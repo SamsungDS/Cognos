@@ -1,4 +1,4 @@
-# SVK-Framework-Core
+# SVK Framework Core
 
 
 
@@ -15,7 +15,7 @@ Already a pro? Just edit this README.md and make it your own. Want to make it ea
 
 ```
 cd existing_repo
-git remote add origin https://cxl-gitlab.ssi.samsung.com/svk/svk-framework-core.git
+git remote add origin https://cxl-gitlab.ssi.samsung.com/svk/core.git
 git branch -M main
 git push -uf origin main
 ```
