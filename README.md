@@ -1,4 +1,4 @@
-# SVK Framework Core
+# SVK Core
 
 
 
