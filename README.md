@@ -1,4 +1,4 @@
-# SVK Common Framework
+# SVK Management Firmware
 
 
 
@@ -15,7 +15,7 @@ Already a pro? Just edit this README.md and make it your own. Want to make it ea
 
 ```
 cd existing_repo
-git remote add origin https://cxl-gitlab.ssi.samsung.com/svk/common.git
+git remote add origin https://cxl-gitlab.ssi.samsung.com/svk/mgmt-fw.git
 git branch -M main
 git push -uf origin main
 ```
