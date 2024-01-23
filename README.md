@@ -1,4 +1,4 @@
-# SVK Management Firmware
+# SVK Management Framework
 
 
 
