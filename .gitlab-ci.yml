@@ -25,7 +25,7 @@ sonar-scanner:
       - .sonar/cache
   script: 
     - sonar-scanner
-  allow_failure: true
+  allow_failure: false
 
 shellcheck:
   stage: test
