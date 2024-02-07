@@ -1,3 +1,3 @@
 [submodule "common/core"]
 	path = common/core
-	url = git@cxl-gitlab.ssi.samsung.com:svk/core.git
+	url = git@cxl-gitlab.ssi.samsung.com:dfs/svk/core.git
