@@ -1,7 +1,0 @@
-[CI/CD Configuration]
-.gitlab-ci.yml              @dfs/dss-devops
-sonar-project.properties    @dfs/dss-devops
-.config/                    @dfs/dss-devops
-
-[Code]
-*.yml                       @dfs/dss-devops
