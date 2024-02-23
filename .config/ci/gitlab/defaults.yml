@@ -1,0 +1,10 @@
+include:
+  - project: dfs/svk/tools
+    ref: main
+    file: .config/ci/gitlab/defaults.yml
+  - project: dfs/svk/tools
+    ref: main
+    file: .config/ci/gitlab/tag_version.yml
+  - project: dfs/svk/tools
+    ref: main
+    file: .config/ci/gitlab/shellcheck.yml
