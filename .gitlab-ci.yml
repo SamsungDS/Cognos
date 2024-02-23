@@ -1,14 +1,8 @@
-variables:
-  CI_CONF_DIR: .config/ci
-  SHELLCHECK_VER: v0.9.0
-
-workflow:
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"
-    - if: $CI_COMMIT_BRANCH =~ /^(stable|feature)\/.*/ && $CI_PIPELINE_SOURCE == "push"
+include: .config/ci/gitlab/defaults.yml
 
 stages:
+  - tag-version
+  - lint
   - test
 
 sonar-scanner:
@@ -26,20 +20,5 @@ sonar-scanner:
   script: 
     - sonar-scanner
   allow_failure: false
-
-shellcheck:
-  stage: test
-  image: koalaman/shellcheck-alpine:$SHELLCHECK_VER
-  before_script:
-    - apk update
-    - apk add git xmlstarlet
-    - shellcheck --version
-  script:
-    - git ls-files --exclude='*.sh' --ignored -c -z |
-      xargs -t --no-run-if-empty -0 shellcheck --format=checkstyle |
-      xmlstarlet tr $CI_CONF_DIR/shellcheck/checkstyle2junit.xslt >
-      shellcheck.xml
-  artifacts:
-    when: always
-    reports:
-      junit: shellcheck.xml
+  rules:
+    - !reference [.default_rules, merge_push_rules]
