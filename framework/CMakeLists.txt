@@ -1,0 +1,53 @@
+set(SVKFramework_INCLUDE_DEST "include/")
+set(SVKFramework_LIB_DEST "lib64/")
+
+set(SVKFramework_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/framework.cc)
+set(SVKFramework_INC ${CMAKE_CURRENT_SOURCE_DIR}/include/framework_upstream.h ${CMAKE_CURRENT_SOURCE_DIR}/include/framework_struct.h)
+
+
+
+
+if(BUILD_SHARED_LIBS)
+    add_library(${SVKFramework} SHARED ${SVKFramework_SRC} ${SVKFramework_INC})
+else() 
+    add_library(${SVKFramework} STATIC ${SVKFramework_SRC} ${SVKFramework_INC})
+endif()
+
+target_include_directories(${SVKFramework} PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+        )
+
+
+install(
+    TARGETS ${SVKFramework}
+    # name of the CMake "export group" containing the targets we want to install
+    EXPORT SVKFrameworkTargets
+    # Dynamic, static library and include destination locations after running
+    # "make install"
+    LIBRARY DESTINATION ${SVKFramework_LIB_DEST}
+    ARCHIVE DESTINATION ${SVKFramework_LIB_DEST} 
+    INCLUDES DESTINATION ${SVKFramework_INCLUDE_DEST}
+    )
+
+
+install(FILES ${SVKFramework_INC} DESTINATION ${SVKFramework_INCLUDE_DEST})
+
+set_target_properties(${SVKFramework} PROPERTIES 
+                            VERSION ${PROJECT_VERSION}
+                            SOVERSION ${PROJECT_VERSION_MAJOR})
+
+set(SVKFramework_CMAKE_DEST "cmake/")
+
+install(
+    # The export we want to save (matches name defined above containing the
+    # install targets)
+    EXPORT SVKFrameworkTargets
+    # CMake file in which to store the export's information
+    FILE  SVKFrameworkTargets.cmake
+    # Namespace prepends all targets in the export (when we import later, we
+    # will use SVKFramework::SVKFramework)
+    # NAMESPACE SVKFramework::
+    # where to place the resulting file (here, we're putting it with the library)
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/${SVKFramework_CMAKE_DEST}
+    )
