@@ -1,0 +1,40 @@
+clang-format:
+  stage: lint
+  image:
+    name: $IMAGE_TAG
+    pull_policy: always
+  before_script:
+    - clang-format --version
+    - git config --global http.sslVerify false
+    - git fetch $CI_MERGE_REQUEST_PROJECT_URL.git $CI_MERGE_REQUEST_TARGET_BRANCH_NAME
+    - CHANGED=$(git clang-format --style=file --commit "$CI_MERGE_REQUEST_DIFF_BASE_SHA" -q --diff | grep -v --color=never "no modified files to format" || true)
+    - FAILED=$([[ -n "$CHANGED" ]] && echo 1 || echo 0)
+    - FAILED_MSG=$([[ -n "$CHANGED" ]] && echo "<failure type=\"clang-format\">Code does not conform to style defined in '.clang-format' file.</failure>" || echo '')
+  script:
+    - |
+      cat > codestyle.xml <<EOL
+      <?xml version="1.0" encoding="UTF-8"?>
+      <testsuite tests="1" failures="$FAILED">
+      <testcase classname="clang-format" name="clang-format">
+      $FAILED_MSG
+      </testcase>
+      </testsuite>
+      EOL
+      if [ -n "$CHANGED" ]
+      then
+        echo "Code does not conform to style defined in '.clang-format' file."
+        echo "Execute 'clang-format' and check in your code with conforming-style."
+        echo "Configure your IDE or editor to use clang-format and you'll never see this message again!"
+        exit 1
+      else
+        exit 0
+      fi
+  variables:
+    DOCKERFILE_NAME: rocky8
+    IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$CI_MERGE_REQUEST_TARGET_BRANCH_NAME
+  artifacts:
+    when: always
+    reports:
+      junit: codestyle.xml
+  rules:
+    - !reference [.default_rules, merge_only]

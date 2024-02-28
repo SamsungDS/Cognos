@@ -1,0 +1,20 @@
+include:
+  - .config/ci/gitlab/docker.yml
+  - .config/ci/gitlab/clang-format.yml
+  - .config/ci/gitlab/unit.yml
+  - .config/ci/gitlab/sonar.yml
+  - project: dfs/svk/tools
+    ref: main
+    file: .config/ci/gitlab/defaults.yml
+  - project: dfs/svk/tools
+    ref: main
+    file: .config/ci/gitlab/tag_version.yml
+  - project: dfs/svk/tools
+    ref: main
+    file: .config/ci/gitlab/shellcheck.yml
+
+variables:
+  REPORT_DIR: build/reports
+  SONAR_COVERAGE_REPORT: $REPORT_DIR/sonar_coverage.xml
+  GITLAB_COVERAGE_REPORT: $REPORT_DIR/gitlab_coverage.xml
+  GITLAB_JUNIT_REPORT: $REPORT_DIR/gitlab_junit.xml

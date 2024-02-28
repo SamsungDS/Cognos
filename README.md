@@ -64,7 +64,57 @@ On some READMEs, you may see small images that convey metadata, such as whether 
 Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
 
 ## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+Build has only been tested on CentOS Stream 8. Requirements are cmake 3.7 for build w/out tests, cmake 3.14 for building with tests, and a C++ compiler compatible with C++17. Note: installing and using `gcc-toolset-11` should make the build process relatively easy.
+
+There are two options for building, using the build script or using cmake to build manually.
+
+### Build script
+Run the `build.sh` script from the top level directory. The `-h` option will show what options are available for building SVK Framework.
+
+    Build script for SVK Framework
+
+    Syntax: build.sh [-b|c|h|p|r]
+    options:
+    -b | --build-tests
+      Build the unit tests for SVK Framework.
+    -c | --with-coverage
+      Build with code coverage report. Must build unit tests for this.
+    -h | --help
+      Print this help.
+    -p=* | --install-prefix=*
+      Install libraries and related files to specified dir.
+    -r | --release
+      Release build.
+
+
+
+### Manual Build
+To build the SVK Framework library without tests:
+
+    cd svk-core
+    mkdir build
+    cd build
+    cmake3 ../  -DCMAKE_INSTALL_PREFIX=svk_fw_distrib  --fresh  && make install
+
+All the distribution files goes into `build/svk_fw_distrib` directory
+
+### Testing
+To build the SVK Framework with tests (GTest) and code coverage, run the above command with the `-DBUILD_TESTING` and `-DWITH_COVERAGE` flags enabled:
+
+    cmake3 ../  -DBUILD_TESTING=ON -DWITH_COVERAGE=ON -DCMAKE_INSTALL_PREFIX=svk_fw_distrib --fresh
+    make install
+
+Tests related files are generated at `build/tests`. To run the tests:
+
+    cd build/tests
+    ctest
+
+This will produce an output of all the unit tests that are under the `tests/` directory. To run each test individually, run the unit test binary located in a similar path to where the unit test source code is, ex. `build/tests/unit/framework/src/framework_ut`.
+
+To see the code coverage report for a source file, cd to the directory where the object files are located, ex. `build/framework/CMakeFiles/svkframework.dir/src`. Make sure the `.gcda` and `.gcno` files are there and run `gcovr` (must be installed with pip), giving the source code dir and current working dir as parameters:
+
+    cd build/framework/CMakeFiles/svkframework.dir/src
+    gcovr -r {path_to_source_code} .
 
 ## Usage
 Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
