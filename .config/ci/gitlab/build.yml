@@ -1,0 +1,13 @@
+build:
+  stage: build
+  image:
+    name: $IMAGE_TAG
+    pull_policy: always
+  script:
+    - scripts/build.sh -p=testgrpcfw
+  variables:
+    DOCKERFILE_NAME: rocky8
+    IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$CI_MERGE_REQUEST_TARGET_BRANCH_NAME
+    GIT_SUBMODULE_STRATEGY: recursive
+  rules:
+    - !reference [.default_rules, merge_and_push]
