@@ -52,22 +52,36 @@ When you're ready to make this README your own, just edit this file and use the 
 Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
 
 ## Name
-Choose a self-explaining name for your project.
+SVK Management Framework
 
 ## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+The SVK Management Framework repository contains code related to REST API Server, gRPC server for the Controller and the Agent nodes, proto files.
 
 ## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
 
 ## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
 
 ## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+- Run `build_prereq.sh`
+- copy the contents of `svk_export.sh` to the shell you will start makefile
+- Run `make` command
+- After the successful compilation, copy the bin, libs to the destination node
+- The core framework library and feature plugin based libraries need to be copied from the respective repositories to libs and plugin_libs respectively
+- Copy proxy directory to the controller node which has REST API server code
 
 ## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+Once all the libraries and binaries are copied, the user needs to run the commands in the following manner
+- Run the controller server on the controller node. Controller runs on the port 9999 by default. It can be changed through command line options
+	./bin/ctrlr_server &
+- Run the node server on the agent nodes with the cluster id, framework library path and its node id. By default node server runs on port 9998
+	./bin/node_server --cluster_id cluster1 --framework_lib_path libs/ --node_id "msl-ssg-vm53:9998" &
+- Run the client for validation using. This is a simple test utility to validate the plugin function
+	./bin/ctrlr_client --option=command --command "cluster_id=cluster1;command=GetDiskPowerState; disk_id=/dev/nvme0;"
+- REST API Server can be started on the controller node with the following commands
+	
+	export GO111MODULE=on
+	cd proxy
+	go run cmd/app/main.go
 
 ## Support
 Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.

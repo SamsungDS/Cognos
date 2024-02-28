@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+package svk;
+
+option go_package = "github.com/svk;Framework";
+
+import "google/api/annotations.proto";
+import "protoc-gen-openapiv2/options/annotations.proto";
+
+// Annotations used when generating the OpenAPI file.
+option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
+  info: {version: "1.0"};
+  external_docs: {
+    url: "https://github.com/";
+    description: "gRPC-gateway for SVK Framework";
+  }
+  schemes: HTTP;
+};
+
+// gRPC APIs at the SVK Controller node
+service Controller{
+  // Register SVK Agent Node with the SVK Controller node
+  rpc RegisterNode(RegisterRequest) returns (RegisterResponse) {
+    option (google.api.http) = {
+        post: "/api/v1/register_node" 
+        body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Register SVK node"
+      description: "Register SVK node"
+      tags: "svk, controller, register_node"
+    };
+  }
+
+  // Unregister SVK Agent Node with the SVK Controller node
+  rpc UnregisterNode(UnregisterRequest) returns (UnregisterResponse) {
+    option (google.api.http) = {
+        post: "/api/v1/unregister_node" 
+        body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Unregister SVK node"
+      description: "Unregister SVK node"
+      tags: "svk, controller, unregister_node"
+    };
+  }
+
+  // Process command sent to the SVK Controller node
+  rpc ProcessControllerCommand(CommandRequest) returns (CommandResponse) {
+    option (google.api.http) = {
+        post: "/api/v1/process_controller_command" 
+        body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "ProcessCommand"
+      description: "Process command sent to SVK Controller node"
+      tags: "svk, controller, command"
+    };
+  }  
+}
+
+// gRPC APIs related to Command Framework at the SVK Agent node
+service CommandFwk{
+  
+  // Process command send to SVK Agent node
+  rpc ProcessNodeCommand(CommandRequest) returns (CommandResponse) {
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Process Command"
+      description: "Process command received by SVK Agent node"
+      tags: "svk, node, command"
+    };
+  }
+}
+
+// A RegisterRequest resource sent to the Controller node to register
+// given node_id for a cluster with the controller.
+message RegisterRequest {
+  // Cluster identifier to associate for the given node_id
+  string cluster_id = 1;
+  // Node identifier in the format <node_ip_or_hostname>:<port>
+  string node_id = 2;
+}
+
+// A RegisterResponse resource.
+message RegisterResponse {
+  // Status of RegisterNode with success or failure with error details
+  string status = 1;
+}
+
+// A UnregisterRequest resource sent to the Controller node to unregister
+// given node_id from the already associated cluster.
+message UnregisterRequest {
+  string cluster_id = 1;
+  string node_id = 2;
+}
+
+// A UnregisterResponse resource.
+message UnregisterResponse {
+  string status = 1;
+}
+
+// A CommandRequest resource sent either to the Controller node or the Agent node
+// to process the given input string. 
+// If sent to Controller node, the controller node can parse the data and send the request to the appropriate Agent nodes.
+// If sent to Command node, the command node parse the data and process the command.
+message CommandRequest {
+  string input = 1;
+}
+
+// A CommandResponse resource.
+message CommandResponse {
+  string output = 1;
+}

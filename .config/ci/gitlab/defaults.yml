@@ -8,3 +8,20 @@ include:
   - project: dfs/svk/tools
     ref: main
     file: .config/ci/gitlab/shellcheck.yml
+  - .config/ci/gitlab/docker.yml
+  - .config/ci/gitlab/build.yml
+  - .config/ci/gitlab/sonar.yml
+
+.build:
+  matrix:
+    - DOCKERFILE_NAME:
+      - rocky8
+      - rocky9
+
+build docker:
+  parallel:
+    matrix: !reference [.build, matrix]
+
+build:
+  parallel:
+    matrix: !reference [.build, matrix]
