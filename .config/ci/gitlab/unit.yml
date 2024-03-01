@@ -10,6 +10,7 @@ unit test:
   script:
     # Build with unit tests and generate coverage report
     - /build-wrapper-linux-x86/build-wrapper-linux-x86-64 --out-dir bw-output/ $BUILD_COMMAND
+  coverage: '/^TOTAL.*\s+(\d+\%)$/'
   artifacts:
     name: unit test
     expire_in: 300 seconds

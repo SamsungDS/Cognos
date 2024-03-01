@@ -129,8 +129,13 @@ pushd "$PROJECT_ROOT/build"
 
         echo "Generating coverage reports"
         # Using path to framework object files
-        gcovr --sonarqube "$REPORTS_DIR/sonar_coverage.xml" -r ../ --exclude _deps/ ./
-        gcovr --xml "$REPORTS_DIR/gitlab_coverage.xml" -r ../ --exclude _deps/ ./
+        gcovr \
+            --xml "$REPORTS_DIR/gitlab_coverage.xml" \
+            --sonarqube "$REPORTS_DIR/sonar_coverage.xml" \
+            --txt \
+            --root "$PROJECT_ROOT" \
+            --exclude "$PROJECT_ROOT/build" \
+            "$PROJECT_ROOT/build"
     fi
 
 popd
