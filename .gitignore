@@ -1,4 +1,9 @@
-# VS Code
-.vscode
-# build directory
+# Build files
 build
+
+# IDE config
+.vscode
+
+# Doxygen
+html
+latex

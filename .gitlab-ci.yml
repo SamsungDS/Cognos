@@ -6,3 +6,4 @@ stages:
   - docker
   - lint
   - build
+  - doxygen
