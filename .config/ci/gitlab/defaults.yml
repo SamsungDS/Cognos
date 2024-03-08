@@ -11,6 +11,7 @@ include:
   - .config/ci/gitlab/docker.yml
   - .config/ci/gitlab/build.yml
   - .config/ci/gitlab/sonar.yml
+  - .config/ci/gitlab/doxygen.yml
 
 .build:
   matrix:
