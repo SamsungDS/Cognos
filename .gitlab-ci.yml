@@ -6,3 +6,4 @@ stages:
   - lint
   - test
   - scan
+  - doxygen

@@ -3,6 +3,7 @@ include:
   - .config/ci/gitlab/clang-format.yml
   - .config/ci/gitlab/unit.yml
   - .config/ci/gitlab/sonar.yml
+  - .config/ci/gitlab/doxygen.yml
   - project: dfs/svk/tools
     ref: main
     file: .config/ci/gitlab/defaults.yml
