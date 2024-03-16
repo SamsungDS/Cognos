@@ -13,6 +13,9 @@ include:
   - project: dfs/svk/tools
     ref: main
     file: .config/ci/gitlab/shellcheck.yml
+  - project: dfs/svk/tools
+    ref: main
+    file: .config/ci/gitlab/coverage.yml
 
 variables:
   REPORT_DIR: build/reports
