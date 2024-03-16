@@ -1,45 +1,5 @@
-variables:
-  CI_CONF_DIR: .config/ci
-  SHELLCHECK_VER: v0.9.0
-
-workflow:
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"
-    - if: $CI_COMMIT_BRANCH =~ /^(stable|feature)\/.*/ && $CI_PIPELINE_SOURCE == "push"
+include: .config/ci/gitlab/defaults.yml
 
 stages:
-  - test
-
-sonar-scanner:
-  stage: test
-  image: 
-    name: sonarsource/sonar-scanner-cli:latest
-    entrypoint: [""]
-  variables:
-    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"  # Defines the location of the analysis task cache
-    GIT_DEPTH: "0"  # Tells git to fetch all the branches of the project, required by the analysis task
-  cache:
-    key: "${CI_JOB_NAME}"
-    paths:
-      - .sonar/cache
-  script: 
-    - sonar-scanner
-  allow_failure: false
-
-shellcheck:
-  stage: test
-  image: koalaman/shellcheck-alpine:$SHELLCHECK_VER
-  before_script:
-    - apk update
-    - apk add git xmlstarlet
-    - shellcheck --version
-  script:
-    - git ls-files --exclude='*.sh' --ignored -c -z |
-      xargs -t --no-run-if-empty -0 shellcheck --format=checkstyle |
-      xmlstarlet tr $CI_CONF_DIR/shellcheck/checkstyle2junit.xslt >
-      shellcheck.xml
-  artifacts:
-    when: always
-    reports:
-      junit: shellcheck.xml
+  - docker
+  - lint
