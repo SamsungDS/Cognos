@@ -1,0 +1,10 @@
+include:
+  - .config/ci/gitlab/docker.yml
+  - project: dfs/svk/tools
+    ref: main
+    file: .config/ci/gitlab/defaults.yml
+  - project: dfs/svk/tools
+    ref: main
+    file: .config/ci/gitlab/shellcheck.yml
+variables:
+  GITLAB_JUNIT_REPORT: $REPORT_DIR/gitlab_junit.xml
