@@ -7,3 +7,4 @@ stages:
   - test
   - scan
   - doxygen
+  - coverage
