@@ -24,6 +24,7 @@ configure_file("cmake/${SVKFramework}.pc.in" "${pkg_config}" @ONLY)
 # Enable CTest for testing these code examples.
 # include(CTest)
 
+add_subdirectory(common)
 add_subdirectory(framework)
 
 if(BUILD_TESTING)

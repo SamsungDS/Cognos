@@ -1,5 +1,6 @@
-#include "framework_upstream.h"
 #include <gtest/gtest.h>
+
+#include "framework_upstream.h"
 
 TEST (InitTest, Init)
 {
