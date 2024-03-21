@@ -1,0 +1,7 @@
+{
+    "core":
+    {
+        "feat_modules_dir": "../../../sample_feature",
+        "log_level": "ERROR"
+    }
+}

@@ -33,17 +33,7 @@ extern "C"
    * @param feature_names
    * @return int
    */
-  int get_supported_feature_list (feature_id feat_id, char *feature_names);
-
-  /**
-   * @brief Show sub-features for a feature
-   *
-   * @param feat_id Feature id code
-   * @param sub_feature_ids Sub-feature code
-   * @return int
-   */
-  int get_supported_sub_feature_list (feature_id feat_id,
-                                      uint16_t sub_feature_ids[]);
+  int get_supported_feature_list (feature_id *feat_id, char *feature_names);
 
   /**
    * @brief Check if license is valid
