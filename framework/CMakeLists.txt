@@ -2,7 +2,8 @@ set(SVKFramework_INCLUDE_DEST "include/")
 set(SVKFramework_LIB_DEST "lib64/")
 
 set(SVKFramework_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/framework.cc)
-set(SVKFramework_INC ${CMAKE_CURRENT_SOURCE_DIR}/include/framework_upstream.h ${CMAKE_CURRENT_SOURCE_DIR}/include/framework_struct.h)
+set(SVKFramework_INC ${CMAKE_CURRENT_SOURCE_DIR}/include/framework_upstream.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/include_private/framework_service.h)
 
 
 
@@ -15,6 +16,7 @@ endif()
 
 target_include_directories(${SVKFramework} PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/include_private>
         $<INSTALL_INTERFACE:include>
         )
 

@@ -22,8 +22,7 @@ extern "C"
    * @param svk_conf_file Path to configuration file
    *
    */
-  int initialize_svk (const char *svk_conf_file, svk_storage_ctx *ctx,
-                      uint32_t num_ctx);
+  int initialize_svk (const char *svk_conf_file, void *);
 
   /**
    * @brief Function to be called by App for feature execution.

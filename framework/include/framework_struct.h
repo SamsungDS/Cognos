@@ -10,21 +10,23 @@
 #include <cstdint>
 
 // Enum for feature_id codes
-enum class feature_id : uint16_t
+typedef enum : uint16_t
 {
   POWER_THROTTLE,
   ZERO_ETL,
   RAID,
   CXL,
   QLC
-};
+} feature_id;
 
 // Status enum for svk_output
-enum class svk_status
+typedef enum
 {
   SVK_STATUS_SUCCESS,
-  SVK_STATUS_FAIL
-};
+  SVK_STATUS_FAIL,
+  SVK_STATUS_INVALID_CONFIG,
+  SVK_STATUS_BAD_FEATURE_LIB
+} svk_status;
 
 /**
  * @struct svk_pass_thru_cmd
@@ -179,7 +181,7 @@ struct svk_postprocess_fn
 
 /**
  * @struct svk_feature_details
- * @brief Struct to pass to feature modules during init
+ * @brief Struct of downstream APIs to pass to feature modules during init
  *
  * Struct for each feature module to keep track of function pointers. Passed to
  * feature modules during init to populate
@@ -188,6 +190,14 @@ struct svk_postprocess_fn
  *  @param svk_conf_file    Config file to initialize SVK with
  *  @param ctx              Storage context to use
  *  @param num_ctx
+ *
+ * @var svk_feature_details::get_supported_feature_list
+ *  Pointer to function that will give back a list of feature names that the
+ * feature module will support
+ *  @param feature_names
+ *
+ * @var svk_feature_details::is_license_valid
+ *  Pointer to function that will check for valid license
  *
  * @var svk_feature_details::execute_sync
  *  Pointer to the execute function that each feature module should define
@@ -208,13 +218,14 @@ struct svk_postprocess_fn
  */
 struct svk_feature_details
 {
-  int (*initialize_svk) (const char *svk_conf_file, svk_storage_ctx *ctx,
-                         uint32_t num_ctx);
+  int (*initialize) (void *init_param);
+  int (*get_supported_feature_list) (feature_id *feature, char *feature_names);
+  int (*is_license_valid) (void *);
   int (*execute_sync) (svk_pass_thru_cmd *pass_thru, svk_input *input,
-                       svk_input *output);
+                       svk_output *output);
   int (*execute_async) (svk_pass_thru_cmd *pass_thru, svk_input *input,
                         svk_postprocess_fn *postprocess_fn);
-  int (*cleanup_svk) (svk_storage_ctx *ctx, void *);
+  int (*clean_up) (void *);
 };
 
 #endif // FRAMEWORK_STRUCT_H
