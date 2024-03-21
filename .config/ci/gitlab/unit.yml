@@ -23,7 +23,7 @@ unit test:
       junit: $GITLAB_JUNIT_REPORT
   variables:
     DOCKERFILE_NAME: rocky8
-    IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$CI_MERGE_REQUEST_TARGET_BRANCH_NAME
+    IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
     BUILD_COMMAND: ./scripts/build.sh --build-tests --with-coverage
   rules:
     - !reference [.default_rules, merge_and_push]
