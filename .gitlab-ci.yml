@@ -7,3 +7,4 @@ stages:
   - lint
   - build
   - doxygen
+  - coverage
