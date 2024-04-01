@@ -1,3 +1,8 @@
 # Python dependencies
-clang-format
-gcovr
+pytest-cov==4.1.0
+pytest-mock
+pytest
+flask
+flask_cors
+mysql-connector-python
+simplejson

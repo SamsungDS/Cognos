@@ -1,10 +1,26 @@
 include:
-  - .config/ci/gitlab/docker.yml
   - project: dfs/svk/tools
     ref: main
     file: .config/ci/gitlab/defaults.yml
   - project: dfs/svk/tools
     ref: main
+    file: .config/ci/gitlab/docker.yml
+  - project: dfs/svk/tools
+    ref: main
     file: .config/ci/gitlab/shellcheck.yml
-variables:
-  GITLAB_JUNIT_REPORT: $REPORT_DIR/gitlab_junit.xml
+  - project: dfs/svk/tools
+    ref: main
+    file: .config/ci/gitlab/tag_version.yml
+  - project: dfs/svk/tools
+    ref: main
+    file: .config/ci/gitlab/coverage.yml
+  - .config/ci/gitlab/unit.yml
+  - .config/ci/gitlab/sonar.yml
+  - .config/ci/gitlab/pep8.yml
+
+build docker:
+  variables:
+    DOCKERFILE_NAME: rocky9
+
+tag semantic version:
+  stage: pre-build
