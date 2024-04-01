@@ -1,0 +1,24 @@
+unit test:
+  stage: test
+  image:
+    name: $IMAGE_TAG
+    pull_policy: always
+  script:
+    # Execute unit tests and generate coverage report
+    - ./scripts/run-tests.sh
+  artifacts:
+    name: unit test
+    expire_in: 300 seconds
+    paths:
+     - scripts/test-reports/ut/coverage.xml
+     - scripts/test-reports/ut/junit.xml
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: scripts/test-reports/ut/coverage.xml
+      junit: scripts/test-reports/ut/junit.xml
+  variables:
+    DOCKERFILE_NAME: rocky9
+    IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
+  rules:
+    - !reference [.default_rules, merge_and_push]
