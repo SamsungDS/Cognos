@@ -15,7 +15,7 @@ sonar-scanner:
   allow_failure: false
   variables:
     DOCKERFILE_NAME: rocky8
-    IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$CI_MERGE_REQUEST_TARGET_BRANCH_NAME
+    IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
     GIT_DEPTH: 0
   rules:
     - !reference [.default_rules, merge_and_push]
