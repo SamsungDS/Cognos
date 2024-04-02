@@ -1,7 +1,10 @@
 #ifndef FRAMEWORK_SERVICE_H
 #define FRAMEWORK_SERVICE_H
 
+#include "svk_logger.h"
 #include "framework_struct.h"
+#include <boost/property_tree/json_parser.hpp>
+#include <boost/property_tree/ptree.hpp>
 #include <dirent.h>
 #include <dlfcn.h>
 #include <memory>
@@ -40,15 +43,24 @@ public:
 class FrameworkSvc
 {
 private:
+  const std::unordered_map<std::string, level_E> log_level_map
+      = { { "TRACE", level_E::TRACE },       { "DEBUG", level_E::DEBUG },
+          { "INFO", level_E::INFO },         { "NOTICE", level_E::NOTICE },
+          { "WARN", level_E::WARN },         { "ERROR", level_E::ERROR },
+          { "CRITICAL", level_E::CRITICAL }, { "ALERT", level_E::ALERT },
+          { "FATAL", level_E::FATAL },       { "OFF", level_E::OFF } };
   mutable std::unordered_map<feature_id, svk_feature_details *> feature_map;
   std::string svk_conf_path;
-  bool report_sym_error (void *fn, const char *entry_name, void *handle,
-                         int &num_failed_libs, svk_status &status,
+  bool report_sym_error (void *fn, const dirent *entry, void *handle,
+                         const char *sym_name, int &num_failed_libs,
+                         svk_status &status,
                          const featureInterface &feature_api,
                          svk_feature_details *details) const;
   svk_status load_feature_modules (const std::string &features_dir,
                                    void *init_param,
                                    const featureInterface &free_api) const;
+  svk_status
+  init_logger (boost::property_tree::ptree const &logger_info) const;
   svk_status set_config (void *init_param,
                          const featureInterface &dep_inj) const;
   svk_status destroy_feat_map () const;

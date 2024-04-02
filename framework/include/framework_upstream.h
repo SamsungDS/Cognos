@@ -1,12 +1,12 @@
-/** @file framework.h
+/** @file framework_upstream.h
  * @brief Upstream APIs for application to use for controlling SVK
  *
  * Upstream APIs that are exposed to the GRPC server or application to control
  * SVK library initialization, cleanup, and feature execution
  */
 
-#ifndef FRAMEWORK_H
-#define FRAMEWORK_H
+#ifndef FRAMEWORK_UPSTREAM_H
+#define FRAMEWORK_UPSTREAM_H
 #include "framework_struct.h"
 
 extern "C"
@@ -66,4 +66,4 @@ extern "C"
 
 } // extern "C"
 
-#endif // FRAMEWORK_H
+#endif // FRAMEWORK_UPSTREAM_H
