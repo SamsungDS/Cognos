@@ -3,7 +3,8 @@ set(SVKFramework_LIB_DEST "lib64/")
 
 set(SVKFramework_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/framework.cc)
 set(SVKFramework_INC ${CMAKE_CURRENT_SOURCE_DIR}/include/framework_upstream.h
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/include_private/framework_service.h)
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/include_private/framework_service.h
+        ${CMAKE_SOURCE_DIR}/common/include/svk_logger.h)
 
 
 
@@ -17,9 +18,11 @@ endif()
 target_include_directories(${SVKFramework} PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/include_private>
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/common/include>
         $<INSTALL_INTERFACE:include>
         )
-
+target_link_directories(${SVKFramework} PRIVATE ${CMAKE_SOURCE_DIR}/build/common)
+target_link_libraries(${SVKFramework} svklogger)
 
 install(
     TARGETS ${SVKFramework}

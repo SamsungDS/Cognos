@@ -20,6 +20,65 @@ public:
   MOCK_METHOD (DIR *, open_dir, (const char *dir_str), (const, override));
 };
 
+// Format for running code before specific test suite, in this case InitTest
+class ConfigTest : public testing::Test
+{
+protected:
+  static void
+  SetUpTestSuite ()
+  {
+    core_conf.put ("core.feat_modules_dir", "../../../sample_feature");
+
+    logger_conf.put ("log_level", "ERROR");
+    logger_conf.put ("log_file_name", "core_conf/framework.log");
+    logger_conf.put ("log_file_count", 1);
+    logger_conf.put ("log_file_size", 1048576);
+    logger_conf.put ("sink_type", "rotating_file");
+
+    core_conf.put_child ("core.logger", logger_conf);
+    boost::property_tree::write_json ("conf.json", core_conf);
+  }
+
+  static boost::property_tree::ptree core_conf;
+  static boost::property_tree::ptree logger_conf;
+};
+// These variables will be global to only the ConfigTest suite
+// Since order of execution is not guaranteed, we can only assume these are
+// available for that test suite.
+boost::property_tree::ptree ConfigTest::core_conf;
+boost::property_tree::ptree ConfigTest::logger_conf;
+
+TEST_F (ConfigTest, BadLoggerConf)
+{
+  core_conf.get_child ("core").erase ("logger");
+  boost::property_tree::write_json ("bad_logger_conf.json", core_conf);
+  svk_storage_ctx *ctx = new svk_storage_ctx ();
+
+  EXPECT_EQ (SVK_STATUS_SUCCESS,
+             initialize_svk ("bad_logger_conf.json", (void *)ctx));
+  cleanup_svk (ctx, (void *)ctx);
+
+  delete ctx;
+  core_conf.put_child ("core.logger", logger_conf);
+}
+
+TEST_F (ConfigTest, InvalidSinkType)
+{
+  logger_conf.erase ("sink_type");
+  logger_conf.put ("sink_type", "invalid");
+  core_conf.erase ("core.logger");
+  core_conf.put_child ("core.logger", logger_conf);
+  boost::property_tree::write_json ("invalid_sink_type.json", core_conf);
+  svk_storage_ctx *ctx = new svk_storage_ctx ();
+
+  EXPECT_EQ (SVK_STATUS_FAIL,
+             initialize_svk ("invalid_sink_type.json", (void *)ctx));
+
+  delete ctx;
+  logger_conf.put ("log_level", "ERROR");
+  core_conf.put_child ("core.logger", logger_conf);
+}
+
 // Test successful init by calling extern api with regular dlopen/dlsym
 TEST (InitTest, InitSuccess)
 {

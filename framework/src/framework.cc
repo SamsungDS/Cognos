@@ -1,8 +1,5 @@
 #include <algorithm>
 #include <bits/stdc++.h>
-#include <boost/property_tree/json_parser.hpp>
-#include <boost/property_tree/ptree.hpp>
-#include <dirent.h>
 #include <sys/stat.h>
 
 #include <algorithm>
@@ -17,6 +14,9 @@
 #define CORE_DEFAULT_CONF "/etc/svk/core_config.json"
 #define CORE_DEFAULT_LIBS_PATH "/usr/lib"
 #define CORE_DEFAULT_LOG_LEVEL "ERROR"
+#define CORE_DEFAULT_LOG_FILE "/var/log/core/framework.log"
+#define CORE_LOGGER_NAME "core"
+#define LOG_MSG_MAX_SIZE 512
 #define FEAT_LIB_SUFFIX ".so"
 
 using namespace std;
@@ -42,8 +42,9 @@ const std::unique_ptr<FrameworkSvc> g_fw_service
 
 // Check if function pointer was set properly
 bool
-FrameworkSvc::report_sym_error (void *fn, const char *entry_name, void *handle,
-                                int &num_failed_libs, svk_status &status,
+FrameworkSvc::report_sym_error (void *fn, const dirent *entry, void *handle,
+                                const char *sym_name, int &num_failed_libs,
+                                svk_status &status,
                                 const featureInterface &feature_api,
                                 svk_feature_details *details) const
 {
@@ -51,10 +52,12 @@ FrameworkSvc::report_sym_error (void *fn, const char *entry_name, void *handle,
     {
 
       const char *dlsym_error = dlerror ();
-      std::cerr << "Cannot load symbol 'initialize' for feature module "
-                << entry_name
-                << ", ignoring this feature module. Error: " << dlsym_error
-                << std::endl;
+      char err_msg[LOG_MSG_MAX_SIZE];
+      snprintf (err_msg, LOG_MSG_MAX_SIZE,
+                "Cannot load symbol '%s' for feature module '%s.' Error: %s\n",
+                sym_name, entry->d_name, dlsym_error);
+      svk_logger (CORE_LOGGER_NAME, level_E::ERROR, err_msg);
+
       feature_api.close_lib (handle);
       num_failed_libs++;
       status = SVK_STATUS_BAD_FEATURE_LIB;
@@ -76,6 +79,7 @@ FrameworkSvc::load_feature_modules (const std::string &features_dir,
   svk_status &get_status = status;
   int num_failed_libs = 0;
   int &get_failed_libs = num_failed_libs;
+  char err_msg[LOG_MSG_MAX_SIZE];
 
   DIR *dirfp = nullptr;
   struct dirent *entry = nullptr;
@@ -83,7 +87,10 @@ FrameworkSvc::load_feature_modules (const std::string &features_dir,
   dirfp = feature_api.open_dir (features_dir.c_str ());
   if (dirfp == nullptr)
     {
-      std::cerr << "unable to open feature lib directory" << std::endl;
+      snprintf (err_msg, LOG_MSG_MAX_SIZE,
+                "Unable to open feature lib directory: %s\n",
+                features_dir.c_str ());
+      svk_logger (CORE_LOGGER_NAME, level_E::ERROR, err_msg);
       return SVK_STATUS_FAIL;
     }
 
@@ -99,7 +106,9 @@ FrameworkSvc::load_feature_modules (const std::string &features_dir,
       void *handle = feature_api.open_lib (feature_lib_str.c_str ());
       if (!handle)
         {
-          std::cerr << "Dlopen failure: " << dlerror () << std::endl;
+          snprintf (err_msg, LOG_MSG_MAX_SIZE, "Dlopen failure. Error: %s\n",
+                    dlerror ());
+          svk_logger (CORE_LOGGER_NAME, level_E::ERROR, err_msg);
           status = SVK_STATUS_BAD_FEATURE_LIB;
           num_failed_libs++;
           continue;
@@ -113,8 +122,9 @@ FrameworkSvc::load_feature_modules (const std::string &features_dir,
       // feature
       details->initialize
           = (initialize)feature_api.get_sym (handle, "initialize");
-      if (report_sym_error ((void *)details->initialize, entry->d_name, handle,
-                            get_failed_libs, get_status, feature_api, details))
+      if (report_sym_error ((void *)details->initialize, entry, handle,
+                            "initialize", get_failed_libs, get_status,
+                            feature_api, details))
         {
           free (details);
           // Set to null to ensure free only happens once
@@ -124,9 +134,9 @@ FrameworkSvc::load_feature_modules (const std::string &features_dir,
       details->get_supported_feature_list
           = (get_supported_feature_list)feature_api.get_sym (
               handle, "get_supported_feature_list");
-      if (report_sym_error ((void *)details->get_supported_feature_list,
-                            entry->d_name, handle, get_failed_libs, get_status,
-                            feature_api, details))
+      if (report_sym_error ((void *)details->get_supported_feature_list, entry,
+                            handle, "get_supported_feature_list",
+                            get_failed_libs, get_status, feature_api, details))
         {
           free (details);
           // Set to null to ensure free only happens once
@@ -135,9 +145,9 @@ FrameworkSvc::load_feature_modules (const std::string &features_dir,
         }
       details->is_license_valid
           = (is_license_valid)feature_api.get_sym (handle, "is_license_valid");
-      if (report_sym_error ((void *)details->is_license_valid, entry->d_name,
-                            handle, get_failed_libs, get_status, feature_api,
-                            details))
+      if (report_sym_error ((void *)details->is_license_valid, entry, handle,
+                            "is_license_valid", get_failed_libs, get_status,
+                            feature_api, details))
         {
           free (details);
           // Set to null to ensure free only happens once
@@ -146,9 +156,9 @@ FrameworkSvc::load_feature_modules (const std::string &features_dir,
         }
       details->execute_sync
           = (execute_sync)feature_api.get_sym (handle, "execute_sync");
-      if (report_sym_error ((void *)details->execute_sync, entry->d_name,
-                            handle, get_failed_libs, get_status, feature_api,
-                            details))
+      if (report_sym_error ((void *)details->execute_sync, entry, handle,
+                            "execute_sync", get_failed_libs, get_status,
+                            feature_api, details))
         {
           free (details);
           // Set to null to ensure free only happens once
@@ -157,9 +167,9 @@ FrameworkSvc::load_feature_modules (const std::string &features_dir,
         }
       details->execute_async
           = (execute_async)feature_api.get_sym (handle, "execute_async");
-      if (report_sym_error ((void *)details->execute_async, entry->d_name,
-                            handle, get_failed_libs, get_status, feature_api,
-                            details))
+      if (report_sym_error ((void *)details->execute_async, entry, handle,
+                            "execute_async", get_failed_libs, get_status,
+                            feature_api, details))
         {
           free (details);
           // Set to null to ensure free only happens once
@@ -167,8 +177,9 @@ FrameworkSvc::load_feature_modules (const std::string &features_dir,
           continue;
         }
       details->clean_up = (clean_up)feature_api.get_sym (handle, "clean_up");
-      if (report_sym_error ((void *)details->clean_up, entry->d_name, handle,
-                            get_failed_libs, get_status, feature_api, details))
+      if (report_sym_error ((void *)details->clean_up, entry, handle,
+                            "clean_up", get_failed_libs, get_status,
+                            feature_api, details))
         {
           free (details);
           // Set to null to ensure free only happens once
@@ -178,9 +189,11 @@ FrameworkSvc::load_feature_modules (const std::string &features_dir,
 
       if (details->initialize (init_param))
         {
-          std::cerr << "Initialization for feature module " << entry->d_name
-                    << "returned non-zero, ignoring this feature module."
-                    << std::endl;
+          snprintf (err_msg, LOG_MSG_MAX_SIZE,
+                    "Initialization for feature module '%s' returned "
+                    "non-zero, ignoring this feature module.",
+                    entry->d_name);
+          svk_logger (CORE_LOGGER_NAME, level_E::ERROR, err_msg);
           status = SVK_STATUS_BAD_FEATURE_LIB;
           free (details);
           // Set to null to ensure free only happens once
@@ -195,9 +208,11 @@ FrameworkSvc::load_feature_modules (const std::string &features_dir,
           = feature_map.insert (make_pair (curr_feature, details));
       if (!inserted)
         {
-          std::cerr << "svk_feature_details for feature lib " << entry->d_name
-                    << "wasn't able to be added to map" << std::endl;
-
+          snprintf (err_msg, LOG_MSG_MAX_SIZE,
+                    "svk_feature_details for feature lib %s wasn't able to be "
+                    "added to map.",
+                    entry->d_name);
+          svk_logger (CORE_LOGGER_NAME, level_E::ERROR, err_msg);
           num_failed_libs++;
           status = SVK_STATUS_BAD_FEATURE_LIB;
           free (details);
@@ -205,10 +220,51 @@ FrameworkSvc::load_feature_modules (const std::string &features_dir,
           details = nullptr;
         }
     }
-  std::cerr << num_failed_libs << " feature libs failed to load" << std::endl;
-  // return amount of feature modules that failed to load
+  if (num_failed_libs)
+    {
+      snprintf (err_msg, LOG_MSG_MAX_SIZE, "%d feature libs failed to load.",
+                num_failed_libs);
+      svk_logger (CORE_LOGGER_NAME, level_E::ERROR, err_msg);
+    }
+  else
+    {
+      svk_logger (CORE_LOGGER_NAME, level_E::INFO,
+                  "All feature libs loaded successfully.");
+    }
+
   return status;
 }
+// Attempt to load logger options from the config, use defaults for any options
+// that can't be found
+svk_status
+FrameworkSvc::init_logger (
+    boost::property_tree::ptree const &logger_info) const
+{
+  std::string log_level
+      = logger_info.get<std::string> ("log_level", CORE_DEFAULT_LOG_LEVEL);
+  std::string file_name
+      = logger_info.get<std::string> ("log_file_name", CORE_DEFAULT_LOG_FILE);
+  int file_count = logger_info.get<int> ("log_file_count", 2);
+  uint64_t file_size = logger_info.get<uint64_t> (
+      "log_file_size", 1048576); // 1MB default max file size
+  std::string sink_type
+      = logger_info.get<std::string> ("sink_type", "rotating_file");
+
+  if (svk_logger_init (CORE_LOGGER_NAME, file_name.c_str (),
+                       log_level_map.at (log_level), file_count, file_size,
+                       sink_type.c_str ())
+      == 0)
+    {
+      svk_logger (CORE_LOGGER_NAME, level_E::INFO,
+                  "Core logger is initialized");
+      return SVK_STATUS_SUCCESS;
+    }
+  else
+    {
+      return SVK_STATUS_INVALID_CONFIG;
+    }
+}
+
 // return svk status
 svk_status
 FrameworkSvc::set_config (void *init_param,
@@ -227,8 +283,22 @@ FrameworkSvc::set_config (void *init_param,
     }
   // Set logger here as well, once logger code is merged. Need to translate log
   // level properly as well
-  std::string log_level
-      = pt.get<std::string> ("core.log_level", CORE_DEFAULT_LOG_LEVEL);
+  boost::property_tree::ptree logger_info;
+  try
+    {
+      logger_info = pt.get_child ("core.logger");
+    }
+  catch (boost::property_tree::ptree_error &e)
+    {
+      std::cerr << "Error while parsing logger config section: " << e.what ()
+                << ". Logger defaults will be used." << std::endl;
+    }
+  // Initialize logger
+  if (init_logger (logger_info) != SVK_STATUS_SUCCESS)
+    { // test
+      std::cerr << "Logger unable to be initialized" << std::endl;
+      return SVK_STATUS_FAIL;
+    }
 
   std::string features_dir
       = pt.get<std::string> ("core.feat_modules_dir", CORE_DEFAULT_LIBS_PATH);
@@ -348,6 +418,6 @@ cleanup_svk (svk_storage_ctx *ctx, void *)
 {
   int status = 0;
   status = g_fw_service->FrameworkSvcCleanup ();
-  std::cout << "SVK Cleanup finished." << std::endl;
+  svk_logger (CORE_LOGGER_NAME, level_E::INFO, "SVK Cleanup finished.");
   return status;
 }
