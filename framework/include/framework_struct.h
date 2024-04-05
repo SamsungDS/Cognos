@@ -10,7 +10,7 @@
 #include <cstdint>
 
 // Enum for feature_id codes
-typedef enum : uint16_t
+typedef enum : uint32_t
 {
   POWER_THROTTLE,
   ZERO_ETL,
@@ -50,9 +50,8 @@ typedef enum
 struct svk_pass_thru_cmd
 {
   feature_id feat_id;
-  uint16_t sub_feat_id;
-  void *input_param;
   void *out_format;
+  uint32_t len;
 };
 
 /**

@@ -79,18 +79,21 @@ FrameworkSvc::load_feature_modules (const std::string &features_dir,
   svk_status &get_status = status;
   int num_failed_libs = 0;
   int &get_failed_libs = num_failed_libs;
-  char err_msg[LOG_MSG_MAX_SIZE];
+  char log_msg[LOG_MSG_MAX_SIZE];
 
   DIR *dirfp = nullptr;
   struct dirent *entry = nullptr;
   // Open dir with feature libs
+  snprintf (log_msg, LOG_MSG_MAX_SIZE, "Loading feature modules from %s",
+            features_dir.c_str ());
+  svk_logger (CORE_LOGGER_NAME, level_E::INFO, log_msg);
   dirfp = feature_api.open_dir (features_dir.c_str ());
   if (dirfp == nullptr)
     {
-      snprintf (err_msg, LOG_MSG_MAX_SIZE,
+      snprintf (log_msg, LOG_MSG_MAX_SIZE,
                 "Unable to open feature lib directory: %s\n",
                 features_dir.c_str ());
-      svk_logger (CORE_LOGGER_NAME, level_E::ERROR, err_msg);
+      svk_logger (CORE_LOGGER_NAME, level_E::ERROR, log_msg);
       return SVK_STATUS_FAIL;
     }
 
@@ -103,12 +106,16 @@ FrameworkSvc::load_feature_modules (const std::string &features_dir,
           continue;
         }
       std::string feature_lib_str = features_dir + "/" + entry->d_name;
+      snprintf (log_msg, LOG_MSG_MAX_SIZE,
+                "Attempting to load feature module functions for %s",
+                entry->d_name);
+      svk_logger (CORE_LOGGER_NAME, level_E::INFO, log_msg);
       void *handle = feature_api.open_lib (feature_lib_str.c_str ());
       if (!handle)
         {
-          snprintf (err_msg, LOG_MSG_MAX_SIZE, "Dlopen failure. Error: %s\n",
+          snprintf (log_msg, LOG_MSG_MAX_SIZE, "Dlopen failure. Error: %s\n",
                     dlerror ());
-          svk_logger (CORE_LOGGER_NAME, level_E::ERROR, err_msg);
+          svk_logger (CORE_LOGGER_NAME, level_E::ERROR, log_msg);
           status = SVK_STATUS_BAD_FEATURE_LIB;
           num_failed_libs++;
           continue;
@@ -186,14 +193,17 @@ FrameworkSvc::load_feature_modules (const std::string &features_dir,
           details = nullptr;
           continue;
         }
-
+      snprintf (log_msg, LOG_MSG_MAX_SIZE,
+                "Running initialize function for feature module %s",
+                entry->d_name);
+      svk_logger (CORE_LOGGER_NAME, level_E::INFO, log_msg);
       if (details->initialize (init_param))
         {
-          snprintf (err_msg, LOG_MSG_MAX_SIZE,
+          snprintf (log_msg, LOG_MSG_MAX_SIZE,
                     "Initialization for feature module '%s' returned "
                     "non-zero, ignoring this feature module.",
                     entry->d_name);
-          svk_logger (CORE_LOGGER_NAME, level_E::ERROR, err_msg);
+          svk_logger (CORE_LOGGER_NAME, level_E::ERROR, log_msg);
           status = SVK_STATUS_BAD_FEATURE_LIB;
           free (details);
           // Set to null to ensure free only happens once
@@ -208,11 +218,11 @@ FrameworkSvc::load_feature_modules (const std::string &features_dir,
           = feature_map.insert (make_pair (curr_feature, details));
       if (!inserted)
         {
-          snprintf (err_msg, LOG_MSG_MAX_SIZE,
+          snprintf (log_msg, LOG_MSG_MAX_SIZE,
                     "svk_feature_details for feature lib %s wasn't able to be "
                     "added to map.",
                     entry->d_name);
-          svk_logger (CORE_LOGGER_NAME, level_E::ERROR, err_msg);
+          svk_logger (CORE_LOGGER_NAME, level_E::ERROR, log_msg);
           num_failed_libs++;
           status = SVK_STATUS_BAD_FEATURE_LIB;
           free (details);
@@ -222,9 +232,9 @@ FrameworkSvc::load_feature_modules (const std::string &features_dir,
     }
   if (num_failed_libs)
     {
-      snprintf (err_msg, LOG_MSG_MAX_SIZE, "%d feature libs failed to load.",
+      snprintf (log_msg, LOG_MSG_MAX_SIZE, "%d feature libs failed to load.",
                 num_failed_libs);
-      svk_logger (CORE_LOGGER_NAME, level_E::ERROR, err_msg);
+      svk_logger (CORE_LOGGER_NAME, level_E::ERROR, log_msg);
     }
   else
     {
@@ -309,19 +319,29 @@ FrameworkSvc::set_config (void *init_param,
 }
 
 svk_status
-FrameworkSvc::destroy_feat_map () const
+FrameworkSvc::destroy_feat_map (void *param) const
 {
+  char log_msg[LOG_MSG_MAX_SIZE];
   for (const auto &[key, value] : feature_map)
     {
+      snprintf (log_msg, LOG_MSG_MAX_SIZE,
+                "Clearing up svk_feature_details for feature_id %d.",
+                (uint32_t)key);
+      svk_logger (CORE_LOGGER_NAME, level_E::DEBUG, log_msg);
+      value->clean_up (param);
       free (value);
     }
   feature_map.clear ();
   if (feature_map.empty ())
     {
+      svk_logger (CORE_LOGGER_NAME, level_E::INFO,
+                  "Feature map cleared successfully.");
       return SVK_STATUS_SUCCESS;
     }
   else
     {
+      svk_logger (CORE_LOGGER_NAME, level_E::ERROR,
+                  "Feature map unable to be cleared.");
       return SVK_STATUS_FAIL;
     }
 }
@@ -341,15 +361,27 @@ FrameworkSvc::FrameworkSvcProcessCommand (svk_pass_thru_cmd *pass_thru,
                                           svk_input *input,
                                           svk_output *output) const
 {
-  svk_status status = SVK_STATUS_SUCCESS;
-  return status;
+  svk_status exec_res = SVK_STATUS_SUCCESS;
+  char log_msg[LOG_MSG_MAX_SIZE];
+  feature_id curr_feat = pass_thru->feat_id;
+  exec_res = (svk_status)feature_map.at (curr_feat)->execute_sync (
+      pass_thru, input, output);
+  if (exec_res != SVK_STATUS_SUCCESS)
+    {
+      snprintf (log_msg, LOG_MSG_MAX_SIZE,
+                "Synchronous execute failed for feature_id %d.",
+                (uint32_t)curr_feat);
+      svk_logger (CORE_LOGGER_NAME, level_E::ERROR, log_msg);
+    }
+  return exec_res;
 }
 
 svk_status
-FrameworkSvc::FrameworkSvcCleanup () const
+FrameworkSvc::FrameworkSvcCleanup (void *param) const
 {
   svk_status status = SVK_STATUS_SUCCESS;
-  status = destroy_feat_map ();
+  status = destroy_feat_map (param);
+
   return status;
 }
 
@@ -414,10 +446,10 @@ execute_svk_feature_async (svk_pass_thru_cmd *pass_thru, svk_input *input,
 }
 
 extern "C" int
-cleanup_svk (svk_storage_ctx *ctx, void *)
+cleanup_svk (svk_storage_ctx *ctx, void *param)
 {
   int status = 0;
-  status = g_fw_service->FrameworkSvcCleanup ();
+  status = g_fw_service->FrameworkSvcCleanup (param);
   svk_logger (CORE_LOGGER_NAME, level_E::INFO, "SVK Cleanup finished.");
   return status;
 }

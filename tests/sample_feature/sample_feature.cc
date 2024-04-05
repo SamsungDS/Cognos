@@ -1,7 +1,7 @@
 #include "sample_feature.h"
 #include <iostream>
 #include <memory>
-#include <string>
+#include <string.h>
 
 using namespace std;
 
@@ -13,6 +13,7 @@ initialize (void *details)
   return 0;
 }
 
+// Emulating power throttle
 extern "C" int
 get_supported_feature_list (feature_id *feature, char *feature_names)
 {
@@ -30,11 +31,20 @@ is_license_valid (void *)
   return 0;
 }
 
+// Assuming that input and output buffers contain strings
 extern "C" int
 execute_sync (svk_pass_thru_cmd *cmd, svk_input *input, svk_output *output)
 {
-  std::cout << "sample feature execute_sync called" << std::endl;
+  char *buf;
+  buf = (char *)input->input_buffer;
+  printf ("Input buffer: %s\n", buf);
 
+  printf ("sample feature execute_sync called\n");
+  char *output_buf = (char *)output->output_buffer;
+  const char *output_str = "sample_key=value";
+  snprintf (output_buf, output->len, "%s", output_str);
+  output->len = strlen (output_str) + 1;
+  output->status = SVK_STATUS_SUCCESS;
   return 0;
 }
 

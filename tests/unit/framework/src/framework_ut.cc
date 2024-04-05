@@ -52,13 +52,12 @@ TEST_F (ConfigTest, BadLoggerConf)
 {
   core_conf.get_child ("core").erase ("logger");
   boost::property_tree::write_json ("bad_logger_conf.json", core_conf);
-  svk_storage_ctx *ctx = new svk_storage_ctx ();
+  svk_storage_ctx ctx;
 
   EXPECT_EQ (SVK_STATUS_SUCCESS,
-             initialize_svk ("bad_logger_conf.json", (void *)ctx));
-  cleanup_svk (ctx, (void *)ctx);
+             initialize_svk ("bad_logger_conf.json", (void *)&ctx));
+  cleanup_svk (&ctx, (void *)&ctx);
 
-  delete ctx;
   core_conf.put_child ("core.logger", logger_conf);
 }
 
@@ -69,12 +68,11 @@ TEST_F (ConfigTest, InvalidSinkType)
   core_conf.erase ("core.logger");
   core_conf.put_child ("core.logger", logger_conf);
   boost::property_tree::write_json ("invalid_sink_type.json", core_conf);
-  svk_storage_ctx *ctx = new svk_storage_ctx ();
+  svk_storage_ctx ctx;
 
   EXPECT_EQ (SVK_STATUS_FAIL,
-             initialize_svk ("invalid_sink_type.json", (void *)ctx));
+             initialize_svk ("invalid_sink_type.json", (void *)&ctx));
 
-  delete ctx;
   logger_conf.put ("log_level", "ERROR");
   core_conf.put_child ("core.logger", logger_conf);
 }
@@ -89,11 +87,10 @@ TEST (InitTest, InitSuccess)
   // Using relative path to config in SVK core for testing
   std::string conf
       = current_working_dir + "/../../../../../config/test_config.json";
-  svk_storage_ctx *ctx = new svk_storage_ctx ();
+  svk_storage_ctx ctx;
 
-  EXPECT_EQ (SVK_STATUS_SUCCESS, initialize_svk (conf.c_str (), (void *)ctx));
-  cleanup_svk (ctx, (void *)conf.c_str ());
-  delete ctx;
+  EXPECT_EQ (SVK_STATUS_SUCCESS, initialize_svk (conf.c_str (), (void *)&ctx));
+  cleanup_svk (&ctx, (void *)conf.c_str ());
 }
 
 TEST (InitTest, InitFail)
@@ -125,13 +122,13 @@ TEST (InitTest, InitFail)
 
   std::string conf
       = current_working_dir + "/../../../../../config/test_config.json";
-  svk_storage_ctx *ctx = new svk_storage_ctx ();
-  FrameworkSvc *test_fwsvc1 = new FrameworkSvc ();
+  svk_storage_ctx ctx;
+  FrameworkSvc test_fwsvc1;
 
   EXPECT_EQ (
       SVK_STATUS_BAD_FEATURE_LIB,
-      test_fwsvc1->FrameworkSvcInit (conf.c_str (), (void *)ctx, dep_inj));
-  cleanup_svk (ctx, (void *)conf.c_str ());
+      test_fwsvc1.FrameworkSvcInit (conf.c_str (), (void *)&ctx, dep_inj));
+  cleanup_svk (&ctx, (void *)conf.c_str ());
 }
 
 TEST (InitTest, FailMapEntry)
@@ -143,39 +140,38 @@ TEST (InitTest, FailMapEntry)
   // Using relative path to config in SVK core for testing
   std::string conf
       = current_working_dir + "/../../../../../config/test_config.json";
-  svk_storage_ctx *ctx = new svk_storage_ctx ();
-  initialize_svk (conf.c_str (), (void *)ctx);
+  svk_storage_ctx ctx;
+  initialize_svk (conf.c_str (), (void *)&ctx);
   EXPECT_EQ (SVK_STATUS_BAD_FEATURE_LIB,
-             initialize_svk (conf.c_str (), (void *)ctx));
-  cleanup_svk (ctx, (void *)conf.c_str ());
-  delete ctx;
+             initialize_svk (conf.c_str (), (void *)&ctx));
+  cleanup_svk (&ctx, (void *)conf.c_str ());
 }
 
 // Test failed init by giving invalid config file path
 TEST (InitTest, InvalidConfigPath)
 {
   std::string conf = "invalid_conf_path";
-  svk_storage_ctx *ctx = new svk_storage_ctx ();
+  svk_storage_ctx ctx;
   EXPECT_EQ (SVK_STATUS_INVALID_CONFIG,
-             initialize_svk (conf.c_str (), (void *)ctx));
-  cleanup_svk (ctx, (void *)conf.c_str ());
-  delete ctx;
+             initialize_svk (conf.c_str (), (void *)&ctx));
+  cleanup_svk (&ctx, (void *)conf.c_str ());
 }
 
 TEST (InitTest, DefaultConfig)
 {
-  svk_storage_ctx *ctx = new svk_storage_ctx ();
+  svk_storage_ctx ctx;
   std::string conf;
-  EXPECT_EQ (SVK_STATUS_INVALID_CONFIG, initialize_svk (nullptr, (void *)ctx));
-  cleanup_svk (ctx, (void *)conf.c_str ());
+  EXPECT_EQ (SVK_STATUS_INVALID_CONFIG,
+             initialize_svk (nullptr, (void *)&ctx));
+  cleanup_svk (&ctx, (void *)conf.c_str ());
 }
 
 TEST (InitTest, EnvConfig)
 {
-  svk_storage_ctx *ctx = new svk_storage_ctx ();
+  svk_storage_ctx ctx;
   setenv ("SVK_FW_CONFIG", "../../../../../config/test_config.json", 1);
-  EXPECT_EQ (SVK_STATUS_SUCCESS, initialize_svk (nullptr, (void *)ctx));
-  cleanup_svk (ctx, (void *)ctx);
+  EXPECT_EQ (SVK_STATUS_SUCCESS, initialize_svk (nullptr, (void *)&ctx));
+  cleanup_svk (&ctx, (void *)&ctx);
 }
 
 TEST (InitTest, BadDir)
@@ -188,14 +184,13 @@ TEST (InitTest, BadDir)
   std::string conf
       = current_working_dir + "/../../../../../config/test_config.json";
 
-  FrameworkSvc *fw_svc1 = new FrameworkSvc ();
+  FrameworkSvc fw_svc1;
   EXPECT_CALL (dep_inj, open_dir (::testing::A<const char *> ()))
       .Times (1)
       .WillOnce (Return (nullptr));
   EXPECT_EQ (SVK_STATUS_FAIL,
-             fw_svc1->FrameworkSvcInit (conf.c_str (), (void *)conf.c_str (),
-                                        dep_inj));
-  delete fw_svc1;
+             fw_svc1.FrameworkSvcInit (conf.c_str (), (void *)conf.c_str (),
+                                       dep_inj));
 }
 
 // Test if dlopen fails
@@ -211,14 +206,13 @@ TEST (InitTest, FailedDlopen)
   ON_CALL (dep_inj, open_dir).WillByDefault ([&dep_inj] (const char *dir_str) {
     return dep_inj.featureInterface::open_dir (dir_str);
   });
-  FrameworkSvc *fw_svc1 = new FrameworkSvc ();
+  FrameworkSvc fw_svc1;
   EXPECT_CALL (dep_inj, open_lib (::testing::A<const char *> ()))
       .Times (1)
       .WillOnce (Return (nullptr));
   EXPECT_EQ (SVK_STATUS_BAD_FEATURE_LIB,
-             fw_svc1->FrameworkSvcInit (conf.c_str (), (void *)conf.c_str (),
-                                        dep_inj));
-  delete fw_svc1;
+             fw_svc1.FrameworkSvcInit (conf.c_str (), (void *)conf.c_str (),
+                                       dep_inj));
 }
 
 // Test failed init by calling fw svc api and either pass in mock api or
@@ -307,25 +301,25 @@ TEST (InitTest, FailedDlsym)
 
   std::string conf
       = current_working_dir + "/../../../../../config/test_config.json";
-  FrameworkSvc *test_fwsvc1 = new FrameworkSvc ();
-  int run1 = test_fwsvc1->FrameworkSvcInit (conf.c_str (),
-                                            (void *)conf.c_str (), dep_inj);
-  test_fwsvc1->FrameworkSvcCleanup ();
-  int run2 = test_fwsvc1->FrameworkSvcInit (conf.c_str (),
-                                            (void *)conf.c_str (), dep_inj);
-  test_fwsvc1->FrameworkSvcCleanup ();
-  int run3 = test_fwsvc1->FrameworkSvcInit (conf.c_str (),
-                                            (void *)conf.c_str (), dep_inj);
-  test_fwsvc1->FrameworkSvcCleanup ();
-  int run4 = test_fwsvc1->FrameworkSvcInit (conf.c_str (),
-                                            (void *)conf.c_str (), dep_inj);
-  test_fwsvc1->FrameworkSvcCleanup ();
-  int run5 = test_fwsvc1->FrameworkSvcInit (conf.c_str (),
-                                            (void *)conf.c_str (), dep_inj);
-  test_fwsvc1->FrameworkSvcCleanup ();
-  int run6 = test_fwsvc1->FrameworkSvcInit (conf.c_str (),
-                                            (void *)conf.c_str (), dep_inj);
-  test_fwsvc1->FrameworkSvcCleanup ();
+  FrameworkSvc test_fwsvc1;
+  int run1 = test_fwsvc1.FrameworkSvcInit (conf.c_str (),
+                                           (void *)conf.c_str (), dep_inj);
+  test_fwsvc1.FrameworkSvcCleanup ((void *)buff);
+  int run2 = test_fwsvc1.FrameworkSvcInit (conf.c_str (),
+                                           (void *)conf.c_str (), dep_inj);
+  test_fwsvc1.FrameworkSvcCleanup ((void *)buff);
+  int run3 = test_fwsvc1.FrameworkSvcInit (conf.c_str (),
+                                           (void *)conf.c_str (), dep_inj);
+  test_fwsvc1.FrameworkSvcCleanup ((void *)buff);
+  int run4 = test_fwsvc1.FrameworkSvcInit (conf.c_str (),
+                                           (void *)conf.c_str (), dep_inj);
+  test_fwsvc1.FrameworkSvcCleanup ((void *)buff);
+  int run5 = test_fwsvc1.FrameworkSvcInit (conf.c_str (),
+                                           (void *)conf.c_str (), dep_inj);
+  test_fwsvc1.FrameworkSvcCleanup ((void *)buff);
+  int run6 = test_fwsvc1.FrameworkSvcInit (conf.c_str (),
+                                           (void *)conf.c_str (), dep_inj);
+  test_fwsvc1.FrameworkSvcCleanup ((void *)buff);
 
   EXPECT_EQ (SVK_STATUS_BAD_FEATURE_LIB, run1);
   EXPECT_EQ (SVK_STATUS_BAD_FEATURE_LIB, run2);
@@ -333,25 +327,90 @@ TEST (InitTest, FailedDlsym)
   EXPECT_EQ (SVK_STATUS_BAD_FEATURE_LIB, run4);
   EXPECT_EQ (SVK_STATUS_BAD_FEATURE_LIB, run5);
   EXPECT_EQ (SVK_STATUS_BAD_FEATURE_LIB, run6);
-  delete test_fwsvc1;
 }
 
-TEST (ExecTest, ExecuteSync)
+TEST (ExecTest, ExecuteSyncSuccess)
 {
-  svk_pass_thru_cmd *pass_thru = new svk_pass_thru_cmd ();
-  svk_input *input = new svk_input ();
-  svk_output *output = new svk_output ();
+  char buff[FILENAME_MAX];
+  getcwd (buff, FILENAME_MAX);
+  std::string current_working_dir (buff);
 
-  EXPECT_EQ (0, execute_svk_feature_sync (pass_thru, input, output));
+  // Using relative path to config in SVK core for testing
+  std::string conf
+      = current_working_dir + "/../../../../../config/test_config.json";
+  svk_storage_ctx ctx;
+  EXPECT_EQ (0, initialize_svk (conf.c_str (), (void *)&ctx));
+
+  svk_pass_thru_cmd pass_thru;
+  pass_thru.feat_id = POWER_THROTTLE;
+
+  svk_input input;
+  std::string input_str = "test input";
+  input.input_buffer = (uint8_t *)input_str.c_str ();
+  input.len = input_str.length ();
+
+  svk_output output;
+  output.output_buffer = (uint8_t *)malloc (128);
+  output.len = 128;
+  EXPECT_EQ (0, execute_svk_feature_sync (&pass_thru, &input, &output));
+  std::cout << "test exec_sync output buffer: " << (char *)output.output_buffer
+            << std::endl;
+  cleanup_svk (&ctx, (void *)conf.c_str ());
+  free (output.output_buffer);
+}
+
+TEST (ExecTest, ExecuteSyncFail)
+{
+  MockFreeInterface dep_inj;
+  auto *dummy_exec_sync = static_cast<int (*) (
+      svk_pass_thru_cmd *pass_thru, svk_input *input, svk_input *output)> (
+      [] (svk_pass_thru_cmd *pass_thru, svk_input *input, svk_input *output) {
+        return 1;
+      });
+  ON_CALL (dep_inj, get_sym)
+      .WillByDefault ([&dep_inj] (void *handle, const char *fn_name) {
+        return dep_inj.featureInterface::get_sym (handle, fn_name);
+      });
+  ON_CALL (dep_inj, open_dir).WillByDefault ([&dep_inj] (const char *dir_str) {
+    return dep_inj.featureInterface::open_dir (dir_str);
+  });
+  ON_CALL (dep_inj, open_lib)
+      .WillByDefault ([&dep_inj] (const char *ft_lib_str) {
+        return dep_inj.featureInterface::open_lib (ft_lib_str);
+      });
+  EXPECT_CALL (dep_inj, get_sym (_, _)).Times (::testing::AnyNumber ());
+  EXPECT_CALL (dep_inj, get_sym (_, StrEq ("execute_sync")))
+      .Times (1)
+      .WillOnce (Return ((void *)dummy_exec_sync))
+      .RetiresOnSaturation ();
+
+  char buff[FILENAME_MAX];
+  getcwd (buff, FILENAME_MAX);
+  std::string current_working_dir (buff);
+
+  // Using relative path to config in SVK core for testing
+  std::string conf
+      = current_working_dir + "/../../../../../config/test_config.json";
+  FrameworkSvc test_fwsvc1;
+  test_fwsvc1.FrameworkSvcInit (conf.c_str (), (void *)conf.c_str (), dep_inj);
+  svk_pass_thru_cmd pass_thru;
+  pass_thru.feat_id = feature_id::POWER_THROTTLE;
+  svk_input input;
+  svk_output output;
+  svk_storage_ctx ctx;
+  EXPECT_EQ (SVK_STATUS_FAIL, test_fwsvc1.FrameworkSvcProcessCommand (
+                                  &pass_thru, &input, &output));
+  cleanup_svk (&ctx, (void *)conf.c_str ());
 }
 
 TEST (ExecTest, ExecuteAsync)
 {
-  svk_pass_thru_cmd *pass_thru = new svk_pass_thru_cmd ();
-  svk_input *input = new svk_input ();
-  svk_postprocess_fn *postprocess_fn = new svk_postprocess_fn ();
+  svk_pass_thru_cmd pass_thru;
+  svk_input input;
+  svk_postprocess_fn postprocess_fn;
 
-  EXPECT_EQ (0, execute_svk_feature_async (pass_thru, input, postprocess_fn));
+  EXPECT_EQ (0,
+             execute_svk_feature_async (&pass_thru, &input, &postprocess_fn));
 }
 
 TEST (CleanupTest, Cleanup)
@@ -363,9 +422,9 @@ TEST (CleanupTest, Cleanup)
   // Using relative path to config in SVK core for testing
   std::string conf
       = current_working_dir + "/../../../../../config/test_config.json";
-  svk_storage_ctx *ctx = new svk_storage_ctx ();
-  EXPECT_EQ (SVK_STATUS_SUCCESS, initialize_svk (conf.c_str (), (void *)ctx));
+  svk_storage_ctx ctx;
+  EXPECT_EQ (SVK_STATUS_SUCCESS, initialize_svk (conf.c_str (), (void *)&ctx));
 
-  svk_feature_details *details = new svk_feature_details ();
-  EXPECT_EQ (SVK_STATUS_SUCCESS, cleanup_svk (ctx, (void *)details));
+  svk_feature_details details;
+  EXPECT_EQ (SVK_STATUS_SUCCESS, cleanup_svk (&ctx, (void *)&details));
 }
