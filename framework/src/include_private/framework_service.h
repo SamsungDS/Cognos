@@ -63,7 +63,7 @@ private:
   init_logger (boost::property_tree::ptree const &logger_info) const;
   svk_status set_config (void *init_param,
                          const featureInterface &dep_inj) const;
-  svk_status destroy_feat_map () const;
+  svk_status destroy_feat_map (void *param) const;
 
 public:
   // In order to comply with Rule-of-Zero, manage class init and deletion
@@ -75,7 +75,7 @@ public:
   svk_status FrameworkSvcProcessCommand (svk_pass_thru_cmd *pass_thru,
                                          svk_input *input,
                                          svk_output *output) const;
-  svk_status FrameworkSvcCleanup () const;
+  svk_status FrameworkSvcCleanup (void *param) const;
 };
 
 #endif // FRAMEWORK_SERVICE_H

@@ -14,7 +14,7 @@ typedef spdlog::level::level_enum spd_level_E;
 spd_level_E
 map_user_log_level_to_libray_log_level (level_E level)
 {
-  spd_level_E val;
+  spd_level_E val = spdlog::level::off;
   switch (level)
     {
     case TRACE:

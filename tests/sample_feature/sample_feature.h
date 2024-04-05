@@ -4,5 +4,4 @@
 
 #include "framework_struct.h"
 
-
 #endif // SAMPLE_FEATURE_H
