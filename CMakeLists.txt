@@ -11,7 +11,7 @@ project(${SVKFramework} VERSION ${SVK_FRAMEWORK_VERSION}
                         DESCRIPTION "SVK Framework")
 
 include(GNUInstallDirs)
-set(PKG_CONFIG_REQUIRES fmt spdlog)
+set(PKG_CONFIG_SPDLOG spdlog)
 
 option(BUILD_SHARED_LIBS "Generate shared libs" ON)
 
