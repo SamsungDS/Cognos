@@ -3,9 +3,9 @@ exec_prefix=${prefix}
 includedir=@PKG_CONFIG_INCLUDEDIR@
 libdir=@PKG_CONFIG_LIBDIR@
 
-Name: lib@PROJECT_NAME@
+Name: @PROJECT_NAME@
 Description: SVK Framework
 Version: @SVK_FRAMEWORK_VERSION@
 CFlags: -I${includedir} @PKG_CONFIG_DEFINES@
 Libs: -L${libdir} -lspdlog
-Requires: @PKG_CONFIG_REQUIRES@
+Requires: @PKG_CONFIG_SPDLOG@

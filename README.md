@@ -36,7 +36,15 @@ To build as release and install necessary artifacts to a specified directory, th
 
     ./scripts/build.sh -r -p install_dir
 
-This will install headers and release libs needed for SVK Management Framework to install_dir
+This will install headers and release libs needed for SVK Management Framework to `install_dir`. In order to get the cflags and linking flags for building a feature module or application that needs them, export the `PKG_CONFIG_PATH` variable with the location of the directory that contains `svkframework.pc` (should be your build directory by default) and run the `pkg-config` command. For example:
+
+    export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/root/core/build
+
+    pkg-config --cflags svkframework
+    -I/root/core/build/install_dir/include -DSPDLOG_COMPILED_LIB -DSPDLOG_FMT_EXTERNAL
+
+    pkg-config --libs svkframework
+    -L/root/core/build/install_dir/lib64 -lspdlog -pthread -lfmt
 
 ### Manual Build
 To build the SVK Framework library without tests:
