@@ -361,11 +361,26 @@ FrameworkSvc::FrameworkSvcProcessCommand (svk_pass_thru_cmd *pass_thru,
                                           svk_input *input,
                                           svk_output *output) const
 {
-  svk_status exec_res = SVK_STATUS_SUCCESS;
+  svk_status exec_res = SVK_STATUS_FAIL;
   char log_msg[LOG_MSG_MAX_SIZE];
   feature_id curr_feat = pass_thru->feat_id;
-  exec_res = (svk_status)feature_map.at (curr_feat)->execute_sync (
-      pass_thru, input, output);
+  svk_feature_details const *feature_details;
+  try
+    {
+      feature_details = feature_map.at (curr_feat);
+    }
+  catch (std::out_of_range &e)
+    {
+      snprintf (log_msg, LOG_MSG_MAX_SIZE,
+                "Feature id %d is not loaded, unable to run execute for this "
+                "feature module. Exception: %s",
+                (uint32_t)curr_feat, e.what ());
+      svk_logger (CORE_LOGGER_NAME, level_E::ERROR, log_msg);
+      return exec_res;
+    }
+
+  exec_res
+      = (svk_status)feature_details->execute_sync (pass_thru, input, output);
   if (exec_res != SVK_STATUS_SUCCESS)
     {
       snprintf (log_msg, LOG_MSG_MAX_SIZE,

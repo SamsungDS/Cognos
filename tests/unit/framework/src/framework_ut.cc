@@ -48,7 +48,7 @@ protected:
 boost::property_tree::ptree ConfigTest::core_conf;
 boost::property_tree::ptree ConfigTest::logger_conf;
 
-TEST_F (ConfigTest, BadLoggerConf)
+TEST_F (ConfigTest, MissingLoggerConf)
 {
   core_conf.get_child ("core").erase ("logger");
   boost::property_tree::write_json ("bad_logger_conf.json", core_conf);
@@ -357,6 +357,29 @@ TEST (ExecTest, ExecuteSyncSuccess)
             << std::endl;
   cleanup_svk (&ctx, (void *)conf.c_str ());
   free (output.output_buffer);
+}
+
+TEST (ExecTest, ExecuteSyncInvalidFeatureID)
+{
+  char buff[FILENAME_MAX];
+  getcwd (buff, FILENAME_MAX);
+  std::string current_working_dir (buff);
+
+  // Using relative path to config in SVK core for testing
+  std::string conf
+      = current_working_dir + "/../../../../../config/test_config.json";
+  svk_storage_ctx ctx;
+  EXPECT_EQ (0, initialize_svk (conf.c_str (), (void *)&ctx));
+
+  svk_pass_thru_cmd pass_thru;
+  pass_thru.feat_id = (feature_id)100;
+
+  svk_input input;
+  svk_output output;
+
+  EXPECT_EQ (1, execute_svk_feature_sync (&pass_thru, &input, &output));
+
+  cleanup_svk (&ctx, (void *)conf.c_str ());
 }
 
 TEST (ExecTest, ExecuteSyncFail)
