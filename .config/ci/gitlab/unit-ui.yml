@@ -1,0 +1,27 @@
+ui unit test:
+  stage: test
+  image:
+    name: $IMAGE_TAG
+    pull_policy: always
+  before_script:
+    # Install NPM modules
+    - cd $ui_dir
+    - npm ci
+  script:
+    # Execute unit tests and generate coverage report
+    - npm run test:coverage
+  artifacts:
+    name: ui unit test
+    expire_in: 300 seconds
+    paths:
+     - $ui_reports_dir/lcov.info
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: $ui_reports_dir/cobertura-coverage.xml
+      junit: $ui_dir/junit.xml
+  variables:
+    DOCKERFILE_NAME: rocky9
+    IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
+  rules:
+    - !reference [.default_rules, merge_and_push]

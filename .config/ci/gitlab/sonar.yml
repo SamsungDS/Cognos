@@ -11,9 +11,13 @@ sonar-scanner:
     paths:
       - .sonar/cache
   script: 
-    - sonar-scanner -Dsonar.python.coverage.reportPaths=scripts/test-reports/ut/coverage.xml
+    - |
+      sonar-scanner \
+        -Dsonar.python.coverage.reportPaths=$backend_reports_dir/coverage.xml \
+        -Dsonar.javascript.lcov.reportPaths=$ui_reports_dir/lcov.info
   allow_failure: false
   needs:
-    - unit test
+    - backend unit test
+    - ui unit test
   rules:
     - !reference [.default_rules, merge_and_push]
