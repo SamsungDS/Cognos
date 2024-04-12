@@ -47,9 +47,9 @@ TEST (SVKCommon, SVKLoggerInitInvalidLogSink)
 
 TEST (SVKCommon, SVKLoggerInitNonexistDir)
 {
-  EXPECT_EQ (0, svk_logger_init ("framework", "/varxyz/logx/testfw.log", ERROR,
+  EXPECT_EQ (0, svk_logger_init ("framework", "varxyz/logx/testfw.log", ERROR,
                                  2, 100, "rotating_file"));
-  system ("rm -rf /varxyz");
+  system ("rm -rf varxyz");
 }
 
 TEST (SVKCommon, SVKLoggerInitNullFeaturePtr)
