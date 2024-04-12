@@ -1,11 +1,16 @@
 #! /usr/bin/env bash
 set -e
 
+# Add NodeJS 21 repo
+curl -fsSL https://rpm.nodesource.com/setup_21.x | bash
+
 # Build Dependencies
 BUILD_DEPS=()
+BUILD_DEPS+=('findutils')
 BUILD_DEPS+=('git')
-BUILD_DEPS+=('wget')
+BUILD_DEPS+=('nodejs')
 BUILD_DEPS+=('python3')
+BUILD_DEPS+=('wget')
 
 # Optimizations for Docker build
 if [[ -f /.dockerenv ]]

@@ -14,7 +14,8 @@ include:
   - project: dfs/svk/tools
     ref: main
     file: .config/ci/gitlab/coverage.yml
-  - .config/ci/gitlab/unit.yml
+  - .config/ci/gitlab/unit-backend.yml
+  - .config/ci/gitlab/unit-ui.yml
   - .config/ci/gitlab/sonar.yml
   - .config/ci/gitlab/pep8.yml
 
@@ -24,3 +25,9 @@ build docker:
 
 tag semantic version:
   stage: pre-build
+
+variables:
+  ui_dir: cognos/ui
+  ui_reports_dir: $ui_dir/coverage
+  backend_reports_dir: scripts/test-reports/ut
+  

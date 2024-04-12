@@ -6,7 +6,7 @@ pycodestyle:
   script:
     - pycodestyle $PYCODESTYLE_PATH --show-source --show-pep8
   variables:
-    PYCODESTYLE_PATH: ui
+    PYCODESTYLE_PATH: cognos/backend
   allow_failure: false
   rules:
     - !reference [.default_rules, merge_and_push]
