@@ -25,5 +25,7 @@ unit test:
     DOCKERFILE_NAME: rocky8
     IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
     BUILD_COMMAND: ./scripts/build.sh --build-tests --with-coverage
+  needs:
+    - build docker
   rules:
     - !reference [.default_rules, merge_and_push]

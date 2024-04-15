@@ -32,9 +32,9 @@ If you would like to build SVK Framework and run unit testing and generate code 
 
     ./scripts/build.sh -t -c
 
-To build as release and install necessary artifacts to a specified directory, this is the command:
+To build and install necessary artifacts to a specified directory, this is the command:
 
-    ./scripts/build.sh -r -p install_dir
+    ./scripts/build.sh -p install_dir
 
 This will install headers and release libs needed for SVK Management Framework to `install_dir`. In order to get the cflags and linking flags for building a feature module or application that needs them, export the `PKG_CONFIG_PATH` variable with the location of the directory that contains `svkframework.pc` (should be your build directory by default) and run the `pkg-config` command. For example:
 
@@ -45,6 +45,10 @@ This will install headers and release libs needed for SVK Management Framework t
 
     pkg-config --libs svkframework
     -L/root/core/build/install_dir/lib64 -lspdlog -pthread -lfmt
+
+### Release build
+
+To do a release build, use the `-r` flag. This will install the artifacts to `usr/local/svk` in the build directory and create a tarball called `svk-core-<version number>.tar.gz`. The tarball will contain the framework related headers/libs, as well as the sample feature module in case it is needed for testing.
 
 ### Manual Build
 To build the SVK Framework library without tests:

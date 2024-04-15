@@ -1,6 +1,8 @@
 include:
-  - .config/ci/gitlab/unit.yml
+  - .config/ci/gitlab/build.yml
+  - .config/ci/gitlab/publish.yml
   - .config/ci/gitlab/sonar.yml
+  - .config/ci/gitlab/unit.yml
   - project: dfs/svk/tools
     ref: main
     file: .config/ci/gitlab/defaults.yml
@@ -31,3 +33,20 @@ variables:
 
 tag semantic version:
   stage: pre-build
+
+build docker:
+  stage: pre-build
+
+clang-format:
+  stage: test
+
+shellcheck:
+  stage: test
+
+pages:
+  stage: post-build
+
+code coverage:
+  stage: post-build
+  needs:
+    - sonar-scanner

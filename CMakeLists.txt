@@ -27,8 +27,11 @@ configure_file("cmake/${SVKFramework}.pc.in" "${pkg_config}" @ONLY)
 add_subdirectory(common)
 add_subdirectory(framework)
 
+# Build script makes it so that if release is used, then tests are turned off 
 if(BUILD_TESTING)
     add_subdirectory(tests)
+elseif(WITH_RELEASE)
+    add_subdirectory(tests/sample_feature)
 endif()
 
 include(CMakePackageConfigHelpers)

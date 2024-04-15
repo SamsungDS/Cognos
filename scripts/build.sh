@@ -18,7 +18,7 @@ help()
     # Display Help
     echo "Build script for SVK Framework"
     echo
-    echo "Syntax: build.sh [-t|c|h|p|r]"
+    echo "Syntax: build.sh [-t|c|h|p|r|f]"
     echo "options:"
     echo "-t | --build-tests"
     echo "  Build the unit tests for SVK Framework."
@@ -26,10 +26,12 @@ help()
     echo "  Build with code coverage report. Must build unit tests for this."
     echo "-h | --help"
     echo "  Print this help."
-    echo "-p * | --install-prefix=*"
+    echo "-p | --install-prefix"
     echo "  Install libraries and related files to specified dir."
     echo "-r | --release"
-    echo "  Release build."
+    echo "  Release build. Generates a tarball called svk-core-<version>.tgz by default."
+    echo "-f | --filename"
+    echo "  Filename prefix to use for release tarball. Only applicable when building with release flag."
     exit
 }
 
@@ -58,6 +60,11 @@ parse_options()
         RELEASE=true
         shift
         ;;
+        -f|--filename)
+        RELEASE_FILENAME_PREFIX="$2"
+        shift
+        shift
+        ;;
         *)
         ;;
     esac
@@ -83,6 +90,12 @@ pushd "$PROJECT_ROOT/build"
     if $RELEASE;then
         BUILD_TESTING=false
         WITH_COVERAGE=false
+        if [ -z "$CMAKE_INSTALL_PREFIX" ];then
+            CMAKE_INSTALL_PREFIX="usr/local/svk" # Need to use this path to generate release tarball properly
+        fi
+        if [ -z "$RELEASE_FILENAME_PREFIX" ];then
+            RELEASE_FILENAME_PREFIX="svk-core"
+        fi
         CMAKE_OPTIONS+=("-DWITH_RELEASE=ON")
     fi
 
@@ -136,6 +149,10 @@ pushd "$PROJECT_ROOT/build"
             --root "$PROJECT_ROOT" \
             --exclude "$PROJECT_ROOT/build" \
             "$PROJECT_ROOT/build"
+    elif $WITH_RELEASE;then
+        echo "Generating release tarball..."
+        GIT_VER=$(git describe --abbrev=4 --always --tags)
+        tar -zcf "$RELEASE_FILENAME_PREFIX-$GIT_VER.tgz" "$CMAKE_INSTALL_PREFIX"
     fi
 
 popd
