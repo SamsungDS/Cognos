@@ -5,14 +5,14 @@ publish release artifacts:
     - apk add git curl
   script:
     # Get the latest tagged version
-    - VERSION=$(git describe --abbrev=4 --always --tags)
+    - export VERSION=$(git describe --abbrev=4 --always --tags)
     - echo "Tagged Version - $VERSION"
     # publish artifacts to Gitlab 
     - |
-      find ./build/ -type f -name "*.tgz" -exec \
-      curl --header "PRIVATE-TOKEN: $CI_TOKEN" \
+      find ./build/ -type f -name "*.tgz" -exec sh -c \
+      'curl --header "PRIVATE-TOKEN: $CI_TOKEN" \
         --insecure --upload-file {} \
-        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$CI_PROJECT_NAME/${VERSION:1}/{}" \
+        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$CI_PROJECT_NAME/${VERSION:1}/$(basename {})"' \
         \;
   dependencies:
     - release build
