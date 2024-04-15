@@ -1,0 +1,20 @@
+publish release artifacts:
+  stage: post-build
+  image: alpine:3.19.1
+  before_script:
+    - apk add git curl
+  script:
+    # Get the latest tagged version
+    - VERSION=$(git describe --abbrev=4 --always --tags)
+    - echo "Tagged Version - $VERSION"
+    # publish artifacts to Gitlab 
+    - |
+      find ./build/ -type f -name "*.tgz" -exec \
+      curl --header "PRIVATE-TOKEN: $CI_TOKEN" \
+        --insecure --upload-file {} \
+        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$CI_PROJECT_NAME/${VERSION:1}/{}" \
+        \;
+  dependencies:
+    - release build
+  rules:
+    - !reference [.default_rules, push_only]

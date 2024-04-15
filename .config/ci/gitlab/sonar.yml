@@ -1,5 +1,5 @@
 sonar-scanner:
-  stage: scan
+  stage: post-build
   image:
     name: $IMAGE_TAG
     pull_policy: always

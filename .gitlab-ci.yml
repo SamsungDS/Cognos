@@ -2,9 +2,6 @@ include: .config/ci/gitlab/defaults.yml
 
 stages:
   - pre-build
-  - docker
-  - lint
   - test
-  - scan
-  - doxygen
-  - coverage
+  - build
+  - post-build

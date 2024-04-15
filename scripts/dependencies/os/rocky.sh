@@ -12,6 +12,7 @@ define_build_deps() {
     BUILD_DEPS+=('git')
     BUILD_DEPS+=('python3.11')
     BUILD_DEPS+=('spdlog-devel')
+    BUILD_DEPS+=('tar')
     BUILD_DEPS+=('unzip')
     BUILD_DEPS+=('wget')
     BUILD_DEPS+=('boost-devel')
