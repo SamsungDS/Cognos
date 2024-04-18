@@ -1,0 +1,4 @@
+{
+    "mgmt_endpoint": "http://<frontend_ip>:<frontend_port>",
+    "data_endpoint": "http://127.0.0.1:4000"
+}

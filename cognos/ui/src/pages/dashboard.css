@@ -1,0 +1,104 @@
+.topology-height {
+  height: 426px;
+}
+.info-memo-com {
+  height: 84px;
+}
+.health-container {
+  height: 96px;
+}
+.system-memory-allocated {
+  height: 230px;
+  padding: 20px;
+}
+.graph-container {
+  height:270px;
+}
+.progress {
+    --bs-progress-bar-bg: #97D653;
+}
+.rc-slider {
+    padding: 12px 0;
+    -webkit-tap-highlight-color:#949494;
+}
+.rc-slider-rail {
+    height: 1px;
+}
+.rc-slider-track {
+    background-color:#949494;
+    height: 1px;
+}
+.rc-slider-handle {
+    margin-top: -6px;
+    border-radius: 20%;
+    border: solid 0px #949494;
+    background-color:#949494;
+}
+.rc-slider-handle:hover {
+    border-color: #ffff;
+}
+.rc-slider-handle:focus-visible {
+    border-color: #ffff;
+    box-shadow: 0 0 0 2px #ffff !important;
+}
+.rc-slider-handle-dragging.rc-slider-handle-dragging.rc-slider-handle-dragging {
+    border-color: #ffff;
+    box-shadow: 0 0 0 2px #ffff !important;
+}
+.circle {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: 1px solid #fff;
+    background-color: #000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #1082df;
+    font-weight: bold;
+    font-size: 24px;
+    margin-top: 3px;
+  }
+/* Media Query as per device size */
+  @media screen and (min-width: 768px) and (max-width: 1023px) {
+    .progres-bar-label {
+      margin-left: 600px !important;
+    }
+  }
+  @media screen and (min-width: 1024px) and ( max-width: 1439px) {
+    .progres-bar-label {
+      margin-left: 850px !important;
+    }
+  }
+  @media screen and (min-width: 1440px) and ( max-width: 2559px) {
+    .progres-bar-label {
+      margin-left: 364px !important;
+    }
+  }
+  @media screen and (min-width: 2560px) {
+    .topology-height {
+      height: 570px;
+    }
+    .info-memo-com {
+      height: 110px;
+    }
+    .health-container {
+      height: 157px;
+    }
+    .graph-container {
+      height: 454px;
+    }
+    .system-memory-allocated {
+      height: 284px;
+      padding: 20px;
+    }
+    .circle {
+      width: 40px;
+      height: 40px;
+      font-size: 32px;
+    }
+    .progres-bar-label {
+      margin-left: 724px !important;
+    }
+  }
+  
