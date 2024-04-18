@@ -5,7 +5,7 @@ release build:
     pull_policy: always
   script:
     # Build with release flag and generate artifact
-    - ./scripts/build.sh --release
+    - ./scripts/build.sh --release --install-prefix /usr/local/svk/core
   artifacts:
     name: release build
     expire_in: 300 seconds
