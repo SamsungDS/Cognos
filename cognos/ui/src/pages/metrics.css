@@ -1,0 +1,104 @@
+.first-row {
+  height: 90%;
+}
+.second-row {
+  height: 90%;
+}
+.second-col-first-col {
+  height: 95%;
+}
+.second-col-second-col {
+  height: 82%;
+}
+/* Progress bar CSS */
+.bandwidth {
+    margin: 12px auto;
+    margin-right: 12px;
+  }
+.bandwidth h1 {
+margin-bottom: 12px;
+}
+.bandwidth-legend {
+margin-bottom: 8px;
+}
+.progress .host1 {
+--bs-progress-bar-bg: rgb(138, 233, 138) !important;
+}
+.progress .host2 {
+--bs-progress-bar-bg: rgb(25, 65, 124) !important;
+}
+.progress .host3 {
+--bs-progress-bar-bg: rgb(194, 230, 96) !important;
+}
+.progress .host4 {
+--bs-progress-bar-bg: rgb(60, 197, 227) !important;
+}
+.dropdownn-app-server {
+  width: 460px;
+}
+.memory-bandwidth {
+  font-size: 24px;
+}
+.saphana-legend {
+  height: 50px;
+}
+.host-app-heading {
+  font-size: 28px;
+  font-weight: 'bold'; 
+  padding-right: 10px;
+}
+.sap-hana {
+  font-size: 24px;
+  bottom: 0px;
+}
+/* Media Query as per device size */
+@media screen and (min-width: 768px) and ( max-width: 1023px) {
+  .second-row {
+    height: 98%;
+  }
+  .app-server-title {
+    font-size: 16px;
+  }
+  .dropdownn-app-server {
+    width: 276px;
+  }
+  .saphana-legend {
+    height: 29px;
+  }
+  .host-app-heading {
+    font-size: 18px;
+  }
+  .sap-hana {
+    font-size: 14px;
+  }
+  .memory-bandwidth {
+    font-size: 16px;
+  }
+}
+@media screen and (min-width: 1024px) and ( max-width: 1440px) {
+  .second-row {
+    height: 90.5%;
+  }
+  .app-server-title {
+    font-size: 18px;
+  }
+  .dropdownn-app-server {
+    width: 380px;
+  }
+}
+@media screen and (min-width: 1140px) and ( max-width: 2559px) {
+  .app-server-title {
+    font-size: 18px;
+  }
+  .dropdownn-app-server {
+    width: 586px;
+  }
+}
+@media screen and (min-width: 2560px) {
+  .app-server-title {
+    font-size: 40px;
+  }
+  .dropdownn-app-server {
+    width: 1138px;
+  }
+}

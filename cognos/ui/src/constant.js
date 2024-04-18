@@ -1,4 +1,7 @@
+import { constant } from 'async';
 
+// Load App Configs
+export const Configs = require('../src/config/config.json');
 export const BackgroundsImage = require('../src/assets/images/backgrounds/BackGroundImage.png');
 export const AddIcon = require('../src/assets/icons/Icon-Add-Light.png');
 export const EditIcon = require('../src/assets/icons/Icon-Edit-Light.png');
@@ -66,3 +69,29 @@ export const memboxTableHeader = [
   export const Host8 = require('../src/assets/icons/Host8.png');
   export const SignInImage = require('../src/assets/images/SignIn/SignIn.png');
   export const SCCDashboard = require('../src/assets/images/SignIn/SCC-Physical-Assets-mgmt-gm.png');
+  export const getImageByColor = (colorCode) => {
+    const colorImageMap = {
+      '#0077C8': D1, 
+      '#00B3E3': D2,
+      '#52DD3A': D3,
+      '#FF6700': D4,
+      '#AC55FF': D5,
+      '#8093DC': D6,
+      '#00C3B2': D7,
+      '#FFB546': D8       
+    };
+    return colorImageMap[colorCode];
+  }
+
+  export const hosts = 'Hosts';
+  export const CMM = 'CMM';
+  export const racks = 'Racks';
+  export const sys_mem_allcated = 'System Memory Allocated';
+  export const cmmd = 'CMM-D';
+  export const cmmh = 'CMM-H';
+  export const health = 'Health';
+  export const host ='Host';
+  export const trend_graph= 'Trend Graph';
+  export const system_bandwidth = 'System Bandwidth';
+  export const rackBandwidth_id = 'rackBandwidth-id';
+  export const dramCxlMemUsage_id = 'dramCxlMemUsage-id';
