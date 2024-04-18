@@ -76,14 +76,142 @@ Tell people where they can go to for help. It can be any combination of an issue
 If you have ideas for releases in the future, it is a good idea to list them in the README.
 
 ## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+Thank you for your interest in contributing to SVK App
+### Requesting changes
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+To request changes,
+[log an issue](https://cxl-gitlab.ssi.samsung.com/dfs/svk/sapp/-/issues/new)
+and describe the problem you are facing.
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+### Sending patches
+
+0. [Fork](https://guides.github.com/activities/forking/) the repository
+   (once).
+
+1. Create a new branch.
+   E.g.,
+   ```sh
+   git checkout -b save-the-prince
+   ```
+
+2. Implement the change, adhering to the [Coding Style Guidelines](#Coding Style Guidelines)
+
+3. Prepare a commit in accordance with [Patch Requirements](#Patch Requirements)
+
+   **Note:** use `git commit --signoff` to commit your code changes.
+   You can enable `--signoff` by default with
+   ```sh
+   git config --local --add format.signOff true
+
+### Coding Style Guidelines
+
+* All error messages should go to stderr.
+
+#### Bash code
+
+* Use 4 spaces for indentation.
+
+* Executable scripts should start with
+  ```bash
+  #!/usr/bin/env bash
+  set -eu -o pipefail
+  ```
+
+* For the rest, follow
+  [bahamas10's Bash Style Guide](https://github.com/bahamas10/bash-style-guide).
+
+#### Python code
+
+* Use Python version 3.10
+
+* [flake8](https://pypi.org/project/flake8/) linter check should pass.
+
+* [mypy](https://mypy.readthedocs.io/en/stable/) type check should pass.
+  Type annotations are optional.
+
+* Executable scripts should start with
+  ```python
+  #!/usr/bin/env python3
+  ```
+
+### Patch Requirements
+1. Maintainers, Contributors and Reviewers MUST have a Platform account
+   and SHOULD use their real names or a well-known alias.
+
+2. A patch SHOULD be a minimal and accurate answer to exactly one
+   identified and agreed problem.
+
+3. A patch MUST adhere to the code style guidelines of the project if
+   these are defined.
+
+4. A patch MUST compile cleanly and pass project self-tests on at least
+   the principal target platform.
+
+5. A patch commit message SHOULD consist of a single short (less than
+   50 characters) line stating the problem ("<module/dir>: ...") being
+   solved, followed by a blank line and then a brief description of the problem followed by the solution
+   and corresponding merge request link for additional details as described below.
+   ```
+   Header line <typically dir/module name having changes>: explain the commit in one line (use the imperative)
+   Body of commit message is a few lines of text, explaining things
+   in more detail, possibly giving some background about the issue
+   being fixed, etc etc.
+
+   The body of the commit message can be several paragraphs, and
+   please do proper word-wrap and keep columns shorter than about
+   74 characters or so. That way "git log" will show things
+   nicely even when it's indented.
+
+   Make sure you explain your solution and why you're doing what you're
+   doing, as opposed to describing what you're doing. Reviewers and your
+   future self can read the patch, but might not understand why a
+   particular solution was implemented.
+   ```
+   Example of a good commit message,
+   ```
+   baz: fix foo() to enable bar()
+
+   bar() is never visited because condition xyz in foo() is invalid and
+   is never true.
+
+   - Fix condition xyz to abc to enable bar()'s visit from foo().
+   - Fix test ut::foo() to validate bar()'s visit.
+
+   MR: !123
+
+   Signed-off-by: John Doe <john.doe@samsung.com>
+   ```
+<!--
+  -- The strictness of the `Problem: ` prefix requirement is controversial[1].
+  -- ZeroMQ maintainers considered the proposal of reducing the strictness
+  -- (s/MUST/SHOULD/), but decided against[2] it, stating that current style
+  -- is foundational[3].
+  --
+  --   1. https://github.com/zeromq/rfc/issues/117
+  --   2. https://github.com/zeromq/rfc/issues/117#issuecomment-249374914
+  --   3. https://github.com/zeromq/rfc/issues/117#issuecomment-249391434
+  --
+  -- | The `Problem` statement wields enormous power. At first you need to
+  -- | recognize that every bug, every feature, every change and every idea is
+  -- | essentially a problem. Thus having a list of solved problems comes
+  -- | naturally. Using the `Problem` statement also sharpens the awareness
+  -- | whether a feature, bug, change or idea is actually worth solving as it
+  -- | is really easy to see if there is a need. Further it forces developers
+  -- | to consciously fragment their work into a stream of small fixes rather
+  -- | than one big with a <censored>nonsensical</censored> commit message or
+  -- | even a listing.
+  -- |
+  -- | From a maintainers perspective it allows us to quickly examine a pull
+  -- | request and merge it in a manner of seconds or decline it if the
+  -- | problem statement is false. And probably most important it is a
+  -- | powerful tool to identify bad actors as they wont follow rules.
+  -->
+
+6. A "Correct Patch" is one that satisfies the above requirements.
 
 ## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+* Nadim Sarras
+* Mohan Patidar
 
 ## License
 For open source projects, say how it is licensed.
