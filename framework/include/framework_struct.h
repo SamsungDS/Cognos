@@ -10,18 +10,10 @@
 #include <cstdint>
 
 // Enum for feature_id codes
-typedef enum : uint32_t
-{
-  POWER_THROTTLE,
-  ZERO_ETL,
-  RAID,
-  CXL,
-  QLC
-} feature_id;
+typedef enum : uint32_t { POWER_THROTTLE, ZERO_ETL, RAID, CXL, QLC } feature_id;
 
 // Status enum for svk_output
-typedef enum
-{
+typedef enum {
   SVK_STATUS_SUCCESS,
   SVK_STATUS_FAIL,
   SVK_STATUS_INVALID_CONFIG,
@@ -47,8 +39,7 @@ typedef enum
  * @var svk_pass_thru_cmd::out_format
  *  Output for the feature command (specific for specific cmd)
  */
-struct svk_pass_thru_cmd
-{
+struct svk_pass_thru_cmd {
   feature_id feat_id;
   void *out_format;
   uint32_t len;
@@ -66,8 +57,7 @@ struct svk_pass_thru_cmd
  *  Length of the input_buffer
  *
  */
-struct svk_input
-{
+struct svk_input {
   uint8_t *input_buffer;
   uint64_t len;
 };
@@ -87,8 +77,7 @@ struct svk_input
  *  Length of buffer for the output_buffer
  *
  */
-struct svk_output
-{
+struct svk_output {
   svk_status status;
   uint8_t *output_buffer;
   uint64_t len;
@@ -110,8 +99,7 @@ struct svk_output
  *
  *
  */
-struct svk_storage_ctx
-{
+struct svk_storage_ctx {
   svk_status status;
   char *db_name;
   void *db_interface;
@@ -146,8 +134,7 @@ struct svk_storage_ctx
  * @var svk_aio_construct::num_out_data
  *
  */
-struct svk_aio_construct
-{
+struct svk_aio_construct {
   feature_id feat_id;
   uint16_t sub_feat_id;
   int32_t result;
@@ -171,9 +158,8 @@ struct svk_aio_construct
  *  Unique IO identifier
  *
  */
-struct svk_postprocess_fn
-{
-  void (*svk_aio_cb) (svk_aio_construct *ops, int32_t num_op);
+struct svk_postprocess_fn {
+  void (*svk_aio_cb)(svk_aio_construct *ops, int32_t num_op);
   void *private_data_1;
   void *svk_io_identifier;
 };
@@ -215,16 +201,15 @@ struct svk_postprocess_fn
  *  Pointer to the cleanup function for this feature module that framework will
  *  call on shutdown
  */
-struct svk_feature_details
-{
-  int (*initialize) (void *init_param);
-  int (*get_supported_feature_list) (feature_id *feature, char *feature_names);
-  int (*is_license_valid) (void *);
-  int (*execute_sync) (svk_pass_thru_cmd *pass_thru, svk_input *input,
-                       svk_output *output);
-  int (*execute_async) (svk_pass_thru_cmd *pass_thru, svk_input *input,
-                        svk_postprocess_fn *postprocess_fn);
-  int (*clean_up) (void *);
+struct svk_feature_details {
+  int (*initialize)(void *init_param);
+  int (*get_supported_feature_list)(feature_id *feature, char *feature_names);
+  int (*is_license_valid)(void *);
+  int (*execute_sync)(svk_pass_thru_cmd *pass_thru, svk_input *input,
+                      svk_output *output);
+  int (*execute_async)(svk_pass_thru_cmd *pass_thru, svk_input *input,
+                       svk_postprocess_fn *postprocess_fn);
+  int (*clean_up)(void *);
 };
 
-#endif // FRAMEWORK_STRUCT_H
+#endif  // FRAMEWORK_STRUCT_H
