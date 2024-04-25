@@ -338,6 +338,35 @@ TEST(ExecTest, ExecuteSyncSuccess) {
   free(output.output_buffer);
 }
 
+TEST(ExecTest, ExecuteSyncFailureFromSampleFeature) {
+  char buff[FILENAME_MAX];
+  getcwd(buff, FILENAME_MAX);
+  std::string current_working_dir(buff);
+
+  // Using relative path to config in SVK core for testing
+  std::string conf =
+      current_working_dir + "/../../../../../config/test_config.json";
+  svk_storage_ctx ctx;
+  EXPECT_EQ(0, initialize_svk(conf.c_str(), (void *)&ctx));
+
+  svk_pass_thru_cmd pass_thru;
+  pass_thru.feat_id = POWER_THROTTLE;
+
+  svk_input input;
+  std::string input_str = "Passing a SampleFeatureFailure string";
+  input.input_buffer = (uint8_t *)input_str.c_str();
+  input.len = input_str.length();
+
+  svk_output output;
+  output.output_buffer = (uint8_t *)malloc(128);
+  output.len = 128;
+  EXPECT_NE(0, execute_svk_feature_sync(&pass_thru, &input, &output));
+  std::cout << "test exec_sync output buffer: " << (char *)output.output_buffer
+            << std::endl;
+  cleanup_svk(&ctx, (void *)conf.c_str());
+  free(output.output_buffer);
+}
+
 TEST(ExecTest, ExecuteSyncInvalidFeatureID) {
   char buff[FILENAME_MAX];
   getcwd(buff, FILENAME_MAX);
