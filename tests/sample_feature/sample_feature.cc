@@ -32,16 +32,22 @@ extern "C" int is_license_valid(void *) {
 extern "C" int execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
                             svk_output *output) {
   char *buf;
+  int status = -1;
   buf = (char *)input->input_buffer;
   printf("Input buffer: %s\n", buf);
 
   printf("sample feature execute_sync called\n");
   char *output_buf = (char *)output->output_buffer;
-  const char *output_str = "sample_key=value";
-  snprintf(output_buf, output->len, "%s", output_str);
-  output->len = strlen(output_str) + 1;
-  output->status = SVK_STATUS_SUCCESS;
-  return 0;
+  if (strstr(buf, "SampleFeatureFailure")) {
+    output->len =
+        snprintf(output_buf, output->len, "SampleFeature: Failed to run");
+    output->status = SVK_STATUS_FAIL;
+  } else {
+    output->len = snprintf(output_buf, output->len, "sample_key=value");
+    output->status = SVK_STATUS_SUCCESS;
+    status = 0;
+  }
+  return status;
 }
 
 extern "C" int execute_async(svk_pass_thru_cmd *pass_thru, svk_input *input,
