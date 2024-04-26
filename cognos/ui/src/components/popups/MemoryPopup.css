@@ -1,0 +1,15 @@
+.modal-dialog {
+    margin-top: 84px !important;
+}
+.modal-content {
+    background-color: rgb(54, 52, 52);
+    color: white;
+    font-size: medium;
+    font-weight: 400;
+}
+.btn-close {
+    --bs-btn-close-color: white !important;
+}
+.custom-modal-free-memory {
+    margin-top: 124px !important;
+}
