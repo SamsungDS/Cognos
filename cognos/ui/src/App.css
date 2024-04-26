@@ -1,0 +1,340 @@
+@font-face {
+  font-family: 'Samsung';
+  src: local('Samsung'), url('./assets/fonts/SamsungSharpSans-Medium.ttf') format('truetype');
+}
+
+.grid-container {
+  background-image: url('assets/images/backgrounds/BackGroundImage.png'); 
+  background-size: cover; 
+  overflow-y: auto;
+}
+.heading{
+  flex-grow: 1;
+  position: static;
+  width: 100%;
+  display: flex;
+  box-sizing: border-box;
+  flex-direction: column;
+  z-index: 1100;
+  box-shadow: none;
+}
+.heading_name {
+  padding-left: 20px;
+  padding-top: 16px;
+  display: block;
+  color: #fff;
+  font-size: 2rem;
+  font-weight: 400;
+  line-height: 1.17;
+  letter-spacing: 0.00735em;
+}
+.content_root {
+  grid-area: Content;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  overflow-y: scroll;
+}
+.sidebar-container{
+color: #fff;
+height: 100vh;
+width: 50px;
+transition: all 0.5s;
+}
+.top_section {
+display: flex;
+align-items: center;
+padding: 20px 15px;
+}
+.logo {
+font-size: 30px;
+}
+.dashboard-root {
+  height: 100%;
+  padding: 10px;
+  flex-grow: 1;
+}
+.dashboard-grid-container{
+  height: 100%;
+  width: calc(100% + 16px);
+  box-sizing: border-box;
+  margin: -8px;
+  display: flex;
+  flex-wrap: wrap;
+}
+.dashboard-card {
+  color: rgba(0, 0, 0, 0.54);
+  height: 100%;
+  border-radius: 0;
+  overflow: hidden;
+  box-shadow: 0px 1px 3px 0px rgba(0,0,0,0.2), 0px 1px 1px 0px rgba(0,0,0,0.14), 0px 2px 1px -1px rgba(0,0,0,0.12);
+  background-color: #fff;
+  padding: 8px;
+}
+.col {
+  padding-right: 0px !important;
+}
+
+.row>* {
+  padding-right: 0px !important;
+}
+
+.device_card {
+  margin-top: 8px;
+  padding: 8px;
+  height: 20rem;
+  gap: 1px;
+  background-color: rgba(0, 0, 0, 0.55);
+  box-shadow: 0px 1px 3px 0px rgba(0,0,0,0.2), 0px 1px 1px 0px rgba(0,0,0,0.14), 0px 2px 1px -1px rgba(0,0,0,0.12);
+  border-radius: 8px;
+  align-items: center;
+  justify-content: center;
+}
+
+.about{
+  background-color: rgba(0, 0, 0, 0.55) !important;
+}
+
+.bars {
+display: flex;
+font-size: 25px;
+margin-left: 30px;
+cursor: pointer;
+}
+.link {
+  display: flex;
+  color: #fff;
+  padding: 10px 15px;
+  gap: 15px;
+  transition: all 0.5s;
+  text-decoration: none;
+}
+.link:hover{
+  background-color: rgb(121, 147, 163);
+  color: #000;
+  transition: all 0.5s;
+}
+.active {
+  background-color: rgba(173, 216, 230, 0.9);
+  color: #000;
+  transition: all 0.5s;
+}
+.icon, .link_text {
+  font-size: 20px;
+}
+.main {
+  background-color: #c3c5ca;
+  padding: 25px;
+  height: 40rem;
+}
+.card {
+  background-color: #f6f7f9;
+  height: 100%;
+  border-radius: 10px;
+}
+.header {
+  background: #7898d8;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 40px;
+  border-radius: 10px;
+}
+h2{
+  padding-left: 8px;
+}
+.topology-table {
+  height: 34rem;
+}
+.pie_chart_card{
+  height: 24rem;
+}
+.pie_chart{
+  display: flex;
+}
+
+.pl-4 {
+  padding-left: 4px;
+}
+.pl-8 {
+  padding-left: 8px;
+}
+.mt-8 {
+  margin-top: 8px;
+}
+.fs-24 {
+  font-size: 24px;
+  font-weight: 600;
+  color: white;
+}
+.fs-22 {
+  font-size: 18px;
+  font-weight: 400;
+  color: white;
+}
+.chart_card {
+  border-radius: 4px !important;
+  padding-bottom: 12px;
+}
+
+.tree {
+  display: flex;
+}
+
+.node circle {
+  fill: #112d4e !important;
+  stroke: #112d4e !important;
+  stroke-width: 1.5px;
+  width: 50px !important;
+  height: 50px !important;
+
+}
+.node text {
+  font-size: 11px;
+  background-color: white;
+  fill: white;
+
+}
+circle {
+  width: 20px !important;
+}
+path.link {
+  fill: none;
+  stroke: #b0cae9 !important;
+  stroke-width: 2px;
+}
+g.node {
+  width: 40px;
+}
+
+
+.about-heading {
+  color: #18A0FB;
+  font-size: 40px;
+  font-family: sans-serif;
+  font-weight: 500;
+}
+.sub-heading {
+  color: #fff;
+  font-size: medium;
+  font-weight: 300;
+  margin-top: 20px;
+}
+.about-col-1{
+  padding-left: 80px;
+}
+.pl-12 {
+  padding-left: 12px;
+}
+.mt{
+  margin-top: 12px;
+}
+
+/* Configure CSS start */
+.config-host {
+  margin: 12px;
+}
+
+/* dropdown css */
+.dropdown-container {
+  display: flex;
+  margin-bottom: 12px;
+}
+.dropdown {
+  border-radius: 6px;
+  padding: 4px;
+}
+.basic-multi-select {
+  width: 40%;
+}
+
+
+.row-info-memo {
+  margin-left: 12px !important;
+  margin-top: 10px !important;
+}
+.app-server {
+  font-size: 16px;
+}
+table {
+  font-family: Arial, Helvetica, sans-serif;
+  border-collapse: collapse;
+  width: 100%;
+}
+
+table td, table th {
+  border: 1px solid #ddd;
+  padding: 8px;
+  text-align: center;
+}
+
+table tr:nth-child(even){background-color: #f2f2f2;}
+
+table tr:hover {background-color: #ddd;}
+
+table th {
+  padding-top: 12px;
+  padding-bottom: 12px;
+  text-align: center;
+  background-color: #080324;
+  color: white;
+}
+.pagination {
+  padding: 8px;
+  display: flex;
+}
+.page_details{
+  margin: 4px;
+  padding: 4px;
+}
+.pagination_button {
+  margin: 4px;
+  cursor: pointer;
+  color: black;
+  float: left;
+  padding: 8px 16px;
+  text-decoration: none;
+  transition: background-color .3s;
+  border: 1px solid #dddbdb;
+  border-radius: 4px;
+}
+
+/* Media Query as per device size */
+@media screen and (min-width: 2560px) {
+  .sidebar {
+    width: 68px !important;
+  }
+  .icon {
+    font-size: 38px;
+  }
+  .app-server {
+    font-size: 26px;
+  }
+  .circle {
+    width: 40px;
+    height: 40px;
+    font-size: 27px;
+  }  
+  .row-info-memo {
+    margin-left: 66px !important;
+    margin-top: 0px !important;
+  }
+  .info-memo {
+    font-size: 26px;
+  }
+  .system-memory-allocated {
+    font-size: 20px;
+  }
+  .health-container {
+    font-size: 26px;
+  }
+  .progres-bar-label {
+    margin-left: 746px !important;
+  }
+  .progres-bar-label1 {
+    margin-left: 856px !important;
+  }
+  .progres-bar-label2 {
+    margin-left: 856px !important;
+  }
+}
