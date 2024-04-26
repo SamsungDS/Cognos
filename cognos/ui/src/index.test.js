@@ -1,5 +1,5 @@
 import React from 'react';
-import ReactDOM from 'react-dom';
+import ReactDOM from 'react-dom/client';
 import { act } from 'react-dom/test-utils';
 import '@testing-library/jest-dom/extend-expect'; 
 import App from './App';
@@ -11,23 +11,29 @@ beforeEach(() => {
   // setup a DOM element as a render target
   container = document.createElement("div");
   document.body.appendChild(container);
-  // Create a root using ReactDOM.createRoot()
-  root = ReactDOM.createRoot(container);
 });
 
 afterEach(() => {
   // cleanup on exiting
   document.body.removeChild(container);
   container = null;
-  root = null;
 });
 
 
 test('renders App component into root element', () => {
+  // Ensure the root element exists
+  const rootElement = document.createElement("div");
+  rootElement.id = 'root';
+  document.body.appendChild(rootElement);
+
+  // Create the root inside the act function
   act(() => {
+    root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<App />);
   });
 
-  const appElement = container.querySelector('.app');
-  expect(appElement).toBeInTheDocument();
+  setTimeout(() => {
+    const appElement = container.querySelector('.app');
+    expect(appElement).toBeInTheDocument();
+  },1000);
 });

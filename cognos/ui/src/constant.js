@@ -50,6 +50,8 @@ export const memboxTableHeader = [
   export const ConfigureIcon = require('../src/assets/icons/ConfigureIcon.png');
   export const VideoMetrics = require('../src/assets/images/charts/host-SAP-HANA.webm');
   export const SAPHANALegend = require('../src/assets/images/charts/Graphs-Legend.png')
+  // SAP HANA Metrics gif
+  export const SAPHANAMetrics = require('../src/assets/gifs/SAPHANA-cropped.gif')
   export const D1 = require('../src/assets/icons/CXL-Dev-Blue1.png');
   export const D2 = require('../src/assets/icons/CXL-Dev-Blue2.png');
   export const D3 = require('../src/assets/icons/CXL-Dev-Green.png');
