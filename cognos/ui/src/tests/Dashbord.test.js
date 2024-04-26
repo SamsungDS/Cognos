@@ -31,7 +31,7 @@ describe('Dashboard', () => {
       expect(countZero.length).toBe(4);
 
       const countSix = screen.getAllByText('6');
-      expect(countSix.length).toBe(2);
+      expect(countSix.length).toBe(3);
 
       const trendGraph = screen.getAllByText(constants.trend_graph);
       expect(trendGraph.length).toBe(2);

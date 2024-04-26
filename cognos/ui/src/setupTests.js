@@ -8,3 +8,9 @@ import '@testing-library/jest-dom/extend-expect';
 import { configure } from '@testing-library/react';
 // Configure the testing library to use the async act function
 configure({ asyncUtilTimeout: 5000 });
+
+global.MutationObserver = class {
+    constructor(callback) {}
+    disconnect() {}
+    observe(element, initObject) {}
+  };
