@@ -6,6 +6,8 @@ import Header from './components/Header';
 import SideBar from './components/SideBar';
 import Metrics from './pages/Metrics';
 import Dashboard from './pages/Dashboard';
+import Configure from './pages/Configure';
+import About from './pages/About';
 
 function App() {
 
@@ -15,7 +17,9 @@ function App() {
         <BrowserRouter>
           <SideBar>
             <Routes><Route path='/' element={<Dashboard/>}/></Routes>
+            <Routes><Route path='/Configure' element={<Configure/>}/></Routes>
             <Routes><Route path='/metrics' element={<Metrics/>}/></Routes>
+            <Routes><Route path='/About' element={<About/>}/></Routes>
           </SideBar>
         </BrowserRouter>
       </div>
