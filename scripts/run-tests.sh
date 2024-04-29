@@ -56,9 +56,6 @@ run_ut() {
     REPORT_DIR=$SCRIPT_DIR/test-reports/ut
     mkdir -p "$REPORT_DIR"
 
-    PROJECT_ROOT=$(realpath "$SCRIPT_DIR/..")
-    cd "$PROJECT_ROOT/cognos/backend/"
-
     python3 -m pytest \
         --cov-report xml:"$REPORT_DIR"/coverage.xml \
         --cov-report term \

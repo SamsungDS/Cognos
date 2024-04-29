@@ -1,5 +1,5 @@
 [tool.pytest.ini_options]
-pythonpath = "ui/cognos_backend"
+pythonpath = "cognos/backend"
 
 [tool.coverage.run]
 omit = [
