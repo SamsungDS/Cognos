@@ -21,7 +21,7 @@ extern "C" {
  * @param svk_conf_file Path to configuration file
  *
  */
-int initialize_svk(const char *svk_conf_file, void *);
+svk_status initialize_svk(const char *svk_conf_file, void *);
 
 /**
  * @brief Function to be called by App for feature execution.
@@ -37,8 +37,8 @@ int initialize_svk(const char *svk_conf_file, void *);
  * @param output    svk_output with status and buffers for the feature to
  * populate if needed
  */
-int execute_svk_feature_sync(svk_pass_thru_cmd *pass_thru, svk_input *input,
-                             svk_output *output);
+svk_status execute_svk_feature_sync(svk_pass_thru_cmd *pass_thru,
+                                    svk_input *input, svk_output *output);
 
 /**
  * @brief Execute feature function asynchronously
@@ -49,8 +49,8 @@ int execute_svk_feature_sync(svk_pass_thru_cmd *pass_thru, svk_input *input,
  * to the feature
  * @param postprocess_fn    Post-process function for async
  */
-int execute_svk_feature_async(svk_pass_thru_cmd *pass_thru, svk_input *input,
-                              svk_postprocess_fn *postprocess_fn);
+svk_status execute_svk_feature_async(svk_pass_thru_cmd *pass_thru,
+                                     svk_postprocess_fn *postprocess_fn);
 
 /**
  * @brief Execute cleanup of SVK framework and features
@@ -60,7 +60,7 @@ int execute_svk_feature_async(svk_pass_thru_cmd *pass_thru, svk_input *input,
  * @param ctx
  *
  */
-int cleanup_svk(svk_storage_ctx *ctx, void *);
+svk_status cleanup_svk(svk_storage_ctx *ctx, void *);
 
 }  // extern "C"
 
