@@ -18,9 +18,9 @@ extern "C" {
  * along with reading and caching licensing terms should be done here.
  *
  * @param init_param
- * @return int
+ * @return svk_status Refer to framework_struct.h for return codes
  */
-int initialize(void *init_param);
+svk_status initialize(void *init_param);
 
 /**
  * @brief Show features the feature module will support
@@ -30,37 +30,51 @@ int initialize(void *init_param);
  *
  * @param feat_id Feature id code
  * @param feature_names
- * @return int
+ * @return svk_status Refer to framework_struct.h for return codes
  */
-int get_supported_feature_list(feature_id *feat_id, char *feature_names);
+svk_status get_supported_feature_list(feature_id *feat_id, char *feature_names);
 
 /**
  * @brief Check if license is valid
  *
  * Every request needs to validate if license is valid before moving on
  *
- * @return int
+ * @return svk_status Refer to framework_struct.h for return codes
  */
-int is_license_valid(void *);
+svk_status is_license_valid(void *);
 
 /**
  * @brief Exact feature execution logic will be implemented here
  *
- * @param cmd       svk passthrough for command info communication from top
+ * @param pass_thru svk passthrough for command info communication from top
  * level
  * @param input     input buffer struct
  * @param result    output buffer struct
- * @return int
+ * @return svk_status Refer to framework_struct.h for return codes
  */
-int execute(svk_pass_thru_cmd *cmd, svk_input *input, svk_output *result);
+svk_status execute_sync(svk_pass_thru_cmd *pass_thru, svk_input *input,
+                        svk_output *output);
+
+/**
+ * @brief Feature module async execute implementation.
+ *
+ * @param pass_thru       svk passthrough for command info communication from
+ * top level
+ * @param input           input buffer struct
+ * @param postprocess_fn  struct containing pointers for async IO, such as
+ * callback, IO identifier, and output buffer
+ * @return svk_status     Refer to framework_struct.h for return codes
+ */
+svk_status execute_async(svk_pass_thru_cmd *pass_thru,
+                         svk_postprocess_fn *postprocess_fn);
 
 /**
  * @brief Usual cleanup before exit
  *
  * @param ctx the storage context to use
- * @return int
+ * @return svk_status Refer to framework_struct.h for return codes
  */
-int clean_up(svk_storage_ctx *ctx, void *);
+svk_status clean_up(void *);
 
 }  // extern "C"
 

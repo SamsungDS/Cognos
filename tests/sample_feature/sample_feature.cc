@@ -7,32 +7,32 @@
 
 using namespace std;
 
-extern "C" int initialize(void *details) {
+extern "C" svk_status initialize(void *details) {
   std::cout << "sample feature init called" << std::endl;
 
-  return 0;
+  return SVK_STATUS_SUCCESS;
 }
 
 // Emulating power throttle
-extern "C" int get_supported_feature_list(feature_id *feature,
-                                          char *feature_names) {
+extern "C" svk_status get_supported_feature_list(feature_id *feature,
+                                                 char *feature_names) {
   *feature = feature_id::POWER_THROTTLE;
   std::cout << "sample feature get_supported_feature_list called" << std::endl;
 
-  return 0;
+  return SVK_STATUS_SUCCESS;
 }
 
-extern "C" int is_license_valid(void *) {
+extern "C" svk_status is_license_valid(void *) {
   std::cout << "sample feature is_license_valid called" << std::endl;
 
-  return 0;
+  return SVK_STATUS_SUCCESS;
 }
 
 // Assuming that input and output buffers contain strings
-extern "C" int execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
-                            svk_output *output) {
+extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
+                                   svk_output *output) {
   char *buf;
-  int status = -1;
+  svk_status status = SVK_STATUS_FAIL;
   buf = (char *)input->input_buffer;
   printf("Input buffer: %s\n", buf);
 
@@ -45,20 +45,20 @@ extern "C" int execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
   } else {
     output->len = snprintf(output_buf, output->len, "sample_key=value");
     output->status = SVK_STATUS_SUCCESS;
-    status = 0;
+    status = SVK_STATUS_SUCCESS;
   }
   return status;
 }
 
-extern "C" int execute_async(svk_pass_thru_cmd *pass_thru, svk_input *input,
-                             svk_postprocess_fn *postprocess_fn) {
+extern "C" svk_status execute_async(svk_pass_thru_cmd *pass_thru,
+                                    svk_postprocess_fn *postprocess_fn) {
   std::cout << "sample feature execute_async called" << std::endl;
 
-  return 0;
+  return SVK_STATUS_SUCCESS;
 }
 
-extern "C" int clean_up(void *) {
+extern "C" svk_status clean_up(void *) {
   std::cout << "sample feature clean_up called" << std::endl;
 
-  return 0;
+  return SVK_STATUS_SUCCESS;
 }

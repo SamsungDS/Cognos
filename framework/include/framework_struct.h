@@ -30,14 +30,11 @@ typedef enum {
  * @var svk_pass_thru_cmd::cmd_id
  *  Specifies which feature to run command (like PT, zETL, RAID, CXL, QLC)
  *
- * @var svk_pass_thru_cmd::sub_cmd_id
- *  Sub-commmand ID for specific feature (like PT::PS2, zETL::SW, RAID::6)
- *
- * @var svk_pass_thru_cmd::input_param
- *  Input for the feature command (specific for specific cmd)
- *
  * @var svk_pass_thru_cmd::out_format
  *  Output for the feature command (specific for specific cmd)
+ *
+ * @var svk_pass_thru_cmd::len
+ *  Length field if needed
  */
 struct svk_pass_thru_cmd {
   feature_id feat_id;
@@ -113,14 +110,8 @@ struct svk_storage_ctx {
  *
  * Structure containing svk_output data along with operation return value.
  *
- * @var svk_aio_construct::feat_id
- *  Feature ID code
- *
- * @var svk_aio_construct::sub_feat_id
- *  Sub-feature ID code
- *
  * @var svk_aio_construct::result
- *  Return value (results)
+ *  Return code (svk_status)
  *
  * @var svk_aio_construct::private_data_1
  *  Private data address passed by caller
@@ -133,11 +124,10 @@ struct svk_storage_ctx {
  *
  * @var svk_aio_construct::num_out_data
  *
+ *
  */
 struct svk_aio_construct {
-  feature_id feat_id;
-  uint16_t sub_feat_id;
-  int32_t result;
+  svk_status result;
   void *private_data_1;
   void *svk_io_identifier;
   svk_output *out_data;
@@ -148,6 +138,9 @@ struct svk_aio_construct {
  * @struct svk_postprocess_fn
  * @brief Postprocess function for SVK execute_async
  *
+ * Contains data and callback for async IO request.
+ * NOTE: This data should NOT be freed until the callback (svk_aio_cb) returns.
+ *
  * @var svk_postprocess_fn::svk_aio_cb
  *  Callback fn for execute async case
  *
@@ -157,11 +150,23 @@ struct svk_aio_construct {
  * @var svk_postprocess_fn::svk_io_identifier
  *  Unique IO identifier
  *
+ * @var svk_postprocess_fn::input
+ *  Input buffer from application to feature module
+ *
+ * @var svk_postprocess_fn::out_data
+ *  Output buffer for feature module to populate
+ *
+ * @var svk_postprocess_fn::num_out_data
+ *  Number of output data that is being returned
+ *
  */
 struct svk_postprocess_fn {
   void (*svk_aio_cb)(svk_aio_construct *ops, int32_t num_op);
   void *private_data_1;
   void *svk_io_identifier;
+  svk_input *input;
+  svk_output *out_data;
+  uint32_t num_out_data;
 };
 
 /**
@@ -171,15 +176,14 @@ struct svk_postprocess_fn {
  * Struct for each feature module to keep track of function pointers. Passed to
  * feature modules during init to populate
  *
- * @var svk_feature_details::initialize_svk
- *  @param svk_conf_file    Config file to initialize SVK with
- *  @param ctx              Storage context to use
- *  @param num_ctx
+ * @var svk_feature_details::initialize
+ *  @param init_param    Feature module defined pointer to pass through
  *
  * @var svk_feature_details::get_supported_feature_list
  *  Pointer to function that will give back a list of feature names that the
  * feature module will support
- *  @param feature_names
+ *  @param feature        feature_id which should be populated by feature module
+ *  @param feature_names  List of subfeatures
  *
  * @var svk_feature_details::is_license_valid
  *  Pointer to function that will check for valid license
@@ -193,13 +197,16 @@ struct svk_postprocess_fn {
  *  @param output       Output info structure
  *
  * @var svk_feature_details::execute_async
- *  @param pass_thru
- *  @param input
- *  @param postprocess_fn
+ *  Function pointer for async request, which will pass structs like callback fn
+ * to feature module
+ *  @param pass_thru      Feature command details to pass through the function
+ * for execution
+ *  @param postprocess_fn Contains callback and various data for async request
  *
- * @var svk_feature_details::cleanup_fn
+ * @var svk_feature_details::clean_up
  *  Pointer to the cleanup function for this feature module that framework will
  *  call on shutdown
+ * @param void            Pointer to give to feature module cleanup
  */
 struct svk_feature_details {
   int (*initialize)(void *init_param);
@@ -207,7 +214,7 @@ struct svk_feature_details {
   int (*is_license_valid)(void *);
   int (*execute_sync)(svk_pass_thru_cmd *pass_thru, svk_input *input,
                       svk_output *output);
-  int (*execute_async)(svk_pass_thru_cmd *pass_thru, svk_input *input,
+  int (*execute_async)(svk_pass_thru_cmd *pass_thru,
                        svk_postprocess_fn *postprocess_fn);
   int (*clean_up)(void *);
 };

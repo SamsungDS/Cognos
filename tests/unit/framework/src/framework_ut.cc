@@ -214,11 +214,11 @@ TEST(InitTest, FailedDlsym) {
       [](svk_pass_thru_cmd *pass_thru, svk_input *input, svk_input *output) {
         return 0;
       });
-  auto *dummy_exec_async =
-      static_cast<int (*)(svk_pass_thru_cmd *pass_thru, svk_input *input,
-                          svk_postprocess_fn *postprocess_fn)>(
-          [](svk_pass_thru_cmd *pass_thru, svk_input *input,
-             svk_postprocess_fn *postprocess_fn) { return 0; });
+  auto *dummy_exec_async = static_cast<int (*)(
+      svk_pass_thru_cmd *pass_thru, svk_postprocess_fn *postprocess_fn)>(
+      [](svk_pass_thru_cmd *pass_thru, svk_postprocess_fn *postprocess_fn) {
+        return 0;
+      });
 
   // These make it so the functionality implemented in the interface
   // will be used instead of the mocked child class
@@ -392,8 +392,8 @@ TEST(ExecTest, ExecuteSyncInvalidFeatureID) {
 TEST(ExecTest, ExecuteSyncFail) {
   MockFreeInterface dep_inj;
   auto *dummy_exec_sync = static_cast<int (*)(
-      svk_pass_thru_cmd *pass_thru, svk_input *input, svk_input *output)>(
-      [](svk_pass_thru_cmd *pass_thru, svk_input *input, svk_input *output) {
+      svk_pass_thru_cmd *pass_thru, svk_input *input, svk_output *output)>(
+      [](svk_pass_thru_cmd *pass_thru, svk_input *input, svk_output *output) {
         return 1;
       });
   ON_CALL(dep_inj, get_sym)
@@ -427,16 +427,75 @@ TEST(ExecTest, ExecuteSyncFail) {
   svk_output output;
   svk_storage_ctx ctx;
   EXPECT_EQ(SVK_STATUS_FAIL, test_fwsvc1.FrameworkSvcProcessCommand(
-                                 &pass_thru, &input, &output));
+                                 &pass_thru, &input, &output, nullptr));
   cleanup_svk(&ctx, (void *)conf.c_str());
 }
 
-TEST(ExecTest, ExecuteAsync) {
+TEST(ExecTest, ExecuteAsyncSuccess) {
+  char buff[FILENAME_MAX];
+  getcwd(buff, FILENAME_MAX);
+  std::string current_working_dir(buff);
+
+  // Using relative path to config in SVK core for testing
+  std::string conf =
+      current_working_dir + "/../../../../../config/test_config.json";
+  svk_storage_ctx ctx;
+  EXPECT_EQ(0, initialize_svk(conf.c_str(), (void *)&ctx));
+
   svk_pass_thru_cmd pass_thru;
-  svk_input input;
   svk_postprocess_fn postprocess_fn;
 
-  EXPECT_EQ(0, execute_svk_feature_async(&pass_thru, &input, &postprocess_fn));
+  pass_thru.feat_id = POWER_THROTTLE;
+
+  EXPECT_EQ(0, execute_svk_feature_async(&pass_thru, &postprocess_fn));
+
+  cleanup_svk(&ctx, (void *)conf.c_str());
+}
+
+TEST(ExecTest, ExecuteAsyncFail) {
+  MockFreeInterface dep_inj;
+  auto *dummy_exec_async = static_cast<int (*)(
+      svk_pass_thru_cmd *pass_thru, svk_postprocess_fn *postprocess_fn)>(
+      [](svk_pass_thru_cmd *pass_thru, svk_postprocess_fn *post_process_fn) {
+        return 1;
+      });
+  ON_CALL(dep_inj, get_sym)
+      .WillByDefault([&dep_inj](void *handle, const char *fn_name) {
+        return dep_inj.featureInterface::get_sym(handle, fn_name);
+      });
+  ON_CALL(dep_inj, open_dir).WillByDefault([&dep_inj](const char *dir_str) {
+    return dep_inj.featureInterface::open_dir(dir_str);
+  });
+  ON_CALL(dep_inj, open_lib).WillByDefault([&dep_inj](const char *ft_lib_str) {
+    return dep_inj.featureInterface::open_lib(ft_lib_str);
+  });
+  EXPECT_CALL(dep_inj, get_sym(_, _)).Times(::testing::AnyNumber());
+  EXPECT_CALL(dep_inj, get_sym(_, StrEq("execute_async")))
+      .Times(1)
+      .WillOnce(Return((void *)dummy_exec_async))
+      .RetiresOnSaturation();
+
+  char buff[FILENAME_MAX];
+  getcwd(buff, FILENAME_MAX);
+  std::string current_working_dir(buff);
+
+  // Using relative path to config in SVK core for testing
+  std::string conf =
+      current_working_dir + "/../../../../../config/test_config.json";
+  FrameworkSvc test_fwsvc1;
+  EXPECT_EQ(SVK_STATUS_SUCCESS,
+            test_fwsvc1.FrameworkSvcInit(conf.c_str(), (void *)conf.c_str(),
+                                         dep_inj));
+
+  svk_pass_thru_cmd pass_thru;
+  svk_postprocess_fn postprocess_fn;
+
+  pass_thru.feat_id = POWER_THROTTLE;
+
+  EXPECT_EQ(SVK_STATUS_FAIL, test_fwsvc1.FrameworkSvcProcessCommand(
+                                 &pass_thru, NULL, NULL, &postprocess_fn));
+
+  test_fwsvc1.FrameworkSvcCleanup((void *)conf.c_str());
 }
 
 TEST(CleanupTest, Cleanup) {

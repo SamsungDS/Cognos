@@ -55,12 +55,11 @@ class FrameworkSvc {
   // In order to comply with Rule-of-Zero, manage class init and deletion
   // through APIs and not through constructors/destructors. Must call init and
   // cleanup from this class to ensure resources are managed properly
-  explicit FrameworkSvc() = default;
   svk_status FrameworkSvcInit(const char *svk_config, void *init_param,
                               const featureInterface &dep_inj);
-  svk_status FrameworkSvcProcessCommand(svk_pass_thru_cmd *pass_thru,
-                                        svk_input *input,
-                                        svk_output *output) const;
+  svk_status FrameworkSvcProcessCommand(
+      svk_pass_thru_cmd *pass_thru, svk_input *input, svk_output *output,
+      svk_postprocess_fn *postprocess_fn) const;
   svk_status FrameworkSvcCleanup(void *param) const;
 };
 

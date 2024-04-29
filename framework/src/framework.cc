@@ -31,7 +31,7 @@ using get_supported_feature_list = int (*)(feature_id *feature,
 using is_license_valid = int (*)(void *);
 using execute_sync = int (*)(svk_pass_thru_cmd *pass_thru, svk_input *input,
                              svk_output *output);
-using execute_async = int (*)(svk_pass_thru_cmd *pass_thru, svk_input *input,
+using execute_async = int (*)(svk_pass_thru_cmd *pass_thru,
                               svk_postprocess_fn *postprocess_fn);
 using clean_up = int (*)(void *);
 
@@ -306,7 +306,8 @@ svk_status FrameworkSvc::FrameworkSvcInit(const char *svk_config,
 }
 
 svk_status FrameworkSvc::FrameworkSvcProcessCommand(
-    svk_pass_thru_cmd *pass_thru, svk_input *input, svk_output *output) const {
+    svk_pass_thru_cmd *pass_thru, svk_input *input, svk_output *output,
+    svk_postprocess_fn *postprocess_fn) const {
   svk_status exec_res = SVK_STATUS_FAIL;
   char log_msg[LOG_MSG_MAX_SIZE];
   feature_id curr_feat = pass_thru->feat_id;
@@ -321,15 +322,27 @@ svk_status FrameworkSvc::FrameworkSvcProcessCommand(
     svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
     return exec_res;
   }
-
-  exec_res =
-      (svk_status)feature_details->execute_sync(pass_thru, input, output);
-  if (exec_res != SVK_STATUS_SUCCESS) {
-    snprintf(log_msg, LOG_MSG_MAX_SIZE,
-             "Synchronous execute failed for feature_id %d.",
-             (uint32_t)curr_feat);
-    svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
+  // Synchrounous execute
+  if (postprocess_fn == nullptr) {
+    exec_res =
+        (svk_status)feature_details->execute_sync(pass_thru, input, output);
+    if (exec_res != SVK_STATUS_SUCCESS) {
+      snprintf(log_msg, LOG_MSG_MAX_SIZE,
+               "Synchronous execute failed for feature_id %d.",
+               (uint32_t)curr_feat);
+      svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
+    }
+  } else {  // Postprocess fn exists, this is async IO
+    exec_res =
+        (svk_status)feature_details->execute_async(pass_thru, postprocess_fn);
+    if (exec_res != SVK_STATUS_SUCCESS) {
+      snprintf(log_msg, LOG_MSG_MAX_SIZE,
+               "Async execute call for feature_id %d returned an error.",
+               (uint32_t)curr_feat);
+      svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
+    }
   }
+
   return exec_res;
 }
 
@@ -344,9 +357,10 @@ svk_status FrameworkSvc::FrameworkSvcCleanup(void *param) const {
  * @endcond
  */
 
-extern "C" int initialize_svk(const char *svk_conf_file, void *init_param) {
+extern "C" svk_status initialize_svk(const char *svk_conf_file,
+                                     void *init_param) {
   // Ignoring storage context stuff for now
-  int status = 0;
+  svk_status status = SVK_STATUS_SUCCESS;
   featureInterface dl;
   std::string conf_path;
   const char *env_p;
@@ -362,7 +376,7 @@ extern "C" int initialize_svk(const char *svk_conf_file, void *init_param) {
 
   if (g_fw_service == nullptr) {
     std::cerr << "FrameworkSvc object was unable to be allocated" << std::endl;
-    status = -1;
+    status = SVK_STATUS_FAIL;
   } else {
     status = g_fw_service->FrameworkSvcInit(conf_path.c_str(), init_param, dl);
   }
@@ -370,22 +384,25 @@ extern "C" int initialize_svk(const char *svk_conf_file, void *init_param) {
   return status;
 }
 
-extern "C" int execute_svk_feature_sync(svk_pass_thru_cmd *pass_thru,
-                                        svk_input *input, svk_output *output) {
-  int status = 0;
-  status = g_fw_service->FrameworkSvcProcessCommand(pass_thru, input, output);
+extern "C" svk_status execute_svk_feature_sync(svk_pass_thru_cmd *pass_thru,
+                                               svk_input *input,
+                                               svk_output *output) {
+  svk_status status = SVK_STATUS_SUCCESS;
+  status =
+      g_fw_service->FrameworkSvcProcessCommand(pass_thru, input, output, NULL);
   return status;
 }
 
-extern "C" int execute_svk_feature_async(svk_pass_thru_cmd *pass_thru,
-                                         svk_input *input,
-                                         svk_postprocess_fn *postprocess_fn) {
-  int status = 0;
+extern "C" svk_status execute_svk_feature_async(
+    svk_pass_thru_cmd *pass_thru, svk_postprocess_fn *postprocess_fn) {
+  svk_status status = SVK_STATUS_SUCCESS;
+  status = g_fw_service->FrameworkSvcProcessCommand(pass_thru, NULL, NULL,
+                                                    postprocess_fn);
   return status;
 }
 
-extern "C" int cleanup_svk(svk_storage_ctx *ctx, void *param) {
-  int status = 0;
+extern "C" svk_status cleanup_svk(svk_storage_ctx *ctx, void *param) {
+  svk_status status = SVK_STATUS_SUCCESS;
   status = g_fw_service->FrameworkSvcCleanup(param);
   svk_logger(CORE_LOGGER_NAME, level_E::INFO, "SVK Cleanup finished.");
   return status;
