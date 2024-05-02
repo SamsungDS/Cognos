@@ -1,0 +1,114 @@
+#ifndef __CXL_PLUGIN_SC_GLOBAL_H__
+#define __CXL_PLUGIN_SC_GLOBAL_H__
+
+#include "sc_device.h"
+
+enum device_type {MBOX=1,SLD=2,MLD=3,LD=4,DCD=5};
+
+//forward declaration
+class sc_mbox;
+
+/**
+* @brief global class
+* @details This class encapsulates device & host object.
+*/
+class sc_global
+{
+
+    public:
+
+	/**
+        * @brief Default constructor
+        * @details Simple constructor that creates a global object.
+        */
+        sc_global() =default;
+
+        /**
+        * @brief create memory box as per the json configuration.
+        * @details This method takes struct portinfo as parameter
+        *          and parses board, list of devices, hosts & endpoints information.
+        */
+        //int g_create_mbox(struct StaticPortInfo * port_info, int dsize, int hsize, int mb_id);
+        int g_create_mbox(struct StaticPortInfo * port_info);
+
+        /**
+        * @brief delete memory box/device.
+        * @details This method takes sc_id and deletes the matched memory box if exists.
+        */
+	int g_delete_mbox(sc_id);
+
+        /**
+        * @brief create host.
+        */
+	int g_create_host();
+
+	/**
+        * @brief attach device to host.
+        * @param d_id device id.
+        * @param h_id host id.
+        * @param mode device shared/direct connect.
+        */
+        size_t dev_attach(uint64_t d_id, uint64_t h_id, string mode, uint64_t fm_id, char* &buffer, size_t buffer_size); 
+
+        /**
+        * @brief detach device from host.
+        * @param d_id device id.
+        * @param h_id host id.
+        * @param mode device shared/direct connect.
+        */
+        size_t dev_detach(uint64_t d_id, uint64_t h_id, string mode, uint64_t fm_id, char* &buffer, size_t buffer_size);
+
+        /** get sc_mbox */  
+        unordered_map<uint64_t, sc_mbox*>& get_mbox_map(); 
+
+        /** 
+	* @brief convert device object to json 
+	*/	
+	//char* to_device_json();
+	size_t to_device_json(char* &buffer, size_t buffer_size);
+
+        /** 
+	* @brief convert host object to json. 
+	*/	
+	size_t to_host_json(char* &buffer, size_t buffer_size);
+
+	size_t to_setup_json(char* &buffer, size_t buffer_size);
+
+        /** 
+	* @brief generate json using input parameter. for ex: {"rc":0} 
+	*/	
+	size_t to_json(int ret,char* &buffer, size_t buffer_size);
+
+	/** 
+	 * @brief list out all persisted memory devices.
+	*/
+	//string list_devices();
+	size_t list_devices(char* &buffer, size_t buffer_size);
+
+	/** 
+	 * @brief list out all persisted hosts.
+	*/
+	size_t list_hosts(char* &buffer, size_t buffer_size);
+
+
+	/** 
+	 * @brief fetch persisted data.
+	*/
+	size_t fetch_setup_info(char* &buffer, size_t buffer_size);
+
+	/** 
+	 * @brief delete dynamically allocated mbox objects.
+	*/
+	void clear_mbox_objects();
+
+    private:
+	//key: fm_id, value:mbox object 
+        unordered_map<uint64_t, sc_mbox*> sc_devices;
+	vector<sc_mbox*> mb_objs; 
+};
+
+/**< global object */
+extern sc_global cxl_global; 
+
+#endif
+
