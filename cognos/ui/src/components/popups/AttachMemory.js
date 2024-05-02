@@ -31,7 +31,7 @@ const AttachMemory = ({ show, onSave, onCancel, availableLMDs }) => {
         <option key={item} value={item}>{item}</option>)): [];
     
     return (<div>
-        <Modal show={show} onHide={onCancel} className='custom-modal' id='attach-modal-id'>
+        <Modal show={show} onHide={onCancel} className='custom-modal' id='attach-modal-id' data-testid='attach-memory-modal'>
             <Modal.Header closeButton closeVariant="white">
                 <Modal.Title>Attach Memory</Modal.Title>
             </Modal.Header>
