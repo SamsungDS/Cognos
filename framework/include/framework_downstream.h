@@ -9,7 +9,9 @@
 #define FRAMEWORK_DOWNSTREAM_H
 #include "framework_struct.h"
 
+#ifdef __cplusplus
 extern "C" {
+#endif
 /**
  * @brief Initialize individual feature module
  *
@@ -76,6 +78,8 @@ svk_status execute_async(svk_pass_thru_cmd *pass_thru,
  */
 svk_status clean_up(void *);
 
+#ifdef __cplusplus
 }  // extern "C"
+#endif
 
 #endif  // FRAMEWORK_DOWNSTREAM_H

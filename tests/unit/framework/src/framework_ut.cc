@@ -3,7 +3,7 @@
 #include <gtest/gtest.h>
 #include <stdlib.h>
 
-#include "framework_service.h"
+#include "framework_service.hpp"
 #include "framework_upstream.h"
 
 using ::testing::_;
