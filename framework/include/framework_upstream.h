@@ -9,7 +9,9 @@
 #define FRAMEWORK_UPSTREAM_H
 #include "framework_struct.h"
 
+#ifdef __cplusplus
 extern "C" {
+#endif
 
 /**
  * @brief Initialize the SVK library and feature modules
@@ -62,6 +64,8 @@ svk_status execute_svk_feature_async(svk_pass_thru_cmd *pass_thru,
  */
 svk_status cleanup_svk(svk_storage_ctx *ctx, void *);
 
+#ifdef __cplusplus
 }  // extern "C"
+#endif
 
 #endif  // FRAMEWORK_UPSTREAM_H

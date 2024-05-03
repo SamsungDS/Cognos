@@ -7,10 +7,13 @@
 #ifndef FRAMEWORK_STRUCT_H
 #define FRAMEWORK_STRUCT_H
 
-#include <cstdint>
+#include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 // Enum for feature_id codes
-typedef enum : uint32_t { POWER_THROTTLE, ZERO_ETL, RAID, CXL, QLC } feature_id;
+typedef enum { POWER_THROTTLE, ZERO_ETL, RAID, CXL, QLC } feature_id;
 
 // Status enum for svk_output
 typedef enum {
@@ -36,11 +39,11 @@ typedef enum {
  * @var svk_pass_thru_cmd::len
  *  Length field if needed
  */
-struct svk_pass_thru_cmd {
+typedef struct {
   feature_id feat_id;
   void *out_format;
   uint32_t len;
-};
+} svk_pass_thru_cmd;
 
 /**
  * @struct svk_input
@@ -54,10 +57,10 @@ struct svk_pass_thru_cmd {
  *  Length of the input_buffer
  *
  */
-struct svk_input {
+typedef struct {
   uint8_t *input_buffer;
   uint64_t len;
-};
+} svk_input;
 
 /**
  * @struct svk_output
@@ -74,11 +77,11 @@ struct svk_input {
  *  Length of buffer for the output_buffer
  *
  */
-struct svk_output {
+typedef struct {
   svk_status status;
   uint8_t *output_buffer;
   uint64_t len;
-};
+} svk_output;
 
 /**
  * @struct svk_storage_ctx
@@ -96,13 +99,13 @@ struct svk_output {
  *
  *
  */
-struct svk_storage_ctx {
+typedef struct {
   svk_status status;
   char *db_name;
   void *db_interface;
   uint64_t pool_id;
   uint64_t storage_dev_id;
-};
+} svk_storage_ctx;
 
 /**
  * @struct svk_aio_construct
@@ -126,13 +129,13 @@ struct svk_storage_ctx {
  *
  *
  */
-struct svk_aio_construct {
+typedef struct {
   svk_status result;
   void *private_data_1;
   void *svk_io_identifier;
   svk_output *out_data;
   uint32_t num_out_data;
-};
+} svk_aio_construct;
 
 /**
  * @struct svk_postprocess_fn
@@ -160,14 +163,14 @@ struct svk_aio_construct {
  *  Number of output data that is being returned
  *
  */
-struct svk_postprocess_fn {
+typedef struct {
   void (*svk_aio_cb)(svk_aio_construct *ops, int32_t num_op);
   void *private_data_1;
   void *svk_io_identifier;
   svk_input *input;
   svk_output *out_data;
   uint32_t num_out_data;
-};
+} svk_postprocess_fn;
 
 /**
  * @struct svk_feature_details
@@ -208,7 +211,7 @@ struct svk_postprocess_fn {
  *  call on shutdown
  * @param void            Pointer to give to feature module cleanup
  */
-struct svk_feature_details {
+typedef struct {
   int (*initialize)(void *init_param);
   int (*get_supported_feature_list)(feature_id *feature, char *feature_names);
   int (*is_license_valid)(void *);
@@ -217,6 +220,10 @@ struct svk_feature_details {
   int (*execute_async)(svk_pass_thru_cmd *pass_thru,
                        svk_postprocess_fn *postprocess_fn);
   int (*clean_up)(void *);
-};
+} svk_feature_details;
+
+#ifdef __cplusplus
+}  // extern "C"
+#endif
 
 #endif  // FRAMEWORK_STRUCT_H

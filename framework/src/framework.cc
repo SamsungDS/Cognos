@@ -7,7 +7,7 @@
 #include <iostream>
 #include <utility>
 
-#include "framework_service.h"
+#include "framework_service.hpp"
 #include "framework_upstream.h"
 
 #define CORE_DEFAULT_CONF "/etc/svk/core_config.json"
