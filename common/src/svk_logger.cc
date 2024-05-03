@@ -9,6 +9,8 @@
 #include <iostream>
 #include <map>
 
+#define PERIODIC_FLUSH_INTERVAL 5
+
 typedef spdlog::level::level_enum spd_level_E;
 
 spd_level_E map_user_log_level_to_libray_log_level(level_E level) {
@@ -81,6 +83,8 @@ int svk_logger_init(const char *feature, const char *filename,
     spd_level_E level = map_user_log_level_to_libray_log_level(base_log_level);
 
     svk_logger->set_level(level);
+    // Set the periodic flush timer at the global level
+    svk_logger_set_flush_interval(PERIODIC_FLUSH_INTERVAL);
   } catch (std::exception &ex) {
     std::cout << "Log initialization (spdlog) failed: " << ex.what()
               << std::endl;
@@ -135,11 +139,23 @@ int svk_logger(const char *feature, level_E log_level, const char *message) {
     }
     spd_level_E level = map_user_log_level_to_libray_log_level(log_level);
     svk_logger->log(level, message);
+
+    // Flush for every message impacts the performance. So the flush is
+    // performed only for warning and above But the periodic flush interval is
+    // set at the global level to automatically flush the messages that are not
+    // flushed yet
+    if (level > spdlog::level::info) svk_logger->flush();
+
   } catch (std::exception &ex) {
     std::cout << "Exception in logging (spdlog) the message " << message
               << "for feature " << feature << ": " << ex.what() << std::endl;
     return -1;
   }
 
+  return 0;
+}
+
+int svk_logger_set_flush_interval(int flush_interval) {
+  spdlog::flush_every(std::chrono::seconds(flush_interval));
   return 0;
 }
