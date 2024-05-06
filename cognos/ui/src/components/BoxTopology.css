@@ -79,6 +79,7 @@
 .vertical-line {
     height: 19px;
     width: 1px;
+    margin-left: 16px;
 }
 .cxl-dev {
     margin-top: -7px;
@@ -322,13 +323,13 @@
         margin-top: -5px;
     }
     .cxl-switch-box {
-        width: 48rem;
+        width: 51rem;
     }
     .badge-container {
         margin-left: 82px;
     }
     .badge {
-        width: 84px;
+        width: 88px;
     }
     .host-round-icon {
         width: 14px;
@@ -345,11 +346,11 @@
     }
     .host-icon {
         display: flex;
-        margin-left: -34px;
+        margin-left: -37px;
     }
     .solid {
         margin-top: -9px !important;
-        margin-left: 81px !important;
+        margin-left: 85px !important;
     }
     .device-icon {
         object-fit: contain;

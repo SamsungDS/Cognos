@@ -1,5 +1,3 @@
-import { constant } from 'async';
-
 // Load App Configs
 export const Configs = require('../src/config/config.json');
 export const BackgroundsImage = require('../src/assets/images/backgrounds/BackGroundImage.png');
