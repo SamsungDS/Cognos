@@ -9,65 +9,68 @@ import "protoc-gen-openapiv2/options/annotations.proto";
 
 // Annotations used when generating the OpenAPI file.
 option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
-  info: {version: "1.0"};
-  external_docs: {
-    url: "https://github.com/";
-    description: "gRPC-gateway for SVK Framework";
-  }
-  schemes: HTTP;
-};
+  info : {version : "1.0"};
+external_docs : {
+url:
+  "https://github.com/";
+description:
+  "gRPC-gateway for SVK Framework";
+}
+schemes : HTTP;
+}
+;
 
 // gRPC APIs at the SVK Controller node
-service Controller{
+service Controller {
   // Register SVK Agent Node with the SVK Controller node
   rpc RegisterNode(RegisterRequest) returns (RegisterResponse) {
     option (google.api.http) = {
-        post: "/api/v1/register_node" 
-        body: "*"
+      post : "/api/v1/register_node"
+      body : "*"
     };
     option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
-      summary: "Register SVK node"
-      description: "Register SVK node"
-      tags: "svk, controller, register_node"
+      summary : "Register SVK node"
+      description : "Register SVK node"
+      tags : "svk, controller, register_node"
     };
   }
 
   // Unregister SVK Agent Node with the SVK Controller node
   rpc UnregisterNode(UnregisterRequest) returns (UnregisterResponse) {
     option (google.api.http) = {
-        post: "/api/v1/unregister_node" 
-        body: "*"
+      post : "/api/v1/unregister_node"
+      body : "*"
     };
     option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
-      summary: "Unregister SVK node"
-      description: "Unregister SVK node"
-      tags: "svk, controller, unregister_node"
+      summary : "Unregister SVK node"
+      description : "Unregister SVK node"
+      tags : "svk, controller, unregister_node"
     };
   }
 
   // Process command sent to the SVK Controller node
   rpc ProcessControllerCommand(CommandRequest) returns (CommandResponse) {
     option (google.api.http) = {
-        post: "/api/v1/process_controller_command" 
-        body: "*"
+      post : "/api/v1/process_controller_command"
+      body : "*"
     };
     option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
-      summary: "ProcessCommand"
-      description: "Process command sent to SVK Controller node"
-      tags: "svk, controller, command"
+      summary : "ProcessCommand"
+      description : "Process command sent to SVK Controller node"
+      tags : "svk, controller, command"
     };
-  }  
+  }
 }
 
 // gRPC APIs related to Command Framework at the SVK Agent node
-service CommandFwk{
-  
+service CommandFwk {
+
   // Process command send to SVK Agent node
   rpc ProcessNodeCommand(CommandRequest) returns (CommandResponse) {
     option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
-      summary: "Process Command"
-      description: "Process command received by SVK Agent node"
-      tags: "svk, node, command"
+      summary : "Process Command"
+      description : "Process command received by SVK Agent node"
+      tags : "svk, node, command"
     };
   }
 }
@@ -79,6 +82,8 @@ message RegisterRequest {
   string cluster_id = 1;
   // Node identifier in the format <node_ip_or_hostname>:<port>
   string node_id = 2;
+  // Node port on which the gRPC node server is running
+  int32 node_port = 3;
 }
 
 // A RegisterResponse resource.
@@ -95,19 +100,35 @@ message UnregisterRequest {
 }
 
 // A UnregisterResponse resource.
-message UnregisterResponse {
-  string status = 1;
-}
+message UnregisterResponse { string status = 1; }
 
-// A CommandRequest resource sent either to the Controller node or the Agent node
-// to process the given input string. 
-// If sent to Controller node, the controller node can parse the data and send the request to the appropriate Agent nodes.
-// If sent to Command node, the command node parse the data and process the command.
+// A CommandRequest resource sent either to the Controller node or the Agent
+// node to process the given input string. If sent to Controller node,
+// - One of the cluster_id or node_id fields is mandatory
+// - the controller checks the node_id. If valid, it sends the request to those
+// nodes only
+// - If node_id is not given, then the controller checks the cluster_id and
+// sends the request to all the nodes in that cluster If sent to Command node,
+// - the command node parse the feature_params and process the command.
+// - cluster_id and node_id are irrelevant
 message CommandRequest {
-  string input = 1;
+  // Cluster ID associated with a set of nodes.
+  string cluster_id = 1;
+  // Comma separated list of nodes. Optional if cluster_id is valid.
+  string node_id = 2;
+  // Feature ID
+  int64 feature_id = 3;
+  // Parameters to be used by the Feature
+  string feature_params = 4;
 }
 
 // A CommandResponse resource.
+// Array of node_id and its command response will be consolidated and send by
+// the controller node
 message CommandResponse {
-  string output = 1;
+  message NodeResponse {
+    string node_id = 1;
+    string output = 2;
+  }
+  repeated NodeResponse node_responses = 1;
 }

@@ -1,0 +1,16 @@
+unit test:
+  stage: test
+  extends: release build
+  script:
+    - /build-wrapper-linux-x86/build-wrapper-linux-x86-64 --out-dir bw-output/ ./scripts/build.sh --build-tests --with-coverage
+  artifacts:
+    name: unit test
+    expire_in: 300 seconds
+    paths:
+     - bw-output
+     - build
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: $GITLAB_COVERAGE_REPORT
+      junit: $GITLAB_JUNIT_REPORT

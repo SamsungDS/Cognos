@@ -18,7 +18,8 @@ enum Scheme {
 
 // `Swagger` is a representation of OpenAPI v2 specification's Swagger object.
 //
-// See: https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#swaggerObject
+// See:
+// https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#swaggerObject
 //
 // Example:
 //
@@ -34,7 +35,8 @@ enum Scheme {
 //      };
 //      license: {
 //        name: "BSD 3-Clause License";
-//        url: "https://github.com/grpc-ecosystem/grpc-gateway/blob/main/LICENSE.txt";
+//        url:
+//        "https://github.com/grpc-ecosystem/grpc-gateway/blob/main/LICENSE.txt";
 //      };
 //    };
 //    schemes: HTTPS;
@@ -98,14 +100,17 @@ message Swagger {
   // Additional external documentation.
   ExternalDocumentation external_docs = 14;
   // Custom properties that start with "x-" such as "x-foo" used to describe
-  // extra functionality that is not covered by the standard OpenAPI Specification.
-  // See: https://swagger.io/docs/specification/2-0/swagger-extensions/
+  // extra functionality that is not covered by the standard OpenAPI
+  // Specification. See:
+  // https://swagger.io/docs/specification/2-0/swagger-extensions/
   map<string, google.protobuf.Value> extensions = 15;
 }
 
-// `Operation` is a representation of OpenAPI v2 specification's Operation object.
+// `Operation` is a representation of OpenAPI v2 specification's Operation
+// object.
 //
-// See: https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#operationObject
+// See:
+// https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#operationObject
 //
 // Example:
 //
@@ -115,7 +120,8 @@ message Swagger {
 //        get: "/v1/example/echo/{id}"
 //      };
 //
-//      option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+//      option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) =
+//      {
 //        summary: "Get a message.";
 //        operation_id: "getMessage";
 //        tags: "echo";
@@ -172,8 +178,9 @@ message Operation {
   // security declaration, an empty array can be used.
   repeated SecurityRequirement security = 12;
   // Custom properties that start with "x-" such as "x-foo" used to describe
-  // extra functionality that is not covered by the standard OpenAPI Specification.
-  // See: https://swagger.io/docs/specification/2-0/swagger-extensions/
+  // extra functionality that is not covered by the standard OpenAPI
+  // Specification. See:
+  // https://swagger.io/docs/specification/2-0/swagger-extensions/
   map<string, google.protobuf.Value> extensions = 13;
   // Custom parameters such as HTTP request headers.
   // See: https://swagger.io/docs/specification/2-0/describing-parameters/
@@ -181,14 +188,16 @@ message Operation {
   Parameters parameters = 14;
 }
 
-// `Parameters` is a representation of OpenAPI v2 specification's parameters object.
-// Note: This technically breaks compatibility with the OpenAPI 2 definition structure as we only
-// allow header parameters to be set here since we do not want users specifying custom non-header
-// parameters beyond those inferred from the Protobuf schema.
-// See: https://swagger.io/specification/v2/#parameter-object
+// `Parameters` is a representation of OpenAPI v2 specification's parameters
+// object. Note: This technically breaks compatibility with the OpenAPI 2
+// definition structure as we only allow header parameters to be set here since
+// we do not want users specifying custom non-header parameters beyond those
+// inferred from the Protobuf schema. See:
+// https://swagger.io/specification/v2/#parameter-object
 message Parameters {
   // `Headers` is one or more HTTP header parameter.
-  // See: https://swagger.io/docs/specification/2-0/describing-parameters/#header-parameters
+  // See:
+  // https://swagger.io/docs/specification/2-0/describing-parameters/#header-parameters
   repeated HeaderParameter headers = 1;
 }
 
@@ -209,8 +218,9 @@ message HeaderParameter {
   string name = 1;
   // `Description` is a short description of the header.
   string description = 2;
-  // `Type` is the type of the object. The value MUST be one of "string", "number", "integer", or "boolean". The "array" type is not supported.
-  // See: https://swagger.io/specification/v2/#parameterType.
+  // `Type` is the type of the object. The value MUST be one of "string",
+  // "number", "integer", or "boolean". The "array" type is not supported. See:
+  // https://swagger.io/specification/v2/#parameterType.
   Type type = 3;
   // `Format` The extending format for the previously mentioned type.
   string format = 4;
@@ -218,28 +228,34 @@ message HeaderParameter {
   bool required = 5;
   // field 6 is reserved for 'items', but in OpenAPI-specific way.
   reserved 6;
-  // field 7 is reserved `Collection Format`. Determines the format of the array if type array is used.
+  // field 7 is reserved `Collection Format`. Determines the format of the array
+  // if type array is used.
   reserved 7;
 }
 
 // `Header` is a representation of OpenAPI v2 specification's Header object.
 //
-// See: https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#headerObject
+// See:
+// https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#headerObject
 //
 message Header {
   // `Description` is a short description of the header.
   string description = 1;
-  // The type of the object. The value MUST be one of "string", "number", "integer", or "boolean". The "array" type is not supported.
+  // The type of the object. The value MUST be one of "string", "number",
+  // "integer", or "boolean". The "array" type is not supported.
   string type = 2;
   // `Format` The extending format for the previously mentioned type.
   string format = 3;
   // field 4 is reserved for 'items', but in OpenAPI-specific way.
   reserved 4;
-  // field 5 is reserved `Collection Format` Determines the format of the array if type array is used.
+  // field 5 is reserved `Collection Format` Determines the format of the array
+  // if type array is used.
   reserved 5;
-  // `Default` Declares the value of the header that the server will use if none is provided.
-  // See: https://tools.ietf.org/html/draft-fge-json-schema-validation-00#section-6.2.
-  // Unlike JSON Schema this value MUST conform to the defined type for the header.
+  // `Default` Declares the value of the header that the server will use if none
+  // is provided. See:
+  // https://tools.ietf.org/html/draft-fge-json-schema-validation-00#section-6.2.
+  // Unlike JSON Schema this value MUST conform to the defined type for the
+  // header.
   string default = 6;
   // field 7 is reserved for 'maximum'.
   reserved 7;
@@ -253,7 +269,8 @@ message Header {
   reserved 11;
   // field 12 is reserved for 'minLength'.
   reserved 12;
-  // 'Pattern' See https://tools.ietf.org/html/draft-fge-json-schema-validation-00#section-5.2.3.
+  // 'Pattern' See
+  // https://tools.ietf.org/html/draft-fge-json-schema-validation-00#section-5.2.3.
   string pattern = 13;
   // field 14 is reserved for 'maxItems'.
   reserved 14;
@@ -269,7 +286,8 @@ message Header {
 
 // `Response` is a representation of OpenAPI v2 specification's Response object.
 //
-// See: https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#responseObject
+// See:
+// https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#responseObject
 //
 message Response {
   // `Description` is a short description of the response.
@@ -279,21 +297,25 @@ message Response {
   // If `Schema` is not provided, it means there is no content to the response.
   Schema schema = 2;
   // `Headers` A list of headers that are sent with the response.
-  // `Header` name is expected to be a string in the canonical format of the MIME header key
-  // See: https://golang.org/pkg/net/textproto/#CanonicalMIMEHeaderKey
+  // `Header` name is expected to be a string in the canonical format of the
+  // MIME header key See:
+  // https://golang.org/pkg/net/textproto/#CanonicalMIMEHeaderKey
   map<string, Header> headers = 3;
   // `Examples` gives per-mimetype response examples.
-  // See: https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#example-object
+  // See:
+  // https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#example-object
   map<string, string> examples = 4;
   // Custom properties that start with "x-" such as "x-foo" used to describe
-  // extra functionality that is not covered by the standard OpenAPI Specification.
-  // See: https://swagger.io/docs/specification/2-0/swagger-extensions/
+  // extra functionality that is not covered by the standard OpenAPI
+  // Specification. See:
+  // https://swagger.io/docs/specification/2-0/swagger-extensions/
   map<string, google.protobuf.Value> extensions = 5;
 }
 
 // `Info` is a representation of OpenAPI v2 specification's Info object.
 //
-// See: https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#infoObject
+// See:
+// https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#infoObject
 //
 // Example:
 //
@@ -309,7 +331,8 @@ message Response {
 //      };
 //      license: {
 //        name: "BSD 3-Clause License";
-//        url: "https://github.com/grpc-ecosystem/grpc-gateway/blob/main/LICENSE.txt";
+//        url:
+//        "https://github.com/grpc-ecosystem/grpc-gateway/blob/main/LICENSE.txt";
 //      };
 //    };
 //    ...
@@ -331,14 +354,16 @@ message Info {
   // with the specification version).
   string version = 6;
   // Custom properties that start with "x-" such as "x-foo" used to describe
-  // extra functionality that is not covered by the standard OpenAPI Specification.
-  // See: https://swagger.io/docs/specification/2-0/swagger-extensions/
+  // extra functionality that is not covered by the standard OpenAPI
+  // Specification. See:
+  // https://swagger.io/docs/specification/2-0/swagger-extensions/
   map<string, google.protobuf.Value> extensions = 7;
 }
 
 // `Contact` is a representation of OpenAPI v2 specification's Contact object.
 //
-// See: https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#contactObject
+// See:
+// https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#contactObject
 //
 // Example:
 //
@@ -368,7 +393,8 @@ message Contact {
 
 // `License` is a representation of OpenAPI v2 specification's License object.
 //
-// See: https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#licenseObject
+// See:
+// https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#licenseObject
 //
 // Example:
 //
@@ -377,7 +403,8 @@ message Contact {
 //      ...
 //      license: {
 //        name: "BSD 3-Clause License";
-//        url: "https://github.com/grpc-ecosystem/grpc-gateway/blob/main/LICENSE.txt";
+//        url:
+//        "https://github.com/grpc-ecosystem/grpc-gateway/blob/main/LICENSE.txt";
 //      };
 //      ...
 //    };
@@ -394,7 +421,8 @@ message License {
 // `ExternalDocumentation` is a representation of OpenAPI v2 specification's
 // ExternalDocumentation object.
 //
-// See: https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#externalDocumentationObject
+// See:
+// https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#externalDocumentationObject
 //
 // Example:
 //
@@ -418,7 +446,8 @@ message ExternalDocumentation {
 
 // `Schema` is a representation of OpenAPI v2 specification's Schema object.
 //
-// See: https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#schemaObject
+// See:
+// https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#schemaObject
 //
 message Schema {
   JSONSchema json_schema = 1;
@@ -438,8 +467,8 @@ message Schema {
   reserved 4;
   // Additional external documentation for this schema.
   ExternalDocumentation external_docs = 5;
-  // A free-form property to include an example of an instance for this schema in JSON.
-  // This is copied verbatim to the output.
+  // A free-form property to include an example of an instance for this schema
+  // in JSON. This is copied verbatim to the output.
   string example = 6;
 }
 
@@ -448,7 +477,8 @@ message Schema {
 //
 // This includes changes made by OpenAPI v2.
 //
-// See: https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#schemaObject
+// See:
+// https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#schemaObject
 //
 // See also: https://cswr.github.io/JsonSchema/spec/basic_types/,
 // https://github.com/json-schema-org/json-schema-spec/blob/master/schema.json
@@ -491,9 +521,11 @@ message JSONSchema {
   string description = 6;
   string default = 7;
   bool read_only = 8;
-  // A free-form property to include a JSON example of this field. This is copied
-  // verbatim to the output swagger.json. Quotes must be escaped.
-  // This property is the same for 2.0 and 3.0.0 https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/3.0.0.md#schemaObject  https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#schemaObject
+  // A free-form property to include a JSON example of this field. This is
+  // copied verbatim to the output swagger.json. Quotes must be escaped. This
+  // property is the same for 2.0 and 3.0.0
+  // https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/3.0.0.md#schemaObject
+  // https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#schemaObject
   string example = 9;
   double multiple_of = 10;
   // Maximum represents an inclusive upper limit for a numeric instance. The
@@ -559,14 +591,16 @@ message JSONSchema {
   // OpenAPI v2:
   // anyOf, oneOf, not
   reserved 43 to 45;
-  // Items in `enum` must be unique https://tools.ietf.org/html/draft-fge-json-schema-validation-00#section-5.5.1
+  // Items in `enum` must be unique
+  // https://tools.ietf.org/html/draft-fge-json-schema-validation-00#section-5.5.1
   repeated string enum = 46;
 
   // Additional field level properties used when generating the OpenAPI v2 file.
   FieldConfiguration field_configuration = 1001;
 
-  // 'FieldConfiguration' provides additional field level properties used when generating the OpenAPI v2 file.
-  // These properties are not defined by OpenAPIv2, but they are used to control the generation.
+  // 'FieldConfiguration' provides additional field level properties used when
+  // generating the OpenAPI v2 file. These properties are not defined by
+  // OpenAPIv2, but they are used to control the generation.
   message FieldConfiguration {
     // Alternative parameter name when used as path parameter. If set, this will
     // be used as the complete parameter name when this field is used as a path
@@ -575,14 +609,16 @@ message JSONSchema {
     string path_param_name = 47;
   }
   // Custom properties that start with "x-" such as "x-foo" used to describe
-  // extra functionality that is not covered by the standard OpenAPI Specification.
-  // See: https://swagger.io/docs/specification/2-0/swagger-extensions/
+  // extra functionality that is not covered by the standard OpenAPI
+  // Specification. See:
+  // https://swagger.io/docs/specification/2-0/swagger-extensions/
   map<string, google.protobuf.Value> extensions = 48;
 }
 
 // `Tag` is a representation of OpenAPI v2 specification's Tag object.
 //
-// See: https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#tagObject
+// See:
+// https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#tagObject
 //
 message Tag {
   // The name of the tag. Use it to allow override of the name of a
@@ -595,15 +631,17 @@ message Tag {
   // Additional external documentation for this tag.
   ExternalDocumentation external_docs = 3;
   // Custom properties that start with "x-" such as "x-foo" used to describe
-  // extra functionality that is not covered by the standard OpenAPI Specification.
-  // See: https://swagger.io/docs/specification/2-0/swagger-extensions/
+  // extra functionality that is not covered by the standard OpenAPI
+  // Specification. See:
+  // https://swagger.io/docs/specification/2-0/swagger-extensions/
   map<string, google.protobuf.Value> extensions = 4;
 }
 
 // `SecurityDefinitions` is a representation of OpenAPI v2 specification's
 // Security Definitions object.
 //
-// See: https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#securityDefinitionsObject
+// See:
+// https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#securityDefinitionsObject
 //
 // A declaration of the security schemes available to be used in the
 // specification. This does not enforce the security schemes on the operations
@@ -617,7 +655,8 @@ message SecurityDefinitions {
 // `SecurityScheme` is a representation of OpenAPI v2 specification's
 // Security Scheme object.
 //
-// See: https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#securitySchemeObject
+// See:
+// https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#securitySchemeObject
 //
 // Allows the definition of a security scheme that can be used by the
 // operations. Supported schemes are basic authentication, an API key (either as
@@ -678,15 +717,17 @@ message SecurityScheme {
   // Valid for oauth2.
   Scopes scopes = 8;
   // Custom properties that start with "x-" such as "x-foo" used to describe
-  // extra functionality that is not covered by the standard OpenAPI Specification.
-  // See: https://swagger.io/docs/specification/2-0/swagger-extensions/
+  // extra functionality that is not covered by the standard OpenAPI
+  // Specification. See:
+  // https://swagger.io/docs/specification/2-0/swagger-extensions/
   map<string, google.protobuf.Value> extensions = 9;
 }
 
 // `SecurityRequirement` is a representation of OpenAPI v2 specification's
 // Security Requirement object.
 //
-// See: https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#securityRequirementObject
+// See:
+// https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#securityRequirementObject
 //
 // Lists the required security schemes to execute this operation. The object can
 // have multiple security schemes declared in it which are all required (that
@@ -698,9 +739,7 @@ message SecurityRequirement {
   // If the security scheme is of type "oauth2", then the value is a list of
   // scope names required for the execution. For other security scheme types,
   // the array MUST be empty.
-  message SecurityRequirementValue {
-    repeated string scope = 1;
-  }
+  message SecurityRequirementValue { repeated string scope = 1; }
   // Each name must correspond to a security scheme which is declared in
   // the Security Definitions. If the security scheme is of type "oauth2",
   // then the value is a list of scope names required for the execution.
@@ -710,7 +749,8 @@ message SecurityRequirement {
 
 // `Scopes` is a representation of OpenAPI v2 specification's Scopes object.
 //
-// See: https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#scopesObject
+// See:
+// https://github.com/OAI/OpenAPI-Specification/blob/3.0.0/versions/2.0.md#scopesObject
 //
 // Lists the available scopes for an OAuth2 security scheme.
 message Scopes {
