@@ -28,6 +28,13 @@ extern "C" svk_status is_license_valid(void *) {
   return SVK_STATUS_SUCCESS;
 }
 
+extern "C" svk_status configure_device_if_any(svk_device_ctx *device_handles,
+                                              uint64_t length) {
+  std::cout << "sample feature configure_device called" << std::endl;
+
+  return SVK_STATUS_SUCCESS;
+}
+
 // Assuming that input and output buffers contain strings
 extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
                                    svk_output *output) {

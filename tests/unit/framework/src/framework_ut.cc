@@ -47,7 +47,7 @@ boost::property_tree::ptree ConfigTest::logger_conf;
 TEST_F(ConfigTest, MissingLoggerConf) {
   core_conf.get_child("core").erase("logger");
   boost::property_tree::write_json("bad_logger_conf.json", core_conf);
-  svk_storage_ctx ctx;
+  svk_device_ctx ctx;
 
   EXPECT_EQ(SVK_STATUS_SUCCESS,
             initialize_svk("bad_logger_conf.json", (void *)&ctx));
@@ -62,7 +62,7 @@ TEST_F(ConfigTest, InvalidSinkType) {
   core_conf.erase("core.logger");
   core_conf.put_child("core.logger", logger_conf);
   boost::property_tree::write_json("invalid_sink_type.json", core_conf);
-  svk_storage_ctx ctx;
+  svk_device_ctx ctx;
 
   EXPECT_EQ(SVK_STATUS_FAIL,
             initialize_svk("invalid_sink_type.json", (void *)&ctx));
@@ -80,7 +80,7 @@ TEST(InitTest, InitSuccess) {
   // Using relative path to config in SVK core for testing
   std::string conf =
       current_working_dir + "/../../../../../config/test_config.json";
-  svk_storage_ctx ctx;
+  svk_device_ctx ctx;
 
   EXPECT_EQ(SVK_STATUS_SUCCESS, initialize_svk(conf.c_str(), (void *)&ctx));
   cleanup_svk(&ctx, (void *)conf.c_str());
@@ -104,7 +104,7 @@ TEST(InitTest, InitFail) {
   });
 
   EXPECT_CALL(dep_inj, get_sym(_, ::testing::A<const char *>()))
-      .Times(6)
+      .Times(7)
       .WillOnce(Return((void *)dummy_init));
 
   char buff[FILENAME_MAX];
@@ -113,7 +113,7 @@ TEST(InitTest, InitFail) {
 
   std::string conf =
       current_working_dir + "/../../../../../config/test_config.json";
-  svk_storage_ctx ctx;
+  svk_device_ctx ctx;
   FrameworkSvc test_fwsvc1;
 
   EXPECT_EQ(SVK_STATUS_BAD_FEATURE_LIB,
@@ -129,7 +129,7 @@ TEST(InitTest, FailMapEntry) {
   // Using relative path to config in SVK core for testing
   std::string conf =
       current_working_dir + "/../../../../../config/test_config.json";
-  svk_storage_ctx ctx;
+  svk_device_ctx ctx;
   initialize_svk(conf.c_str(), (void *)&ctx);
   EXPECT_EQ(SVK_STATUS_BAD_FEATURE_LIB,
             initialize_svk(conf.c_str(), (void *)&ctx));
@@ -139,21 +139,21 @@ TEST(InitTest, FailMapEntry) {
 // Test failed init by giving invalid config file path
 TEST(InitTest, InvalidConfigPath) {
   std::string conf = "invalid_conf_path";
-  svk_storage_ctx ctx;
+  svk_device_ctx ctx;
   EXPECT_EQ(SVK_STATUS_INVALID_CONFIG,
             initialize_svk(conf.c_str(), (void *)&ctx));
   cleanup_svk(&ctx, (void *)conf.c_str());
 }
 
 TEST(InitTest, DefaultConfig) {
-  svk_storage_ctx ctx;
+  svk_device_ctx ctx;
   std::string conf;
   EXPECT_EQ(SVK_STATUS_INVALID_CONFIG, initialize_svk(nullptr, (void *)&ctx));
   cleanup_svk(&ctx, (void *)conf.c_str());
 }
 
 TEST(InitTest, EnvConfig) {
-  svk_storage_ctx ctx;
+  svk_device_ctx ctx;
   setenv("SVK_FW_CONFIG", "../../../../../config/test_config.json", 1);
   EXPECT_EQ(SVK_STATUS_SUCCESS, initialize_svk(nullptr, (void *)&ctx));
   cleanup_svk(&ctx, (void *)&ctx);
@@ -309,6 +309,85 @@ TEST(InitTest, FailedDlsym) {
   EXPECT_EQ(SVK_STATUS_BAD_FEATURE_LIB, run6);
 }
 
+TEST(ConfigureDeviceTest, ConfigureDevSuccess) {
+  char buff[FILENAME_MAX];
+  getcwd(buff, FILENAME_MAX);
+  std::string current_working_dir(buff);
+
+  std::string conf =
+      current_working_dir + "/../../../../../config/test_config.json";
+  svk_device_ctx ctx;
+
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize_svk(conf.c_str(), (void *)&ctx));
+
+  svk_pass_thru_cmd pass_thru;
+  pass_thru.feat_id = POWER_THROTTLE;
+
+  svk_device_ctx device_handle;
+
+  EXPECT_EQ(SVK_STATUS_SUCCESS,
+            configure_svk_device_if_any(&pass_thru, &device_handle, 1));
+}
+
+TEST(ConfigureDeviceTest, ConfigureDevInvalidFeature) {
+  char buff[FILENAME_MAX];
+  getcwd(buff, FILENAME_MAX);
+  std::string current_working_dir(buff);
+
+  std::string conf =
+      current_working_dir + "/../../../../../config/test_config.json";
+  svk_device_ctx ctx;
+
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize_svk(conf.c_str(), (void *)&ctx));
+
+  svk_pass_thru_cmd pass_thru;
+  pass_thru.feat_id = ZERO_ETL;
+
+  svk_device_ctx device_handle;
+
+  EXPECT_EQ(SVK_STATUS_FAIL,
+            configure_svk_device_if_any(&pass_thru, &device_handle, 1));
+}
+
+TEST(ConfigureDeviceTest, ConfigureDevFunctionNotLoaded) {
+  MockFreeInterface dep_inj;
+
+  ON_CALL(dep_inj, open_dir).WillByDefault([&dep_inj](const char *dir_str) {
+    return dep_inj.featureInterface::open_dir(dir_str);
+  });
+  ON_CALL(dep_inj, open_lib).WillByDefault([&dep_inj](const char *ft_lib_str) {
+    return dep_inj.featureInterface::open_lib(ft_lib_str);
+  });
+  ON_CALL(dep_inj, get_sym)
+      .WillByDefault([&dep_inj](void *handle, const char *fn_name) {
+        return dep_inj.featureInterface::get_sym(handle, fn_name);
+      });
+
+  EXPECT_CALL(dep_inj, get_sym(_, _)).Times(::testing::AnyNumber());
+  EXPECT_CALL(dep_inj, get_sym(_, StrEq("configure_device_if_any")))
+      .Times(1)
+      .WillOnce(Return(nullptr))
+      .RetiresOnSaturation();
+
+  char buff[FILENAME_MAX];
+  getcwd(buff, FILENAME_MAX);
+  std::string current_working_dir(buff);
+
+  std::string conf =
+      current_working_dir + "/../../../../../config/test_config.json";
+
+  FrameworkSvc test_fwsvc;
+  EXPECT_EQ(
+      SVK_STATUS_SUCCESS,
+      test_fwsvc.FrameworkSvcInit(conf.c_str(), (void *)conf.c_str(), dep_inj));
+
+  svk_pass_thru_cmd pass_thru;
+  pass_thru.feat_id = POWER_THROTTLE;
+  svk_device_ctx ctx;
+  EXPECT_EQ(SVK_STATUS_FAIL,
+            test_fwsvc.FrameworkSvcConfigureDev(&pass_thru, &ctx, 1));
+}
+
 TEST(ExecTest, ExecuteSyncSuccess) {
   char buff[FILENAME_MAX];
   getcwd(buff, FILENAME_MAX);
@@ -317,7 +396,7 @@ TEST(ExecTest, ExecuteSyncSuccess) {
   // Using relative path to config in SVK core for testing
   std::string conf =
       current_working_dir + "/../../../../../config/test_config.json";
-  svk_storage_ctx ctx;
+  svk_device_ctx ctx;
   EXPECT_EQ(0, initialize_svk(conf.c_str(), (void *)&ctx));
 
   svk_pass_thru_cmd pass_thru;
@@ -346,7 +425,7 @@ TEST(ExecTest, ExecuteSyncFailureFromSampleFeature) {
   // Using relative path to config in SVK core for testing
   std::string conf =
       current_working_dir + "/../../../../../config/test_config.json";
-  svk_storage_ctx ctx;
+  svk_device_ctx ctx;
   EXPECT_EQ(0, initialize_svk(conf.c_str(), (void *)&ctx));
 
   svk_pass_thru_cmd pass_thru;
@@ -375,7 +454,7 @@ TEST(ExecTest, ExecuteSyncInvalidFeatureID) {
   // Using relative path to config in SVK core for testing
   std::string conf =
       current_working_dir + "/../../../../../config/test_config.json";
-  svk_storage_ctx ctx;
+  svk_device_ctx ctx;
   EXPECT_EQ(0, initialize_svk(conf.c_str(), (void *)&ctx));
 
   svk_pass_thru_cmd pass_thru;
@@ -425,7 +504,7 @@ TEST(ExecTest, ExecuteSyncFail) {
   pass_thru.feat_id = feature_id::POWER_THROTTLE;
   svk_input input;
   svk_output output;
-  svk_storage_ctx ctx;
+  svk_device_ctx ctx;
   EXPECT_EQ(SVK_STATUS_FAIL, test_fwsvc1.FrameworkSvcProcessCommand(
                                  &pass_thru, &input, &output, nullptr));
   cleanup_svk(&ctx, (void *)conf.c_str());
@@ -439,7 +518,7 @@ TEST(ExecTest, ExecuteAsyncSuccess) {
   // Using relative path to config in SVK core for testing
   std::string conf =
       current_working_dir + "/../../../../../config/test_config.json";
-  svk_storage_ctx ctx;
+  svk_device_ctx ctx;
   EXPECT_EQ(0, initialize_svk(conf.c_str(), (void *)&ctx));
 
   svk_pass_thru_cmd pass_thru;
@@ -506,7 +585,7 @@ TEST(CleanupTest, Cleanup) {
   // Using relative path to config in SVK core for testing
   std::string conf =
       current_working_dir + "/../../../../../config/test_config.json";
-  svk_storage_ctx ctx;
+  svk_device_ctx ctx;
   EXPECT_EQ(SVK_STATUS_SUCCESS, initialize_svk(conf.c_str(), (void *)&ctx));
 
   svk_feature_details details;

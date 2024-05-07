@@ -49,6 +49,8 @@ class FrameworkSvc {
   svk_status init_logger(boost::property_tree::ptree const &logger_info) const;
   svk_status set_config(void *init_param,
                         const featureInterface &dep_inj) const;
+  svk_status get_feature_details(feature_id feat_id,
+                                 svk_feature_details const **details) const;
   svk_status destroy_feat_map(void *param) const;
 
  public:
@@ -57,6 +59,9 @@ class FrameworkSvc {
   // cleanup from this class to ensure resources are managed properly
   svk_status FrameworkSvcInit(const char *svk_config, void *init_param,
                               const featureInterface &dep_inj);
+  svk_status FrameworkSvcConfigureDev(svk_pass_thru_cmd const *pass_thru,
+                                      svk_device_ctx *device_handles,
+                                      uint64_t length) const;
   svk_status FrameworkSvcProcessCommand(
       svk_pass_thru_cmd *pass_thru, svk_input *input, svk_output *output,
       svk_postprocess_fn *postprocess_fn) const;

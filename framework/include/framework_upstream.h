@@ -26,6 +26,20 @@ extern "C" {
 svk_status initialize_svk(const char *svk_conf_file, void *);
 
 /**
+ * @brief API for feature modules that need to access/initialize a device
+ * NOTE: This is an optional API, not all feature modules need to implement this
+ *
+ * @param pass_thru svk passthrough for command info communication from top
+ * level
+ * @param device_handles List of device contexts
+ * @param length Num of device contexts
+ * @return svk_status Refer to framework_struct.h for return codes
+ */
+svk_status configure_svk_device_if_any(svk_pass_thru_cmd *pass_thru,
+                                       svk_device_ctx *device_handles,
+                                       uint64_t length);
+
+/**
  * @brief Function to be called by App for feature execution.
  *
  * Application should call this API to execute a feature function. The
@@ -62,7 +76,7 @@ svk_status execute_svk_feature_async(svk_pass_thru_cmd *pass_thru,
  * @param ctx
  *
  */
-svk_status cleanup_svk(svk_storage_ctx *ctx, void *);
+svk_status cleanup_svk(svk_device_ctx *ctx, void *);
 
 #ifdef __cplusplus
 }  // extern "C"
