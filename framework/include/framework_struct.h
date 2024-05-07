@@ -100,12 +100,13 @@ typedef struct {
  *
  */
 typedef struct {
-  svk_status status;
-  char *db_name;
-  void *db_interface;
-  uint64_t pool_id;
-  uint64_t storage_dev_id;
-} svk_storage_ctx;
+  int32_t status;
+  uint8_t device_type;
+  char *device_name;
+  void *device_interface_if_any;
+  uint64_t parent_id_if_any;
+  uint64_t dev_id;
+} svk_device_ctx;
 
 /**
  * @struct svk_aio_construct
@@ -191,6 +192,11 @@ typedef struct {
  * @var svk_feature_details::is_license_valid
  *  Pointer to function that will check for valid license
  *
+ * @var svk_feature_details::configure_device_if_any
+ *  Function that feature modules that require device initialization can use
+ *  Note: this is an optional function, not every feature module will need to
+ * implement this
+ *
  * @var svk_feature_details::execute_sync
  *  Pointer to the execute function that each feature module should define
  *  so the framework can use it generically
@@ -212,14 +218,17 @@ typedef struct {
  * @param void            Pointer to give to feature module cleanup
  */
 typedef struct {
-  int (*initialize)(void *init_param);
-  int (*get_supported_feature_list)(feature_id *feature, char *feature_names);
-  int (*is_license_valid)(void *);
-  int (*execute_sync)(svk_pass_thru_cmd *pass_thru, svk_input *input,
-                      svk_output *output);
-  int (*execute_async)(svk_pass_thru_cmd *pass_thru,
-                       svk_postprocess_fn *postprocess_fn);
-  int (*clean_up)(void *);
+  svk_status (*initialize)(void *init_param);
+  svk_status (*get_supported_feature_list)(feature_id *feature,
+                                           char *feature_names);
+  svk_status (*is_license_valid)(void *);
+  svk_status (*configure_device_if_any)(svk_device_ctx *device_handles,
+                                        uint64_t length);
+  svk_status (*execute_sync)(svk_pass_thru_cmd *pass_thru, svk_input *input,
+                             svk_output *output);
+  svk_status (*execute_async)(svk_pass_thru_cmd *pass_thru,
+                              svk_postprocess_fn *postprocess_fn);
+  svk_status (*clean_up)(void *);
 } svk_feature_details;
 
 #ifdef __cplusplus

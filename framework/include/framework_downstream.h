@@ -27,14 +27,27 @@ svk_status initialize(void *init_param);
 /**
  * @brief Show features the feature module will support
  *
- * SVK command framework will call this function to get the feature names
- * this feature module will support
+ * Feature modules should set their feature_id to the *feat_id pointer if
+ * it isn't set already.
+ * SVK command framework will also call this function to get the feature names
+ * this feature module will support.
  *
  * @param feat_id Feature id code
  * @param feature_names
  * @return svk_status Refer to framework_struct.h for return codes
  */
 svk_status get_supported_feature_list(feature_id *feat_id, char *feature_names);
+
+/**
+ * @brief API for feature modules that need to access/initialize a device
+ * NOTE: This is an optional API, not all feature modules need to implement this
+ *
+ * @param device_handles List of device contexts
+ * @param length Num of device contexts
+ * @return svk_status Refer to framework_struct.h for return codes
+ */
+svk_status configure_device_if_any(svk_device_ctx *device_handles,
+                                   uint64_t length);
 
 /**
  * @brief Check if license is valid

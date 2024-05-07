@@ -25,19 +25,23 @@ class FrameworkSvc;
  * @cond INTERNAL
  */
 // Function pointer declaration for casting void* from dlsym
-using initialize = int (*)(void *init_param);
-using get_supported_feature_list = int (*)(feature_id *feature,
-                                           char *feature_names);
-using is_license_valid = int (*)(void *);
-using execute_sync = int (*)(svk_pass_thru_cmd *pass_thru, svk_input *input,
-                             svk_output *output);
-using execute_async = int (*)(svk_pass_thru_cmd *pass_thru,
-                              svk_postprocess_fn *postprocess_fn);
-using clean_up = int (*)(void *);
+using initialize = svk_status (*)(void *init_param);
+using get_supported_feature_list = svk_status (*)(feature_id *feature,
+                                                  char *feature_names);
+using is_license_valid = svk_status (*)(void *);
+using configure_device_if_any = svk_status (*)(svk_device_ctx *device_handles,
+                                               uint64_t length);
+using execute_sync = svk_status (*)(svk_pass_thru_cmd *pass_thru,
+                                    svk_input *input, svk_output *output);
+using execute_async = svk_status (*)(svk_pass_thru_cmd *pass_thru,
+                                     svk_postprocess_fn *postprocess_fn);
+using clean_up = svk_status (*)(void *);
 
 // Global variable to use for Framework service commands
 const std::unique_ptr<FrameworkSvc> g_fw_service =
     std::make_unique<FrameworkSvc>();
+
+/* Private FrameworkSvc helper methods */
 
 // Check if function pointer was set properly
 bool FrameworkSvc::report_sym_error(void *fn, const dirent *entry, void *handle,
@@ -170,6 +174,20 @@ svk_status FrameworkSvc::load_feature_modules(
       details = nullptr;
       continue;
     }
+    // This downstream API is optional, don't throw error if it's not there.
+    // Just adding info log for now.
+    details->configure_device_if_any =
+        (configure_device_if_any)feature_api.get_sym(handle,
+                                                     "configure_device_if_any");
+    if (details->configure_device_if_any == nullptr) {
+      snprintf(log_msg, LOG_MSG_MAX_SIZE,
+               "Optional downstream API configure_device_if_any was not found "
+               "for feature module %s. Ignore this message if it is not "
+               "required for this feature module.",
+               entry->d_name);
+      svk_logger(CORE_LOGGER_NAME, level_E::INFO, log_msg);
+    }
+
     snprintf(log_msg, LOG_MSG_MAX_SIZE,
              "Running initialize function for feature module %s",
              entry->d_name);
@@ -274,6 +292,22 @@ svk_status FrameworkSvc::set_config(void *init_param,
   return status;
 }
 
+svk_status FrameworkSvc::get_feature_details(
+    feature_id feat_id, svk_feature_details const **details) const {
+  char log_msg[LOG_MSG_MAX_SIZE];
+  try {
+    *details = feature_map.at(feat_id);
+  } catch (std::out_of_range &e) {
+    snprintf(log_msg, LOG_MSG_MAX_SIZE,
+             "Feature id %d is not loaded, unable to run commands for this "
+             "feature module. Exception: %s",
+             (uint32_t)feat_id, e.what());
+    svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
+    return SVK_STATUS_FAIL;
+  }
+  return SVK_STATUS_SUCCESS;
+}
+
 svk_status FrameworkSvc::destroy_feat_map(void *param) const {
   char log_msg[LOG_MSG_MAX_SIZE];
   for (const auto &[key, value] : feature_map) {
@@ -296,6 +330,10 @@ svk_status FrameworkSvc::destroy_feat_map(void *param) const {
   }
 }
 
+/* End of private helper methods */
+
+/* Public FrameworkSvc functions */
+
 // Injecting dlInterface dependency for testing, only to be used while loading
 // feature libs
 svk_status FrameworkSvc::FrameworkSvcInit(const char *svk_config,
@@ -305,40 +343,51 @@ svk_status FrameworkSvc::FrameworkSvcInit(const char *svk_config,
   return set_config(init_param, dep_inj);
 }
 
+svk_status FrameworkSvc::FrameworkSvcConfigureDev(
+    svk_pass_thru_cmd const *pass_thru, svk_device_ctx *device_handles,
+    uint64_t length) const {
+  char log_msg[LOG_MSG_MAX_SIZE];
+  svk_feature_details const *feature_details = nullptr;
+  if (svk_status res =
+          get_feature_details(pass_thru->feat_id, &feature_details);
+      res != SVK_STATUS_SUCCESS) {
+    return res;
+  }
+  if (!feature_details->configure_device_if_any) {
+    snprintf(log_msg, LOG_MSG_MAX_SIZE,
+             "configure_device_if_any function called but not is not set for "
+             "feature_id %d.",
+             (uint32_t)pass_thru->feat_id);
+    svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
+    return SVK_STATUS_FAIL;
+  }
+  return feature_details->configure_device_if_any(device_handles, length);
+}
+
 svk_status FrameworkSvc::FrameworkSvcProcessCommand(
     svk_pass_thru_cmd *pass_thru, svk_input *input, svk_output *output,
     svk_postprocess_fn *postprocess_fn) const {
   svk_status exec_res = SVK_STATUS_FAIL;
   char log_msg[LOG_MSG_MAX_SIZE];
-  feature_id curr_feat = pass_thru->feat_id;
-  svk_feature_details const *feature_details;
-  try {
-    feature_details = feature_map.at(curr_feat);
-  } catch (std::out_of_range &e) {
-    snprintf(log_msg, LOG_MSG_MAX_SIZE,
-             "Feature id %d is not loaded, unable to run execute for this "
-             "feature module. Exception: %s",
-             (uint32_t)curr_feat, e.what());
-    svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
-    return exec_res;
-  }
+  svk_feature_details const *feature_details = nullptr;
+  exec_res = get_feature_details(pass_thru->feat_id, &feature_details);
+  if (exec_res != SVK_STATUS_SUCCESS) return exec_res;
+
   // Synchrounous execute
   if (postprocess_fn == nullptr) {
-    exec_res =
-        (svk_status)feature_details->execute_sync(pass_thru, input, output);
+    exec_res = feature_details->execute_sync(pass_thru, input, output);
     if (exec_res != SVK_STATUS_SUCCESS) {
       snprintf(log_msg, LOG_MSG_MAX_SIZE,
                "Synchronous execute failed for feature_id %d.",
-               (uint32_t)curr_feat);
+               (uint32_t)pass_thru->feat_id);
       svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
     }
   } else {  // Postprocess fn exists, this is async IO
-    exec_res =
-        (svk_status)feature_details->execute_async(pass_thru, postprocess_fn);
+    exec_res = feature_details->execute_async(pass_thru, postprocess_fn);
     if (exec_res != SVK_STATUS_SUCCESS) {
       snprintf(log_msg, LOG_MSG_MAX_SIZE,
                "Async execute call for feature_id %d returned an error.",
-               (uint32_t)curr_feat);
+               (uint32_t)pass_thru->feat_id);
       svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
     }
   }
@@ -384,6 +433,13 @@ extern "C" svk_status initialize_svk(const char *svk_conf_file,
   return status;
 }
 
+extern "C" svk_status configure_svk_device_if_any(
+    svk_pass_thru_cmd *pass_thru, svk_device_ctx *device_handles,
+    uint64_t length) {
+  return g_fw_service->FrameworkSvcConfigureDev(pass_thru, device_handles,
+                                                length);
+}
+
 extern "C" svk_status execute_svk_feature_sync(svk_pass_thru_cmd *pass_thru,
                                                svk_input *input,
                                                svk_output *output) {
@@ -401,7 +457,7 @@ extern "C" svk_status execute_svk_feature_async(
   return status;
 }
 
-extern "C" svk_status cleanup_svk(svk_storage_ctx *ctx, void *param) {
+extern "C" svk_status cleanup_svk(svk_device_ctx *ctx, void *param) {
   svk_status status = SVK_STATUS_SUCCESS;
   status = g_fw_service->FrameworkSvcCleanup(param);
   svk_logger(CORE_LOGGER_NAME, level_E::INFO, "SVK Cleanup finished.");
