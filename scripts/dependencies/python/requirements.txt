@@ -1,8 +1,10 @@
 # Python dependencies
-pytest-cov==4.1.0
-pytest-mock
-pytest
 flask
 flask_cors
 mysql-connector-python
+pytest
+pytest-cov==4.1.0
+pytest-mock
+requests
+responses
 simplejson
