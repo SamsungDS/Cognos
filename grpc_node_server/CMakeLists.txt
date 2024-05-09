@@ -34,7 +34,7 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 target_include_directories(${PROJECT_NAME} PUBLIC ${GRPC_PROTO_SRC})
 target_include_directories(${PROJECT_NAME} PUBLIC ${INC_DIR} ${UTILS_INC_DIR})
 
-target_link_libraries(${PROJECT_NAME} PUBLIC "${GRPC_LINK_LIBRARIES_FLAG} ${SVK_FW_LIBS} -lutf8_validity -Wl,--no-as-needed -lgrpc++_reflection -Wl,--as-needed -ldl -lsvklogger")
+target_link_libraries(${PROJECT_NAME} PUBLIC "${GRPC_LINK_LIBRARIES_FLAG} ${SVK_FW_LIBS} -lutf8_validity -Wl,--no-as-needed -lgrpc++_reflection -Wl,--as-needed -ldl -lsvklogger -lsvkframework")
 target_link_libraries(${PROJECT_NAME} PUBLIC ${SVK_FW_GRPC_CORE_LIB})
 
 if(BUILD_TESTING)
@@ -42,7 +42,7 @@ if(BUILD_TESTING)
     target_include_directories(svkgrpc PUBLIC ${GRPC_PROTO_SRC})
     target_include_directories(svkgrpc PUBLIC ${INC_DIR} ${UTILS_INC_DIR})
 
-    target_link_libraries(svkgrpc PUBLIC "${GRPC_LINK_LIBRARIES_FLAG} ${SVK_FW_LIBS} -lutf8_validity -Wl,--no-as-needed -lgrpc++_reflection -Wl,--as-needed -ldl -lsvklogger")
+    target_link_libraries(svkgrpc PUBLIC "${GRPC_LINK_LIBRARIES_FLAG} ${SVK_FW_LIBS} -lutf8_validity -Wl,--no-as-needed -lgrpc++_reflection -Wl,--as-needed -ldl -lsvklogger -lsvkframework")
     target_link_libraries(svkgrpc PUBLIC ${SVK_FW_GRPC_CORE_LIB})
     install(FILES ${GRPC_INC_FILES} DESTINATION ${SVKGRPCFW_INCLUDE_DEST})
 endif()

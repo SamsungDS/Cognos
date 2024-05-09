@@ -15,22 +15,9 @@ using ::testing::SetArgPointee;
 using ::testing::StartsWith;
 using ::testing::StrEq;
 
-#define FRAMEWORK_LIB_PATH "/usr/local/svk/core/lib64/libsvkframework.so";
 #define FEATURES_DIR "/usr/local/svk/core/tests/sample_feature/";
 
-// Mock free function interface
-class MockFreeInterface : public SystemLibraryInterface {
- public:
-  MOCK_METHOD(void *, get_sym, (void *handle, const char *fn_name),
-              (const, override));
-  MOCK_METHOD(void *, open_lib, (const char *ft_lib_str), (const, override));
-  MOCK_METHOD(int, close_lib, (void *handle), (const, override));
-  MOCK_METHOD(int, get_stat, (const char *file, struct stat *fstat),
-              (const, override));
-};
-
 int create_svk_mgmt_fw_conf_json(std::string conf_file,
-                                 std::string framework_lib_path,
                                  std::string fw_conf_file,
                                  std::string sink_type, int log_file_count,
                                  uint64_t log_file_size, std::string log_level,
@@ -39,7 +26,6 @@ int create_svk_mgmt_fw_conf_json(std::string conf_file,
   pt::ptree root;
   std::ofstream json_file(conf_file);
 
-  root.put("svk_mgmt_fw_node.framework.lib_path", framework_lib_path);
   root.put("svk_mgmt_fw_node.framework.conf_file", fw_conf_file);
   root.put("svk_mgmt_fw_node.cluster.id", "CL_ID_1");
   root.put("svk_mgmt_fw_node.controller.id", "localhost");
@@ -83,14 +69,13 @@ int create_svk_mgmt_fw_conf_json_without_mgmt_fw(
 }
 
 int create_svk_mgmt_fw_conf_json_without_logger(
-    std::string conf_file, std::string framework_lib_path,
-    std::string fw_conf_file, std::string sink_type, int log_file_count,
-    uint64_t log_file_size, std::string log_level, std::string features_dir) {
+    std::string conf_file, std::string fw_conf_file, std::string sink_type,
+    int log_file_count, uint64_t log_file_size, std::string log_level,
+    std::string features_dir) {
   namespace pt = boost::property_tree;
   pt::ptree root;
   std::ofstream json_file(conf_file);
 
-  root.put("svk_mgmt_fw_node.framework.lib_path", framework_lib_path);
   root.put("svk_mgmt_fw_node.framework.conf_file", fw_conf_file);
   root.put("svk_mgmt_fw_node.cluster.id", "CL_ID_1");
   root.put("svk_mgmt_fw_node.controller.id", "localhost");
@@ -110,32 +95,26 @@ int create_svk_mgmt_fw_conf_json_without_logger(
 }
 
 TEST(InitTest, InitSuccess) {
-  SystemLibraryInterface sl;
-  std::string framework_lib_path = FRAMEWORK_LIB_PATH;
   char *cw_dir = get_current_dir_name();
   std::string features_dir = FEATURES_DIR;
   std::string conf_file = std::string(cw_dir) + "/conf.json";
-  create_svk_mgmt_fw_conf_json(conf_file, framework_lib_path, conf_file,
-                               "rotating_file", 10, 1048576, "INFO",
-                               features_dir);
+  create_svk_mgmt_fw_conf_json(conf_file, conf_file, "rotating_file", 10,
+                               1048576, "INFO", features_dir);
 
-  Servicer *svcr(new Servicer(conf_file, sl));
+  Servicer *svcr(new Servicer(conf_file));
   auto server = Init(svcr);
   ASSERT_NE(server, nullptr);
   unlink(conf_file.c_str());
 }
 
 TEST(InitTest, InitSuccessWithInvalidFeatureDir) {
-  SystemLibraryInterface sl;
-  std::string framework_lib_path = FRAMEWORK_LIB_PATH;
   char *cw_dir = get_current_dir_name();
   std::string features_dir = (char *)"/tmp/abcd";
   std::string conf_file = std::string(cw_dir) + "/conf.json";
-  create_svk_mgmt_fw_conf_json(conf_file, framework_lib_path, conf_file,
-                               "rotating_file", 10, 1048576, "INFO",
-                               features_dir);
+  create_svk_mgmt_fw_conf_json(conf_file, conf_file, "rotating_file", 10,
+                               1048576, "INFO", features_dir);
 
-  Servicer *svcr(new Servicer(conf_file, sl));
+  Servicer *svcr(new Servicer(conf_file));
   auto server = Init(svcr);
   ASSERT_NE(server, nullptr);
   unlink(conf_file.c_str());
@@ -147,36 +126,30 @@ TEST(InitTest, InitSuccessWithNullServicerObject) {
 }
 
 TEST(InitTest, InitWithInvalidLogger) {
-  SystemLibraryInterface sl;
-  std::string framework_lib_path = FRAMEWORK_LIB_PATH;
   char *cw_dir = get_current_dir_name();
   std::string features_dir = FEATURES_DIR;
   std::string conf_file = std::string(cw_dir) + "/conf.json";
-  create_svk_mgmt_fw_conf_json(conf_file, framework_lib_path, conf_file,
-                               "console", 10, 1048576, "INFO", features_dir);
+  create_svk_mgmt_fw_conf_json(conf_file, conf_file, "console", 10, 1048576,
+                               "INFO", features_dir);
 
-  Servicer *svcr(new Servicer(conf_file, sl));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() == nullptr);
+  Servicer *svcr(new Servicer(conf_file));
+  EXPECT_TRUE(svcr->get_state() == false);
   unlink(conf_file.c_str());
 }
 
 TEST(InitTest, InitWithInvalidJSONConfFile) {
-  SystemLibraryInterface sl;
-  std::string framework_lib_path = "";
   char *cw_dir = get_current_dir_name();
   std::string features_dir = FEATURES_DIR;
   std::string conf_file = std::string(cw_dir) + "/conf.json";
   FILE *fp = fopen(conf_file.c_str(), "a+");
   fwrite(conf_file.c_str(), conf_file.length(), 1, fp);
   fclose(fp);
-  Servicer *svcr(new Servicer(conf_file, sl));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() == nullptr);
+  Servicer *svcr(new Servicer(conf_file));
+  EXPECT_TRUE(svcr->get_state() == false);
   unlink(conf_file.c_str());
 }
 
 TEST(InitTest, InitWithEmptyJSONConfFile) {
-  SystemLibraryInterface sl;
-  std::string framework_lib_path = "";
   char *cw_dir = get_current_dir_name();
   std::string features_dir = FEATURES_DIR;
   std::string content = "{}";
@@ -185,14 +158,12 @@ TEST(InitTest, InitWithEmptyJSONConfFile) {
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
   std::cout << "content written " << content << std::endl;
-  Servicer *svcr(new Servicer(conf_file, sl));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() == nullptr);
+  Servicer *svcr(new Servicer(conf_file));
+  EXPECT_TRUE(svcr->get_state() == false);
   unlink(conf_file.c_str());
 }
 
 TEST(InitTest, InitWithJSONConfFileWithoutFWKey) {
-  SystemLibraryInterface sl;
-  std::string framework_lib_path = "";
   char *cw_dir = get_current_dir_name();
   std::string features_dir = FEATURES_DIR;
   std::string content = "{\"svk_mgmt_fw_node\":{}}";
@@ -201,14 +172,12 @@ TEST(InitTest, InitWithJSONConfFileWithoutFWKey) {
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
   std::cout << "content written " << content << std::endl;
-  Servicer *svcr(new Servicer(conf_file, sl));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() == nullptr);
+  Servicer *svcr(new Servicer(conf_file));
+  EXPECT_TRUE(svcr->get_state() == false);
   unlink(conf_file.c_str());
 }
 
 TEST(InitTest, InitWithJSONConfFileWithEmtpyFWKey) {
-  SystemLibraryInterface sl;
-  std::string framework_lib_path = "";
   char *cw_dir = get_current_dir_name();
   std::string features_dir = FEATURES_DIR;
   std::string content = "{\"svk_mgmt_fw_node\":{\"framework\":{}}}";
@@ -217,63 +186,54 @@ TEST(InitTest, InitWithJSONConfFileWithEmtpyFWKey) {
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
   std::cout << "content written " << content << std::endl;
-  Servicer *svcr(new Servicer(conf_file, sl));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() == nullptr);
+  Servicer *svcr(new Servicer(conf_file));
+  EXPECT_TRUE(svcr->get_state() == false);
   unlink(conf_file.c_str());
 }
 
 TEST(InitTest, InitWithJSONConfFileWithoutFWConfKey) {
-  SystemLibraryInterface sl;
-  std::string framework_lib_path = FRAMEWORK_LIB_PATH;
   char *cw_dir = get_current_dir_name();
   std::string features_dir = FEATURES_DIR;
-  std::string content =
-      "{\"svk_mgmt_fw_node\":{\"framework\":{\"lib_path\":\"" +
-      framework_lib_path + "\"}}}";
+  std::string content = "{\"svk_mgmt_fw_node\":{\"framework\":{}}}";
   std::string conf_file = std::string(cw_dir) + "/conf.json";
   FILE *fp = fopen(conf_file.c_str(), "a+");
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
   std::cout << "content written " << content << std::endl;
-  Servicer *svcr(new Servicer(conf_file, sl));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() == nullptr);
+  Servicer *svcr(new Servicer(conf_file));
+  EXPECT_TRUE(svcr->get_state() == false);
   unlink(conf_file.c_str());
 }
 
 TEST(InitTest, InitWithJSONConfFileWithCompleteFWentries) {
-  SystemLibraryInterface sl;
-  std::string framework_lib_path = FRAMEWORK_LIB_PATH;
   char *cw_dir = get_current_dir_name();
   std::string features_dir = FEATURES_DIR;
   std::string conf_file = std::string(cw_dir) + "/conf.json";
   std::string content =
-      "{\"svk_mgmt_fw_node\":{\"framework\":{\"lib_path\":\"" +
-      framework_lib_path + "\", \"conf_file\":\"" + conf_file + "\"}}}";
+      "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
+      "\"}}}";
   FILE *fp = fopen(conf_file.c_str(), "a+");
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
   std::cout << "content written " << content << std::endl;
-  Servicer *svcr(new Servicer(conf_file, sl));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() != nullptr);
+  Servicer *svcr(new Servicer(conf_file));
+  EXPECT_TRUE(svcr->get_state() == true);
   unlink(conf_file.c_str());
 }
 
 TEST(InitTest, InitWithJSONConfFileWithoutClusterID) {
-  SystemLibraryInterface sl;
-  std::string framework_lib_path = FRAMEWORK_LIB_PATH;
   char *cw_dir = get_current_dir_name();
   std::string features_dir = FEATURES_DIR;
   std::string conf_file = std::string(cw_dir) + "/conf.json";
   std::string content =
-      "{\"svk_mgmt_fw_node\":{\"framework\":{\"lib_path\":\"" +
-      framework_lib_path + "\", \"conf_file\":\"" + conf_file +
+      "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
       "\"}, \"cluster\":{}}}";
   FILE *fp = fopen(conf_file.c_str(), "a+");
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
   std::cout << "content written " << content << std::endl;
-  Servicer *svcr(new Servicer(conf_file, sl));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() != nullptr);
+  Servicer *svcr(new Servicer(conf_file));
+  EXPECT_TRUE(svcr->get_state() == true);
   node_config config = svcr->get_svk_config();
   EXPECT_EQ(config.cluster_id, DEFAULT_CLUSTER_ID);
   EXPECT_EQ(config.controller_id, DEFAULT_CONTROLLER_ID);
@@ -290,21 +250,18 @@ TEST(InitTest, InitWithJSONConfFileWithoutClusterID) {
 }
 
 TEST(InitTest, InitWithJSONConfFileWithoutController) {
-  SystemLibraryInterface sl;
-  std::string framework_lib_path = FRAMEWORK_LIB_PATH;
   char *cw_dir = get_current_dir_name();
   std::string features_dir = FEATURES_DIR;
   std::string conf_file = std::string(cw_dir) + "/conf.json";
   std::string content =
-      "{\"svk_mgmt_fw_node\":{\"framework\":{\"lib_path\":\"" +
-      framework_lib_path + "\", \"conf_file\":\"" + conf_file +
+      "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
       "\"}, \"cluster\":{\"id\":\"CL_ID\"}}}";
   FILE *fp = fopen(conf_file.c_str(), "a+");
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
   std::cout << "content written " << content << std::endl;
-  Servicer *svcr(new Servicer(conf_file, sl));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() != nullptr);
+  Servicer *svcr(new Servicer(conf_file));
+  EXPECT_TRUE(svcr->get_state() == true);
   node_config config = svcr->get_svk_config();
   EXPECT_EQ(config.cluster_id, "CL_ID");
   EXPECT_EQ(config.controller_id, DEFAULT_CONTROLLER_ID);
@@ -320,21 +277,18 @@ TEST(InitTest, InitWithJSONConfFileWithoutController) {
 }
 
 TEST(InitTest, InitWithJSONConfFileWithEmptyController) {
-  SystemLibraryInterface sl;
-  std::string framework_lib_path = FRAMEWORK_LIB_PATH;
   char *cw_dir = get_current_dir_name();
   std::string features_dir = FEATURES_DIR;
   std::string conf_file = std::string(cw_dir) + "/conf.json";
   std::string content =
-      "{\"svk_mgmt_fw_node\":{\"framework\":{\"lib_path\":\"" +
-      framework_lib_path + "\", \"conf_file\":\"" + conf_file +
+      "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
       "\"}, \"cluster\":{\"id\":\"CL_ID\"}, \"controller\":{}}}";
   FILE *fp = fopen(conf_file.c_str(), "a+");
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
   std::cout << "content written " << content << std::endl;
-  Servicer *svcr(new Servicer(conf_file, sl));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() != nullptr);
+  Servicer *svcr(new Servicer(conf_file));
+  EXPECT_TRUE(svcr->get_state() == true);
   node_config config = svcr->get_svk_config();
   EXPECT_EQ(config.cluster_id, "CL_ID");
   EXPECT_EQ(config.controller_id, DEFAULT_CONTROLLER_ID);
@@ -351,22 +305,19 @@ TEST(InitTest, InitWithJSONConfFileWithEmptyController) {
 }
 
 TEST(InitTest, InitWithJSONConfFileWithMissingControllerPort) {
-  SystemLibraryInterface sl;
-  std::string framework_lib_path = FRAMEWORK_LIB_PATH;
   char *cw_dir = get_current_dir_name();
   std::string features_dir = FEATURES_DIR;
   std::string conf_file = std::string(cw_dir) + "/conf.json";
   std::string content =
-      "{\"svk_mgmt_fw_node\":{\"framework\":{\"lib_path\":\"" +
-      framework_lib_path + "\", \"conf_file\":\"" + conf_file +
+      "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
       "\"}, \"cluster\":{\"id\":\"CL_ID\"}, "
       "\"controller\":{\"id\":\"localhostx\"}}}";
   FILE *fp = fopen(conf_file.c_str(), "a+");
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
   std::cout << "content written " << content << std::endl;
-  Servicer *svcr(new Servicer(conf_file, sl));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() != nullptr);
+  Servicer *svcr(new Servicer(conf_file));
+  EXPECT_TRUE(svcr->get_state() == true);
   node_config config = svcr->get_svk_config();
   EXPECT_EQ(config.cluster_id, "CL_ID");
   EXPECT_EQ(config.controller_id, "localhostx");
@@ -383,22 +334,19 @@ TEST(InitTest, InitWithJSONConfFileWithMissingControllerPort) {
 }
 
 TEST(InitTest, InitWithJSONConfFileWithoutNode) {
-  SystemLibraryInterface sl;
-  std::string framework_lib_path = FRAMEWORK_LIB_PATH;
   char *cw_dir = get_current_dir_name();
   std::string features_dir = FEATURES_DIR;
   std::string conf_file = std::string(cw_dir) + "/conf.json";
   std::string content =
-      "{\"svk_mgmt_fw_node\":{\"framework\":{\"lib_path\":\"" +
-      framework_lib_path + "\", \"conf_file\":\"" + conf_file +
+      "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
       "\"}, \"cluster\":{\"id\":\"CL_ID\"}, "
       "\"controller\":{\"id\":\"localhost\", \"port\":9876}}}";
   FILE *fp = fopen(conf_file.c_str(), "a+");
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
   std::cout << "content written " << content << std::endl;
-  Servicer *svcr(new Servicer(conf_file, sl));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() != nullptr);
+  Servicer *svcr(new Servicer(conf_file));
+  EXPECT_TRUE(svcr->get_state() == true);
   node_config config = svcr->get_svk_config();
   EXPECT_EQ(config.cluster_id, "CL_ID");
   EXPECT_EQ(config.controller_id, "localhost");
@@ -414,22 +362,19 @@ TEST(InitTest, InitWithJSONConfFileWithoutNode) {
 }
 
 TEST(InitTest, InitWithJSONConfFileWithEmptyNode) {
-  SystemLibraryInterface sl;
-  std::string framework_lib_path = FRAMEWORK_LIB_PATH;
   char *cw_dir = get_current_dir_name();
   std::string features_dir = FEATURES_DIR;
   std::string conf_file = std::string(cw_dir) + "/conf.json";
   std::string content =
-      "{\"svk_mgmt_fw_node\":{\"framework\":{\"lib_path\":\"" +
-      framework_lib_path + "\", \"conf_file\":\"" + conf_file +
+      "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
       "\"}, \"cluster\":{\"id\":\"CL_ID\"}, "
       "\"controller\":{\"id\":\"localhostx\", \"port\":8765}, \"node\":{}}}";
   FILE *fp = fopen(conf_file.c_str(), "a+");
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
   std::cout << "content written " << content << std::endl;
-  Servicer *svcr(new Servicer(conf_file, sl));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() != nullptr);
+  Servicer *svcr(new Servicer(conf_file));
+  EXPECT_TRUE(svcr->get_state() == true);
   node_config config = svcr->get_svk_config();
   EXPECT_EQ(config.cluster_id, "CL_ID");
   EXPECT_EQ(config.controller_id, "localhostx");
@@ -445,14 +390,11 @@ TEST(InitTest, InitWithJSONConfFileWithEmptyNode) {
 }
 
 TEST(InitTest, InitWithJSONConfFileWithoutNodePort) {
-  SystemLibraryInterface sl;
-  std::string framework_lib_path = FRAMEWORK_LIB_PATH;
   char *cw_dir = get_current_dir_name();
   std::string features_dir = FEATURES_DIR;
   std::string conf_file = std::string(cw_dir) + "/conf.json";
   std::string content =
-      "{\"svk_mgmt_fw_node\":{\"framework\":{\"lib_path\":\"" +
-      framework_lib_path + "\", \"conf_file\":\"" + conf_file +
+      "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
       "\"}, \"cluster\":{\"id\":\"CL_ID\"}, "
       "\"controller\":{\"id\":\"localhost\", \"port\":9999}, "
       "\"node\":{\"id\":\"localhostx\"}}}";
@@ -460,8 +402,8 @@ TEST(InitTest, InitWithJSONConfFileWithoutNodePort) {
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
   std::cout << "content written " << content << std::endl;
-  Servicer *svcr(new Servicer(conf_file, sl));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() != nullptr);
+  Servicer *svcr(new Servicer(conf_file));
+  EXPECT_TRUE(svcr->get_state() == true);
   node_config config = svcr->get_svk_config();
   EXPECT_EQ(config.cluster_id, "CL_ID");
   EXPECT_EQ(config.controller_id, "localhost");
@@ -477,14 +419,11 @@ TEST(InitTest, InitWithJSONConfFileWithoutNodePort) {
 }
 
 TEST(InitTest, InitWithJSONConfFileWithNode) {
-  SystemLibraryInterface sl;
-  std::string framework_lib_path = FRAMEWORK_LIB_PATH;
   char *cw_dir = get_current_dir_name();
   std::string features_dir = FEATURES_DIR;
   std::string conf_file = std::string(cw_dir) + "/conf.json";
   std::string content =
-      "{\"svk_mgmt_fw_node\":{\"framework\":{\"lib_path\":\"" +
-      framework_lib_path + "\", \"conf_file\":\"" + conf_file +
+      "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
       "\"}, \"cluster\":{\"id\":\"CL_ID\"}, "
       "\"controller\":{\"id\":\"localhost\", \"port\":9999}, "
       "\"node\":{\"id\":\"localhosty\", \"port\":99998}}}";
@@ -492,8 +431,8 @@ TEST(InitTest, InitWithJSONConfFileWithNode) {
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
   std::cout << "content written " << content << std::endl;
-  Servicer *svcr(new Servicer(conf_file, sl));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() != nullptr);
+  Servicer *svcr(new Servicer(conf_file));
+  EXPECT_TRUE(svcr->get_state() == true);
   node_config config = svcr->get_svk_config();
   EXPECT_EQ(config.cluster_id, "CL_ID");
   EXPECT_EQ(config.controller_id, "localhost");
@@ -509,14 +448,11 @@ TEST(InitTest, InitWithJSONConfFileWithNode) {
 }
 
 TEST(InitTest, InitWithJSONConfFileWithEmptyLogger) {
-  SystemLibraryInterface sl;
-  std::string framework_lib_path = FRAMEWORK_LIB_PATH;
   char *cw_dir = get_current_dir_name();
   std::string features_dir = FEATURES_DIR;
   std::string conf_file = std::string(cw_dir) + "/conf.json";
   std::string content =
-      "{\"svk_mgmt_fw_node\":{\"framework\":{\"lib_path\":\"" +
-      framework_lib_path + "\", \"conf_file\":\"" + conf_file +
+      "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
       "\"}, \"cluster\":{\"id\":\"CL_ID\"}, "
       "\"controller\":{\"id\":\"localhost\", \"port\":9999}, "
       "\"node\":{\"id\":\"localhost\", \"port\":9998}, \"logger\":{}}}";
@@ -524,8 +460,8 @@ TEST(InitTest, InitWithJSONConfFileWithEmptyLogger) {
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
   std::cout << "content written " << content << std::endl;
-  Servicer *svcr(new Servicer(conf_file, sl));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() != nullptr);
+  Servicer *svcr(new Servicer(conf_file));
+  EXPECT_TRUE(svcr->get_state() == true);
   node_config config = svcr->get_svk_config();
   EXPECT_EQ(config.cluster_id, "CL_ID");
   EXPECT_EQ(config.controller_id, "localhost");
@@ -540,177 +476,56 @@ TEST(InitTest, InitWithJSONConfFileWithEmptyLogger) {
   unlink(conf_file.c_str());
 }
 
-TEST(InitTest, InitWithEmptyFwLibPath) {
-  SystemLibraryInterface sl;
-  std::string framework_lib_path = "";
-  char *cw_dir = get_current_dir_name();
-  std::string features_dir = FEATURES_DIR;
-  std::string conf_file = std::string(cw_dir) + "/conf.json";
-  create_svk_mgmt_fw_conf_json(conf_file, framework_lib_path, conf_file,
-                               "rotating_file", 10, 1048576, "INFO",
-                               features_dir);
-
-  Servicer *svcr(new Servicer(conf_file, sl));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() == nullptr);
-  unlink(conf_file.c_str());
-}
-
 TEST(InitTest, InitWithEmptyMgmtFWSectionConfFile) {
-  SystemLibraryInterface sl;
-  std::string framework_lib_path = FRAMEWORK_LIB_PATH;
   char *cw_dir = get_current_dir_name();
   std::string features_dir = FEATURES_DIR;
   std::string conf_file = std::string(cw_dir) + "/conf.json";
-  create_svk_mgmt_fw_conf_json(conf_file, framework_lib_path, "",
-                               "rotating_file", 10, 1048576, "INFO",
-                               features_dir);
+  create_svk_mgmt_fw_conf_json(conf_file, "", "rotating_file", 10, 1048576,
+                               "INFO", features_dir);
 
-  Servicer *svcr(new Servicer(conf_file, sl));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() == nullptr);
+  Servicer *svcr(new Servicer(conf_file));
+  EXPECT_TRUE(svcr->get_state() == false);
   unlink(conf_file.c_str());
 }
 
 TEST(InitTest, InitWithoutMgmtFWInJSONConfFile) {
-  SystemLibraryInterface sl;
   char *cw_dir = get_current_dir_name();
   std::string features_dir = FEATURES_DIR;
   std::string conf_file = std::string(cw_dir) + "/conf.json";
   create_svk_mgmt_fw_conf_json_without_mgmt_fw(conf_file, "rotating_file", 10,
                                                1048576, "INFO", features_dir);
 
-  Servicer *svcr(new Servicer(conf_file, sl));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() == nullptr);
+  Servicer *svcr(new Servicer(conf_file));
+  EXPECT_TRUE(svcr->get_state() == false);
   unlink(conf_file.c_str());
 }
 
 TEST(InitTest, InitWithoutMgmtLoggerInJSONConfFile) {
-  SystemLibraryInterface sl;
-  std::string framework_lib_path = FRAMEWORK_LIB_PATH;
   char *cw_dir = get_current_dir_name();
   std::string features_dir = FEATURES_DIR;
   std::string conf_file = std::string(cw_dir) + "/conf.json";
-  create_svk_mgmt_fw_conf_json_without_logger(conf_file, framework_lib_path,
-                                              conf_file, "rotating_file", 10,
-                                              1048576, "INFO", features_dir);
-
-  Servicer *svcr(new Servicer(conf_file, sl));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() != nullptr);
+  create_svk_mgmt_fw_conf_json_without_logger(
+      conf_file, conf_file, "rotating_file", 10, 1048576, "INFO", features_dir);
+  Servicer *svcr(new Servicer(conf_file));
+  EXPECT_TRUE(svcr->get_state() == true);
   unlink(conf_file.c_str());
 }
 
 // Test if stat fails
 TEST(InitTest, FailedStatCall) {
-  MockFreeInterface dep_inj;
-  ON_CALL(dep_inj, get_stat)
-      .WillByDefault([&dep_inj](const char *filename, struct stat *fstat) {
-        return dep_inj.SystemLibraryInterface::get_stat(filename, fstat);
-      });
-  EXPECT_CALL(dep_inj, get_stat(_, _)).Times(1).WillOnce(Return(-1));
-  std::string framework_lib_path = FRAMEWORK_LIB_PATH;
-  char *cw_dir = get_current_dir_name();
   std::string features_dir = FEATURES_DIR;
-  std::string conf_file = std::string(cw_dir) + "/conf.json";
-  create_svk_mgmt_fw_conf_json(conf_file, framework_lib_path, conf_file,
-                               "rotating_file", 10, 1048576, "INFO",
-                               features_dir);
-
-  Servicer *svcr(new Servicer(conf_file, dep_inj));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() == nullptr);
-  unlink(conf_file.c_str());
-}
-
-// Test if dlopen (open_lib) fails
-TEST(InitTest, FailedOpenLibCall) {
-  MockFreeInterface dep_inj;
-  ON_CALL(dep_inj, get_stat)
-      .WillByDefault([&dep_inj](const char *filename, struct stat *fstat) {
-        return dep_inj.SystemLibraryInterface::get_stat(filename, fstat);
-      });
-
-  EXPECT_CALL(dep_inj, open_lib(_)).Times(1).WillOnce(Return(nullptr));
-  std::string framework_lib_path = FRAMEWORK_LIB_PATH;
-  char *cw_dir = get_current_dir_name();
-  std::string features_dir = FEATURES_DIR;
-  std::string conf_file = std::string(cw_dir) + "/conf.json";
-  create_svk_mgmt_fw_conf_json(conf_file, framework_lib_path, conf_file,
-                               "rotating_file", 10, 1048576, "INFO",
-                               features_dir);
-
-  Servicer *svcr(new Servicer(conf_file, dep_inj));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() == nullptr);
-  unlink(conf_file.c_str());
-}
-
-// Test if dlsym (get_sym) fails
-TEST(InitTest, FailedDlSymInitializeSVKCall) {
-  MockFreeInterface dep_inj;
-  ON_CALL(dep_inj, get_stat)
-      .WillByDefault([&dep_inj](const char *filename, struct stat *fstat) {
-        return dep_inj.SystemLibraryInterface::get_stat(filename, fstat);
-      });
-
-  ON_CALL(dep_inj, open_lib).WillByDefault([&dep_inj](const char *filename) {
-    return dep_inj.SystemLibraryInterface::open_lib(filename);
-  });
-  ON_CALL(dep_inj, close_lib).WillByDefault([&dep_inj](void *handle) {
-    return dep_inj.SystemLibraryInterface::close_lib(handle);
-  });
-  EXPECT_CALL(dep_inj, get_sym(_, _)).Times(1).WillOnce(Return(nullptr));
-  std::string framework_lib_path = FRAMEWORK_LIB_PATH;
-  char *cw_dir = get_current_dir_name();
-  std::string features_dir = FEATURES_DIR;
-  std::string conf_file = std::string(cw_dir) + "/conf.json";
-  create_svk_mgmt_fw_conf_json(conf_file, framework_lib_path, conf_file,
-                               "rotating_file", 10, 1048576, "INFO",
-                               features_dir);
-
-  Servicer *svcr(new Servicer(conf_file, dep_inj));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() == nullptr);
-  unlink(conf_file.c_str());
-}
-
-// Test if dlsym (get_sym) fails
-TEST(InitTest, FailedDlSymSVKExecuteSyncCall) {
-  MockFreeInterface dep_inj;
-  ON_CALL(dep_inj, get_stat)
-      .WillByDefault([&dep_inj](const char *filename, struct stat *fstat) {
-        return dep_inj.SystemLibraryInterface::get_stat(filename, fstat);
-      });
-
-  ON_CALL(dep_inj, open_lib).WillByDefault([&dep_inj](const char *filename) {
-    return dep_inj.SystemLibraryInterface::open_lib(filename);
-  });
-  ON_CALL(dep_inj, get_sym)
-      .WillByDefault([&dep_inj](void *handle, const char *fn_name) {
-        return dep_inj.SystemLibraryInterface::get_sym(handle, fn_name);
-      });
-
-  EXPECT_CALL(dep_inj, get_sym(_, _)).Times(::testing::AnyNumber());
-
-  EXPECT_CALL(dep_inj, get_sym(_, StrEq("execute_svk_feature_sync")))
-      .Times(1)
-      .WillOnce(Return(nullptr));
-  std::string framework_lib_path = FRAMEWORK_LIB_PATH;
-  char *cw_dir = get_current_dir_name();
-  std::string features_dir = FEATURES_DIR;
-  std::string conf_file = std::string(cw_dir) + "/conf.json";
-  create_svk_mgmt_fw_conf_json(conf_file, framework_lib_path, conf_file,
-                               "rotating_file", 10, 1048576, "INFO",
-                               features_dir);
-
-  Servicer *svcr(new Servicer(conf_file, dep_inj));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() == nullptr);
+  std::string conf_file = "invalid_dir/conf.json";
+  Servicer *svcr(new Servicer(conf_file));
+  EXPECT_TRUE(svcr->get_state() == false);
   unlink(conf_file.c_str());
 }
 
 class FakeClient {
  public:
   explicit FakeClient(svk::CommandFwk::StubInterface *stub) : stub_(stub) {}
-
   Status ProcessNodeCommand(const svk::CommandRequest req,
                             svk::CommandResponse *resp) {
     ClientContext ctxt;
-
     Status status = stub_->ProcessNodeCommand(&ctxt, req, resp);
     if (!status.ok()) {
       std::cout << "ProcessCommand rpc failed: " << status.error_message()
@@ -729,16 +544,13 @@ class MockTest : public ::testing::Test {
   MockTest() {}
 
   void SetUp() override {
-    SystemLibraryInterface sl;
-    std::string framework_lib_path = FRAMEWORK_LIB_PATH;
     char *cw_dir = get_current_dir_name();
     std::string features_dir = FEATURES_DIR;
 
     std::string conf_file = std::string(cw_dir) + "/conf.json";
-    create_svk_mgmt_fw_conf_json(conf_file, framework_lib_path, conf_file,
-                                 "rotating_file", 10, 1048576, "INFO",
-                                 features_dir);
-    Servicer *svcr(new Servicer(conf_file, sl));
+    create_svk_mgmt_fw_conf_json(conf_file, conf_file, "rotating_file", 10,
+                                 1048576, "INFO", features_dir);
+    Servicer *svcr(new Servicer(conf_file));
     server_ = Init(svcr);
 
     ASSERT_NE(server_, nullptr);
@@ -786,16 +598,13 @@ class GRPCServer : public ::testing::Test {
   GRPCServer() {}
 
   void SetUp() override {
-    SystemLibraryInterface sl;
-    std::string framework_lib_path = FRAMEWORK_LIB_PATH;
     char *cw_dir = get_current_dir_name();
     std::string features_dir = FEATURES_DIR;
 
     std::string conf_file = std::string(cw_dir) + "/conf.json";
-    create_svk_mgmt_fw_conf_json(conf_file, framework_lib_path, conf_file,
-                                 "rotating_file", 10, 1048576, "INFO",
-                                 features_dir);
-    Servicer *svcr(new Servicer(conf_file, sl));
+    create_svk_mgmt_fw_conf_json(conf_file, conf_file, "rotating_file", 10,
+                                 1048576, "INFO", features_dir);
+    Servicer *svcr(new Servicer(conf_file));
     server_ = Init(svcr);
 
     ASSERT_NE(server_, nullptr);
@@ -858,56 +667,4 @@ TEST_F(GRPCServer, ProcessSampleCommandWithFailure) {
   EXPECT_THAT(status.error_message(), StartsWith("Failed to run command"));
 
   std::cout << "OUTPUT UT: " << status.error_message() << std::endl;
-}
-
-// Test if dlsym (get_sym) fails
-TEST(InitTest, ProcessCommandWithFailedDlSymSVKExecuteSyncCall) {
-  MockFreeInterface dep_inj;
-  ON_CALL(dep_inj, get_stat)
-      .WillByDefault([&dep_inj](const char *filename, struct stat *fstat) {
-        return dep_inj.SystemLibraryInterface::get_stat(filename, fstat);
-      });
-
-  ON_CALL(dep_inj, open_lib).WillByDefault([&dep_inj](const char *filename) {
-    return dep_inj.SystemLibraryInterface::open_lib(filename);
-  });
-  ON_CALL(dep_inj, get_sym)
-      .WillByDefault([&dep_inj](void *handle, const char *fn_name) {
-        return dep_inj.SystemLibraryInterface::get_sym(handle, fn_name);
-      });
-
-  EXPECT_CALL(dep_inj, get_sym(_, _)).Times(::testing::AnyNumber());
-
-  EXPECT_CALL(dep_inj, get_sym(_, StrEq("execute_svk_feature_sync")))
-      .Times(1)
-      .WillOnce(Return(nullptr));
-  std::string framework_lib_path = FRAMEWORK_LIB_PATH;
-  char *cw_dir = get_current_dir_name();
-  std::string features_dir = FEATURES_DIR;
-  std::string conf_file = std::string(cw_dir) + "/conf.json";
-  create_svk_mgmt_fw_conf_json(conf_file, framework_lib_path, conf_file,
-                               "rotating_file", 10, 1048576, "INFO",
-                               features_dir);
-
-  Servicer *svcr(new Servicer(conf_file, dep_inj));
-  EXPECT_TRUE(svcr->get_execute_svk_feature_sync_ptr() == nullptr);
-  auto server_ = Init(svcr);
-
-  std::unique_ptr<svk::CommandFwk::Stub> fwk_stub_;
-  std::shared_ptr<Channel> channel =
-      grpc::CreateChannel("127.0.0.1:9998", grpc::InsecureChannelCredentials());
-  fwk_stub_ = svk::CommandFwk::NewStub(channel);
-
-  svk::CommandRequest req;
-  svk::CommandResponse *resp = new (svk::CommandResponse);
-  req.set_feature_id((feature_id)100);
-  req.set_node_id("localhost");
-  req.set_feature_params("Test=Value");
-
-  FakeClient client(fwk_stub_.get());
-
-  Status status = client.ProcessNodeCommand(req, resp);
-  ASSERT_EQ(status.ok(), false);
-
-  unlink(conf_file.c_str());
 }

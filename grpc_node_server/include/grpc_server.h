@@ -21,23 +21,6 @@
 #define DEFAULT_NODE_ID "localhost"
 #define DEFAULT_NODE_PORT "9998"
 
-// System library interface for free functions so that we can mock class
-// functions as needed
-class SystemLibraryInterface {
- public:
-  virtual ~SystemLibraryInterface() = default;
-  virtual void *get_sym(void *handle, const char *fn_name) const {
-    return dlsym(handle, fn_name);
-  }
-  virtual void *open_lib(const char *ft_lib_str) const {
-    return dlopen(ft_lib_str, RTLD_LAZY);
-  }
-  virtual int close_lib(void *handle) const { return dlclose(handle); }
-  virtual int get_stat(const char *filename, struct stat *fstat) const {
-    return stat(filename, fstat);
-  }
-};
-
 using node_config = struct grpc_node_server_config {
   std::string framework_lib_path;
   std::string framework_conf_file;
@@ -62,21 +45,19 @@ const std::unordered_map<std::string, level_E> log_level_map = {
 
 class Servicer : public svk::CommandFwk::Service {
  public:
-  Servicer(const std::string &svk_conf_file,
-           const SystemLibraryInterface &dl_interface);
+  explicit Servicer(const std::string &svk_conf_file);
   Status ProcessNodeCommand(ServerContext *ctxt, const svk::CommandRequest *req,
                             svk::CommandResponse *resp) override;
   const std::string &get_svk_config_node_id() { return m_svk_config.node_id; };
   const std::string &get_svk_config_node_port() {
     return m_svk_config.node_port;
   };
-  auto get_execute_svk_feature_sync_ptr() { return execute_svk_feature_sync; };
   const node_config &get_svk_config() { return m_svk_config; };
+  const bool get_state() { return m_initialized_flag; };
 
  private:
-  int (*execute_svk_feature_sync)(svk_pass_thru_cmd *pass_thru,
-                                  svk_input *input, svk_output *output);
   node_config m_svk_config;
+  bool m_initialized_flag = false;
 };
 
 std::shared_ptr<Server> Init(Servicer *svcr);
