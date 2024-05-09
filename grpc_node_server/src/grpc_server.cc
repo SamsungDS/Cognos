@@ -31,13 +31,10 @@ int read_svk_conf_file(const std::string svk_conf_file, node_config *config) {
     pt::read_json(svk_conf_file, root);
     pt::ptree mgmt_config_pt = root.get_child("svk_mgmt_fw_node");
 
-    config->framework_lib_path =
-        mgmt_config_pt.get<std::string>("framework.lib_path");
     config->framework_conf_file =
         mgmt_config_pt.get<std::string>("framework.conf_file");
-    if (config->framework_lib_path.length() == 0 ||
-        config->framework_conf_file.length() == 0) {
-      throw std::invalid_argument("Invalid framework config file or lib path");
+    if (config->framework_conf_file.length() == 0) {
+      throw std::invalid_argument("Invalid framework config file");
     }
     config->cluster_id = mgmt_config_pt.get("cluster.id", DEFAULT_CLUSTER_ID);
     config->controller_id =
@@ -79,16 +76,13 @@ int read_svk_conf_file(const std::string svk_conf_file, node_config *config) {
   return status;
 }
 
-Servicer::Servicer(const std::string &svk_conf_file,
-                   const SystemLibraryInterface &sl_interface) {
+Servicer::Servicer(const std::string &svk_conf_file) {
   struct stat buf;
   int ret_val = -1;
   node_config config;
   std::string logger_str;
 
-  execute_svk_feature_sync = nullptr;
-
-  if (sl_interface.get_stat(svk_conf_file.c_str(), &buf) != 0) {
+  if (stat(svk_conf_file.c_str(), &buf) != 0) {
     std::cout << "Invalid path given for config file - " << svk_conf_file
               << std::endl;
     return;
@@ -107,52 +101,12 @@ Servicer::Servicer(const std::string &svk_conf_file,
   }
 
   m_svk_config = config;
+  m_initialized_flag = true;
 
-  logger_str = "Loading the framework library " + config.framework_lib_path;
-  svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+  svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
+             "Initializing the svk framework");
 
-  void *handle = sl_interface.open_lib(config.framework_lib_path.c_str());
-  if (handle == nullptr) {
-    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR,
-               "Error in opening the framework library");
-    return;
-  }
-  typedef int (*initialize_svk_func_def)(const char *, void *);
-  typedef int (*execute_svk_feature_sync_def)(svk_pass_thru_cmd *, svk_input *,
-                                              svk_output *);
-
-  const auto initialize_svk_func =
-      (initialize_svk_func_def)sl_interface.get_sym(handle, "initialize_svk");
-  const char *dlsym_error = dlerror();
-  if (dlsym_error || initialize_svk_func == nullptr) {
-    logger_str =
-        "Cannot load symbol 'initialize_svk' from frameworklibrary  <" +
-        config.framework_lib_path;
-    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR, logger_str.c_str());
-    sl_interface.close_lib(handle);
-    return;
-  }
-  logger_str = "Found symbol 'initialize_svk' from frameworklibrary  <" +
-               config.framework_lib_path;
-  svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
-  execute_svk_feature_sync = (execute_svk_feature_sync_def)sl_interface.get_sym(
-      handle, "execute_svk_feature_sync");
-  dlsym_error = dlerror();
-  if (dlsym_error || execute_svk_feature_sync == nullptr) {
-    logger_str =
-        "Cannot load symbol 'execute_svk_feature_sync' from "
-        "frameworklibrary  <" +
-        config.framework_lib_path;
-    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR, logger_str.c_str());
-    sl_interface.close_lib(handle);
-    return;
-  }
-  logger_str =
-      "Found symbol 'execute_svk_feature_sync' from frameworklibrary  <" +
-      config.framework_lib_path;
-  svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
-
-  ret_val = initialize_svk_func(config.framework_conf_file.c_str(), nullptr);
+  ret_val = initialize_svk(config.framework_conf_file.c_str(), nullptr);
   if (ret_val) {
     logger_str = "initialize_svk failed with error " + std::to_string(ret_val);
     svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR, logger_str.c_str());
@@ -173,41 +127,30 @@ Status Servicer::ProcessNodeCommand(ServerContext *ctxt,
   Status status;
   std::string feature_params = req->feature_params();
   std::string logger_str;
-  char buffer[MAX_SIZE];
 
+  output_str.resize(MAX_SIZE, 0);
   svk_cmd.feat_id = (feature_id)req->feature_id();
   svk_input.input_buffer = (uint8_t *)feature_params.c_str();
   svk_input.len = feature_params.length();
-  svk_output.output_buffer = (uint8_t *)&buffer[0];
+  svk_output.output_buffer = (uint8_t *)output_str.data();
   svk_output.len = MAX_SIZE;
 
-  if (execute_svk_feature_sync) {
-    ret = execute_svk_feature_sync(&svk_cmd, &svk_input, &svk_output);
-    if (svk_output.status == 0 && ret == 0) {
-      status = Status::OK;
-    } else {
-      status = Status(grpc::UNKNOWN, "Failed to run command");
-      logger_str = "Failed to run command for node_id " + req->node_id() +
-                   " feature_id " + std::to_string(svk_cmd.feat_id) +
-                   " params " + feature_params;
-      svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR,
-                 logger_str.c_str());
-    }
-
-    if (svk_output.len) {
-      CommandResponse_NodeResponse *response = resp->add_node_responses();
-      output_str.assign((char *)svk_output.output_buffer, svk_output.len);
-      response->set_output(output_str);
-      response->set_node_id(req->node_id());
-    }
+  ret = execute_svk_feature_sync(&svk_cmd, &svk_input, &svk_output);
+  if (svk_output.status == 0 && ret == 0) {
+    status = Status::OK;
   } else {
-    status = Status(grpc::UNKNOWN,
-                    "execute_svk_feature_sync function is unavailable");
-    logger_str =
-        "execute_svk_feature_sync function is unavailable for node_id " +
-        req->node_id() + " feature_id " + std::to_string(svk_cmd.feat_id) +
-        " params " + feature_params;
+    status = Status(grpc::UNKNOWN, "Failed to run command");
+    logger_str = "Failed to run command for node_id " + req->node_id() +
+                 " feature_id " + std::to_string(svk_cmd.feat_id) + " params " +
+                 feature_params;
     svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR, logger_str.c_str());
+  }
+
+  if (svk_output.len) {
+    output_str.resize(svk_output.len);
+    CommandResponse_NodeResponse *response = resp->add_node_responses();
+    response->set_output(output_str);
+    response->set_node_id(req->node_id());
   }
   return status;
 }
@@ -258,8 +201,7 @@ std::shared_ptr<Server> Init(Servicer *svcr) {
 
 int main(int argc, char **argv) {
   absl::ParseCommandLine(argc, argv);
-  SystemLibraryInterface sl;
-  Servicer *svcr(new Servicer(absl::GetFlag(FLAGS_svk_conf_file), sl));
+  Servicer *svcr(new Servicer(absl::GetFlag(FLAGS_svk_conf_file)));
   auto server = Init(svcr);
 
   svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
