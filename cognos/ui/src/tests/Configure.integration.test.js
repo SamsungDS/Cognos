@@ -17,6 +17,11 @@ describe('Configure Component - Integration Tests', () => {
       render(<Configure />);
       // Assert that fetch calls are made to attach memory and update data
       setTimeout(() => expect(fetch).toHaveBeenCalledTimes(1));
-      expect(fetch).toHaveBeenCalledWith(`${constants.Configs.data_endpoint}//lmds`);
+      expect(fetch).toHaveBeenCalledWith(`${constants.Configs.data_endpoint}//lmds`, {
+        method: 'get',
+        headers: new Headers({
+          'Access-Control-Allow-Origin':'*'
+        })
+      });
     }, 0);
   });

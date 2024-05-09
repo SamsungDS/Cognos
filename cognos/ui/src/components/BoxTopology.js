@@ -12,7 +12,12 @@ const BoxTopology = () => {
     const [hostToDeviceMapping, setHostToDeviceMapping] = useState([]);
     const hostDeviceMapEndpoint = Configs.data_endpoint + "/host_device_map"
     useEffect(() => {
-      fetch(hostDeviceMapEndpoint)
+      fetch(hostDeviceMapEndpoint , {
+        method: 'get',
+        headers: new Headers({
+          'Access-Control-Allow-Origin':'*'
+        })
+      })
           .then(response => response.json())
           .then(data => setHostToDeviceMapping(data));
     },

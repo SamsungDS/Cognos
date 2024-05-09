@@ -68,7 +68,12 @@ const Configure = () => {
   }
 
   useEffect(() => {
-    fetch(`${apiEndpoint}//${LMDs}`)
+    fetch(`${apiEndpoint}//${LMDs}`, {
+      method: 'get',
+      headers: new Headers({
+        'Access-Control-Allow-Origin':'*'
+      })
+    })
       .then(response => response.json())
       .then(data => setMemboxData(data));
   }, 
@@ -79,7 +84,7 @@ const Configure = () => {
     const response = await fetch(`${apiEndpoint}//${AVAILABLE_lMDs}`, {
       mode: 'cors',
       method: 'GET',
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json', 'Access-Control-Allow-Origin':'*'},
     });
 
     if (response.ok) {
@@ -113,7 +118,7 @@ const Configure = () => {
     const response = await fetch(`${apiEndpoint}`, {
         mode: 'cors',
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin':'*' },
         body: JSON.stringify(payload)
     });
 

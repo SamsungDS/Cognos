@@ -18,7 +18,12 @@ describe('Configure', () => {
     
     // Check if fetch calls are made on mount
     setTimeout(() => expect(fetch).toHaveBeenCalledTimes(1));
-    expect(fetch).toHaveBeenCalledWith(`${constants.Configs.data_endpoint}//lmds`);
+    expect(fetch).toHaveBeenCalledWith(`${constants.Configs.data_endpoint}//lmds`, {
+      method: 'get',
+      headers: new Headers({
+        'Access-Control-Allow-Origin':'*'
+      })
+    });
   },0);
 
 
@@ -90,7 +95,12 @@ describe('Configure', () => {
     
     // Check if fetch calls are made on mount
     setTimeout(() => expect(fetch).toHaveBeenCalledTimes(1));
-    expect(fetch).toHaveBeenCalledWith(`${constants.Configs.data_endpoint}//lmds`);
+    expect(fetch).toHaveBeenCalledWith(`${constants.Configs.data_endpoint}//lmds`, {
+      headers:  new Headers({
+        'Access-Control-Allow-Origin':'*'
+      }),
+      method: 'get'
+    });
   },0);
 
 });
@@ -174,7 +184,12 @@ describe('Configure Component', () => {
     fireEvent.change(select,  { target : { value: 'host_2', label:'Host 2'}});
     expect(select).toBeInTheDocument('Host 2')
     // Expect handleSelectChange to be called with the correct arguments
-    expect(fetch).toHaveBeenCalledWith(expect.stringContaining('http://105.91.142.222:4000//lmds'))
+    expect(fetch).toHaveBeenCalledWith(`${constants.Configs.data_endpoint}//lmds`, {
+      headers:  new Headers({
+        'Access-Control-Allow-Origin':'*'
+      }),
+      method: 'get'
+    });
 
     const menboxId = getByTestId('dropdown-membox');
     const selectMenbox = within(menboxId).getByRole('combobox');

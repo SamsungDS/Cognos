@@ -9,7 +9,7 @@ const useDetachHook = (setMemboxData, setLmdData, handleDetachMemoryToggle, sele
       const response = await fetch(`${apiEndpoint}/detach_lmd`, {
         mode: 'cors',
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin':'*' },
         body: JSON.stringify(detachMem)
       });
 
@@ -23,7 +23,7 @@ const useDetachHook = (setMemboxData, setLmdData, handleDetachMemoryToggle, sele
       const response = await fetch(`${apiEndpoint}/lmds`, {
         mode: 'cors',
         method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin':'*' },
       });
 
       if (response.ok) {

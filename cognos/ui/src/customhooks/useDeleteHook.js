@@ -6,7 +6,7 @@ const useDeleteHook = (setMemboxData, setShowFreeMemory, apiEndpoint) => {
       const response = await fetch(`${apiEndpoint}/free_lmd`, {
         mode: 'cors',
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin':'*' },
         body: JSON.stringify(item)
       });
 

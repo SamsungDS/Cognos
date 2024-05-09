@@ -28,7 +28,7 @@ const useAttachHook = (setMemboxData, setLmdData, handleAttachMemoryToggle, sele
       const response = await fetch(`${apiEndpoint}/lmds`, {
         mode: 'cors',
         method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin':'*' },
       });
 
       if (response.ok) {
@@ -43,7 +43,7 @@ const useAttachHook = (setMemboxData, setLmdData, handleAttachMemoryToggle, sele
         const response = await fetch(`${apiEndpoint}/activate_device`, {
           mode: 'cors',
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin':'*' },
           body: JSON.stringify(attachMem)
         });
 

@@ -9,7 +9,7 @@ const useUpdateHook = (setMemboxData, setShowFreeMemory, apiEndpoint) => {
       const response = await fetch(`${apiEndpoint}/update_lmd`, {
         mode: 'cors',
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin':'*' },
         body: JSON.stringify(updatePayload)
       });
 

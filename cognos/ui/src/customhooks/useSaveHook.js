@@ -8,7 +8,7 @@ const useSaveHook = (setMemboxData, setShow, apiEndpoint) => {
       const response = await fetch(`${apiEndpoint}/create_lmd`, {
         mode: 'cors',
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin':'*' },
         body: JSON.stringify(formData)
       });
 

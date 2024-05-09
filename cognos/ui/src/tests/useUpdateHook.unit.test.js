@@ -27,7 +27,7 @@ describe('useUpdateHook', () => {
       expect(fetch).toHaveBeenCalledWith(`${apiEndpointMock}/update_lmd`, {
         mode: 'cors',
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json',  'Access-Control-Allow-Origin':'*' },
         body: JSON.stringify({ lmd, mem_mode })
       });
       expect(setMemboxDataMock).toHaveBeenCalledWith({ someData: 'memboxData' });
@@ -46,7 +46,7 @@ describe('useUpdateHook', () => {
       expect(fetch).toHaveBeenCalledWith(`${apiEndpointMock}/update_lmd`, {
         mode: 'cors',
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin':'*' },
         body: JSON.stringify({ lmd, mem_mode })
       });
       expect(setMemboxDataMock).not.toHaveBeenCalled();
