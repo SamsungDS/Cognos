@@ -123,17 +123,21 @@ typedef struct {
  * @var svk_aio_construct::svk_io_identifier
  *  Unique IO identifier
  *
+ * @var svk_aio_construct::input
+ *  Input buffer for feature to use
+ *
  * @var svk_aio_construct::out_data
- *  Function output (svk_output)
+ *  Output buffer for feature module to populate
  *
  * @var svk_aio_construct::num_out_data
- *
+ *  Number of buffers that out_data is pointing to
  *
  */
 typedef struct {
   svk_status result;
   void *private_data_1;
   void *svk_io_identifier;
+  svk_input *input;
   svk_output *out_data;
   uint32_t num_out_data;
 } svk_aio_construct;
@@ -146,31 +150,22 @@ typedef struct {
  * NOTE: This data should NOT be freed until the callback (svk_aio_cb) returns.
  *
  * @var svk_postprocess_fn::svk_aio_cb
- *  Callback fn for execute async case
+ *  Callback fn for execute async case. Application should set this and
+ *  feature module should call callback to signal to application that
+ *  it is done working.
  *
- * @var svk_postprocess_fn::private_data_1
- *  Private data address passed by caller
+ * @var svk_postprocess_fn::num_op
+ *  Number of aio_construct in this context in case of batch IO.
  *
- * @var svk_postprocess_fn::svk_io_identifier
- *  Unique IO identifier
- *
- * @var svk_postprocess_fn::input
- *  Input buffer from application to feature module
- *
- * @var svk_postprocess_fn::out_data
- *  Output buffer for feature module to populate
- *
- * @var svk_postprocess_fn::num_out_data
- *  Number of output data that is being returned
+ * @var svk_postprocess_fn::ops
+ *  Pointer to aio construct. Should be allocated by application and given to
+ *  feature module to populate and return through callback.
  *
  */
 typedef struct {
   void (*svk_aio_cb)(svk_aio_construct *ops, int32_t num_op);
-  void *private_data_1;
-  void *svk_io_identifier;
-  svk_input *input;
-  svk_output *out_data;
-  uint32_t num_out_data;
+  int32_t num_op;
+  svk_aio_construct *ops;
 } svk_postprocess_fn;
 
 /**
