@@ -93,9 +93,17 @@ svk_status FrameworkSvc::load_feature_modules(
   entry = readdir(dirfp);
   // Loop through all libs in the dir
   for (; entry != nullptr; entry = readdir(dirfp)) {
-    if (strstr(entry->d_name, FEAT_LIB_SUFFIX) == nullptr) {
+    // Check if this is a shared lib
+    std::string entry_name(entry->d_name);
+    std::string feat_lib_suffix(FEAT_LIB_SUFFIX);
+    // If dir entry is smaller than length(.so), skip the entry
+    // Otherwise compare the last 3 chars to .so to see if it is valid
+    if (entry_name.size() < feat_lib_suffix.size() ||
+        entry_name.compare(entry_name.size() - feat_lib_suffix.size(),
+                           feat_lib_suffix.size(), feat_lib_suffix) != 0) {
       continue;
     }
+
     std::string feature_lib_str = features_dir + "/" + entry->d_name;
     snprintf(log_msg, LOG_MSG_MAX_SIZE,
              "Attempting to load feature module functions for %s",
@@ -211,10 +219,12 @@ svk_status FrameworkSvc::load_feature_modules(
     auto [iterator, inserted] =
         feature_map.insert(make_pair(curr_feature, details));
     if (!inserted) {
-      snprintf(log_msg, LOG_MSG_MAX_SIZE,
-               "svk_feature_details for feature lib %s wasn't able to be "
-               "added to map.",
-               entry->d_name);
+      snprintf(
+          log_msg, LOG_MSG_MAX_SIZE,
+          "svk_feature_details for feature lib %s wasn't able to be "
+          "added to map. You may be getting this error if multiple feature "
+          "libs with the same feature id are in the features dir.",
+          entry->d_name);
       svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
       num_failed_libs++;
       status = SVK_STATUS_BAD_FEATURE_LIB;
