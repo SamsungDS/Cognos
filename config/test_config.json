@@ -2,6 +2,8 @@
   "core":
       {
         "feat_modules_dir": "../../../sample_feature",
+        "reload_config": false,
+        "conf_poll_timer": 5,
         "logger": {
           "log_level": "ERROR",
           "log_file_name": "core/framework.log",

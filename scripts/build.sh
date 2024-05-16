@@ -149,7 +149,7 @@ pushd "$PROJECT_ROOT/build"
             --root "$PROJECT_ROOT" \
             --exclude "$PROJECT_ROOT/build" \
             "$PROJECT_ROOT/build"
-    elif $WITH_RELEASE;then
+    elif $RELEASE;then
         echo "Generating release tarball..."
         GIT_VER=$(git describe --abbrev=4 --always --tags)
         tar -zcf "$RELEASE_FILENAME_PREFIX-$GIT_VER.tgz" "$CMAKE_INSTALL_PREFIX"
