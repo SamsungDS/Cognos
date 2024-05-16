@@ -24,6 +24,8 @@ class ConfigTest : public testing::Test {
  protected:
   static void SetUpTestSuite() {
     core_conf.put("core.feat_modules_dir", "../../../sample_feature");
+    core_conf.put("core.reload_config", false);
+    core_conf.put("core.conf_poll_timer", 5);
 
     logger_conf.put("log_level", "ERROR");
     logger_conf.put("log_file_name", "core_conf/framework.log");
@@ -64,11 +66,177 @@ TEST_F(ConfigTest, InvalidSinkType) {
   boost::property_tree::write_json("invalid_sink_type.json", core_conf);
   svk_device_ctx ctx;
 
-  EXPECT_EQ(SVK_STATUS_FAIL,
+  EXPECT_EQ(SVK_STATUS_INVALID_CONFIG,
             initialize_svk("invalid_sink_type.json", (void *)&ctx));
 
   logger_conf.put("log_level", "ERROR");
   core_conf.put_child("core.logger", logger_conf);
+}
+
+TEST_F(ConfigTest, ReloadConfig) {
+  core_conf.put("core.reload_config", true);
+  boost::property_tree::write_json("conf_reload.json", core_conf);
+
+  svk_device_ctx ctx;
+
+  EXPECT_EQ(SVK_STATUS_SUCCESS,
+            initialize_svk("conf_reload.json", (void *)&ctx));
+
+  logger_conf.erase("log_level");
+  logger_conf.put("log_level", "INFO");
+  core_conf.erase("core.logger");
+  core_conf.put_child("core.logger", logger_conf);
+  boost::property_tree::write_json("conf_reload.json", core_conf);
+
+  cleanup_svk(&ctx, (void *)nullptr);
+
+  logger_conf.erase("log_level");
+  logger_conf.put("log_level", "ERROR");
+  core_conf.erase("core.logger");
+  core_conf.put_child("core.logger", logger_conf);
+}
+
+TEST_F(ConfigTest, ReloadInvalidLogLevel) {
+  core_conf.put("core.reload_config", true);
+  boost::property_tree::write_json("conf_reload.json", core_conf);
+
+  svk_device_ctx ctx;
+
+  EXPECT_EQ(SVK_STATUS_SUCCESS,
+            initialize_svk("conf_reload.json", (void *)&ctx));
+
+  logger_conf.erase("log_level");
+  logger_conf.put("log_level", "invalid");
+  core_conf.erase("core.logger");
+  core_conf.put_child("core.logger", logger_conf);
+  boost::property_tree::write_json("conf_reload.json", core_conf);
+
+  cleanup_svk(&ctx, (void *)nullptr);
+
+  logger_conf.erase("log_level");
+  logger_conf.put("log_level", "ERROR");
+  core_conf.erase("core.logger");
+  core_conf.put_child("core.logger", logger_conf);
+}
+
+TEST_F(ConfigTest, ReloadDuplicateConfig) {
+  core_conf.put("core.reload_config", true);
+  svk_device_ctx ctx;
+
+  EXPECT_EQ(SVK_STATUS_SUCCESS,
+            initialize_svk("conf_reload.json", (void *)&ctx));
+
+  logger_conf.erase("log_level");
+  logger_conf.put("log_level", "INFO");
+  core_conf.erase("core.logger");
+  core_conf.put_child("core.logger", logger_conf);
+  boost::property_tree::write_json("conf_reload.json", core_conf);
+  // Write same file, sleep to make sure file exists
+  sleep(1);
+  boost::property_tree::write_json("conf_reload.json", core_conf);
+  cleanup_svk(&ctx, (void *)nullptr);
+
+  logger_conf.erase("log_level");
+  logger_conf.put("log_level", "ERROR");
+  core_conf.erase("core.logger");
+  core_conf.put_child("core.logger", logger_conf);
+}
+
+TEST_F(ConfigTest, ReloadNonExistentConfig) {
+  svk_device_ctx ctx;
+
+  EXPECT_EQ(SVK_STATUS_SUCCESS,
+            initialize_svk("conf_reload.json", (void *)&ctx));
+  // Give thread time to poll for the change
+  sleep(1);
+  remove("conf_reload.json");
+  sleep(1);
+
+  cleanup_svk(&ctx, (void *)nullptr);
+  core_conf.put("core.reload_config", true);
+  boost::property_tree::write_json("conf_reload.json", core_conf);
+}
+
+TEST_F(ConfigTest, FailInotifyInit) {
+  MockFreeInterface dep_inj;
+
+  ON_CALL(dep_inj, get_sym)
+      .WillByDefault([&dep_inj](void *handle, const char *fn_name) {
+        return dep_inj.featureInterface::get_sym(handle, fn_name);
+      });
+  ON_CALL(dep_inj, open_dir).WillByDefault([&dep_inj](const char *dir_str) {
+    return dep_inj.featureInterface::open_dir(dir_str);
+  });
+  ON_CALL(dep_inj, open_lib).WillByDefault([&dep_inj](const char *ft_lib_str) {
+    return dep_inj.featureInterface::open_lib(ft_lib_str);
+  });
+
+  svk_device_ctx ctx;
+  FrameworkSvc test_fwsvc1;
+
+  EXPECT_EQ(SVK_STATUS_SUCCESS, test_fwsvc1.FrameworkSvcInit(
+                                    "conf_reload.json", (void *)&ctx, dep_inj));
+  sleep(1);
+
+  EXPECT_EQ(-1, test_fwsvc1.initialize_inotify(-1));
+  test_fwsvc1.FrameworkSvcCleanup((void *)&ctx);
+  sleep(1);
+  core_conf.put("core.reload_config", true);
+  boost::property_tree::write_json("conf_reload.json", core_conf);
+}
+
+TEST_F(ConfigTest, FailAddWatchToFile) {
+  MockFreeInterface dep_inj;
+
+  ON_CALL(dep_inj, get_sym)
+      .WillByDefault([&dep_inj](void *handle, const char *fn_name) {
+        return dep_inj.featureInterface::get_sym(handle, fn_name);
+      });
+  ON_CALL(dep_inj, open_dir).WillByDefault([&dep_inj](const char *dir_str) {
+    return dep_inj.featureInterface::open_dir(dir_str);
+  });
+  ON_CALL(dep_inj, open_lib).WillByDefault([&dep_inj](const char *ft_lib_str) {
+    return dep_inj.featureInterface::open_lib(ft_lib_str);
+  });
+
+  svk_device_ctx ctx;
+  FrameworkSvc test_fwsvc1;
+
+  EXPECT_EQ(SVK_STATUS_SUCCESS, test_fwsvc1.FrameworkSvcInit(
+                                    "conf_reload.json", (void *)&ctx, dep_inj));
+
+  sleep(1);
+
+  EXPECT_EQ(-1, test_fwsvc1.set_file_watch(-1, "conf_reload.json"));
+  sleep(1);
+  test_fwsvc1.FrameworkSvcCleanup((void *)&ctx);
+}
+
+TEST_F(ConfigTest, FailPollForConfigChange) {
+  MockFreeInterface dep_inj;
+
+  ON_CALL(dep_inj, get_sym)
+      .WillByDefault([&dep_inj](void *handle, const char *fn_name) {
+        return dep_inj.featureInterface::get_sym(handle, fn_name);
+      });
+  ON_CALL(dep_inj, open_dir).WillByDefault([&dep_inj](const char *dir_str) {
+    return dep_inj.featureInterface::open_dir(dir_str);
+  });
+  ON_CALL(dep_inj, open_lib).WillByDefault([&dep_inj](const char *ft_lib_str) {
+    return dep_inj.featureInterface::open_lib(ft_lib_str);
+  });
+
+  svk_device_ctx ctx;
+  FrameworkSvc test_fwsvc1;
+
+  EXPECT_EQ(SVK_STATUS_SUCCESS, test_fwsvc1.FrameworkSvcInit(
+                                    "conf_reload.json", (void *)&ctx, dep_inj));
+
+  sleep(1);
+
+  EXPECT_EQ(-1, test_fwsvc1.poll_for_config_change(-1, NULL, NULL, NULL, NULL));
+  sleep(1);
+  test_fwsvc1.FrameworkSvcCleanup((void *)&ctx);
 }
 
 // Test successful init by calling extern api with regular dlopen/dlsym
@@ -118,7 +286,7 @@ TEST(InitTest, InitFail) {
 
   EXPECT_EQ(SVK_STATUS_BAD_FEATURE_LIB,
             test_fwsvc1.FrameworkSvcInit(conf.c_str(), (void *)&ctx, dep_inj));
-  cleanup_svk(&ctx, (void *)conf.c_str());
+  test_fwsvc1.FrameworkSvcCleanup((void *)conf.c_str());
 }
 
 TEST(InitTest, FailMapEntry) {
@@ -142,14 +310,12 @@ TEST(InitTest, InvalidConfigPath) {
   svk_device_ctx ctx;
   EXPECT_EQ(SVK_STATUS_INVALID_CONFIG,
             initialize_svk(conf.c_str(), (void *)&ctx));
-  cleanup_svk(&ctx, (void *)conf.c_str());
 }
 
 TEST(InitTest, DefaultConfig) {
   svk_device_ctx ctx;
   std::string conf;
   EXPECT_EQ(SVK_STATUS_INVALID_CONFIG, initialize_svk(nullptr, (void *)&ctx));
-  cleanup_svk(&ctx, (void *)conf.c_str());
 }
 
 TEST(InitTest, EnvConfig) {
@@ -174,6 +340,7 @@ TEST(InitTest, BadDir) {
       .WillOnce(Return(nullptr));
   EXPECT_EQ(SVK_STATUS_FAIL, fw_svc1.FrameworkSvcInit(
                                  conf.c_str(), (void *)conf.c_str(), dep_inj));
+  fw_svc1.FrameworkSvcCleanup((void *)conf.c_str());
 }
 
 // Test if dlopen fails
@@ -195,6 +362,7 @@ TEST(InitTest, FailedDlopen) {
   EXPECT_EQ(
       SVK_STATUS_BAD_FEATURE_LIB,
       fw_svc1.FrameworkSvcInit(conf.c_str(), (void *)conf.c_str(), dep_inj));
+  fw_svc1.FrameworkSvcCleanup((void *)conf.c_str());
 }
 
 // Test failed init by calling fw svc api and either pass in mock api or
@@ -504,10 +672,9 @@ TEST(ExecTest, ExecuteSyncFail) {
   pass_thru.feat_id = feature_id::POWER_THROTTLE;
   svk_input input;
   svk_output output;
-  svk_device_ctx ctx;
   EXPECT_EQ(SVK_STATUS_FAIL, test_fwsvc1.FrameworkSvcProcessCommand(
                                  &pass_thru, &input, &output, nullptr));
-  cleanup_svk(&ctx, (void *)conf.c_str());
+  test_fwsvc1.FrameworkSvcCleanup((void *)conf.c_str());
 }
 
 TEST(ExecTest, ExecuteAsyncSuccess) {

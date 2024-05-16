@@ -3,11 +3,14 @@
 
 #include <dirent.h>
 #include <dlfcn.h>
+#include <sys/inotify.h>
 
+#include <atomic>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <memory>
 #include <string>
+#include <thread>
 #include <unordered_map>
 
 #include "framework_struct.h"
@@ -38,17 +41,21 @@ class FrameworkSvc {
       {"CRITICAL", level_E::CRITICAL}, {"ALERT", level_E::ALERT},
       {"FATAL", level_E::FATAL},       {"OFF", level_E::OFF}};
   mutable std::unordered_map<feature_id, svk_feature_details *> feature_map;
+  std::string curr_log_level;
   std::string svk_conf_path;
+  std::thread conf_reload;
+  std::atomic<bool> reload_flag;
+  int conf_poll_timer;
   bool report_sym_error(void *fn, const dirent *entry, void *handle,
                         const char *sym_name, int &num_failed_libs,
                         svk_status &status,
                         const featureInterface &feature_api) const;
   svk_status load_feature_modules(const std::string &features_dir,
                                   void *init_param,
-                                  const featureInterface &free_api) const;
-  svk_status init_logger(boost::property_tree::ptree const &logger_info) const;
-  svk_status set_config(void *init_param,
-                        const featureInterface &dep_inj) const;
+                                  const featureInterface &feature_api) const;
+  svk_status init_logger(boost::property_tree::ptree const &logger_info);
+  svk_status read_config(boost::property_tree::ptree &pt) const;
+  void reload_config();
   svk_status get_feature_details(feature_id feat_id,
                                  svk_feature_details const **details) const;
   svk_status destroy_feat_map(void *param) const;
@@ -59,13 +66,17 @@ class FrameworkSvc {
   // cleanup from this class to ensure resources are managed properly
   svk_status FrameworkSvcInit(const char *svk_config, void *init_param,
                               const featureInterface &dep_inj);
+  int initialize_inotify(int flags) const;
+  int set_file_watch(int fd, char const *watch_file_path) const;
+  int poll_for_config_change(int nfds, fd_set *readfds, fd_set *writefds,
+                             fd_set *exceptfds, timespec *timeout) const;
   svk_status FrameworkSvcConfigureDev(svk_pass_thru_cmd const *pass_thru,
                                       svk_device_ctx *device_handles,
                                       uint64_t length) const;
   svk_status FrameworkSvcProcessCommand(
       svk_pass_thru_cmd *pass_thru, svk_input *input, svk_output *output,
       svk_postprocess_fn *postprocess_fn) const;
-  svk_status FrameworkSvcCleanup(void *param) const;
+  svk_status FrameworkSvcCleanup(void *param);
 };
 
 #endif  // FRAMEWORK_SERVICE_H

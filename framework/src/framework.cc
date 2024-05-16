@@ -1,4 +1,6 @@
 #include <bits/stdc++.h>
+#include <errno.h>
+#include <sys/select.h>
 #include <sys/stat.h>
 
 #include <algorithm>
@@ -40,6 +42,10 @@ using clean_up = svk_status (*)(void *);
 // Global variable to use for Framework service commands
 const std::unique_ptr<FrameworkSvc> g_fw_service =
     std::make_unique<FrameworkSvc>();
+
+// Global for actual functionality of C APIs. Need to keep this global for
+// config reload thread since if it goes out of scope, the thread will crash
+const featureInterface dl;
 
 /* Private FrameworkSvc helper methods */
 
@@ -247,9 +253,20 @@ svk_status FrameworkSvc::load_feature_modules(
 // Attempt to load logger options from the config, use defaults for any options
 // that can't be found
 svk_status FrameworkSvc::init_logger(
-    boost::property_tree::ptree const &logger_info) const {
-  std::string log_level =
+    boost::property_tree::ptree const &logger_info) {
+  std::string log_level_str =
       logger_info.get<std::string>("log_level", CORE_DEFAULT_LOG_LEVEL);
+  level_E log_level;
+  try {
+    log_level = log_level_map.at(log_level_str);
+  } catch (std::out_of_range &) {
+    // handle exception
+    std::cout << "Invalid log level given, using default log level ERROR"
+              << std::endl;
+    log_level = log_level_map.at(CORE_DEFAULT_LOG_LEVEL);
+  }
+
+  curr_log_level = log_level_str;
   std::string file_name =
       logger_info.get<std::string>("log_file_name", CORE_DEFAULT_LOG_FILE);
   int file_count = logger_info.get<int>("log_file_count", 2);
@@ -258,9 +275,8 @@ svk_status FrameworkSvc::init_logger(
   std::string sink_type =
       logger_info.get<std::string>("sink_type", "rotating_file");
 
-  if (svk_logger_init(CORE_LOGGER_NAME, file_name.c_str(),
-                      log_level_map.at(log_level), file_count, file_size,
-                      sink_type.c_str()) == 0) {
+  if (svk_logger_init(CORE_LOGGER_NAME, file_name.c_str(), log_level,
+                      file_count, file_size, sink_type.c_str()) == 0) {
     svk_logger(CORE_LOGGER_NAME, level_E::INFO, "Core logger is initialized");
     return SVK_STATUS_SUCCESS;
   } else {
@@ -269,37 +285,152 @@ svk_status FrameworkSvc::init_logger(
 }
 
 // return svk status
-svk_status FrameworkSvc::set_config(void *init_param,
-                                    const featureInterface &dep_inj) const {
-  svk_status status = SVK_STATUS_SUCCESS;
-  boost::property_tree::ptree pt;
+svk_status FrameworkSvc::read_config(boost::property_tree::ptree &pt) const {
   try {
     boost::property_tree::read_json(svk_conf_path, pt);
   } catch (boost::property_tree::json_parser_error &e) {
     cerr << "Unable to read SVK config. Error -> " << e.what() << endl;
     return SVK_STATUS_INVALID_CONFIG;
   }
-  // Set logger here as well, once logger code is merged. Need to translate log
-  // level properly as well
-  boost::property_tree::ptree logger_info;
-  try {
-    logger_info = pt.get_child("core.logger");
-  } catch (boost::property_tree::ptree_error &e) {
-    std::cerr << "Error while parsing logger config section: " << e.what()
-              << ". Logger defaults will be used." << std::endl;
+
+  return SVK_STATUS_SUCCESS;
+}
+
+/* Reload config helper functions */
+int FrameworkSvc::initialize_inotify(int flags) const {
+  char log_msg[LOG_MSG_MAX_SIZE];
+  int fd;
+  fd = inotify_init1(flags);
+  if (fd < 0) {
+    snprintf(log_msg, LOG_MSG_MAX_SIZE,
+             "inotify_init() error, unable to start config reload thread: %s",
+             strerror(errno));
+    svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
   }
-  // Initialize logger
-  if (init_logger(logger_info) != SVK_STATUS_SUCCESS) {  // test
-    std::cerr << "Logger unable to be initialized" << std::endl;
-    return SVK_STATUS_FAIL;
+  return fd;
+}
+
+int FrameworkSvc::set_file_watch(int fd, char const *watch_file_path) const {
+  char log_msg[LOG_MSG_MAX_SIZE];
+  // Add a watch to the specified filepath which will signal when a file is
+  // modified Only return for errors unrelated to nonexistent config
+  int wd = inotify_add_watch(fd, watch_file_path, IN_CLOSE_WRITE | IN_CREATE);
+  if (int err = errno; wd < 0 && err != ENOENT) {
+    snprintf(log_msg, LOG_MSG_MAX_SIZE,
+             "inotify_add_watch() error, unable to start config reload "
+             "thread: %s",
+             strerror(err));
+    svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
+  }
+  return wd;
+}
+
+int FrameworkSvc::poll_for_config_change(int nfds, fd_set *readfds,
+                                         fd_set *writefds, fd_set *exceptfds,
+                                         timespec *timeout) const {
+  char log_msg[LOG_MSG_MAX_SIZE];
+  // When inotify detects a change in the file, select will unblock
+  int ret_val = pselect(nfds, readfds, writefds, exceptfds, timeout, NULL);
+  if (ret_val < 0) {
+    snprintf(log_msg, LOG_MSG_MAX_SIZE,
+             "reload_config select() error, unable to continue config "
+             "reload thread: %s",
+             strerror(errno));
+    svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
+  }
+  return ret_val;
+}
+
+/**
+ * @brief Function for thread to monitor config changes
+ *
+ *
+ */
+void FrameworkSvc::reload_config() {
+  size_t event_size = sizeof(struct inotify_event);
+  int fd;
+  char buffer[event_size];
+  char log_msg[LOG_MSG_MAX_SIZE];
+  // Initialize inotify with no flags, exit thread if invalid fd returned
+  fd = initialize_inotify(0);
+  if (fd < 0) {
+    return;
   }
 
-  std::string features_dir =
-      pt.get<std::string>("core.feat_modules_dir", CORE_DEFAULT_LIBS_PATH);
+  fd_set descriptors;
+  FD_ZERO(&descriptors);
+  // timeout for checking for cleanup
+  struct timespec ts;
+  ts.tv_nsec = 0;
 
-  status = load_feature_modules(features_dir, init_param, dep_inj);
+  while (reload_flag) {
+    // Add watch to file in the loop in case original file is deleted
+    // due to editor behavior or user deletion
+    if (set_file_watch(fd, svk_conf_path.c_str()) == -1) {
+      // Couldn't watch file, stop thread
+      close(fd);
+      return;
+    }
 
-  return status;
+    ts.tv_sec = conf_poll_timer;
+    // Add inotify to select() fd set
+    FD_SET(fd, &descriptors);
+    if (poll_for_config_change(fd + 1, &descriptors, NULL, NULL, &ts) < 0) {
+      // pselect returned error, stop thread
+      close(fd);
+      return;
+    } else if (FD_ISSET(fd, &descriptors)) {  // If file was created or modified
+      if (ssize_t length = read(fd, buffer, event_size); length < 0) {
+        snprintf(log_msg, LOG_MSG_MAX_SIZE, "reload_config read() error: %s",
+                 strerror(errno));
+        svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
+      }
+
+      // reload config func
+      // Change log level
+      level_E new_log_level;
+      boost::property_tree::ptree pt;
+      if (read_config(pt) != SVK_STATUS_SUCCESS) {
+        svk_logger(CORE_LOGGER_NAME, level_E::ERROR,
+                   "Invalid config was attempted to be read, ignoring "
+                   "this change to config file.");
+        continue;
+      }
+      // Check if new poll timer
+      conf_poll_timer = pt.get<int>("core.conf_poll_timer", conf_poll_timer);
+
+      // if the log level from config is invalid, use current log level
+      // no need to exit, just continue loop
+      std::string level =
+          pt.get<std::string>("core.logger.log_level", curr_log_level);
+      if (level != curr_log_level) {
+        try {
+          // check if log level is proper
+          snprintf(log_msg, LOG_MSG_MAX_SIZE,
+                   "New log level: %s; old log level: %s", level.c_str(),
+                   curr_log_level.c_str());
+          svk_logger(CORE_LOGGER_NAME, level_E::DEBUG, log_msg);
+          new_log_level = log_level_map.at(level);
+          svk_logger_change_log_level(CORE_LOGGER_NAME, new_log_level);
+          curr_log_level = level;
+        } catch (std::out_of_range &) {
+          svk_logger(CORE_LOGGER_NAME, level_E::ERROR,
+                     "Invalid log level given in config, ignoring "
+                     "new log level.");
+        }
+      } else {  // Same log level, continue loop
+        snprintf(log_msg, LOG_MSG_MAX_SIZE, "Same log level given: %s",
+                 level.c_str());
+        svk_logger(CORE_LOGGER_NAME, level_E::INFO, log_msg);
+
+        continue;
+      }
+
+      // Update feature modules when load API is done in the future
+    }
+  }
+  close(fd);
+  return;
 }
 
 svk_status FrameworkSvc::get_feature_details(
@@ -349,8 +480,51 @@ svk_status FrameworkSvc::destroy_feat_map(void *param) const {
 svk_status FrameworkSvc::FrameworkSvcInit(const char *svk_config,
                                           void *init_param,
                                           const featureInterface &dep_inj) {
+  svk_status status = SVK_STATUS_FAIL;
   svk_conf_path = svk_config;
-  return set_config(init_param, dep_inj);
+  // Set config tree for convenience
+  boost::property_tree::ptree pt;
+  status = read_config(pt);
+  if (status != SVK_STATUS_SUCCESS) {
+    // Return if config file is not able to be set
+    return status;
+  }
+
+  // Initialize logger using config
+  boost::property_tree::ptree logger_info;
+  try {
+    logger_info = pt.get_child("core.logger");
+  } catch (boost::property_tree::ptree_error &e) {
+    std::cerr << "Error while parsing logger config section: " << e.what()
+              << ". Logger defaults will be used." << std::endl;
+  }
+  status = init_logger(logger_info);
+  if (status != SVK_STATUS_SUCCESS) {
+    std::cerr << "Logger unable to be initialized" << std::endl;
+    return status;
+  }
+
+  // Load feature modules
+  std::string features_dir =
+      pt.get<std::string>("core.feat_modules_dir", CORE_DEFAULT_LIBS_PATH);
+  status = load_feature_modules(features_dir, init_param, dep_inj);
+
+  // Check if we want to run config reload thread
+  reload_flag = pt.get<bool>("core.reload_config", false);
+  conf_poll_timer = pt.get<int>("core.conf_poll_timer", 5);
+  // Start config reload thread
+  if (reload_flag) {
+    try {
+      conf_reload = std::thread(&FrameworkSvc::reload_config, this);
+    } catch (std::exception &e) {
+      char log_msg[LOG_MSG_MAX_SIZE];
+      snprintf(log_msg, LOG_MSG_MAX_SIZE,
+               "Exception while spawning config reload thread: %s.", e.what());
+      svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
+    }
+  }
+
+  return status;
 }
 
 svk_status FrameworkSvc::FrameworkSvcConfigureDev(
@@ -405,8 +579,13 @@ svk_status FrameworkSvc::FrameworkSvcProcessCommand(
   return exec_res;
 }
 
-svk_status FrameworkSvc::FrameworkSvcCleanup(void *param) const {
+svk_status FrameworkSvc::FrameworkSvcCleanup(void *param) {
   svk_status status = SVK_STATUS_SUCCESS;
+  if (reload_flag) {
+    reload_flag = false;
+    conf_reload.join();
+  }
+
   status = destroy_feat_map(param);
 
   return status;
@@ -420,7 +599,6 @@ extern "C" svk_status initialize_svk(const char *svk_conf_file,
                                      void *init_param) {
   // Ignoring storage context stuff for now
   svk_status status = SVK_STATUS_SUCCESS;
-  featureInterface dl;
   std::string conf_path;
   const char *env_p;
   if (svk_conf_file == nullptr) {
