@@ -4,13 +4,22 @@ import '@testing-library/jest-dom/extend-expect';
 import Configure, { getReadableStatus } from '../pages/Configure';
 import * as constants from '../constant';
 
-// Mocking fetch responses
-global.fetch = jest.fn().mockImplementation(() =>
-  Promise.resolve({
-    ok: true,
-    json: () => Promise.resolve([]),
-  })
-);
+
+beforeEach(() => {
+  // Mock Configs.data_endpoint
+  jest.mock('../config/config.json', () => ({
+    data_endpoint: 'http://105.91.142.222:4000',
+  }));
+
+  // Mocking fetch responses
+    global.fetch = jest.fn().mockImplementation(() =>
+    Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve([]),
+    })
+  );
+});
+
 
 describe('Configure', () => {
   test('should render properly and fetch data on mount', async () => {
@@ -25,9 +34,8 @@ describe('Configure', () => {
       })
     });
   },0);
-
-
 });
+
 
 describe('Configure component', () => {
   test('should call getAvailableLMDS and toggle showAttach state when handleAttachMemoryToggle is called', async () => {
@@ -45,18 +53,6 @@ describe('Configure component', () => {
   });
 });
 
-// Mock Configs.data_endpoint
-jest.mock('../config/config.json', () => ({
-  data_endpoint: 'http://105.91.142.222:4000',
-}));
-
-// Mock fetch function
-global.fetch = jest.fn(() =>
-  Promise.resolve({
-    ok: true,
-    json: () => Promise.resolve([]),
-  })
-);
 
 test('renders configuration table with mock data', async () => {
   // Render the component
@@ -89,6 +85,7 @@ test('renders configuration table with mock data', async () => {
   });
 });
 
+
 describe('Configure', () => {
   test('should render properly and fetch data on mount', async () => {
     render(<Configure />);
@@ -107,18 +104,20 @@ describe('Configure', () => {
 
 
 
-// Mock Configs.data_endpoint
-jest.mock('../config/config.json', () => ({
-  data_endpoint: 'http://105.91.142.222:4000',
-}));
+// // Mock Configs.data_endpoint
+// jest.mock('../config/config.json', () => ({
+//   data_endpoint: 'http://105.91.142.222:4000',
+// }));
 
-// Mock fetch function
-global.fetch = jest.fn(() =>
-  Promise.resolve({
-    ok: true,
-    json: () => Promise.resolve([]),
-  })
-);
+// // Mock fetch function
+// global.fetch = jest.fn(() =>
+//   Promise.resolve({
+//     ok: true,
+//     json: () => Promise.resolve([]),
+//   })
+// );
+
+
 
 test('renders configuration table with mock data', async () => {
   // Render the component
@@ -149,6 +148,8 @@ test('renders configuration table with mock data', async () => {
     expect(getByText(`${item.capacity} ${item.capacity_units}`)).toBeInTheDocument();
   });
 });
+
+
 
 describe('Configure Component', () => {
   it('should toggle showDetachMemory when handleDetachMemoryToggle is called', () => {
@@ -210,6 +211,7 @@ it('should close AttachMemory modal when cancel button is clicked', () => {
   expect(queryByTestId('attach-memory-modal')).not.toBeInTheDocument();
 });
 
+
 // Test interaction with Detach cancel button
 it('should close DetachMemory modal when cancel button is clicked', () => {
   const { getByTestId, queryByTestId } = render(<Configure />);
@@ -220,6 +222,7 @@ it('should close DetachMemory modal when cancel button is clicked', () => {
   // Expect the DetachMemory modal to be closed
   expect(queryByTestId('detach-memory-modal')).not.toBeInTheDocument();
 });
+
 
 describe('getting Readable status function', () => {
   // Test getReadableStatus function

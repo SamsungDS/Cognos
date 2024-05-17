@@ -6,6 +6,7 @@ ui unit test:
   before_script:
     # Install NPM modules
     - cd $ui_dir
+    - npm i --package-lock-only
     - npm ci
   script:
     # Execute unit tests and generate coverage report

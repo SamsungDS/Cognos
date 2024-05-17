@@ -45,7 +45,7 @@ describe('CreateMemory component', () => {
       hostMemoryAddress: '',
       memoryType: 'CMMD',
       memoryMode: 'Direct',
-      pool: 'Select existing pool',
+      pool: 'Default Pool',
       memoryAllocation: 0,
       isPoolFlag: false
     });

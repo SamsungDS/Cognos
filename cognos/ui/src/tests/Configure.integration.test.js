@@ -4,13 +4,16 @@ import '@testing-library/jest-dom/extend-expect';
 import Configure from '../pages/Configure';
 import * as constants from '../constant';
 
-// Mocking fetch responses
-global.fetch = jest.fn().mockImplementation(() =>
-  Promise.resolve({
-    ok: true,
-    json: () => Promise.resolve([]),
-  })
-);
+
+beforeEach(() => {
+  // Mocking fetch responses
+  global.fetch = jest.fn().mockImplementation(() =>
+    Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve([]),
+    })
+  );
+});
 
 describe('Configure Component - Integration Tests', () => {
     test('should render and attach memory properly', async () => {

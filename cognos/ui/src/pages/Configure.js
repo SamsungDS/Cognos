@@ -73,9 +73,7 @@ const Configure = () => {
       headers: new Headers({
         'Access-Control-Allow-Origin':'*'
       })
-    })
-      .then(response => response.json())
-      .then(data => setMemboxData(data));
+    }).then(response => response.json()).then(data => setMemboxData(data))
   }, 
   // eslint-disable-next-line react-hooks/exhaustive-deps 
   []);
