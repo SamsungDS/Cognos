@@ -9,72 +9,65 @@ using namespace std;
 class sc_device;
 
 /**
-* @brief Represents an application server.
-* @details Maintains information about an application server including its
-*          total memory capacity, upstream connected CXL switch ports, and
-*          corresponding connected CXL devices through downstream ports.
-*/
-class sc_host{
+ * @brief Represents an application server.
+ * @details Maintains information about an application server including its
+ *          total memory capacity, upstream connected CXL switch ports, and
+ *          corresponding connected CXL devices through downstream ports.
+ */
+class sc_host {
+ public:
+  sc_host();
 
-    public:
+  sc_host(uint64_t ci);
 
-        sc_host();
+  ~sc_host();
 
-        sc_host(uint64_t ci);
+  void set_host_name(string h_name);
 
-        ~sc_host();
+  void set_host_port(uint64_t h_port);
 
-        void set_host_name(string h_name); 
+  void set_capacity(uint64_t h_capacity);
 
-	void set_host_port(uint64_t h_port); 
+  void set_target_ports(uint32_t tp);
 
-        void set_capacity(uint64_t h_capacity); 
+  string get_host_name() const;
 
-	void set_target_ports(uint32_t tp);
+  uint32_t get_host_port();
 
-        string get_host_name() const; 
+  /**< Total memory capacity of this application server. */
+  uint64_t get_capacity();
 
-        uint32_t get_host_port(); 
+  uint64_t get_id();
 
-	/**< Total memory capacity of this application server. */
-        uint64_t get_capacity(); 
+  list<uint32_t>& get_target_ports();
 
-        uint64_t get_id(); 
+  /* get host id */
+  sc_id get_composite_obj();
 
-	list<uint32_t>& get_target_ports();
+ private:
+  /**< Application server connected to memory box */
+  string h_name;
 
-        /* get host id */
-        sc_id get_composite_obj();
+  /**
+   * PCIe upstream port by which the application server is connected to
+   * memory box
+   */
+  uint32_t h_port;
 
+  /**< Host total memory capacity, including DRAM and CXL memory */
+  uint64_t h_capacity{1};
 
-    private:
-   
-	/**< Application server connected to memory box */ 
-        string h_name; 
+  /**
+   * A list of CXL memory modules connected to this host via corresponding
+   * downstream PCIe ports
+   */
+  list<uint32_t> target_ports;
 
-        /**
-	 * PCIe upstream port by which the application server is connected to
-	 * memory box
-	 */
-        uint32_t h_port;
+  /**< free host memory */
+  uint64_t h_free_memory{1};
 
-        /**< Host total memory capacity, including DRAM and CXL memory */ 
-        uint64_t h_capacity {1}; 
-
-	/**
-	 * A list of CXL memory modules connected to this host via corresponding
-	 * downstream PCIe ports
-	 */
-        list<uint32_t> target_ports; 
-        
-	/**< free host memory */
-        uint64_t h_free_memory {1}; 
-
-        /**< host id */
-        sc_id h_id;
-        
+  /**< host id */
+  sc_id h_id;
 };
 
 #endif
-
-
