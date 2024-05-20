@@ -1,21 +1,15 @@
 sonar-scanner:
+  extends: release build
   stage: post-build
-  image:
-    name: $IMAGE_TAG
-    pull_policy: always
-  before_script:
+  script:
     # Download latest sonar-scanner from sonar-source
     - wget --no-verbose --content-disposition "https://search.maven.org/remote_content?g=org.sonarsource.scanner.cli&a=sonar-scanner-cli&v=LATEST&c=linux&e=zip"
     - unzip -q sonar-scanner-cli-*.zip -d /
-  script:
-    # Scan with sonar-scanner
-    - /sonar-scanner-*-linux/bin/sonar-scanner -Dsonar.coverageReportPaths=$SONAR_COVERAGE_REPORT
-  dependencies:
+    # Execute sonar-scanner and ingest coverage report
+    - /sonar-scanner-*-linux/bin/sonar-scanner -X -Dsonar.coverageReportPaths=$SONAR_COVERAGE_REPORT
+  needs:
+    - build docker
     - unit test
   allow_failure: false
   variables:
-    DOCKERFILE_NAME: rocky8
-    IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
     GIT_DEPTH: 0
-  rules:
-    - !reference [.default_rules, merge_and_push]

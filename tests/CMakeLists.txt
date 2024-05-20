@@ -1,5 +1,6 @@
 # Include directories
 include_directories(${CMAKE_SOURCE_DIR}/src)
+include(gtest)
 
 file(GLOB TEST_SOURCES
     sc_host_ut.cc

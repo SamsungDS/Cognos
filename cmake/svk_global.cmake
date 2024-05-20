@@ -6,7 +6,7 @@ find_package(Git)
 if(GIT_EXECUTABLE)
   # Generate a git-describe version string from Git repository tags
   execute_process(
-    COMMAND ${GIT_EXECUTABLE} describe --abbrev=4 --always --tags
+	  COMMAND cat ${CMAKE_SOURCE_DIR}/VERSION
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     OUTPUT_VARIABLE GIT_DESCRIBE_VERSION
     RESULT_VARIABLE GIT_DESCRIBE_ERROR_CODE
@@ -16,6 +16,7 @@ if(GIT_EXECUTABLE)
     message(STATUS "GIT VERSION ${GIT_DESCRIBE_VERSION}")
     # git tag can be in the form of v1.0.2 or v1.9.2-1-abcd. Get only the <major>.<minor>.<rev>.
     string(REGEX MATCH "([0-9]+)\\.([0-9]+)\\.([0-9]+)" GIT_DESCRIBE_VERSION_STRIP ${GIT_DESCRIBE_VERSION})
+    message(STATUS "GIT VERSION strip ${GIT_DESCRIBE_VERSION_STRIP}")
 
     set(GIT_REPO_VERSION_FULL ${GIT_DESCRIBE_VERSION})
     set(GIT_REPO_VERSION ${GIT_DESCRIBE_VERSION_STRIP})
@@ -54,6 +55,3 @@ if (WITH_VERBOSE)
   message(STATUS "Git repo full version ${GIT_REPO_VERSION_FULL}")
   message(STATUS "Git repo version for CMake ${GIT_REPO_VERSION}")
 endif()
-
-
-
