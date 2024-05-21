@@ -65,7 +65,7 @@ TEST_F(ScIdTest, HashScId) {
 
 /*
  * @brief Test two different sc_id instances with the same
- * cxid value but different memory addresses
+ * s_id value but different memory addresses
  */
 TEST_F(ScIdTest, HashScId_DistinctObjectsSameValue) {
   uint64_t value = 123;

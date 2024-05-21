@@ -17,7 +17,7 @@ class sc_id {
    * @details This constructor takes any value of type uint64_t as parameter.
    * @param id any value of type uint64_t.
    */
-  sc_id(uint64_t const& id) { cxid = id; }
+  explicit sc_id(uint64_t const& id) : s_id(id) {}
 
   ~sc_id() = default;
 
@@ -25,20 +25,20 @@ class sc_id {
    * @brief mutator of id variable.
    * @param id set id value to data member.
    */
-  void set_sc_id(uint64_t const& id) { cxid = id; }
+  void set_sc_id(uint64_t const& id) { s_id = id; }
 
   /**
    * @brief accessor of id variable.
    * @details get id value.
    */
-  uint64_t get_sc_id() const { return cxid; }
+  uint64_t get_sc_id() const { return s_id; }
 
   /**< Equality operator for key comparison in collision case*/
-  bool operator==(const sc_id& other) const { return cxid == other.cxid; }
+  bool operator==(const sc_id& other) const { return s_id == other.s_id; }
 
  public:
   /**< id value */
-  uint64_t cxid{1};
+  uint64_t s_id{1};
 };
 
 /**
@@ -48,7 +48,7 @@ class sc_id {
  */
 class hash_sc_id {
  public:
-  size_t operator()(const sc_id& key) const { return key.cxid; }
+  size_t operator()(const sc_id& key) const { return key.s_id; }
 };
 
 #endif

@@ -1,10 +1,12 @@
 #ifndef __CXL_PLUGIN_HOST_H__
 #define __CXL_PLUGIN_HOST_H__
 
-#include "sc_device.h"
-#include "sc_global.h"
+#include <cstddef>
+#include <list>
+#include <string>
 
-class sc_device;
+#include "sc_id.h"
+#include "types.h"
 
 /**
  * @brief Represents an application server.
@@ -16,7 +18,7 @@ class sc_host {
  public:
   sc_host();
 
-  sc_host(uint64_t ci);
+  explicit sc_host(uint64_t ci);
 
   ~sc_host() = default;
 
@@ -30,7 +32,7 @@ class sc_host {
 
   std::string get_host_name() const;
 
-  uint32_t get_host_port() const;
+  uint64_t get_host_port() const;
 
   /**< Total memory capacity of this application server. */
   uint64_t get_capacity() const;
@@ -50,16 +52,16 @@ class sc_host {
    * PCIe upstream port by which the application server is connected to
    * memory box
    */
-  uint32_t h_port;
+  uint64_t h_port;
 
   /**< Host total memory capacity, including DRAM and CXL memory */
   uint64_t h_capacity{1};
 
   /**
-   * A std::list of CXL memory modules connected to this host via corresponding
-   * downstream PCIe ports
+   * A std::std::list of CXL memory modules connected to this host via
+   * corresponding downstream PCIe ports
    */
-  std::list<uint32_t> target_ports;
+  std::list<uint32_t> h_target_ports;
 
   /**< host id */
   sc_id h_id;
