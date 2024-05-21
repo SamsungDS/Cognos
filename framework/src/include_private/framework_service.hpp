@@ -71,8 +71,9 @@ class FrameworkSvc {
   int poll_for_config_change(int nfds, fd_set *readfds, fd_set *writefds,
                              fd_set *exceptfds, timespec *timeout) const;
   svk_status FrameworkSvcConfigureDev(svk_pass_thru_cmd const *pass_thru,
+                                      void *config_details,
                                       svk_device_ctx *device_handles,
-                                      uint64_t length) const;
+                                      uint64_t length, void *resp) const;
   svk_status FrameworkSvcProcessCommand(
       svk_pass_thru_cmd *pass_thru, svk_input *input, svk_output *output,
       svk_postprocess_fn *postprocess_fn) const;

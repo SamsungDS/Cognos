@@ -42,12 +42,14 @@ svk_status get_supported_feature_list(feature_id *feat_id, char *feature_names);
  * @brief API for feature modules that need to access/initialize a device
  * NOTE: This is an optional API, not all feature modules need to implement this
  *
+ * @param config_details Any config that is needed should be allocated by app
  * @param device_handles List of device contexts
  * @param length Num of device contexts
  * @return svk_status Refer to framework_struct.h for return codes
  */
-svk_status configure_device_if_any(svk_device_ctx *device_handles,
-                                   uint64_t length);
+svk_status configure_device_if_any(void *config_details,
+                                   svk_device_ctx *device_handles,
+                                   uint64_t length, void *resp);
 
 /**
  * @brief Check if license is valid

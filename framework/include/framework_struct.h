@@ -85,18 +85,26 @@ typedef struct {
 
 /**
  * @struct svk_storage_ctx
- * @brief
+ * @brief Generic context struct for any features that require
+ *  devices to use
  *
  * @var svk_storage_ctx::status
+ *  Status code for this context
  *
- * @var svk_storage_ctx::db_name
+ * @var svk_storage_ctx::device_type
+ *  Device type code
  *
- * @var svk_storage_ctx::db_interface
+ * @var svk_storage_ctx::device_name
+ *  Name of device
  *
- * @var svk_storage_ctx::pool_id
+ * @var svk_storage_ctx::device_interface_if_any
+ *  For feature to use to specify an device interface, eg WAL/base
  *
- * @var svk_storage_ctx::storage_dev_id
+ * @var svk_storage_ctx::parent_id_if_any
+ *  Parent id if needed
  *
+ * @var svk_storage_ctx::dev_id
+ *  Unique device id for this ctx
  *
  */
 typedef struct {
@@ -217,8 +225,9 @@ typedef struct {
   svk_status (*get_supported_feature_list)(feature_id *feature,
                                            char *feature_names);
   svk_status (*is_license_valid)(void *);
-  svk_status (*configure_device_if_any)(svk_device_ctx *device_handles,
-                                        uint64_t length);
+  svk_status (*configure_device_if_any)(void *config_details,
+                                        svk_device_ctx *device_handles,
+                                        uint64_t length, void *resp);
   svk_status (*execute_sync)(svk_pass_thru_cmd *pass_thru, svk_input *input,
                              svk_output *output);
   svk_status (*execute_async)(svk_pass_thru_cmd *pass_thru,

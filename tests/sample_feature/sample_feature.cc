@@ -28,8 +28,9 @@ extern "C" svk_status is_license_valid(void *) {
   return SVK_STATUS_SUCCESS;
 }
 
-extern "C" svk_status configure_device_if_any(svk_device_ctx *device_handles,
-                                              uint64_t length) {
+extern "C" svk_status configure_device_if_any(void *config_details,
+                                              svk_device_ctx *device_handles,
+                                              uint64_t length, void *resp) {
   std::cout << "sample feature configure_device called" << std::endl;
 
   return SVK_STATUS_SUCCESS;
