@@ -25,8 +25,6 @@ class sc_global {
    * @details This method takes struct portinfo as parameter
    *          and parses board, list of devices, hosts & endpoints information.
    */
-  // int g_create_mbox(struct StaticPortInfo * port_info, int dsize, int hsize,
-  // int mb_id);
   int g_create_mbox(struct StaticPortInfo* port_info);
 
   /**
@@ -47,8 +45,8 @@ class sc_global {
    * @param h_id host id.
    * @param mode device shared/direct connect.
    */
-  size_t dev_attach(uint64_t d_id, uint64_t h_id, string mode, uint64_t fm_id,
-                    char*& buffer, size_t buffer_size);
+  size_t dev_attach(uint64_t d_id, uint64_t h_id, std::string mode,
+                    uint64_t fm_id, char*& buffer, size_t buffer_size);
 
   /**
    * @brief detach device from host.
@@ -56,16 +54,15 @@ class sc_global {
    * @param h_id host id.
    * @param mode device shared/direct connect.
    */
-  size_t dev_detach(uint64_t d_id, uint64_t h_id, string mode, uint64_t fm_id,
-                    char*& buffer, size_t buffer_size);
+  size_t dev_detach(uint64_t d_id, uint64_t h_id, std::string mode,
+                    uint64_t fm_id, char*& buffer, size_t buffer_size);
 
   /** get sc_mbox */
-  unordered_map<uint64_t, sc_mbox*>& get_mbox_map();
+  std::unordered_map<uint64_t, sc_mbox*>& get_mbox_map();
 
   /**
    * @brief convert device object to json
    */
-  // char* to_device_json();
   size_t to_device_json(char*& buffer, size_t buffer_size);
 
   /**
@@ -83,18 +80,17 @@ class sc_global {
   /**
    * @brief list out all persisted memory devices.
    */
-  // string list_devices();
-  size_t list_devices(char*& buffer, size_t buffer_size);
+  size_t list_devices(char*& buffer, size_t buffer_size) const;
 
   /**
    * @brief list out all persisted hosts.
    */
-  size_t list_hosts(char*& buffer, size_t buffer_size);
+  size_t list_hosts(char*& buffer, size_t buffer_size) const;
 
   /**
    * @brief fetch persisted data.
    */
-  size_t fetch_setup_info(char*& buffer, size_t buffer_size);
+  size_t fetch_setup_info(char*& buffer, size_t buffer_size) const;
 
   /**
    * @brief delete dynamically allocated mbox objects.
@@ -102,9 +98,8 @@ class sc_global {
   void clear_mbox_objects();
 
  private:
-  // key: fm_id, value:mbox object
-  unordered_map<uint64_t, sc_mbox*> sc_devices;
-  vector<sc_mbox*> mb_objs;
+  std::unordered_map<uint64_t, sc_mbox*> sc_devices;
+  std::vector<sc_mbox*> mb_objs;
 };
 
 /**< global object */

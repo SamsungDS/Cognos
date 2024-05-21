@@ -3,8 +3,6 @@
 
 #include "types.h"
 
-using namespace std;
-
 /**
  * @brief simple class sc_id
  * @details This class encapsulates unsigned 64 bit int ID
@@ -19,21 +17,21 @@ class sc_id {
    * @details This constructor takes any value of type uint64_t as parameter.
    * @param id any value of type uint64_t.
    */
-  sc_id(uint64_t id) { cxid = id; }
+  sc_id(uint64_t const& id) { cxid = id; }
 
-  ~sc_id() {}
+  ~sc_id() = default;
 
   /**
    * @brief mutator of id variable.
    * @param id set id value to data member.
    */
-  void set_sc_id(uint64_t id) { cxid = id; }
+  void set_sc_id(uint64_t const& id) { cxid = id; }
 
   /**
    * @brief accessor of id variable.
    * @details get id value.
    */
-  const uint64_t get_sc_id() const { return cxid; }
+  uint64_t get_sc_id() const { return cxid; }
 
   /**< Equality operator for key comparison in collision case*/
   bool operator==(const sc_id& other) const { return cxid == other.cxid; }

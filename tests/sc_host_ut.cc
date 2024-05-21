@@ -2,6 +2,8 @@
 
 #include "sc_host.h"
 
+using namespace std;
+
 // Test fixture for sc_host
 class ScHostTest : public ::testing::Test {
  protected:

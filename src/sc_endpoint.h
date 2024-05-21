@@ -10,7 +10,7 @@
  */
 class endpoint {
  private:
-  std::string ep; /**< strinv variable ep*/
+  std::string e_ep; /**< strinv variable ep*/
 
  public:
   /**
@@ -23,22 +23,22 @@ class endpoint {
    * @details This constructor takes string parameter.
    * @param ep string value of cxl device endpoint.
    */
-  endpoint(std::string ep) { this->ep = ep; }
+  endpoint(std::string ep) { e_ep = ep; }
 
-  ~endpoint() {}
+  ~endpoint() = default;
 
   /**
    * @brief mutator of endpoint variable.
    * @details set endpoint value to data member.
    * @param ep string value of cxl device endpoint.
    */
-  void set_endpoint(std::string ep) { this->ep = ep; }
+  void set_endpoint(std::string ep) { e_ep = ep; }
 
   /**
    * @brief accessor of endpoint variable.
    * @details get endpoint value.
    */
-  std::string get_endpoint() { return ep; }
+  std::string get_endpoint() { return e_ep; }
 };
 
 #endif

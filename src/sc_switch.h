@@ -9,8 +9,6 @@
 
 #include "sc_id.h"
 
-using namespace std;
-
 /**
  * @brief switch class.
  * @details This class holds switch related information.
@@ -24,14 +22,14 @@ class sc_switch {
    */
   sc_switch(uint64_t sc_id) : s_id(sc_id) {}
 
-  ~sc_switch() {}
+  ~sc_switch() = default;
 
   /**
    * @brief get switch information
    */
-  string s_get_info() {
+  std::string s_get_info() const {
     // Create a stringstream to build the JSON-like string
-    stringstream json;
+    std::stringstream json;
 
     // Start the JSON object
     json << "{\n";

@@ -1,7 +1,5 @@
 #ifndef __CXL_PLUGIN_SC_DEVICES_H__
 #define __CXL_PLUGIN_SC_DEVICES_H__
-#define MAX_DEV_NAME_LEN 1024
-#define INVALID_DEV_PORT 0xFFFFFFFFU
 
 #include <stdint.h>
 
@@ -19,7 +17,11 @@
 #include "sc_switch.h"
 #include "types.h"
 
-using namespace std;
+enum {
+
+  MAX_DEV_NAME_LEN = 1024,
+  INVALID_DEV_PORT = 0xFFFFFFFFU
+};
 
 class sc_host;
 

@@ -4,8 +4,6 @@
 #include "sc_device.h"
 #include "sc_global.h"
 
-using namespace std;
-
 class sc_device;
 
 /**
@@ -20,33 +18,33 @@ class sc_host {
 
   sc_host(uint64_t ci);
 
-  ~sc_host();
+  ~sc_host() = default;
 
-  void set_host_name(string h_name);
+  void set_host_name(std::string const& host);
 
-  void set_host_port(uint64_t h_port);
+  void set_host_port(uint64_t const& port);
 
-  void set_capacity(uint64_t h_capacity);
+  void set_capacity(uint64_t const& capacity);
 
-  void set_target_ports(uint32_t tp);
+  void set_target_ports(uint32_t const& tp);
 
-  string get_host_name() const;
+  std::string get_host_name() const;
 
-  uint32_t get_host_port();
+  uint32_t get_host_port() const;
 
   /**< Total memory capacity of this application server. */
-  uint64_t get_capacity();
+  uint64_t get_capacity() const;
 
-  uint64_t get_id();
+  uint64_t get_id() const;
 
-  list<uint32_t>& get_target_ports();
+  std::list<uint32_t> get_target_ports() const;
 
   /* get host id */
-  sc_id get_composite_obj();
+  sc_id get_composite_obj() const;
 
  private:
   /**< Application server connected to memory box */
-  string h_name;
+  std::string h_name;
 
   /**
    * PCIe upstream port by which the application server is connected to
@@ -58,13 +56,10 @@ class sc_host {
   uint64_t h_capacity{1};
 
   /**
-   * A list of CXL memory modules connected to this host via corresponding
+   * A std::list of CXL memory modules connected to this host via corresponding
    * downstream PCIe ports
    */
-  list<uint32_t> target_ports;
-
-  /**< free host memory */
-  uint64_t h_free_memory{1};
+  std::list<uint32_t> target_ports;
 
   /**< host id */
   sc_id h_id;
