@@ -31,8 +31,9 @@ using initialize = svk_status (*)(void *init_param);
 using get_supported_feature_list = svk_status (*)(feature_id *feature,
                                                   char *feature_names);
 using is_license_valid = svk_status (*)(void *);
-using configure_device_if_any = svk_status (*)(svk_device_ctx *device_handles,
-                                               uint64_t length);
+using configure_device_if_any = svk_status (*)(void *config_details,
+                                               svk_device_ctx *device_handles,
+                                               uint64_t length, void *resp);
 using execute_sync = svk_status (*)(svk_pass_thru_cmd *pass_thru,
                                     svk_input *input, svk_output *output);
 using execute_async = svk_status (*)(svk_pass_thru_cmd *pass_thru,
@@ -528,8 +529,8 @@ svk_status FrameworkSvc::FrameworkSvcInit(const char *svk_config,
 }
 
 svk_status FrameworkSvc::FrameworkSvcConfigureDev(
-    svk_pass_thru_cmd const *pass_thru, svk_device_ctx *device_handles,
-    uint64_t length) const {
+    svk_pass_thru_cmd const *pass_thru, void *config_details,
+    svk_device_ctx *device_handles, uint64_t length, void *resp) const {
   char log_msg[LOG_MSG_MAX_SIZE];
   svk_feature_details const *feature_details = nullptr;
   if (svk_status res =
@@ -545,7 +546,8 @@ svk_status FrameworkSvc::FrameworkSvcConfigureDev(
     svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
     return SVK_STATUS_FAIL;
   }
-  return feature_details->configure_device_if_any(device_handles, length);
+  return feature_details->configure_device_if_any(config_details,
+                                                  device_handles, length, resp);
 }
 
 svk_status FrameworkSvc::FrameworkSvcProcessCommand(
@@ -622,10 +624,10 @@ extern "C" svk_status initialize_svk(const char *svk_conf_file,
 }
 
 extern "C" svk_status configure_svk_device_if_any(
-    svk_pass_thru_cmd *pass_thru, svk_device_ctx *device_handles,
-    uint64_t length) {
-  return g_fw_service->FrameworkSvcConfigureDev(pass_thru, device_handles,
-                                                length);
+    svk_pass_thru_cmd *pass_thru, void *config_details,
+    svk_device_ctx *device_handles, uint64_t length, void *resp) {
+  return g_fw_service->FrameworkSvcConfigureDev(pass_thru, config_details,
+                                                device_handles, length, resp);
 }
 
 extern "C" svk_status execute_svk_feature_sync(svk_pass_thru_cmd *pass_thru,

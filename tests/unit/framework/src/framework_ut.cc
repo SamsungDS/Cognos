@@ -491,10 +491,13 @@ TEST(ConfigureDeviceTest, ConfigureDevSuccess) {
   svk_pass_thru_cmd pass_thru;
   pass_thru.feat_id = POWER_THROTTLE;
 
+  svk_device_ctx dummy_config;
   svk_device_ctx device_handle;
+  svk_device_ctx dummy_resp;
 
   EXPECT_EQ(SVK_STATUS_SUCCESS,
-            configure_svk_device_if_any(&pass_thru, &device_handle, 1));
+            configure_svk_device_if_any(&pass_thru, &dummy_config,
+                                        &device_handle, 1, &dummy_resp));
 }
 
 TEST(ConfigureDeviceTest, ConfigureDevInvalidFeature) {
@@ -511,10 +514,13 @@ TEST(ConfigureDeviceTest, ConfigureDevInvalidFeature) {
   svk_pass_thru_cmd pass_thru;
   pass_thru.feat_id = ZERO_ETL;
 
+  svk_device_ctx dummy_config;
   svk_device_ctx device_handle;
+  svk_device_ctx dummy_resp;
 
   EXPECT_EQ(SVK_STATUS_FAIL,
-            configure_svk_device_if_any(&pass_thru, &device_handle, 1));
+            configure_svk_device_if_any(&pass_thru, &dummy_config,
+                                        &device_handle, 1, &dummy_resp));
 }
 
 TEST(ConfigureDeviceTest, ConfigureDevFunctionNotLoaded) {
@@ -551,9 +557,12 @@ TEST(ConfigureDeviceTest, ConfigureDevFunctionNotLoaded) {
 
   svk_pass_thru_cmd pass_thru;
   pass_thru.feat_id = POWER_THROTTLE;
+  svk_device_ctx dummy_config;
   svk_device_ctx ctx;
+  svk_device_ctx dummy_resp;
   EXPECT_EQ(SVK_STATUS_FAIL,
-            test_fwsvc.FrameworkSvcConfigureDev(&pass_thru, &ctx, 1));
+            test_fwsvc.FrameworkSvcConfigureDev(&pass_thru, &dummy_config, &ctx,
+                                                1, &dummy_resp));
 }
 
 TEST(ExecTest, ExecuteSyncSuccess) {

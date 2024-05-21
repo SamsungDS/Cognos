@@ -31,13 +31,16 @@ svk_status initialize_svk(const char *svk_conf_file, void *);
  *
  * @param pass_thru svk passthrough for command info communication from top
  * level
+ * @param config_details Config allocated by app to be given to feature to use
  * @param device_handles List of device contexts
  * @param length Num of device contexts
+ * @param resp Pointer for volume and cstore uuid
  * @return svk_status Refer to framework_struct.h for return codes
  */
 svk_status configure_svk_device_if_any(svk_pass_thru_cmd *pass_thru,
+                                       void *config_details,
                                        svk_device_ctx *device_handles,
-                                       uint64_t length);
+                                       uint64_t length, void *resp);
 
 /**
  * @brief Function to be called by App for feature execution.
