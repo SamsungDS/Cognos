@@ -55,3 +55,13 @@ install(
     FILES "${pkg_config}"
     DESTINATION "${pkgconfig_install_dir}"
 )
+
+set(SVK_DEVICE_INCLUDE_DIR "device/include")
+install(
+  FILES
+      ${SVK_DEVICE_INCLUDE_DIR}/svk_db_connector_api.h
+      ${SVK_DEVICE_INCLUDE_DIR}/svk_shard_exec_api.h
+
+  DESTINATION
+      "include/device/"
+)
