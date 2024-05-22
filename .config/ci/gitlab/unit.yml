@@ -1,0 +1,31 @@
+unit test:
+  stage: test
+  image:
+    name: $IMAGE_TAG
+    pull_policy: always
+  before_script:
+    # Install latest build-wrapper
+    - wget --no-verbose --content-disposition -E -c "$SONAR_HOST_URL/static/cpp/build-wrapper-linux-x86.zip"
+    - unzip -q build-wrapper-linux-x86.zip -d /
+  script:
+    # Build with unit tests and generate coverage report
+    - /build-wrapper-linux-x86/build-wrapper-linux-x86-64 --out-dir bw-output/ $BUILD_COMMAND
+  artifacts:
+    name: unit test
+    expire_in: 300 seconds
+    paths:
+     - bw-output
+     - build
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: $GITLAB_COVERAGE_REPORT
+      junit: $GITLAB_JUNIT_REPORT
+  variables:
+    DOCKERFILE_NAME: rocky8
+    IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
+    BUILD_COMMAND: ./scripts/build.sh --build-tests --with-coverage
+  needs:
+    - build docker
+  rules:
+    - !reference [.default_rules, merge_and_push]
