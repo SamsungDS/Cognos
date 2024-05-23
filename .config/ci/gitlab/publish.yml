@@ -1,5 +1,5 @@
 publish release artifacts:
-  stage: post-build
+  stage: deploy
   image: alpine:3.19.1
   before_script:
     - apk add git curl

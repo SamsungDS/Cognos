@@ -1,8 +1,1 @@
 include: .config/ci/gitlab/defaults.yml
-
-stages:
-  - pre-build
-  - test
-  - build
-  - post-build
-
