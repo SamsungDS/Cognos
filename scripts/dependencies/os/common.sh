@@ -58,3 +58,9 @@ else
         fi
     popd
 fi
+
+# Set git safe.directory globally if docker
+if [[ -f /.dockerenv ]]
+then
+    git config --global --add safe.directory '*'
+fi
