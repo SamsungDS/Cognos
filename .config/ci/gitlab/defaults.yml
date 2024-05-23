@@ -34,6 +34,9 @@ variables:
 tag semantic version:
   stage: .pre
 
+get branch:
+  stage: .pre
+
 build docker:
   stage: .pre
 
