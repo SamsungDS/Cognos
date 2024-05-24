@@ -32,10 +32,13 @@ variables:
   GITLAB_JUNIT_REPORT: $REPORT_DIR/gitlab_junit.xml
 
 tag semantic version:
-  stage: pre-build
+  stage: .pre
+
+get branch:
+  stage: .pre
 
 build docker:
-  stage: pre-build
+  stage: .pre
 
 clang-format:
   stage: test
@@ -44,9 +47,9 @@ shellcheck:
   stage: test
 
 pages:
-  stage: post-build
+  stage: .post
 
 code coverage:
-  stage: post-build
+  stage: .post
   needs:
     - sonar-scanner
