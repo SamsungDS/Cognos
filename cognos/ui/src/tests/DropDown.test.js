@@ -5,11 +5,11 @@ import DropDown from '../components/DropDown';
 
 describe('DropDown', () => {
   it('renders without crashing', () => {
-    render(<DropDown options={[]} title="Test" dropDownType="single" />);
+    render(<DropDown options={[]} title="Test" dropDownType="single"  onSelectChange={()=> {}}/>);
   });
 
   it('renders title correctly', () => {
-    const { getByText } = render(<DropDown options={[]} title="Test Title" dropDownType="single" />);
+    const { getByText } = render(<DropDown options={[]} title="Test Title" dropDownType="single"  onSelectChange={()=> {}}/>);
     expect(getByText('Test Title')).toBeInTheDocument();
   });
 
@@ -18,7 +18,7 @@ describe('DropDown', () => {
       { value: 'option1', label: 'Option 1' },
       { value: 'option2', label: 'Option 2' },
     ];
-    const { getByText } = render(<DropDown options={options} title="Test" dropDownType="single" />);
+    const { getByText } = render(<DropDown options={options} title="Test" dropDownType="single"  onSelectChange={()=> {}}/>);
     expect(getByText('Option 1')).toBeInTheDocument();
   });
 
@@ -27,15 +27,15 @@ describe('DropDown', () => {
       { value: 'option1', label: 'Option 1' },
       { value: 'option2', label: 'Option 2' },
     ];
-    const onSelectChange = jest.fn((selectedOption) => {
-        setSelectedValue(selectedOption);
-        if (onSelectChange) {
-            onSelectChange(selectedOption);
-        }
-    })
+    // Mocking useState hook
+    const useStateSpy = jest.spyOn(React, 'useState');
+    useStateSpy.mockImplementation((init) => [init, jest.fn()]);
+    const onSelectChange = jest.fn();
+    
     const { getByText } = render(<DropDown options={options} title="Test" dropDownType="single" onSelectChange={onSelectChange} />);
     fireEvent.click(getByText('Option 1'));
-
+    
+    expect(onSelectChange).toHaveBeenCalledWith(options[0]);
   });
 
 });

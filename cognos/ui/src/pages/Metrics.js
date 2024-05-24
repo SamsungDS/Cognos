@@ -94,7 +94,7 @@ const Metrics = () => {
                         <div className='device_card first-row' style={{ padding:20, paddingTop:50}} id='app-server-card-id'>
                             <Row>
                                 <Col sm={7} md={7} lg={7}><div className='fs-24 app-server-title'>Select Application Server</div> </Col>
-                                <Col sm={5} md={5} lg={5}><div className='dropdownn-app-server'><DropDown options={selectorOptions}/></div></Col>
+                                <Col sm={5} md={5} lg={5}><div className='dropdownn-app-server'><DropDown options={selectorOptions} onSelectChange={()=> {}}/></div></Col>
                             </Row>
                         </div>                                    
                     </Col>

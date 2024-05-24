@@ -13,6 +13,15 @@ const DropDown = ({ options, title, dropDownType, onSelectChange, name }) => {
         }
     };
 
+    React.useEffect(() => {
+        // Trigger API request with default selected value when component mounts
+        if (selectedValue) {
+            onSelectChange(selectedValue);
+        }
+    }, 
+    // eslint-disable-next-line react-hooks/exhaustive-deps 
+    []);
+
     return (
         <div className='dropdown-container' id='dropdown-container-id' data-testid={`dropdown-${name}`}>
             <label htmlFor="dropdown" className='app-server' style={{ color: "white", marginRight: 8 }} data-testid='label'>{title}</label>
