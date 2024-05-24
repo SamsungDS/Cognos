@@ -1,5 +1,5 @@
 sonar-scanner:
-  stage: post-build
+  stage: test
   image:
     name: $IMAGE_TAG
     pull_policy: always
@@ -10,7 +10,7 @@ sonar-scanner:
   script:
     # Scan with sonar-scanner
     - /sonar-scanner-*-linux/bin/sonar-scanner -Dsonar.coverageReportPaths=$SONAR_COVERAGE_REPORT
-  dependencies:
+  needs:
     - unit test
   allow_failure: false
   variables:
