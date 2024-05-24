@@ -1,5 +1,5 @@
 sonar-scanner:
-  stage: scan
+  stage: test
   image: 
     name: sonarsource/sonar-scanner-cli:latest
     entrypoint: [""]
