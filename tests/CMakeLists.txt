@@ -11,7 +11,7 @@ file(GLOB TEST_SOURCES
 # Create executable for tests
 add_executable(cxl_ut ${TEST_SOURCES})
 
-
+include(${CMAKE_SOURCE_DIR}/cmake/gtest.cmake)
 # Include directories (adjust as needed)
 target_include_directories(cxl_ut PRIVATE
     ${CMAKE_SOURCE_DIR}/src
@@ -22,6 +22,5 @@ target_include_directories(cxl_ut PRIVATE
 # Link with the library created in src
 target_link_libraries(cxl_ut PRIVATE cxl_lib gtest gtest_main gmock gmock_main)
 
-# Enable testing
-enable_testing()
-add_test(NAME cxl_test_suite COMMAND cxl_ut)
+include(GoogleTest)
+gtest_discover_tests(cxl_ut)

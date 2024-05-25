@@ -38,6 +38,12 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     endif()
 endif()
 
+
+if(WITH_FMAPI)
+    message(STATUS "Building with FMAPI")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I${CMAKE_INCLUDE_PATH} -L${CMAKE_LIBRARY_PATH}")
+endif()
+
 # Add subdirectories
 add_subdirectory(src)
 if(BUILD_TESTING)

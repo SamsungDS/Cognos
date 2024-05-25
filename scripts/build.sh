@@ -2,14 +2,19 @@
 
 set -e
 
+# set -x
+export PS4='+ [${BASH_SOURCE[0]##*/}:${LINENO}${FUNCNAME[0]:+:${FUNCNAME[0]}}] '
+
+# :help: run sapp tests
+PROG=${0##*/}
+
 # Path variables
 SCRIPT_DIR=$(cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd)
 PROJECT_ROOT=$(realpath "$SCRIPT_DIR/../")
 REPORTS_DIR="$PROJECT_ROOT/build/reports"
 
-die()
-{
-    echo "$*"
+die() {
+    echo "$PROG: $*" >&2
     exit 1
 }
 
@@ -32,6 +37,9 @@ help()
     echo "  Release build. Generates a tarball called svk-core-<version>.tgz by default."
     echo "-f | --filename"
     echo "  Filename prefix to use for release tarball. Only applicable when building with release flag."
+    echo "--with-fmapi <FMAPI_LIB_PATH> <FMAPI_INCLUDE_PATH>"
+    echo "  Builds with fmapi. Requires fmapi library and source paths."
+    echo "e.g. scripts/build.sh --with-fmapi /cxl_memory_box/mbox_a1/build/libmbox_a1_shared.so /cxl_memory_box/mbox_a1"
     exit
 }
 
@@ -65,6 +73,18 @@ parse_options()
         shift
         shift
         ;;
+        --with-fmapi)
+	WITH_FMAPI=true
+	if [ -z "$2" ] || [ -z "$3" ]; then
+	    echo "Missing FM library or include path."
+	    help
+	fi
+	FMAPI_LIB_PATH="$2"
+	FMAPI_INCLUDE_PATH="$3"
+	shift
+	shift
+	shift
+	;;
         *)
         ;;
     esac
@@ -74,6 +94,7 @@ parse_options()
 RELEASE=false
 BUILD_TESTING=false
 WITH_COVERAGE=false
+WITH_FMAPI=false
 
 parse_options "$@"
 
@@ -107,6 +128,23 @@ pushd "$PROJECT_ROOT/build"
     # Add code coverage option
     if $WITH_COVERAGE;then
         CMAKE_OPTIONS+=("-DWITH_COVERAGE=ON")
+    fi
+
+    if $WITH_FMAPI;then
+	if [ ! -f "$FMAPI_LIB_PATH" ];then
+		die "$FMAPI_LIB_PATH does not exists"
+	fi
+
+	if ! file "$FMAPI_LIB_PATH" | grep -q "ELF 64-bit LSB shared object"; then
+		die "$FMAPI_LIB_PATH not a library or shared object"
+	fi
+
+	if [ ! -d "$FMAPI_INCLUDE_PATH" ];then
+		die "$FMAPI_INCLUDE_PATH does not exist"
+	fi
+	CMAKE_OPTIONS+=("-DWITH_FMAPI=ON")
+	CMAKE_OPTIONS+=("-DCMAKE_INCLUDE_PATH=$FMAPI_INCLUDE_PATH")
+	CMAKE_OPTIONS+=("-DCMAKE_LIBRARY_PATH=$FMAPI_LIB_PATH")
     fi
 
     # Add cmake install prefix option
