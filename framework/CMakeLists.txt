@@ -37,8 +37,12 @@ install(
     INCLUDES DESTINATION ${SVKFramework_INCLUDE_DEST}
     )
 
-
-install(FILES ${SVKFramework_INC} DESTINATION ${SVKFramework_INCLUDE_DEST})
+install(
+  DIRECTORY
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/
+      ${CMAKE_SOURCE_DIR}/common/include/
+  DESTINATION
+      ${SVKFramework_INCLUDE_DEST})
 
 set_target_properties(${SVKFramework} PROPERTIES 
                             VERSION ${PROJECT_VERSION}
