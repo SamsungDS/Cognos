@@ -1,3 +1,5 @@
+#ifndef __GRPC_SERVER_H__
+#define __GRPC_SERVER_H__
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <unordered_map>
@@ -61,3 +63,4 @@ class Servicer : public svk::CommandFwk::Service {
 };
 
 std::shared_ptr<Server> Init(Servicer *svcr);
+#endif /*__GRPC_SERVER_H__*/

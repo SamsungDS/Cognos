@@ -24,9 +24,23 @@
           "sink_type": "rotating_file"
         }
       },
+  "svk_mgmt_fw_controller":
+      {
+        "controller": {
+          "id": "localhost",
+          "port": 9999
+        },
+        "logger": {
+          "log_level": "INFO",
+          "log_file_name": "/var/log/svk/svk_mgmt_fw_controller.log",
+          "log_file_count": 10,
+          "log_file_size": 1048576,
+          "sink_type": "rotating_file"
+        }
+      },
   "core":
       {
-        "feat_modules_dir": "/tmp/xyz",
+        "feat_modules_dir": "/usr/local/svk/core/tests/sample_feature/",
         "logger": {
           "log_level": "INFO",
           "log_file_name": "/var/log/svk/framework.log",

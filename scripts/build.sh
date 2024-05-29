@@ -123,10 +123,10 @@ pushd "$PROJECT_ROOT/build"
 
     if [ -n "$CMAKE_INSTALL_PREFIX" ];then
         echo "make install..."
-        make install
+        make install "-j$(nproc)"
     else
         echo "make..."
-        make
+        make "-j$(nproc)"
     fi
 
     if $WITH_COVERAGE;then
@@ -144,10 +144,13 @@ pushd "$PROJECT_ROOT/build"
         # Using path to framework object files
         gcovr \
             --xml "$REPORTS_DIR/gitlab_coverage.xml" \
+            --html-details "$REPORTS_DIR/gitlab_coverage.html"\
             --sonarqube "$REPORTS_DIR/sonar_coverage.xml" \
             --txt \
             --root "$PROJECT_ROOT" \
             --exclude "$PROJECT_ROOT/build" \
+            --exclude "$PROJECT_ROOT/tests" \
+            --exclude "/usr/include/" \
             "$PROJECT_ROOT/build"
     elif $WITH_RELEASE;then
         echo "Generating release tarball..."

@@ -1,0 +1,6 @@
+set(GRPC_NODE_SERVER_INC_DIR ${CMAKE_SOURCE_DIR}/grpc_node_server/include)
+set(GRPC_CONTROLLER_INC_DIR ${CMAKE_SOURCE_DIR}/grpc_controller/include)
+set(COMMON_INC_DIR ${CMAKE_SOURCE_DIR}/common/include)
+set(GRPC_NODE_SERVER_INC_PRIVATE_DIR ${CMAKE_SOURCE_DIR}/grpc_node_server/src/include_private)
+set(GRPC_CONTROLLER_INC_PRIVATE_DIR ${CMAKE_SOURCE_DIR}/grpc_controller/src/include_private)
+add_subdirectory(src)
