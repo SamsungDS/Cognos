@@ -1,7 +1,11 @@
 #include "grpc_server.h"
+
+#include "client_library.h"
 #define MAX_SIZE 4096
 
+#ifndef BUILD_TESTING
 ABSL_FLAG(std::string, svk_conf_file, "", "svk configuration file to read");
+#endif
 
 using namespace std;
 using namespace svk;
@@ -127,12 +131,12 @@ Status Servicer::ProcessNodeCommand(ServerContext *ctxt,
   Status status;
   std::string feature_params = req->feature_params();
   std::string logger_str;
+  char buffer[MAX_SIZE];
 
-  output_str.resize(MAX_SIZE, 0);
   svk_cmd.feat_id = (feature_id)req->feature_id();
   svk_input.input_buffer = (uint8_t *)feature_params.c_str();
   svk_input.len = feature_params.length();
-  svk_output.output_buffer = (uint8_t *)output_str.data();
+  svk_output.output_buffer = (uint8_t *)&buffer[0];
   svk_output.len = MAX_SIZE;
 
   ret = execute_svk_feature_sync(&svk_cmd, &svk_input, &svk_output);
@@ -147,26 +151,59 @@ Status Servicer::ProcessNodeCommand(ServerContext *ctxt,
   }
 
   if (svk_output.len) {
-    output_str.resize(svk_output.len);
     CommandResponse_NodeResponse *response = resp->add_node_responses();
+    output_str.assign((char *)svk_output.output_buffer, svk_output.len);
     response->set_output(output_str);
     response->set_node_id(req->node_id());
   }
   return status;
 }
 
-std::shared_ptr<Server> Init(Servicer *svcr) {
+int RegisterNodeWithController(const node_config &config) {
+  int status = -1;
+  Status grpc_status;
   std::string logger_str;
 
-  if (svcr == nullptr || svcr->get_svk_config_node_id().length() == 0 ||
-      svcr->get_svk_config_node_port().length() == 0) {
-    svk_logger(
-        MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR,
-        "Invalid servicer object or the node_id and the port are invalid");
+  svk::RegisterRequest *req(new svk::RegisterRequest());
+  svk::RegisterResponse *resp(new svk::RegisterResponse());
+  req->set_cluster_id(config.cluster_id);
+  req->set_node_id(config.node_id);
+  req->set_node_port(config.node_port);
+
+  Client client(config.controller_id, config.controller_port);
+
+  logger_str = "Registering with the Controller " + config.controller_id +
+               " at port " + config.controller_port;
+  svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+
+  grpc_status = client.RegisterNode(req, resp);
+  if (grpc_status.ok() != true) {
+    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR,
+               "Failed to register with the controller");
+    return status;
+  }
+
+  status = 0;
+  return status;
+}
+
+std::shared_ptr<Server> Init(Servicer *svcr) {
+  std::string logger_str;
+  int status = -1;
+  node_config config;
+
+  if (svcr == nullptr || svcr->get_state() == false) {
+    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR,
+               "Invalid servicer object or object is not fully initialized");
     return nullptr;
   }
-  std::string server_address =
-      svcr->get_svk_config_node_id() + ":" + svcr->get_svk_config_node_port();
+  config = svcr->get_svk_config();
+  if (config.node_id.length() == 0 || config.node_port.length() == 0) {
+    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR,
+               "Invalid node_id or invalid node port");
+    return nullptr;
+  }
+  std::string server_address = config.node_id + ":" + config.node_port;
 
   logger_str = "Server listening on " + server_address;
   svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
@@ -194,11 +231,23 @@ std::shared_ptr<Server> Init(Servicer *svcr) {
 
   svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
              "Server instance successfully created");
+
+  if (config.controller_id.length()) {
+    status = RegisterNodeWithController(config);
+    if (status) {
+      svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
+                 "Node Server failed to register with the controller");
+      // Call destructor
+      return nullptr;
+    }
+  }
+
   // Wait for the server to shutdown. Note that some other thread must be
   // responsible for shutting down the server for this call to ever return.
   return server;
 }
 
+#ifndef BUILD_TESTING
 int main(int argc, char **argv) {
   absl::ParseCommandLine(argc, argv);
   Servicer *svcr(new Servicer(absl::GetFlag(FLAGS_svk_conf_file)));
@@ -209,3 +258,4 @@ int main(int argc, char **argv) {
   server->Wait();
   return 0;
 }
+#endif

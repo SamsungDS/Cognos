@@ -10,12 +10,13 @@ set(PROTOBUF_ABSL_DEPS absl_absl_check absl_absl_log absl_algorithm absl_base ab
 
 set(GRPC_DEPS protobuf grpc++ absl_flags absl_flags_parse)
 
-set(SRCS ${GRPC_STUB_SRCS} ${CMAKE_CURRENT_SOURCE_DIR}/src/grpc_server.cc)
+set(COMMON_INC_DIR ${PARENT_DIR}/common/include/)
+set(COMMON_SRC_DIR ${PARENT_DIR}/common/src)
+set(SRCS ${GRPC_STUB_SRCS} ${CMAKE_CURRENT_SOURCE_DIR}/src/grpc_server.cc ${COMMON_SRC_DIR}/client_library.cc)
 if(BUILD_TESTING)
-set(GRPC_INC_FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/grpc_hdr.h ${CMAKE_CURRENT_SOURCE_DIR}/include/grpc_server.h PARENT_SCOPE)
+set(GRPC_INC_FILES ${COMMON_INC_DIR}/grpc_hdr.h ${COMMON_INC_DIR}/client_library.h ${CMAKE_CURRENT_SOURCE_DIR}/include/grpc_server.h PARENT_SCOPE)
 endif()
 set(INC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include/)
-set(UTILS_INC_DIR ${PARENT_DIR}/utils/include/)
 
 add_executable(${PROJECT_NAME} ${SRCS})
 
@@ -25,25 +26,25 @@ execute_process(COMMAND pkg-config --cflags protobuf grpc absl_flags absl_flags_
 execute_process(COMMAND pkg-config --cflags svkframework OUTPUT_VARIABLE SVK_FW_CFLAGS OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_STRIP_TRAILING_WHITESPACE)
 execute_process(COMMAND pkg-config --libs --static svkframework OUTPUT_VARIABLE SVK_FW_LIBS OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_STRIP_TRAILING_WHITESPACE)
 
-# message(STATUS " cflags ${GRPC_CFLAGS}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC ${GRPC_CFLAGS} ${SVK_FW_CFLAGS}")
 set_target_properties(${PROJECT_NAME} PROPERTIES
                         VERSION ${PROJECT_VERSION}
                         SOVERSION ${PROJECT_VERSION_MAJOR})
 
 target_include_directories(${PROJECT_NAME} PUBLIC ${GRPC_PROTO_SRC})
-target_include_directories(${PROJECT_NAME} PUBLIC ${INC_DIR} ${UTILS_INC_DIR})
+target_include_directories(${PROJECT_NAME} PUBLIC ${INC_DIR} ${COMMON_INC_DIR})
 
 target_link_libraries(${PROJECT_NAME} PUBLIC "${GRPC_LINK_LIBRARIES_FLAG} ${SVK_FW_LIBS} -lutf8_validity -Wl,--no-as-needed -lgrpc++_reflection -Wl,--as-needed -ldl -lsvklogger -lsvkframework")
 target_link_libraries(${PROJECT_NAME} PUBLIC ${SVK_FW_GRPC_CORE_LIB})
 
 if(BUILD_TESTING)
-    add_library(svkgrpc SHARED ${SRCS})
-    target_include_directories(svkgrpc PUBLIC ${GRPC_PROTO_SRC})
-    target_include_directories(svkgrpc PUBLIC ${INC_DIR} ${UTILS_INC_DIR})
+    add_library(svkgrpcnodetest STATIC ${SRCS})
+    set_target_properties(svkgrpcnodetest PROPERTIES COMPILE_DEFINITIONS "BUILD_TESTING")
+    target_include_directories(svkgrpcnodetest PUBLIC ${GRPC_PROTO_SRC})
+    target_include_directories(svkgrpcnodetest PUBLIC ${INC_DIR} ${COMMON_INC_DIR})
 
-    target_link_libraries(svkgrpc PUBLIC "${GRPC_LINK_LIBRARIES_FLAG} ${SVK_FW_LIBS} -lutf8_validity -Wl,--no-as-needed -lgrpc++_reflection -Wl,--as-needed -ldl -lsvklogger -lsvkframework")
-    target_link_libraries(svkgrpc PUBLIC ${SVK_FW_GRPC_CORE_LIB})
+    target_link_libraries(svkgrpcnodetest PUBLIC "${GRPC_LINK_LIBRARIES_FLAG} ${SVK_FW_LIBS} -lutf8_validity -Wl,--no-as-needed -lgrpc++_reflection -Wl,--as-needed -ldl -lsvklogger -lsvkframework")
+    target_link_libraries(svkgrpcnodetest PUBLIC ${SVK_FW_GRPC_CORE_LIB})
     install(FILES ${GRPC_INC_FILES} DESTINATION ${SVKGRPCFW_INCLUDE_DEST})
 endif()
 

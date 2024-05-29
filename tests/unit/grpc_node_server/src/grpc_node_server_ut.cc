@@ -28,8 +28,8 @@ int create_svk_mgmt_fw_conf_json(std::string conf_file,
 
   root.put("svk_mgmt_fw_node.framework.conf_file", fw_conf_file);
   root.put("svk_mgmt_fw_node.cluster.id", "CL_ID_1");
-  root.put("svk_mgmt_fw_node.controller.id", "localhost");
-  root.put("svk_mgmt_fw_node.controller.port", "9999");
+  root.put("svk_mgmt_fw_node.controller.id", "");
+  root.put("svk_mgmt_fw_node.controller.port", "");
   root.put("svk_mgmt_fw_node.node.id", "localhost");
   root.put("svk_mgmt_fw_node.node.port", "9998");
   root.put("svk_mgmt_fw_node.logger.log_level", log_level);
@@ -78,8 +78,8 @@ int create_svk_mgmt_fw_conf_json_without_logger(
 
   root.put("svk_mgmt_fw_node.framework.conf_file", fw_conf_file);
   root.put("svk_mgmt_fw_node.cluster.id", "CL_ID_1");
-  root.put("svk_mgmt_fw_node.controller.id", "localhost");
-  root.put("svk_mgmt_fw_node.controller.port", "9999");
+  root.put("svk_mgmt_fw_node.controller.id", "");
+  root.put("svk_mgmt_fw_node.controller.port", "");
   root.put("svk_mgmt_fw_node.node.id", "localhost");
   root.put("svk_mgmt_fw_node.node.port", "9998");
 
@@ -236,8 +236,6 @@ TEST(InitTest, InitWithJSONConfFileWithoutClusterID) {
   EXPECT_TRUE(svcr->get_state() == true);
   node_config config = svcr->get_svk_config();
   EXPECT_EQ(config.cluster_id, DEFAULT_CLUSTER_ID);
-  EXPECT_EQ(config.controller_id, DEFAULT_CONTROLLER_ID);
-  EXPECT_EQ(config.controller_port, DEFAULT_CONTROLLER_PORT);
   EXPECT_EQ(config.node_id, DEFAULT_NODE_ID);
   EXPECT_EQ(config.node_port, DEFAULT_NODE_PORT);
   EXPECT_EQ(config.log_level, MGMT_FW_LOGGER_DEFAULT_LEVEL);
@@ -264,8 +262,6 @@ TEST(InitTest, InitWithJSONConfFileWithoutController) {
   EXPECT_TRUE(svcr->get_state() == true);
   node_config config = svcr->get_svk_config();
   EXPECT_EQ(config.cluster_id, "CL_ID");
-  EXPECT_EQ(config.controller_id, DEFAULT_CONTROLLER_ID);
-  EXPECT_EQ(config.controller_port, DEFAULT_CONTROLLER_PORT);
   EXPECT_EQ(config.node_id, DEFAULT_NODE_ID);
   EXPECT_EQ(config.node_port, DEFAULT_NODE_PORT);
   EXPECT_EQ(config.log_level, MGMT_FW_LOGGER_DEFAULT_LEVEL);
@@ -291,8 +287,6 @@ TEST(InitTest, InitWithJSONConfFileWithEmptyController) {
   EXPECT_TRUE(svcr->get_state() == true);
   node_config config = svcr->get_svk_config();
   EXPECT_EQ(config.cluster_id, "CL_ID");
-  EXPECT_EQ(config.controller_id, DEFAULT_CONTROLLER_ID);
-  EXPECT_EQ(config.controller_port, DEFAULT_CONTROLLER_PORT);
   EXPECT_EQ(config.node_id, DEFAULT_NODE_ID);
   EXPECT_EQ(config.node_port, DEFAULT_NODE_PORT);
   EXPECT_EQ(config.log_level, MGMT_FW_LOGGER_DEFAULT_LEVEL);
@@ -389,6 +383,25 @@ TEST(InitTest, InitWithJSONConfFileWithEmptyNode) {
   unlink(conf_file.c_str());
 }
 
+TEST(InitTest, InitWithJSONConfFileWithEmptyNodeID) {
+  char *cw_dir = get_current_dir_name();
+  std::string features_dir = FEATURES_DIR;
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  std::string content =
+      "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
+      "\"}, \"cluster\":{\"id\":\"CL_ID\"}, "
+      "\"controller\":{\"id\":\"\", \"port\":9999}, "
+      "\"node\":{\"id\":\"\"}}}";
+  FILE *fp = fopen(conf_file.c_str(), "a+");
+  fwrite(content.c_str(), content.length(), 1, fp);
+  fclose(fp);
+  std::cout << "content written " << content << std::endl;
+  Servicer *svcr(new Servicer(conf_file));
+  auto server = Init(svcr);
+  EXPECT_TRUE(server == nullptr);
+  unlink(conf_file.c_str());
+}
+
 TEST(InitTest, InitWithJSONConfFileWithoutNodePort) {
   char *cw_dir = get_current_dir_name();
   std::string features_dir = FEATURES_DIR;
@@ -415,6 +428,25 @@ TEST(InitTest, InitWithJSONConfFileWithoutNodePort) {
   EXPECT_EQ(config.log_file_count, MGMT_FW_LOGGER_DEFAULT_FILE_COUNT);
   EXPECT_EQ(config.log_file_size, MGMT_FW_LOGGER_DEFAULT_FILE_SIZE);
   EXPECT_EQ(config.log_sink_type, MGMT_FW_LOGGER_DEFAULT_SINK_TYPE);
+  unlink(conf_file.c_str());
+}
+
+TEST(InitTest, InitWithJSONConfFileWithEmptyNodePort) {
+  char *cw_dir = get_current_dir_name();
+  std::string features_dir = FEATURES_DIR;
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  std::string content =
+      "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
+      "\"}, \"cluster\":{\"id\":\"CL_ID\"}, "
+      "\"controller\":{\"id\":\"\", \"port\":9999}, "
+      "\"node\":{\"id\":\"localhostx\", \"port\":\"\"}}}";
+  FILE *fp = fopen(conf_file.c_str(), "a+");
+  fwrite(content.c_str(), content.length(), 1, fp);
+  fclose(fp);
+  std::cout << "content written " << content << std::endl;
+  Servicer *svcr(new Servicer(conf_file));
+  auto server = Init(svcr);
+  EXPECT_TRUE(server == nullptr);
   unlink(conf_file.c_str());
 }
 
