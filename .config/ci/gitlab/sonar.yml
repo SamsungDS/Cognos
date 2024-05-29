@@ -1,6 +1,6 @@
 sonar-scanner:
   extends: release build
-  stage: post-build
+  stage: test
   script:
     # Download latest sonar-scanner from sonar-source
     - wget --no-verbose --content-disposition "https://search.maven.org/remote_content?g=org.sonarsource.scanner.cli&a=sonar-scanner-cli&v=LATEST&c=linux&e=zip"
