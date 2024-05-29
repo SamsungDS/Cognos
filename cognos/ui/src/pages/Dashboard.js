@@ -141,13 +141,13 @@ const Dashboard = () => {
                       <Row>
                         <Col style={{color: 'white'}}>CMM-D</Col>
                         <Col style={{color: 'white'}}><img title="Failure: see Configure page for more details" alt='activelight' src={UnhealthyLight} width="20" height="auto" style={{objectFit: "cover", cursor:'pointer'}} />&nbsp; 0</Col>
-                        <Col style={{color: 'white'}}><img src={ActiveLight} alt='activelight' width="20" height="auto" style={{objectFit: "cover"}} />&nbsp; 6</Col>
+                        <Col style={{color: 'white'}}><img title="Healthy: see Configure page for more details" src={ActiveLight} alt='activelight' width="20" height="auto" style={{objectFit: "cover", cursor:'pointer'}} />&nbsp; 6</Col>
                         <Col style={{color: 'white'}}><img title="Warning: see Configure page for more details" src={InactiveLight} alt='Inactivelight' width="20" height="auto" style={{objectFit: "cover", cursor:'pointer'}} />&nbsp; 0</Col>
                       </Row>
                       <Row>
                         <Col style={{color: 'white'}}>Host</Col>
                         <Col style={{color: 'white'}}><img title="Failure: see Configure page for more details" alt='activelight' src={UnhealthyLight} width="20" height="auto" style={{objectFit: "cover", cursor:'pointer'}} />&nbsp; 0</Col>
-                        <Col style={{color: 'white'}}><img src={ActiveLight} alt='activelight' width="20" height="auto" style={{objectFit: "cover"}} />&nbsp; 2</Col>
+                        <Col style={{color: 'white'}}><img title="Healthy: see Configure page for more details" src={ActiveLight} alt='activelight' width="20" height="auto" style={{objectFit: "cover", cursor:'pointer'}} />&nbsp; 2</Col>
                         <Col style={{color: 'white'}}><img title="Warning: see Configure page for more details" src={InactiveLight} alt='activelight' width="20" height="auto" style={{objectFit: "cover", cursor:'pointer'}} />&nbsp; 0</Col>
                       </Row>
                     </Col>
