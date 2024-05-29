@@ -23,3 +23,9 @@ fi
 INSTALL_STRING="python3 -m pip install ${PIP_ARGS[*]}"
 echo "executing command: $INSTALL_STRING"
 eval "$INSTALL_STRING"
+
+# Set git safe.directory globally if docker
+if [[ -f /.dockerenv ]]
+then
+    git config --global --add safe.directory '*'
+fi
