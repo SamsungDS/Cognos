@@ -23,7 +23,7 @@ describe('AttachMemory', () => {
 
     expect(onSave).toHaveBeenCalledTimes(1);
     expect(onSave).toHaveBeenCalledWith({
-      lmd: 'D-1'
+      dev_name: 'D-1'
     });
   });
 

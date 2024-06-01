@@ -5,7 +5,7 @@ import useSaveHook from '../customhooks/useSaveHook';
 describe('useSaveHook', () => {
   const setMemboxDataMock = jest.fn();
   const setShowMock = jest.fn();
-  const apiEndpointMock = 'http://127.0.0.1:4000';
+  const apiEndpointMock = 'http://127.0.0.1:4000//api/v2.0.0';
 
   afterEach(() => {
     jest.clearAllMocks();

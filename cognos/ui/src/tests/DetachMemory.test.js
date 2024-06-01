@@ -41,7 +41,7 @@ describe('DetachMemory component', () => {
     const { getByText } = render(
       <DetachMemory
         show={true}
-        rowData={{ lmd: 'D-1' }}
+        rowData={{ dev_name: 'D-1' }}
         onCancel={() => {}}
         onDelete={onDeleteMock}
       />

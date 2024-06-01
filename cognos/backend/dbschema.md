@@ -32,16 +32,15 @@
 | status         | varchar(32)     | YES  |     | NULL    |       |
 | type           | varchar(64)     | YES  |     | NULL    |       |
 | mode           | varchar(64)     | YES  |     | NULL    |       |
+| dev_name       | varchar(64)     | YES  |     | NULL    |       |
 +----------------+-----------------+------+-----+---------+-------+
 
-# Table: connections
+# Table: host_device_connections
 +-----------+-----------------+------+-----+---------+-------+
 | Field     | Type            | Null | Key | Default | Extra |
 +-----------+-----------------+------+-----+---------+-------+
-| membox_id | bigint unsigned | NO   | PRI | NULL    |       |
-| dev_id    | bigint unsigned | YES  |     | NULL    |       |
 | host_id   | bigint unsigned | YES  |     | NULL    |       |
-| dev_port  | int unsigned    | YES  |     | NULL    |       |
-| offset    | varchar(128)    | YES  |     | NULL    |       |
-| pool      | varchar(128)    | YES  |     | NULL    |       |
+| host_name | varchar(128)    | YES  |     | NULL    |       |
+| dev_id    | bigint unsigned | YES  |     | NULL    |       |
+| dev_name  | varchar(128)    | YES  |     | NULL    |       |
 +-----------+-----------------+------+-----+---------+-------+

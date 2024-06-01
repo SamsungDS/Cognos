@@ -7,10 +7,11 @@ import { Configs, ArrowLeft, ArrowRight, cxlDevArrow,
     Host1, Host2, Host3, Host4, Host5, Host6, Host7, Host8, 
     D1, D2, D3, D4, D5, D6, D7, D8 } from '../constant';
 
+
 const BoxTopology = () => {
 
     const [hostToDeviceMapping, setHostToDeviceMapping] = useState([]);
-    const hostDeviceMapEndpoint = Configs.data_endpoint + "/host_device_map"
+    const hostDeviceMapEndpoint = Configs.api_endpoint + "/topology"
     useEffect(() => {
       fetch(hostDeviceMapEndpoint , {
         method: 'get',
@@ -27,70 +28,70 @@ const BoxTopology = () => {
 
     const HostList = [
         {
-          host: 'Host1',
+          host: 'Host 1 LNK0',
           srcImage: {Host1},
           color: '#0077C8'      
         },
         {
-          host: 'Host2',
+          host: 'Host 2',
           srcImage: {Host2},
           color: '#AC55FF'
         },
         {
-          host: 'Host3',
+          host: 'Host 3',
           srcImage: {Host3},
           color: '#00B3E3'
         },
         {
-          host: 'Host4',
+          host: 'Host 4',
           srcImage: {Host4},
           color: '#8093DC'
         },
         {
-          host: 'Host5',
+          host: 'Host 5',
           srcImage: {Host5},
           color: '#FFB546'
         },
         {
-          host: 'Host6',
+          host: 'Host 6',
           srcImage: {Host6},
           color: '#FF6700'
         },
         {
-          host: 'Host7',
+          host: 'Host 7',
           srcImage: {Host7},
           color: '#00C3B2'
         },
         {
-          host: 'Host8',
+          host: 'Host 8',
           srcImage: {Host8},
           color: '#52DD3A'
         }
       ] 
     const DeviceList = [
         {
-          lmd: 'D1'
+          device: 'DEV_1-256G'
         },
         {
-          lmd: 'D2'   
+          device: 'DEV_2-256G'   
         },
         {
-          lmd: 'D3'
+          device: 'DEV_3-256G'
         },
         {
-          lmd: 'D4'
+          device: 'DEV_4-256G'
         },
         {
-          lmd: 'D5'
+          device: 'DEV_5-256G'
         },
         {
-          lmd: 'D6'
+          device: 'DEV_6-256G'
         },
         {
-          lmd: 'D7'
+          device: 'DEV_7-256G'
         },
         {
-          lmd: 'D8'
+          device: 'DEV_8-256G'
         }
       ] 
 
@@ -105,7 +106,7 @@ const BoxTopology = () => {
   
 
     const mappedDeviceList = DeviceList.map(device => {
-      const associatedHost = hostToDeviceMapping.find(host => host.devices.includes(device.lmd));
+      const associatedHost = hostToDeviceMapping.find(host => host.devices.includes(device.device));
       const hostDetails = associatedHost ? HostList.find(h => h.host === associatedHost.host) : null;
       return {
         ...device,
@@ -123,17 +124,17 @@ const BoxTopology = () => {
 
     // Hosts rendering
     const hostComponents = mappedHostList.map((host, index) => {
-      const part = host.host.split('');
+      const shortform = host.host.split(' ')[1];
       const lineColor = host.color;
-      const result = part[4];
       const dynamicStyle = {
         color: host.isActive ? host.color : '#4F4F4F',
         border: host.isActive ? `2px solid ${host.color}` : '2px solid #4F4F4F',
       };
-      const srcImage = host.isActive ? host.srcImage[host.host]: HostIconInactive;
+      const srcImageName = 'Host' + shortform
+      const srcImage = host.isActive ? host.srcImage[srcImageName]: HostIconInactive;
   
       const Metadata = (
-        `name: Host ${result} LNK0,
+        `name: ${host.host},
         port: 3,
         port_type: CXL_11,
         PCIe_version: 5,
@@ -145,11 +146,11 @@ const BoxTopology = () => {
       marginBottom: '8px'
     };
       return (
-        <div key={result}>
+        <div key={host.host}>
           <div>
             <Badge className='badge' style={dynamicStyle} title={Metadata}>
               <span className='vertical-badge-line' style={{color:lineColor, fontWeight:900}}>| | | </span>
-              <span className='badge-name' style={{paddingTop:4, fontFamily: 'samsung sharp sons',}}>&nbsp; {`H-${result}`} &nbsp;&nbsp;</span>
+              <span className='badge-name' style={{paddingTop:4, fontFamily: 'samsung sharp sons',}}>&nbsp; {`Host ${shortform}`} &nbsp;&nbsp;</span>
               <img className='host-round-icon' src={srcImage} alt="HostIcon" style={{ objectFit: 'contain', fontFamily: 'Samsung' }} />
             </Badge>
             <div>
@@ -160,11 +161,9 @@ const BoxTopology = () => {
         )
     });
     const hostColorsIcon = mappedHostList.map((host) => {
-      const part = host.host.split('');
       const lineColor = host.color;
-      const result = part[4];
       const Metadata = (
-        `name: Host ${result} LNK0,
+        `name: ${host.host},
         port: 3,
         port_type: CXL_11,
         PCIe_version: 5,
@@ -172,7 +171,7 @@ const BoxTopology = () => {
         `
     ).replace(/ +/g, '');
       return (
-        <div key={result}>
+        <div key={host.host}>
           <p style={{color:'white', backgroundColor: lineColor}} title={Metadata} className='circle-solid solid'></p>
         </div>
         )
@@ -193,12 +192,11 @@ const BoxTopology = () => {
 
     // CXL Devices rendering
     const cxlDeviceComponents = mappedDeviceList.map((device) => {
-      const part = device.lmd.split('');
+      const part = device.device.split('-')[0];
       const fontColor = device.color;
-      const result = part[1];
       const srcImage = device.hostDetails ? getImageByColor(fontColor): cxlDevIconInActive;
       const D1Metadata = (
-        `name: DEV_0${result}-256G
+        `name: ${part}
         size: 256GB
         port: 7
         dev_port_type: CXL_20
@@ -208,11 +206,11 @@ const BoxTopology = () => {
     ).replace(/ +/g, '');
       
       return (
-        <div className='cxl-dev' title={D1Metadata}  key={device.lmd}>
+        <div className='cxl-dev' title={D1Metadata}  key={device.device}>
           <img src={device.hostDetails ? cxlDevArrow : cxlDevArrowInactive} alt="ArrowRight"  className='device-icon' />
-          <p className='device-name' style={{color:fontColor, fontWeight:700, marginBottom:0}}>{device.lmd}</p>
+          <p className='device-name' style={{color:fontColor, fontWeight:700, marginBottom:0}}>{part}</p>
           <img src={srcImage} alt="cxlDevIconActive" className='device-img' style={{ objectFit: 'contain', marginTop:0, fontFamily: 'Samsung' }} />     
-          <p className='fs-22 device-Id' >{`CMM-D${result}`}</p>
+          <p className='fs-22 device-Id' >{`${part}`}</p>
         </div>
       )   
     });

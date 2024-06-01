@@ -21,37 +21,28 @@ export const getReadableStatus = (job) => {
 
 const Configure = () => {
 
-  const apiEndpoint = constants.Configs.data_endpoint;
+  const apiEndpoint = constants.Configs.api_endpoint;
   const LMDs = 'lmds';
   const AVAILABLE_lMDs = 'available_lmds';
+  const AVAILABLE_DEVICES = 'available_devices';
   const HOST_LMDs = 'host_lmds';
+  const HOST_DEVICES = 'host_devices';
   const MEMBOX_LMDs = 'membox_lmds';
   const [showAttach, setShowAttach] = useState(false);
   const [selectedValue, setSelectedValue] = useState('');
   const [showDetachMemory, setShowDetachMemory] = useState(false);
   const [attachedRowData, setAttachedRowData] = useState({});
-  // used for top table
-  const [lmdData, setLmdData] = useState([{
-    lmd: 'D-1',
-    host: 'Host 2',
-    mem_type: 'CMMD',
-    mem_mode: 'Direct',
-    capacity: 128,
-    capacity_units: 'GB',
-    used_capacity: 0,
-    used_capacity_units: 'GB'
-  }]);
-  // used for bottom table
+  
+  // host w/ attached devices top table state variable
+  const [lmdData, setLmdData] = useState([{}]);
+
+  // MemBox bottom table state variable
   const [memboxData, setMemboxData] = useState([{
-    lmd: 'D-1',
-    mem_type: 'CMMD',
-    mem_mode: 'Direct',
-    capacity: 128,
-    capacity_units: 'GB',
-    used_capacity: 0,
-    used_capacity_units: 'GB',
-    status: 'loading',
-    host: 'Host1'
+    dev_name: "DEVX",
+    dev_capacity: 50023929,
+    dev_id: 99999999,
+    dev_port: 100,
+    hosts_attached: "Host 1"
   }]);
   const [availableLMDs, setAvailableLMDs] = useState([]);
 
@@ -66,23 +57,32 @@ const Configure = () => {
     "loading": constants.LoadingGif,
     "ready": constants.ReadyLight,
   }
-
+  
   useEffect(() => {
-    fetch(`${apiEndpoint}//${LMDs}`, {
-      method: 'get',
+    fetch(`${apiEndpoint}/devices`, {
+      method: 'post',
       headers: new Headers({
-        'Access-Control-Allow-Origin':'*'
+        'Access-Control-Allow-Origin':'*',
+        'accept': 'application/json',
+        'content-type': 'application/json'
+      }),
+      body: JSON.stringify({
+        "input": "cluster_id=CLUST1;command=ListDevices;FM_id=203;FM_endpoint=samsung.com"
       })
     }).then(response => response.json()).then(data => setMemboxData(data))
-  }, 
+  },
   // eslint-disable-next-line react-hooks/exhaustive-deps 
   []);
 
   const getAvailableLMDS = async() => {
-    const response = await fetch(`${apiEndpoint}//${AVAILABLE_lMDs}`, {
+    const response = await fetch(`${apiEndpoint}/${AVAILABLE_DEVICES}`, {
       mode: 'cors',
       method: 'GET',
-      headers: {'Content-Type': 'application/json', 'Access-Control-Allow-Origin':'*'},
+      headers: {
+        'Content-Type': 'application/json',
+        'accept': 'application/json',
+        'Access-Control-Allow-Origin':'*'
+      },
     });
 
     if (response.ok) {
@@ -116,7 +116,11 @@ const Configure = () => {
     const response = await fetch(`${apiEndpoint}`, {
         mode: 'cors',
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin':'*' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin':'*',
+          'accept': 'application/json'
+        },
         body: JSON.stringify(payload)
     });
 
@@ -124,49 +128,38 @@ const Configure = () => {
       const data = await response.json();
       setData(data);
     }
-};
-
-
+  };
 
   const lmdTable =  Array.isArray ? lmdData.map(
     (item) => {
         return (
-          <tr key={item.lmd}>
+          <tr key={item.dev_name}>
             <td className='cofig-row'>
               <Button variant="outline-light" size="sm" onClick={() => handleDetachMemoryToggle(item)} data-testid="detach-button">
                 <img src={constants.MinusIcon} alt='minus-icon' width="25" height="auto" /> 
               </Button>
             </td>
-            <td className='cofig-row'>{item.lmd}</td>
-            <td className='cofig-row'>{item.mem_type}</td>
-            <td className='cofig-row'>{item.mem_mode}</td>
-            <td className='cofig-row'>{item.capacity} {item.capacity_units}</td>
-            <td className='cofig-row'>{item.used_capacity} {item.used_capacity_units}</td>
+            <td className='cofig-row'>{item.dev_name}</td>
+            <td className='cofig-row'>{item.status}</td>
+            <td className='cofig-row'>{item.type}</td>
+            <td className='cofig-row'>{item.mode} {item.capacity_units}</td>
+            <td className='cofig-row'>{item.dev_capacity} GB</td>
           </tr>
       )
     }
   ) : null;
+
   const memBoxTable = Array.isArray ? memboxData.map((item) => {
     return (
-      <tr key={item.lmd}>
-        <td className='cmm-row'>
-          <img 
-            src={statusImages[item.status]}
-            alt='status-icon'
-            width="25" 
-            height="auto"
-            title={item.status === 'unhealthy' ? 'failure: unable to allocate memory' : getReadableStatus(item.status)}
-          />
-        </td>
-        <td className='cmm-row'>{item.lmd}</td>
-        <td className='cmm-row'>{item.device_type}</td>
-        <td className='cmm-row'>{item.capacity} {item.capacity_units}</td>
-        <td className='cmm-row'>{item.memory_servers}</td>
+      <tr key={item.dev_id}>
+        <td className='cmm-row'>{item.dev_name}</td>
+        <td className='cmm-row'>{item.dev_id}</td>
+        <td className='cmm-row'>{item.dev_capacity} GB</td>
+        <td className='cmm-row'>{item.dev_port}</td>
+        <td className='cmm-row'>{item.hosts_attached}</td>
       </tr>
     ) 
   }): null;
-
-
 
   return (
     <Container fluid className='content_root' id='configure-container-id'>
@@ -175,7 +168,7 @@ const Configure = () => {
               <div className='device_card' data-testid='app-server-card' id='app-server-card-id' style={{height: '336px'}}>
                 <div className='config-host' data-testid='config-host' style={{ position:'sticky'}}>
                   <DropDown options={constants.hostSelectorOptions} 
-                    onSelectChange={(selectedOption) => handleSelectChange(selectedOption, `${apiEndpoint}//${HOST_LMDs}`, setLmdData)}
+                    onSelectChange={(selectedOption) => handleSelectChange(selectedOption, `${apiEndpoint}/${HOST_DEVICES}`, setLmdData)}
                     title={constants.hostSelectorTitle}
                     dropDownType="single"
                     name='hostTable'
@@ -247,7 +240,6 @@ const Configure = () => {
                     <tbody style={{ maxHeight: '160px', overflowY: 'auto' }}>
                       {memBoxTable}
                       <tr>                        
-                        <td className='cmm-row'></td>
                         <td className='cmm-row'></td>
                         <td className='cmm-row'></td>
                         <td className='cmm-row'></td>

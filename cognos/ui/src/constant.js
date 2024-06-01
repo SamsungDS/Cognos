@@ -11,26 +11,27 @@ export const InactiveLight =  require('../src/assets/gifs/Icon-Yellow-Light.gif'
 export const ReadyLight = require('../src/assets/gifs/Icon-Blue-Light.gif')
 export const hostSelectorTitle = 'Select Application Server:';
 export const hostSelectorOptions = [
-    { value: 'host_2', label: 'Host 2' },
-    { value: 'host_1', label: 'Host 1' }
+    {value: '', label: 'Select' },
+    { value: 'host_1', label: 'Host 1 LNK0' }
   ];
 export const memboxSelectorTitle = 'Select CMM-B:';
 export const memboxSelectorOptions = [
     {value: 'mb-1', label: 'mb-1'}
   ];
+
 export const lmdTableHeader = [
     'Attach/Detach',
     'CXL Device',
-    'Memory Type',
+    'Status',
+    'Type',
     'Mode',
-    'Total Capacity',
-    'Capacity Usage'
+    'Total Capacity (GB)'
 ]
 export const memboxTableHeader = [
-    'Status',
     'CXL Device',
-    'Device Type',
-    'Total Capacity',
+    'CXL Device ID',
+    'Total Capacity (GB)',
+    'Device Port',
     'Application Servers'
 ]
   export const pattern = require('../src/assets/icons/Pattern.png');

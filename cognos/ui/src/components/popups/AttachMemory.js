@@ -18,7 +18,7 @@ const AttachMemory = ({ show, onSave, onCancel, availableLMDs }) => {
 
     const handleAttach = () => {
         const formData = {
-        lmd: logicalMemoryDevice,
+        dev_name: logicalMemoryDevice,
         host_memory_address: hostMemoryAddress,
         lmdCapacity,
         };

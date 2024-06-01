@@ -24,7 +24,7 @@ const DetachMemory = ({show, rowData, onCancel, onDelete}) => {
                     <Button variant='secondary' onClick={onCancel} data-testid='cancel-detach-button'>
                         Cancel
                     </Button>
-                    <Button variant='primary' onClick={() => onDelete(rowData.lmd)} data-testid='detach-memory-cancel-button'>
+                    <Button variant='primary' onClick={() => onDelete(rowData.dev_name)} data-testid='detach-memory-cancel-button'>
                         Detach
                     </Button>
                 </Modal.Footer>

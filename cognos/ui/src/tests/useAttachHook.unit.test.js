@@ -5,7 +5,7 @@ describe('useAttachHook', () => {
   const setLmdDataMock = jest.fn();
   const handleAttachMemoryToggleMock = jest.fn();
   const selectedValueMock = { label: 'Host 1' };
-  const apiEndpointMock = 'http://105.91.142.222:4000';
+  const apiEndpointMock = 'http://105.91.142.222:4000//api/v2.0.0';
 
   afterEach(() => {
     jest.clearAllMocks();
@@ -25,20 +25,15 @@ describe('useAttachHook', () => {
       };
 
     global.fetch = jest.fn().mockImplementation((url) => {
-      if (url.endsWith('/attach_lmd')) {
+      if (url.endsWith('/attach_device')) {
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve(mockLmdData),
         });
-      } else if (url.endsWith('/lmds')) {
+      } else if (url.endsWith('/devices')) {
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve({ someData: 'memboxData' }),
-        });
-      } else if (url.endsWith('/activate_device')) {
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ someData: 'activated' }),
         });
       }
     });
