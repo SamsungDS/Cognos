@@ -26,19 +26,9 @@ typedef enum svk_dbc_op_type {
 
 } svk_dbc_op_type_t;
 
-/** Opaque Configuration passed to underlying DB connector */
-typedef void* svk_dbc_config_t;
-
-/** DB Connector handle to be used for all operations */
-typedef void* svk_dbc_handle_t;
-
-// Callback function for submit_io
-typedef void (*svk_dbc_complete_fn)(svk_dbc_task_t* task,
-                                    svk_dbc_status_t status);
-
 /** Opaque Structure to hold operations that are batched */
 typedef struct svk_dbc_task_s {
-  svk_dbc_op_type opc;
+  svk_dbc_op_type_t opc;
   void* dbc_task_identifier;
   union {
     struct {
@@ -60,6 +50,16 @@ typedef struct svk_dbc_task_s {
 
 } svk_dbc_task_t;
 
+/** Opaque Configuration passed to underlying DB connector */
+typedef void* svk_dbc_config_t;
+
+/** DB Connector handle to be used for all operations */
+typedef void* svk_dbc_handle_t;
+
+// Callback function for submit_io
+typedef void (*svk_dbc_complete_fn)(svk_dbc_task_t* task,
+                                    svk_dbc_status_t status);
+
 /**
  * @brief Open device API for DB connector
  *
@@ -76,7 +76,7 @@ svk_dbc_status_t svk_dbc_open(svk_dbc_config_t* config,
  * @param handle DB connector handle to close
  * @return svk_dbc_status_t Return code
  */
-svk_dbc_status_t svkc_dbc_close(svk_dbc_handle_t* handle);
+svk_dbc_status_t svk_dbc_close(svk_dbc_handle_t* handle);
 
 /**
  * @brief Submit IO API for DB connector
@@ -86,8 +86,8 @@ svk_dbc_status_t svkc_dbc_close(svk_dbc_handle_t* handle);
  *  If callback (svk_dbc_task_t->cb) is empty, treat as sync IO
  * @return svk_dbc_status_t Return code
  */
-svk_dbc_status_t svkc_dbc_submit_io(svk_dbc_handle_t* handle,
-                                    svk_dbc_task_t* task);
+svk_dbc_status_t svk_dbc_submit_io(svk_dbc_handle_t* handle,
+                                   svk_dbc_task_t* task);
 
 #ifdef __cplusplus
 }  // extern "C"
