@@ -26,6 +26,10 @@ typedef enum svk_dbc_op_type {
 
 } svk_dbc_op_type_t;
 
+// Callback function for submit_io
+typedef void (*svk_dbc_complete_fn)(svk_dbc_task_t* task,
+                                    svk_dbc_status_t status);
+
 /** Opaque Structure to hold operations that are batched */
 typedef struct svk_dbc_task_s {
   svk_dbc_op_type_t opc;
@@ -55,10 +59,6 @@ typedef void* svk_dbc_config_t;
 
 /** DB Connector handle to be used for all operations */
 typedef void* svk_dbc_handle_t;
-
-// Callback function for submit_io
-typedef void (*svk_dbc_complete_fn)(svk_dbc_task_t* task,
-                                    svk_dbc_status_t status);
 
 /**
  * @brief Open device API for DB connector
