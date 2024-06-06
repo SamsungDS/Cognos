@@ -39,6 +39,8 @@ get branch:
 
 build docker:
   stage: .pre
+  variables:
+    DOCKERFILE_NAME: rocky9
 
 clang-format:
   stage: test

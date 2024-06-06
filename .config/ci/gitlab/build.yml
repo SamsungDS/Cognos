@@ -12,7 +12,7 @@ release build:
     paths:
      - build/*.tgz
   variables:
-    DOCKERFILE_NAME: rocky8
+    DOCKERFILE_NAME: rocky9
     IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
   needs:
     - build docker

@@ -22,7 +22,7 @@ unit test:
         path: $GITLAB_COVERAGE_REPORT
       junit: $GITLAB_JUNIT_REPORT
   variables:
-    DOCKERFILE_NAME: rocky8
+    DOCKERFILE_NAME: rocky9
     IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
     BUILD_COMMAND: ./scripts/build.sh --build-tests --with-coverage
   needs:
