@@ -69,25 +69,33 @@ const Configure = () => {
       body: JSON.stringify({
         "input": "cluster_id=CLUST1;command=ListDevices;FM_id=203;FM_endpoint=samsung.com"
       })
-    }).then(response => response.json()).then(data => setMemboxData(data))
+    })
+      .then(response => response.json())
+      .then(data => setMemboxData(data))
+      .catch(err => {console.log(err)});
   },
   // eslint-disable-next-line react-hooks/exhaustive-deps 
   []);
 
   const getAvailableLMDS = async() => {
-    const response = await fetch(`${apiEndpoint}/${AVAILABLE_DEVICES}`, {
-      mode: 'cors',
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'accept': 'application/json',
-        'Access-Control-Allow-Origin':'*'
-      },
-    });
+    
+    try {
+      const response = await fetch(`${apiEndpoint}/${AVAILABLE_DEVICES}`, {
+        mode: 'cors',
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'accept': 'application/json',
+          'Access-Control-Allow-Origin':'*'
+        },
+      });
 
-    if (response.ok) {
-      const data = await response.json();
-      setAvailableLMDs(data);
+      if (response.ok) {
+        const data = await response.json();
+        setAvailableLMDs(data);
+      }
+    } catch (error) {
+        console.log(error);
     }
   };
 
@@ -113,20 +121,24 @@ const Configure = () => {
 
     const payload = { host: selectedOption['label'] };
 
-    const response = await fetch(`${apiEndpoint}`, {
-        mode: 'cors',
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin':'*',
-          'accept': 'application/json'
-        },
-        body: JSON.stringify(payload)
-    });
+    try {
+      const response = await fetch(`${apiEndpoint}`, {
+          mode: 'cors',
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin':'*',
+            'accept': 'application/json'
+          },
+          body: JSON.stringify(payload)
+      });
 
-    if (response.ok) {
-      const data = await response.json();
-      setData(data);
+      if (response.ok) {
+        const data = await response.json();
+        setData(data);
+      }
+    } catch(error) {
+        console.log(error);
     }
   };
 
