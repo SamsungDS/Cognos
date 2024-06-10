@@ -12,9 +12,18 @@ publish release artifacts:
       find ./build/ -type f -name "*.tgz" -exec sh -c \
       'curl --header "PRIVATE-TOKEN: $CI_TOKEN" \
         --insecure --upload-file {} \
-        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$CI_PROJECT_NAME/${VERSION:1}/$(basename {})"' \
+        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$CI_PROJECT_NAME$PACKAGE_NAME_MODIFIER/${VERSION:1}/$(basename {})"' \
         \;
-  dependencies:
+  variables:
+    PACKAGE_NAME_MODIFIER:
+  needs:
     - release build
   rules:
     - !reference [.default_rules, push_only]
+
+publish simulation artifacts:
+  extends: publish release artifacts
+  variables:
+    PACKAGE_NAME_MODIFIER: -sim
+  needs:
+    - simulation build

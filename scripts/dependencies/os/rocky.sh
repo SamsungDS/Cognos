@@ -7,7 +7,9 @@ define_build_deps() {
     BUILD_DEPS=('epel-release')
     install_packages
     BUILD_DEPS=()
+    BUILD_DEPS+=('boost-devel')
     BUILD_DEPS+=('cmake')
+    BUILD_DEPS+=('file')
     BUILD_DEPS+=('gcc-c++')
     BUILD_DEPS+=('git')
     BUILD_DEPS+=('python3.11')
@@ -15,7 +17,6 @@ define_build_deps() {
     BUILD_DEPS+=('tar')
     BUILD_DEPS+=('unzip')
     BUILD_DEPS+=('wget')
-    BUILD_DEPS+=('boost-devel')
     install_packages
 }
 
@@ -65,4 +66,3 @@ then
     rm -rf /usr/share/man /usr/share/doc /usr/share/licenses /tmp/*
     rm -f /var/log/dnf*
 fi
-

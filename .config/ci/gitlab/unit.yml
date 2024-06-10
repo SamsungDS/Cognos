@@ -22,10 +22,11 @@ unit test:
         path: $GITLAB_COVERAGE_REPORT
       junit: $GITLAB_JUNIT_REPORT
   variables:
-    DOCKERFILE_NAME: rocky8
+    DOCKERFILE_NAME: rocky9
     IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
-    BUILD_COMMAND: ./scripts/build.sh --build-tests --with-coverage
+    FMAPI_PATH: $CI_PROJECT_DIR/$FMAPI_PROJECT/$FMAPI_DIR
+    BUILD_COMMAND: ./scripts/build.sh --build-tests --with-coverage --with-fmapi $FMAPI_PATH/build/libmbox_a1_shared.so $FMAPI_PATH
   needs:
-    - build docker
+    - build fmapi simulation
   rules:
     - !reference [.default_rules, merge_and_push]

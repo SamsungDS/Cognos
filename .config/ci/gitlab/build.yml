@@ -5,16 +5,22 @@ release build:
     pull_policy: always
   script:
     # Build with release flag and generate artifact
-    - ./scripts/build.sh --release --install-prefix /usr/local/svk/cxl
+    - ./scripts/build.sh --release --install-prefix /usr/local/svk/cxl --with-fmapi $FMAPI_PATH/build/libmbox_a1_shared.so $FMAPI_PATH
   artifacts:
-    name: release build
+    name: $CI_JOB_NAME
     expire_in: 300 seconds
     paths:
      - build/*.tgz
   variables:
-    DOCKERFILE_NAME: rocky8
+    DOCKERFILE_NAME: rocky9
     IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
+    FMAPI_PATH: $CI_PROJECT_DIR/$FMAPI_PROJECT/$FMAPI_DIR
   needs:
-    - build docker
+    - build fmapi
   rules:
     - !reference [.default_rules, merge_and_push]
+
+simulation build:
+  extends: release build
+  needs:
+    - build fmapi simulation

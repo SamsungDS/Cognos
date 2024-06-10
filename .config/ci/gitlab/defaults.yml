@@ -1,4 +1,5 @@
 include:
+  - .config/ci/gitlab/build_fmapi.yml
   - .config/ci/gitlab/build.yml
   - .config/ci/gitlab/publish.yml
   - .config/ci/gitlab/sonar.yml
@@ -30,12 +31,18 @@ variables:
   SONAR_COVERAGE_REPORT: $REPORT_DIR/sonar_coverage.xml
   GITLAB_COVERAGE_REPORT: $REPORT_DIR/gitlab_coverage.xml
   GITLAB_JUNIT_REPORT: $REPORT_DIR/gitlab_junit.xml
+  FMAPI_GROUP: cxl
+  FMAPI_PROJECT: cxl_memory_box
+  FMAPI_COMMIT_ID: 33dd3ea308f59d260f83982475160517a18e024b
+  FMAPI_DIR: mbox_a1
 
 tag semantic version:
   stage: .pre
 
 build docker:
   stage: .pre
+  variables:
+    DOCKERFILE_NAME: rocky9
 
 get branch:
   stage: .pre
