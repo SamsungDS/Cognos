@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 from app import (
-    create_app, NODE_ENDPOINT, get_db_passwd,
+    NODE_ENDPOINT, get_db_passwd,
     get_param_from_request_params, insert_hosts,
     insert_devices, prepare_response_with_body,
     get_db_passwd, fetch_topology, failed_response,
@@ -29,26 +29,6 @@ except Exception as error:
     raise RuntimeError(
         f"Unable to retrieve API version: {str(error)}"
     )
-
-
-@pytest.fixture
-def mock_db_connect_disconnect(mocker):
-    mocker.patch('app.connect_to_mysql', return_value=True)
-    mocker.patch('app.disconnect_mysql', return_value=True)
-
-
-@pytest.fixture
-def mock_clear_setup_tables(mocker):
-    mocker.patch('app.clear_all_tables', return_value=True)
-    mocker.patch('app.setup_tables', return_value=True)
-
-
-@pytest.fixture
-def client(mock_db_connect_disconnect, mock_clear_setup_tables):
-    app = create_app()
-    with app.test_client() as client:
-        with app.app_context():
-            yield client
 
 
 def construct_dummy_response(dummy_data):
@@ -85,22 +65,6 @@ def test_get_param_from_request_params():
     host_id = get_param_from_request_params(dummy_request_params, 'host_id')
     assert dev_id == expected_dev_id
     assert host_id == expected_host_id
-
-
-@pytest.fixture
-def mock_db(mocker):
-    mock_connection = mocker.MagicMock()
-    mock_cursor = mocker.MagicMock()
-
-    mocker.patch('mysql.connector.connect', return_value=mock_connection)
-    mock_connection.cursor.return_value = mock_cursor
-    mock_cursor.execute.return_value = True
-
-    mocker.patch('app.connect_to_mysql',
-                 return_value=(mock_connection, mock_cursor))
-    mocker.patch('app.disconnect_mysql', return_value=True)
-
-    return mock_connection, mock_cursor
 
 
 def test_get_devices_info(mock_db, mocker):
@@ -596,25 +560,6 @@ def test_get_topology(mocker, client):
         }
     )
     assert response.status_code == 200
-
-
-@pytest.fixture
-def mock_cursor(mocker):
-    cursor = mocker.MagicMock()
-    cursor.fetchall.return_value = [{
-        "id": 3917231,
-        "name": "Host 0 LINK 1",
-        "mem_capacity": 473428423,
-        "host_target_ports": [10]
-    }]
-    return cursor
-
-
-@pytest.fixture
-def mock_connection(mocker, mock_cursor):
-    conn = mocker.MagicMock()
-    conn.cursor.return_value = mock_cursor
-    return conn
 
 
 # TODO: Make unit test more comprehensive

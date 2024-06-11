@@ -39,9 +39,7 @@ global NODE_ENDPOINT
 NODE_ENDPOINT = CONFIGS['node_endpoint']
 
 COGNOS_TABLES = [
-    "connections",
     "devices",
-    "host_device_ids",
     "hosts",
     "mem_box",
     "host_device_connections"
