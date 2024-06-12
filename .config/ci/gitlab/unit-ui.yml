@@ -6,7 +6,6 @@ ui unit test:
   before_script:
     # Install NPM modules
     - cd $ui_dir
-    - npm ci
   script:
     # Execute unit tests and generate coverage report
     - npm run test:coverage
@@ -25,3 +24,5 @@ ui unit test:
     IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
   rules:
     - !reference [.default_rules, merge_and_push]
+  needs:
+    - npm-build

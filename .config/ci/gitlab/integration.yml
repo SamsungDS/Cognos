@@ -1,0 +1,13 @@
+integration pipeline:
+  stage: test
+  trigger:
+    include:
+      - local: .config/ci/gitlab/compose.yml
+    strategy: depend
+  resource_group: integration
+  rules:
+    - !reference [.default_rules, merge_and_push]
+  variables:
+    PARENT_PIPELINE_ID: $CI_PIPELINE_ID
+  needs: 
+    - npm-build
