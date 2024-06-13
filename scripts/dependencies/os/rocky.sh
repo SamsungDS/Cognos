@@ -11,6 +11,7 @@ BUILD_DEPS+=('git')
 BUILD_DEPS+=('nodejs')
 BUILD_DEPS+=('python3')
 BUILD_DEPS+=('wget')
+BUILD_DEPS+=('dnf')
 
 # Optimizations for Docker build
 if [[ -f /.dockerenv ]]
@@ -40,6 +41,12 @@ fi
 INSTALL_STRING="$INSTALLER_BIN install -y ${BUILD_DEPS[*]}"
 echo "executing command: $INSTALL_STRING"
 eval "$INSTALL_STRING"
+
+# Install chromium
+dnf install -y epel-release
+dnf install -y chromium
+# Install chrome driver
+dnf install -y chromedriver
 
 # Farther cleanup if Docker environment
 if [[ -f /.dockerenv ]]

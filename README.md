@@ -120,6 +120,31 @@ and describe the problem you are facing.
 * For the rest, follow
   [bahamas10's Bash Style Guide](https://github.com/bahamas10/bash-style-guide).
 
+## Python Selenium Test Cases for Cognos UI
+Enabled Selenium Test Enivornment to test Cognos web application.
+
+### Prerequisites
+Before running the python selenium tests, make sure you have to install the following.
+
+1. Install Python3.10 or above
+2. python3 -m pip install selenium
+3. Install google chrome [Latest Version]
+
+Refer "requirements.txt" file to install the dependencie ssoftwares to run the code.
+
+### Process to run python selenium tests
+
+To run the python selenium tests, follow these steps
+
+1. Clone the directory containing python selenium test files to your local machine
+2. Install the required prerequisites.
+3. Configure Appication url, pages url as per configure file
+4. Check the mandatory inputs required to run the test files.
+
+# Execute the tests
+
+[root@muser selenium]# python3 test_runner.py
+
 #### Python code
 
 * Use Python version 3.10

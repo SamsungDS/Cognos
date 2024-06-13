@@ -6,7 +6,7 @@ export PS4='+ [${BASH_SOURCE[0]##*/}:${LINENO}${FUNCNAME[0]:+:${FUNCNAME[0]}}] '
 
 # :help: run sapp tests
 PROG=${0##*/}
-
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 usage() {
     cat <<EOF
 Usage: $PROG [<option>]
@@ -52,11 +52,11 @@ $debug_p && set -x
 
 run_ut() {
     echo -en "\n Running Unit tests \n"
-    SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
     REPORT_DIR=$SCRIPT_DIR/test-reports/ut
+    APP_ROOT=$SCRIPT_DIR/../cognos
     mkdir -p "$REPORT_DIR"
 
-    python3 -m pytest \
+    python3 -m pytest --ignore-glob "$APP_ROOT"/ui/tests/it \
         --cov-report xml:"$REPORT_DIR"/coverage.xml \
         --cov-report term \
         --junit-xml="$REPORT_DIR"/junit.xml \
@@ -68,8 +68,17 @@ run_st() {
     echo -en "\n System Tests Not Implemented \n"
 }
 
+run_it_selenium(){
+	echo -en "\n Running Selenium Tests \n"
+	TEST_DIR=$SCRIPT_DIR/../cognos/ui/tests/it/selenium
+	mkdir -p "$TEST_DIR"
+	
+	python3 "$TEST_DIR"/test_runner.py
+}
+
 run_it() {
-    echo -en "\n Integration Tests Not Implemented \n"
+    echo -en "\n Running Integration Tests \n"
+    run_it_selenium
 }
 
 run_all() {

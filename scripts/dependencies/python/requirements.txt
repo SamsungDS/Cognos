@@ -8,3 +8,4 @@ pytest-mock
 requests
 responses
 simplejson
+selenium==4.18.1

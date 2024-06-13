@@ -5,7 +5,7 @@ backend unit test:
     pull_policy: always
   script:
     # Execute unit tests and generate coverage report
-    - ./scripts/run-tests.sh
+    - ./scripts/run-tests.sh --ut
   artifacts:
     name: unit test
     expire_in: 300 seconds

@@ -36,8 +36,10 @@ integration test:
     - microdnf install -y jq
     - |
       export RUNNER_IP=$(curl -s --header "PRIVATE-TOKEN: $CI_TOKEN" --insecure -X GET $CI_API_V4_URL/runners/$CI_RUNNER_ID | jq --raw-output '.ip_address')
+    - sed -i "s|\"http://[^/]*:5000|\"http://${RUNNER_IP}:5000|g" $ui_dir/tests/it/selenium/config/config.json
+    - cat cognos/ui/tests/it/selenium/config/config.json
   script:
-    - curl http://$RUNNER_IP:5000
+    - ./scripts/run-tests.sh --it
   variables:
       DOCKERFILE_NAME: rocky9
       IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
