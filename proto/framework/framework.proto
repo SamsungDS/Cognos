@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package svk;
 
-option go_package = "github.com/svk;Framework";
+option go_package = "rest_api/;Framework";
 
 import "google/api/annotations.proto";
 import "protoc-gen-openapiv2/options/annotations.proto";

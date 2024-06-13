@@ -38,6 +38,20 @@
           "sink_type": "rotating_file"
         }
       },
+  "svk_mgmt_rest_api":
+      {
+        "controller": {
+          "id": "localhost",
+          "port": "9999"
+        },
+        "rest_server": {
+          "id": "localhost",
+          "port": "8001"
+        },
+        "logger": {
+          "log_file_name": "/var/log/svk/svk_mgmt_rest_api.log"
+        }
+      },
   "core":
       {
         "feat_modules_dir": "/usr/local/svk/core/tests/sample_feature/",

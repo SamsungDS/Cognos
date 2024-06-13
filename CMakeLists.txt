@@ -22,6 +22,7 @@ set(PARENT_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 add_subdirectory(proto)
 add_subdirectory(grpc_node_server)
 add_subdirectory(grpc_controller)
+add_subdirectory(rest_api)
 
 if(BUILD_TESTING)
     add_subdirectory(tests)

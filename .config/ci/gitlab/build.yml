@@ -8,7 +8,7 @@ release build:
     - wget --no-verbose --content-disposition -E -c "$SONAR_HOST_URL/static/cpp/build-wrapper-linux-x86.zip"
     - unzip -q build-wrapper-linux-x86.zip -d /
     # Download latest artifact from SVK Core
-    - microdnf install jq
+    - microdnf install -y jq
     - |
       export CORE_ID=$(curl -s --header "PRIVATE-TOKEN: $CI_TOKEN" --insecure -X GET $CI_API_V4_URL/projects?search=SVK+Core | jq --raw-output '.[0].id')
     - |
@@ -26,8 +26,6 @@ release build:
     # Configure and load ldconfig
     - echo "/usr/local/svk/core/lib64" > /etc/ld.so.conf.d/svk-core-x86_64.conf
     - ldconfig
-    # Load GCC Toolset 11
-    - source /opt/rh/gcc-toolset-11/enable
     # Export PKG_CONFIG_PATH env var
     - export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/local/lib/pkgconfig/:/usr/local/lib64/pkgconfig/:/usr/local/svk/core/lib64/pkgconfig/
   script:
@@ -39,7 +37,7 @@ release build:
     paths:
      - build/*.tgz
   variables:
-    DOCKERFILE_NAME: rocky8
+    DOCKERFILE_NAME: rocky9
     IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
   needs:
     - build docker

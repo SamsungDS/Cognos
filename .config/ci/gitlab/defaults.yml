@@ -28,6 +28,7 @@ include:
 variables:
   REPORT_DIR: build/reports
   SONAR_COVERAGE_REPORT: $REPORT_DIR/sonar_coverage.xml
+  SONAR_GO_COVERAGE_REPORT: $REPORT_DIR/go_coverage.out
   GITLAB_COVERAGE_REPORT: $REPORT_DIR/gitlab_coverage.xml
   GITLAB_JUNIT_REPORT: $REPORT_DIR/gitlab_junit.xml
 
@@ -39,6 +40,8 @@ get branch:
 
 build docker:
   stage: .pre
+  variables:
+    DOCKERFILE_NAME: rocky9
 
 clang-format:
   stage: test

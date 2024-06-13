@@ -54,6 +54,7 @@ else
         else
             pushd third_party/re2
                 make install
+                echo "/usr/local/lib" > /etc/ld.so.conf.d/grpc_re2.conf
             popd
         fi
     popd

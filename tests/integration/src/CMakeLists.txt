@@ -1,5 +1,6 @@
 execute_process(COMMAND pkg-config --cflags svkframework OUTPUT_VARIABLE SVK_FW_CFLAGS OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_STRIP_TRAILING_WHITESPACE)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${SVK_FW_CFLAGS}")
+add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
 include_directories(${GRPC_STUB_HDRS})
 include_directories( ${GRPC_NODE_SERVER_INC_DIR})
 include_directories(${GRPC_CONTROLLER_INC_DIR})
