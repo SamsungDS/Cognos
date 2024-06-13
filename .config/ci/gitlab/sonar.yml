@@ -6,7 +6,7 @@ sonar-scanner:
     - wget --no-verbose --content-disposition "https://search.maven.org/remote_content?g=org.sonarsource.scanner.cli&a=sonar-scanner-cli&v=LATEST&c=linux&e=zip"
     - unzip -q sonar-scanner-cli-*.zip -d /
     # Execute sonar-scanner and ingest coverage report
-    - /sonar-scanner-*-linux/bin/sonar-scanner -Dsonar.coverageReportPaths=$SONAR_COVERAGE_REPORT
+    - /sonar-scanner-*-linux/bin/sonar-scanner -Dsonar.coverageReportPaths=$SONAR_COVERAGE_REPORT -Dsonar.go.coverage.reportPaths=$SONAR_GO_COVERAGE_REPORT
   needs:
     - build docker
     - unit test

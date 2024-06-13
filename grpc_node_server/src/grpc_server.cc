@@ -242,8 +242,6 @@ std::shared_ptr<Server> Init(Servicer *svcr) {
     }
   }
 
-  // Wait for the server to shutdown. Note that some other thread must be
-  // responsible for shutting down the server for this call to ever return.
   return server;
 }
 
@@ -252,9 +250,14 @@ int main(int argc, char **argv) {
   absl::ParseCommandLine(argc, argv);
   Servicer *svcr(new Servicer(absl::GetFlag(FLAGS_svk_conf_file)));
   auto server = Init(svcr);
+  if (server == nullptr) {
+    std::cout << "Failed to start the node server" << std::endl;
+    return 0;
+  }
 
   svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
              "Starting the server to process the commands");
+  // Wait for the server to shutdown.
   server->Wait();
   return 0;
 }

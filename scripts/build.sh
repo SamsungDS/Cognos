@@ -85,13 +85,30 @@ mkdir -p "$PROJECT_ROOT/build"
 
 CMAKE_OPTIONS=()
 
+install_go_packages() {
+    GO_DIR="/usr/local/svk/go_dir"
+    rm -rf "$GO_DIR"
+    mkdir -p "$GO_DIR"
+    # export GOPATH="$GO_DIR"
+    # export PATH="$PATH:$GOPATH/bin"
+    GO111MODULE=on go mod init rest_api
+    GO111MODULE=on go mod tidy
+    export GO111MODULE=off
+    go get -u github.com/grpc-ecosystem/grpc-gateway/protoc-gen-grpc-gateway
+    go get -u google.golang.org/grpc/cmd/protoc-gen-go-grpc
+    go get -u github.com/grpc-ecosystem/grpc-gateway/protoc-gen-openapiv2
+    go get -u github.com/golang/protobuf/protoc-gen-go
+    rm -f go.mod go.sum
+}
+
+
 pushd "$PROJECT_ROOT/build"
     # If building release, don't build tests and code coverage
     if $RELEASE;then
         BUILD_TESTING=false
         WITH_COVERAGE=false
         if [ -z "$CMAKE_INSTALL_PREFIX" ];then
-            CMAKE_INSTALL_PREFIX="usr/local/svk" # Need to use this path to generate release tarball properly
+            CMAKE_INSTALL_PREFIX="usr/local/svk/mgmt-fw" # Need to use this path to generate release tarball properly
         fi
         if [ -z "$RELEASE_FILENAME_PREFIX" ];then
             RELEASE_FILENAME_PREFIX="svk-mgmt-fw"
@@ -113,6 +130,11 @@ pushd "$PROJECT_ROOT/build"
     if [ -n "$CMAKE_INSTALL_PREFIX" ];then
         CMAKE_OPTIONS+=("-DCMAKE_INSTALL_PREFIX=$CMAKE_INSTALL_PREFIX")
     fi
+
+    export GOPATH=/usr/local/svk/go_dir
+    export PATH=$PATH:$GOPATH/bin
+
+    install_go_packages
 
     printf "Cmake options: %s\n" "${CMAKE_OPTIONS[@]}"
 
@@ -136,6 +158,15 @@ pushd "$PROJECT_ROOT/build"
                 mkdir -p "$REPORTS_DIR"
                 ctest --output-junit "$REPORTS_DIR/gitlab_junit.xml"
             popd
+
+            # Run go code coverage tests as well for REST API server
+            pushd rest_api/tests
+                cp "$PROJECT_ROOT/config/config.json.example" /usr/local/svk/conf.json
+                GO111MODULE=on go mod tidy
+                pushd cmd/app
+                    GO111MODULE=on go test -coverprofile="$REPORTS_DIR/go_coverage.out"
+                popd
+            popd
         else
             die "Can't generate code coverage without building tests, not running gcovr"
         fi
@@ -152,9 +183,33 @@ pushd "$PROJECT_ROOT/build"
             --exclude "$PROJECT_ROOT/tests" \
             --exclude "/usr/include/" \
             "$PROJECT_ROOT/build"
-    elif $WITH_RELEASE;then
+    fi
+
+    if $RELEASE;then
         echo "Generating release tarball..."
         GIT_VER=$(git describe --abbrev=4 --always --tags)
+        GIT_SHORT_VER=$(git describe --abbrev=0 --always --tags|sed 's/v//g')
+        # Run go tidy and go build commands inside the rest_api
+        mkdir -p "$CMAKE_INSTALL_PREFIX/rest_api"
+        pushd "$PROJECT_ROOT/build/rest_api/tests"
+            GO111MODULE=on go mod tidy
+            pushd cmd/app
+                if [ -n "$CMAKE_INSTALL_PREFIX" ]; then
+                    if [[ "$CMAKE_INSTALL_PREFIX" == /* ]]; then
+                        GO111MODULE=on go build -o "$CMAKE_INSTALL_PREFIX/rest_api/svk_rest_server-$GIT_SHORT_VER"
+                        pushd "$CMAKE_INSTALL_PREFIX/rest_api/"
+                            ln -s "svk_rest_server-$GIT_SHORT_VER" svk_rest_server
+                        popd
+                    else
+                        GO111MODULE=on go build -o "$PROJECT_ROOT/build/$CMAKE_INSTALL_PREFIX/rest_api/svk_rest_server-$GIT_SHORT_VER"
+                        pushd "$PROJECT_ROOT/build/$CMAKE_INSTALL_PREFIX/rest_api/"
+                            ln -s "svk_rest_server-$GIT_SHORT_VER" svk_rest_server
+                        popd
+                    fi
+                fi
+            popd
+        popd
+
         tar -zcf "$RELEASE_FILENAME_PREFIX-$GIT_VER.tgz" "$CMAKE_INSTALL_PREFIX"
     fi
 
