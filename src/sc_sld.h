@@ -17,7 +17,7 @@ class sc_sld : public sc_device {
    * constructor and from sc_device class d_id is delegated to sc_id
    * constructor.
    */
-  sc_sld(uint64_t d_id, string d_name, uint64_t capacity, uint32_t port);
+  sc_sld(uint64_t d_id, std::string d_name, uint64_t capacity, uint32_t port);
 
   ~sc_sld();
 
@@ -34,12 +34,7 @@ class sc_sld : public sc_device {
   /**
    * @brief override set device name.
    */
-  void d_set_dev_name(string d_name) override;
-
-  /**
-   * @brief override get device ID of parent class - sc_device.
-   */
-  uint64_t d_get_id() override;
+  void d_set_dev_name(std::string d_name) override;
 
   /**
    * @brief override get device capacity.
@@ -49,25 +44,25 @@ class sc_sld : public sc_device {
   /**
    * @brief override get device name
    */
-  string d_get_dev_name() override;
+  std::string d_get_dev_name() const override;
 
   /**
    * @brief override get device port.
    */
-  uint32_t d_get_port() override;
+  uint32_t d_get_port() const override;
 
   /* get sc_id class object */
-  sc_id get_composite_obj() override;
+  sc_id d_get_id() const override;
 
   /**
    * @brief list of logical devices.
    */
-  list<sc_device> list_sld_devices();
+  std::list<sc_device> list_sld_devices();
 
   /*
    * @brief create ld
    */
-  int sd_create_ld(uint64_t ldId);
+  int sld_id(uint64_t ldId);
 
   /*
    * @brief delete ld
@@ -81,7 +76,7 @@ class sc_sld : public sc_device {
 
  private:
   /**< dictionary of derived logical devices */
-  unordered_map<sc_id, sc_device, hash_sc_id> sd_lds;
+  std::unordered_map<sc_id, sc_device, hash_sc_id> sd_lds;
 };
 
 #endif

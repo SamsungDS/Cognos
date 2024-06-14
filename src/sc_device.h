@@ -7,8 +7,8 @@
 #include <algorithm>
 #include <cstring>
 #include <iostream>
-#include <list>
 #include <string>
+#include <list>
 #include <unordered_map>
 #include <vector>
 
@@ -18,7 +18,6 @@
 #include "sc_switch.h"
 #include "types.h"
 
-using namespace std;
 
 class sc_host;
 
@@ -37,15 +36,10 @@ class sc_device {
    * @param capacity device capacity.
    * @param port device port.
    */
-  sc_device(uint64_t d_id, string d_name, uint64_t capacity,
+  sc_device(uint64_t d_id, std::string d_name, uint64_t capacity,
             uint32_t port);
 
   virtual ~sc_device();
-
-  /**
-   * @brief get device ID from sc_id class.
-   */
-  virtual uint64_t d_get_id();
 
   /**
    * @brief get device capacity.
@@ -55,12 +49,12 @@ class sc_device {
   /**
    * @brief get device name
    */
-  virtual string d_get_dev_name();
+  virtual std::string d_get_dev_name() const;
 
   /**
    * @brief get device port.
    */
-  virtual uint32_t d_get_port();
+  virtual uint32_t d_get_port() const;
 
   /**
    * @brief set device port.
@@ -75,12 +69,12 @@ class sc_device {
   /**
    * @brief set device name.
    */
-  virtual void d_set_dev_name(string d_name);
+  virtual void d_set_dev_name(std::string d_name);
 
   /*
    * @brief get parent sc_device.
    */
-  sc_device *d_get_parent();
+  sc_device *d_get_parent() const;
 
   /*
    * @brief set parent of this device.
@@ -88,7 +82,7 @@ class sc_device {
   void d_set_parent(sc_device *parent);
 
   /* get sc_id class object */
-  virtual sc_id get_composite_obj();
+  virtual sc_id d_get_id() const;
 
  private:
   /*           8 bits                            56 bits
@@ -110,7 +104,7 @@ class sc_device {
   uint32_t d_port;
 
   /**< device name */
-  string d_name;
+  std::string d_name;
 
   /**< device object */
   sc_device *d_parent;

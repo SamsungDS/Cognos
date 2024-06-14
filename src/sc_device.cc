@@ -3,6 +3,9 @@
 #include <regex>
 #include <stdexcept>
 
+using namespace std;
+
+
 // constructor delegation
 sc_device::sc_device() : sc_device(0, "", 0, 0) {}
 
@@ -23,10 +26,8 @@ void sc_device::d_set_dev_name(string d_name) {
   // Validate the device name using a regular expression
   std::regex validDevicename("^[A-Za-z0-9-]+$");
   if (std::regex_match(d_name, validDevicename)) {
-    //strcpy(this->d_name, d_name);
     this->d_name = d_name;
   } else {
-    //throw std::invalid_argument(std::string("Invalid device name: ") + string(d_name));
     throw std::invalid_argument("Invalid device name: " + std::string(d_name));
   }
 }
@@ -50,14 +51,12 @@ void sc_device::d_set_capacity(uint64_t capacity) {
   d_capacity = capacity;
 }
 
-string sc_device::d_get_dev_name() { return d_name; }
+string sc_device::d_get_dev_name() const { return d_name; }
 
-uint32_t sc_device::d_get_port() { return d_port; }
+uint32_t sc_device::d_get_port() const { return d_port; }
 
 uint64_t sc_device::d_get_capacity() const { return d_capacity; }
 
-uint64_t sc_device::d_get_id() { return d_id.get_sc_id(); }
-
-sc_id sc_device::get_composite_obj() { return d_id; }
+sc_id sc_device::d_get_id() const { return d_id; }
 
 

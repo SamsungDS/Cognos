@@ -3,6 +3,9 @@ include_directories(${CMAKE_SOURCE_DIR}/src)
 include(gtest)
 
 file(GLOB TEST_SOURCES
+    sc_device_ut.cc
+    sc_mld_ut.cc
+    sc_sld_ut.cc
     sc_host_ut.cc
     sc_id_ut.cc
     main.cc

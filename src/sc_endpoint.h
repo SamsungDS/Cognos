@@ -38,7 +38,7 @@ class endpoint {
    * @brief accessor of endpoint variable.
    * @details get endpoint value.
    */
-  std::string get_endpoint() { return ep; }
+  std::string get_endpoint() const { return ep; }
 };
 
 #endif

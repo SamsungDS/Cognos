@@ -1,4 +1,7 @@
 #include "sc_mld.h"
+#include <errno.h>
+
+using namespace std;
 
 sc_mld::sc_mld() : sc_mld(0, "", 0, 0) {};
 
@@ -29,20 +32,17 @@ void sc_mld::d_set_dev_name(string d_name) {
   sc_device::d_set_dev_name(d_name);
 }
 
-/** override d_get_id */
-uint64_t sc_mld::d_get_id() { return sc_device::d_get_id(); }
-
 /** override get device capacity */
 uint64_t sc_mld::d_get_capacity() const { return sc_device::d_get_capacity(); }
 
 /** override get device name */
-string sc_mld::d_get_dev_name() { return sc_device::d_get_dev_name(); }
+string sc_mld::d_get_dev_name() const { return sc_device::d_get_dev_name(); }
 
 /** override get device port */
-uint32_t sc_mld::d_get_port() { return sc_device::d_get_port(); }
+uint32_t sc_mld::d_get_port() const { return sc_device::d_get_port(); }
 
-/* override get_composite_obj */
-sc_id sc_mld::get_composite_obj() { return sc_device::get_composite_obj(); }
+/* override d_get_id */
+sc_id sc_mld::d_get_id() const { return sc_device::d_get_id(); }
 
 list<sc_device> sc_mld::list_mld_devices() {
   list<sc_device> ldList;
@@ -55,10 +55,10 @@ list<sc_device> sc_mld::list_mld_devices() {
 /*
  * @brief create mld.
  */
-int sc_mld::md_create_ld(uint64_t ldId) {
+int sc_mld::mld_id(uint64_t ldId) {
   // Create an empty sc_device instance for the LD
-  sc_device newLd(ldId, "", 0, 0);
-  md_lds[newLd.get_composite_obj()] = newLd;
+  sc_device mld(ldId, "", 0, 0);
+  md_lds[mld.d_get_id()] = mld;
   return 0;
 }
 
@@ -70,7 +70,7 @@ int sc_mld::md_delete_ld(uint64_t ldId) {
   // Check if the LD exists
   auto it = md_lds.find(id);
   if (it == md_lds.end()) {
-    return -1;
+    return -ENOENT;
   }
   md_lds.erase(it);
   return 0;

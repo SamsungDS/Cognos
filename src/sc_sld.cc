@@ -1,4 +1,7 @@
 #include "sc_sld.h"
+#include <errno.h>
+
+using namespace std;
 
 // constructor delegation
 sc_sld::sc_sld() : sc_sld(0, "", 0, 0) {};
@@ -30,20 +33,18 @@ void sc_sld::d_set_dev_name(string d_name) {
   sc_device::d_set_dev_name(d_name);
 }
 
-/** override d_get_id */
-uint64_t sc_sld::d_get_id() { return sc_device::d_get_id(); }
 
 /** override get device capacity */
 uint64_t sc_sld::d_get_capacity() const { return sc_device::d_get_capacity(); }
 
 /** override get device name */
-string sc_sld::d_get_dev_name() { return sc_device::d_get_dev_name(); }
+string sc_sld::d_get_dev_name() const { return sc_device::d_get_dev_name(); }
 
 /** override get device port */
-uint32_t sc_sld::d_get_port() { return sc_device::d_get_port(); }
+uint32_t sc_sld::d_get_port() const { return sc_device::d_get_port(); }
 
-/* override get_composite_obj */
-sc_id sc_sld::get_composite_obj() { return sc_device::get_composite_obj(); }
+/* override d_get_id */
+sc_id sc_sld::d_get_id() const { return sc_device::d_get_id(); }
 
 list<sc_device> sc_sld::list_sld_devices() {
   list<sc_device> ldList;
@@ -52,12 +53,12 @@ list<sc_device> sc_sld::list_sld_devices() {
   }
   return ldList;}
 
-int sc_sld::sd_create_ld(uint64_t ldId) {
+int sc_sld::sld_id(uint64_t ldId) {
   // Create an empty sc_device instance for the LD
-  sc_device newLd(ldId, "", 0, 0);
+  sc_device sld(ldId, "", 0, 0);
 
   // Add the LD to the map
-  sd_lds[newLd.get_composite_obj()] = newLd;
+  sd_lds[sld.d_get_id()] = sld;
 
   // Return success status
   return 0;
@@ -69,7 +70,7 @@ int sc_sld::sd_delete_ld(uint64_t ldId) {
   auto it = sd_lds.find(id);
   if (it == sd_lds.end()) {
     // LD not found
-    return -1;
+    return -ENOENT;
   }
 
   sd_lds.erase(it);

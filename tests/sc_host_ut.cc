@@ -22,7 +22,7 @@ TEST_F(ScHostTest, ParameterizedConstructor) {
 }
 
 TEST_F(ScHostTest, GetCompositeObj) {
-  sc_id compositeId = customHost.get_composite_obj();
+  sc_id compositeId = customHost.d_get_id();
   EXPECT_EQ(compositeId.get_sc_id(), customScIdValue);
 }
 

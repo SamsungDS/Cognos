@@ -2,14 +2,11 @@
 #define __CXL_PLUGIN_SWITCH_H__
 
 #include <stdint.h>
-
 #include <iostream>
 #include <sstream>
 #include <string>
-
 #include "sc_id.h"
 
-using namespace std;
 
 /**
  * @brief switch class.
@@ -29,9 +26,9 @@ class sc_switch {
   /**
    * @brief get switch information
    */
-  string s_get_info() {
+  std::string to_json() {
     // Create a stringstream to build the JSON-like string
-    stringstream json;
+    std::stringstream json;
 
     // Start the JSON object
     json << "{\n";
@@ -48,15 +45,27 @@ class sc_switch {
 
     // Convert the stringstream to a string
     return json.str();
-  }
+  };
 
  private:
-  sc_id s_id;                        /**< switch id.*/
-  char s_manufacturer[1024]{};       /**< switch manufacturer.*/
-  uint32_t s_nr_upstream_ports{0};   /**< number of upstream ports.*/
-  uint32_t s_nr_downstream_ports{0}; /**< number of downstream ports.*/
-  uint32_t s_mgmt_port{0};           /**< switch management port.*/
-                                     /* switch features - TBD */
+
+  /**< switch id.*/
+  sc_id s_id;                       
+
+  /**< switch manufacturer.*/
+  char s_manufacturer[1024]{};      
+
+  /**< number of upstream ports.*/
+  uint32_t s_nr_upstream_ports{0};
+
+  /**< number of downstream ports.*/
+  uint32_t s_nr_downstream_ports{0};
+
+  /**< switch management port.*/
+  uint32_t s_mgmt_port{0};     
+
+  /* switch features - TBD */
+
 };
 
 #endif

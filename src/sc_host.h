@@ -42,7 +42,7 @@ class sc_host {
   std::list<uint32_t> get_target_ports() const;
 
   /* get host id */
-  sc_id get_composite_obj() const;
+  sc_id d_get_id() const;
 
  private:
   /**< Application server connected to memory box */

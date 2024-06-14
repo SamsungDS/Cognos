@@ -21,7 +21,7 @@ sc_host::sc_host(uint64_t ci) : h_id(ci) {}
  */
 void sc_host::set_host_name(string const& host) {
   // Validate the hostname using a regular expression
-  regex validHostname("^[A-Za-z0-9-.$]+$");
+  regex validHostname("^[A-Za-z0-9- .$]+$");
   if (regex_match(host, validHostname)) {
     h_name = host;
   } else {
@@ -66,6 +66,6 @@ uint64_t sc_host::get_capacity() const { return h_capacity; }
 
 uint64_t sc_host::get_id() const { return h_id.get_sc_id(); }
 
-sc_id sc_host::get_composite_obj() const { return h_id; }
+sc_id sc_host::d_get_id() const { return h_id; }
 
 list<uint32_t> sc_host::get_target_ports() const { return h_target_ports; }
