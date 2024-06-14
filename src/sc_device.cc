@@ -1,0 +1,63 @@
+#include "sc_device.h"
+
+#include <regex>
+#include <stdexcept>
+
+// constructor delegation
+sc_device::sc_device() : sc_device(0, "", 0, 0) {}
+
+/**
+ * @brief creates sc_device object with the given parameters such as d_id,
+ * d_name, capacity and port.
+ */
+sc_device::sc_device(uint64_t d_id, string d_name, uint64_t capacity,
+                     uint32_t port)
+    : d_id(d_id), d_name(d_name) {
+  d_port = port;
+  d_capacity = capacity;
+}
+
+sc_device::~sc_device() {}
+
+void sc_device::d_set_dev_name(string d_name) {
+  // Validate the device name using a regular expression
+  std::regex validDevicename("^[A-Za-z0-9-]+$");
+  if (std::regex_match(d_name, validDevicename)) {
+    //strcpy(this->d_name, d_name);
+    this->d_name = d_name;
+  } else {
+    //throw std::invalid_argument(std::string("Invalid device name: ") + string(d_name));
+    throw std::invalid_argument("Invalid device name: " + std::string(d_name));
+  }
+}
+
+void sc_device::d_set_port(uint32_t port) {
+  // Check if the port value is valid
+  if (port < 0 || port > 65535) {
+    throw std::invalid_argument("Invalid port value: " + std::to_string(port));
+  }
+
+  d_port = port;
+}
+
+void sc_device::d_set_capacity(uint64_t capacity) {
+  // Check if the capacity is within the valid range
+  const uint64_t maxCapacity = 5024ull * 1024ull * 1024ull * 1024ull;
+  if (capacity < 0 || capacity > maxCapacity) {
+    throw std::invalid_argument("Invalid capacity value: " +
+                                std::to_string(capacity));
+  }
+  d_capacity = capacity;
+}
+
+string sc_device::d_get_dev_name() { return d_name; }
+
+uint32_t sc_device::d_get_port() { return d_port; }
+
+uint64_t sc_device::d_get_capacity() const { return d_capacity; }
+
+uint64_t sc_device::d_get_id() { return d_id.get_sc_id(); }
+
+sc_id sc_device::get_composite_obj() { return d_id; }
+
+
