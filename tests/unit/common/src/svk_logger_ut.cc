@@ -196,3 +196,37 @@ TEST(SVKCommon, SVKLogMessageWithPeriodicFlush) {
 
   unlink(LOG_FILE);
 }
+
+TEST(SVKCommon, SVKLogMessageCloseSuccess) {
+  svk_logger_init("framework", LOG_FILE, INFO, 10, 102400, "rotating_file");
+  EXPECT_EQ(0, svk_logger_set_flush_interval(10));
+  svk_logger("framework", INFO, "Logging message before flush with close");
+
+  // Read the file contents to check whether the message is logged
+  // Since the flush is not set, the messages should not be found
+  std::ifstream file1(LOG_FILE);
+  std::string data1((std::istreambuf_iterator<char>(file1)),
+                    (std::istreambuf_iterator<char>()));
+  file1.close();
+  EXPECT_EQ(true, data1.find("Logging message before flush with close") ==
+                      std::string::npos);
+
+  EXPECT_EQ(0, svk_logger_close("framework"));
+
+  std::ifstream file2(LOG_FILE);
+  std::string data2((std::istreambuf_iterator<char>(file2)),
+                    (std::istreambuf_iterator<char>()));
+  file2.close();
+  std::cout << "DATA 2 " << data2 << std::endl;
+  EXPECT_EQ(true, data2.find("Logging message before flush with close") !=
+                      std::string::npos);
+  EXPECT_EQ(true, data2.find("Flushing the logger and dropping the reference "
+                             "for the feature framework") != std::string::npos);
+  unlink(LOG_FILE);
+}
+
+TEST(SVKCommon, SVKLogMessageCloseFail) {
+  svk_logger_init("framework", LOG_FILE, INFO, 10, 102400, "rotating_file");
+
+  EXPECT_NE(0, svk_logger_close("framework1"));
+}
