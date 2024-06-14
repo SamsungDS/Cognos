@@ -59,7 +59,7 @@ int svk_logger_change_log_level(const char *feature, level_E base_log_level);
 
 /**
  * @brief           Logging function to log the message
- * @param feature    feature name passed during initialization of logger
+ * @param feature   feature name passed during initialization of logger
  * @param log_level Log level between 0 and 8
  * @param message   message to be logged
  *
@@ -74,6 +74,17 @@ int svk_logger(const char *feature, level_E log_level, const char *message);
  * @return 0 on succes, -1 on error
  */
 int svk_logger_set_flush_interval(int flush_interval);
+
+/**
+ * @brief                 close the logger handle by flushing all the buffered
+ * logs
+ * @param feature         feature name passed during initialization of logger
+ *
+ * @return 0 on succes, -1 on error
+ */
+
+int svk_logger_close(const char *feature);
+
 #ifdef __cplusplus
 }
 #endif

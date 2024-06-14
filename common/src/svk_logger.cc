@@ -159,3 +159,26 @@ int svk_logger_set_flush_interval(int flush_interval) {
   spdlog::flush_every(std::chrono::seconds(flush_interval));
   return 0;
 }
+
+int svk_logger_close(const char *feature) {
+  try {
+    auto svk_logger = spdlog::get(feature);
+    if (svk_logger == nullptr) {
+      spdlog::log(spdlog::level::err, "Logger for feature {} not found",
+                  feature);
+      throw std::invalid_argument("Logger for the feature not found");
+    }
+
+    svk_logger->log(
+        spdlog::level::info,
+        "Flushing the logger and dropping the reference for the feature {}",
+        feature);
+    svk_logger->flush();
+    spdlog::drop(feature);
+  } catch (std::exception &ex) {
+    std::cout << "Exception in closing the logger for feature " << feature
+              << ": " << ex.what() << std::endl;
+    return -1;
+  }
+  return 0;
+}
