@@ -155,7 +155,7 @@ const Configure = () => {
             <td className='cofig-row'>{item.status}</td>
             <td className='cofig-row'>{item.type}</td>
             <td className='cofig-row'>{item.mode} {item.capacity_units}</td>
-            <td className='cofig-row'>{item.dev_capacity} GB</td>
+            <td className='cofig-row'>{item.dev_capacity}</td>
           </tr>
       )
     }
@@ -166,7 +166,7 @@ const Configure = () => {
       <tr key={item.dev_id}>
         <td className='cmm-row'>{item.dev_name}</td>
         <td className='cmm-row'>{item.dev_id}</td>
-        <td className='cmm-row'>{item.dev_capacity} GB</td>
+        <td className='cmm-row'>{item.dev_capacity}</td>
         <td className='cmm-row'>{item.dev_port}</td>
         <td className='cmm-row'>{item.hosts_attached}</td>
       </tr>
