@@ -15,6 +15,8 @@ class Client {
                                     svk::CommandResponse* resp);
   virtual Status ProcessControllerCommand(const svk::CommandRequest* req,
                                           svk::CommandResponse* resp);
+  virtual Status ListClusterNodes(const svk::ListClusterCommandRequest* req,
+                                  svk::ListClusterCommandResponse* resp);
   virtual Status RegisterNode(const svk::RegisterRequest* req,
                               svk::RegisterResponse* resp);
   virtual Status UnregisterNode(const svk::UnregisterRequest* req,

@@ -60,6 +60,21 @@ service Controller {
       tags : "svk, controller, command"
     };
   }
+
+  // List the nodes and the cluster topology
+  rpc ListClusterNodes(ListClusterCommandRequest)
+      returns (ListClusterCommandResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/list_cluster_nodes"
+      body : "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary : "ListNodes"
+      description : "List the nodes and the associated cluster registered with "
+                    "the SVK Controller node"
+      tags : "svk, controller, command"
+    };
+  }
 }
 
 // gRPC APIs related to Command Framework at the SVK Agent node
@@ -139,4 +154,26 @@ message CommandResponse {
     string output = 2;
   }
   repeated NodeResponse node_responses = 1;
+}
+
+message NodeDetails {
+  // Node ID and other details
+  string node_id = 1;
+  string node_port = 2;
+}
+
+message ListClusterCommandRequest {
+  // Cluster ID associated with a set of nodes.
+  // Optional field. If not given, then all the node and the cluster association
+  // is retrieved If cluster_id given, then only the node details of the cluster
+  // will be returned
+  string cluster_id = 1;
+}
+
+message ListClusterCommandResponse {
+  message ClusterDetails {
+    string cluster_id = 1;
+    repeated NodeDetails node_info = 2;
+  }
+  repeated ClusterDetails cluster_info = 1;
 }

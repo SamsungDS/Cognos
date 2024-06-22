@@ -325,6 +325,46 @@ Status ControllerServicer::ProcessControllerCommand(
   return Status::OK;
 }
 
+Status ControllerServicer::ListClusterNodes(
+    ServerContext *ctxt, const svk::ListClusterCommandRequest *req,
+    svk::ListClusterCommandResponse *resp) {
+  Status status;
+
+  if (req->cluster_id().length() != 0) {
+    if (m_cluster_map.find(req->cluster_id()) == m_cluster_map.end()) {
+      std::string logger_str;
+      logger_str = "ListClusterNodes called for cluster_id " +
+                   req->cluster_id() + " not found";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                 logger_str.c_str());
+      return Status(grpc::INVALID_ARGUMENT, "cluster_id not found");
+    }
+    ListClusterCommandResponse_ClusterDetails *cluster_info =
+        resp->add_cluster_info();
+    cluster_info->set_cluster_id(req->cluster_id());
+    for (auto itr = m_cluster_map[req->cluster_id()].begin();
+         itr != m_cluster_map[req->cluster_id()].end(); ++itr) {
+      NodeDetails *node_info = cluster_info->add_node_info();
+      node_info->set_node_id(itr->first);
+      node_info->set_node_port(m_cluster_map[req->cluster_id()][itr->first]);
+    }
+  } else {
+    for (auto cluster_itr = m_cluster_map.begin();
+         cluster_itr != m_cluster_map.end(); cluster_itr++) {
+      ListClusterCommandResponse_ClusterDetails *cluster_info =
+          resp->add_cluster_info();
+      cluster_info->set_cluster_id(cluster_itr->first);
+      for (auto node_itr = cluster_itr->second.begin();
+           node_itr != cluster_itr->second.end(); ++node_itr) {
+        NodeDetails *node_info = cluster_info->add_node_info();
+        node_info->set_node_id(node_itr->first);
+        node_info->set_node_port(node_itr->second);
+      }
+    }
+  }
+  return Status::OK;
+}
+
 std::shared_ptr<Server> InitializeServicer(ControllerServicer *svcr) {
   std::string logger_str;
 
