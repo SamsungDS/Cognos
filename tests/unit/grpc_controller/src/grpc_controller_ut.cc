@@ -529,3 +529,132 @@ TEST(InitControllerTest, InitControllerServerInNonBlocking) {
 }
 
 TEST(InitControllerTest, SignalHandlerFunction) { signal_handler(SIGINT); }
+
+TEST_F(MockTestController, ListClusterNodesWithSingleCluster) {
+  Status grpc_status;
+  std::string cluster_id_1 = "CLUSTER_LIST_NODE1";
+  std::string node_id_1 = "listnode1.localdomain.com";
+  std::string node_port_1 = "9998";
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  svk::RegisterRequest *req(new svk::RegisterRequest());
+  svk::RegisterResponse *resp(new svk::RegisterResponse());
+  req->set_cluster_id(cluster_id_1);
+  req->set_node_id(node_id_1);
+  req->set_node_port(node_port_1);
+
+  grpc_status = client.RegisterNode(req, resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+
+  svk_logger_close(CONTROLLER_LOGGER_MODULE_NAME);
+
+  std::cout << "Resp message " << resp->status() << std::endl;
+
+  std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  std::string data((std::istreambuf_iterator<char>(file)),
+                   (std::istreambuf_iterator<char>()));
+  file.close();
+
+  std::string search_str = "Registered the node_id " + node_id_1 + ":" +
+                           node_port_1 + " with cluster:" + cluster_id_1;
+  EXPECT_EQ(true, data.find(search_str) != std::string::npos);
+
+  svk::ListClusterCommandRequest l_req;
+  svk::ListClusterCommandResponse l_resp;
+
+  l_req.set_cluster_id(cluster_id_1);
+  grpc_status = client.ListClusterNodes(&l_req, &l_resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+  ASSERT_EQ(l_resp.cluster_info().size(), 1);
+  ASSERT_EQ(l_resp.cluster_info(0).cluster_id().c_str(), cluster_id_1);
+  ASSERT_EQ(l_resp.cluster_info(0).node_info().size(), 1);
+  ASSERT_EQ(l_resp.cluster_info(0).node_info(0).node_id().c_str(), node_id_1);
+}
+
+TEST_F(MockTestController, ListClusterNodesWithMultipleClusters) {
+  Status grpc_status;
+  std::string cluster_id_1 = "CLUSTER_LIST_NODE1";
+  std::string node_id_1 = "listnode1.localdomain.com";
+  std::string node_port_1 = "9998";
+
+  std::string cluster_id_2 = "CLUSTER_LIST_NODE2";
+  std::string node_id_2 = "listnode2.localdomain.com";
+  std::string node_port_2 = "9998";
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  svk::RegisterRequest *req(new svk::RegisterRequest());
+  svk::RegisterResponse *resp(new svk::RegisterResponse());
+  req->set_cluster_id(cluster_id_1);
+  req->set_node_id(node_id_1);
+  req->set_node_port(node_port_1);
+
+  grpc_status = client.RegisterNode(req, resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+
+  req->set_cluster_id(cluster_id_2);
+  req->set_node_id(node_id_2);
+  req->set_node_port(node_port_2);
+
+  grpc_status = client.RegisterNode(req, resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+
+  svk_logger_close(CONTROLLER_LOGGER_MODULE_NAME);
+
+  std::cout << "Resp message " << resp->status() << std::endl;
+
+  std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  std::string data((std::istreambuf_iterator<char>(file)),
+                   (std::istreambuf_iterator<char>()));
+  file.close();
+
+  std::string search_str = "Registered the node_id " + node_id_1 + ":" +
+                           node_port_1 + " with cluster:" + cluster_id_1;
+  EXPECT_EQ(true, data.find(search_str) != std::string::npos);
+  search_str = "Registered the node_id " + node_id_2 + ":" + node_port_2 +
+               " with cluster:" + cluster_id_2;
+  EXPECT_EQ(true, data.find(search_str) != std::string::npos);
+
+  svk::ListClusterCommandRequest l_req;
+  svk::ListClusterCommandResponse l_resp;
+
+  grpc_status = client.ListClusterNodes(&l_req, &l_resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+  ASSERT_EQ(l_resp.cluster_info().size(), 2);
+  if (l_resp.cluster_info(0).cluster_id() == cluster_id_1) {
+    ASSERT_EQ(l_resp.cluster_info(1).cluster_id().c_str(), cluster_id_2);
+
+    ASSERT_EQ(l_resp.cluster_info(0).node_info().size(), 1);
+    ASSERT_EQ(l_resp.cluster_info(0).node_info(0).node_id().c_str(), node_id_1);
+  } else {
+    ASSERT_EQ(l_resp.cluster_info(0).cluster_id().c_str(), cluster_id_2);
+    ASSERT_EQ(l_resp.cluster_info(0).node_info().size(), 1);
+    ASSERT_EQ(l_resp.cluster_info(0).node_info(0).node_id().c_str(), node_id_2);
+  }
+
+  if (l_resp.cluster_info(1).cluster_id() == cluster_id_1) {
+    ASSERT_EQ(l_resp.cluster_info(0).cluster_id().c_str(), cluster_id_2);
+
+    ASSERT_EQ(l_resp.cluster_info(1).node_info().size(), 1);
+    ASSERT_EQ(l_resp.cluster_info(1).node_info(0).node_id().c_str(), node_id_1);
+  } else {
+    ASSERT_EQ(l_resp.cluster_info(1).cluster_id().c_str(), cluster_id_2);
+    ASSERT_EQ(l_resp.cluster_info(1).node_info().size(), 1);
+    ASSERT_EQ(l_resp.cluster_info(1).node_info(0).node_id().c_str(), node_id_2);
+  }
+}
+
+TEST_F(MockTestController, ListClusterNodesWithInvalidClusterID) {
+  Status grpc_status;
+  std::string cluster_id_1 = "CLUSTER_LIST_NODE1";
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  svk::ListClusterCommandRequest l_req;
+  svk::ListClusterCommandResponse l_resp;
+
+  l_req.set_cluster_id(cluster_id_1);
+  grpc_status = client.ListClusterNodes(&l_req, &l_resp);
+  ASSERT_EQ(grpc_status.ok(), false);
+}

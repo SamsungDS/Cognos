@@ -28,6 +28,16 @@ Status Client::ProcessControllerCommand(const svk::CommandRequest* req,
   return status;
 }
 
+Status Client::ListClusterNodes(const svk::ListClusterCommandRequest* req,
+                                svk::ListClusterCommandResponse* resp) {
+  ClientContext ctxt;
+  Status status = ctrlr_stub_->ListClusterNodes(&ctxt, *req, resp);
+  if (!status.ok()) {
+    return status;
+  }
+  return status;
+}
+
 Status Client::RegisterNode(const svk::RegisterRequest* req,
                             svk::RegisterResponse* resp) {
   ClientContext ctxt;
