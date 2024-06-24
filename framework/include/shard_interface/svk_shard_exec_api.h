@@ -8,7 +8,7 @@ extern "C" {
 #endif
 
 /** Shard status return codes */
-typedef enum svk_shard_exec_status {
+typedef enum svk_shard_status {
   SVK_SHARD_EXEC_STATUS_SUCCESS = 0,
   SVK_SHARD_EXEC_STATUS_ERROR = -1,
   SVK_SHARD_EXEC_STATUS_ENOMEM = -2,
@@ -16,8 +16,7 @@ typedef enum svk_shard_exec_status {
 } svk_shard_status_t;
 
 /** Callback function for shard_exec_fn */
-typedef svk_shard_exec_status (*svk_shard_exec_fn)(void* cmd_req,
-                                                   void* cmd_resp);
+typedef svk_shard_status_t (*svk_shard_exec_fn)(void* cmd_req, void* cmd_resp);
 
 /** Shard execute postprocess struct, fn should be set for async IO*/
 typedef struct svk_shard_exec_fn_s {
@@ -59,27 +58,27 @@ typedef void* svk_shard_exec_handle_t;
  *
  * @param config
  * @param handle
- * @return svk_shard_exec_status
+ * @return svk_shard_status_t
  */
-svk_shard_exec_status svk_shard_context_open(svk_shard_exec_config_t* config,
-                                             svk_shard_exec_handle_t** handle);
+svk_shard_status_t svk_shard_context_open(svk_shard_exec_config_t* config,
+                                          svk_shard_exec_handle_t** handle);
 
 /**
  * @brief Close shard context
  *
  * @param handle
- * @return svk_shard_exec_status
+ * @return svk_shard_status_t
  */
-svk_shard_exec_status svk_shard_context_close(svk_shard_exec_handle_t* handle);
+svk_shard_status_t svk_shard_context_close(svk_shard_exec_handle_t* handle);
 
 /**
  * @brief Register a shard fn with an associated handle
  *
  * @param handle
  * @param one_fn
- * @return svk_shard_exec_status
+ * @return svk_shard_status_t
  */
-svk_shard_exec_status svk_shard_context_register_exec_fn(
+svk_shard_status_t svk_shard_context_register_exec_fn(
     svk_shard_exec_handle_t* handle, svk_shard_exec_fn_t* one_fn);
 
 /**
@@ -87,9 +86,9 @@ svk_shard_exec_status svk_shard_context_register_exec_fn(
  *
  * @param handle
  * @param cmd_req
- * @return svk_shard_exec_status
+ * @return svk_shard_status_t
  */
-svk_shard_exec_status svk_shard_context_submit_io_async(
+svk_shard_status_t svk_shard_context_submit_io_async(
     svk_shard_exec_handle_t* handle, void* cmd_req);
 
 /**
@@ -98,9 +97,9 @@ svk_shard_exec_status svk_shard_context_submit_io_async(
  * @param handle List of handles
  * @param cmd_resp
  * @param num_completed Number of IOs completed
- * @return svk_shard_exec_status
+ * @return svk_shard_status_t
  */
-svk_shard_exec_status svk_shard_context_poll_completion(
+svk_shard_status_t svk_shard_context_poll_completion(
     svk_shard_exec_handle_t* handle, void* cmd_resp, uint32_t num_completed);
 
 #ifdef __cplusplus
