@@ -14,38 +14,31 @@
  */
 class sc_switch {
  public:
-  sc_switch() : sc_switch(0) {};
+
+  sc_switch();
+
   /**
    * @brief parameterized switch constructor.
    * @details This constructor takes s_id as parameter.
    */
-  sc_switch(uint64_t sc_id) : s_id(sc_id) {}
+  sc_switch(uint64_t sc_id);
 
-  ~sc_switch() {}
+  ~sc_switch();
+
+  void set_manufacturer(const std::string& manufacturer);
+  void set_upstream_ports(uint32_t num_ports);
+  void set_downstream_ports(uint32_t num_ports);
+  void set_mgmt_port(uint32_t port);
+  
+  const std::string& get_manufacturer() const;
+  uint32_t get_upstream_ports() const;
+  uint32_t get_downstream_ports() const;
+  uint32_t get_mgmt_port() const;  
 
   /**
    * @brief get switch information
    */
-  std::string to_json() {
-    // Create a stringstream to build the JSON-like string
-    std::stringstream json;
-
-    // Start the JSON object
-    json << "{\n";
-
-    // Add each member's information as key-value pairs
-    json << "  \"SwitchID\": " << s_id.get_sc_id() << ",\n";
-    json << "  \"Manufacturer\": \"" << s_manufacturer << "\",\n";
-    json << "  \"UpstreamPorts\": " << s_nr_upstream_ports << ",\n";
-    json << "  \"DownstreamPorts\": " << s_nr_downstream_ports << ",\n";
-    json << "  \"ManagementPort\": " << s_mgmt_port << "\n";
-
-    // End the JSON object
-    json << "}";
-
-    // Convert the stringstream to a string
-    return json.str();
-  };
+  std::string to_json();
 
  private:
 
@@ -53,7 +46,7 @@ class sc_switch {
   sc_id s_id;                       
 
   /**< switch manufacturer.*/
-  char s_manufacturer[1024]{};      
+  std::string s_manufacturer;      
 
   /**< number of upstream ports.*/
   uint32_t s_nr_upstream_ports{0};

@@ -3,7 +3,6 @@
 #define INVALID_DEV_PORT 0xFFFFFFFFU
 
 #include <stdint.h>
-
 #include <algorithm>
 #include <cstring>
 #include <iostream>
@@ -18,6 +17,7 @@
 #include "sc_switch.h"
 #include "types.h"
 
+#include "/opt/stg/mbox_a1.h"
 
 class sc_host;
 
