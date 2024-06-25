@@ -5,7 +5,8 @@ set -e
 # Path variables
 SCRIPT_DIR=$(cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd)
 PROJECT_ROOT=$(realpath "$SCRIPT_DIR/../")
-REPORTS_DIR="$PROJECT_ROOT/build/reports"
+BUILD_DIR="$PROJECT_ROOT/build"
+REPORTS_DIR="$BUILD_DIR/reports"
 
 die()
 {
@@ -32,6 +33,10 @@ help()
     echo "  Release build. Generates a tarball called svk-core-<version>.tgz by default."
     echo "-f | --filename"
     echo "  Filename prefix to use for release tarball. Only applicable when building with release flag."
+    echo "-b | --build-rpms"
+    echo "  Generate SVK core RPMs."
+    echo "-i | --install-path"
+    echo "  Path that RPMs should install core to (Default: /usr/local/svk/core). Only applicable when building with release flag."
     exit
 }
 
@@ -65,10 +70,32 @@ parse_options()
         shift
         shift
         ;;
+        -b|--build-rpms)
+        INSTALL_RPM=true
+        shift
+        ;;
+        -i|--install-path)
+        RPM_INSTALL_PATH="$2"
+        shift
+        shift
+        ;;
         *)
         ;;
     esac
     done
+}
+
+generateRPMs()
+{
+    local rpmBuildDir=$1
+    local installpath=$2
+
+    GIT_VER="$(git describe --abbrev=0 --always --tags)" #Commit hash causing issues with rpmbuild
+    export GIT_VER
+    export CMAKE_INSTALL_PREFIX
+
+    rpmbuild -bb --clean "$PROJECT_ROOT/svk_core.spec" --define "_topdir $rpmBuildDir" --define "installpath $installpath"
+    ls "$RPMBUILD_DIR/RPMS/x86_64"
 }
 
 RELEASE=false
@@ -81,23 +108,33 @@ echo "Build tests: $BUILD_TESTING"
 echo "Build with code coverage: $WITH_COVERAGE"
 echo "CMake install prefix: $CMAKE_INSTALL_PREFIX"
 
-mkdir -p "$PROJECT_ROOT/build"
+mkdir -p "$BUILD_DIR"
 
 CMAKE_OPTIONS=()
 
-pushd "$PROJECT_ROOT/build"
+pushd "$BUILD_DIR"
     # If building release, don't build tests and code coverage
     if $RELEASE;then
         BUILD_TESTING=false
         WITH_COVERAGE=false
         if [ -z "$CMAKE_INSTALL_PREFIX" ];then
-            CMAKE_INSTALL_PREFIX="usr/local/svk" # Need to use this path to generate release tarball properly
+            CMAKE_INSTALL_PREFIX="svk-core" # Path is used for cmake install only
         fi
         if [ -z "$RELEASE_FILENAME_PREFIX" ];then
             RELEASE_FILENAME_PREFIX="svk-core"
         fi
         CMAKE_OPTIONS+=("-DWITH_RELEASE=ON")
+        if [ -z "$RPM_INSTALL_PATH" ];then
+            RPM_INSTALL_PATH="/usr/local/svk/core" # Location that rpm -ivh will install to
+        fi
     fi
+    
+    if [ -n "$RPM_INSTALL_PATH" ];then
+        CMAKE_OPTIONS+=("-DPKG_CONFIG_PREFIX=$RPM_INSTALL_PATH")
+    else
+        CMAKE_OPTIONS+=("-DPKG_CONFIG_PREFIX=$CMAKE_INSTALL_PREFIX")
+    fi
+
 
     # Add unit test option
     if $BUILD_TESTING;then
@@ -148,11 +185,23 @@ pushd "$PROJECT_ROOT/build"
             --txt \
             --root "$PROJECT_ROOT" \
             --exclude "$PROJECT_ROOT/build" \
-            "$PROJECT_ROOT/build"
+            "$BUILD_DIR"
     elif $RELEASE;then
         echo "Generating release tarball..."
         GIT_VER=$(git describe --abbrev=4 --always --tags)
         tar -zcf "$RELEASE_FILENAME_PREFIX-$GIT_VER.tgz" "$CMAKE_INSTALL_PREFIX"
+        echo "$INSTALL_RPM"
+        if [ -n "$INSTALL_RPM" ];then
+            echo "Generating release/devel RPMs..."
+            
+            RPMBUILD_DIR="$BUILD_DIR/rpmbuild"
+            mkdir -p rpmbuild/{BUILD,RPMS,SPECS}
+            
+            cp -rf "$CMAKE_INSTALL_PREFIX/" "$RPMBUILD_DIR/BUILD"
+
+            generateRPMs "$RPMBUILD_DIR" "$RPM_INSTALL_PATH"
+        fi
+
     fi
 
 popd

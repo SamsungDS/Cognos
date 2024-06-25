@@ -16,6 +16,7 @@ define_build_deps() {
     BUILD_DEPS+=('unzip')
     BUILD_DEPS+=('wget')
     BUILD_DEPS+=('boost-devel')
+    BUILD_DEPS+=('rpmdevtools')
     install_packages
 }
 
