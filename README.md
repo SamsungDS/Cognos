@@ -17,22 +17,7 @@ Run the `install.sh` script in `scripts/dependencies`. This will install depende
 ### Build script
 Run the install script in the `scripts/dependencies` folder to install the dependencies needed for building. Run the `build.sh` script from the top level directory. The `-h` option will show what options are available for building SVK Framework.
 
-    Build script for SVK Framework
-
-    Syntax: build.sh [-t|c|h|p|r|f]
-    options:
-    -t | --build-tests
-      Build the unit tests for SVK Framework.
-    -c | --with-coverage
-      Build with code coverage report. Must build unit tests for this.
-    -h | --help
-      Print this help.
-    -p | --install-prefix
-      Install libraries and related files to specified dir.
-    -r | --release
-      Release build. Generates a tarball called svk-core-<version>.tgz by default.
-    -f | --filename
-    Filename prefix to use for release tarball. Only applicable when building with release flag.
+    ./scripts/build.sh -h
 
 If you would like to build SVK Framework and run unit testing and generate code coverage reports for example, this is the command:
 
@@ -43,9 +28,9 @@ To build and install necessary artifacts to a specified directory, this is the c
     ./scripts/build.sh -p install_dir
 
 
-### Release build
+### Release build & RPMs
 
-To do a release build, use the `-r` flag. This will install the artifacts to `usr/local/svk` in the build directory and create a tarball called `svk-core-<version number>.tar.gz`. The tarball will contain the framework related headers/libs, as well as the sample feature module in case it is needed for testing.
+To do a release build, use the `-r` flag. This will create a tarball and two release RPMs (add the `--build-rpms` flag), svk-core and svk-core-devel. These will contain the framework related headers/libs, as well as the sample feature module in case it is needed for testing. By default, installing the RPM will install to the path `/usr/local/svk/core`, but giving `-i <install_path>` to the build script will make RPMs install to `install_path`. When installing the RPMs with a separate install path, export the `SVK_LDCONFIG` env var, so the ldconfig gets updated properly. Otherwise, you will need to update it yourself.
 
 ### Manual Build
 To build the SVK Framework library without tests:
@@ -56,6 +41,13 @@ To build the SVK Framework library without tests:
     cmake3 ../  -DCMAKE_INSTALL_PREFIX=svk_fw_distrib  --fresh  && make install
 
 All the distribution files goes into `build/svk_fw_distrib` directory
+
+To build the release RPMs manually, run the rpmbuild command inside the build directory with the following options:
+
+    export GIT_VER=$(git describe --abbrev=4 --always --tags)
+    rpmbuild -bb --clean ../svk_core.spec --define "_topdir $PWD/rpmbuild"
+
+Specifying `--define "installpath <install_path>"` as an argument will create RPMs that install to `install_path`.
 
 ### Unit Testing
 To build the SVK Framework with tests (GTest) and code coverage, run the above command with the `-DBUILD_TESTING` and `-DWITH_COVERAGE` flags enabled:
