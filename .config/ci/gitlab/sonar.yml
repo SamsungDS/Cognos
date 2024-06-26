@@ -2,8 +2,8 @@ sonar-scanner:
   extends: release build
   stage: test
   script:
-    # Download latest sonar-scanner from sonar-source
-    - wget --no-verbose --content-disposition "https://search.maven.org/remote_content?g=org.sonarsource.scanner.cli&a=sonar-scanner-cli&v=LATEST&c=linux&e=zip"
+    # Download sonar-scanner from URL defined in CICD variable SONAR_SCANNER_URL
+    - curl --silent --remote-name $SONAR_SCANNER_URL
     - unzip -q sonar-scanner-cli-*.zip -d /
     # Execute sonar-scanner and ingest coverage report
     - /sonar-scanner-*-linux/bin/sonar-scanner -X -Dsonar.coverageReportPaths=$SONAR_COVERAGE_REPORT
