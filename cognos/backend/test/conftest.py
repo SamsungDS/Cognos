@@ -1,6 +1,24 @@
 import pytest
+from influxdb_client import InfluxDBClient
+from influxdb_client.client.write_api import SYNCHRONOUS
+
+from cognos_influxdb_client import CognosInfluxDBClient
 
 from app import create_app
+
+
+@pytest.fixture
+def cognos_influx_client():
+    url = 'http://localhost:8086'
+    token = 'token'
+    org = 'test-org'
+    bucket = 'test-bucket'
+    return CognosInfluxDBClient(url=url, token=token, org=org, bucket=bucket)
+
+
+@pytest.fixture
+def cognos_influx_client_from_config():
+    return CognosInfluxDBClient()
 
 
 @pytest.fixture

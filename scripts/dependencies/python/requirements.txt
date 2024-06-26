@@ -1,6 +1,7 @@
 # Python dependencies
 flask
 flask_cors
+influxdb-client[ciso]
 mysql-connector-python
 pytest
 pytest-cov==4.1.0
