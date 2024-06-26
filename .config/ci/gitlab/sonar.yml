@@ -4,8 +4,8 @@ sonar-scanner:
     name: $IMAGE_TAG
     pull_policy: always
   before_script:
-    # Download latest sonar-scanner from sonar-source
-    - wget --no-verbose --content-disposition "https://search.maven.org/remote_content?g=org.sonarsource.scanner.cli&a=sonar-scanner-cli&v=LATEST&c=linux&e=zip"
+    # Download sonar-scanner from URL defined in CICD variable SONAR_SCANNER_URL
+    - curl --silent --remote-name $SONAR_SCANNER_URL
     - unzip -q sonar-scanner-cli-*.zip -d /
   script:
     # Scan with sonar-scanner
