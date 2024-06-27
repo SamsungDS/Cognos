@@ -59,6 +59,7 @@ typedef struct svk_dbc_task_s {
 typedef struct svk_dbc_device_info_s {
   uint64_t num_blocks;
   uint32_t block_size;
+  void* dev_info;  // Device specific info, defined by caller
 } svk_dbc_device_info_t;
 
 /** Opaque Configuration passed to underlying DB connector */
@@ -92,7 +93,7 @@ svk_dbc_status_t svk_dbc_close(svk_dbc_handle_t* handle);
  * @return svk_dbc_status_t SVK_DBC_STATUS_SUCCESS on success
  */
 svk_dbc_status_t svk_dbc_get_device_info(svk_dbc_handle_t* handle,
-                                         void* dev_info);
+                                         svk_dbc_device_info_t* dev_info);
 
 /**
  * @brief Submit IO API for DB connector
