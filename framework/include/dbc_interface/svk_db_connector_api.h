@@ -58,7 +58,7 @@ typedef struct svk_dbc_task_s {
 
 typedef struct svk_dbc_device_info_s {
   uint64_t num_blocks;
-  uint32_t block_size;
+  uint32_t block_size_in_bytes;
   void* dev_info;  // Device specific info, defined by caller
 } svk_dbc_device_info_t;
 
