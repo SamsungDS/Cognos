@@ -12,6 +12,7 @@
 #include "grpc_controller.h"
 #include "grpc_controller_hlpr.h"
 #include "grpc_server.h"
+#include "grpc_server_hlpr.h"
 
 using ::testing::_;
 using ::testing::AtLeast;
@@ -78,7 +79,7 @@ TEST(InitIntegrationTest, InitControllerAndNodeServerSuccess) {
   StartServer(conf_file, false);
 
   Servicer *svcr(new Servicer(conf_file));
-  auto server = Init(svcr);
+  auto server = InitializeNodeServicer(svcr);
   ASSERT_NE(server, nullptr);
   unlink(conf_file.c_str());
 }
@@ -94,7 +95,7 @@ TEST(InitIntegrationTest, ProcessControllerCommandSuccess) {
   StartServer(conf_file, false);
 
   Servicer *svcr(new Servicer(conf_file));
-  auto server = Init(svcr);
+  auto server = InitializeNodeServicer(svcr);
   ASSERT_NE(server, nullptr);
 
   svk::CommandRequest req;
@@ -126,7 +127,7 @@ TEST(InitIntegrationTest, ProcessControllerCommandSuccessWithClusterIDOnly) {
   StartServer(conf_file, false);
 
   Servicer *svcr(new Servicer(conf_file));
-  auto server = Init(svcr);
+  auto server = InitializeNodeServicer(svcr);
   ASSERT_NE(server, nullptr);
 
   svk::CommandRequest req;
@@ -157,7 +158,7 @@ TEST(InitIntegrationTest, ProcessControllerCommandWithInvalidCluster) {
   StartServer(conf_file, false);
 
   Servicer *svcr(new Servicer(conf_file));
-  auto server = Init(svcr);
+  auto server = InitializeNodeServicer(svcr);
   ASSERT_NE(server, nullptr);
 
   svk::CommandRequest req;
@@ -185,7 +186,7 @@ TEST(InitIntegrationTest, ProcessControllerCommandWithoutClusterID) {
   StartServer(conf_file, false);
 
   Servicer *svcr(new Servicer(conf_file));
-  auto server = Init(svcr);
+  auto server = InitializeNodeServicer(svcr);
   ASSERT_NE(server, nullptr);
 
   svk::CommandRequest req;
@@ -212,7 +213,7 @@ TEST(InitIntegrationTest, ProcessControllerCommandWithInvalidNode) {
   StartServer(conf_file, false);
 
   Servicer *svcr(new Servicer(conf_file));
-  auto server = Init(svcr);
+  auto server = InitializeNodeServicer(svcr);
   ASSERT_NE(server, nullptr);
 
   svk::CommandRequest req;
@@ -241,7 +242,7 @@ TEST(InitIntegrationTest,
   StartServer(conf_file, false);
 
   Servicer *svcr(new Servicer(conf_file));
-  auto server = Init(svcr);
+  auto server = InitializeNodeServicer(svcr);
   ASSERT_NE(server, nullptr);
 
   svk::CommandRequest req;
@@ -269,7 +270,7 @@ TEST(InitIntegrationTest, ProcessControllerCommandWithInvalidFeatureID) {
   StartServer(conf_file, false);
 
   Servicer *svcr(new Servicer(conf_file));
-  auto server = Init(svcr);
+  auto server = InitializeNodeServicer(svcr);
   ASSERT_NE(server, nullptr);
 
   svk::CommandRequest req;
@@ -298,7 +299,7 @@ TEST(InitIntegrationTest, ProcessControllerCommandWithInvalidFeatureParams) {
   StartServer(conf_file, false);
 
   Servicer *svcr(new Servicer(conf_file));
-  auto server = Init(svcr);
+  auto server = InitializeNodeServicer(svcr);
   ASSERT_NE(server, nullptr);
 
   svk::CommandRequest req;
@@ -332,7 +333,7 @@ TEST(InitIntegrationTest, InitControllerAndNodeServerWithInvalidController) {
       CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, "Invalid_Controller");
 
   Servicer *svcr(new Servicer(conf_file1));
-  auto server = Init(svcr);
+  auto server = InitializeNodeServicer(svcr);
   ASSERT_EQ(server, nullptr);
   unlink(conf_file.c_str());
   unlink(conf_file1.c_str());

@@ -1,5 +1,8 @@
 #include "grpc_server.h"
 
+#include <csignal>
+#include <set>
+
 #include "client_library.h"
 #define MAX_SIZE 4096
 
@@ -9,6 +12,8 @@ ABSL_FLAG(std::string, svk_conf_file, "", "svk configuration file to read");
 
 using namespace std;
 using namespace svk;
+
+std::atomic<int> gSignalNodeStatus = -1;
 
 int initialize_logger(const node_config &config) {
   int status = -1;
@@ -104,20 +109,39 @@ Servicer::Servicer(const std::string &svk_conf_file) {
     return;
   }
 
-  m_svk_config = config;
-  m_initialized_flag = true;
-
   svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
              "Initializing the svk framework");
+
+  m_svk_config = config;
 
   ret_val = initialize_svk(config.framework_conf_file.c_str(), nullptr);
   if (ret_val) {
     logger_str = "initialize_svk failed with error " + std::to_string(ret_val);
     svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR, logger_str.c_str());
+    m_initialized_flag = false;
+    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR,
+               "Closing the logger instance");
+    svk_logger_close(MGMT_FW_LOGGER_MODULE_NAME);
   } else {
     svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
                "initialize_svk called successfully");
+    m_initialized_flag = true;
   }
+}
+
+Servicer::~Servicer() {
+  auto server = this->get_server();
+
+  svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
+             "Shutting down the gRPC Node server");
+  if (server) server->Shutdown();
+  svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
+             "gRPC Node server is shutdown");
+  svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
+             "Closing the logger instance as part of shutdown");
+
+  svk_logger_close(MGMT_FW_LOGGER_MODULE_NAME);
+  return;
 }
 
 Status Servicer::ProcessNodeCommand(ServerContext *ctxt,
@@ -187,7 +211,7 @@ int RegisterNodeWithController(const node_config &config) {
   return status;
 }
 
-std::shared_ptr<Server> Init(Servicer *svcr) {
+std::shared_ptr<Server> InitializeNodeServicer(Servicer *svcr) {
   std::string logger_str;
   int status = -1;
   node_config config;
@@ -228,6 +252,7 @@ std::shared_ptr<Server> Init(Servicer *svcr) {
                "Server failed to start");
     return nullptr;
   }
+  svcr->set_server(server);
 
   svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
              "Server instance successfully created");
@@ -245,20 +270,55 @@ std::shared_ptr<Server> Init(Servicer *svcr) {
   return server;
 }
 
+void signal_node_handler(int signal) {
+  std::string logger_str;
+  logger_str = "Received signal " + std::to_string(signal);
+  svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::WARN, logger_str.c_str());
+
+  gSignalNodeStatus.store(signal);
+}
+
+int StartNodeServer(std::string svk_conf_file, bool blocking) {
+  int status = -1;
+  std::signal(SIGTERM, signal_node_handler);
+  std::signal(SIGSEGV, signal_node_handler);
+  std::signal(SIGINT, signal_node_handler);
+  std::signal(SIGABRT, signal_node_handler);
+
+  Servicer *svcr(new Servicer(svk_conf_file));
+  if (svcr->get_state() == false) {
+    std::cout << "Node Servicer is not initialized properly. Exiting"
+              << std::endl;
+    return status;
+  }
+  auto server = InitializeNodeServicer(svcr);
+  if (server != nullptr) {
+    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
+               "Starting the node server to process the commands");
+    if (blocking == true) {
+      while (gSignalNodeStatus.load() == -1) sleep(5);
+      svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
+                 "The node server is stopped gracefully");
+      delete svcr;
+    } else {
+      svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
+                 "The node server is started in non-blocking mode for UT");
+    }
+    status = 0;
+  } else {
+    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR,
+               "Error in starting the node server instance");
+  }
+  return status;
+}
+
 #ifndef BUILD_TESTING
 int main(int argc, char **argv) {
-  absl::ParseCommandLine(argc, argv);
-  Servicer *svcr(new Servicer(absl::GetFlag(FLAGS_svk_conf_file)));
-  auto server = Init(svcr);
-  if (server == nullptr) {
-    std::cout << "Failed to start the node server" << std::endl;
-    return 0;
-  }
+  int status = -1;
 
-  svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
-             "Starting the server to process the commands");
-  // Wait for the server to shutdown.
-  server->Wait();
-  return 0;
+  absl::ParseCommandLine(argc, argv);
+  std::string svk_conf_file = absl::GetFlag(FLAGS_svk_conf_file);
+  status = StartNodeServer(svk_conf_file, true);
+  return status;
 }
 #endif

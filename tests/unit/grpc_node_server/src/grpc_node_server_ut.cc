@@ -4,8 +4,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <csignal>
+#include <thread>
+
 #include "framework/framework_mock.grpc.pb.h"
 #include "grpc_server.h"
+#include "grpc_server_hlpr.h"
 
 using ::testing::_;
 using ::testing::AtLeast;
@@ -102,7 +106,7 @@ TEST(InitTest, InitSuccess) {
                                1048576, "INFO", features_dir);
 
   Servicer *svcr(new Servicer(conf_file));
-  auto server = Init(svcr);
+  auto server = InitializeNodeServicer(svcr);
   ASSERT_NE(server, nullptr);
   unlink(conf_file.c_str());
 }
@@ -115,13 +119,14 @@ TEST(InitTest, InitSuccessWithInvalidFeatureDir) {
                                1048576, "INFO", features_dir);
 
   Servicer *svcr(new Servicer(conf_file));
-  auto server = Init(svcr);
-  ASSERT_NE(server, nullptr);
+  EXPECT_TRUE(svcr->get_state() == false);
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_EQ(server, nullptr);
   unlink(conf_file.c_str());
 }
 
 TEST(InitTest, InitSuccessWithNullServicerObject) {
-  auto server = Init(nullptr);
+  auto server = InitializeNodeServicer(nullptr);
   ASSERT_EQ(server, nullptr);
 }
 
@@ -211,7 +216,7 @@ TEST(InitTest, InitWithJSONConfFileWithCompleteFWentries) {
   std::string conf_file = std::string(cw_dir) + "/conf.json";
   std::string content =
       "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
-      "\"}}}";
+      "\"}}, \"core\":{\"feat_modules_dir\":\"" + features_dir + "\"}}";
   FILE *fp = fopen(conf_file.c_str(), "a+");
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
@@ -227,7 +232,8 @@ TEST(InitTest, InitWithJSONConfFileWithoutClusterID) {
   std::string conf_file = std::string(cw_dir) + "/conf.json";
   std::string content =
       "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
-      "\"}, \"cluster\":{}}}";
+      "\"}, \"cluster\":{}}, \"core\":{\"feat_modules_dir\":\"" + features_dir +
+      "\"}}";
   FILE *fp = fopen(conf_file.c_str(), "a+");
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
@@ -253,7 +259,9 @@ TEST(InitTest, InitWithJSONConfFileWithoutController) {
   std::string conf_file = std::string(cw_dir) + "/conf.json";
   std::string content =
       "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
-      "\"}, \"cluster\":{\"id\":\"CL_ID\"}}}";
+      "\"}, \"cluster\":{\"id\":\"CL_ID\"}}, "
+      "\"core\":{\"feat_modules_dir\":\"" +
+      features_dir + "\"}}";
   FILE *fp = fopen(conf_file.c_str(), "a+");
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
@@ -278,7 +286,9 @@ TEST(InitTest, InitWithJSONConfFileWithEmptyController) {
   std::string conf_file = std::string(cw_dir) + "/conf.json";
   std::string content =
       "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
-      "\"}, \"cluster\":{\"id\":\"CL_ID\"}, \"controller\":{}}}";
+      "\"}, \"cluster\":{\"id\":\"CL_ID\"}, \"controller\":{}}, "
+      "\"core\":{\"feat_modules_dir\":\"" +
+      features_dir + "\"}}";
   FILE *fp = fopen(conf_file.c_str(), "a+");
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
@@ -305,7 +315,9 @@ TEST(InitTest, InitWithJSONConfFileWithMissingControllerPort) {
   std::string content =
       "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
       "\"}, \"cluster\":{\"id\":\"CL_ID\"}, "
-      "\"controller\":{\"id\":\"localhostx\"}}}";
+      "\"controller\":{\"id\":\"localhostx\"}}, "
+      "\"core\":{\"feat_modules_dir\":\"" +
+      features_dir + "\"}}";
   FILE *fp = fopen(conf_file.c_str(), "a+");
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
@@ -334,7 +346,9 @@ TEST(InitTest, InitWithJSONConfFileWithoutNode) {
   std::string content =
       "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
       "\"}, \"cluster\":{\"id\":\"CL_ID\"}, "
-      "\"controller\":{\"id\":\"localhost\", \"port\":9876}}}";
+      "\"controller\":{\"id\":\"localhost\", \"port\":9876}}, "
+      "\"core\":{\"feat_modules_dir\":\"" +
+      features_dir + "\"}}";
   FILE *fp = fopen(conf_file.c_str(), "a+");
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
@@ -362,7 +376,9 @@ TEST(InitTest, InitWithJSONConfFileWithEmptyNode) {
   std::string content =
       "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
       "\"}, \"cluster\":{\"id\":\"CL_ID\"}, "
-      "\"controller\":{\"id\":\"localhostx\", \"port\":8765}, \"node\":{}}}";
+      "\"controller\":{\"id\":\"localhostx\", \"port\":8765}, \"node\":{}}, "
+      "\"core\":{\"feat_modules_dir\":\"" +
+      features_dir + "\"}}";
   FILE *fp = fopen(conf_file.c_str(), "a+");
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
@@ -391,13 +407,14 @@ TEST(InitTest, InitWithJSONConfFileWithEmptyNodeID) {
       "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
       "\"}, \"cluster\":{\"id\":\"CL_ID\"}, "
       "\"controller\":{\"id\":\"\", \"port\":9999}, "
-      "\"node\":{\"id\":\"\"}}}";
+      "\"node\":{\"id\":\"\"}}, \"core\":{\"feat_modules_dir\":\"" +
+      features_dir + "\"}}";
   FILE *fp = fopen(conf_file.c_str(), "a+");
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
   std::cout << "content written " << content << std::endl;
   Servicer *svcr(new Servicer(conf_file));
-  auto server = Init(svcr);
+  auto server = InitializeNodeServicer(svcr);
   EXPECT_TRUE(server == nullptr);
   unlink(conf_file.c_str());
 }
@@ -410,7 +427,8 @@ TEST(InitTest, InitWithJSONConfFileWithoutNodePort) {
       "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
       "\"}, \"cluster\":{\"id\":\"CL_ID\"}, "
       "\"controller\":{\"id\":\"localhost\", \"port\":9999}, "
-      "\"node\":{\"id\":\"localhostx\"}}}";
+      "\"node\":{\"id\":\"localhostx\"}}, \"core\":{\"feat_modules_dir\":\"" +
+      features_dir + "\"}}";
   FILE *fp = fopen(conf_file.c_str(), "a+");
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
@@ -445,7 +463,7 @@ TEST(InitTest, InitWithJSONConfFileWithEmptyNodePort) {
   fclose(fp);
   std::cout << "content written " << content << std::endl;
   Servicer *svcr(new Servicer(conf_file));
-  auto server = Init(svcr);
+  auto server = InitializeNodeServicer(svcr);
   EXPECT_TRUE(server == nullptr);
   unlink(conf_file.c_str());
 }
@@ -458,7 +476,9 @@ TEST(InitTest, InitWithJSONConfFileWithNode) {
       "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
       "\"}, \"cluster\":{\"id\":\"CL_ID\"}, "
       "\"controller\":{\"id\":\"localhost\", \"port\":9999}, "
-      "\"node\":{\"id\":\"localhosty\", \"port\":99998}}}";
+      "\"node\":{\"id\":\"localhosty\", \"port\":99998}}, "
+      "\"core\":{\"feat_modules_dir\":\"" +
+      features_dir + "\"}}";
   FILE *fp = fopen(conf_file.c_str(), "a+");
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
@@ -487,7 +507,9 @@ TEST(InitTest, InitWithJSONConfFileWithEmptyLogger) {
       "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
       "\"}, \"cluster\":{\"id\":\"CL_ID\"}, "
       "\"controller\":{\"id\":\"localhost\", \"port\":9999}, "
-      "\"node\":{\"id\":\"localhost\", \"port\":9998}, \"logger\":{}}}";
+      "\"node\":{\"id\":\"localhost\", \"port\":9998}, \"logger\":{}}, "
+      "\"core\":{\"feat_modules_dir\":\"" +
+      features_dir + "\"}}";
   FILE *fp = fopen(conf_file.c_str(), "a+");
   fwrite(content.c_str(), content.length(), 1, fp);
   fclose(fp);
@@ -583,7 +605,7 @@ class MockTest : public ::testing::Test {
     create_svk_mgmt_fw_conf_json(conf_file, conf_file, "rotating_file", 10,
                                  1048576, "INFO", features_dir);
     Servicer *svcr(new Servicer(conf_file));
-    server_ = Init(svcr);
+    server_ = InitializeNodeServicer(svcr);
 
     ASSERT_NE(server_, nullptr);
   }
@@ -637,7 +659,7 @@ class GRPCServer : public ::testing::Test {
     create_svk_mgmt_fw_conf_json(conf_file, conf_file, "rotating_file", 10,
                                  1048576, "INFO", features_dir);
     Servicer *svcr(new Servicer(conf_file));
-    server_ = Init(svcr);
+    server_ = InitializeNodeServicer(svcr);
 
     ASSERT_NE(server_, nullptr);
   }
@@ -699,4 +721,142 @@ TEST_F(GRPCServer, ProcessSampleCommandWithFailure) {
   EXPECT_THAT(status.error_message(), StartsWith("Failed to run command"));
 
   std::cout << "OUTPUT UT: " << status.error_message() << std::endl;
+}
+
+int KillProcess() {
+  char *cw_dir = get_current_dir_name();
+  std::string features_dir = FEATURES_DIR;
+
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(conf_file, conf_file, "rotating_file", 10,
+                               1048576, "INFO", features_dir);
+
+  std::thread server_thr(StartNodeServer, conf_file, true);
+  // Sleep for a while for the server process to stablize
+  sleep(3);
+  svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
+             "sending the signal to kill the process");
+  // Raise the interrupt signal for the server to go down gracefully
+  std::raise(SIGINT);
+  // Wait for > 5 seconds for the signal handler to be processed on the server
+  // node
+  sleep(7);
+  unlink(conf_file.c_str());
+  return 0;
+}
+
+TEST(InitTest, InitNodeServerWithSignal) {
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  EXPECT_DEATH(KillProcess(), "");
+  std::ifstream file(MGMT_FW_NODE_DEFAULT_LOG_FILE);
+  std::string data((std::istreambuf_iterator<char>(file)),
+                   (std::istreambuf_iterator<char>()));
+  file.close();
+  EXPECT_EQ(true,
+            data.find("gRPC Node server is shutdown") != std::string::npos);
+}
+
+TEST(InitTest, InitNodeServerInNonBlocking) {
+  char *cw_dir = get_current_dir_name();
+  std::string features_dir = FEATURES_DIR;
+
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(conf_file, conf_file, "rotating_file", 10,
+                               1048576, "INFO", features_dir);
+
+  int status = StartNodeServer(conf_file, false);
+  svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
+             "InitNodeServerInNonBlocking UT");
+  svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR,
+             "Flush the logs after InitNodeServerInNonBlocking UT");
+
+  ASSERT_EQ(status, 0);
+}
+
+TEST(InitTest, SignalHandlerFunction) { signal_node_handler(SIGINT); }
+
+TEST(InitTest, InitSuccessWithDestructor) {
+  char *cw_dir = get_current_dir_name();
+  std::string features_dir = FEATURES_DIR;
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(conf_file, conf_file, "rotating_file", 10,
+                               1048576, "INFO", features_dir);
+
+  Servicer *svcr(new Servicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+  EXPECT_TRUE(svcr->get_state() == true);
+  svcr->~Servicer();
+  unlink(conf_file.c_str());
+}
+
+TEST(InitTest, StartNodeServerWithServicerFailure) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  std::string content =
+      "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
+      "\"}, \"cluster\":{\"id\":\"CL_ID\"}, "
+      "\"controller\":{\"id\":\"localhost\", \"port\":9999}, "
+      "\"node\":{\"id\":\"localhosty\", \"port\":99998}}, "
+      "\"core\":{\"feat_modules_dir\":\"\"}}";
+  FILE *fp = fopen(conf_file.c_str(), "a+");
+  fwrite(content.c_str(), content.length(), 1, fp);
+  fclose(fp);
+  std::cout << "StartNodeServerWithServicerFailure: content written " << content
+            << std::endl;
+
+  int ret = StartNodeServer(conf_file, false);
+  svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
+             "StartNodeServerWithServicerFailure UT");
+  svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR,
+             "Flush the logs after StartNodeServerWithServicerFailure UT");
+
+  ASSERT_NE(ret, 0);
+  unlink(conf_file.c_str());
+}
+
+TEST(InitTest, StartNodeServerWithInitializeNodeServicerFailure) {
+  char *cw_dir = get_current_dir_name();
+  std::string features_dir = FEATURES_DIR;
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  std::string content =
+      "{\"svk_mgmt_fw_node\":{\"framework\":{\"conf_file\":\"" + conf_file +
+      "\"}, \"cluster\":{\"id\":\"CL_ID\"}, "
+      "\"controller\":{\"id\":\"\", \"port\":9999}, "
+      "\"node\":{\"id\":\"localhosty\", \"port\":99998}}, "
+      "\"core\":{\"feat_modules_dir\":\"" +
+      features_dir + "\"}}";
+  FILE *fp = fopen(conf_file.c_str(), "a+");
+  fwrite(content.c_str(), content.length(), 1, fp);
+  fclose(fp);
+  std::cout
+      << "StartNodeServerWithInitializeNodeServicerFailure: content written "
+      << content << std::endl;
+
+  int ret = StartNodeServer(conf_file, false);
+  svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
+             "StartNodeServerWithInitializeNodeServicerFailure UT");
+  svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR,
+             "Flush the logs after "
+             "StartNodeServerWithInitializeNodeServicerFailure UT");
+
+  ASSERT_NE(ret, 0);
+  unlink(conf_file.c_str());
+}
+
+TEST(InitTest, InitStartServerSuccessWithDestructor) {
+  char *cw_dir = get_current_dir_name();
+  std::string features_dir = FEATURES_DIR;
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(conf_file, conf_file, "rotating_file", 10,
+                               1048576, "INFO", features_dir);
+
+  Servicer *svcr(new Servicer(conf_file));
+  svcr->~Servicer();
+  unlink(conf_file.c_str());
+}
+
+TEST(InitTest, InitStartServerWithNullConfFile) {
+  int ret = StartNodeServer("", true);
+  ASSERT_NE(ret, 0);
 }

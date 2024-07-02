@@ -136,6 +136,11 @@ ControllerServicer::~ControllerServicer() {
   server->Shutdown();
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
              "gRPC Controller server is shutdown");
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+             "Closing the logger instance as part of shutdown");
+
+  svk_logger_close(CONTROLLER_LOGGER_MODULE_NAME);
+
   return;
 }
 
@@ -441,11 +446,11 @@ int StartServer(std::string svk_conf_file, bool blocking) {
                  "The controller server is stopped gracefully");
       delete svcr;
     }
+    status = 0;
   } else {
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                "Error in starting the server instance");
   }
-  status = 0;
   return status;
 }
 

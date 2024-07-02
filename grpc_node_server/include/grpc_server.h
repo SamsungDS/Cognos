@@ -48,6 +48,8 @@ const std::unordered_map<std::string, level_E> log_level_map = {
 class Servicer : public svk::CommandFwk::Service {
  public:
   explicit Servicer(const std::string &svk_conf_file);
+  ~Servicer();
+
   Status ProcessNodeCommand(ServerContext *ctxt, const svk::CommandRequest *req,
                             svk::CommandResponse *resp) override;
   const std::string &get_svk_config_node_id() { return m_svk_config.node_id; };
@@ -56,10 +58,13 @@ class Servicer : public svk::CommandFwk::Service {
   };
   const node_config &get_svk_config() { return m_svk_config; };
   const bool get_state() { return m_initialized_flag; };
+  void set_server(std::shared_ptr<Server> server) { m_server = server; };
+  std::shared_ptr<Server> get_server() { return m_server; };
 
  private:
   node_config m_svk_config;
   bool m_initialized_flag = false;
+  std::shared_ptr<Server> m_server;
 };
 
 std::shared_ptr<Server> Init(Servicer *svcr);
