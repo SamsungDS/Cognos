@@ -4,7 +4,8 @@ import { Container, Row, Col } from 'react-bootstrap';
 import Modal from 'react-bootstrap/Modal';
 import './MemoryPopup.css';
 
-const DetachMemory = ({show, rowData, onCancel, onDelete}) => {
+const DetachMemory = ({show, rowData, onCancel, onDelete, selectedValue}) => {
+    const host_name = selectedValue?.label;
     return (
         <div>
             <Modal show={show} onHide={onCancel} className='custom-modal' id='detach-mem-modal-id' data-testid='detach-memory-modal'>
@@ -15,7 +16,7 @@ const DetachMemory = ({show, rowData, onCancel, onDelete}) => {
                     <Container>
                         <Row>
                             <Col xs={12} md={12}>
-                                <p>Are you sure you want to detach logical Memory Device from Host ?</p>
+                                <p>Are you sure you want to detach <strong>{rowData.dev_name}</strong> Memory Device from server with hostname as <strong>{host_name}</strong> ?</p>
                             </Col>
                         </Row>
                     </Container>

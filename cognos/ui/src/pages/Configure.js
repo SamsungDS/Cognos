@@ -94,9 +94,7 @@ const Configure = () => {
         const data = await response.json();
         setAvailableLMDs(data);
       }
-    } catch (error) {
-        console.log(error);
-    }
+    } catch (error) {console.log(error)};
   };
 
   const handleAttachMemoryToggle = () => {
@@ -137,9 +135,7 @@ const Configure = () => {
         const data = await response.json();
         setData(data);
       }
-    } catch(error) {
-        console.log(error);
-    }
+    } catch(error) {console.log(error)};
   };
 
   const lmdTable =  Array.isArray ? lmdData.map(
@@ -212,13 +208,14 @@ const Configure = () => {
                   </tbody>
                  </Table>
                 </div>
-                {showAttach && (<AttachMemory onSave={handleAttach} onCancel={handleAttachCancel} show={showAttach} availableLMDs={availableLMDs} data-testid='attach-memory-modal'/>)}
+                {showAttach && (<AttachMemory onSave={handleAttach} onCancel={handleAttachCancel} show={showAttach} availableLMDs={availableLMDs} selectedValue={selectedValue} data-testid='attach-memory-modal'/>)}
                 {showDetachMemory && 
                 (<DetachMemory 
                 show={showDetachMemory}
                 rowData={attachedRowData}
                 onCancel={handleDetachMemoryCancel}
                 onDelete={handleDetach}
+                selectedValue={selectedValue}
                 />)}
               </div>
             </Col>
@@ -252,6 +249,7 @@ const Configure = () => {
                     <tbody style={{ maxHeight: '160px', overflowY: 'auto' }}>
                       {memBoxTable}
                       <tr>                        
+                        <td className='cmm-row'></td>
                         <td className='cmm-row'></td>
                         <td className='cmm-row'></td>
                         <td className='cmm-row'></td>

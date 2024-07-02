@@ -1,43 +1,65 @@
 import React from 'react';
-import { render, fireEvent } from '@testing-library/react';
+import { render, fireEvent, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/extend-expect';
 import AttachMemory from '../components/popups/AttachMemory';
+import * as constant from '../constant';
 
 describe('AttachMemory', () => {
   test('should render properly and call onSave with correct data', () => {
     const onSave = jest.fn();
     const onCancel = jest.fn();
-    const availableLMDs = ['D-1', 'D-2'];
+    const availableLMDs = ['DEVX', 'D-2'];
 
     const { getByLabelText, getByText, } = render(
       <AttachMemory show={true} onSave={onSave} onCancel={onCancel} availableLMDs={availableLMDs} />
     );
 
-    const selectCxlDevice = getByLabelText('Select CXL Device');
-    const memoryMode = getByLabelText('Memory Mode');
-    const attachButton = getByText('Attach');
+    const selectCxlDevice = screen.getByLabelText('Select CXL Device');
+    const memoryMode = screen.getByLabelText('Memory Mode');
+    const applicationServer = screen.getByLabelText('Application Server');
+    expect(applicationServer).toBeInTheDocument();
+    const attachButton = screen.getByText('Attach');
 
-    fireEvent.change(selectCxlDevice, { target: { value: 'D-1' } });
-    fireEvent.change(memoryMode, { target: { value: 'direct' } });
+    fireEvent.change(selectCxlDevice, { target: { value: constant.deviceName } });
+    fireEvent.change(memoryMode, { target: { value: constant.deviceMode } });
     fireEvent.click(attachButton);
+
+    
+    // Find the button to toggle advanced memory settings
+    const toggleButton = screen.getByTestId('Advanced Memory Settings');
+
+    // Ensure the button is found
+    expect(toggleButton).toBeInTheDocument();
+
+    // Click the button to toggle advanced memory settings
+    fireEvent.click(toggleButton);
+
+    const inputElement = screen.getByLabelText('start offset');
+    // Check initial value
+    expect(inputElement.value).toBe('');
+    // Simulate user typing in the input
+    fireEvent.change(inputElement, { target: { value: '0x1234' } });
+
+    // Check if the value is updated
+    expect(inputElement.value).toBe('0x1234');
 
     expect(onSave).toHaveBeenCalledTimes(1);
     expect(onSave).toHaveBeenCalledWith({
-      dev_name: 'D-1'
+      dev_name: 'DEVX'
     });
   });
 
   test('should call onCancel when Cancel button is clicked', () => {
     const onSave = jest.fn();
     const onCancel = jest.fn();
-    const availableLMDs = ['D-1', 'D-2'];
+    const availableLMDs = ['DEVX', 'D-2'];
 
     const { getByText, getByTestId, getByLabelText } = render(
       <AttachMemory show={true} onSave={onSave} onCancel={onCancel} availableLMDs={availableLMDs} />
     );
 
     // Find the button to toggle advanced memory settings
-    const toggleButton = getByTestId('Advanced Memory Settings');
+    const toggleButton = screen.getByTestId('Advanced Memory Settings');
 
     // Ensure the button is found
     expect(toggleButton).toBeInTheDocument();
@@ -46,9 +68,9 @@ describe('AttachMemory', () => {
     fireEvent.click(toggleButton);
 
     // After clicking the button, host memory address input should be rendered
-    expect(getByLabelText('start offset')).toBeInTheDocument();
+    expect(screen.getByLabelText('start offset')).toBeInTheDocument();
 
-    const cancelButton = getByText('Cancel');
+    const cancelButton = screen.getByText('Cancel');
 
     fireEvent.click(cancelButton);
 

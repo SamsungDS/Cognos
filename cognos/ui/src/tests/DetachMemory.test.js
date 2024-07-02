@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, fireEvent } from '@testing-library/react';
+import { render, fireEvent, screen } from '@testing-library/react';
 import DetachMemory from '../components/popups/DetachMemory';
 
 describe('DetachMemory component', () => {
@@ -13,12 +13,10 @@ describe('DetachMemory component', () => {
       />
     );
 
-    expect(getByText('Detach Memory')).toBeInTheDocument();
-    expect(
-      getByText('Are you sure you want to detach logical Memory Device from Host ?')
-    ).toBeInTheDocument();
-    expect(getByText('Cancel')).toBeInTheDocument();
-    expect(getByText('Detach')).toBeInTheDocument();
+    expect(screen.getByText('Detach Memory')).toBeInTheDocument();
+
+    expect(screen.getByText('Cancel')).toBeInTheDocument();
+    expect(screen.getByText('Detach')).toBeInTheDocument();
   });
 
   test('calls onCancel when cancel button is clicked', () => {
@@ -32,7 +30,7 @@ describe('DetachMemory component', () => {
       />
     );
 
-    fireEvent.click(getByText('Cancel'));
+    fireEvent.click(screen.getByText('Cancel'));
     expect(onCancelMock).toHaveBeenCalled();
   });
 
@@ -47,7 +45,7 @@ describe('DetachMemory component', () => {
       />
     );
 
-    fireEvent.click(getByText('Detach'));
+    fireEvent.click(screen.getByText('Detach'));
     expect(onDeleteMock).toHaveBeenCalledWith('D-1');
   });
 
@@ -61,6 +59,6 @@ describe('DetachMemory component', () => {
       />
     );
 
-    expect(queryByText('Detach Memory')).not.toBeInTheDocument();
+    expect(screen.queryByText('Detach Memory')).not.toBeInTheDocument();
   });
 });

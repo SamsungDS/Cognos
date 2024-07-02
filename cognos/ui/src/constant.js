@@ -96,3 +96,5 @@ export const memboxTableHeader = [
   export const system_bandwidth = 'System Bandwidth';
   export const rackBandwidth_id = 'rackBandwidth-id';
   export const dramCxlMemUsage_id = 'dramCxlMemUsage-id';
+  export const deviceName = 'DEVX';
+  export const deviceMode =  'direct';

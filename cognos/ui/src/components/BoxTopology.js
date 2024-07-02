@@ -5,7 +5,7 @@ import './BoxTopology.css';
 import { Configs, ArrowLeft, ArrowRight, cxlDevArrow, 
     HostIconInactive, cxlDevIconInActive, cxlDevArrowInactive,
     Host1, Host2, Host3, Host4, Host5, Host6, Host7, Host8, 
-    D1, D2, D3, D4, D5, D6, D7, D8 } from '../constant';
+    getImageByColor } from '../constant';
 
 
 const BoxTopology = () => {
@@ -177,19 +177,7 @@ const BoxTopology = () => {
         </div>
         )
     });
-    const getImageByColor = (colorCode) => {
-      const colorImageMap = {
-        '#0077C8': D1, 
-        '#00B3E3': D2,
-        '#52DD3A': D3,
-        '#FF6700': D4,
-        '#AC55FF': D5,
-        '#8093DC': D6,
-        '#00C3B2': D7,
-        '#FFB546': D8       
-      };
-      return colorImageMap[colorCode];
-    }
+
 
     // CXL Devices rendering
     const cxlDeviceComponents = mappedDeviceList.map((device) => {
