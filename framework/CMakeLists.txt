@@ -1,5 +1,5 @@
 set(SVKFramework_INCLUDE_DEST "include/")
-set(SVKFramework_LIB_DEST "lib64/")
+set(SVKFramework_LIB_DEST "${CMAKE_INSTALL_LIBDIR}")
 
 set(SVKFramework_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/framework.cc)
 set(SVKFramework_INC ${CMAKE_CURRENT_SOURCE_DIR}/include/framework_upstream.h
@@ -8,8 +8,7 @@ set(SVKFramework_INC ${CMAKE_CURRENT_SOURCE_DIR}/include/framework_upstream.h
         ${CMAKE_CURRENT_SOURCE_DIR}/src/include_private/framework_service.hpp
         ${CMAKE_SOURCE_DIR}/common/include/svk_logger.h)
 
-
-
+add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
 
 if(BUILD_SHARED_LIBS)
     add_library(${SVKFramework} SHARED ${SVKFramework_SRC} ${SVKFramework_INC})

@@ -8,8 +8,8 @@ set(SVKLogger_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/svk_logger.cc)
 set(SVKLogger_INC ${CMAKE_CURRENT_SOURCE_DIR}/include/svk_logger.h)
 
 set(SVKLogger_INCLUDE_DEST "include/")
-set(SVKLogger_LIB_DEST "lib64/")
 set(SVKLogger_CMAKE_DEST "cmake/")
+set(SVKLogger_LIB_DEST "${CMAKE_INSTALL_LIBDIR}")
 
 if(BUILD_SHARED_LIBS)
     add_library(${SVKLogger} SHARED ${SVKLogger_SRC} ${SVKLogger_INC})
