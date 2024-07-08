@@ -191,7 +191,7 @@ void sc_mbox::addHost(sc_host& host) {
 /**
  * @details search for d_id in sld/mld maps to fetch the respective d_port.  
  */
-int sc_mbox::check_d_ports(uint64_t d_id){
+int sc_mbox::fetch_device_port(uint64_t d_id){
 
     uint32_t d_port = 0;
 
@@ -219,7 +219,7 @@ int sc_mbox::check_d_ports(uint64_t d_id){
 */
 int sc_mbox::d_attach(uint64_t d_id, uint64_t h_id, string mode){
 
-    uint32_t d_port = check_d_ports(d_id);
+    uint32_t d_port = fetch_device_port(d_id);
 
     if (d_port<=0) {
 	//device port does not exist   
@@ -273,7 +273,7 @@ int sc_mbox::d_attach(uint64_t d_id, uint64_t h_id, string mode){
 */
 int sc_mbox::d_detach(uint64_t d_id, uint64_t h_id, string mode){
 
-    uint32_t d_port = check_d_ports(d_id);
+    uint32_t d_port = fetch_device_port(d_id);
 
     if (d_port<0) {
         //device port does not exist
@@ -313,17 +313,17 @@ int sc_mbox::d_detach(uint64_t d_id, uint64_t h_id, string mode){
 
 
 //get mbox_connected_slds
-unordered_map<sc_id, sc_sld, hash_sc_id> sc_mbox::get_slds_map()  { return mbox_connected_slds; }
+unordered_map<sc_id, sc_sld, hash_sc_id> sc_mbox::get_slds_map()  const { return mbox_connected_slds; }
 
 //get mbox_connected_mlds
-unordered_map<sc_id, sc_mld, hash_sc_id> sc_mbox::get_mlds_map()  { return mbox_connected_mlds; }
+unordered_map<sc_id, sc_mld, hash_sc_id> sc_mbox::get_mlds_map()  const { return mbox_connected_mlds; }
 
 //get mbox_connected_hosts
-unordered_map<sc_id, sc_host, hash_sc_id> sc_mbox::get_hosts_map() { return mbox_connected_hosts; }
+unordered_map<sc_id, sc_host, hash_sc_id> sc_mbox::get_hosts_map() const { return mbox_connected_hosts; }
 
-unordered_map<uint64_t, sc_id> sc_mbox::get_d_ids() { return d_ids; }
+unordered_map<uint64_t, sc_id> sc_mbox::get_d_ids() const { return d_ids; }
 
-unordered_map<uint32_t,sc_id> sc_mbox::get_pdev() { return pdev; }
+unordered_map<uint32_t,sc_id> sc_mbox::get_pdev() const { return pdev; }
 
 unordered_map<uint32_t,list<sc_id>>& sc_mbox::get_phost() { return phost; } 
 

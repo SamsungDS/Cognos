@@ -145,6 +145,16 @@ pushd "$PROJECT_ROOT/build"
 	CMAKE_OPTIONS+=("-DWITH_FMAPI=ON")
 	CMAKE_OPTIONS+=("-DCMAKE_INCLUDE_PATH=$FMAPI_INCLUDE_PATH")
 	CMAKE_OPTIONS+=("-DCMAKE_LIBRARY_PATH=$FMAPI_LIB_PATH")
+
+	echo "####list cxl_memory_box project files####"
+	pwd
+	ls -l 
+	echo "##################"
+
+        cp "$FMAPI_INCLUDE_PATH/sample_json/input.json" $PROJECT_ROOT/tests/
+	mkdir -p /opt/stg
+        cp "$FMAPI_INCLUDE_PATH/mbox_a1.h" /opt/stg/
+
     fi
 
     # Add cmake install prefix option
@@ -156,7 +166,6 @@ pushd "$PROJECT_ROOT/build"
 
     echo "Running cmake..."
     cmake "${CMAKE_OPTIONS[@]}" .. 
-
     echo "Building libraries..."
 
     if [ -n "$CMAKE_INSTALL_PREFIX" ];then
@@ -171,6 +180,8 @@ pushd "$PROJECT_ROOT/build"
         if $BUILD_TESTING;then
             pushd tests
                 echo "Running unit tests..."
+		cp $PROJECT_ROOT/tests/input.json $PROJECT_ROOT/build/tests/
+
                 mkdir -p "$REPORTS_DIR"
                 ctest --output-junit "$REPORTS_DIR/gitlab_junit.xml"
             popd
@@ -188,6 +199,9 @@ pushd "$PROJECT_ROOT/build"
             --exclude "$PROJECT_ROOT/build" \
             --exclude "$PROJECT_ROOT/tests" \
             "$PROJECT_ROOT/build"
+
+	#rm -f $PROJECT_ROOT/tests/input.json
+
     elif $RELEASE;then
         echo "Generating release tarball..."
         GIT_VER=$(git describe --abbrev=4 --always --tags)

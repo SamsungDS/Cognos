@@ -22,7 +22,7 @@ build fmapi:
     name: $CI_JOB_NAME
     expire_in: 300 seconds
     paths:
-     - $FMAPI_PROJECT/$FMAPI_DIR/build/
+     - $FMAPI_PROJECT/$FMAPI_DIR
   needs:
     - build docker
 

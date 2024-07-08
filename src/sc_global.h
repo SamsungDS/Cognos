@@ -35,7 +35,7 @@ class sc_global
         * @param h_id host id.
         * @param mode device shared/direct connect.
         */
-        size_t dev_attach(uint64_t d_id, uint64_t h_id, std::string mode, uint64_t fm_id, std::string &buffer, size_t buffer_size); 
+        size_t dev_attach(uint64_t d_id, uint64_t h_id, std::string mode, uint64_t fm_id, std::string &buffer); 
 
         /**
         * @brief detach device from host.
@@ -43,7 +43,7 @@ class sc_global
         * @param h_id host id.
         * @param mode device shared/direct connect.
         */
-        size_t dev_detach(uint64_t d_id, uint64_t h_id, std::string mode, uint64_t fm_id, std::string &buffer, size_t buffer_size);
+        size_t dev_detach(uint64_t d_id, uint64_t h_id, std::string mode, uint64_t fm_id, std::string &buffer);
 
         /** get sc_mbox */  
 	std::unordered_map<uint64_t, sc_mbox*>& get_mbox_map(); 
@@ -51,35 +51,35 @@ class sc_global
         /** 
 	* @brief convert device object to json 
 	*/	
-	size_t to_device_json(std::string &buffer, size_t buffer_size);
+	size_t to_device_json(std::string &buffer);
 
         /** 
 	* @brief convert host object to json. 
 	*/	
-	size_t to_host_json(std::string &buffer, size_t buffer_size);
+	size_t to_host_json(std::string &buffer);
 
-	size_t to_setup_json(std::string &buffer, size_t buffer_size);
+	size_t to_setup_json(std::string &buffer);
 
         /** 
 	* @brief generate json using input parameter. for ex: {"rc":0} 
 	*/	
-	size_t to_json(int ret,std::string &buffer, size_t buffer_size);
+	size_t to_json(int ret,std::string &buffer);
 
 	/** 
 	 * @brief list out all persisted memory devices.
 	*/
-	size_t list_devices(std::string& buffer, size_t buffer_size);
+	size_t list_devices(std::string& buffer);
 
 	/** 
 	 * @brief list out all persisted hosts.
 	*/
-	size_t list_hosts(std::string &buffer, size_t buffer_size);
+	size_t list_hosts(std::string &buffer);
 
 
 	/** 
 	 * @brief fetch persisted data.
 	*/
-	size_t fetch_setup_info(std::string &buffer, size_t buffer_size);
+	size_t fetch_setup_info(std::string &buffer);
 
 	/** 
 	 * @brief delete dynamically allocated mbox objects.

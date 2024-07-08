@@ -157,7 +157,7 @@ TEST_F(ScMboxTest, DeviceIdExistsInSlds) {
     sc_sld sld(123, "TestDevice", 1024, 8080);
     mbox->addSld(sld);
 
-    int result = mbox->check_d_ports(sld.d_get_id().get_sc_id());
+    int result = mbox->fetch_device_port(sld.d_get_id().get_sc_id());
 
     ASSERT_EQ(result, sld.d_get_port());
 }
@@ -168,7 +168,7 @@ TEST_F(ScMboxTest, DeviceIdExistsInMlds) {
     sc_mld mld(456, "AnotherDevice", 2048, 9090);
     mbox->addMld(mld);
 
-    int result = mbox->check_d_ports(mld.d_get_id().get_sc_id());
+    int result = mbox->fetch_device_port(mld.d_get_id().get_sc_id());
 
     ASSERT_EQ(result, mld.d_get_port());
 }
@@ -176,7 +176,7 @@ TEST_F(ScMboxTest, DeviceIdExistsInMlds) {
 
 // Test case: Device ID does not exist
 TEST_F(ScMboxTest, DeviceIdDoesNotExist) {
-    int result = mbox->check_d_ports(789); // Assuming 789 is not in the maps
+    int result = mbox->fetch_device_port(789); // Assuming 789 is not in the maps
     ASSERT_EQ(result, -ENOENT);
 }
 

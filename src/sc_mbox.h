@@ -75,7 +75,7 @@ class sc_mbox: public sc_device {
 	 * @brief verify if device port is part of the host endpoint.
 	 * @param d_id device id
 	 */  
-	int check_d_ports(uint64_t d_id);
+	int fetch_device_port(uint64_t d_id);
 
         int check_d_ids(sc_device dev);
 
@@ -117,16 +117,16 @@ class sc_mbox: public sc_device {
 	void addHost(sc_host& host);
 
 	/**< get mbox_connected_slds*/
-	std::unordered_map<sc_id, sc_sld, hash_sc_id> get_slds_map();
+	std::unordered_map<sc_id, sc_sld, hash_sc_id> get_slds_map() const;
  
 	/**< get mbox_connected_mlds*/
-	std::unordered_map<sc_id, sc_mld, hash_sc_id> get_mlds_map();
+	std::unordered_map<sc_id, sc_mld, hash_sc_id> get_mlds_map() const;
 
 	/**< get mbox_connected_hosts*/
-	std::unordered_map<sc_id, sc_host, hash_sc_id> get_hosts_map();
+	std::unordered_map<sc_id, sc_host, hash_sc_id> get_hosts_map() const;
 
-	std::unordered_map<uint64_t, sc_id> get_d_ids();
-	std::unordered_map<uint32_t,sc_id> get_pdev(); 
+	std::unordered_map<uint64_t, sc_id> get_d_ids() const;
+	std::unordered_map<uint32_t,sc_id> get_pdev() const; 
 	std::unordered_map<uint32_t,std::list<sc_id>>& get_phost(); 
 
     private:

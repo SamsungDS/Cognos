@@ -59,14 +59,14 @@ TEST_F(ScGlobalTest, CreateMboxTest) {
     ASSERT_EQ(mlds.size(), 1);
     auto sld = slds.begin()->second;
     auto mld = mlds.begin()->second;
-    ASSERT_EQ(sld.d_get_id().get_sc_id(), 551903297536);
+    ASSERT_EQ(sld.d_get_id().get_sc_id(), 549755813888);
     ASSERT_EQ(mld.d_get_id().get_sc_id(), 824633720832);
     // Check the host
     auto hosts = mbox->get_hosts_map();
     ASSERT_EQ(hosts.size(), 1);
     auto host = hosts.begin()->second;
     ASSERT_EQ(host.d_get_id().get_sc_id(), 551903297536);
-    ASSERT_EQ(host.get_host_port(), 3);
+    ASSERT_EQ(host.get_host_port(), 2);
 }
 
 
@@ -79,18 +79,17 @@ TEST_F(ScGlobalTest, DevAttachTest) {
     int create_result = global_instance.g_create_mbox(&pinfo);
     ASSERT_EQ(create_result, 0);
     std::string buffer;
-    size_t buffer_size = 0;
     // Attach device to host
-    size_t attach_result = global_instance.dev_attach(549755813888, 551903297536, "mode", 203, buffer, buffer_size);
+    size_t attach_result = global_instance.dev_attach(549755813888, 551903297536, "mode", 203, buffer);
     ASSERT_EQ(attach_result, 9);
 
     // Verify attachment
     auto mbox_map = global_instance.get_mbox_map();
     auto mbox = mbox_map[203];
     auto phost = mbox->get_phost();
-    ASSERT_EQ(phost.size(), 3);
-    ASSERT_EQ(phost[10].size(), 0);
-    ASSERT_EQ(phost[10].front().get_sc_id(), 0);
+    ASSERT_EQ(phost.size(), 2);
+    ASSERT_EQ(phost[10].size(), 1);
+    ASSERT_EQ(phost[10].front().get_sc_id(), 551903297536);
 
 
 
@@ -100,10 +99,9 @@ TEST_F(ScGlobalTest, DevAttachTest) {
 TEST_F(ScGlobalTest, NegDevAttachTest) {
 
     std::string buffer;
-    size_t buffer_size = 0;
 
     // Attach device to host
-    global_instance.dev_attach(0, 0, "mode", 203, buffer, buffer_size);
+    global_instance.dev_attach(0, 0, "mode", 203, buffer);
 
     json_error_t error;
     json_t* root = json_loads(&buffer[0], 0, &error);
@@ -130,29 +128,27 @@ TEST_F(ScGlobalTest, DevDetachTest) {
     int create_result = global_instance.g_create_mbox(&pinfo);
     ASSERT_EQ(create_result, 0);
     std::string buffer;
-    size_t buffer_size = 0;
     // Attach device to host
-    size_t attach_result = global_instance.dev_attach(549755813888, 551903297536, "mode", 203, buffer, buffer_size);
+    size_t attach_result = global_instance.dev_attach(549755813888, 551903297536, "mode", 203, buffer);
     ASSERT_EQ(attach_result, 9);
     // Detach device from host
-    size_t detach_result = global_instance.dev_detach(549755813888, 551903297536, "mode", 203, buffer, buffer_size);
+    size_t detach_result = global_instance.dev_detach(549755813888, 551903297536, "mode", 203, buffer);
     ASSERT_EQ(detach_result, 9);
 
     // Verify detachment
     auto mbox_map = global_instance.get_mbox_map();
     auto mbox = mbox_map[203];
     auto phost = mbox->get_phost();
-    ASSERT_EQ(phost.size(), 2);
+    ASSERT_EQ(phost.size(), 1);
 }
 
 
 TEST_F(ScGlobalTest, NegDevDetachTest) {
 
     std::string buffer;
-    size_t buffer_size = 0;
 
     // detach device to host
-    global_instance.dev_detach(0, 0, "mode", 203, buffer, buffer_size);
+    global_instance.dev_detach(0, 0, "mode", 203, buffer);
 
     json_error_t error;
     json_t* root = json_loads(&buffer[0], 0, &error);
@@ -172,8 +168,7 @@ TEST_F(ScGlobalTest, NegDevDetachTest) {
 
 TEST_F(ScGlobalTest, ToDeviceJsonTest) {
     std::string buffer;	
-    size_t buffer_size = 0;
-    size_t size = global_instance.to_device_json(buffer, buffer_size);
+    size_t size = global_instance.to_device_json(buffer);
     ASSERT_NE(size, 0); 
     json_error_t error;
     json_t* root = json_loadb(&buffer[0], size, 0, &error);
@@ -212,8 +207,7 @@ TEST_F(ScGlobalTest, ToDeviceJsonTest) {
 
 TEST_F(ScGlobalTest, ToHostJsonTest) {
     std::string buffer;
-    size_t buffer_size = 0;
-    size_t size = global_instance.to_host_json(buffer, buffer_size);
+    size_t size = global_instance.to_host_json(buffer);
     ASSERT_NE(size, 0); 
 
     json_error_t error;
@@ -244,9 +238,8 @@ TEST_F(ScGlobalTest, ToHostJsonTest) {
 
 TEST_F(ScGlobalTest, ToSetupJsonTest) {
     std::string buffer;	
-    size_t buffer_size = 0;
     // Assuming the "input.json" file exists and contains valid JSON
-    size_t size = global_instance.to_setup_json(buffer, buffer_size);
+    size_t size = global_instance.to_setup_json(buffer);
     ASSERT_NE(size, 0); 
     json_error_t error;
     json_t *root = json_loadb(&buffer[0], size, 0, &error);
@@ -258,8 +251,7 @@ TEST_F(ScGlobalTest, ToSetupJsonTest) {
 
 TEST_F(ScGlobalTest, FetchSetupInfoTest) {
     std::string buffer;	
-    size_t buffer_size = 0;
-    size_t size = global_instance.fetch_setup_info(buffer, buffer_size);
+    size_t size = global_instance.fetch_setup_info(buffer);
     ASSERT_NE(size, 0); 
     json_error_t error;
     json_t *root = json_loadb(&buffer[0], size, 0, &error);
@@ -270,8 +262,7 @@ TEST_F(ScGlobalTest, FetchSetupInfoTest) {
 
 TEST_F(ScGlobalTest, ListDevicesTest) {
     std::string buffer;	
-    size_t buffer_size = 0;
-    size_t size = global_instance.list_devices(buffer, buffer_size);
+    size_t size = global_instance.list_devices(buffer);
     ASSERT_NE(size, 0); 
     json_error_t error;
     json_t *root = json_loadb(&buffer[0], size, 0, &error);
@@ -283,8 +274,7 @@ TEST_F(ScGlobalTest, ListDevicesTest) {
 
 TEST_F(ScGlobalTest, ListHostsTest) {
     std::string buffer;
-    size_t buffer_size = 0;
-    size_t size = global_instance.list_hosts(buffer, buffer_size);
+    size_t size = global_instance.list_hosts(buffer);
     ASSERT_NE(size, 0); 
     json_error_t error;
     json_t *root = json_loadb(&buffer[0], size, 0, &error);

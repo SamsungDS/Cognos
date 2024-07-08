@@ -84,11 +84,11 @@ TEST_F(ServicerTest, TokenHelperTest) {
 TEST_F(ServicerTest, ListDevicesTest) {
     std::string input = "test_input";
     std::string result = ListDevices(input);
-    std::string expected_output = "test_input;device names={\"devices\": []}";
+    std::string expected_output = "test_input;device names=";
     std::string buffer;
-    size_t SIZE_B = 0;
-    size_t bytes_written = cxl_global.list_devices(buffer, SIZE_B);
-    if (bytes_written > 0 && bytes_written <= SIZE_B) {
+    size_t bytes_written = cxl_global.list_devices(buffer);
+    if (bytes_written > 0 && bytes_written <= buffer.size()) {
+	buffer.resize(bytes_written);    
         expected_output += buffer;
     }
     ASSERT_EQ(result, expected_output);
@@ -98,11 +98,11 @@ TEST_F(ServicerTest, ListDevicesTest) {
 TEST_F(ServicerTest, ListHostsTest) {
     std::string input = "test_input";
     std::string result = ListHosts(input);
-    std::string expected_output = "test_input;host names={\"hosts\": []}";
+    std::string expected_output = "test_input;host names=";
     std::string buffer;
-    size_t SIZE_B = 0;
-    size_t bytes_written = cxl_global.list_hosts(buffer, SIZE_B);
-    if (bytes_written > 0 && bytes_written <= SIZE_B) {
+    size_t bytes_written = cxl_global.list_hosts(buffer);
+    if (bytes_written > 0 && bytes_written <= buffer.size()) {
+	buffer.resize(bytes_written);    
         expected_output += buffer;
     }
     ASSERT_EQ(result, expected_output);
@@ -112,11 +112,11 @@ TEST_F(ServicerTest, ListHostsTest) {
 TEST_F(ServicerTest, AttachMemoryTest) {
     std::string input = "dev_id=1;host_id=1;mode=rw";
     std::string result = AttachMemory(input);
-    std::string expected_output = "dev_id=1;host_id=1;mode=rw;AttachMemory={\"rc\": 1}";
+    std::string expected_output = "dev_id=1;host_id=1;mode=rw;AttachMemory=";
     std::string buffer;
-    size_t SIZE_B = 0;
-    size_t bytes_written = cxl_global.dev_attach(1, 1, "rw", 203, buffer, SIZE_B);
-    if (bytes_written > 0 && bytes_written <= SIZE_B) {
+    size_t bytes_written = cxl_global.dev_attach(1, 1, "rw", 203, buffer);
+    if (bytes_written > 0 && bytes_written <= buffer.size()) {
+	buffer.resize(bytes_written);    
         expected_output += buffer;
     }
     ASSERT_EQ(result, expected_output);
@@ -126,11 +126,11 @@ TEST_F(ServicerTest, AttachMemoryTest) {
 TEST_F(ServicerTest, DetachMemoryTest) {
     std::string input = "dev_id=1;host_id=1;mode=rw";
     std::string result = DetachMemory(input);
-    std::string expected_output = "dev_id=1;host_id=1;mode=rw;DetachMemory={\"rc\": 1}";
+    std::string expected_output = "dev_id=1;host_id=1;mode=rw;DetachMemory=";
     std::string buffer;
-    size_t SIZE_B = 0;
-    size_t bytes_written = cxl_global.dev_detach(1, 1, "rw", 203, buffer, SIZE_B);
-    if (bytes_written > 0 && bytes_written <= SIZE_B) {
+    size_t bytes_written = cxl_global.dev_detach(1, 1, "rw", 203, buffer);
+    if (bytes_written > 0 && bytes_written <= buffer.size()) {
+	buffer.resize(bytes_written);    
         expected_output += buffer;
     }
     ASSERT_EQ(result, expected_output);
@@ -140,17 +140,15 @@ TEST_F(ServicerTest, DetachMemoryTest) {
 TEST_F(ServicerTest, SetupInfoTest) {
     std::string input = "test_input";
     std::string result = SetupInfo(input);
-    std::string expected_output = "test_input;setup_info={\"Board\": {\"board_name\": \"Example Direct Config\", \"Mgmt_port_type\": \"PCIe\", \"json_version\": \"0100\", \"switch_mode\": \"direct\", \"management_port\": 1}, \"Hosts\": [{\"host_name\": \"Host 1 LNK0\", \"host_port\": 3, \"deinit_active\": 1, \"host_port_type\": \"CXL_11\", \"classcode\": 0, \"host_aspm_active\": 1, \"host_sris_active\": 1, \"host_equalization\": 1, \"host_speed\": 5, \"host_width\": 8, \"host_addr\": \"0x008080000000\", \"host_size\": \"0x007f80000000\", \"endpoint\": [{\"memdev\": \"mem- 7\", \"target\": 7, \"mem_addr\": \"0x00c000000000\", \"mem_size\": \"0x004000000000\", \"dev_offset\": \"0\"}, {\"memdev\": \"mem- 5\", \"target\": 5, \"mem_addr\": \"0x008080000000\", \"mem_size\": \"0x003f80000000\", \"dev_offset\": \"0\"}]}], \"Devices\": [{\"dev_name\": \"DEV_5-256G\", \"dev_port\": 5, \"dev_addr\": \"0x008080000000\", \"dev_size\": \"0x003f80000000\", \"dev_aspm_active\": 1, \"dev_sris_active\": 1, \"dev_lock_active\": 1, \"dev_speed\": 5, \"dev_width\": 8, \"dev_port_type\": \"CXL_20\"}, {\"dev_name\": \"DEV_7-256G\", \"dev_port\": 7, \"dev_addr\": \"0x00c000000000\", \"dev_size\": \"0x004000000000\", \"dev_aspm_active\": 1, \"dev_sris_active\": 1, \"dev_lock_active\": 1, \"dev_speed\": 5, \"dev_width\": 8, \"dev_port_type\": \"CXL_20\"}]}";
+    std::string expected_output = "test_input;setup_info=";
     std::string buffer;
-    size_t SIZE_B = 0;
-    size_t bytes_written = cxl_global.fetch_setup_info(buffer, SIZE_B);
-    if (bytes_written > 0 && bytes_written <= SIZE_B) {
+    size_t bytes_written = cxl_global.fetch_setup_info(buffer);
+    if (bytes_written > 0 && bytes_written <= buffer.size()) {
+	buffer.resize(bytes_written);    
         expected_output += buffer;
     }
     ASSERT_EQ(result, expected_output);
 }
-
-
 
 
 TEST_F(ServicerTest, RegisterPluginTest) {

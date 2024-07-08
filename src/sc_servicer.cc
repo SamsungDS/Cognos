@@ -50,12 +50,9 @@ string ListDevices(string input) {
 
     string output = input + ";device names=";
     unordered_map<string, string> tokens_map = token_helper(input);
-    const size_t SIZE_B = 5120;
     // Create a buffer to store the JSON data
     std::string buffer;
-    // Reserve the initial buffer size
-    buffer.resize(SIZE_B);
-    size_t bytes_written = cxl_global.list_devices(buffer,SIZE_B);
+    size_t bytes_written = cxl_global.list_devices(buffer);
     // Resize the string to the actual size of the JSON data
     buffer.resize(bytes_written);
     output+=buffer;
@@ -72,12 +69,9 @@ string ListHosts(string input) {
 
     string output = input + ";host names=";
     unordered_map<string, string> tokens_map = token_helper(input);
-    const size_t SIZE_B = 5120;
     // Create a buffer to store the JSON data
     std::string buffer;
-    // Reserve the initial buffer size
-    buffer.resize(SIZE_B);
-    size_t bytes_written = cxl_global.list_hosts(buffer,SIZE_B);
+    size_t bytes_written = cxl_global.list_hosts(buffer);
     // Reserve the initial buffer size
     buffer.resize(bytes_written);
     output+=buffer;
@@ -94,12 +88,9 @@ string AttachMemory(string input) {
 
     string output = input + ";AttachMemory=";
     unordered_map<string, string> tokens_map = token_helper(input);
-    const size_t SIZE_B = 5120;
     std::string buffer; 
-    // Reserve the initial buffer size
-    buffer.resize(SIZE_B);
     //@todo fm_id 203, 204 
-    size_t bytes_written = cxl_global.dev_attach(stoull(tokens_map["dev_id"]), stoull(tokens_map["host_id"]), tokens_map["mode"], 203, buffer,SIZE_B);
+    size_t bytes_written = cxl_global.dev_attach(stoull(tokens_map["dev_id"]), stoull(tokens_map["host_id"]), tokens_map["mode"], 203, buffer);
     buffer.resize(bytes_written);
     output+=buffer;
     return output;
@@ -114,13 +105,10 @@ string DetachMemory(string input) {
 
     string output = input + ";DetachMemory=";
     unordered_map<string, string> tokens_map = token_helper(input);
-    const size_t SIZE_B = 5120;
     // Create a buffer to store the JSON data
     std::string buffer;
-    // Reserve the initial buffer size
-    buffer.resize(SIZE_B);
     //@todo fm_id 203, 204
-    size_t bytes_written = cxl_global.dev_detach(stoull(tokens_map["dev_id"]), stoull(tokens_map["host_id"]), tokens_map["mode"], 203, buffer,SIZE_B);
+    size_t bytes_written = cxl_global.dev_detach(stoull(tokens_map["dev_id"]), stoull(tokens_map["host_id"]), tokens_map["mode"], 203, buffer);
     // Reserve the initial buffer size
     buffer.resize(bytes_written);
     output+=buffer;
@@ -137,12 +125,9 @@ string SetupInfo(string input) {
 
     string output = input + ";setup_info=";
     unordered_map<string, string> tokens_map = token_helper(input);
-    const size_t SIZE_B = 5120;
     // Create a buffer to store the JSON data
     std::string buffer;
-    // Reserve the initial buffer size
-    buffer.resize(SIZE_B);
-    size_t bytes_written = cxl_global.fetch_setup_info(buffer,SIZE_B);
+    size_t bytes_written = cxl_global.fetch_setup_info(buffer);
     // Reserve the initial buffer size
     buffer.resize(bytes_written);
     output+=buffer;

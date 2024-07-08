@@ -75,7 +75,7 @@ unordered_map<uint64_t, sc_mbox*>& sc_global::get_mbox_map() { return sc_devices
 * @details This method invokes sc_mbox class d_connect method which basically 
 *          attaches device to the host.
 */
-size_t sc_global::dev_attach(uint64_t d_id, uint64_t h_id, string mode, uint64_t fm_id, string &buffer, size_t buffer_size){
+size_t sc_global::dev_attach(uint64_t d_id, uint64_t h_id, string mode, uint64_t fm_id, string &buffer){
 
     int ret = 1; 
     for(auto& pair: get_mbox_map())
@@ -86,7 +86,7 @@ size_t sc_global::dev_attach(uint64_t d_id, uint64_t h_id, string mode, uint64_t
             if (ret==0) { break; }
 	}    
     }
-    return to_json(ret, buffer, buffer_size); 
+    return to_json(ret, buffer); 
 }    
     
 
@@ -94,7 +94,7 @@ size_t sc_global::dev_attach(uint64_t d_id, uint64_t h_id, string mode, uint64_t
 * @details This method invokes sc_mbox class d_disconnect method which basically 
 *          detaches device from the host.
 */
-size_t sc_global::dev_detach(uint64_t d_id, uint64_t h_id, string mode, uint64_t fm_id, string &buffer, size_t buffer_size){
+size_t sc_global::dev_detach(uint64_t d_id, uint64_t h_id, string mode, uint64_t fm_id, string &buffer){
 
     int ret = 1; 
 
@@ -106,21 +106,28 @@ size_t sc_global::dev_detach(uint64_t d_id, uint64_t h_id, string mode, uint64_t
             if (ret==0) { break; }
 	} 
     }
-    return to_json(ret, buffer, buffer_size); 
+    return to_json(ret, buffer); 
 }
 
 
 /**
  * @details create json object using the input provided.
  */ 
-size_t sc_global::to_json(int ret, string &buffer, size_t buffer_size){
+size_t sc_global::to_json(int ret, string &buffer){
 
     json_t* root = json_object();
     json_t* jtemp = json_integer(ret);
     json_object_set_new(root, "rc", jtemp);
 
     // Dump the JSON object to the buffer
-    size_t bytes_written = json_dumpb(root, &buffer[0], buffer_size, JSON_INDENT(0));
+    size_t bytes_written = json_dumpb(root, &buffer[0], buffer.size(), JSON_INDENT(0));
+
+
+    if (bytes_written == 0 || bytes_written >= buffer.size()) {
+        size_t buffer_size = bytes_written + 1;
+        buffer.resize(buffer_size);
+        bytes_written = json_dumpb(root, &buffer[0], buffer.size(), JSON_INDENT(0));
+    }
 
     // Clean up
     json_decref(root);
@@ -131,7 +138,7 @@ size_t sc_global::to_json(int ret, string &buffer, size_t buffer_size){
 /**
  * @brief create json response by iterating over persisted device objects.
  */
-size_t sc_global::to_device_json(string &buffer, size_t buffer_size){
+size_t sc_global::to_device_json(string &buffer){
 
     json_t* root = json_object();
     json_t* temp = json_array();
@@ -189,12 +196,12 @@ size_t sc_global::to_device_json(string &buffer, size_t buffer_size){
     }
 
     // Dump the JSON object to the buffer
-    size_t bytes_written = json_dumpb(root, &buffer[0], buffer_size, JSON_INDENT(0));    
+    size_t bytes_written = json_dumpb(root, &buffer[0], buffer.size(), JSON_INDENT(0));    
 
     // Check if buffer size was sufficient
-    if (bytes_written == 0 || bytes_written >= buffer_size) {
+    if (bytes_written == 0 || bytes_written >= buffer.size()) {
         // If buffer was too small, resize and try again, +1 for null terminator
-        buffer_size = bytes_written + 1; 
+        size_t buffer_size = bytes_written + 1; 
         buffer.resize(buffer_size);
         bytes_written = json_dumpb(root, &buffer[0], buffer_size, JSON_INDENT(0));
     }
@@ -208,7 +215,7 @@ size_t sc_global::to_device_json(string &buffer, size_t buffer_size){
 /**
  * @brief create json response by iterating over persisted host objects.
  * */
-size_t sc_global::to_host_json(string &buffer, size_t buffer_size){
+size_t sc_global::to_host_json(string &buffer){
 
     json_t* root = json_object();
     json_t* temp = json_array();
@@ -247,12 +254,12 @@ size_t sc_global::to_host_json(string &buffer, size_t buffer_size){
 
 
     // Dump the JSON object to the buffer
-    size_t bytes_written = json_dumpb(root, &buffer[0], buffer_size, JSON_INDENT(0));
+    size_t bytes_written = json_dumpb(root, &buffer[0], buffer.size(), JSON_INDENT(0));
 
     // Check if buffer size was sufficient
-    if (bytes_written == 0 || bytes_written >= buffer_size) {
+    if (bytes_written == 0 || bytes_written >= buffer.size()) {
         // If buffer was too small, resize and try again, +1 for null terminator
-        buffer_size = bytes_written + 1;
+        size_t buffer_size = bytes_written + 1;
         buffer.resize(buffer_size);
         bytes_written = json_dumpb(root, &buffer[0], buffer_size, JSON_INDENT(0));
     }
@@ -263,7 +270,7 @@ size_t sc_global::to_host_json(string &buffer, size_t buffer_size){
 }
 
 
-size_t sc_global::to_setup_json(string &buffer, size_t buffer_size){ 
+size_t sc_global::to_setup_json(string &buffer){ 
 
     json_t *root;
     json_error_t error;
@@ -275,12 +282,12 @@ size_t sc_global::to_setup_json(string &buffer, size_t buffer_size){
     }
 
     // Dump the JSON object to the buffer
-    size_t bytes_written = json_dumpb(root, &buffer[0], buffer_size, JSON_INDENT(0));
+    size_t bytes_written = json_dumpb(root, &buffer[0], buffer.size(), JSON_INDENT(0));
 
     // Check if buffer size was sufficient
-    if (bytes_written == 0 || bytes_written >= buffer_size) {
+    if (bytes_written == 0 || bytes_written >= buffer.size()) {
         // If buffer was too small, resize and try again
-        buffer_size = bytes_written + 1;
+        size_t buffer_size = bytes_written + 1;
         buffer.resize(buffer_size);
         bytes_written = json_dumpb(root, &buffer[0], buffer_size, JSON_INDENT(0));
     }
@@ -291,11 +298,11 @@ size_t sc_global::to_setup_json(string &buffer, size_t buffer_size){
 }
 
 
-size_t sc_global::fetch_setup_info(string &buffer, size_t buffer_size){ return to_setup_json(buffer, buffer_size);	}
+size_t sc_global::fetch_setup_info(string &buffer){ return to_setup_json(buffer);	}
 
-size_t sc_global::list_devices(string &buffer, size_t buffer_size){ return to_device_json(buffer, buffer_size); }
+size_t sc_global::list_devices(string &buffer){ return to_device_json(buffer); }
 
-size_t sc_global::list_hosts(string &buffer, size_t buffer_size){ return to_host_json(buffer, buffer_size); }
+size_t sc_global::list_hosts(string &buffer){ return to_host_json(buffer); }
 
 void sc_global::clear_mbox_objects(){ mb_objs.clear(); } 
 	
