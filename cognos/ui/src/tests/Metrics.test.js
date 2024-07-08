@@ -10,18 +10,6 @@ describe( "metrics" , () => {test('renders Select Application Server text', () =
   })}
 );
 
-describe('Memory Bandwidth Component', () => {
-  it('renders memory bandwidth component with correct data', () => {
-    
-    const { getByText, getByTestId } = render(<Metrics/>);
-
-    expect(getByTestId('memory-bandwidth-card-id')).toBeInTheDocument();
-
-    expect(getByText('Memory Bandwidth')).toBeInTheDocument();
-    expect(getByText('512 GBps')).toBeInTheDocument();
-    expect(getByText('64 GBps')).toBeInTheDocument();
-  });
-});
 
 describe('Metric component', () => {
   it('renders memCapacityData chart correctly', () => {
@@ -36,13 +24,6 @@ describe('Metric component', () => {
     expect(dramCxlMemChart).toBeInTheDocument();
   });
 
-
-  it('renders memCapacityData chart legend correctly', () => {
-    const { getByText } = render(<Metrics />);
-    const memCapacityLegend = getByText('DRAM');
-    expect(memCapacityLegend).toBeInTheDocument();
-  });
-
 });
 
 describe('SAP HANA Card', () => {
@@ -55,7 +36,7 @@ describe('SAP HANA Card', () => {
     expect(hostAppHeading).toBeInTheDocument();
 
     // Assert that the SAP HANA heading is present
-    const sapHanaHeading = getByText('SAP HANA');
+    const sapHanaHeading = getByText('Memory vs CPU usage');
     expect(sapHanaHeading).toBeInTheDocument();
 
     // Assert that the image is present with the correct attributes

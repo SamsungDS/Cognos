@@ -17,11 +17,11 @@ const Metrics = () => {
     const memCapacityData = [
         ["MemType", "Capacity Used"],
         ["DRAM", 1120],
-        ["CMM-D", 896],
+        ["CXL", 896],
     ];
 
     const memCapacityOptions = {
-        title: "Total Capacity per MemType (GB)",
+        title: "Memory Capacity: DRAM vs CXL",
         titleTextStyle: { color: "#FFFFFD", fontSize: 20, bold: true},
         colors: ["#B24675", "#FE5276", "#FE8E73", "#FEAE00", "B37328"],
         pieSliceText: 'value',
@@ -46,7 +46,7 @@ const Metrics = () => {
     };
 
     const dramCxlMemUsageData = [
-        ["Mem Usage", "DRAM", "CMM-D"],
+        ["Mem Usage", "CXL", "CMM-D"],
         ["6", 123, 172],
         ["5", 151, 142],
         ["4", 481, 211],
@@ -59,7 +59,7 @@ const Metrics = () => {
     const dramCxlMemUsageOptions = {
         isStacked: true,
         height: 220,
-        title: "DRAM vs CMM-D Mem Usage",
+        title: "DRAM vs CXL memory Usage",
         titleTextStyle: { color: "#FFFFFD", fontSize: 25, bold: true},
         colors: ["#24ECC5", "#EC5D24", "#00B3E3"],
         hAxis: {title: "Time Interval (<-- Minutes)", textStyle: { color: "#FFFFFD"}, titleTextStyle: { color: "#FFFFFD" }, gridlines: {color: "4C4C3B"}},
@@ -103,7 +103,7 @@ const Metrics = () => {
                             <Col sm={12} md={12} lg={12}>
                                 <div className='device_card first-row' id='memory-bandwidth-card-id' data-testid="memory-bandwidth-card-id">
                                     <div className='bandwidth'>
-                                        <h1 className='fs-24 memory-bandwidth'>Memory Bandwidth</h1>
+                                        <h1 className='fs-24 memory-bandwidth'>CXL Memory Bandwidth</h1>
                                         <div>
                                             <ProgressBar style={{ height: 20, fontWeight: 'bold'}}>
                                                 <ProgressBar now={memBandwidthVals[0]} label={`512 GBps`} key={1} className='host1' />
@@ -132,7 +132,7 @@ const Metrics = () => {
                         <div className='device_card second-row'  id='saphaana-card-id' style={{paddingBottom: 0, marginBottom: 0}}>
                             <div className='fs-22' style={{display: 'flex', alignItems: 'baseline', height: 30}}>
                                 <h1 className='host-app-heading'>Host Application Metrics:  </h1>
-                                <h1 className='sap-hana' > SAP HANA</h1>
+                                <h1 className='sap-hana' >Memory vs CPU usage</h1>
                             </div>
                             <div style={{display: 'flex', verticalAlign: 'top', justifyContent: 'center'}}>
                                 <img 

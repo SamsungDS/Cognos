@@ -88,7 +88,7 @@
     background-color: black !important;
     border: 2px solid #00C3B2;
     margin-bottom: 0px;
-    margin-left: -24px;
+    margin-left: -32px;
     margin-right: 36px;
 }
 .line {
@@ -273,7 +273,7 @@
         margin-left: 82px;
     }
     .badge {
-        width: 84px;
+        width: 100px;
     }
     .host-round-icon {
         width: 14px;
@@ -329,14 +329,14 @@
         margin-left: 82px;
     }
     .badge {
-        width: 88px;
+        width: 102px;
     }
     .host-round-icon {
         width: 14px;
         margin-left: 0px;
     }
     .cxl-device {
-        margin-left: 56px;
+        margin-left: 98px;
     }
     .cxl-switch {
         margin-left: 347px;
@@ -359,10 +359,10 @@
         margin-left: 50px;
     }
     .device-name {
-        margin-left: 48px;
+        margin-left: 33px;
     }
     .device-img {
-        margin-left: 25px;
+        margin-left: 20px;
         width: 68px;
     }
     .device-Id {

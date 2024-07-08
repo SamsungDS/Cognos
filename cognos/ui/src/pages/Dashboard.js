@@ -3,7 +3,7 @@ import { Container, Row, Col} from 'react-bootstrap';
 import  Chart from "react-google-charts";
 import ProgressBar from 'react-bootstrap/ProgressBar';
 import BoxTopology from '../components/BoxTopology';
-import { ActiveLight, UnhealthyLight, InactiveLight } from '../constant';
+import { ActiveLight, UnhealthyLight } from '../constant';
 import './metrics.css';
 import './dashboard.css';
 import 'rc-slider/assets/index.css';
@@ -50,7 +50,7 @@ const Dashboard = () => {
   };
 
   const dramCxlMemUsageData = [
-    ["Mem Usage", "CMM-D"],
+    ["Mem Usage", "CMM-B"],
     ["50 sec", 74],
     ["40 sec", 71],
     ["30 sec", 118],
@@ -112,7 +112,7 @@ const Dashboard = () => {
               <Row>
                 <Col>
                   <div className='device_card system-memory-allocated' id='sys-mem-allocated-id'> 
-                    <div style={{color: 'white', fontWeight: 'bold', fontFamily: 'Samsung'}}>System Memory Allocated</div>
+                    <div style={{color: 'white', fontWeight: 'bold', fontFamily: 'Samsung'}}>CMM-B Memory Capacity</div>
                     <div>
                       <div style={{color: 'white', paddingTop:12}}>
                         CMM-D
@@ -123,7 +123,7 @@ const Dashboard = () => {
                       </div>
                     </div>
                     <div>
-                      <div style={{color: 'white', paddingTop:12}}>
+                      <div style={{color: 'white', paddingTop:12}} data-testid='cmm-h'>
                           CMM-H
                       </div>
                       <div style={{paddingTop:12}}>
@@ -136,19 +136,17 @@ const Dashboard = () => {
               </Row>
               <div  className='device_card health-container' id='health-container-id' style={{ padding: 24, fontFamily: 'Samsung'}}>
                   <Row>                      
-                    <Col style={{color: 'white'}} sm={3} md={3} lg={3}> Health</Col>
-                    <Col sm={9} md={9} lg={9}>
+                    <Col style={{color: 'white'}} sm={5} md={5} lg={5}>CXL Device Status</Col>
+                    <Col sm={7} md={7} lg={7}>
                       <Row>
                         <Col style={{color: 'white'}}>CMM-D</Col>
                         <Col style={{color: 'white'}}><img title="Failure: see Configure page for more details" alt='activelight' src={UnhealthyLight} width="20" height="auto" style={{objectFit: "cover", cursor:'pointer'}} />&nbsp; 0</Col>
                         <Col style={{color: 'white'}}><img title="Healthy: see Configure page for more details" src={ActiveLight} alt='activelight' width="20" height="auto" style={{objectFit: "cover", cursor:'pointer'}} />&nbsp; 6</Col>
-                        <Col style={{color: 'white'}}><img title="Warning: see Configure page for more details" src={InactiveLight} alt='Inactivelight' width="20" height="auto" style={{objectFit: "cover", cursor:'pointer'}} />&nbsp; 0</Col>
                       </Row>
                       <Row>
-                        <Col style={{color: 'white'}}>Host</Col>
+                        <Col style={{color: 'white'}}>CMM-H</Col>
                         <Col style={{color: 'white'}}><img title="Failure: see Configure page for more details" alt='activelight' src={UnhealthyLight} width="20" height="auto" style={{objectFit: "cover", cursor:'pointer'}} />&nbsp; 0</Col>
                         <Col style={{color: 'white'}}><img title="Healthy: see Configure page for more details" src={ActiveLight} alt='activelight' width="20" height="auto" style={{objectFit: "cover", cursor:'pointer'}} />&nbsp; 2</Col>
-                        <Col style={{color: 'white'}}><img title="Warning: see Configure page for more details" src={InactiveLight} alt='activelight' width="20" height="auto" style={{objectFit: "cover", cursor:'pointer'}} />&nbsp; 0</Col>
                       </Row>
                     </Col>
                   </Row>
@@ -162,7 +160,7 @@ const Dashboard = () => {
                   <Col sm={3} md={3} lg={3}>
                     <div className='fs-22' style={{padding: 12}}>
                       <h6>Trend Graph</h6>
-                      <h6 style={{fontWeight: 'bold'}}>System Bandwidth</h6>
+                      <h6 style={{fontWeight: 'bold'}}>Bandwidth Usage</h6>
                     </div>
                   </Col>
                 </Row>
@@ -183,10 +181,10 @@ const Dashboard = () => {
             <Col sm={12} md={12} lg={12} xl={6}>
               <div className='device_card graph-container' id='cmm-graph-id'>
                 <Row>
-                  <Col sm={3} md={3} lg={3}>
+                  <Col sm={3} md={3} lg={4}>
                     <div className='fs-22' style={{padding: 12}}>
                       <h6>Trend Graph</h6>
-                      <h6 style={{fontWeight: 'bold'}}>CMM-D</h6>
+                      <h6 style={{fontWeight: 'bold'}}>CMM-B Memory Usage</h6>
                     </div>
                   </Col>
                 </Row>  

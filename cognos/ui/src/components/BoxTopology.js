@@ -119,8 +119,8 @@ const BoxTopology = () => {
 
     const numbers = [];
 
-    for (let i = 1; i <= 19; i++) {
-        numbers.push(`${i}`);
+    for (let i = 1; i <= 8; i++) {
+        numbers.push(`CMM-B${i}`);
     }
 
     // Hosts rendering
