@@ -1,5 +1,6 @@
 #include "svk_logger.h"
 // clang-format off
+#define FMT_HEADER_ONLY
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/rotating_file_sink.h>

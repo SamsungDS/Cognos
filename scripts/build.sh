@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
+# shellcheck source=/dev/null
 
 set -e
+
+if [[ -e /etc/os-release ]]; then
+	source "/etc/os-release"
+else
+	ID=unknown
+fi
 
 # Path variables
 SCRIPT_DIR=$(cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd)
@@ -189,7 +196,7 @@ pushd "$BUILD_DIR"
     elif $RELEASE;then
         echo "Generating release tarball..."
         GIT_VER=$(git describe --abbrev=4 --always --tags)
-        tar -zcf "$RELEASE_FILENAME_PREFIX-$GIT_VER.tgz" "$CMAKE_INSTALL_PREFIX"
+        tar -zcf "$RELEASE_FILENAME_PREFIX-$ID-$VERSION_ID-$GIT_VER.tgz" "$CMAKE_INSTALL_PREFIX"
         echo "$INSTALL_RPM"
         if [ -n "$INSTALL_RPM" ];then
             echo "Generating release/devel RPMs..."
