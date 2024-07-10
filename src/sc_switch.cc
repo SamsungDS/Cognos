@@ -8,26 +8,38 @@ sc_switch::sc_switch(uint64_t sc_id) : s_id(sc_id) {}
 sc_switch::~sc_switch() {}
 
 std::string sc_switch::to_json() {
-    // Create a stringstream to build the JSON-like string
     std::stringstream json;
-
-    // Start the JSON object
     json << "{\n";
 
-    // Add each member's information as key-value pairs
     json << "  \"SwitchID\": " << s_id.get_sc_id() << ",\n";
-    json << "  \"Manufacturer\": \"" << s_manufacturer << "\",\n";
-    json << "  \"UpstreamPorts\": " << s_nr_upstream_ports << ",\n";
-    json << "  \"DownstreamPorts\": " << s_nr_downstream_ports << ",\n";
-    json << "  \"ManagementPort\": " << s_mgmt_port << "\n";
 
-    // End the JSON object
+    if (!s_manufacturer.empty()) {
+        json << "  \"Manufacturer\": \"" << s_manufacturer << "\",\n";
+    } else {
+        json << "  \"Manufacturer\": \"Unknown\",\n";
+    }
+
+    if (s_nr_upstream_ports > 0) {
+        json << "  \"UpstreamPorts\": " << s_nr_upstream_ports << ",\n";
+    } else {
+        json << "  \"UpstreamPorts\": 0,\n";
+    }
+
+    if (s_nr_downstream_ports > 0) {
+        json << "  \"DownstreamPorts\": " << s_nr_downstream_ports << ",\n";
+    } else {
+        json << "  \"DownstreamPorts\": 0,\n";
+    }
+
+    if (s_mgmt_port > 0) {
+        json << "  \"ManagementPort\": " << s_mgmt_port << "\n";
+    } else {
+        json << "  \"ManagementPort\": 0\n";
+    }
+
     json << "}";
-
-    // Convert the stringstream to a string
     return json.str();
-};
-
+}
 
 void sc_switch::set_manufacturer(const std::string& manufacturer) {
       s_manufacturer = manufacturer;

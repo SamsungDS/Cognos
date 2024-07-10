@@ -18,7 +18,7 @@ sc_mbox::sc_mbox(uint64_t mb_id, uint64_t mb_fm_id, sc_switch mb_switch):
 sc_mbox::~sc_mbox(){}
 
 
-int sc_mbox::check_d_ids(sc_device dobj){
+int sc_mbox::delete_d_ids(sc_device dobj){
 
     // Remove the d_id from d_ids
     auto d_id_it = d_ids.find(dobj.d_get_id().get_sc_id());
@@ -26,14 +26,14 @@ int sc_mbox::check_d_ids(sc_device dobj){
         d_ids.erase(d_id_it);
     } else {
         // d_id not found
-        return -ENOENT; // Error
+        return -ENOENT; 
     }
 
     return 0;    
 
 }
 
-int sc_mbox::check_pdev(sc_device dobj){
+int sc_mbox::delete_pdev(sc_device dobj){
 
     // Remove the d_id from pdev
     auto pdev_it = pdev.find(dobj.d_get_port()); 
@@ -41,7 +41,7 @@ int sc_mbox::check_pdev(sc_device dobj){
         pdev.erase(pdev_it);
     } else {
         // d_id not found in pdev
-        return -ENOENT; // Error
+        return -ENOENT; 
     }
 
     return 0;
@@ -56,20 +56,10 @@ int sc_mbox::mbox_delete_sld(sc_sld sld) {
         mbox_connected_slds.erase(sld_it);
     } else {
         // SLD with the specified d_id not found
-        return -ENOENT; // Error
+        return -ENOENT; 
     }
 
-
-    if (check_d_ids(sld) < 0) {
-        return 1;
-    }
-
-    if (check_pdev(sld) < 0) {
-        return 1;
-    }
-
-
-    return 0; // Success
+    return 0; 
 }
 
 int sc_mbox::mbox_delete_mld(sc_mld mld) { 
@@ -80,16 +70,7 @@ int sc_mbox::mbox_delete_mld(sc_mld mld) {
         mbox_connected_mlds.erase(mld_it);
     } else {
         // MLD with the specified d_id not found
-        return -ENOENT; // Error
-    }
-
-
-    if (check_d_ids(mld) < 0) {
-        return 1;
-    }
-
-    if (check_pdev(mld) < 0) {
-        return 1;
+        return -ENOENT; 
     }
 
     return 0; 
@@ -138,14 +119,12 @@ list<sc_host> sc_mbox::mbox_list_connected_hosts() {
 
 /** create sld */
 sc_sld sc_mbox::mbox_create_sld(uint64_t capacity) {
-    //@to-do 
     sc_sld sld;
     sld.d_set_capacity(capacity);
     return sld;}; 
 
 /** create mld */
 sc_mld sc_mbox::mbox_create_mld(uint64_t capacity) {
-    //@to-do 
     sc_mld mld;
     mld.d_set_capacity(capacity);
     return mld;};
@@ -193,24 +172,17 @@ void sc_mbox::addHost(sc_host& host) {
  */
 int sc_mbox::fetch_device_port(uint64_t d_id){
 
-    uint32_t d_port = 0;
+    uint32_t d_port=0;
 
     //check if device id exists in sld persistent object
     if (mbox_connected_slds.find(d_ids[d_id]) != mbox_connected_slds.end()) {
         d_port = mbox_connected_slds[d_ids[d_id]].d_get_port();
     }
-
     //check if device id exists in mld persistent object
     else if (mbox_connected_mlds.find(d_ids[d_id]) != mbox_connected_mlds.end()) {
         d_port = mbox_connected_mlds[d_ids[d_id]].d_get_port();
     }
-    else{
-       // device does not exists
-       return -ENOENT;
-    }
-
     return d_port;
-
 }
 
 
@@ -221,14 +193,11 @@ int sc_mbox::d_attach(uint64_t d_id, uint64_t h_id, string mode){
 
     uint32_t d_port = fetch_device_port(d_id);
 
-    if (d_port<=0) {
+    if (d_port==0) {
 	//device port does not exist   
-	return 1; 
+	return -ENOENT; 
     }  	
-
     if (mbox_connected_hosts.find(h_ids[h_id]) != mbox_connected_hosts.end()){
-	
-	bool na = false; // device not attached     
 
 	//check for device port in phost 
         if (phost.find(d_port)!=phost.end()) { 
@@ -239,32 +208,21 @@ int sc_mbox::d_attach(uint64_t d_id, uint64_t h_id, string mode){
                     return 0;  
                 }
             }
-	    //port exist but not attached to current host 
-	    na=true;
         }
-
-	//port does not exist or port exist but not attached to current host
-	if (na or phost.find(d_port)==phost.end()){
+	else{
             //invoke STG API with host_port and dev_port
 	    int ret = mbox_A1_connect_by_hostport(mbox_connected_hosts[h_ids[h_id]].get_host_port(), d_port);
-            int uret=update_json_and_install();
-	    if(uret>0){
-	        return uret;
-	    }
+            update_json_and_install();
             if (ret == 0){
                 //update data structures 		    
                 mbox_connected_hosts[h_ids[h_id]].set_target_ports(d_port);
                 phost[d_port].push_back(h_ids[h_id]);	
 	    }
 	    return ret; 
-            	    
 	}
-	
     }
-
     //host does not exist 
-    return 1; 
-
+    return -ENOENT; 
 }
 
 
@@ -273,25 +231,20 @@ int sc_mbox::d_attach(uint64_t d_id, uint64_t h_id, string mode){
 */
 int sc_mbox::d_detach(uint64_t d_id, uint64_t h_id, string mode){
 
+    int ret = -ENOENT;     
     uint32_t d_port = fetch_device_port(d_id);
 
-    if (d_port<0) {
+    if (d_port==0) {
         //device port does not exist
-        return 1; 
+        return ret; 
     }
-
     //check if device is already connected to host
     if (phost.find(d_port) != phost.end()) {
-	
-	int ret = 1;     
         for (auto& h:phost[d_port]){
             if (mbox_connected_hosts[h].get_id()==h_id){
                 // invoke STG API
 		ret = mbox_A1_disconnect(mbox_connected_hosts[h_ids[h_id]].get_host_port(),d_port);
-		int uret=update_json_and_install();
-		if(uret>0){
-		    return uret;
-	        }
+		update_json_and_install();
 		if (ret==0){
 	            phost[d_port].remove(h);
                     mbox_connected_hosts[h_ids[h_id]].get_target_ports().remove(d_port);
@@ -299,16 +252,9 @@ int sc_mbox::d_detach(uint64_t d_id, uint64_t h_id, string mode){
 		}
 	    }
 	}	
-
 	if (phost[d_port].empty()) { phost.erase(d_port); } 
-
-	return ret;
     }
-    else{
-        // device not attached to device. 
-        return 1; 
-    }
-
+    return ret;
 }
 
 
@@ -326,7 +272,3 @@ unordered_map<uint64_t, sc_id> sc_mbox::get_d_ids() const { return d_ids; }
 unordered_map<uint32_t,sc_id> sc_mbox::get_pdev() const { return pdev; }
 
 unordered_map<uint32_t,list<sc_id>>& sc_mbox::get_phost() { return phost; } 
-
-
-
-

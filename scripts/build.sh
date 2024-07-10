@@ -146,12 +146,7 @@ pushd "$PROJECT_ROOT/build"
 	CMAKE_OPTIONS+=("-DCMAKE_INCLUDE_PATH=$FMAPI_INCLUDE_PATH")
 	CMAKE_OPTIONS+=("-DCMAKE_LIBRARY_PATH=$FMAPI_LIB_PATH")
 
-	echo "####list cxl_memory_box project files####"
-	pwd
-	ls -l 
-	echo "##################"
-
-        cp "$FMAPI_INCLUDE_PATH/sample_json/input.json" $PROJECT_ROOT/tests/
+        cp "$FMAPI_INCLUDE_PATH/sample_json/input.json" "$PROJECT_ROOT/tests/"
 	mkdir -p /opt/stg
         cp "$FMAPI_INCLUDE_PATH/mbox_a1.h" /opt/stg/
 
@@ -180,7 +175,7 @@ pushd "$PROJECT_ROOT/build"
         if $BUILD_TESTING;then
             pushd tests
                 echo "Running unit tests..."
-		cp $PROJECT_ROOT/tests/input.json $PROJECT_ROOT/build/tests/
+		cp "$PROJECT_ROOT/tests/input.json" "$PROJECT_ROOT/build/tests/"
 
                 mkdir -p "$REPORTS_DIR"
                 ctest --output-junit "$REPORTS_DIR/gitlab_junit.xml"

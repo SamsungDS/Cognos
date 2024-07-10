@@ -75,6 +75,7 @@ class sc_global
 	*/
 	size_t list_hosts(std::string &buffer);
 
+	sc_mbox* mbox_find(uint64_t fm_id);
 
 	/** 
 	 * @brief fetch persisted data.

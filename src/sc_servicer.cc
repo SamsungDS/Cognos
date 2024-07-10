@@ -135,21 +135,13 @@ string SetupInfo(string input) {
 }  
 
 /**
- * @brief init function 	
+ * @brief init function
  * @details This function will be triggered first for any requests from client side.
-*/ 
+*/
 int init_cxl_plugin(){
-
     struct StaticPortInfo pinfo;
     mbox_get_static_config(&pinfo);
-    int result = cxl_global.g_create_mbox(&pinfo);
-    if (result>0)
-    {
-        cerr << "creation of memory box is unsuccessful " << endl;	    
-    }
-    return result;
-}
-
+    return cxl_global.g_create_mbox(&pinfo);}    
 
 /** 
  * @brief register_plugin - function mapping 

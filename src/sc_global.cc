@@ -7,6 +7,7 @@
 #include "sc_host.h"
 #include <stdint.h>
 #include <memory>
+#include <errno.h>
 
 
 using namespace std;
@@ -20,6 +21,10 @@ using namespace std;
 * @param hsize number of hosts in the memory box.
 */
 int sc_global::g_create_mbox(struct StaticPortInfo * port_info){
+
+    if (port_info == nullptr) {
+        return -ENOENT; 
+    }	
 
     uint32_t mb_id = 102;
 
@@ -71,24 +76,34 @@ int sc_global::g_create_mbox(struct StaticPortInfo * port_info){
 //get sc_devices map
 unordered_map<uint64_t, sc_mbox*>& sc_global::get_mbox_map() { return sc_devices; }
 
+
+sc_mbox* sc_global::mbox_find(uint64_t fm_id){
+
+    for(auto& pair: get_mbox_map()){
+        if (pair.first == fm_id){
+            sc_mbox* mb = pair.second;
+            return mb;
+        }
+    }
+    return nullptr;
+}
+
+
 /**
 * @details This method invokes sc_mbox class d_connect method which basically 
 *          attaches device to the host.
 */
 size_t sc_global::dev_attach(uint64_t d_id, uint64_t h_id, string mode, uint64_t fm_id, string &buffer){
 
-    int ret = 1; 
-    for(auto& pair: get_mbox_map())
-    {   
-	if (pair.first == fm_id){   
-            sc_mbox* mb = pair.second;
-            ret = mb->d_attach(d_id, h_id, mode);   
-            if (ret==0) { break; }
-	}    
-    }
-    return to_json(ret, buffer); 
-}    
-    
+    int rc;	 
+    sc_mbox *mb = mbox_find(fm_id);
+    if (mb == NULL)
+        rc = -ENOENT;
+    else
+        rc = mb->d_attach(d_id, h_id, mode);
+    return to_json(rc, buffer);
+}
+
 
 /**
 * @details This method invokes sc_mbox class d_disconnect method which basically 
@@ -96,17 +111,13 @@ size_t sc_global::dev_attach(uint64_t d_id, uint64_t h_id, string mode, uint64_t
 */
 size_t sc_global::dev_detach(uint64_t d_id, uint64_t h_id, string mode, uint64_t fm_id, string &buffer){
 
-    int ret = 1; 
-
-    for(auto& pair: get_mbox_map())
-    {
-	if (pair.first == fm_id){   
-            sc_mbox* mb = pair.second;
-            ret = mb->d_detach(d_id, h_id, mode);
-            if (ret==0) { break; }
-	} 
-    }
-    return to_json(ret, buffer); 
+    int rc;	 
+    sc_mbox *mb = mbox_find(fm_id);
+    if (mb == NULL)
+        rc = -ENOENT;
+    else
+        rc = mb->d_detach(d_id, h_id, mode);
+    return to_json(rc, buffer);
 }
 
 
@@ -252,7 +263,6 @@ size_t sc_global::to_host_json(string &buffer){
         
     }
 
-
     // Dump the JSON object to the buffer
     size_t bytes_written = json_dumpb(root, &buffer[0], buffer.size(), JSON_INDENT(0));
 
@@ -276,10 +286,6 @@ size_t sc_global::to_setup_json(string &buffer){
     json_error_t error;
 
     root = json_load_file("input.json", 0, &error);
-    if(!root) {
-        fprintf(stderr, "Error reading JSON file: %s\n", error.text);
-	return 1;
-    }
 
     // Dump the JSON object to the buffer
     size_t bytes_written = json_dumpb(root, &buffer[0], buffer.size(), JSON_INDENT(0));
@@ -305,5 +311,3 @@ size_t sc_global::list_devices(string &buffer){ return to_device_json(buffer); }
 size_t sc_global::list_hosts(string &buffer){ return to_host_json(buffer); }
 
 void sc_global::clear_mbox_objects(){ mb_objs.clear(); } 
-	
-

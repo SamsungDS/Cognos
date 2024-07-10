@@ -1,21 +1,8 @@
-# Include directories
 include_directories(${CMAKE_SOURCE_DIR}/src)
 include(gtest)
 link_directories("${CMAKE_INCLUDE_PATH}/build" "${CMAKE_SOURCE_DIR}/build/src")
 
-file(GLOB TEST_SOURCES
-    sc_servicer_ut.cc	
-    sc_global_ut.cc	
-    sc_mbox_ut.cc	
-    sc_endpoint_ut.cc
-    sc_switch_ut.cc    
-    sc_device_ut.cc
-    sc_mld_ut.cc
-    sc_sld_ut.cc
-    sc_host_ut.cc
-    sc_id_ut.cc
-    main.cc
-)
+file(GLOB TEST_SOURCES *.cc) 
 
 # Create executable for tests
 add_executable(cxl_ut ${TEST_SOURCES})
@@ -26,7 +13,7 @@ include(${CMAKE_SOURCE_DIR}/cmake/gtest.cmake)
 target_include_directories(cxl_ut PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     /usr/include
-    /usr/local/include  # Add path to gtest/gmock headers
+    /usr/local/include 
 )
 
 # Link with the library created in src

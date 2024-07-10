@@ -77,9 +77,9 @@ class sc_mbox: public sc_device {
 	 */  
 	int fetch_device_port(uint64_t d_id);
 
-        int check_d_ids(sc_device dev);
+        int delete_d_ids(sc_device dev);
 
-	int check_pdev(sc_device dev);
+	int delete_pdev(sc_device dev);
 
 
         /**

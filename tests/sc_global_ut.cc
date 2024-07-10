@@ -21,16 +21,25 @@ protected:
         sc_mld mld(2, "MLD", 200, 2);
         mb->addSld(sld);
         mb->addMld(mld);
-        sc_host host(456);
-        host.set_host_name("Host 1");
-        host.set_host_port(1);
-        host.set_capacity(1024);
-	host.set_target_ports(300); 
-        mb->addHost(host);
+
+	sc_host host1(456);
+        host1.set_host_name("Host 1");
+        host1.set_host_port(1);
+        host1.set_capacity(1024);
+        host1.set_target_ports(300);
+        mb->addHost(host1);
+
+        sc_host host2(457);
+        host2.set_host_name("Host 2");
+        host2.set_host_port(2);
+        host2.set_capacity(2048);
+        host2.set_target_ports(301);
+        mb->addHost(host2);
+
+        mb->get_phost()[1].push_back(sc_id(456));  
+        mb->get_phost()[2].push_back(sc_id(457));
         global_instance.get_mbox_map()[mb_id + 101] = mb;
     }
-    
-
 
     void TearDown() override {
         // Clean up the global instance
@@ -69,12 +78,29 @@ TEST_F(ScGlobalTest, CreateMboxTest) {
     ASSERT_EQ(host.get_host_port(), 2);
 }
 
+TEST_F(ScGlobalTest, MboxFindSuccess) {
+    // Use an ID that exists in the setup	
+    uint64_t fm_id = 203;  
+    //auto [status, mbox] = global_instance.mbox_find(fm_id);
+    auto mbox = global_instance.mbox_find(fm_id);
+    //ASSERT_EQ(status, 0);
+    ASSERT_NE(mbox, nullptr);
+    EXPECT_EQ(mbox->d_get_id().get_sc_id(), 102);
+}
+
+TEST_F(ScGlobalTest, MboxFindFailure) {
+    // Use an ID that does not exist	
+    uint64_t fm_id = 999;  
+    //auto [status, mbox] = global_instance.mbox_find(fm_id);
+    auto mbox = global_instance.mbox_find(fm_id);
+    //ASSERT_EQ(status, 1);
+    ASSERT_EQ(mbox, nullptr);
+}
 
 
 TEST_F(ScGlobalTest, DevAttachTest) {
     struct StaticPortInfo pinfo;
     mbox_get_static_config(&pinfo);
-
 
     int create_result = global_instance.g_create_mbox(&pinfo);
     ASSERT_EQ(create_result, 0);
@@ -90,10 +116,6 @@ TEST_F(ScGlobalTest, DevAttachTest) {
     ASSERT_EQ(phost.size(), 2);
     ASSERT_EQ(phost[10].size(), 1);
     ASSERT_EQ(phost[10].front().get_sc_id(), 551903297536);
-
-
-
-
 }
 
 TEST_F(ScGlobalTest, NegDevAttachTest) {
@@ -112,14 +134,12 @@ TEST_F(ScGlobalTest, NegDevAttachTest) {
     json_t* rcValue = json_object_get(root, "rc");
     if (json_is_integer(rcValue)) {
         int rc = json_integer_value(rcValue);
-        ASSERT_EQ(rc, 1);
+        ASSERT_EQ(rc, -2);
     } else {
         std::cerr << "Invalid 'rc' value." << std::endl;
     }
 
 }
-
-
 
 
 TEST_F(ScGlobalTest, DevDetachTest) {
@@ -160,7 +180,7 @@ TEST_F(ScGlobalTest, NegDevDetachTest) {
     json_t* rcValue = json_object_get(root, "rc");
     if (json_is_integer(rcValue)) {
         int rc = json_integer_value(rcValue);
-        ASSERT_EQ(rc, 1);
+        ASSERT_EQ(rc, -2);
     } else {
         std::cerr << "Invalid 'rc' value." << std::endl;
     }
@@ -199,11 +219,12 @@ TEST_F(ScGlobalTest, ToDeviceJsonTest) {
     auto mbox = mbox_map[203];
 
     auto phost = mbox->get_phost();
-    ASSERT_EQ(phost.size(), 3);
+    ASSERT_EQ(phost.size(), 4);
     ASSERT_EQ(phost[10].size(), 0);
     ASSERT_EQ(phost[10].front().get_sc_id(), 0);
 
 }
+
 
 TEST_F(ScGlobalTest, ToHostJsonTest) {
     std::string buffer;
@@ -215,7 +236,7 @@ TEST_F(ScGlobalTest, ToHostJsonTest) {
     ASSERT_NE(root, nullptr); 
     json_t* hosts = json_object_get(root, "hosts");
     ASSERT_TRUE(json_is_array(hosts)); 
-    EXPECT_EQ(json_array_size(hosts), 1);
+    EXPECT_EQ(json_array_size(hosts), 2);
 
     // Check the contents of the hosts array
     json_t* host = json_array_get(hosts, 0);
@@ -234,8 +255,6 @@ TEST_F(ScGlobalTest, ToHostJsonTest) {
 }
 
 
-
-
 TEST_F(ScGlobalTest, ToSetupJsonTest) {
     std::string buffer;	
     // Assuming the "input.json" file exists and contains valid JSON
@@ -246,7 +265,6 @@ TEST_F(ScGlobalTest, ToSetupJsonTest) {
     ASSERT_NE(root, nullptr);
     json_decref(root);
 }
-
 
 
 TEST_F(ScGlobalTest, FetchSetupInfoTest) {
@@ -280,7 +298,7 @@ TEST_F(ScGlobalTest, ListHostsTest) {
     json_t *root = json_loadb(&buffer[0], size, 0, &error);
     json_t *hosts = json_object_get(root, "hosts");
     ASSERT_TRUE(json_is_array(hosts));
-    EXPECT_EQ(json_array_size(hosts), 1);
+    EXPECT_EQ(json_array_size(hosts), 2);
     json_decref(root);
 }
 
@@ -289,3 +307,42 @@ TEST_F(ScGlobalTest, ClearMboxObjectsTest) {
     global_instance.clear_mbox_objects();
     EXPECT_FALSE(global_instance.get_mbox_map().empty());
 }
+
+
+TEST_F(ScGlobalTest, NullPortInfo) {
+    // Test for null port_info
+    int result = global_instance.g_create_mbox(nullptr);
+    ASSERT_EQ(result, -ENOENT);
+}
+
+
+TEST_F(ScGlobalTest, ValidPortInfo) {
+    struct StaticPortInfo pinfo;
+    //mbox_get_static_config(&pinfo);
+    pinfo.num_dev = 2;
+    pinfo.dev[0] = {"DEV10_256G", 549755813888, 4000000000, 2, "CXL_11", 5, 8};
+    pinfo.dev[1] = {"DEV10_256G", 824633720832, 4000000000, 3, "CXL_11", 5, 8};
+    pinfo.num_host = 1;
+    pinfo.host[0] = {.class_code=1, .mem_addr=551903297536, .name="Host3", .port=2, .port_type="CXL_11", .mem_size=4000000000, .bus_speed=4, .bus_width=8, .ep_cnt=1,
+                                .ep = StaticEndpointInfo{.port = 11, .mem_addr=4080000000000, .mem_size=4000000000, .dev_offset=4567, .memdev_name="DEV_11-256GEA"}};
+    int result = global_instance.g_create_mbox(&pinfo);
+    ASSERT_EQ(result, 0);
+    auto mbox_map = global_instance.get_mbox_map();
+    ASSERT_EQ(mbox_map.size(), 1);
+    auto mbox = mbox_map.begin()->second;
+    ASSERT_NE(mbox, nullptr);
+    auto slds = mbox->get_slds_map();
+    auto mlds = mbox->get_mlds_map();
+    ASSERT_EQ(slds.size(), 1);
+    ASSERT_EQ(mlds.size(), 1);
+    auto sld = slds.begin()->second;
+    auto mld = mlds.begin()->second;
+    ASSERT_EQ(sld.d_get_id().get_sc_id(), 549755813888);
+    ASSERT_EQ(mld.d_get_id().get_sc_id(), 824633720832);
+    auto hosts = mbox->get_hosts_map();
+    ASSERT_EQ(hosts.size(), 1);
+    auto host = hosts.begin()->second;
+    ASSERT_EQ(host.d_get_id().get_sc_id(), 551903297536);
+    ASSERT_EQ(host.get_host_port(), 2);
+}
+

@@ -4,6 +4,8 @@ set -e
 # Path variables
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 REQUIREMENTS=$(realpath "$SCRIPT_DIR/../python/requirements.txt")
+JANSSON_VERSION=2.13
+
 
 # Install python3 pip
 python3 -m ensurepip --upgrade
@@ -28,4 +30,24 @@ eval "$INSTALL_STRING"
 if [[ -f /.dockerenv ]]
 then
     git config --global --add safe.directory '*'
+fi
+
+
+# Install Jansson if it is not already installed
+if [ -f "/usr/local/include/jansson.h" ]; then
+    echo "Jansson is installed. Skipping..."
+else
+    echo "Downloading Jansson"
+    wget http://digip.org/jansson/releases/jansson-$JANSSON_VERSION.tar.gz
+    tar -xf jansson-$JANSSON_VERSION.tar.gz
+	
+    echo "Building Jansson"
+    pushd jansson-$JANSSON_VERSION
+        ./configure
+        make
+        make install
+    popd
+
+    echo "Removing Jansson source code files"
+    rm -rf jansson-*
 fi

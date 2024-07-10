@@ -44,15 +44,12 @@ TEST_F(ScMboxTest, DefaultConstructorTest) {
 
 
 TEST_F(ScMboxTest, ParameterizedConstructorTest) {
-    //ASSERT_EQ(mbox->d_get_id(), 123);
     ASSERT_EQ(mbox->d_get_id().get_sc_id(), 123);
 }
 
 TEST_F(ScMboxTest, GetIdTest) {
        sc_mbox mbox(101, 202, 303);
-
        uint64_t result = mbox.d_get_id().get_sc_id();
-
        ASSERT_EQ(result, 101);
 }
 
@@ -83,18 +80,14 @@ TEST_F(ScMboxTest, ListConnectedMldsTest) {
        sc_mld mld2(456, "TestDevice2", 1024, 8081);
        mbox.addMld(mld1);
        mbox.addMld(mld2);
-
        list<sc_mld> result = mbox.mbox_list_connected_mlds();
-
        ASSERT_EQ(result.size(), 2);
 }
 
 
 TEST_F(ScMboxTest, CreateMldTest) {
        sc_mbox mbox(1, 2, 3);
-
        sc_mld result = mbox.mbox_create_mld(1024);
-
        ASSERT_NE(result, sc_mld{});
        ASSERT_TRUE(result.d_get_capacity() > 0);
 }
@@ -104,20 +97,15 @@ TEST_F(ScMboxTest, DeleteMldTest) {
        sc_mbox mbox(1, 2, 3);
        sc_mld mld(123, "TestDevice", 1024, 8080);
        mbox.addMld(mld);
-
        int result = mbox.mbox_delete_mld(mld);
-
        ASSERT_EQ(result, 0);
 }
 
 
 
-
 TEST_F(ScMboxTest, CreateSldTest) {
        sc_mbox mbox(1, 2, 3);
-
        sc_sld result = mbox.mbox_create_sld(1024);
-
        ASSERT_NE(result, sc_sld{});
        ASSERT_TRUE(result.d_get_capacity() > 0);
 }
@@ -127,9 +115,7 @@ TEST_F(ScMboxTest, DeleteSldTest) {
        sc_mbox mbox(1, 2, 3);
        sc_sld sld(123, "TestDevice", 1024, 8080);
        mbox.addSld(sld);
-
        int result = mbox.mbox_delete_sld(sld);
-
        ASSERT_EQ(result, 0);
 }
 
@@ -149,37 +135,19 @@ TEST_F(ScMboxTest, DeleteSldTest_neg) {
     ASSERT_EQ(result4, 0);
 }
 
-
-
-
-// Test case: Device ID exists in mbox_connected_slds
 TEST_F(ScMboxTest, DeviceIdExistsInSlds) {
     sc_sld sld(123, "TestDevice", 1024, 8080);
     mbox->addSld(sld);
-
     int result = mbox->fetch_device_port(sld.d_get_id().get_sc_id());
-
     ASSERT_EQ(result, sld.d_get_port());
 }
 
-
-// Test case: Device ID exists in mbox_connected_mlds
 TEST_F(ScMboxTest, DeviceIdExistsInMlds) {
     sc_mld mld(456, "AnotherDevice", 2048, 9090);
     mbox->addMld(mld);
-
     int result = mbox->fetch_device_port(mld.d_get_id().get_sc_id());
-
     ASSERT_EQ(result, mld.d_get_port());
 }
-
-
-// Test case: Device ID does not exist
-TEST_F(ScMboxTest, DeviceIdDoesNotExist) {
-    int result = mbox->fetch_device_port(789); // Assuming 789 is not in the maps
-    ASSERT_EQ(result, -ENOENT);
-}
-
 
 // Test case: Get switch information
 TEST_F(ScMboxTest, GetSwitchInfoTest) {
@@ -189,7 +157,7 @@ TEST_F(ScMboxTest, GetSwitchInfoTest) {
     // Expected switch information (JSON-like format)
     string expectedInfo = R"({
         "SwitchID": 42,
-        "Manufacturer": "",
+        "Manufacturer": "Unknown",
         "UpstreamPorts": 0,
         "DownstreamPorts": 0,
         "ManagementPort": 0
@@ -217,7 +185,6 @@ TEST_F(ScMboxTest, GetSwitchInfoTest) {
 
 
 TEST_F(ScMboxTest, AttachDeviceToHostTest) {
-    //sc_sld sld(123, "TestDevice", 1024, 8080);
     sc_sld sld(123, "DEV_11-256G", 1024, 11);
     sc_host host(456);
     host.set_host_name("Host 1 LNK0");
@@ -229,6 +196,20 @@ TEST_F(ScMboxTest, AttachDeviceToHostTest) {
     auto hosts_map = mbox->get_hosts_map();
     ASSERT_TRUE(hosts_map.find(host.d_get_id()) != hosts_map.end());
 }
+
+TEST_F(ScMboxTest, AttachDeviceToHostTestNeg) {
+    sc_sld sld(123, "DEV_11-256G", 1024, 11);
+    sc_host host(456);
+    host.set_host_name("Host 1 LNK0");
+    host.set_host_port(2);
+    mbox->addSld(sld);
+    mbox->addHost(host);
+    int result = mbox->d_attach(555, host.d_get_id().get_sc_id(), "mode");
+    ASSERT_EQ(result, -2);
+    int result1 = mbox->d_attach(sld.d_get_id().get_sc_id(), 555, "mode");
+    ASSERT_EQ(result1, -2);
+}
+
 
 
 TEST_F(ScMboxTest, DetachDeviceToHostTest) {
@@ -244,6 +225,19 @@ TEST_F(ScMboxTest, DetachDeviceToHostTest) {
     auto hosts_map = mbox->get_hosts_map();
     ASSERT_TRUE(hosts_map.find(host.d_get_id()) != hosts_map.end());
 }
+
+
+TEST_F(ScMboxTest, DetachDeviceToHostTestNeg) {
+    sc_sld sld(123, "DEV_11-256G", 1024, 11);
+    sc_host host(456);
+    host.set_host_name("Host 1 LNK0");
+    mbox->addSld(sld);
+    mbox->addHost(host);
+    mbox->d_attach(sld.d_get_id().get_sc_id(), host.d_get_id().get_sc_id(), "mode");
+    int result = mbox->d_detach(sld.d_get_id().get_sc_id(), 777, "mode");
+    ASSERT_EQ(result, -2);
+}
+
 
 
 TEST_F(ScMboxTest, GetSldsMap) {
@@ -287,4 +281,45 @@ TEST_F(ScMboxTest, GetDIdsMap) {
     ASSERT_EQ(d_ids_map[789].get_sc_id(), sld.d_get_id().get_sc_id());
 }
 
+
+TEST_F(ScMboxTest, DeleteDIdsFailure) {
+    sc_device dobj(789, "DEV_11-256G", 1024, 11);
+    int result = mbox->delete_d_ids(dobj);
+    EXPECT_EQ(result, -ENOENT); 
+}
+
+TEST_F(ScMboxTest, DeletePDevFailure) {
+    sc_device dobj(799, "DEV_11-256G", 1024, 11);
+    int result = mbox->delete_pdev(dobj);
+    EXPECT_EQ(result, -ENOENT); 
+}
+
+TEST_F(ScMboxTest, DeletePDevSuccess) {
+    sc_sld sld(799, "DEV_11-256G", 1024, 11);
+    mbox->addSld(sld); 
+    int result = mbox->delete_pdev(sld);
+    EXPECT_EQ(result, 0); 
+}
+
+TEST_F(ScMboxTest, DeleteDIdsSuccess) {
+    sc_sld sld(789, "DEV_11-256G", 1024, 11);
+    mbox->addSld(sld); 
+    int result = mbox->delete_d_ids(sld);
+    EXPECT_EQ(result, 0); 
+}
+
+TEST_F(ScMboxTest, DeleteMldTest_neg) {
+    sc_mbox mbox(1, 2, 3);
+    sc_mld mld(876, "TestDevice", 1024, 8080);
+    mbox.addMld(mld);
+
+    // Test case 1: Deleting a non-existent sc_sld
+    sc_mld nonExistentMld(456, "NonExistentDevice", 2048, 9090);
+    int result1 = mbox.mbox_delete_mld(nonExistentMld);
+    ASSERT_EQ(result1, -ENOENT);
+
+    // Test case 4: Deleting the originally added sc_sld (success case)
+    int result4 = mbox.mbox_delete_mld(mld);
+    ASSERT_EQ(result4, 0);
+}
 

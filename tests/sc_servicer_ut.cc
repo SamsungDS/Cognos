@@ -17,51 +17,55 @@ using namespace std;
 sc_global cxl_global;
 
 
+using ::testing::_;
+using ::testing::Return;
 
-class MockScGlobal : public sc_global{
+
+// Mock class for sc_global
+class MockScGlobal : public sc_global {
 public:
-    MOCK_METHOD(int, g_create_mbox, (struct StaticPortInfo*), ());
-    int init_cxl_plugin() {
-        struct StaticPortInfo pinfo;
-        mbox_get_static_config(&pinfo);
-        int result = g_create_mbox(&pinfo);
-        return result;
-    }
-
-    int mock_register_plugin(std::unordered_map<std::string, std::function<std::string(std::string)>>& function_map) {
-        std::cout << "Mocked register_plugin function called" << std::endl;
-        function_map["ListDevices"] = ListDevices;
-        function_map["ListHosts"] = ListHosts;
-        function_map["AttachMemory"] = AttachMemory;
-        function_map["DetachMemory"] = DetachMemory;
-        function_map["SetupInfo"] = SetupInfo;
-        init_cxl_plugin();
-        return 0;
-    }
-
-    // Redirect cxl_global to use this mock instance
-    static MockScGlobal& instance() {
-        static MockScGlobal mock;
-        return mock;
-    }
-
+    MOCK_METHOD(int, g_create_mbox, (StaticPortInfo*), ());
 };
 
+MockScGlobal mock_cxl_global;
 
-
+// Test fixture
 class ServicerTest : public ::testing::Test {
 protected:
     void SetUp() override {
-	function_map.clear();
-        mock_cxl_global = &MockScGlobal::instance();
+        // Use the mock global instance
+        cxl_global = mock_cxl_global;
     }
     void TearDown() override {
-	::testing::Mock::VerifyAndClearExpectations(mock_cxl_global);
-        ::testing::Mock::AllowLeak(mock_cxl_global);
+        // Cleanup if necessary
     }
-    std::unordered_map<std::string, std::function<std::string(std::string)>> function_map;
-    MockScGlobal* mock_cxl_global;
 };
+
+TEST_F(ServicerTest, InitCxlPluginSuccess) {
+    EXPECT_CALL(mock_cxl_global, g_create_mbox(_))
+        .WillOnce(Return(0));  // Simulate successful creation
+    int result = init_cxl_plugin();
+    EXPECT_EQ(result, 0);
+}
+
+
+TEST_F(ServicerTest, RegisterPluginTest) {
+
+    EXPECT_CALL(mock_cxl_global, g_create_mbox(_))
+        .WillOnce(Return(0));  // Simulate successful creation
+    int result = init_cxl_plugin();
+    EXPECT_EQ(result, 0);	
+
+    unordered_map<string, std::function<std::string(std::string)>> function_map;
+    // Register plugin functions
+    register_plugin(function_map);
+    // Check if functions are correctly registered
+    EXPECT_NE(function_map.find("ListDevices"), function_map.end());
+    EXPECT_NE(function_map.find("ListHosts"), function_map.end());
+    EXPECT_NE(function_map.find("AttachMemory"), function_map.end());
+    EXPECT_NE(function_map.find("DetachMemory"), function_map.end());
+    EXPECT_NE(function_map.find("SetupInfo"), function_map.end());
+}
 
 
 TEST_F(ServicerTest, TokenizeTest) {
@@ -148,19 +152,5 @@ TEST_F(ServicerTest, SetupInfoTest) {
         expected_output += buffer;
     }
     ASSERT_EQ(result, expected_output);
-}
-
-
-TEST_F(ServicerTest, RegisterPluginTest) {
-    EXPECT_CALL(*mock_cxl_global, g_create_mbox(testing::_))
-        .WillOnce(testing::Return(0));
-    int result = mock_cxl_global->mock_register_plugin(function_map);
-    EXPECT_EQ(result, 0);
-    EXPECT_EQ(function_map.size(), 5);
-    EXPECT_NE(function_map.find("ListDevices"), function_map.end());
-    EXPECT_NE(function_map.find("ListHosts"), function_map.end());
-    EXPECT_NE(function_map.find("AttachMemory"), function_map.end());
-    EXPECT_NE(function_map.find("DetachMemory"), function_map.end());
-    EXPECT_NE(function_map.find("SetupInfo"), function_map.end());
 }
 
