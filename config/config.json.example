@@ -2,7 +2,7 @@
   "svk_mgmt_fw_node":
       {
         "framework": {
-          "lib_path": "/usr/local/svk/lib64/libsvkframework.so",
+          "lib_path": "/usr/local/svk/core/lib64/libsvkframework.so",
           "conf_file": "/usr/local/svk/conf.json"
         },
         "cluster": {

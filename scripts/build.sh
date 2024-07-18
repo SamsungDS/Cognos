@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
+# shellcheck source=/dev/null
 
 set -e
+
+if [[ -e /etc/os-release ]]; then
+	source "/etc/os-release"
+else
+	ID=unknown
+fi
 
 # Path variables
 SCRIPT_DIR=$(cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd)
@@ -80,6 +87,10 @@ parse_options "$@"
 echo "Build tests: $BUILD_TESTING"
 echo "Build with code coverage: $WITH_COVERAGE"
 echo "CMake install prefix: $CMAKE_INSTALL_PREFIX"
+
+if [ "$ID" == "ubuntu" ]; then
+    export PATH=$PATH:/usr/local/go/bin
+fi
 
 mkdir -p "$PROJECT_ROOT/build"
 
@@ -210,7 +221,7 @@ pushd "$PROJECT_ROOT/build"
             popd
         popd
 
-        tar -zcf "$RELEASE_FILENAME_PREFIX-$GIT_VER.tgz" "$CMAKE_INSTALL_PREFIX"
+        tar -zcf "$RELEASE_FILENAME_PREFIX-$ID-$VERSION_ID-$GIT_VER.tgz" "$CMAKE_INSTALL_PREFIX"
     fi
 
 popd
