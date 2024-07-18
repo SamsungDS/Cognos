@@ -10,10 +10,16 @@ The SVK Management Framework repository contains code related to REST API Server
 - Run the script `scripts/dependencies/install.sh` to install necessary packages.
 - The above script compiles the gRPC related packages and installs in the standard library path
 - Requires artifacts of svk-core repo installed in the directory /usr/local/svk/core as the prerequiste to start with.
+- On Ubuntu OS v22.04, the default `go` package is not sufficient for the project. Need to download go v1.21+ and set the PATH variable accordingly
+  ```
+  export PATH=$PATH:/usr/local/go/bin
+  ```
 - Configure the PKG_CONFIG_PATH to point to the package config file
   ```
-  export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/local/lib/pkgconfig/:/usr/local/lib64/pkgconfig/:/usr/local/svk/core/lib64/pkgconfig/
+  export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/local/lib/pkgconfig/:/usr/local/lib64/pkgconfig/:/usr/local/svk/core/lib64/pkgconfig/:/usr/local/svk/core/lib/pkgconfig/
   ```
+  Check the lib path depending on the OS version.
+
 - Requires GCC toolset 11 and source the gcc environment using the command `source /opt/rh/gcc-toolset-11/enable`
 - Run the script `sh scripts/build.sh` with the appropriate flags
 - To generate the artifact `svk-mgmt-fw-<git_tag>.tgz`, run the build script with `-r` flag

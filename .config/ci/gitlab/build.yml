@@ -25,9 +25,13 @@ release build:
     - tar xvzf $PACKAGE_FILENAME --directory=/
     # Configure and load ldconfig
     - echo "/usr/local/svk/core/lib64" > /etc/ld.so.conf.d/svk-core-x86_64.conf
+    - echo "/usr/local/svk/core/lib" >> /etc/ld.so.conf.d/svk-core-x86_64.conf
+    - echo "/usr/local/lib" > /etc/ld.so.conf.d/svk-mgmt-fw-x86_64.conf
     - ldconfig
     # Export PKG_CONFIG_PATH env var
-    - export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/local/lib/pkgconfig/:/usr/local/lib64/pkgconfig/:/usr/local/svk/core/lib64/pkgconfig/
+    - export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/local/lib/pkgconfig/:/usr/local/lib64/pkgconfig/:/usr/local/svk/core/lib64/pkgconfig/:/usr/local/svk/core/lib/pkgconfig/
+    - export PATH=$PATH:/usr/local/go/bin
+
   script:
     # Build with release flag and generate artifact
     - ./scripts/build.sh --release --install-prefix /usr/local/svk/mgmt-fw
