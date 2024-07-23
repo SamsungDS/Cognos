@@ -13,13 +13,20 @@ import (
 
 func TestConfigFile(t *testing.T) {
 	t.Logf("Running TestConfigFile")
-	restServerId, controllerId := readConfigFileForServer("/usr/local/svk/conf.json")
+	str := `{"svk_mgmt_rest_api":{"controller": {"id": "localhost","port": "9999"},"rest_server": {"id": "localhost","port": "8001"}}}`
+
+	err := os.WriteFile("conf.json", []byte(str), 0644)
+	if err != nil {
+		t.Fatalf("Error in creating conf.json file")
+	}
+	restServerId, controllerId := readConfigFileForServer("conf.json")
 	if restServerId != "localhost:8001" {
 		t.Fatalf("Result was incorrect, got: %s expected %s", restServerId, "localhost:8001")
 	}
 	if controllerId != "localhost:9999" {
 		t.Fatalf("Result was incorrect, got: %s expected %s", controllerId, "localhost:9999")
 	}
+	os.Remove("conf.json")
 }
 
 func TestInitRestServer(t *testing.T){
