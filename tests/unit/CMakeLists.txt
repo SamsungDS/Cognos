@@ -1,2 +1,3 @@
 add_subdirectory(grpc_node_server)
 add_subdirectory(grpc_controller)
+add_subdirectory(svc_mgr)

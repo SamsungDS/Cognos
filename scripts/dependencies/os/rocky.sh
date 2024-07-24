@@ -19,6 +19,8 @@ define_build_deps() {
     BUILD_DEPS+=('tar')
     BUILD_DEPS+=('unzip')
     BUILD_DEPS+=('wget')
+    BUILD_DEPS+=('zeromq')
+    BUILD_DEPS+=('zeromq-devel')
     install_packages
 }
 

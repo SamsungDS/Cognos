@@ -63,5 +63,18 @@
           "sink_type": "rotating_file"
         }
 
+      },
+  "svk_mgmt_fw_svc_mgr":
+      {
+        "svc_mgr": {
+          "feat_sm_svcs_dir" = "/usr/lib/svk/"
+        },
+        "logger": {
+          "log_level": "INFO",
+          "log_file_name": "/var/log/svk/svk_mgmt_fw_svc_mgr.log",
+          "log_file_count": 10,
+          "log_file_size": 1048576,
+          "sink_type": "rotating_file"
+        }
       }
 }
