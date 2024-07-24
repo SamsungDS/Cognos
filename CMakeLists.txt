@@ -23,6 +23,7 @@ add_subdirectory(proto)
 add_subdirectory(grpc_node_server)
 add_subdirectory(grpc_controller)
 add_subdirectory(rest_api)
+add_subdirectory(svc_mgr)
 
 if(BUILD_TESTING)
     add_subdirectory(tests)
