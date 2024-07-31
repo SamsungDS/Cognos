@@ -11,7 +11,8 @@ PROG=${0##*/}
 # Path variables
 SCRIPT_DIR=$(cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd)
 PROJECT_ROOT=$(realpath "$SCRIPT_DIR/../")
-REPORTS_DIR="$PROJECT_ROOT/build/reports"
+BUILD_DIR="$PROJECT_ROOT/build"
+REPORTS_DIR="$BUILD_DIR/reports"
 
 die() {
     echo "$PROG: $*" >&2
@@ -40,6 +41,10 @@ help()
     echo "--with-fmapi <FMAPI_LIB_PATH> <FMAPI_INCLUDE_PATH>"
     echo "  Builds with fmapi. Requires fmapi library and source paths."
     echo "e.g. scripts/build.sh --with-fmapi /cxl_memory_box/mbox_a1/build/libmbox_a1_shared.so /cxl_memory_box/mbox_a1"
+    echo "-b | --build-package"
+    echo "  Generate SVK CXL FW RPMs/DEB packages."
+    echo "-i | --install-path"
+    echo "  Path that RPMs should install svk cxl to (Default: /usr/local/svk/cxl). Only applicable when building with release flag."
     exit
 }
 
@@ -74,18 +79,29 @@ parse_options()
         shift
         ;;
         --with-fmapi)
-	WITH_FMAPI=true
-	if [ -z "$2" ] || [ -z "$3" ]; then
-	    echo "Missing FM library or include path."
-	    help
-	fi
-	FMAPI_LIB_PATH="$2"
-	FMAPI_INCLUDE_PATH="$3"
-	shift
-	shift
-	shift
-	;;
+  WITH_FMAPI=true
+  if [ -z "$2" ] || [ -z "$3" ]; then
+      echo "Missing FM library or include path."
+      help
+  fi
+  FMAPI_LIB_PATH="$2"
+  FMAPI_INCLUDE_PATH="$3"
+  shift
+  shift
+  shift
+  ;;
+  -b|--build-package)
+        GENERATE_PACKAGE=true
+        shift
+        ;;
+        -i|--install-path)
+        PACKAGE_INSTALL_PATH="$2"
+        shift
+        shift
+        ;;
         *)
+  echo "Invalid option provided. Check the valid options"
+        help
         ;;
     esac
     done
@@ -95,6 +111,19 @@ RELEASE=false
 BUILD_TESTING=false
 WITH_COVERAGE=false
 WITH_FMAPI=false
+GIT_VER=$(git describe --abbrev=4 --always --tags)
+
+create_rpm()
+{
+    local rpmBuildDir=$1
+    local installpath=$2
+
+    export GIT_VER
+    export CMAKE_INSTALL_PREFIX
+
+    rpmbuild -bb --clean "$PROJECT_ROOT/svk_cxl.spec" --define "_topdir $rpmBuildDir" --define "installpath $installpath"
+    cp "$RPMBUILD_DIR/RPMS/x86_64"/svk-cxl-*.rpm "$BUILD_DIR"
+}
 
 parse_options "$@"
 
@@ -102,22 +131,31 @@ echo "Build tests: $BUILD_TESTING"
 echo "Build with code coverage: $WITH_COVERAGE"
 echo "CMake install prefix: $CMAKE_INSTALL_PREFIX"
 
-mkdir -p "$PROJECT_ROOT/build"
+mkdir -p "$BUILD_DIR"
 
 CMAKE_OPTIONS=()
 
-pushd "$PROJECT_ROOT/build"
+pushd "$BUILD_DIR"
     # If building release, don't build tests and code coverage
     if $RELEASE;then
         BUILD_TESTING=false
         WITH_COVERAGE=false
         if [ -z "$CMAKE_INSTALL_PREFIX" ];then
-            CMAKE_INSTALL_PREFIX="usr/local/svk" # Need to use this path to generate release tarball properly
+            CMAKE_INSTALL_PREFIX="svk-cxl" # Need to use this path to generate release tarball properly
         fi
         if [ -z "$RELEASE_FILENAME_PREFIX" ];then
             RELEASE_FILENAME_PREFIX="svk-cxl"
         fi
         CMAKE_OPTIONS+=("-DWITH_RELEASE=ON")
+  if [ -z "$PACKAGE_INSTALL_PATH" ];then
+            PACKAGE_INSTALL_PATH="/usr/local/svk/cxl" # Location that rpm -ivh will install to
+        fi
+    fi
+
+    if [ -n "$PACKAGE_INSTALL_PATH" ];then
+        CMAKE_OPTIONS+=("-DPKG_CONFIG_PREFIX=$PACKAGE_INSTALL_PATH")
+    else
+        CMAKE_OPTIONS+=("-DPKG_CONFIG_PREFIX=$CMAKE_INSTALL_PREFIX")
     fi
 
     # Add unit test option
@@ -131,23 +169,23 @@ pushd "$PROJECT_ROOT/build"
     fi
 
     if $WITH_FMAPI;then
-	if [ ! -f "$FMAPI_LIB_PATH" ];then
-		die "$FMAPI_LIB_PATH does not exists"
-	fi
+  if [ ! -f "$FMAPI_LIB_PATH" ];then
+    die "$FMAPI_LIB_PATH does not exists"
+  fi
 
-	if ! file "$FMAPI_LIB_PATH" | grep -q "ELF 64-bit LSB shared object"; then
-		die "$FMAPI_LIB_PATH not a library or shared object"
-	fi
+  if ! file "$FMAPI_LIB_PATH" | grep -q "ELF 64-bit LSB shared object"; then
+    die "$FMAPI_LIB_PATH not a library or shared object"
+  fi
 
-	if [ ! -d "$FMAPI_INCLUDE_PATH" ];then
-		die "$FMAPI_INCLUDE_PATH does not exist"
-	fi
-	CMAKE_OPTIONS+=("-DWITH_FMAPI=ON")
-	CMAKE_OPTIONS+=("-DCMAKE_INCLUDE_PATH=$FMAPI_INCLUDE_PATH")
-	CMAKE_OPTIONS+=("-DCMAKE_LIBRARY_PATH=$FMAPI_LIB_PATH")
+  if [ ! -d "$FMAPI_INCLUDE_PATH" ];then
+    die "$FMAPI_INCLUDE_PATH does not exist"
+  fi
+  CMAKE_OPTIONS+=("-DWITH_FMAPI=ON")
+  CMAKE_OPTIONS+=("-DCMAKE_INCLUDE_PATH=$FMAPI_INCLUDE_PATH")
+  CMAKE_OPTIONS+=("-DCMAKE_LIBRARY_PATH=$FMAPI_LIB_PATH")
 
         cp "$FMAPI_INCLUDE_PATH/sample_json/input.json" "$PROJECT_ROOT/tests/"
-	mkdir -p /opt/stg
+  mkdir -p /opt/stg
         cp "$FMAPI_INCLUDE_PATH/mbox_a1.h" /opt/stg/
 
     fi
@@ -175,7 +213,7 @@ pushd "$PROJECT_ROOT/build"
         if $BUILD_TESTING;then
             pushd tests
                 echo "Running unit tests..."
-		cp "$PROJECT_ROOT/tests/input.json" "$PROJECT_ROOT/build/tests/"
+    cp "$PROJECT_ROOT/tests/input.json" "$BUILD_DIR/tests/"
 
                 mkdir -p "$REPORTS_DIR"
                 ctest --output-junit "$REPORTS_DIR/gitlab_junit.xml"
@@ -191,17 +229,26 @@ pushd "$PROJECT_ROOT/build"
             --sonarqube "$REPORTS_DIR/sonar_coverage.xml" \
             --txt \
             --root "$PROJECT_ROOT" \
-            --exclude "$PROJECT_ROOT/build" \
+            --exclude "$BUILD_DIR" \
             --exclude "$PROJECT_ROOT/tests" \
-            "$PROJECT_ROOT/build"
+            "$BUILD_DIR"
 
-	#rm -f $PROJECT_ROOT/tests/input.json
+  #rm -f $PROJECT_ROOT/tests/input.json
 
     elif $RELEASE;then
         echo "Generating release tarball..."
-        GIT_VER=$(git describe --abbrev=4 --always --tags)
-        tar -zcf "$RELEASE_FILENAME_PREFIX-$GIT_VER.tgz" "$CMAKE_INSTALL_PREFIX"
+        GIT_VER=$(git describe --abbrev=4 --always --tags | tr - _)
+  mkdir -p "$CMAKE_INSTALL_PREFIX/lib"
+        mkdir -p "$CMAKE_INSTALL_PREFIX/lib64"
+        tar -zcf "$RELEASE_FILENAME_PREFIX-$ID-$GIT_VER.tgz" "$CMAKE_INSTALL_PREFIX"
+        echo "$GENERATE_PACKAGE"
+        if [ -n "$GENERATE_PACKAGE" ];then
+          echo "Generating release RPM..."
+          RPMBUILD_DIR="$BUILD_DIR/rpmbuild"
+          mkdir -p rpmbuild/{BUILD,RPMS,SPECS}
+          cp -rf "$CMAKE_INSTALL_PREFIX/" "$RPMBUILD_DIR/BUILD"
+          create_rpm "$RPMBUILD_DIR" "$PACKAGE_INSTALL_PATH"
+        fi
     fi
 
 popd
-

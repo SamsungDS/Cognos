@@ -129,6 +129,8 @@ Total Test time (real) =   1.57 sec
 ~/cxl/svk-cxl/cxl/build ~/cxl/svk-cxl/cxl
 Generating coverage reports
 ```
+#### Build RPMS
+cd cxl && scripts/build.sh -r -b
 
 ## Contributing
 Thank you for your interest in contributing to SVK CXL

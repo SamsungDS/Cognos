@@ -16,6 +16,7 @@ set(PKG_CONFIG_INCLUDEDIR "\${prefix}/${CMAKE_INSTALL_INCLUDEDIR}")
 set(PKG_CONFIG_LIBDIR "\${exec_prefix}/${CMAKE_INSTALL_LIBDIR}")
 set(pkg_config "${CMAKE_BINARY_DIR}/${SVKCXL}.pc")
 set(pkgconfig_install_dir "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
+set(SVKCXL_LIB_DEST "lib64/")
 configure_file("cmake/${SVKCXL}.pc.in" "${pkg_config}" @ONLY)
 
 # Set C++ standard
@@ -24,9 +25,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Include custom cmake modules
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
-
-# Add global settings and dependencies
-# include(svk_global)
 
 # Set coverage flags for GCC/Clang
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
