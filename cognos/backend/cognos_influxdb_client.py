@@ -2,37 +2,23 @@ from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
 
 from datetime import datetime
-import time
 import json
 import math
 import os
-import random
 import requests
 import sys
 
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-
-def fetch_cognos_configs(file_name):
-    current_script_dir = os.path.dirname(os.path.abspath(__file__))
-    config_file_path = os.path.join(current_script_dir,
-                                    'config', file_name)
-    configs = ''
-    try:
-        with open(config_file_path, 'r') as config_file:
-            configs = json.load(config_file)
-    except Exception as error:
-        raise RuntimeError(
-            f"Unable to retrieve cognos influx configs: {str(error)}"
-        )
-    return configs
+sys.path.append(os.path.abspath(  # noqa: E402
+    os.path.join(os.path.dirname(__file__), '..')))  # noqa: E402
+from helper import fetch_cognos_configs
 
 
 class CognosInfluxDBClient():
     def __init__(self, url=None, token=None, org=None, bucket=None):
+        current_script_dir = os.path.dirname(os.path.abspath(__file__))
         if any(arg is None for arg in [url, token, org, bucket]):
-            configs = fetch_cognos_configs('influxdb_config.json')
+            configs = fetch_cognos_configs(current_script_dir,
+                                           'influxdb_config.json')
             self.bucket = configs['bucket']
             self.url = configs['url']
             self.token = configs['token']
@@ -42,6 +28,9 @@ class CognosInfluxDBClient():
             self.token = token
             self.org = org
             self.bucket = bucket
+        endpoint_configs = fetch_cognos_configs(current_script_dir,
+                                                'config.json')
+        self.agent_endpoint = endpoint_configs['agent_endpoint']
 
         self.client = InfluxDBClient(url=self.url, token=self.token,
                                      org=self.org)
@@ -93,11 +82,6 @@ class CognosInfluxDBClient():
         params = {
             "_desc": True
         }
-
-        if self.selected_host == 'loaner-emr02':
-            self.selected_host += '.msl.lab'
-        elif self.selected_host == 'msl-stg-emr03':
-            self.selected_host += '.msl.lab'
 
         tables = self.read_client.query(f'''
             from(bucket:"internal")
@@ -151,11 +135,6 @@ class CognosInfluxDBClient():
             "_desc": True
         }
 
-        if self.selected_host == 'loaner-emr02':
-            self.selected_host += '.msl.lab'
-        elif self.selected_host == 'msl-stg-emr03':
-            self.selected_host += '.msl.lab'
-
         tables = self.read_client.query(f'''
             from(bucket:"internal")
                 |> range(start: -60s)
@@ -205,11 +184,6 @@ class CognosInfluxDBClient():
         params = {
             "_desc": True
         }
-
-        if self.selected_host == 'loaner-emr02':
-            self.selected_host += '.msl.lab'
-        elif self.selected_host == 'msl-stg-emr03':
-            self.selected_host += '.msl.lab'
 
         tables = self.read_client.query(f'''
             from(bucket:"internal")
@@ -287,7 +261,7 @@ class CognosInfluxDBClient():
             'Content-Type': 'application/json'
         }
         response = requests.post(
-            "http://hpos-vroc04:8081/api/v1/process_controller_command",
+            self.agent_endpoint,
             json={"input": "cluster_id=CLUST1;command=SetupInfo"},
             headers=headers
         )
@@ -310,7 +284,7 @@ class CognosInfluxDBClient():
             'Content-Type': 'application/json'
         }
         response = requests.post(
-            "http://hpos-vroc04:8081/api/v1/process_controller_command",
+            self.agent_endpoint,
             json={"input": "cluster_id=CLUST1;command=SetupInfo"},
             headers=headers
         )
@@ -329,7 +303,7 @@ class CognosInfluxDBClient():
             'Content-Type': 'application/json'
         }
         response = requests.post(
-            "http://hpos-vroc04:8081/api/v1/process_controller_command",
+            self.agent_endpoint,
             json={"input": "cluster_id=CLUST1;command=SetupInfo"},
             headers=headers
         )

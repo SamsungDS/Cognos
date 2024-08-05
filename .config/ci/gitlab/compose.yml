@@ -1,0 +1,64 @@
+docker compose:
+  stage: .pre
+  image:
+      name: docker:25.0.3-git
+      pull_policy: always
+  before_script:
+    # Install certs so buildkit can access Gitlab container registry
+    - echo "$SSI_ROOTCA_CERT" > /usr/local/share/ca-certificates/SSI-RootCA.crt
+    - echo "$SSI_ISSUINGCA_CERT" > /usr/local/share/ca-certificates/SSSSI-ISSUINGCA.crt
+    - echo "$MSL_ETX_CERT" > /usr/local/share/ca-certificates/msl-etx.samsung.com.crt
+    - update-ca-certificates --fresh > /dev/null
+    - apk add curl #remove this line later
+    - docker compose -f $CI_PROJECT_DIR/scripts/docker/docker-compose.yml down #environment cleanup
+  script:
+    - docker compose -f $CI_PROJECT_DIR/scripts/docker/docker-compose.yml up -d
+    - sleep 50
+    - docker compose -f $CI_PROJECT_DIR/scripts/docker/docker-compose.yml logs frontend
+    - docker ps
+  variables:
+      DOCKERFILE_NAME: rocky9
+      IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "parent_pipeline"
+  needs:
+    - pipeline: $PARENT_PIPELINE_ID
+      job: npm-build
+  tags:
+    - docker-compose
+
+integration test:
+  stage: test
+  image:
+      name: $IMAGE_TAG
+      pull_policy: always
+  before_script: 
+    - microdnf install -y jq
+    - |
+      export RUNNER_IP=$(curl -s --header "PRIVATE-TOKEN: $CI_TOKEN" --insecure -X GET $CI_API_V4_URL/runners/$CI_RUNNER_ID | jq --raw-output '.ip_address')
+    - sed -i "s|\"http://[^/]*:5000|\"http://${RUNNER_IP}:5000|g" $ui_dir/tests/it/selenium/config/config.json
+    - cat cognos/ui/tests/it/selenium/config/config.json
+  script:
+    - ./scripts/run-tests.sh --it
+  variables:
+      DOCKERFILE_NAME: rocky9
+      IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "parent_pipeline"
+
+    
+environment cleanup:
+  stage: .post
+  image:
+      name: docker:25.0.3-git
+      pull_policy: always
+  script:
+      docker compose -f $CI_PROJECT_DIR/scripts/docker/docker-compose.yml down
+  variables:
+      DOCKERFILE_NAME: rocky9
+      IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "parent_pipeline"
+      when: always
+  tags:
+    - docker-compose

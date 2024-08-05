@@ -33,22 +33,3 @@ describe('Metric component', () => {
   });
 
 });
-
-// describe('SAP HANA Card', () => {
-//   it('renders SAP HANA card correctly', () => {
-//     // Render the component
-//     const { getByText, getByAltText } = render(<Metrics />);
-
-//     // Assert that the host application heading is present
-//     const hostAppHeading = getByText('Host Application Metrics:');
-//     expect(hostAppHeading).toBeInTheDocument();
-
-//     // Assert that the SAP HANA heading is present
-//     const sapHanaHeading = getByText('Memory vs CPU usage');
-//     expect(sapHanaHeading).toBeInTheDocument();
-
-//     // Assert that the image is present with the correct attributes
-//     const saphanaImage = getByAltText('saphana');
-//     expect(saphanaImage).toBeInTheDocument();
-//   });
-// });

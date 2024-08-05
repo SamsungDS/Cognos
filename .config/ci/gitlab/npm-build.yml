@@ -1,0 +1,17 @@
+npm-build:
+  stage: build
+  image:
+      name: $IMAGE_TAG
+      pull_policy: always
+  script:
+    - cd $ui_dir
+    - npm ci
+  variables:
+    DOCKERFILE_NAME: rocky9
+    IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
+  artifacts:
+    paths:
+    - cognos/ui/node_modules
+    expire_in: 300 seconds
+  rules:
+    - !reference [.default_rules, merge_and_push]

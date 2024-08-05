@@ -1,0 +1,9 @@
+{
+	"dashboard_url": "http://localhost:5000/",
+	"configure_url": "http://localhost:5000/configure",
+	"metrics_url":	"http://localhost:5000/metrics",
+	"scmc_url":	"http://localhost:5000",
+	"log_file_name": "cognos_ui.log",
+	"log_dir": "logs"
+	
+}

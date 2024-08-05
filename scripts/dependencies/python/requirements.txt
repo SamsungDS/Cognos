@@ -1,7 +1,6 @@
 # Python dependencies
 flask
 flask_cors
-flask-socketio
 influxdb-client[ciso]
 mysql-connector-python
 pytest

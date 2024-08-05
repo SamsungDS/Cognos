@@ -120,6 +120,74 @@ and describe the problem you are facing.
 * For the rest, follow
   [bahamas10's Bash Style Guide](https://github.com/bahamas10/bash-style-guide).
 
+## Influx DB
+
+### InfluxDB Installation
+1. For Red Hat/CentOS/Fedora x86-64 (x64, AMD64) systems
+curl -LO https://download.influxdata.com/influxdb/releases/influxdb2-2.7.6-1.x86_64.rpm
+sudo yum localinstall influxdb2-2.7.6-1.x86_64.rpm
+
+2. sudo service influxdb start
+
+3. Download influx CLI package
+wget https://download.influxdata.com/influxdb/releases/influxdb2-client-2.7.5-linux-amd64.tar.gz
+
+4. Unpackage downloaded influx CLI binary
+tar xvzf ./influxdb2-client-2.7.5-linux-amd64.tar.gz
+
+5. Place the unpackaged influx executable in your system $PATH
+sudo cp ./influx /usr/local/bin/
+
+6. run influx setup (for future deployment purposes there is a way to setup asynchronously)
+We are able to configure retention in hours, use 720 for a 30 day retention
+
+7. create All Access API token
+influx auth create --all-access --host http://localhost:8086 --org Samsung
+
+8. install influxDB Python Client, must install InfluxDB v2 compatible version, https://github.com/influxdata/influxdb-client-python
+pip install 'influxdb-client[ciso]'
+
+## Cognos InfluxDB Schema
+
+```
+Bucket: <User/Tenant>
+  Measurement: <metric/alert/heartbeat/etc>
+    Fields: {<metric1_name>:<metric1_value>, <metric2_name>:<metric2_value>, ...}
+    Tags: {
+      source: <host/application server>,
+      source_type: <cxl_device/host/memory_box/application>,
+      description: <description>,
+      category: <memory/cpu/bandwidth/etc>,
+      application: <app-name>
+    }
+    Timestamp: <timestamp>
+```
+
+## Python Selenium Test Cases for Cognos UI
+Enabled Selenium Test Enivornment to test Cognos web application.
+
+### Prerequisites
+Before running the python selenium tests, make sure you have to install the following.
+
+1. Install Python3.10 or above
+2. python3 -m pip install selenium
+3. Install google chrome [Latest Version]
+
+Refer "requirements.txt" file to install the dependencie ssoftwares to run the code.
+
+### Process to run python selenium tests
+
+To run the python selenium tests, follow these steps
+
+1. Clone the directory containing python selenium test files to your local machine
+2. Install the required prerequisites.
+3. Configure Appication url, pages url as per configure file
+4. Check the mandatory inputs required to run the test files.
+
+# Execute the tests
+
+[root@muser selenium]# python3 test_runner.py
+
 #### Python code
 
 * Use Python version 3.10

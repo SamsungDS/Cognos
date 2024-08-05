@@ -17,6 +17,8 @@ include:
   - project: dfs/svk/tools
     ref: main
     file: .config/ci/gitlab/pycodestyle.yml
+  - .config/ci/gitlab/npm-build.yml
+  - .config/ci/gitlab/integration.yml
   - .config/ci/gitlab/unit-backend.yml
   - .config/ci/gitlab/unit-ui.yml
   - .config/ci/gitlab/sonar.yml
@@ -43,3 +45,7 @@ shellcheck:
 
 code coverage:
   stage: .post
+
+pycodestyle:
+  stage: test
+  needs: []

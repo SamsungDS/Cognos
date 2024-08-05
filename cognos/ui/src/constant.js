@@ -99,9 +99,6 @@ export const memboxTableHeader = [
   export const deviceName = 'DEVX';
   export const deviceMode =  'direct';
   export const DeviceList = [
-    // {
-    //   device: 'DEV_1-256G'
-    // },
     {
       device: 'DEV_2-256G'   
     },
@@ -114,12 +111,6 @@ export const memboxTableHeader = [
     {
       device: 'DEV_5-256G'
     },
-    // {
-    //   device: 'DEV_6-256G'
-    // },
-    // {
-    //   device: 'DEV_7-256G'
-    // },
     {
       device: 'DEV_8-256G'
     },
@@ -129,78 +120,13 @@ export const memboxTableHeader = [
     {
       device: 'DEV_11-256G'
     }
-  ] 
-  export const DeviceList1 = [
-    {
-      device: 'DEV_1-256G'
-    },
-    {
-      device: 'DEV_2-256G'   
-    },
-    {
-      device: 'DEV_3-256G'
-    },
-    {
-      device: 'DEV_4-256G'
-    },
-    {
-      device: 'DEV_5-256G'
-    },
-    {
-      device: 'DEV_6-256G'
-    },
-    {
-      device: 'DEV_7-256G'
-    },
-    {
-      device: 'DEV_8-256G'
-    },
-    {
-      device: 'DEV_9-256G'
-    },
-    {
-      device: 'DEV_10-256G'   
-    },
-    {
-      device: 'DEV_11-256G'
-    },
-    {
-      device: 'DEV_12-256G'
-    },
-    {
-      device: 'DEV_13-256G'
-    },
-    {
-      device: 'DEV_14-256G'
-    },
-    {
-      device: 'DEV_15-256G'
-    },
-    {
-      device: 'DEV_16-256G'
-    },
-    {
-      device: 'DEV_17-256G'
-    },
-    {
-      device: 'DEV_18-256G'   
-    },
-    {
-      device: 'DEV_19-256G'
-    },
-    {
-      device: 'DEV_20-256G'
-    },
-    {
-      device: 'DEV_21-256G'
-    },
-    {
-      device: 'DEV_22-256G'
-    },
-    {
-      device: 'DEV_23-256G'
-    },
-    {
-      device: 'DEV_24-256G'
-    }
-  ] 
+  ]
+
+  var largeDeviceSet = [];
+  for (var i = 1; i < 25; i++) {
+    largeDeviceSet.push({
+      device: `DEV_${i}-256G`
+    })
+  }
+  export const DeviceList1 = largeDeviceSet;
+  
