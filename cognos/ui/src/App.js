@@ -16,7 +16,7 @@ function App() {
         <Header/>
         <BrowserRouter>
           <SideBar>
-            <Routes><Route path='/' element={<Dashboard/>}/></Routes>
+            <Routes><Route path='/' element={<Dashboard/>} forceRefresh={true}/></Routes>
             <Routes><Route path='/Configure' element={<Configure/>}/></Routes>
             <Routes><Route path='/metrics' element={<Metrics/>}/></Routes>
             <Routes><Route path='/About' element={<About/>}/></Routes>

@@ -1,10 +1,16 @@
+.configure-heading {
+  font-size: 20px;
+  font-family: 'Samsung Sharp Sans', sans-serif;
+  font-weight: bold; 
+  color: #00B3E3; 
+}
 .hostcapacity-bar>.progress-bar {
     background-color: #45a7c8 !important;
     font-size: large;
     font-weight: bold;
 }
 table th {
-    color: #288DEA !important;
+    color: #00B3E3 !important;
     font-weight: 700 !important;
 }
 .table>:not(caption)>*>* {
@@ -38,6 +44,9 @@ th, td {
 }
 .cofig-row {
   min-width: 230px;
+  font-family: 'Samsung Sharp Sans', sans-serif;
+  font-weight: bold; 
+  color: #00B3E3
 }
 .cmm-row {
   min-width: 280px;

@@ -24,7 +24,7 @@ const DropDown = ({ options, title, dropDownType, onSelectChange, name }) => {
 
     return (
         <div className='dropdown-container' id='dropdown-container-id' data-testid={`dropdown-${name}`}>
-            <label htmlFor="dropdown" className='app-server' style={{ color: "white", marginRight: 8 }} data-testid='label'>{title}</label>
+            <label htmlFor="dropdown" className='app-server' data-testid='label'>{title}</label>
             <Select
                 value={selectedValue}
                 isMulti={isMulti}

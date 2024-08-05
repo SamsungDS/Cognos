@@ -11,7 +11,7 @@ describe('useUpdateHook', () => {
       jest.clearAllMocks();
     });
   
-    it('should handle update successfully', async () => {
+    test('should handle update successfully', async () => {
       const lmd = 'D-1';
       const mem_mode = 'Shared';
   
@@ -27,13 +27,15 @@ describe('useUpdateHook', () => {
       expect(fetch).toHaveBeenCalledWith(`${apiEndpointMock}/update_lmd`, {
         mode: 'cors',
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json',  'Access-Control-Allow-Origin':'*' },
+        headers: { 'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin':'*'
+        },
         body: JSON.stringify({ lmd, mem_mode })
       });
       expect(setMemboxDataMock).toHaveBeenCalledWith({ someData: 'memboxData' });
     });
   
-    it('should handle update failure', async () => {
+    test('should handle update failure', async () => {
       const lmd = 'D-1';
       const mem_mode = 'Shared';
   
@@ -46,7 +48,9 @@ describe('useUpdateHook', () => {
       expect(fetch).toHaveBeenCalledWith(`${apiEndpointMock}/update_lmd`, {
         mode: 'cors',
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin':'*' },
+        headers: { 'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin':'*'
+        },
         body: JSON.stringify({ lmd, mem_mode })
       });
       expect(setMemboxDataMock).not.toHaveBeenCalled();

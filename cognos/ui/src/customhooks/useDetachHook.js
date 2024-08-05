@@ -1,15 +1,18 @@
 const useDetachHook = (setMemboxData, setLmdData, handleDetachMemoryToggle, selectedValue, apiEndpoint) => {
   const handleDetach = async (item) => {
     const { label } = selectedValue;
-    const detachMem = { host: label, lmd: item };
-
+    const detachMem = { host_name: label, dev_name: item };
     handleDetachMemoryToggle();
 
     try {
-      const response = await fetch(`${apiEndpoint}/detach_lmd`, {
+      const response = await fetch(`${apiEndpoint}/detach_device`, {
         mode: 'cors',
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin':'*' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'accept': 'application/json',
+          'Access-Control-Allow-Origin':'*'
+        },
         body: JSON.stringify(detachMem)
       });
 
@@ -20,10 +23,17 @@ const useDetachHook = (setMemboxData, setLmdData, handleDetachMemoryToggle, sele
     } catch (error) {}
 
     try {
-      const response = await fetch(`${apiEndpoint}/lmds`, {
+      const response = await fetch(`${apiEndpoint}/devices`, {
         mode: 'cors',
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin':'*' },
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'accept': 'application/json',
+          'Access-Control-Allow-Origin':'*'
+        },
+        body: JSON.stringify({
+          "input": "cluster_id=CLUST1;command=ListDevices;FM_id=203;FM_endpoint=samsung.com"
+        })
       });
 
       if (response.ok) {

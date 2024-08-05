@@ -21,74 +21,89 @@ export const getReadableStatus = (job) => {
 
 const Configure = () => {
 
-  const apiEndpoint = constants.Configs.data_endpoint;
-  const LMDs = 'lmds';
-  const AVAILABLE_lMDs = 'available_lmds';
-  const HOST_LMDs = 'host_lmds';
+  const apiEndpoint = constants.Configs.api_endpoint;
+  const AVAILABLE_DEVICES = 'available_devices';
+  const HOST_DEVICES = 'host_devices';
   const MEMBOX_LMDs = 'membox_lmds';
   const [showAttach, setShowAttach] = useState(false);
   const [selectedValue, setSelectedValue] = useState('');
+  
+  const [selectorOptions, setSelectorOptions] = useState([
+    { value: 'Select Host', label: 'Select Host' }]
+    );
+
+
   const [showDetachMemory, setShowDetachMemory] = useState(false);
   const [attachedRowData, setAttachedRowData] = useState({});
-  // used for top table
-  const [lmdData, setLmdData] = useState([{
-    lmd: 'D-1',
-    host: 'Host 2',
-    mem_type: 'CMMD',
-    mem_mode: 'Direct',
-    capacity: 128,
-    capacity_units: 'GB',
-    used_capacity: 0,
-    used_capacity_units: 'GB'
-  }]);
-  // used for bottom table
+  
+  // host w/ attached devices top table state variable
+  const [attachedDevicesData, setAttachedDevicesData] = useState([{}]);
+
+  // MemBox bottom table state variable
   const [memboxData, setMemboxData] = useState([{
-    lmd: 'D-1',
-    mem_type: 'CMMD',
-    mem_mode: 'Direct',
-    capacity: 128,
-    capacity_units: 'GB',
-    used_capacity: 0,
-    used_capacity_units: 'GB',
-    status: 'loading',
-    host: 'Host1'
+    dev_name: "DEVX",
+    dev_capacity: 50023929,
+    dev_id: 99999999,
+    dev_port: 100,
+    hosts_attached: "Host 1"
   }]);
   const [availableLMDs, setAvailableLMDs] = useState([]);
 
   // Attach and Detach use hook
-  const { handleAttach } = useAttachHook(setMemboxData, setLmdData, () => setShowAttach(false), selectedValue, apiEndpoint);
-  const { handleDetach } = useDetachHook(setMemboxData, setLmdData, () => setShowDetachMemory(false), selectedValue, apiEndpoint);
+  const { handleAttach } = useAttachHook(setMemboxData, setAttachedDevicesData, () => setShowAttach(false), selectedValue, apiEndpoint);
+  const { handleDetach } = useDetachHook(setMemboxData, setAttachedDevicesData, () => setShowDetachMemory(false), selectedValue, apiEndpoint);
 
-  const statusImages = {
-    "active": constants.ActiveLight,
-    "unhealthy": constants.UnhealthyLight,
-    "inactive": constants.InactiveLight,
-    "loading": constants.LoadingGif,
-    "ready": constants.ReadyLight,
-  }
-
-  useEffect(() => {
-    fetch(`${apiEndpoint}//${LMDs}`, {
-      method: 'get',
-      headers: new Headers({
+  useEffect(() =>{
+    fetch(`${apiEndpoint}/hosts`, {
+      mode: 'cors',
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'accept': 'application/json',
         'Access-Control-Allow-Origin':'*'
+      },
+    }).then(response => response.json())
+    .then(data => setSelectorOptions(data))
+    .catch(err => {console.log(err)});
+  }, []);
+  
+  useEffect(() => {
+    fetch(`${apiEndpoint}/devices`, {
+      method: 'post',
+      headers: new Headers({
+        'Access-Control-Allow-Origin':'*',
+        'accept': 'application/json',
+        'content-type': 'application/json'
+      }),
+      body: JSON.stringify({
+        "input": "cluster_id=CLUST1;command=ListDevices;FM_id=203;FM_endpoint=samsung.com"
       })
-    }).then(response => response.json()).then(data => setMemboxData(data))
-  }, 
+    })
+      .then(response => response.json())
+      .then(data => setMemboxData(data))
+      .catch(err => {console.log(err)});
+  },
   // eslint-disable-next-line react-hooks/exhaustive-deps 
   []);
 
   const getAvailableLMDS = async() => {
-    const response = await fetch(`${apiEndpoint}//${AVAILABLE_lMDs}`, {
-      mode: 'cors',
-      method: 'GET',
-      headers: {'Content-Type': 'application/json', 'Access-Control-Allow-Origin':'*'},
-    });
+    
+    try {
+      const response = await fetch(`${apiEndpoint}/${AVAILABLE_DEVICES}`, {
+        mode: 'cors',
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'accept': 'application/json',
+          'Access-Control-Allow-Origin':'*'
+        },
+      });
 
-    if (response.ok) {
-      const data = await response.json();
-      setAvailableLMDs(data);
-    }
+      if (response.ok) {
+        const data = await response.json();
+        setAvailableLMDs(data);
+      }
+    } catch (error) {console.log(error)};
   };
 
   const handleAttachMemoryToggle = () => {
@@ -100,9 +115,11 @@ const Configure = () => {
     setAttachedRowData(item)
     setShowDetachMemory(!showDetachMemory);
   }
+
   const handleAttachCancel = () => {
     handleAttachMemoryToggle();
   }
+
   const handleDetachMemoryCancel = () => {
     handleDetachMemoryToggle();
   }
@@ -113,69 +130,71 @@ const Configure = () => {
 
     const payload = { host: selectedOption['label'] };
 
-    const response = await fetch(`${apiEndpoint}`, {
-        mode: 'cors',
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin':'*' },
-        body: JSON.stringify(payload)
-    });
+    try {
+      const response = await fetch(`${apiEndpoint}`, {
+          mode: 'cors',
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin':'*',
+            'accept': 'application/json'
+          },
+          body: JSON.stringify(payload)
+      });
 
-    if (response.ok) {
-      const data = await response.json();
-      setData(data);
-    }
-};
+      if (response.ok) {
+        const data = await response.json();
+        setData(data);
+      }
+    } catch(error) {console.log(error)};
+  };
 
-
-
-  const lmdTable =  Array.isArray ? lmdData.map(
+  const attachedDevicesTable =  Array.isArray ? attachedDevicesData.map(
     (item) => {
         return (
-          <tr key={item.lmd}>
+          <tr key={item.dev_name}>
             <td className='cofig-row'>
               <Button variant="outline-light" size="sm" onClick={() => handleDetachMemoryToggle(item)} data-testid="detach-button">
                 <img src={constants.MinusIcon} alt='minus-icon' width="25" height="auto" /> 
               </Button>
             </td>
-            <td className='cofig-row'>{item.lmd}</td>
-            <td className='cofig-row'>{item.mem_type}</td>
-            <td className='cofig-row'>{item.mem_mode}</td>
-            <td className='cofig-row'>{item.capacity} {item.capacity_units}</td>
-            <td className='cofig-row'>{item.used_capacity} {item.used_capacity_units}</td>
+            <td className='cofig-row'>{item.dev_name}</td>
+            <td className='cofig-row'>{item.status}</td>
+            <td className='cofig-row'>{item.type}</td>
+            <td className='cofig-row'>{item.mode} {item.capacity_units}</td>
+            <td className='cofig-row'>{item.dev_capacity}</td>
           </tr>
       )
     }
   ) : null;
+
   const memBoxTable = Array.isArray ? memboxData.map((item) => {
     return (
-      <tr key={item.lmd}>
-        <td className='cmm-row'>
-          <img 
-            src={statusImages[item.status]}
-            alt='status-icon'
-            width="25" 
-            height="auto"
-            title={item.status === 'unhealthy' ? 'failure: unable to allocate memory' : getReadableStatus(item.status)}
-          />
-        </td>
-        <td className='cmm-row'>{item.lmd}</td>
-        <td className='cmm-row'>{item.device_type}</td>
-        <td className='cmm-row'>{item.capacity} {item.capacity_units}</td>
-        <td className='cmm-row'>{item.memory_servers}</td>
+      <tr key={item.dev_id}>
+        <td className='cmm-row'>{item.dev_name}</td>
+        <td className='cmm-row'>{item.dev_id}</td>
+        <td className='cmm-row'>{item.dev_capacity}</td>
+        <td className='cmm-row'>{item.dev_port}</td>
+        <td className='cmm-row'>{item.hosts_attached}</td>
       </tr>
     ) 
   }): null;
 
-
-
   return (
     <Container fluid className='content_root' id='configure-container-id'>
+        <Row>
+          <Col>
+            <div className='device_card memory-box-overview-height' data-testid='memory-box-overview'  id='memory-box-overview-id'>
+              <h4 className='configure-heading'>CONFIGURE</h4>
+            </div> 
+          </Col>
+        </Row>
       <Row>
             <Col>
               <div className='device_card' data-testid='app-server-card' id='app-server-card-id' style={{height: '336px'}}>
                 <div className='config-host' data-testid='config-host' style={{ position:'sticky'}}>
-                  <DropDown options={constants.hostSelectorOptions} 
-                    onSelectChange={(selectedOption) => handleSelectChange(selectedOption, `${apiEndpoint}//${HOST_LMDs}`, setLmdData)}
+                  <DropDown options={selectorOptions} 
+                    onSelectChange={(selectedOption) => handleSelectChange(selectedOption, `${apiEndpoint}/${HOST_DEVICES}`, setAttachedDevicesData)}
                     title={constants.hostSelectorTitle}
                     dropDownType="single"
                     name='hostTable'
@@ -185,13 +204,13 @@ const Configure = () => {
                  <Table variant="dark" style={{fontFamily: 'Samsung sharp sons'}}>
                   <thead>
                     <tr>
-                      {constants.lmdTableHeader.map((item) => (
+                      {constants.attachedDevicesTableHeader.map((item) => (
                         <th key={item} className='cofig-row'>{item}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody style={{ maxHeight: '160px', overflowY: 'auto' }}>
-                    {lmdTable}        
+                    {attachedDevicesTable}        
                     <tr>
                       <td className='cofig-row'>
                         <Button variant="outline-light" size="sm" onClick={handleAttachMemoryToggle} data-testid="attach-id">
@@ -207,18 +226,19 @@ const Configure = () => {
                   </tbody>
                  </Table>
                 </div>
-                {showAttach && (<AttachMemory onSave={handleAttach} onCancel={handleAttachCancel} show={showAttach} availableLMDs={availableLMDs} data-testid='attach-memory-modal'/>)}
+                {showAttach && (<AttachMemory onSave={handleAttach} onCancel={handleAttachCancel} show={showAttach} availableLMDs={availableLMDs} selectedValue={selectedValue} data-testid='attach-memory-modal'/>)}
                 {showDetachMemory && 
                 (<DetachMemory 
                 show={showDetachMemory}
                 rowData={attachedRowData}
                 onCancel={handleDetachMemoryCancel}
                 onDelete={handleDetach}
+                selectedValue={selectedValue}
                 />)}
               </div>
             </Col>
-        </Row>
-        <Row>
+      </Row>
+      <Row>
           <Col>
             <div className='device_card memoboxTable' data-testid='memoboxTable-id'>
               <div style={{marginTop: '16px'}} data-testid='cmmd-card-id' id='cmmd-card-id'>
@@ -246,13 +266,6 @@ const Configure = () => {
                     </thead>
                     <tbody style={{ maxHeight: '160px', overflowY: 'auto' }}>
                       {memBoxTable}
-                      <tr>                        
-                        <td className='cmm-row'></td>
-                        <td className='cmm-row'></td>
-                        <td className='cmm-row'></td>
-                        <td className='cmm-row'></td>
-                        <td className='cmm-row'></td>
-                      </tr>
                     </tbody>
                   </Table>
                 </div>

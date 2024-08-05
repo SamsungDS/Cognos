@@ -1,8 +1,24 @@
+.memory-box-title {
+  font-size: 20px;
+  font-family: 'Samsung Sharp Sans', sans-serif;
+  font-weight: bold; 
+  color: #00B3E3;
+}
 .topology-height {
   height: 426px;
 }
 .info-memo-com {
-  height: 84px;
+  height: 186px;
+}
+.row-info-memo {
+  margin-left: 12px !important;
+  margin-top: 40px !important;
+}
+.cmmb-memory-heading {
+  font-size: 22px;
+  font-weight: bold; 
+  color: #00B3E3;
+  font-family: 'Samsung Sharp Sans', sans-serif;
 }
 .health-container {
   height: 96px;
@@ -10,9 +26,10 @@
 .system-memory-allocated {
   height: 230px;
   padding: 20px;
+  padding-bottom: 40px;
 }
 .graph-container {
-  height:270px;
+  height:230px;
 }
 .progress {
     --bs-progress-bar-bg: #97D653;
@@ -56,9 +73,33 @@
     justify-content: center;
     color: #1082df;
     font-weight: bold;
-    font-size: 24px;
-    margin-top: 3px;
+    font-size: 18px;
+    margin-top: -3px;
   }
+  .arrow {
+    display: inline-block;
+    position: relative;
+    padding-left: 136px; 
+  }
+  .arrow::before {
+    content: '';
+    position: absolute;
+    top: 45%;
+    left: 0;
+    width:  150px; 
+    height: 1px; 
+    background-color: white;
+    transform: translateY(-50%);
+  }
+  
+  .right {
+    display: inline-block;
+    padding: 6px;
+    border: solid white;
+    border-width: 0 1px 1px 0;
+    transform: rotate(-45deg);
+  }
+
 /* Media Query as per device size */
   @media screen and (min-width: 768px) and (max-width: 1023px) {
     .progres-bar-label {
@@ -72,7 +113,7 @@
   }
   @media screen and (min-width: 1440px) and ( max-width: 2559px) {
     .progres-bar-label {
-      margin-left: 364px !important;
+      margin-left: 450px;
     }
   }
   @media screen and (min-width: 2560px) {

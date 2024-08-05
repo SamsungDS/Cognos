@@ -2,16 +2,18 @@ const useAttachHook = (setMemboxData, setLmdData, handleAttachMemoryToggle, sele
   const handleAttach = async (formData) => {
     handleAttachMemoryToggle();
     const { label } = selectedValue;
-    const obj = { host: label };
+    const obj = { host_name: label };
     const attachMem = { ...formData, ...obj };
 
-    console.log(attachMem);
-
     try {
-      const response = await fetch(`${apiEndpoint}/attach_lmd`, {
+      const response = await fetch(`${apiEndpoint}/attach_device`, {
         mode: 'cors',
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'accept': 'application/json',
+          'Access-Control-Allow-Origin':'*'
+        },
         body: JSON.stringify(attachMem)
       });
 
@@ -23,12 +25,18 @@ const useAttachHook = (setMemboxData, setLmdData, handleAttachMemoryToggle, sele
       
     }
 
-
     try {
-      const response = await fetch(`${apiEndpoint}/lmds`, {
+      const response = await fetch(`${apiEndpoint}/devices`, {
         mode: 'cors',
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin':'*' },
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'accept': 'application/json',
+          'Access-Control-Allow-Origin':'*'
+        },
+        body: JSON.stringify({
+          "input": "cluster_id=CLUST1;command=ListDevices;FM_id=203;FM_endpoint=samsung.com"
+        })
       });
 
       if (response.ok) {
@@ -38,25 +46,6 @@ const useAttachHook = (setMemboxData, setLmdData, handleAttachMemoryToggle, sele
     } catch (error) {
       
     }
-
-    try {
-        const response = await fetch(`${apiEndpoint}/activate_device`, {
-          mode: 'cors',
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin':'*' },
-          body: JSON.stringify(attachMem)
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          setMemboxData(data);
-        }
-
-    } catch (error) {
-
-      }
-
-
   };
 
   return { handleAttach };

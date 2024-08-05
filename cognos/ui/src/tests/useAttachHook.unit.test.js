@@ -5,40 +5,34 @@ describe('useAttachHook', () => {
   const setLmdDataMock = jest.fn();
   const handleAttachMemoryToggleMock = jest.fn();
   const selectedValueMock = { label: 'Host 1' };
-  const apiEndpointMock = 'http://105.91.142.222:4000';
+  const apiEndpointMock = 'http://105.91.142.222:4000/api/v2.0.0';
 
   afterEach(() => {
     jest.clearAllMocks();
   });
 
   it('should handle attachment successfully', async () => {
-
     const mockLmdData = {
-        capacity: 128,
-        capacity_units: 'GB',
-        lmd: 'D-2',
-        mem_mode: 'Direct',
-        mem_type: 'CMMD',
-        pool: '',
-        used_capacity: 0,
-        used_capacity_units: 'GB',
-      };
+      capacity: 128,
+      capacity_units: 'GB',
+      dev_name: "DEVX",
+      mem_mode: 'Direct',
+      mem_type: 'CMMD',
+      pool: '',
+      used_capacity: 0,
+      used_capacity_units: 'GB',
+    };
 
     global.fetch = jest.fn().mockImplementation((url) => {
-      if (url.endsWith('/attach_lmd')) {
+      if (url.endsWith('/attach_device')) {
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve(mockLmdData),
         });
-      } else if (url.endsWith('/lmds')) {
+      } else if (url.endsWith('/devices')) {
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve({ someData: 'memboxData' }),
-        });
-      } else if (url.endsWith('/activate_device')) {
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ someData: 'activated' }),
         });
       }
     });
@@ -58,8 +52,55 @@ describe('useAttachHook', () => {
     expect(setMemboxDataMock).toHaveBeenCalledWith({ someData: 'memboxData' });
   });
 
-  it('should handle attachment failure', async () => {
+  it('should handle attachment failure when fetch throws an error', async () => {
     global.fetch = jest.fn().mockImplementation(() => Promise.reject(new Error('Failed to fetch')));
+
+    const { handleAttach } = useAttachHook(
+      setMemboxDataMock,
+      setLmdDataMock,
+      handleAttachMemoryToggleMock,
+      selectedValueMock,
+      apiEndpointMock
+    );
+
+    await handleAttach({ someFormData: 'formData' });
+
+    expect(handleAttachMemoryToggleMock).toHaveBeenCalledTimes(1);
+    expect(setLmdDataMock).not.toHaveBeenCalled();
+    expect(setMemboxDataMock).not.toHaveBeenCalled();
+  });
+
+  it('should handle attachment when response is not OK', async () => {
+    global.fetch = jest.fn().mockImplementation((url) => {
+      return Promise.resolve({
+        ok: false,
+      });
+    });
+
+    const { handleAttach } = useAttachHook(
+      setMemboxDataMock,
+      setLmdDataMock,
+      handleAttachMemoryToggleMock,
+      selectedValueMock,
+      apiEndpointMock
+    );
+
+    await handleAttach({ someFormData: 'formData' });
+
+    expect(handleAttachMemoryToggleMock).toHaveBeenCalledTimes(1);
+    expect(setLmdDataMock).not.toHaveBeenCalled();
+    expect(setMemboxDataMock).not.toHaveBeenCalled();
+  });
+
+  it('should handle attachment when response is OK but JSON parsing fails', async () => {
+    global.fetch = jest.fn().mockImplementation((url) => {
+      if (url.endsWith('/attach_device') || url.endsWith('/devices')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.reject(new Error('Failed to parse JSON')),
+        });
+      }
+    });
 
     const { handleAttach } = useAttachHook(
       setMemboxDataMock,

@@ -1,72 +1,60 @@
-import React from 'react'
+import React, { useContext, useState } from 'react'
 import { Container, Row, Col } from 'react-bootstrap';
 import  Chart from "react-google-charts";
 import ProgressBar from 'react-bootstrap/ProgressBar';
 import DropDown from '../components/DropDown';
-import * as constants from '../constant';
-import './metrics.css'
+import './metrics.css';
+import WebSocketContext from '../contexts/WebSocketContext';
+import * as constants from '../../src/constant';
+
 
 const Metrics = () => {
-    const selectorOptions = [
-        { value: 'Host 1', label: 'Host 1' }
-      ];
-    // membandwidth bar
-    const memBandwidthVals = ['80', '20'];
 
-    // Total Capacity 
-    const memCapacityData = [
-        ["MemType", "Capacity Used"],
-        ["DRAM", 1120],
-        ["CMM-D", 896],
-    ];
+    const apiEndpoint = constants.Configs.api_endpoint;
+    const [selectorOptions, setSelectorOptions] = useState([
+        { value: 'Host 1', label: 'Host 1' },
+        { value: 'Host 2', label: 'Host 2' }]
+        );
+    const [selectedOption, setSelectedOption] = useState(null);
+    const { memCapacityData, dramCxlMemUsageData, memoryCpuData, sendMessage } = useContext(WebSocketContext)
 
     const memCapacityOptions = {
-        title: "Total Capacity per MemType (GB)",
-        titleTextStyle: { color: "#FFFFFD", fontSize: 20, bold: true},
-        colors: ["#B24675", "#FE5276", "#FE8E73", "#FEAE00", "B37328"],
+        colors: ["#FFB546", "#0077C8", "#FE8E73", "#FEAE00", "B37328"],
         pieSliceText: 'value',
         backgroundColor: { fill:'transparent' },
         animation: {startup: true},
+        is3D: true,
+        label: 'GB',
         annotations: {
             textStyle: {
               fontName: 'Times-Roman',
-              fontSize: 18,
+              fontSize: 36,
               bold: true,
               italic: true,
-              // The color of the text.
-              color: '#FFFFFD',
-              // The color of the text outline.
+              color: 'black',
               auraColor: '#FFFFFD',
-              // The transparency of the text.
               opacity: 0.8
             }
         },
-        legend: {textStyle: {color: '#FFFFFD'}},
-        chartArea: { width: "85%", height: "95%", top: 50, bottom: 40 },
+        pieSliceTextStyle: {
+            color: 'black',
+            fontSize: 16,
+            bold: true
+        },
+        legend: {textStyle: {color: '#FFFFFD', fontSize: 16}},
+        chartArea: { width: "95%", height: "95%", top: 50, bottom: 40 },
     };
-
-    const dramCxlMemUsageData = [
-        ["Mem Usage", "DRAM", "CMM-D"],
-        ["6", 123, 172],
-        ["5", 151, 142],
-        ["4", 481, 211],
-        ["3", 831, 418],
-        ["2", 996, 642],
-        ["1", 1030, 795],
-        ["Current", 1120, 896],
-    ];
 
     const dramCxlMemUsageOptions = {
         isStacked: true,
         height: 220,
-        title: "DRAM vs CMM-D Mem Usage",
-        titleTextStyle: { color: "#FFFFFD", fontSize: 25, bold: true},
-        colors: ["#24ECC5", "#EC5D24", "#00B3E3"],
-        hAxis: {title: "Time Interval (<-- Minutes)", textStyle: { color: "#FFFFFD"}, titleTextStyle: { color: "#FFFFFD" }, gridlines: {color: "4C4C3B"}},
-        vAxis: {minValue: 100, title: "Memory Usage (GB)", textStyle: { color: "#FFFFFD"}, titleTextStyle: { color: "#FFFFFD" }},
+        colors: ["#0077C8", "#FFB546", "#00B3E3"],
+        hAxis: {title: "Time", textStyle: { color: "#FFFFFD"}, titleTextStyle: { color: "#FFFFFD" }, gridlines: {color: "#8D8D8D", count: 0}},
+        vAxis: {title: "Memory Usage (%)", textStyle: { color: "#FFFFFD"}, titleTextStyle: { color: "#FFFFFD" }, viewWindow: {min: 0, max: 100}, gridlines: {color: "#8D8D8D", count: 0}},
         curveType: "function",
-        legend: {position: "bottom"},
-        chartArea: { width: "65%", height: "100%", top:50, bottom: 50 },
+        lineWidth: 5,
+        legend: {position: "bottom", textStyle: { color: "#FFFFFD"}},
+        chartArea: { width: "85%", height: "100%", top:50, bottom: 50 },
         backgroundColor: { fill:'transparent' },
         animation: {startup: true},
         annotations: {
@@ -75,26 +63,75 @@ const Metrics = () => {
               fontSize: 18,
               bold: true,
               italic: true,
-              // The color of the text.
               color: '#FFFFFD',
-              // The color of the text outline.
               auraColor: '#FFFFFD',
-              // The transparency of the text.
               opacity: 0.8
             }
         }
     };
-    
 
+    const memoryCpuDatOptions = {
+        curveType: "function",
+        legend: { position: "bottom", textStyle: { color: "#FFFFFD"}},
+        height: 480,
+        lineWidth: 5,
+        chartArea: { width: "85%", height: "100%", top:50, bottom: 50 },
+        colors: ["#0077C8", "#97D653", "#00B3E3"],
+        backgroundColor: { fill:'transparent' },
+        vAxis: {title: "Usage (%)", textStyle: { color: "#FFFFFD"}, titleTextStyle: { color: "#FFFFFD" }, viewWindow: {min: 0, max: 100}, gridlines: {color: "#8D8D8D", count: 0}},
+        hAxis: { textStyle: { color: "#FFFFFD"}, titleTextStyle: { color: "#FFFFFD" }, gridlines: {color: "4C4C3B"}},
+        animation: {startup: true},
+    };
+
+    const handleSelectChange = async (selectedOption) => {
+        setSelectedOption(selectedOption);
+
+        // get available hosts
+        try {
+            const response = await fetch(`${apiEndpoint}/hosts`, {
+              mode: 'cors',
+              method: 'GET',
+              headers: {
+                'Content-Type': 'application/json',
+                'accept': 'application/json',
+                'Access-Control-Allow-Origin':'*'
+              },
+            });
+      
+            if (response.ok) {
+              const data = await response.json();
+              setSelectorOptions(data);
+            }
+        } catch (error) {console.log(error)};
+
+
+        let payload = {}
+        payload.host = selectedOption;
+        sendMessage(payload);
+      };
+    
   return (           
         <div className='Content content_root' id='main-container-id'>
             <Container fluid>
                 <Row>
+                    <Col>
+                        <div className='device_card memory-box-overview-height' data-testid='memory-box-overview'  id='memory-box-overview-id'>
+                            <h4 className='metric-title'>APPLICATION SERVER METRICS</h4>
+                        </div> 
+                    </Col>
+                </Row>
+                <Row>
                     <Col sm={6} md={6} lg={6}>                                          
                         <div className='device_card first-row' style={{ padding:20, paddingTop:50}} id='app-server-card-id'>
                             <Row>
-                                <Col sm={7} md={7} lg={7}><div className='fs-24 app-server-title'>Select Application Server</div> </Col>
-                                <Col sm={5} md={5} lg={5}><div className='dropdownn-app-server'><DropDown options={selectorOptions} onSelectChange={()=> {}}/></div></Col>
+                                <Col sm={7} md={7} lg={7}><div className='fs-24 app-server-title'>Select Server</div> </Col>
+                                <Col sm={5} md={5} lg={5}>
+                                    <div className='dropdownn-app-server'> 
+                                        <DropDown 
+                                            options={selectorOptions} 
+                                            onSelectChange={(selectedOption) => handleSelectChange(selectedOption)}/>
+                                    </div>
+                                </Col>
                             </Row>
                         </div>                                    
                     </Col>
@@ -103,24 +140,23 @@ const Metrics = () => {
                             <Col sm={12} md={12} lg={12}>
                                 <div className='device_card first-row' id='memory-bandwidth-card-id' data-testid="memory-bandwidth-card-id">
                                     <div className='bandwidth'>
-                                        <h1 className='fs-24 memory-bandwidth'>Memory Bandwidth</h1>
-                                        <div>
-                                            <ProgressBar style={{ height: 20, fontWeight: 'bold'}}>
-                                                <ProgressBar now={memBandwidthVals[0]} label={`512 GBps`} key={1} className='host1' />
-                                                <ProgressBar now={memBandwidthVals[1]} label={`64 GBps`} key={2} className='host2' />
-                                            </ProgressBar>
-                                        </div>
-                                        <div className='bandwidth-legend'>
-                                            <span className='fs-22'>
-                                            <svg height={20} width={20} style={{ marginBottom: '4'}}>
-                                            <circle cx="10" cy="10" r="10" stroke='black' strokeWidth={3} fill='rgb(138, 233, 138)'></circle>
-                                            </svg> DRAM &nbsp;&nbsp;</span>
-                                            <span  className='fs-22'>
-                                            <svg height={20} width={20} style={{ marginBottom: '4'}}>
-                                            <circle cx="10" cy="10" r="10" stroke='black' strokeWidth={3} fill='rgb(25, 65, 124)'></circle>
-                                            </svg> CMM-D &nbsp;&nbsp;
-                                            </span>                                    
-                                        </div>
+                                        <Row>
+                                            <Col sm={4} md={4} lg={4} xl={4}>
+                                                <h1 className='fs-24 memory-bandwidth'>Memory <span style={{color: 'white'}}>Bandwidth</span></h1>
+                                            </Col>
+                                            <Col sm={8} md={8} lg={8} xl={8}>
+                                                <div className='bandwidth-legend'>
+                                                    <span  className='fs-22'>CMM-D</span>                                    
+                                                </div>
+                                                <div>
+                                                    <div className='progres-bar-label-metrics' style={{color: 'white'}}>
+                                                        {`128 GBps`}
+                                                    </div>
+                                                    <ProgressBar now='50' key={2} className='host2' />
+                                                    <div style={{color:'white', marginLeft:200}}>{`Used Bandwidth 64 GBps`}</div>
+                                                </div>
+                                            </Col>
+                                        </Row>
                                     </div>
                                 </div>
                             </Col>
@@ -131,54 +167,57 @@ const Metrics = () => {
                     <Col sm={7} md={12} lg={12} xl={7}>
                         <div className='device_card second-row'  id='saphaana-card-id' style={{paddingBottom: 0, marginBottom: 0}}>
                             <div className='fs-22' style={{display: 'flex', alignItems: 'baseline', height: 30}}>
-                                <h1 className='host-app-heading'>Host Application Metrics:  </h1>
-                                <h1 className='sap-hana' > SAP HANA</h1>
+                                <h1 className='sap-hana' >CPU vs Memory Usage</h1>
                             </div>
-                            <div style={{display: 'flex', verticalAlign: 'top', justifyContent: 'center'}}>
-                                <img 
-                                    src={constants.SAPHANAMetrics}
-                                    alt='saphana'
-                                    height='450'
-                                    width='100%'
-                                    title='SAP HANA Metrics'
-                                />
-                            </div>
-                            <div style={{display: 'flex', justifyContent: 'center'}}>
-                                <img
-                                    src={constants.SAPHANALegend}
-                                    alt='saphana1'
-                                    className='saphana-legend'
-                                    height='50'
-                                    width='auto'
-                                    title='SAP HANA Metrics Legend'
-                                />
-                            </div>
+                            {memoryCpuData.length ? (
+                                <Chart
+                                chartType="LineChart"
+                                width="100%"
+                                height="400px"
+                                data={memoryCpuData}
+                                options={memoryCpuDatOptions}
+                            />
+                            ) : <div className='fs-22' style={{color: 'grey',  height:380}}> </div>}
                         </div>
                     </Col>
                     <Col sm={5} md={12} lg={12} xl={5}>
                         <Row>
                             <Col>                            
                                 <div className='device_card second-col-first-col' id='mem-capacity-data-card-id' data-testid='mem-capacity-data-card-id'>
-                                    <Chart
-                                        chartType='PieChart'
-                                        data={memCapacityData}
-                                        options={memCapacityOptions}
-                                        width="100%"
-                                        height="250px"
-                                    />
+                                    <Row>
+                                        <Col sm={5} md={5} lg={5} xl={5}>
+                                            <div className='fs-22' style={{display: 'flex', alignItems: 'baseline', height: 30}}>
+                                                <h4 className='dram-cxl-title-pieChart'>Memory <span style={{color: 'white'}}>Capacity (GiB)</span></h4>
+                                            </div>
+                                        </Col>
+                                        <Col sm={7} md={7} lg={7} xl={7}>
+                                            {memCapacityData.length ? (<Chart
+                                                chartType='PieChart'
+                                                data={memCapacityData}
+                                                options={memCapacityOptions}
+                                                width="100%"
+                                                height="250px"
+                                            />
+                                            ): <div className='fs-22' style={{color: 'grey', height:250, paddingTop:20}}> </div>}
+                                        </Col>
+                                    </Row>
                                </div>
                             </Col>
                         </Row>
                         <Row>
                             <Col>
                                 <div className='device_card second-col-second-col' id='dram-cxl-mem-data-card-id' data-testid='dram-cxl-mem-data-card-id'>
-                                    <Chart
-                                        chartType='AreaChart'
+                                    <div className='fs-22' style={{display: 'flex', alignItems: 'baseline', height: 30}}>
+                                        <h4 className='memory-cpu-heading' >DRAM vs CXL Memory Usage</h4>
+                                    </div>
+                                    {dramCxlMemUsageData.length ? (<Chart
+                                        chartType='LineChart'
                                         width="100%"
                                         height="325px"
                                         data={dramCxlMemUsageData}
                                         options={dramCxlMemUsageOptions}
                                     />
+                                    ): <div className='fs-22' style={{color: 'grey', height:325}}></div> }
                                 </div>
                             </Col>
                         </Row>

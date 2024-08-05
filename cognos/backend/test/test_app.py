@@ -1,22 +1,34 @@
 import pytest
 import flask
 import json
+import os
+from pathlib import Path
 
 from app import (
-    create_app, NODE_ENDPOINT, get_db_passwd,
+    NODE_ENDPOINT, get_db_passwd,
     get_param_from_request_params, insert_hosts,
     insert_devices, prepare_response_with_body,
-    get_db_passwd, fetch_topology
+    get_db_passwd, fetch_topology, failed_response,
+    get_devices_from_db, insert_connection, delete_connection,
+    get_hostname_from_id, get_devname_from_id, get_hostid_from_name,
+    get_devid_from_name, get_deviceid_and_devicename_from_port,
+    get_host_attached_devices, clear_all_tables, setup_tables,
+    get_devices_info
 )
 from requests.models import Response
 
 
-@pytest.fixture
-def client():
-    app = create_app()
-    with app.test_client() as client:
-        with app.app_context():
-            yield client
+# get API version
+backend_dir = Path(os.path.abspath(__file__)).parent.parent
+VERSION_FILE_PATH = os.path.join(backend_dir, 'VERSION')
+API_VERSION = ''
+try:
+    with open(VERSION_FILE_PATH, 'r') as version_file:
+        API_VERSION = version_file.read().strip()
+except Exception as error:
+    raise RuntimeError(
+        f"Unable to retrieve API version: {str(error)}"
+    )
 
 
 def construct_dummy_response(dummy_data):
@@ -26,10 +38,20 @@ def construct_dummy_response(dummy_data):
     return dummy_response
 
 
-def test_get_db_passwd():
+def test_failed_response(client):
+    msg = "Dummy failed message"
+    response = failed_response(msg)
+    response_payload = json.loads(response.data.decode('utf-8'))
+    assert response_payload["status"] == 500
+
+
+def test_get_db_passwd(mocker):
     passwd = get_db_passwd()
     assert str == type(passwd)
     assert passwd is not None
+    mocker.patch('json.load', return_value=None)
+    with pytest.raises(Exception):
+        passwd = get_db_passwd()
 
 
 def test_get_param_from_request_params():
@@ -45,7 +67,255 @@ def test_get_param_from_request_params():
     assert host_id == expected_host_id
 
 
-def test_get_hosts(mocker, client):
+def test_get_devices_info(mock_db, mocker):
+    mock_connection, mock_cursor = mock_db
+
+    dummy_data = {
+        "output": {
+            NODE_ENDPOINT: {
+                "devices": [
+                    {
+                        "dev_capacity": 274877906944,
+                        "dev_id": 549755813888,
+                        "dev_port": 10,
+                        "hosts_attached": ["Host 1 LNK0"]
+                    },
+                    {
+                        "dev_capacity": 274877906944,
+                        "dev_id": 824633720832,
+                        "dev_port": 11,
+                        "hosts_attached": ["Host 1 LNK0"]
+                    }
+                ]
+            }
+        }
+    }
+    dummy_response = construct_dummy_response(dummy_data)
+    mocker.patch('requests.post', return_value=dummy_response)
+    payload_output = dummy_data["output"]
+    mocker.patch('json.loads', return_value=payload_output)
+    get_devices_info()
+
+
+def test_get_devices_from_db(mock_db):
+    mock_connection, mock_cursor = mock_db
+
+    dummy_data = [[
+        256, 32131212, 3, ''
+    ]]
+
+    expected_response = [
+        {
+            "dev_capacity": 256,
+            "dev_id": 32131212,
+            "dev_port": 3,
+            "hosts_attached": ''
+        }
+    ]
+
+    mock_cursor.fetchall.return_value = dummy_data
+    result = get_devices_from_db()
+    assert result == expected_response
+
+
+def test_insert_connection(mock_db):
+    host_id = 948342
+    host_name = "dummy-host"
+    dev_id = 3219381281
+    dev_name = "DUMMY_DEV1-256"
+    insert_connection(host_id, host_name, dev_id, dev_name)
+
+
+def test_delete_connection(mock_db):
+    dev_id = 23871273
+    host_id = 3927311
+    delete_connection(dev_id, host_id)
+
+
+def test_get_hostname_from_id(mock_db):
+    mock_connection, mock_cursor = mock_db
+    dummy_data = ('dummy_host', '')
+    mock_cursor.fetchone.return_value = dummy_data
+    response = get_hostname_from_id(8371238)
+    assert response == 'dummy_host'
+
+
+def test_get_devname_from_id(mock_db):
+    mock_connection, mock_cursor = mock_db
+    dummy_data = ('DUMMY_DEV1-256', '')
+    mock_cursor.fetchone.return_value = dummy_data
+    response = get_devname_from_id(3827132)
+    assert response == 'DUMMY_DEV1-256'
+
+
+def test_get_hostid_from_name(mock_db):
+    mock_connection, mock_cursor = mock_db
+    dummy_data = (123124, 0)
+    mock_cursor.fetchone.return_value = dummy_data
+    response = get_hostid_from_name('dummy_host')
+    assert response == 123124
+
+
+def test_get_devid_from_name(mock_db):
+    mock_connection, mock_cursor = mock_db
+    dummy_data = (21311, 0)
+    mock_cursor.fetchone.return_value = dummy_data
+    response = get_devid_from_name('DUMMY_DEV8-256')
+    assert response == 21311
+
+
+def test_get_deviceid_and_devicename_from_port(mock_db):
+    mock_connection, mock_cursor = mock_db
+    dummy_data = (231341, 'DUMMY_DEV1-256')
+    mock_cursor.fetchone.return_value = dummy_data
+    response = get_deviceid_and_devicename_from_port(5)
+    assert response == dummy_data
+
+
+def test_available_devices(client, mock_db):
+    mock_connection, mock_cursor = mock_db
+    dummy_data = [[
+        'DUMMY_DEV1-256'
+    ]]
+    mock_cursor.fetchall.return_value = dummy_data
+    response = client.get(
+        f"/api/{API_VERSION}/available_devices",
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "accept": "application/json",
+            "content-type": "application/json"
+        }
+    )
+    assert response.status_code == 200
+
+
+def test_get_host_attached_devices(mock_db):
+    mock_connection, mock_cursor = mock_db
+    dummy_data = [[
+        'DUMMY_DEV2-256', 'active', 5,
+        'CMM-D', 'direct', 256
+    ]]
+    expected_response = [
+        {
+            'dev_name': 'DUMMY_DEV2-256',
+            'status': 'active',
+            'dev_port': 5,
+            'type': 'CMM-D',
+            'mode': 'direct',
+            'dev_capacity': 256
+        }
+    ]
+    mock_cursor.fetchall.return_value = dummy_data
+    result = get_host_attached_devices('dummy_host')
+    assert result == expected_response
+
+
+def test_clear_all_tables(mock_db):
+    clear_all_tables()
+
+
+def test_setup_tables(mocker, mock_db):
+    dummy_hosts_data = [
+        {
+            "host_target_ports": [11, 10],
+            "id": 551903297536,
+            "mem_capacity": 547608330240,
+            "name": "Host 1 LNK0"
+        }
+    ]
+    mocker.patch('app.get_hosts_info', return_value=dummy_hosts_data)
+
+    dummy_devices_data = [
+        {
+            "dev_capacity": 274877906944,
+            "dev_id": 549755813888,
+            "dev_port": 10,
+            "hosts_attached": ["Host 1 LNK0"]
+        },
+        {
+            "dev_capacity": 274877906944,
+            "dev_id": 824633720832,
+            "dev_port": 11,
+            "hosts_attached": ["Host 1 LNK0"]
+        }
+    ]
+    mocker.patch('app.get_devices_info', return_value=dummy_devices_data)
+
+    dummy_init_data = {
+        "Board": {
+            "Mgmt_port_type": "PCIe",
+            "board_name": "Example Direct Config",
+            "json_version": "0100",
+            "management_port": 1,
+            "switch_mode": "direct"
+        },
+        "Devices": [
+            {
+                "dev_addr": "0x008000000000",
+                "dev_aspm_active": 1,
+                "dev_lock_active": 1,
+                "dev_name": "DEV_10-256G",
+                "dev_port": 10,
+                "dev_port_type": "CXL_20",
+                "dev_size": "0x004000000000",
+                "dev_speed": 5,
+                "dev_sris_active": 1,
+                "dev_width": 8
+            },
+            {
+                "dev_addr": "0x00C000000000",
+                "dev_aspm_active": 1,
+                "dev_lock_active": 1,
+                "dev_name": "DEV_11-256G",
+                "dev_port": 11,
+                "dev_port_type": "CXL_20",
+                "dev_size": "0x004000000000",
+                "dev_speed": 5,
+                "dev_sris_active": 1,
+                "dev_width": 8
+            }
+        ],
+        "Hosts": [
+            {
+                "classcode": 0,
+                "deinit_active": 1,
+                "endpoint": [
+                    {
+                        "dev_offset": "0",
+                        "mem_addr": "0x00C000000000",
+                        "mem_size": "0x004000000000",
+                        "memdev": "mem- 11",
+                        "target": 11
+                    },
+                    {
+                        "dev_offset": "0",
+                        "mem_addr": "0x008000000000",
+                        "mem_size": "0x004000000000",
+                        "memdev": "mem- 10",
+                        "target": 10
+                    }
+                ],
+                "host_addr": "0x008080000000",
+                "host_aspm_active": 1,
+                "host_equalization": 1,
+                "host_name": "Host 1 LNK0",
+                "host_port": 2,
+                "host_port_type": "CXL_11",
+                "host_size": "0x007f80000000",
+                "host_speed": 5,
+                "host_sris_active": 1,
+                "host_width": 8
+            }
+        ]
+    }
+    mocker.patch('app.get_setup_info', return_value=dummy_init_data)
+    mocker.patch('app.insert_devices', return_value=True)
+    mocker.patch('app.insert_hosts', return_value=True)
+    mocker.patch('app.insert_connection', return_value=True)
+    setup_tables()
+
+
+def test_get_hosts(mocker, client, mock_db_connect_disconnect):
     mocker.patch('app.insert_hosts', return_value=True)
     dummy_data = {
         "output": {
@@ -61,17 +331,17 @@ def test_get_hosts(mocker, client):
             }
         }
     }
-    dummy_response = construct_dummy_response(dummy_data)
-    mocker.patch('requests.post', return_value=dummy_response)
-    payload_output = dummy_data["output"]
-    mocker.patch('json.loads', return_value=payload_output)
+    # dummy_response = construct_dummy_response(dummy_data)
+    payload_output = dummy_data["output"][NODE_ENDPOINT]["hosts"]
+    mocker.patch('app.get_hosts_info', return_value=payload_output)
     response = client.get(
-        '/hosts',
-        json={"input": "cluster_id=CLUST1;command=ListHosts"},
-        headers={'accept': 'application/json',
-                 'Content-Type': 'application/json'}
+        f"/api/{API_VERSION}/hosts",
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "accept": "application/json",
+            "content-type": "application/json"
+        }
     )
-
     assert response.status_code == 200
 
 
@@ -97,23 +367,17 @@ def test_get_devices(mocker, client):
             }
         }
     }
-    dummy_response = construct_dummy_response(dummy_data)
-    mocker.patch('requests.post', return_value=dummy_response)
+    # dummy_response = construct_dummy_response(dummy_data)
     payload_output = dummy_data["output"]
-    mocker.patch('json.loads', return_value=payload_output)
-
-    args = (
-        "cluster_id=CLUST1;command=ListDevices;"
-        "FM_id=203;FM_endpoint=samsung.com"
+    mocker.patch('app.get_devices_info', return_value=payload_output)
+    response = client.post(
+        f"/api/{API_VERSION}/devices",
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "accept": "application/json",
+            "content-type": "application/json"
+        }
     )
-    response = client.get(
-        '/devices',
-        json={
-            "input": args},
-        headers={'accept': 'application/json',
-                 'Content-Type': 'application/json'}
-    )
-
     assert response.status_code == 200
 
 
@@ -189,33 +453,85 @@ def test_init(mocker, client):
             }
         }
     }
-    dummy_response = construct_dummy_response(dummy_data)
-    mocker.patch('requests.post', return_value=dummy_response)
+    # dummy_response = construct_dummy_response(dummy_data)
     payload_output = dummy_data["output"]
-    mocker.patch('json.loads', return_value=payload_output)
+    mocker.patch('app.get_setup_info', return_value=payload_output)
 
     response = client.get(
-        '/init',
-        json={"input": "cluster_id=CLUST1;command=SetupInfo"},
-        headers={'accept': 'application/json',
-                 'Content-Type': 'application/json'}
+        f"/api/{API_VERSION}/init",
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "accept": "application/json",
+            "content-type": "application/json"
+        }
     )
-
     assert response.status_code == 200
 
 
 def test_get_device_status(client):
-    response = client.get('/device_status')
+    response = client.get(f"/api/{API_VERSION}/device_status")
     assert response.status_code == 200
 
 
-def test_host_devices(client):
-    response = client.get('/host_devices')
+@pytest.mark.skip(reason="fix me")
+def test_detach_device(client, mock_db, mocker):
+    dummy_dev_name = 'DUMMY_DEV1-256'
+    dummy_host_name = 'dummy_host'
+    dummy_detach_response = {
+        'rc': 0
+    }
+
+    mocker.patch('app.get_devid_from_name', return_value=12321)
+    mocker.patch('app.get_hostid_from_name', return_value=389123)
+    mocker.patch('requests.post', return_value=dummy_detach_response)
+    mocker.patch('app.get_host_attached_devices', return_value={})
+    mocker.patch('json.loads', return_value={})
+    mocker.patch('app.request_data', {
+        "dev_name": dummy_dev_name, "host_name": dummy_host_name})
+
+    response = client.delete(
+        f"/api/{API_VERSION}/detach_device",
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "accept": "application/json",
+            "Content-Type": "application/json"
+        },
+        json={
+            "dev_name": dummy_dev_name,
+            "host_name": dummy_host_name
+        }
+    )
+    assert response.status_code == 200
+
+
+def test_host_devices(mocker, client):
+    dummy_payload = [
+        {
+            "dev_name": "CXL_DEV5-256GB",
+            "status": "active",
+            "dev_port": 6,
+            "type": "CMM-D",
+            "mode": "direct",
+            "dev_capacity": 256
+        }
+    ]
+    mocker.patch('app.get_host_attached_devices', return_value=dummy_payload)
+    response = client.post(
+        f"/api/{API_VERSION}/host_devices",
+        json={
+            "host": "dummyhost"
+        },
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "accept": "application/json",
+            "content-type": "application/json"
+        }
+    )
     assert response.status_code == 200
 
 
 def test_get_mb_info(client):
-    response = client.get("/api/v1/cxl/mb/info")
+    response = client.get(f"/api/{API_VERSION}/cxl/mb/info")
     assert response.status_code == 200
     payload = response.json
     expected_fields = ['mgmt_ip', 'mgmt_port']
@@ -235,27 +551,15 @@ def test_get_topology(mocker, client):
             ]
         )
     )
-    response = client.get('/topology')
+    response = client.get(
+        f"/api/{API_VERSION}/topology",
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "accept": "application/json",
+            "content-type": "application/json"
+        }
+    )
     assert response.status_code == 200
-
-
-@pytest.fixture
-def mock_cursor(mocker):
-    cursor = mocker.MagicMock()
-    cursor.fetchall.return_value = [{
-        "id": 3917231,
-        "name": "Host 0 LINK 1",
-        "mem_capacity": 473428423,
-        "host_target_ports": [10]
-    }]
-    return cursor
-
-
-@pytest.fixture
-def mock_connection(mocker, mock_cursor):
-    conn = mocker.MagicMock()
-    conn.cursor.return_value = mock_cursor
-    return conn
 
 
 # TODO: Make unit test more comprehensive

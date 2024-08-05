@@ -28,7 +28,7 @@
     margin-top: -7px;
     border: 1px solid #ffff;
     height: 250px;
-    
+    padding-top: 20px;
 }
 .cxl-switch-box {
     margin-top: 24px;
@@ -79,16 +79,23 @@
 .vertical-line {
     height: 19px;
     width: 1px;
-    margin-left: 16px;
+    margin-left: 40px;
 }
 .cxl-dev {
-    margin-top: -7px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: auto;
+    box-sizing: border-box;
+    padding: 0rem 1rem 0rem 1rem;
+    transition: transform 0.3s ease;
 }
 .bg-primary{
     background-color: black !important;
     border: 2px solid #00C3B2;
     margin-bottom: 0px;
-    margin-left: -24px;
+    margin-left: -32px;
     margin-right: 36px;
 }
 .line {
@@ -185,6 +192,10 @@
 .device-img {
     margin-left:45px;
     width: 54px;
+    object-fit: contain;
+    margin-top: 0;
+    max-width: auto;
+    height: auto;
 }
 .device-Id {
     margin-left:48px;
@@ -199,6 +210,60 @@
     width: 26px;
     margin-top:-5px;
 }
+.carousel-content {
+    background-color: #000000;
+  }
+/* CMM Navigation Bar */
+.cmm-navigation {
+    display: flex;
+    justify-content: space-around;
+    margin-bottom: 20px;
+  }
+  
+  .cmm-title {
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: bold;
+    padding: 8px 10px;
+    transition: background-color 0.3s, color 0.3s;
+  }
+  
+  .cmm-title:hover,
+  .cmm-title.active {
+    background-color: #0077C8;
+    color: #ffffff;
+    border-radius: 5px;
+  }
+  
+  /* Arrow Buttons */
+  .arrow-button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    outline: none;
+  }
+  
+  .arrow-button img {
+    width: 34px;
+    height: 21px;
+    transition: transform 0.2s;
+    padding-top: 6px;
+  }
+  
+  .arrow-button:hover img {
+    transform: scale(1.1);
+  }
+  
+  .left-arrow {
+    position: absolute;
+    left: 72px;
+  }
+  
+  .right-arrow {
+    position: absolute;
+    right: 641px;
+  }
+  
 @media screen and (min-width: 768px) and ( max-width: 1023px) {
     .cxl-switch-scroll {
         margin-left: 6px;
@@ -273,7 +338,7 @@
         margin-left: 82px;
     }
     .badge {
-        width: 84px;
+        width: 100px;
     }
     .host-round-icon {
         width: 14px;
@@ -329,20 +394,20 @@
         margin-left: 82px;
     }
     .badge {
-        width: 88px;
+        width: 143px;
     }
     .host-round-icon {
         width: 14px;
         margin-left: 0px;
     }
-    .cxl-device {
-        margin-left: 56px;
-    }
+    /* .cxl-device {
+        margin-left: 98px;
+    } */
     .cxl-switch {
         margin-left: 347px;
     }
     .cxl-dev {
-        margin-left: -7px;
+        gap: 1;
     }
     .host-icon {
         display: flex;
@@ -359,15 +424,15 @@
         margin-left: 50px;
     }
     .device-name {
-        margin-left: 48px;
+        margin-left: 12px;
     }
     .device-img {
-        margin-left: 25px;
-        width: 68px;
+        margin-left: 20px;
+        width: 81px;
     }
     .device-Id {
-        margin-left: 35px;
-        margin-top: 4px;
+        margin-left: 4px;
+        margin-top: -2px;
     }
 }
 @media screen and (min-width: 2560px) {

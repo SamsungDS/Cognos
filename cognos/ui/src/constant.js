@@ -11,26 +11,27 @@ export const InactiveLight =  require('../src/assets/gifs/Icon-Yellow-Light.gif'
 export const ReadyLight = require('../src/assets/gifs/Icon-Blue-Light.gif')
 export const hostSelectorTitle = 'Select Application Server:';
 export const hostSelectorOptions = [
-    { value: 'host_2', label: 'Host 2' },
-    { value: 'host_1', label: 'Host 1' }
+    {value: '', label: 'Select' },
+    { value: 'host_1', label: 'Host 1 LNK0' }
   ];
 export const memboxSelectorTitle = 'Select CMM-B:';
 export const memboxSelectorOptions = [
     {value: 'mb-1', label: 'mb-1'}
   ];
-export const lmdTableHeader = [
+
+export const attachedDevicesTableHeader = [
     'Attach/Detach',
     'CXL Device',
-    'Memory Type',
+    'Status',
+    'Type',
     'Mode',
-    'Total Capacity',
-    'Capacity Usage'
+    'Total Capacity (GB)'
 ]
 export const memboxTableHeader = [
-    'Status',
     'CXL Device',
-    'Device Type',
-    'Total Capacity',
+    'CXL Device ID',
+    'Total Capacity (GB)',
+    'Device Port',
     'Application Servers'
 ]
   export const pattern = require('../src/assets/icons/Pattern.png');
@@ -86,12 +87,120 @@ export const memboxTableHeader = [
   export const hosts = 'Hosts';
   export const CMM = 'CMM';
   export const racks = 'Racks';
-  export const sys_mem_allcated = 'System Memory Allocated';
+  export const sys_mem_allcated = 'CMM-B Memory In-Use';
   export const cmmd = 'CMM-D';
   export const cmmh = 'CMM-H';
-  export const health = 'Health';
+  export const health = 'CXL Device Status';
   export const host ='Host';
   export const trend_graph= 'Trend Graph';
   export const system_bandwidth = 'System Bandwidth';
   export const rackBandwidth_id = 'rackBandwidth-id';
   export const dramCxlMemUsage_id = 'dramCxlMemUsage-id';
+  export const deviceName = 'DEVX';
+  export const deviceMode =  'direct';
+  export const DeviceList = [
+    // {
+    //   device: 'DEV_1-256G'
+    // },
+    {
+      device: 'DEV_2-256G'   
+    },
+    {
+      device: 'DEV_3-256G'
+    },
+    {
+      device: 'DEV_4-256G'
+    },
+    {
+      device: 'DEV_5-256G'
+    },
+    // {
+    //   device: 'DEV_6-256G'
+    // },
+    // {
+    //   device: 'DEV_7-256G'
+    // },
+    {
+      device: 'DEV_8-256G'
+    },
+    {
+      device: 'DEV_10-256G'
+    },
+    {
+      device: 'DEV_11-256G'
+    }
+  ] 
+  export const DeviceList1 = [
+    {
+      device: 'DEV_1-256G'
+    },
+    {
+      device: 'DEV_2-256G'   
+    },
+    {
+      device: 'DEV_3-256G'
+    },
+    {
+      device: 'DEV_4-256G'
+    },
+    {
+      device: 'DEV_5-256G'
+    },
+    {
+      device: 'DEV_6-256G'
+    },
+    {
+      device: 'DEV_7-256G'
+    },
+    {
+      device: 'DEV_8-256G'
+    },
+    {
+      device: 'DEV_9-256G'
+    },
+    {
+      device: 'DEV_10-256G'   
+    },
+    {
+      device: 'DEV_11-256G'
+    },
+    {
+      device: 'DEV_12-256G'
+    },
+    {
+      device: 'DEV_13-256G'
+    },
+    {
+      device: 'DEV_14-256G'
+    },
+    {
+      device: 'DEV_15-256G'
+    },
+    {
+      device: 'DEV_16-256G'
+    },
+    {
+      device: 'DEV_17-256G'
+    },
+    {
+      device: 'DEV_18-256G'   
+    },
+    {
+      device: 'DEV_19-256G'
+    },
+    {
+      device: 'DEV_20-256G'
+    },
+    {
+      device: 'DEV_21-256G'
+    },
+    {
+      device: 'DEV_22-256G'
+    },
+    {
+      device: 'DEV_23-256G'
+    },
+    {
+      device: 'DEV_24-256G'
+    }
+  ] 

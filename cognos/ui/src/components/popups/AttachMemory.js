@@ -5,7 +5,7 @@ import Modal from 'react-bootstrap/Modal';
 import 'rc-slider/assets/index.css';
 import './MemoryPopup.css';
 
-const AttachMemory = ({ show, onSave, onCancel, availableLMDs }) => {
+const AttachMemory = ({ show, onSave, onCancel, availableLMDs, selectedValue }) => {
     const [logicalMemoryDevice, setLogicalMemoryDevice] = useState('');
     const [memoryMode, setMemoryMode] = useState('');
     const [lmdCapacity, setlmdCapacity] = useState();
@@ -18,7 +18,7 @@ const AttachMemory = ({ show, onSave, onCancel, availableLMDs }) => {
 
     const handleAttach = () => {
         const formData = {
-        lmd: logicalMemoryDevice,
+        dev_name: logicalMemoryDevice,
         host_memory_address: hostMemoryAddress,
         lmdCapacity,
         };
@@ -29,7 +29,8 @@ const AttachMemory = ({ show, onSave, onCancel, availableLMDs }) => {
     }
     const options = availableLMDs ? availableLMDs.map((item) => (
         <option key={item} value={item}>{item}</option>)): [];
-    
+    const label = selectedValue?.label;
+
     return (<div>
         <Modal show={show} onHide={onCancel} className='custom-modal' id='attach-modal-id' data-testid='attach-memory-modal'>
             <Modal.Header closeButton closeVariant="white">
@@ -51,7 +52,19 @@ const AttachMemory = ({ show, onSave, onCancel, availableLMDs }) => {
                                 </Form.Group>
                             </Col>
                             <Col xs={6} md={6}>
-                               <Form.Group className="mb-3" controlId="memoryMode">
+                                <Form.Group className="mb-3" controlId="applicationServer">
+                                    <Form.Label>Application Server </Form.Label>
+                                    <Form.Control
+                                       type="text"
+                                       placeholder={label}
+                                       readOnly
+                                    />
+                                </Form.Group>
+                            </Col>
+                        </Row>
+                        <Row>
+                            <Col xs={6} md={6}>
+                                <Form.Group className="mb-3" controlId="memoryMode">
                                     <Form.Label>Memory Mode</Form.Label>
                                     <Form.Select
                                         value={memoryMode}
@@ -60,10 +73,7 @@ const AttachMemory = ({ show, onSave, onCancel, availableLMDs }) => {
                                     </Form.Select>
                                 </Form.Group>
                             </Col>
-                        </Row>
-                        <Row>
-                            <Col xs={12} md={12}>
-                                <Button onClick={handleAdvancedMemSettings} style={{color: 'white'}} data-testid='Advanced Memory Settings'>+ Advanced Memory Settings</Button>
+                            <Col xs={6} md={6}>
                                 {advancedMemSettings && <Form.Group className="mb-3" controlId="hostMomoryAddress">
                                     <Form.Label>start offset</Form.Label>
                                     <Form.Control
@@ -79,6 +89,7 @@ const AttachMemory = ({ show, onSave, onCancel, availableLMDs }) => {
                 </Form>
             </Modal.Body>
             <Modal.Footer>
+                <Button className="advanced-settings-btn" onClick={handleAdvancedMemSettings} data-testid='Advanced Memory Settings'>+ Advanced Memory Settings</Button>
                 <Button variant='secondary' onClick={onCancel} data-testid='attach-memory-cancel-button'>
                     Cancel
                 </Button>

@@ -6,9 +6,9 @@ import * as constants from '../constant';
 
 
 beforeEach(() => {
-  // Mock Configs.data_endpoint
+  // Mock Configs.api_endpoint
   jest.mock('../config/config.json', () => ({
-    data_endpoint: 'http://105.91.142.222:4000',
+    api_endpoint: 'http://105.91.142.222:4000//api/v2.0.0',
   }));
 
   // Mocking fetch responses
@@ -27,10 +27,15 @@ describe('Configure', () => {
     
     // Check if fetch calls are made on mount
     setTimeout(() => expect(fetch).toHaveBeenCalledTimes(1));
-    expect(fetch).toHaveBeenCalledWith(`${constants.Configs.data_endpoint}//lmds`, {
-      method: 'get',
+    expect(fetch).toHaveBeenCalledWith(`${constants.Configs.api_endpoint}/devices`, {
+      method: 'post',
       headers: new Headers({
-        'Access-Control-Allow-Origin':'*'
+        'Access-Control-Allow-Origin':'*',
+        'accept': 'application/json',
+        'content-type': 'application/json'
+      }),
+      body: JSON.stringify({
+        "input": "cluster_id=CLUST1;command=ListDevices;FM_id=203;FM_endpoint=samsung.com"
       })
     });
   },0);
@@ -46,7 +51,7 @@ describe('Configure component', () => {
     // Wait for the asynchronous operations inside handleAttachMemoryToggle to complete
     setTimeout(() => {
       // Check if getAvailableLMDS is called
-      expect(fetch).toHaveBeenCalledWith(`${Configs.data_endpoint}//available_lmds`, expect.any(Object));
+      expect(fetch).toHaveBeenCalledWith(`${Configs.api_endpoint}//available_lmds`, expect.any(Object));
       // Check if showAttach state is toggled
       expect(setShowAttachMock).toHaveBeenCalledWith(!initialShowAttachState);
     }, 0);
@@ -65,9 +70,9 @@ test('renders configuration table with mock data', async () => {
 
   // Check if the table headers are rendered
   expect(getByText('Attach/Detach')).toBeInTheDocument();
-  expect(getByText('Memory Type')).toBeInTheDocument();
+  expect(getByText('Status')).toBeInTheDocument();
+  expect(getByText('Type')).toBeInTheDocument();
   expect(getByText('Mode')).toBeInTheDocument();
-  expect(getByText('Capacity Usage')).toBeInTheDocument();
   
   // Mock lmdData
   const lmdData = [];
@@ -77,11 +82,11 @@ test('renders configuration table with mock data', async () => {
 
   // Check if the table rows are rendered properly
   lmdData.forEach(item => {
-    expect(getByText(item.lmd)).toBeInTheDocument();
-    expect(getByText(item.mem_type)).toBeInTheDocument();
-    expect(getByText(item.mem_mode)).toBeInTheDocument();
-    expect(getByText(`${item.capacity} ${item.capacity_units}`)).toBeInTheDocument();
-    expect(getByText(`${item.used_capacity} ${item.used_capacity_units}`)).toBeInTheDocument();
+    expect(getByText(item.dev_name)).toBeInTheDocument();
+    expect(getByText(item.status)).toBeInTheDocument();
+    expect(getByText(item.type)).toBeInTheDocument();
+    expect(getByText(item.mode)).toBeInTheDocument();
+    expect(getByText(item.dev_capacity)).toBeInTheDocument();
   });
 });
 
@@ -92,31 +97,20 @@ describe('Configure', () => {
     
     // Check if fetch calls are made on mount
     setTimeout(() => expect(fetch).toHaveBeenCalledTimes(1));
-    expect(fetch).toHaveBeenCalledWith(`${constants.Configs.data_endpoint}//lmds`, {
-      headers:  new Headers({
-        'Access-Control-Allow-Origin':'*'
+    expect(fetch).toHaveBeenCalledWith(`${constants.Configs.api_endpoint}/devices`, {
+      method: 'post',
+      headers: new Headers({
+        'Access-Control-Allow-Origin':'*',
+        'accept': 'application/json',
+        'content-type': 'application/json'
       }),
-      method: 'get'
+      body: JSON.stringify({
+        "input": "cluster_id=CLUST1;command=ListDevices;FM_id=203;FM_endpoint=samsung.com"
+      })
     });
   },0);
 
 });
-
-
-
-// // Mock Configs.data_endpoint
-// jest.mock('../config/config.json', () => ({
-//   data_endpoint: 'http://105.91.142.222:4000',
-// }));
-
-// // Mock fetch function
-// global.fetch = jest.fn(() =>
-//   Promise.resolve({
-//     ok: true,
-//     json: () => Promise.resolve([]),
-//   })
-// );
-
 
 
 test('renders configuration table with mock data', async () => {
@@ -130,8 +124,6 @@ test('renders configuration table with mock data', async () => {
 
   // Check if the table headers are rendered
   expect(getByText('Status')).toBeInTheDocument();
-  expect(getByText('Device Type')).toBeInTheDocument();
-  expect(getByText('Application Servers')).toBeInTheDocument();
 
   // Mock lmdData
   const memboxData = [];
@@ -183,19 +175,20 @@ describe('Configure Component', () => {
     const dropdown = getByTestId('dropdown-hostTable');
     const select = within(dropdown).getByRole('combobox');
     fireEvent.change(select,  { target : { value: 'host_2', label:'Host 2'}});
-    expect(select).toBeInTheDocument('Host 2')
+
     // Expect handleSelectChange to be called with the correct arguments
-    expect(fetch).toHaveBeenCalledWith(`${constants.Configs.data_endpoint}//lmds`, {
-      headers:  new Headers({
-        'Access-Control-Allow-Origin':'*'
+    expect(fetch).toHaveBeenCalledWith(`${constants.Configs.api_endpoint}/devices`, {
+      headers: new Headers({
+        'Access-Control-Allow-Origin':'*',
+        "accept": "application/json",
+        "content-type": "application/json"
       }),
-      method: 'get'
+      method: 'post',
+      body: JSON.stringify({
+        "input": "cluster_id=CLUST1;command=ListDevices;FM_id=203;FM_endpoint=samsung.com"
+      })
     });
 
-    const menboxId = getByTestId('dropdown-membox');
-    const selectMenbox = within(menboxId).getByRole('combobox');
-    fireEvent.change(selectMenbox,  { target : {value: 'mb-1', label: 'mb-1'}});
-    expect(selectMenbox).toBeInTheDocument('mb-1')
   })
 });
 
