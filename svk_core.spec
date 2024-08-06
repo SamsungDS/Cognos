@@ -1,5 +1,5 @@
 Name:           svk-core
-Version:        %{getenv:GIT_VER}
+Version:        %{getenv:GIT_VER_FOR_RPM}
 Release:        1%{?dist}
 Summary:        SVK core framework
 Requires:       spdlog
@@ -15,6 +15,7 @@ SVK API routing framework library for SVK apps and feature modules.
 %package devel
 Summary:        SVK core devel package contains headers and sample_feature
 Provides:       svk-core-devel = %{version}
+Requires:       svk-core = %{version}
 
 %description devel
 SVK downstream, upstream, and other related header files for app/feature development
@@ -28,23 +29,26 @@ mkdir -p %{buildroot}/%{installpath}
 %if "%{getenv:CMAKE_INSTALL_PREFIX}" != ""
 cp -rf %{getenv:CMAKE_INSTALL_PREFIX}/include %{buildroot}/%{installpath}
 cp -rf %{getenv:CMAKE_INSTALL_PREFIX}/lib64 %{buildroot}/%{installpath}
-cp -rf %{getenv:CMAKE_INSTALL_PREFIX}/tests/sample_feature %{buildroot}/%{installpath}
+cp -rf %{getenv:CMAKE_INSTALL_PREFIX}/tests %{buildroot}/%{installpath}
+cp -rf %{getenv:CMAKE_INSTALL_PREFIX}/lib %{buildroot}/%{installpath}
 
 # If rpmbuild is run manually, use default build dir svk-core, unless user gives a different name
 %else
 cp -rf %{core_build_dir}/include %{buildroot}/%{installpath}
 cp -rf %{core_build_dir}/lib64 %{buildroot}/%{installpath}
-cp -rf %{core_build_dir}/tests/sample_feature %{buildroot}/%{installpath}
+cp -rf %{core_build_dir}/lib %{buildroot}/%{installpath}
+cp -rf %{core_build_dir}/tests %{buildroot}/%{installpath}
 %endif
 
 %files
 #%license add-license-file-here
 #%doc add-docs-here
+%{installpath}/lib
 %{installpath}/lib64
 
 %files devel
 %{installpath}/include
-%{installpath}/sample_feature
+%{installpath}/tests
 
 %clean
 rm -rf %{buildroot}
@@ -56,12 +60,30 @@ if [ -z "$SVK_LDCONFIG" ];then
 fi
 touch /etc/ld.so.conf.d/svk-core-x86_64.conf
 chmod a+r /etc/ld.so.conf.d/svk-core-x86_64.conf
-echo "$installpath/lib64" | tee -a /etc/ld.so.conf.d/svk-core-x86_64.conf
+cat >  /etc/ld.so.conf.d/svk-core-x86_64.conf << EOF
+$installpath/lib
+$installpath/lib64
+EOF
+if [ -f $installpath/lib64/pkgconfig/svkframework.pc ]; then
+    mkdir -p /usr/lib64/pkgconfig
+    ln -s $installpath/lib64/pkgconfig/svkframework.pc /usr/lib64/pkgconfig/svkframework.pc
+fi
+if [ -f $installpath/lib/pkgconfig/svkframework.pc ]; then
+    mkdir -p /usr/lib/pkgconfig
+    ln -s $installpath/lib/pkgconfig/svkframework.pc /usr/lib/pkgconfig/svkframework.pc
+fi
+
 /usr/sbin/ldconfig
 
 %postun
 rm /etc/ld.so.conf.d/svk-core-x86_64.conf
 /usr/sbin/ldconfig
+if [ -h /usr/lib/pkgconfig/svkframework.pc ]; then
+    rm /usr/lib/pkgconfig/svkframework.pc
+fi
+if [ -h /usr/lib64/pkgconfig/svkframework.pc ]; then
+    rm /usr/lib64/pkgconfig/svkframework.pc
+fi
 
 %changelog
 * Mon Jun 24 2024 Aaron Lee <a.lee03@samsung.com>

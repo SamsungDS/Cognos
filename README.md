@@ -30,7 +30,7 @@ To build and install necessary artifacts to a specified directory, this is the c
 
 ### Release build & RPMs
 
-To do a release build, use the `-r` flag. This will create a tarball and two release RPMs (add the `--build-rpms` flag), svk-core and svk-core-devel. These will contain the framework related headers/libs, as well as the sample feature module in case it is needed for testing. By default, installing the RPM will install to the path `/usr/local/svk/core`, but giving `-i <install_path>` to the build script will make RPMs install to `install_path`. When installing the RPMs with a separate install path, export the `SVK_LDCONFIG` env var, so the ldconfig gets updated properly. Otherwise, you will need to update it yourself.
+To do a release build, use the `-r` flag. This will create a tarball and two release RPM/DEB files (add the `--build-package` flag), svk-core and svk-core-devel in the $PROJECT_ROOT/build directory. These will contain the framework related headers/libs, as well as the sample feature module in case it is needed for testing. By default, installing the RPM will install to the path `/usr/local/svk/core`, but giving `-i <install_path>` to the build script will make packages install to `install_path`. When installing the packages with a separate install path, export the `SVK_LDCONFIG` env var, so the ldconfig gets updated properly. Otherwise, you will need to update it yourself.
 
 ### Manual Build
 To build the SVK Framework library without tests:
