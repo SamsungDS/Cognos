@@ -6,9 +6,9 @@ set -e
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
 if [[ -e /etc/os-release ]]; then
-	source /etc/os-release
+    source /etc/os-release
 else
-	ID=unknown
+    ID=unknown
 fi
 
 # Default paths in case they are not exported automatically

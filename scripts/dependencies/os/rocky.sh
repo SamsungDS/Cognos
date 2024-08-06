@@ -2,10 +2,10 @@
 set -e
 
 # Build Dependencies
-define_build_deps() {
+install_build_deps() {
     BUILD_DEPS=()
-    BUILD_DEPS=('epel-release')
-    install_packages
+    BUILD_DEPS+=('epel-release')
+    package_manager 'install'
     BUILD_DEPS=()
     BUILD_DEPS+=('boost-devel')
     BUILD_DEPS+=('cmake')
@@ -21,26 +21,23 @@ define_build_deps() {
     BUILD_DEPS+=('wget')
     BUILD_DEPS+=('zeromq')
     BUILD_DEPS+=('zeromq-devel')
-    install_packages
+    package_manager 'install'
 }
 
 # Install from package mananger
-install_packages() {
-    # Optimizations for Docker build
-    if [[ -f /.dockerenv ]]
-    then
-        BUILD_DEPS+=('--nodocs')
-        BUILD_DEPS+=('--noplugins')
-        BUILD_DEPS+=('--setopt=install_weak_deps=0')
-    fi
-
-    # Detect package installer
+package_manager() {
+    OPERATION=$1
+    # Detect package manager tool
     INSTALLER_BIN=""
 
     if [[ -f '/usr/bin/dnf' ]]
     then
         echo "using dnf"
         INSTALLER_BIN='dnf'
+    elif [[ -f '/usr/bin/yum' ]]
+    then
+        echo "using yum"
+        INSTALLER_BIN='yum'
     elif [[ -f '/usr/bin/microdnf' ]]
     then
         echo "using microdnf"
@@ -51,15 +48,37 @@ install_packages() {
         exit 1
     fi
 
-    INSTALL_STRING="$INSTALLER_BIN install -y ${BUILD_DEPS[*]}"
+    # Optimizations for Docker build
+    if [[ $DOCKER ]]
+    then
+        if [[ $INSTALLER_BIN != 'yum' ]]
+        then
+            BUILD_DEPS+=('--nodocs')
+        fi
+        BUILD_DEPS+=('--noplugins')
+        BUILD_DEPS+=('--setopt=install_weak_deps=0')
+    fi
+
+    INSTALL_STRING="$INSTALLER_BIN $OPERATION -y ${BUILD_DEPS[*]}"
     echo "executing command: $INSTALL_STRING"
     eval "$INSTALL_STRING"
 }
 
-define_build_deps
+# Install SVK Yum Repo (Nexus)
+configure_nexus() {
+    NEXUS_YUM_REPO_FILE="http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$ID${VERSION_ID%%.*}.repo"
+    wget --no-verbose --output-document /etc/yum.repos.d/ssg-nexus.repo "$NEXUS_YUM_REPO_FILE"
+
+    # Install svk-core-devel package
+    BUILD_DEPS=('svk-core-devel')
+    package_manager 'install'
+}
+
+install_build_deps
+configure_nexus
 
 # Farther cleanup if Docker environment
-if [[ -f /.dockerenv ]]
+if [[ $DOCKER ]]
 then
     CLEANUP_STRING="$INSTALLER_BIN clean all"
     echo "executing command: $CLEANUP_STRING"
