@@ -1,4 +1,4 @@
-release build:
+release build rocky9:
   stage: build
   image:
     name: $IMAGE_TAG
@@ -8,26 +8,7 @@ release build:
     - wget --no-verbose --content-disposition -E -c "$SONAR_HOST_URL/static/cpp/build-wrapper-linux-x86.zip"
     - unzip -q build-wrapper-linux-x86.zip -d /
     # Download latest artifact from SVK Core
-    - microdnf install -y jq
-    - |
-      export CORE_ID=$(curl -s --header "PRIVATE-TOKEN: $CI_TOKEN" --insecure -X GET $CI_API_V4_URL/projects?search=SVK+Core | jq --raw-output '.[0].id')
-    - |
-      export LATEST_PACKAGE=$(curl -s --header "PRIVATE-TOKEN: $CI_TOKEN" --insecure "$CI_API_V4_URL/projects/$CORE_ID/packages?order_by=version&sort=desc")
-    - export PACKAGE_ID=$(echo $LATEST_PACKAGE | jq --raw-output '.[0].id')
-    - export PACKAGE_NAME=$(echo $LATEST_PACKAGE | jq --raw-output '.[0].name')
-    - export PACKAGE_VERSION=$(echo $LATEST_PACKAGE | jq --raw-output '.[0].version')
-    - export PACKAGE_TYPE=$(echo $LATEST_PACKAGE | jq --raw-output '.[0].package_type')
-    - |
-      export PACKAGE_FILENAME=$(curl -s --header "PRIVATE-TOKEN: $CI_TOKEN" --insecure "$CI_API_V4_URL/projects/$CORE_ID/packages/$PACKAGE_ID/package_files" | jq --raw-output '.[0].file_name')
-    - |
-      curl -s --location -O -J --header "JOB-TOKEN: $CI_JOB_TOKEN" --insecure "$CI_API_V4_URL/projects/$CORE_ID/packages/$PACKAGE_TYPE/$PACKAGE_NAME/$PACKAGE_VERSION/$PACKAGE_FILENAME"
-    # Install SVK Core artifact to root
-    - tar xvzf $PACKAGE_FILENAME --directory=/
-    # Configure and load ldconfig
-    - echo "/usr/local/svk/core/lib64" > /etc/ld.so.conf.d/svk-core-x86_64.conf
-    - echo "/usr/local/svk/core/lib" >> /etc/ld.so.conf.d/svk-core-x86_64.conf
-    - echo "/usr/local/lib" > /etc/ld.so.conf.d/svk-mgmt-fw-x86_64.conf
-    - ldconfig
+    - $PACKAGE_MANAGER install -y $CORE_PACKAGE
     # Export PKG_CONFIG_PATH env var
     - export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/local/lib/pkgconfig/:/usr/local/lib64/pkgconfig/:/usr/local/svk/core/lib64/pkgconfig/:/usr/local/svk/core/lib/pkgconfig/
     - export PATH=$PATH:/usr/local/go/bin
@@ -41,9 +22,18 @@ release build:
     paths:
      - build/*.tgz
   variables:
+    PACKAGE_MANAGER: microdnf
+    CORE_PACKAGE: svk-core-devel
     DOCKERFILE_NAME: rocky9
     IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
   needs:
     - build docker
   rules:
     - !reference [.default_rules, merge_and_push]
+
+release build ubuntu22:
+  extends: release build rocky9
+  variables:
+    PACKAGE_MANAGER: apt-get
+    CORE_PACKAGE: svk-core-dev
+    DOCKERFILE_NAME: ubuntu22

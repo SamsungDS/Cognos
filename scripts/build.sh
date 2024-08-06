@@ -96,23 +96,6 @@ mkdir -p "$PROJECT_ROOT/build"
 
 CMAKE_OPTIONS=()
 
-install_go_packages() {
-    GO_DIR="/usr/local/svk/go_dir"
-    rm -rf "$GO_DIR"
-    mkdir -p "$GO_DIR"
-    # export GOPATH="$GO_DIR"
-    # export PATH="$PATH:$GOPATH/bin"
-    GO111MODULE=on go mod init rest_api
-    GO111MODULE=on go mod tidy
-    export GO111MODULE=off
-    go get -u github.com/grpc-ecosystem/grpc-gateway/protoc-gen-grpc-gateway
-    go get -u google.golang.org/grpc/cmd/protoc-gen-go-grpc
-    go get -u github.com/grpc-ecosystem/grpc-gateway/protoc-gen-openapiv2
-    go get -u github.com/golang/protobuf/protoc-gen-go
-    rm -f go.mod go.sum
-}
-
-
 pushd "$PROJECT_ROOT/build"
     # If building release, don't build tests and code coverage
     if $RELEASE;then
@@ -144,8 +127,6 @@ pushd "$PROJECT_ROOT/build"
 
     export GOPATH=/usr/local/svk/go_dir
     export PATH=$PATH:$GOPATH/bin
-
-    install_go_packages
 
     printf "Cmake options: %s\n" "${CMAKE_OPTIONS[@]}"
 

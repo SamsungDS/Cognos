@@ -1,6 +1,6 @@
-unit test:
+unit test rocky9:
   stage: test
-  extends: release build
+  extends: release build rocky9
   script:
     - /build-wrapper-linux-x86/build-wrapper-linux-x86-64 --out-dir bw-output/ ./scripts/build.sh --build-tests --with-coverage
   after_script:
@@ -20,3 +20,10 @@ unit test:
         coverage_format: cobertura
         path: $GITLAB_COVERAGE_REPORT
       junit: $GITLAB_JUNIT_REPORT
+
+unit test ubuntu22:
+  extends: unit test rocky9
+  variables:
+    PACKAGE_MANAGER: apt-get
+    CORE_PACKAGE: svk-core-dev
+    DOCKERFILE_NAME: ubuntu22

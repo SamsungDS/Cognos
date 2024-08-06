@@ -1,4 +1,4 @@
-publish release artifacts:
+publish release artifacts rocky9:
   stage: deploy
   image: alpine:3.19.1
   before_script:
@@ -14,7 +14,12 @@ publish release artifacts:
         --insecure --upload-file {} \
         "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$CI_PROJECT_NAME/${VERSION:1}/$(basename {})"' \
         \;
-  dependencies:
-    - release build
+  needs:
+    - release build rocky9
   rules:
     - !reference [.default_rules, push_only]
+
+publish release artifacts ubuntu22:
+  extends: publish release artifacts rocky9
+  needs:
+    - release build ubuntu22
