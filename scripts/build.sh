@@ -40,10 +40,10 @@ help()
     echo "  Release build. Generates a tarball called svk-core-<version>.tgz by default."
     echo "-f | --filename"
     echo "  Filename prefix to use for release tarball. Only applicable when building with release flag."
-    echo "-b | --build-rpms"
-    echo "  Generate SVK core RPMs."
+    echo "-b | --build-package"
+    echo "  Generate SVK core RPMs/DEB packages."
     echo "-i | --install-path"
-    echo "  Path that RPMs should install core to (Default: /usr/local/svk/core). Only applicable when building with release flag."
+    echo "  Path that RPMs/DEBs should install core to (Default: /usr/local/svk/core). Only applicable when building with release flag."
     exit
 }
 
@@ -77,32 +77,79 @@ parse_options()
         shift
         shift
         ;;
-        -b|--build-rpms)
-        INSTALL_RPM=true
+        -b|--build-package)
+        GENERATE_PACKAGE=true
         shift
         ;;
         -i|--install-path)
-        RPM_INSTALL_PATH="$2"
+        PACKAGE_INSTALL_PATH="$2"
         shift
         shift
         ;;
         *)
+        echo "Invalid option provided. Check the valid options"
+        help
         ;;
     esac
     done
 }
+
+GIT_VER=$(git describe --abbrev=4 --always --tags) #Commit hash causing issues with rpmbuild
 
 generateRPMs()
 {
     local rpmBuildDir=$1
     local installpath=$2
 
-    GIT_VER="$(git describe --abbrev=0 --always --tags)" #Commit hash causing issues with rpmbuild
-    export GIT_VER
+    local GIT_VER_FOR_RPM
+    GIT_VER_FOR_RPM=$(git describe --abbrev=4 --always --tags|sed 's/-/_/g'|sed 's/v//g')
+    export GIT_VER_FOR_RPM
     export CMAKE_INSTALL_PREFIX
 
     rpmbuild -bb --clean "$PROJECT_ROOT/svk_core.spec" --define "_topdir $rpmBuildDir" --define "installpath $installpath"
-    ls "$RPMBUILD_DIR/RPMS/x86_64"
+    cp "$RPMBUILD_DIR/RPMS/x86_64"/svk-core-*.rpm "$PROJECT_ROOT/build"
+}
+
+generateDebPackage()
+{
+    installpath=$1
+
+    export CMAKE_INSTALL_PREFIX
+    # Debian package control file expects the version to be starting with integer
+    local GIT_VER_IN_NUM
+    GIT_VER_IN_NUM=$(git describe --abbrev=4 --always --tags|sed 's/v//g')
+
+    # Generate SVK Core DEB package
+    rm -rf packaging/
+    mkdir -p "packaging/$installpath"
+    mkdir -p "packaging/etc/ld.so.conf.d"
+    cp -rf "$CMAKE_INSTALL_PREFIX"/lib "packaging/$installpath/"
+    cp -rf "$CMAKE_INSTALL_PREFIX"/lib64 "packaging/$installpath/"
+    mkdir -p "packaging/usr/lib/pkgconfig"
+    cp -rf "$PROJECT_ROOT/DEBIAN.core/" "packaging/DEBIAN"
+    sed -i "s/Version: GIT_VERSION/Version: $GIT_VER_IN_NUM/g" packaging/DEBIAN/control
+
+    cat > "packaging/etc/ld.so.conf.d/svk-core.conf" << EOF
+$installpath/lib
+$installpath/lib64
+EOF
+    pushd packaging
+    ln -s "$installpath/lib/pkgconfig/svkframework.pc" "usr/lib/pkgconfig/svkframework.pc"
+    popd
+    dpkg -b packaging
+    dpkg-name packaging.deb
+
+    # Generate SVK Core-dev DEB package
+    rm -rf packaging/
+    mkdir -p "packaging/$installpath"
+    cp -rf "$CMAKE_INSTALL_PREFIX"/include "packaging/$installpath/"
+    cp -rf "$CMAKE_INSTALL_PREFIX"/tests "packaging/$installpath/"
+    cp -rf "$PROJECT_ROOT/DEBIAN.core-dev/" "packaging/DEBIAN"
+    sed -i "s/Version: GIT_VERSION/Version: $GIT_VER_IN_NUM/g" packaging/DEBIAN/control
+
+    dpkg -b packaging
+    dpkg-name packaging.deb
+
 }
 
 RELEASE=false
@@ -131,13 +178,13 @@ pushd "$BUILD_DIR"
             RELEASE_FILENAME_PREFIX="svk-core"
         fi
         CMAKE_OPTIONS+=("-DWITH_RELEASE=ON")
-        if [ -z "$RPM_INSTALL_PATH" ];then
-            RPM_INSTALL_PATH="/usr/local/svk/core" # Location that rpm -ivh will install to
+        if [ -z "$PACKAGE_INSTALL_PATH" ];then
+            PACKAGE_INSTALL_PATH="/usr/local/svk/core" # Location that rpm -ivh will install to
         fi
     fi
     
-    if [ -n "$RPM_INSTALL_PATH" ];then
-        CMAKE_OPTIONS+=("-DPKG_CONFIG_PREFIX=$RPM_INSTALL_PATH")
+    if [ -n "$PACKAGE_INSTALL_PATH" ];then
+        CMAKE_OPTIONS+=("-DPKG_CONFIG_PREFIX=$PACKAGE_INSTALL_PATH")
     else
         CMAKE_OPTIONS+=("-DPKG_CONFIG_PREFIX=$CMAKE_INSTALL_PREFIX")
     fi
@@ -195,18 +242,23 @@ pushd "$BUILD_DIR"
             "$BUILD_DIR"
     elif $RELEASE;then
         echo "Generating release tarball..."
-        GIT_VER=$(git describe --abbrev=4 --always --tags)
+        mkdir -p "$CMAKE_INSTALL_PREFIX/lib"
+        mkdir -p "$CMAKE_INSTALL_PREFIX/lib64"
         tar -zcf "$RELEASE_FILENAME_PREFIX-$ID-$VERSION_ID-$GIT_VER.tgz" "$CMAKE_INSTALL_PREFIX"
-        echo "$INSTALL_RPM"
-        if [ -n "$INSTALL_RPM" ];then
-            echo "Generating release/devel RPMs..."
-            
-            RPMBUILD_DIR="$BUILD_DIR/rpmbuild"
-            mkdir -p rpmbuild/{BUILD,RPMS,SPECS}
-            
-            cp -rf "$CMAKE_INSTALL_PREFIX/" "$RPMBUILD_DIR/BUILD"
+        echo "$GENERATE_PACKAGE"
+        if [ -n "$GENERATE_PACKAGE" ];then
+            if [ "$ID" == "ubuntu" ]; then
+                echo "Generating Ubuntu package"
+                generateDebPackage "$PACKAGE_INSTALL_PATH"
+            else
+                echo "Generating release/devel RPMs..."
 
-            generateRPMs "$RPMBUILD_DIR" "$RPM_INSTALL_PATH"
+                RPMBUILD_DIR="$BUILD_DIR/rpmbuild"
+                mkdir -p rpmbuild/{BUILD,RPMS,SPECS}
+                cp -rf "$CMAKE_INSTALL_PREFIX/" "$RPMBUILD_DIR/BUILD"
+
+                generateRPMs "$RPMBUILD_DIR" "$PACKAGE_INSTALL_PATH"
+            fi
         fi
 
     fi

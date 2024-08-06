@@ -5,6 +5,7 @@ set -e
 define_build_deps() {
     BUILD_DEPS=()
     BUILD_DEPS+=('cmake')
+    BUILD_DEPS+=('dpkg-dev')
     BUILD_DEPS+=('g++')
     BUILD_DEPS+=('git')
     BUILD_DEPS+=('libboost-dev')
