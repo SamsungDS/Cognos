@@ -11,6 +11,8 @@ set(PROTOBUF_ABSL_DEPS absl_absl_check absl_absl_log absl_algorithm absl_base ab
 set(SRCS ${SVC_MGR_STUB_SRCS} ${CMAKE_CURRENT_SOURCE_DIR}/src/svc.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/svc_mgr.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/thread.cc)
 set(INC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include/)
 
+add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
+
 add_executable(${PROJECT_NAME} ${SRCS})
 
 string(REPLACE ";" " " absl_deps "${PROTOBUF_ABSL_DEPS}")

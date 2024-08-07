@@ -1,0 +1,13 @@
+Source: svk-mgmt-fw
+Maintainer: Samsung (suresh.g@samsung.com)
+Original-Maintainer: Samsung
+Section: utils
+Priority: optional
+Homepage: https://www.samsung.com
+Version: GIT_VERSION
+Package: svk-mgmt-fw
+Architecture: amd64
+Build-Depends: libspdlog1, libspdlog-dev
+Depends: libre2-9, libzmq3-dev
+Description: SVK Management framework related APIs, services
+

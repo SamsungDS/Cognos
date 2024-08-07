@@ -6,6 +6,7 @@ install_build_deps() {
     BUILD_DEPS=()
     package_manager 'update'
     BUILD_DEPS+=('cmake')
+    BUILD_DEPS+=('dpkg-dev')
     BUILD_DEPS+=('g++')
     BUILD_DEPS+=('git')
     BUILD_DEPS+=('libboost-dev')
