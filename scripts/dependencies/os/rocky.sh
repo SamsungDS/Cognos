@@ -15,6 +15,7 @@ install_build_deps() {
     BUILD_DEPS+=('net-tools')
     BUILD_DEPS+=('python3.11')
     BUILD_DEPS+=('python3-pip')
+    BUILD_DEPS+=('rpmdevtools')
     BUILD_DEPS+=('spdlog-devel')
     BUILD_DEPS+=('tar')
     BUILD_DEPS+=('unzip')

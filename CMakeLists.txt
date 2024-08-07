@@ -24,6 +24,7 @@ add_subdirectory(grpc_node_server)
 add_subdirectory(grpc_controller)
 add_subdirectory(rest_api)
 add_subdirectory(svc_mgr)
+add_subdirectory(systemd_files)
 
 if(BUILD_TESTING)
     add_subdirectory(tests)
