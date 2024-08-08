@@ -64,7 +64,58 @@ On some READMEs, you may see small images that convey metadata, such as whether 
 Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
 
 ## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+
+### Installing SVK APP dependencies can simply be done by running the following command from the sapp directory
+```
+./scripts/dependencies/install.sh
+```
+
+For manual build/installation you will need to do the following;
+
+1. Ensure python3.9 or python3.10 is installed
+2. Install Python depedencies with running
+```
+python3 -m pip install -r scripts/dependencies/python/requirements.txt
+```
+3. Install Mysql, follow instructions in Mysql section of README
+4. Install InfluxDB, following instructions in InfluxDB section of README
+5. Insall NodeJS and NPM (16.2.0)
+```
+sudo yum install npm-8.19.4
+sudo yum install nodejs-16.20.2
+```
+6. Install reactjs and required  packages with npm
+```
+cd cognos/backend/ui
+npm install
+```
+7. Ensure the following config files are properly set
+```
+cognos/backend/config/config.json
+cognos/backend/config/influxdb_config.json
+cognos/ui/config/config.json
+cognos/exporter/config/config.json
+```
+8. Run CAL layer with
+```
+cd cognos/backend
+python3 -m flask run -h <localip> -p 4000
+```
+9. Run Exporter
+```
+cd cognos
+python3 exporter/exporter.py
+```
+10. Run Subscriber
+```
+cd cognos
+python3 subscriber/subscriber.py
+```
+11. Run UI
+```
+cd cognos/ui
+npm start
+```
 
 ## Usage
 Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
@@ -119,6 +170,51 @@ and describe the problem you are facing.
 
 * For the rest, follow
   [bahamas10's Bash Style Guide](https://github.com/bahamas10/bash-style-guide).
+
+## Mysql
+
+### Mysql Installation
+1. Add the mysql repository in yum (process defined in: https://dev.mysql.com/doc/mysql-yum-repo-quick-guide/en/)
+2. Enable/disable repos
+```
+sudo yum-config-manager --disable mysql80-community
+sudo yum-config-manager --disable mysql-tools-community
+sudo yum-config-manager --enable mysql-innovation-community
+sudo yum-config-manager --enable mysql-tools-innovation-community
+```
+3. Install and run Mysql community server
+```
+sudo yum install mysql-community-server
+ 
+systemctl start mysqld
+ 
+systemctl status mysqld
+ 
+sudo mysql_secure_installation
+```
+4. Change password for root mysql user
+```
+mysql -u root -p
+ALTER USER 'root'@'localhost' IDENTIFIED BY 'my-password';
+```
+You can retrieve temporary password with
+```
+sudo grep 'temporary password' /var/log/mysqld.log
+```
+5. Setup mysql and create a user & create scfm database, execute the following commands and use the below credentials
+```
+User: dev
+Pass: CXL123mem!
+```
+```
+mysql -u root -p
+CREATE USER 'dev'@'localhost' IDENTIFIED BY 'my-password';
+GRANT ALL ON *.* To 'dev'@'localhost';
+```
+6. Setup DB with the following script
+```
+python3 cognos/backend/db_setup.py
+```
 
 ## Influx DB
 
