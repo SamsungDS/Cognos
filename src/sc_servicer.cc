@@ -1,6 +1,10 @@
+#include <iostream>
+#include <map>
+#include <sstream>
 #include "sc_servicer.h"
 #include "sc_global.h"
 #include "sc_mbox.h"
+#include "framework_downstream.h"
 
 extern "C"{
 #include "jansson.h"
@@ -10,6 +14,10 @@ extern "C"{
 using namespace std;
 
 sc_global cxl_global;
+
+
+//function pointers for the commands
+typedef std::string (*CommandFunc)(const std::string&);
 
 /** 
  * @brief tokenize input based on ';' and generate key values.
@@ -46,7 +54,7 @@ unordered_map<string, string> token_helper(string input){
  * @param input string having Cluster ID, Command, FM_ID, FM_Endpoint.
  * @return output CXL devices info in json string.
 */
-string ListDevices(string input) {
+std::string ListDevices(const std::string& input) {
 
     string output = input + ";device names=";
     unordered_map<string, string> tokens_map = token_helper(input);
@@ -65,7 +73,7 @@ string ListDevices(string input) {
  * @param input string having Cluster ID, Command, ID.
  * @return output Hosts list in json string.
 */
-string ListHosts(string input) {
+std::string ListHosts(const std::string& input) {
 
     string output = input + ";host names=";
     unordered_map<string, string> tokens_map = token_helper(input);
@@ -84,7 +92,7 @@ string ListHosts(string input) {
  * @param input string having Cluster ID, Command, device_id, host_id & mode.
  * @return output Success/Failure in json string.
 */
-string AttachMemory(string input) {
+std::string AttachMemory(const std::string& input) {
 
     string output = input + ";AttachMemory=";
     unordered_map<string, string> tokens_map = token_helper(input);
@@ -101,7 +109,7 @@ string AttachMemory(string input) {
  * @param input string having Cluster ID, Command, device_id, host_id & mode.
  * @return output Success/Failure in json string.
 */
-string DetachMemory(string input) {
+std::string DetachMemory(const std::string& input) {
 
     string output = input + ";DetachMemory=";
     unordered_map<string, string> tokens_map = token_helper(input);
@@ -121,7 +129,7 @@ string DetachMemory(string input) {
  * @param input string having Cluster ID, Command, ID.
  * @return output Hosts list in json string.
 */
-string SetupInfo(string input) {
+std::string SetupInfo(const std::string& input) {
 
     string output = input + ";setup_info=";
     unordered_map<string, string> tokens_map = token_helper(input);
@@ -141,18 +149,139 @@ string SetupInfo(string input) {
 int init_cxl_plugin(){
     struct StaticPortInfo pinfo;
     mbox_get_static_config(&pinfo);
-    return cxl_global.g_create_mbox(&pinfo);}    
+    return cxl_global.g_create_mbox(&pinfo);
+}    
 
-/** 
- * @brief register_plugin - function mapping 
- * @param function_map  
-*/  
-void register_plugin(unordered_map<string, std::function<std::string(std::string)>>& function_map){
-    cout << "register_plugin function called" << endl;
-    function_map["ListDevices"] = ListDevices;
-    function_map["ListHosts"] = ListHosts;
-    function_map["AttachMemory"] = AttachMemory;
-    function_map["DetachMemory"] = DetachMemory; 
-    function_map["SetupInfo"] = SetupInfo;
-    init_cxl_plugin();
+/**
+ * ########################################
+ * # Start SVK Core Framework Integration #
+ * ########################################
+ */
+
+
+/**
+ * @brief Initialize individual feature module
+ *
+ * This will be called when individual feature module will be loaded by
+ * framework.
+ * @return svk_status     Refer to framework_struct.h for return codes
+ */
+svk_status  initialize(void *) {
+    cout << "initialize function called" << endl;
+
+    if (init_cxl_plugin()==0){
+	return SVK_STATUS_SUCCESS;
+    }else{
+        return SVK_STATUS_FAIL;
+    }
 }
+
+/*
+ * Feature modules set feature_id to the *feat_id pointer if
+ * it isn't set already.
+ * SVK command framework will call this function to get the feature names
+ * this feature module will support.
+ * @return svk_status     Refer to framework_struct.h for return codes
+ */
+svk_status  get_supported_feature_list(feature_id *feat_id, char *) {
+    cout << "get_supported_feature_list function called" << endl;
+    *feat_id = feature_id::CXL;
+    return SVK_STATUS_SUCCESS;
+}
+
+/**
+ * @brief Check if license is valid
+ *
+ * Every request needs to validate if license is valid before moving on
+ * @return svk_status     Refer to framework_struct.h for return codes
+ */
+svk_status  is_license_valid(void *) {
+    cout << "is_license_valid function called" << endl;
+    return SVK_STATUS_FAIL;
+}
+
+/**
+ * @brief API for feature modules that need to access/initialize a device
+ * @return svk_status     Refer to framework_struct.h for return codes
+ */
+svk_status  configure_device_if_any(void *, svk_device_ctx *, uint64_t length, void *) {
+    cout << "configure_device_if_any function called" << endl;
+    return SVK_STATUS_FAIL;
+}
+
+/**
+ * @brief Exact feature execution logic will be implemented here
+ *
+ * @param pass_thru svk passthrough for command info communication from top
+ * level
+ * @param input     input buffer struct
+ * @param result    output buffer struct
+ * @return svk_status Refer to framework_struct.h for return codes
+ */
+svk_status execute_sync(svk_pass_thru_cmd *, svk_input *input, svk_output *output) {
+    cout << "execute_sync function called" << endl;
+    std::string input_str(reinterpret_cast<char*>(input->input_buffer), input->len);
+    std::string result;
+
+    std::string commandValue;
+    std::istringstream ss(input_str);
+    std::string token;
+
+    while (std::getline(ss, token, ';')) {
+        const std::string prefix = "command=";
+        if (token.find(prefix) == 0) {
+            commandValue = token.substr(prefix.length());
+            break;
+        }
+    }
+
+    //@to-do - resolve gcov code coverage for multilines. 
+    // Map of command strings to their corresponding functions
+    std::map<std::string, CommandFunc> fw_hooks {{"ListDevices", ListDevices},{"ListHosts", ListHosts},{"SetupInfo", SetupInfo},{"AttachMemory", AttachMemory},{"DetachMemory", DetachMemory}};
+
+    // Execute the corresponding command function
+    try {
+        result = fw_hooks.at(commandValue)(input_str);
+    } catch (const std::out_of_range&) {
+        std::cerr << "Command not found: " << commandValue << std::endl;
+        return SVK_STATUS_FAIL;
+    } catch (const std::exception& e) {
+        std::cerr << "Invalid command: " << e.what() << std::endl;
+        return SVK_STATUS_FAIL;
+    }
+
+    output->output_buffer = reinterpret_cast<uint8_t*>(strdup(result.c_str()));
+    output->len = result.size();
+    output->status = SVK_STATUS_SUCCESS;
+    return SVK_STATUS_SUCCESS;
+}
+
+/**
+ * @brief Feature module async execute implementation.
+ *
+ * @param pass_thru       svk passthrough for command info communication from
+ * top level
+ * @param input           input buffer struct
+ * @param postprocess_fn  struct containing pointers for async IO, such as
+ * callback, IO identifier, and output buffer
+ * @return svk_status     Refer to framework_struct.h for return codes
+ */
+svk_status execute_async(svk_pass_thru_cmd *, svk_postprocess_fn *) {
+    cout << "execute_async function called" << endl;
+    return SVK_STATUS_FAIL;
+}
+
+/**
+ * @brief Usual cleanup before exit
+ * @return svk_status Refer to framework_struct.h for return codes
+ */
+svk_status clean_up(void *) {
+    cout << "clean_up function called" << endl;
+    return SVK_STATUS_FAIL;
+}
+
+/**
+ * ######################################
+ * # END SVK Core Framework Integration #
+ * ######################################
+ */

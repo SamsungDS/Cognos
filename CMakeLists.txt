@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.7)
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SVKFRAMEWORK REQUIRED svkframework)
+
 include(${CMAKE_SOURCE_DIR}/cmake/svk_global.cmake)
 
 # Set this project's name.

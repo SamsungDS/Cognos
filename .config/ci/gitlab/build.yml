@@ -3,6 +3,18 @@ release build:
   image:
     name: $IMAGE_TAG
     pull_policy: always
+  before_script:
+    # Download latest artifact from SVK Core
+    - $PACKAGE_MANAGER install -y $CORE_PACKAGE
+    # Export PKG_CONFIG_PATH env var
+    - export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/local/lib/pkgconfig/:/usr/local/lib64/pkgconfig/:/usr/local/svk/core/lib64/pkgconfig/:/usr/local/svk/core/lib/pkgconfig/
+    - export PATH=$PATH:/usr/local/go/bin
+
+    # Download latest artifact from SVK Management FW
+    - $PACKAGE_MANAGER install -y $MANAGEMENT_PACKAGE
+    # Export PKG_CONFIG_PATH env var
+    - export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/local/lib/pkgconfig/:/usr/local/lib64/pkgconfig/:/usr/local/svk/mgmt-fw/lib64/pkgconfig/:/usr/local/svk/mgmt-fw/lib/pkgconfig/
+    - export PATH=$PATH:/usr/local/go/bin
   script:
     # Build with release flag and generate artifact
     - ./scripts/build.sh --release --install-prefix /usr/local/svk/cxl --with-fmapi $FMAPI_PATH/build/libmbox_a1_shared.so $FMAPI_PATH
@@ -12,6 +24,9 @@ release build:
     paths:
      - build/*.tgz
   variables:
+    PACKAGE_MANAGER: microdnf
+    CORE_PACKAGE: svk-core-devel
+    MANAGEMENT_PACKAGE: svk-mgmt-fw-devel
     DOCKERFILE_NAME: rocky9
     IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
     FMAPI_PATH: $CI_PROJECT_DIR/$FMAPI_PROJECT/$FMAPI_DIR

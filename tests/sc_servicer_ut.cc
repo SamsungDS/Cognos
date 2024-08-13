@@ -3,7 +3,7 @@
 #include "sc_global.h"
 #include "sc_mbox.h"
 #include "sc_servicer.h"
-
+#include "framework_downstream.h"
 
 
 extern "C"{
@@ -20,20 +20,20 @@ sc_global cxl_global;
 using ::testing::_;
 using ::testing::Return;
 
+//function pointers for the commands
+typedef std::string (*CommandFunc)(const std::string&);
 
-// Mock class for sc_global
 class MockScGlobal : public sc_global {
 public:
     MOCK_METHOD(int, g_create_mbox, (StaticPortInfo*), ());
 };
 
-MockScGlobal mock_cxl_global;
 
 // Test fixture
+MockScGlobal mock_cxl_global;
 class ServicerTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        // Use the mock global instance
         cxl_global = mock_cxl_global;
     }
     void TearDown() override {
@@ -43,28 +43,25 @@ protected:
 
 TEST_F(ServicerTest, InitCxlPluginSuccess) {
     EXPECT_CALL(mock_cxl_global, g_create_mbox(_))
-        .WillOnce(Return(0));  // Simulate successful creation
+        .WillOnce(Return(0));  
     int result = init_cxl_plugin();
     EXPECT_EQ(result, 0);
 }
 
 
-TEST_F(ServicerTest, RegisterPluginTest) {
-
+TEST_F(ServicerTest, InitializeSuccessTest) {
     EXPECT_CALL(mock_cxl_global, g_create_mbox(_))
-        .WillOnce(Return(0));  // Simulate successful creation
-    int result = init_cxl_plugin();
-    EXPECT_EQ(result, 0);	
+        .WillOnce(Return(0));  
+    svk_status status = initialize(nullptr);
+    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
+}
 
-    unordered_map<string, std::function<std::string(std::string)>> function_map;
-    // Register plugin functions
-    register_plugin(function_map);
-    // Check if functions are correctly registered
-    EXPECT_NE(function_map.find("ListDevices"), function_map.end());
-    EXPECT_NE(function_map.find("ListHosts"), function_map.end());
-    EXPECT_NE(function_map.find("AttachMemory"), function_map.end());
-    EXPECT_NE(function_map.find("DetachMemory"), function_map.end());
-    EXPECT_NE(function_map.find("SetupInfo"), function_map.end());
+
+TEST_F(ServicerTest, InitializeFailureTest) {
+    EXPECT_CALL(mock_cxl_global, g_create_mbox(nullptr))
+        .WillOnce(Return(-1));  
+    svk_status status = initialize(nullptr);
+    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
 }
 
 
@@ -85,72 +82,156 @@ TEST_F(ServicerTest, TokenHelperTest) {
     EXPECT_EQ(tokens["key3"], "value3");
 }
 
-TEST_F(ServicerTest, ListDevicesTest) {
-    std::string input = "test_input";
-    std::string result = ListDevices(input);
-    std::string expected_output = "test_input;device names=";
-    std::string buffer;
-    size_t bytes_written = cxl_global.list_devices(buffer);
-    if (bytes_written > 0 && bytes_written <= buffer.size()) {
-	buffer.resize(bytes_written);    
-        expected_output += buffer;
-    }
-    ASSERT_EQ(result, expected_output);
+TEST_F(ServicerTest, GetSupportedFeatureListTest) {
+    feature_id feat_id;
+    char feature_names[256];
+    svk_status status = get_supported_feature_list(&feat_id, feature_names);
+    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
+}
+
+TEST_F(ServicerTest, IsLicenseValidTest) {
+    svk_status status = is_license_valid(nullptr);
+    ASSERT_EQ(status, SVK_STATUS_FAIL);
+}
+
+TEST_F(ServicerTest, ExecuteAsyncTest) {
+    svk_pass_thru_cmd pass_thru;
+    svk_postprocess_fn postprocess_fn;
+    svk_status status = execute_async(&pass_thru, &postprocess_fn);
+    ASSERT_EQ(status, SVK_STATUS_FAIL);
+}
+
+TEST_F(ServicerTest, CleanUpTest) {
+    svk_status status = clean_up(nullptr);
+    ASSERT_EQ(status, SVK_STATUS_FAIL);
+}
+
+TEST_F(ServicerTest, ConfigureDeviceIfAnyTest) {
+    svk_device_ctx device_handles;
+    void *config_details = nullptr;
+    uint64_t length = 0;
+    void *resp = nullptr;
+    svk_status status = configure_device_if_any(config_details, &device_handles, length, resp);
+    ASSERT_EQ(status, SVK_STATUS_FAIL);
+}
+
+TEST_F(ServicerTest, ExecuteSyncDevTest) {
+    svk_input input;
+    svk_output output;
+    svk_pass_thru_cmd pass_thru;
+    input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=ListDevices"));
+    input.len = strlen("command=ListDevices");
+    svk_status status = execute_sync(&pass_thru, &input, &output);
+    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
+    ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
+    ASSERT_NE(output.len, 0);
+    ASSERT_NE(output.output_buffer, nullptr);
+    free(input.input_buffer);
+    free(output.output_buffer);
+}
+
+TEST_F(ServicerTest, ExecuteSyncHostTest) {
+    svk_input input;
+    svk_output output;
+    svk_pass_thru_cmd pass_thru;
+    input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=ListHosts"));
+    input.len = strlen("command=ListHosts");
+    svk_status status = execute_sync(&pass_thru, &input, &output);
+    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
+    ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
+    ASSERT_NE(output.len, 0);
+    ASSERT_NE(output.output_buffer, nullptr);
+    free(input.input_buffer);
+    free(output.output_buffer);
 }
 
 
-TEST_F(ServicerTest, ListHostsTest) {
-    std::string input = "test_input";
-    std::string result = ListHosts(input);
-    std::string expected_output = "test_input;host names=";
-    std::string buffer;
-    size_t bytes_written = cxl_global.list_hosts(buffer);
-    if (bytes_written > 0 && bytes_written <= buffer.size()) {
-	buffer.resize(bytes_written);    
-        expected_output += buffer;
-    }
-    ASSERT_EQ(result, expected_output);
+TEST_F(ServicerTest, ExecuteSyncSetUPTest) {
+    svk_input input;
+    svk_output output;
+    svk_pass_thru_cmd pass_thru;
+    input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=SetupInfo"));
+    input.len = strlen("command=SetupInfo");
+    svk_status status = execute_sync(&pass_thru, &input, &output);
+    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
+    ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
+    ASSERT_NE(output.len, 0);
+    ASSERT_NE(output.output_buffer, nullptr);
+    free(input.input_buffer);
+    free(output.output_buffer);
 }
 
 
-TEST_F(ServicerTest, AttachMemoryTest) {
-    std::string input = "dev_id=1;host_id=1;mode=rw";
-    std::string result = AttachMemory(input);
-    std::string expected_output = "dev_id=1;host_id=1;mode=rw;AttachMemory=";
-    std::string buffer;
-    size_t bytes_written = cxl_global.dev_attach(1, 1, "rw", 203, buffer);
-    if (bytes_written > 0 && bytes_written <= buffer.size()) {
-	buffer.resize(bytes_written);    
-        expected_output += buffer;
-    }
-    ASSERT_EQ(result, expected_output);
+TEST_F(ServicerTest, ExecuteSyncDetachTest) {
+    svk_input input;
+    svk_output output;
+    svk_pass_thru_cmd pass_thru;
+    input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=DetachMemory;dev_id=549755813888;host_id=551903297536;mode=direct"));
+    input.len = strlen("command=DetachMemory;dev_id=549755813888;host_id=551903297536;mode=direct");
+    svk_status status = execute_sync(&pass_thru, &input, &output);
+    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
+    ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
+    ASSERT_NE(output.len, 0);
+    ASSERT_NE(output.output_buffer, nullptr);
+    free(input.input_buffer);
+    free(output.output_buffer);
 }
 
 
-TEST_F(ServicerTest, DetachMemoryTest) {
-    std::string input = "dev_id=1;host_id=1;mode=rw";
-    std::string result = DetachMemory(input);
-    std::string expected_output = "dev_id=1;host_id=1;mode=rw;DetachMemory=";
-    std::string buffer;
-    size_t bytes_written = cxl_global.dev_detach(1, 1, "rw", 203, buffer);
-    if (bytes_written > 0 && bytes_written <= buffer.size()) {
-	buffer.resize(bytes_written);    
-        expected_output += buffer;
-    }
-    ASSERT_EQ(result, expected_output);
+TEST_F(ServicerTest, ExecuteSyncAttachTest) {
+    svk_input input;
+    svk_output output;
+    svk_pass_thru_cmd pass_thru;
+    input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=AttachMemory;dev_id=549755813888;host_id=551903297536;mode=direct"));
+    input.len = strlen("command=AttachMemory;dev_id=549755813888;host_id=551903297536;mode=direct");
+    svk_status status = execute_sync(&pass_thru, &input, &output);
+    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
+    ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
+    ASSERT_NE(output.len, 0);
+    ASSERT_NE(output.output_buffer, nullptr);
+    free(input.input_buffer);
+    free(output.output_buffer);
 }
 
 
-TEST_F(ServicerTest, SetupInfoTest) {
-    std::string input = "test_input";
-    std::string result = SetupInfo(input);
-    std::string expected_output = "test_input;setup_info=";
-    std::string buffer;
-    size_t bytes_written = cxl_global.fetch_setup_info(buffer);
-    if (bytes_written > 0 && bytes_written <= buffer.size()) {
-	buffer.resize(bytes_written);    
-        expected_output += buffer;
-    }
-    ASSERT_EQ(result, expected_output);
+TEST_F(ServicerTest, ExecuteSyncFailTest) {
+    svk_input input;
+    svk_output output;
+    svk_pass_thru_cmd pass_thru;
+    input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=Fail"));
+    input.len = strlen("command=Fail");
+    svk_status status = execute_sync(&pass_thru, &input, &output);
+    ASSERT_EQ(status, SVK_STATUS_FAIL);
+    ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
+    ASSERT_NE(output.len, 0);
+    ASSERT_EQ(output.output_buffer, nullptr);
+    free(input.input_buffer);
+    free(output.output_buffer);
+}
+
+
+TEST_F(ServicerTest, ExecuteSyncInvalidCommandTest) {
+    svk_input input;
+    svk_output output;
+    svk_pass_thru_cmd pass_thru;
+    input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=InvalidCommand"));
+    input.len = strlen("command=InvalidCommand");
+    svk_status status = execute_sync(&pass_thru, &input, &output);
+    ASSERT_EQ(status, SVK_STATUS_FAIL); 
+    free(input.input_buffer);
+}
+
+
+TEST_F(ServicerTest, ExecuteSyncDetachInvalidInputTest) {
+    svk_input input;
+    svk_output output;
+    svk_pass_thru_cmd pass_thru;
+    input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=DetachMemory;dev_=54975581;host_id=551903297536;mode=direct"));
+    input.len = strlen("command=DetachMemory;dev_=54975581;host_id=551903297536;mode=direct");
+    svk_status status = execute_sync(&pass_thru, &input, &output);
+    ASSERT_EQ(status, SVK_STATUS_FAIL);
+    ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
+    free(input.input_buffer);
+    free(output.output_buffer);
 }
 

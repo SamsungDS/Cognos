@@ -25,7 +25,6 @@ std::string SetupInfo(std::string input);
 
 extern "C"{
     int init_cxl_plugin();
-    void register_plugin(std::unordered_map<std::string, std::function<std::string(std::string)>>& function_map);
 }
 
 
