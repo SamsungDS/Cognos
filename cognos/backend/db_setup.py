@@ -89,7 +89,7 @@ def setup_mem_box_table(db, cursor):
         "name VARCHAR(255), "
         "mem_capacity BIGINT UNSIGNED, "
         "hosts_target_ports VARCHAR(64), "
-        "PRIMARY KEY (id));"
+        "PRIMARY KEY (membox_id));"
     )
     cursor.execute(create_membox_table)
     db.commit()

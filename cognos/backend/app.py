@@ -1,6 +1,7 @@
-# app.py
+from abc import ABC, abstractmethod
 from collections import defaultdict, namedtuple
 from flask import Flask, request, jsonify
+import click
 import json
 import math
 import mysql.connector
@@ -230,6 +231,18 @@ def fetch_topology():
     return payload
 
 
+def get_hosts_from_db():
+    db, cursor = connect_to_mysql()
+    try:
+        query = "SELECT name from hosts"
+        cursor.execute(query)
+        hosts = cursor.fetchall()
+    except Exception as error:
+        print(f"Failed to fetch from hosts table.. {str(error)}")
+    
+    return hosts if hosts else []
+
+
 def get_hostname_from_id(host_id):
     db, cursor = connect_to_mysql()
     try:
@@ -311,6 +324,8 @@ def get_deviceid_and_devicename_from_port(port):
 
 
 def get_setup_info():
+    # TODO: Implement mode if mock is set here and override payload
+    
     headers = {
         'accept': 'application/json',
         'Content-Type': 'application/json'
@@ -479,54 +494,203 @@ def setup_tables():
         insert_connection(host_id, host_name, dev_id, dev_name)
 
 
-def create_app():
-    """ Implements endpoints of Flask App """
-    app = Flask(__name__)
-    CORS(app)
-    app.config['CORS_HEADERS'] = 'Content-Type'
+class DataSource(ABC):
+    @abstractmethod
+    def init(self):
+        pass
 
-    # clear out existing tables
-    clear_all_tables()
+    @abstractmethod
+    def get_topology(self):
+        pass
 
-    @app.get(f"/api/{API_VERSION}/init")
-    def init():
-        """
-        Derives initial configuration and connections between devices
-        """
-        payload = get_setup_info()
-        return jsonify(payload)
+    @abstractmethod
+    def get_hosts(self):
+        pass
 
-    @app.get(f"/api/{API_VERSION}/topology")
-    def get_topology():
-        """
-        Expected UI topology format - Example layout
-        [
-            { host: 'Host1',
-            devices: [
-                'D1',
-                'D3',
-                'D6'
-            ]
-            },{
-            host: 'Host2',
-            devices: [
-                'D4'
-            ]
-            },{
-            host: 'Host3',
-            devices: [
-                'D5'
-            ]
-            }
-        ]
-        """
+    @abstractmethod
+    def get_device_status(self):
+        pass
+
+    @abstractmethod
+    def post_devices(self):
+        pass
+
+    @abstractmethod
+    def membox_capacity(self):
+        pass
+
+    @abstractmethod
+    def host_devices(self):
+        pass
+
+    @abstractmethod
+    def available_devices(self):
+        pass
+
+    @abstractmethod
+    def detach_device(self):
+        pass
+
+    @abstractmethod
+    def attach_device(self):
+        pass
+
+    @abstractmethod
+    def get_mb_info(self):
+        pass
+
+class CAL:
+    def __init__(self, data_source):
+        self.data_source = data_source
+    def init(self):
+        return self.data_source.init()
+    def get_topology(self):
+        return self.data_source.get_topology()
+    def get_hosts(self):
+        return self.data_source.get_hosts()
+    def get_device_status(self):
+        return self.data_source.get_device_status()
+    def post_devices(self):
+        return self.data_source.post_devices()
+    def membox_capacity(self):
+        return self.data_source.membox_capacity()
+    def host_devices(self):
+        return self.data_source.host_devices()
+    def available_devices(self):
+        return self.data_source.available_devices()
+    def detach_device(self):
+        return self.data_source.detach_device()
+    def attach_device(self):
+        return self.data_source.attach_device()
+    def get_mb_info(self):
+        return self.data_source.get_mb_info()
+
+class Mock(DataSource):
+    def init(self):
+        return jsonify({
+            "mock_data": 193821
+        })
+    
+    def get_topology(self):
         payload = fetch_topology()
         response = jsonify(payload)
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
 
-    @app.get(f"/api/{API_VERSION}/hosts")
-    def get_hosts():
+    def get_hosts(self):
+        hosts = get_hosts_from_db()
+        payload = []
+        for host in hosts:
+            data = {
+                "value": host,
+                "label": host
+            }
+            payload.append(data)
+        response = jsonify(payload)
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
+
+    def post_devices(self):
+        # TODO: derive from constants
+        return jsonify({'status': 200})
+
+    def membox_capacity(self):
+        # TODO: derive from constants
+        return jsonify({'status': 200})
+
+    def host_devices(self):
+        request_data = request.get_json()
+        host = request_data["host"]
+        payload = get_host_attached_devices(host)
+        response = jsonify(payload)
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
+
+    def available_devices(self):
+        db, cursor = connect_to_mysql()
+        query = (
+            "SELECT dev_name FROM devices WHERE dev_name not in "
+            "(SELECT dev_name FROM host_device_connections);"
+        )
+        cursor.execute(query)
+        result = cursor.fetchall()
+        disconnect_mysql(db)
+        response = jsonify(result)
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
+
+    def detach_device(self):
+        request_data = request.get_json()
+        dev_name = request_data["dev_name"]
+        host_name = request_data["host_name"]
+        dev_id = get_devid_from_name(dev_name)
+        host_id = get_hostid_from_name(host_name)
+        delete_connection(int(dev_id), int(host_id))
+        # Return response for host/attached-devices table
+        payload = get_host_attached_devices(host_name)
+        response = jsonify(payload)
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
+
+    def attach_device(self):
+        request_data = request.get_json()
+        dev_name = request_data["dev_name"]
+        host_name = request_data["host_name"]
+        dev_id = get_devid_from_name(dev_name)
+        host_id = get_hostid_from_name(host_name)
+
+        # Update DB with new connection
+        db, cursor = connect_to_mysql()
+        insert_query = (
+            "INSERT INTO host_device_connections "
+            "(host_id, host_name, dev_id, dev_name)"
+            "VALUES (%s, %s, %s, %s)"
+        )
+        values = (host_id, host_name, dev_id, dev_name)
+        cursor.execute(insert_query, values)
+        db.commit()
+        disconnect_mysql(db)
+
+        # Return response for host/attached-devices table
+        payload = get_host_attached_devices(host_name)
+        response = jsonify(payload)
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
+
+    def get_mb_info(self):
+        TB = 1024 * 1024 * 1024 * 1024
+        GB = 1024 * 1024 * 1024
+        mb_mgmt_ip = socket.gethostbyname(socket.gethostname())
+        mb_info = {
+            'data_ports': 15,
+            'mgmt_ports': 1,
+            'mgmt_ip': f'{mb_mgmt_ip}',
+            'mgmt_port': 5000,
+            'mgmt_port_type': 'PCIe',
+            'mgmt_netmask': '255.255.254.0',
+            'form_factor': '4U',
+            'manufacturer': 'Samsung',
+            'memory_size': f'{((256 * GB) * 6) / TB}T',
+            'power_state': 'ON',
+            'health': 'OK',
+            'protocol_version': 2.0
+        }
+        response = jsonify(mb_info)
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
+
+class CXLPlugin(DataSource):
+    def init(self):
+        payload = get_setup_info()
+        return jsonify(payload)
+
+    def get_topology(self):
+        payload = fetch_topology()
+        response = jsonify(payload)
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
+
+    def get_hosts(self):
         payload = get_hosts_info()
         hosts = []
         for host in payload:
@@ -539,20 +703,13 @@ def create_app():
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
 
-    @app.get(f"/api/{API_VERSION}/device_status")
-    def get_device_status():
-        # TODO: currently not implemented on SVK CXL Plugin end
-        return jsonify({'status': 200})
-
-    @app.post(f"/api/{API_VERSION}/devices")
-    def post_devices():
+    def post_devices(self):
         payload = get_devices_info()
         response = jsonify(payload)
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
 
-    @app.post(f"/api/{API_VERSION}/membox_capacity")
-    def membox_capacity():
+    def membox_capacity(self):
         payload = get_devices_info()
         num_devices = 0
         num_hosts = 0
@@ -572,8 +729,7 @@ def create_app():
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
 
-    @app.post(f"/api/{API_VERSION}/host_devices")
-    def host_devices():
+    def host_devices(self):
         request_data = request.get_json()
         host = request_data["host"]
         payload = get_host_attached_devices(host)
@@ -581,8 +737,7 @@ def create_app():
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
 
-    @app.get(f"/api/{API_VERSION}/available_devices")
-    def available_devices():
+    def available_devices(self):
         db, cursor = connect_to_mysql()
         query = (
             "SELECT dev_name FROM devices WHERE dev_name not in "
@@ -594,11 +749,9 @@ def create_app():
         response = jsonify(result)
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
-
-    @app.delete(f"/api/{API_VERSION}/detach_device")
-    def detach_device():
+    
+    def detach_device(self):
         request_data = request.get_json()
-        print(f"**** REQUEST DATA: {request_data}")
         dev_name = request_data["dev_name"]
         host_name = request_data["host_name"]
         dev_id = get_devid_from_name(dev_name)
@@ -631,10 +784,8 @@ def create_app():
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
 
-    @app.post(f"/api/{API_VERSION}/attach_device")
-    def attach_device():
+    def attach_device(self):
         request_data = request.get_json()
-
         dev_name = request_data["dev_name"]
         host_name = request_data["host_name"]
         dev_id = get_devid_from_name(dev_name)
@@ -676,8 +827,7 @@ def create_app():
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
 
-    @app.get(f"/api/{API_VERSION}/cxl/mb/info")
-    def get_mb_info():
+    def get_mb_info(self):
         TB = 1024 * 1024 * 1024 * 1024
         GB = 1024 * 1024 * 1024
         mb_mgmt_ip = socket.gethostbyname(socket.gethostname())
@@ -699,6 +849,108 @@ def create_app():
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
 
+def create_app(mock=False):
+    """ Implements endpoints of Flask App """
+    app = Flask(__name__)
+    CORS(app)
+    app.config['CORS_HEADERS'] = 'Content-Type'
+
+    # import sys
+    # sys.exit()
+    if mock:
+        data_source = Mock()
+    else:
+        data_source = CXLPlugin()
+    
+    cal = CAL(data_source)
+
+    # clear out existing tables
+    clear_all_tables()
+
+    @app.get(f"/api/{API_VERSION}/init")
+    def init():
+        """
+        Derives initial configuration and connections between devices
+        """
+        return cal.init()
+
+    @app.get(f"/api/{API_VERSION}/topology")
+    def get_topology():
+        """
+        Expected UI topology format - Example layout
+        [
+            { host: 'Host1',
+            devices: [
+                'D1',
+                'D3',
+                'D6'
+            ]
+            },{
+            host: 'Host2',
+            devices: [
+                'D4'
+            ]
+            },{
+            host: 'Host3',
+            devices: [
+                'D5'
+            ]
+            }
+        ]
+        """
+        return cal.get_topology()
+        
+
+    @app.get(f"/api/{API_VERSION}/hosts")
+    def get_hosts():
+        return cal.get_hosts()
+
+    @app.get(f"/api/{API_VERSION}/device_status")
+    def get_device_status():
+        # TODO: currently not implemented on SVK CXL Plugin end
+        return jsonify({'status': 200})
+
+    @app.post(f"/api/{API_VERSION}/devices")
+    def post_devices():
+        return cal.post_devices()
+
+    @app.post(f"/api/{API_VERSION}/membox_capacity")
+    def membox_capacity():
+        return cal.membox_capacity()
+
+    @app.post(f"/api/{API_VERSION}/host_devices")
+    def host_devices():
+        return cal.host_devices()
+
+    @app.get(f"/api/{API_VERSION}/available_devices")
+    def available_devices():
+        return cal.available_devices()
+
+    @app.delete(f"/api/{API_VERSION}/detach_device")
+    def detach_device():
+        return cal.detach_device()
+
+    @app.post(f"/api/{API_VERSION}/attach_device")
+    def attach_device():
+        return cal.attach_device()
+
+    @app.get(f"/api/{API_VERSION}/cxl/mb/info")
+    def get_mb_info():
+        return cal.get_mb_info()
+
     # setup database tables based on current state during initial boot
     setup_tables()
     return app
+
+
+@click.command()
+@click.option('--mock', '-m', is_flag=True, help="Print more output.")
+@click.option('--host', '-h', required=True, help="IP of host of CAL")
+@click.option('--port', '-p', required=True, help="Port to run CAL on")
+def main(mock, host, port):
+    app = create_app(mock)
+    app.run(host=host, port=port)
+
+
+if __name__ == '__main__':
+    main()

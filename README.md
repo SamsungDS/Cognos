@@ -109,7 +109,7 @@ python3 exporter/exporter.py
 10. Run Subscriber
 ```
 cd cognos
-python3 subscriber/subscriber.py
+python3 subscriber/mock_sub_client.py
 ```
 11. Run UI
 ```

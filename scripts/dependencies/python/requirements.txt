@@ -1,4 +1,5 @@
 # Python dependencies
+click
 flask
 flask_cors
 influxdb-client[ciso]
