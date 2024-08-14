@@ -1,4 +1,6 @@
+import argparse
 import asyncio
+import click
 import functools
 import json
 import os
@@ -11,7 +13,6 @@ sys.path.append(os.path.abspath(  # noqa: E402
 from backend.cognos_influxdb_client import CognosInfluxDBClient
 from backend.helper import fetch_cognos_configs
 
-
 ws = None
 global influx_client
 influx_client = CognosInfluxDBClient()
@@ -23,7 +24,8 @@ async def recv_host_selection_handler():
             message = json.loads(await ws.recv())
             if message:
                 influx_client.filter_hosts = True
-                influx_client.selected_host = message['host']['value']
+                selected_host = message['host']['value']
+                influx_client.selected_host = selected_host[0] if type(selected_host) is list else selected_host
         await asyncio.sleep(1)
         time.sleep(1)
 
@@ -31,7 +33,6 @@ async def recv_host_selection_handler():
 async def metrics_handler(websocket, stop_event=False):
     global ws
     ws = websocket
-
     while not stop_event.is_set():
         try:
             event = {
@@ -105,6 +106,12 @@ async def metrics_handler(websocket, stop_event=False):
             print(f"ERROR: {str(e)} TYPE: {type(e)}")
 
 
+# @click.command()
+# @click.option('--mock', '-m', is_flag=True, help="mock mode")
+# def set_mode(mock):
+#     influx_client.mock = mock
+#     print(f"Running exporter in mock mode: {influx_client.mock}")
+
 async def main():
     parent_dir = os.path.dirname(os.path.abspath(__file__))
     configs = fetch_cognos_configs(parent_dir, 'config.json')
@@ -122,4 +129,9 @@ async def main():
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mock', action='store_true')
+    args = parser.parse_args()
+    influx_client.mock = args.mock
+    print(f"Running exporter in mock mode: {influx_client.mock} ..")
     asyncio.run(main())

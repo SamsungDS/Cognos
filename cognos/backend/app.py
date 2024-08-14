@@ -10,6 +10,8 @@ import requests
 import socket
 from flask_cors import CORS
 
+import mock_constants
+
 
 current_script_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -107,12 +109,11 @@ def insert_hosts(payload):
             insert_query = (
                 "REPLACE INTO hosts "
                 "(id, name, mem_capacity, host_target_ports)"
-                "VALUES (%s, %s, %s, %s)"
+                "VALUES (%s, %s, %s)"
             )
 
             values = (
-                host['id'], host['name'], host['mem_capacity'],
-                ','.join([str(x) for x in host['host_target_ports']])
+                host['id'], host['name'], host['mem_capacity']
             )
             cursor.execute(insert_query, values)
             db.commit()
@@ -277,6 +278,8 @@ def get_devname_from_id(dev_id):
 
 def get_hostid_from_name(name):
     db, cursor = connect_to_mysql()
+    row = []
+    print(f"NAME FROM UI: {name} TYPE: {type(name)}")
     try:
         query = "SELECT id FROM hosts WHERE name=%s"
         values = [name]
@@ -323,26 +326,27 @@ def get_deviceid_and_devicename_from_port(port):
     return dev_id, dev_name
 
 
-def get_setup_info():
-    # TODO: Implement mode if mock is set here and override payload
-    
-    headers = {
-        'accept': 'application/json',
-        'Content-Type': 'application/json'
-    }
+def get_setup_info(mock=False):
+    if not mock:
+        headers = {
+            'accept': 'application/json',
+            'Content-Type': 'application/json'
+        }
 
-    # TODO: replace json field with json from incoming request
-    # no current notion of cluster_id
-    response = requests.post(
-        AGENT_ENDPOINT,
-        json={"input": "cluster_id=CLUST1;command=SetupInfo"},
-        headers=headers
-    )
+        # TODO: replace json field with json from incoming request
+        # no current notion of cluster_id
+        response = requests.post(
+            AGENT_ENDPOINT,
+            json={"input": "cluster_id=CLUST1;command=SetupInfo"},
+            headers=headers
+        )
 
-    payload = (
-        json.loads(response.json()['output'])
-        [NODE_ENDPOINT]
-    )
+        payload = (
+            json.loads(response.json()['output'])
+            [NODE_ENDPOINT]
+        )
+    else:
+        payload = mock_constants.MOCK_CXL_SETUP
 
     # Find mappings between hosts and devices
     dev_ports = set()
@@ -368,64 +372,72 @@ def get_setup_info():
     return payload
 
 
-def get_devices_info():
-    headers = {
-            'accept': 'application/json',
-            'Content-Type': 'application/json'
-        }
-    svk_api_input_arg = (
-        "cluster_id=CLUST1;command=ListDevices;"
-        "FM_id=203;FM_endpoint=samsung.com"
-    )
-    response = requests.post(
-        AGENT_ENDPOINT,
-        json={"input": svk_api_input_arg},
-        headers=headers
-    )
-
-    if response.ok:
-        payload = (
-            json.loads(response.json()['output'])
-            [NODE_ENDPOINT]
-            ["devices"]
+def get_devices_info(mock=False):
+    if not mock:
+        headers = {
+                'accept': 'application/json',
+                'Content-Type': 'application/json'
+            }
+        svk_api_input_arg = (
+            "cluster_id=CLUST1;command=ListDevices;"
+            "FM_id=203;FM_endpoint=samsung.com"
+        )
+        response = requests.post(
+            AGENT_ENDPOINT,
+            json={"input": svk_api_input_arg},
+            headers=headers
         )
 
-        # convert bytes into GB & add device names
-        for i in range(len(payload)):
-            payload[i]["dev_capacity"] = (
-                math.trunc(payload[i]["dev_capacity"] / (1024*1024*1024))
+        if response.ok:
+            payload = (
+                json.loads(response.json()['output'])
+                [NODE_ENDPOINT]
+                ["devices"]
             )
-            dev_id = payload[i]["dev_id"]
-            payload[i]["dev_name"] = get_devname_from_id(payload[i]["dev_id"])
-
-        return payload
+        else:
+            return failed_response("Failed to fetch device info from SVK")
     else:
-        return failed_response("Failed to fetch device info from SVK")
+        payload = mock_constants.MOCK_CXL_DEVICES
 
-
-def get_hosts_info():
-    headers = {
-            'accept': 'application/json',
-            'Content-Type': 'application/json'
-    }
-    response = requests.post(
-        AGENT_ENDPOINT,
-        json={"input": "cluster_id=CLUST1;command=ListHosts"},
-        headers=headers
-    )
-    if response.ok:
-        payload = (
-            json.loads(response.json()['output'])
-            [NODE_ENDPOINT]
-            ['hosts']
+    # convert bytes into GB & add device names
+    for i in range(len(payload)):
+        payload[i]["dev_capacity"] = (
+            math.trunc(payload[i]["dev_capacity"] / (1024*1024*1024))
         )
-        return payload
+        dev_id = payload[i]["dev_id"]
+        payload[i]["dev_name"] = get_devname_from_id(payload[i]["dev_id"])
+
+    return payload
+
+
+def get_hosts_info(mock=False):
+    if not mock:
+        headers = {
+                'accept': 'application/json',
+                'Content-Type': 'application/json'
+        }
+        response = requests.post(
+            AGENT_ENDPOINT,
+            json={"input": "cluster_id=CLUST1;command=ListHosts"},
+            headers=headers
+        )
+        if response.ok:
+            payload = (
+                json.loads(response.json()['output'])
+                [NODE_ENDPOINT]
+                ['hosts']
+            )
+            return payload
+        else:
+            return failed_response("Failed to retrieve hosts info from SVK")
     else:
-        return failed_response("Failed to retrieve hosts info from SVK")
+        return mock_constants.MOCK_CXL_HOSTS
 
 
 def get_host_attached_devices(host):
     db, cursor = connect_to_mysql()
+    results = []
+    host = host[0] if type(host) is list else host
     try:
         query = (
             "SELECT dev_name, status, dev_port, type, mode, dev_capacity "
@@ -463,9 +475,9 @@ def clear_all_tables():
     disconnect_mysql(db)
 
 
-def setup_tables():
+def setup_tables(mock=False):
     # get setup info
-    init_payload = get_setup_info()
+    init_payload = get_setup_info(mock=mock)
     dev_port_name_map = defaultdict()
     devport_hostname_map = defaultdict()
 
@@ -477,14 +489,14 @@ def setup_tables():
             devport_hostname_map[endpt["target"]] = host["host_name"]
 
     # get device info
-    devices_payload = get_devices_info()
+    devices_payload = get_devices_info(mock=mock)
     for i in range(len(devices_payload)):
         dev_name = dev_port_name_map[devices_payload[i]["dev_port"]]
         devices_payload[i]["dev_name"] = dev_name
     insert_devices(devices_payload)
 
     # get hosts info
-    hosts_payload = get_hosts_info()
+    hosts_payload = get_hosts_info(mock=mock)
     insert_hosts(hosts_payload)
 
     # store connections
@@ -505,10 +517,6 @@ class DataSource(ABC):
 
     @abstractmethod
     def get_hosts(self):
-        pass
-
-    @abstractmethod
-    def get_device_status(self):
         pass
 
     @abstractmethod
@@ -591,12 +599,30 @@ class Mock(DataSource):
         return response
 
     def post_devices(self):
-        # TODO: derive from constants
-        return jsonify({'status': 200})
+        payload = get_devices_info(mock=True)
+        response = jsonify(payload)
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
 
     def membox_capacity(self):
-        # TODO: derive from constants
-        return jsonify({'status': 200})
+        payload = get_devices_info(mock=True)
+        num_devices = 0
+        num_hosts = 0
+        for dev in payload:
+            num_devices += 1
+            num_hosts += 1 if dev['hosts_attached'] else 0
+        total_capacity = 256 * num_devices
+        used_capacity = 256 * num_hosts
+        payload = [{
+            "total_capacity": total_capacity,
+            "used_capacity": used_capacity,
+            "used_capacity_percentage": (
+                math.floor((used_capacity/total_capacity) * 100)
+            )
+        }]
+        response = jsonify(payload)
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
 
     def host_devices(self):
         request_data = request.get_json()
@@ -622,7 +648,7 @@ class Mock(DataSource):
     def detach_device(self):
         request_data = request.get_json()
         dev_name = request_data["dev_name"]
-        host_name = request_data["host_name"]
+        host_name = request_data["host_name"][0]
         dev_id = get_devid_from_name(dev_name)
         host_id = get_hostid_from_name(host_name)
         delete_connection(int(dev_id), int(host_id))
@@ -635,7 +661,7 @@ class Mock(DataSource):
     def attach_device(self):
         request_data = request.get_json()
         dev_name = request_data["dev_name"]
-        host_name = request_data["host_name"]
+        host_name = request_data["host_name"][0]
         dev_id = get_devid_from_name(dev_name)
         host_id = get_hostid_from_name(host_name)
 
@@ -939,12 +965,12 @@ def create_app(mock=False):
         return cal.get_mb_info()
 
     # setup database tables based on current state during initial boot
-    setup_tables()
+    setup_tables(mock=mock)
     return app
 
 
 @click.command()
-@click.option('--mock', '-m', is_flag=True, help="Print more output.")
+@click.option('--mock', '-m', is_flag=True, help="mock mode")
 @click.option('--host', '-h', required=True, help="IP of host of CAL")
 @click.option('--port', '-p', required=True, help="Port to run CAL on")
 def main(mock, host, port):

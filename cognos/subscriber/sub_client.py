@@ -1,19 +1,19 @@
 import sys, os
-import json 
+import json
 import pandas as pd
 import zmq
-import time 
+import time
 import ast
 import errno
 import os.path
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from backend.cognos_influxdb_client import CognosInfluxDBClient 
+from backend.cognos_influxdb_client import CognosInfluxDBClient
 from backend.helper import *
 
 def read_input(filename):
 
-    data=[] 
+    data=[]
     with open(filename,"r") as file:
 
         for line in file:
@@ -32,14 +32,14 @@ def main() -> None:
 
     if not os.path.exists(sys.argv[1]):
         raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), sys.argv[1])
- 
+
     data = read_input(sys.argv[1])
-    if data: 
+    if data:
         # Create a DataFrame
         df = pd.DataFrame(data)
     else:
-        print("No data to send to influxDB!!") 
-        sys.exit(0)   
+        print("No data to send to influxDB!!")
+        sys.exit(0)
 
     #create an instance of CognosInfluxDBClient
     dbobj = CognosInfluxDBClient()
@@ -55,18 +55,18 @@ def main() -> None:
                 utc_time = current_time.tz_localize('UTC')
 
                 # Add current timestamp
-                row["timestamp"] = utc_time.strftime("%Y-%m-%dT%H:%M:%S")
+                row["timestamp"] = utc_time.strftime("%Y-%m-%dT%H:%M:%SZ")
 
                 # Sleep for 5 seconds
-                time.sleep(5)
+                time.sleep(0.5)
 
                 #write event to influxdb
                 dbobj.write_cognos_event(row.to_dict())
-           
+
 
     except KeyboardInterrupt:
         pass
-    
+
 
 if __name__ == "__main__":
     main()

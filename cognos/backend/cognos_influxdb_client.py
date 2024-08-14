@@ -10,11 +10,13 @@ import sys
 
 sys.path.append(os.path.abspath(  # noqa: E402
     os.path.join(os.path.dirname(__file__), '..')))  # noqa: E402
-from helper import fetch_cognos_configs
+from backend.helper import fetch_cognos_configs
+
+from backend.mock_constants import MOCK_CXL_SETUP
 
 
 class CognosInfluxDBClient():
-    def __init__(self, url=None, token=None, org=None, bucket=None):
+    def __init__(self, url=None, token=None, org=None, bucket=None, mock=False):
         current_script_dir = os.path.dirname(os.path.abspath(__file__))
         if any(arg is None for arg in [url, token, org, bucket]):
             configs = fetch_cognos_configs(current_script_dir,
@@ -38,6 +40,7 @@ class CognosInfluxDBClient():
         self.read_client = self.client.query_api()
         self.filter_hosts = False
         self.selected_host = None
+        self.mock = mock
 
     def write_cognos_event(self, event):
         """
@@ -256,17 +259,20 @@ class CognosInfluxDBClient():
         upstream port bandwidth = 8 lanes per port* 4GB/s per lane
         32G per upstream port
         """
-        headers = {
-            'accept': 'application/json',
-            'Content-Type': 'application/json'
-        }
-        response = requests.post(
-            self.agent_endpoint,
-            json={"input": "cluster_id=CLUST1;command=SetupInfo"},
-            headers=headers
-        )
+        if self.mock:
+            payload = MOCK_CXL_SETUP
+        else:
+            headers = {
+                'accept': 'application/json',
+                'Content-Type': 'application/json'
+            }
+            response = requests.post(
+                self.agent_endpoint,
+                json={"input": "cluster_id=CLUST1;command=SetupInfo"},
+                headers=headers
+            )
+            payload = json.loads(response.json()['output'])["hpos-vroc04:9998"]
 
-        payload = json.loads(response.json()['output'])["hpos-vroc04:9998"]
         max_bandwidth = 512
         num_upstream_ports = len(payload['Hosts'])
         used_bandwidth = 32 * num_upstream_ports
@@ -279,17 +285,19 @@ class CognosInfluxDBClient():
         }
 
     def get_attached_devices_count(self):
-        headers = {
-            'accept': 'application/json',
-            'Content-Type': 'application/json'
-        }
-        response = requests.post(
-            self.agent_endpoint,
-            json={"input": "cluster_id=CLUST1;command=SetupInfo"},
-            headers=headers
-        )
-
-        payload = json.loads(response.json()['output'])["hpos-vroc04:9998"]
+        if self.mock:
+            payload = MOCK_CXL_SETUP
+        else:
+            headers = {
+                'accept': 'application/json',
+                'Content-Type': 'application/json'
+            }
+            response = requests.post(
+                self.agent_endpoint,
+                json={"input": "cluster_id=CLUST1;command=SetupInfo"},
+                headers=headers
+            )
+            payload = json.loads(response.json()['output'])["hpos-vroc04:9998"]
         num_hosts = len(payload['Hosts'])
         num_cxl_devices = len(payload['Devices'])
         return {
@@ -298,17 +306,20 @@ class CognosInfluxDBClient():
         }
 
     def get_membox_capacity(self):
-        headers = {
-            'accept': 'application/json',
-            'Content-Type': 'application/json'
-        }
-        response = requests.post(
-            self.agent_endpoint,
-            json={"input": "cluster_id=CLUST1;command=SetupInfo"},
-            headers=headers
-        )
+        if self.mock:
+            payload = MOCK_CXL_SETUP
+        else:
+            headers = {
+                'accept': 'application/json',
+                'Content-Type': 'application/json'
+            }
+            response = requests.post(
+                self.agent_endpoint,
+                json={"input": "cluster_id=CLUST1;command=SetupInfo"},
+                headers=headers
+            )
+            payload = json.loads(response.json()['output'])["hpos-vroc04:9998"]
 
-        payload = json.loads(response.json()['output'])["hpos-vroc04:9998"]
         num_attached_devices = 0
         for host in payload['Hosts']:
             num_attached_devices += (

@@ -49,8 +49,13 @@ export const WebSocketProvider = ({ children }) => {
       }
     };
 
-    ws.current.onclose = () => {
-      console.log("UI closed connection to websocket");
+    ws.current.onclose = (event) => {
+      if (event.wasClean) {
+        console.log("Clean termination to websocket");
+      } else {
+        console.error("Unexpected termination of websocket");
+        ws.current = new WebSocket(`ws://${Configs.exporter_endpoint}`);
+      }
     };
 
     return () => {

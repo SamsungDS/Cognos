@@ -248,7 +248,7 @@ const Configure = () => {
                       <DropDown 
                         options={constants.memboxSelectorOptions}  
                         title={constants.memboxSelectorTitle}
-                        onSelectChange={(selectedOption) => handleSelectChange(selectedOption, `${apiEndpoint}//${MEMBOX_LMDs}`, setMemboxData)}
+                        onSelectChange={(selectedOption) => handleSelectChange(selectedOption, `${apiEndpoint}/host_devices`, setMemboxData)}
                         dropDownType="single"
                         name='membox'
                       />
