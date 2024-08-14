@@ -75,12 +75,12 @@ const Dashboard = () => {
                       <h4 className='cmmb-memory-heading'>CMM-B <span style={{color: 'white'}}>Capacity</span></h4>
                     </div>
                     <div>
-                      <div className='progres-bar-label' style={{color: 'white', paddingTop:12, marginLeft:514}}>
-                        {`${cmmbCapacityData.total_capacity} GB`}
-                      </div>
                       <div style={{paddingTop:12}}>
-                        <ProgressBar style={{ height: 24, fontWeight: 'bold'}} now={cmmbCapacityData.used_capacity_percentage} key={1} className='host1'/>
-                        <div style={{color:'white', marginLeft:200}}>{`Used Capacity ${cmmbCapacityData.used_capacity} GB`}</div>
+                          <div className='progres-bar-label' style={{color: 'white'}}>
+                            {`${cmmbCapacityData.total_capacity ? cmmbCapacityData.total_capacity: 0} GB`}
+                          </div>
+                          <ProgressBar style={{ height: 24, fontWeight: 'bold'}} now={cmmbCapacityData.used_capacity_percentage} key={1} className='host1'/>
+                          <div style={{color:'white', marginLeft:200}}>{`Used Capacity ${cmmbCapacityData.used_capacity ? cmmbCapacityData.total_capacity: 0} GB`}</div>
                       </div>
                     </div>
                   </div>
@@ -93,8 +93,8 @@ const Dashboard = () => {
               <div className='device_card graph-container' id='rack-graph-id'>
                 <Row>
                   <Col sm={3} md={4} lg={4} xl={2}>
-                    <div className='fs-22' style={{padding: 12}}>
-                      <h6 style={{fontWeight: 'bold', color:'#00B3E3'}}>CMM-B Memory <span style={{color: "white"}}>Usage</span></h6>
+                    <div style={{padding: 12}}>
+                      <h6 className='cmmb-memory-heading'>CMM-B Memory <span style={{color: "white"}}>Usage</span></h6>
                     </div>
                   </Col>
                   <Col sm={3} md={8} lg={8} xl={10} data-testid='rackBandwidth-id'>
@@ -118,10 +118,10 @@ const Dashboard = () => {
                       <h4 className='cmmb-memory-heading'>CMM-B Memory <span style={{color: 'white'}}>Bandwidth</span></h4>
                     </div>
                     <div>
-                      <div className='progres-bar-label' style={{color: 'white', paddingTop:12, marginLeft: 514}}>
-                        {`${cmmbBandwidthData.max_bandwidth ? cmmbBandwidthData.max_bandwidth : 0} GBps`}
-                      </div>
                       <div style={{paddingTop:12}}>
+                        <div className='progres-bar-label' style={{color: 'white'}}>
+                          {`${cmmbBandwidthData.max_bandwidth ? cmmbBandwidthData.max_bandwidth : 0} GBps`}
+                        </div>
                         <ProgressBar style={{ height: 24, fontWeight: 'bold'}} now={cmmbBandwidthData.used_percentage_bandwidth} key={1} className='host1'/>
                         <div style={{color:'white', marginLeft:200}}>{`Used Bandwidth ${cmmbBandwidthData.used_bandwidth ? cmmbBandwidthData.used_bandwidth: 0} GBps`}</div>
                       </div>

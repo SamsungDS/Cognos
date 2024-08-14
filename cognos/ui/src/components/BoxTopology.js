@@ -116,12 +116,12 @@ const BoxTopology = () => {
     });
 
     const mappedHostList1 = HostList1.map(item => {
-const isActive = hostToDeviceMappingB2.some(hostItem => hostItem.host === item.host);
-  return {
-    ...item,
-    color: isActive ? item.color : '#4F4F4F',
-    isActive
-  };
+    const isActive = hostToDeviceMappingB2.some(hostItem => hostItem.host === item.host);
+      return {
+        ...item,
+        color: isActive ? item.color : '#4F4F4F',
+        isActive
+      };
     });
 
 
@@ -200,12 +200,17 @@ const isActive = hostToDeviceMappingB2.some(hostItem => hostItem.host === item.h
         ).replace(/ +/g, '');
         const deviceCount = devices.length;
         const sizeMultiplier = deviceCount > 8 ? 1 : 1.3;
+        const sizePadding = deviceCount > 8 ? '0' : '0rem 1rem 0rem 1rem';
         const cardStyle = {
-          transform: `scale(${sizeMultiplier})`
+          transform: `scale(${sizeMultiplier})`,
+          padding: sizePadding
         };
+        const horizontalLeft = deviceCount > 8 ? '0px' :  '10px';
+        const horizontalStyle = {
+          left: horizontalLeft
+        }
         return (
           <div className='cxl-dev' title={D1Metadata} key={device.device} style={cardStyle} >
-            <p className='device-name' style={{ color: fontColor, fontWeight: 700, marginBottom: 0 }}>{part}</p>
             <img src={srcImage} alt="cxlDevIconActive" className='device-img' style={{ objectFit: 'contain', marginTop: 0, fontFamily: 'Samsung' }} />
             <p className='fs-22 device-Id' >{`${part}`}</p>
           </div>

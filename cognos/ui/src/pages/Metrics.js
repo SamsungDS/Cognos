@@ -110,7 +110,7 @@ const Metrics = () => {
         sendMessage(payload);
       };
     
-  return (           
+    return (           
         <div className='Content content_root' id='main-container-id'>
             <Container fluid>
                 <Row>
@@ -153,7 +153,7 @@ const Metrics = () => {
                                                         {`128 GBps`}
                                                     </div>
                                                     <ProgressBar now='50' key={2} className='host2' />
-                                                    <div style={{color:'white', marginLeft:200}}>{`Used Bandwidth 64 GBps`}</div>
+                                                    <div className='progres-bar-title-metrics' style={{color:'white'}}>{`Used Bandwidth 64 GBps`}</div>
                                                 </div>
                                             </Col>
                                         </Row>

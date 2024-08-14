@@ -75,11 +75,11 @@ th, td {
 @media screen and (min-width: 1140px) and ( max-width: 2559px) {
   .cofig-row {
     min-width: 220px;
-    font-size: 20px;
+    font-size: 18px;
   }
   .cmm-row {
     min-width: 262px;
-    font-size: 20px;
+    font-size: 18px;
   }
 }
 @media screen and (min-width: 2560px) {

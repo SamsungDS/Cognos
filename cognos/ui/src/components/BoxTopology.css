@@ -26,7 +26,7 @@
   }
 .device-box {
     margin-top: -7px;
-    border: 1px solid #ffff;
+    border: 1px solid #4F4F4F;
     height: 250px;
     padding-top: 20px;
 }
@@ -88,7 +88,7 @@
     justify-content: center;
     height: auto;
     box-sizing: border-box;
-    padding: 0rem 1rem 0rem 1rem;
+    /* padding: 0rem 1rem 0rem 1rem; */
     transition: transform 0.3s ease;
 }
 .bg-primary{
@@ -230,9 +230,10 @@
   
   .cmm-title:hover,
   .cmm-title.active {
-    background-color: #0077C8;
+    background-color: black;
     color: #ffffff;
     border-radius: 5px;
+    border: 2px solid #00B3E3;
   }
   
   /* Arrow Buttons */
@@ -254,16 +255,6 @@
     transform: scale(1.1);
   }
   
-  .left-arrow {
-    position: absolute;
-    left: 72px;
-  }
-  
-  .right-arrow {
-    position: absolute;
-    right: 641px;
-  }
-  
 @media screen and (min-width: 768px) and ( max-width: 1023px) {
     .cxl-switch-scroll {
         margin-left: 6px;
@@ -281,7 +272,7 @@
         margin-left: 28px;
     }
     .badge {
-        width: 72px;
+        width: 60px;
     }
     .bg-primary {
         margin-left: -28px;
@@ -317,12 +308,12 @@
         margin-left: 38px;
     }
     .device-img {
-        margin-left: 20px;
-        width: 56px;
+        margin-left: 0px;
+        width: 45px;
     }
     .device-Id {
-        margin-left: 23px;
-        font-size: 12px; 
+        margin-left: 12px;
+        font-size: 8px; 
         margin-top: 4px;
     }
 }
@@ -343,9 +334,6 @@
     .host-round-icon {
         width: 14px;
         margin-left: 0px;
-    }
-    .cxl-device {
-        margin-left: 90px;
     }
     .cxl-switch {
         margin-left: 347px;
@@ -374,11 +362,11 @@
         margin-left: 48px;
     }
     .device-img {
-        margin-left: 25px;
-        width: 68px;
+        margin-left: 23px;
+        width: 39px;
     }
     .device-Id {
-        margin-left: 35px;
+        margin-left: 33px;
         margin-top: 4px;
     }
 }
@@ -394,15 +382,12 @@
         margin-left: 82px;
     }
     .badge {
-        width: 143px;
+        width: 100px;
     }
     .host-round-icon {
         width: 14px;
         margin-left: 0px;
     }
-    /* .cxl-device {
-        margin-left: 98px;
-    } */
     .cxl-switch {
         margin-left: 347px;
     }
@@ -427,11 +412,11 @@
         margin-left: 12px;
     }
     .device-img {
-        margin-left: 20px;
-        width: 81px;
+        margin: 2px;
+        width: 64px;
     }
     .device-Id {
-        margin-left: 4px;
+        margin-left: 1px;
         margin-top: -2px;
     }
 }
