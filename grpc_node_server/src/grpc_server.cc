@@ -280,10 +280,6 @@ void signal_node_handler(int signal) {
 
 int StartNodeServer(std::string svk_conf_file, bool blocking) {
   int status = -1;
-  std::signal(SIGTERM, signal_node_handler);
-  std::signal(SIGSEGV, signal_node_handler);
-  std::signal(SIGINT, signal_node_handler);
-  std::signal(SIGABRT, signal_node_handler);
 
   Servicer *svcr(new Servicer(svk_conf_file));
   if (svcr->get_state() == false) {
@@ -295,6 +291,12 @@ int StartNodeServer(std::string svk_conf_file, bool blocking) {
   if (server != nullptr) {
     svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
                "Starting the node server to process the commands");
+
+    std::signal(SIGTERM, signal_node_handler);
+    std::signal(SIGSEGV, signal_node_handler);
+    std::signal(SIGINT, signal_node_handler);
+    std::signal(SIGABRT, signal_node_handler);
+
     if (blocking == true) {
       while (gSignalNodeStatus.load() == -1) sleep(5);
       svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
