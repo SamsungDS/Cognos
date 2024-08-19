@@ -8,6 +8,5 @@ Version: GIT_VERSION
 Package: svk-mgmt-fw
 Architecture: amd64
 Build-Depends: libspdlog1, libspdlog-dev
-Depends: libre2-9, libzmq3-dev
+Depends: libre2-9, libzmq3-dev, svk-core
 Description: SVK Management framework related APIs, services
-

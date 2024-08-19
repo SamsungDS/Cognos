@@ -14,7 +14,7 @@ SVK Management framework related APIs, services
 %package devel
 Summary:        SVK Management framework devel package contains headers and sample_feature
 Provides:       svk-mgmt-fw-devel = %{version}
-Requires:       svk-core, svk-core-devel, svk-mgmt-fw = %{version}
+Requires:       svk-core, svk-core-devel, svk-go-modules, svk-grpc, svk-mgmt-fw = %{version}
 
 %description devel
 SVK Management framework related API header files

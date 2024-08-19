@@ -10,6 +10,7 @@ sonar-scanner:
     - unzip -q $SONAR_SCANNER_FILENAME -d /
     # Execute sonar-scanner and ingest coverage report
     - /$SONAR_SCANNER_DIR/bin/sonar-scanner -Dsonar.coverageReportPaths=$SONAR_COVERAGE_REPORT -Dsonar.go.coverage.reportPaths=$SONAR_GO_COVERAGE_REPORT
+  after_script:
   needs:
     - build docker
     - unit test rocky9

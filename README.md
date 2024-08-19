@@ -1,59 +1,129 @@
 # SVK Management Framework
 
-## Name
-SVK Management Framework
-
 ## Description
-The SVK Management Framework repository contains code related to REST API Server, gRPC server for the Controller and the Agent nodes, proto files, configuration files and the unit tests.
 
-## Manual Installation
-- Run the script `scripts/dependencies/install.sh` to install necessary packages.
-- The above script compiles the gRPC related packages and installs in the standard library path
-- Requires artifacts of svk-core repo installed in the directory /usr/local/svk/core as the prerequiste to start with.
-- On Ubuntu OS v22.04, the default `go` package is not sufficient for the project. Need to download go v1.21+ and set the PATH variable accordingly
-  ```
-  export PATH=$PATH:/usr/local/go/bin
-  ```
-- Configure the PKG_CONFIG_PATH to point to the package config file
-  ```
-  export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/local/lib/pkgconfig/:/usr/local/lib64/pkgconfig/:/usr/local/svk/core/lib64/pkgconfig/:/usr/local/svk/core/lib/pkgconfig/
-  ```
-  Check the lib path depending on the OS version.
+The SVK Management Framework repository contains code related to REST API Server, gRPC server for the SVK Controller and the Agent nodes, proto files, configuration files and the unit tests.
 
-- For CentOS/Rocky 8 and below, the build requires GCC toolset 11 and source the gcc environment using the command `source /opt/rh/gcc-toolset-11/enable`
+## Supported build and runtime platforms
 
-## Testing
-- Requires prerequisite packages as mentioned in the Installation section. Some of them are grpc, svk-core, gcc-toolset-11
-- Run the script `sh scripts/build.sh` with the flags `-t -c` to run unit tests and code coverage results
+- Rockylinux 9
+- Ubuntu 22
 
-## Building source code and unit testing
-Run the script `scripts/dependencies/install.sh` folder to install the dependencies needed for building. Run the `build.sh` script from the top level directory. The `-h` option will show what options are available for building SVK Mgmt Framework.
+## Install build dependencies
 
-    ./scripts/build.sh -h
+```bash
+./scripts/dependencies/install.sh
+```
 
-If you would like to build SVK Mgmt Framework and run unit testing and generate code coverage reports for example, this is the command:
+### SVK Dependencies
 
-    ./scripts/build.sh -t -c
+The [dependencies install script](#Install-build-dependencies) will configure your build environment to pull packages from [SSG Nexus](http://ssg-nexus.msl.lab:8081).
 
-## Generate tar ball artifacts
-- Run the script `./scripts/build.sh -r -p /usr/local/svk/mgmt-fw` to copy the libraries and necessary files in the directory /usr/local/svk/mgmt-fw directory.
-  The above command generates the artifact `svk-mgmt-fw-<git_tag>.tgz` in the `build` directory.
+The following SVK dependencies are installed automatically by the above script, but can be manually updated, if necessary, using your OS's package manager:
 
-To build and install necessary artifacts to a specified directory, this is the command:
+- `svk-core`
+- `svk-core-dev` (Ubuntu) or `svk-core-devel` (Rockylinux)
+- `svk-grpc`
+- `svk-go-modules`
 
-    ./scripts/build.sh -r -p install_dir
+### Manual upgrade of SVK Packages
 
-To build RPM/DEB packages, run the command
-    ./scripts/build.sh -r -b -i /usr/local/svk/mgmt-fw
+#### Rockylinux
+
+```bash
+dnf clean all
+dnf install svk-core-devel svk-grpc svk-go-modules  -y
+```
+
+#### Ubuntu
+
+```bash
+apt-get update
+apt-get install svk-core-dev svk-grpc svk-go-modules -y
+```
+
+## Building and executing unit tests
+
+- [Install build dependencies](#Install-build-dependencies)
+- Execute `./scripts/build.sh` script from the top level directory. The `-h` option will show what options are available for building SVK Management Framework:
+
+```bash
+$ ./scripts/build.sh -h
+Build script for SVK Management Framework
+
+Syntax: build.sh [-t|c|h|p|r|f]
+options:
+-t | --build-tests
+  Build the unit tests for SVK Framework.
+-c | --with-coverage
+  Build with code coverage report. Must build unit tests for this.
+-h | --help
+  Print this help.
+-p | --install-prefix
+  Install libraries and related files to specified dir.
+-r | --release
+  Release build. Generates a tarball called svk-mgmt-fw-<version>.tgz by default.
+-f | --filename
+  Filename prefix to use for release tarball. Only applicable when building with release flag.
+-b | --build-package
+  Generate SVK Mgmt FW RPMs/DEB packages.
+-i | --install-path
+  Path that RPMs/DEBs should install mgmt-fw to (Default: /usr/local/svk/mgmt-fw). Only applicable when building with release flag.
+```
+
+### Unit Tests and Code Coverage
+
+Execute the following script to build with unit tests, and display code coverage results:
+
+```bash
+./scripts/build.sh -t -c
+```
+
+### Generate release artifacts
+
+Execute the build script to create a release build and copy the resulting libraries to `/usr/local/svk/mgmt-fw`:
+
+```bash
+./scripts/build.sh -r -b -p /usr/local/svk/mgmt-fw
+```
+
+The above command generates the artifact `svk-mgmt-fw-<git_tag>.tgz` as well as RPM/DEB packages in the `build` directory.
 
 ### Release build & RPMs
 
-To do a release build, use the `-r` flag. This will create a tarball and two release RPM/DEB files (add the `--build-package` flag), svk-mgmt-fw and svk-mgmt-fw-dev(el) in the `build` directory. These will contain the framework related headers/libs.
+* `svk-mgmt-fw`: Runtime version of SVK Management Framework
+* `svk-mgmt-fw-dev` (Ubuntu) or `svk-mgmt-fw-devel` (Rockylinux): Development package of SVK Management Framework
 
-By default, installing the RPM will install to the path `/usr/local/svk/mgmt-fw`. If the RPMs/DEB packages are built with `-i <install_path>` to the build script, then they will be installed to the given `install_path`.
+By default, installing the RPM/DEB will install files to  `/usr/local/svk/mgmt-fw`. If packages are built with `-i <install_path>` from the build script, then they will be installed to the given `install_path` instead.
+
+## Installation
+
+To install a pre-compiled version of SVK Management Framework and its dependencies, configure your package manager to use the SSG Nexus repo, then install the Management Framework package(s).
+
+### Rockylinux
+
+```bash
+curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
+dnf install epel-release -y
+dnf install svk-mgmt-fw -y
+# Optional - install devel package
+dnf install svk-mgmt-fw-devel -y
+```
+
+### Ubuntu
+
+```bash
+wget --quiet --output-document /usr/share/keyrings/ssg-nexus.pgp  http://ssg-nexus.msl.lab:8081/repository/svk_common/public.pgp
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ssg-nexus.pgp] http://ssg-nexus.msl.lab:8081/repository/svk_apt_ubuntu22 $(. /etc/os-release && echo $UBUNTU_CODENAME) main" > /etc/apt/sources.list.d/ssg-nexus.list
+apt update
+apt-get install svk-mgmt-fw -y
+# Optional - install devel package
+apt-get install svk-mgmt-fw-dev -y
+```
 
 ## Usage
-Once all the svk-core and svk-mgmt-fw artifacts are installed, the user needs to run the commands in the following manner
+
+Once `svk-core` and `svk-mgmt-fw` artifacts are installed, the user needs to run the commands in the following manner
 - Copy the configuration JSON files to /etc/svk/ directory. Sample config file can be seen at `config/config.json.example`
 - The server hosting `controller` should have the **svk_mgmt_fw_controller** section in the JSON configuration file (/etc/svk/controller.json)
 - The server hosting `node agent` should have the following
