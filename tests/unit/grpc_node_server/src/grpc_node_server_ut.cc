@@ -752,8 +752,28 @@ TEST(InitTest, InitNodeServerWithSignal) {
   std::string data((std::istreambuf_iterator<char>(file)),
                    (std::istreambuf_iterator<char>()));
   file.close();
+  EXPECT_EQ(true, data.find("Received signal 2") != std::string::npos);
   EXPECT_EQ(true,
             data.find("gRPC Node server is shutdown") != std::string::npos);
+  unlink(MGMT_FW_NODE_DEFAULT_LOG_FILE);
+}
+
+TEST(InitTest, StartNodeServerWithInvalidFeatureDir) {
+  char *cw_dir = get_current_dir_name();
+  std::string features_dir = (char *)"/tmp/abcd";
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(conf_file, conf_file, "rotating_file", 10,
+                               1048576, "INFO", features_dir);
+
+  int status = StartNodeServer(conf_file, false);
+  ASSERT_EQ(status, -1);
+  unlink(conf_file.c_str());
+  std::ifstream file(MGMT_FW_NODE_DEFAULT_LOG_FILE);
+  std::string data((std::istreambuf_iterator<char>(file)),
+                   (std::istreambuf_iterator<char>()));
+  file.close();
+  EXPECT_EQ(true, data.find("Received signal 2") == std::string::npos);
+  unlink(MGMT_FW_NODE_DEFAULT_LOG_FILE);
 }
 
 TEST(InitTest, InitNodeServerInNonBlocking) {
