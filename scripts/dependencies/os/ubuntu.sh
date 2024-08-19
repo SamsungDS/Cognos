@@ -1,6 +1,8 @@
 #! /usr/bin/env bash
 set -e
 
+GO_VERSION=1.21
+
 # Build Dependencies
 install_build_deps() {
     BUILD_DEPS=()
@@ -9,6 +11,7 @@ install_build_deps() {
     BUILD_DEPS+=('dpkg-dev')
     BUILD_DEPS+=('g++')
     BUILD_DEPS+=('git')
+    BUILD_DEPS+=("golang-$GO_VERSION-go")
     BUILD_DEPS+=('libboost-dev')
     BUILD_DEPS+=('libfmt8')
     BUILD_DEPS+=('libfmt-dev')
@@ -60,22 +63,23 @@ configure_nexus() {
     BUILD_DEPS=()
     package_manager 'update'
 
-    # Install svk-core-dev package
-    BUILD_DEPS=('svk-core-dev')
+    # Install svk-core-dev, svk-extras packages from Nexus
+    BUILD_DEPS=()
+    BUILD_DEPS+=('svk-core-dev')
+    BUILD_DEPS+=('svk-grpc')
+    BUILD_DEPS+=('svk-go-modules')
     package_manager 'install'
 }
 
-# Install Go
-install_go() {
-    GO_PKG="go1.21.7.linux-amd64.tar.gz"
-
-    if [[ ! -f /usr/local/go/bin/go ]]; then
-        wget --no-verbose "https://go.dev/dl/$GO_PKG"
-        tar -zxvf $GO_PKG --directory=/usr/local
-    fi
-    rm -fv $GO_PKG
+# Set PATH to include go bin dir
+set_go_path() {
+    local GO_PROFILE="/etc/profile.d/go-$GO_VERSION.sh"
+    echo "export PATH=\$PATH:/usr/lib/go-$GO_VERSION/bin" > "$GO_PROFILE"
+    chmod +x "$GO_PROFILE"
+    # shellcheck disable=SC1090
+    source "$GO_PROFILE"
 }
 
 install_build_deps
 configure_nexus
-install_go
+set_go_path

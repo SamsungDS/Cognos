@@ -15,12 +15,18 @@ release build rocky9:
 
   script:
     # Build with release flag and generate artifact
-    - ./scripts/build.sh --release --install-prefix /usr/local/svk/mgmt-fw
+    - ./scripts/build.sh --release --install-prefix /usr/local/svk/mgmt-fw --build-package
+  after_script:
+    # move artifacts to dir DOCKERFILE OS name - Do not fail if filetype does not exist
+    - mkdir -p "artifacts/$DOCKERFILE_NAME"
+    - cp build/*.tgz "artifacts/$DOCKERFILE_NAME/" || true
+    - cp build/*.rpm "artifacts/$DOCKERFILE_NAME/" || true
+    - cp build/*.deb "artifacts/$DOCKERFILE_NAME/" || true
   artifacts:
     name: release build
     expire_in: 300 seconds
     paths:
-     - build/*.tgz
+     - artifacts/
   variables:
     PACKAGE_MANAGER: microdnf
     CORE_PACKAGE: svk-core-devel

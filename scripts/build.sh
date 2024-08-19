@@ -15,7 +15,7 @@ PROJECT_ROOT=$(realpath "$SCRIPT_DIR/../")
 BUILD_DIR="$PROJECT_ROOT/build"
 REPORTS_DIR="$BUILD_DIR/reports"
 
-export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/local/lib64/pkgconfig:/usr/local/lib/pkgconfig
+export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/local/lib64/pkgconfig:/usr/local/lib/pkgconfig:/usr/lib/pkgconfig
 
 die()
 {
@@ -158,7 +158,7 @@ echo "CMake install prefix: $CMAKE_INSTALL_PREFIX"
 
 mkdir -p "$BUILD_DIR"
 if [ "$ID" == "ubuntu" ]; then
-    export PATH=$PATH:/usr/local/go/bin
+    source /etc/profile
 fi
 
 mkdir -p "$PROJECT_ROOT/build"

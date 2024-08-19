@@ -70,8 +70,11 @@ configure_nexus() {
     NEXUS_YUM_REPO_FILE="http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$ID${VERSION_ID%%.*}.repo"
     wget --no-verbose --output-document /etc/yum.repos.d/ssg-nexus.repo "$NEXUS_YUM_REPO_FILE"
 
-    # Install svk-core-devel package
-    BUILD_DEPS=('svk-core-devel')
+    # Install svk-core-devel, svk-extras packages from Nexus
+    BUILD_DEPS=()
+    BUILD_DEPS+=('svk-core-devel')
+    BUILD_DEPS+=('svk-grpc')
+    BUILD_DEPS+=('svk-go-modules')
     package_manager 'install'
 }
 
