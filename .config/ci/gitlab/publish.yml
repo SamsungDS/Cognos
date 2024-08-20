@@ -1,4 +1,4 @@
-publish release artifacts:
+publish release artifacts - Gitlab:
   stage: .post
   image: alpine:3.19.1
   before_script:
@@ -9,12 +9,59 @@ publish release artifacts:
     - echo "Tagged Version - $VERSION"
     # publish artifacts to Gitlab 
     - |
-      find ./build/ -type f -name "*.tgz" -exec sh -c \
-      'curl --header "PRIVATE-TOKEN: $CI_TOKEN" \
-        --insecure --upload-file {} \
-        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$CI_PROJECT_NAME/${VERSION:1}/$(basename {})"' \
-        \;
-  dependencies:
-    - release build
+      find ./artifacts/ -type f \( -name "*.tgz" -o -name "*.rpm" -o -name "*.deb" \) -exec sh -c \
+      ' \
+        FILEPATH="$1"
+        FILENAME="$(basename "$FILEPATH")"
+        GITLAB_PACKAGE_URL="$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$CI_PROJECT_NAME/${VERSION:1}/$FILENAME"
+        if ! curl --fail --verbose --header "PRIVATE-TOKEN: $CI_TOKEN" \
+            --insecure --upload-file {} \
+            "$GITLAB_PACKAGE_URL"; then
+          echo "ERROR: Failed to upload $FILENAME to $GITLAB_PACKAGE_URL"
+          exit 1
+        fi
+      ' shell {} \;
+  needs:
+    - release build rocky9
+    - release build ubuntu22
   rules:
     - !reference [.default_rules, push_only]
+
+publish release artifacts - Nexus:
+  extends: publish release artifacts - Gitlab
+  script:
+    # publish RPMs to Nexus 
+    - |
+      find ./artifacts/$OS/ -type f -name "*.rpm" -exec sh -c \
+        ' \
+          FILEPATH="$1"
+          FILENAME="$(basename "$FILEPATH")"
+          REPONAME="svk_yum_$OS"
+          NEXUS_REPO_URL="$NEXUS_URL/$REPONAME/"
+          if ! curl --fail --verbose --user "$NEXUS_USER:$NEXUS_SECRET" \
+                  --upload-file "$FILEPATH" \
+                  "$NEXUS_REPO_URL"; then
+              echo "ERROR: Failed to upload $FILENAME to $NEXUS_REPO_URL"
+              exit 1
+          fi
+        ' shell {} \;
+    # publish Debian Packages to Nexus
+    - |
+      find ./artifacts/$OS/ -type f -name "*.deb" -exec sh -c \
+        ' \
+          FILEPATH="$1"
+          FILENAME="$(basename "$FILEPATH")"
+          REPONAME="svk_apt_$OS"
+          NEXUS_REPO_URL="$NEXUS_URL/$REPONAME/"
+          if ! curl --fail --verbose --user "$NEXUS_USER:$NEXUS_SECRET" \
+              --header "Content-Type: multipart/form-data" \
+              --data-binary "@$FILEPATH" \
+              "$NEXUS_REPO_URL"; then
+            echo "ERROR: Failed to upload $FILENAME to $NEXUS_REPO_URL"
+            exit 1
+          fi
+        ' shell {} \;
+  parallel:
+    matrix:
+      - OS: rocky9
+      - OS: ubuntu22
