@@ -99,17 +99,17 @@ cognos/exporter/config/config.json
 8. Run CAL layer with
 ```
 cd cognos/backend
-python3 -m flask run -h <localip> -p 4000
+python3 -m flask run -h <localip> -p 4000 --mock
 ```
 9. Run Exporter
 ```
 cd cognos
-python3 exporter/exporter.py
+python3 exporter/exporter.py --mock
 ```
 10. Run Subscriber
 ```
 cd cognos
-python3 subscriber/mock_sub_client.py
+python3 subscriber/sub_client.py subscriber/mock_publisher_events.output
 ```
 11. Run UI
 ```
@@ -219,6 +219,9 @@ python3 cognos/backend/db_setup.py
 ## Influx DB
 
 ### InfluxDB Installation
+
+Use the following Influx documentation: https://docs.influxdata.com/influxdb/v2/install/ for Step-1 and Step-2
+
 1. For Red Hat/CentOS/Fedora x86-64 (x64, AMD64) systems
 curl -LO https://download.influxdata.com/influxdb/releases/influxdb2-2.7.6-1.x86_64.rpm
 sudo yum localinstall influxdb2-2.7.6-1.x86_64.rpm
