@@ -1,4 +1,4 @@
-unit test:
+unit test rocky9:
   stage: test
   image:
     name: $IMAGE_TAG
@@ -29,3 +29,8 @@ unit test:
     - build docker
   rules:
     - !reference [.default_rules, merge_and_push]
+
+unit test ubuntu22:
+  extends: unit test rocky9
+  variables:
+    DOCKERFILE_NAME: ubuntu22

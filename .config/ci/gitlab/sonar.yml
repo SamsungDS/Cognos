@@ -11,7 +11,7 @@ sonar-scanner:
     # Scan with sonar-scanner
     - /sonar-scanner-*-linux/bin/sonar-scanner -Dsonar.coverageReportPaths=$SONAR_COVERAGE_REPORT
   needs:
-    - unit test
+    - unit test rocky9
   allow_failure: false
   variables:
     DOCKERFILE_NAME: rocky9
