@@ -108,7 +108,7 @@ def insert_hosts(payload):
         try:
             insert_query = (
                 "REPLACE INTO hosts "
-                "(id, name, mem_capacity, host_target_ports)"
+                "(id, name, mem_capacity)"
                 "VALUES (%s, %s, %s)"
             )
 
