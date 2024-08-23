@@ -1,15 +1,56 @@
-# SVK Web
+# SVK CXL Plugin
 
 ## Description
 SVK CXL plugin interfaces with connected CXL devices downstream through fabric management and Cognos GUI upstream. It defines interfaces to read and update the CXL device state using fabric management interface. 
 For more details, see http://sj-confluence.ssi.samsung.com:8090/display/MPL/High+Level+Design+of+Samsung+Cognos+Management+Console.
 
-## Build and Install
+## Supported Build and Runtime Platforms
+- Rockylinux 9
+- Ubuntu 22
+- At least 4 CPU Cores with 8GB RAM.
 
-### Prerequisites
+## Install build dependencies
+```bash
+./scripts/dependencies/install.sh
+```
 
-0. Rocky Linux 9.4+
-1. At least 4 CPU Cores with 8GB RAM.
+### SVK Dependencies
+
+The [dependencies install script](#Install-build-dependencies) will configure your build environment to pull packages from [SSG Nexus](http://ssg-nexus.msl.lab:8081).
+
+The following SVK dependencies are installed automatically by the above script, but can be manually updated, if necessary, using your OS's package manager:
+
+- `svk-core`
+- `svk-core-dev` (Ubuntu) or `svk-core-devel` (Rockylinux)
+- `svk-grpc`
+- `svk-go-modules`
+- `svk-mgmt-fw`
+
+### Manual upgrade of SVK Packages
+
+#### Rockylinux
+
+```bash
+dnf clean all
+dnf config-manager --add-repo=http://ssg-nexus.msl.lab:8081/repository/svk_yum_rocky9/
+dnf install svk-core-devel svk-grpc svk-go-modules  -y
+dnf install svk-mgmt-fw
+
+# Optional - install devel package
+dnf install svk-mgmt-fw-devel -y
+```
+
+#### Ubuntu
+
+```bash
+wget --quiet --output-document /usr/share/keyrings/ssg-nexus.pgp  http://ssg-nexus.msl.lab:8081/repository/svk_common/public.pgp
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ssg-nexus.pgp] http://ssg-nexus.msl.lab:8081/repository/svk_apt_ubuntu22 $(. /etc/os-release && echo $UBUNTU_CODENAME) main" > /etc/apt/sources.list.d/ssg-nexus.list
+apt-get update
+apt-get install svk-core-dev svk-grpc svk-go-modules -y
+apt-get install svk-mgmt-fw -y
+# Optional - install devel package
+apt-get install svk-mgmt-fw-dev -y
+```
 
 ### Get the Sources
 
@@ -29,15 +70,31 @@ git clone --recursive https://cxl-gitlab.ssi.samsung.com/cxl/cxl_memory_box.git
 Assuming you already have access to https://cxl-gitlab.ssi.samsung.com/, if not please contact Samsung IT.
 For additional access permissions and information on https://cxl-gitlab.ssi.samsung.com/cxl/cxl_memory_box.git please contact mukesh.garg@samsung.com (owner/maintainer) or changho.c@samsung.com.
 
-### Build & Install
-
-#### Install dependencies
-
-scripts/dependencies/install.sh
-
 #### Build with CXL Memory box API
 
 https://cxl-gitlab.ssi.samsung.com/cxl/cxl_memory_box/-/blob/main/mbox_a1/README.md
+
+##### Two modes for CXL Memory box build
+
+- Simulated Mode 
+```bash
+git clone git@cxl-gitlab.ssi.samsung.com:cxl/cxl_memory_box.git  
+cd mbox_a1  
+mkdir build  
+cd build  
+cmake -DCMAKE_CXX_FLAGS="-DENABLE_SIM" ..
+make  
+```
+
+- Hardware Mode
+```bash
+git clone git@cxl-gitlab.ssi.samsung.com:cxl/cxl_memory_box.git  
+cd mbox_a1  
+mkdir build  
+cd build  
+cmake.. && make  
+```
+
 
 #### Link FM API with SVK CXL
 
@@ -70,16 +127,42 @@ make...
 ~/cxl/svk-cxl/cxl
 ```
 
+## Building and executing unit tests
 
-#### Build without CXL Memory box API
+- Execute `./scripts/build.sh` script from the top level directory. The `-h` option will show what options are available for building SVK CXL Plugin:
 
-cd cxl && scripts/build.sh
+```bash
+./scripts/build.sh -h
+Build script for SVK CXL Plugin
 
-#### Build with test and code coverage
-cd cxl && scripts/build.sh -t -c
+Syntax: build.sh [-t|c|h|p|r|f]
+options:
+-t | --build-tests
+  Build the unit tests for SVK Framework.
+-c | --with-coverage
+  Build with code coverage report. Must build unit tests for this.
+-h | --help
+  Print this help.
+-p | --install-prefix
+  Install libraries and related files to specified dir.
+-r | --release
+  Release build. Generates a tarball called svk-core-<version>.tgz by default.
+-f | --filename
+  Filename prefix to use for release tarball. Only applicable when building with release flag.
+--with-fmapi <FMAPI_LIB_PATH> <FMAPI_INCLUDE_PATH>
+  Builds with fmapi. Requires fmapi library and source paths.
+e.g. scripts/build.sh --with-fmapi /cxl_memory_box/mbox_a1/build/libmbox_a1_shared.so /cxl_memory_box/mbox_a1
+```
+
+### Unit Tests and Code Coverage
+
+Execute the following script to build with unit tests, and display code coverage results:
+
+```bash
+./scripts/build.sh -t -c
 
 e.g. output
-```
+
 [100%] Built target cxl_ut
 ~/cxl/svk-cxl/cxl/build/tests ~/cxl/svk-cxl/cxl/build ~/cxl/svk-cxl/cxl
 Running unit tests...
@@ -129,6 +212,12 @@ Total Test time (real) =   1.57 sec
 ~/cxl/svk-cxl/cxl/build ~/cxl/svk-cxl/cxl
 Generating coverage reports
 ```
+
+#### Build without CXL Memory box API
+
+cd cxl && scripts/build.sh
+
+
 #### Build RPMS
 cd cxl && scripts/build.sh -r -b
 
