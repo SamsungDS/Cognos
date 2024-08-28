@@ -85,9 +85,7 @@ get_os_version() {
 get_git_version() {
     # Get Git version from tag
     echo "Determining version from git tag"
-    pushd "$PROJECT_ROOT"
-        GIT_VERSION=$(git describe --abbrev=4 --always --tags)
-    popd
+    GIT_VERSION=$("$SCRIPT_DIR/get_version.sh")
 
     # Strip 'v' character from version string
     GIT_VERSION=${GIT_VERSION/v/}
