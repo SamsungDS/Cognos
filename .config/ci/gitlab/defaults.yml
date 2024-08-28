@@ -30,33 +30,10 @@ variables:
   SONAR_COVERAGE_REPORT: $REPORT_DIR/sonar_coverage.xml
   GITLAB_COVERAGE_REPORT: $REPORT_DIR/gitlab_coverage.xml
   GITLAB_JUNIT_REPORT: $REPORT_DIR/gitlab_junit.xml
-  # Enable terminal color on all jobs
-  TERM: xterm
-  CLICOLOR_FORCE: 1
-
-tag semantic version:
-  stage: .pre
-
-get branch:
-  stage: .pre
+  ARTIFACTS_DIR: build/artifacts
 
 build docker:
-  stage: .pre
   parallel:
     matrix:
       - DOCKERFILE_NAME: rocky9
       - DOCKERFILE_NAME: ubuntu22
-
-clang-format:
-  stage: test
-
-shellcheck:
-  stage: test
-
-pages:
-  stage: .post
-
-code coverage:
-  stage: .post
-  needs:
-    - sonar-scanner

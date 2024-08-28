@@ -13,9 +13,8 @@ PIP_ARGS=()
 PIP_ARGS+=("-r")
 PIP_ARGS+=("$REQUIREMENTS")
 
-# Optimizations for Docker build
-if [[ -f /.dockerenv ]]
-then
+# Optimizations for Docker build - see scripts/docker/*.DOCKERFILE for $DOCKER var invocation
+if $DOCKER; then
     PIP_ARGS+=("--no-cache-dir")
 fi
 
@@ -25,7 +24,6 @@ echo "executing command: $INSTALL_STRING"
 eval "$INSTALL_STRING"
 
 # Set git safe.directory globally if docker
-if [[ -f /.dockerenv ]]
-then
+if $DOCKER; then
     git config --global --add safe.directory '*'
 fi

@@ -9,7 +9,7 @@ publish release artifacts - Gitlab:
     - echo "Tagged Version - $VERSION"
     # publish artifacts to Gitlab 
     - |
-      find ./artifacts/ -type f \( -name "*.tgz" -o -name "*.rpm" -o -name "*.deb" \) -exec sh -c \
+      find ./$ARTIFACTS_DIR/ -type f \( -name "*.tgz" -o -name "*.rpm" -o -name "*.deb" \) -exec sh -c \
       ' \
         FILEPATH="$1"
         FILENAME="$(basename "$FILEPATH")"
@@ -32,7 +32,7 @@ publish release artifacts - Nexus:
   script:
     # publish RPMs to Nexus 
     - |
-      find ./artifacts/$OS/ -type f -name "*.rpm" -exec sh -c \
+      find ./$ARTIFACTS_DIR/$OS/ -type f -name "*.rpm" -exec sh -c \
         ' \
           FILEPATH="$1"
           FILENAME="$(basename "$FILEPATH")"
@@ -47,7 +47,7 @@ publish release artifacts - Nexus:
         ' shell {} \;
     # publish Debian Packages to Nexus
     - |
-      find ./artifacts/$OS/ -type f -name "*.deb" -exec sh -c \
+      find ./$ARTIFACTS_DIR/$OS/ -type f -name "*.deb" -exec sh -c \
         ' \
           FILEPATH="$1"
           FILENAME="$(basename "$FILEPATH")"
