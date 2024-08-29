@@ -1,0 +1,16 @@
+Source: svk-core
+Section: utils
+Priority: optional
+Maintainer: Aaron Lee (a.lee03@samsung.com)
+Build-Depends: debhelper (>=12)
+Standards-Version: 4.1.4
+
+Package: svk-core
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, libspdlog1, libfmt8
+Description: SVK Core Framework to load the feature modules and service the commands from the Management module
+
+Package: svk-core-dev
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, svk-core (= ${binary:Version}), libspdlog1, libfmt8
+Description: SVK Core Framework development headers/libraries

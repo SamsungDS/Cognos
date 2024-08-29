@@ -2,44 +2,43 @@
 set -e
 
 # Build Dependencies
-define_build_deps() {
-    BUILD_DEPS=()
+install_packages() {
     BUILD_DEPS=('epel-release')
-    install_packages
-    BUILD_DEPS=()
-    BUILD_DEPS+=('cmake')
-    BUILD_DEPS+=('gcc-c++')
-    BUILD_DEPS+=('git')
-    BUILD_DEPS+=('python3.11')
-    BUILD_DEPS+=('python3-pip')
-    BUILD_DEPS+=('spdlog-devel')
-    BUILD_DEPS+=('tar')
-    BUILD_DEPS+=('unzip')
-    BUILD_DEPS+=('wget')
-    BUILD_DEPS+=('boost-devel')
-    BUILD_DEPS+=('rpmdevtools')
-    install_packages
+    package_manager
+    BUILD_DEPS=(
+        'cmake'
+        'gcc-c++'
+        'git'
+        'python3.11'
+        'python3-pip'
+        'spdlog-devel'
+        'tar'
+        'unzip'
+        'wget'
+        'boost-devel'
+        'rpmdevtools'
+    )
+    package_manager
 }
 
 # Install from package mananger
-install_packages() {
-    # Optimizations for Docker build
-    if [[ -f /.dockerenv ]]
-    then
-        BUILD_DEPS+=('--nodocs')
-        BUILD_DEPS+=('--noplugins')
-        BUILD_DEPS+=('--setopt=install_weak_deps=0')
+package_manager() {
+    # Optimizations for Docker build  - see scripts/docker/*.DOCKERFILE for $DOCKER var invocation
+    if $DOCKER; then
+        BUILD_DEPS+=(
+            '--nodocs'
+            '--noplugins'
+            '--setopt=install_weak_deps=0'
+        )
     fi
 
     # Detect package installer
     INSTALLER_BIN=""
 
-    if [[ -f '/usr/bin/dnf' ]]
-    then
+    if [[ -f '/usr/bin/dnf' ]]; then
         echo "using dnf"
         INSTALLER_BIN='dnf'
-    elif [[ -f '/usr/bin/microdnf' ]]
-    then
+    elif [[ -f '/usr/bin/microdnf' ]]; then
         echo "using microdnf"
         INSTALLER_BIN='microdnf'
     else
@@ -53,17 +52,19 @@ install_packages() {
     eval "$INSTALL_STRING"
 }
 
-define_build_deps
+install_packages
 
 # Farther cleanup if Docker environment
-if [[ -f /.dockerenv ]]
-then
+if $DOCKER; then
     CLEANUP_STRING="$INSTALLER_BIN clean all"
     echo "executing command: $CLEANUP_STRING"
     eval "$CLEANUP_STRING"
     rm -rf /var/lib/dnf/history*
     rm -rf /var/lib/dnf/repos/*
     rm -rf /var/lib/rpm/__db*
-    rm -rf /usr/share/man /usr/share/doc /usr/share/licenses /tmp/*
+    rm -rf /usr/share/man
+    rm -rf /usr/share/doc
+    rm -rf /usr/share/licenses
+    rm -rf /tmp/*
     rm -f /var/log/dnf*
 fi

@@ -2,43 +2,49 @@
 set -e
 
 # Build Dependencies
-define_build_deps() {
-    BUILD_DEPS=()
-    BUILD_DEPS+=('cmake')
-    BUILD_DEPS+=('dpkg-dev')
-    BUILD_DEPS+=('g++')
-    BUILD_DEPS+=('git')
-    BUILD_DEPS+=('libboost-dev')
-    BUILD_DEPS+=('libfmt8')
-    BUILD_DEPS+=('libfmt-dev')
-    BUILD_DEPS+=('libspdlog-dev')
-    BUILD_DEPS+=('python3.11')
-    BUILD_DEPS+=('python3-pip')
-    BUILD_DEPS+=('tar')
-    BUILD_DEPS+=('unzip')
-    BUILD_DEPS+=('wget')
-    install_packages
+install_packages() {
+    apt-get update
+    BUILD_DEPS=(
+        'build-essential'
+        'cmake'
+        'debhelper'
+        'g++'
+        'git'
+        'libboost-dev'
+        'libfmt8'
+        'libfmt-dev'
+        'libspdlog-dev'
+        'python3.11'
+        'python3-pip'
+        'tar'
+        'unzip'
+        'wget'
+    )
+    package_manager
 }
 
 # Install from package mananger
-install_packages() {
-    INSTALLER_BIN="apt-get"
-    # Run apt-get update to update the package repo cache
-    INSTALL_STRING="$INSTALLER_BIN update"
-    echo "executing command: $INSTALL_STRING"
-    eval "$INSTALL_STRING"
+package_manager() {
+    # Optimizations for Docker build - see scripts/docker/*.DOCKERFILE for $DOCKER var invocation
+    if $DOCKER; then
+        BUILD_DEPS+=('--no-install-recommends')
+    fi
 
-    INSTALL_STRING="$INSTALLER_BIN install -y ${BUILD_DEPS[*]}"
+    INSTALL_STRING="apt-get install -y ${BUILD_DEPS[*]}"
     echo "executing command: $INSTALL_STRING"
     eval "$INSTALL_STRING"
 }
 
-define_build_deps
+install_packages
 
-# Farther cleanup if Docker environment
-if [[ -f /.dockerenv ]]
-then
-    CLEANUP_STRING="$INSTALLER_BIN clean all"
-    echo "executing command: $CLEANUP_STRING"
-    eval "$CLEANUP_STRING"
+# Post-install Docker optimizations
+if $DOCKER; then
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+    rm -rf /tmp/*
+    rm -rf /var/tmp/*
+    rm -rf /usr/share/doc
+    rm -rf /usr/share/man
+    rm -rf /usr/share/locale
+    rm -rf /usr/share/zoneinfo
 fi

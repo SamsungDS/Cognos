@@ -24,7 +24,7 @@ unit test rocky9:
   variables:
     DOCKERFILE_NAME: rocky9
     IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
-    BUILD_COMMAND: ./scripts/build.sh --build-tests --with-coverage
+    BUILD_COMMAND: ./scripts/build.sh --run-tests
   needs:
     - build docker
   rules:

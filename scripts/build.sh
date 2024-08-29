@@ -1,50 +1,41 @@
 #!/usr/bin/env bash
-# shellcheck source=/dev/null
-
-set -e
-
-if [[ -e /etc/os-release ]]; then
-	source "/etc/os-release"
-else
-	ID=unknown
-fi
+set -eu
 
 # Path variables
 SCRIPT_DIR=$(cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd)
-PROJECT_ROOT=$(realpath "$SCRIPT_DIR/../")
+PROJECT_ROOT=$(realpath "$SCRIPT_DIR/..")
 BUILD_DIR="$PROJECT_ROOT/build"
+ARTIFACTS_DIR="$BUILD_DIR/artifacts"
 REPORTS_DIR="$BUILD_DIR/reports"
+TESTS_DIR="$BUILD_DIR/tests"
 
-die()
-{
-    echo "$*"
-    exit 1
-}
+# Default build options
+CMAKE_OPTIONS=()
+BUILD_RELEASE=false
+RUN_TESTS=false
+MAKE_INSTALL=false
 
 help()
 {
+    # Exit with 0 by default - otherwise used passed value
+    local EXIT_CODE="${1-0}"
+
     # Display Help
     echo "Build script for SVK Framework"
     echo
-    echo "Syntax: build.sh [-t|c|h|p|r|f]"
+    echo "Syntax: build.sh [-r|t|p|h]"
     echo "options:"
-    echo "-t | --build-tests"
-    echo "  Build the unit tests for SVK Framework."
-    echo "-c | --with-coverage"
-    echo "  Build with code coverage report. Must build unit tests for this."
+    echo "-r | --release"
+    echo "  Release build. Generates RPMs on Rockylinux or Debian Packages on Ubuntu."
+    echo "  If selected, all other build options are ignored."
+    echo "-t | --run-tests"
+    echo "  Execute unit tests for SVK Framework and generate code coverage reports."
+    echo "-p | --install-prefix"
+    echo "  Performs 'make install' to the specified path."
+    echo "  Path is relative to $BUILD_DIR unless you provide an absolute path."
     echo "-h | --help"
     echo "  Print this help."
-    echo "-p | --install-prefix"
-    echo "  Install libraries and related files to specified dir."
-    echo "-r | --release"
-    echo "  Release build. Generates a tarball called svk-core-<version>.tgz by default."
-    echo "-f | --filename"
-    echo "  Filename prefix to use for release tarball. Only applicable when building with release flag."
-    echo "-b | --build-package"
-    echo "  Generate SVK core RPMs/DEB packages."
-    echo "-i | --install-path"
-    echo "  Path that RPMs/DEBs should install core to (Default: /usr/local/svk/core). Only applicable when building with release flag."
-    exit
+    exit "$EXIT_CODE"
 }
 
 parse_options()
@@ -52,215 +43,194 @@ parse_options()
     while [[ $# -gt 0 ]];
     do
     case $1 in
-        -t|--build-tests)
-        BUILD_TESTING=true
+        -r|--release)
+        BUILD_RELEASE=true
         shift
         ;;
-        -c|--with-coverage)
-        WITH_COVERAGE=true
+        -t|--run-tests)
+        RUN_TESTS=true
+        CMAKE_OPTIONS+=("-DBUILD_TESTING=ON")
+        CMAKE_OPTIONS+=("-DWITH_COVERAGE=ON")
+        shift
+        ;;
+        -p|--install-prefix)
+        MAKE_INSTALL=true
+        INSTALL_PREFIX="$2"
+        shift
         shift
         ;;
         -h|--help)
         help
         ;;
-        -p|--install-prefix)
-        CMAKE_INSTALL_PREFIX="$2"
-        shift
-        shift
-        ;;
-        -r|--release)
-        RELEASE=true
-        shift
-        ;;
-        -f|--filename)
-        RELEASE_FILENAME_PREFIX="$2"
-        shift
-        shift
-        ;;
-        -b|--build-package)
-        GENERATE_PACKAGE=true
-        shift
-        ;;
-        -i|--install-path)
-        PACKAGE_INSTALL_PATH="$2"
-        shift
-        shift
-        ;;
         *)
-        echo "Invalid option provided. Check the valid options"
-        help
+        echo "Invalid option provided. See usage details below:"
+        help 1
         ;;
     esac
     done
 }
 
-GIT_VER=$(git describe --abbrev=4 --always --tags) #Commit hash causing issues with rpmbuild
-
-generateRPMs()
-{
-    local rpmBuildDir=$1
-    local installpath=$2
-
-    local GIT_VER_FOR_RPM
-    GIT_VER_FOR_RPM=$(git describe --abbrev=4 --always --tags|sed 's/-/_/g'|sed 's/v//g')
-    export GIT_VER_FOR_RPM
-    export CMAKE_INSTALL_PREFIX
-
-    rpmbuild -bb --clean "$PROJECT_ROOT/svk_core.spec" --define "_topdir $rpmBuildDir" --define "installpath $installpath"
-    cp "$RPMBUILD_DIR/RPMS/x86_64"/svk-core-*.rpm "$PROJECT_ROOT/build"
+get_os_version() {
+    # Determine OS ID from /etc/os-release
+    if [[ -e /etc/os-release ]]; then
+        # shellcheck disable=SC1091
+        source "/etc/os-release"
+    else
+        echo "ERROR: Unknown build OS"
+        exit 1
+    fi
+    echo "Build OS is: $ID ${VERSION_ID%%.*}"
 }
 
-generateDebPackage()
-{
-    installpath=$1
+get_git_version() {
+    # Get Git version from tag
+    echo "Determining version from git tag"
+    GIT_VERSION=$("$SCRIPT_DIR/get_version.sh")
 
-    export CMAKE_INSTALL_PREFIX
-    # Debian package control file expects the version to be starting with integer
-    local GIT_VER_IN_NUM
-    GIT_VER_IN_NUM=$(git describe --abbrev=4 --always --tags|sed 's/v//g')
+    # Strip 'v' character from version string
+    GIT_VERSION=${GIT_VERSION/v/}
+    echo "Building SVK Core version: $GIT_VERSION"
+}
 
-    # Generate SVK Core DEB package
-    rm -rf packaging/
-    mkdir -p "packaging/$installpath"
-    mkdir -p "packaging/etc/ld.so.conf.d"
-    cp -rf "$CMAKE_INSTALL_PREFIX"/lib "packaging/$installpath/"
-    cp -rf "$CMAKE_INSTALL_PREFIX"/lib64 "packaging/$installpath/"
-    mkdir -p "packaging/usr/lib/pkgconfig"
-    cp -rf "$PROJECT_ROOT/DEBIAN.core/" "packaging/DEBIAN"
-    sed -i "s/Version: GIT_VERSION/Version: $GIT_VER_IN_NUM/g" packaging/DEBIAN/control
+build_core() {
+    # Append INSTALL_PREFIX to CMAKE_OPTIONS if we are installing
+    if $MAKE_INSTALL; then
+        CMAKE_OPTIONS+=("-DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX")
+        CMAKE_OPTIONS+=("-DPKG_CONFIG_PREFIX=$INSTALL_PREFIX")
+    fi
 
-    cat > "packaging/etc/ld.so.conf.d/svk-core.conf" << EOF
-$installpath/lib
-$installpath/lib64
-EOF
-    pushd packaging
-    ln -s "$installpath/lib/pkgconfig/svkframework.pc" "usr/lib/pkgconfig/svkframework.pc"
+    # Display CMAKE_OPTIONS before building
+    printf "CMake options: %s\n" "${CMAKE_OPTIONS[@]}"
+    
+    # Build SVK Core
+    mkdir --verbose --parents "$BUILD_DIR"
+    pushd "$BUILD_DIR"
+        cmake "${CMAKE_OPTIONS[@]}" ..
+        make "-j$(nproc)"
     popd
-    dpkg -b packaging
-    dpkg-name packaging.deb
 
-    # Generate SVK Core-dev DEB package
-    rm -rf packaging/
-    mkdir -p "packaging/$installpath"
-    cp -rf "$CMAKE_INSTALL_PREFIX"/include "packaging/$installpath/"
-    cp -rf "$CMAKE_INSTALL_PREFIX"/tests "packaging/$installpath/"
-    cp -rf "$PROJECT_ROOT/DEBIAN.core-dev/" "packaging/DEBIAN"
-    sed -i "s/Version: GIT_VERSION/Version: $GIT_VER_IN_NUM/g" packaging/DEBIAN/control
+    # Optionally execute tests
+    if $RUN_TESTS; then
+        execute_tests
+    else
+        echo "Skipping test execution"
+    fi
 
-    dpkg -b packaging
-    dpkg-name packaging.deb
-
+    # Optionally install
+    if $MAKE_INSTALL; then
+        pushd "$BUILD_DIR"
+            make install
+        popd
+    else
+        echo "Skipping make install"
+    fi
 }
 
-RELEASE=false
-BUILD_TESTING=false
-WITH_COVERAGE=false
+execute_tests() {
+    # Execute unit tests
+    echo "Running unit tests..."
+    mkdir --verbose --parent "$REPORTS_DIR"
+    ctest --output-junit "$REPORTS_DIR/gitlab_junit.xml" --test-dir "$TESTS_DIR"
+    
+    # Generate coverage reports and display results with summary to terminal
+    echo "Generating coverage reports"
+    gcovr \
+        --xml "$REPORTS_DIR/gitlab_coverage.xml" \
+        --sonarqube "$REPORTS_DIR/sonar_coverage.xml" \
+        --txt-metric line --txt \
+        --print-summary \
+        --root "$PROJECT_ROOT" \
+        --exclude "$PROJECT_ROOT/build" \
+        "$BUILD_DIR"
+}
+
+move_artifacts() {
+    # Paths to move artifacts from
+    local MOVE_ARTIFACTS_DIR=$1
+    local MOVE_ARTIFACTS_SUFFIX=$2
+
+    # Path to move artifacts to
+    local OS_ARTIFACTS_DIR="$ARTIFACTS_DIR/$ID${VERSION_ID%%.*}"
+
+    # Create artifacts dir and move artifacts
+    mkdir --verbose --parents "$OS_ARTIFACTS_DIR"
+    mv --verbose "$MOVE_ARTIFACTS_DIR"/*."$MOVE_ARTIFACTS_SUFFIX" "$OS_ARTIFACTS_DIR"
+}
+
+build_rpm() {
+    # RPM vars
+    local SPECFILE=svk_core.spec
+    local RPMBUILD_DIR="$BUILD_DIR/rpmbuild"
+
+    # Replace '-' with '_' in version string, in case current commit is not an exact tag
+    local RPM_VERSION=${GIT_VERSION//-/_}
+
+    # Only build RPM on supported OS
+    if [[ "$ID" == "rocky" ]]; then
+        # Prepare RPMBUILD directories - inside our build directory
+        rm -rf "$BUILD_DIR"
+        mkdir --verbose --parents "$RPMBUILD_DIR"/{BUILD,RPMS,SPECS}
+
+        # Build RPM
+        echo "Building $SPECFILE RPM..."
+        rpmbuild -bb --clean "$SCRIPT_DIR"/packaging/rpm/"$SPECFILE" \
+            --define "_topdir $RPMBUILD_DIR" \
+            --define "svk_core_builddir $BUILD_DIR" \
+            --define "svk_core_version $RPM_VERSION" \
+            --define "svk_os_version $ID$VERSION_ID"
+
+        # Move RPMs to artifacts dir
+        move_artifacts "$RPMBUILD_DIR/RPMS/$(rpm --eval '%{_arch}')" rpm
+    else
+        echo "Skipping $SPECFILE RPM build for OS: $ID"
+    fi
+}
+
+build_deb() {
+    # Debian Package vars
+    local DEBIAN_DIR="$BUILD_DIR/debian"
+
+    # Only build Debian Package on supported OS
+    if [[ "$ID" == "ubuntu" ]]; then
+        # Prepare Debian package files
+        rm -rf "$BUILD_DIR"
+        mkdir --verbose --parent "$DEBIAN_DIR"
+        cp --verbose -r "$PROJECT_ROOT"/scripts/packaging/debian "$BUILD_DIR/"
+
+        echo "Updating $DEBIAN_DIR/changelog for this build"
+        # Append git commit history to changelog
+        sed -i -e "/.*DEB_CHANGELOG.*$/r /dev/stdin" -e "s/.*DEB_CHANGELOG.*$//" "$DEBIAN_DIR/changelog" <<< "$(git -C "$PROJECT_ROOT" log --pretty=format:'  * %aD %an - %s' --no-merges)"
+        # Update changelog version string
+        sed -i "s/DEB_VERSION/$GIT_VERSION-$ID$VERSION_ID/g" "$DEBIAN_DIR/changelog"
+        # Update changelog timestamp
+        sed -i "s/DEB_TIMESTAMP/$(date -R)/g" "$DEBIAN_DIR/changelog"
+        # Update changelog OS version
+        sed -i "s/DEB_OSVER/$ID$VERSION_ID/g" "$DEBIAN_DIR/changelog"
+
+        pushd "$BUILD_DIR"
+            echo "Building SVK Core Debian packages..."
+            # Build Debian packages - generate binaries only, do not sign packages
+            dpkg-buildpackage -b -us -uc --no-sign
+
+            # Delete .bindinfo and .changes files, since we don't care about them and can't suppress them
+            rm --verbose -f ../*.buildinfo ../*.changes
+
+            # Move Debian Packages to artifacts dir
+            move_artifacts "$PROJECT_ROOT" deb
+        popd
+    else
+        echo "Skipping SVK Core Debian package build for OS: $ID"
+    fi
+}
 
 parse_options "$@"
+get_os_version
+get_git_version
 
-echo "Build tests: $BUILD_TESTING"
-echo "Build with code coverage: $WITH_COVERAGE"
-echo "CMake install prefix: $CMAKE_INSTALL_PREFIX"
-
-mkdir -p "$BUILD_DIR"
-
-CMAKE_OPTIONS=()
-
-pushd "$BUILD_DIR"
-    # If building release, don't build tests and code coverage
-    if $RELEASE;then
-        BUILD_TESTING=false
-        WITH_COVERAGE=false
-        if [ -z "$CMAKE_INSTALL_PREFIX" ];then
-            CMAKE_INSTALL_PREFIX="svk-core" # Path is used for cmake install only
-        fi
-        if [ -z "$RELEASE_FILENAME_PREFIX" ];then
-            RELEASE_FILENAME_PREFIX="svk-core"
-        fi
-        CMAKE_OPTIONS+=("-DWITH_RELEASE=ON")
-        if [ -z "$PACKAGE_INSTALL_PATH" ];then
-            PACKAGE_INSTALL_PATH="/usr/local/svk/core" # Location that rpm -ivh will install to
-        fi
-    fi
-    
-    if [ -n "$PACKAGE_INSTALL_PATH" ];then
-        CMAKE_OPTIONS+=("-DPKG_CONFIG_PREFIX=$PACKAGE_INSTALL_PATH")
-    else
-        CMAKE_OPTIONS+=("-DPKG_CONFIG_PREFIX=$CMAKE_INSTALL_PREFIX")
-    fi
-
-
-    # Add unit test option
-    if $BUILD_TESTING;then
-        CMAKE_OPTIONS+=("-DBUILD_TESTING=ON")
-    fi
-
-    # Add code coverage option
-    if $WITH_COVERAGE;then
-        CMAKE_OPTIONS+=("-DWITH_COVERAGE=ON")
-    fi
-
-    # Add cmake install prefix option
-    if [ -n "$CMAKE_INSTALL_PREFIX" ];then
-        CMAKE_OPTIONS+=("-DCMAKE_INSTALL_PREFIX=$CMAKE_INSTALL_PREFIX")
-    fi
-
-    printf "Cmake options: %s\n" "${CMAKE_OPTIONS[@]}"
-
-    echo "Running cmake..."
-    cmake "${CMAKE_OPTIONS[@]}" .. 
-
-    echo "Building libraries..."
-
-    if [ -n "$CMAKE_INSTALL_PREFIX" ];then
-        echo "make install..."
-        make install
-    else
-        echo "make..."
-        make
-    fi
-
-    if $WITH_COVERAGE;then
-        if $BUILD_TESTING;then
-            pushd tests
-                echo "Running unit tests..."
-                mkdir -p "$REPORTS_DIR"
-                ctest --output-junit "$REPORTS_DIR/gitlab_junit.xml"
-            popd
-        else
-            die "Can't generate code coverage without building tests, not running gcovr"
-        fi
-
-        echo "Generating coverage reports"
-        # Using path to framework object files
-        gcovr \
-            --xml "$REPORTS_DIR/gitlab_coverage.xml" \
-            --sonarqube "$REPORTS_DIR/sonar_coverage.xml" \
-            --txt \
-            --root "$PROJECT_ROOT" \
-            --exclude "$PROJECT_ROOT/build" \
-            "$BUILD_DIR"
-    elif $RELEASE;then
-        echo "Generating release tarball..."
-        mkdir -p "$CMAKE_INSTALL_PREFIX/lib"
-        mkdir -p "$CMAKE_INSTALL_PREFIX/lib64"
-        tar -zcf "$RELEASE_FILENAME_PREFIX-$ID-$VERSION_ID-$GIT_VER.tgz" "$CMAKE_INSTALL_PREFIX"
-        echo "$GENERATE_PACKAGE"
-        if [ -n "$GENERATE_PACKAGE" ];then
-            if [ "$ID" == "ubuntu" ]; then
-                echo "Generating Ubuntu package"
-                generateDebPackage "$PACKAGE_INSTALL_PATH"
-            else
-                echo "Generating release/devel RPMs..."
-
-                RPMBUILD_DIR="$BUILD_DIR/rpmbuild"
-                mkdir -p rpmbuild/{BUILD,RPMS,SPECS}
-                cp -rf "$CMAKE_INSTALL_PREFIX/" "$RPMBUILD_DIR/BUILD"
-
-                generateRPMs "$RPMBUILD_DIR" "$PACKAGE_INSTALL_PATH"
-            fi
-        fi
-
-    fi
-
-popd
+if $BUILD_RELEASE; then
+    # Build release packages
+    build_deb
+    build_rpm
+else
+    build_core
+fi
