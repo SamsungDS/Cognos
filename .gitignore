@@ -10,3 +10,7 @@ latex
 
 # Release artifacts
 *.tgz
+
+#sw files
+.swo
+.swp

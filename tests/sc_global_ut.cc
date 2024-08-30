@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include "sc_global.h"
 #include "sc_mbox.h"
-#include "/opt/stg/mbox_a1.h"
+#include "mbox_a1.h"
 
 
 extern "C"{

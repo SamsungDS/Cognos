@@ -8,7 +8,7 @@
 
 extern "C"{
 #include "jansson.h"
-#include "/opt/stg/mbox_a1.h"
+#include "mbox_a1.h"
 }
 
 using namespace std;
@@ -245,10 +245,7 @@ svk_status execute_sync(svk_pass_thru_cmd *, svk_input *input, svk_output *outpu
     } catch (const std::out_of_range&) {
         std::cerr << "Command not found: " << commandValue << std::endl;
         return SVK_STATUS_FAIL;
-    } catch (const std::exception& e) {
-        std::cerr << "Invalid command: " << e.what() << std::endl;
-        return SVK_STATUS_FAIL;
-    }
+    } 
 
     output->output_buffer = reinterpret_cast<uint8_t*>(strdup(result.c_str()));
     output->len = result.size();

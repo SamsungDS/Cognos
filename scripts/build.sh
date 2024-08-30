@@ -14,10 +14,18 @@ PROJECT_ROOT=$(realpath "$SCRIPT_DIR/../")
 BUILD_DIR="$PROJECT_ROOT/build"
 REPORTS_DIR="$BUILD_DIR/reports"
 
+# Default build options
+RELEASE=false
+MOCK=false
+BUILD_TESTING=false
+WITH_COVERAGE=false
+WITH_FMAPI=false
+
 die() {
     echo "$PROG: $*" >&2
     exit 1
 }
+
 
 help()
 {
@@ -45,6 +53,8 @@ help()
     echo "  Generate SVK CXL FW RPMs/DEB packages."
     echo "-i | --install-path"
     echo "  Path that RPMs should install svk cxl to (Default: /usr/local/svk/cxl). Only applicable when building with release flag."
+    echo "--mock"
+    echo "  use simulated fmapi library for cxl build, Usage ex: scripts/build.sh --mock --with-fmapi <FMAPI_LIB_PATH> <FMAPI_INCLUDE_PATH>" 
     exit
 }
 
@@ -79,18 +89,18 @@ parse_options()
         shift
         ;;
         --with-fmapi)
-  WITH_FMAPI=true
-  if [ -z "$2" ] || [ -z "$3" ]; then
-      echo "Missing FM library or include path."
-      help
-  fi
-  FMAPI_LIB_PATH="$2"
-  FMAPI_INCLUDE_PATH="$3"
-  shift
-  shift
-  shift
-  ;;
-  -b|--build-package)
+        WITH_FMAPI=true
+        if [ -z "$2" ] || [ -z "$3" ]; then
+            echo "Missing FM library or include path."
+            help
+        fi
+        FMAPI_LIB_PATH="$2"
+        FMAPI_INCLUDE_PATH="$3"
+        shift
+        shift
+        shift
+        ;;
+        -b|--build-package)
         GENERATE_PACKAGE=true
         shift
         ;;
@@ -99,33 +109,68 @@ parse_options()
         shift
         shift
         ;;
+	--mock)
+	MOCK=true
+        shift	
+        ;;
         *)
-  echo "Invalid option provided. Check the valid options"
+        echo "Invalid option provided. Check the valid options"
         help
         ;;
     esac
     done
 }
 
-RELEASE=false
-BUILD_TESTING=false
-WITH_COVERAGE=false
-WITH_FMAPI=false
-GIT_VER=$(git describe --abbrev=4 --always --tags)
+
+get_os_version() {
+    # Determine OS ID from /etc/os-release
+    if [[ -e /etc/os-release ]]; then
+        # shellcheck disable=SC1091
+        source "/etc/os-release"
+    else
+        echo "ERROR: Unknown build OS"
+        exit 1
+    fi
+    echo "Build OS is: $ID ${VERSION_ID%%.*}"
+}
+
+get_git_version() {
+    # Get Git version from tag
+    echo "Determining version from git tag"
+    GIT_VERSION=$("$SCRIPT_DIR/get_version.sh")
+
+    # Strip 'v' character from version string
+    GIT_VERSION=${GIT_VERSION/v/}
+    echo "Building SVK Core version: $GIT_VERSION"
+}
+
+
 
 create_rpm()
 {
     local rpmBuildDir=$1
     local installpath=$2
+    local mock_flag=$3
 
-    export GIT_VER
+    # Replace '-' with '_' in version string, in case current commit is not an exact tag
+    local RPM_VERSION=${GIT_VERSION//-/_}
+
+    export GIT_VERSION
     export CMAKE_INSTALL_PREFIX
 
-    rpmbuild -bb --clean "$PROJECT_ROOT/svk_cxl.spec" --define "_topdir $rpmBuildDir" --define "installpath $installpath"
+    rpmbuild -bb --clean "$PROJECT_ROOT/svk_cxl.spec" \
+	    --define "_topdir $rpmBuildDir" \
+	    --define "installpath $installpath" \
+	    --define "svk_cxl_version $RPM_VERSION" \
+            --define "svk_os_version $ID$VERSION_ID" \
+	    --define "mock_flag ${mock_flag:-}"
+
     cp "$RPMBUILD_DIR/RPMS/x86_64"/svk-cxl-*.rpm "$BUILD_DIR"
 }
 
 parse_options "$@"
+get_os_version
+get_git_version
 
 echo "Build tests: $BUILD_TESTING"
 echo "Build with code coverage: $WITH_COVERAGE"
@@ -184,9 +229,7 @@ pushd "$BUILD_DIR"
   CMAKE_OPTIONS+=("-DCMAKE_INCLUDE_PATH=$FMAPI_INCLUDE_PATH")
   CMAKE_OPTIONS+=("-DCMAKE_LIBRARY_PATH=$FMAPI_LIB_PATH")
 
-        cp "$FMAPI_INCLUDE_PATH/sample_json/input.json" "$PROJECT_ROOT/tests/"
-  mkdir -p /opt/stg
-        cp "$FMAPI_INCLUDE_PATH/mbox_a1.h" /opt/stg/
+    cp "$FMAPI_INCLUDE_PATH/sample_json/input.json" "$PROJECT_ROOT/tests/"
 
     fi
 
@@ -233,21 +276,24 @@ pushd "$BUILD_DIR"
             --exclude "$PROJECT_ROOT/tests" \
             "$BUILD_DIR"
 
-  #rm -f $PROJECT_ROOT/tests/input.json
+    #rm -f $PROJECT_ROOT/tests/input.json
 
     elif $RELEASE;then
         echo "Generating release tarball..."
-        GIT_VER=$(git describe --abbrev=4 --always --tags | tr - _)
-  mkdir -p "$CMAKE_INSTALL_PREFIX/lib"
+        mkdir -p "$CMAKE_INSTALL_PREFIX/lib"
         mkdir -p "$CMAKE_INSTALL_PREFIX/lib64"
-        tar -zcf "$RELEASE_FILENAME_PREFIX-$ID-$GIT_VER.tgz" "$CMAKE_INSTALL_PREFIX"
+	if $MOCK; then
+		tar -zcf "$RELEASE_FILENAME_PREFIX-mock-$ID-$GIT_VERSION.tgz" "$CMAKE_INSTALL_PREFIX"
+	else
+	        tar -zcf "$RELEASE_FILENAME_PREFIX-$ID-$GIT_VERSION.tgz" "$CMAKE_INSTALL_PREFIX"
+	fi
         echo "$GENERATE_PACKAGE"
         if [ -n "$GENERATE_PACKAGE" ];then
           echo "Generating release RPM..."
           RPMBUILD_DIR="$BUILD_DIR/rpmbuild"
           mkdir -p rpmbuild/{BUILD,RPMS,SPECS}
           cp -rf "$CMAKE_INSTALL_PREFIX/" "$RPMBUILD_DIR/BUILD"
-          create_rpm "$RPMBUILD_DIR" "$PACKAGE_INSTALL_PATH"
+          create_rpm "$RPMBUILD_DIR" "$PACKAGE_INSTALL_PATH" "mock"
         fi
     fi
 

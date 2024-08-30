@@ -1,14 +1,10 @@
-Name:           svk-cxl
-Version:        %{getenv:GIT_VER}
-Release:        1%{?dist}
+Name:           svk-cxl%{?mock_flag:-%{mock_flag}}
+Version:        %svk_cxl_version
+Release:        1%{?dist}.%svk_os_version
 Summary:        SVK CXL Plugin
 License:        Samsung Internal
-
-BuildRequires:  jansson jansson-devel
-Requires:       svk-core
-# Enable me
-# Requires:       svk-mgmt-fw
-Requires:       jansson jansson-devel
+BuildRequires:  jansson
+Requires:       svk-core, svk-mgmt-fw, jansson
 
 %{!?installpath: %global installpath /usr/local/svk/cxl}
 %{!?cxl_build_dir: %global cxl_build_dir svk-cxl}
@@ -24,17 +20,18 @@ mkdir -p %{buildroot}/%{installpath}
 
 # If rpmbuild is run in the build script, use CMAKE_INSTALL_PREFIX as temp dir in %{_topdir}/BUILD
 %if "%{getenv:CMAKE_INSTALL_PREFIX}" != ""
-cp -rf %{getenv:CMAKE_INSTALL_PREFIX}/lib64 %{buildroot}/%{installpath}
+cp -rf %{getenv:CMAKE_INSTALL_PREFIX}/%{_lib} %{buildroot}/%{installpath}
 
 # If rpmbuild is run manually, use default build dir svk-core, unless user gives a different name
 %else
-cp -rf %{cxl_build_dir}/lib64 %{buildroot}/%{installpath}
+cp -rf %{cxl_build_dir}/%{_lib} %{buildroot}/%{installpath}
 %endif
 
 %files
 #%license add-license-file-here
 #%doc add-docs-here
-%{installpath}/lib64
+%defattr(-,root,root,-)
+%{installpath}/%{_lib}
 
 %clean
 rm -rf %{buildroot}
@@ -46,7 +43,7 @@ if [ -z "$SVK_LDCONFIG" ];then
 fi
 touch /etc/ld.so.conf.d/svk-cxl-x86_64.conf
 chmod a+r /etc/ld.so.conf.d/svk-cxl-x86_64.conf
-echo "$installpath/lib64" | tee -a /etc/ld.so.conf.d/svk-cxl-x86_64.conf
+echo "$installpath/%{_lib}" | tee -a /etc/ld.so.conf.d/svk-cxl-x86_64.conf
 /usr/sbin/ldconfig
 
 %postun

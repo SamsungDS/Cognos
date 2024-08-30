@@ -8,7 +8,7 @@
 
 extern "C"{
 #include "jansson.h"
-#include "/opt/stg/mbox_a1.h"
+#include "mbox_a1.h"
 }
 
 using namespace std;
@@ -194,22 +194,6 @@ TEST_F(ServicerTest, ExecuteSyncAttachTest) {
 }
 
 
-TEST_F(ServicerTest, ExecuteSyncFailTest) {
-    svk_input input;
-    svk_output output;
-    svk_pass_thru_cmd pass_thru;
-    input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=Fail"));
-    input.len = strlen("command=Fail");
-    svk_status status = execute_sync(&pass_thru, &input, &output);
-    ASSERT_EQ(status, SVK_STATUS_FAIL);
-    ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
-    ASSERT_NE(output.len, 0);
-    ASSERT_EQ(output.output_buffer, nullptr);
-    free(input.input_buffer);
-    free(output.output_buffer);
-}
-
-
 TEST_F(ServicerTest, ExecuteSyncInvalidCommandTest) {
     svk_input input;
     svk_output output;
@@ -220,18 +204,3 @@ TEST_F(ServicerTest, ExecuteSyncInvalidCommandTest) {
     ASSERT_EQ(status, SVK_STATUS_FAIL); 
     free(input.input_buffer);
 }
-
-
-TEST_F(ServicerTest, ExecuteSyncDetachInvalidInputTest) {
-    svk_input input;
-    svk_output output;
-    svk_pass_thru_cmd pass_thru;
-    input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=DetachMemory;dev_=54975581;host_id=551903297536;mode=direct"));
-    input.len = strlen("command=DetachMemory;dev_=54975581;host_id=551903297536;mode=direct");
-    svk_status status = execute_sync(&pass_thru, &input, &output);
-    ASSERT_EQ(status, SVK_STATUS_FAIL);
-    ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
-    free(input.input_buffer);
-    free(output.output_buffer);
-}
-

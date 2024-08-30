@@ -51,25 +51,9 @@ if(BUILD_TESTING)
     add_subdirectory(tests)
 endif()
 
-include(CMakePackageConfigHelpers)
-write_basic_package_version_file(
-	SVKCXLConfigVersion.cmake
-    VERSION ${PROJECT_VERSION}
-    COMPATIBILITY AnyNewerVersion
-    )
-
-    set(SVKCXL_CMAKE_DEST "cmake/")
-
+# install memory box library
 install(
-    FILES
-        "cmake/svkcxl-config.cmake"
-	"${CMAKE_CURRENT_BINARY_DIR}/SVKCXLConfigVersion.cmake"
-	DESTINATION ${CMAKE_INSTALL_LIBDIR}/${SVKCXL_CMAKE_DEST}
-    )
-
-# install pkg config file
-install(
-    FILES "${pkg_config}"
-    DESTINATION "${pkgconfig_install_dir}"
+    FILES "${CMAKE_LIBRARY_PATH}" "${CMAKE_INCLUDE_PATH}/sample_json/input.json"
+    DESTINATION "${SVKCXL_LIB_DEST}"
+    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
-

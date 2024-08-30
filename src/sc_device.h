@@ -16,8 +16,7 @@
 #include "sc_id.h"
 #include "sc_switch.h"
 #include "types.h"
-
-#include "/opt/stg/mbox_a1.h"
+#include "mbox_a1.h"
 
 class sc_host;
 
