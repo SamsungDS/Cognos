@@ -33,6 +33,7 @@ apt-get install svk-core svk-core-dev -y
 
 ```bash
 curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
+dnf install epel-release -y
 dnf install svk-core svk-core-devel -y
 ```
 
@@ -48,7 +49,7 @@ Execute the dependencies installation script to install all build dependencies f
 
 ### Build SVK Core
 
-[After installing build dependencies](#Build-Dependencies), execute the `./scripts/build.sh` script. The `-h` option will show what options are available for building SVK Core:
+[After installing build dependencies](#build-dependencies), execute the `./scripts/build.sh` script. The `-h` option will show what options are available for building SVK Core:
 
 ```bash
 ./scripts/build.sh -h
@@ -80,7 +81,6 @@ This will build and package RPM or Debian Packages (on Rockylinux or Ubuntu, res
 
 - `svk-core`: Runtime files
 - `svk-core-dev(el)`: Development header files
-
 
 ### Manual Build
 
@@ -124,7 +124,7 @@ gcovr -r {path_to_source_code} .
 
 ## SVK Application/Feature module integration
 
-[Install SVK Core](#Installation) to install the necessary headers and libraries for feature modules to use.
+[Install SVK Core](#installation) to install the necessary headers and libraries for feature modules to use.
 
 This will install any headers and libs to `/usr/local/svk/core` for feature modules to use and link against.
 
