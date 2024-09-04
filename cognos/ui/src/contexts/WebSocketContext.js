@@ -22,11 +22,7 @@ function connect() {
 
     ws.current.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      // if (data.type == "ping") {
-      //   let payload = {}
-      //   payload.response = "pong";
-      //   sendMessage(payload);
-      // }
+
       switch (data.type) {
         case "dram_cxl_usage":
             setDramCxlMemUsageData(data.data)
@@ -79,30 +75,15 @@ function check() {
 
 
   useEffect(() => {
-    // pinr.current = setInterval(() => {
-    //   if (ws.current.readyState === WebSocket.OPEN) {
-    //     ws.current.send(JSON.stringify({type: 'ping'}));
-    //     console.log('ping');
-    //   }
-    // }, 10000);
-
     connect();
     setInterval(check, 5000);
-
-    // return () => {
-    //   if (ws.current) {
-    //     ws.current.close();
-    //   }
-    // };
   }, []);
 
   const sendMessage = (message) => {
     console.log("UI IS ATTEMPTING TO SEND MSG TO EXPORTER: ", message);
     if (ws.current && ws.current.readyState === WebSocket.OPEN) {
       ws.current.send(JSON.stringify(message));
-      console.log("MSG SENT TO EXPORTER");
     } else {
-      console.log("MSG SEND FAILED TO EXPORTER");
       console.error('WebSocket is not open'+ JSON.stringify(message.host));
     }
   };
