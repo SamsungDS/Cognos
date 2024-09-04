@@ -5,9 +5,6 @@ set -e
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 REQUIREMENTS=$(realpath "$SCRIPT_DIR/../python/requirements.txt")
 
-# Install python3 pip
-python3 -m ensurepip --upgrade
-
 # Install python modules from requirements.txt
 PIP_ARGS=()
 PIP_ARGS+=("-r")
