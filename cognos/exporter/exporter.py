@@ -17,13 +17,6 @@ ws = None
 global influx_client
 influx_client = CognosInfluxDBClient()
 
-ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-
-# Generate with Lets Encrypt, copied to this location, chown to current user and 400 permissions
-ssl_cert = "/home/ubuntu/aws-deployment/cognos/exporter/fullchain.pem"
-ssl_key = "/home/ubuntu/aws-deployment/cognos/exporter/privkey.pem"
-
-ssl_context.load_cert_chain(ssl_cert, keyfile=ssl_key)
 
 async def recv_host_selection_handler():
     try:
@@ -34,19 +27,21 @@ async def recv_host_selection_handler():
                     if message:
                         influx_client.filter_hosts = True
                         selected_host = message['host']['value']
-                        print(f"Extract selected host: {selected_host} type: {type(selected_host)}")
-                        influx_client.selected_host = selected_host[0] if type(selected_host) is list else selected_host
-                        print(f"Set SELECTED HOST TO: {influx_client.selected_host}")
+                        influx_client.selected_host = (
+                            selected_host[0]
+                            if type(selected_host) is list else selected_host
+                        )
                 except asyncio.TimeoutError:
                     print("timeout occured while waiting for message")
                 except Exception as error:
-                    print(f"Error encountered while receiving message {str(error)}")
+                    print(f"Error while receiving message {str(error)}")
             await asyncio.sleep(1)
             time.sleep(1)
     except websockets.ConnectionClosed:
         print("Connection closed, waiting for new connection.. ")
     except Exception as error:
-        print(f"Exception encountered while running host select handler: {str(error)}")
+        print(f"Error while running host select handler: {str(error)}")
+
 
 async def metrics_handler(websocket, stop_event=False):
     global ws
@@ -58,7 +53,8 @@ async def metrics_handler(websocket, stop_event=False):
                 await ws.send(json.dumps({"type": "ping"}))
             except Exception:
                 print("Ping failed")
-                raise websockets.ConnectionClosed(1000, 'Manually close the connection')
+                raise websockets.ConnectionClosed(
+                    1000, 'Manually close the connection')
 
             event = {
                 "type": "dram_cxl_usage",
@@ -167,8 +163,17 @@ async def main():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--mock', action='store_true')
+    parser.add_argument('--ssl', action='store_true')
     args = parser.parse_args()
     influx_client.mock = args.mock
+
+    if args.ssl:
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        # Generate with Lets Encrypt, copied to this location,
+        # chown to current user and 400 permissions
+        ssl_cert = "/home/ubuntu/aws-deployment/cognos/exporter/fullchain.pem"
+        ssl_key = "/home/ubuntu/aws-deployment/cognos/exporter/privkey.pem"
+        ssl_context.load_cert_chain(ssl_cert, keyfile=ssl_key)
 
     loop = asyncio.get_event_loop()
     try:

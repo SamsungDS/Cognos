@@ -240,7 +240,7 @@ def get_hosts_from_db():
         hosts = cursor.fetchall()
     except Exception as error:
         print(f"Failed to fetch from hosts table.. {str(error)}")
-    
+
     return hosts if hosts else []
 
 
@@ -547,38 +547,51 @@ class DataSource(ABC):
     def get_mb_info(self):
         pass
 
+
 class CAL:
     def __init__(self, data_source):
         self.data_source = data_source
+
     def init(self):
         return self.data_source.init()
+
     def get_topology(self):
         return self.data_source.get_topology()
+
     def get_hosts(self):
         return self.data_source.get_hosts()
+
     def get_device_status(self):
         return self.data_source.get_device_status()
+
     def post_devices(self):
         return self.data_source.post_devices()
+
     def membox_capacity(self):
         return self.data_source.membox_capacity()
+
     def host_devices(self):
         return self.data_source.host_devices()
+
     def available_devices(self):
         return self.data_source.available_devices()
+
     def detach_device(self):
         return self.data_source.detach_device()
+
     def attach_device(self):
         return self.data_source.attach_device()
+
     def get_mb_info(self):
         return self.data_source.get_mb_info()
+
 
 class Mock(DataSource):
     def init(self):
         return jsonify({
             "mock_data": 193821
         })
-    
+
     def get_topology(self):
         payload = fetch_topology()
         response = jsonify(payload)
@@ -705,6 +718,7 @@ class Mock(DataSource):
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
 
+
 class CXLPlugin(DataSource):
     def init(self):
         payload = get_setup_info()
@@ -775,7 +789,7 @@ class CXLPlugin(DataSource):
         response = jsonify(result)
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
-    
+
     def detach_device(self):
         request_data = request.get_json()
         dev_name = request_data["dev_name"]
@@ -875,19 +889,18 @@ class CXLPlugin(DataSource):
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
 
+
 def create_app(mock=False):
     """ Implements endpoints of Flask App """
     app = Flask(__name__)
     CORS(app)
     app.config['CORS_HEADERS'] = 'Content-Type'
 
-    # import sys
-    # sys.exit()
     if mock:
         data_source = Mock()
     else:
         data_source = CXLPlugin()
-    
+
     cal = CAL(data_source)
 
     # clear out existing tables
@@ -925,7 +938,6 @@ def create_app(mock=False):
         ]
         """
         return cal.get_topology()
-        
 
     @app.get(f"/api/{API_VERSION}/hosts")
     def get_hosts():

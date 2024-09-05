@@ -16,7 +16,8 @@ from backend.mock_constants import MOCK_CXL_SETUP
 
 
 class CognosInfluxDBClient():
-    def __init__(self, url=None, token=None, org=None, bucket=None, mock=False):
+    def __init__(self, url=None, token=None, org=None, bucket=None,
+                 mock=False):
         current_script_dir = os.path.dirname(os.path.abspath(__file__))
         if any(arg is None for arg in [url, token, org, bucket]):
             configs = fetch_cognos_configs(current_script_dir,

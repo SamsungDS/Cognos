@@ -1,20 +1,20 @@
-import sys, os
-import json
-import pandas as pd
-import zmq
-import time
-import ast
 import errno
+import os
 import os.path
+import sys
+import pandas as pd
+import time
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(  # noqa: E402
+    os.path.abspath(os.path.join(  # noqa: E402
+        os.path.dirname(__file__), '..')))  # noqa: E402
 from backend.cognos_influxdb_client import CognosInfluxDBClient
 from backend.helper import *
 
-def read_input(filename):
 
-    data=[]
-    with open(filename,"r") as file:
+def read_input(filename):
+    data = []
+    with open(filename, "r") as file:
 
         for line in file:
             # Remove "metric:" prefix and convert to dictionary
@@ -23,15 +23,15 @@ def read_input(filename):
 
     return data
 
+
 def main() -> None:
-
-
     if len(sys.argv) < 2:
         print('usage: subscriber.py <publisher_output_file>')
         sys.exit(1)
 
     if not os.path.exists(sys.argv[1]):
-        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), sys.argv[1])
+        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT),
+                                sys.argv[1])
 
     data = read_input(sys.argv[1])
     if data:
@@ -41,7 +41,7 @@ def main() -> None:
         print("No data to send to influxDB!!")
         sys.exit(0)
 
-    #create an instance of CognosInfluxDBClient
+    # create an instance of CognosInfluxDBClient
     dbobj = CognosInfluxDBClient()
 
     try:
@@ -60,10 +60,8 @@ def main() -> None:
                 # Sleep for 5 seconds
                 time.sleep(0.5)
 
-                #write event to influxdb
+                # write event to influxdb
                 dbobj.write_cognos_event(row.to_dict())
-
-
     except KeyboardInterrupt:
         pass
 
