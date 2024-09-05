@@ -12,6 +12,7 @@ BUILD_DEPS+=('nodejs')
 BUILD_DEPS+=('python3')
 BUILD_DEPS+=('wget')
 BUILD_DEPS+=('dnf')
+BUILD_DEPS+=('python3-pip')
 
 # Optimizations for Docker build
 if [[ -f /.dockerenv ]]
