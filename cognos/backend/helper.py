@@ -13,3 +13,14 @@ def fetch_cognos_configs(parent_dir, file_name):
             f"Unable to retrieve cognos influx configs: {str(error)}"
         )
     return configs
+
+
+def fetch_api_version(parent_dir):
+    try:
+        with open(os.path.join(parent_dir, 'VERSION'), 'r') as v:
+            API_VERSION = v.read().strip()
+            return API_VERSION
+    except Exception as error:
+        raise RuntimeError(
+            f"Unable to retrieve API version: {str(error)}"
+        )

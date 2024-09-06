@@ -34,6 +34,7 @@ class CognosInfluxDBClient():
         endpoint_configs = fetch_cognos_configs(current_script_dir,
                                                 'config.json')
         self.agent_endpoint = endpoint_configs['agent_endpoint']
+        self.node_endpoint = endpoint_configs['node_endpoint']
 
         self.client = InfluxDBClient(url=self.url, token=self.token,
                                      org=self.org)
@@ -272,7 +273,7 @@ class CognosInfluxDBClient():
                 json={"input": "cluster_id=CLUST1;command=SetupInfo"},
                 headers=headers
             )
-            payload = json.loads(response.json()['output'])["hpos-vroc04:9998"]
+            payload = json.loads(response.json()['output'])[self.node_endpoint]
 
         max_bandwidth = 512
         num_upstream_ports = len(payload['Hosts'])
@@ -298,7 +299,7 @@ class CognosInfluxDBClient():
                 json={"input": "cluster_id=CLUST1;command=SetupInfo"},
                 headers=headers
             )
-            payload = json.loads(response.json()['output'])["hpos-vroc04:9998"]
+            payload = json.loads(response.json()['output'])[self.node_endpoint]
         num_hosts = len(payload['Hosts'])
         num_cxl_devices = len(payload['Devices'])
         return {
@@ -319,7 +320,7 @@ class CognosInfluxDBClient():
                 json={"input": "cluster_id=CLUST1;command=SetupInfo"},
                 headers=headers
             )
-            payload = json.loads(response.json()['output'])["hpos-vroc04:9998"]
+            payload = json.loads(response.json()['output'])[self.node_endpoint]
 
         num_attached_devices = 0
         for host in payload['Hosts']:

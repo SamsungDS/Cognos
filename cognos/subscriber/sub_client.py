@@ -1,3 +1,4 @@
+import argparse
 import errno
 import os
 import os.path
@@ -24,7 +25,7 @@ def read_input(filename):
     return data
 
 
-def main() -> None:
+def main(interval) -> None:
     if len(sys.argv) < 2:
         print('usage: subscriber.py <publisher_output_file>')
         sys.exit(1)
@@ -58,7 +59,7 @@ def main() -> None:
                 row["timestamp"] = utc_time.strftime("%Y-%m-%dT%H:%M:%SZ")
 
                 # Sleep for 5 seconds
-                time.sleep(0.5)
+                time.sleep(interval)
 
                 # write event to influxdb
                 dbobj.write_cognos_event(row.to_dict())
@@ -67,4 +68,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--i', '--interval')
+    args = parser.parse_args()
+    if args.interval:
+        main(args.interval)
+    else:
+        main(5)
