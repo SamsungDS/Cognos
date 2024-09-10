@@ -259,7 +259,6 @@ def get_devname_from_id(dev_id):
 def get_hostid_from_name(name):
     db, cursor = connect_to_mysql()
     row = []
-    print(f"NAME FROM UI: {name} TYPE: {type(name)}")
     try:
         query = "SELECT id FROM hosts WHERE name=%s"
         values = [name]
