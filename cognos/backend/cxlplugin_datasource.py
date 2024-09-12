@@ -1,4 +1,3 @@
-from base_datasource import DataSource
 from collections import defaultdict, namedtuple
 from flask import request, jsonify
 import json
@@ -7,11 +6,18 @@ import os
 import requests
 import socket
 
-import app
-import helper
+from cognos.backend.base_datasource import DataSource
+from cognos.backend.helper import (
+    fetch_cognos_configs, process_membox_capacity_payload,
+    get_available_devices_fromdb, get_dummy_mb_info, get_devport_name_map,
+    get_devport_hostname_map, init_devices_table, init_hosts_table,
+    init_connections_table, fetch_topology, get_host_attached_devices,
+    get_devid_from_name, get_hostid_from_name, delete_connection,
+    connect_to_mysql, disconnect_mysql, failed_response, get_devname_from_id
+)
 
 
-CONFIGS = helper.fetch_cognos_configs(
+CONFIGS = fetch_cognos_configs(
     os.path.dirname(os.path.abspath(__file__)),
     'config.json'
 )
@@ -25,7 +31,7 @@ class CXLPlugin(DataSource):
         return jsonify(payload)
 
     def get_topology(self):
-        payload = app.fetch_topology()
+        payload = fetch_topology()
         response = jsonify(payload)
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
@@ -51,20 +57,20 @@ class CXLPlugin(DataSource):
 
     def membox_capacity(self):
         payload = self.get_devices_info()
-        response = jsonify(helper.process_membox_capacity_payload(payload))
+        response = jsonify(process_membox_capacity_payload(payload))
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
 
     def host_devices(self):
         request_data = request.get_json()
         host = request_data["host"]
-        payload = app.get_host_attached_devices(host)
+        payload = get_host_attached_devices(host)
         response = jsonify(payload)
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
 
     def available_devices(self):
-        response = jsonify(helper.get_available_devices_fromdb())
+        response = jsonify(get_available_devices_fromdb())
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
 
@@ -77,8 +83,8 @@ class CXLPlugin(DataSource):
         dev_name = request_data["dev_name"]
         host_name = request_data["host_name"]
 
-        dev_id = app.get_devid_from_name(dev_name)
-        host_id = app.get_hostid_from_name(host_name)
+        dev_id = get_devid_from_name(dev_name)
+        host_id = get_hostid_from_name(host_name)
         svk_api_input_arg = (
             "cluster_id=CLUST1;command=DetachMemory;"
             f"dev_id={dev_id};host_id={host_id};mode=direct"
@@ -99,10 +105,10 @@ class CXLPlugin(DataSource):
 
         if response.ok:
             # Update DB after detach operation
-            app.delete_connection(int(dev_id), int(host_id))
+            delete_connection(int(dev_id), int(host_id))
 
         # Return response for host/attached-devices table
-        payload = app.get_host_attached_devices(host_name)
+        payload = get_host_attached_devices(host_name)
         response = jsonify(payload)
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
@@ -115,8 +121,8 @@ class CXLPlugin(DataSource):
             request_data = mock_request_data
         dev_name = request_data["dev_name"]
         host_name = request_data["host_name"]
-        dev_id = app.get_devid_from_name(dev_name)
-        host_id = app.get_hostid_from_name(host_name)
+        dev_id = get_devid_from_name(dev_name)
+        host_id = get_hostid_from_name(host_name)
         svk_api_input_arg = (
             "cluster_id=CLUST1;command=AttachMemory;"
             f"dev_id={dev_id};host_id={host_id};mode=direct"
@@ -137,7 +143,7 @@ class CXLPlugin(DataSource):
 
         if response.ok:
             # Update DB with new connection
-            db, cursor = app.connect_to_mysql()
+            db, cursor = connect_to_mysql()
             insert_query = (
                 "INSERT INTO host_device_connections "
                 "(host_id, host_name, dev_id, dev_name)"
@@ -146,16 +152,16 @@ class CXLPlugin(DataSource):
             values = (host_id, host_name, dev_id, dev_name)
             cursor.execute(insert_query, values)
             db.commit()
-            app.disconnect_mysql(db)
+            disconnect_mysql(db)
 
         # Return response for host/attached-devices table
-        payload = app.get_host_attached_devices(host_name)
+        payload = get_host_attached_devices(host_name)
         response = jsonify(payload)
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
 
     def get_mb_info(self):
-        response = jsonify(helper.get_dummy_mb_info())
+        response = jsonify(get_dummy_mb_info())
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
 
@@ -201,7 +207,7 @@ class CXLPlugin(DataSource):
                 ["devices"]
             )
         else:
-            return app.failed_response("Failed to fetch device info from SVK")
+            return failed_response("Failed to fetch device info from SVK")
 
         # convert bytes into GB & add device names
         for i in range(len(payload)):
@@ -210,7 +216,7 @@ class CXLPlugin(DataSource):
             )
             dev_id = payload[i]["dev_id"]
             payload[i]["dev_name"] = (
-                app.get_devname_from_id(payload[i]["dev_id"])
+                get_devname_from_id(payload[i]["dev_id"])
             )
         return payload
 
@@ -232,7 +238,7 @@ class CXLPlugin(DataSource):
             )
             return payload
         else:
-            return app.failed_response(
+            return failed_response(
                 "Failed to retrieve hosts info from SVK"
             )
 
@@ -240,19 +246,19 @@ class CXLPlugin(DataSource):
         # get setup info
         init_payload = self.get_setup_info()
         dev_port_name_map = (
-            helper.get_devport_name_map(init_payload["Devices"])
+            get_devport_name_map(init_payload["Devices"])
         )
         devport_hostname_map = (
-            helper.get_devport_hostname_map(init_payload["Hosts"])
+            get_devport_hostname_map(init_payload["Hosts"])
         )
 
         # get device info
         devices_payload = self.get_devices_info()
-        helper.init_devices_table(devices_payload, dev_port_name_map)
+        init_devices_table(devices_payload, dev_port_name_map)
 
         # get hosts info
         hosts_payload = self.get_hosts_info()
-        helper.init_hosts_table(hosts_payload)
+        init_hosts_table(hosts_payload)
 
         # store connections
-        helper.init_connections_table(devport_hostname_map)
+        init_connections_table(devport_hostname_map)

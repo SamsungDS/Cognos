@@ -4,8 +4,8 @@ import json
 import os
 from pathlib import Path
 
-import helper
-from app import (
+
+from cognos.backend.helper import (
     get_db_passwd, get_param_from_request_params, insert_hosts,
     insert_devices, prepare_response_with_body,
     get_db_passwd, fetch_topology, failed_response,
@@ -13,17 +13,17 @@ from app import (
     get_hostname_from_id, get_devname_from_id, get_hostid_from_name,
     get_devid_from_name, get_deviceid_and_devicename_from_port,
     get_host_attached_devices, clear_all_tables, connect_to_mysql,
-    get_hosts_from_db
+    get_hosts_from_db, fetch_cognos_configs, fetch_api_version
 )
 from requests.models import Response
 
 
 # get API version
 backend_dir = Path(os.path.abspath(__file__)).parent.parent
-CONFIGS = helper.fetch_cognos_configs(backend_dir, 'config.json')
+CONFIGS = fetch_cognos_configs(backend_dir, 'config.json')
 AGENT_ENDPOINT = CONFIGS['agent_endpoint']
 NODE_ENDPOINT = CONFIGS['node_endpoint']
-API_VERSION = helper.fetch_api_version(backend_dir)
+API_VERSION = fetch_api_version(backend_dir)
 
 
 def test_get_db_psswd(client):

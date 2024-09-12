@@ -2,10 +2,12 @@ import json
 import pytest
 from unittest.mock import MagicMock
 
-from mock_cognos_agent_metrics_populator import (
+from cognos.backend.mock_cognos_agent_metrics_populator import (
     mock_metrics, run_mock_populator
 )
 from requests.models import Response
+
+cognos_backend_prefix = 'cognos.backend.'
 
 
 def construct_dummy_response(dummy_data):
@@ -25,6 +27,7 @@ def test_create_client_from_config(cognos_influx_client_from_config):
 
 def test_write_records(cognos_influx_client, mocker):
     mocker.patch(
+        cognos_backend_prefix +
         'cognos_influxdb_client.CognosInfluxDBClient.write_cognos_event',
         return_value=True
     )
@@ -34,6 +37,7 @@ def test_write_records(cognos_influx_client, mocker):
 
 def test_read_records(cognos_influx_client, mocker):
     mocker.patch(
+        cognos_backend_prefix +
         'cognos_influxdb_client.CognosInfluxDBClient.query_cognos_events',
         return_value=True
     )
@@ -42,10 +46,12 @@ def test_read_records(cognos_influx_client, mocker):
 
 def test_run_mock_populator(cognos_influx_client, mocker):
     mocker.patch(
+        cognos_backend_prefix +
         'cognos_influxdb_client.CognosInfluxDBClient.write_cognos_event',
         return_value=True
     )
     mocker.patch(
+        cognos_backend_prefix +
         'cognos_influxdb_client.CognosInfluxDBClient.query_cognos_events',
         return_value=True
     )

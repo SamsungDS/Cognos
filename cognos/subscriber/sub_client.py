@@ -8,9 +8,9 @@ import time
 
 sys.path.append(  # noqa: E402
     os.path.abspath(os.path.join(  # noqa: E402
-        os.path.dirname(__file__), '..')))  # noqa: E402
-from backend.cognos_influxdb_client import CognosInfluxDBClient
-from backend.helper import *
+        os.path.dirname(__file__), '../..')))  # noqa: E402
+from cognos.backend.cognos_influxdb_client import CognosInfluxDBClient
+from cognos.backend.helper import *
 
 
 def read_input(filename):
@@ -25,16 +25,18 @@ def read_input(filename):
     return data
 
 
-def main(interval) -> None:
+def main(interval, mock_file=None) -> None:
     if len(sys.argv) < 2:
         print('usage: subscriber.py <publisher_output_file>')
         sys.exit(1)
 
-    if not os.path.exists(sys.argv[1]):
+    if not os.path.exists(mock_file):
         raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT),
-                                sys.argv[1])
+                                mock_file)
 
-    data = read_input(sys.argv[1])
+    data = None
+    if mock_file:
+        data = read_input(mock_file)
     if data:
         # Create a DataFrame
         df = pd.DataFrame(data)
@@ -69,9 +71,10 @@ def main(interval) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--i', '--interval')
+    parser.add_argument('--mock', type=str)
+    parser.add_argument('--interval', nargs='?', default=5, required=False)
     args = parser.parse_args()
     if args.interval:
-        main(args.interval)
+        main(args.interval, mock_file=(args.mock if args.mock else None))
     else:
-        main(5)
+        main(5, mock_file=(args.mock if args.mock else None))

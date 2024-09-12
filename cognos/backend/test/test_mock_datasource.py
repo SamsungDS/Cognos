@@ -14,7 +14,7 @@ def test_mock_get_hosts(get_mock_datasource, client):
 
 
 def test_mock_post_devices(mocker, get_mock_datasource, client):
-    mocker.patch('mock_datasource.Mock.get_devices_info',
+    mocker.patch('cognos.backend.mock_datasource.Mock.get_devices_info',
                  return_value={"dev": "dev1"})
     get_mock_datasource.post_devices()
 
@@ -30,7 +30,7 @@ def test_mock_host_devices(get_mock_datasource, client):
 
 def test_mock_available_devices(mocker, get_mock_datasource,
                                 client, mock_connection, mock_cursor):
-    mocker.patch('app.connect_to_mysql',
+    mocker.patch('cognos.backend.helper.connect_to_mysql',
                  return_value=(mock_connection, mock_cursor))
     dummy_data = [[
         'DUMMY_DEV5-256'
@@ -43,25 +43,51 @@ def test_mock_available_devices(mocker, get_mock_datasource,
 def test_mock_detach_device(mocker, get_mock_datasource, client):
     data = client.post('/detach_device',
                        json={"host_name": ["host1"], "dev_name": "dev1"})
-    mocker.patch('app.get_devid_from_name', return_value=3215)
-    mocker.patch('app.get_hostid_from_name', return_value=4314)
-    mocker.patch('app.delete_connection', return_value=True)
-    mocker.patch('app.get_host_attached_devices', return_value={"dev": "dev1"})
+    mocker.patch(
+        'cognos.backend.helper.get_devid_from_name',
+        return_value=3215
+    )
+    mocker.patch(
+        'cognos.backend.helper.get_hostid_from_name',
+        return_value=4314
+    )
+    mocker.patch(
+        'cognos.backend.helper.delete_connection',
+        return_value=True
+    )
+    mocker.patch(
+        'cognos.backend.helper.get_host_attached_devices',
+        return_value={"dev": "dev1"}
+    )
     get_mock_datasource.detach_device()
 
 
 def test_mock_attach_device(mocker, get_mock_datasource,
-                            client, mock_connection, mock_cursor):
+                            client, mock_db):
     data = client.post('/attach_device',
                        json={"host_name": ["host2"], "dev_name": "dev2"})
-    mocker.patch('app.connect_to_mysql',
-                 return_value=(mock_connection, mock_cursor))
-    mocker.patch('app.disconnect_mysql', return_value=True)
-    mock_cursor.execute.return_value = True
-    mocker.patch('app.get_devid_from_name', return_value=7653)
-    mocker.patch('app.get_hostid_from_name', return_value=437314)
-    mocker.patch('app.delete_connection', return_value=True)
-    mocker.patch('app.get_host_attached_devices', return_value={"dev": "dev2"})
+    mocker.patch('cognos.backend.helper.connect_to_mysql',
+                 return_value=(mock_db[0], mock_db[1]))
+    mocker.patch(
+        'cognos.backend.helper.disconnect_mysql',
+        return_value=True
+    )
+    mocker.patch(
+        'cognos.backend.helper.get_devid_from_name',
+        return_value=7653
+    )
+    mocker.patch(
+        'cognos.backend.helper.get_hostid_from_name',
+        return_value=437314
+    )
+    mocker.patch(
+        'cognos.backend.helper.delete_connection',
+        return_value=True
+    )
+    mocker.patch(
+        'cognos.backend.helper.get_host_attached_devices',
+        return_value={"dev": "dev2"}
+    )
     get_mock_datasource.attach_device()
 
 

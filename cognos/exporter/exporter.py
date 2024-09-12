@@ -9,13 +9,15 @@ import websockets
 import time
 
 sys.path.append(os.path.abspath(  # noqa: E402
-    os.path.join(os.path.dirname(__file__), '..')))  # noqa: E402
-from backend.cognos_influxdb_client import CognosInfluxDBClient
-from backend.helper import fetch_cognos_configs
+    os.path.join(os.path.dirname(__file__), '../..')))  # noqa: E402
+from cognos.backend.cognos_influxdb_client import CognosInfluxDBClient
+from cognos.backend.helper import fetch_cognos_configs
 
 ws = None
 global influx_client
 influx_client = CognosInfluxDBClient()
+global ssl_context
+ssl_context = None
 
 
 async def recv_host_selection_handler():
@@ -144,13 +146,21 @@ async def main():
     stop_event = asyncio.Event()
     metrics_handler_with_stop_event = functools.partial(
         metrics_handler, stop_event=stop_event)
-    server = await websockets.serve(
-        metrics_handler_with_stop_event,
-        configs['exporter_ip'],
-        configs['exporter_port'],
-        ssl=ssl_context,
-        ping_timeout=None
-    )
+    if ssl_context:
+        server = await websockets.serve(
+            metrics_handler_with_stop_event,
+            configs['exporter_ip'],
+            configs['exporter_port'],
+            ssl=ssl_context,
+            ping_timeout=None
+        )
+    else:
+        server = await websockets.serve(
+            metrics_handler_with_stop_event,
+            configs['exporter_ip'],
+            configs['exporter_port'],
+            ping_timeout=None
+        )
 
     await recv_host_selection_handler()
 

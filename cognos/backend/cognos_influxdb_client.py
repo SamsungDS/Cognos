@@ -10,9 +10,9 @@ import sys
 
 sys.path.append(os.path.abspath(  # noqa: E402
     os.path.join(os.path.dirname(__file__), '..')))  # noqa: E402
-from backend.helper import fetch_cognos_configs
+from cognos.backend.helper import fetch_cognos_configs
 
-from backend.mock_constants import MOCK_CXL_SETUP
+from cognos.backend.mock_constants import MOCK_CXL_SETUP
 
 
 class CognosInfluxDBClient():

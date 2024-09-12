@@ -1,6 +1,6 @@
 import time
 import random
-from cognos_influxdb_client import CognosInfluxDBClient
+from cognos.backend.cognos_influxdb_client import CognosInfluxDBClient
 
 
 mock_metrics = [

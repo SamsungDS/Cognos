@@ -3,347 +3,37 @@ import click
 import json
 import mysql.connector
 import os
+import sys
 from flask_cors import CORS
 
-import helper
-import mock_datasource
-import cxlplugin_datasource
 
-COGNOS_TABLES = [
-    "devices",
-    "hosts",
-    "mem_box",
-    "host_device_connections"
-]
+sys.path.append(os.path.abspath(  # noqa: E402
+    os.path.join(os.path.dirname(__file__), '../..')))  # noqa: E402
+from cognos.backend.helper import (
+    fetch_cognos_configs, fetch_api_version,
+    get_db_passwd, prepare_response_with_body, failed_response,
+    connect_to_mysql, disconnect_mysql, get_param_from_request_params,
+    insert_hosts, get_devices_from_db, insert_devices, insert_connection,
+    delete_connection, fetch_topology, get_hosts_from_db,
+    get_hostname_from_id, get_devname_from_id, get_hostid_from_name,
+    get_devid_from_name, get_deviceid_and_devicename_from_port,
+    get_host_attached_devices, clear_all_tables
+)
+from cognos.backend.mock_datasource import Mock
+from cognos.backend.cxlplugin_datasource import CXLPlugin
+
 
 current_script_dir = os.path.dirname(os.path.abspath(__file__))
-CONFIG_FILE_PATH = os.path.join(current_script_dir, 'config',
-                                'config.json')
-CONFIGS = helper.fetch_cognos_configs(current_script_dir, 'config.json')
-API_VERSION = helper.fetch_api_version(current_script_dir)
+# CONFIG_FILE_PATH = os.path.join(current_script_dir, 'config',
+#                                 'config.json')
+CONFIGS = fetch_cognos_configs(current_script_dir, 'config.json')
+API_VERSION = fetch_api_version(current_script_dir)
 
 global AGENT_ENDPOINT
 AGENT_ENDPOINT = CONFIGS['agent_endpoint']
 # TODO: support multiple Node Servers / Agents at scale
 global NODE_ENDPOINT
 NODE_ENDPOINT = CONFIGS['node_endpoint']
-
-
-def get_db_passwd():
-    db_pass = ''
-    try:
-        with open(CONFIG_FILE_PATH, 'r') as config_file:
-            db_pass = json.load(config_file)
-            if not db_pass:
-                raise RuntimeError(
-                    f"Unable to retrieve mysql db password: {error}"
-                )
-    except Exception as error:
-        raise RuntimeError(f"Unable to retrieve mysql db password: {error}")
-    return db_pass['mysql_db_dev_passwd']
-
-
-def prepare_response_with_body(payload):
-    response = jsonify(payload)
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    return response
-
-
-def failed_response(msg):
-    payload = {'status': 500, 'error': msg}
-    response = jsonify(payload)
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    return response
-
-
-def connect_to_mysql():
-    try:
-        db = mysql.connector.connect(
-            host="localhost",
-            user="dev",
-            passwd=get_db_passwd(),
-            database="cognos"
-        )
-        cursor = db.cursor()
-        return db, cursor
-    except Exception as error:
-        print(f"Failed to connect to Cognos Mysql DB.. {str(error)}")
-
-
-def disconnect_mysql(db):
-    db.close()
-
-
-def get_param_from_request_params(request_params, arg):
-    for param in request_params:
-        if param.startswith(arg):
-            return param.split("=")[1]
-    return None
-
-
-def insert_hosts(payload):
-    db, cursor = connect_to_mysql()
-
-    for host in payload:
-        try:
-            insert_query = (
-                "REPLACE INTO hosts "
-                "(id, name, mem_capacity)"
-                "VALUES (%s, %s, %s)"
-            )
-
-            values = (
-                host['id'], host['name'], host['mem_capacity']
-            )
-            cursor.execute(insert_query, values)
-            db.commit()
-        except Exception as error:
-            print(f"Failed to insert into hosts table.. {str(error)}")
-
-    disconnect_mysql(db)
-
-
-def get_devices_from_db():
-    db, cursor = connect_to_mysql()
-    try:
-        query = (
-            "SELECT dev_capacity, dev_id, dev_port, "
-            "hosts_attached FROM devices"
-        )
-        cursor.execute(query)
-        rows = cursor.fetchall()
-
-        payload = []
-        for row in rows:
-            obj = {
-                "dev_capacity": row[0],
-                "dev_id": row[1],
-                "dev_port": row[2],
-                "hosts_attached": row[3]
-            }
-            payload.append(obj)
-        disconnect_mysql(db)
-    except Exception as error:
-        print(f"Failed to fetch from devices table.. {str(error)}")
-    return payload
-
-
-def insert_devices(payload):
-    db, cursor = connect_to_mysql()
-
-    for device in payload:
-        try:
-            insert_query = (
-                "INSERT INTO devices "
-                "(dev_id, dev_name, dev_capacity, dev_port,"
-                " hosts_attached, status, type, mode)"
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
-            )
-
-            # TODO: extract status, type, and mode info
-            # currently not available in SVK CXL Plugin
-
-            values = (
-                device['dev_id'], device['dev_name'],
-                device['dev_capacity'],
-                device['dev_port'], ','.join(device['hosts_attached']),
-                'active', 'CMM-D', 'direct'
-            )
-            cursor.execute(insert_query, values)
-            db.commit()
-        except Exception as error:
-            print(f"Failed insert into devices table.. {str(error)}")
-
-    disconnect_mysql(db)
-
-
-def insert_connection(host_id, host_name, dev_id, dev_name):
-    db, cursor = connect_to_mysql()
-    try:
-        insert_query = (
-            "INSERT INTO host_device_connections "
-            "(host_id, host_name, dev_id, dev_name) "
-            "VALUES (%s, %s, %s, %s)"
-        )
-        values = (host_id, host_name, dev_id, dev_name)
-        cursor.execute(insert_query, values)
-        db.commit()
-    except Exception as error:
-        print(f"Failed to insert into connections table.. {str(error)}")
-    disconnect_mysql(db)
-
-
-def delete_connection(dev_id, host_id):
-    db, cursor = connect_to_mysql()
-    try:
-        delete_query = (
-            "DELETE FROM host_device_connections "
-            "WHERE (dev_id=%s AND host_id=%s)"
-        )
-        values = (dev_id, host_id)
-        cursor.execute(delete_query, values)
-        db.commit()
-    except Exception as e:
-        print(f"Failed to delete from host_devices_connections.. {str(e)}")
-    disconnect_mysql(db)
-
-
-def fetch_topology():
-    payload = []
-
-    db, cursor = connect_to_mysql()
-    try:
-        cursor.execute(
-            "SELECT DISTINCT(host_name) as host, GROUP_CONCAT(dev_name) "
-            "as devices FROM host_device_connections GROUP BY 1;"
-        )
-        rows = cursor.fetchall()
-    except Exception as error:
-        print(f"Failed to fetch topology from devices table.. {str(error)}")
-
-    for row in rows:
-        obj = {
-            "host": row[0],
-            "devices": row[1].split(',')
-        }
-        payload.append(obj)
-
-    disconnect_mysql(db)
-    return payload
-
-
-def get_hosts_from_db():
-    db, cursor = connect_to_mysql()
-    try:
-        query = "SELECT name from hosts"
-        cursor.execute(query)
-        hosts = cursor.fetchall()
-    except Exception as error:
-        print(f"Failed to fetch from hosts table.. {str(error)}")
-
-    return hosts if hosts else []
-
-
-def get_hostname_from_id(host_id):
-    db, cursor = connect_to_mysql()
-    try:
-        query = "SELECT name FROM hosts WHERE id=%s"
-        values = [host_id]
-        cursor.execute(query, values)
-        row = cursor.fetchone()
-    except Exception as error:
-        print(f"Failed to fetch from hosts table.. {str(error)}")
-    disconnect_mysql(db)
-    if row:
-        return row[0]
-    else:
-        return ''
-
-
-def get_devname_from_id(dev_id):
-    db, cursor = connect_to_mysql()
-    try:
-        query = "SELECT dev_name FROM devices WHERE dev_id=%s LIMIT 1;"
-        values = [dev_id]
-        cursor.execute(query, values)
-        row = cursor.fetchone()
-    except Exception as error:
-        print(f"Failed to fetch from devices table.. {str(error)}")
-    disconnect_mysql(db)
-    if row:
-        return row[0]
-    else:
-        return ''
-
-
-def get_hostid_from_name(name):
-    db, cursor = connect_to_mysql()
-    row = []
-    try:
-        query = "SELECT id FROM hosts WHERE name=%s"
-        values = [name]
-        cursor.execute(query, values)
-        row = cursor.fetchone()
-    except Exception as error:
-        print(f"Failed to fetch from hosts table.. {str(error)}")
-    disconnect_mysql(db)
-    if row:
-        return row[0]
-    else:
-        return ''
-
-
-def get_devid_from_name(dev_name):
-    db, cursor = connect_to_mysql()
-    try:
-        query = "SELECT dev_id FROM devices WHERE dev_name=%s"
-        values = [dev_name]
-        cursor.execute(query, values)
-        row = cursor.fetchone()
-    except Exception as error:
-        print(f"Failed to fetch from devices table.. {str(error)}")
-    disconnect_mysql(db)
-    if row:
-        return row[0]
-    else:
-        return ''
-
-
-def get_deviceid_and_devicename_from_port(port):
-    db, cursor = connect_to_mysql()
-    try:
-        query = "SELECT dev_id, dev_name FROM devices WHERE dev_port=%s"
-        values = [port]
-        cursor.execute(query, values)
-        row = cursor.fetchone()
-        if not row:
-            return (0, '')
-        dev_id, dev_name = row[0], row[1]
-    except Exception as error:
-        print(f"Failed to fetch from devices table.. {str(error)}")
-    disconnect_mysql(db)
-    return dev_id, dev_name
-
-
-def get_host_attached_devices(host):
-    db, cursor = connect_to_mysql()
-    results = []
-    host = host[0] if type(host) is list else host
-    try:
-        query = (
-            "SELECT dev_name, status, dev_port, type, mode, dev_capacity "
-            "FROM devices WHERE dev_id IN "
-            "(SELECT dev_id FROM host_device_connections "
-            f"WHERE host_name='{host}')"
-        )
-        cursor.execute(query)
-        results = cursor.fetchall()
-    except Exception as e:
-        print(f"Failed to fetch device data for a specific host.. {str(e)}")
-    disconnect_mysql(db)
-    payload = []
-    row = {}
-    for x in results:
-        row = {
-            'dev_name': x[0], 'status': x[1], 'dev_port': x[2],
-            'type': x[3], 'mode': x[4],
-            'dev_capacity': x[5]
-        }
-        payload.append(row)
-        row = {}
-    return payload
-
-
-def clear_all_tables():
-    db, cursor = connect_to_mysql()
-    for table in COGNOS_TABLES:
-        try:
-            delete_query = f"DELETE FROM {table};"
-            cursor.execute(delete_query)
-            db.commit()
-        except Exception as error:
-            print(f"Failed to delete from {table}.. {str(error)}")
-    disconnect_mysql(db)
 
 
 def create_app(mock=False):
@@ -353,8 +43,8 @@ def create_app(mock=False):
     app.config['CORS_HEADERS'] = 'Content-Type'
 
     data_source = (
-        mock_datasource.Mock()
-        if mock else cxlplugin_datasource.CXLPlugin()
+        Mock()
+        if mock else CXLPlugin()
     )
 
     # clear out existing tables

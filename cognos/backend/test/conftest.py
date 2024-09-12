@@ -1,19 +1,24 @@
 import os
 from pathlib import Path
 import pytest
+import sys
 from unittest.mock import MagicMock
 
-import cxlplugin_datasource
-import helper
-import mock_datasource
-from app import create_app
-from cognos_influxdb_client import CognosInfluxDBClient
+sys.path.append(os.path.abspath(  # noqa: E402
+    os.path.join(os.path.dirname(__file__), '../../..')))  # noqa: E402
+from cognos.backend.cxlplugin_datasource import CXLPlugin
+from cognos.backend.helper import (
+    fetch_cognos_configs
+)
+from cognos.backend.mock_datasource import Mock
+from cognos.backend.app import create_app
+from cognos.backend.cognos_influxdb_client import CognosInfluxDBClient
 
 
 @pytest.fixture
 def get_cognos_configs():
     backend_dir = Path(os.path.abspath(__file__)).parent.parent
-    configs = helper.fetch_cognos_configs(backend_dir, 'config.json')
+    configs = fetch_cognos_configs(backend_dir, 'config.json')
     return configs
 
 
@@ -34,31 +39,34 @@ def cognos_influx_client_from_config():
 
 @pytest.fixture
 def get_cxlplugin_datasource():
-    return cxlplugin_datasource.CXLPlugin()
+    return CXLPlugin()
 
 
 @pytest.fixture
 def get_mock_datasource():
-    return mock_datasource.Mock()
+    return Mock()
 
 
 @pytest.fixture
 def mock_db_connect_disconnect(mocker):
-    mocker.patch('app.connect_to_mysql', return_value=True)
-    mocker.patch('app.disconnect_mysql', return_value=True)
+    mocker.patch('cognos.backend.helper.connect_to_mysql', return_value=True)
+    mocker.patch('cognos.backend.helper.disconnect_mysql', return_value=True)
 
 
 @pytest.fixture
 def mock_clear_setup_tables(mocker):
-    mocker.patch('app.clear_all_tables', return_value=True)
+    mocker.patch('cognos.backend.helper.clear_all_tables', return_value=True)
 
 
 @pytest.fixture
 def mock_mysql_connection(mocker):
     mock_conn = MagicMock()
     mock_cursor = MagicMock()
-    mocker.patch('app.connect_to_mysql', return_value=(mock_conn, mock_cursor))
-    mocker.patch('app.disconnect_mysql', return_value=True)
+    mocker.patch(
+        'cognos.backend.helper.connect_to_mysql',
+        return_value=(mock_conn, mock_cursor)
+    )
+    mocker.patch('cognos.backend.helper.disconnect_mysql', return_value=True)
 
 
 @pytest.fixture
@@ -73,9 +81,12 @@ def client(mock_mysql_connection, mock_clear_setup_tables, mocker):
 def mock_app(mocker):
     mock_conn = MagicMock()
     mock_cursor = MagicMock()
-    mocker.patch('app.connect_to_mysql', return_value=(mock_conn, mock_cursor))
-    mocker.patch('app.disconnect_mysql', return_value=True)
-    mocker.patch('app.clear_all_tables', return_value=True)
+    mocker.patch(
+        'cognos.backend.helper.connect_to_mysql',
+        return_value=(mock_conn, mock_cursor)
+    )
+    mocker.patch('cognos.backend.helper.disconnect_mysql', return_value=True)
+    mocker.patch('cognos.backend.helper.clear_all_tables', return_value=True)
     APP = create_app(mock=True)
     return APP
 
@@ -101,9 +112,9 @@ def mock_db(mocker):
     mock_connection.cursor.return_value = mock_cursor
     mock_cursor.execute.return_value = True
 
-    mocker.patch('app.connect_to_mysql',
+    mocker.patch('cognos.backend.helper.connect_to_mysql',
                  return_value=(mock_connection, mock_cursor))
-    mocker.patch('app.disconnect_mysql', return_value=True)
+    mocker.patch('cognos.backend.helper.disconnect_mysql', return_value=True)
 
     return mock_connection, mock_cursor
 

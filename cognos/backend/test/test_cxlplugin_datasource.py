@@ -1,7 +1,7 @@
 import json
 from requests.models import Response
 
-from test_app import construct_dummy_response
+from cognos.backend.test.test_cal_helper import construct_dummy_response
 
 
 def test_cxlplugin_init(mocker, client, get_cognos_configs,
@@ -78,8 +78,10 @@ def test_cxlplugin_init(mocker, client, get_cognos_configs,
         }
     }
     payload_output = dummy_data["output"]
-    mocker.patch('cxlplugin_datasource.CXLPlugin.get_setup_info',
-                 return_value=payload_output)
+    mocker.patch(
+        'cognos.backend.cxlplugin_datasource.CXLPlugin.get_setup_info',
+        return_value=payload_output
+    )
     get_cxlplugin_datasource.init()
 
 
@@ -88,7 +90,10 @@ def test_cxlplugin_get_topology(mocker, client, get_cxlplugin_datasource):
         "Host 1 LINK 0",
         "DEV10,DEV11"
     ]
-    mocker.patch('app.fetch_topology', return_value=mock_data)
+    mocker.patch(
+        'cognos.backend.helper.fetch_topology',
+        return_value=mock_data
+    )
     get_cxlplugin_datasource.get_topology()
 
 
@@ -97,22 +102,28 @@ def test_cxlplugin_get_hosts(mocker, client, get_cxlplugin_datasource):
         {'name': 'host1'},
         {'name': 'host2'}
     ]
-    mocker.patch('cxlplugin_datasource.CXLPlugin.get_hosts_info',
-                 return_value=mock_hosts)
+    mocker.patch(
+        'cognos.backend.cxlplugin_datasource.CXLPlugin.get_hosts_info',
+        return_value=mock_hosts
+    )
     get_cxlplugin_datasource.get_hosts()
 
 
 def test_cxlplugin_post_devices(mocker, client, get_cxlplugin_datasource,
                                 mock_devices_info):
-    mocker.patch('cxlplugin_datasource.CXLPlugin.get_devices_info',
-                 return_value=mock_devices_info)
+    mocker.patch(
+        'cognos.backend.cxlplugin_datasource.CXLPlugin.get_devices_info',
+        return_value=mock_devices_info
+    )
     get_cxlplugin_datasource.post_devices()
 
 
 def test_cxlplugin_membox_capacity(mocker, client, get_cxlplugin_datasource,
                                    mock_devices_info):
-    mocker.patch('cxlplugin_datasource.CXLPlugin.get_devices_info',
-                 return_value=mock_devices_info)
+    mocker.patch(
+        'cognos.backend.cxlplugin_datasource.CXLPlugin.get_devices_info',
+        return_value=mock_devices_info
+    )
     get_cxlplugin_datasource.membox_capacity()
 
 
@@ -140,7 +151,7 @@ def test_host_devices(mocker, get_cxlplugin_datasource, mock_db, client):
 
 def test_cxlplugin_available_devices(mocker, get_cxlplugin_datasource,
                                      client, mock_connection, mock_cursor):
-    mocker.patch('app.connect_to_mysql',
+    mocker.patch('cognos.backend.helper.connect_to_mysql',
                  return_value=(mock_connection, mock_cursor))
     dummy_data = [[
         'DUMMY_DEV1-256'
@@ -169,7 +180,14 @@ def test_cxlplugin_detach_device(mocker, get_cxlplugin_datasource,
         mocker.patch('json.loads',
                      return_value={
                          get_cognos_configs["node_endpoint"]: {'rc': 0}})
-        mocker.patch('app.delete_connection', return_value=True)
+        mocker.patch(
+            'cognos.backend.helper.get_db_passwd',
+            return_value="CXL123mem!"
+        )
+        mocker.patch(
+            'cognos.backend.helper.delete_connection',
+            return_value=True
+        )
         get_cxlplugin_datasource.detach_device(
             mock_request=True,
             mock_request_data={"dev_name": "dev1", "host_name": "host1"}
@@ -178,7 +196,7 @@ def test_cxlplugin_detach_device(mocker, get_cxlplugin_datasource,
 
 def test_cxlplugin_attach_device(mocker, get_cxlplugin_datasource,
                                  get_cognos_configs, mock_app,
-                                 app_context, mock_connection, mock_cursor):
+                                 app_context):
     with mock_app.test_request_context('/attach_device', method='POST'):
         dummy_attach_response = {
             "output": {
@@ -198,13 +216,25 @@ def test_cxlplugin_attach_device(mocker, get_cxlplugin_datasource,
                 get_cognos_configs["node_endpoint"]: {'rc': 0}
             }
         )
+        mock_connection = mocker.MagicMock()
+        mock_cursor = mocker.MagicMock()
+        mocker.patch('mysql.connector.connect', return_value=mock_connection)
+        mock_connection.cursor.return_value = mock_cursor
+        mock_cursor.execute.return_value = True
         mocker.patch(
-            'app.connect_to_mysql',
+            'cognos.backend.helper.get_db_passwd',
+            return_value="CXL123mem!"
+        )
+        mocker.patch(
+            'cognos.backend.helper.connect_to_mysql',
             return_value=(mock_connection, mock_cursor)
         )
-        mocker.patch('app.disconnect_mysql', return_value=True)
-        mock_cursor.execute.return_value = True
-        mocker.patch('app.get_host_attached_devices',
+        mocker.patch(
+            'cognos.backend.helper.disconnect_mysql',
+            return_value=True
+        )
+        # mock_cursor.execute.return_value = True
+        mocker.patch('cognos.backend.helper.get_host_attached_devices',
                      return_value={"device": "dev1"})
         get_cxlplugin_datasource.attach_device(
             mock_request=True,
@@ -394,8 +424,10 @@ def test_cxlplugin_setup_tables(mocker, mock_db, client,
             "name": "Host 1 LNK0"
         }
     ]
-    mocker.patch('cxlplugin_datasource.CXLPlugin.get_hosts_info',
-                 return_value=dummy_hosts_data)
+    mocker.patch(
+        'cognos.backend.cxlplugin_datasource.CXLPlugin.get_hosts_info',
+        return_value=dummy_hosts_data
+    )
 
     dummy_devices_data = [
         {
@@ -411,8 +443,10 @@ def test_cxlplugin_setup_tables(mocker, mock_db, client,
             "hosts_attached": ["Host 1 LNK0"]
         }
     ]
-    mocker.patch('cxlplugin_datasource.CXLPlugin.get_devices_info',
-                 return_value=dummy_devices_data)
+    mocker.patch(
+        'cognos.backend.cxlplugin_datasource.CXLPlugin.get_devices_info',
+        return_value=dummy_devices_data
+    )
 
     dummy_init_data = {
         "Board": {
@@ -481,9 +515,20 @@ def test_cxlplugin_setup_tables(mocker, mock_db, client,
             }
         ]
     }
-    mocker.patch('cxlplugin_datasource.CXLPlugin.get_setup_info',
-                 return_value=dummy_init_data)
-    mocker.patch('app.insert_devices', return_value=True)
-    mocker.patch('app.insert_hosts', return_value=True)
-    mocker.patch('app.insert_connection', return_value=True)
+    mocker.patch(
+        'cognos.backend.cxlplugin_datasource.CXLPlugin.get_setup_info',
+        return_value=dummy_init_data
+    )
+    mocker.patch(
+        'cognos.backend.helper.insert_devices',
+        return_value=True
+    )
+    mocker.patch(
+        'cognos.backend.helper.insert_hosts',
+        return_value=True
+    )
+    mocker.patch(
+        'cognos.backend.helper.insert_connection',
+        return_value=True
+    )
     get_cxlplugin_datasource.setup_tables()

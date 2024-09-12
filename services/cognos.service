@@ -1,0 +1,16 @@
+[Unit]
+Description=Cognos Management Console Service
+After=mysql.service influxdb.service network.target
+Wants=cognos-cal.service cognos-exporter.service cognos-subscriber.service
+
+[Service]
+SyslogIdentifier=Cognos Management Console Service
+WorkingDirectory=/usr/local/svk/svkapp
+KillMode=control-group
+Restart=on-failure
+ExecStart=/bin/bash -c "/usr/local/svk/svkapp/sapp/scripts/cognos-start.sh"
+ExecReload = /bin/kill -s HUP $MAINPID
+ExecStop = /bin/kill -s TERM $MAINPID
+
+[Install]
+WantedBy=multi-user.target

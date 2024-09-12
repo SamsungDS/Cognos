@@ -1,0 +1,17 @@
+[Unit]
+Description=Cognos Subscriber
+After=influxdb.service network.target
+PartOf=cognos.service
+
+[Service]
+SyslogIdentifier=Cognos Subscriber
+WorkingDirectory=/usr/local/svk/svkapp
+KillMode=control-group
+Restart=on-failure
+ExecStart=/bin/bash -c "/usr/local/svk/svkapp/sapp/scripts/subscriber-start.sh"
+ExecReload = /bin/kill -s HUP $MAINPID
+ExecStop = /bin/kill -s SIGKILL $MAINPID
+SuccessExitStatus=SIGKILL
+
+[Install]
+WantedBy=multi-user.target
