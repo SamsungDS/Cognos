@@ -1,5 +1,5 @@
 sonar-scanner:
-  extends: release build rocky9
+  extends: release build
   stage: test
   script:
     # Download sonar-scanner from URL defined in CICD variable SONAR_SCANNER_URL
@@ -11,9 +11,12 @@ sonar-scanner:
     # Execute sonar-scanner and ingest coverage report
     - /$SONAR_SCANNER_DIR/bin/sonar-scanner -Dsonar.coverageReportPaths=$SONAR_COVERAGE_REPORT -Dsonar.go.coverage.reportPaths=$SONAR_GO_COVERAGE_REPORT
   after_script:
+  parallel:
   needs:
-    - build docker
-    - unit test rocky9
+    - job: unit test
+      parallel:
+        matrix:
+          - DOCKERFILE_NAME: rocky9
   artifacts:
   allow_failure: false
   variables:

@@ -2,28 +2,27 @@ publish release artifacts - Gitlab:
   stage: deploy
   image: alpine:3.19.1
   before_script:
-    - apk add git curl
+    - apk add git curl bash
   script:
-    # Get the latest tagged version
-    - export VERSION=$(git describe --abbrev=4 --always --tags)
+    # Get the latest tagged version from get_version.sh script (without preceding 'v')
+    - export VERSION=$(./scripts/get_version.sh -v)
     - echo "Tagged Version - $VERSION"
     # publish artifacts to Gitlab 
     - |
-      find ./artifacts/ -type f \( -name "*.tgz" -o -name "*.rpm" -o -name "*.deb" \) -exec sh -c \
+      find $ARTIFACTS_DIR/ -type f \( -name "*.tgz" -o -name "*.rpm" -o -name "*.deb" \) -exec sh -c \
       ' \
         FILEPATH="$1"
         FILENAME="$(basename "$FILEPATH")"
-        GITLAB_PACKAGE_URL="$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$CI_PROJECT_NAME/${VERSION:1}/$FILENAME"
+        GITLAB_PACKAGE_URL="$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$CI_PROJECT_NAME/$VERSION/$FILENAME"
         if ! curl --fail --verbose --header "PRIVATE-TOKEN: $CI_TOKEN" \
-            --insecure --upload-file {} \
+            --insecure --upload-file $FILEPATH \
             "$GITLAB_PACKAGE_URL"; then
           echo "ERROR: Failed to upload $FILENAME to $GITLAB_PACKAGE_URL"
           exit 1
         fi
       ' shell {} \;
   needs:
-    - release build rocky9
-    - release build ubuntu22
+    - release build
   rules:
     - !reference [.default_rules, push_only]
 
@@ -32,7 +31,7 @@ publish release artifacts - Nexus:
   script:
     # publish RPMs to Nexus 
     - |
-      find ./artifacts/$OS/ -type f -name "*.rpm" -exec sh -c \
+      find $ARTIFACTS_DIR/$OS/ -type f -name "*.rpm" -exec sh -c \
         ' \
           FILEPATH="$1"
           FILENAME="$(basename "$FILEPATH")"
@@ -47,7 +46,7 @@ publish release artifacts - Nexus:
         ' shell {} \;
     # publish Debian Packages to Nexus
     - |
-      find ./artifacts/$OS/ -type f -name "*.deb" -exec sh -c \
+      find $ARTIFACTS_DIR/$OS/ -type f -name "*.deb" -exec sh -c \
         ' \
           FILEPATH="$1"
           FILENAME="$(basename "$FILEPATH")"

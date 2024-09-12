@@ -9,9 +9,10 @@ REQUIREMENTS=$(realpath "$SCRIPT_DIR/../python/requirements.txt")
 python3 -m pip install --upgrade pip
 
 # Install python modules from requirements.txt
-PIP_ARGS=()
-PIP_ARGS+=("-r")
-PIP_ARGS+=("$REQUIREMENTS")
+PIP_ARGS=(
+    '-r'
+    "$REQUIREMENTS"
+)
 
 # Optimizations for Docker build
 if [[ $DOCKER ]]
