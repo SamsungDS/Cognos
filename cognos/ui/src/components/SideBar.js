@@ -1,31 +1,31 @@
 import React from 'react';
-import { FaRegChartBar} from 'react-icons/fa'
-import { PiGaugeBold } from "react-icons/pi";
-import { FaGears } from "react-icons/fa6";
-import { HiOutlineDotsCircleHorizontal } from "react-icons/hi";
 import { NavLink } from 'react-router-dom'
+import { ReactComponent as ConfigureIcon  } from '../assets/icons/ConfigureIcon.svg';
+import { ReactComponent as DashboardIcon  } from '../assets/icons/DashboardIcon.svg';
+import { ReactComponent as MetricsIcon  } from '../assets/icons/ChartIcon.svg';
+import { ReactComponent as AboutIcon  } from '../assets/icons/AboutIcon.svg';
 
 const SideBar = ({children}) => {
 
   const  menuItem = [
   {
     path:"/",
-    icon: <PiGaugeBold/>,
+    icon: <DashboardIcon/>,
     datatestid: 'menu-item-0',
   },
   {
     path:"/configure",
-    icon: <FaGears/>,
+    icon: <ConfigureIcon/>,
     datatestid: 'menu-item-1',
   },
   {
     path:"/metrics",
-    icon: <FaRegChartBar/>,
+    icon: <MetricsIcon/>,
     datatestid: 'menu-item-2',
   },
   {
     path:"/about",
-    icon: <HiOutlineDotsCircleHorizontal/>,
+    icon: <AboutIcon/>,
     datatestid: 'menu-item-3',
   }
 ]
