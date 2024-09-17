@@ -5,46 +5,40 @@ GO_VERSION=1.21
 
 # Build Dependencies
 install_build_deps() {
-    BUILD_DEPS=()
-    package_manager 'update'
-    BUILD_DEPS+=('cmake')
-    BUILD_DEPS+=('dpkg-dev')
-    BUILD_DEPS+=('g++')
-    BUILD_DEPS+=('git')
-    BUILD_DEPS+=("golang-$GO_VERSION-go")
-    BUILD_DEPS+=('libboost-dev')
-    BUILD_DEPS+=('libfmt8')
-    BUILD_DEPS+=('libfmt-dev')
-    BUILD_DEPS+=('libspdlog-dev')
-    BUILD_DEPS+=('libssl-dev')
-    BUILD_DEPS+=('libzmq3-dev')
-    BUILD_DEPS+=('net-tools')
-    BUILD_DEPS+=('pkgconf')
-    BUILD_DEPS+=('python3.11')
-    BUILD_DEPS+=('python3-pip')
-    BUILD_DEPS+=('tar')
-    BUILD_DEPS+=('unzip')
-    BUILD_DEPS+=('wget')
-    package_manager 'install'
+    apt-get update
+    BUILD_DEPS=(
+        'build-essential'
+        'cmake'
+        'debhelper'
+        'dpkg-dev'
+        'g++'
+        'git'
+        "golang-$GO_VERSION-go"
+        'libboost-dev'
+        'libfmt8'
+        'libfmt-dev'
+        'libspdlog-dev'
+        'libssl-dev'
+        'libzmq3-dev'
+        'net-tools'
+        'pkgconf'
+        'python3.11'
+        'python3-pip'
+        'tar'
+        'unzip'
+        'wget'
+    )
+    package_manager
 }
 
 # Install from package mananger
 package_manager() {
-    OPERATION=$1
-    # Detect package manager tool
-    INSTALLER_BIN=""
-
-    if [[ -f '/usr/bin/apt-get' ]]
-    then
-        echo "using apt-get"
-        INSTALLER_BIN='apt-get'
-    else
-        # Can't find an appropriate installer
-        echo "can't find a valid installer"
-        exit 1
+    # Optimizations for Docker build - see scripts/docker/*.DOCKERFILE for $DOCKER var invocation
+    if $DOCKER; then
+        BUILD_DEPS+=('--no-install-recommends')
     fi
 
-    INSTALL_STRING="$INSTALLER_BIN $OPERATION -y ${BUILD_DEPS[*]}"
+    INSTALL_STRING="apt-get install -y ${BUILD_DEPS[*]}"
     echo "executing command: $INSTALL_STRING"
     eval "$INSTALL_STRING"
 }
@@ -61,14 +55,16 @@ configure_nexus() {
     signed-by=$NEXUS_PUBKEY_PATH] \
     $NEXUS_APT_URL $UBUNTU_CODENAME main" > /etc/apt/sources.list.d/ssg-nexus.list
     BUILD_DEPS=()
-    package_manager 'update'
+    apt-get update
 
-    # Install svk-core-dev, svk-extras packages from Nexus
-    BUILD_DEPS=()
-    BUILD_DEPS+=('svk-core-dev')
-    BUILD_DEPS+=('svk-grpc')
-    BUILD_DEPS+=('svk-go-modules')
-    package_manager 'install'
+    # Install svk-core, svk-extras packages from Nexus
+    BUILD_DEPS=(
+        'svk-core'
+        'svk-core-dev'
+        'svk-grpc'
+        'svk-go-modules'
+    )
+    package_manager
 }
 
 # Set PATH to include go bin dir
@@ -83,3 +79,15 @@ set_go_path() {
 install_build_deps
 configure_nexus
 set_go_path
+
+# Post-install Docker optimizations
+if $DOCKER; then
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+    rm -rf /tmp/*
+    rm -rf /var/tmp/*
+    rm -rf /usr/share/doc
+    rm -rf /usr/share/man
+    rm -rf /usr/share/locale
+    rm -rf /usr/share/zoneinfo
+fi

@@ -1,0 +1,16 @@
+Source: svk-mgmt-fw
+Section: utils
+Priority: optional
+Maintainer: Suresh Grandhi (suresh.g@samsung.com)
+Build-Depends: debhelper (>=12)
+Standards-Version: 4.1.4
+
+Package: svk-mgmt-fw
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, libre2-9, svk-core
+Description: SVK Management framework related APIs, services
+
+Package: svk-mgmt-fw-dev
+Architecture: amd64
+Depends: ${misc:Depends}, svk-mgmt-fw (= ${binary:Version}), svk-core, svk-core-dev, svk-go-modules, svk-grpc, libre2-9
+Description: SVK Management framework related API header files.

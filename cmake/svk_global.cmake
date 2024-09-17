@@ -1,30 +1,38 @@
 # Set the minimum required version of CMake for this project.
 cmake_minimum_required(VERSION 3.7)
 
-find_package(Git)
+set(GET_VERSION_SCRIPT ${CMAKE_SOURCE_DIR}/scripts/get_version.sh)
 
-if(GIT_EXECUTABLE)
-  # Generate a git-describe version string from Git repository tags
-  execute_process(
-    COMMAND ${GIT_EXECUTABLE} describe --abbrev=4 --always --tags
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    OUTPUT_VARIABLE GIT_DESCRIBE_VERSION
-    RESULT_VARIABLE GIT_DESCRIBE_ERROR_CODE
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    )
-  if(NOT GIT_DESCRIBE_ERROR_CODE)
-    message(STATUS "GIT VERSION ${GIT_DESCRIBE_VERSION}")
-    # git tag can be in the form of v1.0.2 or v1.9.2-1-abcd. Get only the <major>.<minor>.<rev>.
-    string(REGEX MATCH "([0-9]+)\\.([0-9]+)\\.([0-9]+)" GIT_DESCRIBE_VERSION_STRIP ${GIT_DESCRIBE_VERSION})
+# Get full version from get_version.sh
+execute_process(
+  COMMAND ${GET_VERSION_SCRIPT}
+  OUTPUT_VARIABLE GIT_DESCRIBE_VERSION
+  RESULT_VARIABLE GIT_DESCRIBE_ERROR_CODE
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
 
-    set(GIT_REPO_VERSION_FULL ${GIT_DESCRIBE_VERSION})
-    set(GIT_REPO_VERSION ${GIT_DESCRIBE_VERSION_STRIP})
-  else()
-    message(FATAL_ERROR "git failed in getting the tag for the repo")
-  endif()
+if(NOT GIT_DESCRIBE_ERROR_CODE EQUAL 0)
+  message(FATAL_ERROR "Failed to retreieve version string from ${GET_VERSION_SCRIPT}")
 else()
-  message(FATAL_ERROR "git command not found")
+  message(STATUS "GIT VERSION ${GIT_DESCRIBE_VERSION}")
 endif()
+
+# Get short version from get_version.sh
+execute_process(
+  COMMAND ${GET_VERSION_SCRIPT} --short
+  OUTPUT_VARIABLE GIT_DESCRIBE_VERSION_STRIP
+  RESULT_VARIABLE GIT_DESCRIBE_VERSION_STRIP_ERROR_CODE
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+if(NOT GIT_DESCRIBE_ERROR_CODE EQUAL 0)
+  message(FATAL_ERROR "Failed to retreieve short version string from ${GET_VERSION_SCRIPT}")
+else()
+  message(STATUS "SHORT GIT VERSION ${GIT_DESCRIBE_VERSION_STRIP}")
+endif()
+
+set(GIT_REPO_VERSION_FULL ${GIT_DESCRIBE_VERSION})
+set(GIT_REPO_VERSION ${GIT_DESCRIBE_VERSION_STRIP})
 
 # Set the C++ standard to use to build this target.
 set(CMAKE_CXX_STANDARD 17)
@@ -54,4 +62,3 @@ if (WITH_VERBOSE)
   message(STATUS "Git repo full version ${GIT_REPO_VERSION_FULL}")
   message(STATUS "Git repo version for CMake ${GIT_REPO_VERSION}")
 endif()
-
