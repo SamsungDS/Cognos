@@ -17,17 +17,24 @@ release build:
     - export PATH=$PATH:/usr/local/go/bin
   script:
     # Build with release flag and generate artifact
-    - ./scripts/build.sh --release --install-prefix /usr/local/svk/cxl --with-fmapi $FMAPI_PATH/build/libmbox_a1_shared.so $FMAPI_PATH
+    - ./scripts/build.sh --release $MOCK_MODE --install-prefix /usr/local/svk/cxl --with-fmapi $FMAPI_PATH/build/libmbox_a1_shared.so $FMAPI_PATH -b
+  after_script:
+    # move artifacts to dir DOCKERFILE OS name - Do not fail if filetype does not exist
+    - mkdir -p "artifacts/$DOCKERFILE_NAME"
+    - cp build/*.tgz "artifacts/$DOCKERFILE_NAME/" || true
+    - cp build/*.rpm "artifacts/$DOCKERFILE_NAME/" || true
+    - cp build/*.deb "artifacts/$DOCKERFILE_NAME/" || true
   artifacts:
     name: $CI_JOB_NAME
     expire_in: 300 seconds
     paths:
-     - build/*.tgz
+     - artifacts/
   variables:
     PACKAGE_MANAGER: microdnf
     CORE_PACKAGE: svk-core-devel
     MANAGEMENT_PACKAGE: svk-mgmt-fw-devel
     DOCKERFILE_NAME: rocky9
+    MOCK_MODE:
     IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
     FMAPI_PATH: $CI_PROJECT_DIR/$FMAPI_PROJECT/$FMAPI_DIR
   needs:
@@ -37,5 +44,7 @@ release build:
 
 simulation build:
   extends: release build
+  variables:
+    MOCK_MODE: "--mock"
   needs:
     - build fmapi simulation
