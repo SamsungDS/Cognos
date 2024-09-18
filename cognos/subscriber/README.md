@@ -22,35 +22,31 @@ This script reads static file having published events related to cxl memory box,
 Subscriber script constantly accepts events from the host:port where the publisher process publishes the events.
 
 
-Prerequisites
-pip install --upgrade pip
-pip install pyzmq
-pip install 'influxdb-client[ciso]'
+#Prerequisites:
+
+    pip install --upgrade pip
+
+    pip install pyzmq
+
+    pip install 'influxdb-client[ciso]'
 
 
-####################
+#How to execute the subscriber program?
+
+    #hostname and topic are positional arguments
+    /usr/bin/python3 sub_client.py hostname:port topic -i 5
+
+    ex: /usr/bin/python3 sub_client.py msl-ssg-cx03:5555 metrics --interval 10
 
 
-How to execute the subscriber program?
+#To execute on screen:
 
-#hostname and topic are positional arguments
-/usr/bin/python3 sub_client.py hostname:port topic -i 5
-
-ex: /usr/bin/python3 sub_client.py msl-ssg-cx03:5555 metrics --interval 10
-
-
-####################
-To execute on screen:
-
-
-create a screen session
+#create a screen session
 screen -S session_name
 
-
-trigger the process
+#trigger the process
 /usr/bin/python3 sub_client.py hostname:port topic 
 
-
-detach from the session
+#detach from the session
 screen -d
 
