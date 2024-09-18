@@ -1,0 +1,5 @@
+svk-app (DEB_VERSION) DEB_OSVER; urgency=medium
+
+  * DEB_CHANGELOG
+
+ -- Nadim Sarras <nadim.s@samsung.com>  DEB_TIMESTAMP

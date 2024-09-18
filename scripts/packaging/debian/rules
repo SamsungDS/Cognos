@@ -1,0 +1,40 @@
+#!/usr/bin/make -f
+
+SVK_VERSION := $(shell $(CURDIR)/../scripts/get_version.sh)
+INSTALL_PATH = usr/local/svk/svk-app
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	# Set version of Cognos UI (React App)
+	npm --prefix $(CURDIR)/../cognos/ui version $(SVK_VERSION) --allow-same-version
+	# Clean install Cognos UI dependencies
+	npm --prefix $(CURDIR)/../cognos/ui ci
+
+override_dh_auto_build:
+	# Create Cognos UI directory
+	mkdir -p -v $(CURDIR)/$(INSTALL_PATH)/
+	# Build release Cognos UI (React App)
+	BUILD_PATH=$(CURDIR)/$(INSTALL_PATH)/cognos-ui npm --prefix $(CURDIR)/../cognos/ui run build
+
+override_dh_auto_install:
+	# Custom auto-install steps TBD (might include things like symlinks, conf file creation etc)
+
+override_dh_usrlocal:
+	# Do nothing, because we are installing to /usr/local even though this is non-standard practice
+
+override_dh_install:
+	# Custom dh_install steps TBD
+
+	dh_install
+
+override_dh_strip:
+	# Do not generate debug symbol packages
+	dh_strip --no-ddebs
+
+override_dh_shlibdeps:
+	# Set link path for shlibdeps TBD (if we are linking libs)
+
+override_dh_installsystemd:
+	# systemd steps TBD (for service files)

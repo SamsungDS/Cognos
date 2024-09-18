@@ -1,62 +1,71 @@
 #! /usr/bin/env bash
-
 set -e 
 
 # Build Dependencies
 install_build_deps() {
-    BUILD_DEPS=()
-    package_manager 'update'
-    BUILD_DEPS+=('curl')
-    package_manager 'install'
+    apt-get update
+
+    BUILD_DEPS=(
+        build-essential
+        curl
+        debhelper
+        dpkg-dev
+        findutils
+        git
+        gnupg
+        pip
+        python3.11
+        unzip
+        wget
+    )
+    package_manager
+    
+    # Install NodeJS 21
     curl -fsSL https://deb.nodesource.com/setup_21.x | bash -
-    BUILD_DEPS+=('nodejs')
-    BUILD_DEPS+=('findutils')
-    BUILD_DEPS+=('git')
-    BUILD_DEPS+=('python3.11')
-    BUILD_DEPS+=('pip')
-    BUILD_DEPS+=('unzip')
-    BUILD_DEPS+=('gnupg')
-    BUILD_DEPS+=('wget')
-    package_manager 'install'
+    BUILD_DEPS=(nodejs)
+    package_manager
+
+    # Install chrome
+    wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add -
+    sh -c 'echo "deb http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list'
+    apt-get update
+    BUILD_DEPS=(google-chrome-stable)
+    package_manager
 }
 
 # Install from package mananger
 package_manager() {
-    OPERATION=$1
-    # Detect package manager tool
-    INSTALLER_BIN=""
-
-    if [[ -f '/usr/bin/apt-get' ]]
-    then
-        echo "using apt-get"
-        INSTALLER_BIN='apt-get'
-    else
-        # Can't find an appropriate installer
-        echo "can't find a valid installer"
-        exit 1
+    # Optimizations for Docker build - see scripts/docker/*.DOCKERFILE for $DOCKER var invocation
+    if $DOCKER; then
+        BUILD_DEPS+=(--no-install-recommends)
     fi
 
-    INSTALL_STRING="$INSTALLER_BIN $OPERATION -y ${BUILD_DEPS[*]}"
+    INSTALL_STRING="apt-get install -y ${BUILD_DEPS[*]}"
     echo "executing command: $INSTALL_STRING"
     eval "$INSTALL_STRING"
 }
 
 # Configure google chrome for selenium tests
 configure_chrome() {
-    
-    wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add -
-    sh -c 'echo "deb http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list'
     wget -q -O /tmp/chromedriver.zip https://chromedriver.storage.googleapis.com/114.0.5735.90/chromedriver_linux64.zip
     unzip /tmp/chromedriver.zip
     rm -rf /tmp/chromedriver.zip
     chmod +x chromedriver
-    BUILD_DEPS=()
-    package_manager 'update'
-
-    # Install chrome stable
-    BUILD_DEPS=(google-chrome-stable)
-    package_manager 'install'
 }
 
 install_build_deps
-configure_chrome
+# Commenting this out because it is not being used and it is not idempotent
+# To be addressed in a future MR
+# configure_chrome
+
+# Post-install Docker optimizations
+if $DOCKER; then
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+    rm -rf /tmp/*
+    rm -rf /var/tmp/*
+    rm -rf /usr/share/doc
+    rm -rf /usr/share/man
+    rm -rf /usr/share/locale
+    rm -rf /usr/share/zoneinfo
+fi

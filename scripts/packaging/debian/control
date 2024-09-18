@@ -1,0 +1,11 @@
+Source: svk-app
+Section: utils
+Priority: optional
+Maintainer: Nadim Sarras (nadim.s@samsung.com)
+Build-Depends: debhelper (>=12)
+Standards-Version: 4.1.4
+
+Package: svk-app
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: SVK Application, Cognos

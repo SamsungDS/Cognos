@@ -12,3 +12,6 @@ __pycache__/
 
 # IDE
 .vscode
+
+# Release build staging files
+/build

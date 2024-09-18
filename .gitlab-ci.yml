@@ -1,1 +1,42 @@
-include: .config/ci/gitlab/defaults.yml
+include:
+  - project: dfs/svk/tools
+    ref: main
+    file: .config/ci/gitlab/defaults.yml
+  - project: dfs/svk/tools
+    ref: main
+    file: .config/ci/gitlab/docker.yml
+  - project: dfs/svk/tools
+    ref: main
+    file: .config/ci/gitlab/shellcheck.yml
+  - project: dfs/svk/tools
+    ref: main
+    file: .config/ci/gitlab/tag_version.yml
+  - project: dfs/svk/tools
+    ref: main
+    file: .config/ci/gitlab/coverage.yml
+  - project: dfs/svk/tools
+    ref: main
+    file: .config/ci/gitlab/pycodestyle.yml
+  - .config/ci/gitlab/npm-build.yml
+  - .config/ci/gitlab/integration.yml
+  - .config/ci/gitlab/unit-backend.yml
+  - .config/ci/gitlab/unit-ui.yml
+  - .config/ci/gitlab/sonar.yml
+  - .config/ci/gitlab/release-build.yml
+  - .config/ci/gitlab/publish.yml
+
+variables:
+  ARTIFACTS_DIR: build/artifacts
+  ui_dir: cognos/ui
+  ui_reports_dir: $ui_dir/coverage
+  backend_reports_dir: scripts/test-reports/ut
+
+build docker:
+  parallel:
+    matrix:
+      - DOCKERFILE_NAME: rocky9
+      - DOCKERFILE_NAME: ubuntu22
+
+# Do not use artifacts from previous stage when scanning pycodestyle
+pycodestyle:
+  dependencies: []

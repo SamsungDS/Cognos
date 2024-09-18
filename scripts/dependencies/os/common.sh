@@ -6,14 +6,14 @@ SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 REQUIREMENTS=$(realpath "$SCRIPT_DIR/../python/requirements.txt")
 
 # Install python modules from requirements.txt
-PIP_ARGS=()
-PIP_ARGS+=("-r")
-PIP_ARGS+=("$REQUIREMENTS")
+PIP_ARGS=(
+    -r
+    "$REQUIREMENTS"
+)
 
 # Optimizations for Docker build
-if [[ -f /.dockerenv ]]
-then
-    PIP_ARGS+=("--no-cache-dir")
+if $DOCKER; then
+    PIP_ARGS+=(--no-cache-dir)
 fi
 
 # Install python modules from requirements.txt via pip
@@ -22,7 +22,6 @@ echo "executing command: $INSTALL_STRING"
 eval "$INSTALL_STRING"
 
 # Set git safe.directory globally if docker
-if [[ -f /.dockerenv ]]
-then
+if $DOCKER; then
     git config --global --add safe.directory '*'
 fi
