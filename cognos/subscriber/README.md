@@ -1,6 +1,4 @@
-###################
-# Mock Subscriber #
-################### 
+# Mock Subscriber
 
 This script reads static file having published events related to cxl memory box, modifies timestamp to current UTC and loads it to influx db for every 5 seconds.
 
@@ -15,9 +13,7 @@ This script reads static file having published events related to cxl memory box,
   /usr/bin/python3 subscriber/sub_client.py published_events.output --mock -i 10 
 
 
-######################
-# zero-mq subscriber #
-######################
+# zero-mq subscriber 
 
 Subscriber script constantly accepts events from the host:port where the publisher process publishes the events.
 
@@ -42,11 +38,14 @@ Subscriber script constantly accepts events from the host:port where the publish
 #To execute on screen:
 
 #create a screen session
+
 screen -S session_name
 
 #trigger the process
+
 /usr/bin/python3 sub_client.py hostname:port topic 
 
 #detach from the session
+
 screen -d
 
