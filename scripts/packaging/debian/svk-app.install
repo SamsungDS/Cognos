@@ -1,1 +1,7 @@
-usr/local/svk/svk-app/cognos-ui/* /usr/local/svk/svk-app/cognos-ui/
+usr/local/svk/svk-app/cognos/backend/* /usr/local/svk/svk-app/cognos/backend/
+usr/local/svk/svk-app/cognos/backend/config/* /usr/local/svk/svk-app/cognos/backend/config/
+usr/local/svk/svk-app/cognos/exporter/* /usr/local/svk/svk-app/cognos/exporter/
+usr/local/svk/svk-app/cognos/exporter/config/* /usr/local/svk/svk-app/cognos/exporter/config/
+usr/local/svk/svk-app/cognos/subscriber/* /usr/local/svk/svk-app/cognos/subscriber/
+usr/local/svk/svk-app/cognos/ui/* /usr/local/svk/svk-app/ui/
+usr/local/svk/svk-app/* /usr/local/svk/svk-app/

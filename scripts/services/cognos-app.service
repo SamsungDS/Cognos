@@ -1,0 +1,21 @@
+[Unit]
+Description=Cognos Management Abstraction Layer
+After=mysql.service network.target
+
+[Service]
+SyslogIdentifier=Cognos Abstraction Layer
+WorkingDirectory=/usr/local/svk/svk-app/cognos
+EnvironmentFile=/usr/local/svk/svk-app/cognos.config
+KillMode=control-group
+Restart=on-failure
+ExecStart=/bin/bash -c '\
+  if [ "${MODE}" = "mock" ]; then \
+    /usr/local/svk/svk-app/env/bin/python3 backend/app.py --host ${CAL_IP} --port ${CAL_PORT} --mock;\
+  else /usr/local/svk/svk-app/env/bin/python3 backend/app.py --host ${CAL_IP} --port ${CAL_PORT};\
+  fi'
+ExecReload = /bin/kill -s HUP $MAINPID
+ExecStop = /bin/kill -s SIGKILL $MAINPID
+SuccessExitStatus=SIGKILL
+
+[Install]
+WantedBy=multi-user.target

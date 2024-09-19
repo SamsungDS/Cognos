@@ -21,12 +21,80 @@ Enable the SSG Nexus repo for your distro, then install the `svk-app` packages v
 
 ### Ubuntu Installation
 
+Dependencies;
+ - python3.10
+ - python3-pip
+ - python3.10-venv
+ - nodejs
+ - npm
+
+Installation Instructions for svk-app debian package
 ```bash
 wget --quiet --output-document /usr/share/keyrings/ssg-nexus.pgp  http://ssg-nexus.msl.lab:8081/repository/svk_common/public.pgp
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ssg-nexus.pgp] http://ssg-nexus.msl.lab:8081/repository/svk_apt_ubuntu22 $(. /etc/os-release && echo $UBUNTU_CODENAME) main" > /etc/apt/sources.list.d/ssg-nexus.list
 apt update
 apt-get install svk-app -y
 
+```
+
+Post Installtion Steps;
+1. Install MySQL
+
+```sudo apt install mysql-server```
+```sudo mysql_secure_installation```
+
+login with root user to Mysql console
+```sudo mysql -u root```
+
+Create Dev User
+```
+CREATE USER 'dev'@'localhost' IDENTIFIED BY 'my-password';
+GRANT ALL ON *.* To 'dev'@'localhost';
+```
+Run DB setup script
+```
+/usr/local/svk/svk-app/env/bin/python3 /usr/local/svk/svk-app/cognos/backend/db_setup.py
+```
+
+2. Install InfluxDB
+```sudo apt update```
+Import repository key
+```
+curl -fsSL https://repos.influxdata.com/influxdata-archive_compat.key|sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/influxdata.gpg
+```
+Add InfluxDB APT repository
+```
+echo 'deb [signed-by=/etc/apt/trusted.gpg.d/influxdata.gpg] https://repos.influxdata.com/debian stable main' | sudo tee /etc/apt/sources.list.d/influxdata.list
+```
+Update apt index and install InfluxDB
+```
+sudo apt install influxdb2
+```
+Use the InfluxDB UI to configure and setup the user/org/token/etc..
+navigate to http://<ip>:8086/ and follow the steps
+
+
+3. Configure the following configuration files appropiately
+```
+/usr/local/svk/svk-app/cognos/backend/config/config.json
+/usr/local/svk/svk-app/cognos/backend/config/influxdb_config.json
+/usr/local/svk/svk-app/cognos/exporter/config/config.json
+/usr/local/svk/svk-app/cognos/ui/src/config/config.json
+/usr/local/svk/svk-app/cognos/cognos.config
+```
+4. Run the services
+```
+sudo service cognos-subscriber start
+sudo service cognos-exporter start
+sudo service cognos-app start
+sudo service cognos-ui start
+```
+
+5. You can perform smoke testing by the following 
+navigate to /usr/local/svk/svk-app/cognos/health/test folder
+```
+chmod +x ./smoke_test.sh
+./smoke_test.sh 
 ```
 
 ### Rockylinux Installation
@@ -101,10 +169,6 @@ Installing SVK APP dependencies can simply be done by running the following comm
    cd cognos/ui
    npm start
    ```
-
-### Ubuntu Installation Instructions
-
-Instructions are coming
 
 ## Usage
 

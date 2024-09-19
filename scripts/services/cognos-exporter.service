@@ -1,0 +1,21 @@
+[Unit]
+Description=Cognos Exporter
+After=influxdb.service network.target
+
+[Service]
+SyslogIdentifier=Cognos Exporter
+WorkingDirectory=/usr/local/svk/svk-app/cognos
+EnvironmentFile=/usr/local/svk/svk-app/cognos.config
+KillMode=control-group
+Restart=on-failure
+ExecStart=/bin/bash -c '\
+  if [ "${MODE}" = "mock" ]; then \
+    /usr/local/svk/svk-app/env/bin/python3 exporter/exporter.py --mock;\
+  else /usr/local/svk/svk-app/env/bin/python3 exporter/exporter.py;\
+  fi'
+ExecReload = /bin/kill -s HUP $MAINPID
+ExecStop = /bin/kill -s SIGKILL $MAINPID
+SuccessExitStatus=SIGKILL
+
+[Install]
+WantedBy=multi-user.target

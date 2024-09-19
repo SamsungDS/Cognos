@@ -15,11 +15,44 @@ override_dh_auto_configure:
 override_dh_auto_build:
 	# Create Cognos UI directory
 	mkdir -p -v $(CURDIR)/$(INSTALL_PATH)/
+
+	# Turning off for now until we refactor configs of Cognos UI
 	# Build release Cognos UI (React App)
-	BUILD_PATH=$(CURDIR)/$(INSTALL_PATH)/cognos-ui npm --prefix $(CURDIR)/../cognos/ui run build
+	# BUILD_PATH=$(CURDIR)/$(INSTALL_PATH)/cognos-ui npm --prefix $(CURDIR)/../cognos/ui run build
 
 override_dh_auto_install:
 	# Custom auto-install steps TBD (might include things like symlinks, conf file creation etc)
+
+	# copying CAL files
+	mkdir -p -v $(CURDIR)/$(INSTALL_PATH)/cognos/backend/config/
+	cp $(CURDIR)/../cognos/backend/*.py $(CURDIR)/$(INSTALL_PATH)/cognos/backend/; 2>/dev/null
+	cp $(CURDIR)/../cognos/backend/VERSION $(CURDIR)/$(INSTALL_PATH)/cognos/backend/; 2>/dev/null
+	cp $(CURDIR)/../cognos/backend/config/*.json $(CURDIR)/$(INSTALL_PATH)/cognos/backend/config/; 2>/dev/null
+
+	# copying exporter files
+	mkdir -p -v $(CURDIR)/$(INSTALL_PATH)/cognos/exporter/config/
+	cp $(CURDIR)/../cognos/exporter/exporter.py $(CURDIR)/$(INSTALL_PATH)/cognos/exporter/; 2>/dev/null
+	cp $(CURDIR)/../cognos/exporter/config/config.json $(CURDIR)/$(INSTALL_PATH)/cognos/exporter/config/config.json; 2>/dev/null
+
+	# copying subscriber files
+	mkdir -p -v $(CURDIR)/$(INSTALL_PATH)/cognos/subscriber/
+	cp $(CURDIR)/../cognos/subscriber/*.py $(CURDIR)/$(INSTALL_PATH)/cognos/subscriber/; 2>/dev/null
+	cp $(CURDIR)/../cognos/subscriber/*.output $(CURDIR)/$(INSTALL_PATH)/cognos/subscriber/; 2>/dev/null
+
+	# copying UI files
+	mkdir -p -v $(CURDIR)/$(INSTALL_PATH)/cognos/ui/
+	# cp -r $(CURDIR)/../cognos/ui/ $(CURDIR)/$(INSTALL_PATH)/cognos/ui
+	# rsync -av --exclude 'node_modules' $(CURDIR)/../cognos/ui/ $(CURDIR)/$(INSTALL_PATH)/cognos/ui
+	cp -r $(CURDIR)/../cognos/ui/public $(CURDIR)/$(INSTALL_PATH)/cognos/ui/public
+	cp -r $(CURDIR)/../cognos/ui/src $(CURDIR)/$(INSTALL_PATH)/cognos/ui/src
+	cp $(CURDIR)/../cognos/ui/package.json $(CURDIR)/$(INSTALL_PATH)/cognos/ui/package.json
+
+	# copy cognos config file
+	cp $(CURDIR)/../scripts/cognos.config $(CURDIR)/$(INSTALL_PATH)/cognos.config
+
+	# copy python requirements file
+	cp $(CURDIR)/../scripts/dependencies/python/requirements.txt $(CURDIR)/$(INSTALL_PATH)/requirements.txt
+
 
 override_dh_usrlocal:
 	# Do nothing, because we are installing to /usr/local even though this is non-standard practice
@@ -38,3 +71,7 @@ override_dh_shlibdeps:
 
 override_dh_installsystemd:
 	# systemd steps TBD (for service files)
+	dh_installsystemd --name=cognos-exporter
+	dh_installsystemd --name=cognos-subscriber
+	dh_installsystemd --name=cognos-app
+	dh_installsystemd --name=cognos-ui
