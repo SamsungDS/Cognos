@@ -1,0 +1,17 @@
+Source: svk-cxl
+Section: utils
+Priority: optional
+Maintainer: Sukesh Nagaraja (sukesh.n@samsung.com)
+Build-Depends: debhelper (>=12)
+Standards-Version: 4.1.4
+
+Package: svk-cxl
+Architecture: amd64
+Depends: svk-core, svk-mgmt-fw, svk-mgmt-fw-dev, libjansson4, libjansson-dev 
+Description: SVK Management framework related APIs, services
+
+Package: svk-cxl-dev
+Architecture: amd64
+Depends: svk-core, svk-mgmt-fw, svk-mgmt-fw-dev, libjansson4, libjansson-dev
+Description: SVK CXL Plugin, services
+

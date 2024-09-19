@@ -219,7 +219,12 @@ cd cxl && scripts/build.sh
 
 
 #### Build RPMS
-cd cxl && scripts/build.sh -r -b
+e.g.
+cd cxl && scripts/build.sh --with-fmapi mbox_a1/build/libmbox_a1_shared.so mbox_a1 -r -b
+
+#### Build Debian pacakages
+e.g.
+cd cxl && scripts/build.sh --with-fmapi mbox_a1/build/libmbox_a1_shared.so mbox_a1 -r -b
 
 ## Contributing
 Thank you for your interest in contributing to SVK CXL

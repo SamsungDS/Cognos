@@ -1,0 +1,38 @@
+#!/usr/bin/make -f
+
+SHORT_VERSION := $(shell $(CURDIR)/../scripts/get_version.sh -s)
+INSTALL_PATH = usr/local/svk/cxl
+FMAPI_INCLUDE = FMAPI_INCLUDE_VAL
+FMAPI_LIB = FMAPI_LIB_VAL
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	cmake -DWITH_RELEASE=ON -DPKG_CONFIG_PREFIX=/$(INSTALL_PATH) -DCMAKE_INSTALL_PREFIX=/$(INSTALL_PATH) -DFMAPI_INCLUDE_PATH=$(FMAPI_INCLUDE) -DFMAPI_LIBRARY_PATH=$(FMAPI_LIB) ..
+
+override_dh_auto_build:
+	make -j$(nproc)
+
+override_dh_auto_install:
+	make DESTDIR=$(CURDIR) prefix=/usr install
+
+override_dh_usrlocal:
+	# Do nothing, because we are installing to /usr/local even though this is non-standard practice
+
+override_dh_install:
+	mkdir -p $(INSTALL_PATH)/share/cxl_memory_box/lib
+	mkdir -p $(INSTALL_PATH)/conf
+	cp -f $(FMAPI_LIB) $(INSTALL_PATH)/share/cxl_memory_box/lib
+	cp -f $(FMAPI_INCLUDE)/sample_json/input.json $(INSTALL_PATH)/conf
+	dh_install
+
+override_dh_strip:
+	# Do not generate debug symbol packages
+	dh_strip --no-ddebs
+
+override_dh_shlibdeps:
+	# Set link path for shlibdeps
+	dh_shlibdeps --dpkg-shlibdeps-params=--ignore-missing-info -l$(CURDIR)/$(INSTALL_PATH)/lib64 -l$(FMAPI_LIB)
+
+override_dh_installsystemd:

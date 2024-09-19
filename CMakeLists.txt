@@ -20,6 +20,7 @@ set(PKG_CONFIG_LIBDIR "\${exec_prefix}/${CMAKE_INSTALL_LIBDIR}")
 set(pkg_config "${CMAKE_BINARY_DIR}/${SVKCXL}.pc")
 set(pkgconfig_install_dir "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
 set(SVKCXL_LIB_DEST "lib64/")
+set(SVKCXL_INCLUDE_DEST "include/")
 configure_file("cmake/${SVKCXL}.pc.in" "${pkg_config}" @ONLY)
 
 # Set C++ standard
@@ -42,7 +43,7 @@ endif()
 
 if(WITH_FMAPI)
     message(STATUS "Building with FMAPI")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I${CMAKE_INCLUDE_PATH} -L${CMAKE_LIBRARY_PATH}")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I${FMAPI_INCLUDE_PATH} -L${FMAPI_LIBRARY_PATH}")
 endif()
 
 # Add subdirectories
@@ -50,10 +51,3 @@ add_subdirectory(src)
 if(BUILD_TESTING)
     add_subdirectory(tests)
 endif()
-
-# install memory box library
-install(
-    FILES "${CMAKE_LIBRARY_PATH}" "${CMAKE_INCLUDE_PATH}/sample_json/input.json"
-    DESTINATION "${SVKCXL_LIB_DEST}"
-    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
-)

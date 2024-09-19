@@ -8,7 +8,7 @@ JANSSON_VERSION=2.13
 
 
 # Install python3 pip
-python3 -m ensurepip --upgrade
+python3 -m pip install --upgrade pip
 
 # Install python modules from requirements.txt
 PIP_ARGS=()
