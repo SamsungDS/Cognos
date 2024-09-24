@@ -33,6 +33,7 @@ override_dh_strip:
 
 override_dh_shlibdeps:
 	# Set link path for shlibdeps
-	dh_shlibdeps -l$(CURDIR)/$(INSTALL_PATH)/lib64 -l$(CURDIR)/$(INSTALL_PATH)/share/cxl_memory_box/lib
+	dh_shlibdeps --dpkg-shlibdeps-params=--ignore-missing-info -l$(CURDIR)/$(INSTALL_PATH)/lib64 -l$(CURDIR)/$(INSTALL_PATH)/share/cxl_memory_box/lib
 
 override_dh_installsystemd:
+

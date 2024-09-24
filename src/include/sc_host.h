@@ -2,6 +2,7 @@
 #define __CXL_PLUGIN_HOST_H__
 
 #include <cstddef>
+#include <cstdint>
 #include <list>
 #include <string>
 

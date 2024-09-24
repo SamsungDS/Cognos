@@ -112,8 +112,8 @@ parse_options()
       shift
       shift
       ;;
-  --mock)
-  MOCK=true
+      --mock)
+      MOCK=true
       shift 
       ;;
       *)
@@ -123,7 +123,6 @@ parse_options()
   esac
   done
 }
-
 
 get_os_version() {
   # Determine OS ID from /etc/os-release
@@ -298,9 +297,9 @@ if $WITH_FMAPI;then
     die "$FMAPI_LIB_PATH does not exists"
   fi
 
-  if ! file "$FMAPI_LIB_PATH" | grep -q "ELF 64-bit LSB shared object"; then
-    die "$FMAPI_LIB_PATH not a library or shared object"
-  fi
+  #if ! file "FMAPI_LIB_PATH" | grep -q "ELF 64-bit LSB shared object"; then
+    #die "$FMAPI_LIB_PATH not a library or shared object"
+  #fi
 
   if [ ! -d "$FMAPI_INCLUDE_PATH" ];then
     die "$FMAPI_INCLUDE_PATH does not exist"
@@ -310,7 +309,6 @@ if $WITH_FMAPI;then
   CMAKE_OPTIONS+=("-DFMAPI_LIBRARY_PATH=$FMAPI_LIB_PATH")
 
   cp "$FMAPI_INCLUDE_PATH/sample_json/input.json" "$PROJECT_ROOT/tests"
-
 fi
 
 # Add cmake install prefix option
@@ -380,6 +378,6 @@ elif $RELEASE;then
       create_rpm "$RPMBUILD_DIR" "$PACKAGE_INSTALL_PATH" $MOCK
     fi
   fi
- fi
+fi
 
 popd

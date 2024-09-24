@@ -1,4 +1,7 @@
 #!/bin/sh
 set -e
 
+rm /etc/ld.so.conf.d/svk-cxl-x86_64.conf
+rm -rf /usr/local/lib/cxl_memory_box
+rm -rf /usr/local/svk/cxl
 ldconfig

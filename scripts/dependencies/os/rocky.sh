@@ -18,17 +18,22 @@ install_packages() {
         boost-devel
         cmake
         diffutils
-        file
+        dstat
+	file
         gcc-c++
         git
         jansson-devel
-        python3.11
+        numactl
+	numactl-devel
+	python3.11
         python3-pip
         rpm-build
         spdlog-devel
         tar
         unzip
         wget
+	zeromq
+	zeromq-devel
     )
     package_manager
 }

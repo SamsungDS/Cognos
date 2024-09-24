@@ -10,13 +10,15 @@ install_packages() {
         debhelper
         diffutils
         dpkg-dev
-        file
+        dstat
+	file
         g++
         git
         libboost-dev
         libfmt-dev
         libjansson-dev
-        libspdlog-dev
+	libnuma-dev
+	libspdlog-dev
         libssl-dev
         libzmq3-dev
         net-tools

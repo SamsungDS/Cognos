@@ -204,3 +204,4 @@ TEST_F(ServicerTest, ExecuteSyncInvalidCommandTest) {
     ASSERT_EQ(status, SVK_STATUS_FAIL); 
     free(input.input_buffer);
 }
+

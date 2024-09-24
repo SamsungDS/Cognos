@@ -21,11 +21,17 @@ set(pkg_config "${CMAKE_BINARY_DIR}/${SVKCXL}.pc")
 set(pkgconfig_install_dir "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
 set(SVKCXL_LIB_DEST "lib64/")
 set(SVKCXL_INCLUDE_DEST "include/")
+set(SVKMGMTFW_INCLUDE_DIRS "/usr/local/svk/mgmt-fw/include")
+set(SVKMGMTFW_LIB_DIRS "/usr/local/svk/mgmt-fw/lib64")
 configure_file("cmake/${SVKCXL}.pc.in" "${pkg_config}" @ONLY)
+
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SVKFRAMEWORK REQUIRED svkframework)
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -rdynamic")
 
 # Include custom cmake modules
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
@@ -40,10 +46,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     endif()
 endif()
 
+#if(WITH_FMAPI)
+#     message(STATUS "Building with FMAPI")
+#     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I${FMAPI_INCLUDE_PATH} -L${FMAPI_LIB_PATH}")
+# endif()
 
-if(WITH_FMAPI)
-    message(STATUS "Building with FMAPI")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I${FMAPI_INCLUDE_PATH} -L${FMAPI_LIBRARY_PATH}")
+if(WITH_MGMT_FW)
+    message(STATUS "Building with MGMT_FW")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -rdynamic")
 endif()
 
 # Add subdirectories
@@ -51,3 +61,25 @@ add_subdirectory(src)
 if(BUILD_TESTING)
     add_subdirectory(tests)
 endif()
+
+include(CMakePackageConfigHelpers)
+write_basic_package_version_file(
+        SVKCXLConfigVersion.cmake
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY AnyNewerVersion
+    )
+
+    set(SVKCXL_CMAKE_DEST "cmake/")
+
+install(
+    FILES
+        "cmake/svkcxl-config.cmake"
+        "${CMAKE_CURRENT_BINARY_DIR}/SVKCXLConfigVersion.cmake"
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/${SVKCXL_CMAKE_DEST}
+    )
+
+# install pkg config file
+install(
+    FILES "${pkg_config}"
+    DESTINATION "${pkgconfig_install_dir}"
+)

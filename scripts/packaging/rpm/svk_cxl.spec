@@ -61,10 +61,12 @@ mkdir -p /usr/local/lib/cxl_memory_box
 cp -rf %{installpath}/share/cxl_memory_box /usr/local/lib
 cp -f %{buildroot}/%{installpath}/conf/input.json /usr/local/svk/mgmt-fw/
 echo "/usr/local/lib/cxl_memory_box/lib" | tee -a /etc/ld.so.conf.d/svk-cxl-x86_64.conf
+echo "/usr/local/svk/mgmt-fw/lib64" | tee -a /etc/ld.so.conf.d/svk-cxl-x86_64.conf
 /usr/sbin/ldconfig
 
 
 %postun
 rm /etc/ld.so.conf.d/svk-cxl-x86_64.conf
 rm -rf /usr/local/lib/cxl_memory_box 
+rm -rf /usr/local/svk/cxl
 /usr/sbin/ldconfig
