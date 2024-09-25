@@ -1,0 +1,8 @@
+SET(CONFIG_FILE "mgmt_fw_config.json")
+set(CONFIG_DIR "/etc/svk")
+
+install(
+    FILES "${CONFIG_FILE}"
+    DESTINATION "${CONFIG_DIR}"
+    PERMISSIONS OWNER_READ OWNER_EXECUTE GROUP_READ WORLD_READ
+)
