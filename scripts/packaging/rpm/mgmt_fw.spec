@@ -49,6 +49,7 @@ install -D -m 0644 %svk_script_dir/systemd_files/svk-restserver.service %buildro
 %_unitdir/svk-controller.service
 %_unitdir/svk-node.service
 %_unitdir/svk-restserver.service
+%_sysconfdir/svk/mgmt_fw_config.json
 %ghost %_sysconfdir/ld.so.conf.d/svk-mgmt-fw-%_arch.conf
 
 %files devel

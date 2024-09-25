@@ -3,7 +3,7 @@
       {
         "framework": {
           "lib_path": "/usr/local/svk/core/lib64/libsvkframework.so",
-          "conf_file": "/etc/svk/core.json"
+          "conf_file": "/etc/svk/mgmt_fw_config.json"
         },
         "cluster": {
           "id": "CL_ID_1"
@@ -54,7 +54,8 @@
       },
   "core":
       {
-        "feat_modules_dir": "/usr/local/svk/core/tests/sample_feature/",
+        "_comment": "All the feature libraries (ONLY) should be present in /usr/local/svk/feature_libs",
+        "feat_modules_dir": "/usr/local/svk/feature_libs",
         "logger": {
           "log_level": "INFO",
           "log_file_name": "/var/log/svk/framework.log",
@@ -67,7 +68,7 @@
   "svk_mgmt_fw_svc_mgr":
       {
         "svc_mgr": {
-          "feat_sm_svcs_dir": "/usr/lib/svk/"
+          "feat_sm_svcs_dir": "/usr/local/svk/svc_mgr_libs/"
         },
         "logger": {
           "log_level": "INFO",

@@ -1,3 +1,4 @@
 usr/local/svk/mgmt-fw/lib64/* /usr/local/svk/mgmt-fw/lib64/
 usr/local/svk/mgmt-fw/bin/* /usr/local/svk/mgmt-fw/bin/
 usr/local/svk/mgmt-fw/rest_api/* /usr/local/svk/mgmt-fw/rest_api/
+etc/svk/mgmt_fw_config.json /etc/svk/

@@ -86,24 +86,25 @@ This will build and package RPM or Debian Packages (on Rockylinux or Ubuntu, res
 
 Once `svk-core` and `svk-mgmt-fw` artifacts are installed, the user needs to run the commands in the following manner
 
-- Copy the configuration JSON files to /etc/svk/ directory. Sample config file can be seen at `config/config.json.example`
-- The server hosting `controller` should have the **svk_mgmt_fw_controller** section in the JSON configuration file (/etc/svk/controller.json)
+- Edit the JSON configuration file `/etc/svk/mgmt_fw_config.json` depending on the system configuration
+- The server hosting `controller` should have the **svk_mgmt_fw_controller** section updated as per the system configuration
 - The server hosting `node agent` should have the following
   - svk-core rpm/deb should be installed as the prerequisite
-  - **core** section in the JSON configuration file (/etc/svk/core.json). The **feat_modules_dir** should be updated to the proper directory containing feature module's libraries.
-  - **svk_mgmt_fw_node** section in the JSON configuration file (/etc/svk/node_agent.json). The `lib_path` in *framework* section of **svk_mgmt_fw_node** should point to the file path of *libsvkframework.so*. The `conf_file` in *framework* section should point to the JSON file having the **core** section
-- The server hosting `REST server` should have the **svk_mgmt_rest_api** section in the JSON configuration file(/etc/svk/rest_server.json)
+  - **core** section in the JSON configuration file. The **feat_modules_dir** should be updated to the proper directory containing feature module's libraries.
+  - **svk_mgmt_fw_node** section in the JSON configuration file. The `lib_path` in *framework* section should point to the file path of *libsvkframework.so*. The `conf_file` in *framework* section should point to the JSON file path having the **core** section. The controller details need to be updated with the appropriate IP address or host name to which this node connects to.
+- The server hosting `REST server` should have the **svk_mgmt_rest_api** section in the JSON configuration file and updated as per the system configuration. The controller details need to be updated with the appropriate IP address or host name to which the REST API Server connects to.
 
 - Depending on the type of server being deployed, the scripts expect the following configuration files
 
-  - Controller: `/etc/svk/controller.json`
-  - Rest Server: `/etc/svk/rest_server.json`
+  - Controller:  **svk_mgmt_fw_controller** section in JSON file
+  - Rest Server: **svk_mgmt_rest_api** section in JSON file
   - Node agent:
-    - `/etc/svk/node_agent.json`
-    - `/etc/svk/core.json`
+    - **svk_mgmt_fw_node** section in JSON file
+    - **core** section in JSON file
 
 - Copy the appropriate files from the *systemd_files* directory in the repository to `/etc/systemd/system` and run the command `systemctl daemon-reload`
 
-- Run the controller server on the controller node. Controller runs on the port 9999 by default. It can be run using `systemctl start svk-controller`
-- Run the node server on the agent nodes. By default node server runs on port 9998. It can be run using `systemctl start svk-node`
-- Run the REST API server on the controller node using the command `systemctl start svk-restserver`. By default, the REST server runs on port 8001.
+- Run the controller server on the controller node. Controller runs on the port 9999 by default. It can be run using `systemctl start svk-controller`. This is a prerequisite for the Node Server and the REST API server.
+- Run the node server on the agent nodes. By default node server runs on port 9998. It can be run using `systemctl start svk-node`. Please make sure that the controller is started before starting the node server.
+- Run the REST API server on the controller node using the command `systemctl start svk-restserver`. By default, the REST server runs on port 8001. Please make sure that the controller is started before starting the REST API server.
+- Enable the services to start across reboot using the command `systemctl enable svk-<servertype>`

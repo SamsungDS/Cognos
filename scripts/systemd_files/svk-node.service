@@ -4,11 +4,11 @@ After=network.target
 StartLimitBurst=5
 
 [Service]
-User=svk
+#User=svk
 KillMode=process
 WorkingDirectory = /usr/local/svk/mgmt-fw
 
-ExecStart = /usr/local/svk/mgmt-fw/bin/svkgrpcnode --svk_conf_file /etc/svk/node_agent.json
+ExecStart = /usr/local/svk/mgmt-fw/bin/svkgrpcnode --svk_conf_file /etc/svk/mgmt_fw_config.json
 ExecReload = /bin/kill -s HUP $MAINPID
 ExecStop = /bin/kill -s INT $MAINPID
 Restart=always
