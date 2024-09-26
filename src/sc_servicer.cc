@@ -56,7 +56,7 @@ unordered_map<string, string> token_helper(string input){
 */
 std::string ListDevices(const std::string& input) {
 
-    string output = input + ";device names=";
+    string output = "";
     unordered_map<string, string> tokens_map = token_helper(input);
     // Create a buffer to store the JSON data
     std::string buffer;
@@ -75,7 +75,7 @@ std::string ListDevices(const std::string& input) {
 */
 std::string ListHosts(const std::string& input) {
 
-    string output = input + ";host names=";
+    string output = "";
     unordered_map<string, string> tokens_map = token_helper(input);
     // Create a buffer to store the JSON data
     std::string buffer;
@@ -94,7 +94,7 @@ std::string ListHosts(const std::string& input) {
 */
 std::string AttachMemory(const std::string& input) {
 
-    string output = input + ";AttachMemory=";
+    string output = "";
     unordered_map<string, string> tokens_map = token_helper(input);
     std::string buffer; 
     //@todo fm_id 203, 204 
@@ -111,7 +111,7 @@ std::string AttachMemory(const std::string& input) {
 */
 std::string DetachMemory(const std::string& input) {
 
-    string output = input + ";DetachMemory=";
+    string output = "";
     unordered_map<string, string> tokens_map = token_helper(input);
     // Create a buffer to store the JSON data
     std::string buffer;
@@ -131,7 +131,7 @@ std::string DetachMemory(const std::string& input) {
 */
 std::string SetupInfo(const std::string& input) {
 
-    string output = input + ";setup_info=";
+    string output = "";
     unordered_map<string, string> tokens_map = token_helper(input);
     // Create a buffer to store the JSON data
     std::string buffer;
