@@ -49,3 +49,10 @@ screen -S session_name
 
 screen -d
 
+
+#How to run test cases? 
+
+python3.10 -m pytest subscriber/test/sub_test.py
+
+python3.10 -m pytest --cov cognos.subscriber --cov-report=term --cov-report=html  subscriber/test/sub_test.py
+
