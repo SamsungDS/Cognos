@@ -19,6 +19,14 @@ COGNOS_TABLES = [
 ]
 
 
+def parse_svkcxlplugin_response(response):
+    """
+    Should parse REST response and return a payload similar to the
+    output of FM API
+    """
+    return json.loads(response.json()["nodeResponses"][0]["output"])
+
+
 def fetch_cognos_configs(parent_dir, file_name):
     config_file_path = os.path.join(parent_dir, 'config', file_name)
     configs = ''

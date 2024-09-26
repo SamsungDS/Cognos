@@ -166,9 +166,12 @@ def test_cxlplugin_detach_device(mocker, get_cxlplugin_datasource,
                                  mock_connection, mock_cursor):
     with mock_app.test_request_context('/detach_device', method='POST'):
         dummy_detach_response = {
-            "output": {
-                get_cognos_configs["node_endpoint"]: {'rc': 0}
-            }
+            "nodeResponses": [
+                {
+                    "nodeId": "localhost",
+                    "output": """{"rc": 0}"""
+                }
+            ]
         }
         dummy_response = Response()
         dummy_response.status_code = 200
@@ -177,9 +180,10 @@ def test_cxlplugin_detach_device(mocker, get_cxlplugin_datasource,
         )
         dummy_response.headers['Content-Type'] = 'application/json'
         mocker.patch('requests.post', return_value=dummy_response)
-        mocker.patch('json.loads',
-                     return_value={
-                         get_cognos_configs["node_endpoint"]: {'rc': 0}})
+        mocker.patch(
+            'cognos.backend.helper.parse_svkcxlplugin_response',
+            return_value={get_cognos_configs["node_endpoint"]: {'rc': 0}}
+        )
         mocker.patch(
             'cognos.backend.helper.get_db_passwd',
             return_value="CXL123mem!"
@@ -199,10 +203,14 @@ def test_cxlplugin_attach_device(mocker, get_cxlplugin_datasource,
                                  app_context):
     with mock_app.test_request_context('/attach_device', method='POST'):
         dummy_attach_response = {
-            "output": {
-                get_cognos_configs["node_endpoint"]: {'rc': 0}
-            }
+            "nodeResponses": [
+                {
+                    "nodeId": "localhost",
+                    "output": """{"rc": 0}"""
+                }
+            ]
         }
+
         dummy_response = Response()
         dummy_response.status_code = 200
         dummy_response._content = (
@@ -211,10 +219,8 @@ def test_cxlplugin_attach_device(mocker, get_cxlplugin_datasource,
         dummy_response.headers['Content-Type'] = 'application/json'
         mocker.patch('requests.post', return_value=dummy_response)
         mocker.patch(
-            'json.loads',
-            return_value={
-                get_cognos_configs["node_endpoint"]: {'rc': 0}
-            }
+            'cognos.backend.helper.parse_svkcxlplugin_response',
+            return_value={get_cognos_configs["node_endpoint"]: {'rc': 0}}
         )
         mock_connection = mocker.MagicMock()
         mock_cursor = mocker.MagicMock()
@@ -249,75 +255,78 @@ def test_cxlplugin_get_mb_info(client, get_cxlplugin_datasource):
 def test_cxlplugin_setup_info(mocker, client,
                               get_cxlplugin_datasource, get_cognos_configs):
     dummy_init_data = {
-        "output": {
-            get_cognos_configs["node_endpoint"]: {
-                "Board": {
-                    "Mgmt_port_type": "PCIe",
-                    "board_name": "Example Direct Config",
-                    "json_version": "0100",
-                    "management_port": 1,
-                    "switch_mode": "direct"
-                },
-                "Devices": [
-                    {
-                        "dev_addr": "0x008000000000",
-                        "dev_aspm_active": 1,
-                        "dev_lock_active": 1,
-                        "dev_name": "DEV_10-256G",
-                        "dev_port": 10,
-                        "dev_port_type": "CXL_20",
-                        "dev_size": "0x004000000000",
-                        "dev_speed": 5,
-                        "dev_sris_active": 1,
-                        "dev_width": 8
+        "nodeResponses": [
+            {
+                "nodeId": "localhost",
+                "output": """{
+                    "Board": {
+                        "Mgmt_port_type": "PCIe",
+                        "board_name": "Example Direct Config",
+                        "json_version": "0100",
+                        "management_port": 1,
+                        "switch_mode": "direct"
                     },
-                    {
-                        "dev_addr": "0x00C000000000",
-                        "dev_aspm_active": 1,
-                        "dev_lock_active": 1,
-                        "dev_name": "DEV_11-256G",
-                        "dev_port": 11,
-                        "dev_port_type": "CXL_20",
-                        "dev_size": "0x004000000000",
-                        "dev_speed": 5,
-                        "dev_sris_active": 1,
-                        "dev_width": 8
-                    }
-                ],
-                "Hosts": [
-                    {
-                        "classcode": 0,
-                        "deinit_active": 1,
-                        "endpoint": [
-                            {
-                                "dev_offset": "0",
-                                "mem_addr": "0x00C000000000",
-                                "mem_size": "0x004000000000",
-                                "memdev": "mem- 11",
-                                "target": 11
-                            },
-                            {
-                                "dev_offset": "0",
-                                "mem_addr": "0x008000000000",
-                                "mem_size": "0x004000000000",
-                                "memdev": "mem- 10",
-                                "target": 10
-                            }
-                        ],
-                        "host_addr": "0x008080000000",
-                        "host_aspm_active": 1,
-                        "host_equalization": 1,
-                        "host_name": "Host 1 LNK0",
-                        "host_port": 2,
-                        "host_port_type": "CXL_11",
-                        "host_size": "0x007f80000000",
-                        "host_speed": 5,
-                        "host_sris_active": 1,
-                        "host_width": 8
-                    }
-                ]
+                    "Devices": [
+                        {
+                            "dev_addr": "0x008000000000",
+                            "dev_aspm_active": 1,
+                            "dev_lock_active": 1,
+                            "dev_name": "DEV_10-256G",
+                            "dev_port": 10,
+                            "dev_port_type": "CXL_20",
+                            "dev_size": "0x004000000000",
+                            "dev_speed": 5,
+                            "dev_sris_active": 1,
+                            "dev_width": 8
+                        },
+                        {
+                            "dev_addr": "0x00C000000000",
+                            "dev_aspm_active": 1,
+                            "dev_lock_active": 1,
+                            "dev_name": "DEV_11-256G",
+                            "dev_port": 11,
+                            "dev_port_type": "CXL_20",
+                            "dev_size": "0x004000000000",
+                            "dev_speed": 5,
+                            "dev_sris_active": 1,
+                            "dev_width": 8
+                        }
+                    ],
+                    "Hosts": [
+                        {
+                            "classcode": 0,
+                            "deinit_active": 1,
+                            "endpoint": [
+                                {
+                                    "dev_offset": "0",
+                                    "mem_addr": "0x00C000000000",
+                                    "mem_size": "0x004000000000",
+                                    "memdev": "mem- 11",
+                                    "target": 11
+                                },
+                                {
+                                    "dev_offset": "0",
+                                    "mem_addr": "0x008000000000",
+                                    "mem_size": "0x004000000000",
+                                    "memdev": "mem- 10",
+                                    "target": 10
+                                }
+                            ],
+                            "host_addr": "0x008080000000",
+                            "host_aspm_active": 1,
+                            "host_equalization": 1,
+                            "host_name": "Host 1 LNK0",
+                            "host_port": 2,
+                            "host_port_type": "CXL_11",
+                            "host_size": "0x007f80000000",
+                            "host_speed": 5,
+                            "host_sris_active": 1,
+                            "host_width": 8
+                        }
+                    ]
+                }"""
             }
-        }
+        ]
     }
     dummy_response = Response()
     dummy_response.status_code = 200
@@ -326,7 +335,10 @@ def test_cxlplugin_setup_info(mocker, client,
     )
     dummy_response.headers['Content-Type'] = 'application/json'
     mocker.patch('requests.post', return_value=dummy_response)
-    mocker.patch('json.loads', return_value=dummy_init_data['output'])
+    mocker.patch(
+        'cognos.backend.helper.parse_svkcxlplugin_response',
+        return_value=dummy_init_data["nodeResponses"][0]["output"]
+    )
     get_cxlplugin_datasource.get_setup_info()
 
 
@@ -336,29 +348,35 @@ def test_cxlplugin_get_devices_info(mock_db, mocker,
     mock_connection, mock_cursor = mock_db
 
     dummy_data = {
-        "output": {
-            get_cognos_configs["node_endpoint"]: {
-                "devices": [
-                    {
-                        "dev_capacity": 274877906944,
-                        "dev_id": 549755813888,
-                        "dev_port": 10,
-                        "hosts_attached": ["Host 1 LNK0"]
-                    },
-                    {
-                        "dev_capacity": 274877906944,
-                        "dev_id": 824633720832,
-                        "dev_port": 11,
-                        "hosts_attached": ["Host 1 LNK0"]
-                    }
-                ]
+        "nodeResponses": [
+            {
+                "nodeId": "localhost",
+                "output": """{
+                    "devices": [
+                        {
+                            "dev_capacity": 274877906944,
+                            "dev_id": 549755813888,
+                            "dev_port": 10,
+                            "hosts_attached": ["Host 1 LNK0"]
+                        },
+                        {
+                            "dev_capacity": 274877906944,
+                            "dev_id": 824633720832,
+                            "dev_port": 11,
+                            "hosts_attached": ["Host 1 LNK0"]
+                        }
+                    ]
+                }"""
             }
-        }
+        ]
     }
     dummy_response = construct_dummy_response(dummy_data)
     mocker.patch('requests.post', return_value=dummy_response)
-    payload_output = dummy_data["output"]
-    mocker.patch('json.loads', return_value=payload_output)
+    payload_output = json.loads(dummy_data["nodeResponses"][0]["output"])
+    mocker.patch(
+        'cognos.backend.helper.parse_svkcxlplugin_response',
+        return_value=payload_output
+    )
     get_cxlplugin_datasource.get_devices_info()
 
 
@@ -368,47 +386,55 @@ def test_cxlplugin_get_hosts_info(mock_db, mocker,
     mock_connection, mock_cursor = mock_db
 
     dummy_data = {
-        "output": {
-            get_cognos_configs["node_endpoint"]: {
-                "hosts": [
-                    {
-                        "classcode": 0,
-                        "deinit_active": 1,
-                        "endpoint": [
-                            {
-                                "dev_offset": "0",
-                                "mem_addr": "0x00C000000000",
-                                "mem_size": "0x004000000000",
-                                "memdev": "mem- 11",
-                                "target": 11
-                            },
-                            {
-                                "dev_offset": "0",
-                                "mem_addr": "0x008000000000",
-                                "mem_size": "0x004000000000",
-                                "memdev": "mem- 10",
-                                "target": 10
-                            }
-                        ],
-                        "host_addr": "0x008080000000",
-                        "host_aspm_active": 1,
-                        "host_equalization": 1,
-                        "host_name": "Host 1 LNK0",
-                        "host_port": 2,
-                        "host_port_type": "CXL_11",
-                        "host_size": "0x007f80000000",
-                        "host_speed": 5,
-                        "host_sris_active": 1,
-                        "host_width": 8
-                    }
-                ]
+        "nodeResponses": [
+            {
+                "nodeId": "localhost",
+                "output": """{
+                    "hosts": [
+                        {
+                            "classcode": 0,
+                            "deinit_active": 1,
+                            "endpoint": [
+                                {
+                                    "dev_offset": "0",
+                                    "mem_addr": "0x00C000000000",
+                                    "mem_size": "0x004000000000",
+                                    "memdev": "mem- 11",
+                                    "target": 11
+                                },
+                                {
+                                    "dev_offset": "0",
+                                    "mem_addr": "0x008000000000",
+                                    "mem_size": "0x004000000000",
+                                    "memdev": "mem- 10",
+                                    "target": 10
+                                }
+                            ],
+                            "host_addr": "0x008080000000",
+                            "host_aspm_active": 1,
+                            "host_equalization": 1,
+                            "host_name": "Host 1 LNK0",
+                            "host_port": 2,
+                            "host_port_type": "CXL_11",
+                            "host_size": "0x007f80000000",
+                            "host_speed": 5,
+                            "host_sris_active": 1,
+                            "host_width": 8
+                        }
+                    ]
+                }"""
+
             }
-        }
+
+        ]
     }
     dummy_response = construct_dummy_response(dummy_data)
     mocker.patch('requests.post', return_value=dummy_response)
-    payload_output = dummy_data["output"]
-    mocker.patch('json.loads', return_value=payload_output)
+    payload_output = dummy_data["nodeResponses"][0]["output"]
+    mocker.patch(
+        'cognos.backend.helper.parse_svkcxlplugin_response',
+        return_value=payload_output
+    )
     get_cxlplugin_datasource.get_hosts_info()
 
 

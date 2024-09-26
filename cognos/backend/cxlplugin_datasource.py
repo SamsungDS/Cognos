@@ -13,7 +13,8 @@ from cognos.backend.helper import (
     get_devport_hostname_map, init_devices_table, init_hosts_table,
     init_connections_table, fetch_topology, get_host_attached_devices,
     get_devid_from_name, get_hostid_from_name, delete_connection,
-    connect_to_mysql, disconnect_mysql, failed_response, get_devname_from_id
+    connect_to_mysql, disconnect_mysql, failed_response, get_devname_from_id,
+    parse_svkcxlplugin_response
 )
 
 
@@ -98,10 +99,7 @@ class CXLPlugin(DataSource):
         }
         response = requests.post(AGENT_ENDPOINT, json=body,
                                  headers=headers)
-        payload = (
-            json.loads(response.json()['output'])
-            [NODE_ENDPOINT]
-        )
+        payload = parse_svkcxlplugin_response(response)
 
         if response.ok:
             # Update DB after detach operation
@@ -136,10 +134,7 @@ class CXLPlugin(DataSource):
         }
         response = requests.post(AGENT_ENDPOINT, json=request_data,
                                  headers=headers)
-        payload = (
-            json.loads(response.json()['output'])
-            [NODE_ENDPOINT]
-        )
+        payload = parse_svkcxlplugin_response(response)
 
         if response.ok:
             # Update DB with new connection
@@ -179,10 +174,7 @@ class CXLPlugin(DataSource):
             headers=headers
         )
 
-        payload = (
-            json.loads(response.json()['output'])
-            [NODE_ENDPOINT]
-        )
+        payload = parse_svkcxlplugin_response(response)
         return payload
 
     def get_devices_info(self):
@@ -201,11 +193,7 @@ class CXLPlugin(DataSource):
         )
 
         if response.ok:
-            payload = (
-                json.loads(response.json()['output'])
-                [NODE_ENDPOINT]
-                ["devices"]
-            )
+            payload = parse_svkcxlplugin_response(response)["devices"]
         else:
             return failed_response("Failed to fetch device info from SVK")
 
@@ -231,11 +219,7 @@ class CXLPlugin(DataSource):
             headers=headers
         )
         if response.ok:
-            payload = (
-                json.loads(response.json()['output'])
-                [NODE_ENDPOINT]
-                ['hosts']
-            )
+            payload = parse_svkcxlplugin_response(response)['hosts']
             return payload
         else:
             return failed_response(

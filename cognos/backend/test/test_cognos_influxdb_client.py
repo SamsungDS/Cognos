@@ -194,7 +194,10 @@ def test_get_membox_bandwidth(cognos_influx_client, mocker):
     }
     dummy_response = construct_dummy_response(dummy_data)
     mocker.patch('requests.post', return_value=dummy_response)
-    mocker.patch('json.loads', return_value=dummy_response.json()["output"])
+    mocker.patch(
+        'cognos.backend.helper.parse_svkcxlplugin_response',
+        return_value=dummy_response.json()["output"]
+    )
     cognos_influx_client.get_membox_bandwidth()
 
 
@@ -272,7 +275,10 @@ def test_get_attached_devices_count(cognos_influx_client, mocker):
     }
     dummy_response = construct_dummy_response(dummy_data)
     mocker.patch('requests.post', return_value=dummy_response)
-    mocker.patch('json.loads', return_value=dummy_response.json()["output"])
+    mocker.patch(
+        'cognos.backend.helper.parse_svkcxlplugin_response',
+        return_value=dummy_response.json()["output"]
+    )
     cognos_influx_client.get_attached_devices_count()
 
 
@@ -350,5 +356,8 @@ def test_get_membox_capacity(cognos_influx_client, mocker):
     }
     dummy_response = construct_dummy_response(dummy_data)
     mocker.patch('requests.post', return_value=dummy_response)
-    mocker.patch('json.loads', return_value=dummy_response.json()["output"])
+    mocker.patch(
+        'cognos.backend.helper.parse_svkcxlplugin_response',
+        return_value=dummy_response.json()["output"]
+    )
     cognos_influx_client.get_membox_capacity()

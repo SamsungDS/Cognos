@@ -10,7 +10,9 @@ import sys
 
 sys.path.append(os.path.abspath(  # noqa: E402
     os.path.join(os.path.dirname(__file__), '..')))  # noqa: E402
-from cognos.backend.helper import fetch_cognos_configs
+from cognos.backend.helper import (
+    fetch_cognos_configs, parse_svkcxlplugin_response
+)
 
 from cognos.backend.mock_constants import MOCK_CXL_SETUP
 
@@ -273,7 +275,7 @@ class CognosInfluxDBClient():
                 json={"input": "cluster_id=CLUST1;command=SetupInfo"},
                 headers=headers
             )
-            payload = json.loads(response.json()['output'])[self.node_endpoint]
+            payload = parse_svkcxlplugin_response(response)
 
         max_bandwidth = 512
         num_upstream_ports = len(payload['Hosts'])
@@ -299,7 +301,7 @@ class CognosInfluxDBClient():
                 json={"input": "cluster_id=CLUST1;command=SetupInfo"},
                 headers=headers
             )
-            payload = json.loads(response.json()['output'])[self.node_endpoint]
+            payload = parse_svkcxlplugin_response(response)
         num_hosts = len(payload['Hosts'])
         num_cxl_devices = len(payload['Devices'])
         return {
@@ -320,7 +322,7 @@ class CognosInfluxDBClient():
                 json={"input": "cluster_id=CLUST1;command=SetupInfo"},
                 headers=headers
             )
-            payload = json.loads(response.json()['output'])[self.node_endpoint]
+            payload = parse_svkcxlplugin_response(response)
 
         num_attached_devices = 0
         for host in payload['Hosts']:
