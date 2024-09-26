@@ -14,4 +14,4 @@ responses
 simplejson
 selenium==4.18.1
 websockets
-zmq
+pyzmq

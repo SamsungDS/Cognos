@@ -38,7 +38,7 @@ def mock_subscription(interval, stop_condition=None) -> None:
     except Exception as e:
         print(f"Error reading input file: {e}")
         sys.exit(1)
-        return 
+        return
 
     # Check if data exists and convert to DataFrame
     if not data:
@@ -49,18 +49,16 @@ def mock_subscription(interval, stop_condition=None) -> None:
 
     if df.empty:
         print("DataFrame is empty, no data to send to InfluxDB!")
-        #sys.exit(0)
         return
 
     # Create an instance of CognosInfluxDBClient
     dbobj = CognosInfluxDBClient()
 
-    # Set the default stop_condition to an always False condition if none is provided
+    # Set the default stop_condition to an always False condition
     stop_condition = stop_condition or (lambda: False)
 
     try:
-        #while True:
-        while not stop_condition(): 
+        while not stop_condition():
             for _, row in df.iterrows():
                 # Get the current timestamp
                 current_time = pd.Timestamp.now()
@@ -80,7 +78,7 @@ def mock_subscription(interval, stop_condition=None) -> None:
         sys.exit(1)
 
 
-def zeromq_subscription(hostname, topic, interval, stop_condition=None) -> None:
+def zeromq_subscription(hostname, topic, interval, stop_condition=None):
 
     try:
         # Parse hostname and port
@@ -92,7 +90,7 @@ def zeromq_subscription(hostname, topic, interval, stop_condition=None) -> None:
     except ValueError as ve:
         print(f"Error parsing hostname or port: {ve}")
         sys.exit(1)
-        return   
+        return
 
     # Initialize ZMQ context and socket
     context = zmq.Context()
@@ -150,6 +148,7 @@ def zeromq_subscription(hostname, topic, interval, stop_condition=None) -> None:
     finally:
         socket.close()
         context.term()
+
 
 def main(hostname=None, topic=None, interval=5, use_mock=False):
     if use_mock:
