@@ -8,6 +8,7 @@ SVK Core contains utilities and framework for [Management Framework](https://cxl
 
 - Rockylinux 9
 - Ubuntu 22.04
+- Ubuntu 24.04
 
 ## Installation
 

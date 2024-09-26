@@ -4,7 +4,7 @@ sonar-scanner:
     name: $IMAGE_TAG
     pull_policy: always
   before_script:
-    # Download sonar-scanner from SONAR_SCANNER_URL - Github-defined org var
+      # Download sonar-scanner from SONAR_SCANNER_URL - Github-defined org var
       - export SONAR_SCANNER_FILENAME="${SONAR_SCANNER_URL##*/}"
       - wget --no-verbose --content-disposition -E -c "$SONAR_SCANNER_URL"
       # Get sonar-scanner root dir filename from printed contents of zip file
@@ -15,7 +15,10 @@ sonar-scanner:
     # Scan with sonar-scanner
     - /"$SONAR_SCANNER_DIR"/bin/sonar-scanner -Dsonar.coverageReportPaths=$SONAR_COVERAGE_REPORT
   needs:
-    - unit test rocky9
+    - job: unit test
+      parallel:
+        matrix:
+          - DOCKERFILE_NAME: rocky9
   allow_failure: false
   variables:
     DOCKERFILE_NAME: rocky9

@@ -3,20 +3,28 @@ set -e
 
 # Build Dependencies
 install_packages() {
-    BUILD_DEPS=('epel-release')
-    package_manager
     BUILD_DEPS=(
-        'cmake'
-        'gcc-c++'
-        'git'
-        'python3.11'
-        'python3-pip'
-        'spdlog-devel'
-        'tar'
-        'unzip'
-        'wget'
-        'boost-devel'
-        'rpmdevtools'
+        dnf
+        epel-release
+    )
+    package_manager
+
+    # Enable CodeReady Builder (CRB) repository
+    BUILD_DEPS=("'dnf-command(config-manager)'")
+    package_manager
+    /usr/bin/crb enable
+
+    BUILD_DEPS=(
+        boost-devel
+        cmake
+        gcc-c++
+        git
+        python3-virtualenv
+        rpmdevtools
+        spdlog-devel
+        tar
+        unzip
+        wget
     )
     package_manager
 }
@@ -24,11 +32,11 @@ install_packages() {
 # Install from package mananger
 package_manager() {
     # Optimizations for Docker build  - see scripts/docker/*.DOCKERFILE for $DOCKER var invocation
-    if $DOCKER; then
+    if [[ $DOCKER ]]; then
         BUILD_DEPS+=(
-            '--nodocs'
-            '--noplugins'
-            '--setopt=install_weak_deps=0'
+            --nodocs
+            --noplugins
+            --setopt=install_weak_deps=0
         )
     fi
 
@@ -55,7 +63,7 @@ package_manager() {
 install_packages
 
 # Farther cleanup if Docker environment
-if $DOCKER; then
+if [[ $DOCKER ]]; then
     CLEANUP_STRING="$INSTALLER_BIN clean all"
     echo "executing command: $CLEANUP_STRING"
     eval "$CLEANUP_STRING"

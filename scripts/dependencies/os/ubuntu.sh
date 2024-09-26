@@ -5,20 +5,20 @@ set -e
 install_packages() {
     apt-get update
     BUILD_DEPS=(
-        'build-essential'
-        'cmake'
-        'debhelper'
-        'g++'
-        'git'
-        'libboost-dev'
-        'libfmt8'
-        'libfmt-dev'
-        'libspdlog-dev'
-        'python3.11'
-        'python3-pip'
-        'tar'
-        'unzip'
-        'wget'
+        build-essential
+        clang-format
+        cmake
+        debhelper
+        g++
+        gcovr
+        git
+        libboost-dev
+        libfmt-dev
+        libspdlog-dev
+        python3-virtualenv
+        tar
+        unzip
+        wget
     )
     package_manager
 }
@@ -26,11 +26,11 @@ install_packages() {
 # Install from package mananger
 package_manager() {
     # Optimizations for Docker build - see scripts/docker/*.DOCKERFILE for $DOCKER var invocation
-    if $DOCKER; then
+    if [[ $DOCKER ]]; then
         BUILD_DEPS+=('--no-install-recommends')
     fi
 
-    INSTALL_STRING="apt-get install -y ${BUILD_DEPS[*]}"
+    INSTALL_STRING="DEBIAN_FRONTEND=noninteractive apt-get install -y ${BUILD_DEPS[*]}"
     echo "executing command: $INSTALL_STRING"
     eval "$INSTALL_STRING"
 }
@@ -38,7 +38,7 @@ package_manager() {
 install_packages
 
 # Post-install Docker optimizations
-if $DOCKER; then
+if [[ $DOCKER ]]; then
     apt-get clean
     rm -rf /var/lib/apt/lists/*
     rm -rf /tmp/*

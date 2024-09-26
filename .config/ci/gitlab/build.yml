@@ -1,4 +1,4 @@
-release build rocky9:
+release build:
   stage: build
   image:
     name: $IMAGE_TAG
@@ -7,21 +7,18 @@ release build rocky9:
     # Build with release flag and generate artifact
     - ./scripts/build.sh --release
   artifacts:
-    name: release build
+    name: release build $DOCKERFILE_NAME
     expire_in: 300 seconds
     paths:
      - $ARTIFACTS_DIR/
   variables:
-    DOCKERFILE_NAME: rocky9
     IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
   needs:
     - build docker
+  parallel:
+    matrix:
+      - DOCKERFILE_NAME: rocky9
+      - DOCKERFILE_NAME: ubuntu22
+      - DOCKERFILE_NAME: ubuntu24
   rules:
     - !reference [.default_rules, merge_and_push]
-
-release build ubuntu22:
-  extends: release build rocky9
-  variables:
-    PACKAGE_MANAGER: apt-get
-    CORE_PACKAGE: svk-core-dev
-    DOCKERFILE_NAME: ubuntu22
