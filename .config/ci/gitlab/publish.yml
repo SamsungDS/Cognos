@@ -22,8 +22,7 @@ publish release artifacts - Gitlab:
         fi
       ' shell {} \;
   needs:
-    - release build rocky9
-    - release build ubuntu22
+    - release build
   rules:
     - !reference [.default_rules, push_only]
 
@@ -65,3 +64,4 @@ publish release artifacts - Nexus:
     matrix:
       - OS: rocky9
       - OS: ubuntu22
+      - OS: ubuntu24

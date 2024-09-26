@@ -1,4 +1,4 @@
-unit test rocky9:
+unit test:
   stage: test
   image:
     name: $IMAGE_TAG
@@ -22,15 +22,14 @@ unit test rocky9:
         path: $GITLAB_COVERAGE_REPORT
       junit: $GITLAB_JUNIT_REPORT
   variables:
-    DOCKERFILE_NAME: rocky9
     IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
     BUILD_COMMAND: ./scripts/build.sh --run-tests
   needs:
     - build docker
+  parallel:
+    matrix:
+      - DOCKERFILE_NAME: rocky9
+      - DOCKERFILE_NAME: ubuntu22
+      - DOCKERFILE_NAME: ubuntu24
   rules:
     - !reference [.default_rules, merge_and_push]
-
-unit test ubuntu22:
-  extends: unit test rocky9
-  variables:
-    DOCKERFILE_NAME: ubuntu22
