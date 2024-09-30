@@ -1,0 +1,4 @@
+#!/bin/sh
+set -e
+
+# post remove steps go here
