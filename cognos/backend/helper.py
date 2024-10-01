@@ -27,6 +27,15 @@ def parse_svkcxlplugin_response(response):
     return json.loads(response.json()["nodeResponses"][0]["output"])
 
 
+def gen_svkcxlplugin_request_params(feature_params):
+    return {
+        "cluster_id": "CL_ID_1",
+        "node_id": "localhost",
+        "feature_id": "3",
+        "feature_params": feature_params
+    }
+
+
 def fetch_cognos_configs(parent_dir, file_name):
     config_file_path = os.path.join(parent_dir, 'config', file_name)
     configs = ''

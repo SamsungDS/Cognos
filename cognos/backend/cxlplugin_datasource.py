@@ -14,7 +14,7 @@ from cognos.backend.helper import (
     init_connections_table, fetch_topology, get_host_attached_devices,
     get_devid_from_name, get_hostid_from_name, delete_connection,
     connect_to_mysql, disconnect_mysql, failed_response, get_devname_from_id,
-    parse_svkcxlplugin_response
+    parse_svkcxlplugin_response, gen_svkcxlplugin_request_params
 )
 
 
@@ -86,13 +86,11 @@ class CXLPlugin(DataSource):
 
         dev_id = get_devid_from_name(dev_name)
         host_id = get_hostid_from_name(host_name)
-        svk_api_input_arg = (
-            "cluster_id=CLUST1;command=DetachMemory;"
+        feature_params = (
+            "cluster_id=CL_ID_1;command=DetachMemory;"
             f"dev_id={dev_id};host_id={host_id};mode=direct"
         )
-        body = {
-            "input": svk_api_input_arg
-        }
+        body = gen_svkcxlplugin_request_params(feature_params)
         headers = {
             'accept': 'application/json',
             'Content-Type': 'application/json'
@@ -121,18 +119,16 @@ class CXLPlugin(DataSource):
         host_name = request_data["host_name"]
         dev_id = get_devid_from_name(dev_name)
         host_id = get_hostid_from_name(host_name)
-        svk_api_input_arg = (
-            "cluster_id=CLUST1;command=AttachMemory;"
+        feature_params = (
+            "cluster_id=CL_ID_1;command=AttachMemory;"
             f"dev_id={dev_id};host_id={host_id};mode=direct"
         )
-        request_data = {
-            "input": svk_api_input_arg
-        }
+        body = gen_svkcxlplugin_request_params(feature_params)
         headers = {
             'accept': 'application/json',
             'Content-Type': 'application/json'
         }
-        response = requests.post(AGENT_ENDPOINT, json=request_data,
+        response = requests.post(AGENT_ENDPOINT, json=body,
                                  headers=headers)
         payload = parse_svkcxlplugin_response(response)
 
@@ -168,9 +164,11 @@ class CXLPlugin(DataSource):
 
         # TODO: replace json field with json from incoming request
         # no current notion of cluster_id
+        feature_params = "cluster_id=CL_ID_1;command=SetupInfo"
+        body = gen_svkcxlplugin_request_params(feature_params)
         response = requests.post(
             AGENT_ENDPOINT,
-            json={"input": "cluster_id=CLUST1;command=SetupInfo"},
+            json=body,
             headers=headers
         )
 
@@ -182,13 +180,14 @@ class CXLPlugin(DataSource):
                 'accept': 'application/json',
                 'Content-Type': 'application/json'
             }
-        svk_api_input_arg = (
-            "cluster_id=CLUST1;command=ListDevices;"
+        feature_params = (
+            "cluster_id=CL_ID_1;command=ListDevices;"
             "FM_id=203;FM_endpoint=samsung.com"
         )
+        body = gen_svkcxlplugin_request_params(feature_params)
         response = requests.post(
             AGENT_ENDPOINT,
-            json={"input": svk_api_input_arg},
+            json=body,
             headers=headers
         )
 
@@ -213,9 +212,11 @@ class CXLPlugin(DataSource):
                 'accept': 'application/json',
                 'Content-Type': 'application/json'
         }
+        feature_params = "cluster_id=CL_ID_1;command=ListHosts"
+        body = gen_svkcxlplugin_request_params(feature_params)
         response = requests.post(
             AGENT_ENDPOINT,
-            json={"input": "cluster_id=CLUST1;command=ListHosts"},
+            json=body,
             headers=headers
         )
         if response.ok:
