@@ -6,11 +6,11 @@ This script reads static file having published events related to cxl memory box,
 
   #by default interval is set to 5 seconds and its optional
 
-  /usr/bin/python3 subscriber/sub_client.py published_events.output --mock  
+  /usr/bin/python3 subscriber/sub_client.py published_events.output --mock
 
-  OR 
+  OR  
 
-  /usr/bin/python3 subscriber/sub_client.py published_events.output --mock -i 10 
+  python3.10 subscriber/sub_client.py subscriber/mock_publisher_events.output --mock
 
 
 # zero-mq subscriber 
@@ -33,6 +33,10 @@ Subscriber script constantly accepts events from the host:port where the publish
     /usr/bin/python3 sub_client.py hostname:port topic -i 5
 
     ex: /usr/bin/python3 sub_client.py msl-ssg-cx03:5555 metrics --interval 10
+
+    or
+
+    python3.10 subscriber/sub_client.py msl-ssg-cx03:5555 metrics --interval 10
 
 
 #To execute on screen:
