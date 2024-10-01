@@ -181,7 +181,9 @@ create_rpm()
     --define "svk_os_version $ID$VERSION_ID" \
     --define "mock_flag ${mock_flag:-}"
 
-  cp "$RPMBUILD_DIR/RPMS/x86_64"/svk-cxl-*.rpm "$BUILD_DIR"
+  # Move RPMs to artifacts dir
+  move_artifacts "$RPMBUILD_DIR/RPMS/$(rpm --eval '%{_arch}')" rpm
+
 }
 
 create_deb()

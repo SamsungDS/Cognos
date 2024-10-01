@@ -1,8 +1,6 @@
 unit test:
   stage: test
-  image:
-    name: $IMAGE_TAG
-    pull_policy: always
+  extends: release build
   before_script:
     # Install latest build-wrapper
     - wget --no-verbose --content-disposition -E -c "$SONAR_HOST_URL/static/cpp/build-wrapper-linux-x86.zip"
@@ -11,8 +9,9 @@ unit test:
     # Build with unit tests and generate coverage report
     - /build-wrapper-linux-x86/build-wrapper-linux-x86-64 --out-dir bw-output/ $BUILD_COMMAND
   artifacts:
-    name: unit test
+    name: unit test - $DOCKERFILE_NAME
     expire_in: 300 seconds
+    expose_as: Unit Test Artifacts
     paths:
      - bw-output
      - build
@@ -22,11 +21,11 @@ unit test:
         path: $GITLAB_COVERAGE_REPORT
       junit: $GITLAB_JUNIT_REPORT
   variables:
-    DOCKERFILE_NAME: rocky9
-    IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
     FMAPI_PATH: $CI_PROJECT_DIR/$FMAPI_PROJECT/$FMAPI_DIR
     BUILD_COMMAND: ./scripts/build.sh --build-tests --with-coverage --with-fmapi $FMAPI_PATH/build/libmbox_a1_shared.so $FMAPI_PATH
-  needs:
-    - build fmapi simulation
+  parallel:
+    matrix:
+      - DOCKERFILE_NAME: rocky9
+      - DOCKERFILE_NAME: ubuntu22 
   rules:
     - !reference [.default_rules, merge_and_push]

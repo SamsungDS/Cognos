@@ -93,7 +93,3 @@ then
     rm -rf /usr/share/man /usr/share/doc /usr/share/licenses /tmp/*
     rm -f /var/log/dnf*
 fi
-
-
-
-
