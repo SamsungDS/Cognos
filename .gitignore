@@ -1,8 +1,9 @@
 # Build files
-build
+/build
+/cxl_memory_box
 
 # IDE config
-.vscode
+/.vscode
 
 # Doxygen
 html

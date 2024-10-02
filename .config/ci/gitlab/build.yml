@@ -18,8 +18,10 @@ release build:
   variables:
     MOCK_MODE:
     DOCKERFILE_NAME: rocky9
+    RELEASE_TYPE: release
+    FMAPI_CLONE_DIR: "$FMAPI_PROJECT/$DOCKERFILE_NAME/$RELEASE_TYPE"
     IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
-    FMAPI_PATH: $CI_PROJECT_DIR/$FMAPI_PROJECT/$FMAPI_DIR
+    FMAPI_PATH: $CI_PROJECT_DIR/$FMAPI_CLONE_DIR/$FMAPI_DIR
   parallel:
     matrix:
       - DOCKERFILE_NAME: rocky9
@@ -33,5 +35,6 @@ simulation build:
   extends: release build
   variables:
     MOCK_MODE: "--mock"
+    RELEASE_TYPE: sim
   needs:
     - build fmapi simulation

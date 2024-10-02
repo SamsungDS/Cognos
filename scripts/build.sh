@@ -190,6 +190,13 @@ create_deb()
 {
   # Debian Package vars
   local DEBIAN_DIR="$BUILD_DIR/debian"
+  # We're passing $PACKAGE_INSTALL_PATH as $1 below but not capturing it? - Someone please fix this! - Matt
+
+  # Define a dynamic package name which reflects whether we are producting a release or simulation artifact
+  local DEB_PACKAGE_NAME='svk-cxl'
+  if [[ $MOCK == true ]]; then
+    DEB_PACKAGE_NAME="$DEB_PACKAGE_NAME-mock"
+  fi
 
   # Only build Debian Package on supported OS
   if [[ "$ID" == "ubuntu" ]]; then
@@ -210,6 +217,15 @@ create_deb()
     # Update FM_API build and include dirs
     sed -i -e "s@FMAPI_INCLUDE_VAL@$FMAPI_INCLUDE_PATH@g" "$DEBIAN_DIR/rules"
     sed -i -e "s@FMAPI_LIB_VAL@$FMAPI_LIB_PATH@g" "$DEBIAN_DIR/rules"
+    # Define the package name - needed to differentiate "release" from "simulation" package
+    sed -i -e "s@DEB_PACKAGE_NAME@$DEB_PACKAGE_NAME@g" "$DEBIAN_DIR/rules"
+    sed -i -e "s@DEB_PACKAGE_NAME@$DEB_PACKAGE_NAME@g" "$DEBIAN_DIR/changelog"
+    sed -i -e "s@DEB_PACKAGE_NAME@$DEB_PACKAGE_NAME@g" "$DEBIAN_DIR/control"
+    if [[ $MOCK == true ]]; then
+      # Rename the .install packages if MOCK - to refelect above renamed package in rules / changelog / control
+      mv -v "$DEBIAN_DIR/svk-cxl.install" "$DEBIAN_DIR/$DEB_PACKAGE_NAME.install"
+      mv -v "$DEBIAN_DIR/svk-cxl-dev.install" "$DEBIAN_DIR/$DEB_PACKAGE_NAME-dev.install"
+    fi
 
     pushd "$BUILD_DIR"
       echo "Building SVK Management Framework Debian packages..."

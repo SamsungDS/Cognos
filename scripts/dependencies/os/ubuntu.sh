@@ -2,95 +2,81 @@
 set -e
 
 # Build Dependencies
-install_build_deps() {
-  BUILD_DEPS=()
-  package_manager 'update'
-  BUILD_DEPS+=('cmake')
-  BUILD_DEPS+=('dpkg-dev')
-  BUILD_DEPS+=('debhelper')
-  BUILD_DEPS+=('diffutils')
-  BUILD_DEPS+=('file')
-  BUILD_DEPS+=('g++')
-  BUILD_DEPS+=('git')
-  BUILD_DEPS+=('libboost-dev')
-  BUILD_DEPS+=('libjansson-dev')
-  BUILD_DEPS+=('libjansson4')
-  BUILD_DEPS+=('libjansson-doc')
-  BUILD_DEPS+=('libfmt8')
-  BUILD_DEPS+=('libfmt-dev')
-  BUILD_DEPS+=('libspdlog-dev')
-  BUILD_DEPS+=('libssl-dev')
-  BUILD_DEPS+=('libzmq3-dev')
-  BUILD_DEPS+=('net-tools')
-  BUILD_DEPS+=('pkgconf')
-  BUILD_DEPS+=('python3.11')
-  BUILD_DEPS+=('python3-pip')
-  BUILD_DEPS+=('tar')
-  BUILD_DEPS+=('unzip')
-  BUILD_DEPS+=('wget')
-  package_manager 'install'
+install_packages() {
+    apt-get update
+    BUILD_DEPS=(
+        build-essential
+        cmake
+        debhelper
+        diffutils
+        dpkg-dev
+        file
+        g++
+        git
+        libboost-dev
+        libfmt-dev
+        libjansson-dev
+        libspdlog-dev
+        libssl-dev
+        libzmq3-dev
+        net-tools
+        pkgconf
+        python3.11
+        python3-pip
+        tar
+        unzip
+        wget
+    )
+    package_manager
 }
 
 # Install from package mananger
 package_manager() {
-  OPERATION=$1
-  # Detect package manager tool
-  INSTALLER_BIN=""
+    # Optimizations for Docker build - see scripts/docker/*.DOCKERFILE for $DOCKER var invocation
+    if [[ $DOCKER ]]; then
+        BUILD_DEPS+=('--no-install-recommends')
+    fi
 
-  if [[ -f '/usr/bin/apt-get' ]]
-  then
-    echo "using apt-get"
-    INSTALLER_BIN='apt-get'
-  else
-    # Can't find an appropriate installer
-    echo "can't find a valid installer"
-    exit 1
-  fi
-
-  INSTALL_STRING="$INSTALLER_BIN $OPERATION -y ${BUILD_DEPS[*]}"
-  echo "executing command: $INSTALL_STRING"
-  eval "$INSTALL_STRING"
+    INSTALL_STRING="DEBIAN_FRONTEND=noninteractive apt-get install -y ${BUILD_DEPS[*]}"
+    echo "executing command: $INSTALL_STRING"
+    eval "$INSTALL_STRING"
 }
 
 # Install SVK APT Repo (Nexus)
 configure_nexus() {
-  if [[ -e /etc/os-release ]]; then
-    # shellcheck source=/dev/null
-    source /etc/os-release
-  else
-    ID=unknown
-  fi
-  NEXUS_BASE_URL=http://ssg-nexus.msl.lab:8081
-  NEXUS_COMMON_URL="$NEXUS_BASE_URL/repository/svk_common"
-  NEXUS_APT_URL="$NEXUS_BASE_URL/repository/svk_apt_$ID${VERSION_ID%%.*}"
-  NEXUS_PUBKEY_PATH=/usr/share/keyrings/ssg-nexus.pgp
+    NEXUS_BASE_URL=http://ssg-nexus.msl.lab:8081
+    NEXUS_COMMON_URL="$NEXUS_BASE_URL/repository/svk_common"
+    NEXUS_APT_URL="$NEXUS_BASE_URL/repository/svk_apt_$ID${VERSION_ID%%.*}"
+    NEXUS_PUBKEY_PATH=/usr/share/keyrings/ssg-nexus.pgp
 
-  wget --no-verbose --output-document $NEXUS_PUBKEY_PATH  $NEXUS_COMMON_URL/public.pgp
-  echo "deb [arch=$(dpkg --print-architecture) \
-  signed-by=$NEXUS_PUBKEY_PATH] \
-  $NEXUS_APT_URL $UBUNTU_CODENAME main" > /etc/apt/sources.list.d/ssg-nexus.list
-  BUILD_DEPS=()
-  package_manager 'update'
+    wget --no-verbose --output-document $NEXUS_PUBKEY_PATH  $NEXUS_COMMON_URL/public.pgp
+    echo "deb [arch=$(dpkg --print-architecture) \
+    signed-by=$NEXUS_PUBKEY_PATH] \
+    $NEXUS_APT_URL $UBUNTU_CODENAME main" > /etc/apt/sources.list.d/ssg-nexus.list
+    BUILD_DEPS=()
+    apt-get update
 
-  # Install svk framework and core packages
-  BUILD_DEPS=('svk-core')
-  BUILD_DEPS=('svk-core-dev')
-  BUILD_DEPS=('svk-mgmt-fw')
-  BUILD_DEPS=('svk-mgmt-fw-dev')
-  package_manager 'install'
+    # Install svk-core, svk-extras packages from Nexus
+    BUILD_DEPS=(
+        svk-core
+        svk-core-dev
+        svk-mgmt-fw
+        svk-mgmt-fw-dev
+    )
+    package_manager
 }
 
-# Install Go
-install_go() {
-  GO_PKG="go1.21.7.linux-amd64.tar.gz"
-
-  if [[ ! -f /usr/local/go/bin/go ]]; then
-    wget --no-verbose "https://go.dev/dl/$GO_PKG"
-    tar -zxvf $GO_PKG --directory=/usr/local
-  fi
-  rm -fv $GO_PKG
-}
-
-install_build_deps
+install_packages
 configure_nexus
-install_go
+
+# Post-install Docker optimizations
+if [[ $DOCKER ]]; then
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+    rm -rf /tmp/*
+    rm -rf /var/tmp/*
+    rm -rf /usr/share/doc
+    rm -rf /usr/share/man
+    rm -rf /usr/share/locale
+    rm -rf /usr/share/zoneinfo
+fi

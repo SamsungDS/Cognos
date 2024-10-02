@@ -1,45 +1,56 @@
-#!/usr/bin/env bash
+#! /usr/bin/env bash
+set -e
 
 # Build Dependencies
-install_build_deps() {
-    BUILD_DEPS=()
-    BUILD_DEPS+=('epel-release')
-    package_manager 'install'
+install_packages() {
+    BUILD_DEPS=(
+        dnf
+        epel-release
+    )
+    package_manager
 
-    BUILD_DEPS=()
-    BUILD_DEPS+=('boost-devel')
-    BUILD_DEPS+=('cmake')
-    BUILD_DEPS+=('file')
-    BUILD_DEPS+=('gcc-c++')
-    BUILD_DEPS+=('git')
-    BUILD_DEPS+=('python3.11')
-    BUILD_DEPS+=('python3-pip')
-    BUILD_DEPS+=('spdlog-devel')
-    BUILD_DEPS+=('tar')
-    BUILD_DEPS+=('unzip')
-    BUILD_DEPS+=('wget')
-    BUILD_DEPS+=('diffutils')
-    BUILD_DEPS+=('jansson')
-    BUILD_DEPS+=('rpm-build')
-    package_manager 'install'
+    # Enable CodeReady Builder (CRB) repository
+    BUILD_DEPS=("'dnf-command(config-manager)'")
+    package_manager
+    /usr/bin/crb enable
+
+    BUILD_DEPS=(
+        boost-devel
+        cmake
+        diffutils
+        file
+        gcc-c++
+        git
+        jansson-devel
+        python3.11
+        python3-pip
+        rpm-build
+        spdlog-devel
+        tar
+        unzip
+        wget
+    )
+    package_manager
 }
 
 # Install from package mananger
 package_manager() {
-    OPERATION=$1
-    # Detect package manager tool
+    # Optimizations for Docker build  - see scripts/docker/*.DOCKERFILE for $DOCKER var invocation
+    if [[ $DOCKER ]]; then
+        BUILD_DEPS+=(
+            --nodocs
+            --noplugins
+            --setopt=install_weak_deps=0
+        )
+    fi
+
+    # Detect package installer
     INSTALLER_BIN=""
 
-    if [[ -f '/usr/bin/dnf' ]]
-    then
+    if [[ -f '/usr/bin/dnf' ]]; then
         echo "using dnf"
         INSTALLER_BIN='dnf'
-    elif [[ -f '/usr/bin/yum' ]]
-    then
-        echo "using yum"
-        INSTALLER_BIN='yum'
-    elif [[ -f '/usr/bin/microdnf' ]]
-    then
+    elif [[ -f '/usr/bin/microdnf' ]]; then
         echo "using microdnf"
         INSTALLER_BIN='microdnf'
     else
@@ -48,48 +59,42 @@ package_manager() {
         exit 1
     fi
 
-    # Optimizations for Docker build
-    if [[ $DOCKER ]]
-    then
-        if [[ $INSTALLER_BIN != 'yum' ]]
-        then
-            BUILD_DEPS+=('--nodocs')
-        fi
-        BUILD_DEPS+=('--noplugins')
-        BUILD_DEPS+=('--setopt=install_weak_deps=0')
-    fi
-
-    INSTALL_STRING="$INSTALLER_BIN $OPERATION -y ${BUILD_DEPS[*]}"
+    INSTALL_STRING="$INSTALLER_BIN install -y ${BUILD_DEPS[*]}"
     echo "executing command: $INSTALL_STRING"
     eval "$INSTALL_STRING"
 }
 
-
+# Install SVK Yum Repo (Nexus)
 configure_nexus() {
     NEXUS_YUM_REPO_FILE="http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$ID${VERSION_ID%%.*}.repo"
     wget --no-verbose --output-document /etc/yum.repos.d/ssg-nexus.repo "$NEXUS_YUM_REPO_FILE"
 
-    # Install svk-core-devel, svk-extras packages from Nexus
-    BUILD_DEPS=()
-    BUILD_DEPS+=('svk-core-devel')
-    BUILD_DEPS+=('svk-mgmt-fw-devel')
-    package_manager 'install'
+    # Install svk-core, svk-extras packages from Nexus
+    BUILD_DEPS=(
+        svk-core
+        svk-core-devel
+        svk-mgmt-fw
+        svk-mgmt-fw-devel
+    )
+    package_manager
 }
 
 
 
-install_build_deps
+install_packages
 configure_nexus
 
 # Farther cleanup if Docker environment
-if [[ -f /.dockerenv ]]
-then
+if [[ $DOCKER ]]; then
     CLEANUP_STRING="$INSTALLER_BIN clean all"
     echo "executing command: $CLEANUP_STRING"
     eval "$CLEANUP_STRING"
     rm -rf /var/lib/dnf/history*
     rm -rf /var/lib/dnf/repos/*
     rm -rf /var/lib/rpm/__db*
-    rm -rf /usr/share/man /usr/share/doc /usr/share/licenses /tmp/*
+    rm -rf /usr/share/man
+    rm -rf /usr/share/doc
+    rm -rf /usr/share/licenses
+    rm -rf /tmp/*
     rm -f /var/log/dnf*
 fi
