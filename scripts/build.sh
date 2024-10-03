@@ -226,6 +226,7 @@ create_deb()
       mv -v "$DEBIAN_DIR/svk-cxl-dev.install" "$DEBIAN_DIR/$DEB_PACKAGE_NAME-dev.install"
     fi
 
+    sed -i -e "s@ZMQ_CONF_VAL@$PROJECT_ROOT@g" "$DEBIAN_DIR/rules"
     pushd "$BUILD_DIR"
       echo "Building SVK Management Framework Debian packages..."
       # Build Debian packages - generate binaries only, do not sign packages
@@ -336,6 +337,7 @@ if $WITH_COVERAGE;then
     echo "Running unit tests..."
 
     cp "$PROJECT_ROOT/tests/input.json" "$BUILD_DIR/tests"
+    cp "$PROJECT_ROOT/config/zmq_config.json" "$BUILD_DIR/tests/"
     mkdir -p "$REPORTS_DIR"
     ctest --output-junit "$REPORTS_DIR/gitlab_junit.xml"
     popd
@@ -352,6 +354,7 @@ if $WITH_COVERAGE;then
     --root "$PROJECT_ROOT" \
     --exclude "$BUILD_DIR" \
     --exclude "$PROJECT_ROOT/tests" \
+    --exclude-throw-branches \
       "$BUILD_DIR"
 
   #rm -rf "$PROJECT_ROOT/tests/usr/"
@@ -360,6 +363,7 @@ elif $RELEASE;then
   echo "Generating release tarball..."
   mkdir -p "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/lib"
   mkdir -p "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/lib64"
+  cp "$PROJECT_ROOT/config/zmq_config.json" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
   if $MOCK; then
     tar -zcf "$RELEASE_FILENAME_PREFIX-mock-$ID-$GIT_VERSION.tgz" "$CMAKE_INSTALL_PREFIX"
   else

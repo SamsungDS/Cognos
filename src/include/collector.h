@@ -7,7 +7,8 @@
 #include "metrics_collector.h"
 
 const std::string SVK_CXL_HOST_TAG = "svk_cxl_host_node";
-const std::string SVK_CXL_HOST_IP_CONFIG = "/etc/svk/mgmt_fw_config.json";
+const std::string SVK_CXL_HOST_IP_CONFIG = "/etc/svk/zmq_config.json";
+const std::string SVK_CXL_HOST_IP_CONFIG_TEST = "zmq_config.json";
 const std::string SVK_CXL_HOST_ZMQ_IP = "127.0.0.1";
 const std::string SVK_CXL_HOST_ZMQ_PORT = "5555";
 const uint8_t COLLECTION_FREQUENCY_S = 5;

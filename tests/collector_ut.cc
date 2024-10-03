@@ -20,8 +20,8 @@ TEST_F(CollectorTest, CheckBindAddr)
 {
 	// Test wrong conf filename
   	EXPECT_EQ(get_zmq_bindaddr("invalid_json"), "");
-  	EXPECT_NE(get_zmq_bindaddr(SVK_CXL_HOST_IP_CONFIG), "");
-	EXPECT_EQ(get_zmq_bindaddr(SVK_CXL_HOST_IP_CONFIG), "tcp://127.0.0.1:5555");
+  	EXPECT_NE(get_zmq_bindaddr("zmq_config.json"), "");
+	EXPECT_EQ(get_zmq_bindaddr("zmq_config.json"), "tcp://127.0.0.1:5555");
 }
 
 TEST_F(CollectorTest, CheckConstructor)
@@ -59,7 +59,7 @@ TEST_F(CollectorTest, CheckSvcRegistration)
        	EXPECT_EQ(register_svk_service(nullptr), -1);
 	namespace pt = boost::property_tree;
 	pt::ptree root;
-	pt::read_json(SVK_CXL_HOST_IP_CONFIG, root);
+	pt::read_json(SVK_CXL_HOST_IP_CONFIG_TEST, root);
 	pt::ptree host_ip_info = root.get_child(SVK_CXL_HOST_TAG);
 	host_ip_info.put("ip", "0.0.0.0");
 	EXPECT_EQ(register_svk_service(nullptr), -2);

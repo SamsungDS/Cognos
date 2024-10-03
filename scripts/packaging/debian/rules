@@ -4,6 +4,7 @@ SHORT_VERSION := $(shell $(CURDIR)/../scripts/get_version.sh -s)
 INSTALL_PATH = usr/local/svk/cxl
 FMAPI_INCLUDE = FMAPI_INCLUDE_VAL
 FMAPI_LIB = FMAPI_LIB_VAL
+ZMQ_CONF_PATH = ZMQ_CONF_VAL
 
 %:
 	dh $@
@@ -21,10 +22,15 @@ override_dh_usrlocal:
 	# Do nothing, because we are installing to /usr/local even though this is non-standard practice
 
 override_dh_install:
+	# Create ld.conf.so.d file for SVK Management Framework
+	mkdir --verbose --parent $(CURDIR)/etc/ld.so.conf.d
+	echo "/$(INSTALL_PATH)/lib" > $(CURDIR)/etc/ld.so.conf.d/svk-cxl-x86_64.conf
 	mkdir -p $(INSTALL_PATH)/share/cxl_memory_box/lib
 	mkdir -p $(INSTALL_PATH)/conf
 	cp -f $(FMAPI_LIB) $(INSTALL_PATH)/share/cxl_memory_box/lib
 	cp -f $(FMAPI_INCLUDE)/sample_json/input.json $(INSTALL_PATH)/conf
+	cp -f $(ZMQ_CONF_PATH)/config/zmq_config.json $(INSTALL_PATH)/conf
+
 	dh_install
 
 override_dh_strip:
@@ -33,7 +39,7 @@ override_dh_strip:
 
 override_dh_shlibdeps:
 	# Set link path for shlibdeps
-	dh_shlibdeps --dpkg-shlibdeps-params=--ignore-missing-info -l$(CURDIR)/$(INSTALL_PATH)/lib64 -l$(CURDIR)/$(INSTALL_PATH)/share/cxl_memory_box/lib
+	dh_shlibdeps -l$(CURDIR)/$(INSTALL_PATH)/lib64 -l$(CURDIR)/$(INSTALL_PATH)/share/cxl_memory_box/lib
 
 override_dh_installsystemd:
 

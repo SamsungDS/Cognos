@@ -8,5 +8,6 @@ echo "/usr/local/svk/mgmt-fw/lib64" | tee -a /etc/ld.so.conf.d/svk-cxl-x86_64.co
 mkdir -p /usr/local/lib/cxl_memory_box
 cp -rf /usr/local/svk/cxl/share/cxl_memory_box /usr/local/lib
 cp -rf /usr/local/svk/cxl/conf/input.json /usr/local/svk/mgmt-fw/
+cp -rf /usr/local/svk/cxl/conf/zmq_config.json /etc/svk/
 echo "/usr/local/lib/cxl_memory_box/lib" | tee -a /etc/ld.so.conf.d/svk-cxl-x86_64.conf
 ldconfig

@@ -131,7 +131,15 @@ int register_svk_service(ServiceManager *svc_mgr)
 	try
 	{
 		cout << "##HOST_METRIC Registering Collector service" << endl;
-		string collector_pub_bind_addr = get_zmq_bindaddr(SVK_CXL_HOST_IP_CONFIG);
+		string collector_pub_bind_addr;
+		if (TEST_BUILD)
+		{
+			collector_pub_bind_addr = get_zmq_bindaddr(SVK_CXL_HOST_IP_CONFIG_TEST);
+		}
+		else
+		{
+			collector_pub_bind_addr = get_zmq_bindaddr(SVK_CXL_HOST_IP_CONFIG);
+		}
 		c = new Collector(collector_pub_bind_addr, "Collector", _run);
 		if (svc_mgr == nullptr)
         	{
