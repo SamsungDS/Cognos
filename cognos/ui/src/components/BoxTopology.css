@@ -94,7 +94,7 @@
 .bg-primary{
     background-color: black !important;
     border: 2px solid #00C3B2;
-    margin-bottom: 0px;
+    margin-bottom: -7px;
     margin-left: -32px;
     margin-right: 36px;
 }
@@ -383,6 +383,9 @@
     }
     .badge {
         width: 100px;
+    }
+    .vertical-line {
+        margin-left: 20px;
     }
     .host-round-icon {
         width: 14px;

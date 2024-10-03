@@ -130,3 +130,16 @@ export const memboxTableHeader = [
   }
   export const DeviceList1 = largeDeviceSet;
   
+  export const defaultHostProperties = {
+    'msl-cti-emr1': { srcImage: Host1, color: '#0077C8' },
+    'loaner-emr02': { srcImage: Host2, color: '#AC55FF' },
+    'msl-stg-emr03': { srcImage: Host3, color: '#00B3E3' },
+    'Host 4': { srcImage: Host4, color: '#8093DC' },
+    'Host 1 LNK0': { srcImage: Host1, color: '#0077C8' },
+    'Host 2': { srcImage: Host2, color: '#AC55FF' },
+    'Host 3': { srcImage: Host3, color: '#00B3E3' },
+    'Host 5': { srcImage: Host5, color: '#FFB546' },
+    'Host 6': { srcImage: Host6, color: '#FF6700' },
+    'Host 7': { srcImage: Host7, color: '#00C3B2' },
+    'Host 8': { srcImage: Host8, color: '#52DD3A' }
+  };
