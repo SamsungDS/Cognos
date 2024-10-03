@@ -23,6 +23,8 @@ std::string DetachMemory(std::string input);
 		
 std::string SetupInfo(std::string input);
 
+std::string get_ip_address(const std::string &filename);
+
 extern "C"{
     int init_cxl_plugin();
 }

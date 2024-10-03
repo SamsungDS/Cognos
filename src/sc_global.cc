@@ -62,7 +62,7 @@ int sc_global::g_create_mbox(struct StaticPortInfo * port_info){
             struct StaticEndpointInfo * ep_info = &host_info->ep[i];
             h.set_target_ports(ep_info->port);
         }
-	mb->addHost(h);
+        mb->addHost(h);
     }
 
     sc_devices[mb_id+101]=mb;
@@ -95,7 +95,9 @@ sc_mbox* sc_global::mbox_find(uint64_t fm_id){
 */
 size_t sc_global::dev_attach(uint64_t d_id, uint64_t h_id, string mode, uint64_t fm_id, string &buffer){
 
-    int rc;	 
+    int rc;
+
+    cout << "d_id: " << d_id << "h_id: " << h_id << "fm_id: " << fm_id << endl; 
     sc_mbox *mb = mbox_find(fm_id);
     if (mb == NULL)
         rc = -ENOENT;

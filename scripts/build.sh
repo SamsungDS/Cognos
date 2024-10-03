@@ -228,6 +228,8 @@ create_deb()
     fi
 
     sed -i -e "s@ZMQ_CONF_VAL@$PROJECT_ROOT@g" "$DEBIAN_DIR/rules"
+    sed -i -e "s@CXL_CONF_VAL@$PROJECT_ROOT@g" "$DEBIAN_DIR/rules"
+
     pushd "$BUILD_DIR"
       echo "Building SVK Management Framework Debian packages..."
       # Build Debian packages - generate binaries only, do not sign packages
@@ -368,6 +370,7 @@ elif $RELEASE;then
   mkdir -p "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/lib"
   mkdir -p "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/lib64"
   cp "$PROJECT_ROOT/config/zmq_config.json" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
+  cp "$PROJECT_ROOT/cxl.conf" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
   if $MOCK; then
     tar -zcf "$RELEASE_FILENAME_PREFIX-mock-$ID-$GIT_VERSION.tgz" "$CMAKE_INSTALL_PREFIX"
   else

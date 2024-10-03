@@ -68,4 +68,4 @@ uint64_t sc_host::get_id() const { return h_id.get_sc_id(); }
 
 sc_id sc_host::d_get_id() const { return h_id; }
 
-list<uint32_t> sc_host::get_target_ports() const { return h_target_ports; }
+list<uint32_t> &sc_host::get_target_ports() { return h_target_ports; }

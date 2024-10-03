@@ -19,6 +19,42 @@ sc_global cxl_global;
 //function pointers for the commands
 typedef std::string (*CommandFunc)(const std::string&);
 
+
+/**
+ * @brief get the value of "ip_address" from the JSON file
+ * @param filename - switch config file having ip_address
+ * @return ip_address
+*/
+std::string get_ip_address(const std::string &filename) {
+    json_error_t error;
+    // Load the JSON file
+    json_t *root = json_load_file(filename.c_str(), 0, &error);
+    if (!root) {
+        std::cerr << "Error loading JSON file: " << error.text << std::endl;
+        return "";
+    }
+    // Get the "switch" object from the JSON
+    json_t *switch_obj = json_object_get(root, "switch");
+    if (!switch_obj || !json_is_object(switch_obj)) {
+        std::cerr << "Error: 'Switch' key not found or not an object" << std::endl;
+        json_decref(root);
+        return "";
+    }
+    // Get the "ip_address" value from the "switch" object
+    json_t *ip_address = json_object_get(switch_obj, "ip_address");
+    if (!ip_address || !json_is_string(ip_address)) {
+        std::cerr << "Error: 'ip_address' key not found or not a string" << std::endl;
+        json_decref(root);
+        return "";
+    }
+    // Extract the IP address value
+    std::string ip_value = json_string_value(ip_address);
+    // Clean up by decreasing the reference count
+    json_decref(root);
+    return ip_value;
+}
+    
+
 /** 
  * @brief tokenize input based on ';' and generate key values.
  * @param input - input string having Cluster ID, Command, Device ID etc.
@@ -148,6 +184,10 @@ std::string SetupInfo(const std::string& input) {
 */
 int init_cxl_plugin(){
     struct StaticPortInfo pinfo;
+    // Get the IP address 
+    std::string ip_address = get_ip_address("cxl.conf");
+    set_ip(ip_address.c_str());
+    init();
     mbox_get_static_config(&pinfo);
     return cxl_global.g_create_mbox(&pinfo);
 }    

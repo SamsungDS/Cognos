@@ -10,6 +10,7 @@ License:        Samsung Internal
 BuildRequires:  jansson
 Requires:       svk-core, svk-mgmt-fw, jansson
 
+
 %{!?installpath: %global installpath /usr/local/svk/cxl}
 %{!?installpath_mgmt: %global installpath_mgmt /usr/local/svk/mgmt-fw}
 %{!?installpath_mbox: %global installpath_mbox /usr/local/lib/cxl_memory_box}

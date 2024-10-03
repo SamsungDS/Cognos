@@ -40,7 +40,7 @@ class sc_host {
 
   uint64_t get_id() const;
 
-  std::list<uint32_t> get_target_ports() const;
+  std::list<uint32_t>& get_target_ports();
 
   /* get host id */
   sc_id d_get_id() const;
