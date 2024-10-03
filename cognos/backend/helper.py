@@ -30,7 +30,7 @@ def parse_svkcxlplugin_response(response):
 def gen_svkcxlplugin_request_params(feature_params):
     return {
         "cluster_id": "CL_ID_1",
-        "node_id": socket.gethostbyname(socket.gethostname()),
+        "node_id": "localhost",
         "feature_id": "3",
         "feature_params": feature_params
     }

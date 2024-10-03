@@ -4,7 +4,7 @@ After=influxdb.service network.target
 
 [Service]
 SyslogIdentifier=Cognos Subscriber
-WorkingDirectory=/usr/local/svk/svkapp/cognos
+WorkingDirectory=/usr/local/svk/svk-app/cognos
 EnvironmentFile=/usr/local/svk/svk-app/cognos.config
 KillMode=control-group
 Restart=on-failure
