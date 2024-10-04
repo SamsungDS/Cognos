@@ -11,7 +11,8 @@ import sys
 sys.path.append(os.path.abspath(  # noqa: E402
     os.path.join(os.path.dirname(__file__), '..')))  # noqa: E402
 from cognos.backend.helper import (
-    fetch_cognos_configs, parse_svkcxlplugin_response
+    fetch_cognos_configs, parse_svkcxlplugin_response,
+    gen_svkcxlplugin_request_params
 )
 
 from cognos.backend.mock_constants import MOCK_CXL_SETUP
@@ -270,9 +271,11 @@ class CognosInfluxDBClient():
                 'accept': 'application/json',
                 'Content-Type': 'application/json'
             }
+            body = gen_svkcxlplugin_request_params(
+                "cluster_id=CLUST1;command=SetupInfo")
             response = requests.post(
                 self.agent_endpoint,
-                json={"input": "cluster_id=CLUST1;command=SetupInfo"},
+                json=body,
                 headers=headers
             )
             payload = parse_svkcxlplugin_response(response)
@@ -296,9 +299,11 @@ class CognosInfluxDBClient():
                 'accept': 'application/json',
                 'Content-Type': 'application/json'
             }
+            body = gen_svkcxlplugin_request_params(
+                "cluster_id=CLUST1;command=SetupInfo")
             response = requests.post(
                 self.agent_endpoint,
-                json={"input": "cluster_id=CLUST1;command=SetupInfo"},
+                json=body,
                 headers=headers
             )
             payload = parse_svkcxlplugin_response(response)
@@ -317,9 +322,11 @@ class CognosInfluxDBClient():
                 'accept': 'application/json',
                 'Content-Type': 'application/json'
             }
+            body = gen_svkcxlplugin_request_params(
+                "cluster_id=CLUST1;command=SetupInfo")
             response = requests.post(
                 self.agent_endpoint,
-                json={"input": "cluster_id=CLUST1;command=SetupInfo"},
+                json=body,
                 headers=headers
             )
             payload = parse_svkcxlplugin_response(response)

@@ -193,6 +193,10 @@ def test_get_membox_bandwidth(cognos_influx_client, mocker):
         }
     }
     dummy_response = construct_dummy_response(dummy_data)
+    mocker.patch(
+        'cognos.backend.helper.gen_svkcxlplugin_request_params',
+        return_value={"cluster_id:1"}
+    )
     mocker.patch('requests.post', return_value=dummy_response)
     mocker.patch(
         'cognos.backend.helper.parse_svkcxlplugin_response',
@@ -274,6 +278,10 @@ def test_get_attached_devices_count(cognos_influx_client, mocker):
         }
     }
     dummy_response = construct_dummy_response(dummy_data)
+    mocker.patch(
+        'cognos.backend.helper.gen_svkcxlplugin_request_params',
+        return_value={"cluster_id:1"}
+    )
     mocker.patch('requests.post', return_value=dummy_response)
     mocker.patch(
         'cognos.backend.helper.parse_svkcxlplugin_response',
@@ -355,6 +363,10 @@ def test_get_membox_capacity(cognos_influx_client, mocker):
         }
     }
     dummy_response = construct_dummy_response(dummy_data)
+    mocker.patch(
+        'cognos.backend.helper.gen_svkcxlplugin_request_params',
+        return_value={"cluster_id:1"}
+    )
     mocker.patch('requests.post', return_value=dummy_response)
     mocker.patch(
         'cognos.backend.helper.parse_svkcxlplugin_response',

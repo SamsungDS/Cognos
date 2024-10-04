@@ -1,17 +1,21 @@
+import sys
+import os
 import argparse
 import asyncio
 import functools
 import ssl
 import json
-import os
-import sys
 import websockets
 import time
+paths = ['../..', '.', '..']
+for p in paths:
+    sys.path.append(os.path.abspath(  # noqa: E402
+        os.path.join(os.path.dirname(__file__), p)))  # noqa: E402
+from cognos.backend.cognos_influxdb_client import (  # noqa: E402
+    CognosInfluxDBClient
+)
+from cognos.backend.helper import fetch_cognos_configs  # noqa: E402
 
-sys.path.append(os.path.abspath(  # noqa: E402
-    os.path.join(os.path.dirname(__file__), '../..')))  # noqa: E402
-from cognos.backend.cognos_influxdb_client import CognosInfluxDBClient
-from cognos.backend.helper import fetch_cognos_configs
 
 ws = None
 global influx_client
@@ -20,13 +24,29 @@ global ssl_context
 ssl_context = None
 
 
+async def send_metrics_event(websocket, event_type, data):
+    try:
+        event = {
+            "type": event_type,
+            "data":  data
+        }
+        await websocket.send(json.dumps(event))
+    except Exception as e:
+        print(f"{event_type} failed: {str(e)}")
+        pass
+
+
 async def recv_host_selection_handler():
     try:
         while True:
             if ws:
                 try:
-                    message = json.loads(await asyncio.wait_for(ws.recv(), 3))
-                    if message:
+                    message = json.loads(await asyncio.wait_for(ws.recv(), 10))
+                    print(f"RECV'D MSG FROM UI: {message}")
+
+                    if not message or not message['host']:
+                        continue
+                    elif message:
                         influx_client.filter_hosts = True
                         selected_host = message['host']['value']
                         influx_client.selected_host = (
@@ -51,78 +71,59 @@ async def metrics_handler(websocket, stop_event=False):
     stop_event = asyncio.Event()
     while not stop_event.is_set():
         try:
+            print(f"CURR SELECTED HOST FROM UI: {influx_client.selected_host}")
             try:
                 await ws.send(json.dumps({"type": "ping"}))
             except Exception:
                 print("Ping failed")
                 raise websockets.ConnectionClosed(
-                    1000, 'Manually close the connection')
+                    3000, 'Manually close the connection')
+                break
 
-            event = {
-                "type": "dram_cxl_usage",
-                "data":  influx_client.get_recent_dram_cxl_usage_data()
-            }
-            try:
-                await websocket.send(json.dumps(event))
-            except Exception:
-                pass
+            await send_metrics_event(
+                websocket,
+                "dram_cxl_usage",
+                influx_client.get_recent_dram_cxl_usage_data()
+            )
 
-            event = {
-                "type": "cpu_mem_usage",
-                "data": influx_client.get_cpu_mem_usage()
-            }
-            try:
-                await websocket.send(json.dumps(event))
-            except Exception:
-                pass
+            await send_metrics_event(
+                websocket,
+                "cpu_mem_usage",
+                influx_client.get_cpu_mem_usage()
+            )
 
-            event = {
-                "type": "memserver_capacity",
-                "data": influx_client.get_memserver_capacity()
-            }
-            try:
-                await websocket.send(json.dumps(event))
-            except Exception:
-                pass
+            await send_metrics_event(
+                websocket,
+                "memserver_capacity",
+                influx_client.get_memserver_capacity()
+            )
 
-            event = {
-                "type": "cmmb_usage",
-                "data": influx_client.get_membox_usage()
-            }
-            try:
-                await websocket.send(json.dumps(event))
-            except Exception:
-                pass
+            await send_metrics_event(
+                websocket,
+                "cmmb_usage",
+                influx_client.get_membox_usage()
+            )
 
-            event = {
-                "type": "cmmb_capacity",
-                "data": influx_client.get_membox_capacity()
-            }
-            try:
-                await websocket.send(json.dumps(event))
-            except Exception:
-                pass
+            await send_metrics_event(
+                websocket,
+                "cmmb_capacity",
+                influx_client.get_membox_capacity()
+            )
 
-            event = {
-                "type": "cmmb_bandwidth",
-                "data": influx_client.get_membox_bandwidth()
-            }
-            try:
-                await websocket.send(json.dumps(event))
-            except Exception:
-                pass
+            await send_metrics_event(
+                websocket,
+                "cmmb_bandwidth",
+                influx_client.get_membox_bandwidth()
+            )
 
-            event = {
-                "type": "devices_count",
-                "data": influx_client.get_attached_devices_count()
-            }
-            try:
-                await websocket.send(json.dumps(event))
-            except Exception:
-                pass
+            await send_metrics_event(
+                websocket,
+                "devices_count",
+                influx_client.get_attached_devices_count()
+            )
 
-            await asyncio.sleep(5)
-            time.sleep(5)
+            await asyncio.sleep(1)
+            time.sleep(1)
         except StopAsyncIteration:
             stop_event.set()
         except websockets.ConnectionClosed:

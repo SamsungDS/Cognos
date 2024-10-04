@@ -13,7 +13,8 @@ from cognos.backend.helper import (
     get_hostname_from_id, get_devname_from_id, get_hostid_from_name,
     get_devid_from_name, get_deviceid_and_devicename_from_port,
     get_host_attached_devices, clear_all_tables, connect_to_mysql,
-    get_hosts_from_db, fetch_cognos_configs, fetch_api_version
+    get_hosts_from_db, fetch_cognos_configs, fetch_api_version,
+    gen_svkcxlplugin_request_params, get_cognos_influx_functions
 )
 from requests.models import Response
 
@@ -235,3 +236,13 @@ def test_get_host_attached_devices(mock_db):
 
 def test_clear_all_tables(mock_db):
     clear_all_tables()
+
+
+def test_gen_svkcxlplugin_request_params():
+    feature_params = "cluster_id=CLUST_ID_1;command=ListHosts;"
+    gen_svkcxlplugin_request_params(feature_params)
+
+
+def test_get_cognos_influx_functions():
+    cognos_influx_fns = get_cognos_influx_functions()
+    assert cognos_influx_fns is not None

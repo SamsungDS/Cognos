@@ -13,5 +13,6 @@
         "Host 6", 
         "Host 7", 
         "Host 8"
-      ]
+      ],
+    "ssl": false
 }

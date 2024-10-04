@@ -1,14 +1,23 @@
+from unittest import mock
+from influxdb_client import InfluxDBClient
 import asyncio
 import os
+import sys
 import pytest
 import pytest_asyncio
-import sys
-from unittest import mock
-
-sys.path.append(os.path.abspath(  # noqa: E402
-    os.path.join(os.path.dirname(__file__), '../..')))  # noqa: E402
-from backend.cognos_influxdb_client import CognosInfluxDBClient
-from exporter import recv_host_selection_handler, metrics_handler
+import websockets
+paths = ['../..', '.', '../../..', '..']
+for p in paths:
+    sys.path.append(os.path.abspath(  # noqa: E402
+        os.path.join(os.path.dirname(__file__), p)))  # noqa: E402
+from cognos.backend.cognos_influxdb_client import (  # noqa: E402
+    CognosInfluxDBClient
+)
+from cognos.exporter.exporter import (
+    recv_host_selection_handler, metrics_handler,  # noqa: E402
+    send_metrics_event
+)
+from cognos.backend.helper import get_cognos_influx_functions  # noqa: E402
 
 pytest_plugins = ('pytest_asyncio',)
 
@@ -39,7 +48,14 @@ async def test_mock_websocket_recv(mock_websocket):
 
 
 @pytest.mark.asyncio
-async def test_recv_host_selection_handler(mocker):
+async def test_send_metrics_event(mock_websocket):
+    mock_event_type = "dram_cxl_usage"
+    mock_data = [{"dram_usage": 22, "cxl_usage": 54}]
+    send_metrics_event(mock_websocket, mock_event_type, mock_data)
+
+
+@pytest.mark.asyncio
+async def test_recv_host_selection_handler(mocker, mock_websocket):
     mocker.patch(
         'json.loads',
         return_value=(
@@ -51,6 +67,55 @@ async def test_recv_host_selection_handler(mocker):
             }
         )
     )
+    mocker.patch('cognos.exporter.exporter.ws', mock_websocket)
+    try:
+        done, pending = await asyncio.wait(
+            [recv_host_selection_handler()], timeout=3)
+        for task in pending:
+            task.cancel()
+    except Exception as error:
+        print(f"ERROR: {str(error)}")
+
+
+@pytest.mark.asyncio
+async def test_recv_host_timeout_error(mocker, mock_websocket):
+    mocker.patch(
+        'json.loads',
+        return_value=(
+            {
+                "host": {
+                    "value": "samsung.host1.com",
+                    "label": "samsung.host1.com"
+                }
+            }
+        ),
+        side_effect=asyncio.TimeoutError("Mocked timeout..")
+    )
+    mocker.patch('cognos.exporter.exporter.ws', mock_websocket)
+    try:
+        done, pending = await asyncio.wait(
+            [recv_host_selection_handler()], timeout=3)
+        for task in pending:
+            task.cancel()
+    except Exception as error:
+        print(f"ERROR: {str(error)}")
+
+
+@pytest.mark.asyncio
+async def test_recv_host_general_exception(mocker, mock_websocket):
+    mocker.patch(
+        'json.loads',
+        return_value=(
+            {
+                "host": {
+                    "value": "samsung.host1.com",
+                    "label": "samsung.host1.com"
+                }
+            }
+        ),
+        side_effect=Exception("Mocked exception..")
+    )
+    mocker.patch('cognos.exporter.exporter.ws', mock_websocket)
     try:
         done, pending = await asyncio.wait(
             [recv_host_selection_handler()], timeout=3)
@@ -62,18 +127,14 @@ async def test_recv_host_selection_handler(mocker):
 
 @pytest.mark.asyncio
 async def test_metrics_handler(mock_websocket, mocker):
-    influx_functions_to_mock = [
-        'get_recent_dram_cxl_usage_data',
-        'get_cpu_mem_usage',
-        'get_memserver_capacity',
-        'get_membox_usage',
-        'get_membox_capacity',
-        'get_membox_bandwidth',
-        'get_attached_devices_count'
-    ]
+    mocker.patch('influxdb_client.InfluxDBClient')
+    influx_functions_to_mock = get_cognos_influx_functions()
+    cognos_influx_db_lib_path = (
+        'cognos.backend.cognos_influxdb_client.CognosInfluxDBClient'
+    )
     for influx_fn in influx_functions_to_mock:
         mocker.patch(
-            f'backend.cognos_influxdb_client.CognosInfluxDBClient.{influx_fn}',
+            f'{cognos_influx_db_lib_path}.{influx_fn}',
             return_value=(
                 {
                     "type": "test_event",
@@ -90,6 +151,88 @@ async def test_metrics_handler(mock_websocket, mocker):
     influx_client.get_membox_capacity()
     influx_client.get_membox_bandwidth()
     influx_client.get_attached_devices_count()
+
+    try:
+        stop_event = asyncio.Event()
+        done, pending = (
+            await asyncio.wait(
+                [metrics_handler(mock_websocket, stop_event)],
+                timeout=3
+            )
+        )
+        for task in pending:
+            task.cancel()
+    except Exception as error:
+        print(f"ERROR: {str(error)}")
+
+
+@pytest.mark.asyncio
+async def test_metrics_handler_with_failing_websocket(mocker):
+    mocker.patch('influxdb_client.InfluxDBClient')
+    influx_functions_to_mock = get_cognos_influx_functions()
+    cognos_influx_db_lib_path = (
+        'cognos.backend.cognos_influxdb_client.CognosInfluxDBClient'
+    )
+    for influx_fn in influx_functions_to_mock:
+        mocker.patch(
+            f'{cognos_influx_db_lib_path}.{influx_fn}',
+            return_value=(
+                {
+                    "type": "test_event",
+                    "data": [{"dram_usage": 22, "cxl_usage": 54}]
+                }
+            )
+        )
+
+    influx_client = CognosInfluxDBClient()
+    influx_client.get_recent_dram_cxl_usage_data()
+    influx_client.get_cpu_mem_usage()
+    influx_client.get_memserver_capacity()
+    influx_client.get_membox_usage()
+    influx_client.get_membox_capacity()
+    influx_client.get_membox_bandwidth()
+    influx_client.get_attached_devices_count()
+
+    bad_ws = mocker.patch('websockets.connect', new_callable=mock.AsyncMock)
+
+    bad_ws.return_value.__aenter__.return_value.send = mock.AsyncMock(
+        side_effect=Exception("send failed")
+    )
+
+    try:
+        stop_event = asyncio.Event()
+        done, pending = (
+            await asyncio.wait(
+                [metrics_handler(bad_ws, stop_event)],
+                timeout=3
+            )
+        )
+        for task in pending:
+            task.cancel()
+    except Exception as error:
+        print(f"ERROR: {str(error)}")
+
+
+@pytest.mark.asyncio
+async def test_failed_influx_queries(mocker, mock_websocket):
+    mocker.patch('influxdb_client.InfluxDBClient')
+    influx_functions_to_mock = get_cognos_influx_functions()
+    cognos_influx_db_lib_path = (
+        'cognos.backend.cognos_influxdb_client.CognosInfluxDBClient'
+    )
+    for influx_fn in influx_functions_to_mock:
+        mocker.patch(
+            f'{cognos_influx_db_lib_path}.{influx_fn}',
+            return_value=(
+                {
+                    "type": "test_event",
+                    "data": [{"dram_usage": 22, "cxl_usage": 54}]
+                }
+            ),
+            side_effect=Exception("Mocked Exception..")
+        )
+
+    influx_client = CognosInfluxDBClient()
 
     try:
         stop_event = asyncio.Event()

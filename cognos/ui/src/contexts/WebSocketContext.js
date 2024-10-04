@@ -13,9 +13,14 @@ export const WebSocketProvider = ({ children }) => {
   const [devicesCountData, setDevicesCountData] = useState([]);
   const ws = useRef(null);
 
-function connect() {
+  function connect() {
     console.log("TRYING TO CONNECT TO: ", Configs.exporter_endpoint);
-    ws.current = new WebSocket(`wss://${Configs.exporter_endpoint}`);
+
+    if (Configs.ssl) {
+        ws.current = new WebSocket(`wss://${Configs.exporter_endpoint}`);
+    } else {
+        ws.current = new WebSocket(`ws://${Configs.exporter_endpoint}`);
+    }
     ws.current.onopen = () => {
       console.log("UI opened connection to websocket");
     };
@@ -60,15 +65,14 @@ function connect() {
         ws.current = null;
       }
     };
-
   }
 
-function check() {
+  function check() {
     if(!ws) {
       connect();
     } else if (!ws.current) {
         connect();
-    } else if (ws.readyState === 3) {
+    } else if (ws.current.readyState === 3) {
         connect();
     }
   }
@@ -80,7 +84,6 @@ function check() {
   }, []);
 
   const sendMessage = (message) => {
-    console.log("UI IS ATTEMPTING TO SEND MSG TO EXPORTER: ", message);
     if (ws.current && ws.current.readyState === WebSocket.OPEN) {
       ws.current.send(JSON.stringify(message));
     } else {

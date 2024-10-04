@@ -60,6 +60,18 @@ def fetch_api_version(parent_dir):
         )
 
 
+def get_cognos_influx_functions():
+    return [
+        'get_recent_dram_cxl_usage_data',
+        'get_cpu_mem_usage',
+        'get_memserver_capacity',
+        'get_membox_usage',
+        'get_membox_capacity',
+        'get_membox_bandwidth',
+        'get_attached_devices_count'
+    ]
+
+
 def get_devport_name_map(devices_payload):
     dev_port_name_map = defaultdict()
     for device in devices_payload:

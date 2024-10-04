@@ -1,4 +1,4 @@
-import React, { useContext, useState } from 'react'
+import React, { useContext, useState, useEffect, useRef } from 'react'
 import { Container, Row, Col } from 'react-bootstrap';
 import  Chart from "react-google-charts";
 import ProgressBar from 'react-bootstrap/ProgressBar';
@@ -6,6 +6,52 @@ import DropDown from '../components/DropDown';
 import './metrics.css';
 import WebSocketContext from '../contexts/WebSocketContext';
 import * as constants from '../../src/constant';
+
+
+export const handleSelectChange = async (
+    selectedOption, setSelectedOption, setSelectorOptions,
+    sendMessage, lastSelectedHost, apiEndpoint) => {
+    setSelectedOption(selectedOption);
+
+    if (selectedOption) {
+      console.log("Host selected: ", selectedOption);
+      lastSelectedHost.current = selectedOption
+    }
+
+    // get available hosts
+    try {
+        const response = await fetch(`${apiEndpoint}/hosts`, {
+          mode: 'cors',
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'accept': 'application/json',
+            'Access-Control-Allow-Origin':'*'
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setSelectorOptions(data);
+        }
+    } catch (error) {console.log(error)};
+
+
+    let payload = {}
+    payload.host = selectedOption;
+    sendMessage(payload);
+};
+
+
+export function checkSelectedHost(lastSelectedHost, sendMessage) {
+    if (lastSelectedHost.current) {
+      let payload = {}
+      payload.host = lastSelectedHost.current;
+      sendMessage(payload);
+    } else {
+        console.log("last selected host is None");
+    }
+}
 
 
 const Metrics = () => {
@@ -16,6 +62,7 @@ const Metrics = () => {
         { value: 'Host 2', label: 'Host 2' }]
         );
     const [selectedOption, setSelectedOption] = useState(null);
+    const lastSelectedHost = useRef(null);
     const { memCapacityData, dramCxlMemUsageData, memoryCpuData, sendMessage } = useContext(WebSocketContext)
 
     const memCapacityOptions = {
@@ -83,57 +130,36 @@ const Metrics = () => {
         animation: {startup: true},
     };
 
-    const handleSelectChange = async (selectedOption) => {
-        setSelectedOption(selectedOption);
+    useEffect(() => {
+        setInterval(() => {checkSelectedHost(lastSelectedHost, sendMessage)},
+            2000
+        );
+    }, []);
 
-        // get available hosts
-        try {
-            const response = await fetch(`${apiEndpoint}/hosts`, {
-              mode: 'cors',
-              method: 'GET',
-              headers: {
-                'Content-Type': 'application/json',
-                'accept': 'application/json',
-                'Access-Control-Allow-Origin':'*'
-              },
-            });
-      
-            if (response.ok) {
-              const data = await response.json();
-              setSelectorOptions(data);
-            }
-        } catch (error) {console.log(error)};
-
-
-        let payload = {}
-        payload.host = selectedOption;
-        sendMessage(payload);
-      };
-    
-    return (           
+    return (
         <div className='Content content_root' id='main-container-id'>
             <Container fluid>
                 <Row>
                     <Col>
                         <div className='device_card memory-box-overview-height' data-testid='memory-box-overview'  id='memory-box-overview-id'>
                             <h4 className='metric-title'>APPLICATION SERVER METRICS</h4>
-                        </div> 
+                        </div>
                     </Col>
                 </Row>
                 <Row>
-                    <Col sm={6} md={6} lg={6}>                                          
+                    <Col sm={6} md={6} lg={6}>
                         <div className='device_card first-row' style={{ padding:20, paddingTop:50}} id='app-server-card-id'>
                             <Row>
                                 <Col sm={7} md={7} lg={7}><div className='fs-24 app-server-title'>Select Server</div> </Col>
                                 <Col sm={5} md={5} lg={5}>
-                                    <div className='dropdownn-app-server'> 
-                                        <DropDown 
-                                            options={selectorOptions} 
-                                            onSelectChange={(selectedOption) => handleSelectChange(selectedOption)}/>
+                                    <div className='dropdownn-app-server'>
+                                        <DropDown
+                                            options={selectorOptions}
+                                            onSelectChange={(selectedOption) => handleSelectChange(selectedOption, setSelectedOption, setSelectorOptions, sendMessage, lastSelectedHost, apiEndpoint)}/>
                                     </div>
                                 </Col>
                             </Row>
-                        </div>                                    
+                        </div>
                     </Col>
                     <Col sm={6} md={6} lg={6}>
                         <Row>
@@ -146,7 +172,7 @@ const Metrics = () => {
                                             </Col>
                                             <Col sm={8} md={8} lg={8} xl={8}>
                                                 <div className='bandwidth-legend'>
-                                                    <span  className='fs-22'>CMM-D</span>                                    
+                                                    <span  className='fs-22'>CMM-D</span>
                                                 </div>
                                                 <div>
                                                     <div className='progres-bar-label-metrics' style={{color: 'white'}}>
@@ -182,7 +208,7 @@ const Metrics = () => {
                     </Col>
                     <Col sm={5} md={12} lg={12} xl={5}>
                         <Row>
-                            <Col>                            
+                            <Col>
                                 <div className='device_card second-col-first-col' id='mem-capacity-data-card-id' data-testid='mem-capacity-data-card-id'>
                                     <Row>
                                         <Col sm={5} md={5} lg={5} xl={5}>
@@ -221,11 +247,12 @@ const Metrics = () => {
                                 </div>
                             </Col>
                         </Row>
-                    </Col>                    
+                    </Col>
                 </Row>
             </Container>
         </div>
   )
 }
 
-export default Metrics
+
+export default Metrics;
