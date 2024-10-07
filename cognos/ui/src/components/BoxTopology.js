@@ -6,12 +6,13 @@ import {
   Configs,
   ArrowLeft,
   ArrowRight,
-  cxlDevIconInActive,
   DeviceList,
   DeviceList1,
-  getImageByColor,
   defaultHostProperties,
+  mappedHostList,
+  mappedDeviceList
 } from "../constant";
+import { ReactComponent as DeviceIcon } from "../assets/icons/deviceSVGIcon.svg";
 
 const BoxTopology = () => {
   const [hostToDeviceMapping, setHostToDeviceMapping] = useState([]);
@@ -45,10 +46,9 @@ const BoxTopology = () => {
       // Function to map hosts dynamically from a list
       const mapHosts = (hostNames) => {
         return hostNames.map((hostName) => {
-          const { srcImage, color } = defaultHostProperties[hostName] || {};
+          const { color } = defaultHostProperties[hostName] || {};
           return {
             host: hostName,
-            srcImage,
             color,
           };
         });
@@ -64,69 +64,63 @@ const BoxTopology = () => {
     []
   );
 
-
-
-  const mappedHostList = (hostList, hostToDeviceMapping) => {
-    return hostList.map((item) => {
-      const isActive = hostToDeviceMapping.some(
-        (hostItem) => hostItem.host === item.host
-      );
-      return {
-        ...item,
-        color: isActive ? item.color : "#4F4F4F",
-        isActive,
-      };
-    });
-  };
-
- 
-  const mappedDeviceList = (deviceList, hostList, hostToDeviceMapping) =>
-    deviceList.map((device) => {
-      const associatedHost = hostToDeviceMapping.find((host) =>
-        host.devices.includes(device.device)
-      );
-      const hostDetails =
-        hostList.find((h) => h.host === associatedHost?.host) || null;
-
-      return {
-        ...device,
-        color: hostDetails?.color || "#4F4F4F",
-        hostDetails,
-      };
-    });
-
   const cmmList = [
     {
       title: "CMM-B1",
       hostComponents: mappedHostList(hostList, hostToDeviceMapping),
-      deviceComponents: mappedDeviceList(DeviceList, hostList, hostToDeviceMapping),
+      deviceComponents: mappedDeviceList(
+        DeviceList,
+        mappedHostList(hostList, hostToDeviceMapping),
+        hostToDeviceMapping
+      ),
     },
     {
       title: "CMM-B2",
       hostComponents: mappedHostList(hostList1, hostToDeviceMappingB2),
-      deviceComponents: mappedDeviceList(DeviceList1, hostList1, hostToDeviceMappingB2),
+      deviceComponents: mappedDeviceList(
+        DeviceList1,
+        hostList1,
+        hostToDeviceMappingB2
+      ),
     },
     {
       title: "CMM-B3",
       hostComponents: mappedHostList(hostList, hostToDeviceMapping),
-      deviceComponents: mappedDeviceList(DeviceList, hostList, hostToDeviceMapping),
+      deviceComponents: mappedDeviceList(
+        DeviceList,
+        hostList,
+        hostToDeviceMapping
+      ),
     },
     {
       title: "CMM-B4",
       hostComponents: mappedHostList(hostList, hostToDeviceMapping),
-      deviceComponents: mappedDeviceList(DeviceList, hostList, hostToDeviceMapping),
+      deviceComponents: mappedDeviceList(
+        DeviceList,
+        hostList,
+        hostToDeviceMapping
+      ),
     },
     {
       title: "CMM-B5",
       hostComponents: mappedHostList(hostList, hostToDeviceMapping),
-      deviceComponents: mappedDeviceList(DeviceList, hostList, hostToDeviceMapping),
+      deviceComponents: mappedDeviceList(
+        DeviceList,
+        hostList,
+        hostToDeviceMapping
+      ),
     },
     {
       title: "CMM-B6",
       hostComponents: mappedHostList(hostList, hostToDeviceMapping),
-      deviceComponents: mappedDeviceList(DeviceList, hostList, hostToDeviceMapping),
+      deviceComponents: mappedDeviceList(
+        DeviceList,
+        hostList,
+        hostToDeviceMapping
+      ),
     },
   ];
+
   const renderHostComponents = (hosts) => {
     return hosts.map((host, index) => {
       const lineColor = host.color;
@@ -148,7 +142,17 @@ const BoxTopology = () => {
       return (
         <div key={host.host}>
           <div>
-            <Badge className="badge" style={{...dynamicStyle, maxWidth: '100px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}} title={Metadata}>
+            <Badge
+              className="badge"
+              style={{
+                ...dynamicStyle,
+                maxWidth: "100px",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+              title={Metadata}
+            >
               <span
                 className="vertical-badge-line"
                 style={{ color: lineColor, fontWeight: 900 }}
@@ -174,10 +178,7 @@ const BoxTopology = () => {
   const renderDeviceComponents = (devices) => {
     return devices.map((device) => {
       const part = device.device.split("-")[0];
-      const fontColor = device.color;
-      const srcImage = device.hostDetails
-        ? getImageByColor(fontColor)
-        : cxlDevIconInActive;
+      const deviceColor = device.color;
       const D1Metadata = `name: ${part}
           size: 256GB
           port: 7
@@ -200,16 +201,7 @@ const BoxTopology = () => {
           key={device.device}
           style={cardStyle}
         >
-          <img
-            src={srcImage}
-            alt="cxlDevIconActive"
-            className="device-img"
-            style={{
-              objectFit: "contain",
-              marginTop: 0,
-              fontFamily: "Samsung",
-            }}
-          />
+          <DeviceIcon style={{ color: deviceColor }} className="device-img" />
           <p className="fs-22 device-Id">{`${part}`}</p>
         </div>
       );
@@ -229,7 +221,11 @@ const BoxTopology = () => {
       <Row>
         <Col>
           <div className="cmm-navigation">
-            <button className="arrow-button left-arrow" onClick={handlePrev}  data-testid="prev-button" >
+            <button
+              className="arrow-button left-arrow"
+              onClick={handlePrev}
+              data-testid="prev-button"
+            >
               <img src={ArrowLeft} alt="Previous" />
             </button>
             {cmmList.map((cmm, index) => (
@@ -242,7 +238,11 @@ const BoxTopology = () => {
                 {cmm.title}
               </span>
             ))}
-            <button className="arrow-button right-arrow"  data-testid="next-button"  onClick={handleNext}>
+            <button
+              className="arrow-button right-arrow"
+              data-testid="next-button"
+              onClick={handleNext}
+            >
               <img src={ArrowRight} alt="Next" />
             </button>
           </div>

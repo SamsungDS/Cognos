@@ -3,7 +3,7 @@
     "data_endpoint": "http://127.0.0.1:4000",
     "api_endpoint": "http://127.0.0.1:4000//api/v2.0.0",
     "exporter_endpoint": "http://127.0.0.1:4001",
-    "HostList": ["msl-cti-emr1", "loaner-emr02", "msl-stg-emr03", "Host 4"],
+    "HostList": ["Host 1", "Host 2", "Host 3", "Host 4", "Host 5", "Host 6", "Host 7", "Host 8"],
     "HostList1": [
         "Host 1 LNK0", 
         "Host 2", 
