@@ -84,8 +84,6 @@ configure_nexus() {
     package_manager
 }
 
-
-
 install_packages
 configure_nexus
 
