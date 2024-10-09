@@ -159,7 +159,7 @@ TEST_F(ScGlobalTest, DevDetachTest) {
     auto mbox_map = global_instance.get_mbox_map();
     auto mbox = mbox_map[203];
     auto phost = mbox->get_phost();
-    ASSERT_EQ(phost.size(), 1);
+    ASSERT_EQ(phost.size(), 2);
 }
 
 

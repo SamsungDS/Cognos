@@ -15,7 +15,7 @@ using namespace std;
 
 // Global instance
 sc_global cxl_global;
-
+const std::string json_filepath = "cxl.conf";
 
 using ::testing::_;
 using ::testing::Return;
@@ -205,3 +205,53 @@ TEST_F(ServicerTest, ExecuteSyncInvalidCommandTest) {
     free(input.input_buffer);
 }
 
+
+TEST_F(ServicerTest, GetIPAddressSuccess) {
+    std::string ip = get_ip_address(json_filepath);
+    EXPECT_EQ(ip, "105.140.86.13");  
+}
+
+TEST_F(ServicerTest, MissingSwitchObject) {
+    // Create a mock JSON file with no "switch" object
+    std::string json_content = R"(
+    {
+        "router": {
+            "ip_address": "192.168.1.100"
+        }
+    })";
+
+    // Simulate file creation and reading (or mock the file reading)
+    std::ofstream out("test_no_switch.json");
+    out << json_content;
+    out.close();
+    std::string ip = get_ip_address("test_no_switch.json");
+    // Expect an empty string because "switch" is missing
+    EXPECT_EQ(ip, "");
+    // Clean up the test file
+    std::remove("test_no_switch.json");
+}
+
+TEST_F(ServicerTest, MissingIPAddressField) {
+    // Create a mock JSON file with no "ip_address" field
+    std::string json_content = R"(
+    {
+        "switch": {}
+    })";
+    // Simulate file creation and reading (or mock the file reading)
+    std::ofstream out("test_no_ip_address.json");
+    out << json_content;
+    out.close();
+    std::string ip = get_ip_address("test_no_ip_address.json");
+    // Expect an empty string because "ip_address" is missing
+    EXPECT_EQ(ip, "");
+    // Clean up the test file
+    std::remove("test_no_ip_address.json");
+}
+
+TEST_F(ServicerTest, FailToLoadJsonFile) {
+    // Simulate a missing or malformed JSON file
+    std::string invalid_filepath = "non_existent.json";
+    std::string ip = get_ip_address(invalid_filepath);
+    // Expect an empty string since the file cannot be loaded
+    EXPECT_EQ(ip, "");
+}

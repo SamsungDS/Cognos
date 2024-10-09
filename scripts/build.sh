@@ -340,6 +340,7 @@ if $WITH_COVERAGE;then
     echo "Running unit tests..."
 
     cp "$PROJECT_ROOT/tests/input.json" "$BUILD_DIR/tests"
+    cp "$PROJECT_ROOT/config/cxl.conf" "$BUILD_DIR/tests"
     cp "$PROJECT_ROOT/config/zmq_config.json" "$BUILD_DIR/tests/"
     mkdir -p "$REPORTS_DIR"
     ctest --output-junit "$REPORTS_DIR/gitlab_junit.xml"
@@ -350,7 +351,7 @@ if $WITH_COVERAGE;then
 
   echo "Generating coverage reports"
   # Using path to framework object files
-  gcovr \
+  /usr/local/bin/gcovr \
     --xml "$REPORTS_DIR/gitlab_coverage.xml" \
     --sonarqube "$REPORTS_DIR/sonar_coverage.xml" \
     --txt \
@@ -367,7 +368,7 @@ elif $RELEASE;then
   mkdir -p "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/lib"
   mkdir -p "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/lib64"
   cp "$PROJECT_ROOT/config/zmq_config.json" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
-  cp "$PROJECT_ROOT/cxl.conf" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
+  cp "$PROJECT_ROOT/config/cxl.conf" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
   if $MOCK; then
     tar -zcf "$RELEASE_FILENAME_PREFIX-mock-$ID-$GIT_VERSION.tgz" "$CMAKE_INSTALL_PREFIX"
   else
