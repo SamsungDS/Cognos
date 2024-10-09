@@ -91,7 +91,8 @@ list<sc_sld> sc_mbox::mbox_list_connected_slds() {
 	      []( const pair<sc_id, sc_sld> &pair){
                   return pair.second; 
               });
-    return values;};
+    return values;
+}
 
 /** 
  * @details iterate over mbox_connected_mlds to list out the persisted mld objects. 
@@ -102,7 +103,8 @@ list<sc_mld> sc_mbox::mbox_list_connected_mlds() {
 	      []( const pair<sc_id, sc_mld> &pair){
                   return pair.second; 
               });
-    return values;};
+    return values;
+}
 
 /** 
  * @details iterate over mbox_connected_mlds to list out the persisted mld objects. 
@@ -113,21 +115,22 @@ list<sc_host> sc_mbox::mbox_list_connected_hosts() {
 	      []( const pair<sc_id, sc_host> &pair){
                   return pair.second; 
               });
-    return values;};
-
-
+    return values;
+}
 
 /** create sld */
 sc_sld sc_mbox::mbox_create_sld(uint64_t capacity) {
     sc_sld sld;
     sld.d_set_capacity(capacity);
-    return sld;}; 
+    return sld;
+}
 
 /** create mld */
 sc_mld sc_mbox::mbox_create_mld(uint64_t capacity) {
     sc_mld mld;
     mld.d_set_capacity(capacity);
-    return mld;};
+    return mld;
+}
 
 
 /* override d_get_id */
@@ -161,11 +164,10 @@ void sc_mbox::addHost(sc_host& host) {
     
     mbox_connected_hosts[host.d_get_id()]=host;
     h_ids[host.d_get_id().get_sc_id()]=host.d_get_id();
-    //for(auto& p:host.get_target_ports()){
-        //phost[p].push_back(host.d_get_id());
-    //}
+    for(auto& p:host.get_target_ports()){
+        phost[p].push_back(host.d_get_id());
+    }
 }
-
 
 /**
  * @details search for d_id in sld/mld maps to fetch the respective d_port.  
@@ -185,7 +187,6 @@ int sc_mbox::fetch_device_port(uint64_t d_id){
     return d_port;
 }
 
-
 /**
 * @details This function invokes STG API to attach device to host.
 */
@@ -200,41 +201,30 @@ int sc_mbox::d_attach(uint64_t d_id, uint64_t h_id, string mode){
 	return -ENOENT; 
     }  	
     if (mbox_connected_hosts.find(h_ids[h_id]) != mbox_connected_hosts.end()){
-	cout << " found host for hid: " << h_id << endl;
-
-
 	//check for device port in phost 
-        //if (phost.find(d_port)!= phost.end()) {
-	for (auto& v: mbox_connected_hosts[h_ids[h_id]].get_target_ports()){
-            if (v == d_port) {
-	      cout << "dev " << d_port << "found in host " << h_id << endl;
-	      //check if device already attached
-	      //list<sc_id>& hl = phost[d_port];
-              //for (auto& h:hl){
-              //   if (mbox_connected_hosts[h].get_id()==h_id){
-              //      return 0;  
-              //   }
-              //}
-	      //cout << "dev not attached to host " << d_port << endl;
-	      return 0;
-	    }
+        if (phost.find(d_port)!= phost.end()) {
+	    //check if device already attached
+	    list<sc_id>& hl = phost[d_port];
+            for (auto& h:hl){
+               if (mbox_connected_hosts[h].get_id()==h_id){
+	           /* Host @h_id is already connected to the device. */
+                   return 0;  
+               }
+            }
 	}
-	cout << "invoking fmapi connect " << endl;
         //invoke STG API with host_port and dev_port
         int ret = mbox_A1_connect_by_hostport(mbox_connected_hosts[h_ids[h_id]].get_host_port(), d_port);
-        cout << "Attaching " << d_id << "to host " << h_id << "ret: " << ret << endl;
         update_json_and_install();
         if (ret == 0){
           //update data structures 		    
           mbox_connected_hosts[h_ids[h_id]].set_target_ports(d_port);
-          //phost[d_port].push_back(h_ids[h_id]);	
+          phost[d_port].push_back(h_ids[h_id]);	
         }
         return ret;
-    }  
+    }
     //host does not exist 
     return -ENOENT; 
 }
-
 
 /**
 * @details This function invokes STG API to detach device from host.
@@ -249,28 +239,22 @@ int sc_mbox::d_detach(uint64_t d_id, uint64_t h_id, string mode){
         return ret; 
     }
     //check if device is already connected to host
-    //if (phost.find(d_port) != phost.end()) {
-    for (auto& v: mbox_connected_hosts[h_ids[h_id]].get_target_ports()){
-        //for (auto& h:phost[d_port]){
-	if (v == d_port) {
-            //if (mbox_connected_hosts[h].get_id()==h_id){
+    if (phost.find(d_port) != phost.end()) {
+        for (auto& h:phost[d_port]){
+            if (mbox_connected_hosts[h].get_id()==h_id){
                 // invoke STG API
-          ret = mbox_A1_disconnect(mbox_connected_hosts[h_ids[h_id]].get_host_port(),d_port);
-	  update_json_and_install();
-	  cout << "ret: " << ret << endl;
-	  if (ret == 0){
-	    //phost[d_port].remove(h_ids[h_id]);
-	    list<uint32_t> &h_to_dev_list = mbox_connected_hosts[h_ids[h_id]].get_target_ports();
-	    for (list<uint32_t>::iterator it = h_to_dev_list.begin(); it != h_to_dev_list.end(); ++it) {
-	      cout << "h_id: " << h_id << "d_port: " << *it << endl;
-	    }
-            h_to_dev_list.remove(d_port);
-	    break;
-          }
+                ret = mbox_A1_disconnect(mbox_connected_hosts[h_ids[h_id]].get_host_port(),d_port);
+	        update_json_and_install();
+	        if (ret == 0){
+	            phost[d_port].remove(h_ids[h_id]);
+	            list<uint32_t> &h_to_dev_list = mbox_connected_hosts[h_ids[h_id]].get_target_ports();
+                    h_to_dev_list.remove(d_port);
+	            break;
+		}
+            }
 	}
+        if (phost[d_port].empty()) { phost.erase(d_port); }
     }
-    //if (phost[d_port].empty()) { phost.erase(d_port); }
-    //}
     return ret;
 }
 

@@ -2,7 +2,6 @@
 set -e
 
 # Build Dependencies
-<<<<<<< HEAD
 install_packages() {
     apt-get update
     BUILD_DEPS=(
@@ -31,37 +30,6 @@ install_packages() {
         wget
     )
     package_manager
-=======
-install_build_deps() {
-  BUILD_DEPS=()
-  package_manager 'update'
-  BUILD_DEPS+=('cmake')
-  BUILD_DEPS+=('dpkg-dev')
-  BUILD_DEPS+=('debhelper')
-  BUILD_DEPS+=('diffutils')
-  BUILD_DEPS+=('dstat')
-  BUILD_DEPS+=('file')
-  BUILD_DEPS+=('g++')
-  BUILD_DEPS+=('git')
-  BUILD_DEPS+=('libboost-dev')
-  BUILD_DEPS+=('libjansson-dev')
-  BUILD_DEPS+=('libjansson4')
-  BUILD_DEPS+=('libjansson-doc')
-  BUILD_DEPS+=('libfmt8')
-  BUILD_DEPS+=('libfmt-dev')
-  BUILD_DEPS+=('libnuma-dev')
-  BUILD_DEPS+=('libspdlog-dev')
-  BUILD_DEPS+=('libssl-dev')
-  BUILD_DEPS+=('libzmq3-dev')
-  BUILD_DEPS+=('net-tools')
-  BUILD_DEPS+=('pkgconf')
-  BUILD_DEPS+=('python3.11')
-  BUILD_DEPS+=('python3-pip')
-  BUILD_DEPS+=('tar')
-  BUILD_DEPS+=('unzip')
-  BUILD_DEPS+=('wget')
-  package_manager 'install'
->>>>>>> 46a4331 (FAM-1432: Host metrics collection implementation and support.)
 }
 
 # Install from package mananger
