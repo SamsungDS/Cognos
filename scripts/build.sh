@@ -227,6 +227,7 @@ create_deb()
       mv -v "$DEBIAN_DIR/svk-cxl-dev.install" "$DEBIAN_DIR/$DEB_PACKAGE_NAME-dev.install"
     fi
 
+    sed -i -e "s@ZMQ_CONF_VAL@$PROJECT_ROOT@g" "$DEBIAN_DIR/rules"
     pushd "$BUILD_DIR"
       echo "Building SVK Management Framework Debian packages..."
       # Build Debian packages - generate binaries only, do not sign packages

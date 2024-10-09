@@ -81,6 +81,10 @@ if(WITH_FMAPI)
         FILES "${FMAPI_LIBRARY_PATH}"
         DESTINATION "/usr/local/lib/cxl_memory_box"
     )
+    install(
+        FILES "config/cxl.conf"
+        DESTINATION "${SVKMGMTFW_DIRS}"
+    )
     if(MOCK_FLAG)
         install(
             FILES "${FMAPI_INCLUDE_PATH}/sample_json/input.json"

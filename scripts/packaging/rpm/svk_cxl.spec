@@ -34,6 +34,7 @@ cp -rf %{getenv:CMAKE_INSTALL_PREFIX}/%{_lib} %{buildroot}/%{installpath}
 cp -rf %{_fmapilibpath} %{buildroot}/%{installpath_mbox}/lib
 cp -f %{_fmapiincpath}/sample_json/input.json %{buildroot}/%{installpath_mgmt}
 cp -f %{getenv:CMAKE_INSTALL_PREFIX}/zmq_config.json %{buildroot}/%{installpath_zmq}
+cp -f %{getenv:CMAKE_INSTALL_PREFIX}/cxl.conf %{buildroot}/%{installpath_mgmt}
 
 # If rpmbuild is run manually, use default build dir svk-core, unless user gives a different name
 %else
@@ -41,6 +42,7 @@ cp -rf %{cxl_build_dir}/%{_lib} %{buildroot}/%{installpath}
 cp -rf %{_fmapipath} %{buildroot}/%{installpath_mbox}/lib
 cp -f %{_fmapiincpath}/sample_json/input.json %{buildroot}/%{installpath_mgmt}
 cp -f %{cxl_build_dir}/config/zmq_config.json %{buildroot}/%{installpath_zmq}
+cp -f %{cxl_build_dir}/config/cxl.conf  %{buildroot}/%{installpath_mgmt}
 %endif
 
 %files
@@ -53,7 +55,6 @@ cp -f %{cxl_build_dir}/config/zmq_config.json %{buildroot}/%{installpath_zmq}
 %{installpath_zmq}
 
 %clean
-# rm -rf %{buildroot}
 
 %post
 # export the SVK_LDCONFIG if a separate install path was given
@@ -66,7 +67,6 @@ echo "$installpath/%{_lib}" | tee -a /etc/ld.so.conf.d/svk-cxl-x86_64.conf
 echo "/usr/local/lib/cxl_memory_box/lib" | tee -a /etc/ld.so.conf.d/svk-cxl-x86_64.conf
 echo "/usr/local/svk/mgmt-fw/lib64" | tee -a /etc/ld.so.conf.d/svk-cxl-x86_64.conf
 /usr/sbin/ldconfig
-
 
 %postun
 rm /etc/ld.so.conf.d/svk-cxl-x86_64.conf
