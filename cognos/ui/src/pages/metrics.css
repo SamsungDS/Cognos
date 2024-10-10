@@ -93,7 +93,9 @@
 .progres-bar-title-metrics {
   margin-left: 200px;
 }
-
+.btn-outline-light {
+  --bs-btn-hover-bg: #3f464d;
+}
 /* Media Query as per device size */
 @media screen and (min-width: 768px) and ( max-width: 1023px){
   .second-row {

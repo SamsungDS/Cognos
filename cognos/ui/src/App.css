@@ -106,20 +106,18 @@ cursor: pointer;
 }
 .link {
   display: flex;
-  color: #fff;
+  color: #4A4A4A;
   padding: 10px 15px;
   gap: 15px;
   transition: all 0.5s;
   text-decoration: none;
 }
 .link:hover{
-  background-color: rgb(121, 147, 163);
-  color: #000;
+  color: #cfcccc;
   transition: all 0.5s;
 }
 .active {
-  background-color: rgba(173, 216, 230, 0.9);
-  color: #000;
+  color: #fff;
   transition: all 0.5s;
 }
 .icon, .link_text {
