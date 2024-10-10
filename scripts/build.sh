@@ -216,6 +216,7 @@ create_deb()
     # Update FM_API build and include dirs
     sed -i -e "s@FMAPI_INCLUDE_VAL@$FMAPI_INCLUDE_PATH@g" "$DEBIAN_DIR/rules"
     sed -i -e "s@FMAPI_LIB_VAL@$FMAPI_LIB_PATH@g" "$DEBIAN_DIR/rules"
+    sed -i -e "s@MOCK_VAL@$MOCK@g" "$DEBIAN_DIR/rules"
     # Define the package name - needed to differentiate "release" from "simulation" package
     sed -i -e "s@DEB_PACKAGE_NAME@$DEB_PACKAGE_NAME@g" "$DEBIAN_DIR/rules"
     sed -i -e "s@DEB_PACKAGE_NAME@$DEB_PACKAGE_NAME@g" "$DEBIAN_DIR/changelog"
@@ -226,7 +227,6 @@ create_deb()
       mv -v "$DEBIAN_DIR/svk-cxl-dev.install" "$DEBIAN_DIR/$DEB_PACKAGE_NAME-dev.install"
     fi
 
-    sed -i -e "s@ZMQ_CONF_VAL@$PROJECT_ROOT@g" "$DEBIAN_DIR/rules"
     pushd "$BUILD_DIR"
       echo "Building SVK Management Framework Debian packages..."
       # Build Debian packages - generate binaries only, do not sign packages

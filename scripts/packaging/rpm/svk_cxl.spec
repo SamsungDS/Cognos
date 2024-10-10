@@ -11,6 +11,9 @@ BuildRequires:  jansson
 Requires:       svk-core, svk-mgmt-fw, jansson
 
 %{!?installpath: %global installpath /usr/local/svk/cxl}
+%{!?installpath_mgmt: %global installpath_mgmt /usr/local/svk/mgmt-fw}
+%{!?installpath_mbox: %global installpath_mbox /usr/local/lib/cxl_memory_box}
+%{!?installpath_zmq: %global installpath_zmq /etc/svk}
 %{!?cxl_build_dir: %global cxl_build_dir svk-cxl}
 
 
@@ -21,22 +24,23 @@ SVK CXL plugin to manage and access CXL devices.
 %install
 rm -rf %{buildroot}
 mkdir -p %{buildroot}/%{installpath}
-mkdir -p %{buildroot}/%{installpath}/share/cxl_memory_box/lib
-mkdir -p %{buildroot}/%{installpath}/conf
+mkdir -p %{buildroot}/%{installpath_mgmt}
+mkdir -p %{buildroot}/%{installpath_mbox}/lib
+mkdir -p %{buildroot}/%{installpath_zmq}
 
 # If rpmbuild is run in the build script, use CMAKE_INSTALL_PREFIX as temp dir in %{_topdir}/BUILD
 %if "%{getenv:CMAKE_INSTALL_PREFIX}" != ""
 cp -rf %{getenv:CMAKE_INSTALL_PREFIX}/%{_lib} %{buildroot}/%{installpath}
-cp -rf %{_fmapilibpath} %{buildroot}/%{installpath}/share/cxl_memory_box/lib
-cp -f %{_fmapiincpath}/sample_json/input.json %{buildroot}/%{installpath}/conf
-cp -f %{getenv:CMAKE_INSTALL_PREFIX}/zmq_config.json %{buildroot}/%{installpath}/conf
+cp -rf %{_fmapilibpath} %{buildroot}/%{installpath_mbox}/lib
+cp -f %{_fmapiincpath}/sample_json/input.json %{buildroot}/%{installpath_mgmt}
+cp -f %{getenv:CMAKE_INSTALL_PREFIX}/zmq_config.json %{buildroot}/%{installpath_zmq}
 
 # If rpmbuild is run manually, use default build dir svk-core, unless user gives a different name
 %else
 cp -rf %{cxl_build_dir}/%{_lib} %{buildroot}/%{installpath}
-cp -rf %{_fmapipath} %{buildroot}/%{installpath}/share/cxl_memory_box/lib
-cp -f %{_fmapiincpath}/sample_json/input.json %{buildroot}/%{installpath}/conf
-cp -f %{cxl_build_dir}/config/zmq_config.json %{buildroot}/%{installpath}/conf
+cp -rf %{_fmapipath} %{buildroot}/%{installpath_mbox}/lib
+cp -f %{_fmapiincpath}/sample_json/input.json %{buildroot}/%{installpath_mgmt}
+cp -f %{cxl_build_dir}/config/zmq_config.json %{buildroot}/%{installpath_zmq}
 %endif
 
 %files
@@ -44,9 +48,9 @@ cp -f %{cxl_build_dir}/config/zmq_config.json %{buildroot}/%{installpath}/conf
 #%doc add-docs-here
 %defattr(-,root,root,-)
 %{installpath}/%{_lib}
-%{installpath}/share/
-%{installpath}/conf
-
+%{installpath_mgmt}
+%{installpath_mbox}
+%{installpath_zmq}
 
 %clean
 # rm -rf %{buildroot}
@@ -59,10 +63,6 @@ fi
 touch /etc/ld.so.conf.d/svk-cxl-x86_64.conf
 chmod a+r /etc/ld.so.conf.d/svk-cxl-x86_64.conf
 echo "$installpath/%{_lib}" | tee -a /etc/ld.so.conf.d/svk-cxl-x86_64.conf
-mkdir -p /usr/local/lib/cxl_memory_box
-cp -rf %{installpath}/share/cxl_memory_box /usr/local/lib
-cp -f %{buildroot}/%{installpath}/conf/input.json /usr/local/svk/mgmt-fw/
-cp -f %{buildroot}/%{installpath}/conf/zmq_config.json /etc/svk/
 echo "/usr/local/lib/cxl_memory_box/lib" | tee -a /etc/ld.so.conf.d/svk-cxl-x86_64.conf
 echo "/usr/local/svk/mgmt-fw/lib64" | tee -a /etc/ld.so.conf.d/svk-cxl-x86_64.conf
 /usr/sbin/ldconfig

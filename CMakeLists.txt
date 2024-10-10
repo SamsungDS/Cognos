@@ -21,6 +21,7 @@ set(pkg_config "${CMAKE_BINARY_DIR}/${SVKCXL}.pc")
 set(pkgconfig_install_dir "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
 set(SVKCXL_LIB_DEST "lib64/")
 set(SVKCXL_INCLUDE_DEST "include/")
+set(SVKMGMTFW_DIRS "/usr/local/svk/mgmt-fw")
 set(SVKMGMTFW_INCLUDE_DIRS "/usr/local/svk/mgmt-fw/include")
 set(SVKMGMTFW_LIB_DIRS "/usr/local/svk/mgmt-fw/lib64")
 configure_file("cmake/${SVKCXL}.pc.in" "${pkg_config}" @ONLY)
@@ -46,16 +47,6 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     endif()
 endif()
 
-#if(WITH_FMAPI)
-#     message(STATUS "Building with FMAPI")
-#     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I${FMAPI_INCLUDE_PATH} -L${FMAPI_LIB_PATH}")
-# endif()
-
-if(WITH_MGMT_FW)
-    message(STATUS "Building with MGMT_FW")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -rdynamic")
-endif()
-
 # Add subdirectories
 add_subdirectory(src)
 if(BUILD_TESTING)
@@ -77,7 +68,31 @@ install(
         "${CMAKE_CURRENT_BINARY_DIR}/SVKCXLConfigVersion.cmake"
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/${SVKCXL_CMAKE_DEST}
     )
+install(CODE "
+    file(WRITE \"/etc/ld.so.conf.d/svk-cxl-x86_64.conf\" \"\\n${CMAKE_INSTALL_PREFIX}/lib\\n\")
+    file(APPEND \"/etc/ld.so.conf.d/svk-cxl-x86_64.conf\" \"\\n${CMAKE_INSTALL_PREFIX}/lib64\\n\")
+")
 
+if(WITH_FMAPI)
+    install(CODE "
+        file(APPEND \"/etc/ld.so.conf.d/svk-cxl-x86_64.conf\" \"\\n${FMAPI_INCLUDE_PATH}/build\\n\")
+    ")
+    install(
+        FILES "${FMAPI_LIBRARY_PATH}"
+        DESTINATION "/usr/local/lib/cxl_memory_box"
+    )
+    if(MOCK_FLAG)
+        install(
+            FILES "${FMAPI_INCLUDE_PATH}/sample_json/input.json"
+            DESTINATION "${SVKMGMTFW_DIRS}"
+        )
+    endif()
+endif()
+
+install(
+    FILES "config/zmq_config.json"
+    DESTINATION "/etc/svk/"
+)
 # install pkg config file
 install(
     FILES "${pkg_config}"

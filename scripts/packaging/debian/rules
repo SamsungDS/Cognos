@@ -4,13 +4,13 @@ SHORT_VERSION := $(shell $(CURDIR)/../scripts/get_version.sh -s)
 INSTALL_PATH = usr/local/svk/cxl
 FMAPI_INCLUDE = FMAPI_INCLUDE_VAL
 FMAPI_LIB = FMAPI_LIB_VAL
-ZMQ_CONF_PATH = ZMQ_CONF_VAL
-
+MOCK = MOCK_VAL
 %:
 	dh $@
 
 override_dh_auto_configure:
-	cmake -DWITH_RELEASE=ON -DCMAKE_INSTALL_PREFIX=/$(INSTALL_PATH) -DWITH_FMAPI=ON -DFMAPI_INCLUDE_PATH=$(FMAPI_INCLUDE) -DFMAPI_LIBRARY_PATH=$(FMAPI_LIB) ..
+
+	cmake -DMOCK_FLAG=$(MOCK) -DWITH_RELEASE=ON -DCMAKE_INSTALL_PREFIX=/$(INSTALL_PATH) -DWITH_FMAPI=ON -DFMAPI_INCLUDE_PATH=$(FMAPI_INCLUDE) -DFMAPI_LIBRARY_PATH=$(FMAPI_LIB) ..
 
 override_dh_auto_build:
 	make -j$(nproc)
@@ -22,15 +22,9 @@ override_dh_usrlocal:
 	# Do nothing, because we are installing to /usr/local even though this is non-standard practice
 
 override_dh_install:
-	# Create ld.conf.so.d file for SVK Management Framework
-	mkdir --verbose --parent $(CURDIR)/etc/ld.so.conf.d
-	echo "/$(INSTALL_PATH)/lib" > $(CURDIR)/etc/ld.so.conf.d/svk-cxl-x86_64.conf
-	mkdir -p $(INSTALL_PATH)/share/cxl_memory_box/lib
-	mkdir -p $(INSTALL_PATH)/conf
-	cp -f $(FMAPI_LIB) $(INSTALL_PATH)/share/cxl_memory_box/lib
-	cp -f $(FMAPI_INCLUDE)/sample_json/input.json $(INSTALL_PATH)/conf
-	cp -f $(ZMQ_CONF_PATH)/config/zmq_config.json $(INSTALL_PATH)/conf
-
+	# Add copying of input.json for mock mode to install files
+	if [ "${MOCK}" = "true" ]; then echo "/usr/local/svk/mgmt-fw/input.json /usr/local/svk/mgmt-fw/" | tee -a debian/svk-cxl*.install;  fi
+	
 	dh_install
 
 override_dh_strip:
