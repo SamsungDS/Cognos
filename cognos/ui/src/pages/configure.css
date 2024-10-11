@@ -65,7 +65,7 @@ th, td {
 @media screen and (min-width: 1024px) and ( max-width: 1440px) {
   .cofig-row {
     min-width: 150px;
-    font-size: 16px;
+    font-size: 14px;
   }
   .cmm-row {
     min-width: 180px;

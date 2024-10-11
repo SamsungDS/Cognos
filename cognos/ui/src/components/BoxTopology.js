@@ -10,7 +10,8 @@ import {
   DeviceList1,
   defaultHostProperties,
   mappedHostList,
-  mappedDeviceList
+  mappedDeviceList,
+  fetchData
 } from "../constant";
 import { ReactComponent as DeviceIcon } from "../assets/icons/deviceSVGIcon.svg";
 
@@ -20,26 +21,21 @@ const BoxTopology = () => {
   const [hostToDeviceMappingB2, setHostToDeviceMappingB2] = useState([]);
   const [currentCMM, setCurrentCMM] = useState(0);
   const [hostList, setHostList] = useState([]);
-  const [hostList1, setHostList1] = useState([]);
+  const [hostActiveList, setHostActiveList] = useState([]);
   const hostDeviceMapEndpoint = Configs.api_endpoint + "/topology";
+  const hostMapEndpoint = Configs.api_endpoint + "/hosts";
+  
   useEffect(
     () => {
-      fetch(hostDeviceMapEndpoint, {
-        method: "get",
-        headers: new Headers({
-          "Access-Control-Allow-Origin": "*",
-        }),
-      })
-        .then((response) => response.json())
-        .then((data) => setHostToDeviceMapping(data))
-        .catch((err) => {
-          console.log(err);
-        });
+      fetchData(hostDeviceMapEndpoint, setHostToDeviceMapping);
+      fetchData(hostMapEndpoint, setHostActiveList);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
   console.log(hostToDeviceMapping);
+
+  console.log(hostActiveList);
 
   useEffect(
     () => {
@@ -53,12 +49,9 @@ const BoxTopology = () => {
           };
         });
       };
-      // Map both HostList and HostList1 dynamically
+      // Map HostList dynamically
       const hostsFromConfig = mapHosts(Configs.HostList);
-      const hostsFromConfig1 = mapHosts(Configs.HostList1);
-
       setHostList(hostsFromConfig);
-      setHostList1(hostsFromConfig1);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
@@ -67,19 +60,19 @@ const BoxTopology = () => {
   const cmmList = [
     {
       title: "CMM-B1",
-      hostComponents: mappedHostList(hostList, hostToDeviceMapping),
+      hostComponents: mappedHostList(hostList, hostActiveList),
       deviceComponents: mappedDeviceList(
         DeviceList,
-        mappedHostList(hostList, hostToDeviceMapping),
+        mappedHostList(hostList, hostActiveList),
         hostToDeviceMapping
       ),
     },
     {
       title: "CMM-B2",
-      hostComponents: mappedHostList(hostList1, hostToDeviceMappingB2),
+      hostComponents: mappedHostList(hostList, hostToDeviceMappingB2),
       deviceComponents: mappedDeviceList(
         DeviceList1,
-        hostList1,
+        hostList,
         hostToDeviceMappingB2
       ),
     },

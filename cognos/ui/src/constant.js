@@ -89,19 +89,19 @@ export const memboxTableHeader = [
     return hostList.map((item) => {
       // Try to find the current host in the unusedHostMapping
       const mappedHostIndex = unusedHostMapping.findIndex(
-        (hostItem) => hostItem.host === item.host
+        (hostItem) => hostItem.label === item.host
       );
 
       let newHostName = item.host; // Default to the original host name
       let newColor = "#4F4F4F";
       // If a match is found, update the host name and remove it from unusedHostMapping
       if (mappedHostIndex !== -1) {
-        newHostName = unusedHostMapping[mappedHostIndex].host;
+        newHostName = unusedHostMapping[mappedHostIndex].label;
         unusedHostMapping.splice(mappedHostIndex, 1); // Remove used host
       } else if (unusedHostMapping.length > 0) {
         // If no match is found, replace with the next available host from unusedHostMapping
         newColor = item.color;
-        newHostName = unusedHostMapping[0].host;
+        newHostName = unusedHostMapping[0].label;
         unusedHostMapping.shift(); // Remove the first host (unshifted)
       }
       return {
@@ -143,4 +143,19 @@ export const memboxTableHeader = [
         color: newColor, // Use the determined color
       };
     });
+  };
+
+  export const fetchData = async (url, setDataCallback) => {
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        headers: new Headers({
+          "Access-Control-Allow-Origin": "*",
+        }),
+      });
+      const data = await response.json();
+      setDataCallback(data);
+    } catch (error) {
+      console.error("Error fetching data:", error);
+    }
   };
