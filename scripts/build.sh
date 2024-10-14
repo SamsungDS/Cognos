@@ -312,6 +312,8 @@ if $WITH_FMAPI;then
   cp "$FMAPI_INCLUDE_PATH/sample_json/input.json" "$PROJECT_ROOT/tests"
 fi
 
+#cp "$PROJECT_ROOT/tests/zmq_config.json" "$BUILD_DIR/tests"
+
 # Add cmake install prefix option
 if [ -n "$CMAKE_INSTALL_PREFIX" ];then
   CMAKE_OPTIONS+=("-DCMAKE_INSTALL_PREFIX=$CMAKE_INSTALL_PREFIX")
