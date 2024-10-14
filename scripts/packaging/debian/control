@@ -7,5 +7,5 @@ Standards-Version: 4.1.4
 
 Package: svk-app
 Architecture: amd64
-Depends: ${shlibs:Depends}, ${misc:Depends}, nodejs, npm
+Depends: ${shlibs:Depends}, ${misc:Depends}, nodejs (>=21)
 Description: SVK Application, Cognos
