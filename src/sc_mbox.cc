@@ -218,30 +218,30 @@ int sc_mbox::d_attach(uint64_t d_id, uint64_t h_id, string mode){
 * @details This function invokes STG API to detach device from host.
 */
 int sc_mbox::d_detach(uint64_t d_id, uint64_t h_id, string mode){
-
-    int ret = -ENOENT;
     uint32_t d_port = fetch_device_port(d_id);
 
     if (d_port==0) {
-        //device port does not exist
-        return ret;
+        // device id is invalid
+	return -EINVAL;
     }
 
-    //check if device is already connected to host
+    //device id and port is valid, now check if device is already connected to host
     for (auto& v: mbox_connected_hosts[h_ids[h_id]].get_target_ports()){
         if (v == d_port) {
-          // invoke STG API
-          ret = mbox_A1_disconnect(mbox_connected_hosts[h_ids[h_id]].get_host_port(),d_port);
-          update_json_and_install();
-          if (ret == 0){
+          // found device to host mapping, invoke STG API to disconnect
+          int ret = mbox_A1_disconnect(mbox_connected_hosts[h_ids[h_id]].get_host_port(),d_port);
+          if (ret == 0) {
+            update_json_and_install();
             list<uint32_t> &h_to_dev_list = mbox_connected_hosts[h_ids[h_id]].get_target_ports();
             h_to_dev_list.remove(d_port);
-            break;
           }
+          // We don't expect duplicate device-to-host mappings, so return, success or failure.
+          return ret;
         }
     }
-    return ret;
+    return -ENOENT;
 }
+
 
 
 //get mbox_connected_slds
