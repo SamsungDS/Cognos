@@ -194,7 +194,7 @@ int sc_mbox::d_attach(uint64_t d_id, uint64_t h_id, string mode){
         //device port does not exist
         return -ENOENT;
     }
-    if (mbox_connected_hosts.find(h_ids[h_id]) != mbox_connected_hosts.end()){
+    else if (mbox_connected_hosts.find(h_ids[h_id]) != mbox_connected_hosts.end()){
         //check for device port in phost
         for (auto& v: mbox_connected_hosts[h_ids[h_id]].get_target_ports()){
             if (v == d_port) {
