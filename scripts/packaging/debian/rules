@@ -29,7 +29,7 @@ override_dh_usrlocal:
 override_dh_install:
 	# Create ld.conf.so.d file for SVK Management Framework
 	mkdir --verbose --parent $(CURDIR)/etc/ld.so.conf.d
-	echo "/$(INSTALL_PATH)/lib" > $(CURDIR)/etc/ld.so.conf.d/svk-mgmt-fw.conf
+	echo "/$(INSTALL_PATH)/lib64" > $(CURDIR)/etc/ld.so.conf.d/svk-mgmt-fw.conf
 
 	dh_install
 
