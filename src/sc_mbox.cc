@@ -242,8 +242,6 @@ int sc_mbox::d_detach(uint64_t d_id, uint64_t h_id, string mode){
     return -ENOENT;
 }
 
-
-
 //get mbox_connected_slds
 unordered_map<sc_id, sc_sld, hash_sc_id> sc_mbox::get_slds_map()  const { return mbox_connected_slds; }
 
