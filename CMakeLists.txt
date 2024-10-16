@@ -94,6 +94,11 @@ if(WITH_FMAPI)
 endif()
 
 install(
+    FILES "/etc/ld.so.conf.d/svk-cxl-x86_64.conf"
+    DESTINATION "/etc/ld.so.conf.d"
+)
+
+install(
     FILES "config/zmq_config.json"
     DESTINATION "/etc/svk/"
 )
