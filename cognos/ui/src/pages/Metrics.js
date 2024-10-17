@@ -13,9 +13,12 @@ export const handleSelectChange = async (
     sendMessage, lastSelectedHost, apiEndpoint) => {
     setSelectedOption(selectedOption);
 
+
+    console.log("In handle select change: ", selectedOption);
     if (selectedOption) {
       console.log("Host selected: ", selectedOption);
       lastSelectedHost.current = selectedOption
+      sessionStorage.setItem('lastSelectedHostValue', lastSelectedHost.current);
     }
 
     // get available hosts
@@ -39,19 +42,38 @@ export const handleSelectChange = async (
 
     let payload = {}
     payload.host = selectedOption;
-    sendMessage(payload);
+    // sendMessage(payload);
+
+    // update DB through CAL to store host to filter on
+    try {
+      const hostPayload = {host: selectedOption}
+      const response = await fetch(`${apiEndpoint}/update_metrics_host_filter`, {
+        mode: 'cors',
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin':'*',
+          'accept': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (response.ok) {
+        console.log("Successfully sent selected host to backend: ", selectedOption);
+      }
+    } catch(error) {console.log(error)};
 };
 
 
-export function checkSelectedHost(lastSelectedHost, sendMessage) {
-    if (lastSelectedHost.current) {
-      let payload = {}
-      payload.host = lastSelectedHost.current;
-      sendMessage(payload);
-    } else {
-        console.log("last selected host is None");
-    }
-}
+// export function checkSelectedHost(lastSelectedHost, sendMessage) {
+//     if (lastSelectedHost.current) {
+//       let payload = {}
+//       payload.host = lastSelectedHost.current;
+//       sendMessage(payload);
+//     } else {
+//         console.log("last selected host is None");
+//     }
+// }
 
 
 const Metrics = () => {
@@ -61,7 +83,13 @@ const Metrics = () => {
         { value: 'Host 2', label: 'Host 2' }]
         );
     const [selectedOption, setSelectedOption] = useState(null);
-    const lastSelectedHost = useRef(null);
+    // const lastSelectedHost = useRef(null);
+    const lastSelectedHost = useRef(() => {
+	const savedValue = sessionStorage.getItem('lastSelectedHostValue');
+	return savedValue ? savedValue: null;
+    });
+    
+    const hostCheckerInterval = useRef(null);
     const { memCapacityData, dramCxlMemUsageData, memoryCpuData, sendMessage } = useContext(WebSocketContext)
     const memCapacityOptions = {
       colors: ["#FFB546", "#0077C8", "#FE8E73", "#FEAE00", "B37328"],
@@ -150,9 +178,21 @@ const Metrics = () => {
 
 
   useEffect(() => {
-    setInterval(() => {
-      checkSelectedHost(lastSelectedHost, sendMessage);
-    }, 2000);
+    const intervalCallBack = () => {
+      // checkSelectedHost(lastSelectedHost, sendMessage);
+      if (lastSelectedHost.current) {
+        let payload = {}
+        payload.host = lastSelectedHost.current;
+        console.log("CURRENTLY SELECTED HOST FROM UI IS: ", payload);
+        sendMessage(payload);
+      } else {
+        console.log("last selected host is None");
+      }
+    };
+
+    hostCheckerInterval.current = setInterval(intervalCallBack, 2000);
+
+    return () => clearInterval(hostCheckerInterval.current);
   }, []);
 
   return (

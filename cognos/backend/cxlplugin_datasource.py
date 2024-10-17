@@ -14,7 +14,9 @@ from cognos.backend.helper import (
     init_connections_table, fetch_topology, get_host_attached_devices,
     get_devid_from_name, get_hostid_from_name, delete_connection,
     connect_to_mysql, disconnect_mysql, failed_response, get_devname_from_id,
-    parse_svkcxlplugin_response, gen_svkcxlplugin_request_params
+    parse_svkcxlplugin_response, gen_svkcxlplugin_request_params,
+    update_device_attached_hosts, remove_device_attached_host,
+    update_metrics_host_filter_table
 )
 
 
@@ -30,6 +32,16 @@ class CXLPlugin(DataSource):
     def init(self):
         payload = self.get_setup_info()
         return jsonify(payload)
+
+    def update_metrics_host_filter(self):
+        request_data = request.get_json()
+        host = request_data["host"]["value"]
+        update_metrics_host_filter_table(host)
+        print("update_metrics_host_filter host: ", host)
+        payload = {'status': 200}
+        response = jsonify(payload)
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
 
     def get_topology(self):
         payload = fetch_topology()
@@ -102,6 +114,8 @@ class CXLPlugin(DataSource):
         if response.ok:
             # Update DB after detach operation
             delete_connection(int(dev_id), int(host_id))
+            # remove attached host from device
+            remove_device_attached_host(dev_id, host_name)
 
         # Return response for host/attached-devices table
         payload = get_host_attached_devices(host_name)
@@ -144,6 +158,8 @@ class CXLPlugin(DataSource):
             cursor.execute(insert_query, values)
             db.commit()
             disconnect_mysql(db)
+            # add attached host to device
+            update_device_attached_hosts(dev_id, host_name)
 
         # Return response for host/attached-devices table
         payload = get_host_attached_devices(host_name)

@@ -23,8 +23,8 @@ const Configure = () => {
 
   const apiEndpoint = constants.Configs.api_endpoint;
   const AVAILABLE_DEVICES = 'available_devices';
-  const HOST_DEVICES = 'host_devices';
-  const MEMBOX_LMDs = 'membox_lmds';
+  const HOST_DEVICES_ENDPT_SUFFIX = 'host_devices';
+  const MEMBOX_DEVICES_ENDPT_SUFFIX = 'devices';
   const [showAttach, setShowAttach] = useState(false);
   const [selectedValue, setSelectedValue] = useState('');
   
@@ -194,7 +194,7 @@ const Configure = () => {
               <div className='device_card' data-testid='app-server-card' id='app-server-card-id' style={{height: '336px'}}>
                 <div className='config-host' data-testid='config-host' style={{ position:'sticky'}}>
                   <DropDown options={selectorOptions} 
-                    onSelectChange={(selectedOption) => handleSelectChange(selectedOption, `${apiEndpoint}/${HOST_DEVICES}`, setAttachedDevicesData)}
+                    onSelectChange={(selectedOption) => handleSelectChange(selectedOption, `${apiEndpoint}/${HOST_DEVICES_ENDPT_SUFFIX}`, setAttachedDevicesData)}
                     title={constants.hostSelectorTitle}
                     dropDownType="single"
                     name='hostTable'
@@ -248,7 +248,7 @@ const Configure = () => {
                       <DropDown 
                         options={constants.memboxSelectorOptions}  
                         title={constants.memboxSelectorTitle}
-                        onSelectChange={(selectedOption) => handleSelectChange(selectedOption, `${apiEndpoint}/host_devices`, setMemboxData)}
+                        onSelectChange={(selectedOption) => handleSelectChange(selectedOption, `${apiEndpoint}/${MEMBOX_DEVICES_ENDPT_SUFFIX}`, setMemboxData)}
                         dropDownType="single"
                         name='membox'
                       />

@@ -7,6 +7,10 @@ class DataSource(ABC):
         pass
 
     @abstractmethod
+    def update_metrics_host_filter(self):
+        pass
+
+    @abstractmethod
     def get_topology(self):
         pass
 

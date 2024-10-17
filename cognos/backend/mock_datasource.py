@@ -10,23 +10,15 @@ from cognos.backend.mock_constants import (
     MOCK_CXL_HOSTS
 )
 from cognos.backend.helper import (
-    process_membox_capacity_payload,
-    get_available_devices_fromdb,
-    get_dummy_mb_info,
-    get_devport_name_map,
-    get_devport_hostname_map,
-    init_devices_table,
-    init_hosts_table,
-    init_connections_table,
-    fetch_topology,
-    get_hosts_from_db,
-    get_host_attached_devices,
-    get_devid_from_name,
-    get_hostid_from_name,
-    delete_connection,
-    connect_to_mysql,
-    disconnect_mysql,
-    get_devname_from_id
+    process_membox_capacity_payload, get_available_devices_fromdb,
+    get_dummy_mb_info, get_devport_name_map,
+    get_devport_hostname_map, init_devices_table,
+    init_hosts_table, init_connections_table, fetch_topology,
+    get_hosts_from_db, get_devices_from_db, get_host_attached_devices,
+    get_devid_from_name, get_hostid_from_name, delete_connection,
+    connect_to_mysql, disconnect_mysql, get_devname_from_id,
+    update_device_attached_hosts, remove_device_attached_host,
+    update_metrics_host_filter_table
 )
 
 
@@ -35,6 +27,15 @@ class Mock(DataSource):
         return jsonify({
             "mock_data": 193821
         })
+
+    def update_metrics_host_filter(self):
+        request_data = request.get_json()
+        host = request_data["host"]["value"]
+        update_metrics_host_filter_table(host)
+        payload = {'status': 200}
+        response = jsonify(payload)
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
 
     def get_topology(self):
         payload = fetch_topology()
@@ -56,7 +57,7 @@ class Mock(DataSource):
         return response
 
     def post_devices(self):
-        payload = self.get_devices_info()
+        payload = get_devices_from_db()
         response = jsonify(payload)
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
@@ -87,6 +88,8 @@ class Mock(DataSource):
         dev_id = get_devid_from_name(dev_name)
         host_id = get_hostid_from_name(host_name)
         delete_connection(int(dev_id), int(host_id))
+        # remove attached host from device
+        remove_device_attached_host(dev_id, host_name)
         # Return response for host/attached-devices table
         payload = get_host_attached_devices(host_name)
         response = jsonify(payload)
@@ -111,6 +114,9 @@ class Mock(DataSource):
         cursor.execute(insert_query, values)
         db.commit()
         disconnect_mysql(db)
+
+        # Update Attached hosts for device
+        update_device_attached_hosts(dev_id, host_name)
 
         # Return response for host/attached-devices table
         payload = get_host_attached_devices(host_name)

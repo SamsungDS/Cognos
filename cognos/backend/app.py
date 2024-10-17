@@ -57,6 +57,10 @@ def create_app(mock=False):
         """
         return data_source.init()
 
+    @app.post(f"/api/{API_VERSION}/update_metrics_host_filter")
+    def post_update_metrics_host_filter():
+        return data_source.update_metrics_host_filter()
+
     @app.get(f"/api/{API_VERSION}/topology")
     def get_topology():
         """

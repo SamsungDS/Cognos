@@ -65,6 +65,10 @@ export const WebSocketProvider = ({ children }) => {
         ws.current = null;
       }
     };
+
+    ws.current.onerror = (err) => {
+      console.error('websocket error: ', err);
+    };
   }
 
   function check() {
@@ -85,7 +89,12 @@ export const WebSocketProvider = ({ children }) => {
 
   const sendMessage = (message) => {
     if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-      ws.current.send(JSON.stringify(message));
+      console.log('SENDING MSG TO EXPORTER: ', message);
+      try {
+        ws.current.send(JSON.stringify(message));
+      } catch (err) {
+          console.error('Error sending message: ', err);
+      }
     } else {
       console.error('WebSocket is not open'+ JSON.stringify(message.host));
     }

@@ -106,43 +106,53 @@ class CognosInfluxDBClient():
         output = tables.to_json()
         data = json.loads(output)
 
-        time_set = set()
-        data_set = {}
-        for m in data:
-            curr_time = datetime.strptime(
-                m['_time'].split('.')[0],
-                '%Y-%m-%dT%H:%M:%S'
-            )
-            time_set.add(curr_time)
-            field = m["_field"]
-            value = m["_value"]
-            if curr_time not in data_set:
-                data_set[curr_time] = {field: value}
-            elif field not in data_set[curr_time].keys():
-                data_set[curr_time][field] = value
+        print(f"DATA RECVD FROM INFLUX for RECENT CXL VS DRAM: {data}")
 
-        ordered_timeset = sorted(list(time_set))
-        export_data = [["Mem Usage", "DRAM", "CXL"]]
-        for t in ordered_timeset:
-            metric_time = t.strftime('%H:%M:%S')
-            dram_metric = math.floor((
-                data_set[t]['dram_usage_mb'] / data_set[t]['dram_capacity_mb']
-            ) * 100)
-            cxl_metric = math.floor((
-                data_set[t]['cxl_usage_mb'] / data_set[t]['cxl_capacity_mb']
-            ) * 100)
-            export_data.append([
-                metric_time,
-                dram_metric,
-                cxl_metric
-            ])
-        return export_data
+        try:
+            time_set = set()
+            data_set = {}
+            for m in data:
+                curr_time = datetime.strptime(
+                    m['_time'].split('.')[0],
+                    '%Y-%m-%dT%H:%M:%S'
+                )
+                time_set.add(curr_time)
+                field = m["_field"]
+                value = m["_value"]
+                if curr_time not in data_set:
+                    data_set[curr_time] = {field: value}
+                elif field not in data_set[curr_time].keys():
+                    data_set[curr_time][field] = value
+
+            ordered_timeset = sorted(list(time_set))
+            export_data = [["Mem Usage", "DRAM", "CXL"]]
+            for t in ordered_timeset:
+                metric_time = t.strftime('%H:%M:%S')
+                dram_metric = (
+                    math.floor((
+                    data_set[t]['dram_usage_mb'] / data_set[t]['dram_capacity_mb']
+                    ) * 100) if data_set[t]['dram_usage_mb'] > 0 else 0
+                )
+                cxl_metric = (
+                    math.floor((
+                    data_set[t]['cxl_usage_mb'] / data_set[t]['cxl_capacity_mb']
+                    ) * 100) if data_set[t]['cxl_usage_mb'] > 0 else 0
+                )
+                export_data.append([
+                    metric_time,
+                    dram_metric,
+                    cxl_metric
+                ])
+            return export_data
+        except Exception as error:
+            print(f"ERROR during recent_dram vs cxl processing {str(error)}")
 
     def get_cpu_mem_usage(self):
         params = {
             "_desc": True
         }
 
+        print(f"\n\nIN GET CPU MEM USAGE INFLUX ******** HOST: {self.selected_host} **********\n\n")
         tables = self.read_client.query(f'''
             from(bucket:"internal")
                 |> range(start: -60s)
@@ -158,35 +168,38 @@ class CognosInfluxDBClient():
         output = tables.to_json()
         data = json.loads(output)
 
-        time_set = set()
-        data_set = {}
-        for m in data:
-            curr_time = datetime.strptime(
-                m['_time'].split('.')[0],
-                '%Y-%m-%dT%H:%M:%S'
-            )
-            time_set.add(curr_time)
-            field = m["_field"]
-            value = m["_value"]
-            if curr_time not in data_set:
-                data_set[curr_time] = {field: value}
-            else:
-                data_set[curr_time][field] = value
+        try:
+            time_set = set()
+            data_set = {}
+            for m in data:
+                curr_time = datetime.strptime(
+                    m['_time'].split('.')[0],
+                    '%Y-%m-%dT%H:%M:%S'
+                )
+                time_set.add(curr_time)
+                field = m["_field"]
+                value = m["_value"]
+                if curr_time not in data_set:
+                    data_set[curr_time] = {field: value}
+                else:
+                    data_set[curr_time][field] = value
 
-        ordered_timeset = sorted(list(time_set))
-        export_data = [["CPU vs Memory Usage", "Mem (CXL+DRAM)", "CPU"]]
-        for t in ordered_timeset:
-            export_data.append([
-                t.strftime('%H:%M:%S'),
-                (
-                    ((data_set[t]['dram_usage_mb']+data_set[t]['cxl_usage_mb'])
-                     / (data_set[t]['dram_capacity_mb']
-                        + data_set[t]['cxl_capacity_mb'])
-                     )*100
-                ),
-                data_set[t]['cpu_usage']
-            ])
-        return export_data
+            ordered_timeset = sorted(list(time_set))
+            export_data = [["CPU vs Memory Usage", "Mem (CXL+DRAM)", "CPU"]]
+            for t in ordered_timeset:
+                export_data.append([
+                    t.strftime('%H:%M:%S'),
+                    (
+                        (((data_set[t]['dram_usage_mb']+data_set[t]['cxl_usage_mb'])
+                        / (data_set[t]['dram_capacity_mb']
+                            + data_set[t]['cxl_capacity_mb'])
+                        )*100) if (data_set[t]['dram_capacity_mb']+ data_set[t]['cxl_capacity_mb']) > 0 else 0
+                    ),
+                    data_set[t]['cpu_usage']
+                ])
+            return export_data
+        except Exception as error:
+            print(f"failed to send recent CPU vs mem usage data {str(error)}")
 
     def get_memserver_capacity(self):
         params = {
@@ -206,17 +219,20 @@ class CognosInfluxDBClient():
         output = tables.to_json()
         data = json.loads(output)
 
-        export_data = [["Memtype", "Capacity Used"]]
-        total_capacity = 0
-        for metric in data:
-            for k, v in metric.items():
-                if k == '_value':
-                    total_capacity += v
+        try:
+            export_data = [["Memtype", "Capacity Used"]]
+            total_capacity = 0
+            for metric in data:
+                for k, v in metric.items():
+                    if k == '_value':
+                        total_capacity += v
 
-        for metric in data:
-            memtype = metric['_field'].split('_')[0].upper()
-            export_data.append([memtype, (metric['_value']//1024)])
-        return export_data
+            for metric in data:
+                memtype = metric['_field'].split('_')[0].upper()
+                export_data.append([memtype, (metric['_value']//1024)])
+            return export_data
+        except Exception as error:
+            print(f"Failed to process memserver capacity data {str(error)}")
 
     def get_membox_usage(self):
         params = {
@@ -235,29 +251,33 @@ class CognosInfluxDBClient():
 
         output = tables.to_json()
         data = json.loads(output)
-        time_set = set()
-        data_set = {}
-        for m in data:
-            curr_time = datetime.strptime(
-                m['_time'].split('+')[0].split('.')[0],
-                '%Y-%m-%dT%H:%M:%S'
-            )
-            time_set.add(curr_time)
-            field = m["_field"]
-            value = m["_value"]
-            if curr_time not in data_set:
-                data_set[curr_time] = {field: value}
-            else:
-                data_set[curr_time][field] = value
 
-        export_data = [["Membox Usage", "Usage MB"]]
-        ordered_timeset = sorted(list(time_set))
-        for t in ordered_timeset:
-            export_data.append([
-                t.strftime('%H:%M:%S'),
-                data_set[t]['cxl_usage_mb']
-            ])
-        return export_data
+        try:
+            time_set = set()
+            data_set = {}
+            for m in data:
+                curr_time = datetime.strptime(
+                    m['_time'].split('+')[0].split('.')[0],
+                    '%Y-%m-%dT%H:%M:%S'
+                )
+                time_set.add(curr_time)
+                field = m["_field"]
+                value = m["_value"]
+                if curr_time not in data_set:
+                    data_set[curr_time] = {field: value}
+                else:
+                    data_set[curr_time][field] = value
+
+            export_data = [["Membox Usage", "Usage MB"]]
+            ordered_timeset = sorted(list(time_set))
+            for t in ordered_timeset:
+                export_data.append([
+                    t.strftime('%H:%M:%S'),
+                    data_set[t]['cxl_usage_mb']
+                ])
+            return export_data
+        except Exception as error:
+            print(f"failed to process membox usage data: {str(error)}")
 
     def get_membox_bandwidth(self):
         """
@@ -279,17 +299,22 @@ class CognosInfluxDBClient():
                 headers=headers
             )
             payload = parse_svkcxlplugin_response(response)
-
-        max_bandwidth = 512
-        num_upstream_ports = len(payload['Hosts'])
-        used_bandwidth = 32 * num_upstream_ports
-        used_percentage_bandwidth = math.floor(
-            (used_bandwidth / max_bandwidth) * 100)
-        return {
-            "max_bandwidth": max_bandwidth,
-            "used_bandwidth": used_bandwidth,
-            "used_percentage_bandwidth": used_percentage_bandwidth
-        }
+        
+        try:
+            max_bandwidth = 512
+            num_upstream_ports = len(payload['Hosts'])
+            used_bandwidth = 32 * num_upstream_ports
+            used_percentage_bandwidth = (
+                    math.floor((used_bandwidth / max_bandwidth) * 100)
+                    if max_bandwidth > 0 else 100
+            )
+            return {
+                "max_bandwidth": max_bandwidth,
+                "used_bandwidth": used_bandwidth,
+                "used_percentage_bandwidth": used_percentage_bandwidth
+            }
+        except Exception as error:
+            print(f"failure while processing membox bandwidth {str(error)}")
 
     def get_attached_devices_count(self):
         if self.mock:
@@ -307,12 +332,15 @@ class CognosInfluxDBClient():
                 headers=headers
             )
             payload = parse_svkcxlplugin_response(response)
-        num_hosts = len(payload['Hosts'])
-        num_cxl_devices = len(payload['Devices'])
-        return {
-            "num_hosts": num_hosts,
-            "num_cxl_devices": num_cxl_devices
-        }
+        try:
+            num_hosts = len(payload['Hosts'])
+            num_cxl_devices = len(payload['Devices'])
+            return {
+                "num_hosts": num_hosts,
+                "num_cxl_devices": num_cxl_devices
+            }
+        except Exception as error:
+            print(f"Error in processing attached devices count: {str(error)}")
 
     def get_membox_capacity(self):
         if self.mock:
@@ -331,18 +359,23 @@ class CognosInfluxDBClient():
             )
             payload = parse_svkcxlplugin_response(response)
 
-        num_attached_devices = 0
-        for host in payload['Hosts']:
-            num_attached_devices += (
-                len(host['endpoint']) if host['endpoint'] else 0
+        try:
+            num_attached_devices = 0
+            for host in payload['Hosts']:
+                num_attached_devices += (
+                    len(host['endpoint']) if host['endpoint'] else 0
+                )
+            num_cxl_devices = len(payload['Devices'])
+            total_capacity = 256 * num_cxl_devices
+            used_capacity = 256 * num_attached_devices
+            used_capacity_percentage = (
+                    math.floor((used_capacity/total_capacity) * 100)
+                    if total_capacity > 0 else 100
             )
-        num_cxl_devices = len(payload['Devices'])
-        total_capacity = 256 * num_cxl_devices
-        used_capacity = 256 * num_attached_devices
-        used_capacity_percentage = math.floor(
-            (used_capacity/total_capacity) * 100)
-        return {
-            "total_capacity": total_capacity,
-            "used_capacity": used_capacity,
-            "used_capacity_percentage": used_capacity_percentage
-        }
+            return {
+                "total_capacity": total_capacity,
+                "used_capacity": used_capacity,
+                "used_capacity_percentage": used_capacity_percentage
+            }
+        except Exception as error:
+            print(f"Failure during processing membox capacity: {str(error)}")

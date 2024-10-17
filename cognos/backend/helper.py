@@ -183,6 +183,41 @@ def disconnect_mysql(db):
     db.close()
 
 
+def update_metrics_host_filter_table(host):
+    try:
+        print(f"ATTEMPTING TO UPDATE scmc table with host: {host}")
+        db, cursor = connect_to_mysql()
+        delete_query = "DELETE FROM scmc;"
+        cursor.execute(delete_query)
+        db.commit()
+        insert_query = (
+            "INSERT INTO scmc (metrics_host_filter) VALUES (%s);"
+        )
+        values = [host]
+        cursor.execute(insert_query, values)
+        db.commit()
+        disconnect_mysql(db)
+    except Exception as error:
+        print(f"Failed to update metrics host filter table.. {str(error)}")
+
+
+def get_metrics_host_filter():
+    try:
+        db, cursor = connect_to_mysql()
+        fetch_query = (
+            "SELECT metrics_host_filter FROM scmc;"
+        )
+        cursor.execute(fetch_query)
+        row = cursor.fetchone()
+        if row:
+            return row[0]
+        else:
+            return ''
+        disconnect_mysql(db)
+    except Exception as error:
+        print(f"Failed to get metrics host filter.. {str(error)}")
+    
+
 def get_param_from_request_params(request_params, arg):
     for param in request_params:
         if param.startswith(arg):
@@ -216,7 +251,7 @@ def get_devices_from_db():
     db, cursor = connect_to_mysql()
     try:
         query = (
-            "SELECT dev_capacity, dev_id, dev_port, "
+            "SELECT dev_name, dev_capacity, dev_id, dev_port, "
             "hosts_attached FROM devices"
         )
         cursor.execute(query)
@@ -225,10 +260,11 @@ def get_devices_from_db():
         payload = []
         for row in rows:
             obj = {
-                "dev_capacity": row[0],
-                "dev_id": row[1],
-                "dev_port": row[2],
-                "hosts_attached": row[3]
+                "dev_name": row[0],
+                "dev_capacity": row[1],
+                "dev_id": row[2],
+                "dev_port": row[3],
+                "hosts_attached": row[4]
             }
             payload.append(obj)
         disconnect_mysql(db)
@@ -263,6 +299,87 @@ def insert_devices(payload):
         except Exception as error:
             print(f"Failed insert into devices table.. {str(error)}")
 
+    disconnect_mysql(db)
+
+
+def remove_device_attached_host(dev_id, removed_host):
+    db, cursor = connect_to_mysql()
+    prev_hosts_attached = -1
+    row = None
+    try:
+        query = "SELECT hosts_attached FROM devices WHERE dev_id=%s"
+        values = [dev_id]
+        cursor.execute(query, values)
+        row = cursor.fetchone()
+    except Exception as error:
+        print(f"Failed to fetch from devices table.. {str(error)}")
+    
+    if row:
+        prev_hosts_attached = row[0]
+    else:
+        return
+    
+    update_query = ''
+    values = None
+    if len(prev_hosts_attached.split(',')) > 1:
+        # multiple hosts attached
+        all_hosts_attached = (
+            ','.join(prev_hosts_attached.split(',').remove(removed_host))
+        )
+        update_query = (
+                "UPDATE devices SET hosts_attached = %s WHERE dev_id = %s;"
+        )
+        values = (all_hosts_attached, dev_id)
+    elif prev_hosts_attached == -1:
+        # no hosts attached
+        return
+    else:
+        # only a single host attached
+        update_query = (
+            "UPDATE devices SET hosts_attached = null WHERE dev_id = %s;"
+        )
+        values = [dev_id]
+    
+    try:
+        cursor.execute(update_query, values)
+        db.commit()
+    except Exception as error:
+        print(f"Failed to update devices table.. {str(error)}")
+    disconnect_mysql(db)
+
+
+def update_device_attached_hosts(dev_id, new_attached_host):
+    db, cursor = connect_to_mysql()
+    prev_hosts_attached = -1
+    row = None
+    try:
+        query = "SELECT hosts_attached FROM devices WHERE dev_id=%s"
+        values = [dev_id]
+        cursor.execute(query, values)
+        row = cursor.fetchone()
+    except Exception as error:
+        print(f"Failed to fetch from devices table.. {str(error)}")
+    
+    if row:
+        prev_hosts_attached = row[0]
+    else:
+        return ''
+    
+    if prev_hosts_attached != -1:
+        all_hosts_attached = (
+            ','.join([prev_hosts_attached, new_attached_host])
+            if prev_hosts_attached
+            else new_attached_host
+        )
+        try:
+            update_query = (
+                "UPDATE devices SET hosts_attached = %s WHERE dev_id = %s;"
+            )
+            values = (all_hosts_attached, dev_id)
+            cursor.execute(update_query, values)
+            db.commit()
+        except Exception as error:
+            print(f"Failed to update devices table.. {str(error)}")
     disconnect_mysql(db)
 
 

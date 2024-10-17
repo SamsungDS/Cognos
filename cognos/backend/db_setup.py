@@ -95,6 +95,14 @@ def setup_mem_box_table(db, cursor):
     db.commit()
 
 
+def setup_scmc_table(db, cursor):
+    create_scmc_table = (
+        "CREATE TABLE IF NOT EXISTS scmc (metrics_host_filter VARCHAR(255));"
+    )
+    cursor.execute(create_scmc_table)
+    db.commit()
+
+
 def shutdown_db_connection(db):
     db.close()
 
@@ -109,5 +117,6 @@ if __name__ == "__main__":
     setup_hosts_table(db, cursor)
     setup_devices_table(db, cursor)
     setup_mem_box_table(db, cursor)
+    setup_scmc_table(db, cursor)
 
     shutdown_db_connection(db)
