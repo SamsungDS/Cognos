@@ -24,6 +24,7 @@ set(SVKCXL_INCLUDE_DEST "include/")
 set(SVKMGMTFW_DIRS "/usr/local/svk/mgmt-fw")
 set(SVKMGMTFW_INCLUDE_DIRS "/usr/local/svk/mgmt-fw/include")
 set(SVKMGMTFW_LIB_DIRS "/usr/local/svk/mgmt-fw/lib64")
+set(SVKCXL_FMAPI_DIRS "/usr/local/lib/cxl_memory_box")
 configure_file("cmake/${SVKCXL}.pc.in" "${pkg_config}" @ONLY)
 
 find_package(PkgConfig REQUIRED)
@@ -69,18 +70,18 @@ install(
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/${SVKCXL_CMAKE_DEST}
     )
 install(CODE "
-    file(WRITE \"/etc/ld.so.conf.d/svk-cxl-x86_64.conf\" \"\\n${CMAKE_INSTALL_PREFIX}/lib\\n\")
-    file(APPEND \"/etc/ld.so.conf.d/svk-cxl-x86_64.conf\" \"\\n${CMAKE_INSTALL_PREFIX}/lib64\\n\")
+    file(WRITE \"svk-cxl-x86_64.conf\" \"\\n${CMAKE_INSTALL_PREFIX}/lib\\n\")
+    file(APPEND \"svk-cxl-x86_64.conf\" \"\\n${CMAKE_INSTALL_PREFIX}/lib64\\n\")
 ")
 
 if(WITH_FMAPI)
-    install(CODE "
-        file(APPEND \"/etc/ld.so.conf.d/svk-cxl-x86_64.conf\" \"\\n${FMAPI_INCLUDE_PATH}/build\\n\")
-    ")
     install(
         FILES "${FMAPI_LIBRARY_PATH}"
-        DESTINATION "/usr/local/lib/cxl_memory_box"
+        DESTINATION "${SVKCXL_FMAPI_DIRS}"
     )
+    install(CODE "
+        file(APPEND \"svk-cxl-x86_64.conf\" \"\\n${SVKCXL_FMAPI_DIRS}\\n\")
+    ")
     install(
         FILES "config/cxl.conf"
         DESTINATION "${SVKMGMTFW_DIRS}"
@@ -94,7 +95,7 @@ if(WITH_FMAPI)
 endif()
 
 install(
-    FILES "/etc/ld.so.conf.d/svk-cxl-x86_64.conf"
+    FILES "build/svk-cxl-x86_64.conf"
     DESTINATION "/etc/ld.so.conf.d"
 )
 
