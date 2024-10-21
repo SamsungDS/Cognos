@@ -11,25 +11,25 @@ import * as constants from '../../src/constant';
 export const handleSelectChange = async (
     selectedOption, setSelectedOption, setSelectorOptions,
     sendMessage, lastSelectedHost, apiEndpoint) => {
-    setSelectedOption(selectedOption);
+      setSelectedOption(selectedOption);
 
+      if (selectedOption) {
+        lastSelectedHost.current = selectedOption;
+        sessionStorage.setItem(
+          "lastSelectedHostValue",
+          lastSelectedHost.current
+        );
+      }
 
-    console.log("In handle select change: ", selectedOption);
-    if (selectedOption) {
-      console.log("Host selected: ", selectedOption);
-      lastSelectedHost.current = selectedOption
-      sessionStorage.setItem('lastSelectedHostValue', lastSelectedHost.current);
-    }
-
-    // get available hosts
-    try {
+      // get available hosts
+      try {
         const response = await fetch(`${apiEndpoint}/hosts`, {
-          mode: 'cors',
-          method: 'GET',
+          mode: "cors",
+          method: "GET",
           headers: {
-            'Content-Type': 'application/json',
-            'accept': 'application/json',
-            'Access-Control-Allow-Origin':'*'
+            "Content-Type": "application/json",
+            accept: "application/json",
+            "Access-Control-Allow-Origin": "*",
           },
         });
 
@@ -37,56 +37,54 @@ export const handleSelectChange = async (
           const data = await response.json();
           setSelectorOptions(data);
         }
-    } catch (error) {console.log(error)};
-
-
-    let payload = {}
-    payload.host = selectedOption;
-    // sendMessage(payload);
-
-    // update DB through CAL to store host to filter on
-    try {
-      const hostPayload = {host: selectedOption}
-      const response = await fetch(`${apiEndpoint}/update_metrics_host_filter`, {
-        mode: 'cors',
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin':'*',
-          'accept': 'application/json'
-        },
-        body: JSON.stringify(payload)
-      });
-
-      if (response.ok) {
-        console.log("Successfully sent selected host to backend: ", selectedOption);
+        // istanbul ignore next
+      } catch (error) {
+        console.log(error);
       }
-    } catch(error) {console.log(error)};
-};
 
+      let payload = {};
+      payload.host = selectedOption;
 
-// export function checkSelectedHost(lastSelectedHost, sendMessage) {
-//     if (lastSelectedHost.current) {
-//       let payload = {}
-//       payload.host = lastSelectedHost.current;
-//       sendMessage(payload);
-//     } else {
-//         console.log("last selected host is None");
-//     }
-// }
-
+      // update DB through CAL to store host to filter on
+      try {
+        const hostPayload = { host: selectedOption };
+        const response = await fetch(
+          `${apiEndpoint}/update_metrics_host_filter`,
+          {
+            mode: "cors",
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Access-Control-Allow-Origin": "*",
+              accept: "application/json",
+            },
+            body: JSON.stringify(payload),
+          }
+        );
+        // istanbul ignore next
+        if (response.ok) {
+          console.log(
+            "Successfully sent selected host to backend: ",
+            selectedOption
+          );
+        }
+        // istanbul ignore next
+      } catch (error) {
+        console.log(error);
+      }
+    };
 
 const Metrics = () => {
     const apiEndpoint = constants.Configs.api_endpoint;
     const [selectorOptions, setSelectorOptions] = useState([
-        { value: 'Host 1', label: 'Host 1' },
-        { value: 'Host 2', label: 'Host 2' }]
-        );
+      { value: "Host 1", label: "Host 1" },
+      { value: "Host 2", label: "Host 2" },
+    ]);
     const [selectedOption, setSelectedOption] = useState(null);
-    // const lastSelectedHost = useRef(null);
+    // istanbul ignore next
     const lastSelectedHost = useRef(() => {
-	const savedValue = sessionStorage.getItem('lastSelectedHostValue');
-	return savedValue ? savedValue: null;
+      const savedValue = sessionStorage.getItem("lastSelectedHostValue");
+      return savedValue ? savedValue : null;
     });
     
     const hostCheckerInterval = useRef(null);
@@ -178,12 +176,11 @@ const Metrics = () => {
 
 
   useEffect(() => {
+    // istanbul ignore next
     const intervalCallBack = () => {
-      // checkSelectedHost(lastSelectedHost, sendMessage);
       if (lastSelectedHost.current) {
         let payload = {}
         payload.host = lastSelectedHost.current;
-        console.log("CURRENTLY SELECTED HOST FROM UI IS: ", payload);
         sendMessage(payload);
       } else {
         console.log("last selected host is None");

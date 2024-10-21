@@ -35,11 +35,9 @@ async def send_metrics_event(websocket, event_type, data, stop_event):
         print(f"sent metrics for {event_type} with data {data}")
     except websockets.exceptions.ConnectionClosedOK:
         print("FOUND WEBSOCKET RECV MSG WHILE CLOSING")
-        # stop_event.set()
 
     except websockets.exceptions.ConnectionClosedError:
         print("FOUND WEBSOCKET CONNECTION CLOSED ERROR")
-        # stop_event.set()
     except Exception as e:
         print(f"{event_type} failed: {str(e)}")
         print(f"Exception Type: {type(e).__name__}")
@@ -57,48 +55,10 @@ async def recv_host_selection_handler(stop_event):
             if latest_host_selected and latest_host_selected != '':
                 influx_client.filter_hosts = True
                 influx_client.selected_host = latest_host_selected
-                print(f"INFLUX FILTER IS SET TO: {influx_client.selected_host}")
-            """
-            max_idle_time = 20
-            last_message_time = time.time()
-            print("Running recv host routine")
-            if ws and ws.open and ((time.time() - last_message_time) < max_idle_time):
-                print("Websocket connection is open")
-                try:
-                    await ws.ping()
-                    print("WAITING TO RECV MSG FROM UI")
-                    message = json.loads(await asyncio.wait_for(ws.recv(), timeout=1))
-                    last_message_time = time.time()
-                    #async for message in ws:
-                    print(f"RECV'D MSG FROM UI: {message}")
-
-                    if not message or not message['host']:
-                        continue
-                    # elif message:
-                    #     influx_client.filter_hosts = True
-                    #     selected_host = message['host']['value']
-                    #     influx_client.selected_host = (
-                    #         selected_host[0]
-                    #         if type(selected_host) is list else selected_host
-                    #     )
-                except asyncio.TimeoutError:
-                    print("timeout occured while waiting for message")
-                except websockets.exceptions.ConnectionClosedError:
-                    print("Websocket connection closed unexpectedly")
-                except Exception as error:
-                    print(f"Error while receiving message {str(error)}")
-            elif ws and ((time.time() - last_message_time) > max_idle_time):
-                print("Exporter host handler waited to long for msg, closing ws..")
-                await ws.close()
-                break
-            else:
-                print("Waiting for websocket to come online")
-            """
             await asyncio.sleep(0.1)
             time.sleep(0.1)
     except websockets.ConnectionClosed:
         print("Connection closed, waiting for new connection.. ")
-        # stop_event.set()
     except Exception as error:
         print(f"Error while running host select handler: {str(error)}")
 
@@ -106,49 +66,46 @@ async def recv_host_selection_handler(stop_event):
 async def metrics_handler(websocket, stop_event=None):
     global ws
     ws = websocket
-    # stop_event = asyncio.Event()
     while not stop_event.is_set():
         print("Running metrics handler routine")
         try:
-            print(f"CURR SELECTED HOST FROM UI: {influx_client.selected_host}")
             if ws.open:
                 try:
                     await ws.send(json.dumps({"type": "ping"}))
-                    print("ping from exporter to UI successful")
                 except Exception:
                     print("Ping failed")
                     raise websockets.ConnectionClosed(
                         3000, 'Manually close the connection')
                     break
-            
+
                 await send_metrics_event(
                     websocket,
                     "dram_cxl_usage",
                     influx_client.get_recent_dram_cxl_usage_data(),
                     stop_event
                 )
-            
+
                 await send_metrics_event(
                     websocket,
                     "cpu_mem_usage",
                     influx_client.get_cpu_mem_usage(),
                     stop_event
                 )
-            
+
                 await send_metrics_event(
                     websocket,
                     "memserver_capacity",
                     influx_client.get_memserver_capacity(),
                     stop_event
                 )
-            
+
                 await send_metrics_event(
                     websocket,
                     "cmmb_usage",
                     influx_client.get_membox_usage(),
                     stop_event
                 )
-            
+
                 await send_metrics_event(
                     websocket,
                     "cmmb_capacity",
@@ -162,7 +119,7 @@ async def metrics_handler(websocket, stop_event=None):
                     influx_client.get_membox_bandwidth(),
                     stop_event
                 )
-            
+
                 await send_metrics_event(
                     websocket,
                     "devices_count",
@@ -178,25 +135,18 @@ async def metrics_handler(websocket, stop_event=None):
             print("Closing server side websocket..")
             await ws.close()
             print("Connection closed, waiting for new connection.. ")
-            # stop_event.set()
             break
         except ZeroDivisionError:
             print("Hit Zero Division Error, closing websocket.. ")
             await ws.close()
-            # stop_event.set()
             break
         except Exception as e:
             print(f"ERROR: {str(e)} TYPE: {type(e)}")
-            print("Closing server side websocket..")
             await ws.close()
-            print("Connection closed, waiting for new connection.. ")
-            # stop_event.set()
             break
     print("exited main metrics handler loop")
     await asyncio.sleep(0.1)
     time.sleep(1)
-
-
 
 
 async def main():

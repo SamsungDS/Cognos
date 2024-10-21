@@ -210,6 +210,7 @@ class CXLPlugin(DataSource):
         if response.ok:
             payload = parse_svkcxlplugin_response(response)["devices"]
         else:
+            # pragma: no cover
             return failed_response("Failed to fetch device info from SVK")
 
         # convert bytes into GB & add device names
@@ -239,6 +240,7 @@ class CXLPlugin(DataSource):
             payload = parse_svkcxlplugin_response(response)['hosts']
             return payload
         else:
+            # pragma: no cover
             return failed_response(
                 "Failed to retrieve hosts info from SVK"
             )

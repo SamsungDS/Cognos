@@ -51,7 +51,8 @@ async def test_mock_websocket_recv(mock_websocket):
 async def test_send_metrics_event(mock_websocket):
     mock_event_type = "dram_cxl_usage"
     mock_data = [{"dram_usage": 22, "cxl_usage": 54}]
-    send_metrics_event(mock_websocket, mock_event_type, mock_data)
+    stop_event = asyncio.Event()
+    send_metrics_event(mock_websocket, mock_event_type, mock_data, stop_event)
 
 
 @pytest.mark.asyncio

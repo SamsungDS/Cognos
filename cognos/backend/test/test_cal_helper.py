@@ -102,11 +102,12 @@ def test_get_devices_from_db(mock_db):
     mock_connection, mock_cursor = mock_db
 
     dummy_data = [[
-        256, 32131212, 3, ''
+        "dev02", 256, 32131212, 3, ''
     ]]
 
     expected_response = [
         {
+            "dev_name": "dev02",
             "dev_capacity": 256,
             "dev_id": 32131212,
             "dev_port": 3,

@@ -88,6 +88,8 @@ def test_mock_attach_device(mocker, get_mock_datasource,
         'cognos.backend.helper.get_host_attached_devices',
         return_value={"dev": "dev2"}
     )
+    # Here we simulate the value for 'hosts_attached' being a string
+    mock_db[1].fetchone.return_value = ('host1',)
     get_mock_datasource.attach_device()
 
 

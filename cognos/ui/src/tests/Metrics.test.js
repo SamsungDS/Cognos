@@ -75,10 +75,5 @@ describe('Metric component', () => {
     );
   });
 
-  it('test last selected host', () => {
-    const mockLastSelectedHost = { current: "mock_host"};
-    const mockSendMessage = jest.fn();
-    checkSelectedHost(mockLastSelectedHost, mockSendMessage);
-  });
 
 });

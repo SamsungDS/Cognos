@@ -239,6 +239,9 @@ def test_cxlplugin_attach_device(mocker, get_cxlplugin_datasource,
             'cognos.backend.helper.disconnect_mysql',
             return_value=True
         )
+        # Return a dummy value for `fetchone` to avoid `MagicMock`
+        mock_cursor.fetchone.return_value = ('host1',)
+
         # mock_cursor.execute.return_value = True
         mocker.patch('cognos.backend.helper.get_host_attached_devices',
                      return_value={"device": "dev1"})

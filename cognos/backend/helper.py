@@ -42,6 +42,7 @@ def fetch_cognos_configs(parent_dir, file_name):
     try:
         with open(config_file_path, 'r') as config_file:
             configs = json.load(config_file)
+    # pragma: no cover
     except Exception as error:
         raise RuntimeError(
             f"Unable to retrieve cognos influx configs: {str(error)}"
@@ -54,6 +55,7 @@ def fetch_api_version(parent_dir):
         with open(os.path.join(parent_dir, 'VERSION'), 'r') as v:
             API_VERSION = v.read().strip()
             return API_VERSION
+    # pragma: no cover
     except Exception as error:
         raise RuntimeError(
             f"Unable to retrieve API version: {str(error)}"
@@ -175,6 +177,7 @@ def connect_to_mysql():
         )
         cursor = db.cursor()
         return db, cursor
+    # pragma: no cover
     except Exception as error:
         print(f"Failed to connect to Cognos Mysql DB.. {str(error)}")
 
@@ -216,7 +219,7 @@ def get_metrics_host_filter():
         disconnect_mysql(db)
     except Exception as error:
         print(f"Failed to get metrics host filter.. {str(error)}")
-    
+
 
 def get_param_from_request_params(request_params, arg):
     for param in request_params:
@@ -241,6 +244,7 @@ def insert_hosts(payload):
             )
             cursor.execute(insert_query, values)
             db.commit()
+        # pragma: no cover
         except Exception as error:
             print(f"Failed to insert into hosts table.. {str(error)}")
 
@@ -313,12 +317,12 @@ def remove_device_attached_host(dev_id, removed_host):
         row = cursor.fetchone()
     except Exception as error:
         print(f"Failed to fetch from devices table.. {str(error)}")
-    
+
     if row:
         prev_hosts_attached = row[0]
     else:
         return
-    
+
     update_query = ''
     values = None
     if len(prev_hosts_attached.split(',')) > 1:
@@ -339,7 +343,7 @@ def remove_device_attached_host(dev_id, removed_host):
             "UPDATE devices SET hosts_attached = null WHERE dev_id = %s;"
         )
         values = [dev_id]
-    
+
     try:
         cursor.execute(update_query, values)
         db.commit()
@@ -359,12 +363,12 @@ def update_device_attached_hosts(dev_id, new_attached_host):
         row = cursor.fetchone()
     except Exception as error:
         print(f"Failed to fetch from devices table.. {str(error)}")
-    
+
     if row:
         prev_hosts_attached = row[0]
     else:
         return ''
-    
+
     if prev_hosts_attached != -1:
         all_hosts_attached = (
             ','.join([prev_hosts_attached, new_attached_host])

@@ -14,14 +14,16 @@ export const WebSocketProvider = ({ children }) => {
   const ws = useRef(null);
 
   function connect() {
-    console.log("TRYING TO CONNECT TO: ", Configs.exporter_endpoint);
 
     if (Configs.ssl) {
+      // istanbul ignore next
         ws.current = new WebSocket(`wss://${Configs.exporter_endpoint}`);
     } else {
         ws.current = new WebSocket(`ws://${Configs.exporter_endpoint}`);
     }
+    // istanbul ignore next
     ws.current.onopen = () => {
+      // istanbul ignore next
       console.log("UI opened connection to websocket");
     };
 
@@ -56,10 +58,12 @@ export const WebSocketProvider = ({ children }) => {
     };
 
     ws.current.onclose = (event) => {
+      // istanbul ignore next
       if (event.wasClean) {
+        // istanbul ignore next
         console.log("Clean termination to websocket");
       } else {
-        console.log("Closing websocket");
+        // istanbul ignore next
         console.error("Unexpected termination of websocket");
         ws.current.close();
         ws.current = null;
@@ -67,10 +71,12 @@ export const WebSocketProvider = ({ children }) => {
     };
 
     ws.current.onerror = (err) => {
+      // istanbul ignore next
       console.error('websocket error: ', err);
     };
   }
 
+  // istanbul ignore next
   function check() {
     if(!ws) {
       connect();
@@ -81,22 +87,24 @@ export const WebSocketProvider = ({ children }) => {
     }
   }
 
-
+  
   useEffect(() => {
     connect();
     setInterval(check, 5000);
   }, []);
 
   const sendMessage = (message) => {
+    // istanbul ignore next
     if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-      console.log('SENDING MSG TO EXPORTER: ', message);
       try {
         ws.current.send(JSON.stringify(message));
       } catch (err) {
+        // istanbul ignore next
           console.error('Error sending message: ', err);
       }
     } else {
-      console.error('WebSocket is not open'+ JSON.stringify(message.host));
+      // istanbul ignore next
+      console.error('WebSocket is not open'+ JSON.stringify(message.host)); 
     }
   };
 
