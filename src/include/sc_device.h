@@ -18,6 +18,8 @@
 #include "types.h"
 #include "mbox_a1.h"
 
+enum device_type {MBOX=1,SLD=2,MLD=3,LD=4,DCD=5};
+
 class sc_host;
 
 /**

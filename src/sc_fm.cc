@@ -1,0 +1,231 @@
+#include <unordered_set>
+#include "sc_fm.h"  
+#include <iostream>
+
+// Constructor that takes a json object
+FabricManager::FabricManager(json_t* config) {
+    // Parse the provided config
+    parse_config(config);
+    std::cout << "FabricManager created: " << get_fmid().get_sc_id() <<std::endl;
+}
+
+// Destructor
+FabricManager::~FabricManager() {
+    cleanup();
+    std::cout << "FabricManager destroyed: "<<get_fmid().get_sc_id() << std::endl;
+}
+
+void FabricManager::cleanup() {
+    hosts.clear();
+    devs.clear();
+}
+
+/*
+ * @brief  Helper function to hash the ID from id_json
+ */
+uint64_t FabricManager::hash_id_json(json_t* id_json, const std::string& fm_type) {
+    if (!json_is_integer(id_json)) {
+        std::cerr << "Invalid id format in JSON" << std::endl;
+        return 0;
+    }
+    uint64_t id_value = json_integer_value(id_json);
+    // Combine id_value and fm_type into a single string
+    std::ostringstream combined;
+    combined << id_value << "_" << fm_type;
+
+    uint64_t full_hash = std::hash<std::string>{}(combined.str());
+    // Reduce to a 7-digit hash by keeping only the lowest 24 bits
+    // Range: 0 - 16,777,215
+    uint64_t short_hash = full_hash & 0xFFFFFF; 
+    return short_hash;
+}
+
+/**
+ * @brief parse json and populate vector<sc_host> and vector<sc_sld>
+ */
+void FabricManager::parse_config(json_t* config) {
+    // Parse the "id" and "type" fields
+    json_t* id_json = json_object_get(config, "id");
+    json_t* fm_type_json = json_object_get(config, "type");
+
+    if (json_is_string(fm_type_json)){
+        set_fm_type(json_string_value(fm_type_json));
+    }
+
+    if (json_is_integer(id_json) && json_is_string(fm_type_json)) {
+        uint64_t hashed_id = hash_id_json(id_json, get_fm_type());
+        // Set the hashed ID in the sc_id member
+        id.set_sc_id(hashed_id);
+        std::cout << "FabricManager initialized with hashed ID: " << hashed_id << std::endl;
+    }
+
+    // Parse the "Hosts" array
+    json_t* hosts_json = json_object_get(config, "Hosts");
+    if (json_is_array(hosts_json)) {
+        size_t index;
+        json_t* host_json;
+        json_array_foreach(hosts_json, index, host_json) {
+	    const char* h_addr_str = json_string_value(json_object_get(host_json, "host_addr"));
+            uint64_t h_addr = std::stoull(h_addr_str, nullptr, 16);
+	    const char* h_size_str = json_string_value(json_object_get(host_json, "host_size"));
+            uint64_t h_size = std::stoull(h_size_str, nullptr, 16);
+
+            sc_host h(h_addr);
+            h.set_capacity(h_size); 
+            h.set_host_name(json_string_value(json_object_get(host_json, "host_name")));
+            h.set_host_port(json_integer_value(json_object_get(host_json, "host_port")));
+
+	    // endpoints
+            json_t* endpoints = json_object_get(host_json, "endpoint");
+            if (json_is_array(endpoints)) {
+                size_t endpoint_index;
+                json_t* endpoint;
+                json_array_foreach(endpoints, endpoint_index, endpoint) {
+                    uint32_t d_port = json_integer_value(json_object_get(endpoint, "target"));
+		    h.set_target_ports(d_port); 
+                }
+            }
+
+            hosts.push_back(h);
+        }
+    }
+    // Parse the "Devices" array
+    json_t* devices_json = json_object_get(config, "Devices");
+    if (json_is_array(devices_json)) {
+        size_t index;
+        json_t* device_json;
+        json_array_foreach(devices_json, index, device_json) {
+       	    const char* dev_addr_str = json_string_value(json_object_get(device_json, "dev_addr"));
+            uint64_t dev_addr = std::stoull(dev_addr_str, nullptr, 16); 	
+	    // parse dev_size as a string and convert it to uint64_t
+            const char* dev_size_str = json_string_value(json_object_get(device_json, "dev_size"));
+	    // Convert from hex string to uint64_t
+            uint64_t dev_size = std::stoull(dev_size_str, nullptr, 16);  
+            const char* dev_name = json_string_value(json_object_get(device_json, "dev_name"));
+            uint32_t dev_port = json_integer_value(json_object_get(device_json, "dev_port"));
+            sc_sld d(dev_addr, dev_name, dev_size, dev_port);
+            devs.push_back(d);
+        }
+
+
+    }
+}
+
+
+/**
+ * @brief set_up_info of direct attached device which includes host & device info. 
+ */
+size_t FabricManager::setup_info(std::string &buffer) {
+
+    if (hosts.empty() && devs.empty()) {
+        // Return early if there are no hosts or devices, indicating an empty state
+        buffer.clear();
+        return 0;
+    }	
+
+    // Create root object
+    json_t* root = json_object();
+    
+    // Add id from the sc_id class
+    json_object_set_new(root, "id", json_integer(id.get_sc_id()));
+    json_object_set_new(root, "type", json_string(get_fm_type().c_str()));
+
+    // Create hosts array
+    json_t* hosts_array = json_array();
+    // Loop through each host and populate their JSON objects
+    for (auto& h : hosts) {
+        json_t* host_obj = json_object();
+        json_object_set_new(host_obj, "host_name", json_string(h.get_host_name().c_str()));
+        json_object_set_new(host_obj, "host_addr", json_string(std::to_string(h.get_id()).c_str()));
+        json_object_set_new(host_obj, "host_size", json_string(std::to_string(h.get_capacity()).c_str()));
+        json_object_set_new(host_obj, "host_port", json_integer(h.get_host_port()));
+
+        // Set default values for fields not covered
+        json_object_set_new(host_obj, "deinit_active", json_integer(0)); 
+        json_object_set_new(host_obj, "host_port_type", json_string("")); 
+        json_object_set_new(host_obj, "classcode", json_integer(0)); 
+        json_object_set_new(host_obj, "host_aspm_active", json_integer(0)); 
+        json_object_set_new(host_obj, "host_sris_active", json_integer(0)); 
+        json_object_set_new(host_obj, "host_equalization", json_integer(0)); 
+        json_object_set_new(host_obj, "host_speed", json_integer(0)); 
+        json_object_set_new(host_obj, "host_width", json_integer(0)); 
+	
+	// Initialize the endpoint array for the current host
+        json_t* endpoint_array = json_array();
+
+        // Populate d_ports for this host's target ports
+        std::unordered_set<uint32_t> d_ports;
+
+        for (auto& port : h.get_target_ports()) {
+            d_ports.insert(port);
+        }
+
+        // Loop through each device to match target ports and populate endpoint info
+        for (const auto& d : devs) {
+            // Match found for target port
+            if (d_ports.count(d.d_get_port()) > 0) {
+                json_t* endpoint_obj = json_object();
+                json_object_set_new(endpoint_obj, "memdev", json_string(d.d_get_dev_name().c_str()));
+                json_object_set_new(endpoint_obj, "target", json_integer(d.d_get_port()));
+                json_object_set_new(endpoint_obj, "mem_size", json_string(std::to_string(d.d_get_capacity()).c_str()));
+                json_object_set_new(endpoint_obj, "dev_offset", json_string("0"));
+
+                // Append the endpoint object to the endpoint array
+                json_array_append_new(endpoint_array, endpoint_obj);
+            }
+        }
+
+        // Add the populated endpoint array to the host object
+        json_object_set_new(host_obj, "endpoint", endpoint_array);
+
+        // Append the host object to the hosts array
+        json_array_append_new(hosts_array, host_obj);
+    }
+    // Add hosts array to the root object
+    json_object_set_new(root, "Hosts", hosts_array);
+
+    // Create devices array
+    json_t* devices_array = json_array();
+    // Loop through each device and populate their JSON objects
+    for (const auto& d : devs) {
+        json_t* dev_obj = json_object();
+        json_object_set_new(dev_obj, "dev_name", json_string(d.d_get_dev_name().c_str()));
+        json_object_set_new(dev_obj, "dev_addr", json_string(std::to_string(d.d_get_id().get_sc_id()).c_str()));
+        json_object_set_new(dev_obj, "dev_size", json_string(std::to_string(d.d_get_capacity()).c_str()));
+        json_object_set_new(dev_obj, "dev_port", json_integer(d.d_get_port()));
+        // Set default values for fields not covered
+        json_object_set_new(dev_obj, "dev_aspm_active", json_integer(0)); 
+        json_object_set_new(dev_obj, "dev_sris_active", json_integer(0)); 
+        json_object_set_new(dev_obj, "dev_lock_active", json_integer(0)); 
+        json_object_set_new(dev_obj, "dev_speed", json_integer(0)); 
+        json_object_set_new(dev_obj, "dev_width", json_integer(0)); 
+        json_object_set_new(dev_obj, "dev_port_type", json_string(""));
+        // Append the device object to the devices array
+        json_array_append_new(devices_array, dev_obj);
+    }
+    // Add devices array to the root object
+    json_object_set_new(root, "Devices", devices_array);
+    // Dump the JSON object to the buffer
+    size_t bytes_written = json_dumpb(root, &buffer[0], buffer.size(), JSON_INDENT(0));
+
+    // Check if buffer size was sufficient
+    if (bytes_written == 0 || bytes_written >= buffer.size()) {
+        // Resize buffer and try again if the current buffer size is too small
+        buffer.resize(bytes_written + 1);  
+        bytes_written = json_dumpb(root, &buffer[0], buffer.size(), JSON_INDENT(0));
+    }
+    // Clean up JSON object
+    json_decref(root);
+    return bytes_written;
+}
+
+void FabricManager::set_fm_type(std::string id_type) { fm_type = id_type; }
+
+sc_id FabricManager::get_fmid() const {
+    return id;
+}
+
+std::string FabricManager::get_fm_type() const {
+    return fm_type; 
+}
+

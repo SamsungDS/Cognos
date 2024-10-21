@@ -103,6 +103,10 @@ install(
     FILES "config/zmq_config.json"
     DESTINATION "/etc/svk/"
 )
+install(
+    FILES "config/input.conf"
+    DESTINATION "${SVKMGMTFW_DIRS}"
+)
 # install pkg config file
 install(
     FILES "${pkg_config}"

@@ -2,4 +2,5 @@
 /usr/local/lib/cxl_memory_box/* /usr/local/lib/cxl_memory_box/
 /etc/svk/* /etc/svk/
 /usr/local/svk/mgmt-fw/cxl.conf /usr/local/svk/mgmt-fw/
+/usr/local/svk/mgmt-fw/input.conf /usr/local/svk/mgmt-fw/
 /etc/ld.so.conf.d/* /etc/ld.so.conf.d/

@@ -341,6 +341,7 @@ if $WITH_COVERAGE;then
 
     cp "$PROJECT_ROOT/tests/input.json" "$BUILD_DIR/tests"
     cp "$PROJECT_ROOT/config/cxl.conf" "$BUILD_DIR/tests"
+    cp "$PROJECT_ROOT/config/input.conf" "$BUILD_DIR/tests"
     cp "$PROJECT_ROOT/config/zmq_config.json" "$BUILD_DIR/tests/"
     mkdir -p "$REPORTS_DIR"
     ctest --output-junit "$REPORTS_DIR/gitlab_junit.xml"
@@ -369,6 +370,7 @@ elif $RELEASE;then
   mkdir -p "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/lib64"
   cp "$PROJECT_ROOT/config/zmq_config.json" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
   cp "$PROJECT_ROOT/config/cxl.conf" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
+  cp "$PROJECT_ROOT/config/input.conf" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
   if $MOCK; then
     tar -zcf "$RELEASE_FILENAME_PREFIX-mock-$ID-$GIT_VERSION.tgz" "$CMAKE_INSTALL_PREFIX"
   else

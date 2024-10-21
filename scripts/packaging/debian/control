@@ -8,7 +8,10 @@ Standards-Version: 4.1.4
 Package: DEB_PACKAGE_NAME
 Architecture: amd64
 Depends: ${shlibs:Depends}, ${misc:Depends}, svk-mgmt-fw, dstat
-Description: SVK Management framework related APIs, services
+Description: SVK Management framework - APIs and services for monitoring and management.
+ This package provides APIs and services related to the SVK Management framework,
+ including tools for system monitoring and performance analysis.
+ It includes `dstat` to support real-time resource usage tracking and diagnostic capabilities.
 
 Package: DEB_PACKAGE_NAME-dev
 Architecture: amd64

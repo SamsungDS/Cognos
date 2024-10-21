@@ -1,15 +1,25 @@
 #include <iostream>
 #include <map>
 #include <sstream>
+#include <fstream>
+#include <unordered_map>
+#include <functional>
+#include "sc_fm.h"
 #include "sc_servicer.h"
 #include "sc_global.h"
 #include "sc_mbox.h"
 #include "framework_downstream.h"
+#include "sc_cmmd.h"
+#include "sc_cmmh.h"
+#include "sc_cmmb.h"
 
 extern "C"{
 #include "jansson.h"
 #include "mbox_a1.h"
 }
+
+#define CXL_CONF_FILE "cxl.conf"
+#define INPUT_CONF_FILE "input.conf"
 
 using namespace std;
 
@@ -161,36 +171,148 @@ std::string DetachMemory(const std::string& input) {
 
 
 /**
- * @brief ListHosts - invokes list_hosts function of Device Class.
+ * @brief provide direct attached host or switch setup such as hosts, devices, endpoints.
  * @param input string having Cluster ID, Command, ID.
- * @return output Hosts list in json string.
+ * @return setup details as string.
 */
 std::string SetupInfo(const std::string& input) {
 
-    string output = "";
-    unordered_map<string, string> tokens_map = token_helper(input);
-    // Create a buffer to store the JSON data
+    string output;
     std::string buffer;
-    size_t bytes_written = cxl_global.fetch_setup_info(buffer);
-    // Reserve the initial buffer size
-    buffer.resize(bytes_written);
-    output+=buffer;
+    unordered_map<string, string> tokens_map = token_helper(input);
+
+    // Retrieve all sc_id keys from cxl_global
+    std::vector<sc_id> fm_keys = cxl_global.get_fm_keys();
+ 
+    // Iterate over each key, retrieve the FabricManager, and call setup_info
+    for (auto& id : fm_keys) {
+        FabricManager* manager = cxl_global.find_fm(id);
+        if (manager) {
+            std::cout << "Invoke Direct attached host setup_info" << std::endl;
+            size_t bytes_written = manager->setup_info(buffer);
+            buffer.resize(bytes_written);
+            output += buffer;
+        }
+    }
+
+    if (output.empty()) {
+        std::cerr << "No FabricManager found " << std::endl;
+    }
     return output;
-}  
+}
+
+void create_dev_cmmd(json_t* config) {
+    // Allocate DevCMMD on the heap
+    DevCMMD* manager = new DevCMMD(config);
+    cxl_global.add_fm(manager->get_fmid(), *manager);
+    std::cout << "Added DevCMMD to map." << std::endl;
+}
+
+void create_dev_cmmh(json_t* config) {
+    // Allocate DevCMMH on the heap
+    DevCMMH* manager = new DevCMMH(config);
+    cxl_global.add_fm(manager->get_fmid(), *manager);
+    std::cout << "Added DevCMMH to map." << std::endl;
+}
+
+void create_dev_cmmb(json_t* config) {
+    // Allocate DevCMMB on the heap
+    DevCMMB* manager = new DevCMMB(config);
+    cxl_global.add_fm(manager->get_fmid(), *manager);
+    std::cout << "Added DevCMMB to map." << std::endl;
+}
+
+
+const std::unordered_map<std::string, std::function<void(json_t*)>> factory_map = {
+    {"FM_DIRECT_CMMD", create_dev_cmmd},
+    {"FM_DIRECT_CMMH", create_dev_cmmh},
+    {"FM_REMOTE_CMMB", create_dev_cmmb}
+};
+
+
+/**
+ * @brief function would take each fabric_manager entry, check for a valid type
+ *        and handle unknown types
+ */
+int process_fabric_manager(json_t* fabric_manager) {
+    json_t* type_json = json_object_get(fabric_manager, "type");
+    if (!json_is_string(type_json)) {
+        std::cerr << "Missing or invalid 'type' field in fabric_manager" << std::endl;
+        return 1; 
+    }
+    std::string type_str = json_string_value(type_json);
+    auto it = factory_map.find(type_str);
+    if (it != factory_map.end()) {
+	// Call factory function    
+        it->second(fabric_manager); 
+    } else {
+        std::cerr << "Unknown fabric_manager type: " << type_str << std::endl;
+        return 2; 
+    }
+    return 0; 
+}
+
+
+/**
+ * @brief  Function to load the JSON config file with path availability check, 
+ *         error handling and return the json_t object 
+*/
+json_t* direct_config(const std::string& input_config) {
+    json_error_t error;
+    json_t* config_json = json_load_file(input_config.c_str(), 0, &error);
+    if (!config_json) {
+        std::cerr << "Error loading JSON file: " << error.text << std::endl;
+    }
+    return config_json;
+}
+
+/**
+ * @brief  load and validate the JSON structure, ensuring the file is correctly parsed 
+ *         and contains a fabric_managers array
+ */
+json_t* load_json_config(const std::string& config_path) {
+    json_t* root = direct_config(config_path);
+    if (!root || !json_is_object(root)) {
+        std::cerr << "Failed to load or parse configuration file: " << config_path << std::endl;
+        return nullptr;
+    }
+    json_t* fabric_managers = json_object_get(root, "fabric_managers");
+    if (!json_is_array(fabric_managers)) {
+        std::cerr << "Invalid or missing 'fabric_managers' array in configuration" << std::endl;
+        json_decref(root);
+        return nullptr;
+    }
+    return root;
+}
 
 /**
  * @brief init function
  * @details This function will be triggered first for any requests from client side.
 */
-int init_cxl_plugin(){
+int init_cxl_plugin() {
+    std::cout << "invoked init_cxl_plugin " << std::endl;
+    json_t* root = load_json_config(INPUT_CONF_FILE);
+    if (!root) {
+	// error loading JSON    
+        return 1; 
+    }
+    size_t index;
+    json_t* fabric_manager;
+    json_array_foreach(json_object_get(root, "fabric_managers"), index, fabric_manager) {
+        if (process_fabric_manager(fabric_manager) != 0) {
+            // skip if theres an error processing		
+            continue; 
+        }
+    }
+    json_decref(root);
+
     struct StaticPortInfo pinfo;
-    // Get the IP address 
-    std::string ip_address = get_ip_address("cxl.conf");
+    std::string ip_address = get_ip_address(CXL_CONF_FILE);
     set_ip(ip_address.c_str());
     init();
     mbox_get_static_config(&pinfo);
     return cxl_global.g_create_mbox(&pinfo);
-}    
+}
 
 /**
  * ########################################

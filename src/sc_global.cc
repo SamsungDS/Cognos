@@ -305,7 +305,6 @@ size_t sc_global::to_setup_json(string &buffer){
     return bytes_written;
 }
 
-
 size_t sc_global::fetch_setup_info(string &buffer){ return to_setup_json(buffer);	}
 
 size_t sc_global::list_devices(string &buffer){ return to_device_json(buffer); }
@@ -313,3 +312,53 @@ size_t sc_global::list_devices(string &buffer){ return to_device_json(buffer); }
 size_t sc_global::list_hosts(string &buffer){ return to_host_json(buffer); }
 
 void sc_global::clear_mbox_objects(){ mb_objs.clear(); } 
+
+void sc_global::add_fm(const sc_id& id, FabricManager& manager) {
+    // Store the address of the FabricManager reference in the map
+    fm_map[id] = &manager;
+}
+
+void sc_global::del_fm(const sc_id& id) {
+    auto it = fm_map.find(id);
+    if (it != fm_map.end()) {
+        // Delete the FabricManager object to prevent memory leaks
+        delete it->second;
+        // Remove the entry from the map
+        fm_map.erase(it);
+        std::cout << "Deleted FabricManager with ID: " << id.get_sc_id() << std::endl;
+    } else {
+        std::cerr << "FabricManager with ID: " << id.get_sc_id() << " not found." << std::endl;
+    }
+}
+
+FabricManager* sc_global::find_fm(const sc_id& id) {
+    auto it = fm_map.find(id);
+    if (it != fm_map.end()) {
+        // Return the pointer to the FabricManager object
+        return it->second;
+    }
+    // Return nullptr if the sc_id is not found
+    return nullptr;
+}
+
+
+std::vector<sc_id> sc_global::get_fm_keys() const {
+    std::vector<sc_id> keys;
+    for (const auto& entry : fm_map) {
+        keys.push_back(entry.first);
+    }
+    return keys;}
+
+void sc_global::cleanup_fm_map() {
+    for (auto& entry : fm_map) {
+        // Delete each dynamically allocated FabricManager
+        delete entry.second;  
+    }
+    // Clear the map to remove all entries
+    fm_map.clear(); 
+}
+
+sc_global::~sc_global() {
+    cleanup_fm_map();
+}
+

@@ -8,12 +8,26 @@ extern "C"{
 #include "jansson.h"
 }
 
+const std::string json_filepath = "input.conf";
 
 class ScGlobalTest : public ::testing::Test {
 protected:
-
+    json_t* config;
     sc_global global_instance;
     void SetUp() override {
+
+        // Load the JSON configuration from the file
+        config = load_json_from_file(json_filepath);
+        ASSERT_NE(config, nullptr) << "Failed to load JSON config from file";
+        json_t* fabric_managers = json_object_get(config, "fabric_managers");
+        ASSERT_TRUE(json_is_array(fabric_managers)) << "Expected fabric_managers to be an array";
+        size_t index;
+        json_t* fabric_manager;
+        json_array_foreach(fabric_managers, index, fabric_manager) {
+            FabricManager* manager = new FabricManager(fabric_manager);
+            global_instance.add_fm(manager->get_fmid(), *manager);
+        }
+	    
         uint32_t mb_id = 102;
         sc_switch sw(mb_id + 102);
         sc_mbox* mb = new sc_mbox(mb_id, mb_id + 101, sw);
@@ -39,11 +53,23 @@ protected:
         mb->get_phost()[1].push_back(sc_id(456));  
         mb->get_phost()[2].push_back(sc_id(457));
         global_instance.get_mbox_map()[mb_id + 101] = mb;
+
     }
 
     void TearDown() override {
-        // Clean up the global instance
         global_instance.clear_mbox_objects();
+        json_decref(config);  
+    }
+
+public:
+    json_t* load_json_from_file(const std::string& file_path) {
+        json_error_t error;
+        json_t* root = json_load_file(file_path.c_str(), 0, &error);
+        if (!root) {
+            std::cerr << "Error loading JSON from file: " << error.text << " at line " << error.line << std::endl;
+            return nullptr;
+        }
+        return root;
     }
 
 };
@@ -347,3 +373,79 @@ TEST_F(ScGlobalTest, ValidPortInfo) {
     ASSERT_EQ(host.get_host_port(), 2);
 }
 
+// Test for adding and finding FabricManager instances
+TEST_F(ScGlobalTest, AddAndFindFm) {
+    std::vector<sc_id> fm_keys = global_instance.get_fm_keys();
+    ASSERT_GT(fm_keys.size(), 0);  
+    for (const auto& id : fm_keys) {
+        FabricManager* found_manager = global_instance.find_fm(id);
+        ASSERT_NE(found_manager, nullptr);
+        std::cout << "Found FabricManager with type: " << found_manager->get_fm_type() << std::endl;
+    }
+}
+
+// Test for finding a non-existent FabricManager
+TEST_F(ScGlobalTest, FindNonExistentFm) {
+    sc_id non_existent_id(9999);  
+    FabricManager* found_manager = global_instance.find_fm(non_existent_id);
+    EXPECT_EQ(found_manager, nullptr);
+}
+
+
+TEST_F(ScGlobalTest, GetFmKeys) {
+    std::vector<sc_id> fm_keys = global_instance.get_fm_keys();
+    ASSERT_GT(fm_keys.size(), 0);  
+    for (const auto& id : fm_keys) {
+        std::cout << "FabricManager ID: " << id.get_sc_id() << std::endl;
+    }
+}
+
+
+TEST_F(ScGlobalTest, CleanupFmMap) {
+    {
+        sc_global temp_global_instance;
+        json_t* fabric_managers = json_object_get(config, "fabric_managers");
+        size_t index;
+        json_t* fabric_manager;
+        json_array_foreach(fabric_managers, index, fabric_manager) {
+            FabricManager* manager = new FabricManager(fabric_manager);
+            temp_global_instance.add_fm(manager->get_fmid(), *manager);
+        }
+    } 
+    SUCCEED(); 
+}
+
+
+TEST_F(ScGlobalTest, DelFm) {
+    // Ensure the FabricManager instance was added in SetUp
+    json_t* fabric_managers = json_object_get(config, "fabric_managers");
+    ASSERT_TRUE(json_is_array(fabric_managers)) << "Expected fabric_managers to be an array";
+    json_t* first_fabric_manager = json_array_get(fabric_managers, 0);
+    ASSERT_TRUE(first_fabric_manager != nullptr) << "Expected first fabric manager to be available";
+    // Create a FabricManager instance from the first entry in fabric_managers
+    FabricManager manager(first_fabric_manager);
+    sc_id id = manager.get_fmid();
+    // Verify that the FabricManager instance was added to global_instance
+    FabricManager* retrieved_manager = global_instance.find_fm(id);
+    ASSERT_NE(retrieved_manager, nullptr) << "FabricManager was not added to global_instance";
+    EXPECT_EQ(retrieved_manager->get_fm_type(), manager.get_fm_type());
+    // Now delete the FabricManager from global_instance
+    global_instance.del_fm(id);
+    // Verify that the FabricManager was removed
+    retrieved_manager = global_instance.find_fm(id);
+    EXPECT_EQ(retrieved_manager, nullptr) << "FabricManager was not removed from global_instance";
+}
+
+
+TEST_F(ScGlobalTest, DelFmNonExistentId) {
+    // ID that does not exist in the global_instance
+    sc_id non_existent_id(9999);  
+    // Capture the output printed to std::cerr
+    testing::internal::CaptureStderr();
+    global_instance.del_fm(non_existent_id);
+    std::string output = testing::internal::GetCapturedStderr();
+    EXPECT_TRUE(output.find("not found") != std::string::npos) << "Expected 'not found' error message";
+    //verify 
+    FabricManager* manager = global_instance.find_fm(non_existent_id);
+    EXPECT_EQ(manager, nullptr) << "Non-existent FabricManager ID should not be found";
+}

@@ -2,6 +2,7 @@
 #define __CXL_PLUGIN_SC_ID_H__
 
 #include "types.h"
+#include <functional>
 
 /**
  * @brief simple class sc_id
@@ -40,6 +41,7 @@ class sc_id {
   /**< id value */
   uint64_t s_id{1};
 };
+
 
 /**
  * @brief custom hash function.

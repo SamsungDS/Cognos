@@ -16,12 +16,14 @@ using namespace std;
 // Global instance
 sc_global cxl_global;
 const std::string json_filepath = "cxl.conf";
+const std::string input_conf_path = "input.conf";
 
 using ::testing::_;
 using ::testing::Return;
 
 //function pointers for the commands
 typedef std::string (*CommandFunc)(const std::string&);
+
 
 class MockScGlobal : public sc_global {
 public:
@@ -33,13 +35,98 @@ public:
 MockScGlobal mock_cxl_global;
 class ServicerTest : public ::testing::Test {
 protected:
+
+    std::string temp_filename;
+
     void SetUp() override {
         cxl_global = mock_cxl_global;
     }
+
     void TearDown() override {
-        // Cleanup if necessary
+	// Clean up temporary file 
+        if (!temp_filename.empty()) {
+            remove(temp_filename.c_str());
+        }
     }
+
+    // Helper function to load JSON from a file
+    json_t* load_json_from_file(const std::string& file_path) {
+        json_error_t error;
+        json_t* root = json_load_file(file_path.c_str(), 0, &error);
+        if (!root) {
+            std::cerr << "Error loading JSON from file: " << error.text << " at line " << error.line << std::endl;
+            return nullptr;
+        }
+        return root;
+    }
+
+
+    // Helper function to create the JSON configuration dynamically
+    json_t* create_dev_cmmb_config() {
+      // Create the root JSON object
+      json_t* root = json_object();
+      // Create the `fabric_managers` array
+      json_t* fabric_managers = json_array();
+      // Create a single fabric manager object
+      json_t* fabric_manager = json_object();
+      json_object_set_new(fabric_manager, "id", json_integer(1007));
+      json_object_set_new(fabric_manager, "type", json_string("FM_REMOTE_CMMB"));
+      
+      // Create the Hosts array
+      json_t* hosts_array = json_array();
+      // Create a host object
+      json_t* host = json_object();
+      json_object_set_new(host, "host_name", json_string("Host1"));
+      json_object_set_new(host, "host_port", json_integer(1));
+      // Create an endpoint array within the host
+      json_t* endpoint_array = json_array();
+      // Create an endpoint object
+      json_t* endpoint = json_object();
+      json_object_set_new(endpoint, "memdev", json_string("DEVM"));
+      json_object_set_new(endpoint, "target", json_integer(15));
+      json_array_append_new(endpoint_array, endpoint);
+      // Add the endpoint array to the host object
+      json_object_set_new(host, "endpoint", endpoint_array);
+      // Add the host object to the hosts array
+      json_array_append_new(hosts_array, host);
+      // Add the hosts array to the fabric manager object
+      json_object_set_new(fabric_manager, "Hosts", hosts_array);
+      // Create the Devices array within the fabric manager
+      json_t* devices_array = json_array();
+      // Create a device object
+      json_t* device = json_object();
+      json_object_set_new(device, "dev_name", json_string("DEVJA-256G"));
+      json_object_set_new(device, "dev_port", json_integer(15));
+      json_object_set_new(device, "dev_addr", json_string("0x00H000000000"));
+      json_object_set_new(device, "dev_size", json_string("0x004000000000"));
+      json_object_set_new(device, "dev_aspm_active", json_integer(1));
+      json_object_set_new(device, "dev_sris_active", json_integer(1));
+      json_object_set_new(device, "dev_lock_active", json_integer(1));
+      json_object_set_new(device, "dev_speed", json_integer(5));
+      json_object_set_new(device, "dev_width", json_integer(8));
+      json_object_set_new(device, "dev_port_type", json_string("dh"));
+      // Add the device object to the devices array
+      json_array_append_new(devices_array, device);
+      // Add the devices array to the fabric manager object
+      json_object_set_new(fabric_manager, "Devices", devices_array);
+      // Add the fabric manager object to the `fabric_managers` array
+      json_array_append_new(fabric_managers, fabric_manager);
+      // Add the `fabric_managers` array to the root object
+      json_object_set_new(root, "fabric_managers", fabric_managers);
+      return root;
+    }
+
+
+    std::string write_json_to_temp_file(const std::string& json_content) {
+        std::string temp_filename = "temp_config.json";
+        std::ofstream temp_file(temp_filename);
+        temp_file << json_content;
+        temp_file.close();
+        return temp_filename;
+    }
+
 };
+
 
 TEST_F(ServicerTest, InitCxlPluginSuccess) {
     EXPECT_CALL(mock_cxl_global, g_create_mbox(_))
@@ -73,6 +160,8 @@ TEST_F(ServicerTest, TokenizeTest) {
     EXPECT_EQ(tokens["key2"], "value2");
     EXPECT_EQ(tokens["key3"], "value3");
 }
+
+
 TEST_F(ServicerTest, TokenHelperTest) {
     string input = "key1=value1;key2=value2;key3=value3";
     unordered_map<string, string> tokens = token_helper(input);
@@ -82,6 +171,7 @@ TEST_F(ServicerTest, TokenHelperTest) {
     EXPECT_EQ(tokens["key3"], "value3");
 }
 
+
 TEST_F(ServicerTest, GetSupportedFeatureListTest) {
     feature_id feat_id;
     char feature_names[256];
@@ -89,10 +179,12 @@ TEST_F(ServicerTest, GetSupportedFeatureListTest) {
     ASSERT_EQ(status, SVK_STATUS_SUCCESS);
 }
 
+
 TEST_F(ServicerTest, IsLicenseValidTest) {
     svk_status status = is_license_valid(nullptr);
     ASSERT_EQ(status, SVK_STATUS_FAIL);
 }
+
 
 TEST_F(ServicerTest, ExecuteAsyncTest) {
     svk_pass_thru_cmd pass_thru;
@@ -101,10 +193,12 @@ TEST_F(ServicerTest, ExecuteAsyncTest) {
     ASSERT_EQ(status, SVK_STATUS_FAIL);
 }
 
+
 TEST_F(ServicerTest, CleanUpTest) {
     svk_status status = clean_up(nullptr);
     ASSERT_EQ(status, SVK_STATUS_FAIL);
 }
+
 
 TEST_F(ServicerTest, ConfigureDeviceIfAnyTest) {
     svk_device_ctx device_handles;
@@ -114,6 +208,7 @@ TEST_F(ServicerTest, ConfigureDeviceIfAnyTest) {
     svk_status status = configure_device_if_any(config_details, &device_handles, length, resp);
     ASSERT_EQ(status, SVK_STATUS_FAIL);
 }
+
 
 TEST_F(ServicerTest, ExecuteSyncDevTest) {
     svk_input input;
@@ -130,28 +225,13 @@ TEST_F(ServicerTest, ExecuteSyncDevTest) {
     free(output.output_buffer);
 }
 
+
 TEST_F(ServicerTest, ExecuteSyncHostTest) {
     svk_input input;
     svk_output output;
     svk_pass_thru_cmd pass_thru;
     input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=ListHosts"));
     input.len = strlen("command=ListHosts");
-    svk_status status = execute_sync(&pass_thru, &input, &output);
-    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
-    ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
-    ASSERT_NE(output.len, 0);
-    ASSERT_NE(output.output_buffer, nullptr);
-    free(input.input_buffer);
-    free(output.output_buffer);
-}
-
-
-TEST_F(ServicerTest, ExecuteSyncSetUPTest) {
-    svk_input input;
-    svk_output output;
-    svk_pass_thru_cmd pass_thru;
-    input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=SetupInfo"));
-    input.len = strlen("command=SetupInfo");
     svk_status status = execute_sync(&pass_thru, &input, &output);
     ASSERT_EQ(status, SVK_STATUS_SUCCESS);
     ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
@@ -211,6 +291,7 @@ TEST_F(ServicerTest, GetIPAddressSuccess) {
     EXPECT_EQ(ip, "105.140.86.13");  
 }
 
+
 TEST_F(ServicerTest, MissingSwitchObject) {
     // Create a mock JSON file with no "switch" object
     std::string json_content = R"(
@@ -231,6 +312,7 @@ TEST_F(ServicerTest, MissingSwitchObject) {
     std::remove("test_no_switch.json");
 }
 
+
 TEST_F(ServicerTest, MissingIPAddressField) {
     // Create a mock JSON file with no "ip_address" field
     std::string json_content = R"(
@@ -248,6 +330,7 @@ TEST_F(ServicerTest, MissingIPAddressField) {
     std::remove("test_no_ip_address.json");
 }
 
+
 TEST_F(ServicerTest, FailToLoadJsonFile) {
     // Simulate a missing or malformed JSON file
     std::string invalid_filepath = "non_existent.json";
@@ -255,3 +338,142 @@ TEST_F(ServicerTest, FailToLoadJsonFile) {
     // Expect an empty string since the file cannot be loaded
     EXPECT_EQ(ip, "");
 }
+
+
+/** 
+ * @brief Test for direct_config function with valid config path
+ */
+TEST_F(ServicerTest, DirectConfigSuccessTest) {
+    std::string config_path = "valid_config.json";
+    // Create a valid JSON configuration file for the test
+    std::ofstream config_file(config_path);
+    config_file << "{\"id\": 100, \"id_type\": \"Direct\"}";
+    config_file.close();
+    json_t* result = direct_config(config_path);
+    ASSERT_NE(result, nullptr);  
+    json_decref(result);
+    remove(config_path.c_str());  
+}
+
+
+/**
+ * @brief Test for direct_config function with invalid config path
+ */
+TEST_F(ServicerTest, DirectConfigFailureTest) {
+    std::string invalid_config_path = "non_existent_config.json";
+    // Test direct_config with an invalid file path
+    json_t* result = direct_config(invalid_config_path);
+    EXPECT_EQ(result, nullptr);  
+}
+
+/**
+ * @brief SetupInfo with a valid FabricManager instance
+ */
+TEST_F(ServicerTest, SetupInfoWithFM) {
+    // Load configuration from file and add a FabricManager instance
+    json_t* config = load_json_from_file(input_conf_path);
+    ASSERT_NE(config, nullptr) << "Failed to load input.conf";
+    json_t* fabric_managers = json_object_get(config, "fabric_managers");
+    ASSERT_TRUE(json_is_array(fabric_managers)) << "fabric_managers should be an array";
+    json_t* first_fabric_manager = json_array_get(fabric_managers, 0);
+    ASSERT_NE(first_fabric_manager, nullptr);
+    FabricManager* manager = new FabricManager(first_fabric_manager);
+    cxl_global.add_fm(manager->get_fmid(), *manager);
+    // Free the config JSON after adding the manager
+    json_decref(config);
+
+    // Set up and invoke `execute_sync` for `SetupInfo`
+    svk_input input;
+    svk_output output;
+    svk_pass_thru_cmd pass_thru;
+    input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=SetupInfo"));
+    input.len = strlen("command=SetupInfo");
+    svk_status status = execute_sync(&pass_thru, &input, &output);
+    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
+    ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
+    ASSERT_NE(output.len, 0);  
+    ASSERT_NE(output.output_buffer, nullptr);  
+    free(input.input_buffer);
+    free(output.output_buffer);
+}
+
+/** 
+ * @brief SetupInfo with no FabricManager instances
+ */
+TEST_F(ServicerTest, SetupInfoNoManagers) {
+    svk_input input;
+    svk_output output;
+    svk_pass_thru_cmd pass_thru;
+    input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=SetupInfo"));
+    input.len = strlen("command=SetupInfo");
+    svk_status status = execute_sync(&pass_thru, &input, &output);
+    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
+    ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
+    free(input.input_buffer);
+}
+
+
+TEST_F(ServicerTest, MissingFabricManagersArray) {
+    // Create JSON content without the `fabric_managers` key
+    std::string json_content = R"({
+        "some_other_key": 123
+    })";
+    // Write the content to a temporary file
+    temp_filename = write_json_to_temp_file(json_content);
+    // Capture stderr output to verify the error message
+    testing::internal::CaptureStderr();
+    json_t* result = load_json_config(temp_filename);
+    std::string output = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(result, nullptr);
+    EXPECT_TRUE(output.find("Invalid or missing 'fabric_managers' array in configuration") != std::string::npos);
+}
+
+
+TEST_F(ServicerTest, FabricManagersNotArray) {
+    // Create JSON content with `fabric_managers` as an object instead of an array
+    std::string json_content = R"({
+        "fabric_managers": {
+            "id": 1001
+        }
+    })";
+    // Write the content to a temporary file
+    temp_filename = write_json_to_temp_file(json_content);
+    // Capture stderr output to verify the error message
+    testing::internal::CaptureStderr();
+    json_t* result = load_json_config(temp_filename);
+    std::string output = testing::internal::GetCapturedStderr();
+    // Verify the result
+    EXPECT_EQ(result, nullptr);
+    EXPECT_TRUE(output.find("Invalid or missing 'fabric_managers' array in configuration") != std::string::npos);
+}
+
+
+TEST_F(ServicerTest, ValidFabricManagersArray) {
+    // Create JSON content with `fabric_managers` as an array
+    std::string json_content = R"({
+        "fabric_managers": []
+    })";
+    // Write the content to a temporary file
+    temp_filename = write_json_to_temp_file(json_content);
+    // Capture stderr output to verify no error message
+    testing::internal::CaptureStderr();
+    json_t* result = load_json_config(temp_filename);
+    std::string output = testing::internal::GetCapturedStderr();
+    // Verify the result is not null, indicating the array was valid
+    EXPECT_NE(result, nullptr);
+    EXPECT_TRUE(output.empty());
+    // Clean up JSON object
+    json_decref(result);
+}
+
+TEST_F(ServicerTest, CreateDevCMMB) {
+    // Create the JSON configuration for DevCMMB
+    json_t* config = create_dev_cmmb_config();
+    // Capture the output printed to std::cout
+    testing::internal::CaptureStdout();
+    // Call the function to create and add DevCMMB to cxl_global
+    create_dev_cmmb(config);
+    std::string output = testing::internal::GetCapturedStdout();
+    EXPECT_TRUE(output.find("Added DevCMMB to map.") != std::string::npos);
+} 
+

@@ -25,6 +25,16 @@ std::string SetupInfo(std::string input);
 
 std::string get_ip_address(const std::string &filename);
 
+json_t* direct_config(const std::string& config_path);
+
+json_t* load_json_config(const std::string& config_path);
+
+int process_fabric_manager(json_t* fabric_manager);
+
+void create_dev_cmmb(json_t* config);
+
+extern const std::unordered_map<std::string, std::function<void(json_t*)>> factory_map;
+
 extern "C"{
     int init_cxl_plugin();
 }
