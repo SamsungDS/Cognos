@@ -172,7 +172,21 @@ Installing SVK APP dependencies can simply be done by running the following comm
 
 ## Usage
 
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+Samsung Cognos Management Console can operate in 3 modes
+
+1. Mock mode: In order to enable faster development / prototyping, as well as quick validation of
+   the UI, Cognos is able to run in mock mode. Mock mode means that no hardware and no other
+   components below the SVKAPP layer will be used. In order to configure "Mock Mode" ensure that 
+   the cognos.config MODE variable is set to "mock".
+
+2. Simulated Mode: Simulated mode is still technically a "mock mode", however it entails running
+   the entire SVK stack. Specfically these components include UI, exporter, subscriber, app, 
+   SVK node server, SVK restserver, and SVK controller server. In order to run in this mode set
+   cognos.config MODE to "real" and ensure the installed SVK CXL artifiact is the "sim" version. 
+
+3. CXL Mode: This is the main intended use of Cognos. This mode enables Cognos to interact with
+   and monitor real hardware. To use this mode set cognos.config MODE to "real" and ensure that
+   you are using the CXL version of the SVK CXL Plugin artifact upon installation.
 
 ## Support
 
