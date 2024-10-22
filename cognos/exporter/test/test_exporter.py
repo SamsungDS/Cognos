@@ -22,6 +22,22 @@ from cognos.backend.helper import get_cognos_influx_functions  # noqa: E402
 pytest_plugins = ('pytest_asyncio',)
 
 
+@pytest.fixture
+def mock_db(mocker):
+    mock_connection = mocker.MagicMock()
+    mock_cursor = mocker.MagicMock()
+
+    mocker.patch('mysql.connector.connect', return_value=mock_connection)
+    mock_connection.cursor.return_value = mock_cursor
+    mock_cursor.execute.return_value = True
+
+    mocker.patch('cognos.backend.helper.connect_to_mysql',
+                 return_value=(mock_connection, mock_cursor))
+    mocker.patch('cognos.backend.helper.disconnect_mysql', return_value=True)
+
+    return mock_connection, mock_cursor
+
+
 @pytest_asyncio.fixture(scope="session")
 async def mock_websocket():
     mock_ws = mock.Mock()
@@ -69,9 +85,14 @@ async def test_recv_host_selection_handler(mocker, mock_websocket):
         )
     )
     mocker.patch('cognos.exporter.exporter.ws', mock_websocket)
+    mocker.patch(
+        'cognos.backend.helper.get_metrics_host_filter',
+        return_value=''
+    )
+    stop_event = asyncio.Event()
     try:
         done, pending = await asyncio.wait(
-            [recv_host_selection_handler()], timeout=3)
+            [recv_host_selection_handler(stop_event)], timeout=3)
         for task in pending:
             task.cancel()
     except Exception as error:
@@ -79,7 +100,7 @@ async def test_recv_host_selection_handler(mocker, mock_websocket):
 
 
 @pytest.mark.asyncio
-async def test_recv_host_timeout_error(mocker, mock_websocket):
+async def test_recv_host_timeout_error(mocker, mock_websocket, mock_db):
     mocker.patch(
         'json.loads',
         return_value=(

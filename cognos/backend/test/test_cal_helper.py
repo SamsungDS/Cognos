@@ -14,7 +14,8 @@ from cognos.backend.helper import (
     get_devid_from_name, get_deviceid_and_devicename_from_port,
     get_host_attached_devices, clear_all_tables, connect_to_mysql,
     get_hosts_from_db, fetch_cognos_configs, fetch_api_version,
-    gen_svkcxlplugin_request_params, get_cognos_influx_functions
+    gen_svkcxlplugin_request_params, get_cognos_influx_functions,
+    update_metrics_host_filter_table, get_metrics_host_filter
 )
 from requests.models import Response
 
@@ -96,6 +97,26 @@ def test_insert_hosts(mocker, mock_cursor, mock_connection):
         "host_target_ports": [10]
     }]
     insert_hosts(mock_data)
+
+
+def test_update_metrics_host_filter_table(mocker, mock_cursor,
+                                          mock_connection):
+    mocker.patch('app.connect_to_mysql',
+                 return_value=(mock_connection, mock_cursor))
+    dummy_host = "test_host"
+    update_metrics_host_filter_table(dummy_host)
+
+
+def test_get_metrics_host_filter(mock_db):
+    mock_connection, mock_cursor = mock_db
+    dummy_data = [['test_host']]
+    expected_response = ['test_host']
+    mock_cursor.fetchone.return_value = dummy_data
+    result = get_metrics_host_filter()
+    assert result == expected_response
+    # test empty DB table
+    mock_cursor.fetchone.return_value = None
+    assert '' == get_metrics_host_filter()
 
 
 def test_get_devices_from_db(mock_db):

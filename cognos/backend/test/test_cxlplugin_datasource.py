@@ -561,3 +561,12 @@ def test_cxlplugin_setup_tables(mocker, mock_db, client,
         return_value=True
     )
     get_cxlplugin_datasource.setup_tables()
+
+
+def test_update_metrics_host_filter(get_cxlplugin_datasource, mocker, client,
+                                    mock_db):
+    data = client.post(
+        '/update_metrics_host_filter',
+        json={"host": {"value": "test_host"}}
+    )
+    get_cxlplugin_datasource.update_metrics_host_filter()

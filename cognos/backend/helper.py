@@ -215,6 +215,7 @@ def get_metrics_host_filter():
         if row:
             return row[0]
         else:
+            print("No host filter in scmc DB table..")
             return ''
         disconnect_mysql(db)
     except Exception as error:

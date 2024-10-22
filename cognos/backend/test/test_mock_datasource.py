@@ -107,3 +107,12 @@ def test_mock_getdevicesinfo(get_mock_datasource, client):
 
 def test_mock_gethostsinfo(get_mock_datasource, client):
     get_mock_datasource.get_hosts_info()
+
+
+def test_update_metrics_host_filter(get_mock_datasource, client, mocker,
+                                    mock_db):
+    data = client.post(
+        '/update_metrics_host_filter',
+        json={"host": {"value": "test_host"}}
+    )
+    get_mock_datasource.update_metrics_host_filter()

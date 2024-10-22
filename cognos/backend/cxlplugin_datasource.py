@@ -37,7 +37,6 @@ class CXLPlugin(DataSource):
         request_data = request.get_json()
         host = request_data["host"]["value"]
         update_metrics_host_filter_table(host)
-        print("update_metrics_host_filter host: ", host)
         payload = {'status': 200}
         response = jsonify(payload)
         response.headers.add('Access-Control-Allow-Origin', '*')
