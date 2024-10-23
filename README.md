@@ -2,7 +2,19 @@
 
 ## Description
 
-🤡 A description of this project should be added here. 🤡
+SVKAPP is the top-most layer enabling Samsung Cognos Management Console.
+
+SVKAPP consists of the following services;
+
+cognos-app: Responsible for backend support of the webapplication, communicating
+            with SVK CXL Plugin, storing metadata and state information, supporting
+            storage and usage of InfluxDB client
+
+cognos-subscriber: Consumes metrics published from publisher and stores them into InfluxDB
+
+cognos-exporter: Pushes metrics from InfluxDB to UI
+
+cognos-ui: UI for Samsung Management Console
 
 ## Supported OS List
 
@@ -84,10 +96,10 @@ navigate to http://<ip>:8086/ and follow the steps
 ```
 4. Run the services
 ```
-sudo service cognos-subscriber start
-sudo service cognos-exporter start
-sudo service cognos-app start
-sudo service cognos-ui start
+sudo systemctl start cognos-subscriber
+sudo systemctl start cognos-exporter
+sudo systemctl start cognos-app
+sudo systemctl start cognos-ui
 ```
 
 5. You can perform smoke testing by the following 
@@ -172,6 +184,7 @@ Installing SVK APP dependencies can simply be done by running the following comm
 
 ## Usage
 
+### Operational Modes
 Samsung Cognos Management Console can operate in 3 modes
 
 1. Mock mode: In order to enable faster development / prototyping, as well as quick validation of
@@ -188,17 +201,17 @@ Samsung Cognos Management Console can operate in 3 modes
    and monitor real hardware. To use this mode set cognos.config MODE to "real" and ensure that
    you are using the CXL version of the SVK CXL Plugin artifact upon installation.
 
-## Support
-
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-
-Thank you for your interest in contributing to SVK App
+### Order of service-based execution for Cognos Full Stack upon production installation
+```
+sudo systemctl start svk-controller
+sudo systemctl start svk-node
+sudo systemctl start svk-restserver
+sudo /usr/local/svk/mgmt-fw/bin/svksvcmgr --svk_conf_file /etc/svk/mgmt_fw_config.json &
+sudo systemctl start cognos-subscriber
+sudo systemctl start cognos-app
+sudo systemctl start cognos-exporter
+sudo systemctl start cognos-ui
+```
 
 ### Requesting changes
 
@@ -233,6 +246,21 @@ and describe the problem you are facing.
 
 - All error messages should go to stderr.
 
+### Python code
+
+- Use Python version 3.10
+
+- [flake8](https://pypi.org/project/flake8/) linter check should pass.
+
+- [mypy](https://mypy.readthedocs.io/en/stable/) type check should pass.
+  Type annotations are optional.
+
+- Executable scripts should start with
+  
+```python
+#!/usr/bin/env python3
+```
+
 #### Bash code
 
 - Use 4 spaces for indentation.
@@ -246,125 +274,6 @@ and describe the problem you are facing.
 
 - For the rest, follow
   [bahamas10's Bash Style Guide](https://github.com/bahamas10/bash-style-guide).
-
-## Mysql
-
-### Mysql Installation
-
-1. Add the mysql repository in yum (process defined in: <https://dev.mysql.com/doc/mysql-yum-repo-quick-guide/en/>)
-2. Enable/disable repos
-
-   ```bash
-   sudo yum-config-manager --disable mysql80-community
-   sudo yum-config-manager --disable mysql-tools-community
-   sudo yum-config-manager --enable mysql-innovation-community
-   sudo yum-config-manager --enable mysql-tools-innovation-community
-   ```
-
-3. Install and run Mysql community server
-
-   ```bash
-   sudo yum install mysql-community-server
-   systemctl start mysqld
-   systemctl status mysqld
-   sudo mysql_secure_installation
-   ```
-
-4. Change password for root mysql user
-
-   ```bash
-   mysql -u root -p
-   ALTER USER 'root'@'localhost' IDENTIFIED BY 'my-password';
-   ```
-
-   You can retrieve temporary password with
-
-   ```bash
-   sudo grep 'temporary password' /var/log/mysqld.log
-   ```
-
-5. Setup mysql and create a user & create scfm database, execute the following commands and use the below credentials
-
-   ```txt
-   User: dev
-   Pass: CXL123mem!
-   ```
-
-   ```bash
-   mysql -u root -p
-   CREATE USER 'dev'@'localhost' IDENTIFIED BY 'my-password';
-   GRANT ALL ON *.* To 'dev'@'localhost';
-   ```
-
-6. Setup DB with the following script
-
-   ```bash
-   python3 cognos/backend/db_setup.py
-   ```
-
-## Influx DB
-
-### InfluxDB Installation
-
-Use the following Influx documentation: <https://docs.influxdata.com/influxdb/v2/install/> for Step-1 and Step-2
-
-1. For Red Hat/CentOS/Fedora x86-64 (x64, AMD64) systems
-
-   ```bash
-   curl -LO https://download.influxdata.com/influxdb/releases/influxdb2-2.7.6-1.x86_64.rpm
-   sudo yum localinstall influxdb2-2.7.6-1.x86_64.rpm
-   ```
-
-2. sudo service influxdb start
-
-3. Download influx CLI package
-
-   ```bash
-   wget https://download.influxdata.com/influxdb/releases/influxdb2-client-2.7.5-linux-amd64.tar.gz
-   ```
-
-4. Unpackage downloaded influx CLI binary
-
-   ```bash
-   tar xvzf ./influxdb2-client-2.7.5-linux-amd64.tar.gz
-   ```
-
-5. Place the unpackaged influx executable in your system $PATH
-
-   ```bash
-   sudo cp ./influx /usr/local/bin/
-   ```
-
-6. run influx setup (for future deployment purposes there is a way to setup asynchronously)
-We are able to configure retention in hours, use 720 for a 30 day retention
-
-7. create All Access API token
-
-   ```bash
-   influx auth create --all-access --host http://localhost:8086 --org Samsung
-   ```
-
-8. install influxDB Python Client, must install InfluxDB v2 compatible version, <https://github.com/influxdata/influxdb-client-python>
-
-   ```bash
-   pip install 'influxdb-client[ciso]'
-   ```
-
-## Cognos InfluxDB Schema
-
-```txt
-Bucket: <User/Tenant>
-  Measurement: <metric/alert/heartbeat/etc>
-    Fields: {<metric1_name>:<metric1_value>, <metric2_name>:<metric2_value>, ...}
-    Tags: {
-      source: <host/application server>,
-      source_type: <cxl_device/host/memory_box/application>,
-      description: <description>,
-      category: <memory/cpu/bandwidth/etc>,
-      application: <app-name>
-    }
-    Timestamp: <timestamp>
-```
 
 ## Python Selenium Test Cases for Cognos UI
 
@@ -393,22 +302,7 @@ To run the python selenium tests, follow these steps
 
 [root@muser selenium]# python3 test_runner.py
 
-### Python code
-
-- Use Python version 3.10
-
-- [flake8](https://pypi.org/project/flake8/) linter check should pass.
-
-- [mypy](https://mypy.readthedocs.io/en/stable/) type check should pass.
-  Type annotations are optional.
-
-- Executable scripts should start with
-  
-```python
-#!/usr/bin/env python3
-```
-
-### Patch Requirements
+## Patch Requirements
 
 1. Maintainers, Contributors and Reviewers MUST have a Platform account
    and SHOULD use their real names or a well-known alias.
@@ -495,10 +389,11 @@ To run the python selenium tests, follow these steps
 - Nadim Sarras
 - Mohan Patidar
 
-## License
-
-For open source projects, say how it is licensed.
-
 ## Project status
 
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+Alpha.0 release complete
+
+Supported SVKAPP Features:
+- Metrics data consumption and visualization
+- Immutable and Mutable operations through UI
+- Samsung Management Console UI
