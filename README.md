@@ -108,3 +108,5 @@ Once `svk-core` and `svk-mgmt-fw` artifacts are installed, the user needs to run
 - Run the node server on the agent nodes. By default node server runs on port 9998. It can be run using `systemctl start svk-node`. Please make sure that the controller is started before starting the node server.
 - Run the REST API server on the controller node using the command `systemctl start svk-restserver`. By default, the REST server runs on port 8001. Please make sure that the controller is started before starting the REST API server.
 - Enable the services to start across reboot using the command `systemctl enable svk-<servertype>`
+- Start SVK service manager on controller or node server as `systemctl start svk-svc-mgr` on RHEL systems or as `service svk-svc-mgr start` on Debian based systems.
+  - Make sure to update feature libs directory (`feat_sm_svcs_dir`) in `svk_mgmt_fw_svc_mgr` section of `/etc/svk/mgmt_fw_config.json`

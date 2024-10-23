@@ -38,6 +38,7 @@ go build -C %svk_build_dir/rest_api/tests/cmd/app -o %buildroot/%svk_install_dir
 install -D -m 0644 %svk_script_dir/systemd_files/svk-controller.service %buildroot/%_unitdir/svk-controller.service
 install -D -m 0644 %svk_script_dir/systemd_files/svk-node.service %buildroot/%_unitdir/svk-node.service
 install -D -m 0644 %svk_script_dir/systemd_files/svk-restserver.service %buildroot/%_unitdir/svk-restserver.service
+install -D -m 0644 %svk_script_dir/systemd_files/svk-svc-mgr.service %buildroot/%_unitdir/svk-svc-mgr.service
 
 %files
 %defattr(-,root,root,-)
@@ -49,6 +50,7 @@ install -D -m 0644 %svk_script_dir/systemd_files/svk-restserver.service %buildro
 %_unitdir/svk-controller.service
 %_unitdir/svk-node.service
 %_unitdir/svk-restserver.service
+%_unitdir/svk-svc-mgr.service
 %_sysconfdir/svk/mgmt_fw_config.json
 %ghost %_sysconfdir/ld.so.conf.d/svk-mgmt-fw-%_arch.conf
 
@@ -62,17 +64,20 @@ echo "%svk_install_dir/%_lib" > %_sysconfdir/ld.so.conf.d/svk-mgmt-fw-%_arch.con
 %systemd_post svk-controller.service
 %systemd_post svk-node.service
 %systemd_post svk-restserver.service
+%systemd_post svk-svc-mgr.service
 
 %preun
 %systemd_preun svk-controller.service
 %systemd_preun svk-node.service
 %systemd_preun svk-restserver.service
+%systemd_preun svk-svc-mgr.service 
 
 %postun
 %_sbindir/ldconfig
 %systemd_postun_with_restart svk-controller.service
 %systemd_postun_with_restart svk-node.service
 %systemd_postun_with_restart svk-restserver.service
+%systemd_postun_with_restart svk-svc-mgr.service 
 
 %changelog
 * Mon Jun 24 2024 Suresh Grandhi <suresh.g@samsung.com>
