@@ -3,14 +3,15 @@
 /sonar-project.properties
 /.config/
 /scripts/
-*.sh @matt.d
+*.sh
 
-<!-- [Code] @som.roy @benixon.a
-*.h
-*.c
-*.cc
-*.cpp
-*.hpp
-*.in
-*.cmake
-CMakeLists.txt -->
+# Include at least 2 approvers so MR approval is not blocked on a single person
+# [Code] @som.roy @benixon.a
+# *.h
+# *.c
+# *.cc
+# *.cpp
+# *.hpp
+# *.in
+# *.cmake
+# CMakeLists.txt
