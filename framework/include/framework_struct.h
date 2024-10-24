@@ -13,7 +13,14 @@
 extern "C" {
 #endif
 // Enum for feature_id codes
-typedef enum { POWER_THROTTLE, ZERO_ETL, RAID, CXL, QLC } feature_id;
+typedef enum {
+  POWER_THROTTLE,
+  ZERO_ETL,
+  RAID,
+  CXL,
+  QLC,
+  SLA_TRACKER
+} feature_id;
 
 // Status enum for svk_output
 typedef enum {
