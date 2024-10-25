@@ -11,6 +11,10 @@ install_packages() {
         debhelper
         g++
         git
+        libboost-dev
+        libfmt-dev
+        libspdlog-dev
+        pkgconf
         python3-virtualenv
         tar
         unzip
@@ -23,7 +27,7 @@ install_packages() {
 package_manager() {
     # Optimizations for Docker build - see scripts/docker/*.DOCKERFILE for $DOCKER var invocation
     if [[ $DOCKER ]]; then
-        BUILD_DEPS+=(--no-install-recommends)
+        BUILD_DEPS+=('--no-install-recommends')
     fi
 
     INSTALL_STRING="DEBIAN_FRONTEND=noninteractive apt-get install -y ${BUILD_DEPS[*]}"

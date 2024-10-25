@@ -14,8 +14,7 @@ sonar-scanner:
   script:
     # Scan with sonar-scanner
     # Uncomment below to scan once there is a real build
-    # - /"$SONAR_SCANNER_DIR"/bin/sonar-scanner -Dsonar.coverageReportPaths=$SONAR_COVERAGE_REPORT
-    echo "sonar-scanner command should run in this stage"
+    - /"$SONAR_SCANNER_DIR"/bin/sonar-scanner -Dsonar.coverageReportPaths=$SONAR_COVERAGE_REPORT
   needs:
     - job: unit test
       parallel:

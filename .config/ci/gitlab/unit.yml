@@ -1,35 +1,33 @@
 unit test:
   stage: test
-  image:
-    name: $IMAGE_TAG
-    pull_policy: always
-  before_script:
+  extends: release build
+  script:
     # Install latest build-wrapper
     - wget --no-verbose --content-disposition -E -c "$SONAR_HOST_URL/static/cpp/build-wrapper-linux-x86.zip"
     - unzip -q build-wrapper-linux-x86.zip -d /
-  script:
-    # Build with unit tests and generate coverage report
+    # Execute build with build-wrapper
     - /build-wrapper-linux-x86/build-wrapper-linux-x86-64 --out-dir bw-output/ $BUILD_COMMAND
-  # artifacts:
-  #   name: unit test
-  #   expire_in: 300 seconds
-  #   paths:
-  #    - bw-output
-  #    - build
-  #   reports:
-  #     coverage_report:
-  #       coverage_format: cobertura
-  #       path: $GITLAB_COVERAGE_REPORT
-  #     junit: $GITLAB_JUNIT_REPORT
+  after_script:
+    # Copy the logs dir inside the build context so they can be collected as an artifact
+    - cp -r /var/log/svk logs
+  artifacts:
+    name: unit test - $DOCKERFILE_NAME
+    expire_in: 300 seconds
+    expose_as: Unit Test Artifacts
+    when: always
+    paths:
+      - logs/
+      - bw-output/
+      - build/
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: $GITLAB_COVERAGE_REPORT
+      junit: $GITLAB_JUNIT_REPORT
   variables:
-    IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
     BUILD_COMMAND: ./scripts/build.sh --run-tests
-  needs:
-    - build docker
   parallel:
     matrix:
       - DOCKERFILE_NAME: rocky9
       - DOCKERFILE_NAME: ubuntu22
       - DOCKERFILE_NAME: ubuntu24
-  rules:
-    - !reference [.default_rules, merge_and_push]

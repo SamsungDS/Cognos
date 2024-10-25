@@ -1,8 +1,8 @@
-# SVK Template
+# SVK SLA Tracker Feature Module
 
 ## Description
 
-SVK Template contains a basic skeleton to be used to create a new SVK project in Gitlab. If you have enhancements you would like to be automatically included in future SVK projects, please open an MR.
+SVK SLA Tracker module is a feature loaded by the SVK Core framework. Depending on the application requirements with resepect to the latency and other attributes, it sends the request to the underlying logic modules to execute the operation w.r.t the requirements. It collects the SLA details from the operation and sends to the upper module to validate the requirements and send the request to the underlying supporting modules to configure the devices to meet the SLA requirements.
 
 ### Supported OS List
 
@@ -12,21 +12,21 @@ SVK Template contains a basic skeleton to be used to create a new SVK project in
 
 ## Installation
 
-The prefered method to install SVK Template is through your OS package manager.
+The prefered method to install SVK SLA Tracker module is through your OS package manager.
 
-SVK Template's CI/CD automatically produces release artifacts which are published to [SSG-Nexus](http://ssg-nexus.msl.lab:8081/), which you can browse from within the SSG lab network.
+SVK SLA Tracker module's CI/CD automatically produces release artifacts which are published to [SSG-Nexus](http://ssg-nexus.msl.lab:8081/), which you can browse from within the SSG lab network.
 
-Release artifacts are also published to the [SVK Template Package Registry on Gitlab](https://cxl-gitlab.ssi.samsung.com/dfs/svk/test/template/-/packages).
+Release artifacts are also published to the [SVK SLA Tracker Package Registry on Gitlab](https://cxl-gitlab.ssi.samsung.com/dfs/svk/slat/-/packages).
 
-Enable the SSG Nexus repo for your distro, then install the `svk-template` packages via the package manager:
+Enable the SSG Nexus repo for your distro, then install the `svk-slat` packages via the package manager:
 
 ### Ubuntu
 
 ```bash
 wget --quiet --output-document /usr/share/keyrings/ssg-nexus.pgp  http://ssg-nexus.msl.lab:8081/repository/svk_common/public.pgp
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ssg-nexus.pgp] http://ssg-nexus.msl.lab:8081/repository/svk_apt_ubuntu22 $(. /etc/os-release && echo $UBUNTU_CODENAME) main" > /etc/apt/sources.list.d/ssg-nexus.list
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ssg-nexus.pgp] http://ssg-nexus.msl.lab:8081/repository/svk_apt_$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}") $(. /etc/os-release && echo $UBUNTU_CODENAME) main" > /etc/apt/sources.list.d/ssg-nexus.list
 apt update
-apt-get install svk-template svk-template-dev -y
+apt-get install svk-slat svk-slat-dev -y
 
 ```
 
@@ -35,7 +35,7 @@ apt-get install svk-template svk-template-dev -y
 ```bash
 curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
 dnf install epel-release -y
-dnf install svk-template svk-template-devel -y
+dnf install svk-slat svk-slat-devel -y
 ```
 
 ## Build & Installation
@@ -48,21 +48,21 @@ Execute the dependencies installation script to install all build dependencies f
 ./scripts/dependencies/install.sh
 ```
 
-### Build SVK Template
+### Build SVK SLA Tracker
 
-[After installing build dependencies](#build-dependencies), execute the `./scripts/build.sh` script. The `-h` option will show what options are available for building SVK Template:
+[After installing build dependencies](#build-dependencies), execute the `./scripts/build.sh` script. The `-h` option will show what options are available for building SVK SLA Tracker feature:
 
 ```bash
 ./scripts/build.sh -h
 ```
 
-To build SVK Template, run unit tests and generate code coverage reports, execute:
+To build SVK SLA Tracker feature, run unit tests and generate code coverage reports, execute:
 
 ```bash
 ./scripts/build.sh -t
 ```
 
-To build and install SVK Template to a specified directory, execute:
+To build and install SVK SLA Tracker feature to a specified directory, execute:
 
 ```bash
 ./scripts/build.sh -p install_dir
@@ -80,25 +80,25 @@ To execute a release build, execute:
 
 This will build and package RPM or Debian Packages (on Rockylinux or Ubuntu, respectively), which are staged in the `build/artifacts` dir in the project root. The packages produced include:
 
-- `svk-template`: Runtime files
-- `svk-template-dev(el)`: Development header files
+- `svk-slat`: Runtime files
+- `svk-slat-dev(el)`: Development header files
 
 ### Manual Build
 
-Template manual build without tests:
+SVK SLA Tracker manual build without tests:
 
 ```bash
 mkdir build
 cd build
-cmake3 ../  -DCMAKE_INSTALL_PREFIX=svk_template
+cmake3 ../  -DCMAKE_INSTALL_PREFIX=svk_slat
 make install
 ```
 
-In the above example, SVK Template is installed to the `build/svk_template` directory.
+In the above example, SVK SLA Tracker libraries is installed to the `build/svk_slat` directory.
 
 ### Unit Testing
 
-To build the SVK Template with tests (GTest) and code coverage, run the `cmake3` command with `-DBUILD_TESTING` and `-DWITH_COVERAGE` flags enabled:
+To build the SVK SLA Tracker feature with tests (GTest) and code coverage, run the `cmake3` command with `-DBUILD_TESTING` and `-DWITH_COVERAGE` flags enabled:
 
 ```bash
 mkdir build
@@ -114,11 +114,11 @@ cd build/tests
 ctest
 ```
 
-This will produce an output of all the unit tests that are under the `tests/` directory. To run each test individually, run the unit test binary located in a similar path to where the unit test source code is. For example: `build/tests/unit/framework/src/framework_ut`. Note: if you don't run ctest as a user that has write/read privileges to the `/var` or `/etc` directories, some tests may fail.
+This will produce an output of all the unit tests that are under the `tests/` directory. To run each test individually, run the unit test binary located in a similar path to where the unit test source code is. For example: `build/tests/unit/slat/src/slat_ut`. Note: if you don't run ctest as a user that has write/read privileges to the `/var` or `/etc` directories, some tests may fail.
 
-To see the code coverage report for a source file, cd to the directory where the object files are located, ex. `build/framework/CMakeFiles/svkframework.dir/src`. Make sure the `.gcda` and `.gcno` files are there and run `gcovr` (must be installed with pip), giving the source code dir and current working dir as parameters:
+To see the code coverage report for a source file, cd to the directory where the object files are located, ex. `build/slat/CMakeFiles/svkslat.dir/src`. Make sure the `.gcda` and `.gcno` files are there and run `gcovr` (must be installed with pip), giving the source code dir and current working dir as parameters:
 
 ```bash
-cd build/framework/CMakeFiles/svkframework.dir/src
+cd build/slat/CMakeFiles/svkslat.dir/src
 gcovr -r {path_to_source_code} .
 ```

@@ -17,11 +17,13 @@ install_packages() {
 
     # Project build dependencies
     BUILD_DEPS=(
+        boost-devel
         cmake
         gcc-c++
         git
         python3-virtualenv
         rpmdevtools
+        spdlog-devel
         tar
         unzip
         wget
