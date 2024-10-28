@@ -1,7 +1,7 @@
 #ifndef __SVK_LOGIC_INTERFACE_H__
 #define __SVK_LOGIC_INTERFACE_H__
 
-#include "svk_logic.h"
+#include "svk_logic_struct.h"
 
 #ifdef __cplusplus
 extern "C" {

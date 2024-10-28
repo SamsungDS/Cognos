@@ -111,9 +111,12 @@ typedef struct {
  * @param void            Pointer to give to logic module cleanup
  */
 
-typedef struct {
+typedef struct svk_logic_module_details_t {
   char feature_name[256];
   char logic_module_name[256];
+  svk_status (*initialize_logic_module)(void *init_param);
+  svk_status (*get_supported_logic_details)(
+      struct svk_logic_module_details_t *details);
   svk_status (*execute_logic_sync)(svk_logic_cmd *cmd, svk_logic_input *input,
                                    svk_logic_output *output);
   svk_status (*execute_logic_async)(svk_logic_cmd *pass_thru,
@@ -123,6 +126,20 @@ typedef struct {
 
 #ifdef __cplusplus
 }  // extern "C"
+#endif
+
+#ifdef __cplusplus
+// Function pointer declaration for casting functions for dlsym
+using initialize_logic_module_dlsym = svk_status (*)(void *init_param);
+using get_supported_logic_details_dlsym =
+    svk_status (*)(svk_logic_module_details *details);
+using execute_logic_sync_dlsym = svk_status (*)(svk_logic_cmd *pass_thru,
+                                                svk_logic_input *input,
+                                                svk_logic_output *output);
+using execute_logic_async_dlsym = svk_status (*)(
+    svk_logic_cmd *pass_thru, svk_postprocess_fn *postprocess_fn);
+using cleanup_logic_module_dlsym = svk_status (*)(void *);
+
 #endif
 
 #endif  // __SVK_LOGIC_STRUCT_H__
