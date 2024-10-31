@@ -45,3 +45,4 @@ override_dh_installsystemd:
 	dh_installsystemd --name=svk-controller
 	dh_installsystemd --name=svk-node
 	dh_installsystemd --name=svk-restserver
+	dh_installsystemd --name=svk-svc-mgr
