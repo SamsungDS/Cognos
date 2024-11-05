@@ -5,15 +5,10 @@ set(SVKSlatLib "svkslat")
 set(SVKSlatLib_INCLUDE_DEST "include/")
 set(SVKSlatLib_LIB_DEST "lib64/")
 
-
-execute_process(COMMAND pkg-config --cflags svkframework OUTPUT_VARIABLE SVK_FW_CFLAGS OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_STRIP_TRAILING_WHITESPACE)
-execute_process(COMMAND pkg-config --libs svkframework OUTPUT_VARIABLE SVK_FW_LIBS OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_STRIP_TRAILING_WHITESPACE)
-
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC ${SVK_FW_CFLAGS}")
-
 add_library(${SVKSlatLib} SHARED ${SVKSlatLib_SRC})
 target_include_directories(${SVKSlatLib} PUBLIC ${INC_DIR})
-target_link_libraries(${SVKSlatLib} PUBLIC "${SVK_FW_LIBS}" "svklogger")
+target_link_directories(${SVKSlatLib} PUBLIC ${SVKFW_LIBRARY_DIRS})
+target_link_libraries(${SVKSlatLib} PUBLIC svklogger)
 add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
 
 set_target_properties(${SVKSlatLib} PROPERTIES 

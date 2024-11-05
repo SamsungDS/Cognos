@@ -148,6 +148,14 @@ execute_tests() {
     mkdir --verbose --parent "$REPORTS_DIR"
     # test execution goes below
     ctest --output-junit "$REPORTS_DIR/gitlab_junit.xml" --test-dir "$TESTS_DIR"
+
+    pushd "$BUILD_DIR"
+    sed -i "s;\"logic_lib_dir\": \"/path/to/logic_lib\",;\"logic_lib_dir\": \"${BUILD_DIR}/tests/sample_logic/src/\",;g" ../tests/sample_app/conf/slat_config.json
+    ./tests/sample_app/sample_app -p ./src/ -c ../tests/sample_app/conf/slat_config.json  -l ../tests/sample_app/conf/slat_logic_config.json
+
+    export SVK_SLAT_SAMPLE_LOGIC_SUPPORT_FAIL=Fail
+    ./tests/sample_app/sample_app -p ./src/ -c ../tests/sample_app/conf/slat_config.json  -l ../tests/sample_app/conf/slat_logic_config.json
+    popd
     
     # Generate coverage reports and display results with summary to terminal
     echo "Generating coverage reports"
@@ -159,6 +167,7 @@ execute_tests() {
         --print-summary \
         --root "$PROJECT_ROOT" \
         --exclude "$PROJECT_ROOT/build" \
+        --exclude "$PROJECT_ROOT/tests/" \
         "$BUILD_DIR"
 }
 

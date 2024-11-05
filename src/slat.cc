@@ -14,20 +14,6 @@
 #define LIBRARY_SUFFIX ".so"
 using namespace std;
 
-/**
- * @cond INTERNAL
- */
-// Function pointer declaration for casting void* from dlsym
-using initialize_logic_module = svk_status (*)(void *init_param);
-using get_supported_logic_details =
-    svk_status (*)(svk_logic_module_details *details);
-using execute_logic_sync = svk_status (*)(svk_logic_cmd *pass_thru,
-                                          svk_logic_input *input,
-                                          svk_logic_output *output);
-using execute_logic_async = svk_status (*)(svk_logic_cmd *pass_thru,
-                                           svk_postprocess_fn *postprocess_fn);
-using cleanup_logic_module = svk_status (*)(void *);
-
 // Global variable to use for Framework service commands
 const std::unique_ptr<SLATrackerSvc> g_slat_service =
     std::make_unique<SLATrackerSvc>();
@@ -45,7 +31,7 @@ svk_status SLATrackerSvc::read_slat_config_file(
     pt::ptree slat_config_pt = root.get_child(SLAT_CONF_SECTION_TAG);
 
     config->slat_logic_lib_dir =
-        slat_config_pt.get("logic_lib_dir", SLAT_LOGIC_LIB_DIR_DEFAULT);
+        slat_config_pt.get<std::string>("logic_lib_dir");
 
     try {
       pt::ptree logger_info_pt = slat_config_pt.get_child("logger");
@@ -102,6 +88,172 @@ svk_status SLATrackerSvc::initialize_logger(const slat_config config) const {
   return status;
 }
 
+void *dlopen_fn(const char *filename, int flags) {
+  return dlopen(filename, flags);
+}
+
+void *dlsym_fn(void *handle, const char *symbol) {
+  return dlsym(handle, symbol);
+}
+
+int dlclose_fn(void *handle) { return dlclose(handle); }
+
+// Load logic modules from config directory, using the interface for file/lib
+// related functions
+svk_status SLATrackerSvc::load_logic_modules(
+    const std::string &logic_modules_lib_dir) const {
+  svk_status status = SVK_STATUS_SUCCESS;
+  int num_failed_libs = 0;
+  char log_msg[LOG_MSG_MAX_SIZE];
+
+  DIR *dirfp = nullptr;
+  struct dirent *entry = nullptr;
+  // Open dir with feature libs
+  snprintf(log_msg, LOG_MSG_MAX_SIZE, "Loading logic modules from %s",
+           logic_modules_lib_dir.c_str());
+  svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, log_msg);
+  dirfp = opendir(logic_modules_lib_dir.c_str());
+  if (dirfp == nullptr) {
+    snprintf(log_msg, LOG_MSG_MAX_SIZE,
+             "Unable to open logic modules lib directory: %s\n",
+             logic_modules_lib_dir.c_str());
+    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, log_msg);
+    return SVK_STATUS_FAIL;
+  }
+
+  entry = readdir(dirfp);
+  // Loop through all libs in the dir
+  for (; entry != nullptr; entry = readdir(dirfp)) {
+    // Check if this is a shared lib
+    std::string entry_name(entry->d_name);
+    std::string library_suffix(LIBRARY_SUFFIX);
+    // If dir entry is smaller than length(.so), skip the entry
+    // Otherwise compare the last 3 chars to .so to see if it is valid
+    if (entry_name.size() < library_suffix.size() ||
+        entry_name.compare(entry_name.size() - library_suffix.size(),
+                           library_suffix.size(), library_suffix) != 0) {
+      continue;
+    }
+
+    std::string logic_module_lib_str =
+        logic_modules_lib_dir + "/" + entry->d_name;
+    snprintf(log_msg, LOG_MSG_MAX_SIZE,
+             "Attempting to load feature module functions for %s",
+             entry->d_name);
+    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, log_msg);
+    void *handle = dlopen_fn(logic_module_lib_str.c_str(), RTLD_LAZY);
+    if (!handle) {
+      snprintf(log_msg, LOG_MSG_MAX_SIZE, "dlopen failure for %s. Error: %s\n",
+               logic_module_lib_str.c_str(), dlerror());
+      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, log_msg);
+      continue;
+    }
+
+    auto details =
+        (svk_logic_module_details *)malloc(sizeof(svk_logic_module_details));
+    if (details == nullptr) {
+      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR,
+                 "Failed to allocate memory for svk_logic_module_details");
+      continue;
+    }
+
+    // Try to load feature module function APIs from .so
+    // If any fail, indicate this in the return value and move to next
+    // feature
+    details->initialize_logic_module = (initialize_logic_module_dlsym)dlsym_fn(
+        handle, "initialize_logic_module");
+
+    if (details->initialize_logic_module == nullptr) {
+      snprintf(log_msg, LOG_MSG_MAX_SIZE,
+               "Cannot load symbol initialize_logic_module for logic module "
+               "'%s.' Error: %s\n",
+               entry->d_name, dlerror());
+      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, log_msg);
+      free(details);
+      dlclose_fn(handle);
+      continue;
+    }
+
+    details->get_supported_logic_details =
+        (get_supported_logic_details_dlsym)dlsym_fn(
+            handle, "get_supported_logic_details");
+
+    if (details->get_supported_logic_details == nullptr) {
+      snprintf(
+          log_msg, LOG_MSG_MAX_SIZE,
+          "Cannot load symbol get_supported_logic_details for logic module "
+          "'%s.' Error: %s\n",
+          entry->d_name, dlerror());
+      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, log_msg);
+      free(details);
+      dlclose_fn(handle);
+      continue;
+    }
+
+    snprintf(log_msg, LOG_MSG_MAX_SIZE,
+             "Running initialize_logic_module function for logic module %s",
+             entry->d_name);
+    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, log_msg);
+    if (details->initialize_logic_module(nullptr)) {
+      snprintf(log_msg, LOG_MSG_MAX_SIZE,
+               "initialize_logic_module for logic module '%s' returned "
+               "non-zero, ignoring this logic module.",
+               entry->d_name);
+      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, log_msg);
+      status = SVK_STATUS_BAD_FEATURE_LIB;
+      num_failed_libs++;
+      free(details);
+      dlclose_fn(handle);
+      continue;
+    }
+
+    snprintf(log_msg, LOG_MSG_MAX_SIZE,
+             "Running get_supported_logic_details function for logic module %s",
+             entry->d_name);
+    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, log_msg);
+    if (details->get_supported_logic_details(details)) {
+      snprintf(log_msg, LOG_MSG_MAX_SIZE,
+               "get_supported_logic_details for logic module '%s' returned "
+               "non-zero, ignoring this logic module.",
+               entry->d_name);
+      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, log_msg);
+      status = SVK_STATUS_BAD_FEATURE_LIB;
+      num_failed_libs++;
+      free(details);
+      dlclose_fn(handle);
+      continue;
+    }
+
+    // insert logic_id/function pointers into map
+    auto [iterator, inserted] = logic_modules_map.insert(
+        make_pair(details->logic_module_name, details));
+    if (!inserted) {
+      snprintf(
+          log_msg, LOG_MSG_MAX_SIZE,
+          "SVK SLAT logic module details for logic lib %s wasn't able to be "
+          "added to map. You may be getting this error if multiple logic "
+          "module libs with the same logic id are in the logic modules lib "
+          "dir.",
+          entry->d_name);
+      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, log_msg);
+      num_failed_libs++;
+      status = SVK_STATUS_BAD_FEATURE_LIB;
+      free(details);
+      dlclose_fn(handle);
+    }
+  }
+  if (num_failed_libs) {
+    snprintf(log_msg, LOG_MSG_MAX_SIZE, "%d logic module libs failed to load.",
+             num_failed_libs);
+    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, log_msg);
+  } else {
+    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO,
+               "All logic module libs loaded successfully.");
+  }
+
+  return status;
+}
+
 svk_status SLATrackerSvc::Initialize(const char *slat_config_file) {
   svk_status status = SVK_STATUS_FAIL;
   slat_config config;
@@ -115,6 +267,7 @@ svk_status SLATrackerSvc::Initialize(const char *slat_config_file) {
   if (status != SVK_STATUS_SUCCESS) {
     return SVK_STATUS_FAIL;
   }
+  status = load_logic_modules(config.slat_logic_lib_dir);
 
   return status;
 }
@@ -159,7 +312,7 @@ extern "C" svk_status get_supported_feature_list(feature_id *feature,
     return SVK_STATUS_FAIL;
   }
   *feature = feature_id::SLA_TRACKER;
-  svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR,
+  svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO,
              "Get supported feature list returned successfully.");
 
   return SVK_STATUS_SUCCESS;

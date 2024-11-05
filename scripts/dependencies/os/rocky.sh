@@ -18,6 +18,7 @@ install_packages() {
     # Project build dependencies
     BUILD_DEPS=(
         boost-devel
+        boost-program-options
         cmake
         gcc-c++
         git

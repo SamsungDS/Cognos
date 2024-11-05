@@ -1,0 +1,11 @@
+{
+  "sample_logic": {
+    "logger": {
+      "log_level": "INFO",
+      "log_file_name": "/var/log/svk/slat_logic.log",
+      "log_file_count": 1,
+      "log_file_size": 1048576,
+      "sink_type": "rotating_file"
+    }
+  }
+}
