@@ -46,13 +46,14 @@ class SLATrackerSvc {
       {"WARN", level_E::WARN},         {"ERROR", level_E::ERROR},
       {"CRITICAL", level_E::CRITICAL}, {"ALERT", level_E::ALERT},
       {"FATAL", level_E::FATAL},       {"OFF", level_E::OFF}};
-  mutable std::unordered_map<logic_id, svk_logic_module_details *>
+  mutable std::unordered_map<char *, svk_logic_module_details *>
       logic_modules_map;
   std::string curr_log_level;
   std::string svk_conf_path;
   svk_status read_slat_config_file(const std::string slat_conf_file,
                                    slat_config *config) const;
   svk_status initialize_logger(const slat_config config) const;
+  svk_status load_logic_modules(const std::string &logic_modules_lib_dir) const;
 
  public:
   // In order to comply with Rule-of-Zero, manage class init and deletion
@@ -60,5 +61,12 @@ class SLATrackerSvc {
   // cleanup from this class to ensure resources are managed properly
   svk_status Initialize(const char *svk_config);
 };
+
+extern "C" {
+// Creating the dlsym function wrapper for mocking in the UTs
+void *my_dlopen(const char *filename, int flags);
+void *my_dlsym(void *handle, const char *symbol);
+int my_dlclose(void *handle);
+}
 
 #endif /* __SVK_SLAT_HLPR_HPP__ */

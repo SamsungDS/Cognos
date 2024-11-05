@@ -6,6 +6,8 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+#include <boost/property_tree/xml_parser.hpp>
+
 #include "logic_interface/svk_logic_struct.h"
 #include "svk_slat_hlpr.hpp"
 
@@ -13,20 +15,109 @@ using ::testing::_;
 using ::testing::Return;
 using ::testing::StrEq;
 
+#define MOCK_STRUCT_INIT(...) \
+  { __VA_ARGS__ }
+
+#define DEFINE_RETURN_MOCK(fn, ret) \
+  bool ut_##fn##_mocked = false;    \
+  ret ut_##fn
+
+svk_status my_initialize_logic_module_function(void *init_param) {
+  const char *env_string_ilm;
+  env_string_ilm = std::getenv("SVK_SLAT_INITIALIZE_LOGIC_MODULE_FN_FAIL");
+  if (env_string_ilm && strcmp(env_string_ilm, "true") == 0) {
+    return SVK_STATUS_FAIL;
+  }
+  return SVK_STATUS_SUCCESS;
+}
+
+svk_status my_get_supported_logic_details_fn(
+    svk_logic_module_details *details) {
+  const char *env_string_gsld;
+  env_string_gsld = std::getenv("SVK_SLAT_GET_SUPPORTED_LOGIC_DETAILS_FN_FAIL");
+  if (env_string_gsld && strcmp(env_string_gsld, "true") == 0) {
+    return SVK_STATUS_FAIL;
+  }
+  return SVK_STATUS_SUCCESS;
+}
+
+DEFINE_RETURN_MOCK(dlopen_fn, void *);
+void *dlopen_fn(const char *filename, int flags) {
+  char *ptr;
+  const char *env_string;
+  env_string = getenv("SVK_SLAT_DLOPEN_SIM");
+  if (env_string && strcmp(env_string, "true") == 0) {
+    // Return some valid pointer for simulation purpose
+    std::cout << "Returning dummy pointer from dlopen" << std::endl;
+    ptr = (char *)malloc(16);
+    return (void *)ptr;
+  }
+
+  return dlopen(filename, flags);
+}
+
+DEFINE_RETURN_MOCK(dlclose_fn, int);
+int dlclose_fn(void *handle) {
+  const char *env_string;
+  env_string = getenv("SVK_SLAT_DLOPEN_SIM");
+  if (env_string && strcmp(env_string, "true") == 0) {
+    // Return some valid pointer for simulation purpose
+    return 0;
+  }
+
+  return dlclose(handle);
+}
+
+DEFINE_RETURN_MOCK(dlsym_fn, void *);
+void *dlsym_fn(void *handle, const char *symbol) {
+  const char *env_string_ilm;
+  const char *env_string_gsld;
+
+  env_string_ilm = std::getenv("SVK_SLAT_INITIALIZE_LOGIC_MODULE_PTR");
+  env_string_gsld = std::getenv("SVK_SLAT_GET_SUPPORTED_LOGIC_DETAILS_PTR");
+
+  if (strcmp(symbol, "initialize_logic_module") == 0) {
+    if (env_string_ilm) {
+      if (strcmp(env_string_ilm, "nullptr") == 0) {
+        std::cout << "ILM pointer is null" << std::endl;
+        return nullptr;
+      }
+      if (strcmp(env_string_ilm, "sim") == 0) {
+        std::cout << "ILM pointer is sim" << std::endl;
+        return (void *)&my_initialize_logic_module_function;
+      }
+    }
+  }
+  if (strcmp(symbol, "get_supported_logic_details") == 0) {
+    if (env_string_gsld) {
+      if (strcmp(env_string_gsld, "nullptr") == 0) {
+        std::cout << "GSLD pointer is null" << std::endl;
+        return nullptr;
+      }
+      if (strcmp(env_string_gsld, "sim") == 0) {
+        std::cout << "ILM pointer is sim" << std::endl;
+        return (void *)&my_get_supported_logic_details_fn;
+      }
+    }
+  }
+  std::cout << "calling DLSYM" << std::endl;
+
+  return dlsym(handle, symbol);
+}
+
 // Format for running code before specific test suite, in this case InitTest
 class ConfigTest : public testing::Test {
  protected:
   static void SetUpTestSuite() {
     slat_conf.put("slat.logic_lib_dir", "/tmp");
 
-    logger_conf.put("log_level", "ERROR");
-    logger_conf.put("log_file_name", "slat_conf/slat.log");
+    logger_conf.put("log_level", "INFO");
+    logger_conf.put("log_file_name", "/var/log/svk/test_slat.log");
     logger_conf.put("log_file_count", 1);
     logger_conf.put("log_file_size", 1048576);
     logger_conf.put("sink_type", "rotating_file");
 
     slat_conf.put_child("slat.logger", logger_conf);
-    boost::property_tree::write_json("slat.json", slat_conf);
   }
 
   static boost::property_tree::ptree slat_conf;
@@ -39,7 +130,11 @@ class ConfigTest : public testing::Test {
 boost::property_tree::ptree ConfigTest::slat_conf;
 boost::property_tree::ptree ConfigTest::logger_conf;
 
-TEST_F(ConfigTest, MissingLoggerConf) {
+TEST_F(ConfigTest, MissingConf) {
+  EXPECT_EQ(SVK_STATUS_FAIL, initialize(nullptr));
+}
+
+TEST_F(ConfigTest, MissingLoggerConfSection) {
   slat_conf.get_child("slat").erase("logger");
   boost::property_tree::write_json("missing_logger_conf.json", slat_conf);
 
@@ -86,7 +181,7 @@ TEST_F(ConfigTest, LoggerConfFailWithoutEnv) {
   EXPECT_EQ(SVK_STATUS_FAIL, initialize(nullptr));
 }
 
-TEST_F(ConfigTest, LoggerConfWithoutEnv) {
+TEST_F(ConfigTest, LoggerConfDefault) {
   mkdir("/etc/svk", 0755);
   boost::property_tree::write_json(SLAT_CONFIG_FILE_DEFAULT, slat_conf);
 
@@ -104,41 +199,183 @@ TEST_F(ConfigTest, InitializeSuccess) {
   setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
   EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
 
-  slat_conf.put_child("slat.logger", logger_conf);
   unlink("slat_conf.json");
 }
 
+TEST_F(ConfigTest, InvalidLogicLibDir) {
+  slat_conf.erase("slat.logic_lib_dir");
+  slat_conf.put("slat.logic_lib_dir", "/tmpx");
+
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+
+  setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
+  EXPECT_EQ(SVK_STATUS_FAIL, initialize(nullptr));
+
+  unlink("slat_conf.json");
+}
+
+TEST_F(ConfigTest, InvalidLogicLibrary) {
+  slat_conf.erase("slat.logic_lib_dir");
+  slat_conf.put("slat.logic_lib_dir", "/tmp");
+
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+
+  int fd = open("/tmp/libunittest.so", O_RDWR | O_CREAT);
+  close(fd);
+  setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
+
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
+  unlink("/tmp/libunittest.so");
+  unlink("slat_conf.json");
+}
+
+TEST_F(ConfigTest, LogicLibDirMissing) {
+  FILE *fp = NULL;
+  std::string buf = "{\"slat\":{}}";
+
+  fp = fopen("slat_conf_logic.json", "w+");
+  fwrite(buf.c_str(), buf.length(), 1, fp);
+  fclose(fp);
+  setenv("SVK_SLAT_CONFIG", "slat_conf_logic.json", true);
+  EXPECT_EQ(SVK_STATUS_FAIL, initialize(nullptr));
+  unlink("slat_conf_logic.json");
+}
+
 TEST_F(ConfigTest, GetFeatureListFailCase1) {
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+
+  setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
   EXPECT_EQ(SVK_STATUS_FAIL, get_supported_feature_list(nullptr, nullptr));
+  unlink("slat_conf.json");
 }
 
 TEST_F(ConfigTest, GetFeatureListFailCase2) {
   feature_id f_id;
 
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+
+  setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
   EXPECT_EQ(SVK_STATUS_FAIL, get_supported_feature_list(&f_id, nullptr));
+  unlink("slat_conf.json");
 }
 
 TEST_F(ConfigTest, GetFeatureListSuccess) {
   feature_id f_id;
   char feature_name[128];
 
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+
+  setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
   EXPECT_EQ(SVK_STATUS_SUCCESS,
             get_supported_feature_list(&f_id, &feature_name[0]));
   EXPECT_EQ(f_id, feature_id::SLA_TRACKER);
+  unlink("slat_conf.json");
+}
+
+TEST_F(ConfigTest, InitializeLogicModuleNullPtr) {
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+  int fd = open("/tmp/libunittest.so", O_RDWR | O_CREAT);
+  close(fd);
+
+  setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
+  setenv("SVK_SLAT_DLOPEN_SIM", "true", true);
+  setenv("SVK_SLAT_INITIALIZE_LOGIC_MODULE_PTR", "nullptr", true);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
+  setenv("SVK_SLAT_DLOPEN_SIM", "false", true);
+  setenv("SVK_SLAT_INITIALIZE_LOGIC_MODULE_PTR", "", true);
+  unlink("/tmp/libunittest.so");
+  unlink("slat_conf.json");
+}
+
+TEST_F(ConfigTest, GetSupportedLogicDetailsNullPtr) {
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+  int fd = open("/tmp/libunittest.so", O_RDWR | O_CREAT);
+  close(fd);
+
+  setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
+  setenv("SVK_SLAT_DLOPEN_SIM", "true", true);
+  setenv("SVK_SLAT_INITIALIZE_LOGIC_MODULE_PTR", "sim", true);
+  setenv("SVK_SLAT_GET_SUPPORTED_LOGIC_DETAILS_PTR", "nullptr", true);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
+  setenv("SVK_SLAT_DLOPEN_SIM", "false", true);
+  setenv("SVK_SLAT_INITIALIZE_LOGIC_MODULE_PTR", "", true);
+  setenv("SVK_SLAT_GET_SUPPORTED_LOGIC_DETAILS_PTR", "", true);
+  unlink("/tmp/libunittest.so");
+  unlink("slat_conf.json");
+}
+
+TEST_F(ConfigTest, InitializeLogicModuleFnFail) {
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+  int fd = open("/tmp/libunittest.so", O_RDWR | O_CREAT);
+  close(fd);
+
+  setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
+  setenv("SVK_SLAT_DLOPEN_SIM", "true", true);
+  setenv("SVK_SLAT_INITIALIZE_LOGIC_MODULE_PTR", "sim", true);
+  setenv("SVK_SLAT_GET_SUPPORTED_LOGIC_DETAILS_PTR", "sim", true);
+  setenv("SVK_SLAT_INITIALIZE_LOGIC_MODULE_FN_FAIL", "true", true);
+  EXPECT_EQ(SVK_STATUS_BAD_FEATURE_LIB, initialize(nullptr));
+  setenv("SVK_SLAT_DLOPEN_SIM", "false", true);
+  setenv("SVK_SLAT_INITIALIZE_LOGIC_MODULE_PTR", "", true);
+  setenv("SVK_SLAT_GET_SUPPORTED_LOGIC_DETAILS_PTR", "", true);
+  setenv("SVK_SLAT_INITIALIZE_LOGIC_MODULE_FN_FAIL", "", true);
+  unlink("/tmp/libunittest.so");
+  unlink("slat_conf.json");
+}
+
+TEST_F(ConfigTest, GetSupportedLogicDetailsFnFail) {
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+  int fd = open("/tmp/libunittest.so", O_RDWR | O_CREAT);
+  close(fd);
+
+  setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
+  setenv("SVK_SLAT_DLOPEN_SIM", "true", true);
+  setenv("SVK_SLAT_INITIALIZE_LOGIC_MODULE_PTR", "sim", true);
+  setenv("SVK_SLAT_GET_SUPPORTED_LOGIC_DETAILS_PTR", "sim", true);
+  setenv("SVK_SLAT_INITIALIZE_LOGIC_MODULE_FN_FAIL", "false", true);
+  setenv("SVK_SLAT_GET_SUPPORTED_LOGIC_DETAILS_FN_FAIL", "true", true);
+  svk_logger("slat", level_E::ERROR,
+             "gsld pointer set to null --------------------");
+  EXPECT_EQ(SVK_STATUS_BAD_FEATURE_LIB, initialize(nullptr));
+  setenv("SVK_SLAT_DLOPEN_SIM", "false", true);
+  setenv("SVK_SLAT_INITIALIZE_LOGIC_MODULE_PTR", "", true);
+  setenv("SVK_SLAT_GET_SUPPORTED_LOGIC_DETAILS_PTR", "", true);
+  setenv("SVK_SLAT_INITIALIZE_LOGIC_MODULE_FN_FAIL", "", true);
+  setenv("SVK_SLAT_GET_SUPPORTED_LOGIC_DETAILS_FN_FAIL", "", true);
+  unlink("/tmp/libunittest.so");
+  unlink("slat_conf.json");
 }
 
 TEST_F(ConfigTest, LicenseValidFnFail) {
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+
+  setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
   EXPECT_EQ(SVK_STATUS_FAIL, is_license_valid(nullptr));
+  unlink("slat_conf.json");
 }
 
 TEST_F(ConfigTest, LicenseValidFnSuccess) {
   char license[256];
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+
+  setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
   EXPECT_EQ(SVK_STATUS_SUCCESS, is_license_valid(&license));
+  unlink("slat_conf.json");
 }
 
 TEST_F(ConfigTest, ConfigureDeviceFnFail) {
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+
+  setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
   EXPECT_EQ(SVK_STATUS_FAIL,
             configure_device_if_any(nullptr, nullptr, 10, nullptr));
+  unlink("slat_conf.json");
 }
 
 TEST_F(ConfigTest, ConfigureDeviceFnSuccess) {
@@ -147,13 +384,23 @@ TEST_F(ConfigTest, ConfigureDeviceFnSuccess) {
   uint64_t length = 256;
   char resp[256];
 
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+
+  setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
   EXPECT_EQ(
       SVK_STATUS_SUCCESS,
       configure_device_if_any(&config_details, &device_handles, length, &resp));
+  unlink("slat_conf.json");
 }
 
 TEST_F(ConfigTest, ExecuteSyncFnFail) {
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+
+  setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(nullptr, nullptr, nullptr));
+  unlink("slat_conf.json");
 }
 
 TEST_F(ConfigTest, ExecuteSyncFnSuccess) {
@@ -161,25 +408,50 @@ TEST_F(ConfigTest, ExecuteSyncFnSuccess) {
   svk_input input;
   svk_output output;
 
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+
+  setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
   EXPECT_EQ(SVK_STATUS_SUCCESS, execute_sync(&cmd, &input, &output));
+  unlink("slat_conf.json");
 }
 
 TEST_F(ConfigTest, ExecuteASyncFnFail) {
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+
+  setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
   EXPECT_EQ(SVK_STATUS_FAIL, execute_async(nullptr, nullptr));
+  unlink("slat_conf.json");
 }
 
 TEST_F(ConfigTest, ExecuteASyncFnSuccess) {
   svk_pass_thru_cmd pass_thru;
   svk_postprocess_fn postprocess_fn;
 
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+
+  setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
   EXPECT_EQ(SVK_STATUS_SUCCESS, execute_async(&pass_thru, &postprocess_fn));
+  unlink("slat_conf.json");
 }
 
 TEST_F(ConfigTest, CleanupFnFail) {
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+
+  setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
   EXPECT_EQ(SVK_STATUS_FAIL, clean_up(nullptr));
+  unlink("slat_conf.json");
 }
 
 TEST_F(ConfigTest, CleanupFnSuccess) {
   char param[256];
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+
+  setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
   EXPECT_EQ(SVK_STATUS_SUCCESS, clean_up(&param));
+  unlink("slat_conf.json");
 }
