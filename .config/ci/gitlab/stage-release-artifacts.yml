@@ -1,0 +1,11 @@
+stage-release-artifacts:
+  stage: build
+  script:
+    - echo "The purpose of this stage is to consolidate the parallel matrix artifacts from the release-build stage to be consumed by the child deployment stage"
+  artifacts:
+    paths:
+      - $ARTIFACTS_DIR/
+  needs:
+    - release-build
+  rules:
+  - !reference [.default_rules, merge_and_push]

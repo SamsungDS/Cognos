@@ -18,18 +18,30 @@ include:
     ref: main
     file: .config/ci/gitlab/pycodestyle.yml
   - .config/ci/gitlab/npm-build.yml
-  - .config/ci/gitlab/integration.yml
   - .config/ci/gitlab/unit-backend.yml
   - .config/ci/gitlab/unit-ui.yml
   - .config/ci/gitlab/sonar.yml
   - .config/ci/gitlab/release-build.yml
+  - .config/ci/gitlab/stage-release-artifacts.yml
   - .config/ci/gitlab/publish.yml
+  - .config/ci/gitlab/deployment.yml
 
 variables:
   ARTIFACTS_DIR: build/artifacts
   ui_dir: cognos/ui
   ui_reports_dir: $ui_dir/coverage
   backend_reports_dir: scripts/test-reports/ut
+  UI_PORT: 5000
+  BACKEND_PORT: 4000
+  EXPORTER_PORT: 4001
+  RESTSERVER_PORT: 8001
+  NODE_PORT: 9998
+  SUB_PORT: 5555
+  INFLUX_PASS: Samsung123!
+  INFLUX_ORG: Samsung
+  INFLUX_BUCKET: internal
+  MYSQL_DEV_PASSWORD: CXL123mem!
+  SVK_DIR: /usr/local/svk
 
 build docker:
   parallel:
