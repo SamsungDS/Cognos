@@ -6,6 +6,7 @@ set(SVKFramework_INC ${CMAKE_CURRENT_SOURCE_DIR}/include/framework_upstream.h
         ${CMAKE_CURRENT_SOURCE_DIR}/include/framework_struct.h
         ${CMAKE_CURRENT_SOURCE_DIR}/include/framework_downstream.h
         ${CMAKE_CURRENT_SOURCE_DIR}/src/include_private/framework_service.hpp
+        ${CMAKE_SOURCE_DIR}/common/include/svk_logger.hpp
         ${CMAKE_SOURCE_DIR}/common/include/svk_logger.h)
 
 add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
