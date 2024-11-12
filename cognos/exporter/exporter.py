@@ -69,63 +69,64 @@ async def metrics_handler(websocket, stop_event=None):
     while not stop_event.is_set():
         print("Running metrics handler routine")
         try:
-            if ws.open:
-                try:
-                    await ws.send(json.dumps({"type": "ping"}))
-                except Exception:
-                    print("Ping failed")
-                    raise websockets.ConnectionClosed(
-                        3000, 'Manually close the connection')
-                    break
-
-                await send_metrics_event(
-                    websocket,
-                    "dram_cxl_usage",
-                    influx_client.get_recent_dram_cxl_usage_data(),
-                    stop_event
+            try:
+                await ws.send(json.dumps({"type": "ping"}))
+            except Exception:
+                print("Ping failed")
+                raise websockets.ConnectionClosed(
+                    3000,
+                    'Manually close the connection'
                 )
+                break
 
-                await send_metrics_event(
-                    websocket,
-                    "cpu_mem_usage",
-                    influx_client.get_cpu_mem_usage(),
-                    stop_event
-                )
+            await send_metrics_event(
+                websocket,
+                "dram_cxl_usage",
+                influx_client.get_recent_dram_cxl_usage_data(),
+                stop_event
+            )
 
-                await send_metrics_event(
-                    websocket,
-                    "memserver_capacity",
-                    influx_client.get_memserver_capacity(),
-                    stop_event
-                )
+            await send_metrics_event(
+                websocket,
+                "cpu_mem_usage",
+                influx_client.get_cpu_mem_usage(),
+                stop_event
+            )
 
-                await send_metrics_event(
-                    websocket,
-                    "cmmb_usage",
-                    influx_client.get_membox_usage(),
-                    stop_event
-                )
+            await send_metrics_event(
+                websocket,
+                "memserver_capacity",
+                influx_client.get_memserver_capacity(),
+                stop_event
+            )
 
-                await send_metrics_event(
-                    websocket,
-                    "cmmb_capacity",
-                    influx_client.get_membox_capacity(),
-                    stop_event
-                )
+            await send_metrics_event(
+                websocket,
+                "cmmb_usage",
+                influx_client.get_membox_usage(),
+                stop_event
+            )
 
-                await send_metrics_event(
-                    websocket,
-                    "cmmb_bandwidth",
-                    influx_client.get_membox_bandwidth(),
-                    stop_event
-                )
+            await send_metrics_event(
+                websocket,
+                "cmmb_capacity",
+                influx_client.get_membox_capacity(),
+                stop_event
+            )
 
-                await send_metrics_event(
-                    websocket,
-                    "devices_count",
-                    influx_client.get_attached_devices_count(),
-                    stop_event
-                )
+            await send_metrics_event(
+                websocket,
+                "cmmb_bandwidth",
+                influx_client.get_membox_bandwidth(),
+                stop_event
+            )
+
+            await send_metrics_event(
+                websocket,
+                "devices_count",
+                influx_client.get_attached_devices_count(),
+                stop_event
+            )
 
             await asyncio.sleep(3)
             time.sleep(3)

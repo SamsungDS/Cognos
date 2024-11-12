@@ -16,3 +16,5 @@ selenium==4.18.1
 websockets
 pyzmq
 unittest-xml-reporting
+xmlrunner
+
