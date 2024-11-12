@@ -62,6 +62,11 @@ svk-install:
     - jq '.svk_mgmt_fw_svc_mgr.svc_mgr.feat_sm_svcs_dir = "/usr/local/svk/cxl/lib64"' $SVK_MGMT_FW_CONF | sponge $SVK_MGMT_FW_CONF
     - jq --arg ip "$VM_IP" '.svk_mgmt_rest_api.rest_server.id = $ip' $SVK_MGMT_FW_CONF | sponge $SVK_MGMT_FW_CONF
 
+    #### Configure '/etc/svk/zmq_config.json' ####
+    - export SVK_ZMQ_CONF='/etc/svk/zmq_config.json'
+    # Substitute IP of the host in the configuration file to ensure publisher and subscriber listen to the same IP
+    - jq --arg ip "$VM_IP" '.svk_cxl_host_node.ip = $ip' $SVK_ZMQ_CONF | sponge $SVK_ZMQ_CONF
+
     #### Management FW input.json configuration (JSON) ####
     - export SVK_MGMT_FW_INPUT='/usr/local/svk/mgmt-fw/input.json'
     # (SIM mode) Configure the input.json file to reflect the hostname of the machine being deployed
