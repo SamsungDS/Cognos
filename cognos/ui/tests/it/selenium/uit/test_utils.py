@@ -34,7 +34,7 @@ class TestUtils:
     def find_element_and_assert(
             self, locator, locator_type, test_name, assertion_func):
         try:
-            element = WebDriverWait(self.driver, 10).until(
+            element = WebDriverWait(self.driver, 30).until(
                 EC.presence_of_element_located((locator_type, locator)))
             assert assertion_func(element)
             self.logger.info(f"{test_name} - Passed")

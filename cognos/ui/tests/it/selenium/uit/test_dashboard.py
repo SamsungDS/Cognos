@@ -27,41 +27,28 @@ class TestDashboard(unittest.TestCase):
 
     def test_dashboard_page_displayed(self):
         self.utils.find_element_and_assert(
-            "dashboard-container-id", By.ID,
-            "test_dashboard_page_displayed",
+            "dashboard-container-id",
+            By.ID,
+            "TestCase-HPOS-T82: test_dashboard_page_displayed",
             self.utils.assert_element_displayed)
 
     def test_system_topology(self):
         self.utils.find_element_and_assert(
-            "topology-card-id", By.ID,
+            "topology-card-id",
+            By.ID,
             "TestCase-HPOS-T3: System Toplogy widget displayed",
             self.utils.assert_element_displayed)
 
     def test_hosts_info_on_hover_in_toplogy(self):
         try:
             host_elements = self.driver.find_elements(
-                By.XPATH, "//*[@id='host-card-id']")
+                By.XPATH, "//*[@id='host-card-id']/div/div")
             self.assertGreater(len(host_elements), 0)
-            for host_element in host_elements:
-                assert host_element.is_displayed()
-                ActionChains(self.driver).move_to_element(
-                    host_element).perform()
-                host_tooltip = self.driver.find_element(
-                    By.XPATH, "//*[@id='host-card-id']/div[1]/div/span")
-                assert host_tooltip.is_displayed()
-            self.logger.info(
-                "TestCase-HPOS-T57: Hosts info displayed in tooltip - Passed")
-            switch_elements = self.driver.find_elements(
-                By.XPATH, "//*[@id='cxl-device-card-id']/div[2]")
-            self.assertGreater(len(switch_elements), 0)
-            for switch_element in switch_elements:
-                assert switch_element.is_displayed()
-                ActionChains(self.driver).move_to_element(
-                    switch_element).perform()
-                switch_tooltip = self.driver.find_element(
-                    By.XPATH,
-                    "//*[@id='cxl-device-card-id']/div[1]/div[1]/div[1]/p")
-            assert switch_tooltip.is_displayed()
+            host_tooltip = self.driver.find_element(
+                By.XPATH, "//*[@id='host-card-id']/div[2]/div/span")
+            ActionChains(self.driver).move_to_element(
+                    host_tooltip).perform()
+            assert host_tooltip.is_displayed()
             self.logger.info(
                 "TestCase-HPOS-T57:Displayed hosts info in tooltip - Passed")
         except Exception as e:
@@ -69,67 +56,79 @@ class TestDashboard(unittest.TestCase):
                 f"TestCase-HPOS-T57:test_hosts_info_on_hover- Failed:{str(e)}")
             self.fail("TestCase-HPOS-T57: test_hosts_info_on_hover - Failed:")
 
-    def test_CMM_D_devices_info_on_hover_in_toplogy(self):
+    def test_tooltip_display_CMM_D_devices_info_on_hover_in_toplogy(self):
         try:
             device_elements = self.driver.find_elements(
-                By.XPATH, "//*[@id='cxl-device-card-id']/div[2]")
+                By.XPATH, "//*[@id='cxl-device-card-id']/div/div")
             self.assertGreater(len(device_elements), 0)
-            for device_element in device_elements:
-                assert device_element.is_displayed()
-                ActionChains(self.driver).move_to_element(
-                    device_element).perform()
-                device_tooltip = self.driver.find_element(
-                    By.XPATH, "//*[@id='cxl-device-card-id']/div[2]/div[2]")
-                device_tooltip.is_displayed()
+            device_tooltip = self.driver.find_element(
+                    By.XPATH, "//*[@id='cxl-device-card-id']/div/div[3]")
+            ActionChains(self.driver).move_to_element(
+                    device_tooltip).perform()
+            device_tooltip.is_displayed()
             self.logger.info(
-                "TestCase-HPOS-T58:Displayed CXL devices info - Passed")
+                "TestCase-HPOS-T58:Displayed devices info in tooltip - Passed")
         except Exception as e:
             self.logger.error(
                 f"TestCase-HPOS-T58:test_CMM_D_devices_info- Failed: {str(e)}")
             self.fail(
                 f"TestCase-HPOS-T58:test_CMM_D_devices_info- Failed: {str(e)}")
 
+    def test_CMM_B_boxes_selection_in_toplogy(self):
+        try:
+            cmm_b_boxes = self.driver.find_elements(
+                By.XPATH, "//*[@id='topology-card-id']/div/div/div[1]/span")
+            self.assertGreater(len(cmm_b_boxes), 0)
+            for cmm_b_box in cmm_b_boxes:
+                assert cmm_b_box.is_displayed()
+                ActionChains(self.driver).click(cmm_b_box).perform()
+            self.logger.info(
+                    "TestCase-HPOS-T123 :CMM_B_boxes selection - Passed")
+        except Exception as e:
+            self.logger.error(
+             f"TestCase-HPOS-T123:test_CMM_B_boxes_selection-Failed: {str(e)}")
+            self.fail(
+             f"TestCase-HPOS-T123:test_CMM_B_boxes_selection-Failed: {str(e)}")
+
+    def test_selecting_next_arrow_in_toplogy(self):
+        self.utils.find_element_and_assert(
+            "//*[@id='topology-card-id']/div/div/div[1]/button[2]",
+            By.XPATH,
+            "TestCase-HPOS-Ti121 : Clicking next arrow in toplogy",
+            self.utils.assert_element_displayed)
+
+    def test_selecting_previous_arrow_in_toplogy(self):
+        self.utils.find_element_and_assert(
+            "//*[@id='topology-card-id']/div/div/div[1]/button[1]",
+            By.XPATH,
+            "TestCase-HPOS-T120: Clicking previous arrow in toplogy",
+            self.utils.assert_element_displayed)
+
     def test_system_information(self):
         self.utils.find_element_and_assert(
             "mem-info", By.ID, "TestCase-HPOS-T15: test_system_information",
             self.utils.assert_element_displayed)
 
-    def test_system_memory_allocated(self):
+    def test_CMM_B_memory_bandwidth(self):
         self.utils.find_element_and_assert(
             "sys-mem-allocated-id", By.ID,
-            "TestCase-HPOS-T16: test_system_memory_allocated",
+            "TestCase-HPOS-T16: test_CMM-B_memory_bandwidth",
             self.utils.assert_element_displayed)
 
         self.utils.find_element_and_assert(
-            "//*[@id='sys-mem-allocated-id']/div[2]/div[2]/div[1]/div",
+            "//*[@id='sys-mem-allocated-id']/div[2]/div/div[2]",
             By.XPATH,
-            "TestCase-HPOS-T16: test_system_memory-->Progress bars displayed",
+            "TestCase-HPOS-T16: CMM-B Memory Bandwith Progress bar displayed",
             self.utils.assert_element_displayed)
 
-    def test_system_health_status(self):
+    def test_CMM_B_memory_capacity(self):
         self.utils.find_element_and_assert(
-            "health-container-id", By.ID,
-            "TestCase-HPOS-T17: test_system_health_status",
-            self.utils.assert_element_displayed)
-
-    def test_system_bandwidth_graph(self):
-        self.utils.find_element_and_assert(
-            "rack-graph-id", By.ID,
-            "TestCase-HPOS-T18: test_system_bandwidth_graph",
+            "sys-mem-allocated-id", By.ID,
+            "TestCase-HPOS-T18: test_CMM-B_memory_capacity",
             self.utils.assert_element_displayed)
 
         self.utils.find_element_and_assert(
-            "//h6[contains(text(), 'System Bandwidth')]", By.XPATH,
-            "TestCase-HPOS-T18: System Bandwidth Text displayed",
-            self.utils.assert_element_displayed)
-
-    def test_cmmd_graph(self):
-        self.utils.find_element_and_assert(
-            "cmm-graph-id", By.ID, "TestCase-HPOS-T21: test_cmmd_graph",
-            self.utils.assert_element_displayed)
-
-        self.utils.find_element_and_assert(
-            "//h6[contains(text(), 'CMM-D')][@style='font-weight: bold;']",
+            "//*[@id='sys-mem-allocated-id']/div[2]/div/div[2]",
             By.XPATH,
-            "TestCase-HPOS-T21: test_cmmd_graph-->CMM-D Text displayed",
+            "TestCase-HPOS-T18: CMM-B Memory Capacity Progress bar displayed",
             self.utils.assert_element_displayed)

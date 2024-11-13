@@ -52,3 +52,4 @@ build docker:
 # Do not use artifacts from previous stage when scanning pycodestyle
 pycodestyle:
   dependencies: []
+

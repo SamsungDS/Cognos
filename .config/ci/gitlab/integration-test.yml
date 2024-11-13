@@ -1,0 +1,22 @@
+integration test:
+  stage: .post
+  image:
+    name: $IMAGE_TAG
+    pull_policy: always
+  before_script:
+    #configure selenium config file
+    - apt-get update && apt-get install moreutils jq -y
+    - jq --arg name "$VM_NAME" '.dashboard_url = "http://\($name):5000/"' $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
+    - jq --arg name "$VM_NAME" '.configure_url = "http://\($name):5000/configure"' $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
+    - jq --arg name "$VM_NAME" '.metrics_url = "http://\($name):5000/metrics"'  $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
+    - jq --arg name "$VM_NAME" '.scmc_url = "http://\($name):5000"' $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
+    - jq --arg name "$VM_NAME" '.host_name = $name' $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
+  script:
+    - ./scripts/run-tests.sh --it
+  variables:
+    DOCKERFILE_NAME: ubuntu22
+    IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
+    INTEGRATION_TEST_DIR: cognos/ui/tests/it/selenium
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "parent_pipeline"
+
