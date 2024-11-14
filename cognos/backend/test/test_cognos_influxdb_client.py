@@ -102,6 +102,100 @@ def test_get_memserver_capacity(cognos_influx_client, mocker):
     mocker.patch(
         'json.loads', return_value=dummy_data
     )
+
+    dummy_data = {
+        'nodeResponses': [
+            {
+                'nodeId': 'localhost',
+                'output': '{"Board": {"board_name": "Example Direct '
+                          'Config", "Mgmt_port_type": "PCIe", '
+                          '"json_version": "0100", "switch_mode": '
+                          '"direct", "management_port": 1}, "Hosts": '
+                          '[{"host_name": "msl-ssg-vm55", "host_port": 2, '
+                          '"deinit_active": 1, "host_port_type": "CXL_11", '
+                          '"classcode": 0, "host_aspm_active": 1, '
+                          '"host_sris_active": 1, "host_equalization": 1, '
+                          '"host_speed": 5, "host_width": 8, "host_addr": '
+                          '"0x008080000000", "host_size": '
+                          '"0x007f80000000", "endpoint": []}], "Devices": '
+                          '[{"dev_name": "DEV_10-256G", "dev_port": 10, '
+                          '"dev_addr": "0x008000000000", "dev_size": '
+                          '"0x004000000000", "dev_aspm_active": 1, '
+                          '"dev_sris_active": 1, "dev_lock_active": 1, '
+                          '"dev_speed": 5, "dev_width": 8, '
+                          '"dev_port_type": "CXL_20"}, {"dev_name": '
+                          '"DEV_11-256G", "dev_port": 11, "dev_addr": '
+                          '"0x00C000000000", "dev_size": "0x004000000000", '
+                          '"dev_aspm_active": 1, "dev_sris_active": 1, '
+                          '"dev_lock_active": 1, "dev_speed": 5, '
+                          '"dev_width": 8, "dev_port_type": "CXL_20"}]}'
+            }
+        ]
+    }
+    dummy_response = construct_dummy_response(dummy_data)
+    mocker.patch(
+        'cognos.backend.helper.gen_svkcxlplugin_request_params',
+        return_value={"cluster_id:1"}
+    )
+    mocker.patch('requests.post', return_value=dummy_response)
+    mocker.patch(
+        'cognos.backend.cognos_influxdb_client.parse_svkcxlplugin_response',
+        return_value=(
+            {
+                'Board': {
+                    'Mgmt_port_type': 'PCIe',
+                    'board_name': 'Example Direct Config',
+                    'json_version': '0100',
+                    'management_port': 1,
+                    'switch_mode': 'direct'
+                },
+                'Devices': [
+                            {
+                                'dev_addr': '0x008000000000',
+                                'dev_aspm_active': 1,
+                                'dev_lock_active': 1,
+                                'dev_name': 'DEV_10-256G',
+                                'dev_port': 10,
+                                'dev_port_type': 'CXL_20',
+                                'dev_size': '0x004000000000',
+                                'dev_speed': 5,
+                                'dev_sris_active': 1,
+                                'dev_width': 8
+                            },
+                            {
+                                'dev_addr': '0x00C000000000',
+                                'dev_aspm_active': 1,
+                                'dev_lock_active': 1,
+                                'dev_name': 'DEV_11-256G',
+                                'dev_port': 11,
+                                'dev_port_type': 'CXL_20',
+                                'dev_size': '0x004000000000',
+                                'dev_speed': 5,
+                                'dev_sris_active': 1,
+                                'dev_width': 8
+                            }
+                ],
+                'Hosts': [
+                            {
+                                'classcode': 0,
+                                'deinit_active': 1,
+                                'endpoint': [],
+                                'host_addr': '0x008080000000',
+                                'host_aspm_active': 1,
+                                'host_equalization': 1,
+                                'host_name': 'msl-ssg-vm55',
+                                'host_port': 2,
+                                'host_port_type': 'CXL_11',
+                                'host_size': '0x007f80000000',
+                                'host_speed': 5,
+                                'host_sris_active': 1,
+                                'host_width': 8
+                            }
+                ]
+            }
+        )
+    )
+    cognos_influx_client.mock = False
     cognos_influx_client.get_memserver_capacity()
 
 

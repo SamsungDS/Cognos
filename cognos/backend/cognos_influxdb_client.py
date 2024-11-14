@@ -11,8 +11,9 @@ import sys
 sys.path.append(os.path.abspath(  # noqa: E402
     os.path.join(os.path.dirname(__file__), '..')))  # noqa: E402
 from cognos.backend.helper import (
-    fetch_cognos_configs, parse_svkcxlplugin_response,
-    gen_svkcxlplugin_request_params
+    bytes_to_GB, fetch_cognos_configs, parse_svkcxlplugin_response,
+    gen_svkcxlplugin_request_params,
+    mb_to_GiB
 )
 
 from cognos.backend.mock_constants import MOCK_CXL_SETUP
@@ -105,8 +106,6 @@ class CognosInfluxDBClient():
 
         output = tables.to_json()
         data = json.loads(output)
-
-        print(f"DATA RECVD FROM INFLUX for RECENT CXL VS DRAM: {data}")
 
         try:
             time_set = set()
@@ -235,17 +234,42 @@ class CognosInfluxDBClient():
         output = tables.to_json()
         data = json.loads(output)
 
+        # get CXL capacity based on # of attached devices to selected host
+        cxl_capacity_gb = -1
+        if self.mock:
+            cxl_capacity_gb = 256
+        else:
+            headers = {
+                'accept': 'application/json',
+                'Content-Type': 'application/json'
+            }
+            body = gen_svkcxlplugin_request_params(
+                "cluster_id=CLUST1;command=SetupInfo")
+            response = requests.post(
+                self.agent_endpoint,
+                json=body,
+                headers=headers
+            )
+            payload = parse_svkcxlplugin_response(response)
+            for host in payload['Hosts']:
+                if host['host_name'] == self.selected_host:
+                    cxl_capacity_gb = 0
+                    for endpt in host['endpoint']:
+                        device_port = endpt['target']
+                        for device in payload['Devices']:
+                            if device['dev_port'] == device_port:
+                                cxl_capacity_gb += (
+                                    bytes_to_GB(int(device['dev_size'], 16))
+                                )
         try:
             export_data = [["Memtype", "Capacity Used"]]
-            total_capacity = 0
-            for metric in data:
-                for k, v in metric.items():
-                    if k == '_value':
-                        total_capacity += v
-
             for metric in data:
                 memtype = metric['_field'].split('_')[0].upper()
-                export_data.append([memtype, (metric['_value']//1024)])
+                # derive CXL capacity from attach/detached states
+                if memtype == 'CXL':
+                    export_data.append([memtype, cxl_capacity_gb])
+                else:
+                    export_data.append([memtype, mb_to_GiB(metric['_value'])])
             return export_data
         except Exception as error:
             print(f"Failed to process memserver capacity data {str(error)}")
@@ -380,14 +404,24 @@ class CognosInfluxDBClient():
             payload = parse_svkcxlplugin_response(response)
 
         try:
-            num_attached_devices = 0
+            # get used capacity
+            used_capacity = 0
             for host in payload['Hosts']:
-                num_attached_devices += (
-                    len(host['endpoint']) if host['endpoint'] else 0
+                for endpt in host['endpoint']:
+                    device_port = endpt['target']
+                    for device in payload['Devices']:
+                        if device['dev_port'] == device_port:
+                            used_capacity += (
+                                bytes_to_GB(int(device['dev_size'], 16))
+                            )
+
+            # get total capacity
+            total_capacity = 0
+            for device in payload['Devices']:
+                total_capacity += (
+                    bytes_to_GB(int(device['dev_size'], 16))
                 )
-            num_cxl_devices = len(payload['Devices'])
-            total_capacity = 256 * num_cxl_devices
-            used_capacity = 256 * num_attached_devices
+
             used_capacity_percentage = (
                     math.floor((used_capacity/total_capacity) * 100)
                     if total_capacity > 0 else 100

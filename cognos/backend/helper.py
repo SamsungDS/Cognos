@@ -62,6 +62,18 @@ def fetch_api_version(parent_dir):
         )
 
 
+def mb_to_GiB(val):
+    return val // 1024
+
+
+def bytes_to_MB(val):
+    return val / (1024 * 1024)
+
+
+def bytes_to_GB(val):
+    return val / (1024 ** 3)
+
+
 def get_cognos_influx_functions():
     return [
         'get_recent_dram_cxl_usage_data',

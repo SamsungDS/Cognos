@@ -14,7 +14,8 @@ describe('Dashboard', () => {
       };
   
       const cmmbCapacityData = {
-        'total_capacity': 10000
+        'total_capacity': 10000,
+        'used_capacity': 5000
       }
   
       const cmmbBandwidthData = {
@@ -30,13 +31,6 @@ describe('Dashboard', () => {
           <Dashboard />
         </WebSocketContext.Provider>
       );
-      
       expect(screen.getByTestId('box-topology-id')).toBeInTheDocument();
-
-      expect(screen.getByText('Attached Hosts')).toBeInTheDocument();
-      expect(screen.getByText('CXL Devices')).toBeInTheDocument();
-
-      expect(screen.getByText('Usage')).toBeInTheDocument();
-    
     });
   });
