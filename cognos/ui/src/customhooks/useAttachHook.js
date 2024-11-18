@@ -22,8 +22,8 @@ const useAttachHook = (setMemboxData, setLmdData, handleAttachMemoryToggle, sele
         setLmdData(data);
       }
     } catch (error) {
-      
-    }
+      console.error("Operation failed", error);
+   }
 
     try {
       const response = await fetch(`${apiEndpoint}/devices`, {

@@ -1,5 +1,5 @@
 import React, { useContext, useState, useEffect, useRef } from 'react'
-import { Container, Row, Col } from 'react-bootstrap';
+import { Container, Row, Col, Spinner } from 'react-bootstrap';
 import  Chart from "react-google-charts";
 import ProgressBar from 'react-bootstrap/ProgressBar';
 import DropDown from '../components/DropDown';
@@ -47,6 +47,7 @@ export const handleSelectChange = async (
 
       // update DB through CAL to store host to filter on
       try {
+        // eslint-disable-next-line
         const hostPayload = { host: selectedOption };
         const response = await fetch(
           `${apiEndpoint}/update_metrics_host_filter`,
@@ -80,6 +81,7 @@ const Metrics = () => {
       { value: "Host 1", label: "Host 1" },
       { value: "Host 2", label: "Host 2" },
     ]);
+    // eslint-disable-next-line
     const [selectedOption, setSelectedOption] = useState(null);
     // istanbul ignore next
     const lastSelectedHost = useRef(() => {
@@ -87,6 +89,7 @@ const Metrics = () => {
       return savedValue ? savedValue : null;
     });
     
+    const [dataAvailable, setDataAvailable] = useState(true);
     const hostCheckerInterval = useRef(null);
     const { memCapacityData, dramCxlMemUsageData, memoryCpuData, sendMessage } = useContext(WebSocketContext)
     const memCapacityOptions = {
@@ -173,7 +176,24 @@ const Metrics = () => {
     },
     animation: { startup: true },
   };
+  const ismemoryCpuDataValid =
+  memoryCpuData !== null &&
+  memoryCpuData !== "" &&
+  !isNaN(Number(memoryCpuData)) &&
+  (typeof memoryCpuData !== "object" ||
+    Object.keys(memoryCpuData).length !== 0);
 
+  const isCapacityDataValid = memCapacityData !== null &&
+  memCapacityData !== "" &&
+  !isNaN(Number(memCapacityData)) &&
+  (typeof memCapacityData !== "object" ||
+    Object.keys(memCapacityData).length !== 0);
+
+  const isdramCxlMemUsageDataValid = dramCxlMemUsageData !== null &&
+  dramCxlMemUsageData !== "" &&
+  !isNaN(Number(dramCxlMemUsageData)) &&
+  (typeof dramCxlMemUsageData !== "object" ||
+    Object.keys(dramCxlMemUsageData).length !== 0)
 
   useEffect(() => {
     // istanbul ignore next
@@ -192,6 +212,18 @@ const Metrics = () => {
     return () => clearInterval(hostCheckerInterval.current);
   }, []);
 
+  useEffect(() => {
+    // Set timeout for 120 seconds (120000 ms)
+    // istanbul ignore next
+    const timer = setTimeout(() => {
+      if (!ismemoryCpuDataValid || !isCapacityDataValid || !isdramCxlMemUsageDataValid ) {
+        setDataAvailable(false);
+      }
+    }, 120000);
+
+    // Clear timeout if data becomes available before the timeout elapses
+    return () => clearTimeout(timer);
+  }, [ismemoryCpuDataValid, isCapacityDataValid, isdramCxlMemUsageDataValid ]);
   return (
     <div className="Content content_root" id="main-container-id">
       <Container fluid>
@@ -222,7 +254,14 @@ const Metrics = () => {
                     <DropDown
                       options={selectorOptions}
                       onSelectChange={(selectedOption) =>
-                        handleSelectChange(selectedOption, setSelectedOption, setSelectorOptions, sendMessage, lastSelectedHost, apiEndpoint)
+                        handleSelectChange(
+                          selectedOption,
+                          setSelectedOption,
+                          setSelectorOptions,
+                          sendMessage,
+                          lastSelectedHost,
+                          apiEndpoint
+                        )
                       }
                     />
                   </div>
@@ -284,7 +323,7 @@ const Metrics = () => {
               >
                 <h1 className="sap-hana">CPU vs Memory Usage</h1>
               </div>
-              {memoryCpuData.length ? (
+              {ismemoryCpuDataValid ? (
                 <Chart
                   chartType="LineChart"
                   width="100%"
@@ -292,9 +331,15 @@ const Metrics = () => {
                   data={memoryCpuData}
                   options={memoryCpuDatOptions}
                 />
+              ) : dataAvailable ? (
+                <div className="spinner-style" style={{ height: 400 }}>
+                  <Spinner animation="border" variant="secondary" />
+                </div>
               ) : (
-                <div className="fs-22" style={{ color: "grey", height: 380 }}>
-                  {" "}
+                <div className="spinner-style" style={{ height: 400 }}>
+                  <div style={{ color: "white", textAlign: "center", marginTop: 50 }}>
+                      Data is not available
+                  </div>
                 </div>
               )}
             </div>
@@ -324,7 +369,7 @@ const Metrics = () => {
                       </div>
                     </Col>
                     <Col sm={7} md={7} lg={7} xl={7}>
-                      {memCapacityData.length ? (
+                      {isCapacityDataValid ? (
                         <Chart
                           chartType="PieChart"
                           data={memCapacityData}
@@ -332,12 +377,15 @@ const Metrics = () => {
                           width="100%"
                           height="250px"
                         />
+                      ) : dataAvailable ? (
+                        <div className="spinner-style" style={{ height: 250 }}>
+                          <Spinner animation="border" variant="secondary" />
+                        </div>
                       ) : (
-                        <div
-                          className="fs-22"
-                          style={{ color: "grey", height: 250, paddingTop: 20 }}
-                        >
-                          {" "}
+                        <div className="spinner-style" style={{ height: 250 }}>
+                          <div style={{ color: "white", textAlign: "center", marginTop: 50 }}>
+                              Data is not available
+                          </div>
                         </div>
                       )}
                     </Col>
@@ -364,7 +412,7 @@ const Metrics = () => {
                       DRAM vs CXL Memory Usage
                     </h4>
                   </div>
-                  {dramCxlMemUsageData.length ? (
+                  {isdramCxlMemUsageDataValid ? (
                     <Chart
                       chartType="LineChart"
                       width="100%"
@@ -372,12 +420,17 @@ const Metrics = () => {
                       data={dramCxlMemUsageData}
                       options={dramCxlMemUsageOptions}
                     />
+                  ) : dataAvailable ? (
+                    <div className="spinner-style" style={{ height: 250 }}>
+                      <Spinner animation="border" variant="secondary" />
+                    </div>
                   ) : (
-                    <div
-                      className="fs-22"
-                      style={{ color: "grey", height: 325 }}
-                    ></div>
-                  )}
+                    <div className="spinner-style" style={{ height: 250 }}>
+                      <div style={{ color: "white", textAlign: "center" }}>
+                          Data is not available
+                      </div>
+                    </div>
+                  ) }
                 </div>
               </Col>
             </Row>

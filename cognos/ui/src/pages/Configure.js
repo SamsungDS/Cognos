@@ -27,10 +27,11 @@ const Configure = () => {
   const MEMBOX_DEVICES_ENDPT_SUFFIX = 'devices';
   const [showAttach, setShowAttach] = useState(false);
   const [selectedValue, setSelectedValue] = useState('');
+
   
   const [selectorOptions, setSelectorOptions] = useState([
-    { value: 'Select Host', label: 'Select Host' }]
-    );
+    { value: "Select Host", label: "Select Host" },
+  ]);
 
 
   const [showDetachMemory, setShowDetachMemory] = useState(false);
@@ -181,100 +182,169 @@ const Configure = () => {
   }): null;
 
   return (
-    <Container fluid className='content_root' id='configure-container-id'>
-        <Row>
-          <Col>
-            <div className='device_card memory-box-overview-height' data-testid='memory-box-overview'  id='memory-box-overview-id'>
-              <h4 className='configure-heading'>CONFIGURE</h4>
-            </div> 
-          </Col>
-        </Row>
+    <Container fluid className="content_root" id="configure-container-id">
       <Row>
-            <Col>
-              <div className='device_card' data-testid='app-server-card' id='app-server-card-id' style={{height: '336px'}}>
-                <div className='config-host' data-testid='config-host' style={{ position:'sticky'}}>
-                  <DropDown options={selectorOptions} 
-                    onSelectChange={(selectedOption) => handleSelectChange(selectedOption, `${apiEndpoint}/${HOST_DEVICES_ENDPT_SUFFIX}`, setAttachedDevicesData)}
-                    title={constants.hostSelectorTitle}
-                    dropDownType="single"
-                    name='hostTable'
-                  />
-                </div>
-                <div className='table-div' data-testid='table-div-id' style={{ maxHeight: '300px', overflowY: 'auto' }}>
-                 <Table variant="dark" style={{fontFamily: 'Samsung sharp sons'}}>
-                  <thead>
-                    <tr>
-                      {constants.attachedDevicesTableHeader.map((item) => (
-                        <th key={item} className='cofig-row'>{item}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody style={{ maxHeight: '160px', overflowY: 'auto' }}>
-                    {attachedDevicesTable}        
-                    <tr>
-                      <td className='cofig-row'>
-                        <Button variant="outline-light" size="sm" onClick={handleAttachMemoryToggle} data-testid="attach-id">
-                          <img src={constants.AddIcon} alt='add-Icon'width="30" height="auto" style={{objectFit: "cover"}} />
-                        </Button>
-                      </td>
-                      <td className='cofig-row'></td>
-                      <td className='cofig-row'></td>
-                      <td className='cofig-row'></td>
-                      <td className='cofig-row'></td>
-                      <td className='cofig-row'></td>
-                    </tr>
-                  </tbody>
-                 </Table>
-                </div>
-                {showAttach && (<AttachMemory onSave={handleAttach} onCancel={handleAttachCancel} show={showAttach} availableLMDs={availableLMDs} selectedValue={selectedValue} data-testid='attach-memory-modal'/>)}
-                {showDetachMemory && 
-                (<DetachMemory 
+        <Col>
+          <div
+            className="device_card memory-box-overview-height"
+            data-testid="memory-box-overview"
+            id="memory-box-overview-id"
+          >
+            <h4 className="configure-heading">CONFIGURE</h4>
+          </div>
+        </Col>
+      </Row>
+      <Row>
+        <Col>
+          <div
+            className="device_card"
+            data-testid="app-server-card"
+            id="app-server-card-id"
+            style={{ height: "336px" }}
+          >
+            <div
+              className="config-host"
+              data-testid="config-host"
+              style={{ position: "sticky" }}
+            >
+              <DropDown
+                options={selectorOptions}
+                onSelectChange={(selectedOption) =>
+                  handleSelectChange(
+                    selectedOption,
+                    `${apiEndpoint}/${HOST_DEVICES_ENDPT_SUFFIX}`,
+                    setAttachedDevicesData
+                  )
+                }
+                title={constants.hostSelectorTitle}
+                dropDownType="single"
+                name="hostTable"
+              />
+            </div>
+            <div
+              className="table-div"
+              data-testid="table-div-id"
+              style={{ maxHeight: "300px", overflowY: "auto" }}
+            >
+              <Table
+                variant="dark"
+                style={{ fontFamily: "Samsung sharp sons" }}
+              >
+                <thead>
+                  <tr>
+                    {constants.attachedDevicesTableHeader.map((item) => (
+                      <th key={item} className="cofig-row">
+                        {item}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody style={{ maxHeight: "160px", overflowY: "auto" }}>
+                  {attachedDevicesTable}
+                  <tr>
+                    <td className="cofig-row">
+                      <Button
+                        variant="outline-light"
+                        size="sm"
+                        onClick={handleAttachMemoryToggle}
+                        data-testid="attach-id"
+                      >
+                        <img
+                          src={constants.AddIcon}
+                          alt="add-Icon"
+                          width="30"
+                          height="auto"
+                          style={{ objectFit: "cover" }}
+                        />
+                      </Button>
+                    </td>
+                    <td className="cofig-row"></td>
+                    <td className="cofig-row"></td>
+                    <td className="cofig-row"></td>
+                    <td className="cofig-row"></td>
+                    <td className="cofig-row"></td>
+                  </tr>
+                </tbody>
+              </Table>
+            </div>
+            {showAttach && (
+              <AttachMemory
+                onSave={handleAttach}
+                onCancel={handleAttachCancel}
+                show={showAttach}
+                availableLMDs={availableLMDs}
+                selectedValue={selectedValue}
+                data-testid="attach-memory-modal"
+              />
+            )}
+            {showDetachMemory && (
+              <DetachMemory
                 show={showDetachMemory}
                 rowData={attachedRowData}
                 onCancel={handleDetachMemoryCancel}
                 onDelete={handleDetach}
                 selectedValue={selectedValue}
-                />)}
-              </div>
-            </Col>
+              />
+            )}
+          </div>
+        </Col>
       </Row>
       <Row>
-          <Col>
-            <div className='device_card memoboxTable' data-testid='memoboxTable-id'>
-              <div style={{marginTop: '16px'}} data-testid='cmmd-card-id' id='cmmd-card-id'>
-                <Row>
-                  <Col sm={8} md={8} lg={8}>
-                    <div className='config-host'>
-                      <DropDown 
-                        options={constants.memboxSelectorOptions}  
-                        title={constants.memboxSelectorTitle}
-                        onSelectChange={(selectedOption) => handleSelectChange(selectedOption, `${apiEndpoint}/${MEMBOX_DEVICES_ENDPT_SUFFIX}`, setMemboxData)}
-                        dropDownType="single"
-                        name='membox'
-                      />
-                    </div>
-                  </Col>
-                </Row>
-                <div className='table-div' data-testid='table-div-id' style={{ maxHeight: '300px', overflowY: 'auto' }}>
-                  <Table variant="dark" style={{fontFamily: 'Samsung'}}>
-                    <thead>
-                      <tr>
-                        {constants.memboxTableHeader.map((item) => (
-                          <th key={item} className='cmm-row'>{item}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody style={{ maxHeight: '160px', overflowY: 'auto' }}>
-                      {memBoxTable}
-                    </tbody>
-                  </Table>
-                </div>
+        <Col>
+          <div
+            className="device_card memoboxTable"
+            data-testid="memoboxTable-id"
+          >
+            <div
+              style={{ marginTop: "16px" }}
+              data-testid="cmmd-card-id"
+              id="cmmd-card-id"
+            >
+              <Row>
+                <Col sm={8} md={8} lg={8}>
+                  <div className="config-host">
+                    <DropDown
+                      options={constants.memboxSelectorOptions}
+                      title={constants.memboxSelectorTitle}
+                      onSelectChange={(selectedOption) =>
+                        handleSelectChange(
+                          selectedOption,
+                          `${apiEndpoint}/${MEMBOX_DEVICES_ENDPT_SUFFIX}`,
+                          setMemboxData
+                        )
+                      }
+                      dropDownType="single"
+                      name="membox"
+                    />
+                  </div>
+                </Col>
+              </Row>
+              <div
+                className="table-div"
+                data-testid="table-div-id"
+                style={{ maxHeight: "300px", overflowY: "auto" }}
+              >
+                <Table variant="dark" style={{ fontFamily: "Samsung" }}>
+                  <thead>
+                    <tr>
+                      {constants.memboxTableHeader.map((item) => (
+                        <th key={item} className="cmm-row">
+                          {item}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody style={{ maxHeight: "160px", overflowY: "auto" }}>
+                    {memBoxTable}
+                  </tbody>
+                </Table>
               </div>
             </div>
-          </Col>
+          </div>
+        </Col>
       </Row>
     </Container>
-  )
+  );
 }
 
 export default Configure

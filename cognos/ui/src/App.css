@@ -300,6 +300,13 @@ table th {
 .memory-box-overview-height {
   height: 44px;
 }
+.spinner-style {
+  color: grey;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+}
 /* Media Query as per device size */
 @media screen and (min-width: 2560px) {
   .sidebar {
