@@ -72,7 +72,6 @@ int sc_global::g_create_mbox(struct StaticPortInfo * port_info){
 }
 
 
-
 //get sc_devices map
 unordered_map<uint64_t, sc_mbox*>& sc_global::get_mbox_map() { return sc_devices; }
 

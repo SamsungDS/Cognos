@@ -20,6 +20,7 @@ extern "C"{
 
 #define CXL_CONF_FILE "cxl.conf"
 #define INPUT_CONF_FILE "input.conf"
+#define DELIMITER ","
 
 using namespace std;
 
@@ -94,7 +95,6 @@ unordered_map<string, string> token_helper(string input){
     return tokens_map;
 }
 
-
 /**
  * @brief ListDevices - invokes list_devices function of Device Class.
  * @param input string having Cluster ID, Command, FM_ID, FM_Endpoint.
@@ -113,7 +113,6 @@ std::string ListDevices(const std::string& input) {
     return output;
 }
 
-
 /**
  * @brief ListHosts - invokes list_hosts function of Device Class.
  * @param input string having Cluster ID, Command, ID.
@@ -131,7 +130,6 @@ std::string ListHosts(const std::string& input) {
     output+=buffer;
     return output;
 }
-
 
 /**
  * @brief attach device to host.
@@ -183,6 +181,7 @@ std::string SetupInfo(const std::string& input) {
 
     // Retrieve all sc_id keys from cxl_global
     std::vector<sc_id> fm_keys = cxl_global.get_fm_keys();
+    output += "[";
  
     // Iterate over each key, retrieve the FabricManager, and call setup_info
     for (auto& id : fm_keys) {
@@ -191,15 +190,22 @@ std::string SetupInfo(const std::string& input) {
             std::cout << "Invoke Direct attached host setup_info" << std::endl;
             size_t bytes_written = manager->setup_info(buffer);
             buffer.resize(bytes_written);
-            output += buffer;
+            output += buffer + DELIMITER;
         }
     }
 
-    if (output.empty()) {
+    if (output.size() > 1) {
+        // Remove the trailing comma
+        output.pop_back();
+    }
+    // Close the JSON array
+    output += "]";
+    if (output == "[]") {
         std::cerr << "No FabricManager found " << std::endl;
     }
     return output;
 }
+
 
 void create_dev_cmmd(json_t* config) {
     // Allocate DevCMMD on the heap
@@ -208,12 +214,14 @@ void create_dev_cmmd(json_t* config) {
     std::cout << "Added DevCMMD to map." << std::endl;
 }
 
+
 void create_dev_cmmh(json_t* config) {
     // Allocate DevCMMH on the heap
     DevCMMH* manager = new DevCMMH(config);
     cxl_global.add_fm(manager->get_fmid(), *manager);
     std::cout << "Added DevCMMH to map." << std::endl;
 }
+
 
 void create_dev_cmmb(json_t* config) {
     // Allocate DevCMMB on the heap
@@ -228,6 +236,39 @@ const std::unordered_map<std::string, std::function<void(json_t*)>> factory_map 
     {"FM_DIRECT_CMMH", create_dev_cmmh},
     {"FM_REMOTE_CMMB", create_dev_cmmb}
 };
+
+
+/**
+ * Helper function to create cmmb fabric manager map dynamically
+ */
+json_t* fmapi_setup(std::string& buffer) {
+    size_t bytes_written = cxl_global.fetch_setup_info(buffer);
+    if (bytes_written == 0) {
+	std::cout << "Error: No data fetched by fetch_setup_info" << std::endl;
+        return nullptr;
+    }
+    buffer.resize(bytes_written);
+
+    json_error_t error;
+    json_t* parsed_buffer = json_loads(buffer.c_str(), 0, &error);
+    if (!parsed_buffer) {
+	std::cout<<"Error parsing buffer: " << std::string(error.text) << std::endl;
+        return nullptr;
+    }
+
+    json_t* hosts = json_object_get(parsed_buffer, "Hosts");
+    json_t* devices = json_object_get(parsed_buffer, "Devices");
+
+    std::cout<< "Constructing CMMB fabric manager entry." << std::endl;
+    json_t* cmmb_fm = json_object();
+    json_object_set_new(cmmb_fm, "id", json_integer(4004));
+    json_object_set_new(cmmb_fm, "type", json_string("FM_REMOTE_CMMB"));
+    json_object_set(cmmb_fm, "Hosts", hosts);
+    json_object_set(cmmb_fm, "Devices", devices);
+    std::cout<<"CMMB fabric manager entry constructed successfully."<<std::endl;
+    json_decref(parsed_buffer);
+    return cmmb_fm;
+}
 
 
 /**
@@ -266,6 +307,7 @@ json_t* direct_config(const std::string& input_config) {
     return config_json;
 }
 
+
 /**
  * @brief  load and validate the JSON structure, ensuring the file is correctly parsed 
  *         and contains a fabric_managers array
@@ -290,29 +332,49 @@ json_t* load_json_config(const std::string& config_path) {
  * @details This function will be triggered first for any requests from client side.
 */
 int init_cxl_plugin() {
-    std::cout << "invoked init_cxl_plugin " << std::endl;
-    json_t* root = load_json_config(INPUT_CONF_FILE);
-    if (!root) {
-	// error loading JSON    
-        return 1; 
-    }
-    size_t index;
-    json_t* fabric_manager;
-    json_array_foreach(json_object_get(root, "fabric_managers"), index, fabric_manager) {
-        if (process_fabric_manager(fabric_manager) != 0) {
-            // skip if theres an error processing		
-            continue; 
-        }
-    }
-    json_decref(root);
-
+    std::cout << "invoked init_cxl_plugin" << std::endl;
     struct StaticPortInfo pinfo;
     std::string ip_address = get_ip_address(CXL_CONF_FILE);
     set_ip(ip_address.c_str());
     init();
     mbox_get_static_config(&pinfo);
-    return cxl_global.g_create_mbox(&pinfo);
+
+    int mret = cxl_global.g_create_mbox(&pinfo);
+    if (mret != 0) {
+	std::cout << "Error creating memory box: " << std::to_string(mret) << std::endl;
+        return mret;
+    }
+
+    json_t* root = load_json_config(INPUT_CONF_FILE);
+   
+    std::cout << "Extracting fabric_managers array..." << std::endl;
+    json_t* fabric_managers = json_object_get(root, "fabric_managers");
+
+    std::string buffer;
+    json_t* cmmb_fm = fmapi_setup(buffer);
+    if (!cmmb_fm) {
+	std::cout << "Error setting up CMMB fabric manager."<< std::endl;
+        json_decref(root);
+        return 1;
+    }
+
+    // Add the cmmb fm to the array
+    json_array_append_new(fabric_managers, cmmb_fm);
+
+    // Process each fabric manager in the array
+    size_t index;
+    json_t* fabric_manager;
+    json_array_foreach(json_object_get(root, "fabric_managers"), index, fabric_manager) {
+        if (process_fabric_manager(fabric_manager) != 0) {
+            // skip if theres an error processing
+            continue;
+        }
+    }
+
+    json_decref(root);
+    return mret;
 }
+
 
 /**
  * ########################################
@@ -329,7 +391,7 @@ int init_cxl_plugin() {
  * @return svk_status     Refer to framework_struct.h for return codes
  */
 svk_status  initialize(void *) {
-    cout << "initialize function called" << endl;
+    std::cout << "initialize function called" << std::endl;
 
     if (init_cxl_plugin()==0){
 	return SVK_STATUS_SUCCESS;
@@ -346,7 +408,7 @@ svk_status  initialize(void *) {
  * @return svk_status     Refer to framework_struct.h for return codes
  */
 svk_status  get_supported_feature_list(feature_id *feat_id, char *) {
-    cout << "get_supported_feature_list function called" << endl;
+    std::cout << "get_supported_feature_list function called" << std::endl;
     *feat_id = feature_id::CXL;
     return SVK_STATUS_SUCCESS;
 }
@@ -358,7 +420,7 @@ svk_status  get_supported_feature_list(feature_id *feat_id, char *) {
  * @return svk_status     Refer to framework_struct.h for return codes
  */
 svk_status  is_license_valid(void *) {
-    cout << "is_license_valid function called" << endl;
+    std::cout << "is_license_valid function called" << std::endl;
     return SVK_STATUS_FAIL;
 }
 
@@ -367,7 +429,7 @@ svk_status  is_license_valid(void *) {
  * @return svk_status     Refer to framework_struct.h for return codes
  */
 svk_status  configure_device_if_any(void *, svk_device_ctx *, uint64_t length, void *) {
-    cout << "configure_device_if_any function called" << endl;
+    std::cout << "configure_device_if_any function called" << std::endl;
     return SVK_STATUS_FAIL;
 }
 
@@ -381,7 +443,7 @@ svk_status  configure_device_if_any(void *, svk_device_ctx *, uint64_t length, v
  * @return svk_status Refer to framework_struct.h for return codes
  */
 svk_status execute_sync(svk_pass_thru_cmd *, svk_input *input, svk_output *output) {
-    cout << "execute_sync function called" << endl;
+    std::cout << "execute_sync function called" << std::endl;
     std::string input_str(reinterpret_cast<char*>(input->input_buffer), input->len);
     std::string result;
 
@@ -426,7 +488,7 @@ svk_status execute_sync(svk_pass_thru_cmd *, svk_input *input, svk_output *outpu
  * @return svk_status     Refer to framework_struct.h for return codes
  */
 svk_status execute_async(svk_pass_thru_cmd *, svk_postprocess_fn *) {
-    cout << "execute_async function called" << endl;
+    std::cout << "execute_async function called" << std::endl;
     return SVK_STATUS_FAIL;
 }
 
@@ -435,7 +497,7 @@ svk_status execute_async(svk_pass_thru_cmd *, svk_postprocess_fn *) {
  * @return svk_status Refer to framework_struct.h for return codes
  */
 svk_status clean_up(void *) {
-    cout << "clean_up function called" << endl;
+    std::cout << "clean_up function called" << std::endl;
     return SVK_STATUS_FAIL;
 }
 

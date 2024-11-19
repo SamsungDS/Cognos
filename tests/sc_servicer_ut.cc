@@ -40,6 +40,7 @@ protected:
 
     void SetUp() override {
         cxl_global = mock_cxl_global;
+	temp_filename.clear();
     }
 
     void TearDown() override {
@@ -477,3 +478,48 @@ TEST_F(ServicerTest, CreateDevCMMB) {
     EXPECT_TRUE(output.find("Added DevCMMB to map.") != std::string::npos);
 } 
 
+TEST_F(ServicerTest, FmapiSetupSuccess) {
+    std::string buffer; 	
+    json_t* result = fmapi_setup(buffer);
+    ASSERT_NE(result, nullptr);  
+    json_t* type = json_object_get(result, "type");
+    ASSERT_TRUE(json_is_string(type));
+    EXPECT_STREQ(json_string_value(type), "FM_REMOTE_CMMB");
+    json_decref(result);  
+}
+
+TEST_F(ServicerTest, ProcessFMInvalidTypeField) {
+    json_t* fabric_manager = json_object();
+    json_object_set_new(fabric_manager, "id", json_integer(123));
+    json_object_set_new(fabric_manager, "type", json_integer(123)); 
+    int result = process_fabric_manager(fabric_manager);
+    EXPECT_EQ(result, 1);
+    json_decref(fabric_manager);
+}
+
+TEST_F(ServicerTest, ProcessFMUnknownType) {
+    // Create a JSON fabric manager with an unknown type
+    json_t* fabric_manager = json_object();
+    json_object_set_new(fabric_manager, "id", json_integer(123));
+    json_object_set_new(fabric_manager, "type", json_string("UNKNOWN")); 
+    int result = process_fabric_manager(fabric_manager);
+    EXPECT_EQ(result, 2);
+    json_decref(fabric_manager);
+}
+
+
+TEST_F(ServicerTest, LoadJsonConfigInvalidRootType) {
+    std::string invalid_json_content = R"([{"key": "value"}])";
+    std::string path = write_json_to_temp_file(invalid_json_content);
+    json_t* result = load_json_config(path);
+    EXPECT_EQ(result, nullptr);
+}
+
+// Test case for valid root but missing fabric_managers
+TEST_F(ServicerTest, LoadJsonConfigMissingFabricManagers) {
+    // Write a JSON object without the "fabric_managers" field
+    std::string invalid_json_content = R"({"other_key": "value"})";
+    std::string path = write_json_to_temp_file(invalid_json_content);
+    json_t* result = load_json_config(path);
+    EXPECT_EQ(result, nullptr);
+}

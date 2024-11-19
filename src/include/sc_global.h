@@ -110,7 +110,6 @@ class sc_global
 	 */
 	std::vector<sc_id> get_fm_keys() const; 
 
-
     private:
 	std::unordered_map<uint64_t, sc_mbox*> sc_devices;
 	std::vector<sc_mbox*> mb_objs;

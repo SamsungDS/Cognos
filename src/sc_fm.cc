@@ -167,6 +167,7 @@ size_t FabricManager::setup_info(std::string &buffer) {
                 json_t* endpoint_obj = json_object();
                 json_object_set_new(endpoint_obj, "memdev", json_string(d.d_get_dev_name().c_str()));
                 json_object_set_new(endpoint_obj, "target", json_integer(d.d_get_port()));
+		json_object_set_new(endpoint_obj, "mem_addr", json_string(std::to_string(d.d_get_id().get_sc_id()).c_str()));
                 json_object_set_new(endpoint_obj, "mem_size", json_string(std::to_string(d.d_get_capacity()).c_str()));
                 json_object_set_new(endpoint_obj, "dev_offset", json_string("0"));
 

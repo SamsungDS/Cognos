@@ -23,15 +23,16 @@ public:
      */
     virtual size_t setup_info(std::string &buffer);
 
+    void set_fm_type(std::string id_type);
+
     std::string get_fm_type() const;
 
     sc_id get_fmid() const;
 
     uint64_t hash_id_json(json_t* id_json, const std::string& fm_type); 
 
-    void set_fm_type(std::string id_type);
-
     void cleanup();
+
 
 private:
 

@@ -35,6 +35,8 @@ void create_dev_cmmb(json_t* config);
 
 extern const std::unordered_map<std::string, std::function<void(json_t*)>> factory_map;
 
+json_t* fmapi_setup(std::string& buffer);
+
 extern "C"{
     int init_cxl_plugin();
 }
