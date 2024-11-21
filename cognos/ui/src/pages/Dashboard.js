@@ -19,17 +19,13 @@ const Dashboard = () => {
   const [dataAvailable, setDataAvailable] = useState(true);
 
   useEffect(() => {
-    const isMemoryDataValid =
-      cmmbMemoryData !== null &&
-      cmmbMemoryData !== "" &&
-      !isNaN(Number(cmmbMemoryData)) &&
-      (typeof cmmbMemoryData !== "object" ||
-        Object.keys(cmmbMemoryData).length !== 0);
     // Set timeout for 120 seconds (120000 ms)
     // istanbul ignore next
     const timer = setTimeout(() => {
-      if (!cmmbBandwidthData?.max_bandwidth || !devicesCountData?.num_hosts || !cmmbCapacityData?.total_capacity || !isMemoryDataValid ) {
-        setDataAvailable(false);
+      if (
+        !cmmbBandwidthData?.max_bandwidth || !devicesCountData?.num_hosts
+        || !cmmbCapacityData?.total_capacity || !cmmbMemoryData) {
+          setDataAvailable(false);
       }
     }, 120000);
 
@@ -218,7 +214,7 @@ const Dashboard = () => {
                           style={{ color: "white", marginLeft: 200 }}
                         >{`Used Capacity ${
                           cmmbCapacityData.used_capacity
-                            ? cmmbCapacityData.total_capacity
+                            ? cmmbCapacityData.used_capacity
                             : 0
                         } GB`}</div>
                       </div>
@@ -262,11 +258,7 @@ const Dashboard = () => {
                   xl={10}
                   data-testid="rackBandwidth-id"
                 >
-                  {cmmbMemoryData !== null &&
-                  cmmbMemoryData !== "" &&
-                  !isNaN(Number(cmmbMemoryData)) &&
-                  (typeof cmmbMemoryData !== "object" ||
-                    Object.keys(cmmbMemoryData).length !== 0) ? (
+                  {cmmbMemoryData ? (
                     <Chart
                       data-testid="chart"
                       chartType="AreaChart"
