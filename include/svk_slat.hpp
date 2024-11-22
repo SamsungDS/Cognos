@@ -1,5 +1,5 @@
-#ifndef __SVK_SLAT_HLPR_HPP__
-#define __SVK_SLAT_HLPR_HPP__
+#ifndef __SVK_SLAT_HPP__
+#define __SVK_SLAT_HPP__
 
 #include <dirent.h>
 #include <dlfcn.h>
@@ -9,24 +9,31 @@
 #include <thread>
 #include <unordered_map>
 
-// TODO: Need to finalize the default location in case we cannot get this arg
-#define SLAT_CONFIG_FILE_DEFAULT "/etc/svk/slat_config.json"
+#include "svk_logger.hpp"
+
+// Hardcoding this path for now. This will be provided by the header from the
+// svk-core repo in the future
+#define SVK_FEATURE_MODULE_PATH "/usr/local/svk/feature_modules"
+
+#define FEATURE_MODULE_SLAT_PATH SVK_FEATURE_MODULE_PATH "/slat"
+#define FEATURE_MODULE_SLAT_CONFIG_PATH FEATURE_MODULE_SLAT_PATH "/config"
+#define FEATURE_MODULE_SLAT_LIB_PATH FEATURE_MODULE_SLAT_PATH "/lib64"
+#define SLAT_FEATURE_LOGIC_MODULES_PATH \
+  FEATURE_MODULE_SLAT_PATH "/logic_modules"
+
+#define SLAT_CONFIG_FILE_DEFAULT FEATURE_MODULE_SLAT_CONFIG_PATH "/config.json"
+
+// Expects the logic modules to provide the feature_name as "slat" as part of
+// get_supported_logic_details If not provided, then we ignore the logic module
+#define SLAT_FEATURE_MODULE_NAME "slat"
 
 #define SLAT_LOG_FILENAME_DEFAULT "/var/log/svk/slat.log"
-#define SLAT_CONF_SECTION_TAG "slat"
-#define SLAT_LOGIC_LIB_DIR_DEFAULT "/usr/local/svk/feature_libs/slat/logic_libs"
-#define SLAT_LOGGER_MODULE_NAME "slat"
+#define SLAT_CONF_SECTION_TAG SLAT_FEATURE_MODULE_NAME
+#define SLAT_LOGGER_MODULE_NAME SLAT_FEATURE_MODULE_NAME
 #define SLAT_LOGGER_FILE_COUNT_DEFAULT 10
 #define SLAT_LOGGER_FILE_SIZE_DEFAULT 1048576ULL  // 1MB default max file size
 #define SLAT_LOGGER_LEVEL_DEFAULT "INFO"
 #define SLAT_LOGGER_SINK_TYPE_DEFAULT "rotating_file"
-
-const std::unordered_map<std::string, level_E> slat_log_level_map = {
-    {"TRACE", level_E::TRACE},       {"DEBUG", level_E::DEBUG},
-    {"INFO", level_E::INFO},         {"NOTICE", level_E::NOTICE},
-    {"WARN", level_E::WARN},         {"ERROR", level_E::ERROR},
-    {"CRITICAL", level_E::CRITICAL}, {"ALERT", level_E::ALERT},
-    {"FATAL", level_E::FATAL},       {"OFF", level_E::OFF}};
 
 using slat_config = struct slat_config {
   std::string slat_logic_lib_dir;
@@ -40,13 +47,7 @@ using slat_config = struct slat_config {
 // Making this global to be able to mock functions for testing
 class SLATrackerSvc {
  private:
-  const std::unordered_map<std::string, level_E> log_level_map = {
-      {"TRACE", level_E::TRACE},       {"DEBUG", level_E::DEBUG},
-      {"INFO", level_E::INFO},         {"NOTICE", level_E::NOTICE},
-      {"WARN", level_E::WARN},         {"ERROR", level_E::ERROR},
-      {"CRITICAL", level_E::CRITICAL}, {"ALERT", level_E::ALERT},
-      {"FATAL", level_E::FATAL},       {"OFF", level_E::OFF}};
-  mutable std::unordered_map<char *, svk_logic_module_details *>
+  mutable std::unordered_map<std::string, svk_logic_module_details *>
       logic_modules_map;
   std::string curr_log_level;
   std::string svk_conf_path;
@@ -60,6 +61,7 @@ class SLATrackerSvc {
   // through APIs and not through constructors/destructors. Must call init and
   // cleanup from this class to ensure resources are managed properly
   svk_status Initialize(const char *svk_config);
+  svk_logic_module_details *getLogicDetails(char *logic_module_name);
 };
 
 extern "C" {
@@ -69,4 +71,4 @@ void *my_dlsym(void *handle, const char *symbol);
 int my_dlclose(void *handle);
 }
 
-#endif /* __SVK_SLAT_HLPR_HPP__ */
+#endif /* __SVK_SLAT_HPP__ */

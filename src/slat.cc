@@ -8,7 +8,7 @@
 
 #include "logic_interface/svk_logic_struct.h"
 #include "svk_logger.h"
-#include "svk_slat_hlpr.hpp"
+#include "svk_slat.hpp"
 
 #define LOG_MSG_MAX_SIZE (1024)
 #define LIBRARY_SUFFIX ".so"
@@ -60,7 +60,14 @@ svk_status SLATrackerSvc::read_slat_config_file(
     std::cerr
         << "Unable to read SLAT config file. Assigning default value. Error -> "
         << e.what() << std::endl;
-    config->slat_logic_lib_dir = SLAT_LOGIC_LIB_DIR_DEFAULT;
+    config->slat_logic_lib_dir = SLAT_FEATURE_LOGIC_MODULES_PATH;
+
+    // Assign defaults
+    config->log_level = SLAT_LOGGER_LEVEL_DEFAULT;
+    config->log_filename = SLAT_LOG_FILENAME_DEFAULT;
+    config->log_file_count = SLAT_LOGGER_FILE_COUNT_DEFAULT;
+    config->log_file_size = SLAT_LOGGER_FILE_SIZE_DEFAULT;
+    config->log_sink_type = SLAT_LOGGER_SINK_TYPE_DEFAULT;
   }
 
   return status;
@@ -68,8 +75,8 @@ svk_status SLATrackerSvc::read_slat_config_file(
 
 svk_status SLATrackerSvc::initialize_logger(const slat_config config) const {
   svk_status status = SVK_STATUS_FAIL;
-  auto found = slat_log_level_map.find(config.log_level);
-  if (found == slat_log_level_map.end()) {
+  auto found = log_level_map.find(config.log_level);
+  if (found == log_level_map.end()) {
     std::cout << "Matching log level for the [" << config.log_level
               << "] not found. Exiting" << std::endl;
     return status;
@@ -105,6 +112,7 @@ svk_status SLATrackerSvc::load_logic_modules(
   svk_status status = SVK_STATUS_SUCCESS;
   int num_failed_libs = 0;
   char log_msg[LOG_MSG_MAX_SIZE];
+  struct stat st;
 
   DIR *dirfp = nullptr;
   struct dirent *entry = nullptr;
@@ -124,13 +132,25 @@ svk_status SLATrackerSvc::load_logic_modules(
   entry = readdir(dirfp);
   // Loop through all libs in the dir
   for (; entry != nullptr; entry = readdir(dirfp)) {
+    // Skip the file names starting with "."
+    if (strncmp(entry->d_name, ".", 1) == 0 ||
+        strlen(entry->d_name) <= strlen(LIBRARY_SUFFIX)) {
+      continue;
+    }
     // Check if this is a shared lib
     std::string entry_name(entry->d_name);
     std::string library_suffix(LIBRARY_SUFFIX);
+    std::string full_path(logic_modules_lib_dir + "/" + entry_name);
+
+    stat(full_path.c_str(), &st);
+    if (S_ISDIR(st.st_mode)) {
+      std::string file(full_path + "/lib64/lib" + entry_name + ".so");
+      entry_name = file;
+    }
+
     // If dir entry is smaller than length(.so), skip the entry
     // Otherwise compare the last 3 chars to .so to see if it is valid
-    if (entry_name.size() < library_suffix.size() ||
-        entry_name.compare(entry_name.size() - library_suffix.size(),
+    if (entry_name.compare(entry_name.size() - library_suffix.size(),
                            library_suffix.size(), library_suffix) != 0) {
       continue;
     }
@@ -211,7 +231,7 @@ svk_status SLATrackerSvc::load_logic_modules(
              "Running get_supported_logic_details function for logic module %s",
              entry->d_name);
     svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, log_msg);
-    if (details->get_supported_logic_details(details)) {
+    if (details->get_supported_logic_details(details) != SVK_STATUS_SUCCESS) {
       snprintf(log_msg, LOG_MSG_MAX_SIZE,
                "get_supported_logic_details for logic module '%s' returned "
                "non-zero, ignoring this logic module.",
@@ -224,9 +244,20 @@ svk_status SLATrackerSvc::load_logic_modules(
       continue;
     }
 
+    if (strcmp(details->feature_name, SLAT_FEATURE_MODULE_NAME) != 0) {
+      snprintf(log_msg, LOG_MSG_MAX_SIZE,
+               "get_supported_logic_details for logic module '%s' returned "
+               "invalid feature name %s, ignoring this logic module.",
+               entry->d_name, details->feature_name);
+      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, log_msg);
+      free(details);
+      dlclose_fn(handle);
+      continue;
+    }
+
     // insert logic_id/function pointers into map
     auto [iterator, inserted] = logic_modules_map.insert(
-        make_pair(details->logic_module_name, details));
+        make_pair(std::string(details->logic_module_name), details));
     if (!inserted) {
       snprintf(
           log_msg, LOG_MSG_MAX_SIZE,
@@ -258,18 +289,35 @@ svk_status SLATrackerSvc::Initialize(const char *slat_config_file) {
   svk_status status = SVK_STATUS_FAIL;
   slat_config config;
 
-  status = read_slat_config_file(slat_config_file, &config);
+  status = this->read_slat_config_file(slat_config_file, &config);
   if (status != SVK_STATUS_SUCCESS) {
     return SVK_STATUS_INVALID_CONFIG;
   }
 
-  status = initialize_logger(config);
+  status = this->initialize_logger(config);
   if (status != SVK_STATUS_SUCCESS) {
     return SVK_STATUS_FAIL;
   }
-  status = load_logic_modules(config.slat_logic_lib_dir);
+  status = this->load_logic_modules(config.slat_logic_lib_dir);
 
   return status;
+}
+
+svk_logic_module_details *SLATrackerSvc::getLogicDetails(
+    char *logic_module_name) {
+  char log_msg[LOG_MSG_MAX_SIZE];
+  svk_logic_module_details *details = nullptr;
+
+  auto found = this->logic_modules_map.find(std::string(logic_module_name));
+  if (found == this->logic_modules_map.end()) {
+    snprintf(log_msg, LOG_MSG_MAX_SIZE,
+             "Matching logic module for the [%s] not found. Exiting.",
+             logic_module_name);
+    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, log_msg);
+    return details;
+  }
+  details = found->second;
+  return details;
 }
 
 // Actual implementation of the feature module functions
@@ -345,15 +393,64 @@ extern "C" svk_status configure_device_if_any(void *config_details,
 
 extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
                                    svk_output *output) {
-  if (cmd == nullptr || input == nullptr || output == nullptr) {
+  char *ptr = NULL;
+  char logic_module_name[256];
+  svk_logic_module_details *details;
+  char log_msg[LOG_MSG_MAX_SIZE];
+  svk_logic_cmd logic_cmd;
+  svk_logic_input logic_input;
+  svk_logic_output logic_output;
+  svk_status status;
+
+  if (cmd == nullptr || input == nullptr || output == nullptr ||
+      input->input_buffer == nullptr || output->output_buffer == nullptr) {
     svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR,
-               "execute_sync function called with nullptr param");
+               "execute_sync function called with nullptr params");
     return SVK_STATUS_FAIL;
   }
-  svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO,
-             "execute_sync returned successfully.");
+  ptr = strstr((char *)input->input_buffer, "logic_module");
+  if (ptr == nullptr) {
+    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR,
+               "execute_sync function called without the keyword "
+               "'logic_module' in the input structure");
+    return SVK_STATUS_FAIL;
+  }
+  sscanf(ptr, "logic_module=%[a-zA-Z0-9]", logic_module_name);
+  details = g_slat_service->getLogicDetails(logic_module_name);
+  if (details == nullptr) {
+    snprintf(log_msg, LOG_MSG_MAX_SIZE,
+             "Matching logic module for the [%s] not found. Exiting.",
+             logic_module_name);
+    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, log_msg);
+    return SVK_STATUS_FAIL;
+  }
 
-  return SVK_STATUS_SUCCESS;
+  if (details->execute_logic_sync == nullptr) {
+    snprintf(log_msg, LOG_MSG_MAX_SIZE,
+             "logic module [%s]'s execute_logic_sync is null. Exiting.",
+             logic_module_name);
+    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, log_msg);
+    return SVK_STATUS_FAIL;
+  }
+  strcpy(logic_cmd.logic_name, logic_module_name);
+  logic_input.input_buffer = input->input_buffer;
+  logic_input.input_len = input->len;
+  logic_output.output_buffer = output->output_buffer;
+  logic_output.output_len = output->len;
+  status = details->execute_logic_sync(&logic_cmd, &logic_input, &logic_output);
+  if (status == SVK_STATUS_SUCCESS) {
+    output->len = logic_output.output_len;
+    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO,
+               "execute_sync returned successfully.");
+  } else {
+    output->len = 0;
+    snprintf(log_msg, LOG_MSG_MAX_SIZE,
+             "execute_sync for the logic module [%s] failed",
+             logic_module_name);
+    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, log_msg);
+  }
+
+  return status;
 }
 
 extern "C" svk_status execute_async(svk_pass_thru_cmd *pass_thru,

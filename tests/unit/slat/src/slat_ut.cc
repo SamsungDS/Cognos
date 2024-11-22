@@ -9,7 +9,7 @@
 #include <boost/property_tree/xml_parser.hpp>
 
 #include "logic_interface/svk_logic_struct.h"
-#include "svk_slat_hlpr.hpp"
+#include "svk_slat.hpp"
 
 using ::testing::_;
 using ::testing::Return;
@@ -182,10 +182,14 @@ TEST_F(ConfigTest, LoggerConfFailWithoutEnv) {
 }
 
 TEST_F(ConfigTest, LoggerConfDefault) {
-  mkdir("/etc/svk", 0755);
+  char command[256];
+  sprintf(command, "mkdir -p %s", FEATURE_MODULE_SLAT_CONFIG_PATH);
+  system(command);
   boost::property_tree::write_json(SLAT_CONFIG_FILE_DEFAULT, slat_conf);
 
   EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
+  sprintf(command, "rm -rf %s", SVK_FEATURE_MODULE_PATH);
+  system(command);
   unlink(SLAT_CONFIG_FILE_DEFAULT);
 }
 
@@ -403,7 +407,7 @@ TEST_F(ConfigTest, ExecuteSyncFnFail) {
   unlink("slat_conf.json");
 }
 
-TEST_F(ConfigTest, ExecuteSyncFnSuccess) {
+TEST_F(ConfigTest, ExecuteSyncFnFailWithEmptyInputBuffer) {
   svk_pass_thru_cmd cmd;
   svk_input input;
   svk_output output;
@@ -412,7 +416,25 @@ TEST_F(ConfigTest, ExecuteSyncFnSuccess) {
 
   setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
   EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
-  EXPECT_EQ(SVK_STATUS_SUCCESS, execute_sync(&cmd, &input, &output));
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&cmd, &input, &output));
+  unlink("slat_conf.json");
+}
+
+TEST_F(ConfigTest, ExecuteSyncFnFailWithInvalidLogicModule) {
+  svk_pass_thru_cmd cmd;
+  svk_input input;
+  svk_output output;
+
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+
+  setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
+  memset((char *)&input, 0, sizeof(input));
+  input.input_buffer = (uint8_t *)malloc(1024);
+  strcpy((char *)input.input_buffer, "logic_module=InvalidLogic");
+  input.len = strlen("logic_module=InvalidLogic");
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&cmd, &input, &output));
+  free(input.input_buffer);
   unlink("slat_conf.json");
 }
 
