@@ -176,26 +176,11 @@ const Metrics = () => {
     },
     animation: { startup: true },
   };
-  const ismemoryCpuDataValid =
-  memoryCpuData !== null &&
-  memoryCpuData !== "" &&
-  !isNaN(Number(memoryCpuData)) &&
-  (typeof memoryCpuData !== "object" ||
-    Object.keys(memoryCpuData).length !== 0);
-
-  const isCapacityDataValid = memCapacityData !== null &&
-  memCapacityData !== "" &&
-  !isNaN(Number(memCapacityData)) &&
-  (typeof memCapacityData !== "object" ||
-    Object.keys(memCapacityData).length !== 0);
-
-  const isdramCxlMemUsageDataValid = dramCxlMemUsageData !== null &&
-  dramCxlMemUsageData !== "" &&
-  !isNaN(Number(dramCxlMemUsageData)) &&
-  (typeof dramCxlMemUsageData !== "object" ||
-    Object.keys(dramCxlMemUsageData).length !== 0)
 
   useEffect(() => {
+    console.log("memoryCPUData: ", memoryCpuData)
+    console.log("memCapacityData", memCapacityData)
+    console.log("dramCxlMemUsageData", dramCxlMemUsageData)
     // istanbul ignore next
     const intervalCallBack = () => {
       if (lastSelectedHost.current) {
@@ -216,14 +201,14 @@ const Metrics = () => {
     // Set timeout for 120 seconds (120000 ms)
     // istanbul ignore next
     const timer = setTimeout(() => {
-      if (!ismemoryCpuDataValid || !isCapacityDataValid || !isdramCxlMemUsageDataValid ) {
+      if (!memoryCpuData || !memCapacityData || !dramCxlMemUsageData ) {
         setDataAvailable(false);
       }
     }, 120000);
 
     // Clear timeout if data becomes available before the timeout elapses
     return () => clearTimeout(timer);
-  }, [ismemoryCpuDataValid, isCapacityDataValid, isdramCxlMemUsageDataValid ]);
+  }, [memoryCpuData, memCapacityData, dramCxlMemUsageData ]);
   return (
     <div className="Content content_root" id="main-container-id">
       <Container fluid>
@@ -323,7 +308,7 @@ const Metrics = () => {
               >
                 <h1 className="sap-hana">CPU vs Memory Usage</h1>
               </div>
-              {ismemoryCpuDataValid ? (
+              {memoryCpuData?.length > 1 ? (
                 <Chart
                   chartType="LineChart"
                   width="100%"
@@ -369,7 +354,7 @@ const Metrics = () => {
                       </div>
                     </Col>
                     <Col sm={7} md={7} lg={7} xl={7}>
-                      {isCapacityDataValid ? (
+                      {memCapacityData?.length > 1 ? (
                         <Chart
                           chartType="PieChart"
                           data={memCapacityData}
@@ -412,7 +397,7 @@ const Metrics = () => {
                       DRAM vs CXL Memory Usage
                     </h4>
                   </div>
-                  {isdramCxlMemUsageDataValid ? (
+                  {dramCxlMemUsageData?.length > 1 ? (
                     <Chart
                       chartType="LineChart"
                       width="100%"

@@ -258,7 +258,7 @@ const Dashboard = () => {
                   xl={10}
                   data-testid="rackBandwidth-id"
                 >
-                  {cmmbMemoryData ? (
+                  {cmmbMemoryData?.length > 1 ? (
                     <Chart
                       data-testid="chart"
                       chartType="AreaChart"
