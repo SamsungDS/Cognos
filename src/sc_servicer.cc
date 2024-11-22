@@ -4,6 +4,9 @@
 #include <fstream>
 #include <unordered_map>
 #include <functional>
+#include <sys/stat.h>
+#include <regex>
+
 #include "sc_fm.h"
 #include "sc_servicer.h"
 #include "sc_global.h"
@@ -20,7 +23,7 @@ extern "C"{
 
 #define CXL_CONF_FILE "cxl.conf"
 #define INPUT_CONF_FILE "input.conf"
-#define DELIMITER ","
+constexpr char DELIMITER[] = ",";
 
 using namespace std;
 
@@ -30,6 +33,27 @@ sc_global cxl_global;
 //function pointers for the commands
 typedef std::string (*CommandFunc)(const std::string&);
 
+
+/**
+@brief Validate the format of an IPv4 address
+@param ip_address - the IP address to validate
+@return true if the IP address is valid, false otherwise
+ */
+bool is_valid_ip(const std::string &ip_address) {
+    // Trim whitespace 
+    std::string trimmed_ip = ip_address;
+    trimmed_ip.erase(0, trimmed_ip.find_first_not_of(" \t\n\r"));
+    trimmed_ip.erase(trimmed_ip.find_last_not_of(" \t\n\r") + 1);
+    // Regular expression for a valid IPv4 address
+    const std::regex ip_pattern( \
+	"(^(1[0-9]{0,2}|2[0-4][0-9]|25[0-5]|[1-9][0-9]?)\\." \
+	"(25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)\\." \
+        "(25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)\\." \
+        "(25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)$)"
+    );
+
+    return std::regex_match(trimmed_ip, ip_pattern);
+}
 
 /**
  * @brief get the value of "ip_address" from the JSON file
@@ -60,11 +84,16 @@ std::string get_ip_address(const std::string &filename) {
     }
     // Extract the IP address value
     std::string ip_value = json_string_value(ip_address);
-    // Clean up by decreasing the reference count
+    // Validate the IP address format
+    if (!is_valid_ip(ip_value)) {
+        std::cerr << "Error: Invalid IP address format: " << ip_value << std::endl;
+        json_decref(root);
+        return "";
+    }
+    // Clean up
     json_decref(root);
     return ip_value;
 }
-    
 
 /** 
  * @brief tokenize input based on ';' and generate key values.
@@ -174,15 +203,14 @@ std::string DetachMemory(const std::string& input) {
  * @return setup details as string.
 */
 std::string SetupInfo(const std::string& input) {
-
-    string output;
+    std::string output;
     std::string buffer;
-    unordered_map<string, string> tokens_map = token_helper(input);
-
+    std::unordered_map<std::string, std::string> tokens_map = token_helper(input);
     // Retrieve all sc_id keys from cxl_global
     std::vector<sc_id> fm_keys = cxl_global.get_fm_keys();
     output += "[";
- 
+    // Counter to track the number of FabricManagers parsed
+    uint32_t fm_count = 0;
     // Iterate over each key, retrieve the FabricManager, and call setup_info
     for (auto& id : fm_keys) {
         FabricManager* manager = cxl_global.find_fm(id);
@@ -190,17 +218,17 @@ std::string SetupInfo(const std::string& input) {
             std::cout << "Invoke Direct attached host setup_info" << std::endl;
             size_t bytes_written = manager->setup_info(buffer);
             buffer.resize(bytes_written);
-            output += buffer + DELIMITER;
+            // Add a delimiter only if this is not the first FabricManager
+            if (fm_count > 0) {
+                output += std::string(DELIMITER);
+            }
+            output += buffer;
+            ++fm_count;
         }
-    }
-
-    if (output.size() > 1) {
-        // Remove the trailing comma
-        output.pop_back();
     }
     // Close the JSON array
     output += "]";
-    if (output == "[]") {
+    if (fm_count == 0) {
         std::cerr << "No FabricManager found " << std::endl;
     }
     return output;
@@ -241,20 +269,12 @@ const std::unordered_map<std::string, std::function<void(json_t*)>> factory_map 
 /**
  * Helper function to create cmmb fabric manager map dynamically
  */
-json_t* fmapi_setup(std::string& buffer) {
+json_t* parse_input_config(std::string& buffer) {
     size_t bytes_written = cxl_global.fetch_setup_info(buffer);
-    if (bytes_written == 0) {
-	std::cout << "Error: No data fetched by fetch_setup_info" << std::endl;
-        return nullptr;
-    }
     buffer.resize(bytes_written);
 
     json_error_t error;
     json_t* parsed_buffer = json_loads(buffer.c_str(), 0, &error);
-    if (!parsed_buffer) {
-	std::cout<<"Error parsing buffer: " << std::string(error.text) << std::endl;
-        return nullptr;
-    }
 
     json_t* hosts = json_object_get(parsed_buffer, "Hosts");
     json_t* devices = json_object_get(parsed_buffer, "Devices");
@@ -294,6 +314,21 @@ int process_fabric_manager(json_t* fabric_manager) {
 }
 
 
+bool is_file_empty_or_missing(const std::string& file_path) {
+    struct stat file_stat;
+    // Check if the file exists
+    if (stat(file_path.c_str(), &file_stat) != 0) {
+        std::cerr << "Error: Cannot access file: " << file_path << std::endl;
+        return true;
+    }
+    // Check if the file is empty
+    if (file_stat.st_size == 0) {
+        std::cerr << "Error: File is empty: " << file_path << std::endl;
+        return true;
+    }
+    return false;
+}
+
 /**
  * @brief  Function to load the JSON config file with path availability check, 
  *         error handling and return the json_t object 
@@ -327,54 +362,66 @@ json_t* load_json_config(const std::string& config_path) {
     return root;
 }
 
-/**
- * @brief init function
- * @details This function will be triggered first for any requests from client side.
-*/
-int init_cxl_plugin() {
-    std::cout << "invoked init_cxl_plugin" << std::endl;
+int cmmb_a1_init() {
     struct StaticPortInfo pinfo;
     std::string ip_address = get_ip_address(CXL_CONF_FILE);
     set_ip(ip_address.c_str());
     init();
     mbox_get_static_config(&pinfo);
-
-    int mret = cxl_global.g_create_mbox(&pinfo);
-    if (mret != 0) {
-	std::cout << "Error creating memory box: " << std::to_string(mret) << std::endl;
+    if (int mret = cxl_global.g_create_mbox(&pinfo); mret != 0) {
+        std::cout << "Error creating memory box: " << std::to_string(mret) << std::endl;
         return mret;
+    }
+    return 0;
+}
+
+void fm_init() {
+
+    // Check if the input file is empty or missing
+    if (is_file_empty_or_missing(INPUT_CONF_FILE)) {
+        return; 
     }
 
     json_t* root = load_json_config(INPUT_CONF_FILE);
-   
+    if (!root) {
+        std::cout << "Error loading JSON configuration from " << INPUT_CONF_FILE << std::endl;
+	return;
+    }
     std::cout << "Extracting fabric_managers array..." << std::endl;
     json_t* fabric_managers = json_object_get(root, "fabric_managers");
-
     std::string buffer;
-    json_t* cmmb_fm = fmapi_setup(buffer);
+    json_t* cmmb_fm = parse_input_config(buffer);
     if (!cmmb_fm) {
-	std::cout << "Error setting up CMMB fabric manager."<< std::endl;
+        std::cout << "Error setting up CMMB fabric manager." << std::endl;
         json_decref(root);
-        return 1;
+	return;
     }
-
     // Add the cmmb fm to the array
     json_array_append_new(fabric_managers, cmmb_fm);
 
     // Process each fabric manager in the array
     size_t index;
     json_t* fabric_manager;
-    json_array_foreach(json_object_get(root, "fabric_managers"), index, fabric_manager) {
+    json_array_foreach(fabric_managers, index, fabric_manager) {
         if (process_fabric_manager(fabric_manager) != 0) {
-            // skip if theres an error processing
+            // Skip if there's an error processing
             continue;
         }
     }
-
     json_decref(root);
-    return mret;
 }
 
+/**
+ * @brief init function
+ * @details This function will be triggered first for any requests from client side.
+*/
+int init_cxl_plugin() {
+    std::cout << "invoked init_cxl_plugin" << std::endl;
+    int mret = cmmb_a1_init();
+    fm_init();
+    
+    return mret; 
+}
 
 /**
  * ########################################

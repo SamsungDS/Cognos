@@ -4,12 +4,15 @@
 #include "sc_mbox.h"
 #include "sc_servicer.h"
 #include "framework_downstream.h"
-
+#include "sc_servicer_internal.h"
 
 extern "C"{
 #include "jansson.h"
 #include "mbox_a1.h"
 }
+
+
+#define DELIMITER ","
 
 using namespace std;
 
@@ -28,6 +31,8 @@ typedef std::string (*CommandFunc)(const std::string&);
 class MockScGlobal : public sc_global {
 public:
     MOCK_METHOD(int, g_create_mbox, (StaticPortInfo*), ());
+    MOCK_METHOD(FabricManager*, find_fm, (sc_id id), ());
+    MOCK_METHOD(std::vector<sc_id>, get_fm_keys, (), ());
 };
 
 
@@ -48,6 +53,9 @@ protected:
         if (!temp_filename.empty()) {
             remove(temp_filename.c_str());
         }
+	// Clean up temporary files
+        remove("empty_file.json");
+        remove("valid_file.json");
     }
 
     // Helper function to load JSON from a file
@@ -124,6 +132,13 @@ protected:
         temp_file << json_content;
         temp_file.close();
         return temp_filename;
+    }
+
+    // Helper function to create temporary files
+    void create_file(const std::string& file_name, const std::string& content) {
+        std::ofstream file(file_name);
+        file << content;
+        file.close();
     }
 
 };
@@ -414,6 +429,84 @@ TEST_F(ServicerTest, SetupInfoNoManagers) {
 }
 
 
+TEST_F(ServicerTest, SetupInfoWithMultipleFMs) {
+    // Load configuration from file and add multiple FabricManager instances
+    json_t* config = load_json_from_file(input_conf_path);
+    ASSERT_NE(config, nullptr) << "Failed to load input.conf";
+    json_t* fabric_managers = json_object_get(config, "fabric_managers");
+    ASSERT_TRUE(json_is_array(fabric_managers)) << "fabric_managers should be an array";
+    // Add multiple FabricManagers
+    for (size_t i = 0; i < json_array_size(fabric_managers); ++i) {
+        json_t* fabric_manager = json_array_get(fabric_managers, i);
+        ASSERT_NE(fabric_manager, nullptr);
+        FabricManager* manager = new FabricManager(fabric_manager);
+        cxl_global.add_fm(manager->get_fmid(), *manager);
+    }
+    // Free the config JSON
+    json_decref(config);
+    // Set up and invoke `execute_sync` for `SetupInfo`
+    svk_input input;
+    svk_output output;
+    svk_pass_thru_cmd pass_thru;
+    input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=SetupInfo"));
+    input.len = strlen("command=SetupInfo");
+    svk_status status = execute_sync(&pass_thru, &input, &output);
+    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
+    ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
+    ASSERT_NE(output.len, 0);
+    ASSERT_NE(output.output_buffer, nullptr);
+    // Verify delimiter exists in output
+    std::string result(reinterpret_cast<char*>(output.output_buffer), output.len);
+    ASSERT_TRUE(result.find(",") != std::string::npos) << "Output should contain delimiter.";
+    // Clean up
+    free(input.input_buffer);
+    free(output.output_buffer);
+}
+
+
+TEST_F(ServicerTest, SetupInfoWithNullManager) {
+    // Mock cxl_global to simulate find_fm returning nullptr
+    EXPECT_CALL(mock_cxl_global, find_fm(_)).WillRepeatedly(Return(nullptr));
+    // Set up and invoke `execute_sync` for `SetupInfo`
+    svk_input input;
+    svk_output output;
+    svk_pass_thru_cmd pass_thru;
+    input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=SetupInfo"));
+    input.len = strlen("command=SetupInfo");
+    svk_status status = execute_sync(&pass_thru, &input, &output);
+    // Verify the function handles the case correctly
+    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
+    ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
+    ASSERT_NE(output.len, 0);
+    std::string result(reinterpret_cast<char*>(output.output_buffer), output.len);
+    ASSERT_EQ(result, "[]") << "Output should be an empty JSON array when no managers are found.";
+    // Clean up
+    free(input.input_buffer);
+    free(output.output_buffer);
+}
+
+TEST_F(ServicerTest, SetupInfoWithNoFMKeys) {
+    // Mock cxl_global to return an empty list of keys
+    EXPECT_CALL(mock_cxl_global, get_fm_keys()).WillRepeatedly(Return(std::vector<sc_id>{}));
+    // Set up and invoke `execute_sync` for `SetupInfo`
+    svk_input input;
+    svk_output output;
+    svk_pass_thru_cmd pass_thru;
+    input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=SetupInfo"));
+    input.len = strlen("command=SetupInfo");
+    svk_status status = execute_sync(&pass_thru, &input, &output);
+    // Verify the function returns an empty JSON array
+    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
+    ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
+    ASSERT_NE(output.len, 0);
+    std::string result(reinterpret_cast<char*>(output.output_buffer), output.len);
+    ASSERT_EQ(result, "[]") << "Output should be an empty JSON array when no keys are present.";
+    // Clean up
+    free(input.input_buffer);
+    free(output.output_buffer);
+}
+
+
 TEST_F(ServicerTest, MissingFabricManagersArray) {
     // Create JSON content without the `fabric_managers` key
     std::string json_content = R"({
@@ -431,7 +524,6 @@ TEST_F(ServicerTest, MissingFabricManagersArray) {
 
 
 TEST_F(ServicerTest, FabricManagersNotArray) {
-    // Create JSON content with `fabric_managers` as an object instead of an array
     std::string json_content = R"({
         "fabric_managers": {
             "id": 1001
@@ -460,7 +552,6 @@ TEST_F(ServicerTest, ValidFabricManagersArray) {
     testing::internal::CaptureStderr();
     json_t* result = load_json_config(temp_filename);
     std::string output = testing::internal::GetCapturedStderr();
-    // Verify the result is not null, indicating the array was valid
     EXPECT_NE(result, nullptr);
     EXPECT_TRUE(output.empty());
     // Clean up JSON object
@@ -480,7 +571,7 @@ TEST_F(ServicerTest, CreateDevCMMB) {
 
 TEST_F(ServicerTest, FmapiSetupSuccess) {
     std::string buffer; 	
-    json_t* result = fmapi_setup(buffer);
+    json_t* result = parse_input_config(buffer);
     ASSERT_NE(result, nullptr);  
     json_t* type = json_object_get(result, "type");
     ASSERT_TRUE(json_is_string(type));
@@ -515,11 +606,57 @@ TEST_F(ServicerTest, LoadJsonConfigInvalidRootType) {
     EXPECT_EQ(result, nullptr);
 }
 
-// Test case for valid root but missing fabric_managers
 TEST_F(ServicerTest, LoadJsonConfigMissingFabricManagers) {
     // Write a JSON object without the "fabric_managers" field
     std::string invalid_json_content = R"({"other_key": "value"})";
     std::string path = write_json_to_temp_file(invalid_json_content);
     json_t* result = load_json_config(path);
     EXPECT_EQ(result, nullptr);
+}
+
+TEST_F(ServicerTest, IPAddressIsNotString) {
+    std::string json_content = R"(
+    {
+        "switch": {
+            "ip_address": 12345
+        }
+    })";
+    std::ofstream out("test_ip_not_string.json");
+    out << json_content;
+    out.close();
+    std::string ip = get_ip_address("test_ip_not_string.json");
+    EXPECT_EQ(ip, "");
+    std::remove("test_ip_not_string.json");
+}
+
+TEST_F(ServicerTest, MissingFile) {
+    // Ensure the file does not exist
+    std::string missing_file = "missing_file.json";
+    remove(missing_file.c_str());
+    ASSERT_TRUE(is_file_empty_or_missing(missing_file))
+        << "The function should return true for a missing file.";
+}
+
+TEST_F(ServicerTest, EmptyFile) {
+    // Create an empty file
+    std::string empty_file = "empty_file.json";
+    create_file(empty_file, "");
+    ASSERT_TRUE(is_file_empty_or_missing(empty_file))
+        << "The function should return true for an empty file.";
+}
+
+TEST_F(ServicerTest, ValidNonEmptyFile) {
+    // Create a valid non-empty file
+    std::string valid_file = "valid_file.json";
+    create_file(valid_file, R"({"key": "value"})");
+    ASSERT_FALSE(is_file_empty_or_missing(valid_file))
+        << "The function should return false for a valid non-empty file.";
+}
+
+TEST_F(ServicerTest, IsValidIP) {
+    ASSERT_TRUE(is_valid_ip("192.168.1.1")) << "Valid IP address should return true.";
+    ASSERT_FALSE(is_valid_ip("300.168.1.1")) << "Invalid IP address should return false.";
+    ASSERT_FALSE(is_valid_ip("192.168.1")) << "Incomplete IP address should return false.";
+    ASSERT_FALSE(is_valid_ip("0.123.123.123")) << "InValid IP address should return false.";
+    ASSERT_FALSE(is_valid_ip("abc.def.ghi.jkl")) << "Non-numeric IP address should return false.";
 }

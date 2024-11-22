@@ -10,14 +10,14 @@ class FabricManager {
 public:
 
     /** 
-     * @brief constructor with a direct config object reference.
+     * @brief Constructor with a direct config object reference.
      */
     explicit FabricManager(json_t* config);
 
     virtual ~FabricManager();
 
     /** 
-     * @brief direct attached host setup information. 
+     * @brief Returns a topology hierarchy for cluster configuration. 
      * @param buffer to hold json data.
      * @return setup info as JSON.
      */
