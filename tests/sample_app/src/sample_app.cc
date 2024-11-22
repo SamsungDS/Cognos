@@ -172,7 +172,7 @@ svk_status load_slat_feature(std::string features_dir,
     if (details->initialize(init_param)) {
       snprintf(log_msg, LOG_MSG_MAX_SIZE,
                "Initialization for feature module '%s' returned "
-               "non-zero, ignoring this feature module.",
+               "non-zero, Marking with an error.",
                entry->d_name);
       std::cout << log_msg << std::endl;
       num_failed_libs++;
@@ -186,11 +186,31 @@ svk_status load_slat_feature(std::string features_dir,
     snprintf(log_msg, LOG_MSG_MAX_SIZE, "%d feature libs failed to load.",
              num_failed_libs);
     std::cout << log_msg << std::endl;
-  } else {
-    snprintf(log_msg, LOG_MSG_MAX_SIZE, "All features loaded successfully");
-    std::cout << log_msg << std::endl;
-    status = SVK_STATUS_SUCCESS;
+    return status;
   }
+  snprintf(log_msg, LOG_MSG_MAX_SIZE, "All features loaded successfully");
+  std::cout << log_msg << std::endl;
+
+  svk_pass_thru_cmd cmd;
+  svk_input input;
+  svk_output output;
+  cmd.feat_id = feature_id::SLA_TRACKER;
+  input.input_buffer = (uint8_t *)calloc(1, 1024);
+  input.len = 1024;
+  strcpy((char *)input.input_buffer,
+         "logic_module=SampleLogic;thread_count=3;time_limit=10");
+  output.output_buffer = (uint8_t *)calloc(1, 10240);
+  output.len = 10240;
+
+  status = details->execute_sync(&cmd, &input, &output);
+  if (status == SVK_STATUS_SUCCESS) {
+    std::cout << "Execute_sync worked successfully. Output buffer ["
+              << std::string((char *)output.output_buffer) << "]" << std::endl;
+  } else {
+    std::cout << "Execute_sync failed" << std::endl;
+  }
+  free(input.input_buffer);
+  free(output.output_buffer);
   return status;
 }
 
@@ -239,8 +259,24 @@ int main(int argc, char **argv) {
   status = load_slat_feature(argsMap["libdir"].as<string>(), &details);
   std::cout << "Status from load_slat_feature - " << status << std::endl;
   if (status != SVK_STATUS_SUCCESS) {
-    std::cout << "Running sample application exited with error" << std::endl;
-    return status;
+    char *env_string = std::getenv("SVK_SLAT_SAMPLE_LOGIC_SUPPORT_FAIL");
+    if (env_string && strcmp(env_string, "Fail") == 0) {
+      std::cout << "Running sample application exited with error expected"
+                << std::endl;
+
+      return 0;
+    }
+
+    env_string = std::getenv("SVK_SLAT_SAMPLE_LOGIC_INVALID_FEATURE");
+    if (env_string && strcmp(env_string, "True") == 0) {
+      std::cout << "Running sample application exited with error expected"
+                << std::endl;
+
+      return 0;
+    } else {
+      std::cout << "Running sample application exited with error" << std::endl;
+      return status;
+    }
   }
   std::cout << "Running sample application exited gracefully" << std::endl;
 

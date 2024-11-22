@@ -18,6 +18,7 @@ project(SVKSLATracker VERSION ${SVK_SLAT_FEATURE_VERSION} DESCRIPTION "SVK SLAT 
 pkg_check_modules(SVKFW REQUIRED svkframework)
 
 add_compile_options(${SVKFW_CFLAGS})
+add_subdirectory(config)
 add_subdirectory(src)
 
 if(BUILD_TESTING)

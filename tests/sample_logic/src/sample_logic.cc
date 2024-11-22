@@ -1,11 +1,15 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#include <cstring>
+#include <ctime>
+#include <future>
 #include <iostream>
 #include <memory>
 
 #include "logic_interface/svk_logic_interface.h"
 #include "svk_logger.h"
+#include "worker.h"
 
 using namespace std;
 
@@ -33,6 +37,43 @@ using slat_logic_config = struct slat_logic_config {
   1048576ULL  // 1MB default max file size
 #define SLAT_LOGIC_LOGGER_LEVEL_DEFAULT "INFO"
 #define SLAT_LOGIC_LOGGER_SINK_TYPE_DEFAULT "rotating_file"
+
+int runCommand(WorkerSharedData *sharedData) {
+  int status = -1;
+  std::time_t time;
+
+  std::cout << "runCommand fn called with "
+            << sharedData->slatInput->feature_name << std::endl;
+  while (true) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    if (sharedData->threadNotifyFlag == true ||
+        sharedData->timeoutFlag == true) {
+      std::cout << "thread notify flag set to true" << std::endl;
+      break;
+    }
+    time = std::time(nullptr);
+    std::cout << "worker command running " << time << std::endl;
+    sharedData->mutex.lock();
+    sharedData->slatOutput->iops += 10;
+    sharedData->mutex.unlock();
+  }
+  return status;
+}
+
+int runSampleLogicThreadMgr(int threadCount, int timeLimit,
+                            svk_slat_logic_input *slatInput,
+                            svk_slat_logic_output *slatOutput) {
+  memset(slatOutput, 0, sizeof(*slatOutput));
+
+  WorkerManager mgr(SLAT_LOGIC_LOGGER_MODULE_NAME, threadCount, timeLimit,
+                    slatInput, slatOutput, &runCommand);
+
+  std::thread *thread = new std::thread(&WorkerManager::start, &mgr);
+
+  thread->join();
+  std::cout << "Avg iops" << slatOutput->iops << std::endl;
+  return 0;
+}
 
 svk_status read_slat_config_file(const std::string slat_conf_file,
                                  slat_logic_config *config) {
@@ -137,6 +178,13 @@ extern "C" svk_status get_supported_logic_details(
   const char *env_string;
   char log_msg[256];
 
+  if (details == nullptr) {
+    svk_logger(
+        SLAT_LOGIC_LOGGER_MODULE_NAME, level_E::INFO,
+        "sample logic's get_supported_logic_details input pointer is null");
+    return SVK_STATUS_FAIL;
+  }
+
   env_string = std::getenv("SVK_SLAT_SAMPLE_LOGIC_SUPPORT_FAIL");
   sprintf(
       log_msg,
@@ -144,17 +192,29 @@ extern "C" svk_status get_supported_logic_details(
       env_string);
   svk_logger(SLAT_LOGIC_LOGGER_MODULE_NAME, level_E::INFO, log_msg);
 
-  if (details == nullptr && strcmp(env_string, "Fail") == 0) {
+  if (env_string && strcmp(env_string, "Fail") == 0) {
     svk_logger(SLAT_LOGIC_LOGGER_MODULE_NAME, level_E::INFO,
-               "sample logic's get_supported_logic_details failed");
+               "sample logic's get_supported_logic_details failed with "
+               "simulation environment");
     return SVK_STATUS_FAIL;
   }
+
   svk_logger(SLAT_LOGIC_LOGGER_MODULE_NAME, level_E::INFO,
              "sample logic's get_supported_logic_details called");
 
+  strcpy(details->logic_module_name, "SampleLogic");
+  env_string = std::getenv("SVK_SLAT_SAMPLE_LOGIC_INVALID_FEATURE");
+  if (env_string && strcmp(env_string, "True") == 0) {
+    strcpy(details->feature_name, "invalid");
+  } else {
+    strcpy(details->feature_name, "slat");
+  }
   details->execute_logic_sync = &execute_logic_sync;
   details->execute_logic_async = &execute_logic_async;
   details->cleanup_logic_module = &cleanup_logic_module;
+  svk_logger(SLAT_LOGIC_LOGGER_MODULE_NAME, level_E::INFO,
+             "sample logic's get_supported_logic_details returned successfully "
+             "for SampleLogic");
 
   return SVK_STATUS_SUCCESS;
 }
@@ -163,8 +223,46 @@ extern "C" svk_status get_supported_logic_details(
 extern "C" svk_status execute_logic_sync(svk_logic_cmd *cmd,
                                          svk_logic_input *input,
                                          svk_logic_output *output) {
+  int threadCount = 1;  // Default thread count of 1
+  int timeLimit = 1;    // Default of 1 sec
+  char app_name[256];
+  char *ptr;
+  svk_slat_logic_input slatInput;
+  svk_slat_logic_output slatOutput;
+  char log_msg[256];
+
   svk_logger(SLAT_LOGIC_LOGGER_MODULE_NAME, level_E::INFO,
              "sample logic's execute_logic_sync called");
+
+  if (strcmp(cmd->logic_name, "SampleLogic") != 0) {
+    svk_logger(
+        SLAT_LOGIC_LOGGER_MODULE_NAME, level_E::INFO,
+        "sample logic's execute_logic_sync called with invalid logic-name");
+    return SVK_STATUS_FAIL;
+  }
+  ptr = strstr((char *)input->input_buffer, "app_name");
+  if (ptr) {
+    sscanf(ptr, "app_name=%[a-zA-Z0-9]", app_name);
+  }
+  ptr = strstr((char *)input->input_buffer, "thread_count");
+  if (ptr) {
+    sscanf(ptr, "thread_count=%d", &threadCount);
+  }
+  ptr = strstr((char *)input->input_buffer, "time_limit");
+  if (ptr) {
+    sscanf(ptr, "time_limit=%d", &timeLimit);
+  }
+
+  slatInput.app_name = std::string(app_name);
+  slatInput.logic_module_name = std::string("SampleLogic");
+  slatInput.feature_name = std::string("slat");
+
+  runSampleLogicThreadMgr(threadCount, timeLimit, &slatInput, &slatOutput);
+  snprintf(log_msg, 256, "slatOutput.avgIOPS %lu", slatOutput.iops);
+  svk_logger(SLAT_LOGIC_LOGGER_MODULE_NAME, level_E::INFO, log_msg);
+  output->output_len =
+      sprintf((char *)output->output_buffer, "AvgIOPS=%lu", slatOutput.iops);
+  output->output_buffer[output->output_len] = '\0';
 
   return SVK_STATUS_SUCCESS;
 }
