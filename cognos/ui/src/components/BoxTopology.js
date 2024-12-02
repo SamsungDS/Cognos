@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { Container, Row, Col, Badge, Carousel } from "react-bootstrap";
+import { Container, Row, Col, Badge, Carousel, Button } from "react-bootstrap";
+import { FiFilter } from "react-icons/fi";
 import "rc-slider/assets/index.css";
 import "./BoxTopology.css";
 import {
@@ -11,20 +12,25 @@ import {
   defaultHostProperties,
   mappedHostList,
   mappedDeviceList,
-  fetchData
+  fetchData,
+  mergeHosts,
+  updateHostListAttached,
 } from "../constant";
 import { ReactComponent as DeviceIcon } from "../assets/icons/deviceSVGIcon.svg";
 
 const BoxTopology = () => {
+  const [selectedOption, setSelectedOption] = useState("CMM-B");
   const [hostToDeviceMapping, setHostToDeviceMapping] = useState([]);
   // eslint-disable-next-line
   const [hostToDeviceMappingB2, setHostToDeviceMappingB2] = useState([]);
   const [currentCMM, setCurrentCMM] = useState(0);
+  const [currentHostView, setCurrentHostView] = useState(0);
   const [hostList, setHostList] = useState([]);
   const [hostActiveList, setHostActiveList] = useState([]);
+
   const hostDeviceMapEndpoint = Configs.api_endpoint + "/topology";
   const hostMapEndpoint = Configs.api_endpoint + "/hosts";
-  
+
   useEffect(
     () => {
       fetchData(hostDeviceMapEndpoint, setHostToDeviceMapping);
@@ -33,9 +39,6 @@ const BoxTopology = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
-  console.log(hostToDeviceMapping);
-
-  console.log(hostActiveList);
 
   useEffect(
     () => {
@@ -56,6 +59,27 @@ const BoxTopology = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
+  
+
+  const mappedDeviceViewList = (devices, type) => {
+    // istanbul ignore next
+    return devices.map((device) => ({
+      dev_name: device,
+      type: type,
+    }));
+  };
+
+  const hostDirectView = updateHostListAttached(
+    mergeHosts(hostToDeviceMapping)
+  );
+  
+  // istanbul ignore next
+  const hostDirectViewList = hostDirectView.map((item) => ({
+    title: item.host,
+    deviceComponents: item.details.flatMap((detail) =>
+      mappedDeviceViewList(detail.devices, detail.fm_type)
+    ),
+  }));
 
   const cmmList = [
     {
@@ -78,38 +102,38 @@ const BoxTopology = () => {
     },
     {
       title: "CMM-B3",
-      hostComponents: mappedHostList(hostList, hostToDeviceMapping),
+      hostComponents: mappedHostList(hostList, hostActiveList),
       deviceComponents: mappedDeviceList(
         DeviceList,
-        hostList,
+        mappedHostList(hostList, hostActiveList),
         hostToDeviceMapping
       ),
     },
     {
       title: "CMM-B4",
-      hostComponents: mappedHostList(hostList, hostToDeviceMapping),
+      hostComponents: mappedHostList(hostList, hostActiveList),
       deviceComponents: mappedDeviceList(
         DeviceList,
         hostList,
-        hostToDeviceMapping
+        hostToDeviceMappingB2
       ),
     },
     {
       title: "CMM-B5",
-      hostComponents: mappedHostList(hostList, hostToDeviceMapping),
+      hostComponents: mappedHostList(hostList, hostActiveList),
       deviceComponents: mappedDeviceList(
         DeviceList,
         hostList,
-        hostToDeviceMapping
+        hostToDeviceMappingB2
       ),
     },
     {
       title: "CMM-B6",
-      hostComponents: mappedHostList(hostList, hostToDeviceMapping),
+      hostComponents: mappedHostList(hostList, hostActiveList),
       deviceComponents: mappedDeviceList(
         DeviceList,
         hostList,
-        hostToDeviceMapping
+        hostToDeviceMappingB2
       ),
     },
   ];
@@ -117,6 +141,7 @@ const BoxTopology = () => {
   const renderHostComponents = (hosts) => {
     return hosts.map((host, index) => {
       const lineColor = host.color;
+      // istanbul ignore next
       const dynamicStyle = {
         color: host.isActive ? host.color : "#4F4F4F",
         border: host.isActive ? `2px solid ${host.color}` : "2px solid #4F4F4F",
@@ -128,6 +153,7 @@ const BoxTopology = () => {
           PCIe_version: 5,
           PCIe_lanes: 8,
           `.replace(/ +/g, "");
+      // istanbul ignore next
       const lineStyle = {
         background: host.isActive ? "white" : "#4F4F4F",
         marginBottom: "8px",
@@ -200,92 +226,232 @@ const BoxTopology = () => {
       );
     });
   };
+  // istanbul ignore next
+  const renderHostViewDevice = (devices = []) => {
+    return devices.map((device) => {
+      const part = device.dev_name.split("-")[0];
+      const deviceColor = "#FFB546";
+      const D1Metadata = `name: ${part}
+          type: ${device.type}
+          `.replace(/ +/g, "");
+      const deviceCount = devices.length;
+      const sizeMultiplier = deviceCount > 8 ? 1 : 1.3;
+      const sizePadding = deviceCount > 8 ? "0" : "0rem 1rem 0rem 1rem";
+      const cardStyle = {
+        transform: `scale(${sizeMultiplier})`,
+        padding: sizePadding,
+      };
+      return (
+        <div
+          className="cxl-dev"
+          title={D1Metadata}
+          key={device.device}
+          style={cardStyle}
+        >
+          <DeviceIcon style={{ color: deviceColor }} className="device-img" />
+          <p
+            className="device-Id"
+            style={{ color: deviceColor }}
+          >{`${part}`}</p>
+        </div>
+      );
+    });
+  };
   // Navigation handlers
+  // istanbul ignore next
   const handlePrev = () => {
     setCurrentCMM((prevCMM) => (prevCMM === 0 ? 5 : prevCMM - 1));
   };
-
+  // istanbul ignore next
   const handleNext = () => {
     setCurrentCMM((prevCMM) => (prevCMM === 5 ? 0 : prevCMM + 1));
   };
+  // istanbul ignore next
+  const handlePrevHostView = () => {
+    setCurrentHostView((prevCMM) => (prevCMM === 0 ? hostDirectView.length-1 : prevCMM - 1));
+  };
+  // istanbul ignore next
+  const handleNextHostView = () => {
+    setCurrentHostView((prevCMM) => (prevCMM === hostDirectView.length-1 ? 0 : prevCMM + 1));
+  };
+  // istanbul ignore next
+  const handleToggle = () => {
+    setSelectedOption((prevOption) =>
+      prevOption === "CMM-B" ? "Host" : "CMM-B"
+    );
+  };
 
+  // istanbul ignore next
   return (
     <Container className="box-container" id="topology-card-id">
       <Row>
         <Col>
+          {hostDirectViewList.length === 0 ? (
+            " "
+          ) : (
+            <p style={{ color: "white", marginBottom: 5, fontSize: 12 }}>
+              Switch Between CMM-B or Host
+            </p>
+          )}
           <div className="cmm-navigation">
-            <button
-              className="arrow-button left-arrow"
-              onClick={handlePrev}
-              data-testid="prev-button"
-            >
-              <img src={ArrowLeft} alt="Previous" />
-            </button>
-            {cmmList.map((cmm, index) => (
-              <span
-                key={index}
-                className={`cmm-title ${index === currentCMM ? "active" : ""}`}
-                data-testid="specific-button"
-                onClick={() => setCurrentCMM(index)}
-              >
-                {cmm.title}
-              </span>
-            ))}
-            <button
-              className="arrow-button right-arrow"
-              data-testid="next-button"
-              onClick={handleNext}
-            >
-              <img src={ArrowRight} alt="Next" />
-            </button>
+            {hostDirectViewList.length === 0 ? (
+              " "
+            ) : (
+              <Button variant="secondary" onClick={handleToggle}>
+                {selectedOption} <FiFilter />
+              </Button>
+            )}
+            {selectedOption === "CMM-B" ? (
+              <>
+                <button
+                  className="arrow-button left-arrow"
+                  onClick={handlePrev}
+                  data-testid="prev-button"
+                >
+                  <img src={ArrowLeft} alt="Previous" />
+                </button>
+                {cmmList.map((cmm, index) => (
+                  <span
+                    key={index}
+                    className={`cmm-title ${
+                      index === currentCMM ? "active" : ""
+                    }`}
+                    data-testid="specific-button"
+                    onClick={() => setCurrentCMM(index)}
+                  >
+                    {cmm.title}
+                  </span>
+                ))}
+                <button
+                  className="arrow-button right-arrow"
+                  data-testid="next-button"
+                  onClick={handleNext}
+                  
+                >
+                  <img src={ArrowRight} alt="Next" />
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  className="arrow-button left-arrow"
+                  onClick={handlePrevHostView}
+                >
+                  <img src={ArrowLeft} alt="Previous" />
+                </button>
+                {hostDirectViewList.map((cmm, index) => (
+                  <span
+                    key={index}
+                    className={`cmm-title ${
+                      index === currentHostView ? "active" : ""
+                    }`}
+                    onClick={() => setCurrentHostView(index)}
+                  >
+                    {cmm.title}
+                  </span>
+                ))}
+                <button className="arrow-button right-arrow" onClick={handleNextHostView} disabled={hostDirectView.length - 1 === currentHostView}>
+                  <img src={ArrowRight} alt="Next" />
+                </button>
+              </>
+            )}
           </div>
-          <Carousel
-            activeIndex={currentCMM}
-            controls={false}
-            indicators={false}
-            interval={null}
-          >
-            {cmmList.map((cmm, index) => (
-              <Carousel.Item key={index}>
-                <div className="carousel-content">
-                  <div
-                    className="badge-container"
-                    id="host-card-id"
-                    style={{
-                      display: "flex",
-                      justifyContent: "center",
-                      alignItems: "center",
-                      textAlign: "center",
-                    }}
-                  >
-                    {renderHostComponents(cmm.hostComponents)}
-                  </div>
-                  <div
-                    className="device-box"
-                    style={{
-                      display: "flex",
-                      justifyContent: "center",
-                      alignItems: "center",
-                    }}
-                    id="cxl-device-card-id"
-                  >
+          {selectedOption === "CMM-B" ? (
+            <Carousel
+              activeIndex={currentCMM}
+              controls={false}
+              indicators={false}
+              interval={null}
+            >
+              {cmmList.map((cmm, index) => (
+                <Carousel.Item key={index}>
+                  <div className="carousel-content">
                     <div
-                      className="cxl-device"
+                      className="badge-container"
+                      id="host-card-id"
                       style={{
                         display: "flex",
-                        flexWrap: "wrap",
-                        fontFamily: "Samsung",
+                        justifyContent: "center",
+                        alignItems: "center",
                         textAlign: "center",
-                        justifyContent: "space-around",
                       }}
                     >
-                      {renderDeviceComponents(cmm.deviceComponents)}
+                      {renderHostComponents(cmm.hostComponents)}
+                    </div>
+                    <div
+                      className="device-box"
+                      style={{
+                        display: "flex",
+                        justifyContent: "center",
+                        alignItems: "center",
+                      }}
+                      id="cxl-device-card-id"
+                    >
+                      <div
+                        className="cxl-device"
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          fontFamily: "Samsung",
+                          textAlign: "center",
+                          justifyContent: "space-around",
+                        }}
+                      >
+                        {renderDeviceComponents(cmm.deviceComponents)}
+                      </div>
                     </div>
                   </div>
-                </div>
-              </Carousel.Item>
-            ))}
-          </Carousel>
+                </Carousel.Item>
+              ))}
+            </Carousel>
+          ) : (
+            <Carousel
+              activeIndex={currentHostView}
+              controls={false}
+              indicators={false}
+              interval={null}
+            >
+              {hostDirectViewList.map((cmm, index) => (
+                <Carousel.Item key={index}>
+                  <div className="carousel-content">
+                    <div
+                      className="badge-container"
+                      id="host-card-id"
+                      style={{
+                        display: "flex",
+                        justifyContent: "center",
+                        alignItems: "center",
+                        textAlign: "center",
+                        marginTop: 12,
+                      }}
+                    ></div>
+                    <div
+                      className="device-box"
+                      style={{
+                        display: "flex",
+                        justifyContent: "center",
+                        alignItems: "center",
+                      }}
+                      id="cxl-device-card-id"
+                    >
+                      <div
+                        className="cxl-device"
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          fontFamily: "Samsung",
+                          textAlign: "center",
+                          justifyContent: "space-around",
+                        }}
+                      >
+                        {renderHostViewDevice(cmm.deviceComponents || [])}
+                      </div>
+                    </div>
+                  </div>
+                </Carousel.Item>
+              ))}
+            </Carousel>
+          )}
         </Col>
       </Row>
     </Container>

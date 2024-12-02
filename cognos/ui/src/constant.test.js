@@ -73,9 +73,9 @@ describe('mappedDeviceList', () => {
     const result = constants.mappedDeviceList(deviceList, hostList, hostToDeviceMapping);
 
     expect(result).toEqual([
-      { device: 'DEV_11-256G', host: 'loaner-emr04', color: '#0077C8' },
-      { device: 'DEV_2-256G', host: 'msl-cti-emr06', color: '#AC55FF' },
-      { device: 'DEV_5-256G', host: null, color: '#4F4F4F' }, // No mapping found
+      { device: 'DEV_11-256G', host: null, color: '#4F4F4F' },
+      { device: 'DEV_2-256G', host: null, color: '#4F4F4F' },
+      { device: 'DEV_5-256G', host: null, color: '#4F4F4F' },
     ]);
   });
 

@@ -1,5 +1,5 @@
 .box-container { 
-    padding: 20px;
+    padding: 0px 20px;
 }
 .slider {
     width: 100%;
@@ -171,7 +171,7 @@
     height: 15px;
     border-radius: 50%;
     border: 1px solid #fff;
-    background-color: #000;
+    background-color: #00B215;
     display: flex;
     align-items: center;
     justify-content: center;

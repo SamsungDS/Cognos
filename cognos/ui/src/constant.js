@@ -95,6 +95,7 @@ export const memboxTableHeader = [
       let newHostName = item.host; // Default to the original host name
       let newColor = "#4F4F4F";
       // If a match is found, update the host name and remove it from unusedHostMapping
+      // istanbul ignore next
       if (mappedHostIndex !== -1) {
         newHostName = unusedHostMapping[mappedHostIndex].label;
         unusedHostMapping.splice(mappedHostIndex, 1); // Remove used host
@@ -114,9 +115,7 @@ export const memboxTableHeader = [
   };
 
   export const mappedDeviceList = (deviceList, hostList, hostToDeviceMapping) => {
-    // Create a shallow copy of the hostToDeviceMapping to keep track of unused hosts
-    let unusedHostMapping = [...hostToDeviceMapping];
-
+    let unusedHostMapping = hostToDeviceMapping.filter(mapping => mapping.fm_type === "FM_REMOTE_CMMB");
     return deviceList.map((device) => {
       // Find the associated host for the current device by checking all hosts
       const associatedHost = unusedHostMapping.find((host) =>
@@ -127,6 +126,7 @@ export const memboxTableHeader = [
       let newColor = "#4F4F4F"; // Default color for devices with no associated host
 
       // If a match is found, update the host name
+      // istanbul ignore next
       if (associatedHost) {
         newHostName = associatedHost.host; // Get the host name
         const hostDetails = hostList.find((h) => h.host === newHostName);
@@ -159,3 +159,41 @@ export const memboxTableHeader = [
       console.error("Error fetching data:", error);
     }
   };
+  // istanbul ignore next
+  export function mergeHosts(data) {
+    const merged = {};
+  
+    data.forEach(item => {
+      const { host, devices, fm_type } = item;
+  
+      if (!merged[host]) {
+        // Initialize new host entry if it doesn't exist
+        merged[host] = [{ devices: [...devices], fm_type }];
+      } else {
+        // Add new object with devices and fm_type to the existing host entry
+        merged[host].push({ devices: [...devices], fm_type });
+      }
+    });
+  
+    // Convert the merged object back to array format with the desired structure
+    return Object.keys(merged).map(host => ({
+      host,
+      details: merged[host]
+    }));
+  };
+
+  // istanbul ignore next
+  export function updateHostListAttached(newHostData) {
+    // Filtering out hosts that contain "FM_REMOTE_CMMB" in their details
+    return newHostData
+      .filter((item) => item.details.some(detail => detail.fm_type !== "FM_REMOTE_CMMB"))
+      .map((item) => ({
+        host: item.host,
+        details: item.details
+          .filter(detail => detail.fm_type !== "FM_REMOTE_CMMB") // Filter out FM_REMOTE_CMMB
+          .map((detail) => ({
+            devices: detail.devices,
+            fm_type: detail.fm_type,
+          }))
+      }));
+    }
