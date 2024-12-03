@@ -12,11 +12,16 @@ set(GRPC_DEPS protobuf grpc++ absl_flags absl_flags_parse)
 
 set(COMMON_INC_DIR ${PARENT_DIR}/common/include/)
 set(COMMON_SRC_DIR ${PARENT_DIR}/common/src)
-set(SRCS ${GRPC_STUB_SRCS} ${CMAKE_CURRENT_SOURCE_DIR}/src/grpc_controller.cc ${COMMON_SRC_DIR}/client_library.cc)
+set(SRCS ${GRPC_STUB_SRCS} ${CMAKE_CURRENT_SOURCE_DIR}/src/grpc_controller.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/sla_hlpr_fns.cc ${COMMON_SRC_DIR}/client_library.cc)
 if(BUILD_TESTING)
 set(GRPC_INC_FILES ${COMMON_INC_DIR}/grpc_hdr.h ${COMMON_INC_DIR}/client_library.h ${CMAKE_CURRENT_SOURCE_DIR}/include/grpc_controller.h PARENT_SCOPE)
 endif()
 set(INC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include/)
+
+message(STATUS "SLA compilation flag is ${CXL_SLA_ENABLED}")
+if (CXL_SLA_ENABLED)
+add_compile_definitions(CXL_SLA_ENABLED)
+endif()
 
 add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
 add_executable(${PROJECT_NAME} ${SRCS})

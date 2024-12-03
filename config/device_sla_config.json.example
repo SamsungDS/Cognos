@@ -1,0 +1,41 @@
+[
+  {
+    "type": "FM_DIRECT_CMMD",
+    "Devices": [
+      {
+        "dev_name": "DEV1-256G",
+        "dev_size": "274877906944",
+        "dev_numa": 0,
+        "sla_avg_latency_us": 10
+      }
+    ]
+  },
+  {
+    "type": "FM_DIRECT_CMMH",
+    "Devices": [
+      {
+        "dev_name": "DEV3-256G",
+        "dev_size": "274877906944",
+        "dev_numa": 2,
+        "sla_avg_latency_us": 20
+      },
+      {
+        "dev_name": "DEV4-256G",
+        "dev_size": "274877906944",
+        "dev_numa": 3,
+        "sla_avg_latency_us": 20
+      }
+    ]
+  },
+  {
+    "type": "FM_REMOTE_CMMB",
+    "Devices": [
+      {
+        "dev_name": "DEV5-256G",
+        "dev_size": "274877906944",
+        "dev_numa": 4,
+        "sla_avg_latency_us": 40
+      }
+    ]
+  }
+]

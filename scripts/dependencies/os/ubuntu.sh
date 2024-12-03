@@ -15,7 +15,6 @@ install_build_deps() {
         'git'
         "golang-$GO_VERSION-go"
         'libboost-dev'
-        'libfmt8'
         'libfmt-dev'
         'libspdlog-dev'
         'libssl-dev'

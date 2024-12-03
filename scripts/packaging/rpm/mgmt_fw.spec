@@ -52,6 +52,7 @@ install -D -m 0644 %svk_script_dir/systemd_files/svk-svc-mgr.service %buildroot/
 %_unitdir/svk-restserver.service
 %_unitdir/svk-svc-mgr.service
 %_sysconfdir/svk/mgmt_fw_config.json
+%_sysconfdir/svk/device_sla_config.json.example
 %ghost %_sysconfdir/ld.so.conf.d/svk-mgmt-fw-%_arch.conf
 
 %files devel

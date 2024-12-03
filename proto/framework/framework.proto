@@ -143,6 +143,8 @@ message CommandRequest {
   int64 feature_id = 3;
   // Parameters to be used by the Feature
   string feature_params = 4;
+  // Command ID
+  string command_id = 5;
 }
 
 // A CommandResponse resource.

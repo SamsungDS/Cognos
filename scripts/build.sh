@@ -56,6 +56,7 @@ parse_options()
         RUN_TESTS=true
         CMAKE_OPTIONS+=("-DBUILD_TESTING=ON")
         CMAKE_OPTIONS+=("-DWITH_COVERAGE=ON")
+        CMAKE_OPTIONS+=("-DCXL_SLA_ENABLED=OFF")
         shift
         ;;
         -p|--install-prefix)
@@ -161,6 +162,7 @@ execute_tests() {
         --print-summary \
         --root "$PROJECT_ROOT" \
         --exclude "$PROJECT_ROOT/build" \
+        --exclude "$PROJECT_ROOT/tests" \
         "$BUILD_DIR"
 }
 
