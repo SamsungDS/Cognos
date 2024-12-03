@@ -1,8 +1,10 @@
-SET(CONFIG_FILE "mgmt_fw_config.json")
+SET(CONFIG_FILES "mgmt_fw_config.json;device_sla_config.json.example")
 set(CONFIG_DIR "/etc/svk")
 
-install(
-    FILES "${CONFIG_FILE}"
-    DESTINATION "${CONFIG_DIR}"
-    PERMISSIONS OWNER_READ OWNER_EXECUTE GROUP_READ WORLD_READ
-)
+foreach(ITEM ${CONFIG_FILES})
+    install(
+        FILES "${ITEM}"
+        DESTINATION "${CONFIG_DIR}"
+        PERMISSIONS OWNER_READ OWNER_EXECUTE GROUP_READ WORLD_READ
+    )
+endforeach()

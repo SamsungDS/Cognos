@@ -4,6 +4,7 @@
 #include <set>
 
 #include "client_library.h"
+#include "sla_hlpr_fns.h"
 #define MAX_SIZE 4096
 
 #ifndef BUILD_TESTING
@@ -13,6 +14,9 @@ ABSL_FLAG(std::string, svk_conf_file, "", "svk configuration file to read");
 using namespace svk;
 
 std::atomic<int> gSignalStatus = -1;
+
+const std::unique_ptr<SLADeviceHelper> g_sla_device_hlpr =
+    std::make_unique<SLADeviceHelper>();
 
 int tokenize(std::string node_id_list, std::set<std::string> &tokens) {
   int count = 0;
@@ -153,6 +157,7 @@ Status ControllerServicer::RegisterNode(ServerContext *ctxt,
   std::string node_info = node_id + ":" + node_port;
   std::string logger_str;
   int status = -1;
+  int device_info_status;
 
   logger_str = "RegisterNode called with cluster_id:" + cluster_id +
                " node_id:" + node_id;
@@ -197,6 +202,12 @@ Status ControllerServicer::RegisterNode(ServerContext *ctxt,
                  logger_str.c_str());
     }
   }
+
+  device_info_status = g_sla_device_hlpr->GetDeviceInfo(node_id, node_port);
+  if (device_info_status != 0) {
+    return Status(grpc::UNKNOWN, "Failed to run command");
+  }
+
   status = 0;
   resp->set_status("Success");
   resp->set_error_code(status);
@@ -281,6 +292,7 @@ Status ControllerServicer::ProcessControllerCommand(
         grpc::INVALID_ARGUMENT,
         "Args (cluster_id/feature_id/feature_params) is of zero length");
   }
+
   if (m_cluster_map[req->cluster_id()].size() == 0) {
     std::string logger_str;
     logger_str = "ProcessControllerCommand called for cluster_id " +

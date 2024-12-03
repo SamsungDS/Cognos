@@ -11,6 +11,7 @@
 #include "framework/framework_mock.grpc.pb.h"
 #include "grpc_controller.h"
 #include "grpc_controller_hlpr.h"
+#include "sla_hlpr_fns.h"
 
 using ::testing::_;
 using ::testing::AtLeast;
@@ -40,6 +41,33 @@ int create_svk_mgmt_fw_conf_json(std::string conf_file,
 
   pt::write_json(json_file, root);
 
+  return 0;
+}
+
+int create_device_sla_conf_json() {
+  char command[256];
+  char data[256];
+  FILE *fp;
+  struct stat fstat;
+
+  if (stat(SLA_CONFIG_FILE, &fstat) == 0) {
+    return 0;
+  }
+
+  sprintf(command, "mkdir -p %s", SLA_CONFIG_DIR);
+  system(command);
+
+  memset(data, 0, sizeof(data));
+  strcpy(data,
+         "[{\"type\": \"FM_DIRECT_CMMD\",\"Devices\": [{\"dev_name\": "
+         "\"DEV1-256G\",\"dev_size\": \"274877906944\",\"dev_numa\": "
+         "0,\"sla_avg_latency_us\": 10}]}]");
+  fp = fopen(SLA_CONFIG_FILE, "w+");
+  if (fp == NULL) {
+    return -1;
+  }
+  fwrite((void *)&data[0], strlen(data), 1, fp);
+  fclose(fp);
   return 0;
 }
 
@@ -183,6 +211,32 @@ class MockTestController : public ::testing::Test {
   std::shared_ptr<Server> server_;
 };
 
+TEST_F(MockTestController, RegisterNodeWithoutDeviceSLAConf) {
+  Status grpc_status;
+  std::string cluster_id = "CLUSTER_REGISTER_NODE_SLA";
+  std::string node_id = "registernodesla.localdomain.com";
+  std::string node_port = "9998";
+
+  unlink(SLA_CONFIG_FILE);
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+             "RegisterNodeWithoutDeviceSLAConf UT called");
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  svk::RegisterRequest *req(new svk::RegisterRequest());
+  svk::RegisterResponse *resp(new svk::RegisterResponse());
+  req->set_cluster_id(cluster_id);
+  req->set_node_id(node_id);
+  req->set_node_port(node_port);
+
+  grpc_status = client.RegisterNode(req, resp);
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+             "Just for flushing logs with RegisterNode");
+  svk_logger_close(CONTROLLER_LOGGER_MODULE_NAME);
+
+  ASSERT_EQ(grpc_status.ok(), false);
+}
+
 TEST_F(MockTestController, RegisterNode) {
   Status grpc_status;
   std::string cluster_id = "CLUSTER_REGISTER_NODE";
@@ -192,6 +246,7 @@ TEST_F(MockTestController, RegisterNode) {
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
              "RegisterNode UT called");
 
+  ASSERT_EQ(create_device_sla_conf_json(), 0);
   Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
 
   svk::RegisterRequest *req(new svk::RegisterRequest());
@@ -277,6 +332,8 @@ TEST_F(MockTestController, RegisterSameNodeAgain) {
 
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
              "RegisterSameNodeAgain UT called");
+
+  ASSERT_EQ(create_device_sla_conf_json(), 0);
 
   Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
 
