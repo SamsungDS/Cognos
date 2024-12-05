@@ -184,37 +184,6 @@ int sc_mbox::fetch_device_port(uint64_t d_id){
 
 
 /**
-* @details This function invokes STG API to attach device to host.
-*/
-int sc_mbox::d_attach(uint64_t d_id, uint64_t h_id, string mode){
-
-    uint32_t d_port = fetch_device_port(d_id);
-
-    if (d_port==0) {
-        //device port does not exist
-        return -ENOENT;
-    }
-    else if (mbox_connected_hosts.find(h_ids[h_id]) != mbox_connected_hosts.end()){
-        //check for device port in phost
-        for (auto& v: mbox_connected_hosts[h_ids[h_id]].get_target_ports()){
-            if (v == d_port) {
-              return 0;
-            }
-        }
-        //invoke STG API with host_port and dev_port
-        int ret = mbox_A1_connect_by_hostport(mbox_connected_hosts[h_ids[h_id]].get_host_port(), d_port);
-        update_json_and_install();
-        if (ret == 0){
-          //update data structures
-          mbox_connected_hosts[h_ids[h_id]].set_target_ports(d_port);
-        }
-        return ret;
-    }
-    //host does not exist
-    return -ENOENT;
-}
-
-/**
 * @details This function invokes STG API to detach device from host.
 */
 int sc_mbox::d_detach(uint64_t d_id, uint64_t h_id, string mode){
@@ -234,11 +203,82 @@ int sc_mbox::d_detach(uint64_t d_id, uint64_t h_id, string mode){
             update_json_and_install();
             list<uint32_t> &h_to_dev_list = mbox_connected_hosts[h_ids[h_id]].get_target_ports();
             h_to_dev_list.remove(d_port);
+
+	    // Access phost map and remove the matching sc_id for d_port
+            auto& phost_map = get_phost();  
+            if (phost_map.find(d_port) != phost_map.end()) {
+                auto& host_objs_list = phost_map[d_port];  
+                for (auto it = host_objs_list.begin(); it != host_objs_list.end(); ++it) {
+                    if (it->get_sc_id() == h_id) {
+                        host_objs_list.erase(it);  
+                        // Exit the loop once the matching sc_id is removed 
+                        break; 
+                    }
+                }
+                // If the list becomes empty, erase the entry from the map
+                if (host_objs_list.empty()) {
+                    phost_map.erase(d_port);
+    	        }
+	    }
           }
           // We don't expect duplicate device-to-host mappings, so return, success or failure.
           return ret;
         }
     }
+    return -ENOENT;
+}
+
+
+/**
+* @details This function invokes STG API to attach device to host.
+*/
+int sc_mbox::d_attach(uint64_t d_id, uint64_t h_id, string mode) {
+    uint32_t d_port = fetch_device_port(d_id);
+    if (d_port == 0) {
+        // device id is invalid
+        return -ENOENT;
+    } else if (mbox_connected_hosts.find(h_ids[h_id]) != mbox_connected_hosts.end()) {
+        // Invoke STG API with host_port and dev_port
+        int ret = mbox_A1_connect_by_hostport(mbox_connected_hosts[h_ids[h_id]].get_host_port(), d_port);
+        if (ret == 0) {
+            // Check if the device port is already in target_ports
+            bool port_found = false;
+            for (auto& v : mbox_connected_hosts[h_ids[h_id]].get_target_ports()) {
+                if (v == d_port) {
+	            // Port already exists		
+                    port_found = true; 
+                    break;
+                }
+            }
+            // If port is not present, add it
+            if (!port_found) {
+                mbox_connected_hosts[h_ids[h_id]].set_target_ports(d_port);
+            }
+            // Update `phost` map: Check and add sc_id object if not already present
+            auto& phost_map = get_phost();
+            if (phost_map.find(d_port) != phost_map.end()) {
+		// List of sc_id objects for the port    
+                auto& host_objs_list = phost_map[d_port]; 
+                bool sc_id_found = false;
+                for (auto& sc : host_objs_list) {
+                    if (sc.get_sc_id() == h_id) {
+			// sc_id object already exists    
+                        sc_id_found = true; 
+                        break;
+                    }
+                }
+                if (!sc_id_found) {
+                    // Add a new sc_id object for h_id to the list
+                    host_objs_list.push_back(sc_id(h_id));
+                }
+            } else {
+                // If d_port is not in `phost`, add a new entry with a list of sc_id objects
+                phost_map[d_port] = {sc_id(h_id)};
+            }
+        }
+        return ret;
+    }
+    // Host does not exist
     return -ENOENT;
 }
 

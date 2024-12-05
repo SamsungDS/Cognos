@@ -96,7 +96,6 @@ size_t sc_global::dev_attach(uint64_t d_id, uint64_t h_id, string mode, uint64_t
 
     int rc;
 
-    cout << "d_id: " << d_id << "h_id: " << h_id << "fm_id: " << fm_id << endl; 
     sc_mbox *mb = mbox_find(fm_id);
     if (mb == NULL)
         rc = -ENOENT;
@@ -177,9 +176,15 @@ size_t sc_global::to_device_json(string &buffer){
             jtemp = json_array();
             json_object_set_new( jroot, "hosts_attached", jtemp);
             list<sc_id>& hl = mb->get_phost()[sld.d_get_port()]; 
-	    for (auto& sc_h:hl){
-                json_array_append_new(jtemp, json_string(mb->get_hosts_map()[sc_h].get_host_name().c_str()));
-	    }
+            if (hl.empty()) {
+                // Add empty list to hosts_attached
+                json_object_set_new(jroot, "hosts_attached", json_array());
+            } else {
+	        // Add host names to hosts_attached
+                for (auto& sc_h : hl) {
+                    json_array_append_new(jtemp, json_string(mb->get_hosts_map()[sc_h].get_host_name().c_str()));
+                }
+            }   
             json_array_append(temp, jroot);
         }
 
@@ -199,9 +204,15 @@ size_t sc_global::to_device_json(string &buffer){
             jtemp = json_array();
             json_object_set_new( jroot, "hosts_attached", jtemp);
             list<sc_id>& hl = mb->get_phost()[mld.d_get_port()]; 
-	    for (auto& sc_h:hl){
-                json_array_append_new(jtemp, json_string(mb->get_hosts_map()[sc_h].get_host_name().c_str()));
-	    }
+            if (hl.empty()) {
+                // Add empty list to hosts_attached
+                json_object_set_new(jroot, "hosts_attached", json_array());
+            } else {
+	        // Add host names to hosts_attached
+                for (auto& sc_h : hl) {
+                    json_array_append_new(jtemp, json_string(mb->get_hosts_map()[sc_h].get_host_name().c_str()));
+                }
+            }   
             json_array_append(temp, jroot);
         }
        
