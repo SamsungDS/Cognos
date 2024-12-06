@@ -15,6 +15,7 @@ install_packages() {
         libboost-dev
         libfmt-dev
         libspdlog-dev
+        libzmq3-dev
         python3-virtualenv
         tar
         unzip

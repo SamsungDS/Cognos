@@ -25,6 +25,7 @@ install_packages() {
         tar
         unzip
         wget
+        zeromq-devel
     )
     package_manager
 }
