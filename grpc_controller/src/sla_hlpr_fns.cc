@@ -31,14 +31,14 @@ int SLADeviceHelper::GetDeviceInfo(std::string node_name, std::string port) {
   std::string logger_str;
   std::string output;
   int status = -1;
-  int parser_status;
+  int parser_status = -1;
   std::vector<DeviceInfo> dev_data;
 
   logger_str = "running setupinfo with node id " + node_name + " port " + port;
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
 
   try {
-#ifdef CXL_SLA_ENABLED
+#if 0
     svk::CommandRequest req_node;
     svk::CommandResponse resp_node;
     Status cmd_status;
@@ -57,13 +57,26 @@ int SLADeviceHelper::GetDeviceInfo(std::string node_name, std::string port) {
     }
 
     output = resp_node.node_responses(0).output();
-#else
+#endif
+    struct stat fstat;
+
+    if (stat(SLA_CONFIG_FILE, &fstat) != 0) {
+      // TODO: Needs to remove this once the SetupInfo is properly supported.
+      // File not present. Return success
+      logger_str =
+          "SLA Config file not found for the command SetupInfo. Returning as "
+          "success";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                 logger_str.c_str());
+      return 0;
+    }
+
     std::ifstream fh(SLA_CONFIG_FILE);
     std::string file_data((std::istreambuf_iterator<char>(fh)),
                           (std::istreambuf_iterator<char>()));
     fh.close();
     output = file_data;
-#endif
+
     parser_status = parseJSONOutput(output, dev_data);
 
     if (parser_status != 0) {

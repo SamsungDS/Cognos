@@ -234,7 +234,7 @@ TEST_F(MockTestController, RegisterNodeWithoutDeviceSLAConf) {
              "Just for flushing logs with RegisterNode");
   svk_logger_close(CONTROLLER_LOGGER_MODULE_NAME);
 
-  ASSERT_EQ(grpc_status.ok(), false);
+  ASSERT_EQ(grpc_status.ok(), true);
 }
 
 TEST_F(MockTestController, RegisterNode) {
