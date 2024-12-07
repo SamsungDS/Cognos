@@ -7,6 +7,12 @@ import socket
 from collections import defaultdict, namedtuple
 from flask import Flask, jsonify
 
+project_root = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "../..")
+)
+sys.path.insert(0, project_root)
+from cognos.backend.db_query_constants import DUMMYIP  # noqa: E402
+
 
 current_script_dir = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE_PATH = os.path.join(current_script_dir, 'config', 'config.json')

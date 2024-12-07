@@ -61,13 +61,20 @@ describe('Metric component', () => {
     global.fetch.mockImplementation(() => mockFetch);
     const mockSelectedOption = 'test_host';
     const mockSetSelectedOption = jest.fn();
+
+    const mockSomeFn = jest.fn().mockReturnValue(true);
+    const mockSelectorOptionsRef = { current: { some: mockSomeFn} };
+    jest.spyOn(React, 'useRef').mockReturnValue(mockSelectorOptionsRef);
+
     const mockSetSelectorOptions = jest.fn();
     const mockSendMessage = jest.fn();
     const mockLastSelectedHost = { current: "test_host2"};
     const mockApiEndpoint = "/api/v2.0.1";
+
     const result = await handleSelectChange(
       mockSelectedOption,
       mockSetSelectedOption,
+      mockSelectorOptionsRef,
       mockSetSelectorOptions,
       mockSendMessage,
       mockLastSelectedHost,

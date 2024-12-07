@@ -9,7 +9,7 @@ import * as constants from '../../src/constant';
 
 
 export const handleSelectChange = async (
-    selectedOption, setSelectedOption, setSelectorOptions,
+    selectedOption, setSelectedOption, selectorOptionsRef, setSelectorOptions,
     sendMessage, lastSelectedHost, apiEndpoint) => {
       setSelectedOption(selectedOption);
 
@@ -45,34 +45,42 @@ export const handleSelectChange = async (
       let payload = {};
       payload.host = selectedOption;
 
-      // update DB through CAL to store host to filter on
-      try {
-        // eslint-disable-next-line
-        const hostPayload = { host: selectedOption };
-        const response = await fetch(
-          `${apiEndpoint}/update_metrics_host_filter`,
-          {
-            mode: "cors",
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Access-Control-Allow-Origin": "*",
-              accept: "application/json",
-            },
-            body: JSON.stringify(payload),
-          }
-        );
-        // istanbul ignore next
-        if (response.ok) {
-          console.log(
-            "Successfully sent selected host to backend: ",
-            selectedOption
+      // check if selected host is a valid host
+      if (selectorOptionsRef.current.some(item => item.value === payload.host.value)) {
+
+        // update DB through CAL to store host to filter on
+        try {
+          // eslint-disable-next-line
+          const hostPayload = { host: selectedOption };
+          const response = await fetch(
+            `${apiEndpoint}/update_metrics_host_filter`,
+            {
+              mode: "cors",
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*",
+                accept: "application/json",
+              },
+              body: JSON.stringify(payload),
+            }
           );
+          // istanbul ignore next
+          if (response.ok) {
+            console.log(
+              "Successfully sent selected host to backend: ",
+              selectedOption
+            );
+          }
+          // istanbul ignore next
+        } catch (error) {
+          console.log(error);
         }
-        // istanbul ignore next
-      } catch (error) {
-        console.log(error);
+        
+      } else {
+        console.log("default or invalid selected host");
       }
+      
     };
 
 const Metrics = () => {
@@ -81,6 +89,7 @@ const Metrics = () => {
       { value: "Host 1", label: "Host 1" },
       { value: "Host 2", label: "Host 2" },
     ]);
+    const selectorOptionsRef = useRef(selectorOptions);
     // eslint-disable-next-line
     const [selectedOption, setSelectedOption] = useState(null);
     // istanbul ignore next
@@ -178,15 +187,19 @@ const Metrics = () => {
   };
 
   useEffect(() => {
-    console.log("memoryCPUData: ", memoryCpuData)
-    console.log("memCapacityData", memCapacityData)
-    console.log("dramCxlMemUsageData", dramCxlMemUsageData)
     // istanbul ignore next
     const intervalCallBack = () => {
       if (lastSelectedHost.current) {
         let payload = {}
         payload.host = lastSelectedHost.current;
-        sendMessage(payload);
+
+        if (selectorOptionsRef.current.some(item => item.value === payload.host.value)) {
+          console.log("sending current host to exporter..");
+          sendMessage(payload);
+        } else {
+          console.log("default or invalid host");
+        }
+        
       } else {
         console.log("last selected host is None");
       }
@@ -242,6 +255,7 @@ const Metrics = () => {
                         handleSelectChange(
                           selectedOption,
                           setSelectedOption,
+                          selectorOptionsRef,
                           setSelectorOptions,
                           sendMessage,
                           lastSelectedHost,
