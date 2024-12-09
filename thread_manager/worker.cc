@@ -38,7 +38,8 @@ int WorkerManager::stopWorker() { return 0; }
 
 /* WorkerManager related functions */
 WorkerManager::WorkerManager(std::string svk_logic_logger_name, int threadCount,
-                             int timeLimit, svk_slat_logic_input* slatInput,
+                             int timeLimit,
+                             svk_slat_worker_logic_input* slatInput,
                              svk_slat_logic_output* slatOutput,
                              logic_fn function_ptr) {
   workerThreadGr.reserve(threadCount);

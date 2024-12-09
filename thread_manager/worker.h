@@ -27,7 +27,7 @@ typedef struct {
   std::string zmq_server;      // valid for push stats only
   std::string zmq_port;        // valid for push stats only
   std::string publish_prefix;  // valid for push stats only
-} svk_slat_logic_input;
+} svk_slat_worker_logic_input;
 
 typedef struct {
   uint64_t avgLatencyus;
@@ -59,7 +59,7 @@ class WorkerSharedData {
   int timeLimit;          // Time limit for the logic module to run
   std::mutex mutex;
   std::time_t startTime;
-  svk_slat_logic_input *slatInput;
+  svk_slat_worker_logic_input *slatInput;
   svk_slat_logic_output *slatOutput;
   logic_fn function_ptr;  // Function to run and return the the stats
 };
@@ -67,7 +67,7 @@ class WorkerSharedData {
 class WorkerManager {
  public:
   WorkerManager(std::string svk_logic_logger_name, int threadCount,
-                int timeLimit, svk_slat_logic_input *slatInput,
+                int timeLimit, svk_slat_worker_logic_input *slatInput,
                 svk_slat_logic_output *slatOutput, logic_fn function_ptr);
   ~WorkerManager();
   int start();
