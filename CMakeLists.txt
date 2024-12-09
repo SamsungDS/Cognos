@@ -20,6 +20,7 @@ pkg_check_modules(SVKFW REQUIRED svkframework)
 add_compile_options(${SVKFW_CFLAGS})
 add_subdirectory(config)
 add_subdirectory(src)
+add_subdirectory(modules)
 
 if(BUILD_TESTING)
     add_subdirectory(tests)
