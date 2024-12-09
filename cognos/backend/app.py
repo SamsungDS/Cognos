@@ -6,49 +6,38 @@ import os
 import sys
 from flask_cors import CORS
 
+sys.path.append(
+    os.path.abspath(  # noqa: E402
+        os.path.join(os.path.dirname(__file__), "../..")
+    )
+)  # noqa: E402
 
-sys.path.append(os.path.abspath(  # noqa: E402
-    os.path.join(os.path.dirname(__file__), '../..')))  # noqa: E402
-from cognos.backend.helper import (
-    fetch_cognos_configs, fetch_api_version,
-    get_db_passwd, prepare_response_with_body, failed_response,
-    connect_to_mysql, disconnect_mysql, get_param_from_request_params,
-    insert_hosts, get_devices_from_db, insert_devices, insert_connection,
-    delete_connection, fetch_topology, get_hosts_from_db,
-    get_hostname_from_id, get_devname_from_id, get_hostid_from_name,
-    get_devid_from_name, get_deviceid_and_devicename_from_port,
-    get_host_attached_devices, clear_all_tables
-)
+import cognos.backend.helper as helper
 from cognos.backend.mock_datasource import Mock
 from cognos.backend.cxlplugin_datasource import CXLPlugin
 
 
 current_script_dir = os.path.dirname(os.path.abspath(__file__))
-# CONFIG_FILE_PATH = os.path.join(current_script_dir, 'config',
-#                                 'config.json')
-CONFIGS = fetch_cognos_configs(current_script_dir, 'config.json')
-API_VERSION = fetch_api_version(current_script_dir)
+CONFIGS = helper.fetch_cognos_configs(current_script_dir, "config.json")
+API_VERSION = helper.fetch_api_version(current_script_dir)
 
 global AGENT_ENDPOINT
-AGENT_ENDPOINT = CONFIGS['agent_endpoint']
+AGENT_ENDPOINT = CONFIGS["agent_endpoint"]
 # TODO: support multiple Node Servers / Agents at scale
 global NODE_ENDPOINT
-NODE_ENDPOINT = CONFIGS['node_endpoint']
+NODE_ENDPOINT = CONFIGS["node_endpoint"]
 
 
 def create_app(mock=False):
-    """ Implements endpoints of Flask App """
+    """Implements endpoints of Flask App"""
     app = Flask(__name__)
     CORS(app)
-    app.config['CORS_HEADERS'] = 'Content-Type'
+    app.config["CORS_HEADERS"] = "Content-Type"
 
-    data_source = (
-        Mock()
-        if mock else CXLPlugin()
-    )
+    data_source = Mock() if mock else CXLPlugin()
 
     # clear out existing tables
-    clear_all_tables()
+    helper.clear_all_tables()
 
     @app.get(f"/api/{API_VERSION}/init")
     def init():
@@ -94,7 +83,7 @@ def create_app(mock=False):
     @app.get(f"/api/{API_VERSION}/device_status")
     def get_device_status():
         # TODO: currently not implemented on SVK CXL Plugin end
-        return jsonify({'status': 200})
+        return jsonify({"status": 200})
 
     @app.post(f"/api/{API_VERSION}/devices")
     def post_devices():
@@ -130,13 +119,13 @@ def create_app(mock=False):
 
 
 @click.command()
-@click.option('--mock', '-m', is_flag=True, help="mock mode")
-@click.option('--host', '-h', required=True, help="IP of host of CAL")
-@click.option('--port', '-p', required=True, help="Port to run CAL on")
+@click.option("--mock", "-m", is_flag=True, help="mock mode")
+@click.option("--host", "-h", required=True, help="IP of host of CAL")
+@click.option("--port", "-p", required=True, help="Port to run CAL on")
 def main(mock, host, port):
     app = create_app(mock)
     app.run(host=host, port=port)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

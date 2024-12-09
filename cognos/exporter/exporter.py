@@ -7,14 +7,21 @@ import ssl
 import json
 import websockets
 import time
-paths = ['../..', '.', '..']
+
+paths = ["../..", ".", ".."]
 for p in paths:
-    sys.path.append(os.path.abspath(  # noqa: E402
-        os.path.join(os.path.dirname(__file__), p)))  # noqa: E402
+    sys.path.append(
+        os.path.abspath(  # noqa: E402
+            os.path.join(os.path.dirname(__file__), p)
+        )
+    )  # noqa: E402
 from cognos.backend.cognos_influxdb_client import (  # noqa: E402
     CognosInfluxDBClient
 )
-from cognos.backend.helper import fetch_cognos_configs, get_metrics_host_filter  # noqa: E402
+from cognos.backend.helper import (
+    fetch_cognos_configs,
+    get_metrics_host_filter
+)  # noqa: E402
 
 
 ws = None
@@ -27,10 +34,7 @@ ssl_context = None
 async def send_metrics_event(websocket, event_type, data, stop_event):
     print("IN SEND METRICS EVENT")
     try:
-        event = {
-            "type": event_type,
-            "data":  data
-        }
+        event = {"type": event_type, "data": data}
         await websocket.send(json.dumps(event))
         print(f"sent metrics for {event_type} with data {data}")
     except websockets.exceptions.ConnectionClosedOK:
@@ -52,7 +56,7 @@ async def recv_host_selection_handler(stop_event):
             # search for filter in DB
             latest_host_selected = get_metrics_host_filter()
             print(f"RECVD LATEST HOST: {latest_host_selected}")
-            if latest_host_selected and latest_host_selected != '':
+            if latest_host_selected and latest_host_selected != "":
                 influx_client.filter_hosts = True
                 influx_client.selected_host = latest_host_selected
             await asyncio.sleep(0.1)
@@ -74,8 +78,7 @@ async def metrics_handler(websocket, stop_event=None):
             except Exception:
                 print("Ping failed")
                 raise websockets.ConnectionClosed(
-                    3000,
-                    'Manually close the connection'
+                    3000, "Manually close the connection"
                 )
                 break
 
@@ -152,23 +155,24 @@ async def metrics_handler(websocket, stop_event=None):
 
 async def main():
     parent_dir = os.path.dirname(os.path.abspath(__file__))
-    configs = fetch_cognos_configs(parent_dir, 'config.json')
+    configs = fetch_cognos_configs(parent_dir, "config.json")
     stop_event = asyncio.Event()
     metrics_handler_with_stop_event = functools.partial(
-        metrics_handler, stop_event=stop_event)
+        metrics_handler, stop_event=stop_event
+    )
     if ssl_context:
         server = await websockets.serve(
             metrics_handler_with_stop_event,
-            configs['exporter_ip'],
-            configs['exporter_port'],
+            configs["exporter_ip"],
+            configs["exporter_port"],
             ssl=ssl_context,
             ping_timeout=None
         )
     else:
         server = await websockets.serve(
             metrics_handler_with_stop_event,
-            configs['exporter_ip'],
-            configs['exporter_port'],
+            configs["exporter_ip"],
+            configs["exporter_port"],
             ping_timeout=None
         )
 
@@ -182,8 +186,8 @@ async def main():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--mock', action='store_true')
-    parser.add_argument('--ssl', action='store_true')
+    parser.add_argument("--mock", action="store_true")
+    parser.add_argument("--ssl", action="store_true")
     args = parser.parse_args()
     influx_client.mock = args.mock
 

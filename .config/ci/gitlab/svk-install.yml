@@ -50,8 +50,6 @@ svk-install:
     - apt-get install svk-cxl-mock -y
     - apt-get install ./$ARTIFACTS_DIR/ubuntu22/svk-*.deb -y
 
-    #### Configure MySQL DB to create SCMC tables ####
-    - $SVK_DIR/svk-app/env/bin/python3 $SVK_DIR/svk-app/cognos/backend/db_setup.py
 
     #### Configure '/etc/svk/mgmt_fw_config.json' (JSON) ####
     - export SVK_MGMT_FW_CONF='/etc/svk/mgmt_fw_config.json'
@@ -91,6 +89,11 @@ svk-install:
     - jq --arg ip "$VM_IP" --arg restport "$RESTSERVER_PORT" '.agent_endpoint = "http://\($ip):\($restport)/api/v1/process_controller_command"' $SVK_APP_BACKEND_CONF | sponge $SVK_APP_BACKEND_CONF
     # Substitute '.node_endpoint' value with NODE_PORT obtained from gitlab-ci.yml
     - jq --arg ip "$VM_IP" --arg nodeport "$NODE_PORT" '.node_endpoint = "\($ip):\($nodeport)"' $SVK_APP_BACKEND_CONF | sponge $SVK_APP_BACKEND_CONF
+    # Substitute 'list_cluster_ep' value with RESTSERVER_PORT obtained from gitlab-ci.yml
+    - jq --arg ip "$VM_IP" --arg restport "$RESTSERVER_PORT" '.list_cluster_ep = "http://\($ip):\($restport)/api/v1/list_cluster_nodes"' $SVK_APP_BACKEND_CONF | sponge $SVK_APP_BACKEND_CONF
+
+    #### Configure MySQL DB to create SCMC tables ####
+    - $SVK_DIR/svk-app/env/bin/python3 $SVK_DIR/svk-app/cognos/backend/db_setup.py
 
     #### SVK App exporter configuration (JSON) ####
     - export SVK_APP_EXPORTER_CONF='/usr/local/svk/svk-app/cognos/exporter/config/config.json'

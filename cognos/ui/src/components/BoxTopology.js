@@ -82,7 +82,7 @@ const BoxTopology = () => {
   }));
 
   useEffect(()=> {
-    if(hostDirectViewList.length > 1) {
+    if(hostDirectViewList.length > 0) {
       setIsToggleEnabled(true)
     }else {
       setIsToggleEnabled(false)
@@ -479,3 +479,4 @@ const BoxTopology = () => {
 };
 
 export default BoxTopology;
+

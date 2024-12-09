@@ -14,7 +14,7 @@ mock_metrics = [
         "application": "test",
         "observations": {
             "cpu_usage": random.uniform(0, 100),
-        }
+        },
     },
     {
         "type": "metric",
@@ -26,7 +26,7 @@ mock_metrics = [
         "application": "test",
         "observations": {
             "mem_usage": random.uniform(0, 10000),
-        }
+        },
     },
     {
         "type": "metric",
@@ -38,7 +38,7 @@ mock_metrics = [
         "application": "test",
         "observations": {
             "capacity": random.uniform(0, 1000000),
-        }
+        },
     },
     {
         "type": "metric",
@@ -50,8 +50,8 @@ mock_metrics = [
         "application": "test",
         "observations": {
             "cxl_device_usage": random.uniform(0, 10000000),
-        }
-    }
+        },
+    },
 ]
 
 
@@ -68,6 +68,6 @@ def run_mock_populator(client, runtime, query_window):
 
 if __name__ == "__main__":
     MOCK_POPULATOR_RUNTIME = 10  # seconds
-    TEST_TIME_WINDOW = '10m'
+    TEST_TIME_WINDOW = "10m"
     client = CognosInfluxDBClient()
     run_mock_populator(client, MOCK_POPULATOR_RUNTIME, TEST_TIME_WINDOW)

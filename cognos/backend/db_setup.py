@@ -1,11 +1,12 @@
 import mysql.connector
+from helper import get_db_passwd
 
 
 def create_database(db_name):
     connection = mysql.connector.connect(
         host="localhost",
         user="dev",
-        passwd="CXL123mem!"
+        passwd=get_db_passwd(),
     )
     cursor = connection.cursor()
 
@@ -31,8 +32,8 @@ def get_database_connection(db_name):
     db = mysql.connector.connect(
         host="localhost",
         user="dev",
-        passwd="CXL123mem!",
-        database=db_name
+        passwd=get_db_passwd(),
+        database=db_name,
     )
     return db, db.cursor()
 
@@ -45,12 +46,12 @@ def setup_devices_table(db, cursor):
         "dev_port INT UNSIGNED, "
         "hosts_attached VARCHAR(511), "
         "status VARCHAR(32), "
-        "type VARCHAR(64), "
+        "type VARCHAR(25) NOT NULL, "
         "mode VARCHAR(64), "
         "dev_name VARCHAR(64), "
         "used_capacity_units VARCHAR(10), "
         "device_type VARCHAR(32), "
-        "PRIMARY KEY (dev_id));"
+        "PRIMARY KEY (dev_id, dev_port, type) );"
     )
     cursor.execute(create_devices_table)
     db.commit()
@@ -62,7 +63,8 @@ def setup_host_device_connections_table(db, cursor):
         "host_id BIGINT UNSIGNED, "
         "host_name VARCHAR(128), "
         "dev_id BIGINT UNSIGNED, "
-        "dev_name VARCHAR(128)"
+        "dev_name VARCHAR(128), "
+        "PRIMARY KEY (host_id, dev_id)"
         ");"
     )
     cursor.execute(create_host_device_connections_table)
@@ -76,7 +78,9 @@ def setup_hosts_table(db, cursor):
         "name VARCHAR(255), "
         "mem_capacity BIGINT UNSIGNED, "
         "hosts_target_ports VARCHAR(64), "
-        "PRIMARY KEY (id));"
+        "fm_type VARCHAR(25) NOT NULL, "
+        "PRIMARY KEY (id, fm_type)"
+        ");"
     )
     cursor.execute(create_hosts_table)
     db.commit()
@@ -108,7 +112,7 @@ def shutdown_db_connection(db):
 
 
 if __name__ == "__main__":
-    """create and setup database for Samsung Cognos Management Console """
+    """create and setup database for Samsung Cognos Management Console"""
 
     db_name = "cognos"
     db, cursor = create_database(db_name)

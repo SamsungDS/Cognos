@@ -50,7 +50,6 @@ def mock_subscription(interval, stop_condition=None) -> None:
     if df.empty:
         print("DataFrame is empty, no data to send to InfluxDB!")
         return
-
     # Create an instance of CognosInfluxDBClient
     dbobj = CognosInfluxDBClient()
 
@@ -70,6 +69,7 @@ def mock_subscription(interval, stop_condition=None) -> None:
                 time.sleep(interval)
                 # Write event to InfluxDB
                 dbobj.write_cognos_event(row.to_dict())
+                print(row.to_dict())
     except KeyboardInterrupt:
         print("Process interrupted by user. Exiting...")
         sys.exit(0)
@@ -135,6 +135,7 @@ def zeromq_subscription(hostname, topic, interval, stop_condition=None):
                     continue
                 # Write the event to InfluxDB
                 dbobj.write_cognos_event(data)
+                print(data)
             except zmq.ZMQError as zmqe:
                 print(f"ZMQ error during message reception: {zmqe}")
                 break

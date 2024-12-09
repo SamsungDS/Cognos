@@ -1,5 +1,6 @@
 {
     "mysql_db_dev_passwd": "<passwd>",
     "agent_endpoint": "http://<agentip/hostname>:<agent_port>/api/v1/process_controller_command",
-    "node_endpoint": "<nodeip/hostname>:<nodeport>"
+    "node_endpoint": "<nodeip/hostname>:<nodeport>",
+    "list_cluster_ep": "http://<agentip/hostname>:<agent_port>/api/v1/list_cluster_nodes"
 }
