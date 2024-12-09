@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Container, Row, Col, Badge, Carousel, Button } from "react-bootstrap";
-import { FiFilter } from "react-icons/fi";
+import { Container, Row, Col, Badge, Carousel } from "react-bootstrap";
 import "rc-slider/assets/index.css";
 import "./BoxTopology.css";
 import {
@@ -17,9 +16,9 @@ import {
   updateHostListAttached,
 } from "../constant";
 import { ReactComponent as DeviceIcon } from "../assets/icons/deviceSVGIcon.svg";
+import { useSelectedOption } from "../contexts/SelectedOptionContext";
 
 const BoxTopology = () => {
-  const [selectedOption, setSelectedOption] = useState("CMM-B");
   const [hostToDeviceMapping, setHostToDeviceMapping] = useState([]);
   // eslint-disable-next-line
   const [hostToDeviceMappingB2, setHostToDeviceMappingB2] = useState([]);
@@ -30,7 +29,8 @@ const BoxTopology = () => {
 
   const hostDeviceMapEndpoint = Configs.api_endpoint + "/topology";
   const hostMapEndpoint = Configs.api_endpoint + "/hosts";
-
+  const { handleToggle, selectedOption } = useSelectedOption();
+  const [isToggleEnabled, setIsToggleEnabled] = useState(false);
   useEffect(
     () => {
       fetchData(hostDeviceMapEndpoint, setHostToDeviceMapping);
@@ -80,6 +80,14 @@ const BoxTopology = () => {
       mappedDeviceViewList(detail.devices, detail.fm_type)
     ),
   }));
+
+  useEffect(()=> {
+    if(hostDirectViewList.length > 1) {
+      setIsToggleEnabled(true)
+    }else {
+      setIsToggleEnabled(false)
+    }
+  },[hostDirectViewList])
 
   const cmmList = [
     {
@@ -274,33 +282,45 @@ const BoxTopology = () => {
   const handleNextHostView = () => {
     setCurrentHostView((prevCMM) => (prevCMM === hostDirectView.length-1 ? 0 : prevCMM + 1));
   };
-  // istanbul ignore next
-  const handleToggle = () => {
-    setSelectedOption((prevOption) =>
-      prevOption === "CMM-B" ? "Host" : "CMM-B"
-    );
-  };
+
 
   // istanbul ignore next
   return (
     <Container className="box-container" id="topology-card-id">
       <Row>
         <Col>
-          {hostDirectViewList.length === 0 ? (
-            " "
-          ) : (
-            <p style={{ color: "white", marginBottom: 5, fontSize: 12 }}>
-              Switch Between CMM-B or Host
-            </p>
-          )}
           <div className="cmm-navigation">
-            {hostDirectViewList.length === 0 ? (
-              " "
-            ) : (
-              <Button variant="secondary" onClick={handleToggle}>
-                {selectedOption} <FiFilter />
-              </Button>
-            )}
+              <div className="toggle-switch-container">
+                <div className="toggle-switch">
+                  <input
+                    type="checkbox"
+                    id="switch"                    
+                    className="toggle-input"
+                    checked={selectedOption === "Host"}
+                    onChange={handleToggle}
+                    disabled={!isToggleEnabled}
+                  />
+                  <label htmlFor="switch" className={`toggle-label ${
+                      isToggleEnabled ? "enabled" : "disabled"
+                    }`}>
+                    <span
+                      className={`toggle-text left ${
+                        selectedOption === "CMM-B" ? "visible" : "hidden"
+                      }`}
+                      // style={{ color: "#535353" }}
+                    >
+                      CMM-B
+                    </span>
+                    <span
+                      className={`toggle-text right ${
+                        selectedOption === "Host" ? "visible" : "hidden"
+                      }`}
+                    >
+                      Host
+                    </span>
+                  </label>
+                </div>{" "}
+              </div>
             {selectedOption === "CMM-B" ? (
               <>
                 <button

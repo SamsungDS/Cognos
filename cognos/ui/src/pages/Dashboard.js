@@ -8,6 +8,7 @@ import "./dashboard.css";
 import "rc-slider/assets/index.css";
 
 import WebSocketContext from "../contexts/WebSocketContext";
+import { useSelectedOption } from "../contexts/SelectedOptionContext";
 
 const Dashboard = () => {
   const {
@@ -18,14 +19,18 @@ const Dashboard = () => {
   } = useContext(WebSocketContext);
   const [dataAvailable, setDataAvailable] = useState(true);
 
+  const { selectedOption } = useSelectedOption();
   useEffect(() => {
     // Set timeout for 120 seconds (120000 ms)
     // istanbul ignore next
     const timer = setTimeout(() => {
       if (
-        !cmmbBandwidthData?.max_bandwidth || !devicesCountData?.num_hosts
-        || !cmmbCapacityData?.total_capacity || !cmmbMemoryData) {
-          setDataAvailable(false);
+        !cmmbBandwidthData?.max_bandwidth ||
+        !devicesCountData?.num_hosts ||
+        !cmmbCapacityData?.total_capacity ||
+        !cmmbMemoryData
+      ) {
+        setDataAvailable(false);
       }
     }, 120000);
 
@@ -94,85 +99,110 @@ const Dashboard = () => {
             </div>
           </Col>
           <Col sm={12} md={12} lg={12} xl={4}>
-            {devicesCountData.num_hosts ? (
-              <div
-                className="device_card info-memo-com"
-                id="mem-info"
-                style={{ fontFamily: "Samsung One", verticalAlign: "top" }}
-              >
-                <Row className="row-info-memo">
-                  <Col>
+            {selectedOption === "Host" ? (
+              <>
+                <div className="device_card info-memo-com">
+                  <div className="spinner-style" style={{ height: 150 }}>
                     <div
                       style={{
                         color: "white",
-                        display: "inline",
-                        fontWeight: "bold",
+                        textAlign: "center",
                       }}
                     >
-                      {" "}
-                      Attached Hosts &nbsp;{" "}
+                      Data is not available
                     </div>
-                  </Col>
-                  <Col>
-                    <span className="arrow">
-                      <i className="right"></i>
-                    </span>
-                  </Col>
-                  <Col>
-                    <span className="circle" style={{ color: "#00B3E3" }}>{`${
-                      devicesCountData.num_hosts
-                        ? devicesCountData.num_hosts
-                        : 0
-                    }`}</span>
-                  </Col>
-                </Row>
-                <Row className="row-info-memo">
-                  <Col>
-                    <div
-                      style={{
-                        color: "white",
-                        display: "inline",
-                        fontWeight: "bold",
-                      }}
-                    >
-                      {" "}
-                      CXL Devices{" "}
-                    </div>
-                  </Col>
-                  <Col>
-                    <span className="arrow">
-                      <i className="right"></i>
-                    </span>
-                  </Col>
-                  <Col>
-                    <div className="circle" style={{ color: "#00B3E3" }}>{`${
-                      devicesCountData.num_cxl_devices
-                        ? devicesCountData.num_cxl_devices
-                        : 0
-                    }`}</div>
-                  </Col>
-                </Row>
-              </div>
-            ) : dataAvailable ? (
-              <div className="device_card info-memo-com" id="mem-info">
-                <div className="spinner-style" style={{ height: 150 }}>
-                  <Spinner animation="border" variant="secondary" />
-                </div>
-              </div>
-            ) : (
-              <div className="device_card info-memo-com" id="mem-info">
-                <div className="spinner-style" style={{ height: 150 }}>
-                  <div
-                    style={{
-                      color: "white",
-                      textAlign: "center",
-                      marginTop: 50,
-                    }}
-                  >
-                    Data is not available
                   </div>
                 </div>
-              </div>
+              </>
+            ) : (
+              <>
+                {devicesCountData.num_hosts ? (
+                  <div
+                    className="device_card info-memo-com"
+                    id="mem-info"
+                    style={{ fontFamily: "Samsung One", verticalAlign: "top" }}
+                  >
+                    <Row className="row-info-memo">
+                      <Col>
+                        <div
+                          style={{
+                            color: "white",
+                            display: "inline",
+                            fontWeight: "bold",
+                          }}
+                        >
+                          {" "}
+                          Attached Hosts &nbsp;{" "}
+                        </div>
+                      </Col>
+                      <Col>
+                        <span className="arrow">
+                          <i className="right"></i>
+                        </span>
+                      </Col>
+                      <Col>
+                        <span
+                          className="circle"
+                          style={{ color: "#00B3E3" }}
+                        >{`${
+                          devicesCountData.num_hosts
+                            ? devicesCountData.num_hosts
+                            : 0
+                        }`}</span>
+                      </Col>
+                    </Row>
+                    <Row className="row-info-memo">
+                      <Col>
+                        <div
+                          style={{
+                            color: "white",
+                            display: "inline",
+                            fontWeight: "bold",
+                          }}
+                        >
+                          {" "}
+                          CXL Devices{" "}
+                        </div>
+                      </Col>
+                      <Col>
+                        <span className="arrow">
+                          <i className="right"></i>
+                        </span>
+                      </Col>
+                      <Col>
+                        <div
+                          className="circle"
+                          style={{ color: "#00B3E3" }}
+                        >{`${
+                          devicesCountData.num_cxl_devices
+                            ? devicesCountData.num_cxl_devices
+                            : 0
+                        }`}</div>
+                      </Col>
+                    </Row>
+                  </div>
+                ) : dataAvailable ? (
+                  <div className="device_card info-memo-com" id="mem-info">
+                    <div className="spinner-style" style={{ height: 150 }}>
+                      <Spinner animation="border" variant="secondary" />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="device_card info-memo-com" id="mem-info">
+                    <div className="spinner-style" style={{ height: 150 }}>
+                      <div
+                        style={{
+                          color: "white",
+                          textAlign: "center",
+                          marginTop: 50,
+                        }}
+                      >
+                        Data is not available
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
             <Row>
               <Col>
@@ -180,61 +210,84 @@ const Dashboard = () => {
                   className="device_card system-memory-allocated"
                   id="sys-mem-allocated-id"
                 >
-                  <div
-                    style={{
-                      color: "white",
-                      fontWeight: "bold",
-                      fontFamily: "Samsung",
-                    }}
-                  >
-                    <h4 className="cmmb-memory-heading">
-                      CMM-B <span style={{ color: "white" }}>Capacity</span>
-                    </h4>
-                  </div>
-                  <div>
-                    {cmmbCapacityData.total_capacity ? (
-                      <div style={{ paddingTop: 12 }}>
-                        <div
-                          className="progres-bar-label"
-                          style={{ color: "white" }}
-                        >
-                          {`${
-                            cmmbCapacityData.total_capacity
-                              ? cmmbCapacityData.total_capacity
-                              : 0
-                          } GB`}
-                        </div>
-                        <ProgressBar
-                          style={{ height: 24, fontWeight: "bold" }}
-                          now={cmmbCapacityData.used_capacity_percentage}
-                          key={1}
-                          className="host1"
-                        />
-                        <div
-                          style={{ color: "white", marginLeft: 200 }}
-                        >{`Used Capacity ${
-                          cmmbCapacityData.used_capacity
-                            ? cmmbCapacityData.used_capacity
-                            : 0
-                        } GB`}</div>
-                      </div>
-                    ) : dataAvailable ? (
-                      <div className="spinner-style" style={{ height: 150 }}>
-                        <Spinner animation="border" variant="secondary" />
-                      </div>
-                    ) : (
+                  {selectedOption === "Host" ? (
+                    <>
                       <div className="spinner-style" style={{ height: 150 }}>
                         <div
                           style={{
                             color: "white",
-                            textAlign: "center"                         
+                            textAlign: "center",
                           }}
                         >
                           Data is not available
                         </div>
                       </div>
-                    )}
-                  </div>
+                    </>
+                  ) : (
+                    <>
+                      <div
+                        style={{
+                          color: "white",
+                          fontWeight: "bold",
+                          fontFamily: "Samsung",
+                        }}
+                      >
+                        <h4 className="cmmb-memory-heading">
+                          CMM-B <span style={{ color: "white" }}>Capacity</span>
+                        </h4>
+                      </div>
+                      <div>
+                        {cmmbCapacityData.total_capacity ? (
+                          <div style={{ paddingTop: 12 }}>
+                            <div
+                              className="progres-bar-label"
+                              style={{ color: "white" }}
+                            >
+                              {`${
+                                cmmbCapacityData.total_capacity
+                                  ? cmmbCapacityData.total_capacity
+                                  : 0
+                              } GB`}
+                            </div>
+                            <ProgressBar
+                              style={{ height: 24, fontWeight: "bold" }}
+                              now={cmmbCapacityData.used_capacity_percentage}
+                              key={1}
+                              className="host1"
+                            />
+                            <div
+                              style={{ color: "white", marginLeft: 200 }}
+                            >{`Used Capacity ${
+                              cmmbCapacityData.used_capacity
+                                ? cmmbCapacityData.used_capacity
+                                : 0
+                            } GB`}</div>
+                          </div>
+                        ) : dataAvailable ? (
+                          <div
+                            className="spinner-style"
+                            style={{ height: 150 }}
+                          >
+                            <Spinner animation="border" variant="secondary" />
+                          </div>
+                        ) : (
+                          <div
+                            className="spinner-style"
+                            style={{ height: 150 }}
+                          >
+                            <div
+                              style={{
+                                color: "white",
+                                textAlign: "center",
+                              }}
+                            >
+                              Data is not available
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
               </Col>
             </Row>
@@ -243,49 +296,69 @@ const Dashboard = () => {
         <Row>
           <Col sm={12} md={12} lg={12} xl={8}>
             <div className="device_card graph-container" id="rack-graph-id">
-              <Row>
-                <Col sm={3} md={4} lg={4} xl={2}>
-                  <div style={{ padding: 12 }}>
-                    <h6 className="cmmb-memory-heading">
-                      CMM-B Memory <span style={{ color: "white" }}>Usage</span>
-                    </h6>
+              {selectedOption === "Host" ? (
+                <>
+                  <div className="spinner-style" style={{ height: 150 }}>
+                    <div
+                      style={{
+                        color: "white",
+                        textAlign: "center",
+                        marginTop: 50,
+                      }}
+                    >
+                      Data is not available
+                    </div>
                   </div>
-                </Col>
-                <Col
-                  sm={3}
-                  md={8}
-                  lg={8}
-                  xl={10}
-                  data-testid="rackBandwidth-id"
-                >
-                  {cmmbMemoryData?.length > 1 ? (
-                    <Chart
-                      data-testid="chart"
-                      chartType="AreaChart"
-                      width="100%"
-                      height="150px"
-                      data={cmmbMemoryData}
-                      options={cmmbMemoryDataOptions}
-                    />
-                  ) : dataAvailable ? (
-                    <div className="spinner-style" style={{ height: 150, marginTop: 40 }}>
-                      <Spinner animation="border" variant="secondary" />
+                </>
+              ) : (
+                <Row>
+                  <Col sm={3} md={4} lg={4} xl={2}>
+                    <div style={{ padding: 12 }}>
+                      <h6 className="cmmb-memory-heading">
+                        CMM-B Memory{" "}
+                        <span style={{ color: "white" }}>Usage</span>
+                      </h6>
                     </div>
-                  ) : (
-                    <div className="spinner-style" style={{ height: 150 }}>
+                  </Col>
+                  <Col
+                    sm={3}
+                    md={8}
+                    lg={8}
+                    xl={10}
+                    data-testid="rackBandwidth-id"
+                  >
+                    {cmmbMemoryData?.length > 1 ? (
+                      <Chart
+                        data-testid="chart"
+                        chartType="AreaChart"
+                        width="100%"
+                        height="150px"
+                        data={cmmbMemoryData}
+                        options={cmmbMemoryDataOptions}
+                      />
+                    ) : dataAvailable ? (
                       <div
-                        style={{
-                          color: "white",
-                          textAlign: "center",
-                          marginTop: 50
-                        }}
+                        className="spinner-style"
+                        style={{ height: 150, marginTop: 40 }}
                       >
-                        Data is not available
+                        <Spinner animation="border" variant="secondary" />
                       </div>
-                    </div>
-                  )}
-                </Col>
-              </Row>
+                    ) : (
+                      <div className="spinner-style" style={{ height: 150 }}>
+                        <div
+                          style={{
+                            color: "white",
+                            textAlign: "center",
+                            marginTop: 50,
+                          }}
+                        >
+                          Data is not available
+                        </div>
+                      </div>
+                    )}
+                  </Col>
+                </Row>
+              )}
             </div>
           </Col>
           <Col sm={12} md={12} lg={12} xl={4}>
@@ -293,49 +366,8 @@ const Dashboard = () => {
               className="device_card system-memory-allocated"
               id="sys-mem-allocated-id"
             >
-              <div
-                style={{
-                  color: "white",
-                  fontWeight: "bold",
-                  fontFamily: "Samsung",
-                }}
-              >
-                <h4 className="cmmb-memory-heading">
-                  CMM-B Memory <span style={{ color: "white" }}>Bandwidth</span>
-                </h4>
-              </div>
-              <div>
-                {cmmbBandwidthData.max_bandwidth ? (
-                  <div style={{ paddingTop: 12 }}>
-                    <div
-                      className="progres-bar-label"
-                      style={{ color: "white" }}
-                    >
-                      {`${
-                        cmmbBandwidthData.max_bandwidth
-                          ? cmmbBandwidthData.max_bandwidth
-                          : 0
-                      } GBps`}
-                    </div>
-                    <ProgressBar
-                      style={{ height: 24, fontWeight: "bold" }}
-                      now={cmmbBandwidthData.used_percentage_bandwidth}
-                      key={1}
-                      className="host1"
-                    />
-                    <div
-                      style={{ color: "white", marginLeft: 200 }}
-                    >{`Used Bandwidth ${
-                      cmmbBandwidthData.used_bandwidth
-                        ? cmmbBandwidthData.used_bandwidth
-                        : 0
-                    } GBps`}</div>
-                  </div>
-                ) : dataAvailable ? (
-                  <div className="spinner-style" style={{ height: 150 }}>
-                    <Spinner animation="border" variant="secondary" />
-                  </div>
-                ) : (
+              {selectedOption === "Host" ? (
+                <>
                   <div
                     style={{
                       color: "white",
@@ -345,8 +377,66 @@ const Dashboard = () => {
                   >
                     Data is not available
                   </div>
-                )}
-              </div>
+                </>
+              ) : (
+                <>
+                  <div
+                    style={{
+                      color: "white",
+                      fontWeight: "bold",
+                      fontFamily: "Samsung",
+                    }}
+                  >
+                    <h4 className="cmmb-memory-heading">
+                      CMM-B Memory{" "}
+                      <span style={{ color: "white" }}>Bandwidth</span>
+                    </h4>
+                  </div>
+                  <div>
+                    {cmmbBandwidthData.max_bandwidth ? (
+                      <div style={{ paddingTop: 12 }}>
+                        <div
+                          className="progres-bar-label"
+                          style={{ color: "white" }}
+                        >
+                          {`${
+                            cmmbBandwidthData.max_bandwidth
+                              ? cmmbBandwidthData.max_bandwidth
+                              : 0
+                          } GBps`}
+                        </div>
+                        <ProgressBar
+                          style={{ height: 24, fontWeight: "bold" }}
+                          now={cmmbBandwidthData.used_percentage_bandwidth}
+                          key={1}
+                          className="host1"
+                        />
+                        <div
+                          style={{ color: "white", marginLeft: 200 }}
+                        >{`Used Bandwidth ${
+                          cmmbBandwidthData.used_bandwidth
+                            ? cmmbBandwidthData.used_bandwidth
+                            : 0
+                        } GBps`}</div>
+                      </div>
+                    ) : dataAvailable ? (
+                      <div className="spinner-style" style={{ height: 150 }}>
+                        <Spinner animation="border" variant="secondary" />
+                      </div>
+                    ) : (
+                      <div
+                        style={{
+                          color: "white",
+                          textAlign: "center",
+                          marginTop: 65,
+                        }}
+                      >
+                        Data is not available
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           </Col>
         </Row>

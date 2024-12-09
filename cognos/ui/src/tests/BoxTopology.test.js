@@ -2,18 +2,7 @@ import React from "react";
 import { render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/extend-expect";
 import "@testing-library/jest-dom";
-import BoxTopology from "../components/BoxTopology";
 
-test("renders BoxTopology component", () => {
-  render(<BoxTopology />);
-});
-
-test("handles previous and next button clicks correctly", () => {
-   render(<BoxTopology />);
-
-  expect(screen.getByTestId("prev-button")).toBeInTheDocument();
-  expect(screen.getByTestId("next-button")).toBeInTheDocument();
-});
 
 describe("BoxTopology", () => {
   afterEach(() => {

@@ -2,16 +2,10 @@ import React from 'react';
 import { render} from '@testing-library/react';
 import App from './App';
 import WebSocketContext from './contexts/WebSocketContext';
+import { SelectedOptionProvider } from './contexts/SelectedOptionContext';
 
 describe('App', () => {
-  it('renders without crashing', () => {
-    // const [devicesCountData, setDevicesCountData] = useState([]);
-    // const setDevicesCountData = jest.fn();
-    // const useStateSpy = jest.spyOn(React, 'useState');
-    // useStateSpy.mockImplementation((devicesCountData) => [devicesCountData, setDevicesCountData]);    
-    // setDevicesCountData({
-    //   "num_hosts": 1
-    // })
+  test('renders without crashing', () => {
 
     const devicesCountData = {
       'num_hosts': 1
@@ -27,12 +21,14 @@ describe('App', () => {
 
     render(
       <WebSocketContext.Provider value={{devicesCountData, cmmbCapacityData, cmmbBandwidthData}}>
-        <App />
+        <SelectedOptionProvider>
+          <App />
+        </SelectedOptionProvider>
       </WebSocketContext.Provider>
     );
   });
 
-  it('renders header', () => {
+  test('renders header', () => {
 
     const devicesCountData = {
       'num_hosts': 5
@@ -48,13 +44,15 @@ describe('App', () => {
 
     const { getByText } = render(
       <WebSocketContext.Provider value={{devicesCountData, cmmbCapacityData, cmmbBandwidthData}}>
-        <App />
+        <SelectedOptionProvider>
+          <App />
+        </SelectedOptionProvider>
       </WebSocketContext.Provider>
     );
     expect(getByText(/Cognos Management Console/i)).toBeInTheDocument();
   });
 
-  it('renders sidebar', () => {
+  test('renders sidebar', () => {
     const devicesCountData = {
       'num_hosts': 3
     };
@@ -69,7 +67,9 @@ describe('App', () => {
 
     const { getByTestId } = render(
       <WebSocketContext.Provider value={{devicesCountData, cmmbCapacityData, cmmbBandwidthData}}>
-        <App />
+        <SelectedOptionProvider>
+          <App />
+        </SelectedOptionProvider>
       </WebSocketContext.Provider>
     );
     expect(getByTestId('sidebar-container')).toBeInTheDocument();

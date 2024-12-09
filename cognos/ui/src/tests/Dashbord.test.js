@@ -4,6 +4,7 @@ import '@testing-library/jest-dom/extend-expect';
 import Dashboard from '../pages/Dashboard';
 import * as constants from '../constant';
 import WebSocketContext from '../contexts/WebSocketContext';
+import { SelectedOptionProvider } from "../contexts/SelectedOptionContext";
 
 
 describe('Dashboard', () => {
@@ -28,7 +29,9 @@ describe('Dashboard', () => {
 
       render(
         <WebSocketContext.Provider value={{ cmmbMemoryData, cmmbCapacityData, cmmbBandwidthData, devicesCountData }}>
-          <Dashboard />
+          <SelectedOptionProvider>
+              <Dashboard />
+          </SelectedOptionProvider>
         </WebSocketContext.Provider>
       );
       expect(screen.getByTestId('box-topology-id')).toBeInTheDocument();
