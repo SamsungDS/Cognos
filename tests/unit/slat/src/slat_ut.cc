@@ -15,8 +15,7 @@ using ::testing::_;
 using ::testing::Return;
 using ::testing::StrEq;
 
-#define MOCK_STRUCT_INIT(...) \
-  { __VA_ARGS__ }
+#define MOCK_STRUCT_INIT(...) {__VA_ARGS__}
 
 #define DEFINE_RETURN_MOCK(fn, ret) \
   bool ut_##fn##_mocked = false;    \
@@ -110,6 +109,7 @@ class ConfigTest : public testing::Test {
  protected:
   static void SetUpTestSuite() {
     slat_conf.put("slat.logic_lib_dir", "/tmp");
+    slat_conf.put("slat.disable_bg_thread", "true");
 
     logger_conf.put("log_level", "INFO");
     logger_conf.put("log_file_name", "/var/log/svk/test_slat.log");

@@ -27,7 +27,7 @@ svk_status execute_mlc_logic_sync(svk_logic_cmd *cmd, svk_logic_input *input,
   std::cout << "mlc logic sync" << std::endl;
   std::string result_str;
   argOpts opts = {};
-  result_str = runMlc("idle_latency", opts, std::string(MLC_DEFAULT_PATH));
+  // result_str = runMlc("idle_latency", opts, std::string(MLC_DEFAULT_PATH));
   return SVK_STATUS_SUCCESS;
 }
 

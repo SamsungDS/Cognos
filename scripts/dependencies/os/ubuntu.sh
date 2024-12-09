@@ -20,6 +20,7 @@ install_packages() {
         tar
         unzip
         wget
+        libczmq-dev
     )
     package_manager
 }

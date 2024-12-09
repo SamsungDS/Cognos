@@ -6,8 +6,10 @@
 #include <unistd.h>
 
 #include <boost/program_options.hpp>
+#include <chrono>
 #include <iostream>
 #include <memory>
+#include <thread>
 
 #include "framework_downstream.h"
 #include "framework_struct.h"
@@ -33,7 +35,7 @@ using t_execute_async = svk_status (*)(svk_pass_thru_cmd *pass_thru,
                                        svk_postprocess_fn *postprocess_fn);
 using t_clean_up = svk_status (*)(void *);
 
-svk_status load_slat_feature(std::string features_dir,
+svk_status load_slat_feature(std::string features_dir, std::string logic_module,
                              svk_feature_details *details) {
   svk_status status = SVK_STATUS_SUCCESS;
   int num_failed_libs = 0;
@@ -197,20 +199,42 @@ svk_status load_slat_feature(std::string features_dir,
   cmd.feat_id = feature_id::SLA_TRACKER;
   input.input_buffer = (uint8_t *)calloc(1, 1024);
   input.len = 1024;
-  strcpy((char *)input.input_buffer,
-         "logic_module=SampleLogic;thread_count=3;time_limit=10");
+  std::string cmd_input_str = "logic_module=";
+  cmd_input_str += logic_module;
+  cmd_input_str += ";thread_count=3;time_limit=10";
+  strcpy((char *)input.input_buffer, cmd_input_str.c_str());
   output.output_buffer = (uint8_t *)calloc(1, 10240);
   output.len = 10240;
 
-  status = details->execute_sync(&cmd, &input, &output);
-  if (status == SVK_STATUS_SUCCESS) {
-    std::cout << "Execute_sync worked successfully. Output buffer ["
-              << std::string((char *)output.output_buffer) << "]" << std::endl;
+  if (logic_module != "MlcLogic") {
+    status = details->execute_sync(&cmd, &input, &output);
+    if (status == SVK_STATUS_SUCCESS) {
+      std::cout << "Execute_sync worked successfully. Output buffer ["
+                << std::string((char *)output.output_buffer) << "]"
+                << std::endl;
+    } else {
+      std::cout << "Execute_sync failed" << std::endl;
+    }
   } else {
-    std::cout << "Execute_sync failed" << std::endl;
+    std::this_thread::sleep_for(std::chrono::seconds(5));
   }
   free(input.input_buffer);
   free(output.output_buffer);
+
+  // status = details->execute_async(&cmd, NULL);
+  // if (status == SVK_STATUS_SUCCESS) {
+  //   std::cout << "execute_async worked successfully." << std::endl;
+  // } else {
+  //   std::cout << "execute_async failed" << std::endl;
+  // }
+
+  status = details->clean_up(&status);
+  if (status == SVK_STATUS_SUCCESS) {
+    std::cout << "cleanup worked successfully." << std::endl;
+  } else {
+    std::cout << "cleanup failed" << std::endl;
+  }
+
   return status;
 }
 
@@ -225,8 +249,9 @@ int main(int argc, char **argv) {
       "libdir,p", po::value<string>(),
       "Library directory to load the SLAT feature lib")(
       "slatconfig,c", po::value<string>(), "/path/to/slat_config.json")(
-      "slatlogicconfig,l", po::value<string>(),
-      "/path/to/slat_logic_config.json");
+      "test_logic_module,m", po::value<string>()->default_value("SampleLogic"),
+      "Logic module to test")("slatlogicconfig,l", po::value<string>(),
+                              "/path/to/slat_logic_config.json");
 
   po::store(po::parse_command_line(argc, argv, argsDescription), argsMap);
   po::notify(argsMap);
@@ -256,7 +281,9 @@ int main(int argc, char **argv) {
   setenv("SVK_SLAT_LOGIC_CONFIG",
          argsMap["slatlogicconfig"].as<string>().c_str(), true);
 
-  status = load_slat_feature(argsMap["libdir"].as<string>(), &details);
+  status =
+      load_slat_feature(argsMap["libdir"].as<string>(),
+                        argsMap["test_logic_module"].as<string>(), &details);
   std::cout << "Status from load_slat_feature - " << status << std::endl;
   if (status != SVK_STATUS_SUCCESS) {
     char *env_string = std::getenv("SVK_SLAT_SAMPLE_LOGIC_SUPPORT_FAIL");

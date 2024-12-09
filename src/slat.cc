@@ -18,7 +18,68 @@ using namespace std;
 const std::unique_ptr<SLATrackerSvc> g_slat_service =
     std::make_unique<SLATrackerSvc>();
 
+#define LOGIC_OUT_BUFFER_LEN (256)
 /* Private SLATrackerSvc helper methods */
+std::string run_benchmark(slat_benchmark_config config) {
+  svk_status status;
+
+  svk_logic_module_details *details;
+  svk_logic_cmd logic_cmd;
+  svk_logic_input logic_input = {};
+  svk_logic_output logic_output;
+  char *out[LOGIC_OUT_BUFFER_LEN] = {};
+
+  logic_output.output_buffer = (uint8_t *)out;
+  logic_output.output_len = LOGIC_OUT_BUFFER_LEN;
+
+  if (config.benchmark_tool == "mlc") {
+    strncpy(logic_cmd.logic_name, "MlcLogic", 256);
+
+    details = g_slat_service->getLogicDetails(logic_cmd.logic_name);
+    if (details == nullptr) {
+      std::cout << "Logic module not found" << std::endl;
+      return "status=failed";
+    }
+  } else {
+    std::cout << "Unsupported benchmark [" << config.benchmark_tool << "]"
+              << std::endl;
+    return "status=failed";
+  }
+
+  if (details->execute_logic_sync == nullptr) {
+    std::cout << "logic module's execute_logic_sync is null. Exiting."
+              << std::endl;
+    return "status=failed";
+  }
+
+  status = details->execute_logic_sync(&logic_cmd, &logic_input, &logic_output);
+  if (status == SVK_STATUS_SUCCESS) {
+    std::string out_str((const char *)out);
+    return out_str;
+  } else {
+    std::cout << "failed" << std::endl;
+    return "status=failed";
+  }
+}
+
+void parse_result(slat_benchmark_config config, std::string result) {
+  if (config.benchmark_tool == "mlc") {
+  }
+}
+void SLATrackerSvc::benchmarking_thread_fn(void) {
+  std::string benchmark_result_str;
+  std::cout << "Started benchmarking thread" << std::endl;
+  while (1) {
+    for (slat_benchmark_config bconfig : this->th_data.benchmark_list) {
+      benchmark_result_str = run_benchmark(bconfig);
+    }
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    if (this->th_data.shutdown_bm_thread) {
+      break;
+    }
+  }
+  return;
+}
 
 svk_status SLATrackerSvc::read_slat_config_file(
     const std::string slat_conf_file, slat_config *config) const {
@@ -33,6 +94,17 @@ svk_status SLATrackerSvc::read_slat_config_file(
     config->slat_logic_lib_dir =
         slat_config_pt.get<std::string>("logic_lib_dir");
 
+    try {
+      std::string disable_bg_thread =
+          slat_config_pt.get<std::string>("disable_bg_thread");
+      if (disable_bg_thread == "true") {
+        config->enable_bg_thread = false;
+      } else {
+        config->enable_bg_thread = true;
+      }
+    } catch (std::exception &e) {
+      config->enable_bg_thread = true;
+    }
     try {
       pt::ptree logger_info_pt = slat_config_pt.get_child("logger");
       config->log_level = logger_info_pt.get<std::string>(
@@ -57,9 +129,9 @@ svk_status SLATrackerSvc::read_slat_config_file(
       config->log_sink_type = SLAT_LOGGER_SINK_TYPE_DEFAULT;
     }
   } catch (std::exception &e) {
-    std::cerr
-        << "Unable to read SLAT config file. Assigning default value. Error -> "
-        << e.what() << std::endl;
+    std::cerr << "Unable to read SLAT config file. Assigning default value. "
+                 "Error -> "
+              << e.what() << std::endl;
     config->slat_logic_lib_dir = SLAT_FEATURE_LOGIC_MODULES_PATH;
 
     // Assign defaults
@@ -296,9 +368,37 @@ svk_status SLATrackerSvc::Initialize(const char *slat_config_file) {
 
   status = this->initialize_logger(config);
   if (status != SVK_STATUS_SUCCESS) {
-    return SVK_STATUS_FAIL;
+    return status;
   }
+
   status = this->load_logic_modules(config.slat_logic_lib_dir);
+  if (status != SVK_STATUS_SUCCESS) {
+    return status;
+  }
+
+  this->th_data.shutdown_bm_thread = false;
+  this->th_data.thread_running = false;
+
+  if (config.enable_bg_thread) {
+    int rc;
+
+    rc = initialize_pub(&this->th_data.zmq_context, &this->th_data.zmq_socket,
+                        "0", "5555");
+    if (rc != 0) {
+      std::cout << "Failed to initialize publisher" << std::endl;
+      return SVK_STATUS_FAIL;
+    }
+    std::cout << "Initialized publisher" << std::endl;
+
+    slat_benchmark_config bc;
+    bc.benchmark_tool = "mlc";
+    bc.benchmark_out_field = "avgLatencyus";
+
+    this->th_data.benchmark_list.push_back(bc);
+    this->th_data.benchmarking_thread =
+        std::thread(&SLATrackerSvc::benchmarking_thread_fn, this);
+    this->th_data.thread_running = true;
+  }
 
   return status;
 }
@@ -318,6 +418,21 @@ svk_logic_module_details *SLATrackerSvc::getLogicDetails(
   }
   details = found->second;
   return details;
+}
+
+void SLATrackerSvc::clean_up(void) {
+  int rc;
+  if (this->th_data.thread_running) {
+    this->th_data.shutdown_bm_thread = true;
+    this->th_data.benchmarking_thread.join();
+
+    rc = cleanup_zmq(&this->th_data.zmq_context, &this->th_data.zmq_socket);
+    if (rc) {
+      std::cout << "Zero MQ Cleanup failed\n" << std::endl;
+    }
+
+    std::cout << "Cleanup publisher" << std::endl;
+  }
 }
 
 // Actual implementation of the feature module functions
@@ -408,6 +523,7 @@ extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
                "execute_sync function called with nullptr params");
     return SVK_STATUS_FAIL;
   }
+
   ptr = strstr((char *)input->input_buffer, "logic_module");
   if (ptr == nullptr) {
     svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR,
@@ -474,6 +590,8 @@ extern "C" svk_status clean_up(void *param) {
   }
   svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO,
              "clean_up returned successfully.");
+
+  g_slat_service->clean_up();
 
   return SVK_STATUS_SUCCESS;
 }

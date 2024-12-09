@@ -10,6 +10,7 @@ target_link_libraries(
   gmock_main
   svklogger
   svkslat
+  svkzmq
   dl
 )
 

@@ -9,6 +9,7 @@ add_library(${SVKSlatLib} SHARED ${SVKSlatLib_SRC})
 target_include_directories(${SVKSlatLib} PUBLIC ${INC_DIR})
 target_link_directories(${SVKSlatLib} PUBLIC ${SVKFW_LIBRARY_DIRS})
 target_link_libraries(${SVKSlatLib} PUBLIC svklogger)
+target_link_libraries(${SVKSlatLib} PUBLIC svkzmq)
 add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
 
 set_target_properties(${SVKSlatLib} PROPERTIES 

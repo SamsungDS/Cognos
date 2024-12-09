@@ -1,6 +1,6 @@
 {
   "slat": {
-    "logic_lib_dir": "/path/to/logic_lib",
+    "logic_lib_dir": "/slat/build/tests/sample_logic/src/",
     "logger": {
       "log_level": "INFO",
       "log_file_name": "/var/log/svk/slat.log",
