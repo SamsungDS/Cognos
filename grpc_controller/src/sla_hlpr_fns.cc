@@ -142,3 +142,128 @@ int SLADeviceHelper::SetSLADataForApp(std::string app_name,
   this->app_device_data[app_name] = app_device_data;
   return 0;
 }
+
+bool SLAStatsManager::addSLADataEntry(const std::string& app_name,
+                                      const std::string& host_name,
+                                      const std::string& device_name,
+                                      svk_slat_logic_output data) {
+  std::string logger_str;
+  auto key = std::make_tuple(app_name, host_name, device_name);
+  if (stats.find(key) != stats.end()) {
+    logger_str =
+        "SLA stats with given app_name/host_name/device_name exists already. "
+        "Will attempt to update entry.";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
+    return this->updateSLAData(app_name, host_name, device_name, data);
+  }
+  stats[key] = data;
+  return true;
+}
+
+svk_slat_logic_output SLAStatsManager::getSLAData(
+    const std::string& app_name, const std::string& host_name,
+    const std::string& device_name) {
+  auto key = std::make_tuple(app_name, host_name, device_name);
+  auto it = stats.find(key);
+  if (it != stats.end()) {
+    return it->second;
+  } else {
+    throw std::runtime_error("SLA data not found for given tuple.");
+  }
+}
+
+bool SLAStatsManager::updateSLAData(const std::string& app_name,
+                                    const std::string& host_name,
+                                    const std::string& device_name,
+                                    svk_slat_logic_output data) {
+  std::string logger_str;
+  auto key = std::make_tuple(app_name, host_name, device_name);
+  if (stats.find(key) == stats.end()) {
+    logger_str = "Unable to find entry for " + app_name + ", " + host_name +
+                 ", " + device_name + ". Could not update SLA stats.";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    return false;
+  }
+  stats[key] = data;
+  return true;
+}
+
+std::map<std::tuple<std::string, std::string, std::string>,
+         svk_slat_logic_output>
+SLAStatsManager::searchSLAData(const std::string& name) {
+  std::map<std::tuple<std::string, std::string, std::string>,
+           svk_slat_logic_output>
+      results;
+  for (const auto& [key, value] : stats) {
+    const auto& [k1, k2, k3] = key;
+    if (k1 == name || k2 == name || k3 == name) {
+      results[key] = value;
+    }
+  }
+  if (results.size() == 0) {
+    std::string logger_str = "No SLA data found for the given name.";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
+  }
+  return results;
+}
+
+bool SLAStatsManager::writeToFile(const std::string& filename) {
+  std::ofstream outfile(filename);
+  std::string logger_str =
+      "SLA stats file was unabled to be opened for writing.";
+  if (!outfile.is_open()) {
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    return false;
+  }
+  for (const auto& [key, val] : stats) {
+    // Write SLA data as bytes
+    outfile.write((char*)&val, sizeof(svk_slat_logic_output));
+    if (!outfile) {
+      logger_str = "Error while writing SLA stats to file.";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                 logger_str.c_str());
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool SLAStatsManager::readFromFile(const std::string& filename) {
+  std::ifstream infile(filename, std::ios::binary);
+  if (!infile.is_open()) {
+    std::string logger_str =
+        "SLA stats file was unabled to be opened for reading.";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    return false;
+  }
+  std::map<std::tuple<std::string, std::string, std::string>,
+           svk_slat_logic_output>
+      new_stats;
+  while (infile.peek() != EOF) {
+    try {
+      // Read SLA data as bytes
+      svk_slat_logic_output data;
+      infile.read((char*)&data, sizeof(svk_slat_logic_output));
+
+      std::string app_name(data.app_name);
+      std::string host_name(data.host_name);
+      std::string device_name(data.device_name);
+
+      new_stats[std::make_tuple(app_name, host_name, device_name)] = data;
+    } catch (std::exception& e) {
+      std::string exc = e.what();
+      std::string logger_str = "Error while reading SLA stats file: " + exc;
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                 logger_str.c_str());
+      return false;
+    }
+  }
+  stats = new_stats;
+  return true;
+}
