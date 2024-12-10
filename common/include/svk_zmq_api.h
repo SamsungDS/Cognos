@@ -20,8 +20,8 @@ extern "C" {
 typedef struct {
   char host_name[64];
   char app_name[64];
-  char device_name[64];
-  uint64_t avgLatencyus;
+  char device_name[64];   // This may contain just numa of device
+  uint64_t avgLatencyns;  // Latency in nanoseconds
   uint64_t iops;
   uint64_t bandwidthGBps;
   uint64_t avgReadLatency;
@@ -29,7 +29,7 @@ typedef struct {
   uint64_t avgUpdateLatency;
   uint64_t avgReadIOPS;
   uint64_t avgWriteIOPS;
-  uint64_t avgP99Latency;  // TBD
+  uint64_t avgP99Latency;
   uint64_t ioBytesRead;
   uint64_t ioBytesWritten;
   uint64_t ioBytesRewrite;
