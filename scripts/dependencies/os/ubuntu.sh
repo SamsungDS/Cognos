@@ -16,6 +16,7 @@ install_packages() {
         libfmt-dev
         libspdlog-dev
         libzmq3-dev
+        pkg-config
         python3-virtualenv
         tar
         unzip
