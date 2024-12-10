@@ -49,16 +49,15 @@ std::string runMlc(
         restream >> lat_precision;
 
         double latency_result = std::atof(lat_res.c_str());
-        if (lat_precision == "ns") {
-          latency_result /= 1000;
-        } else if (lat_precision != "us") {
+
+        if (lat_precision != "ns") {
           std::cout << "unknown latency precision detected [" + lat_precision +
                            "]" + lat_res
                     << std::endl;
           return "status=failed";
         }
-        rinfo.output = "status=success;average_latency_us=" +
-                       std::to_string(latency_result);
+        rinfo.output =
+            "status=success;avgReadLatency=" + std::to_string(latency_result);
       }
     }
   } else {

@@ -3,7 +3,7 @@ set(SVKSlatMlcLogicLib "svkslatmlclogic")
 
 set(SVKSlatLogicLib_LIB_DEST "lib64/")
 
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/../deps/mlc/Linux/mlc /usr/svk/slat/logic/mlc/deps/mlc/Linux/mlc)
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/../deps/mlc/Linux/mlc DESTINATION /usr/svk/slat/logic/mlc/deps/mlc/Linux/)
 add_library(${SVKSlatMlcLogicLib} SHARED ${SVKSlatMlcLogicLib_SRC})
 target_link_directories(${SVKSlatMlcLogicLib} PUBLIC ${SVKFW_LIBRARY_DIRS})
 target_link_libraries(${SVKSlatMlcLogicLib} PUBLIC svklogger)

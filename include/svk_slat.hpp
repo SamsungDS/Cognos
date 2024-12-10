@@ -54,6 +54,7 @@ using slat_config = struct slat_config {
   int log_file_count;
   uint64_t log_file_size;
   bool enable_bg_thread;
+  int64_t benchmark_run_interval;
 };
 using slat_thread_data = struct slat_thread_data_s {
   std::thread benchmarking_thread;
@@ -65,6 +66,7 @@ using slat_thread_data = struct slat_thread_data_s {
 
   svk_slat_logic_output benchmark_data;
   std::vector<slat_benchmark_config> benchmark_list;
+  int64_t benchmark_run_interval;
 };
 
 using device_name_str = std::string;
@@ -85,6 +87,8 @@ class SLATrackerSvc {
   svk_status initialize_logger(const slat_config config) const;
   svk_status load_logic_modules(const std::string &logic_modules_lib_dir) const;
   void benchmarking_thread_fn(void);
+  std::string run_benchmark(slat_benchmark_config config);
+  void parse_result(slat_benchmark_config config, std::string result);
 
  public:
   // In order to comply with Rule-of-Zero, manage class init and deletion

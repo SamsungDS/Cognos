@@ -20,7 +20,7 @@ const std::unique_ptr<SLATrackerSvc> g_slat_service =
 
 #define LOGIC_OUT_BUFFER_LEN (256)
 /* Private SLATrackerSvc helper methods */
-std::string run_benchmark(slat_benchmark_config config) {
+std::string SLATrackerSvc::run_benchmark(slat_benchmark_config config) {
   svk_status status;
 
   svk_logic_module_details *details;
@@ -62,18 +62,44 @@ std::string run_benchmark(slat_benchmark_config config) {
   }
 }
 
-void parse_result(slat_benchmark_config config, std::string result) {
+void SLATrackerSvc::parse_result(slat_benchmark_config config,
+                                 std::string result) {
+  char *ptr = nullptr;
+  char parsed_result[LOGIC_OUT_BUFFER_LEN];
   if (config.benchmark_tool == "mlc") {
+    ptr = strstr((char *)result.c_str(), "avgReadLatency");
+    if (ptr == nullptr) {
+      std::cout << "Error parsing result" << std::endl;
+      return;
+    }
+    sscanf(ptr, "logic_module=%[.0-9]", parsed_result);
+    uint64_t avgReadLatency = atof(parsed_result);
+    this->th_data.benchmark_data.avgReadLatency = avgReadLatency;
   }
 }
+
 void SLATrackerSvc::benchmarking_thread_fn(void) {
   std::string benchmark_result_str;
+  int rc;
+
   std::cout << "Started benchmarking thread" << std::endl;
   while (1) {
     for (slat_benchmark_config bconfig : this->th_data.benchmark_list) {
       benchmark_result_str = run_benchmark(bconfig);
+      parse_result(bconfig, benchmark_result_str);
     }
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    rc = publish(&this->th_data.zmq_socket,
+                 "DEVICE_SLA:", &this->th_data.benchmark_data);
+    if (rc == -1) {
+      std::cout << " failed to publish sla results" << std::endl;
+    }
+
+    std::cout << "Benchmark thread sleeping for "
+              << this->th_data.benchmark_run_interval << " seconds"
+              << std::endl;
+    std::this_thread::sleep_for(
+        std::chrono::seconds(this->th_data.benchmark_run_interval));
     if (this->th_data.shutdown_bm_thread) {
       break;
     }
@@ -104,6 +130,13 @@ svk_status SLATrackerSvc::read_slat_config_file(
       }
     } catch (std::exception &e) {
       config->enable_bg_thread = true;
+    }
+    try {
+      std::string benchmark_run_interval =
+          slat_config_pt.get<std::string>("benchmark_run_interval");
+      config->benchmark_run_interval = atoi(benchmark_run_interval.c_str());
+    } catch (std::exception &e) {
+      config->benchmark_run_interval = 10;  // 10 Seconds
     }
     try {
       pt::ptree logger_info_pt = slat_config_pt.get_child("logger");
@@ -381,6 +414,8 @@ svk_status SLATrackerSvc::Initialize(const char *slat_config_file) {
 
   if (config.enable_bg_thread) {
     int rc;
+
+    this->th_data.benchmark_run_interval = config.benchmark_run_interval;
 
     rc = initialize_pub(&this->th_data.zmq_context, &this->th_data.zmq_socket,
                         "0", "5555");
