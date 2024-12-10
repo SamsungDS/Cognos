@@ -360,3 +360,162 @@ TEST(InitIntegrationTest, ProcessControllerCommandWithoutNodeRegistration) {
   ASSERT_EQ(status.ok(), false);
   unlink(conf_file.c_str());
 }
+
+TEST(InitIntegrationTest, ProcessControllerCommandForAllocateMemoryFailure) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  Servicer *svcr(new Servicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  svk::CommandRequest req;
+  svk::CommandResponse *resp = new (svk::CommandResponse);
+  req.set_cluster_id(DEFAULT_CLUSTER_ID);
+  req.set_command_id("allocate_memory");
+  req.set_feature_params("sla_latency_ns=10;app_name=TestApp;size=1024");
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status status = client.ProcessControllerCommand(&req, resp);
+  ASSERT_EQ(status.ok(), false);
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest, ProcessControllerCommandForAllocateMemoryFailure1) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  Servicer *svcr(new Servicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  svk::CommandRequest req;
+  svk::CommandResponse *resp = new (svk::CommandResponse);
+  req.set_cluster_id(DEFAULT_CLUSTER_ID);
+  req.set_command_id("allocate_memory");
+  req.set_feature_params("sla_latency_ns=10");
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status status = client.ProcessControllerCommand(&req, resp);
+  ASSERT_EQ(status.ok(), false);
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest, ProcessControllerCommandForAllocateMemoryFailure2) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  Servicer *svcr(new Servicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  svk::CommandRequest req;
+  svk::CommandResponse *resp = new (svk::CommandResponse);
+  req.set_cluster_id(DEFAULT_CLUSTER_ID);
+  req.set_command_id("allocate_memory");
+  req.set_feature_params("app_name=TestApp");
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status status = client.ProcessControllerCommand(&req, resp);
+  ASSERT_EQ(status.ok(), false);
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest, ProcessControllerCommandForAllocateMemoryFailure3) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  Servicer *svcr(new Servicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  svk::CommandRequest req;
+  svk::CommandResponse *resp = new (svk::CommandResponse);
+  req.set_cluster_id(DEFAULT_CLUSTER_ID);
+  req.set_command_id("allocate_memory");
+  req.set_feature_params("size=100");
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status status = client.ProcessControllerCommand(&req, resp);
+  ASSERT_EQ(status.ok(), false);
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest,
+     ProcessControllerCommandForAllocateMemoryFailure4WithZeroDevicesSLAMet) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  Servicer *svcr(new Servicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  svk::CommandRequest req;
+  svk::CommandResponse *resp = new (svk::CommandResponse);
+  req.set_cluster_id(DEFAULT_CLUSTER_ID);
+  req.set_command_id("allocate_memory");
+  req.set_feature_params("sla_latency_ns=1;app_name=TestApp;size=1024");
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status status = client.ProcessControllerCommand(&req, resp);
+  ASSERT_EQ(status.ok(), false);
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest,
+     ProcessControllerCommandForAllocateMemoryFailure5WithLogicModule) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  Servicer *svcr(new Servicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  svk::CommandRequest req;
+  svk::CommandResponse *resp = new (svk::CommandResponse);
+  req.set_cluster_id(DEFAULT_CLUSTER_ID);
+  req.set_command_id("allocate_memory");
+  req.set_feature_params(
+      "sla_latency_ns=10;app_name=TestApp;size=1024;logic_module=default");
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status status = client.ProcessControllerCommand(&req, resp);
+  ASSERT_EQ(status.ok(), false);
+  unlink(conf_file.c_str());
+}

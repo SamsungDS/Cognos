@@ -53,6 +53,9 @@ class ControllerServicer : public svk::Controller::Service {
   Status ListClusterNodes(ServerContext *ctxt,
                           const svk::ListClusterCommandRequest *req,
                           svk::ListClusterCommandResponse *resp) override;
+  Status ProcessAllocateMemory(const svk::CommandRequest *req,
+                               svk::CommandResponse *resp);
+
   const std::string &get_svk_config_controller_id() {
     return m_svk_config.controller_id;
   };

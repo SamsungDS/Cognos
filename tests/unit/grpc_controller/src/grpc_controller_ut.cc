@@ -46,7 +46,7 @@ int create_svk_mgmt_fw_conf_json(std::string conf_file,
 
 int create_device_sla_conf_json() {
   char command[256];
-  char data[256];
+  char data[1024];
   FILE *fp;
   struct stat fstat;
 
@@ -61,7 +61,7 @@ int create_device_sla_conf_json() {
   strcpy(data,
          "[{\"type\": \"FM_DIRECT_CMMD\",\"Devices\": [{\"dev_name\": "
          "\"DEV1-256G\",\"dev_size\": \"274877906944\",\"dev_numa\": "
-         "0,\"sla_avg_latency_us\": 10}]}]");
+         "0,\"sla_avg_latency_ns\": 10, \"node_name\": \"localhost\"}]}]");
   fp = fopen(SLA_CONFIG_FILE, "w+");
   if (fp == NULL) {
     return -1;
@@ -727,4 +727,109 @@ TEST_F(MockTestController, ListClusterNodesWithInvalidClusterID) {
   l_req.set_cluster_id(cluster_id_1);
   grpc_status = client.ListClusterNodes(&l_req, &l_resp);
   ASSERT_EQ(grpc_status.ok(), false);
+}
+
+TEST(SLAFunction, DeviceSLAHelperFunctionFailure) {
+  FILE *fp = nullptr;
+  fp = fopen("test.conf", "w+");
+  fclose(fp);
+  SLADeviceHelper device_hlpr_class = SLADeviceHelper("test.conf");
+  int status = device_hlpr_class.GetDeviceInfo("localhost", "9998");
+  ASSERT_EQ(status, -1);
+}
+
+TEST(SLAFunction, DeviceSLAHelperFunctionSuccess) {
+  FILE *fp = nullptr;
+  char data[1024];
+
+  memset(data, 0, sizeof(data));
+  strcpy(data,
+         "[{\"type\": \"FM_DIRECT_CMMD\",\"Devices\": [{\"dev_name\": "
+         "\"DEV1-256G\",\"dev_size\": \"274877906944\",\"dev_numa\": "
+         "0,\"sla_avg_latency_ns\": 10, \"node_name\": \"localhost\"}]}]");
+  fp = fopen("test.conf", "w+");
+  fwrite((void *)&data[0], strlen(data), 1, fp);
+  fclose(fp);
+
+  SLADeviceHelper device_hlpr_class = SLADeviceHelper("test.conf");
+  int status = device_hlpr_class.GetDeviceInfo("localhost", "9998");
+  ASSERT_EQ(status, 0);
+}
+
+TEST(SLAFunction, DeviceSLAHelperGetDeviceForAppRequirements) {
+  FILE *fp = nullptr;
+  char data[1024];
+  std::vector<DeviceInfo> devices;
+
+  memset(data, 0, sizeof(data));
+  strcpy(data,
+         "[{\"type\": \"FM_DIRECT_CMMD\",\"Devices\": [{\"dev_name\": "
+         "\"DEV1-256G\",\"dev_size\": \"274877906944\",\"dev_numa\": "
+         "0,\"sla_avg_latency_ns\": 10, \"node_name\": \"localhost\"}]}]");
+  fp = fopen("test.conf", "w+");
+  fwrite((void *)&data[0], strlen(data), 1, fp);
+  fclose(fp);
+
+  SLADeviceHelper device_hlpr_class = SLADeviceHelper("test.conf");
+  int status = device_hlpr_class.GetDeviceInfo("localhost", "9998");
+
+  status = device_hlpr_class.GetDeviceForAppRequirements(50, 100, devices);
+
+  ASSERT_EQ(status, 0);
+  ASSERT_EQ(devices.size(), 1);
+}
+
+TEST(SLAFunction, DeviceSLAHelperGetDeviceForAppRequirementsNotMet) {
+  FILE *fp = nullptr;
+  char data[1024];
+  std::vector<DeviceInfo> devices;
+
+  memset(data, 0, sizeof(data));
+  strcpy(data,
+         "[{\"type\": \"FM_DIRECT_CMMD\",\"Devices\": [{\"dev_name\": "
+         "\"DEV1-256G\",\"dev_size\": \"274877906944\",\"dev_numa\": "
+         "0,\"sla_avg_latency_ns\": 10, \"node_name\": \"localhost\"}]}]");
+  fp = fopen("test.conf", "w+");
+  fwrite((void *)&data[0], strlen(data), 1, fp);
+  fclose(fp);
+
+  SLADeviceHelper device_hlpr_class = SLADeviceHelper("test.conf");
+  int status = device_hlpr_class.GetDeviceInfo("localhost", "9998");
+  ASSERT_EQ(status, 0);
+
+  status = device_hlpr_class.GetDeviceForAppRequirements(5, 100, devices);
+
+  ASSERT_EQ(status, -1);
+  ASSERT_EQ(devices.size(), 0);
+}
+
+TEST(SLAFunction, DeviceSLAHelperGetDeviceForAppRequirementsAndUpdate) {
+  FILE *fp = nullptr;
+  char data[1024];
+  std::vector<DeviceInfo> devices;
+  App_Device_List dev_data;
+
+  memset(data, 0, sizeof(data));
+  strcpy(data,
+         "[{\"type\": \"FM_DIRECT_CMMD\",\"Devices\": [{\"dev_name\": "
+         "\"DEV1-256G\",\"dev_size\": \"274877906944\",\"dev_numa\": "
+         "0,\"sla_avg_latency_ns\": 10, \"node_name\": \"localhost\"}]}]");
+  fp = fopen("test.conf", "w+");
+  fwrite((void *)&data[0], strlen(data), 1, fp);
+  fclose(fp);
+
+  SLADeviceHelper device_hlpr_class = SLADeviceHelper("test.conf");
+  int status = device_hlpr_class.GetDeviceInfo("localhost", "9998");
+  ASSERT_EQ(status, 0);
+
+  status = device_hlpr_class.GetDeviceForAppRequirements(50, 100, devices);
+
+  ASSERT_EQ(status, 0);
+  ASSERT_EQ(devices.size(), 1);
+
+  dev_data.appLatencyns = 50;
+  dev_data.device_info = devices;
+
+  status = device_hlpr_class.SetSLADataForApp("TestingApp", dev_data);
+  ASSERT_EQ(status, 0);
 }
