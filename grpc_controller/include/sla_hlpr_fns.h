@@ -32,7 +32,7 @@ typedef struct {
 } svk_slat_logic_output;
 
 typedef struct {
-  uint64_t avg_latency_us;
+  uint64_t avg_latency_ns;  // Device Latency in nanoseconds
   uint64_t p99_latency;
   uint64_t io_per_sec;
   uint64_t bw_per_sec;
@@ -41,6 +41,7 @@ typedef struct {
 } DeviceQOS;
 
 typedef struct DeviceInfo_T {
+  std::string node_name;
   std::string device_name;
   std::string device_type;
   uint64_t total_capacity;
@@ -49,25 +50,30 @@ typedef struct DeviceInfo_T {
   uint64_t numa;
   DeviceQOS device_qos;
   svk_slat_logic_output stats;
+  bool free_flag;
 } DeviceInfo;
 
-typedef struct SLA_Data_T {
-  std::string host_name;
-  std::string port;
-  uint64_t appLatencyus;
-  std::vector<DeviceInfo> device_info;
-} SLA_Data;
+typedef struct {
+  uint64_t appLatencyns;
+  uint64_t size;
+  std::vector<DeviceInfo> device_info;  // Array of pointers pointing to the
+                                        // devices in the device_info array
+} App_Device_List;
 
 class SLADeviceHelper {
  public:
-  SLADeviceHelper(){};
+  SLADeviceHelper(std::string config_file);
   int GetDeviceInfo(std::string node_name, std::string port);
+  int GetDeviceForAppRequirements(uint64_t sla_latency_ns, uint64_t size,
+                                  std::vector<DeviceInfo> &devices);
+  int SetSLADataForApp(std::string app_name, App_Device_List sla_data);
   ~SLADeviceHelper(){};
 
  private:
+  std::string config_file;
   std::vector<DeviceInfo> device_info;
   // unordered map with app_name and the SLA data
-  std::unordered_map<std::string, SLA_Data> sla_data;
+  std::unordered_map<std::string, App_Device_List> app_device_data;
 };
 
 #endif /* __SLA_HLPR_FNS_H__ */

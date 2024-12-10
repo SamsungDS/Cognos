@@ -16,7 +16,7 @@ using namespace svk;
 std::atomic<int> gSignalStatus = -1;
 
 const std::unique_ptr<SLADeviceHelper> g_sla_device_hlpr =
-    std::make_unique<SLADeviceHelper>();
+    std::make_unique<SLADeviceHelper>(SLA_CONFIG_FILE);
 
 int tokenize(std::string node_id_list, std::set<std::string> &tokens) {
   int count = 0;
@@ -273,15 +273,133 @@ Status ControllerServicer::UnregisterNode(ServerContext *ctxt,
   return Status::OK;
 }
 
+Status ControllerServicer::ProcessAllocateMemory(const svk::CommandRequest *req,
+                                                 svk::CommandResponse *resp) {
+  Status cmd_status;
+  svk::CommandRequest req_node;
+  svk::CommandResponse resp_node;
+  std::string logger_str;
+  std::string feature_params;
+
+  feature_params = req->feature_params();
+
+  char *ptr_sla = strstr((char *)feature_params.c_str(), "sla_latency_ns");
+  char *ptr_app = strstr((char *)feature_params.c_str(), "app_name");
+  char *ptr_size = strstr((char *)feature_params.c_str(), "size");
+  char *ptr_logicmod = strstr((char *)feature_params.c_str(), "logic_module");
+  if (ptr_sla == nullptr || ptr_app == nullptr || ptr_size == nullptr) {
+    logger_str =
+        "ProcessControllerCommand called for allocate_memory without "
+        "sla_latency_ns, size, logic_module or app_name in params";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    return Status(grpc::INVALID_ARGUMENT, "invalid feature params");
+  }
+
+  uint64_t sla_latency_ns;
+  uint64_t size;
+  char app_name[128];
+  char logic_module[128];
+  std::vector<DeviceInfo> app_devices;
+  int status;
+  sscanf(ptr_sla, "sla_latency_ns=%lu", &sla_latency_ns);
+  sscanf(ptr_app, "app_name=%[a-zA-Z0-9]", &app_name[0]);
+  if (ptr_logicmod) {
+    sscanf(ptr_logicmod, "logic_module=%[a-zA-Z0-9]", &logic_module[0]);
+  }
+  sscanf(ptr_size, "size=%lu", &size);
+  status = g_sla_device_hlpr->GetDeviceForAppRequirements(sla_latency_ns, size,
+                                                          app_devices);
+  if (status != 0) {
+    logger_str =
+        "ProcessControllerCommand allocate_memory failed in getting devices "
+        "for the given SLA";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    return Status(grpc::INVALID_ARGUMENT, "devices not met SLA");
+  }
+
+  for (auto itr = m_cluster_map[req->cluster_id()].begin();
+       itr != m_cluster_map[req->cluster_id()].end(); ++itr) {
+    std::string device_names = "";
+    std::string device_latency_str = "";
+    std::string node_name;
+    std::string port;
+    logger_str = "Checking for devices in the node " + itr->first +
+                 " in the cluster " + req->cluster_id();
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
+
+    node_name = itr->first;
+    port = itr->second;
+
+    for (auto dev : app_devices) {
+      if (dev.node_name == node_name) {
+        if (device_names.length() == 0) {
+          device_names = "devices=" + std::to_string(dev.numa);
+          device_latency_str = "device_sla_latency_ns=" +
+                               std::to_string(dev.device_qos.avg_latency_ns);
+        } else {
+          device_names += "," + std::to_string(dev.numa);
+          device_latency_str +=
+              "," + std::to_string(dev.device_qos.avg_latency_ns);
+        }
+      }
+    }
+
+    if (device_names.length() != 0) {
+      req_node.set_node_id(node_name);
+      req_node.set_feature_id(feature_id::SLA_TRACKER);
+      feature_params = "app_name=" + std::string(app_name) + ";" +
+                       "app_sla_latency_ns=" + std::to_string(sla_latency_ns) +
+                       ";" + device_names + ";" + device_latency_str +
+                       ";host_name=" + node_name;
+      if (ptr_logicmod) {
+        feature_params += ";logic_module=" + std::string(logic_module);
+      }
+      req_node.set_feature_params(feature_params);
+      logger_str = "Command with feature_params " + feature_params +
+                   " is passed to node " + node_name;
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                 logger_str.c_str());
+
+      Client client(node_name, port);
+      cmd_status = client.ProcessNodeCommand(&req_node, &resp_node);
+      if (cmd_status.ok() == true) {
+        CommandResponse_NodeResponse *response = resp->add_node_responses();
+        response->set_output(resp_node.node_responses(0).output());
+        response->set_node_id(resp_node.node_responses(0).node_id());
+      } else {
+        // If one of the nodes return failure for whatever reason, we are
+        // returning error for the whole cluster. Need to handle partial
+        // failures accordingly
+        return cmd_status;
+      }
+    }
+  }
+
+  App_Device_List app_device_data;
+  app_device_data.appLatencyns = sla_latency_ns;
+  app_device_data.size = size;
+  for (auto dev : app_devices) {
+    app_device_data.device_info.push_back(dev);
+  }
+  g_sla_device_hlpr->SetSLADataForApp(app_name, app_device_data);
+
+  return Status::OK;
+}
+
 Status ControllerServicer::ProcessControllerCommand(
     ServerContext *ctxt, const svk::CommandRequest *req,
     svk::CommandResponse *resp) {
   Status status;
   svk::CommandRequest req_node;
   svk::CommandResponse resp_node;
+  std::string logger_str;
+  std::string feature_params;
+  uint64_t feature_id;
 
   if (req->cluster_id().length() == 0 || req->feature_params().length() == 0) {
-    std::string logger_str;
     logger_str = "ProcessControllerCommand called for feature_id <" +
                  std::to_string(req->feature_id()) + "> with params <" +
                  req->feature_params() + "> on nodes <" + req->node_id() +
@@ -294,7 +412,6 @@ Status ControllerServicer::ProcessControllerCommand(
   }
 
   if (m_cluster_map[req->cluster_id()].size() == 0) {
-    std::string logger_str;
     logger_str = "ProcessControllerCommand called for cluster_id " +
                  req->cluster_id() + " not found";
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
@@ -310,7 +427,6 @@ Status ControllerServicer::ProcessControllerCommand(
     for (auto itr = nodes.begin(); itr != nodes.end(); ++itr) {
       if (m_cluster_map[req->cluster_id()].find(*itr) ==
           m_cluster_map[req->cluster_id()].end()) {
-        std::string logger_str;
         logger_str = "ProcessControllerCommand called for node_id " + *itr +
                      "is not part of cluster_id " + req->cluster_id();
         svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
@@ -320,12 +436,24 @@ Status ControllerServicer::ProcessControllerCommand(
     }
   }
 
+  feature_id = req->feature_id();
+  feature_params = req->feature_params();
+
+  if (req->command_id().size() != 0) {
+    if (req->command_id() == "allocate_memory") {
+      status = ProcessAllocateMemory(req, resp);
+      return status;
+    }
+  }
+
   for (auto itr = m_cluster_map[req->cluster_id()].begin();
        itr != m_cluster_map[req->cluster_id()].end(); ++itr) {
-    if (count && nodes.find(itr->first) == nodes.end()) continue;
+    if (count && nodes.find(itr->first) == nodes.end()) {
+      continue;
+    }
     req_node.set_node_id(itr->first);
-    req_node.set_feature_id(req->feature_id());
-    req_node.set_feature_params(req->feature_params());
+    req_node.set_feature_id(feature_id);
+    req_node.set_feature_params(feature_params);
     Client client(itr->first, m_cluster_map[req->cluster_id()][itr->first]);
     status = client.ProcessNodeCommand(&req_node, &resp_node);
     if (status.ok() == true) {
