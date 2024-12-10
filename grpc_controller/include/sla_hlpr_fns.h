@@ -12,24 +12,10 @@
 #include "grpc_controller.h"
 #include "grpc_hdr.h"
 #include "svk_logger.h"
+#include "svk_zmq_api.h"
 
 #define SLA_CONFIG_DIR "/usr/local/svk/mgmt-fw/config/"
 #define SLA_CONFIG_FILE SLA_CONFIG_DIR "/device_sla_config.json"
-
-typedef struct {
-  uint64_t avgLatencyus;
-  uint64_t iops;
-  uint64_t bandwidthGBps;
-  uint64_t avgReadLatency;
-  uint64_t avgWriteLatency;
-  uint64_t avgUpdateLatency;
-  uint64_t avgReadIOPS;
-  uint64_t avgWriteIOPS;
-  uint64_t avgP99Latency;  // TBD
-  uint64_t ioBytesRead;
-  uint64_t ioBytesWritten;
-  uint64_t ioBytesRewrite;
-} svk_slat_logic_output;
 
 typedef struct {
   uint64_t avg_latency_ns;  // Device Latency in nanoseconds
@@ -65,7 +51,7 @@ class SLADeviceHelper {
   SLADeviceHelper(std::string config_file);
   int GetDeviceInfo(std::string node_name, std::string port);
   int GetDeviceForAppRequirements(uint64_t sla_latency_ns, uint64_t size,
-                                  std::vector<DeviceInfo> &devices);
+                                  std::vector<DeviceInfo>& devices);
   int SetSLADataForApp(std::string app_name, App_Device_List sla_data);
   ~SLADeviceHelper(){};
 
@@ -74,6 +60,34 @@ class SLADeviceHelper {
   std::vector<DeviceInfo> device_info;
   // unordered map with app_name and the SLA data
   std::unordered_map<std::string, App_Device_List> app_device_data;
+};
+
+class SLAStatsManager {
+ public:
+  SLAStatsManager(){};
+  ~SLAStatsManager(){};
+  bool addSLADataEntry(const std::string& app_name,
+                       const std::string& host_name,
+                       const std::string& device_name,
+                       svk_slat_logic_output data);
+  // Get data based on specific tuple
+  svk_slat_logic_output getSLAData(const std::string& app_name,
+                                   const std::string& host_name,
+                                   const std::string& device_name);
+  bool updateSLAData(const std::string& app_name, const std::string& host_name,
+                     const std::string& device_name,
+                     svk_slat_logic_output data);
+  // Get all entries that include name in the tuple
+  std::map<std::tuple<std::string, std::string, std::string>,
+           svk_slat_logic_output>
+  searchSLAData(const std::string& name);
+  bool writeToFile(const std::string& filename);
+  bool readFromFile(const std::string& filename);
+
+ private:
+  std::map<std::tuple<std::string, std::string, std::string>,
+           svk_slat_logic_output>
+      stats;
 };
 
 #endif /* __SLA_HLPR_FNS_H__ */

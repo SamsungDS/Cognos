@@ -833,3 +833,249 @@ TEST(SLAFunction, DeviceSLAHelperGetDeviceForAppRequirementsAndUpdate) {
   status = device_hlpr_class.SetSLADataForApp("TestingApp", dev_data);
   ASSERT_EQ(status, 0);
 }
+
+TEST(SLAStatsManager, addEntryTest) {
+  SLAStatsManager mgr;
+  std::string app_name = "test_app";
+  std::string host_name = "test_host";
+  std::string device_name = "test_device";
+  svk_slat_logic_output data = {.host_name = "test_host",
+                                .app_name = "test_app",
+                                .device_name = "test_device",
+                                .avgLatencyns = 1,
+                                .iops = 1,
+                                .avgReadLatency = 1,
+                                .avgWriteLatency = 1,
+                                .avgUpdateLatency = 1,
+                                .avgReadIOPS = 1,
+                                .avgWriteIOPS = 1,
+                                .avgP99Latency = 1,
+                                .ioBytesRead = 1,
+                                .ioBytesWritten = 1,
+                                .ioBytesRewrite = 1};
+
+  bool rc = mgr.addSLADataEntry(app_name, host_name, device_name, data);
+  ASSERT_TRUE(rc);
+}
+
+TEST(SLAStatsManager, addDuplicateEntry) {
+  SLAStatsManager mgr;
+  std::string app_name = "test_app";
+  std::string host_name = "test_host";
+  std::string device_name = "test_device";
+  svk_slat_logic_output data = {.host_name = "test_host",
+                                .app_name = "test_app",
+                                .device_name = "test_device",
+                                .avgLatencyns = 1,
+                                .iops = 1,
+                                .avgReadLatency = 1,
+                                .avgWriteLatency = 1,
+                                .avgUpdateLatency = 1,
+                                .avgReadIOPS = 1,
+                                .avgWriteIOPS = 1,
+                                .avgP99Latency = 1,
+                                .ioBytesRead = 1,
+                                .ioBytesWritten = 1,
+                                .ioBytesRewrite = 1};
+
+  bool rc = mgr.addSLADataEntry(app_name, host_name, device_name, data);
+  ASSERT_TRUE(rc);
+  rc = mgr.addSLADataEntry(app_name, host_name, device_name, data);
+  ASSERT_TRUE(rc);
+}
+
+TEST(SLAStatsManager, getDataTest) {
+  SLAStatsManager mgr;
+  std::string app_name = "test_app";
+  std::string host_name = "test_host";
+  std::string device_name = "test_device";
+  svk_slat_logic_output data = {.host_name = "test_host",
+                                .app_name = "test_app",
+                                .device_name = "test_device",
+                                .avgLatencyns = 1,
+                                .iops = 1,
+                                .avgReadLatency = 1,
+                                .avgWriteLatency = 1,
+                                .avgUpdateLatency = 1,
+                                .avgReadIOPS = 1,
+                                .avgWriteIOPS = 1,
+                                .avgP99Latency = 1,
+                                .ioBytesRead = 1,
+                                .ioBytesWritten = 1,
+                                .ioBytesRewrite = 1};
+
+  bool rc = mgr.addSLADataEntry(app_name, host_name, device_name, data);
+  ASSERT_TRUE(rc);
+
+  svk_slat_logic_output stats =
+      mgr.getSLAData("test_app", "test_host", "test_device");
+  ASSERT_STREQ(data.host_name, stats.host_name);
+}
+
+TEST(SLAStatsManager, getDataFail) {
+  SLAStatsManager mgr;
+  EXPECT_THROW(mgr.getSLAData("test_app", "test_host", "test_device"),
+               std::runtime_error);
+}
+
+TEST(SLAStatsManager, updateDataTest) {
+  SLAStatsManager mgr;
+  std::string app_name = "test_app";
+  std::string host_name = "test_host";
+  std::string device_name = "test_device";
+  svk_slat_logic_output data = {.host_name = "test_host",
+                                .app_name = "test_app",
+                                .device_name = "test_device",
+                                .avgLatencyns = 1,
+                                .iops = 1,
+                                .avgReadLatency = 1,
+                                .avgWriteLatency = 1,
+                                .avgUpdateLatency = 1,
+                                .avgReadIOPS = 1,
+                                .avgWriteIOPS = 1,
+                                .avgP99Latency = 1,
+                                .ioBytesRead = 1,
+                                .ioBytesWritten = 1,
+                                .ioBytesRewrite = 1};
+
+  bool rc = mgr.addSLADataEntry(app_name, host_name, device_name, data);
+  ASSERT_TRUE(rc);
+
+  svk_slat_logic_output data2 = {.host_name = "test_host2",
+                                 .app_name = "test_app2",
+                                 .device_name = "test_device2",
+                                 .avgLatencyns = 1,
+                                 .iops = 1,
+                                 .avgReadLatency = 1,
+                                 .avgWriteLatency = 1,
+                                 .avgUpdateLatency = 1,
+                                 .avgReadIOPS = 1,
+                                 .avgWriteIOPS = 1,
+                                 .avgP99Latency = 1,  // TBD
+                                 .ioBytesRead = 1,
+                                 .ioBytesWritten = 1,
+                                 .ioBytesRewrite = 1};
+  rc = mgr.updateSLAData(app_name, host_name, device_name, data2);
+  ASSERT_TRUE(rc);
+
+  svk_slat_logic_output stats =
+      mgr.getSLAData(app_name, host_name, device_name);
+  ASSERT_STREQ(data2.host_name, stats.host_name);
+}
+
+TEST(SLAStatsManager, updateDataFail) {
+  SLAStatsManager mgr;
+  svk_slat_logic_output data;
+
+  bool rc = mgr.updateSLAData("test_app", "test_host", "test_device", data);
+  ASSERT_FALSE(rc);
+}
+
+TEST(SLAStatsManager, searchTest) {
+  SLAStatsManager mgr;
+  for (int x = 0; x < 5; x++) {
+    std::string app_name = "test_app";
+    std::string host_name = "test_host" + std::to_string(x);
+    std::string device_name = "test_device" + std::to_string(x);
+
+    svk_slat_logic_output data = {.host_name = "test_host",
+                                  .app_name = "test_app",
+                                  .device_name = "test_device",
+                                  .avgLatencyns = 1,
+                                  .iops = 1,
+                                  .avgReadLatency = 1,
+                                  .avgWriteLatency = 1,
+                                  .avgUpdateLatency = 1,
+                                  .avgReadIOPS = 1,
+                                  .avgWriteIOPS = 1,
+                                  .avgP99Latency = 1,
+                                  .ioBytesRead = 1,
+                                  .ioBytesWritten = 1,
+                                  .ioBytesRewrite = 1};
+
+    bool rc = mgr.addSLADataEntry(app_name, host_name, device_name, data);
+    ASSERT_TRUE(rc);
+  }
+  for (int x = 0; x < 3; x++) {
+    std::string app_name = "test_app2";
+    std::string host_name = "test_host" + std::to_string(x);
+    std::string device_name = "test_device" + std::to_string(x);
+    svk_slat_logic_output data = {.host_name = "test_host2",
+                                  .app_name = "test_app2",
+                                  .device_name = "test_device2",
+                                  .avgLatencyns = 1,
+                                  .iops = 1,
+                                  .avgReadLatency = 1,
+                                  .avgWriteLatency = 1,
+                                  .avgUpdateLatency = 1,
+                                  .avgReadIOPS = 1,
+                                  .avgWriteIOPS = 1,
+                                  .avgP99Latency = 1,
+                                  .ioBytesRead = 1,
+                                  .ioBytesWritten = 1,
+                                  .ioBytesRewrite = 1};
+
+    bool rc = mgr.addSLADataEntry(app_name, host_name, device_name, data);
+    ASSERT_TRUE(rc);
+  }
+
+  std::map<std::tuple<std::string, std::string, std::string>,
+           svk_slat_logic_output>
+      results;
+  results = mgr.searchSLAData("test_app");
+
+  ASSERT_EQ(5, results.size());
+}
+
+TEST(SLAStatsManager, searchFail) {
+  SLAStatsManager mgr;
+  std::map<std::tuple<std::string, std::string, std::string>,
+           svk_slat_logic_output>
+      results;
+  results = mgr.searchSLAData("test_app");
+  ASSERT_EQ(0, results.size());
+}
+
+TEST(SLAStatsManager, writeReadFile) {
+  SLAStatsManager mgr;
+  std::string app_name = "test_app";
+  std::string host_name = "test_host";
+  std::string device_name = "test_device";
+  svk_slat_logic_output data = {.host_name = "test_host",
+                                .app_name = "test_app",
+                                .device_name = "test_device",
+                                .avgLatencyns = 1,
+                                .iops = 1,
+                                .avgReadLatency = 1,
+                                .avgWriteLatency = 1,
+                                .avgUpdateLatency = 1,
+                                .avgReadIOPS = 1,
+                                .avgWriteIOPS = 1,
+                                .avgP99Latency = 1,
+                                .ioBytesRead = 1,
+                                .ioBytesWritten = 1,
+                                .ioBytesRewrite = 1};
+
+  bool rc = mgr.addSLADataEntry(app_name, host_name, device_name, data);
+  ASSERT_TRUE(rc);
+
+  rc = mgr.writeToFile("testfile.bin");
+  ASSERT_TRUE(rc);
+
+  SLAStatsManager mgr2;
+  rc = mgr2.readFromFile("testfile.bin");
+  ASSERT_TRUE(rc);
+
+  svk_slat_logic_output data2;
+  EXPECT_NO_THROW(data2 =
+                      mgr2.getSLAData("test_app", "test_host", "test_device"));
+  // data2 = mgr2.getSLAData("test_app", "test_host", "test_device");
+  ASSERT_STREQ(data.host_name, data2.host_name);
+}
+
+TEST(SLAStatsManager, readFileFail) {
+  SLAStatsManager mgr;
+
+  bool rc = mgr.readFromFile("badfile");
+  ASSERT_FALSE(rc);
+}
