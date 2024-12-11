@@ -33,14 +33,10 @@ std::string runMlc(
   std::string line;
 
   if (testType == "idle_latency") {
-    std::regex idle_lat_re("\\(([^)]+)\\)");
+    std::regex idle_lat_re("Each iteration.*\\(([^)]+)\\)");
     std::smatch idle_lat_match;
-    bool skipped_first_line = false;
     while (std::getline(outstream, line)) {
-      if (skipped_first_line == false) {
-        skipped_first_line = true;
-        continue;
-      }
+
       if (std::regex_search(line, idle_lat_match, idle_lat_re)) {
         std::istringstream restream(idle_lat_match[1].str());
         std::string lat_res;
