@@ -169,7 +169,7 @@ execute_tests() {
     export SVK_SLAT_SAMPLE_LOGIC_INVALID_FEATURE=No
     ./tests/sample_app/sample_app -p ./src/ -c ../tests/sample_app/conf/slat_config.json  -l ../tests/sample_app/conf/slat_logic_config.json
 
-    ./tests/sample_app/sample_app -p ./src/ -m MlcLogic -c ../tests/sample_app/conf/slat_mlc_config.json  -l ../tests/sample_app/conf/slat_logic_config.json
+    ./tests/sample_app/sample_app -p ./src/ -m MlcLogic -c ${BUILD_DIR}/slat_mlc_config.json  -l ../tests/sample_app/conf/slat_logic_config.json
     popd
   
     # Generate coverage reports and display results with summary to terminal
