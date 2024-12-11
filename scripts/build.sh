@@ -150,24 +150,23 @@ execute_tests() {
     ctest --output-junit "$REPORTS_DIR/gitlab_junit.xml" --test-dir "$TESTS_DIR"
 
     pushd "$BUILD_DIR"
-    sed -i "s;\"logic_lib_dir\": \"/path/to/logic_lib\",;\"logic_lib_dir\": \"${BUILD_DIR}/tests/sample_logic/src/\",;g" ../tests/sample_app/conf/slat_config.json
 
     # Simulate the get_supported_logic_details function failure in the sample logic code
     # These variables are consumed in sample_app as well as sample_logic
     export SVK_SLAT_SAMPLE_LOGIC_SUPPORT_FAIL=Fail
-    ./tests/sample_app/sample_app -p ./src/ -c ../tests/sample_app/conf/slat_config.json  -l ../tests/sample_app/conf/slat_logic_config.json
+    ./tests/sample_app/sample_app -p ./src/ -c ${BUILD_DIR}/slat_config.json  -l ../tests/sample_app/conf/slat_logic_config.json
 
     # Simulate the get_supported_logic_details function failure by returning invalid feature ID in the sample logic code
     # These variables are consumed in sample_app as well as sample_logic
     export SVK_SLAT_SAMPLE_LOGIC_SUPPORT_FAIL=No
     export SVK_SLAT_SAMPLE_LOGIC_INVALID_FEATURE=True
-    ./tests/sample_app/sample_app -p ./src/ -c ../tests/sample_app/conf/slat_config.json  -l ../tests/sample_app/conf/slat_logic_config.json
+    ./tests/sample_app/sample_app -p ./src/ -c ${BUILD_DIR}/slat_config.json  -l ../tests/sample_app/conf/slat_logic_config.json
 
     # Run the valid use-case of the sample app loading the sample logic and completing successfully
     # These variables are consumed in sample_app as well as sample_logic
     export SVK_SLAT_SAMPLE_LOGIC_SUPPORT_FAIL=No
     export SVK_SLAT_SAMPLE_LOGIC_INVALID_FEATURE=No
-    ./tests/sample_app/sample_app -p ./src/ -c ../tests/sample_app/conf/slat_config.json  -l ../tests/sample_app/conf/slat_logic_config.json
+    ./tests/sample_app/sample_app -p ./src/ -c ${BUILD_DIR}/slat_config.json  -l ../tests/sample_app/conf/slat_logic_config.json
 
     ./tests/sample_app/sample_app -p ./src/ -m MlcLogic -c ${BUILD_DIR}/slat_mlc_config.json  -l ../tests/sample_app/conf/slat_logic_config.json
     popd
