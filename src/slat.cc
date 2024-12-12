@@ -122,8 +122,10 @@ void SLATrackerSvc::add_pending_app_sla_monitoring(void) {
         cfg.device_numa_node = device_numa;
         cfg.device_sla_tolerance_percent = APP_DEFAULT_TOLERANCE_PERCENT;
         cfg.app_sla_list[app_name] = to_add.app_sla;
+
         std::cout << "Adding device " << device_numa << " and app " << app_name
                   << std::endl;
+        this->th_data.benchmark_device_config_list[device_numa] = cfg;
         continue;
       }
       std::cout << "Device already exist for " << device_numa
@@ -133,6 +135,7 @@ void SLATrackerSvc::add_pending_app_sla_monitoring(void) {
       cfg.app_sla_list[app_name] = to_add.app_sla;
     }
   }
+  this->th_data.benchmark_pending_list_to_add.clear();
   this->th_data.benchmark_pending_list_lock.unlock();
 }
 
@@ -266,7 +269,7 @@ svk_status SLATrackerSvc::parse_and_add_new_sla_monitor(
 
   std::cout << "Queued app sla for monitoring "
             << app_sla_to_add.app_sla.app_current_sla.app_name << std::endl;
-  return SVK_STATUS_FAIL;
+  return SVK_STATUS_SUCCESS;
 }
 
 svk_status SLATrackerSvc::read_slat_config_file(
