@@ -15,7 +15,8 @@ using ::testing::_;
 using ::testing::Return;
 using ::testing::StrEq;
 
-#define MOCK_STRUCT_INIT(...) {__VA_ARGS__}
+#define MOCK_STRUCT_INIT(...) \
+  { __VA_ARGS__ }
 
 #define DEFINE_RETURN_MOCK(fn, ret) \
   bool ut_##fn##_mocked = false;    \

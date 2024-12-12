@@ -3,8 +3,12 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <boost/algorithm/string.hpp>
+#include <boost/tokenizer.hpp>
 #include <iostream>
+#include <map>
 #include <memory>
+#include <ranges>
 
 #include "logic_interface/svk_logic_struct.h"
 #include "svk_logger.h"
@@ -12,7 +16,10 @@
 
 #define LOG_MSG_MAX_SIZE (1024)
 #define LIBRARY_SUFFIX ".so"
-using namespace std;
+
+#define APP_MAX_LEN (64)
+#define HOSTNAME_MAX_LEN (64)
+#define APP_DEFAULT_TOLERANCE_PERCENT (10)
 
 // Global variable to use for Framework service commands
 const std::unique_ptr<SLATrackerSvc> g_slat_service =
@@ -20,7 +27,7 @@ const std::unique_ptr<SLATrackerSvc> g_slat_service =
 
 #define LOGIC_OUT_BUFFER_LEN (256)
 /* Private SLATrackerSvc helper methods */
-std::string SLATrackerSvc::run_benchmark(slat_benchmark_config config) {
+std::string SLATrackerSvc::run_benchmark(slat_benchmark_config &config) {
   svk_status status;
 
   svk_logic_module_details *details;
@@ -32,6 +39,7 @@ std::string SLATrackerSvc::run_benchmark(slat_benchmark_config config) {
   logic_output.output_buffer = (uint8_t *)out;
   logic_output.output_len = LOGIC_OUT_BUFFER_LEN;
 
+  // TODO: Use NUMA node
   if (config.benchmark_tool == "mlc") {
     strncpy(logic_cmd.logic_name, "MlcLogic", 256);
 
@@ -62,37 +70,96 @@ std::string SLATrackerSvc::run_benchmark(slat_benchmark_config config) {
   }
 }
 
-void SLATrackerSvc::parse_result(slat_benchmark_config config,
+void SLATrackerSvc::parse_result(slat_benchmark_config &config,
                                  std::string result) {
   char *ptr = nullptr;
   char parsed_result[LOGIC_OUT_BUFFER_LEN];
   if (config.benchmark_tool == "mlc") {
-    ptr = strstr((char *)result.c_str(), "avgReadLatency");
+    ptr = strstr((char *)result.c_str(), "avgLatencyns");
     if (ptr == nullptr) {
       std::cout << "Error parsing result" << std::endl;
       return;
     }
-    sscanf(ptr, "logic_module=%[.0-9]", parsed_result);
+    sscanf(ptr, "avgLatencyns=%[.0-9]", parsed_result);
     uint64_t avgReadLatency = atof(parsed_result);
-    this->th_data.benchmark_data.avgReadLatency = avgReadLatency;
+    config.device_current_sla = avgReadLatency;
   }
+}
+
+void SLATrackerSvc::update_app_sla_with_device_sla(
+    slat_benchmark_config &config) {
+  for (auto &[app_name, app_sla_config] : config.app_sla_list) {
+    app_sla_config.app_current_sla.avgLatencyns = config.device_current_sla;
+  }
+}
+
+void SLATrackerSvc::publish_app_degraded_sla(slat_benchmark_config &config) {
+  int rc;
+
+  for (const auto &[app_name, app_sla_config] : config.app_sla_list) {
+    rc = publish(&this->th_data.zmq_socket, "APP_SLA_DEGRADED:",
+                 (svk_slat_logic_output *)&app_sla_config.app_current_sla);
+    if (rc == -1) {
+      std::cout << " failed to publish sla results" << std::endl;
+    }
+  }
+}
+
+void SLATrackerSvc::add_pending_app_sla_monitoring(void) {
+  this->th_data.benchmark_pending_list_lock.lock();
+  for (slat_app_benchmark_sla_to_add &to_add :
+       this->th_data.benchmark_pending_list_to_add) {
+    const std::string app_name = to_add.app_sla.app_current_sla.app_name;
+    for (const auto &device : to_add.device_sla_list) {
+      std::string device_numa = device.device_numa_node;
+      auto it = this->th_data.benchmark_device_config_list.find(device_numa);
+      if (it == this->th_data.benchmark_device_config_list.end()) {
+        slat_benchmark_config cfg = {};
+        cfg.benchmark_tool = "mlc";
+        cfg.benchmark_out_field = "avgLatencyns";
+        cfg.device_current_sla = 0;
+        cfg.device_advertised_sla = device.device_advertised_sla;
+        cfg.device_numa_node = device_numa;
+        cfg.device_sla_tolerance_percent = APP_DEFAULT_TOLERANCE_PERCENT;
+        cfg.app_sla_list[app_name] = to_add.app_sla;
+        std::cout << "Adding device " << device_numa << " and app " << app_name
+                  << std::endl;
+        continue;
+      }
+      std::cout << "Device already exist for " << device_numa
+                << "]. Updating for app " << app_name << std::endl;
+      slat_benchmark_config &cfg = it->second;
+      cfg.device_advertised_sla = device.device_advertised_sla;
+      cfg.app_sla_list[app_name] = to_add.app_sla;
+    }
+  }
+  this->th_data.benchmark_pending_list_lock.unlock();
 }
 
 void SLATrackerSvc::benchmarking_thread_fn(void) {
   std::string benchmark_result_str;
-  int rc;
 
   std::cout << "Started benchmarking thread" << std::endl;
   while (1) {
-    for (slat_benchmark_config bconfig : this->th_data.benchmark_list) {
-      benchmark_result_str = run_benchmark(bconfig);
-      parse_result(bconfig, benchmark_result_str);
-    }
+    this->add_pending_app_sla_monitoring();
 
-    rc = publish(&this->th_data.zmq_socket,
-                 "DEVICE_SLA:", &this->th_data.benchmark_data);
-    if (rc == -1) {
-      std::cout << " failed to publish sla results" << std::endl;
+    for (auto &[device_numa, device_benchmark_config] :
+         this->th_data.benchmark_device_config_list) {
+      benchmark_result_str = this->run_benchmark(device_benchmark_config);
+      this->parse_result(device_benchmark_config, benchmark_result_str);
+      this->update_app_sla_with_device_sla(device_benchmark_config);
+
+      if (device_benchmark_config.device_current_sla >
+          (device_benchmark_config.device_advertised_sla +
+           ((device_benchmark_config.device_advertised_sla *
+             device_benchmark_config.device_sla_tolerance_percent / 100)))) {
+        std::cout << "Detected App degraded SLA "
+                  << device_benchmark_config.device_current_sla << " > "
+                  << device_benchmark_config.device_sla_tolerance_percent
+                  << "% of " << device_benchmark_config.device_advertised_sla
+                  << std::endl;
+        this->publish_app_degraded_sla(device_benchmark_config);
+      }
     }
 
     std::cout << "Benchmark thread sleeping for "
@@ -105,6 +172,101 @@ void SLATrackerSvc::benchmarking_thread_fn(void) {
     }
   }
   return;
+}
+
+svk_status update_sla_details(
+    const std::map<std::string, std::string> &param_map, const char *key,
+    char *dest, unsigned int max_len) {
+  auto it = param_map.find(key);
+  if (it == param_map.end()) {
+    std::cout << key << " not found" << std::endl;
+    return SVK_STATUS_FAIL;
+  } else {
+    std::string value = it->second;
+    if (value.length() >= max_len) {
+      std::cout << key << " length greater than " << max_len << " not supported"
+                << std::endl;
+      return SVK_STATUS_FAIL;
+    }
+    strncpy(dest, value.c_str(), max_len);
+  }
+  return SVK_STATUS_SUCCESS;
+}
+
+svk_status SLATrackerSvc::parse_and_add_new_sla_monitor(
+    std::string sla_details) {
+  svk_status rc;
+  slat_app_benchmark_sla_to_add app_sla_to_add = {};
+
+  std::map<std::string, std::string> sla_kv_pairs;
+
+  boost::char_separator<char> sep(";");
+  boost::tokenizer<boost::char_separator<char>> tokens(sla_details, sep);
+
+  // app_name=TestApp;app_sla_latency_ns=10;devices=0;device_sla_latency_ns=10;host_name=localhost;logic_module=default
+  for (const auto &token : tokens) {
+    std::vector<std::string> params;
+    boost::split(params, token, boost::is_any_of("="));
+    if (params.size() != 2) {
+      std::cout << "Invalid param found [" << token << "]" << std::endl;
+      return SVK_STATUS_FAIL;
+    }
+    sla_kv_pairs[params[0]] = params[1];
+  }
+
+  rc = update_sla_details(sla_kv_pairs, "app_name",
+                          app_sla_to_add.app_sla.app_current_sla.app_name,
+                          APP_MAX_LEN);
+  if (rc != SVK_STATUS_SUCCESS) {
+    return rc;
+  }
+  rc = update_sla_details(sla_kv_pairs, "host_name",
+                          app_sla_to_add.app_sla.app_current_sla.host_name,
+                          HOSTNAME_MAX_LEN);
+  if (rc != SVK_STATUS_SUCCESS) {
+    return rc;
+  }
+
+  app_sla_to_add.app_sla.app_current_sla.avgLatencyns = 0;
+  app_sla_to_add.app_sla.app_sla_tolerance_percent =
+      APP_DEFAULT_TOLERANCE_PERCENT;
+
+  if (sla_kv_pairs.find("app_sla_latency") == sla_kv_pairs.end()) {
+    std::cout << "app_sla_latency " << " not found" << std::endl;
+    return SVK_STATUS_FAIL;
+  } else {
+    app_sla_to_add.app_sla.app_requested_sla_ns =
+        atoi(sla_kv_pairs["app_sla_latency"].c_str());
+  }
+
+  boost::char_separator<char> multi_item_sep(",");
+  boost::tokenizer<boost::char_separator<char>> device_numas(
+      sla_kv_pairs["devices"], multi_item_sep);
+  boost::tokenizer<boost::char_separator<char>> device_latencies(
+      sla_kv_pairs["device_sla_latency_ns"], multi_item_sep);
+
+  int i = 0;
+  std::vector<uint64_t> dev_sla_list;
+  for (auto dl : device_latencies) {
+    dev_sla_list.push_back(atoi(dl.c_str()));
+  }
+
+  for (auto d : device_numas) {
+    slat_device_sla_config dc;
+    dc.device_current_sla = 0;
+    dc.device_advertised_sla = dev_sla_list[i++];
+    dc.device_numa_node = d;
+
+    app_sla_to_add.device_sla_list.push_back(dc);
+  }
+
+  this->th_data.benchmark_pending_list_lock.lock();
+  this->th_data.benchmark_pending_list_to_add.push_back(app_sla_to_add);
+  this->th_data.benchmark_pending_list_lock.unlock();
+
+  std::cout << "Queued app sla for monitoring "
+            << app_sla_to_add.app_sla.app_current_sla.app_name << std::endl;
+  return SVK_STATUS_FAIL;
 }
 
 svk_status SLATrackerSvc::read_slat_config_file(
@@ -425,11 +587,6 @@ svk_status SLATrackerSvc::Initialize(const char *slat_config_file) {
     }
     std::cout << "Initialized publisher" << std::endl;
 
-    slat_benchmark_config bc;
-    bc.benchmark_tool = "mlc";
-    bc.benchmark_out_field = "avgLatencyus";
-
-    this->th_data.benchmark_list.push_back(bc);
     this->th_data.benchmarking_thread =
         std::thread(&SLATrackerSvc::benchmarking_thread_fn, this);
     this->th_data.thread_running = true;
@@ -574,6 +731,14 @@ extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
              logic_module_name);
     svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, log_msg);
     return SVK_STATUS_FAIL;
+  }
+
+  if (strstr((const char *)input->input_buffer, "app_name") != nullptr) {
+    if (strlen((const char *)input->input_buffer) >= input->len) {
+      return SVK_STATUS_FAIL;
+    }
+    return g_slat_service->parse_and_add_new_sla_monitor(
+        (const char *)input->input_buffer);
   }
 
   if (details->execute_logic_sync == nullptr) {

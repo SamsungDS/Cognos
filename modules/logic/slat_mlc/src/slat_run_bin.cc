@@ -1,12 +1,14 @@
 #include "slat_run_bin.hpp"
 
+#include <boost/filesystem.hpp>
 #include <boost/process.hpp>
 #include <iostream>
 #include <string>
 
 namespace bp = boost::process;
 
-exe_ret_info runExecutable(const std::string &binary, const std::string &arg_str) {
+exe_ret_info runExecutable(const std::string &binary,
+                           const std::string &arg_str) {
   exe_ret_info return_info;
 
   return_info.output = "";
@@ -14,6 +16,12 @@ exe_ret_info runExecutable(const std::string &binary, const std::string &arg_str
   bp::ipstream out;
   bp::ipstream err;
   std::string cmd_str = binary + " " + arg_str;
+
+  boost::filesystem::path p(binary);
+  if (boost::filesystem::exists(p) == false) {
+    return_info.rc = -1;
+    return return_info;
+  }
 
   return_info.rc = bp::system(cmd_str, bp::std_out > out, bp::std_err > err);
 

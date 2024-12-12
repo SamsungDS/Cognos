@@ -35,6 +35,50 @@ using t_execute_async = svk_status (*)(svk_pass_thru_cmd *pass_thru,
                                        svk_postprocess_fn *postprocess_fn);
 using t_clean_up = svk_status (*)(void *);
 
+svk_status testMlcLogicModule(svk_feature_details *details) {
+  // app_name=TestApp;app_sla_latency_ns=10;devices=0;device_sla_latency_ns=10;host_name=localhost;logic_module=default
+  svk_pass_thru_cmd pt_cmd;
+  svk_input input;
+  svk_output output;
+
+  pt_cmd.feat_id = feature_id::SLA_TRACKER;
+  input.input_buffer = (uint8_t *)calloc(1, 1024);
+  input.len = 1024;
+  std::vector<std::string> cmds = {
+      "logic_module=MlcLogic;app_name=TestApp;app_sla_latency_ns=300;devices=0;"
+      "device_sla_latency_ns=300;",
+      "logic_module=MlcLogic;app_name="
+      "TestApp123456789012345678901234567890123456789012345678901234567890;app_"
+      "sla_latency_ns=300;devices=0;device_sla_latency_ns=300;host_name="
+      "localhost",
+      "logic_module=MlcLogic;app_name=TestApp;app_sla_latency_ns=300;devices=0;"
+      "device_sla_latency_ns=300;host_name="
+      "localhost123456789012345678901234567890123456789012345678901234567890",
+      "logic_module=MlcLogic;app_name=TestApp;devices=0;device_sla_latency_ns="
+      "300;host_name=localhost",
+      "logic_module=MlcLogic;app_name=TestApp;app_sla_latency_ns=300;devices=0;"
+      "device_sla_latency_ns=300;host_name=localhost",
+      "logic_module=MlcLogic;app_name=TestApp;app_sla_latency_ns=10;devices=0,"
+      "1;device_sla_latency_ns=10,20;host_name=localhost"};
+
+  output.output_buffer = (uint8_t *)calloc(1, 10240);
+  output.len = 10240;
+
+  for (auto cmd : cmds) {
+    svk_status status;
+    strncpy((char *)input.input_buffer, cmd.c_str(), input.len);
+    status = details->execute_sync(&pt_cmd, &input, &output);
+    if (status == SVK_STATUS_SUCCESS) {
+      std::cout << "Execute_sync worked successfully. Output buffer ["
+                << std::string((char *)output.output_buffer) << "]"
+                << std::endl;
+    } else {
+      std::cout << "Execute_sync failed for " << cmd << std::endl;
+    }
+  }
+
+  return SVK_STATUS_SUCCESS;
+}
 svk_status load_slat_feature(std::string features_dir, std::string logic_module,
                              svk_feature_details *details) {
   svk_status status = SVK_STATUS_SUCCESS;
@@ -216,17 +260,13 @@ svk_status load_slat_feature(std::string features_dir, std::string logic_module,
       std::cout << "Execute_sync failed" << std::endl;
     }
   } else {
-    std::this_thread::sleep_for(std::chrono::seconds(5));
+    testMlcLogicModule(details);
+    std::cout << "Waiting in main thread for 30 seconds" << std::endl;
+    std::this_thread::sleep_for(std::chrono::seconds(30));
   }
+
   free(input.input_buffer);
   free(output.output_buffer);
-
-  // status = details->execute_async(&cmd, NULL);
-  // if (status == SVK_STATUS_SUCCESS) {
-  //   std::cout << "execute_async worked successfully." << std::endl;
-  // } else {
-  //   std::cout << "execute_async failed" << std::endl;
-  // }
 
   status = details->clean_up(&status);
   if (status == SVK_STATUS_SUCCESS) {

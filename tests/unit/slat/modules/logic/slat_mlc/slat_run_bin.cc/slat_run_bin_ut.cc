@@ -22,7 +22,16 @@ TEST(TestRunBin, RunMlcBinarySuccess) {
   out = runMlc("idle_latency", opts, std::string(MLC_TEST_BIN_PATH));
   std::cout << out << std::endl;
 
+  out = runMlc("idle_latency", opts, std::string(TEST_BIN_PATH));
+  std::cout << out << std::endl;
+
+  out = runMlc("invalid_test", opts, std::string(TEST_BIN_PATH));
+  std::cout << out << std::endl;
+
   opts.insert(std::make_pair("numa_node", "0"));
   out = runMlc("idle_latency", opts, std::string(MLC_TEST_BIN_PATH));
+  std::cout << out << std::endl;
+
+  out = runMlc("idle_latency", opts, std::string("/path/does/not/exist"));
   std::cout << out << std::endl;
 }

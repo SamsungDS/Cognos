@@ -5,6 +5,7 @@
 #include <dlfcn.h>
 #include <sys/inotify.h>
 
+#include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -41,9 +42,31 @@
 #define SLAT_MAX_LOGIC_MODULE_NAME_LEN SLAT_MAX_STR_LEN
 #define SLAT_MAX_FEATURE_NAME_LEN SLAT_MAX_STR_LEN
 
+using slat_app_sla_config = struct slat_app_sla_config_s {
+  uint64_t app_requested_sla_ns;
+  uint64_t app_sla_tolerance_percent;
+  svk_slat_logic_output app_current_sla;
+};
+
 using slat_benchmark_config = struct slat_benchmark_config_s {
+  std::string device_numa_node;
+  uint64_t device_advertised_sla;
+  uint64_t device_current_sla;
+  uint64_t device_sla_tolerance_percent;
   std::string benchmark_tool;
   std::string benchmark_out_field;
+  std::map<std::string, slat_app_sla_config> app_sla_list;
+};
+
+using slat_device_sla_config = struct slat_device_sla_config_s {
+  std::string device_numa_node;
+  uint64_t device_advertised_sla;
+  uint64_t device_current_sla;
+};
+
+using slat_app_benchmark_sla_to_add = struct slat_app_benchmark_sla_to_add_s {
+  slat_app_sla_config app_sla;
+  std::vector<slat_device_sla_config> device_sla_list;
 };
 
 using slat_config = struct slat_config {
@@ -64,12 +87,13 @@ using slat_thread_data = struct slat_thread_data_s {
   void *zmq_context;
   void *zmq_socket;
 
-  svk_slat_logic_output benchmark_data;
-  std::vector<slat_benchmark_config> benchmark_list;
+  std::map<std::string, slat_benchmark_config> benchmark_device_config_list;
   int64_t benchmark_run_interval;
+
+  std::vector<slat_app_benchmark_sla_to_add> benchmark_pending_list_to_add;
+  std::mutex benchmark_pending_list_lock;
 };
 
-using device_name_str = std::string;
 // Making this global to be able to mock functions for testing
 class SLATrackerSvc {
  private:
@@ -78,8 +102,6 @@ class SLATrackerSvc {
   std::string curr_log_level;
   std::string svk_conf_path;
 
-  // std::map<device_name_str, svk_slat_logic_output> current_sla;
-
   slat_thread_data th_data;
 
   svk_status read_slat_config_file(const std::string slat_conf_file,
@@ -87,8 +109,11 @@ class SLATrackerSvc {
   svk_status initialize_logger(const slat_config config) const;
   svk_status load_logic_modules(const std::string &logic_modules_lib_dir) const;
   void benchmarking_thread_fn(void);
-  std::string run_benchmark(slat_benchmark_config config);
-  void parse_result(slat_benchmark_config config, std::string result);
+  std::string run_benchmark(slat_benchmark_config &config);
+  void parse_result(slat_benchmark_config &config, std::string result);
+  void update_app_sla_with_device_sla(slat_benchmark_config &config);
+  void publish_app_degraded_sla(slat_benchmark_config &config);
+  void add_pending_app_sla_monitoring(void);
 
  public:
   // In order to comply with Rule-of-Zero, manage class init and deletion
@@ -97,6 +122,7 @@ class SLATrackerSvc {
   svk_status Initialize(const char *svk_config);
   svk_logic_module_details *getLogicDetails(char *logic_module_name);
   void clean_up(void);
+  svk_status parse_and_add_new_sla_monitor(std::string sla_details);
 };
 
 extern "C" {

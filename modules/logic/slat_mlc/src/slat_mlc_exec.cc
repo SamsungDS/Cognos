@@ -6,9 +6,7 @@
 #include "slat_benchmark.hpp"
 #include "slat_run_bin.hpp"
 
-std::string runMlc(
-    std::string testType, argOpts args,
-    std::string bin_path = "/usr/svk/slat/logic/mlc/deps/mlc/Linux/mlc") {
+std::string runMlc(std::string testType, argOpts args, std::string bin_path) {
   std::string cmd_args;
   exe_ret_info rinfo;
 
@@ -36,7 +34,6 @@ std::string runMlc(
     std::regex idle_lat_re("Each iteration.*\\(([^)]+)\\)");
     std::smatch idle_lat_match;
     while (std::getline(outstream, line)) {
-
       if (std::regex_search(line, idle_lat_match, idle_lat_re)) {
         std::istringstream restream(idle_lat_match[1].str());
         std::string lat_res;

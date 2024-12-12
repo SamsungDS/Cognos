@@ -7,6 +7,7 @@ file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/../deps/mlc/Linux/mlc DESTINATION /usr/svk
 add_library(${SVKSlatMlcLogicLib} SHARED ${SVKSlatMlcLogicLib_SRC})
 target_link_directories(${SVKSlatMlcLogicLib} PUBLIC ${SVKFW_LIBRARY_DIRS})
 target_link_libraries(${SVKSlatMlcLogicLib} PUBLIC svklogger)
+target_link_libraries(${SVKSlatMlcLogicLib} PUBLIC boost_filesystem)
 add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
 
 set_target_properties(${SVKSlatMlcLogicLib} PROPERTIES
