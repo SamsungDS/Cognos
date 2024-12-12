@@ -53,7 +53,7 @@ std::string runMlc(
           return "status=failed";
         }
         rinfo.output =
-            "status=success;avgReadLatency=" + std::to_string(latency_result);
+            "status=success;avgLatencyns=" + std::to_string(latency_result);
       }
     }
   } else {

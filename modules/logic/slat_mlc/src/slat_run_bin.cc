@@ -6,23 +6,22 @@
 
 namespace bp = boost::process;
 
-exe_ret_info runExecutable(std::string binary, std::string arg_str) {
+exe_ret_info runExecutable(const std::string &binary, const std::string &arg_str) {
   exe_ret_info return_info;
 
   return_info.output = "";
 
   bp::ipstream out;
   bp::ipstream err;
+  std::string cmd_str = binary + " " + arg_str;
 
-  bp::child c(binary, arg_str, bp::std_out > out, bp::std_err > err);
+  return_info.rc = bp::system(cmd_str, bp::std_out > out, bp::std_err > err);
 
   std::string line;
-  while (c.running() && std::getline(out, line)) {
+  while (std::getline(out, line)) {
     return_info.output += line;
     return_info.output += "\n";
   }
-
-  c.wait();
 
   std::cout << "--------------ERR---------------------" << std::endl;
   std::string print_line;
@@ -32,8 +31,6 @@ exe_ret_info runExecutable(std::string binary, std::string arg_str) {
 
   std::cout << "--------------OUT---------------------" << std::endl;
   std::cout << return_info.output << std::endl;
-
-  return_info.rc = c.exit_code();
 
   return return_info;
 }

@@ -10,6 +10,6 @@ struct exe_ret_info_s {
 
 using exe_ret_info = struct exe_ret_info_s;
 
-exe_ret_info runExecutable(std::string binary, std::string arg_str);
+exe_ret_info runExecutable(const std::string &binary, const std::string &arg_str);
 
 #endif  // SLAT_RUN_BIN_HPP
