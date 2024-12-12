@@ -231,12 +231,12 @@ svk_status SLATrackerSvc::parse_and_add_new_sla_monitor(
   app_sla_to_add.app_sla.app_sla_tolerance_percent =
       APP_DEFAULT_TOLERANCE_PERCENT;
 
-  if (sla_kv_pairs.find("app_sla_latency") == sla_kv_pairs.end()) {
-    std::cout << "app_sla_latency " << " not found" << std::endl;
+  if (sla_kv_pairs.find("app_sla_latency_ns") == sla_kv_pairs.end()) {
+    std::cout << "app_sla_latency_ns " << " not found" << std::endl;
     return SVK_STATUS_FAIL;
   } else {
     app_sla_to_add.app_sla.app_requested_sla_ns =
-        atoi(sla_kv_pairs["app_sla_latency"].c_str());
+        atoi(sla_kv_pairs["app_sla_latency_ns"].c_str());
   }
 
   boost::char_separator<char> multi_item_sep(",");
