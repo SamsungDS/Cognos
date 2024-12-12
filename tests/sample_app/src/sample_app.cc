@@ -56,7 +56,8 @@ svk_status testMlcLogicModule(svk_feature_details *details) {
       "localhost123456789012345678901234567890123456789012345678901234567890",
       "logic_module=MlcLogic;app_name=TestApp;devices=0;device_sla_latency_ns="
       "300;host_name=localhost",
-      "logic_module=MlcLogic;app_name=TestApp;app_sla_latency_ns=300=x;devices=0;"
+      "logic_module=MlcLogic;app_name=TestApp;app_sla_latency_ns=300=x;devices="
+      "0;"
       "device_sla_latency_ns=300;host_name=localhost",
       "logic_module=MlcLogic;app_name=TestApp;app_sla_latency_ns=300;devices=0;"
       "device_sla_latency_ns=300;host_name=localhost",
