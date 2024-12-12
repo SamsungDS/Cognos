@@ -27,7 +27,7 @@ const Configure = () => {
   const MEMBOX_DEVICES_ENDPT_SUFFIX = 'devices';
   const [showAttach, setShowAttach] = useState(false);
   const [selectedValue, setSelectedValue] = useState('');
-
+  const [loading, setLoading] = useState(false);
   
   const [selectorOptions, setSelectorOptions] = useState([
     { value: "Select Host", label: "Select Host" },
@@ -150,12 +150,36 @@ const Configure = () => {
     } catch(error) {console.log(error)};
   };
 
+  // istanbul ignore next
+  const handleAttachClick = async () => {
+    setLoading(true);
+    try {
+      await handleAttach();
+    } catch (error) {
+      console.error("Attach operation failed", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  // istanbul ignore next
+  const handleDetachClick = async () => {
+    setLoading(true);
+    try {
+      await handleDetach();
+    } catch (error) {
+      console.error("Attach operation failed", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const attachedDevicesTable =  Array.isArray ? attachedDevicesData.map(
     (item) => {
         return (
           <tr key={item.dev_name}>
             <td className='cofig-row'>
-              <Button variant="outline-light" size="sm" onClick={() => handleDetachMemoryToggle(item)} data-testid="detach-button">
+              <Button variant="outline-light" size="sm" onClick={() => handleDetachMemoryToggle(item)} data-testid="detach-button" disabled={loading}>
                 <img src={constants.MinusIcon} alt='minus-icon' width="25" height="auto" /> 
               </Button>
             </td>
@@ -269,7 +293,7 @@ const Configure = () => {
             </div>
             {showAttach && (
               <AttachMemory
-                onSave={handleAttach}
+                onSave={handleAttachClick}
                 onCancel={handleAttachCancel}
                 show={showAttach}
                 availableLMDs={availableLMDs}
@@ -282,7 +306,7 @@ const Configure = () => {
                 show={showDetachMemory}
                 rowData={attachedRowData}
                 onCancel={handleDetachMemoryCancel}
-                onDelete={handleDetach}
+                onDelete={handleDetachClick}
                 selectedValue={selectedValue}
               />
             )}
