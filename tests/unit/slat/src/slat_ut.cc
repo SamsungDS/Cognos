@@ -374,12 +374,15 @@ TEST_F(ConfigTest, LicenseValidFnSuccess) {
 }
 
 TEST_F(ConfigTest, ConfigureDeviceFnFail) {
+  void *dummy = (void *)0xdeadbeef;
   boost::property_tree::write_json("slat_conf.json", slat_conf);
 
   setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
   EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
   EXPECT_EQ(SVK_STATUS_FAIL,
             configure_device_if_any(nullptr, nullptr, 10, nullptr));
+  EXPECT_EQ(SVK_STATUS_FAIL,
+            configure_device_if_any(dummy, nullptr, 10, nullptr));
   unlink("slat_conf.json");
 }
 
@@ -402,9 +405,19 @@ TEST_F(ConfigTest, ConfigureDeviceFnSuccess) {
 TEST_F(ConfigTest, ExecuteSyncFnFail) {
   boost::property_tree::write_json("slat_conf.json", slat_conf);
 
+  svk_pass_thru_cmd cmd;
+  svk_input input;
+  svk_output output;
+
   setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
   EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(nullptr, nullptr, nullptr));
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&cmd, nullptr, nullptr));
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&cmd, &input, nullptr));
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&cmd, &input, &output));
+  input.input_buffer = (uint8_t *)0xdeadbeef;
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&cmd, &input, &output));
+
   unlink("slat_conf.json");
 }
 
