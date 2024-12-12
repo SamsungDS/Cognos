@@ -408,13 +408,12 @@ svk_status SLATrackerSvc::load_logic_modules(
       continue;
     }
     // Check if this is a shared lib
-    std::string entry_name(entry->d_name);
+    std::string entry_name(logic_modules_lib_dir + "/" + entry->d_name);
     std::string library_suffix(LIBRARY_SUFFIX);
-    std::string full_path(logic_modules_lib_dir + "/" + entry_name);
 
-    stat(full_path.c_str(), &st);
+    stat(entry_name.c_str(), &st);
     if (S_ISDIR(st.st_mode)) {
-      std::string file(full_path + "/lib64/lib" + entry_name + ".so");
+      std::string file(entry_name + "/lib64/lib" + entry->d_name + ".so");
       entry_name = file;
     }
 
@@ -425,16 +424,14 @@ svk_status SLATrackerSvc::load_logic_modules(
       continue;
     }
 
-    std::string logic_module_lib_str =
-        logic_modules_lib_dir + "/" + entry->d_name;
     snprintf(log_msg, LOG_MSG_MAX_SIZE,
              "Attempting to load feature module functions for %s",
-             entry->d_name);
+             entry_name.c_str());
     svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, log_msg);
-    void *handle = dlopen_fn(logic_module_lib_str.c_str(), RTLD_LAZY);
+    void *handle = dlopen_fn(entry_name.c_str(), RTLD_LAZY);
     if (!handle) {
       snprintf(log_msg, LOG_MSG_MAX_SIZE, "dlopen failure for %s. Error: %s\n",
-               logic_module_lib_str.c_str(), dlerror());
+               entry_name.c_str(), dlerror());
       svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, log_msg);
       continue;
     }
