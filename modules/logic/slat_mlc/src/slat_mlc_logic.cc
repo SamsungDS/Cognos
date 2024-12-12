@@ -21,7 +21,7 @@ using slat_logic_config = struct slat_logic_config {
   uint64_t log_file_size;
 };
 
-#define MLC_DEFAULT_PATH "/usr/svk/slat/logic/mlc/deps/mlc/Linux/mlc"
+#define MLC_DEFAULT_PATH "/usr/local/svk/feature_modules/slat/logic_modules/svkslatlogic/bin/mlc"
 svk_status execute_mlc_logic_sync(svk_logic_cmd *cmd, svk_logic_input *input,
                                   svk_logic_output *output) {
   std::cout << "mlc logic sync" << std::endl;
