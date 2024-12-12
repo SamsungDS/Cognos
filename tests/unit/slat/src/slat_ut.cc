@@ -407,7 +407,7 @@ TEST_F(ConfigTest, ExecuteSyncFnFail) {
 
   svk_pass_thru_cmd cmd;
   svk_input input;
-  svk_output output;
+  svk_output output = {};
 
   setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
   EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
