@@ -19,6 +19,7 @@ install_packages() {
         cmake
         gcc-c++
         git
+        pkg-config
         python3-virtualenv
         rpmdevtools
         spdlog-devel

@@ -1,6 +1,8 @@
 # Build shared libraries by default.
 find_package(fmt REQUIRED)
 find_package(spdlog REQUIRED)
+find_package(PkgConfig)
+pkg_check_modules(ZeroMQ REQUIRED libzmq)
 
 set(SVKLogger "svklogger")
 set(SVKLogger_INC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include PARENT_SCOPE)
