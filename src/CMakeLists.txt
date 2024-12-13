@@ -1,4 +1,6 @@
-set(SVKSlatLib_SRC ${CMAKE_SOURCE_DIR}/src/slat.cc)
+set(SVKSlatLib_SRC
+    ${CMAKE_SOURCE_DIR}/src/logger_util.cc
+    ${CMAKE_SOURCE_DIR}/src/slat.cc)
 set(INC_DIR ${CMAKE_SOURCE_DIR}/include/)
 
 set(SVKSlatLib "svkslat")

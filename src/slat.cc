@@ -11,7 +11,6 @@
 #include <ranges>
 
 #include "logic_interface/svk_logic_struct.h"
-#include "svk_logger.h"
 #include "svk_slat.hpp"
 
 #define LOG_MSG_MAX_SIZE (1024)
@@ -306,26 +305,17 @@ svk_status SLATrackerSvc::read_slat_config_file(
     }
     try {
       pt::ptree logger_info_pt = slat_config_pt.get_child("logger");
-      config->log_level = logger_info_pt.get<std::string>(
-          "log_level", SLAT_LOGGER_LEVEL_DEFAULT);
-      config->log_filename = logger_info_pt.get<std::string>(
-          "log_file_name", SLAT_LOG_FILENAME_DEFAULT);
-      config->log_file_count = logger_info_pt.get<uint64_t>(
-          "log_file_count", SLAT_LOGGER_FILE_COUNT_DEFAULT);
-      config->log_file_size = logger_info_pt.get<uint64_t>(
-          "log_file_size", SLAT_LOGGER_FILE_SIZE_DEFAULT);
-      config->log_sink_type = logger_info_pt.get<std::string>(
-          "sink_type", SLAT_LOGGER_SINK_TYPE_DEFAULT);
+      status = read_slat_logger_config(logger_info_pt, config->logger_config);
     } catch (std::exception &e) {
       std::cout << "Unable to read Logger section of SLAT in the config file. "
                    "Falling back to default values. Error -> "
                 << e.what() << std::endl;
       // Assign defaults
-      config->log_level = SLAT_LOGGER_LEVEL_DEFAULT;
-      config->log_filename = SLAT_LOG_FILENAME_DEFAULT;
-      config->log_file_count = SLAT_LOGGER_FILE_COUNT_DEFAULT;
-      config->log_file_size = SLAT_LOGGER_FILE_SIZE_DEFAULT;
-      config->log_sink_type = SLAT_LOGGER_SINK_TYPE_DEFAULT;
+      config->logger_config.log_level = SLAT_LOGGER_LEVEL_DEFAULT;
+      config->logger_config.log_filename = SLAT_LOG_FILENAME_DEFAULT;
+      config->logger_config.log_file_count = SLAT_LOGGER_FILE_COUNT_DEFAULT;
+      config->logger_config.log_file_size = SLAT_LOGGER_FILE_SIZE_DEFAULT;
+      config->logger_config.log_sink_type = SLAT_LOGGER_SINK_TYPE_DEFAULT;
     }
   } catch (std::exception &e) {
     std::cerr << "Unable to read SLAT config file. Assigning default value. "
@@ -334,36 +324,27 @@ svk_status SLATrackerSvc::read_slat_config_file(
     config->slat_logic_lib_dir = SLAT_FEATURE_LOGIC_MODULES_PATH;
 
     // Assign defaults
-    config->log_level = SLAT_LOGGER_LEVEL_DEFAULT;
-    config->log_filename = SLAT_LOG_FILENAME_DEFAULT;
-    config->log_file_count = SLAT_LOGGER_FILE_COUNT_DEFAULT;
-    config->log_file_size = SLAT_LOGGER_FILE_SIZE_DEFAULT;
-    config->log_sink_type = SLAT_LOGGER_SINK_TYPE_DEFAULT;
+    config->logger_config.log_level = SLAT_LOGGER_LEVEL_DEFAULT;
+    config->logger_config.log_filename = SLAT_LOG_FILENAME_DEFAULT;
+    config->logger_config.log_file_count = SLAT_LOGGER_FILE_COUNT_DEFAULT;
+    config->logger_config.log_file_size = SLAT_LOGGER_FILE_SIZE_DEFAULT;
+    config->logger_config.log_sink_type = SLAT_LOGGER_SINK_TYPE_DEFAULT;
   }
 
   return status;
 }
 
 svk_status SLATrackerSvc::initialize_logger(const slat_config config) const {
-  svk_status status = SVK_STATUS_FAIL;
-  auto found = log_level_map.find(config.log_level);
-  if (found == log_level_map.end()) {
-    std::cout << "Matching log level for the [" << config.log_level
-              << "] not found. Exiting" << std::endl;
-    return status;
-  }
+  slat_logger_config c;
 
-  if (svk_logger_init(SLAT_LOGGER_MODULE_NAME, config.log_filename.c_str(),
-                      found->second, config.log_file_count,
-                      config.log_file_size,
-                      config.log_sink_type.c_str()) == SVK_STATUS_SUCCESS) {
-    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO,
-               "SVK SLAT logger is initialized");
-    status = SVK_STATUS_SUCCESS;
-  } else {
-    std::cout << "SVK SLAT logger initialization failed" << std::endl;
-  }
-  return status;
+  c.log_file_count = config.logger_config.log_file_count;
+  c.log_file_size = config.logger_config.log_file_size;
+  c.log_filename = config.logger_config.log_filename;
+  c.log_level = config.logger_config.log_level;
+  c.log_sink_type = config.logger_config.log_sink_type;
+  c.log_module_name = SLAT_FEATURE_MODULE_NAME;
+
+  return slat_initialize_logger(c);
 }
 
 void *dlopen_fn(const char *filename, int flags) {

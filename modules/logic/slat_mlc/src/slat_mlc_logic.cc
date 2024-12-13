@@ -6,14 +6,7 @@
 
 using namespace std;
 
-const std::unordered_map<std::string, level_E> log_level_map = {
-    {"TRACE", level_E::TRACE},       {"DEBUG", level_E::DEBUG},
-    {"INFO", level_E::INFO},         {"NOTICE", level_E::NOTICE},
-    {"WARN", level_E::WARN},         {"ERROR", level_E::ERROR},
-    {"CRITICAL", level_E::CRITICAL}, {"ALERT", level_E::ALERT},
-    {"FATAL", level_E::FATAL},       {"OFF", level_E::OFF}};
-
-using slat_logic_config = struct slat_logic_config {
+using slat_mlc_logic_config = struct slat_mlc_logic_config_s {
   std::string log_level;
   std::string log_filename;
   std::string log_sink_type;

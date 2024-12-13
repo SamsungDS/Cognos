@@ -11,7 +11,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "svk_logger.hpp"
+#include "logger_util.hpp"
 #include "svk_zmq_api.h"
 
 // Hardcoding this path for now. This will be provided by the header from the
@@ -30,13 +30,8 @@
 // get_supported_logic_details If not provided, then we ignore the logic module
 #define SLAT_FEATURE_MODULE_NAME "slat"
 
-#define SLAT_LOG_FILENAME_DEFAULT "/var/log/svk/slat.log"
 #define SLAT_CONF_SECTION_TAG SLAT_FEATURE_MODULE_NAME
 #define SLAT_LOGGER_MODULE_NAME SLAT_FEATURE_MODULE_NAME
-#define SLAT_LOGGER_FILE_COUNT_DEFAULT 10
-#define SLAT_LOGGER_FILE_SIZE_DEFAULT 1048576ULL  // 1MB default max file size
-#define SLAT_LOGGER_LEVEL_DEFAULT "INFO"
-#define SLAT_LOGGER_SINK_TYPE_DEFAULT "rotating_file"
 
 #define SLAT_MAX_STR_LEN (256)
 #define SLAT_MAX_LOGIC_MODULE_NAME_LEN SLAT_MAX_STR_LEN
@@ -71,14 +66,11 @@ using slat_app_benchmark_sla_to_add = struct slat_app_benchmark_sla_to_add_s {
 
 using slat_config = struct slat_config {
   std::string slat_logic_lib_dir;
-  std::string log_level;
-  std::string log_filename;
-  std::string log_sink_type;
-  int log_file_count;
-  uint64_t log_file_size;
+  slat_logger_config logger_config;
   bool enable_bg_thread;
   int64_t benchmark_run_interval;
 };
+
 using slat_thread_data = struct slat_thread_data_s {
   std::thread benchmarking_thread;
   bool shutdown_bm_thread;
