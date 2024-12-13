@@ -1,6 +1,6 @@
 {
   "slat": {
-    "logic_lib_dir": "@SLAT_FEATURE_DIR@/logic_modules",
+    "logic_lib_dir": "@SLAT_FEATURE_DIR@/logic_modules/mlclogic/bin/",
     "logger": {
       "log_level": "INFO",
       "log_file_name": "/var/log/svk/slat.log",

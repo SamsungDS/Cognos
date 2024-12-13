@@ -28,7 +28,7 @@ svk_status slat_initialize_logger(slat_logger_config config) {
   if (svk_logger_init(config.log_module_name.c_str(),
                       config.log_filename.c_str(), found->second,
                       config.log_file_count, config.log_file_size,
-                      config.log_sink_type.c_str()) == SVK_STATUS_SUCCESS) {
+                      config.log_sink_type.c_str()) == 0) {
     svk_logger(config.log_module_name.c_str(), level_E::INFO,
                "SVK logger is initialized");
     status = SVK_STATUS_SUCCESS;
