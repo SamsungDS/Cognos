@@ -27,6 +27,6 @@ install(
 )
 
 install (
-    PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/../deps/mlc/Linux/redist.txt
+    PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/../deps/mlc/Linux/mlc
     DESTINATION ${SVKSlatLogicLib_LIB_DEST}/../bin
 )
