@@ -19,6 +19,7 @@ exe_ret_info runExecutable(const std::string &binary,
 
   boost::filesystem::path p(binary);
   if (boost::filesystem::exists(p) == false) {
+    std::cout << "Provided binary path does not exist " << binary << std::endl;
     return_info.rc = -1;
     return return_info;
   }
