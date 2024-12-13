@@ -114,6 +114,10 @@ class SLATrackerSvc {
   svk_status Initialize(const char *svk_config);
   svk_logic_module_details *getLogicDetails(char *logic_module_name);
   void clean_up(void);
+  // Dummy function to trigger all logic module async
+  //  To get code coverrage
+  // TODO: Remove this
+  void dummy_submit_async_all(void);
   svk_status parse_and_add_new_sla_monitor(std::string sla_details);
 };
 

@@ -601,6 +601,9 @@ svk_logic_module_details *SLATrackerSvc::getLogicDetails(
 
 void SLATrackerSvc::clean_up(void) {
   int rc;
+  for (auto [module, detail] : this->logic_modules_map) {
+    detail->cleanup_logic_module(nullptr);
+  }
   if (this->th_data.thread_running) {
     this->th_data.shutdown_bm_thread = true;
     this->th_data.benchmarking_thread.join();
@@ -614,6 +617,11 @@ void SLATrackerSvc::clean_up(void) {
   }
 }
 
+void SLATrackerSvc::dummy_submit_async_all(void) {
+  for (auto [module, detail] : this->logic_modules_map) {
+    detail->execute_logic_async(nullptr, nullptr);
+  }
+}
 // Actual implementation of the feature module functions
 
 extern "C" svk_status initialize(void *details) {
@@ -765,6 +773,8 @@ extern "C" svk_status execute_async(svk_pass_thru_cmd *pass_thru,
                "execute_async function called with nullptr param");
     return SVK_STATUS_FAIL;
   }
+  g_slat_service->dummy_submit_async_all();
+
   svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO,
              "execute_async returned successfully.");
 

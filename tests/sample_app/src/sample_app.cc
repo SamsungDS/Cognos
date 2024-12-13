@@ -40,6 +40,7 @@ svk_status testMlcLogicModule(svk_feature_details *details) {
   svk_pass_thru_cmd pt_cmd;
   svk_input input;
   svk_output output;
+  svk_status status;
 
   pt_cmd.feat_id = feature_id::SLA_TRACKER;
   input.input_buffer = (uint8_t *)calloc(1, 1024);
@@ -68,7 +69,6 @@ svk_status testMlcLogicModule(svk_feature_details *details) {
   output.len = 10240;
 
   for (auto cmd : cmds) {
-    svk_status status;
     strncpy((char *)input.input_buffer, cmd.c_str(), input.len);
     status = details->execute_sync(&pt_cmd, &input, &output);
     if (status == SVK_STATUS_SUCCESS) {
@@ -78,6 +78,17 @@ svk_status testMlcLogicModule(svk_feature_details *details) {
     } else {
       std::cout << "Execute_sync failed for " << cmd << std::endl;
     }
+  }
+
+  // Test invalid input len
+  strncpy((char *)input.input_buffer, cmds[1].c_str(), input.len);
+  input.len = 10;
+  status = details->execute_sync(&pt_cmd, &input, &output);
+  if (status == SVK_STATUS_SUCCESS) {
+    std::cout << "Execute_sync worked successfully. Output buffer ["
+              << std::string((char *)output.output_buffer) << "]" << std::endl;
+  } else {
+    std::cout << "Execute_sync failed for " << cmds[1] << std::endl;
   }
 
   return SVK_STATUS_SUCCESS;
@@ -270,6 +281,16 @@ svk_status load_slat_feature(std::string features_dir, std::string logic_module,
 
   free(input.input_buffer);
   free(output.output_buffer);
+
+  svk_pass_thru_cmd async_cmd;
+  svk_postprocess_fn pp_fn;
+
+  status = details->execute_async(&async_cmd, &pp_fn);
+  if (status == SVK_STATUS_SUCCESS) {
+    std::cout << "cleanup worked successfully." << std::endl;
+  } else {
+    std::cout << "cleanup failed" << std::endl;
+  }
 
   status = details->clean_up(&status);
   if (status == SVK_STATUS_SUCCESS) {
