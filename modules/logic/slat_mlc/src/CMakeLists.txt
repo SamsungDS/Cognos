@@ -1,10 +1,10 @@
 set(SVKSlatMlcLogicLib_SRC  slat_run_bin.cc slat_mlc_exec.cc slat_mlc_logic.cc)
-set(SVKSlatMlcLogicLib "svkslatmlclogic")
+set(SVKSlatMlcLogicLib "mlclogic")
 
-set(SVKSlatLogicLib_LIB_DEST "logic_modules/svkslatmlclogic/lib64/")
+set(SVKSlatLogicLib_LIB_DEST "logic_modules/mlclogic/lib64/")
 
 #TODO this should be used via config
-file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/../deps/mlc/Linux/mlc DESTINATION /usr/local/svk/feature_modules/slat/logic_modules/svkslatmlclogic/bin)
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/../deps/mlc/Linux/mlc DESTINATION /usr/local/svk/feature_modules/slat/logic_modules/mlclogic/bin)
 
 add_library(${SVKSlatMlcLogicLib} SHARED ${SVKSlatMlcLogicLib_SRC})
 target_link_directories(${SVKSlatMlcLogicLib} PUBLIC ${SVKFW_LIBRARY_DIRS})

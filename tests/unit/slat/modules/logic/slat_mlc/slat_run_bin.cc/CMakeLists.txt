@@ -9,12 +9,12 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR})
 link_directories(${CMAKE_SOURCE_DIR}/build/slat)
 add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
 add_executable(slat_run_bin_ut slat_run_bin_ut.cc)
-add_dependencies(slat_run_bin_ut svkslatmlclogic)
+add_dependencies(slat_run_bin_ut mlclogic)
 target_link_directories(slat_run_bin_ut PUBLIC ${SVKFW_LIBRARY_DIRS})
 
 target_link_libraries(
   slat_run_bin_ut
-  svkslatmlclogic
+  mlclogic
   GTest::gtest_main
   gmock_main
   svklogger
