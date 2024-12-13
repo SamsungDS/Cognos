@@ -17,6 +17,25 @@ svk_status execute_mlc_logic_sync(svk_logic_cmd *cmd, svk_logic_input *input,
   std::cout << "mlc logic sync" << std::endl;
   std::string result_str;
   argOpts opts = {};
+  char numa_node[64] = {};
+  char *ptr;
+
+  if (cmd == nullptr || input == nullptr || output == nullptr) {
+    std::cout << "Invalid input for logic sync params" << std::endl;
+    return SVK_STATUS_FAIL;
+  }
+
+  if (input->input_buffer == nullptr) {
+    std::cout << "NULL input buffer for logic sync params" << std::endl;
+    return SVK_STATUS_FAIL;
+  }
+
+  ptr = strstr((char *)input->input_buffer, "numa_node");
+  if (ptr != nullptr) {
+    sscanf(ptr, "numa_node=%[.0-9]", numa_node);
+    opts["numa_node"] = numa_node;
+  }
+
   result_str = runMlc("idle_latency", opts, g_mlc_bin);
   snprintf((char *)output->output_buffer, output->output_len, "%s",
            result_str.c_str());

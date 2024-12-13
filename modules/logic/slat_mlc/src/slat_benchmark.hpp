@@ -9,5 +9,6 @@
 using argOpts = std::map<std::string, std::string>;
 std::string runMlc(std::string testType, argOpts args, std::string bin_path);
 svk_status configure_slat_mlc_logic(const std::string slat_logic_conf_file);
-
+svk_status execute_mlc_logic_sync(svk_logic_cmd *cmd, svk_logic_input *input,
+                                  svk_logic_output *output);
 #endif  // SLAT_BENCHMARK_HPP

@@ -24,6 +24,7 @@
 const std::unique_ptr<SLATrackerSvc> g_slat_service =
     std::make_unique<SLATrackerSvc>();
 
+#define LOGIC_IN_BUFFER_LEN (256)
 #define LOGIC_OUT_BUFFER_LEN (256)
 /* Private SLATrackerSvc helper methods */
 std::string SLATrackerSvc::run_benchmark(slat_benchmark_config &config) {
@@ -33,12 +34,14 @@ std::string SLATrackerSvc::run_benchmark(slat_benchmark_config &config) {
   svk_logic_cmd logic_cmd;
   svk_logic_input logic_input = {};
   svk_logic_output logic_output;
+  char in[LOGIC_IN_BUFFER_LEN] = {};
   char out[LOGIC_OUT_BUFFER_LEN] = {};
 
+  logic_input.input_buffer = (uint8_t *)in;
+  logic_input.input_len = LOGIC_IN_BUFFER_LEN;
   logic_output.output_buffer = (uint8_t *)out;
   logic_output.output_len = LOGIC_OUT_BUFFER_LEN;
 
-  // TODO: Use NUMA node
   if (config.benchmark_tool == "mlc") {
     strncpy(logic_cmd.logic_name, "MlcLogic", 256);
 
@@ -47,6 +50,8 @@ std::string SLATrackerSvc::run_benchmark(slat_benchmark_config &config) {
       std::cout << "Logic module not found" << std::endl;
       return "status=failed";
     }
+    snprintf((char *)logic_input.input_buffer, logic_input.input_len,
+             "numa_node=%s", config.device_numa_node.c_str());
   } else {
     std::cout << "Unsupported benchmark [" << config.benchmark_tool << "]"
               << std::endl;

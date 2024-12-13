@@ -11,6 +11,17 @@ TEST(TestMlcConfigure, RunTestInvalidConfigFile) {
   EXPECT_EQ(SVK_STATUS_SUCCESS, configure_slat_mlc_logic(""));
 }
 
+TEST(TestMlcLogic, RunTestInvalidExecSync) {
+  svk_logic_cmd cmd = {};
+  svk_logic_input in = {};
+  svk_logic_output out = {};
+
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_mlc_logic_sync(nullptr, nullptr, nullptr));
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_mlc_logic_sync(&cmd, nullptr, nullptr));
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_mlc_logic_sync(&cmd, &in, nullptr));
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_mlc_logic_sync(&cmd, &in, &out));
+}
+
 TEST(TestRunBin, RunTestBinarySuccess) {
   exe_ret_info rinfo;
 
