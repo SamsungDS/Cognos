@@ -235,7 +235,8 @@ svk_status SLATrackerSvc::parse_and_add_new_sla_monitor(
       APP_DEFAULT_TOLERANCE_PERCENT;
 
   if (sla_kv_pairs.find("app_sla_latency_ns") == sla_kv_pairs.end()) {
-    std::cout << "app_sla_latency_ns " << " not found" << std::endl;
+    std::cout << "app_sla_latency_ns "
+              << " not found" << std::endl;
     return SVK_STATUS_FAIL;
   } else {
     app_sla_to_add.app_sla.app_requested_sla_ns =
