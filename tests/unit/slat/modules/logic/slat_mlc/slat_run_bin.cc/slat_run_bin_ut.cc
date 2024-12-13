@@ -7,6 +7,10 @@
 #include "slat_run_bin.hpp"
 #include "test_bin.h"
 
+TEST(TestMlcConfigure, RunTestInvalidConfigFile) {
+  EXPECT_EQ(SVK_STATUS_SUCCESS, configure_slat_mlc_logic(""));
+}
+
 TEST(TestRunBin, RunTestBinarySuccess) {
   exe_ret_info rinfo;
 

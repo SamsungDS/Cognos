@@ -33,7 +33,7 @@ std::string SLATrackerSvc::run_benchmark(slat_benchmark_config &config) {
   svk_logic_cmd logic_cmd;
   svk_logic_input logic_input = {};
   svk_logic_output logic_output;
-  char *out[LOGIC_OUT_BUFFER_LEN] = {};
+  char out[LOGIC_OUT_BUFFER_LEN] = {};
 
   logic_output.output_buffer = (uint8_t *)out;
   logic_output.output_len = LOGIC_OUT_BUFFER_LEN;

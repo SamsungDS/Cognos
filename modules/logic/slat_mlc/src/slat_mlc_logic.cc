@@ -1,10 +1,7 @@
 #include <iostream>
 
 #include "logger_util.hpp"
-#include "logic_interface/svk_logic_interface.h"
 #include "slat_benchmark.hpp"
-
-using namespace std;
 
 #define SLAT_DEFAULT_LOGIC_CONFIG_FILE "/etc/svk/slat_logic.json"
 #define MLC_DEFAULT_BINARY \
