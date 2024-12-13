@@ -15,7 +15,8 @@ target_link_directories(cxl_ut PRIVATE "${FMAPI_INCLUDE_PATH}/build" ${SVKMGMTFW
 
 # Link with the library created in src
 
-target_link_libraries(cxl_ut PRIVATE cxl gtest gtest_main gmock gmock_main svcmgr jansson zmq numa mbox_a1_shared)
+#FAM-1520: added yaml-cpp
+target_link_libraries(cxl_ut PRIVATE cxl gtest gtest_main gmock gmock_main svcmgr jansson zmq numa mbox_a1_shared yaml-cpp)
 
 include(GoogleTest)
 gtest_discover_tests(cxl_ut)

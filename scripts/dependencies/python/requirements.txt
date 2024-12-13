@@ -1,3 +1,5 @@
 # Python dependencies
 clang-format
 gcovr
+pyyaml
+damo

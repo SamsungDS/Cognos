@@ -3,6 +3,7 @@
 #include "sc_global.h"
 #include "sc_mbox.h"
 #include "sc_servicer.h"
+#include "tuner.h"
 #include "framework_downstream.h"
 #include "sc_servicer_internal.h"
 
@@ -35,9 +36,9 @@ public:
     MOCK_METHOD(std::vector<sc_id>, get_fm_keys, (), ());
 };
 
-
 // Test fixture
 MockScGlobal mock_cxl_global;
+
 class ServicerTest : public ::testing::Test {
 protected:
 
@@ -659,4 +660,36 @@ TEST_F(ServicerTest, IsValidIP) {
     ASSERT_FALSE(is_valid_ip("192.168.1")) << "Incomplete IP address should return false.";
     ASSERT_FALSE(is_valid_ip("0.123.123.123")) << "InValid IP address should return false.";
     ASSERT_FALSE(is_valid_ip("abc.def.ghi.jkl")) << "Non-numeric IP address should return false.";
+}
+
+TEST_F(ServicerTest, StartTuning) {
+    svk_input input;
+    svk_output output;
+    svk_pass_thru_cmd pass_thru;
+    std::string cmd = "command=StartTuning;application=gemfire;application_id=101010;dram_node=0;cxl_node=1;sla_iops=150000;sla_size=1024;sla_latencyus=750";
+    input.input_buffer = reinterpret_cast<uint8_t*>(strdup(cmd.c_str()));
+    input.len = strlen(cmd.c_str());
+    svk_status status = execute_sync(&pass_thru, &input, &output);
+    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
+    ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
+    ASSERT_NE(output.len, 0);
+    ASSERT_NE(output.output_buffer, nullptr);
+    free(input.input_buffer);
+    free(output.output_buffer);
+}
+
+TEST_F(ServicerTest, StopTuning) {
+    svk_input input;
+    svk_output output;
+    svk_pass_thru_cmd pass_thru;
+    std::string cmd = "command=StopTuning;application=gemfire;application_id=101010";
+    input.input_buffer = reinterpret_cast<uint8_t*>(strdup(cmd.c_str()));
+    input.len = strlen(cmd.c_str());
+    svk_status status = execute_sync(&pass_thru, &input, &output);
+    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
+    ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
+    ASSERT_NE(output.len, 0);
+    ASSERT_NE(output.output_buffer, nullptr);
+    free(input.input_buffer);
+    free(output.output_buffer);
 }

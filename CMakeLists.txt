@@ -107,6 +107,14 @@ install(
     FILES "config/input.conf"
     DESTINATION "${SVKMGMTFW_DIRS}"
 )
+install(
+    FILES "config/damo_config.json"
+    DESTINATION "/etc/svk/"
+)
+install(
+    FILES "tools/tm_gen_config.py"
+    DESTINATION "/etc/svk/"
+)
 # install pkg config file
 install(
     FILES "${pkg_config}"

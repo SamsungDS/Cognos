@@ -7,6 +7,7 @@ install_packages() {
     BUILD_DEPS=(
         build-essential
         cmake
+        cgroup-tools
         debhelper
         diffutils
         dpkg-dev
@@ -20,11 +21,13 @@ install_packages() {
 	libnuma-dev
 	libspdlog-dev
         libssl-dev
+        libyaml-cpp-dev
         libzmq3-dev
         net-tools
         pkgconf
         python3.11
         python3-pip
+        sudo
         tar
         unzip
         wget

@@ -29,8 +29,10 @@ install_packages() {
         python3-pip
         rpm-build
         spdlog-devel
+        sudo
         tar
         unzip
+        yaml-cpp-devel
         wget
 	zeromq
 	zeromq-devel

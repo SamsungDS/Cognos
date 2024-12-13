@@ -1,8 +1,11 @@
 #include <iostream>
-#include <map>
 #include <sstream>
 #include <fstream>
+#include <map>
 #include <unordered_map>
+#include <tuple>
+#include <vector>
+#include <stdexcept>
 #include <functional>
 #include <sys/stat.h>
 #include <regex>
@@ -15,6 +18,9 @@
 #include "sc_cmmd.h"
 #include "sc_cmmh.h"
 #include "sc_cmmb.h"
+#include "tuner.h"
+#include "yaml-cpp/yaml.h"
+
 
 extern "C"{
 #include "jansson.h"
@@ -29,10 +35,37 @@ using namespace std;
 
 sc_global cxl_global;
 
-
 //function pointers for the commands
 typedef std::string (*CommandFunc)(const std::string&);
 
+//Global tuner object
+tuner mt_obj;
+
+/**
+ * @brief Start Memory tuner
+ * @param command string which includes memory tier params,
+ * sla params, application params
+ * @return status code of tuner start: 0 = success
+*/
+std::string StartTuning(const std::string& input) {
+    unordered_map<string, string> tokens_map = token_helper(input);
+    int ret;
+    ret = mt_obj.tuner_start(tokens_map, PAGE_MOVER_DAMO);
+    return to_string(ret);
+}
+
+/**
+ * @brief Stop Memory tuner
+ * @param command string
+ * @return status code of tuner stop: 0 = success
+*/
+std::string StopTuning(const std::string& input) {
+    unordered_map<string, string> tokens_map = token_helper(input);
+    pair <string, unsigned long> tuner_context_key = make_pair(tokens_map["application"], stoul(tokens_map["application_id"]));
+    int ret;
+    ret = mt_obj.tuner_stop(tuner_context_key);
+    return to_string(ret);
+}
 
 /**
 @brief Validate the format of an IPv4 address
@@ -412,6 +445,20 @@ void fm_init() {
 }
 
 /**
+ * @brief init tm functionality
+ * @details As cxl cleanup is not called, 
+ * deleting left over config files explicitly.
+*/
+void tm_init()
+{
+    /*clean up cgroup
+    TODO: Cgroup delete needs yaml parsing
+    ret = cgroup_delete();
+    */
+    damo_global_config_cleanup();
+}
+
+/**
  * @brief init function
  * @details This function will be triggered first for any requests from client side.
 */
@@ -419,7 +466,8 @@ int init_cxl_plugin() {
     std::cout << "invoked init_cxl_plugin" << std::endl;
     int mret = cmmb_a1_init();
     fm_init();
-    
+    tm_init();
+
     return mret; 
 }
 
@@ -508,7 +556,7 @@ svk_status execute_sync(svk_pass_thru_cmd *, svk_input *input, svk_output *outpu
 
     //@to-do - resolve gcov code coverage for multilines. 
     // Map of command strings to their corresponding functions
-    std::map<std::string, CommandFunc> fw_hooks {{"ListDevices", ListDevices},{"ListHosts", ListHosts},{"SetupInfo", SetupInfo},{"AttachMemory", AttachMemory},{"DetachMemory", DetachMemory}};
+    std::map<std::string, CommandFunc> fw_hooks {{"ListDevices", ListDevices},{"ListHosts", ListHosts},{"SetupInfo", SetupInfo},{"AttachMemory", AttachMemory},{"DetachMemory", DetachMemory}, {"StartTuning", StartTuning}, {"StopTuning", StopTuning}};
 
     // Execute the corresponding command function
     try {

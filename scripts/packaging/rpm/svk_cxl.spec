@@ -15,6 +15,7 @@ Requires:       svk-core, svk-mgmt-fw, jansson
 %{!?installpath_mgmt: %global installpath_mgmt /usr/local/svk/mgmt-fw}
 %{!?installpath_mbox: %global installpath_mbox /usr/local/lib/cxl_memory_box}
 %{!?installpath_zmq: %global installpath_zmq /etc/svk}
+%{!?installpath_tm_config: %global installpath_tm_config /etc/svk}
 %{!?cxl_build_dir: %global cxl_build_dir svk-cxl}
 
 
@@ -28,6 +29,7 @@ mkdir -p %{buildroot}/%{installpath}
 mkdir -p %{buildroot}/%{installpath_mgmt}
 mkdir -p %{buildroot}/%{installpath_mbox}/lib
 mkdir -p %{buildroot}/%{installpath_zmq}
+mkdir -p %{buildroot}/%{installpath_tm_config}
 
 # If rpmbuild is run in the build script, use CMAKE_INSTALL_PREFIX as temp dir in %{_topdir}/BUILD
 %if "%{getenv:CMAKE_INSTALL_PREFIX}" != ""
@@ -35,6 +37,8 @@ cp -rf %{getenv:CMAKE_INSTALL_PREFIX}/%{_lib} %{buildroot}/%{installpath}
 cp -rf %{_fmapilibpath} %{buildroot}/%{installpath_mbox}/lib
 cp -f %{_fmapiincpath}/sample_json/input.json %{buildroot}/%{installpath_mgmt}
 cp -f %{getenv:CMAKE_INSTALL_PREFIX}/zmq_config.json %{buildroot}/%{installpath_zmq}
+cp -f %{getenv:CMAKE_INSTALL_PREFIX}/damo_config.json %{buildroot}/%{installpath_tm_config}
+cp -f %{getenv:CMAKE_INSTALL_PREFIX}/tm_gen_config.py %{buildroot}/%{installpath_tm_config}
 cp -f %{getenv:CMAKE_INSTALL_PREFIX}/cxl.conf %{buildroot}/%{installpath_mgmt}
 cp -f %{getenv:CMAKE_INSTALL_PREFIX}/input.conf %{buildroot}/%{installpath_mgmt}
 
@@ -44,6 +48,8 @@ cp -rf %{cxl_build_dir}/%{_lib} %{buildroot}/%{installpath}
 cp -rf %{_fmapipath} %{buildroot}/%{installpath_mbox}/lib
 cp -f %{_fmapiincpath}/sample_json/input.json %{buildroot}/%{installpath_mgmt}
 cp -f %{cxl_build_dir}/config/zmq_config.json %{buildroot}/%{installpath_zmq}
+cp -f %{cxl_build_dir}/config/damo_config.json %{buildroot}/%{installpath_tm_config}
+cp -f %{cxl_build_dir}/tools/tm_gen_config.py %{buildroot}/%{installpath_tm_config}
 cp -f %{cxl_build_dir}/config/cxl.conf  %{buildroot}/%{installpath_mgmt}
 cp -f %{cxl_build_dir}/config/input.conf  %{buildroot}/%{installpath_mgmt}
 %endif
@@ -56,6 +62,7 @@ cp -f %{cxl_build_dir}/config/input.conf  %{buildroot}/%{installpath_mgmt}
 %{installpath_mgmt}
 %{installpath_mbox}
 %{installpath_zmq}
+%{installpath_tm_config}
 
 %clean
 

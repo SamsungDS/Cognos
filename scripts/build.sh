@@ -343,6 +343,8 @@ if $WITH_COVERAGE;then
     cp "$PROJECT_ROOT/config/cxl.conf" "$BUILD_DIR/tests"
     cp "$PROJECT_ROOT/config/input.conf" "$BUILD_DIR/tests"
     cp "$PROJECT_ROOT/config/zmq_config.json" "$BUILD_DIR/tests/"
+    cp "$PROJECT_ROOT/config/damo_config.json" "/etc/svk/"
+    cp "$PROJECT_ROOT/tools/tm_gen_config.py" "/etc/svk/"
     mkdir -p "$REPORTS_DIR"
     ctest --output-junit "$REPORTS_DIR/gitlab_junit.xml"
     popd
@@ -371,6 +373,8 @@ elif $RELEASE;then
   cp "$PROJECT_ROOT/config/zmq_config.json" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
   cp "$PROJECT_ROOT/config/cxl.conf" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
   cp "$PROJECT_ROOT/config/input.conf" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
+  cp "$PROJECT_ROOT/config/damo_config.json" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
+  cp "$PROJECT_ROOT/tools/tm_gen_config.py" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
   if $MOCK; then
     tar -zcf "$RELEASE_FILENAME_PREFIX-mock-$ID-$GIT_VERSION.tgz" "$CMAKE_INSTALL_PREFIX"
   else
