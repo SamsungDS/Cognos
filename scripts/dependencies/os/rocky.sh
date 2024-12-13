@@ -28,7 +28,6 @@ install_packages() {
         tar
         unzip
         wget
-        czmq-devel
     )
     package_manager
 }
