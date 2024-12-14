@@ -63,6 +63,9 @@ svk_status testMlcLogicModule(svk_feature_details *details) {
       "logic_module=MlcLogic;app_name=TestApp;app_sla_latency_ns=300;devices=0;"
       "device_sla_latency_ns=300;host_name=localhost",
       "logic_module=MlcLogic;app_name=TestApp;app_sla_latency_ns=10;devices=0,"
+      "1;device_sla_latency_ns=10,20;host_name=localhost;sla_benchmark_tool="
+      "non-existent",
+      "logic_module=MlcLogic;app_name=TestApp;app_sla_latency_ns=10;devices=0,"
       "1;device_sla_latency_ns=10,20;host_name=localhost"};
 
   output.output_buffer = (uint8_t *)calloc(1, 10240);

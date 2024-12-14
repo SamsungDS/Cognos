@@ -62,6 +62,7 @@ using slat_device_sla_config = struct slat_device_sla_config_s {
 using slat_app_benchmark_sla_to_add = struct slat_app_benchmark_sla_to_add_s {
   slat_app_sla_config app_sla;
   std::vector<slat_device_sla_config> device_sla_list;
+  char sla_benchmark_tool[64];
 };
 
 using slat_config = struct slat_config {

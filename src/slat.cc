@@ -110,6 +110,8 @@ void SLATrackerSvc::publish_app_degraded_sla(slat_benchmark_config &config) {
 }
 
 void SLATrackerSvc::add_pending_app_sla_monitoring(void) {
+  char log_msg[LOG_MSG_MAX_SIZE];
+
   this->th_data.benchmark_pending_list_lock.lock();
   for (slat_app_benchmark_sla_to_add &to_add :
        this->th_data.benchmark_pending_list_to_add) {
@@ -119,7 +121,7 @@ void SLATrackerSvc::add_pending_app_sla_monitoring(void) {
       auto it = this->th_data.benchmark_device_config_list.find(device_numa);
       if (it == this->th_data.benchmark_device_config_list.end()) {
         slat_benchmark_config cfg = {};
-        cfg.benchmark_tool = "mlc";
+        cfg.benchmark_tool = to_add.sla_benchmark_tool;
         cfg.benchmark_out_field = "avgLatencyns";
         cfg.device_current_sla = 0;
         cfg.device_advertised_sla = device.device_advertised_sla;
@@ -127,13 +129,17 @@ void SLATrackerSvc::add_pending_app_sla_monitoring(void) {
         cfg.device_sla_tolerance_percent = APP_DEFAULT_TOLERANCE_PERCENT;
         cfg.app_sla_list[app_name] = to_add.app_sla;
 
-        std::cout << "Adding device " << device_numa << " and app " << app_name
-                  << std::endl;
+        snprintf(log_msg, LOG_MSG_MAX_SIZE, "Adding device %s. and app  %s\n",
+                 device_numa.c_str(), app_name.c_str());
+        svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, log_msg);
+
         this->th_data.benchmark_device_config_list[device_numa] = cfg;
         continue;
       }
-      std::cout << "Device already exist for " << device_numa
-                << "]. Updating for app " << app_name << std::endl;
+      snprintf(log_msg, LOG_MSG_MAX_SIZE,
+               "Device already exist for %s. Updating for app %s\n",
+               device_numa.c_str(), app_name.c_str());
+      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, log_msg);
       slat_benchmark_config &cfg = it->second;
       cfg.device_advertised_sla = device.device_advertised_sla;
       cfg.app_sla_list[app_name] = to_add.app_sla;
@@ -145,6 +151,7 @@ void SLATrackerSvc::add_pending_app_sla_monitoring(void) {
 
 void SLATrackerSvc::benchmarking_thread_fn(void) {
   std::string benchmark_result_str;
+  char log_msg[LOG_MSG_MAX_SIZE];
 
   std::cout << "Started benchmarking thread" << std::endl;
   while (1) {
@@ -169,9 +176,11 @@ void SLATrackerSvc::benchmarking_thread_fn(void) {
       }
     }
 
-    std::cout << "Benchmark thread sleeping for "
-              << this->th_data.benchmark_run_interval << " seconds"
-              << std::endl;
+    snprintf(log_msg, LOG_MSG_MAX_SIZE,
+             "Benchmark thread sleeping for %d seconds\n",
+             (int)this->th_data.benchmark_run_interval);
+    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, log_msg);
+
     std::this_thread::sleep_for(
         std::chrono::seconds(this->th_data.benchmark_run_interval));
     if (this->th_data.shutdown_bm_thread) {
@@ -234,6 +243,10 @@ svk_status SLATrackerSvc::parse_and_add_new_sla_monitor(
     return rc;
   }
 
+  strncpy(app_sla_to_add.sla_benchmark_tool, "mlc", 64);
+  rc = update_sla_details(sla_kv_pairs, "sla_benchmark_tool",
+                          app_sla_to_add.sla_benchmark_tool, 64);
+
   app_sla_to_add.app_sla.app_current_sla.avgLatencyns = 0;
   app_sla_to_add.app_sla.app_sla_tolerance_percent =
       APP_DEFAULT_TOLERANCE_PERCENT;
@@ -272,8 +285,12 @@ svk_status SLATrackerSvc::parse_and_add_new_sla_monitor(
   this->th_data.benchmark_pending_list_to_add.push_back(app_sla_to_add);
   this->th_data.benchmark_pending_list_lock.unlock();
 
-  std::cout << "Queued app sla for monitoring "
-            << app_sla_to_add.app_sla.app_current_sla.app_name << std::endl;
+  char log_msg[LOG_MSG_MAX_SIZE];
+
+  snprintf(log_msg, LOG_MSG_MAX_SIZE, "Queued app [%s] for sla monitoring\n",
+           app_sla_to_add.app_sla.app_current_sla.app_name);
+  svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, log_msg);
+
   return SVK_STATUS_SUCCESS;
 }
 
