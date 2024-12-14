@@ -87,6 +87,10 @@ void SLATrackerSvc::parse_result(slat_benchmark_config &config,
     sscanf(ptr, "avgLatencyns=%[.0-9]", parsed_result);
     uint64_t avgReadLatency = atof(parsed_result);
     config.device_current_sla = avgReadLatency;
+
+    for (auto [app_name, app_sla] : config.app_sla_list) {
+      app_sla.app_current_sla.avgLatencyns = avgReadLatency;
+    }
   }
 }
 
@@ -101,7 +105,7 @@ void SLATrackerSvc::publish_app_degraded_sla(slat_benchmark_config &config) {
   int rc;
 
   for (const auto &[app_name, app_sla_config] : config.app_sla_list) {
-    rc = publish(&this->th_data.zmq_socket, "APP_SLA_DEGRADED:",
+    rc = publish(&this->th_data.zmq_socket, "APP_SLA_DEGRADED",
                  (svk_slat_logic_output *)&app_sla_config.app_current_sla);
     if (rc == -1) {
       std::cout << " failed to publish sla results" << std::endl;
@@ -128,6 +132,10 @@ void SLATrackerSvc::add_pending_app_sla_monitoring(void) {
         cfg.device_numa_node = device_numa;
         cfg.device_sla_tolerance_percent = APP_DEFAULT_TOLERANCE_PERCENT;
         cfg.app_sla_list[app_name] = to_add.app_sla;
+        strncpy(
+            cfg.app_sla_list[app_name].app_current_sla.device_name,
+            device_numa.c_str(),
+            sizeof(cfg.app_sla_list[app_name].app_current_sla.device_name) - 1);
 
         snprintf(log_msg, LOG_MSG_MAX_SIZE, "Adding device %s. and app  %s\n",
                  device_numa.c_str(), app_name.c_str());
@@ -543,6 +551,9 @@ svk_status SLATrackerSvc::load_logic_modules(
       free(details);
       dlclose_fn(handle);
     }
+    snprintf(log_msg, LOG_MSG_MAX_SIZE, "Logic module [%s] loaded",
+             details->logic_module_name);
+    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, log_msg);
   }
   if (num_failed_libs) {
     snprintf(log_msg, LOG_MSG_MAX_SIZE, "%d logic module libs failed to load.",

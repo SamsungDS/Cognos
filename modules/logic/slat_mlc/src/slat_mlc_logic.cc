@@ -3,7 +3,9 @@
 #include "logger_util.hpp"
 #include "slat_benchmark.hpp"
 
-#define SLAT_DEFAULT_LOGIC_CONFIG_FILE "/etc/svk/slat_logic.json"
+#define SLAT_DEFAULT_LOGIC_CONFIG_FILE                                 \
+  "/usr/local/svk/feature_modules/slat/logic_modules/mlclogic/config/" \
+  "config.logic.json"
 #define MLC_DEFAULT_BINARY \
   "/usr/local/svk/feature_modules/slat/logic_modules/mlclogic/bin/mlc"
 
