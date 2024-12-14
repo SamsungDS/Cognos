@@ -275,9 +275,70 @@ and describe the problem you are facing.
 - For the rest, follow
   [bahamas10's Bash Style Guide](https://github.com/bahamas10/bash-style-guide).
 
-## Python Selenium Test Cases for Cognos UI
+## Unit Tests
 
-Enabled Selenium Test Enivornment to test Cognos web application.
+### Backend Unit Tests
+
+This repo leverages the Pytest framework to test for backend code including app and exporter. Subscriber
+module leverages the traditional unit test model in python. 
+
+In order to run unit tests simply go to the source code directory of that module, i.e. cognos/backend
+or cognos/exporter and run;
+
+```
+python3.10 -m pytest -s --cov .
+```
+
+You will then see a report generated of which test cases passed along with a summary of code coverage for the
+underlying source code. 
+
+To execute pytest for a single file or even a specfic test case, run as so;
+
+```
+python3 -m pytest test/<test file>::<test case> -s -vvvvv --tb=long
+```
+
+### Frontend Unit Tests
+
+We leverage Jest, a Node-based runner to execute unit tests for the UI code. All UI test cases are defined in the
+following directory;
+```
+cognos/ui/src/tests/
+```
+
+*All tests should be exexcuted from the cognos/ui/src/ directory.
+
+To execute frontend tests and generate a code coverage report simply run
+```
+npm run test:coverage
+```
+
+To execute frontend unit tests for a specific file you can use the command below. Jest will automatically find any
+matching file names in subdirectories
+```
+npm test -- <filename>
+```
+
+### Unit Test Code Quality
+The repo contains a policy to ensure that all source code maintains at least 70% code coverage and that all new code
+checked in also maintains a 70% code coverage threshold.
+
+## Integration Tests
+
+In order to validate the front-facing functionality and integration amongst Cognos components, the integration
+tests consist of a suite of test cases written in Selenium to test the Cognos web application. These integrations tests
+run in the Git pipeline whenever new code is merged to ensure that all of the components integrate and produce the 
+desired top level functionality. 
+
+*Future Plan: Build integration tests across layers of stack and not just at the top level. 
+
+Currently, integration tests only asses the top-level functionality, meaning the integration tests sit on top of the UI layer.
+Therefore, the source code for the integration tests can be found in the following directory;
+```
+cognos/ui/tests/it/selenium/
+```
+
+Below are the instructions to run the integration tests.
 
 ### Prerequisites
 
