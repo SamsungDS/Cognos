@@ -189,8 +189,9 @@ class CXLPlugin(DataSource):
                 f"cluster_id={cluster_id};node_id={node_id};command=SetupInfo"
             )
         else:
-            feature_params = ("cluster_id=CL_ID_1;node_id=localhost;"
-                              "command=SetupInfo")
+            feature_params = (
+                "cluster_id=CL_ID_1;node_id=localhost;" "command=SetupInfo"
+            )
         body = helper.gen_svkcxlplugin_request_params(feature_params)
         response = requests.post(AGENT_ENDPOINT, json=body, headers=headers)
         payload = helper.parse_svkcxlplugin_setup_response(response)
@@ -360,3 +361,30 @@ class CXLPlugin(DataSource):
                 print(f"Error with cluster {cluster_id},node:{node_id}:{e}")
                 continue
         return list(result_d.values())
+
+    def get_all_hosts_info(self):
+
+        try:
+            print("inside cxldata source get_all_hosts")
+            # Call the helper function to get host information
+            result = helper.get_all_hosts()
+            if result is None:
+                formatted_result = []
+            else:
+                formatted_result = [
+                    {"value": host, "label": host} for host in result["hostnames"]
+                ]
+            print(f"helper output: {formatted_result}")
+            response = jsonify(formatted_result)
+            response.status_code = 200
+            response.headers.add("Access-Control-Allow-Origin", "*")
+            print(f"response text: {response.get_json()}")
+            return response
+        except Exception as e:
+            print(f"An error occurred in get_all_hosts_info: {e}")
+            response = jsonify(
+                {"error": "Failed to retrieve host information"}
+            )
+            response.status_code = 500
+            return response
+

@@ -1,8 +1,9 @@
 {
-    "mgmt_endpoint": "http://<frontend_ip>:<frontend_port>",
-    "data_endpoint": "http://127.0.0.1:4000",
-    "api_endpoint": "http://127.0.0.1:4000/api/v2.0.1",
-    "exporter_endpoint": "127.0.0.1:4001",
+    "mgmt_endpoint": "http://105.128.44.83:5000",
+    "data_endpoint": "http://105.128.44.83:4000",
+    "api_endpoint": "http://105.128.44.83:4000/api/v2.0.1",
+    "exporter_endpoint": "105.128.44.83:4002",
     "HostList": ["Host 1", "Host 2", "Host 3", "Host 4", "Host 5", "Host 6", "Host 7", "Host 8"],
     "ssl": false
 }
+

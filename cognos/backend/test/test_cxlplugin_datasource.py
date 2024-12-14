@@ -759,3 +759,68 @@ def test_attach_device_database_mock(
             mock_request=True, mock_request_data=mock_request_data
         )
     assert response.status_code == 200
+
+
+@patch("cognos.backend.helper.get_all_hosts")
+def test_get_all_hosts_info_success(mock_get_all_hosts, mock_app):
+    # Mock the return value of get_all_hosts
+    mock_get_all_hosts.return_value = {
+        "hostnames": ["host1", "host2", "host3"]
+    }
+    # Use Flask's app context to avoid RuntimeError
+    with mock_app.app_context():
+        # Instantiate the plugin and call the wrapper
+        plugin_instance = cxlds.CXLPlugin()
+        response = plugin_instance.get_all_hosts_info()
+        # Build the expected response
+        expected_response = jsonify({"hostnames": ["host1", "host2", "host3"]})
+        # Assertions
+        assert (
+            response.status_code == 200
+        ), "Response status code should be 200"
+        assert json.loads(response.data) == json.loads(
+            expected_response.data
+        ), "Response data should match the expected hostnames"
+        assert (
+            response.headers["Access-Control-Allow-Origin"] == "*"
+        ), "Response should have the Access-Control-Allow-Origin header"
+        mock_get_all_hosts.assert_called_once()
+
+
+@patch("cognos.backend.helper.get_all_hosts")
+def test_get_all_hosts_info_no_data(mock_get_all_hosts, mock_app):
+    # Mock the return value of get_all_hosts as None
+    mock_get_all_hosts.return_value = None
+    with mock_app.app_context():
+        plugin_instance = cxlds.CXLPlugin()
+        response = plugin_instance.get_all_hosts_info()
+        expected_response = jsonify({"hostnames": []})
+        assert (
+            response.status_code == 200
+        ), "Response status code should be 200"
+        assert json.loads(response.data) == json.loads(
+            expected_response.data
+        ), "Response data should return an empty list of hostnames"
+        assert (
+            response.headers["Access-Control-Allow-Origin"] == "*"
+        ), "Response should have the Access-Control-Allow-Origin header"
+        mock_get_all_hosts.assert_called_once()
+
+
+@patch("cognos.backend.helper.get_all_hosts")
+def test_get_all_hosts_info_error(mock_get_all_hosts, mock_app):
+    # Simulate an exception being raised in get_all_hosts
+    mock_get_all_hosts.side_effect = Exception("Database error")
+    with mock_app.app_context():
+        plugin_instance = cxlds.CXLPlugin()
+        response = plugin_instance.get_all_hosts_info()
+        expected_response = jsonify(
+            {"error": "Failed to retrieve host information"}
+        )
+        assert (
+            response.status_code == 500
+        ), "Response status code should be 500 for errors"
+        assert json.loads(response.data) == json.loads(
+            expected_response.data
+        ), "Response data should indicate an error occurred"
+        mock_get_all_hosts.assert_called_once()

@@ -725,3 +725,52 @@ def test_get_clusters():
     result = helper.get_clusters()
     # Assertions
     assert result == ["CL_ID_1"], "Expected cluster names to be ['CL_ID_1']"
+
+
+@patch("cognos.backend.helper.connect_to_mysql")
+@patch("cognos.backend.helper.disconnect_mysql")
+def test_get_all_hosts_success(mock_disconnect, mock_connect):
+    # Mocking database connection
+    mock_cursor = MagicMock()
+    # Mocked database result
+    mock_cursor.fetchall.return_value = [("host1",), ("host2",), ("host3",)]
+    mock_db = MagicMock()
+    mock_db.cursor.return_value = mock_cursor
+    mock_connect.return_value = (mock_db, mock_cursor)
+    # Call the function
+    result = helper.get_all_hosts()
+    print(result)
+    assert result is not None, "Result should not be None"
+    assert result["hostnames"] == [
+        "host1",
+        "host2",
+        "host3",
+    ], "Distinct hostnames should match the expected list"
+    mock_connect.assert_called_once()
+    mock_disconnect.assert_called_once_with(mock_db)
+
+
+@patch("cognos.backend.helper.connect_to_mysql")
+@patch("cognos.backend.helper.disconnect_mysql")
+def test_get_all_hosts_empty_table(mock_disconnect, mock_connect):
+    # Mocking database connection
+    mock_cursor = MagicMock()
+    # Mocked empty result
+    mock_cursor.fetchall.return_value = []
+    mock_db = MagicMock()
+    mock_db.cursor.return_value = mock_cursor
+    mock_connect.return_value = (mock_db, mock_cursor)
+    result = helper.get_all_hosts()
+    assert result is None, "Result should be None when the table is empty"
+    mock_connect.assert_called_once()
+    mock_disconnect.assert_called_once_with(mock_db)
+
+
+@patch("cognos.backend.helper.connect_to_mysql")
+@patch("cognos.backend.helper.disconnect_mysql")
+def test_get_all_hosts_connection_failure(mock_disconnect, mock_connect):
+    # Simulate database connection failure
+    mock_connect.return_value = (None, None)
+    result = helper.get_all_hosts()
+    assert result is None, "Result should be None when connection fails"
+    mock_connect.assert_called_once()

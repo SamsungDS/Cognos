@@ -113,6 +113,10 @@ def create_app(mock=False):
     def get_mb_info():
         return data_source.get_mb_info()
 
+    @app.get(f"/api/{API_VERSION}/all_hosts")
+    def get_all_hosts():
+        return data_source.get_all_hosts_info()
+
     # setup database tables based on current state during initial boot
     data_source.setup_tables()
     return app

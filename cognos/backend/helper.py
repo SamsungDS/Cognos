@@ -821,3 +821,33 @@ def count_host_upstream_ports():
 def get_clusters():
     # @to-do use list cluster names API
     return ["CL_ID_1"]
+
+
+def get_all_hosts():
+    """
+    Fetch distinct hostnames from the hosts table.
+    """
+    try:
+        db, cursor = connect_to_mysql()
+        if not db or not cursor:
+            print("Failed to connect to the database.")
+            return None
+        # SQL query to get distinct hostnames
+        query = """
+            SELECT DISTINCT name
+            FROM hosts;
+        """
+        cursor.execute(query)
+        results = cursor.fetchall()
+        # If no results are found, return None
+        if not results or len(results) == 0:
+            return None
+        # Extract hostnames from results and return them as a list
+        return {
+            "hostnames": [row[0] for row in results]
+        }
+    except Error as e:
+        print(f"Error while connecting to MySQL: {e}")
+        return None
+    finally:
+        disconnect_mysql(db)
