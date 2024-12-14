@@ -247,28 +247,16 @@ class CognosInfluxDBClient:
         output = tables.to_json()
         data = json.loads(output)
 
-        # get CXL capacity based on # of attached devices to selected host
-        cxl_capacity_gb = -1
         if self.mock:
-            cxl_capacity_gb = 256
+            return [["Memtype", "Capacity Used"], ["CXL", 512], ["DRAM", 256]]
         else:
-
             try:
-                result = helper.fetch_memory_capacity()
-                if result:
-                    # Extract values from the query result
-                    cxl_capacity_gb = int(result["used_capacity"])
-
                 export_data = [["Memtype", "Capacity Used"]]
                 for metric in data:
                     memtype = metric["_field"].split("_")[0].upper()
-                    # derive CXL capacity from attach/detached states
-                    if memtype == "CXL":
-                        export_data.append([memtype, cxl_capacity_gb])
-                    else:
-                        export_data.append(
-                            [memtype, helper.mb_to_GB(metric["_value"])]
-                        )
+                    export_data.append(
+                        [memtype, helper.mb_to_GB(metric["_value"])]
+                    )
 
                 return export_data
 

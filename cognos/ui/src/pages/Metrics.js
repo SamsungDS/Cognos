@@ -23,7 +23,7 @@ export const handleSelectChange = async (
 
       // get available hosts
       try {
-        const response = await fetch(`${apiEndpoint}/hosts`, {
+        const response = await fetch(`${apiEndpoint}/all_hosts`, {
           mode: "cors",
           method: "GET",
           headers: {
