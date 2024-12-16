@@ -159,7 +159,7 @@ Status Servicer::ProcessNodeCommand(ServerContext *ctxt,
 
   svk_cmd.feat_id = (feature_id)req->feature_id();
   svk_input.input_buffer = (uint8_t *)feature_params.c_str();
-  svk_input.len = feature_params.length();
+  svk_input.len = feature_params.length() + 1;
   svk_output.output_buffer = (uint8_t *)&buffer[0];
   svk_output.len = MAX_SIZE;
 
@@ -172,6 +172,7 @@ Status Servicer::ProcessNodeCommand(ServerContext *ctxt,
                  " feature_id " + std::to_string(svk_cmd.feat_id) + " params " +
                  feature_params;
     svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR, logger_str.c_str());
+    return status;
   }
 
   if (svk_output.len) {

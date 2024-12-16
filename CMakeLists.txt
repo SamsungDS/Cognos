@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.7)
+include(FindPkgConfig)
 
 if (EXISTS "${CMAKE_SOURCE_DIR}/cmake/svk_global.cmake")
     include (${CMAKE_SOURCE_DIR}/cmake/svk_global.cmake)
@@ -19,6 +20,7 @@ set(SVKGRPCFW_INCLUDE_DEST "include/")
 set(SVKGRPCFW_LIB_DEST "lib64/")
 
 set(PARENT_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+pkg_check_modules(SVKFW REQUIRED svkframework)
 
 add_subdirectory(proto)
 add_subdirectory(grpc_node_server)

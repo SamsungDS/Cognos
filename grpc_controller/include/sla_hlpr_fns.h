@@ -1,6 +1,7 @@
 #ifndef __SLA_HLPR_FNS_H__
 #define __SLA_HLPR_FNS_H__
 
+#include <algorithm>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <unordered_map>
@@ -53,6 +54,11 @@ class SLADeviceHelper {
   int GetDeviceForAppRequirements(uint64_t sla_latency_ns, uint64_t size,
                                   std::vector<DeviceInfo>& devices);
   int SetSLADataForApp(std::string app_name, App_Device_List sla_data);
+  int UnregisterDevicesForNode(std::string node_name);
+  std::vector<DeviceInfo> GetDevices() { return this->device_info; };
+  void SetDevices(std::vector<DeviceInfo>& devices) {
+    this->device_info = devices;
+  };
   ~SLADeviceHelper(){};
 
  private:

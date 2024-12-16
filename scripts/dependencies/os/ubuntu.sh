@@ -21,7 +21,7 @@ install_build_deps() {
         'libzmq3-dev'
         'net-tools'
         'pkgconf'
-        'python3.11'
+        'python3'
         'python3-pip'
         'tar'
         'unzip'

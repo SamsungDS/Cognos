@@ -2,9 +2,12 @@
 
 #include <csignal>
 #include <set>
+#include <thread>
+#include <zmq.hpp>
 
 #include "client_library.h"
 #include "sla_hlpr_fns.h"
+#include "svk_zmq_api.h"
 #define MAX_SIZE 4096
 
 #ifndef BUILD_TESTING
@@ -205,9 +208,9 @@ Status ControllerServicer::RegisterNode(ServerContext *ctxt,
 
   device_info_status = g_sla_device_hlpr->GetDeviceInfo(node_id, node_port);
   if (device_info_status != 0) {
-    return Status(grpc::UNKNOWN, "Failed to run command");
+    return Status(grpc::UNKNOWN, "Failed to get devices");
   }
-
+  m_config_changed = true;
   status = 0;
   resp->set_status("Success");
   resp->set_error_code(status);
@@ -263,10 +266,20 @@ Status ControllerServicer::UnregisterNode(ServerContext *ctxt,
       logger_str = "Unregistered the node_id " + node_id + " successfully";
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                  logger_str.c_str());
-
       status = 0;
     }
   }
+  status = g_sla_device_hlpr->UnregisterDevicesForNode(node_id);
+  if (status != 0) {
+    logger_str =
+        "Failed to remove devices from the SLA tracker for the node_id " +
+        node_id;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
+    return Status(grpc::INVALID_ARGUMENT,
+                  "Failed to remove devices from the SLA tracker for the node");
+  }
+  m_config_changed = true;
   resp->set_status("Success");
   resp->set_error_code(status);
 
@@ -280,6 +293,12 @@ Status ControllerServicer::ProcessAllocateMemory(const svk::CommandRequest *req,
   svk::CommandResponse resp_node;
   std::string logger_str;
   std::string feature_params;
+  uint64_t sla_latency_ns;
+  uint64_t size;
+  char app_name[128];
+  char logic_module[128];
+  std::vector<DeviceInfo> app_devices;
+  int status = -1;
 
   feature_params = req->feature_params();
 
@@ -296,12 +315,6 @@ Status ControllerServicer::ProcessAllocateMemory(const svk::CommandRequest *req,
     return Status(grpc::INVALID_ARGUMENT, "invalid feature params");
   }
 
-  uint64_t sla_latency_ns;
-  uint64_t size;
-  char app_name[128];
-  char logic_module[128];
-  std::vector<DeviceInfo> app_devices;
-  int status;
   sscanf(ptr_sla, "sla_latency_ns=%lu", &sla_latency_ns);
   sscanf(ptr_app, "app_name=%[a-zA-Z0-9]", &app_name[0]);
   if (ptr_logicmod) {
@@ -365,14 +378,15 @@ Status ControllerServicer::ProcessAllocateMemory(const svk::CommandRequest *req,
 
       Client client(node_name, port);
       cmd_status = client.ProcessNodeCommand(&req_node, &resp_node);
-      if (cmd_status.ok() == true) {
-        CommandResponse_NodeResponse *response = resp->add_node_responses();
-        response->set_output(resp_node.node_responses(0).output());
-        response->set_node_id(resp_node.node_responses(0).node_id());
-      } else {
+      if (cmd_status.ok() != true) {
         // If one of the nodes return failure for whatever reason, we are
         // returning error for the whole cluster. Need to handle partial
         // failures accordingly
+        logger_str = "ProcessNodeCommand with feature_params " +
+                     feature_params + " failed for node " + node_name;
+        svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                   logger_str.c_str());
+
         return cmd_status;
       }
     }
@@ -386,6 +400,8 @@ Status ControllerServicer::ProcessAllocateMemory(const svk::CommandRequest *req,
   }
   g_sla_device_hlpr->SetSLADataForApp(app_name, app_device_data);
 
+  logger_str = "ProcessAllocateMemory processed successfully";
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
   return Status::OK;
 }
 
@@ -441,6 +457,10 @@ Status ControllerServicer::ProcessControllerCommand(
 
   if (req->command_id().size() != 0) {
     if (req->command_id() == "allocate_memory") {
+      logger_str = "ProcessAllocateMemory called";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                 logger_str.c_str());
+
       status = ProcessAllocateMemory(req, resp);
       return status;
     }
@@ -564,8 +584,123 @@ void signal_handler(int signal) {
   gSignalStatus.store(signal);
 }
 
+#define SUBSCRIBER_PORT "5555"
+int StartSLAThreadForTiering(ControllerServicer *svcr) {
+  // A map of <node_name> with the socket
+  std::unordered_map<std::string, void *> socket_map;
+  std::string logger_str;
+  zmq::pollitem_t *items;
+  svk_slat_logic_output data;
+  std::string topic = "APP_SLA_DEGRADED";
+  std::unordered_map<std::string, std::unordered_map<std::string, std::string>>
+      m_cluster_map;
+  std::string node_name;
+  std::string cluster_name;
+  int status = -1;
+  int socket_map_count = 0;
+
+  while (true) {
+    if (svcr->get_stop_flag() == true) {
+      logger_str = "Detected the stop flag enabled";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                 logger_str.c_str());
+      break;
+    }
+    if (svcr->is_config_changed() == true) {
+      svcr->set_config_changed(false);
+      logger_str = "Detected the cluster config change";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                 logger_str.c_str());
+      m_cluster_map = svcr->get_cluster_map();
+      for (auto itr = m_cluster_map.begin(); itr != m_cluster_map.end();
+           ++itr) {
+        cluster_name = itr->first;
+        for (auto nodes = itr->second.begin(); nodes != itr->second.end();
+             ++nodes) {
+          node_name = nodes->first;
+          if (socket_map[node_name] == nullptr) {
+            void *zmq_context;
+            void *zmq_socket;
+            status =
+                initialize_sub(&zmq_context, &zmq_socket, node_name.c_str(),
+                               SUBSCRIBER_PORT, topic.c_str());
+            if (status != 0) {
+              logger_str =
+                  "Error in initializing the subscriber for node " + node_name;
+              svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                         logger_str.c_str());
+            } else {
+              logger_str = "Initialized the subscriber for node " + node_name;
+              svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                         logger_str.c_str());
+              socket_map[node_name] = zmq_socket;
+            }
+          }
+        }
+      }
+      socket_map_count = socket_map.size();
+      if (socket_map_count) {
+        items = new zmq::pollitem_t[socket_map_count];
+        int count = 0;
+        for (auto itr = socket_map.begin(); itr != socket_map.end(); ++itr) {
+          *(items + count) = {itr->second, 0, ZMQ_POLLIN, 0};
+          count++;
+        }
+      }
+    }
+
+    if (socket_map_count) {
+      try {
+        int rc =
+            zmq::poll(items, socket_map_count, std::chrono::milliseconds(1000));
+        if (rc > 0) {
+          for (int i = 0; i < socket_map_count; i++) {
+            if (items[i].revents && ZMQ_POLLIN) {
+              status = get_data(&items[i].socket, &data);
+              if (status != ((int)topic.length() + (int)sizeof(data))) {
+                // error
+                logger_str =
+                    "Error in receiving the data for node " + node_name;
+                svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                           logger_str.c_str());
+
+              } else {
+                logger_str =
+                    "Device's numa " + std::string(data.device_name) +
+                    " on host " + std::string(data.host_name) +
+                    " for the app " + std::string(data.app_name) +
+                    " deviated than expected - Reported latency_ns = " +
+                    std::to_string(data.avgLatencyns);
+                svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::WARN,
+                           logger_str.c_str());
+              }
+            }
+          }
+        }
+      } catch (zmq::error_t &e) {
+        std::string errorMessage = e.what();
+        logger_str =
+            "Exception in starting the subscriber poller" + errorMessage;
+        svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                   logger_str.c_str());
+        return -1;
+      }
+    } else {
+      // sleep for 2 seconds if no nodes are registered with the controller
+      sleep(2);
+    }
+  }
+  return 0;
+}
+
+int StopSLAThreadForTiering(ControllerServicer *svcr) {
+  svcr->set_stop_flag();
+  return 0;
+}
+
 int StartServer(std::string svk_conf_file, bool blocking) {
   int status = -1;
+  std::thread *sla_thread;
   std::signal(SIGTERM, signal_handler);
   std::signal(SIGSEGV, signal_handler);
   std::signal(SIGINT, signal_handler);
@@ -581,9 +716,19 @@ int StartServer(std::string svk_conf_file, bool blocking) {
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                "Starting the controller server to process the commands");
     if (blocking == true) {
+      sla_thread = new std::thread(&StartSLAThreadForTiering, svcr);
+      if (sla_thread == nullptr) {
+        svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                   "Failed in starting the thread SLAThreadForTiering");
+        delete svcr;
+        return status;
+      }
+
       while (gSignalStatus.load() == -1) sleep(5);
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                  "The controller server is stopped gracefully");
+      StopSLAThreadForTiering(svcr);
+      sla_thread->join();
       delete svcr;
     }
     status = 0;

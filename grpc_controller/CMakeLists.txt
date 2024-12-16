@@ -39,9 +39,13 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 
 target_include_directories(${PROJECT_NAME} PUBLIC ${GRPC_PROTO_SRC})
 target_include_directories(${PROJECT_NAME} PUBLIC ${INC_DIR} ${COMMON_INC_DIR})
+target_link_directories(${PROJECT_NAME} PUBLIC ${SVKFW_LIBRARY_DIRS})
 
 target_link_libraries(${PROJECT_NAME} PUBLIC "${GRPC_LINK_LIBRARIES_FLAG} ${SVK_FW_LIBS} -lutf8_validity -Wl,--no-as-needed -lgrpc++_reflection -Wl,--as-needed -ldl -lsvklogger")
 target_link_libraries(${PROJECT_NAME} PUBLIC ${SVK_FW_GRPC_CORE_LIB})
+target_link_libraries(${PROJECT_NAME} PUBLIC zmq)
+target_link_libraries(${PROJECT_NAME} PUBLIC svkzmq)
+
 
 if(BUILD_TESTING)
     add_library(svkgrpccontrollertest STATIC ${SRCS})
@@ -51,6 +55,8 @@ if(BUILD_TESTING)
 
     target_link_libraries(svkgrpccontrollertest PUBLIC "${GRPC_LINK_LIBRARIES_FLAG} ${SVK_FW_LIBS} -lutf8_validity -Wl,--no-as-needed -lgrpc++_reflection -Wl,--as-needed -ldl -lsvklogger")
     target_link_libraries(svkgrpccontrollertest PUBLIC ${SVK_FW_GRPC_CORE_LIB})
+    target_link_libraries(svkgrpccontrollertest PUBLIC svkzmq)
+    target_link_libraries(svkgrpccontrollertest PUBLIC zmq)
     install(FILES ${GRPC_INC_FILES} DESTINATION ${SVKGRPCFW_INCLUDE_DEST})
 endif()
 

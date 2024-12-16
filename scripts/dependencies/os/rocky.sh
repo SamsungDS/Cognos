@@ -8,6 +8,7 @@ install_build_deps() {
     BUILD_DEPS=(
         'boost-devel'
         'cmake'
+        'cppzmq-devel'
         'gcc-c++'
         'git'
         'golang'
