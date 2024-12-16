@@ -54,8 +54,8 @@
       },
   "core":
       {
-        "_comment": "All the feature libraries (ONLY) should be present in /usr/local/svk/feature_libs",
-        "feat_modules_dir": "/usr/local/svk/feature_libs",
+        "_comment": "All the feature libraries (ONLY) should be present in /usr/local/svk/feature_modules",
+        "feat_modules_dir": "/usr/local/svk/feature_modules",
         "logger": {
           "log_level": "INFO",
           "log_file_name": "/var/log/svk/framework.log",

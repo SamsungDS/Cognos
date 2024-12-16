@@ -49,13 +49,17 @@ int create_device_sla_conf_json() {
   char data[1024];
   FILE *fp;
   struct stat fstat;
+  int status = -1;
 
   if (stat(SLA_CONFIG_FILE, &fstat) == 0) {
     return 0;
   }
 
   sprintf(command, "mkdir -p %s", SLA_CONFIG_DIR);
-  system(command);
+  status = system(command);
+  if (status != 0) {
+    return -1;
+  }
 
   memset(data, 0, sizeof(data));
   strcpy(data,
@@ -832,6 +836,131 @@ TEST(SLAFunction, DeviceSLAHelperGetDeviceForAppRequirementsAndUpdate) {
 
   status = device_hlpr_class.SetSLADataForApp("TestingApp", dev_data);
   ASSERT_EQ(status, 0);
+}
+
+TEST(SLAFunction, DeviceUnregister) {
+  FILE *fp = nullptr;
+  char data[1024];
+  std::vector<DeviceInfo> devices;
+  App_Device_List dev_data;
+
+  memset(data, 0, sizeof(data));
+  strcpy(data,
+         "[{\"type\": \"FM_DIRECT_CMMD\",\"Devices\": [{\"dev_name\": "
+         "\"DEV1-256G\",\"dev_size\": \"274877906944\",\"dev_numa\": "
+         "0,\"sla_avg_latency_ns\": 10, \"node_name\": \"localhost\"},"
+         "{\"dev_name\": \"DEV2-256G\",\"dev_size\": "
+         "\"274877906944\",\"dev_numa\": "
+         "2,\"sla_avg_latency_ns\": 10, \"node_name\": \"localhost\"}]}]");
+  fp = fopen("test.conf", "w+");
+  fwrite((void *)&data[0], strlen(data), 1, fp);
+  fclose(fp);
+
+  SLADeviceHelper device_hlpr_class = SLADeviceHelper("test.conf");
+  int status = device_hlpr_class.GetDeviceInfo("localhost", "9998");
+  ASSERT_EQ(status, 0);
+
+  status = device_hlpr_class.UnregisterDevicesForNode("localhost");
+  ASSERT_EQ(status, 0);
+}
+
+TEST(SLAFunction, DeviceUnregisterWithDeviceInUse) {
+  FILE *fp = nullptr;
+  char data[1024];
+  std::string logger_msg;
+
+  memset(data, 0, sizeof(data));
+  strcpy(data,
+         "[{\"type\": \"FM_DIRECT_CMMD\",\"Devices\": [{\"dev_name\": "
+         "\"DEV1-256G\",\"dev_size\": \"274877906944\",\"dev_numa\": "
+         "0,\"sla_avg_latency_ns\": 10, \"node_name\": \"localhost\"},"
+         "{\"dev_name\": \"DEV2-256G\",\"dev_size\": "
+         "\"274877906944\",\"dev_numa\": "
+         "2,\"sla_avg_latency_ns\": 10, \"node_name\": \"localhost\"}]}]");
+  fp = fopen("test.conf", "w+");
+  fwrite((void *)&data[0], strlen(data), 1, fp);
+  fclose(fp);
+
+  SLADeviceHelper device_hlpr_class = SLADeviceHelper("test.conf");
+
+  int status = device_hlpr_class.GetDeviceInfo("localhost", "9998");
+  ASSERT_EQ(status, 0);
+
+  std::vector<DeviceInfo> devices = device_hlpr_class.GetDevices();
+  DeviceInfo dev = devices.front();
+  dev.free_flag = false;
+  devices.front() = dev;
+  device_hlpr_class.SetDevices(devices);
+  std::vector<DeviceInfo> ndevices = device_hlpr_class.GetDevices();
+  status = device_hlpr_class.UnregisterDevicesForNode("localhost");
+  ASSERT_EQ(status, -1);
+}
+
+TEST(SLAFunction, DeviceUnregisterWithInvalidNode) {
+  FILE *fp = nullptr;
+  char data[1024];
+  std::vector<DeviceInfo> devices;
+  App_Device_List dev_data;
+
+  memset(data, 0, sizeof(data));
+  strcpy(data,
+         "[{\"type\": \"FM_DIRECT_CMMD\",\"Devices\": [{\"dev_name\": "
+         "\"DEV1-256G\",\"dev_size\": \"274877906944\",\"dev_numa\": "
+         "0,\"sla_avg_latency_ns\": 10, \"node_name\": \"localhost\"}]}]");
+  fp = fopen("test.conf", "w+");
+  fwrite((void *)&data[0], strlen(data), 1, fp);
+  fclose(fp);
+
+  SLADeviceHelper device_hlpr_class = SLADeviceHelper("test.conf");
+  int status = device_hlpr_class.GetDeviceInfo("localhost", "9998");
+  ASSERT_EQ(status, 0);
+
+  status = device_hlpr_class.UnregisterDevicesForNode("localhost1");
+  ASSERT_EQ(status, 0);
+}
+
+TEST(SLAFunction, SLADeviceHelperDestructor) {
+  FILE *fp = nullptr;
+  char data[1024];
+
+  memset(data, 0, sizeof(data));
+  strcpy(data,
+         "[{\"type\": \"FM_DIRECT_CMMD\",\"Devices\": [{\"dev_name\": "
+         "\"DEV1-256G\",\"dev_size\": \"274877906944\",\"dev_numa\": "
+         "0,\"sla_avg_latency_ns\": 10, \"node_name\": \"localhost\"}]}]");
+  fp = fopen("test.conf", "w+");
+  fwrite((void *)&data[0], strlen(data), 1, fp);
+  fclose(fp);
+
+  SLADeviceHelper device_hlpr_class = SLADeviceHelper("test.conf");
+  device_hlpr_class.~SLADeviceHelper();
+}
+
+TEST(ServicerFunctions, ServicerFunctionValidation) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  unlink(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL);
+
+  ControllerServicer *svcr(new ControllerServicer(conf_file));
+  svcr->set_config_changed(true);
+  ASSERT_EQ(svcr->is_config_changed(), true);
+  svcr->set_config_changed(false);
+  ASSERT_EQ(svcr->is_config_changed(), false);
+
+  std::unordered_map<std::string, std::unordered_map<std::string, std::string>>
+      cluster_map;
+  cluster_map["cluster1"]["localhost1"] = "1234";
+  cluster_map["cluster1"]["localhost2"] = "1234";
+  svcr->set_cluster_map(cluster_map);
+  cluster_map = svcr->get_cluster_map();
+  ASSERT_EQ(cluster_map.find("cluster1") == cluster_map.end(), false);
+
+  ASSERT_EQ(svcr->get_svk_config_controller_port(), CONTROLLER_DEFAULT_PORT);
+  ASSERT_EQ(svcr->get_svk_config_controller_id(), CONTROLLER_DEFAULT_ID);
 }
 
 TEST(SLAStatsManager, addEntryTest) {

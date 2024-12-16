@@ -66,13 +66,32 @@ class ControllerServicer : public svk::Controller::Service {
   const bool get_state() { return m_initialized_flag; };
   void set_server(std::shared_ptr<Server> server) { m_server = server; };
   std::shared_ptr<Server> get_server() { return m_server; };
+  void set_config_changed(bool state) { m_config_changed = state; };
+  bool is_config_changed() { return m_config_changed; };
+  std::unordered_map<std::string, std::unordered_map<std::string, std::string>>
+  get_cluster_map() {
+    return m_cluster_map;
+  };
+
+  void set_cluster_map(
+      std::unordered_map<std::string,
+                         std::unordered_map<std::string, std::string>>
+          &cluster_map) {
+    m_cluster_map = cluster_map;
+  }
+
+  bool get_stop_flag() { return stop_flag; };
+  void set_stop_flag() { stop_flag = true; };
 
  private:
   controller_config m_svk_config;
   bool m_initialized_flag = false;
+  // A cluster map with the cluster name to the map of <node_name, port>
   std::unordered_map<std::string, std::unordered_map<std::string, std::string>>
       m_cluster_map;
   std::shared_ptr<Server> m_server;
+  bool m_config_changed = false;
+  bool stop_flag = false;
 };
 
 #endif /*__GRPC_CONTROLLER_H__*/

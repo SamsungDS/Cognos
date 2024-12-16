@@ -126,7 +126,7 @@ int SLADeviceHelper::GetDeviceForAppRequirements(
                    " added to the list for consumption";
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                  logger_str.c_str());
-      dev.free_flag = false;
+      // dev.free_flag = false;
       devices.push_back(dev);
     }
   }
@@ -134,6 +134,32 @@ int SLADeviceHelper::GetDeviceForAppRequirements(
   if (devices.size() == 0) {
     status = -1;
   }
+  return status;
+}
+
+int SLADeviceHelper::UnregisterDevicesForNode(std::string node_name) {
+  int status = -1;
+  std::string logger_str;
+  for (DeviceInfo dev : this->device_info) {
+    if (dev.free_flag != true) {
+      // Should we return error as the device is associated with an app
+      // Ignoring for now
+      logger_str = "device " + dev.device_name + " with numa " +
+                   std::to_string(dev.numa) + " is in use";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                 logger_str.c_str());
+      return status;
+    }
+  }
+
+  this->device_info.erase(
+      std::remove_if(
+          this->device_info.begin(), this->device_info.end(),
+          [node_name](DeviceInfo d) { return d.node_name == node_name; }),
+      this->device_info.end());
+
+  status = 0;
+
   return status;
 }
 
