@@ -61,7 +61,7 @@ int runCommand(WorkerSharedData *sharedData) {
 }
 
 int runSampleLogicThreadMgr(int threadCount, int timeLimit,
-                            svk_slat_logic_input *slatInput,
+                            svk_slat_worker_logic_input *slatInput,
                             svk_slat_logic_output *slatOutput) {
   memset(slatOutput, 0, sizeof(*slatOutput));
 
@@ -227,7 +227,7 @@ extern "C" svk_status execute_logic_sync(svk_logic_cmd *cmd,
   int timeLimit = 1;    // Default of 1 sec
   char app_name[256];
   char *ptr;
-  svk_slat_logic_input slatInput;
+  svk_slat_worker_logic_input slatInput;
   svk_slat_logic_output slatOutput;
   char log_msg[256];
 

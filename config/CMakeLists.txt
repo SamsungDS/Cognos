@@ -4,11 +4,18 @@ else()
   set(SLAT_FEATURE_DIR "${PKG_CONFIG_PREFIX}")
 endif()
 set(CONFIG_DIR "${SLAT_FEATURE_DIR}/config/")
+set(MLC_LOGIC_CONFIG_DIR "${SLAT_FEATURE_DIR}/logic_modules/mlclogic/config/")
 message(STATUS "slat config dir set to ${CONFIG_DIR}")
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/config.json.in ${CMAKE_CURRENT_BINARY_DIR}/config.json @ONLY)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/config.logic.json.in ${CMAKE_CURRENT_BINARY_DIR}/config.logic.json @ONLY)
 
 install(
     FILES ${CMAKE_CURRENT_BINARY_DIR}/config.json
     DESTINATION "${CONFIG_DIR}"
     PERMISSIONS OWNER_READ OWNER_EXECUTE GROUP_READ WORLD_READ
+)
+
+install(
+    FILES ${CMAKE_CURRENT_BINARY_DIR}/config.logic.json
+    DESTINATION "${MLC_LOGIC_CONFIG_DIR}"
 )

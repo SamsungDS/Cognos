@@ -7,6 +7,6 @@ Standards-Version: 4.1.4
 
 Package: svk-slat
 Architecture: amd64
-Depends: ${shlibs:Depends}, ${misc:Depends}, svk-core
+Depends: ${shlibs:Depends}, ${misc:Depends}, svk-core, libboost-filesystem1.83.0|libboost-filesystem1.74.0
 Description: SVK SLA Tracker module feature library
 

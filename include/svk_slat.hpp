@@ -5,11 +5,14 @@
 #include <dlfcn.h>
 #include <sys/inotify.h>
 
+#include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
-#include "svk_logger.hpp"
+#include "logger_util.hpp"
+#include "svk_zmq_api.h"
 
 // Hardcoding this path for now. This will be provided by the header from the
 // svk-core repo in the future
@@ -27,21 +30,61 @@
 // get_supported_logic_details If not provided, then we ignore the logic module
 #define SLAT_FEATURE_MODULE_NAME "slat"
 
-#define SLAT_LOG_FILENAME_DEFAULT "/var/log/svk/slat.log"
 #define SLAT_CONF_SECTION_TAG SLAT_FEATURE_MODULE_NAME
 #define SLAT_LOGGER_MODULE_NAME SLAT_FEATURE_MODULE_NAME
-#define SLAT_LOGGER_FILE_COUNT_DEFAULT 10
-#define SLAT_LOGGER_FILE_SIZE_DEFAULT 1048576ULL  // 1MB default max file size
-#define SLAT_LOGGER_LEVEL_DEFAULT "INFO"
-#define SLAT_LOGGER_SINK_TYPE_DEFAULT "rotating_file"
+
+#define SLAT_MAX_STR_LEN (256)
+#define SLAT_MAX_LOGIC_MODULE_NAME_LEN SLAT_MAX_STR_LEN
+#define SLAT_MAX_FEATURE_NAME_LEN SLAT_MAX_STR_LEN
+
+using slat_app_sla_config = struct slat_app_sla_config_s {
+  uint64_t app_requested_sla_ns;
+  uint64_t app_sla_tolerance_percent;
+  svk_slat_logic_output app_current_sla;
+};
+
+using slat_benchmark_config = struct slat_benchmark_config_s {
+  std::string device_numa_node;
+  uint64_t device_advertised_sla;
+  uint64_t device_current_sla;
+  uint64_t device_sla_tolerance_percent;
+  std::string benchmark_tool;
+  std::string benchmark_out_field;
+  std::map<std::string, slat_app_sla_config> app_sla_list;
+};
+
+using slat_device_sla_config = struct slat_device_sla_config_s {
+  std::string device_numa_node;
+  uint64_t device_advertised_sla;
+  uint64_t device_current_sla;
+};
+
+using slat_app_benchmark_sla_to_add = struct slat_app_benchmark_sla_to_add_s {
+  slat_app_sla_config app_sla;
+  std::vector<slat_device_sla_config> device_sla_list;
+  char sla_benchmark_tool[64];
+};
 
 using slat_config = struct slat_config {
   std::string slat_logic_lib_dir;
-  std::string log_level;
-  std::string log_filename;
-  std::string log_sink_type;
-  int log_file_count;
-  uint64_t log_file_size;
+  slat_logger_config logger_config;
+  bool enable_bg_thread;
+  int64_t benchmark_run_interval;
+};
+
+using slat_thread_data = struct slat_thread_data_s {
+  std::thread benchmarking_thread;
+  bool shutdown_bm_thread;
+  bool thread_running;
+
+  void *zmq_context;
+  void *zmq_socket;
+
+  std::map<std::string, slat_benchmark_config> benchmark_device_config_list;
+  int64_t benchmark_run_interval;
+
+  std::vector<slat_app_benchmark_sla_to_add> benchmark_pending_list_to_add;
+  std::mutex benchmark_pending_list_lock;
 };
 
 // Making this global to be able to mock functions for testing
@@ -51,10 +94,19 @@ class SLATrackerSvc {
       logic_modules_map;
   std::string curr_log_level;
   std::string svk_conf_path;
+
+  slat_thread_data th_data;
+
   svk_status read_slat_config_file(const std::string slat_conf_file,
                                    slat_config *config) const;
   svk_status initialize_logger(const slat_config config) const;
   svk_status load_logic_modules(const std::string &logic_modules_lib_dir) const;
+  void benchmarking_thread_fn(void);
+  std::string run_benchmark(slat_benchmark_config &config);
+  void parse_result(slat_benchmark_config &config, std::string result);
+  void update_app_sla_with_device_sla(slat_benchmark_config &config);
+  void publish_app_degraded_sla(slat_benchmark_config &config);
+  void add_pending_app_sla_monitoring(void);
 
  public:
   // In order to comply with Rule-of-Zero, manage class init and deletion
@@ -62,6 +114,12 @@ class SLATrackerSvc {
   // cleanup from this class to ensure resources are managed properly
   svk_status Initialize(const char *svk_config);
   svk_logic_module_details *getLogicDetails(char *logic_module_name);
+  void clean_up(void);
+  // Dummy function to trigger all logic module async
+  //  To get code coverrage
+  // TODO: Remove this
+  void dummy_submit_async_all(void);
+  svk_status parse_and_add_new_sla_monitor(std::string sla_details);
 };
 
 extern "C" {

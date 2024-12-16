@@ -12,6 +12,7 @@ install_packages() {
         g++
         git
         libboost-dev
+        libboost-filesystem-dev
         libboost-program-options-dev
         libfmt-dev
         libspdlog-dev
