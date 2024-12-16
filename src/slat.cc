@@ -739,6 +739,8 @@ extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
     return SVK_STATUS_FAIL;
   }
 
+  output->status = SVK_STATUS_FAIL;
+
   ptr = strstr((char *)input->input_buffer, "logic_module");
   if (ptr == nullptr) {
     svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR,
@@ -746,6 +748,7 @@ extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
                "'logic_module' in the input structure");
     return SVK_STATUS_FAIL;
   }
+
   sscanf(ptr, "logic_module=%[a-zA-Z0-9]", logic_module_name);
   details = g_slat_service->getLogicDetails(logic_module_name);
   if (details == nullptr) {
@@ -762,8 +765,12 @@ extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
                  "string length exceeds input buffer length");
       return SVK_STATUS_FAIL;
     }
-    return g_slat_service->parse_and_add_new_sla_monitor(
+    status = g_slat_service->parse_and_add_new_sla_monitor(
         (const char *)input->input_buffer);
+    if (status == SVK_STATUS_SUCCESS) {
+      output->status = SVK_STATUS_SUCCESS;
+      return SVK_STATUS_SUCCESS;
+    }
   }
 
   if (details->execute_logic_sync == nullptr) {
@@ -791,6 +798,8 @@ extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
     svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, log_msg);
   }
 
+  // Copy status to be in sync with output status
+  output->status = status;
   return status;
 }
 
