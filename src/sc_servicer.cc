@@ -308,10 +308,13 @@ json_t* parse_input_config(std::string& buffer) {
 
     json_error_t error;
     json_t* parsed_buffer = json_loads(buffer.c_str(), 0, &error);
-
     json_t* hosts = json_object_get(parsed_buffer, "Hosts");
     json_t* devices = json_object_get(parsed_buffer, "Devices");
-
+    if (!hosts || !devices) {
+        std::cerr << "missing 'Hosts' or 'Devices' in parsed JSON." << std::endl;
+        json_decref(parsed_buffer);
+        return nullptr;
+    }
     std::cout<< "Constructing CMMB fabric manager entry." << std::endl;
     json_t* cmmb_fm = json_object();
     json_object_set_new(cmmb_fm, "id", json_integer(4004));
@@ -424,13 +427,12 @@ void fm_init() {
     json_t* fabric_managers = json_object_get(root, "fabric_managers");
     std::string buffer;
     json_t* cmmb_fm = parse_input_config(buffer);
-    if (!cmmb_fm) {
-        std::cout << "Error setting up CMMB fabric manager." << std::endl;
-        json_decref(root);
-	return;
+    if (cmmb_fm) {
+        std::cout << "Adding CMMB fabric manager to fabric_managers array." << std::endl;
+        json_array_append_new(fabric_managers, cmmb_fm);
+    } else {
+        std::cerr << "CMMB fabric manager is null; skipping addition to fabric_managers array." << std::endl;
     }
-    // Add the cmmb fm to the array
-    json_array_append_new(fabric_managers, cmmb_fm);
 
     // Process each fabric manager in the array
     size_t index;
