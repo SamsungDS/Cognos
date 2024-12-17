@@ -40,6 +40,9 @@ const Configure = () => {
   // host w/ attached devices top table state variable
   const [attachedDevicesData, setAttachedDevicesData] = useState([{}]);
 
+  // Device to attach to host
+  const [logicalMemoryDevice, setLogicalMemoryDevice] = useState('');
+
   // MemBox bottom table state variable
   const [memboxData, setMemboxData] = useState([{
     dev_name: "DEVX",
@@ -51,8 +54,8 @@ const Configure = () => {
   const [availableLMDs, setAvailableLMDs] = useState([]);
 
   // Attach and Detach use hook
-  const { handleAttach } = useAttachHook(setMemboxData, setAttachedDevicesData, () => setShowAttach(false), selectedValue, apiEndpoint);
-  const { handleDetach } = useDetachHook(setMemboxData, setAttachedDevicesData, () => setShowDetachMemory(false), selectedValue, apiEndpoint);
+  const { handleAttach } = useAttachHook(setMemboxData, setAttachedDevicesData, () => setShowAttach(false), selectedValue, apiEndpoint, logicalMemoryDevice);
+  const { handleDetach } = useDetachHook(setMemboxData, setAttachedDevicesData, () => setShowDetachMemory(false), selectedValue, apiEndpoint, attachedRowData);
 
   useEffect(() =>{
     fetch(`${apiEndpoint}/hosts`, {
@@ -298,6 +301,8 @@ const Configure = () => {
                 show={showAttach}
                 availableLMDs={availableLMDs}
                 selectedValue={selectedValue}
+                logicalMemoryDevice={logicalMemoryDevice}
+                setLogicalMemoryDevice={setLogicalMemoryDevice}
                 data-testid="attach-memory-modal"
               />
             )}

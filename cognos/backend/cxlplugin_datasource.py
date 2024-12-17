@@ -365,20 +365,18 @@ class CXLPlugin(DataSource):
     def get_all_hosts_info(self):
 
         try:
-            print("inside cxldata source get_all_hosts")
             # Call the helper function to get host information
             result = helper.get_all_hosts()
             if result is None:
                 formatted_result = []
             else:
                 formatted_result = [
-                    {"value": host, "label": host} for host in result["hostnames"]
+                    {"value": host, "label": host}
+                    for host in result["hostnames"]
                 ]
-            print(f"helper output: {formatted_result}")
             response = jsonify(formatted_result)
             response.status_code = 200
             response.headers.add("Access-Control-Allow-Origin", "*")
-            print(f"response text: {response.get_json()}")
             return response
         except Exception as e:
             print(f"An error occurred in get_all_hosts_info: {e}")
@@ -387,4 +385,3 @@ class CXLPlugin(DataSource):
             )
             response.status_code = 500
             return response
-

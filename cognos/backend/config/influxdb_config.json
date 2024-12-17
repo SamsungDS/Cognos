@@ -1,6 +1,6 @@
 {
-    "bucket": "internal",
-    "url": "http://105.128.44.83:8086",
-    "token": "hiodretrn3T1wwQM1yobmDZxlSsCvweawGKVMOIsmPhqSauYj_isZh0hsXuHzxhHa_075ffUhWwi8bNQ5D9_dw==",
-    "org": "samsung"
+    "bucket": "<bucket>",
+    "url": "http://localhost:8086",
+    "token": "<token>",
+    "org": "<org>"
 }

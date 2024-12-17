@@ -5,8 +5,8 @@ import Modal from 'react-bootstrap/Modal';
 import 'rc-slider/assets/index.css';
 import './MemoryPopup.css';
 
-const AttachMemory = ({ show, onSave, onCancel, availableLMDs, selectedValue }) => {
-    const [logicalMemoryDevice, setLogicalMemoryDevice] = useState('');
+const AttachMemory = ({ show, onSave, onCancel, availableLMDs, selectedValue, logicalMemoryDevice, setLogicalMemoryDevice }) => {
+    // const [logicalMemoryDevice, setLogicalMemoryDevice] = useState('');
     const [memoryMode, setMemoryMode] = useState('');
     const [lmdCapacity, setlmdCapacity] = useState();
     const [hostMemoryAddress, setHostMemoryAddress] = useState();

@@ -1,9 +1,10 @@
-const useAttachHook = (setMemboxData, setLmdData, handleAttachMemoryToggle, selectedValue, apiEndpoint) => {
+const useAttachHook = (setMemboxData, setLmdData, handleAttachMemoryToggle, selectedValue, apiEndpoint, logicalMemoryDevice) => {
   const handleAttach = async (formData) => {
     handleAttachMemoryToggle();
     const { label } = selectedValue;
-    const obj = { host_name: label };
+    const obj = { host_name: label, dev_name: logicalMemoryDevice };
     const attachMem = { ...formData, ...obj };
+
 
     try {
       const response = await fetch(`${apiEndpoint}/attach_device`, {

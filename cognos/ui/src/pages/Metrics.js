@@ -36,6 +36,7 @@ export const handleSelectChange = async (
         if (response.ok) {
           const data = await response.json();
           setSelectorOptions(data);
+          selectorOptionsRef.current = data;
         }
         // istanbul ignore next
       } catch (error) {

@@ -1,7 +1,7 @@
-const useDetachHook = (setMemboxData, setLmdData, handleDetachMemoryToggle, selectedValue, apiEndpoint) => {
+const useDetachHook = (setMemboxData, setLmdData, handleDetachMemoryToggle, selectedValue, apiEndpoint, attachedRowData) => {
   const handleDetach = async (item) => {
     const { label } = selectedValue;
-    const detachMem = { host_name: label, dev_name: item };
+    const detachMem = { host_name: label, dev_name: attachedRowData.dev_name };
     handleDetachMemoryToggle();
 
     try {

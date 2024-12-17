@@ -843,9 +843,7 @@ def get_all_hosts():
         if not results or len(results) == 0:
             return None
         # Extract hostnames from results and return them as a list
-        return {
-            "hostnames": [row[0] for row in results]
-        }
+        return {"hostnames": [row[0] for row in results]}
     except Error as e:
         print(f"Error while connecting to MySQL: {e}")
         return None

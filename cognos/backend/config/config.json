@@ -1,6 +1,6 @@
 {
-    "mysql_db_dev_passwd": "CXL123mem!",
-    "agent_endpoint": "http://105.128.44.83:8001/api/v1/process_controller_command",
-    "list_cluster_ep": "http://105.128.44.83:8001/api/v1/list_cluster_nodes",
-    "node_endpoint": "105.128.44.83:9998"
+    "mysql_db_dev_passwd": "<passwd>",
+    "agent_endpoint": "http://<agentip/hostname>:<agent_port>/api/v1/process_controller_command",
+    "node_endpoint": "<nodeip/hostname>:<nodeport>",
+    "list_cluster_ep": "http://<agentip/hostname>:<agent_port>/api/v1/list_cluster_nodes"
 }

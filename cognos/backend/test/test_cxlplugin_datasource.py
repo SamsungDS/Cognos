@@ -767,23 +767,25 @@ def test_get_all_hosts_info_success(mock_get_all_hosts, mock_app):
     mock_get_all_hosts.return_value = {
         "hostnames": ["host1", "host2", "host3"]
     }
-    # Use Flask's app context to avoid RuntimeError
+    # Use Flask's app context
     with mock_app.app_context():
-        # Instantiate the plugin and call the wrapper
+        # Instantiate the plugin and call the method
         plugin_instance = cxlds.CXLPlugin()
         response = plugin_instance.get_all_hosts_info()
-        # Build the expected response
-        expected_response = jsonify({"hostnames": ["host1", "host2", "host3"]})
-        # Assertions
+        expected_response = [
+            {"value": "host1", "label": "host1"},
+            {"value": "host2", "label": "host2"},
+            {"value": "host3", "label": "host3"},
+        ]
         assert (
             response.status_code == 200
         ), "Response status code should be 200"
-        assert json.loads(response.data) == json.loads(
-            expected_response.data
-        ), "Response data should match the expected hostnames"
+        assert (
+            json.loads(response.data) == expected_response
+        ), "Response data should match formatted hostnames"
         assert (
             response.headers["Access-Control-Allow-Origin"] == "*"
-        ), "Response should have the Access-Control-Allow-Origin header"
+        ), "CORS header should be set"
         mock_get_all_hosts.assert_called_once()
 
 
@@ -794,16 +796,17 @@ def test_get_all_hosts_info_no_data(mock_get_all_hosts, mock_app):
     with mock_app.app_context():
         plugin_instance = cxlds.CXLPlugin()
         response = plugin_instance.get_all_hosts_info()
-        expected_response = jsonify({"hostnames": []})
+        # Expected response is an empty list
+        expected_response = []
         assert (
             response.status_code == 200
         ), "Response status code should be 200"
-        assert json.loads(response.data) == json.loads(
-            expected_response.data
-        ), "Response data should return an empty list of hostnames"
+        assert (
+            json.loads(response.data) == expected_response
+        ), "Response data should be an empty list"
         assert (
             response.headers["Access-Control-Allow-Origin"] == "*"
-        ), "Response should have the Access-Control-Allow-Origin header"
+        ), "CORS header should be set"
         mock_get_all_hosts.assert_called_once()
 
 
@@ -814,13 +817,12 @@ def test_get_all_hosts_info_error(mock_get_all_hosts, mock_app):
     with mock_app.app_context():
         plugin_instance = cxlds.CXLPlugin()
         response = plugin_instance.get_all_hosts_info()
-        expected_response = jsonify(
-            {"error": "Failed to retrieve host information"}
-        )
+        # Expected error response
+        expected_response = {"error": "Failed to retrieve host information"}
         assert (
             response.status_code == 500
         ), "Response status code should be 500 for errors"
-        assert json.loads(response.data) == json.loads(
-            expected_response.data
+        assert (
+            json.loads(response.data) == expected_response
         ), "Response data should indicate an error occurred"
         mock_get_all_hosts.assert_called_once()
