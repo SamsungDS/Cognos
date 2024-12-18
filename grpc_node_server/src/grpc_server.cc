@@ -158,8 +158,8 @@ Status Servicer::ProcessNodeCommand(ServerContext *ctxt,
   char buffer[MAX_SIZE];
 
   svk_cmd.feat_id = (feature_id)req->feature_id();
-  svk_input.input_buffer = (uint8_t *)feature_params.c_str();
-  svk_input.len = feature_params.length() + 1;
+  svk_input.input_buffer = (uint8_t *)&feature_params[0];
+  svk_input.len = feature_params.length();
   svk_output.output_buffer = (uint8_t *)&buffer[0];
   svk_output.len = MAX_SIZE;
 
@@ -169,8 +169,8 @@ Status Servicer::ProcessNodeCommand(ServerContext *ctxt,
   } else {
     status = Status(grpc::UNKNOWN, "Failed to run command");
     logger_str = "Failed to run command for node_id " + req->node_id() +
-                 " feature_id " + std::to_string(svk_cmd.feat_id) + " params " +
-                 feature_params;
+                 " feature_id " + std::to_string(svk_cmd.feat_id) +
+                 " params [" + feature_params + "]";
     svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR, logger_str.c_str());
     return status;
   }
