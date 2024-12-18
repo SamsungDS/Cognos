@@ -759,16 +759,14 @@ extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
     return SVK_STATUS_FAIL;
   }
 
-  if (strstr((const char *)input->input_buffer, "app_name") != nullptr) {
-    if (strlen((const char *)input->input_buffer) >= input->len) {
-      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR,
-                 "string length exceeds input buffer length");
-      return SVK_STATUS_FAIL;
-    }
-    status = g_slat_service->parse_and_add_new_sla_monitor(
-        (const char *)input->input_buffer);
+  std::string input_str(reinterpret_cast<char *>(input->input_buffer),
+                        input->len);
+
+  if (strstr(input_str.c_str(), "app_name") != nullptr) {
+    status = g_slat_service->parse_and_add_new_sla_monitor(input_str.c_str());
     if (status == SVK_STATUS_SUCCESS) {
       output->status = SVK_STATUS_SUCCESS;
+      output->len = 0;
       return SVK_STATUS_SUCCESS;
     }
   }
