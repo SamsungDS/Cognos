@@ -6,6 +6,7 @@ describe('useDetachHook', () => {
   const handleDetachMemoryToggleMock = jest.fn();
   const selectedValueMock = { label: 'Host 1' };
   const apiEndpointMock = 'http://105.91.142.222:4000//api/v2.0.0';
+  const attachedRowDataMock = [{dev_name: 'dev1',}];
 
   afterEach(() => {
     jest.clearAllMocks();
@@ -61,7 +62,8 @@ describe('useDetachHook', () => {
       setLmdDataMock,
       handleDetachMemoryToggleMock,
       selectedValueMock,
-      apiEndpointMock
+      apiEndpointMock,
+      attachedRowDataMock,
     );
 
     await handleDetach(mockItem);
@@ -81,7 +83,8 @@ describe('useDetachHook', () => {
       setLmdDataMock,
       handleDetachMemoryToggleMock,
       selectedValueMock,
-      apiEndpointMock
+      apiEndpointMock,
+      attachedRowDataMock
     );
 
  

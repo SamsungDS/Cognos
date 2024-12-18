@@ -52,7 +52,7 @@ describe('Metric component', () => {
 
     global.fetch = jest.fn();
     const endpoint = 'test_endpt'
-    const mockResponse = { data: 'xxx' };
+    const mockResponse = ['xxx'];
     const mockFetch = Promise.resolve({
       ok: true,
       json: () => Promise.resolve(mockResponse),
@@ -62,10 +62,7 @@ describe('Metric component', () => {
     const mockSelectedOption = 'test_host';
     const mockSetSelectedOption = jest.fn();
 
-    const mockSomeFn = jest.fn().mockReturnValue(true);
-    const mockSelectorOptionsRef = { current: { some: mockSomeFn} };
-    jest.spyOn(React, 'useRef').mockReturnValue(mockSelectorOptionsRef);
-
+    const mockSelectorOptionsRef = { current: ['host1','host2'] };
     const mockSetSelectorOptions = jest.fn();
     const mockSendMessage = jest.fn();
     const mockLastSelectedHost = { current: "test_host2"};

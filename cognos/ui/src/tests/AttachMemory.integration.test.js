@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {useState} from 'react';
 import { render, fireEvent, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/extend-expect';
 import AttachMemory from '../components/popups/AttachMemory';
@@ -9,9 +9,16 @@ describe('AttachMemory', () => {
     const onSave = jest.fn();
     const onCancel = jest.fn();
     const availableLMDs = ['DEVX', 'D-2'];
+    const selectedValue = 'host1';
+    const logicalMemoryDevice = 'DEVX';
+    const setLogicalMemoryDevice = jest.fn();
 
     const { getByLabelText, getByText, } = render(
-      <AttachMemory show={true} onSave={onSave} onCancel={onCancel} availableLMDs={availableLMDs} />
+      <AttachMemory 
+        show={true} onSave={onSave} onCancel={onCancel} availableLMDs={availableLMDs}
+        selectedValue={selectedValue} logicalMemoryDevice={logicalMemoryDevice}
+        setLogicalMemoryDevice={setLogicalMemoryDevice}
+      />
     );
 
     const selectCxlDevice = screen.getByLabelText('Select CXL Device');
@@ -53,9 +60,16 @@ describe('AttachMemory', () => {
     const onSave = jest.fn();
     const onCancel = jest.fn();
     const availableLMDs = ['DEVX', 'D-2'];
+    const selectedValue = 'host1';
+    const logicalMemoryDevice = 'DEVX';
+    const setLogicalMemoryDevice = jest.fn();
 
     const { getByText, getByTestId, getByLabelText } = render(
-      <AttachMemory show={true} onSave={onSave} onCancel={onCancel} availableLMDs={availableLMDs} />
+      <AttachMemory 
+        show={true} onSave={onSave} onCancel={onCancel} availableLMDs={availableLMDs}
+        selectedValue={selectedValue} logicalMemoryDevice={logicalMemoryDevice}
+        setLogicalMemoryDevice={setLogicalMemoryDevice}
+      />
     );
 
     // Find the button to toggle advanced memory settings
