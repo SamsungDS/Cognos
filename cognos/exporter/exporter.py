@@ -27,19 +27,14 @@ from cognos.backend.helper import (
 ws = None
 global influx_client
 influx_client = CognosInfluxDBClient()
-global ssl_context
-ssl_context = None
 
 
 async def send_metrics_event(websocket, event_type, data, stop_event):
-    print("IN SEND METRICS EVENT")
     try:
         event = {"type": event_type, "data": data}
         await websocket.send(json.dumps(event))
-        print(f"sent metrics for {event_type} with data {data}")
     except websockets.exceptions.ConnectionClosedOK:
         print("FOUND WEBSOCKET RECV MSG WHILE CLOSING")
-
     except websockets.exceptions.ConnectionClosedError:
         print("FOUND WEBSOCKET CONNECTION CLOSED ERROR")
     except Exception as e:
@@ -50,12 +45,9 @@ async def send_metrics_event(websocket, event_type, data, stop_event):
 
 async def recv_host_selection_handler(stop_event):
     try:
-
-        print(f"stop event type: {stop_event}")
         while not stop_event.is_set():
             # search for filter in DB
             latest_host_selected = get_metrics_host_filter()
-            print(f"RECVD LATEST HOST: {latest_host_selected}")
             if latest_host_selected and latest_host_selected != "":
                 influx_client.filter_hosts = True
                 influx_client.selected_host = latest_host_selected
@@ -76,11 +68,10 @@ async def metrics_handler(websocket, stop_event=None):
             try:
                 await ws.send(json.dumps({"type": "ping"}))
             except Exception:
-                print("Ping failed")
+                print("Ping failed, closing websocket connection")
                 raise websockets.ConnectionClosed(
                     3000, "Manually close the connection"
                 )
-                break
 
             await send_metrics_event(
                 websocket,
@@ -153,19 +144,27 @@ async def metrics_handler(websocket, stop_event=None):
     time.sleep(1)
 
 
-async def main():
+def get_sslcontext_with_certchain(configs):
+    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ssl_cert = configs["ssl_cert"]
+    ssl_key = configs["ssl_key"]
+    ssl_context.load_cert_chain(ssl_cert, keyfile=ssl_key)
+    return ssl_context
+
+
+async def main(ssl=False):
     parent_dir = os.path.dirname(os.path.abspath(__file__))
     configs = fetch_cognos_configs(parent_dir, "config.json")
     stop_event = asyncio.Event()
     metrics_handler_with_stop_event = functools.partial(
         metrics_handler, stop_event=stop_event
     )
-    if ssl_context:
+    if ssl:
         server = await websockets.serve(
             metrics_handler_with_stop_event,
             configs["exporter_ip"],
             configs["exporter_port"],
-            ssl=ssl_context,
+            ssl=get_sslcontext_with_certchain(configs),
             ping_timeout=None
         )
     else:
@@ -191,17 +190,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     influx_client.mock = args.mock
 
-    if args.ssl:
-        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        # Generate with Lets Encrypt, copied to this location,
-        # chown to current user and 400 permissions
-        ssl_cert = "/home/ubuntu/aws-deployment/cognos/exporter/fullchain.pem"
-        ssl_key = "/home/ubuntu/aws-deployment/cognos/exporter/privkey.pem"
-        ssl_context.load_cert_chain(ssl_cert, keyfile=ssl_key)
-
     loop = asyncio.get_event_loop()
     try:
-        loop.run_until_complete(main())
+        loop.run_until_complete(main(ssl=args.ssl))
         loop.run_forever()
     except KeyboardInterrupt:
         pass

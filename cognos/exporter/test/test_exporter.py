@@ -15,7 +15,7 @@ from cognos.backend.cognos_influxdb_client import (  # noqa: E402
 )
 from cognos.exporter.exporter import (
     recv_host_selection_handler, metrics_handler,  # noqa: E402
-    send_metrics_event
+    send_metrics_event, main, get_sslcontext_with_certchain
 )
 from cognos.backend.helper import get_cognos_influx_functions  # noqa: E402
 
@@ -268,3 +268,73 @@ async def test_failed_influx_queries(mocker, mock_websocket):
             task.cancel()
     except Exception as error:
         print(f"ERROR: {str(error)}")
+
+
+@pytest.mark.asyncio
+async def test_ssl_support(mocker):
+    mocker.patch('ssl.SSLContext.load_cert_chain', return_value=True)
+    mock_serve = mocker.patch("websockets.serve",
+                              return_value=mock.AsyncMock())
+
+    mocker.patch('influxdb_client.InfluxDBClient')
+    influx_functions_to_mock = get_cognos_influx_functions()
+    cognos_influx_db_lib_path = (
+        'cognos.backend.cognos_influxdb_client.CognosInfluxDBClient'
+    )
+    for influx_fn in influx_functions_to_mock:
+        mocker.patch(
+            f'{cognos_influx_db_lib_path}.{influx_fn}',
+            return_value=(
+                {
+                    "type": "test_event",
+                    "data": [{"dram_usage": 22, "cxl_usage": 54}]
+                }
+            ),
+            side_effect=Exception("Mocked Exception..")
+        )
+    try:
+        await asyncio.wait(
+            [main(ssl=True)],
+            timeout=5
+        )
+    except Exception as error:
+        print(f"error: {str(error)}")
+
+
+@pytest.mark.asyncio
+async def test_http(mocker):
+    mocker.patch('influxdb_client.InfluxDBClient')
+    influx_functions_to_mock = get_cognos_influx_functions()
+    cognos_influx_db_lib_path = (
+        'cognos.backend.cognos_influxdb_client.CognosInfluxDBClient'
+    )
+    for influx_fn in influx_functions_to_mock:
+        mocker.patch(
+            f'{cognos_influx_db_lib_path}.{influx_fn}',
+            return_value=(
+                {
+                    "type": "test_event",
+                    "data": [{"dram_usage": 22, "cxl_usage": 54}]
+                }
+            ),
+            side_effect=Exception("Mocked Exception..")
+        )
+    try:
+        await asyncio.wait(
+            [main(ssl=False)],
+            timeout=5
+        )
+    except Exception as error:
+        print(f"error: {str(error)}")
+
+
+def test_get_sslcontext_with_certchain(mocker):
+    mocker.patch('ssl.SSLContext.load_cert_chain', return_value='$#&*^@*&#$^')
+    configs = {
+        "exporter_ip": "127.0.0.1",
+        "exporter_port": 4001,
+        "ssl_cert": "<cert_path>",
+        "ssl_key": "<sslkey_path>"
+    }
+    ssl_context = get_sslcontext_with_certchain(configs)
+    assert ssl_context
