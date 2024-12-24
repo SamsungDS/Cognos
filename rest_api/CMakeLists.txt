@@ -20,6 +20,7 @@ set(PROTO_PATH ${PARENT_DIR}/proto/)
 set(PROTO_THIRD_PARTY_PATH ${PROTO_PATH}/third_party)
 set(PROTO_GO_API_DIR ${CMAKE_CURRENT_BINARY_DIR}/api/)
 set(PROTO_OPENAPI_DIR ${CMAKE_CURRENT_BINARY_DIR}/third_party/OpenAPI)
+set(GOPATH_DIR "$ENV{GOPATH}")
 
 set(PROTO_FILE ${PROTO_PATH}/framework/framework.proto)
 make_directory(${CMAKE_CURRENT_BINARY_DIR}/api/)
@@ -35,6 +36,7 @@ execute_process(COMMAND ${GRPC_PROTOC} --go_out=${PROTO_GO_API_DIR} --go_opt pat
 
 file(COPY ${PARENT_DIR}/rest_api/cmd DESTINATION ${PARENT_DIR}/build/rest_api/tests)
 file(COPY ${PARENT_DIR}/rest_api/third_party DESTINATION ${PARENT_DIR}/build/rest_api/tests)
-file(COPY ${PARENT_DIR}/rest_api/go.mod DESTINATION ${PARENT_DIR}/build/rest_api/tests)
+file(COPY ${GOPATH_DIR}/go_files_dir/go.mod DESTINATION ${PARENT_DIR}/build/rest_api/tests)
+file(COPY ${GOPATH_DIR}/go_files_dir/go.sum DESTINATION ${PARENT_DIR}/build/rest_api/tests)
 file(COPY ${CMAKE_CURRENT_BINARY_DIR}/api DESTINATION ${PARENT_DIR}/build/rest_api/tests)
 file(COPY ${CMAKE_CURRENT_BINARY_DIR}/third_party DESTINATION ${PARENT_DIR}/build/rest_api/tests)
