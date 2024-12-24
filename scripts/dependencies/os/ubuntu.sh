@@ -1,7 +1,7 @@
 #! /usr/bin/env bash
 set -e
 
-GO_VERSION=1.21
+GO_VERSION=1.22
 
 # Build Dependencies
 install_build_deps() {
@@ -27,6 +27,13 @@ install_build_deps() {
         'unzip'
         'wget'
     )
+
+    # Packages specific for Ubuntu 24
+    if [ "${VERSION_ID%%.*}" == "24" ]; then
+        BUILD_DEPS+=(
+            'cppzmq-dev'
+        )
+    fi
     package_manager
 }
 

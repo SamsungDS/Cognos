@@ -8,6 +8,7 @@ The SVK Management Framework repository contains code related to REST API Server
 
 - Rockylinux 9
 - Ubuntu 22.04
+- Ubuntu 24.04
 
 ## Installation
 
@@ -22,8 +23,11 @@ Enable the SSG Nexus repo for your distro, then install the `svk-mgmt-fw` packag
 ### Ubuntu Installation
 
 ```bash
+source /etc/os-release
+UBUNTU_VER="${VERSION_ID%%.*}"
+
 wget --quiet --output-document /usr/share/keyrings/ssg-nexus.pgp  http://ssg-nexus.msl.lab:8081/repository/svk_common/public.pgp
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ssg-nexus.pgp] http://ssg-nexus.msl.lab:8081/repository/svk_apt_ubuntu22 $(. /etc/os-release && echo $UBUNTU_CODENAME) main" > /etc/apt/sources.list.d/ssg-nexus.list
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ssg-nexus.pgp] http://ssg-nexus.msl.lab:8081/repository/svk_apt_ubuntu${UBUNTU_VER} $(. /etc/os-release && echo $UBUNTU_CODENAME) main" > /etc/apt/sources.list.d/ssg-nexus.list
 apt update
 apt-get install svk-mgmt-fw svk-mgmt-fw-dev -y
 

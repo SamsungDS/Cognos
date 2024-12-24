@@ -98,9 +98,9 @@ get_git_version() {
 
 set_go_paths() {
     # Set PATH to include Go on Ubuntu
-    if [ -f /etc/profile.d/go-1.21.sh ]; then
+    if [ -f /etc/profile.d/go-1.22.sh ]; then
         # shellcheck disable=SC1091
-        source /etc/profile.d/go-1.21.sh
+        source /etc/profile.d/go-1.22.sh
     fi
 
     # Set GOPATH for SVK Go Modules and append to PATH

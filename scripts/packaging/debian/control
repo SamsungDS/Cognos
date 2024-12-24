@@ -7,10 +7,10 @@ Standards-Version: 4.1.4
 
 Package: svk-mgmt-fw
 Architecture: amd64
-Depends: ${shlibs:Depends}, ${misc:Depends}, libre2-9, svk-core
+Depends: ${shlibs:Depends}, ${misc:Depends}, libre2-9|libre2-10, svk-core
 Description: SVK Management framework related APIs, services
 
 Package: svk-mgmt-fw-dev
 Architecture: amd64
-Depends: ${misc:Depends}, svk-mgmt-fw (= ${binary:Version}), svk-core, svk-core-dev, svk-go-modules, svk-grpc, libre2-9
+Depends: ${misc:Depends}, svk-mgmt-fw (= ${binary:Version}), svk-core, svk-core-dev, svk-go-modules, svk-grpc, libre2-9|libre2-10
 Description: SVK Management framework related API header files.
