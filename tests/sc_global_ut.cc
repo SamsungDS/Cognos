@@ -175,10 +175,10 @@ TEST_F(ScGlobalTest, DevDetachTest) {
     ASSERT_EQ(create_result, 0);
     std::string buffer;
     // Attach device to host
-    size_t attach_result = global_instance.dev_attach(549755813888, 551903297536, "mode", 203, buffer);
+    size_t attach_result = global_instance.dev_attach(549755813888, 551903297536, "test", 203, buffer);
     ASSERT_EQ(attach_result, 9);
     // Detach device from host
-    size_t detach_result = global_instance.dev_detach(549755813888, 551903297536, "mode", 203, buffer);
+    size_t detach_result = global_instance.dev_detach(549755813888, 551903297536, "test", 203, buffer);
     ASSERT_EQ(detach_result, 9);
 
     // Verify detachment

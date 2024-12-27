@@ -6,17 +6,20 @@
 #include "sc_sld.h"
 #include "sc_mld.h"
 #include "sc_host.h"
+#include "mbox_a1.h"
 
 using ::testing::Return;
 using namespace std;
 
+int update_json_and_install() {
+    // simulate success
+    return 0;
+}
 
 class MockScMbox : public sc_mbox {
 public:
     MockScMbox(uint64_t mb_id, uint64_t mb_fm_id, sc_switch mb_switch) : sc_mbox(mb_id, mb_fm_id, mb_switch) {}
-    MOCK_METHOD(int, update_json_and_install, (), ());
 };
-
 
 
 class ScMboxTest : public ::testing::Test {
@@ -102,7 +105,6 @@ TEST_F(ScMboxTest, DeleteMldTest) {
 }
 
 
-
 TEST_F(ScMboxTest, CreateSldTest) {
        sc_mbox mbox(1, 2, 3);
        sc_sld result = mbox.mbox_create_sld(1024);
@@ -163,7 +165,6 @@ TEST_F(ScMboxTest, GetSwitchInfoTest) {
         "ManagementPort": 0
     })";
 
-
     // Normalize spacing (remove extra spaces and newlines)
     std::string normalizedExpectedInfo;
     for (char c : expectedInfo) {
@@ -183,7 +184,6 @@ TEST_F(ScMboxTest, GetSwitchInfoTest) {
     ASSERT_EQ(normalizedResult, normalizedExpectedInfo);
 }
 
-
 TEST_F(ScMboxTest, AttachDeviceToHostTest) {
     sc_sld sld(123, "DEV_11-256G", 1024, 11);
     sc_host host(456);
@@ -191,7 +191,7 @@ TEST_F(ScMboxTest, AttachDeviceToHostTest) {
     host.set_host_port(2);
     mbox->addSld(sld);
     mbox->addHost(host);
-    int result = mbox->d_attach(sld.d_get_id().get_sc_id(), host.d_get_id().get_sc_id(), "mode");
+    int result = mbox->d_attach(sld.d_get_id().get_sc_id(), host.d_get_id().get_sc_id(), "test");
     ASSERT_EQ(result, 0);
     auto hosts_map = mbox->get_hosts_map();
     ASSERT_TRUE(hosts_map.find(host.d_get_id()) != hosts_map.end());
@@ -204,12 +204,11 @@ TEST_F(ScMboxTest, AttachDeviceToHostTestNeg) {
     host.set_host_port(2);
     mbox->addSld(sld);
     mbox->addHost(host);
-    int result = mbox->d_attach(555, host.d_get_id().get_sc_id(), "mode");
+    int result = mbox->d_attach(555, host.d_get_id().get_sc_id(), "test");
     ASSERT_EQ(result, -2);
-    int result1 = mbox->d_attach(sld.d_get_id().get_sc_id(), 555, "mode");
+    int result1 = mbox->d_attach(sld.d_get_id().get_sc_id(), 555, "test");
     ASSERT_EQ(result1, -2);
 }
-
 
 
 TEST_F(ScMboxTest, DetachDeviceToHostTest) {
@@ -219,8 +218,8 @@ TEST_F(ScMboxTest, DetachDeviceToHostTest) {
     host.set_host_port(2);
     mbox->addSld(sld);
     mbox->addHost(host);
-    mbox->d_attach(sld.d_get_id().get_sc_id(), host.d_get_id().get_sc_id(), "mode");
-    int result = mbox->d_detach(sld.d_get_id().get_sc_id(), host.d_get_id().get_sc_id(), "mode");
+    mbox->d_attach(sld.d_get_id().get_sc_id(), host.d_get_id().get_sc_id(), "test");
+    int result = mbox->d_detach(sld.d_get_id().get_sc_id(), host.d_get_id().get_sc_id(), "test");
     ASSERT_EQ(result, 0);
     auto hosts_map = mbox->get_hosts_map();
     ASSERT_TRUE(hosts_map.find(host.d_get_id()) != hosts_map.end());
@@ -233,11 +232,10 @@ TEST_F(ScMboxTest, DetachDeviceToHostTestNeg) {
     host.set_host_name("Host 1 LNK0");
     mbox->addSld(sld);
     mbox->addHost(host);
-    mbox->d_attach(sld.d_get_id().get_sc_id(), host.d_get_id().get_sc_id(), "mode");
-    int result = mbox->d_detach(sld.d_get_id().get_sc_id(), 777, "mode");
+    mbox->d_attach(sld.d_get_id().get_sc_id(), host.d_get_id().get_sc_id(), "test");
+    int result = mbox->d_detach(sld.d_get_id().get_sc_id(), 777, "test");
     ASSERT_EQ(result, -2);
 }
-
 
 
 TEST_F(ScMboxTest, GetSldsMap) {

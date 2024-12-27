@@ -200,7 +200,10 @@ int sc_mbox::d_detach(uint64_t d_id, uint64_t h_id, string mode){
           // found device to host mapping, invoke STG API to disconnect
           int ret = mbox_A1_disconnect(mbox_connected_hosts[h_ids[h_id]].get_host_port(),d_port);
           if (ret == 0) {
-            update_json_and_install();
+            ret = update_json_and_install();
+            if (ret != 0) {
+                return ret;
+	    }
             list<uint32_t> &h_to_dev_list = mbox_connected_hosts[h_ids[h_id]].get_target_ports();
             h_to_dev_list.remove(d_port);
 
@@ -241,6 +244,10 @@ int sc_mbox::d_attach(uint64_t d_id, uint64_t h_id, string mode) {
         // Invoke STG API with host_port and dev_port
         int ret = mbox_A1_connect_by_hostport(mbox_connected_hosts[h_ids[h_id]].get_host_port(), d_port);
         if (ret == 0) {
+            ret = update_json_and_install();
+            if (ret != 0) {
+                return ret;
+            }
             // Check if the device port is already in target_ports
             bool port_found = false;
             for (auto& v : mbox_connected_hosts[h_ids[h_id]].get_target_ports()) {
