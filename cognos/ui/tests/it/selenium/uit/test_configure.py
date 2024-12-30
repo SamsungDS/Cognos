@@ -19,6 +19,18 @@ class TestConfigure(unittest.TestCase):
             "TestCase-HPOS-T81: test_configure_page_displayed",
             self.utils.assert_element_displayed)
 
+    def test_select_application_server(self):
+        self.utils.click_element_and_assert(
+            "//*[@id='dropdown-container-id']/div/div/div[2]/div",
+            By.XPATH,
+            "TestCase-HPOS-T38: select_application_server_dropdown",
+            self.utils.assert_element_displayed)
+
+        self.utils.click_element_and_assert(
+            f"//div[text()='{self.host_name}']", By.XPATH,
+            "TestCase-HPOS-T38: Select host from dropdown",
+            self.utils.assert_element_displayed)
+
     def test_host_table_displayed(self):
         self.utils.find_element_and_assert(
             "//*[@id='app-server-card-id']",

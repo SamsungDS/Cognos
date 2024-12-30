@@ -103,9 +103,7 @@ class TestDashboard(unittest.TestCase):
             By.XPATH,
             "TestCase-HPOS-T120: Clicking previous arrow in toplogy",
             self.utils.assert_element_displayed)
-    '''
-    Skiping the following test cases as issues with CAL layer &
-    The test cases would fail as expected.
+
     def test_system_information(self):
         self.utils.find_element_and_assert(
             "mem-info", By.ID, "TestCase-HPOS-T15: test_system_information",
@@ -134,4 +132,23 @@ class TestDashboard(unittest.TestCase):
             By.XPATH,
             "TestCase-HPOS-T18: CMM-B Memory Capacity Progress bar displayed",
             self.utils.assert_element_displayed)
-    '''
+
+    def test_CMM_B_memory_usage_graph(self):
+
+        self.utils.find_element_and_assert(
+            "rack-graph-id",
+            By.ID,
+            "TestCase-HPOS-T21: test_cmm-b_memory_usage_graph",
+            self.utils.assert_element_displayed)
+
+        self.utils.find_element_and_assert(
+         "//h6[contains(text(), 'CMM-B Memory')]",
+         By.XPATH,
+         "TestCase-HPOS-T21: CMM-B Memory Usage Text displayed",
+         self.utils.assert_element_displayed)
+
+        self.utils.find_element_and_assert(
+         "//div[@data-testid='rackBandwidth-id']//div[@aria-label='A chart.']",
+         By.XPATH,
+         "TestCase-HPOS-T21: Graph component displayed",
+         self.utils.assert_element_displayed)

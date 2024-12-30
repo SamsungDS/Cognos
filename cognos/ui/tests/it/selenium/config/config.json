@@ -5,7 +5,7 @@
   "scmc_url": "http://localhost:5000",
   "log_file_name": "scmc_ui.log",
   "host_name": "host1",
-  "device_name": "DEV_11-256G",
+  "device_names": ["DEV_10-256G", "DEV_11-256G"],
   "log_dir": "/var/log/svk/"
 }
 

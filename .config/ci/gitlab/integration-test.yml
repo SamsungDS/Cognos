@@ -6,11 +6,11 @@ integration test:
   before_script:
     #configure selenium config file
     - apt-get update && apt-get install moreutils jq -y
-    - jq --arg name "$VM_NAME" '.dashboard_url = "http://\($name):5000/"' $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
-    - jq --arg name "$VM_NAME" '.configure_url = "http://\($name):5000/configure"' $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
-    - jq --arg name "$VM_NAME" '.metrics_url = "http://\($name):5000/metrics"'  $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
-    - jq --arg name "$VM_NAME" '.scmc_url = "http://\($name):5000"' $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
-    - jq --arg name "$VM_NAME" '.host_name = $name' $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
+    - jq --arg name "$VM_NAME.msl.lab" '.dashboard_url = "http://\($name):5000/"' $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
+    - jq --arg name "$VM_NAME.msl.lab" '.configure_url = "http://\($name):5000/configure"' $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
+    - jq --arg name "$VM_NAME.msl.lab" '.metrics_url = "http://\($name):5000/metrics"'  $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
+    - jq --arg name "$VM_NAME.msl.lab" '.scmc_url = "http://\($name):5000"' $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
+    - jq --arg name "$VM_NAME.msl.lab" '.host_name = $name' $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
   script:
     - ./scripts/run-tests.sh --it
   variables:
