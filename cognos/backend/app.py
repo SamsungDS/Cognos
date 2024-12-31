@@ -129,14 +129,21 @@ def get_ssl_context():
     return context
 
 
+def validate_ssl_enabled():
+    ssl_flag = CONFIGS["ssl"]
+    ssl_cert = CONFIGS["ssl_cert"]
+    ssl_key = CONFIGS["ssl_key"]
+    return ssl_flag and os.path.exists(ssl_cert) and os.path.exists(ssl_key)
+
+
 @click.command()
 @click.option("--mock", "-m", is_flag=True, help="mock mode")
 @click.option("--host", "-h", required=True, help="IP of host of CAL")
 @click.option("--port", "-p", required=True, help="Port to run CAL on")
-@click.option("--ssl", "-s", is_flag=True, help="Run CAL layer in SSL mode")
-def main(mock, host, port, ssl):
+def main(mock, host, port):
     app = create_app(mock)
-    if ssl:
+
+    if validate_ssl_enabled():
         app.run(host=host, port=port, ssl_context=get_ssl_context())
     else:
         app.run(host=host, port=port)

@@ -152,14 +152,14 @@ def get_sslcontext_with_certchain(configs):
     return ssl_context
 
 
-async def main(ssl=False):
+async def main():
     parent_dir = os.path.dirname(os.path.abspath(__file__))
     configs = fetch_cognos_configs(parent_dir, "config.json")
     stop_event = asyncio.Event()
     metrics_handler_with_stop_event = functools.partial(
         metrics_handler, stop_event=stop_event
     )
-    if ssl:
+    if configs["ssl"]:
         server = await websockets.serve(
             metrics_handler_with_stop_event,
             configs["exporter_ip"],
@@ -186,13 +186,12 @@ async def main(ssl=False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--mock", action="store_true")
-    parser.add_argument("--ssl", action="store_true")
     args = parser.parse_args()
     influx_client.mock = args.mock
 
     loop = asyncio.get_event_loop()
     try:
-        loop.run_until_complete(main(ssl=args.ssl))
+        loop.run_until_complete(main())
         loop.run_forever()
     except KeyboardInterrupt:
         pass

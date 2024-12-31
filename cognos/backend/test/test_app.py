@@ -1,7 +1,7 @@
 from click.testing import CliRunner
 import pytest
 import cognos.backend.app as app
-from cognos.backend.app import main, get_ssl_context
+from cognos.backend.app import main, get_ssl_context, validate_ssl_enabled
 
 
 runner = CliRunner()
@@ -21,3 +21,7 @@ def test_get_ssl_context():
     assert ssl_cert and ssl_key
     assert isinstance(ssl_cert, str)
     assert isinstance(ssl_key, str)
+
+
+def test_validate_ssl_enabled():
+    assert not validate_ssl_enabled()
