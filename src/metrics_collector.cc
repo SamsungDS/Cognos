@@ -132,6 +132,19 @@ void MetricsCollector::get_cpu_metrics(string cmd)
 	}
 }
 
+static int bitmask_isallclear_bytes(struct bitmask *bm)
+{
+        unsigned int bm_sz = numa_bitmask_nbytes(bm);
+        unsigned bm_longs = bm_sz / sizeof(unsigned long);
+
+        for (unsigned int i=0; i<bm_longs; ++i) {
+                unsigned long bm_long = bm->maskp[i];
+                if (bm_long & 0xffffffff)
+                        return 0;
+        }
+        return 1;
+}
+
 /**
 * @brief get memory metrics
 * @details This method uses libnuma APIs to get numa node info
@@ -142,21 +155,20 @@ void MetricsCollector::get_memory_metrics(void)
         try
        	{
 		const unsigned long long MB = 1024*1024;
-		int numa_node_count = numa_num_configured_nodes();
-		cout << "No of configured numa nodes found = "<< numa_node_count <<endl;
 		unsigned long long total_cxl_free = 0;
 		unsigned long long total_cxl_size = 0;
 		unsigned long long total_dram_free = 0;
 		unsigned long long total_dram_size = 0;
+                
+                int numa_node_count = numa_num_configured_nodes();
+		cout << "No of configured numa nodes found = "<< numa_node_count <<endl;
+                int numcpus = numa_num_task_cpus();
+                numa_set_localalloc();
+                cout << "No of configured numa cpu count =" << numcpus << endl;
 
 		for(int i=0; i<numa_node_count; i++)
 		{
 			unsigned long long sz;
-			struct bitmask* mask = numa_allocate_cpumask();
-			if (mask == nullptr)
-			{
-				throw runtime_error("Error in bit mask allocation : numa_allocate_cpumask ");
-			}
 			long long size_raw = numa_node_size64(i,(long long*)&sz);
 			if (size_raw == (long long )-1)
 			{
@@ -165,26 +177,31 @@ void MetricsCollector::get_memory_metrics(void)
 			unsigned long long size = size_raw / MB;
 			unsigned long long free =  sz / MB;
 			cout << "numanode =" << i << " size=" << size << " free=" << free << endl;
-			int st = numa_node_to_cpus(i, mask);
-			if (st != 0)
+
+                        bitmask* mask = numa_bitmask_alloc(numcpus);
+                        if (mask == nullptr)
+			{
+				throw runtime_error("Error in bit mask allocation : numa_allocate_cpumask ");
+			}
+                        
+                        int st = numa_node_to_cpus(i, mask);
+                        if (st != 0)
 			{
 				throw runtime_error("Error in numa_node_to_cpus, errno = " + to_string(errno) + ", error = " + strerror(errno));
 			}
-			unsigned long long val = *(mask->maskp);
-			cout << "bitmask=" << mask->size << " val="  << val << endl;
-			if (val == 0)
-			{
-				total_cxl_size += size;
+                        if (bitmask_isallclear_bytes(mask))
+                        {
+                                total_cxl_size += size;
 				total_cxl_free += free;
-			}
-			else
-			{
-				total_dram_size += size;
+                        }
+                        else
+                        {
+                                total_dram_size += size;
 				total_dram_free += free;
-			}
-			numa_free_cpumask(mask);
+                        }
+                        numa_bitmask_free(mask);
 		}
-		
+
 		cout << "total dram size = " << total_dram_size << ", total dram free = " << total_dram_free << ", total dram usage = " << total_dram_size - total_dram_free << endl;
 		cout << "total cxl size = " << total_cxl_size << ", total cxl free = " << total_cxl_free << ", total cxl usage = " << total_cxl_size - total_cxl_free << endl;
 		

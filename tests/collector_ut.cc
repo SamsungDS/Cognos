@@ -43,15 +43,9 @@ TEST_F(CollectorTest, CheckRun)
 	{
 		EXPECT_STREQ("test", e.what());
 	}
-        cc.c_pub = nullptr;    
-        try 
-        {   
-                _run((void*)&(cc));
-        }   
-        catch(const std::exception& e)
-        {   
-                EXPECT_THAT(e.what(), (testing::HasSubstr("zmq_send failed")));
-        }
+        
+        cc.c_pub = nullptr;
+        EXPECT_THROW(_run((void*)&(cc)),  std::runtime_error);    
 }
 
 TEST_F(CollectorTest, CheckSvcRegistration)
