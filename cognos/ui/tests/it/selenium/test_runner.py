@@ -8,6 +8,8 @@ from uit.test_metrics import TestMetrics
 from uit.test_mutable import TestMutable
 from uit.test_mutable_combinations import TestMutableCombinations
 from uit.test_frequent_switch_pages import FrequentPageSwitchTest
+from uit.test_validate_scmc_pages import PageValidationTest
+from uit.test_frequent_select_devices import TestSelectDevices
 
 
 class TestSuite(unittest.TestCase):
@@ -35,7 +37,10 @@ class TestSuite(unittest.TestCase):
             "test_combination_of_Attach_Attach"))
         suite.addTests(unittest.TestLoader().loadTestsFromTestCase(
             FrequentPageSwitchTest))
-
+        suite.addTests(unittest.TestLoader().loadTestsFromTestCase(
+            PageValidationTest))
+        suite.addTests(unittest.TestLoader().loadTestsFromTestCase(
+            TestSelectDevices))
         with open("scmc_tests.xml", "wb") as output:
             runner = xmlrunner.XMLTestRunner(output=output, verbosity=2)
             result = runner.run(suite)
