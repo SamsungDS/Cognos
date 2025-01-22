@@ -411,11 +411,12 @@ int cmmb_a1_init() {
     return 0;
 }
 
+
 void fm_init() {
 
     // Check if the input file is empty or missing
     if (is_file_empty_or_missing(INPUT_CONF_FILE)) {
-        return; 
+        return;
     }
 
     json_t* root = load_json_config(INPUT_CONF_FILE);
@@ -445,6 +446,7 @@ void fm_init() {
     }
     json_decref(root);
 }
+
 
 /**
  * @brief init tm functionality
