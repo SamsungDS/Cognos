@@ -1,62 +1,53 @@
-# Mock Subscriber
+#Prerequisites
 
-This script reads static file having published events related to cxl memory box, modifies timestamp to current UTC and loads it to influx db for every 5 seconds.
+Ensure the following dependencies are installed:
 
-- How to execute the mock subscriber program? 
+pip install --upgrade pip
+pip install pyzmq
+pip install 'influxdb-client[ciso]'
 
-  #by default interval is set to 5 seconds and its optional
+#Subscriber Configuration File
 
-  /usr/bin/python3 subscriber/sub_client.py published_events.output --mock
+Ensure the `sub.yaml` configuration file is available in the subscriber folder. This YAML file is dynamically loaded by environment variables when the `cognos.subscriber` service is executed.
 
-  OR  
+Note: To test the subscriber module independently, the `sub.yaml` file can be manually edited.
+make sure to export variables for manual edit. 
+export CAL_IP=127.0.0.1
+export TOPIC=metric 
 
-  python3.10 subscriber/sub_client.py subscriber/mock_publisher_events.output --mock
+#Mock Subscriber
 
+The `mock_subscription` function reads the static file `subscriber/mock_publisher_events.output`, which contains published events related to the CXL memory box. It updates the timestamp to the current UTC time and loads the data into InfluxDB every 5 seconds.
 
-# zero-mq subscriber 
+#How to Execute the Mock Subscriber:
 
-Subscriber script constantly accepts events from the host:port where the publisher process publishes the events.
+/usr/bin/python3 cognos/subscriber/sub_client.py --mock subscriber/mock_publisher_events.output
 
+#ZeroMQ Subscriber
 
-#Prerequisites:
+The `zeromq_subscription` function continuously accepts events from the `nodeId/ip_address` (obtained from rest api call `list_cluster_node`) where the publisher process publishes events.
 
-    pip install --upgrade pip
+#How to Execute the ZeroMQ Subscriber:
 
-    pip install pyzmq
+/usr/bin/python3 cognos/subscriber/sub_client.py --config sub.yaml
 
-    pip install 'influxdb-client[ciso]'
+#How to Execute on Screen
 
+1. Create a screen session 
 
-#How to execute the subscriber program?
+   `screen -S session_name`
 
-    #hostname and topic are positional arguments
-    /usr/bin/python3 sub_client.py hostname:port topic -i 5
+2. Trigger the Subscriber Process:
 
-    ex: /usr/bin/python3 sub_client.py msl-ssg-cx03:5555 metrics --interval 10
+   - Refer to the Mock Subscriber and ZeroMQ Subscriber sections for the respective execution commands.
 
-    or
+3. Detach from the Session:
 
-    python3.10 subscriber/sub_client.py msl-ssg-cx03:5555 metrics --interval 10
+   `screen -d`
 
+#How to Run Test Cases
 
-#To execute on screen:
+To execute test cases for the subscriber program, use the following command:
 
-#create a screen session
-
-screen -S session_name
-
-#trigger the process
-
-/usr/bin/python3 sub_client.py hostname:port topic 
-
-#detach from the session
-
-screen -d
-
-
-#How to run test cases? 
-
-python3.10 -m pytest subscriber/test/sub_test.py
-
-python3.10 -m pytest --cov cognos.subscriber --cov-report=term --cov-report=html  subscriber/test/sub_test.py
+/usr/bin/python3 -m pytest --cov cognos.subscriber --cov-report=term --cov-report=html subscriber/test/sub_test.py
 

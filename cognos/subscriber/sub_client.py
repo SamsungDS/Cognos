@@ -7,12 +7,57 @@ import pandas as pd
 import time
 import zmq
 import json
+import yaml
+import requests
+import threading
+import ipaddress
+import re
 
 sys.path.append(  # noqa: E402
-    os.path.abspath(os.path.join(  # noqa: E402
-        os.path.dirname(__file__), '../..')))  # noqa: E402
+    os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "../..")  # noqa: E402
+    )
+)  # noqa: E402
 from cognos.backend.cognos_influxdb_client import CognosInfluxDBClient
 from cognos.backend.helper import *
+
+
+def is_valid_ip_or_fqdn(node_id):
+    """
+    Check If a node_id is a valid IPv4/IPv6, localhost
+    or a Fully Qualified Domain Name (FQDN).
+    """
+    # explicitly allow 'localhost'
+    if node_id.lower() == "localhost":
+        return True
+
+    try:
+        ipaddress.ip_address(node_id)
+        return True
+    except ValueError:
+        # not an ipaddress
+        pass
+
+    # Check if it's a valid FQDN
+    fqdn_regex = re.compile(
+        r"^(?=.{1,255}$)([a-zA-Z0-9-]{1,63}\.)+[a-zA-Z]{2,}$"
+    )
+    if fqdn_regex.match(node_id):
+        return True
+
+    # invalid ip/fqdn
+    return False
+
+
+def validate_file(file_path):
+    """
+    Validate if a file exists.
+    """
+    if not os.path.exists(file_path):
+        raise argparse.ArgumentTypeError(
+            f"The file '{file_path}' does not exist."
+        )
+    return file_path
 
 
 def read_input(filename):
@@ -27,14 +72,101 @@ def read_input(filename):
     return data
 
 
-def mock_subscription(interval, stop_condition=None) -> None:
-
-    # Check if the file exists
-    if not os.path.exists(sys.argv[1]):
-        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT),
-              sys.argv[1])
+def load_and_validate_config(config_file):
+    """
+    Load and validate the YAML configuration file.
+    """
     try:
-        data = read_input(sys.argv[1])
+        with open(config_file, "r") as file:
+            config = yaml.safe_load(file)
+
+        # Replace place holders with env variable values
+        for key, value in config.items():
+            if (
+                isinstance(value, str)
+                and value.startswith("{")
+                and value.endswith("}")
+            ):
+                # Extract the variable name from {VAR}
+                env_var = value[1:-1]
+                # Replace with env value or keep as is
+                config[key] = os.getenv(env_var, value)
+
+        # Validate required fields
+        required_fields = [
+            "rest_ip",
+            "rest_port",
+            "publisher_port",
+            "publisher_topic",
+            "interval",
+            "cluster_id",
+        ]
+        for field in required_fields:
+            if field not in config:
+                raise ValueError(f"Missing required field in config: {field}")
+        # Ensure valid types
+        if not isinstance(config["rest_port"], int) or not isinstance(
+            config["publisher_port"], int
+        ):
+            raise ValueError("Ports must be integers.")
+        if not isinstance(config["interval"], int):
+            raise ValueError("Interval must be an integer.")
+        if not isinstance(config["rest_ip"], str) or not isinstance(
+            config["publisher_topic"], str
+        ):
+            raise ValueError(
+                "Rest IP, Publisher Topic, and Cluster ID must be strings."
+            )
+        return config
+    except FileNotFoundError:
+        print(f"Config file '{config_file}' not found.")
+        sys.exit(1)
+    except yaml.YAMLError as e:
+        print(f"Error parsing YAML config: {e}")
+        sys.exit(1)
+    except ValueError as ve:
+        print(f"Invalid configuration: {ve}")
+        sys.exit(1)
+
+
+def get_node_ids(rest_ip, rest_port, cluster_id):
+    """
+    Fetches the list of node IDs by calling the controller API.
+    """
+    url = f"http://{rest_ip}:{rest_port}/api/v1/list_cluster_nodes"
+    headers = {
+        "accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    payload = {"cluster_id": cluster_id}
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+        data = response.json()
+        # Extract node IDs from the response
+        node_info = data.get("clusterInfo", [{}])[0].get("nodeInfo", [])
+        return [
+            node["nodeId"]
+            for node in node_info
+            if is_valid_ip_or_fqdn(node["nodeId"])
+        ]
+    except requests.exceptions.RequestException as e:
+        print(f"Error calling API: {e}")
+        return []
+
+
+def mock_subscription(mock_file, interval, stop_condition=None) -> None:
+    """
+    Handles mock subscription by reading from a mock
+    file and simulating events.
+    """
+    # Check if the mock file exists
+    if not os.path.exists(mock_file):
+        raise FileNotFoundError(
+            errno.ENOENT, os.strerror(errno.ENOENT), mock_file
+        )
+    try:
+        data = read_input(mock_file)
     except Exception as e:
         print(f"Error reading input file: {e}")
         sys.exit(1)
@@ -62,7 +194,7 @@ def mock_subscription(interval, stop_condition=None) -> None:
                 # Get the current timestamp
                 current_time = pd.Timestamp.now()
                 # Convert to UTC
-                utc_time = current_time.tz_localize('UTC')
+                utc_time = current_time.tz_localize("UTC")
                 # Add the current timestamp to the row
                 row["timestamp"] = utc_time.strftime("%Y-%m-%dT%H:%M:%SZ")
                 # Sleep for the specified interval
@@ -78,55 +210,44 @@ def mock_subscription(interval, stop_condition=None) -> None:
         sys.exit(1)
 
 
-def zeromq_subscription(hostname, topic, interval, stop_condition=None):
-
-    try:
-        # Parse hostname and port
-        if ':' not in hostname:
-            raise ValueError("Invalid <hostname:port> format.")
-        host, port = hostname.split(":")
-        # Ensure the port is a valid integer
-        port = int(port)
-    except ValueError as ve:
-        print(f"Error parsing hostname or port: {ve}")
-        sys.exit(1)
-        return
-
-    # Initialize ZMQ context and socket
+def zeromq_subscription(
+    node_id, publisher_port, topic, interval, stop_condition=None
+) -> None:
+    """
+    Subscribe to ZeroMQ for each node using its node ID and publisher port.
+    Write data to InfluxDB.
+    """
     context = zmq.Context()
     socket = context.socket(zmq.SUB)
     try:
-        # Connect to the server
-        socket.connect(f"tcp://{host}:{port}")
+        # Connect to the publisher
+        socket.connect(f"tcp://{node_id}:{publisher_port}")
     except zmq.ZMQError as e:
-        print(f"Failed to connect to server: {e}")
+        print(
+            f"Failed to connect to server at {node_id}:{publisher_port}: {e}"
+        )
         sys.exit(1)
         return
-
-    # Subscribe to the provided topic
     socket.setsockopt_string(zmq.SUBSCRIBE, topic)
 
     # Create an instance of CognosInfluxDBClient
-    dbobj = CognosInfluxDBClient()
+    db_client = CognosInfluxDBClient()
 
     # Set the default stop_condition to always False if none is provided
     stop_condition = stop_condition or (lambda: False)
-
     try:
         while not stop_condition():
             try:
                 # Receive a message from the server
                 string = socket.recv()
-                # Convert the message to string format
-                payload = str(string, 'utf-8')
+                payload = str(string, "utf-8")
                 # Ensure payload contains colon (':') to split
-                if ':' not in payload:
+                if ":" not in payload:
                     print("Invalid message format: missing ':' separator")
                     continue
                 # Split the topic and message data
-                index = payload.index(':')
-                topic, messagedata = payload[:index], payload[index + 1:]
-
+                index = payload.index(":")
+                topic, messagedata = payload[:index], payload[index+1:]
                 # Parse the message data as JSON
                 try:
                     data = json.loads(messagedata)
@@ -134,7 +255,7 @@ def zeromq_subscription(hostname, topic, interval, stop_condition=None):
                     print(f"Failed to parse message data as JSON: {je}")
                     continue
                 # Write the event to InfluxDB
-                dbobj.write_cognos_event(data)
+                db_client.write_cognos_event(data)
                 print(data)
             except zmq.ZMQError as zmqe:
                 print(f"ZMQ error during message reception: {zmqe}")
@@ -145,46 +266,61 @@ def zeromq_subscription(hostname, topic, interval, stop_condition=None):
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
         sys.exit(1)
-        return
     finally:
         socket.close()
         context.term()
 
 
-def main(hostname=None, topic=None, interval=5, use_mock=False):
-    if use_mock:
-        # Check if enough arguments are passed
-        if len(sys.argv) < 3:
-            print('Usage: subscriber.py <publisher_output_file> --mock <i>')
+def main(config_file=None, mock_file=None):
+    """
+    Main function to manage subscriptions in mock or non-mock mode.
+    """
+    if mock_file:
+        # Mock mode: no YAML file needed
+        print(f"Running in mock mode with file: {mock_file}")
+        # Default interval for mock
+        mock_subscription(mock_file=mock_file, interval=5)
+    elif config_file:
+        # Non-mock mode: YAML file is required
+        print(f"Running in non-mock mode with config: {config_file}")
+        config = load_and_validate_config(config_file)
+        # Extract configuration values
+        rest_ip = config["rest_ip"]
+        rest_port = config["rest_port"]
+        publisher_port = config["publisher_port"]
+        publisher_topic = config["publisher_topic"]
+        interval = config["interval"]
+        cluster_id = config["cluster_id"]
+        # Fetch node IDs from the controller
+        node_ids = get_node_ids(rest_ip, rest_port, cluster_id)
+        if not node_ids:
+            print("No node IDs retrieved. Exiting.")
             sys.exit(1)
-        mock_subscription(interval)
+        # Subscribe to ZeroMQ for each node ID
+        threads = []
+        for node_id in node_ids:
+            print(f"Subscribing to node: {node_id}")
+            t = threading.Thread(
+                target=zeromq_subscription,
+                args=(node_id, publisher_port, publisher_topic, interval),
+            )
+            t.start()
+            threads.append(t)
+
+        for t in threads:
+            t.join()
     else:
-        if len(sys.argv) < 3:
-            print('Usage: subscriber.py <hostname:port> <topic> <interval>')
-            sys.exit(1)
-        elif hostname and topic:
-            zeromq_subscription(hostname, topic, interval)
-        else:
-            print("Hostname and topic are required for ZeroMQ subscriber.")
-            sys.exit(1)
+        print("Error: Either a config file or a mock file must be provided.")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-
-    # Add common arguments
-    parser.add_argument('-i', '--interval', help="sleep", type=int, default=5)
-    parser.add_argument('--mock', action='store_true', help="mock flag")
-
-    # Positional arguments are optional depending on --mock flag
-    parser.add_argument('hostname', nargs='?', help="Hostname:port for ZeroMQ")
-    parser.add_argument('topic', nargs='?', help="Topic to subscribe to")
+    parser.add_argument(
+        "--config", help="YAML conf", type=validate_file, required=False
+    )
+    parser.add_argument(
+        "--mock", help="Path to the mock data file", required=False
+    )
     args = parser.parse_args()
-
-    if args.mock:
-        main(interval=args.interval, use_mock=True)
-    else:
-        if args.hostname and args.topic:
-            main(args.hostname, args.topic, args.interval)
-        else:
-            print("Error: For ZeroMQ sub, hostname & topic must be provided.")
+    main(config_file=args.config, mock_file=args.mock)

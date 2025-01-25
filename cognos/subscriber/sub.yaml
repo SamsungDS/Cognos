@@ -1,0 +1,6 @@
+rest_ip: "{CAL_IP}"
+rest_port: 8001
+publisher_port: 5555
+publisher_topic: "{TOPIC}"
+interval: 5
+cluster_id: "CL_ID_1"

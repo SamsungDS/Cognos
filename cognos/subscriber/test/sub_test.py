@@ -40,7 +40,7 @@ def test_mock_subscription_with_real_data(
         return iteration_count[0] > 2  # Stop after 2 iterations
 
     # Run the actual mock_subscription logic
-    mock_subscription(1, stop_condition=stop_condition)
+    mock_subscription(dataset_path, 1, stop_condition=stop_condition)
     # write_cognos_event method on the mock instance called twice
     assert (
         mock_db_instance.write_cognos_event.call_count == 2
@@ -72,7 +72,7 @@ def test_mock_subscription_file_not_found(monkeypatch):
     # Simulate file not existing
     monkeypatch.setattr("os.path.exists", lambda x: False)
     with pytest.raises(FileNotFoundError):
-        mock_subscription(5)
+        mock_subscription("", 5)
 
 
 # Test case for error while reading the input file (Generic Exception)
@@ -84,7 +84,7 @@ def test_mock_subscription_error_reading_file(mock_sys_exit, capfd):
             "cognos.subscriber.sub_client.read_input",
             side_effect=Exception("Failed to read file"),
         ):
-            mock_subscription(5)
+            mock_subscription("", 5)
             # Capture printed output
             captured = capfd.readouterr()
             # Check the correct error message
@@ -92,11 +92,6 @@ def test_mock_subscription_error_reading_file(mock_sys_exit, capfd):
                 "Error reading input file: Failed to read file" in captured.out
             )
             mock_sys_exit.assert_called_once_with(1)
-
-
-def test_zeromq_subscription_invalid_hostname():
-    with pytest.raises(SystemExit):
-        zeromq_subscription("invalid_hostname", "topic", 1)
 
 
 # Test case to handle ZMQError during socket connection
@@ -112,15 +107,16 @@ def test_zeromq_subscription_zmq_error(mock_zmq_context, mock_sys_exit, capfd):
         "Simulated connection failure"
     )
     # Call zeromq_subscription with valid hostname:port to trigger the ZMQError
-    zeromq_subscription("localhost:5555", "topic", 1)
+    zeromq_subscription("localhost", 5555, "topic", 1)
     # Ensure sys.exit(1) is called
     mock_sys_exit.assert_called_once_with(1)
     # Capture printed output and verify the correct error message
     captured = capfd.readouterr()
-    assert (
-        "Failed to connect to server: Simulated connection failure"
-        in captured.out
-    )
+    print(captured.out)
+    expected_msg = "Failed to connect to server at localhost:5555: \
+                    Simulated connection failure"
+    print(expected_msg)
+    assert " ".join(expected_msg.strip().split()) in captured.out
 
 
 # Test case for invalid JSON in message and sys.exit handling
@@ -137,56 +133,12 @@ def test_zeromq_subscription_invalid_json_sys_exit(
         b"topic1:metric:{invalid_json_data}"  # Invalid JSON format
     ]
     # Call the zeromq_subscription function
-    zeromq_subscription("localhost:5555", "topic", 1)
+    zeromq_subscription("localhost", 5555, "topic", 1)
     # Ensure sys.exit(1) is called when the error occurs
     mock_sys_exit.assert_called_once_with(1)
     # Capture the printed output and check the error message
     captured = capfd.readouterr()
     assert "Failed to parse message data as JSON" in captured.out
-
-
-# Test case to handle ValueError for invalid hostname and port
-@patch("sys.exit")  # Mock sys.exit to prevent the test from exiting
-def test_zeromq_subscription_mock_hostname_parsing(mock_sys_exit, capfd):
-    # Invalid hostname without colon
-    zeromq_subscription("invalid_hostname", "topic", 1)
-    # Ensure sys.exit(1) is called
-    mock_sys_exit.assert_called_once_with(1)
-    # Capture printed output and verify error message
-    captured = capfd.readouterr()
-    assert (
-        "Error parsing hostname or port: Invalid <hostname:port> format."
-        in captured.out
-    )
-    # Reset mock_sys_exit for the next test case
-    mock_sys_exit.reset_mock()
-    # Simulate valid hostname but invalid port (non-integer)
-    with patch(
-        "builtins.int", side_effect=ValueError("invalid literal for int()")
-    ):
-        zeromq_subscription("localhost:notaport", "topic", 1)
-        # Ensure sys.exit(1) is called for invalid port
-        mock_sys_exit.assert_called_once_with(1)
-        # Capture printed output & verify the error message
-        captured = capfd.readouterr()
-        assert (
-            "Error parsing hostname or port: invalid literal for int()"
-            in captured.out
-        )
-
-
-# Test case to handle ValueError when port is not an integer
-@patch("sys.exit")  # Mock sys.exit to prevent the test from exiting
-def test_zeromq_subscription_invalid_port_sys_exit(mock_sys_exit, capfd):
-    zeromq_subscription("localhost:notaport", "topic", 1)
-    # Check that sys.exit(1) was called
-    mock_sys_exit.assert_called_once_with(1)
-    # Capture printed output and check that the error message was printed
-    captured = capfd.readouterr()
-    assert (
-        "Error parsing hostname or port: invalid literal for int()"
-        in captured.out
-    )
 
 
 @patch("cognos.subscriber.sub_client.CognosInfluxDBClient")
@@ -229,7 +181,7 @@ def test_zeromq_subscription_with_mock_zmq(
 
     # Call the zeromq_subscription function with the stop condition
     zeromq_subscription(
-        "localhost:5555", "metric", 1, stop_condition=stop_condition
+        "localhost", 5555, "metric", 1, stop_condition=stop_condition
     )
     # Check that recv is called twice (for 2 messages)
     assert mock_socket.recv.call_count == 2, "recv should be called twice."
@@ -256,7 +208,7 @@ def test_mock_subscription_empty_dataframe(monkeypatch):
     monkeypatch.setattr("os.path.exists", lambda x: True)
     monkeypatch.setattr("builtins.open", mock.mock_open(read_data="[]"))
     with patch("sys.exit") as mock_sys_exit:
-        mock_subscription(5)
+        mock_subscription("", 5)
         mock_sys_exit.assert_not_called()
 
 
@@ -271,7 +223,7 @@ def test_zeromq_subscription_keyboard_interrupt(
     mock_zmq_context_instance.socket.return_value = mock_socket
     # Simulate a KeyboardInterrupt
     mock_socket.recv.side_effect = KeyboardInterrupt
-    zeromq_subscription("localhost:5555", "topic", 1)
+    zeromq_subscription("localhost", 5555, "topic", 1)
     # Check that sys.exit(0) was called after keyboard interrupt
     mock_sys_exit.assert_called_once_with(0)
 
@@ -281,33 +233,296 @@ def test_mock_subscription_empty_file(monkeypatch):
     monkeypatch.setattr("os.path.exists", lambda x: True)
     monkeypatch.setattr("builtins.open", mock.mock_open(read_data=""))
     with patch("sys.exit") as mock_sys_exit:
-        mock_subscription(5)
+        mock_subscription("", 5)
         mock_sys_exit.assert_not_called()
 
 
+@patch("cognos.subscriber.sub_client.load_and_validate_config")
+@patch("cognos.subscriber.sub_client.get_node_ids", return_value=["node1"])
 @patch("cognos.subscriber.sub_client.zeromq_subscription")
-def test_main_valid_zeromq_subscription(mock_zeromq_subscription, monkeypatch):
-    # Simulate valid arguments being passed
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["sub_client.py", "localhost:5555", "topic", "--interval=5"],
-    )
-    main("localhost:5555", "topic", 5)
+def test_main_valid_zeromq_subscription(
+    mock_zeromq_subscription, mock_get_node_ids, mock_load_config
+):
+    # Mock configuration data
+    mock_load_config.return_value = {
+        "rest_ip": "127.0.0.1",
+        "rest_port": 8080,
+        "publisher_port": 5555,
+        "publisher_topic": "topic",
+        "interval": 5,
+        "cluster_id": "cluster123",
+    }
+    # Call the main function with config_file argument
+    main(config_file="test_config.yaml")
+    # Ensure that zeromq_subscription is called with expected parameters
     mock_zeromq_subscription.assert_called_once_with(
-        "localhost:5555", "topic", 5
+        "node1",
+        5555,
+        "topic",
+        5,
     )
 
 
+@patch(
+    "cognos.subscriber.sub_client.is_valid_ip_or_fqdn",
+    side_effect=lambda x: True,
+)
+@patch("requests.post")
+def test_get_node_ids_success_2(mock_post, mock_validation):
+    mock_post.return_value.status_code = 200
+    mock_post.return_value.json.return_value = {
+        "clusterInfo": [
+            {
+                "nodeInfo": [
+                    {"nodeId": "10.105.81.34"},
+                    {"nodeId": "ssl-ssg-v9m.msl.lab"},
+                ]
+            }
+        ]
+    }
+    node_ids = get_node_ids("127.0.0.1", 8080, "cluster123")
+    assert node_ids == ["10.105.81.34", "ssl-ssg-v9m.msl.lab"]
+
+
+@patch("requests.post")
+def test_get_node_ids_failure(mock_post):
+    mock_post.return_value.status_code = 500
+    mock_post.return_value.json.return_value = {}
+    node_ids = get_node_ids("127.0.0.1", 8080, "cluster123")
+    assert node_ids == []
+
+
+@patch("cognos.subscriber.sub_client.CognosInfluxDBClient")
+@patch("time.sleep", return_value=None)  # Skip the actual sleep
+@patch(
+    "builtins.open",
+    new_callable=mock_open,
+    read_data="metric:{'field1': 'value1', 'field2': 'value2'}\n",
+)
+@patch("os.path.exists", return_value=True)
+def test_mock_subscription(mock_exists, mock_open, mock_sleep, mock_db_client):
+    # Create a mock instance of CognosInfluxDBClient
+    mock_db_instance = MagicMock()
+    mock_db_client.return_value = mock_db_instance
+    # Define a stop condition to stop after exactly 1 iteration
+    iteration_count = [0]
+
+    def stop_condition():
+        iteration_count[0] += 1
+        return iteration_count[0] > 1  # Stops after 1 iteration
+
+    # Run the function
+    mock_subscription(
+        mock_file="test_mock_publisher_events.output",
+        interval=1,
+        stop_condition=stop_condition,
+    )
+    # Check that the function writes to the DB exactly once per iteration
+    assert (
+        mock_db_instance.write_cognos_event.call_count == 1
+    ), f"Expected write_cognos_event to be called once, but was called \
+            {mock_db_instance.write_cognos_event.call_count} times."
+
+
+@patch(
+    "builtins.open",
+    new_callable=mock_open,
+    read_data="""
+rest_ip: 127.0.0.1
+rest_port: 8080
+publisher_port: 5555
+publisher_topic: "topic"
+interval: 5
+cluster_id: "cluster123"
+""",
+)
+@patch("os.path.exists", return_value=True)  # Simulate config file exists
+@patch("cognos.subscriber.sub_client.load_and_validate_config")
+@patch("cognos.subscriber.sub_client.get_node_ids", return_value=["node1"])
 @patch("cognos.subscriber.sub_client.zeromq_subscription")
-def test_main_valid_zeromq_subscription(mock_zeromq_subscription, monkeypatch):
-    # Simulate valid arguments being passed
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["sub_client.py", "localhost:5555", "topic", "--interval=5"],
-    )
-    main("localhost:5555", "topic", 5)
-    mock_zeromq_subscription.assert_called_once_with(
-        "localhost:5555", "topic", 5
-    )
+@patch("sys.exit")  # Prevent test from exiting
+def test_main_non_mock_mode(
+    mock_sys_exit,
+    mock_zeromq_subscription,
+    mock_get_node_ids,
+    mock_load_config,
+    mock_exists,
+    mock_open_file,
+):
+    # Mock configuration data
+    mock_load_config.return_value = {
+        "rest_ip": "127.0.0.1",
+        "rest_port": 8080,
+        "publisher_port": 5555,
+        "publisher_topic": "topic",
+        "interval": 5,
+        "cluster_id": "cluster123",
+    }
+    # Run the main function with the mock config file
+    main(config_file="test_config.yaml")
+    # Ensure `zeromq_subscription` is called with expected positional arguments
+    mock_zeromq_subscription.assert_called_once_with("node1", 5555, "topic", 5)
+    # Ensure sys.exit is NOT called since config is now mocked properly
+    mock_sys_exit.assert_not_called()
+
+
+def test_load_and_validate_config_valid():
+    valid_yaml = """
+    rest_ip: 127.0.0.1
+    rest_port: 8080
+    publisher_port: 5555
+    publisher_topic: "topic"
+    interval: 5
+    cluster_id: "cluster123"
+    """
+    with patch("builtins.open", mock_open(read_data=valid_yaml)):
+        config = load_and_validate_config("test_config.yaml")
+        assert config["rest_ip"] == "127.0.0.1"
+        assert config["rest_port"] == 8080
+
+
+def test_load_and_validate_config_missing_field():
+    invalid_yaml = """
+    rest_ip: 127.0.0.1
+    rest_port: 8080
+    """
+    with patch("builtins.open", mock_open(read_data=invalid_yaml)):
+        with pytest.raises(SystemExit):
+            load_and_validate_config("test_config.yaml")
+
+
+def test_load_and_validate_config_invalid_yaml():
+    invalid_yaml = "invalid_yaml: ["
+    with patch("builtins.open", mock_open(read_data=invalid_yaml)):
+        with pytest.raises(SystemExit):
+            load_and_validate_config("test_config.yaml")
+
+
+def test_read_input_valid():
+    mock_data = """metric:{"key1": "value1"}\nmetric:{"key2": "value2"}"""
+    with patch("builtins.open", mock_open(read_data=mock_data)):
+        result = read_input("mock_file.txt")
+        assert result == [{"key1": "value1"}, {"key2": "value2"}]
+
+
+def test_validate_file_valid(tmp_path):
+    # Create a temporary file
+    file_path = tmp_path / "test_file.txt"
+    file_path.write_text("content")
+    assert validate_file(str(file_path)) == str(file_path)
+
+
+def test_validate_file_invalid():
+    with pytest.raises(argparse.ArgumentTypeError):
+        validate_file("non_existent_file.txt")
+
+
+@patch("cognos.subscriber.sub_client.CognosInfluxDBClient")
+@patch("time.sleep", return_value=None)
+@patch("builtins.open", new_callable=mock_open, read_data=sample_file_content)
+@patch("os.path.exists", return_value=True)
+def test_mock_subscription_with_real_data(
+    mock_exists, mock_open, mock_sleep, mock_db_client
+):
+    # Prepare mock file path and arguments
+    basedir = os.path.split(os.path.dirname(__file__))[0]
+    dataset_path = os.path.join(basedir, "test_mock_publisher_events.output")
+
+
+@patch("builtins.open", mock_open(read_data="{}"))  # Empty config
+@patch("sys.exit")  # Mock sys.exit to prevent actual exit
+def test_load_and_validate_config_empty(mock_sys_exit, capfd):
+    load_and_validate_config("test_config.yaml")
+    # Capture the printed output
+    captured = capfd.readouterr()
+    # Validate the expected error message
+    assert (
+        "Missing required field" in captured.out
+    ), f"Expected error message not found in: {captured.out}"
+    # Ensure sys.exit(1) was called
+    mock_sys_exit.assert_called_once_with(1)
+
+
+@patch(
+    "builtins.open",
+    mock_open(
+        read_data="""
+rest_ip: 127.0.0.1
+rest_port: "not_an_int"
+publisher_port: 5555
+publisher_topic: "topic"
+interval: 5
+cluster_id: "cluster123"
+"""
+    ),
+)
+@patch("sys.exit")  # Mock sys.exit to prevent actual exit
+def test_load_and_validate_config_invalid_type(mock_sys_exit, capfd):
+    load_and_validate_config("test_config.yaml")
+    # Capture the printed output
+    captured = capfd.readouterr()
+    # Validate expected error message
+    assert (
+        "Ports must be integers" in captured.out
+    ), f"Expected error message not found in: {captured.out}"
+    # Ensure sys.exit(1) was called
+    mock_sys_exit.assert_called_once_with(1)
+
+
+@patch(
+    "cognos.subscriber.sub_client.read_input",
+    side_effect=SyntaxError("Eval error"),
+)
+@patch("sys.exit")
+def test_mock_subscription_eval_failure(mock_sys_exit, mock_read_input):
+    with patch("os.path.exists", return_value=True):
+        mock_subscription("mock_file.txt", 5)
+        mock_sys_exit.assert_called_once_with(1)
+
+
+@patch("zmq.Context")
+@patch("sys.exit")
+def test_zeromq_subscription_zmqerror(mock_sys_exit, mock_zmq_context):
+    mock_socket = MagicMock()
+    mock_zmq_context_instance = mock_zmq_context.return_value
+    mock_zmq_context_instance.socket.return_value = mock_socket
+    mock_socket.connect.side_effect = zmq.ZMQError("Mocked ZMQ error")
+    zeromq_subscription("localhost", 5555, "topic", 1)
+    mock_sys_exit.assert_called_once_with(1)
+
+
+@patch("requests.post")
+def test_get_node_ids_invalid_json(mock_post):
+    # Simulate a valid response but with an invalid JSON structure
+    mock_post.return_value.status_code = 200
+    # Not expected "clusterInfo"
+    mock_post.return_value.json.return_value = {
+        "invalid_key": "unexpected_value"
+    }
+    node_ids = get_node_ids("127.0.0.1", 8080, "cluster123")
+    # expected JSON format is missing, the function should return an empty list
+    assert node_ids == [], f"Expected empty list, but got: {node_ids}"
+
+
+@patch("requests.post")
+def test_get_node_ids_timeout(mock_post):
+    mock_post.side_effect = requests.exceptions.Timeout
+    node_ids = get_node_ids("127.0.0.1", 8080, "cluster123")
+    assert node_ids == []
+
+
+def test_is_valid_ip_or_fqdn():
+    # Valid IPv4
+    assert is_valid_ip_or_fqdn("10.105.80.34") is True
+    # Valid IPv6
+    assert is_valid_ip_or_fqdn("2001:db8::ff00:42:8329") is True
+    # Valid FQDN
+    assert is_valid_ip_or_fqdn("msl-ssg-vm53.msl.lab") is True
+    assert is_valid_ip_or_fqdn("google.com") is True
+    # Invalid Cases
+    assert is_valid_ip_or_fqdn("invalid_domain") is False
+    # invalid ip
+    assert is_valid_ip_or_fqdn("256.256.256.256") is False
+    # not a fqdn as last part is misisng atleast 2 characters ex: .org
+    assert is_valid_ip_or_fqdn("my-server") is False
+    assert is_valid_ip_or_fqdn("localhost") is True
