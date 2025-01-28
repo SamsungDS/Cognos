@@ -128,4 +128,3 @@ TEST_F(ScDeviceTest, SetCapacityInvalidValue) {
     FAIL() << "Unexpected exception type.";
   }
 }
-

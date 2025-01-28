@@ -100,7 +100,7 @@ cmake.. && make
 
 For example,
 ```
-[mandar.s@msl-ssg-vm11 cxl]$ scripts/build.sh --with-fmapi /home/mandar.s/cxl/svk-cxl/cxl_memory_box/mbox_a1/build/libmbox_a1_shared.so /home/mandar.s/cxl/svk-cxl/cxl_memory_box/mbox_a1/
+[mandar.s@msl-ssg-vm11 cxl]$ scripts/build.sh --with-fmapi /home/mandar.s/cxl/svk-cxl/cxl_memory_box/mbox_a1/build/libmbox_a1_shared.so /home/mandar.s/cxl/svk-cxl/cxl_memory_box/mbox_a1/ --mock
 Build tests: false
 Build with code coverage: false
 CMake install prefix:
@@ -159,6 +159,10 @@ e.g. scripts/build.sh --with-fmapi /cxl_memory_box/mbox_a1/build/libmbox_a1_shar
 Execute the following script to build with unit tests, and display code coverage results:
 
 ```bash
+#mock mode:
+./scripts/build.sh --mock -t -c
+
+#hardware mode
 ./scripts/build.sh -t -c
 
 e.g. output
@@ -222,9 +226,13 @@ cd cxl && scripts/build.sh
 e.g.
 cd cxl && scripts/build.sh --with-fmapi mbox_a1/build/libmbox_a1_shared.so mbox_a1 -r -b
 
+
 #### Build Debian pacakages
 e.g.
 cd cxl && scripts/build.sh --with-fmapi mbox_a1/build/libmbox_a1_shared.so mbox_a1 -r -b
+
+Note: for mock binary use "--mock" flag
+
 
 ## Contributing
 Thank you for your interest in contributing to SVK CXL

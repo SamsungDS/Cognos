@@ -77,4 +77,3 @@ class sc_mld : public sc_device {
 };
 
 #endif
-

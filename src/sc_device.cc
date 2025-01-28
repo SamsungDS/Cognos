@@ -5,7 +5,6 @@
 
 using namespace std;
 
-
 // constructor delegation
 sc_device::sc_device() : sc_device(0, "", 0, 0) {}
 
@@ -58,5 +57,3 @@ uint32_t sc_device::d_get_port() const { return d_port; }
 uint64_t sc_device::d_get_capacity() const { return d_capacity; }
 
 sc_id sc_device::d_get_id() const { return d_id; }
-
-

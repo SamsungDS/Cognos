@@ -80,4 +80,3 @@ class sc_sld : public sc_device {
 };
 
 #endif
-

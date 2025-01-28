@@ -3,22 +3,23 @@
 #define INVALID_DEV_PORT 0xFFFFFFFFU
 
 #include <stdint.h>
+
 #include <algorithm>
 #include <cstring>
 #include <iostream>
-#include <string>
 #include <list>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
+#include "mbox_a1.h"
 #include "sc_endpoint.h"
 #include "sc_host.h"
 #include "sc_id.h"
 #include "sc_switch.h"
 #include "types.h"
-#include "mbox_a1.h"
 
-enum device_type {MBOX=1,SLD=2,MLD=3,LD=4,DCD=5};
+enum device_type { MBOX = 1, SLD = 2, MLD = 3, LD = 4, DCD = 5 };
 
 class sc_host;
 
@@ -115,4 +116,3 @@ class sc_device {
 };
 
 #endif
-

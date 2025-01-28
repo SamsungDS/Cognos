@@ -3,10 +3,10 @@
 #include "sc_fm.h"
 
 class DevCMMD : public FabricManager {
-public:
-    explicit DevCMMD(json_t* config);
-    virtual ~DevCMMD();
-    size_t setup_info(std::string &buffer) override;
+ public:
+  explicit DevCMMD(json_t* config);
+  virtual ~DevCMMD();
+  size_t setup_info(std::string& buffer) override;
 };
 
 #endif
