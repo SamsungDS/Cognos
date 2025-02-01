@@ -135,7 +135,7 @@ svk_status  initialize(void *) {
  */
 svk_status  get_supported_feature_list(feature_id *feat_id, char *) {
     std::cout << "get_supported_feature_list function called" << std::endl;
-    *feat_id = feature_id::CXL;
+    *feat_id = feature_id::CME;
     return SVK_STATUS_SUCCESS;
 }
 
