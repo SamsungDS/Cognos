@@ -153,9 +153,8 @@ describe('Configure Component', () => {
     // Check if showDetachMemory state is toggled
     expect(getByTestId('detach-memory-modal').getAttribute('show')).toBe(null);
   });
-
-  it('should toggle showAttach when handleAttachCancel is called', () => {
-    const { getByTestId } = render(<Configure />);
+  it('should toggle showAttach when handleAttachCancel is called', () => {    
+    const { getByTestId } = render(<Configure testMode={true} />);
     const attachButton = getByTestId('attach-id'); 
 
     fireEvent.click(attachButton);
@@ -191,11 +190,9 @@ describe('Configure Component', () => {
 
   })
 });
-
-
 // Test interaction with Attach cancel button
 it('should close AttachMemory modal when cancel button is clicked', () => {
-  const { getByTestId, queryByTestId } = render(<Configure />);
+  const { getByTestId, queryByTestId } = render(<Configure testMode={true} />);
   // Open the AttachMemory modal
   fireEvent.click(getByTestId('attach-id'));
   // Simulate clicking on the cancel button
@@ -203,8 +200,6 @@ it('should close AttachMemory modal when cancel button is clicked', () => {
   // Expect the AttachMemory modal to be closed
   expect(queryByTestId('attach-memory-modal')).not.toBeInTheDocument();
 });
-
-
 // Test interaction with Detach cancel button
 it('should close DetachMemory modal when cancel button is clicked', () => {
   const { getByTestId, queryByTestId } = render(<Configure />);

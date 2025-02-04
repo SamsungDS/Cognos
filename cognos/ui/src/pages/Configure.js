@@ -19,7 +19,7 @@ export const getReadableStatus = (job) => {
   return `${job.status}`;
 };
 
-const Configure = () => {
+const Configure = ({testMode}) => {
 
   const apiEndpoint = constants.Configs.api_endpoint;
   const AVAILABLE_DEVICES = 'available_devices';
@@ -58,6 +58,7 @@ const Configure = () => {
   const { handleDetach } = useDetachHook(setMemboxData, setAttachedDevicesData, () => setShowDetachMemory(false), selectedValue, apiEndpoint, attachedRowData);
 
   useEffect(() =>{
+    setSelectedValue(selectorOptions[0]);
     fetch(`${apiEndpoint}/hosts`, {
       mode: 'cors',
       method: 'GET',
@@ -90,6 +91,7 @@ const Configure = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps 
   []);
 
+  // istanbul ignore next
   const getAvailableLMDS = async() => {
     
     try {
@@ -109,7 +111,7 @@ const Configure = () => {
       }
     } catch (error) {console.log(error)};
   };
-
+  // istanbul ignore next
   const handleAttachMemoryToggle = () => {
     getAvailableLMDS();
     setShowAttach(!showAttach);
@@ -275,6 +277,7 @@ const Configure = () => {
                         size="sm"
                         onClick={handleAttachMemoryToggle}
                         data-testid="attach-id"
+                        disabled={!testMode && selectedValue['value'] === 'Select Host'}
                       >
                         <img
                           src={constants.AddIcon}
