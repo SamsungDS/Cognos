@@ -117,11 +117,11 @@ svk-install:
     # Step 2: Set CAL_PORT to pass information to the backend
     - sed -i "s|^CAL_PORT.*|CAL_PORT=${BACKEND_PORT}|" "$SVK_DIR/svk-app/cognos.config"
     # Step 3: Set SUB_PORT to publish metrics to the subscriber
-    - sed -i "s|^SUB_PORT=.*|SUB_PORT=${SUB_PORT}|" "$SVK_DIR/svk-app/cognos.config"
+    #- sed -i "s|^SUB_PORT=.*|SUB_PORT=${SUB_PORT}|" "$SVK_DIR/svk-app/cognos.config"
     # Step 4: Set CAL_IP to indicate the host running the backend
     - sed -i "s|^CAL_IP=.*|CAL_IP=${VM_IP}|" "$SVK_DIR/svk-app/cognos.config"
     # Step 5: Set SUB_HOST to indicate the host running the subscriber
-    - sed -i "s|^SUB_HOST=.*|SUB_HOST=${VM_IP}|" "$SVK_DIR/svk-app/cognos.config"
+    #- sed -i "s|^SUB_HOST=.*|SUB_HOST=${VM_IP}|" "$SVK_DIR/svk-app/cognos.config"
 
     # Start the Management FW services
     - systemctl start svk-controller.service

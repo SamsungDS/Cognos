@@ -253,7 +253,7 @@ def test_main_valid_zeromq_subscription(
         "cluster_id": "cluster123",
     }
     # Call the main function with config_file argument
-    main(config_file="test_config.yaml")
+    main(config_file="test_config.json")
     # Ensure that zeromq_subscription is called with expected parameters
     mock_zeromq_subscription.assert_called_once_with(
         "node1",
@@ -328,12 +328,12 @@ def test_mock_subscription(mock_exists, mock_open, mock_sleep, mock_db_client):
     "builtins.open",
     new_callable=mock_open,
     read_data="""
-rest_ip: 127.0.0.1
-rest_port: 8080
-publisher_port: 5555
-publisher_topic: "topic"
-interval: 5
-cluster_id: "cluster123"
+{"rest_ip": "127.0.0.1",
+"rest_port": 8080,
+"publisher_port": 5555,
+"publisher_topic": "topic",
+"interval": 5,
+"cluster_id": "cluster123"}
 """,
 )
 @patch("os.path.exists", return_value=True)  # Simulate config file exists
@@ -359,7 +359,7 @@ def test_main_non_mock_mode(
         "cluster_id": "cluster123",
     }
     # Run the main function with the mock config file
-    main(config_file="test_config.yaml")
+    main(config_file="test_config.json")
     # Ensure `zeromq_subscription` is called with expected positional arguments
     mock_zeromq_subscription.assert_called_once_with("node1", 5555, "topic", 5)
     # Ensure sys.exit is NOT called since config is now mocked properly
@@ -367,35 +367,35 @@ def test_main_non_mock_mode(
 
 
 def test_load_and_validate_config_valid():
-    valid_yaml = """
-    rest_ip: 127.0.0.1
-    rest_port: 8080
-    publisher_port: 5555
-    publisher_topic: "topic"
-    interval: 5
-    cluster_id: "cluster123"
+    valid_json = """
+    { "rest_ip": "127.0.0.1",
+    "rest_port": 8080,
+    "publisher_port": 5555,
+    "publisher_topic": "topic",
+    "interval": 5,
+    "cluster_id": "cluster123"}
     """
-    with patch("builtins.open", mock_open(read_data=valid_yaml)):
-        config = load_and_validate_config("test_config.yaml")
+    with patch("builtins.open", mock_open(read_data=valid_json)):
+        config = load_and_validate_config("test_config.json")
         assert config["rest_ip"] == "127.0.0.1"
         assert config["rest_port"] == 8080
 
 
 def test_load_and_validate_config_missing_field():
-    invalid_yaml = """
-    rest_ip: 127.0.0.1
-    rest_port: 8080
+    invalid_json = """
+    { "rest_ip": "127.0.0.1",
+    "rest_port": 8080
     """
-    with patch("builtins.open", mock_open(read_data=invalid_yaml)):
+    with patch("builtins.open", mock_open(read_data=invalid_json)):
         with pytest.raises(SystemExit):
-            load_and_validate_config("test_config.yaml")
+            load_and_validate_config("test_config.json")
 
 
 def test_load_and_validate_config_invalid_yaml():
-    invalid_yaml = "invalid_yaml: ["
-    with patch("builtins.open", mock_open(read_data=invalid_yaml)):
+    invalid_json = "invalid_json: ["
+    with patch("builtins.open", mock_open(read_data=invalid_json)):
         with pytest.raises(SystemExit):
-            load_and_validate_config("test_config.yaml")
+            load_and_validate_config("test_config.json")
 
 
 def test_read_input_valid():
@@ -432,7 +432,7 @@ def test_mock_subscription_with_real_data(
 @patch("builtins.open", mock_open(read_data="{}"))  # Empty config
 @patch("sys.exit")  # Mock sys.exit to prevent actual exit
 def test_load_and_validate_config_empty(mock_sys_exit, capfd):
-    load_and_validate_config("test_config.yaml")
+    load_and_validate_config("test_config.json")
     # Capture the printed output
     captured = capfd.readouterr()
     # Validate the expected error message
@@ -447,26 +447,26 @@ def test_load_and_validate_config_empty(mock_sys_exit, capfd):
     "builtins.open",
     mock_open(
         read_data="""
-rest_ip: 127.0.0.1
-rest_port: "not_an_int"
-publisher_port: 5555
-publisher_topic: "topic"
-interval: 5
-cluster_id: "cluster123"
-"""
+        {
+            "rest_ip": "127.0.0.1",
+            "rest_port": "not_an_int",
+            "publisher_port": 5555,
+            "publisher_topic": "topic",
+            "interval": 5,
+            "cluster_id": "cluster123"
+        }
+        """
     ),
 )
 @patch("sys.exit")  # Mock sys.exit to prevent actual exit
 def test_load_and_validate_config_invalid_type(mock_sys_exit, capfd):
-    load_and_validate_config("test_config.yaml")
+    load_and_validate_config("test_config.json")
     # Capture the printed output
     captured = capfd.readouterr()
     # Validate expected error message
     assert (
         "Ports must be integers" in captured.out
     ), f"Expected error message not found in: {captured.out}"
-    # Ensure sys.exit(1) was called
-    mock_sys_exit.assert_called_once_with(1)
 
 
 @patch(

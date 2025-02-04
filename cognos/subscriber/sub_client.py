@@ -7,7 +7,6 @@ import pandas as pd
 import time
 import zmq
 import json
-import yaml
 import requests
 import threading
 import ipaddress
@@ -78,7 +77,7 @@ def load_and_validate_config(config_file):
     """
     try:
         with open(config_file, "r") as file:
-            config = yaml.safe_load(file)
+            config = json.load(file)
 
         # Replace place holders with env variable values
         for key, value in config.items():
@@ -121,8 +120,8 @@ def load_and_validate_config(config_file):
     except FileNotFoundError:
         print(f"Config file '{config_file}' not found.")
         sys.exit(1)
-    except yaml.YAMLError as e:
-        print(f"Error parsing YAML config: {e}")
+    except json.JSONDecodeError as e:
+        print(f"Error parsing JSON config: {e}")
         sys.exit(1)
     except ValueError as ve:
         print(f"Invalid configuration: {ve}")

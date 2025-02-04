@@ -38,6 +38,7 @@ override_dh_auto_install:
 	mkdir -p -v $(CURDIR)/$(INSTALL_PATH)/cognos/subscriber/
 	cp $(CURDIR)/../cognos/subscriber/*.py $(CURDIR)/$(INSTALL_PATH)/cognos/subscriber/; 2>/dev/null
 	cp $(CURDIR)/../cognos/subscriber/*.output $(CURDIR)/$(INSTALL_PATH)/cognos/subscriber/; 2>/dev/null
+	cp $(CURDIR)/../cognos/subscriber/*.json $(CURDIR)/$(INSTALL_PATH)/cognos/subscriber/; 2>/dev/null
 
 	# copying UI files
 	mkdir -p -v $(CURDIR)/$(INSTALL_PATH)/cognos/ui/
