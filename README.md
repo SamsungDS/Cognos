@@ -117,6 +117,26 @@ dnf install epel-release -y
 dnf install svk-app -y
 ```
 
+### SSL Configuration
+SSL mode must be configured in 2 key components, cognos-app and cognos-exporter. This will enable https REST requests
+to reach cognos-app and https websocket connection to be made with cognos-exporter. 
+
+in the following config files set the following parameters to your cert and key file and set "ssl" to true
+
+cognos/exporter/config/config.json
+```
+"ssl_cert": "<cert_path>",
+"ssl_key": "<sslkey_path>",
+"ssl": false
+```
+
+cognos/backend/config/config.json
+```
+"ssl_cert": "<path to ssl cert file>",
+"ssl_key": "<path to ssl key file",
+"ssl": false
+```
+
 ## Release build
 
 To create a release build, execute the `scripts/build.sh` script with the `--release` or `-r` flag:
@@ -452,7 +472,7 @@ To run the python selenium tests, follow these steps
 
 ## Project status
 
-Alpha.0 release complete
+MVP.1 release complete
 
 Supported SVKAPP Features:
 - Metrics data consumption and visualization
