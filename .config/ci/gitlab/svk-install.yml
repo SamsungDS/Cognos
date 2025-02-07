@@ -55,6 +55,8 @@ svk-install:
     - export SVK_MGMT_FW_CONF='/etc/svk/mgmt_fw_config.json'
     # Substitute the feat_modules_dir in the "core" section of '/etc/svk/mgmt_fw_config.json' and replace with the path to libcxl.so
     - jq '.core.feat_modules_dir = "/usr/local/svk/cxl/lib64"' $SVK_MGMT_FW_CONF | sponge $SVK_MGMT_FW_CONF
+    # Modify the node_id variable in the '/etc/svk/mgmt_fw_config.json'
+    - jq --arg hn "$(hostname)" '.svk_mgmt_fw_node.node.id=$hn' $SVK_MGMT_FW_CONF | sponge $SVK_MGMT_FW_CONF
     # Substitute the svc.mgr.feat_sm_svcs_dir in the "svk_mgmt_fw" section of '/etc/svk/mgmt_fw_config.json' and
     # replace with the path to libcxl.so
     - jq '.svk_mgmt_fw_svc_mgr.svc_mgr.feat_sm_svcs_dir = "/usr/local/svk/cxl/lib64"' $SVK_MGMT_FW_CONF | sponge $SVK_MGMT_FW_CONF
@@ -94,6 +96,13 @@ svk-install:
 
     #### Configure MySQL DB to create SCMC tables ####
     - $SVK_DIR/svk-app/env/bin/python3 $SVK_DIR/svk-app/cognos/backend/db_setup.py
+
+    #### SVK App subscriber configuration (JSON) ####
+    - export SVK_APP_SUBSCRIBER_CONF='/usr/local/svk/svk-app/cognos/subscriber/sub_config.json'
+    # Substitute the '.rest_ip' endpoint in SVK_APP_SUBSCRIBER_CONF
+    - jq --arg ip "$VM_IP" '.rest_ip = $ip' $SVK_APP_SUBSCRIBER_CONF | sponge $SVK_APP_SUBSCRIBER_CONF
+    # Substitute '.publisher_topic' value with the term "metric"
+    - jq '.publisher_topic = "metric"' $SVK_APP_EXPORTER_CONF | sponge $SVK_APP_EXPORTER_CONF
 
     #### SVK App exporter configuration (JSON) ####
     - export SVK_APP_EXPORTER_CONF='/usr/local/svk/svk-app/cognos/exporter/config/config.json'
