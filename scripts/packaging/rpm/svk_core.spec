@@ -16,7 +16,7 @@ SVK API routing framework library for SVK apps and feature modules.
 %package devel
 Summary:        SVK core devel package contains headers and sample_feature
 Provides:       svk-core-devel = %version
-Requires:       svk-core = %version zeromq-devel
+Requires:       svk-core = %version zeromq-devel spdlog-devel
 
 %description devel
 SVK downstream, upstream, and other related header files for app/feature development
