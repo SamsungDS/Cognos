@@ -17,14 +17,19 @@ install_packages() {
 
     # Project build dependencies
     BUILD_DEPS=(
+	boost-devel
         cmake
         gcc-c++
         git
+	jansson-devel
+        numactl
+        numactl-devel
         python3-virtualenv
         rpmdevtools
         tar
         unzip
         wget
+	yaml-cpp-devel
     )
     package_manager
 }

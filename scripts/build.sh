@@ -17,10 +17,8 @@ REPORTS_DIR="$BUILD_DIR/reports"
 
 # Default build options
 RELEASE=false
-MOCK=false
 BUILD_TESTING=false
 WITH_COVERAGE=false
-WITH_FMAPI=false
 
 export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/local/lib64/pkgconfig:/usr/local/lib/pkgconfig:/usr/lib/pkgconfig
 
@@ -122,7 +120,7 @@ get_git_version() {
 
   # Strip 'v' character from version string
   GIT_VERSION=${GIT_VERSION/v/}
-  echo "Building SVK Core version: $GIT_VERSION"
+  echo "Building SVK ME version: $GIT_VERSION"
 }
 
 move_artifacts() {
@@ -149,10 +147,10 @@ create_rpm()
   export GIT_VERSION
   export CMAKE_INSTALL_PREFIX
 
-  rpmbuild -bb --clean "$PROJECT_ROOT/scripts/packaging/rpm/svk_cxl.spec" \
+  rpmbuild -bb --clean "$PROJECT_ROOT/scripts/packaging/rpm/svk_me.spec" \
     --define "_topdir $rpmBuildDir" \
     --define "installpath $installpath" \
-    --define "svk_cme_version $RPM_VERSION" \
+    --define "svk_me_version $RPM_VERSION" \
     --define "svk_os_version $ID$VERSION_ID"
 
   # Move RPMs to artifacts dir
@@ -167,7 +165,7 @@ create_deb()
   # We're passing $PACKAGE_INSTALL_PATH as $1 below but not capturing it? - Someone please fix this! - Matt
 
   # Define a dynamic package name which reflects whether we are producting a release or simulation artifact
-  local DEB_PACKAGE_NAME='svk-cme'
+  local DEB_PACKAGE_NAME='me'
 
   # Only build Debian Package on supported OS
   if [[ "$ID" == "ubuntu" ]]; then
@@ -191,8 +189,8 @@ create_deb()
     sed -i -e "s@DEB_PACKAGE_NAME@$DEB_PACKAGE_NAME@g" "$DEBIAN_DIR/control"
     if [[ $MOCK == true ]]; then
       # Rename the .install packages if MOCK - to refelect above renamed package in rules / changelog / control
-      mv -v "$DEBIAN_DIR/svk-cme.install" "$DEBIAN_DIR/$DEB_PACKAGE_NAME.install"
-      mv -v "$DEBIAN_DIR/svk-cme-dev.install" "$DEBIAN_DIR/$DEB_PACKAGE_NAME-dev.install"
+      mv -v "$DEBIAN_DIR/svk-me.install" "$DEBIAN_DIR/$DEB_PACKAGE_NAME.install"
+      mv -v "$DEBIAN_DIR/svk-me-dev.install" "$DEBIAN_DIR/$DEB_PACKAGE_NAME-dev.install"
     fi
 
     pushd "$BUILD_DIR"
@@ -234,14 +232,14 @@ if $RELEASE;then
   BUILD_TESTING=false
   WITH_COVERAGE=false
   if [ -z "$CMAKE_INSTALL_PREFIX" ];then
-    CMAKE_INSTALL_PREFIX="svk-cme" # Need to use this path to generate release tarball properly
+    CMAKE_INSTALL_PREFIX="me" # Need to use this path to generate release tarball properly
   fi
   if [ -z "$RELEASE_FILENAME_PREFIX" ];then
-    RELEASE_FILENAME_PREFIX="svk-cme"
+    RELEASE_FILENAME_PREFIX="me"
   fi
   CMAKE_OPTIONS+=("-DWITH_RELEASE=ON")
   if [ -z "$PACKAGE_INSTALL_PATH" ];then
-    PACKAGE_INSTALL_PATH="/usr/local/svk/cme" # Location that rpm -ivh will install to
+    PACKAGE_INSTALL_PATH="/usr/local/svk/me" # Location that rpm -ivh will install to
   fi
 fi
 

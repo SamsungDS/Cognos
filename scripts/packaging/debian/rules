@@ -2,26 +2,22 @@
 
 # We can get a version string if needed
 # SHORT_VERSION := $(shell $(CURDIR)/../scripts/get_version.sh -s)
-INSTALL_PATH = usr/local/svk/template
+INSTALL_PATH = usr/local/svk/me
 
 %:
 	dh $@
 
 override_dh_auto_configure:
 	# Configure steps below (eg: cmake)
-	# cmake -DWITH_RELEASE=ON -DPKG_CONFIG_PREFIX=/$(INSTALL_PATH) -DCMAKE_INSTALL_PREFIX=/$(INSTALL_PATH) ..
+	cmake -DWITH_RELEASE=ON -DPKG_CONFIG_PREFIX=/$(INSTALL_PATH) -DCMAKE_INSTALL_PREFIX=/$(INSTALL_PATH) ..
 
 override_dh_auto_build:
 	# build steps below (eg: make)
-	# make -j$(nproc)
+	make -j$(nproc)
 
 override_dh_auto_install:
 	# install steps below (eg: make install)
-	# make install DESTDIR=$(CURDIR)
-	mkdir -p $(INSTALL_PATH)
-	mkdir -p $(INSTALL_PATH)/devstuff
-	touch "$(INSTALL_PATH)/foo"
-	touch "$(INSTALL_PATH)/devstuff/bar"
+	make DESTDIR=$(CURDIR) prefix=/usr install
 
 override_dh_usrlocal:
 	# Do nothing, because we are installing to /usr/local even though this is non-standard practice

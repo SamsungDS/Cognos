@@ -1,20 +1,19 @@
 #ifndef __TUNER_ELEMENT_H__
 #define __TUNER_ELEMENT_H__
 
-#include <stdio.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdlib.h>
-#include <thread>
+#include "jansson.h"
+#include <bits/stdc++.h>
+#include <ctime>
+#include <fstream>
 #include <iostream>
 #include <sstream>
-#include <fstream>
-#include <vector>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <string>
-#include <ctime>
-#include <bits/stdc++.h>
-#include "jansson.h"
+#include <thread>
+#include <unistd.h>
+#include <vector>
 
 using namespace std;
 
@@ -25,10 +24,10 @@ using namespace std;
  */
 typedef enum
 {
-        PM_INIT,
-        PM_ACTIVE,
-        PM_PAUSED,
-        PM_STOPPED
+  PM_INIT,
+  PM_ACTIVE,
+  PM_PAUSED,
+  PM_STOPPED
 } pm_state;
 
 /**
@@ -38,8 +37,8 @@ typedef enum
  */
 typedef enum pm_type
 {
-        PAGE_MOVER_DAMO,
-        PAGE_MOVER_INVALID
+  PAGE_MOVER_DAMO,
+  PAGE_MOVER_INVALID
 } pm_type;
 
 /**
@@ -47,21 +46,21 @@ typedef enum pm_type
  * @details tuner context :: tuner_element :: app_params
  * app name, app pid
  */
-typedef struct app_params 
+typedef struct app_params
 {
-        string app_name;
-        unsigned long app_pid;
+  string app_name;
+  unsigned long app_pid;
 } app_params;
 
 /**
  * @brief structure for application performance sla params
  * @details iops,i/o size, i/o latency
  */
-typedef struct sla_params 
-        {
-        unsigned long iops;
-        unsigned long sizebytes;
-        unsigned long latencyus;
+typedef struct sla_params
+{
+  unsigned long iops;
+  unsigned long sizebytes;
+  unsigned long latencyus;
 } sla_params;
 
 /**
@@ -71,9 +70,9 @@ typedef struct sla_params
  */
 typedef struct pm_params
 {
-        int pm_state;
-        bool pm_Persist;
-        int pm_type;
+  int pm_state;
+  bool pm_Persist;
+  int pm_type;
 } pm_params;
 
 /**
@@ -84,8 +83,8 @@ typedef struct pm_params
  */
 typedef struct host_memtiers
 {
-        int slow_tier;
-        int fast_tier;
+  int slow_tier;
+  int fast_tier;
 } host_memtiers;
 
 /**
@@ -100,14 +99,14 @@ typedef struct host_memtiers
  */
 class tuner_element
 {
-        public:
-		// Default constructor
-                tuner_element() = default;
-                tuner_element(pm_state);
-		app_params app_param;
-		sla_params sla_param;
-                pm_params pg_mvr;
-                host_memtiers sys_param;
+public:
+  // Default constructor
+  tuner_element () = default;
+  tuner_element (pm_state);
+  app_params app_param;
+  sla_params sla_param;
+  pm_params pg_mvr;
+  host_memtiers sys_param;
 };
 
 #endif

@@ -7,9 +7,9 @@ include(${CMAKE_SOURCE_DIR}/cmake/svk_global.cmake)
 
 # Set this project's name.
 set(SVK_CME_VERSION ${GIT_REPO_VERSION})
-set(SVKCME "svkcme")
-project(${SVKCME} VERSION ${SVK_CME_VERSION}
-	DESCRIPTION "SVK CME")
+set(SVKME "svkme")
+project(${SVKME} VERSION ${SVK_CME_VERSION}
+	DESCRIPTION "SVK ME")
 
 include(GNUInstallDirs)
 
@@ -17,14 +17,14 @@ option(BUILD_SHARED_LIBS "Generate shared libs" ON)
 
 set(PKG_CONFIG_INCLUDEDIR "\${prefix}/${CMAKE_INSTALL_INCLUDEDIR}")
 set(PKG_CONFIG_LIBDIR "\${exec_prefix}/${CMAKE_INSTALL_LIBDIR}")
-set(pkg_config "${CMAKE_BINARY_DIR}/${SVKCME}.pc")
+set(pkg_config "${CMAKE_BINARY_DIR}/${SVKME}.pc")
 set(pkgconfig_install_dir "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
-set(SVKCME_LIB_DEST "lib64/")
-set(SVKCME_INCLUDE_DEST "include/")
+set(SVKME_LIB_DEST "lib64/")
+set(SVKME_INCLUDE_DEST "include/")
 set(SVKMGMTFW_DIRS "/usr/local/svk/mgmt-fw")
 set(SVKMGMTFW_INCLUDE_DIRS "/usr/local/svk/mgmt-fw/include")
 set(SVKMGMTFW_LIB_DIRS "/usr/local/svk/mgmt-fw/lib64")
-configure_file("cmake/${SVKCME}.pc.in" "${pkg_config}" @ONLY)
+configure_file("cmake/${SVKME}.pc.in" "${pkg_config}" @ONLY)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SVKFRAMEWORK REQUIRED svkframework)
@@ -55,20 +55,26 @@ endif()
 
 include(CMakePackageConfigHelpers)
 write_basic_package_version_file(
-	SVKCMEConfigVersion.cmake
+	SVKMEConfigVersion.cmake
     VERSION ${PROJECT_VERSION}
     COMPATIBILITY AnyNewerVersion
     )
 
-    set(SVKCME_CMAKE_DEST "cmake/")
+    set(SVKME_CMAKE_DEST "cmake/")
 
 install(
     FILES
-	"${CMAKE_CURRENT_BINARY_DIR}/SVKCMEConfigVersion.cmake"
-	DESTINATION ${CMAKE_INSTALL_LIBDIR}/${SVKCME_CMAKE_DEST}
+        "cmake/svkme-config.cmake"
+	"${CMAKE_CURRENT_BINARY_DIR}/SVKMEConfigVersion.cmake"
+	DESTINATION ${CMAKE_INSTALL_LIBDIR}/${SVKME_CMAKE_DEST}
     )
+install(CODE "
+    file(WRITE \"svk-me-x86_64.conf\" \"\\n${CMAKE_INSTALL_PREFIX}/lib\\n\")
+    file(APPEND \"svk-me-x86_64.conf\" \"\\n${CMAKE_INSTALL_PREFIX}/lib64\\n\")
+")
 
 install(
+    FILES "build/svk-me-x86_64.conf"
     DESTINATION "/etc/ld.so.conf.d"
 )
 

@@ -1,12 +1,11 @@
 #ifndef __DAMO_UTILS_H__
 #define __DAMO_UTILS_H__
 
-#include <iostream>
+#include <fstream>
 #include <iostream>
 #include <sstream>
-#include <fstream>
-#include <vector>
 #include <string>
+#include <vector>
 
 const std::string SVK_CXL_PATH = "/etc/svk/";
 const std::string PM_DAMO_PATH = "/usr/local/bin/damo";
@@ -17,12 +16,13 @@ using namespace std;
 
 /**
  * @brief function executes command line/system command through popen
- * @details 
+ * @details
  * @params:
  *  input : command to be executed
  *  output: output of the command in a string vector
  * @return: status of command execution
  */
-string create_config_gen_command(string, string, string, string, string, string);
+string create_config_gen_command (string, string, string, string, string,
+                                  string);
 
 #endif

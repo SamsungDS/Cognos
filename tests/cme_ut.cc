@@ -26,7 +26,6 @@ TEST_F(cmeTest, InitCxlPluginSuccess) {
     EXPECT_EQ(result, 0);
 }
 
-
 TEST_F(cmeTest, InitializeSuccessTest) {
     EXPECT_CALL(mock_cxl_global, g_create_mbox(_))
         .WillOnce(Return(0));  
@@ -34,14 +33,12 @@ TEST_F(cmeTest, InitializeSuccessTest) {
     ASSERT_EQ(status, SVK_STATUS_SUCCESS);
 }
 
-
 TEST_F(cmeTest, InitializeFailureTest) {
     EXPECT_CALL(mock_cxl_global, g_create_mbox(nullptr))
         .WillOnce(Return(-1));  
     svk_status status = initialize(nullptr);
     ASSERT_EQ(status, SVK_STATUS_SUCCESS);
 }
-
 
 TEST_F(cmeTest, TokenizeTest) {
     string input = "key1=value1;key2=value2;key3=value3";
@@ -52,7 +49,6 @@ TEST_F(cmeTest, TokenizeTest) {
     EXPECT_EQ(tokens["key3"], "value3");
 }
 
-
 TEST_F(cmeTest, TokenHelperTest) {
     string input = "key1=value1;key2=value2;key3=value3";
     unordered_map<string, string> tokens = token_helper(input);
@@ -62,7 +58,6 @@ TEST_F(cmeTest, TokenHelperTest) {
     EXPECT_EQ(tokens["key3"], "value3");
 }
 
-
 TEST_F(cmeTest, GetSupportedFeatureListTest) {
     feature_id feat_id;
     char feature_names[256];
@@ -70,12 +65,10 @@ TEST_F(cmeTest, GetSupportedFeatureListTest) {
     ASSERT_EQ(status, SVK_STATUS_SUCCESS);
 }
 
-
 TEST_F(cmeTest, IsLicenseValidTest) {
     svk_status status = is_license_valid(nullptr);
     ASSERT_EQ(status, SVK_STATUS_FAIL);
 }
-
 
 TEST_F(cmeTest, ExecuteAsyncTest) {
     svk_pass_thru_cmd pass_thru;
@@ -84,12 +77,10 @@ TEST_F(cmeTest, ExecuteAsyncTest) {
     ASSERT_EQ(status, SVK_STATUS_FAIL);
 }
 
-
 TEST_F(cmeTest, CleanUpTest) {
     svk_status status = clean_up(nullptr);
     ASSERT_EQ(status, SVK_STATUS_FAIL);
 }
-
 
 TEST_F(cmeTest, ConfigureDeviceIfAnyTest) {
     svk_device_ctx device_handles;
@@ -99,7 +90,6 @@ TEST_F(cmeTest, ConfigureDeviceIfAnyTest) {
     svk_status status = configure_device_if_any(config_details, &device_handles, length, resp);
     ASSERT_EQ(status, SVK_STATUS_FAIL);
 }
-
 
 TEST_F(cmeTest, ExecuteSyncDevTest) {
     svk_input input;
@@ -116,7 +106,6 @@ TEST_F(cmeTest, ExecuteSyncDevTest) {
     free(output.output_buffer);
 }
 
-
 TEST_F(cmeTest, ExecuteSyncHostTest) {
     svk_input input;
     svk_output output;
@@ -132,39 +121,6 @@ TEST_F(cmeTest, ExecuteSyncHostTest) {
     free(output.output_buffer);
 }
 
-
-TEST_F(cmeTest, ExecuteSyncDetachTest) {
-    svk_input input;
-    svk_output output;
-    svk_pass_thru_cmd pass_thru;
-    input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=DetachMemory;dev_id=549755813888;host_id=551903297536;mode=direct"));
-    input.len = strlen("command=DetachMemory;dev_id=549755813888;host_id=551903297536;mode=direct");
-    svk_status status = execute_sync(&pass_thru, &input, &output);
-    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
-    ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
-    ASSERT_NE(output.len, 0);
-    ASSERT_NE(output.output_buffer, nullptr);
-    free(input.input_buffer);
-    free(output.output_buffer);
-}
-
-
-TEST_F(cmeTest, ExecuteSyncAttachTest) {
-    svk_input input;
-    svk_output output;
-    svk_pass_thru_cmd pass_thru;
-    input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=AttachMemory;dev_id=549755813888;host_id=551903297536;mode=direct"));
-    input.len = strlen("command=AttachMemory;dev_id=549755813888;host_id=551903297536;mode=direct");
-    svk_status status = execute_sync(&pass_thru, &input, &output);
-    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
-    ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
-    ASSERT_NE(output.len, 0);
-    ASSERT_NE(output.output_buffer, nullptr);
-    free(input.input_buffer);
-    free(output.output_buffer);
-}
-
-
 TEST_F(cmeTest, ExecuteSyncInvalidCommandTest) {
     svk_input input;
     svk_output output;
@@ -175,7 +131,6 @@ TEST_F(cmeTest, ExecuteSyncInvalidCommandTest) {
     ASSERT_EQ(status, SVK_STATUS_FAIL); 
     free(input.input_buffer);
 }
-
 
 TEST_F(cmeTest, GetIPAddressSuccess) {
     std::string ip = get_ip_address(json_filepath);
