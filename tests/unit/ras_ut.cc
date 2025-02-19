@@ -1,0 +1,210 @@
+#include <dirent.h>
+#include <dlfcn.h>
+// #include <gmock/gmock.h>
+#include <gtest/gtest.h>
+#include <stdlib.h>
+#include <sys/inotify.h>
+
+#include <atomic>
+#include <boost/property_tree/json_parser.hpp>
+#include <boost/property_tree/ptree.hpp>
+#include <memory>
+#include <string>
+#include <thread>
+#include <unordered_map>
+
+#include "ras.hpp"
+
+#define WAIT_FOR_FLUSH 2
+
+//  Format for running code before specific test suite, in this case InitTest
+class ConfigUnitTest : public testing::Test {
+ protected:
+  static void SetUpTestSuite() {
+    logger_conf.put("log_level", "TRACE");  // log_level being "ERROR" will
+                                            // disable the "INFO" level logging
+    logger_conf.put("log_file_name", RAS_LOG);
+    logger_conf.put("log_file_count", 1);
+    logger_conf.put("log_file_size", 1048576);
+    logger_conf.put("sink_type", "rotating_file");
+
+    top_conf.put_child("ras.logger", logger_conf);
+    boost::property_tree::write_json("conf.json", top_conf);
+  }
+
+  static boost::property_tree::ptree top_conf;
+  static boost::property_tree::ptree logger_conf;
+};
+// These variables will be global to only the ConfigTest suite
+// Since order of execution is not guaranteed, we can only assume these are
+// available for that test suite.
+boost::property_tree::ptree ConfigUnitTest::top_conf;
+boost::property_tree::ptree ConfigUnitTest::logger_conf;
+
+TEST_F(ConfigUnitTest, SVKCLEANUP) {
+  setenv("SVK_RAS_CONFIG", "conf.json", true);
+  initialize(nullptr);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, clean_up(nullptr));
+  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
+  sleep(WAIT_FOR_FLUSH);
+  std::ifstream logFile(RAS_LOG);
+  std::string logs((std::istreambuf_iterator<char>(logFile)),
+                   (std::istreambuf_iterator<char>()));
+  logFile.close();
+  EXPECT_NE(std::string::npos, logs.find("[ras] [info] ras clean_up called"));
+}
+
+TEST_F(ConfigUnitTest, SVKInit) {
+  setenv("SVK_RAS_CONFIG", "conf.json", true);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
+  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
+  sleep(WAIT_FOR_FLUSH);
+  std::ifstream logFile(RAS_LOG);
+  std::string logs((std::istreambuf_iterator<char>(logFile)),
+                   (std::istreambuf_iterator<char>()));
+  logFile.close();
+  EXPECT_NE(std::string::npos,
+            logs.find("[ras] [info] ras init called & logger is initialized"));
+  clean_up(nullptr);
+}
+
+TEST_F(ConfigUnitTest, WrongConfigFileName) {
+  setenv("SVK_RAS_CONFIG", "wrong_name.json", true);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
+  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
+  sleep(WAIT_FOR_FLUSH);
+  std::ifstream logFile(RAS_LOG);
+  std::string logs((std::istreambuf_iterator<char>(logFile)),
+                   (std::istreambuf_iterator<char>()));
+  logFile.close();
+  EXPECT_NE(std::string::npos,
+            logs.find("[ras] [info] ras init called & logger is initialized"));
+  clean_up(nullptr);
+}
+
+TEST_F(ConfigUnitTest, UndefinedConfig) {
+  unsetenv("SVK_RAS_CONFIG");
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
+  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
+  sleep(WAIT_FOR_FLUSH);
+  std::ifstream logFile(RAS_LOG);
+  std::string logs((std::istreambuf_iterator<char>(logFile)),
+                   (std::istreambuf_iterator<char>()));
+  logFile.close();
+  EXPECT_NE(std::string::npos,
+            logs.find("[ras] [info] ras init called & logger is initialized"));
+  clean_up(nullptr);
+}
+
+TEST_F(ConfigUnitTest, MissingLoggerConfig) {
+  top_conf.get_child("ras").erase("logger");
+  boost::property_tree::write_json("missing_logger_conf.json", top_conf);
+  setenv("SVK_RAS_CONFIG", "missing_logger_conf.json", true);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
+  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
+  sleep(WAIT_FOR_FLUSH);
+  std::ifstream logFile(RAS_LOG);
+  std::string logs((std::istreambuf_iterator<char>(logFile)),
+                   (std::istreambuf_iterator<char>()));
+  logFile.close();
+  EXPECT_NE(std::string::npos,
+            logs.find("[ras] [info] ras init called & logger is initialized"));
+  clean_up(nullptr);
+  top_conf.put_child("ras.logger", logger_conf);
+  unlink("missing_logger_conf.json");
+}
+
+TEST_F(ConfigUnitTest, InvalidLoggerConfig) {
+  logger_conf.erase("sink_type");
+  logger_conf.put("sink_type", "invalid");
+  top_conf.erase("ras.logger");
+  top_conf.put_child("ras.logger", logger_conf);
+  boost::property_tree::write_json("invalid_sink_type.json", top_conf);
+  setenv("SVK_RAS_CONFIG", "invalid_sink_type.json", true);
+  EXPECT_EQ(SVK_STATUS_INVALID_CONFIG, initialize(nullptr));
+  clean_up(nullptr);
+  logger_conf.put("log_level", "ERROR");
+  top_conf.put_child("ras.logger", logger_conf);
+  unlink("invalid_sink_type.json");
+}
+
+TEST_F(ConfigUnitTest, SVKGetFeatureList) {
+  setenv("SVK_RAS_CONFIG", "conf.json", true);
+  feature_id feature = feature_id::POWER_THROTTLE;
+  char *feat_names = nullptr;
+  initialize(nullptr);
+  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
+  EXPECT_EQ(SVK_STATUS_SUCCESS,
+            get_supported_feature_list(&feature, feat_names));
+  sleep(WAIT_FOR_FLUSH);
+  std::ifstream logFile(RAS_LOG);
+  std::string logs((std::istreambuf_iterator<char>(logFile)),
+                   (std::istreambuf_iterator<char>()));
+  logFile.close();
+  EXPECT_NE(std::string::npos,
+            logs.find("[ras] [info] ras get_supported_feature_list called"));
+  clean_up(nullptr);
+  unlink("conf.json");
+}
+
+TEST_F(ConfigUnitTest, SVKLicense) {
+  setenv("SVK_RAS_CONFIG", "conf.json", true);
+  initialize(nullptr);
+  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
+  EXPECT_EQ(SVK_STATUS_SUCCESS, is_license_valid(nullptr));
+  sleep(WAIT_FOR_FLUSH);
+  std::ifstream logFile(RAS_LOG);
+  std::string logs((std::istreambuf_iterator<char>(logFile)),
+                   (std::istreambuf_iterator<char>()));
+  logFile.close();
+  EXPECT_NE(std::string::npos,
+            logs.find("[ras] [info] ras is_license_valid called"));
+  clean_up(nullptr);
+  unlink("conf.json");
+}
+
+TEST_F(ConfigUnitTest, SVKEXEC) {
+  setenv("SVK_RAS_CONFIG", "conf.json", true);
+  initialize(nullptr);
+  svk_pass_thru_cmd pass_thru;
+  pass_thru.feat_id = ZERO_ETL;
+  svk_input input;
+  std::string input_str = "Passing a RAS string";
+  input.input_buffer = (uint8_t *)input_str.c_str();
+  input.len = input_str.length();
+  svk_output output;
+  output.output_buffer = (uint8_t *)malloc(128);
+  output.len = 128;
+  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
+  EXPECT_EQ(SVK_STATUS_SUCCESS, execute_sync(&pass_thru, &input, &output));
+  sleep(WAIT_FOR_FLUSH);
+  std::ifstream logFile(RAS_LOG);
+  std::string logs((std::istreambuf_iterator<char>(logFile)),
+                   (std::istreambuf_iterator<char>()));
+  logFile.close();
+  EXPECT_NE(std::string::npos,
+            logs.find("[ras] [info] ras execute_sync called."));
+  EXPECT_NE(std::string::npos, logs.find("input buffer: Passing a RAS string"));
+  EXPECT_NE(std::string::npos, logs.find("output buffer:"));
+  clean_up(nullptr);
+  unlink("conf.json");
+}
+
+TEST_F(ConfigUnitTest, SVKEXECASYNC) {
+  setenv("SVK_RAS_CONFIG", "conf.json", true);
+  initialize(nullptr);
+  svk_pass_thru_cmd pass_thru;
+  pass_thru.feat_id = ZERO_ETL;
+  svk_postprocess_fn *postprocess_fn = nullptr;
+  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
+  EXPECT_EQ(SVK_STATUS_SUCCESS, execute_async(&pass_thru, postprocess_fn));
+  sleep(WAIT_FOR_FLUSH);
+  std::ifstream logFile(RAS_LOG);
+  std::string logs((std::istreambuf_iterator<char>(logFile)),
+                   (std::istreambuf_iterator<char>()));
+  logFile.close();
+  EXPECT_NE(std::string::npos,
+            logs.find("[ras] [info] ras execute_async called"));
+  clean_up(nullptr);
+  unlink("conf.json");
+}

@@ -2,7 +2,7 @@
 set -eu
 
 # The name of this project
-SVK_PROJECT_NAME='SVK Template'
+SVK_PROJECT_NAME='SVK RAS'
 
 # Path variables
 SCRIPT_DIR=$(cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd)
@@ -10,8 +10,8 @@ PROJECT_ROOT=$(realpath "$SCRIPT_DIR/..")
 BUILD_DIR="$PROJECT_ROOT/build"
 ARTIFACTS_DIR="$BUILD_DIR/artifacts"
 REPORTS_DIR="$BUILD_DIR/reports"
-# TESTS_DIR="$BUILD_DIR/tests"
-VENV_DIR=/usr/local/svk/template/venv
+TESTS_DIR="$BUILD_DIR/tests"
+VENV_DIR=/usr/local/svk/ras/venv
 
 # Default build options
 CMAKE_OPTIONS=()
@@ -119,8 +119,8 @@ build_feature() {
     mkdir --verbose --parents "$BUILD_DIR"
     pushd "$BUILD_DIR"
         # Build Commands below
-        # cmake "${CMAKE_OPTIONS[@]}" ..
-        # make "-j$(nproc)"
+        cmake "${CMAKE_OPTIONS[@]}" ..
+        make "-j$(nproc)"
         echo "$SVK_PROJECT_NAME build should happen here"
     popd
 
@@ -147,19 +147,19 @@ execute_tests() {
     echo "Running unit tests..."
     mkdir --verbose --parent "$REPORTS_DIR"
     # test execution goes below
-    # ctest --output-junit "$REPORTS_DIR/gitlab_junit.xml" --test-dir "$TESTS_DIR"
+    ctest --output-junit "$REPORTS_DIR/gitlab_junit.xml" --test-dir "$TESTS_DIR"
     
     # Generate coverage reports and display results with summary to terminal
     echo "Generating coverage reports"
     # Coverage report generation goes below
-    # gcovr \
-    #     --xml "$REPORTS_DIR/gitlab_coverage.xml" \
-    #     --sonarqube "$REPORTS_DIR/sonar_coverage.xml" \
-    #     --txt-metric line --txt \
-    #     --print-summary \
-    #     --root "$PROJECT_ROOT" \
-    #     --exclude "$PROJECT_ROOT/build" \
-    #     "$BUILD_DIR"
+    gcovr \
+        --xml "$REPORTS_DIR/gitlab_coverage.xml" \
+        --sonarqube "$REPORTS_DIR/sonar_coverage.xml" \
+        --txt-metric line --txt \
+        --print-summary \
+        --root "$PROJECT_ROOT" \
+        --exclude "$PROJECT_ROOT/build" \
+        "$BUILD_DIR"
 }
 
 move_artifacts() {
@@ -177,7 +177,7 @@ move_artifacts() {
 
 build_rpm() {
     # RPM vars
-    local SPECFILE=template.spec
+    local SPECFILE=svk_ras.spec
     local RPMBUILD_DIR="$BUILD_DIR/rpmbuild"
 
     # Replace '-' with '_' in version string, in case current commit is not an exact tag

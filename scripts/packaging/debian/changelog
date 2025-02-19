@@ -1,5 +1,5 @@
-svk-template (DEB_VERSION) DEB_OSVER; urgency=medium
+svk-ras (DEB_VERSION) DEB_OSVER; urgency=medium
 
   * DEB_CHANGELOG
 
- -- Matt Durand <matt.d@samsung.com>  DEB_TIMESTAMP
+ -- Mike Xu <pengfei.xu@samsung.com>  DEB_TIMESTAMP

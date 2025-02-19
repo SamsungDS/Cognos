@@ -3,12 +3,16 @@ release build:
   image:
     name: $IMAGE_TAG
     pull_policy: always
+  before_script:
+    # Run the dependency installation script to ensure we have the latest SVK Core package
+    - ./scripts/dependencies/install.sh
   script:
     # Build with release flag and generate artifact
     - ./scripts/build.sh --release
   artifacts:
     name: release build $DOCKERFILE_NAME
     expire_in: 300 seconds
+    expose_as: Release Build Artifacts
     paths:
      - $ARTIFACTS_DIR/
   variables:
