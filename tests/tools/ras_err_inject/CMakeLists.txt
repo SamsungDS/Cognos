@@ -14,5 +14,4 @@ find_package_handle_standard_args( nlohmann REQUIRED_VARS nlohmann_INCLUDE_DIR)
 
 target_link_libraries(mslras numa) # Link library to target
 
-install(FILES config.json DESTINATION ${CMAKE_BINARY_DIR} )
-install(FILES mslras DESTINATION ${CMAKE_BINARY_DIR} )
+install(FILES ${CMAKE_SOURCE_DIR}/config.json DESTINATION ${CMAKE_BINARY_DIR} )

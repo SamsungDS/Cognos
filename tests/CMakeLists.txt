@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.7)
 
-include(${CMAKE_SOURCE_DIR}/../cmake/gtest.cmake)
+include(${CMAKE_SOURCE_DIR}/cmake/gtest.cmake)
 
 add_subdirectory(unit)
 
