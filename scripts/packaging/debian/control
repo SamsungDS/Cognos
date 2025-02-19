@@ -1,16 +1,16 @@
-Source: svk-template
+Source: svk-ras
 Section: utils
 Priority: optional
-Maintainer: Matt Durand (matt.d@samsung.com)
+Maintainer: Mike Xu (pengfei.xu@samsung.com)
 Build-Depends: debhelper (>=12)
 Standards-Version: 4.1.4
 
-Package: svk-template
+Package: svk-ras
 Architecture: amd64
-Depends: ${shlibs:Depends}, ${misc:Depends}
-Description: SVK Template description goes here
+Depends: svk-core, svk-core-dev
+Description: SVK RAS Feature Module
 
-Package: svk-template-dev
+Package: svk-ras-dev
 Architecture: amd64
-Depends: ${shlibs:Depends}, ${misc:Depends}, svk-template (= ${binary:Version})
-Description: SVK Template development description goes here
+Depends: svk-core, svk-core-dev
+Description: SVK RAS Feature Module Development Package. This package contains the development files for the SVK RAS Feature Module.

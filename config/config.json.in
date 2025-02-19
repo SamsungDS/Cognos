@@ -1,0 +1,11 @@
+{
+    "ras": {
+        "logger": {
+            "log_level": "TRACE",
+            "log_file_name": "/var/log/svk/ras.log",
+            "log_file_count": "1",
+            "log_file_size": "1048576",
+            "sink_type": "rotating_file"
+        }
+    }
+}

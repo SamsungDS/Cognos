@@ -11,6 +11,8 @@ install_packages() {
         debhelper
         g++
         git
+        libboost-thread-dev
+        pkg-config
         python3-virtualenv
         tar
         unzip
@@ -52,8 +54,18 @@ configure_nexus() {
     package_manager
 }
 
+# Set PATH to include go bin dir
+set_go_path() {
+    local GO_PROFILE="/etc/profile.d/go-$GO_VERSION.sh"
+    echo "export PATH=\$PATH:/usr/lib/go-$GO_VERSION/bin" > "$GO_PROFILE"
+    chmod +x "$GO_PROFILE"
+    # shellcheck disable=SC1090
+    source "$GO_PROFILE"
+}
+
 install_packages
 configure_nexus
+set_go_path
 
 # Post-install Docker optimizations
 if [[ $DOCKER ]]; then
