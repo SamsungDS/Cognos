@@ -8,10 +8,22 @@ install_packages() {
         build-essential
         clang-format
         cmake
+	cgroup-tools
         debhelper
+	diffutils
+	dpkg-dev
         g++
         git
+	libjansson-dev
+	libboost-dev
+	libfmt-dev
+	libnuma-dev
+	libyaml-cpp-dev
+	pkgconf
         python3-virtualenv
+	python3
+        python3-pip
+	sudo
         tar
         unzip
         wget
