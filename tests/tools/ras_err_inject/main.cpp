@@ -1,3 +1,7 @@
+/*  Memory Solutions Lab RAS Utility
+ *
+ */
+ 
 #include <fcntl.h>
 #include <getopt.h>
 #include <numa.h>

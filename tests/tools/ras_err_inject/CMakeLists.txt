@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.15) 
+cmake_minimum_required(VERSION 3.7) 
 
 include(FindPackageHandleStandardArgs)
 project(mslras) # Project name
@@ -15,3 +15,4 @@ find_package_handle_standard_args( nlohmann REQUIRED_VARS nlohmann_INCLUDE_DIR)
 target_link_libraries(mslras numa) # Link library to target
 
 install(FILES config.json DESTINATION ${CMAKE_BINARY_DIR} )
+install(FILES mslras DESTINATION ${CMAKE_BINARY_DIR} )
