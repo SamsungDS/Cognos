@@ -598,6 +598,8 @@ int StartSLAThreadForTiering(ControllerServicer *svcr) {
   std::string cluster_name;
   int status = -1;
   int socket_map_count = 0;
+  // TODO: Workaround to call TM module only once
+  bool tm_flag = false;
 
   while (true) {
     if (svcr->get_stop_flag() == true) {
@@ -665,6 +667,12 @@ int StartSLAThreadForTiering(ControllerServicer *svcr) {
                            logger_str.c_str());
 
               } else {
+                // TODO: Workaround to call TM module only once
+                if (tm_flag) {
+                  continue;
+                }
+                tm_flag = true;
+
                 logger_str =
                     "Device's numa " + std::string(data.device_name) +
                     " on host " + std::string(data.host_name) +
@@ -673,6 +681,52 @@ int StartSLAThreadForTiering(ControllerServicer *svcr) {
                     std::to_string(data.avgLatencyns);
                 svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::WARN,
                            logger_str.c_str());
+
+                // Received the event for SLA deviation. Send a command to TM
+                // module with the params expected at this point of time.
+                node_name = "";
+                for (auto itr = m_cluster_map.begin();
+                     itr != m_cluster_map.end(); ++itr) {
+                  cluster_name = itr->first;
+                  for (auto nodes = itr->second.begin();
+                       nodes != itr->second.end(); ++nodes) {
+                    if (nodes->first == data.host_name) {
+                      node_name = data.host_name;
+                      break;
+                    }
+                  }
+                }
+                if (node_name.length() != 0) {
+                  svk::CommandRequest req;
+                  svk::CommandResponse resp;
+                  req.set_cluster_id(cluster_name);
+                  req.set_node_id(node_name);
+                  req.set_feature_id(feature_id::CXL);
+                  std::string feature_params =
+                      "cluster_id=" + cluster_name +
+                      ";command=StartTuning;application="
+                      "gemfire;application_id=" +
+                      std::to_string(getpid()) +
+                      ";dram_node=0;cxl_node=1;"
+                      "sla_iops=150000;sla_size=1024;sla_latencyus=750";
+                  req.set_feature_params(feature_params);
+                  Client client(svcr->get_svk_config_controller_id(),
+                                svcr->get_svk_config_controller_port());
+                  Status client_grpc_status =
+                      client.ProcessControllerCommand(&req, &resp);
+                  if (client_grpc_status.ok()) {
+                    logger_str =
+                        "Command to the TM module with feature_params " +
+                        feature_params + "is successful";
+                    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                               logger_str.c_str());
+                  } else {
+                    logger_str = "Command with feature_params " +
+                                 feature_params + "is failed";
+                    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                               logger_str.c_str());
+                  }
+                }
               }
             }
           }
