@@ -26,6 +26,7 @@ install_packages() {
         tar
         unzip
         wget
+        nlohmann-json3-dev
     )
     package_manager
 }

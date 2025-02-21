@@ -7,11 +7,11 @@ add_executable(mslras main.cpp config.json)
 
 find_path(nlohmann_INCLUDE_DIR NAMES "nlohmann/json.hpp")
 if(NOT nlohmann_INCLUDE_DIR)
-    message(FATAL_ERROR "error: Cannot find ${nlohmann_INCLUDE_DIR}/nlohmann/json.hpp")
+    message(FATAL_ERROR "error: Cannot find nlohmann/json.hpp")
 endif()
 
 find_package_handle_standard_args( nlohmann REQUIRED_VARS nlohmann_INCLUDE_DIR)
 
 target_link_libraries(mslras numa) # Link library to target
 
-install(FILES ${CMAKE_SOURCE_DIR}/config.json DESTINATION ${CMAKE_BINARY_DIR} )
+install(FILES config.json DESTINATION ${CMAKE_BINARY_DIR} )
