@@ -819,3 +819,83 @@ TEST(InitIntegrationTest,
 
   unlink(conf_file.c_str());
 }
+
+class FakeNodeServicerForTM : public Servicer {
+ public:
+  FakeNodeServicerForTM(std::string conf_file) : Servicer(conf_file){};
+  Status ProcessNodeCommand(ServerContext *ctxt, const svk::CommandRequest *req,
+                            svk::CommandResponse *resp) override {
+    std::string feature_params = req->feature_params();
+    std::cout << "FakeProcessNodeCommand called for the command "
+              << feature_params << std::endl;
+    if (feature_params.find("StartTuning") != std::string::npos) {
+      svk::CommandResponse_NodeResponse *response = resp->add_node_responses();
+      response->set_output("{status = \"0\"}");
+    }
+    return Status::OK;
+  }
+};
+
+TEST(InitIntegrationTest, ControllerNodeManualServicerStartForTMOperation) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  ControllerServicer *c_svcr(new ControllerServicer(conf_file));
+  auto c_server = InitializeServicer(c_svcr);
+  ASSERT_NE(c_server, nullptr);
+  EXPECT_TRUE(c_svcr->get_state() == true);
+  std::thread *sla_thread = new std::thread(&StartSLAThreadForTiering, c_svcr);
+
+  void *zmq_context;
+  void *zmq_socket;
+  svk_slat_logic_output data;
+
+  int rc = initialize_pub(&zmq_context, &zmq_socket, "0", "5555");
+  if (rc != 0) {
+    std::cout << "Failed to initialize publisher" << std::endl;
+    return;
+  }
+  Servicer *n_svcr(new FakeNodeServicerForTM(conf_file));
+  if (n_svcr->get_state() == false) {
+    std::cout << "Node Servicer is not initialized properly. Exiting"
+              << std::endl;
+    return;
+  }
+  auto n_server = InitializeNodeServicer(n_svcr);
+  ASSERT_NE(n_server, nullptr);
+
+  sleep(5);
+
+  strcpy(data.host_name, "localhost");
+  strcpy(data.device_name, "11");
+  strcpy(data.app_name, "TESTAPP1");
+  data.avgLatencyns = 1000;
+
+  rc = publish(&zmq_socket, "APP_SLA_DEGRADED", &data);
+  std::cout << "Published data result " << rc << std::endl;
+  sleep(10);
+
+  rc = publish(&zmq_socket, "APP_SLA_DEGRADED", &data);
+  std::cout << "Published data result " << rc << "one more time" << std::endl;
+  sleep(3);
+
+  StopSLAThreadForTiering(c_svcr);
+  sla_thread->join();
+  delete c_svcr;
+  delete n_svcr;
+
+  std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  std::string filedata((std::istreambuf_iterator<char>(file)),
+                       (std::istreambuf_iterator<char>()));
+  file.close();
+  EXPECT_EQ(true, filedata.find(
+                      "Device's numa 11 on host localhost for the app TESTAPP1 "
+                      "deviated than expected - Reported latency_ns = 1000") !=
+                      std::string::npos);
+
+  unlink(conf_file.c_str());
+}
