@@ -5,12 +5,12 @@ project(mslras) # Project name
 
 add_executable(mslras main.cpp config.json) 
 
-find_path(nlohmann_INCLUDE_DIR NAMES "nlohmann/json.hpp")
-if(NOT nlohmann_INCLUDE_DIR)
-    message(FATAL_ERROR "error: Cannot find nlohmann/json.hpp")
+find_path(rapidjson_INCLUDE_DIR NAMES "rapidjson/document.h")
+if(NOT rapidjson_INCLUDE_DIR)
+    message(FATAL_ERROR "error: Cannot find rapidjson include directory")
 endif()
 
-find_package_handle_standard_args( nlohmann REQUIRED_VARS nlohmann_INCLUDE_DIR)
+find_package_handle_standard_args( rapidjson REQUIRED_VARS rapidjson_INCLUDE_DIR)
 
 target_link_libraries(mslras numa) # Link library to target
 

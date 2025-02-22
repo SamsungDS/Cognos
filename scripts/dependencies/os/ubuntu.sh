@@ -17,7 +17,7 @@ install_packages() {
         tar
         unzip
         wget
-        nlohmann-json3-dev
+        rapidjson-dev
     )
     package_manager
 }

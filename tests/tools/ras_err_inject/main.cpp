@@ -1,13 +1,12 @@
-/*  Memory Solutions Lab RAS Utility
- *
- */
-
 #include <fcntl.h>
 #include <getopt.h>
 #include <numa.h>
 #include <numaif.h>
+#include <rapidjson/document.h>
+#include <rapidjson/filereadstream.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 #include <syslog.h>
 #include <unistd.h>
 
@@ -17,16 +16,17 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
-#include <nlohmann/json.hpp>
 #include <regex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 
 #define NUMA_ALLOCATION_SIZE 1024
+#define CONFIG_FILE "config.json"
+#define APP_LOG "mslras.log"
 
 using namespace std;
-using json = nlohmann::json;
+using namespace rapidjson;
 
 // Configuration global variables as defined in config.json
 struct Config {
@@ -38,7 +38,7 @@ struct Config {
 
 // Instantiation of global vars to be used as key-value pairs
 Config cf;
-FILE *fp;  // descriptor for log file
+FILE *file;  // descriptor for log file
 
 // Struct derived from https://www.kernel.org/doc/Documentation/vm/pagemap.txt
 typedef struct {
@@ -301,48 +301,58 @@ int allocate_memory_on_numa_node(const int &noden) {
   return 0;
 }
 
+// Get file size of config.json
+long get_file_size(std::string filename) {
+  struct stat stat_buf;
+  int rc = stat(filename.c_str(), &stat_buf);
+  return rc == 0 ? stat_buf.st_size : -1;
+}
+
 /***
  * Initialization to to start a log file and read magic strings from from
  * config.json file
  */
 int init() {
   setlogmask(LOG_UPTO(LOG_INFO));
-  openlog("mslras.log", LOG_PERROR | LOG_CONS | LOG_PID | LOG_NDELAY,
-          LOG_LOCAL1);
+  openlog(APP_LOG, LOG_PERROR | LOG_CONS | LOG_PID | LOG_NDELAY, LOG_LOCAL1);
 
   syslog(LOG_NOTICE, "Program started by User %d", getuid());
 
-  ifstream file("config.json");
-  if (!file.is_open()) {
+  // Open the file for reading
+  file = fopen(CONFIG_FILE, "r");
+  if (file == nullptr) {
     syslog(LOG_ERR, "%s", "Failed to open configuration file config.json");
     return 2;
   }
 
-  json data;
-  try {
-    data = json::parse(file);
-  } catch (const json::parse_error &e) {
-    syslog(LOG_WARNING, "JSON parse error: %s", e.what());
-    return 3;
-  }
+  long sz = get_file_size(CONFIG_FILE);
+  char readBuffer[sz + 1];
+  FileReadStream is(file, readBuffer, sz);
 
-  if (data.contains("grep_CXL")) {
-    cf.grep_CXL = data["grep_CXL"];
+  // Parse the JSON data using a Document object
+  Document data;
+  data.ParseStream(is);
+
+  // Close the file
+  // fclose(file);
+
+  if (data["grep_CXL"].IsString()) {
+    cf.grep_CXL = data["grep_CXL"].GetString();
     syslog(LOG_INFO, "grep_CXL: %s", cf.grep_CXL.c_str());
   }
 
-  if (data.contains("grep_acpi_srat")) {
-    cf.grep_acpi_srat = data["grep_acpi_srat"];
+  if (data["grep_acpi_srat"].IsString()) {
+    cf.grep_acpi_srat = data["grep_acpi_srat"].GetString();
     syslog(LOG_INFO, "grep_acpi_srat: %s", cf.grep_acpi_srat.c_str());
   }
 
-  if (data.contains("regex_iomem")) {
-    cf.regex_iomem = data["regex_iomem"];
+  if (data["regex_iomem"].IsString()) {
+    cf.regex_iomem = data["regex_iomem"].GetString();
     syslog(LOG_INFO, "reg_iomem: %s", cf.regex_iomem.c_str());
   }
 
-  if (data.contains("regex_addr_range")) {
-    cf.regex_addr_range = data["regex_addr_range"];
+  if (data["regex_addr_range"].IsString()) {
+    cf.regex_addr_range = data["regex_addr_range"].GetString();
     syslog(LOG_INFO, "regex_addr_range: %s", cf.regex_addr_range.c_str());
   }
 
@@ -351,15 +361,15 @@ int init() {
 
 void usage() {
   char buf[] =
-      "USAGE: ras -n <CXL_node_index> [-l <physical address for \
-		  testing on CXL node>(optional)]";
+      "USAGE: ras -n <CXL_node_index> [-l <physical address for testing on CXL "
+      "node>(optional)]";
   syslog(LOG_WARNING, "%s", buf);
 }
 
 int main(int argc, char *argv[]) {
   if (argc < 3) {
-    cout << "USAGE: ras -n <CXL_node_index> [-l <physical address for \
-		testing on CXL node>(optional)]"
+    cout << "USAGE: ras -n <CXL_node_index> [-l <physical address for testing "
+            "on CXL node>(optional)]"
          << endl;
     return 1;
   }
