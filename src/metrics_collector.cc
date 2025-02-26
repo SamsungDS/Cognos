@@ -162,9 +162,11 @@ void MetricsCollector::get_memory_metrics(void)
                 
                 int numa_node_count = numa_num_configured_nodes();
 		cout << "No of configured numa nodes found = "<< numa_node_count <<endl;
-                int numcpus = numa_num_task_cpus();
+                int num_cpus_possible = numa_num_possible_cpus();
+                int num_cpus_configured = numa_num_task_cpus();
                 numa_set_localalloc();
-                cout << "No of configured numa cpu count =" << numcpus << endl;
+                cout << "No of possible numa cpu count =" << num_cpus_possible << endl;
+                cout << "No of configured numa cpu count =" << num_cpus_configured << endl;
 
 		for(int i=0; i<numa_node_count; i++)
 		{
@@ -178,7 +180,7 @@ void MetricsCollector::get_memory_metrics(void)
 			unsigned long long free =  sz / MB;
 			cout << "numanode =" << i << " size=" << size << " free=" << free << endl;
 
-                        bitmask* mask = numa_bitmask_alloc(numcpus);
+                        bitmask* mask = numa_bitmask_alloc(num_cpus_possible);
                         if (mask == nullptr)
 			{
 				throw runtime_error("Error in bit mask allocation : numa_allocate_cpumask ");
