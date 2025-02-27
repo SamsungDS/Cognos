@@ -102,7 +102,6 @@ int init_log(const std::string& config_file) {
       log_level_ = CXL_LOGGER_LEVEL_DEFAULT;
     }
 
-    LOG(level_E::INFO, "Logger initialized for module: " + log_module_name);
     auto log_level_enum = log_level_map.at(log_level_);
     if (svk_logger_init(log_module_name.c_str(), log_filename.c_str(),
                         log_level_enum, log_file_count, log_file_size,
@@ -613,6 +612,7 @@ svk_status initialize(void*) {
   // Translate POSIX error codes to SVK status enums
   switch (log_status) {
     case 0:
+      LOG(level_E::INFO, "Logger initialized for module: " + log_module_name);
       break;  // success, continue execution
     case -ENOENT:
       LOG(level_E::ERROR, "Log configuration file missing.");

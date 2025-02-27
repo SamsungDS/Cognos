@@ -41,6 +41,7 @@ cp -f %{getenv:CMAKE_INSTALL_PREFIX}/damo_config.json %{buildroot}/%{installpath
 cp -f %{getenv:CMAKE_INSTALL_PREFIX}/tm_gen_config.py %{buildroot}/%{installpath_tm_config}
 cp -f %{getenv:CMAKE_INSTALL_PREFIX}/cxl.conf %{buildroot}/%{installpath_mgmt}
 cp -f %{getenv:CMAKE_INSTALL_PREFIX}/input.conf %{buildroot}/%{installpath_mgmt}
+cp -f %{getenv:CMAKE_INSTALL_PREFIX}/log.conf %{buildroot}/%{installpath_mgmt}
 
 # If rpmbuild is run manually, use default build dir svk-core, unless user gives a different name
 %else
@@ -52,6 +53,7 @@ cp -f %{cxl_build_dir}/config/damo_config.json %{buildroot}/%{installpath_tm_con
 cp -f %{cxl_build_dir}/tools/tm_gen_config.py %{buildroot}/%{installpath_tm_config}
 cp -f %{cxl_build_dir}/config/cxl.conf  %{buildroot}/%{installpath_mgmt}
 cp -f %{cxl_build_dir}/config/input.conf  %{buildroot}/%{installpath_mgmt}
+cp -f %{cxl_build_dir}/config/log.conf  %{buildroot}/%{installpath_mgmt}
 %endif
 
 %files

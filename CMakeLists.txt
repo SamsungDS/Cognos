@@ -108,6 +108,10 @@ install(
     DESTINATION "${SVKMGMTFW_DIRS}"
 )
 install(
+    FILES "config/log.conf"
+    DESTINATION "${SVKMGMTFW_DIRS}"
+)
+install(
     FILES "config/damo_config.json"
     DESTINATION "/etc/svk/"
 )

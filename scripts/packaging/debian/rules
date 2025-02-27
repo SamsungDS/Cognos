@@ -24,6 +24,7 @@ override_dh_usrlocal:
 override_dh_install:
 	# Add copying of input.json for mock mode to install files
 	if [ "${MOCK}" = "true" ]; then echo "/usr/local/svk/mgmt-fw/input.json /usr/local/svk/mgmt-fw/" | tee -a debian/svk-cxl*.install;  fi
+	echo "/usr/local/svk/mgmt-fw/log.conf /usr/local/svk/mgmt-fw/" | tee -a debian/svk-cxl*.install
 	dh_install
 
 override_dh_strip:

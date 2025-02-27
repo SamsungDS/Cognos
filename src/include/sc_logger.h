@@ -17,7 +17,9 @@ constexpr char CXL_LOGGER_SINK_TYPE_DEFAULT[] = "rotating_file";
 // defined in sc_servicer
 extern std::string log_module_name;
 
-#define LOG(level, message) \
-  svk_logger(log_module_name.c_str(), level, std::string(message).c_str());
+#define LOG(level, message)                                                   \
+  do {                                                                        \
+    svk_logger(log_module_name.c_str(), level, std::string(message).c_str()); \
+  } while (0)
 
 #endif

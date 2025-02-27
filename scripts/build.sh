@@ -373,6 +373,7 @@ elif $RELEASE;then
   cp "$PROJECT_ROOT/config/zmq_config.json" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
   cp "$PROJECT_ROOT/config/cxl.conf" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
   cp "$PROJECT_ROOT/config/input.conf" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
+  cp "$PROJECT_ROOT/config/log.conf" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
   cp "$PROJECT_ROOT/config/damo_config.json" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
   cp "$PROJECT_ROOT/tools/tm_gen_config.py" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
   if $MOCK; then
