@@ -12,6 +12,7 @@
 #include <sys/statvfs.h>
 #include <syslog.h>
 #include <unistd.h>
+
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -82,8 +83,7 @@ void ras_log(int pri, char *buf) { syslog(pri, "%s", buf); }
 
 // Parse the pagemap entry for the given virtual address.
 int pagemap_get_entry(PagemapEntry *entry, int pagemap_fd, uintptr_t vaddr) {
-  if (vaddr == NULL)
-    return 1;
+  if (vaddr == NULL) return 1;
 
   size_t nread;
   ssize_t ret;
@@ -296,7 +296,7 @@ int verify_cxl_numa_node(const int &node_index, string &phy_addr_range) {
         p = strtok(nullptr, "-");
       }
       p = nullptr;
-      string t = cf.grep_CXL; 
+      string t = cf.grep_CXL;
       out = "";
       out = cmd_exec(t);
       ss2 << out;
@@ -575,16 +575,17 @@ int main(int argc, char *argv[]) {
         noden = strtol(optarg, NULL, 0);
         break;
       case 'l':
-	len = strlen(optarg);
-        if (len <= 2 || strncmp(optarg,"0x",2) != 0) {
+        len = strlen(optarg);
+        if (len <= 2 || strncmp(optarg, "0x", 2) != 0) {
           sprintf(buf, "Invalid entry for physical memory address: %s", optarg);
           ras_log(LOG_ERR, buf);
           ret = OPT_ERR;
           return ret;
         }
-        for (size_t i = 2; i < len; ++i)  {
-          if (!isxdigit(optarg[i]))  {
-            sprintf(buf, "Invalid entry for physical memory address: %s", optarg);
+        for (size_t i = 2; i < len; ++i) {
+          if (!isxdigit(optarg[i])) {
+            sprintf(buf, "Invalid entry for physical memory address: %s",
+                    optarg);
             ras_log(LOG_ERR, buf);
             ret = OPT_ERR;
             return ret;
