@@ -3,10 +3,13 @@
 #include <numa.h>
 #include <numaif.h>
 #include <rapidjson/document.h>
+#include <rapidjson/error/en.h>
+#include <rapidjson/error/error.h>
 #include <rapidjson/filereadstream.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <syslog.h>
 #include <unistd.h>
 
@@ -49,6 +52,35 @@ typedef struct {
   unsigned int present : 1;
 } PagemapEntry;
 
+// Enum definition for errors
+enum {
+  USAGE_ERR = 101,
+  CONFIG_FILE_NOT_AVAILABLE_ERR,
+  INVALID_CONFIG_FILE_SIZE_ERR,
+  CONFIG_FILE_PARSE_ERR,
+  GREP_CXL_MISSING_ERR,
+  GREP_ACPI_SRAT_MISSING_ERR,
+  REGEX_IOMEM_MISSING_ERR,
+  REGEX_ADDR_RANGE_MISSING_ERR,
+  INIT_ERR,
+  NUMA_NOT_AVAILABLE_ERR,
+  OPT_ERR,
+  INVALID_NUMA_INDEX_ERR,
+  NOT_CXL_NODE_ERR,
+  INVALID_PAGEMAP_ERR,
+  PAGEMAP_GET_ERR,
+  NUMA_ALLOCATE_CPUMASK_ERR,
+  NUMA_NODE_TO_CPUS_ERR,
+  NOT_CPULESS_NODE_ERR,
+  NUMA_ALLOC_ON_NODE_ERR,
+  FAILURE_TO_MAP_VIRTUAL_TO_PHYSICAL_MEM_ERR,
+  ADDRESS_NOT_OF_NUMA_NODE_ERR,
+  IOMEM_NOT_MATCHING_ACPI_SRAT_ERR
+};
+
+// Wrapper around syslog
+void ras_log(int pri, char *buf) { syslog(pri, "%s", buf); }
+
 // Parse the pagemap entry for the given virtual address.
 int pagemap_get_entry(PagemapEntry *entry, int pagemap_fd, uintptr_t vaddr) {
   size_t nread;
@@ -83,11 +115,11 @@ int virt_to_phys_user(uintptr_t *paddr, pid_t pid, uintptr_t vaddr) {
            (uintmax_t)pid);
   pagemap_fd = open(pagemap_file, O_RDONLY);
   if (pagemap_fd < 0) {
-    return 1;
+    return INVALID_PAGEMAP_ERR;
   }
   PagemapEntry entry;
   if (pagemap_get_entry(&entry, pagemap_fd, vaddr)) {
-    return 1;
+    return PAGEMAP_GET_ERR;
   }
   close(pagemap_fd);
   *paddr =
@@ -100,6 +132,7 @@ int get_node(void *p) {
   int status[1];
   void *pa;
   unsigned long a;
+  char buf[128];
 
   // round p down to the nearest page boundary
   a = (unsigned long)(p);
@@ -107,8 +140,9 @@ int get_node(void *p) {
   pa = (void *)a;
 
   if (move_pages(0, 1, &pa, NULL, status, 0) != 0) {
-    syslog(LOG_CRIT, "Problem in %s line %d calling move_pages()", __FILE__,
-           __LINE__);
+    sprintf(buf, "Problem in %s line %d calling move_pages()", __FILE__,
+            __LINE__);
+    ras_log(LOG_CRIT, buf);
     abort();
   }
 
@@ -116,7 +150,7 @@ int get_node(void *p) {
 }
 
 // Execute a command using popen/pclose
-std::string exec(string &cmd) {
+std::string cmd_exec(string &cmd) {
   std::array<char, 128> buffer;
   std::string result;
   std::unique_ptr<FILE, void (*)(FILE *)> pipe(
@@ -175,80 +209,42 @@ void timestamp(char *buf) {
 }
 
 // Verify CPU-less NUMA node
-bool verify_zero_cpu_node(const int &node_index) {
+int verify_zero_cpu_node(const int &node_index) {
   struct bitmask *cpus;
+  int ret = 0;
 
   // Assigning bits for CPUs and evaluating
   cpus = numa_allocate_cpumask();
-  numa_node_to_cpus(node_index, cpus);
-  if (numa_bitmask_weight(cpus) == 0) return true;
-
-  return false;
-}
-
-// Verify CXL NUMA node for provided hardware address using regex
-bool verify_cxl_numa_node(const int &node_index, string &phy_addr_range) {
-  bool ret = false;
-
-  // Creating the command-line using the provided node index
-  string in = cf.grep_acpi_srat +
-              string("|grep \"Node " + to_string(node_index) + string("\""));
-
-  // Execute the command-line formed from above
-  string out = exec(in);
-  stringstream ss(out);
-  string tok;
-  string regex_addr_range = cf.regex_addr_range;
-  regex regex_acpi_srat(regex_addr_range);
-
-  while (getline(ss, tok, '\n')) {
-    smatch m;
-    if (regex_match(tok, m, regex_acpi_srat)) {
-      string res = string(m[1]);
-      remove_substr(res, "0x");
-      string t = cf.grep_CXL + string("|grep ") + res;
-      out = "";
-      out = exec(t);
-      if (out.substr(out.find(res), res.length()).compare(res) == 0) {
-        ret = true;
-        phy_addr_range = res;
-      }
-    }
+  if (!cpus) {
+    ret = NUMA_ALLOCATE_CPUMASK_ERR;
+    return ret;
   }
-  return ret;
-}
 
-// Verify hardware address in the range valid for the NUMA node
-bool verify_numa_node_addr(const int &node_index, const string &addr) {
-  bool ret = false;
-  string res;
-  if (verify_cxl_numa_node(node_index, res) == true) {
-    int pos = res.find("-");
-    string low = res.substr(0, pos);
-    string high = res.substr(pos + 1);
-
-    long addr_low = strtoll(low.c_str(), NULL, 16);
-    long addr_high = strtoll(high.c_str(), NULL, 16);
-    long l_addr = strtol(addr.c_str(), NULL, 16);
-
-    if ((l_addr >= addr_low) && (l_addr <= addr_high))
-      ret = true;
-    else
-      ret = false;
+  if (numa_node_to_cpus(node_index, cpus) != 0) {
+    ret = NUMA_NODE_TO_CPUS_ERR;
+    return ret;
   }
+
+  if (numa_bitmask_weight(cpus) != 0) {
+    ret = NOT_CPULESS_NODE_ERR;
+    return ret;
+  }
+
   return ret;
 }
 
 // Verify that the user-provided node is a valid CXL node
-bool verify_cpuless_node(const int &node_index) {
+int verify_cpuless_node(const int &node_index) {
   int max_node = numa_max_node();
-  int ret = false;
+  int ret = 0;
   stringstream s;
   char buf[128];
 
   if ((node_index > max_node) || (node_index < 0)) {
-    sprintf(buf, "Node index is outside valid range");
-    syslog(LOG_WARNING, "%s", buf);
+    sprintf(buf, "Node index %d is outside the valid range [0-%d]", node_index,
+            max_node);
+    ras_log(LOG_WARNING, buf);
+    ret = INVALID_NUMA_INDEX_ERR;
     return ret;
   }
 
@@ -257,18 +253,138 @@ bool verify_cpuless_node(const int &node_index) {
   return ret;
 }
 
+// Verify CXL NUMA node for provided hardware address using regex
+int verify_cxl_numa_node(const int &node_index, string &phy_addr_range) {
+  int ret = 0;
+  char buf[256];
+
+  ret = verify_cpuless_node(node_index);
+  if (ret != 0) {
+    return ret;
+  }
+
+  // Creating the command-line using the provided node index
+  string in = cf.grep_acpi_srat +
+              string("|grep \"Node " + to_string(node_index) + string("\""));
+
+  // Execute the command-line formed from above
+  string out = cmd_exec(in);
+  stringstream ss(out), ss2;
+  string tok, tok2, ts, res;
+  string regex_addr_range = cf.regex_addr_range;
+  regex regex_acpi_srat(regex_addr_range);
+  char *p = nullptr;
+  long low, high, chk_low, chk_high;
+
+  while (getline(ss, tok, '\n')) {
+    smatch m;
+    if (regex_match(tok, m, regex_acpi_srat)) {
+      res = m[1].str();
+      remove_substr(res, "0x");
+      p = nullptr;
+      ts.assign(res);
+      p = strtok((char *)ts.c_str(), "-");
+
+      while (p != nullptr) {
+        chk_low = strtoll(p, 0, 16);
+        p = strtok(nullptr, "-");
+        if (p != nullptr) {
+          chk_high = strtoll(p, 0, 16);
+        }
+        p = strtok(nullptr, "-");
+      }
+      p = nullptr;
+      string t = cf.grep_CXL; 
+      out = "";
+      out = cmd_exec(t);
+      ss2 << out;
+      while (getline(ss2, tok2, '\n')) {
+        p = strtok((char *)tok2.c_str(), ":");
+
+        while (p != nullptr) {
+          ts.assign(p);
+          trim(ts);
+          p = NULL;
+          p = strtok((char *)ts.c_str(), "-");
+
+          while (p != nullptr) {
+            low = strtoll(p, 0, 16);
+            p = strtok(nullptr, "-");
+            if (p != nullptr) {
+              high = strtoll(p, 0, 16);
+            }
+            p = strtok(nullptr, "-");
+          }
+
+          if (((chk_low >= low) && (chk_low <= high)) &&
+              ((chk_high >= low) && (chk_high <= high))) {
+            phy_addr_range = res;
+            ret = 0;
+            return ret;
+
+          } else {
+            ret = IOMEM_NOT_MATCHING_ACPI_SRAT_ERR;
+          }
+          p = strtok(nullptr, ":");
+        }
+      }
+      if (ret != 0) {
+        sprintf(buf,
+                "Cannot find physical address in ACPI:SRAT entries of "
+                "/var/log/dmesg with the CXL node in /proc/iomem output");
+        ras_log(LOG_CRIT, buf);
+        return ret;
+      }
+    }
+  }
+  return ret;
+}
+
+// Verify hardware address in the range valid for the NUMA node
+int verify_numa_node_addr(const int &node_index, const string &addr) {
+  int ret = 0;
+  string res;
+  char buf[256];
+
+  ret = verify_cxl_numa_node(node_index, res);
+  if (ret == 0) {
+    int pos = res.find("-");
+    string low = res.substr(0, pos);
+    string high = res.substr(pos + 1);
+
+    long addr_low = strtoll(low.c_str(), NULL, 16);
+    long addr_high = strtoll(high.c_str(), NULL, 16);
+    long l_addr = strtoll(addr.c_str(), NULL, 16);
+
+    if ((l_addr >= addr_low) && (l_addr <= addr_high))
+      ret = 0;
+    else {
+      sprintf(buf,
+              "Address provided %s is NOT valid for NUMA node %d. "
+              "The valid range is [%s-%s]",
+              addr.c_str(), node_index, low.c_str(), high.c_str());
+      ras_log(LOG_WARNING, buf);
+      ret = ADDRESS_NOT_OF_NUMA_NODE_ERR;
+    }
+  }
+
+  return ret;
+}
+
 int allocate_memory_on_numa_node(const int &noden) {
   /* Allocate on user-provided CXL node*/
   void *ptr;
   uintptr_t paddr;
+  int ret = 0;
   char buf[256];
   sprintf(buf, "Manually allocating memory on node %d", noden);
-  syslog(LOG_INFO, "%s", buf);
+  ras_log(LOG_INFO, buf);
 
   if ((ptr = numa_alloc_onnode(NUMA_ALLOCATION_SIZE, noden)) == 0) {
     sprintf(buf, "Problem in %s line %d allocating memory", __FILE__, __LINE__);
-    syslog(LOG_CRIT, "%s", buf);
-    return (102);
+    ras_log(LOG_CRIT, buf);
+    ret = NUMA_ALLOC_ON_NODE_ERR;
+    return ret;
   }
 
   /***
@@ -285,18 +401,19 @@ int allocate_memory_on_numa_node(const int &noden) {
     sprintf(buf,
             "Failure in mapping virtual to physical addresss of \
                 a NUMA CXL node");
-    syslog(LOG_ERR, "%s", buf);
-    return (103);
+    ras_log(LOG_ERR, buf);
+    ret = FAILURE_TO_MAP_VIRTUAL_TO_PHYSICAL_MEM_ERR;
+    return ret;
   };
   sprintf(buf, "Physical address of memory alloc on NUMA CXL node: 0x%jx",
           (uintmax_t)paddr);
-  syslog(LOG_NOTICE, "%s", buf);
+  ras_log(LOG_NOTICE, buf);
 
   // Freeing memory allocated using NUMA library
   numa_free((void *)ptr, NUMA_ALLOCATION_SIZE);
   sprintf(buf, "NUMA allocated memory after numa_free is on node %d",
           get_node(ptr));
-  syslog(LOG_NOTICE, "%s", buf);
+  ras_log(LOG_NOTICE, buf);
 
   return 0;
 }
@@ -308,84 +425,147 @@ long get_file_size(std::string filename) {
   return rc == 0 ? stat_buf.st_size : -1;
 }
 
+// Determine the VFS block size
+int block_size() {
+  struct statvfs vfs_stat;
+  if (statvfs("/", &vfs_stat) == 0) {
+    return vfs_stat.f_bsize;
+  } else {
+    return 4096;
+  }
+}
+
 /***
- * Initialization to to start a log file and read magic strings from from
+ * Initialization to to start a log file and read magic strings from
  * config.json file
  */
 int init() {
+  char buf[128];
+  int ret = 0;
   setlogmask(LOG_UPTO(LOG_INFO));
   openlog(APP_LOG, LOG_PERROR | LOG_CONS | LOG_PID | LOG_NDELAY, LOG_LOCAL1);
 
-  syslog(LOG_NOTICE, "Program started by User %d", getuid());
+  sprintf(buf, "Program started by User %d", getuid());
+  ras_log(LOG_NOTICE, buf);
 
   // Open the file for reading
   file = fopen(CONFIG_FILE, "r");
   if (file == nullptr) {
-    syslog(LOG_ERR, "%s", "Failed to open configuration file config.json");
-    return 2;
+    sprintf(buf, "Failed to open configuration file %s", CONFIG_FILE);
+    ras_log(LOG_ERR, buf);
+    ret = CONFIG_FILE_NOT_AVAILABLE_ERR;
+    return ret;
   }
 
   long sz = get_file_size(CONFIG_FILE);
+  if (sz == -1) {
+    sprintf(buf, "Invalid size of configuration file %s", CONFIG_FILE);
+    ras_log(LOG_ERR, buf);
+    ret = INVALID_CONFIG_FILE_SIZE_ERR;
+    return ret;
+  }
+
   char readBuffer[sz + 1];
-  FileReadStream is(file, readBuffer, sz);
+  FileReadStream is(file, readBuffer, block_size());
 
   // Parse the JSON data using a Document object
   Document data;
   data.ParseStream(is);
 
+  if (data.HasParseError()) {
+    sprintf(buf, "Config file %s parsing error: %d. Error (offset %ld): %s",
+            CONFIG_FILE, data.GetParseError(), data.GetErrorOffset(),
+            GetParseError_En(data.GetParseError()));
+    ras_log(LOG_ERR, buf);
+    ret = CONFIG_FILE_PARSE_ERR;
+    return ret;
+  }
   // Close the file
   // fclose(file);
 
-  if (data["grep_CXL"].IsString()) {
+  if (data.HasMember("grep_CXL") && data["grep_CXL"].IsString()) {
     cf.grep_CXL = data["grep_CXL"].GetString();
-    syslog(LOG_INFO, "grep_CXL: %s", cf.grep_CXL.c_str());
+    sprintf(buf, "grep_CXL: %s", cf.grep_CXL.c_str());
+    ras_log(LOG_INFO, buf);
+  } else {
+    sprintf(buf, "The required key 'grep_CXL' not found in config file %s",
+            CONFIG_FILE);
+    ras_log(LOG_ERR, buf);
+    ret = GREP_CXL_MISSING_ERR;
+    return ret;
   }
 
-  if (data["grep_acpi_srat"].IsString()) {
+  if (data.HasMember("grep_acpi_srat") && data["grep_acpi_srat"].IsString()) {
     cf.grep_acpi_srat = data["grep_acpi_srat"].GetString();
-    syslog(LOG_INFO, "grep_acpi_srat: %s", cf.grep_acpi_srat.c_str());
+    sprintf(buf, "grep_acpi_srat: %s", cf.grep_acpi_srat.c_str());
+    ras_log(LOG_INFO, buf);
+  } else {
+    sprintf(buf,
+            "The required key 'grep_acpi_srat' not found in config file %s",
+            CONFIG_FILE);
+    ras_log(LOG_ERR, buf);
+    ret = GREP_ACPI_SRAT_MISSING_ERR;
+    return ret;
   }
 
-  if (data["regex_iomem"].IsString()) {
+  if (data.HasMember("regex_iomem") && data["regex_iomem"].IsString()) {
     cf.regex_iomem = data["regex_iomem"].GetString();
-    syslog(LOG_INFO, "reg_iomem: %s", cf.regex_iomem.c_str());
+    sprintf(buf, "reg_iomem: %s", cf.regex_iomem.c_str());
+    ras_log(LOG_INFO, buf);
+  } else {
+    sprintf(buf, "The required key 'regex_iomem' not found in config file %s",
+            CONFIG_FILE);
+    ras_log(LOG_ERR, buf);
+    ret = REGEX_IOMEM_MISSING_ERR;
+    return ret;
   }
 
-  if (data["regex_addr_range"].IsString()) {
+  if (data.HasMember("regex_addr_range") &&
+      data["regex_addr_range"].IsString()) {
     cf.regex_addr_range = data["regex_addr_range"].GetString();
-    syslog(LOG_INFO, "regex_addr_range: %s", cf.regex_addr_range.c_str());
+    sprintf(buf, "regex_addr_range: %s", cf.regex_addr_range.c_str());
+    ras_log(LOG_INFO, buf);
+  } else {
+    sprintf(buf,
+            "The required key 'regex_addr_range' not found in config file %s",
+            CONFIG_FILE);
+    ras_log(LOG_ERR, buf);
+    ret = REGEX_ADDR_RANGE_MISSING_ERR;
+    return ret;
   }
 
-  return 0;
+  return ret;
 }
 
 void usage() {
   char buf[] =
-      "USAGE: ras -n <CXL_node_index> [-l <physical address for testing on CXL "
-      "node>(optional)]";
-  syslog(LOG_WARNING, "%s", buf);
+      "USAGE: mslras -n <CXL_node_index> [-l <Value of physical memory address "
+      "for the provied CXL node index in hexadecimal "
+      "format {e.g. '0xabcd1234'}>](optional)";
+  ras_log(LOG_ERR, buf);
+  cout << buf << endl;
 }
 
 int main(int argc, char *argv[]) {
+  int ret = 0;
   if (argc < 3) {
-    cout << "USAGE: ras -n <CXL_node_index> [-l <physical address for testing "
-            "on CXL node>(optional)]"
-         << endl;
-    return 1;
+    usage();
+    ret = USAGE_ERR;
+    return ret;
   }
 
   stringstream s;
-  int ret = 0;
   char buf[128];
 
-  if (init() != 0) {
-    sprintf(buf, "Initialization failed!");
-    syslog(LOG_ERR, "%s", buf);
-    ret = 1;
+  if ((ret = init()) != 0) {
+    sprintf(buf, "Initialization failed! Return Value: %d", ret);
+    ras_log(LOG_ERR, buf);
+    ret = INIT_ERR;
     return ret;
   }
 
   int noden, c;
+  size_t len;
   string paddr = "";
 
   while ((c = getopt(argc, argv, "n:l:h")) != -1) switch (c) {
@@ -393,48 +573,66 @@ int main(int argc, char *argv[]) {
         noden = strtol(optarg, NULL, 0);
         break;
       case 'l':
+	len = strlen(optarg);
+        if (len <= 2 || strncmp(optarg,"0x",2) != 0) {
+          sprintf(buf, "Invalid entry for physical memory address: %s", optarg);
+          ras_log(LOG_ERR, buf);
+          ret = OPT_ERR;
+          return ret;
+        }
+        for (size_t i = 2; i < len; ++i)  {
+          if (!isxdigit(optarg[i]))  {
+            sprintf(buf, "Invalid entry for physical memory address: %s", optarg);
+            ras_log(LOG_ERR, buf);
+            ret = OPT_ERR;
+            return ret;
+          }
+        }
         paddr = optarg;
         break;
       default:
         usage();
-        ret = 2;
+        ret = OPT_ERR;
         return ret;
     }
 
   if (numa_available() < 0) {
-    syslog(LOG_WARNING, "%s", "NUMA featute not available");
-    ret = 3;
+    sprintf(buf, "NUMA feature not available");
+    ras_log(LOG_WARNING, buf);
+    ret = NUMA_NOT_AVAILABLE_ERR;
     return ret;
   }
 
   string addr_range;
-  s.str("");
-  s.clear();
-  if ((verify_cpuless_node(noden) == false) ||
-      (verify_cxl_numa_node(noden, addr_range) == false)) {
+
+  ret = verify_cxl_numa_node(noden, addr_range);
+  if (ret != 0) {
     sprintf(buf, "The provided index %d is NOT of a CXL node", noden);
-    syslog(LOG_NOTICE, "%s", buf);
-    ret = 101;
+    ras_log(LOG_NOTICE, buf);
     return ret;
   } else {
     sprintf(buf, "The provided index %d is of a CXL node", noden);
-    syslog(LOG_NOTICE, "%s", buf);
+    ras_log(LOG_NOTICE, buf);
   }
 
   // Verify provided physical address
-  s.str("");
-  s.clear();
   if (paddr.length() > 0) {
-    if (verify_numa_node_addr(noden, paddr) == true) {
-      sprintf(buf, "The address %s is valid on node %d", paddr.c_str(), noden);
-      syslog(LOG_NOTICE, "%s", buf);
+    if (verify_numa_node_addr(noden, paddr) == 0) {
+      sprintf(buf, "The address %s [within %s] is valid on node %d",
+              paddr.c_str(), addr_range.c_str(), noden);
+      ras_log(LOG_NOTICE, buf);
     } else {
-      sprintf(buf, "The address %s is invalid on node %d", paddr.c_str(),
-              noden);
-      syslog(LOG_NOTICE, "%s", buf);
+      sprintf(buf, "The address %s [outside %s] is invalid on node %d",
+              paddr.c_str(), addr_range.c_str(), noden);
+      ras_log(LOG_NOTICE, buf);
     }
   } else if (paddr.length() == 0) {
-    allocate_memory_on_numa_node(noden);
+    ret = allocate_memory_on_numa_node(noden);
+    if (ret != 0) {
+      sprintf(buf, "Failed to allocate memory on NUMA node %d", noden);
+      ras_log(LOG_CRIT, buf);
+      return ret;
+    }
   }
 
   return 0;
