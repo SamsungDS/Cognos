@@ -83,7 +83,7 @@ void ras_log(int pri, char *buf) { syslog(pri, "%s", buf); }
 
 // Parse the pagemap entry for the given virtual address.
 int pagemap_get_entry(PagemapEntry *entry, int pagemap_fd, uintptr_t vaddr) {
-  if (vaddr == NULL) return 1;
+  if (vaddr == 0) return 1;
 
   size_t nread;
   ssize_t ret;
