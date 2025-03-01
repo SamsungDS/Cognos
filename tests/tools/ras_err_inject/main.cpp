@@ -566,7 +566,7 @@ int main(int argc, char *argv[]) {
             ras_log(LOG_ERR, "NUMA node index %s is an invalid entry", optarg);
             ret = OPT_ERR;
             return ret;
-	  }
+          }
         }
         noden = strtol(optarg, NULL, 0);
         break;
