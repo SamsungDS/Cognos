@@ -27,7 +27,7 @@ install_packages() {
         unzip
         wget
         rapidjson-devel
-        numactl-devel.x86_64
+        numactl-devel
     )
     package_manager
 }
