@@ -17,6 +17,8 @@ install_packages() {
         tar
         unzip
         wget
+        rapidjson-dev
+        libnuma-dev
     )
     package_manager
 }

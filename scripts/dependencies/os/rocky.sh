@@ -26,6 +26,8 @@ install_packages() {
         tar
         unzip
         wget
+        rapidjson-devel
+        numactl-devel
     )
     package_manager
 }
