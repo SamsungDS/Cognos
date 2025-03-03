@@ -91,6 +91,33 @@ int pagemap_get_entry(PagemapEntry *entry, int pagemap_fd, uintptr_t vaddr) {
   uint64_t data;
   uintptr_t vpn;
 
+  /**********************************************************************
+   * sizeof(sysconf(_SC_PAGE_SIZE)) -> 4096 bytes
+   * sizeof(PagemapEntry) -> 8 bytes
+   * sizeof(uint64_t) -> 8 bytes
+   * and that stuct PagemapEntry has specific bit-field sized members designed
+   * as per kernel's specification mentioned in the URL
+   * https://www.kernel.org/doc/Documentation/vm/pagemap.txt
+   * Now, as per man page of pread:
+   * ssize_t pread(int fd, void *buf, size_t count, off_t offset);
+   * pread() reads up to count bytes from file descriptor fd at offset (from
+   * the start of the file) into the buffer starting at buf. The file offset
+   * is not changed. The variable vpn "vpn" is the original starting offset
+   * aligned on the page size (i.e. sysconf(_SC_PAGE_SIZE) for that particular
+   * virtual address (vaddr in this case) in the file containing info about
+   * page mapping for a paricular process. Now each 8 bytes
+   * (i.e. 64 bits = sizeof(uint64_t)) in that pagemap file has info about
+   * one page size i.e. 4096 bytes of virtual address space.
+
+   * Moreover, sizeof() library call is with the variable of type uint64_t i.e
+   * if the number of bytes read is less than size of uint64_t (and this is
+   * per kernel documentation requirement mentioned above) then the
+   * statements inside `while (nread < sizeof(data)) ` will be executed till
+   * the total amount read using pread is equal to or less than
+   * sizeof(uint64_t) and the pread returns 0 on EOF or negative on pread
+   * failure.
+   ********************************************************************/
+
   vpn = vaddr / sysconf(_SC_PAGE_SIZE);
   nread = 0;
   while (nread < sizeof(data)) {
