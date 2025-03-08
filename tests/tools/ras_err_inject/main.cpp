@@ -1,3 +1,4 @@
+#include <execinfo.h>
 #include <fcntl.h>
 #include <getopt.h>
 #include <numa.h>
@@ -6,11 +7,15 @@
 #include <rapidjson/error/en.h>
 #include <rapidjson/error/error.h>
 #include <rapidjson/filereadstream.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/mman.h>
+#include <sys/prctl.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <syslog.h>
+#include <ucontext.h>
 #include <unistd.h>
 
 #include <array>
@@ -21,13 +26,16 @@
 #include <memory>
 #include <regex>
 #include <sstream>
+#include <stack>
 #include <stdexcept>
 #include <string>
 
-#define NUMA_ALLOCATION_SIZE 1024
+#define NUMA_ALLOCATION_SIZE 4096UL
 #define CONFIG_FILE "config.json"
 #define APP_LOG "svk_ras_einj.log"
 #define ras_log(x, ...) syslog(x, ##__VA_ARGS__)
+#define MAP_SIZE 4096UL
+#define MAP_MASK (MAP_SIZE - 1)
 
 using namespace std;
 using namespace rapidjson;
@@ -76,11 +84,64 @@ enum {
   NUMA_ALLOC_ON_NODE_ERR,
   FAILURE_TO_MAP_VIRTUAL_TO_PHYSICAL_MEM_ERR,
   ADDRESS_NOT_OF_NUMA_NODE_ERR,
-  IOMEM_NOT_MATCHING_ACPI_SRAT_ERR
+  IOMEM_NOT_MATCHING_ACPI_SRAT_ERR,
+  UNABLE_OPEN_DEV_MEM,
+  MMAP_FAIL,
+  INVALID_PID,
+  SIGACTION_FAIL,
+  PRCTL_FAIL,
+  MADVISE_FAIL
 };
+
+/* This structure mirrors the one found in /usr/include/asm/ucontext.h */
+typedef struct _sig_ucontext {
+  unsigned long uc_flags;
+  ucontext_t *uc_link;
+  stack_t uc_stack;
+  sigcontext uc_mcontext;
+  sigset_t uc_sigmask;
+} sig_ucontext_t;
 
 // Wrapper around syslog
 // void ras_log(int pri, char *buf) { syslog(pri, "%s", buf); }
+
+// Signal handler for SIGBUS, etc. for memory access on poisoned page
+void signal_handler(int sig_num, siginfo_t *info, void *ucontext) {
+  void *caller_address;
+  sig_ucontext_t *uc;
+  void *array[50];
+  char **messages;
+  int size, i;
+
+  uc = (sig_ucontext_t *)ucontext;
+/* Get the address at the time the signal was raised */
+#if defined(__i386__)                            // gcc specific
+  caller_address = (void *)uc->uc_mcontext.eip;  // EIP: x86 specific
+#elif defined(__x86_64__)                        // gcc specific
+  caller_address = (void *)uc->uc_mcontext.rip;  // RIP: x86_64 specific
+#else
+#error Unsupported architecture. // Add support for other arch.
+#endif
+
+  ras_log(LOG_ERR, "signal %d (%s), address is %p from %p\n", sig_num,
+          strsignal(sig_num), info->si_addr, (void *)caller_address);
+
+  size = backtrace(array, 50);
+
+  /* overwrite sigaction with caller's address */
+  array[1] = caller_address;
+
+  messages = backtrace_symbols(array, size);
+
+  /* skip first stack frame (points here) */
+  for (i = 1; i < size && messages != NULL; ++i) {
+    fprintf(stderr, "[bt]: (%d) %s\n", i, messages[i]);
+  }
+
+  free(messages);
+
+  exit(sig_num);
+}
 
 // Parse the pagemap entry for the given virtual address.
 int pagemap_get_entry(PagemapEntry *entry, int pagemap_fd, uintptr_t vaddr) {
@@ -218,24 +279,6 @@ void remove_substr(string &s, const string &p) {
     s.erase(i, n);
 }
 
-void timestamp(char *buf) {
-  chrono::system_clock::time_point now = std::chrono::system_clock::now();
-  time_t currentTime = std::chrono::system_clock::to_time_t(now);
-  chrono::milliseconds now2 =
-      std::chrono::duration_cast<std::chrono::milliseconds>(
-          now.time_since_epoch());
-  struct tm currentLocalTime;
-  localtime_r(&currentTime, &currentLocalTime);
-  char timeBuffer[80];
-  std::size_t charCount{
-      std::strftime(timeBuffer, 80, "%D %T", &currentLocalTime)};
-
-  if (charCount == 0)
-    strcpy(buf, "");
-  else
-    sprintf(buf, "%s.%3ld", timeBuffer, now2.count() % 1000);
-}
-
 // Verify CPU-less NUMA node
 int verify_zero_cpu_node(const int &node_index) {
   struct bitmask *cpus;
@@ -256,7 +299,7 @@ int verify_zero_cpu_node(const int &node_index) {
   }
 
   if (numa_bitmask_weight(cpus) != 0) {
-    ras_log(LOG_ERR, "Node index %d is not of a CPU-less node", node_index);
+    ras_log(LOG_DEBUG, "Node index %d is not of a CPU-less node", node_index);
     ret = NOT_CPULESS_NODE_ERR;
     return ret;
   }
@@ -286,15 +329,55 @@ int verify_cpuless_node(const int &node_index) {
   return ret;
 }
 
-// Verify CXL NUMA node for provided hardware address using regex
-int verify_cxl_numa_node(const int &node_index, string &phy_addr_range) {
+// Show details about all NUMA nodes
+int show_details_of_numa_nodes() {
   int ret = 0;
-
-  ret = verify_cpuless_node(node_index);
-  if (ret != 0) {
+  string in;
+  size_t max_node = numa_max_node();
+  if (max_node < 0) {
+    ras_log(LOG_CRIT, "Unable to get maximum value of NUMA node");
+    ret = NUMA_MAX_NODE_ERR;
     return ret;
   }
 
+  for (size_t i = 0; i <= max_node; ++i) {
+    // Creating the command-line using the provided node index
+    in = cf.grep_acpi_srat +
+         string("|grep \"Node " + to_string(i) + string("\""));
+
+    // Execute the command-line formed from above
+    string out = cmd_exec(in);
+    stringstream ss(out), ss2;
+    string tok, res;
+    string regex_addr_range = cf.regex_addr_range;
+    regex regex_acpi_srat(regex_addr_range);
+
+    while (getline(ss, tok, '\n')) {
+      smatch m;
+      if (regex_match(tok, m, regex_acpi_srat)) {
+        res = m[1].str();
+        remove_substr(res, "0x");
+        ras_log(LOG_INFO, "Node: %ld     CXL: %s     Address Range: %s", i,
+                ((verify_cpuless_node(i) == NOT_CPULESS_NODE_ERR) ? "False"
+                                                                  : "True"),
+                res.c_str());
+      }
+    }
+  }
+  return ret;
+}
+
+// Verify CXL NUMA node for provided hardware address using regex
+int verify_cxl_numa_node(const int &node_index) {
+  int ret = 0;
+
+  ret = verify_cpuless_node(node_index);
+  return ret;
+}
+
+int get_numa_node_address_range(const int &node_index, const bool cxl_node,
+                                string &phy_addr_range) {
+  int ret = 0;
   // Creating the command-line using the provided node index
   string in = cf.grep_acpi_srat +
               string("|grep \"Node " + to_string(node_index) + string("\""));
@@ -307,6 +390,7 @@ int verify_cxl_numa_node(const int &node_index, string &phy_addr_range) {
   regex regex_acpi_srat(regex_addr_range);
   char *p = nullptr;
   long low, high, chk_low, chk_high;
+  stack<string> st;
 
   // Find the appropriate CXL device entry from /proc/iomem (if any) for the
   // NUMA node using the memory address range mentioned in /var/log/dmesg. The
@@ -314,10 +398,18 @@ int verify_cxl_numa_node(const int &node_index, string &phy_addr_range) {
   // will be a subset of the range mentioned in /proc/iomem entry for the found
   // CXL device entry.
   while (getline(ss, tok, '\n')) {
+    st.push(tok);
+  }
+  tok.clear();
+
+  while (!st.empty()) {
     smatch m;
+    tok = st.top();
+    st.pop();
     if (regex_match(tok, m, regex_acpi_srat)) {
       res = m[1].str();
       remove_substr(res, "0x");
+      phy_addr_range += (res + " ");
       p = nullptr;
       ts.assign(res);
       p = strtok((char *)ts.c_str(), "-");
@@ -330,6 +422,9 @@ int verify_cxl_numa_node(const int &node_index, string &phy_addr_range) {
         }
         p = strtok(nullptr, "-");
       }
+      if (cxl_node == false) continue;
+
+      // Continue if the node index is of a CXL node
       p = nullptr;
       string t = cf.grep_CXL;
       out = "";
@@ -355,7 +450,6 @@ int verify_cxl_numa_node(const int &node_index, string &phy_addr_range) {
 
           if (((chk_low >= low) && (chk_low <= high)) &&
               ((chk_high >= low) && (chk_high <= high))) {
-            phy_addr_range = res;
             ret = 0;
             return ret;
 
@@ -365,41 +459,54 @@ int verify_cxl_numa_node(const int &node_index, string &phy_addr_range) {
           p = strtok(nullptr, ":");
         }
       }
-      if (ret != 0) {
-        ras_log(LOG_CRIT,
-                "Cannot find physical address in ACPI:SRAT entries of "
-                "/var/log/dmesg with the CXL node in /proc/iomem output");
-        return ret;
-      }
+    }
+    if (ret != 0) {
+      ras_log(LOG_DEBUG,
+              "Cannot find physical address in ACPI:SRAT entries of "
+              "/var/log/dmesg with the CXL node in /proc/iomem output");
+      return ret;
     }
   }
   return ret;
 }
 
 // Verify hardware address in the range valid for the NUMA node
-int verify_numa_node_addr(const int &node_index, const string &addr) {
+int verify_numa_node_addr(const int &node_index, const bool cxl_node,
+                          const string &addr, string &addr_range) {
   int ret = 0;
   string res;
 
-  ret = verify_cxl_numa_node(node_index, res);
-  if (ret == 0) {
-    int pos = res.find("-");
-    string low = res.substr(0, pos);
-    string high = res.substr(pos + 1);
+  ret = get_numa_node_address_range(node_index, cxl_node, res);
+  if ((ret == 0) || (ret == IOMEM_NOT_MATCHING_ACPI_SRAT_ERR)) {
+    trim(res);
+    addr_range = res;
+    string low, high, tok;
+    long addr_low, addr_high, l_addr;
+    stringstream ss(res);
 
-    long addr_low = strtoll(low.c_str(), NULL, 16);
-    long addr_high = strtoll(high.c_str(), NULL, 16);
-    long l_addr = strtoll(addr.c_str(), NULL, 16);
+    while (getline(ss, tok, '-')) {
+      if (low.empty()) {
+        low = tok;
+        addr_low = strtoll(low.c_str(), NULL, 16);
+      } else if (high.empty()) {
+        high = tok;
+        addr_high = strtoll(high.c_str(), NULL, 16);
+      }
+      l_addr = strtoll(addr.c_str(), NULL, 16);
 
-    if ((l_addr >= addr_low) && (l_addr <= addr_high))
-      ret = 0;
-    else {
-      ras_log(LOG_WARNING,
-              "Address provided %s is NOT valid for NUMA node %d. "
-              "The valid range is [%s-%s]",
-              addr.c_str(), node_index, low.c_str(), high.c_str());
-      ret = ADDRESS_NOT_OF_NUMA_NODE_ERR;
+      if ((l_addr >= addr_low) && (l_addr <= addr_high)) {
+        ras_log(LOG_NOTICE, "Address provide %s is valid for node %d",
+                addr.c_str(), node_index);
+        ret = 0;
+        return ret;
+      }
     }
+
+    ras_log(LOG_WARNING,
+            "Address provided %s is NOT valid for NUMA node %d. "
+            "The valid range is [%s-%s]",
+            addr.c_str(), node_index, low.c_str(), high.c_str());
+    ret = ADDRESS_NOT_OF_NUMA_NODE_ERR;
   }
 
   return ret;
@@ -446,6 +553,81 @@ int allocate_memory_on_numa_node(const int &noden) {
           get_node(ptr));
 
   return 0;
+}
+
+int error_injection(void *paddr) {
+  int ret = 0;
+
+  // Using prctl to set the policy for signal trigger only after memory access
+  // of the poisoned address
+  if (prctl(PR_MCE_KILL, PR_MCE_KILL_SET, PR_MCE_KILL_LATE, 0L, 0L) != 0) {
+    ras_log(LOG_CRIT, "prctl error");
+    ret = PRCTL_FAIL;
+    return ret;
+  }
+
+  // Inject memory failure using madvise with MADV_HWPOISON
+  int result = madvise(paddr, 4096, MADV_HWPOISON);
+  if (result == -1) {
+    ras_log(LOG_CRIT, "madvise failed");
+    ret = MADVISE_FAIL;
+    return ret;
+  }
+
+  // Attempt to access the poisoned memory (will likely trigger a SIGBUS)
+  unsigned int *value = (unsigned int *)paddr;
+  ras_log(LOG_INFO, "Value at poisoned memory: %d\n", *value);
+
+  return ret;
+}
+
+int error_inject_using_paddr(string lpaddr) {
+  int ret = 0, fd;
+  void *map_base_d;
+  uintptr_t virt_addr;
+  off_t target;
+  target = strtoul(lpaddr.c_str(), NULL, 0);
+
+  if ((fd = open("/dev/mem", O_RDWR | O_SYNC)) == -1) {
+    ras_log(LOG_CRIT, "Unable to open /dev/mem");
+    ret = UNABLE_OPEN_DEV_MEM;
+    return ret;
+  }
+
+  // mmap using the inode descriptor of /dev/mem and offset of physical address
+  map_base_d =
+      (void *)mmap(0, MAP_SIZE, PROT_READ | PROT_WRITE,
+                   MAP_ANONYMOUS | MAP_PRIVATE, fd, target & ~MAP_MASK);
+  if (map_base_d == MAP_FAILED) {
+    ras_log(LOG_CRIT, "Unable to mmap using physical address %ld", target);
+    close(fd);
+    ret = MMAP_FAIL;
+    return ret;
+  }
+
+  ras_log(LOG_NOTICE, "Memory mapped at address %p.\n", map_base_d);
+
+  virt_addr = (uintptr_t)map_base_d + (target & MAP_MASK);
+  unsigned int *p = reinterpret_cast<unsigned int *>(virt_addr);
+  *p = 0x1234;
+  ras_log(LOG_INFO, "Value at address 0x%lX: 0x%X\n", virt_addr,
+          *(unsigned int *)(virt_addr));
+
+  // Error injection using mmap address using the physical address offset and
+  // /dev/mem
+  ret = error_injection(map_base_d);
+  if (ret != 0) {
+    ras_log(LOG_ERR, "Error while injecting error using physical address 0x%lX",
+            virt_addr);
+    close(fd);
+    munmap(map_base_d, MAP_SIZE);
+    return ret;
+  }
+
+  close(fd);
+  munmap(map_base_d, MAP_SIZE);
+
+  return ret;
 }
 
 // Get file size of config.json
@@ -558,22 +740,23 @@ int init() {
 
 void usage() {
   char buf[] =
-      "USAGE: svk_ras_einj -n <CXL_node_index> [-l <Value of physical memory "
-      "address "
-      "for the provied CXL node index in hexadecimal "
-      "format {e.g. '0xabcd1234'}>](optional)";
+      "USAGE: svk_ras_einj [-n <CXL_node_index>] [-l <Value of physical memory "
+      "address for the provied CXL node index in hexadecimal "
+      "format {e.g. '0xabcd1234'}>](optional) [-e (for injecting "
+      "error)](optional)\n"
+      "OR \n"
+      "svk_ras_einj [-p <process_ID>] [-v <virtual address of process_ID>] [-e "
+      "(for injecting error)](optional)\n"
+      "OR \n"
+      "svk_ras_einj [-n <CXL_node_index>] \n"
+      "OR \n"
+      "svk_ras_einj [-s (to show detailsof NUMA nodes)]\n";
   ras_log(LOG_ERR, "%s", buf);
   cout << buf << endl;
 }
 
 int main(int argc, char *argv[]) {
   int ret = 0;
-  if (argc < 3) {
-    usage();
-    ret = USAGE_ERR;
-    return ret;
-  }
-
   stringstream s;
 
   if ((ret = init()) != 0) {
@@ -582,11 +765,24 @@ int main(int argc, char *argv[]) {
     return ret;
   }
 
-  int noden, c;
-  size_t len;
-  string paddr = "", ts;
+  struct sigaction sigact;
 
-  while ((c = getopt(argc, argv, "n:l:h")) != -1) switch (c) {
+  sigact.sa_sigaction = signal_handler;
+  sigact.sa_flags = SA_RESTART | SA_SIGINFO;
+
+  if (sigaction(SIGBUS, &sigact, (struct sigaction *)NULL) != 0) {
+    ras_log(LOG_CRIT, "Error setting signal handler for %d (%s)\n", SIGBUS,
+            strsignal(SIGBUS));
+    ret = SIGACTION_FAIL;
+    return ret;
+  }
+
+  int noden = -1, pid = -1, c;
+  size_t len;
+  string paddr = "", vaddr = "", ts;
+  bool raise_error = false;
+
+  while ((c = getopt(argc, argv, "n:l:v:p:esh")) != -1) switch (c) {
       case 'n':
         for (size_t i = 0; i < strlen(optarg); ++i) {
           if (!isdigit(optarg[i])) {
@@ -615,6 +811,46 @@ int main(int argc, char *argv[]) {
         }
         paddr = optarg;
         break;
+      case 'v':
+        len = strlen(optarg);
+        if (len <= 2 || strncmp(optarg, "0x", 2) != 0) {
+          ras_log(LOG_ERR, "Invalid entry for virtual memory address: %s",
+                  optarg);
+          ret = OPT_ERR;
+          return ret;
+        }
+        for (size_t i = 2; i < len; ++i) {
+          if (!isxdigit(optarg[i])) {
+            ras_log(LOG_ERR, "Invalid entry for physical memory address: %s",
+                    optarg);
+            ret = OPT_ERR;
+            return ret;
+          }
+        }
+        vaddr = optarg;
+        break;
+      case 'p':
+        len = strlen(optarg);
+        for (size_t i = 0; i < len; ++i) {
+          if (!isdigit(optarg[i])) {
+            ras_log(LOG_ERR, "Process ID provided %s is an invalid entry",
+                    optarg);
+            ret = OPT_ERR;
+            return ret;
+          }
+        }
+        pid = strtol(optarg, NULL, 0);
+        break;
+      case 'e':
+        raise_error = true;
+        break;
+      case 's':
+        ret = show_details_of_numa_nodes();
+        if (ret != 0) {
+          return ret;
+        }
+        break;
+
       default:
         usage();
         ret = OPT_ERR;
@@ -627,26 +863,104 @@ int main(int argc, char *argv[]) {
     return ret;
   }
 
-  string addr_range;
+  bool cxl_node = false;
 
-  ret = verify_cxl_numa_node(noden, addr_range);
-  if (ret != 0) {
-    ras_log(LOG_NOTICE, "The provided index %d is NOT of a CXL node", noden);
+  if (noden == -1) {
+    noden = get_node(paddr.data());
     return ret;
-  } else {
-    ras_log(LOG_NOTICE, "The provided index %d is of a CXL node", noden);
+  }
+  if (noden >= 0) {
+    ret = verify_cxl_numa_node(noden);
+    if (ret != 0) {
+      cxl_node = false;
+      if (ret == NOT_CPULESS_NODE_ERR)
+        ras_log(LOG_NOTICE, "The provided index %d is NOT of a CXL node",
+                noden);
+      else {
+        ras_log(LOG_NOTICE, "Verification of CXL node %d failed", noden);
+        return ret;
+      }
+
+    } else {
+      cxl_node = true;
+      ras_log(LOG_NOTICE, "The provided index %d is of a CXL node", noden);
+    }
   }
 
   // Verify provided physical address
   if (paddr.length() > 0) {
-    if (verify_numa_node_addr(noden, paddr) == 0) {
-      ras_log(LOG_NOTICE, "The address %s [within %s] is valid on node %d",
+    string addr_range;
+    ret = verify_numa_node_addr(noden, cxl_node, paddr, addr_range);
+    if (ret == 0) {
+      ras_log(LOG_NOTICE,
+              "The address %s [within range %s] is valid on NUMA node %d",
               paddr.c_str(), addr_range.c_str(), noden);
     } else {
-      ras_log(LOG_NOTICE, "The address %s [outside %s] is invalid on node %d",
-              paddr.c_str(), addr_range.c_str(), noden);
+      ras_log(LOG_NOTICE,
+              "The address %s [outside range %s] NOT valid on NUMA node %d. "
+              "Return: %d",
+              paddr.c_str(), addr_range.c_str(), noden, ret);
     }
-  } else if (paddr.length() == 0) {
+    if (raise_error == true) {
+      remove_substr(paddr, "0x");
+      ret = error_inject_using_paddr(paddr);
+      if (ret != 0) {
+        ras_log(
+            LOG_ERR,
+            "Error during steps to error injection using physical address %s",
+            paddr.c_str());
+        return ret;
+      }
+
+    } else {
+      ras_log(LOG_NOTICE,
+              "Please add \'-e\' to inject error using valid physical address");
+      return ret;
+    }
+  }
+
+  if ((pid >= 1) && (vaddr.length() > 0)) {
+    int ret = 0;
+    if (pid < 0) {
+      ras_log(LOG_ERR, "Invalid pid %d", pid);
+      ret = INVALID_PID;
+      return ret;
+    }
+    uintptr_t lvaddr, lpaddr;
+    string s_paddr;
+
+    lvaddr = strtoll(vaddr.c_str(), NULL, 16);
+
+    ret = virt_to_phys_user(&lpaddr, pid, lvaddr);
+    if (ret != 0) {
+      ras_log(LOG_ERR,
+              "Failed to get physical address using pid %d and virtual address "
+              "0x%lX",
+              pid, lvaddr);
+      return ret;
+    }
+
+    ras_log(LOG_NOTICE,
+            "The physical address:0x%lX can/will be used for error injection",
+            lpaddr);
+
+    if (raise_error == true) {
+      sprintf(s_paddr.data(), "%lX", lpaddr);
+      ret = error_inject_using_paddr(s_paddr);
+      if (ret != 0) {
+        ras_log(LOG_ERR,
+                "Error while injecting error using physical address 0x%lX",
+                lpaddr);
+        return ret;
+      }
+    } else {
+      ras_log(LOG_NOTICE,
+              "Please add \'-e\' to inject error using valid PID and virtual "
+              "address");
+    }
+  }
+
+  if ((pid < 0) && (vaddr.length() == 0) && (paddr.length() == 0)) {
     ret = allocate_memory_on_numa_node(noden);
     if (ret != 0) {
       ras_log(LOG_CRIT, "Failed to allocate memory on NUMA node %d", noden);
