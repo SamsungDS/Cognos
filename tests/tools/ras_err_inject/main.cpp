@@ -318,13 +318,16 @@ int verify_cpuless_node(const int &node_index) {
   }
 
   if ((node_index > max_node) || (node_index < 0)) {
-    ras_log(LOG_WARNING, "Node index %d is outside the valid range [0-%d]",
+    ras_log(LOG_NOTICE, "Node index %d is outside the valid range [0-%d]",
             node_index, max_node);
     ret = INVALID_NUMA_INDEX_ERR;
     return ret;
   }
 
   ret = verify_zero_cpu_node(node_index);
+  if (ret == 0) {
+    ras_log(LOG_DEBUG, "Node index %d is of a CPU-less NUMA node", node_index);
+  }
 
   return ret;
 }
@@ -357,7 +360,8 @@ int show_details_of_numa_nodes() {
       if (regex_match(tok, m, regex_acpi_srat)) {
         res = m[1].str();
         remove_substr(res, "0x");
-        ras_log(LOG_INFO, "Node: %ld     CXL: %s     Address Range: %s", i,
+        ras_log(LOG_INFO, "Node: %-5ldCXL: %-7s Physical Address Range: %-40s",
+                i,
                 ((verify_cpuless_node(i) == NOT_CPULESS_NODE_ERR) ? "False"
                                                                   : "True"),
                 res.c_str());
@@ -495,16 +499,16 @@ int verify_numa_node_addr(const int &node_index, const bool cxl_node,
       l_addr = strtoll(addr.c_str(), NULL, 16);
 
       if ((l_addr >= addr_low) && (l_addr <= addr_high)) {
-        ras_log(LOG_NOTICE, "Address provide %s is valid for node %d",
+        ras_log(LOG_NOTICE, "Address provided %s is valid for node %d",
                 addr.c_str(), node_index);
         ret = 0;
         return ret;
       }
     }
 
-    ras_log(LOG_WARNING,
-            "Address provided %s is NOT valid for NUMA node %d. "
-            "The valid range is [%s-%s]",
+    ras_log(LOG_DEBUG,
+            "Physical address provided %s is NOT valid for NUMA node %d\n"
+            "The valid physical address range is [%s-%s]",
             addr.c_str(), node_index, low.c_str(), high.c_str());
     ret = ADDRESS_NOT_OF_NUMA_NODE_ERR;
   }
@@ -513,11 +517,11 @@ int verify_numa_node_addr(const int &node_index, const bool cxl_node,
 }
 
 int allocate_memory_on_numa_node(const int &noden) {
-  /* Allocate on user-provided CXL node*/
+  /* Allocate on user-provided node*/
   void *ptr;
   uintptr_t paddr;
   int ret = 0;
-  ras_log(LOG_INFO, "Manually allocating memory on node %d", noden);
+  ras_log(LOG_DEBUG, "Manually allocating memory on node %d", noden);
 
   if ((ptr = numa_alloc_onnode(NUMA_ALLOCATION_SIZE, noden)) == 0) {
     ras_log(LOG_CRIT, "Problem in %s line %d allocating memory", __FILE__,
@@ -544,17 +548,19 @@ int allocate_memory_on_numa_node(const int &noden) {
     return ret;
   };
   ras_log(LOG_NOTICE,
-          "Physical address of memory alloc on NUMA CXL node: 0x%jx",
+          "Physical address of memory alloc on NUMA CXL node: 0x%jx. "
+          "This address can be used to inject error using \'-e\' option",
           (uintmax_t)paddr);
 
   // Freeing memory allocated using NUMA library
   numa_free((void *)ptr, NUMA_ALLOCATION_SIZE);
-  ras_log(LOG_NOTICE, "NUMA allocated memory after numa_free is on node %d",
+  ras_log(LOG_DEBUG, "NUMA allocated memory after numa_free is on node %d",
           get_node(ptr));
 
   return 0;
 }
 
+// Error injection using madvise with MADV_HWPOISON flag
 int error_injection(void *paddr) {
   int ret = 0;
 
@@ -567,7 +573,7 @@ int error_injection(void *paddr) {
   }
 
   // Inject memory failure using madvise with MADV_HWPOISON
-  int result = madvise(paddr, 4096, MADV_HWPOISON);
+  int result = madvise(paddr, sysconf(_SC_PAGE_SIZE), MADV_HWPOISON);
   if (result == -1) {
     ras_log(LOG_CRIT, "madvise failed");
     ret = MADVISE_FAIL;
@@ -581,6 +587,8 @@ int error_injection(void *paddr) {
   return ret;
 }
 
+// Mmap a physical address using /dev/mem to get a virtual address that will
+// be used for error injection using madvise
 int error_inject_using_paddr(string lpaddr) {
   int ret = 0, fd;
   void *map_base_d;
@@ -740,17 +748,19 @@ int init() {
 
 void usage() {
   char buf[] =
-      "USAGE: svk_ras_einj [-n <CXL_node_index>] [-l <Value of physical memory "
-      "address for the provied CXL node index in hexadecimal "
-      "format {e.g. '0xabcd1234'}>](optional) [-e (for injecting "
-      "error)](optional)\n"
+      "USAGE: svk_ras_einj [-n <NUMA node index>] [-l <Value of physical memory"
+      " address valid for the NUMA node index in hexadecimal format "
+      "{example: '0xabcd1234'}>] [-e (for injecting error)](optional)\n"
       "OR \n"
-      "svk_ras_einj [-p <process_ID>] [-v <virtual address of process_ID>] [-e "
-      "(for injecting error)](optional)\n"
+      "svk_ras_einj [-p <external process ID>] [-v <virtual address of "
+      "process ID>] [-e (for injecting error)](optional)\n"
       "OR \n"
       "svk_ras_einj [-n <CXL_node_index>] \n"
       "OR \n"
-      "svk_ras_einj [-s (to show detailsof NUMA nodes)]\n";
+      "svk_ras_einj [-s (to show details of NUMA nodes)]\n"
+      "OR \n"
+      "svk_ras_einj -h (to show this usage text)\n";
+
   ras_log(LOG_ERR, "%s", buf);
   cout << buf << endl;
 }
@@ -792,6 +802,18 @@ int main(int argc, char *argv[]) {
           }
         }
         noden = strtol(optarg, NULL, 0);
+        if (noden < 0) {
+          ras_log(LOG_ERR,
+                  "NUMA node index %d is an invalid entry.\n"
+                  "Please consult the NUMA node details below to get"
+                  " a valid node index",
+                  noden);
+          ret = show_details_of_numa_nodes();
+          if (ret != 0) {
+            ras_log(LOG_ERR, "Error in getting detils of NUMA nodes");
+            return ret;
+          }
+        }
         break;
       case 'l':
         len = strlen(optarg);
@@ -847,8 +869,10 @@ int main(int argc, char *argv[]) {
       case 's':
         ret = show_details_of_numa_nodes();
         if (ret != 0) {
+          ras_log(LOG_ERR, "Error in getting details of NUMA nodes");
           return ret;
         }
+        return ret;
         break;
 
       default:
@@ -865,11 +889,28 @@ int main(int argc, char *argv[]) {
 
   bool cxl_node = false;
 
-  if (noden == -1) {
-    noden = get_node(paddr.data());
+  // The command-line arguments are processed in the following order:
+  // 0) Show usage is -h option is used
+  // 1) Provide NUMA node details (node index, CXL NUMA node or not, physical
+  // address range as allocated by the kernel) if -s option is used
+  // 2) If node index and PID of external process not provided, print usage and
+  // return
+  // 3) If node index and physical address provided, validate physical address
+  // with NUMA node index and use that physical address using /dev/mem to mmap
+  // to get a virtual address in this process address space ti inject error
+  // using madvise using MADV_HWPOISON flag
+  // 4) If PID of external process and virtual address in that process address
+  // provided, use that to get corresponding physical address and mmap that
+  // physical address in this process using /dev/mem and use that to inject
+  // error using madvise MADV_HWPOISON flag
+  // 5) If only a node index is provided, validate that as a valid node index
+  // and provide a sample physical address on that node as allocated by the
+  // kernel
+
+  if ((noden == -1) && (pid == -1)) {
+    usage();
     return ret;
-  }
-  if (noden >= 0) {
+  } else if ((noden >= 0) && (paddr.length() > 0)) {
     ret = verify_cxl_numa_node(noden);
     if (ret != 0) {
       cxl_node = false;
@@ -885,10 +926,8 @@ int main(int argc, char *argv[]) {
       cxl_node = true;
       ras_log(LOG_NOTICE, "The provided index %d is of a CXL node", noden);
     }
-  }
 
-  // Verify provided physical address
-  if (paddr.length() > 0) {
+    // Verify provided physical address
     string addr_range;
     ret = verify_numa_node_addr(noden, cxl_node, paddr, addr_range);
     if (ret == 0) {
@@ -897,9 +936,8 @@ int main(int argc, char *argv[]) {
               paddr.c_str(), addr_range.c_str(), noden);
     } else {
       ras_log(LOG_NOTICE,
-              "The address %s [outside range %s] NOT valid on NUMA node %d. "
-              "Return: %d",
-              paddr.c_str(), addr_range.c_str(), noden, ret);
+              "The address %s [outside range %s] NOT valid on NUMA node %d. ",
+              paddr.c_str(), addr_range.c_str(), noden);
     }
     if (raise_error == true) {
       remove_substr(paddr, "0x");
@@ -919,7 +957,7 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  if ((pid >= 1) && (vaddr.length() > 0)) {
+  else if ((pid >= 1) && (vaddr.length() > 0)) {
     int ret = 0;
     if (pid < 0) {
       ras_log(LOG_ERR, "Invalid pid %d", pid);
@@ -957,10 +995,27 @@ int main(int argc, char *argv[]) {
       ras_log(LOG_NOTICE,
               "Please add \'-e\' to inject error using valid PID and virtual "
               "address");
+      return ret;
     }
-  }
+  } else if ((pid >= 1) && (vaddr.length() == 0)) {
+    usage();
+    return ret;
+  } else if (noden >= 0) {
+    ret = verify_cxl_numa_node(noden);
+    if (ret != 0) {
+      cxl_node = false;
+      if (ret == NOT_CPULESS_NODE_ERR)
+        ras_log(LOG_NOTICE, "The provided index %d is NOT of a CXL node",
+                noden);
+      else {
+        ras_log(LOG_DEBUG, "Verification of CXL node %d failed", noden);
+        return ret;
+      }
 
-  if ((pid < 0) && (vaddr.length() == 0) && (paddr.length() == 0)) {
+    } else {
+      cxl_node = true;
+      ras_log(LOG_NOTICE, "The provided index %d is of a CXL node", noden);
+    }
     ret = allocate_memory_on_numa_node(noden);
     if (ret != 0) {
       ras_log(LOG_CRIT, "Failed to allocate memory on NUMA node %d", noden);
