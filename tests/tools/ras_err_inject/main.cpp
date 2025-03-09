@@ -536,21 +536,21 @@ int allocate_memory_on_numa_node(const int &noden) {
    */
   strcpy((char *)ptr, "*");
 
-  // Virtual to physical mapping of the allocated address on the CXL node
+  // Virtual to physical mapping of the allocated address on the NUMA node
   pid_t self_pid;
 
   self_pid = getpid();
   if (virt_to_phys_user(&paddr, self_pid, (uintptr_t)ptr)) {
     ras_log(LOG_ERR,
-            "Failure in mapping virtual to physical addresss of \
-                a NUMA CXL node");
+            "Failure in mapping virtual to physical addresss of a NUMA"
+            " CXL node");
     ret = FAILURE_TO_MAP_VIRTUAL_TO_PHYSICAL_MEM_ERR;
     return ret;
   };
   ras_log(LOG_NOTICE,
-          "Physical address of memory alloc on NUMA CXL node: 0x%jx. "
+          "Physical address of memory alloc on NUMA node %d: 0x%jx. "
           "This address can be used to inject error using \'-e\' option",
-          (uintmax_t)paddr);
+          noden, (uintmax_t)paddr);
 
   // Freeing memory allocated using NUMA library
   numa_free((void *)ptr, NUMA_ALLOCATION_SIZE);
