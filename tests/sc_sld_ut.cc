@@ -115,3 +115,4 @@ TEST_F(ScSldTest, DeleteLd_NonExistentLd) {
   // Assert: Verify that it fails due to non-existent LD
   EXPECT_EQ(result, -2);
 }
+

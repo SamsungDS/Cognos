@@ -19,9 +19,10 @@ extern "C" {
 #define INPUT_CONF_FILE "input.conf"
 #define LOG_CONF_FILE "log.conf"
 
-std::unordered_map<std::string, std::string> tokenize(std::string input);
+const std::unordered_map<std::string, std::string> tokenize(std::string input);
 
-std::unordered_map<std::string, std::string> token_helper(std::string input);
+const std::unordered_map<std::string, std::string> token_helper(
+    std::string input);
 
 std::string ListDevices(std::string input);
 

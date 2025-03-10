@@ -46,7 +46,6 @@ class FabricManagerTest : public ::testing::Test {
     delete fabricManager;
     json_decref(config);
     remove(LOG_CONF_FILE);
-    // svk_logger_close("CXL");
   }
 };
 

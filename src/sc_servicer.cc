@@ -14,12 +14,14 @@
 #include <stdexcept>
 #include <tuple>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 #include "framework_downstream.h"
 #include "sc_cmmb.h"
 #include "sc_cmmd.h"
 #include "sc_cmmh.h"
+#include "sc_dev_manager.h"
 #include "sc_fm.h"
 #include "sc_global.h"
 #include "sc_logger.h"
@@ -39,6 +41,8 @@ sc_global cxl_global;
 
 // function pointers for the commands
 typedef std::string (*CommandFunc)(const std::string&);
+using CommandFuncMap = std::function<std::string(
+    const std::unordered_map<std::string, std::string>&)>;
 
 // Global tuner object
 tuner mt_obj;
@@ -118,6 +122,61 @@ int init_log(const std::string& config_file) {
 }
 
 /**
+ * @brief Processes a JSON API request and extracts relevant parameters.
+ *
+ * This function parses the input JSON request, extracts the `command_name`,
+ * and processes `command_params` into a key-value map.
+ *
+ * @param[in] input_str The raw JSON request as a string.
+ * @param[out] command The extracted command ID.
+ * @param[out] params A map storing parsed command parameters.
+ * @return True if parsing succeeds, false otherwise.
+ */
+bool process_json_request(
+    const std::string& input_str, std::string& command,
+    std::unordered_map<std::string, std::string>& params) {
+  LOG(level_E::INFO, "Processing JSON request.");
+  json_error_t error;
+  json_t* root = json_loads(input_str.c_str(), 0, &error);
+  if (!root) {
+    LOG(level_E::ERROR, "Failed to parse JSON: " + std::string(error.text));
+    return false;
+  }
+  // Extract `command_name`
+  json_t* command_json = json_object_get(root, "command_name");
+  if (!command_json || !json_is_string(command_json)) {
+    LOG(level_E::ERROR, "Missing or invalid 'command_name' in JSON request.");
+    json_decref(root);
+    return false;
+  }
+  command = json_string_value(command_json);
+  LOG(level_E::INFO, "Extracted command_name: " + command);
+  // Extract `command_params`
+  json_t* params_json = json_object_get(root, "command_params");
+  if (params_json && json_is_object(params_json)) {
+    LOG(level_E::INFO, "Extracting command_params...");
+    const char* key;
+    json_t* value;
+    json_object_foreach(params_json, key, value) {
+      if (json_is_string(value)) {
+        params[key] = json_string_value(value);
+        LOG(level_E::INFO, "Param extracted - Key: " + std::string(key) +
+                               ", Value: " + params[key]);
+      } else {
+        params[key] = json_dumps(value, JSON_COMPACT);
+        LOG(level_E::INFO,
+            "Param extracted (Non-string) - Key: " + std::string(key));
+      }
+    }
+  } else {
+    LOG(level_E::INFO, "No command_params found in JSON request.");
+  }
+  json_decref(root);
+  LOG(level_E::INFO, "JSON request processed successfully.");
+  return true;
+}
+
+/**
 @brief Validate the format of an IPv4 address
 @param ip_address - the IP address to validate
 @return true if the IP address is valid, false otherwise
@@ -163,17 +222,18 @@ int get_ip_address(const std::string& filename, std::string& out_ip) {
     return -EINVAL;
   }
   json_t* ip_address = json_object_get(switch_obj, "ip_address");
+  if (!ip_address) {
+    LOG(level_E::ERROR,
+        "`ip_address` key not found in config file: " + filename);
+    json_decref(root);
+    return -ENODATA;
+  }
+
   if (!json_is_string(ip_address)) {
     LOG(level_E::ERROR,
         "`ip_address` is not a string in config file: " + filename);
     json_decref(root);
     return -EINVAL;
-  }
-  if (!ip_address || !json_is_string(ip_address)) {
-    LOG(level_E::ERROR,
-        "`ip_address` key not found in config file: " + filename);
-    json_decref(root);
-    return -ENODATA;
   }
 
   std::string ip_value = json_string_value(ip_address);
@@ -192,12 +252,12 @@ int get_ip_address(const std::string& filename, std::string& out_ip) {
  * @param input - input string having Cluster ID, Command, Device ID etc.
  * @return tokens unordered map
  */
-std::unordered_map<std::string, std::string> tokenize(std::string input) {
+const std::unordered_map<std::string, std::string> tokenize(std::string input) {
   LOG(level_E::INFO, "Parsing tokens from input string: " + input);
   char* s = (char*)input.c_str();
   char* tok = strtok(s, ";");
   char key[256], val[256];
-  std::unordered_map<std::string, std::string> tokens;
+  static std::unordered_map<std::string, std::string> tokens;
   while (tok != NULL) {
     sscanf(tok, "%[a-zA-Z0-9_]=%[/a-zA-Z0-9]", key, val);
     tokens[key] = val;
@@ -213,7 +273,8 @@ std::unordered_map<std::string, std::string> tokenize(std::string input) {
  * @param input - input string having Cluster ID, Command, Device ID etc.
  * @return tokens unordered map
  */
-std::unordered_map<std::string, std::string> token_helper(std::string input) {
+const std::unordered_map<std::string, std::string> token_helper(
+    std::string input) {
   LOG(level_E::INFO, "Tokenizing input string...");
   return tokenize(input);
 }
@@ -628,11 +689,21 @@ svk_status initialize(void*) {
 
   if (init_cxl_plugin() == 0) {
     LOG(level_E::INFO, "CXL plugin initialized successfully.");
-    return SVK_STATUS_SUCCESS;
   } else {
     LOG(level_E::ERROR, "CXL plugin initialization failed.");
     return SVK_STATUS_FAIL;
   }
+
+  try {
+    DeviceManager::getInstance();
+    DeviceRegistry::getInstance();
+    LOG(level_E::INFO, "All singletons initialized successfully.");
+  } catch (const std::exception& e) {
+    LOG(level_E::ERROR, "Initialization failed: " + std::string(e.what()));
+    return SVK_STATUS_FAIL;
+  }
+
+  return SVK_STATUS_SUCCESS;
 }
 
 /*
@@ -671,13 +742,37 @@ svk_status configure_device_if_any(void*, svk_device_ctx*, uint64_t length,
 }
 
 /**
- * @brief Exact feature execution logic will be implemented here
+@brief Command mapping for New API execution.
+*/
+const std::unordered_map<std::string, CommandFuncMap> command_map = {
+    {"list_devices",
+     [](const std::unordered_map<std::string, std::string>& params) {
+       return DeviceManager::getInstance().list_devices(params);
+     }},
+    {"get_device_info",
+     [](const std::unordered_map<std::string, std::string>& params) {
+       return DeviceManager::getInstance().list_devices(params);
+     }},
+    {"attach_memory",
+     [](const std::unordered_map<std::string, std::string>& params) {
+       return DeviceManager::getInstance().attach_memory(params);
+     }},
+    {"detach_memory",
+     [](const std::unordered_map<std::string, std::string>& params) {
+       return DeviceManager::getInstance().detach_memory(params);
+     }}};
+
+/**
+ * @brief Executes API commands synchronously for both old and new formats.
+ *
+ * Supports both semicolon-separated requests (old API) and JSON-based
+ * structured requests (new API).
  *
  * @param pass_thru svk passthrough for command info communication from top
  * level
- * @param input     input buffer struct
- * @param result    output buffer struct
- * @return svk_status Refer to framework_struct.h for return codes
+ * @param input Input buffer containing the request payload
+ * @param output Output buffer where the response will be stored
+ * @return svk_status, Refer to framework_struct.h for return codes
  */
 svk_status execute_sync(svk_pass_thru_cmd*, svk_input* input,
                         svk_output* output) {
@@ -688,31 +783,41 @@ svk_status execute_sync(svk_pass_thru_cmd*, svk_input* input,
   }
   std::string input_str(reinterpret_cast<char*>(input->input_buffer),
                         input->len);
-  LOG(level_E::INFO, "execute_sync received input: " + input_str);
-  std::string commandValue;
-  std::istringstream ss(input_str);
-  std::string token;
-  while (std::getline(ss, token, ';')) {
-    const std::string prefix = "command=";
-    if (token.find(prefix) == 0) {
-      commandValue = token.substr(prefix.length());
-      break;
-    }
-  }
-  LOG(level_E::INFO, "Parsed command: " + commandValue);
-  //@to-do - resolve gcov code coverage for multilines.
-  std::map<std::string, CommandFunc> fw_hooks{
+  LOG(level_E::INFO, "Received API Request: " + input_str);
+  std::string result;
+  std::unordered_map<std::string, std::string> params;
+  std::string command;
+  const std::unordered_map<std::string, CommandFunc> fw_hooks = {
       {"ListDevices", ListDevices},   {"ListHosts", ListHosts},
       {"SetupInfo", SetupInfo},       {"AttachMemory", AttachMemory},
       {"DetachMemory", DetachMemory}, {"StartTuning", StartTuning},
       {"StopTuning", StopTuning}};
-  std::string result;
-  // Execute the corresponding command function
   try {
-    result = fw_hooks.at(commandValue)(input_str);
-  } catch (const std::out_of_range&) {
-    LOG(level_E::ERROR, "Command not found: " + commandValue);
-    return SVK_STATUS_FAIL;
+    // Attempt to process the input as a JSON request
+    if (!process_json_request(input_str, command, params)) {
+      throw std::invalid_argument("Invalid JSON format");
+    }
+    LOG(level_E::INFO, "Parsed JSON command: " + command);
+    // Handle New JSON Request Type
+    auto it = command_map.find(command);
+    if (it == command_map.end()) {
+      LOG(level_E::ERROR, "Command not found in API handlers: " + command);
+      return SVK_STATUS_FAIL;
+    }
+    result = it->second(params);
+  } catch (const std::exception& e) {
+    LOG(level_E::WARN,
+        "Processing as legacy API due to: " + std::string(e.what()));
+    // Old API format processing
+    params = token_helper(input_str);
+    command = params["command"];
+    LOG(level_E::INFO, "Parsed legacy command: " + command);
+    auto it = fw_hooks.find(command);
+    if (it == fw_hooks.end()) {
+      LOG(level_E::ERROR, "Command not found in legacy handlers: " + command);
+      return SVK_STATUS_FAIL;
+    }
+    result = it->second(input_str);
   }
   output->output_buffer = reinterpret_cast<uint8_t*>(strdup(result.c_str()));
   output->len = result.size();

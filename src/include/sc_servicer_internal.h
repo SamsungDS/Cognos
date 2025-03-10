@@ -10,10 +10,6 @@
 
 #include "types.h"
 
-std::unordered_map<std::string, std::string> tokenize(std::string input);
-
-std::unordered_map<std::string, std::string> token_helper(std::string input);
-
 std::string ListDevices(std::string input);
 
 std::string ListHosts(std::string input);
@@ -42,5 +38,10 @@ json_t* parse_input_config(std::string& buffer);
 bool is_file_empty_or_missing(const std::string& file_path);
 
 bool is_valid_ip(const std::string& ip_address);
+
+bool process_json_request(const std::string& input_str, std::string& command,
+                          std::unordered_map<std::string, std::string>& params);
+
+int cmmb_a1_init();
 
 #endif
