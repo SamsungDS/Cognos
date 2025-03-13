@@ -19,6 +19,7 @@
 #define MGMT_FW_LOGGER_DEFAULT_SINK_TYPE "rotating_file"
 #define DEFAULT_CLUSTER_ID "CL_ID_1"
 #define DEFAULT_CONTROLLER_ID "localhost"
+#define DEFAULT_NODE_NAME "node_1"
 #define DEFAULT_CONTROLLER_PORT "9999"
 #define DEFAULT_NODE_ID "localhost"
 #define DEFAULT_NODE_PORT "9998"
@@ -29,6 +30,7 @@ using node_config = struct grpc_node_server_config {
   std::string cluster_id;
   std::string controller_id;
   std::string controller_port;
+  std::string node_name;
   std::string node_id;
   std::string node_port;
   std::string log_level;

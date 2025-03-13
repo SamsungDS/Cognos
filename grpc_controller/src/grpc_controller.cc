@@ -151,68 +151,135 @@ ControllerServicer::~ControllerServicer() {
   return;
 }
 
+/**
+ * @brief Creates a json object which contains a list of nodes in the given
+ * cluster. The returned json object will look like this:
+ * {"cluster_name":"cluster1","nodes":[{"node_name":"test_node1"},{"node_name":"test_node2"}]}
+ *
+ * @param cluster_name cluster to get the list of nodes for
+ * @return nlohmann::json json object containing the list of nodes in the
+ * cluster
+ */
+nlohmann::json ControllerServicer::ClusterResponseJson(
+    std::string cluster_name) {
+  using json = nlohmann::json;
+  json cluster_nodes_resp;
+  cluster_info cluster = new_cluster_map.at(cluster_name);
+  json node_list = json::array();
+  for (auto &node_name : cluster.node_names) {
+    json single_node;
+    single_node["node_name"] = node_name;
+    single_node["status"] =
+        node_status_to_str.at(m_registered_nodes.at(node_name).status);
+    node_list.push_back(single_node);
+  }
+  cluster_nodes_resp["cluster_name"] = cluster_name;
+  cluster_nodes_resp["nodes"] = node_list;
+  return cluster_nodes_resp;
+}
+
 Status ControllerServicer::RegisterNode(ServerContext *ctxt,
                                         const svk::RegisterRequest *req,
                                         svk::RegisterResponse *resp) {
-  std::string cluster_id = req->cluster_id();
-  std::string node_id = req->node_id();
+  std::string node_name = req->node_name();
+  std::string node_ip = req->node_ip();
   std::string node_port = req->node_port();
-  std::string node_info = node_id + ":" + node_port;
+  std::string cluster_name = req->cluster_name();
+
+  node_info node;
   std::string logger_str;
   int status = -1;
   int device_info_status;
 
-  logger_str = "RegisterNode called with cluster_id:" + cluster_id +
-               " node_id:" + node_id;
+  logger_str =
+      "RegisterNode called with node_name:" + node_name + " node_ip:" + node_ip;
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
 
-  if (cluster_id.length() == 0 || node_id.length() == 0 ||
-      node_port.length() == 0) {
+  if (node_ip.length() == 0 || node_port.length() == 0) {
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                "Invalid input. One of the arguments is zero length");
-    resp->set_status(
-        "One of the input parameters (cluster_id/node_id/node_port) is of zero "
+    resp->set_error_id_or_string_if_any(
+        "One of the input parameters (node_name/node_ip/node_port) is of zero "
         "length");
     resp->set_error_code(status);
     return Status(grpc::INVALID_ARGUMENT,
                   "Invalid input - zero length arg given");
   }
 
-  if (m_cluster_map.find(cluster_id) == m_cluster_map.end()) {
-    logger_str = "Registering the cluster_id: " + cluster_id;
-    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-               logger_str.c_str());
-    m_cluster_map[cluster_id][node_id] = node_port;
-    logger_str =
-        "Registered the node_id " + node_info + " with cluster:" + cluster_id;
-    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-               logger_str.c_str());
-  } else {
-    logger_str = "Found the cluster_id: " + cluster_id + " already registered";
-    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-               logger_str.c_str());
+  node.node_ip = node_ip;
+  node.node_port = node_port;
+  node_name.length() > 0 ? node.node_name = node_name
+                         : node.node_name = node_ip;
+  node.cluster_name = "";
+  node.status = NODE_ONLINE;
 
-    if (m_cluster_map[req->cluster_id()].find(node_id) ==
-        m_cluster_map[req->cluster_id()].end()) {
-      m_cluster_map[cluster_id][node_id] = node_port;
-      logger_str =
-          "Registered the node_id " + node_info + " with cluster:" + cluster_id;
+  bool node_exists = false;
+  for (const auto &curr_node : m_registered_nodes) {
+    if (curr_node.second.node_name == node.node_name) {
+      // Node already registered, coming online
+      m_registered_nodes[curr_node.second.node_name].status = NODE_ONLINE;
+      node_exists = true;
+      logger_str = "Node " + curr_node.second.node_name +
+                   " is already registered with the "
+                   "controller, coming online";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                 logger_str.c_str());
+      break;
+    }
+  }
+  // Node not registered yet, add to map
+  if (!node_exists) {
+    m_registered_nodes.insert(std::make_pair(node_name, node));
+    logger_str = "Registered the node " + node.node_name + " with controller.";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
+  }
+
+  // If cluster_name is given, add to old m_cluster_map for backwards
+  // compatibility
+  if (cluster_name.length() != 0) {
+    logger_str =
+        "cluster_name given in node_register request, registering with old "
+        "m_cluster_map";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
+    if (m_cluster_map.find(cluster_name) == m_cluster_map.end()) {
+      logger_str = "Registering the cluster_name: " + cluster_name;
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                 logger_str.c_str());
+      m_cluster_map[cluster_name][node_ip] = node_port;
+      logger_str = "Registered the node_id " + node_ip + ":" + node_port +
+                   " with cluster:" + cluster_name;
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                  logger_str.c_str());
     } else {
-      logger_str = "Node with node_id " + node_info + " already registered";
+      logger_str =
+          "Found the cluster_name: " + cluster_name + " already registered";
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                  logger_str.c_str());
+
+      if (m_cluster_map[cluster_name].find(node_ip) ==
+          m_cluster_map[cluster_name].end()) {
+        m_cluster_map[cluster_name][node_ip] = node_port;
+        logger_str = "Registered the node_id " + node_ip + ":" + node_port +
+                     " with cluster:" + cluster_name;
+        svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                   logger_str.c_str());
+      } else {
+        logger_str = "Node with node_id " + node_ip + ":" + node_port +
+                     " already registered";
+        svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                   logger_str.c_str());
+      }
     }
   }
 
-  device_info_status = g_sla_device_hlpr->GetDeviceInfo(node_id, node_port);
+  device_info_status = g_sla_device_hlpr->GetDeviceInfo(node_ip, node_port);
   if (device_info_status != 0) {
     return Status(grpc::UNKNOWN, "Failed to get devices");
   }
   m_config_changed = true;
   status = 0;
-  resp->set_status("Success");
   resp->set_error_code(status);
   return Status::OK;
 }
@@ -528,6 +595,125 @@ Status ControllerServicer::ListClusterNodes(
     }
   }
   return Status::OK;
+}
+
+Status ControllerServicer::CreateCluster(std::string cluster_name,
+                                         std::string command_params,
+                                         svk::ClusterResponse *resp) {
+  std::string logger_str;
+  cluster_info clstr_info;
+  Status status;
+  using json = nlohmann::json;
+
+  try {
+    auto it = new_cluster_map.find(cluster_name);
+    if (it != new_cluster_map.end()) {
+      logger_str = "Cluster id " + cluster_name + " already exists";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                 logger_str.c_str());
+      status = Status(grpc::ALREADY_EXISTS, "Cluster id already exists");
+      clstr_info = new_cluster_map[cluster_name];
+    } else {
+      // Create a new cluster with nodes in command_params
+      // Go through each node in command_params add to cluster
+      // Expecting proper json string format, fail if can't parse
+
+      json j = json::parse(command_params);
+
+      json node = j["nodes"];
+      for (auto &[key, value] : node.items()) {
+        std::string node_name = value["node_name"];
+        bool node_added = false;
+        // Add node to cluster if node exists and is online
+        if (m_registered_nodes.count(node_name)) {
+          node_info n = m_registered_nodes[node_name];
+          if (n.status == NODE_ONLINE) {
+            clstr_info.cluster_name = cluster_name;
+            clstr_info.node_names.push_back(node_name);
+            new_cluster_map[cluster_name] = clstr_info;
+
+            // Backward compatibility
+            m_cluster_map[cluster_name][n.node_ip] = n.node_port;
+            n.cluster_name = cluster_name;
+            m_registered_nodes[node_name] = n;
+            node_added = true;
+          }
+        }
+        if (!node_added) {
+          logger_str =
+              "Node " + node_name +
+              " is offline or doesn't exist, could not be added to cluster";
+          svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                     logger_str.c_str());
+          m_cluster_map.erase(cluster_name);
+          resp->set_error_id_or_string_if_any(
+              "Invalid node could not be added to cluster");
+          resp->set_error_code(SVK_STATUS_FAIL);
+          return Status(grpc::INVALID_ARGUMENT,
+                        "Invalid node could not be added to cluster");
+        }
+      }
+      new_cluster_map[cluster_name] = clstr_info;
+      logger_str = "Cluster id " + cluster_name + " created";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                 logger_str.c_str());
+      status = Status::OK;
+    }
+    // Create response with nodes in the cluster
+    json cluster = json::array();
+    json nodes_in_cluster = ClusterResponseJson(cluster_name);
+    cluster.push_back(nodes_in_cluster);
+    json response;
+    response["clusters"] = cluster;
+
+    resp->set_command_response(response.dump());
+    resp->set_error_code(SVK_STATUS_SUCCESS);
+  } catch (json::exception &e) {
+    std::string exception_str = e.what();
+    logger_str = "JSON error: " + exception_str;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    resp->set_error_id_or_string_if_any("Error parsing json command_params");
+    resp->set_error_code(SVK_STATUS_FAIL);
+    return Status(grpc::INVALID_ARGUMENT, "Error parsing json command_params");
+  }
+  return status;
+}
+
+Status ControllerServicer::ClusterAPI(ServerContext *ctxt,
+                                      const svk::ClusterRequest *req,
+                                      svk::ClusterResponse *resp) {
+  Status status;
+  std::string cluster_name = req->cluster_name();
+  std::string command_name = req->command_name();
+  std::string command_params = req->command_params();
+  std::string logger_str;
+
+  resp->set_api_version(API_VERSION);
+
+  if (cluster_name.length() == 0 || command_params.length() == 0 ||
+      command_name.length() == 0) {
+    logger_str = "Cluster command called with invalid parameters";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               "Invalid request parameters");
+    resp->set_error_id_or_string_if_any("Invalid request parameters");
+    resp->set_error_code(SVK_STATUS_FAIL);
+    return Status(grpc::INVALID_ARGUMENT, "Invalid request parameters");
+  }
+  if (command_name == "create_cluster") {
+    logger_str = "create_cluster called";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
+    status = CreateCluster(cluster_name, command_params, resp);
+  } else {
+    logger_str = "Invalid command name " + command_name;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    resp->set_error_id_or_string_if_any("Invalid command name");
+    resp->set_error_code(SVK_STATUS_FAIL);
+    status = Status(grpc::INVALID_ARGUMENT, "Invalid command name");
+  }
+  return status;
 }
 
 std::shared_ptr<Server> InitializeServicer(ControllerServicer *svcr) {

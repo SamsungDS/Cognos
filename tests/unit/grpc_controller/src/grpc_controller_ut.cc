@@ -229,8 +229,8 @@ TEST_F(MockTestController, RegisterNodeWithoutDeviceSLAConf) {
 
   svk::RegisterRequest *req(new svk::RegisterRequest());
   svk::RegisterResponse *resp(new svk::RegisterResponse());
-  req->set_cluster_id(cluster_id);
-  req->set_node_id(node_id);
+  req->set_cluster_name(cluster_id);
+  req->set_node_ip(node_id);
   req->set_node_port(node_port);
 
   grpc_status = client.RegisterNode(req, resp);
@@ -255,8 +255,8 @@ TEST_F(MockTestController, RegisterNode) {
 
   svk::RegisterRequest *req(new svk::RegisterRequest());
   svk::RegisterResponse *resp(new svk::RegisterResponse());
-  req->set_cluster_id(cluster_id);
-  req->set_node_id(node_id);
+  req->set_cluster_name(cluster_id);
+  req->set_node_ip(node_id);
   req->set_node_port(node_port);
 
   grpc_status = client.RegisterNode(req, resp);
@@ -265,7 +265,8 @@ TEST_F(MockTestController, RegisterNode) {
   svk_logger_close(CONTROLLER_LOGGER_MODULE_NAME);
 
   ASSERT_EQ(grpc_status.ok(), true);
-  std::cout << "Resp message " << resp->status() << std::endl;
+  std::cout << "Resp message " << resp->error_id_or_string_if_any()
+            << std::endl;
 
   std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
   std::string data((std::istreambuf_iterator<char>(file)),
@@ -275,6 +276,147 @@ TEST_F(MockTestController, RegisterNode) {
   std::string search_str = "Registered the node_id " + node_id + ":" +
                            node_port + " with cluster:" + cluster_id;
   EXPECT_EQ(true, data.find(search_str) != std::string::npos);
+  search_str = "Registered the node " + node_id + " with controller.";
+  EXPECT_EQ(true, data.find(search_str) != std::string::npos);
+}
+
+TEST_F(MockTestController, CreateCluster) {
+  Status grpc_status;
+
+  std::string cluster_name = "CLUSTER_CREATE_CLUSTER";
+  std::string command_name = "create_cluster";
+
+  namespace pt = boost::property_tree;
+  pt::ptree cmd;
+  pt::ptree nodes;
+
+  pt::ptree node;
+  node.put("node_name", "NODE_CREATE_CLUSTER");
+
+  nodes.push_back(std::make_pair("", node));
+  cmd.add_child("nodes", nodes);
+
+  std::stringstream ss;
+  pt::write_json(ss, cmd, false);
+  std::string json_str = ss.str();
+  // test json:
+  // {
+  //     "cluster_name": "CLUSTER_CREATE_CLUSTER",
+  //     "command_name": "create_cluster",
+  //     "command_params": {
+  //         "nodes": [
+  //             {
+  //                 "node_name": "NODE_CREATE_CLUSTER"
+  //             }
+  //         ]
+  //     }
+  // }
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  std::string node_id = "registernodesla.localdomain.com";
+  std::string node_port = "9998";
+  std::string node_name = "NODE_CREATE_CLUSTER";
+
+  svk::RegisterRequest *reg_req(new svk::RegisterRequest());
+  svk::RegisterResponse *reg_resp(new svk::RegisterResponse());
+
+  reg_req->set_node_name(node_name);
+  reg_req->set_node_ip(node_id);
+  reg_req->set_node_port(node_port);
+
+  grpc_status = client.RegisterNode(reg_req, reg_resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+             "Just for flushing logs");
+  std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  std::string data((std::istreambuf_iterator<char>(file)),
+                   (std::istreambuf_iterator<char>()));
+  file.close();
+  std::string search_str =
+      "Registered the node " + node_name + " with controller.";
+  EXPECT_EQ(true, data.find(search_str) != std::string::npos);
+
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+  req->set_cluster_name(cluster_name);
+  req->set_command_name(command_name);
+  req->set_command_params(json_str);
+
+  grpc_status = client.ClusterAPI(req, resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+
+  std::string resp_json = resp->command_response();
+  std::string expected_json =
+      "{\"clusters\":[{\"cluster_name\":\"CLUSTER_CREATE_CLUSTER\",\"nodes\":[{"
+      "\"node_name\":\"NODE_CREATE_CLUSTER\",\"status\":\"online\"}]}]}";
+  EXPECT_EQ(resp_json, expected_json);
+
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+             "Just for flushing logs");
+  std::ifstream file2(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  std::string data2((std::istreambuf_iterator<char>(file2)),
+                    (std::istreambuf_iterator<char>()));
+  file2.close();
+  search_str = "Cluster id " + cluster_name + " created";
+  EXPECT_EQ(true, data2.find(search_str) != std::string::npos);
+}
+
+TEST_F(MockTestController, InvalidParamsClusterAPI) {
+  Status grpc_status;
+  std::string cluster_name = "";
+  std::string command_name = "";
+  std::string command_params = "";
+  std::string logger_str;
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+  req->set_cluster_name(cluster_name);
+  req->set_command_name(command_name);
+  req->set_command_params(command_params);
+
+  grpc_status = client.ClusterAPI(req, resp);
+  EXPECT_EQ(grpc_status.ok(), false);
+  EXPECT_EQ(grpc_status.error_message(), "Invalid request parameters");
+}
+
+TEST_F(MockTestController, InvalidCommandClusterAPI) {
+  Status grpc_status;
+  std::string cluster_name = "CLUSTER_CREATE_CLUSTER";
+  std::string command_name = "invalid";
+  std::string command_params = "test";
+  std::string logger_str;
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+  req->set_cluster_name(cluster_name);
+  req->set_command_name(command_name);
+  req->set_command_params(command_params);
+
+  grpc_status = client.ClusterAPI(req, resp);
+  EXPECT_EQ(grpc_status.ok(), false);
+  EXPECT_EQ(grpc_status.error_message(), "Invalid command name");
+}
+
+TEST_F(MockTestController, InvalidClusterParamsCreateCluster) {
+  Status grpc_status;
+  std::string cluster_name = "CLUSTER_CREATE_CLUSTER";
+  std::string command_name = "create_cluster";
+  std::string command_params = "invalid";
+
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+  req->set_cluster_name(cluster_name);
+  req->set_command_name(command_name);
+  req->set_command_params(command_params);
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  grpc_status = client.ClusterAPI(req, resp);
+  EXPECT_EQ(grpc_status.ok(), false);
+  EXPECT_EQ(grpc_status.error_message(), "Error parsing json command_params");
 }
 
 TEST_F(MockTestController, RegisterNodeWithNullClusterID) {
@@ -284,14 +426,12 @@ TEST_F(MockTestController, RegisterNodeWithNullClusterID) {
 
   svk::RegisterRequest *req(new svk::RegisterRequest());
   svk::RegisterResponse *resp(new svk::RegisterResponse());
-  req->set_node_id("testnode.localdomain.com");
+  req->set_node_ip("testnode.localdomain.com");
   req->set_node_port("9998");
 
   grpc_status = client.RegisterNode(req, resp);
 
-  ASSERT_EQ(grpc_status.ok(), false);
-  ASSERT_EQ(grpc_status.error_message(),
-            "Invalid input - zero length arg given");
+  ASSERT_EQ(grpc_status.ok(), true);
 }
 
 TEST_F(MockTestController, RegisterNodeWithNullNodeID) {
@@ -301,7 +441,7 @@ TEST_F(MockTestController, RegisterNodeWithNullNodeID) {
 
   svk::RegisterRequest *req(new svk::RegisterRequest());
   svk::RegisterResponse *resp(new svk::RegisterResponse());
-  req->set_cluster_id("DUMMY_CLUSTER");
+  req->set_cluster_name("DUMMY_CLUSTER");
   req->set_node_port("9998");
 
   grpc_status = client.RegisterNode(req, resp);
@@ -318,8 +458,8 @@ TEST_F(MockTestController, RegisterNodeWithNullNodePort) {
 
   svk::RegisterRequest *req(new svk::RegisterRequest());
   svk::RegisterResponse *resp(new svk::RegisterResponse());
-  req->set_cluster_id("DUMMY_CLUSTER");
-  req->set_node_id("testnode.localdomain.com");
+  req->set_cluster_name("DUMMY_CLUSTER");
+  req->set_node_ip("testnode.localdomain.com");
 
   grpc_status = client.RegisterNode(req, resp);
 
@@ -343,19 +483,21 @@ TEST_F(MockTestController, RegisterSameNodeAgain) {
 
   svk::RegisterRequest *req(new svk::RegisterRequest());
   svk::RegisterResponse *resp(new svk::RegisterResponse());
-  req->set_cluster_id(cluster_id);
-  req->set_node_id(node_id);
+  req->set_cluster_name(cluster_id);
+  req->set_node_ip(node_id);
   req->set_node_port(node_port);
 
   grpc_status = client.RegisterNode(req, resp);
 
   ASSERT_EQ(grpc_status.ok(), true);
-  std::cout << "Resp message " << resp->status() << std::endl;
+  std::cout << "Resp message " << resp->error_id_or_string_if_any()
+            << std::endl;
 
   grpc_status = client.RegisterNode(req, resp);
 
   ASSERT_EQ(grpc_status.ok(), true);
-  std::cout << "Resp message " << resp->status() << std::endl;
+  std::cout << "Resp message " << resp->error_id_or_string_if_any()
+            << std::endl;
 
   // Forcefully flush the logs
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
@@ -366,10 +508,13 @@ TEST_F(MockTestController, RegisterSameNodeAgain) {
                    (std::istreambuf_iterator<char>()));
   file.close();
   std::string search_str =
-      "Found the cluster_id: " + cluster_id + " already registered";
+      "Found the cluster_name: " + cluster_id + " already registered";
   EXPECT_EQ(true, data.find(search_str) != std::string::npos);
   search_str =
       "Node with node_id " + node_id + ":" + node_port + " already registered";
+  EXPECT_EQ(true, data.find(search_str) != std::string::npos);
+  search_str = "Node " + node_id +
+               " is already registered with the controller, coming online";
   EXPECT_EQ(true, data.find(search_str) != std::string::npos);
 }
 
@@ -387,14 +532,15 @@ TEST_F(MockTestController, UnRegisterNode) {
   // Register the node initially
   svk::RegisterRequest *req(new svk::RegisterRequest());
   svk::RegisterResponse *resp(new svk::RegisterResponse());
-  req->set_cluster_id(cluster_id);
-  req->set_node_id(node_id);
+  req->set_cluster_name(cluster_id);
+  req->set_node_ip(node_id);
   req->set_node_port(node_port);
 
   grpc_status = client.RegisterNode(req, resp);
 
   ASSERT_EQ(grpc_status.ok(), true);
-  std::cout << "Resp message " << resp->status() << std::endl;
+  std::cout << "Resp message " << resp->error_id_or_string_if_any()
+            << std::endl;
 
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
              "Just for flushing logs with UnRegisterNode");
@@ -478,14 +624,15 @@ TEST_F(MockTestController, UnRegisterNodeWithInvalidClusterID) {
   // Register the node initially
   svk::RegisterRequest *req(new svk::RegisterRequest());
   svk::RegisterResponse *resp(new svk::RegisterResponse());
-  req->set_cluster_id("MY_CLUSTER_ID3");
-  req->set_node_id("testnode3.localdomain.com");
+  req->set_cluster_name("MY_CLUSTER_ID3");
+  req->set_node_ip("testnode3.localdomain.com");
   req->set_node_port("9998");
 
   grpc_status = client.RegisterNode(req, resp);
 
   ASSERT_EQ(grpc_status.ok(), true);
-  std::cout << "Resp message " << resp->status() << std::endl;
+  std::cout << "Resp message " << resp->error_id_or_string_if_any()
+            << std::endl;
 
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
              "Just for flushing logs");
@@ -528,14 +675,15 @@ TEST_F(MockTestController, UnRegisterNodeWithInvalidNodeID) {
   // Register the node initially
   svk::RegisterRequest *req(new svk::RegisterRequest());
   svk::RegisterResponse *resp(new svk::RegisterResponse());
-  req->set_cluster_id("CLUSTER_UNREGISTER_NODE_INVALID_ID");
-  req->set_node_id("testnode1.localdomain.com");
+  req->set_cluster_name("CLUSTER_UNREGISTER_NODE_INVALID_ID");
+  req->set_node_ip("testnode1.localdomain.com");
   req->set_node_port("9998");
 
   grpc_status = client.RegisterNode(req, resp);
 
   ASSERT_EQ(grpc_status.ok(), true);
-  std::cout << "Resp message " << resp->status() << std::endl;
+  std::cout << "Resp message " << resp->error_id_or_string_if_any()
+            << std::endl;
 
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
              "Just for flushing logs");
@@ -614,8 +762,8 @@ TEST_F(MockTestController, ListClusterNodesWithSingleCluster) {
 
   svk::RegisterRequest *req(new svk::RegisterRequest());
   svk::RegisterResponse *resp(new svk::RegisterResponse());
-  req->set_cluster_id(cluster_id_1);
-  req->set_node_id(node_id_1);
+  req->set_cluster_name(cluster_id_1);
+  req->set_node_ip(node_id_1);
   req->set_node_port(node_port_1);
 
   grpc_status = client.RegisterNode(req, resp);
@@ -623,7 +771,8 @@ TEST_F(MockTestController, ListClusterNodesWithSingleCluster) {
 
   svk_logger_close(CONTROLLER_LOGGER_MODULE_NAME);
 
-  std::cout << "Resp message " << resp->status() << std::endl;
+  std::cout << "Resp message " << resp->error_id_or_string_if_any()
+            << std::endl;
 
   std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
   std::string data((std::istreambuf_iterator<char>(file)),
@@ -660,15 +809,15 @@ TEST_F(MockTestController, ListClusterNodesWithMultipleClusters) {
 
   svk::RegisterRequest *req(new svk::RegisterRequest());
   svk::RegisterResponse *resp(new svk::RegisterResponse());
-  req->set_cluster_id(cluster_id_1);
-  req->set_node_id(node_id_1);
+  req->set_cluster_name(cluster_id_1);
+  req->set_node_ip(node_id_1);
   req->set_node_port(node_port_1);
 
   grpc_status = client.RegisterNode(req, resp);
   ASSERT_EQ(grpc_status.ok(), true);
 
-  req->set_cluster_id(cluster_id_2);
-  req->set_node_id(node_id_2);
+  req->set_cluster_name(cluster_id_2);
+  req->set_node_ip(node_id_2);
   req->set_node_port(node_port_2);
 
   grpc_status = client.RegisterNode(req, resp);
@@ -676,7 +825,8 @@ TEST_F(MockTestController, ListClusterNodesWithMultipleClusters) {
 
   svk_logger_close(CONTROLLER_LOGGER_MODULE_NAME);
 
-  std::cout << "Resp message " << resp->status() << std::endl;
+  std::cout << "Resp message " << resp->error_id_or_string_if_any()
+            << std::endl;
 
   std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
   std::string data((std::istreambuf_iterator<char>(file)),

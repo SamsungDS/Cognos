@@ -57,3 +57,10 @@ Status Client::UnregisterNode(const svk::UnregisterRequest* req,
   }
   return status;
 }
+
+Status Client::ClusterAPI(const svk::ClusterRequest* req,
+                          svk::ClusterResponse* resp) {
+  ClientContext ctxt;
+  Status status = ctrlr_stub_->ClusterAPI(&ctxt, *req, resp);
+  return status;
+}

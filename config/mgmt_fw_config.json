@@ -13,6 +13,7 @@
           "port": 9999
         },
         "node": {
+          "name": "node_1",
           "id": "localhost",
           "port": 9998
         },

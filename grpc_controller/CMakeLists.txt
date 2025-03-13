@@ -10,13 +10,17 @@ set(PROTOBUF_ABSL_DEPS absl_absl_check absl_absl_log absl_algorithm absl_base ab
 
 set(GRPC_DEPS protobuf grpc++ absl_flags absl_flags_parse)
 
+include(FetchContent)
+FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
+FetchContent_MakeAvailable(json)
+
 set(COMMON_INC_DIR ${PARENT_DIR}/common/include/)
 set(COMMON_SRC_DIR ${PARENT_DIR}/common/src)
 set(SRCS ${GRPC_STUB_SRCS} ${CMAKE_CURRENT_SOURCE_DIR}/src/grpc_controller.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/sla_hlpr_fns.cc ${COMMON_SRC_DIR}/client_library.cc)
 if(BUILD_TESTING)
 set(GRPC_INC_FILES ${COMMON_INC_DIR}/grpc_hdr.h ${COMMON_INC_DIR}/client_library.h ${CMAKE_CURRENT_SOURCE_DIR}/include/grpc_controller.h PARENT_SCOPE)
 endif()
-set(INC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include/)
+set(INC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include/ ${json_SOURCE_DIR}/include)
 
 message(STATUS "SLA compilation flag is ${CXL_SLA_ENABLED}")
 if (CXL_SLA_ENABLED)
@@ -45,6 +49,7 @@ target_link_libraries(${PROJECT_NAME} PUBLIC "${GRPC_LINK_LIBRARIES_FLAG} ${SVK_
 target_link_libraries(${PROJECT_NAME} PUBLIC ${SVK_FW_GRPC_CORE_LIB})
 target_link_libraries(${PROJECT_NAME} PUBLIC zmq)
 target_link_libraries(${PROJECT_NAME} PUBLIC svkzmq)
+target_link_libraries(${PROJECT_NAME} PUBLIC nlohmann_json::nlohmann_json)
 
 
 if(BUILD_TESTING)
