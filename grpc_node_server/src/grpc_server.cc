@@ -45,12 +45,16 @@ int read_svk_conf_file(const std::string svk_conf_file, node_config *config) {
     if (config->framework_conf_file.length() == 0) {
       throw std::invalid_argument("Invalid framework config file");
     }
-    config->cluster_id = mgmt_config_pt.get("cluster.id", DEFAULT_CLUSTER_ID);
+    config->cluster_id = mgmt_config_pt.get("cluster.id", "");
     config->controller_id =
         mgmt_config_pt.get("controller.id", DEFAULT_CONTROLLER_ID);
     config->controller_port = mgmt_config_pt.get<std::string>(
         "controller.port", DEFAULT_CONTROLLER_PORT);
+    config->node_name = mgmt_config_pt.get("node.name", "");
     config->node_id = mgmt_config_pt.get("node.id", DEFAULT_NODE_ID);
+    if (config->node_name.length() == 0) {
+      config->node_name = config->node_id;
+    }
     config->node_port =
         mgmt_config_pt.get<std::string>("node.port", DEFAULT_NODE_PORT);
 
@@ -191,9 +195,10 @@ int RegisterNodeWithController(const node_config &config) {
 
   svk::RegisterRequest *req(new svk::RegisterRequest());
   svk::RegisterResponse *resp(new svk::RegisterResponse());
-  req->set_cluster_id(config.cluster_id);
-  req->set_node_id(config.node_id);
+  req->set_node_name(config.node_name);
+  req->set_node_ip(config.node_id);
   req->set_node_port(config.node_port);
+  req->set_cluster_name(config.cluster_id);
 
   Client client(config.controller_id, config.controller_port);
 
@@ -223,9 +228,10 @@ std::shared_ptr<Server> InitializeNodeServicer(Servicer *svcr) {
     return nullptr;
   }
   config = svcr->get_svk_config();
-  if (config.node_id.length() == 0 || config.node_port.length() == 0) {
+  if (config.node_id.length() == 0 || config.node_port.length() == 0 ||
+      config.node_name.length() == 0) {
     svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR,
-               "Invalid node_id or invalid node port");
+               "Invalid node_name, node_id, or node_port");
     return nullptr;
   }
   std::string server_address = config.node_id + ":" + config.node_port;

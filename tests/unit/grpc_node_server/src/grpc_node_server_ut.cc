@@ -241,7 +241,7 @@ TEST(InitTest, InitWithJSONConfFileWithoutClusterID) {
   Servicer *svcr(new Servicer(conf_file));
   EXPECT_TRUE(svcr->get_state() == true);
   node_config config = svcr->get_svk_config();
-  EXPECT_EQ(config.cluster_id, DEFAULT_CLUSTER_ID);
+  EXPECT_EQ(config.cluster_id, "");
   EXPECT_EQ(config.node_id, DEFAULT_NODE_ID);
   EXPECT_EQ(config.node_port, DEFAULT_NODE_PORT);
   EXPECT_EQ(config.log_level, MGMT_FW_LOGGER_DEFAULT_LEVEL);
