@@ -23,6 +23,7 @@ class Client {
                                 svk::UnregisterResponse* resp);
   virtual Status ClusterAPI(const svk::ClusterRequest* req,
                             svk::ClusterResponse* resp);
+  virtual Status NodeAPI(const svk::NodeRequest* req, svk::NodeResponse* resp);
 
  private:
   std::shared_ptr<Channel> channel;

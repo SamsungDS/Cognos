@@ -57,6 +57,7 @@ using node_info = struct node_info {
   std::string node_name;
   std::string node_ip;
   std::string node_port;
+  std::string node_type;
   std::string cluster_name;
   node_status status;  // Online/offline
 };
@@ -88,6 +89,9 @@ class ControllerServicer : public svk::Controller::Service {
                     svk::ClusterResponse *resp) override;
   Status CreateCluster(std::string cluster_name, std::string command_params,
                        svk::ClusterResponse *resp);
+  Status NodeAPI(ServerContext *ctxt, const svk::NodeRequest *req,
+                 svk::NodeResponse *resp) override;
+  Status ListNodes(svk::NodeResponse *resp);
 
   const std::string &get_svk_config_controller_id() {
     return m_svk_config.controller_id;
