@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+if [ $? -eq 0 ]
+then
+        echo "Pre-requisite python packages verification successful"
+else
+        echo "Pre-requisite python packages verification failed: python packages missing."
+        exit 1
+fi

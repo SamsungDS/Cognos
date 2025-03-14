@@ -7,7 +7,7 @@ Standards-Version: 4.1.4
 
 Package: DEB_PACKAGE_NAME
 Architecture: amd64
-Depends: ${shlibs:Depends}, ${misc:Depends}, svk-mgmt-fw, dstat
+Depends: ${shlibs:Depends}, ${misc:Depends}, svk-mgmt-fw
 Description: SVK Management framework - APIs and services for monitoring and management.
  This package provides APIs and services related to the SVK Management framework,
  including tools for system monitoring and performance analysis.
@@ -15,5 +15,5 @@ Description: SVK Management framework - APIs and services for monitoring and man
 
 Package: DEB_PACKAGE_NAME-dev
 Architecture: amd64
-Depends: svk-mgmt-fw-dev, DEB_PACKAGE_NAME (= ${binary:Version})
+Depends: svk-mgmt-fw-dev 
 Description: SVK CXL Plugin, services

@@ -17,6 +17,8 @@ override_dh_auto_build:
 
 override_dh_auto_install:
 	make DESTDIR=$(CURDIR) prefix=/usr install
+	# copy dependencies
+	cp -r $(CURDIR)/../scripts/dependencies/ $(CURDIR)/$(INSTALL_PATH)
 
 override_dh_usrlocal:
 	# Do nothing, because we are installing to /usr/local even though this is non-standard practice
