@@ -680,6 +680,46 @@ Status ControllerServicer::CreateCluster(std::string cluster_name,
   return status;
 }
 
+/**
+ * This function returns a JSON array of cluster names in a string in a format
+ * of {clusters: [cluster_name_0, cluster_name_1] }.
+ *
+ * @param resp A pointer to svk::ClusterResponse object to store the response.
+ *
+ * @return Status object indicating the status of the operation.
+ */
+Status ControllerServicer::ListClusters(svk::ClusterResponse *resp) {
+  Status status;
+  std::string cluster_name;
+  using json = nlohmann::json;
+  json cluster_names = nlohmann::json::array();
+  json clusters_info;
+
+  status = Status::OK;
+
+  // Iterate through the new_cluster_map and add each cluster name to the
+  // cluster_names array.
+  for (const auto &it : new_cluster_map) {
+    cluster_name = it.first;
+    json name_json;
+    name_json["cluster_name"] = cluster_name;
+    cluster_names.push_back(name_json);
+  }
+
+  // Construct the response JSON object.
+  clusters_info["clusters"] = cluster_names;
+
+  // Set the command response in the resp object.
+  resp->set_command_response(clusters_info.dump());
+
+  std::string logger_str = "ListClusters returns " +
+                           std::to_string(std::size(cluster_names)) +
+                           " cluster names";
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+  resp->set_error_code(SVK_STATUS_SUCCESS);
+  return status;
+}
+
 Status ControllerServicer::ClusterAPI(ServerContext *ctxt,
                                       const svk::ClusterRequest *req,
                                       svk::ClusterResponse *resp) {
@@ -691,8 +731,7 @@ Status ControllerServicer::ClusterAPI(ServerContext *ctxt,
 
   resp->set_api_version(API_VERSION);
 
-  if (cluster_name.length() == 0 || command_params.length() == 0 ||
-      command_name.length() == 0) {
+  if (command_name.length() == 0) {
     logger_str = "Cluster command called with invalid parameters";
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                "Invalid request parameters");
@@ -700,11 +739,16 @@ Status ControllerServicer::ClusterAPI(ServerContext *ctxt,
     resp->set_error_code(SVK_STATUS_FAIL);
     return Status(grpc::INVALID_ARGUMENT, "Invalid request parameters");
   }
+
+  logger_str = command_name + " called";
   if (command_name == "create_cluster") {
-    logger_str = "create_cluster called";
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                logger_str.c_str());
     status = CreateCluster(cluster_name, command_params, resp);
+  } else if (command_name == "list_clusters") {
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
+    status = ListClusters(resp);
   } else {
     logger_str = "Invalid command name " + command_name;
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,

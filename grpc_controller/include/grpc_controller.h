@@ -92,6 +92,7 @@ class ControllerServicer : public svk::Controller::Service {
   Status NodeAPI(ServerContext *ctxt, const svk::NodeRequest *req,
                  svk::NodeResponse *resp) override;
   Status ListNodes(svk::NodeResponse *resp);
+  Status ListClusters(svk::ClusterResponse *resp);
 
   const std::string &get_svk_config_controller_id() {
     return m_svk_config.controller_id;
