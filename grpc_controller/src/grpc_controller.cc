@@ -716,6 +716,82 @@ Status ControllerServicer::ClusterAPI(ServerContext *ctxt,
   return status;
 }
 
+Status ControllerServicer::ListNodes(svk::NodeResponse *resp) {
+  std::string logger_str;
+  Status status;
+
+  //  Creating json in the following format:
+  // {
+  //     "node_info":[
+  //       {
+  //           "node_name":"cognos_node1",
+  //           "node_port":"9998",
+  //           "node_ip": "<IP addr>",
+  //           "node_type": <controller/host>,
+  //           "status": "online/offline"
+  //       },
+  //    ]
+  // }
+  using json = nlohmann::json;
+  json node_info;
+  json node_array = json::array();
+  for (auto &curr_node : m_registered_nodes) {
+    json curr_node_info;
+    curr_node_info["node_name"] = curr_node.second.node_name;
+    curr_node_info["node_port"] = curr_node.second.node_port;
+    curr_node_info["node_ip"] = curr_node.second.node_ip;
+    curr_node_info["status"] = node_status_to_str.at(curr_node.second.status);
+    node_array.push_back(curr_node_info);
+  }
+  node_info["node_info"] = node_array;
+
+  resp->set_error_code(0);
+  resp->set_command_response(node_info.dump());
+  logger_str = "list_nodes called successfully, found " +
+               std::to_string(m_registered_nodes.size()) + " nodes";
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+
+  return Status::OK;
+}
+
+Status ControllerServicer::NodeAPI(ServerContext *ctxt,
+                                   const svk::NodeRequest *req,
+                                   svk::NodeResponse *resp) {
+  std::string logger_str;
+  Status status;
+  std::string cluster_name = req->cluster_name();
+  std::string node_name = req->node_name();
+  std::string feature_id = req->feature_id();
+  std::string command_name = req->command_name();
+  std::string command_params = req->command_params();
+
+  resp->set_api_version(API_VERSION);
+
+  if (command_name.length() == 0) {
+    logger_str = "NodeAPI called with empty command_name";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    resp->set_error_id_or_string_if_any("Invalid node request parameters");
+    resp->set_error_code(1);
+    std::cout << "cmd name len" << std::endl;
+    return Status(grpc::INVALID_ARGUMENT, "Invalid node request parameters");
+  }
+
+  if (command_name == "list_nodes") {
+    status = ListNodes(resp);
+  } else {
+    logger_str = "Invalid command name " + command_name;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    resp->set_error_id_or_string_if_any("Invalid node command name");
+    resp->set_error_code(1);
+    std::cout << resp->error_code() << std::endl;
+    status = Status(grpc::INVALID_ARGUMENT, "Invalid node command name");
+  }
+
+  return status;
+}
+
 std::shared_ptr<Server> InitializeServicer(ControllerServicer *svcr) {
   std::string logger_str;
 

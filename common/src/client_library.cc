@@ -64,3 +64,9 @@ Status Client::ClusterAPI(const svk::ClusterRequest* req,
   Status status = ctrlr_stub_->ClusterAPI(&ctxt, *req, resp);
   return status;
 }
+
+Status Client::NodeAPI(const svk::NodeRequest* req, svk::NodeResponse* resp) {
+  ClientContext ctxt;
+  Status status = ctrlr_stub_->NodeAPI(&ctxt, *req, resp);
+  return status;
+}

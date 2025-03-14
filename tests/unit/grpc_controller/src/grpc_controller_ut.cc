@@ -419,6 +419,65 @@ TEST_F(MockTestController, InvalidClusterParamsCreateCluster) {
   EXPECT_EQ(grpc_status.error_message(), "Error parsing json command_params");
 }
 
+TEST_F(MockTestController, ListNodes) {
+  Status grpc_status;
+
+  std::string cluster_id = "CLUSTER_REGISTER_NODE";
+  std::string node_id = "registernode.localdomain.com";
+  std::string node_port = "9998";
+
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+             "RegisterNode UT called");
+
+  ASSERT_EQ(create_device_sla_conf_json(), 0);
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  svk::RegisterRequest *reg_req(new svk::RegisterRequest());
+  svk::RegisterResponse *reg_resp(new svk::RegisterResponse());
+  reg_req->set_cluster_name(cluster_id);
+  reg_req->set_node_ip(node_id);
+  reg_req->set_node_port(node_port);
+
+  grpc_status = client.RegisterNode(reg_req, reg_resp);
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+             "Just for flushing logs with RegisterNode");
+  svk_logger_close(CONTROLLER_LOGGER_MODULE_NAME);
+
+  ASSERT_EQ(grpc_status.ok(), true);
+
+  svk::NodeRequest *req(new svk::NodeRequest());
+  svk::NodeResponse *resp(new svk::NodeResponse());
+
+  req->set_command_name("list_nodes");
+
+  grpc_status = client.NodeAPI(req, resp);
+  EXPECT_EQ(grpc_status.ok(), true);
+  std::string command_resp = resp->command_response();
+  std::string expected_resp =
+      "{\"node_info\":[{\"node_ip\":\"registernode.localdomain.com\",\"node_"
+      "name\":\"registernode.localdomain.com\",\"node_port\":\"9998\","
+      "\"status\":\"online\"}]}";
+  EXPECT_EQ(command_resp, expected_resp);
+}
+
+TEST_F(MockTestController, ListNodesInvalidCommandName) {
+  Status grpc_status;
+
+  svk::NodeRequest *req(new svk::NodeRequest());
+  svk::NodeResponse *resp(new svk::NodeResponse());
+
+  req->set_command_name("invalid");
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  grpc_status = client.NodeAPI(req, resp);
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+
+  req->set_command_name("");
+  grpc_status = client.NodeAPI(req, resp);
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+}
+
 TEST_F(MockTestController, RegisterNodeWithNullClusterID) {
   Status grpc_status;
 
