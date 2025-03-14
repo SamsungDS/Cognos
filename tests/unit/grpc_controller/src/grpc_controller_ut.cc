@@ -180,13 +180,22 @@ void prepare_clusters(std::vector<int> num_nodes_for_each_cluster) {
  * @return True if the string is found in the log file, false otherwise.
  */
 bool is_str_in_log(std::string search_str) {
-  // Open the log file for reading
-  std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  // Use this call to flush logs immediately
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+             "Just for flushing logs");
 
+  // Check if the log file exists
+  std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  if (!file.good()) {
+    const char *message = CONTROLLER_NODE_DEFAULT_LOG_FILE " doesn't exist";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR, message);
+    return false;
+  }
   // Read the entire log file into a string
   std::string data((std::istreambuf_iterator<char>(file)),
                    (std::istreambuf_iterator<char>()));
 
+  // Close the file
   file.close();
 
   // Check if the search string is found in the log file
@@ -601,9 +610,8 @@ TEST_F(MockTestController, ListClustersEmpty) {
   EXPECT_EQ(grpc_status.ok(), true);
   EXPECT_EQ(resp->command_response(), "{\"clusters\":[]}");
 
-  // TODO: Add log verification after escape character issue is resolved
-  // std::string search_str = "ListClusters returns 0 cluster names";
-  // EXPECT_EQ(is_str_in_log(search_str), true);
+  std::string search_str = "ListClusters returns 0 cluster names";
+  EXPECT_EQ(is_str_in_log(search_str), true);
 }
 
 TEST_F(MockTestController, ListClusters) {
@@ -638,9 +646,8 @@ TEST_F(MockTestController, ListClusters) {
   EXPECT_TRUE(resp->command_response() == str1 ||
               resp->command_response() == str2);
 
-  // TODO: Add log verification after escape character issue is resolved
-  // std::string search_str = "ListClusters returns 2 cluster names";
-  // EXPECT_EQ(is_str_in_log(search_str), true);
+  std::string search_str = "ListClusters returns 2 cluster names";
+  EXPECT_EQ(is_str_in_log(search_str), true);
 }
 
 TEST_F(MockTestController, RegisterNodeWithNullClusterID) {
