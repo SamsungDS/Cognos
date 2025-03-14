@@ -97,6 +97,7 @@ class ControllerServicer : public svk::Controller::Service {
   const std::string &get_svk_config_controller_id() {
     return m_svk_config.controller_id;
   };
+
   const std::string &get_svk_config_controller_port() {
     return m_svk_config.controller_port;
   };

@@ -699,6 +699,7 @@ Status ControllerServicer::ListClusters(svk::ClusterResponse *resp) {
 
   // Iterate through the new_cluster_map and add each cluster name to the
   // cluster_names array.
+
   for (const auto &it : new_cluster_map) {
     cluster_name = it.first;
     json name_json;

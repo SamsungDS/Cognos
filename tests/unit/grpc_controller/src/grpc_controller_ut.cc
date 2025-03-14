@@ -582,6 +582,8 @@ TEST_F(MockTestController, ListNodesInvalidCommandName) {
   req->set_command_name("");
   grpc_status = client.NodeAPI(req, resp);
   EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+}
+
 TEST_F(MockTestController, ListClustersEmpty) {
   Status grpc_status;
   std::string command_name = "list_clusters";
