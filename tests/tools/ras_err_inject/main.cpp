@@ -683,7 +683,8 @@ int fifo_read(char *fifo_name, string &dstr) {
   fd = open(fifo_name, O_RDONLY);
   if (fd == -1) {
     // Create the named FIFO
-    if (fd = mkfifo(fifo_name, 0666) == -1) {
+    fd = mkfifo(fifo_name, 0666);
+    if (fd == -1) {
       ras_log(LOG_ERR, "Error with mkfifo");
       return MKFIFO_FAIL;
     }
@@ -706,10 +707,8 @@ int fifo_read(char *fifo_name, string &dstr) {
 // Start rasdaemon and dump its output to a file.  Those outputs are
 // captured by reading the file and logging it
 int prepare_mce_inject_error_capture_using_rasdaemon() {
-  int fd, ret = 0;
-  // char * myfifo = (char*)("/tmp/rasfifo");
+  int ret = 0;
   char *myfifo = (char *)(fname);
-  int bytesread;
   string str = cf.mce_inject_template_string;
   int cpu = sched_getcpu();
   int node = numa_node_of_cpu(cpu);
