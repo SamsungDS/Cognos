@@ -121,7 +121,7 @@ typedef struct _sig_ucontext {
 void signal_handler(int sig_num, siginfo_t *info, void *ucontext) {
   void *caller_address;
   sig_ucontext_t *uc;
-  void *array[50];
+  void *array[STACK_LENGTH];
   char **messages;
   int size, i;
 
@@ -138,7 +138,7 @@ void signal_handler(int sig_num, siginfo_t *info, void *ucontext) {
   ras_log(LOG_ERR, "signal %d (%s), address is %p from %p\n", sig_num,
           strsignal(sig_num), info->si_addr, (void *)caller_address);
 
-  size = backtrace(array, 50);
+  size = backtrace(array, STACK_LENGTH);
 
   /* overwrite sigaction with caller's address */
   array[1] = caller_address;
@@ -518,7 +518,7 @@ int verify_numa_node_addr(const int &node_index, const bool cxl_node,
     long addr_low, addr_high, l_addr;
     stringstream ss(res);
 
-    // Verify if the address provided is valid in the range specified in 
+    // Verify if the address provided is valid in the range specified in
     // the `cat /proc/iomem` output or from the /var/log/dmesg output
     while (getline(ss, tok, '-')) {
       if (low.empty()) {
