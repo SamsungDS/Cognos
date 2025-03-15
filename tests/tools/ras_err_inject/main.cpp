@@ -508,6 +508,9 @@ int verify_numa_node_addr(const int &node_index, const bool cxl_node,
   string res;
 
   ret = get_numa_node_address_range(node_index, cxl_node, res);
+
+  // Get the address range from `cat /proc/iomem` output for a valid
+  // NUMA node (i.e. a CXL or a non-CXL NUMA node)
   if ((ret == 0) || (ret == IOMEM_NOT_MATCHING_ACPI_SRAT_ERR)) {
     trim(res);
     addr_range = res;
@@ -515,6 +518,8 @@ int verify_numa_node_addr(const int &node_index, const bool cxl_node,
     long addr_low, addr_high, l_addr;
     stringstream ss(res);
 
+    // Verify if the address provided is valid in the range specified in 
+    // the `cat /proc/iomem` output or from the /var/log/dmesg output
     while (getline(ss, tok, '-')) {
       if (low.empty()) {
         low = tok;

@@ -4,6 +4,5 @@
   "regex_iomem": "^[\\s]*[0-9a-z]+-[0-9a-z]+[\\s]*:[\\s]*CXL[\\s]*Window[\\s]*[0-9]+$",
   "regex_addr_range": ".*mem[\\s]*([0-9a-z]+-[0-9a-z]+).*",
   "mce_inject_template_string" : "CPU {cpu} BANK 1\nSTATUS CORRECTED\nADDR {addr}\n",
-  "rasdaemon_exec_command" : "rasdaemon -f -r > ",
-  "xyz" : 0
+  "rasdaemon_exec_command" : "rasdaemon -f -r > "
 }
