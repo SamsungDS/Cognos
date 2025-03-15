@@ -29,6 +29,7 @@
 #include <stack>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 #define NUMA_ALLOCATION_SIZE 4096UL
 #define CONFIG_FILE "config.json"
@@ -36,6 +37,12 @@
 #define ras_log(x, ...) syslog(x, ##__VA_ARGS__)
 #define MAP_SIZE 4096UL
 #define MAP_MASK (MAP_SIZE - 1)
+#define fname "/tmp/svk_ras_inject"
+#define STACK_LENGTH 50
+#define CPU "{cpu}"
+#define ADDR "{addr}"
+#define MCE_INJECT_SAMPLE_FILE "/tmp/test_corrected"
+#define MAX_BUF 1024
 
 using namespace std;
 using namespace rapidjson;
@@ -46,6 +53,8 @@ struct Config {
   string grep_acpi_srat;
   string regex_iomem;
   string regex_addr_range;
+  string mce_inject_template_string;
+  string rasdaemon_exec_command;
 };
 
 // Instantiation of global vars to be used as key-value pairs
@@ -90,7 +99,10 @@ enum {
   INVALID_PID,
   SIGACTION_FAIL,
   PRCTL_FAIL,
-  MADVISE_FAIL
+  MADVISE_FAIL,
+  MKFIFO_FAIL,
+  MCE_INJECT_TEMPLARE_STRING_MISSING_ERR,
+  RASDAEMON_EXEC_COMMAND_MISSING_ERR
 };
 
 /* This structure mirrors the one found in /usr/include/asm/ucontext.h */
@@ -141,6 +153,21 @@ void signal_handler(int sig_num, siginfo_t *info, void *ucontext) {
   free(messages);
 
   exit(sig_num);
+}
+
+// Creating a sample file that can be used with mce-inject
+void file_write(const char *filepath, const char *data) {
+  FILE *fp = fopen(filepath, "w");
+  if (fp != NULL) {
+    fputs(data, fp);
+    fclose(fp);
+  }
+}
+
+// Converting a template string replacing parameters with custon values
+// Converting a tempalte string to mce-inject error injection sample string
+void apply_tmpl(string &tmpl, const string &rep, const string &val) {
+  tmpl.replace(tmpl.find(rep), rep.length(), val);
 }
 
 // Parse the pagemap entry for the given virtual address.
@@ -516,7 +543,7 @@ int verify_numa_node_addr(const int &node_index, const bool cxl_node,
   return ret;
 }
 
-int allocate_memory_on_numa_node(const int &noden) {
+int allocate_memory_on_numa_node(const int &noden, string &addr) {
   /* Allocate on user-provided node*/
   void *ptr;
   uintptr_t paddr;
@@ -551,6 +578,10 @@ int allocate_memory_on_numa_node(const int &noden) {
           "Physical address of memory alloc on NUMA node %d: 0x%jx. "
           "This address can be used to inject error using \'-e\' option",
           noden, (uintmax_t)paddr);
+
+  char t[20];
+  sprintf(t, "%lx", paddr);
+  addr.assign(t);
 
   // Freeing memory allocated using NUMA library
   numa_free((void *)ptr, NUMA_ALLOCATION_SIZE);
@@ -603,9 +634,9 @@ int error_inject_using_paddr(string lpaddr) {
   }
 
   // mmap using the inode descriptor of /dev/mem and offset of physical address
-  map_base_d =
-      (void *)mmap(0, MAP_SIZE, PROT_READ | PROT_WRITE,
-                   MAP_ANONYMOUS | MAP_PRIVATE, fd, target & ~MAP_MASK);
+  map_base_d = (void *)mmap(0, MAP_SIZE, PROT_READ | PROT_WRITE,
+                            MAP_ANONYMOUS | MAP_SHARED, fd, target & ~MAP_MASK);
+  // MAP_ANONYMOUS | MAP_PRIVATE, fd, target & ~MAP_MASK);
   if (map_base_d == MAP_FAILED) {
     ras_log(LOG_CRIT, "Unable to mmap using physical address %ld", target);
     close(fd);
@@ -634,6 +665,67 @@ int error_inject_using_paddr(string lpaddr) {
 
   close(fd);
   munmap(map_base_d, MAP_SIZE);
+
+  return ret;
+}
+
+// Readind the file written to by rasdaemon
+int fifo_read(char *fifo_name, string &dstr) {
+  char buf[MAX_BUF];
+  int fd = -1, bytesread, ret = 0;
+
+  /* open, read, and display the message from the FIFO */
+  fd = open(fifo_name, O_RDONLY);
+  if (fd == -1) {
+    // Create the named FIFO
+    if (fd = mkfifo(fifo_name, 0666) == -1) {
+      ras_log(LOG_ERR, "Error with mkfifo");
+      return MKFIFO_FAIL;
+    }
+    ras_log(LOG_INFO, "Created fifo %s", fifo_name);
+  }
+  // Show rasdaemon output
+  while (1) {
+    bytesread = read(fd, buf, MAX_BUF - 1);
+    if (bytesread > 0) {
+      buf[bytesread] = '\0';
+      ras_log(LOG_NOTICE, "Received: %s\n", buf);
+    } else
+      break;
+  }
+  close(fd);
+  unlink(fifo_name);
+  return ret;
+}
+
+// Start rasdaemon and dump its output to a file.  Those outputs are
+// captured by reading the file and logging it
+int prepare_mce_inject_error_capture_using_rasdaemon() {
+  int fd, ret = 0;
+  // char * myfifo = (char*)("/tmp/rasfifo");
+  char *myfifo = (char *)(fname);
+  int bytesread;
+  string str = cf.mce_inject_template_string;
+  int cpu = sched_getcpu();
+  int node = numa_node_of_cpu(cpu);
+
+  apply_tmpl(str, CPU, to_string(cpu));
+  string dstr;
+  ret = allocate_memory_on_numa_node(node, dstr);
+  if (ret != 0) {
+    printf("Failed to allocate memory on NUMA node %d", node);
+    return ret;
+  }
+  apply_tmpl(str, ADDR, string("0x") + dstr);
+
+  file_write(MCE_INJECT_SAMPLE_FILE, str.c_str());
+  string scmd;
+  scmd = (string)(cf.rasdaemon_exec_command) + string(myfifo);
+  thread tproc(cmd_exec, ref(scmd));
+  thread tpipe(fifo_read, myfifo, ref(dstr));
+
+  tpipe.join();
+  tproc.join();
 
   return ret;
 }
@@ -743,6 +835,35 @@ int init() {
     return ret;
   }
 
+  if (data.HasMember("mce_inject_template_string") &&
+      data["mce_inject_template_string"].IsString()) {
+    cf.mce_inject_template_string =
+        data["mce_inject_template_string"].GetString();
+    ras_log(LOG_INFO, "mce_inject_template_string: %s",
+            cf.mce_inject_template_string.c_str());
+  } else {
+    ras_log(LOG_ERR,
+            "The required key 'mce_inject_template_string' not found in config "
+            "file %s",
+            CONFIG_FILE);
+    ret = MCE_INJECT_TEMPLARE_STRING_MISSING_ERR;
+    return ret;
+  }
+
+  if (data.HasMember("rasdaemon_exec_command") &&
+      data["rasdaemon_exec_command"].IsString()) {
+    cf.rasdaemon_exec_command = data["rasdaemon_exec_command"].GetString();
+    ras_log(LOG_INFO, "rasdaemon_exec_command: %s",
+            cf.rasdaemon_exec_command.c_str());
+  } else {
+    ras_log(
+        LOG_ERR,
+        "The required key 'rasdaemon_exec_command' not found in config file %s",
+        CONFIG_FILE);
+    ret = RASDAEMON_EXEC_COMMAND_MISSING_ERR;
+    return ret;
+  }
+
   return ret;
 }
 
@@ -756,6 +877,8 @@ void usage() {
       "process ID>] [-e (for injecting error)](optional)\n"
       "OR \n"
       "svk_ras_einj [-n <CXL_node_index>] \n"
+      "OR \n"
+      "svk_ras_einj [-c (to capture errors using rasdaemon)]\n"
       "OR \n"
       "svk_ras_einj [-s (to show details of NUMA nodes)]\n"
       "OR \n"
@@ -792,7 +915,7 @@ int main(int argc, char *argv[]) {
   string paddr = "", vaddr = "", ts;
   bool raise_error = false;
 
-  while ((c = getopt(argc, argv, "n:l:v:p:esh")) != -1) switch (c) {
+  while ((c = getopt(argc, argv, "n:l:v:p:cesh")) != -1) switch (c) {
       case 'n':
         for (size_t i = 0; i < strlen(optarg); ++i) {
           if (!isdigit(optarg[i])) {
@@ -870,6 +993,14 @@ int main(int argc, char *argv[]) {
         ret = show_details_of_numa_nodes();
         if (ret != 0) {
           ras_log(LOG_ERR, "Error in getting details of NUMA nodes");
+          return ret;
+        }
+        return ret;
+        break;
+      case 'c':
+        ret = prepare_mce_inject_error_capture_using_rasdaemon();
+        if (ret != 0) {
+          ras_log(LOG_ERR, "Error in capturing rasdaemon error output");
           return ret;
         }
         return ret;
@@ -1016,7 +1147,9 @@ int main(int argc, char *argv[]) {
       cxl_node = true;
       ras_log(LOG_NOTICE, "The provided index %d is of a CXL node", noden);
     }
-    ret = allocate_memory_on_numa_node(noden);
+
+    string dstr;
+    ret = allocate_memory_on_numa_node(noden, dstr);
     if (ret != 0) {
       ras_log(LOG_CRIT, "Failed to allocate memory on NUMA node %d", noden);
       return ret;
