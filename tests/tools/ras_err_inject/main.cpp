@@ -674,7 +674,7 @@ int error_inject_using_paddr(string lpaddr) {
   return ret;
 }
 
-// Readind the file written to by rasdaemon
+// Reading the file/fifo written to by rasdaemon
 int fifo_read(char *fifo_name, string &dstr) {
   char buf[MAX_BUF];
   int fd = -1, bytesread, ret = 0;
