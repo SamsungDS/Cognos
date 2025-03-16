@@ -708,7 +708,9 @@ int fifo_read(char *fifo_name, string &dstr) {
 // captured by reading the file and logging it
 int prepare_mce_inject_error_capture_using_rasdaemon() {
   int ret = 0;
-  char *myfifo = (char *)(fname);
+  char *fifo_name = (char *)(fname);
+
+  // Create a sample test_corrected error injection file for mce-inject
   string str = cf.mce_inject_template_string;
   int cpu = sched_getcpu();
   int node = numa_node_of_cpu(cpu);
@@ -721,12 +723,14 @@ int prepare_mce_inject_error_capture_using_rasdaemon() {
     return ret;
   }
   apply_tmpl(str, ADDR, string("0x") + dstr);
-
   file_write(MCE_INJECT_SAMPLE_FILE, str.c_str());
+
+  // Start rasdaemon and redirect output to a file in one thread and that file
+  // is read in a separate thread
   string scmd;
-  scmd = (string)(cf.rasdaemon_exec_command) + string(myfifo);
+  scmd = (string)(cf.rasdaemon_exec_command) + string(fifo_name);
   thread tproc(cmd_exec, ref(scmd));
-  thread tpipe(fifo_read, myfifo, ref(dstr));
+  thread tpipe(fifo_read, fifo_name, ref(dstr));
 
   tpipe.join();
   tproc.join();
@@ -1041,6 +1045,8 @@ int main(int argc, char *argv[]) {
   // 5) If only a node index is provided, validate that as a valid node index
   // and provide a sample physical address on that node as allocated by the
   // kernel
+  // 6) Start rasdaemon and mce-inject caturing threads if '-c' option is 
+  // provided 
 
   if ((noden == -1) && (pid == -1)) {
     usage();

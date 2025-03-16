@@ -19,6 +19,7 @@ install_packages() {
         wget
         rapidjson-dev
         libnuma-dev
+	rasdaemon
     )
     package_manager
 }
