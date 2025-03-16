@@ -1045,8 +1045,8 @@ int main(int argc, char *argv[]) {
   // 5) If only a node index is provided, validate that as a valid node index
   // and provide a sample physical address on that node as allocated by the
   // kernel
-  // 6) Start rasdaemon and mce-inject caturing threads if '-c' option is 
-  // provided 
+  // 6) Start rasdaemon and mce-inject caturing threads if '-c' option is
+  // provided
 
   if ((noden == -1) && (pid == -1)) {
     usage();
