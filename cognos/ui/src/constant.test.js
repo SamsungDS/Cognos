@@ -24,17 +24,17 @@ describe('mappedHostList', () => {
     const result = constants.mappedHostList(hostList, hostToDeviceMapping);
 
     expect(result).toEqual([
-      { host: 'loaner-emr04', color: '#4F4F4F', isActive: true },
-      { host: 'msl-cti-emr06', color: '#4F4F4F', isActive: true },
-      { host: 'msl-stg-emr03', color: '#4F4F4F', isActive: false }, // Replaced with the next available host
+      { host: 'loaner-emr04', color: '#4F4F4F', isActive: true, "cluster": null },
+      { host: 'msl-cti-emr06', color: '#4F4F4F', isActive: true, "cluster": null },
+      { host: 'msl-stg-emr03', color: '#4F4F4F', isActive: false, "cluster": null }, // Replaced with the next available host
     ]);
   });
 
   test('should keep the original color for hosts without mapping', () => {
     const hostList = [
-      { host: 'loaner-emr04', color: '#0077C8' },
-      { host: 'msl-cti-emr06', color: '#AC55FF' },
-      { host: 'other-host', color: '#4F4F4F' },
+      { host: 'loaner-emr04', color: '#0077C8', "cluster": null },
+      { host: 'msl-cti-emr06', color: '#AC55FF', "cluster": null },
+      { host: 'other-host', color: '#4F4F4F', "cluster": null },
     ];
 
     const hostToDeviceMapping = [
@@ -45,9 +45,9 @@ describe('mappedHostList', () => {
     const result = constants.mappedHostList(hostList, hostToDeviceMapping);
 
     expect(result).toEqual([
-      { host: 'loaner-emr04', color: '#4F4F4F', isActive: true },
-      { host: 'msl-cti-emr06', color: '#4F4F4F', isActive: true },
-      { host: 'other-host', color: '#4F4F4F', isActive: false }, // Original color is kept
+      { host: 'loaner-emr04', color: '#4F4F4F', isActive: true,"cluster": null },
+      { host: 'msl-cti-emr06', color: '#4F4F4F', isActive: true, "cluster": null },
+      { host: 'other-host', color: '#4F4F4F', isActive: false, "cluster": null }, // Original color is kept
     ]);
   });
 });

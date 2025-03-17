@@ -94,21 +94,24 @@ export const memboxTableHeader = [
 
       let newHostName = item.host; // Default to the original host name
       let newColor = "#4F4F4F";
+      let clusterName = null;
       // If a match is found, update the host name and remove it from unusedHostMapping
       // istanbul ignore next
       if (mappedHostIndex !== -1) {
-        newHostName = unusedHostMapping[mappedHostIndex].label;
+        newHostName = unusedHostMapping[mappedHostIndex].label;       
         unusedHostMapping.splice(mappedHostIndex, 1); // Remove used host
       } else if (unusedHostMapping.length > 0) {
         // If no match is found, replace with the next available host from unusedHostMapping
         newColor = item.color;
         newHostName = unusedHostMapping[0].label;
+        clusterName = unusedHostMapping[0].cluster;
         unusedHostMapping.shift(); // Remove the first host (unshifted)
       }
       return {
         ...item,
         host: newHostName, // Update the host name only once
         color: newColor, // Keep the original color
+        cluster: clusterName,
         isActive: mappedHostIndex !== -1 || newHostName !== item.host, // Set isActive based on whether the host was updated
       };
     });

@@ -1,5 +1,12 @@
 import React, { useEffect, useState } from "react";
-import { Container, Row, Col, Badge, Carousel } from "react-bootstrap";
+import {
+  Container,
+  Row,
+  Col,
+  Badge,
+  Carousel,
+  Dropdown,
+} from "react-bootstrap";
 import "rc-slider/assets/index.css";
 import "./BoxTopology.css";
 import {
@@ -31,6 +38,50 @@ const BoxTopology = () => {
   const hostMapEndpoint = Configs.api_endpoint + "/hosts";
   const { handleToggle, selectedOption } = useSelectedOption();
   const [isToggleEnabled, setIsToggleEnabled] = useState(false);
+  const [selectedCluster, setSelectedCluster] = useState("None");
+  const [clusterList, setClusterList] = useState([
+    "None",
+    "Cluster-A",
+    "Cluster-B",
+  ]);
+  // Filtered data
+  const [filteredDataHost, setFilteredDataHost] = useState(hostActiveList);
+  const [filteredDataDevice, setFilteredDataDevice] =
+    useState(hostToDeviceMapping);
+  // Cluster mapping for hosts
+  const hostClusterMapping = {
+    "Host 1": "Cluster-A",
+    "Host 2": "Cluster-A",
+    "Host 3": "Cluster-B",
+    "Host 4": "Cluster-B",
+    "Host 5": "Cluster-A",
+    "Host 6": "Cluster-B",
+    "Host 7": "Cluster-A",
+    "Host 8": "Cluster-B",
+    "Host 9": "Cluster-A",
+    "Host 10": "Cluster-B",
+    "Host 11": "Cluster-A",
+  };
+  // Rules for determining clusters for unknown hosts
+  // istanbul ignore next
+  const determineClusterForUnknownHost = (hostValue) => {
+    // Convert to lowercase for case-insensitive matching
+    const hostLower = hostValue.toLowerCase();
+
+    // Rule 1: Hosts starting with "msl-" go to Cluster-B
+    if (hostLower.startsWith("msl-")) {
+      return "Cluster-B";
+    }
+
+    // Rule 2: Hosts containing "host" go to Cluster-A
+    if (hostLower.includes("host")) {
+      return "Cluster-A";
+    }
+
+    // Default rule: Any other host gets null cluster
+    return null;
+  };
+
   useEffect(
     () => {
       fetchData(hostDeviceMapEndpoint, setHostToDeviceMapping);
@@ -39,16 +90,46 @@ const BoxTopology = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
+  useEffect(() => {
+    // Function to add cluster information to hosts
+    const addClusterToHosts = (hosts) => {
+      return hosts.map((host) => {
+        return {
+          ...host,
+          cluster: determineClusterForUnknownHost(host.value),
+        };
+      });
+    };
 
+    // Function to add cluster information to hosts
+    const addClusterToDevice = (hosts) => {
+      // istanbul ignore next
+      return hosts.map((host) => {
+        return {
+          ...host,
+          cluster: determineClusterForUnknownHost(host.host),
+        };
+      });
+    };
+
+    // Process the API response and update state
+    const hostsWithClusters = addClusterToHosts(hostActiveList);
+    const deviceWithClusters = addClusterToDevice(hostToDeviceMapping);
+    setHostActiveList(hostsWithClusters);
+    setHostToDeviceMapping(deviceWithClusters);
+  }, []);
+  // istanbul ignore next
   useEffect(
     () => {
       // Function to map hosts dynamically from a list
       const mapHosts = (hostNames) => {
         return hostNames.map((hostName) => {
           const { color } = defaultHostProperties[hostName] || {};
+          const cluster = hostClusterMapping[hostName] || null;
           return {
             host: hostName,
             color,
+            cluster,
           };
         });
       };
@@ -59,7 +140,31 @@ const BoxTopology = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
-  
+
+  // Filter function to apply when selected cluster changes
+  // istanbul ignore next
+  useEffect(() => {
+    if (selectedCluster === "None") {
+      // Show all data when None is selected
+      setFilteredDataDevice(hostToDeviceMapping);
+      setFilteredDataHost(hostActiveList);
+    } else {
+      // Filter data based on selected cluster
+      const filtered = hostToDeviceMapping.filter(
+        (item) => item.cluster === selectedCluster
+      );
+      setFilteredDataDevice(filtered);
+
+      const filteredHost = hostActiveList.filter(
+        (host) => host.cluster === selectedCluster
+      );
+      setFilteredDataHost(filteredHost);
+    }
+  }, [selectedCluster]);
+  // istanbul ignore next
+  const filterByCluster = (clusterName) => {
+    setSelectedCluster(clusterName);
+  };
 
   const mappedDeviceViewList = (devices, type) => {
     // istanbul ignore next
@@ -69,10 +174,8 @@ const BoxTopology = () => {
     }));
   };
 
-  const hostDirectView = updateHostListAttached(
-    mergeHosts(hostToDeviceMapping)
-  );
-  
+  const hostDirectView = updateHostListAttached(mergeHosts(filteredDataDevice));
+
   // istanbul ignore next
   const hostDirectViewList = hostDirectView.map((item) => ({
     title: item.host,
@@ -81,22 +184,22 @@ const BoxTopology = () => {
     ),
   }));
 
-  useEffect(()=> {
-    if(hostDirectViewList.length > 0) {
-      setIsToggleEnabled(true)
-    }else {
-      setIsToggleEnabled(false)
+  useEffect(() => {
+    if (hostDirectViewList.length > 0) {
+      setIsToggleEnabled(true);
+    } else {
+      setIsToggleEnabled(false);
     }
-  },[hostDirectViewList])
+  }, [hostDirectViewList]);
 
   const cmmList = [
     {
       title: "CMM-B1",
-      hostComponents: mappedHostList(hostList, hostActiveList),
+      hostComponents: mappedHostList(hostList, filteredDataHost),
       deviceComponents: mappedDeviceList(
         DeviceList,
-        mappedHostList(hostList, hostActiveList),
-        hostToDeviceMapping
+        mappedHostList(hostList, filteredDataHost),
+        filteredDataDevice
       ),
     },
     {
@@ -110,11 +213,11 @@ const BoxTopology = () => {
     },
     {
       title: "CMM-B3",
-      hostComponents: mappedHostList(hostList, hostActiveList),
+      hostComponents: mappedHostList(hostList, filteredDataHost),
       deviceComponents: mappedDeviceList(
         DeviceList,
-        mappedHostList(hostList, hostActiveList),
-        hostToDeviceMapping
+        mappedHostList(hostList, filteredDataHost),
+        filteredDataDevice
       ),
     },
     {
@@ -276,13 +379,16 @@ const BoxTopology = () => {
   };
   // istanbul ignore next
   const handlePrevHostView = () => {
-    setCurrentHostView((prevCMM) => (prevCMM === 0 ? hostDirectView.length-1 : prevCMM - 1));
+    setCurrentHostView((prevCMM) =>
+      prevCMM === 0 ? hostDirectView.length - 1 : prevCMM - 1
+    );
   };
   // istanbul ignore next
   const handleNextHostView = () => {
-    setCurrentHostView((prevCMM) => (prevCMM === hostDirectView.length-1 ? 0 : prevCMM + 1));
+    setCurrentHostView((prevCMM) =>
+      prevCMM === hostDirectView.length - 1 ? 0 : prevCMM + 1
+    );
   };
-
 
   // istanbul ignore next
   return (
@@ -290,37 +396,64 @@ const BoxTopology = () => {
       <Row>
         <Col>
           <div className="cmm-navigation">
-              <div className="toggle-switch-container">
-                <div className="toggle-switch">
-                  <input
-                    type="checkbox"
-                    id="switch"                    
-                    className="toggle-input"
-                    checked={selectedOption === "Host"}
-                    onChange={handleToggle}
-                    disabled={!isToggleEnabled}
-                  />
-                  <label htmlFor="switch" className={`toggle-label ${
-                      isToggleEnabled ? "enabled" : "disabled"
-                    }`}>
-                    <span
-                      className={`toggle-text left ${
-                        selectedOption === "CMM-B" ? "visible" : "hidden"
-                      }`}
-                      // style={{ color: "#535353" }}
+            {/* Add the cluster dropdown here */}
+            <div className="cluster-dropdown-container">
+              <Dropdown>
+                <Dropdown.Toggle
+                  variant="outline-secondary"
+                  id="dropdown-cluster"
+                >
+                  Cluster: {selectedCluster}
+                </Dropdown.Toggle>
+
+                <Dropdown.Menu>
+                  {clusterList.map((cluster, index) => (
+                    <Dropdown.Item
+                      key={index}
+                      onClick={() => filterByCluster(cluster)}
+                      active={selectedCluster === cluster}
                     >
-                      CMM-B
-                    </span>
-                    <span
-                      className={`toggle-text right ${
-                        selectedOption === "Host" ? "visible" : "hidden"
-                      }`}
-                    >
-                      Host
-                    </span>
-                  </label>
-                </div>{" "}
-              </div>
+                      {cluster}
+                    </Dropdown.Item>
+                  ))}
+                </Dropdown.Menu>
+              </Dropdown>
+            </div>
+
+            <div className="toggle-switch-container">
+              <div className="toggle-switch">
+                <input
+                  type="checkbox"
+                  id="switch"
+                  className="toggle-input"
+                  checked={selectedOption === "Host"}
+                  onChange={handleToggle}
+                  disabled={!isToggleEnabled}
+                />
+                <label
+                  htmlFor="switch"
+                  className={`toggle-label ${
+                    isToggleEnabled ? "enabled" : "disabled"
+                  }`}
+                >
+                  <span
+                    className={`toggle-text left ${
+                      selectedOption === "CMM-B" ? "visible" : "hidden"
+                    }`}
+                    // style={{ color: "#535353" }}
+                  >
+                    CMM-B
+                  </span>
+                  <span
+                    className={`toggle-text right ${
+                      selectedOption === "Host" ? "visible" : "hidden"
+                    }`}
+                  >
+                    Host
+                  </span>
+                </label>
+              </div>{" "}
+            </div>
             {selectedOption === "CMM-B" ? (
               <>
                 <button
@@ -346,7 +479,6 @@ const BoxTopology = () => {
                   className="arrow-button right-arrow"
                   data-testid="next-button"
                   onClick={handleNext}
-                  
                 >
                   <img src={ArrowRight} alt="Next" />
                 </button>
@@ -370,7 +502,11 @@ const BoxTopology = () => {
                     {cmm.title}
                   </span>
                 ))}
-                <button className="arrow-button right-arrow" onClick={handleNextHostView} disabled={hostDirectView.length - 1 === currentHostView}>
+                <button
+                  className="arrow-button right-arrow"
+                  onClick={handleNextHostView}
+                  disabled={hostDirectView.length - 1 === currentHostView}
+                >
                   <img src={ArrowRight} alt="Next" />
                 </button>
               </>
@@ -479,4 +615,3 @@ const BoxTopology = () => {
 };
 
 export default BoxTopology;
-

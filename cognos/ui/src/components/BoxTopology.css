@@ -27,7 +27,7 @@
 .device-box {
     margin-top: -7px;
     border: 1px solid #4F4F4F;
-    height: 250px;
+    height: 232px;
     padding-top: 20px;
 }
 .cxl-switch-box {
@@ -355,6 +355,12 @@
   .toggle-label.disabled {
     cursor: not-allowed;
   }
+  .dropdown-item.active, .dropdown-item:active {
+    background-color: #686d74;
+  }
+  .dropdown-menu{
+    --bs-dropdown-bg: #aeb3b980;
+  }
 @media screen and (min-width: 768px) and ( max-width: 1023px) {
     .cxl-switch-scroll {
         margin-left: 6px;
@@ -605,3 +611,28 @@
         font-size: 20px;
     }
 }
+
+.custom-dropdown-toggle {
+    width: 160px; /* Adjust width */
+    text-align: left; /* Align text inside */
+  }
+
+.custom-scroll {
+    width: 150px;
+    max-height: 80px; /* Adjust height */
+    overflow-y: auto;
+  }
+  
+  /* Custom Scrollbar */
+  .custom-scroll::-webkit-scrollbar {
+    width: 6px; /* Scrollbar width */
+  }
+  
+  .custom-scroll::-webkit-scrollbar-thumb {
+    background-color: #484b4d; /* Scrollbar thumb color */
+    border-radius: 10px; /* Rounded corners */
+  }
+  
+  .custom-scroll::-webkit-scrollbar-track {
+    background: #f1f1f1; /* Scrollbar track color */
+  }
