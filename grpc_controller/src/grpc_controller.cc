@@ -603,6 +603,18 @@ Status ControllerServicer::CreateCluster(std::string cluster_name,
   std::string logger_str;
   cluster_info clstr_info;
   Status status;
+
+  if (cluster_name.length() == 0 || command_params.length() == 0) {
+    logger_str = "Cluster command called with invalid parameters";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               "Invalid request parameters for CreateCluster");
+    resp->set_error_id_or_string_if_any(
+        "Invalid request parameters for CreateCluster");
+    resp->set_error_code(SVK_STATUS_FAIL);
+    return Status(grpc::INVALID_ARGUMENT,
+                  "Invalid request parameters for CreateCluster");
+  }
+
   using json = nlohmann::json;
 
   try {
@@ -621,6 +633,13 @@ Status ControllerServicer::CreateCluster(std::string cluster_name,
       json j = json::parse(command_params);
 
       json node = j["nodes"];
+      if (node.empty()) {
+        logger_str = "No nodes found in command_params";
+        svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                   logger_str.c_str());
+        return Status(grpc::INVALID_ARGUMENT,
+                      "No nodes found in command_params");
+      }
       for (auto &[key, value] : node.items()) {
         std::string node_name = value["node_name"];
         bool node_added = false;
@@ -642,15 +661,13 @@ Status ControllerServicer::CreateCluster(std::string cluster_name,
         if (!node_added) {
           logger_str =
               "Node " + node_name +
-              " is offline or doesn't exist, could not be added to cluster";
+              " is offline or not registered, could not be added to cluster";
           svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                      logger_str.c_str());
           m_cluster_map.erase(cluster_name);
-          resp->set_error_id_or_string_if_any(
-              "Invalid node could not be added to cluster");
+          resp->set_error_id_or_string_if_any(logger_str);
           resp->set_error_code(SVK_STATUS_FAIL);
-          return Status(grpc::INVALID_ARGUMENT,
-                        "Invalid node could not be added to cluster");
+          return Status(grpc::INVALID_ARGUMENT, logger_str);
         }
       }
       new_cluster_map[cluster_name] = clstr_info;
@@ -732,16 +749,8 @@ Status ControllerServicer::ClusterAPI(ServerContext *ctxt,
 
   resp->set_api_version(API_VERSION);
 
-  if (command_name.length() == 0) {
-    logger_str = "Cluster command called with invalid parameters";
-    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
-               "Invalid request parameters");
-    resp->set_error_id_or_string_if_any("Invalid request parameters");
-    resp->set_error_code(SVK_STATUS_FAIL);
-    return Status(grpc::INVALID_ARGUMENT, "Invalid request parameters");
-  }
-
   logger_str = command_name + " called";
+
   if (command_name == "create_cluster") {
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                logger_str.c_str());
@@ -751,12 +760,14 @@ Status ControllerServicer::ClusterAPI(ServerContext *ctxt,
                logger_str.c_str());
     status = ListClusters(resp);
   } else {
-    logger_str = "Invalid command name " + command_name;
+    logger_str = "ClusterAPI received invalid command name " + command_name;
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                logger_str.c_str());
-    resp->set_error_id_or_string_if_any("Invalid command name");
+    resp->set_error_id_or_string_if_any(
+        "ClusterAPI received invalid command name");
     resp->set_error_code(SVK_STATUS_FAIL);
-    status = Status(grpc::INVALID_ARGUMENT, "Invalid command name");
+    status = Status(grpc::INVALID_ARGUMENT,
+                    "ClusterAPI received invalid command name");
   }
   return status;
 }

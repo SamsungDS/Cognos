@@ -125,8 +125,6 @@ void prepare_clusters(std::vector<int> num_nodes_for_each_cluster) {
     pt::ptree cmd;
     pt::ptree nodes;
 
-    params.put("cluster_name", cluster_name);
-    params.put("command_name", command_name);
     // For each node, perform initialization and setup
     for (int j = 0; j < num_nodes; j++) {
       pt::ptree node;
@@ -144,8 +142,7 @@ void prepare_clusters(std::vector<int> num_nodes_for_each_cluster) {
       grpc_status = client.RegisterNode(reg_req, reg_resp);
       ASSERT_EQ(grpc_status.ok(), true);
     }
-    cmd.add_child("nodes", nodes);
-    params.add_child("command_params", cmd);
+    params.add_child("nodes", nodes);
 
     std::stringstream ss;
     pt::write_json(ss, params, false);
@@ -494,7 +491,8 @@ TEST_F(MockTestController, InvalidParamsClusterAPI) {
 
   grpc_status = client.ClusterAPI(req, resp);
   EXPECT_EQ(grpc_status.ok(), false);
-  EXPECT_EQ(grpc_status.error_message(), "Invalid request parameters");
+  EXPECT_EQ(grpc_status.error_message(),
+            "ClusterAPI received invalid command name");
 }
 
 TEST_F(MockTestController, InvalidCommandClusterAPI) {
@@ -513,7 +511,8 @@ TEST_F(MockTestController, InvalidCommandClusterAPI) {
 
   grpc_status = client.ClusterAPI(req, resp);
   EXPECT_EQ(grpc_status.ok(), false);
-  EXPECT_EQ(grpc_status.error_message(), "Invalid command name");
+  EXPECT_EQ(grpc_status.error_message(),
+            "ClusterAPI received invalid command name");
 }
 
 TEST_F(MockTestController, InvalidClusterParamsCreateCluster) {
@@ -532,6 +531,80 @@ TEST_F(MockTestController, InvalidClusterParamsCreateCluster) {
   grpc_status = client.ClusterAPI(req, resp);
   EXPECT_EQ(grpc_status.ok(), false);
   EXPECT_EQ(grpc_status.error_message(), "Error parsing json command_params");
+}
+
+TEST_F(MockTestController, EmptyClusterParamsCreateCluster) {
+  Status grpc_status;
+  std::string cluster_name = "cluster1";
+  std::string command_name = "";
+
+  using json = nlohmann::json;
+
+  json cmd_params;
+  json nodes = json::array();
+  cmd_params["nodes"] = nodes;
+  std::string command_params = cmd_params.dump();
+  // namespace pt = boost::property_tree;
+  // pt::ptree cmd;
+  // pt::ptree nodes;
+
+  // pt::ptree node;
+  // //node.put("node_name", "NODE_CREATE_CLUSTER");
+
+  // nodes.push_back(std::make_pair("", node));
+  // cmd.add_child("nodes", nodes);
+
+  // std::stringstream ss;
+  // pt::write_json(ss, cmd, false);
+  // std::string command_params = ss.str();
+  // std::cout << command_params << std::endl;
+
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+  req->set_cluster_name(cluster_name);
+  req->set_command_name(command_name);
+  req->set_command_params(command_params);
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  grpc_status = client.ClusterAPI(req, resp);
+
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+  EXPECT_EQ(grpc_status.error_message(),
+            "ClusterAPI received invalid command name");
+
+  req->set_cluster_name("");
+  req->set_command_name("create_cluster");
+  grpc_status = client.ClusterAPI(req, resp);
+
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+  EXPECT_EQ(grpc_status.error_message(),
+            "Invalid request parameters for CreateCluster");
+
+  req->set_cluster_name("cluster1");
+  req->set_command_params("");
+  grpc_status = client.ClusterAPI(req, resp);
+
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+  EXPECT_EQ(grpc_status.error_message(),
+            "Invalid request parameters for CreateCluster");
+
+  req->set_command_params(cmd_params.dump());
+  grpc_status = client.ClusterAPI(req, resp);
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+  EXPECT_EQ(grpc_status.error_message(), "No nodes found in command_params");
+
+  json invalid_node;
+  invalid_node["node_name"] = "invalid_node";
+  nodes.push_back(invalid_node);
+  cmd_params["nodes"] = nodes;
+  req->set_command_params(cmd_params.dump());
+  grpc_status = client.ClusterAPI(req, resp);
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+  EXPECT_EQ(
+      grpc_status.error_message(),
+      "Node invalid_node is offline or not registered, could not be added "
+      "to cluster");
 }
 
 TEST_F(MockTestController, ListNodes) {
