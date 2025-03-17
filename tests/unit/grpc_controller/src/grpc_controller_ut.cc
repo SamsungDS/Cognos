@@ -87,6 +87,118 @@ int create_svk_mgmt_fw_conf_json_without_logger(std::string conf_file) {
   return 0;
 }
 
+/**
+ * Prepares clusters based on the provided number of nodes for each cluster.
+ *
+ * @param num_nodes_for_each_cluster A vector containing the number of nodes for
+ * each cluster.
+ *
+ */
+void prepare_clusters(std::vector<int> num_nodes_for_each_cluster) {
+  int num_nodes;
+  Status grpc_status;
+  std::string cluster_name;
+  std::string command_name;
+  std::string node_name;
+  namespace pt = boost::property_tree;
+
+  // Initialize variables and perform initial checks
+  int num_clusters = num_nodes_for_each_cluster.size();
+
+  command_name = "create_cluster";
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  svk::RegisterRequest *reg_req(new svk::RegisterRequest());
+  svk::RegisterResponse *reg_resp(new svk::RegisterResponse());
+
+  std::string node_ip;
+  std::string node_port;
+
+  // Iterate over each cluster and perform necessary operations
+  for (int i = 0; i < num_clusters; i++) {
+    num_nodes = num_nodes_for_each_cluster[i];
+
+    cluster_name = "Cluster_" + std::to_string(i);
+
+    pt::ptree params;
+    pt::ptree cmd;
+    pt::ptree nodes;
+
+    // For each node, perform initialization and setup
+    for (int j = 0; j < num_nodes; j++) {
+      pt::ptree node;
+      node_ip = "node." + std::to_string(i * 1000 + j) + ".com";
+      node_port = "9998";
+      node_name = "Node_" + std::to_string(i * 1000 + j);
+
+      node.put("node_name", node_name);
+      nodes.push_back(std::make_pair("", node));
+
+      reg_req->set_node_name(node_name);
+      reg_req->set_node_ip(node_ip);
+      reg_req->set_node_port(node_port);
+
+      grpc_status = client.RegisterNode(reg_req, reg_resp);
+      ASSERT_EQ(grpc_status.ok(), true);
+    }
+    params.add_child("nodes", nodes);
+
+    std::stringstream ss;
+    pt::write_json(ss, params, false);
+    std::string json_str = ss.str();
+    // test json:
+    // {
+    //     "cluster_name": "Cluster_0",
+    //     "command_name": "create_cluster",
+    //     "command_params": {
+    //         "nodes": [
+    //             {
+    //                 "node_name": "Node_0"
+    //             }
+    //         ]
+    //     }
+    // }
+    svk::ClusterRequest *req(new svk::ClusterRequest());
+    svk::ClusterResponse *resp(new svk::ClusterResponse());
+    req->set_cluster_name(cluster_name);
+    req->set_command_name(command_name);
+    req->set_command_params(json_str);
+
+    grpc_status = client.ClusterAPI(req, resp);
+    ASSERT_EQ(grpc_status.ok(), true);
+  }
+}
+
+/**
+ * Checks if a given string exists in the log file.
+ *
+ * @param search_str The string to search for in the log file.
+ * @return True if the string is found in the log file, false otherwise.
+ */
+bool is_str_in_log(std::string search_str) {
+  // Use this call to flush logs immediately
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+             "Just for flushing logs");
+
+  // Check if the log file exists
+  std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  if (!file.good()) {
+    const char *message = CONTROLLER_NODE_DEFAULT_LOG_FILE " doesn't exist";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR, message);
+    return false;
+  }
+  // Read the entire log file into a string
+  std::string data((std::istreambuf_iterator<char>(file)),
+                   (std::istreambuf_iterator<char>()));
+
+  // Close the file
+  file.close();
+
+  // Check if the search string is found in the log file
+  return data.find(search_str) != std::string::npos;
+}
+
 TEST(InitControllerTest, InitSuccess) {
   char *cw_dir = get_current_dir_name();
   std::string conf_file = std::string(cw_dir) + "/conf.json";
@@ -552,6 +664,63 @@ TEST_F(MockTestController, ListNodesInvalidCommandName) {
   req->set_command_name("");
   grpc_status = client.NodeAPI(req, resp);
   EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+}
+
+TEST_F(MockTestController, ListClustersEmpty) {
+  Status grpc_status;
+  std::string command_name = "list_clusters";
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+
+  req->set_command_name(command_name);
+  req->set_cluster_name("");
+  req->set_command_params("");
+
+  grpc_status = client.ClusterAPI(req, resp);
+
+  EXPECT_EQ(grpc_status.ok(), true);
+  EXPECT_EQ(resp->command_response(), "{\"clusters\":[]}");
+
+  std::string search_str = "ListClusters returns 0 cluster names";
+  EXPECT_EQ(is_str_in_log(search_str), true);
+}
+
+TEST_F(MockTestController, ListClusters) {
+  std::vector<int> nodes_for_each_cluster = {2, 3};
+  Status grpc_status;
+  std::string command_name;
+  prepare_clusters(nodes_for_each_cluster);
+
+  command_name = "list_clusters";
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+
+  req->set_command_name(command_name);
+
+  grpc_status = client.ClusterAPI(req, resp);
+
+  EXPECT_EQ(grpc_status.ok(), true);
+
+  // The order of two cluster names may be different, because controller uses
+  // unsorted map.
+  std::string str1 =
+      "{\"clusters\":[{\"cluster_name\":\"Cluster_0\"},"
+      "{\"cluster_name\":\"Cluster_1\"}]}";
+  std::string str2 =
+      "{\"clusters\":[{\"cluster_name\":\"Cluster_1\"},"
+      "{\"cluster_name\":\"Cluster_0\"}]}";
+  std::cout << "Expected response (str1): " << str1 << std::endl;
+  std::cout << "Expected response (str2): " << str2 << std::endl;
+  std::cout << "Actual response: " << resp->command_response() << std::endl;
+  EXPECT_TRUE(resp->command_response() == str1 ||
+              resp->command_response() == str2);
+
+  std::string search_str = "ListClusters returns 2 cluster names";
+  EXPECT_EQ(is_str_in_log(search_str), true);
 }
 
 TEST_F(MockTestController, RegisterNodeWithNullClusterID) {
