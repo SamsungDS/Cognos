@@ -128,9 +128,11 @@ void prepare_clusters(std::vector<int> num_nodes_for_each_cluster) {
     // For each node, perform initialization and setup
     for (int j = 0; j < num_nodes; j++) {
       pt::ptree node;
-      node_ip = "node." + std::to_string(i * 1000 + j) + ".com";
+      // e.g., "node.0.0.com"
+      node_ip = "node." + std::to_string(i) + "." + std::to_string(j) + ".com";
       node_port = "9998";
-      node_name = "Node_" + std::to_string(i * 1000 + j);
+      // e.g., "Node_0_0"
+      node_name = "Node_" + std::to_string(i) + "_" + std::to_string(j);
 
       node.put("node_name", node_name);
       nodes.push_back(std::make_pair("", node));
@@ -154,7 +156,7 @@ void prepare_clusters(std::vector<int> num_nodes_for_each_cluster) {
     //     "command_params": {
     //         "nodes": [
     //             {
-    //                 "node_name": "Node_0"
+    //                 "node_name": "Node_0_0"
     //             }
     //         ]
     //     }
@@ -664,6 +666,83 @@ TEST_F(MockTestController, ListNodesInvalidCommandName) {
   req->set_command_name("");
   grpc_status = client.NodeAPI(req, resp);
   EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+}
+
+TEST_F(MockTestController, DeleteClusterInvalidParam) {
+  Status grpc_status;
+  std::string command_name = "delete_cluster";
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+
+  req->set_command_name(command_name);
+  req->set_cluster_name("");
+  req->set_command_params("");
+
+  grpc_status = client.ClusterAPI(req, resp);
+
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+
+  std::string error_str =
+      "Invalid request parameters for DeleteCluster: cluster_name is null.";
+  EXPECT_EQ(is_str_in_log(error_str), true);
+
+  EXPECT_EQ(grpc_status.error_message(), error_str);
+}
+
+TEST_F(MockTestController, DeleteClusterNotFound) {
+  Status grpc_status;
+  std::string command_name = "delete_cluster";
+  std::string cluster_name = "Cluster_999";
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+
+  req->set_command_name(command_name);
+  req->set_cluster_name(cluster_name);
+  req->set_command_params("");
+
+  grpc_status = client.ClusterAPI(req, resp);
+
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+
+  std::string error_str =
+      "Invalid request parameters for DeleteCluster: " + cluster_name +
+      " not found in deletion";
+  EXPECT_EQ(is_str_in_log(error_str), true);
+
+  EXPECT_EQ(grpc_status.error_message(), error_str);
+}
+
+TEST_F(MockTestController, DeleteCluster) {
+  Status grpc_status;
+  std::vector<int> nodes_for_each_cluster = {2, 3};
+  // Create two clusters (Cluster_0 and Cluster_1) with 2 and 3 nodes,
+  // respectively.
+  prepare_clusters(nodes_for_each_cluster);
+
+  std::string command_name = "delete_cluster";
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+
+  req->set_command_name(command_name);
+  req->set_cluster_name("Cluster_0");
+  req->set_command_params("");
+
+  grpc_status = client.ClusterAPI(req, resp);
+
+  EXPECT_EQ(grpc_status.ok(), true);
+  std::string resp_json = resp->command_response();
+  std::string expected_json =
+      "{\"clusters\":[{\"cluster_name\":\"Cluster_0\",\"nodes\":[{"
+      "\"node_name\":\"Node_0_0\",\"status\":\"online\"},{\"node_name\":\"Node_"
+      "0_1\",\"status\":\"online\"}]}]}";
+  EXPECT_EQ(resp_json, expected_json);
+
+  std::string search_str = "Cluster Cluster_0 removed.";
+  EXPECT_EQ(is_str_in_log(search_str), true);
 }
 
 TEST_F(MockTestController, ListClustersEmpty) {

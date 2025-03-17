@@ -89,6 +89,7 @@ class ControllerServicer : public svk::Controller::Service {
                     svk::ClusterResponse *resp) override;
   Status CreateCluster(std::string cluster_name, std::string command_params,
                        svk::ClusterResponse *resp);
+  Status DeleteCluster(std::string cluster_name, svk::ClusterResponse *resp);
   Status NodeAPI(ServerContext *ctxt, const svk::NodeRequest *req,
                  svk::NodeResponse *resp) override;
   Status ListNodes(svk::NodeResponse *resp);
