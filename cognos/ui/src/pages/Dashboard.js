@@ -109,7 +109,7 @@ const Dashboard = () => {
                         textAlign: "center",
                       }}
                     >
-                      Data is not available
+                      This data is not available for this host
                     </div>
                   </div>
                 </div>
@@ -197,7 +197,7 @@ const Dashboard = () => {
                           marginTop: 50,
                         }}
                       >
-                        Data is not available
+                        This data is not available for this host
                       </div>
                     </div>
                   </div>
@@ -219,7 +219,7 @@ const Dashboard = () => {
                             textAlign: "center",
                           }}
                         >
-                          Data is not available
+                          This data is not available for this host
                         </div>
                       </div>
                     </>
@@ -281,7 +281,7 @@ const Dashboard = () => {
                                 textAlign: "center",
                               }}
                             >
-                              Data is not available
+                              This data is not available for this host
                             </div>
                           </div>
                         )}
@@ -306,7 +306,7 @@ const Dashboard = () => {
                         marginTop: 50,
                       }}
                     >
-                      Data is not available
+                      This data is not available for this host
                     </div>
                   </div>
                 </>
@@ -352,7 +352,7 @@ const Dashboard = () => {
                             marginTop: 50,
                           }}
                         >
-                          Data is not available
+                          This data is not available for this host
                         </div>
                       </div>
                     )}
@@ -375,7 +375,7 @@ const Dashboard = () => {
                       marginTop: 65,
                     }}
                   >
-                    Data is not available
+                    This data is not available for this host
                   </div>
                 </>
               ) : (
@@ -431,7 +431,7 @@ const Dashboard = () => {
                           marginTop: 65,
                         }}
                       >
-                        Data is not available
+                        This data is not available for this host
                       </div>
                     )}
                   </div>

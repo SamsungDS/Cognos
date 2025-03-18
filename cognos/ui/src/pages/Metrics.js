@@ -338,7 +338,7 @@ const Metrics = () => {
               ) : (
                 <div className="spinner-style" style={{ height: 400 }}>
                   <div style={{ color: "white", textAlign: "center", marginTop: 50 }}>
-                      Data is not available
+                    This data is not available for this host
                   </div>
                 </div>
               )}
@@ -384,7 +384,7 @@ const Metrics = () => {
                       ) : (
                         <div className="spinner-style" style={{ height: 250 }}>
                           <div style={{ color: "white", textAlign: "center", marginTop: 50 }}>
-                              Data is not available
+                            This data is not available for this host
                           </div>
                         </div>
                       )}
@@ -427,7 +427,7 @@ const Metrics = () => {
                   ) : (
                     <div className="spinner-style" style={{ height: 250 }}>
                       <div style={{ color: "white", textAlign: "center" }}>
-                          Data is not available
+                        This data is not available for this host
                       </div>
                     </div>
                   ) }
