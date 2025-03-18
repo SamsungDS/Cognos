@@ -734,12 +734,6 @@ TEST_F(MockTestController, DeleteCluster) {
   grpc_status = client.ClusterAPI(req, resp);
 
   EXPECT_EQ(grpc_status.ok(), true);
-  std::string resp_json = resp->command_response();
-  std::string expected_json =
-      "{\"clusters\":[{\"cluster_name\":\"Cluster_0\",\"nodes\":[{"
-      "\"node_name\":\"Node_0_0\",\"status\":\"online\"},{\"node_name\":\"Node_"
-      "0_1\",\"status\":\"online\"}]}]}";
-  EXPECT_EQ(resp_json, expected_json);
 
   std::string search_str = "Cluster Cluster_0 removed.";
   EXPECT_EQ(is_str_in_log(search_str), true);

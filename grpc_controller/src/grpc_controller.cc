@@ -708,7 +708,6 @@ Status ControllerServicer::CreateCluster(std::string cluster_name,
 Status ControllerServicer::DeleteCluster(std::string cluster_name,
                                          svk::ClusterResponse *resp) {
   std::vector<std::string> node_names;
-  using json = nlohmann::json;
   std::string logger_str;
 
   // If cluster_name is empty, return invalid argument error.
@@ -724,9 +723,9 @@ Status ControllerServicer::DeleteCluster(std::string cluster_name,
 
   // Find the cluster by the given cluster_name
   // If not found, return invalid argument error.
-  auto cluster_itr = new_cluster_map.find(cluster_name);
-  if (cluster_itr == new_cluster_map.end()) {
-    std::string logger_str =
+  if (auto cluster_itr = new_cluster_map.find(cluster_name);
+      cluster_itr == new_cluster_map.end()) {
+    logger_str =
         "Invalid request parameters for DeleteCluster: " + cluster_name +
         " not found in deletion";
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
@@ -736,38 +735,18 @@ Status ControllerServicer::DeleteCluster(std::string cluster_name,
     return Status(grpc::INVALID_ARGUMENT, logger_str.c_str());
   }
 
-  try {
-    // Create response with nodes in the cluster
-    json cluster = json::array();
-    json nodes_in_cluster = ClusterResponseJson(cluster_name);
-    cluster.push_back(nodes_in_cluster);
-    json response;
-    response["clusters"] = cluster;
+  // Update new_cluster_map table
+  // Only remove the mapping from cluster_name to node lists. Keep the node
+  // status as registered.
+  new_cluster_map.erase(cluster_name);
 
-    // Update new_cluster_map table
-    // Only remove the mapping from cluster_name to node lists. Keep the node
-    // status as registered.
-    new_cluster_map.erase(cluster_name);
+  // Backward compatibility
+  m_cluster_map.erase(cluster_name);
 
-    // Backward compatibility
-    m_cluster_map.erase(cluster_name);
+  resp->set_error_code(SVK_STATUS_SUCCESS);
 
-    resp->set_command_response(response.dump());
-    resp->set_error_code(SVK_STATUS_SUCCESS);
-
-    logger_str = "Cluster " + cluster_name + " removed.";
-    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-               logger_str.c_str());
-
-  } catch (json::exception &e) {
-    std::string exception_str = e.what();
-    logger_str = "JSON error in create response JSON: " + exception_str;
-    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
-               logger_str.c_str());
-    resp->set_error_id_or_string_if_any(logger_str.c_str());
-    resp->set_error_code(SVK_STATUS_FAIL);
-    return Status(grpc::INVALID_ARGUMENT, logger_str.c_str());
-  }
+  logger_str = "Cluster " + cluster_name + " removed.";
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
 
   return Status::OK;
 }
@@ -834,7 +813,6 @@ Status ControllerServicer::ClusterAPI(ServerContext *ctxt,
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                logger_str.c_str());
     status = DeleteCluster(cluster_name, resp);
-
   } else if (command_name == "list_clusters") {
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                logger_str.c_str());
