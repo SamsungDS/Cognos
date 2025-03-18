@@ -586,8 +586,8 @@ int allocate_memory_on_numa_node(const int &noden, string &addr) {
     return ret;
   };
   ras_log(LOG_NOTICE,
-          "Physical address of memory alloc on NUMA node %d: 0x%jx.",
-          noden, (uintmax_t)paddr);
+          "Physical address of memory alloc on NUMA node %d: 0x%jx.", noden,
+          (uintmax_t)paddr);
 
   stringstream ss;
   ss << hex << paddr;
@@ -683,8 +683,8 @@ int error_injection_using_mce(int32_t pid = -1, int32_t noden = -1,
   string str_to_get_cpu_for_pid = GET_CPU_FROM_PID(pid);
   // Determine the CPU using PID
   cpu = stoi(cmd_exec(ref(str_to_get_cpu_for_pid)));
- 
-  // Find the NUMA node using CPU id 
+
+  // Find the NUMA node using CPU id
   if (noden == -1) {
     node = numa_node_of_cpu(cpu);
     if (node == -1) {
@@ -695,9 +695,11 @@ int error_injection_using_mce(int32_t pid = -1, int32_t noden = -1,
     }
   } else
     node = noden;
-  
-  ras_log(LOG_NOTICE, "PID %d is currently executing on CPU %d using NUMA "
-          "node %d", pid, cpu, node);
+
+  ras_log(LOG_NOTICE,
+          "PID %d is currently executing on CPU %d using NUMA "
+          "node %d",
+          pid, cpu, node);
 
   apply_tmpl(str, CPU, to_string(cpu));
   string dstr;
@@ -1189,8 +1191,8 @@ int main(int argc, char *argv[]) {
     ret = virt_to_phys_user(&lpaddr, pid, lvaddr);
     if (ret != 0) {
       ras_log(LOG_ERR,
-              "Failed to get physical address using pid %d and virtual address "
-              "0x%lX",
+              "Failed to get physical address using pid %d and virtual "
+              "address 0x%lX",
               pid, lvaddr);
       return ret;
     }
