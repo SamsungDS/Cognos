@@ -19,6 +19,7 @@
 #include <unistd.h>
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <fstream>
@@ -43,6 +44,9 @@
 #define ADDR "{addr}"
 #define MCE_INJECT_SAMPLE_FILE "/tmp/test_corrected"
 #define MAX_BUF 1024
+#define MCE_INJECT_CMD "mce-inject"
+#define GET_CPU_FROM_PID(x) \
+  string("cut -d ' ' -f 39 /proc/") + to_string(x) + string("/stat")
 
 using namespace std;
 using namespace rapidjson;
@@ -59,7 +63,7 @@ struct Config {
 
 // Instantiation of global vars to be used as key-value pairs
 Config cf;
-
+atomic<bool> inject_file_ready{false};
 // Struct derived from https://www.kernel.org/doc/Documentation/vm/pagemap.txt
 typedef struct {
   uint64_t pfn : 55;
@@ -102,7 +106,9 @@ enum {
   MADVISE_FAIL,
   MKFIFO_FAIL,
   MCE_INJECT_TEMPLARE_STRING_MISSING_ERR,
-  RASDAEMON_EXEC_COMMAND_MISSING_ERR
+  RASDAEMON_EXEC_COMMAND_MISSING_ERR,
+  NUMA_NODE_PID_ERR,
+  MCE_CONFIG_FILE_EXIST_ERR
 };
 
 /* This structure mirrors the one found in /usr/include/asm/ucontext.h */
@@ -478,7 +484,7 @@ int get_numa_node_address_range(const int &node_index, const bool cxl_node,
             }
             p = strtok(nullptr, "-");
           }
-
+          // Verify that the address is within the max and min limits
           if (((chk_low >= low) && (chk_low <= high)) &&
               ((chk_high >= low) && (chk_high <= high))) {
             ret = 0;
@@ -580,18 +586,137 @@ int allocate_memory_on_numa_node(const int &noden, string &addr) {
     return ret;
   };
   ras_log(LOG_NOTICE,
-          "Physical address of memory alloc on NUMA node %d: 0x%jx. "
-          "This address can be used to inject error using \'-e\' option",
+          "Physical address of memory alloc on NUMA node %d: 0x%jx.",
           noden, (uintmax_t)paddr);
 
-  char t[20];
-  sprintf(t, "%lx", paddr);
-  addr.assign(t);
+  stringstream ss;
+  ss << hex << paddr;
+  addr.assign(ss.str());
 
   // Freeing memory allocated using NUMA library
   numa_free((void *)ptr, NUMA_ALLOCATION_SIZE);
   ras_log(LOG_DEBUG, "NUMA allocated memory after numa_free is on node %d",
           get_node(ptr));
+
+  return 0;
+}
+
+// Reading the file/fifo written to by rasdaemon
+int fifo_read(char *fifo_name, string &dstr) {
+  while (!inject_file_ready.load(memory_order_relaxed)) {
+    // Spin until mce inject file not ready
+  }
+  atomic_thread_fence(memory_order_acquire);  // Acquire fence
+
+  char buf[MAX_BUF];
+  int fd = -1, bytesread, ret = 0;
+
+  /* open, read, and display the message from the FIFO */
+  fd = open(fifo_name, O_RDONLY);
+  if (fd == -1) {
+    // Create the required file in /tmp
+    ifstream file(fifo_name);
+    if (file.good()) {
+      ras_log(LOG_DEBUG, "%s exists", fifo_name);
+    } else {
+      ofstream newFile(fifo_name);
+      ras_log(LOG_ERR,
+              "Please create the appropriate %s before injecting error using "
+              "mce-inject",
+              fifo_name);
+      ret = MCE_CONFIG_FILE_EXIST_ERR;
+      return ret;
+    }
+  }
+  // Show rasdaemon output
+  while (1) {
+    bytesread = read(fd, buf, MAX_BUF - 1);
+    if (bytesread > 0) {
+      buf[bytesread] = '\0';
+      ras_log(LOG_NOTICE, "Received: %s\n", buf);
+    } else
+      break;
+  }
+  close(fd);
+  unlink(fifo_name);
+  return ret;
+}
+
+// Start rasdaemon and dump its output to a file.  Those outputs are
+// captured by reading the file and logging it
+int prepare_mce_inject_error_capture_using_rasdaemon() {
+  int ret = 0;
+  char *fifo_name = (char *)(fname);
+
+  // Start rasdaemon and redirect output to a file in one thread and that file
+  // is read in a separate thread
+  string scmd;
+  scmd = (string)(cf.rasdaemon_exec_command) + string(fifo_name);
+  thread tproc(cmd_exec, ref(scmd));
+
+  // Ensuring that inject config file to be used is ready before waiting for
+  //  rasdaemon output
+  atomic_thread_fence(std::memory_order_release);  // Release fence
+  inject_file_ready.store(true, std::memory_order_relaxed);
+
+  string dstr;
+  thread tpipe(fifo_read, fifo_name, ref(dstr));
+
+  tpipe.join();
+  tproc.join();
+
+  return ret;
+}
+
+// Error injection using mce-inject
+int error_injection_using_mce(int32_t pid = -1, int32_t noden = -1,
+                              const string addr = "") {
+  int ret = 0;
+  // char *fifo_name = (char *)(fname);
+  int cpu = -1, node = -1;
+
+  // Create a sample test_corrected error injection file for mce-inject
+  string str = cf.mce_inject_template_string;
+  if (pid == -1) {
+    pid = getpid();
+  }
+  string str_to_get_cpu_for_pid = GET_CPU_FROM_PID(pid);
+  // Determine the CPU using PID
+  cpu = stoi(cmd_exec(ref(str_to_get_cpu_for_pid)));
+ 
+  // Find the NUMA node using CPU id 
+  if (noden == -1) {
+    node = numa_node_of_cpu(cpu);
+    if (node == -1) {
+      ras_log(LOG_ERR,
+              " Cannot determine NUMA node for the provided process ID %d",
+              pid);
+      return NUMA_NODE_PID_ERR;
+    }
+  } else
+    node = noden;
+  
+  ras_log(LOG_NOTICE, "PID %d is currently executing on CPU %d using NUMA "
+          "node %d", pid, cpu, node);
+
+  apply_tmpl(str, CPU, to_string(cpu));
+  string dstr;
+  dstr.assign(addr);
+  if ((node == -1) || (dstr == "")) {
+    ret = allocate_memory_on_numa_node(node, dstr);
+    if (ret != 0) {
+      ras_log(LOG_ERR, "Failed to allocate memory on NUMA node %d", node);
+      return ret;
+    }
+  }
+  apply_tmpl(str, ADDR, string("0x") + dstr);
+  // Apply the changes to mce-inject error config file
+  file_write(MCE_INJECT_SAMPLE_FILE, str.c_str());
+
+  prepare_mce_inject_error_capture_using_rasdaemon();
+  // After creating the /tmp/test_corrceted we execute "mce-inject
+  // /tmp/test_corrected"
+  // cmd_exec(string(MCE_INJECT_CMD) + string(" ") + string(fname));
 
   return 0;
 }
@@ -670,70 +795,6 @@ int error_inject_using_paddr(string lpaddr) {
 
   close(fd);
   munmap(map_base_d, MAP_SIZE);
-
-  return ret;
-}
-
-// Reading the file/fifo written to by rasdaemon
-int fifo_read(char *fifo_name, string &dstr) {
-  char buf[MAX_BUF];
-  int fd = -1, bytesread, ret = 0;
-
-  /* open, read, and display the message from the FIFO */
-  fd = open(fifo_name, O_RDONLY);
-  if (fd == -1) {
-    // Create the named FIFO
-    fd = mkfifo(fifo_name, 0666);
-    if (fd == -1) {
-      ras_log(LOG_ERR, "Error with mkfifo");
-      return MKFIFO_FAIL;
-    }
-    ras_log(LOG_INFO, "Created fifo %s", fifo_name);
-  }
-  // Show rasdaemon output
-  while (1) {
-    bytesread = read(fd, buf, MAX_BUF - 1);
-    if (bytesread > 0) {
-      buf[bytesread] = '\0';
-      ras_log(LOG_NOTICE, "Received: %s\n", buf);
-    } else
-      break;
-  }
-  close(fd);
-  unlink(fifo_name);
-  return ret;
-}
-
-// Start rasdaemon and dump its output to a file.  Those outputs are
-// captured by reading the file and logging it
-int prepare_mce_inject_error_capture_using_rasdaemon() {
-  int ret = 0;
-  char *fifo_name = (char *)(fname);
-
-  // Create a sample test_corrected error injection file for mce-inject
-  string str = cf.mce_inject_template_string;
-  int cpu = sched_getcpu();
-  int node = numa_node_of_cpu(cpu);
-
-  apply_tmpl(str, CPU, to_string(cpu));
-  string dstr;
-  ret = allocate_memory_on_numa_node(node, dstr);
-  if (ret != 0) {
-    printf("Failed to allocate memory on NUMA node %d", node);
-    return ret;
-  }
-  apply_tmpl(str, ADDR, string("0x") + dstr);
-  file_write(MCE_INJECT_SAMPLE_FILE, str.c_str());
-
-  // Start rasdaemon and redirect output to a file in one thread and that file
-  // is read in a separate thread
-  string scmd;
-  scmd = (string)(cf.rasdaemon_exec_command) + string(fifo_name);
-  thread tproc(cmd_exec, ref(scmd));
-  thread tpipe(fifo_read, fifo_name, ref(dstr));
-
-  tpipe.join();
-  tproc.join();
 
   return ret;
 }
@@ -879,12 +940,14 @@ void usage() {
   char buf[] =
       "USAGE: svk_ras_einj [-n <NUMA node index>] [-l <Value of physical memory"
       " address valid for the NUMA node index in hexadecimal format "
-      "{example: '0xabcd1234'}>] [-e (for injecting error)](optional)\n"
+      "{example: '0xabcd1234'}>] \n"
       "OR \n"
       "svk_ras_einj [-p <external process ID>] [-v <virtual address of "
-      "process ID>] [-e (for injecting error)](optional)\n"
+      "process ID>] \n"
       "OR \n"
       "svk_ras_einj [-n <CXL_node_index>] \n"
+      "OR \n"
+      "svk_ras_einj [-n <CXL_node_index>] [ -p <external process ID>] \n"
       "OR \n"
       "svk_ras_einj [-c (to capture errors using rasdaemon)]\n"
       "OR \n"
@@ -923,7 +986,7 @@ int main(int argc, char *argv[]) {
   string paddr = "", vaddr = "", ts;
   bool raise_error = false;
 
-  while ((c = getopt(argc, argv, "n:l:v:p:cesh")) != -1) switch (c) {
+  while ((c = getopt(argc, argv, "n:l:p:v:cesh")) != -1) switch (c) {
       case 'n':
         for (size_t i = 0; i < strlen(optarg); ++i) {
           if (!isdigit(optarg[i])) {
@@ -1036,16 +1099,22 @@ int main(int argc, char *argv[]) {
   // return
   // 3) If node index and physical address provided, validate physical address
   // with NUMA node index and use that physical address using /dev/mem to mmap
-  // to get a virtual address in this process address space ti inject error
-  // using madvise using MADV_HWPOISON flag
+  // to get a virtual address in this process address space to inject error
+  // using madvise using MADV_HWPOISON flag OR use the physical address to
+  // populate /tmp/test_corrected to inject error using mce-inject
   // 4) If PID of external process and virtual address in that process address
   // provided, use that to get corresponding physical address and mmap that
   // physical address in this process using /dev/mem and use that to inject
-  // error using madvise MADV_HWPOISON flag
+  // error using madvise MADV_HWPOISON flag OR use the physical address to
+  // populate /tmp/test_corrected to inject error using mce-inject
   // 5) If only a node index is provided, validate that as a valid node index
   // and provide a sample physical address on that node as allocated by the
-  // kernel
-  // 6) Start rasdaemon and mce-inject caturing threads if '-c' option is
+  // kernel and use the physical address to populate /tmp/test_corrected to
+  // inject error using mce-inject
+  // 6) If only a PID is provided, use that PID to get the current CPU and the
+  // NUMA node; use NUMA node to get a physical address to populate
+  // /tmp/test_corrected to inject error using mce-inject
+  // 7) Start rasdaemon and mce-inject capturing threads if '-c' option is
   // provided
 
   if ((noden == -1) && (pid == -1)) {
@@ -1079,6 +1148,7 @@ int main(int argc, char *argv[]) {
       ras_log(LOG_NOTICE,
               "The address %s [outside range %s] NOT valid on NUMA node %d. ",
               paddr.c_str(), addr_range.c_str(), noden);
+      return ret;
     }
     if (raise_error == true) {
       remove_substr(paddr, "0x");
@@ -1092,9 +1162,15 @@ int main(int argc, char *argv[]) {
       }
 
     } else {
-      ras_log(LOG_NOTICE,
-              "Please add \'-e\' to inject error using valid physical address");
-      return ret;
+      remove_substr(paddr, "0x");
+      ret = error_injection_using_mce(pid, noden, paddr);
+      if (ret != 0) {
+        ras_log(LOG_ERR,
+                "Error setting up for mce-inject with node %d and physical "
+                "address %s",
+                noden, paddr.c_str());
+        return ret;
+      }
     }
   }
 
@@ -1123,8 +1199,8 @@ int main(int argc, char *argv[]) {
             "The physical address:0x%lX can/will be used for error injection",
             lpaddr);
 
+    sprintf(s_paddr.data(), "%lX", lpaddr);
     if (raise_error == true) {
-      sprintf(s_paddr.data(), "%lX", lpaddr);
       ret = error_inject_using_paddr(s_paddr);
       if (ret != 0) {
         ras_log(LOG_ERR,
@@ -1133,15 +1209,17 @@ int main(int argc, char *argv[]) {
         return ret;
       }
     } else {
-      ras_log(LOG_NOTICE,
-              "Please add \'-e\' to inject error using valid PID and virtual "
-              "address");
-      return ret;
+      ret = error_injection_using_mce(pid, noden, s_paddr);
+      if (ret != 0) {
+        ras_log(LOG_ERR,
+                "Error setting up for mce-inject with pid %d and virtual "
+                "address %s with physical address 0x%lX",
+                pid, vaddr.c_str(), lpaddr);
+        return ret;
+      }
     }
-  } else if ((pid >= 1) && (vaddr.length() == 0)) {
-    usage();
-    return ret;
   } else if (noden >= 0) {
+    string dstr;
     ret = verify_cxl_numa_node(noden);
     if (ret != 0) {
       cxl_node = false;
@@ -1158,10 +1236,34 @@ int main(int argc, char *argv[]) {
       ras_log(LOG_NOTICE, "The provided index %d is of a CXL node", noden);
     }
 
-    string dstr;
     ret = allocate_memory_on_numa_node(noden, dstr);
     if (ret != 0) {
       ras_log(LOG_CRIT, "Failed to allocate memory on NUMA node %d", noden);
+      return ret;
+    }
+
+    if ((pid >= 1)) {
+      ret = error_injection_using_mce(pid, noden, dstr);
+      if (ret != 0) {
+        ras_log(LOG_CRIT,
+                "Error setting up for mce-inject for PID %d on NUMA node %d",
+                pid, noden);
+        return ret;
+      }
+
+    } else {
+      ret = error_injection_using_mce(pid, noden, dstr);
+      if (ret != 0) {
+        ras_log(LOG_CRIT,
+                "Error setting up for mce-inject for PID %d on NUMA node %d",
+                pid, noden);
+        return ret;
+      }
+    }
+  } else if (pid >= 1) {
+    ret = error_injection_using_mce(pid, noden);
+    if (ret != 0) {
+      ras_log(LOG_CRIT, "Error setting up for mce-inject for PID %d ", pid);
       return ret;
     }
   }
