@@ -698,6 +698,72 @@ Status ControllerServicer::CreateCluster(std::string cluster_name,
 }
 
 /**
+ * Deletes the specified cluster.
+ *
+ * @param cluster_name The name of the cluster to delete.
+ * @param resp A pointer to the ClusterResponse object to store the information
+ * of deleted cluster.
+ * @return Status indicating the success or failure of the operation.
+ */
+Status ControllerServicer::DeleteCluster(std::string cluster_name,
+                                         svk::ClusterResponse *resp) {
+  std::vector<std::string> node_names;
+  node_info node;
+  std::string logger_str;
+
+  // If cluster_name is empty, return invalid argument error.
+  if (cluster_name.length() == 0) {
+    logger_str =
+        "Invalid request parameters for DeleteCluster: cluster_name is null.";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    resp->set_error_id_or_string_if_any(logger_str.c_str());
+    resp->set_error_code(SVK_STATUS_FAIL);
+    return Status(grpc::INVALID_ARGUMENT, logger_str.c_str());
+  }
+
+  // Find the cluster by the given cluster_name
+  // If not found, return invalid argument error.
+  if (auto cluster_itr = new_cluster_map.find(cluster_name);
+      cluster_itr == new_cluster_map.end()) {
+    logger_str =
+        "Invalid request parameters for DeleteCluster: " + cluster_name +
+        " not found in deletion";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    resp->set_error_id_or_string_if_any(logger_str.c_str());
+    resp->set_error_code(SVK_STATUS_FAIL);
+    return Status(grpc::INVALID_ARGUMENT, logger_str.c_str());
+  }
+
+  // Iterate over all nodes in the cluster and remove the cluster_name in
+  // node_info
+  node_names = new_cluster_map[cluster_name].node_names;
+  for (auto &node_name : node_names) {
+    node = m_registered_nodes[node_name];
+    node.cluster_name = "";
+    logger_str = "Node " + node.node_name + " changes its cluster_name to " +
+                 ((node.cluster_name == "") ? "null" : node.cluster_name) + ".";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::DEBUG,
+               logger_str.c_str());
+  }
+  // Update new_cluster_map table
+  // Only remove the mapping from cluster_name to node lists. Keep the node
+  // status as registered.
+  new_cluster_map.erase(cluster_name);
+
+  // Backward compatibility
+  m_cluster_map.erase(cluster_name);
+
+  resp->set_error_code(SVK_STATUS_SUCCESS);
+
+  logger_str = "Cluster " + cluster_name + " removed.";
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+
+  return Status::OK;
+}
+
+/**
  * This function returns a JSON array of cluster names in a string in a format
  * of {clusters: [cluster_name_0, cluster_name_1] }.
  *
@@ -755,6 +821,10 @@ Status ControllerServicer::ClusterAPI(ServerContext *ctxt,
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                logger_str.c_str());
     status = CreateCluster(cluster_name, command_params, resp);
+  } else if (command_name == "delete_cluster") {
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
+    status = DeleteCluster(cluster_name, resp);
   } else if (command_name == "list_clusters") {
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                logger_str.c_str());
