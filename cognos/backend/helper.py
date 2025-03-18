@@ -42,6 +42,24 @@ def parse_svkcxlplugin_setup_response(response):
     return [fm for fm in response]
 
 
+def get_scmc_version_file():
+    """
+    Returns: Filepath of VERSION file containing svk-app version
+             VERSION file will always be located in the root of
+             the install location or the development repository
+    """
+    root_folder = (
+        os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        )
+    )
+    return (
+        os.path.join(root_folder, 'VERSION')
+        if os.path.exists(root_folder + os.sep + 'VERSION')
+        else None
+    )
+
+
 def gen_svkcxlplugin_request_params(
     feature_params, mock_request=False, mock_request_data=None
 ):

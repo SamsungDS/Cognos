@@ -21,6 +21,18 @@ cognos-ui: UI for Samsung Management Console
 - Rockylinux 9
 - Ubuntu 22.04
 
+## Versioning
+
+The version of svk-app is retrievable from the generated VERSION file
+during the packaging process or by manually running the following;
+```./scripts/get_version.sh > ./VERSION```
+
+The VERSION file will automatically be placed in the root of the package
+install location or in the root of the repository when running in dev mode.
+
+Versioning follows the following schema
+```svk-app.<major_verison>.<minor_version>.<patch_version>```
+
 ## Installation
 
 The prefered method to install SVK Application is through your OS package manager.

@@ -6,7 +6,7 @@ import BoxTopology from "../components/BoxTopology";
 import "./metrics.css";
 import "./dashboard.css";
 import "rc-slider/assets/index.css";
-
+import * as constants from '../constant';
 import WebSocketContext from "../contexts/WebSocketContext";
 import { useSelectedOption } from "../contexts/SelectedOptionContext";
 
@@ -20,6 +20,25 @@ const Dashboard = () => {
   const [dataAvailable, setDataAvailable] = useState(true);
 
   const { selectedOption } = useSelectedOption();
+  const [version, setVersion] = useState('00.00.00');
+
+  const apiEndpoint = constants.Configs.api_endpoint;
+  // istanbul ignore next
+  useEffect(() =>{
+    fetch(`${apiEndpoint}/version`, {
+      mode: 'cors',
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'accept': 'application/json',
+        'Access-Control-Allow-Origin':'*'
+      },
+    }).then(response => response.json())
+    .then(data => setVersion(data))
+    .catch(err => {console.log(err)});
+  },
+  // eslint-disable-next-line react-hooks/exhaustive-deps 
+  []);
   useEffect(() => {
     // Set timeout for 120 seconds (120000 ms)
     // istanbul ignore next
@@ -437,6 +456,15 @@ const Dashboard = () => {
                   </div>
                 </>
               )}
+            </div>
+          </Col>
+        </Row>
+        <Row>
+          <Col>
+            <div
+              className="device_card memory-box-overview-height text-center"
+            >
+              <h4 className="memory-box-title1">Samsung Cognos Management Console ({version.version})</h4>
             </div>
           </Col>
         </Row>

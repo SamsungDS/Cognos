@@ -1,8 +1,9 @@
 import json
 from requests.models import Response
+import os
 import pytest
 import requests
-from unittest.mock import patch, MagicMock
+from unittest.mock import mock_open, patch, MagicMock
 from data_constants import dummy_init_data
 import cognos.backend.cxlplugin_datasource as cxlds
 from cognos.backend.test.test_cal_helper import construct_dummy_response
@@ -99,6 +100,33 @@ def test_cxlplugin_get_topology(mocker, client, get_cxlplugin_datasource):
         "cognos.backend.helper.fetch_topology", return_value=mock_data
     )
     get_cxlplugin_datasource.get_topology()
+
+
+def test_get_scmc_version(mocker, client, get_cxlplugin_datasource):
+    mock_version = "0.5"
+    mocker.patch(
+        "cognos.backend.helper.get_scmc_version_file", return_value=os.getcwd()
+    )
+
+    with patch("builtins.open", mock_open(read_data=mock_version)):
+        response = get_cxlplugin_datasource.get_scmc_version()
+        assert response.json == {"version": mock_version}
+
+    # File not found
+    with patch("builtins.open", side_effect=FileNotFoundError):
+        with pytest.raises(
+            RuntimeError, match="Unable to retrieve API version*"
+        ):
+            get_cxlplugin_datasource.get_scmc_version()
+
+    # validate edge case
+    mocker.resetall()
+    mocker.patch(
+        "cognos.backend.helper.get_scmc_version_file", return_value=False
+    )
+    response = get_cxlplugin_datasource.get_scmc_version()
+    assert response.json == {"error": "version file not found"}
+    assert response.status_code == 404
 
 
 def test_cxlplugin_get_hosts(

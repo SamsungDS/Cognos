@@ -307,6 +307,9 @@ table th {
   justify-content: center;
   flex-direction: column;
 }
+.heading-col {
+  margin-top: 14px;
+}
 /* Media Query as per device size */
 @media screen and (min-width: 2560px) {
   .sidebar {

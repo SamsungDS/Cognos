@@ -10,6 +10,7 @@ from typing import Callable, List, Dict
 from cognos.backend.base_datasource import DataSource
 import cognos.backend.helper as helper
 
+
 CONFIGS = helper.fetch_cognos_configs(
     os.path.dirname(os.path.abspath(__file__)), "config.json"
 )
@@ -21,8 +22,27 @@ LIST_CLUSTER_EP = CONFIGS["list_cluster_ep"]
 class CXLPlugin(DataSource):
 
     def init(self):
+        super().__init__()
         payload = self.get_setup_info()
         return jsonify(payload)
+
+    def get_scmc_version(self):
+        scmc_version_file = helper.get_scmc_version_file()
+        if scmc_version_file:
+            try:
+                with open(scmc_version_file, "r") as v:
+                    API_VERSION = v.read().strip()
+                    response = jsonify({"version": API_VERSION})
+                    response.status_code = 200
+                    return response
+            except Exception as error:
+                raise RuntimeError(
+                    f"Unable to retrieve API version: {str(error)}"
+                )
+        else:
+            response = jsonify({"error": "version file not found"})
+            response.status_code = 404
+            return response
 
     def update_metrics_host_filter(self):
         request_data = request.get_json()

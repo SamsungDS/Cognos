@@ -20,6 +20,9 @@ override_dh_auto_build:
 	# Build release Cognos UI (React App)
 	# BUILD_PATH=$(CURDIR)/$(INSTALL_PATH)/cognos-ui npm --prefix $(CURDIR)/../cognos/ui run build
 
+	# create VERSION file
+	$(CURDIR)/../scripts/get_version.sh > $(CURDIR)/VERSION
+
 override_dh_auto_install:
 	# Custom auto-install steps TBD (might include things like symlinks, conf file creation etc)
 
@@ -54,6 +57,8 @@ override_dh_auto_install:
 	# copy python requirements file
 	cp $(CURDIR)/../scripts/dependencies/python/requirements.txt $(CURDIR)/$(INSTALL_PATH)/requirements.txt
 
+	# Copy the VERSION file
+	cp $(CURDIR)/VERSION $(CURDIR)/$(INSTALL_PATH)
 
 override_dh_usrlocal:
 	# Do nothing, because we are installing to /usr/local even though this is non-standard practice

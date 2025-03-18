@@ -1,8 +1,23 @@
+from unittest.mock import mock_open, MagicMock
 import mock_datasource
 
 
 def test_mock_init(get_mock_datasource, client):
     get_mock_datasource.init()
+
+
+def test_mock_get_scmc_version(get_mock_datasource, client, mocker):
+    response = get_mock_datasource.get_scmc_version()
+    # should fail as version file is non-existent
+    assert response.json == {"error": "version file not found"}
+
+    # test with mocked version file
+    mock_file = mock_open(read_data="0.5.0 \n")
+    mocker.patch("cognos.backend.mock_datasource.open", mock_file)
+    mocker.patch("cognos.backend.mock_datasource.get_scmc_version_file",
+                 return_value=mock_file)
+    response = get_mock_datasource.get_scmc_version()
+    assert response.json == {"version": "0.5.0"}
 
 
 def test_mock_get_topology(get_mock_datasource, client):

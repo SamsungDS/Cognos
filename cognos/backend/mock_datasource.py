@@ -34,12 +34,31 @@ from cognos.backend.helper import (
     update_metrics_host_filter_table,
     get_fm_devices_info,
     get_fm_host_info,
+    get_scmc_version_file
 )
 
 
 class Mock(DataSource):
     def init(self):
         return jsonify({"mock_data": 193821})
+
+    def get_scmc_version(self):
+        scmc_version_file = get_scmc_version_file()
+        if scmc_version_file:
+            try:
+                with open(scmc_version_file, "r") as v:
+                    API_VERSION = v.read().strip()
+                    response = jsonify({"version": API_VERSION})
+                    response.status_code = 200
+                    return response
+            except Exception as error:
+                raise RuntimeError(
+                    f"Unable to retrieve API version: {str(error)}"
+                )
+        else:
+            response = jsonify({"error": "version file not found"})
+            response.status_code = 404
+            return response
 
     def update_metrics_host_filter(self):
         request_data = request.get_json()

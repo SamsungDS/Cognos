@@ -4,6 +4,12 @@
   font-weight: bold; 
   color: #00B3E3;
 }
+.memory-box-title1 {
+  font-size: 14px;
+  font-family: 'Samsung Sharp Sans', sans-serif;
+  font-weight: 400; 
+  color: #b6b2b2;
+}
 .topology-height {
   height: 426px;
 }

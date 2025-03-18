@@ -1,5 +1,5 @@
 import React from 'react';
-import { render} from '@testing-library/react';
+import { render, screen} from '@testing-library/react';
 import App from './App';
 import WebSocketContext from './contexts/WebSocketContext';
 import { SelectedOptionProvider } from './contexts/SelectedOptionContext';
@@ -49,9 +49,9 @@ describe('App', () => {
         </SelectedOptionProvider>
       </WebSocketContext.Provider>
     );
-    expect(getByText(/Cognos Management Console/i)).toBeInTheDocument();
+    const headers = screen.queryAllByText(/Cognos Management Console/i);
+    expect(headers).toHaveLength(2);
   });
-
   test('renders sidebar', () => {
     const devicesCountData = {
       'num_hosts': 3
