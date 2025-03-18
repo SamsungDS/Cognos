@@ -717,6 +717,9 @@ TEST_F(MockTestController, DeleteClusterNotFound) {
 TEST_F(MockTestController, DeleteCluster) {
   Status grpc_status;
   std::vector<int> nodes_for_each_cluster = {2, 3};
+
+  svk_logger_change_log_level(CONTROLLER_LOGGER_MODULE_NAME, level_E::TRACE);
+
   // Create two clusters (Cluster_0 and Cluster_1) with 2 and 3 nodes,
   // respectively.
   prepare_clusters(nodes_for_each_cluster);
@@ -743,6 +746,8 @@ TEST_F(MockTestController, DeleteCluster) {
 
   search_str = "Node Node_0_1 changes its cluster_name to null.";
   EXPECT_EQ(is_str_in_log(search_str), true);
+
+  svk_logger_change_log_level(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO);
 }
 
 TEST_F(MockTestController, ListClustersEmpty) {

@@ -744,7 +744,7 @@ Status ControllerServicer::DeleteCluster(std::string cluster_name,
     node.cluster_name = "";
     logger_str = "Node " + node.node_name + " changes its cluster_name to " +
                  ((node.cluster_name == "") ? "null" : node.cluster_name) + ".";
-    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::DEBUG,
                logger_str.c_str());
   }
   // Update new_cluster_map table
