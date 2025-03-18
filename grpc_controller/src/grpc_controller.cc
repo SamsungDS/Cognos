@@ -708,6 +708,7 @@ Status ControllerServicer::CreateCluster(std::string cluster_name,
 Status ControllerServicer::DeleteCluster(std::string cluster_name,
                                          svk::ClusterResponse *resp) {
   std::vector<std::string> node_names;
+  node_info node;
   std::string logger_str;
 
   // If cluster_name is empty, return invalid argument error.
@@ -735,6 +736,17 @@ Status ControllerServicer::DeleteCluster(std::string cluster_name,
     return Status(grpc::INVALID_ARGUMENT, logger_str.c_str());
   }
 
+  // Iterate over all nodes in the cluster and remove the cluster_name in
+  // node_info
+  node_names = new_cluster_map[cluster_name].node_names;
+  for (auto &node_name : node_names) {
+    node = m_registered_nodes[node_name];
+    node.cluster_name = "";
+    logger_str = "Node " + node.node_name + " changes its cluster_name to " +
+                 ((node.cluster_name == "") ? "null" : node.cluster_name) + ".";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
+  }
   // Update new_cluster_map table
   // Only remove the mapping from cluster_name to node lists. Keep the node
   // status as registered.

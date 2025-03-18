@@ -737,6 +737,12 @@ TEST_F(MockTestController, DeleteCluster) {
 
   std::string search_str = "Cluster Cluster_0 removed.";
   EXPECT_EQ(is_str_in_log(search_str), true);
+
+  search_str = "Node Node_0_0 changes its cluster_name to null.";
+  EXPECT_EQ(is_str_in_log(search_str), true);
+
+  search_str = "Node Node_0_1 changes its cluster_name to null.";
+  EXPECT_EQ(is_str_in_log(search_str), true);
 }
 
 TEST_F(MockTestController, ListClustersEmpty) {
