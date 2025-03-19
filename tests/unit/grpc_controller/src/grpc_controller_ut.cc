@@ -807,6 +807,457 @@ TEST_F(MockTestController, ListClusters) {
   EXPECT_EQ(is_str_in_log(search_str), true);
 }
 
+TEST_F(MockTestController, AddNodeToCluster) {
+  Status grpc_status;
+
+  using json = nlohmann::json;
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  svk::RegisterRequest *reg_req(new svk::RegisterRequest());
+  svk::RegisterResponse *reg_resp(new svk::RegisterResponse());
+
+  reg_req->set_node_name("test_node1");
+  reg_req->set_node_ip("localhost");
+  reg_req->set_node_port("9998");
+
+  // Registering 2 nodes
+  grpc_status = client.RegisterNode(reg_req, reg_resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+
+  reg_req->set_node_name("test_node2");
+  reg_req->set_node_ip("localhost2");
+
+  grpc_status = client.RegisterNode(reg_req, reg_resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+
+  // Creating a cluster
+  svk::ClusterRequest *cluster_req(new svk::ClusterRequest());
+  svk::ClusterResponse *cluster_resp(new svk::ClusterResponse());
+  cluster_req->set_cluster_name("test_cluster");
+  cluster_req->set_command_name("create_cluster");
+  json command_params;
+  json nodes = json::array();
+  json single_node;
+  single_node["node_name"] = "test_node1";
+  nodes.push_back(single_node);
+  command_params["nodes"] = nodes;
+  std::cout << command_params.dump() << std::endl;
+  cluster_req->set_command_params(command_params.dump());
+
+  grpc_status = client.ClusterAPI(cluster_req, cluster_resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+
+  // Add other node to the cluster
+  svk::ClusterRequest *add_node_req(new svk::ClusterRequest());
+  svk::ClusterResponse *add_node_resp(new svk::ClusterResponse());
+
+  add_node_req->set_cluster_name("test_cluster");
+  add_node_req->set_command_name("add_node_to_cluster");
+  // Set up json req
+  single_node["node_name"] = "test_node2";
+  nodes.clear();
+  nodes.push_back(single_node);
+  command_params["nodes"] = nodes;
+
+  std::cout << command_params.dump() << std::endl;
+  add_node_req->set_command_params(command_params.dump());
+  grpc_status = client.ClusterAPI(add_node_req, add_node_resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+  std::string resp_json = add_node_resp->command_response();
+  std::string expected_json =
+      "{\"clusters\":[{\"cluster_name\":\"test_cluster\",\"nodes\":[{"
+      "\"node_name\":\"test_node1\",\"status\":\"online\"},{"
+      "\"node_name\":\"test_node2\",\"status\":\"online\"}]}]}";
+  EXPECT_EQ(resp_json, expected_json);
+
+  std::string search_str =
+      "Nodes successfully added/removed from cluster test_cluster";
+  EXPECT_EQ(is_str_in_log(search_str), true);
+}
+
+TEST_F(MockTestController, AddNodeEmptyParams) {
+  Status grpc_status;
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+  req->set_command_params("");
+  req->set_command_name("add_node_to_cluster");
+  req->set_cluster_name("test_cluster");
+
+  grpc_status = client.ClusterAPI(req, resp);
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+  std::string search_str =
+      "add_node_to_cluster called with no cluster_name or command_params";
+  EXPECT_EQ(is_str_in_log(search_str), true);
+
+  using json = nlohmann::json;
+  json command_params;
+  json nodes = json::array();
+  json single_node;
+  single_node["node_name"] = "test_node1";
+  nodes.push_back(single_node);
+  command_params["nodes"] = nodes;
+  req->set_command_params(command_params.dump());
+  req->set_cluster_name("");
+
+  grpc_status = client.ClusterAPI(req, resp);
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+  EXPECT_EQ(is_str_in_log(search_str), true);
+}
+
+TEST_F(MockTestController, AddNodeInvalidJson) {
+  Status grpc_status;
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+  req->set_command_name("add_node_to_cluster");
+  req->set_command_params("invalid");
+  req->set_cluster_name("invalid");
+
+  grpc_status = client.ClusterAPI(req, resp);
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+  std::string search_str = "JSON error: ";
+  EXPECT_EQ(is_str_in_log(search_str), true);
+}
+
+TEST_F(MockTestController, AddNodeInvalidParams) {
+  Status grpc_status;
+
+  std::vector<int> cluster_vec = {1};
+  prepare_clusters(cluster_vec);
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+  req->set_command_name("add_node_to_cluster");
+  req->set_cluster_name("invalid");
+  using json = nlohmann::json;
+  json command_params;
+  json nodes = json::array();
+  json single_node;
+  single_node["node_name"] = "invalid";
+  nodes.push_back(single_node);
+  command_params["nodes"] = nodes;
+
+  req->set_command_params(command_params.dump());
+
+  grpc_status = client.ClusterAPI(req, resp);
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+  std::string search_str =
+      "Invalid cluster or node, could not add/remove node from cluster.";
+  EXPECT_EQ(is_str_in_log(search_str), true);
+
+  single_node["node_name"] = "Node_0";
+  nodes.clear();
+  nodes.push_back(single_node);
+  command_params["nodes"] = nodes;
+  req->set_command_params(command_params.dump());
+
+  grpc_status = client.ClusterAPI(req, resp);
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+  search_str =
+      "Invalid cluster or node, could not add/remove node from cluster.";
+  EXPECT_EQ(is_str_in_log(search_str), true);
+}
+
+TEST_F(MockTestController, AddNodeEmptyNodeList) {
+  Status grpc_status;
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+  req->set_command_name("add_node_to_cluster");
+  req->set_cluster_name("Cluster_0");
+
+  using json = nlohmann::json;
+  json command_params;
+  json nodes = json::array();
+  command_params["nodes"] = nodes;
+  req->set_command_params(command_params.dump());
+  grpc_status = client.ClusterAPI(req, resp);
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+  std::string search_str = "add_node_to_cluster called with empty nodes list";
+  EXPECT_EQ(is_str_in_log(search_str), true);
+}
+
+TEST_F(MockTestController, AddSameNodeToCluster) {
+  Status grpc_status;
+
+  using json = nlohmann::json;
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  svk::RegisterRequest *reg_req(new svk::RegisterRequest());
+  svk::RegisterResponse *reg_resp(new svk::RegisterResponse());
+
+  reg_req->set_node_name("test_node1");
+  reg_req->set_node_ip("localhost");
+  reg_req->set_node_port("9998");
+
+  grpc_status = client.RegisterNode(reg_req, reg_resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+
+  svk::ClusterRequest *cluster_req(new svk::ClusterRequest());
+  svk::ClusterResponse *cluster_resp(new svk::ClusterResponse());
+  cluster_req->set_cluster_name("test_cluster");
+  cluster_req->set_command_name("create_cluster");
+  json command_params;
+  json nodes = json::array();
+  json single_node;
+  single_node["node_name"] = "test_node1";
+  nodes.push_back(single_node);
+  command_params["nodes"] = nodes;
+  std::cout << command_params.dump() << std::endl;
+  cluster_req->set_command_params(command_params.dump());
+
+  grpc_status = client.ClusterAPI(cluster_req, cluster_resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+
+  svk::ClusterRequest *add_node_req(new svk::ClusterRequest());
+  svk::ClusterResponse *add_node_resp(new svk::ClusterResponse());
+
+  add_node_req->set_cluster_name("test_cluster");
+  add_node_req->set_command_name("add_node_to_cluster");
+
+  std::cout << command_params.dump() << std::endl;
+  add_node_req->set_command_params(command_params.dump());
+  grpc_status = client.ClusterAPI(add_node_req, add_node_resp);
+  ASSERT_EQ(grpc_status.error_code(), grpc::ALREADY_EXISTS);
+
+  std::string search_str = "Node test_node1 is already part of a cluster";
+  EXPECT_EQ(is_str_in_log(search_str), true);
+}
+
+TEST_F(MockTestController, RemoveNodeFromCluster) {
+  Status grpc_status;
+
+  using json = nlohmann::json;
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+  svk_logger_change_log_level(CONTROLLER_LOGGER_MODULE_NAME, level_E::TRACE);
+
+  svk::RegisterRequest *reg_req(new svk::RegisterRequest());
+  svk::RegisterResponse *reg_resp(new svk::RegisterResponse());
+
+  reg_req->set_node_name("test_node1");
+  reg_req->set_node_ip("localhost");
+  reg_req->set_node_port("9998");
+
+  // Registering 2 nodes
+  grpc_status = client.RegisterNode(reg_req, reg_resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+
+  reg_req->set_node_name("test_node2");
+  reg_req->set_node_ip("localhost2");
+
+  grpc_status = client.RegisterNode(reg_req, reg_resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+
+  // Creating a cluster with 2 nodes
+  svk::ClusterRequest *cluster_req(new svk::ClusterRequest());
+  svk::ClusterResponse *cluster_resp(new svk::ClusterResponse());
+  cluster_req->set_cluster_name("test_cluster");
+  cluster_req->set_command_name("create_cluster");
+  json command_params;
+  json nodes = json::array();
+  json single_node;
+  single_node["node_name"] = "test_node1";
+  nodes.push_back(single_node);
+  single_node["node_name"] = "test_node2";
+  nodes.push_back(single_node);
+  command_params["nodes"] = nodes;
+  cluster_req->set_command_params(command_params.dump());
+
+  grpc_status = client.ClusterAPI(cluster_req, cluster_resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+
+  // Remove node
+  svk::ClusterRequest *remove_node_req(new svk::ClusterRequest());
+  svk::ClusterResponse *remove_node_resp(new svk::ClusterResponse());
+
+  remove_node_req->set_cluster_name("test_cluster");
+  remove_node_req->set_command_name("remove_node_from_cluster");
+  // Set up json req
+  nodes.clear();
+  single_node["node_name"] = "test_node1";
+  nodes.push_back(single_node);
+
+  command_params["nodes"] = nodes;
+
+  remove_node_req->set_command_params(command_params.dump());
+  grpc_status = client.ClusterAPI(remove_node_req, remove_node_resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+  std::string resp_json = remove_node_resp->command_response();
+  std::string expected_json =
+      "{\"clusters\":[{\"cluster_name\":\"test_cluster\",\"nodes\":[{"
+      "\"node_name\":\"test_node2\",\"status\":\"online\"}]}]}";
+  EXPECT_EQ(resp_json, expected_json);
+
+  std::string search_str =
+      "Nodes successfully added/removed from cluster test_cluster";
+  EXPECT_EQ(is_str_in_log(search_str), true);
+  search_str =
+      "Node test_node1 removed from cluster test_cluster, cluster now contains "
+      "1 nodes.";
+  EXPECT_EQ(is_str_in_log(search_str), true);
+
+  svk_logger_change_log_level(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO);
+}
+
+TEST_F(MockTestController, RemoveNodeEmptyParams) {
+  Status grpc_status;
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+  req->set_command_params("");
+  req->set_command_name("remove_node_from_cluster");
+  req->set_cluster_name("test_cluster");
+
+  grpc_status = client.ClusterAPI(req, resp);
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+  std::string search_str =
+      "remove_node_from_cluster called with no cluster_name or command_params";
+  EXPECT_EQ(is_str_in_log(search_str), true);
+
+  using json = nlohmann::json;
+  json command_params;
+  json nodes = json::array();
+  json single_node;
+  single_node["node_name"] = "test_node1";
+  nodes.push_back(single_node);
+  command_params["nodes"] = nodes;
+  req->set_command_params(command_params.dump());
+  req->set_cluster_name("");
+
+  grpc_status = client.ClusterAPI(req, resp);
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+  EXPECT_EQ(is_str_in_log(search_str), true);
+}
+
+TEST_F(MockTestController, RemoveNodeInvalidJson) {
+  Status grpc_status;
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+  req->set_command_name("remove_node_from_cluster");
+  req->set_command_params("invalid");
+  req->set_cluster_name("invalid");
+
+  grpc_status = client.ClusterAPI(req, resp);
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+  std::string search_str = "JSON error: ";
+  EXPECT_EQ(is_str_in_log(search_str), true);
+}
+
+TEST_F(MockTestController, RemoveNodeInvalidParams) {
+  Status grpc_status;
+
+  std::vector<int> cluster_vec = {1};
+  prepare_clusters(cluster_vec);
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+  req->set_command_name("remove_node_from_cluster");
+  req->set_cluster_name("invalid");
+  using json = nlohmann::json;
+  json command_params;
+  json nodes = json::array();
+  json single_node;
+  single_node["node_name"] = "invalid";
+  nodes.push_back(single_node);
+  command_params["nodes"] = nodes;
+
+  req->set_command_params(command_params.dump());
+
+  grpc_status = client.ClusterAPI(req, resp);
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+  std::string search_str =
+      "Invalid cluster or node, could not add/remove node from cluster.";
+  EXPECT_EQ(is_str_in_log(search_str), true);
+
+  single_node["node_name"] = "Node_0";
+  nodes.clear();
+  nodes.push_back(single_node);
+  command_params["nodes"] = nodes;
+  req->set_command_params(command_params.dump());
+
+  grpc_status = client.ClusterAPI(req, resp);
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+  search_str =
+      "Invalid cluster or node, could not add/remove node from cluster.";
+  EXPECT_EQ(is_str_in_log(search_str), true);
+}
+
+TEST_F(MockTestController, RemoveNodeEmptyNodeList) {
+  Status grpc_status;
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+  req->set_command_name("remove_node_from_cluster");
+  req->set_cluster_name("Cluster_0");
+
+  using json = nlohmann::json;
+  json command_params;
+  json nodes = json::array();
+  command_params["nodes"] = nodes;
+  req->set_command_params(command_params.dump());
+  grpc_status = client.ClusterAPI(req, resp);
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+  std::string search_str =
+      "remove_node_from_cluster called with empty nodes list";
+  EXPECT_EQ(is_str_in_log(search_str), true);
+}
+
+TEST_F(MockTestController, RemoveInvalidNode) {
+  Status grpc_status;
+
+  std::vector<int> cluster_vec = {1};
+  prepare_clusters(cluster_vec);
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  svk::RegisterRequest *reg_req(new svk::RegisterRequest());
+  svk::RegisterResponse *reg_resp(new svk::RegisterResponse());
+
+  reg_req->set_node_name("invalid_node");
+  reg_req->set_node_ip("localhost");
+  reg_req->set_node_port("1234");
+
+  grpc_status = client.RegisterNode(reg_req, reg_resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+
+  req->set_command_name("remove_node_from_cluster");
+  req->set_cluster_name("Cluster_0");
+  using json = nlohmann::json;
+  json command_params;
+  json nodes = json::array();
+  json single_node;
+  single_node["node_name"] = "invalid_node";
+  nodes.push_back(single_node);
+  command_params["nodes"] = nodes;
+
+  req->set_command_params(command_params.dump());
+
+  grpc_status = client.ClusterAPI(req, resp);
+  EXPECT_EQ(grpc_status.error_code(), grpc::NOT_FOUND);
+  std::string search_str =
+      "Node invalid_node not found in cluster Cluster_0, could not remove it "
+      "from cluster.";
+  EXPECT_EQ(is_str_in_log(search_str), true);
+}
+
 TEST_F(MockTestController, RegisterNodeWithNullClusterID) {
   Status grpc_status;
 
