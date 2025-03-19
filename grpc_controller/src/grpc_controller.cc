@@ -804,6 +804,135 @@ Status ControllerServicer::ListClusters(svk::ClusterResponse *resp) {
   return status;
 }
 
+// Combining add and remove node from cluster to prevent duplicate code
+Status ControllerServicer::AddRemoveNode(std::string cluster_name,
+                                         std::string command_name,
+                                         std::string command_params,
+                                         svk::ClusterResponse *resp) {
+  Status status;
+  std::string logger_str;
+
+  if (cluster_name.length() == 0 || command_params.length() == 0) {
+    logger_str =
+        command_name + " called with no cluster_name or command_params";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    resp->set_error_id_or_string_if_any(logger_str);
+    resp->set_error_code(SVK_STATUS_FAIL);
+    return Status(grpc::INVALID_ARGUMENT, logger_str);
+  }
+
+  using json = nlohmann::json;
+  try {
+    // Parse command_params for nodes
+    json params_json = json::parse(command_params);
+
+    json nodes = params_json["nodes"];
+    if (nodes.empty()) {
+      logger_str = command_name + " called with empty nodes list";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                 logger_str.c_str());
+      resp->set_error_id_or_string_if_any(logger_str);
+      resp->set_error_code(SVK_STATUS_FAIL);
+      return Status(grpc::INVALID_ARGUMENT, logger_str);
+    }
+    // Add or remove given nodes from cluster
+    for (auto &[key, value] : nodes.items()) {
+      std::string node_name = value["node_name"];
+      // Add or remove node if node is registered and cluster exists
+      if (m_registered_nodes.count(node_name) &&
+          new_cluster_map.count(cluster_name)) {
+        node_info &curr_node = m_registered_nodes[node_name];
+        // Add node to cluster
+        if (command_name == "add_node_to_cluster") {
+          if (curr_node.cluster_name.length() != 0) {
+            logger_str = "Node " + node_name + " is already part of a cluster.";
+
+            svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                       logger_str.c_str());
+            resp->set_error_id_or_string_if_any(logger_str);
+            resp->set_error_code(SVK_STATUS_FAIL);
+            return Status(grpc::ALREADY_EXISTS, logger_str);
+          }
+          // Add node to new and old cluster data structures
+          new_cluster_map[cluster_name].node_names.push_back(node_name);
+          m_cluster_map[cluster_name][curr_node.node_ip] = curr_node.node_port;
+          // Update internal node_info
+          curr_node.cluster_name = cluster_name;
+          logger_str = "Node " + node_name + " added to cluster " +
+                       m_registered_nodes[node_name].cluster_name;
+          svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::DEBUG,
+                     logger_str.c_str());
+        } else {
+          // Remove node from cluster
+          std::vector<std::string> &node_names =
+              new_cluster_map[cluster_name].node_names;
+          auto it = std::find(node_names.begin(), node_names.end(), node_name);
+          if (it != node_names.end()) {
+            node_names.erase(it);
+          } else {
+            logger_str = "Node " + node_name + " not found in cluster " +
+                         cluster_name + ", could not remove it from cluster.";
+            svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                       logger_str.c_str());
+            resp->set_error_id_or_string_if_any(logger_str);
+            resp->set_error_code(SVK_STATUS_FAIL);
+            return Status(grpc::NOT_FOUND, logger_str);
+          }
+          // Remove node from old cluster data structure
+          if (!m_cluster_map[cluster_name].erase(curr_node.node_ip)) {
+            logger_str = "Node " + node_name + " not found in cluster " +
+                         cluster_name + ", in old cluster map.";
+            svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                       logger_str.c_str());
+            resp->set_error_id_or_string_if_any(logger_str);
+            resp->set_error_code(SVK_STATUS_FAIL);
+            return Status(grpc::NOT_FOUND, logger_str);
+          }
+          // Update internal node_info
+          curr_node.cluster_name = "";
+          logger_str = "Node " + node_name + " removed from cluster " +
+                       cluster_name + ", cluster now contains " +
+                       std::to_string(m_cluster_map[cluster_name].size()) +
+                       " nodes.";
+          svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::DEBUG,
+                     logger_str.c_str());
+        }
+
+      } else {
+        logger_str =
+            "Invalid cluster or node, could not add/remove node from cluster.";
+        svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                   logger_str.c_str());
+        resp->set_error_id_or_string_if_any(logger_str);
+        resp->set_error_code(SVK_STATUS_FAIL);
+        return Status(grpc::INVALID_ARGUMENT, logger_str);
+      }
+    }
+    logger_str =
+        "Nodes successfully added/removed from cluster " + cluster_name;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
+    // Generate json response
+    json cluster_json = json::array();
+    json nodes_in_cluster = ClusterResponseJson(cluster_name);
+    cluster_json.push_back(nodes_in_cluster);
+    json response;
+    response["clusters"] = cluster_json;
+    resp->set_command_response(response.dump());
+
+    return Status::OK;
+  } catch (json::exception &e) {
+    std::string exception_str = e.what();
+    logger_str = "JSON error: " + exception_str;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    resp->set_error_id_or_string_if_any("Error parsing json command_params");
+    resp->set_error_code(SVK_STATUS_FAIL);
+    return Status(grpc::INVALID_ARGUMENT, "Error parsing json command_params");
+  }
+}
+
 Status ControllerServicer::ClusterAPI(ServerContext *ctxt,
                                       const svk::ClusterRequest *req,
                                       svk::ClusterResponse *resp) {
@@ -829,6 +958,11 @@ Status ControllerServicer::ClusterAPI(ServerContext *ctxt,
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                logger_str.c_str());
     status = ListClusters(resp);
+  } else if (command_name == "add_node_to_cluster" ||
+             command_name == "remove_node_from_cluster") {
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
+    status = AddRemoveNode(cluster_name, command_name, command_params, resp);
   } else {
     logger_str = "ClusterAPI received invalid command name " + command_name;
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
