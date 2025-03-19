@@ -23,6 +23,7 @@
 #include <chrono>
 #include <cstdint>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <memory>
 #include <regex>
@@ -100,7 +101,6 @@ enum {
   IOMEM_NOT_MATCHING_ACPI_SRAT_ERR,
   UNABLE_OPEN_DEV_MEM,
   MMAP_FAIL,
-  INVALID_PID,
   SIGACTION_FAIL,
   PRCTL_FAIL,
   MADVISE_FAIL,
@@ -108,7 +108,8 @@ enum {
   MCE_INJECT_TEMPLARE_STRING_MISSING_ERR,
   RASDAEMON_EXEC_COMMAND_MISSING_ERR,
   NUMA_NODE_PID_ERR,
-  MCE_CONFIG_FILE_EXIST_ERR
+  MCE_CONFIG_FILE_EXIST_ERR,
+  INVALID_PID_ERR
 };
 
 /* This structure mirrors the one found in /usr/include/asm/ucontext.h */
@@ -714,11 +715,20 @@ int error_injection_using_mce(int32_t pid = -1, int32_t noden = -1,
   apply_tmpl(str, ADDR, string("0x") + dstr);
   // Apply the changes to mce-inject error config file
   file_write(MCE_INJECT_SAMPLE_FILE, str.c_str());
+  ras_log(LOG_NOTICE,
+          "Physical address %s recorded in %s for mce-inject error test",
+          dstr.c_str(), MCE_INJECT_SAMPLE_FILE);
 
-  prepare_mce_inject_error_capture_using_rasdaemon();
   // After creating the /tmp/test_corrceted we execute "mce-inject
   // /tmp/test_corrected"
-  // cmd_exec(string(MCE_INJECT_CMD) + string(" ") + string(fname));
+  string scmd =
+      string(MCE_INJECT_CMD) + string(" ") + string(MCE_INJECT_SAMPLE_FILE);
+  thread tmce_inject(cmd_exec, ref(scmd));
+  ras_log(
+      LOG_NOTICE,
+      "MCE Inject test executed. Please consult rasdaemon output for details");
+
+  tmce_inject.join();
 
   return 0;
 }
@@ -752,7 +762,7 @@ int error_injection(void *paddr) {
 
 // Mmap a physical address using /dev/mem to get a virtual address that will
 // be used for error injection using madvise
-int error_inject_using_paddr(string lpaddr) {
+int error_inject_using_madvise(string lpaddr) {
   int ret = 0, fd;
   void *map_base_d;
   uintptr_t virt_addr;
@@ -864,7 +874,7 @@ int init() {
 
   if (data.HasMember("grep_CXL") && data["grep_CXL"].IsString()) {
     cf.grep_CXL = data["grep_CXL"].GetString();
-    ras_log(LOG_INFO, "grep_CXL: %s", cf.grep_CXL.c_str());
+    ras_log(LOG_DEBUG, "grep_CXL: %s", cf.grep_CXL.c_str());
   } else {
     ras_log(LOG_ERR, "The required key 'grep_CXL' not found in config file %s",
             CONFIG_FILE);
@@ -874,7 +884,7 @@ int init() {
 
   if (data.HasMember("grep_acpi_srat") && data["grep_acpi_srat"].IsString()) {
     cf.grep_acpi_srat = data["grep_acpi_srat"].GetString();
-    ras_log(LOG_INFO, "grep_acpi_srat: %s", cf.grep_acpi_srat.c_str());
+    ras_log(LOG_DEBUG, "grep_acpi_srat: %s", cf.grep_acpi_srat.c_str());
   } else {
     ras_log(LOG_ERR,
             "The required key 'grep_acpi_srat' not found in config file %s",
@@ -885,7 +895,7 @@ int init() {
 
   if (data.HasMember("regex_iomem") && data["regex_iomem"].IsString()) {
     cf.regex_iomem = data["regex_iomem"].GetString();
-    ras_log(LOG_INFO, "reg_iomem: %s", cf.regex_iomem.c_str());
+    ras_log(LOG_DEBUG, "reg_iomem: %s", cf.regex_iomem.c_str());
   } else {
     ras_log(LOG_ERR,
             "The required key 'regex_iomem' not found in config file %s",
@@ -897,7 +907,7 @@ int init() {
   if (data.HasMember("regex_addr_range") &&
       data["regex_addr_range"].IsString()) {
     cf.regex_addr_range = data["regex_addr_range"].GetString();
-    ras_log(LOG_INFO, "regex_addr_range: %s", cf.regex_addr_range.c_str());
+    ras_log(LOG_DEBUG, "regex_addr_range: %s", cf.regex_addr_range.c_str());
   } else {
     ras_log(LOG_ERR,
             "The required key 'regex_addr_range' not found in config file %s",
@@ -910,7 +920,7 @@ int init() {
       data["mce_inject_template_string"].IsString()) {
     cf.mce_inject_template_string =
         data["mce_inject_template_string"].GetString();
-    ras_log(LOG_INFO, "mce_inject_template_string: %s",
+    ras_log(LOG_DEBUG, "mce_inject_template_string: %s",
             cf.mce_inject_template_string.c_str());
   } else {
     ras_log(LOG_ERR,
@@ -924,7 +934,7 @@ int init() {
   if (data.HasMember("rasdaemon_exec_command") &&
       data["rasdaemon_exec_command"].IsString()) {
     cf.rasdaemon_exec_command = data["rasdaemon_exec_command"].GetString();
-    ras_log(LOG_INFO, "rasdaemon_exec_command: %s",
+    ras_log(LOG_DEBUG, "rasdaemon_exec_command: %s",
             cf.rasdaemon_exec_command.c_str());
   } else {
     ras_log(
@@ -958,7 +968,7 @@ void usage() {
       "svk_ras_einj -h (to show this usage text)\n";
 
   ras_log(LOG_ERR, "%s", buf);
-  cout << buf << endl;
+  // cout << buf << endl;
 }
 
 int main(int argc, char *argv[]) {
@@ -1154,7 +1164,7 @@ int main(int argc, char *argv[]) {
     }
     if (raise_error == true) {
       remove_substr(paddr, "0x");
-      ret = error_inject_using_paddr(paddr);
+      ret = error_inject_using_madvise(paddr);
       if (ret != 0) {
         ras_log(
             LOG_ERR,
@@ -1177,10 +1187,16 @@ int main(int argc, char *argv[]) {
   }
 
   else if ((pid >= 1) && (vaddr.length() > 0)) {
-    int ret = 0;
     if (pid < 0) {
       ras_log(LOG_ERR, "Invalid pid %d", pid);
-      ret = INVALID_PID;
+      ret = INVALID_PID_ERR;
+      return ret;
+    }
+    struct stat sts;
+    string t = string("/proc/") + to_string(pid);
+    if (stat(t.c_str(), &sts) == -1 && errno == ENOENT) {
+      ret = INVALID_PID_ERR;
+      ras_log(LOG_CRIT, "Process with PID %d does not exist", pid);
       return ret;
     }
     uintptr_t lvaddr, lpaddr;
@@ -1203,7 +1219,7 @@ int main(int argc, char *argv[]) {
 
     sprintf(s_paddr.data(), "%lX", lpaddr);
     if (raise_error == true) {
-      ret = error_inject_using_paddr(s_paddr);
+      ret = error_inject_using_madvise(s_paddr);
       if (ret != 0) {
         ras_log(LOG_ERR,
                 "Error while injecting error using physical address 0x%lX",
@@ -1245,15 +1261,13 @@ int main(int argc, char *argv[]) {
     }
 
     if ((pid >= 1)) {
-      ret = error_injection_using_mce(pid, noden, dstr);
-      if (ret != 0) {
-        ras_log(LOG_CRIT,
-                "Error setting up for mce-inject for PID %d on NUMA node %d",
-                pid, noden);
+      struct stat sts;
+      string t = string("/proc/") + to_string(pid);
+      if (stat(t.c_str(), &sts) == -1 && errno == ENOENT) {
+        ret = INVALID_PID_ERR;
+        ras_log(LOG_CRIT, "Process with PID %d does not exist", pid);
         return ret;
       }
-
-    } else {
       ret = error_injection_using_mce(pid, noden, dstr);
       if (ret != 0) {
         ras_log(LOG_CRIT,
@@ -1263,6 +1277,13 @@ int main(int argc, char *argv[]) {
       }
     }
   } else if (pid >= 1) {
+    struct stat sts;
+    string t = string("/proc/") + to_string(pid);
+    if (stat(t.c_str(), &sts) == -1 && errno == ENOENT) {
+      ret = INVALID_PID_ERR;
+      ras_log(LOG_CRIT, "Process with PID %d does not exist", pid);
+      return ret;
+    }
     ret = error_injection_using_mce(pid, noden);
     if (ret != 0) {
       ras_log(LOG_CRIT, "Error setting up for mce-inject for PID %d ", pid);
