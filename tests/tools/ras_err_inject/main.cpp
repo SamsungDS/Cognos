@@ -110,7 +110,8 @@ enum {
   NUMA_NODE_PID_ERR,
   MCE_CONFIG_FILE_EXIST_ERR,
   INVALID_PID_ERR,
-  VIRTUAL_TO_PHYSICAL_ADDRESS_MAPPING_ERR
+  VIRTUAL_TO_PHYSICAL_ADDRESS_MAPPING_ERR,
+  GET_STACK_VIRTUAL_ADDRESS_ERR
 };
 
 /* This structure mirrors the one found in /usr/include/asm/ucontext.h */
@@ -609,6 +610,55 @@ int allocate_memory_on_numa_node(const int &noden, string &addr) {
   return 0;
 }
 
+// Find the lowest stack virtual address space of the PID process and return
+int get_physical_address_using_pid(const int32_t pid, const int32_t &noden,
+                                   string &dstr) {
+  int ret = 0;
+
+  string maps_file = "/proc/" + to_string(pid) + "/maps";
+  ifstream maps_stream(maps_file);
+  string line;
+  unsigned long mem_start;
+  stringstream ss;
+  uintptr_t paddr;
+
+  while (getline(maps_stream, line)) {
+    ss.clear();
+    if (line.find("[heap]") != string::npos) {
+      ss << (line.substr(0, line.find("-")));
+      break;
+    }
+  }
+  if (ss >> hex >> mem_start) {
+    ras_log(LOG_DEBUG, "Lowest heap virtual address 0x%lX for PID %d",
+            mem_start, pid);
+    void *ptr = (void *)mem_start;
+
+    ret = virt_to_phys_user(&paddr, pid, (uintptr_t)ptr);
+    if (ret != 0) {
+      ras_log(LOG_ERR,
+              "Failure in mapping virtual address 0x%lX to physical addresss"
+              " of a NUMA node %d",
+              (uintmax_t)paddr, noden);
+      return ret;
+    };
+    ras_log(LOG_NOTICE,
+            "Physical address of memory alloc on NUMA node %d: 0x%jx.", noden,
+            (uintmax_t)paddr);
+
+    stringstream ss2;
+    ss2 << hex << paddr;
+    dstr.assign(ss2.str());
+  } else {
+    ras_log(LOG_ERR, "Error: Could not get stack virtual address for pid %d",
+            pid);
+    ret = GET_STACK_VIRTUAL_ADDRESS_ERR;
+    return ret;
+  }
+
+  return ret;
+}
+
 // Reading the file/fifo written to by rasdaemon
 int fifo_read(char *fifo_name, string &dstr) {
   while (!inject_file_ready.load(memory_order_relaxed)) {
@@ -712,8 +762,8 @@ int error_injection_using_mce(int32_t pid = -1, int32_t noden = -1,
   apply_tmpl(str, CPU, to_string(cpu));
   string dstr;
   dstr.assign(addr);
-  if ((node == -1) || (dstr == "")) {
-    ret = allocate_memory_on_numa_node(node, dstr);
+  if (dstr == "") {
+    ret = get_physical_address_using_pid(pid, node, dstr);
     if (ret != 0) {
       ras_log(LOG_ERR, "Failed to allocate memory on NUMA node %d", node);
       return ret;
@@ -723,7 +773,7 @@ int error_injection_using_mce(int32_t pid = -1, int32_t noden = -1,
   // Apply the changes to mce-inject error config file
   file_write(MCE_INJECT_SAMPLE_FILE, str.c_str());
   ras_log(LOG_NOTICE,
-          "Physical address %s recorded in %s for mce-inject error test",
+          "Physical address 0x%s recorded in %s for mce-inject error test",
           dstr.c_str(), MCE_INJECT_SAMPLE_FILE);
 
   // After creating the /tmp/test_corrceted we execute "mce-inject
