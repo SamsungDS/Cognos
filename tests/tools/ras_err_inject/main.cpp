@@ -78,7 +78,7 @@ typedef struct {
 enum {
   USAGE_ERR = 101,
   CONFIG_FILE_NOT_AVAILABLE_ERR,
-  INVALID_CONFIG_FILE_SIZE_ERR,
+  INVALID_CONFIG_FILE_ERR,
   CONFIG_FILE_PARSE_ERR,
   GREP_CXL_MISSING_ERR,
   GREP_ACPI_SRAT_MISSING_ERR,
@@ -109,7 +109,8 @@ enum {
   RASDAEMON_EXEC_COMMAND_MISSING_ERR,
   NUMA_NODE_PID_ERR,
   MCE_CONFIG_FILE_EXIST_ERR,
-  INVALID_PID_ERR
+  INVALID_PID_ERR,
+  VIRTUAL_TO_PHYSICAL_ADDRESS_MAPPING_ERR
 };
 
 /* This structure mirrors the one found in /usr/include/asm/ucontext.h */
@@ -233,6 +234,7 @@ int pagemap_get_entry(PagemapEntry *entry, int pagemap_fd, uintptr_t vaddr) {
 
 // Convert the given virtual address to physical using /proc/PID/pagemap.
 int virt_to_phys_user(uintptr_t *paddr, pid_t pid, uintptr_t vaddr) {
+  int ret = 0;
   char pagemap_file[BUFSIZ];
   int pagemap_fd;
 
@@ -240,16 +242,21 @@ int virt_to_phys_user(uintptr_t *paddr, pid_t pid, uintptr_t vaddr) {
            (uintmax_t)pid);
   pagemap_fd = open(pagemap_file, O_RDONLY);
   if (pagemap_fd < 0) {
-    return INVALID_PAGEMAP_ERR;
+    ret = INVALID_PAGEMAP_ERR;
+    return ret;
   }
   PagemapEntry entry;
   if (pagemap_get_entry(&entry, pagemap_fd, vaddr)) {
-    return PAGEMAP_GET_ERR;
+    ret = PAGEMAP_GET_ERR;
+    return ret;
   }
   close(pagemap_fd);
   *paddr =
       (entry.pfn * sysconf(_SC_PAGE_SIZE)) + (vaddr % sysconf(_SC_PAGE_SIZE));
-  return 0;
+
+  if (*paddr == 0) ret = VIRTUAL_TO_PHYSICAL_ADDRESS_MAPPING_ERR;
+
+  return ret;
 }
 
 // This function returns the NUMA node that a pointer address resides on.
@@ -579,11 +586,11 @@ int allocate_memory_on_numa_node(const int &noden, string &addr) {
   pid_t self_pid;
 
   self_pid = getpid();
-  if (virt_to_phys_user(&paddr, self_pid, (uintptr_t)ptr)) {
+  ret = virt_to_phys_user(&paddr, self_pid, (uintptr_t)ptr);
+  if (ret != 0) {
     ras_log(LOG_ERR,
             "Failure in mapping virtual to physical addresss of a NUMA"
             " CXL node");
-    ret = FAILURE_TO_MAP_VIRTUAL_TO_PHYSICAL_MEM_ERR;
     return ret;
   };
   ras_log(LOG_NOTICE,
@@ -849,9 +856,9 @@ int init() {
   }
 
   long sz = get_file_size(CONFIG_FILE);
-  if (sz == -1) {
-    ras_log(LOG_ERR, "Invalid size of configuration file %s", CONFIG_FILE);
-    ret = INVALID_CONFIG_FILE_SIZE_ERR;
+  if (sz <= 0) {
+    ras_log(LOG_ERR, "Invalid configuration file %s", CONFIG_FILE);
+    ret = INVALID_CONFIG_FILE_ERR;
     return ret;
   }
 
@@ -956,6 +963,8 @@ void usage() {
       "OR \n"
       "svk_ras_einj [-p <external process ID>] [-v <virtual address of "
       "process ID>] \n"
+      "OR \n"
+      "svk_ras_einj [-p <external process ID>]"
       "OR \n"
       "svk_ras_einj [-n <CXL_node_index>] \n"
       "OR \n"
@@ -1268,13 +1277,13 @@ int main(int argc, char *argv[]) {
         ras_log(LOG_CRIT, "Process with PID %d does not exist", pid);
         return ret;
       }
-      ret = error_injection_using_mce(pid, noden, dstr);
-      if (ret != 0) {
-        ras_log(LOG_CRIT,
-                "Error setting up for mce-inject for PID %d on NUMA node %d",
-                pid, noden);
-        return ret;
-      }
+    }
+    ret = error_injection_using_mce(pid, noden, dstr);
+    if (ret != 0) {
+      ras_log(LOG_CRIT,
+              "Error setting up for mce-inject for PID %d on NUMA node %d", pid,
+              noden);
+      return ret;
     }
   } else if (pid >= 1) {
     struct stat sts;
