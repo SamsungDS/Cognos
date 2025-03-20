@@ -807,6 +807,61 @@ TEST_F(MockTestController, ListClusters) {
   EXPECT_EQ(is_str_in_log(search_str), true);
 }
 
+TEST_F(MockTestController, ListNodesInCluster) {
+  std::vector<int> nodes_for_each_cluster = {1};
+  Status grpc_status;
+  std::string command_name;
+  prepare_clusters(nodes_for_each_cluster);
+
+  command_name = "list_nodes_in_cluster";
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+
+  req->set_command_name(command_name);
+  req->set_cluster_name("Cluster_0");
+
+  grpc_status = client.ClusterAPI(req, resp);
+
+  EXPECT_EQ(grpc_status.ok(), true);
+  std::string expected_json =
+      "{\"clusters\":[{\"cluster_name\":\"Cluster_0\",\"nodes\":[{"
+      "\"node_name\":\"Node_0_0\",\"status\":\"online\"}]}]}";
+  EXPECT_EQ(resp->command_response(), expected_json);
+}
+
+TEST_F(MockTestController, ListNodesInInvalidCluster) {
+  Status grpc_status;
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+
+  req->set_command_name("list_nodes_in_cluster");
+  req->set_cluster_name("Cluster_0");
+
+  grpc_status = client.ClusterAPI(req, resp);
+  EXPECT_EQ(grpc_status.error_code(), grpc::NOT_FOUND);
+  std::string search_str = "Cluster Cluster_0 not found";
+  EXPECT_EQ(is_str_in_log(search_str), true);
+}
+
+TEST_F(MockTestController, ListNodesEmptyClusterName) {
+  Status grpc_status;
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+
+  req->set_command_name("list_nodes_in_cluster");
+  req->set_cluster_name("");
+
+  grpc_status = client.ClusterAPI(req, resp);
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+  std::string search_str = "ListNodesInCluster called with empty cluster name";
+  EXPECT_EQ(is_str_in_log(search_str), true);
+}
+
 TEST_F(MockTestController, AddNodeToCluster) {
   Status grpc_status;
 

@@ -804,6 +804,43 @@ Status ControllerServicer::ListClusters(svk::ClusterResponse *resp) {
   return status;
 }
 
+Status ControllerServicer::ListNodesInCluster(std::string cluster_name,
+                                              svk::ClusterResponse *resp) {
+  std::string logger_str;
+  if (cluster_name.length() == 0) {
+    logger_str = "ListNodesInCluster called with empty cluster name";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    resp->set_error_id_or_string_if_any(logger_str);
+    resp->set_error_code(SVK_STATUS_FAIL);
+    return Status(grpc::INVALID_ARGUMENT, logger_str);
+  }
+
+  const auto &cluster = new_cluster_map.find(cluster_name);
+  if (cluster != new_cluster_map.end()) {
+    using json = nlohmann::json;
+    json resp_json;
+    json cluster_json = json::array();
+    cluster_json.push_back(ClusterResponseJson(cluster_name));
+    resp_json["clusters"] = cluster_json;
+
+    logger_str = "Listed " + std::to_string(cluster->second.node_names.size()) +
+                 " nodes in cluster " + cluster_name;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
+    resp->set_error_code(SVK_STATUS_SUCCESS);
+    resp->set_command_response(resp_json.dump());
+    return Status::OK;
+  } else {
+    logger_str = "Cluster " + cluster_name + " not found";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    resp->set_error_id_or_string_if_any(logger_str);
+    resp->set_error_code(SVK_STATUS_FAIL);
+    return Status(grpc::NOT_FOUND, logger_str);
+  }
+}
+
 // Combining add and remove node from cluster to prevent duplicate code
 Status ControllerServicer::AddRemoveNode(std::string cluster_name,
                                          std::string command_name,
@@ -958,6 +995,10 @@ Status ControllerServicer::ClusterAPI(ServerContext *ctxt,
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                logger_str.c_str());
     status = ListClusters(resp);
+  } else if (command_name == "list_nodes_in_cluster") {
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
+    status = ListNodesInCluster(cluster_name, resp);
   } else if (command_name == "add_node_to_cluster" ||
              command_name == "remove_node_from_cluster") {
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
