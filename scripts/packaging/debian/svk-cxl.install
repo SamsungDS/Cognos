@@ -1,5 +1,4 @@
 /usr/local/svk/cxl/lib64/libcxl* /usr/local/svk/cxl/lib64/
-/usr/local/svk/cxl/dependencies/* /usr/local/svk/cxl/dependencies/
 /usr/local/lib/cxl_memory_box/* /usr/local/lib/cxl_memory_box/
 /etc/svk/* /etc/svk/
 /usr/local/svk/mgmt-fw/cxl.conf /usr/local/svk/mgmt-fw/

@@ -230,10 +230,6 @@ create_deb()
     sed -i -e "s@ZMQ_CONF_VAL@$PROJECT_ROOT@g" "$DEBIAN_DIR/rules"
     sed -i -e "s@CXL_CONF_VAL@$PROJECT_ROOT@g" "$DEBIAN_DIR/rules"
 
-    cmd0=" awk 'NR>1 {printf \"pip list | grep -i %s && \", \$0} END{printf \"pip -V\"} '  \"$PROJECT_ROOT\"/scripts/dependencies/python/requirements.txt "
-    cmd1=$(eval "$cmd0")
-    sed -i -e "3i $cmd1" "$DEBIAN_DIR/preinst"
-
     pushd "$BUILD_DIR"
       echo "Building SVK Management Framework Debian packages..."
       # Build Debian packages - generate binaries only, do not sign packages
