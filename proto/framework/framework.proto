@@ -48,6 +48,19 @@ service Controller {
     };
   }
 
+  // Set SVK Agent Node status with the SVK Controller node
+  rpc SetNodeStatus(SetNodeStatusRequest) returns (SetNodeStatusResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/set_node_status"
+      body : "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary : "Set SVK Node status"
+      description : "Set SVK Node status"
+      tags : "svk, controller, set_node_status"
+    };
+  }
+
   // Process command sent to the SVK Controller node
   rpc ProcessControllerCommand(CommandRequest) returns (CommandResponse) {
     option (google.api.http) = {
@@ -157,6 +170,16 @@ message UnregisterRequest {
 message UnregisterResponse {
   // Status of UnregisterNode with success or failure with error details
   string status = 1;
+  int32 error_code = 2;
+}
+
+message SetNodeStatusRequest {
+  string node_name = 1;
+  string node_status = 2;
+}
+
+message SetNodeStatusResponse {
+  string error_id_or_string_if_any = 1;
   int32 error_code = 2;
 }
 

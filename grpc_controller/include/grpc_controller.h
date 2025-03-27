@@ -77,6 +77,9 @@ class ControllerServicer : public svk::Controller::Service {
                       svk::RegisterResponse *resp) override;
   Status UnregisterNode(ServerContext *ctxt, const svk::UnregisterRequest *req,
                         svk::UnregisterResponse *resp) override;
+  Status SetNodeStatus(ServerContext *ctxt,
+                       const svk::SetNodeStatusRequest *req,
+                       svk::SetNodeStatusResponse *resp);
   Status ProcessControllerCommand(ServerContext *ctxt,
                                   const svk::CommandRequest *req,
                                   svk::CommandResponse *resp) override;
