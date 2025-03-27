@@ -795,6 +795,16 @@ TEST(InitTest, InitNodeServerInNonBlocking) {
 
 TEST(InitTest, SignalHandlerFunction) { signal_node_handler(SIGINT); }
 
+TEST(InitTest, SetNodeStatusFail) {
+  node_config conf;
+  conf.node_name = "localhost";
+  conf.controller_id = "localhost";
+  conf.controller_port = "9998";
+
+  int status = SetNodeStatus(conf, "offline");
+  ASSERT_EQ(status, -1);
+}
+
 TEST(InitTest, InitSuccessWithDestructor) {
   char *cw_dir = get_current_dir_name();
   std::string features_dir = FEATURES_DIR;

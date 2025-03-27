@@ -102,6 +102,16 @@ int read_svk_conf_file(const std::string svk_conf_file,
   return status;
 }
 
+int update_node_status_from_str(std::string status_str, node_status &status) {
+  for (const auto &pair : node_status_to_str) {
+    if (pair.second == status_str) {
+      status = pair.first;
+      return 0;
+    }
+  }
+  return -1;
+}
+
 ControllerServicer::ControllerServicer(const std::string &svk_conf_file) {
   struct stat buf;
   int ret_val = -1;
@@ -349,6 +359,50 @@ Status ControllerServicer::UnregisterNode(ServerContext *ctxt,
   m_config_changed = true;
   resp->set_status("Success");
   resp->set_error_code(status);
+
+  return Status::OK;
+}
+
+Status ControllerServicer::SetNodeStatus(ServerContext *ctxt,
+                                         const svk::SetNodeStatusRequest *req,
+                                         svk::SetNodeStatusResponse *resp) {
+  std::string logger_str;
+
+  std::string node_name = req->node_name();
+  std::string node_status = req->node_status();
+
+  if (node_name.length() == 0 || node_status.length() == 0) {
+    logger_str = "Invalid node name or status";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    resp->set_error_id_or_string_if_any(logger_str);
+    resp->set_error_code(SVK_STATUS_FAIL);
+    return Status(grpc::INVALID_ARGUMENT, logger_str);
+  }
+
+  auto node_itr = m_registered_nodes.find(node_name);
+  if (node_itr == m_registered_nodes.end()) {
+    logger_str = "Node " + node_name + " not found";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    resp->set_error_id_or_string_if_any(logger_str);
+    resp->set_error_code(SVK_STATUS_FAIL);
+    return Status(grpc::INVALID_ARGUMENT, logger_str);
+  }
+  node_info &node_to_update = node_itr->second;
+  int status = update_node_status_from_str(node_status, node_to_update.status);
+  if (status) {
+    logger_str = "Invalid status given: " + node_status +
+                 ". Could not update node status.";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    resp->set_error_id_or_string_if_any(logger_str);
+    resp->set_error_code(SVK_STATUS_FAIL);
+    return Status(grpc::INVALID_ARGUMENT, logger_str);
+  }
+  logger_str = "Updated node " + node_name + "'s status to " +
+               node_status_to_str.at(node_to_update.status);
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
 
   return Status::OK;
 }

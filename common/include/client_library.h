@@ -21,6 +21,8 @@ class Client {
                               svk::RegisterResponse* resp);
   virtual Status UnregisterNode(const svk::UnregisterRequest* req,
                                 svk::UnregisterResponse* resp);
+  virtual Status SetNodeStatus(const svk::SetNodeStatusRequest* req,
+                               svk::SetNodeStatusResponse* resp);
   virtual Status ClusterAPI(const svk::ClusterRequest* req,
                             svk::ClusterResponse* resp);
   virtual Status NodeAPI(const svk::NodeRequest* req, svk::NodeResponse* resp);

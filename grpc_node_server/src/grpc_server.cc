@@ -217,6 +217,25 @@ int RegisterNodeWithController(const node_config &config) {
   return status;
 }
 
+int SetNodeStatus(const node_config &config, std::string node_status) {
+  svk::SetNodeStatusRequest *req(new svk::SetNodeStatusRequest());
+  svk::SetNodeStatusResponse *resp(new svk::SetNodeStatusResponse());
+  req->set_node_status(node_status);
+  req->set_node_name(config.node_name);
+
+  Client client(config.controller_id, config.controller_port);
+  std::string logger_str = "Setting node status to " + node_status;
+  svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+
+  Status grpc_status = client.SetNodeStatus(req, resp);
+  if (!grpc_status.ok()) {
+    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR,
+               "Failed to set node status");
+    return -1;
+  }
+  return 0;
+}
+
 std::shared_ptr<Server> InitializeNodeServicer(Servicer *svcr) {
   std::string logger_str;
   int status = -1;
@@ -306,6 +325,9 @@ int StartNodeServer(std::string svk_conf_file, bool blocking) {
 
     if (blocking == true) {
       while (gSignalNodeStatus.load() == -1) sleep(5);
+      SetNodeStatus(svcr->get_svk_config(), "offline");
+      cleanup_svk(nullptr, nullptr);
+      gSignalNodeStatus = -1;
       svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
                  "The node server is stopped gracefully");
       delete svcr;

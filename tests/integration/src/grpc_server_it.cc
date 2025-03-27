@@ -583,6 +583,7 @@ int CheckPoller() {
   rc = publish(&zmq_socket, "APP_SLA_DEGRADED", &data);
   std::cout << "Published data result " << rc << std::endl;
   sleep(10);
+
   // Raise the interrupt signal for the server to go down gracefully
   std::thread::id node_thread_id = node_thr.get_id();
   std::thread::id ctrlr_thread_id = server_thr.get_id();
@@ -612,6 +613,98 @@ TEST(InitIntegrationTest, InitControllerNodeServerWithSignal) {
             data.find("Device's numa 1 on host localhost for the app TESTAPP "
                       "deviated than expected - Reported latency_ns = 100") !=
                 std::string::npos);
+  EXPECT_EQ(true, data.find("Updated node localhost's status to offline") !=
+                      std::string::npos);
+}
+
+int CheckNodeStatus() {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+  std::thread server_thr(StartServer, conf_file, true);
+  std::thread node_thr(StartNodeServer, conf_file, true);
+  // Sleep for a while for the server processes to stablize
+  sleep(5);
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+  // Check internal structure is updated
+  svk::NodeRequest *n_req(new svk::NodeRequest());
+  svk::NodeResponse *n_resp(new svk::NodeResponse());
+
+  n_req->set_command_name("list_nodes");
+
+  Status grpc_status = client.NodeAPI(n_req, n_resp);
+  EXPECT_EQ(grpc_status.ok(), true);
+  std::string command_resp = n_resp->command_response();
+  std::string expected_resp =
+      "{\"node_info\":[{\"node_ip\":\"localhost\",\"node_"
+      "name\":\"localhost\",\"node_port\":\"9998\","
+      "\"status\":\"online\"}]}";
+  std::cout << "List nodes response on startup: " << command_resp << std::endl;
+  EXPECT_EQ(command_resp, expected_resp);
+  sleep(1);
+  // Raise the interrupt signal for the server to go down gracefully
+  std::thread::id node_thread_id = node_thr.get_id();
+  auto node_native_handle =
+      *reinterpret_cast<std::thread::native_handle_type *>(&node_thread_id);
+  pthread_kill(node_native_handle, SIGINT);
+  sleep(5);
+
+  // Check the nodes status after server shutdown
+  grpc_status = client.NodeAPI(n_req, n_resp);
+  EXPECT_EQ(grpc_status.ok(), true);
+  command_resp = n_resp->command_response();
+  expected_resp =
+      "{\"node_info\":[{\"node_ip\":\"localhost\",\"node_"
+      "name\":\"localhost\",\"node_port\":\"9998\","
+      "\"status\":\"offline\"}]}";
+  EXPECT_EQ(command_resp, expected_resp);
+  std::cout << "List nodes response on shutdown: " << command_resp << std::endl;
+  sleep(1);
+
+  // Start node again
+  std::thread node_thr2(StartNodeServer, conf_file, true);
+  sleep(5);
+  // Check the nodes status after server restart
+  grpc_status = client.NodeAPI(n_req, n_resp);
+  EXPECT_EQ(grpc_status.ok(), true);
+  command_resp = n_resp->command_response();
+  expected_resp =
+      "{\"node_info\":[{\"node_ip\":\"localhost\",\"node_"
+      "name\":\"localhost\",\"node_port\":\"9998\","
+      "\"status\":\"online\"}]}";
+  EXPECT_EQ(command_resp, expected_resp);
+  std::cout << "List nodes response on restart: " << command_resp << std::endl;
+
+  sleep(1);
+  node_thread_id = node_thr2.get_id();
+  std::thread::id ctrlr_thread_id = server_thr.get_id();
+  node_native_handle =
+      *reinterpret_cast<std::thread::native_handle_type *>(&node_thread_id);
+  auto ctrlr_native_handle =
+      *reinterpret_cast<std::thread::native_handle_type *>(&ctrlr_thread_id);
+  pthread_kill(node_native_handle, SIGINT);
+  pthread_kill(ctrlr_native_handle, SIGINT);
+  // Wait for > 5 seconds for the signal handler to be processed on the server
+  // node
+  sleep(5);
+  unlink(conf_file.c_str());
+  return 0;
+}
+
+TEST(InitIntegrationTest, CheckNodeStatusUpdated) {
+  std::string output;
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  EXPECT_DEATH(CheckNodeStatus(), "");
+  std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  std::string data((std::istreambuf_iterator<char>(file)),
+                   (std::istreambuf_iterator<char>()));
+  file.close();
+  EXPECT_EQ(true, data.find("Updated node localhost's status to offline") !=
+                      std::string::npos);
 }
 
 TEST(InitIntegrationTest, UnregisterNodeServer) {

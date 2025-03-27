@@ -394,6 +394,110 @@ TEST_F(MockTestController, RegisterNode) {
   EXPECT_EQ(true, data.find(search_str) != std::string::npos);
 }
 
+TEST_F(MockTestController, SetNodeStatus) {
+  Status grpc_status;
+  std::vector<int> nodes_for_each_cluster = {1};
+  prepare_clusters(nodes_for_each_cluster);
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+  svk::SetNodeStatusRequest *req(new svk::SetNodeStatusRequest());
+  svk::SetNodeStatusResponse *resp(new svk::SetNodeStatusResponse());
+
+  req->set_node_name("Node_0_0");
+  req->set_node_status("offline");
+
+  grpc_status = client.SetNodeStatus(req, resp);
+  EXPECT_TRUE(grpc_status.ok());
+  std::string search_str = "Updated node Node_0_0's status to offline";
+  EXPECT_TRUE(is_str_in_log(search_str));
+
+  // Check internal structure is updated
+  svk::NodeRequest *n_req(new svk::NodeRequest());
+  svk::NodeResponse *n_resp(new svk::NodeResponse());
+
+  n_req->set_command_name("list_nodes");
+
+  grpc_status = client.NodeAPI(n_req, n_resp);
+  EXPECT_EQ(grpc_status.ok(), true);
+  std::string command_resp = n_resp->command_response();
+  std::string expected_resp =
+      "{\"node_info\":[{\"node_ip\":\"node.0.0.com\",\"node_"
+      "name\":\"Node_0_0\",\"node_port\":\"9998\","
+      "\"status\":\"offline\"}]}";
+  EXPECT_EQ(command_resp, expected_resp);
+
+  // Set to online
+  req->set_node_name("Node_0_0");
+  req->set_node_status("online");
+
+  grpc_status = client.SetNodeStatus(req, resp);
+  EXPECT_TRUE(grpc_status.ok());
+  search_str = "Updated node Node_0_0's status to online";
+  EXPECT_TRUE(is_str_in_log(search_str));
+
+  // Check internal structure is updated
+  n_req->set_command_name("list_nodes");
+
+  grpc_status = client.NodeAPI(n_req, n_resp);
+  EXPECT_EQ(grpc_status.ok(), true);
+  command_resp = n_resp->command_response();
+  expected_resp =
+      "{\"node_info\":[{\"node_ip\":\"node.0.0.com\",\"node_"
+      "name\":\"Node_0_0\",\"node_port\":\"9998\","
+      "\"status\":\"online\"}]}";
+  EXPECT_EQ(command_resp, expected_resp);
+}
+
+TEST_F(MockTestController, SetNodeStatusEmptyParams) {
+  Status grpc_status;
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+  svk::SetNodeStatusRequest *req(new svk::SetNodeStatusRequest());
+  svk::SetNodeStatusResponse *resp(new svk::SetNodeStatusResponse());
+
+  req->set_node_name("");
+  req->set_node_status("offline");
+
+  grpc_status = client.SetNodeStatus(req, resp);
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+  std::string search_str = "Invalid node name or status";
+  EXPECT_TRUE(is_str_in_log(search_str));
+
+  req->set_node_name("Node_0_0");
+  req->set_node_status("");
+
+  grpc_status = client.SetNodeStatus(req, resp);
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+  search_str = "Invalid node name or status";
+  EXPECT_TRUE(is_str_in_log(search_str));
+}
+
+TEST_F(MockTestController, SetNodeStatusInvalidParams) {
+  Status grpc_status;
+  std::vector<int> nodes_for_each_cluster = {1};
+  prepare_clusters(nodes_for_each_cluster);
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+  svk::SetNodeStatusRequest *req(new svk::SetNodeStatusRequest());
+  svk::SetNodeStatusResponse *resp(new svk::SetNodeStatusResponse());
+
+  req->set_node_name("invalid");
+  req->set_node_status("offline");
+
+  grpc_status = client.SetNodeStatus(req, resp);
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+  std::string search_str = "Node invalid not found";
+  EXPECT_TRUE(is_str_in_log(search_str));
+
+  req->set_node_name("Node_0_0");
+  req->set_node_status("invalid");
+
+  grpc_status = client.SetNodeStatus(req, resp);
+  EXPECT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+  search_str = "Invalid status given: invalid. Could not update node status.";
+  EXPECT_TRUE(is_str_in_log(search_str));
+}
+
 TEST_F(MockTestController, CreateCluster) {
   Status grpc_status;
 
