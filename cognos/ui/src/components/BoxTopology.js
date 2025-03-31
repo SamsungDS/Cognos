@@ -21,6 +21,8 @@ import {
   fetchData,
   mergeHosts,
   updateHostListAttached,
+  assignClusters,
+  assignClustersToLabelValuePairs
 } from "../constant";
 import { ReactComponent as DeviceIcon } from "../assets/icons/deviceSVGIcon.svg";
 import { useSelectedOption } from "../contexts/SelectedOptionContext";
@@ -45,91 +47,25 @@ const BoxTopology = () => {
     "Cluster-B",
   ]);
   // Filtered data
-  const [filteredDataHost, setFilteredDataHost] = useState(hostActiveList);
+  const [filteredDataHost, setFilteredDataHost] = useState([]);
   const [filteredDataDevice, setFilteredDataDevice] =
-    useState(hostToDeviceMapping);
-  // Cluster mapping for hosts
-  const hostClusterMapping = {
-    "Host 1": "Cluster-A",
-    "Host 2": "Cluster-A",
-    "Host 3": "Cluster-B",
-    "Host 4": "Cluster-B",
-    "Host 5": "Cluster-A",
-    "Host 6": "Cluster-B",
-    "Host 7": "Cluster-A",
-    "Host 8": "Cluster-B",
-    "Host 9": "Cluster-A",
-    "Host 10": "Cluster-B",
-    "Host 11": "Cluster-A",
-  };
-  // Rules for determining clusters for unknown hosts
+    useState([]);
+  const [filteredDirectDevice, setFilteredDirectDevice] =
+    useState([]);
+
+
   // istanbul ignore next
-  const determineClusterForUnknownHost = (hostValue) => {
-    // Convert to lowercase for case-insensitive matching
-    const hostLower = hostValue.toLowerCase();
-
-    // Rule 1: Hosts starting with "msl-" go to Cluster-B
-    if (hostLower.startsWith("msl-")) {
-      return "Cluster-B";
-    }
-
-    // Rule 2: Hosts containing "host" go to Cluster-A
-    if (hostLower.includes("host")) {
-      return "Cluster-A";
-    }
-
-    // Default rule: Any other host gets null cluster
-    return null;
-  };
-
   useEffect(
     () => {
       fetchData(hostDeviceMapEndpoint, setHostToDeviceMapping);
       fetchData(hostMapEndpoint, setHostActiveList);
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    []
-  );
-  useEffect(() => {
-    // Function to add cluster information to hosts
-    const addClusterToHosts = (hosts) => {
-      return hosts.map((host) => {
-        return {
-          ...host,
-          cluster: determineClusterForUnknownHost(host.value),
-        };
-      });
-    };
-
-    // Function to add cluster information to hosts
-    const addClusterToDevice = (hosts) => {
-      // istanbul ignore next
-      return hosts.map((host) => {
-        return {
-          ...host,
-          cluster: determineClusterForUnknownHost(host.host),
-        };
-      });
-    };
-
-    // Process the API response and update state
-    const hostsWithClusters = addClusterToHosts(hostActiveList);
-    const deviceWithClusters = addClusterToDevice(hostToDeviceMapping);
-    setHostActiveList(hostsWithClusters);
-    setHostToDeviceMapping(deviceWithClusters);
-  }, []);
-  // istanbul ignore next
-  useEffect(
-    () => {
       // Function to map hosts dynamically from a list
       const mapHosts = (hostNames) => {
         return hostNames.map((hostName) => {
           const { color } = defaultHostProperties[hostName] || {};
-          const cluster = hostClusterMapping[hostName] || null;
           return {
             host: hostName,
-            color,
-            cluster,
+            color
           };
         });
       };
@@ -140,27 +76,52 @@ const BoxTopology = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
-
-  // Filter function to apply when selected cluster changes
+  // Filtering hosts and device names based on fm-type: "FM_REMOTE_CMMB" for CMM-B view and others for Direct Host view.
+  let hostlistRemote = hostToDeviceMapping.filter(mapping => mapping.fm_type === "FM_REMOTE_CMMB");
+  let hostlistDirect = hostToDeviceMapping.filter(mapping => mapping.fm_type !== "FM_REMOTE_CMMB");
+  // Function to assign clusters
+  const clusterWithDevice = assignClusters(hostlistRemote);
+  const clusterWithDirectHost = assignClusters(hostlistDirect);
+  const clusterWithHost = assignClustersToLabelValuePairs(hostActiveList);
   // istanbul ignore next
   useEffect(() => {
+  
     if (selectedCluster === "None") {
-      // Show all data when None is selected
-      setFilteredDataDevice(hostToDeviceMapping);
-      setFilteredDataHost(hostActiveList);
+      // Only update state if it's different
+      if (JSON.stringify(clusterWithDevice) !== JSON.stringify(filteredDataDevice)) {
+        setFilteredDataDevice(clusterWithDevice || []);
+      }
+      if (JSON.stringify(clusterWithDirectHost) !== JSON.stringify(filteredDirectDevice)) {
+        setFilteredDirectDevice(clusterWithDirectHost || []);
+      }
+      if (JSON.stringify(clusterWithHost) !== JSON.stringify(filteredDataHost)) {
+        setFilteredDataHost(clusterWithHost || []);
+      }
     } else {
-      // Filter data based on selected cluster
-      const filtered = hostToDeviceMapping.filter(
-        (item) => item.cluster === selectedCluster
+      const filtered = (clusterWithDevice || []).filter(
+        (item) => item?.cluster === selectedCluster
       );
-      setFilteredDataDevice(filtered);
-
-      const filteredHost = hostActiveList.filter(
-        (host) => host.cluster === selectedCluster
+  
+      if (JSON.stringify(filtered) !== JSON.stringify(filteredDataDevice)) {
+        setFilteredDataDevice(filtered);
+      }
+  
+      const filteredDirect = (clusterWithDirectHost || []).filter(
+        (item) => item?.cluster === selectedCluster
       );
-      setFilteredDataHost(filteredHost);
+      if (JSON.stringify(filteredDirect) !== JSON.stringify(filteredDirectDevice)) {
+        setFilteredDirectDevice(filteredDirect);
+      }
+  
+      const filteredHost = (clusterWithHost || []).filter(
+        (host) => host?.cluster === selectedCluster
+      );
+      if (JSON.stringify(filteredHost) !== JSON.stringify(filteredDataHost)) {
+        setFilteredDataHost(filteredHost);
+      }
     }
-  }, [selectedCluster]);
+  }, [selectedCluster, clusterWithDevice, clusterWithHost, clusterWithDirectHost, filteredDataDevice, filteredDirectDevice, filteredDataHost]);
+
   // istanbul ignore next
   const filterByCluster = (clusterName) => {
     setSelectedCluster(clusterName);
@@ -174,7 +135,7 @@ const BoxTopology = () => {
     }));
   };
 
-  const hostDirectView = updateHostListAttached(mergeHosts(filteredDataDevice));
+  const hostDirectView = updateHostListAttached(mergeHosts(filteredDirectDevice));
 
   // istanbul ignore next
   const hostDirectViewList = hostDirectView.map((item) => ({
@@ -560,7 +521,7 @@ const BoxTopology = () => {
                 </Carousel.Item>
               ))}
             </Carousel>
-          ) : (
+          ) : filteredDirectDevice.length ? (
             <Carousel
               activeIndex={currentHostView}
               controls={false}
@@ -607,7 +568,7 @@ const BoxTopology = () => {
                 </Carousel.Item>
               ))}
             </Carousel>
-          )}
+          ): <div style={{color: "white"}}>For selecting a cluster, the host is not Available.</div>}
         </Col>
       </Row>
     </Container>

@@ -1,4 +1,5 @@
 // Load App Configs
+const clusterPolicies = require('../src/components/clusterPolicies');
 export const Configs = require('../src/config/config.json');
 export const BackgroundsImage = require('../src/assets/images/backgrounds/BackGroundImage.png');
 export const AddIcon = require('../src/assets/icons/Icon-Add-Light.png');
@@ -200,3 +201,25 @@ export const memboxTableHeader = [
           }))
       }));
     }
+// Main function to assign clusters based on selected policy
+export const assignClusters = (hosts) => {
+  const clusterList = Configs.clusters;
+  const policyName = Configs.clusterPolicy;
+  const policyOptions = Configs.policyOptions?.[policyName] || {};
+  
+  // Get the appropriate policy function or default to roundRobin
+  const policyFunction = clusterPolicies[policyName] || clusterPolicies.roundRobin;
+  
+  // Apply the selected policy
+  return policyFunction(hosts, clusterList, policyOptions);
+};
+
+export const assignClustersToLabelValuePairs = (labelValuePairs) => {
+  const clusterList = Configs.clusters;
+  
+  // Use the specific label-value policy or fall back to the generic round robin
+  const policyFunction = clusterPolicies.labelValueRoundRobin || clusterPolicies.roundRobin;
+  const policyOptions = Configs.policyOptions?.labelValueRoundRobin || {};
+  
+  return policyFunction(labelValuePairs, clusterList, policyOptions);
+};
