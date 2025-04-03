@@ -140,7 +140,7 @@ class ControllerServicer : public svk::Controller::Service {
   std::unordered_map<std::string, std::unordered_map<std::string, std::string>>
       m_cluster_map;
   // Map of clusters <cluster_name, cluster_info>
-  std::unordered_map<std::string, cluster_info> new_cluster_map;
+  std::unordered_map<std::string, cluster_info> m_cluster_info;
   // Map of registered nodes, may or may not be part of a cluster
   std::unordered_map<std::string, node_info> m_registered_nodes;
   std::shared_ptr<Server> m_server;

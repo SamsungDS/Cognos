@@ -374,11 +374,27 @@ TEST_F(MockTestController, RegisterNode) {
   req->set_node_port(node_port);
 
   grpc_status = client.RegisterNode(req, resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+  svk::ClusterRequest *c_req(new svk::ClusterRequest());
+  svk::ClusterResponse *c_resp(new svk::ClusterResponse());
+
+  c_req->set_command_name("list_clusters");
+  grpc_status = client.ClusterAPI(c_req, c_resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+  std::string expected_json =
+      "{\"clusters\":[{\"cluster_name\":\"CLUSTER_REGISTER_NODE\"}]}";
+  EXPECT_EQ(c_resp->command_response(), expected_json);
+
+  c_req->set_cluster_name(cluster_id);
+  c_req->set_command_name("list_nodes_in_cluster");
+
+  grpc_status = client.ClusterAPI(c_req, c_resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
              "Just for flushing logs with RegisterNode");
   svk_logger_close(CONTROLLER_LOGGER_MODULE_NAME);
 
-  ASSERT_EQ(grpc_status.ok(), true);
   std::cout << "Resp message " << resp->error_id_or_string_if_any()
             << std::endl;
 
@@ -392,6 +408,144 @@ TEST_F(MockTestController, RegisterNode) {
   EXPECT_EQ(true, data.find(search_str) != std::string::npos);
   search_str = "Registered the node " + node_id + " with controller.";
   EXPECT_EQ(true, data.find(search_str) != std::string::npos);
+
+  expected_json =
+      "{\"clusters\":[{\"cluster_name\":\"CLUSTER_REGISTER_NODE\",\"nodes\":[{"
+      "\"node_name\":\"registernode.localdomain.com\",\"status\":\"online\"}]}]"
+      "}";
+  std::cout << grpc_status.error_message() << std::endl;
+  EXPECT_EQ(c_resp->command_response(), expected_json);
+}
+
+TEST_F(MockTestController, RegisterNodeWithoutClusterName) {
+  Status grpc_status;
+
+  std::string node_id = "registernode.localdomain.com";
+  std::string node_port = "9998";
+  std::string node_name = "test_node";
+
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+             "RegisterNode UT called");
+
+  ASSERT_EQ(create_device_sla_conf_json(), 0);
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  svk::RegisterRequest *req(new svk::RegisterRequest());
+  svk::RegisterResponse *resp(new svk::RegisterResponse());
+
+  req->set_node_ip(node_id);
+  req->set_node_port(node_port);
+  req->set_node_name(node_name);
+
+  grpc_status = client.RegisterNode(req, resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+
+  svk::NodeRequest *n_req(new svk::NodeRequest());
+  svk::NodeResponse *n_resp(new svk::NodeResponse());
+
+  n_req->set_command_name("list_nodes");
+
+  grpc_status = client.NodeAPI(n_req, n_resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+             "Just for flushing logs with RegisterNode");
+  svk_logger_close(CONTROLLER_LOGGER_MODULE_NAME);
+
+  std::cout << "Resp message " << resp->error_id_or_string_if_any()
+            << std::endl;
+
+  std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  std::string data((std::istreambuf_iterator<char>(file)),
+                   (std::istreambuf_iterator<char>()));
+  file.close();
+
+  std::string search_str =
+      "Registered the node " + node_name + " with controller";
+  EXPECT_EQ(true, data.find(search_str) != std::string::npos);
+
+  std::string expected_json =
+      "{\"node_info\":[{\"node_ip\":\"registernode.localdomain.com\",\"node_"
+      "name\":\"test_node\",\"node_port\":\"9998\",\"status\":\"online\"}]}";
+  std::cout << n_resp->command_response() << std::endl;
+  EXPECT_EQ(n_resp->command_response(), expected_json);
+}
+
+TEST_F(MockTestController, RegisterNodeWithMultipleNodesInCluster) {
+  Status grpc_status;
+  std::string cluster_id = "CLUSTER_REGISTER_NODE";
+  std::string node_id = "registernode.localdomain.com";
+  std::string node_port = "9998";
+
+  ASSERT_EQ(create_device_sla_conf_json(), 0);
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  svk::RegisterRequest *req(new svk::RegisterRequest());
+  svk::RegisterResponse *resp(new svk::RegisterResponse());
+  req->set_cluster_name(cluster_id);
+  req->set_node_ip(node_id);
+  req->set_node_port(node_port);
+
+  grpc_status = client.RegisterNode(req, resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+
+  // Register another node with same cluster
+  req->set_cluster_name("CLUSTER_REGISTER_NODE");
+  req->set_node_ip("registernode.localdomain2.com");
+  req->set_node_port("9999");
+  req->set_node_name("test_node");
+
+  grpc_status = client.RegisterNode(req, resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+
+  svk::ClusterRequest *c_req(new svk::ClusterRequest());
+  svk::ClusterResponse *c_resp(new svk::ClusterResponse());
+
+  c_req->set_command_name("list_clusters");
+  grpc_status = client.ClusterAPI(c_req, c_resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+  std::string expected_json =
+      "{\"clusters\":[{\"cluster_name\":\"CLUSTER_REGISTER_NODE\"}]}";
+  ;
+  EXPECT_EQ(c_resp->command_response(), expected_json);
+
+  c_req->set_cluster_name(cluster_id);
+  c_req->set_command_name("list_nodes_in_cluster");
+
+  grpc_status = client.ClusterAPI(c_req, c_resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+             "Just for flushing logs with RegisterNode");
+  svk_logger_close(CONTROLLER_LOGGER_MODULE_NAME);
+
+  std::cout << "Resp message " << resp->error_id_or_string_if_any()
+            << std::endl;
+
+  std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  std::string data((std::istreambuf_iterator<char>(file)),
+                   (std::istreambuf_iterator<char>()));
+  file.close();
+
+  std::string search_str = "Registered the node_id " + node_id + ":" +
+                           node_port + " with cluster:" + cluster_id;
+  EXPECT_EQ(true, data.find(search_str) != std::string::npos);
+  search_str = "Registered the node " + node_id + " with controller.";
+  EXPECT_EQ(true, data.find(search_str) != std::string::npos);
+
+  search_str =
+      "Registered the node_id registernode.localdomain2.com:9999 with "
+      "cluster:" +
+      cluster_id;
+  EXPECT_EQ(true, data.find(search_str) != std::string::npos);
+  search_str = "Registered the node " + node_id + " with controller.";
+  EXPECT_EQ(true, data.find(search_str) != std::string::npos);
+
+  expected_json =
+      "{\"clusters\":[{\"cluster_name\":\"CLUSTER_REGISTER_NODE\",\"nodes\":[{"
+      "\"node_name\":\"registernode.localdomain.com\",\"status\":\"online\"},{"
+      "\"node_name\":\"test_node\",\"status\":\"online\"}]}]}";
+  EXPECT_EQ(c_resp->command_response(), expected_json);
 }
 
 TEST_F(MockTestController, SetNodeStatus) {
