@@ -174,7 +174,7 @@ nlohmann::json ControllerServicer::ClusterResponseJson(
     std::string cluster_name) {
   using json = nlohmann::json;
   json cluster_nodes_resp;
-  cluster_info cluster = new_cluster_map.at(cluster_name);
+  cluster_info cluster = m_cluster_info.at(cluster_name);
   json node_list = json::array();
   for (auto &node_name : cluster.node_names) {
     json single_node;
@@ -239,7 +239,7 @@ Status ControllerServicer::RegisterNode(ServerContext *ctxt,
   }
   // Node not registered yet, add to map
   if (!node_exists) {
-    m_registered_nodes.insert(std::make_pair(node_name, node));
+    m_registered_nodes.insert(std::make_pair(node.node_name, node));
     logger_str = "Registered the node " + node.node_name + " with controller.";
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                logger_str.c_str());
@@ -248,16 +248,17 @@ Status ControllerServicer::RegisterNode(ServerContext *ctxt,
   // If cluster_name is given, add to old m_cluster_map for backwards
   // compatibility
   if (cluster_name.length() != 0) {
-    logger_str =
-        "cluster_name given in node_register request, registering with old "
-        "m_cluster_map";
+    logger_str = "cluster_name given in node_register request";
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                logger_str.c_str());
-    if (m_cluster_map.find(cluster_name) == m_cluster_map.end()) {
+    if (m_cluster_info.find(cluster_name) == m_cluster_info.end()) {
       logger_str = "Registering the cluster_name: " + cluster_name;
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                  logger_str.c_str());
+      // Update old cluster map
       m_cluster_map[cluster_name][node_ip] = node_port;
+      // Update new cluster map
+      m_cluster_info[cluster_name].node_names.push_back(node.node_name);
       logger_str = "Registered the node_id " + node_ip + ":" + node_port +
                    " with cluster:" + cluster_name;
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
@@ -270,7 +271,10 @@ Status ControllerServicer::RegisterNode(ServerContext *ctxt,
 
       if (m_cluster_map[cluster_name].find(node_ip) ==
           m_cluster_map[cluster_name].end()) {
+        // Update old cluster map
         m_cluster_map[cluster_name][node_ip] = node_port;
+        // Update new cluster map
+        m_cluster_info[cluster_name].node_names.push_back(node.node_name);
         logger_str = "Registered the node_id " + node_ip + ":" + node_port +
                      " with cluster:" + cluster_name;
         svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
@@ -672,13 +676,13 @@ Status ControllerServicer::CreateCluster(std::string cluster_name,
   using json = nlohmann::json;
 
   try {
-    auto it = new_cluster_map.find(cluster_name);
-    if (it != new_cluster_map.end()) {
+    auto it = m_cluster_info.find(cluster_name);
+    if (it != m_cluster_info.end()) {
       logger_str = "Cluster id " + cluster_name + " already exists";
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                  logger_str.c_str());
       status = Status(grpc::ALREADY_EXISTS, "Cluster id already exists");
-      clstr_info = new_cluster_map[cluster_name];
+      clstr_info = m_cluster_info[cluster_name];
     } else {
       // Create a new cluster with nodes in command_params
       // Go through each node in command_params add to cluster
@@ -703,7 +707,6 @@ Status ControllerServicer::CreateCluster(std::string cluster_name,
           if (n.status == NODE_ONLINE) {
             clstr_info.cluster_name = cluster_name;
             clstr_info.node_names.push_back(node_name);
-            new_cluster_map[cluster_name] = clstr_info;
 
             // Backward compatibility
             m_cluster_map[cluster_name][n.node_ip] = n.node_port;
@@ -724,7 +727,7 @@ Status ControllerServicer::CreateCluster(std::string cluster_name,
           return Status(grpc::INVALID_ARGUMENT, logger_str);
         }
       }
-      new_cluster_map[cluster_name] = clstr_info;
+      m_cluster_info[cluster_name] = clstr_info;
       logger_str = "Cluster id " + cluster_name + " created";
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                  logger_str.c_str());
@@ -778,8 +781,7 @@ Status ControllerServicer::DeleteCluster(std::string cluster_name,
 
   // Find the cluster by the given cluster_name
   // If not found, return invalid argument error.
-  if (auto cluster_itr = new_cluster_map.find(cluster_name);
-      cluster_itr == new_cluster_map.end()) {
+  if (m_cluster_info.find(cluster_name) == m_cluster_info.end()) {
     logger_str =
         "Invalid request parameters for DeleteCluster: " + cluster_name +
         " not found in deletion";
@@ -792,7 +794,7 @@ Status ControllerServicer::DeleteCluster(std::string cluster_name,
 
   // Iterate over all nodes in the cluster and remove the cluster_name in
   // node_info
-  node_names = new_cluster_map[cluster_name].node_names;
+  node_names = m_cluster_info[cluster_name].node_names;
   for (auto &node_name : node_names) {
     node = m_registered_nodes[node_name];
     node.cluster_name = "";
@@ -801,10 +803,10 @@ Status ControllerServicer::DeleteCluster(std::string cluster_name,
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::DEBUG,
                logger_str.c_str());
   }
-  // Update new_cluster_map table
+  // Update m_cluster_info table
   // Only remove the mapping from cluster_name to node lists. Keep the node
   // status as registered.
-  new_cluster_map.erase(cluster_name);
+  m_cluster_info.erase(cluster_name);
 
   // Backward compatibility
   m_cluster_map.erase(cluster_name);
@@ -834,10 +836,10 @@ Status ControllerServicer::ListClusters(svk::ClusterResponse *resp) {
 
   status = Status::OK;
 
-  // Iterate through the new_cluster_map and add each cluster name to the
+  // Iterate through the m_cluster_info and add each cluster name to the
   // cluster_names array.
 
-  for (const auto &it : new_cluster_map) {
+  for (const auto &it : m_cluster_info) {
     cluster_name = it.first;
     json name_json;
     name_json["cluster_name"] = cluster_name;
@@ -870,8 +872,8 @@ Status ControllerServicer::ListNodesInCluster(std::string cluster_name,
     return Status(grpc::INVALID_ARGUMENT, logger_str);
   }
 
-  const auto &cluster = new_cluster_map.find(cluster_name);
-  if (cluster != new_cluster_map.end()) {
+  const auto &cluster = m_cluster_info.find(cluster_name);
+  if (cluster != m_cluster_info.end()) {
     using json = nlohmann::json;
     json resp_json;
     json cluster_json = json::array();
@@ -932,7 +934,7 @@ Status ControllerServicer::AddRemoveNode(std::string cluster_name,
       std::string node_name = value["node_name"];
       // Add or remove node if node is registered and cluster exists
       if (m_registered_nodes.count(node_name) &&
-          new_cluster_map.count(cluster_name)) {
+          m_cluster_info.count(cluster_name)) {
         node_info &curr_node = m_registered_nodes[node_name];
         // Add node to cluster
         if (command_name == "add_node_to_cluster") {
@@ -946,7 +948,7 @@ Status ControllerServicer::AddRemoveNode(std::string cluster_name,
             return Status(grpc::ALREADY_EXISTS, logger_str);
           }
           // Add node to new and old cluster data structures
-          new_cluster_map[cluster_name].node_names.push_back(node_name);
+          m_cluster_info[cluster_name].node_names.push_back(node_name);
           m_cluster_map[cluster_name][curr_node.node_ip] = curr_node.node_port;
           // Update internal node_info
           curr_node.cluster_name = cluster_name;
@@ -957,7 +959,7 @@ Status ControllerServicer::AddRemoveNode(std::string cluster_name,
         } else {
           // Remove node from cluster
           std::vector<std::string> &node_names =
-              new_cluster_map[cluster_name].node_names;
+              m_cluster_info[cluster_name].node_names;
           auto it = std::find(node_names.begin(), node_names.end(), node_name);
           if (it != node_names.end()) {
             node_names.erase(it);
