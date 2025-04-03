@@ -867,6 +867,91 @@ TEST_F(MockTestController, EmptyClusterParamsCreateCluster) {
       "to cluster");
 }
 
+TEST_F(MockTestController, CreateClusterWithUnregisteredNodes) {
+  Status grpc_status;
+
+  std::string cluster_name = "CLUSTER_CREATE_CLUSTER";
+  std::string command_name = "create_cluster";
+
+  using json = nlohmann::json;
+  json cmd;
+  json nodes = json::array();
+  json node;
+  node["node_name"] = "NODE_CREATE_CLUSTER";
+  nodes.push_back(node);
+  node["node_name"] = "NODE_CREATE_CLUSTER_2";
+  nodes.push_back(node);
+  cmd["nodes"] = nodes;
+  std::cout << cmd.dump() << std::endl;
+  // test json:
+  // {
+  //     "cluster_name": "CLUSTER_CREATE_CLUSTER",
+  //     "command_name": "create_cluster",
+  //     "command_params": {
+  //         "nodes": [
+  //             {
+  //                 "node_name": "NODE_CREATE_CLUSTER"
+  //             }
+  //         ]
+  //     }
+  // }
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  std::string node_id = "registernodesla.localdomain.com";
+  std::string node_port = "9998";
+  std::string node_name = "NODE_CREATE_CLUSTER";
+
+  svk::RegisterRequest *reg_req(new svk::RegisterRequest());
+  svk::RegisterResponse *reg_resp(new svk::RegisterResponse());
+
+  reg_req->set_node_name(node_name);
+  reg_req->set_node_ip(node_id);
+  reg_req->set_node_port(node_port);
+
+  grpc_status = client.RegisterNode(reg_req, reg_resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+             "Just for flushing logs");
+  std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  std::string data((std::istreambuf_iterator<char>(file)),
+                   (std::istreambuf_iterator<char>()));
+  file.close();
+  std::string search_str =
+      "Registered the node " + node_name + " with controller.";
+  EXPECT_EQ(true, data.find(search_str) != std::string::npos);
+
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+  req->set_cluster_name(cluster_name);
+  req->set_command_name(command_name);
+  req->set_command_params(cmd.dump());
+
+  grpc_status = client.ClusterAPI(req, resp);
+  ASSERT_EQ(grpc_status.error_code(), grpc::INVALID_ARGUMENT);
+
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+             "Just for flushing logs");
+  std::ifstream file2(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  std::string data2((std::istreambuf_iterator<char>(file2)),
+                    (std::istreambuf_iterator<char>()));
+  file2.close();
+  search_str =
+      "Node NODE_CREATE_CLUSTER_2 is offline or not registered, could not be "
+      "added to cluster";
+  EXPECT_EQ(true, data2.find(search_str) != std::string::npos);
+
+  req->set_command_name("list_clusters");
+
+  grpc_status = client.ClusterAPI(req, resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+  EXPECT_EQ(resp->command_response(), "{\"clusters\":[]}");
+
+  search_str = "ListClusters returns 0 cluster names";
+  EXPECT_EQ(is_str_in_log(search_str), true);
+}
+
 TEST_F(MockTestController, ListNodes) {
   Status grpc_status;
 

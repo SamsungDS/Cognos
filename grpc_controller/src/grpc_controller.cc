@@ -722,6 +722,7 @@ Status ControllerServicer::CreateCluster(std::string cluster_name,
           svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                      logger_str.c_str());
           m_cluster_map.erase(cluster_name);
+          m_cluster_info.erase(cluster_name);
           resp->set_error_id_or_string_if_any(logger_str);
           resp->set_error_code(SVK_STATUS_FAIL);
           return Status(grpc::INVALID_ARGUMENT, logger_str);
