@@ -29,6 +29,21 @@ class DeviceManager {
   static DeviceManager& getInstance();
 
   /**
+   * @brief Constructs a DeviceManager instance for library use.
+   *
+   * This constructor allows embedding DeviceManager in external applications
+   * by injecting a DeviceRegistry instance.
+   *
+   * @param registry Reference to an externally managed DeviceRegistry instance.
+   */
+  explicit DeviceManager(DeviceRegistry& registry);
+
+  /**
+   * @brief Destructor for DeviceManager.
+   */
+  ~DeviceManager();
+
+  /**
    * @brief Deleted copy constructor to prevent duplication.
    **/
   DeviceManager(const DeviceManager&) = delete;
@@ -145,12 +160,8 @@ class DeviceManager {
                         std::string& device_result);
 
  private:
-  /**
-   * @brief Private constructor to enforce the Singleton pattern.
-   *
-   * Initializes logging and prepares DeviceManager for operations.
-   */
-  DeviceManager();
+  // Registry reference (injected)
+  DeviceRegistry& registry_;
 };
 
 #endif

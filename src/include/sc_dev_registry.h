@@ -25,6 +25,17 @@ class DeviceRegistry {
    */
   static DeviceRegistry& getInstance();
 
+  DeviceRegistry() = default;
+
+  // Prevent copying
+  DeviceRegistry(const DeviceRegistry&) = delete;
+  DeviceRegistry& operator=(const DeviceRegistry&) = delete;
+
+  /**
+   * @brief Destructor for DeviceRegistry. Cleans up all adapter objects.
+   */
+  ~DeviceRegistry();
+
   /**
    * @brief Registers a new device adapter.
    *
@@ -75,15 +86,6 @@ class DeviceRegistry {
   const std::unordered_map<std::string, CXLDeviceAdapter*>& get_adapters();
 
  private:
-  /**
-   * @brief Private constructor for Singleton.
-   */
-  DeviceRegistry() = default;
-
-  // Prevent copying
-  DeviceRegistry(const DeviceRegistry&) = delete;
-  DeviceRegistry& operator=(const DeviceRegistry&) = delete;
-
   /**
    * @brief Map storing registered adapters.
    */

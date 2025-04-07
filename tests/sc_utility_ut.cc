@@ -90,6 +90,18 @@ TEST_F(ScUtilityTest, PosixErrToJson_Coverage) {
             "Invalid request parameters");
   EXPECT_EQ(get_json_value(posix_err_to_json(ENOENT, ""), "message"),
             "Requested resource not found");
+  EXPECT_EQ(get_json_value(posix_err_to_json(EEXIST, ""), "message"),
+            "Resource already exists");
+  EXPECT_EQ(get_json_value(posix_err_to_json(ENOEXEC, ""), "message"),
+            "Executable format error (plugin load failed)");
+  EXPECT_EQ(get_json_value(posix_err_to_json(EPROTO, ""), "message"),
+            "Plugin registration error");
+  EXPECT_EQ(get_json_value(posix_err_to_json(EFAULT, ""), "message"),
+            "System fault occurred");
+  EXPECT_EQ(get_json_value(posix_err_to_json(ETIMEDOUT, ""), "message"),
+            "Operation timed out");
+  EXPECT_EQ(get_json_value(posix_err_to_json(ECONNREFUSED, ""), "message"),
+            "Connection refused");
   // Testing the default case (passing an unknown error code)
   EXPECT_EQ(get_json_value(posix_err_to_json(9999, ""), "message"),
             "Unknown error occurred");

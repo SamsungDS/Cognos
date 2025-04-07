@@ -695,8 +695,8 @@ svk_status initialize(void*) {
   }
 
   try {
-    DeviceManager::getInstance();
     DeviceRegistry::getInstance();
+    DeviceManager::getInstance();
     LOG(level_E::INFO, "All singletons initialized successfully.");
   } catch (const std::exception& e) {
     LOG(level_E::ERROR, "Initialization failed: " + std::string(e.what()));

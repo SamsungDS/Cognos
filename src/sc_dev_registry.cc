@@ -10,6 +10,17 @@ DeviceRegistry& DeviceRegistry::getInstance() {
   return instance;
 }
 
+DeviceRegistry::~DeviceRegistry() {
+  std::lock_guard<std::mutex> lock(registryMutex);
+  for (auto& [name, adapter] : adapterMap) {
+    delete adapter;
+    LOG(level_E::INFO,
+        "Adapter '" + name + "' deleted during registry cleanup.");
+  }
+  adapterMap.clear();
+  LOG(level_E::INFO, "DeviceRegistry destroyed and cleaned up.");
+}
+
 /**
  * @brief Registers a new device adapter.
  */

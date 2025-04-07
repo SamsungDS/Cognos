@@ -10,6 +10,7 @@
 #include "sc_dev_manager.h"
 #include "sc_test_utils.h"
 #include "sc_utility.h"
+
 class TestCXLDeviceAdapter : public CXLDeviceAdapter {
  public:
   std::string mockResponse;
@@ -128,9 +129,11 @@ class TestCXLDeviceAdapter : public CXLDeviceAdapter {
 
 class DeviceManagerTest : public ::testing::Test {
  protected:
-  DeviceManager& devManager = DeviceManager::getInstance();
-  DeviceRegistry& devRegistry = DeviceRegistry::getInstance();
+  DeviceRegistry devRegistry;
+  DeviceManager devManager;
   TestCXLDeviceAdapter testAdapter;
+
+  DeviceManagerTest() : devRegistry(), devManager(devRegistry) {}
 
   void SetUp() override {
     // Register the test adapter in DeviceRegistry
@@ -270,8 +273,7 @@ TEST_F(DeviceManagerTest, AttachMemory_InvalidDeviceID) {
 TEST_F(DeviceManagerTest, AttachMemory_AdapterFailure) {
   auto testAdapter = std::make_shared<TestCXLDeviceAdapter>();
   testAdapter->setMalformedJsonResponse();  // Simulate failure
-  DeviceRegistry::getInstance().registerAdapter("TestAdapter",
-                                                testAdapter.get());
+  devRegistry.registerAdapter("TestAdapter", testAdapter.get());
   std::unordered_map<std::string, std::string> params;
   params["device_id"] = "1";
   params["host_id"] = "123";
@@ -319,8 +321,7 @@ TEST_F(DeviceManagerTest, DetachMemory_InvalidDeviceID) {
 TEST_F(DeviceManagerTest, DetachMemory_AdapterFailure) {
   auto testAdapter = std::make_shared<TestCXLDeviceAdapter>();
   testAdapter->setMalformedJsonResponse();
-  DeviceRegistry::getInstance().registerAdapter("TestAdapter",
-                                                testAdapter.get());
+  devRegistry.registerAdapter("TestAdapter", testAdapter.get());
   std::unordered_map<std::string, std::string> params;
   params["device_id"] = "1";
   params["host_id"] = "123";
@@ -423,8 +424,7 @@ TEST_F(DeviceManagerTest, FetchAllDevices_WithFilter) {
 TEST_F(DeviceManagerTest, FetchAllDevices_InvalidJson) {
   // Malformed JSON
   auto testAdapter = std::make_shared<TestCXLDeviceAdapter>();
-  DeviceRegistry::getInstance().registerAdapter("TestAdapter",
-                                                testAdapter.get());
+  devRegistry.registerAdapter("TestAdapter", testAdapter.get());
   testAdapter->setMockError(-EINVAL);
   std::unordered_set<uint64_t> device_filter;
   std::string response;
@@ -435,8 +435,7 @@ TEST_F(DeviceManagerTest, FetchAllDevices_InvalidJson) {
 TEST_F(DeviceManagerTest, FetchAllDevices_EmptyResult) {
   auto testAdapter = std::make_shared<TestCXLDeviceAdapter>();
   testAdapter->setEmptyResponse();
-  DeviceRegistry::getInstance().registerAdapter("TestAdapter",
-                                                testAdapter.get());
+  devRegistry.registerAdapter("TestAdapter", testAdapter.get());
   std::unordered_set<uint64_t> device_filter;
   std::string response;
   int status = devManager.fetch_all_devices(device_filter, response);
@@ -465,8 +464,7 @@ TEST_F(DeviceManagerTest, FetchAllDevices_MultipleAdapters) {
 TEST_F(DeviceManagerTest, FetchAllDevices_LargeDeviceList) {
   auto testAdapter = std::make_shared<TestCXLDeviceAdapter>();
   testAdapter->setLargeDeviceListResponse(1000);
-  DeviceRegistry::getInstance().registerAdapter("TestAdapter",
-                                                testAdapter.get());
+  devRegistry.registerAdapter("TestAdapter", testAdapter.get());
   std::unordered_set<uint64_t> device_filter;
   std::string response;
   int status = devManager.fetch_all_devices(device_filter, response);
@@ -479,9 +477,7 @@ TEST_F(DeviceManagerTest, FetchAllDevices_LargeDeviceList) {
 TEST_F(DeviceManagerTest, FetchAllDevices_FlattenFailure) {
   auto testAdapter = std::make_shared<TestCXLDeviceAdapter>();
   testAdapter->setMalformedJsonResponse();
-  DeviceRegistry::getInstance().registerAdapter("TestAdapter",
-                                                testAdapter.get());
-
+  devRegistry.registerAdapter("TestAdapter", testAdapter.get());
   std::unordered_set<uint64_t> device_filter;
   std::string response;
   int status = devManager.fetch_all_devices(device_filter, response);
@@ -499,8 +495,7 @@ TEST_F(DeviceManagerTest, FetchAllDevices_FlattenFailure) {
 TEST_F(DeviceManagerTest, GetDeviceInfo_Failure) {
   auto testAdapter = std::make_shared<TestCXLDeviceAdapter>();
   testAdapter->setMalformedJsonResponse();
-  DeviceRegistry::getInstance().registerAdapter("TestAdapter",
-                                                testAdapter.get());
+  devRegistry.registerAdapter("TestAdapter", testAdapter.get());
   std::unordered_map<std::string, std::string> params;
   params["device_id"] = "1";
   std::string response = devManager.get_device_info(params);

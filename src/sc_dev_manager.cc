@@ -18,15 +18,24 @@
  * @brief Gets the singleton instance of DeviceManager.
  */
 DeviceManager& DeviceManager::getInstance() {
-  static DeviceManager instance;
+  static DeviceManager instance(DeviceRegistry::getInstance());
   return instance;
 }
 
 /**
- * @brief Private constructor for DeviceManager (Singleton).
+ * @brief Constructs a DeviceManager with an external DeviceRegistry.
+ *
+ * This constructor supports library/embedded usage, allowing callers
+ * to inject their own registry and manage adapter lifecycles independently.
+ *
+ * @param registry Reference to the injected DeviceRegistry.
  */
-DeviceManager::DeviceManager() {
+DeviceManager::DeviceManager(DeviceRegistry& registry) : registry_(registry) {
   LOG(level_E::INFO, "DeviceManager initialized.");
+}
+
+DeviceManager::~DeviceManager() {
+  LOG(level_E::INFO, "DeviceManager destroyed.");
 }
 
 /**
@@ -91,7 +100,7 @@ int DeviceManager::fetch_all_devices(
   std::ostringstream oss;
   oss << R"({"devices":[)";
   int init_stream_pos = oss.tellp();
-  for (const auto& entry : DeviceRegistry::getInstance().get_adapters()) {
+  for (const auto& entry : registry_.get_adapters()) {
     CXLDeviceAdapter* adapter = entry.second;
     if (!adapter) continue;
     LOG(level_E::INFO, "Querying adapter: " + entry.first);
@@ -169,8 +178,7 @@ std::string DeviceManager::get_device_info(
   if (!str_to_int(it->second, d_id, error_response)) {
     return error_response;
   }
-  CXLDeviceAdapter* adapter =
-      DeviceRegistry::getInstance().getAdapterForDevice(d_id);
+  CXLDeviceAdapter* adapter = registry_.getAdapterForDevice(d_id);
   if (!adapter) {
     LOG(level_E::ERROR,
         "No adapter found for device ID: " + std::to_string(d_id));
@@ -209,8 +217,7 @@ std::string DeviceManager::attach_memory(
     return error_response;
   }
 
-  CXLDeviceAdapter* adapter =
-      DeviceRegistry::getInstance().getAdapterForDevice(d_id);
+  CXLDeviceAdapter* adapter = registry_.getAdapterForDevice(d_id);
   if (!adapter) {
     LOG(level_E::ERROR,
         "No adapter found for device ID: " + std::to_string(d_id));
@@ -246,8 +253,7 @@ std::string DeviceManager::detach_memory(
       !str_to_int(h_it->second, h_id, error_response)) {
     return error_response;
   }
-  CXLDeviceAdapter* adapter =
-      DeviceRegistry::getInstance().getAdapterForDevice(d_id);
+  CXLDeviceAdapter* adapter = registry_.getAdapterForDevice(d_id);
   if (!adapter) {
     LOG(level_E::ERROR,
         "No adapter found for device ID: " + std::to_string(d_id));

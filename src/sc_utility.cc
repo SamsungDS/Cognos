@@ -63,8 +63,19 @@ bool str_to_int(const std::string& id_str, uint64_t& id,
 
 // Mapping POSIX error codes to human-readable error names
 const std::unordered_map<int, std::string> error_map = {
-    {EINVAL, "EINVAL"}, {ENOENT, "ENOENT"}, {EIO, "EIO"},      {EPERM, "EPERM"},
-    {EBUSY, "EBUSY"},   {ENOMEM, "ENOMEM"}, {ERANGE, "ERANGE"}
+    {EINVAL, "EINVAL"},
+    {ENOENT, "ENOENT"},
+    {EIO, "EIO"},
+    {EPERM, "EPERM"},
+    {EBUSY, "EBUSY"},
+    {ENOMEM, "ENOMEM"},
+    {ERANGE, "ERANGE"},
+    {EEXIST, "EEXIST"},
+    {ENOEXEC, "ENOEXEC"},
+    {EPROTO, "EPROTO"},
+    {EFAULT, "EFAULT"},
+    {ETIMEDOUT, "ETIMEDOUT"},
+    {ECONNREFUSED, "ECONNREFUSED"}
 
 };
 
@@ -92,8 +103,25 @@ std::string posix_err_to_json(int error_code,
       message = "Memory allocation failure";
       break;
     case ERANGE:
-      std::cout << "I am in erange" << std::endl;
       message = "Value out of range";
+      break;
+    case EEXIST:
+      message = "Resource already exists";
+      break;
+    case ENOEXEC:
+      message = "Executable format error (plugin load failed)";
+      break;
+    case EPROTO:
+      message = "Plugin registration error";
+      break;
+    case EFAULT:
+      message = "System fault occurred";
+      break;
+    case ETIMEDOUT:
+      message = "Operation timed out";
+      break;
+    case ECONNREFUSED:
+      message = "Connection refused";
       break;
     default:
       message = "Unknown error occurred";
