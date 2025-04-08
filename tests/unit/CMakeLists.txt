@@ -19,11 +19,15 @@ target_link_libraries(
   ${RAS_UT}
   dl
   GTest::gtest_main
-  gmock_main
   svkframework
   svklogger
   ras
 )
 
+enable_testing()
+add_subdirectory(RequestManager.cpp)
+
 include(GoogleTest)
 gtest_discover_tests(${RAS_UT})
+
+
