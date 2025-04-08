@@ -4,6 +4,8 @@ set(RAS_LIB_DEST "lib64/")
 set(RAS_INCLUDE_DEST "include/")
 set(RAS "ras")
 
+add_subdirectory(utils)
+
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../include)
 add_library(${RAS} SHARED ${RAS_SRC} ${RAS_INC})
 target_include_directories(${RAS} PUBLIC ${RAS_INCLUDE_DEST})
