@@ -1,5 +1,3 @@
-link_directories(${CMAKE_BUILD_DIR}/src)
-
 set(REQUEST_MANAGER_UT "requestManager_ut")
 set(REQUEST_MANAGER_UT_SOURCES
   RequestManager_ut.cc

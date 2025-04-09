@@ -26,6 +26,8 @@ target_link_libraries(
 
 enable_testing()
 add_subdirectory(RequestManager.cpp)
+add_subdirectory(RequestProcessor)
+add_subdirectory(ras_monitor.cc)
 
 include(GoogleTest)
 gtest_discover_tests(${RAS_UT})

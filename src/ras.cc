@@ -1,5 +1,15 @@
 #include "ras.hpp"
 
+#include "ras_monitor.h"
+
+struct ras_context_s {
+  ras_monitor *monitor_context;
+  bool initialized;
+  std::mutex ctx_mutex;
+};
+struct ras_context_s g_ras_context = {.monitor_context = nullptr,
+                                      .initialized = false};
+
 svk_status parsing_ras_conf(std::string ras_conf_path, ras_conf *ras_configs) {
   boost::property_tree::ptree root_conf;
   static boost::property_tree::ptree logger_conf;
@@ -52,11 +62,23 @@ extern "C" svk_status initialize(void *details) {
                       ras_configs->log_sink_type.c_str()) == 0) {
     svk_logger(RAS_LOGGER, level_E::INFO,
                "ras init called & logger is initialized");
-    return SVK_STATUS_SUCCESS;
   } else {
     std::cerr << "ras logger init fail" << std::endl;
     return SVK_STATUS_INVALID_CONFIG;
   }
+
+  std::lock_guard<std::mutex> lock(g_ras_context.ctx_mutex);
+
+  if (g_ras_context.monitor_context == nullptr) {
+    g_ras_context.monitor_context = new ras_monitor();
+    if (g_ras_context.monitor_context == nullptr) {
+      svk_logger("ras", level_E::ERROR, "ras monitor context init fail");
+      return SVK_STATUS_FAIL;
+    }
+    g_ras_context.initialized = true;
+  }
+
+  return SVK_STATUS_SUCCESS;
 }
 
 extern "C" svk_status get_supported_feature_list(feature_id *feature,
@@ -97,5 +119,11 @@ extern "C" svk_status execute_async(svk_pass_thru_cmd *pass_thru,
 extern "C" svk_status clean_up(void *) {
   std::string msg = "ras clean_up called";
   svk_logger("ras", level_E::INFO, msg.c_str());
+  std::lock_guard<std::mutex> lock(g_ras_context.ctx_mutex);
+  if (g_ras_context.initialized == true) {
+    delete g_ras_context.monitor_context;
+    g_ras_context.monitor_context = nullptr;
+    g_ras_context.initialized = false;
+  }
   return SVK_STATUS_SUCCESS;
 }
