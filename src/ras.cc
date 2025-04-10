@@ -102,10 +102,19 @@ extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
   char *input_buf = (char *)input->input_buffer;
   char *output_buf = (char *)output->output_buffer;
   char debug_info[2048];
+  ras_request request(
+      false, true,
+      g_ras_context
+          .monitor_context);  // Local variable okay since this will be sync
+  bool submit_okay = false;
   snprintf(debug_info, sizeof(debug_info),
            "ras execute_sync called.\ninput buffer: %s\noutput buffer:%s\n",
            input_buf, output_buf);
   svk_logger("ras", level_E::INFO, debug_info);
+  submit_okay = g_ras_context.monitor_context->ras_submit_request(&request);
+  if (submit_okay != true) {
+    return SVK_STATUS_FAIL;
+  }
   return SVK_STATUS_SUCCESS;
 }
 

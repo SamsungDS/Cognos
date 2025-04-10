@@ -3,7 +3,8 @@
 
 TEST(RasMonitorTest, TestClass) {
   std::unique_ptr<ras_monitor> test_mon_inst = std::make_unique<ras_monitor>();
-  ras_request *dummy_request = (ras_request *)0xff001;
+  ras_request *dummy_request =
+      new ras_request(false, true, test_mon_inst.get());
   bool result = false;
 
   result = test_mon_inst->ras_submit_request(nullptr);
@@ -12,6 +13,5 @@ TEST(RasMonitorTest, TestClass) {
   result = test_mon_inst->ras_submit_request(dummy_request);
   ASSERT_EQ(true, result);
 
-  // Sleep for 1 second to allow enough time for requests to complete
-  std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+  delete dummy_request;
 }

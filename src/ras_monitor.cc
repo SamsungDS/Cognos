@@ -7,9 +7,26 @@ ras_monitor::ras_monitor(/* args */) {
 
 ras_monitor::~ras_monitor() {}
 
+void ras_monitor::set_sync_request_completed(ras_request *req) {
+  std::lock_guard<std::mutex> lock(req->sync_mutex);
+  req->is_completed = true;
+}
+void ras_monitor::process_request_sync(ras_request *req) {
+  // TODO
+
+  set_sync_request_completed(req);
+
+  req->sync_cv.notify_one();
+  return;
+}
+
 bool ras_monitor::ras_submit_request(ras_request *req) {
   if (req != nullptr) {
     ras_monitor_->submitRequest(req);
+    if (req->is_sync_request) {
+      std::unique_lock<std::mutex> lock(req->sync_mutex);
+      req->sync_cv.wait(lock, [req] { return req->is_completed; });
+    }
     return true;
   } else {
     return false;
