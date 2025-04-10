@@ -1,4 +1,4 @@
-svk-template (DEB_VERSION) DEB_OSVER; urgency=medium
+svk-node (DEB_VERSION) DEB_OSVER; urgency=medium
 
   * DEB_CHANGELOG
 

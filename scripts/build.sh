@@ -2,7 +2,7 @@
 set -eu
 
 # The name of this project
-SVK_PROJECT_NAME='SVK Template'
+SVK_PROJECT_NAME='SVK Node'
 
 # Path variables
 SCRIPT_DIR=$(cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd)
@@ -11,7 +11,7 @@ BUILD_DIR="$PROJECT_ROOT/build"
 ARTIFACTS_DIR="$BUILD_DIR/artifacts"
 REPORTS_DIR="$BUILD_DIR/reports"
 # TESTS_DIR="$BUILD_DIR/tests"
-VENV_DIR=/usr/local/svk/template/venv
+VENV_DIR=/usr/local/svk/node/venv
 
 # Default build options
 CMAKE_OPTIONS=()
@@ -177,7 +177,7 @@ move_artifacts() {
 
 build_rpm() {
     # RPM vars
-    local SPECFILE=template.spec
+    local SPECFILE=node.spec
     local RPMBUILD_DIR="$BUILD_DIR/rpmbuild"
 
     # Replace '-' with '_' in version string, in case current commit is not an exact tag

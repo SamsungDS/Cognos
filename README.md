@@ -1,8 +1,8 @@
-# SVK Template
+# SVK Node
 
 ## Description
 
-SVK Template contains a basic skeleton to be used to create a new SVK project in Gitlab. If you have enhancements you would like to be automatically included in future SVK projects, please open an MR.
+SVK Node feature provides the node information such as CPU, Memory, PCI device information.
 
 ### Supported OS List
 
@@ -12,21 +12,22 @@ SVK Template contains a basic skeleton to be used to create a new SVK project in
 
 ## Installation
 
-The prefered method to install SVK Template is through your OS package manager.
+The prefered method to install SVK Node is through your OS package manager.
 
-SVK Template's CI/CD automatically produces release artifacts which are published to [SSG-Nexus](http://ssg-nexus.msl.lab:8081/), which you can browse from within the SSG lab network.
+SVK Node's CI/CD automatically produces release artifacts which are published to [SSG-Nexus](http://ssg-nexus.msl.lab:8081/), which you can browse from within the SSG lab network.
 
-Release artifacts are also published to the [SVK Template Package Registry on Gitlab](https://cxl-gitlab.ssi.samsung.com/dfs/svk/test/template/-/packages).
+Release artifacts are also published to the [SVK Node Package Registry on Gitlab](https://cxl-gitlab.ssi.samsung.com/dfs/svk/test/node/-/packages).
 
-Enable the SSG Nexus repo for your distro, then install the `svk-template` packages via the package manager:
+Enable the SSG Nexus repo for your distro, then install the `svk-node` packages via the package manager:
 
 ### Ubuntu
 
 ```bash
+source /etc/os-release
 wget --quiet --output-document /usr/share/keyrings/ssg-nexus.pgp  http://ssg-nexus.msl.lab:8081/repository/svk_common/public.pgp
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ssg-nexus.pgp] http://ssg-nexus.msl.lab:8081/repository/svk_apt_ubuntu22 $(. /etc/os-release && echo $UBUNTU_CODENAME) main" > /etc/apt/sources.list.d/ssg-nexus.list
 apt update
-apt-get install svk-template svk-template-dev -y
+apt-get install svk-node svk-node-dev -y
 
 ```
 
@@ -35,7 +36,7 @@ apt-get install svk-template svk-template-dev -y
 ```bash
 curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
 dnf install epel-release -y
-dnf install svk-template svk-template-devel -y
+dnf install svk-node svk-node-devel -y
 ```
 
 ## Build & Installation
@@ -48,21 +49,21 @@ Execute the dependencies installation script to install all build dependencies f
 ./scripts/dependencies/install.sh
 ```
 
-### Build SVK Template
+### Build SVK Node
 
-[After installing build dependencies](#build-dependencies), execute the `./scripts/build.sh` script. The `-h` option will show what options are available for building SVK Template:
+[After installing build dependencies](#build-dependencies), execute the `./scripts/build.sh` script. The `-h` option will show what options are available for building SVK Node:
 
 ```bash
 ./scripts/build.sh -h
 ```
 
-To build SVK Template, run unit tests and generate code coverage reports, execute:
+To build SVK Node, run unit tests and generate code coverage reports, execute:
 
 ```bash
 ./scripts/build.sh -t
 ```
 
-To build and install SVK Template to a specified directory, execute:
+To build and install SVK Node to a specified directory, execute:
 
 ```bash
 ./scripts/build.sh -p install_dir
@@ -80,25 +81,25 @@ To execute a release build, execute:
 
 This will build and package RPM or Debian Packages (on Rockylinux or Ubuntu, respectively), which are staged in the `build/artifacts` dir in the project root. The packages produced include:
 
-- `svk-template`: Runtime files
-- `svk-template-dev(el)`: Development header files
+- `svk-node`: Runtime files
+- `svk-node-dev(el)`: Development header files
 
 ### Manual Build
 
-Template manual build without tests:
+SVK Node manual build without tests:
 
 ```bash
 mkdir build
 cd build
-cmake3 ../  -DCMAKE_INSTALL_PREFIX=svk_template
+cmake3 ../  -DCMAKE_INSTALL_PREFIX=svk_node
 make install
 ```
 
-In the above example, SVK Template is installed to the `build/svk_template` directory.
+In the above example, SVK Node is installed to the `build/svk_node` directory.
 
 ### Unit Testing
 
-To build the SVK Template with tests (GTest) and code coverage, run the `cmake3` command with `-DBUILD_TESTING` and `-DWITH_COVERAGE` flags enabled:
+To build the SVK Node with tests (GTest) and code coverage, run the `cmake3` command with `-DBUILD_TESTING` and `-DWITH_COVERAGE` flags enabled:
 
 ```bash
 mkdir build
