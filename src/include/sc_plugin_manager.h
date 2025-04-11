@@ -4,9 +4,11 @@
 #include <unordered_map>
 #include <vector>
 
+#include "sc_dev_manager.h"
+
 /**
  * @class PluginManager
- * @brief Manages dynamic loading and unloading of plugin modules.
+ * @brief Manages dynamic loading and unloading of cxladapter plugin modules.
  *
  * PluginManager is responsible for discovering, loading, unloading, and
  * managing dynamically linked plugin libraries (e.g. cmm-h.so, cmm-d.so and
@@ -15,10 +17,15 @@
 class PluginManager {
  public:
   /**
-   * @brief Constructs a PluginManager with the given plugin directory.
+   * @brief Constructs a PluginManager.
+   *
+   * Initializes the plugin manager with plugin directory and a reference to
+   * DeviceManager.
    * @param plugin_dir Path to the directory containing plugin `.so` files.
+   * @param manager reference to DeviceManager instance for
+   * registering/unregistering adapters.
    */
-  explicit PluginManager(const std::string& plugin_dir);
+  explicit PluginManager(const std::string& plugin_dir, DeviceManager& manager);
 
   /**
    * @brief Destructor. Ensures all loaded plugins are properly unloaded.
@@ -75,6 +82,8 @@ class PluginManager {
  private:
   // Path to plugin directory
   std::string plugin_dir_;
+  // Device Manager
+  DeviceManager& manager_;
   // Stores loaded plugin handles (e.g. from dlopen)
   std::unordered_map<std::string, void*> loaded_plugins_;
 };

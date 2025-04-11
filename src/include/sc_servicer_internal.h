@@ -44,4 +44,8 @@ bool process_json_request(const std::string& input_str, std::string& command,
 
 int cmmb_a1_init();
 
+std::string handle_list_devices(
+    const std::unordered_map<std::string, std::string>& params);
+std::string handle_get_device_info(
+    const std::unordered_map<std::string, std::string>& params);
 #endif

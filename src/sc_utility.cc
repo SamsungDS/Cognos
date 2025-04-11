@@ -5,7 +5,6 @@
 #include <cerrno>
 #include <iostream>
 #include <sstream>
-#include <unordered_map>
 
 #include "sc_logger.h"
 
@@ -143,4 +142,47 @@ std::string posix_err_to_json(int error_code,
        << R"("})";
 
   return json.str();
+}
+
+bool extract_required_params(
+    const std::unordered_map<std::string, std::string>& input,
+    const std::vector<std::string>& keys,
+    std::unordered_map<std::string, std::string>& output,
+    std::string& error_response) {
+  LOG(level_E::INFO, "Extracting required parameters...");
+  for (const auto& key : keys) {
+    auto it = input.find(key);
+    if (it == input.end()) {
+      LOG(level_E::ERROR, "Missing required parameter: " + key);
+      error_response = posix_err_to_json(EINVAL, "Missing parameter: " + key);
+      return false;
+    }
+    output[key] = it->second;
+    LOG(level_E::INFO,
+        "Extracted parameter - Key: " + key + ", Value: " + output[key]);
+  }
+  LOG(level_E::INFO, "All required parameters extracted successfully.");
+  return true;
+}
+
+bool is_device_list_empty(const std::string& json_response) {
+  LOG(level_E::INFO, "Checking if device list is empty...");
+  json_error_t error;
+  json_t* root = json_loads(json_response.c_str(), 0, &error);
+  if (!root) {
+    LOG(level_E::ERROR, "JSON parse failed while checking empty device list: " +
+                            std::string(error.text));
+    return true;
+  }
+  json_t* devices = json_object_get(root, "devices");
+  if (!devices || !json_is_array(devices)) {
+    LOG(level_E::WARN, "`devices` key missing or not an array.");
+    json_decref(root);
+    return true;
+  }
+  size_t count = json_array_size(devices);
+  LOG(level_E::INFO,
+      "Device list contains " + std::to_string(count) + " entries.");
+  json_decref(root);
+  return count == 0;
 }

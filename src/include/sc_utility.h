@@ -2,6 +2,8 @@
 #define _UTILITY_H
 
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 /**
  * @brief Generates a structured JSON error response based on a POSIX error
@@ -55,4 +57,40 @@ bool str_to_int(const std::string& id_str, uint64_t& id,
  */
 int json_arr_to_str(const std::string& json_str, std::string& flattened_result);
 
+/**
+ * @brief Extracts a list of required parameters from the input map.
+ *
+ * This utility function checks whether all required keys are present in the
+ * input parameter map. If any required key is missing, it generates an error
+ * response using POSIX error format and returns false. Otherwise, it fills the
+ * output map with corresponding key-value pairs.
+ *
+ * @param[in] input The full input parameter map (e.g., parsed from JSON).
+ * @param[in] keys A list of required keys to check and extract from the input
+ * map.
+ * @param[out] output A map to be populated with key-value pairs for found keys.
+ * @param[out] error_response A string containing the error message in JSON
+ * format if any required key is missing.
+ * @return true if all required keys are present and extracted; false otherwise.
+ */
+bool extract_required_params(
+    const std::unordered_map<std::string, std::string>& input,
+    const std::vector<std::string>& keys,
+    std::unordered_map<std::string, std::string>& output,
+    std::string& error_response);
+
+/**
+ * @brief Checks whether the device list in a JSON response is empty.
+ *
+ * This function parses the given JSON response string and looks for the
+ * "devices" array. It then checks if the array exists and whether it contains
+ * any elements. It is useful for validating whether any devices were returned
+ * from a list operation.
+ *
+ * @param[in] json_response The JSON-formatted response string to inspect.
+ * @return true if the "devices" array is missing, not an array, or has zero
+ * entries.
+ * @return false if the "devices" array exists and contains at least one device.
+ */
+bool is_device_list_empty(const std::string& json_response);
 #endif

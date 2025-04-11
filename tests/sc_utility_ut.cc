@@ -115,9 +115,54 @@ TEST_F(ScUtilityTest, JsonArrToStr_InvalidJson) {
   EXPECT_TRUE(output.empty());
 }
 
-/*TEST(UtilityTest, JsonArrToStr_NotArrayOrObject) {
-    std::string input = R"("just_a_string")";  // JSON is a string, not an array
-or object std::string output; int status = json_arr_to_str(input, output);
-    EXPECT_EQ(status, -EINVAL);
-    EXPECT_TRUE(output.empty());
-}*/
+TEST_F(ScUtilityTest, ExtractRequiredParams_AllKeysPresent) {
+  std::unordered_map<std::string, std::string> input = {{"key1", "val1"},
+                                                        {"key2", "val2"}};
+  std::vector<std::string> keys = {"key1", "key2"};
+  std::unordered_map<std::string, std::string> output;
+  std::string error;
+
+  bool result = extract_required_params(input, keys, output, error);
+  EXPECT_TRUE(result);
+  EXPECT_EQ(output["key1"], "val1");
+  EXPECT_EQ(output["key2"], "val2");
+  EXPECT_TRUE(error.empty());
+}
+
+TEST_F(ScUtilityTest, ExtractRequiredParams_KeyMissing) {
+  std::unordered_map<std::string, std::string> input = {{"key1", "val1"}};
+  std::vector<std::string> keys = {"key1", "key2"};
+  std::unordered_map<std::string, std::string> output;
+  std::string error;
+
+  bool result = extract_required_params(input, keys, output, error);
+  EXPECT_FALSE(result);
+  EXPECT_EQ(output.count("key1"), 1);
+  EXPECT_EQ(output.count("key2"), 0);
+  EXPECT_NE(error.find("Missing parameter: key2"), std::string::npos);
+}
+
+TEST_F(ScUtilityTest, IsDeviceListEmpty_EmptyList) {
+  std::string json_response = R"({"devices":[]})";
+  EXPECT_TRUE(is_device_list_empty(json_response));
+}
+
+TEST_F(ScUtilityTest, IsDeviceListEmpty_NonEmptyList) {
+  std::string json_response = R"({"devices":[{"id":"1"}]})";
+  EXPECT_FALSE(is_device_list_empty(json_response));
+}
+
+TEST_F(ScUtilityTest, IsDeviceListEmpty_MalformedJson) {
+  std::string json_response = R"({"devices":)";
+  EXPECT_TRUE(is_device_list_empty(json_response));
+}
+
+TEST_F(ScUtilityTest, IsDeviceListEmpty_MissingDevicesKey) {
+  std::string json_response = R"({"data":[]})";
+  EXPECT_TRUE(is_device_list_empty(json_response));
+}
+
+TEST_F(ScUtilityTest, IsDeviceListEmpty_DevicesNotArray) {
+  std::string json_response = R"({"devices":{}})";
+  EXPECT_TRUE(is_device_list_empty(json_response));
+}

@@ -26,6 +26,7 @@
 #include "sc_global.h"
 #include "sc_logger.h"
 #include "sc_mbox.h"
+#include "sc_utility.h"
 #include "tuner.h"
 #include "yaml-cpp/yaml.h"
 
@@ -46,6 +47,9 @@ using CommandFuncMap = std::function<std::string(
 
 // Global tuner object
 tuner mt_obj;
+
+// GLobal DeviceManager for API access
+static DeviceManager* g_dev_mgr = nullptr;
 
 /**
  * @brief Start Memory tuner
@@ -122,15 +126,16 @@ int init_log(const std::string& config_file) {
 }
 
 /**
- * @brief Processes a JSON API request and extracts relevant parameters.
+ * @brief Parses a JSON input string to extract command name and parameters.
  *
- * This function parses the input JSON request, extracts the `command_name`,
- * and processes `command_params` into a key-value map.
+ * This method handles both modern and legacy JSON input formats.
  *
- * @param[in] input_str The raw JSON request as a string.
- * @param[out] command The extracted command ID.
- * @param[out] params A map storing parsed command parameters.
- * @return True if parsing succeeds, false otherwise.
+ * @param input_str JSON stringified input (must contain `command_name` key).
+ * @param[out] command Extracted command name.
+ * @param[out] params Flattened key-value pairs from "command_params" if
+ * present.
+ * @return true if JSON was parsed successfully and command was found, false
+ * otherwise.
  */
 bool process_json_request(
     const std::string& input_str, std::string& command,
@@ -542,6 +547,77 @@ json_t* load_json_config(const std::string& config_path) {
   return root;
 }
 
+std::string handle_list_devices(
+    const std::unordered_map<std::string, std::string>& params) {
+  std::unordered_set<uint64_t> device_ids;
+  std::string error;
+  try {
+    auto it = params.find("device_id");
+    if (it != params.end()) {
+      const std::string& value = it->second;
+      // Handle array input: ["123", "456"]
+      if (!value.empty() && value.front() == '[' && value.back() == ']') {
+        json_error_t jerr;
+        json_t* arr = json_loads(value.c_str(), 0, &jerr);
+        if (!arr || !json_is_array(arr)) {
+          return posix_err_to_json(EINVAL, "Invalid device_id array format");
+        }
+        size_t index;
+        json_t* val;
+        json_array_foreach(arr, index, val) {
+          if (json_is_string(val)) {
+            uint64_t id;
+            std::string err;
+            if (str_to_int(json_string_value(val), id, err)) {
+              device_ids.insert(id);
+            } else {
+              json_decref(arr);
+              return err;
+            }
+          } else {
+            json_decref(arr);
+            return posix_err_to_json(EINVAL,
+                                     "device_id array must contain strings");
+          }
+        }
+        json_decref(arr);
+      }
+      // Handle single value input: "123"
+      else {
+        uint64_t id;
+        if (!str_to_int(value, id, error)) {
+          return error;
+        }
+        device_ids.insert(id);
+      }
+    }
+  } catch (const std::exception& e) {
+    LOG(level_E::ERROR,
+        "Exception in handle_list_devices: " + std::string(e.what()));
+    return posix_err_to_json(EIO, "Exception while parsing device_id");
+  }
+  // Empty set = return all devices
+  std::string result = g_dev_mgr->list_devices(device_ids);
+  if (!device_ids.empty() && is_device_list_empty(result)) {
+    return posix_err_to_json(ENOENT, "No matching device IDs found");
+  }
+  return result;
+}
+
+std::string handle_get_device_info(
+    const std::unordered_map<std::string, std::string>& params) {
+  std::unordered_map<std::string, std::string> values;
+  std::string error;
+  if (!extract_required_params(params, {"device_id"}, values, error)) {
+    return error;
+  }
+  uint64_t device_id;
+  if (!str_to_int(values["device_id"], device_id, error)) {
+    return error;
+  }
+  return g_dev_mgr->get_device_info(device_id);
+}
+
 int cmmb_a1_init() {
   LOG(level_E::INFO, "Starting `cmmb_a1_init`...");
   struct StaticPortInfo pinfo;
@@ -695,8 +771,10 @@ svk_status initialize(void*) {
   }
 
   try {
-    DeviceRegistry::getInstance();
-    DeviceManager::getInstance();
+    static DeviceManager mgr;
+    g_dev_mgr = &mgr;
+    // PluginManager plugin_mgr(g_dev_mgr);
+    // plugin_mgr.loadAllPlugins();
     LOG(level_E::INFO, "All singletons initialized successfully.");
   } catch (const std::exception& e) {
     LOG(level_E::ERROR, "Initialization failed: " + std::string(e.what()));
@@ -745,35 +823,51 @@ svk_status configure_device_if_any(void*, svk_device_ctx*, uint64_t length,
 @brief Command mapping for New API execution.
 */
 const std::unordered_map<std::string, CommandFuncMap> command_map = {
-    {"list_devices",
-     [](const std::unordered_map<std::string, std::string>& params) {
-       return DeviceManager::getInstance().list_devices(params);
-     }},
-    {"get_device_info",
-     [](const std::unordered_map<std::string, std::string>& params) {
-       return DeviceManager::getInstance().list_devices(params);
-     }},
-    {"attach_memory",
-     [](const std::unordered_map<std::string, std::string>& params) {
-       return DeviceManager::getInstance().attach_memory(params);
-     }},
-    {"detach_memory",
-     [](const std::unordered_map<std::string, std::string>& params) {
-       return DeviceManager::getInstance().detach_memory(params);
-     }}};
+    {"list_devices", handle_list_devices},
+    {"get_device_info", handle_get_device_info}};
+
+/**
+ * @brief Dispatches a command to its corresponding legacy handler function.
+ *
+ * This function maps legacy-style API commands to their corresponding handler
+ * functions defined in `fw_hooks` and invokes the appropriate function.
+ *
+ * @param command Name of the command to execute (e.g., "SetupInfo").
+ * @param input_str Raw input string passed to the legacy handler.
+ * @return JSON string result from the legacy API handler. Returns an error JSON
+ * if the command is unknown.
+ */
+std::string dispatch_fw_hook_command(const std::string& command,
+                                     const std::string& input_str) {
+  static const std::unordered_map<std::string, CommandFunc> fw_hooks = {
+      {"ListDevices", ListDevices},   {"ListHosts", ListHosts},
+      {"SetupInfo", SetupInfo},       {"AttachMemory", AttachMemory},
+      {"DetachMemory", DetachMemory}, {"StartTuning", StartTuning},
+      {"StopTuning", StopTuning}};
+
+  auto it = fw_hooks.find(command);
+  if (it == fw_hooks.end()) {
+    LOG(level_E::ERROR, "Command not found in fw_hooks: " + command);
+    return posix_err_to_json(ENOSYS, "Unsupported command: " + command);
+  }
+
+  return it->second(input_str);
+}
 
 /**
  * @brief Executes API commands synchronously for both old and new formats.
  *
- * Supports both semicolon-separated requests (old API) and JSON-based
- * structured requests (new API).
- *
+ * This function supports:
+ * 1. Modern API style (JSON with `command_params`)
+ * 2. Legacy JSON API (stringified JSON without `command_params`)
+ * 3. Legacy flat style (semicolon-delimited string)
+
  * @param pass_thru svk passthrough for command info communication from top
  * level
  * @param input Input buffer containing the request payload
  * @param output Output buffer where the response will be stored
- * @return svk_status, Refer to framework_struct.h for return codes
- */
+ * @return svk_status, Refer to framework_struct.h for return codes*
+*/
 svk_status execute_sync(svk_pass_thru_cmd*, svk_input* input,
                         svk_output* output) {
   LOG(level_E::INFO, "execute_sync function called.");
@@ -787,37 +881,34 @@ svk_status execute_sync(svk_pass_thru_cmd*, svk_input* input,
   std::string result;
   std::unordered_map<std::string, std::string> params;
   std::string command;
-  const std::unordered_map<std::string, CommandFunc> fw_hooks = {
-      {"ListDevices", ListDevices},   {"ListHosts", ListHosts},
-      {"SetupInfo", SetupInfo},       {"AttachMemory", AttachMemory},
-      {"DetachMemory", DetachMemory}, {"StartTuning", StartTuning},
-      {"StopTuning", StopTuning}};
   try {
-    // Attempt to process the input as a JSON request
     if (!process_json_request(input_str, command, params)) {
       throw std::invalid_argument("Invalid JSON format");
     }
     LOG(level_E::INFO, "Parsed JSON command: " + command);
-    // Handle New JSON Request Type
-    auto it = command_map.find(command);
-    if (it == command_map.end()) {
-      LOG(level_E::ERROR, "Command not found in API handlers: " + command);
-      return SVK_STATUS_FAIL;
+    // New style JSON with params
+    if (!params.empty()) {
+      auto it = command_map.find(command);
+      if (it == command_map.end()) {
+        LOG(level_E::ERROR, "Command not found in command_map: " + command);
+        return SVK_STATUS_FAIL;
+      }
+      result = it->second(params);
+    } else {
+      // Old JSON without params
+      result = dispatch_fw_hook_command(command, input_str);
     }
-    result = it->second(params);
   } catch (const std::exception& e) {
-    LOG(level_E::WARN,
-        "Processing as legacy API due to: " + std::string(e.what()));
-    // Old API format processing
+    LOG(level_E::WARN, "Falling back to legacy flat API parsing due to: " +
+                           std::string(e.what()));
+    // Legacy flat style
     params = token_helper(input_str);
-    command = params["command"];
-    LOG(level_E::INFO, "Parsed legacy command: " + command);
-    auto it = fw_hooks.find(command);
-    if (it == fw_hooks.end()) {
-      LOG(level_E::ERROR, "Command not found in legacy handlers: " + command);
+    if (params.find("command") == params.end()) {
+      LOG(level_E::ERROR, "Missing 'command' in legacy flat request.");
       return SVK_STATUS_FAIL;
     }
-    result = it->second(input_str);
+    command = params["command"];
+    result = dispatch_fw_hook_command(command, input_str);
   }
   output->output_buffer = reinterpret_cast<uint8_t*>(strdup(result.c_str()));
   output->len = result.size();

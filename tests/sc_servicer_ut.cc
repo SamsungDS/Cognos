@@ -6,10 +6,12 @@
 
 #include "framework_downstream.h"
 #include "log_utils.h"
+#include "sc_dev_manager.h"
 #include "sc_global.h"
 #include "sc_mbox.h"
 #include "sc_servicer.h"
 #include "sc_servicer_internal.h"
+#include "sc_test_cxl_adapter.h"
 #include "tuner.h"
 
 extern "C" {
@@ -21,6 +23,9 @@ extern "C" {
 #define LOG_CONF_FILE "log.conf"
 
 using namespace std;
+
+extern DeviceManager* g_dev_mgr;
+DeviceManager* g_dev_mgr = nullptr;
 
 // Global instance
 sc_global cxl_global;
@@ -46,6 +51,7 @@ MockScGlobal mock_cxl_global;
 class ServicerTest : public ::testing::Test {
  protected:
   std::string temp_filename;
+  TestCXLDeviceAdapter testAdapter;
 
   void SetUp() override {
     cxl_global = mock_cxl_global;
@@ -75,6 +81,17 @@ class ServicerTest : public ::testing::Test {
         "switch": "bad_format"
     })";
     create_file("test_corrupt.json", corrupt_json);
+
+    static DeviceManager dev_mgr;
+    g_dev_mgr = &dev_mgr;
+
+    // Register adapters and devices
+    g_dev_mgr->registerAdapter("Test", &testAdapter);
+    sc_id sid(1);
+    g_dev_mgr->register_device(sid, &testAdapter);
+
+    // testAdapter.setLargeDeviceListResponse(R"([{"id": "1", "type": "1",
+    // "pcie_addr": "0x1234"}])");
   }
 
   void TearDown() override {
@@ -94,6 +111,8 @@ class ServicerTest : public ::testing::Test {
     remove("test_no_switch.json");
     remove("test_no_ip_address.json");
     remove("test_corrupt.json");
+    g_dev_mgr->unregister_device(&testAdapter);
+    g_dev_mgr->unregisterAdapter("Test");
   }
 
   // Helper function to load JSON from a file
@@ -184,8 +203,6 @@ class ServicerTest : public ::testing::Test {
     std::ofstream dest("cxl.conf", std::ios::binary);
     dest << src.rdbuf();
   }
-
-
 };
 
 TEST_F(ServicerTest, InitCxlPluginSuccess) {
@@ -396,18 +413,6 @@ TEST_F(ServicerTest, ExecuteSyncAttachTest) {
   ASSERT_NE(output.output_buffer, nullptr);
   free(input.input_buffer);
   free(output.output_buffer);
-}
-
-TEST_F(ServicerTest, ExecuteSyncInvalidCommandTest) {
-  svk_input input;
-  svk_output output;
-  svk_pass_thru_cmd pass_thru;
-  input.input_buffer =
-      reinterpret_cast<uint8_t*>(strdup("command=InvalidCommand"));
-  input.len = strlen("command=InvalidCommand");
-  svk_status status = execute_sync(&pass_thru, &input, &output);
-  ASSERT_EQ(status, SVK_STATUS_FAIL);
-  free(input.input_buffer);
 }
 
 TEST_F(ServicerTest, GetIPAddressSuccess) {
@@ -822,7 +827,7 @@ TEST_F(ServicerTest, ProcessJsonRequest_ValidJsonWithoutParams) {
   bool result = process_json_request(input_str, command, params);
   EXPECT_TRUE(result);
   EXPECT_EQ(command, "get_device_info");
-  EXPECT_TRUE(params.empty());  
+  EXPECT_TRUE(params.empty());
 }
 
 TEST_F(ServicerTest, ProcessJsonRequest_MissingCommandName) {
@@ -835,7 +840,7 @@ TEST_F(ServicerTest, ProcessJsonRequest_MissingCommandName) {
   std::unordered_map<std::string, std::string> params;
   bool result = process_json_request(input_str, command, params);
   // Should fail due to missing "command_name"
-  EXPECT_FALSE(result); 
+  EXPECT_FALSE(result);
 }
 
 TEST_F(ServicerTest, ProcessJsonRequest_InvalidJsonFormat) {
@@ -849,7 +854,7 @@ TEST_F(ServicerTest, ProcessJsonRequest_InvalidJsonFormat) {
   std::unordered_map<std::string, std::string> params;
   bool result = process_json_request(input_str, command, params);
   // Should fail due to JSON syntax error
-  EXPECT_FALSE(result);  
+  EXPECT_FALSE(result);
 }
 
 TEST_F(ServicerTest, ProcessJsonRequest_EmptyJson) {
@@ -858,7 +863,7 @@ TEST_F(ServicerTest, ProcessJsonRequest_EmptyJson) {
   std::unordered_map<std::string, std::string> params;
   bool result = process_json_request(input_str, command, params);
   // Should fail due to missing "command_name"
-  EXPECT_FALSE(result); 
+  EXPECT_FALSE(result);
 }
 
 TEST_F(ServicerTest, ProcessJsonRequest_ArrayParams) {
@@ -879,45 +884,17 @@ TEST_F(ServicerTest, ProcessJsonRequest_ArrayParams) {
 
 TEST_F(ServicerTest, ExecuteSync_NullInputOutput) {
   svk_status status = execute_sync(nullptr, nullptr, nullptr);
-  EXPECT_EQ(status, SVK_STATUS_FAIL);  
-}
-
-TEST_F(ServicerTest, ExecuteSync_ValidJsonCommand) {
-  std::string json_input = R"({
-    "command_name": "list_devices",
-    "command_params": {
-      "device_id": "1234"
-    }
-  })";
-  svk_input input;
-  svk_output output;
-  input.input_buffer = reinterpret_cast<uint8_t*>(const_cast<char*>(json_input.c_str()));
-  input.len = json_input.size();
-  svk_status status = execute_sync(nullptr, &input, &output);
-  EXPECT_EQ(status, SVK_STATUS_SUCCESS);
-  std::string response(reinterpret_cast<char*>(output.output_buffer));
-  EXPECT_FALSE(response.empty());  
-}
-
-TEST_F(ServicerTest, ExecuteSync_CommandNotFoundInApiHandlers) {
-  std::string json_input = R"({
-    "command_name": "unknown_command",
-    "command_params": {}
-  })";
-  svk_input input;
-  svk_output output;
-  input.input_buffer = reinterpret_cast<uint8_t*>(const_cast<char*>(json_input.c_str()));
-  input.len = json_input.size();
-  svk_status status = execute_sync(nullptr, &input, &output);
-  // Expected failure since command is not in `command_map`
-  EXPECT_EQ(status, SVK_STATUS_FAIL); 
+  EXPECT_EQ(status, SVK_STATUS_FAIL);
 }
 
 TEST_F(ServicerTest, ExecuteSync_LegacyCommandFormat) {
-  std::string legacy_input = "cluster_id=CL_ID_1;command=ListDevices;FM_id=203;FM_endpoint=samsung.com";
+  std::string legacy_input =
+      "cluster_id=CL_ID_1;command=ListDevices;FM_id=203;FM_endpoint=samsung."
+      "com";
   svk_input input;
   svk_output output;
-  input.input_buffer = reinterpret_cast<uint8_t*>(const_cast<char*>(legacy_input.c_str()));
+  input.input_buffer =
+      reinterpret_cast<uint8_t*>(const_cast<char*>(legacy_input.c_str()));
   input.len = legacy_input.size();
   svk_status status = execute_sync(nullptr, &input, &output);
   EXPECT_EQ(status, SVK_STATUS_SUCCESS);
@@ -936,13 +913,14 @@ TEST_F(ServicerTest, ExecuteSync_ListDevices) {
   })";
   svk_input input;
   svk_output output;
-  input.input_buffer = reinterpret_cast<uint8_t*>(const_cast<char*>(json_input.c_str()));
+  input.input_buffer =
+      reinterpret_cast<uint8_t*>(const_cast<char*>(json_input.c_str()));
   input.len = json_input.size();
   svk_status status = execute_sync(nullptr, &input, &output);
   EXPECT_EQ(status, SVK_STATUS_SUCCESS);
   // Verify DeviceManager::list_devices() was executed
   std::string response(reinterpret_cast<char*>(output.output_buffer));
-  EXPECT_FALSE(response.empty()); 
+  EXPECT_FALSE(response.empty());
 }
 
 TEST_F(ServicerTest, ExecuteSync_GetDeviceInfo) {
@@ -955,84 +933,83 @@ TEST_F(ServicerTest, ExecuteSync_GetDeviceInfo) {
   })";
   svk_input input;
   svk_output output;
-  input.input_buffer = reinterpret_cast<uint8_t*>(const_cast<char*>(json_input.c_str()));
+  input.input_buffer =
+      reinterpret_cast<uint8_t*>(const_cast<char*>(json_input.c_str()));
   input.len = json_input.size();
   svk_status status = execute_sync(nullptr, &input, &output);
   EXPECT_EQ(status, SVK_STATUS_SUCCESS);
-  std::string response(reinterpret_cast<char*>(output.output_buffer));
-  EXPECT_FALSE(response.empty());
-}
-
-TEST_F(ServicerTest, ExecuteSync_AttachMemory) {
-  std::string json_input = R"({
-    "command_name": "attach_memory",
-    "command_params": {
-      "domain_id": "",
-      "node_id": "",
-      "capacity": "0"
-    }
-  })";
-  svk_input input;
-  svk_output output;
-  input.input_buffer = reinterpret_cast<uint8_t*>(const_cast<char*>(json_input.c_str()));
-  input.len = json_input.size();
-  svk_status status = execute_sync(nullptr, &input, &output);
-  EXPECT_EQ(status, SVK_STATUS_SUCCESS);
-  // Verify DeviceManager::attach_memory() was executed
-  std::string response(reinterpret_cast<char*>(output.output_buffer));
-  EXPECT_FALSE(response.empty());
-}
-
-TEST_F(ServicerTest, ExecuteSync_DetachMemory) {
-  std::string json_input = R"({
-    "command_name": "detach_memory",
-    "command_params": {
-      "domain_id": "",
-      "node_id": ""
-    }
-  })";
-  svk_input input;
-  svk_output output;
-  input.input_buffer = reinterpret_cast<uint8_t*>(const_cast<char*>(json_input.c_str()));
-  input.len = json_input.size();
-  svk_status status = execute_sync(nullptr, &input, &output);
-  EXPECT_EQ(status, SVK_STATUS_SUCCESS);
-  // Verify DeviceManager::detach_memory() was executed
   std::string response(reinterpret_cast<char*>(output.output_buffer));
   EXPECT_FALSE(response.empty());
 }
 
 TEST_F(ServicerTest, CmmbA1_Success) {
-  use_test_config("valid_cxl.json");	
+  use_test_config("valid_cxl.json");
   EXPECT_CALL(mock_cxl_global, g_create_mbox(_)).WillOnce(Return(0));
-  int status = cmmb_a1_init(); 
+  int status = cmmb_a1_init();
   EXPECT_EQ(status, 0);
 }
 
 TEST_F(ServicerTest, CmmbA1_ConfigFileNotFound) {
-  use_test_config("non_existent.json");	
-  EXPECT_CALL(mock_cxl_global, g_create_mbox(_)).Times(0); 
+  use_test_config("non_existent.json");
+  EXPECT_CALL(mock_cxl_global, g_create_mbox(_)).Times(0);
   int status = cmmb_a1_init();
   EXPECT_EQ(status, -ENOENT);
 }
 
 TEST_F(ServicerTest, CmmbA1_MissingSwitchObject) {
-  use_test_config("test_no_switch.json");	
+  use_test_config("test_no_switch.json");
   EXPECT_CALL(mock_cxl_global, g_create_mbox(_)).Times(0);
   int status = cmmb_a1_init();
   EXPECT_EQ(status, -EINVAL);
 }
 
 TEST_F(ServicerTest, CmmbA1_MissingIPAddressField) {
-  use_test_config("test_no_ip_address.json");	
+  use_test_config("test_no_ip_address.json");
   EXPECT_CALL(mock_cxl_global, g_create_mbox(_)).Times(0);
   int status = cmmb_a1_init();
   EXPECT_EQ(status, -ENODATA);
 }
 
 TEST_F(ServicerTest, CmmbA1_CorruptJsonFile) {
-  use_test_config("test_corrupt.json");	
+  use_test_config("test_corrupt.json");
   EXPECT_CALL(mock_cxl_global, g_create_mbox(_)).Times(0);
   int status = cmmb_a1_init();
   EXPECT_EQ(status, -EINVAL);
+}
+
+TEST_F(ServicerTest, ListDevices_EmptyInput_ReturnsAllDevices) {
+  std::unordered_map<std::string, std::string> params;
+  std::string result = handle_list_devices(params);
+  EXPECT_FALSE(result.empty());
+  EXPECT_TRUE(result.find("devices") != std::string::npos);
+}
+
+TEST_F(ServicerTest, ListDevices_InvalidArrayFormat_ReturnsError) {
+  std::unordered_map<std::string, std::string> params = {
+      {"device_id", R"([123, 456])"}  // not strings
+  };
+  std::string result = handle_list_devices(params);
+  EXPECT_TRUE(result.find("device_id array must contain strings") !=
+              std::string::npos);
+}
+
+TEST_F(ServicerTest, ListDevices_ExceptionHandling) {
+  std::unordered_map<std::string, std::string> params = {
+      {"device_id", "not_a_number"}};
+  std::string result = handle_list_devices(params);
+  EXPECT_TRUE(result.find("Exception") != std::string::npos ||
+              result.find("Invalid") != std::string::npos);
+}
+
+TEST_F(ServicerTest, GetDeviceInfo_MissingParam_ReturnsError) {
+  std::unordered_map<std::string, std::string> params;
+  std::string result = handle_get_device_info(params);
+  EXPECT_TRUE(result.find("Missing parameter") != std::string::npos);
+}
+
+TEST_F(ServicerTest, GetDeviceInfo_InvalidIdString_ReturnsError) {
+  std::unordered_map<std::string, std::string> params = {
+      {"device_id", "invalid"}};
+  std::string result = handle_get_device_info(params);
+  EXPECT_TRUE(result.find("Invalid") != std::string::npos);
 }

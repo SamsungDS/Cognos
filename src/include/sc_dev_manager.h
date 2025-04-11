@@ -6,8 +6,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "sc_dev_registry.h"
-
+#include "sc_cxl_dev_adapter.h"
+#include "sc_id.h"
 /**
  * @class DeviceManager
  * @brief Singleton class responsible for managing device operations.
@@ -20,23 +20,9 @@
 class DeviceManager {
  public:
   /**
-   * @brief Gets the singleton instance of DeviceManager.
-   *
-   * Ensures a single instance of the DeviceManager exists across the
-   * application.
-   * @return Reference to the singleton instance.
-   */
-  static DeviceManager& getInstance();
-
-  /**
    * @brief Constructs a DeviceManager instance for library use.
-   *
-   * This constructor allows embedding DeviceManager in external applications
-   * by injecting a DeviceRegistry instance.
-   *
-   * @param registry Reference to an externally managed DeviceRegistry instance.
    */
-  explicit DeviceManager(DeviceRegistry& registry);
+  DeviceManager();
 
   /**
    * @brief Destructor for DeviceManager.
@@ -45,7 +31,7 @@ class DeviceManager {
 
   /**
    * @brief Deleted copy constructor to prevent duplication.
-   **/
+   */
   DeviceManager(const DeviceManager&) = delete;
 
   /**
@@ -54,20 +40,23 @@ class DeviceManager {
   DeviceManager& operator=(const DeviceManager&) = delete;
 
   /**
-   * @brief Lists all registered devices based on provided filters.
+   * @brief Lists all registered devices.
+   *
+   * Overload: No parameters — returns all devices.
+   * @return JSON string containing the list of devices or error response.
+   */
+  std::string list_devices();
+
+  /**
+   * @brief Lists all registered devices with a filter on device IDs.
    *
    * Extracts device filter parameters, retrieves device lists from adapters,
    * and compiles a unified JSON response.
    *
-   * @param[in] params Map containing API request parameters, including
-   * "command_params".
-   * @return JSON string containing the list of devices or an error response.
-   *
-   * @error EINVAL If request format is invalid or missing required parameters.
-   * @error EIO If device retrieval fails.
+   * @param[in] d_ids Set of device IDs to filter the list.
+   * @return JSON string of filtered device list or error response.
    */
-  std::string list_devices(
-      const std::unordered_map<std::string, std::string>& params);
+  std::string list_devices(const std::unordered_set<uint64_t>& d_ids);
 
   /**
    * @brief Retrieves detailed information about a specific device.
@@ -76,92 +65,96 @@ class DeviceManager {
    * `get_device_info`. Returns a JSON response with the device information or
    * an appropriate error.
    *
-   * @param[in] params Map containing "device_id".
+   * @param[in] "d_id" of the device to retrieve.
    * @return JSON string containing device details or an error response.
    *
-   * @error EINVAL If "device_id" is missing or improperly formatted.
+   * @error EINVAL If "d_id" is missing or improperly formatted.
    * @error ENOENT If the specified device is not found.
    * @error EIO If fetching device details fails.
    */
-  std::string get_device_info(
-      const std::unordered_map<std::string, std::string>& params);
+  std::string get_device_info(uint64_t d_id);
 
   /**
-   * @brief Handles the attachment of a device to a host (Only applicable for
-   * CMMB).
+   * @brief Registers a new device adapter.
    *
-   * This function validates the input parameters, retrieves the corresponding
-   * adapter, and calls the `attach_memory` function on the adapter. If any
-   * error occurs during the process, a proper error response is generated.
+   * Adds the specified adapter to the internal mapping.
    *
-   * @param[in] params Map containing "device_id", "node_id" or "host_id".
-   * @return JSON response as a string.
-   *
-   * @error EINVAL  If "device_id" or "host_id" is missing or invalid.
-   * @error ENOENT  If no adapter is found for the given device ID.
-   * @error Other POSIX error codes from `detach_memory` if the operation fails.
+   * @param[in] name Name of the adapter.
+   * @param[in] adapter Pointer to the CXLDeviceAdapter instance.
    */
-  std::string attach_memory(
-      const std::unordered_map<std::string, std::string>& params);
+  void registerAdapter(const std::string& name, CXLDeviceAdapter* adapter);
 
   /**
-   * @brief Handles the detachment of a device from a host (Only applicable for
-   * CMMB).
+   * @brief Unregisters a device adapter.
    *
-   * This function validates the input parameters, retrieves the appropriate
-   * adapter, and calls the `detach_memory` function on the adapter. If any
-   * error occurs during the process, a proper error response is generated.
+   * Removes the adapter entry from the registry.
    *
-   * @param[in] params Map containing "device_id" and "host_id".
-   * @return JSON response as a string.
-   *
-   * @error EINVAL  If "device_id" or "host_id" is missing or invalid.
-   * @error ENOENT  If no adapter is found for the given device ID.
-   * @error Other POSIX error codes from `detach_memory` if the operation fails.
+   * @param[in] name Name of the adapter to be unregistered.
    */
-  std::string detach_memory(
-      const std::unordered_map<std::string, std::string>& params);
+  void unregisterAdapter(const std::string& name);
 
   /**
-   * @brief Extracts and validates device IDs from a JSON string.
+   * @brief Retrieves an adapter by its name.
    *
-   * Parses the "command_params" JSON to extract the "device_id" field, which
-   * can be a string or an array. Validates and stores the device IDs in
-   * `dev_ids_out`.
+   * Searches for an adapter registered under the given name.
    *
-   * @param[in] json_request JSON string containing device filter parameters.
-   * @param[out] dev_ids_out Set to store extracted device IDs.
-   * @return 0 on success, or a negative POSIX error code on failure.
-   *
-   * @error EINVAL If the JSON format is invalid or "device_id" is improperly
-   * formatted.
+   * @param[in] name Name of the adapter.
+   * @return Pointer to the CXLDeviceAdapter if found, otherwise nullptr.
    */
-  int fetch_dev_ids_from_req(const std::string& json_request,
-                             std::unordered_set<uint64_t>& dev_ids_out);
+  CXLDeviceAdapter* getAdapter(const std::string& name);
 
   /**
-   * @brief Retrieves and aggregates device information from all registered
-   * adapters.
+   * @brief Retrieves a read-only reference to all registered adapters.
    *
-   * Iterates through all registered adapters in the `DeviceRegistry`, calling
-   * their `list_devices` method. The results are processed and flattened into a
-   * unified JSON response.
+   * This methid allows querying of all currently registered adapters.
    *
-   * @param[in] dev_ids_out Set containing device IDs to filter the results. If
-   * empty, all devices are listed.
-   * @param[in] device_result to capture flattened list of devices.
-   * @return JSON string containing the aggregated list of devices or an error
-   * response.
-   *
-   * @error EIO If an adapter fails to retrieve device data.
-   * @error EINVAL If an adapter returns an invalid JSON format.
+   * @return A const reference to adapter map (thread safe access).
    */
-  int fetch_all_devices(const std::unordered_set<uint64_t>& dev_ids_out,
-                        std::string& device_result);
+  const std::unordered_map<std::string, CXLDeviceAdapter*>& get_adapters();
+
+  /**
+   * @brief Registers a discovered device with the manager.
+   *
+   * This function is called by adapters during setup/discovery. It stores the
+   * mapping between the device's sc_id and its owning adapter, and also maps
+   * the numeric device_id for fast lookup.
+   *
+   * @param[in] id The device's sc_id (unique identifier).
+   * @param[in] adapter Pointer to the owning CXL adapter.
+   */
+  void register_device(const sc_id& id, CXLDeviceAdapter* adapter);
+
+  /**
+   * @brief Unregisters all devices associated with a given adapter.
+   *
+   * This function is called when an adapter is unregistered or unloaded.
+   * It ensures that all device-to-adapter mappings held by the DeviceManager
+   * are also cleaned up to avoid dangling references.
+   *
+   * @param adapter Pointer to the adapter being unregistered.
+   */
+  void unregister_device(CXLDeviceAdapter* adapter);
 
  private:
-  // Registry reference (injected)
-  DeviceRegistry& registry_;
+  /**
+   * @brief Map storing registered adapters.
+   */
+  std::unordered_map<std::string, CXLDeviceAdapter*> adapterMap;
+
+  /**
+   * @brief Map storing id to id object
+   */
+  std::unordered_map<uint64_t, sc_id> d_id_to_sc_id;
+
+  /**
+   * @brief Map storing id object to adapter.
+   */
+  std::unordered_map<sc_id, CXLDeviceAdapter*, hash_sc_id> sc_id_to_adapter;
+
+  /**
+   * @brief Mutex for thread-safe access.
+   */
+  std::mutex registryMutex;
 };
 
 #endif
