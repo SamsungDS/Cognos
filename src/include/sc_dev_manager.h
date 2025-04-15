@@ -2,6 +2,7 @@
 #define DEVICE_MANAGER_H
 
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -43,9 +44,9 @@ class DeviceManager {
    * @brief Lists all registered devices.
    *
    * Overload: No parameters — returns all devices.
-   * @return JSON string containing the list of devices or error response.
+   * @return A vector of sc_device representing all discovered devices.
    */
-  std::string list_devices();
+  std::vector<sc_device> list_devices();
 
   /**
    * @brief Lists all registered devices with a filter on device IDs.
@@ -53,26 +54,20 @@ class DeviceManager {
    * Extracts device filter parameters, retrieves device lists from adapters,
    * and compiles a unified JSON response.
    *
-   * @param[in] d_ids Set of device IDs to filter the list.
-   * @return JSON string of filtered device list or error response.
+   * @param[in] d_ids Set of device IDs to retrieve.
+   * @return A vector of sc_device filtered by the given device IDs.
    */
-  std::string list_devices(const std::unordered_set<uint64_t>& d_ids);
+  std::vector<sc_device> list_devices(
+      const std::unordered_set<uint64_t>& d_ids);
 
   /**
    * @brief Retrieves detailed information about a specific device.
    *
-   * Validates the input, retrieves the corresponding adapter, and calls
-   * `get_device_info`. Returns a JSON response with the device information or
-   * an appropriate error.
-   *
-   * @param[in] "d_id" of the device to retrieve.
-   * @return JSON string containing device details or an error response.
-   *
-   * @error EINVAL If "d_id" is missing or improperly formatted.
-   * @error ENOENT If the specified device is not found.
-   * @error EIO If fetching device details fails.
+   * @param[in] d_id Device ID.
+   * @return std::optional<DeviceInfo> containing device info on success,
+   * or std::nullopt if the device is not found or an error occurs.
    */
-  std::string get_device_info(uint64_t d_id);
+  std::optional<FullDeviceInfo> get_device_info(uint64_t d_id);
 
   /**
    * @brief Registers a new device adapter.

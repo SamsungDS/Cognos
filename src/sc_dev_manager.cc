@@ -27,34 +27,30 @@ DeviceManager::~DeviceManager() {
  *
  * Only adapters that support bulk listing will be queried.
  *
- * @return JSON-formatted list of all devices.
+ * @return vector of sc_device.
  */
-std::string DeviceManager::list_devices() {
+std::vector<sc_device> DeviceManager::list_devices() {
   LOG(level_E::INFO,
       "DeviceManager::list_devices - No filter, returning all devices.");
-
-  std::ostringstream oss;
-  oss << R"({"devices":[)";
-  int init_stream_pos = oss.tellp();
+  std::vector<sc_device> result;
 
   for (const auto& [adapter_name, adapter] : get_adapters()) {
     if (!adapter) continue;
 
-    std::string result;
-    int status = adapter->list_devices(result);
-    if (status == -ENOTSUP) continue;
-    if (status < 0) {
-      LOG(level_E::ERROR, "Adapter list_devices failed: " + adapter_name);
-      return posix_err_to_json(std::abs(status), "Adapter list_devices failed");
-    }
-    if (!result.empty()) {
-      if (oss.tellp() > init_stream_pos) oss << ",";
-      oss << result;
+    try {
+      // Adapter returns a list of its managed devices
+      std::vector<sc_device> adapter_devices = adapter->list_devices();
+
+      // Append adapter’s devices to the aggregated result
+      result.insert(result.end(), adapter_devices.begin(),
+                    adapter_devices.end());
+    } catch (const std::exception& ex) {
+      LOG(level_E::ERROR,
+          "Adapter list_devices threw exception: " + std::string(ex.what()));
     }
   }
 
-  oss << "]}";
-  return oss.str();
+  return result;
 }
 
 /**
@@ -66,67 +62,72 @@ std::string DeviceManager::list_devices() {
  * @param[in] d_ids Set of device IDs to retrieve.
  * @return JSON-formatted list of matched devices.
  */
-std::string DeviceManager::list_devices(
+std::vector<sc_device> DeviceManager::list_devices(
     const std::unordered_set<uint64_t>& d_ids) {
-  LOG(level_E::INFO, "DeviceManager::list_devices - Listing filtered devices.");
+  LOG(level_E::INFO, "DeviceManager::list_devices - Filtered by device IDs.");
 
-  std::ostringstream oss;
-  oss << R"({"devices":[)";
-  int init_stream_pos = oss.tellp();
+  std::vector<sc_device> result;
 
   for (const auto& d_id : d_ids) {
+    // Map device_id to sc_id
     auto id_it = d_id_to_sc_id.find(d_id);
-    if (id_it == d_id_to_sc_id.end()) continue;
+    if (id_it == d_id_to_sc_id.end()) {
+      LOG(level_E::WARN,
+          "Device ID not found in registry: " + std::to_string(d_id));
+      continue;  // skip unknown device
+    }
 
     const sc_id& sid = id_it->second;
+    // Get adapter mapped to this sc_id
     auto adapter_it = sc_id_to_adapter.find(sid);
-    if (adapter_it == sc_id_to_adapter.end()) continue;
+    if (adapter_it == sc_id_to_adapter.end() || adapter_it->second == nullptr) {
+      LOG(level_E::WARN,
+          "No adapter found for sc_id: " + std::to_string(sid.get_sc_id()));
+      continue;
+    }
 
     CXLDeviceAdapter* adapter = adapter_it->second;
-    std::string adapter_result;
-    int status = adapter->list_devices(sid, adapter_result);
-    if (status < 0) {
+    try {
+      // Fetch the specific device via adapter
+      const sc_device& dev = adapter->get_device_object(sid);
+      result.push_back(dev);
+    } catch (const std::exception& ex) {
       LOG(level_E::ERROR,
-          "Failed to fetch device info for ID: " + std::to_string(d_id));
-      return posix_err_to_json(std::abs(status),
-                               "Failed to fetch filtered devices");
-    }
-    if (!adapter_result.empty()) {
-      if (oss.tellp() > init_stream_pos) oss << ",";
-      oss << adapter_result;
+          "Error retrieving device " + std::to_string(d_id) + ": " + ex.what());
     }
   }
 
-  oss << "]}";
-  return oss.str();
+  return result;
 }
 
 /**
  * @brief Retrieves detailed information about a specific device.
  */
-std::string DeviceManager::get_device_info(uint64_t d_id) {
+std::optional<FullDeviceInfo> DeviceManager::get_device_info(uint64_t d_id) {
   LOG(level_E::INFO, "Fetching device info for ID: " + std::to_string(d_id));
+
   auto id_it = d_id_to_sc_id.find(d_id);
   if (id_it == d_id_to_sc_id.end()) {
     LOG(level_E::ERROR, "Invalid device_id: " + std::to_string(d_id));
-    return posix_err_to_json(ENOENT, "Device ID not found");
+    return std::nullopt;
   }
+
   const sc_id& scid = id_it->second;
   auto adapter_it = sc_id_to_adapter.find(scid);
   if (adapter_it == sc_id_to_adapter.end()) {
     LOG(level_E::ERROR, "No adapter mapped for sc_id: " + std::to_string(d_id));
-    return posix_err_to_json(ENOENT, "No adapter found for device");
+    return std::nullopt;
   }
+
   CXLDeviceAdapter* adapter = adapter_it->second;
-  std::string buffer;
-  int status = adapter->get_device_info(scid, buffer);
-  if (status < 0) {
-    LOG(level_E::ERROR, "Failed to retrieve device info for device_id: " +
-                            std::to_string(d_id));
-    return posix_err_to_json(std::abs(status),
-                             "Failed to retrieve device info");
+  try {
+    const sc_device& dev = adapter->get_device_object(scid);
+    return dev.to_device_info();
+  } catch (const std::exception& ex) {
+    LOG(level_E::ERROR,
+        "Failed to retrieve device info: " + std::string(ex.what()));
+    return std::nullopt;
   }
-  return buffer;
 }
 
 void DeviceManager::register_device(const sc_id& sid,

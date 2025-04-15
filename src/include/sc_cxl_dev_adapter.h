@@ -3,9 +3,13 @@
 
 #include <error.h>
 
+#include <optional>
 #include <string>
 #include <unordered_set>
+#include <vector>
 
+#include "sc_device.h"
+#include "sc_host.h"
 #include "sc_id.h"
 
 /**
@@ -18,48 +22,39 @@ class CXLDeviceAdapter {
   virtual ~CXLDeviceAdapter() = default;
 
   /**
-   * @brief Lists all devices managed by this adapter.
-   *
-   * This optional overload is used when the caller wants to retrieve all
-   * devices from the adapter without applying any filter (e.g., in cases where
-   * the DeviceManager is iterating over all adapters without device ID
-   * filtering).
-   *
-   * Not all adapters may support unfiltered listing. By default, this method
-   * returns `-ENOTSUP`, indicating the operation is not supported unless
-   * overridden by the adapter.
-   *
-   * @param[out] buffer A JSON-formatted string containing the list of devices.
-   * @return 0 on success, or a negative POSIX error code (e.g., -ENOTSUP).
+   * @brief Lists all devices managed by this adapter(unfiltered).
+   * This is typically used for full discovery (no filter).
+   * @return Vector of sc_device objects.
    */
-  virtual int list_devices(std::string& buffer) { return -ENOTSUP; }
+  virtual std::vector<sc_device> list_devices() const { return {}; }
 
   /**
-   * @brief Retrieve the list of devices managed by this adapter, filtered if
-   * necessary.
+   * @brief Retrieves a specific device object by its sc_id.
    *
-   * @param[in] sc_id object, encapsulated device id.
-   * @param[out] buffer JSON-formatted device list.
-   * @return int success or posix error code.
+   * This method is used to fetch a single `sc_device` instance managed by the
+   * adapter, based on the provided `sc_id`. Implementing adapters must maintain
+   * an internal map or container of devices and return a copy of the matching
+   * device.
+   *
+   * @param sid The system-composed identifier of the device to retrieve.
+   * @return A copy of the matching `sc_device` object.
    */
-  virtual int list_devices(const sc_id& sid, std::string& buffer) = 0;
+  virtual sc_device get_device_object(const sc_id& sid) const = 0;
 
   /**
    * @brief Retrieve the list of hosts managed by this adapter.
    *
-   * @param[out] buffer JSON-formatted host list.
-   * @return Number of bytes written.
+   * @return Vector of sc_host objects.
    */
-  virtual int list_hosts(std::string& buffer) = 0;
+  virtual std::vector<sc_host> list_hosts() = 0;
 
   /**
-   * @brief Fetch detailed information about a specific device.
-   *
-   * @param[in] sid sc_id object.
-   * @param[out] buffer JSON-formatted device info.
-   * @return Number of bytes written.
+   * @brief Get the internal sc_device object for the given device ID.
+   * @param sid The sc_id of the device.
+   * @return Reference to the internal sc_device object.
+   * @throws std::runtime_error if device is not found.
    */
-  virtual int get_device_info(const sc_id& sid, std::string& buffer) = 0;
+  virtual const sc_device& get_device_info(const sc_id& sid) const = 0;
 
   /**
    * @brief Attach a device to a host (only applicable for CMMB).

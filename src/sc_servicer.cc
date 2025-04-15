@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "framework_downstream.h"
+#include "sc_api_structs.h"
 #include "sc_cmmb.h"
 #include "sc_cmmd.h"
 #include "sc_cmmh.h"
@@ -551,17 +552,19 @@ std::string handle_list_devices(
     const std::unordered_map<std::string, std::string>& params) {
   std::unordered_set<uint64_t> device_ids;
   std::string error;
+
   try {
     auto it = params.find("device_id");
     if (it != params.end()) {
       const std::string& value = it->second;
-      // Handle array input: ["123", "456"]
+
       if (!value.empty() && value.front() == '[' && value.back() == ']') {
         json_error_t jerr;
         json_t* arr = json_loads(value.c_str(), 0, &jerr);
         if (!arr || !json_is_array(arr)) {
           return posix_err_to_json(EINVAL, "Invalid device_id array format");
         }
+
         size_t index;
         json_t* val;
         json_array_foreach(arr, index, val) {
@@ -581,13 +584,9 @@ std::string handle_list_devices(
           }
         }
         json_decref(arr);
-      }
-      // Handle single value input: "123"
-      else {
+      } else {
         uint64_t id;
-        if (!str_to_int(value, id, error)) {
-          return error;
-        }
+        if (!str_to_int(value, id, error)) return error;
         device_ids.insert(id);
       }
     }
@@ -596,11 +595,32 @@ std::string handle_list_devices(
         "Exception in handle_list_devices: " + std::string(e.what()));
     return posix_err_to_json(EIO, "Exception while parsing device_id");
   }
-  // Empty set = return all devices
-  std::string result = g_dev_mgr->list_devices(device_ids);
-  if (!device_ids.empty() && is_device_list_empty(result)) {
+
+  std::vector<sc_device> devices = device_ids.empty()
+                                       ? g_dev_mgr->list_devices()
+                                       : g_dev_mgr->list_devices(device_ids);
+
+  // Return early if filtered but got no matching devices
+  if (!device_ids.empty() && devices.empty()) {
     return posix_err_to_json(ENOENT, "No matching device IDs found");
   }
+
+  // Serialize response
+  json_t* root = json_object();
+  json_t* array = json_array();
+  for (const auto& dev : devices) {
+    json_t* obj = json_object();
+    json_object_set_new(obj, "id", json_integer(dev.d_get_id().get_sc_id()));
+    json_object_set_new(obj, "type", json_integer(dev.d_get_type()));
+    json_object_set_new(obj, "pcie_addr",
+                        json_string(dev.d_get_pcie_addr().c_str()));
+    json_array_append_new(array, obj);
+  }
+  json_object_set_new(root, "devices", array);
+  char* json_str = json_dumps(root, JSON_COMPACT);
+  std::string result(json_str);
+  free(json_str);
+  json_decref(root);
   return result;
 }
 
@@ -608,14 +628,90 @@ std::string handle_get_device_info(
     const std::unordered_map<std::string, std::string>& params) {
   std::unordered_map<std::string, std::string> values;
   std::string error;
+
   if (!extract_required_params(params, {"device_id"}, values, error)) {
     return error;
   }
+
   uint64_t device_id;
   if (!str_to_int(values["device_id"], device_id, error)) {
     return error;
   }
-  return g_dev_mgr->get_device_info(device_id);
+
+  std::optional<FullDeviceInfo> info = g_dev_mgr->get_device_info(device_id);
+  if (!info.has_value()) {
+    return posix_err_to_json(ENOENT, "Device not found or error occurred");
+  }
+
+  // Convert DeviceInfo to JSON
+  const FullDeviceInfo& dev = info.value();
+  json_t* root = json_object();
+  json_object_set_new(root, "api_version", json_real(1.0));
+
+  json_object_set_new(root, "id", json_integer(dev.id));
+  json_object_set_new(root, "manufacturer",
+                      json_string(dev.manufacturer.c_str()));
+  json_object_set_new(root, "serial_number",
+                      json_string(dev.serial_number.c_str()));
+  json_object_set_new(root, "FW_revision",
+                      json_string(dev.fw_revision.c_str()));
+  json_object_set_new(root, "location", json_string(dev.location.c_str()));
+  json_object_set_new(root, "total_capacity_MB",
+                      json_integer(dev.total_capacity_MB));
+  json_object_set_new(root, "available_capacity_MB",
+                      json_integer(dev.available_capacity_MB));
+  json_object_set_new(root, "status", json_string(dev.status.c_str()));
+  json_object_set_new(root, "feature_supported",
+                      json_string(dev.feature_supported.c_str()));
+  json_object_set_new(root, "device_type",
+                      json_string(dev.device_type.c_str()));
+  json_object_set_new(root, "cxl_type", json_string(dev.cxl_type.c_str()));
+  json_object_set_new(root, "protocol", json_string(dev.protocol.c_str()));
+
+  json_object_set_new(root, "aspm_active", json_boolean(dev.aspm_active));
+  json_object_set_new(root, "sris_active", json_boolean(dev.sris_active));
+  json_object_set_new(root, "lock_active", json_boolean(dev.lock_active));
+  json_object_set_new(root, "link_speed", json_integer(dev.link_speed));
+  json_object_set_new(root, "link_width", json_integer(dev.link_width));
+
+  json_object_set_new(root, "port_type", json_string(dev.port_type.c_str()));
+  json_object_set_new(root, "numa_attached", json_integer(dev.numa_attached));
+  json_object_set_new(root, "mode_discovered",
+                      json_string(dev.mode_discovered.c_str()));
+  json_object_set_new(root, "connection_type",
+                      json_string(dev.connection_type.c_str()));
+  json_object_set_new(root, "domain_type",
+                      json_string(dev.domain_type.c_str()));
+  json_object_set_new(root, "domain_id", json_integer(dev.domain_id));
+
+  // Add capability fields
+  json_t* caps = json_object();
+  json_object_set_new(caps, "Power Management version",
+                      json_integer(dev.capabilities.power_management_version));
+  //@to-do
+  // json_object_set_new(caps, "Vendor specific capabilities",
+  // json_string(dev.capabilities.vendor_specific));
+  json_object_set_new(root, "capabilities", caps);
+
+  // Add QoS fields
+  json_t* qos = json_object();
+  json_object_set_new(qos, "avg_latency",
+                      json_real(dev.advertized_qos.avg_latency));
+  json_object_set_new(qos, "p99_latency",
+                      json_real(dev.advertized_qos.p99_latency));
+  json_object_set_new(qos, "io_per_sec",
+                      json_real(dev.advertized_qos.io_per_sec));
+  json_object_set_new(qos, "BW_per_sec",
+                      json_real(dev.advertized_qos.bw_per_sec));
+  json_object_set_new(qos, "io_size", json_real(dev.advertized_qos.io_size));
+  json_object_set_new(qos, "qd", json_real(dev.advertized_qos.qd));
+  json_object_set_new(root, "advertized_qos", qos);
+
+  char* json_str = json_dumps(root, JSON_COMPACT);
+  std::string result(json_str);
+  free(json_str);
+  json_decref(root);
+  return result;
 }
 
 int cmmb_a1_init() {
