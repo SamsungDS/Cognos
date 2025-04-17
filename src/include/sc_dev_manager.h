@@ -8,7 +8,10 @@
 #include <unordered_set>
 
 #include "sc_cxl_dev_adapter.h"
+#include "sc_device.h"
 #include "sc_id.h"
+
+class CXLDeviceAdapter;
 
 /**
  * @class DeviceManager
@@ -130,6 +133,18 @@ class DeviceManager {
    * @param adapter Pointer to the adapter being unregistered.
    */
   void unregister_device(CXLDeviceAdapter* adapter);
+
+  /**
+   * @brief Triggers discovery or rediscovery of devices from all registered
+   * adapters.
+   *
+   * This method is called during system startup or runtime hotplug detection.
+   * It loops through all registered adapters and invokes their
+   * discover_devices() method. Each adapter scans for connected hardware,
+   * creates `sc_device` objects, and registers new devices with DeviceManager.
+   * Already-known devices are skipped.
+   */
+  void discover_devices();
 
  private:
   /**

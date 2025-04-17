@@ -66,9 +66,9 @@ std::vector<sc_device> DeviceManager::list_devices(
     const std::unordered_set<uint64_t>& d_ids) {
   LOG(level_E::INFO, "DeviceManager::list_devices - Filtered by device IDs.");
   std::vector<sc_device> result;
-  
+
   for (const auto& d_id : d_ids) {
-    LOG(level_E::INFO, "DeviceManager::ONE" + std::to_string(d_id));	  
+    LOG(level_E::INFO, "DeviceManager::ONE" + std::to_string(d_id));
     // Map device_id to sc_id
     auto id_it = d_id_to_sc_id.find(d_id);
     LOG(level_E::INFO, "DeviceManager::Two.");
@@ -97,8 +97,8 @@ std::vector<sc_device> DeviceManager::list_devices(
           "Error retrieving device " + std::to_string(d_id) + ": " + ex.what());
     }
   }
- 
-  LOG(level_E::INFO, "DeviceManager::list_devices - Completed."); 
+
+  LOG(level_E::INFO, "DeviceManager::list_devices - Completed.");
   return result;
 }
 
@@ -123,8 +123,7 @@ std::optional<DevInfo> DeviceManager::get_device_info(uint64_t d_id) {
 
   CXLDeviceAdapter* adapter = adapter_it->second;
   try {
-    const sc_device& dev = adapter->get_device_object(scid);
-    return dev.to_device_info();
+    return adapter->get_device_info(scid);
   } catch (const std::exception& ex) {
     LOG(level_E::ERROR,
         "Failed to retrieve device info: " + std::string(ex.what()));
@@ -203,4 +202,30 @@ const std::unordered_map<std::string, CXLDeviceAdapter*>&
 DeviceManager::get_adapters() {
   std::lock_guard<std::mutex> lock(registryMutex);
   return adapterMap;
+}
+
+void DeviceManager::discover_devices() {
+  LOG(level_E::INFO, "DeviceManager: Starting device discovery...");
+
+  for (const auto& [adapter_name, adapter] : adapterMap) {
+    if (!adapter) {
+      LOG(level_E::WARN,
+          "DeviceManager: Adapter '" + adapter_name + "' is null. Skipping.");
+      continue;
+    }
+
+    try {
+      LOG(level_E::INFO,
+          "DeviceManager: Invoking discover_devices on adapter '" +
+              adapter_name + "'");
+      adapter->discover_devices(*this);
+    } catch (const std::exception& ex) {
+      LOG(level_E::ERROR, "DeviceManager: Exception from adapter '" +
+                              adapter_name + "': " + ex.what());
+    } catch (...) {
+      LOG(level_E::ERROR, "DeviceManager: Unknown exception from adapter '" +
+                              adapter_name + "'");
+    }
+  }
+  LOG(level_E::INFO, "DeviceManager: Completed device discovery.");
 }

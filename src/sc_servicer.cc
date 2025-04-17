@@ -609,11 +609,13 @@ std::string handle_list_devices(
   json_t* root = json_object();
   json_t* array = json_array();
   for (const auto& dev : devices) {
+    DevInfo info = dev.to_device_info();
     json_t* obj = json_object();
-    json_object_set_new(obj, "id", json_integer(dev.d_get_id().get_sc_id()));
-    json_object_set_new(obj, "type", json_integer(dev.d_get_type()));
+    json_object_set_new(obj, "id", json_integer(info.static_info.id));
+    json_object_set_new(obj, "type",
+                        json_string(info.static_info.device_type.c_str()));
     json_object_set_new(obj, "pcie_addr",
-                        json_string(dev.d_get_pcie_addr().c_str()));
+                        json_string(info.static_info.location.c_str()));
     json_array_append_new(array, obj);
   }
   json_object_set_new(root, "devices", array);
@@ -628,85 +630,84 @@ std::string handle_get_device_info(
     const std::unordered_map<std::string, std::string>& params) {
   std::unordered_map<std::string, std::string> values;
   std::string error;
-
   if (!extract_required_params(params, {"device_id"}, values, error)) {
     return error;
   }
-
   uint64_t device_id;
   if (!str_to_int(values["device_id"], device_id, error)) {
     return error;
   }
-
   std::optional<DevInfo> info = g_dev_mgr->get_device_info(device_id);
   if (!info.has_value()) {
     return posix_err_to_json(ENOENT, "Device not found or error occurred");
   }
-
-  // Convert DeviceInfo to JSON
   const DevInfo& dev = info.value();
   json_t* root = json_object();
   json_object_set_new(root, "api_version", json_real(1.0));
-
-  json_object_set_new(root, "id", json_integer(dev.id));
+  // Static fields
+  json_object_set_new(root, "id", json_integer(dev.static_info.id));
   json_object_set_new(root, "manufacturer",
-                      json_string(dev.manufacturer.c_str()));
+                      json_string(dev.static_info.manufacturer.c_str()));
   json_object_set_new(root, "serial_number",
-                      json_integer(dev.serial_number));
+                      json_integer(dev.static_info.serial_number));
   json_object_set_new(root, "FW_revision",
-                      json_string(dev.fw_revision.c_str()));
-  json_object_set_new(root, "location", json_string(dev.location.c_str()));
+                      json_string(dev.static_info.fw_revision.c_str()));
+  json_object_set_new(root, "location",
+                      json_string(dev.static_info.location.c_str()));
   json_object_set_new(root, "total_capacity_MB",
-                      json_integer(dev.total_capacity_MB));
+                      json_integer(dev.static_info.total_capacity_MB));
+  json_object_set_new(root, "feature_supported",
+                      json_string(dev.static_info.feature_supported.c_str()));
+  json_object_set_new(root, "device_type",
+                      json_string(dev.static_info.device_type.c_str()));
+  json_object_set_new(root, "cxl_type",
+                      json_string(dev.static_info.cxl_type.c_str()));
+  json_object_set_new(root, "protocol",
+                      json_string(dev.static_info.protocol.c_str()));
+  json_object_set_new(root, "port_type",
+                      json_string(dev.static_info.port_type.c_str()));
+  json_object_set_new(root, "mode_discovered",
+                      json_string(dev.static_info.mode_discovered.c_str()));
+  json_object_set_new(root, "connection_type",
+                      json_string(dev.static_info.connection_type.c_str()));
+  json_object_set_new(root, "domain_type",
+                      json_string(dev.static_info.domain_type.c_str()));
+  json_object_set_new(root, "domain_id",
+                      json_integer(dev.static_info.domain_id));
+  json_object_set_new(root, "link_speed",
+                      json_integer(dev.static_info.link_speed));
+  json_object_set_new(root, "link_width",
+                      json_integer(dev.static_info.link_width));
+
+  // Dynamic fields
   json_object_set_new(root, "available_capacity_MB",
                       json_integer(dev.available_capacity_MB));
   json_object_set_new(root, "status", json_string(dev.status.c_str()));
-  json_object_set_new(root, "feature_supported",
-                      json_string(dev.feature_supported.c_str()));
-  json_object_set_new(root, "device_type",
-                      json_string(dev.device_type.c_str()));
-  json_object_set_new(root, "cxl_type", json_string(dev.cxl_type.c_str()));
-  json_object_set_new(root, "protocol", json_string(dev.protocol.c_str()));
-
   json_object_set_new(root, "aspm_active", json_boolean(dev.aspm_active));
   json_object_set_new(root, "sris_active", json_boolean(dev.sris_active));
   json_object_set_new(root, "lock_active", json_boolean(dev.lock_active));
-  json_object_set_new(root, "link_speed", json_integer(dev.link_speed));
-  json_object_set_new(root, "link_width", json_integer(dev.link_width));
-
-  json_object_set_new(root, "port_type", json_string(dev.port_type.c_str()));
   json_object_set_new(root, "numa_attached", json_integer(dev.numa_attached));
-  json_object_set_new(root, "mode_discovered",
-                      json_string(dev.mode_discovered.c_str()));
-  json_object_set_new(root, "connection_type",
-                      json_string(dev.connection_type.c_str()));
-  json_object_set_new(root, "domain_type",
-                      json_string(dev.domain_type.c_str()));
-  json_object_set_new(root, "domain_id", json_integer(dev.domain_id));
-
-  // Add capability fields
+  // Capabilities
   json_t* caps = json_object();
-  json_object_set_new(caps, "Power Management version",
-                      json_integer(dev.capabilities.power_management_version));
-  //@to-do
-  // json_object_set_new(caps, "Vendor specific capabilities",
-  // json_string(dev.capabilities.vendor_specific));
+  json_object_set_new(
+      caps, "Power Management version",
+      json_integer(dev.static_info.capabilities.power_management_version));
   json_object_set_new(root, "capabilities", caps);
-
-  // Add QoS fields
+  // QoS
   json_t* qos = json_object();
   json_object_set_new(qos, "avg_latency",
-                      json_real(dev.advertized_qos.avg_latency));
+                      json_real(dev.static_info.advertized_qos.avg_latency));
   json_object_set_new(qos, "p99_latency",
-                      json_real(dev.advertized_qos.p99_latency));
+                      json_real(dev.static_info.advertized_qos.p99_latency));
   json_object_set_new(qos, "io_per_sec",
-                      json_real(dev.advertized_qos.io_per_sec));
+                      json_real(dev.static_info.advertized_qos.io_per_sec));
   json_object_set_new(qos, "BW_per_sec",
-                      json_real(dev.advertized_qos.bw_per_sec));
-  json_object_set_new(qos, "io_size", json_real(dev.advertized_qos.io_size));
-  json_object_set_new(qos, "qd", json_real(dev.advertized_qos.qd));
+                      json_real(dev.static_info.advertized_qos.bw_per_sec));
+  json_object_set_new(qos, "io_size",
+                      json_real(dev.static_info.advertized_qos.io_size));
+  json_object_set_new(qos, "qd", json_real(dev.static_info.advertized_qos.qd));
   json_object_set_new(root, "advertized_qos", qos);
-
+  // Finalize JSON
   char* json_str = json_dumps(root, JSON_COMPACT);
   std::string result(json_str);
   free(json_str);

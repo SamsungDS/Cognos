@@ -80,7 +80,7 @@ TEST_F(ScGlobalTest, CreateMboxTest) {
   struct StaticPortInfo pinfo;
   mbox_get_static_config(&pinfo);
   const char* host_name = "Host1LNK0";
-  strncpy(pinfo.host[0].name, host_name, MAX_STRING_LEN); 
+  strncpy(pinfo.host[0].name, host_name, MAX_STRING_LEN);
 
   int result = global_instance.g_create_mbox(&pinfo);
   ASSERT_EQ(result, 0);
@@ -129,7 +129,7 @@ TEST_F(ScGlobalTest, MboxFindFailure) {
 TEST_F(ScGlobalTest, DevAttachTest) {
   struct StaticPortInfo pinfo;
   mbox_get_static_config(&pinfo);
-  strncpy(pinfo.host[0].name, "host1", MAX_STRING_LEN); 
+  strncpy(pinfo.host[0].name, "host1", MAX_STRING_LEN);
 
   int create_result = global_instance.g_create_mbox(&pinfo);
   ASSERT_EQ(create_result, 0);

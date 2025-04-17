@@ -8,9 +8,12 @@
 #include <unordered_set>
 #include <vector>
 
+#include "sc_dev_manager.h"
 #include "sc_device.h"
 #include "sc_host.h"
 #include "sc_id.h"
+
+class DeviceManager;
 
 /**
  * @class CXLDeviceAdapter
@@ -49,38 +52,36 @@ class CXLDeviceAdapter {
   virtual std::vector<sc_host> list_hosts() = 0;
 
   /**
-   * @brief Get the internal sc_device object for the given device ID.
-   * @param sid The sc_id of the device.
-   * @return Reference to the internal sc_device object.
-   * @throws std::runtime_error if device is not found.
+   * @brief Retrieves the full DevInfo (static + dynamic fields) for a given
+   * device.
+   *
+   * This method is typically used during runtime by the Servicer layer or a
+   * library  to provide detailed information about a specific device, including
+   * its status, available capacity, and operational flags. The static portion
+   * (e.g., manufacturer, domain ID) is embedded inside the returned DevInfo
+   * struct.
+   *
+   * @param sid The sc_id object representing the unique device ID.
+   * @return A DevInfo struct containing both static and dynamic metadata for
+   * the device.
    */
-  virtual const sc_device& get_device_info(const sc_id& sid) const = 0;
+  virtual DevInfo get_device_info(const sc_id& sid) const = 0;
 
   /**
-   * @brief Attach a device to a host (only applicable for CMMB).
+   * @brief Performs device discovery using PCI or other mechanisms and
+   * registers new devices.
    *
-   * @param[in] d_id encapsulated ID of the device - sc_id object.
-   * @param[in] h_id encapsulated ID of the host - sc_id object.
-   * @param[out] buffer JSON-formatted response.
-   * @return Status code (0 for success, negative for error).
-   */
-  virtual int attach_memory(const sc_id& d_id, const sc_id& h_id,
-                            std::string& buffer) {
-    return -EPERM;
-  }
-
-  /**
-   * @brief Detach a device from a host (only applicable for CMMB).
+   * Called by `DeviceManager::discover_devices()` either during system boot or
+   * later rediscovery cycles. The adapter is responsible for:
+   * 1. Scanning connected hardware (e.g., using libpci),
+   * 2. Building `sc_device` objects with appropriate DevInfo structs,
+   * 3. Calling `DeviceManager::register_device()` for newly discovered devices
+   * only.
    *
-   * @param[in] d_id encapsulated ID of the device - sc_id object.
-   * @param[in] h_id encapsulated ID of the host - sc_id object.
-   * @param[out] buffer JSON-formatted response.
-   * @return Status code (0 for success, negative for error).
+   * @param mgr Reference to the DeviceManager that owns device registration
+   * logic.
    */
-  virtual int detach_memory(const sc_id& d_id, const sc_id& h_id,
-                            std::string& buffer) {
-    return -EPERM;
-  }
+  virtual void discover_devices(DeviceManager& mgr) = 0;
 
   /**
    * @brief Initialize the adapter and load necessary configurations.
