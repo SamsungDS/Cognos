@@ -1,4 +1,5 @@
 {
+    "cognos_endpoint": "http://<agentip/hostname>:<agent_port>/api/v<version_number>/",
     "mysql_db_dev_passwd": "<passwd>",
     "agent_endpoint": "http://<agentip/hostname>:<agent_port>/api/v1/process_controller_command",
     "node_endpoint": "<nodeip/hostname>:<nodeport>",

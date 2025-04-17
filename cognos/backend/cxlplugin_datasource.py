@@ -1,6 +1,6 @@
 from collections import defaultdict, namedtuple
 from flask import request, jsonify
-from db_query_constants import APPLICATION_JSON
+from cognos.backend.db_query_constants import APPLICATION_JSON
 import json
 import math
 import os
@@ -53,6 +53,7 @@ class CXLPlugin(DataSource):
         response.headers.add("Access-Control-Allow-Origin", "*")
         return response
 
+    # TODO: DEPRECATE
     def get_topology(self):
         payload = helper.fetch_topology()
         response = jsonify(payload)

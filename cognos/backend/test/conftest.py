@@ -9,6 +9,7 @@ sys.path.append(
         os.path.join(os.path.dirname(__file__), "../../..")
     )
 )  # noqa: E402
+from cognos.backend.base_control_interface import BaseControlInterface
 from cognos.backend.cxlplugin_datasource import CXLPlugin
 from cognos.backend.helper import fetch_cognos_configs
 from cognos.backend.mock_datasource import Mock

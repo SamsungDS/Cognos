@@ -15,7 +15,7 @@ sys.path.append(
 import cognos.backend.helper as helper
 from cognos.backend.mock_datasource import Mock
 from cognos.backend.cxlplugin_datasource import CXLPlugin
-
+from cognos.backend.cognos_northbound import Cognos
 
 current_script_dir = os.path.dirname(os.path.abspath(__file__))
 CONFIGS = helper.fetch_cognos_configs(current_script_dir, "config.json")
@@ -34,6 +34,7 @@ def create_app(mock=False):
     CORS(app)
     app.config["CORS_HEADERS"] = "Content-Type"
 
+    cognos = Cognos()
     data_source = Mock() if mock else CXLPlugin()
 
     # clear out existing tables
@@ -78,7 +79,7 @@ def create_app(mock=False):
             }
         ]
         """
-        return data_source.get_topology()
+        return cognos.fetch_cognos_topology_response()
 
     @app.get(f"/api/{API_VERSION}/hosts")
     def get_hosts():

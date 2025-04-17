@@ -202,8 +202,8 @@ export const memboxTableHeader = [
       }));
     }
 // Main function to assign clusters based on selected policy
-export const assignClusters = (hosts) => {
-  const clusterList = Configs.clusters;
+export const assignClusters = (hosts, clusterName) => {
+  const clusterList = clusterName;
   const policyName = Configs.clusterPolicy;
   const policyOptions = Configs.policyOptions?.[policyName] || {};
   
@@ -214,8 +214,8 @@ export const assignClusters = (hosts) => {
   return policyFunction(hosts, clusterList, policyOptions);
 };
 
-export const assignClustersToLabelValuePairs = (labelValuePairs) => {
-  const clusterList = Configs.clusters;
+export const assignClustersToLabelValuePairs = (labelValuePairs, clusterName) => {
+  const clusterList = clusterName;
   
   // Use the specific label-value policy or fall back to the generic round robin
   const policyFunction = clusterPolicies.labelValueRoundRobin || clusterPolicies.roundRobin;
@@ -223,3 +223,59 @@ export const assignClustersToLabelValuePairs = (labelValuePairs) => {
   
   return policyFunction(labelValuePairs, clusterList, policyOptions);
 };
+
+export const transformData = function(inputData) {
+  const result = [];
+  
+  // Check if inputData is empty or null/undefined
+  if (!inputData || (typeof inputData === 'object' && Object.keys(inputData).length === 0)) {
+    console.warn("Input data is empty, null, or undefined.");
+    return result; // Return empty array
+  }
+  
+  // Handle the case where the input is an array containing objects with clusters
+  if (Array.isArray(inputData)) {
+    // Process each object in the array using optional chaining
+    inputData.forEach(dataObj => {
+      // Use optional chaining for accessing the clusters property
+      dataObj?.clusters?.forEach(cluster => {
+        const clusterName = cluster.cluster_name;
+        
+        // Use optional chaining for accessing the nodes property
+        cluster?.nodes?.forEach(node => {
+          const hostName = node.node_name;
+          
+          // Create the transformed object
+          const transformedObj = {
+            "devices": node.devices || [],
+            "fm_type": node.fm_type || "",
+            "host": hostName || "",
+            "cluster": clusterName || ""
+          };
+          
+          result.push(transformedObj);
+        });
+      });
+    });
+  } else {
+    // Handle the case where inputData is a direct object with clusters property
+    inputData?.clusters?.forEach(cluster => {
+      const clusterName = cluster.cluster_name;
+      
+      cluster?.nodes?.forEach(node => {
+        const hostName = node.node_name;
+        
+        const transformedObj = {
+          "devices": node.devices || [],
+          "fm_type": node.fm_type || "",
+          "host": hostName || "",
+          "cluster": clusterName || ""
+        };
+        
+        result.push(transformedObj);
+      });
+    });
+  }
+  
+  return result;
+}

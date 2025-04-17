@@ -22,13 +22,14 @@ import {
   mergeHosts,
   updateHostListAttached,
   assignClusters,
-  assignClustersToLabelValuePairs
+  assignClustersToLabelValuePairs,
+  transformData
 } from "../constant";
 import { ReactComponent as DeviceIcon } from "../assets/icons/deviceSVGIcon.svg";
 import { useSelectedOption } from "../contexts/SelectedOptionContext";
 
 const BoxTopology = () => {
-  const [hostToDeviceMapping, setHostToDeviceMapping] = useState([]);
+  const [hostToDeviceMapping, setHostToDeviceMapping] = useState({});
   // eslint-disable-next-line
   const [hostToDeviceMappingB2, setHostToDeviceMappingB2] = useState([]);
   const [currentCMM, setCurrentCMM] = useState(0);
@@ -42,9 +43,7 @@ const BoxTopology = () => {
   const [isToggleEnabled, setIsToggleEnabled] = useState(false);
   const [selectedCluster, setSelectedCluster] = useState("None");
   const [clusterList, setClusterList] = useState([
-    "None",
-    "Cluster-A",
-    "Cluster-B",
+    "None"
   ]);
   // Filtered data
   const [filteredDataHost, setFilteredDataHost] = useState([]);
@@ -52,7 +51,7 @@ const BoxTopology = () => {
     useState([]);
   const [filteredDirectDevice, setFilteredDirectDevice] =
     useState([]);
-
+  const [transformedData, setTransformedData] = useState([]);
 
   // istanbul ignore next
   useEffect(
@@ -76,13 +75,23 @@ const BoxTopology = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
+  // istanbul ignore next
+  useEffect(() => {
+     const names = Array.isArray(hostToDeviceMapping.clusters) ? hostToDeviceMapping.clusters.map(cluster => cluster.cluster_name): [];
+     setClusterList(prev => [...new Set([...prev, ...names])]);
+     const transformResponse = transformData(hostToDeviceMapping);
+     setTransformedData(transformResponse);
+  }, [hostToDeviceMapping]);
+
   // Filtering hosts and device names based on fm-type: "FM_REMOTE_CMMB" for CMM-B view and others for Direct Host view.
-  let hostlistRemote = hostToDeviceMapping.filter(mapping => mapping.fm_type === "FM_REMOTE_CMMB");
-  let hostlistDirect = hostToDeviceMapping.filter(mapping => mapping.fm_type !== "FM_REMOTE_CMMB");
+  let hostlistRemote = transformedData.filter(mapping => mapping.fm_type === "FM_REMOTE_CMMB");
+  let hostlistDirect = transformedData.filter(mapping => mapping.fm_type !== "FM_REMOTE_CMMB");
   // Function to assign clusters
-  const clusterWithDevice = assignClusters(hostlistRemote);
-  const clusterWithDirectHost = assignClusters(hostlistDirect);
-  const clusterWithHost = assignClustersToLabelValuePairs(hostActiveList);
+  const clusterWithDevice = assignClusters(hostlistRemote, clusterList.slice(1));
+  const clusterWithDirectHost = assignClusters(hostlistDirect, clusterList.slice(1));
+  const clusterWithHost = assignClustersToLabelValuePairs(hostActiveList, clusterList.slice(1));
+
+
   // istanbul ignore next
   useEffect(() => {
   
