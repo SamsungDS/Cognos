@@ -79,6 +79,8 @@ class ScGlobalTest : public ::testing::Test {
 TEST_F(ScGlobalTest, CreateMboxTest) {
   struct StaticPortInfo pinfo;
   mbox_get_static_config(&pinfo);
+  const char* host_name = "Host1LNK0";
+  strncpy(pinfo.host[0].name, host_name, MAX_STRING_LEN); 
 
   int result = global_instance.g_create_mbox(&pinfo);
   ASSERT_EQ(result, 0);
@@ -127,6 +129,7 @@ TEST_F(ScGlobalTest, MboxFindFailure) {
 TEST_F(ScGlobalTest, DevAttachTest) {
   struct StaticPortInfo pinfo;
   mbox_get_static_config(&pinfo);
+  strncpy(pinfo.host[0].name, "host1", MAX_STRING_LEN); 
 
   int create_result = global_instance.g_create_mbox(&pinfo);
   ASSERT_EQ(create_result, 0);
@@ -169,16 +172,20 @@ TEST_F(ScGlobalTest, NegDevAttachTest) {
 TEST_F(ScGlobalTest, DevDetachTest) {
   struct StaticPortInfo pinfo;
   mbox_get_static_config(&pinfo);
+  strncpy(pinfo.host[0].name, "host1", MAX_STRING_LEN);
   int create_result = global_instance.g_create_mbox(&pinfo);
   ASSERT_EQ(create_result, 0);
   std::string buffer;
   // Attach device to host
   size_t attach_result = global_instance.dev_attach(549755813888, 551903297536,
                                                     "test", 203, buffer);
+
+  std::cout << "devdetach attach result ### " << attach_result << std::endl;
   ASSERT_EQ(attach_result, 9);
   // Detach device from host
   size_t detach_result = global_instance.dev_detach(549755813888, 551903297536,
                                                     "test", 203, buffer);
+  std::cout << "devdetach detach result ### " << detach_result << std::endl;
   ASSERT_EQ(detach_result, 9);
 
   // Verify detachment

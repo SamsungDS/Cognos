@@ -50,7 +50,7 @@ using CommandFuncMap = std::function<std::string(
 tuner mt_obj;
 
 // GLobal DeviceManager for API access
-static DeviceManager* g_dev_mgr = nullptr;
+DeviceManager* g_dev_mgr = nullptr;
 
 /**
  * @brief Start Memory tuner
@@ -638,13 +638,13 @@ std::string handle_get_device_info(
     return error;
   }
 
-  std::optional<FullDeviceInfo> info = g_dev_mgr->get_device_info(device_id);
+  std::optional<DevInfo> info = g_dev_mgr->get_device_info(device_id);
   if (!info.has_value()) {
     return posix_err_to_json(ENOENT, "Device not found or error occurred");
   }
 
   // Convert DeviceInfo to JSON
-  const FullDeviceInfo& dev = info.value();
+  const DevInfo& dev = info.value();
   json_t* root = json_object();
   json_object_set_new(root, "api_version", json_real(1.0));
 
@@ -652,7 +652,7 @@ std::string handle_get_device_info(
   json_object_set_new(root, "manufacturer",
                       json_string(dev.manufacturer.c_str()));
   json_object_set_new(root, "serial_number",
-                      json_string(dev.serial_number.c_str()));
+                      json_integer(dev.serial_number));
   json_object_set_new(root, "FW_revision",
                       json_string(dev.fw_revision.c_str()));
   json_object_set_new(root, "location", json_string(dev.location.c_str()));

@@ -75,6 +75,11 @@ class sc_device {
   virtual void d_set_capacity(uint64_t capacity);
 
   /**
+   * @brief set used device capacity.
+   */
+  virtual void d_set_used_capacity(uint64_t used_capacity); 
+
+  /**
    * @brief set device name.
    */
   virtual void d_set_dev_name(std::string d_name);
@@ -99,10 +104,10 @@ class sc_device {
   std::string d_get_manufacturer() const;
 
   /** @brief Set device serial number */
-  void d_set_serial_number(const std::string& sn);
+  void d_set_serial_number(const uint64_t sn);
 
   /** @brief Get device serial number */
-  std::string d_get_serial_number() const;
+  uint64_t d_get_serial_number() const;
 
   /** @brief Set firmware revision */
   void d_set_fw_revision(const std::string& rev);
@@ -246,7 +251,7 @@ class sc_device {
    *
    * @return A populated DeviceInfo struct representing this device.
    */
-  FullDeviceInfo to_device_info() const;
+  DevInfo to_device_info() const;
 
  private:
   /*           8 bits                            56 bits
@@ -280,7 +285,7 @@ class sc_device {
   device_type d_type;
   std::string d_pcie_address;
   std::string d_manufacturer = "Samsung";
-  std::string d_serial_number;
+  uint64_t d_serial_number;
   std::string d_fw_revision;
   std::string d_location;
   std::string d_status = "active";

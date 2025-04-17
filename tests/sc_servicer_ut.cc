@@ -3,9 +3,11 @@
 
 #include <cstdio>
 #include <fstream>
+#include <iostream>
 
 #include "framework_downstream.h"
 #include "log_utils.h"
+#include "sc_test_utils.h"
 #include "sc_dev_manager.h"
 #include "sc_global.h"
 #include "sc_mbox.h"
@@ -25,7 +27,7 @@ extern "C" {
 using namespace std;
 
 extern DeviceManager* g_dev_mgr;
-DeviceManager* g_dev_mgr = nullptr;
+//DeviceManager* g_dev_mgr = nullptr;
 
 // Global instance
 sc_global cxl_global;
@@ -203,6 +205,37 @@ class ServicerTest : public ::testing::Test {
     std::ofstream dest("cxl.conf", std::ios::binary);
     dest << src.rdbuf();
   }
+
+std::string get_json_value(const std::string& json_str,
+                           const std::string& key) {
+  json_error_t error;
+  std::string result;
+  json_t* root = json_loads(json_str.c_str(), 0, &error);
+  if (!root) {
+    result = "";
+  }
+  json_t* value = json_object_get(root, key.c_str());
+  if (!value) {
+    result = "";
+  }
+  std::cout << "input " << json_str.c_str() << std::endl;
+  // If value is an array, return its string representation
+  if (json_is_array(value)) {
+    char* json_str = json_dumps(value, JSON_COMPACT);
+    result = json_str ? json_str : "";
+    std::cout << "its an array , result: " << result << std::endl;
+    free(json_str);
+  } else if (json_is_string(value)) {
+    result = json_string_value(value);
+  } else if (json_is_integer(value)) {
+    result = std::to_string(json_integer_value(value));
+  }
+
+  json_decref(root);
+  std::cout << "final return value " << result << std::endl;
+  return result;
+}
+
 };
 
 TEST_F(ServicerTest, InitCxlPluginSuccess) {
@@ -977,16 +1010,16 @@ TEST_F(ServicerTest, CmmbA1_CorruptJsonFile) {
   EXPECT_EQ(status, -EINVAL);
 }
 
-TEST_F(ServicerTest, ListDevices_EmptyInput_ReturnsAllDevices) {
+/*TEST_F(ServicerTest, ListDevices_EmptyInput_ReturnsAllDevices) {
   std::unordered_map<std::string, std::string> params;
   std::string result = handle_list_devices(params);
   EXPECT_FALSE(result.empty());
   EXPECT_TRUE(result.find("devices") != std::string::npos);
-}
+}*/
 
 TEST_F(ServicerTest, ListDevices_InvalidArrayFormat_ReturnsError) {
   std::unordered_map<std::string, std::string> params = {
-      {"device_id", R"([123, 456])"}  // not strings
+      {"device_id", R"([123, 456])"}  
   };
   std::string result = handle_list_devices(params);
   EXPECT_TRUE(result.find("device_id array must contain strings") !=
@@ -1013,3 +1046,191 @@ TEST_F(ServicerTest, GetDeviceInfo_InvalidIdString_ReturnsError) {
   std::string result = handle_get_device_info(params);
   EXPECT_TRUE(result.find("Invalid") != std::string::npos);
 }
+
+/*TEST_F(ServicerTest, ListDevices_InvalidJsonArrayFormat) {
+  std::unordered_map<std::string, std::string> params = {
+      {"device_id", "[not_valid_json"}
+  };
+  std::string response = handle_list_devices(params);
+  EXPECT_NE(response.find("EINVAL"), std::string::npos);
+}*/
+
+TEST_F(ServicerTest, ListDevices_InvalidDeviceIdInArray) {
+  std::unordered_map<std::string, std::string> params = {
+      {"device_id", R"(["abc123"])"}
+  };
+  std::string response = handle_list_devices(params);
+  EXPECT_NE(response.find("EINVAL"), std::string::npos);
+}
+
+TEST_F(ServicerTest, ListDevices_NonStringArrayElement) {
+  std::unordered_map<std::string, std::string> params = {
+      {"device_id", R"([1234])"}
+  };
+  std::string response = handle_list_devices(params);
+  EXPECT_NE(response.find("device_id array must contain strings"), std::string::npos);
+}
+
+TEST_F(ServicerTest, ListDevices_ValidSingleDeviceId) {
+  // Setup mock adapter and device
+  auto adapter = std::make_shared<TestCXLDeviceAdapter>();
+  sc_device dev(1234, "mock_dev", 1024, 1);
+  dev.d_set_pcie_addr("0000:00:01.0");
+
+  adapter->add_mock_device(dev);  // add to adapter
+  g_dev_mgr->registerAdapter("mock_adapter", adapter.get()); 
+  g_dev_mgr->register_device(dev.d_get_id(), adapter.get()); 
+
+  // Now run the test
+  std::unordered_map<std::string, std::string> params = {
+      {"device_id", "1234"}
+  };
+  std::string response = handle_list_devices(params);
+
+  EXPECT_NE(response.find("devices"), std::string::npos);
+  EXPECT_NE(response.find("1234"), std::string::npos);
+}
+
+TEST_F(ServicerTest, ListDevices_ValidResultJson) {
+  auto adapter = std::make_shared<TestCXLDeviceAdapter>();
+  sc_device dev(1234, "mock_dev", 1024, 1);
+  dev.d_set_pcie_addr("0000:00:01.0");
+  adapter->add_mock_device(dev);
+  g_dev_mgr->registerAdapter("mock_adapter", adapter.get());
+  g_dev_mgr->register_device(dev.d_get_id(), adapter.get());
+  std::unordered_map<std::string, std::string> params = {
+      {"device_id", "[\"1234\"]"}
+  };
+  std::string response = handle_list_devices(params);
+  EXPECT_NE(response.find("\"id\":"), std::string::npos);
+}
+
+TEST_F(ServicerTest, ListDevices_ExceptionWhileParsing) {
+  std::unordered_map<std::string, std::string> params = {
+      {"device_id", "throws_exception"}
+  };
+  // str_to_int mock throws std::runtime_error
+  std::string response = handle_list_devices(params);
+  EXPECT_EQ(get_json_value(response, "rc"), "EINVAL"); 
+  EXPECT_EQ(get_json_value(response, "message"),"Invalid id format");
+}
+
+TEST_F(ServicerTest, ListDevices_NoFilter_FetchAll) {
+  std::unordered_map<std::string, std::string> params;
+  std::string response = handle_list_devices(params);
+  EXPECT_NE(response.find("devices"), std::string::npos);
+}
+
+TEST_F(ServicerTest, ListDevices_FilterNoMatch) {
+  std::unordered_map<std::string, std::string> params = {
+      {"device_id", "[\"999999\"]"}
+  };
+  std::string response = handle_list_devices(params);
+  EXPECT_NE(response.find("No matching device IDs found"), std::string::npos);
+}
+
+TEST_F(ServicerTest, GetDeviceInfo_MissingParam) {
+  std::unordered_map<std::string, std::string> params = {};
+  std::string response = handle_get_device_info(params);
+  EXPECT_EQ(get_json_value(response, "rc"), "EINVAL"); 
+  EXPECT_EQ(get_json_value(response, "message"),"Missing parameter: device_id");
+}
+
+
+TEST_F(ServicerTest, GetDeviceInfo_InvalidParamFormat) {
+  std::unordered_map<std::string, std::string> params = {
+    {"device_id", "abcde"}
+  };
+  std::string response = handle_get_device_info(params);
+
+  EXPECT_NE(response.find("Invalid id format"), std::string::npos);
+}
+
+TEST_F(ServicerTest, GetDeviceInfo_DeviceNotFound) {
+  std::unordered_map<std::string, std::string> params = {
+    {"device_id", "9999"}
+  };
+  std::string response = handle_get_device_info(params);
+
+  EXPECT_NE(response.find("Device not found or error occurred"), std::string::npos);
+}
+
+
+TEST_F(ServicerTest, GetDeviceInfo_Success) {
+  sc_device dev(1234, "mydev", 1024, 1);
+  //dev.d_set_dev_name("mydev");
+  dev.d_set_serial_number(123456);
+  dev.d_set_fw_revision("1.0.0");
+  dev.d_set_location("slotA");
+  //dev.d_set_capacity(1024);
+  dev.d_set_status("active");
+  dev.d_set_feature_supported("SLD");
+  dev.d_set_device_type("CMMB");
+  dev.d_set_cxl_type("type1");
+  dev.d_set_protocol_version("1.1");
+  dev.d_set_aspm_active(true);
+  dev.d_set_sris_active(true);
+  dev.d_set_lock_active(false);
+  dev.d_set_link_speed(5);
+  dev.d_set_link_width(16);
+  dev.d_set_port_type("dh");
+  dev.d_set_numa_attached(0);
+  dev.d_set_mode_discovered("system-mem");
+  dev.d_set_connection_type("local");
+  dev.d_set_domain_type("direct");
+  dev.d_set_domain_id(20);
+
+  Capabilities caps;
+  caps.power_management_version = 3;
+  dev.d_set_capabilities(caps);
+
+  QoSInfo qos;
+  qos.avg_latency = 1.5;
+  qos.p99_latency = 2.0;
+  qos.io_per_sec = 5000;
+  qos.bw_per_sec = 1000;
+  qos.io_size = 128;
+  qos.qd = 32;
+  dev.d_set_qos_info(qos);
+
+  g_dev_mgr->register_device(dev.d_get_id(), &testAdapter);
+  testAdapter.add_mock_device(dev);
+
+  std::unordered_map<std::string, std::string> params = {
+    {"device_id", "1234"}
+  };
+
+  std::string response = handle_get_device_info(params);
+  std::cout << "Test case response #### "<<response << std::endl;
+  
+  EXPECT_EQ(get_json_value(response, "id"), "1234");
+  EXPECT_EQ(get_json_value(response, "manufacturer"), "Samsung");
+  EXPECT_EQ(get_json_value(response, "device_type"), "CMMB");
+  EXPECT_EQ(get_json_value(response, "serial_number"), "123456");
+  EXPECT_EQ(get_json_value(response, "FW_revision"), "1.0.0");
+  EXPECT_EQ(get_json_value(response, "status"), "active");
+  EXPECT_EQ(get_json_value(response, "cxl_type"), "type1");
+  EXPECT_EQ(get_json_value(response, "connection_type"), "local");
+}
+
+TEST_F(ServicerTest, ListDevices_InvalidJsonArrayFormat) {
+  // {"device_id", "[{\"invalid_key\":\"invalid_value\"}]"
+
+  std::unordered_map<std::string, std::string> params = {
+    {"device_id", "[\"1234\", invalid_value]"}
+  };
+  std::string response = handle_list_devices(params);
+  //std::cout << "Test case response #### "<<response << std::endl;
+  EXPECT_EQ(get_json_value(response, "rc"), "EINVAL"); 
+  EXPECT_EQ(get_json_value(response, "message"),"Invalid device_id array format");
+}
+
+TEST_F(ServicerTest, ListDevices_ArrayContainsInvalidId) {
+  std::unordered_map<std::string, std::string> params = {
+    {"device_id", "[\"1234\", \"bad_id\"]"}
+  };
+  std::string response = handle_list_devices(params);
+  EXPECT_NE(response.find("Invalid id format"), std::string::npos);
+}
+
+

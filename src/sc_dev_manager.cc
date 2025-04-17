@@ -65,18 +65,19 @@ std::vector<sc_device> DeviceManager::list_devices() {
 std::vector<sc_device> DeviceManager::list_devices(
     const std::unordered_set<uint64_t>& d_ids) {
   LOG(level_E::INFO, "DeviceManager::list_devices - Filtered by device IDs.");
-
   std::vector<sc_device> result;
-
+  
   for (const auto& d_id : d_ids) {
+    LOG(level_E::INFO, "DeviceManager::ONE" + std::to_string(d_id));	  
     // Map device_id to sc_id
     auto id_it = d_id_to_sc_id.find(d_id);
+    LOG(level_E::INFO, "DeviceManager::Two.");
     if (id_it == d_id_to_sc_id.end()) {
       LOG(level_E::WARN,
           "Device ID not found in registry: " + std::to_string(d_id));
       continue;  // skip unknown device
     }
-
+    LOG(level_E::INFO, "DeviceManager::Three.");
     const sc_id& sid = id_it->second;
     // Get adapter mapped to this sc_id
     auto adapter_it = sc_id_to_adapter.find(sid);
@@ -96,14 +97,15 @@ std::vector<sc_device> DeviceManager::list_devices(
           "Error retrieving device " + std::to_string(d_id) + ": " + ex.what());
     }
   }
-
+ 
+  LOG(level_E::INFO, "DeviceManager::list_devices - Completed."); 
   return result;
 }
 
 /**
  * @brief Retrieves detailed information about a specific device.
  */
-std::optional<FullDeviceInfo> DeviceManager::get_device_info(uint64_t d_id) {
+std::optional<DevInfo> DeviceManager::get_device_info(uint64_t d_id) {
   LOG(level_E::INFO, "Fetching device info for ID: " + std::to_string(d_id));
 
   auto id_it = d_id_to_sc_id.find(d_id);

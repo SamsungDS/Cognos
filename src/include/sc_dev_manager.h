@@ -9,6 +9,7 @@
 
 #include "sc_cxl_dev_adapter.h"
 #include "sc_id.h"
+
 /**
  * @class DeviceManager
  * @brief Singleton class responsible for managing device operations.
@@ -67,7 +68,7 @@ class DeviceManager {
    * @return std::optional<DeviceInfo> containing device info on success,
    * or std::nullopt if the device is not found or an error occurs.
    */
-  std::optional<FullDeviceInfo> get_device_info(uint64_t d_id);
+  std::optional<DevInfo> get_device_info(uint64_t d_id);
 
   /**
    * @brief Registers a new device adapter.

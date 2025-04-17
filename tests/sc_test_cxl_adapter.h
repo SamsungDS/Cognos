@@ -2,35 +2,35 @@
 #define TEST_CXL_ADAPTER_H
 
 #include "sc_cxl_dev_adapter.h"
+#include "sc_id.h"
+#include <vector>
+#include <optional>
 
 class TestCXLDeviceAdapter : public CXLDeviceAdapter {
- public:
-  std::string mockResponse;
-  int mockErrorCode = 0;
-  int mockListStatus = 0;
-  int mockDevStatus = 0;
-  bool mockEmptyResponse = false;
+public:
+  int mockListStatus = 0; 
+  int mockDevStatus = 0; 
+  std::vector<sc_device> mockDevices;
+  std::unordered_map<sc_id, sc_device, hash_sc_id> deviceMap;
+  std::vector<sc_host> mockHosts;
+  int mockSetupInfoStatus = 0;
 
-  int list_devices(std::string& buffer) override;
+  std::vector<sc_device> list_devices() const override;
 
-  int list_devices(const sc_id& sid, std::string& buffer) override;
+  sc_device get_device_object(const sc_id& sid) const override;
 
-  int get_device_info(const sc_id& sid, std::string& buffer) override;
+  std::vector<sc_host> list_hosts() override;
 
-  int list_hosts(std::string& buffer) override;
+  const sc_device& get_device_info(const sc_id& sid) const override;
 
   int setup_info() override;
 
-  void setMockError(int errorCode);
-
-  void setEmptyResponse();
-
-  void setLargeDeviceListResponse(size_t device_count);
-
-  void setMalformedJsonResponse();
+  void add_mock_device(const sc_device& dev);
+  void add_mock_host(const sc_host& host);
+  void set_setup_info_status(int status);
   void setListDevicesStatus(int status);
+  void setGetDevicesInfoStatus(int status);
 
-  void setGetDeviceInfoStatus(int status);
 };
 
 #endif

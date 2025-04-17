@@ -18,10 +18,10 @@ struct Capabilities {
   std::unordered_map<std::string, std::string> vendor_specific;
 };
 
-struct FullDeviceInfo {
+struct DevInfo {
 uint64_t id = 0;
 std::string manufacturer;
-std::string serial_number;
+uint64_t serial_number;
 std::string fw_revision;
 std::string location;
 uint64_t total_capacity_MB = 0;

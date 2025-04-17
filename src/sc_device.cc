@@ -50,6 +50,10 @@ void sc_device::d_set_capacity(uint64_t capacity) {
   d_capacity = capacity;
 }
 
+void sc_device::d_set_used_capacity(uint64_t used_capacity){
+  d_used_capacity = used_capacity; 
+}
+
 string sc_device::d_get_dev_name() const { return d_name; }
 
 uint32_t sc_device::d_get_port() const { return d_port; }
@@ -62,16 +66,18 @@ uint64_t sc_device::d_get_available_capacity() {
   return d_capacity > d_used_capacity ? d_capacity - d_used_capacity : 0;
 }
 
+
 // Device Metadata
 void sc_device::d_set_manufacturer(const std::string& mfg) {
   d_manufacturer = mfg;
 }
 std::string sc_device::d_get_manufacturer() const { return d_manufacturer; }
 
-void sc_device::d_set_serial_number(const std::string& sn) {
+void sc_device::d_set_serial_number(uint64_t sn) {
   d_serial_number = sn;
 }
-std::string sc_device::d_get_serial_number() const { return d_serial_number; }
+
+uint64_t sc_device::d_get_serial_number() const { return d_serial_number; }
 
 void sc_device::d_set_fw_revision(const std::string& rev) {
   d_fw_revision = rev;
@@ -166,8 +172,8 @@ const std::string& sc_device::d_get_pcie_addr() const { return d_pcie_address; }
 void sc_device::d_set_type(device_type type) { d_type = type; }
 device_type sc_device::d_get_type() const { return d_type; }
 
-FullDeviceInfo sc_device::to_device_info() const {
-  FullDeviceInfo info;
+DevInfo sc_device::to_device_info() const {
+  DevInfo info;
   info.id = d_id.get_sc_id();
   info.manufacturer = d_manufacturer;
   info.serial_number = d_serial_number;
