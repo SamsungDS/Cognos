@@ -35,16 +35,20 @@ typedef enum {
  * @brief Passthrough command to the feature execute function
  *
  * Passthrough command struct is used for communication between the
- * top and lower levels
+ * management service and core framework.
  *
- * @var svk_pass_thru_cmd::cmd_id
+ * @var svk_pass_thru_cmd::feat_id
  *  Specifies which feature to run command (like PT, zETL, RAID, CXL, QLC)
+ * We are no longer adding more feat_id's, the feature_id enum will remain
+ * the same until it is removed completely at later time.
  *
  * @var svk_pass_thru_cmd::out_format
- *  Output for the feature command (specific for specific cmd)
+ *  Using this for passing feature_name when the new feature modules are calling
+ * execute/configure_devices
  *
  * @var svk_pass_thru_cmd::len
- *  Length field if needed
+ *  Length field if needed. If this is set to anything other than 0, the feat_id
+ * is ignored. Must set this to 0 if feat_id is not being used
  */
 typedef struct {
   feature_id feat_id;

@@ -12,14 +12,6 @@
 #include "framework_service.hpp"
 #include "framework_upstream.h"
 
-#define CORE_DEFAULT_CONF "/etc/svk/core_config.json"
-#define CORE_DEFAULT_LIBS_PATH "/usr/lib"
-#define CORE_DEFAULT_LOG_LEVEL "ERROR"
-#define CORE_DEFAULT_LOG_FILE "/var/log/core/framework.log"
-#define CORE_LOGGER_NAME "core"
-#define LOG_MSG_MAX_SIZE 512
-#define FEAT_LIB_SUFFIX ".so"
-
 using namespace std;
 class FrameworkSvc;
 
@@ -109,6 +101,13 @@ svk_status FrameworkSvc::load_feature_modules(
         entry_name.compare(entry_name.size() - feat_lib_suffix.size(),
                            feat_lib_suffix.size(), feat_lib_suffix) != 0) {
       continue;
+    }
+
+    // Check lib naming format for libsvk<feature_name>.so
+    std::string feature_name = "";
+    if (entry_name.length() > 9 && entry_name.substr(0, 6) == "libsvk") {
+      // Only use <feature_name> for the key
+      feature_name = entry_name.substr(6, entry_name.length() - 9);
     }
 
     std::string feature_lib_str = features_dir + "/" + entry->d_name;
@@ -214,17 +213,40 @@ svk_status FrameworkSvc::load_feature_modules(
                entry->d_name);
       svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
       status = SVK_STATUS_BAD_FEATURE_LIB;
+      num_failed_libs++;
       free(details);
       // Set to null to ensure free only happens once
       details = nullptr;
       continue;
     }
-    feature_id curr_feature;
-    char feature_names;
-    details->get_supported_feature_list(&curr_feature, &feature_names);
-    // insert fid/function pointers into map
-    auto [iterator, inserted] =
-        feature_map.insert(make_pair(curr_feature, details));
+
+    bool inserted;
+    if (feature_name.length() == 0) {
+      // Use feature_id map if feature_name is not set
+      feature_id curr_feature;
+      char feature_names;
+      details->get_supported_feature_list(&curr_feature, &feature_names);
+      // insert fid/function pointers into map
+      inserted = feature_map.insert(make_pair(curr_feature, details)).second;
+      if (inserted) {
+        snprintf(log_msg, LOG_MSG_MAX_SIZE,
+                 "Feature module %s has been added to feature map using "
+                 "feature id: %d.",
+                 entry->d_name, curr_feature);
+        svk_logger(CORE_LOGGER_NAME, level_E::INFO, log_msg);
+      }
+    } else {
+      // insert feature_name/function pointers into map if feature_name exists
+      inserted =
+          feature_name_map.insert(make_pair(feature_name, details)).second;
+      if (inserted) {
+        snprintf(log_msg, LOG_MSG_MAX_SIZE,
+                 "Feature module %s has been added to feature map using "
+                 "feature name %s.",
+                 entry->d_name, feature_name.c_str());
+        svk_logger(CORE_LOGGER_NAME, level_E::INFO, log_msg);
+      }
+    }
     if (!inserted) {
       snprintf(
           log_msg, LOG_MSG_MAX_SIZE,
@@ -435,15 +457,28 @@ void FrameworkSvc::reload_config() {
 }
 
 svk_status FrameworkSvc::get_feature_details(
-    feature_id feat_id, svk_feature_details const **details) const {
+    svk_feature_details const **details, feature_key feat_key) const {
   char log_msg[LOG_MSG_MAX_SIZE];
   try {
-    *details = feature_map.at(feat_id);
+    if (std::holds_alternative<std::string>(feat_key)) {
+      snprintf(log_msg, LOG_MSG_MAX_SIZE,
+               "Feature name given, using feature_name_map for getting feature "
+               "details.");
+      svk_logger(CORE_LOGGER_NAME, level_E::INFO, log_msg);
+      *details = feature_name_map.at(std::get<std::string>(feat_key));
+    } else {
+      snprintf(log_msg, LOG_MSG_MAX_SIZE,
+               "Feature name not given, using feature_id for getting feature "
+               "details.");
+      svk_logger(CORE_LOGGER_NAME, level_E::INFO, log_msg);
+      *details = feature_map.at(std::get<feature_id>(feat_key));
+    }
   } catch (std::out_of_range &e) {
-    snprintf(log_msg, LOG_MSG_MAX_SIZE,
-             "Feature id %d is not loaded, unable to run commands for this "
-             "feature module. Exception: %s",
-             (uint32_t)feat_id, e.what());
+    snprintf(
+        log_msg, LOG_MSG_MAX_SIZE,
+        "Feature id or name is not registered with the map, unable to run "
+        "execute or configure_devices with this feature module. Exception: %s",
+        e.what());
     svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
     return SVK_STATUS_FAIL;
   }
@@ -461,6 +496,15 @@ svk_status FrameworkSvc::destroy_feat_map(void *param) const {
     free(value);
   }
   feature_map.clear();
+  for (const auto &[key, value] : feature_name_map) {
+    snprintf(log_msg, LOG_MSG_MAX_SIZE,
+             "Clearing up svk_feature_details for feature_name %s.",
+             key.c_str());
+    svk_logger(CORE_LOGGER_NAME, level_E::DEBUG, log_msg);
+    value->clean_up(param);
+    free(value);
+  }
+  feature_name_map.clear();
   if (feature_map.empty()) {
     svk_logger(CORE_LOGGER_NAME, level_E::INFO,
                "Feature map cleared successfully.");
@@ -534,7 +578,7 @@ svk_status FrameworkSvc::FrameworkSvcConfigureDev(
   char log_msg[LOG_MSG_MAX_SIZE];
   svk_feature_details const *feature_details = nullptr;
   if (svk_status res =
-          get_feature_details(pass_thru->feat_id, &feature_details);
+          get_feature_details(&feature_details, pass_thru->feat_id);
       res != SVK_STATUS_SUCCESS) {
     return res;
   }
@@ -556,7 +600,16 @@ svk_status FrameworkSvc::FrameworkSvcProcessCommand(
   svk_status exec_res = SVK_STATUS_FAIL;
   char log_msg[LOG_MSG_MAX_SIZE];
   svk_feature_details const *feature_details = nullptr;
-  exec_res = get_feature_details(pass_thru->feat_id, &feature_details);
+  if (pass_thru->len) {
+    // If the feature name/len is provided, use it to get the feature details
+    char feature_name[pass_thru->len + 1];
+    snprintf(feature_name, sizeof(feature_name), "%s",
+             (char *)pass_thru->out_format);
+    exec_res = get_feature_details(&feature_details, std::string(feature_name));
+  } else {
+    exec_res = get_feature_details(&feature_details, pass_thru->feat_id);
+  }
+
   if (exec_res != SVK_STATUS_SUCCESS) return exec_res;
 
   // Synchrounous execute
@@ -651,5 +704,6 @@ extern "C" svk_status cleanup_svk(svk_device_ctx *ctx, void *param) {
   svk_status status = SVK_STATUS_SUCCESS;
   status = g_fw_service->FrameworkSvcCleanup(param);
   svk_logger(CORE_LOGGER_NAME, level_E::INFO, "SVK Cleanup finished.");
+  svk_logger_close(CORE_LOGGER_NAME);
   return status;
 }

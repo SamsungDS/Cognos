@@ -16,6 +16,16 @@
 #include "framework_struct.h"
 #include "svk_logger.h"
 
+#define CORE_DEFAULT_CONF "/etc/svk/core_config.json"
+#define CORE_DEFAULT_LIBS_PATH "/usr/lib"
+#define CORE_DEFAULT_LOG_LEVEL "ERROR"
+#define CORE_DEFAULT_LOG_FILE "/var/log/svk/framework.log"
+#define CORE_LOGGER_NAME "core"
+#define LOG_MSG_MAX_SIZE 512
+#define FEAT_LIB_SUFFIX ".so"
+
+using feature_key = std::variant<std::string, feature_id>;
+
 // featureInterface for free functions so that we can mock class functions as
 // needed
 class featureInterface {
@@ -40,7 +50,11 @@ class FrameworkSvc {
       {"WARN", level_E::WARN},         {"ERROR", level_E::ERROR},
       {"CRITICAL", level_E::CRITICAL}, {"ALERT", level_E::ALERT},
       {"FATAL", level_E::FATAL},       {"OFF", level_E::OFF}};
+  // Maintaining 2 maps for now, one for old style and one for new style
+  // Since old style cannot support the string key, need to use both maps
   mutable std::unordered_map<feature_id, svk_feature_details *> feature_map;
+  mutable std::unordered_map<std::string, svk_feature_details *>
+      feature_name_map;
   std::string curr_log_level;
   std::string svk_conf_path;
   std::thread conf_reload;
@@ -56,8 +70,8 @@ class FrameworkSvc {
   svk_status init_logger(boost::property_tree::ptree const &logger_info);
   svk_status read_config(boost::property_tree::ptree &pt) const;
   void reload_config();
-  svk_status get_feature_details(feature_id feat_id,
-                                 svk_feature_details const **details) const;
+  svk_status get_feature_details(svk_feature_details const **details,
+                                 feature_key feat_key) const;
   svk_status destroy_feat_map(void *param) const;
 
  public:
