@@ -162,6 +162,7 @@ Status Servicer::ProcessNodeCommand(ServerContext *ctxt,
   char buffer[MAX_SIZE];
 
   svk_cmd.feat_id = (feature_id)req->feature_id();
+  svk_cmd.len = 0;
   svk_input.input_buffer = (uint8_t *)&feature_params[0];
   svk_input.len = feature_params.length();
   svk_output.output_buffer = (uint8_t *)&buffer[0];
