@@ -50,11 +50,19 @@ extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
     output->len =
         snprintf(output_buf, output->len, "SampleFeature: Failed to run");
     output->status = SVK_STATUS_FAIL;
-  } else {
+    return SVK_STATUS_FAIL;
+  }
+  if (cmd->len == 0) {
     output->len = snprintf(output_buf, output->len, "sample_key=value");
     output->status = SVK_STATUS_SUCCESS;
     status = SVK_STATUS_SUCCESS;
+  } else {
+    output->len =
+        snprintf(output_buf, output->len, "{\"output_key\":\"output_value\"}");
+    output->status = SVK_STATUS_SUCCESS;
+    status = SVK_STATUS_SUCCESS;
   }
+
   return status;
 }
 

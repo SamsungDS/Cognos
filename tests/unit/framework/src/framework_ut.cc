@@ -239,6 +239,26 @@ TEST_F(ConfigTest, FailPollForConfigChange) {
   test_fwsvc1.FrameworkSvcCleanup((void *)&ctx);
 }
 
+bool is_str_in_log(std::string search_str) {
+  svk_logger(CORE_LOGGER_NAME, level_E::ERROR, "Just for flushing logs");
+
+  std::ifstream file(CORE_DEFAULT_LOG_FILE);
+  if (!file.good()) {
+    const char *message = CORE_DEFAULT_LOG_FILE " doesn't exist";
+    svk_logger(CORE_LOGGER_NAME, level_E::ERROR, message);
+    return false;
+  }
+  // Read the entire log file into a string
+  std::string data((std::istreambuf_iterator<char>(file)),
+                   (std::istreambuf_iterator<char>()));
+
+  // Close the file
+  file.close();
+
+  // Check if the search string is found in the log file
+  return data.find(search_str) != std::string::npos;
+}
+
 // Test successful init by calling extern api with regular dlopen/dlsym
 TEST(InitTest, InitSuccess) {
   char buff[FILENAME_MAX];
@@ -251,6 +271,15 @@ TEST(InitTest, InitSuccess) {
   svk_device_ctx ctx;
 
   EXPECT_EQ(SVK_STATUS_SUCCESS, initialize_svk(conf.c_str(), (void *)&ctx));
+
+  std::string search_str =
+      "Feature module libsample_feature.so has been added to feature map using "
+      "feature id: 0.";
+  EXPECT_TRUE(is_str_in_log(search_str));
+  search_str =
+      "Feature module libsvksample_feature.so has been added to feature map "
+      "using feature name sample_feature.";
+  EXPECT_TRUE(is_str_in_log(search_str));
   cleanup_svk(&ctx, (void *)conf.c_str());
 }
 
@@ -272,7 +301,7 @@ TEST(InitTest, InitFail) {
   });
 
   EXPECT_CALL(dep_inj, get_sym(_, ::testing::A<const char *>()))
-      .Times(7)
+      .Times(14)
       .WillOnce(Return((void *)dummy_init));
 
   char buff[FILENAME_MAX];
@@ -357,7 +386,7 @@ TEST(InitTest, FailedDlopen) {
   });
   FrameworkSvc fw_svc1;
   EXPECT_CALL(dep_inj, open_lib(::testing::A<const char *>()))
-      .Times(1)
+      .Times(2)
       .WillOnce(Return(nullptr));
   EXPECT_EQ(
       SVK_STATUS_BAD_FEATURE_LIB,
@@ -415,7 +444,7 @@ TEST(InitTest, FailedDlsym) {
   // These statements will force get_sym to return dummy function pointers
   // for the cases where we don't want errors
   EXPECT_CALL(dep_inj, get_sym(_, StrEq("initialize")))
-      .Times(6)
+      .Times(12)  // 12 times because we are testing 2 different libs
       .WillOnce(Return((void *)dummy_init))
       .WillOnce(Return((void *)dummy_init))
       .WillOnce(Return((void *)dummy_init))
@@ -539,8 +568,8 @@ TEST(ConfigureDeviceTest, ConfigureDevFunctionNotLoaded) {
 
   EXPECT_CALL(dep_inj, get_sym(_, _)).Times(::testing::AnyNumber());
   EXPECT_CALL(dep_inj, get_sym(_, StrEq("configure_device_if_any")))
-      .Times(1)
-      .WillOnce(Return(nullptr))
+      .Times(2)
+      .WillRepeatedly(Return(nullptr))
       .RetiresOnSaturation();
 
   char buff[FILENAME_MAX];
@@ -557,6 +586,7 @@ TEST(ConfigureDeviceTest, ConfigureDevFunctionNotLoaded) {
 
   svk_pass_thru_cmd pass_thru;
   pass_thru.feat_id = POWER_THROTTLE;
+  pass_thru.len = 0;
   svk_device_ctx dummy_config;
   svk_device_ctx ctx;
   svk_device_ctx dummy_resp;
@@ -578,7 +608,8 @@ TEST(ExecTest, ExecuteSyncSuccess) {
 
   svk_pass_thru_cmd pass_thru;
   pass_thru.feat_id = POWER_THROTTLE;
-
+  pass_thru.len = 0;
+  // Need to test new input/output with json
   svk_input input;
   std::string input_str = "test input";
   input.input_buffer = (uint8_t *)input_str.c_str();
@@ -590,6 +621,42 @@ TEST(ExecTest, ExecuteSyncSuccess) {
   EXPECT_EQ(0, execute_svk_feature_sync(&pass_thru, &input, &output));
   std::cout << "test exec_sync output buffer: " << (char *)output.output_buffer
             << std::endl;
+  std::string search_str =
+      "Feature name not given, using feature_id for getting feature details.";
+  EXPECT_TRUE(is_str_in_log(search_str));
+  cleanup_svk(&ctx, (void *)conf.c_str());
+  free(output.output_buffer);
+}
+
+TEST(ExecTest, ExecuteSyncWithStrKey) {
+  char buff[FILENAME_MAX];
+  getcwd(buff, FILENAME_MAX);
+  std::string current_working_dir(buff);
+
+  // Using relative path to config in SVK core for testing
+  std::string conf =
+      current_working_dir + "/../../../../../config/test_config.json";
+  svk_device_ctx ctx;
+  EXPECT_EQ(0, initialize_svk(conf.c_str(), (void *)&ctx));
+
+  svk_pass_thru_cmd pass_thru;
+  std::string feature_name = "sample_feature";
+  // Send null-terminated string
+  pass_thru.out_format = (void *)feature_name.c_str();
+  pass_thru.len = feature_name.length() + 1;
+
+  svk_input input;
+  std::string input_str = "test input";
+  input.input_buffer = (uint8_t *)input_str.c_str();
+  input.len = input_str.length();
+
+  svk_output output;
+  output.output_buffer = (uint8_t *)malloc(128);
+  output.len = 128;
+  EXPECT_EQ(0, execute_svk_feature_sync(&pass_thru, &input, &output));
+  std::string search_str =
+      "Feature name given, using feature_name_map for getting feature details.";
+  EXPECT_TRUE(is_str_in_log(search_str));
   cleanup_svk(&ctx, (void *)conf.c_str());
   free(output.output_buffer);
 }
@@ -607,6 +674,7 @@ TEST(ExecTest, ExecuteSyncFailureFromSampleFeature) {
 
   svk_pass_thru_cmd pass_thru;
   pass_thru.feat_id = POWER_THROTTLE;
+  pass_thru.len = 0;
 
   svk_input input;
   std::string input_str = "Passing a SampleFeatureFailure string";
@@ -636,6 +704,7 @@ TEST(ExecTest, ExecuteSyncInvalidFeatureID) {
 
   svk_pass_thru_cmd pass_thru;
   pass_thru.feat_id = (feature_id)100;
+  pass_thru.len = 0;
 
   svk_input input;
   svk_output output;
@@ -664,8 +733,8 @@ TEST(ExecTest, ExecuteSyncFail) {
   });
   EXPECT_CALL(dep_inj, get_sym(_, _)).Times(::testing::AnyNumber());
   EXPECT_CALL(dep_inj, get_sym(_, StrEq("execute_sync")))
-      .Times(1)
-      .WillOnce(Return((void *)dummy_exec_sync))
+      .Times(2)
+      .WillRepeatedly(Return((void *)dummy_exec_sync))
       .RetiresOnSaturation();
 
   char buff[FILENAME_MAX];
@@ -679,6 +748,7 @@ TEST(ExecTest, ExecuteSyncFail) {
   test_fwsvc1.FrameworkSvcInit(conf.c_str(), (void *)conf.c_str(), dep_inj);
   svk_pass_thru_cmd pass_thru;
   pass_thru.feat_id = feature_id::POWER_THROTTLE;
+  pass_thru.len = 0;
   svk_input input;
   svk_output output;
   EXPECT_EQ(SVK_STATUS_FAIL, test_fwsvc1.FrameworkSvcProcessCommand(
@@ -701,6 +771,7 @@ TEST(ExecTest, ExecuteAsyncSuccess) {
   svk_postprocess_fn postprocess_fn;
 
   pass_thru.feat_id = POWER_THROTTLE;
+  pass_thru.len = 0;
 
   EXPECT_EQ(0, execute_svk_feature_async(&pass_thru, &postprocess_fn));
 
@@ -726,8 +797,8 @@ TEST(ExecTest, ExecuteAsyncFail) {
   });
   EXPECT_CALL(dep_inj, get_sym(_, _)).Times(::testing::AnyNumber());
   EXPECT_CALL(dep_inj, get_sym(_, StrEq("execute_async")))
-      .Times(1)
-      .WillOnce(Return((void *)dummy_exec_async))
+      .Times(2)
+      .WillRepeatedly(Return((void *)dummy_exec_async))
       .RetiresOnSaturation();
 
   char buff[FILENAME_MAX];
@@ -746,6 +817,7 @@ TEST(ExecTest, ExecuteAsyncFail) {
   svk_postprocess_fn postprocess_fn;
 
   pass_thru.feat_id = POWER_THROTTLE;
+  pass_thru.len = 0;
 
   EXPECT_EQ(SVK_STATUS_FAIL, test_fwsvc1.FrameworkSvcProcessCommand(
                                  &pass_thru, NULL, NULL, &postprocess_fn));
