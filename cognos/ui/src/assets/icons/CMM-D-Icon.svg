@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_1" xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 80 50">
+  <!-- Generator: Adobe Illustrator 29.4.0, SVG Export Plug-In . SVG Version: 2.1.0 Build 152)  -->
+  <defs>
+    <style>
+      .st0 {
+        fill: none;
+      }
+
+      .stD1 {
+        fill: #b466ff;
+      }
+
+      .st2 {
+        font-family: SamsungSharpSans-Bold, 'Samsung Sharp Sans';
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0em;
+      }
+    </style>
+  </defs>
+  <path class="stD1" d="M70.3,44H9.7c-1.6,0-2.9-1.3-2.9-2.9v-11.2h.9c2.6,0,4.8-2.2,4.8-4.8s-2.2-4.8-4.8-4.8h-.9v-11.2c0-1.6,1.3-2.9,2.9-2.9h60.5c1.6,0,2.9,1.3,2.9,2.9v11.2h-.9c-2.6,0-4.8,2.2-4.8,4.8s2.2,4.8,4.8,4.8h.9v11.2c0,1.6-1.3,2.9-2.9,2.9h0ZM8.6,31.7v9.5c0,.6.4,1,1,1h60.5c.6,0,1-.4,1-1v-9.5c-3.2-.4-5.7-3.2-5.7-6.7s2.5-6.1,5.7-6.7v-9.5c0-.6-.4-1-1-1H9.6c-.6,0-1,.4-1,1v9.5c3.2.4,5.7,3.2,5.7,6.7s-2.5,6.1-5.7,6.7h0Z"/>
+  <text class="st2" transform="translate(20.2 28.7)"><tspan class="stD1" x="0" y="0">CMM-</tspan><tspan class="st0" x="28" y="0">M</tspan></text>
+  <path class="stD1" d="M49.1,18.6h3.7c1.1,0,2.2.2,3,.5.9.3,1.6.8,2.3,1.4s1.1,1.3,1.4,2.1c.3.8.5,1.7.5,2.7s-.2,1.9-.5,2.7c-.3.8-.8,1.5-1.5,2.1-.6.6-1.4,1.1-2.2,1.4-.9.3-1.8.5-2.8.5h-3.8v-13.5ZM51.6,20.9v8.9h1c.7,0,1.4-.1,2-.3.6-.2,1.1-.5,1.5-.9.4-.4.7-.9,1-1.4.2-.5.3-1.1.3-1.8s0-1.3-.3-1.8c-.2-.5-.5-1-.9-1.4s-.9-.7-1.5-.9-1.3-.3-2.2-.3h-.9Z"/>
+</svg>

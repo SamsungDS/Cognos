@@ -26,6 +26,8 @@ import {
   transformData
 } from "../constant";
 import { ReactComponent as DeviceIcon } from "../assets/icons/deviceSVGIcon.svg";
+import { ReactComponent as CMMDIcon } from "../assets/icons/CMM-D-Icon.svg";
+import { ReactComponent as CMMHIcon } from "../assets/icons/CMM-H-Icon.svg";
 import { useSelectedOption } from "../contexts/SelectedOptionContext";
 
 const BoxTopology = () => {
@@ -311,7 +313,6 @@ const BoxTopology = () => {
   const renderHostViewDevice = (devices = []) => {
     return devices.map((device) => {
       const part = device.dev_name.split("-")[0];
-      const deviceColor = "#FFB546";
       const D1Metadata = `name: ${part}
           type: ${device.type}
           `.replace(/ +/g, "");
@@ -322,6 +323,8 @@ const BoxTopology = () => {
         transform: `scale(${sizeMultiplier})`,
         padding: sizePadding,
       };
+
+      const dynamicIcons =  device.type === "FM_DIRECT_CMMD" ? <CMMDIcon className="device-img"/> : <CMMHIcon className="device-img"/>
       return (
         <div
           className="cxl-dev"
@@ -329,10 +332,10 @@ const BoxTopology = () => {
           key={device.device}
           style={cardStyle}
         >
-          <DeviceIcon style={{ color: deviceColor }} className="device-img" />
+          {dynamicIcons}
           <p
             className="device-Id"
-            style={{ color: deviceColor }}
+            style={{ color: device.type === "FM_DIRECT_CMMD" ? "#b466ff" : "#ff7900" }}
           >{`${part}`}</p>
         </div>
       );
