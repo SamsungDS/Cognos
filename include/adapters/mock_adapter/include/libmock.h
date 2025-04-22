@@ -128,4 +128,3 @@ long get_file_size(string filename);
 string find_address_range_from_rasmcctl(string& dev, string& type);
 
 #endif
-
