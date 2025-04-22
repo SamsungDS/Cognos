@@ -1,0 +1,9 @@
+{
+  "grep_CXL": "cat /proc/iomem|grep CXL",
+  "grep_acpi_srat": "[ -f /var/log/dmesg ] && cat /var/log/dmesg || [ -x dmesg ] && dmesg|grep -i acpi|grep -i srat",
+  "regex_iomem": "^[\\s]*[0-9a-z]+-[0-9a-z]+[\\s]*:[\\s]*CXL[\\s]*Window[\\s]*[0-9]+$",
+  "regex_addr_range": ".*mem[\\s]*([0-9a-z]+-[0-9a-z]+).*",
+  "mce_inject_template_string": "CPU {cpu} BANK 1\nSTATUS CORRECTED\nADDR {addr}\n",
+  "rasdaemon_exec_command": "rasdaemon -f -r /dev/null 2>&1 > ",
+  "ras_mc_ctl_error_addresses": "ras-mc-ctl --errors|awk -F',' '{printf \"\\n\" $7}'|cut -d'=' -f2"
+}
