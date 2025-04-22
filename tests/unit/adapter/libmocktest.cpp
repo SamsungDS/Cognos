@@ -20,7 +20,7 @@ class LibMockTest : public testing::Test {
 
   LibMockTest() {
     // You can do set-up work for each test here.
-    cfg_file = CONFIG_FILE;
+    cfg_file = "../../../adapters/mock_adapter/config/mock_config.json";
   }
 
   ~LibMockTest() override {
@@ -62,10 +62,11 @@ TEST_F(LibMockTest, ReturnConfigFileSize) {
 }
 
 TEST_F(LibMockTest, ReturnZeroConfigFileSize) {
-  string cfg = "config/mock_config0.json";
+  string cfg = "mock_config0.json";
   ofstream file(cfg);
   file.close();
   int ret = get_file_size(cfg);
+  unlink(cfg.c_str());
 
   EXPECT_EQ(ret, 0);
 }

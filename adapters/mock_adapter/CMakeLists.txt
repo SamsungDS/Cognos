@@ -1,7 +1,7 @@
 set(LIBMOCK_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/libmock.cpp)
 set(LIBMOCK_INC ${CMAKE_SOURCE_DIR}/include/adapters/mock_adapter/include/libmock.h)
 set(LIBMOCK_CFG ${CMAKE_CURRENT_SOURCE_DIR}/config/mock_config.json)
-set(LIBMOCK_LIB_DEST "lib64/")
+set(LIBMOCK_LIB_DEST "adapters/mock_adapter/lib64/")
 set(LIBMOCK_INCLUDE_DEST "include/adapters/mock_adapter/include/")
 set(LIBMOCK_CFG_DEST "adapters/mock_adapter/config")
 set(LIBMOCK "mock")
@@ -25,5 +25,4 @@ install(TARGETS ${LIBMOCK}
         INCLUDES DESTINATION ${LIBMOCK_INCLUDE_DEST})
 
 install(FILES ${LIBMOCK_INC} DESTINATION ${LIBMOCK_INCLUDE_DEST})
-install(FILES ${LIBMOCK_CFG} DESTINATION ${LIBMOCK_CFG_DEST})
 
