@@ -6,6 +6,7 @@ set(LIBMOCK_INCLUDE_DEST "include/adapters/mock_adapter/include/")
 set(LIBMOCK_CFG_DEST "adapters/mock_adapter/config")
 set(LIBMOCK "mock")
 
+include_directories(${CMAKE_SOURCE_DIR}/include)
 add_library(${LIBMOCK} SHARED ${LIBMOCK_SRC} )
 target_link_directories(${LIBMOCK} PUBLIC ${SVKFW_LIBRARY_DIRS})
 target_link_libraries(${LIBMOCK} numa svklogger)
