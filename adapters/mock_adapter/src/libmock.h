@@ -107,7 +107,7 @@ int getErrorCount_validate(const string& device);
 int verify_node(const int& node_index);
 
 // Validate the CXL NUMA device physical address range allocation
-int determine_physical_address_range(string&, const bool, string&);
+int determine_physical_address_range(const string&, const bool, string&);
 
 // Get the physical address allocation of any NUMA device
 int get_numa_node_address_range(const int& node_index, const bool cxl_node,

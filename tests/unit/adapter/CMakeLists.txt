@@ -1,6 +1,6 @@
 
 set(LIBMOCKTEST "libmocktest")
-set(LIBMOCK_INCLUDE_DEST ${CMAKE_SOURCE_DIR}/include/adapters/mock_adapter/include ${CMAKE_CURRENT_SOURCE_DIR}/include)
+set(LIBMOCK_INCLUDE_DEST ${CMAKE_SOURCE_DIR}/include/adapters/mock_adapter/include ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_SOURCE_DIR}/adapters/mock_adapter/src)
 
 include_directories(${LIBMOCK_INCLUDE_DEST})
 link_directories(${CMAKE_SOURCE_DIR}/adapters/mock_adapter/lib64)

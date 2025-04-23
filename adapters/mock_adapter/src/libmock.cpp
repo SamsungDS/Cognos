@@ -1,4 +1,6 @@
 // Source code for Mock Adapter API
+#include "libmock.h"
+
 #include <numa.h>
 #include <numaif.h>
 #include <rapidjson/document.h>
@@ -25,8 +27,6 @@
 
 #include "ras.hpp"
 
-#define STR(x) #x
-#define CONFIG_FILE "mock_config.json"
 #define BLOCK_SIZE 4096
 #define MAX_ERR_SIZE 50
 
@@ -47,79 +47,6 @@ struct Config {
 // Instantiation of global vars to be used as key-value pairs
 Config cf;
 ostringstream os(ostringstream::ate), emp;
-
-// Enum definition for errors
-// These errors are listed for failure for each library, system API
-// or functions defined in this module. These are returned using the return
-// value of those calls
-enum {
-  OK,
-  USAGE_ERR,
-  CONFIG_FILE_NOT_AVAILABLE_ERR,
-  INVALID_CONFIG_FILE_ERR,
-  CONFIG_FILE_PARSE_ERR,
-  GREP_CXL_MISSING_ERR,
-  GREP_ACPI_SRAT_MISSING_ERR,
-  REGEX_IOMEM_MISSING_ERR,
-  REGEX_ADDR_RANGE_MISSING_ERR,
-  INIT_ERR,
-  NUMA_NOT_AVAILABLE_ERR,
-  OPT_ERR,
-  NUMA_MAX_NODE_ERR,
-  INVALID_NUMA_INDEX_ERR,
-  NOT_CXL_NODE_ERR,
-  NUMA_ALLOCATE_CPUMASK_ERR,
-  NUMA_NODE_TO_CPUS_ERR,
-  NOT_CPULESS_NODE_ERR,
-  ADDRESS_NOT_OF_NUMA_NODE_ERR,
-  IOMEM_NOT_MATCHING_ACPI_SRAT_ERR,
-  MCE_INJECT_TEMPLARE_STRING_MISSING_ERR,
-  RASDAEMON_EXEC_COMMAND_MISSING_ERR,
-  NUMA_NODE_PID_ERR,
-  GET_STACK_VIRTUAL_ADDRESS_ERR,
-  RASMCCTL_ERROR_ADDRESSES_MISSING_ERR,
-  REGISTER_FUNCTION_ERR,
-  GET_ERROR_COUNT_VALIDATION_ERR,
-  INPUT_JSON_PARSE_ERR,
-  INVALID_INPUT_ERR,
-  UNABLE_TO_GET_NUMA_ADDR_RANGE_ERR,
-  CMD_EXEC_ERR,
-  END
-};
-
-// Error string for errors using enums
-const char *err_str[] = {STR(OK),
-                         STR(USAGE_ERR),
-                         STR(CONFIG_FILE_NOT_AVAILABLE_ERR),
-                         STR(INVALID_CONFIG_FILE_ERR),
-                         STR(CONFIG_FILE_PARSE_ERR),
-                         STR(GREP_CXL_MISSING_ERR),
-                         STR(GREP_ACPI_SRAT_MISSING_ERR),
-                         STR(REGEX_IOMEM_MISSING_ERR),
-                         STR(REGEX_ADDR_RANGE_MISSING_ERR),
-                         STR(INIT_ERR),
-                         STR(NUMA_NOT_AVAILABLE_ERR),
-                         STR(OPT_ERR),
-                         STR(NUMA_MAX_NODE_ERR),
-                         STR(INVALID_NUMA_INDEX_ERR),
-                         STR(NOT_CXL_NODE_ERR),
-                         STR(NUMA_ALLOCATE_CPUMASK_ERR),
-                         STR(NUMA_NODE_TO_CPUS_ERR),
-                         STR(NOT_CPULESS_NODE_ERR),
-                         STR(ADDRESS_NOT_OF_NUMA_NODE_ERR),
-                         STR(IOMEM_NOT_MATCHING_ACPI_SRAT_ERR),
-                         STR(MCE_INJECT_TEMPLARE_STRING_MISSING_ERR),
-                         STR(RASDAEMON_EXEC_COMMAND_MISSING_ERR),
-                         STR(NUMA_NODE_PID_ERR),
-                         STR(GET_STACK_VIRTUAL_ADDRESS_ERR),
-                         STR(RASMCCTL_ERROR_ADDRESSES_MISSING_ERR),
-                         STR(REGISTER_FUNCTION_ERR),
-                         STR(GET_ERROR_COUNT_VALIDATION_ERR),
-                         STR(INPUT_JSON_PARSE_ERR),
-                         STR(INVALID_INPUT_ERR),
-                         STR(UNABLE_TO_GET_NUMA_ADDR_RANGE_ERR),
-                         STR(CMD_EXEC_ERR),
-                         STR(END)};
 
 // trim from left
 inline string &ltrim(std::string &s, const char *t = " \t\n\r\f\v") {
@@ -183,7 +110,7 @@ int verify_node(const int &node_index) {
 }
 
 // Find the physical address range using kernel log
-int determine_physical_address_range(string &out, const bool cxl_node,
+int determine_physical_address_range(const string &out, const bool cxl_node,
                                      string &phy_addr_range) {
   int ret = 0;
   stringstream ss(out);

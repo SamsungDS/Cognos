@@ -1,5 +1,5 @@
 set(LIBMOCK_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/libmock.cpp)
-set(LIBMOCK_INC ${CMAKE_SOURCE_DIR}/include/adapters/mock_adapter/include/libmock.h)
+set(LIBMOCK_INC ${CMAKE_CURRENT_SOURCE_DIR}/src/libmock.h)
 set(LIBMOCK_CFG ${CMAKE_CURRENT_SOURCE_DIR}/config/mock_config.json)
 set(LIBMOCK_LIB_DEST "lib64/adapters/mock_adapter/lib64/")
 set(LIBMOCK_INCLUDE_DEST "include/adapters/mock_adapter/include/")
@@ -7,7 +7,7 @@ set(LIBMOCK_CFG_DEST "lib64/adapters/mock_adapter/config/")
 set(LIBMOCK "mock")
 
 include_directories(${CMAKE_SOURCE_DIR}/include)
-add_library(${LIBMOCK} SHARED ${LIBMOCK_SRC} )
+add_library(${LIBMOCK} SHARED ${LIBMOCK_SRC} ${LIBMOCK_INC})
 target_link_directories(${LIBMOCK} PUBLIC ${SVKFW_LIBRARY_DIRS})
 target_link_libraries(${LIBMOCK} numa svklogger)
 

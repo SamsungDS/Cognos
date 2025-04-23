@@ -5,6 +5,7 @@
 #include <iostream>
 #include <streambuf>
 #include <string>
+#include <vector>
 
 #include "libmock.h"
 #include "test_inputs.h"
@@ -277,15 +278,33 @@ TEST_F(LibMockTest, ReturnEmptyAddrRangesEmptyInput) {
 }
 
 TEST_F(LibMockTest, ReturnAddrRanges) {
-  string out, phy_addr_range;
-  out.assign((const char*)kernel_log_inp);
+  int ret = 0;
+  size_t len = strlen(kernel_log_inp_c);
+  for (size_t i = 0; i < len; ++i) {
+    if (kernel_log_inp[i] != static_cast<unsigned char>(kernel_log_inp[i])) {
+      ret = -1;
+      break;
+    }
+  }
+  EXPECT_EQ(ret, 0);
+  string out((const char*)kernel_log_inp);
+  string phy_addr_range;
 
   bool cxl_node = false;
-  int ret = determine_physical_address_range(out, cxl_node, phy_addr_range);
+  ret = determine_physical_address_range(out, cxl_node, phy_addr_range);
   EXPECT_EQ(ret, 0);
 }
 
 TEST_F(LibMockTest, ReturnStatusUsingcalculateErrorCount1) {
+  int ret = 0;
+  size_t len = strlen(ras_err_c);
+  for (size_t i = 0; i < len; ++i) {
+    if (ras_err[i] != static_cast<unsigned char>(ras_err_c[i])) {
+      ret = -1;
+      break;
+    }
+  }
+  EXPECT_EQ(ret, 0);
   string ras_str, addr_range = "0x100000000-0x207fffffff";
   ras_str.assign((const char*)ras_err);
 
