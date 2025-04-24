@@ -85,6 +85,8 @@ svk-install:
     
     #### SVK APP Backend configuration (JSON) ####
     - export SVK_APP_BACKEND_CONF='/usr/local/svk/svk-app/cognos/backend/config/config.json'
+    # Set 'cognos_endpoint' parameter to point to Cognos Northbound API
+    - jq --arg ip "$VM_IP" --arg restport "$RESTSERVER_PORT" '.cognos_endpoint = "http://\($ip):\($restport)/api/v1/"' $SVK_APP_BACKEND_CONF | sponge $SVK_APP_BACKEND_CONF
     # Substitute '.mysql_db_dev_passwd' value with MYSQL_DEV_PASSWORD obtained from gitlab-ci.yml
     - jq --arg passwd "$MYSQL_DEV_PASSWORD" '.mysql_db_dev_passwd =  $passwd' $SVK_APP_BACKEND_CONF | sponge $SVK_APP_BACKEND_CONF
     # Substitute '.agent_endpoint' value with RESTSERVER_PORT obtained from gitlab-ci.yml
