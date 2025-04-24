@@ -10,9 +10,6 @@ set(PROTOBUF_ABSL_DEPS absl_absl_check absl_absl_log absl_algorithm absl_base ab
 
 set(GRPC_DEPS protobuf grpc++ absl_flags absl_flags_parse)
 
-include(FetchContent)
-FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
-FetchContent_MakeAvailable(json)
 
 set(COMMON_INC_DIR ${PARENT_DIR}/common/include/)
 set(COMMON_SRC_DIR ${PARENT_DIR}/common/src)

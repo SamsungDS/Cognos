@@ -16,7 +16,7 @@ set(SRCS ${GRPC_STUB_SRCS} ${CMAKE_CURRENT_SOURCE_DIR}/src/grpc_server.cc ${COMM
 if(BUILD_TESTING)
 set(GRPC_INC_FILES ${COMMON_INC_DIR}/grpc_hdr.h ${COMMON_INC_DIR}/client_library.h ${CMAKE_CURRENT_SOURCE_DIR}/include/grpc_server.h PARENT_SCOPE)
 endif()
-set(INC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include/)
+set(INC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include/ ${json_SOURCE_DIR}/include)
 add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
 
 add_executable(${PROJECT_NAME} ${SRCS})

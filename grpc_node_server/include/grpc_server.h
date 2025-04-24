@@ -2,6 +2,7 @@
 #define __GRPC_SERVER_H__
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
+#include <nlohmann/json.hpp>
 #include <unordered_map>
 
 #include "framework/framework.grpc.pb.h"

@@ -707,6 +707,54 @@ TEST_F(GRPCServer, ProcessSampleCommand) {
               StartsWith("sample_key=value"));
 }
 
+TEST_F(GRPCServer, ProcessSampleCommandStrKey) {
+  ResetStub();
+  FakeClient client(fwk_stub_.get());
+  svk::CommandRequest req;
+  svk::CommandResponse *resp = new (svk::CommandResponse);
+  req.set_feature_name("new_sample_feature");
+  req.set_node_id("node.dummy.net");
+  req.set_command_params("{\"sample_key\":\"sample_value\"}");
+  req.set_command_name("sample_command");
+
+  Status status = client.ProcessNodeCommand(req, resp);
+  std::cout << "ProcessSampleCommand Output: "
+            << resp->node_responses(0).output() << std::endl;
+  EXPECT_THAT(resp->node_responses(0).output().c_str(),
+              StartsWith("{\"output_key\":\"output_value\"}"));
+}
+
+TEST_F(GRPCServer, ProcessSampleCommandStrKeyInvalidJson) {
+  ResetStub();
+  FakeClient client(fwk_stub_.get());
+  svk::CommandRequest req;
+  svk::CommandResponse *resp = new (svk::CommandResponse);
+  req.set_feature_name("sample_feature");
+  req.set_node_id("node.dummy.net");
+  req.set_command_params("invalid");
+  req.set_command_name("sample_command");
+
+  Status status = client.ProcessNodeCommand(req, resp);
+  EXPECT_EQ(status.error_code(), grpc::INVALID_ARGUMENT);
+  EXPECT_THAT(status.error_message(),
+              StartsWith("Json parsing error in ProcessNodeCommand:"));
+}
+
+TEST_F(GRPCServer, ProcessSampleCommandBadNameOrID) {
+  ResetStub();
+  FakeClient client(fwk_stub_.get());
+  svk::CommandRequest req;
+  svk::CommandResponse *resp = new (svk::CommandResponse);
+  req.set_feature_id((feature_id)-1);
+
+  Status status = client.ProcessNodeCommand(req, resp);
+  EXPECT_EQ(status.error_code(), grpc::INVALID_ARGUMENT);
+  EXPECT_THAT(
+      status.error_message(),
+      StartsWith(
+          "ProcessNodeCommand received invalid feature_id and feature_name"));
+}
+
 TEST_F(GRPCServer, ProcessSampleCommandWithFailure) {
   ResetStub();
   FakeClient client(fwk_stub_.get());
