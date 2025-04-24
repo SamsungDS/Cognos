@@ -157,14 +157,55 @@ Status Servicer::ProcessNodeCommand(ServerContext *ctxt,
   std::string output_str;
   int ret;
   Status status;
-  std::string feature_params = req->feature_params();
+  std::string params;
   std::string logger_str;
   char buffer[MAX_SIZE];
+  if (req->feature_name().length() != 0) {
+    // If using feature_name (string) for execute
+    logger_str =
+        "ProcessNodeCommand using feature_name: " + req->feature_name();
+    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+    svk_cmd.out_format = (void *)req->feature_name().c_str();
+    svk_cmd.len = req->feature_name().size();
 
-  svk_cmd.feat_id = (feature_id)req->feature_id();
-  svk_cmd.len = 0;
-  svk_input.input_buffer = (uint8_t *)&feature_params[0];
-  svk_input.len = feature_params.length();
+    using json = nlohmann::json;
+    json command_params;
+    try {
+      if (req->command_params().length()) {
+        command_params = json::parse(req->command_params());
+      }
+      command_params["command_name"] = req->command_name();
+    } catch (json::exception &e) {
+      logger_str =
+          "Json parsing error in ProcessNodeCommand: " + std::string(e.what());
+      svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR,
+                 logger_str.c_str());
+      status = Status(grpc::INVALID_ARGUMENT, logger_str);
+      return status;
+    }
+
+    params = command_params.dump();
+    svk_input.input_buffer = (uint8_t *)&params[0];
+    svk_input.len = params.length();
+  } else if (req->feature_id() >= POWER_THROTTLE &&
+             req->feature_id() <= SLA_TRACKER) {
+    // If using feature_id for execute
+    logger_str = "ProcessNodeCommand using feature_id: " +
+                 std::to_string(req->feature_id());
+    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+    svk_cmd.feat_id = (feature_id)req->feature_id();
+    svk_cmd.len = 0;
+    params = req->feature_params();
+    svk_input.input_buffer = (uint8_t *)&params[0];
+    svk_input.len = params.length();
+  } else {
+    // Must give either feature_id or feature_name for execute, fail if neither
+    // exist
+    logger_str =
+        "ProcessNodeCommand received invalid feature_id and feature_name";
+    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR, logger_str.c_str());
+    return Status(grpc::INVALID_ARGUMENT, logger_str);
+  }
   svk_output.output_buffer = (uint8_t *)&buffer[0];
   svk_output.len = MAX_SIZE;
 
@@ -175,7 +216,7 @@ Status Servicer::ProcessNodeCommand(ServerContext *ctxt,
     status = Status(grpc::UNKNOWN, "Failed to run command");
     logger_str = "Failed to run command for node_id " + req->node_id() +
                  " feature_id " + std::to_string(svk_cmd.feat_id) +
-                 " params [" + feature_params + "]";
+                 " params [" + params + "]";
     svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR, logger_str.c_str());
     return status;
   }

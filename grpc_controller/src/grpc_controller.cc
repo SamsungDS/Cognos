@@ -539,17 +539,20 @@ Status ControllerServicer::ProcessControllerCommand(
   std::string logger_str;
   std::string feature_params;
   uint64_t feature_id;
-
-  if (req->cluster_id().length() == 0 || req->feature_params().length() == 0) {
+  // Check for valid cluster_id and feature_id+params/command_name
+  if ((req->cluster_id().length() == 0) ||
+      (((req->feature_id() < POWER_THROTTLE ||
+         req->feature_id() > SLA_TRACKER) ||
+        req->feature_params().length() == 0) &&
+       req->command_name().length() == 0)) {
     logger_str = "ProcessControllerCommand called for feature_id <" +
-                 std::to_string(req->feature_id()) + "> with params <" +
-                 req->feature_params() + "> on nodes <" + req->node_id() +
-                 "> - zero length args";
+                 std::to_string(req->feature_id()) + "> on nodes <" +
+                 req->node_id() + "> - zero length args";
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                logger_str.c_str());
     return Status(
         grpc::INVALID_ARGUMENT,
-        "Args (cluster_id/feature_id/feature_params) is of zero length");
+        "Args (cluster_id/command_name/feature_params) is of zero length");
   }
 
   if (m_cluster_map[req->cluster_id()].size() == 0) {
@@ -599,6 +602,10 @@ Status ControllerServicer::ProcessControllerCommand(
     req_node.set_node_id(itr->first);
     req_node.set_feature_id(feature_id);
     req_node.set_feature_params(feature_params);
+
+    req_node.set_feature_name(req->feature_name());
+    req_node.set_command_name(req->command_name());
+    req_node.set_command_params(req->command_params());
     Client client(itr->first, m_cluster_map[req->cluster_id()][itr->first]);
     status = client.ProcessNodeCommand(&req_node, &resp_node);
     if (status.ok() == true) {

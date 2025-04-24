@@ -205,6 +205,13 @@ message CommandRequest {
   string feature_params = 4;
   // Command ID
   string command_id = 5;
+
+  // New command processing, using this until FeatureAPI is implemented and old
+  // APIs are phased out If feature_name exists, use new style command
+  // processing
+  string feature_name = 6;
+  string command_name = 7;
+  string command_params = 8;
 }
 
 // A CommandResponse resource.

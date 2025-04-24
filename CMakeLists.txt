@@ -22,6 +22,10 @@ set(SVKGRPCFW_LIB_DEST "lib64/")
 set(PARENT_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 pkg_check_modules(SVKFW REQUIRED svkframework)
 
+include(FetchContent)
+FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
+FetchContent_MakeAvailable(json)
+
 add_subdirectory(proto)
 add_subdirectory(grpc_node_server)
 add_subdirectory(grpc_controller)
