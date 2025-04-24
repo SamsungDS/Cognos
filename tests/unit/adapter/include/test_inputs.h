@@ -56,32 +56,34 @@ const char* ras_err =
     "\n0xcf9d41000\n0xcf9d41000\n0x68da86000\n0x68da86000\n0x66e7f60d000";
 
 // const char arry of bad config json file
-const char* badconfig_json =
-    "{\\n  \"grep_CXL\": \"cat /proc/iomem|grep CXL\",\\n  \"grep_acpi_srat\": "
-    "\"cat /var/log/dmesg|grep -i acpi|grep -i srat\",\\n  \"regex_iomem\" "
-    "\"^[\\s]*[0-9a-z]+-[0-9a-z]+[\\s]*:[\\s]*CXL[\\s]*Window[\\s]*[0-9]+$\","
-    "\\n  \"regex_addr_range\": \".*mem[\\s]*([0-9a-z]+-[0-9a-z]+).*\",\\n  "
-    "\"mce_inject_template_string\": \"CPU {cpu} BANK 1\\nSTATUS "
-    "CORRECTED\\nADDR {addr}\\n\",\\n  \"rasdaemon_exec_command\": \"rasdaemon "
-    "-f -r /dev/null 2>&1 > \",\\n  \"ras_mc_ctl_error_addresses\": "
-    "\"ras-mc-ctl --errors|awk -F',' '{printf \"%s\\n\", $7}'|cut -d'=' "
-    "-f2\"\\n}\\n\\n";
+const char* badconfig_json = R"(
+{
+  "grep_CXL": "cat /proc/iomem|grep CXL",
+  "grep_acpi_srat": "[ -f /var/log/dmesg ] && cat /var/log/dmesg || [ -x dmesg ] && dmesg|grep -i acpi|grep -i srat",
+  "regex_iomem" "^[\\s]*[0-9a-z]+-[0-9a-z]+[\\s]*:[\\s]*CXL[\\s]*Window[\\s]*[0-9]+$",
+  "regex_addr_range": ".*mem[\\s]*([0-9a-z]+-[0-9a-z]+).*",
+  "mce_inject_template_string": "CPU {cpu} BANK 1\nSTATUS CORRECTED\nADDR {addr}\n",
+  "rasdaemon_exec_command": "rasdaemon -f -r /dev/null 2>&1 > ",
+  "ras_mc_ctl_error_addresses": "ras-mc-ctl --errors|awk -F',' '{printf \"\\n\" $7}'|cut -d'=' -f2"
+}
+)";
 
 // input from an empty json file
 unsigned char config0_json[] = {};
 unsigned int config0_json_len = 0;
 
 // Input from a valid config.json file
-const char config_json[] =
-    "{\\n  \"grep_CXL\": \"cat /proc/iomem|grep CXL\",\\n  \"grep_acpi_srat\": "
-    "\"cat /var/log/dmesg|grep -i acpi|grep -i srat\",\\n  \"regex_iomem\": "
-    "\"^[\\s]*[0-9a-z]+-[0-9a-z]+[\\s]*:[\\s]*CXL[\\s]*Window[\\s]*[0-9]+$\","
-    "\\n  \"regex_addr_range\": \".*mem[\\s]*([0-9a-z]+-[0-9a-z]+).*\",\\n  "
-    "\"mce_inject_template_string\": \"CPU {cpu} BANK 1\\nSTATUS "
-    "CORRECTED\\nADDR {addr}\\n\",\\n  \"rasdaemon_exec_command\": \"rasdaemon "
-    "-f -r /dev/null 2>&1 > \",\\n  \"ras_mc_ctl_error_addresses\": "
-    "\"ras-mc-ctl --errors|awk -F',' '{printf \"%s\\n\", $7}'|cut -d'=' "
-    "-f2\"\\n}\\n\\n";
+const char config_json[] = R"(
+{
+  "grep_CXL": "cat /proc/iomem|grep CXL",
+  "grep_acpi_srat": "[ -f /var/log/dmesg ] && cat /var/log/dmesg || [ -x dmesg ] && dmesg|grep -i acpi|grep -i srat",
+  "regex_iomem": "^[\\s]*[0-9a-z]+-[0-9a-z]+[\\s]*:[\\s]*CXL[\\s]*Window[\\s]*[0-9]+$",
+  "regex_addr_range": ".*mem[\\s]*([0-9a-z]+-[0-9a-z]+).*",
+  "mce_inject_template_string": "CPU {cpu} BANK 1\nSTATUS CORRECTED\nADDR {addr}\n",
+  "rasdaemon_exec_command": "rasdaemon -f -r /dev/null 2>&1 > ",
+  "ras_mc_ctl_error_addresses": "ras-mc-ctl --errors|awk -F',' '{printf \"\\n\" $7}'|cut -d'=' -f2"
+}
+)";
 
 // Input from a Json file that lacks the entry for "grep_CXL" key
 const char config1_json[] = R"(
