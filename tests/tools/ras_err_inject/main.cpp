@@ -435,7 +435,7 @@ int get_numa_node_address_range(const int &node_index, const bool cxl_node,
   string regex_addr_range = cf.regex_addr_range;
   regex regex_acpi_srat(regex_addr_range);
   char *p = nullptr;
-  long low, high, chk_low, chk_high;
+  long low = -1, high = -1, chk_low = -1, chk_high = -1;
   stack<string> st;
 
   // Find the appropriate CXL device entry from /proc/iomem (if any) for the
@@ -530,7 +530,7 @@ int verify_numa_node_addr(const int &node_index, const bool cxl_node,
     trim(res);
     addr_range = res;
     string low, high, tok;
-    long addr_low, addr_high, l_addr;
+    long addr_low = -1, addr_high = -1, l_addr = -1;
     stringstream ss(res);
 
     // Verify if the address provided is valid in the range specified in
