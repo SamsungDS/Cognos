@@ -277,8 +277,8 @@ TEST(InitTest, InitSuccess) {
       "feature id: 0.";
   EXPECT_TRUE(is_str_in_log(search_str));
   search_str =
-      "Feature module libsvksample_feature.so has been added to feature map "
-      "using feature name sample_feature.";
+      "Feature module libsvknew_sample_feature.so has been added to feature "
+      "map using feature name new_sample_feature.";
   EXPECT_TRUE(is_str_in_log(search_str));
   cleanup_svk(&ctx, (void *)conf.c_str());
 }
@@ -640,7 +640,7 @@ TEST(ExecTest, ExecuteSyncWithStrKey) {
   EXPECT_EQ(0, initialize_svk(conf.c_str(), (void *)&ctx));
 
   svk_pass_thru_cmd pass_thru;
-  std::string feature_name = "sample_feature";
+  std::string feature_name = "new_sample_feature";
   // Send null-terminated string
   pass_thru.out_format = (void *)feature_name.c_str();
   pass_thru.len = feature_name.length() + 1;
