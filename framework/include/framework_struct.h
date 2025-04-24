@@ -7,6 +7,7 @@
 #ifndef FRAMEWORK_STRUCT_H
 #define FRAMEWORK_STRUCT_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -199,7 +200,8 @@ typedef struct {
  *
  * @var svk_feature_details::get_supported_feature_list
  *  Pointer to function that will give back a list of feature names that the
- * feature module will support
+ * feature module will support. All new feature modules should return false for
+ * now, until feature_id is deprecated
  *  @param feature        feature_id which should be populated by feature module
  *  @param feature_names  List of subfeatures
  *
@@ -230,6 +232,10 @@ typedef struct {
  *  Pointer to the cleanup function for this feature module that framework will
  *  call on shutdown
  * @param void            Pointer to give to feature module cleanup
+ *
+ * @var svk_feature_details::is_duplicate
+ *  Internal to core to mark if this feature module is stored in both feature_id
+ * and feature_name maps. Will be removed once feature_id loading is deprecated
  */
 typedef struct {
   svk_status (*initialize)(void *init_param);
@@ -244,6 +250,7 @@ typedef struct {
   svk_status (*execute_async)(svk_pass_thru_cmd *pass_thru,
                               svk_postprocess_fn *postprocess_fn);
   svk_status (*clean_up)(void *);
+  bool is_duplicate;
 } svk_feature_details;
 
 #ifdef __cplusplus

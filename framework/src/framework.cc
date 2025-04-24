@@ -220,34 +220,58 @@ svk_status FrameworkSvc::load_feature_modules(
       continue;
     }
 
-    bool inserted;
-    if (feature_name.length() == 0) {
-      // Use feature_id map if feature_name is not set
-      feature_id curr_feature;
-      char feature_names;
-      details->get_supported_feature_list(&curr_feature, &feature_names);
-      // insert fid/function pointers into map
-      inserted = feature_map.insert(make_pair(curr_feature, details)).second;
-      if (inserted) {
+    bool feature_id_inserted = false;
+    bool feature_name_inserted = false;
+    feature_id curr_feature;
+    char feature_names;
+    // Check if get_support_feature_list returns success, add to old style map
+    // if it does for backwards compatibility
+    if (details->get_supported_feature_list(&curr_feature, &feature_names) ==
+        SVK_STATUS_SUCCESS) {
+      feature_name.length() > 0 ? details->is_duplicate = true
+                                : details->is_duplicate = false;
+      feature_id_inserted =
+          feature_map.insert(make_pair(curr_feature, details)).second;
+      if (feature_id_inserted) {
         snprintf(log_msg, LOG_MSG_MAX_SIZE,
                  "Feature module %s has been added to feature map using "
                  "feature id: %d.",
                  entry->d_name, curr_feature);
         svk_logger(CORE_LOGGER_NAME, level_E::INFO, log_msg);
+      } else {
+        snprintf(
+            log_msg, LOG_MSG_MAX_SIZE,
+            "Feature module %s was not able to be added to feature map using "
+            "feature id: %d.",
+            entry->d_name, curr_feature);
+        svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
       }
-    } else {
+    }
+    if (feature_name.length() > 0) {
       // insert feature_name/function pointers into map if feature_name exists
-      inserted =
-          feature_name_map.insert(make_pair(feature_name, details)).second;
-      if (inserted) {
+      // Making copy of feature pointers for now, so cleanup won't double free
+      auto details_copy =
+          (svk_feature_details *)malloc(sizeof(svk_feature_details));
+      memcpy(details_copy, details, sizeof(svk_feature_details));
+      feature_name_inserted =
+          feature_name_map.insert(make_pair(feature_name, details_copy)).second;
+      if (feature_name_inserted) {
         snprintf(log_msg, LOG_MSG_MAX_SIZE,
                  "Feature module %s has been added to feature map using "
                  "feature name %s.",
                  entry->d_name, feature_name.c_str());
         svk_logger(CORE_LOGGER_NAME, level_E::INFO, log_msg);
+      } else {
+        snprintf(
+            log_msg, LOG_MSG_MAX_SIZE,
+            "Feature module %s was not able to be added to feature map using "
+            "feature name %s.",
+            entry->d_name, feature_name.c_str());
+        svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
+        free(details_copy);
       }
     }
-    if (!inserted) {
+    if (!feature_id_inserted && !feature_name_inserted) {
       snprintf(
           log_msg, LOG_MSG_MAX_SIZE,
           "svk_feature_details for feature lib %s wasn't able to be "
@@ -273,8 +297,9 @@ svk_status FrameworkSvc::load_feature_modules(
 
   return status;
 }
-// Attempt to load logger options from the config, use defaults for any options
-// that can't be found
+
+// Attempt to load logger options from the config, use defaults for any
+// options that can't be found
 svk_status FrameworkSvc::init_logger(
     boost::property_tree::ptree const &logger_info) {
   std::string log_level_str =
@@ -402,7 +427,8 @@ void FrameworkSvc::reload_config() {
       // pselect returned error, stop thread
       close(fd);
       return;
-    } else if (FD_ISSET(fd, &descriptors)) {  // If file was created or modified
+    } else if (FD_ISSET(fd,
+                        &descriptors)) {  // If file was created or modified
       if (ssize_t length = read(fd, buffer, event_size); length < 0) {
         snprintf(log_msg, LOG_MSG_MAX_SIZE, "reload_config read() error: %s",
                  strerror(errno));
@@ -477,7 +503,8 @@ svk_status FrameworkSvc::get_feature_details(
     snprintf(
         log_msg, LOG_MSG_MAX_SIZE,
         "Feature id or name is not registered with the map, unable to run "
-        "execute or configure_devices with this feature module. Exception: %s",
+        "execute or configure_devices with this feature module. Exception: "
+        "%s",
         e.what());
     svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
     return SVK_STATUS_FAIL;
@@ -501,7 +528,10 @@ svk_status FrameworkSvc::destroy_feat_map(void *param) const {
              "Clearing up svk_feature_details for feature_name %s.",
              key.c_str());
     svk_logger(CORE_LOGGER_NAME, level_E::DEBUG, log_msg);
-    value->clean_up(param);
+    // Only run cleanup once if both feature maps contain the same feature
+    if (!value->is_duplicate) {
+      value->clean_up(param);
+    }
     free(value);
   }
   feature_name_map.clear();
