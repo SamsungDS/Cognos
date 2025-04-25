@@ -1,5 +1,7 @@
-#ifndef __CXL_PLUGIN_SC_SERVICER_H__
-#define __CXL_PLUGIN_SC_SERVICER_H__
+#ifndef __CME_INIT_H__
+#define __CME_INIT_H__
+
+#include "framework_downstream.h"
 
 extern "C"
 {

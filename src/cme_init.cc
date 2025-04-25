@@ -9,10 +9,11 @@
 #include <tuple>
 #include <unordered_map>
 #include <vector>
-
+#include <string.h>
 #include "framework_downstream.h"
-#include "tuner.h"
 #include "yaml-cpp/yaml.h"
+#include "cme_global.h"
+#include "cme_utils.h"
 
 /*
 extern "C"{
@@ -29,110 +30,37 @@ using namespace std;
 // function pointers for the commands
 typedef std::string (*CommandFunc) (const std::string &);
 
-// Global tuner object
-tuner mt_obj;
+// Global cme object
+cme_global cme_global_obj;
 
 /**
- * @brief tokenize input based on ';' and generate key values.
- * @param input - input string having Cluster ID, Command, Device ID etc.
- * @return tokens unordered map
+ * @brief init cme functionality
  */
-static unordered_map<string, string>
-tokenize (string input)
+int 
+cme_init ()
 {
+        int rc = cme_global_obj.read_cme_config_json(CME_CONFIG_FILE);
+        if (rc !=0)
+        {
+                std::cerr << "read_cme_config_json failed for : " << std::endl;
+                return -EINVAL;
+        }
 
-  char *s = (char *)input.c_str ();
-  char *tok = strtok (s, ";");
-  char key[256], val[256];
-  unordered_map<string, string> tokens;
-  while (tok != NULL)
-    {
-      sscanf (tok, "%[a-zA-Z0-9_]=%[/a-zA-Z0-9]", key, val);
-      tokens[key] = val;
-      tok = strtok (NULL, ";");
-    }
-  return tokens;
+        rc = cme_global_obj.cme_discovery();
+        if (rc !=0)
+        {
+                std::cerr << "cme_discovery failed" << std::endl;
+                return -EINVAL;
+        }
+	rc = cme_global_obj.initialize();
+        if (rc !=0)
+        {
+                std::cerr << "cme_initialize failed" << std::endl;
+                return -EINVAL;
+        }
+        return 0;
 }
 
-/**
- * @brief tokenization helper function which invokes tokenize function.
- * @param input - input string having Cluster ID, Command, Device ID etc.
- * @return tokens unordered map
- */
-static unordered_map<string, string>
-token_helper (string input)
-{
-  unordered_map<string, string> tokens_map = tokenize (input);
-  return tokens_map;
-}
-
-/**
- * @brief Start Memory tuner
- * @param command string which includes memory tier params,
- * sla params, application params
- * @return status code of tuner start: 0 = success
- */
-std::string
-StartTuning (const std::string &input)
-{
-  unordered_map<string, string> tokens_map = token_helper (input);
-  int ret;
-  ret = mt_obj.tuner_start (tokens_map, PAGE_MOVER_DAMO);
-  return to_string (ret);
-}
-
-/**
- * @brief Stop Memory tuner
- * @param command string
- * @return status code of tuner stop: 0 = success
- */
-std::string
-StopTuning (const std::string &input)
-{
-  unordered_map<string, string> tokens_map = token_helper (input);
-  pair<string, unsigned long> tuner_context_key = make_pair (
-      tokens_map["application"], stoul (tokens_map["application_id"]));
-  int ret;
-  ret = mt_obj.tuner_stop (tuner_context_key);
-  return to_string (ret);
-}
-
-/**
-@brief Validate the format of an IPv4 address
-@param ip_address - the IP address to validate
-@return true if the IP address is valid, false otherwise
- */
-bool
-is_valid_ip (const std::string &ip_address)
-{
-  // Trim whitespace
-  std::string trimmed_ip = ip_address;
-  trimmed_ip.erase (0, trimmed_ip.find_first_not_of (" \t\n\r"));
-  trimmed_ip.erase (trimmed_ip.find_last_not_of (" \t\n\r") + 1);
-  // Regular expression for a valid IPv4 address
-  const std::regex ip_pattern (
-      "(^(1[0-9]{0,2}|2[0-4][0-9]|25[0-5]|[1-9][0-9]?)\\."
-      "(25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)\\."
-      "(25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)\\."
-      "(25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)$)");
-
-  return std::regex_match (trimmed_ip, ip_pattern);
-}
-
-/**
- * @brief init tm functionality
- * @details As cxl cleanup is not called,
- * deleting left over config files explicitly.
- */
-void
-tm_init ()
-{
-  /*clean up cgroup
-  TODO: Cgroup delete needs yaml parsing
-  ret = cgroup_delete();
-  */
-  damo_global_config_cleanup ();
-}
 
 /**
  * @brief init function
@@ -140,12 +68,11 @@ tm_init ()
  * side.
  */
 int
-init_cxl_plugin ()
+init_cme_plugin ()
 {
-  std::cout << "invoked init_cxl_plugin" << std::endl;
-  tm_init ();
-
-  return 0;
+        std::cout << "invoked init_cme_plugin" << std::endl;
+        int rc = cme_init();
+        return rc;
 }
 
 /**
@@ -166,7 +93,7 @@ initialize (void *)
 {
   std::cout << "initialize function called" << std::endl;
 
-  if (init_cxl_plugin () == 0)
+  if (init_cme_plugin () == 0)
     {
       return SVK_STATUS_SUCCESS;
     }
@@ -176,6 +103,7 @@ initialize (void *)
     }
 }
 
+
 /*
  * Feature modules set feature_id to the *feat_id pointer if
  * it isn't set already.
@@ -184,10 +112,10 @@ initialize (void *)
  * @return svk_status     Refer to framework_struct.h for return codes
  */
 svk_status
-get_supported_feature_list (feature_id *feat_id, char *)
+get_supported_feature_list (feature_id *feat_id, char *feature_name)
 {
   std::cout << "get_supported_feature_list function called" << std::endl;
-  *feat_id = (feature_id)CME_FEATURE_ID;
+  *feat_id = feature_id::POWER_THROTTLE;
   return SVK_STATUS_SUCCESS;
 }
 
@@ -201,7 +129,7 @@ svk_status
 is_license_valid (void *)
 {
   std::cout << "is_license_valid function called" << std::endl;
-  return SVK_STATUS_FAIL;
+  return SVK_STATUS_SUCCESS;
 }
 
 /**
@@ -212,8 +140,10 @@ svk_status
 configure_device_if_any (void *, svk_device_ctx *, uint64_t length, void *)
 {
   std::cout << "configure_device_if_any function called" << std::endl;
-  return SVK_STATUS_FAIL;
+  return SVK_STATUS_SUCCESS;
 }
+
+
 
 /**
  * @brief Exact feature execution logic will be implemented here
@@ -227,46 +157,27 @@ configure_device_if_any (void *, svk_device_ctx *, uint64_t length, void *)
 svk_status
 execute_sync (svk_pass_thru_cmd *, svk_input *input, svk_output *output)
 {
-  std::cout << "execute_sync function called" << std::endl;
-  std::string input_str (reinterpret_cast<char *> (input->input_buffer),
-                         input->len);
-  std::string result;
-
-  std::string commandValue;
-  std::istringstream ss (input_str);
-  std::string token;
-
-  while (std::getline (ss, token, ';'))
-    {
-      const std::string prefix = "command=";
-      if (token.find (prefix) == 0)
+        std::cout << "execute_sync function called" << std::endl;
+        std::string input_str (reinterpret_cast<char *> (input->input_buffer),
+                                input->len);
+        cout << "Input command received = " << input_str << endl;
+	std::string result;
+  
+        try  
         {
-          commandValue = token.substr (prefix.length ());
-          break;
+                result = cme_global_obj.cme_command_handler(input_str);
+	}
+        catch (const std::exception &e)
+        {
+                std::cerr << "cme_command_handler. Error -> " << e.what () << endl;
+                return SVK_STATUS_FAIL;
         }
-    }
 
-  //@to-do - resolve gcov code coverage for multilines.
-  // Map of command strings to their corresponding functions
-  std::map<std::string, CommandFunc> fw_hooks{ { "StartTuning", StartTuning },
-                                               { "StopTuning", StopTuning } };
-
-  // Execute the corresponding command function
-  try
-    {
-      result = fw_hooks.at (commandValue) (input_str);
-    }
-  catch (const std::out_of_range &)
-    {
-      std::cerr << "Command not found: " << commandValue << std::endl;
-      return SVK_STATUS_FAIL;
-    }
-
-  output->output_buffer
-      = reinterpret_cast<uint8_t *> (strdup (result.c_str ()));
-  output->len = result.size ();
-  output->status = SVK_STATUS_SUCCESS;
-  return SVK_STATUS_SUCCESS;
+        output->output_buffer
+        = reinterpret_cast<uint8_t *> (strdup (result.c_str ()));
+        output->len = result.size ();
+        output->status = SVK_STATUS_SUCCESS;
+        return SVK_STATUS_SUCCESS;
 }
 
 /**

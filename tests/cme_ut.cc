@@ -1,44 +1,61 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include "cme_global.h"
+#include "cme_utils.h"
 #include "cme_init.h"
-#include "tuner.h"
 #include "framework_downstream.h"
+#include <numa.h>
+#include <numaif.h>
+#include <boost/property_tree/json_parser.hpp>
+#include <boost/property_tree/ptree.hpp>
+#include <boost/property_tree/xml_parser.hpp>
 
 extern "C"{
 #include "jansson.h"
 }
 
-
-#define DELIMITER ","
-
 using namespace std;
 
-using ::testing::_;
-using ::testing::Return;
+class cmeTest : public ::testing::Test {
+        protected:
+      
+         void SetUp() override {}
+};
 
-//function pointers for the commands
-typedef std::string (*CommandFunc)(const std::string&);
-
-TEST_F(cmeTest, InitCxlPluginSuccess) {
-    EXPECT_CALL(mock_cxl_global, g_create_mbox(_))
-        .WillOnce(Return(0));  
-    int result = init_cxl_plugin();
-    EXPECT_EQ(result, 0);
+TEST_F(cmeTest, GetSupportedFeatureListTest) {
+  feature_id feat_id;
+  char feature_names[256];
+  svk_status status = get_supported_feature_list(&feat_id, feature_names);
+  ASSERT_EQ(status, SVK_STATUS_SUCCESS);
 }
 
-TEST_F(cmeTest, InitializeSuccessTest) {
-    EXPECT_CALL(mock_cxl_global, g_create_mbox(_))
-        .WillOnce(Return(0));  
-    svk_status status = initialize(nullptr);
-    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
+TEST_F(cmeTest, IsLicenseValidTest) {
+  svk_status status = is_license_valid(nullptr);
+  ASSERT_EQ(status, SVK_STATUS_SUCCESS);
 }
 
-TEST_F(cmeTest, InitializeFailureTest) {
-    EXPECT_CALL(mock_cxl_global, g_create_mbox(nullptr))
-        .WillOnce(Return(-1));  
-    svk_status status = initialize(nullptr);
-    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
+TEST_F(cmeTest, ConfigureDeviceIfAnyTest) {
+  svk_device_ctx device_handles;
+  void* config_details = nullptr;
+  uint64_t length = 0;
+  void* resp = nullptr;
+  svk_status status =
+      configure_device_if_any(config_details, &device_handles, length, resp);
+  ASSERT_EQ(status, SVK_STATUS_SUCCESS);
 }
+
+TEST_F(cmeTest, ExecuteAsyncTest) {
+    svk_pass_thru_cmd pass_thru;
+    svk_postprocess_fn postprocess_fn;
+    svk_status status = execute_async(&pass_thru, &postprocess_fn);
+    ASSERT_EQ(status, SVK_STATUS_FAIL);
+}
+
+TEST_F(cmeTest, CleanUpTest) {
+    svk_status status = clean_up(nullptr);
+    ASSERT_EQ(status, SVK_STATUS_FAIL);
+}
+
 
 TEST_F(cmeTest, TokenizeTest) {
     string input = "key1=value1;key2=value2;key3=value3";
@@ -58,68 +75,29 @@ TEST_F(cmeTest, TokenHelperTest) {
     EXPECT_EQ(tokens["key3"], "value3");
 }
 
-TEST_F(cmeTest, GetSupportedFeatureListTest) {
-    feature_id feat_id;
-    char feature_names[256];
-    svk_status status = get_supported_feature_list(&feat_id, feature_names);
-    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
+TEST_F(cmeTest, CommandParserJsonTestt) {
+    namespace pt = boost::property_tree;
+    pt::ptree root;
+    root.put("command_name", "test_command");
+    pt::ptree child_node;
+    child_node.put("param_1", "value_1");
+    child_node.put("param_2", "value_2");
+    root.add_child("command_params", child_node);
+    std::stringstream json_stream;
+    pt::write_json(json_stream, root);
+    std::string json_string = json_stream.str();
+    unordered_map<string, string> command_params_map;
+
+    EXPECT_TRUE(command_parser_json(json_string, command_params_map));
+    EXPECT_EQ(command_params_map["command"], "test_command");
+    EXPECT_EQ(command_params_map["param_1"], "value_1");
+    EXPECT_EQ(command_params_map["param_2"], "value_2");
+
+    command_params_map.clear();
+    std::string invalid_json_string = "{\"tm_attr\":\"0\",\"app\":\"test\",\"app_pid\":\"107626\",\"src\":\"2\",\"dst\":\"1\",,}";
+    EXPECT_FALSE(command_parser_json(invalid_json_string, command_params_map));
 }
 
-TEST_F(cmeTest, IsLicenseValidTest) {
-    svk_status status = is_license_valid(nullptr);
-    ASSERT_EQ(status, SVK_STATUS_FAIL);
-}
-
-TEST_F(cmeTest, ExecuteAsyncTest) {
-    svk_pass_thru_cmd pass_thru;
-    svk_postprocess_fn postprocess_fn;
-    svk_status status = execute_async(&pass_thru, &postprocess_fn);
-    ASSERT_EQ(status, SVK_STATUS_FAIL);
-}
-
-TEST_F(cmeTest, CleanUpTest) {
-    svk_status status = clean_up(nullptr);
-    ASSERT_EQ(status, SVK_STATUS_FAIL);
-}
-
-TEST_F(cmeTest, ConfigureDeviceIfAnyTest) {
-    svk_device_ctx device_handles;
-    void *config_details = nullptr;
-    uint64_t length = 0;
-    void *resp = nullptr;
-    svk_status status = configure_device_if_any(config_details, &device_handles, length, resp);
-    ASSERT_EQ(status, SVK_STATUS_FAIL);
-}
-
-TEST_F(cmeTest, ExecuteSyncDevTest) {
-    svk_input input;
-    svk_output output;
-    svk_pass_thru_cmd pass_thru;
-    input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=ListDevices"));
-    input.len = strlen("command=ListDevices");
-    svk_status status = execute_sync(&pass_thru, &input, &output);
-    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
-    ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
-    ASSERT_NE(output.len, 0);
-    ASSERT_NE(output.output_buffer, nullptr);
-    free(input.input_buffer);
-    free(output.output_buffer);
-}
-
-TEST_F(cmeTest, ExecuteSyncHostTest) {
-    svk_input input;
-    svk_output output;
-    svk_pass_thru_cmd pass_thru;
-    input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=ListHosts"));
-    input.len = strlen("command=ListHosts");
-    svk_status status = execute_sync(&pass_thru, &input, &output);
-    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
-    ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
-    ASSERT_NE(output.len, 0);
-    ASSERT_NE(output.output_buffer, nullptr);
-    free(input.input_buffer);
-    free(output.output_buffer);
-}
 
 TEST_F(cmeTest, ExecuteSyncInvalidCommandTest) {
     svk_input input;
@@ -132,86 +110,104 @@ TEST_F(cmeTest, ExecuteSyncInvalidCommandTest) {
     free(input.input_buffer);
 }
 
-TEST_F(cmeTest, GetIPAddressSuccess) {
-    std::string ip = get_ip_address(json_filepath);
-    EXPECT_EQ(ip, "105.140.86.13");  
+TEST_F(cmeTest, CheckInitialize) {
+ 	cme_global cme_global_obj;
+	EXPECT_EQ(cme_global_obj.initialize(), 0);
 }
 
-TEST_F(cmeTest, IPAddressIsNotString) {
-    std::string json_content = R"(
-    {
-        "switch": {
-            "ip_address": 12345
-        }
-    })";
-    std::ofstream out("test_ip_not_string.json");
-    out << json_content;
-    out.close();
-    std::string ip = get_ip_address("test_ip_not_string.json");
-    EXPECT_EQ(ip, "");
-    std::remove("test_ip_not_string.json");
+TEST_F(cmeTest, CheckInvalidCommand) {
+        cme_global cme_global_obj;
+        string invalidcommand = "command=InvalidCommand;app=gemfire;app_pid=363043;src=0;dst=1;sla_iops=150000;sla_size=1024;sla_latencyus=750";
+	EXPECT_THROW(cme_global_obj.cme_command_handler(invalidcommand), std::runtime_error);
 }
 
-TEST_F(cmeTest, MissingFile) {
-    // Ensure the file does not exist
-    std::string missing_file = "missing_file.json";
-    remove(missing_file.c_str());
-    ASSERT_TRUE(is_file_empty_or_missing(missing_file))
-        << "The function should return true for a missing file.";
+TEST_F(cmeTest, CheckCmeInitialization) {
+	cme_global cme_global_obj;
+	EXPECT_EQ(cme_global_obj.read_cme_config_json("cme_config.json"), 0);
+	EXPECT_EQ(cme_global_obj.cme_discovery(), 0);
+	EXPECT_EQ(cme_global_obj.initialize(), 0);
 }
 
-TEST_F(cmeTest, EmptyFile) {
-    // Create an empty file
-    std::string empty_file = "empty_file.json";
-    create_file(empty_file, "");
-    ASSERT_TRUE(is_file_empty_or_missing(empty_file))
-        << "The function should return true for an empty file.";
+TEST_F(cmeTest, CheckCmdMoveAllFlatStringInput) {
+        cme_global cme_global_obj;
+	ASSERT_EQ(cme_global_obj.read_cme_config_json("cme_config.json"), 0);
+	ASSERT_EQ(cme_global_obj.cme_discovery(), 0);
+        ASSERT_EQ(cme_global_obj.initialize(), 0);
+	int pid = getpid();
+
+	// move_all: Test mover busy for context using dummy mover
+	string command = "command=move_all;tm_attr=cme_mover_dummy;app=test;app_pid="  + to_string(pid) + ";src=0;dst=0";
+        EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
+	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(-EBUSY));
+	// get_status: Test mover busy for context using dummy mover
+	command = "command=get_status;app=test;app_pid=" + to_string(pid);
+	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(-EBUSY));
+	std::this_thread::sleep_for(std::chrono::seconds(4));
+	
+	// move_all: Test valid context name and expected move_all success
+	command = "command=move_all;tm_attr=0;app=test;app_pid=" + to_string(pid) + ";src=0;dst=0";
+	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
+	std::this_thread::sleep_for(std::chrono::seconds(4));
+	// get_status: Test valid context name and expected move_all success
+	command = "command=get_status;app=test;app_pid=" + to_string(pid);
+	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
+
+	// get_status: Test invalid context name (wrong pid)
+	command = "command=get_status;app=test;app_pid=" + to_string(pid-1);
+	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(-EINVAL));
+
+	// move_all: Test invalid pid, valid numa node for numa_move_all mover
+	command = "command=move_all;tm_attr=0;app=test;app_pid=" + to_string(-1) + ";src=0;dst=0";
+	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
+	std::this_thread::sleep_for(std::chrono::seconds(2));
+	// get_status: Test invalid pid, valid numa node for numa_move_all mover
+	command = "command=get_status;app=test;app_pid=" + to_string(-1);
+	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(-ESRCH));
+
+	// move_all: Test valid pid, invalid numa node for numa_move_all mover
+	unsigned int numa_count_conf = numa_num_configured_nodes();
+	command = "command=move_all;tm_attr=0;app=test;app_pid=" + to_string(pid) + ";src=0;dst=" + to_string(numa_count_conf);
+	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
+	std::this_thread::sleep_for(std::chrono::seconds(2));
+	// get_status: Test valid pid, invalid numa node for numa_move_all mover
+	command = "command=get_status;app=test;app_pid=" + to_string(pid);
+	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(-EINVAL));
+
+	// move_all: verify_cmd_move_all fail
+	command = "command=move_all;app=test;app_pid=" + to_string(pid) + ";src=0;dst=0";
+	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(-EINVAL));
 }
 
-TEST_F(cmeTest, ValidNonEmptyFile) {
-    // Create a valid non-empty file
-    std::string valid_file = "valid_file.json";
-    create_file(valid_file, R"({"key": "value"})");
-    ASSERT_FALSE(is_file_empty_or_missing(valid_file))
-        << "The function should return false for a valid non-empty file.";
+TEST_F(cmeTest, CheckCmdMoveAllJsonStringInput) {
+        cme_global cme_global_obj;
+        ASSERT_EQ(cme_global_obj.read_cme_config_json("cme_config.json"), 0);
+        ASSERT_EQ(cme_global_obj.cme_discovery(), 0);
+        ASSERT_EQ(cme_global_obj.initialize(), 0);
+        int pid = getpid();
+	string command = " {\"command_name\": \"move_all\", \"feature_name\": \"me\", \"feature_id\": \"0\", \"command_params\": {\"tm_attr\": \"cme_mover_dummy\", \"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"src\": \"0\", \"dst\": \"1\"},\"cluster_id\": \"CL_ID_3\",\"node_id\": \"localhost\"} ";
+        EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
+        EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(-EBUSY));
+	command = " {\"command_name\": \"get_status\", \"feature_name\": \"me\", \"feature_id\": \"0\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\"},\"cluster_id\": \"CL_ID_1\",\"node_id\": \"localhost\"} ";
+	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(-EBUSY));
+        std::this_thread::sleep_for(std::chrono::seconds(4));
+
+	command = " {\"command_name\": \"move_all\", \"feature_name\": \"me\", \"feature_id\": \"0\", \"command_params\": {\"tm_attr\": \"0\", \"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"src\": \"0\", \"dst\": \"0\"},\"cluster_id\": \"CL_ID_1\",\"node_id\": \"localhost\"} ";
+        EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
+	std::this_thread::sleep_for(std::chrono::seconds(4));
+	command = " {\"command_name\": \"get_status\", \"feature_name\": \"me\", \"feature_id\": \"0\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\"},\"cluster_id\": \"CL_ID_1\",\"node_id\": \"localhost\"} ";
+	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
+	command = " {\"command_name\": \"get_status\", \"feature_name\": \"me\", \"feature_id\": \"0\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid-1) + "\"},\"cluster_id\": \"CL_ID_1\",\"node_id\": \"localhost\"} ";
+	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(-EINVAL));
+	command = " {\"command_name\": \"move_all\", \"feature_name\": \"me\", \"feature_id\": \"0\", \"command_params\": {\"tm_attr\": \"0\", \"app\": \"test\", \"app_pid\":\"" + to_string(-1) + "\", \"src\": \"0\", \"dst\": \"0\"},\"cluster_id\": \"CL_ID_1\",\"node_id\": \"localhost\"} ";
+	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
+	std::this_thread::sleep_for(std::chrono::seconds(2));
+	command = " {\"command_name\": \"get_status\", \"feature_name\": \"me\", \"feature_id\": \"0\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(-1) + "\"},\"cluster_id\": \"CL_ID_1\",\"node_id\": \"localhost\"} ";
+	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(-ESRCH));
+	unsigned int numa_count_conf = numa_num_configured_nodes();
+	command = " {\"command_name\": \"move_all\", \"feature_name\": \"me\", \"feature_id\": \"0\", \"command_params\": {\"tm_attr\": \"0\", \"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"src\": \"0\", \"dst\":\"" + to_string(numa_count_conf) + "\"},\"cluster_id\": \"CL_ID_1\",\"node_id\": \"localhost\"} ";
+	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
+	std::this_thread::sleep_for(std::chrono::seconds(2));
+	command = " {\"command_name\": \"get_status\", \"feature_name\": \"me\", \"feature_id\": \"0\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\"},\"cluster_id\": \"CL_ID_1\",\"node_id\": \"localhost\"} ";
+	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(-EINVAL));
 }
 
-TEST_F(cmeTest, IsValidIP) {
-    ASSERT_TRUE(is_valid_ip("192.168.1.1")) << "Valid IP address should return true.";
-    ASSERT_FALSE(is_valid_ip("300.168.1.1")) << "Invalid IP address should return false.";
-    ASSERT_FALSE(is_valid_ip("192.168.1")) << "Incomplete IP address should return false.";
-    ASSERT_FALSE(is_valid_ip("0.123.123.123")) << "InValid IP address should return false.";
-    ASSERT_FALSE(is_valid_ip("abc.def.ghi.jkl")) << "Non-numeric IP address should return false.";
-}
-
-TEST_F(cmeTest, StartTuning) {
-    svk_input input;
-    svk_output output;
-    svk_pass_thru_cmd pass_thru;
-    std::string cmd = "command=StartTuning;application=gemfire;application_id=101010;dram_node=0;cxl_node=1;sla_iops=150000;sla_size=1024;sla_latencyus=750";
-    input.input_buffer = reinterpret_cast<uint8_t*>(strdup(cmd.c_str()));
-    input.len = strlen(cmd.c_str());
-    svk_status status = execute_sync(&pass_thru, &input, &output);
-    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
-    ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
-    ASSERT_NE(output.len, 0);
-    ASSERT_NE(output.output_buffer, nullptr);
-    free(input.input_buffer);
-    free(output.output_buffer);
-}
-
-TEST_F(cmeTest, StopTuning) {
-    svk_input input;
-    svk_output output;
-    svk_pass_thru_cmd pass_thru;
-    std::string cmd = "command=StopTuning;application=gemfire;application_id=101010";
-    input.input_buffer = reinterpret_cast<uint8_t*>(strdup(cmd.c_str()));
-    input.len = strlen(cmd.c_str());
-    svk_status status = execute_sync(&pass_thru, &input, &output);
-    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
-    ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
-    ASSERT_NE(output.len, 0);
-    ASSERT_NE(output.output_buffer, nullptr);
-    free(input.input_buffer);
-    free(output.output_buffer);
-}

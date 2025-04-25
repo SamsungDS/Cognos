@@ -1,3 +1,5 @@
-/usr/local/svk/me/lib64/libme* /usr/local/svk/me/lib64/
-/etc/svk/* /etc/svk/
-/etc/ld.so.conf.d/* /etc/ld.so.conf.d/
+/etc/svk/cme_config.json /etc/svk/
+/usr/local/svk/me/lib64/libsvkme* /usr/local/svk/me/lib64/
+/usr/local/svk/me/lib/movers/lib* /usr/local/svk/me/lib/movers/
+/usr/local/svk/me/lib/profilers/lib* /usr/local/svk/me/lib/profilers/
+

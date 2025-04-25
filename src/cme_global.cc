@@ -1,0 +1,504 @@
+#include <iostream>
+#include <map>
+#include <stdexcept>
+#include <tuple>
+#include <map>
+#include <unordered_map>
+#include <dlfcn.h>
+#include <dirent.h>
+#include <vector>
+#include <errno.h>
+#include <sys/inotify.h>
+#include <sys/stat.h>
+#include <thread>
+#include <functional>
+#include <chrono>
+#include <unistd.h>
+#include <boost/property_tree/json_parser.hpp>
+#include <boost/property_tree/ptree.hpp>
+#include <boost/property_tree/xml_parser.hpp>
+
+#include "include/cme_global.h"
+
+using namespace std;
+
+cme_global::cme_global() {}
+
+/**
+ * @brief Helper function to read cme_config json file
+ *      Extract path for shared li=brary location for
+ *      profilers and movers.
+ * @param: 
+ *      string: cme_config file name
+ * @return int: status = success/failure
+*/
+int cme_global::read_cme_config_json (std::string conf_filename)
+{
+	try
+	{
+      		namespace pt = boost::property_tree;
+		pt::ptree root;
+      		cout << "reading cme config json = " << conf_filename << endl;
+      		pt::read_json (conf_filename, root);
+
+      		profilers_lib = root.get<std::string> ("profilers_lib_path");
+      		movers_lib = root.get<std::string> ("movers_lib_path");
+      		cout << profilers_lib << " -- " << movers_lib << endl;
+    	}
+  	catch (const std::exception &e)
+    	{
+      		std::cerr << "Unable to read cme config json. Error -> " << e.what ()
+                	<< '\n';
+      		return -EINVAL;
+    	}
+  	return 0;
+}
+
+void cme_global::mover_register(std::string mover_name, cme_mover* mover_obj)
+{
+	try
+	{
+		movers_list.emplace(mover_name, mover_obj);
+	}
+	catch (const exception &e)
+    	{
+      		throw runtime_error ("Error in " + string (__FUNCTION__) + " : " + string (e.what ()));
+    	}
+}
+
+void cme_global::profiler_register(std::string profiler_name, cme_profiler* profiler_obj)
+{
+        try
+        {
+                profilers_list.emplace(profiler_name, profiler_obj);
+        }
+        catch (const exception &e) 
+        {   
+                throw runtime_error ("Error in " + string (__FUNCTION__) + " : " + string (e.what ()));
+        }   
+}
+
+/**
+ * @brief Discover profilers or movers through
+ * 	dynamic loading of shared library objects.
+ * 	Populate global list of movers and profilers
+ * @param: 
+ * 	string: directory path of shared libraries
+ * 	enum: cme_type = profiler/mover
+ * @return int: status = success/failure
+*/
+int cme_global::_cme_discovery(std::string feat_sm_svcs_dir, int type)
+{
+        try
+        {
+                cout << "cme discovery in path = " << feat_sm_svcs_dir << endl;
+                DIR *dirfp = opendir(feat_sm_svcs_dir.c_str());
+
+                if (dirfp == nullptr)
+                {
+                        cout << "Invalid feature service directory" << endl;
+                        return -EINVAL;
+                }
+
+                struct dirent *entry = readdir(dirfp);
+                for (; entry != nullptr; entry = readdir(dirfp))
+                {
+                        std::string entry_name(entry->d_name);
+                        std::string feat_lib_suffix_so(".so");
+                        if (entry_name.compare(".") == 0 || entry_name.compare("..") == 0) continue;
+                        std::string dfpath = feat_sm_svcs_dir + std::string("/") + entry_name;
+                        if (isDirectory(dfpath)) _cme_discovery(dfpath, type);
+                        if (entry_name.size() < feat_lib_suffix_so.size() ||
+                        entry_name.compare(entry_name.size() - feat_lib_suffix_so.size(),
+                                                feat_lib_suffix_so.size(),
+                                                feat_lib_suffix_so) != 0) {
+                        	cout << "No Service found" << endl;
+                        	continue;
+                        }
+
+                        std::string feature_lib_str = feat_sm_svcs_dir + "/" + entry_name;
+                        void *handle = dlopen(feature_lib_str.c_str(), RTLD_LAZY);
+                        if (!handle)
+                        {
+                                cerr << "Failed to load library " << feature_lib_str << " Reason: " << dlerror() << endl;
+                                continue;
+                        }
+
+                        if (type == CME_MOVER)
+                        {
+                                auto register_cme_fn = reinterpret_cast<cme_mover* (*)()>(dlsym(handle, "register_cme_fn"));
+                                if (!register_cme_fn) {
+                                        cerr << "Cannot load symbols from library " << feature_lib_str << " Reason: " << dlerror() << endl;
+                                        dlclose(handle);
+                                        return 1;
+                                }
+                                cme_mover* cme_obj = register_cme_fn();
+                                if (!cme_obj) {
+                                        cerr << "Object creation failed" << endl;
+                                        dlclose(handle);
+                                        continue;
+                                }
+				mover_register(cme_obj->get_name(), cme_obj);
+                        }
+                        else if (type == CME_PROFILER)
+                        {
+                                
+                                auto register_cme_fn = reinterpret_cast<cme_profiler* (*)()>(dlsym(handle, "register_cme_fn"));
+                                if (!register_cme_fn) {
+                                        cerr << "Cannot load symbols from library " << feature_lib_str << " Reason: " << dlerror() << endl;
+                                        dlclose(handle);
+                                        return 1;
+                                }
+                                cme_profiler* cme_obj = register_cme_fn();
+                                if (!cme_obj) {
+                                        cerr << "Object creation failed" << endl;
+                                        dlclose(handle);
+                                        continue;
+                                }
+                                profilers_list.emplace(cme_obj->get_name(), cme_obj);
+				profiler_register(cme_obj->get_name(), cme_obj);
+                        }
+                        else
+                        {
+                                cerr << "Invalid CME type" << endl;
+                                return -EINVAL;
+                        }
+                }
+        }
+
+        catch (const std::exception &e)
+        {
+                std::cerr << "Unable to read cme config json. Error -> " << e.what () << endl;
+                return -EINVAL;
+        }
+        return 0;
+}
+
+
+/**
+ * @brief Discover profilers and movers
+ * @return int: status = success/failure
+*/
+int cme_global::cme_discovery()
+{
+        int rc1,rc2;
+        try
+        {
+                rc1 = _cme_discovery(movers_lib, CME_MOVER);
+                if (rc1 !=0)
+                {
+                        std::cerr << "cme_discovery failed for : " << movers_lib << std::endl;
+                }
+                rc2 = _cme_discovery(profilers_lib, CME_PROFILER);
+                if (rc2 !=0)
+                {
+                        std::cerr << "cme_discovery failed for : " << profilers_lib << std::endl;
+                }
+                if (rc2!=0 && rc1!=0)
+                {
+                        return -EINVAL;
+                }
+        }
+
+        catch (const std::exception &e)
+        {
+          std::cerr << "cme_discovery. Error -> " << e.what ()
+                    << '\n';
+                    return -EINVAL;
+        }
+
+	std::cout << "Profilers discovered count = " << profilers_list.size() << std::endl;
+	std::cout << "Movers discovered count = " << movers_list.size() << std::endl;
+	return 0;
+}
+
+void cme_global::cme_contexts_lock ()
+{
+        cme_contexts_mutex.lock ();
+}
+
+void cme_global::cme_contexts_unlock ()
+{
+        cme_contexts_mutex.unlock ();
+}
+
+/**
+ * @brief find cme_context based on context key
+ * 	that is app name and app_pid,
+ * 	If context not present, create cme_context and
+ * 	populate relevant members.
+ * @param cme_global object, command tokens map,
+ * @return cme_context object
+*/
+static cme_context* cg_find_context(cme_global* cg_obj, unordered_map<string, string> &tokens_map, bool is_status)
+{
+        try 
+        {
+		std::string app_name = tokens_map["app"];
+                long app_pid = stol (tokens_map["app_pid"]);
+
+                std::pair<std::string, long> cme_ctx_key = make_pair (app_name, app_pid);
+                cme_context* cme_ctx;
+                // Check if the element was found
+                if (cg_obj->cme_contexts_list.find(cme_ctx_key) != (cg_obj->cme_contexts_list.end ()))
+                {
+                        cout << "cme context found for key"  << endl;
+                        cme_ctx = cg_obj->cme_contexts_list.at(cme_ctx_key);
+                }
+                else
+                {
+                        if (is_status)
+                        {
+                                return nullptr;
+                        }
+                        // create new context
+                        cme_ctx = new cme_context ();
+                        cme_ctx->app_attr.app_name = app_name;
+                        cme_ctx->app_attr.app_pid  = app_pid;
+			cme_ctx->mover_state = CTX_INACTIVE;
+
+                        // Add context to list
+                        cg_obj->cme_contexts_list.emplace(cme_ctx_key,cme_ctx);
+                }
+                return cme_ctx;
+        }
+        catch (const std::exception &e)
+        {
+          std::cerr << "cg_find_context. Error -> " << e.what () << endl;
+                    return nullptr;
+        }
+}
+
+/**
+ * @brief find mover from global movers list
+ *      Can be expanded later to add more intelligent logic
+ * @param cme_global object,
+ *        cme_context pointer
+ * @return cme_mover object
+*/
+static cme_mover* cg_find_mover(cme_global* cg_obj, cme_context* cme_ctx)
+{
+        cme_mover* cme_mov;
+        try
+        {
+		if(cme_ctx->tm_attr.mover_tag == "0")
+		{
+			// default mover
+			cme_ctx->tm_attr.mover_tag = "numa_move_all";
+		}
+		cme_mov = cg_obj->movers_list.at(cme_ctx->tm_attr.mover_tag);
+        }
+        catch (const std::exception &e)
+        {
+                std::cerr << "cg_find_mover. Error -> " << e.what () << endl;
+                return nullptr;
+        }
+        return cme_mov;
+}
+
+/**
+ * @brief call back function for move_all
+ *      This function canimplement diffrent actions to be done
+ *      at the end on the move_all thread function like updating
+ *      the corresponding CME context.
+ * @param  cb_ctx: corresponding cme_context
+ * @return None
+*/
+void callback_fn_move_all(void* cb_ctx, int status) 
+{
+        try
+        {               
+        	std::cout << "Callback function callback_fn_move_all started"  << std::endl;
+        	cme_context* ctx = (cme_context*) cb_ctx;
+		ctx->mover_cmd_status = status;
+		ctx->mover_state = CTX_INACTIVE;
+        	cout << "Callback function callback_fn_move_all finished; updated context state=" << to_string(ctx->mover_state) << endl;
+        }
+        catch (const std::exception &e)
+        {
+                std::cerr << "callback_fn_move_all. Error -> " << e.what () << endl;
+        }
+}
+
+/**
+ * @brief function to verify all params needed for move_all
+ * 	are present
+ * @param command tokens map
+ * @return true if valid params for move_all
+*/
+static bool verify_cmd_move_all(unordered_map<string, string> &tokens_map)	
+{
+	try
+	{
+		if ( (tokens_map.count("src") < 0)
+			|| (tokens_map.count("dst") < 0)
+			|| (tokens_map.count("app") < 0)
+			|| (tokens_map.count("app_pid") < 0)
+			|| (tokens_map.count("tm_attr") < 0)
+		   )
+		{
+		throw runtime_error ("Error in " + string (__FUNCTION__) + " :move_all command parameters not found");	
+		}
+				
+	}
+        catch (const std::exception &e) 
+        {
+                std::cerr << "Error -> " << e.what () << endl;
+                return false;
+        }
+        return true;
+}
+
+/**
+ * @brief move_all
+ * @param command string
+ * @return status code of move all, 0 = success
+*/
+static std::string cg_move_all(cme_global* cg_obj, unordered_map<string, string> &tokens_map)
+{
+        try
+        {
+		if (cg_obj->movers_list.size() == 0)
+		{
+			throw runtime_error ("Error in " + string (__FUNCTION__) + " No movers found ");
+		}
+		if (!(verify_cmd_move_all(tokens_map)))
+                {
+                        throw runtime_error ("Error in " + string (__FUNCTION__) + " verify command error ");
+                }
+		
+                std::string app_name = tokens_map["app"];
+		long app_pid = stol(tokens_map["app_pid"]);
+                // find cme_context
+		cg_obj->cme_contexts_lock();
+		cme_context* cme_ctx = cg_find_context(cg_obj, tokens_map, false);
+		if (cme_ctx == nullptr)
+                {
+                        cg_obj->cme_contexts_unlock();
+                        throw runtime_error ("Error in " + string (__FUNCTION__) + " cme context not found"); 
+                }
+                if (cme_ctx->mover_state == CTX_ACTIVE)
+                {
+                        std::cerr << "cg_move_all. Error -> mover for context busy" << endl;
+                        cg_obj->cme_contexts_unlock();
+                        return std::to_string(-EBUSY);
+                }
+		// update cme_context
+		cme_ctx->mem_attr.src_numa_node = stoi (tokens_map["src"]);
+                cme_ctx->mem_attr.dst_numa_node = stoi (tokens_map["dst"]);
+		cme_ctx->tm_attr.mover_tag = tokens_map["tm_attr"];
+                cme_ctx->mover_state = CTX_ACTIVE;
+                cg_obj->cme_contexts_unlock();
+                
+		int src = cme_ctx->mem_attr.src_numa_node;
+                int dst = cme_ctx->mem_attr.dst_numa_node;
+                cme_ctx->mover_obj = cg_find_mover(cg_obj ,cme_ctx);
+                if (cme_ctx->mover_obj == nullptr)
+		{
+			throw runtime_error ("Error in " + string (__FUNCTION__) + " mover not found");
+		}
+		cout << "movername= " << cme_ctx->mover_obj->get_name() << " src=" << to_string(src) << " dst="<< to_string(dst) << endl;               
+		// Create detached thread for move_all function
+                std::thread mover_start_th(&cme_mover::move_all, cme_ctx->mover_obj , app_pid, src, dst, callback_fn_move_all  ,(void*)cme_ctx, 0);
+                mover_start_th.detach();;
+        }
+
+        catch (const std::exception &e)
+        {
+                std::cerr << "cg_move_all. Error -> " << e.what () << endl;
+                return std::to_string(-EINVAL);
+        }
+        return to_string (0);
+}
+
+/**
+ * @brief get_status
+ * @param command string
+ * @return status code of tuner stop: 0 = success
+*/
+static std::string cg_get_status(cme_global* cg_obj, unordered_map<string, string> &tokens_map)
+
+{
+        try
+        {
+		cg_obj->cme_contexts_lock();
+                cme_context* cme_ctx = cg_find_context(cg_obj, tokens_map, true);
+		cg_obj->cme_contexts_unlock();
+                if (cme_ctx == nullptr)
+                {
+			std::cerr << "Context not found" << endl;
+			return std::to_string(-EINVAL);
+                }
+		// for now returning status of las completed mover command
+		// logic will be added later for profiler
+		if (cme_ctx->mover_state == CTX_ACTIVE)
+		{
+			return to_string(-EBUSY);
+		}
+		cout << "status = " << to_string(cme_ctx->mover_cmd_status) << endl;
+		return to_string(cme_ctx->mover_cmd_status);
+        }
+        catch (const std::exception &e)
+        {
+                std::cerr << "cg_get_status. Error -> " << e.what () << endl;
+                return std::to_string(-EINVAL);
+        }
+	return std::to_string(-EINVAL);
+}
+
+/**
+ * @brief cme_command_handler
+ * @param command string
+ * @return result of command execution functions
+*/
+std::string cme_global::cme_command_handler(std::string input_cme_command)
+{
+        std::string result;
+        std::string commandValue;
+        unordered_map<string, string> command_params_map;
+	try
+        { 
+		bool cmd_style_json = command_parser_json(input_cme_command, command_params_map);
+		if(!cmd_style_json)
+		{
+			command_params_map = token_helper (input_cme_command);
+		}
+		commandValue = command_params_map.at("command");
+		cout << "command=" << commandValue << endl;
+        	result = fw_hooks.at (commandValue) (this, command_params_map);
+	}
+        catch (const std::out_of_range &)
+        {
+                std::cerr << "Command not found: " << commandValue << std::endl;
+                throw runtime_error ("Error in " + string (__FUNCTION__) + "Command not found:");
+        }
+        catch (const std::exception &e)
+        {
+                std::cerr << "cme_command_handler. Error -> " << e.what () << endl;
+                throw runtime_error ("Error in " + string (__FUNCTION__) + "cme_command_handler. Error ->" + e.what());
+        }
+                    
+        return result;
+}
+
+/**
+ * @brief: Initialize global cme_global object
+ * 	Populate map of command name and corresponding function pointers.
+ * @return result of command execution functions
+*/
+
+int cme_global::initialize()
+{
+        try
+        { 
+                fw_hooks.emplace("move_all", cg_move_all);
+                fw_hooks.emplace("get_status", cg_get_status);
+        }
+        catch (const std::exception &e)
+        {
+                std::cerr << "cme global initialize. Error -> " << e.what () << endl;
+                return (-EINVAL);
+        }
+        return 0;
+}
+

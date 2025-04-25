@@ -50,7 +50,7 @@ help()
   echo "-b | --build-package"
   echo "  Generate SVK CME FW RPMs/DEB packages."
   echo "-i | --install-path"
-  echo "  Path that RPMs should install svk cxl to (Default: /usr/local/svk/cxl). Only applicable when building with release flag."
+  echo "  Path that RPMs should install svk cxl to (Default: /usr/local/svk/me). Only applicable when building with release flag."
   exit
 }
 
@@ -162,10 +162,10 @@ create_deb()
 {
   # Debian Package vars
   local DEBIAN_DIR="$BUILD_DIR/debian"
-  # We're passing $PACKAGE_INSTALL_PATH as $1 below but not capturing it? - Someone please fix this! - Matt
 
   # Define a dynamic package name which reflects whether we are producting a release or simulation artifact
-  local DEB_PACKAGE_NAME='me'
+  # This name needs to match the .install file name in the debian directory
+  local DEB_PACKAGE_NAME='svk-me'
 
   # Only build Debian Package on supported OS
   if [[ "$ID" == "ubuntu" ]]; then
@@ -187,14 +187,10 @@ create_deb()
     sed -i -e "s@DEB_PACKAGE_NAME@$DEB_PACKAGE_NAME@g" "$DEBIAN_DIR/rules"
     sed -i -e "s@DEB_PACKAGE_NAME@$DEB_PACKAGE_NAME@g" "$DEBIAN_DIR/changelog"
     sed -i -e "s@DEB_PACKAGE_NAME@$DEB_PACKAGE_NAME@g" "$DEBIAN_DIR/control"
-    if [[ $MOCK == true ]]; then
-      # Rename the .install packages if MOCK - to refelect above renamed package in rules / changelog / control
-      mv -v "$DEBIAN_DIR/svk-me.install" "$DEBIAN_DIR/$DEB_PACKAGE_NAME.install"
-      mv -v "$DEBIAN_DIR/svk-me-dev.install" "$DEBIAN_DIR/$DEB_PACKAGE_NAME-dev.install"
-    fi
 
+    sed -i -e "s@PACKAGE_INSTALL_PATH_VAL@$1@g" "$DEBIAN_DIR/rules"
     pushd "$BUILD_DIR"
-      echo "Building SVK Management Framework Debian packages..."
+      echo "Building SVK Memory Engine Debian packages.."
       # Build Debian packages - generate binaries only, do not sign packages
       dpkg-buildpackage -b -us -uc --no-sign
 
@@ -205,7 +201,7 @@ create_deb()
       move_artifacts "$PROJECT_ROOT" deb
     popd
   else
-    echo "Skipping SVK Management Framework Debian package build for OS: $ID"
+    echo "Skipping SVK Memory Engine Debian package build for OS: $ID"
   fi
 }
 
@@ -239,14 +235,8 @@ if $RELEASE;then
   fi
   CMAKE_OPTIONS+=("-DWITH_RELEASE=ON")
   if [ -z "$PACKAGE_INSTALL_PATH" ];then
-    PACKAGE_INSTALL_PATH="/usr/local/svk/me" # Location that rpm -ivh will install to
+    PACKAGE_INSTALL_PATH="usr/local/svk/me" # Location that rpm -ivh will install to
   fi
-fi
-
-if [ -n "$PACKAGE_INSTALL_PATH" ];then
-  CMAKE_OPTIONS+=("-DPKG_CONFIG_PREFIX=$PACKAGE_INSTALL_PATH")
-else
-  CMAKE_OPTIONS+=("-DPKG_CONFIG_PREFIX=$CMAKE_INSTALL_PREFIX")
 fi
 
 # Add unit test option
@@ -283,8 +273,11 @@ if $WITH_COVERAGE;then
     pushd tests
     echo "Running unit tests..."
 
-    cp "$PROJECT_ROOT/config/damo_config.json" "/etc/svk/"
-    cp "$PROJECT_ROOT/tools/tm_gen_config.py" "/etc/svk/"
+    cp "$PROJECT_ROOT/tests/cme_config.json" "$BUILD_DIR/tests"
+    mkdir -p "$BUILD_DIR/tests/movers"
+    mkdir -p "$BUILD_DIR/tests/profilers"
+    cp "$BUILD_DIR/src/movers/cme_mover_dummy/libcme_mover_dummy.so" "$BUILD_DIR/tests/movers/"
+    cp "$BUILD_DIR/src/movers/numa_move_all/libnuma_move_all.so" "$BUILD_DIR/tests/movers/"
     mkdir -p "$REPORTS_DIR"
     ctest --output-junit "$REPORTS_DIR/gitlab_junit.xml"
     popd
@@ -307,17 +300,10 @@ if $WITH_COVERAGE;then
   #rm -rf "$PROJECT_ROOT/tests/usr/"
 
 elif $RELEASE;then
-  echo "Generating release tarball..."
-  mkdir -p "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/lib"
-  mkdir -p "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/lib64"
-  cp "$PROJECT_ROOT/config/damo_config.json" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
-  cp "$PROJECT_ROOT/tools/tm_gen_config.py" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
-  if $MOCK; then
-    tar -zcf "$RELEASE_FILENAME_PREFIX-mock-$ID-$GIT_VERSION.tgz" "$CMAKE_INSTALL_PREFIX"
-  else
-    tar -zcf "$RELEASE_FILENAME_PREFIX-$ID-$GIT_VERSION.tgz" "$CMAKE_INSTALL_PREFIX"
-  fi
-  echo "$GENERATE_PACKAGE"
+  
+  tar -zcf "$RELEASE_FILENAME_PREFIX-$ID-$GIT_VERSION.tgz" "$CMAKE_INSTALL_PREFIX"
+  
+  echo "Generate Package = $GENERATE_PACKAGE"
   if [ -n "$GENERATE_PACKAGE" ];then
     if [ "$ID" == "ubuntu" ]; then
       echo "Generating Ubuntu package"
@@ -327,7 +313,7 @@ elif $RELEASE;then
       RPMBUILD_DIR="$BUILD_DIR/rpmbuild"
       mkdir -p rpmbuild/{BUILD,RPMS,SPECS}
       cp -rf "$CMAKE_INSTALL_PREFIX/" "$RPMBUILD_DIR/BUILD"
-      create_rpm "$RPMBUILD_DIR" "$PACKAGE_INSTALL_PATH" $MOCK
+      create_rpm "$RPMBUILD_DIR" "/$PACKAGE_INSTALL_PATH"
     fi
   fi
 fi

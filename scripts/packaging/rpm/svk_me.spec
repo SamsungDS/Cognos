@@ -9,7 +9,7 @@ Requires:       svk-core, svk-mgmt-fw, jansson
 
 %{!?installpath: %global installpath /usr/local/svk/me}
 %{!?installpath_mgmt: %global installpath_mgmt /usr/local/svk/mgmt-fw}
-%{!?installpath_tm_config: %global installpath_tm_config /etc/svk}
+%{!?installpath_me_config: %global installpath_me_config /etc/svk}
 %{!?me_build_dir: %global me_build_dir me}
 
 
@@ -21,19 +21,17 @@ SVK Memory Engine - APIs and functions for application memory monitoring and man
 rm -rf %{buildroot}
 mkdir -p %{buildroot}/%{installpath}
 mkdir -p %{buildroot}/%{installpath_mgmt}
-mkdir -p %{buildroot}/%{installpath_tm_config}
+mkdir -p %{buildroot}/%{installpath_me_config}
 
 # If rpmbuild is run in the build script, use CMAKE_INSTALL_PREFIX as temp dir in %{_topdir}/BUILD
 %if "%{getenv:CMAKE_INSTALL_PREFIX}" != ""
 cp -rf %{getenv:CMAKE_INSTALL_PREFIX}/%{_lib} %{buildroot}/%{installpath}
-cp -f %{getenv:CMAKE_INSTALL_PREFIX}/damo_config.json %{buildroot}/%{installpath_tm_config}
-cp -f %{getenv:CMAKE_INSTALL_PREFIX}/tm_gen_config.py %{buildroot}/%{installpath_tm_config}
+cp -f %{getenv:CMAKE_INSTALL_PREFIX}/cme_config.json %{buildroot}/%{installpath_me_config}
 
 # If rpmbuild is run manually, use default build dir svk-core, unless user gives a different name
 %else
 cp -rf %{me_build_dir}/%{_lib} %{buildroot}/%{installpath}
-cp -f %{me_build_dir}/config/damo_config.json %{buildroot}/%{installpath_tm_config}
-cp -f %{me_build_dir}/tools/tm_gen_config.py %{buildroot}/%{installpath_tm_config}
+cp -f %{me_build_dir}/config/cme_config.json %{buildroot}/%{installpath_me_config}
 %endif
 
 %files
@@ -42,7 +40,7 @@ cp -f %{me_build_dir}/tools/tm_gen_config.py %{buildroot}/%{installpath_tm_confi
 %defattr(-,root,root,-)
 %{installpath}/%{_lib}
 %{installpath_mgmt}
-%{installpath_tm_config}
+%{installpath_me_config}
 
 %clean
 
