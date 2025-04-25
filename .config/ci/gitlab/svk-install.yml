@@ -56,12 +56,15 @@ svk-install:
     # Substitute the feat_modules_dir in the "core" section of '/etc/svk/mgmt_fw_config.json' and replace with the path to libcxl.so
     - jq '.core.feat_modules_dir = "/usr/local/svk/cxl/lib64"' $SVK_MGMT_FW_CONF | sponge $SVK_MGMT_FW_CONF
     # Modify the node_id variable in the '/etc/svk/mgmt_fw_config.json'
-    - jq --arg hn "$(hostname)" '.svk_mgmt_fw_node.node.id=$hn' $SVK_MGMT_FW_CONF | sponge $SVK_MGMT_FW_CONF
+    - jq --arg hn "$(hostname)" '.svk_mgmt_fw_node.node.name=$hn' $SVK_MGMT_FW_CONF | sponge $SVK_MGMT_FW_CONF
+    - jq --arg ip "$VM_IP" '.svk_mgmt_fw_node.node.id=$ip' $SVK_MGMT_FW_CONF | sponge $SVK_MGMT_FW_CONF
     # Substitute the svc.mgr.feat_sm_svcs_dir in the "svk_mgmt_fw" section of '/etc/svk/mgmt_fw_config.json' and
     # replace with the path to libcxl.so
     - jq '.svk_mgmt_fw_svc_mgr.svc_mgr.feat_sm_svcs_dir = "/usr/local/svk/cxl/lib64"' $SVK_MGMT_FW_CONF | sponge $SVK_MGMT_FW_CONF
     - jq --arg ip "$VM_IP" '.svk_mgmt_rest_api.rest_server.id = $ip' $SVK_MGMT_FW_CONF | sponge $SVK_MGMT_FW_CONF
-
+    #### Configure the hostname in input.conf ####
+    - export SVK_INPUT_CONF=/usr/local/svk/mgmt-fw/input.conf
+    - jq --arg hn "$(hostname)" '.fabric_managers[0].Hosts[0].host_name = $hn | .fabric_managers[1].Hosts[0].host_name = $hn' "$SVK_INPUT_CONF" | sponge "$SVK_INPUT_CONF"
     #### Configure '/etc/svk/zmq_config.json' ####
     - export SVK_ZMQ_CONF='/etc/svk/zmq_config.json'
     # Substitute IP of the host in the configuration file to ensure publisher and subscriber listen to the same IP
