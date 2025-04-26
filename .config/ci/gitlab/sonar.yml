@@ -20,10 +20,10 @@ sonar-scanner:
     - job: unit test
       parallel:
         matrix:
-          - DOCKERFILE_NAME: rocky9
+          - DOCKERFILE_NAME: ubuntu22
   allow_failure: false
   variables:
-    DOCKERFILE_NAME: rocky9
+    DOCKERFILE_NAME: ubuntu22
     IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
     GIT_DEPTH: 0
   rules:
