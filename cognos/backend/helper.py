@@ -512,7 +512,7 @@ def fetch_topology():
 def get_hosts_from_db():
     db, cursor = connect_to_mysql()
     try:
-        query = "SELECT name from hosts"
+        query = "SELECT DISTINCT(name) from hosts"
         cursor.execute(query)
         hosts = cursor.fetchall()
     except Exception as error:
@@ -546,6 +546,25 @@ def get_devname_from_id(dev_id):
         row = cursor.fetchone()
     except Exception as error:
         print(f"Failed to fetch from devices table.. {str(error)}")
+    disconnect_mysql(db)
+    if row:
+        return row[0]
+    else:
+        return ""
+
+
+def get_cmmb_hostid_from_name(name):
+    db, cursor = connect_to_mysql()
+    row = []
+    try:
+        query = (
+            "SELECT id FROM hosts WHERE name=%s AND fm_type='FM_REMOTE_CMMB'"
+        )
+        values = [name]
+        cursor.execute(query, values)
+        row = cursor.fetchone()
+    except Exception as error:
+        print(f"Failed to fetch from hosts table.. {str(error)}")
     disconnect_mysql(db)
     if row:
         return row[0]

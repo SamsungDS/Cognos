@@ -108,7 +108,7 @@ class CXLPlugin(DataSource):
         host_name = request_data["host_name"]
 
         dev_id = helper.get_devid_from_name(dev_name)
-        host_id = helper.get_hostid_from_name(host_name)
+        host_id = helper.get_cmmb_hostid_from_name(host_name)
 
         feature_params = (
             "cluster_id=CL_ID_1;command=DetachMemory;"
@@ -155,7 +155,8 @@ class CXLPlugin(DataSource):
         dev_name = request_data["dev_name"]
         host_name = request_data["host_name"]
         dev_id = helper.get_devid_from_name(dev_name)
-        host_id = helper.get_hostid_from_name(host_name)
+        host_id = helper.get_cmmb_hostid_from_name(host_name)
+
         feature_params = (
             "cluster_id=CL_ID_1;command=AttachMemory;"
             f"dev_id={dev_id};host_id={host_id};mode=direct"
@@ -200,6 +201,7 @@ class CXLPlugin(DataSource):
         response.headers.add("Access-Control-Allow-Origin", "*")
         return response
 
+    # TODO: NEEDS TO BE UPDATED FROM CXL PLUGIN SIDE TO SHOW CURR STATE
     def get_setup_info(self, cluster_id=None, node_id=None):
         headers = {
             "accept": APPLICATION_JSON,
@@ -271,7 +273,12 @@ class CXLPlugin(DataSource):
         response = requests.post(AGENT_ENDPOINT, json=body, headers=headers)
         if response.ok:
             payload = helper.parse_svkcxlplugin_response(response)["hosts"]
-            return payload
+            valid_payload = []
+            # filter out invalid hosts from response
+            for host in payload:
+                if host['id'] != 0:
+                    valid_payload.append(host)
+            return valid_payload
         else:
             # pragma: no cover
             return helper.failed_response(

@@ -385,45 +385,20 @@ def test_cxlplugin_get_hosts_info(
     dummy_data = {
         "nodeResponses": [
             {
-                "nodeId": "localhost",
+                "nodeId": "1.2.3.4",
                 "output": {
                     "hosts": [
                         {
-                            "classcode": 0,
-                            "deinit_active": 1,
-                            "endpoint": [
-                                {
-                                    "dev_offset": "0",
-                                    "mem_addr": "0x00C000000000",
-                                    "mem_size": "0x004000000000",
-                                    "memdev": "mem-11",
-                                    "target": 11,
-                                },
-                                {
-                                    "dev_offset": "0",
-                                    "mem_addr": "0x008000000000",
-                                    "mem_size": "0x004000000000",
-                                    "memdev": "mem-10",
-                                    "target": 10,
-                                },
-                            ],
-                            "host_addr": "0x008080000000",
-                            "host_aspm_active": 1,
-                            "host_equalization": 1,
-                            "host_name": "Host 1 LNK0",
-                            "host_port": 2,
-                            "host_port_type": "CXL_11",
-                            "host_size": "0x007f80000000",
-                            "host_speed": 5,
-                            "host_sris_active": 1,
-                            "host_width": 8,
+                            "id": 551903297536,
+                            "name": "testhost.area.51",
+                            "mem_capacity": 547608330240,
+                            "host_target_ports": [11, 10]
                         }
                     ]
-                },
+                }
             }
         ]
     }
-    # Mock the response from requests.post
     mocker.patch(
         "requests.post",
         return_value=mocker.MagicMock(
@@ -438,10 +413,11 @@ def test_cxlplugin_get_hosts_info(
     )
     # Call the method under test
     result = get_cxlplugin_datasource.get_hosts_info("CL_ID_1", "localhost")
+
     # Assertions
-    assert "host_name" in result[0]
+    assert "id" in result[0]
     assert len(result) == 1
-    assert result[0]["host_name"] == "Host 1 LNK0"
+    assert result[0]["name"] == 'testhost.area.51'
 
 
 def test_cxlplugin_setup_tables(
