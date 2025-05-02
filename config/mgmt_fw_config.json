@@ -13,8 +13,9 @@
           "port": 9999
         },
         "node": {
+          "_comment": "id parameter should be populated with the IP address for now.",
           "name": "node_1",
-          "id": "localhost",
+          "id": "127.0.0.1",
           "port": 9998
         },
         "logger": {

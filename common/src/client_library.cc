@@ -62,3 +62,10 @@ Status Client::NodeAPI(const svk::NodeRequest* req, svk::NodeResponse* resp) {
   Status status = ctrlr_stub_->NodeAPI(&ctxt, *req, resp);
   return status;
 }
+
+Status Client::FeatureAPI(const svk::FeatureRequest* req,
+                          svk::FeatureResponse* resp) {
+  ClientContext ctxt;
+  Status status = ctrlr_stub_->FeatureAPI(&ctxt, *req, resp);
+  return status;
+}
