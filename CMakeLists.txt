@@ -29,10 +29,15 @@ add_subdirectory(framework)
 
 # Build script makes it so that if release is used, then tests are turned off 
 if(BUILD_TESTING)
+    set(FEAT_MODULE_PATH "${CMAKE_BINARY_DIR}/tests/sample_feature")
     add_subdirectory(tests)
 elseif(WITH_RELEASE)
     add_subdirectory(tests/sample_feature)
 endif()
+
+set(feat_module_conf "feature_module_conf.h")
+set(feat_module_conf_path "${CMAKE_BINARY_DIR}/${feat_module_conf}")
+configure_file("${feat_module_conf}.in" "${feat_module_conf_path}" @ONLY)
 
 include(CMakePackageConfigHelpers)
 write_basic_package_version_file(
@@ -54,4 +59,9 @@ install(
 install(
     FILES "${pkg_config}"
     DESTINATION "${pkgconfig_install_dir}"
+)
+
+install(
+    FILES "${feat_module_conf_path}"
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
 )

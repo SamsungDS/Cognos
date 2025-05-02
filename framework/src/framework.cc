@@ -92,28 +92,48 @@ svk_status FrameworkSvc::load_feature_modules(
   entry = readdir(dirfp);
   // Loop through all libs in the dir
   for (; entry != nullptr; entry = readdir(dirfp)) {
-    // Check if this is a shared lib
-    std::string entry_name(entry->d_name);
+    // Check if this is a shared lib or contains the proper directory structure
+    std::string lib_name(entry->d_name);
     std::string feat_lib_suffix(FEAT_LIB_SUFFIX);
-    // If dir entry is smaller than length(.so), skip the entry
-    // Otherwise compare the last 3 chars to .so to see if it is valid
-    if (entry_name.size() < feat_lib_suffix.size() ||
-        entry_name.compare(entry_name.size() - feat_lib_suffix.size(),
-                           feat_lib_suffix.size(), feat_lib_suffix) != 0) {
+    if (lib_name == "." || lib_name == "..") {
       continue;
     }
 
-    // Check lib naming format for libsvk<feature_name>.so
+    std::string feature_lib_str = features_dir + "/" + lib_name;
     std::string feature_name = "";
-    if (entry_name.length() > 9 && entry_name.substr(0, 6) == "libsvk") {
-      // Only use <feature_name> for the key
-      feature_name = entry_name.substr(6, entry_name.length() - 9);
+
+    struct stat st;
+    stat(feature_lib_str.c_str(), &st);
+    if (S_ISDIR(st.st_mode)) {
+      // Is a directory, check for proper directory structure. Assuming that
+      // this is using the updated lib naming scheme libsvk<feature_name>.so
+      feature_name = std::string(entry->d_name);
+      lib_name = "libsvk" + feature_name + FEAT_LIB_SUFFIX;
+      feature_lib_str = feature_lib_str + "/lib64/" + lib_name;
+
+      if (stat(feature_lib_str.c_str(), &st) != 0) {
+        continue;
+      }
+    } else {
+      // Is a file, check for proper lib name
+      // If dir entry is smaller than length(.so), skip the entry
+      // Otherwise compare the last 3 chars to .so to see if it is valid
+      if (lib_name.size() < feat_lib_suffix.size() ||
+          lib_name.compare(lib_name.size() - feat_lib_suffix.size(),
+                           feat_lib_suffix.size(), feat_lib_suffix) != 0) {
+        continue;
+      }
+      // Check lib naming format for libsvk<feature_name>.so
+      if (lib_name.length() > 9 && lib_name.substr(0, 6) == "libsvk") {
+        // Only use <feature_name> for the key
+        feature_name = lib_name.substr(6, lib_name.length() - 9);
+      }
     }
 
-    std::string feature_lib_str = features_dir + "/" + entry->d_name;
     snprintf(log_msg, LOG_MSG_MAX_SIZE,
-             "Attempting to load feature module functions for %s",
-             entry->d_name);
+             "Attempting to load feature module functions for feature module "
+             "%s at %s",
+             entry->d_name, feature_lib_str.c_str());
     svk_logger(CORE_LOGGER_NAME, level_E::INFO, log_msg);
     void *handle = feature_api.open_lib(feature_lib_str.c_str());
     if (!handle) {
@@ -236,14 +256,14 @@ svk_status FrameworkSvc::load_feature_modules(
         snprintf(log_msg, LOG_MSG_MAX_SIZE,
                  "Feature module %s has been added to feature map using "
                  "feature id: %d.",
-                 entry->d_name, curr_feature);
+                 lib_name.c_str(), curr_feature);
         svk_logger(CORE_LOGGER_NAME, level_E::INFO, log_msg);
       } else {
         snprintf(
             log_msg, LOG_MSG_MAX_SIZE,
             "Feature module %s was not able to be added to feature map using "
             "feature id: %d.",
-            entry->d_name, curr_feature);
+            lib_name.c_str(), curr_feature);
         svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
       }
     }
@@ -259,14 +279,14 @@ svk_status FrameworkSvc::load_feature_modules(
         snprintf(log_msg, LOG_MSG_MAX_SIZE,
                  "Feature module %s has been added to feature map using "
                  "feature name %s.",
-                 entry->d_name, feature_name.c_str());
+                 lib_name.c_str(), feature_name.c_str());
         svk_logger(CORE_LOGGER_NAME, level_E::INFO, log_msg);
       } else {
         snprintf(
             log_msg, LOG_MSG_MAX_SIZE,
             "Feature module %s was not able to be added to feature map using "
             "feature name %s.",
-            entry->d_name, feature_name.c_str());
+            lib_name.c_str(), feature_name.c_str());
         svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
         free(details_copy);
       }
