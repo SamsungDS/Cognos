@@ -85,6 +85,136 @@ TEST(InitIntegrationTest, InitControllerAndNodeServerSuccess) {
   unlink(conf_file.c_str());
 }
 
+TEST(InitIntegrationTest, FeatureAPISuccess) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  Servicer *svcr(new Servicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  svk::FeatureRequest req;
+  svk::FeatureResponse resp;
+
+  req.set_cluster_name(DEFAULT_CLUSTER_ID);
+  req.set_node_name(DEFAULT_NODE_ID);
+
+  req.set_feature_name("new_sample_feature");
+  req.set_command_name("FeatureAPI_command");
+  req.set_command_params("{\"sample_key\":\"sample_value\"}");
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status status = client.FeatureAPI(&req, &resp);
+  ASSERT_TRUE(status.ok());
+  std::cout << "FeatureAPI response: " << resp.response(0) << std::endl;
+  EXPECT_THAT(resp.response(0),
+              StartsWith("{\"output_key\":\"output_value\"}"));
+
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest, FeatureAPINoCommand) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  Servicer *svcr(new Servicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  svk::FeatureRequest req;
+  svk::FeatureResponse resp;
+
+  req.set_cluster_name(DEFAULT_CLUSTER_ID);
+  req.set_node_name(DEFAULT_NODE_ID);
+
+  req.set_feature_name("new_sample_feature");
+  req.set_command_name("");
+  req.set_command_params("{\"sample_key\":\"sample_value\"}");
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status status = client.FeatureAPI(&req, &resp);
+  ASSERT_FALSE(status.ok());
+
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest, FeatureAPINoClusterName) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  Servicer *svcr(new Servicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  svk::FeatureRequest req;
+  svk::FeatureResponse resp;
+
+  req.set_cluster_name("");
+  req.set_node_name(DEFAULT_NODE_ID);
+
+  req.set_feature_name("new_sample_feature");
+  req.set_command_name("FeatureAPI_command");
+  req.set_command_params("{\"sample_key\":\"sample_value\"}");
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status status = client.FeatureAPI(&req, &resp);
+  ASSERT_TRUE(status.ok());
+  std::cout << "FeatureAPI response: " << resp.response(0) << std::endl;
+  EXPECT_THAT(resp.response(0),
+              StartsWith("{\"output_key\":\"output_value\"}"));
+
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest, FeatureAPINoClusterOrNode) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  Servicer *svcr(new Servicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  svk::FeatureRequest req;
+  svk::FeatureResponse resp;
+
+  req.set_cluster_name("");
+  req.set_node_name("invalid");
+
+  req.set_feature_name("new_sample_feature");
+  req.set_command_name("FeatureAPI_command");
+  req.set_command_params("{\"sample_key\":\"sample_value\"}");
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status status = client.FeatureAPI(&req, &resp);
+  ASSERT_FALSE(status.ok());
+
+  unlink(conf_file.c_str());
+}
+
 TEST(InitIntegrationTest, ProcessControllerCommandSuccess) {
   char *cw_dir = get_current_dir_name();
   std::string conf_file = std::string(cw_dir) + "/conf.json";

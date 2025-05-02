@@ -258,6 +258,7 @@ Status ControllerServicer::RegisterNode(ServerContext *ctxt,
       // Update old cluster map
       m_cluster_map[cluster_name][node_ip] = node_port;
       // Update new cluster map
+      m_registered_nodes.at(node.node_name).cluster_name = cluster_name;
       m_cluster_info[cluster_name].node_names.push_back(node.node_name);
       logger_str = "Registered the node_id " + node_ip + ":" + node_port +
                    " with cluster:" + cluster_name;
@@ -274,6 +275,7 @@ Status ControllerServicer::RegisterNode(ServerContext *ctxt,
         // Update old cluster map
         m_cluster_map[cluster_name][node_ip] = node_port;
         // Update new cluster map
+        m_registered_nodes.at(node.node_name).cluster_name = cluster_name;
         m_cluster_info[cluster_name].node_names.push_back(node.node_name);
         logger_str = "Registered the node_id " + node_ip + ":" + node_port +
                      " with cluster:" + cluster_name;
@@ -1152,6 +1154,75 @@ Status ControllerServicer::NodeAPI(ServerContext *ctxt,
     resp->set_error_code(1);
     std::cout << resp->error_code() << std::endl;
     status = Status(grpc::INVALID_ARGUMENT, "Invalid node command name");
+  }
+
+  return status;
+}
+
+Status ControllerServicer::FeatureAPI(ServerContext *ctxt,
+                                      const svk::FeatureRequest *req,
+                                      svk::FeatureResponse *resp) {
+  std::string logger_str;
+  Status status;
+
+  std::string cluster_name = req->cluster_name();
+  std::string node_name = req->node_name();
+  std::string feature_name = req->feature_name();
+  std::string command_name = req->command_name();
+  std::string command_params = req->command_params();
+
+  if (cluster_name.length() == 0) {
+    try {
+      node_info n = m_registered_nodes.at(node_name);
+      cluster_name = n.cluster_name;
+    } catch (const std::out_of_range &e) {
+      logger_str =
+          "Could not find a cluster_name for node <" + node_name + ">.";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                 logger_str.c_str());
+    }
+  }
+
+  resp->set_api_version(API_VERSION);
+
+  if (cluster_name.length() == 0 || command_name.length() == 0) {
+    logger_str = "FeatureAPI called with empty cluster name or command_name";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    status = Status(grpc::INVALID_ARGUMENT, logger_str);
+    resp->set_error_id_or_string_if_any(logger_str);
+    resp->set_error_code(SVK_STATUS_FAIL);
+    return status;
+  }
+
+  // For now, form CommandRequest structure and send to ProcessControllerCommand
+  svk::CommandRequest cmd_req;
+  svk::CommandResponse cmd_resp;
+  // cluster_name is the equivalent of cluster.id for now
+  cmd_req.set_cluster_id(cluster_name);
+  // node_name, if provided, should be the ip right now (node.id)
+  // Since ProcessControllerCommand uses old cluster map, we need to give the ip
+  // provided in config
+  cmd_req.set_node_id(node_name);
+  // Only taking feature_name, command_name, and command_params for FeatureAPI
+  cmd_req.set_feature_name(feature_name);
+  cmd_req.set_command_name(command_name);
+  cmd_req.set_command_params(command_params);
+
+  // Not doing redundant valid param checks
+  status = ProcessControllerCommand(ctxt, &cmd_req, &cmd_resp);
+
+  if (status.ok()) {
+    for (int x = 0; x < cmd_resp.node_responses().size(); x++) {
+      resp->add_response(cmd_resp.node_responses(x).output());
+    }
+  } else {
+    logger_str = "ProcessControllerCommand returned error to FeatureAPI: " +
+                 status.error_message();
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    resp->set_error_id_or_string_if_any(logger_str);
+    resp->set_error_code(SVK_STATUS_FAIL);
   }
 
   return status;

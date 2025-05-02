@@ -123,6 +123,27 @@ service Controller {
       tags : "svk, controller, node"
     };
   }
+
+  // All the feature module based APIs
+  rpc FeatureAPI(FeatureRequest) returns (FeatureResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/features"
+      body : "*"
+      additional_bindings {
+        post : "/api/v1/nodes/{node_name}/features/{feature_name}"
+        body : "*"
+      }
+      additional_bindings {
+        post : "/api/v1/clusters/{cluster_name}/features/{feature_name}"
+        body : "*"
+      }
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary : "SVK Feature API"
+      description : "SVK Feature API"
+      tags : "svk, controller, feature"
+    };
+  }
 }
 
 // gRPC APIs related to Command Framework at the SVK Agent node
@@ -283,4 +304,24 @@ message NodeResponse {
   string api_version = 3;
   // JSON format of the output response
   string command_response = 4;
+}
+
+// A FeatureRequest resource sent to the Controller node to handle cluster API.
+message FeatureRequest {
+  string cluster_name = 1;
+  string node_name = 2;
+  string feature_name = 3;
+  string command_name = 4;
+  // JSON format of the input params to be passed
+  string command_params = 5;
+}
+
+// A FeatureResponse resource.
+message FeatureResponse {
+  // Status of FeatureResponse with success or failure with error details
+  string error_id_or_string_if_any = 1;
+  int32 error_code = 2;
+  string api_version = 3;
+  // JSON format of the output response
+  repeated string response = 4;
 }

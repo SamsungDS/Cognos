@@ -103,6 +103,9 @@ class ControllerServicer : public svk::Controller::Service {
                  svk::NodeResponse *resp) override;
   Status ListNodes(svk::NodeResponse *resp);
 
+  Status FeatureAPI(ServerContext *ctxt, const svk::FeatureRequest *req,
+                    svk::FeatureResponse *resp) override;
+
   const std::string &get_svk_config_controller_id() {
     return m_svk_config.controller_id;
   };
