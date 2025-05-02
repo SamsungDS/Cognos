@@ -3,6 +3,9 @@
 #include <gtest/gtest.h>
 #include <stdlib.h>
 
+#include <cstdio>
+#include <filesystem>
+
 #include "framework_service.hpp"
 #include "framework_upstream.h"
 
@@ -265,6 +268,16 @@ TEST(InitTest, InitSuccess) {
   getcwd(buff, FILENAME_MAX);
   std::string current_working_dir(buff);
 
+  // Copy the new sample feature to feature module directory for testing
+  std::string new_sample_feat_path =
+      current_working_dir +
+      "/../../../sample_feature/new_sample_feature/lib64/"
+      "libsvknew_sample_feature.so";
+  std::string temp_sample_feat_path =
+      current_working_dir +
+      "/../../../sample_feature/libsvktemp_sample_feature.so";
+  std::filesystem::copy(new_sample_feat_path, temp_sample_feat_path);
+
   // Using relative path to config in SVK core for testing
   std::string conf =
       current_working_dir + "/../../../../../config/test_config.json";
@@ -280,6 +293,12 @@ TEST(InitTest, InitSuccess) {
       "Feature module libsvknew_sample_feature.so has been added to feature "
       "map using feature name new_sample_feature.";
   EXPECT_TRUE(is_str_in_log(search_str));
+  search_str =
+      "Feature module libsvktemp_sample_feature.so has been added to feature "
+      "map using feature name temp_sample_feature.";
+  EXPECT_TRUE(is_str_in_log(search_str));
+
+  std::remove(std::string(temp_sample_feat_path).c_str());
   cleanup_svk(&ctx, (void *)conf.c_str());
 }
 

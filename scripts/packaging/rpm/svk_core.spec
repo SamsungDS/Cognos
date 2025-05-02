@@ -6,6 +6,7 @@ Requires:       spdlog zeromq
 License:        Samsung Internal
 
 %global svk_core_svk_topdir %_prefix/local/svk
+%global svk_core_feat_module_path %svk_core_svk_topdir/feature_modules
 %global svk_core_install_dir %svk_core_svk_topdir/core
 %global svk_core_pcfile pkgconfig/svkframework.pc
 %global svk_core_ldconf ld.so.conf.d/svk-core-%_arch.conf
@@ -23,7 +24,7 @@ SVK downstream, upstream, and other related header files for app/feature develop
 
 %install
 cd %svk_core_builddir
-cmake -DWITH_RELEASE=ON -DPKG_CONFIG_PREFIX=%svk_core_install_dir -DCMAKE_INSTALL_PREFIX=%svk_core_install_dir ..
+cmake -DWITH_RELEASE=ON -DPKG_CONFIG_PREFIX=%svk_core_install_dir -DCMAKE_INSTALL_PREFIX=%svk_core_install_dir -DFEAT_MODULE_PATH=%svk_core_feat_module_path ..
 %make_install
 
 %files
