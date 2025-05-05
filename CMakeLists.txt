@@ -80,7 +80,7 @@ install(
 
 install(
     FILES "config/cme_config.json"
-    DESTINATION "/etc/svk/"
+    DESTINATION "${CMAKE_INSTALL_PREFIX}/config/"
 )
 
 # install pkg config file

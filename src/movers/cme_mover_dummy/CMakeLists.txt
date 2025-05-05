@@ -7,6 +7,6 @@ add_library(cme_mover_dummy SHARED ${SOURCES} ${HEADERS})
 target_include_directories(cme_mover_dummy PUBLIC "${SVKME_SRC_INCLUDE}")
 install(
     TARGETS cme_mover_dummy
-    LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}/movers/"
+    LIBRARY DESTINATION "${CMAKE_INSTALL_PREFIX}/logic_modules/movers/${SVKME_LIB_DEST}"
 )
 
