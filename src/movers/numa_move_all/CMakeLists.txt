@@ -12,6 +12,6 @@ add_definitions("-DBOOST_ALLOW_DEPRECATED_HEADERS")
 add_definitions("-DBOOST_BIND_GLOBAL_PLACEHOLDERS")
 install(
     TARGETS numa_move_all
-    LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}/movers/"
+    LIBRARY DESTINATION "${CMAKE_INSTALL_PREFIX}/logic_modules/movers/${SVKME_LIB_DEST}"
 )
 

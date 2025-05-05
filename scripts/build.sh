@@ -235,7 +235,7 @@ if $RELEASE;then
   fi
   CMAKE_OPTIONS+=("-DWITH_RELEASE=ON")
   if [ -z "$PACKAGE_INSTALL_PATH" ];then
-    PACKAGE_INSTALL_PATH="usr/local/svk/me" # Location that rpm -ivh will install to
+    PACKAGE_INSTALL_PATH="usr/local/svk/feature_modules/me" # Location that rpm -ivh will install to
   fi
 fi
 
