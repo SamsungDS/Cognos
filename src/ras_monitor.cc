@@ -1,5 +1,9 @@
 #include "ras_monitor.h"
 
+#include <sstream>
+
+#include "ras.hpp"
+
 ras_monitor::ras_monitor(/* args */) {
   ras_monitor_ = std::make_unique<RequestProcessor<ras_request>>(
       ras_monitor::process_request);
@@ -13,6 +17,11 @@ void ras_monitor::set_sync_request_completed(ras_request *req) {
 }
 void ras_monitor::process_request_sync(ras_request *req) {
   // TODO
+  std::stringstream ss;
+  ss << req->request_details;
+  boost::property_tree::ptree pt;
+  boost::property_tree::read_json(ss, pt);
+  std::cout << "Command Name:" << pt.get<std::string>("command") << std::endl;
 
   set_sync_request_completed(req);
 

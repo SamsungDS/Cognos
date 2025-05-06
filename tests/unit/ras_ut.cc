@@ -169,7 +169,8 @@ TEST_F(ConfigUnitTest, SVKEXEC) {
   svk_pass_thru_cmd pass_thru;
   pass_thru.feat_id = ZERO_ETL;
   svk_input input;
-  std::string input_str = "Passing a RAS string";
+  std::string input_str =
+      R"({"command": "getErrorCount", "device": "0", "type": "correctable"})";
   input.input_buffer = (uint8_t *)input_str.c_str();
   input.len = input_str.length();
   svk_output output;

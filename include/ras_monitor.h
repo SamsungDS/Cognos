@@ -1,14 +1,19 @@
 #ifndef _RAS_MONITOR_H_
 #define _RAS_MONITOR_H_
 
+#include <string>
+
 #include "RequestProcessor.h"
+
 class ras_monitor;
 
 struct ras_request {
-  ras_request(bool is_internal_request, bool is_sync_request,
-              ras_monitor *monitor_instance)
+  ras_request(bool is_internal_request, bool is_sync_request, std::string in,
+              std::string out, ras_monitor *monitor_instance)
       : is_internal_request(is_internal_request),
         is_sync_request(is_sync_request),
+        request_details(in),
+        response(out),
         monitor_instance(monitor_instance) {
     is_completed = false;
   }
@@ -19,6 +24,11 @@ struct ras_request {
   bool is_completed;
   std::mutex sync_mutex;
   std::condition_variable sync_cv;
+
+  // Request method and params
+  std::string request_details;
+  // Response string
+  std::string response;
 
   ras_monitor *monitor_instance;
 };
