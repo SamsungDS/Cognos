@@ -1171,16 +1171,30 @@ Status ControllerServicer::FeatureAPI(ServerContext *ctxt,
   std::string command_name = req->command_name();
   std::string command_params = req->command_params();
 
-  if (cluster_name.length() == 0) {
+  node_info n;
+  std::string node_ip = "";
+  // If node name is provided, get the IP and cluster if needed
+  // Otherwise, the command will be run on all nodes in given cluster
+  if (node_name.length() != 0) {
     try {
-      node_info n = m_registered_nodes.at(node_name);
-      cluster_name = n.cluster_name;
+      // Note: must use the node_name to find the ip/cluster, not the IP
+      n = m_registered_nodes.at(node_name);
     } catch (const std::out_of_range &e) {
       logger_str =
-          "Could not find a cluster_name for node <" + node_name + ">.";
+          "Could not find node_info for node name <" + node_name + ">.";
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                  logger_str.c_str());
+      resp->set_error_id_or_string_if_any(logger_str);
+      resp->set_error_code(SVK_STATUS_FAIL);
+      return Status(grpc::INVALID_ARGUMENT, logger_str);
     }
+    // If cluster_name is not provided and the node_name is, try to find the
+    // cluster
+    if (cluster_name.length() == 0) {
+      cluster_name = n.cluster_name;
+    }
+    // Send the node_ip to ProcessControllerCommand for now
+    node_ip = n.node_ip;
   }
 
   resp->set_api_version(API_VERSION);
@@ -1203,7 +1217,7 @@ Status ControllerServicer::FeatureAPI(ServerContext *ctxt,
   // node_name, if provided, should be the ip right now (node.id)
   // Since ProcessControllerCommand uses old cluster map, we need to give the ip
   // provided in config
-  cmd_req.set_node_id(node_name);
+  cmd_req.set_node_id(node_ip);
   // Only taking feature_name, command_name, and command_params for FeatureAPI
   cmd_req.set_feature_name(feature_name);
   cmd_req.set_command_name(command_name);
