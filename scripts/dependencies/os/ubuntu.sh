@@ -45,14 +45,6 @@ package_manager() {
     eval "$INSTALL_STRING"
 }
 
-# Configure google chrome for selenium tests
-configure_chrome() {
-    wget -q -O /tmp/chromedriver.zip https://chromedriver.storage.googleapis.com/114.0.5735.90/chromedriver_linux64.zip
-    unzip /tmp/chromedriver.zip
-    rm -rf /tmp/chromedriver.zip
-    chmod +x chromedriver
-}
-
 install_build_deps
 # Commenting this out because it is not being used and it is not idempotent
 # To be addressed in a future MR
