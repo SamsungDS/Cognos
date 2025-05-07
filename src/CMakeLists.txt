@@ -8,7 +8,6 @@ add_subdirectory(utils)
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/utils/rte_ring)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../adapters/mock_adapter/src)
 add_library(${RAS} SHARED ${RAS_SRC} ${RAS_INC})
 add_dependencies(${RAS} rte_ring)
 target_include_directories(${RAS} PUBLIC ${RAS_INCLUDE_DEST})

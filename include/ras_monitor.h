@@ -12,8 +12,8 @@ struct ras_request {
               std::string out, ras_monitor *monitor_instance)
       : is_internal_request(is_internal_request),
         is_sync_request(is_sync_request),
-        request_details(in),
-        response(out),
+        input(in),
+        output(out),
         monitor_instance(monitor_instance) {
     is_completed = false;
   }
@@ -26,9 +26,9 @@ struct ras_request {
   std::condition_variable sync_cv;
 
   // Request method and params
-  std::string request_details;
+  std::string input;
   // Response string
-  std::string response;
+  std::string output;
 
   ras_monitor *monitor_instance;
 };
@@ -55,7 +55,7 @@ class ras_monitor {
   std::vector<ras_device> devices;
 
   static void process_request(ras_request *req) {
-    if (req->is_sync_request) {
+    if ((req != nullptr) && (req->is_sync_request)) {
       req->monitor_instance->process_request_sync(req);
     }
     return;
@@ -63,6 +63,9 @@ class ras_monitor {
 
   void set_sync_request_completed(ras_request *req);
   void process_request_sync(ras_request *req);
+  friend inline void proc_req(const ras_monitor &rm, ras_request *req) {
+    process_request(req);
+  }
 
  public:
   ras_monitor(/* args */);

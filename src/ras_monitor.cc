@@ -1,8 +1,11 @@
 #include "ras_monitor.h"
 
+#include <boost/property_tree/json_parser.hpp>
 #include <sstream>
 
 #include "ras.hpp"
+
+using namespace std;
 
 ras_monitor::ras_monitor(/* args */) {
   ras_monitor_ = std::make_unique<RequestProcessor<ras_request>>(
@@ -15,13 +18,21 @@ void ras_monitor::set_sync_request_completed(ras_request *req) {
   std::lock_guard<std::mutex> lock(req->sync_mutex);
   req->is_completed = true;
 }
+
 void ras_monitor::process_request_sync(ras_request *req) {
   // TODO
-  std::stringstream ss;
-  ss << req->request_details;
-  boost::property_tree::ptree pt;
-  boost::property_tree::read_json(ss, pt);
-  std::cout << "Command Name:" << pt.get<std::string>("command") << std::endl;
+  if (req == nullptr) return;
+
+  try {
+    std::stringstream ss;
+    ss << req->input;
+    boost::property_tree::ptree pt;
+    boost::property_tree::read_json(ss, pt);
+    std::string cmd_name = pt.get<std::string>("command");
+    std::cout << "Command Name:" << cmd_name << std::endl;
+  } catch (const boost::property_tree::ptree_error &e) {
+    std::cout << e.what() << std::endl;
+  }
 
   set_sync_request_completed(req);
 
