@@ -47,5 +47,14 @@ TEST(RasMonitorTest, ProcessRequestSync) {
   proc_req(rm, dummy_request_1);
   ASSERT_EQ(strcmp(dummy_request->output.c_str(), ""), 0);
 
+  std::string instr_2 = R"(A sample RAS string)";
+  ras_request *dummy_request_2 =
+      new ras_request(false, true, instr_2, outstr, test_mon_inst.get());
+
+  proc_req(rm, dummy_request_2);
+  ASSERT_EQ(strcmp(dummy_request->output.c_str(), ""), 0);
+
   delete dummy_request;
+  delete dummy_request_1;
+  delete dummy_request_2;
 }
