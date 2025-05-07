@@ -22,19 +22,17 @@ void ras_monitor::set_sync_request_completed(ras_request *req) {
 void ras_monitor::process_request_sync(ras_request *req) {
   // TODO
   boost::property_tree::ptree pt;
-  if (req != nullptr) {
-    try {
-      std::stringstream ss;
-      ss << req->input;
-      boost::property_tree::read_json(ss, pt);
-      std::string cmd_name = pt.get<std::string>("command");
-      // std::cout << "Command Name:" << cmd_name << std::endl;
-    } catch (const boost::property_tree::ptree_error &e) {
-      std::cout << e.what() << std::endl;
-    }
-  } else {
-    return;
+  std::stringstream ss;
+  if (req == nullptr) return;
+
+  try {
+    ss << req->input;
+    boost::property_tree::read_json(ss, pt);
+    std::string cmd_name = pt.get<std::string>("command");
+  } catch (const boost::property_tree::ptree_error &e) {
+    std::cout << e.what() << std::endl;
   }
+
   set_sync_request_completed(req);
 
   req->sync_cv.notify_one();
