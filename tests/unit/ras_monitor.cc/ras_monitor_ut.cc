@@ -54,7 +54,6 @@ TEST(RasMonitorTest, ProcessRequestSync) {
   proc_req(rm, dummy_request_2);
   ASSERT_EQ(strcmp(dummy_request->output.c_str(), "getErrorCount"), 0);
 
-
   delete dummy_request;
   delete dummy_request_1;
   delete dummy_request_2;
