@@ -26,7 +26,7 @@ void ras_monitor::process_request_sync(ras_request *req) {
   try {
     ss << req->input;
     boost::property_tree::read_json(ss, pt);
-    // std::string cmd_name = pt.get<std::string>("command");
+    req->output = pt.get<std::string>("command");
   } catch (const boost::property_tree::ptree_error &e) {
     svk_logger(RAS_LOGGER, level_E::ERROR, e.what());
   }
