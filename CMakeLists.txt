@@ -22,8 +22,8 @@ add_compile_options(${SVKFW_CFLAGS})
 
 set(PARENT_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_subdirectory(adapters)
 add_subdirectory(src)
+add_subdirectory(adapters)
 add_subdirectory(config)
 
 if(BUILD_TESTING)

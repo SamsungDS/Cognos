@@ -5,8 +5,6 @@
 
 #include "ras.hpp"
 
-using namespace std;
-
 ras_monitor::ras_monitor(/* args */) {
   ras_monitor_ = std::make_unique<RequestProcessor<ras_request>>(
       ras_monitor::process_request);
@@ -30,7 +28,7 @@ void ras_monitor::process_request_sync(ras_request *req) {
     boost::property_tree::read_json(ss, pt);
     // std::string cmd_name = pt.get<std::string>("command");
   } catch (const boost::property_tree::ptree_error &e) {
-    std::cout << e.what() << std::endl;
+    svk_logger(RAS_LOGGER, level_E::ERROR, e.what());
   }
 
   set_sync_request_completed(req);
