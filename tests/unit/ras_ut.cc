@@ -169,7 +169,8 @@ TEST_F(ConfigUnitTest, SVKEXEC) {
   svk_pass_thru_cmd pass_thru;
   pass_thru.feat_id = ZERO_ETL;
   svk_input input;
-  std::string input_str = "Passing a RAS string";
+  std::string input_str =
+      R"({"command": "getErrorCount", "device": "0", "type": "correctable"})";
   input.input_buffer = (uint8_t *)input_str.c_str();
   input.len = input_str.length();
   svk_output output;
@@ -184,7 +185,9 @@ TEST_F(ConfigUnitTest, SVKEXEC) {
   logFile.close();
   EXPECT_NE(std::string::npos,
             logs.find("[ras] [info] ras execute_sync called."));
-  EXPECT_NE(std::string::npos, logs.find("input buffer: Passing a RAS string"));
+  EXPECT_NE(std::string::npos,
+            logs.find("input buffer: {\"command\": \"getErrorCount\", "
+                      "\"device\": \"0\", \"type\": \"correctable\"}"));
   EXPECT_NE(std::string::npos, logs.find("output buffer:"));
   clean_up(nullptr);
   unlink("conf.json");
