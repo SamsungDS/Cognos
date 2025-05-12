@@ -12,7 +12,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include "mbox_a1.h"
 #include "sc_api_structs.h"
 #include "sc_endpoint.h"
 #include "sc_host.h"

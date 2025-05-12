@@ -3,8 +3,12 @@
 #include <jansson.h>
 
 #include <cerrno>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <mutex>
 #include <sstream>
+#include <string>
 
 #include "sc_logger.h"
 
@@ -185,4 +189,85 @@ bool is_device_list_empty(const std::string& json_response) {
       "Device list contains " + std::to_string(count) + " entries.");
   json_decref(root);
   return count == 0;
+}
+
+static const DevTypeMap* global_dev_type_map = nullptr;
+
+void set_global_dev_type_map(const DevTypeMap& external_map) {
+  global_dev_type_map = &external_map;
+}
+
+const DevTypeMap* get_global_dev_type_map() { return global_dev_type_map; }
+
+const DevTypeMap& load_dev_type_mapping_csv(const std::string& filepath) {
+  static DevTypeMap internal_map;
+  static std::once_flag init_flag;
+
+  std::call_once(init_flag, [&]() {
+    std::ifstream infile(filepath);
+    if (!infile.is_open()) {
+      LOG(level_E::ERROR,
+          "Failed to open device type mapping file: " + filepath);
+      return;
+    }
+
+    std::string line;
+    while (std::getline(infile, line)) {
+      // skip comments, blank lines
+      if (line.empty() || line[0] == '#') continue;
+      std::istringstream ss(line);
+      std::string type, vendor_str, device_str;
+
+      if (std::getline(ss, type, ',') && std::getline(ss, vendor_str, ',') &&
+          std::getline(ss, device_str, ',')) {
+        try {
+          uint16_t vendor = std::stoul(vendor_str, nullptr, 16);
+          uint16_t device = std::stoul(device_str, nullptr, 16);
+          internal_map[{vendor, device}] = type;
+        } catch (const std::exception& ex) {
+          LOG(level_E::WARN,
+              "Failed to parse line: " + line + " — " + ex.what());
+        }
+      }
+    }
+
+    LOG(level_E::INFO, "Loaded " + std::to_string(internal_map.size()) +
+                           " device ID mappings from: " + filepath);
+    global_dev_type_map = &internal_map;
+  });
+
+  return *global_dev_type_map;
+}
+
+int validate_csv_file(const std::string& filepath) {
+  if (std::filesystem::exists(filepath)) {
+    LOG(level_E::INFO, "CSV file found: " + filepath);
+    return 0;
+  } else {
+    LOG(level_E::ERROR, "CSV file missing: " + filepath);
+    return -ENOENT;
+  }
+}
+
+int parse_json_key(const std::string& json_file, const std::string& key,
+                   std::string& value) {
+  json_error_t error;
+  json_t* root = json_load_file(json_file.c_str(), 0, &error);
+  if (!root) {
+    LOG(level_E::ERROR,
+        "Failed to load JSON file: " + json_file + " error: " + error.text);
+    return -ENOENT;
+  }
+
+  json_t* jval = json_object_get(root, key.c_str());
+  if (!jval || !json_is_string(jval)) {
+    json_decref(root);
+    LOG(level_E::ERROR, "Key missing or not a string: " + key);
+    return -EINVAL;
+  }
+
+  value = json_string_value(jval);
+  LOG(level_E::INFO, "Extracted key " + key + " with value: " + value);
+  json_decref(root);
+  return 0;
 }

@@ -4,6 +4,7 @@ file(GLOB HEADERS include/*.h tm/include/*.h)
 
 # Create a library
 add_library(cxl ${SOURCES} ${HEADERS})
+add_subdirectory(cmmh)
 
 find_library(JSON NAMES "libjansson.so" REQUIRED)
 if (NOT JSON)

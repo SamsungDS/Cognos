@@ -36,11 +36,9 @@ std::vector<sc_device> DeviceManager::list_devices() {
 
   for (const auto& [adapter_name, adapter] : get_adapters()) {
     if (!adapter) continue;
-
     try {
       // Adapter returns a list of its managed devices
       std::vector<sc_device> adapter_devices = adapter->list_devices();
-
       // Append adapter’s devices to the aggregated result
       result.insert(result.end(), adapter_devices.begin(),
                     adapter_devices.end());
@@ -49,7 +47,6 @@ std::vector<sc_device> DeviceManager::list_devices() {
           "Adapter list_devices threw exception: " + std::string(ex.what()));
     }
   }
-
   return result;
 }
 
@@ -133,7 +130,6 @@ std::optional<DevInfo> DeviceManager::get_device_info(uint64_t d_id) {
 
 void DeviceManager::register_device(const sc_id& sid,
                                     CXLDeviceAdapter* adapter) {
-  std::lock_guard<std::mutex> lock(registryMutex);
   uint64_t d_id = sid.get_sc_id();
   d_id_to_sc_id[d_id] = sid;
   sc_id_to_adapter[sid] = adapter;
@@ -141,7 +137,6 @@ void DeviceManager::register_device(const sc_id& sid,
 }
 
 void DeviceManager::unregister_device(CXLDeviceAdapter* adapter) {
-  std::lock_guard<std::mutex> lock(registryMutex);
   // Remove all sc_ids associated with this adapter
   std::vector<sc_id> ids_to_remove;
   for (const auto& [scid, registered_adapter] : sc_id_to_adapter) {
@@ -163,8 +158,6 @@ void DeviceManager::unregister_device(CXLDeviceAdapter* adapter) {
  */
 void DeviceManager::registerAdapter(const std::string& name,
                                     CXLDeviceAdapter* adapter) {
-  // Lock before modifying
-  std::lock_guard<std::mutex> lock(registryMutex);
   adapterMap[name] = adapter;
   LOG(level_E::INFO, "Adapter '" + name + "' registered successfully.");
 }
@@ -173,8 +166,6 @@ void DeviceManager::registerAdapter(const std::string& name,
  * @brief Unregisters a device adapter.
  */
 void DeviceManager::unregisterAdapter(const std::string& name) {
-  // Lock before modifying
-  std::lock_guard<std::mutex> lock(registryMutex);
   if (adapterMap.erase(name)) {
     LOG(level_E::INFO, "Adapter '" + name + "' unregistered successfully.");
   } else {
@@ -187,8 +178,6 @@ void DeviceManager::unregisterAdapter(const std::string& name) {
  * @brief Retrieves a registered adapter by name.
  */
 CXLDeviceAdapter* DeviceManager::getAdapter(const std::string& name) {
-  // Lock before accessing
-  std::lock_guard<std::mutex> lock(registryMutex);
   auto it = adapterMap.find(name);
   if (it != adapterMap.end()) {
     LOG(level_E::INFO, "Adapter '" + name + "' retrieved successfully.");
@@ -200,7 +189,7 @@ CXLDeviceAdapter* DeviceManager::getAdapter(const std::string& name) {
 
 const std::unordered_map<std::string, CXLDeviceAdapter*>&
 DeviceManager::get_adapters() {
-  std::lock_guard<std::mutex> lock(registryMutex);
+  LOG(level_E::INFO, "DeviceManager::get_adapters called.");
   return adapterMap;
 }
 
@@ -228,4 +217,12 @@ void DeviceManager::discover_devices() {
     }
   }
   LOG(level_E::INFO, "DeviceManager: Completed device discovery.");
+}
+
+const std::unordered_map<uint64_t, sc_id>& DeviceManager::get_d_id_map() const {
+  return d_id_to_sc_id;
+}
+const std::unordered_map<sc_id, CXLDeviceAdapter*, hash_sc_id>&
+DeviceManager::get_sc_id_adapter_map() const {
+  return sc_id_to_adapter;
 }

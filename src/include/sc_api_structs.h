@@ -19,15 +19,15 @@ struct Capabilities {
 };
 
 struct DevStaticInfo {
-  uint64_t id = 0;
+  uint64_t device_id = 0;
   std::string manufacturer;
   uint64_t serial_number;
   std::string fw_revision;
   std::string location;
   uint64_t total_capacity_MB = 0;
   std::string feature_supported;
-  std::string device_type;
-  std::string cxl_type;
+  std::string vendor_device_type;
+  std::string cxl_device_type;
   uint32_t domain_id = 0;
   std::string domain_type;
   std::string connection_type;

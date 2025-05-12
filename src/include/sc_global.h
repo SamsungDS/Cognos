@@ -4,7 +4,8 @@
 #include <memory>
 
 #include "sc_device.h"
-#include "sc_fm.h"
+// #include "sc_fm.h"
+#include "mbox_a1.h"
 
 class sc_mbox;
 
@@ -93,23 +94,23 @@ class sc_global {
    * @brief Retrieve a pointer to the FabricManager associated with the given
    * sc_id
    */
-  FabricManager* find_fm(const sc_id& id);
+  // FabricManager* find_fm(const sc_id& id);
 
   /**
    * @brief Add a FabricManager by reference associated with an sc_id to the map
    */
-  void add_fm(const sc_id& id, FabricManager& manager);
+  // void add_fm(const sc_id& id, FabricManager& manager);
 
   /**
    * @brief remove the FabricManager pointer associated
    *        with the given sc_id from fm_map
    */
-  void del_fm(const sc_id& id);
+  // void del_fm(const sc_id& id);
 
   /**
    * @brief get all keys (sc_id) as a list
    */
-  std::vector<sc_id> get_fm_keys() const;
+  // std::vector<sc_id> get_fm_keys() const;
 
  private:
   std::unordered_map<uint64_t, sc_mbox*> sc_devices;
@@ -118,12 +119,12 @@ class sc_global {
   /**
    * Map storing pointers to FabricManager objects
    */
-  std::unordered_map<sc_id, FabricManager*, hash_sc_id> fm_map;
+  // std::unordered_map<sc_id, FabricManager*, hash_sc_id> fm_map;
 
   /**
    * @brief Cleanup dynamically allocated FabricManager objects
    */
-  void cleanup_fm_map();
+  // void cleanup_fm_map();
 };
 
 /**< global object */

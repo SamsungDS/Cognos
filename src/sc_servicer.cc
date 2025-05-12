@@ -19,14 +19,11 @@
 
 #include "framework_downstream.h"
 #include "sc_api_structs.h"
-#include "sc_cmmb.h"
-#include "sc_cmmd.h"
-#include "sc_cmmh.h"
 #include "sc_dev_manager.h"
-#include "sc_fm.h"
 #include "sc_global.h"
 #include "sc_logger.h"
 #include "sc_mbox.h"
+#include "sc_plugin_manager.h"
 #include "sc_utility.h"
 #include "tuner.h"
 #include "yaml-cpp/yaml.h"
@@ -36,9 +33,7 @@ extern "C" {
 }
 
 constexpr char DELIMITER[] = ",";
-
 using namespace std;
-
 sc_global cxl_global;
 
 // function pointers for the commands
@@ -126,29 +121,19 @@ int init_log(const std::string& config_file) {
   }
 }
 
-/**
- * @brief Parses a JSON input string to extract command name and parameters.
- *
- * This method handles both modern and legacy JSON input formats.
- *
- * @param input_str JSON stringified input (must contain `command_name` key).
- * @param[out] command Extracted command name.
- * @param[out] params Flattened key-value pairs from "command_params" if
- * present.
- * @return true if JSON was parsed successfully and command was found, false
- * otherwise.
- */
 bool process_json_request(
     const std::string& input_str, std::string& command,
     std::unordered_map<std::string, std::string>& params) {
   LOG(level_E::INFO, "Processing JSON request.");
   json_error_t error;
   json_t* root = json_loads(input_str.c_str(), 0, &error);
+
   if (!root) {
     LOG(level_E::ERROR, "Failed to parse JSON: " + std::string(error.text));
     return false;
   }
-  // Extract `command_name`
+
+  // Extract command_name
   json_t* command_json = json_object_get(root, "command_name");
   if (!command_json || !json_is_string(command_json)) {
     LOG(level_E::ERROR, "Missing or invalid 'command_name' in JSON request.");
@@ -157,26 +142,34 @@ bool process_json_request(
   }
   command = json_string_value(command_json);
   LOG(level_E::INFO, "Extracted command_name: " + command);
-  // Extract `command_params`
+
+  // Extract command_params
   json_t* params_json = json_object_get(root, "command_params");
   if (params_json && json_is_object(params_json)) {
     LOG(level_E::INFO, "Extracting command_params...");
     const char* key;
     json_t* value;
+
     json_object_foreach(params_json, key, value) {
       if (json_is_string(value)) {
         params[key] = json_string_value(value);
         LOG(level_E::INFO, "Param extracted - Key: " + std::string(key) +
                                ", Value: " + params[key]);
+      } else if (json_is_integer(value)) {
+        params[key] = std::to_string(json_integer_value(value));
+        LOG(level_E::INFO, "Param extracted (integer) - Key: " +
+                               std::string(key) + ", Value: " + params[key]);
       } else {
+        // Fallback for arrays, booleans, objects
         params[key] = json_dumps(value, JSON_COMPACT);
         LOG(level_E::INFO,
-            "Param extracted (Non-string) - Key: " + std::string(key));
+            "Param extracted (JSON dump) - Key: " + std::string(key));
       }
     }
   } else {
     LOG(level_E::INFO, "No command_params found in JSON request.");
   }
+
   json_decref(root);
   LOG(level_E::INFO, "JSON request processed successfully.");
   return true;
@@ -371,127 +364,23 @@ std::string DetachMemory(const std::string& input) {
 }
 
 /**
- * @brief provide direct attached host or switch setup such as hosts, devices,
- * endpoints.
- * @param input string having Cluster ID, Command, ID.
- * @return setup details as string.
- */
+ * @brief provide switch setupinfo such as hosts, devices,
+ * endpoints.
+ * @param input string having Cluster ID, Command, ID.
+ * @return setup details as string.
+ */
 std::string SetupInfo(const std::string& input) {
   LOG(level_E::INFO, "SetupInfo called with input: " + input);
   std::string output;
   std::string buffer;
   std::unordered_map<std::string, std::string> tokens_map = token_helper(input);
-  // Retrieve all sc_id keys from cxl_global
-  std::vector<sc_id> fm_keys = cxl_global.get_fm_keys();
-  output += "[";
-  // Counter to track the number of FabricManagers parsed
-  uint32_t fm_count = 0;
-  // Iterate over each key, retrieve the FabricManager, and call setup_info
-  for (auto& id : fm_keys) {
-    FabricManager* manager = cxl_global.find_fm(id);
-    if (manager) {
-      LOG(level_E::INFO, "Calling setup_info for FabricManager ID: " +
-                             std::to_string(id.get_sc_id()));
-      size_t bytes_written = manager->setup_info(buffer);
-      buffer.resize(bytes_written);
-      if (fm_count > 0) {
-        output += std::string(DELIMITER);
-      }
-      output += buffer;
-      ++fm_count;
-    }
-  }
-  output += "]";
-  if (fm_count == 0) {
-    LOG(level_E::WARN, "SetupInfo: No FabricManager found.");
-  } else {
-    LOG(level_E::INFO,
-        "SetupInfo completed successfully. FabricManagers processed: " +
-            std::to_string(fm_count));
-  }
-  return output;
-}
-
-void create_dev_cmmd(json_t* config) {
-  // Allocate DevCMMD on the heap
-  LOG(level_E::INFO, "Creating DevCMMD fabric manager...");
-  DevCMMD* manager = new DevCMMD(config);
-  cxl_global.add_fm(manager->get_fmid(), *manager);
-  LOG(level_E::INFO, "Added DevCMMD to fabric manager map.");
-}
-
-void create_dev_cmmh(json_t* config) {
-  // Allocate DevCMMH on the heap
-  LOG(level_E::INFO, "Creating DevCMMH fabric manager...");
-  DevCMMH* manager = new DevCMMH(config);
-  cxl_global.add_fm(manager->get_fmid(), *manager);
-  LOG(level_E::INFO, "Added DevCMMH to fabric manager map.");
-}
-
-void create_dev_cmmb(json_t* config) {
-  // Allocate DevCMMB on the heap
-  LOG(level_E::INFO, "Creating DevCMMB fabric manager...");
-  DevCMMB* manager = new DevCMMB(config);
-  cxl_global.add_fm(manager->get_fmid(), *manager);
-  LOG(level_E::INFO, "Added DevCMMB to fabric manager map.");
-}
-
-const std::unordered_map<std::string, std::function<void(json_t*)>>
-    factory_map = {{"FM_DIRECT_CMMD", create_dev_cmmd},
-                   {"FM_DIRECT_CMMH", create_dev_cmmh},
-                   {"FM_REMOTE_CMMB", create_dev_cmmb}};
-
-/**
- * Helper function to create cmmb fabric manager map dynamically
- */
-json_t* parse_input_config(std::string& buffer) {
-  LOG(level_E::INFO, "Fetching setup info for CMMB fabric manager...");
+  LOG(level_E::INFO, "Fetching setup info for CMMB...");
+  // Call global function to fetch setup info
   size_t bytes_written = cxl_global.fetch_setup_info(buffer);
   buffer.resize(bytes_written);
-  json_error_t error;
-  json_t* parsed_buffer = json_loads(buffer.c_str(), 0, &error);
-  json_t* hosts = json_object_get(parsed_buffer, "Hosts");
-  json_t* devices = json_object_get(parsed_buffer, "Devices");
-  if (!hosts || !devices) {
-    LOG(level_E::ERROR, "Missing 'Hosts' or 'Devices' in parsed JSON.");
-    json_decref(parsed_buffer);
-    return nullptr;
-  }
-  LOG(level_E::INFO, "Constructing CMMB fabric manager entry...");
-  json_t* cmmb_fm = json_object();
-  json_object_set_new(cmmb_fm, "id", json_integer(4004));
-  json_object_set_new(cmmb_fm, "type", json_string("FM_REMOTE_CMMB"));
-  json_object_set(cmmb_fm, "Hosts", hosts);
-  json_object_set(cmmb_fm, "Devices", devices);
-  LOG(level_E::INFO, "CMMB fabric manager entry constructed successfully.");
-  json_decref(parsed_buffer);
-  return cmmb_fm;
-}
-
-/**
- * @brief function would take each fabric_manager entry, check for a valid type
- *        and handle unknown types
- */
-int process_fabric_manager(json_t* fabric_manager) {
-  LOG(level_E::INFO, "Processing a fabric_manager entry...");
-  json_t* type_json = json_object_get(fabric_manager, "type");
-  if (!json_is_string(type_json)) {
-    LOG(level_E::ERROR, "Missing or invalid 'type' field in fabric_manager.");
-    return 1;
-  }
-  std::string type_str = json_string_value(type_json);
-  LOG(level_E::INFO, "Fabric manager type detected: " + type_str);
-  auto it = factory_map.find(type_str);
-  if (it != factory_map.end()) {
-    LOG(level_E::INFO,
-        "Executing factory function for fabric manager type: " + type_str);
-    it->second(fabric_manager);
-  } else {
-    LOG(level_E::ERROR, "Unknown fabric_manager type: " + type_str);
-    return 2;
-  }
-  LOG(level_E::INFO, "Fabric manager processing completed.");
-  return 0;
+  output = buffer;
+  LOG(level_E::INFO, "SetupInfo completed successfully.");
+  return output;
 }
 
 bool is_file_empty_or_missing(const std::string& file_path) {
@@ -507,45 +396,6 @@ bool is_file_empty_or_missing(const std::string& file_path) {
   }
   LOG(level_E::INFO, "File check passed: " + file_path);
   return false;
-}
-
-/**
- * @brief  Function to load the JSON config file with path availability check,
- *         error handling and return the json_t object
- */
-json_t* direct_config(const std::string& input_config) {
-  LOG(level_E::INFO, "Loading JSON configuration from: " + input_config);
-  json_error_t error;
-  json_t* config_json = json_load_file(input_config.c_str(), 0, &error);
-  if (!config_json) {
-    LOG(level_E::ERROR, "Error loading JSON file: " + std::string(error.text));
-  }
-  return config_json;
-}
-
-/**
- * @brief  load and validate the JSON structure, ensuring the file is correctly
- * parsed and contains a fabric_managers array
- */
-json_t* load_json_config(const std::string& config_path) {
-  LOG(level_E::INFO, "Loading JSON configuration: " + config_path);
-  json_t* root = direct_config(config_path);
-  if (!root || !json_is_object(root)) {
-    LOG(level_E::ERROR,
-        "Failed to load or parse configuration file: " + config_path);
-    return nullptr;
-  }
-  json_t* fabric_managers = json_object_get(root, "fabric_managers");
-  if (!json_is_array(fabric_managers)) {
-    LOG(level_E::ERROR,
-        "Invalid or missing `fabric_managers` array in configuration file: " +
-            config_path);
-    json_decref(root);
-    return nullptr;
-  }
-  LOG(level_E::INFO,
-      "Successfully loaded JSON configuration from: " + config_path);
-  return root;
 }
 
 std::string handle_list_devices(
@@ -611,9 +461,11 @@ std::string handle_list_devices(
   for (const auto& dev : devices) {
     DevInfo info = dev.to_device_info();
     json_t* obj = json_object();
-    json_object_set_new(obj, "id", json_integer(info.static_info.id));
-    json_object_set_new(obj, "type",
-                        json_string(info.static_info.device_type.c_str()));
+    json_object_set_new(obj, "device_id",
+                        json_integer(info.static_info.device_id));
+    json_object_set_new(
+        obj, "vendor_device_type",
+        json_string(info.static_info.vendor_device_type.c_str()));
     json_object_set_new(obj, "pcie_addr",
                         json_string(info.static_info.location.c_str()));
     json_array_append_new(array, obj);
@@ -645,7 +497,8 @@ std::string handle_get_device_info(
   json_t* root = json_object();
   json_object_set_new(root, "api_version", json_real(1.0));
   // Static fields
-  json_object_set_new(root, "id", json_integer(dev.static_info.id));
+  json_object_set_new(root, "device_id",
+                      json_integer(dev.static_info.device_id));
   json_object_set_new(root, "manufacturer",
                       json_string(dev.static_info.manufacturer.c_str()));
   json_object_set_new(root, "serial_number",
@@ -658,10 +511,10 @@ std::string handle_get_device_info(
                       json_integer(dev.static_info.total_capacity_MB));
   json_object_set_new(root, "feature_supported",
                       json_string(dev.static_info.feature_supported.c_str()));
-  json_object_set_new(root, "device_type",
-                      json_string(dev.static_info.device_type.c_str()));
-  json_object_set_new(root, "cxl_type",
-                      json_string(dev.static_info.cxl_type.c_str()));
+  json_object_set_new(root, "vendor_device_type",
+                      json_string(dev.static_info.vendor_device_type.c_str()));
+  json_object_set_new(root, "cxl_device_type",
+                      json_string(dev.static_info.cxl_device_type.c_str()));
   json_object_set_new(root, "protocol",
                       json_string(dev.static_info.protocol.c_str()));
   json_object_set_new(root, "port_type",
@@ -757,49 +610,6 @@ int cmmb_a1_init() {
   return 0;
 }
 
-void fm_init() {
-  LOG(level_E::INFO, "Initializing Fabric Manager...");
-  if (is_file_empty_or_missing(INPUT_CONF_FILE)) {
-    LOG(level_E::WARN,
-        "Skipping Fabric Manager initialization due to missing or empty input "
-        "config: " +
-            std::string(INPUT_CONF_FILE));
-    return;
-  }
-  LOG(level_E::INFO, "Loading Fabric Manager configuration...");
-  json_t* root = load_json_config(INPUT_CONF_FILE);
-  if (!root) {
-    LOG(level_E::ERROR, "Error loading JSON configuration from " +
-                            std::string(INPUT_CONF_FILE));
-    return;
-  }
-  LOG(level_E::INFO, "Extracting `fabric_managers` array...");
-  json_t* fabric_managers = json_object_get(root, "fabric_managers");
-  std::string buffer;
-  json_t* cmmb_fm = parse_input_config(buffer);
-  if (cmmb_fm) {
-    LOG(level_E::INFO,
-        "Adding CMMB fabric manager to `fabric_managers` array.");
-    json_array_append_new(fabric_managers, cmmb_fm);
-  } else {
-    LOG(level_E::ERROR,
-        "CMMB fabric manager is null; skipping addition to `fabric_managers` "
-        "array.");
-  }
-  size_t index;
-  json_t* fabric_manager;
-  json_array_foreach(fabric_managers, index, fabric_manager) {
-    LOG(level_E::INFO, "Processing Fabric Manager " + std::to_string(index));
-    if (process_fabric_manager(fabric_manager) != 0) {
-      LOG(level_E::WARN,
-          "Error processing Fabric Manager at index " + std::to_string(index));
-      continue;
-    }
-  }
-  LOG(level_E::INFO, "Fabric Manager initialization completed.");
-  json_decref(root);
-}
-
 /**
  * @brief init tm functionality
  * @details As cxl cleanup is not called,
@@ -823,7 +633,7 @@ int init_cxl_plugin() {
   int mret = cmmb_a1_init();
   LOG(level_E::INFO,
       "CMMB A1 initialization returned: " + std::to_string(mret));
-  fm_init();
+  // fm_init();
   tm_init();
   return mret;
 }
@@ -868,11 +678,29 @@ svk_status initialize(void*) {
   }
 
   try {
+    std::string plugin_dir;
+    int plugin_path_status =
+        parse_json_key(CXL_CONF_FILE, "plugin_dir", plugin_dir);
+    if (plugin_path_status != 0) {
+      LOG(level_E::ERROR, "Plugin directory not configured or invalid.");
+      return SVK_STATUS_FAIL;
+    }
+
+    int csv_status = validate_csv_file(CXL_ID_TYPE_MAP_FILE);
+    if (csv_status != 0) {
+      LOG(level_E::ERROR, "Device ID mapping CSV not found.");
+      return SVK_STATUS_FAIL;
+    }
+    // Load and cache device type map globally
+    const auto& map = load_dev_type_mapping_csv(CXL_ID_TYPE_MAP_FILE);
+    set_global_dev_type_map(map);
     static DeviceManager mgr;
     g_dev_mgr = &mgr;
-    // PluginManager plugin_mgr(g_dev_mgr);
-    // plugin_mgr.loadAllPlugins();
-    LOG(level_E::INFO, "All singletons initialized successfully.");
+    static PluginManager plugin_mgr(mgr);
+    plugin_mgr.loadAllPlugins(plugin_dir);
+    mgr.discover_devices();
+    LOG(level_E::INFO,
+        "Device Discovery is completed successfully from `init`.");
   } catch (const std::exception& e) {
     LOG(level_E::ERROR, "Initialization failed: " + std::string(e.what()));
     return SVK_STATUS_FAIL;

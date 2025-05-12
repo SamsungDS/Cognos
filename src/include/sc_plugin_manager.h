@@ -10,7 +10,7 @@
  * @class PluginManager
  * @brief Manages dynamic loading and unloading of cxladapter plugin modules.
  *
- * PluginManager is responsible for discovering, loading, unloading, and
+ * PluginManager is responsible for discovering, loading, unloading and
  * managing dynamically linked plugin libraries (e.g. cmm-h.so, cmm-d.so and
  * cmm-b.so). It supports both individual plugin handling and bulk operations.
  */
@@ -19,13 +19,12 @@ class PluginManager {
   /**
    * @brief Constructs a PluginManager.
    *
-   * Initializes the plugin manager with plugin directory and a reference to
+   * Initializes the plugin manager with a reference to
    * DeviceManager.
-   * @param plugin_dir Path to the directory containing plugin `.so` files.
    * @param manager reference to DeviceManager instance for
    * registering/unregistering adapters.
    */
-  explicit PluginManager(const std::string& plugin_dir, DeviceManager& manager);
+  explicit PluginManager(DeviceManager& manager);
 
   /**
    * @brief Destructor. Ensures all loaded plugins are properly unloaded.
@@ -37,10 +36,10 @@ class PluginManager {
    *
    * Scans the specified directory, attempts to load each `.so` file, and
    * registers the plugin via a known symbol.
-   *
+   * @param plugin_dir Path to the directory containing plugin `.so` files.
    * @return 0 on success, or negative POSIX error code on failure.
    */
-  int loadAllPlugins();
+  int loadAllPlugins(const std::string& plugin_dir);
 
   /**
    * @brief Unloads all currently loaded plugins.
@@ -87,4 +86,5 @@ class PluginManager {
   // Stores loaded plugin handles (e.g. from dlopen)
   std::unordered_map<std::string, void*> loaded_plugins_;
 };
+
 #endif

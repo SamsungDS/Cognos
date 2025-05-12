@@ -1,7 +1,6 @@
 #ifndef DEVICE_MANAGER_H
 #define DEVICE_MANAGER_H
 
-#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -146,6 +145,12 @@ class DeviceManager {
    */
   void discover_devices();
 
+  // debug
+  const std::unordered_map<uint64_t, sc_id>& get_d_id_map() const;
+  const std::unordered_map<sc_id, CXLDeviceAdapter*, hash_sc_id>&
+  get_sc_id_adapter_map() const;
+  // debug
+
  private:
   /**
    * @brief Map storing registered adapters.
@@ -161,11 +166,6 @@ class DeviceManager {
    * @brief Map storing id object to adapter.
    */
   std::unordered_map<sc_id, CXLDeviceAdapter*, hash_sc_id> sc_id_to_adapter;
-
-  /**
-   * @brief Mutex for thread-safe access.
-   */
-  std::mutex registryMutex;
 };
 
 #endif
