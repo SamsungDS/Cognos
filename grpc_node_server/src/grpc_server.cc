@@ -170,11 +170,14 @@ Status Servicer::ProcessNodeCommand(ServerContext *ctxt,
 
     using json = nlohmann::json;
     json command_params;
+    json res;
+    res["command_params"] = "";
     try {
       if (req->command_params().length()) {
         command_params = json::parse(req->command_params());
+        res["command_params"] = command_params;
       }
-      command_params["command_name"] = req->command_name();
+      res["command_name"] = req->command_name();
     } catch (json::exception &e) {
       logger_str =
           "Json parsing error in ProcessNodeCommand: " + std::string(e.what());
@@ -184,7 +187,7 @@ Status Servicer::ProcessNodeCommand(ServerContext *ctxt,
       return status;
     }
 
-    params = command_params.dump();
+    params = res.dump();
     svk_input.input_buffer = (uint8_t *)&params[0];
     svk_input.len = params.length();
   } else if (req->feature_id() >= POWER_THROTTLE &&
