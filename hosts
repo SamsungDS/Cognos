@@ -1,0 +1,12 @@
+[servers]
+
+[clients]
+
+[slat_node]
+msl-ssg-vm28
+#msl-ssg-srf05
+
+
+[converged_node]
+msl-ssg-cx02
+

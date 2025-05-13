@@ -1,0 +1,53 @@
+[
+  {# 
+  "The configuration file device_sla_config.json is used to determine the latency and other
+attributes of the devices. Once the CXL feature library supports, this will be removed" 
+  #}
+  {
+    "type": "FM_DIRECT_CMMD",
+    "Devices": [
+      {
+        "dev_name": "DEV1-256G",
+        "dev_size": "274877906944",
+        {# "node_name": "msl-ssg-cxl0", #}
+        "node_name": "{{ controller_ip }}",
+        "dev_numa": 0,
+        "sla_avg_latency_ns": 100
+      }
+    ]
+  },
+  {
+    "type": "FM_DIRECT_CMMH",
+    "Devices": [
+      {
+        "dev_name": "DEV3-256G",
+        "dev_size": "274877906944",
+        {# "node_name": "msl-ssg-cxl0", #}
+        "node_name": "{{ controller_ip }}",
+        "dev_numa": 2,
+        "sla_avg_latency_ns": 200
+      },
+      {
+        "dev_name": "DEV4-256G",
+        "dev_size": "274877906944",
+        {# "node_name": "msl-ssg-cxl0", #}
+        "node_name": "{{ controller_ip }}",
+        "dev_numa": 3,
+        "sla_avg_latency_ns": 200
+      }
+    ]
+  },
+  {
+    "type": "FM_REMOTE_CMMB",
+    "Devices": [
+      {
+        "dev_name": "DEV5-256G",
+        "dev_size": "274877906944",
+        {# "node_name": "msl-ssg-cxl0", #}
+        "node_name": "{{ controller_ip }}",
+        "dev_numa": 4,
+        "sla_avg_latency_ns": 400
+      }
+    ]
+  }
+]
