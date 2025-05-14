@@ -8,6 +8,8 @@ import requests
 import socket
 from typing import Callable, List, Dict
 from cognos.backend.base_datasource import DataSource
+from cognos.backend.cognos_influxdb_client import CognosInfluxDBClient
+from cognos.backend.helper import create_empty_response
 import cognos.backend.helper as helper
 
 
@@ -20,6 +22,21 @@ LIST_CLUSTER_EP = CONFIGS["list_cluster_ep"]
 
 
 class CXLPlugin(DataSource):
+
+    def __init__(self):
+        super().__init__()
+        self.influx_client = CognosInfluxDBClient()
+        self.cognos_metric_functions = {
+            "dram_cxl_usage": (
+                self.influx_client.get_recent_dram_cxl_usage_data
+            ),
+            "cpu_mem_usage": self.influx_client.get_cpu_mem_usage,
+            "memserver_capacity": self.influx_client.get_memserver_capacity,
+            "cmmb_usage": self.influx_client.get_membox_usage,
+            "cmmb_capacity": self.influx_client.get_membox_capacity,
+            "cmmb_bandwidth": self.influx_client.get_membox_bandwidth,
+            "devices_count": self.influx_client.get_attached_devices_count
+        }
 
     def init(self):
         super().__init__()
@@ -43,6 +60,30 @@ class CXLPlugin(DataSource):
             response = jsonify({"error": "version file not found"})
             response.status_code = 404
             return response
+
+    def get_request_args(self):
+        return request.get_json()
+
+    def get_metrics(self):
+        metric_type = ""
+        host = None
+        try:
+            request_data = self.get_request_args()
+            metric_type = request_data["metric_type"]
+            host = request_data.get("host", None)
+        except Exception:
+            print("Failed to get input request data")
+        if host and host != "":
+            self.influx_client.selected_host = host
+            self.influx_client.filter = True
+
+        payload = self.cognos_metric_functions.get(
+            metric_type,
+            create_empty_response
+        )()
+        response = jsonify(payload)
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        return response
 
     def update_metrics_host_filter(self):
         request_data = request.get_json()

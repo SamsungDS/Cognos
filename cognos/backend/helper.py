@@ -8,7 +8,7 @@ import sys
 import ast
 import socket
 from collections import defaultdict, namedtuple
-from flask import Flask, jsonify
+from flask import Flask, jsonify, make_response
 
 project_root = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "../..")
@@ -26,6 +26,10 @@ def is_hexadecimal(value):
     if isinstance(value, str) and re.fullmatch(r"0x[0-9a-fA-F]+", value):
         return True
     return False
+
+
+def create_empty_response():
+    return make_response('', 204)
 
 
 def parse_svkcxlplugin_response(response):

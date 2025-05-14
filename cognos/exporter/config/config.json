@@ -1,7 +1,0 @@
-{
-    "exporter_ip": "127.0.0.1",
-    "exporter_port": 4001,
-    "ssl_cert": "<cert_path>",
-    "ssl_key": "<sslkey_path>",
-    "ssl": false
-}

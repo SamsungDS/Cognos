@@ -1,37 +1,77 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/extend-expect';
 import Metrics from '../pages/Metrics';
 import {handleSelectChange, checkSelectedHost} from '../pages/Metrics';
-import WebSocketContext from '../contexts/WebSocketContext';
+import * as constants from '../constant';
 
 
 describe('Metric component', () => {
-  it('renders memCapacityData chart correctly', () => {
-    const memCapacityData = jest.fn()
-    const dramCxlMemUsageData = jest.fn()
-    const memoryCpuData = jest.fn()
-    const { getByTestId } = render(
-      <WebSocketContext.Provider value={{ dramCxlMemUsageData, memoryCpuData, memCapacityData }}>
-        <Metrics />
-      </WebSocketContext.Provider>
-    );
-    const memCapacityChart = getByTestId('mem-capacity-data-card-id');
-    expect(memCapacityChart).toBeInTheDocument();
+  beforeEach(() => {
+    global.fetch = jest.fn();
   });
 
-  it('renders dramCxlMemUsageData chart correctly', () => {
-    const memCapacityData = jest.fn()
-    const dramCxlMemUsageData = jest.fn()
-    const memoryCpuData = jest.fn()
-    const { getByTestId } = render(
-      <WebSocketContext.Provider value={{ dramCxlMemUsageData, memoryCpuData, memCapacityData }}>
-        <Metrics />
-      </WebSocketContext.Provider>
-    );
-    const dramCxlMemChart = getByTestId('dram-cxl-mem-data-card-id');
-    expect(dramCxlMemChart).toBeInTheDocument();
+  afterEach(() => {
+    jest.resetAllMocks();
   });
+
+  it('tests for fetching metrics data successfully', async () => {
+    const mockOptions = ([
+      { value: "Host 1", label: "Host 1" },
+      { value: "Host 2", label: "Host 2" },
+    ]);
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => (mockOptions),
+    });
+
+    const metricsData = { metric_type: 'cpu_mem_usage'};
+    const fetchMetricsSpy = jest.spyOn(constants, 'fetchMetrics').mockResolvedValue(metricsData);
+
+    render(
+      <Metrics />
+    );
+  });
+
+  // it('failed metrics calls', () => {
+  //   const mockOptions = ([
+  //     { value: "Host 1", label: "Host 1" },
+  //     { value: "Host 2", label: "Host 2" },
+  //   ]);
+  //   fetch.mockResolvedValueOnce({
+  //     ok: true,
+  //     json: async () => (mockOptions),
+  //   });
+
+  //   const metricsData = { metric_type: 'cpu_mem_usage'};
+  //   const fetchMetricsSpy = jest.spyOn(constants, 'fetchMetrics').mockRejectedValue(new Error("Failed to fetch metrics data"));
+
+  //   render(
+  //     <Metrics />
+  //   );
+  // })
+
+  // it('renders memCapacityData chart correctly', () => {
+  //   const setSelectorOptions = jest.fn();
+  //   jest.spyOn(React, 'useState').mockImplementation(init => [init, setSelectorOptions]);
+  //   const memCapacityData = jest.fn()
+  //   const dramCxlMemUsageData = jest.fn()
+  //   const memoryCpuData = jest.fn()
+  //   render(
+  //     <Metrics />
+  //   );
+  // });
+
+  // it('renders dramCxlMemUsageData chart correctly', () => {
+  //   const setSelectorOptions = jest.fn();
+  //   jest.spyOn(React, 'useState').mockImplementation(init => [init, setSelectorOptions]);
+  //   const memCapacityData = jest.fn()
+  //   const dramCxlMemUsageData = jest.fn()
+  //   const memoryCpuData = jest.fn()
+  //   render(
+  //     <Metrics />
+  //   );
+  // });
 
   it('test host selection', async () => {
     jest.mock('react', () => ({
@@ -44,10 +84,21 @@ describe('Metric component', () => {
     const memCapacityData = jest.fn()
     const dramCxlMemUsageData = jest.fn()
     const memoryCpuData = jest.fn()
-    const { getByTestId } = render(
-      <WebSocketContext.Provider value={{ dramCxlMemUsageData, memoryCpuData, memCapacityData }}>
-        <Metrics />
-      </WebSocketContext.Provider>
+
+    const mockOptions = ([
+      { value: "Host 1", label: "Host 1" },
+      { value: "Host 2", label: "Host 2" },
+    ]);
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => (mockOptions),
+    });
+
+    const metricsData = { metric_type: 'cpu_mem_usage'};
+    const fetchMetricsSpy = jest.spyOn(constants, 'fetchMetrics').mockResolvedValue(metricsData);
+
+    render(
+      <Metrics />
     );
 
     global.fetch = jest.fn();

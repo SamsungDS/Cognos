@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from requests.models import Response
 import os
 import pytest
@@ -296,6 +297,56 @@ def test_cxlplugin_attach_device(
             mock_request=True,
             mock_request_data={"dev_name": "dev2", "host_name": "host2"},
         )
+
+
+def test_get_metrics(mocker, mock_app):
+    mock_request = MagicMock()
+    mock_request.get_json.return_value = {
+        "metric_type": "dram_cxl_usage"
+    }
+
+    dummy_data = [[datetime.now(), "0.7", "0.9"]]
+    prefix_fn_path = (
+        "cognos.backend.cognos_influxdb_client.CognosInfluxDBClient."
+    )
+    mocker.patch(
+        prefix_fn_path + "get_recent_dram_cxl_usage_data",
+        return_value=dummy_data
+    )
+
+    with mock_app.app_context():
+        with patch("cognos.backend.cxlplugin_datasource.request",
+                   mock_request):
+            from cognos.backend.cxlplugin_datasource import CXLPlugin
+            cxl_plugin = CXLPlugin()
+            cxl_plugin.get_metrics()
+
+
+def test_get_metrics_failure(mocker, mock_app):
+    mock_request = MagicMock()
+    mock_request.get_json.side_effect = Exception(
+        "Failed to get input request data"
+    )
+    mock_request.get_json.return_value = {
+        "metric_type": "dram_cxl_usage"
+    }
+
+    dummy_data = [[datetime.now(), "0.7", "0.9"]]
+    prefix_fn_path = (
+        "cognos.backend.cognos_influxdb_client.CognosInfluxDBClient."
+    )
+    mocker.patch(
+        prefix_fn_path + "get_recent_dram_cxl_usage_data",
+        return_value=dummy_data
+    )
+
+    with mock_app.app_context():
+        with patch("cognos.backend.cxlplugin_datasource.request",
+                   mock_request):
+            from cognos.backend.cxlplugin_datasource import CXLPlugin
+            with pytest.raises(Exception):
+                cxl_plugin = CXLPlugin()
+                cxl_plugin.get_metrics()
 
 
 def test_cxlplugin_get_mb_info(client, get_cxlplugin_datasource):

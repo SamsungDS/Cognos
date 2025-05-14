@@ -3,37 +3,33 @@ import { render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/extend-expect';
 import Dashboard from '../pages/Dashboard';
 import * as constants from '../constant';
-import WebSocketContext from '../contexts/WebSocketContext';
 import { SelectedOptionProvider } from "../contexts/SelectedOptionContext";
 
 
 describe('Dashboard', () => {
-    test('renders correctly', () => {
-
-      const devicesCountData = {
-        'num_hosts': 3
-      };
-  
-      const cmmbCapacityData = {
-        'total_capacity': 10000,
-        'used_capacity': 5000
-      }
-  
-      const cmmbBandwidthData = {
-        'max_bandwidth': 32
-      }
-
-      const cmmbMemoryData = {
-        'total_memory': 64
-      }
-
-      render(
-        <WebSocketContext.Provider value={{ cmmbMemoryData, cmmbCapacityData, cmmbBandwidthData, devicesCountData }}>
-          <SelectedOptionProvider>
-              <Dashboard />
-          </SelectedOptionProvider>
-        </WebSocketContext.Provider>
-      );
-      expect(screen.getByTestId('box-topology-id')).toBeInTheDocument();
-    });
+  beforeEach(() => {
+    global.fetch = jest.fn();
   });
+
+  afterEach(() => {
+    jest.resetAllMocks();
+  });
+
+  it('renders correctly', async () => {
+    const mockVersion = { version: "2.0.1"}
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => (mockVersion),
+    });
+
+    const metricsData = { metric_type: 'cpu_mem_usage'};
+    const fetchMetricsSpy = jest.spyOn(constants, 'fetchMetrics').mockResolvedValue(metricsData);
+
+    render(
+      <SelectedOptionProvider>
+          <Dashboard />
+      </SelectedOptionProvider>
+    );
+    expect(screen.getByTestId('box-topology-id')).toBeInTheDocument();
+  });
+});

@@ -1,4 +1,5 @@
 from collections import namedtuple
+from datetime import datetime
 from flask import request, jsonify
 import math
 import socket
@@ -59,6 +60,12 @@ class Mock(DataSource):
             response = jsonify({"error": "version file not found"})
             response.status_code = 404
             return response
+
+    def get_metrics(self):
+        payload = {"data": [datetime.now(), 0.5, 0.7]}
+        response = jsonify(payload)
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        return response
 
     def update_metrics_host_filter(self):
         request_data = request.get_json()

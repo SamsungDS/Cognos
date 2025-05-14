@@ -8,11 +8,9 @@ SVKAPP consists of the following services;
 
 cognos-app: Responsible for backend support of the webapplication, communicating
             with SVK CXL Plugin, storing metadata and state information, supporting
-            storage and usage of InfluxDB client
+            storage and usage of InfluxDB client, transferring Cognos Events to UI.
 
 cognos-subscriber: Consumes metrics published from publisher and stores them into InfluxDB
-
-cognos-exporter: Pushes metrics from InfluxDB to UI
 
 cognos-ui: UI for Samsung Management Console
 
@@ -102,14 +100,12 @@ navigate to http://<ip>:8086/ and follow the steps
 ```
 /usr/local/svk/svk-app/cognos/backend/config/config.json
 /usr/local/svk/svk-app/cognos/backend/config/influxdb_config.json
-/usr/local/svk/svk-app/cognos/exporter/config/config.json
 /usr/local/svk/svk-app/cognos/ui/src/config/config.json
 /usr/local/svk/svk-app/cognos/cognos.config
 ```
 4. Run the services
 ```
 sudo systemctl start cognos-subscriber
-sudo systemctl start cognos-exporter
 sudo systemctl start cognos-app
 sudo systemctl start cognos-ui
 ```
@@ -130,17 +126,10 @@ dnf install svk-app -y
 ```
 
 ### SSL Configuration
-SSL mode must be configured in 2 key components, cognos-app and cognos-exporter. This will enable https REST requests
-to reach cognos-app and https websocket connection to be made with cognos-exporter. 
+SSL mode must be configured in cognos-app. This will enable https REST requests
+to reach cognos-app. 
 
-in the following config files set the following parameters to your cert and key file and set "ssl" to true
-
-cognos/exporter/config/config.json
-```
-"ssl_cert": "<cert_path>",
-"ssl_key": "<sslkey_path>",
-"ssl": false
-```
+in the following config file set the following parameters to your cert and key file and set "ssl" to true
 
 cognos/backend/config/config.json
 ```
@@ -183,7 +172,6 @@ Installing SVK APP dependencies can simply be done by running the following comm
    cognos/backend/config/config.json
    cognos/backend/config/influxdb_config.json
    cognos/ui/config/config.json
-   cognos/exporter/config/config.json
    ```
 
 4. Run CAL layer with:
@@ -193,21 +181,14 @@ Installing SVK APP dependencies can simply be done by running the following comm
    python3 -m flask run -h <localip> -p 4000 --mock
    ```
 
-5. Run Exporter:
-
-   ```bash
-   cd cognos
-   python3 exporter/exporter.py --mock
-   ```
-
-6. Run Subscriber:
+5. Run Subscriber:
 
    ```bash
    cd cognos
    python3 subscriber/sub_client.py subscriber/mock_publisher_events.output
    ```
 
-7. Run UI:
+6. Run UI:
 
    ```bash
    cd cognos/ui
@@ -225,7 +206,7 @@ Samsung Cognos Management Console can operate in 3 modes
    the cognos.config MODE variable is set to "mock".
 
 2. Simulated Mode: Simulated mode is still technically a "mock mode", however it entails running
-   the entire SVK stack. Specfically these components include UI, exporter, subscriber, app, 
+   the entire SVK stack. Specfically these components include UI, subscriber, app, 
    SVK node server, SVK restserver, and SVK controller server. In order to run in this mode set
    cognos.config MODE to "real" and ensure the installed SVK CXL artifiact is the "sim" version. 
 
@@ -241,7 +222,6 @@ sudo systemctl start svk-restserver
 sudo /usr/local/svk/mgmt-fw/bin/svksvcmgr --svk_conf_file /etc/svk/mgmt_fw_config.json &
 sudo systemctl start cognos-subscriber
 sudo systemctl start cognos-app
-sudo systemctl start cognos-exporter
 sudo systemctl start cognos-ui
 ```
 
@@ -311,11 +291,10 @@ and describe the problem you are facing.
 
 ### Backend Unit Tests
 
-This repo leverages the Pytest framework to test for backend code including app and exporter. Subscriber
+This repo leverages the Pytest framework to test for backend code including cognos-app. Subscriber
 module leverages the traditional unit test model in python. 
 
-In order to run unit tests simply go to the source code directory of that module, i.e. cognos/backend
-or cognos/exporter and run;
+In order to run unit tests simply go to the source code directory of that module, i.e. cognos/backend and run;
 
 ```
 python3.10 -m pytest -s --cov .

@@ -45,6 +45,23 @@ def test_read_records(cognos_influx_client, mocker):
     cognos_influx_client.query_cognos_events("10m")
 
 
+def test_query_node_cognos_events(cognos_influx_client, mocker):
+    mocker.patch(
+        cognos_backend_prefix +
+        "cognos_influxdb_client.CognosInfluxDBClient.query_node_cognos_events",
+        return_value=True
+    )
+    dummy_time_window = "10m"
+    dummy_category = "metric"
+    dummy_source_type = "host"
+    dummy_source = "x.y.x"
+    event_keys = ["cpu_mem_usage", "dram_cxl_mem_usage"]
+    cognos_influx_client.query_node_cognos_events(
+        dummy_time_window, dummy_category, dummy_source_type,
+        dummy_source, event_keys
+    )
+
+
 def test_run_mock_populator(cognos_influx_client, mocker):
     mocker.patch(
         cognos_backend_prefix

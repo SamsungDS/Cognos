@@ -4,13 +4,12 @@ import  Chart from "react-google-charts";
 import ProgressBar from 'react-bootstrap/ProgressBar';
 import DropDown from '../components/DropDown';
 import './metrics.css';
-import WebSocketContext from '../contexts/WebSocketContext';
 import * as constants from '../../src/constant';
 
 
 export const handleSelectChange = async (
     selectedOption, setSelectedOption, selectorOptionsRef, setSelectorOptions,
-    sendMessage, lastSelectedHost, apiEndpoint) => {
+    lastSelectedHost, apiEndpoint) => {
       setSelectedOption(selectedOption);
 
       if (selectedOption) {
@@ -42,46 +41,6 @@ export const handleSelectChange = async (
       } catch (error) {
         console.log(error);
       }
-
-      let payload = {};
-      payload.host = selectedOption;
-
-      // check if selected host is a valid host
-      if (selectorOptionsRef.current.some(item => item.value === payload.host.value)) {
-
-        // update DB through CAL to store host to filter on
-        try {
-          // eslint-disable-next-line
-          const hostPayload = { host: selectedOption };
-          const response = await fetch(
-            `${apiEndpoint}/update_metrics_host_filter`,
-            {
-              mode: "cors",
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "Access-Control-Allow-Origin": "*",
-                accept: "application/json",
-              },
-              body: JSON.stringify(payload),
-            }
-          );
-          // istanbul ignore next
-          if (response.ok) {
-            console.log(
-              "Successfully sent selected host to backend: ",
-              selectedOption
-            );
-          }
-          // istanbul ignore next
-        } catch (error) {
-          console.log(error);
-        }
-        
-      } else {
-        console.log("default or invalid selected host");
-      }
-      
     };
 
 const Metrics = () => {
@@ -98,10 +57,7 @@ const Metrics = () => {
       const savedValue = sessionStorage.getItem("lastSelectedHostValue");
       return savedValue ? savedValue : null;
     });
-    
-    const [dataAvailable, setDataAvailable] = useState(true);
-    const hostCheckerInterval = useRef(null);
-    const { memCapacityData, dramCxlMemUsageData, memoryCpuData, sendMessage } = useContext(WebSocketContext)
+
     const memCapacityOptions = {
       colors: ["#FFB546", "#0077C8", "#FE8E73", "#FEAE00", "B37328"],
       pieSliceText: 'value',
@@ -187,42 +143,105 @@ const Metrics = () => {
     animation: { startup: true },
   };
 
+  const memoryCpuDataRef = useRef({});
+  const [memoryCpuDataState, setMemoryCpuDataState] = useState([]);
+  // poll for memory CPU data for selected host
   useEffect(() => {
-    // istanbul ignore next
-    const intervalCallBack = () => {
-      if (lastSelectedHost.current) {
-        let payload = {}
-        payload.host = lastSelectedHost.current;
-
-        if (selectorOptionsRef.current.some(item => item.value === payload.host.value)) {
-          console.log("sending current host to exporter..");
-          sendMessage(payload);
-        } else {
-          console.log("default or invalid host");
-        }
-        
-      } else {
-        console.log("last selected host is None");
+    async function getMemoryCpuData() {
+      let payload = {};
+      payload.metric_type = "cpu_mem_usage";
+      if (lastSelectedHost.current && lastSelectedHost.current.value) {
+        payload.host = lastSelectedHost.current.value;
       }
-    };
+      else {
+        payload.host = ""
+      }
 
-    hostCheckerInterval.current = setInterval(intervalCallBack, 2000);
+      const response = await constants.fetchMetrics(`${apiEndpoint}/metrics`, payload)
 
-    return () => clearInterval(hostCheckerInterval.current);
-  }, []);
+      if (response.ok) {
+          const data = await response.json();
+          memoryCpuDataRef.current = data;
+          setMemoryCpuDataState(memoryCpuDataRef.current);
+      }
+      else {
+          console.log("unable to fetch memory cpu data..");
+      }
+    }
 
+    getMemoryCpuData()
+    const interval = setInterval(() => getMemoryCpuData(), 3000)
+    return () => {
+      clearInterval(interval);
+    }
+  }, [])
+
+  const memCapacityDataRef = useRef({});
+  const [memCapacityDataState, setMemCapacityDataState] = useState([]);
+  // poll for memory capacity data for selected host
   useEffect(() => {
-    // Set timeout for 120 seconds (120000 ms)
-    // istanbul ignore next
-    const timer = setTimeout(() => {
-      if (!memoryCpuData || !memCapacityData || !dramCxlMemUsageData ) {
-        setDataAvailable(false);
+    async function getMemoryCapacityData() {
+      let payload = {};
+      payload.metric_type = "memserver_capacity";
+      if (lastSelectedHost.current && lastSelectedHost.current.value) {
+        payload.host = lastSelectedHost.current.value;
       }
-    }, 120000);
+      else {
+        payload.host = ""
+      }
 
-    // Clear timeout if data becomes available before the timeout elapses
-    return () => clearTimeout(timer);
-  }, [memoryCpuData, memCapacityData, dramCxlMemUsageData ]);
+      const response = await constants.fetchMetrics(`${apiEndpoint}/metrics`, payload)
+
+      if (response.ok) {
+          const data = await response.json();
+          memCapacityDataRef.current = data;
+          setMemCapacityDataState(memCapacityDataRef.current);
+      }
+      else {
+          console.log("unable to fetch memory cpu data..");
+      }
+    }
+
+    getMemoryCapacityData()
+    const interval = setInterval(() => getMemoryCapacityData(), 3000)
+    return () => {
+      clearInterval(interval);
+    }
+  }, [])
+
+  const dramCxlMemUsageDataRef = useRef({});
+  const [dramCxlMemUsageDataState, setDramCxlMemUsageDataState] = useState([]);
+  // poll for memory capacity data for selected host
+  useEffect(() => {
+    async function getDramCxlMemUsage() {
+      let payload = {};
+      payload.metric_type = "dram_cxl_usage";
+      if (lastSelectedHost.current && lastSelectedHost.current.value) {
+        payload.host = lastSelectedHost.current.value;
+      }
+      else {
+        payload.host = ""
+      }
+
+      const response = await constants.fetchMetrics(`${apiEndpoint}/metrics`, payload)
+
+      if (response.ok) {
+          const data = await response.json();
+          dramCxlMemUsageDataRef.current = data;
+          setDramCxlMemUsageDataState(dramCxlMemUsageDataRef.current);
+      }
+      else {
+          console.log("unable to fetch memory cpu data..");
+      }
+    }
+
+    getDramCxlMemUsage()
+    const interval = setInterval(() => getDramCxlMemUsage(), 3000)
+    return () => {
+      clearInterval(interval);
+    }
+  }, [])
+
   return (
     <div className="Content content_root" id="main-container-id">
       <Container fluid>
@@ -258,7 +277,6 @@ const Metrics = () => {
                           setSelectedOption,
                           selectorOptionsRef,
                           setSelectorOptions,
-                          sendMessage,
                           lastSelectedHost,
                           apiEndpoint
                         )
@@ -323,23 +341,17 @@ const Metrics = () => {
               >
                 <h1 className="sap-hana">CPU vs Memory Usage</h1>
               </div>
-              {memoryCpuData?.length > 1 ? (
+              {memoryCpuDataState.length > 1 ? (
                 <Chart
                   chartType="LineChart"
                   width="100%"
                   height="400px"
-                  data={memoryCpuData}
+                  data={memoryCpuDataState}
                   options={memoryCpuDatOptions}
                 />
-              ) : dataAvailable ? (
-                <div className="spinner-style" style={{ height: 400 }}>
-                  <Spinner animation="border" variant="secondary" />
-                </div>
               ) : (
                 <div className="spinner-style" style={{ height: 400 }}>
-                  <div style={{ color: "white", textAlign: "center", marginTop: 50 }}>
-                    This data is not available for this host
-                  </div>
+                  <Spinner animation="border" variant="secondary" />
                 </div>
               )}
             </div>
@@ -369,23 +381,17 @@ const Metrics = () => {
                       </div>
                     </Col>
                     <Col sm={7} md={7} lg={7} xl={7}>
-                      {memCapacityData?.length > 1 ? (
+                      {memCapacityDataState?.length > 1 ? (
                         <Chart
                           chartType="PieChart"
-                          data={memCapacityData}
+                          data={memCapacityDataState}
                           options={memCapacityOptions}
                           width="100%"
                           height="250px"
                         />
-                      ) : dataAvailable ? (
-                        <div className="spinner-style" style={{ height: 250 }}>
-                          <Spinner animation="border" variant="secondary" />
-                        </div>
                       ) : (
                         <div className="spinner-style" style={{ height: 250 }}>
-                          <div style={{ color: "white", textAlign: "center", marginTop: 50 }}>
-                            This data is not available for this host
-                          </div>
+                          <Spinner animation="border" variant="secondary" />
                         </div>
                       )}
                     </Col>
@@ -412,25 +418,19 @@ const Metrics = () => {
                       DRAM vs CXL Memory Usage
                     </h4>
                   </div>
-                  {dramCxlMemUsageData?.length > 1 ? (
+                  {dramCxlMemUsageDataState?.length > 1 ? (
                     <Chart
                       chartType="LineChart"
                       width="100%"
                       height="325px"
-                      data={dramCxlMemUsageData}
+                      data={dramCxlMemUsageDataState}
                       options={dramCxlMemUsageOptions}
                     />
-                  ) : dataAvailable ? (
+                  ) : (
                     <div className="spinner-style" style={{ height: 250 }}>
                       <Spinner animation="border" variant="secondary" />
                     </div>
-                  ) : (
-                    <div className="spinner-style" style={{ height: 250 }}>
-                      <div style={{ color: "white", textAlign: "center" }}>
-                        This data is not available for this host
-                      </div>
-                    </div>
-                  ) }
+                  )}
                 </div>
               </Col>
             </Row>

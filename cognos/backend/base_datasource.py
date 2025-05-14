@@ -65,3 +65,7 @@ class DataSource(ABC):
     @abstractmethod
     def setup_tables(self):
         pass
+
+    @abstractmethod
+    def get_metrics(self):
+        pass

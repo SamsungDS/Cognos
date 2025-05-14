@@ -107,12 +107,7 @@ svk-install:
     # Substitute the '.rest_ip' endpoint in SVK_APP_SUBSCRIBER_CONF
     - jq --arg ip "$VM_IP" '.rest_ip = $ip' $SVK_APP_SUBSCRIBER_CONF | sponge $SVK_APP_SUBSCRIBER_CONF
     # Substitute '.publisher_topic' value with the term "metric"
-    - jq '.publisher_topic = "metric"' $SVK_APP_EXPORTER_CONF | sponge $SVK_APP_EXPORTER_CONF
-
-    #### SVK App exporter configuration (JSON) ####
-    - export SVK_APP_EXPORTER_CONF='/usr/local/svk/svk-app/cognos/exporter/config/config.json'
-    # Substitute '.exporter_ip' value with VM of the host in SVK_APP_EXPORTER_CONF
-    - jq --arg ip "$VM_IP" '.exporter_ip = $ip' $SVK_APP_EXPORTER_CONF | sponge $SVK_APP_EXPORTER_CONF
+    - jq '.publisher_topic = "metric"' $SVK_APP_SUBSCRIBER_CONF | sponge $SVK_APP_SUBSCRIBER_CONF
 
     #### SVK App UI configuration (JSON) ####
     - export SVK_APP_UI_CONF='/usr/local/svk/svk-app/cognos/ui/src/config/config.json'
@@ -122,8 +117,6 @@ svk-install:
     - jq --arg ip "$VM_IP" --arg backend_port "$BACKEND_PORT" '.data_endpoint = "http://\($ip):\($backend_port)"' $SVK_APP_UI_CONF| sponge $SVK_APP_UI_CONF
     # Substitute '.api_endpoint' value with BACKEND_PORT value in SVK_APP_UI_CONF obtained from gitlab-ci.yml
     - jq --arg ip "$VM_IP" --arg backend_port "$BACKEND_PORT" '.api_endpoint = "http://\($ip):\($backend_port)/api/v2.0.1"' $SVK_APP_UI_CONF | sponge $SVK_APP_UI_CONF
-    # Substitute '.api_endpoint' value with EXPORTER_PORT value in SVK_APP_UI_CONF obtained from gitlab-ci.yml
-    - jq --arg ip "$VM_IP" --arg exporter_port "$EXPORTER_PORT" '.exporter_endpoint = "\($ip):\($exporter_port)"'  $SVK_APP_UI_CONF | sponge $SVK_APP_UI_CONF
 
     #### Cognos.config configuration changes ####
     # Step 1: Set MODE to 'real' to populate metrics using service manager
@@ -144,7 +137,6 @@ svk-install:
     - systemctl start svk-svc-mgr
     # Start the SCMC UI services
     - systemctl start cognos-subscriber
-    - systemctl start cognos-exporter
     - systemctl start cognos-app
     - systemctl start cognos-ui
 

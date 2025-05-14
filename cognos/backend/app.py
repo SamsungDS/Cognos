@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 import click
 import json
 import mysql.connector
@@ -16,6 +16,8 @@ import cognos.backend.helper as helper
 from cognos.backend.mock_datasource import Mock
 from cognos.backend.cxlplugin_datasource import CXLPlugin
 from cognos.backend.cognos_northbound import Cognos
+# from cognos.backend.cognos_influxdb_client import CognosInfluxDBClient
+
 
 current_script_dir = os.path.dirname(os.path.abspath(__file__))
 CONFIGS = helper.fetch_cognos_configs(current_script_dir, "config.json")
@@ -36,9 +38,23 @@ def create_app(mock=False):
 
     cognos = Cognos()
     data_source = Mock() if mock else CXLPlugin()
+    # influx_client = CognosInfluxDBClient()
+
+    # cognos_metric_functions = {
+    #     "dram_cxl_usage": influx_client.get_recent_dram_cxl_usage_data,
+    #     "cpu_mem_usage": influx_client.get_cpu_mem_usage,
+    #     "memserver_capacity": influx_client.get_memserver_capacity,
+    #     "cmmb_usage": influx_client.get_membox_usage,
+    #     "cmmb_capacity": influx_client.get_membox_capacity,
+    #     "cmmb_bandwidth": influx_client.get_membox_bandwidth,
+    #     "devices_count": influx_client.get_attached_devices_count
+    # }
 
     # clear out existing tables
     helper.clear_all_tables()
+
+    # def create_empty_response():
+    #     return make_response('', 204)
 
     @app.get(f"/api/{API_VERSION}/init")
     def init():
@@ -121,6 +137,16 @@ def create_app(mock=False):
     @app.get(f"/api/{API_VERSION}/all_hosts")
     def get_all_hosts():
         return data_source.get_all_hosts_info()
+
+    @app.post(f"/api/{API_VERSION}/metrics")
+    def get_metrics():
+        """
+        Temporary Implementation to transition fixed event structure
+        from websockets to long-polling
+
+        TODO: Implement Cognos event schema, support custom query requests
+        """
+        return data_source.get_metrics()
 
     # setup database tables based on current state during initial boot
     data_source.setup_tables()

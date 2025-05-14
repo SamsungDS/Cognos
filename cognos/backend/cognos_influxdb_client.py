@@ -93,6 +93,28 @@ class CognosInfluxDBClient:
             "|> last(6)"
         )
 
+    def query_node_cognos_events(self, time_window, category,
+                                 source_type, source, event_keys):
+        """
+        Performs a query for a specific node's events
+
+        TODO: Port to new Cognos observability event structure
+
+        {
+            domain: <string>,
+            category: <string>,
+            severity: <string>, (optional)
+            source: <string>,
+            source_type: <string>,
+            timestamp: <timestamp>,
+            observations: { <key>: <value> }
+        }
+        """
+        return self.read_client.query(
+            f'from(bucket:"internal") |> range(start: -{time_window}) '
+            "|> last(6)"
+        )
+
     def get_recent_dram_cxl_usage_data(self):
         params = {"_desc": True}
 

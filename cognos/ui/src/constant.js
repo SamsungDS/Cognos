@@ -149,6 +149,24 @@ export const memboxTableHeader = [
     });
   };
 
+  export const fetchMetrics = async (url, payload) => {
+    try {
+      const response = await fetch(url, {
+        mode: 'cors',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'accept': 'application/json',
+          'Access-Control-Allow-Origin':'*'
+        },
+        body: JSON.stringify(payload),
+      })
+      return response
+    } catch (error) {
+        console.error("Failed Metrics POST Request: ", error);
+    }
+  }
+
   export const fetchData = async (url, setDataCallback) => {
     try {
       const response = await fetch(url, {

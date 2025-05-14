@@ -3,7 +3,6 @@ import ReactDOM from 'react-dom/client';
 import { act } from 'react-dom/test-utils';
 import '@testing-library/jest-dom/extend-expect'; 
 import App from './App';
-import WebSocketContext from './contexts/WebSocketContext';
 import { SelectedOptionProvider } from './contexts/SelectedOptionContext';
 
 let container = null;
@@ -39,12 +38,10 @@ test('renders App component into root element', () => {
     const cmmbBandwidthData = jest.fn()
     const devicesCountData = jest.fn()
     root.render(
-      <WebSocketContext.Provider value={{ cmmbMemoryData, dramCxlMemUsageData, memoryCpuData, memCapacityData, cmmbCapacityData, cmmbBandwidthData, devicesCountData}}>
-        <SelectedOptionProvider> 
-          <App />
-        </SelectedOptionProvider>
-      </WebSocketContext.Provider>
-    );
+      <SelectedOptionProvider> 
+        <App />
+      </SelectedOptionProvider>
+  );
   });
 
   setTimeout(() => {

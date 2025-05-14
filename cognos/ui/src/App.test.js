@@ -1,7 +1,6 @@
 import React from 'react';
 import { render, screen} from '@testing-library/react';
 import App from './App';
-import WebSocketContext from './contexts/WebSocketContext';
 import { SelectedOptionProvider } from './contexts/SelectedOptionContext';
 
 describe('App', () => {
@@ -20,11 +19,9 @@ describe('App', () => {
     }
 
     render(
-      <WebSocketContext.Provider value={{devicesCountData, cmmbCapacityData, cmmbBandwidthData}}>
-        <SelectedOptionProvider>
-          <App />
-        </SelectedOptionProvider>
-      </WebSocketContext.Provider>
+      <SelectedOptionProvider>
+        <App />
+      </SelectedOptionProvider>
     );
   });
 
@@ -43,11 +40,9 @@ describe('App', () => {
     }
 
     const { getByText } = render(
-      <WebSocketContext.Provider value={{devicesCountData, cmmbCapacityData, cmmbBandwidthData}}>
-        <SelectedOptionProvider>
-          <App />
-        </SelectedOptionProvider>
-      </WebSocketContext.Provider>
+      <SelectedOptionProvider>
+        <App />
+      </SelectedOptionProvider>
     );
     const headers = screen.queryAllByText(/Cognos Management Console/i);
     expect(headers).toHaveLength(2);
@@ -66,11 +61,9 @@ describe('App', () => {
     }
 
     const { getByTestId } = render(
-      <WebSocketContext.Provider value={{devicesCountData, cmmbCapacityData, cmmbBandwidthData}}>
-        <SelectedOptionProvider>
-          <App />
-        </SelectedOptionProvider>
-      </WebSocketContext.Provider>
+      <SelectedOptionProvider>
+        <App />
+      </SelectedOptionProvider>
     );
     expect(getByTestId('sidebar-container')).toBeInTheDocument();
   });

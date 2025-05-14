@@ -28,6 +28,10 @@ def test_mock_get_hosts(get_mock_datasource, client):
     get_mock_datasource.get_hosts()
 
 
+def test_mock_get_metrics(get_mock_datasource, client):
+    get_mock_datasource.get_metrics()
+
+
 def test_mock_post_devices(mocker, get_mock_datasource, client):
     mocker.patch(
         "cognos.backend.mock_datasource.Mock.get_devices_info",

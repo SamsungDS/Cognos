@@ -1,4 +1,4 @@
-import React, { useContext, useState, useEffect } from "react";
+import React, { useContext, useState, useEffect, useRef } from "react";
 import { Container, Row, Col, Spinner } from "react-bootstrap";
 import Chart from "react-google-charts";
 import ProgressBar from "react-bootstrap/ProgressBar";
@@ -7,55 +7,150 @@ import "./metrics.css";
 import "./dashboard.css";
 import "rc-slider/assets/index.css";
 import * as constants from '../constant';
-import WebSocketContext from "../contexts/WebSocketContext";
 import { useSelectedOption } from "../contexts/SelectedOptionContext";
 
 const Dashboard = () => {
-  const {
-    cmmbMemoryData,
-    cmmbCapacityData,
-    cmmbBandwidthData,
-    devicesCountData,
-  } = useContext(WebSocketContext);
-  const [dataAvailable, setDataAvailable] = useState(true);
-
   const { selectedOption } = useSelectedOption();
   const [version, setVersion] = useState('00.00.00');
 
   const apiEndpoint = constants.Configs.api_endpoint;
   // istanbul ignore next
   useEffect(() =>{
-    fetch(`${apiEndpoint}/version`, {
-      mode: 'cors',
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'accept': 'application/json',
-        'Access-Control-Allow-Origin':'*'
-      },
-    }).then(response => response.json())
-    .then(data => setVersion(data))
-    .catch(err => {console.log(err)});
+    async function getVersion() {
+      try {
+        const response = await fetch(`${apiEndpoint}/version`, {
+          mode: 'cors',
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'accept': 'application/json',
+            'Access-Control-Allow-Origin':'*'
+          },
+        })
+
+        if (response.ok) {
+          const data = await response.json();
+          setVersion(data);
+        } else {
+          console.log("unable to fetch version number");
+        }
+      } catch (error) {
+        console.log(error);
+      }
+    }
+    getVersion()
   },
   // eslint-disable-next-line react-hooks/exhaustive-deps 
   []);
-  useEffect(() => {
-    // Set timeout for 120 seconds (120000 ms)
-    // istanbul ignore next
-    const timer = setTimeout(() => {
-      if (
-        !cmmbBandwidthData?.max_bandwidth ||
-        !devicesCountData?.num_hosts ||
-        !cmmbCapacityData?.total_capacity ||
-        !cmmbMemoryData
-      ) {
-        setDataAvailable(false);
-      }
-    }, 120000);
 
-    // Clear timeout if data becomes available before the timeout elapses
-    return () => clearTimeout(timer);
-  }, [cmmbBandwidthData, devicesCountData, cmmbCapacityData, cmmbMemoryData]);
+  const cmmbMemoryDataRef = useRef({});
+  const [cmmbMemoryDataState, setcmmbMemoryDataState] = useState([]);
+  // poll for cmmb memory data
+  useEffect(() => {
+    async function getCmmbMemoryUsage() {
+      let payload = {};
+      payload.metric_type = "cmmb_usage";
+      
+      const response = await constants.fetchMetrics(`${apiEndpoint}/metrics`, payload);
+
+      if (response.ok) {
+          const data = await response.json();
+          cmmbMemoryDataRef.current = data;
+          setcmmbMemoryDataState(cmmbMemoryDataRef.current);
+      }
+      else {
+          console.log("unable to fetch memory cpu data..");
+      }
+    }
+
+    getCmmbMemoryUsage()
+    const interval = setInterval(() => getCmmbMemoryUsage(), 3000)
+    return () => {
+      clearInterval(interval);
+    }
+  }, [])
+
+  const cmmbCapacityDataRef = useRef({});
+  const [cmmbCapacityDataState, setcmmbCapacityDataState] = useState([]);
+  // poll for cmmb capacity data
+  useEffect(() => {
+    async function getCmmbCapacityUsage() {
+      let payload = {};
+      payload.metric_type = "cmmb_capacity";
+      
+      const response = await constants.fetchMetrics(`${apiEndpoint}/metrics`, payload);
+
+      if (response.ok) {
+          const data = await response.json();
+          cmmbCapacityDataRef.current = data;
+          setcmmbCapacityDataState(cmmbCapacityDataRef.current);
+      }
+      else {
+          console.log("unable to fetch memory cpu data..");
+      }
+    }
+
+    getCmmbCapacityUsage()
+    const interval = setInterval(() => getCmmbCapacityUsage(), 3000)
+    return () => {
+      clearInterval(interval);
+    }
+  }, [])
+
+  const cmmbBandwidthDataRef = useRef({});
+  const [cmmbBandwidthDataState, setCmmbBandwidthDataState] = useState([]);
+  // poll for cmmb bandwidth usage
+  useEffect(() => {
+    async function getCmmbBandwidthUsage() {
+      let payload = {};
+      payload.metric_type = "cmmb_bandwidth";
+
+      const response = await constants.fetchMetrics(`${apiEndpoint}/metrics`, payload);
+
+      if (response.ok) {
+          const data = await response.json();
+          cmmbBandwidthDataRef.current = data;
+          setCmmbBandwidthDataState(cmmbBandwidthDataRef.current);
+      }
+      else {
+          console.log("unable to fetch memory cpu data..");
+      }
+    }
+
+    getCmmbBandwidthUsage()
+    const interval = setInterval(() => getCmmbBandwidthUsage(), 3000)
+    return () => {
+      clearInterval(interval);
+    }
+  }, [])
+
+  const devicesCountDataRef = useRef({});
+  const [devicesCountDataState, setdevicesCountDataState] = useState([]);
+  // poll for devices count
+  useEffect(() => {
+    async function getDevicesCount() {
+      let payload = {};
+      payload.metric_type = "devices_count";
+      
+      const response = await constants.fetchMetrics(`${apiEndpoint}/metrics`, payload);
+
+      if (response.ok) {
+          const data = await response.json();
+          devicesCountDataRef.current = data;
+          setdevicesCountDataState(devicesCountDataRef.current);
+      }
+      else {
+          console.log("unable to fetch memory cpu data..");
+      }
+    }
+
+    getDevicesCount()
+    const interval = setInterval(() => getDevicesCount(), 3000)
+    return () => {
+      clearInterval(interval);
+    }
+  }, [])
+
 
   const cmmbMemoryDataOptions = {
     isStacked: true,
@@ -135,7 +230,7 @@ const Dashboard = () => {
               </>
             ) : (
               <>
-                {devicesCountData.num_hosts ? (
+                {devicesCountDataState.num_hosts ? (
                   <div
                     className="device_card info-memo-com"
                     id="mem-info"
@@ -164,8 +259,8 @@ const Dashboard = () => {
                           className="circle"
                           style={{ color: "#00B3E3" }}
                         >{`${
-                          devicesCountData.num_hosts
-                            ? devicesCountData.num_hosts
+                          devicesCountDataState.num_hosts
+                            ? devicesCountDataState.num_hosts
                             : 0
                         }`}</span>
                       </Col>
@@ -193,31 +288,17 @@ const Dashboard = () => {
                           className="circle"
                           style={{ color: "#00B3E3" }}
                         >{`${
-                          devicesCountData.num_cxl_devices
-                            ? devicesCountData.num_cxl_devices
+                          devicesCountDataState.num_cxl_devices
+                            ? devicesCountDataState.num_cxl_devices
                             : 0
                         }`}</div>
                       </Col>
                     </Row>
                   </div>
-                ) : dataAvailable ? (
-                  <div className="device_card info-memo-com" id="mem-info">
-                    <div className="spinner-style" style={{ height: 150 }}>
-                      <Spinner animation="border" variant="secondary" />
-                    </div>
-                  </div>
                 ) : (
                   <div className="device_card info-memo-com" id="mem-info">
                     <div className="spinner-style" style={{ height: 150 }}>
-                      <div
-                        style={{
-                          color: "white",
-                          textAlign: "center",
-                          marginTop: 50,
-                        }}
-                      >
-                        This data is not available for this host
-                      </div>
+                      <Spinner animation="border" variant="secondary" />
                     </div>
                   </div>
                 )}
@@ -256,52 +337,38 @@ const Dashboard = () => {
                         </h4>
                       </div>
                       <div>
-                        {cmmbCapacityData.total_capacity ? (
+                        {cmmbCapacityDataState.total_capacity ? (
                           <div style={{ paddingTop: 12 }}>
                             <div
                               className="progres-bar-label"
                               style={{ color: "white" }}
                             >
                               {`${
-                                cmmbCapacityData.total_capacity
-                                  ? cmmbCapacityData.total_capacity
+                                cmmbCapacityDataState.total_capacity
+                                  ? cmmbCapacityDataState.total_capacity
                                   : 0
                               } GB`}
                             </div>
                             <ProgressBar
                               style={{ height: 24, fontWeight: "bold" }}
-                              now={cmmbCapacityData.used_capacity_percentage}
+                              now={cmmbCapacityDataState.used_capacity_percentage}
                               key={1}
                               className="host1"
                             />
                             <div
                               style={{ color: "white", marginLeft: 200 }}
                             >{`Used Capacity ${
-                              cmmbCapacityData.used_capacity
-                                ? cmmbCapacityData.used_capacity
+                              cmmbCapacityDataState.used_capacity
+                                ? cmmbCapacityDataState.used_capacity
                                 : 0
                             } GB`}</div>
-                          </div>
-                        ) : dataAvailable ? (
-                          <div
-                            className="spinner-style"
-                            style={{ height: 150 }}
-                          >
-                            <Spinner animation="border" variant="secondary" />
                           </div>
                         ) : (
                           <div
                             className="spinner-style"
                             style={{ height: 150 }}
                           >
-                            <div
-                              style={{
-                                color: "white",
-                                textAlign: "center",
-                              }}
-                            >
-                              This data is not available for this host
-                            </div>
+                            <Spinner animation="border" variant="secondary" />
                           </div>
                         )}
                       </div>
@@ -346,33 +413,21 @@ const Dashboard = () => {
                     xl={10}
                     data-testid="rackBandwidth-id"
                   >
-                    {cmmbMemoryData?.length > 1 ? (
+                    {cmmbMemoryDataState?.length > 1 ? (
                       <Chart
                         data-testid="chart"
                         chartType="AreaChart"
                         width="100%"
                         height="150px"
-                        data={cmmbMemoryData}
+                        data={cmmbMemoryDataState}
                         options={cmmbMemoryDataOptions}
                       />
-                    ) : dataAvailable ? (
+                    ) : (
                       <div
                         className="spinner-style"
                         style={{ height: 150, marginTop: 40 }}
                       >
                         <Spinner animation="border" variant="secondary" />
-                      </div>
-                    ) : (
-                      <div className="spinner-style" style={{ height: 150 }}>
-                        <div
-                          style={{
-                            color: "white",
-                            textAlign: "center",
-                            marginTop: 50,
-                          }}
-                        >
-                          This data is not available for this host
-                        </div>
                       </div>
                     )}
                   </Col>
@@ -412,45 +467,35 @@ const Dashboard = () => {
                     </h4>
                   </div>
                   <div>
-                    {cmmbBandwidthData.max_bandwidth ? (
+                    {cmmbBandwidthDataState.max_bandwidth ? (
                       <div style={{ paddingTop: 12 }}>
                         <div
                           className="progres-bar-label"
                           style={{ color: "white" }}
                         >
                           {`${
-                            cmmbBandwidthData.max_bandwidth
-                              ? cmmbBandwidthData.max_bandwidth
+                            cmmbBandwidthDataState.max_bandwidth
+                              ? cmmbBandwidthDataState.max_bandwidth
                               : 0
                           } GBps`}
                         </div>
                         <ProgressBar
                           style={{ height: 24, fontWeight: "bold" }}
-                          now={cmmbBandwidthData.used_percentage_bandwidth}
+                          now={cmmbBandwidthDataState.used_percentage_bandwidth}
                           key={1}
                           className="host1"
                         />
                         <div
                           style={{ color: "white", marginLeft: 200 }}
                         >{`Used Bandwidth ${
-                          cmmbBandwidthData.used_bandwidth
-                            ? cmmbBandwidthData.used_bandwidth
+                          cmmbBandwidthDataState.used_bandwidth
+                            ? cmmbBandwidthDataState.used_bandwidth
                             : 0
                         } GBps`}</div>
                       </div>
-                    ) : dataAvailable ? (
+                    ) : (
                       <div className="spinner-style" style={{ height: 150 }}>
                         <Spinner animation="border" variant="secondary" />
-                      </div>
-                    ) : (
-                      <div
-                        style={{
-                          color: "white",
-                          textAlign: "center",
-                          marginTop: 65,
-                        }}
-                      >
-                        This data is not available for this host
                       </div>
                     )}
                   </div>
