@@ -686,13 +686,13 @@ svk_status initialize(void*) {
       return SVK_STATUS_FAIL;
     }
 
-    int csv_status = validate_csv_file(CXL_ID_TYPE_MAP_FILE);
-    if (csv_status != 0) {
-      LOG(level_E::ERROR, "Device ID mapping CSV not found.");
+    int json_status = validate_json_file(CXL_ID_TYPE_MAP_FILE);
+    if (json_status != 0) {
+      LOG(level_E::ERROR, "Device ID mapping JSON not found.");
       return SVK_STATUS_FAIL;
     }
     // Load and cache device type map globally
-    const auto& map = load_dev_type_mapping_csv(CXL_ID_TYPE_MAP_FILE);
+    const auto& map = load_dev_type_mapping_json(CXL_ID_TYPE_MAP_FILE);
     set_global_dev_type_map(map);
     static DeviceManager mgr;
     g_dev_mgr = &mgr;

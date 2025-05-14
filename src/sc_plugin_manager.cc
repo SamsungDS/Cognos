@@ -1,14 +1,12 @@
-#include "sc_plugin_manager.h"
+#include "sc_plugin_manager.h"  // PluginManager, register_plugin_func
 
-#include <dirent.h>
-#include <dlfcn.h>
-#include <errno.h>
-#include <sys/stat.h>
-#include <unistd.h>
+#include <dirent.h>  // DIR, opendir, readdir, closedir
+#include <dlfcn.h>   // dlopen, dlsym, dlclose, dlerror
+#include <errno.h>   // errno, POSIX error codes
 
-#include <string>
+#include <string>  // std::string
 
-#include "sc_logger.h"
+#include "sc_logger.h"  // LOG
 
 /**
  * @brief Typedef for the symbol exposed by each plugin.
@@ -89,7 +87,7 @@ int PluginManager::loadPlugin(const std::string& plugin_file) {
     return -EEXIST;
   }
 
-  //void* handle = dlopen(plugin_file.c_str(), RTLD_NOW | RTLD_GLOBAL);
+  // void* handle = dlopen(plugin_file.c_str(), RTLD_NOW | RTLD_GLOBAL);
   void* handle = dlopen(plugin_file.c_str(), RTLD_LAZY);
   if (!handle) {
     LOG(level_E::ERROR, "dlopen failed for " + plugin_file + ": " + dlerror());

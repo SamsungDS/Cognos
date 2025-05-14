@@ -45,13 +45,6 @@ class CXLDeviceAdapter {
   virtual sc_device get_device_object(const sc_id& sid) const = 0;
 
   /**
-   * @brief Retrieve the list of hosts managed by this adapter.
-   *
-   * @return Vector of sc_host objects.
-   */
-  virtual std::vector<sc_host> list_hosts() = 0;
-
-  /**
    * @brief Retrieves the full DevInfo (static + dynamic fields) for a given
    * device.
    *
@@ -89,5 +82,19 @@ class CXLDeviceAdapter {
    * @return Status code (0 for success, negative for error).
    */
   virtual int setup_info() = 0;
+
+  /**
+   * @brief Retrieve the list of hosts managed by this adapter.
+   *
+   * @return Vector of sc_host objects.
+   */
+  std::vector<sc_host> list_hosts() const;
+
+ protected:
+  /** Map of device ID to device object */
+  std::unordered_map<sc_id, sc_device, hash_sc_id> device_map_;
+
+  /** List of associated hosts (currently unused) */
+  std::vector<sc_host> hosts_;
 };
 #endif

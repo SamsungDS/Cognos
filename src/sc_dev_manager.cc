@@ -4,15 +4,9 @@
  * device operations.
  */
 
-#include "sc_dev_manager.h"
+#include "sc_dev_manager.h"  // DeviceManager functions
 
-#include <jansson.h>
-
-#include <iostream>
-#include <sstream>
-
-#include "sc_logger.h"
-#include "sc_utility.h"
+#include "sc_logger.h"  // LOG
 
 DeviceManager::DeviceManager() {
   LOG(level_E::INFO, "DeviceManager initialized.");
@@ -190,6 +184,7 @@ CXLDeviceAdapter* DeviceManager::getAdapter(const std::string& name) {
 const std::unordered_map<std::string, CXLDeviceAdapter*>&
 DeviceManager::get_adapters() {
   LOG(level_E::INFO, "DeviceManager::get_adapters called.");
+  LOG(level_E::INFO, "adapterMap size: " + std::to_string(adapterMap.size()));
   return adapterMap;
 }
 

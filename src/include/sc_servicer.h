@@ -16,7 +16,7 @@ extern "C" {
 #include "types.h"
 
 #define CXL_CONF_FILE "cxl.conf"
-#define CXL_ID_TYPE_MAP_FILE "cxl_dev_id_map.csv"
+#define CXL_ID_TYPE_MAP_FILE "cxl_dev_id_map.json"
 #define LOG_CONF_FILE "log.conf"
 
 const std::unordered_map<std::string, std::string> tokenize(std::string input);

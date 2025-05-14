@@ -1,6 +1,7 @@
 #ifndef __CXL_PLUGIN_MBOX_H__
 #define __CXL_PLUGIN_MBOX_H__
 
+#include <cstdint>
 #include "mbox_a1.h"
 #include "sc_device.h"
 #include "sc_mld.h"

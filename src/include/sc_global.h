@@ -4,7 +4,6 @@
 #include <memory>
 
 #include "sc_device.h"
-// #include "sc_fm.h"
 #include "mbox_a1.h"
 
 class sc_mbox;

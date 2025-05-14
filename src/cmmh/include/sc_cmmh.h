@@ -40,12 +40,6 @@ class DevCMMH : public CXLDeviceAdapter {
   sc_device get_device_object(const sc_id& sid) const override;
 
   /**
-   * @brief Returns the list of hosts.
-   * @return Vector of sc_host objects.
-   */
-  std::vector<sc_host> list_hosts() override;
-
-  /**
    * @brief Returns DevInfo structure for a given device.
    * @param sid The device identifier.
    * @return DevInfo struct, or empty if not found.
@@ -63,13 +57,6 @@ class DevCMMH : public CXLDeviceAdapter {
    * @return 0 on success.
    */
   int setup_info() override;
-
- private:
-  /** Map of device ID to device object */
-  std::unordered_map<sc_id, sc_device, hash_sc_id> device_map_;
-
-  /** List of associated hosts (currently unused) */
-  std::vector<sc_host> hosts_;
 };
 
 /**

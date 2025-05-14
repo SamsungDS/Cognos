@@ -1,0 +1,6 @@
+{
+ "device_map": [
+   { "device_type": "CMM-H", "vendor_id": "1e98", "device_id": "0ddb" },
+   { "device_type": "CMM-D", "vendor_id": "1b00", "device_id": "c001" }
+ ]
+}

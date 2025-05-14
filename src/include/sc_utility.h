@@ -8,7 +8,10 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <cstdint>
 #include <vector>
+#include "sc_device.h"
+#include "sc_logger.h"
 
 /**
  * @brief Generates a structured JSON error response based on a POSIX error
@@ -124,31 +127,31 @@ void set_global_dev_type_map(const DevTypeMap& external_map);
 const DevTypeMap* get_global_dev_type_map();
 
 /**
- * @brief Loads the device type mapping from a CSV file, once per process.
- *
- * This function parses a CSV file containing device type mappings of the
- * format:
- * @code
- * device_type,vendor_id_hex,device_id_hex
- * @endcode
- * Example:
- * @code
- * CMM-H,1e98,0ddb
- * CMM-D,1b00,c001
- * @endcode
- *
- * It stores the result in a static map (singleton style) and sets the global
- * reference `global_dev_type_map`. On subsequent calls, it simply returns the
- * cached map without re-reading the file.
- *
- * This is intended to be called during system/plugin initialization.
- * In library mode, use `set_global_dev_type_map()` to inject a custom map
- * instead.
- *
- * @param filepath Absolute path to the CSV file (used only on first call)
- * @return Reference to the internally cached device type map
- */
-const DevTypeMap& load_dev_type_mapping_csv(const std::string& filepath);
+* @brief Loads the device type mapping from a JSON file, once per process.
+*
+* This function reads a structured JSON file containing device type mappings in
+* the following format:
+*
+* @code
+* {
+* "device_map": [
+* { "device_type": "CMM-H", "vendor_id": "1e98", "device_id": "0ddb" },
+* { "device_type": "CMM-D", "vendor_id": "1b00", "device_id": "c001" }
+* ]
+* }
+* @endcode
+*
+* It parses the vendor ID and device ID (as hex strings) and maps them to the
+* corresponding device type string. The mapping is cached and only loaded once
+* during the process lifetime. On subsequent calls, it returns the cached result.
+*
+* The map is stored in a global singleton-style reference for use by
+* discovery functions.
+*
+* @param filepath Absolute path to the JSON file containing device type mappings.
+* @return Reference to the internally cached device type map.
+*/
+const DevTypeMap& load_dev_type_mapping_json(const std::string& filepath);
 
 /**
  * @brief Get NUMA node memory capacity and free memory (in MB)
@@ -175,11 +178,11 @@ inline bool get_numa_memory_info(int node_id, uint64_t& total_mb,
 }
 
 /**
- * @brief Validates that a CSV file exists and logs accordingly.
- * @param filepath Full path to the CSV file.
+ * @brief Validates that a JSON file exists and logs accordingly.
+ * @param filepath Full path to the JSON file.
  * @return 0 if found, -ENOENT if not.
  */
-int validate_csv_file(const std::string& filepath);
+int validate_json_file(const std::string& filepath);
 
 /**
  * @brief Parses a JSON file and checks whether the given key exists.
@@ -190,4 +193,18 @@ int validate_csv_file(const std::string& filepath);
  */
 int parse_json_key(const std::string& json_file, const std::string& key,
                    std::string& value);
+
+/**
+ * @brief Shared PCI-based device discovery logic.
+ *
+ * This utility function performs PCI enumeration, filters devices using the given
+ * vendor/device ID map, and constructs a map of sc_device objects with static and
+ * dynamic metadata. The caller is expected to handle device registration and
+ * ownership after this function returns.
+ *
+ * @param dev_type_map Mapping of {vendor_id, device_id} to device type strings.
+ * @return Map of discovered sc_device objects indexed by sc_id.
+ */
+std::unordered_map<sc_id, sc_device, hash_sc_id> discover_cxl_devices_shared(const DevTypeMap& dev_type_map);
+
 #endif
