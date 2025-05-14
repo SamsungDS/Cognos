@@ -25,6 +25,7 @@ import {
   assignClustersToLabelValuePairs,
   transformData
 } from "../constant";
+import { HostList } from "../utils/dashboard-utils";
 import { ReactComponent as DeviceIcon } from "../assets/icons/deviceSVGIcon.svg";
 import { ReactComponent as CMMDIcon } from "../assets/icons/CMM-D-Icon.svg";
 import { ReactComponent as CMMHIcon } from "../assets/icons/CMM-H-Icon.svg";
@@ -71,7 +72,7 @@ const BoxTopology = () => {
         });
       };
       // Map HostList dynamically
-      const hostsFromConfig = mapHosts(Configs.HostList);
+      const hostsFromConfig = mapHosts(HostList);
       setHostList(hostsFromConfig);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
