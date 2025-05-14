@@ -92,7 +92,7 @@ const BoxTopology = () => {
   // Function to assign clusters
   const clusterWithDevice = assignClusters(hostlistRemote, clusterList.slice(1));
   const clusterWithDirectHost = assignClusters(hostlistDirect, clusterList.slice(1));
-  const clusterWithHost = assignClustersToLabelValuePairs(hostActiveList, clusterList.slice(1));
+  const clusterWithHost = assignClustersToLabelValuePairs(hostActiveList, hostlistRemote);
 
 
   // istanbul ignore next

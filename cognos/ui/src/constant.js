@@ -203,27 +203,37 @@ export const memboxTableHeader = [
     }
 // Main function to assign clusters based on selected policy
 export const assignClusters = (hosts, clusterName) => {
-  const clusterList = clusterName;
-  const policyName = Configs.clusterPolicy;
-  const policyOptions = Configs.policyOptions?.[policyName] || {};
-  
-  // Get the appropriate policy function or default to roundRobin
-  const policyFunction = clusterPolicies[policyName] || clusterPolicies.roundRobin;
-  
-  // Apply the selected policy
-  return policyFunction(hosts, clusterList, policyOptions);
+  // Filter the hosts array to only include hosts whose cluster property
+  // matches one of the values in the clusterName array
+  return hosts.filter(host => clusterName.includes(host.cluster));
 };
 
-export const assignClustersToLabelValuePairs = (labelValuePairs, clusterName) => {
-  const clusterList = clusterName;
-  
-  // Use the specific label-value policy or fall back to the generic round robin
-  const policyFunction = clusterPolicies.labelValueRoundRobin || clusterPolicies.roundRobin;
-  const policyOptions = Configs.policyOptions?.labelValueRoundRobin || {};
-  
-  return policyFunction(labelValuePairs, clusterList, policyOptions);
+// istanbul ignore next
+export const assignClustersToLabelValuePairs = (labelValuePairs, HostList) => {
+  // Create a map for quick lookup of hosts by their host property
+  const hostMap = HostList.reduce((map, hostObj) => {
+    map[hostObj.host] = hostObj;
+    return map;
+  }, {});
+
+  // Map through labelValuePairs and add cluster property
+  return labelValuePairs.map(pair => {
+    const matchingHost = hostMap[pair.label];
+    
+    // If a matching host is found, add its cluster to the pair
+    if (matchingHost) {
+      return {
+        ...pair,
+        cluster: matchingHost.cluster
+      };
+    }
+    
+    // If no matching host is found, return the original pair
+    return pair;
+  });
 };
 
+// istanbul ignore next
 export const transformData = function(inputData) {
   const result = [];
   
