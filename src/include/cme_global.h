@@ -9,7 +9,7 @@
 #include <mutex>
 #include <unordered_map>
 
-const std::string CME_CONFIG_FILE = "/etc/svk/cme_config.json";
+const std::string CME_CONFIG_FILE = "/usr/local/svk/feature_modules/me/config/cme_config.json";
 
 typedef enum
 {
