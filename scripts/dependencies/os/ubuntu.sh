@@ -11,6 +11,9 @@ install_packages() {
         debhelper
         g++
         git
+        lshw
+        pciutils
+        pkgconf
         python3-virtualenv
         tar
         unzip

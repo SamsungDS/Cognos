@@ -2,4 +2,4 @@ svk-node (DEB_VERSION) DEB_OSVER; urgency=medium
 
   * DEB_CHANGELOG
 
- -- Matt Durand <matt.d@samsung.com>  DEB_TIMESTAMP
+ -- Aaron Lee <a.lee03@samsung.com>  DEB_TIMESTAMP
