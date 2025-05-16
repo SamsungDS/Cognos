@@ -1,6 +1,8 @@
 #include "sc_cmmh.h"  // implements all functions declared in cmmh.h
 
-#include "sc_utility.h"  // generate_dev_id, get_numa_memory_info, discover_cxl_devices_shared, get_global_dev_type_map
+#include "sc_utility.h"  // generate_dev_id, get_numa_memory_info, 
+			 // discover_cxl_devices_shared, get_global_dev_type_map, 
+			 // get_numa_node_from_sysfs
 
 /**
  * @brief DevCMMH constructor.
@@ -49,7 +51,34 @@ std::vector<sc_host> CXLDeviceAdapter::list_hosts() const {
 DevInfo DevCMMH::get_device_info(const sc_id& sid) const {
   auto it = device_map_.find(sid);
   LOG(level_E::DEBUG, "DevCMMH::get_device_info called");
-  return it != device_map_.end() ? it->second.d_get_info() : DevInfo{};
+
+  if (it == device_map_.end()) {
+    return DevInfo{};
+  }
+
+  // get existing device
+  sc_device& dev = const_cast<sc_device&>(it->second);
+  DevInfo dinfo = dev.d_get_info();
+
+  // extract BDF location from static info
+  const std::string& bdf = dinfo.static_info.location;
+
+  // utility function to fetch updated NUMA node
+  int numa_node = get_numa_node_from_sysfs(bdf);
+
+  // fetch updated memory info if node is valid
+  uint64_t total_mb = 0, free_mb = 0;
+  if (numa_node >= 0) {
+    get_numa_memory_info(numa_node, total_mb, free_mb);
+  }
+
+  // update dynamic fields
+  dinfo.numa_attached = numa_node;
+  dinfo.available_capacity_MB = free_mb;
+
+  dev.d_set_dynamic_info(dinfo);
+
+  return dinfo;
 }
 
 /**

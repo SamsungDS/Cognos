@@ -296,7 +296,7 @@ int parse_json_key(const std::string& json_file, const std::string& key,
 /**
  * @brief Generate a 48-bit unique device ID
  */
-inline uint64_t generate_dev_id(uint16_t vendor_id, uint16_t device_id,
+uint64_t generate_dev_id(uint16_t vendor_id, uint16_t device_id,
                                 uint8_t bus) {
   uint64_t dev_id = 0;
   dev_id |= ((uint64_t)(vendor_id & 0xFFFF)) << 32;
@@ -330,17 +330,7 @@ std::unordered_map<sc_id, sc_device, hash_sc_id> discover_cxl_devices_shared(
     snprintf(bdf, sizeof(bdf), "%04x:%02x:%02x.%x", dev->domain, dev->bus,
              dev->dev, dev->func);
     std::string bdf_str(bdf);
-    std::string sysfs_path = "/sys/bus/pci/devices/" + bdf_str + "/numa_node";
-
-    // NUMA node detection
-    int numa_node = -1;
-    std::ifstream nfile(sysfs_path);
-    if (nfile.is_open()) {
-      nfile >> numa_node;
-    } else {
-      LOG(level_E::WARN,
-          "NUMA node file missing: " + sysfs_path + " — assuming -1");
-    }
+    int numa_node = get_numa_node_from_sysfs(bdf_str);
 
     // Get memory metrics
     uint64_t total_mb = 1024, free_mb = 1024;
@@ -412,4 +402,36 @@ std::unordered_map<sc_id, sc_device, hash_sc_id> discover_cxl_devices_shared(
   LOG(level_E::INFO,
       "Total CXL devices discovered: " + std::to_string(device_map.size()));
   return device_map;
+}
+
+bool get_numa_memory_info(int node_id, uint64_t& total_mb, uint64_t& free_mb) {
+  try {
+    const uint64_t MB = 1024 * 1024;
+    long long free_bytes = 0;
+    long long total_bytes = numa_node_size64(node_id, &free_bytes);
+    if (total_bytes == -1) {
+      LOG(level_E::WARN,
+          "NUMA node size query failed for node " + std::to_string(node_id));
+      return false;
+    }
+    total_mb = total_bytes / MB;
+    free_mb = free_bytes / MB;
+    return true;
+  } catch (...) {
+    LOG(level_E::ERROR, "Exception in get_numa_memory_info for node " +
+                            std::to_string(node_id));
+    return false;
+  }
+}
+
+int get_numa_node_from_sysfs(const std::string& bdf) {
+  std::string path = "/sys/bus/pci/devices/" + bdf + "/numa_node";
+  int node = -1;
+  std::ifstream nfile(path);
+  if (nfile.is_open()) {
+    nfile >> node;
+  } else {
+    LOG(level_E::WARN, "NUMA node file missing for " + bdf);
+  }
+  return node;
 }

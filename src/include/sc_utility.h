@@ -4,12 +4,13 @@
 #include <numa.h>
 #include <numaif.h>
 
+#include <cstdint>
 #include <iostream>
 #include <string>
 #include <unordered_map>
 #include <utility>
-#include <cstdint>
 #include <vector>
+
 #include "sc_device.h"
 #include "sc_logger.h"
 
@@ -127,55 +128,38 @@ void set_global_dev_type_map(const DevTypeMap& external_map);
 const DevTypeMap* get_global_dev_type_map();
 
 /**
-* @brief Loads the device type mapping from a JSON file, once per process.
-*
-* This function reads a structured JSON file containing device type mappings in
-* the following format:
-*
-* @code
-* {
-* "device_map": [
-* { "device_type": "CMM-H", "vendor_id": "1e98", "device_id": "0ddb" },
-* { "device_type": "CMM-D", "vendor_id": "1b00", "device_id": "c001" }
-* ]
-* }
-* @endcode
-*
-* It parses the vendor ID and device ID (as hex strings) and maps them to the
-* corresponding device type string. The mapping is cached and only loaded once
-* during the process lifetime. On subsequent calls, it returns the cached result.
-*
-* The map is stored in a global singleton-style reference for use by
-* discovery functions.
-*
-* @param filepath Absolute path to the JSON file containing device type mappings.
-* @return Reference to the internally cached device type map.
-*/
+ * @brief Loads the device type mapping from a JSON file, once per process.
+ *
+ * This function reads a structured JSON file containing device type mappings in
+ * the following format:
+ *
+ * @code
+ * {
+ * "device_map": [
+ * { "device_type": "CMM-H", "vendor_id": "1e98", "device_id": "0ddb" },
+ * { "device_type": "CMM-D", "vendor_id": "1b00", "device_id": "c001" }
+ * ]
+ * }
+ * @endcode
+ *
+ * It parses the vendor ID and device ID (as hex strings) and maps them to the
+ * corresponding device type string. The mapping is cached and only loaded once
+ * during the process lifetime. On subsequent calls, it returns the cached
+ * result.
+ *
+ * The map is stored in a global singleton-style reference for use by
+ * discovery functions.
+ *
+ * @param filepath Absolute path to the JSON file containing device type
+ * mappings.
+ * @return Reference to the internally cached device type map.
+ */
 const DevTypeMap& load_dev_type_mapping_json(const std::string& filepath);
 
 /**
  * @brief Get NUMA node memory capacity and free memory (in MB)
  */
-inline bool get_numa_memory_info(int node_id, uint64_t& total_mb,
-                                 uint64_t& free_mb) {
-  try {
-    const uint64_t MB = 1024 * 1024;
-    long long free_bytes = 0;
-    long long total_bytes = numa_node_size64(node_id, &free_bytes);
-    if (total_bytes == -1) {
-      LOG(level_E::WARN,
-          "NUMA node size query failed for node " + std::to_string(node_id));
-      return false;
-    }
-    total_mb = total_bytes / MB;
-    free_mb = free_bytes / MB;
-    return true;
-  } catch (...) {
-    LOG(level_E::ERROR, "Exception in get_numa_memory_info for node " +
-                            std::to_string(node_id));
-    return false;
-  }
-}
+bool get_numa_memory_info(int node_id, uint64_t& total_mb, uint64_t& free_mb);
 
 /**
  * @brief Validates that a JSON file exists and logs accordingly.
@@ -197,14 +181,34 @@ int parse_json_key(const std::string& json_file, const std::string& key,
 /**
  * @brief Shared PCI-based device discovery logic.
  *
- * This utility function performs PCI enumeration, filters devices using the given
- * vendor/device ID map, and constructs a map of sc_device objects with static and
- * dynamic metadata. The caller is expected to handle device registration and
- * ownership after this function returns.
+ * This utility function performs PCI enumeration, filters devices using the
+ * given vendor/device ID map, and constructs a map of sc_device objects with
+ * static and dynamic metadata. The caller is expected to handle device
+ * registration and ownership after this function returns.
  *
  * @param dev_type_map Mapping of {vendor_id, device_id} to device type strings.
  * @return Map of discovered sc_device objects indexed by sc_id.
  */
-std::unordered_map<sc_id, sc_device, hash_sc_id> discover_cxl_devices_shared(const DevTypeMap& dev_type_map);
+std::unordered_map<sc_id, sc_device, hash_sc_id> discover_cxl_devices_shared(
+    const DevTypeMap& dev_type_map);
+
+/**
+ * @brief Retrieves the NUMA node for a given PCI device based on its BDF
+ * string.
+ *
+ * This function reads the `/sys/bus/pci/devices/<BDF>/numa_node` sysfs entry
+ * to determine the NUMA node associated with the specified PCI device.
+ *
+ * @param bdf PCI address in the format "0000:xx:yy.z"
+ * (domain:bus:device.function).
+ * @return The NUMA node ID if found otherwise -1 if the file is missing or
+ * unreadable.
+ */
+int get_numa_node_from_sysfs(const std::string& bdf);
+
+/**
+ * @brief Generate a 48-bit unique device ID
+ */
+uint64_t generate_dev_id(uint16_t vendor_id, uint16_t device_id, uint8_t bus);
 
 #endif

@@ -40,10 +40,22 @@ class DevCMMH : public CXLDeviceAdapter {
   sc_device get_device_object(const sc_id& sid) const override;
 
   /**
-   * @brief Returns DevInfo structure for a given device.
-   * @param sid The device identifier.
-   * @return DevInfo struct, or empty if not found.
-   */
+   * @brief Returns updated DevInfo for the given device ID.
+   *
+   * This method retrieves the `sc_device` corresponding to the provided `sc_id`
+   * from the internal `device_map_`. It then uses the stored PCI BDF string
+   * (from the device's static info) to:
+   * - Re-evaluate the current NUMA node using sysfs.
+   * - Refresh the memory metrics (total/available) via libnuma.
+   *
+   * These updated dynamic values are then injected into the device’s internal
+   * dynamic info structure, ensuring that the returned `DevInfo` reflects the
+   * most recent system state for the CMM-H device.
+   *
+   * @param sid The device identifier (sc_id).
+   * @return DevInfo structure with up-to-date memory and NUMA info,
+   * or empty is not found.
+  */
   DevInfo get_device_info(const sc_id& sid) const override;
 
   /**
