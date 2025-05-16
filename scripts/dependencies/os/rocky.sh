@@ -20,6 +20,8 @@ install_packages() {
         cmake
         gcc-c++
         git
+        lshw
+        pciutils
         python3-virtualenv
         rpmdevtools
         tar

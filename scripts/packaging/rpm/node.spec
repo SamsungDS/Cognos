@@ -13,14 +13,6 @@ License:        Samsung Internal
 %description
 SVK Node feature module to get the node's information such as CPU, Memory, PCI devices etc.
 
-%package devel
-Summary:        SVK node devel package contains headers and sample_feature
-Provides:       svk-node-devel = %version
-Requires:       svk-node = %version, svk-core-devel
-
-%description devel
-SVK Node feature's devel module provides the headers and other development libraries
-
 %install
 cd %svk_build_dir
 # build commands go below
@@ -33,19 +25,20 @@ cmake -DWITH_RELEASE=ON -DPKG_CONFIG_PREFIX=%svk_install_dir -DCMAKE_INSTALL_PRE
 # dir for svk/node - we can assume "svk" already exists because it is owned by core RPM
 %dir %svk_install_dir/
 %svk_install_dir/%_lib
-
-
-%files devel
-# devel files go here
+%svk_install_dir/scripts
+%svk_install_dir/config
+%ghost %_sysconfdir/ld.so.conf.d/svk-node-mgmt-%_arch.conf
 
 %post
-# post-install commands go here
+echo "%svk_install_dir/%_lib" > %_sysconfdir/ld.so.conf.d/svk-node-mgmt-%_arch.conf
+%__chmod a+r %_sysconfdir/ld.so.conf.d/svk-node-mgmt-%_arch.conf
+%_sbindir/ldconfig
 
 %preun
 # pre-uninstall commands go here
 
 %postun
-# post-uninstall commands go here
+%_sbindir/ldconfig
 
 %changelog
 * Wed Feb 17 2024 Suresh Grandhi <suresh.g@samsung.com>

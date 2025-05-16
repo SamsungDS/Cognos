@@ -9,8 +9,3 @@ Package: svk-node
 Architecture: amd64
 Depends: ${shlibs:Depends}, ${misc:Depends}, svk-core
 Description: SVK Node feature module to get the node's information
-
-Package: svk-node-dev
-Architecture: amd64
-Depends: ${shlibs:Depends}, ${misc:Depends}, svk-node (= ${binary:Version}), svk-core-dev
-Description: SVK Node feature module's header files and development environment
