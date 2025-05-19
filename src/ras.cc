@@ -103,7 +103,7 @@ extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
   char *output_buf = (char *)output->output_buffer;
   char debug_info[2048];
   ras_request request(
-      false, true, input_buf, output_buf,
+      false, true,
       g_ras_context
           .monitor_context);  // Local variable okay since this will be sync
   bool submit_okay = false;

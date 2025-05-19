@@ -1,19 +1,14 @@
 #ifndef _RAS_MONITOR_H_
 #define _RAS_MONITOR_H_
 
-#include <string>
-
 #include "RequestProcessor.h"
-
 class ras_monitor;
 
 struct ras_request {
-  ras_request(bool is_internal_request, bool is_sync_request, std::string in,
-              std::string out, ras_monitor *monitor_instance)
+  ras_request(bool is_internal_request, bool is_sync_request,
+              ras_monitor *monitor_instance)
       : is_internal_request(is_internal_request),
         is_sync_request(is_sync_request),
-        input(in),
-        output(out),
         monitor_instance(monitor_instance) {
     is_completed = false;
   }
@@ -24,11 +19,6 @@ struct ras_request {
   bool is_completed;
   std::mutex sync_mutex;
   std::condition_variable sync_cv;
-
-  // Request method and params
-  std::string input;
-  // Response string
-  std::string output;
 
   ras_monitor *monitor_instance;
 };
@@ -55,7 +45,7 @@ class ras_monitor {
   std::vector<ras_device> devices;
 
   static void process_request(ras_request *req) {
-    if ((req != nullptr) && (req->is_sync_request)) {
+    if (req->is_sync_request) {
       req->monitor_instance->process_request_sync(req);
     }
     return;
@@ -63,9 +53,6 @@ class ras_monitor {
 
   void set_sync_request_completed(ras_request *req);
   void process_request_sync(ras_request *req);
-  friend inline void proc_req(const ras_monitor &rm, ras_request *req) {
-    process_request(req);
-  }
 
  public:
   ras_monitor(/* args */);
