@@ -6,7 +6,7 @@ SCRIPT_DIR=$(cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd)
 PROJECT_ROOT=$(realpath "$SCRIPT_DIR/..")
 BUILD_DIR="$PROJECT_ROOT/build"
 ARTIFACTS_DIR="$BUILD_DIR/artifacts"
-
+VENV_DIR=/usr/local/svk/sapp/venv
 
 
 help()
@@ -45,6 +45,17 @@ parse_options()
         ;;
     esac
     done
+}
+
+activate_venv() {
+    if [[ ! -d $VENV_DIR ]]; then
+        echo "Python virtual environment does not exist!"
+        echo "Execute dependency install script and try again: ./scripts/dependencies/install.sh"
+        exit 1
+    else
+        # shellcheck disable=SC1091
+        source "$VENV_DIR/bin/activate"
+    fi
 }
 
 get_os_version() {
@@ -148,6 +159,7 @@ build_rpm() {
 parse_options "$@"
 get_os_version
 get_git_version
+activate_venv
 
 if $BUILD_RELEASE; then
     build_deb

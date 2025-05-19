@@ -3,11 +3,19 @@ set -e
 
 # Build Dependencies
 install_packages() {
-    # Add NodeJS 21 repo
-    curl -fsSL https://rpm.nodesource.com/setup_21.x | bash
-
-    BUILD_DEPS=(epel-release)
+    BUILD_DEPS=(
+        dnf
+        epel-release
+    )
     package_manager
+
+    # Add NodeJS 21 repo
+    curl -fsSL https://rpm.nodesource.com/setup_22.x | bash
+    
+    # Enable CodeReady Builder (CRB) repository
+    BUILD_DEPS=("'dnf-command(config-manager)'")
+    package_manager
+    /usr/bin/crb enable
 
     BUILD_DEPS=(
         chromedriver
@@ -17,6 +25,7 @@ install_packages() {
         nodejs
         python3
         python3-pip
+        python3-virtualenv
         rpmdevtools
     )
     package_manager
