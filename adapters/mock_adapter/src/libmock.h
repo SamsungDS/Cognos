@@ -98,7 +98,7 @@ int startup(char const* cfg);
 string processRequest(string& request);
 
 // getErrorCount API
-string getErrorCount(const string& device, const string& type);
+int getErrorCount(const string& device, const string& type, string& out);
 
 // Validate device string ID before calling getErrorCount
 int getErrorCount_validate(const string& device);
@@ -115,7 +115,7 @@ int get_numa_node_address_range(const int& node_index, const bool cxl_node,
 
 // Find the total number of lines in ras-mc-ctl output that has address
 // between the limits of provided address range
-string calculateErrorCount(string& res, string& addr_range);
+int calculateErrorCount(string& res, string& addr_range, string& out);
 
 // Validate the provided JSON string string to be a proper for processing
 int validate_config(const string& text);

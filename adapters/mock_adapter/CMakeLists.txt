@@ -1,15 +1,18 @@
 set(LIBMOCK_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/libmock.cpp)
+set(LOGICMOCK_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/logicmock.cpp)
 set(LIBMOCK_INC ${CMAKE_CURRENT_SOURCE_DIR}/src/libmock.h)
 set(LIBMOCK_CFG ${CMAKE_CURRENT_SOURCE_DIR}/config/mock_config.json)
 set(LIBMOCK_LIB_DEST "lib64/adapters/mock_adapter/lib64/")
 set(LIBMOCK_INCLUDE_DEST "include/adapters/mock_adapter/include/")
 set(LIBMOCK_CFG_DEST "lib64/adapters/mock_adapter/config/")
 set(LIBMOCK "mock")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
 
 include_directories(${CMAKE_SOURCE_DIR}/include)
-add_library(${LIBMOCK} SHARED ${LIBMOCK_SRC} ${LIBMOCK_INC})
+add_library(libmock_mod OBJECT ${LIBMOCK_SRC})
+add_library(${LIBMOCK} SHARED ${LOGICMOCK_SRC})
+target_link_libraries(${LIBMOCK} libmock_mod numa svklogger)
 target_link_directories(${LIBMOCK} PUBLIC ${SVKFW_LIBRARY_DIRS})
-target_link_libraries(${LIBMOCK} numa svklogger)
 
 set_target_properties(${LIBMOCK} PROPERTIES
                       VERSION ${SVK_RAS_VERSION_FULL}

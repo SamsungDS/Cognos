@@ -312,21 +312,44 @@ int getErrorCount_validate(const string &dev) {
 }
 
 // Creating JSON string response for getErrorCount
-string createResponse(const char *status, string &response) {
+string createResponse(const string &device, const string &error_type,
+                      const char *status, const string &error_count) {
   Document document;
   document.SetObject();
 
   Document::AllocatorType &allocator = document.GetAllocator();
 
-  // Allocating memory to add status
-  Value stat;
-  stat.SetString(status, allocator);
-  document.AddMember("Status", stat, allocator);
+  // Adding object for "command_response"
+  Value cmd_response(kObjectType);
 
-  // Allocating memory to add response
-  Value resp;
-  resp.SetString(response.c_str(), allocator);
-  document.AddMember("Response", resp, allocator);
+  // Adding object for "getErrorCount"
+  Value get_error_count(kObjectType);
+
+  // Adding device name
+  Value dev(kStringType);
+  dev.SetString(device.c_str(), allocator);
+  get_error_count.AddMember("device", dev, allocator);
+
+  // Adding error type
+  Value etype(kStringType);
+  etype.SetString(error_type.c_str(), allocator);
+  get_error_count.AddMember("errorType", etype, allocator);
+
+  // Adding result details
+  Value result(kObjectType);
+
+  // Adding success status
+  if (strcmp(status, "OK") == 0) {
+    result.AddMember("commandSuccessful", true, allocator);
+    result.AddMember("errorCount", stol(error_count), allocator);
+  } else
+    result.AddMember("commandSuccessful", false, allocator);
+
+  get_error_count.AddMember("result", result, allocator);
+  cmd_response.AddMember("getErrorCount", get_error_count, allocator);
+
+  // Adding command response to document
+  document.AddMember("command_response", cmd_response, allocator);
 
   StringBuffer buffer;
   Writer<StringBuffer> writer(buffer);
@@ -338,7 +361,7 @@ string createResponse(const char *status, string &response) {
 }
 
 // Get the error count using ras-mc-ctl output
-string calculateErrorCount(string &res, string &addr_range) {
+int calculateErrorCount(string &res, string &addr_range, string &out) {
   int ret = 0;
   string response, retresp, tok;
   string delim = "-";
@@ -347,8 +370,8 @@ string calculateErrorCount(string &res, string &addr_range) {
   if ((res.size() == 0) || (addr_range.size() == 0) || (dpos == string::npos)) {
     ret = UNABLE_TO_GET_NUMA_ADDR_RANGE_ERR;
     response = "Empty or Invalid address range detected";
-    retresp = createResponse(err_str[ret], response);
-    return retresp;
+    svk_logger(RAS_LOGGER, level_E::ERROR, response.c_str());
+    return ret;
   }
 
   string t1 = addr_range.substr(0, dpos);
@@ -368,14 +391,13 @@ string calculateErrorCount(string &res, string &addr_range) {
       }
     }
   }
-  response.assign(to_string(count));
-  retresp = createResponse(err_str[ret], response);
-  return retresp;
+  out.assign(to_string(count));
+  return ret;
 }
 
 // The implementation of getErrorCount
 // Counts the physical addresses valid for the provided node index
-string getErrorCount(const string &dev, const string &type) {
+int getErrorCount(const string &dev, const string &type, string &out) {
   int ret = 0, noden = -1;
   string status, response = "", retresp, addr_range, res = "";
   bool cxl = false;
@@ -383,21 +405,23 @@ string getErrorCount(const string &dev, const string &type) {
   ret = getErrorCount_validate(dev);
   if (ret != 0) {
     response = "Error during validation of device ID: " + dev;
-    retresp = createResponse(err_str[ret], response);
-    return retresp;
+    retresp = createResponse(dev, type, err_str[ret], response);
+    svk_logger(RAS_LOGGER, level_E::ERROR, retresp.c_str());
+    return ret;
   } else {
     noden = stoi(dev);
     ret = get_numa_node_address_range(noden, cxl, addr_range);
     if (ret != 0) {
       response = "Error getting address range of device ID: " + dev;
-      retresp = createResponse(err_str[ret], response);
-      return retresp;
+      retresp = createResponse(dev, type, err_str[ret], response);
+      svk_logger(RAS_LOGGER, level_E::ERROR, retresp.c_str());
+      return ret;
     }
 
     string cmd = cf.ras_mc_ctl_error_addresses;
     if (!cmd.empty()) res = cmd_exec(cmd);
 
-    return calculateErrorCount(res, addr_range);
+    return calculateErrorCount(res, addr_range, out);
   }
 }
 
@@ -409,7 +433,7 @@ string processRequest(string &request) {
   int ret = 0;
   // Create a rapidjson document
   Document document;
-  string cmd_str, cmd, device_str, device, type_str, type, res, estring;
+  string cmd_str, cmd, device_str, device, type_str, type, res, estring, out;
 
   // Parse the JSON string
   document.Parse(request.c_str());
@@ -417,7 +441,7 @@ string processRequest(string &request) {
   if (ret != 0) {
     ret = INPUT_JSON_PARSE_ERR;
     estring = GetParseError_En(document.GetParseError());
-    res = createResponse(err_str[INPUT_JSON_PARSE_ERR], estring);
+    res = createResponse(device, type, err_str[ret], estring);
   } else {
     // Check if the document is an object
     if (document.IsObject()) {
@@ -449,14 +473,18 @@ string processRequest(string &request) {
           }
         }
       }
-
       if ((cmd == "getErrorCount") && (device_str == "device") &&
           ((type == "correctable") || (type == "uncorrectable"))) {
-        res = getErrorCount(device, type);
+        ret = getErrorCount(device, type, out);
+        res = createResponse(device, type, err_str[ret], out);
+        svk_logger(RAS_LOGGER, level_E::ERROR, res.c_str());
+
       } else {
         ret = INVALID_INPUT_ERR;
-        estring = "Invalid/Missing Key Name and/or Invalid Value Provided";
-        res = createResponse(err_str[INVALID_INPUT_ERR], estring);
+        res = createResponse(device, type, err_str[ret], out);
+        estring =
+            res + ":Invalid/Missing Key Name and/or Invalid Value Provided";
+        svk_logger(RAS_LOGGER, level_E::ERROR, estring.c_str());
       }
     }
   }

@@ -158,4 +158,21 @@ unsigned char config6_json[] = R"(
 }
 )";
 
+// Input for LogicMock
+unsigned char inp1[] = R"(
+{
+  "command": "getErrorCount1",
+  "device": 0,
+  "type": "correctable"
+}
+)";
+
+unsigned char inp2[] = R"(
+{
+  "command": "getErrorCount",
+  "device": 0,
+  "type": "correctable"
+}
+)";
+
 #endif

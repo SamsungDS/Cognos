@@ -1,0 +1,90 @@
+#include "logicmock.h"
+
+#include <boost/property_tree/json_parser.hpp>
+#include <iostream>
+#include <sstream>
+#include <string>
+
+#include "ras.hpp"
+
+#define MOCK_MODULE_NAME "mock"
+
+svk_status execute_mock_logic_sync(svk_logic_cmd *cmd, svk_logic_input *input,
+                                   svk_logic_output *output) {
+  svk_status ret = SVK_STATUS_SUCCESS;
+  std::string slog;
+  std::stringstream ss;
+  slog.assign("mock logic sync");
+  svk_logger(RAS_LOGGER, level_E::INFO, slog.c_str());
+
+  if (cmd == nullptr || input == nullptr || output == nullptr) {
+    ss << "cmd:" << cmd << " input:" << input << " output:" << output;
+    slog.assign("Invalid input for mock logic sync params. " + ss.str());
+    svk_logger(RAS_LOGGER, level_E::INFO, slog.c_str());
+    return SVK_STATUS_FAIL;
+  }
+
+  if (input->input_buffer == nullptr) {
+    slog.assign("NULL input buffer for mock logic sync params");
+    svk_logger(RAS_LOGGER, level_E::INFO, slog.c_str());
+    return SVK_STATUS_FAIL;
+  }
+
+  boost::property_tree::ptree pt;
+  std::string in, out, sts;
+  output->status = SVK_STATUS_SUCCESS;
+
+  in.assign((const char *)input->input_buffer);
+  out = processRequest(in);
+
+  try {
+    ss.str(std::string());
+    ss << out;
+    boost::property_tree::read_json(ss, pt);
+    snprintf((char *)output->output_buffer, output->output_len, "%s",
+             out.c_str());
+    if (pt.get<std::string>(
+            "command_response.getErrorCount.result.commandSuccessful") ==
+        "false") {
+      output->status = SVK_STATUS_FAIL;
+      ret = SVK_STATUS_FAIL;
+    }
+
+  } catch (const boost::property_tree::ptree_error &e) {
+    svk_logger(RAS_LOGGER, level_E::ERROR, e.what());
+  }
+
+  return ret;
+}
+
+inline svk_status execute_mock_logic_async(svk_logic_cmd *pass_thru,
+                                           svk_postprocess_fn *postprocess_fn) {
+  return SVK_STATUS_SUCCESS;
+}
+
+inline svk_status cleanup_mock_logic_module(void *param) {
+  return SVK_STATUS_SUCCESS;
+}
+
+inline svk_status configure_mock_logic(const std::string slat_logic_conf_file) {
+  return SVK_STATUS_SUCCESS;
+}
+
+extern "C" svk_status initialize_logic_module(void *init_param) {
+  if (startup((const char *)init_param))
+    return SVK_STATUS_FAIL;
+  else
+    return SVK_STATUS_SUCCESS;
+}
+
+extern "C" inline svk_status get_supported_logic_details(
+    svk_logic_module_details *details) {
+  strcpy(details->feature_name, "ras");
+  strcpy(details->logic_module_name, "mock");
+
+  details->execute_logic_sync = &execute_mock_logic_sync;
+  details->execute_logic_async = &execute_mock_logic_async;
+  details->cleanup_logic_module = &cleanup_mock_logic_module;
+
+  return SVK_STATUS_SUCCESS;
+}
