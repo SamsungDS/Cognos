@@ -8,18 +8,20 @@ install_packages() {
         build-essential
         cmake
         cgroup-tools
+        curl
         debhelper
         diffutils
         dpkg-dev
         dstat
-	file
+	    file
         g++
         git
         libboost-dev
         libfmt-dev
         libjansson-dev
-	libnuma-dev
-	libspdlog-dev
+	    libnuma-dev
+        libpci-dev
+	    libspdlog-dev
         libssl-dev
         libyaml-cpp-dev
         libzmq3-dev
@@ -30,7 +32,7 @@ install_packages() {
         sudo
         tar
         unzip
-        wget
+        wget 
     )
     package_manager
 }

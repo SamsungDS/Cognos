@@ -13,7 +13,7 @@ else()
 endif()
 
 add_library(${PLUGIN_NAME} SHARED ${CMMH_SOURCES} ${CMMH_HEADERS})
-add_dependencies(${PLUGIN_NAME} cxl)
+add_dependencies(${PLUGIN_NAME} svkcxl)
 
 target_include_directories(${PLUGIN_NAME} PRIVATE
 "${CMAKE_CURRENT_SOURCE_DIR}/include"
@@ -36,10 +36,9 @@ target_link_libraries(${PLUGIN_NAME}
  numa
  svklogger
  ${PCI_LIB} 
- ${PROJECT_BINARY_DIR}/src/libcxl.so
+ ${PROJECT_BINARY_DIR}/src/libsvkcxl.so
 )
 
-# Install plugin .so to plugin directory
-install(TARGETS ${PLUGIN_NAME}
- LIBRARY DESTINATION ${SVKCXL_LIB_DEST})
+install(TARGETS ${PLUGIN_NAME} 
+LIBRARY DESTINATION "${CMMH_LIB_PATH}")
 

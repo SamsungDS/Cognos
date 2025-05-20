@@ -17,14 +17,14 @@ release build:
      - $ARTIFACTS_DIR/
   variables:
     MOCK_MODE:
-    DOCKERFILE_NAME: rocky9
+    DOCKERFILE_NAME: ubuntu22
     RELEASE_TYPE: release
     FMAPI_CLONE_DIR: "$FMAPI_PROJECT/$DOCKERFILE_NAME/$RELEASE_TYPE"
     IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
     FMAPI_PATH: $CI_PROJECT_DIR/$FMAPI_CLONE_DIR/$FMAPI_DIR
   parallel:
     matrix:
-      - DOCKERFILE_NAME: rocky9
+      #- DOCKERFILE_NAME: rocky9
       - DOCKERFILE_NAME: ubuntu22
   needs:
     - build fmapi

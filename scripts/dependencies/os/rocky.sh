@@ -36,6 +36,7 @@ install_packages() {
         wget
 	zeromq
 	zeromq-devel
+	pciutils-devel
     )
     package_manager
 }

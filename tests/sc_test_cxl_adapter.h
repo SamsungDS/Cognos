@@ -21,7 +21,7 @@ class TestCXLDeviceAdapter : public CXLDeviceAdapter {
 
   sc_device get_device_object(const sc_id& sid) const override;
 
-  std::vector<sc_host> list_hosts() override;
+  std::vector<sc_host> list_hosts();
 
   virtual DevInfo get_device_info(const sc_id& sid) const override;
   virtual void discover_devices(DeviceManager& mgr);

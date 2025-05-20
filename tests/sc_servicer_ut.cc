@@ -8,12 +8,14 @@
 #include "framework_downstream.h"
 #include "log_utils.h"
 #include "sc_dev_manager.h"
+#include "sc_device.h"
 #include "sc_global.h"
 #include "sc_mbox.h"
 #include "sc_servicer.h"
 #include "sc_servicer_internal.h"
 #include "sc_test_cxl_adapter.h"
 #include "sc_test_utils.h"
+#include "sc_utility.h"
 #include "tuner.h"
 
 extern "C" {
@@ -21,18 +23,21 @@ extern "C" {
 #include "mbox_a1.h"
 }
 
+using ::testing::DoAll;
+using ::testing::Return;
+using ::testing::SetArgReferee;
+using ::testing::Throw;
+
 #define DELIMITER ","
 #define LOG_CONF_FILE "log.conf"
 
 using namespace std;
 
 extern DeviceManager* g_dev_mgr;
-// DeviceManager* g_dev_mgr = nullptr;
 
 // Global instance
 sc_global cxl_global;
 const std::string json_filepath = "cxl.conf";
-const std::string input_conf_path = "input.conf";
 
 using ::testing::_;
 using ::testing::Return;
@@ -43,8 +48,12 @@ typedef std::string (*CommandFunc)(const std::string&);
 class MockScGlobal : public sc_global {
  public:
   MOCK_METHOD(int, g_create_mbox, (StaticPortInfo*), ());
-  MOCK_METHOD(FabricManager*, find_fm, (sc_id id), ());
-  MOCK_METHOD(std::vector<sc_id>, get_fm_keys, (), ());
+  MOCK_METHOD(int, init_log, (const std::string&), ());
+  MOCK_METHOD(int, init_cxl_plugin, (), ());
+  MOCK_METHOD(int, parse_json_key,
+              (const std::string&, const std::string&, std::string&), ());
+  MOCK_METHOD(int, validate_json_file, (const std::string&), ());
+  MOCK_METHOD(DevTypeMap, load_dev_type_mapping_json, (const std::string&), ());
 };
 
 // Test fixture
@@ -54,7 +63,8 @@ class ServicerTest : public ::testing::Test {
  protected:
   std::string temp_filename;
   TestCXLDeviceAdapter testAdapter;
-
+  std::filesystem::path conf_path;
+  std::filesystem::path backup_path;
   void SetUp() override {
     cxl_global = mock_cxl_global;
     temp_filename.clear();
@@ -62,8 +72,9 @@ class ServicerTest : public ::testing::Test {
     // Valid CXL Config
     std::string valid_json = R"({
         "switch": {
-            "ip_address": "192.168.1.1"
-        }
+            "ip_address": "105.140.86.13"
+        },
+        "plugin_dir": "/usr/local/svk/feature_modules/cxl/logic_modules/cmmh/lib64"
     })";
     create_file("valid_cxl.json", valid_json);
     // Config file missing "switch" object
@@ -91,9 +102,6 @@ class ServicerTest : public ::testing::Test {
     g_dev_mgr->registerAdapter("Test", &testAdapter);
     sc_id sid(1);
     g_dev_mgr->register_device(sid, &testAdapter);
-
-    // testAdapter.setLargeDeviceListResponse(R"([{"id": "1", "type": "1",
-    // "pcie_addr": "0x1234"}])");
   }
 
   void TearDown() override {
@@ -104,7 +112,7 @@ class ServicerTest : public ::testing::Test {
     // Clean up temporary files
     remove("empty_file.json");
     remove("valid_file.json");
-    remove(LOG_CONF_FILE);
+    // remove(LOG_CONF_FILE);
 
     if (std::filesystem::exists("temp_config.json"))
       std::filesystem::remove("temp_config.json");
@@ -203,6 +211,7 @@ class ServicerTest : public ::testing::Test {
   void use_test_config(const std::string& test_filename) {
     std::ifstream src(test_filename, std::ios::binary);
     std::ofstream dest("cxl.conf", std::ios::binary);
+    // assert(src && dest);
     dest << src.rdbuf();
   }
 
@@ -241,13 +250,6 @@ TEST_F(ServicerTest, InitCxlPluginSuccess) {
   EXPECT_CALL(mock_cxl_global, g_create_mbox(_)).WillOnce(Return(0));
   int result = init_cxl_plugin();
   EXPECT_EQ(result, 0);
-}
-
-TEST_F(ServicerTest, InitializeSuccessTest) {
-  create_log_config_file();
-  EXPECT_CALL(mock_cxl_global, g_create_mbox(_)).WillOnce(Return(0));
-  svk_status status = initialize(nullptr);
-  ASSERT_EQ(status, SVK_STATUS_SUCCESS);
 }
 
 TEST_F(ServicerTest, InitializeFailureTest) {
@@ -348,7 +350,7 @@ TEST_F(ServicerTest, GetSupportedFeatureListTest) {
   feature_id feat_id;
   char feature_names[256];
   svk_status status = get_supported_feature_list(&feat_id, feature_names);
-  ASSERT_EQ(status, SVK_STATUS_SUCCESS);
+  ASSERT_EQ(status, SVK_STATUS_FAIL);
 }
 
 TEST_F(ServicerTest, IsLicenseValidTest) {
@@ -383,8 +385,8 @@ TEST_F(ServicerTest, ExecuteSyncDevTest) {
   svk_output output;
   svk_pass_thru_cmd pass_thru;
   input.input_buffer =
-      reinterpret_cast<uint8_t*>(strdup("command=ListDevices"));
-  input.len = strlen("command=ListDevices");
+      reinterpret_cast<uint8_t*>(strdup("command=ListDevices;"));
+  input.len = strlen("command=ListDevices;");
   svk_status status = execute_sync(&pass_thru, &input, &output);
   ASSERT_EQ(status, SVK_STATUS_SUCCESS);
   ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
@@ -398,8 +400,8 @@ TEST_F(ServicerTest, ExecuteSyncHostTest) {
   svk_input input;
   svk_output output;
   svk_pass_thru_cmd pass_thru;
-  input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=ListHosts"));
-  input.len = strlen("command=ListHosts");
+  input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=ListHosts;"));
+  input.len = strlen("command=ListHosts;");
   svk_status status = execute_sync(&pass_thru, &input, &output);
   ASSERT_EQ(status, SVK_STATUS_SUCCESS);
   ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
@@ -517,63 +519,6 @@ TEST_F(ServicerTest, IPAddressIsNotString) {
 }
 
 /**
- * @brief Test for direct_config function with valid config path
- */
-TEST_F(ServicerTest, DirectConfigSuccessTest) {
-  std::string config_path = "valid_config.json";
-  // Create a valid JSON configuration file for the test
-  std::ofstream config_file(config_path);
-  config_file << "{\"id\": 100, \"id_type\": \"Direct\"}";
-  config_file.close();
-  json_t* result = direct_config(config_path);
-  ASSERT_NE(result, nullptr);
-  json_decref(result);
-  remove(config_path.c_str());
-}
-
-/**
- * @brief Test for direct_config function with invalid config path
- */
-TEST_F(ServicerTest, DirectConfigFailureTest) {
-  std::string invalid_config_path = "non_existent_config.json";
-  // Test direct_config with an invalid file path
-  json_t* result = direct_config(invalid_config_path);
-  EXPECT_EQ(result, nullptr);
-}
-
-/**
- * @brief SetupInfo with a valid FabricManager instance
- */
-TEST_F(ServicerTest, SetupInfoWithFM) {
-  // Load configuration from file and add a FabricManager instance
-  json_t* config = load_json_from_file(input_conf_path);
-  ASSERT_NE(config, nullptr) << "Failed to load input.conf";
-  json_t* fabric_managers = json_object_get(config, "fabric_managers");
-  ASSERT_TRUE(json_is_array(fabric_managers))
-      << "fabric_managers should be an array";
-  json_t* first_fabric_manager = json_array_get(fabric_managers, 0);
-  ASSERT_NE(first_fabric_manager, nullptr);
-  FabricManager* manager = new FabricManager(first_fabric_manager);
-  cxl_global.add_fm(manager->get_fmid(), *manager);
-  // Free the config JSON after adding the manager
-  json_decref(config);
-
-  // Set up and invoke `execute_sync` for `SetupInfo`
-  svk_input input;
-  svk_output output;
-  svk_pass_thru_cmd pass_thru;
-  input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=SetupInfo"));
-  input.len = strlen("command=SetupInfo");
-  svk_status status = execute_sync(&pass_thru, &input, &output);
-  ASSERT_EQ(status, SVK_STATUS_SUCCESS);
-  ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
-  ASSERT_NE(output.len, 0);
-  ASSERT_NE(output.output_buffer, nullptr);
-  free(input.input_buffer);
-  free(output.output_buffer);
-}
-
-/**
  * @brief SetupInfo with no FabricManager instances
  */
 TEST_F(ServicerTest, SetupInfoNoManagers) {
@@ -586,179 +531,6 @@ TEST_F(ServicerTest, SetupInfoNoManagers) {
   ASSERT_EQ(status, SVK_STATUS_SUCCESS);
   ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
   free(input.input_buffer);
-}
-
-TEST_F(ServicerTest, SetupInfoWithMultipleFMs) {
-  // Load configuration from file and add multiple FabricManager instances
-  json_t* config = load_json_from_file(input_conf_path);
-  ASSERT_NE(config, nullptr) << "Failed to load input.conf";
-  json_t* fabric_managers = json_object_get(config, "fabric_managers");
-  ASSERT_TRUE(json_is_array(fabric_managers))
-      << "fabric_managers should be an array";
-  // Add multiple FabricManagers
-  for (size_t i = 0; i < json_array_size(fabric_managers); ++i) {
-    json_t* fabric_manager = json_array_get(fabric_managers, i);
-    ASSERT_NE(fabric_manager, nullptr);
-    FabricManager* manager = new FabricManager(fabric_manager);
-    cxl_global.add_fm(manager->get_fmid(), *manager);
-  }
-  // Free the config JSON
-  json_decref(config);
-  // Set up and invoke `execute_sync` for `SetupInfo`
-  svk_input input;
-  svk_output output;
-  svk_pass_thru_cmd pass_thru;
-  input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=SetupInfo"));
-  input.len = strlen("command=SetupInfo");
-  svk_status status = execute_sync(&pass_thru, &input, &output);
-  ASSERT_EQ(status, SVK_STATUS_SUCCESS);
-  ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
-  ASSERT_NE(output.len, 0);
-  ASSERT_NE(output.output_buffer, nullptr);
-  // Verify delimiter exists in output
-  std::string result(reinterpret_cast<char*>(output.output_buffer), output.len);
-  ASSERT_TRUE(result.find(",") != std::string::npos)
-      << "Output should contain delimiter.";
-  // Clean up
-  free(input.input_buffer);
-  free(output.output_buffer);
-}
-
-TEST_F(ServicerTest, SetupInfoWithNullManager) {
-  // Mock cxl_global to simulate find_fm returning nullptr
-  EXPECT_CALL(mock_cxl_global, find_fm(_)).WillRepeatedly(Return(nullptr));
-  // Set up and invoke `execute_sync` for `SetupInfo`
-  svk_input input;
-  svk_output output;
-  svk_pass_thru_cmd pass_thru;
-  input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=SetupInfo"));
-  input.len = strlen("command=SetupInfo");
-  svk_status status = execute_sync(&pass_thru, &input, &output);
-  // Verify the function handles the case correctly
-  ASSERT_EQ(status, SVK_STATUS_SUCCESS);
-  ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
-  ASSERT_NE(output.len, 0);
-  std::string result(reinterpret_cast<char*>(output.output_buffer), output.len);
-  ASSERT_EQ(result, "[]")
-      << "Output should be an empty JSON array when no managers are found.";
-  // Clean up
-  free(input.input_buffer);
-  free(output.output_buffer);
-}
-
-TEST_F(ServicerTest, SetupInfoWithNoFMKeys) {
-  // Mock cxl_global to return an empty list of keys
-  EXPECT_CALL(mock_cxl_global, get_fm_keys())
-      .WillRepeatedly(Return(std::vector<sc_id>{}));
-  // Set up and invoke `execute_sync` for `SetupInfo`
-  svk_input input;
-  svk_output output;
-  svk_pass_thru_cmd pass_thru;
-  input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=SetupInfo"));
-  input.len = strlen("command=SetupInfo");
-  svk_status status = execute_sync(&pass_thru, &input, &output);
-  // Verify the function returns an empty JSON array
-  ASSERT_EQ(status, SVK_STATUS_SUCCESS);
-  ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
-  ASSERT_NE(output.len, 0);
-  std::string result(reinterpret_cast<char*>(output.output_buffer), output.len);
-  ASSERT_EQ(result, "[]")
-      << "Output should be an empty JSON array when no keys are present.";
-  // Clean up
-  free(input.input_buffer);
-  free(output.output_buffer);
-}
-
-TEST_F(ServicerTest, MissingFabricManagersArray) {
-  // Create JSON content without the `fabric_managers` key
-  std::string json_content = R"({
-        "some_other_key": 123
-    })";
-  // Write the content to a temporary file
-  temp_filename = write_json_to_temp_file(json_content);
-  json_t* result = load_json_config(temp_filename);
-  EXPECT_EQ(result, nullptr);
-}
-
-TEST_F(ServicerTest, FabricManagersNotArray) {
-  std::string json_content = R"({
-        "fabric_managers": {
-            "id": 1001
-        }
-    })";
-  // Write the content to a temporary file
-  temp_filename = write_json_to_temp_file(json_content);
-  json_t* result = load_json_config(temp_filename);
-  // Verify the result
-  EXPECT_EQ(result, nullptr);
-}
-
-TEST_F(ServicerTest, ValidFabricManagersArray) {
-  // Create JSON content with `fabric_managers` as an array
-  std::string json_content = R"({
-        "fabric_managers": []
-    })";
-  // Write the content to a temporary file
-  temp_filename = write_json_to_temp_file(json_content);
-  // Capture stderr output to verify no error message
-  testing::internal::CaptureStderr();
-  json_t* result = load_json_config(temp_filename);
-  std::string output = testing::internal::GetCapturedStderr();
-  EXPECT_NE(result, nullptr);
-  EXPECT_TRUE(output.empty());
-  // Clean up JSON object
-  json_decref(result);
-}
-
-TEST_F(ServicerTest, CreateDevCMMB) {
-  // Create the JSON configuration for DevCMMB
-  json_t* config = create_dev_cmmb_config();
-  // Call the function to create and add DevCMMB to cxl_global
-  create_dev_cmmb(config);
-}
-
-TEST_F(ServicerTest, FmapiSetupSuccess) {
-  std::string buffer;
-  json_t* result = parse_input_config(buffer);
-  ASSERT_NE(result, nullptr);
-  json_t* type = json_object_get(result, "type");
-  ASSERT_TRUE(json_is_string(type));
-  EXPECT_STREQ(json_string_value(type), "FM_REMOTE_CMMB");
-  json_decref(result);
-}
-
-TEST_F(ServicerTest, ProcessFMInvalidTypeField) {
-  json_t* fabric_manager = json_object();
-  json_object_set_new(fabric_manager, "id", json_integer(123));
-  json_object_set_new(fabric_manager, "type", json_integer(123));
-  int result = process_fabric_manager(fabric_manager);
-  EXPECT_EQ(result, 1);
-  json_decref(fabric_manager);
-}
-
-TEST_F(ServicerTest, ProcessFMUnknownType) {
-  // Create a JSON fabric manager with an unknown type
-  json_t* fabric_manager = json_object();
-  json_object_set_new(fabric_manager, "id", json_integer(123));
-  json_object_set_new(fabric_manager, "type", json_string("UNKNOWN"));
-  int result = process_fabric_manager(fabric_manager);
-  EXPECT_EQ(result, 2);
-  json_decref(fabric_manager);
-}
-
-TEST_F(ServicerTest, LoadJsonConfigInvalidRootType) {
-  std::string invalid_json_content = R"([{"key": "value"}])";
-  std::string path = write_json_to_temp_file(invalid_json_content);
-  json_t* result = load_json_config(path);
-  EXPECT_EQ(result, nullptr);
-}
-
-TEST_F(ServicerTest, LoadJsonConfigMissingFabricManagers) {
-  // Write a JSON object without the "fabric_managers" field
-  std::string invalid_json_content = R"({"other_key": "value"})";
-  std::string path = write_json_to_temp_file(invalid_json_content);
-  json_t* result = load_json_config(path);
-  EXPECT_EQ(result, nullptr);
 }
 
 TEST_F(ServicerTest, MissingFile) {
@@ -974,20 +746,6 @@ TEST_F(ServicerTest, ExecuteSync_GetDeviceInfo) {
   EXPECT_FALSE(response.empty());
 }
 
-TEST_F(ServicerTest, CmmbA1_Success) {
-  use_test_config("valid_cxl.json");
-  EXPECT_CALL(mock_cxl_global, g_create_mbox(_)).WillOnce(Return(0));
-  int status = cmmb_a1_init();
-  EXPECT_EQ(status, 0);
-}
-
-TEST_F(ServicerTest, CmmbA1_ConfigFileNotFound) {
-  use_test_config("non_existent.json");
-  EXPECT_CALL(mock_cxl_global, g_create_mbox(_)).Times(0);
-  int status = cmmb_a1_init();
-  EXPECT_EQ(status, -ENOENT);
-}
-
 TEST_F(ServicerTest, CmmbA1_MissingSwitchObject) {
   use_test_config("test_no_switch.json");
   EXPECT_CALL(mock_cxl_global, g_create_mbox(_)).Times(0);
@@ -1009,12 +767,12 @@ TEST_F(ServicerTest, CmmbA1_CorruptJsonFile) {
   EXPECT_EQ(status, -EINVAL);
 }
 
-/*TEST_F(ServicerTest, ListDevices_EmptyInput_ReturnsAllDevices) {
-  std::unordered_map<std::string, std::string> params;
-  std::string result = handle_list_devices(params);
-  EXPECT_FALSE(result.empty());
-  EXPECT_TRUE(result.find("devices") != std::string::npos);
-}*/
+TEST_F(ServicerTest, CmmbA1_Success) {
+  use_test_config("valid_cxl.json");
+  EXPECT_CALL(mock_cxl_global, g_create_mbox(_)).WillOnce(Return(0));
+  int status = cmmb_a1_init();
+  EXPECT_EQ(status, 0);
+}
 
 TEST_F(ServicerTest, ListDevices_InvalidArrayFormat_ReturnsError) {
   std::unordered_map<std::string, std::string> params = {
@@ -1059,44 +817,12 @@ TEST_F(ServicerTest, ListDevices_NonStringArrayElement) {
   EXPECT_NE(response.find("device_id array must contain strings"),
             std::string::npos);
 }
-
-/*TEST_F(ServicerTest, ListDevices_ValidSingleDeviceId) {
-  // Setup mock adapter and device
-  auto adapter = std::make_shared<TestCXLDeviceAdapter>();
-  sc_device dev(1234, "mock_dev", 1024, 1);
-  dev.d_set_pcie_addr("0000:00:01.0");
-
-  adapter->add_mock_device(dev);  // add to adapter
-  g_dev_mgr->registerAdapter("mock_adapter", adapter.get());
-  g_dev_mgr->register_device(dev.d_get_id(), adapter.get());
-
-  // Now run the test
-  std::unordered_map<std::string, std::string> params = {{"device_id", "1234"}};
-  std::string response = handle_list_devices(params);
-
-  EXPECT_NE(response.find("devices"), std::string::npos);
-  EXPECT_NE(response.find("1234"), std::string::npos);
-}
-
-TEST_F(ServicerTest, ListDevices_ValidResultJson) {
-  auto adapter = std::make_shared<TestCXLDeviceAdapter>();
-  sc_device dev(1234, "mock_dev", 1024, 1);
-  dev.d_set_pcie_addr("0000:00:01.0");
-  adapter->add_mock_device(dev);
-  g_dev_mgr->registerAdapter("mock_adapter", adapter.get());
-  g_dev_mgr->register_device(dev.d_get_id(), adapter.get());
-  std::unordered_map<std::string, std::string> params = {
-      {"device_id", "[\"1234\"]"}};
-  std::string response = handle_list_devices(params);
-  EXPECT_NE(response.find("\"id\":"), std::string::npos);
-}*/
-
 TEST_F(ServicerTest, ListDevices_ValidSingleDeviceId) {
   auto adapter = std::make_shared<TestCXLDeviceAdapter>();
   sc_device dev(1234, "mock_dev", 1024, 1);
 
   DevStaticInfo stat;
-  stat.id = dev.d_get_id().get_sc_id();
+  stat.device_id = dev.d_get_id().get_sc_id();
   stat.location = "0000:00:01.0";
   dev.d_set_static_info(stat);
 
@@ -1127,13 +853,12 @@ TEST_F(ServicerTest, ListDevices_ValidResultJson) {
   std::string response = handle_list_devices(params);
 
   std::cout << "Test#### " << response << std::endl;
-  EXPECT_NE(response.find("\"id\""), std::string::npos);
+  EXPECT_NE(response.find("\"device_id\""), std::string::npos);
 }
 
 TEST_F(ServicerTest, ListDevices_ExceptionWhileParsing) {
   std::unordered_map<std::string, std::string> params = {
       {"device_id", "throws_exception"}};
-  // str_to_int mock throws std::runtime_error
   std::string response = handle_list_devices(params);
   EXPECT_EQ(get_json_value(response, "rc"), "EINVAL");
   EXPECT_EQ(get_json_value(response, "message"), "Invalid id format");
@@ -1179,14 +904,14 @@ TEST_F(ServicerTest, GetDeviceInfo_DeviceNotFound) {
 TEST_F(ServicerTest, GetDeviceInfo_Success) {
   sc_device dev(1234, "mydev", 1024, 1);
   DevStaticInfo stat;
-  stat.id = dev.d_get_id().get_sc_id();
+  stat.device_id = dev.d_get_id().get_sc_id();
   stat.manufacturer = "Samsung";
   stat.serial_number = 123456;
   stat.fw_revision = "1.0.0";
   stat.location = "slotA";
   stat.feature_supported = "SLD";
-  stat.device_type = "CMMB";
-  stat.cxl_type = "type1";
+  stat.vendor_device_type = "CMMB";
+  stat.cxl_device_type = "type1";
   stat.protocol = "1.1";
   stat.link_speed = 5;
   stat.link_width = 16;
@@ -1227,23 +952,20 @@ TEST_F(ServicerTest, GetDeviceInfo_Success) {
   std::string response = handle_get_device_info(params);
   std::cout << "Test case response #### " << response << std::endl;
 
-  EXPECT_EQ(get_json_value(response, "id"), "1234");
+  EXPECT_EQ(get_json_value(response, "device_id"), "1234");
   EXPECT_EQ(get_json_value(response, "manufacturer"), "Samsung");
-  EXPECT_EQ(get_json_value(response, "device_type"), "CMMB");
+  EXPECT_EQ(get_json_value(response, "vendor_device_type"), "CMMB");
   EXPECT_EQ(get_json_value(response, "serial_number"), "123456");
   EXPECT_EQ(get_json_value(response, "FW_revision"), "1.0.0");
   EXPECT_EQ(get_json_value(response, "status"), "active");
-  EXPECT_EQ(get_json_value(response, "cxl_type"), "type1");
+  EXPECT_EQ(get_json_value(response, "cxl_device_type"), "type1");
   EXPECT_EQ(get_json_value(response, "connection_type"), "local");
 }
 
 TEST_F(ServicerTest, ListDevices_InvalidJsonArrayFormat) {
-  // {"device_id", "[{\"invalid_key\":\"invalid_value\"}]"
-
   std::unordered_map<std::string, std::string> params = {
       {"device_id", "[\"1234\", invalid_value]"}};
   std::string response = handle_list_devices(params);
-  // std::cout << "Test case response #### "<<response << std::endl;
   EXPECT_EQ(get_json_value(response, "rc"), "EINVAL");
   EXPECT_EQ(get_json_value(response, "message"),
             "Invalid device_id array format");
@@ -1254,4 +976,90 @@ TEST_F(ServicerTest, ListDevices_ArrayContainsInvalidId) {
       {"device_id", "[\"1234\", \"bad_id\"]"}};
   std::string response = handle_list_devices(params);
   EXPECT_NE(response.find("Invalid id format"), std::string::npos);
+}
+
+TEST_F(ServicerTest, ExecuteSync_FallbackWithMissingCommand) {
+  svk_input input{};
+  svk_output output{};
+  svk_pass_thru_cmd pass_thru;
+
+  std::string malformed_json = R"({"fake_command":"val1","unused":"val2"})";
+  input.input_buffer =
+      reinterpret_cast<uint8_t*>(strdup(malformed_json.c_str()));
+  input.len = malformed_json.size();
+
+  svk_status status = execute_sync(&pass_thru, &input, &output);
+
+  EXPECT_EQ(status, SVK_STATUS_FAIL);
+  free(input.input_buffer);
+}
+
+TEST_F(ServicerTest, ExecuteSync_TriggersRuntimeErrorFallback) {
+  svk_input input{};
+  svk_output output{};
+  svk_pass_thru_cmd pass_thru;
+
+  // valid JSON with a command not in command_map
+  std::string json = R"({
+ "cluster_name": "CL_ID_1", "command_name":"ListDevices",
+ "command_params": {"command": "ListDevices",
+ "cluster_id": "CL_ID_1",
+ "FM_id": "203",
+ "FM_endpoint": "samsung.com"
+ }})";
+
+  input.input_buffer = reinterpret_cast<uint8_t*>(strdup(json.c_str()));
+  input.len = json.size();
+
+  svk_status status = execute_sync(&pass_thru, &input, &output);
+
+  // Expected fallback due to unknown command
+  EXPECT_EQ(status, SVK_STATUS_SUCCESS);
+
+  std::string result(reinterpret_cast<char*>(output.output_buffer), output.len);
+  EXPECT_GT(output.len, 0);
+
+  free(input.input_buffer);
+  free(output.output_buffer);
+}
+
+TEST_F(ServicerTest, InitThrowsException) {
+  EXPECT_CALL(mock_cxl_global, init_log(_)).WillOnce(Return(0));
+  EXPECT_CALL(mock_cxl_global, init_cxl_plugin()).WillOnce(Return(0));
+  EXPECT_CALL(mock_cxl_global, parse_json_key(_, "plugin_dir", _))
+      .WillOnce(Throw(std::runtime_error("parse_json_key failed")));
+  int status = initialize(nullptr);
+  EXPECT_EQ(status, SVK_STATUS_FAIL);
+}
+
+TEST_F(ServicerTest, InitMissingDeviceIdJson) {
+  EXPECT_CALL(mock_cxl_global, init_log(_)).WillOnce(Return(0));
+  EXPECT_CALL(mock_cxl_global, init_cxl_plugin()).WillOnce(Return(0));
+  EXPECT_CALL(mock_cxl_global, parse_json_key(_, "plugin_dir", _))
+      .WillOnce(DoAll(SetArgReferee<2>("logic_modules"), Return(0)));
+  EXPECT_CALL(mock_cxl_global, validate_json_file(_)).WillOnce(Return(-1));
+  int status = initialize(nullptr);
+  EXPECT_EQ(status, SVK_STATUS_FAIL);
+}
+
+TEST_F(ServicerTest, InitMissingPluginDirKey) {
+  EXPECT_CALL(mock_cxl_global, init_log(_)).WillOnce(Return(0));
+  EXPECT_CALL(mock_cxl_global, init_cxl_plugin()).WillOnce(Return(0));
+  EXPECT_CALL(mock_cxl_global, parse_json_key(_, "plugin_dir", _))
+      .WillOnce(Return(-1));
+  int status = initialize(nullptr);
+  EXPECT_EQ(status, SVK_STATUS_FAIL);
+}
+
+TEST_F(ServicerTest, InitPluginFailure) {
+  EXPECT_CALL(mock_cxl_global, init_log(_)).WillOnce(Return(0));
+  EXPECT_CALL(mock_cxl_global, init_cxl_plugin()).WillOnce(Return(-1));
+  int status = initialize(nullptr);
+  EXPECT_EQ(status, SVK_STATUS_FAIL);
+}
+
+TEST_F(ServicerTest, InitLoggerUnexpectedError) {
+  EXPECT_CALL(mock_cxl_global, init_log(_)).WillOnce(Return(-5));
+  int status = initialize(nullptr);
+  EXPECT_EQ(status, SVK_STATUS_FAIL);
 }

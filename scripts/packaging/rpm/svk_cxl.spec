@@ -36,23 +36,23 @@ mkdir -p %{buildroot}/%{installpath_tm_config}
 cp -rf %{getenv:CMAKE_INSTALL_PREFIX}/%{_lib} %{buildroot}/%{installpath}
 cp -rf %{_fmapilibpath} %{buildroot}/%{installpath_mbox}/lib
 cp -f %{_fmapiincpath}/sample_json/input.json %{buildroot}/%{installpath_mgmt}
-cp -f %{getenv:CMAKE_INSTALL_PREFIX}/zmq_config.json %{buildroot}/%{installpath_zmq}
-cp -f %{getenv:CMAKE_INSTALL_PREFIX}/damo_config.json %{buildroot}/%{installpath_tm_config}
-cp -f %{getenv:CMAKE_INSTALL_PREFIX}/tm_gen_config.py %{buildroot}/%{installpath_tm_config}
-cp -f %{getenv:CMAKE_INSTALL_PREFIX}/cxl.conf %{buildroot}/%{installpath_mgmt}
-cp -f %{getenv:CMAKE_INSTALL_PREFIX}/input.conf %{buildroot}/%{installpath_mgmt}
-cp -f %{getenv:CMAKE_INSTALL_PREFIX}/log.conf %{buildroot}/%{installpath_mgmt}
+cp -f /etc/svk/zmq_config.json %{buildroot}/%{installpath_zmq}
+cp -f /etc/svk/damo_config.json %{buildroot}/%{installpath_tm_config}
+cp -f /etc/svk/tm_gen_config.py %{buildroot}/%{installpath_tm_config}
+cp -f %{getenv:CMAKE_INSTALL_PREFIX}/config/cxl.conf %{buildroot}/%{installpath_mgmt}
+cp -f %{getenv:CMAKE_INSTALL_PREFIX}/config/cxl_dev_id_map.json %{buildroot}/%{installpath_mgmt}
+cp -f %{getenv:CMAKE_INSTALL_PREFIX}/config/log.conf %{buildroot}/%{installpath_mgmt}
 
 # If rpmbuild is run manually, use default build dir svk-core, unless user gives a different name
 %else
 cp -rf %{cxl_build_dir}/%{_lib} %{buildroot}/%{installpath}
 cp -rf %{_fmapipath} %{buildroot}/%{installpath_mbox}/lib
 cp -f %{_fmapiincpath}/sample_json/input.json %{buildroot}/%{installpath_mgmt}
-cp -f %{cxl_build_dir}/config/zmq_config.json %{buildroot}/%{installpath_zmq}
-cp -f %{cxl_build_dir}/config/damo_config.json %{buildroot}/%{installpath_tm_config}
-cp -f %{cxl_build_dir}/tools/tm_gen_config.py %{buildroot}/%{installpath_tm_config}
+cp -f /etc/svk/zmq_config.json %{buildroot}/%{installpath_zmq}
+cp -f /etc/svk/damo_config.json %{buildroot}/%{installpath_tm_config}
+cp -f /etc/svk/tm_gen_config.py %{buildroot}/%{installpath_tm_config}
 cp -f %{cxl_build_dir}/config/cxl.conf  %{buildroot}/%{installpath_mgmt}
-cp -f %{cxl_build_dir}/config/input.conf  %{buildroot}/%{installpath_mgmt}
+cp -f %{cxl_build_dir}/config/cxl_dev_id_map.json  %{buildroot}/%{installpath_mgmt}
 cp -f %{cxl_build_dir}/config/log.conf  %{buildroot}/%{installpath_mgmt}
 %endif
 

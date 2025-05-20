@@ -59,10 +59,8 @@ std::vector<sc_device> DeviceManager::list_devices(
   std::vector<sc_device> result;
 
   for (const auto& d_id : d_ids) {
-    LOG(level_E::INFO, "DeviceManager::ONE" + std::to_string(d_id));
     // Map device_id to sc_id
     auto id_it = d_id_to_sc_id.find(d_id);
-    LOG(level_E::INFO, "DeviceManager::Two.");
     if (id_it == d_id_to_sc_id.end()) {
       LOG(level_E::WARN,
           "Device ID not found in registry: " + std::to_string(d_id));
@@ -217,6 +215,7 @@ void DeviceManager::discover_devices() {
 const std::unordered_map<uint64_t, sc_id>& DeviceManager::get_d_id_map() const {
   return d_id_to_sc_id;
 }
+
 const std::unordered_map<sc_id, CXLDeviceAdapter*, hash_sc_id>&
 DeviceManager::get_sc_id_adapter_map() const {
   return sc_id_to_adapter;

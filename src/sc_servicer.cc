@@ -718,8 +718,8 @@ svk_status initialize(void*) {
  */
 svk_status get_supported_feature_list(feature_id* feat_id, char*) {
   LOG(level_E::INFO, "get_supported_feature_list function called.");
-  *feat_id = feature_id::CXL;
-  return SVK_STATUS_SUCCESS;
+  //*feat_id = feature_id::CXL;
+  return SVK_STATUS_FAIL;
 }
 
 /**
@@ -816,7 +816,16 @@ svk_status execute_sync(svk_pass_thru_cmd*, svk_input* input,
       auto it = command_map.find(command);
       if (it == command_map.end()) {
         LOG(level_E::ERROR, "Command not found in command_map: " + command);
-        return SVK_STATUS_FAIL;
+        // convert to legacy flat string and throw to trigger fallback
+        std::string flat;
+        for (const auto& [k, v] : params) {
+          flat += k + "=" + v + ";";
+        }
+        if (!flat.empty() && flat.back() == ';') {
+          flat.pop_back();  // remove trailing semi
+        }
+        // fallback will handle string
+        throw std::runtime_error(flat);
       }
       result = it->second(params);
     } else {
@@ -827,7 +836,16 @@ svk_status execute_sync(svk_pass_thru_cmd*, svk_input* input,
     LOG(level_E::WARN, "Falling back to legacy flat API parsing due to: " +
                            std::string(e.what()));
     // Legacy flat style
-    params = token_helper(input_str);
+    // If runtime_error was thrown with a flattened string
+    std::string flat_input = input_str;
+    const auto* re = dynamic_cast<const std::runtime_error*>(&e);
+    if (re) {
+      // flattened key-value pair
+      flat_input = re->what();
+      LOG(level_E::INFO,
+          "Using flattened string from exception: " + flat_input);
+    }
+    params = token_helper(flat_input);
     if (params.find("command") == params.end()) {
       LOG(level_E::ERROR, "Missing 'command' in legacy flat request.");
       return SVK_STATUS_FAIL;

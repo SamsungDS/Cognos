@@ -55,7 +55,7 @@ class DevCMMH : public CXLDeviceAdapter {
    * @param sid The device identifier (sc_id).
    * @return DevInfo structure with up-to-date memory and NUMA info,
    * or empty is not found.
-  */
+   */
   DevInfo get_device_info(const sc_id& sid) const override;
 
   /**

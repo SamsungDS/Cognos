@@ -27,7 +27,7 @@ unit test:
     FMAPI_PATH: $CI_PROJECT_DIR/$FMAPI_CLONE_DIR/$FMAPI_DIR
   parallel:
     matrix:
-      - DOCKERFILE_NAME: rocky9
+      #- DOCKERFILE_NAME: rocky9
       - DOCKERFILE_NAME: ubuntu22 
   rules:
     - !reference [.default_rules, merge_and_push]

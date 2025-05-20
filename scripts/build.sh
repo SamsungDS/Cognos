@@ -269,14 +269,14 @@ if $RELEASE;then
   BUILD_TESTING=false
   WITH_COVERAGE=false
   if [ -z "$CMAKE_INSTALL_PREFIX" ];then
-    CMAKE_INSTALL_PREFIX="svk-cxl" # Need to use this path to generate release tarball properly
+    CMAKE_INSTALL_PREFIX="/usr/local/svk/feature_modules/cxl" # Need to use this path to generate release tarball properly
   fi
   if [ -z "$RELEASE_FILENAME_PREFIX" ];then
     RELEASE_FILENAME_PREFIX="svk-cxl"
   fi
   CMAKE_OPTIONS+=("-DWITH_RELEASE=ON")
   if [ -z "$PACKAGE_INSTALL_PATH" ];then
-    PACKAGE_INSTALL_PATH="/usr/local/svk/cxl" # Location that rpm -ivh will install to
+    PACKAGE_INSTALL_PATH="/usr/local/svk/feature_modules/cxl" # Location that rpm -ivh will install to
   fi
 fi
 
@@ -301,10 +301,6 @@ if $WITH_FMAPI;then
     die "$FMAPI_LIB_PATH does not exists"
   fi
 
-  #if ! file "FMAPI_LIB_PATH" | grep -q "ELF 64-bit LSB shared object"; then
-    #die "$FMAPI_LIB_PATH not a library or shared object"
-  #fi
-
   if [ ! -d "$FMAPI_INCLUDE_PATH" ];then
     die "$FMAPI_INCLUDE_PATH does not exist"
   fi
@@ -313,6 +309,8 @@ if $WITH_FMAPI;then
   CMAKE_OPTIONS+=("-DFMAPI_LIBRARY_PATH=$FMAPI_LIB_PATH")
 
   cp "$FMAPI_INCLUDE_PATH/sample_json/input.json" "$PROJECT_ROOT/tests"
+  mkdir -p "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/config"
+  cp "$PROJECT_ROOT/tests/input.json" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/config/"
 fi
 
 # Add cmake install prefix option
@@ -328,7 +326,7 @@ echo "Building libraries..."
 
 if [ -n "$CMAKE_INSTALL_PREFIX" ];then
   echo "make install..."
-  make install
+  make 
 else
   echo "make..."
   make
@@ -341,8 +339,8 @@ if $WITH_COVERAGE;then
 
     cp "$PROJECT_ROOT/tests/input.json" "$BUILD_DIR/tests"
     cp "$PROJECT_ROOT/config/cxl.conf" "$BUILD_DIR/tests"
-    cp "$PROJECT_ROOT/config/input.conf" "$BUILD_DIR/tests"
-    cp "$PROJECT_ROOT/config/zmq_config.json" "$BUILD_DIR/tests/"
+    cp "$PROJECT_ROOT/config/cxl_dev_id_map.json" "$BUILD_DIR/tests"
+    cp "$PROJECT_ROOT/config/zmq_config.json" "$BUILD_DIR/tests"
     cp "$PROJECT_ROOT/config/damo_config.json" "/etc/svk/"
     cp "$PROJECT_ROOT/tools/tm_gen_config.py" "/etc/svk/"
     mkdir -p "$REPORTS_DIR"
@@ -364,23 +362,7 @@ if $WITH_COVERAGE;then
     --exclude-throw-branches \
       "$BUILD_DIR"
 
-  #rm -rf "$PROJECT_ROOT/tests/usr/"
-
 elif $RELEASE;then
-  echo "Generating release tarball..."
-  mkdir -p "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/lib"
-  mkdir -p "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/lib64"
-  cp "$PROJECT_ROOT/config/zmq_config.json" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
-  cp "$PROJECT_ROOT/config/cxl.conf" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
-  cp "$PROJECT_ROOT/config/input.conf" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
-  cp "$PROJECT_ROOT/config/log.conf" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
-  cp "$PROJECT_ROOT/config/damo_config.json" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
-  cp "$PROJECT_ROOT/tools/tm_gen_config.py" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/"
-  if $MOCK; then
-    tar -zcf "$RELEASE_FILENAME_PREFIX-mock-$ID-$GIT_VERSION.tgz" "$CMAKE_INSTALL_PREFIX"
-  else
-    tar -zcf "$RELEASE_FILENAME_PREFIX-$ID-$GIT_VERSION.tgz" "$CMAKE_INSTALL_PREFIX"
-  fi
   echo "$GENERATE_PACKAGE"
   if [ -n "$GENERATE_PACKAGE" ];then
     if [ "$ID" == "ubuntu" ]; then
@@ -390,7 +372,7 @@ elif $RELEASE;then
       echo "Generating release RPM..."
       RPMBUILD_DIR="$BUILD_DIR/rpmbuild"
       mkdir -p rpmbuild/{BUILD,RPMS,SPECS}
-      cp -rf "$CMAKE_INSTALL_PREFIX/" "$RPMBUILD_DIR/BUILD"
+      #cp -rf "$CMAKE_INSTALL_PREFIX/" "$RPMBUILD_DIR/BUILD"
       create_rpm "$RPMBUILD_DIR" "$PACKAGE_INSTALL_PATH" $MOCK
     fi
   fi

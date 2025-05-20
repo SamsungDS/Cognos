@@ -1,8 +1,8 @@
 #include "sc_cmmh.h"  // implements all functions declared in cmmh.h
 
-#include "sc_utility.h"  // generate_dev_id, get_numa_memory_info, 
-			 // discover_cxl_devices_shared, get_global_dev_type_map, 
-			 // get_numa_node_from_sysfs
+#include "sc_utility.h"  // generate_dev_id, get_numa_memory_info,
+// discover_cxl_devices_shared, get_global_dev_type_map,
+// get_numa_node_from_sysfs
 
 /**
  * @brief DevCMMH constructor.

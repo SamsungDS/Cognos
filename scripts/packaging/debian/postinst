@@ -1,3 +1,16 @@
 #!/bin/sh
 set -e
 ldconfig
+
+MGMT_DIR="/usr/local/svk/mgmt-fw"
+CXL_CONFIG_DIR="/usr/local/svk/feature_modules/cxl/config"
+
+mkdir -p "$MGMT_DIR"
+
+for file in input.json cxl.conf cxl_dev_id_map.json log.conf; do
+if [ ! -e "$MGMT_DIR/$file" ]; then
+ln -sf "$CXL_CONFIG_DIR/$file" "$MGMT_DIR/$file"
+fi
+done
+
+exit 0

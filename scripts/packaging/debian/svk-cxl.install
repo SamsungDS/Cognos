@@ -1,7 +1,9 @@
-/usr/local/svk/cxl/lib64/libcxl* /usr/local/svk/cxl/lib64/
+/usr/local/svk/feature_modules/cxl/lib64/libsvkcxl* /usr/local/svk/feature_modules/cxl/lib64/
+/usr/local/svk/feature_modules/cxl/config/log.conf  /usr/local/svk/feature_modules/cxl/config/
+/usr/local/svk/feature_modules/cxl/config/cxl_dev_id_map.json  /usr/local/svk/feature_modules/cxl/config/
+/usr/local/svk/feature_modules/cxl/config/cxl.conf  /usr/local/svk/feature_modules/cxl/config/
+/usr/local/svk/feature_modules/cxl/config/input.json /usr/local/svk/feature_modules/cxl/config/
+/usr/local/svk/feature_modules/cxl/logic_modules/cmmh/lib64/* /usr/local/svk/feature_modules/cxl/logic_modules/cmmh/lib64/
 /usr/local/lib/cxl_memory_box/* /usr/local/lib/cxl_memory_box/
-/etc/svk/* /etc/svk/
-/usr/local/svk/mgmt-fw/cxl.conf /usr/local/svk/mgmt-fw/
-/usr/local/svk/mgmt-fw/input.conf /usr/local/svk/mgmt-fw/
-/usr/local/svk/mgmt-fw/log.conf /usr/local/svk/mgmt-fw/
 /etc/ld.so.conf.d/* /etc/ld.so.conf.d/
+/etc/svk/* /etc/svk/

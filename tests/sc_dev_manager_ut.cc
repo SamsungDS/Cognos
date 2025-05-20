@@ -1,236 +1,301 @@
-#include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include <jansson.h>
-
-#include <memory>
-#include <optional>
-#include <string>
-#include <unordered_set>
-#include <vector>
 
 #include "sc_cxl_dev_adapter.h"
 #include "sc_dev_manager.h"
 #include "sc_device.h"
-#include "sc_test_cxl_adapter.h"
-#include "sc_utility.h"
+
+class ThrowingAdapter : public CXLDeviceAdapter {
+ public:
+  enum class Mode { THROW_STD_EXCEPTION, THROW_UNKNOWN_EXCEPTION, NONE };
+  Mode throw_mode = Mode::NONE;
+
+  std::vector<sc_device> list_devices() const override {
+    return {};  // Not relevant for this test
+  }
+
+  sc_device get_device_object(const sc_id&) const override {
+    throw std::runtime_error("Simulated exception in get_device_object");
+  }
+
+  DevInfo get_device_info(const sc_id&) const override {
+    return {};  // Not used in current tests
+  }
+
+  void discover_devices(DeviceManager& mgr) override {
+    switch (throw_mode) {
+      case Mode::THROW_STD_EXCEPTION:
+        throw std::runtime_error("Simulated discover_devices std::exception");
+      case Mode::THROW_UNKNOWN_EXCEPTION:
+        throw 42;  // Non-standard exception
+      case Mode::NONE:
+        mgr.register_device(sc_id(1234567), const_cast<ThrowingAdapter*>(this));
+        break;
+    }
+  }
+
+  int setup_info() override { return 0; }
+
+  std::vector<sc_host> list_hosts() { return {}; }
+};
+
+class DummyAdapter : public CXLDeviceAdapter {
+ public:
+  bool simulate_throw = false;
+  std::vector<sc_device> list_devices() const override {
+    sc_device dev(123456, "TestDevice", 2048, 1);
+
+    DevStaticInfo static_info;
+    static_info.device_id = 123456;
+    static_info.manufacturer = "Samsung";
+    static_info.serial_number = 987654321;
+    static_info.total_capacity_MB = 2048;
+    static_info.vendor_device_type = "CMM-H";
+
+    DevInfo info;
+    info.static_info = static_info;
+    info.available_capacity_MB = 1024;
+    info.status = "active";
+
+    dev.d_set_static_info(static_info);
+    dev.d_set_dynamic_info(info);
+
+    return {dev};
+  }
+
+  sc_device get_device_object(const sc_id& sid) const override {
+    auto devices = list_devices();
+    return !devices.empty() ? devices.front() : sc_device();
+  }
+
+  DevInfo get_device_info(const sc_id& sid) const override {
+    if (simulate_throw) throw std::runtime_error("simulated error");
+    return list_devices().front().d_get_info();
+  }
+
+  void discover_devices(DeviceManager& mgr) override {
+    sc_id id(123456);
+    mgr.register_device(id, const_cast<DummyAdapter*>(this));
+  }
+
+  int setup_info() override { return 0; }
+
+  std::vector<sc_host> list_hosts() { return {}; }
+};
 
 class DeviceManagerTest : public ::testing::Test {
  protected:
-  TestCXLDeviceAdapter testAdapter;
-  DeviceManager devManager;
-
-  DeviceManagerTest() : devManager() {}
+  DeviceManager mgr;
+  DummyAdapter adapter;
 
   void SetUp() override {
-    // Create sc_device objects using valid constructor
-    sc_device dev1(1, "dev1", 1024, 1);
-    DevStaticInfo stat1, stat2;
-    stat1.id = dev1.d_get_id().get_sc_id();
-    stat1.location = "0x1234";
-    dev1.d_set_static_info(stat1);
-
-    sc_device dev2(2, "dev2", 2048, 2);
-    stat2.id = dev2.d_get_id().get_sc_id();
-    stat2.location = "0x5678";
-    dev2.d_set_static_info(stat2);
-
-    // Register devices with the test adapter
-    testAdapter.add_mock_device(dev1);
-    testAdapter.add_mock_device(dev2);
-
-    // Register adapter and devices with the DeviceManager
-    devManager.registerAdapter("TestAdapter", &testAdapter);
-    devManager.register_device(dev1.d_get_id(), &testAdapter);
-    devManager.register_device(dev2.d_get_id(), &testAdapter);
+    mgr.registerAdapter("dummy", &adapter);
+    adapter.discover_devices(mgr);
   }
 
   void TearDown() override {
-    devManager.unregister_device(&testAdapter);
-    devManager.unregisterAdapter("TestAdapter");
+    mgr.unregisterAdapter("dummy");
+    mgr.unregister_device(&adapter);
   }
 };
 
-TEST_F(DeviceManagerTest, ListDevices_NoFilter) {
-  auto devices = devManager.list_devices();
-  std::unordered_set<uint64_t> actual_ids;
-
-  for (const auto& dev : devices) {
-    actual_ids.insert(dev.d_get_id().get_sc_id());
-  }
-
-  std::unordered_set<uint64_t> expected_ids = {1, 2};
-  EXPECT_EQ(actual_ids, expected_ids);
+TEST_F(DeviceManagerTest, RegisterAndRetrieveAdapter) {
+  EXPECT_NE(mgr.getAdapter("dummy"), nullptr);
 }
 
-TEST_F(DeviceManagerTest, ListDevices_FilterForOne) {
-  std::unordered_set<uint64_t> filter = {1};
-  auto devices = devManager.list_devices(filter);
-
-  ASSERT_EQ(devices.size(), 1);
-  EXPECT_EQ(devices[0].d_get_id().get_sc_id(), 1);
+TEST_F(DeviceManagerTest, ListDevicesReturnsDiscoveredDevice) {
+  auto devices = mgr.list_devices();
+  ASSERT_FALSE(devices.empty());
+  EXPECT_EQ(devices[0].d_get_dev_name(), "TestDevice");
 }
 
-TEST_F(DeviceManagerTest, GetDeviceInfo_ValidDevice) {
-  auto dev_info = devManager.get_device_info(1);
-  ASSERT_TRUE(dev_info.has_value());
-
-  EXPECT_EQ(dev_info->static_info.id, 1);
-  EXPECT_EQ(dev_info->static_info.location, "0x1234");
+TEST_F(DeviceManagerTest, GetDeviceInfoReturnsCorrectDetails) {
+  auto devices = mgr.list_devices();
+  ASSERT_FALSE(devices.empty());
+  // Register device ID with manager for lookup
+  const sc_device& device = devices[0];
+  mgr.register_device(device.d_get_id(), &adapter);
+  uint64_t d_id = device.d_get_id().get_sc_id();
+  auto info = mgr.get_device_info(d_id);
+  ASSERT_TRUE(info.has_value());
+  EXPECT_EQ(info->static_info.manufacturer, "Samsung");
 }
 
-TEST_F(DeviceManagerTest, GetDeviceInfo_InvalidDevice) {
-  auto dev_info = devManager.get_device_info(999);
-  EXPECT_FALSE(dev_info.has_value());
+TEST_F(DeviceManagerTest, ListDevicesByIdReturnsOnlyMatching) {
+  auto devices = mgr.list_devices();
+  ASSERT_FALSE(devices.empty());
+  // Register device ID
+  const sc_device& device = devices[0];
+  mgr.register_device(device.d_get_id(), &adapter);
+  std::unordered_set<uint64_t> ids = {device.d_get_id().get_sc_id()};
+  auto filtered = mgr.list_devices(ids);
+  ASSERT_EQ(filtered.size(), 1);
+  EXPECT_EQ(filtered[0].d_get_dev_name(), "TestDevice");
 }
 
-TEST_F(DeviceManagerTest, GetAdapter_SuccessAndFailure) {
-  auto anotherAdapter = std::make_shared<TestCXLDeviceAdapter>();
-  devManager.registerAdapter("TempAdapter", anotherAdapter.get());
-
-  auto* valid = devManager.getAdapter("TempAdapter");
-  EXPECT_NE(valid, nullptr);
-
-  auto* invalid = devManager.getAdapter("MissingAdapter");
-  EXPECT_EQ(invalid, nullptr);
-
-  devManager.unregisterAdapter("TempAdapter");
+TEST_F(DeviceManagerTest, UnregisterDeviceRemovesMappings) {
+  auto devices = mgr.list_devices();
+  ASSERT_FALSE(devices.empty());
+  mgr.unregister_device(&adapter);
+  auto d_id = devices[0].d_get_id().get_sc_id();
+  auto info = mgr.get_device_info(d_id);
+  EXPECT_FALSE(info.has_value());
 }
 
-TEST_F(DeviceManagerTest, ListDevices_AdapterNotSupported) {
-  testAdapter.setListDevicesStatus(-ENOTSUP);
-  auto devices = devManager.list_devices();
-  EXPECT_TRUE(devices.empty());
+TEST_F(DeviceManagerTest, UnregisterNonexistentAdapterIsSafe) {
+  mgr.unregisterAdapter("nonexistent");
 }
 
-TEST_F(DeviceManagerTest, ListDevices_StatusFail) {
-  testAdapter.setListDevicesStatus(-EINVAL);
-  auto devices = devManager.list_devices();
-  EXPECT_TRUE(devices.empty());
+TEST_F(DeviceManagerTest, GetAdapterReturnsCorrectInstance) {
+  auto* found = mgr.getAdapter("dummy");
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(found, &adapter);
 }
 
-TEST_F(DeviceManagerTest, ListDevices_MultiArgFail) {
-  testAdapter.setListDevicesStatus(-EINVAL);
-  std::unordered_set<uint64_t> filter = {1};
-  auto devices = devManager.list_devices(filter);
-  EXPECT_TRUE(devices.empty());
+TEST(DeviceManagerEmptyTest, DiscoverDevicesSkipsNullAdapters) {
+  DeviceManager mgr_local;
+  // Inject null adapter
+  mgr_local.registerAdapter("null_adapter", nullptr);
+  mgr_local.discover_devices();
 }
 
-TEST_F(DeviceManagerTest, GetDeviceInfo_AdapterFailsRetrieval) {
-  TestCXLDeviceAdapter failingAdapter;
-  failingAdapter.setGetDevicesInfoStatus(-EIO);
-
-  sc_device dev(200, "fail_dev", 4096, 3);
-  DevStaticInfo stat;
-  stat.location = "0xfail";
-  dev.d_set_static_info(stat);
-  failingAdapter.add_mock_device(dev);
-
-  devManager.register_device(dev.d_get_id(), &failingAdapter);
-
-  auto dev_info = devManager.get_device_info(200);
-  EXPECT_FALSE(dev_info.has_value());
+TEST_F(DeviceManagerTest, GetAdapterReturnsNullIfNotFound) {
+  auto* result = mgr.getAdapter("nonexistent_adapter");
+  EXPECT_EQ(result, nullptr);
 }
 
-TEST_F(DeviceManagerTest, ListDevices_AdapterReturnsDevices) {
-  auto devices = devManager.list_devices();
-  ASSERT_EQ(devices.size(), 2);
-  EXPECT_EQ(devices[0].d_get_id().get_sc_id(), 1);
-  EXPECT_EQ(devices[1].d_get_id().get_sc_id(), 2);
+TEST_F(DeviceManagerTest, GetDIdMapReflectsRegisteredDevice) {
+  auto d_id_map = mgr.get_d_id_map();
+  EXPECT_EQ(d_id_map.size(), 1);
+  uint64_t expected_id = 123456;
+  EXPECT_EQ(d_id_map.count(expected_id), 1);
 }
 
-TEST_F(DeviceManagerTest, ListDevices_AdapterThrowsException) {
-  testAdapter.setListDevicesStatus(-EIO);
-  auto devices = devManager.list_devices();
-  EXPECT_TRUE(devices.empty());
+TEST_F(DeviceManagerTest, ListDevicesSkipsNullAdapter) {
+  mgr.registerAdapter("null_adapter", nullptr);  // simulate null
+  auto devices = mgr.list_devices();
+  EXPECT_FALSE(devices.empty());
+  EXPECT_EQ(devices.size(), 1);
 }
 
-TEST_F(DeviceManagerTest, ListDevices_Filtered_DeviceIdNotRegistered) {
-  // 999 is not registered
-  std::unordered_set<uint64_t> filter = {999};
-  auto devices = devManager.list_devices(filter);
-
-  // Since 999 is unknown, it should skip
-  EXPECT_TRUE(devices.empty());
+TEST_F(DeviceManagerTest, ListDevicesHandlesExceptionInDeviceRetrieval) {
+  ThrowingAdapter bad_adapter;
+  mgr.registerAdapter("thrower", &bad_adapter);
+  bad_adapter.discover_devices(mgr);
+  std::unordered_set<uint64_t> ids = {1234567};
+  auto result = mgr.list_devices(ids);
+  EXPECT_TRUE(result.empty());
+  mgr.unregisterAdapter("thrower");
+  mgr.unregister_device(&bad_adapter);
 }
 
-TEST_F(DeviceManagerTest, ListDevices_Filtered_NoAdapterFound) {
-  sc_id sid(300);
-  // Force null adapter mapping
-  devManager.register_device(sid, nullptr);
-
-  std::unordered_set<uint64_t> filter = {300};
-  auto devices = devManager.list_devices(filter);
-
-  EXPECT_TRUE(devices.empty());
+TEST_F(DeviceManagerTest, ListDevicesHandlesAdapterException) {
+  DeviceManager mgr;
+  ThrowingAdapter bad_adapter;
+  mgr.registerAdapter("thrower", &bad_adapter);
+  bad_adapter.discover_devices(mgr);
+  std::vector<sc_device> result = mgr.list_devices();
+  EXPECT_TRUE(result.empty());
+  mgr.unregisterAdapter("thrower");
+  mgr.unregister_device(&bad_adapter);
 }
 
-TEST_F(DeviceManagerTest, ListDevices_Filtered_Success) {
-  std::unordered_set<uint64_t> filter = {1};
-  auto devices = devManager.list_devices(filter);
-
-  ASSERT_EQ(devices.size(), 1);
-  EXPECT_EQ(devices[0].d_get_id().get_sc_id(), 1);
+TEST_F(DeviceManagerTest, ListDevicesHandlesMissingAdapter) {
+  // ID that won't be registered
+  sc_id fake_id(999999);
+  // simulate missing adapter
+  mgr.register_device(fake_id, nullptr);
+  std::unordered_set<uint64_t> ids = {fake_id.get_sc_id()};
+  auto result = mgr.list_devices(ids);
+  EXPECT_TRUE(result.empty());
 }
 
-TEST_F(DeviceManagerTest, GetDeviceInfo_NoAdapterMappedForScId) {
-  sc_id fake_scid(1234);
-  // Register a valid sc_id mapping
-  devManager.register_device(fake_scid, &testAdapter);
-  devManager.unregisterAdapter("TestAdapter");
+TEST_F(DeviceManagerTest, ListDevicesFilteredCompletesSuccessfully) {
+  auto devices = mgr.list_devices();  // get valid id
+  ASSERT_FALSE(devices.empty());
+  uint64_t id = devices[0].d_get_id().get_sc_id();
+  std::unordered_set<uint64_t> ids = {id};
+  auto result = mgr.list_devices(ids);
+  EXPECT_FALSE(result.empty());
+  EXPECT_EQ(result[0].d_get_dev_name(), "TestDevice");
+}
 
-  auto result = devManager.get_device_info(1234);
-  // fail with nullopt
+TEST_F(DeviceManagerTest, GetDeviceInfoReturnsExpected) {
+  auto devices = mgr.list_devices();
+  ASSERT_FALSE(devices.empty());
+  uint64_t id = devices[0].d_get_id().get_sc_id();
+  auto result = mgr.get_device_info(id);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->status, "active");
+  EXPECT_EQ(result->available_capacity_MB, 1024);
+}
+
+TEST_F(DeviceManagerTest, GetDeviceInfo_DeviceIdNotFound) {
+  auto result = mgr.get_device_info(56);  // Unregistered ID
   EXPECT_FALSE(result.has_value());
 }
 
-TEST_F(DeviceManagerTest, DiscoverDevices_RegistersDevices) {
-  TestCXLDeviceAdapter discoveryAdapter;
-
-  DevStaticInfo stat1, stat2;
-  sc_device dev1(10, "dA", 128, 10);
-  stat1.location = "locA";
-  dev1.d_set_static_info(stat1);
-  sc_device dev2(20, "dB", 256, 20);
-  stat2.location = "locB";
-  dev2.d_set_static_info(stat2);
-
-  discoveryAdapter.add_mock_device(dev1);
-  discoveryAdapter.add_mock_device(dev2);
-
-  devManager.registerAdapter("DiscoveryAdapter", &discoveryAdapter);
-  devManager.discover_devices();
-  auto all_devices = devManager.list_devices();
-  std::unordered_set<uint64_t> ids;
-  for (const auto& d : all_devices) {
-    ids.insert(d.d_get_id().get_sc_id());
-  }
-
-  std::unordered_set<uint64_t> expected = {1, 2, 10, 20};
-  EXPECT_EQ(ids, expected);
-
-  devManager.unregister_device(&discoveryAdapter);
-  devManager.unregisterAdapter("DiscoveryAdapter");
+TEST_F(DeviceManagerTest, GetDeviceInfo_ScIdNotMapped) {
+  // Remove adapter to create missing mapping
+  mgr.unregister_device(&adapter);
+  auto result = mgr.get_device_info(56);
+  EXPECT_FALSE(result.has_value());
 }
 
-TEST_F(DeviceManagerTest, DiscoverDevices_AdapterThrowsStdException) {
-  class ThrowingAdapter : public TestCXLDeviceAdapter {
-   public:
-    void discover_devices(DeviceManager& mgr) override {
-      throw std::runtime_error("Simulated failure");
-    }
-  };
+TEST_F(DeviceManagerTest, GetDeviceInfo_NoAdapterMapped) {
+  auto devices = mgr.list_devices();
+  ASSERT_FALSE(devices.empty());
+  sc_id sid = devices[0].d_get_id();
+  uint64_t d_id = sid.get_sc_id();
+  // bypass const accessor by casting to non-const to erase adapter entry
+  auto& adapter_map =
+      const_cast<std::unordered_map<sc_id, CXLDeviceAdapter*, hash_sc_id>&>(
+          mgr.get_sc_id_adapter_map());
+  adapter_map.erase(sid);
+  auto result = mgr.get_device_info(d_id);
+  EXPECT_FALSE(result.has_value());
+}
+
+TEST_F(DeviceManagerTest, GetDeviceInfo_AdapterThrowsException) {
+  adapter.simulate_throw = true;
+  auto devices = mgr.list_devices();
+  ASSERT_FALSE(devices.empty());
+  uint64_t d_id = devices[0].d_get_id().get_sc_id();
+  auto result = mgr.get_device_info(d_id);
+  EXPECT_FALSE(result.has_value());
+}
+
+TEST_F(DeviceManagerTest, DiscoverDevicesHandlesStdException) {
   ThrowingAdapter adapter;
-  devManager.registerAdapter("ThrowingAdapter", &adapter);
-  devManager.discover_devices();
+  adapter.throw_mode = ThrowingAdapter::Mode::THROW_STD_EXCEPTION;
+  mgr.registerAdapter("thrower", &adapter);
+  EXPECT_NO_THROW(mgr.discover_devices());
 }
 
-TEST_F(DeviceManagerTest, DiscoverDevices_AdapterThrowsUnknownException) {
-  class UnknownThrowingAdapter : public TestCXLDeviceAdapter {
-   public:
-    void discover_devices(DeviceManager& mgr) override { throw 42; }
-  };
+TEST_F(DeviceManagerTest, DiscoverDevicesHandlesUnknownException) {
+  ThrowingAdapter adapter;
+  adapter.throw_mode = ThrowingAdapter::Mode::THROW_UNKNOWN_EXCEPTION;
+  mgr.registerAdapter("thrower", &adapter);
+  EXPECT_NO_THROW(mgr.discover_devices());
+}
 
-  UnknownThrowingAdapter adapter;
-  devManager.registerAdapter("UnknownAdapter", &adapter);
-  devManager.discover_devices();
+TEST_F(DeviceManagerTest, DiscoverDevicesSkipsNullAdapter) {
+  mgr.registerAdapter("null_adapter", nullptr);
+  mgr.discover_devices();
+  mgr.unregisterAdapter("null_adapter");
+  SUCCEED();
+}
+
+TEST_F(DeviceManagerTest, ListDevicesReturnsFromAllAdapters) {
+  auto result = mgr.list_devices();
+  ASSERT_FALSE(result.empty());
+}
+
+TEST_F(DeviceManagerTest, ListDevicesFilteredReturnsExpectedDevice) {
+  auto devices = mgr.list_devices();
+  ASSERT_FALSE(devices.empty());
+  uint64_t id = devices[0].d_get_id().get_sc_id();
+  std::unordered_set<uint64_t> d_ids = {id};
+  auto filtered = mgr.list_devices(d_ids);
+  ASSERT_EQ(filtered.size(), 1);
+  EXPECT_EQ(filtered[0].d_get_dev_name(), "TestDevice");
 }

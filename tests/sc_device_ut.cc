@@ -14,6 +14,19 @@ class ScDeviceTest : public ::testing::Test {
   }
 };
 
+TEST_F(ScDeviceTest, ToDeviceInfo) {
+  DevStaticInfo sinfo;
+  sinfo.location = "0000:5e:00.0";
+  paramDevice.d_set_static_info(sinfo);
+
+  DevInfo dinfo;
+  dinfo.numa_attached = -1;
+  dinfo.available_capacity_MB = 0;
+  paramDevice.d_set_dynamic_info(dinfo);
+  DevInfo result = paramDevice.to_device_info();
+  EXPECT_EQ(result.static_info.location, "0000:5e:00.0");
+}
+
 TEST_F(ScDeviceTest, DefaultConstructor) {
   // Test default constructor
   EXPECT_EQ(defaultDevice.d_get_dev_name(), "");
@@ -133,10 +146,10 @@ TEST_F(ScDeviceTest, get_info_valid) {
   sc_device dev(1001, "sample_dev", 2048, 2);
 
   DevStaticInfo static_info;
-  static_info.id = 1001;
+  static_info.device_id = 1001;
   static_info.location = "slot-B";
   static_info.manufacturer = "AcmeCorp";
-  static_info.device_type = "CMMH";
+  static_info.cxl_device_type = "CMMH";
   dev.d_set_static_info(static_info);
 
   DevInfo dynamic_info;
@@ -147,10 +160,10 @@ TEST_F(ScDeviceTest, get_info_valid) {
 
   const DevInfo& info = dev.d_get_info();
 
-  EXPECT_EQ(info.static_info.id, 1001);
+  EXPECT_EQ(info.static_info.device_id, 1001);
   EXPECT_EQ(info.static_info.location, "slot-B");
   EXPECT_EQ(info.static_info.manufacturer, "AcmeCorp");
-  EXPECT_EQ(info.static_info.device_type, "CMMH");
+  EXPECT_EQ(info.static_info.cxl_device_type, "CMMH");
 
   EXPECT_EQ(info.status, "active");
   EXPECT_TRUE(info.aspm_active);

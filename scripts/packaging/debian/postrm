@@ -2,3 +2,22 @@
 set -e
 
 ldconfig
+
+MGMT_DIR="/usr/local/svk/mgmt-fw"
+
+# Only remove during purge
+if [ "$1" = "purge" ]; then
+echo "Purging svk-cxl config and directories..."
+
+# Remove symbolic link or file
+rm -f "$MGMT_DIR/input.json"
+rm -f "$MGMT_DIR/cxl_dev_id_map.json"
+rm -f "$MGMT_DIR/log.conf"
+rm -f "$MGMT_DIR/cxl.conf"
+
+# remove cxl tree
+rm -rf /usr/local/svk/feature_modules/cxl
+
+fi
+
+exit 0

@@ -13,6 +13,19 @@ project(${SVKCXL} VERSION ${SVK_CXL_VERSION}
 
 include(GNUInstallDirs)
 
+# Centralized install paths
+set(SVK_BASE_PATH "/usr/local/svk/feature_modules/cxl")
+set(SVK_CONFIG_PATH "${SVK_BASE_PATH}/config")
+set(SVK_LIB_PATH "${SVK_BASE_PATH}/lib64")
+set(SVK_LOGIC_MODULE_PATH "${SVK_BASE_PATH}/logic_modules")
+
+# Subpath for logic modules
+set(CMMH_LIB_PATH "${SVK_LOGIC_MODULE_PATH}/cmmh/lib64")
+
+# For header/library install destinations
+set(SVKCXL_INCLUDE_DEST "include")
+set(SVKCXL_LIB_DEST "${SVK_LIB_PATH}")
+
 option(BUILD_SHARED_LIBS "Generate shared libs" ON)
 
 set(PKG_CONFIG_INCLUDEDIR "\${prefix}/${CMAKE_INSTALL_INCLUDEDIR}")
@@ -82,10 +95,6 @@ if(WITH_FMAPI)
     install(CODE "
         file(APPEND \"svk-cxl-x86_64.conf\" \"\\n${SVKCXL_FMAPI_DIRS}\\n\")
     ")
-    install(
-        FILES "config/cxl.conf"
-        DESTINATION "${SVKMGMTFW_DIRS}"
-    )
     if(MOCK_FLAG)
         install(
             FILES "${FMAPI_INCLUDE_PATH}/sample_json/input.json"
@@ -103,24 +112,26 @@ install(
     FILES "config/zmq_config.json"
     DESTINATION "/etc/svk/"
 )
-install(
-    FILES "config/input.conf"
-    DESTINATION "${SVKMGMTFW_DIRS}"
-)
-install(
-    FILES "config/log.conf"
-    DESTINATION "${SVKMGMTFW_DIRS}"
-)
+
 install(
     FILES "config/damo_config.json"
     DESTINATION "/etc/svk/"
 )
+
 install(
     FILES "tools/tm_gen_config.py"
     DESTINATION "/etc/svk/"
 )
-# install pkg config file
+
 install(
     FILES "${pkg_config}"
     DESTINATION "${pkgconfig_install_dir}"
 )
+
+install(FILES 
+	config/cxl.conf 
+	config/log.conf 
+	config/cxl_dev_id_map.json 
+	"${PROJECT_SOURCE_DIR}/tests/input.json"
+DESTINATION "${SVK_CONFIG_PATH}")
+

@@ -53,20 +53,6 @@ bool str_to_int(const std::string& id_str, uint64_t& id,
                 std::string& error_response);
 
 /**
- * @brief Flattens a JSON array into a comma-separated string.
- *
- * This function processes a JSON string, ensuring that if it is a valid array,
- * all its elements are extracted and concatenated into a single comma-separated
- * string without additional list nesting. If the input is a JSON object, it is
- * returned as is. If the input is not valid JSON, an error code is returned.
- *
- * @param[in] json_str The input JSON string (either an array or an object).
- * @param[out] A flattened JSON string
- * @return status success or error code.
- */
-int json_arr_to_str(const std::string& json_str, std::string& flattened_result);
-
-/**
  * @brief Extracts a list of required parameters from the input map.
  *
  * This utility function checks whether all required keys are present in the

@@ -16,7 +16,7 @@ sonar-scanner:
     - job: unit test
       parallel:
         matrix:
-          - DOCKERFILE_NAME: rocky9
+          - DOCKERFILE_NAME: ubuntu22
   artifacts:
   allow_failure: false
   variables:

@@ -14,43 +14,6 @@ extern "C" {
 #include <pci/pci.h>  // pci_alloc, pci_init, pci_scan_bus, pci_fill_info, pci_cleanup
 }
 
-int json_arr_to_str(const std::string& json_str,
-                    std::string& flattened_result) {
-  LOG(level_E::INFO, "Flattening JSON array...");
-  json_error_t error;
-  json_t* root = json_loads(json_str.c_str(), 0, &error);
-  if (!root) {
-    LOG(level_E::ERROR, "JSON Parsing Error: " + std::string(error.text));
-    return -EINVAL;
-  }
-  std::ostringstream oss;
-  if (json_is_object(root)) {
-    char* json_value = json_dumps(root, JSON_COMPACT);
-    flattened_result = json_value;
-    free(json_value);
-    json_decref(root);
-    return 0;
-  } else if (json_is_array(root)) {
-    // extract and flatten elements
-    size_t index;
-    json_t* value;
-    json_array_foreach(root, index, value) {
-      // Add comma only after the first element
-      if (oss.tellp() > 0) oss << ",";
-      char* json_value = json_dumps(value, JSON_COMPACT);
-      oss << json_value;
-      free(json_value);
-    }
-    json_decref(root);
-    flattened_result = oss.str();
-    return 0;
-  }
-
-  json_decref(root);
-  // neither object nor array
-  return -EINVAL;
-}
-
 bool str_to_int(const std::string& id_str, uint64_t& id,
                 std::string& error_response) {
   try {
@@ -296,8 +259,7 @@ int parse_json_key(const std::string& json_file, const std::string& key,
 /**
  * @brief Generate a 48-bit unique device ID
  */
-uint64_t generate_dev_id(uint16_t vendor_id, uint16_t device_id,
-                                uint8_t bus) {
+uint64_t generate_dev_id(uint16_t vendor_id, uint16_t device_id, uint8_t bus) {
   uint64_t dev_id = 0;
   dev_id |= ((uint64_t)(vendor_id & 0xFFFF)) << 32;
   dev_id |= ((uint64_t)(device_id & 0xFFFF)) << 16;
@@ -425,7 +387,11 @@ bool get_numa_memory_info(int node_id, uint64_t& total_mb, uint64_t& free_mb) {
 }
 
 int get_numa_node_from_sysfs(const std::string& bdf) {
-  std::string path = "/sys/bus/pci/devices/" + bdf + "/numa_node";
+  const char* test_root = std::getenv("TEST_SYSFS_ROOT");
+  std::string base_path =
+      test_root ? std::string(test_root) : "/sys/bus/pci/devices";
+  std::string path = base_path + "/" + bdf + "/numa_node";
+
   int node = -1;
   std::ifstream nfile(path);
   if (nfile.is_open()) {

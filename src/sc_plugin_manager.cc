@@ -135,7 +135,9 @@ int PluginManager::unloadPlugin(const std::string& plugin_file) {
     return -ENOENT;
   }
 
-  dlclose(it->second);
+  if (it->second != nullptr) {
+    dlclose(it->second);
+  }
   loaded_plugins_.erase(it);
   LOG(level_E::INFO, "Unloaded plugin: " + plugin_file);
   return 0;
@@ -148,8 +150,12 @@ int PluginManager::unloadPlugin(const std::string& plugin_file) {
  */
 int PluginManager::unloadAllPlugins() {
   for (const auto& [path, handle] : loaded_plugins_) {
-    dlclose(handle);
-    LOG(level_E::INFO, "Unloaded plugin: " + path);
+    if (handle) {
+      dlclose(handle);
+      LOG(level_E::INFO, "Unloaded plugin: " + path);
+    } else {
+      LOG(level_E::INFO, "Skipping Unload for null plugin handle: " + path);
+    }
   }
   loaded_plugins_.clear();
   return 0;
