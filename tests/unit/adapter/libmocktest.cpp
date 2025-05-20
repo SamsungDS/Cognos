@@ -187,52 +187,40 @@ TEST_F(LibMockTest, ReturnNonZeroStatusverify_nodeNeg) {
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusgetErrorCount) {
-  string device_id = to_string(numa_max_node() + 1), type = "correctable";
+  string device_id = to_string(numa_max_node() + 1), type = "correctable", out;
 
-  string res = getErrorCount(device_id, type);
-  Document document;
-  document.Parse(res.c_str());
-  EXPECT_STREQ(document["Status"].GetString(), "INVALID_NUMA_INDEX_ERR");
+  int ret = getErrorCount(device_id, type, out);
+  EXPECT_EQ(ret, INVALID_NUMA_INDEX_ERR);
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusgetErrorCountNeg) {
-  string device_id = to_string(-1), type = "correctable";
+  string device_id = to_string(-1), type = "correctable", out;
 
-  string res = getErrorCount(device_id, type);
-  Document document;
-  document.Parse(res.c_str());
-  EXPECT_STREQ(document["Status"].GetString(), "INVALID_NUMA_INDEX_ERR");
+  int ret = getErrorCount(device_id, type, out);
+  EXPECT_EQ(ret, INVALID_NUMA_INDEX_ERR);
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusgetErrorCountAlpha) {
-  string device_id = "abc", type = "correctable";
+  string device_id = "abc", type = "correctable", out;
 
-  string res = getErrorCount(device_id, type);
-  Document document;
-  document.Parse(res.c_str());
-  EXPECT_STREQ(document["Status"].GetString(), "INVALID_NUMA_INDEX_ERR");
+  int ret = getErrorCount(device_id, type, out);
+  EXPECT_EQ(ret, INVALID_NUMA_INDEX_ERR);
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusgetErrorCountEmpty) {
-  string device_id = "", type = "correctable";
+  string device_id = "", type = "correctable", out;
 
-  string res = getErrorCount(device_id, type);
-  Document document;
-  document.Parse(res.c_str());
-  EXPECT_STREQ(document["Status"].GetString(), "INVALID_NUMA_INDEX_ERR");
+  int ret = getErrorCount(device_id, type, out);
+  EXPECT_EQ(ret, INVALID_NUMA_INDEX_ERR);
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusgetErrorCountValid) {
-  string device_id, type = "correctable";
+  string device_id, type = "correctable", out;
   device_id.assign((const char*)"0");
 
-  string res = getErrorCount(device_id, type);
-  Document document;
-  document.Parse(res.c_str());
-  EXPECT_TRUE(((strcmp(document["Status"].GetString(), "OK")) == 0) ||
-              (strcmp(document["Status"].GetString(), "CMD_EXEC_ERR") == 0) ||
-              (strcmp(document["Status"].GetString(),
-                      "UNABLE_TO_GET_NUMA_ADDR_RANGE_ERR") == 0));
+  int ret = getErrorCount(device_id, type, out);
+  EXPECT_TRUE((ret == 0) || (ret == CMD_EXEC_ERR) ||
+              (ret == UNABLE_TO_GET_NUMA_ADDR_RANGE_ERR));
 }
 
 TEST_F(LibMockTest, ReturnGetNumaAddrRange1) {
@@ -287,31 +275,23 @@ TEST_F(LibMockTest, ReturnAddrRanges) {
 }
 
 TEST_F(LibMockTest, ReturnStatusUsingcalculateErrorCount1) {
-  string ras_str, addr_range = "0x100000000-0x207fffffff";
+  string ras_str, addr_range = "0x100000000-0x207fffffff", out;
   ras_str.assign((const char*)ras_err);
 
-  string res = calculateErrorCount(ras_str, addr_range);
-  Document document;
-  document.Parse(res.c_str());
-  EXPECT_STREQ(document["Status"].GetString(), "OK");
+  int ret = calculateErrorCount(ras_str, addr_range, out);
+  EXPECT_EQ(ret, OK);
 }
 
 TEST_F(LibMockTest, ReturnStatusUsingcalculateErrorCount2) {
-  string ras_str = "", addr_range = "0x100000000-0x207fffffff";
-  string res = calculateErrorCount(ras_str, addr_range);
-  Document document;
-  document.Parse(res.c_str());
-  EXPECT_STREQ(document["Status"].GetString(),
-               "UNABLE_TO_GET_NUMA_ADDR_RANGE_ERR");
+  string ras_str = "", addr_range = "0x100000000-0x207fffffff", out;
+  int ret = calculateErrorCount(ras_str, addr_range, out);
+  EXPECT_EQ(ret, UNABLE_TO_GET_NUMA_ADDR_RANGE_ERR);
 }
 
 TEST_F(LibMockTest, ReturnStatusUsingcalculateErrorCount3) {
-  string ras_str = "", addr_range = "0x100000000-";
-  string res = calculateErrorCount(ras_str, addr_range);
-  Document document;
-  document.Parse(res.c_str());
-  EXPECT_STREQ(document["Status"].GetString(),
-               "UNABLE_TO_GET_NUMA_ADDR_RANGE_ERR");
+  string ras_str = "", addr_range = "0x100000000-", out;
+  int ret = calculateErrorCount(ras_str, addr_range, out);
+  EXPECT_EQ(ret, UNABLE_TO_GET_NUMA_ADDR_RANGE_ERR);
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidCommand) {
@@ -323,7 +303,9 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidCommand) {
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
-  EXPECT_STREQ(document["Status"].GetString(), "INVALID_INPUT_ERR");
+  EXPECT_EQ(document["command_response"]["getErrorCount"]["result"]
+                    ["commandSuccessful"],
+            false);
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForValidCommand) {
@@ -336,10 +318,8 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForValidCommand) {
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
-  EXPECT_TRUE(((strcmp(document["Status"].GetString(), "OK")) == 0) ||
-              (strcmp(document["Status"].GetString(), "CMD_EXEC_ERR") == 0) ||
-              (strcmp(document["Status"].GetString(),
-                      "UNABLE_TO_GET_NUMA_ADDR_RANGE_ERR") == 0));
+  EXPECT_TRUE((document["command_response"]["getErrorCount"]["result"]
+                       ["commandSuccessful"] == false));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidDeviceAlpha) {
@@ -351,7 +331,8 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidDeviceAlpha) {
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
-  EXPECT_STREQ(document["Status"].GetString(), "INPUT_JSON_PARSE_ERR");
+  EXPECT_TRUE((document["command_response"]["getErrorCount"]["result"]
+                       ["commandSuccessful"] == false));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidDeviceString) {
@@ -363,7 +344,8 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidDeviceString) {
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
-  EXPECT_STREQ(document["Status"].GetString(), "INVALID_NUMA_INDEX_ERR");
+  EXPECT_TRUE((document["command_response"]["getErrorCount"]["result"]
+                       ["commandSuccessful"] == false));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidJSONInput) {
@@ -375,7 +357,8 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidJSONInput) {
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
-  EXPECT_STREQ(document["Status"].GetString(), "INPUT_JSON_PARSE_ERR");
+  EXPECT_TRUE((document["command_response"]["getErrorCount"]["result"]
+                       ["commandSuccessful"] == false));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForMissingItem) {
@@ -386,7 +369,8 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForMissingItem) {
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
-  EXPECT_STREQ(document["Status"].GetString(), "INVALID_INPUT_ERR");
+  EXPECT_TRUE((document["command_response"]["getErrorCount"]["result"]
+                       ["commandSuccessful"] == false));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForEmptyInput) {
@@ -397,7 +381,8 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForEmptyInput) {
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
-  EXPECT_STREQ(document["Status"].GetString(), "INPUT_JSON_PARSE_ERR");
+  EXPECT_TRUE((document["command_response"]["getErrorCount"]["result"]
+                       ["commandSuccessful"] == false));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForBadInput) {
@@ -408,7 +393,8 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForBadInput) {
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
-  EXPECT_STREQ(document["Status"].GetString(), "INPUT_JSON_PARSE_ERR");
+  EXPECT_TRUE((document["command_response"]["getErrorCount"]["result"]
+                       ["commandSuccessful"] == false));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidParam) {
@@ -421,7 +407,8 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidParam) {
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
-  EXPECT_STREQ(document["Status"].GetString(), "INVALID_INPUT_ERR");
+  EXPECT_TRUE((document["command_response"]["getErrorCount"]["result"]
+                       ["commandSuccessful"] == false));
 }
 
 int main(int argc, char** argv) {
