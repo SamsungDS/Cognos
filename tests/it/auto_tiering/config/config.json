@@ -1,0 +1,16 @@
+{
+  "cluster_id": "CL_ID_1",
+  "node_id": "localhost",
+  "feature_id": "3",
+  "application": "gemfire",
+  "dram_node": "0",
+  "cxl_node": "2",
+  "sla_iops": "150000",
+  "sla_size": "1024",
+  "sla_latencyus": "750",
+  "api_url": "http://localhost:8001/api/v1/process_controller_command",
+  "stress_command": "stress --vm 2 --vm-bytes 4m --vm-hang 10",
+  "log_dir": "/var/log/svk",
+  "log_file_name": "scmc_ui.log",
+  "stop_process_command": "pkill -9 stress"
+}
