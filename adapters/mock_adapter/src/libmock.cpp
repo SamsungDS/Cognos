@@ -42,6 +42,7 @@ struct Config {
   string mce_inject_template_string;
   string rasdaemon_exec_command;
   string ras_mc_ctl_error_addresses;
+  string ras_mc_ctl_health_status_command;
 };
 
 // Instantiation of global vars to be used as key-value pairs
@@ -68,7 +69,7 @@ inline string &trim(std::string &s, const char *t = " \t\n\r\f\v") {
 // Execute a command using command-line string using popen/pclose
 string cmd_exec(string &cmd) {
   int ret = 0;
-  string res;
+  string res = "";
   FILE *pipe = popen(cmd.c_str(), "r");
 
   if (!pipe) {
@@ -77,6 +78,7 @@ string cmd_exec(string &cmd) {
   }
 
   char buffer[128];
+
   while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
     res += buffer;
   }
@@ -245,6 +247,7 @@ int validate_config(const string &str) {
   } else {
     return RASMCCTL_ERROR_ADDRESSES_MISSING_ERR;
   }
+
   return ret;
 }
 
@@ -292,7 +295,7 @@ int init(char const *cfg = CONFIG_FILE) {
 }
 
 // Validate the device string
-int getErrorCount_validate(const string &dev) {
+int device_validate(const string &dev) {
   int ret = 0, noden = -1;
   if (dev.empty()) return INVALID_NUMA_INDEX_ERR;
 
@@ -313,7 +316,7 @@ int getErrorCount_validate(const string &dev) {
 
 // Creating JSON string response for getErrorCount
 string createResponse(const string &device, const string &error_type,
-                      const char *status, const string &error_count) {
+                      const char *status, const Response &response) {
   Document document;
   document.SetObject();
 
@@ -323,30 +326,47 @@ string createResponse(const string &device, const string &error_type,
   Value cmd_response(kObjectType);
 
   // Adding object for "getErrorCount"
-  Value get_error_count(kObjectType);
+  Value request_function(kObjectType);
 
   // Adding device name
   Value dev(kStringType);
   dev.SetString(device.c_str(), allocator);
-  get_error_count.AddMember("device", dev, allocator);
+  request_function.AddMember("device", dev, allocator);
 
   // Adding error type
-  Value etype(kStringType);
-  etype.SetString(error_type.c_str(), allocator);
-  get_error_count.AddMember("errorType", etype, allocator);
+  if (response.function_name == "getErrorCount") {
+    Value etype(kStringType);
+    etype.SetString(error_type.c_str(), allocator);
+    request_function.AddMember("errorType", etype, allocator);
+  }
 
   // Adding result details
   Value result(kObjectType);
 
-  // Adding success status
+  // Adding success or fail status
   if (strcmp(status, "OK") == 0) {
     result.AddMember("commandSuccessful", true, allocator);
-    result.AddMember("errorCount", stol(error_count), allocator);
+    if (response.function_name == "getErrorCount")
+      result.AddMember("errorCount", stol(response.return_value), allocator);
+    else if (response.function_name == "getHealthStatus") {
+      long val = stol(response.return_value);
+      if (val < HEALTH_DECIDER_VALUE)
+        result.AddMember("healthStatus", true, allocator);
+      else
+        result.AddMember("healthStatus", false, allocator);
+    }
+
   } else
     result.AddMember("commandSuccessful", false, allocator);
 
-  get_error_count.AddMember("result", result, allocator);
-  cmd_response.AddMember("getErrorCount", get_error_count, allocator);
+  // Adding result to request_function
+  request_function.AddMember("result", result, allocator);
+
+  // Adding request function under command response
+  if (response.function_name == "getErrorCount")
+    cmd_response.AddMember("getErrorCount", request_function, allocator);
+  else if (response.function_name == "getHealthStatus")
+    cmd_response.AddMember("getHealthStatus", request_function, allocator);
 
   // Adding command response to document
   document.AddMember("command_response", cmd_response, allocator);
@@ -361,7 +381,7 @@ string createResponse(const string &device, const string &error_type,
 }
 
 // Get the error count using ras-mc-ctl output
-int calculateErrorCount(string &res, string &addr_range, string &out) {
+int calculateErrorCount(string &res, string &addr_range, Response &out) {
   int ret = 0;
   string response, retresp, tok;
   string delim = "-";
@@ -391,21 +411,25 @@ int calculateErrorCount(string &res, string &addr_range, string &out) {
       }
     }
   }
-  out.assign(to_string(count));
+
+  // Adding the error count to Response output field
+  out.return_value.assign(to_string(count));
+
   return ret;
 }
 
 // The implementation of getErrorCount
 // Counts the physical addresses valid for the provided node index
-int getErrorCount(const string &dev, const string &type, string &out) {
+int getErrorCount(const string &dev, const string &type, Response &out) {
   int ret = 0, noden = -1;
-  string status, response = "", retresp, addr_range, res = "";
+  string response = "", retresp, addr_range, res = "";
   bool cxl = false;
 
-  ret = getErrorCount_validate(dev);
+  ret = device_validate(dev);
   if (ret != 0) {
     response = "Error during validation of device ID: " + dev;
-    retresp = createResponse(dev, type, err_str[ret], response);
+    out.response_details = response;
+    retresp = createResponse(dev, type, err_str[ret], out);
     svk_logger(RAS_LOGGER, level_E::ERROR, retresp.c_str());
     return ret;
   } else {
@@ -413,7 +437,8 @@ int getErrorCount(const string &dev, const string &type, string &out) {
     ret = get_numa_node_address_range(noden, cxl, addr_range);
     if (ret != 0) {
       response = "Error getting address range of device ID: " + dev;
-      retresp = createResponse(dev, type, err_str[ret], response);
+      out.response_details = response;
+      retresp = createResponse(dev, type, err_str[ret], out);
       svk_logger(RAS_LOGGER, level_E::ERROR, retresp.c_str());
       return ret;
     }
@@ -425,6 +450,11 @@ int getErrorCount(const string &dev, const string &type, string &out) {
   }
 }
 
+// The implementation of getHealthStatus leverages getErrorCount
+int getHealthStatus(const string &dev, Response &out, const string &type) {
+  return getErrorCount(dev, type, out);
+}
+
 // Invoked during initialization
 int startup(char const *cfg = CONFIG_FILE) { return init(cfg); }
 
@@ -433,7 +463,8 @@ string processRequest(string &request) {
   int ret = 0;
   // Create a rapidjson document
   Document document;
-  string cmd_str, cmd, device_str, device, type_str, type, res, estring, out;
+  string cmd_str, cmd, device_str, device, type_str, type, res, estring, fname;
+  Response out;
 
   // Parse the JSON string
   document.Parse(request.c_str());
@@ -441,52 +472,68 @@ string processRequest(string &request) {
   if (ret != 0) {
     ret = INPUT_JSON_PARSE_ERR;
     estring = GetParseError_En(document.GetParseError());
-    res = createResponse(device, type, err_str[ret], estring);
+    out.function_name = "processRequest";
+    out.response_details = estring;
+    res = createResponse(device, type, err_str[ret], out);
   } else {
     // Check if the document is an object
     if (document.IsObject()) {
-      // Get the object
-      const auto &object = document.GetObject();
-
-      // Iterate through the object's members
-      for (auto &member : object) {
-        const Value &name = member.name;
-        if (name.IsString() && (name == "command")) {
-          cmd_str = name.GetString();
-          const Value &value = member.value;
-          if (value.IsString()) {
-            cmd = value.GetString();
+      if (document.HasMember("command_name")) {
+        const Value &cmdobj = document["command_name"];
+        if (cmdobj.IsObject()) {
+          const auto &t = cmdobj.GetObject();
+          for (auto &y : t) {
+            fname = y.name.GetString();
+            break;
           }
-        } else if (name.IsString() && (name == "device")) {
-          device_str = name.GetString();
-          const Value &value = member.value;
-          if (value.IsNumber()) {
-            device = to_string(value.GetInt());
-          } else if (value.IsString()) {
-            device = value.GetString();
-          }
-        } else if (name.IsString() && (name == "type")) {
-          type_str = name.GetString();
-          const Value &value = member.value;
-          if (value.IsString()) {
-            type = value.GetString();
+          if (cmdobj.HasMember(fname.c_str())) {
+            const Value &f = document["command_name"][fname.c_str()];
+            cmd = fname.c_str();
+            if (f.IsObject()) {
+              for (auto &x : f.GetObject()) {
+                if (x.name.IsString() && x.name == "device") {
+                  device_str = x.name.GetString();
+                  if (x.value.IsNumber()) {
+                    device = to_string(x.value.GetInt());
+                  } else if (x.value.IsString()) {
+                    device = x.value.GetString();
+                  }
+                }
+                if (x.name.IsString() && x.name == "errorType") {
+                  type_str = x.name.GetString();
+                  if (x.value.IsNumber()) {
+                    type = to_string(x.value.GetInt());
+                  } else if (x.value.IsString()) {
+                    type = x.value.GetString();
+                  }
+                }
+              }
+            }
           }
         }
       }
-      if ((cmd == "getErrorCount") && (device_str == "device") &&
-          ((type == "correctable") || (type == "uncorrectable"))) {
-        ret = getErrorCount(device, type, out);
-        res = createResponse(device, type, err_str[ret], out);
-        svk_logger(RAS_LOGGER, level_E::ERROR, res.c_str());
-
-      } else {
-        ret = INVALID_INPUT_ERR;
-        res = createResponse(device, type, err_str[ret], out);
-        estring =
-            res + ":Invalid/Missing Key Name and/or Invalid Value Provided";
-        svk_logger(RAS_LOGGER, level_E::ERROR, estring.c_str());
-      }
     }
+  }
+
+  if ((cmd == "getErrorCount") && (device_str == "device") &&
+      ((type == "correctable") || (type == "uncorrectable"))) {
+    out.function_name = "getErrorCount";
+    ret = getErrorCount(device, type, out);
+    res = createResponse(device, type, err_str[ret], out);
+    svk_logger(RAS_LOGGER, level_E::ERROR, res.c_str());
+  } else if ((cmd == "getHealthStatus") && (device_str == "device")) {
+    out.function_name = "getHealthStatus";
+    ret = getHealthStatus(device, out);
+    res = createResponse(device, type, err_str[ret], out);
+    svk_logger(RAS_LOGGER, level_E::ERROR, res.c_str());
+
+  } else {
+    ret = INVALID_INPUT_ERR;
+    res = createResponse(device, type, err_str[ret], out);
+    estring = res + ":Invalid/Missing Key Name and/or Invalid Value Provided";
+    out.function_name = "processRequest";
+    out.response_details = estring;
+    svk_logger(RAS_LOGGER, level_E::ERROR, estring.c_str());
   }
   return res;
 }

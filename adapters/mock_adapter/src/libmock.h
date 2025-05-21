@@ -52,6 +52,7 @@ enum {
   INVALID_INPUT_ERR,
   UNABLE_TO_GET_NUMA_ADDR_RANGE_ERR,
   CMD_EXEC_ERR,
+  RASMCCTL_HEALTH_STATUS_COMMAND_MISSING_ERR,
   END
 };
 
@@ -87,9 +88,19 @@ const char* err_str[] = {STR(OK),
                          STR(INVALID_INPUT_ERR),
                          STR(UNABLE_TO_GET_NUMA_ADDR_RANGE_ERR),
                          STR(CMD_EXEC_ERR),
+                         STR(RASMCCTL_HEALTH_STATUS_COMMAND_MISSING_ERR),
                          STR(END)};
 
+#define HEALTH_DECIDER_VALUE 10
+
 using namespace std;
+
+// Response structure
+struct Response {
+  string function_name;
+  string return_value;
+  string response_details;
+};
 
 // Initialization function
 int startup(char const* cfg);
@@ -98,10 +109,18 @@ int startup(char const* cfg);
 string processRequest(string& request);
 
 // getErrorCount API
-int getErrorCount(const string& device, const string& type, string& out);
+int getErrorCount(const string& device, const string& type, Response& out);
+
+// getErrorCount API
+int getHealthStatus(const string& device, Response& out,
+                    const string& type = "correctable");
+
+// createResponse API
+string createResponse(const string& device, const string& error_type,
+                      const char* status, const Response& response);
 
 // Validate device string ID before calling getErrorCount
-int getErrorCount_validate(const string& device);
+int device_validate(const string& device);
 
 // Validate device NUMA node index
 int verify_node(const int& node_index);
@@ -115,7 +134,7 @@ int get_numa_node_address_range(const int& node_index, const bool cxl_node,
 
 // Find the total number of lines in ras-mc-ctl output that has address
 // between the limits of provided address range
-int calculateErrorCount(string& res, string& addr_range, string& out);
+int calculateErrorCount(string& res, string& addr_range, Response& out);
 
 // Validate the provided JSON string string to be a proper for processing
 int validate_config(const string& text);

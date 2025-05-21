@@ -32,7 +32,8 @@ svk_status execute_mock_logic_sync(svk_logic_cmd *cmd, svk_logic_input *input,
 
   boost::property_tree::ptree pt;
   std::string in, out, sts;
-  output->status = SVK_STATUS_SUCCESS;
+  output->status = SVK_STATUS_FAIL;
+  ret = SVK_STATUS_FAIL;
 
   in.assign((const char *)input->input_buffer);
   out = processRequest(in);
@@ -45,9 +46,9 @@ svk_status execute_mock_logic_sync(svk_logic_cmd *cmd, svk_logic_input *input,
              out.c_str());
     if (pt.get<std::string>(
             "command_response.getErrorCount.result.commandSuccessful") ==
-        "false") {
-      output->status = SVK_STATUS_FAIL;
-      ret = SVK_STATUS_FAIL;
+        "true") {
+      output->status = SVK_STATUS_SUCCESS;
+      ret = SVK_STATUS_SUCCESS;
     }
 
   } catch (const boost::property_tree::ptree_error &e) {
