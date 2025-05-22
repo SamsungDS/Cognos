@@ -12,7 +12,8 @@
 #include <vector>
 
 #include "logger_util.hpp"
-#include "svk_zmq_api.h"
+#include "svk_pub_sub_struct.h"
+#include "svk_publisher.h"
 
 // Hardcoding this path for now. This will be provided by the header from the
 // svk-core repo in the future
@@ -76,9 +77,6 @@ using slat_thread_data = struct slat_thread_data_s {
   std::thread benchmarking_thread;
   bool shutdown_bm_thread;
   bool thread_running;
-
-  void *zmq_context;
-  void *zmq_socket;
 
   std::map<std::string, slat_benchmark_config> benchmark_device_config_list;
   int64_t benchmark_run_interval;
