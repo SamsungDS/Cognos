@@ -7,6 +7,7 @@
 
 #include "client_library.h"
 #include "sla_hlpr_fns.h"
+#include "svk_pub_sub_struct.h"
 #include "svk_zmq_api.h"
 #define MAX_SIZE 4096
 
@@ -17,9 +18,44 @@ ABSL_FLAG(std::string, svk_conf_file, "", "svk configuration file to read");
 using namespace svk;
 
 std::atomic<int> gSignalStatus = -1;
+std::string gSubscriberPort;
+std::string gTransportType;
+std::vector<std::string> gTopicsVector;
 
 const std::unique_ptr<SLADeviceHelper> g_sla_device_hlpr =
     std::make_unique<SLADeviceHelper>(SLA_CONFIG_FILE);
+
+static int read_subscriber_settings_from_config_file(
+    const char *config_file, std::string &port, std::string &transport_type,
+    std::vector<std::string> &topics_vector) {
+  std::string log_msg;
+  boost::property_tree::ptree pt;
+
+  boost::property_tree::read_json(config_file, pt);
+
+  port = std::to_string(pt.get<int>("pubsub.port", DEFAULT_PUB_SUB_PORT));
+  transport_type = pt.get<std::string>("pubsub.transport_type", "zmq");
+  log_msg = "Subscriber config with transport type:" + transport_type +
+            " Port: " + port;
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, log_msg.c_str());
+
+  try {
+    for (const auto &topic_item : pt.get_child("pubsub.topics")) {
+      std::string topic_s = topic_item.second.get_value<std::string>();
+      topics_vector.push_back(topic_s);
+      log_msg = "Topics read from the config file " + topic_s;
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, log_msg.c_str());
+    }
+  } catch (boost::property_tree::ptree_bad_path &e) {
+    log_msg =
+        "Unable to read the topics section under pubsub of SVK config. Error "
+        "-> " +
+        std::string(e.what());
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, log_msg.c_str());
+  }
+
+  return 0;
+}
 
 int tokenize(std::string node_id_list, std::set<std::string> &tokens) {
   int count = 0;
@@ -93,7 +129,9 @@ int read_svk_conf_file(const std::string svk_conf_file,
       config->log_file_size = CONTROLLER_LOGGER_DEFAULT_FILE_SIZE;
       config->log_sink_type = "rotating_file";
     }
-    status = 0;
+
+    status = read_subscriber_settings_from_config_file(
+        svk_conf_file.c_str(), gSubscriberPort, gTransportType, gTopicsVector);
   } catch (std::exception &e) {
     std::cerr << "Unable to read SVK config. Error -> " << e.what()
               << std::endl;
@@ -136,6 +174,8 @@ ControllerServicer::ControllerServicer(const std::string &svk_conf_file) {
     std::cout << "Failed to create logger " << std::endl;
     return;
   }
+
+  zmq_init_subscriber_logger(CONTROLLER_LOGGER_MODULE_NAME);
 
   m_svk_config = config;
 
@@ -1296,12 +1336,10 @@ void signal_handler(int signal) {
   gSignalStatus.store(signal);
 }
 
-#define SUBSCRIBER_PORT "5555"
 int StartSLAThreadForTiering(ControllerServicer *svcr) {
   // A map of <node_name> with the socket
   std::unordered_map<std::string, void *> socket_map;
   std::string logger_str;
-  zmq::pollitem_t *items;
   svk_slat_logic_output data;
   std::string topic = "APP_SLA_DEGRADED";
   std::unordered_map<std::string, std::unordered_map<std::string, std::string>>
@@ -1309,9 +1347,10 @@ int StartSLAThreadForTiering(ControllerServicer *svcr) {
   std::string node_name;
   std::string cluster_name;
   int status = -1;
-  int socket_map_count = 0;
   // TODO: Workaround to call TM module only once
   bool tm_flag = false;
+  void *zmq_context = nullptr;
+  void *zmq_socket = nullptr;
 
   while (true) {
     if (svcr->get_stop_flag() == true) {
@@ -1332,114 +1371,112 @@ int StartSLAThreadForTiering(ControllerServicer *svcr) {
         for (auto nodes = itr->second.begin(); nodes != itr->second.end();
              ++nodes) {
           node_name = nodes->first;
-          if (socket_map[node_name] == nullptr) {
-            void *zmq_context;
-            void *zmq_socket;
-            status =
-                initialize_sub(&zmq_context, &zmq_socket, node_name.c_str(),
-                               SUBSCRIBER_PORT, topic.c_str());
+          if (zmq_context == nullptr) {
+            status = zmq_init_subscriber(
+                &zmq_context, &zmq_socket, node_name.c_str(),
+                gSubscriberPort.c_str(), topic.c_str());
             if (status != 0) {
               logger_str =
                   "Error in initializing the subscriber for node " + node_name;
               svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                          logger_str.c_str());
+              // Mark it as null
+              zmq_context = nullptr;
+              zmq_socket = nullptr;
             } else {
-              logger_str = "Initialized the subscriber for node " + node_name;
+              logger_str = "Initialized the subscriber for node " + node_name +
+                           " with zmq context ptr " +
+                           std::to_string(reinterpret_cast<uintptr_t>(
+                               static_cast<void *>(zmq_context)));
               svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                          logger_str.c_str());
-              socket_map[node_name] = zmq_socket;
+              svcr->set_zmq_socket(zmq_context, zmq_socket);
+            }
+          } else {
+            status = zmq_add_publisher_endpoint_to_subscriber(
+                zmq_socket, node_name.c_str(), gSubscriberPort.c_str());
+            if (status != 0) {
+              logger_str =
+                  "Error in adding the subscriber for node " + node_name;
+              svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                         logger_str.c_str());
+            } else {
+              logger_str =
+                  "Added the node " + node_name + "to the subscriber socket";
+              svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                         logger_str.c_str());
             }
           }
         }
       }
-      socket_map_count = socket_map.size();
-      if (socket_map_count) {
-        items = new zmq::pollitem_t[socket_map_count];
-        int count = 0;
-        for (auto itr = socket_map.begin(); itr != socket_map.end(); ++itr) {
-          *(items + count) = {itr->second, 0, ZMQ_POLLIN, 0};
-          count++;
-        }
-      }
     }
 
-    if (socket_map_count) {
+    if (zmq_socket) {
       try {
-        int rc =
-            zmq::poll(items, socket_map_count, std::chrono::milliseconds(1000));
-        if (rc > 0) {
-          for (int i = 0; i < socket_map_count; i++) {
-            if (items[i].revents && ZMQ_POLLIN) {
-              status = get_data(&items[i].socket, &data);
-              if (status != ((int)topic.length() + (int)sizeof(data))) {
-                // error
-                logger_str =
-                    "Error in receiving the data for node " + node_name;
-                svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
-                           logger_str.c_str());
+        status = zmq_receive_data(zmq_socket, (uint8_t *)&data,
+                                  (int)sizeof(data), true);
+        if (status != (int)sizeof(data)) {
+          // error
+          logger_str = "Error in receiving the data";
+          svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                     logger_str.c_str());
+        } else {
+          // TODO: Workaround to call TM module only once
+          if (tm_flag) {
+            continue;
+          }
+          tm_flag = true;
 
-              } else {
-                // TODO: Workaround to call TM module only once
-                if (tm_flag) {
-                  continue;
-                }
-                tm_flag = true;
+          logger_str = "Device's numa " + std::string(data.device_name) +
+                       " on host " + std::string(data.host_name) +
+                       " for the app " + std::string(data.app_name) +
+                       " deviated than expected - Reported latency_ns = " +
+                       std::to_string(data.avgLatencyns);
+          svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::WARN,
+                     logger_str.c_str());
 
-                logger_str =
-                    "Device's numa " + std::string(data.device_name) +
-                    " on host " + std::string(data.host_name) +
-                    " for the app " + std::string(data.app_name) +
-                    " deviated than expected - Reported latency_ns = " +
-                    std::to_string(data.avgLatencyns);
-                svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::WARN,
-                           logger_str.c_str());
-
-                // Received the event for SLA deviation. Send a command to TM
-                // module with the params expected at this point of time.
-                node_name = "";
-                for (auto itr = m_cluster_map.begin();
-                     itr != m_cluster_map.end(); ++itr) {
-                  cluster_name = itr->first;
-                  for (auto nodes = itr->second.begin();
-                       nodes != itr->second.end(); ++nodes) {
-                    if (nodes->first == data.host_name) {
-                      node_name = data.host_name;
-                      break;
-                    }
-                  }
-                }
-                if (node_name.length() != 0) {
-                  svk::CommandRequest req;
-                  svk::CommandResponse resp;
-                  req.set_cluster_id(cluster_name);
-                  req.set_node_id(node_name);
-                  req.set_feature_id(feature_id::CXL);
-                  std::string feature_params =
-                      "cluster_id=" + cluster_name +
-                      ";command=StartTuning;application="
-                      "gemfire;application_id=" +
-                      std::to_string(getpid()) +
-                      ";dram_node=0;cxl_node=1;"
-                      "sla_iops=150000;sla_size=1024;sla_latencyus=750";
-                  req.set_feature_params(feature_params);
-                  Client client(svcr->get_svk_config_controller_id(),
-                                svcr->get_svk_config_controller_port());
-                  Status client_grpc_status =
-                      client.ProcessControllerCommand(&req, &resp);
-                  if (client_grpc_status.ok()) {
-                    logger_str =
-                        "Command to the TM module with feature_params " +
-                        feature_params + "is successful";
-                    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-                               logger_str.c_str());
-                  } else {
-                    logger_str = "Command with feature_params " +
-                                 feature_params + "is failed";
-                    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
-                               logger_str.c_str());
-                  }
-                }
+          // Received the event for SLA deviation. Send a command to TM
+          // module with the params expected at this point of time.
+          node_name = "";
+          for (auto itr = m_cluster_map.begin(); itr != m_cluster_map.end();
+               ++itr) {
+            cluster_name = itr->first;
+            for (auto nodes = itr->second.begin(); nodes != itr->second.end();
+                 ++nodes) {
+              if (nodes->first == data.host_name) {
+                node_name = data.host_name;
+                break;
               }
+            }
+          }
+          if (node_name.length() != 0) {
+            svk::CommandRequest req;
+            svk::CommandResponse resp;
+            req.set_cluster_id(cluster_name);
+            req.set_node_id(node_name);
+            req.set_feature_id(feature_id::CXL);
+            std::string feature_params =
+                "cluster_id=" + cluster_name +
+                ";command=StartTuning;application="
+                "gemfire;application_id=" +
+                std::to_string(getpid()) +
+                ";dram_node=0;cxl_node=1;"
+                "sla_iops=150000;sla_size=1024;sla_latencyus=750";
+            req.set_feature_params(feature_params);
+            Client client(svcr->get_svk_config_controller_id(),
+                          svcr->get_svk_config_controller_port());
+            Status client_grpc_status =
+                client.ProcessControllerCommand(&req, &resp);
+            if (client_grpc_status.ok()) {
+              logger_str = "Command to the TM module with feature_params " +
+                           feature_params + "is successful";
+              svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                         logger_str.c_str());
+            } else {
+              logger_str =
+                  "Command with feature_params " + feature_params + "is failed";
+              svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                         logger_str.c_str());
             }
           }
         }
@@ -1460,7 +1497,18 @@ int StartSLAThreadForTiering(ControllerServicer *svcr) {
 }
 
 int StopSLAThreadForTiering(ControllerServicer *svcr) {
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+             "StopSLAThreadForTiering called");
   svcr->set_stop_flag();
+  void *zmq_context = svcr->get_zmq_context();
+  void *zmq_socket = svcr->get_zmq_socket();
+  std::string logger = "cleanup subscriber called with zmq context" +
+                       std::to_string(reinterpret_cast<uintptr_t>(
+                           static_cast<void *>(zmq_context)));
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger.c_str());
+  zmq_cleanup_subscriber(zmq_context, zmq_socket);
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+             "cleanup subscriber done");
   return 0;
 }
 
@@ -1489,6 +1537,9 @@ int StartServer(std::string svk_conf_file, bool blocking) {
         delete svcr;
         return status;
       }
+
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                 "Started the SLA Thread for TM");
 
       while (gSignalStatus.load() == -1) sleep(5);
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,

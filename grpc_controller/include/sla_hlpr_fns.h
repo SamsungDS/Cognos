@@ -13,7 +13,8 @@
 #include "grpc_controller.h"
 #include "grpc_hdr.h"
 #include "svk_logger.h"
-#include "svk_zmq_api.h"
+#include "svk_pub_sub_struct.h"
+#include "svk_publisher.h"
 
 #define SLA_CONFIG_DIR "/usr/local/svk/mgmt-fw/config/"
 #define SLA_CONFIG_FILE SLA_CONFIG_DIR "/device_sla_config.json"

@@ -781,7 +781,7 @@ int KillProcess() {
 
   std::thread server_thr(StartNodeServer, conf_file, true);
   // Sleep for a while for the server process to stablize
-  sleep(3);
+  sleep(10);
   svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
              "sending the signal to kill the process");
   // Raise the interrupt signal for the server to go down gracefully
@@ -796,6 +796,7 @@ int KillProcess() {
 TEST(InitTest, InitNodeServerWithSignal) {
   GTEST_FLAG_SET(death_test_style, "threadsafe");
   EXPECT_DEATH(KillProcess(), "");
+  sleep(5);
   std::ifstream file(MGMT_FW_NODE_DEFAULT_LOG_FILE);
   std::string data((std::istreambuf_iterator<char>(file)),
                    (std::istreambuf_iterator<char>()));

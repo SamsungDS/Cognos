@@ -2595,3 +2595,40 @@ TEST(SLAStatsManager, readFileFail) {
   bool rc = mgr.readFromFile("badfile");
   ASSERT_FALSE(rc);
 }
+
+TEST(InitControllerTest, InitSuccessWithPubSubConfig) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  unlink(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL);
+
+  boost::property_tree::ptree pt;
+
+  boost::property_tree::read_json(conf_file, pt);
+  pt.put("pubsub.port", 5432);
+
+  boost::property_tree::ptree topics;
+  boost::property_tree::ptree element1;
+  element1.put_value("events");
+  boost::property_tree::ptree element2;
+  element2.put_value("metrics");
+
+  topics.push_back(std::make_pair("", element1));
+  topics.push_back(std::make_pair("", element2));
+  pt.add_child("pubsub.topics", topics);
+  boost::property_tree::write_json(conf_file, pt);
+  FILE *fp = fopen(conf_file.c_str(), "r");
+  char buf[4096];
+  fread(buf, 4096, 1, fp);
+  fclose(fp);
+  std::cout << "PUBSUB conf " << buf << std::endl;
+
+  ControllerServicer *svcr(new ControllerServicer(conf_file));
+  auto server = InitializeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+  EXPECT_TRUE(svcr->get_state() == true);
+  unlink(conf_file.c_str());
+}

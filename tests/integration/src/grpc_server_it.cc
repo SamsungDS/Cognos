@@ -14,6 +14,7 @@
 #include "grpc_server.h"
 #include "grpc_server_hlpr.h"
 #include "sla_hlpr_fns.h"
+#include "svk_publisher.h"
 
 using ::testing::_;
 using ::testing::AtLeast;
@@ -67,6 +68,35 @@ int create_svk_mgmt_fw_conf_json(std::string conf_file,
   pt::write_json(json_file, root);
 
   return 0;
+}
+
+/**
+ * Checks if a given string exists in the log file.
+ *
+ * @param search_str The string to search for in the log file.
+ * @return True if the string is found in the log file, false otherwise.
+ */
+bool is_str_in_log(std::string file_name, std::string search_str) {
+  // Use this call to flush logs immediately
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+             "Just for flushing logs");
+
+  // Check if the log file exists
+  std::ifstream file(file_name);
+  if (!file.good()) {
+    const char *message = (file_name + " doesn't exist").c_str();
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR, message);
+    return false;
+  }
+  // Read the entire log file into a string
+  std::string data((std::istreambuf_iterator<char>(file)),
+                   (std::istreambuf_iterator<char>()));
+
+  // Close the file
+  file.close();
+
+  // Check if the search string is found in the log file
+  return data.find(search_str) != std::string::npos;
 }
 
 TEST(InitIntegrationTest, InitControllerAndNodeServerSuccess) {
@@ -798,29 +828,31 @@ int CheckPoller() {
       CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
       CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
 
-  void *zmq_context;
-  void *zmq_socket;
   svk_slat_logic_output data;
 
-  int rc = initialize_pub(&zmq_context, &zmq_socket, "0", "5555");
+  std::thread server_thr(StartServer, conf_file, true);
+  std::thread node_thr(StartNodeServer, conf_file, true);
+  // Sleep for a while for the server processes to stablize
+  sleep(10);
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+             "InitControllerNodeServerWithSignal in CheckPoller");
+  int rc = initialize_publisher(conf_file.c_str());
   if (rc != 0) {
     std::cout << "Failed to initialize publisher" << std::endl;
     return -1;
   }
 
-  std::thread server_thr(StartServer, conf_file, true);
-  std::thread node_thr(StartNodeServer, conf_file, true);
-  // Sleep for a while for the server processes to stablize
-  sleep(5);
-
   strcpy(data.host_name, "localhost");
-  strcpy(data.device_name, "1");
+  strcpy(data.device_name, "DEV1");
   strcpy(data.app_name, "TESTAPP");
   data.avgLatencyns = 100;
 
-  rc = publish(&zmq_socket, "APP_SLA_DEGRADED", &data);
-  std::cout << "Published data result " << rc << std::endl;
-  sleep(10);
+  rc = publish_data((char *)"APP_SLA_DEGRADED", (uint8_t *)&data, sizeof(data));
+  sleep(3);
+  cleanup_publisher();
+
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+             "Done with InitControllerNodeServerWithSignal in CheckPoller");
 
   // Raise the interrupt signal for the server to go down gracefully
   std::thread::id node_thread_id = node_thr.get_id();
@@ -836,6 +868,7 @@ int CheckPoller() {
   // Wait for > 5 seconds for the signal handler to be processed on the server
   // node
   sleep(5);
+
   unlink(conf_file.c_str());
   return 0;
 }
@@ -843,16 +876,13 @@ int CheckPoller() {
 TEST(InitIntegrationTest, InitControllerNodeServerWithSignal) {
   GTEST_FLAG_SET(death_test_style, "threadsafe");
   EXPECT_DEATH(CheckPoller(), "");
-  std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
-  std::string data((std::istreambuf_iterator<char>(file)),
-                   (std::istreambuf_iterator<char>()));
-  file.close();
-  EXPECT_EQ(true,
-            data.find("Device's numa 1 on host localhost for the app TESTAPP "
-                      "deviated than expected - Reported latency_ns = 100") !=
-                std::string::npos);
-  EXPECT_EQ(true, data.find("Updated node localhost's status to offline") !=
-                      std::string::npos);
+  EXPECT_EQ(
+      true,
+      is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
+                    "Device's numa DEV1 on host localhost for the app TESTAPP "
+                    "deviated than expected - Reported latency_ns = 100"));
+  EXPECT_EQ(true, is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
+                                "Updated node localhost's status to offline"));
 }
 
 int CheckNodeStatus() {
@@ -984,15 +1014,8 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStart) {
   EXPECT_TRUE(c_svcr->get_state() == true);
   std::thread *sla_thread = new std::thread(&StartSLAThreadForTiering, c_svcr);
 
-  void *zmq_context;
-  void *zmq_socket;
   svk_slat_logic_output data;
 
-  int rc = initialize_pub(&zmq_context, &zmq_socket, "0", "5555");
-  if (rc != 0) {
-    std::cout << "Failed to initialize publisher" << std::endl;
-    return;
-  }
   Servicer *n_svcr(new Servicer(conf_file));
   if (n_svcr->get_state() == false) {
     std::cout << "Node Servicer is not initialized properly. Exiting"
@@ -1004,12 +1027,17 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStart) {
 
   sleep(5);
 
+  int rc = initialize_publisher(conf_file.c_str());
+  if (rc != 0) {
+    std::cout << "Failed to initialize publisher" << std::endl;
+    return;
+  }
   strcpy(data.host_name, "localhost1");
-  strcpy(data.device_name, "11");
+  strcpy(data.device_name, "DEV11");
   strcpy(data.app_name, "TESTAPP1");
   data.avgLatencyns = 1000;
 
-  rc = publish(&zmq_socket, "APP_SLA_DEGRADED", &data);
+  rc = publish_data((char *)"APP_SLA_DEGRADED", (uint8_t *)&data, sizeof(data));
   std::cout << "Published data result " << rc << std::endl;
   sleep(10);
 
@@ -1017,16 +1045,17 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStart) {
   sla_thread->join();
   delete c_svcr;
   delete n_svcr;
+  cleanup_publisher();
 
   std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
   std::string filedata((std::istreambuf_iterator<char>(file)),
                        (std::istreambuf_iterator<char>()));
   file.close();
-  EXPECT_EQ(
-      true,
-      filedata.find("Device's numa 11 on host localhost1 for the app TESTAPP1 "
-                    "deviated than expected - Reported latency_ns = 1000") !=
-          std::string::npos);
+  EXPECT_EQ(true,
+            filedata.find(
+                "Device's numa DEV11 on host localhost1 for the app TESTAPP1 "
+                "deviated than expected - Reported latency_ns = 1000") !=
+                std::string::npos);
 
   unlink(conf_file.c_str());
 }
@@ -1084,12 +1113,9 @@ TEST(InitIntegrationTest,
   EXPECT_TRUE(c_svcr->get_state() == true);
   std::thread *sla_thread = new std::thread(&StartSLAThreadForTiering, c_svcr);
 
-  void *zmq_context;
-  void *zmq_socket;
   svk_slat_logic_output data;
-  std::string topic = "APP_SLA_DEGRADED";
 
-  int rc = initialize_pub(&zmq_context, &zmq_socket, "0", "5555");
+  int rc = initialize_publisher(conf_file.c_str());
   if (rc != 0) {
     std::cout << "Failed to initialize publisher" << std::endl;
     return;
@@ -1110,26 +1136,7 @@ TEST(InitIntegrationTest,
   strcpy(data.app_name, "TESTAPP2");
   data.avgLatencyns = 1000;
 
-  // rc = publish(&zmq_socket, "APP_SLA_DEGRADED", &data);
-
-  char buffer[sizeof(svk_slat_logic_output)];
-  int len = sizeof(svk_slat_logic_output);
-  int topic_size, data_size;
-
-  topic_size = zmq_send(zmq_socket, topic.c_str(),
-                        strnlen(topic.c_str(), MAX_TOPIC_LEN - 1), ZMQ_SNDMORE);
-  if (topic_size == -1) {
-    std::cout << "ZMQ send topic failed." << std::endl;
-    return;
-  }
-
-  memcpy(buffer, (void *)&data, len);
-  data_size = zmq_send(zmq_socket, buffer, len - 2, 0);
-  if (data_size == -1) {
-    std::cout << "ZMQ send data failed." << std::endl;
-    return;
-  }
-
+  rc = publish_data((char *)"APP_SLA_DEGRADED", (uint8_t *)&data, sizeof(data));
   std::cout << "Published data result successfully" << std::endl;
   sleep(10);
 
@@ -1137,13 +1144,14 @@ TEST(InitIntegrationTest,
   sla_thread->join();
   delete c_svcr;
   delete n_svcr;
+  cleanup_publisher();
 
   std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
   std::string filedata((std::istreambuf_iterator<char>(file)),
                        (std::istreambuf_iterator<char>()));
   file.close();
   EXPECT_EQ(
-      false,
+      true,
       filedata.find("Device's numa 12 on host localhost2 for the app TESTAPP2 "
                     "deviated than expected - Reported latency_ns = 1000") !=
           std::string::npos);
@@ -1181,11 +1189,9 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForTMOperation) {
   EXPECT_TRUE(c_svcr->get_state() == true);
   std::thread *sla_thread = new std::thread(&StartSLAThreadForTiering, c_svcr);
 
-  void *zmq_context;
-  void *zmq_socket;
   svk_slat_logic_output data;
 
-  int rc = initialize_pub(&zmq_context, &zmq_socket, "0", "5555");
+  int rc = initialize_publisher(conf_file.c_str());
   if (rc != 0) {
     std::cout << "Failed to initialize publisher" << std::endl;
     return;
@@ -1202,15 +1208,15 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForTMOperation) {
   sleep(5);
 
   strcpy(data.host_name, "localhost");
-  strcpy(data.device_name, "11");
+  strcpy(data.device_name, "DEVTM");
   strcpy(data.app_name, "TESTAPP1");
   data.avgLatencyns = 1000;
 
-  rc = publish(&zmq_socket, "APP_SLA_DEGRADED", &data);
+  rc = publish_data((char *)"APP_SLA_DEGRADED", (uint8_t *)&data, sizeof(data));
   std::cout << "Published data result " << rc << std::endl;
   sleep(10);
 
-  rc = publish(&zmq_socket, "APP_SLA_DEGRADED", &data);
+  rc = publish_data((char *)"APP_SLA_DEGRADED", (uint8_t *)&data, sizeof(data));
   std::cout << "Published data result " << rc << "one more time" << std::endl;
   sleep(3);
 
@@ -1218,15 +1224,17 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForTMOperation) {
   sla_thread->join();
   delete c_svcr;
   delete n_svcr;
+  cleanup_publisher();
 
   std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
   std::string filedata((std::istreambuf_iterator<char>(file)),
                        (std::istreambuf_iterator<char>()));
   file.close();
-  EXPECT_EQ(true, filedata.find(
-                      "Device's numa 11 on host localhost for the app TESTAPP1 "
-                      "deviated than expected - Reported latency_ns = 1000") !=
-                      std::string::npos);
+  EXPECT_EQ(true,
+            filedata.find(
+                "Device's numa DEVTM on host localhost for the app TESTAPP1 "
+                "deviated than expected - Reported latency_ns = 1000") !=
+                std::string::npos);
 
   unlink(conf_file.c_str());
 }
