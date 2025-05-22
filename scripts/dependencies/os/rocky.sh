@@ -17,6 +17,7 @@ install_packages() {
     BUILD_DEPS=(
         boost-devel
         cmake
+        cppzmq-devel	
         gcc-c++
         git
         pkg-config

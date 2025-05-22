@@ -39,6 +39,7 @@ target_include_directories(${SVK_ZMQ} PUBLIC
 target_compile_definitions(${SVKLogger} PUBLIC "-DSPDLOG_FMT_EXTERNAL")
 target_link_libraries(${SVKLogger} PUBLIC spdlog)
 target_link_libraries(${SVK_ZMQ} PUBLIC zmq)
+target_link_libraries(${SVK_ZMQ} PUBLIC svklogger)
 
 set_target_properties(${SVKLogger} PROPERTIES 
                             VERSION ${PROJECT_VERSION}

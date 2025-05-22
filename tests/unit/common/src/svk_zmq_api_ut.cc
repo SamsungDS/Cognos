@@ -8,6 +8,24 @@
 
 #include "svk_zmq_api.h"
 
+typedef struct {
+  char host_name[64];
+  char app_name[64];
+  char device_name[64];   // This may contain just numa of device
+  uint64_t avgLatencyns;  // Latency in nanoseconds
+  uint64_t iops;
+  uint64_t bandwidthGBps;
+  uint64_t avgReadLatency;
+  uint64_t avgWriteLatency;
+  uint64_t avgUpdateLatency;
+  uint64_t avgReadIOPS;
+  uint64_t avgWriteIOPS;
+  uint64_t avgP99Latency;
+  uint64_t ioBytesRead;
+  uint64_t ioBytesWritten;
+  uint64_t ioBytesRewrite;
+} svk_slat_logic_output;
+
 #define MOCK_STRUCT_INIT(...) \
   { __VA_ARGS__ }
 
@@ -43,13 +61,14 @@ int zmq_recv(void *s_, void *buf_, size_t len_, int flags_) {
                                 .ioBytesWritten = 1,
                                 .ioBytesRewrite = 1};
   char *buffer = (char *)buf_;
-
+  payload_header topic_hdr;
   if (len_ == sizeof(svk_slat_logic_output)) {
     memcpy(buffer, &data, sizeof(data));
     return len_;
-  } else if (len_ == MAX_TOPIC_LEN - 1) {
-    const char *topic = "test_topic";
-    memcpy(buffer, topic, strlen(topic));
+  } else if (len_ == sizeof(payload_header)) {
+    strcpy(topic_hdr.topic, "test_topic");
+    topic_hdr.payload_len = sizeof(data);
+    memcpy(buffer, &topic_hdr, sizeof(topic_hdr));
     return len_;
   }
 
@@ -70,22 +89,26 @@ int zmq_getsockopt(void *s_, int option_, void *optval_, size_t *optvallen_) {
 TEST(SVKZeroMQ, PublisherInit) {
   void *ctx;
   void *publisher;
-  int rc = initialize_pub(&ctx, &publisher, "*", "5555");
+  int rc = zmq_init_publisher(&ctx, &publisher, "*", "5555");
   EXPECT_EQ(0, rc);
-  cleanup_zmq(&ctx, &publisher);
+  zmq_cleanup_publisher(ctx, publisher);
 }
 
 TEST(SVKZeroMQ, PublisherInitFail) {
   void *ctx;
   void *publisher;
-  int rc = initialize_pub(&ctx, &publisher, "fail", "");
+  int rc = zmq_init_publisher(&ctx, &publisher, "fail", "");
+  EXPECT_EQ(-1, rc);
+
+  rc = zmq_init_publisher(&ctx, &publisher, "127.0.0.1", "");
   EXPECT_EQ(-1, rc);
 }
 
 TEST(SVKZeroMQ, PublisherSend) {
   void *ctx;
   void *publisher;
-  int rc = initialize_pub(&ctx, &publisher, "*", "5555");
+  payload_header topic_hdr;
+  int rc = zmq_init_publisher(&ctx, &publisher, "*", "5555");
   EXPECT_EQ(0, rc);
 
   svk_slat_logic_output data = {.host_name = "test_host",
@@ -102,31 +125,47 @@ TEST(SVKZeroMQ, PublisherSend) {
                                 .ioBytesRead = 1,
                                 .ioBytesWritten = 1,
                                 .ioBytesRewrite = 1};
-  rc = publish(&publisher, "test_topic", &data);
+  strcpy(topic_hdr.topic, "test_topic");
+  topic_hdr.payload_len = sizeof(data);
+  rc = zmq_publish_data(publisher, &topic_hdr, (uint8_t *)&data);
   EXPECT_NE(-1, rc);
-  cleanup_zmq(&ctx, &publisher);
+  zmq_cleanup_publisher(ctx, publisher);
 }
 
 TEST(SVKZeroMQ, PublisherSendInvalidSocket) {
   void *publisher = nullptr;
   svk_slat_logic_output data;
+  payload_header topic_hdr;
+  strcpy(topic_hdr.topic, "test_topic");
+  topic_hdr.payload_len = sizeof(data);
 
-  int rc = publish(&publisher, "topic", &data);
+  int rc = zmq_publish_data(publisher, &topic_hdr, (uint8_t *)&data);
   EXPECT_EQ(-1, rc);
 }
 
 TEST(SVKZeroMQ, PublisherSendInvalidData) {
   void *ctx;
   void *publisher;
-  int rc = initialize_pub(&ctx, &publisher, "*", "5555");
+  int rc = zmq_init_publisher(&ctx, &publisher, "*", "5555");
   EXPECT_EQ(0, rc);
+  payload_header topic_hdr;
 
   svk_slat_logic_output data;
   svk_slat_logic_output *inv_data = nullptr;
-  rc = publish(&publisher, "", &data);
+  // Empty topic in the header
+  strcpy(topic_hdr.topic, "");
+  topic_hdr.payload_len = sizeof(data);
+  rc = zmq_publish_data(publisher, &topic_hdr, (uint8_t *)&data);
+  EXPECT_EQ(0, rc);
+  // null data
+  strcpy(topic_hdr.topic, "Topic");
+  rc = zmq_publish_data(publisher, &topic_hdr, (uint8_t *)inv_data);
   EXPECT_EQ(-1, rc);
 
-  rc = publish(&publisher, "topic", inv_data);
+  // payload len is zero
+  strcpy(topic_hdr.topic, "Topic");
+  topic_hdr.payload_len = 0;
+  rc = zmq_publish_data(publisher, &topic_hdr, (uint8_t *)&data);
   EXPECT_EQ(-1, rc);
 }
 
@@ -134,50 +173,105 @@ TEST(SVKZeroMQ, PublisherSendInvalidData) {
 TEST(SVKZeroMQ, SubscriberInit) {
   void *ctx;
   void *subscriber;
-  int rc = initialize_sub(&ctx, &subscriber, "localhost", "5555", "test_topic");
-
+  int rc =
+      zmq_init_subscriber(&ctx, &subscriber, "127.0.0.1", "5555", "test_topic");
   EXPECT_EQ(0, rc);
 
-  rc = set_socket_filters(&subscriber, "new_topic");
+  rc = zmq_subscribe_topic(subscriber, "new_topic");
   EXPECT_EQ(0, rc);
-  cleanup_zmq(&ctx, &subscriber);
+  zmq_cleanup_publisher(ctx, subscriber);
 }
 
 TEST(SVKZeroMQ, SubscriberInitFail) {
   void *ctx;
   void *subscriber;
-  int rc = initialize_sub(&ctx, &subscriber, "", "", "");
+  int rc = zmq_init_subscriber(&ctx, &subscriber, "", "", "");
+  EXPECT_EQ(-1, rc);
+  rc = zmq_init_subscriber(&ctx, &subscriber, "127.0.0.1", "", "test_topic");
+  EXPECT_EQ(-1, rc);
+  rc = zmq_init_subscriber(nullptr, &subscriber, "127.0.0.1", "", "test_topic");
+  EXPECT_EQ(-1, rc);
+  rc = zmq_init_subscriber(&ctx, nullptr, "127.0.0.1", "", "test_topic");
   EXPECT_EQ(-1, rc);
 }
 
-TEST(SVKZeroMQ, SubscriberGetData) {
+TEST(SVKZeroMQ, SubscriberInitWithoutTopic) {
+  void *ctx;
+  void *subscriber;
+  int rc = zmq_init_subscriber(&ctx, &subscriber, "127.0.0.1", "5555", "");
+  EXPECT_EQ(0, rc);
+  zmq_cleanup_publisher(ctx, subscriber);
+  rc = zmq_init_subscriber(&ctx, &subscriber, "127.0.0.1", "5555", nullptr);
+  EXPECT_EQ(0, rc);
+  zmq_cleanup_publisher(ctx, subscriber);
+}
+
+TEST(SVKZeroMQ, SubscriberGetDataNonBlocking) {
   void *c;
   void *subscriber;
-  int rc = initialize_sub(&c, &subscriber, "localhost", "5555", "test_topic");
+  int rc =
+      zmq_init_subscriber(&c, &subscriber, "localhost", "5555", "test_topic");
   EXPECT_EQ(0, rc);
 
   svk_slat_logic_output recv_data;
-  rc = get_data(&subscriber, &recv_data);
-  EXPECT_EQ(sizeof(svk_slat_logic_output) + MAX_TOPIC_LEN - 1, rc);
+  rc = zmq_receive_data(subscriber, (uint8_t *)&recv_data, sizeof(recv_data),
+                        false);
+  EXPECT_EQ(sizeof(svk_slat_logic_output), rc);
 
-  cleanup_zmq(&c, &subscriber);
+  zmq_cleanup_publisher(c, subscriber);
 }
+
+// Since this function is modified to zmq::poll, it will get stuck.
+// Validating this in integration mode
+// TEST(SVKZeroMQ, SubscriberGetData) {
+//   void *c;
+//   void *subscriber;
+//   int rc = zmq_init_subscriber(&c, &subscriber, "localhost", "5555",
+//   "test_topic"); EXPECT_EQ(0, rc);
+
+//   svk_slat_logic_output recv_data;
+//   rc = zmq_receive_data(subscriber, (uint8_t *)&recv_data,
+//   sizeof(recv_data), true); EXPECT_EQ(sizeof(svk_slat_logic_output), rc);
+
+//   zmq_cleanup_publisher(c, subscriber);
+// }
 
 TEST(SVKZeroMQ, SubscriberGetDataFail) {
   void *s = nullptr;
-
   svk_slat_logic_output data;
 
-  int rc = get_data(&s, &data);
+  int rc = zmq_receive_data(s, (uint8_t *)&data, sizeof(data), true);
   EXPECT_EQ(-1, rc);
-}
 
-TEST(SVKZeroMQ, CleanupZMQ) {
-  void *ctx;
-  void *publisher;
-  int rc = initialize_pub(&ctx, &publisher, "*", "5555");
+  void *c;
+  rc = zmq_init_subscriber(&c, &s, "localhost", "5555", "test_topic");
   EXPECT_EQ(0, rc);
 
-  rc = cleanup_zmq(&ctx, &publisher);
+  rc = zmq_receive_data(s, nullptr, sizeof(data), true);
+  EXPECT_EQ(-1, rc);
+
+  rc = zmq_receive_data(s, (uint8_t *)&data, 0, true);
+  EXPECT_EQ(-1, rc);
+  zmq_cleanup_subscriber(c, s);
+}
+
+TEST(SVKZeroMQ, CleanupPub) {
+  void *ctx;
+  void *publisher;
+  int rc = zmq_init_publisher(&ctx, &publisher, "*", "5555");
+  EXPECT_EQ(0, rc);
+
+  rc = zmq_cleanup_publisher(ctx, publisher);
+  EXPECT_EQ(0, rc);
+}
+
+TEST(SVKZeroMQ, CleanupSub) {
+  void *ctx;
+  void *subscriber;
+  int rc =
+      zmq_init_subscriber(&ctx, &subscriber, "127.0.0.1", "5555", "test_topic");
+  EXPECT_EQ(0, rc);
+
+  rc = zmq_cleanup_subscriber(ctx, subscriber);
   EXPECT_EQ(0, rc);
 }

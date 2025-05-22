@@ -858,3 +858,12 @@ TEST(CleanupTest, Cleanup) {
   svk_feature_details details;
   EXPECT_EQ(SVK_STATUS_SUCCESS, cleanup_svk(&ctx, (void *)&details));
 }
+
+TEST_F(ConfigTest, InvalidPubSub) {
+  core_conf.put("pubsub.transport_type", "grpc");
+
+  boost::property_tree::write_json("bad_pubsub_conf.json", core_conf);
+  svk_device_ctx ctx;
+  EXPECT_EQ(SVK_STATUS_FAIL,
+            initialize_svk("bad_pubsub_conf.json", (void *)&ctx));
+}
