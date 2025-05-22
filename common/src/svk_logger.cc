@@ -161,6 +161,51 @@ int svk_logger_set_flush_interval(int flush_interval) {
   return 0;
 }
 
+bool is_svk_logger_initialized(const char *feature) {
+  if (feature == nullptr) {
+    std::cout << "Feature or message argument is null" << std::endl;
+    return false;
+  }
+
+  try {
+    auto svk_logger = spdlog::get(feature);
+    if (svk_logger == nullptr) {
+      std::cout << "Logger for feature " + std::string(feature) + " not found"
+                << std::endl;
+      throw std::invalid_argument("Logger for the feature not found");
+    }
+  } catch (std::exception &ex) {
+    std::cout << "Exception in logger (spdlog) flusher for feature " << feature
+              << ": " << ex.what() << std::endl;
+    return false;
+  }
+
+  return true;
+}
+
+int svk_logger_flush(const char *feature) {
+  if (feature == nullptr) {
+    std::cout << "Feature or message argument is null" << std::endl;
+    return -1;
+  }
+
+  try {
+    auto svk_logger = spdlog::get(feature);
+    if (svk_logger == nullptr) {
+      std::cout << "Logger for feature " + std::string(feature) + " not found"
+                << std::endl;
+      throw std::invalid_argument("Logger for the feature not found");
+    }
+    svk_logger->flush();
+  } catch (std::exception &ex) {
+    std::cout << "Exception in logger (spdlog) flusher for feature " << feature
+              << ": " << ex.what() << std::endl;
+    return -1;
+  }
+
+  return 0;
+}
+
 int svk_logger_close(const char *feature) {
   try {
     auto svk_logger = spdlog::get(feature);

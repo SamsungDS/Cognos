@@ -1,6 +1,13 @@
 #! /usr/bin/env bash
 set -e
 
+if [[ -e /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    source /etc/os-release
+else
+    VERSION_ID=unknown
+fi
+
 # Build Dependencies
 install_packages() {
     apt-get update
@@ -23,6 +30,16 @@ install_packages() {
         wget
     )
     package_manager
+
+    # On Ubuntu 24, the cppzmq-dev needs to be installed explicitly to overcome
+    # the issue where this pkg is not installed with the default docker setup
+    if [ "${VERSION_ID/22/}" == "$VERSION_ID" ]; then 
+        apt-get update
+        BUILD_DEPS=(
+            cppzmq-dev
+        )
+        package_manager
+    fi
 }
 
 # Install from package mananger

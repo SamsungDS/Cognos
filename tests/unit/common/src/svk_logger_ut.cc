@@ -118,6 +118,27 @@ TEST(SVKCommon, SVKLogDebugMessage) {
   unlink(LOG_FILE);
 }
 
+TEST(SVKCommon, SVKLogDebugMessageFlushWithInvalidCase) {
+  EXPECT_EQ(-1, svk_logger_flush(nullptr));
+  EXPECT_EQ(-1, svk_logger_flush("dummy"));
+}
+
+TEST(SVKCommon, SVKLogDebugMessageFlush) {
+  std::string input = "Logging Test Message";
+  svk_logger_init("framework", LOG_FILE, TRACE, 1, 100, "rotating_file");
+  EXPECT_EQ(0, svk_logger_set_flush_interval(5));
+  EXPECT_EQ(0, svk_logger("framework", DEBUG, input.c_str()));
+  EXPECT_EQ(0, svk_logger_flush("framework"));
+  std::ifstream file(LOG_FILE);
+  std::string data((std::istreambuf_iterator<char>(file)),
+                   (std::istreambuf_iterator<char>()));
+  file.close();
+
+  EXPECT_EQ(true, data.find(input) != std::string::npos);
+  EXPECT_EQ(true, data.find("debug") != std::string::npos);
+  unlink(LOG_FILE);
+}
+
 TEST(SVKCommon, SVKLogMessageWithRotatingFile) {
   std::string input = "Logging Test Message";
   svk_logger_init("framework", LOG_FILE, TRACE, 4, 10, "rotating_file");

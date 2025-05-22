@@ -1,11 +1,12 @@
 set(SVKFramework_INCLUDE_DEST "include/")
 set(SVKFramework_LIB_DEST "${CMAKE_INSTALL_LIBDIR}")
 
-set(SVKFramework_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/framework.cc)
+set(SVKFramework_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/framework.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/svk_publisher.cc)
 set(SVKFramework_INC ${CMAKE_CURRENT_SOURCE_DIR}/include/framework_upstream.h
         ${CMAKE_CURRENT_SOURCE_DIR}/include/framework_struct.h
         ${CMAKE_CURRENT_SOURCE_DIR}/include/framework_downstream.h
         ${CMAKE_CURRENT_SOURCE_DIR}/src/include_private/framework_service.hpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/svk_publisher.h
         ${CMAKE_SOURCE_DIR}/common/include/svk_logger.hpp
         ${CMAKE_SOURCE_DIR}/common/include/svk_logger.h)
 
@@ -25,6 +26,7 @@ target_include_directories(${SVKFramework} PUBLIC
         )
 target_link_directories(${SVKFramework} PRIVATE ${CMAKE_SOURCE_DIR}/build/common)
 target_link_libraries(${SVKFramework} svklogger)
+target_link_libraries(${SVKFramework} svkzmq)
 
 install(
     TARGETS ${SVKFramework}

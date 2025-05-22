@@ -9,8 +9,10 @@
 #include <iostream>
 #include <utility>
 
+#include "framework_defs.hpp"
 #include "framework_service.hpp"
 #include "framework_upstream.h"
+#include "svk_publisher.h"
 
 using namespace std;
 class FrameworkSvc;
@@ -686,13 +688,27 @@ svk_status FrameworkSvc::FrameworkSvcProcessCommand(
 
 svk_status FrameworkSvc::FrameworkSvcCleanup(void *param) {
   svk_status status = SVK_STATUS_SUCCESS;
+  int rc = -1;
   if (reload_flag) {
     reload_flag = false;
     conf_reload.join();
   }
 
   status = destroy_feat_map(param);
+  if (status != SVK_STATUS_SUCCESS) {
+    return status;
+  }
 
+  rc = cleanup_publisher();
+  if (rc != 0) {
+    svk_logger(CORE_LOGGER_NAME, level_E::ERROR,
+               "Error in closing the publisher");
+  } else {
+    svk_logger(CORE_LOGGER_NAME, level_E::INFO,
+               "Closed the publisher successfully");
+  }
+
+  svk_logger_close(CORE_LOGGER_NAME);
   return status;
 }
 
@@ -706,6 +722,8 @@ extern "C" svk_status initialize_svk(const char *svk_conf_file,
   svk_status status = SVK_STATUS_SUCCESS;
   std::string conf_path;
   const char *env_p;
+  int rc = -1;
+
   if (svk_conf_file == nullptr) {
     if ((env_p = std::getenv("SVK_FW_CONFIG"))) {
       conf_path = env_p;
@@ -721,6 +739,17 @@ extern "C" svk_status initialize_svk(const char *svk_conf_file,
     status = SVK_STATUS_FAIL;
   } else {
     status = g_fw_service->FrameworkSvcInit(conf_path.c_str(), init_param, dl);
+  }
+
+  if (status != SVK_STATUS_SUCCESS) {
+    return status;
+  }
+
+  rc = initialize_publisher(conf_path.c_str());
+  if (rc != 0) {
+    svk_logger(CORE_LOGGER_NAME, level_E::ERROR,
+               "Failed to initialize SVK Publisher");
+    status = SVK_STATUS_FAIL;
   }
 
   return status;

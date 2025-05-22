@@ -68,6 +68,22 @@ int svk_logger_change_log_level(const char *feature, level_E base_log_level);
 int svk_logger(const char *feature, level_E log_level, const char *message);
 
 /**
+ * @brief           Check if the logger is initialized for the given feature
+ * @param feature   feature name passed during initialization of logger
+ *
+ * @return True on succes, False on error
+ */
+bool is_svk_logger_initialized(const char *feature);
+
+/**
+ * @brief           Flushing all the buffered messages forcefully
+ * @param feature   feature name passed during initialization of logger
+ *
+ * @return 0 on succes, -1 on error
+ */
+int svk_logger_flush(const char *feature);
+
+/**
  * @brief                 Enable periodic flush of the messages by the logger
  * @param flush_interval  Interval at which the messages will be flushed
  *
