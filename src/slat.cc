@@ -105,8 +105,9 @@ void SLATrackerSvc::publish_app_degraded_sla(slat_benchmark_config &config) {
   int rc;
 
   for (const auto &[app_name, app_sla_config] : config.app_sla_list) {
-    rc = publish(&this->th_data.zmq_socket, "APP_SLA_DEGRADED",
-                 (svk_slat_logic_output *)&app_sla_config.app_current_sla);
+    rc = publish_data((char *)"APP_SLA_DEGRADED",
+                      (uint8_t *)&app_sla_config.app_current_sla,
+                      sizeof(svk_slat_logic_output));
     if (rc == -1) {
       std::cout << " failed to publish sla results" << std::endl;
     }
@@ -590,17 +591,7 @@ svk_status SLATrackerSvc::Initialize(const char *slat_config_file) {
   this->th_data.thread_running = false;
 
   if (config.enable_bg_thread) {
-    int rc;
-
     this->th_data.benchmark_run_interval = config.benchmark_run_interval;
-
-    rc = initialize_pub(&this->th_data.zmq_context, &this->th_data.zmq_socket,
-                        "0", "5555");
-    if (rc != 0) {
-      std::cout << "Failed to initialize publisher" << std::endl;
-      return SVK_STATUS_FAIL;
-    }
-    std::cout << "Initialized publisher" << std::endl;
 
     this->th_data.benchmarking_thread =
         std::thread(&SLATrackerSvc::benchmarking_thread_fn, this);
@@ -628,20 +619,12 @@ svk_logic_module_details *SLATrackerSvc::getLogicDetails(
 }
 
 void SLATrackerSvc::clean_up(void) {
-  int rc;
   for (auto [module, detail] : this->logic_modules_map) {
     detail->cleanup_logic_module(nullptr);
   }
   if (this->th_data.thread_running) {
     this->th_data.shutdown_bm_thread = true;
     this->th_data.benchmarking_thread.join();
-
-    rc = cleanup_zmq(&this->th_data.zmq_context, &this->th_data.zmq_socket);
-    if (rc) {
-      std::cout << "Zero MQ Cleanup failed\n" << std::endl;
-    }
-
-    std::cout << "Cleanup publisher" << std::endl;
   }
 }
 

@@ -1,6 +1,13 @@
 #! /usr/bin/env bash
 set -e
 
+if [[ -e /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    source /etc/os-release
+else
+    VERSION_ID=unknown
+fi
+
 # Build Dependencies
 install_packages() {
     apt-get update
@@ -23,6 +30,7 @@ install_packages() {
         wget
     )
     package_manager
+
 }
 
 # Install from package mananger
