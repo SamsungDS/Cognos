@@ -133,6 +133,12 @@ class ControllerServicer : public svk::Controller::Service {
 
   bool get_stop_flag() { return stop_flag; };
   void set_stop_flag() { stop_flag = true; };
+  void set_zmq_socket(void *zmq_context, void *zmq_socket) {
+    m_zmq_subscriber_socket = zmq_socket;
+    m_zmq_subscriber_context = zmq_context;
+  };
+  void *get_zmq_context() { return m_zmq_subscriber_context; };
+  void *get_zmq_socket() { return m_zmq_subscriber_socket; };
 
  private:
   nlohmann::json ClusterResponseJson(std::string cluster_name);
@@ -149,6 +155,9 @@ class ControllerServicer : public svk::Controller::Service {
   std::shared_ptr<Server> m_server;
   bool m_config_changed = false;
   bool stop_flag = false;
+  // Store the ZMQ subscriber socket and context
+  void *m_zmq_subscriber_socket = nullptr;
+  void *m_zmq_subscriber_context = nullptr;
 };
 
 #endif /*__GRPC_CONTROLLER_H__*/
