@@ -111,7 +111,7 @@ string processRequest(string& request);
 // getErrorCount API
 int getErrorCount(const string& device, const string& type, Response& out);
 
-// getErrorCount API
+// getHealthStatus API
 int getHealthStatus(const string& device, Response& out,
                     const string& type = "correctable");
 
