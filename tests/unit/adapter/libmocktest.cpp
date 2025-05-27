@@ -336,8 +336,8 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidCommand) {
   Document document;
   document.Parse(res.c_str());
   EXPECT_FALSE(document.HasMember("command_name") &&
-               document.HasMember("getErrorCount") &&
-               document.HasMember("device") && document.HasMember("errorType"));
+               document["command_name"].HasMember("getErrorCount") &&
+               document["command_name"]["getErrorCount"].HasMember("result"));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForValidCommand) {
@@ -378,8 +378,8 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidDeviceAlpha) {
   Document document;
   document.Parse(res.c_str());
   EXPECT_FALSE(document.HasMember("command_name") &&
-               document.HasMember("getErrorCount") &&
-               document.HasMember("device") && document.HasMember("errorType"));
+               document["command_name"].HasMember("getErrorCount") &&
+               document["command_name"]["getErrorCount"].HasMember("result"));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroHealthStatusForInvalidDeviceAlpha) {
@@ -392,8 +392,8 @@ TEST_F(LibMockTest, ReturnNonZeroHealthStatusForInvalidDeviceAlpha) {
   Document document;
   document.Parse(res.c_str());
   EXPECT_FALSE(document.HasMember("command_name") &&
-               document.HasMember("getHealthStatus") &&
-               document.HasMember("device"));
+               document["command_name"].HasMember("getHealthStatus") &&
+               document["command_name"]["getHealthStatus"].HasMember("result"));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidDeviceString) {
@@ -432,8 +432,8 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidJSONInput) {
   Document document;
   document.Parse(res.c_str());
   EXPECT_FALSE(document.HasMember("command_name") &&
-               document.HasMember("getErrorCount") &&
-               document.HasMember("device") && document.HasMember("errorType"));
+               document["command_name"].HasMember("getErrorCount") &&
+               document["command_name"]["getErrorCount"].HasMember("result"));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroHealthStatusForInvalidJSONInput) {
@@ -446,8 +446,8 @@ TEST_F(LibMockTest, ReturnNonZeroHealthStatusForInvalidJSONInput) {
   Document document;
   document.Parse(res.c_str());
   EXPECT_FALSE(document.HasMember("command_name") &&
-               document.HasMember("getHealthStatus") &&
-               document.HasMember("device") && document.HasMember("errorType"));
+               document["command_name"].HasMember("getHealthStatus") &&
+               document["command_name"]["getHealthStatus"].HasMember("result"));
 }
 TEST_F(LibMockTest, ReturnNonZeroStatusForMissingItem) {
   const char* jsonString =
@@ -459,8 +459,7 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForMissingItem) {
   Document document;
   document.Parse(res.c_str());
   EXPECT_FALSE(document.HasMember("command_name") &&
-               document.HasMember("getErrorCount") &&
-               document.HasMember("device") && document.HasMember("errorType"));
+               document["command_name"].HasMember("getErrorCount"));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForEmptyInput) {
@@ -472,8 +471,9 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForEmptyInput) {
   Document document;
   document.Parse(res.c_str());
   EXPECT_FALSE(document.HasMember("command_name") &&
-               document.HasMember("getErrorCount") &&
-               document.HasMember("device") && document.HasMember("errorType"));
+               (document["command_name"].HasMember("getErrorCount") ||
+                document["command_name"].HasMember("getHealthStatus")) &&
+               document["command_name"]["getErrorCount"].HasMember("device"));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForBadInput) {
@@ -485,8 +485,9 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForBadInput) {
   Document document;
   document.Parse(res.c_str());
   EXPECT_FALSE(document.HasMember("command_name") &&
-               document.HasMember("getErrorCount") &&
-               document.HasMember("device") && document.HasMember("errorType"));
+               (document["command_name"].HasMember("getErrorCount") ||
+                document["command_name"].HasMember("getHealthStatus")) &&
+               document["command_name"]["getErrorCount"].HasMember("device"));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidParam) {
@@ -499,8 +500,8 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidParam) {
   Document document;
   document.Parse(res.c_str());
   EXPECT_FALSE(document.HasMember("command_name") &&
-               document.HasMember("getErrorCount") &&
-               document.HasMember("device") && document.HasMember("errorType"));
+               document["command_name"].HasMember("getErrorCount") &&
+               document["command_name"]["getErrorCount"].HasMember("device"));
 }
 
 TEST_F(LibMockTest, ReturnZeroHealthStatusUsingcreateResponse) {
