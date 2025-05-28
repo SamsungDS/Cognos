@@ -367,6 +367,8 @@ string createResponse(const string &device, const string &error_type,
     cmd_response.AddMember("getErrorCount", request_function, allocator);
   else if (response.function_name == "getHealthStatus")
     cmd_response.AddMember("getHealthStatus", request_function, allocator);
+  else
+    cmd_response.AddMember("None", request_function, allocator);
 
   // Adding command response to document
   document.AddMember("command_response", cmd_response, allocator);
@@ -529,10 +531,10 @@ string processRequest(string &request) {
 
   } else {
     ret = INVALID_INPUT_ERR;
-    res = createResponse(device, type, err_str[ret], out);
     estring = res + ":Invalid/Missing Key Name and/or Invalid Value Provided";
-    out.function_name = "processRequest";
     out.response_details = estring;
+    res = createResponse(device, type, err_str[ret], out);
+    out.function_name = "processRequest";
     svk_logger(RAS_LOGGER, level_E::ERROR, estring.c_str());
   }
   return res;

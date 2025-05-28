@@ -1,4 +1,3 @@
-#include <dlfcn.h>
 #include <gtest/gtest.h>
 
 #include <fstream>
@@ -335,9 +334,8 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidCommand) {
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
-  EXPECT_FALSE(document.HasMember("command_name") &&
-               document["command_name"].HasMember("getErrorCount") &&
-               document["command_name"]["getErrorCount"].HasMember("result"));
+  EXPECT_EQ(document.HasMember("command_response"), true);
+  EXPECT_FALSE(document["command_response"].HasMember("getErrorCount"));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForValidCommand) {
@@ -350,6 +348,13 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForValidCommand) {
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
+  // In a properly set up host that includes
+  // 1) NUMA node entries are recorded in kernel logs ( e.g //var/log/dmesg
+  // 2) cat /proc/iomem has the due CXL device address allocations
+  // the
+  // document["command_response"]["getErrorCount"]["result"]["commandSuccessful"]
+  // value will be true for the above input. In the build image VMs the above
+  // conditions are not satisfied and hence the expected output is false.
   EXPECT_TRUE((document["command_response"]["getErrorCount"]["result"]
                        ["commandSuccessful"] == false));
 }
@@ -364,6 +369,13 @@ TEST_F(LibMockTest, ReturnNonZeroHealthStatusForValidCommand) {
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
+  // In a properly set up host that includes
+  // 1) NUMA node entries are recorded in kernel logs ( e.g //var/log/dmesg
+  // 2) cat /proc/iomem has the due CXL device address allocations
+  // the
+  // document["command_response"]["getErrorCount"]["result"]["commandSuccessful"]
+  // value will be true for the above input. In the build image VMs the above
+  // conditions are not satisfied and hence the expected output is false.
   EXPECT_TRUE((document["command_response"]["getHealthStatus"]["result"]
                        ["commandSuccessful"] == false));
 }
@@ -377,9 +389,8 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidDeviceAlpha) {
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
-  EXPECT_FALSE(document.HasMember("command_name") &&
-               document["command_name"].HasMember("getErrorCount") &&
-               document["command_name"]["getErrorCount"].HasMember("result"));
+  EXPECT_TRUE(document.HasMember("command_response"));
+  EXPECT_FALSE(document["command_response"].HasMember("getErrorCount"));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroHealthStatusForInvalidDeviceAlpha) {
@@ -391,9 +402,8 @@ TEST_F(LibMockTest, ReturnNonZeroHealthStatusForInvalidDeviceAlpha) {
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
-  EXPECT_FALSE(document.HasMember("command_name") &&
-               document["command_name"].HasMember("getHealthStatus") &&
-               document["command_name"]["getHealthStatus"].HasMember("result"));
+  EXPECT_TRUE(document.HasMember("command_response"));
+  EXPECT_FALSE(document["command_response"].HasMember("getHealthStatus"));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidDeviceString) {
@@ -405,6 +415,13 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidDeviceString) {
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
+  // In a properly set up host that includes
+  // 1) NUMA node entries are recorded in kernel logs ( e.g //var/log/dmesg
+  // 2) cat /proc/iomem has the due CXL device address allocations
+  // the
+  // document["command_response"]["getErrorCount"]["result"]["commandSuccessful"]
+  // value will be true for the above input. In the build image VMs the above
+  // conditions are not satisfied and hence the expected output is false.
   EXPECT_TRUE((document["command_response"]["getErrorCount"]["result"]
                        ["commandSuccessful"] == false));
 }
@@ -418,6 +435,13 @@ TEST_F(LibMockTest, ReturnNonZeroHealthStatusForInvalidDeviceString) {
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
+  // In a properly set up host that includes
+  // 1) NUMA node entries are recorded in kernel logs ( e.g //var/log/dmesg
+  // 2) cat /proc/iomem has the due CXL device address allocations
+  // the
+  // document["command_response"]["getErrorCount"]["result"]["commandSuccessful"]
+  // value will be true for the above input. In the build image VMs the above
+  // conditions are not satisfied and hence the expected output is false.
   EXPECT_TRUE((document["command_response"]["getHealthStatus"]["result"]
                        ["commandSuccessful"] == false));
 }
@@ -431,9 +455,12 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidJSONInput) {
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
-  EXPECT_FALSE(document.HasMember("command_name") &&
-               document["command_name"].HasMember("getErrorCount") &&
-               document["command_name"]["getErrorCount"].HasMember("result"));
+  EXPECT_EQ(document.HasMember("command_response"), true);
+  EXPECT_EQ(document["command_response"].HasMember("getErrorCount"), true);
+  EXPECT_EQ(document["command_response"]["getErrorCount"].HasMember("result"),
+            true);
+  EXPECT_TRUE((document["command_response"]["getErrorCount"]["result"]
+                       ["commandSuccessful"] == false));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroHealthStatusForInvalidJSONInput) {
@@ -445,9 +472,12 @@ TEST_F(LibMockTest, ReturnNonZeroHealthStatusForInvalidJSONInput) {
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
-  EXPECT_FALSE(document.HasMember("command_name") &&
-               document["command_name"].HasMember("getHealthStatus") &&
-               document["command_name"]["getHealthStatus"].HasMember("result"));
+  EXPECT_EQ(document.HasMember("command_response"), true);
+  EXPECT_EQ(document["command_response"].HasMember("getHealthStatus"), true);
+  EXPECT_EQ(document["command_response"]["getHealthStatus"].HasMember("result"),
+            true);
+  EXPECT_TRUE((document["command_response"]["getHealthStatus"]["result"]
+                       ["commandSuccessful"] == false));
 }
 TEST_F(LibMockTest, ReturnNonZeroStatusForMissingItem) {
   const char* jsonString =
@@ -458,8 +488,8 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForMissingItem) {
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
-  EXPECT_FALSE(document.HasMember("command_name") &&
-               document["command_name"].HasMember("getErrorCount"));
+  EXPECT_EQ(document.HasMember("command_response"), true);
+  EXPECT_FALSE(document["command_response"].HasMember("getErrorCount"));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForEmptyInput) {
@@ -470,10 +500,9 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForEmptyInput) {
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
-  EXPECT_FALSE(document.HasMember("command_name") &&
-               (document["command_name"].HasMember("getErrorCount") ||
-                document["command_name"].HasMember("getHealthStatus")) &&
-               document["command_name"]["getErrorCount"].HasMember("device"));
+  EXPECT_TRUE(document.HasMember("command_response"));
+  EXPECT_FALSE(document["command_response"].HasMember("getErrorCount"));
+  EXPECT_FALSE(document["command_response"].HasMember("getHealthStatus"));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForBadInput) {
@@ -484,10 +513,9 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForBadInput) {
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
-  EXPECT_FALSE(document.HasMember("command_name") &&
-               (document["command_name"].HasMember("getErrorCount") ||
-                document["command_name"].HasMember("getHealthStatus")) &&
-               document["command_name"]["getErrorCount"].HasMember("device"));
+  EXPECT_EQ(document.HasMember("command_response"), true);
+  EXPECT_FALSE(document["command_response"].HasMember("getErrorCount"));
+  EXPECT_FALSE(document["command_response"].HasMember("getHealthStatus"));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidParam) {
@@ -499,9 +527,8 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidParam) {
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
-  EXPECT_FALSE(document.HasMember("command_name") &&
-               document["command_name"].HasMember("getErrorCount") &&
-               document["command_name"]["getErrorCount"].HasMember("device"));
+  EXPECT_EQ(document.HasMember("command_response"), true);
+  EXPECT_FALSE(document["command_response"].HasMember("getErrorCount"));
 }
 
 TEST_F(LibMockTest, ReturnZeroHealthStatusUsingcreateResponse) {
