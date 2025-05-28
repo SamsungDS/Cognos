@@ -4,7 +4,7 @@
 	dh $@
 
 override_dh_auto_configure:
-	cmake -DWITH_RELEASE=ON -DPKG_CONFIG_PREFIX=/usr/local/svk/core -DCMAKE_INSTALL_PREFIX=/usr/local/svk/core -DFEAT_MODULE_PATH=/usr/local/svk/core/feature_modules ..
+	cmake -DWITH_RELEASE=ON -DPKG_CONFIG_PREFIX=/usr/local/svk/core -DCMAKE_INSTALL_PREFIX=/usr/local/svk/core -DFEAT_MODULE_PATH=/usr/local/svk/feature_modules ..
 
 override_dh_auto_build:
 	make -j$(nproc)
