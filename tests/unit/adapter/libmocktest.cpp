@@ -1,4 +1,3 @@
-#include <dlfcn.h>
 #include <gtest/gtest.h>
 
 #include <fstream>
@@ -135,33 +134,33 @@ TEST_F(LibMockTest, ReturnZeroStatusWithLocalConfig6) {
   EXPECT_EQ(ret, RASMCCTL_ERROR_ADDRESSES_MISSING_ERR);
 }
 
-TEST_F(LibMockTest, ReturnZeroStatusgetErrorCount_validate) {
+TEST_F(LibMockTest, ReturnZeroStatusdevice_validate) {
   string device_id, type = "correctable";
   device_id.assign((const char*)"0");
 
-  int ret = getErrorCount_validate(device_id);
+  int ret = device_validate(device_id);
   EXPECT_EQ(ret, 0);
 }
 
-TEST_F(LibMockTest, ReturnNonZeroStatusgetErrorCount_validate) {
+TEST_F(LibMockTest, ReturnNonZeroStatusdevice_validate) {
   string device_id, type = "correctable";
   device_id.assign(to_string(numa_max_node() + 1));
 
-  int ret = getErrorCount_validate(device_id);
+  int ret = device_validate(device_id);
   EXPECT_EQ(ret, INVALID_NUMA_INDEX_ERR);
 }
 
-TEST_F(LibMockTest, ReturnNonZeroStatusgetErrorCount_validateNeg) {
+TEST_F(LibMockTest, ReturnNonZeroStatusdevice_validateNeg) {
   string device_id = to_string(-1), type = "correctable";
 
-  int ret = getErrorCount_validate(device_id);
+  int ret = device_validate(device_id);
   EXPECT_EQ(ret, INVALID_NUMA_INDEX_ERR);
 }
 
-TEST_F(LibMockTest, ReturnNonZeroStatusgetErrorCount_validateAlpha) {
+TEST_F(LibMockTest, ReturnNonZeroStatusdevice_validateAlpha) {
   string device_id = "abc", type = "correctable";
 
-  int ret = getErrorCount_validate(device_id);
+  int ret = device_validate(device_id);
   EXPECT_EQ(ret, INVALID_NUMA_INDEX_ERR);
 }
 
@@ -187,35 +186,64 @@ TEST_F(LibMockTest, ReturnNonZeroStatusverify_nodeNeg) {
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusgetErrorCount) {
-  string device_id = to_string(numa_max_node() + 1), type = "correctable", out;
+  string device_id = to_string(numa_max_node() + 1), type = "correctable";
+  Response out;
 
   int ret = getErrorCount(device_id, type, out);
+  EXPECT_EQ(ret, INVALID_NUMA_INDEX_ERR);
+}
+
+TEST_F(LibMockTest, ReturnNonZeroHealthStatusgetErrorCount) {
+  string device_id = to_string(numa_max_node() + 1);
+  Response out;
+
+  int ret = getHealthStatus(device_id, out);
   EXPECT_EQ(ret, INVALID_NUMA_INDEX_ERR);
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusgetErrorCountNeg) {
-  string device_id = to_string(-1), type = "correctable", out;
+  string device_id = to_string(-1), type = "correctable";
+  Response out;
 
   int ret = getErrorCount(device_id, type, out);
+  EXPECT_EQ(ret, INVALID_NUMA_INDEX_ERR);
+}
+
+TEST_F(LibMockTest, ReturnNonZeroHealthStatusgetErrorCountNeg) {
+  string device_id = to_string(-1);
+  Response out;
+
+  int ret = getHealthStatus(device_id, out);
   EXPECT_EQ(ret, INVALID_NUMA_INDEX_ERR);
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusgetErrorCountAlpha) {
-  string device_id = "abc", type = "correctable", out;
+  string device_id = "abc", type = "correctable";
+  Response out;
 
   int ret = getErrorCount(device_id, type, out);
   EXPECT_EQ(ret, INVALID_NUMA_INDEX_ERR);
 }
 
+TEST_F(LibMockTest, ReturnNonZeroHealthStatusgetErrorCountAlpha) {
+  string device_id = "abc";
+  Response out;
+
+  int ret = getHealthStatus(device_id, out);
+  EXPECT_EQ(ret, INVALID_NUMA_INDEX_ERR);
+}
+
 TEST_F(LibMockTest, ReturnNonZeroStatusgetErrorCountEmpty) {
-  string device_id = "", type = "correctable", out;
+  string device_id = "", type = "correctable";
+  Response out;
 
   int ret = getErrorCount(device_id, type, out);
   EXPECT_EQ(ret, INVALID_NUMA_INDEX_ERR);
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusgetErrorCountValid) {
-  string device_id, type = "correctable", out;
+  string device_id, type = "correctable";
+  Response out;
   device_id.assign((const char*)"0");
 
   int ret = getErrorCount(device_id, type, out);
@@ -275,7 +303,8 @@ TEST_F(LibMockTest, ReturnAddrRanges) {
 }
 
 TEST_F(LibMockTest, ReturnStatusUsingcalculateErrorCount1) {
-  string ras_str, addr_range = "0x100000000-0x207fffffff", out;
+  string ras_str, addr_range = "0x100000000-0x207fffffff";
+  Response out;
   ras_str.assign((const char*)ras_err);
 
   int ret = calculateErrorCount(ras_str, addr_range, out);
@@ -283,34 +312,35 @@ TEST_F(LibMockTest, ReturnStatusUsingcalculateErrorCount1) {
 }
 
 TEST_F(LibMockTest, ReturnStatusUsingcalculateErrorCount2) {
-  string ras_str = "", addr_range = "0x100000000-0x207fffffff", out;
+  string ras_str = "", addr_range = "0x100000000-0x207fffffff";
+  Response out;
   int ret = calculateErrorCount(ras_str, addr_range, out);
   EXPECT_EQ(ret, UNABLE_TO_GET_NUMA_ADDR_RANGE_ERR);
 }
 
 TEST_F(LibMockTest, ReturnStatusUsingcalculateErrorCount3) {
-  string ras_str = "", addr_range = "0x100000000-", out;
+  string ras_str = "", addr_range = "0x100000000-";
+  Response out;
   int ret = calculateErrorCount(ras_str, addr_range, out);
   EXPECT_EQ(ret, UNABLE_TO_GET_NUMA_ADDR_RANGE_ERR);
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidCommand) {
   const char* jsonString =
-      R"({"command": "getErrorCount1", "device": 0, "type": "correctable"})";
+      R"({"command_name": { "getErrorCount1": { "device": 0, "errorType": "correctable"} } })";
   string res;
   string req;
   req.assign(jsonString);
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
-  EXPECT_EQ(document["command_response"]["getErrorCount"]["result"]
-                    ["commandSuccessful"],
-            false);
+  EXPECT_EQ(document.HasMember("command_response"), true);
+  EXPECT_FALSE(document["command_response"].HasMember("getErrorCount"));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForValidCommand) {
   const char* jsonString =
-      R"({"command": "getErrorCount", "device": 0, "type": "correctable"})";
+      R"({"command_name": { "getErrorCount": { "device": "0", "errorType": "correctable"} } })";
   string req;
   req.assign(jsonString);
   string res;
@@ -318,59 +348,148 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForValidCommand) {
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
+  // In a properly set up host that includes
+  // 1) NUMA node entries are recorded in kernel logs ( e.g //var/log/dmesg
+  // 2) cat /proc/iomem has the due CXL device address allocations
+  // the
+  // document["command_response"]["getErrorCount"]["result"]["commandSuccessful"]
+  // value will be true for the above input. In the build image VMs the above
+  // conditions are not satisfied and hence the expected output is false.
   EXPECT_TRUE((document["command_response"]["getErrorCount"]["result"]
+                       ["commandSuccessful"] == false));
+}
+
+TEST_F(LibMockTest, ReturnNonZeroHealthStatusForValidCommand) {
+  const char* jsonString =
+      R"({"command_name": { "getHealthStatus": { "device": "0" } } })";
+  string req;
+  req.assign(jsonString);
+  string res;
+
+  res = processRequest(req);
+  Document document;
+  document.Parse(res.c_str());
+  // In a properly set up host that includes
+  // 1) NUMA node entries are recorded in kernel logs ( e.g //var/log/dmesg
+  // 2) cat /proc/iomem has the due CXL device address allocations
+  // the
+  // document["command_response"]["getErrorCount"]["result"]["commandSuccessful"]
+  // value will be true for the above input. In the build image VMs the above
+  // conditions are not satisfied and hence the expected output is false.
+  EXPECT_TRUE((document["command_response"]["getHealthStatus"]["result"]
                        ["commandSuccessful"] == false));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidDeviceAlpha) {
   const char* jsonString =
-      R"({"command": "getErrorCount", "device": abc, "type": "correctable"})";
+      R"({"command_name": { "getErrorCount": { "device": abc, "errorType": "correctable"} } })";
   string res;
   string req;
   req.assign(jsonString);
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
-  EXPECT_TRUE((document["command_response"]["getErrorCount"]["result"]
-                       ["commandSuccessful"] == false));
+  EXPECT_TRUE(document.HasMember("command_response"));
+  EXPECT_FALSE(document["command_response"].HasMember("getErrorCount"));
+}
+
+TEST_F(LibMockTest, ReturnNonZeroHealthStatusForInvalidDeviceAlpha) {
+  const char* jsonString =
+      R"({"command_name": { "getHealthStatus": { "device": abc } } })";
+  string res;
+  string req;
+  req.assign(jsonString);
+  res = processRequest(req);
+  Document document;
+  document.Parse(res.c_str());
+  EXPECT_TRUE(document.HasMember("command_response"));
+  EXPECT_FALSE(document["command_response"].HasMember("getHealthStatus"));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidDeviceString) {
   const char* jsonString =
-      R"({"command": "getErrorCount", "device": "abc", "type": "correctable"})";
+      R"({"command_name": { "getErrorCount": { "device": "abc", "errorType": "correctable"} } })";
   string res;
   string req;
   req.assign(jsonString);
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
+  // In a properly set up host that includes
+  // 1) NUMA node entries are recorded in kernel logs ( e.g //var/log/dmesg
+  // 2) cat /proc/iomem has the due CXL device address allocations
+  // the
+  // document["command_response"]["getErrorCount"]["result"]["commandSuccessful"]
+  // value will be true for the above input. In the build image VMs the above
+  // conditions are not satisfied and hence the expected output is false.
   EXPECT_TRUE((document["command_response"]["getErrorCount"]["result"]
+                       ["commandSuccessful"] == false));
+}
+
+TEST_F(LibMockTest, ReturnNonZeroHealthStatusForInvalidDeviceString) {
+  const char* jsonString =
+      R"({"command_name": { "getHealthStatus": { "device": "abc", "errorType": "correctable"} } })";
+  string res;
+  string req;
+  req.assign(jsonString);
+  res = processRequest(req);
+  Document document;
+  document.Parse(res.c_str());
+  // In a properly set up host that includes
+  // 1) NUMA node entries are recorded in kernel logs ( e.g //var/log/dmesg
+  // 2) cat /proc/iomem has the due CXL device address allocations
+  // the
+  // document["command_response"]["getErrorCount"]["result"]["commandSuccessful"]
+  // value will be true for the above input. In the build image VMs the above
+  // conditions are not satisfied and hence the expected output is false.
+  EXPECT_TRUE((document["command_response"]["getHealthStatus"]["result"]
                        ["commandSuccessful"] == false));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidJSONInput) {
   const char* jsonString =
-      R"({"command": "getErrorCount", "device": 19 "type": "correctable"})";
+      R"({"command_name": { "getErrorCount": { "device": 19, "errorType": "correctable"} } })";
   string res;
   string req;
   req.assign(jsonString);
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
+  EXPECT_EQ(document.HasMember("command_response"), true);
+  EXPECT_EQ(document["command_response"].HasMember("getErrorCount"), true);
+  EXPECT_EQ(document["command_response"]["getErrorCount"].HasMember("result"),
+            true);
   EXPECT_TRUE((document["command_response"]["getErrorCount"]["result"]
                        ["commandSuccessful"] == false));
 }
 
-TEST_F(LibMockTest, ReturnNonZeroStatusForMissingItem) {
-  const char* jsonString = R"({"command": "getErrorCount", "device": 19})";
+TEST_F(LibMockTest, ReturnNonZeroHealthStatusForInvalidJSONInput) {
+  const char* jsonString =
+      R"({"command_name": { "getHealthStatus": { "device": 19, "errorType": "correctable"} } })";
   string res;
   string req;
   req.assign(jsonString);
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
-  EXPECT_TRUE((document["command_response"]["getErrorCount"]["result"]
+  EXPECT_EQ(document.HasMember("command_response"), true);
+  EXPECT_EQ(document["command_response"].HasMember("getHealthStatus"), true);
+  EXPECT_EQ(document["command_response"]["getHealthStatus"].HasMember("result"),
+            true);
+  EXPECT_TRUE((document["command_response"]["getHealthStatus"]["result"]
                        ["commandSuccessful"] == false));
+}
+TEST_F(LibMockTest, ReturnNonZeroStatusForMissingItem) {
+  const char* jsonString =
+      R"({"command_name": { "getErrorCount": { "device": "abc" } } })";
+  string res;
+  string req;
+  req.assign(jsonString);
+  res = processRequest(req);
+  Document document;
+  document.Parse(res.c_str());
+  EXPECT_EQ(document.HasMember("command_response"), true);
+  EXPECT_FALSE(document["command_response"].HasMember("getErrorCount"));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForEmptyInput) {
@@ -381,36 +500,46 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForEmptyInput) {
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
-  EXPECT_TRUE((document["command_response"]["getErrorCount"]["result"]
-                       ["commandSuccessful"] == false));
+  EXPECT_TRUE(document.HasMember("command_response"));
+  EXPECT_FALSE(document["command_response"].HasMember("getErrorCount"));
+  EXPECT_FALSE(document["command_response"].HasMember("getHealthStatus"));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForBadInput) {
-  const char* jsonString = R"({"command"})";
+  const char* jsonString = R"({"command_name"})";
   string res;
   string req;
   req.assign(jsonString);
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
-  EXPECT_TRUE((document["command_response"]["getErrorCount"]["result"]
-                       ["commandSuccessful"] == false));
+  EXPECT_EQ(document.HasMember("command_response"), true);
+  EXPECT_FALSE(document["command_response"].HasMember("getErrorCount"));
+  EXPECT_FALSE(document["command_response"].HasMember("getHealthStatus"));
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidParam) {
   const char* jsonString =
-      R"({"command": "getErrorCount", "invalid_device": 1,
-         "type": "correctable"})";
+      R"({"command_name": { "getErrorCount": { "invalid_device": 19, "errorType": "correctable"} } })";
   string res;
   string req;
   req.assign(jsonString);
   res = processRequest(req);
   Document document;
   document.Parse(res.c_str());
-  EXPECT_TRUE((document["command_response"]["getErrorCount"]["result"]
-                       ["commandSuccessful"] == false));
+  EXPECT_EQ(document.HasMember("command_response"), true);
+  EXPECT_FALSE(document["command_response"].HasMember("getErrorCount"));
 }
 
+TEST_F(LibMockTest, ReturnZeroHealthStatusUsingcreateResponse) {
+  const char *device = "0", *type = "correctable", *status = "OK";
+  Response out = {"getHealthStatus", "5", "Test Case"};
+  string res = createResponse(device, type, status, out);
+  Document document;
+  document.Parse(res.c_str());
+  EXPECT_TRUE((document["command_response"]["getHealthStatus"]["result"]
+                       ["commandSuccessful"] == true));
+}
 int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
   testing::FLAGS_gtest_catch_exceptions = true;
