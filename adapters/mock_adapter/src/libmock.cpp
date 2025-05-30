@@ -71,7 +71,8 @@ inline string &trim(std::string &s, const char *t = " \t\n\r\f\v") {
 string cmd_exec(string &cmd) {
   array<char, 128> buffer;
   string result;
-  unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
+  unique_ptr<FILE, void (*)(FILE *)> pipe(
+      popen(cmd.c_str(), "r"), [](FILE *f) -> void { ignore = pclose(f); });
   if (!pipe) {
     throw std::runtime_error("popen() failed!");
   }
