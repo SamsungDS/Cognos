@@ -73,7 +73,7 @@ TEST_F(LibMockTest, ReturnZeroConfigFileSize) {
 
 TEST_F(LibMockTest, ReturnZeroStatusWithLocalBadConfig) {
   int ret = 0;
-  string str, phy_addr_range;
+  string str;
   str.assign((const char*)badconfig_json);
 
   ret = validate_config(str);
@@ -82,7 +82,7 @@ TEST_F(LibMockTest, ReturnZeroStatusWithLocalBadConfig) {
 
 TEST_F(LibMockTest, ReturnZeroStatusWithLocalConfig1) {
   int ret = 0;
-  string str, phy_addr_range;
+  string str;
   str.assign((const char*)config1_json);
 
   ret = validate_config(str);
@@ -91,7 +91,7 @@ TEST_F(LibMockTest, ReturnZeroStatusWithLocalConfig1) {
 
 TEST_F(LibMockTest, ReturnZeroStatusWithLocalConfig2) {
   int ret = 0;
-  string str, phy_addr_range;
+  string str;
   str.assign((const char*)config2_json);
 
   ret = validate_config(str);
@@ -100,7 +100,7 @@ TEST_F(LibMockTest, ReturnZeroStatusWithLocalConfig2) {
 
 TEST_F(LibMockTest, ReturnZeroStatusWithLocalConfig3) {
   int ret = 0;
-  string str, phy_addr_range;
+  string str;
   str.assign((const char*)config3_json);
 
   ret = validate_config(str);
@@ -109,7 +109,7 @@ TEST_F(LibMockTest, ReturnZeroStatusWithLocalConfig3) {
 
 TEST_F(LibMockTest, ReturnZeroStatusWithLocalConfig4) {
   int ret = 0;
-  string str, phy_addr_range;
+  string str;
   str.assign((const char*)config4_json);
 
   ret = validate_config(str);
@@ -118,7 +118,7 @@ TEST_F(LibMockTest, ReturnZeroStatusWithLocalConfig4) {
 
 TEST_F(LibMockTest, ReturnZeroStatusWithLocalConfig5) {
   int ret = 0;
-  string str, phy_addr_range;
+  string str;
   str.assign((const char*)config5_json);
 
   ret = validate_config(str);
@@ -127,11 +127,20 @@ TEST_F(LibMockTest, ReturnZeroStatusWithLocalConfig5) {
 
 TEST_F(LibMockTest, ReturnZeroStatusWithLocalConfig6) {
   int ret = 0;
-  string str, phy_addr_range;
+  string str;
   str.assign((const char*)config6_json);
 
   ret = validate_config(str);
   EXPECT_EQ(ret, RASMCCTL_ERROR_ADDRESSES_MISSING_ERR);
+}
+
+TEST_F(LibMockTest, ReturnZeroStatusWithLocalConfig7) {
+  int ret = 0;
+  string str;
+  str.assign((const char*)config7_json);
+
+  ret = validate_config(str);
+  EXPECT_EQ(ret, GREP_NUMA_NODES_MISSING_ERR);
 }
 
 TEST_F(LibMockTest, ReturnZeroStatusdevice_validate) {
@@ -540,6 +549,76 @@ TEST_F(LibMockTest, ReturnZeroHealthStatusUsingcreateResponse) {
   EXPECT_TRUE((document["command_response"]["getHealthStatus"]["result"]
                        ["commandSuccessful"] == true));
 }
+
+TEST_F(LibMockTest, ReturnEmptyget_numa_nodes) {
+  const bool cxl = false;
+  Response res;
+  int ret = get_numa_nodes(cxl, res);
+  Document document;
+  document.Parse(res.return_value.c_str());
+  EXPECT_EQ(ret, 0);
+  // In a properly set up host that includes
+  // 1) NUMA node entries are recorded in kernel logs ( e.g /var/log/dmesg
+  // 2) cat /proc/iomem has the due CXL device address allocations
+  // the res.return_value will have the NUMA node entries. In the build
+  // image VMs the above conditions are not satisfied and hence the
+  // expected output is empty.
+  EXPECT_EQ(res.return_value, "");
+}
+
+TEST_F(LibMockTest, ReturnEmptygetDeviceList) {
+  Response res;
+  int ret = getDeviceList(res);
+  Document document;
+  document.Parse(res.return_value.c_str());
+  EXPECT_EQ(ret, 0);
+  // In a properly set up host that includes
+  // 1) NUMA node entries are recorded in kernel logs ( e.g /var/log/dmesg
+  // 2) cat /proc/iomem has the due CXL device address allocations
+  // the res.return_value will have the NUMA node entries. In the build
+  // image VMs the above conditions are not satisfied and hence the
+  // expected output is empty.
+  EXPECT_EQ(res.return_value, "");
+}
+
+TEST_F(LibMockTest, ReturnFalseprocessRequest) {
+  string req = R"({"command_name" : { "getDeviceList" : {}}})";
+  string res = processRequest(req);
+  Document document;
+  document.Parse(res.c_str());
+  EXPECT_EQ(document.HasMember("command_response"), true);
+  EXPECT_TRUE(document["command_response"].HasMember("getDeviceList"));
+  EXPECT_TRUE(
+      document["command_response"]["getDeviceList"].HasMember("result"));
+  EXPECT_TRUE(document["command_response"]["getDeviceList"]["result"].HasMember(
+      "commandSuccessful"));
+}
+
+TEST_F(LibMockTest, ReturnSuccessWithDeviceListcreateResponse) {
+  Response res_in = {"getDeviceList", "0\n1\n2\n3\n", ""};
+  string dev, type, status = "OK";
+  string res = createResponse(dev, type, status.c_str(), res_in);
+  std::cout << res << std::endl;
+  Document document;
+  document.Parse(res.c_str());
+  EXPECT_EQ(document.HasMember("command_response"), true);
+  EXPECT_TRUE(document["command_response"].HasMember("getDeviceList"));
+  EXPECT_TRUE(
+      document["command_response"]["getDeviceList"].HasMember("result"));
+  EXPECT_TRUE(document["command_response"]["getDeviceList"]["result"].HasMember(
+      "commandSuccessful"));
+  EXPECT_TRUE(document["command_response"]["getDeviceList"]["result"].HasMember(
+      "deviceList"));
+  EXPECT_TRUE(document["command_response"]["getDeviceList"]["result"]
+                      ["commandSuccessful"] == true);
+  EXPECT_TRUE(
+      document["command_response"]["getDeviceList"]["result"]["deviceList"]
+          .IsArray());
+  EXPECT_TRUE(
+      document["command_response"]["getDeviceList"]["result"]["deviceList"]
+          .Size() == 4);
+}
+
 int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
   testing::FLAGS_gtest_catch_exceptions = true;
