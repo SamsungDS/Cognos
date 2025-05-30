@@ -815,7 +815,6 @@ Status ControllerServicer::CreateCluster(std::string cluster_name,
 Status ControllerServicer::DeleteCluster(std::string cluster_name,
                                          svk::ClusterResponse *resp) {
   std::vector<std::string> node_names;
-  node_info node;
   std::string logger_str;
 
   // If cluster_name is empty, return invalid argument error.
@@ -846,7 +845,7 @@ Status ControllerServicer::DeleteCluster(std::string cluster_name,
   // node_info
   node_names = m_cluster_info[cluster_name].node_names;
   for (auto &node_name : node_names) {
-    node = m_registered_nodes[node_name];
+    node_info &node = m_registered_nodes[node_name];
     node.cluster_name = "";
     logger_str = "Node " + node.node_name + " changes its cluster_name to " +
                  ((node.cluster_name == "") ? "null" : node.cluster_name) + ".";
@@ -1044,7 +1043,9 @@ Status ControllerServicer::AddRemoveNode(std::string cluster_name,
 
       } else {
         logger_str =
-            "Invalid cluster or node, could not add/remove node from cluster.";
+            "Invalid cluster or node, could not add/remove node from cluster. "
+            "Check debug logs for more info. Cluster: " +
+            cluster_name + "; Node: " + node_name;
         svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                    logger_str.c_str());
         resp->set_error_id_or_string_if_any(logger_str);
@@ -1087,28 +1088,18 @@ Status ControllerServicer::ClusterAPI(ServerContext *ctxt,
 
   resp->set_api_version(API_VERSION);
 
-  logger_str = command_name + " called";
-
+  logger_str = command_name + " called for cluster " + cluster_name;
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
   if (command_name == "create_cluster") {
-    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-               logger_str.c_str());
     status = CreateCluster(cluster_name, command_params, resp);
   } else if (command_name == "delete_cluster") {
-    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-               logger_str.c_str());
     status = DeleteCluster(cluster_name, resp);
   } else if (command_name == "list_clusters") {
-    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-               logger_str.c_str());
     status = ListClusters(resp);
   } else if (command_name == "list_nodes_in_cluster") {
-    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-               logger_str.c_str());
     status = ListNodesInCluster(cluster_name, resp);
   } else if (command_name == "add_node_to_cluster" ||
              command_name == "remove_node_from_cluster") {
-    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-               logger_str.c_str());
     status = AddRemoveNode(cluster_name, command_name, command_params, resp);
   } else {
     logger_str = "ClusterAPI received invalid command name " + command_name;
