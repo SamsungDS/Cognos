@@ -598,7 +598,6 @@ TEST_F(LibMockTest, ReturnSuccessWithDeviceListcreateResponse) {
   Response res_in = {"getDeviceList", "0\n1\n2\n3\n", ""};
   string dev, type, status = "OK";
   string res = createResponse(dev, type, status.c_str(), res_in);
-  std::cout << res << std::endl;
   Document document;
   document.Parse(res.c_str());
   EXPECT_EQ(document.HasMember("command_response"), true);
@@ -617,6 +616,12 @@ TEST_F(LibMockTest, ReturnSuccessWithDeviceListcreateResponse) {
   EXPECT_TRUE(
       document["command_response"]["getDeviceList"]["result"]["deviceList"]
           .Size() == 4);
+  EXPECT_EQ(
+      strcmp(res.c_str(),
+             "{\"command_response\":{\"getDeviceList\":{\"result\":{"
+             "\"commandSuccessful\":true,\"deviceList\":[\"0\",\"1\",\"2\","
+             "\"3\"]}}}}"),
+      0);
 }
 
 int main(int argc, char** argv) {
