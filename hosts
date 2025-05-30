@@ -1,0 +1,8 @@
+[slat_node]
+msl-dpe-da1
+
+[converged_node]
+msl-dpe-da1
+
+[kernel_upgrade_node]
+msl-dpe-da1
