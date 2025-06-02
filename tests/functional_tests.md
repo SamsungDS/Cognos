@@ -34,7 +34,7 @@ curl -X 'POST' 'http://105.128.44.80:8001/api/v1/nodes/node_1/features/cxl' -H '
 
 --detach device 11
 
-curl -X 'POST' 'http://105.128.44.80:8001/api/v1/nodes/node_1/features/cxl' -H 'accept:application/json' -H 'Content-Type: application/json' -d '{ "cluster_name": "CL_ID_1", "command_name":"DetachMemory", "command_params":"{\"command\":\"DetachMemory\",\"cluster_id\":\"CL_ID_1\", \"dev_id\":\"824633720832\\",\"host_id\":\"551903297536\", \"mode\":\"direct\"}" }'
+curl -X 'POST' 'http://105.128.44.80:8001/api/v1/nodes/node_1/features/cxl' -H 'accept:application/json' -H 'Content-Type: application/json' -d '{ "cluster_name": "CL_ID_1", "command_name":"DetachMemory", "command_params":"{\"command\":\"DetachMemory\",\"cluster_id\":\"CL_ID_1\", \"dev_id\":\"824633720832\",\"host_id\":\"551903297536\", \"mode\":\"direct\"}" }'
 
 {"errorIdOrStringIfAny":"", "errorCode":0, "apiVersion":"0.1", "response":["{\"rc\": 0}"]}
 
@@ -49,7 +49,7 @@ curl -X 'POST' 'http://105.128.44.80:8001/api/v1/nodes/node_1/features/cxl' -H '
 
 --attach device 11
 
-curl -X 'POST' 'http://105.128.44.80:8001/api/v1/nodes/node_1/features/cxl' -H 'accept:application/json' -H 'Content-Type: application/json' -d '{ "cluster_name": "CL_ID_1", "command_name":"AttachMemory", "command_params":"{\"command\":\"AttachMemory\",\"cluster_id\":\"CL_ID_1\", \"dev_id\":\"824633720832\\",\"host_id\":\"551903297536\", \"mode\":\"direct\"}" }'
+curl -X 'POST' 'http://105.128.44.80:8001/api/v1/nodes/node_1/features/cxl' -H 'accept:application/json' -H 'Content-Type: application/json' -d '{ "cluster_name": "CL_ID_1", "command_name":"AttachMemory", "command_params":"{\"command\":\"AttachMemory\",\"cluster_id\":\"CL_ID_1\", \"dev_id\":\"824633720832\",\"host_id\":\"551903297536\", \"mode\":\"direct\"}" }'
 
 {"errorIdOrStringIfAny":"", "errorCode":0, "apiVersion":"0.1", "response":["{\"rc\": 0}"]}
 
@@ -75,5 +75,5 @@ curl -X 'POST' 'http://105.128.44.80:8001/api/v1/nodes/node_1/features/cxl' -H '
 
  curl -X 'POST' 'http://105.128.44.80:8001/api/v1/nodes/node_1/features/cxl' -H 'accept:application/json' -H 'Content-Type: application/json' -d '{ "cluster_name": "CL_ID_1", "command_name":"get_device_info", "command_params":"{ \"domain_id\": \"\", \"device_id\": \"33638416360448\" }"}'
 
-{"errorIdOrStringIfAny":"", "errorCode":0, "apiVersion":"0.1", "response":["{\"api_version\":1.0,\"device_id\":33638416360448,\"manufacturer\":\"Samsung\",\"serial_number\":305419896,\"FW_revision\":\"1.0.0\",\"location\":\"0000:a4:00.0\",\"total_capacity_MB\":516079,\"feature_supported\":\"basic\",\"vendor_device_type\":\"CMM-H\",\"cxl_device_type\":\"Type3\",\"protocol\":\"CXL 2.0\",\"port_type\":\"root\",\"mode_discovered\":\"auto\",\"connection_type\":\"CXL.mem\",\"domain_type\":\"PCIe\",\"domain_id\":0,\"link_speed\":16,\"link_width\":8,\"available_capacity_MB\":467515,\"status\":\"active\",\"aspm_active\":false,\"sris_active\":false,\"lock_active\":false,\"numa_attached\":1,\"capabilities\":{\"Power Management version\":1},\"advertized_qos\":{\"avg_latency\":120.0,\"p99_latency\":350.0,\"io_per_sec\":50000.0,\"BW_per_sec\":1000000.0,\"io_size\":4096.0,\"qd\":32.0}}"]} 
+{"errorIdOrStringIfAny":"", "errorCode":0, "apiVersion":"0.1", "response":["{\"api_version\":1.0,\"device_id\":33638416360448,\"manufacturer\":\"Samsung\",\"serial_number\":305419896,\"FW_revision\":\"1.0.0\",\"location\":\"0000:a4:00.0\",\"total_capacity_MB\":516079,\"feature_supported\":\"basic\",\"vendor_device_type\":\"CMM-H\",\"cxl_device_type\":\"Type3\",\"protocol\":\"CXL 2.0\",\"port_type\":\"root\",\"mode_discovered\":\"auto\",\"connection_type\":\"CXL.mem\",\"domain_type\":\"PCIe\",\"domain_id\":0,\"link_speed\":16,\"link_width\":8,\"available_capacity_MB\":467515,\"status\":\"active\",\"aspm_active\":false,\"sris_active\":false,\"lock_active\":false,\"numa_attached\":1,\"capabilities\":{\"Power Management version\":1},\"advertised_qos\":{\"avg_latency\":120.0,\"p99_latency\":350.0,\"io_per_sec\":50000.0,\"BW_per_sec\":1000000.0,\"io_size\":4096.0,\"qd\":32.0}}"]} 
 

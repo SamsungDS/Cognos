@@ -5,12 +5,12 @@
 #include <unordered_map>
 
 struct QoSInfo {
-  double avg_latency = 0;
-  double p99_latency = 0;
-  double io_per_sec = 0;
-  double bw_per_sec = 0;
-  double io_size = 0;
-  double qd = 0;
+  uint64_t avg_latency = 0;
+  uint64_t p99_latency = 0;
+  uint64_t io_per_sec = 0;
+  uint64_t bw_per_sec = 0;
+  uint64_t io_size = 0;
+  uint64_t qd = 0;
 };
 
 struct Capabilities {
@@ -37,7 +37,7 @@ struct DevStaticInfo {
   int link_width = 0;
   std::string port_type;
   Capabilities capabilities;
-  QoSInfo advertized_qos;
+  QoSInfo advertised_qos;
 };
 
 // Full Device Info Struct (Static + Dynamic)

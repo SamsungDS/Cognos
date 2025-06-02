@@ -932,7 +932,7 @@ TEST_F(ServicerTest, GetDeviceInfo_Success) {
   qos.bw_per_sec = 1000;
   qos.io_size = 128;
   qos.qd = 32;
-  stat.advertized_qos = qos;
+  stat.advertised_qos = qos;
 
   dev.d_set_static_info(stat);
 

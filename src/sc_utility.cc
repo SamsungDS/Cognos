@@ -333,7 +333,7 @@ std::unordered_map<sc_id, sc_device, hash_sc_id> discover_cxl_devices_shared(
     static_info.port_type = "root";
     static_info.capabilities.power_management_version = 1;
     static_info.capabilities.vendor_specific["latency_hint"] = "enabled";
-    static_info.advertized_qos = {.avg_latency = 120,
+    static_info.advertised_qos = {.avg_latency = 120,
                                   .p99_latency = 350,
                                   .io_per_sec = 50000,
                                   .bw_per_sec = 1000000,

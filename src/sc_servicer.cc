@@ -549,17 +549,18 @@ std::string handle_get_device_info(
   // QoS
   json_t* qos = json_object();
   json_object_set_new(qos, "avg_latency",
-                      json_real(dev.static_info.advertized_qos.avg_latency));
+                      json_integer(dev.static_info.advertised_qos.avg_latency));
   json_object_set_new(qos, "p99_latency",
-                      json_real(dev.static_info.advertized_qos.p99_latency));
+                      json_integer(dev.static_info.advertised_qos.p99_latency));
   json_object_set_new(qos, "io_per_sec",
-                      json_real(dev.static_info.advertized_qos.io_per_sec));
+                      json_integer(dev.static_info.advertised_qos.io_per_sec));
   json_object_set_new(qos, "BW_per_sec",
-                      json_real(dev.static_info.advertized_qos.bw_per_sec));
+                      json_integer(dev.static_info.advertised_qos.bw_per_sec));
   json_object_set_new(qos, "io_size",
-                      json_real(dev.static_info.advertized_qos.io_size));
-  json_object_set_new(qos, "qd", json_real(dev.static_info.advertized_qos.qd));
-  json_object_set_new(root, "advertized_qos", qos);
+                      json_integer(dev.static_info.advertised_qos.io_size));
+  json_object_set_new(qos, "qd",
+                      json_integer(dev.static_info.advertised_qos.qd));
+  json_object_set_new(root, "advertised_qos", qos);
   // Finalize JSON
   char* json_str = json_dumps(root, JSON_COMPACT);
   std::string result(json_str);
