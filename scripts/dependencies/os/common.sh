@@ -29,7 +29,7 @@ PIP_ARGS=(
 
 # Optimizations for Docker build - see scripts/docker/*.DOCKERFILE for $DOCKER var invocation
 if [[ $DOCKER ]]; then
-    PIP_ARGS+=(--no-cache-dir)
+    PIP_ARGS+=("--no-cache-dir")
 fi
 
 # Install python modules from requirements.txt via pip

@@ -1,0 +1,15 @@
+# pyproject.toml
+[tool.pytest.ini_options]
+pythonpath = [
+    "src/node_info/"
+]
+
+testpaths = [
+
+    "tests/unit/src/"
+]
+
+[tool.coverage.run]
+omit = [
+    "*test*"
+]

@@ -17,6 +17,7 @@ VENV_DIR=/usr/local/svk/node/venv
 CMAKE_OPTIONS=()
 BUILD_RELEASE=false
 RUN_TESTS=false
+RUN_PYTHON_TESTS=false
 MAKE_INSTALL=false
 
 help()
@@ -34,6 +35,8 @@ help()
     echo "  If selected, all other build options are ignored."
     echo "-t | --run-tests"
     echo "  Execute unit tests for $SVK_PROJECT_NAME and generate code coverage reports."
+    echo "-y | --run-python-tests"
+    echo "  Execute unit tests for python code"
     echo "-p | --install-prefix"
     echo "  Performs 'make install' to the specified path."
     echo "  Path is relative to $BUILD_DIR unless you provide an absolute path."
@@ -55,6 +58,10 @@ parse_options()
         RUN_TESTS=true
         CMAKE_OPTIONS+=("-DBUILD_TESTING=ON")
         CMAKE_OPTIONS+=("-DWITH_COVERAGE=ON")
+        shift
+        ;;
+        -y|--run-python-tests)
+        RUN_PYTHON_TESTS=true
         shift
         ;;
         -p|--install-prefix)
@@ -141,13 +148,24 @@ build_feature() {
     fi
 }
 
+execute_python_tests() {
+    echo "Running python unit tests"
+    /usr/local/svk/node/venv/bin/python3 -m pytest \
+        "$PROJECT_ROOT"/tests/unit/src/test_node_info.py \
+        --cov-report xml:"$REPORTS_DIR"/python_coverage.xml \
+        --cov-report term \
+        --junit-xml="$REPORTS_DIR"/python_junit.xml \
+        --cov-branch \
+        --cov
+}
+
 execute_tests() {
     # Execute unit tests
     echo "Running unit tests..."
     mkdir --verbose --parent "$REPORTS_DIR"
     # test execution goes below
     ctest --output-junit "$REPORTS_DIR/gitlab_junit.xml" --test-dir "$TESTS_DIR"
-    
+
     # Generate coverage reports and display results with summary to terminal
     echo "Generating coverage reports"
     # Coverage report generation goes below
@@ -248,6 +266,8 @@ if $BUILD_RELEASE; then
     # Build release packages
     build_deb
     build_rpm
+elif $RUN_PYTHON_TESTS; then
+    execute_python_tests
 else
     build_feature
 fi

@@ -21,6 +21,8 @@ int initialize_logger(json logger_config) {
   level_E log_level;
   try {
     log_level = log_level_map.at(log_level_str);
+    // Set log level for python as well
+    py_log_level = log_level_str;
   } catch (const std::out_of_range &e) {
     std::cerr << "Invalid log level from log file, unable to initialize Node "
                  "management logger"
@@ -43,9 +45,8 @@ int initialize_logger(json logger_config) {
 int find_node_info(std::string info_type, std::string node_info_script_path,
                    std::string &output) {
   std::string logger_str;
-  std::string command = node_info_script_path;
-  // Valid node info types are system, memory, network, cpu, devices
-  // If info_type is an empty string, get all node info
+  //  Valid node info types are system, memory, network, cpu, devices
+  //  If info_type is an empty string, get all node info
   if (info_type.length() != 0 &&
       node_info_types.find(info_type) == node_info_types.end()) {
     logger_str = "Invalid data type to get from node: " + info_type;
@@ -53,7 +54,25 @@ int find_node_info(std::string info_type, std::string node_info_script_path,
     return -1;
   }
   // set command string
-  command = command + " " + info_type;
+  std::string info_type_option = "";
+  std::string log_level_option = "";
+  if (info_type.length()) {
+    info_type_option = "-t " + info_type;
+  }
+  // py_log_level is set when config is read
+  if (py_log_level.length()) {
+    if (py_log_levels.count(py_log_level) == 1) {
+      log_level_option = "-l " + py_log_level;
+    } else {
+      // Leave log level empty and find_node_info.py will use INFO
+      logger_str = "Log level <" + py_log_level +
+                   "> unknown for Python logger, will use default log level "
+                   "INFO for find_node_info.py. ";
+      svk_logger(NODE_FEAT_MODULE_NAME, level_E::INFO, logger_str.c_str());
+    }
+  }
+  std::string command =
+      node_info_script_path + " " + info_type_option + " " + log_level_option;
   // Execute python command
   FILE *pipe = popen(command.c_str(), "r");
   if (!pipe) {
@@ -71,13 +90,12 @@ int find_node_info(std::string info_type, std::string node_info_script_path,
   }
 
   int status = pclose(pipe);
-  if (status != 0) {
+  if (status == -1) {
     svk_logger(NODE_FEAT_MODULE_NAME, level_E::ERROR,
                "pclose returned an error after attempting to run "
                "get_node_info.py script.");
     return -1;
   }
-
   // Verify that the JSON string is a valid JSON object
   try {
     json j = json::parse(node_info_json_str);
@@ -85,8 +103,9 @@ int find_node_info(std::string info_type, std::string node_info_script_path,
     svk_logger(NODE_FEAT_MODULE_NAME, level_E::DEBUG, logger_str.c_str());
     output = j.dump();
   } catch (json::parse_error &e) {
-    logger_str =
-        "Invalid JSON string from find_node_info.py:\n" + node_info_json_str;
+    logger_str = "Invalid JSON string from find_node_info.py; output:\n" +
+                 node_info_json_str;
+    svk_logger(NODE_FEAT_MODULE_NAME, level_E::ERROR, logger_str.c_str());
     return -1;
   }
 
@@ -99,7 +118,7 @@ int run_command(const uint8_t *buffer, uint64_t len, std::string &output) {
   std::string command =
       std::string(reinterpret_cast<const char *>(buffer), len);
   std::string command_name;
-  std::string info_type;
+  std::string info_type = "";
   try {
     json j = json::parse(command);
     command_name = j["command_name"];
@@ -108,15 +127,9 @@ int run_command(const uint8_t *buffer, uint64_t len, std::string &output) {
       // Give data type to find the proper node info, if none is specified then
       // get all info
       json command_params = j["command_params"];
-      if (command_params.is_string() &&
-          command_params.get<std::string>().empty()) {
-        info_type = "";
-      } else {
+      if (command_params.is_object()) {
         info_type = command_params.value("info_type", "");
       }
-      std::string node_info_script_path =
-          "python3 " + node_feature_path + "/scripts/find_node_info.py";
-      return find_node_info(info_type, node_info_script_path, output);
     } else {
       logger_str = "Invalid command_name: " + command_name;
       svk_logger(NODE_FEAT_MODULE_NAME, level_E::ERROR, logger_str.c_str());
@@ -128,6 +141,9 @@ int run_command(const uint8_t *buffer, uint64_t len, std::string &output) {
     svk_logger(NODE_FEAT_MODULE_NAME, level_E::ERROR, logger_str.c_str());
     return -1;
   }
+  std::string node_info_script_path =
+      "python3 " + node_feature_path + "/scripts/find_node_info.py";
+  return find_node_info(info_type, node_info_script_path, output);
 }
 
 svk_status initialize(void *init_param) {
@@ -137,20 +153,19 @@ svk_status initialize(void *init_param) {
   if (config_file.is_open()) {
     conf = json::parse(config_file);
   } else {
-    svk_logger(NODE_FEAT_MODULE_NAME, level_E::ERROR,
-               "Unable to parse node mgmt config");
+    std::cerr << "Unable to parse node mgmt config" << std::endl;
     return SVK_STATUS_INVALID_CONFIG;
   }
   int status;
   try {
     status = initialize_logger(conf.at("logger"));
-  } catch (const json::type_error &e) {
+  } catch (const json::exception &e) {
     std::cerr << "Node mgmt logger config is invalid: " << e.what()
               << std::endl;
     return SVK_STATUS_INVALID_CONFIG;
   }
   if (status != 0) {
-    return SVK_STATUS_FAIL;
+    return SVK_STATUS_INVALID_CONFIG;
   }
 
   return SVK_STATUS_SUCCESS;

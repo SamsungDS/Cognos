@@ -2,4 +2,6 @@
 clang-format
 gcovr
 psutil
+pytest
+pytest-cov
 distro
