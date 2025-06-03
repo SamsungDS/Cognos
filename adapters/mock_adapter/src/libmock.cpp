@@ -122,9 +122,11 @@ int determine_physical_address_range(const string &out, const bool cxl_node,
     tok = st.top();
     st.pop();
     if (regex_match(tok, m, regex_acpi_srat)) {
-      res = m[1].str();
-      remove_substr(res, "0x");
-      phy_addr_range += (res + " ");
+      if (cxl_node == false) {
+        res = m[1].str();
+        remove_substr(res, "0x");
+        phy_addr_range += (res + " ");
+      }
     }
   }
 
@@ -150,7 +152,7 @@ int get_numa_node_address_range(const int &node_index, const bool cxl_node,
 }
 
 // Use kernel log (/var/log/dmesg) to get all the registered NUMA nodes
-int get_numa_nodes(const bool &cxl_node, Response &out) {
+int get_numa_nodes(Response &out) {
   int ret = 0;
 
   // Creating command-line string to get all numa nodes
@@ -490,8 +492,7 @@ int getHealthStatus(const string &dev, Response &out, const string &type) {
 // The implementation for getDeviceList
 int getDeviceList(Response &out) {
   int ret = 0;
-  bool cxl = false;
-  ret = get_numa_nodes(cxl, out);
+  ret = get_numa_nodes(out);
 
   return ret;
 }

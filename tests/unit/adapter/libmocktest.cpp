@@ -551,9 +551,8 @@ TEST_F(LibMockTest, ReturnZeroHealthStatusUsingcreateResponse) {
 }
 
 TEST_F(LibMockTest, ReturnEmptyget_numa_nodes) {
-  const bool cxl = false;
   Response res;
-  int ret = get_numa_nodes(cxl, res);
+  int ret = get_numa_nodes(res);
   Document document;
   document.Parse(res.return_value.c_str());
   EXPECT_EQ(ret, 0);
