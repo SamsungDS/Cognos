@@ -49,7 +49,7 @@ int find_node_info(std::string info_type, std::string node_info_script_path,
   //  If info_type is an empty string, get all node info
   if (info_type.length() != 0 &&
       node_info_types.find(info_type) == node_info_types.end()) {
-    logger_str = "Invalid data type to get from node: " + info_type;
+    logger_str = "Invalid info_type given for the get_node_info: " + info_type;
     svk_logger(NODE_FEAT_MODULE_NAME, level_E::ERROR, logger_str.c_str());
     return -1;
   }
@@ -73,6 +73,8 @@ int find_node_info(std::string info_type, std::string node_info_script_path,
   }
   std::string command =
       node_info_script_path + " " + info_type_option + " " + log_level_option;
+  logger_str = "Executing python script, full command to be run: " + command;
+  svk_logger(NODE_FEAT_MODULE_NAME, level_E::DEBUG, logger_str.c_str());
   // Execute python command
   FILE *pipe = popen(command.c_str(), "r");
   if (!pipe) {
@@ -96,6 +98,9 @@ int find_node_info(std::string info_type, std::string node_info_script_path,
                "get_node_info.py script.");
     return -1;
   }
+  logger_str = "Successfully ran popen/pclose and received the node info: " +
+               node_info_json_str;
+  svk_logger(NODE_FEAT_MODULE_NAME, level_E::DEBUG, logger_str.c_str());
   // Verify that the JSON string is a valid JSON object
   try {
     json j = json::parse(node_info_json_str);
@@ -143,6 +148,11 @@ int run_command(const uint8_t *buffer, uint64_t len, std::string &output) {
   }
   std::string node_info_script_path =
       "python3 " + node_feature_path + "/scripts/find_node_info.py";
+  logger_str =
+      "Successfully parsed json from input buffer, finding node info with "
+      "python script located at <" +
+      node_info_script_path + "> and info_type <" + info_type + ">.";
+  svk_logger(NODE_FEAT_MODULE_NAME, level_E::DEBUG, logger_str.c_str());
   return find_node_info(info_type, node_info_script_path, output);
 }
 
@@ -190,7 +200,7 @@ svk_status execute_sync(svk_pass_thru_cmd *pass_thru, svk_input *input,
   status = run_command(input->input_buffer, input->len, response_json_str);
   if (status != 0) {
     svk_logger(NODE_FEAT_MODULE_NAME, level_E::ERROR,
-               "Execute sync failed attempting to run command");
+               "Execute sync failed attempting to retrieve node info");
     return SVK_STATUS_FAIL;
   }
   output->status = SVK_STATUS_SUCCESS;

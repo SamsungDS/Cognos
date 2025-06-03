@@ -19,7 +19,7 @@
 #define MAX_BUF_LEN 512
 
 std::unordered_set<std::string> node_info_types = {
-    "all", "system", "memory", "network", "cpu", "devices"};
+    "all", "system", "memory", "network", "cpu", "pci"};
 std::unordered_set<std::string> py_log_levels = {"DEBUG", "INFO", "WARNING",
                                                  "ERROR", "CRITICAL"};
 std::string py_log_level;
