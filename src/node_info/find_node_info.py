@@ -8,8 +8,7 @@ import psutil
 import socket
 import subprocess
 
-logging.basicConfig(filename='find_node_info.log', level=logging.ERROR,
-                    format='[find_node_info.py]: %(asctime)s - %(levelname)s - %(message)s')
+logger = None
 
 def get_system_info():
     """
@@ -26,7 +25,7 @@ def get_system_info():
         "kernel-version": platform.uname().release if hasattr(platform, 'uname') else None,
     }
     
-    return server_info
+    return {'server-info': server_info}
 
 def get_network_adapters_info():
     """
@@ -57,11 +56,13 @@ def get_network_adapters_info():
             
 
             # Get MTU
-            with open(f"/sys/class/net/{adapter}/mtu", "r") as f:
-                mtu = f.read().strip()
-                if mtu == None:
-                    mtu = ""
-                network_adapters_info[adapter]["mtu"] = mtu
+            mtu_path = f"/sys/class/net/{adapter}/mtu"
+            if os.path.exists(mtu_path):
+                with open(mtu_path, "r") as f:
+                    mtu = f.read().strip()
+                    if mtu == None:
+                        mtu = ""
+                    network_adapters_info[adapter]["mtu"] = mtu
 
             # Get adapter speed, duplex setting, link detected, pci address of the adapter, and device vendor
             operstate_path = f"/sys/class/net/{adapter}/operstate"
@@ -91,18 +92,17 @@ def get_network_adapters_info():
                     network_adapters_info[adapter]["duplex"] = duplex
             
         except Exception as e:
-            print(f"Error getting info for adapter {adapter}: {e}")
-            logging.error(f"Error getting info for adapter {adapter}: {e}")
+            logger.error(f"Error getting info for adapter {adapter}: {e}")
     
     for item in data:
         network_dev_name = item.get("logicalname")
         if not network_dev_name:
             continue
-        pci_address_match = re.search(r"([0-9a-fA-F]{2}:[0-9a-fA-F]{2}.[0-9a-fA-F]{0,2})", item.get("businfo", ""))
+        pci_address_match = re.search(r"([0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]{0,2})", item.get("businfo", ""))
         network_adapters_info[network_dev_name]["pci-address"] = pci_address_match.group(1)
         network_adapters_info[network_dev_name]["device-vendor"] = item["vendor"]
     
-    return network_adapters_info
+    return {'network-adapters-info': network_adapters_info}
 
 def get_cpu_info():
     """
@@ -112,15 +112,16 @@ def get_cpu_info():
         dict: A dictionary containing CPU information.
     """
     #numa, cpu type
+    # interval is being set, if not set it may return 0
     cpu_info = {
         "physical-cores": psutil.cpu_count(logical=False),
         "total-cores": psutil.cpu_count(logical=True),
         "current-frequency": psutil.cpu_freq().current,
         "max-frequency": psutil.cpu_freq().max,
         "min-frequency": psutil.cpu_freq().min,
-        "cpu-percentage": psutil.cpu_percent(),
+        "cpu-percentage": psutil.cpu_percent(interval=0.5),
     }
-    return cpu_info
+    return {'cpu_info': cpu_info}
 
 def get_memory_info():
     """
@@ -140,48 +141,57 @@ def get_memory_info():
         "buffers": svmem.buffers,
         "cached": svmem.cached,
     }
-    return memory_info
+    return {'memory_info': memory_info}
 
-def get_storage_devices_info():
-    devices_info = []
-
+def get_pci_info():
+    pci_info = []
+    dev_info_fields = {
+        "Slot": "pci_address",
+        "Vendor": "device_manufacturer",
+        "NUMANode": "NUMA node",
+    }
     try:
         # Use lspci command to get information about PCI devices
-        lspci_output = subprocess.check_output(['lspci', '-vmm']).decode('utf-8').split('\n\n')
+        lspci_output = (
+            subprocess.check_output(["lspci", "-vmm"]).decode("utf-8").split("\n\n")
+        )
 
         for device in lspci_output:
             if device:  # Check if device string is not empty
                 device_info = {}
-                lines = device.split('\n')
+                lines = device.split("\n")
 
                 for line in lines:
-                    if ':' in line:
-                        key, value = line.split(':', 1)
+                    if ":" in line:
+                        key, value = line.split(":", 1)
                         key = key.strip()
                         value = value.strip()
-
-                        if key == 'Slot':
-                            device_info['pci_address'] = value
-                        elif key == 'Class':
-                            if 'Non-Volatile memory controller' in value or 'NVMe' in value:
-                                device_info['device_type'] = 'nvme'
-                            elif 'CXL' in value:
-                                device_info['device_type'] = 'cxl'
+                        if key == "Class":
+                            if (
+                                "Non-Volatile memory controller" in value
+                                or "NVMe" in value
+                            ):
+                                device_info["device_type"] = "nvme"
+                            elif "CXL" in value:
+                                device_info["device_type"] = "cxl"
                             else:
                                 continue  # Skip other device types
-                        elif key == 'Vendor':
-                            device_info['device_manufacturer'] = value
-                        elif key == 'NUMANode':
-                            device_info['NUMA node'] = value
-                # Check if required information is available
-                required_keys = ['pci_address', 'device_type']
+                        else:
+                            try:
+                                device_info[dev_info_fields[key]] = value
+                            except Exception as e:
+                                logger.debug(
+                                    f"Device info not part of map, skipping this field: {e}"
+                                )
+
+                required_keys = ["pci_address", "device_type"]
                 if all(key in device_info for key in required_keys):
-                    devices_info.append(device_info)
+                    pci_info.append(device_info)
 
     except Exception as e:
-        print(f"An error occurred: {e}")
+        logger.error(f"Error in getting pci info: {e}")
 
-    return devices_info
+    return {'pci-info': pci_info}
 
 
 def get_all_info():
@@ -191,57 +201,98 @@ def get_all_info():
     Returns:
         dict: A dictionary containing aggregated system information.
     """
-    system_info = {
-        "system-info": get_system_info(),
-        "network-adapters-info": get_network_adapters_info(),
-        "cpu-info": get_cpu_info(),
-        "memory-info": get_memory_info(),
-        "device-info": get_storage_devices_info()
-    }
-    return system_info
+    func_list = [get_system_info, get_cpu_info, get_network_adapters_info,
+                 get_memory_info, get_pci_info]
+    res = {k:v for func in func_list for k, v in func().items()}
+
+    return res
+
+
+def parse_args():
+
+    parser = argparse.ArgumentParser(
+        description="Python script to retrieve information about the node."
+            "Currently only supporting 1 type of info at a time or all node info"
+    )
+
+    parser.add_argument(
+        "-t",
+        "--info-type",
+        type=str,
+        default="all",
+        choices=["network", "memory", "cpu", "system", "pci", "all"],
+        help="Type of info to retrieve about the node. If no info type is provided, retrieve all info."
+            "Types supported: network, memory, cpu, system, pci, all"
+    )
+    
+    parser.add_argument("-l", "--log-level", type=str, default="INFO",
+                        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+                        help="Log level for python logger."
+                        "Log levels: DEBUG, INFO, WARNING, ERROR, CRITICAL")
+    # Using hardcode default log file for now
+    default_log_file = "/var/log/svk/find_node_info.log"
+    args = parser.parse_args()
+
+    return {'info_type': args.info_type, 'log_level': args.log_level, 'log_file_path': default_log_file}
+
+
+def init_logger(log_level: str, log_file_path: str):
+    """Initialize the logger for find_node_info.py
+
+    Args:
+        log_level (str): Log level to set. Valid log levels: DEBUG, INFO, WARNING, ERROR, CRITICAL
+        log_file_path (str): File path for the logger to print to
+
+    Returns:
+        Logger: A logger object for this python script with the given log level and file path set
+    """
+    global logger
+    logger = logging.getLogger("find_node_info.py")
+    logger.propagate = False
+    
+    log_levels_supported = {'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'}
+    if log_level in log_levels_supported:
+        logger.setLevel(log_level)
+    else:
+        # Default log level
+        logger.setLevel('INFO')
+
+    formatter = logging.Formatter('[%(name)s]: %(asctime)s - %(levelname)s - %(message)s')
+
+    try:
+        dir_path = os.path.dirname(log_file_path)
+        if dir_path and not os.path.exists(dir_path):
+            raise FileNotFoundError(f"Directory '{dir_path}' does not exist.")
+        file_handler = logging.FileHandler(log_file_path)
+        file_handler.setLevel(logger.level)
+        
+        
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+        
+    except Exception as e:
+        print(f"Couldn't create log file: {e}")
+        logger = None
+        return
+    logger.info("Logger is initialized")
+
+def get_command(info_type: str):
+    command_map = {'network': get_network_adapters_info, 'memory': get_memory_info, 'cpu': get_cpu_info,
+                   'system': get_system_info, 'pci': get_pci_info, 'all': get_all_info}
+    return command_map[info_type]
 
 def main():
-    if platform.system() != 'Linux':
+    if platform.system() != "Linux":
         print("Platform not supported")
         return
-    parser = argparse.ArgumentParser(description="Python script to retrieve information about the node. Currently only supporting 1 type of info at a time or all node info")
-    subparsers = parser.add_subparsers(dest="command", prog=parser.prog)
 
-    subparsers.add_parser("network", help="Get network adapter info")
-    subparsers.add_parser("memory", help="Get memory info in bytes")
-    subparsers.add_parser("cpu", help="Get CPU info")
-    subparsers.add_parser("system", help="Get info about the current server")
-    subparsers.add_parser("devices", help="Get info about storage devices")
+    args = parse_args()
 
-    args = parser.parse_args()
-    if args.command == "network":
-        network_info = {
-            "newtork-adapters-info": get_network_adapters_info()
-        }
-        print(json.dumps(network_info, indent=4))
-    elif args.command == "memory":
-        memory_info = {
-            "memory-info": get_memory_info()
-        }
-        print(json.dumps(memory_info, indent=4))
-    elif args.command == "cpu":
-        cpu_info = {
-            "cpu-info": get_cpu_info()
-        }
-        print(json.dumps(cpu_info, indent=4))
-    elif args.command == "system":
-        system_info = {
-            "system-info": get_system_info()
-        }
-        print(json.dumps(system_info, indent=4))
-    elif args.command == "devices":
-        device_info = {
-            "device-info": get_storage_devices_info()
-        }
-        print(json.dumps(device_info, indent=4))
-    else:
-        system_info = get_all_info()
-        print(json.dumps(system_info, indent=4))
+    init_logger(args["log_level"], args["log_file_path"])
+    if logger is None:
+        print("Logger not initialized, couldn't run find node info")
+        return
+    print(json.dumps(get_command(args['info_type'])(), indent=4))
 
 if __name__ == "__main__":
     main()

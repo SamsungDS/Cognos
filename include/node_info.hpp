@@ -18,8 +18,11 @@
 #define NODE_FEAT_LOGGER_DEFAULT_SINK_TYPE "rotating_file"
 #define MAX_BUF_LEN 512
 
-std::unordered_set<std::string> node_info_types = {"system", "memory",
-                                                   "network", "cpu", "devices"};
+std::unordered_set<std::string> node_info_types = {
+    "all", "system", "memory", "network", "cpu", "devices"};
+std::unordered_set<std::string> py_log_levels = {"DEBUG", "INFO", "WARNING",
+                                                 "ERROR", "CRITICAL"};
+std::string py_log_level;
 
 #ifdef BUILD_TESTING
 const std::string node_feature_path = "node/";

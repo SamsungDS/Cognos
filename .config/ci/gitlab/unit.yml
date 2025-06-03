@@ -1,8 +1,6 @@
 unit test:
+  extends: release build
   stage: test
-  image:
-    name: $IMAGE_TAG
-    pull_policy: always
   before_script:
     # Install latest build-wrapper
     - wget --no-verbose --content-disposition -E -c "$SONAR_HOST_URL/static/cpp/build-wrapper-linux-x86.zip"
@@ -10,19 +8,24 @@ unit test:
   script:
     # Build with unit tests and generate coverage report
     - /build-wrapper-linux-x86/build-wrapper-linux-x86-64 --out-dir bw-output/ $BUILD_COMMAND
+    - ./scripts/build.sh --run-python-tests
   artifacts:
-    name: unit test
+    name: unit test - $DOCKERFILE_NAME
     expire_in: 300 seconds
+    expose_as: Unit Test Artifacts
+    when: always
     paths:
      - bw-output
      - build
+     - $REPORT_DIR/python_coverage.xml
+     - $REPORT_DIR/python_junit.xml
     reports:
       coverage_report:
         coverage_format: cobertura
-        path: $GITLAB_COVERAGE_REPORT
-      junit: $GITLAB_JUNIT_REPORT
+        path: $REPORT_DIR/*
+      junit: $REPORT_DIR/*
   variables:
-    IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
+    # IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
     BUILD_COMMAND: ./scripts/build.sh --run-tests
   needs:
     - build docker
@@ -30,6 +33,6 @@ unit test:
     matrix:
       - DOCKERFILE_NAME: rocky9
       - DOCKERFILE_NAME: ubuntu22
-      #- DOCKERFILE_NAME: ubuntu24
+      - DOCKERFILE_NAME: ubuntu24
   rules:
     - !reference [.default_rules, merge_and_push]

@@ -64,4 +64,4 @@ publish release artifacts - Nexus:
     matrix:
       - OS: rocky9
       - OS: ubuntu22
-      #- OS: ubuntu24
+      - OS: ubuntu24
