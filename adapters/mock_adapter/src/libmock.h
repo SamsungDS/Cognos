@@ -53,6 +53,7 @@ enum {
   UNABLE_TO_GET_NUMA_ADDR_RANGE_ERR,
   CMD_EXEC_ERR,
   RASMCCTL_HEALTH_STATUS_COMMAND_MISSING_ERR,
+  GREP_NUMA_NODES_MISSING_ERR,
   END
 };
 
@@ -89,6 +90,7 @@ const char* err_str[] = {STR(OK),
                          STR(UNABLE_TO_GET_NUMA_ADDR_RANGE_ERR),
                          STR(CMD_EXEC_ERR),
                          STR(RASMCCTL_HEALTH_STATUS_COMMAND_MISSING_ERR),
+                         STR(GREP_NUMA_NODES_MISSING_ERR),
                          STR(END)};
 
 #define HEALTH_DECIDER_VALUE 10
@@ -114,6 +116,9 @@ int getErrorCount(const string& device, const string& type, Response& out);
 // getHealthStatus API
 int getHealthStatus(const string& device, Response& out,
                     const string& type = "correctable");
+
+// getDeviceList API
+int getDeviceList(Response& out);
 
 // createResponse API
 string createResponse(const string& device, const string& error_type,
@@ -145,5 +150,8 @@ long get_file_size(string filename);
 // Get the address range valid for a partucular NUMA device in ras-mc-ctl
 // output
 string find_address_range_from_rasmcctl(string& dev, string& type);
+
+// Get the numa nodes using kernel log (/var/log/dmesg)
+int get_numa_nodes(Response& res);
 
 #endif

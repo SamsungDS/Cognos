@@ -37,6 +37,7 @@ using namespace rapidjson;
 struct Config {
   string grep_CXL;
   string grep_acpi_srat;
+  string grep_numa_nodes;
   string regex_iomem;
   string regex_addr_range;
   string mce_inject_template_string;
@@ -68,28 +69,18 @@ inline string &trim(std::string &s, const char *t = " \t\n\r\f\v") {
 
 // Execute a command using command-line string using popen/pclose
 string cmd_exec(string &cmd) {
-  int ret = 0;
-  string res = "";
-  FILE *pipe = popen(cmd.c_str(), "r");
-
+  array<char, 128> buffer;
+  string result;
+  unique_ptr<FILE, void (*)(FILE *)> pipe(
+      popen(cmd.c_str(), "r"), [](FILE *f) -> void { ignore = pclose(f); });
   if (!pipe) {
-    return (string(err_str[CMD_EXEC_ERR]) + " Error opening pipe " +
-            strerror(errno));
+    throw std::runtime_error("popen() failed!");
   }
-
-  char buffer[128];
-
-  while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-    res += buffer;
+  while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe.get()) !=
+         nullptr) {
+    result += buffer.data();
   }
-
-  int status = pclose(pipe);
-  if ((status == -1) || (WIFEXITED(status)) || (WIFSIGNALED(status))) {
-    ret = CMD_EXEC_ERR;
-    res = string(err_str[ret]) + " Error closing pipe " + strerror(errno);
-    return res;
-  }
-  return res;
+  return result;
 }
 
 // remove substring
@@ -131,9 +122,11 @@ int determine_physical_address_range(const string &out, const bool cxl_node,
     tok = st.top();
     st.pop();
     if (regex_match(tok, m, regex_acpi_srat)) {
-      res = m[1].str();
-      remove_substr(res, "0x");
-      phy_addr_range += (res + " ");
+      if (cxl_node == false) {
+        res = m[1].str();
+        remove_substr(res, "0x");
+        phy_addr_range += (res + " ");
+      }
     }
   }
 
@@ -155,6 +148,20 @@ int get_numa_node_address_range(const int &node_index, const bool cxl_node,
   string out = "";
   if (!in.empty()) out = cmd_exec(in);
   ret = determine_physical_address_range(out, cxl_node, phy_addr_range);
+  return ret;
+}
+
+// Use kernel log (/var/log/dmesg) to get all the registered NUMA nodes
+int get_numa_nodes(Response &out) {
+  int ret = 0;
+
+  // Creating command-line string to get all numa nodes
+  string in = cf.grep_numa_nodes;
+
+  // Execute the command-line from above
+  out.return_value = "";
+  if (!in.empty()) out.return_value = cmd_exec(in);
+
   return ret;
 }
 
@@ -248,6 +255,15 @@ int validate_config(const string &str) {
     return RASMCCTL_ERROR_ADDRESSES_MISSING_ERR;
   }
 
+  if (data.HasMember("grep_numa_nodes") && data["grep_numa_nodes"].IsString()) {
+    cf.grep_numa_nodes = data["grep_numa_nodes"].GetString();
+    os.swap(emp);
+    os << "grep_numa_nodes: " << cf.grep_numa_nodes.c_str() << endl;
+    svk_logger(RAS_LOGGER, level_E::DEBUG, os.str().c_str());
+  } else {
+    return GREP_NUMA_NODES_MISSING_ERR;
+  }
+
   return ret;
 }
 
@@ -314,7 +330,7 @@ int device_validate(const string &dev) {
   return ret;
 }
 
-// Creating JSON string response for getErrorCount
+// Creating JSON string response
 string createResponse(const string &device, const string &error_type,
                       const char *status, const Response &response) {
   Document document;
@@ -325,13 +341,16 @@ string createResponse(const string &device, const string &error_type,
   // Adding object for "command_response"
   Value cmd_response(kObjectType);
 
-  // Adding object for "getErrorCount"
+  // Adding object for "getErrorCount/getHealthStatus/getDeviceList"
   Value request_function(kObjectType);
 
   // Adding device name
-  Value dev(kStringType);
-  dev.SetString(device.c_str(), allocator);
-  request_function.AddMember("device", dev, allocator);
+  if ((response.function_name == "getErrorCount") ||
+      (response.function_name == "getHealthStatus")) {
+    Value dev(kStringType);
+    dev.SetString(device.c_str(), allocator);
+    request_function.AddMember("device", dev, allocator);
+  }
 
   // Adding error type
   if (response.function_name == "getErrorCount") {
@@ -354,6 +373,17 @@ string createResponse(const string &device, const string &error_type,
         result.AddMember("healthStatus", true, allocator);
       else
         result.AddMember("healthStatus", false, allocator);
+    } else if (response.function_name == "getDeviceList") {
+      Value devlistarray(kArrayType);
+      char *pch;
+      pch = strtok((char *)response.return_value.c_str(), " \n");
+      while (pch != NULL) {
+        Value stringValue;
+        stringValue.SetString(pch, strlen(pch), allocator);
+        devlistarray.PushBack(stringValue, allocator);
+        pch = strtok(NULL, " \n");
+      }
+      result.AddMember("deviceList", devlistarray, allocator);
     }
 
   } else
@@ -367,6 +397,8 @@ string createResponse(const string &device, const string &error_type,
     cmd_response.AddMember("getErrorCount", request_function, allocator);
   else if (response.function_name == "getHealthStatus")
     cmd_response.AddMember("getHealthStatus", request_function, allocator);
+  else if (response.function_name == "getDeviceList")
+    cmd_response.AddMember("getDeviceList", request_function, allocator);
   else
     cmd_response.AddMember("None", request_function, allocator);
 
@@ -457,6 +489,14 @@ int getHealthStatus(const string &dev, Response &out, const string &type) {
   return getErrorCount(dev, type, out);
 }
 
+// The implementation for getDeviceList
+int getDeviceList(Response &out) {
+  int ret = 0;
+  ret = get_numa_nodes(out);
+
+  return ret;
+}
+
 // Invoked during initialization
 int startup(char const *cfg = CONFIG_FILE) { return init(cfg); }
 
@@ -522,12 +562,19 @@ string processRequest(string &request) {
     out.function_name = "getErrorCount";
     ret = getErrorCount(device, type, out);
     res = createResponse(device, type, err_str[ret], out);
-    svk_logger(RAS_LOGGER, level_E::ERROR, res.c_str());
+    svk_logger(RAS_LOGGER, level_E::INFO, res.c_str());
+
   } else if ((cmd == "getHealthStatus") && (device_str == "device")) {
     out.function_name = "getHealthStatus";
     ret = getHealthStatus(device, out);
     res = createResponse(device, type, err_str[ret], out);
-    svk_logger(RAS_LOGGER, level_E::ERROR, res.c_str());
+    svk_logger(RAS_LOGGER, level_E::INFO, res.c_str());
+
+  } else if (cmd == "getDeviceList") {
+    out.function_name = "getDeviceList";
+    ret = getDeviceList(out);
+    res = createResponse(device, type, err_str[ret], out);
+    svk_logger(RAS_LOGGER, level_E::INFO, res.c_str());
 
   } else {
     ret = INVALID_INPUT_ERR;
