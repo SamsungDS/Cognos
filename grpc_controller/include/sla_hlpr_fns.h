@@ -16,8 +16,8 @@
 #include "svk_pub_sub_struct.h"
 #include "svk_publisher.h"
 
-#define SLA_CONFIG_DIR "/usr/local/svk/mgmt-fw/config/"
-#define SLA_CONFIG_FILE SLA_CONFIG_DIR "/device_sla_config.json"
+#define SVK_NODE_FEATURE_NAME "node"
+#define SVK_CXL_FEATURE_NAME "cxl"
 
 typedef struct {
   uint64_t avg_latency_ns;  // Device Latency in nanoseconds
@@ -30,12 +30,16 @@ typedef struct {
 
 typedef struct DeviceInfo_T {
   std::string node_name;
-  std::string device_name;
+  uint64_t device_id;
+  uint64_t device_serial;
   std::string device_type;
-  uint64_t total_capacity;
-  uint64_t available_capacity;
-  std::string status; /* attach/remote/direct */
+  std::string cxl_device_type;
+  std::string cxl_protocol;
+  uint64_t total_capacity_mb;
+  uint64_t available_capacity_mb;
+  std::string status;
   uint64_t numa;
+  uint64_t numa_attached;
   DeviceQOS device_qos;
   svk_slat_logic_output stats;
   bool free_flag;
@@ -50,8 +54,8 @@ typedef struct {
 
 class SLADeviceHelper {
  public:
-  SLADeviceHelper(std::string config_file);
-  int GetDeviceInfo(std::string node_name, std::string port);
+  SLADeviceHelper(){};
+  int GetDeviceDetails(std::string node_name, std::string port);
   int GetDeviceForAppRequirements(uint64_t sla_latency_ns, uint64_t size,
                                   std::vector<DeviceInfo>& devices);
   int SetSLADataForApp(std::string app_name, App_Device_List sla_data);
@@ -63,7 +67,6 @@ class SLADeviceHelper {
   ~SLADeviceHelper(){};
 
  private:
-  std::string config_file;
   std::vector<DeviceInfo> device_info;
   // unordered map with app_name and the SLA data
   std::unordered_map<std::string, App_Device_List> app_device_data;

@@ -79,5 +79,16 @@
           "log_file_size": 1048576,
           "sink_type": "rotating_file"
         }
+      },
+  "pubsub":
+      {
+        "ip_address": "127.0.0.1",
+        "port": 5555,
+        "topics": [
+          "metrics",
+          "events",
+          "alerts"
+        ],
+        "transport_type": "zmq"
       }
 }

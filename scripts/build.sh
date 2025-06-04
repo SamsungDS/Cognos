@@ -56,7 +56,6 @@ parse_options()
         RUN_TESTS=true
         CMAKE_OPTIONS+=("-DBUILD_TESTING=ON")
         CMAKE_OPTIONS+=("-DWITH_COVERAGE=ON")
-        CMAKE_OPTIONS+=("-DCXL_SLA_ENABLED=ON")
         shift
         ;;
         -p|--install-prefix)

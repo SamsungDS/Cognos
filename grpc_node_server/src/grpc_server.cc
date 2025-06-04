@@ -143,6 +143,7 @@ Servicer::~Servicer() {
              "gRPC Node server is shutdown");
   svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
              "Closing the logger instance as part of shutdown");
+  cleanup_svk(nullptr, nullptr);
 
   svk_logger_close(MGMT_FW_LOGGER_MODULE_NAME);
   return;
@@ -369,13 +370,13 @@ int StartNodeServer(std::string svk_conf_file, bool blocking) {
     std::signal(SIGABRT, signal_node_handler);
 
     if (blocking == true) {
-      while (gSignalNodeStatus.load() == -1) sleep(5);
+      while (gSignalNodeStatus.load() == -1) {
+        sleep(5);
+      }
       SetNodeStatus(svcr->get_svk_config(), "offline");
-      cleanup_svk(nullptr, nullptr);
       gSignalNodeStatus = -1;
       svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
                  "The node server is stopped gracefully");
-      delete svcr;
     } else {
       svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
                  "The node server is started in non-blocking mode for UT");
@@ -384,6 +385,9 @@ int StartNodeServer(std::string svk_conf_file, bool blocking) {
   } else {
     svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR,
                "Error in starting the node server instance");
+  }
+  if (svcr) {
+    delete svcr;
   }
   return status;
 }

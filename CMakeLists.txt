@@ -9,7 +9,6 @@ endif()
 
 option(BUILD_SHARED_LIBS "shared libs" OFF)
 option(BUILD_TESTING "Run unit tests" OFF)
-option(CXL_SLA_ENABLED "SLA is enabled to turn on certain features" OFF)
 
 set(SVK_GRPC_FW_VERSION_FULL ${GIT_REPO_VERSION_FULL})
 set(SVK_GRPC_FW_VERSION ${GIT_REPO_VERSION})

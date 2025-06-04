@@ -5,6 +5,7 @@
 #include <stdlib.h>
 
 #include <csignal>
+#include <regex>
 #include <thread>
 
 #include "client_library.h"
@@ -653,171 +654,33 @@ TEST(InitIntegrationTest, ProcessControllerCommandForAllocateMemoryFailure) {
   Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
   Status status = client.ProcessControllerCommand(&req, resp);
   ASSERT_EQ(status.ok(), false);
-  unlink(conf_file.c_str());
-}
 
-TEST(InitIntegrationTest, ProcessControllerCommandForAllocateMemoryFailure1) {
-  char *cw_dir = get_current_dir_name();
-  std::string conf_file = std::string(cw_dir) + "/conf.json";
-  create_svk_mgmt_fw_conf_json(
-      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
-      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
-      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
-
-  StartServer(conf_file, false);
-
-  Servicer *svcr(new Servicer(conf_file));
-  auto server = InitializeNodeServicer(svcr);
-  ASSERT_NE(server, nullptr);
-
-  svk::CommandRequest req;
-  svk::CommandResponse *resp = new (svk::CommandResponse);
-  req.set_cluster_id(DEFAULT_CLUSTER_ID);
   req.set_command_id("allocate_memory");
   req.set_feature_params("sla_latency_ns=10");
 
-  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
-  Status status = client.ProcessControllerCommand(&req, resp);
+  status = client.ProcessControllerCommand(&req, resp);
   ASSERT_EQ(status.ok(), false);
-  unlink(conf_file.c_str());
-}
 
-TEST(InitIntegrationTest, ProcessControllerCommandForAllocateMemoryFailure2) {
-  char *cw_dir = get_current_dir_name();
-  std::string conf_file = std::string(cw_dir) + "/conf.json";
-  create_svk_mgmt_fw_conf_json(
-      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
-      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
-      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
-
-  StartServer(conf_file, false);
-
-  Servicer *svcr(new Servicer(conf_file));
-  auto server = InitializeNodeServicer(svcr);
-  ASSERT_NE(server, nullptr);
-
-  svk::CommandRequest req;
-  svk::CommandResponse *resp = new (svk::CommandResponse);
-  req.set_cluster_id(DEFAULT_CLUSTER_ID);
   req.set_command_id("allocate_memory");
   req.set_feature_params("app_name=TestApp");
 
-  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
-  Status status = client.ProcessControllerCommand(&req, resp);
+  status = client.ProcessControllerCommand(&req, resp);
   ASSERT_EQ(status.ok(), false);
-  unlink(conf_file.c_str());
-}
 
-TEST(InitIntegrationTest, ProcessControllerCommandForAllocateMemoryFailure3) {
-  char *cw_dir = get_current_dir_name();
-  std::string conf_file = std::string(cw_dir) + "/conf.json";
-  create_svk_mgmt_fw_conf_json(
-      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
-      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
-      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
-
-  StartServer(conf_file, false);
-
-  Servicer *svcr(new Servicer(conf_file));
-  auto server = InitializeNodeServicer(svcr);
-  ASSERT_NE(server, nullptr);
-
-  svk::CommandRequest req;
-  svk::CommandResponse *resp = new (svk::CommandResponse);
-  req.set_cluster_id(DEFAULT_CLUSTER_ID);
   req.set_command_id("allocate_memory");
   req.set_feature_params("size=100");
 
-  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
-  Status status = client.ProcessControllerCommand(&req, resp);
+  status = client.ProcessControllerCommand(&req, resp);
   ASSERT_EQ(status.ok(), false);
-  unlink(conf_file.c_str());
-}
 
-TEST(InitIntegrationTest,
-     ProcessControllerCommandForAllocateMemoryFailure4WithZeroDevicesSLAMet) {
-  char *cw_dir = get_current_dir_name();
-  std::string conf_file = std::string(cw_dir) + "/conf.json";
-  create_svk_mgmt_fw_conf_json(
-      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
-      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
-      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
-
-  StartServer(conf_file, false);
-
-  Servicer *svcr(new Servicer(conf_file));
-  auto server = InitializeNodeServicer(svcr);
-  ASSERT_NE(server, nullptr);
-
-  svk::CommandRequest req;
-  svk::CommandResponse *resp = new (svk::CommandResponse);
-  req.set_cluster_id(DEFAULT_CLUSTER_ID);
-  req.set_command_id("allocate_memory");
-  req.set_feature_params("sla_latency_ns=1;app_name=TestApp;size=1024");
-
-  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
-  Status status = client.ProcessControllerCommand(&req, resp);
-  ASSERT_EQ(status.ok(), false);
-  unlink(conf_file.c_str());
-}
-
-TEST(InitIntegrationTest,
-     ProcessControllerCommandForAllocateMemoryFailure5WithLogicModule) {
-  char *cw_dir = get_current_dir_name();
-  std::string conf_file = std::string(cw_dir) + "/conf.json";
-  create_svk_mgmt_fw_conf_json(
-      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
-      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
-      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
-
-  StartServer(conf_file, false);
-
-  Servicer *svcr(new Servicer(conf_file));
-  auto server = InitializeNodeServicer(svcr);
-  ASSERT_NE(server, nullptr);
-
-  svk::CommandRequest req;
-  svk::CommandResponse *resp = new (svk::CommandResponse);
-  req.set_cluster_id(DEFAULT_CLUSTER_ID);
   req.set_command_id("allocate_memory");
   req.set_feature_params(
       "sla_latency_ns=10;app_name=TestApp;size=1024;logic_module=default");
 
-  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
-  Status status = client.ProcessControllerCommand(&req, resp);
+  status = client.ProcessControllerCommand(&req, resp);
   ASSERT_EQ(status.ok(), false);
+
   unlink(conf_file.c_str());
-}
-
-int create_device_sla_conf_json() {
-  char command[256];
-  char data[1024];
-  FILE *fp;
-  struct stat fstat;
-  int status = -1;
-
-  if (stat(SLA_CONFIG_FILE, &fstat) == 0) {
-    return 0;
-  }
-
-  sprintf(command, "mkdir -p %s", SLA_CONFIG_DIR);
-  status = system(command);
-  if (status != 0) {
-    return -1;
-  }
-
-  memset(data, 0, sizeof(data));
-  strcpy(data,
-         "[{\"type\": \"FM_DIRECT_CMMD\",\"Devices\": [{\"dev_name\": "
-         "\"DEV1-256G\",\"dev_size\": \"274877906944\",\"dev_numa\": "
-         "0,\"sla_avg_latency_ns\": 10, \"node_name\": \"localhost\"}]}]");
-  fp = fopen(SLA_CONFIG_FILE, "w+");
-  if (fp == NULL) {
-    return -1;
-  }
-  fwrite((void *)&data[0], strlen(data), 1, fp);
-  fclose(fp);
-  return 0;
 }
 
 int CheckPoller() {
@@ -1060,11 +923,63 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStart) {
   unlink(conf_file.c_str());
 }
 
+// Trimmed down version of node feature output
+#define NODE_FEATURE_OUTPUT                                              \
+  "{\"pci-info\":[{\"NUMA "                                              \
+  "node\":\"0\",\"device_manufacturer\":\"Samsung Electronics Co "       \
+  "Ltd\",\"device_type\":\"nvme\",\"pci_address\":\"2c:00.0\"},{\"NUMA " \
+  "node\":\"0\",\"device_manufacturer\":\"Montage Technology Co., "      \
+  "Ltd.\",\"device_type\":\"cxl\",\"pci_address\":\"4c:00.0\"},{\"NUMA " \
+  "node\":\"0\",\"device_manufacturer\":\"Samsung Electronics Co "       \
+  "Ltd\",\"device_type\":\"nvme\",\"pci_address\":\"6e:00.0\"},{\"NUMA " \
+  "node\":\"0\",\"device_manufacturer\":\"Samsung Electronics Co "       \
+  "Ltd\",\"device_type\":\"nvme\",\"pci_address\":\"6f:00.0\"},{\"NUMA " \
+  "node\":\"1\",\"device_manufacturer\":\"Montage Technology Co., "      \
+  "Ltd.\",\"device_type\":\"cxl\",\"pci_address\":\"b8:00.0\"}]}"
+#define CXL_DEVICE_LIST_OUTPUT                                                \
+  "{\"devices\":[{\"device_id\":29690035288064,\"vendor_device_type\":\"CMM-" \
+  "D\",\"pcie_addr\":\"0000:b8:00.0\"}]}"
+#define CXL_DEVICE_INFO_OUTPUT                                               \
+  "{\"api_version\":1.0,\"device_id\":29690035288064,\"manufacturer\":"      \
+  "\"Samsung\",\"serial_number\":305419896,\"FW_revision\":\"1.0.0\","       \
+  "\"location\":\"0000:b8:00.0\",\"total_capacity_MB\":129007,\"feature_"    \
+  "supported\":\"basic\",\"vendor_device_type\":\"CMM-D\",\"cxl_device_"     \
+  "type\":\"Type3\",\"protocol\":\"CXL "                                     \
+  "2.0\",\"port_type\":\"root\",\"mode_discovered\":\"auto\",\"connection_"  \
+  "type\":\"CXL.mem\",\"domain_type\":\"PCIe\",\"domain_id\":0,\"link_"      \
+  "speed\":16,\"link_width\":8,\"available_capacity_MB\":127080,\"status\":" \
+  "\"active\",\"aspm_active\":false,\"sris_active\":false,\"lock_active\":"  \
+  "false,\"numa_attached\":1,\"capabilities\":{\"Power Management "          \
+  "version\":1},\"advertised_qos\":{\"avg_latency\":120,\"p99_latency\":"    \
+  "350,\"io_per_sec\":50000,\"BW_per_sec\":1000000,\"io_size\":4096,"        \
+  "\"qd\":32}}"
+
 class FakeNodeServicer : public Servicer {
  public:
   FakeNodeServicer(std::string conf_file) : Servicer(conf_file){};
   Status ProcessNodeCommand(ServerContext *ctxt, const svk::CommandRequest *req,
                             svk::CommandResponse *resp) override {
+    if (req->command_name().length() > 0) {
+      if (req->command_name() == "get_node_info") {
+        svk::CommandResponse_NodeResponse *response =
+            resp->add_node_responses();
+        response->set_output(NODE_FEATURE_OUTPUT);
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      } else if (req->command_name() == "list_devices") {
+        svk::CommandResponse_NodeResponse *response =
+            resp->add_node_responses();
+        response->set_output(CXL_DEVICE_LIST_OUTPUT);
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      } else if (req->command_name() == "get_device_info") {
+        svk::CommandResponse_NodeResponse *response =
+            resp->add_node_responses();
+        response->set_output(CXL_DEVICE_INFO_OUTPUT);
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      }
+    }
     std::cout << "FakeProcessNodeCommand called for the command "
               << req->feature_params() << std::endl;
     return Status::OK;
@@ -1095,6 +1010,33 @@ TEST(InitIntegrationTest, AllocateMemorySuccessWithFakeProcessNodeCommand) {
   Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
   Status status = client.ProcessControllerCommand(&req, resp);
   ASSERT_EQ(status.ok(), true);
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest,
+     ProcessControllerCommandForAllocateMemoryFailureWithZeroDevicesSLAMet) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  Servicer *svcr(new FakeNodeServicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  svk::CommandRequest req;
+  svk::CommandResponse *resp = new (svk::CommandResponse);
+  req.set_cluster_id(DEFAULT_CLUSTER_ID);
+  req.set_command_id("allocate_memory");
+  req.set_feature_params("sla_latency_ns=50;app_name=TestApp;size=1024");
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status status = client.ProcessControllerCommand(&req, resp);
+  ASSERT_EQ(status.ok(), false);
   unlink(conf_file.c_str());
 }
 
@@ -1164,7 +1106,30 @@ class FakeNodeServicerForTM : public Servicer {
   FakeNodeServicerForTM(std::string conf_file) : Servicer(conf_file){};
   Status ProcessNodeCommand(ServerContext *ctxt, const svk::CommandRequest *req,
                             svk::CommandResponse *resp) override {
-    std::string feature_params = req->feature_params();
+    if (req->command_name().length() > 0) {
+      if (req->command_name() == "get_node_info") {
+        svk::CommandResponse_NodeResponse *response =
+            resp->add_node_responses();
+        response->set_output(NODE_FEATURE_OUTPUT);
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      } else if (req->command_name() == "list_devices") {
+        svk::CommandResponse_NodeResponse *response =
+            resp->add_node_responses();
+        response->set_output(CXL_DEVICE_LIST_OUTPUT);
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      } else if (req->command_name() == "get_device_info") {
+        svk::CommandResponse_NodeResponse *response =
+            resp->add_node_responses();
+        response->set_output(CXL_DEVICE_INFO_OUTPUT);
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      }
+    }
+
+    std::string feature_params =
+        req->feature_params().length() ? req->feature_params() : "";
     std::cout << "FakeProcessNodeCommand called for the command "
               << feature_params << std::endl;
     if (feature_params.find("StartTuning") != std::string::npos) {
@@ -1236,5 +1201,190 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForTMOperation) {
                 "deviated than expected - Reported latency_ns = 1000") !=
                 std::string::npos);
 
+  unlink(conf_file.c_str());
+}
+
+class FakeNodeServicerWithoutCXLDevices : public Servicer {
+ public:
+  FakeNodeServicerWithoutCXLDevices(std::string conf_file)
+      : Servicer(conf_file){};
+  Status ProcessNodeCommand(ServerContext *ctxt, const svk::CommandRequest *req,
+                            svk::CommandResponse *resp) override {
+    if (req->command_name().length() > 0) {
+      if (req->command_name() == "get_node_info") {
+        std::string output = NODE_FEATURE_OUTPUT;
+        output = std::regex_replace(
+            output, std::regex("cxl", std::regex_constants::icase), "test");
+        svk::CommandResponse_NodeResponse *response =
+            resp->add_node_responses();
+        response->set_output(output);
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      }
+    }
+    std::cout << "FakeNodeServicerWithoutCXLDevices called for the command "
+              << req->feature_params() << std::endl;
+    return Status(grpc::INVALID_ARGUMENT, "Should not land here");
+  }
+};
+
+TEST(InitIntegrationTest, AllocateMemoryFailureWithoutCXLDevices) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  Servicer *svcr(new FakeNodeServicerWithoutCXLDevices(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  svk::CommandRequest req;
+  svk::CommandResponse *resp = new (svk::CommandResponse);
+  req.set_cluster_id(DEFAULT_CLUSTER_ID);
+  req.set_command_id("allocate_memory");
+  req.set_feature_params(
+      "sla_latency_ns=1000;app_name=TestApp;size=1024;logic_module=default");
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status status = client.ProcessControllerCommand(&req, resp);
+  ASSERT_EQ(status.ok(), false);
+  unlink(conf_file.c_str());
+}
+
+class FakeNodeServicerInvalidCXLDeviceList : public Servicer {
+ public:
+  FakeNodeServicerInvalidCXLDeviceList(std::string conf_file)
+      : Servicer(conf_file){};
+  Status ProcessNodeCommand(ServerContext *ctxt, const svk::CommandRequest *req,
+                            svk::CommandResponse *resp) override {
+    if (req->command_name().length() > 0) {
+      if (req->command_name() == "get_node_info") {
+        svk::CommandResponse_NodeResponse *response =
+            resp->add_node_responses();
+        response->set_output(NODE_FEATURE_OUTPUT);
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      } else if (req->command_name() == "list_devices") {
+        svk::CommandResponse_NodeResponse *response =
+            resp->add_node_responses();
+        response->set_output("{\"devices\": \"xyz\"}");
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      } else if (req->command_name() == "get_device_info") {
+        svk::CommandResponse_NodeResponse *response =
+            resp->add_node_responses();
+        response->set_output(CXL_DEVICE_INFO_OUTPUT);
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      }
+    }
+
+    std::string feature_params =
+        req->feature_params().length() ? req->feature_params() : "";
+    std::cout << "FakeProcessNodeCommand called for the command "
+              << feature_params << std::endl;
+    if (feature_params.find("StartTuning") != std::string::npos) {
+      svk::CommandResponse_NodeResponse *response = resp->add_node_responses();
+      response->set_output("{status = \"0\"}");
+    }
+    return Status::OK;
+  }
+};
+
+TEST(InitIntegrationTest, AllocateMemoryFailureInvalidCXLDeviceList) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  Servicer *svcr(new FakeNodeServicerInvalidCXLDeviceList(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_EQ(server, nullptr);
+
+  svk::CommandRequest req;
+  svk::CommandResponse *resp = new (svk::CommandResponse);
+  req.set_cluster_id(DEFAULT_CLUSTER_ID);
+  req.set_command_id("allocate_memory");
+  req.set_feature_params(
+      "sla_latency_ns=1000;app_name=TestApp;size=1024;logic_module=default");
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status status = client.ProcessControllerCommand(&req, resp);
+  ASSERT_EQ(status.ok(), false);
+  unlink(conf_file.c_str());
+}
+
+class FakeNodeServicerInvalidCXLDeviceInfo : public Servicer {
+ public:
+  FakeNodeServicerInvalidCXLDeviceInfo(std::string conf_file)
+      : Servicer(conf_file){};
+  Status ProcessNodeCommand(ServerContext *ctxt, const svk::CommandRequest *req,
+                            svk::CommandResponse *resp) override {
+    if (req->command_name().length() > 0) {
+      if (req->command_name() == "get_node_info") {
+        svk::CommandResponse_NodeResponse *response =
+            resp->add_node_responses();
+        response->set_output(NODE_FEATURE_OUTPUT);
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      } else if (req->command_name() == "list_devices") {
+        svk::CommandResponse_NodeResponse *response =
+            resp->add_node_responses();
+        response->set_output(CXL_DEVICE_LIST_OUTPUT);
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      } else if (req->command_name() == "get_device_info") {
+        svk::CommandResponse_NodeResponse *response =
+            resp->add_node_responses();
+        response->set_output("{}");
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      }
+    }
+
+    std::string feature_params =
+        req->feature_params().length() ? req->feature_params() : "";
+    std::cout << "FakeProcessNodeCommand called for the command "
+              << feature_params << std::endl;
+    if (feature_params.find("StartTuning") != std::string::npos) {
+      svk::CommandResponse_NodeResponse *response = resp->add_node_responses();
+      response->set_output("{status = \"0\"}");
+    }
+    return Status::OK;
+  }
+};
+
+TEST(InitIntegrationTest, AllocateMemoryFailureInvalidCXLDeviceInfo) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  Servicer *svcr(new FakeNodeServicerInvalidCXLDeviceInfo(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_EQ(server, nullptr);
+
+  svk::CommandRequest req;
+  svk::CommandResponse *resp = new (svk::CommandResponse);
+  req.set_cluster_id(DEFAULT_CLUSTER_ID);
+  req.set_command_id("allocate_memory");
+  req.set_feature_params(
+      "sla_latency_ns=1000;app_name=TestApp;size=1024;logic_module=default");
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status status = client.ProcessControllerCommand(&req, resp);
+  ASSERT_EQ(status.ok(), false);
   unlink(conf_file.c_str());
 }

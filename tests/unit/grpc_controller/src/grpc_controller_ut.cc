@@ -44,37 +44,6 @@ int create_svk_mgmt_fw_conf_json(std::string conf_file,
   return 0;
 }
 
-int create_device_sla_conf_json() {
-  char command[256];
-  char data[1024];
-  FILE *fp;
-  struct stat fstat;
-  int status = -1;
-
-  if (stat(SLA_CONFIG_FILE, &fstat) == 0) {
-    return 0;
-  }
-
-  sprintf(command, "mkdir -p %s", SLA_CONFIG_DIR);
-  status = system(command);
-  if (status != 0) {
-    return -1;
-  }
-
-  memset(data, 0, sizeof(data));
-  strcpy(data,
-         "[{\"type\": \"FM_DIRECT_CMMD\",\"Devices\": [{\"dev_name\": "
-         "\"DEV1-256G\",\"dev_size\": \"274877906944\",\"dev_numa\": "
-         "0,\"sla_avg_latency_ns\": 10, \"node_name\": \"localhost\"}]}]");
-  fp = fopen(SLA_CONFIG_FILE, "w+");
-  if (fp == NULL) {
-    return -1;
-  }
-  fwrite((void *)&data[0], strlen(data), 1, fp);
-  fclose(fp);
-  return 0;
-}
-
 int create_svk_mgmt_fw_conf_json_without_logger(std::string conf_file) {
   namespace pt = boost::property_tree;
   pt::ptree root;
@@ -329,32 +298,6 @@ class MockTestController : public ::testing::Test {
   std::shared_ptr<Server> server_;
 };
 
-TEST_F(MockTestController, RegisterNodeWithoutDeviceSLAConf) {
-  Status grpc_status;
-  std::string cluster_id = "CLUSTER_REGISTER_NODE_SLA";
-  std::string node_id = "registernodesla.localdomain.com";
-  std::string node_port = "9998";
-
-  unlink(SLA_CONFIG_FILE);
-  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-             "RegisterNodeWithoutDeviceSLAConf UT called");
-
-  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
-
-  svk::RegisterRequest *req(new svk::RegisterRequest());
-  svk::RegisterResponse *resp(new svk::RegisterResponse());
-  req->set_cluster_name(cluster_id);
-  req->set_node_ip(node_id);
-  req->set_node_port(node_port);
-
-  grpc_status = client.RegisterNode(req, resp);
-  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
-             "Just for flushing logs with RegisterNode");
-  svk_logger_close(CONTROLLER_LOGGER_MODULE_NAME);
-
-  ASSERT_EQ(grpc_status.ok(), true);
-}
-
 TEST_F(MockTestController, RegisterNode) {
   Status grpc_status;
   std::string cluster_id = "CLUSTER_REGISTER_NODE";
@@ -364,7 +307,6 @@ TEST_F(MockTestController, RegisterNode) {
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
              "RegisterNode UT called");
 
-  ASSERT_EQ(create_device_sla_conf_json(), 0);
   Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
 
   svk::RegisterRequest *req(new svk::RegisterRequest());
@@ -427,7 +369,6 @@ TEST_F(MockTestController, RegisterNodeWithoutClusterName) {
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
              "RegisterNode UT called");
 
-  ASSERT_EQ(create_device_sla_conf_json(), 0);
   Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
 
   svk::RegisterRequest *req(new svk::RegisterRequest());
@@ -477,7 +418,6 @@ TEST_F(MockTestController, RegisterNodeWithMultipleNodesInCluster) {
   std::string node_id = "registernode.localdomain.com";
   std::string node_port = "9998";
 
-  ASSERT_EQ(create_device_sla_conf_json(), 0);
   Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
 
   svk::RegisterRequest *req(new svk::RegisterRequest());
@@ -962,7 +902,6 @@ TEST_F(MockTestController, ListNodes) {
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
              "RegisterNode UT called");
 
-  ASSERT_EQ(create_device_sla_conf_json(), 0);
   Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
 
   svk::RegisterRequest *reg_req(new svk::RegisterRequest());
@@ -1811,8 +1750,6 @@ TEST_F(MockTestController, RegisterSameNodeAgain) {
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
              "RegisterSameNodeAgain UT called");
 
-  ASSERT_EQ(create_device_sla_conf_json(), 0);
-
   Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
 
   svk::RegisterRequest *req(new svk::RegisterRequest());
@@ -2217,207 +2154,35 @@ TEST_F(MockTestController, ListClusterNodesWithInvalidClusterID) {
   ASSERT_EQ(grpc_status.ok(), false);
 }
 
-TEST(SLAFunction, DeviceSLAHelperFunctionFailure) {
-  FILE *fp = nullptr;
-  fp = fopen("test.conf", "w+");
-  fclose(fp);
-  SLADeviceHelper device_hlpr_class = SLADeviceHelper("test.conf");
-  int status = device_hlpr_class.GetDeviceInfo("localhost", "9998");
-  ASSERT_EQ(status, -1);
-}
+TEST_F(MockTestController, RegisterNodeWithoutDeviceSLAConf) {
+  Status grpc_status;
+  std::string cluster_id = "CLUSTER_REGISTER_NODE_SLA";
+  std::string node_id = "registernodesla.localdomain.com";
+  std::string node_port = "9998";
 
-TEST(SLAFunction, DeviceSLAHelperFunctionSuccess) {
-  FILE *fp = nullptr;
-  char data[1024];
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+             "RegisterNodeWithoutDeviceSLAConf UT called");
 
-  memset(data, 0, sizeof(data));
-  strcpy(data,
-         "[{\"type\": \"FM_DIRECT_CMMD\",\"Devices\": [{\"dev_name\": "
-         "\"DEV1-256G\",\"dev_size\": \"274877906944\",\"dev_numa\": "
-         "0,\"sla_avg_latency_ns\": 10, \"node_name\": \"localhost\"}]}]");
-  fp = fopen("test.conf", "w+");
-  fwrite((void *)&data[0], strlen(data), 1, fp);
-  fclose(fp);
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
 
-  SLADeviceHelper device_hlpr_class = SLADeviceHelper("test.conf");
-  int status = device_hlpr_class.GetDeviceInfo("localhost", "9998");
-  ASSERT_EQ(status, 0);
-}
+  svk::RegisterRequest *req(new svk::RegisterRequest());
+  svk::RegisterResponse *resp(new svk::RegisterResponse());
+  req->set_cluster_name(cluster_id);
+  req->set_node_name(node_id);
+  req->set_node_ip("127.0.0.1");
+  req->set_node_port(node_port);
 
-TEST(SLAFunction, DeviceSLAHelperGetDeviceForAppRequirements) {
-  FILE *fp = nullptr;
-  char data[1024];
-  std::vector<DeviceInfo> devices;
+  grpc_status = client.RegisterNode(req, resp);
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+             "Just for flushing logs with RegisterNodeWithoutDeviceSLAConf");
+  svk_logger_flush(CONTROLLER_LOGGER_MODULE_NAME);
 
-  memset(data, 0, sizeof(data));
-  strcpy(data,
-         "[{\"type\": \"FM_DIRECT_CMMD\",\"Devices\": [{\"dev_name\": "
-         "\"DEV1-256G\",\"dev_size\": \"274877906944\",\"dev_numa\": "
-         "0,\"sla_avg_latency_ns\": 10, \"node_name\": \"localhost\"}]}]");
-  fp = fopen("test.conf", "w+");
-  fwrite((void *)&data[0], strlen(data), 1, fp);
-  fclose(fp);
+  std::string search_str =
+      "Error in getting node info for the node 127.0.0.1 or the CXL device is "
+      "not present";
+  EXPECT_TRUE(is_str_in_log(search_str));
 
-  SLADeviceHelper device_hlpr_class = SLADeviceHelper("test.conf");
-  int status = device_hlpr_class.GetDeviceInfo("localhost", "9998");
-
-  status = device_hlpr_class.GetDeviceForAppRequirements(50, 100, devices);
-
-  ASSERT_EQ(status, 0);
-  ASSERT_EQ(devices.size(), 1);
-}
-
-TEST(SLAFunction, DeviceSLAHelperGetDeviceForAppRequirementsNotMet) {
-  FILE *fp = nullptr;
-  char data[1024];
-  std::vector<DeviceInfo> devices;
-
-  memset(data, 0, sizeof(data));
-  strcpy(data,
-         "[{\"type\": \"FM_DIRECT_CMMD\",\"Devices\": [{\"dev_name\": "
-         "\"DEV1-256G\",\"dev_size\": \"274877906944\",\"dev_numa\": "
-         "0,\"sla_avg_latency_ns\": 10, \"node_name\": \"localhost\"}]}]");
-  fp = fopen("test.conf", "w+");
-  fwrite((void *)&data[0], strlen(data), 1, fp);
-  fclose(fp);
-
-  SLADeviceHelper device_hlpr_class = SLADeviceHelper("test.conf");
-  int status = device_hlpr_class.GetDeviceInfo("localhost", "9998");
-  ASSERT_EQ(status, 0);
-
-  status = device_hlpr_class.GetDeviceForAppRequirements(5, 100, devices);
-
-  ASSERT_EQ(status, -1);
-  ASSERT_EQ(devices.size(), 0);
-}
-
-TEST(SLAFunction, DeviceSLAHelperGetDeviceForAppRequirementsAndUpdate) {
-  FILE *fp = nullptr;
-  char data[1024];
-  std::vector<DeviceInfo> devices;
-  App_Device_List dev_data;
-
-  memset(data, 0, sizeof(data));
-  strcpy(data,
-         "[{\"type\": \"FM_DIRECT_CMMD\",\"Devices\": [{\"dev_name\": "
-         "\"DEV1-256G\",\"dev_size\": \"274877906944\",\"dev_numa\": "
-         "0,\"sla_avg_latency_ns\": 10, \"node_name\": \"localhost\"}]}]");
-  fp = fopen("test.conf", "w+");
-  fwrite((void *)&data[0], strlen(data), 1, fp);
-  fclose(fp);
-
-  SLADeviceHelper device_hlpr_class = SLADeviceHelper("test.conf");
-  int status = device_hlpr_class.GetDeviceInfo("localhost", "9998");
-  ASSERT_EQ(status, 0);
-
-  status = device_hlpr_class.GetDeviceForAppRequirements(50, 100, devices);
-
-  ASSERT_EQ(status, 0);
-  ASSERT_EQ(devices.size(), 1);
-
-  dev_data.appLatencyns = 50;
-  dev_data.device_info = devices;
-
-  status = device_hlpr_class.SetSLADataForApp("TestingApp", dev_data);
-  ASSERT_EQ(status, 0);
-}
-
-TEST(SLAFunction, DeviceUnregister) {
-  FILE *fp = nullptr;
-  char data[1024];
-  std::vector<DeviceInfo> devices;
-  App_Device_List dev_data;
-
-  memset(data, 0, sizeof(data));
-  strcpy(data,
-         "[{\"type\": \"FM_DIRECT_CMMD\",\"Devices\": [{\"dev_name\": "
-         "\"DEV1-256G\",\"dev_size\": \"274877906944\",\"dev_numa\": "
-         "0,\"sla_avg_latency_ns\": 10, \"node_name\": \"localhost\"},"
-         "{\"dev_name\": \"DEV2-256G\",\"dev_size\": "
-         "\"274877906944\",\"dev_numa\": "
-         "2,\"sla_avg_latency_ns\": 10, \"node_name\": \"localhost\"}]}]");
-  fp = fopen("test.conf", "w+");
-  fwrite((void *)&data[0], strlen(data), 1, fp);
-  fclose(fp);
-
-  SLADeviceHelper device_hlpr_class = SLADeviceHelper("test.conf");
-  int status = device_hlpr_class.GetDeviceInfo("localhost", "9998");
-  ASSERT_EQ(status, 0);
-
-  status = device_hlpr_class.UnregisterDevicesForNode("localhost");
-  ASSERT_EQ(status, 0);
-}
-
-TEST(SLAFunction, DeviceUnregisterWithDeviceInUse) {
-  FILE *fp = nullptr;
-  char data[1024];
-  std::string logger_msg;
-
-  memset(data, 0, sizeof(data));
-  strcpy(data,
-         "[{\"type\": \"FM_DIRECT_CMMD\",\"Devices\": [{\"dev_name\": "
-         "\"DEV1-256G\",\"dev_size\": \"274877906944\",\"dev_numa\": "
-         "0,\"sla_avg_latency_ns\": 10, \"node_name\": \"localhost\"},"
-         "{\"dev_name\": \"DEV2-256G\",\"dev_size\": "
-         "\"274877906944\",\"dev_numa\": "
-         "2,\"sla_avg_latency_ns\": 10, \"node_name\": \"localhost\"}]}]");
-  fp = fopen("test.conf", "w+");
-  fwrite((void *)&data[0], strlen(data), 1, fp);
-  fclose(fp);
-
-  SLADeviceHelper device_hlpr_class = SLADeviceHelper("test.conf");
-
-  int status = device_hlpr_class.GetDeviceInfo("localhost", "9998");
-  ASSERT_EQ(status, 0);
-
-  std::vector<DeviceInfo> devices = device_hlpr_class.GetDevices();
-  DeviceInfo dev = devices.front();
-  dev.free_flag = false;
-  devices.front() = dev;
-  device_hlpr_class.SetDevices(devices);
-  std::vector<DeviceInfo> ndevices = device_hlpr_class.GetDevices();
-  status = device_hlpr_class.UnregisterDevicesForNode("localhost");
-  ASSERT_EQ(status, -1);
-}
-
-TEST(SLAFunction, DeviceUnregisterWithInvalidNode) {
-  FILE *fp = nullptr;
-  char data[1024];
-  std::vector<DeviceInfo> devices;
-  App_Device_List dev_data;
-
-  memset(data, 0, sizeof(data));
-  strcpy(data,
-         "[{\"type\": \"FM_DIRECT_CMMD\",\"Devices\": [{\"dev_name\": "
-         "\"DEV1-256G\",\"dev_size\": \"274877906944\",\"dev_numa\": "
-         "0,\"sla_avg_latency_ns\": 10, \"node_name\": \"localhost\"}]}]");
-  fp = fopen("test.conf", "w+");
-  fwrite((void *)&data[0], strlen(data), 1, fp);
-  fclose(fp);
-
-  SLADeviceHelper device_hlpr_class = SLADeviceHelper("test.conf");
-  int status = device_hlpr_class.GetDeviceInfo("localhost", "9998");
-  ASSERT_EQ(status, 0);
-
-  status = device_hlpr_class.UnregisterDevicesForNode("localhost1");
-  ASSERT_EQ(status, 0);
-}
-
-TEST(SLAFunction, SLADeviceHelperDestructor) {
-  FILE *fp = nullptr;
-  char data[1024];
-
-  memset(data, 0, sizeof(data));
-  strcpy(data,
-         "[{\"type\": \"FM_DIRECT_CMMD\",\"Devices\": [{\"dev_name\": "
-         "\"DEV1-256G\",\"dev_size\": \"274877906944\",\"dev_numa\": "
-         "0,\"sla_avg_latency_ns\": 10, \"node_name\": \"localhost\"}]}]");
-  fp = fopen("test.conf", "w+");
-  fwrite((void *)&data[0], strlen(data), 1, fp);
-  fclose(fp);
-
-  SLADeviceHelper device_hlpr_class = SLADeviceHelper("test.conf");
-  device_hlpr_class.~SLADeviceHelper();
+  ASSERT_EQ(grpc_status.ok(), true);
 }
 
 TEST(ServicerFunctions, ServicerFunctionValidation) {
@@ -2719,7 +2484,7 @@ TEST(InitControllerTest, InitSuccessWithPubSubConfig) {
   boost::property_tree::write_json(conf_file, pt);
   FILE *fp = fopen(conf_file.c_str(), "r");
   char buf[4096];
-  fread(buf, 4096, 1, fp);
+  ASSERT_LE(fread(buf, 4096, 1, fp), 4096);
   fclose(fp);
   std::cout << "PUBSUB conf " << buf << std::endl;
 
