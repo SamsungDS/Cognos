@@ -7,10 +7,6 @@ include_directories(${COMMON_INC_DIR})
 link_directories(${CMAKE_SOURCE_DIR}/build/grpc_controller)
 add_executable(svkgrpccontroller_ut grpc_controller_ut.cc)
 
-if (CXL_SLA_ENABLED)
-  add_compile_definitions(CXL_SLA_ENABLED)
-endif()
-
 target_link_libraries(
   svkgrpccontroller_ut
   GTest::gtest_main

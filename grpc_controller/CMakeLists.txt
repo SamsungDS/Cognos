@@ -19,11 +19,6 @@ set(GRPC_INC_FILES ${COMMON_INC_DIR}/grpc_hdr.h ${COMMON_INC_DIR}/client_library
 endif()
 set(INC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include/ ${json_SOURCE_DIR}/include)
 
-message(STATUS "SLA compilation flag is ${CXL_SLA_ENABLED}")
-if (CXL_SLA_ENABLED)
-add_compile_definitions(CXL_SLA_ENABLED)
-endif()
-
 add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
 add_executable(${PROJECT_NAME} ${SRCS})
 

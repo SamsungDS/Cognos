@@ -23,7 +23,7 @@ std::string gTransportType;
 std::vector<std::string> gTopicsVector;
 
 const std::unique_ptr<SLADeviceHelper> g_sla_device_hlpr =
-    std::make_unique<SLADeviceHelper>(SLA_CONFIG_FILE);
+    std::make_unique<SLADeviceHelper>();
 
 static int read_subscriber_settings_from_config_file(
     const char *config_file, std::string &port, std::string &transport_type,
@@ -330,8 +330,12 @@ Status ControllerServicer::RegisterNode(ServerContext *ctxt,
     }
   }
 
-  device_info_status = g_sla_device_hlpr->GetDeviceInfo(node_ip, node_port);
+  device_info_status =
+      g_sla_device_hlpr->GetDeviceDetails(node.node_ip, node.node_port);
   if (device_info_status != 0) {
+    logger_str = "Failed to get device details";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
     return Status(grpc::UNKNOWN, "Failed to get devices");
   }
   m_config_changed = true;
@@ -466,6 +470,7 @@ Status ControllerServicer::ProcessAllocateMemory(const svk::CommandRequest *req,
   char logic_module[128];
   std::vector<DeviceInfo> app_devices;
   int status = -1;
+  bool device_found = false;
 
   feature_params = req->feature_params();
 
@@ -528,6 +533,7 @@ Status ControllerServicer::ProcessAllocateMemory(const svk::CommandRequest *req,
     }
 
     if (device_names.length() != 0) {
+      device_found = true;
       req_node.set_node_id(node_name);
       req_node.set_feature_id(feature_id::SLA_TRACKER);
       feature_params = "app_name=" + std::string(app_name) + ";" +
@@ -557,6 +563,15 @@ Status ControllerServicer::ProcessAllocateMemory(const svk::CommandRequest *req,
         return cmd_status;
       }
     }
+  }
+
+  if (device_found == false) {
+    logger_str =
+        "ProcessAllocateMemory failed because of the device details mismatch "
+        "or no devices available for the given nodes";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    return Status(grpc::UNKNOWN, logger_str);
   }
 
   App_Device_List app_device_data;
@@ -1253,6 +1268,10 @@ Status ControllerServicer::FeatureAPI(ServerContext *ctxt,
   cmd_req.set_feature_name(feature_name);
   cmd_req.set_command_name(command_name);
   cmd_req.set_command_params(command_params);
+
+  logger_str = "FeatureAPI called with feature: " + feature_name +
+               " command: " + command_name + " params: " + command_params;
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
 
   // Not doing redundant valid param checks
   status = ProcessControllerCommand(ctxt, &cmd_req, &cmd_resp);

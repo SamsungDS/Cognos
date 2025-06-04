@@ -1,114 +1,299 @@
 #include "sla_hlpr_fns.h"
 
+#include <nlohmann/json.hpp>
+
 /* Helper functions */
-int parseJSONOutput(std::string json_data, std::vector<DeviceInfo>& dev_data) {
+static int parseJSONOutputOfDeviceList(
+    std::string& json_data, std::vector<uint64_t>& device_id_vector) {
   int status = -1;
-  std::string device_type;
-  boost::property_tree::ptree setup_info_pt;
-  boost::property_tree::ptree device_sla_pt;
   std::string logger_str;
 
   try {
-    std::istringstream iss(json_data);
-    boost::property_tree::read_json(iss, setup_info_pt);
+    logger_str = "JSON output " + json_data;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::DEBUG,
+               logger_str.c_str());
 
-    for (const auto& element : setup_info_pt) {
-      // Each element is a ptree itself
-      device_type = element.second.get<std::string>("type");
-      for (const auto& device_ptree : element.second.get_child("Devices")) {
-        DeviceInfo dev_info;
-        dev_info.device_type = device_type;
-        dev_info.device_name = device_ptree.second.get<std::string>("dev_name");
-        dev_info.total_capacity = device_ptree.second.get<uint64_t>("dev_size");
-        dev_info.node_name = device_ptree.second.get<std::string>("node_name");
-        dev_info.numa = device_ptree.second.get<uint64_t>("dev_numa");
-        dev_info.device_qos.avg_latency_ns =
-            device_ptree.second.get<uint64_t>("sla_avg_latency_ns");
-        dev_info.free_flag = true;
+    nlohmann::json device_list_json = nlohmann::json::parse(json_data);
 
-        dev_data.push_back(dev_info);
-      }
+    // Get the devices array
+    for (const auto& device : device_list_json["devices"]) {
+      uint64_t device_id = device["device_id"].get<uint64_t>();
+      device_id_vector.push_back(device_id);
     }
   } catch (std::exception& e) {
     std::string exc_message = e.what();
-    logger_str = "failed to process command setupinfo. Error -> " + exc_message;
+    logger_str = "failed to parse JSON output for GetDeviceList. Error -> " +
+                 exc_message;
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                logger_str.c_str());
     return status;
   }
-
   status = 0;
   return status;
 }
 
-SLADeviceHelper::SLADeviceHelper(std::string config_file) {
-  this->config_file = config_file;
+static int parseJSONOutputOfDeviceInfo(std::string node_name,
+                                       std::string& json_data,
+                                       DeviceInfo& dev_info) {
+  int status = -1;
+  nlohmann::json response_json;
+  std::string logger_str;
+
+  try {
+    logger_str = "JSON output " + json_data;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::DEBUG,
+               logger_str.c_str());
+
+    response_json = nlohmann::json::parse(json_data);
+
+    dev_info.node_name = node_name;
+    dev_info.device_id = response_json["device_id"];
+    dev_info.device_serial = response_json["serial_number"];
+    dev_info.device_type = response_json["vendor_device_type"];
+    dev_info.cxl_device_type = response_json["cxl_device_type"];
+    dev_info.cxl_protocol = response_json["protocol"];
+    dev_info.total_capacity_mb = response_json["total_capacity_MB"];
+    dev_info.available_capacity_mb = response_json["available_capacity_MB"];
+    // TODO: Need to fix on the correct way of reporting the numa_attached vs
+    // the actual numa of the device
+    dev_info.numa_attached = response_json["numa_attached"];
+    dev_info.numa = dev_info.numa_attached;
+    dev_info.status = response_json["status"];
+
+    // QOS fields
+    nlohmann::json qos_json = response_json["advertised_qos"];
+
+    dev_info.device_qos.avg_latency_ns =
+        static_cast<uint64_t>(qos_json["avg_latency"]);
+    dev_info.device_qos.p99_latency =
+        static_cast<uint64_t>(qos_json["p99_latency"]);
+    dev_info.device_qos.io_per_sec =
+        static_cast<uint64_t>(qos_json["io_per_sec"]);
+    dev_info.device_qos.bw_per_sec =
+        static_cast<uint64_t>(qos_json["BW_per_sec"]);
+    dev_info.device_qos.io_size = static_cast<uint64_t>(qos_json["io_size"]);
+    dev_info.device_qos.queue_depth = static_cast<uint64_t>(qos_json["qd"]);
+    dev_info.free_flag = true;
+  } catch (std::exception& e) {
+    std::string exc_message = e.what();
+    logger_str =
+        "failed to parse JSON output of GetDeviceInfo. Error -> " + exc_message;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
+    return status;
+  }
+  status = 0;
+  return status;
 }
 
-int SLADeviceHelper::GetDeviceInfo(std::string node_name, std::string port) {
+static int GetDeviceList(std::string node_name, std::string port,
+                         std::vector<uint64_t>& device_id_vector) {
   std::string logger_str;
   std::string output;
   int status = -1;
-  int parser_status = -1;
-  std::vector<DeviceInfo> dev_data;
 
-  logger_str = "running setupinfo with node id " + node_name + " port " + port;
+  logger_str =
+      "GetDeviceList called with node id " + node_name + " port " + port;
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
 
-#if 0
   svk::CommandRequest req_node;
   svk::CommandResponse resp_node;
   Status cmd_status;
 
   req_node.set_node_id(node_name);
-  req_node.set_feature_id(feature_id::CXL);
-  req_node.set_feature_params("command=SetupInfo");
+  req_node.set_feature_name(SVK_CXL_FEATURE_NAME);
+  req_node.set_command_name("list_devices");
+
+  nlohmann::json command_param;
+  command_param["device_id"] = nlohmann::json::array();
+  req_node.set_command_params(command_param.dump());
 
   Client client(node_name, port);
   cmd_status = client.ProcessNodeCommand(&req_node, &resp_node);
   if (cmd_status.ok() != true) {
-    logger_str = "Got error for the command SetupInfo " + node_name;
+    logger_str = "Got error for the command device_list " + node_name +
+                 " with error:" + cmd_status.error_message();
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
-                logger_str.c_str());
+               logger_str.c_str());
     return status;
   }
 
   output = resp_node.node_responses(0).output();
-#endif
-  struct stat fstat;
 
-  if (stat(this->config_file.c_str(), &fstat) != 0) {
-    // TODO: Needs to remove this once the SetupInfo is properly supported.
-    // File not present. Return success
-    logger_str = "SLA Config file at " + this->config_file +
-                 " not found for the command SetupInfo. Returning as success";
+  status = parseJSONOutputOfDeviceList(output, device_id_vector);
+
+  if (status != 0) {
+    logger_str =
+        "Unable to parse the output for the DeviceList [" + output + "]";
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                logger_str.c_str());
-    return 0;
   }
 
-  std::ifstream fh(this->config_file);
-  std::string file_data((std::istreambuf_iterator<char>(fh)),
-                        (std::istreambuf_iterator<char>()));
-  fh.close();
-  output = file_data;
+  return status;
+}
 
-  parser_status = parseJSONOutput(output, dev_data);
+static int GetDeviceInfo(std::string node_name, std::string port,
+                         uint64_t device_id, DeviceInfo& dev_data) {
+  std::string logger_str;
+  std::string output;
+  int status = -1;
 
-  if (parser_status != 0) {
-    logger_str = "Unable to parse the output for the SetupInfo " + output;
+  logger_str =
+      "GetDeviceInfo called for device_id:" + std::to_string(device_id);
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+
+  svk::CommandRequest req_node;
+  svk::CommandResponse resp_node;
+  Status cmd_status;
+
+  nlohmann::json pt;
+  pt["domain_id"] = "";
+  pt["device_id"] = device_id;
+
+  req_node.set_node_id(node_name);
+  req_node.set_feature_name(SVK_CXL_FEATURE_NAME);
+  req_node.set_command_name("get_device_info");
+  req_node.set_command_params(pt.dump());
+
+  Client client(node_name, port);
+  cmd_status = client.ProcessNodeCommand(&req_node, &resp_node);
+  if (cmd_status.ok() != true) {
+    logger_str = "Got error for the command device_info " + node_name +
+                 " with error:" + cmd_status.error_message();
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                logger_str.c_str());
     return status;
   }
 
-  for (DeviceInfo dev : dev_data) {
-    // Need to add a mechanism to generate unique id for each dev entry as
-    // hashing for future modifications
-    this->device_info.push_back(dev);
+  output = resp_node.node_responses(0).output();
+
+  status = parseJSONOutputOfDeviceInfo(node_name, output, dev_data);
+
+  if (status != 0) {
+    logger_str = "Unable to parse the output for the DeviceInfo " + output;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    return status;
   }
 
-  logger_str = "Successfully parsed the output and populated the devices";
+  if (dev_data.device_id != device_id) {
+    logger_str =
+        "Received DeviceInfo for the wrong device " + dev_data.device_id;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    status = -1;
+  }
+
+  return status;
+}
+
+static bool CheckIfCXLDeviceExistInNode(std::string node_name,
+                                        std::string port) {
+  std::string logger_str;
+  std::string output;
+  bool status = false;
+  nlohmann::json response_json;
+
+  logger_str = "CheckIfCXLDeviceExistInNode  called for node" + node_name;
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+
+  svk::CommandRequest req_node;
+  svk::CommandResponse resp_node;
+  Status cmd_status;
+
+  req_node.set_node_id(node_name);
+  req_node.set_feature_name(SVK_NODE_FEATURE_NAME);
+  req_node.set_command_name("get_node_info");
+  req_node.set_command_params("{\"info_type\":\"pci\"}");
+  Client client(node_name, port);
+  cmd_status = client.ProcessNodeCommand(&req_node, &resp_node);
+  if (cmd_status.ok() != true) {
+    logger_str = "Got error for the command node_info " + node_name +
+                 " with error:" + cmd_status.error_message();
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    return status;
+  }
+
+  output = resp_node.node_responses(0).output();
+
+  logger_str = "JSON output " + output;
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::DEBUG, logger_str.c_str());
+
+  try {
+    response_json = nlohmann::json::parse(output);
+    if (response_json.contains("pci-info")) {
+      for (const auto& pci : response_json["pci-info"]) {
+        std::string device_type = pci.at("device_type");
+        if (device_type == "cxl") {
+          status = true;
+          logger_str = "Found a PCI device type with CXL";
+          svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                     logger_str.c_str());
+          break;
+        }
+      }
+    } else {
+      logger_str = "pci-info not found in JSON output";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                 logger_str.c_str());
+      status = false;
+    }
+  } catch (nlohmann::json::exception& e) {
+    std::string exc_message = e.what();
+    logger_str =
+        "failed to parse JSON output of GetNodeInfo. Error -> " + exc_message;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    status = false;
+  }
+
+  return status;
+}
+
+int SLADeviceHelper::GetDeviceDetails(std::string node_name, std::string port) {
+  std::string logger_str;
+  std::string output;
+  int status = -1;
+  std::vector<uint64_t> device_id_vector;
+
+  logger_str =
+      "running GetDeviceDetails with node id " + node_name + " port " + port;
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+
+  // Check for CXL tag in the PCI device info from the node. If present,
+  // read the actual CXL devices. Otherwise, skip and return success
+  if (CheckIfCXLDeviceExistInNode(node_name, port) == false) {
+    logger_str = "Error in getting node info for the node " + node_name +
+                 " or the CXL device is not present";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    status = 0;
+    return status;
+  }
+
+  status = GetDeviceList(node_name, port, device_id_vector);
+  if (status != 0) {
+    logger_str = "Unable to get the GetDeviceList for the node " + node_name;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    return status;
+  }
+
+  for (uint64_t device_id : device_id_vector) {
+    DeviceInfo dev_info;
+
+    status = GetDeviceInfo(node_name, port, device_id, dev_info);
+    if (status != 0) {
+      logger_str = "Failed to get device info for " + std::to_string(device_id);
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                 logger_str.c_str());
+      return status;
+    }
+    this->device_info.push_back(dev_info);
+  }
+
+  logger_str = "Successfully populated the devices for the node " + node_name;
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
 
   status = 0;
@@ -120,8 +305,12 @@ int SLADeviceHelper::GetDeviceForAppRequirements(
   int status = 0;
   std::string logger_str;
   for (DeviceInfo dev : this->device_info) {
+    logger_str = "device " + std::to_string(dev.device_id) + " has latency " +
+                 std::to_string(dev.device_qos.avg_latency_ns);
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
     if (dev.free_flag && sla_latency_ns >= dev.device_qos.avg_latency_ns) {
-      logger_str = "device " + dev.device_name + " with numa " +
+      logger_str = "device " + std::to_string(dev.device_id) + " with numa " +
                    std::to_string(dev.numa) +
                    " added to the list for consumption";
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
@@ -144,7 +333,7 @@ int SLADeviceHelper::UnregisterDevicesForNode(std::string node_name) {
     if (dev.free_flag != true) {
       // Should we return error as the device is associated with an app
       // Ignoring for now
-      logger_str = "device " + dev.device_name + " with numa " +
+      logger_str = "device " + std::to_string(dev.device_id) + " with numa " +
                    std::to_string(dev.numa) + " is in use";
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                  logger_str.c_str());
