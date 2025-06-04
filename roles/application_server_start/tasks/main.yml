@@ -1,0 +1,39 @@
+---
+- name: Configure mgmt_fw_config
+  ansible.builtin.template:
+    src: mgmt_fw_config.j2
+    dest: "/etc/svk/mgmt_fw_config.json"
+    mode: 0644
+  become: true
+
+- name: Configure zmq
+  ansible.builtin.template:
+    src: zmq_config.j2
+    dest: "/etc/svk/zmq_config.json"
+    mode: 0644
+  become: true
+
+- name: Start application services
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  become: true
+  loop:
+    - svk-node.service
+    - svk-svc-mgr.service
+
+- name: Gather service status
+  ansible.builtin.service_facts:
+  changed_when: false
+
+- name: Check service status on application server
+  ansible.builtin.assert:
+    that:
+      - "'{{ item }}' in ansible_facts.services"
+      - "ansible_facts.services['{{ item }}'].state == 'running'"
+    fail_msg: "{{ item }} failed to start!"
+    success_msg: "{{ item }} started successfully."
+  loop:
+    - svk-node.service
+    - svk-svc-mgr.service
