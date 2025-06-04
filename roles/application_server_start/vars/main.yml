@@ -1,0 +1,6 @@
+---
+feat_modules_bin_dir: "/usr/local/svk/feature_modules"
+management_server_ip: "localhost"
+application_server_ip: "localhost"
+rest_server_ip: "localhost"
+MVP_version: 1

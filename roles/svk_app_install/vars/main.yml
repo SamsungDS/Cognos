@@ -1,0 +1,10 @@
+---
+# vars file for roles/svk_app_install
+mysql_root_password: ""
+mysql_root_user: "root"
+mysql_user: "dev"
+mysql_user_password: "CXL123mem!"
+influxdb_user: "svk"
+influxdb_pwd: "CXL123mem!"
+influxdb_org: "Samsung"
+influxdb_bucket: "internal"

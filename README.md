@@ -149,6 +149,20 @@ Your inventory file should contain hosts in the following groups:
   * Hosts for conducting the kernel upgrade, the default is upgrade kernel to version 6.11.11.
   * kernel upgrading will be done on hosts of slat_node which available capacity >= 29G and current kernel version < 6.11.11, and hosts that do not meet the conditions will be ignored.
 
+* [management_server]
+  * Hosts running the scmc-managment side services, including:
+    * svk-core
+    * svk-cxl
+    * svk-mgmt-fw
+    * svk-app
+
+* [applicaition_server]
+  * Hosts running the scmc-application side services, including:
+    * svk-core
+    * svk-cxl
+    * svk-mgmt-fw
+
+=======
 ### Prepare the artifacts:
 The cognos packages to be installed should be placed in the artifacts directory in advance.
 1. Enter $project_dir and create a directory named artifacts. 
@@ -238,13 +252,24 @@ Perform the kernel upgrade and default to upgrading to version 6.11.11:
   
     ansible-playbook -i your_inventory playbooks/deploy_kernel.yml
 
-### SVK Management:
-* _TBD._
+### SVK SCMC:
+Perform the deployment of SCMC:
 
+    ansible-playbook -i your_inventory playbooks/deploy_scmc.yml
 
-### SVK Application:
-* _TBD._
+Configure and start SCMC Tracker:
 
+    Update the values in roles/management_server_start/vars/main.yml & roles/application_server_start/vars/main.yml, then    
+
+    ansible-playbook -i your_inventory playbooks/start_scmc.yml
+
+Stop SCMC service:
+
+    ansible-playbook -i your_inventory playbooks/start_scmc.yml
+
+Remove or uninstall SCMC related packages:
+
+    ansible-playbook -i your_inventory playbooks/remove_scmc.yml
 
 
 ### Complete Playbook Documentation
@@ -309,3 +334,21 @@ Execute this playbook to automatically stop and disable SVK converged service ac
 #### playbooks/stop_cognos_slat.yml
 
 Execute this playbook to automatically stop SVK SLA Tracker service accross all [slat_node].
+
+#### playbooks/deploy_scmc.yml
+
+Execute this playbooks to install svk-core, svk-mgmt-fw, svk-cxl to management & application servers, and install svk-app to management servers, as well as their dependencies.
+
+**NOTE:** _It's currently tested in Ubuntu22.04. You may want to keep the influxdb token displayed during execution for later use._
+
+#### playbooks/start_scmc.yml
+
+Execute this playbook to automatically configure and start services running on management and application servers
+
+#### playbooks/stop_scmc.yml
+
+Execute this playbook to stop services running on management and application servers
+
+#### playbooks/remove_scmc.yml
+
+Execute this playbook to automatically remove all scmc-related packages on management and application servers

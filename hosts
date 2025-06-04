@@ -6,3 +6,9 @@ msl-dpe-da1
 
 [kernel_upgrade_node]
 msl-dpe-da1
+
+[management_server]
+msl-ssg-vm28
+
+[application_server]
+msl-ssg-vm26
