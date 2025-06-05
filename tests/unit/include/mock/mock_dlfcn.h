@@ -1,6 +1,7 @@
 #ifndef _MOCK_DLFCN__H_
 #define _MOCK_DLFCN__H_
 
+#include <dlfcn.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -23,7 +24,6 @@ void *dlopen(const char *filename, int flags) {
     std::cout << "Returning dummy pointer from dlopen" << std::endl;
     return mock_dlopen_dummy_ptr;
   }
-
   return nullptr;
 }
 
@@ -32,10 +32,8 @@ int dlclose(void *handle) {
   const char *env_string;
   env_string = getenv("MOCK_DLCLOSE_FAIL");
   if (env_string && strcmp(env_string, "true") == 0) {
-    // Return some valid pointer for simulation purpose
     return -1;
   }
-
   return 0;
 }
 
@@ -44,7 +42,6 @@ void *get_ptr_from_string(const char *hex_str) {
   uintptr_t ptr_value;
 
   // Parse the int string
-  // Note: Assumes address is 64bit max
   ptr_value = strtoul(hex_str, &endptr, 10);
 
   if (*endptr != '\0') {

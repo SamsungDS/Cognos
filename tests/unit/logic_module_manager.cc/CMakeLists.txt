@@ -1,3 +1,11 @@
+
+function(add_wrap_linker_flag func_name)
+  add_link_options(-Wl,--wrap,${func_name})
+endfunction()
+
+# Usage
+add_wrap_linker_flag(malloc)
+
 include_directories(${UNIT_TEST_MOCK_INCLUE_DIR})
 set(LOGIC_MODULE_MANAGER_UT "lmm_ut")
 set(LOGIC_MODULE_MANAGER_UT_SOURCES

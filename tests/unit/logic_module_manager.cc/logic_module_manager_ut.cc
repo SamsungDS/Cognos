@@ -5,6 +5,7 @@
 #include "logic_interface/svk_logic_struct.h"
 #include "mock/mock_dlfcn.h"
 #include "mock/mock_logger.h"
+#include "mock/mock_malloc.h"
 #include "utils/logic_module_manager.hpp"
 
 using ::testing::_;
@@ -151,6 +152,31 @@ TEST(LogicModuleManagerTest, LoadLogicModuleInitFnFail) {
   logic_module_name result =
       manager.load_logic_module(logic_module_location, test_feature_name1);
 
+  ASSERT_TRUE(result == std::nullopt);
+  unsetenv("MOCK_DLOPEN_SUCCESS");
+}
+
+TEST(LogicModuleManagerTest, LoadLogicModuleInitMallocFail) {
+  logic_module_manager manager;
+  std::string logic_module_location = "/path/to/module";
+  setenv("MOCK_DLOPEN_SUCCESS", "true", true);
+  setenv("MOCK_SET_MODULE_FEATURE_NAME", test_feature_name1.c_str(), true);
+  setenv("initialize_logic_module",
+         std::to_string(
+             reinterpret_cast<uintptr_t>(mock_initialize_logic_module_function))
+             .c_str(),
+         true);
+  setenv("get_supported_logic_details",
+         std::to_string(
+             reinterpret_cast<uintptr_t>(mock_get_supported_logic_details_fn))
+             .c_str(),
+         true);
+
+  MOCK_SET(malloc, NULL);
+  // Load the logic module
+  logic_module_name result =
+      manager.load_logic_module(logic_module_location, test_feature_name1);
+  MOCK_CLEAR(malloc);
   ASSERT_TRUE(result == std::nullopt);
   unsetenv("MOCK_DLOPEN_SUCCESS");
 }
