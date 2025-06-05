@@ -274,7 +274,7 @@ TEST(LogicModuleManagerTest, LoadLogicModule_FailMultipleTimes) {
   unsetenv("MOCK_DLOPEN_SUCCESS");
 }
 
-TEST(LogicModuleManagerTest, LoadLogicModule_FailFeatureMismatcg) {
+TEST(LogicModuleManagerTest, LoadLogicModule_FailFeatureMismatch) {
   logic_module_manager manager;
   std::string logic_module_location = "/path/to/module";
   setenv("MOCK_DLOPEN_SUCCESS", "true", true);
@@ -295,6 +295,114 @@ TEST(LogicModuleManagerTest, LoadLogicModule_FailFeatureMismatcg) {
       manager.load_logic_module(logic_module_location, test_feature_name1);
 
   ASSERT_TRUE(result == std::nullopt);
+  unsetenv("MOCK_SET_MODULE_FEATURE_NAME");
+  unsetenv("MOCK_DLOPEN_SUCCESS");
+}
+
+TEST(LogicModuleManagerTest, UnloadLogicModule_Success) {
+  logic_module_manager manager;
+  std::string logic_module_location = "/path/to/module";
+  setenv("MOCK_DLOPEN_SUCCESS", "true", true);
+  setenv("MOCK_SET_MODULE_FEATURE_NAME", test_feature_name1.c_str(), true);
+  setenv("initialize_logic_module",
+         std::to_string(
+             reinterpret_cast<uintptr_t>(mock_initialize_logic_module_function))
+             .c_str(),
+         true);
+  setenv("get_supported_logic_details",
+         std::to_string(
+             reinterpret_cast<uintptr_t>(mock_get_supported_logic_details_fn))
+             .c_str(),
+         true);
+
+  // Load the logic module
+  logic_module_name result =
+      manager.load_logic_module(logic_module_location, test_feature_name1);
+  ASSERT_TRUE(result == lmn);
+  ASSERT_TRUE(result.has_value());
+
+  // Unload the logic module
+  manager.unload_logic_module(lmn);
+
+  // Verify that the module is unloaded
+  logic_module_ctx module_ctx = manager.get_logic_module_details(lmn);
+  ASSERT_EQ(module_ctx, nullptr);
+
+  unsetenv("MOCK_SET_MODULE_FEATURE_NAME");
+  unsetenv("MOCK_DLOPEN_SUCCESS");
+}
+
+TEST(LogicModuleManagerTest, UnloadLogicModule_ModuleNotFound) {
+  logic_module_manager manager;
+
+  // Unload a non-existent logic module
+  manager.unload_logic_module("non_existent_module");
+}
+
+TEST(LogicModuleManagerTest, UnloadLogicModule_MultipleTimes) {
+  logic_module_manager manager;
+  std::string logic_module_location = "/path/to/module";
+  setenv("MOCK_DLOPEN_SUCCESS", "true", true);
+  setenv("MOCK_SET_MODULE_FEATURE_NAME", test_feature_name1.c_str(), true);
+  setenv("initialize_logic_module",
+         std::to_string(
+             reinterpret_cast<uintptr_t>(mock_initialize_logic_module_function))
+             .c_str(),
+         true);
+  setenv("get_supported_logic_details",
+         std::to_string(
+             reinterpret_cast<uintptr_t>(mock_get_supported_logic_details_fn))
+             .c_str(),
+         true);
+
+  // Load the logic module
+  logic_module_name result =
+      manager.load_logic_module(logic_module_location, test_feature_name1);
+  ASSERT_TRUE(result == lmn);
+  ASSERT_TRUE(result.has_value());
+
+  // Unload the logic module multiple times
+  manager.unload_logic_module(lmn);
+  manager.unload_logic_module(lmn);
+
+  // Verify that the module is unloaded
+  logic_module_ctx module_ctx = manager.get_logic_module_details(lmn);
+  ASSERT_EQ(module_ctx, nullptr);
+
+  unsetenv("MOCK_SET_MODULE_FEATURE_NAME");
+  unsetenv("MOCK_DLOPEN_SUCCESS");
+}
+
+TEST(LogicModuleManagerTest, UnloadLogicModuleDlcloseFail) {
+  logic_module_manager manager;
+  std::string logic_module_location = "/path/to/module";
+  setenv("MOCK_DLOPEN_SUCCESS", "true", true);
+  setenv("MOCK_SET_MODULE_FEATURE_NAME", test_feature_name1.c_str(), true);
+  setenv("initialize_logic_module",
+         std::to_string(
+             reinterpret_cast<uintptr_t>(mock_initialize_logic_module_function))
+             .c_str(),
+         true);
+  setenv("get_supported_logic_details",
+         std::to_string(
+             reinterpret_cast<uintptr_t>(mock_get_supported_logic_details_fn))
+             .c_str(),
+         true);
+
+  // Load the logic module
+  logic_module_name result =
+      manager.load_logic_module(logic_module_location, test_feature_name1);
+  ASSERT_TRUE(result == lmn);
+  ASSERT_TRUE(result.has_value());
+
+  // Mock dlclose to fail
+  setenv("MOCK_DLCLOSE_FAIL", "true", true);
+
+  // Unload the logic module
+  manager.unload_logic_module(lmn);
+
+  // Verify that an error is logged
+  unsetenv("MOCK_DLCLOSE_FAIL");
   unsetenv("MOCK_SET_MODULE_FEATURE_NAME");
   unsetenv("MOCK_DLOPEN_SUCCESS");
 }

@@ -27,6 +27,7 @@ class logic_module_manager {
 
   logic_module_name load_logic_module(const std::string &logic_module_location,
                                       const std::string &feature_name);
+  void unload_logic_module(const std::string &logic_module_name);
   logic_module_ctx get_logic_module_details(
       const std::string &logic_module_name);
 };

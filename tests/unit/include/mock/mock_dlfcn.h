@@ -57,7 +57,6 @@ void *get_ptr_from_string(const char *hex_str) {
 }
 
 DEFINE_RETURN_MOCK(dlsym, void *);
-
 void *dlsym(void *handle, const char *symbol) {
   const char *env_string_return_pointer;
 

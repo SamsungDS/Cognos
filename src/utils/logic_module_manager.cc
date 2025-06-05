@@ -94,10 +94,27 @@ logic_module_name logic_module_manager::load_logic_module(
     dlclose(handle);
     return std::nullopt;
   }
-  std::cout << "lmn [ " << std::string(details->logic_module_name) << " ]"
-            << std::endl;
 
+  dlclose(handle);
   return std::string(details->logic_module_name);
+}
+
+// ... existing code ...
+
+void logic_module_manager::unload_logic_module(
+    const std::string &logic_module_name) {
+  auto it = this->logic_modules_map.find(logic_module_name);
+  if (it != this->logic_modules_map.end()) {
+    // Free the details
+    free(it->second);
+
+    // Remove the module from the map
+    this->logic_modules_map.erase(it);
+  } else {
+    std::stringstream logger_ss;
+    logger_ss << "Logic module not found: " << logic_module_name;
+    svk_logger(RAS_LOGGER, level_E::ERROR, logger_ss.str().c_str());
+  }
 }
 
 logic_module_ctx logic_module_manager::get_logic_module_details(
