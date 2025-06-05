@@ -9,6 +9,8 @@
 
 #include "mock.h"
 
+extern "C" {
+
 static char mock_dlopen_dummy_handle;
 static void *mock_dlopen_dummy_ptr = &mock_dlopen_dummy_handle;
 
@@ -41,9 +43,9 @@ void *get_ptr_from_string(const char *hex_str) {
   char *endptr;
   uintptr_t ptr_value;
 
-  // Parse the hexadecimal string
+  // Parse the int string
   // Note: Assumes address is 64bit max
-  ptr_value = strtoul(hex_str, &endptr, 16);
+  ptr_value = strtoul(hex_str, &endptr, 10);
 
   if (*endptr != '\0') {
     std::cout << "Invalid input" << std::endl;
@@ -55,12 +57,15 @@ void *get_ptr_from_string(const char *hex_str) {
 }
 
 DEFINE_RETURN_MOCK(dlsym, void *);
+
 void *dlsym(void *handle, const char *symbol) {
   const char *env_string_return_pointer;
 
-  env_string_return_pointer = std::getenv("MOCK_DLSYM_RETURN_PTR");
+  env_string_return_pointer = std::getenv(symbol);
 
   if (env_string_return_pointer) {
+    std::cout << "Returning Mock pointer "
+              << std::string(env_string_return_pointer) << std::endl;
     return get_ptr_from_string(env_string_return_pointer);
   }
 
@@ -68,5 +73,5 @@ void *dlsym(void *handle, const char *symbol) {
 
   return nullptr;
 }
-
+}
 #endif  // _MOCK_DLFCN__H_

@@ -2,6 +2,7 @@
 
 #include <dlfcn.h>
 
+#include <iostream>
 #include <sstream>
 
 #include "ras_exports.h"
@@ -13,7 +14,7 @@ logic_module_name logic_module_manager::load_logic_module(
 
   void *handle = dlopen(logic_module_location.c_str(), RTLD_LAZY);
   if (!handle) {
-    logger_ss << "Unable to opene logic module" << logic_module_location;
+    logger_ss << "Unable to open logic module" << logic_module_location;
     svk_logger(RAS_LOGGER, level_E::ERROR, logger_ss.str().c_str());
     return std::nullopt;
   }
@@ -93,6 +94,8 @@ logic_module_name logic_module_manager::load_logic_module(
     dlclose(handle);
     return std::nullopt;
   }
+  std::cout << "lmn [ " << std::string(details->logic_module_name) << " ]"
+            << std::endl;
 
   return std::string(details->logic_module_name);
 }
