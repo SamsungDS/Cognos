@@ -1,4 +1,0 @@
----
-deploy_staging_dir: "/tmp/"
-artifacts_dir: "{{ inventory_dir }}/artifacts"
-svk_app_pkg_dir: "{{ artifacts_dir }}/SVK/Management_Server"

@@ -1,0 +1,88 @@
+# The Clear BSD License
+#
+# Copyright (c) 2025 Samsung Electronics Co., Ltd.
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted (subject to the limitations in the disclaimer
+# below) provided that the following conditions are met:
+#
+# * Redistributions of source code must retain the above copyright notice,
+#   this list of conditions and the following disclaimer.
+# * Redistributions in binary form must reproduce the above copyright notice,
+#   this list of conditions and the following disclaimer in the documentation
+#   and/or other materials provided with the distribution.
+# * Neither the name of Samsung Electronics Co., Ltd. nor the names of its
+#   contributors may be used to endorse or promote products derived from this
+#   software without specific prior written permission.
+# NO EXPRESS OR IMPLIED LICENSES TO ANY PARTY'S PATENT RIGHTS ARE GRANTED BY
+# THIS LICENSE. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+# CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT
+# NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+# PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+# OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+# WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+# OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+# ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+# Author: June Liu
+# Contact: june.liu@samsung.com
+
+- name: Stat converged installed path
+  ansible.builtin.stat:
+    path: "{{ converged_bin_path }}"
+  register: converged_path
+
+- name: Assert converged installed path exists
+  ansible.builtin.assert:
+    that: converged_path.stat.exists
+    fail_msg: SVK_converged is not installed. Execute 'deploy_cognos_software.yml' playbook first.
+
+- name: Set hugepages and move NVMe devices to user space mode
+  ansible.builtin.shell: 
+    "NRHUGE={{ NRHUGE }} {{ converged_bin_path }}/scripts/setup.sh"
+  register: converged_setup
+  changed_when: converged_setup.stdout is search('nvme -> vfio-pci')
+  when: converged_path.stat.exists
+  become: true
+
+- name: check setup status
+  ansible.builtin.debug: 
+    msg: "Set hugepages= {{ NRHUGE }} and {{ converged_setup }}"
+  when: converged_setup.rc != 0
+
+
+# - name: Get the svk_converged.conf file
+#   ansible.builtin.stat:
+#     path: "{{ converged_bin_path }}/config/svk-converged.conf"
+#   register: conf_file_stat
+#   changed_when: false
+
+# - name: Ensure the svk_converged.conf file exists
+#   ansible.builtin.assert:
+#     that: conf_file_stat.stat.exists
+#     fail_msg: "The file {{ conf_file_stat }} does not exist"
+#     success_msg: "SVK converged configuration file exists"
+
+# - name: Modify the specified value in svk-converged.conf file
+#   ansible.builtin.lineinfile:
+#     path: "{{ converged_bin_path }}/config/svk-converged.conf"
+#     regexp: "^COREMASK="
+#     line: "COREMASK={{ COREMASK }}"
+#     backrefs: yes
+#     state: present
+#   register: modified_conf_file
+#   changed_when: modified_conf_file.changed
+
+- name: Set the specified COREMASK in svk-converged.conf file
+  template:
+    src: svk-converged.conf.j2
+    dest: "{{ converged_bin_path }}/config/svk-converged.conf"
+  when: COREMASK is defined
+
+- name: Display the modified CORE_MASK
+  ansible.builtin.debug: 
+    msg: "The modified coremask is {{ COREMASK }}"
+
