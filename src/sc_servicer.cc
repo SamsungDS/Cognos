@@ -569,6 +569,54 @@ std::string handle_get_device_info(
   return result;
 }
 
+std::string handle_get_device_stats(
+    const std::unordered_map<std::string, std::string>& params) {
+  std::unordered_map<std::string, std::string> values;
+  std::string error;
+
+  if (!extract_required_params(params, {"device_id"}, values, error)) {
+    return error;
+  }
+
+  uint64_t device_id;
+  if (!str_to_int(values["device_id"], device_id, error)) {
+    return error;
+  }
+
+  std::optional<StatInfo> stats = g_dev_mgr->get_device_stats(device_id);
+  if (!stats.has_value()) {
+    return posix_err_to_json(ENOENT, "Device not found or error occurred");
+  }
+
+  const StatInfo& s = stats.value();
+  json_t* root = json_object();
+  json_object_set_new(root, "api_version", json_real(1.0));
+  json_object_set_new(root, "device_id", json_integer(s.device_id));
+  json_object_set_new(root, "device_protocol", json_string(s.protocol.c_str()));
+  json_object_set_new(root, "port_type", json_string(s.port_type.c_str()));
+  json_object_set_new(root, "status", json_string(s.status.c_str()));
+  json_object_set_new(root, "total_memory", json_integer(s.total_memory_MB));
+  json_object_set_new(root, "used_memory", json_integer(s.used_memory_MB));
+  json_object_set_new(root, "available_memory",
+                      json_integer(s.available_memory_MB));
+  json_object_set_new(root, "total_bandwidth",
+                      json_real(s.total_bandwidth_MBps));
+  json_object_set_new(root, "used_bandwidth", json_real(s.used_bandwidth_MBps));
+  json_object_set_new(root, "rw_errors", json_integer(s.rw_errors));
+  json_object_set_new(root, "latency", json_integer(s.latency_us));
+
+  if (s.sensor_stats.has_value()) {
+    json_object_set_new(root, "device_temperature",
+                        json_integer(s.sensor_stats->fpga_temp));
+  }
+
+  char* json_str = json_dumps(root, JSON_COMPACT);
+  std::string result(json_str);
+  free(json_str);
+  json_decref(root);
+  return result;
+}
+
 int cmmb_a1_init() {
   LOG(level_E::INFO, "Starting `cmmb_a1_init`...");
   struct StaticPortInfo pinfo;
@@ -750,7 +798,8 @@ svk_status configure_device_if_any(void*, svk_device_ctx*, uint64_t length,
 */
 const std::unordered_map<std::string, CommandFuncMap> command_map = {
     {"list_devices", handle_list_devices},
-    {"get_device_info", handle_get_device_info}};
+    {"get_device_info", handle_get_device_info},
+    {"get_device_stats", handle_get_device_stats}};
 
 /**
  * @brief Dispatches a command to its corresponding legacy handler function.

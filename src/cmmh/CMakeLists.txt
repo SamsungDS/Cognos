@@ -1,6 +1,11 @@
 # Set the plugin name
 set(PLUGIN_NAME cmmh)
 
+set(CMMH_STATIC_LIB "${PROJECT_SOURCE_DIR}/third_party/libcmmh.a")
+if(NOT EXISTS ${CMMH_STATIC_LIB})
+ message(FATAL_ERROR "libcmmh.a not found at ${CMMH_STATIC_LIB}")
+endif()
+
 file(GLOB CMMH_SOURCES "*.cc")
 file(GLOB CMMH_HEADERS "include/*.h")
 
@@ -25,6 +30,7 @@ ${SVKFRAMEWORK_INCLUDE_DIRS}
 target_link_directories(${PLUGIN_NAME} PRIVATE
 ${SVKMGMTFW_LIB_DIRS}
 ${SVKFRAMEWORK_LIBRARY_DIRS}
+"${PROJECT_SOURCE_DIR}/third_party"
 )
 
 #force linker to retain libpci symbols
@@ -32,7 +38,10 @@ target_link_options(${PLUGIN_NAME} PRIVATE "-Wl,--no-as-needed")
 
 # Link required system and framework libraries
 target_link_libraries(${PLUGIN_NAME}
- PRIVATE      	
+ PRIVATE      
+ "-Wl,--whole-archive"  
+ ${CMMH_STATIC_LIB}
+ "-Wl,--no-whole-archive"  
  numa
  svklogger
  ${PCI_LIB} 
@@ -41,4 +50,5 @@ target_link_libraries(${PLUGIN_NAME}
 
 install(TARGETS ${PLUGIN_NAME} 
 LIBRARY DESTINATION "${CMMH_LIB_PATH}")
+
 

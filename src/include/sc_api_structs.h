@@ -1,8 +1,11 @@
 #ifndef SC_API_STRUCTS_H
 #define SC_API_STRUCTS_H
 
+#include <optional>
 #include <string>
 #include <unordered_map>
+
+#include "libcmmh.h"
 
 struct QoSInfo {
   uint64_t avg_latency = 0;
@@ -49,6 +52,24 @@ struct DevInfo {
   uint64_t available_capacity_MB = 0;
   std::string status;
   int numa_attached = 0;
+};
+
+struct StatInfo {
+  uint64_t device_id = 0;
+  std::string protocol;
+  std::string port_type;
+  std::string status;
+  uint64_t total_memory_MB = 0;
+  uint64_t used_memory_MB = 0;
+  uint64_t available_memory_MB = 0;
+  double total_bandwidth_MBps = 0.0;
+  double used_bandwidth_MBps = 0.0;
+  uint64_t rw_errors = 0;
+  uint64_t latency_us = 0;
+  // Device-specific stats
+  std::optional<cmmh_stat_sensor_t> sensor_stats;
+  std::optional<cmmh_stat_interface_t> interface_stats;
+  std::optional<cmmh_stat_cache_t> cache_stats;
 };
 
 #endif

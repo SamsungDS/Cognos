@@ -14,6 +14,14 @@ extern "C" {
 #include <pci/pci.h>  // pci_alloc, pci_init, pci_scan_bus, pci_fill_info, pci_cleanup
 }
 
+#ifndef PCI_CAP_PTR
+#define PCI_CAP_PTR 0x34  ///< Offset in PCI config space to capability list
+#endif
+
+#ifndef PCI_CAP_ID_EXP
+#define PCI_CAP_ID_EXP 0x10  ///< PCI Express Capability ID
+#endif
+
 bool str_to_int(const std::string& id_str, uint64_t& id,
                 std::string& error_response) {
   try {
@@ -157,15 +165,23 @@ bool is_device_list_empty(const std::string& json_response) {
 }
 
 static const DevTypeMap* global_dev_type_map = nullptr;
+static const LinkInfoMap* global_link_info_map = nullptr;
 
 void set_global_dev_type_map(const DevTypeMap& external_map) {
   global_dev_type_map = &external_map;
 }
 
+void set_global_link_info_map(const LinkInfoMap& external_map) {
+  global_link_info_map = &external_map;
+}
+
 const DevTypeMap* get_global_dev_type_map() { return global_dev_type_map; }
+
+const LinkInfoMap* get_global_link_info_map() { return global_link_info_map; }
 
 const DevTypeMap& load_dev_type_mapping_json(const std::string& filepath) {
   static DevTypeMap internal_map;
+  static LinkInfoMap internal_link_map;
   static std::once_flag init_flag;
 
   std::call_once(init_flag, [&]() {
@@ -197,6 +213,8 @@ const DevTypeMap& load_dev_type_mapping_json(const std::string& filepath) {
           json_string_value(json_object_get(entry, "vendor_id"));
       const char* device_str =
           json_string_value(json_object_get(entry, "device_id"));
+      json_t* lane_speed = json_object_get(entry, "lane_speed");
+      json_t* lane_width = json_object_get(entry, "lane_width");
 
       if (!type_str || !vendor_str || !device_str) {
         LOG(level_E::WARN,
@@ -208,6 +226,14 @@ const DevTypeMap& load_dev_type_mapping_json(const std::string& filepath) {
         uint16_t vendor = std::stoul(vendor_str, nullptr, 16);
         uint16_t device = std::stoul(device_str, nullptr, 16);
         internal_map[{vendor, device}] = std::string(type_str);
+
+        if (lane_speed && json_is_integer(lane_speed) && lane_width &&
+            json_is_integer(lane_width)) {
+          int speed = json_integer_value(lane_speed);
+          int width = json_integer_value(lane_width);
+          internal_link_map[{vendor, device}] = {speed, width};
+        }
+
       } catch (const std::exception& ex) {
         LOG(level_E::WARN, "Failed to parse vendor/device ID at index " +
                                std::to_string(index) + ": " + ex.what());
@@ -215,12 +241,21 @@ const DevTypeMap& load_dev_type_mapping_json(const std::string& filepath) {
     }
 
     json_decref(root);
+    // LOG(level_E::INFO, "Loaded " + std::to_string(internal_map.size()) +
+    //                        " device ID mappings from JSON: " + filepath);
+
     LOG(level_E::INFO, "Loaded " + std::to_string(internal_map.size()) +
-                           " device ID mappings from JSON: " + filepath);
-    global_dev_type_map = &internal_map;
+                           " device ID mappings and " +
+                           std::to_string(internal_link_map.size()) +
+                           " link info entries from JSON: " + filepath);
+
+    // global_dev_type_map = &internal_map;
+    set_global_dev_type_map(internal_map);
+    set_global_link_info_map(internal_link_map);
   });
 
-  return *global_dev_type_map;
+  // return *global_dev_type_map;
+  return *get_global_dev_type_map();
 }
 
 int validate_json_file(const std::string& filepath) {
@@ -275,6 +310,7 @@ std::unordered_map<sc_id, sc_device, hash_sc_id> discover_cxl_devices_shared(
   pci_init(pacc);
   pci_scan_bus(pacc);
 
+  const LinkInfoMap* link_map = get_global_link_info_map();
   for (pci_dev* dev = pacc->devices; dev; dev = dev->next) {
     pci_fill_info(dev, PCI_FILL_IDENT | PCI_FILL_BASES);
 
@@ -286,6 +322,17 @@ std::unordered_map<sc_id, sc_device, hash_sc_id> discover_cxl_devices_shared(
         "Discovered CXL device: vendor=" + std::to_string(vendor) +
             " device=" + std::to_string(device) + " type=" + it->second);
     std::string dev_type = it->second;
+
+    // Link speed/width lookup
+    int link_speed = 32;  // default Gen5
+    int link_width = 8;   // default x8
+    if (link_map) {
+      auto link_it = link_map->find({vendor, device});
+      if (link_it != link_map->end()) {
+        link_speed = link_it->second.first;
+        link_width = link_it->second.second;
+      }
+    }
 
     // Build PCI BDF string
     char bdf[32];
@@ -328,8 +375,8 @@ std::unordered_map<sc_id, sc_device, hash_sc_id> discover_cxl_devices_shared(
     static_info.connection_type = "CXL.mem";
     static_info.mode_discovered = "auto";
     static_info.protocol = "CXL 2.0";
-    static_info.link_speed = 16;
-    static_info.link_width = 8;
+    static_info.link_speed = link_speed;
+    static_info.link_width = link_width;
     static_info.port_type = "root";
     static_info.capabilities.power_management_version = 1;
     static_info.capabilities.vendor_specific["latency_hint"] = "enabled";

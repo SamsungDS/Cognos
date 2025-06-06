@@ -103,15 +103,29 @@ struct pairHash {
 using DevTypeMap =
     std::unordered_map<std::pair<uint16_t, uint16_t>, std::string, pairHash>;
 
+using LinkInfoMap = std::unordered_map<std::pair<uint16_t, uint16_t>,
+                                       std::pair<int, int>, pairHash>;
+
 /**
  * @brief Manually inject a device map (for library usage)
  */
 void set_global_dev_type_map(const DevTypeMap& external_map);
 
 /**
+ * @brief Set the global LinkInfoMap for lane speed and lane width lookup
+ * @param external_map Reference to the external map to be used globally
+ */
+void set_global_link_info_map(const LinkInfoMap& external_map);
+
+/**
  * @brief Access the global device type map if already set
  */
 const DevTypeMap* get_global_dev_type_map();
+
+/**
+ * @brief Access the global link info map if already set
+ */
+const LinkInfoMap* get_global_link_info_map();
 
 /**
  * @brief Loads the device type mapping from a JSON file, once per process.

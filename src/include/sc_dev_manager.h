@@ -73,6 +73,36 @@ class DeviceManager {
   std::optional<DevInfo> get_device_info(uint64_t d_id);
 
   /**
+   * @brief Retrieves runtime statistics for a specific device.
+   *
+   * For a given numeric device ID, this method resolves the internal sc_id,
+   * identifies the corresponding adapter, and invokes its implementation of
+   * get_device_stats(). This is typically used by APIs to retrieve real time
+   * telemetry from the device (e.g bandwidth, memory usage, temperature).
+   *
+   * @param d_id device ID for which stats are requested.
+   * @return std::optional<StatInfo> containing the device stats if successful,
+   * or std::nullopt if the device is not found or an error occurs.
+   */
+  std::optional<StatInfo> get_device_stats(uint64_t d_id);
+
+  /**
+   * @brief Resolves a given device ID to its internal sc_id and associated
+   * adapter.
+   *
+   * This utility is used by APIs like get_device_info() and get_device_stats()
+   * to translate a 48-bit device ID to the corresponding internal `sc_id` and
+   * `CXLDeviceAdapter*`. If the device ID is invalid or the adapter mapping
+   * is missing, the function returns std::nullopt.
+   *
+   * @param d_id The 48-bit unique device identifier.
+   * @return std::optional<std::pair<sc_id, CXLDeviceAdapter*>> containing the
+   * resolved sc_id and adapter pointer if found; std::nullopt otherwise.
+   */
+  std::optional<std::pair<sc_id, CXLDeviceAdapter*>> resolve_adapter(
+      uint64_t d_id) const;
+
+  /**
    * @brief Registers a new device adapter.
    *
    * Adds the specified adapter to the internal mapping.

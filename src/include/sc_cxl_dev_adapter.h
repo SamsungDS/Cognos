@@ -61,6 +61,20 @@ class CXLDeviceAdapter {
   virtual DevInfo get_device_info(const sc_id& sid) const = 0;
 
   /**
+   * @brief Retrieves runtime stats for a specific device.
+   *
+   * This method returns dynamic statistics of the device, such as memory usage,
+   * bandwidth, error count, latency, and device-specific metrics like
+   * temperature and cache hit rates. Implementations typically query
+   * hardware-specific APIs like libcmmh to populate this data.
+   *
+   * @param sid The sc_id object representing the unique device ID.
+   * @return StatInfo structure containing runtime stats and optional
+   * subcomponents.
+   */
+  virtual StatInfo get_device_stats(const sc_id& sid) const = 0;
+
+  /**
    * @brief Performs device discovery using PCI or other mechanisms and
    * registers new devices.
    *

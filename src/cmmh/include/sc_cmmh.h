@@ -59,6 +59,14 @@ class DevCMMH : public CXLDeviceAdapter {
   DevInfo get_device_info(const sc_id& sid) const override;
 
   /**
+   * @brief Returns runtime statistics (memory, bandwidth, temperature) for a
+   * given device.
+   * @param sid Device identifier.
+   * @return StatInfo with populated runtime metrics.
+   */
+  StatInfo get_device_stats(const sc_id& sid) const override;
+
+  /**
    * @brief Performs PCI-based discovery and populates device map.
    * @param mgr Reference to DeviceManager for device registration.
    */

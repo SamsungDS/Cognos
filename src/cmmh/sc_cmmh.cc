@@ -82,6 +82,48 @@ DevInfo DevCMMH::get_device_info(const sc_id& sid) const {
 }
 
 /**
+ * @brief Returns StatInfo for a given device ID.
+ */
+StatInfo DevCMMH::get_device_stats(const sc_id& sid) const {
+  DevInfo info = get_device_info(sid);
+
+  StatInfo stats;
+  stats.device_id = info.static_info.device_id;
+  stats.protocol = info.static_info.protocol;
+  stats.port_type = info.static_info.port_type;
+  stats.status = info.status;
+
+  stats.total_memory_MB = info.static_info.total_capacity_MB;
+  stats.available_memory_MB = info.available_capacity_MB;
+  stats.used_memory_MB = stats.total_memory_MB - stats.available_memory_MB;
+
+  ///@brief Estimate total theoretical bandwidth in MBps
+  /// - Each PCIe lane provides ~125 MB/s per 1 GT/s (after 128b/130b encoding
+  /// overhead)
+  /// - for instance, Gen5 (32 GT/s) * x8 lanes = 32 * 8 * 125 = 32000 MB/s
+  /// - Note: This is an upper bound; real bandwidth may be lower due to
+  /// protocol overhead
+  // assuming its one direction, for bidirectional (rx+tx) we need to multiply
+  // by 2
+  stats.total_bandwidth_MBps =
+      info.static_info.link_speed * info.static_info.link_width * 125;
+
+  // dummy value for now, @to-do implementation
+  stats.used_bandwidth_MBps = 456.78;
+  stats.rw_errors = 0;
+  stats.latency_us = 0;
+
+  if (cmmh_init() == 0) {
+    stats.sensor_stats = cmmh_stat_sensor();
+    stats.cache_stats = cmmh_stat_cache();
+    stats.interface_stats = cmmh_stat_interface();
+    cmmh_close();
+  }
+
+  return stats;
+}
+
+/**
  * @brief Perform PCI-based device discovery for CMMH devices.
  *
  * This function invokes a shared utility to discover CXL memory devices (based

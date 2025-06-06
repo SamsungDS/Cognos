@@ -91,12 +91,8 @@ std::vector<sc_device> DeviceManager::list_devices(
   return result;
 }
 
-/**
- * @brief Retrieves detailed information about a specific device.
- */
-std::optional<DevInfo> DeviceManager::get_device_info(uint64_t d_id) {
-  LOG(level_E::INFO, "Fetching device info for ID: " + std::to_string(d_id));
-
+std::optional<std::pair<sc_id, CXLDeviceAdapter*>>
+DeviceManager::resolve_adapter(uint64_t d_id) const {
   auto id_it = d_id_to_sc_id.find(d_id);
   if (id_it == d_id_to_sc_id.end()) {
     LOG(level_E::ERROR, "Invalid device_id: " + std::to_string(d_id));
@@ -109,13 +105,41 @@ std::optional<DevInfo> DeviceManager::get_device_info(uint64_t d_id) {
     LOG(level_E::ERROR, "No adapter mapped for sc_id: " + std::to_string(d_id));
     return std::nullopt;
   }
+  return std::make_pair(scid, adapter_it->second);
+}
 
-  CXLDeviceAdapter* adapter = adapter_it->second;
+/**
+ * @brief Retrieves detailed information about a specific device.
+ */
+std::optional<DevInfo> DeviceManager::get_device_info(uint64_t d_id) {
+  LOG(level_E::INFO, "Fetching device info for ID: " + std::to_string(d_id));
+
+  auto result = resolve_adapter(d_id);
+  if (!result.has_value()) return std::nullopt;
+  const auto& [scid, adapter] = result.value();
   try {
     return adapter->get_device_info(scid);
   } catch (const std::exception& ex) {
     LOG(level_E::ERROR,
         "Failed to retrieve device info: " + std::string(ex.what()));
+    return std::nullopt;
+  }
+}
+
+/**
+ * @brief Retrieves stats information about a specific device.
+ */
+std::optional<StatInfo> DeviceManager::get_device_stats(uint64_t d_id) {
+  LOG(level_E::INFO, "Fetching device stats for ID: " + std::to_string(d_id));
+
+  auto result = resolve_adapter(d_id);
+  if (!result.has_value()) return std::nullopt;
+  const auto& [scid, adapter] = result.value();
+  try {
+    return adapter->get_device_stats(scid);
+  } catch (const std::exception& ex) {
+    LOG(level_E::ERROR,
+        "Failed to retrieve device stats: " + std::string(ex.what()));
     return std::nullopt;
   }
 }

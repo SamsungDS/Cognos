@@ -3,12 +3,16 @@
     {
       "device_type": "CMM-H",
       "vendor_id": "1e98",
-      "device_id": "0ddb"
+      "device_id": "0ddb",
+      "lane_width": 8,
+      "lane_speed": 32
     },
     {
       "device_type": "CMM-D",
       "vendor_id": "1b00",
-      "device_id": "c001"
+      "device_id": "c001",
+      "lane_width": 8,
+      "lane_speed": 32
     }
   ]
 }
