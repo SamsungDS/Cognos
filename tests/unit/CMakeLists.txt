@@ -1,6 +1,10 @@
 set(RAS_UT "ras_ut")
 set(RAS_INCLUDE_DEST ${CMAKE_SOURCE_DIR}/include)
 
+set(UNIT_TEST_MOCK_INCLUE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+add_subdirectory(logic_module_manager.cc)
+
 #TODO: if all the subdirectories of testing are using svk-core,
 # put this complication option to the top level
 add_compile_options(${SVK_FW_CFLAGS})

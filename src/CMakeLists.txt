@@ -1,4 +1,7 @@
-set(RAS_SRC ${CMAKE_CURRENT_SOURCE_DIR}/ras_monitor.cc ${CMAKE_CURRENT_SOURCE_DIR}/ras.cc)
+set(RAS_SRC
+  ${CMAKE_SOURCE_DIR}/src/utils/logic_module_manager.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/ras_monitor.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/ras.cc)
 set(RAS_INC ${CMAKE_CURRENT_SOURCE_DIR}/../include/ras.hpp )
 set(RAS_LIB_DEST "lib64/")
 set(RAS_INCLUDE_DEST "include/")
