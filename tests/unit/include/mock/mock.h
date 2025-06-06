@@ -64,6 +64,6 @@ extern "C" {
   }
 
 /* declare wrapper protos (alphabetically please) here */
-DECLARE_WRAPPER(malloc, void *, (size_t size));
+DECLARE_WRAPPER(calloc, void *, (size_t nmemb, size_t size));
 }
 #endif  // _MOCK__H_

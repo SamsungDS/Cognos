@@ -20,12 +20,16 @@ svk_status mock_initialize_logic_module_function(void *init_param) {
   const char *env_string_ilm;
   env_string_ilm = std::getenv("MOCK_INITIALIZE_LOGIC_MODULE_FN_FAIL");
   if (env_string_ilm && strcmp(env_string_ilm, "true") == 0) {
+    std::cout << "Returning failure for mocked init function" << std::endl;
     return SVK_STATUS_FAIL;
   }
   return SVK_STATUS_SUCCESS;
 }
 
-svk_status mock_cleanup_logic_module(void *) { return SVK_STATUS_SUCCESS; }
+svk_status mock_cleanup_logic_module(void *ctx) {
+  std::cout << "Cleanup called" << std::endl;
+  return SVK_STATUS_SUCCESS;
+}
 svk_status mock_get_supported_logic_details_fn(
     svk_logic_module_details *details) {
   const char *env_string_gsld;
@@ -33,11 +37,14 @@ svk_status mock_get_supported_logic_details_fn(
 
   env_string_gsld = std::getenv("MOCK_GET_SUPPORTED_LOGIC_DETAILS_FN_FAIL");
   if (env_string_gsld && strcmp(env_string_gsld, "true") == 0) {
+    std::cout << "Returning failure for mocked get logic details function"
+              << std::endl;
     return SVK_STATUS_FAIL;
   }
 
   env_string_feature_name = std::getenv("MOCK_SET_MODULE_FEATURE_NAME");
   if (env_string_gsld && !strcmp(env_string_feature_name, "") == 0) {
+    std::cout << "Returning failure for feature name mismatch" << std::endl;
     return SVK_STATUS_FAIL;
   }
 
@@ -71,6 +78,8 @@ TEST(LogicModuleManagerTest, LoadLogicModuleSuccess) {
 
   ASSERT_TRUE(result == lmn);
   ASSERT_TRUE(result.has_value());
+  unsetenv("initialize_logic_module");
+  unsetenv("get_supported_logic_details");
   unsetenv("MOCK_SET_MODULE_FEATURE_NAME");
   unsetenv("MOCK_DLOPEN_SUCCESS");
 }
@@ -100,6 +109,8 @@ TEST(LogicModuleManagerTest, GetLogicModuleDetails_Valid) {
 
   logic_module_ctx module_ctx = manager.get_logic_module_details(lmn);
   ASSERT_TRUE(module_ctx != nullptr);
+  unsetenv("initialize_logic_module");
+  unsetenv("get_supported_logic_details");
   unsetenv("MOCK_SET_MODULE_FEATURE_NAME");
   unsetenv("MOCK_DLOPEN_SUCCESS");
 }
@@ -128,6 +139,8 @@ TEST(LogicModuleManagerTest, LoadLogicModule_MultipleSuccess) {
 
   ASSERT_TRUE(result1 == lmn);
   ASSERT_TRUE(result2 == std::nullopt);
+  unsetenv("initialize_logic_module");
+  unsetenv("get_supported_logic_details");
   unsetenv("MOCK_SET_MODULE_FEATURE_NAME");
   unsetenv("MOCK_DLOPEN_SUCCESS");
 }
@@ -147,7 +160,6 @@ TEST(LogicModuleManagerTest, LoadLogicModuleInitFnFail) {
   logic_module_manager manager;
   std::string logic_module_location = "/path/to/module";
   setenv("MOCK_DLOPEN_SUCCESS", "true", true);
-
   // Load the logic module
   logic_module_name result =
       manager.load_logic_module(logic_module_location, test_feature_name1);
@@ -172,11 +184,11 @@ TEST(LogicModuleManagerTest, LoadLogicModuleInitMallocFail) {
              .c_str(),
          true);
 
-  MOCK_SET(malloc, NULL);
+  MOCK_SET(calloc, NULL);
   // Load the logic module
   logic_module_name result =
       manager.load_logic_module(logic_module_location, test_feature_name1);
-  MOCK_CLEAR(malloc);
+  MOCK_CLEAR(calloc);
   ASSERT_TRUE(result == std::nullopt);
   unsetenv("MOCK_DLOPEN_SUCCESS");
 }
@@ -219,6 +231,8 @@ TEST(LogicModuleManagerTest, LoadLogicModuleGetDetailsFnFail) {
       manager.load_logic_module(logic_module_location, test_feature_name1);
 
   ASSERT_TRUE(result == std::nullopt);
+  unsetenv("initialize_logic_module");
+  unsetenv("get_supported_logic_details");
   unsetenv("MOCK_DLOPEN_SUCCESS");
 }
 
@@ -226,6 +240,7 @@ TEST(LogicModuleManagerTest, InitializeLogicModuleFail) {
   logic_module_manager manager;
   std::string logic_module_location = "/path/to/module";
   setenv("MOCK_DLOPEN_SUCCESS", "true", true);
+  setenv("MOCK_SET_MODULE_FEATURE_NAME", test_feature_name1.c_str(), true);
   setenv("initialize_logic_module",
          std::to_string(
              reinterpret_cast<uintptr_t>(mock_initialize_logic_module_function))
@@ -243,6 +258,9 @@ TEST(LogicModuleManagerTest, InitializeLogicModuleFail) {
       manager.load_logic_module(logic_module_location, test_feature_name1);
 
   ASSERT_EQ(result, std::nullopt);
+  unsetenv("MOCK_SET_MODULE_FEATURE_NAME");
+  unsetenv("initialize_logic_module");
+  unsetenv("get_supported_logic_details");
   unsetenv("MOCK_DLOPEN_SUCCESS");
   unsetenv("MOCK_INITIALIZE_LOGIC_MODULE_FN_FAIL");
 }
@@ -251,6 +269,7 @@ TEST(LogicModuleManagerTest, GetSupportedLogicDetailsFail) {
   logic_module_manager manager;
   std::string logic_module_location = "/path/to/module";
   setenv("MOCK_DLOPEN_SUCCESS", "true", true);
+  setenv("MOCK_SET_MODULE_FEATURE_NAME", test_feature_name1.c_str(), true);
   setenv("initialize_logic_module",
          std::to_string(
              reinterpret_cast<uintptr_t>(mock_initialize_logic_module_function))
@@ -268,6 +287,9 @@ TEST(LogicModuleManagerTest, GetSupportedLogicDetailsFail) {
       manager.load_logic_module(logic_module_location, test_feature_name1);
 
   ASSERT_EQ(result, std::nullopt);
+  unsetenv("MOCK_SET_MODULE_FEATURE_NAME");
+  unsetenv("initialize_logic_module");
+  unsetenv("get_supported_logic_details");
   unsetenv("MOCK_DLOPEN_SUCCESS");
   unsetenv("MOCK_GET_SUPPORTED_LOGIC_DETAILS_FN_FAIL");
 }

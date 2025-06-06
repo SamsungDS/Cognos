@@ -1,7 +1,5 @@
 #include "utils/logic_module_manager.hpp"
 
-#include <dlfcn.h>
-
 #include <iostream>
 #include <sstream>
 
@@ -12,6 +10,8 @@ logic_module_name logic_module_manager::load_logic_module(
     const std::string &logic_module_location, const std::string &feature_name) {
   std::stringstream logger_ss;
 
+  std::unique_ptr<logic_module_manager::logic_module_context> module_context =
+      std::make_unique<logic_module_manager::logic_module_context>();
   void *handle = dlopen(logic_module_location.c_str(), RTLD_LAZY);
   if (!handle) {
     logger_ss << "Unable to open logic module" << logic_module_location;
@@ -19,16 +19,19 @@ logic_module_name logic_module_manager::load_logic_module(
     return std::nullopt;
   }
 
+  module_context->module_so_handle = std::optional<void *>(handle);
+
   auto details =
-      (svk_logic_module_details *)malloc(sizeof(svk_logic_module_details));
+      (svk_logic_module_details *)calloc(1, sizeof(svk_logic_module_details));
   if (details == nullptr) {
     logger_ss << "Memory allocation failed for module details loading from path"
               << logic_module_location;
     svk_logger(RAS_LOGGER, level_E::ERROR, logger_ss.str().c_str());
-    dlclose(handle);
     return std::nullopt;
   }
 
+  module_context->module_details =
+      std::optional<svk_logic_module_details *>(details);
   details->initialize_logic_module =
       (initialize_logic_module_dlsym)dlsym(handle, "initialize_logic_module");
 
@@ -36,8 +39,6 @@ logic_module_name logic_module_manager::load_logic_module(
     logger_ss << "Unable to load intitalize logic module pointer while loading"
               << logic_module_location;
     svk_logger(RAS_LOGGER, level_E::ERROR, logger_ss.str().c_str());
-    free(details);
-    dlclose(handle);
     return std::nullopt;
   }
 
@@ -49,17 +50,13 @@ logic_module_name logic_module_manager::load_logic_module(
     logger_ss << "Unable to load get supported details pointer while loading"
               << logic_module_location;
     svk_logger(RAS_LOGGER, level_E::ERROR, logger_ss.str().c_str());
-    free(details);
-    dlclose(handle);
     return std::nullopt;
   }
 
-  if (details->initialize_logic_module(nullptr)) {
+  if (details->initialize_logic_module(nullptr) != SVK_STATUS_SUCCESS) {
     logger_ss << "Initialze logic module failed while loading"
               << logic_module_location;
     svk_logger(RAS_LOGGER, level_E::ERROR, logger_ss.str().c_str());
-    free(details);
-    dlclose(handle);
     return std::nullopt;
   }
 
@@ -67,8 +64,6 @@ logic_module_name logic_module_manager::load_logic_module(
     logger_ss << "Get supported detail call failed while loading"
               << logic_module_location;
     svk_logger(RAS_LOGGER, level_E::ERROR, logger_ss.str().c_str());
-    free(details);
-    dlclose(handle);
     return std::nullopt;
   }
 
@@ -78,36 +73,26 @@ logic_module_name logic_module_manager::load_logic_module(
               << "but loaded by" << feature_name << "while loading"
               << logic_module_location;
     svk_logger(RAS_LOGGER, level_E::ERROR, logger_ss.str().c_str());
-    free(details);
-    dlclose(handle);
     return std::nullopt;
   }
 
   // insert logic_id/function pointers into map
-  auto [iterator, inserted] = this->logic_modules_map.insert(
-      make_pair(std::string(details->logic_module_name), details));
+  auto [iterator, inserted] = this->logic_modules_map.insert(make_pair(
+      std::string(details->logic_module_name), std::move(module_context)));
   if (!inserted) {
     logger_ss << "Failed to insert to map while loading"
               << logic_module_location;
     svk_logger(RAS_LOGGER, level_E::ERROR, logger_ss.str().c_str());
-    free(details);
-    dlclose(handle);
     return std::nullopt;
   }
 
-  dlclose(handle);
   return std::string(details->logic_module_name);
 }
-
-// ... existing code ...
 
 void logic_module_manager::unload_logic_module(
     const std::string &logic_module_name) {
   auto it = this->logic_modules_map.find(logic_module_name);
   if (it != this->logic_modules_map.end()) {
-    // Free the details
-    free(it->second);
-
     // Remove the module from the map
     this->logic_modules_map.erase(it);
   } else {
@@ -121,7 +106,8 @@ logic_module_ctx logic_module_manager::get_logic_module_details(
     const std::string &logic_module_name) {
   auto it = this->logic_modules_map.find(logic_module_name);
   if (it != this->logic_modules_map.end()) {
-    return it->second;
+    return *(
+        (it->second)->module_details);  // If it's in the map it should be valid
   }
   return nullptr;  // Return nullptr if module not found
 }
