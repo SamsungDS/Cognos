@@ -51,6 +51,7 @@ TEST_F(ConfigUnitTest, SVKCLEANUP) {
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
   logFile.close();
+  EXPECT_NE(std::string::npos, logs.find("[ras] [info] ras clean_up called"));
 }
 
 TEST_F(ConfigUnitTest, SVKInit) {
@@ -62,6 +63,8 @@ TEST_F(ConfigUnitTest, SVKInit) {
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
   logFile.close();
+  EXPECT_NE(std::string::npos,
+            logs.find("[ras] [info] ras init called & logger is initialized"));
   clean_up(nullptr);
 }
 
@@ -74,6 +77,8 @@ TEST_F(ConfigUnitTest, WrongConfigFileName) {
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
   logFile.close();
+  EXPECT_NE(std::string::npos,
+            logs.find("[ras] [info] ras init called & logger is initialized"));
   clean_up(nullptr);
 }
 
@@ -86,6 +91,8 @@ TEST_F(ConfigUnitTest, UndefinedConfig) {
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
   logFile.close();
+  EXPECT_NE(std::string::npos,
+            logs.find("[ras] [info] ras init called & logger is initialized"));
   clean_up(nullptr);
 }
 
@@ -100,6 +107,8 @@ TEST_F(ConfigUnitTest, MissingLoggerConfig) {
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
   logFile.close();
+  EXPECT_NE(std::string::npos,
+            logs.find("[ras] [info] ras init called & logger is initialized"));
   clean_up(nullptr);
   top_conf.put_child("ras.logger", logger_conf);
   unlink("missing_logger_conf.json");
@@ -132,6 +141,8 @@ TEST_F(ConfigUnitTest, SVKGetFeatureList) {
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
   logFile.close();
+  EXPECT_NE(std::string::npos,
+            logs.find("[ras] [info] ras get_supported_feature_list called"));
   clean_up(nullptr);
   unlink("conf.json");
 }
@@ -146,6 +157,8 @@ TEST_F(ConfigUnitTest, SVKLicense) {
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
   logFile.close();
+  EXPECT_NE(std::string::npos,
+            logs.find("[ras] [info] ras is_license_valid called"));
   clean_up(nullptr);
   unlink("conf.json");
 }
@@ -169,6 +182,10 @@ TEST_F(ConfigUnitTest, SVKEXEC) {
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
   logFile.close();
+  EXPECT_NE(std::string::npos,
+            logs.find("[ras] [info] ras execute_sync called."));
+  EXPECT_NE(std::string::npos, logs.find("input buffer: Passing a RAS string"));
+  EXPECT_NE(std::string::npos, logs.find("output buffer:"));
   clean_up(nullptr);
   unlink("conf.json");
 }
@@ -186,6 +203,8 @@ TEST_F(ConfigUnitTest, SVKEXECASYNC) {
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
   logFile.close();
+  EXPECT_NE(std::string::npos,
+            logs.find("[ras] [info] ras execute_async called"));
   clean_up(nullptr);
   unlink("conf.json");
 }
