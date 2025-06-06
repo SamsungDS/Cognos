@@ -44,6 +44,8 @@ typedef struct mem_attrs
 {
   	int src_numa_node;
   	int dst_numa_node;
+        int slow_tier;
+  	int fast_tier;
 } mem_attrs;
 
 /**
@@ -53,6 +55,7 @@ typedef struct tm_attrs
 {
   	std::string mover_tag;
   	std::string profiler_tag;
+        int ag_level;
 } tm_attrs;
 
 /**

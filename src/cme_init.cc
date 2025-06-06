@@ -61,6 +61,22 @@ cme_init ()
         return 0;
 }
 
+/**
+ * @brief de_init cme functionality
+ */
+int 
+cme_clean_up ()
+{
+
+ 	int rc = cme_global_obj.clean_up();
+        if (rc !=0)
+        {
+                std::cerr << "de_init failed" << std::endl;
+                return -EINVAL;
+        }
+        return 0;
+}
+
 
 /**
  * @brief init function
@@ -115,8 +131,7 @@ svk_status
 get_supported_feature_list (feature_id *feat_id, char *feature_name)
 {
   std::cout << "get_supported_feature_list function called" << std::endl;
-  *feat_id = feature_id::POWER_THROTTLE;
-  return SVK_STATUS_SUCCESS;
+  return SVK_STATUS_FAIL;
 }
 
 /**
@@ -205,6 +220,7 @@ svk_status
 clean_up (void *)
 {
   std::cout << "clean_up function called" << std::endl;
+  cme_clean_up ();
   return SVK_STATUS_FAIL;
 }
 
