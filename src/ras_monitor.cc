@@ -32,3 +32,21 @@ bool ras_monitor::ras_submit_request(ras_request *req) {
     return false;
   }
 }
+
+// Function that sleeps and calls submitRequest
+void call_ras_submit_request(ras_request *req, ras_monitor *m, bool &ret) {
+  if (req != nullptr) {
+    std::this_thread::sleep_for(std::chrono::seconds(REQUEST_WAIT_TIME));
+    ret = m->ras_submit_request(req);
+  }
+}
+
+// A timer based ras_submit_request wrapper
+bool ras_monitor::ras_submit_timed_request(ras_request *req) {
+  bool ret = false;
+  std::thread tfunc(call_ras_submit_request, req, this, std::ref(ret));
+
+  tfunc.join();
+
+  return ret;
+}

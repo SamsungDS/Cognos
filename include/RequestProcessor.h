@@ -5,6 +5,7 @@
 #include <atomic>
 #include <functional>
 #include <thread>
+#include <chrono>
 
 #include "RequestManager.h"
 
