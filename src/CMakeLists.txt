@@ -18,6 +18,7 @@ target_link_libraries(
   rte_ring
   dl
   svklogger
+  OpenMP::OpenMP_CXX
 )
 
 set_target_properties(${RAS} PROPERTIES 

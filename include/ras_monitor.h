@@ -2,7 +2,6 @@
 #define _RAS_MONITOR_H_
 
 #include "RequestProcessor.h"
-#define REQUEST_WAIT_TIME 3
 
 class ras_monitor;
 
@@ -60,7 +59,7 @@ class ras_monitor {
   ras_monitor(/* args */);
   ~ras_monitor();
   bool ras_submit_request(ras_request *req);
-  bool ras_submit_timed_request(ras_request *req);
+  bool ras_submit_timed_request(ras_request *req, int interval);
 };
 
 #endif  // _RAS_MONITOR_H_
