@@ -19,7 +19,7 @@ install_packages() {
     BUILD_DEPS=(
         boost-devel
         cmake
-        gcc-toolset-13
+        gcc-c++
         git
         python3-virtualenv
         rpmdevtools
