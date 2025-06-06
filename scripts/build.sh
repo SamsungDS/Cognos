@@ -273,14 +273,19 @@ if $WITH_COVERAGE;then
     pushd tests
     echo "Running unit tests..."
 
-    cp "$PROJECT_ROOT/tests/cme_config.json" "$BUILD_DIR/tests"
+    
     mkdir -p "$BUILD_DIR/tests/movers"
     mkdir -p "$BUILD_DIR/tests/profilers"
+    mkdir -p "/usr/local/svk/feature_modules/me/config/"
     cp "$BUILD_DIR/src/movers/cme_mover_dummy/libcme_mover_dummy.so" "$BUILD_DIR/tests/movers/"
     cp "$BUILD_DIR/src/movers/numa_move_all/libnuma_move_all.so" "$BUILD_DIR/tests/movers/"
+    cp "$BUILD_DIR/src/movers/mover_damo/libmover_damo.so" "$BUILD_DIR/tests/movers/"
+    cp "$PROJECT_ROOT/tests/cme_config.json" "$BUILD_DIR/tests/"
+    cp "$PROJECT_ROOT/src/movers/mover_damo/config/damo_config.json" "/usr/local/svk/feature_modules/me/config/"
+    cp "$PROJECT_ROOT/src/movers/mover_damo/tools/tm_gen_config.py" "/usr/local/svk/feature_modules/me/config/"
     mkdir -p "$REPORTS_DIR"
     ctest --output-junit "$REPORTS_DIR/gitlab_junit.xml"
-    popd
+    rm -rf "/usr/local/svk/feature_modules/me"
   else
     die "Can't generate code coverage without building tests, not running gcovr"
   fi

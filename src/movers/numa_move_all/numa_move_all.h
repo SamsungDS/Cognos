@@ -10,11 +10,11 @@ class numa_move_all : public cme_mover
 		numa_move_all(std::string);
 
                 int move_all(long, unsigned int, unsigned int,  std::function<void(void*, int)>, void*, int) override;
-                int move_hot() override;
-                int move_cold() override;
-                int move() override;
+                int move_hot(std::string,  long, unsigned int, unsigned int, unsigned int) override;
+                int move_cold(std::string,  long, unsigned int, unsigned int, unsigned int) override;
+                int move(std::string,  long, unsigned int, unsigned int, unsigned int) override;
                 int get_status() override;
-                int stop() override;
+                int stop(std::string, long) override;
                 std::string get_name() override;
 	private:
 		std::string name;

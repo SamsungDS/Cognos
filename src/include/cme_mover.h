@@ -27,11 +27,11 @@ public:
 	 * 	void* callback function argument: Likely to be pointer to cme_context object.
 	 * */
         virtual int move_all(long, unsigned int, unsigned int, std::function<void(void*, int)> , void*, int) = 0;
-        virtual int move_hot() = 0;
-        virtual int move_cold() = 0;
-        virtual int move() = 0;
+        virtual int move_hot(std::string,  long, unsigned int, unsigned int, unsigned int) = 0;
+        virtual int move_cold(std::string,  long, unsigned int, unsigned int, unsigned int) = 0;
+        virtual int move(std::string,  long, unsigned int, unsigned int, unsigned int) = 0;
         virtual int get_status() = 0;
-        virtual int stop() = 0;
+        virtual int stop(std::string, long) = 0;
 };
 
 #endif

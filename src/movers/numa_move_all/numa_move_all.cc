@@ -93,19 +93,19 @@ int numa_move_all::move_all(long target_pid, unsigned int node_src, unsigned int
         return 0;
 }
 
-int numa_move_all::move_hot()
+int numa_move_all::move_hot(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, unsigned int aggresiveness_level)
 {
         cout << name << " Started  " <<  string (__FUNCTION__) << endl;
         return 0;
 }
 
-int numa_move_all::move_cold()
+int numa_move_all::move_cold(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, unsigned int aggresiveness_level)
 {
         cout << name << " Started  " <<  string (__FUNCTION__) << endl;
         return 0;
 }
 
-int numa_move_all::move()
+int numa_move_all::move(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, unsigned int aggresiveness_level)
 {
         cout << name << " Started  " <<  string (__FUNCTION__) << endl;
         return 0;
@@ -117,7 +117,7 @@ int numa_move_all::get_status()
         return 0;
 }
 
-int numa_move_all::stop()
+int numa_move_all::stop(string app_name, long app_pid)
 {
         cout << name << " Started  " <<  string (__FUNCTION__) << endl;
         return 0;

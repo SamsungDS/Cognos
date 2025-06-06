@@ -17,6 +17,7 @@
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
+#include <filesystem>
 
 #include "include/cme_global.h"
 
@@ -326,7 +327,7 @@ void callback_fn_move_all(void* cb_ctx, int status)
  * @param command tokens map
  * @return true if valid params for move_all
 */
-static bool verify_cmd_move_all(unordered_map<string, string> &tokens_map)	
+static bool is_valid_cmd_move_all(cme_global* cg_obj, unordered_map<string, string> &tokens_map)	
 {
 	try
 	{
@@ -337,7 +338,11 @@ static bool verify_cmd_move_all(unordered_map<string, string> &tokens_map)
 			|| (tokens_map.count("tm_attr") < 0)
 		   )
 		{
-		throw runtime_error ("Error in " + string (__FUNCTION__) + " :move_all command parameters not found");	
+			throw runtime_error ("Error in " + string (__FUNCTION__) + " :move_all command parameters not found");	
+		}
+		if (!(!(tokens_map.at("tm_attr").compare("0")) || (cg_obj->movers_list.find(tokens_map.at("tm_attr")) != cg_obj->movers_list.end() ) ))
+		{
+			throw runtime_error ("Error in " + string (__FUNCTION__) + " :move_all tm_attr param invalid");
 		}
 				
 	}
@@ -362,7 +367,7 @@ static std::string cg_move_all(cme_global* cg_obj, unordered_map<string, string>
 		{
 			throw runtime_error ("Error in " + string (__FUNCTION__) + " No movers found ");
 		}
-		if (!(verify_cmd_move_all(tokens_map)))
+		if (!(is_valid_cmd_move_all(cg_obj, tokens_map)))
                 {
                         throw runtime_error ("Error in " + string (__FUNCTION__) + " verify command error ");
                 }
@@ -417,7 +422,6 @@ static std::string cg_move_all(cme_global* cg_obj, unordered_map<string, string>
  * @return status code of tuner stop: 0 = success
 */
 static std::string cg_get_status(cme_global* cg_obj, unordered_map<string, string> &tokens_map)
-
 {
         try
         {
@@ -429,7 +433,7 @@ static std::string cg_get_status(cme_global* cg_obj, unordered_map<string, strin
 			std::cerr << "Context not found" << endl;
 			return std::to_string(-EINVAL);
                 }
-		// for now returning status of las completed mover command
+		// for now returning status of last completed mover command (move_all)
 		// logic will be added later for profiler
 		if (cme_ctx->mover_state == CTX_ACTIVE)
 		{
@@ -447,6 +451,278 @@ static std::string cg_get_status(cme_global* cg_obj, unordered_map<string, strin
 }
 
 /**
+ * @brief function to verify all params needed for move
+ *      are present
+ * @param command tokens map
+ * @return true if valid params for move
+*/
+static bool is_valid_cmd_move(cme_global* cg_obj, unordered_map<string, string> &tokens_map)
+{
+        try
+        {
+                if ( (tokens_map.count("slow_tier") < 0)
+                        || (tokens_map.count("fast_tier") < 0)
+                        || (tokens_map.count("app") < 0)
+                        || (tokens_map.count("app_pid") < 0)
+                        || (tokens_map.count("tm_attr") < 0)
+                   )
+                {
+			std::cerr << "Error in " + string (__FUNCTION__) + " :move command parameters not found" << endl;
+			return false;
+                }
+        }
+        catch (const std::exception &e)
+        {
+                std::cerr << "Error -> " << e.what () << endl;
+                return false;
+        }
+        return true;
+}
+
+
+/**
+ * @brief move
+ * @param command string
+ * @return status code of move
+*/
+static std::string cg_move(cme_global* cg_obj, unordered_map<string, string> &tokens_map)
+{
+        int ret;
+        try
+        {
+                if (cg_obj->movers_list.size() == 0)
+                {
+                        throw runtime_error ("Error in " + string (__FUNCTION__) + " No movers found ");
+                }
+                if (!(is_valid_cmd_move(cg_obj, tokens_map)))
+                {
+                        throw runtime_error ("Error in " + string (__FUNCTION__) + " verify command error ");
+                }
+
+                // find cme_context
+                cg_obj->cme_contexts_lock();
+                cme_context* cme_ctx = cg_find_context(cg_obj, tokens_map, false);
+                if (cme_ctx == nullptr)
+                {
+                        cg_obj->cme_contexts_unlock();
+                        throw runtime_error ("Error in " + string (__FUNCTION__) + " cme context not found");
+                }
+                if (cme_ctx->mover_state == CTX_ACTIVE)
+                {
+                        std::cerr << "cg_move_all. Error -> mover for context busy" << endl;
+                        cg_obj->cme_contexts_unlock();
+                        return std::to_string(-EBUSY);
+                }
+                // update cme_context
+                cme_ctx->mem_attr.slow_tier = stoi (tokens_map["slow_tier"]);
+                cme_ctx->mem_attr.fast_tier = stoi (tokens_map["fast_tier"]);
+                cme_ctx->tm_attr.ag_level = stoi(tokens_map["tm_attr"]);
+                
+                
+                int slow_t = cme_ctx->mem_attr.slow_tier;
+                int fast_t = cme_ctx->mem_attr.fast_tier;
+                cme_ctx->mover_obj = cg_obj->movers_list.at("mover_damo");
+
+                if (cme_ctx->mover_obj == nullptr)
+                {
+                        cg_obj->cme_contexts_unlock();
+                        throw runtime_error ("Error in " + string (__FUNCTION__) + " mover not found");
+                }
+                cout << tokens_map["command"] << " movername= " << cme_ctx->mover_obj->get_name() << " slow_tier=" << to_string(slow_t) << " fast_tier="<< to_string(fast_t) << endl;
+                std::string app_name = tokens_map["app"];
+                long app_pid = stol(tokens_map["app_pid"]);
+                
+                // Since we are using Damo mover we can use this approach
+                // for future movers we can use async thread method similar to move all
+
+                if (!(tokens_map["command"].compare("move")))
+                {
+                        ret = cme_ctx->mover_obj->move(app_name, app_pid, slow_t, fast_t, cme_ctx->tm_attr.ag_level);
+                }
+                
+                else if (!(tokens_map["command"].compare("move_hot")))
+                {
+                        ret = cme_ctx->mover_obj->move_hot(app_name, app_pid, slow_t, fast_t, cme_ctx->tm_attr.ag_level);
+                }
+                else if (!(tokens_map["command"].compare("move_cold")))
+                {
+                        ret = cme_ctx->mover_obj->move_cold(app_name, app_pid, slow_t, fast_t, cme_ctx->tm_attr.ag_level);
+                }
+                else
+                {
+                        cg_obj->cme_contexts_unlock();
+                        return std::to_string(-EINVAL);
+                }
+                if (!ret)
+                {
+                        cme_ctx->mover_state = CTX_ACTIVE;
+                } 
+                cg_obj->cme_contexts_unlock();
+        }
+
+        catch (const std::exception &e)
+        {
+                std::cerr << "cg_move. Error -> " << e.what () << endl;
+                return std::to_string(-EINVAL);
+        }
+        return to_string (ret);
+}
+
+/**
+ * @brief move_hot
+ * @param command string
+ * @return status code of move_hot
+ *  With damo mover move_hot and move_hot not explicitly implemented
+ *  TBD in future for different mover
+*/
+static std::string cg_move_hot(cme_global* cg_obj, unordered_map<string, string> &tokens_map)
+{
+        return cg_move(cg_obj, tokens_map);
+}
+
+/**
+ * @brief move_cold
+ * @param command string
+ * @return status code of move_cold
+ *  With damo mover move_hot and move_cold not explicitly implemented
+ *  TBD in future for different mover
+*/
+static std::string cg_move_cold(cme_global* cg_obj, unordered_map<string, string> &tokens_map)
+{
+        return cg_move(cg_obj, tokens_map);
+}
+
+/**
+ * @brief function to verify all params needed for move
+ *      are present
+ * @param command tokens map
+ * @return true if valid params for move
+*/
+static bool is_valid_cmd_move_stop(cme_global* cg_obj, unordered_map<string, string> &tokens_map)
+{
+        try
+        {
+                if ( (tokens_map.count("app_pid")  < 0) || (tokens_map.count("app") < 0))
+                {
+			std::cerr << "Error in " + string (__FUNCTION__) + " :move stop command parameters not found" << endl;
+			return false;
+                }
+        }
+        catch (const std::exception &e)
+        {
+                std::cerr << "Error -> " << e.what () << endl;
+                return false;
+        }
+        return true;
+}
+
+/**
+ * @brief move stop
+ * @param command string
+ * @return status code of move stop
+*/
+static std::string cg_move_stop(cme_global* cg_obj, unordered_map<string, string> &tokens_map)
+{
+        int ret;
+        try
+        {
+                if (cg_obj->movers_list.size() == 0)
+                {
+                        throw runtime_error ("Error in " + string (__FUNCTION__) + " No movers found ");
+                }
+                if (!(is_valid_cmd_move_stop(cg_obj, tokens_map)))
+                {
+                        throw runtime_error ("Error in " + string (__FUNCTION__) + " verify command error ");
+                }
+
+                std::string app_name = tokens_map["app"];
+                long app_pid = stol(tokens_map["app_pid"]);
+                // find cme_context
+                cg_obj->cme_contexts_lock();
+                cme_context* cme_ctx = cg_find_context(cg_obj, tokens_map, false);
+                if (cme_ctx == nullptr)
+                {
+                        cg_obj->cme_contexts_unlock();
+                        throw runtime_error ("Error in " + string (__FUNCTION__) + " cme context not found");
+                }
+                if (cme_ctx->mover_obj == nullptr)
+                {
+                        std::cerr << "cg_move_stop. Error -> No mover for context" << endl;
+                        cg_obj->cme_contexts_unlock();
+                        return std::to_string(-EINVAL);
+                }
+                cout << "movername=" << cme_ctx->mover_obj->get_name() << " app_name=" << app_name << " app_pid="<< to_string(app_pid) << endl;
+                if (cme_ctx->mover_state == CTX_ACTIVE)
+                {
+                        ret = cme_ctx->mover_obj->stop(app_name, app_pid);
+                        if (ret)
+                        {
+                                std::cerr << "cg_move_stop. Error -> stop failed" << endl;
+                                cg_obj->cme_contexts_unlock();
+                                return std::to_string(-EINVAL);
+                        }
+                }
+                delete cme_ctx;
+                std::pair<std::string, long> cme_ctx_key = make_pair (app_name, app_pid);
+                cg_obj->cme_contexts_list.erase(cme_ctx_key);
+                cg_obj->cme_contexts_unlock();
+        }
+        catch (const std::exception &e)
+        {
+                std::cerr << "cg_move_stop. Error -> " << e.what () << endl;
+                return std::to_string(-EINVAL);
+        }
+        return to_string (ret);
+}
+
+/**
+ * @brief StartTuning
+ * @param command string
+ * @return status code of StartTuning
+ *  StartTuning redirects to move 
+*/
+static std::string cg_StartTuning(cme_global* cg_obj, unordered_map<string, string> &tokens_map)
+{
+        try
+        {
+                tokens_map.emplace("app", tokens_map["application"]);
+                tokens_map.emplace("fast_tier", tokens_map["dram_node"]);
+                tokens_map.emplace("app_pid", tokens_map["application_id"]);
+                tokens_map.emplace("slow_tier", tokens_map["cxl_node"]);
+                tokens_map.emplace("tm_attr", "0");
+                tokens_map["command"] = "move";
+                return cg_move(cg_obj, tokens_map);
+                
+        }
+        catch(const std::exception& e)
+        {
+                std::cerr << "StartTuning. Error -> " << e.what () << endl;
+                return std::to_string(-EINVAL);
+        }
+}
+
+/**
+ * @brief StopTuning
+ * @param command string
+ * @return status code of StopTuning
+ *  StopTuning redirects to move
+*/
+static std::string cg_StopTuning(cme_global* cg_obj, unordered_map<string, string> &tokens_map)
+{
+        try
+        {
+                tokens_map.emplace("app", tokens_map["application"]);
+                tokens_map.emplace("app_pid", tokens_map["application_id"]);
+                return cg_move_stop(cg_obj, tokens_map);
+        }
+        catch(const std::exception& e)
+        {
+                std::cerr << "cg_StopTuning. Error -> " << e.what () << endl;
+                return std::to_string(-EINVAL);
+        }
+}
+
+/**
  * @brief cme_command_handler
  * @param command string
  * @return result of command execution functions
@@ -458,10 +734,12 @@ std::string cme_global::cme_command_handler(std::string input_cme_command)
         unordered_map<string, string> command_params_map;
 	try
         { 
-		bool cmd_style_json = command_parser_json(input_cme_command, command_params_map);
+		// Check and parse valid json command string
+                bool cmd_style_json = command_parser_json(input_cme_command, command_params_map);
 		if(!cmd_style_json)
 		{
-			command_params_map = token_helper (input_cme_command);
+			// Older style flat command string
+                        command_params_map = token_helper (input_cme_command);
 		}
 		commandValue = command_params_map.at("command");
 		cout << "command=" << commandValue << endl;
@@ -493,6 +771,13 @@ int cme_global::initialize()
         { 
                 fw_hooks.emplace("move_all", cg_move_all);
                 fw_hooks.emplace("get_status", cg_get_status);
+                fw_hooks.emplace("move", cg_move);
+                fw_hooks.emplace("move_hot", cg_move_hot);
+                fw_hooks.emplace("move_cold", cg_move_cold);
+                fw_hooks.emplace("stop", cg_move_stop);
+                fw_hooks.emplace("StartTuning", cg_StartTuning);
+                fw_hooks.emplace("StopTuning", cg_StopTuning);
+
         }
         catch (const std::exception &e)
         {
@@ -501,4 +786,36 @@ int cme_global::initialize()
         }
         return 0;
 }
+
+int cme_global::clean_up()
+{
+        try
+        { 
+                std::string global_damo_gen_config = CME_CONFIG_PATH + "global_damo_config.yaml";
+                filesystem::path filePath(global_damo_gen_config);
+                if (filesystem::exists(filePath))
+                {
+                        cout << "Global damo config File exists, deleting.\n";
+                        if (remove(global_damo_gen_config.c_str()) == 0)
+                        {
+                                cout << "File: " + global_damo_gen_config + " deleted successfully." << endl;
+                        }
+                }
+                for (auto item : movers_list)
+                {
+                        delete item.second;
+                }
+                for (auto item : profilers_list)
+                {
+                        delete item.second;
+                }
+        }
+        catch (const std::exception &e)
+        {
+                std::cerr << "cme clean up. Error -> " << e.what () << endl;
+                return (-EINVAL);
+        }
+        return 0;
+}
+  
 

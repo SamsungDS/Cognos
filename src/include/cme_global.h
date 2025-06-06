@@ -9,7 +9,8 @@
 #include <mutex>
 #include <unordered_map>
 
-const std::string CME_CONFIG_FILE = "/usr/local/svk/feature_modules/me/config/cme_config.json";
+const std::string CME_CONFIG_PATH = "/usr/local/svk/feature_modules/me/config/";
+const std::string CME_CONFIG_FILE = CME_CONFIG_PATH + "cme_config.json";
 
 typedef enum
 {
@@ -46,6 +47,7 @@ class cme_global
                 std::string cme_command_handler(std::string );
 		void cme_contexts_lock ();
                 void cme_contexts_unlock ();
+                int clean_up();
         private:
                 
                 int _cme_discovery(std::string, int);
