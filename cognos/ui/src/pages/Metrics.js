@@ -304,9 +304,6 @@ const Metrics = () => {
                         </h1>
                       </Col>
                       <Col sm={8} md={8} lg={8} xl={8}>
-                        <div className="bandwidth-legend">
-                          <span className="fs-22">CMM-D</span>
-                        </div>
                         <div>
                           <div
                             className="progres-bar-label-metrics"
