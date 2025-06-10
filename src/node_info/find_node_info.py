@@ -17,10 +17,16 @@ def get_system_info():
     Returns:
         dict: A dictionary containing server information.
     """
+    hostname = platform.node()
+    # Create set of IPs that are used for localhost and filter them from the IP list
+    localhost_ips = set()
+    for res in socket.getaddrinfo('localhost', 0):
+        localhost_ips.add(res[4][0])
     server_info = {
-        "hostname": platform.node(),
+        "hostname": hostname,
         "fqdn": socket.getfqdn(),
-        "ip-address": socket.gethostbyname(platform.node()),
+        "ip-address": next((ip for ip in socket.gethostbyname_ex(platform.node())[2] if ip not in localhost_ips), 
+                           socket.gethostbyname(hostname)),
         "os-release": distro.name(pretty=True),
         "kernel-version": platform.uname().release if hasattr(platform, 'uname') else None,
     }

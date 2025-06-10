@@ -49,7 +49,8 @@ def test_get_system_info(monkeypatch):
     """Verify that get_system_info collects information from the platform."""
     monkeypatch.setattr(fn.platform, "node", lambda: "testnode")
     monkeypatch.setattr(fn.socket, "getfqdn", lambda: "testnode.example.com")
-    monkeypatch.setattr(fn.socket, "gethostbyname", lambda host: "10.1.1.1")
+    monkeypatch.setattr(fn.socket, "gethostbyname_ex", lambda host: ("testnode", [], ["10.1.1.1"]))
+    monkeypatch.setattr(fn.socket, "gethostbyname", lambda host : ("10.0.1.1"))
     monkeypatch.setattr(fn.distro, "name", lambda pretty=True: "MyLinux")
     mock_uname = types.SimpleNamespace(release="5.10.0")
     monkeypatch.setattr(fn.platform, "uname", lambda: mock_uname)
@@ -60,6 +61,69 @@ def test_get_system_info(monkeypatch):
             "hostname": "testnode",
             "fqdn": "testnode.example.com",
             "ip-address": "10.1.1.1",
+            "os-release": "MyLinux",
+            "kernel-version": "5.10.0",
+        }
+    }
+
+def test_get_system_info_localhost_ip(monkeypatch):
+    """Verify that get_system_info excludes localhost IP addresses."""
+    monkeypatch.setattr(fn.platform, "node", lambda: "testnode")
+    monkeypatch.setattr(fn.socket, "getfqdn", lambda: "testnode.example.com")
+    monkeypatch.setattr(fn.socket, "gethostbyname_ex", lambda host: ("testnode", "", ["127.0.0.1", "10.1.1.1"]))
+    monkeypatch.setattr(fn.socket, "gethostbyname", lambda host : ("10.0.1.1"))
+    monkeypatch.setattr(fn.distro, "name", lambda pretty=True: "MyLinux")
+    mock_uname = types.SimpleNamespace(release="5.10.0")
+    monkeypatch.setattr(fn.platform, "uname", lambda: mock_uname)
+
+    result = fn.get_system_info()
+    assert result == {
+        "server-info": {
+            "hostname": "testnode",
+            "fqdn": "testnode.example.com",
+            "ip-address": "10.1.1.1",
+            "os-release": "MyLinux",
+            "kernel-version": "5.10.0",
+        }
+    }
+    
+def test_get_system_info_default_ip(monkeypatch):
+    """Verify that get_system_info defaults to what is returned by socket.gethostbyname()"""
+    monkeypatch.setattr(fn.platform, "node", lambda: "testnode")
+    monkeypatch.setattr(fn.socket, "getfqdn", lambda: "testnode.example.com")
+    monkeypatch.setattr(fn.socket, "gethostbyname_ex", lambda host: ("testnode", "", ["127.0.0.1"]))
+    monkeypatch.setattr(fn.socket, "gethostbyname", lambda host : ("10.0.1.1"))
+    monkeypatch.setattr(fn.distro, "name", lambda pretty=True: "MyLinux")
+    mock_uname = types.SimpleNamespace(release="5.10.0")
+    monkeypatch.setattr(fn.platform, "uname", lambda: mock_uname)
+
+    result = fn.get_system_info()
+    assert result == {
+        "server-info": {
+            "hostname": "testnode",
+            "fqdn": "testnode.example.com",
+            "ip-address": "10.0.1.1",
+            "os-release": "MyLinux",
+            "kernel-version": "5.10.0",
+        }
+    }
+    
+def test_get_system_info_ipv6_localhost(monkeypatch):
+    """Verify that get_system_info returns ipv6 address"""
+    monkeypatch.setattr(fn.platform, "node", lambda: "testnode")
+    monkeypatch.setattr(fn.socket, "getfqdn", lambda: "testnode.example.com")
+    monkeypatch.setattr(fn.socket, "gethostbyname_ex", lambda host: ("testnode", "", ["::1", "2001:0db8:85a3:0000:0000:8a2e:0370:7334"]))
+    monkeypatch.setattr(fn.socket, "gethostbyname", lambda host : ("10.0.1.1"))
+    monkeypatch.setattr(fn.distro, "name", lambda pretty=True: "MyLinux")
+    mock_uname = types.SimpleNamespace(release="5.10.0")
+    monkeypatch.setattr(fn.platform, "uname", lambda: mock_uname)
+
+    result = fn.get_system_info()
+    assert result == {
+        "server-info": {
+            "hostname": "testnode",
+            "fqdn": "testnode.example.com",
+            "ip-address": "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
             "os-release": "MyLinux",
             "kernel-version": "5.10.0",
         }
