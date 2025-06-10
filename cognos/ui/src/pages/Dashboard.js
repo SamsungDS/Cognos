@@ -53,7 +53,7 @@ const Dashboard = () => {
       
       const response = await constants.fetchMetrics(`${apiEndpoint}/metrics`, payload);
 
-      if (response.ok) {
+      if (response?.ok) {
           const data = await response.json();
           cmmbMemoryDataRef.current = data;
           setcmmbMemoryDataState(cmmbMemoryDataRef.current);
@@ -80,7 +80,7 @@ const Dashboard = () => {
       
       const response = await constants.fetchMetrics(`${apiEndpoint}/metrics`, payload);
 
-      if (response.ok) {
+      if (response?.ok) {
           const data = await response.json();
           cmmbCapacityDataRef.current = data;
           setcmmbCapacityDataState(cmmbCapacityDataRef.current);
@@ -107,7 +107,7 @@ const Dashboard = () => {
 
       const response = await constants.fetchMetrics(`${apiEndpoint}/metrics`, payload);
 
-      if (response.ok) {
+      if (response?.ok) {
           const data = await response.json();
           cmmbBandwidthDataRef.current = data;
           setCmmbBandwidthDataState(cmmbBandwidthDataRef.current);
@@ -134,7 +134,7 @@ const Dashboard = () => {
       
       const response = await constants.fetchMetrics(`${apiEndpoint}/metrics`, payload);
 
-      if (response.ok) {
+      if (response?.ok) {
           const data = await response.json();
           devicesCountDataRef.current = data;
           setdevicesCountDataState(devicesCountDataRef.current);

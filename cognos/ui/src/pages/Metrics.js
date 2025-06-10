@@ -46,8 +46,7 @@ export const handleSelectChange = async (
 const Metrics = () => {
     const apiEndpoint = constants.Configs.api_endpoint;
     const [selectorOptions, setSelectorOptions] = useState([
-      { value: "Host 1", label: "Host 1" },
-      { value: "Host 2", label: "Host 2" },
+      { value: "", label: "Select Host" },
     ]);
     const selectorOptionsRef = useRef(selectorOptions);
     // eslint-disable-next-line
@@ -159,7 +158,7 @@ const Metrics = () => {
 
       const response = await constants.fetchMetrics(`${apiEndpoint}/metrics`, payload)
 
-      if (response.ok) {
+      if (response?.ok) {
           const data = await response.json();
           memoryCpuDataRef.current = data;
           setMemoryCpuDataState(memoryCpuDataRef.current);
@@ -192,7 +191,7 @@ const Metrics = () => {
 
       const response = await constants.fetchMetrics(`${apiEndpoint}/metrics`, payload)
 
-      if (response.ok) {
+      if (response?.ok) {
           const data = await response.json();
           memCapacityDataRef.current = data;
           setMemCapacityDataState(memCapacityDataRef.current);
@@ -225,7 +224,7 @@ const Metrics = () => {
 
       const response = await constants.fetchMetrics(`${apiEndpoint}/metrics`, payload)
 
-      if (response.ok) {
+      if (response?.ok) {
           const data = await response.json();
           dramCxlMemUsageDataRef.current = data;
           setDramCxlMemUsageDataState(dramCxlMemUsageDataRef.current);
