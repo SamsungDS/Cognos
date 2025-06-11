@@ -31,6 +31,8 @@
 #define RAS_LOGGER_FILE_SIZE_DEFAULT 1048576
 #define RAS_LOGGER_SINK_TYPE_DEFAULT "rotating_file"
 
+#define RAS_DEFAULT_ADAPTERS_DIRECTORY "/usr/local/svk/ras/adapters"
+
 /**
  * @struct ras_conf
  * @brief struct containing ras related configs
@@ -57,11 +59,13 @@
  */
 
 typedef struct {
+  // TODO: Refactor Log config to sub struct
   std::string log_level;
   std::string log_file_name;
   uint64_t log_file_count;
   uint64_t log_file_size;
   std::string log_sink_type;
+  std::string adapters_directory;
 } ras_conf;
 
 #endif  // __RAS_HPP__

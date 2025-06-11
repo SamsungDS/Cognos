@@ -1,10 +1,16 @@
 #include "ras.hpp"
 
+#include <fmt/format.h>
+
+#include <filesystem>
+
 #include "ras_monitor.h"
+#include "utils/logic_module_manager.hpp"
 
 struct ras_context_s {
   ras_monitor *monitor_context;
   bool initialized;
+  logic_module_manager adapters;
   std::mutex ctx_mutex;
 };
 struct ras_context_s g_ras_context = {.monitor_context = nullptr,
@@ -37,6 +43,66 @@ svk_status parsing_ras_conf(std::string ras_conf_path, ras_conf *ras_configs) {
       logger_conf.get<int>("log_file_size", RAS_LOGGER_FILE_SIZE_DEFAULT);
   ras_configs->log_sink_type =
       logger_conf.get<std::string>("sink_type", RAS_LOGGER_SINK_TYPE_DEFAULT);
+
+  ras_configs->adapters_directory = root_conf.get<std::string>(
+      "adapters_directory", RAS_DEFAULT_ADAPTERS_DIRECTORY);
+  if (!(std::filesystem::exists(ras_configs->adapters_directory) &&
+        std::filesystem::is_directory(ras_configs->adapters_directory))) {
+    std::cout << "Adapters Directory does not exist." << std::endl;
+    return SVK_STATUS_FAIL;
+  }
+  return SVK_STATUS_SUCCESS;
+}
+
+static inline bool validate_lib_entry(const std::string &lib_path_str) {
+  std::filesystem::path lib_path = lib_path_str;
+  if (!std::filesystem::exists(lib_path)) {
+    svk_logger(RAS_LOGGER, level_E::WARN,
+               fmt::format("Library not found {}", lib_path_str).c_str());
+
+    return false;
+  }
+  return true;
+}
+/**
+ * NOTE: RAS adpaters are dynamic (.so) libraries that are compliant to svk
+ * logic interface. The loading is tried on each directory listing given in the
+ * load path `ras_adapters_dir`. If the directory name is <name> then if
+ * lib64/lib<name>.so exists then it will be loaded, if it complies with the svk
+ * logic interface.
+ */
+static inline svk_status load_ras_adapters(
+    const std::string &ras_adapters_dir) {
+  std::filesystem::path load_dir = ras_adapters_dir;
+
+  for (const auto &entry : std::filesystem::directory_iterator(load_dir)) {
+    auto entry_path_str = entry.path().string();
+    if (!entry.is_directory()) {
+      svk_logger(RAS_LOGGER, level_E::WARN,
+                 fmt::format("Skipping non directory entry {}", entry_path_str)
+                     .c_str());
+      continue;
+    }
+
+    std::string lib_path_str = fmt::format("{}/lib64/lib{}.so", entry_path_str,
+                                           entry.path().filename().string());
+
+    if (validate_lib_entry(lib_path_str)) {
+      auto logic_module_name = g_ras_context.adapters.load_logic_module(
+          lib_path_str, std::string(RAS_FEATURE_MODULE_NAME));
+      if (logic_module_name == std::nullopt) {
+        svk_logger(
+            RAS_LOGGER, level_E::WARN,
+            fmt::format("Failed to load adapter {}", lib_path_str).c_str());
+        continue;
+      }
+    } else {
+      svk_logger(
+          RAS_LOGGER, level_E::WARN,
+          fmt::format("Skipping non compliant directory {}", entry_path_str)
+              .c_str());
+    }
+  }
   return SVK_STATUS_SUCCESS;
 }
 
@@ -44,6 +110,7 @@ svk_status parsing_ras_conf(std::string ras_conf_path, ras_conf *ras_configs) {
 // according to the config file path and the function here will enable an
 // internal ras logger (svk_logger_1) which can log without svk-core
 extern "C" svk_status initialize(void *details) {
+  svk_status rc = SVK_STATUS_FAIL;
   std::string ras_conf_path;
   const char *env_p;
   if ((env_p = std::getenv("SVK_RAS_CONFIG")) != nullptr) {
@@ -52,7 +119,10 @@ extern "C" svk_status initialize(void *details) {
     ras_conf_path = RAS_CONFIG_FILE_DEFAULT;
   }
   ras_conf *ras_configs = new ras_conf();
-  assert((parsing_ras_conf(ras_conf_path, ras_configs) == SVK_STATUS_SUCCESS));
+  rc = parsing_ras_conf(ras_conf_path, ras_configs);
+  if (rc != SVK_STATUS_SUCCESS) {
+    return rc;
+  }
   // TODO: in the next version with more stuff to init in this function
   // we should refactor this init function and put logger related map &
   // initialization in the ras_logger_init function
@@ -68,6 +138,9 @@ extern "C" svk_status initialize(void *details) {
   }
 
   std::lock_guard<std::mutex> lock(g_ras_context.ctx_mutex);
+
+  // Load adapters
+  load_ras_adapters(ras_configs->adapters_directory);
 
   if (g_ras_context.monitor_context == nullptr) {
     g_ras_context.monitor_context = new ras_monitor();

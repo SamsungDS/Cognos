@@ -19,7 +19,8 @@ install_packages() {
         wget
         rapidjson-dev
         libnuma-dev
-	rasdaemon
+        libfmt-dev
+        rasdaemon
     )
     package_manager
 }

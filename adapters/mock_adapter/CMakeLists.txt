@@ -2,9 +2,9 @@ set(LIBMOCK_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/libmock.cpp)
 set(LOGICMOCK_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/logicmock.cpp)
 set(LIBMOCK_INC ${CMAKE_CURRENT_SOURCE_DIR}/src/libmock.h)
 set(LIBMOCK_CFG ${CMAKE_CURRENT_SOURCE_DIR}/config/mock_config.json)
-set(LIBMOCK_LIB_DEST "lib64/adapters/mock_adapter/lib64/")
-set(LIBMOCK_INCLUDE_DEST "include/adapters/mock_adapter/include/")
-set(LIBMOCK_CFG_DEST "lib64/adapters/mock_adapter/config/")
+set(LIBMOCK_LIB_DEST "adapters/mock/lib64/")
+set(LIBMOCK_INCLUDE_DEST "include/adapters/mock")
+set(LIBMOCK_CFG_DEST "adapters/mock/config/")
 set(LIBMOCK "mock")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
 
@@ -26,5 +26,4 @@ install(TARGETS ${LIBMOCK}
         ARCHIVE DESTINATION ${LIBMOCK_INSTALL_DEST}
         INCLUDES DESTINATION ${LIBMOCK_INCLUDE_DEST})
 
-install(FILES ${LIBMOCK_INC} DESTINATION ${LIBMOCK_INCLUDE_DEST})
 install(FILES ${LIBMOCK_CFG} DESTINATION ${LIBMOCK_CFG_DEST})

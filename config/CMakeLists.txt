@@ -4,6 +4,8 @@ else()
   set(RAS_FEATURE_DIR "${PKG_CONFIG_PREFIX}")
 endif()
 set(CONFIG_DIR "${RAS_FEATURE_DIR}/config/")
+set(ADAPTERS_DIR "${RAS_FEATURE_DIR}/adapters/")
+
 message(STATUS "ras config dir set to ${CONFIG_DIR}")
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/config.json.in ${CMAKE_CURRENT_BINARY_DIR}/config.json @ONLY)
 

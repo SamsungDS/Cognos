@@ -78,7 +78,7 @@ extern "C" svk_status initialize_logic_module(void *init_param) {
     return SVK_STATUS_SUCCESS;
 }
 
-extern "C" inline svk_status get_supported_logic_details(
+extern "C" svk_status get_supported_logic_details(
     svk_logic_module_details *details) {
   strcpy(details->feature_name, "ras");
   strcpy(details->logic_module_name, "mock");
