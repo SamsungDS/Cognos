@@ -17,6 +17,7 @@
 #include <variant>
 #include <vector>
 
+#include "bw_monitor.h"
 #include "framework_downstream.h"
 #include "sc_api_structs.h"
 #include "sc_dev_manager.h"
@@ -46,6 +47,9 @@ tuner mt_obj;
 
 // GLobal DeviceManager for API access
 DeviceManager* g_dev_mgr = nullptr;
+
+static BandwidthMonitor g_bw;
+static bool monitor_started = false;
 
 /**
  * @brief Start Memory tuner
@@ -600,8 +604,9 @@ std::string handle_get_device_stats(
   json_object_set_new(root, "available_memory",
                       json_integer(s.available_memory_MB));
   json_object_set_new(root, "total_bandwidth",
-                      json_real(s.total_bandwidth_MBps));
-  json_object_set_new(root, "used_bandwidth", json_real(s.used_bandwidth_MBps));
+                      json_integer(s.total_bandwidth_MBps));
+  json_object_set_new(root, "used_bandwidth",
+                      json_integer(s.used_bandwidth_MBps));
   json_object_set_new(root, "rw_errors", json_integer(s.rw_errors));
   json_object_set_new(root, "latency", json_integer(s.latency_us));
 
@@ -750,6 +755,15 @@ svk_status initialize(void*) {
     mgr.discover_devices();
     LOG(level_E::INFO,
         "Device Discovery is completed successfully from `init`.");
+
+    if (cmmh_init() == 0) {
+      g_bw.start();
+      monitor_started = true;
+      LOG(level_E::INFO, "cmmh_init succeeded. Bandwidth monitoring started.");
+    } else {
+      LOG(level_E::ERROR, "cmmh_init failed. Bandwidth monitoring disabled.");
+    }
+
   } catch (const std::exception& e) {
     LOG(level_E::ERROR, "Initialization failed: " + std::string(e.what()));
     return SVK_STATUS_FAIL;
@@ -931,6 +945,13 @@ svk_status execute_async(svk_pass_thru_cmd*, svk_postprocess_fn*) {
  */
 svk_status clean_up(void*) {
   LOG(level_E::INFO, "clean_up function called.");
+  if (monitor_started) {
+    g_bw.stop();
+    cmmh_close();
+    monitor_started = false;
+  }
+  LOG(level_E::INFO, "cmmh and BandwidthMonitor shutdown completed.");
+
   return SVK_STATUS_SUCCESS;
 }
 

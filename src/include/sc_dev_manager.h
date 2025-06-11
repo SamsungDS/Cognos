@@ -67,10 +67,10 @@ class DeviceManager {
    * @brief Retrieves detailed information about a specific device.
    *
    * @param[in] d_id Device ID.
-   * @return std::optional<DeviceInfo> containing device info on success,
-   * or std::nullopt if the device is not found or an error occurs.
+   * @return DevInfo containing device info on success,
+   * or if the device is not found an error occurs.
    */
-  std::optional<DevInfo> get_device_info(uint64_t d_id);
+  DevInfo get_device_info(uint64_t d_id);
 
   /**
    * @brief Retrieves runtime statistics for a specific device.
@@ -81,10 +81,10 @@ class DeviceManager {
    * telemetry from the device (e.g bandwidth, memory usage, temperature).
    *
    * @param d_id device ID for which stats are requested.
-   * @return std::optional<StatInfo> containing the device stats if successful,
-   * or std::nullopt if the device is not found or an error occurs.
+   * @return StatInfo containing the device stats if successful,
+   * or if the device is not found an error occurs.
    */
-  std::optional<StatInfo> get_device_stats(uint64_t d_id);
+  StatInfo get_device_stats(uint64_t d_id);
 
   /**
    * @brief Resolves a given device ID to its internal sc_id and associated

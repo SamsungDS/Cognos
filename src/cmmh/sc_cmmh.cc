@@ -12,7 +12,11 @@ DevCMMH::DevCMMH() { LOG(level_E::INFO, "DevCMMH adapter constructed"); }
 /**
  * @brief DevCMMH destructor.
  */
-DevCMMH::~DevCMMH() { LOG(level_E::INFO, "DevCMMH adapter destroyed"); }
+DevCMMH::~DevCMMH() {
+  LOG(level_E::INFO, "DevCMMH adapter destroyed");
+  bandwidth_monitor_.stop();
+  cmmh_close();
+}
 
 /**
  * @brief Returns all discovered devices.
@@ -97,28 +101,24 @@ StatInfo DevCMMH::get_device_stats(const sc_id& sid) const {
   stats.available_memory_MB = info.available_capacity_MB;
   stats.used_memory_MB = stats.total_memory_MB - stats.available_memory_MB;
 
-  ///@brief Estimate total theoretical bandwidth in MBps
-  /// - Each PCIe lane provides ~125 MB/s per 1 GT/s (after 128b/130b encoding
-  /// overhead)
-  /// - for instance, Gen5 (32 GT/s) * x8 lanes = 32 * 8 * 125 = 32000 MB/s
-  /// - Note: This is an upper bound; real bandwidth may be lower due to
-  /// protocol overhead
-  // assuming its one direction, for bidirectional (rx+tx) we need to multiply
-  // by 2
+  /*
+   * @brief Estimate total theoretical bandwidth in MBps
+   * - Each PCIe lane provides ~125 MB/s per 1 GT/s (after 128b/130b encoding
+   *   overhead)
+   * - for instance, Gen5 (32 GT/s) * x8 lanes = 32 * 8 * 125 = 32000 MB/s
+   * - Note: This is an upper bound; real bandwidth may be lower due to
+   *   protocol overhead
+   *   assuming its one direction, for bidirectional (rx+tx) we need to multiply
+   *   by 2
+   */
   stats.total_bandwidth_MBps =
       info.static_info.link_speed * info.static_info.link_width * 125;
 
-  // dummy value for now, @to-do implementation
-  stats.used_bandwidth_MBps = 456.78;
   stats.rw_errors = 0;
   stats.latency_us = 0;
-
-  if (cmmh_init() == 0) {
-    stats.sensor_stats = cmmh_stat_sensor();
-    stats.cache_stats = cmmh_stat_cache();
-    stats.interface_stats = cmmh_stat_interface();
-    cmmh_close();
-  }
+  stats.sensor_stats = cmmh_stat_sensor();
+  stats.cache_stats = cmmh_stat_cache();
+  stats.used_bandwidth_MBps = bandwidth_monitor_.get_average_MBps();
 
   return stats;
 }

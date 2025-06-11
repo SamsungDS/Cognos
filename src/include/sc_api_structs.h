@@ -62,8 +62,8 @@ struct StatInfo {
   uint64_t total_memory_MB = 0;
   uint64_t used_memory_MB = 0;
   uint64_t available_memory_MB = 0;
-  double total_bandwidth_MBps = 0.0;
-  double used_bandwidth_MBps = 0.0;
+  uint64_t total_bandwidth_MBps = 0;
+  uint64_t used_bandwidth_MBps = 0;
   uint64_t rw_errors = 0;
   uint64_t latency_us = 0;
   // Device-specific stats

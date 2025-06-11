@@ -111,37 +111,29 @@ DeviceManager::resolve_adapter(uint64_t d_id) const {
 /**
  * @brief Retrieves detailed information about a specific device.
  */
-std::optional<DevInfo> DeviceManager::get_device_info(uint64_t d_id) {
+DevInfo DeviceManager::get_device_info(uint64_t d_id) {
   LOG(level_E::INFO, "Fetching device info for ID: " + std::to_string(d_id));
-
   auto result = resolve_adapter(d_id);
-  if (!result.has_value()) return std::nullopt;
-  const auto& [scid, adapter] = result.value();
-  try {
-    return adapter->get_device_info(scid);
-  } catch (const std::exception& ex) {
-    LOG(level_E::ERROR,
-        "Failed to retrieve device info: " + std::string(ex.what()));
-    return std::nullopt;
+  if (!result.has_value()) {
+    throw std::runtime_error("No adapter found for device ID: " +
+                             std::to_string(d_id));
   }
+  const auto& [scid, adapter] = result.value();
+  return adapter->get_device_info(scid);
 }
 
 /**
  * @brief Retrieves stats information about a specific device.
  */
-std::optional<StatInfo> DeviceManager::get_device_stats(uint64_t d_id) {
+StatInfo DeviceManager::get_device_stats(uint64_t d_id) {
   LOG(level_E::INFO, "Fetching device stats for ID: " + std::to_string(d_id));
-
   auto result = resolve_adapter(d_id);
-  if (!result.has_value()) return std::nullopt;
-  const auto& [scid, adapter] = result.value();
-  try {
-    return adapter->get_device_stats(scid);
-  } catch (const std::exception& ex) {
-    LOG(level_E::ERROR,
-        "Failed to retrieve device stats: " + std::string(ex.what()));
-    return std::nullopt;
+  if (!result.has_value()) {
+    throw std::runtime_error("No adapter found for device ID: " +
+                             std::to_string(d_id));
   }
+  const auto& [scid, adapter] = result.value();
+  return adapter->get_device_stats(scid);
 }
 
 void DeviceManager::register_device(const sc_id& sid,
@@ -225,6 +217,9 @@ void DeviceManager::discover_devices() {
           "DeviceManager: Invoking discover_devices on adapter '" +
               adapter_name + "'");
       adapter->discover_devices(*this);
+      LOG(level_E::INFO,
+          "DeviceManager: Returned from discover_devices on adapter '" +
+              adapter_name + "'");
     } catch (const std::exception& ex) {
       LOG(level_E::ERROR, "DeviceManager: Exception from adapter '" +
                               adapter_name + "': " + ex.what());

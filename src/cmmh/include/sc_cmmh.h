@@ -3,9 +3,9 @@
 
 #include <unordered_map>
 
+#include "bw_monitor.h"
 #include "sc_cxl_dev_adapter.h"
 #include "sc_logger.h"
-
 /**
  * @class DevCMMH
  * @brief CXL Adapter implementation for CMM-H devices.
@@ -77,6 +77,10 @@ class DevCMMH : public CXLDeviceAdapter {
    * @return 0 on success.
    */
   int setup_info() override;
+
+ private:
+  // background monitor
+  BandwidthMonitor bandwidth_monitor_;
 };
 
 /**

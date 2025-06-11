@@ -241,20 +241,15 @@ const DevTypeMap& load_dev_type_mapping_json(const std::string& filepath) {
     }
 
     json_decref(root);
-    // LOG(level_E::INFO, "Loaded " + std::to_string(internal_map.size()) +
-    //                        " device ID mappings from JSON: " + filepath);
-
     LOG(level_E::INFO, "Loaded " + std::to_string(internal_map.size()) +
                            " device ID mappings and " +
                            std::to_string(internal_link_map.size()) +
                            " link info entries from JSON: " + filepath);
 
-    // global_dev_type_map = &internal_map;
     set_global_dev_type_map(internal_map);
     set_global_link_info_map(internal_link_map);
   });
 
-  // return *global_dev_type_map;
   return *get_global_dev_type_map();
 }
 
