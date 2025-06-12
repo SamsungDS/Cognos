@@ -1350,8 +1350,7 @@ int StartSLAThreadForTiering(ControllerServicer *svcr) {
   // A map of <node_name> with the socket
   std::unordered_map<std::string, void *> socket_map;
   std::string logger_str;
-  svk_slat_logic_output data;
-  std::string topic = "APP_SLA_DEGRADED";
+  std::string topic = "alerts";
   std::unordered_map<std::string, std::unordered_map<std::string, std::string>>
       m_cluster_map;
   std::string node_name;
@@ -1361,6 +1360,15 @@ int StartSLAThreadForTiering(ControllerServicer *svcr) {
   bool tm_flag = false;
   void *zmq_context = nullptr;
   void *zmq_socket = nullptr;
+
+  uint8_t zmq_data[MAX_SIZE];
+  std::string sla_reported_device_name;
+  std::string sla_reported_host_name;
+  std::string sla_reported_app_name;
+  uint64_t sla_reported_avg_latency_ns;
+  std::string event_json;
+
+  using json = nlohmann::json;
 
   while (true) {
     if (svcr->get_stop_flag() == true) {
@@ -1423,9 +1431,9 @@ int StartSLAThreadForTiering(ControllerServicer *svcr) {
 
     if (zmq_socket) {
       try {
-        status = zmq_receive_data(zmq_socket, (uint8_t *)&data,
-                                  (int)sizeof(data), true);
-        if (status != (int)sizeof(data)) {
+        status =
+            zmq_receive_data(zmq_socket, (uint8_t *)&zmq_data, MAX_SIZE, true);
+        if (status < 0) {
           // error
           logger_str = "Error in receiving the data";
           svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
@@ -1436,12 +1444,35 @@ int StartSLAThreadForTiering(ControllerServicer *svcr) {
             continue;
           }
           tm_flag = true;
+          int data_size = status;
 
-          logger_str = "Device's numa " + std::string(data.device_name) +
-                       " on host " + std::string(data.host_name) +
-                       " for the app " + std::string(data.app_name) +
+          try {
+            event_json =
+                std::string(reinterpret_cast<char *>(zmq_data), data_size);
+            // Parse the JSON data in the buffer zmq_data of size data_size
+            json json_data = json::parse(event_json);
+
+            json observations_map = json_data.at("observations");
+
+            sla_reported_device_name = observations_map.at("device_name");
+            sla_reported_host_name = observations_map.at("host_name");
+            sla_reported_app_name = observations_map.at("app_name");
+            sla_reported_avg_latency_ns = observations_map.at("avg_latency_ns");
+          } catch (json::exception &e) {
+            std::string errorMessage = e.what();
+
+            logger_str = "Parse error for zmq data:[ " + event_json +
+                         " ] with error " + errorMessage;
+            svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::WARN,
+                       logger_str.c_str());
+            continue;
+          }
+          logger_str = "Device's numa " +
+                       std::string(sla_reported_device_name) + " on host " +
+                       std::string(sla_reported_host_name) + " for the app " +
+                       std::string(sla_reported_app_name) +
                        " deviated than expected - Reported latency_ns = " +
-                       std::to_string(data.avgLatencyns);
+                       std::to_string(sla_reported_avg_latency_ns);
           svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::WARN,
                      logger_str.c_str());
 
@@ -1453,8 +1484,8 @@ int StartSLAThreadForTiering(ControllerServicer *svcr) {
             cluster_name = itr->first;
             for (auto nodes = itr->second.begin(); nodes != itr->second.end();
                  ++nodes) {
-              if (nodes->first == data.host_name) {
-                node_name = data.host_name;
+              if (nodes->first == sla_reported_host_name) {
+                node_name = sla_reported_host_name;
                 break;
               }
             }
@@ -1464,27 +1495,33 @@ int StartSLAThreadForTiering(ControllerServicer *svcr) {
             svk::CommandResponse resp;
             req.set_cluster_id(cluster_name);
             req.set_node_id(node_name);
-            req.set_feature_id(feature_id::CXL);
-            std::string feature_params =
-                "cluster_id=" + cluster_name +
-                ";command=StartTuning;application="
-                "gemfire;application_id=" +
-                std::to_string(getpid()) +
-                ";dram_node=0;cxl_node=1;"
-                "sla_iops=150000;sla_size=1024;sla_latencyus=750";
-            req.set_feature_params(feature_params);
+            req.set_feature_name("me");
+            req.set_command_name("StartTuning");
+
+            json json_data;
+            json_data["command"] = "StartTuning";
+            json_data["application"] = "gemfire";
+            json_data["application_id"] = std::to_string(getpid());
+            json_data["dram_node"] = "0";
+            json_data["cxl_node"] = "1";
+            json_data["sla_iops"] = 150000;
+            json_data["sla_size"] = 1024;
+            json_data["sla_latencyus"] = 750;
+
+            std::string command_params = json_data.dump();
+            req.set_command_params(command_params);
             Client client(svcr->get_svk_config_controller_id(),
                           svcr->get_svk_config_controller_port());
             Status client_grpc_status =
                 client.ProcessControllerCommand(&req, &resp);
             if (client_grpc_status.ok()) {
               logger_str = "Command to the TM module with feature_params " +
-                           feature_params + "is successful";
+                           command_params + "is successful";
               svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                          logger_str.c_str());
             } else {
               logger_str =
-                  "Command with feature_params " + feature_params + "is failed";
+                  "Command with feature_params " + command_params + "is failed";
               svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                          logger_str.c_str());
             }

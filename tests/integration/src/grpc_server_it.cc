@@ -25,6 +25,8 @@ using ::testing::SetArgPointee;
 using ::testing::StartsWith;
 using ::testing::StrEq;
 
+using json = nlohmann::json;
+
 #define FEATURES_DIR "/usr/local/svk/core/tests/sample_feature/"
 
 int create_svk_mgmt_fw_conf_json(std::string conf_file,
@@ -69,6 +71,42 @@ int create_svk_mgmt_fw_conf_json(std::string conf_file,
   pt::write_json(json_file, root);
 
   return 0;
+}
+
+static std::string get_epoch_string() {
+  auto now = std::chrono::system_clock::now();
+  auto epoch =
+      std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch())
+          .count();
+
+  // Convert the epoch time to a string
+  return std::to_string(epoch);
+}
+
+static std::string get_sla_deviation_data(std::string feature_name,
+                                          std::string device_name,
+                                          std::string host_name,
+                                          std::string app_name,
+                                          uint64_t latency) {
+  json json_map;
+  json observations_map;
+  observations_map["device_name"] = device_name;
+  observations_map["host_name"] = host_name;
+  observations_map["app_name"] = app_name;
+  observations_map["avg_latency_ns"] = 1000;
+  observations_map["message"] = "Device SLA deviation";
+
+  json_map["domain"] = "observability";
+  json_map["category"] = feature_name;
+  json_map["severity"] = "warning";
+
+  json_map["source"] = "node";
+  json_map["source_type"] = host_name;
+  json_map["timestamp"] = get_epoch_string();
+  json_map["observations"] = observations_map;
+
+  std::string json_data_str = json_map.dump();
+  return json_data_str;
 }
 
 /**
@@ -691,8 +729,6 @@ int CheckPoller() {
       CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
       CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
 
-  svk_slat_logic_output data;
-
   std::thread server_thr(StartServer, conf_file, true);
   std::thread node_thr(StartNodeServer, conf_file, true);
   // Sleep for a while for the server processes to stablize
@@ -705,12 +741,11 @@ int CheckPoller() {
     return -1;
   }
 
-  strcpy(data.host_name, "localhost");
-  strcpy(data.device_name, "DEV1");
-  strcpy(data.app_name, "TESTAPP");
-  data.avgLatencyns = 100;
+  std::string json_data_str =
+      get_sla_deviation_data("sla", "DEV1", "localhost", "TESTAPP", 100);
+  rc = publish_data((char *)"alerts", (uint8_t *)json_data_str.c_str(),
+                    json_data_str.length());
 
-  rc = publish_data((char *)"APP_SLA_DEGRADED", (uint8_t *)&data, sizeof(data));
   sleep(3);
   cleanup_publisher();
 
@@ -877,8 +912,6 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStart) {
   EXPECT_TRUE(c_svcr->get_state() == true);
   std::thread *sla_thread = new std::thread(&StartSLAThreadForTiering, c_svcr);
 
-  svk_slat_logic_output data;
-
   Servicer *n_svcr(new Servicer(conf_file));
   if (n_svcr->get_state() == false) {
     std::cout << "Node Servicer is not initialized properly. Exiting"
@@ -895,12 +928,11 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStart) {
     std::cout << "Failed to initialize publisher" << std::endl;
     return;
   }
-  strcpy(data.host_name, "localhost1");
-  strcpy(data.device_name, "DEV11");
-  strcpy(data.app_name, "TESTAPP1");
-  data.avgLatencyns = 1000;
+  std::string json_data_str =
+      get_sla_deviation_data("sla", "DEV11", "localhost1", "TESTAPP1", 1000);
+  rc = publish_data((char *)"alerts", (uint8_t *)json_data_str.c_str(),
+                    json_data_str.length());
 
-  rc = publish_data((char *)"APP_SLA_DEGRADED", (uint8_t *)&data, sizeof(data));
   std::cout << "Published data result " << rc << std::endl;
   sleep(10);
 
@@ -1055,8 +1087,6 @@ TEST(InitIntegrationTest,
   EXPECT_TRUE(c_svcr->get_state() == true);
   std::thread *sla_thread = new std::thread(&StartSLAThreadForTiering, c_svcr);
 
-  svk_slat_logic_output data;
-
   int rc = initialize_publisher(conf_file.c_str());
   if (rc != 0) {
     std::cout << "Failed to initialize publisher" << std::endl;
@@ -1073,12 +1103,10 @@ TEST(InitIntegrationTest,
 
   sleep(5);
 
-  strcpy(data.host_name, "localhost2");
-  strcpy(data.device_name, "12");
-  strcpy(data.app_name, "TESTAPP2");
-  data.avgLatencyns = 1000;
-
-  rc = publish_data((char *)"APP_SLA_DEGRADED", (uint8_t *)&data, sizeof(data));
+  std::string json_data_str =
+      get_sla_deviation_data("sla", "12", "localhost2", "TESTAPP2", 1000);
+  rc = publish_data((char *)"alerts", (uint8_t *)json_data_str.c_str(),
+                    json_data_str.length());
   std::cout << "Published data result successfully" << std::endl;
   sleep(10);
 
@@ -1128,11 +1156,12 @@ class FakeNodeServicerForTM : public Servicer {
       }
     }
 
-    std::string feature_params =
-        req->feature_params().length() ? req->feature_params() : "";
-    std::cout << "FakeProcessNodeCommand called for the command "
-              << feature_params << std::endl;
-    if (feature_params.find("StartTuning") != std::string::npos) {
+    std::string command_name =
+        req->command_name().length() ? req->command_name() : "";
+    std::cout
+        << "FakeProcessNodeCommand called for the command StartTuning with "
+        << req->command_params() << std::endl;
+    if (command_name == "StartTuning") {
       svk::CommandResponse_NodeResponse *response = resp->add_node_responses();
       response->set_output("{status = \"0\"}");
     }
@@ -1154,8 +1183,6 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForTMOperation) {
   EXPECT_TRUE(c_svcr->get_state() == true);
   std::thread *sla_thread = new std::thread(&StartSLAThreadForTiering, c_svcr);
 
-  svk_slat_logic_output data;
-
   int rc = initialize_publisher(conf_file.c_str());
   if (rc != 0) {
     std::cout << "Failed to initialize publisher" << std::endl;
@@ -1172,16 +1199,16 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForTMOperation) {
 
   sleep(5);
 
-  strcpy(data.host_name, "localhost");
-  strcpy(data.device_name, "DEVTM");
-  strcpy(data.app_name, "TESTAPP1");
-  data.avgLatencyns = 1000;
+  std::string json_data_str =
+      get_sla_deviation_data("sla", "DEVTM", "localhost", "TESTAPP1", 1000);
+  rc = publish_data((char *)"alerts", (uint8_t *)json_data_str.c_str(),
+                    json_data_str.length());
 
-  rc = publish_data((char *)"APP_SLA_DEGRADED", (uint8_t *)&data, sizeof(data));
   std::cout << "Published data result " << rc << std::endl;
   sleep(10);
 
-  rc = publish_data((char *)"APP_SLA_DEGRADED", (uint8_t *)&data, sizeof(data));
+  rc = publish_data((char *)"alerts", (uint8_t *)json_data_str.c_str(),
+                    json_data_str.length());
   std::cout << "Published data result " << rc << "one more time" << std::endl;
   sleep(3);
 
@@ -1386,5 +1413,65 @@ TEST(InitIntegrationTest, AllocateMemoryFailureInvalidCXLDeviceInfo) {
   Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
   Status status = client.ProcessControllerCommand(&req, resp);
   ASSERT_EQ(status.ok(), false);
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest, SLATheadForTMWithMissingData) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  ControllerServicer *c_svcr(new ControllerServicer(conf_file));
+  auto c_server = InitializeServicer(c_svcr);
+  ASSERT_NE(c_server, nullptr);
+  EXPECT_TRUE(c_svcr->get_state() == true);
+  std::thread *sla_thread = new std::thread(&StartSLAThreadForTiering, c_svcr);
+
+  Servicer *n_svcr(new Servicer(conf_file));
+  if (n_svcr->get_state() == false) {
+    std::cout << "Node Servicer is not initialized properly. Exiting"
+              << std::endl;
+    return;
+  }
+  auto n_server = InitializeNodeServicer(n_svcr);
+  ASSERT_NE(n_server, nullptr);
+
+  sleep(5);
+
+  int rc = initialize_publisher(conf_file.c_str());
+  if (rc != 0) {
+    std::cout << "Failed to initialize publisher" << std::endl;
+    return;
+  }
+  std::string json_data_str =
+      get_sla_deviation_data("sla", "DEV11", "localhost1", "TESTAPP1", 1000);
+  json json_data = json::parse(json_data_str);
+  json_data.erase("observations");
+  json_data_str = json_data.dump();
+  rc = publish_data((char *)"alerts", (uint8_t *)json_data_str.c_str(),
+                    json_data_str.length());
+
+  std::cout << "Published data result " << rc << std::endl;
+  EXPECT_EQ(true, is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
+                                "Parse error for zmq data"));
+  sleep(2);
+
+  json_data_str = "dummyjson=true";
+  rc = publish_data((char *)"alerts", (uint8_t *)json_data_str.c_str(),
+                    json_data_str.length());
+  std::cout << "Published data result " << rc << std::endl;
+  EXPECT_EQ(true, is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
+                                "Parse error for zmq data"));
+  sleep(10);
+
+  StopSLAThreadForTiering(c_svcr);
+  sla_thread->join();
+  delete c_svcr;
+  delete n_svcr;
+  cleanup_publisher();
+
   unlink(conf_file.c_str());
 }
