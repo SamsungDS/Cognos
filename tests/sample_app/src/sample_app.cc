@@ -13,6 +13,9 @@
 
 #include "framework_downstream.h"
 #include "framework_struct.h"
+#include "svk_logger.h"
+#include "svk_pub_sub_struct.h"
+#include "svk_publisher.h"
 
 namespace po = boost::program_options;
 using namespace std;
@@ -34,6 +37,21 @@ using t_execute_sync = svk_status (*)(svk_pass_thru_cmd *pass_thru,
 using t_execute_async = svk_status (*)(svk_pass_thru_cmd *pass_thru,
                                        svk_postprocess_fn *postprocess_fn);
 using t_clean_up = svk_status (*)(void *);
+
+int create_config_file(const char *file_name, const char *transport_type,
+                       const char *ip_address, const char *port) {
+  char buffer[512];
+  sprintf(buffer,
+          "{\"pubsub\": {\"transport_type\": \"%s\",\"ip_address\": \"%s\", "
+          "\"port\": %d, \"topics\": [\"metrics\", \"events\", \"alerts\"]}}",
+          transport_type ? transport_type : "zmq",
+          ip_address ? ip_address : "0",
+          port ? atoi(port) : DEFAULT_PUB_SUB_PORT);
+  FILE *fp = fopen(file_name, "w");
+  fwrite((void *)buffer, strlen(buffer), 1, fp);
+  fclose(fp);
+  return 0;
+}
 
 svk_status testMlcLogicModule(svk_feature_details *details) {
   // app_name=TestApp;app_sla_latency_ns=10;devices=0;device_sla_latency_ns=10;host_name=localhost;logic_module=default
@@ -96,15 +114,35 @@ svk_status testMlcLogicModule(svk_feature_details *details) {
 
   return SVK_STATUS_SUCCESS;
 }
+
 svk_status load_slat_feature(std::string features_dir, std::string logic_module,
                              svk_feature_details *details) {
   svk_status status = SVK_STATUS_SUCCESS;
   int num_failed_libs = 0;
   char log_msg[LOG_MSG_MAX_SIZE];
   void *init_param = nullptr;
+  std::string log_file = "/var/log/svk/pubsub.log";
 
   DIR *dirfp = nullptr;
   struct dirent *entry = nullptr;
+
+  std::string config_file = "conf.json";
+  int rc;
+
+  rc = svk_logger_init("core", log_file.c_str(), level_E::INFO, 1, 1024 * 1024,
+                       "rotating_file");
+  if (rc != 0) {
+    std::cerr << "Error in initializing logger for core feature" << std::endl;
+    return SVK_STATUS_FAIL;
+  }
+
+  rc = create_config_file(config_file.c_str(), "zmq", "127.0.0.1", "5555");
+  // publisher struct null ptr
+  rc = initialize_publisher(config_file.c_str());
+  if (rc != 0) {
+    std::cerr << "Error in initializing publisher" << std::endl;
+    return SVK_STATUS_FAIL;
+  }
 
   // Open dir with feature libs
   snprintf(log_msg, LOG_MSG_MAX_SIZE, "Loading feature modules from %s",

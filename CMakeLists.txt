@@ -17,6 +17,10 @@ project(SVKSLATracker VERSION ${SVK_SLAT_FEATURE_VERSION} DESCRIPTION "SVK SLAT 
 
 pkg_check_modules(SVKFW REQUIRED svkframework)
 
+include(FetchContent)
+FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
+FetchContent_MakeAvailable(json)
+
 add_compile_options(${SVKFW_CFLAGS})
 add_subdirectory(config)
 add_subdirectory(src)
