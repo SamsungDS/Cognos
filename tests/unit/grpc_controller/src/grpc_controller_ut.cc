@@ -2484,7 +2484,7 @@ TEST(InitControllerTest, InitSuccessWithPubSubConfig) {
   boost::property_tree::write_json(conf_file, pt);
   FILE *fp = fopen(conf_file.c_str(), "r");
   char buf[4096];
-  ASSERT_LE(fread(buf, 4096, 1, fp), 4096);
+  EXPECT_LE(fread(buf, 4096, 1, fp), 4096);
   fclose(fp);
   std::cout << "PUBSUB conf " << buf << std::endl;
 
