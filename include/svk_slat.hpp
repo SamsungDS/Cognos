@@ -31,6 +31,8 @@
 // get_supported_logic_details If not provided, then we ignore the logic module
 #define SLAT_FEATURE_MODULE_NAME "slat"
 
+#define ALERTS_TOPIC_FILTER "alerts"
+
 #define SLAT_CONF_SECTION_TAG SLAT_FEATURE_MODULE_NAME
 #define SLAT_LOGGER_MODULE_NAME SLAT_FEATURE_MODULE_NAME
 
@@ -103,8 +105,10 @@ class SLATrackerSvc {
   std::string run_benchmark(slat_benchmark_config &config);
   void parse_result(slat_benchmark_config &config, std::string result);
   void update_app_sla_with_device_sla(slat_benchmark_config &config);
-  void publish_app_degraded_sla(slat_benchmark_config &config);
   void add_pending_app_sla_monitoring(void);
+
+ protected:
+  void publish_app_degraded_sla(slat_benchmark_config &config);
 
  public:
   // In order to comply with Rule-of-Zero, manage class init and deletion

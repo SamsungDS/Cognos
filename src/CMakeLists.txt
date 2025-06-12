@@ -1,7 +1,7 @@
 set(SVKSlatLib_SRC
     ${CMAKE_SOURCE_DIR}/src/logger_util.cc
     ${CMAKE_SOURCE_DIR}/src/slat.cc)
-set(INC_DIR ${CMAKE_SOURCE_DIR}/include/)
+set(INC_DIR ${CMAKE_SOURCE_DIR}/include/ ${json_SOURCE_DIR}/include)
 
 set(SVKSlatLib "svkslat")
 set(SVKSlatLib_INCLUDE_DEST "include/")
@@ -12,6 +12,7 @@ target_include_directories(${SVKSlatLib} PUBLIC ${INC_DIR})
 target_link_directories(${SVKSlatLib} PUBLIC ${SVKFW_LIBRARY_DIRS})
 target_link_libraries(${SVKSlatLib} PUBLIC svklogger)
 target_link_libraries(${SVKSlatLib} PUBLIC svkframework)
+target_link_libraries(${SVKSlatLib} PUBLIC nlohmann_json::nlohmann_json)
 add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
 
 set_target_properties(${SVKSlatLib} PROPERTIES 

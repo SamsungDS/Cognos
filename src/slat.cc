@@ -5,9 +5,11 @@
 
 #include <boost/algorithm/string.hpp>
 #include <boost/tokenizer.hpp>
+#include <chrono>
 #include <iostream>
 #include <map>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <ranges>
 
 #include "logic_interface/svk_logic_struct.h"
@@ -23,6 +25,8 @@
 // Global variable to use for Framework service commands
 const std::unique_ptr<SLATrackerSvc> g_slat_service =
     std::make_unique<SLATrackerSvc>();
+
+using json = nlohmann::json;
 
 #define LOGIC_IN_BUFFER_LEN (256)
 #define LOGIC_OUT_BUFFER_LEN (256)
@@ -101,15 +105,77 @@ void SLATrackerSvc::update_app_sla_with_device_sla(
   }
 }
 
+static std::string get_epoch() {
+  auto now = std::chrono::system_clock::now();
+  std::string epoch = std::to_string(
+      std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch())
+          .count());
+
+  // Convert the epoch time to a string
+  return epoch;
+}
+
+int create_event_in_json_format(const svk_slat_logic_output &app_current_sla,
+                                json &json_data) {
+  json json_map;
+  json observations_map;
+  observations_map["device_name"] =
+      std::string(app_current_sla.device_name, 0, MAX_LENGTH);
+  observations_map["host_name"] =
+      std::string(app_current_sla.host_name, 0, MAX_LENGTH);
+  observations_map["app_name"] =
+      std::string(app_current_sla.app_name, 0, MAX_LENGTH);
+  observations_map["avg_latency_ns"] = app_current_sla.avgLatencyns;
+  observations_map["feature_name"] = SLAT_FEATURE_MODULE_NAME;
+
+  json_map["domain"] = "observability";
+  json_map["category"] = "slat";
+  json_map["severity"] = "warning";
+
+  json_map["source_type"] = "node";
+  json_map["source"] = std::string(app_current_sla.host_name, 0, MAX_LENGTH);
+  json_map["timestamp"] = get_epoch();
+  json_map["observations"] = observations_map;
+  json_data = json_map;
+  return 0;
+}
+
 void SLATrackerSvc::publish_app_degraded_sla(slat_benchmark_config &config) {
   int rc;
+  std::string topic_filter;
+  char log_msg[LOG_MSG_MAX_SIZE];
+  std::string json_data_str;
 
+  svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::DEBUG,
+             "SLA publish_app_degraded_sla");
   for (const auto &[app_name, app_sla_config] : config.app_sla_list) {
-    rc = publish_data((char *)"APP_SLA_DEGRADED",
-                      (uint8_t *)&app_sla_config.app_current_sla,
-                      sizeof(svk_slat_logic_output));
+    json json_data;
+    create_event_in_json_format(app_sla_config.app_current_sla, json_data);
+    if (json_data.empty()) {
+      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO,
+                 "JSON Data is empty. Continuing");
+      continue;
+    }
+    try {
+      json_data_str = json_data.dump();
+    } catch (json::exception &e) {
+      std::string exception_str = e.what();
+      std::string logger_str =
+          "JSON error in converting the data to string: " + exception_str;
+      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, logger_str.c_str());
+      continue;
+    }
+    snprintf(log_msg, LOG_MSG_MAX_SIZE, "sending the alert [%s]",
+             json_data_str.c_str());
+    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, log_msg);
+
+    topic_filter = ALERTS_TOPIC_FILTER;
+    rc = publish_data((char *)topic_filter.c_str(),
+                      (uint8_t *)json_data_str.c_str(), json_data_str.length());
     if (rc == -1) {
-      std::cout << " failed to publish sla results" << std::endl;
+      snprintf(log_msg, LOG_MSG_MAX_SIZE, "Failed to publish the alert [%s]",
+               json_data_str.c_str());
+      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, log_msg);
     }
   }
 }

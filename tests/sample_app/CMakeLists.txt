@@ -8,5 +8,7 @@ target_link_libraries(
   sample_app
   boost_program_options
   dl
+  svkframework
+  svklogger
 )
 
