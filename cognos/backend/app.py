@@ -1,7 +1,5 @@
-from flask import Flask, jsonify, request
+from flask import Flask
 import click
-import json
-import mysql.connector
 import os
 import sys
 from flask_cors import CORS
@@ -13,15 +11,12 @@ sys.path.append(
 )  # noqa: E402
 
 import cognos.backend.helper as helper
-from cognos.backend.mock_datasource import Mock
-from cognos.backend.cxlplugin_datasource import CXLPlugin
-from cognos.backend.cognos_northbound import Cognos
-# from cognos.backend.cognos_influxdb_client import CognosInfluxDBClient
+from cognos.backend.cognos_client import Cognos
 
 
 current_script_dir = os.path.dirname(os.path.abspath(__file__))
 CONFIGS = helper.fetch_cognos_configs(current_script_dir, "config.json")
-API_VERSION = helper.fetch_api_version(current_script_dir)
+CAL_API_VERSION = helper.fetch_cal_api_version(current_script_dir)
 
 global AGENT_ENDPOINT
 AGENT_ENDPOINT = CONFIGS["agent_endpoint"]
@@ -35,110 +30,114 @@ def create_app(mock=False):
     app = Flask(__name__)
     CORS(app)
     app.config["CORS_HEADERS"] = "Content-Type"
+    cognos = Cognos(mock=mock)
 
-    cognos = Cognos()
-    data_source = Mock() if mock else CXLPlugin()
-    # influx_client = CognosInfluxDBClient()
-
-    # cognos_metric_functions = {
-    #     "dram_cxl_usage": influx_client.get_recent_dram_cxl_usage_data,
-    #     "cpu_mem_usage": influx_client.get_cpu_mem_usage,
-    #     "memserver_capacity": influx_client.get_memserver_capacity,
-    #     "cmmb_usage": influx_client.get_membox_usage,
-    #     "cmmb_capacity": influx_client.get_membox_capacity,
-    #     "cmmb_bandwidth": influx_client.get_membox_bandwidth,
-    #     "devices_count": influx_client.get_attached_devices_count
-    # }
-
-    # clear out existing tables
-    helper.clear_all_tables()
-
-    # def create_empty_response():
-    #     return make_response('', 204)
-
-    @app.get(f"/api/{API_VERSION}/init")
-    def init():
-        """
-        Derives initial configuration and connections between devices
-        """
-        return data_source.init()
-
-    @app.get(f"/api/{API_VERSION}/version")
+    @app.get(f"/api/{CAL_API_VERSION}/scmc_version")
     def get_version():
-        return data_source.get_scmc_version()
+        """
+        Returns SCMC Version
+        """
+        if not cognos.scmc_version:
+            return helper.create_notfound_response_from_payload({})
+        elif "error" in cognos.scmc_version:
+            return helper.create_notfound_response_from_payload(
+                cognos.scmc_version
+            )
+        else:
+            return helper.create_response_from_payload(cognos.scmc_version)
 
-    @app.post(f"/api/{API_VERSION}/update_metrics_host_filter")
-    def post_update_metrics_host_filter():
-        return data_source.update_metrics_host_filter()
-
-    @app.get(f"/api/{API_VERSION}/topology")
+    @app.get(f"/api/{CAL_API_VERSION}/topology")
     def get_topology():
         """
-        Expected UI topology format - Example layout
-        [
-            { host: 'Host1',
-            devices: [
-                'D1',
-                'D3',
-                'D6'
-            ]
-            },{
-            host: 'Host2',
-            devices: [
-                'D4'
-            ]
-            },{
-            host: 'Host3',
-            devices: [
-                'D5'
-            ]
-            }
-        ]
+        Returns topology of Cognos System
         """
-        return cognos.fetch_cognos_topology_response()
+        return helper.create_response_from_payload(
+            cognos.fetch_topology()
+        )
 
-    @app.get(f"/api/{API_VERSION}/hosts")
+    @app.get(f"/api/{CAL_API_VERSION}/hosts")
     def get_hosts():
-        return data_source.get_hosts()
+        return helper.create_response_from_payload(
+            cognos.get_remote_hosts()
+        )
 
-    @app.get(f"/api/{API_VERSION}/device_status")
-    def get_device_status():
-        # TODO: currently not implemented on SVK CXL Plugin end
-        return jsonify({"status": 200})
+    @app.get(f"/api/{CAL_API_VERSION}/nodes")
+    def get_nodes():
+        """
+        Returns all node_names of Cognos System
+        """
+        return helper.create_response_from_payload(
+            cognos.get_nodes()
+        )
 
-    @app.post(f"/api/{API_VERSION}/devices")
-    def post_devices():
-        return data_source.post_devices()
+    @app.post(f"/api/{CAL_API_VERSION}/devices")
+    def remote_devices():
+        """
+        Gets device information for all remote
+        attached devices
+        """
+        return helper.create_response_from_payload(
+            cognos.get_remote_devices()
+        )
 
-    @app.post(f"/api/{API_VERSION}/membox_capacity")
+    @app.post(f"/api/{CAL_API_VERSION}/membox_capacity")
     def membox_capacity():
-        return data_source.membox_capacity()
+        return helper.create_response_from_payload(
+            cognos.membox_capacity()
+        )
 
-    @app.post(f"/api/{API_VERSION}/host_devices")
+    @app.post(f"/api/{CAL_API_VERSION}/host_devices")
     def host_devices():
-        return data_source.host_devices()
+        """
+        Input: {"host": <hostname>}
+        Returns: JSON of devices and their information that
+                 are attached to the input host
+        """
+        return helper.create_response_from_payload(
+            cognos.host_devices()
+        )
 
-    @app.get(f"/api/{API_VERSION}/available_devices")
+    @app.get(f"/api/{CAL_API_VERSION}/available_devices")
     def available_devices():
-        return data_source.available_devices()
+        """
+        Returns list of device names
+        """
+        return helper.create_response_from_payload(
+            cognos.available_remote_devices()
+        )
 
-    @app.delete(f"/api/{API_VERSION}/detach_device")
+    @app.delete(f"/api/{CAL_API_VERSION}/detach_device")
     def detach_device():
-        return data_source.detach_device()
+        """
+        Performs Detach Operation
 
-    @app.post(f"/api/{API_VERSION}/attach_device")
+        Returns list of json objects containing attached device information
+        """
+        return helper.create_response_from_payload(
+            cognos.detach_remote_device()
+        )
+
+    @app.post(f"/api/{CAL_API_VERSION}/attach_device")
     def attach_device():
-        return data_source.attach_device()
+        """
+        Performs Attach Operation
 
-    @app.get(f"/api/{API_VERSION}/cxl/mb/info")
-    def get_mb_info():
-        return data_source.get_mb_info()
+        Returns list of json objects containing attached device information
+        """
+        return helper.create_response_from_payload(
+            cognos.attach_remote_device()
+        )
 
-    @app.get(f"/api/{API_VERSION}/all_hosts")
+    @app.get(f"/api/{CAL_API_VERSION}/all_hosts")
     def get_all_hosts():
-        return data_source.get_all_hosts_info()
+        """
+        Returns list of hosts in format {"value": host, "label": host}
+        """
+        return helper.create_response_from_payload(
+            cognos.get_hosts()
+        )
 
-    @app.post(f"/api/{API_VERSION}/metrics")
+    @app.post(f"/api/{CAL_API_VERSION}/metrics")
     def get_metrics():
         """
         Temporary Implementation to transition fixed event structure
@@ -146,10 +145,10 @@ def create_app(mock=False):
 
         TODO: Implement Cognos event schema, support custom query requests
         """
-        return data_source.get_metrics()
+        return helper.create_response_from_payload(
+            cognos.get_metrics()
+        )
 
-    # setup database tables based on current state during initial boot
-    data_source.setup_tables()
     return app
 
 

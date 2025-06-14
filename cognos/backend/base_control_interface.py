@@ -2,6 +2,9 @@ from abc import ABC, abstractmethod
 
 
 class BaseControlInterface(ABC):
+    """
+    Abstract Definition for System Fabric Managers
+    """
     @property
     @abstractmethod
     def cognos_endpoint(self):
@@ -9,7 +12,7 @@ class BaseControlInterface(ABC):
 
     @property
     @abstractmethod
-    def api_version(self):
+    def scmc_version(self):
         pass
 
     @property
@@ -28,10 +31,6 @@ class BaseControlInterface(ABC):
 
     @abstractmethod
     def list_nodes(self):
-        pass
-
-    @abstractmethod
-    def list_devices(self):
         pass
 
     @abstractmethod

@@ -159,7 +159,7 @@ const Metrics = () => {
 
       const response = await constants.fetchMetrics(`${apiEndpoint}/metrics`, payload)
 
-      if (response.ok) {
+      if (response?.ok) {
           const data = await response.json();
           memoryCpuDataRef.current = data;
           setMemoryCpuDataState(memoryCpuDataRef.current);
@@ -192,7 +192,7 @@ const Metrics = () => {
 
       const response = await constants.fetchMetrics(`${apiEndpoint}/metrics`, payload)
 
-      if (response.ok) {
+      if (response?.ok) {
           const data = await response.json();
           memCapacityDataRef.current = data;
           setMemCapacityDataState(memCapacityDataRef.current);
@@ -225,7 +225,7 @@ const Metrics = () => {
 
       const response = await constants.fetchMetrics(`${apiEndpoint}/metrics`, payload)
 
-      if (response.ok) {
+      if (response?.ok) {
           const data = await response.json();
           dramCxlMemUsageDataRef.current = data;
           setDramCxlMemUsageDataState(dramCxlMemUsageDataRef.current);

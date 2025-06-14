@@ -197,6 +197,12 @@ Installing SVK APP dependencies can simply be done by running the following comm
 
 ## Usage
 
+### Operating Assumptions
+The following assumptions are made regarding SCMC usage and the underlying Cognos System
+- every node_name is unique
+- device name is derived from the device type and the last 5 digits of the device id
+- FM_id and FM_endpoint requests args to CXL are dummy values
+
 ### Operational Modes
 Samsung Cognos Management Console can operate in 3 modes
 
@@ -256,7 +262,9 @@ and describe the problem you are facing.
 
 ### Coding Style Guidelines
 
-- All error messages should go to stderr.
+- ALL functions should contain a docstring indicating the inputs and return of that function
+- ALL functions should have the input parameters and the return type hinted
+- Simplicity and clean code is greatly valued over complex functions that do more
 
 ### Python code
 

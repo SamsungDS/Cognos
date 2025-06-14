@@ -18,6 +18,7 @@ sys.path.append(  # noqa: E402
     )
 )  # noqa: E402
 from cognos.backend.cognos_influxdb_client import CognosInfluxDBClient
+from cognos.backend.sqlite_client import SqliteClient
 from cognos.backend.helper import *
 
 
@@ -230,7 +231,8 @@ def zeromq_subscription(
     socket.setsockopt_string(zmq.SUBSCRIBE, topic)
 
     # Create an instance of CognosInfluxDBClient
-    db_client = CognosInfluxDBClient()
+    sql_client = SqliteClient()
+    db_client = CognosInfluxDBClient(sql_client)
 
     # Set the default stop_condition to always False if none is provided
     stop_condition = stop_condition or (lambda: False)

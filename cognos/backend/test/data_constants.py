@@ -1,3 +1,103 @@
+
+
+DUMMY_NODE_INFO = {
+    "node_name": "node_1",
+    "fm_type": "FM_REMOTE_CMMD",
+    "mem_capacity": 76535464645,
+    "target_ports": [10, 11],
+    "ip_addr": "0.0.0.0",
+    "hostname": "lab-device-xyz.com",
+    "remote_id": 123145241
+}
+
+
+DUMMY_DEVICE_REMOTE_INFO = {
+    "dev_id": 549755813888,
+    "dev_capacity": 274877906944,
+    "dev_port": 10,
+    "hosts_attached": ["node2"]
+}
+
+DUMMY_REMOTE_LIST_DEVICES_OUTPUT = [
+    {
+        "dev_id": 549755813888,
+        "dev_capacity": 274877906944,
+        "dev_port": 10,
+        "hosts_attached": ["node2"]
+    },
+    {
+        "dev_id": 454353231,
+        "dev_capacity": 353252352,
+        "dev_port": 11,
+        "hosts_attached": ["node2"]
+    }
+]
+
+DUMMY_DEVICE_DIRECT_INFO = {
+    "api_version": 1.0,
+    "device_id": 33638416369152,
+    "manufacturer": "Samsung",
+    "serial_number": 305419896,
+    "FW_revision": "1.0.0",
+    "location": "0000:c6:00.0",
+    "total_capacity_MB": 516079,
+    "feature_supported": "basic",
+    "vendor_device_type": "CMM-H",
+    "cxl_device_type": "Type3",
+    "protocol": "CXL 2.0",
+    "port_type": "root",
+    "mode_discovered": "auto",
+    "connection_type": "CXL.mem",
+    "domain_type": "PCIe",
+    "domain_id": 0,
+    "link_speed": 32,
+    "link_width": 8,
+    "available_capacity_MB": 443507,
+    "status": "active",
+    "aspm_active": False,
+    "sris_active": False,
+    "lock_active": False,
+    "numa_attached": 1,
+    "capabilities": {"Power Management version": 1},
+    "advertised_qos": {
+        "avg_latency": 120, "p99_latency": 350, "io_per_sec": 50000,
+        "BW_per_sec": 1000000, "io_size": 4096, "qd": 32
+    }
+}
+
+CREATE_DEVICES_TABLE_QUERY = (
+    "CREATE TABLE IF NOT EXISTS devices ("
+    "id BIGINT UNSIGNED NOT NULL, "
+    "mem_capacity BIGINT UNSIGNED, "
+    "port INT UNSIGNED, "
+    "type VARCHAR(32), "
+    "mode VARCHAR(15), "
+    "name VARCHAR(32), "
+    "PRIMARY KEY (id)"
+    ");"
+)
+
+
+DUMMY_INSERT_DEVICE_QUERY = (
+    "INSERT INTO devices "
+    "(id, mem_capacity, port, type, mode, name) "
+    "VALUES (32312, 593502, 32, 'CMM-D', 'direct', 'DEV10.321')"
+)
+
+
+DUMMY_DEVICES_FETCH_QUERY = (
+    "SELECT * FROM devices "
+)
+
+DUMMY_DEVICES_SINGLE_FETCH_QUERY = (
+    "SELECT id from devices WHERE mode = 'direct' LIMIT 1"
+)
+
+DUMMY_COUNT_DEVICES_QUERY = (
+    "SELECT COUNT(*) FROM devices"
+)
+
+
 DUMMY_INIT_DATA = {
     "nodeResponses": [
         {

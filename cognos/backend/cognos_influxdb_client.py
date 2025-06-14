@@ -7,6 +7,7 @@ import math
 import os
 import requests
 import sys
+from typing import Dict, List
 
 sys.path.append(
     os.path.abspath(  # noqa: E402
@@ -16,13 +17,17 @@ sys.path.append(
 import cognos.backend.helper as helper
 import cognos.backend.db_query_constants as dbq
 from cognos.backend.mock_constants import MOCK_CXL_SETUP
-from cognos.backend.helper import parse_svkcxlplugin_response
 
 
 class CognosInfluxDBClient:
+    """
+    Direct InfluxDB Client for querying Cognos Events
+    """
     def __init__(
-        self, url=None, token=None, org=None, bucket=None, mock=False
+        self, sql_client, url=None, token=None, org=None,
+        bucket=None, mock=False,
     ):
+        self.sql_client = sql_client
         current_script_dir = os.path.dirname(os.path.abspath(__file__))
         if any(arg is None for arg in [url, token, org, bucket]):
             configs = helper.fetch_cognos_configs(
@@ -52,7 +57,7 @@ class CognosInfluxDBClient:
         self.selected_host = None
         self.mock = mock
 
-    def write_cognos_event(self, event):
+    def write_cognos_event(self, event: Dict) -> None:
         """
         Takes the following schema from Cognos Agent event collectors and
         writes to InfluxDB
@@ -87,14 +92,18 @@ class CognosInfluxDBClient:
         ]
         self.write_client.write(self.bucket, self.org, records)
 
-    def query_cognos_events(self, time_window):
+    def query_cognos_events(self, time_window: int) -> List:
+        """
+        Returns all cognos events within a given time window
+        """
         return self.read_client.query(
             f'from(bucket:"internal") |> range(start: -{time_window}) '
             "|> last(6)"
         )
 
-    def query_node_cognos_events(self, time_window, category,
-                                 source_type, source, event_keys):
+    def query_node_cognos_events(self, time_window: int, category: str,
+                                 source_type: str, source: str,
+                                 event_keys: Dict) -> List:
         """
         Performs a query for a specific node's events
 
@@ -115,7 +124,11 @@ class CognosInfluxDBClient:
             "|> last(6)"
         )
 
-    def get_recent_dram_cxl_usage_data(self):
+    def get_recent_dram_cxl_usage_data(self) -> List[List]:
+        """
+        Returns a series of data points associated with recent DRAM and
+        CXL usage data
+        """
         params = {"_desc": True}
 
         tables = self.read_client.query(
@@ -181,7 +194,11 @@ class CognosInfluxDBClient:
         except Exception as error:
             print(f"ERROR during recent_dram vs cxl processing {str(error)}")
 
-    def get_cpu_mem_usage(self):
+    def get_cpu_mem_usage(self) -> List[List]:
+        """
+        Returns a series of data points associated with recent
+        CPU and MEM usage data
+        """
         params = {"_desc": True}
 
         tables = self.read_client.query(
@@ -250,7 +267,11 @@ class CognosInfluxDBClient:
         except Exception as error:
             print(f"failed to send recent CPU vs mem usage data {str(error)}")
 
-    def get_memserver_capacity(self):
+    def get_memserver_capacity(self) -> List[List]:
+        """
+        Returns a series of data points associated with recent
+        Memserver Capacity Data
+        """
         params = {"_desc": True}
 
         tables = self.read_client.query(
@@ -285,7 +306,11 @@ class CognosInfluxDBClient:
             except Exception as e:
                 print(f"Failed to process memserver capacity data {str(e)}")
 
-    def get_membox_usage(self):
+    def get_membox_usage(self) -> List[List]:
+        """
+        Returns a series of data points associated with recent
+        memory box mem usage data
+        """
         params = {"_desc": True}
 
         tables = self.read_client.query(
@@ -331,8 +356,10 @@ class CognosInfluxDBClient:
             # pragma: no cover
             print(f"failed to process membox usage data: {str(error)}")
 
-    def get_membox_bandwidth(self):
+    def get_membox_bandwidth(self) -> List[List]:
         """
+        Returns bandwidth usage data of the memory box
+
         Calculate membox bandwidth:
         Upstream port bandwidth: 8 lanes per port * 4GB/s per
         lane = 32GB per upstream port
@@ -350,11 +377,15 @@ class CognosInfluxDBClient:
             }
         try:
             # Fetch the number of upstream ports
-            upstream_ports_result = helper.count_host_upstream_ports()
-            num_upstream_ports = (
-                upstream_ports_result.get(
-                    "num_upstream_ports", default_upstream_ports
+            upstream_ports_result = (
+                self.sql_client.exec_fetch_singlerecord_query(
+                    "SELECT COUNT(*) FROM hosts "
+                    "WHERE fm_type = 'FM_REMOTE_CMMD';",
+                    tuple()
                 )
+            )
+            num_upstream_ports = (
+                upstream_ports_result
                 if upstream_ports_result
                 else default_upstream_ports
             )
@@ -379,25 +410,26 @@ class CognosInfluxDBClient:
                 "used_percentage_bandwidth": default_used_percentage_bandwidth,
             }
 
-    def get_attached_devices_count(self):
+    def get_attached_devices_count(self) -> Dict:
+        """
+        Returns the total # of devices in the cognos system
+        """
         if self.mock:
             payload = MOCK_CXL_SETUP
             return {"num_hosts": 1, "num_cxl_devices": 2}
         else:
             try:
-                headers = {
-                    "accept": dbq.APPLICATION_JSON,
-                    "Content-Type": dbq.APPLICATION_JSON,
-                }
-                # Fetch the result
-                result = helper.count_attached_devices()
-                if not result:
-                    # Default values
-                    num_hosts = 0
-                    num_cxl_devices = 0
-                else:
-                    num_hosts = result["num_hosts"]
-                    num_cxl_devices = result["num_cxl_devices"]
+                num_hosts = self.sql_client.exec_fetch_singlerecord_query(
+                    "SELECT COUNT(DISTINCT(node_name)) FROM connections;",
+                    tuple()
+                )
+                num_cxl_devices = (
+                    self.sql_client.exec_fetch_singlerecord_query(
+                        "SELECT COUNT(DISTINCT(device_id)) "
+                        "FROM connections;",
+                        tuple()
+                    )
+                )
             except Exception as e:
                 print(f"Error while fetching attached devices count: {e}")
                 # Default values in case of an exception
@@ -405,29 +437,49 @@ class CognosInfluxDBClient:
                 num_cxl_devices = 0
         return {"num_hosts": num_hosts, "num_cxl_devices": num_cxl_devices}
 
-    def get_membox_capacity(self):
+    def get_membox_capacity(self) -> Dict:
+        """
+        Returns Memory Box memory capacity and usage data
+        """
         if self.mock:
             payload = MOCK_CXL_SETUP
             return {
                 "total_capacity": 512,
                 "used_capacity": 256,
-                "used_capacity_percentage": 67,
+                "used_capacity_percentage": 50,
             }
         else:
             try:
-                result = helper.fetch_memory_capacity()
-                if not result:
-                    # Default values for failed query
-                    used_capacity = 0
-                    total_capacity = 0
-                    used_capacity_percentage = 0
-                else:
-                    # Extract values from the query result
-                    used_capacity = int(result["used_capacity"])
-                    total_capacity = int(result["total_capacity"])
-                    used_capacity_percentage = int(
-                        float(result["used_percentage"])
+                total_capacity = (
+                    self.sql_client.exec_fetch_singlerecord_query(
+                        "SELECT SUM(mem_capacity) as total_capacity "
+                        "FROM devices;",
+                        tuple()
                     )
+                )
+                total_capacity = (
+                    round(total_capacity / 1000000000, 2)
+                    if total_capacity
+                    else 0
+                )
+
+                used_capacity = (
+                    self.sql_client.exec_fetch_singlerecord_query(
+                        "SELECT SUM(mem_capacity) FROM devices "
+                        "WHERE id IN "
+                        "(SELECT device_id FROM connections);",
+                        tuple()
+                    )
+                )
+                used_capacity = (
+                    round(used_capacity / 1000000000, 2)
+                    if used_capacity
+                    else 0
+                )
+
+                used_capacity_percentage = (
+                    float((used_capacity / total_capacity) * 100)
+                )
             except Exception as e:
                 print(f"Error fetching memory capacity: {e}")
                 # Default values for exceptions

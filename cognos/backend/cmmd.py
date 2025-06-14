@@ -1,80 +1,78 @@
-from cognos.backend.base_device import BaseDevice
+from cognos.backend.base_device import BaseDeviceObject
+from typing import Dict
 
 
-class CMMD(BaseDevice):
-    def __init__(self, device_name):
-        self._device_name = device_name
+class CMMD(BaseDeviceObject):
+    """
+    In-Mem Object representation of a CMM-D device
 
-    @property
-    def node_name(self):
-        pass
-
-    @property
-    def device_name(self):
-        return self._device_name
+    Enables serialization to underlying sqlite schema
+    """
+    def __init__(self, device_info: Dict, device_info_type: str):
+        self._parse_device_info(device_info, device_info_type)
 
     @property
     def device_id(self):
-        pass
+        return self._device_id
 
     @property
     def device_type(self):
-        return "cmmd"
+        return "CMM-D"
 
     @property
-    def device_info(self):
-        pass
-
-    @property
-    def device_status(self):
-        pass
-
-    @property
-    def fm_type(self):
-        pass
+    def device_port(self):
+        return self._device_port
 
     @property
     def capacity(self):
-        pass
+        return self._capacity
 
-    def attach_to_node(self):
-        pass
+    @property
+    def attached_type(self):
+        return self._attached_type
 
-    def detach_from_node(self):
-        pass
+    @property
+    def name(self):
+        return self._name
 
-    def get_device_info(self):
-        pass
+    def _parse_device_info(self, device_info: Dict,
+                           device_info_type: str) -> None:
+        """
+        Populates device attributes by reading input given
+        from CXL Plugin's remote or direct device information
+        """
+        self._attached_type = device_info_type
+        if device_info_type == "remote":
+            self._device_id = device_info["dev_id"]
+            self._capacity = device_info["dev_capacity"]
+            self._device_port = device_info["dev_port"]
+        else:
+            self._device_id = device_info["device_id"]
+            self._capacity = device_info["total_capacity_MB"] * 1000000
+            self._device_port = None
+        # not supplied by CXL Plugin: device type + last 5 chars of dev id
+        self._name = self.device_type + "." + str(self._device_id)[-5:]
 
-    def get_device_stats(self):
-        pass
-
-    def get_device_errors(self):
-        pass
-
-    def get_device_alerts(self):
-        pass
-
-    def get_device_health(self):
-        pass
-
-    def configure_device(self):
-        pass
-
-    def get_device_features(self):
-        pass
-
-    def get_device_QOS_params(self):
-        pass
-
-    def set_device_QOS_params(self):
-        pass
-
-    def get_device_maintenance_operations(self):
-        pass
-
-    def get_device_capabilities(self):
-        pass
-
-    def get_device_event_records(self):
-        pass
+    def serialize_device_to_insert_query(self) -> str:
+        """
+        Returns string query to insert device and its attributes
+        into sqlite devices table
+        """
+        if self.device_port:
+            insert_query = (
+                "INSERT INTO devices "
+                "(id, mem_capacity, port, type, mode, name) "
+                f"VALUES ({self.device_id}, {self.capacity}, "
+                f"{self.device_port}, '{self.device_type}', "
+                f"'{self.attached_type}', '{self.name}')"
+            )
+            return insert_query
+        else:
+            insert_query = (
+                "INSERT INTO devices "
+                "(id, mem_capacity, port, type, mode, name) "
+                f"VALUES ({self.device_id}, {self.capacity}, "
+                f"'{self.device_port}', '{self.device_type}', "
+                f"'{self.attached_type}', '{self.name}')"
+            )
+            return insert_query

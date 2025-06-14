@@ -42,6 +42,7 @@ const BoxTopology = () => {
 
   const hostDeviceMapEndpoint = Configs.api_endpoint + "/topology";
   const hostMapEndpoint = Configs.api_endpoint + "/hosts";
+  const getNodesEndpoint = Configs.api_endpoint + "/nodes"
   const { handleToggle, selectedOption } = useSelectedOption();
   const [isToggleEnabled, setIsToggleEnabled] = useState(false);
   const [selectedCluster, setSelectedCluster] = useState("None");
@@ -60,7 +61,8 @@ const BoxTopology = () => {
   useEffect(
     () => {
       fetchData(hostDeviceMapEndpoint, setHostToDeviceMapping);
-      fetchData(hostMapEndpoint, setHostActiveList);
+      // fetchData(hostMapEndpoint, setHostActiveList);
+      fetchData(getNodesEndpoint, setHostActiveList);
       // Function to map hosts dynamically from a list
       const mapHosts = (hostNames) => {
         return hostNames.map((hostName) => {
@@ -86,9 +88,9 @@ const BoxTopology = () => {
      setTransformedData(transformResponse);
   }, [hostToDeviceMapping]);
 
-  // Filtering hosts and device names based on fm-type: "FM_REMOTE_CMMB" for CMM-B view and others for Direct Host view.
-  let hostlistRemote = transformedData.filter(mapping => mapping.fm_type === "FM_REMOTE_CMMB");
-  let hostlistDirect = transformedData.filter(mapping => mapping.fm_type !== "FM_REMOTE_CMMB");
+  // Filtering hosts and device names based on fm-type: "FM_REMOTE_CMMD" for CMM-B view and others for Direct Host view.
+  let hostlistRemote = transformedData.filter(mapping => mapping.fm_type === "FM_REMOTE_CMMD");
+  let hostlistDirect = transformedData.filter(mapping => mapping.fm_type !== "FM_REMOTE_CMMD");
   // Function to assign clusters
   const clusterWithDevice = assignClusters(hostlistRemote, clusterList.slice(1));
   const clusterWithDirectHost = assignClusters(hostlistDirect, clusterList.slice(1));
@@ -280,7 +282,7 @@ const BoxTopology = () => {
 
   const renderDeviceComponents = (devices) => {
     return devices.map((device) => {
-      const part = device.device.split("-")[0];
+      const part = device.device //.split(" ")[0];
       const deviceColor = device.color;
       const D1Metadata = `name: ${part}
           size: 256GB
@@ -313,7 +315,8 @@ const BoxTopology = () => {
   // istanbul ignore next
   const renderHostViewDevice = (devices = []) => {
     return devices.map((device) => {
-      const part = device.dev_name.split("-")[0];
+      const part = device.dev_name // .split("-")[0];
+      console.log("DEVICE IN REDNER HOST VIEW DEVICE ", device);
       const D1Metadata = `name: ${part}
           type: ${device.type}
           `.replace(/ +/g, "");

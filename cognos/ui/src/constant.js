@@ -118,33 +118,49 @@ export const memboxTableHeader = [
     });
   };
 
-  export const mappedDeviceList = (deviceList, hostList, hostToDeviceMapping) => {
-    let unusedHostMapping = hostToDeviceMapping.filter(mapping => mapping.fm_type === "FM_REMOTE_CMMB");
-    return deviceList.map((device) => {
-      // Find the associated host for the current device by checking all hosts
-      const associatedHost = unusedHostMapping.find((host) =>
-        host.devices.includes(device.device)
+  export const mappedDeviceList = (deviceList, hostList, hostToDeviceMapping) => {  
+    // Filter mappings by fm_type
+    let filteredHostMapping = hostToDeviceMapping.filter(
+      mapping => mapping.fm_type === "FM_REMOTE_CMMD" && mapping.devices.every(item => item !==null)
+    );
+    // Extract all replacement devices from hostToDeviceMapping
+    // istanbul ignore next
+    let replacementDevices = [];
+    filteredHostMapping.forEach(mapping => {
+      if (mapping.devices && Array.isArray(mapping.devices)) {
+        replacementDevices.push(...mapping.devices);
+      }
+    });
+    // istanbul ignore next
+    return deviceList.map((device, index) => {
+      // Replace device name if we have replacement devices available
+      let currentDeviceName = device.device;
+      if (index < replacementDevices.length) {
+        currentDeviceName = replacementDevices[index];
+      }
+      
+      // Find the associated host for the current device
+      const associatedHost = filteredHostMapping.find((mapping) => 
+        mapping.devices && mapping.devices.includes(currentDeviceName)
       );
-
-      let newHostName = null; // Default to null if no host is found
-      let newColor = "#4F4F4F"; // Default color for devices with no associated host
-
-      // If a match is found, update the host name
+      
+      let newHostName = null;
+      let newColor = "#4F4F4F"; // Default color
       // istanbul ignore next
       if (associatedHost) {
-        newHostName = associatedHost.host; // Get the host name
+        newHostName = associatedHost.host;
+        // Find host details to get the color
         const hostDetails = hostList.find((h) => h.host === newHostName);
-
-        // Update the newColor based on the found host
         if (hostDetails) {
-          newColor = hostDetails.color; // Use the host's color if found
+          newColor = hostDetails.color;
         }
       }
-
+      
       return {
         ...device,
-        host: newHostName, // Update with associated host name if found
-        color: newColor, // Use the determined color
+        device: currentDeviceName, // Replaced device name
+        host: newHostName,
+        color: newColor,
       };
     });
   };

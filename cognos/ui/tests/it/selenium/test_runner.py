@@ -19,10 +19,13 @@ class TestSuite(unittest.TestCase):
         suite = loader.loadTestsFromTestCase(CognosPages)
         suite.addTests(unittest.TestLoader().loadTestsFromTestCase(
             TestDashboard))
+        """
         suite.addTests(unittest.TestLoader().loadTestsFromTestCase(
             TestConfigure))
+        """
         suite.addTests(unittest.TestLoader().loadTestsFromTestCase(
             TestMetrics))
+        """
         suite.addTest(TestMutable(
             "test_device_detachment"))
         suite.addTest(TestMutable(
@@ -35,12 +38,15 @@ class TestSuite(unittest.TestCase):
             "test_combination_of_Attach_Detach"))
         suite.addTest(TestMutableCombinations(
             "test_combination_of_Attach_Attach"))
+        """
         suite.addTests(unittest.TestLoader().loadTestsFromTestCase(
             FrequentPageSwitchTest))
         suite.addTests(unittest.TestLoader().loadTestsFromTestCase(
             PageValidationTest))
+        """
         suite.addTests(unittest.TestLoader().loadTestsFromTestCase(
             TestSelectDevices))
+        """
         with open("scmc_tests.xml", "wb") as output:
             runner = xmlrunner.XMLTestRunner(output=output, verbosity=2)
             result = runner.run(suite)

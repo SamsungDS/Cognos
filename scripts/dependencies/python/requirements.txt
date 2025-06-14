@@ -3,7 +3,6 @@ click
 flask
 flask_cors
 influxdb-client[ciso]
-mysql-connector-python
 pandas
 pytest
 pytest-asyncio
@@ -13,6 +12,7 @@ requests
 responses
 simplejson
 selenium==4.18.1
+sqlparse
 websockets
 pyzmq
 unittest-xml-reporting
