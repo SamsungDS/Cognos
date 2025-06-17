@@ -1,4 +1,6 @@
-#include "sc_servicer.h"
+#if MOCK == 1
+#include "mock/mock_cmmh.h"
+#endif
 
 #include <sys/stat.h>
 
@@ -25,6 +27,7 @@
 #include "sc_logger.h"
 #include "sc_mbox.h"
 #include "sc_plugin_manager.h"
+#include "sc_servicer.h"
 #include "sc_utility.h"
 #include "tuner.h"
 #include "yaml-cpp/yaml.h"
@@ -47,9 +50,6 @@ tuner mt_obj;
 
 // GLobal DeviceManager for API access
 DeviceManager* g_dev_mgr = nullptr;
-
-static BandwidthMonitor g_bw;
-static bool monitor_started = false;
 
 /**
  * @brief Start Memory tuner
@@ -750,19 +750,19 @@ svk_status initialize(void*) {
     set_global_dev_type_map(map);
     static DeviceManager mgr;
     g_dev_mgr = &mgr;
+
+#if MOCK == 1
+    LOG(level_E::INFO, "MOCK build: Registering MOCK_CMMH directly");
+    static MockCMMH mock_cmmh;
+    mgr.registerAdapter("mock_cmmh", &mock_cmmh);
+    mgr.discover_devices();
+#else
     static PluginManager plugin_mgr(mgr);
     plugin_mgr.loadAllPlugins(plugin_dir);
     mgr.discover_devices();
     LOG(level_E::INFO,
         "Device Discovery is completed successfully from `init`.");
-
-    if (cmmh_init() == 0) {
-      g_bw.start();
-      monitor_started = true;
-      LOG(level_E::INFO, "cmmh_init succeeded. Bandwidth monitoring started.");
-    } else {
-      LOG(level_E::ERROR, "cmmh_init failed. Bandwidth monitoring disabled.");
-    }
+#endif
 
   } catch (const std::exception& e) {
     LOG(level_E::ERROR, "Initialization failed: " + std::string(e.what()));
@@ -868,10 +868,13 @@ svk_status execute_sync(svk_pass_thru_cmd*, svk_input* input,
                         input->len);
   LOG(level_E::INFO, "Received API Request: " + input_str);
   std::string result;
-  std::unordered_map<std::string, std::string> params;
-  std::string command;
+  svk_status status = SVK_STATUS_SUCCESS;
+  bool legacy = false;
   try {
+    std::unordered_map<std::string, std::string> params;
+    std::string command;
     if (!process_json_request(input_str, command, params)) {
+      legacy = true;
       throw std::invalid_argument("Invalid JSON format");
     }
     LOG(level_E::INFO, "Parsed JSON command: " + command);
@@ -885,43 +888,56 @@ svk_status execute_sync(svk_pass_thru_cmd*, svk_input* input,
         for (const auto& [k, v] : params) {
           flat += k + "=" + v + ";";
         }
+        legacy = true;
         if (!flat.empty() && flat.back() == ';') {
           flat.pop_back();  // remove trailing semi
         }
         // fallback will handle string
-        throw std::runtime_error(flat);
+        input_str = flat;
+        throw std::invalid_argument(input_str);
       }
       result = it->second(params);
     } else {
       // Old JSON without params
       result = dispatch_fw_hook_command(command, input_str);
     }
+  } catch (const std::invalid_argument& e) {
+    LOG(level_E::WARN,
+        "Invalid JSON format, attempting fallback: " + std::string(e.what()));
+
+    try {
+      std::unordered_map<std::string, std::string> params =
+          token_helper(input_str);
+
+      if (!legacy)
+        throw std::invalid_argument("invalid argument in api request.");
+
+      if (params.find("command") == params.end())
+        throw std::runtime_error("Missing 'command' in legacy request.");
+
+      std::string command = params["command"];
+      result = dispatch_fw_hook_command(command, input_str);
+
+    } catch (const std::exception& fallback_err) {
+      LOG(level_E::ERROR,
+          "Fallback failed: " + std::string(fallback_err.what()));
+      result = "{\"status\":\"error\",\"message\":\"" +
+               std::string(fallback_err.what()) + "\"}";
+      status = SVK_STATUS_FAIL;
+    }
+
   } catch (const std::exception& e) {
-    LOG(level_E::WARN, "Falling back to legacy flat API parsing due to: " +
-                           std::string(e.what()));
-    // Legacy flat style
-    // If runtime_error was thrown with a flattened string
-    std::string flat_input = input_str;
-    const auto* re = dynamic_cast<const std::runtime_error*>(&e);
-    if (re) {
-      // flattened key-value pair
-      flat_input = re->what();
-      LOG(level_E::INFO,
-          "Using flattened string from exception: " + flat_input);
-    }
-    params = token_helper(flat_input);
-    if (params.find("command") == params.end()) {
-      LOG(level_E::ERROR, "Missing 'command' in legacy flat request.");
-      return SVK_STATUS_FAIL;
-    }
-    command = params["command"];
-    result = dispatch_fw_hook_command(command, input_str);
+    LOG(level_E::ERROR, "Command processing failed: " + std::string(e.what()));
+    result =
+        "{\"status\":\"error\",\"message\":\"" + std::string(e.what()) + "\"}";
+    status = SVK_STATUS_FAIL;
   }
+
   output->output_buffer = reinterpret_cast<uint8_t*>(strdup(result.c_str()));
   output->len = result.size();
-  output->status = SVK_STATUS_SUCCESS;
+  output->status = status;
   LOG(level_E::INFO, "execute_sync completed successfully.");
-  return SVK_STATUS_SUCCESS;
+  return status;
 }
 
 /**
@@ -945,13 +961,6 @@ svk_status execute_async(svk_pass_thru_cmd*, svk_postprocess_fn*) {
  */
 svk_status clean_up(void*) {
   LOG(level_E::INFO, "clean_up function called.");
-  if (monitor_started) {
-    g_bw.stop();
-    cmmh_close();
-    monitor_started = false;
-  }
-  LOG(level_E::INFO, "cmmh and BandwidthMonitor shutdown completed.");
-
   return SVK_STATUS_SUCCESS;
 }
 

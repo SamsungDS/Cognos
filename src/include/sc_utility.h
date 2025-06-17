@@ -99,15 +99,43 @@ struct pairHash {
   }
 };
 
-// Type alias
+/**
+ * @typedef DevTypeMap
+ * @brief Maps (vendor_id, device_id) → device_type string.
+ *
+ * Example:
+ * {
+ * {0x8086, 0x0A54} → "CMMD",
+ * {0x1234, 0x5678} → "CMMH"
+ * }
+ */
 using DevTypeMap =
     std::unordered_map<std::pair<uint16_t, uint16_t>, std::string, pairHash>;
 
+/**
+ * @typedef LinkInfoMap
+ * @brief Maps (vendor_id, device_id) → (link_speed, link_width).
+ *
+ * link_speed is in GT/s and link_width is the number of PCIe lanes.
+ *
+ * Example:
+ * {
+ * {0x8086, 0x0A54} → {32, 16},
+ * {0x1234, 0x5678} → {16, 8}
+ * }
+ */
 using LinkInfoMap = std::unordered_map<std::pair<uint16_t, uint16_t>,
                                        std::pair<int, int>, pairHash>;
 
 /**
- * @brief Manually inject a device map (for library usage)
+ * @brief Inject an external device type map (used when calling the library
+ * directly).
+ * @param external_map A map from {vendor_id, device_id} to device_type string.
+ *
+ * Example:
+ * DevTypeMap map;
+ * map[{0x8086, 0x0A54}] = "CMMD";
+ * set_global_dev_type_map(map);
  */
 void set_global_dev_type_map(const DevTypeMap& external_map);
 

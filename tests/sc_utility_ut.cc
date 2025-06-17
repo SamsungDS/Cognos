@@ -63,6 +63,7 @@ class ScUtilityTest : public ::testing::Test {
     DevTypeMap dev_map;
     dev_map[{0x1e98, 0x0ddb}] = "CMM-H";
     dev_map[{0x1b00, 0xc001}] = "CMM-D";
+    dev_map[{0x1234, 0xABCD}] = "FM_CMMH";  // fake
     set_global_dev_type_map(dev_map);
     std::remove("/tmp/nonexistent_config.json");
   }
@@ -238,7 +239,7 @@ TEST_F(ScUtilityTest, LoadDevTypeMapping_ValidFile) {
   std::ofstream file(path);
   file << R"({
 "device_map": [
-{ "device_type": "CMM-H", "vendor_id": "1e98", "device_id": "0ddb" }
+{ "device_type": "CMM-H", "vendor_id": "1e98", "device_id": "0ddb", "lane_width": 8, "lane_speed": 32 }
 ]
 })";
   file.close();
@@ -395,10 +396,21 @@ TEST_F(ScUtilityTest, DiscoverCxlDevicesShared_ReturnsDiscoveredDevices) {
   test_force_numa_failure = false;
   DevTypeMap dev_type_map;
   dev_type_map[{0x1234, 0xABCD}] = "FM_CMMH";
+  LinkInfoMap test_map;
+  test_map[{0x1234, 0xABCD}] = {32, 8};
+  set_global_link_info_map(test_map);
+
   auto device_map = discover_cxl_devices_shared(dev_type_map);
   ASSERT_EQ(device_map.size(), 1);
   const sc_device& dev = device_map.begin()->second;
   EXPECT_TRUE(dev.d_get_capacity() == 4096 || dev.d_get_capacity() == 1024);
+
+  DevInfo info = dev.to_device_info();
+  const DevStaticInfo& st = info.static_info;
+  // EXPECT_EQ(st.device_id, generate_dev_id(0x1234, 0xABCD, 0x02));
+  EXPECT_EQ(st.link_speed, 32);
+  EXPECT_EQ(st.link_width, 8);
+  EXPECT_EQ(st.total_capacity_MB, 1024);
 }
 
 TEST_F(ScUtilityTest, DiscoverCxlDevicesShared_InvalidNumaNodeHandled) {
@@ -463,4 +475,22 @@ TEST_F(ScUtilityTest, GetNumaNodeFromSysfs_FileMissing) {
   EXPECT_EQ(result, -1);
 
   std::filesystem::remove_all("/tmp/sysfs_test");
+}
+
+TEST_F(ScUtilityTest, GetGlobalLinkInfoMap_Returnvalid) {
+  LinkInfoMap test_map;
+  test_map[{0x1234, 0xABCD}] = {64, 16};  // Gen6 x16
+  set_global_link_info_map(test_map);
+  const LinkInfoMap* retrieved = get_global_link_info_map();
+  auto it = retrieved->find({0x1234, 0xABCD});
+  ASSERT_NE(it, retrieved->end());
+  EXPECT_EQ(it->second.first, 64);   // link_speed
+  EXPECT_EQ(it->second.second, 16);  // link_width
+}
+
+TEST_F(ScUtilityTest, GetGlobalLinkInfoMap_NULL) {
+  LinkInfoMap test_map;
+  set_global_link_info_map(test_map);
+  const LinkInfoMap* ptr = get_global_link_info_map();
+  EXPECT_EQ(ptr, &test_map);
 }

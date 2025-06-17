@@ -1,6 +1,17 @@
+option (MOCK "Enable Mock mode" OFF)
+
 # Collect source files
-file(GLOB SOURCES *.cc tm/*.cc)
-file(GLOB HEADERS include/*.h tm/include/*.h)
+file(GLOB SOURCES *.cc tm/*.cc mock/*.cc)
+file(GLOB HEADERS include/*.h tm/include/*.h mock/*.h)
+
+if(MOCK)
+  message(STATUS "Using MockCMMH for MOCK or BUILD_TESTING")
+  add_definitions(-DMOCK=1)
+else()
+  message(STATUS "Using Real cmmh for non mock mode")
+  list(REMOVE_ITEM HEADERS mock_libcmmh.h)
+  add_definitions(-DMOCK=0)
+endif()
 
 # Create a library
 add_library(svkcxl ${SOURCES} ${HEADERS})
@@ -14,8 +25,22 @@ else()
   message(STATUS "found libjansson for libcxl")
 endif()
 
-target_include_directories(svkcxl PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include/" "${CMAKE_CURRENT_SOURCE_DIR}/tm/include/" ${SVKFRAMEWORK_INCLUDE_DIRS} ${SVKMGMTFW_INCLUDE_DIRS} ${FMAPI_INCLUDE_PATH})
-target_link_directories(svkcxl PRIVATE "${FMAPI_INCLUDE_PATH}/build" ${SVKMGMTFW_LIB_DIRS} ${SVKFRAMEWORK_LIBRARY_DIRS})
+target_include_directories(svkcxl PUBLIC 
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/" 
+  "${CMAKE_CURRENT_SOURCE_DIR}/tm/include/"
+  "${CMAKE_CURRENT_SOURCE_DIR}/mock/"
+  "${PROJECT_SOURCE_DIR}/third_party"	
+  ${SVKFRAMEWORK_INCLUDE_DIRS} 
+  ${SVKMGMTFW_INCLUDE_DIRS} 
+  ${FMAPI_INCLUDE_PATH}
+)
+
+target_link_directories(svkcxl PRIVATE 
+  "${FMAPI_INCLUDE_PATH}/build" 
+  ${SVKMGMTFW_LIB_DIRS} 
+  ${SVKFRAMEWORK_LIBRARY_DIRS}
+)
+
 target_link_libraries(svkcxl mbox_a1_shared svcmgr jansson zmq numa svklogger yaml-cpp)
 
 add_definitions("-DBOOST_ALLOW_DEPRECATED_HEADERS")
@@ -26,7 +51,9 @@ if(BUILD_TESTING)
 else()
   add_definitions(-DTEST_BUILD=0 )
 endif()
+
 install(FILES ${HEADERS} DESTINATION ${SVKCXL_INCLUDE_DEST})
+
 install(
     TARGETS svkcxl
     EXPORT cxlTargets

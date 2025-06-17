@@ -417,15 +417,30 @@ TEST_F(ServicerTest, ExecuteSyncDetachTest) {
   svk_pass_thru_cmd pass_thru;
   input.input_buffer = reinterpret_cast<uint8_t*>(
       strdup("command=DetachMemory;dev_id=549755813888;host_id=551903297536;"
-             "mode=direct"));
+             "mode=direct;"));
   input.len = strlen(
       "command=DetachMemory;dev_id=549755813888;host_id=551903297536;mode="
-      "direct");
+      "direct;");
   svk_status status = execute_sync(&pass_thru, &input, &output);
   ASSERT_EQ(status, SVK_STATUS_SUCCESS);
   ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
   ASSERT_NE(output.len, 0);
   ASSERT_NE(output.output_buffer, nullptr);
+  free(input.input_buffer);
+  free(output.output_buffer);
+}
+
+TEST_F(ServicerTest, ExecuteSyncDetachMemoryMissingParams) {
+  svk_input input{};
+  svk_output output{};
+  svk_pass_thru_cmd pass_thru{};
+  input.input_buffer = reinterpret_cast<uint8_t*>(
+      strdup("command=DetachMemory;dev_id=1234;mode=direct;"));
+  input.len = strlen(reinterpret_cast<char*>(input.input_buffer));
+  svk_status status = execute_sync(&pass_thru, &input, &output);
+  EXPECT_EQ(status, SVK_STATUS_SUCCESS);
+  EXPECT_EQ(output.status, SVK_STATUS_SUCCESS);
+  EXPECT_EQ(output.len, 0);
   free(input.input_buffer);
   free(output.output_buffer);
 }
@@ -436,15 +451,35 @@ TEST_F(ServicerTest, ExecuteSyncAttachTest) {
   svk_pass_thru_cmd pass_thru;
   input.input_buffer = reinterpret_cast<uint8_t*>(
       strdup("command=AttachMemory;dev_id=549755813888;host_id=551903297536;"
-             "mode=direct"));
+             "mode=direct;"));
   input.len = strlen(
       "command=AttachMemory;dev_id=549755813888;host_id=551903297536;mode="
-      "direct");
+      "direct;");
   svk_status status = execute_sync(&pass_thru, &input, &output);
   ASSERT_EQ(status, SVK_STATUS_SUCCESS);
   ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
   ASSERT_NE(output.len, 0);
   ASSERT_NE(output.output_buffer, nullptr);
+  free(input.input_buffer);
+  free(output.output_buffer);
+}
+
+TEST_F(ServicerTest, ExecuteSyncAttachMemoryMissingParams) {
+  svk_input input{};
+  svk_output output{};
+  svk_pass_thru_cmd pass_thru{};
+
+  input.input_buffer = reinterpret_cast<uint8_t*>(strdup(
+      "command=AttachMemory;dev_id=1234;mode=direct;"));  // missing host_id
+  input.len = strlen(reinterpret_cast<const char*>(input.input_buffer));
+
+  svk_status status = execute_sync(&pass_thru, &input, &output);
+
+  ASSERT_EQ(status, SVK_STATUS_SUCCESS);
+  ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
+  ASSERT_STREQ(reinterpret_cast<const char*>(output.output_buffer), "");
+  ASSERT_EQ(output.len, 0);
+
   free(input.input_buffer);
   free(output.output_buffer);
 }
@@ -525,8 +560,8 @@ TEST_F(ServicerTest, SetupInfoNoManagers) {
   svk_input input;
   svk_output output;
   svk_pass_thru_cmd pass_thru;
-  input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=SetupInfo"));
-  input.len = strlen("command=SetupInfo");
+  input.input_buffer = reinterpret_cast<uint8_t*>(strdup("command=SetupInfo;"));
+  input.len = strlen("command=SetupInfo;legacy=true");
   svk_status status = execute_sync(&pass_thru, &input, &output);
   ASSERT_EQ(status, SVK_STATUS_SUCCESS);
   ASSERT_EQ(output.status, SVK_STATUS_SUCCESS);
@@ -576,7 +611,7 @@ TEST_F(ServicerTest, StartTuning) {
   svk_pass_thru_cmd pass_thru;
   std::string cmd =
       "command=StartTuning;application=gemfire;application_id=101010;dram_node="
-      "0;cxl_node=1;sla_iops=150000;sla_size=1024;sla_latencyus=750";
+      "0;cxl_node=1;sla_iops=150000;sla_size=1024;sla_latencyus=750;";
   input.input_buffer = reinterpret_cast<uint8_t*>(strdup(cmd.c_str()));
   input.len = strlen(cmd.c_str());
   svk_status status = execute_sync(&pass_thru, &input, &output);
@@ -593,7 +628,7 @@ TEST_F(ServicerTest, StopTuning) {
   svk_output output;
   svk_pass_thru_cmd pass_thru;
   std::string cmd =
-      "command=StopTuning;application=gemfire;application_id=101010";
+      "command=StopTuning;application=gemfire;application_id=101010;";
   input.input_buffer = reinterpret_cast<uint8_t*>(strdup(cmd.c_str()));
   input.len = strlen(cmd.c_str());
   svk_status status = execute_sync(&pass_thru, &input, &output);
@@ -694,7 +729,7 @@ TEST_F(ServicerTest, ExecuteSync_NullInputOutput) {
 TEST_F(ServicerTest, ExecuteSync_LegacyCommandFormat) {
   std::string legacy_input =
       "cluster_id=CL_ID_1;command=ListDevices;FM_id=203;FM_endpoint=samsung."
-      "com";
+      "com;legacy=true";
   svk_input input;
   svk_output output;
   input.input_buffer =
@@ -895,10 +930,8 @@ TEST_F(ServicerTest, GetDeviceInfo_InvalidParamFormat) {
 
 TEST_F(ServicerTest, GetDeviceInfo_DeviceNotFound) {
   std::unordered_map<std::string, std::string> params = {{"device_id", "9999"}};
-  std::string response = handle_get_device_info(params);
-
-  EXPECT_NE(response.find("Device not found or error occurred"),
-            std::string::npos);
+  EXPECT_THROW({ std::string response = handle_get_device_info(params); },
+               std::runtime_error);
 }
 
 TEST_F(ServicerTest, GetDeviceInfo_Success) {
@@ -1062,4 +1095,135 @@ TEST_F(ServicerTest, InitLoggerUnexpectedError) {
   EXPECT_CALL(mock_cxl_global, init_log(_)).WillOnce(Return(-5));
   int status = initialize(nullptr);
   EXPECT_EQ(status, SVK_STATUS_FAIL);
+}
+
+TEST_F(ServicerTest, GetDeviceStats_MissingDeviceID) {
+  std::unordered_map<std::string, std::string> params = {};  // No device_id
+  std::string response = handle_get_device_stats(params);
+  EXPECT_THAT(response, ::testing::HasSubstr("Missing parameter: device_id"));
+}
+
+TEST_F(ServicerTest, GetDeviceStats_InvalidDeviceIDFormat) {
+  std::unordered_map<std::string, std::string> params = {{"device_id", "abc"}};
+  std::string response = handle_get_device_stats(params);
+  EXPECT_THAT(response, ::testing::HasSubstr("Invalid id format"));
+}
+
+TEST_F(ServicerTest, GetDeviceStats_WithSensorStats) {
+  sc_device dev(999, "device_stat", 2048, 1);
+  DevStaticInfo stat{};
+  stat.device_id = 999;
+  stat.protocol = "1.1";
+  stat.port_type = "ph";
+  dev.d_set_static_info(stat);
+
+  DevInfo dyn{};
+  dyn.status = "active";
+  dev.d_set_dynamic_info(dyn);
+
+  g_dev_mgr->register_device(dev.d_get_id(), &testAdapter);
+  testAdapter.set_stat_info_for_device(
+      dev.d_get_id(),
+      StatInfo{.device_id = 999,
+               .protocol = "1.1",
+               .port_type = "ph",
+               .status = "active",
+               .total_memory_MB = 1024,
+               .used_memory_MB = 512,
+               .available_memory_MB = 512,
+               .total_bandwidth_MBps = 32000,
+               .used_bandwidth_MBps = 16000,
+               .rw_errors = 0,
+               .latency_us = 10,
+               .sensor_stats = cmmh_stat_sensor_t{.fpga_temp = 42},
+               .interface_stats = std::nullopt,
+               .cache_stats = std::nullopt});
+
+  std::unordered_map<std::string, std::string> params = {{"device_id", "999"}};
+  std::string response = handle_get_device_stats(params);
+  EXPECT_EQ(get_json_value(response, "device_id"), "999");
+  EXPECT_EQ(get_json_value(response, "device_temperature"), "42");
+}
+
+TEST_F(ServicerTest, GetDeviceStats_WithoutSensorStats) {
+  sc_device dev(888, "device_stat_nosensor", 2048, 1);
+  DevStaticInfo stat{};
+  stat.device_id = 888;
+  stat.protocol = "1.1";
+  stat.port_type = "ph";
+  dev.d_set_static_info(stat);
+
+  DevInfo dyn{};
+  dyn.status = "inactive";
+  dev.d_set_dynamic_info(dyn);
+
+  g_dev_mgr->register_device(dev.d_get_id(), &testAdapter);
+  StatInfo s;
+  s.device_id = 888;
+  s.protocol = "1.1";
+  s.port_type = "ph";
+  s.status = "inactive";
+  s.total_memory_MB = 2048;
+  s.available_memory_MB = 2048;
+  s.used_memory_MB = 0;
+  s.total_bandwidth_MBps = 64000;
+  s.used_bandwidth_MBps = 0;
+  s.rw_errors = 0;
+  s.latency_us = 5;
+  s.sensor_stats = std::nullopt;
+
+  testAdapter.set_stat_info_for_device(dev.d_get_id(), s);
+
+  std::unordered_map<std::string, std::string> params = {{"device_id", "888"}};
+  std::string response = handle_get_device_stats(params);
+  EXPECT_EQ(get_json_value(response, "device_id"), "888");
+  EXPECT_EQ(get_json_value(response, "status"), "inactive");
+}
+
+TEST_F(ServicerTest, InitLog_MissingConfigFile_ReturnsInvalidConfig) {
+  remove(LOG_CONF_FILE);
+  EXPECT_CALL(mock_cxl_global, g_create_mbox(nullptr)).WillOnce(Return(0));
+  svk_status status = initialize(nullptr);
+  EXPECT_EQ(status, SVK_STATUS_INVALID_CONFIG);
+}
+
+TEST_F(ServicerTest, InitLog_Failure_ReturnsFail) {
+  create_file(LOG_CONF_FILE, "fail marker");
+  svk_status status = initialize(nullptr);
+  EXPECT_EQ(status, SVK_STATUS_FAIL);
+}
+
+TEST_F(ServicerTest, InitLog_Success) {
+  create_file(LOG_CONF_FILE, "valid");
+  svk_status status = initialize(nullptr);
+  EXPECT_NE(status, SVK_STATUS_INVALID_CONFIG);
+}
+
+TEST_F(ServicerTest, ListDevices_ArrayContainsNonString) {
+  std::unordered_map<std::string, std::string> params = {
+      {"device_id", R"([1234, true])"}};
+  std::string result = handle_list_devices(params);
+  EXPECT_NE(result.find("device_id array must contain strings"),
+            std::string::npos);
+}
+
+TEST_F(ServicerTest, GetDeviceInfo_EmptyJsonParam) {
+  std::unordered_map<std::string, std::string> params = {{"device_id", ""}};
+  std::string response = handle_get_device_info(params);
+  EXPECT_NE(response.find("Invalid id format"), std::string::npos);
+}
+
+TEST_F(ServicerTest, ListDevices_ValidAndInvalidIdsInArray) {
+  std::unordered_map<std::string, std::string> params = {
+      {"device_id", R"(["1234", "not_a_number"])"}};
+  std::string response = handle_list_devices(params);
+  EXPECT_NE(response.find("Invalid id format"), std::string::npos);
+}
+
+TEST_F(ServicerTest, ListDevices_InvalidJsonArrayString) {
+  std::unordered_map<std::string, std::string> params = {
+      {"device_id", "[\"unclosed_string"}};
+  std::string result = handle_list_devices(params);
+  EXPECT_FALSE(result.find("Invalid device_id array format") !=
+               std::string::npos);
 }

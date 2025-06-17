@@ -8,6 +8,7 @@ class DummyAdapter : public CXLDeviceAdapter {
   DevInfo get_device_info(const sc_id&) const override { return {}; }
   void discover_devices(DeviceManager&) override {}
   int setup_info() override { return 0; }
+  StatInfo get_device_stats(const sc_id& sid) const override { return {}; }
 };
 
 extern "C" void register_plugin(DeviceManager& mgr) {

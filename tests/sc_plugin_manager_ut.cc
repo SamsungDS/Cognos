@@ -104,7 +104,7 @@ throw std::runtime_error("Simulated plugin registration failure");
   out.close();
 
   std::string cmd = "g++ -fPIC -shared -o " + so_file + " " + cpp_file +
-                    " -I../../src/include";
+                    " -I../../src/include -I../../third_party";
   int compile_result = std::system(cmd.c_str());
   ASSERT_EQ(compile_result, 0) << "Failed to compile plugin .so";
 

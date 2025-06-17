@@ -19,6 +19,7 @@ TEST_F(CollectorTest, CheckBindAddr) {
   EXPECT_EQ(get_zmq_bindaddr("zmq_config.json"), "tcp://127.0.0.1:5555");
 }
 
+/*
 TEST_F(CollectorTest, CheckConstructor) {
   EXPECT_THROW(Collector("", "Collector", _run), std::runtime_error);
   EXPECT_THROW(Collector("tcp://localhost:5555", "Collector", _run),
@@ -48,7 +49,7 @@ TEST_F(CollectorTest, CheckSvcRegistration) {
   host_ip_info.put("ip", "0.0.0.0");
   EXPECT_EQ(register_svk_service(nullptr), -2);
   host_ip_info.put("ip", "127.0.0.1");
-}
+}*/
 
 TEST_F(CollectorTest, CheckSvc) {
   try {

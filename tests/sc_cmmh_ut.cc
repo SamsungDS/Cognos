@@ -150,3 +150,46 @@ TEST_F(DevCMMHTest, DiscoverDevices_NullGlobalMap_LogsAndReturns) {
   auto devices = adapter.list_devices();
   EXPECT_EQ(devices.size(), 0);
 }
+
+TEST_F(DevCMMHTest, GetDeviceStats_PopulatesAllFieldsCorrectly) {
+  sc_id id(0x55);  // some arbitrary ID
+
+  DevStaticInfo sinfo;
+  sinfo.device_id = 0x55;
+  sinfo.protocol = "CXL";
+  sinfo.port_type = "Upstream";
+  sinfo.total_capacity_MB = 8192;
+  sinfo.link_speed = 16;  // Gen5
+  sinfo.link_width = 8;   // x8
+  sinfo.location = "0000:5e:00.0";
+
+  DevInfo dinfo;
+  dinfo.static_info = sinfo;
+  dinfo.status = "Healthy";
+  dinfo.available_capacity_MB = 4096;
+  dinfo.numa_attached = 2;
+
+  sc_device dev;
+  dev.d_set_static_info(sinfo);
+  dev.d_set_dynamic_info(dinfo);
+
+  adapter.inject_device(id, dev);
+
+  StatInfo stats = adapter.get_device_stats(id);
+
+  EXPECT_EQ(stats.device_id, 0x55);
+  EXPECT_EQ(stats.protocol, "CXL");
+  EXPECT_EQ(stats.port_type, "Upstream");
+  EXPECT_EQ(stats.status, "Healthy");
+
+  EXPECT_EQ(stats.total_memory_MB, 8192);
+  EXPECT_EQ(stats.available_memory_MB, 4096);
+  EXPECT_EQ(stats.used_memory_MB, 4096);
+
+  EXPECT_EQ(stats.total_bandwidth_MBps, 16 * 8 * 125);
+
+  EXPECT_EQ(stats.rw_errors, 0);
+  EXPECT_EQ(stats.latency_us, 0);
+
+  EXPECT_GE(stats.used_bandwidth_MBps, 0);
+}

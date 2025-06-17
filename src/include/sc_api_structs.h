@@ -5,7 +5,11 @@
 #include <string>
 #include <unordered_map>
 
+#if MOCK == 1
+#include "mock_libcmmh.h"
+#else
 #include "libcmmh.h"
+#endif
 
 struct QoSInfo {
   uint64_t avg_latency = 0;

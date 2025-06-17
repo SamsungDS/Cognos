@@ -17,6 +17,10 @@ Requires:       svk-core, svk-mgmt-fw, jansson
 %{!?installpath_zmq: %global installpath_zmq /etc/svk}
 %{!?installpath_tm_config: %global installpath_tm_config /etc/svk}
 %{!?cxl_build_dir: %global cxl_build_dir svk-cxl}
+%{!?installpath_cmmh_lib: %global installpath_cmmh_lib /usr/local/lib}
+%{!?installpath_cmmh_include: %global installpath_cmmh_include /usr/local/include}
+%{!?installpath_cmmh_service: %global installpath_cmmh_service /etc/systemd/system}
+%{!?installpath_cmmh_driver: %global installpath_cmmh_service /usr/local/bin}
 
 
 %description
@@ -30,6 +34,8 @@ mkdir -p %{buildroot}/%{installpath_mgmt}
 mkdir -p %{buildroot}/%{installpath_mbox}/lib
 mkdir -p %{buildroot}/%{installpath_zmq}
 mkdir -p %{buildroot}/%{installpath_tm_config}
+mkdir -p %{buildroot}/%{installpath_cmmh_lib}
+mkdir -p %{buildroot}/%{installpath_cmmh_include}
 
 # If rpmbuild is run in the build script, use CMAKE_INSTALL_PREFIX as temp dir in %{_topdir}/BUILD
 %if "%{getenv:CMAKE_INSTALL_PREFIX}" != ""
@@ -42,6 +48,12 @@ cp -f /etc/svk/tm_gen_config.py %{buildroot}/%{installpath_tm_config}
 cp -f %{getenv:CMAKE_INSTALL_PREFIX}/config/cxl.conf %{buildroot}/%{installpath_mgmt}
 cp -f %{getenv:CMAKE_INSTALL_PREFIX}/config/cxl_dev_id_map.json %{buildroot}/%{installpath_mgmt}
 cp -f %{getenv:CMAKE_INSTALL_PREFIX}/config/log.conf %{buildroot}/%{installpath_mgmt}
+cp -f %{getenv:CMAKE_INSTALL_PREFIX}/third_party/libcmmh.a %{buildroot}/%{installpath_cmmh_lib}/
+cp -f %{getenv:CMAKE_INSTALL_PREFIX}/third_party/libcmmh.h %{buildroot}/%{installpath_cmmh_include}/
+cp -f %{getenv:CMAKE_INSTALL_PREFIX}/third_party/cmmh_driver %{buildroot}/%{installpath_cmmh_driver}/
+cp -f %{getenv:CMAKE_INSTALL_PREFIX}/third_party/cmmh_driver.service %{buildroot}/%{installpath_cmmh_service}/
+chmod 755 %{buildroot}/%{installpath_cmmh_driver}/cmmh_driver
+chmod 644 %{buildroot}/%{installpath_cmmh_service}/cmmh_driver.service
 
 # If rpmbuild is run manually, use default build dir svk-core, unless user gives a different name
 %else
@@ -54,6 +66,12 @@ cp -f /etc/svk/tm_gen_config.py %{buildroot}/%{installpath_tm_config}
 cp -f %{cxl_build_dir}/config/cxl.conf  %{buildroot}/%{installpath_mgmt}
 cp -f %{cxl_build_dir}/config/cxl_dev_id_map.json  %{buildroot}/%{installpath_mgmt}
 cp -f %{cxl_build_dir}/config/log.conf  %{buildroot}/%{installpath_mgmt}
+cp -f %{cxl_build_dir}/third_party/libcmmh.a %{buildroot}/%{installpath_cmmh_lib}/
+cp -f %{cxl_build_dir}/third_party/libcmmh.h %{buildroot}/%{installpath_cmmh_include}/
+cp -f %{cxl_build_dir}/third_party/cmmh_driver %{buildroot}/%{installpath_cmmh_driver}/
+cp -f %{cxl_build_dir}/third_party/cmmh_driver.service %{buildroot}/%{installpath_cmmh_service}/
+chmod 755 %{buildroot}/%{installpath_cmmh_driver}/cmmh_driver
+chmod 644 %{buildroot}/%{installpath_cmmh_service}/cmmh_driver.service
 %endif
 
 %files
@@ -65,6 +83,10 @@ cp -f %{cxl_build_dir}/config/log.conf  %{buildroot}/%{installpath_mgmt}
 %{installpath_mbox}
 %{installpath_zmq}
 %{installpath_tm_config}
+%{installpath_cmmh_lib}/libcmmh.a
+%{installpath_cmmh_include}/libcmmh.h
+%{installpath_cmmh_service}/cmmh_driver.service
+%{installpath_cmmh_driver}/cmmh_driver
 
 %clean
 

@@ -135,3 +135,14 @@ install(FILES
 	"${PROJECT_SOURCE_DIR}/tests/input.json"
 DESTINATION "${SVK_CONFIG_PATH}")
 
+install(FILES ${CMAKE_SOURCE_DIR}/third_party/libcmmh.h
+        DESTINATION /usr/local/include)
+
+install(FILES ${CMAKE_SOURCE_DIR}/third_party/libcmmh.a
+        DESTINATION /usr/local/lib)
+
+install(FILES ${CMAKE_SOURCE_DIR}/third_party/cmmh_driver
+        DESTINATION /usr/local/bin)
+
+install(FILES ${CMAKE_SOURCE_DIR}/third_party/cmmh_driver.service
+        DESTINATION /etc/systemd/system)

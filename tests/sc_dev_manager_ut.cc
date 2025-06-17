@@ -9,16 +9,16 @@ class ThrowingAdapter : public CXLDeviceAdapter {
   enum class Mode { THROW_STD_EXCEPTION, THROW_UNKNOWN_EXCEPTION, NONE };
   Mode throw_mode = Mode::NONE;
 
-  std::vector<sc_device> list_devices() const override {
-    return {};  // Not relevant for this test
-  }
+  std::vector<sc_device> list_devices() const override { return {}; }
 
   sc_device get_device_object(const sc_id&) const override {
     throw std::runtime_error("Simulated exception in get_device_object");
   }
 
-  DevInfo get_device_info(const sc_id&) const override {
-    return {};  // Not used in current tests
+  DevInfo get_device_info(const sc_id&) const override { return {}; }
+
+  StatInfo get_device_stats(const sc_id&) const override {
+    throw std::runtime_error("Simulated get_device_stats error");
   }
 
   void discover_devices(DeviceManager& mgr) override {
@@ -80,6 +80,20 @@ class DummyAdapter : public CXLDeviceAdapter {
   int setup_info() override { return 0; }
 
   std::vector<sc_host> list_hosts() { return {}; }
+
+  StatInfo get_device_stats(const sc_id& sid) const override {
+    StatInfo stats{};
+    stats.device_id = sid.get_sc_id();
+    stats.status = "active";
+    stats.total_memory_MB = 2048;
+    stats.available_memory_MB = 1024;
+    stats.used_memory_MB = 1024;
+    stats.total_bandwidth_MBps = 64000;
+    stats.used_bandwidth_MBps = 0;
+    stats.rw_errors = 0;
+    stats.latency_us = 0;
+    return stats;
+  }
 };
 
 class DeviceManagerTest : public ::testing::Test {
@@ -116,8 +130,8 @@ TEST_F(DeviceManagerTest, GetDeviceInfoReturnsCorrectDetails) {
   mgr.register_device(device.d_get_id(), &adapter);
   uint64_t d_id = device.d_get_id().get_sc_id();
   auto info = mgr.get_device_info(d_id);
-  ASSERT_TRUE(info.has_value());
-  EXPECT_EQ(info->static_info.manufacturer, "Samsung");
+  // ASSERT_TRUE(info.has_value());
+  EXPECT_EQ(info.static_info.manufacturer, "Samsung");
 }
 
 TEST_F(DeviceManagerTest, ListDevicesByIdReturnsOnlyMatching) {
@@ -137,8 +151,7 @@ TEST_F(DeviceManagerTest, UnregisterDeviceRemovesMappings) {
   ASSERT_FALSE(devices.empty());
   mgr.unregister_device(&adapter);
   auto d_id = devices[0].d_get_id().get_sc_id();
-  auto info = mgr.get_device_info(d_id);
-  EXPECT_FALSE(info.has_value());
+  EXPECT_THROW(mgr.get_device_info(d_id), std::runtime_error);
 }
 
 TEST_F(DeviceManagerTest, UnregisterNonexistentAdapterIsSafe) {
@@ -224,21 +237,19 @@ TEST_F(DeviceManagerTest, GetDeviceInfoReturnsExpected) {
   ASSERT_FALSE(devices.empty());
   uint64_t id = devices[0].d_get_id().get_sc_id();
   auto result = mgr.get_device_info(id);
-  ASSERT_TRUE(result.has_value());
-  EXPECT_EQ(result->status, "active");
-  EXPECT_EQ(result->available_capacity_MB, 1024);
+  // ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result.status, "active");
+  EXPECT_EQ(result.available_capacity_MB, 1024);
 }
 
 TEST_F(DeviceManagerTest, GetDeviceInfo_DeviceIdNotFound) {
-  auto result = mgr.get_device_info(56);  // Unregistered ID
-  EXPECT_FALSE(result.has_value());
+  EXPECT_THROW(mgr.get_device_info(56), std::runtime_error);
 }
 
 TEST_F(DeviceManagerTest, GetDeviceInfo_ScIdNotMapped) {
   // Remove adapter to create missing mapping
   mgr.unregister_device(&adapter);
-  auto result = mgr.get_device_info(56);
-  EXPECT_FALSE(result.has_value());
+  EXPECT_THROW(mgr.get_device_info(56), std::runtime_error);
 }
 
 TEST_F(DeviceManagerTest, GetDeviceInfo_NoAdapterMapped) {
@@ -251,8 +262,7 @@ TEST_F(DeviceManagerTest, GetDeviceInfo_NoAdapterMapped) {
       const_cast<std::unordered_map<sc_id, CXLDeviceAdapter*, hash_sc_id>&>(
           mgr.get_sc_id_adapter_map());
   adapter_map.erase(sid);
-  auto result = mgr.get_device_info(d_id);
-  EXPECT_FALSE(result.has_value());
+  EXPECT_THROW(mgr.get_device_info(d_id), std::runtime_error);
 }
 
 TEST_F(DeviceManagerTest, GetDeviceInfo_AdapterThrowsException) {
@@ -260,8 +270,7 @@ TEST_F(DeviceManagerTest, GetDeviceInfo_AdapterThrowsException) {
   auto devices = mgr.list_devices();
   ASSERT_FALSE(devices.empty());
   uint64_t d_id = devices[0].d_get_id().get_sc_id();
-  auto result = mgr.get_device_info(d_id);
-  EXPECT_FALSE(result.has_value());
+  EXPECT_THROW(mgr.get_device_info(d_id), std::runtime_error);
 }
 
 TEST_F(DeviceManagerTest, DiscoverDevicesHandlesStdException) {
@@ -298,4 +307,26 @@ TEST_F(DeviceManagerTest, ListDevicesFilteredReturnsExpectedDevice) {
   auto filtered = mgr.list_devices(d_ids);
   ASSERT_EQ(filtered.size(), 1);
   EXPECT_EQ(filtered[0].d_get_dev_name(), "TestDevice");
+}
+
+TEST_F(DeviceManagerTest, GetDeviceStatsAdapterMissing) {
+  DeviceManager mgr;
+  EXPECT_THROW(
+      {
+        try {
+          mgr.get_device_stats(99999);
+        } catch (const std::runtime_error& e) {
+          EXPECT_STREQ(e.what(), "No adapter found for device ID: 99999");
+          throw;
+        }
+      },
+      std::runtime_error);
+}
+
+TEST_F(DeviceManagerTest, GetDeviceStatsCorrectInfo) {
+  StatInfo stats = mgr.get_device_stats(123456);
+  EXPECT_EQ(stats.device_id, 123456);
+  EXPECT_EQ(stats.total_memory_MB, 2048);
+  EXPECT_EQ(stats.available_memory_MB, 1024);
+  EXPECT_EQ(stats.status, "active");
 }

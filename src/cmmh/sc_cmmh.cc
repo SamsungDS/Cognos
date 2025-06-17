@@ -7,15 +7,31 @@
 /**
  * @brief DevCMMH constructor.
  */
-DevCMMH::DevCMMH() { LOG(level_E::INFO, "DevCMMH adapter constructed"); }
+DevCMMH::DevCMMH() : bandwidth_monitor(10) {
+  LOG(level_E::INFO, "DevCMMH adapter constructed");
+#if MOCK == 1
+  LOG(level_E::INFO, "cmmh in mock mode.");
+#else
+  if (cmmh_init() == 0) {
+    bandwidth_monitor.start();
+    LOG(level_E::INFO, "cmmh_init succeeded. Bandwidth monitoring started.");
+  } else {
+    LOG(level_E::ERROR, "cmmh_init failed. Bandwidth monitoring disabled.");
+  }
+#endif
+}
 
 /**
  * @brief DevCMMH destructor.
  */
 DevCMMH::~DevCMMH() {
   LOG(level_E::INFO, "DevCMMH adapter destroyed");
-  bandwidth_monitor_.stop();
+#if MOCK == 1
+  LOG(level_E::INFO, "Mock mode: skipping bandwidth monitor stop.");
+#else
+  bandwidth_monitor.stop();
   cmmh_close();
+#endif
 }
 
 /**
@@ -54,7 +70,7 @@ std::vector<sc_host> CXLDeviceAdapter::list_hosts() const {
  */
 DevInfo DevCMMH::get_device_info(const sc_id& sid) const {
   auto it = device_map_.find(sid);
-  LOG(level_E::DEBUG, "DevCMMH::get_device_info called");
+  LOG(level_E::INFO, "DevCMMH::get_device_info called");
 
   if (it == device_map_.end()) {
     return DevInfo{};
@@ -89,6 +105,7 @@ DevInfo DevCMMH::get_device_info(const sc_id& sid) const {
  * @brief Returns StatInfo for a given device ID.
  */
 StatInfo DevCMMH::get_device_stats(const sc_id& sid) const {
+  LOG(level_E::INFO, "DevCMMH::get_device_stat called");
   DevInfo info = get_device_info(sid);
 
   StatInfo stats;
@@ -116,10 +133,11 @@ StatInfo DevCMMH::get_device_stats(const sc_id& sid) const {
 
   stats.rw_errors = 0;
   stats.latency_us = 0;
+
   stats.sensor_stats = cmmh_stat_sensor();
   stats.cache_stats = cmmh_stat_cache();
-  stats.used_bandwidth_MBps = bandwidth_monitor_.get_average_MBps();
-
+  stats.used_bandwidth_MBps = bandwidth_monitor.get_average_MBps();
+  LOG(level_E::INFO, "DevCMMH::get_device_stats completed");
   return stats;
 }
 

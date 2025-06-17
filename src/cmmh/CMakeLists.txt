@@ -23,6 +23,7 @@ add_dependencies(${PLUGIN_NAME} svkcxl)
 target_include_directories(${PLUGIN_NAME} PRIVATE
 "${CMAKE_CURRENT_SOURCE_DIR}/include"
 "${PROJECT_SOURCE_DIR}/src/include"
+"${PROJECT_SOURCE_DIR}/third_party"
 ${SVKMGMTFW_INCLUDE_DIRS}
 ${SVKFRAMEWORK_INCLUDE_DIRS}
 )
@@ -50,5 +51,3 @@ target_link_libraries(${PLUGIN_NAME}
 
 install(TARGETS ${PLUGIN_NAME} 
 LIBRARY DESTINATION "${CMMH_LIB_PATH}")
-
-

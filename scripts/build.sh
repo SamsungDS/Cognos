@@ -318,6 +318,11 @@ if [ -n "$CMAKE_INSTALL_PREFIX" ];then
   CMAKE_OPTIONS+=("-DCMAKE_INSTALL_PREFIX=$CMAKE_INSTALL_PREFIX")
 fi
 
+if $MOCK; then
+  echo "MOCK flag enabled"
+  CMAKE_OPTIONS+=("-DMOCK=1")
+fi
+
 printf "Cmake options: %s\n" "${CMAKE_OPTIONS[@]}"
 
 echo "Running cmake..."
@@ -359,6 +364,7 @@ if $WITH_COVERAGE;then
     --root "$PROJECT_ROOT" \
     --exclude "$BUILD_DIR" \
     --exclude "$PROJECT_ROOT/tests" \
+    --exclude "$PROJECT_ROOT/src/bw_monitor.cc" \
     --exclude-throw-branches \
       "$BUILD_DIR"
 

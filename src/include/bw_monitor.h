@@ -1,10 +1,18 @@
 #ifndef BANDWIDTH_MONITOR_H
 #define BANDWIDTH_MONITOR_H
 
+#include <atomic>
 #include <cstdint>
+#include <deque>
+#include <mutex>
 
-#include "libcmmh.h"
 #include "thread.h"
+
+#if MOCK == 1
+#include "mock_libcmmh.h"
+#else
+#include "libcmmh.h"
+#endif
 
 /**
  * @class BandwidthMonitor
@@ -25,7 +33,7 @@ class BandwidthMonitor {
    *
    * Initializes internal state and sampling interval.
    */
-  BandwidthMonitor();
+  BandwidthMonitor(uint64_t interval_sec);
 
   /**
    * @brief Destructor for BandwidthMonitor.
@@ -64,33 +72,16 @@ class BandwidthMonitor {
    * This method is invoked by the SVKThread and runs in a loop until stopped.
    * @return nullptr
    */
-  void* sampling_loop();
-
-  /**
-   * @brief Static entry point wrapper for the thread.
-   *
-   * Casts the input argument to BandwidthMonitor and delegates to
-   * sampling_loop().
-   * @param arg Pointer to BandwidthMonitor instance.
-   * @return nullptr
-   */
-  static void* thread_entry(void* arg);
-
-  /**
-   * @brief Get the current time in milliseconds.
-   *
-   * Used to timestamp each sample and calculate deltas.
-   * @return Time in milliseconds since epoch.
-   */
-  uint64_t get_time_ms() const;
+  static void* sampling_loop(void* arg);
 
  private:
   // sampling interval in seconds (default: 10)
-  uint64_t interval_sec_;
+  uint64_t interval_sec;
   // flag to control thread execution
-  bool running_;
+  bool running;
+  std::atomic<uint64_t> cached_avg_MBps;
   // Background sampling thread
-  SVKThread sampler_thread_;
+  SVKThread sampler_thread;
 };
 
 #endif

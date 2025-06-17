@@ -80,7 +80,7 @@ class DevCMMH : public CXLDeviceAdapter {
 
  private:
   // background monitor
-  BandwidthMonitor bandwidth_monitor_;
+  BandwidthMonitor bandwidth_monitor;
 };
 
 /**
