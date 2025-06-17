@@ -50,6 +50,7 @@ void call_ras_submit_request(ras_request *req, ras_monitor *m, int interval,
 bool ras_monitor::ras_submit_timed_request(ras_request *req, int interval) {
   bool ret = false;
 #pragma omp parallel
+#pragma omp single nowait
   { call_ras_submit_request(req, this, interval, std::ref(ret)); }
   return ret;
 }
