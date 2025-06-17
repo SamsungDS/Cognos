@@ -1,0 +1,5 @@
+#ifndef _RAS_UT_CONFIG_H_
+#define _RAS_UT_CONFIG_H_
+
+#define RAS_UT_ADAPTERS_DIR "@BUILD_ADAPTERS_DIR@"
+#endif // _RAS_UT_CONFIG_H_

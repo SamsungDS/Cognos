@@ -6,7 +6,7 @@ endfunction()
 # Usage
 add_wrap_linker_flag(calloc)
 
-include_directories(${UNIT_TEST_MOCK_INCLUE_DIR})
+include_directories(${UNIT_TEST_MOCK_INCLUDE_DIR})
 set(LOGIC_MODULE_MANAGER_UT "lmm_ut")
 set(LOGIC_MODULE_MANAGER_UT_SOURCES
 ${CMAKE_SOURCE_DIR}/src/utils/logic_module_manager.cc

@@ -14,6 +14,7 @@
 #include <unordered_map>
 
 #include "ras.hpp"
+#include "ras_ut_config.h"
 
 #define WAIT_FOR_FLUSH 2
 
@@ -29,6 +30,7 @@ class ConfigUnitTest : public testing::Test {
     logger_conf.put("sink_type", "rotating_file");
 
     top_conf.put_child("ras.logger", logger_conf);
+    top_conf.put("adapters_directory", RAS_UT_ADAPTERS_DIR);
     boost::property_tree::write_json("conf.json", top_conf);
   }
 
@@ -70,30 +72,12 @@ TEST_F(ConfigUnitTest, SVKInit) {
 
 TEST_F(ConfigUnitTest, WrongConfigFileName) {
   setenv("SVK_RAS_CONFIG", "wrong_name.json", true);
-  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
-  sleep(WAIT_FOR_FLUSH);
-  std::ifstream logFile(RAS_LOG);
-  std::string logs((std::istreambuf_iterator<char>(logFile)),
-                   (std::istreambuf_iterator<char>()));
-  logFile.close();
-  EXPECT_NE(std::string::npos,
-            logs.find("[ras] [info] ras init called & logger is initialized"));
-  clean_up(nullptr);
+  EXPECT_EQ(SVK_STATUS_FAIL, initialize(nullptr));
 }
 
 TEST_F(ConfigUnitTest, UndefinedConfig) {
   unsetenv("SVK_RAS_CONFIG");
-  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
-  sleep(WAIT_FOR_FLUSH);
-  std::ifstream logFile(RAS_LOG);
-  std::string logs((std::istreambuf_iterator<char>(logFile)),
-                   (std::istreambuf_iterator<char>()));
-  logFile.close();
-  EXPECT_NE(std::string::npos,
-            logs.find("[ras] [info] ras init called & logger is initialized"));
-  clean_up(nullptr);
+  EXPECT_EQ(SVK_STATUS_FAIL, initialize(nullptr));
 }
 
 TEST_F(ConfigUnitTest, MissingLoggerConfig) {

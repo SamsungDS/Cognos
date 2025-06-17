@@ -35,6 +35,7 @@ cmake -DWITH_RELEASE=ON -DPKG_CONFIG_PREFIX=%svk_install_dir -DCMAKE_INSTALL_PRE
 %svk_install_dir/%_lib
 %svk_install_dir/include
 %svk_install_dir/config
+%svk_install_dir/adapters
 %ghost %_sysconfdir/%svk_ras_ldconf
 
 %files devel

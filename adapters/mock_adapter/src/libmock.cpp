@@ -46,6 +46,19 @@ struct Config {
   string ras_mc_ctl_health_status_command;
 };
 
+std::string mock_adapter_default_config = R"(
+{
+  "grep_CXL": "cat /proc/iomem|grep CXL",
+  "grep_acpi_srat": "cat /var/log/dmesg|grep -i acpi|grep -i srat",
+  "grep_numa_nodes": "cat /var/log/dmesg|grep -i acpi|grep -i srat|grep -oP '(?<=Node).* (?=PXM)'|uniq",
+  "regex_iomem": "^[\\s]*[0-9a-z]+-[0-9a-z]+[\\s]*:[\\s]*CXL[\\s]*Window[\\s]*[0-9]+$",
+  "regex_addr_range": ".*mem[\\s]*([0-9a-z]+-[0-9a-z]+).*",
+  "mce_inject_template_string": "CPU {cpu} BANK 1\nSTATUS CORRECTED\nADDR {addr}\n",
+  "rasdaemon_exec_command": "rasdaemon -f -r /dev/null 2>&1 > ",
+  "ras_mc_ctl_error_addresses": "ras-mc-ctl --errors|awk -F',' '{printf \"\\n\" $7}'|cut -d'=' -f2"
+}
+)";
+
 // Instantiation of global vars to be used as key-value pairs
 Config cf;
 ostringstream os(ostringstream::ate), emp;
@@ -271,7 +284,7 @@ int validate_config(const string &str) {
  * Initialization to start a log file and read magic strings from
  * config.json file
  */
-int init(char const *cfg = CONFIG_FILE) {
+int init_from_file(char const *cfg = nullptr) {
   int ret = 0;
   FILE *file;
 
@@ -498,7 +511,13 @@ int getDeviceList(Response &out) {
 }
 
 // Invoked during initialization
-int startup(char const *cfg = CONFIG_FILE) { return init(cfg); }
+int startup(char const *cfg = nullptr) {
+  if (cfg != nullptr) {
+    return init_from_file(cfg);
+  } else {
+    return validate_config(mock_adapter_default_config);
+  }
+}
 
 // Process the request using the request string
 string processRequest(string &request) {
