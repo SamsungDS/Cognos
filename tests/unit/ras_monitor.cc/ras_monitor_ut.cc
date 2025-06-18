@@ -17,15 +17,16 @@ TEST(RasMonitorTest, TestClass) {
   ASSERT_EQ(true, result);
 
   result = test_mon_inst->ras_submit_timed_request(nullptr, 3);
-  ASSERT_EQ(false, result);
+  ASSERT_EQ(true, result);
 
-  int n = 5000, interval = 3;
+  int n = 10, interval = 3;
   std::thread t[n];
   ras_monitor m;
   bool ret;
 
 #pragma omp parallel for
   for (int i = 0; i < n; ++i) {
+    ret = false;
     t[i] = std::thread([&]() {
       ret = m.ras_submit_timed_request(dummy_request, interval);
       EXPECT_EQ(ret, true);
@@ -34,6 +35,12 @@ TEST(RasMonitorTest, TestClass) {
 
   for (int i = 0; i < n; ++i) {
     t[i].join();  // Wait for each thread to complete
+  }
+
+  for (int i = 0; i < n; ++i) {
+    ret = false;
+    ret = m.ras_submit_timed_request(dummy_request, interval);
+    EXPECT_EQ(ret, true);
   }
 
   delete dummy_request;

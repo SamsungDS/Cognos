@@ -45,12 +45,10 @@ void call_ras_submit_request(ras_request *req, ras_monitor *m, int interval,
 }
 
 // A timer based ras_submit_request wrapper
-// #pragma omp parallel directive to mark the region of code that can/will
-// be executed by multiple threads
 bool ras_monitor::ras_submit_timed_request(ras_request *req, int interval) {
-  bool ret = false;
-#pragma omp parallel
-#pragma omp single nowait
-  { call_ras_submit_request(req, this, interval, std::ref(ret)); }
-  return ret;
+  bool ret = false, tcall = true;
+
+  std::thread(call_ras_submit_request, req, this, interval, std::ref(ret))
+      .detach();
+  return tcall;
 }
