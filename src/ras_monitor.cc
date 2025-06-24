@@ -75,12 +75,12 @@ auto ras_monitor::execute_request_by_monitor(ras_request &req) {
 }
 
 void execute_request_by_monitor_(ras_request &req) {
-  auto status = req.monitor_instance->execute_request_by_monitor(req);
-  if (status ==
+  if (auto status = req.monitor_instance->execute_request_by_monitor(req);
+      status ==
       CommandHandler<ras_request>::command_status::COMMAND_UNSUPPORTED) {
     req.mark_request_unsupported();
   }
-  // Other cases should be handled by validator/executor to mark the result
+  // Other cases should be handled by validator/executor and mark the result
   // appropriately
   return;
 }
