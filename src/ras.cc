@@ -187,14 +187,16 @@ extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
     return SVK_STATUS_FAIL;
   }
 
-  snprintf(debug_info, sizeof(debug_info),
-           "ras execute_sync called.\ninput buffer: %s\noutput buffer:%s\n",
-           (char *)input->input_buffer, (char *)output->output_buffer);
+  snprintf(debug_info, sizeof(debug_info), "ras execute_sync called.");
   svk_logger(RAS_LOGGER, level_E::INFO, debug_info);
 
   ras_request request(
       true, g_ras_context.monitor_context, false, (char *)input->input_buffer,
       input->len);  // Local variable okay since this will be sync
+
+  snprintf(debug_info, sizeof(debug_info), "input buffer: %s",
+           (char *)input->input_buffer);
+  svk_logger(RAS_LOGGER, level_E::INFO, debug_info);
 
   // Initialize request command json
   if (request.parse_input_command_to_json() == false) {
@@ -209,6 +211,20 @@ extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
     svk_logger(RAS_LOGGER, level_E::INFO, "submit failed");
     return SVK_STATUS_FAIL;
   }
+
+  std::string out_str = request.get_json_object_string();
+  strncpy((char *)output->output_buffer, out_str.c_str(), output->len);
+
+  if (out_str.length() >= output->len) {
+    svk_logger(RAS_LOGGER, level_E::ERROR,
+               "Output buffer has insufficient size");
+    output->status = SVK_STATUS_FAIL;
+    return SVK_STATUS_FAIL;
+  }
+
+  snprintf(debug_info, sizeof(debug_info), "output buffer:%s\n",
+           (char *)output->output_buffer);
+  svk_logger(RAS_LOGGER, level_E::INFO, debug_info);
 
   if (request.is_successfull == false) {
     output->status = SVK_STATUS_FAIL;

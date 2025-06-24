@@ -86,6 +86,10 @@ struct ras_request {
     return true;
   }
 
+  std::string get_json_object_string(void) {
+    return this->command_obj.dump(2 /*Indent by two spaces*/);
+  }
+
   void mark_request_unsupported(void) {
     auto cmd_res_str = RAS_COMMAND_RESULT_STR;
     this->is_successfull = false;
