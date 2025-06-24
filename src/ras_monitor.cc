@@ -1,7 +1,5 @@
 #include "ras_monitor.h"
 
-#include <omp.h>
-
 ras_monitor::ras_monitor(/* args */) {
   ras_monitor_ = std::make_unique<RequestProcessor<ras_request>>(
       ras_monitor::process_request);
