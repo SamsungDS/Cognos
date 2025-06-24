@@ -22,8 +22,10 @@ static int parseJSONOutputOfDeviceList(
     }
   } catch (std::exception& e) {
     std::string exc_message = e.what();
-    logger_str = "failed to parse JSON output for GetDeviceList. Error -> " +
-                 exc_message;
+    logger_str =
+        "failed to parse JSON output for GetDeviceListFromCXLFeature. Error "
+        "-> " +
+        exc_message;
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                logger_str.c_str());
     return status;
@@ -77,7 +79,9 @@ static int parseJSONOutputOfDeviceInfo(std::string node_name,
   } catch (std::exception& e) {
     std::string exc_message = e.what();
     logger_str =
-        "failed to parse JSON output of GetDeviceInfo. Error -> " + exc_message;
+        "failed to parse JSON output of GetDeviceInfoFromCXLFeature. Error "
+        "-> " +
+        exc_message;
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                logger_str.c_str());
     return status;
@@ -86,14 +90,15 @@ static int parseJSONOutputOfDeviceInfo(std::string node_name,
   return status;
 }
 
-static int GetDeviceList(std::string node_name, std::string port,
-                         std::vector<uint64_t>& device_id_vector) {
+static int GetDeviceListFromCXLFeature(
+    std::string node_name, std::string port,
+    std::vector<uint64_t>& device_id_vector) {
   std::string logger_str;
   std::string output;
   int status = -1;
 
-  logger_str =
-      "GetDeviceList called with node id " + node_name + " port " + port;
+  logger_str = "GetDeviceListFromCXLFeature called with node id " + node_name +
+               " port " + port;
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
 
   svk::CommandRequest req_node;
@@ -132,14 +137,15 @@ static int GetDeviceList(std::string node_name, std::string port,
   return status;
 }
 
-static int GetDeviceInfo(std::string node_name, std::string port,
-                         uint64_t device_id, DeviceInfo& dev_data) {
+static int GetDeviceInfoFromCXLFeature(std::string node_name, std::string port,
+                                       uint64_t device_id,
+                                       DeviceInfo& dev_data) {
   std::string logger_str;
   std::string output;
   int status = -1;
 
-  logger_str =
-      "GetDeviceInfo called for device_id:" + std::to_string(device_id);
+  logger_str = "GetDeviceInfoFromCXLFeature called for device_id:" +
+               std::to_string(device_id);
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
 
   svk::CommandRequest req_node;
@@ -208,7 +214,7 @@ static bool CheckIfCXLDeviceExistInNode(std::string node_name,
   Client client(node_name, port);
   cmd_status = client.ProcessNodeCommand(&req_node, &resp_node);
   if (cmd_status.ok() != true) {
-    logger_str = "Got error for the command node_info " + node_name +
+    logger_str = "Got error for the command get_node_info " + node_name +
                  " with error:" + cmd_status.error_message();
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                logger_str.c_str());
@@ -272,9 +278,10 @@ int SLADeviceHelper::GetDeviceDetails(std::string node_name, std::string port) {
     return status;
   }
 
-  status = GetDeviceList(node_name, port, device_id_vector);
+  status = GetDeviceListFromCXLFeature(node_name, port, device_id_vector);
   if (status != 0) {
-    logger_str = "Unable to get the GetDeviceList for the node " + node_name;
+    logger_str = "Unable to get the GetDeviceListFromCXLFeature for the node " +
+                 node_name;
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                logger_str.c_str());
     return status;
@@ -283,14 +290,14 @@ int SLADeviceHelper::GetDeviceDetails(std::string node_name, std::string port) {
   for (uint64_t device_id : device_id_vector) {
     DeviceInfo dev_info;
 
-    status = GetDeviceInfo(node_name, port, device_id, dev_info);
+    status = GetDeviceInfoFromCXLFeature(node_name, port, device_id, dev_info);
     if (status != 0) {
       logger_str = "Failed to get device info for " + std::to_string(device_id);
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                  logger_str.c_str());
       return status;
     }
-    this->device_info.push_back(dev_info);
+    this->m_device_info.push_back(dev_info);
   }
 
   logger_str = "Successfully populated the devices for the node " + node_name;
@@ -304,7 +311,15 @@ int SLADeviceHelper::GetDeviceForAppRequirements(
     uint64_t sla_latency_ns, uint64_t size, std::vector<DeviceInfo>& devices) {
   int status = 0;
   std::string logger_str;
-  for (DeviceInfo dev : this->device_info) {
+
+  // Sort the devices with high avg_latency_ns at the top
+  std::vector<DeviceInfo> sorted_devices = this->m_device_info;
+  std::sort(sorted_devices.begin(), sorted_devices.end(),
+            [](const DeviceInfo& a, const DeviceInfo& b) {
+              return a.device_qos.avg_latency_ns > b.device_qos.avg_latency_ns;
+            });
+
+  for (DeviceInfo dev : sorted_devices) {
     logger_str = "device " + std::to_string(dev.device_id) + " has latency " +
                  std::to_string(dev.device_qos.avg_latency_ns);
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
@@ -329,7 +344,7 @@ int SLADeviceHelper::GetDeviceForAppRequirements(
 int SLADeviceHelper::UnregisterDevicesForNode(std::string node_name) {
   int status = -1;
   std::string logger_str;
-  for (DeviceInfo dev : this->device_info) {
+  for (DeviceInfo dev : this->m_device_info) {
     if (dev.free_flag != true) {
       // Should we return error as the device is associated with an app
       // Ignoring for now
@@ -341,20 +356,41 @@ int SLADeviceHelper::UnregisterDevicesForNode(std::string node_name) {
     }
   }
 
-  this->device_info.erase(
+  this->m_device_info.erase(
       std::remove_if(
-          this->device_info.begin(), this->device_info.end(),
+          this->m_device_info.begin(), this->m_device_info.end(),
           [node_name](DeviceInfo d) { return d.node_name == node_name; }),
-      this->device_info.end());
+      this->m_device_info.end());
 
   status = 0;
 
   return status;
 }
 
-int SLADeviceHelper::SetSLADataForApp(std::string app_name,
-                                      App_Device_List app_device_data) {
-  this->app_device_data[app_name] = app_device_data;
+int SLADeviceHelper::GetDeviceInfo(std::string device_id,
+                                   DeviceInfo& device_info) {
+  std::vector<DeviceInfo> devices = this->m_device_info;
+  for (DeviceInfo dev : devices) {
+    if (dev.device_id == std::stoull(device_id)) {
+      device_info = dev;
+      return 0;
+    }
+  }
+  return -1;
+}
+
+int SLADeviceHelper::GetAppInfo(std::string device_id, App_Info& app_info) {
+  auto it = this->m_device_app_data.find(device_id);
+  if (it != this->m_device_app_data.end()) {
+    app_info = it->second;
+    return 0;
+  }
+  return -1;
+}
+
+int SLADeviceHelper::SetSLADataForApp(std::string device_id,
+                                      App_Info app_info) {
+  this->m_device_app_data[device_id] = app_info;
   return 0;
 }
 

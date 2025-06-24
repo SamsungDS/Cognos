@@ -16,9 +16,6 @@
 #include "svk_pub_sub_struct.h"
 #include "svk_publisher.h"
 
-#define SVK_NODE_FEATURE_NAME "node"
-#define SVK_CXL_FEATURE_NAME "cxl"
-
 typedef struct {
   uint64_t avg_latency_ns;  // Device Latency in nanoseconds
   uint64_t p99_latency;
@@ -46,11 +43,10 @@ typedef struct DeviceInfo_T {
 } DeviceInfo;
 
 typedef struct {
+  std::string app_name;
   uint64_t appLatencyns;
   uint64_t size;
-  std::vector<DeviceInfo> device_info;  // Array of pointers pointing to the
-                                        // devices in the device_info array
-} App_Device_List;
+} App_Info;
 
 class SLADeviceHelper {
  public:
@@ -58,18 +54,16 @@ class SLADeviceHelper {
   int GetDeviceDetails(std::string node_name, std::string port);
   int GetDeviceForAppRequirements(uint64_t sla_latency_ns, uint64_t size,
                                   std::vector<DeviceInfo>& devices);
-  int SetSLADataForApp(std::string app_name, App_Device_List sla_data);
+  int SetSLADataForApp(std::string device_id, App_Info app_info);
   int UnregisterDevicesForNode(std::string node_name);
-  std::vector<DeviceInfo> GetDevices() { return this->device_info; };
-  void SetDevices(std::vector<DeviceInfo>& devices) {
-    this->device_info = devices;
-  };
+  int GetDeviceInfo(std::string device_id, DeviceInfo& device_info);
+  int GetAppInfo(std::string device_id, App_Info& app_info);
   ~SLADeviceHelper(){};
 
  private:
-  std::vector<DeviceInfo> device_info;
-  // unordered map with app_name and the SLA data
-  std::unordered_map<std::string, App_Device_List> app_device_data;
+  std::vector<DeviceInfo> m_device_info;
+  // unordered map with device_id with the App details
+  std::unordered_map<std::string, App_Info> m_device_app_data;
 };
 
 class SLAStatsManager {

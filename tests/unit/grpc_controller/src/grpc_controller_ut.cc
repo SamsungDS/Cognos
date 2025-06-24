@@ -2494,3 +2494,116 @@ TEST(InitControllerTest, InitSuccessWithPubSubConfig) {
   EXPECT_TRUE(svcr->get_state() == true);
   unlink(conf_file.c_str());
 }
+
+TEST(InitControllerTest, ProcessRASEventWithParseErrorWithMissingField) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  unlink(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL);
+
+  const std::shared_ptr<SLADeviceHelper> g_sla_device_hlpr =
+      std::make_shared<SLADeviceHelper>();
+
+  json observations_map;
+  observations_map["device_name"] = "1234";
+
+  json json_data;
+  json_data["observations"] = observations_map;
+  ControllerServicer *svcr(new ControllerServicer(conf_file));
+  auto server = InitializeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+  ProcessRASEvent(json_data, svcr);
+  unlink(conf_file.c_str());
+}
+
+class NewSLADeviceHelperFakeDeviceInfo : public SLADeviceHelper {
+ public:
+  NewSLADeviceHelperFakeDeviceInfo() : SLADeviceHelper(){};
+  int GetDeviceInfo(std::string device_id, DeviceInfo &device_info) {
+    return -1;
+  }
+};
+
+TEST(InitControllerTest, ProcessRASEventWithSLAHlprGetDeviceInfoFailure) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  unlink(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL);
+
+  const std::shared_ptr<NewSLADeviceHelperFakeDeviceInfo> g_sla_device_hlpr =
+      std::make_shared<NewSLADeviceHelperFakeDeviceInfo>();
+
+  json observations_map;
+  observations_map["device_id"] = "1234";
+
+  json json_data;
+  json_data["observations"] = observations_map;
+  ControllerServicer *svcr(new ControllerServicer(conf_file));
+  auto server = InitializeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+  ProcessRASEvent(json_data, svcr);
+  unlink(conf_file.c_str());
+}
+
+class NewSLADeviceHelperFakeAppInfo : public SLADeviceHelper {
+ public:
+  NewSLADeviceHelperFakeAppInfo() : SLADeviceHelper(){};
+  int GetDeviceInfo(std::string device_id, DeviceInfo &device_info) {
+    return 0;
+  }
+  int GetAppInfo(std::string device_id, App_Info &app_info) { return -1; }
+};
+
+TEST(InitControllerTest, ProcessRASEventWithSLAHlprGetAppInfoFailure) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  unlink(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL);
+
+  const std::shared_ptr<NewSLADeviceHelperFakeAppInfo> g_sla_device_hlpr =
+      std::make_shared<NewSLADeviceHelperFakeAppInfo>();
+
+  json observations_map;
+  observations_map["device_id"] = "1234";
+
+  json json_data;
+  json_data["observations"] = observations_map;
+  ControllerServicer *svcr(new ControllerServicer(conf_file));
+  auto server = InitializeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+  ProcessRASEvent(json_data, svcr);
+  unlink(conf_file.c_str());
+}
+
+TEST(InitControllerTest, ProcessSLAEventWithParseErrorWithMissingField) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  unlink(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL);
+
+  const std::shared_ptr<SLADeviceHelper> g_sla_device_hlpr =
+      std::make_shared<SLADeviceHelper>();
+
+  json observations_map;
+  observations_map["device_id"] = "1234";
+
+  json json_data;
+  json_data["observations"] = observations_map;
+  ControllerServicer *svcr(new ControllerServicer(conf_file));
+  auto server = InitializeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+  ProcessSLAEvent(json_data, svcr);
+  unlink(conf_file.c_str());
+}
