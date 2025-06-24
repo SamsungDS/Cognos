@@ -24,6 +24,12 @@
 #define CONTROLLER_DEFAULT_PORT "9999"
 #define API_VERSION "0.1"
 
+#define SVK_NODE_FEATURE_NAME "node"
+#define SVK_CXL_FEATURE_NAME "cxl"
+#define SLAT_FEATURE_MODULE_NAME "slat"
+#define RAS_FEATURE_MODULE_NAME "ras"
+#define ME_FEATURE_MODULE_NAME "me"
+
 enum node_status { NODE_ONLINE, NODE_OFFLINE };
 
 const std::map<node_status, std::string> node_status_to_str = {
@@ -46,6 +52,7 @@ using controller_config = struct grpc_controller_config {
   int log_file_count;
   uint64_t log_file_size;
 };
+
 // Cluster name and list of nodes in cluster
 using cluster_info = struct cluster_info {
   std::string cluster_name;
@@ -61,6 +68,8 @@ using node_info = struct node_info {
   std::string cluster_name;
   node_status status;  // Online/offline
 };
+
+using json = nlohmann::json;
 
 const std::unordered_map<std::string, level_E> ctrl_log_level_map = {
     {"TRACE", level_E::TRACE},       {"DEBUG", level_E::DEBUG},

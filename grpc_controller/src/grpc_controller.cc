@@ -1,6 +1,8 @@
 #include "grpc_controller.h"
 
+#include <condition_variable>
 #include <csignal>
+#include <mutex>
 #include <set>
 #include <thread>
 #include <zmq.hpp>
@@ -9,7 +11,7 @@
 #include "sla_hlpr_fns.h"
 #include "svk_pub_sub_struct.h"
 #include "svk_zmq_api.h"
-#define MAX_SIZE 4096
+#define ZMQ_MSG_MAX_SIZE (64 * 1024ULL)
 
 #ifndef BUILD_TESTING
 ABSL_FLAG(std::string, svk_conf_file, "", "svk configuration file to read");
@@ -21,9 +23,15 @@ std::atomic<int> gSignalStatus = -1;
 std::string gSubscriberPort;
 std::string gTransportType;
 std::vector<std::string> gTopicsVector;
+std::mutex gMutex;
+std::condition_variable gCondVar;
 
-const std::unique_ptr<SLADeviceHelper> g_sla_device_hlpr =
-    std::make_unique<SLADeviceHelper>();
+const std::shared_ptr<SLADeviceHelper> g_sla_device_hlpr =
+    std::make_shared<SLADeviceHelper>();
+
+int SendCommandToNodeInJSON(std::string node_name, std::string node_port,
+                            svk::CommandRequest &req,
+                            svk::CommandResponse &resp);
 
 static int read_subscriber_settings_from_config_file(
     const char *config_file, std::string &port, std::string &transport_type,
@@ -212,7 +220,6 @@ ControllerServicer::~ControllerServicer() {
  */
 nlohmann::json ControllerServicer::ClusterResponseJson(
     std::string cluster_name) {
-  using json = nlohmann::json;
   json cluster_nodes_resp;
   cluster_info cluster = m_cluster_info.at(cluster_name);
   json node_list = json::array();
@@ -338,7 +345,13 @@ Status ControllerServicer::RegisterNode(ServerContext *ctxt,
                logger_str.c_str());
     return Status(grpc::UNKNOWN, "Failed to get devices");
   }
-  m_config_changed = true;
+
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+             "Cluster config changed. Notifying the event thread");
+  std::lock_guard<std::mutex> lock(gMutex);
+
+  this->set_config_changed(true);
+  gCondVar.notify_one();
   status = 0;
   resp->set_error_code(status);
   return Status::OK;
@@ -406,7 +419,14 @@ Status ControllerServicer::UnregisterNode(ServerContext *ctxt,
     return Status(grpc::INVALID_ARGUMENT,
                   "Failed to remove devices from the SLA tracker for the node");
   }
-  m_config_changed = true;
+
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+             "Cluster config changed. Notifying the event thread");
+  std::lock_guard<std::mutex> lock(gMutex);
+
+  this->set_config_changed(true);
+  gCondVar.notify_one();
+
   resp->set_status("Success");
   resp->set_error_code(status);
 
@@ -455,6 +475,47 @@ Status ControllerServicer::SetNodeStatus(ServerContext *ctxt,
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
 
   return Status::OK;
+}
+
+// Need to move these thresholds to JSON file for configuring
+// until the actual settings are finalized
+#define ERROR_COUNT_THRESHOLD 5
+#define ERROR_RATE_THRESHOLD_COUNT 3
+#define ERROR_RATE_THRESHOLD_TIME_WINDOW_IN_SECS 300
+
+// Enable RAS Tracking on the devices added for SLAT as well
+// Ignoring the errors of node command until the RAS feature is completed
+int EnableRASTrackingOnDevices(
+    std::string node_name, std::string node_port,
+    std::unordered_map<std::string, DeviceInfo> &ras_device_map) {
+  svk::CommandRequest req_node;
+  svk::CommandResponse resp;
+  int status = -1;
+  // Send each device to RAS feature module for reliability tracking
+  for (const auto &[device_id, device_info] : ras_device_map) {
+    req_node.set_node_id(node_name);
+    req_node.set_feature_name(RAS_FEATURE_MODULE_NAME);
+    req_node.set_command_name("add_reliability_monitoring_for_device");
+    json command_params_json = {
+        "device_id",
+        device_id,
+        "device_numa",
+        std::to_string(device_info.numa),
+        "device_type",
+        device_info.device_type,
+        "configure_options",
+        {"error_count_threshold",
+         ERROR_COUNT_THRESHOLD,
+         "error_rate_threshold",
+         {"count", ERROR_RATE_THRESHOLD_COUNT, "time_window_in_seconds",
+          ERROR_RATE_THRESHOLD_TIME_WINDOW_IN_SECS}}};
+
+    req_node.set_command_params(command_params_json.dump());
+    SendCommandToNodeInJSON(node_name, node_port, req_node, resp);
+  }
+
+  status = 0;
+  return status;
 }
 
 Status ControllerServicer::ProcessAllocateMemory(const svk::CommandRequest *req,
@@ -510,6 +571,7 @@ Status ControllerServicer::ProcessAllocateMemory(const svk::CommandRequest *req,
     std::string device_latency_str = "";
     std::string node_name;
     std::string port;
+    std::unordered_map<std::string, DeviceInfo> ras_device_map;
     logger_str = "Checking for devices in the node " + itr->first +
                  " in the cluster " + req->cluster_id();
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
@@ -518,8 +580,10 @@ Status ControllerServicer::ProcessAllocateMemory(const svk::CommandRequest *req,
     node_name = itr->first;
     port = itr->second;
 
+    ras_device_map.clear();
     for (auto dev : app_devices) {
       if (dev.node_name == node_name) {
+        ras_device_map[std::to_string(dev.device_id)] = dev;
         if (device_names.length() == 0) {
           device_names = "devices=" + std::to_string(dev.numa);
           device_latency_str = "device_sla_latency_ns=" +
@@ -532,37 +596,40 @@ Status ControllerServicer::ProcessAllocateMemory(const svk::CommandRequest *req,
       }
     }
 
-    if (device_names.length() != 0) {
-      device_found = true;
-      req_node.set_node_id(node_name);
-      req_node.set_feature_id(feature_id::SLA_TRACKER);
-      feature_params = "app_name=" + std::string(app_name) + ";" +
-                       "app_sla_latency_ns=" + std::to_string(sla_latency_ns) +
-                       ";" + device_names + ";" + device_latency_str +
-                       ";host_name=" + node_name;
-      if (ptr_logicmod) {
-        feature_params += ";logic_module=" + std::string(logic_module);
-      }
-      req_node.set_feature_params(feature_params);
-      logger_str = "Command with feature_params " + feature_params +
-                   " is passed to node " + node_name;
-      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+    if (device_names.length() == 0) {
+      continue;
+    }
+    device_found = true;
+    req_node.set_node_id(node_name);
+    req_node.set_feature_id(feature_id::SLA_TRACKER);
+    feature_params = "app_name=" + std::string(app_name) + ";" +
+                     "app_sla_latency_ns=" + std::to_string(sla_latency_ns) +
+                     ";" + device_names + ";" + device_latency_str +
+                     ";host_name=" + node_name;
+    if (ptr_logicmod) {
+      feature_params += ";logic_module=" + std::string(logic_module);
+    }
+    req_node.set_feature_params(feature_params);
+    logger_str = "Command with feature_params " + feature_params +
+                 " is passed to node " + node_name;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
+
+    Client client(node_name, port);
+    cmd_status = client.ProcessNodeCommand(&req_node, &resp_node);
+    if (cmd_status.ok() != true) {
+      // If one of the nodes return failure for whatever reason, we are
+      // returning error for the whole cluster. Need to handle partial
+      // failures accordingly
+      logger_str = "ProcessNodeCommand with feature_params " + feature_params +
+                   " failed for node " + node_name;
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                  logger_str.c_str());
 
-      Client client(node_name, port);
-      cmd_status = client.ProcessNodeCommand(&req_node, &resp_node);
-      if (cmd_status.ok() != true) {
-        // If one of the nodes return failure for whatever reason, we are
-        // returning error for the whole cluster. Need to handle partial
-        // failures accordingly
-        logger_str = "ProcessNodeCommand with feature_params " +
-                     feature_params + " failed for node " + node_name;
-        svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
-                   logger_str.c_str());
-
-        return cmd_status;
-      }
+      return cmd_status;
     }
+
+    EnableRASTrackingOnDevices(node_name, port, ras_device_map);
   }
 
   if (device_found == false) {
@@ -574,13 +641,15 @@ Status ControllerServicer::ProcessAllocateMemory(const svk::CommandRequest *req,
     return Status(grpc::UNKNOWN, logger_str);
   }
 
-  App_Device_List app_device_data;
-  app_device_data.appLatencyns = sla_latency_ns;
-  app_device_data.size = size;
+  App_Info app_info;
+
+  app_info.app_name = app_name;
+  app_info.appLatencyns = sla_latency_ns;
+  app_info.size = size;
   for (auto dev : app_devices) {
-    app_device_data.device_info.push_back(dev);
+    g_sla_device_hlpr->SetSLADataForApp(std::to_string(dev.device_id),
+                                        app_info);
   }
-  g_sla_device_hlpr->SetSLADataForApp(app_name, app_device_data);
 
   logger_str = "ProcessAllocateMemory processed successfully";
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
@@ -737,8 +806,6 @@ Status ControllerServicer::CreateCluster(std::string cluster_name,
                   "Invalid request parameters for CreateCluster");
   }
 
-  using json = nlohmann::json;
-
   try {
     auto it = m_cluster_info.find(cluster_name);
     if (it != m_cluster_info.end()) {
@@ -816,6 +883,15 @@ Status ControllerServicer::CreateCluster(std::string cluster_name,
     resp->set_error_code(SVK_STATUS_FAIL);
     return Status(grpc::INVALID_ARGUMENT, "Error parsing json command_params");
   }
+
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+             "Cluster config changed. Notifying the event thread");
+
+  std::lock_guard<std::mutex> lock(gMutex);
+
+  this->set_config_changed(true);
+  gCondVar.notify_one();
+
   return status;
 }
 
@@ -880,6 +956,14 @@ Status ControllerServicer::DeleteCluster(std::string cluster_name,
   logger_str = "Cluster " + cluster_name + " removed.";
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
 
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+             "Cluster config changed. Notifying the event thread");
+
+  std::lock_guard<std::mutex> lock(gMutex);
+
+  this->set_config_changed(true);
+  gCondVar.notify_one();
+
   return Status::OK;
 }
 
@@ -894,7 +978,6 @@ Status ControllerServicer::DeleteCluster(std::string cluster_name,
 Status ControllerServicer::ListClusters(svk::ClusterResponse *resp) {
   Status status;
   std::string cluster_name;
-  using json = nlohmann::json;
   json cluster_names = nlohmann::json::array();
   json clusters_info;
 
@@ -938,7 +1021,6 @@ Status ControllerServicer::ListNodesInCluster(std::string cluster_name,
 
   const auto &cluster = m_cluster_info.find(cluster_name);
   if (cluster != m_cluster_info.end()) {
-    using json = nlohmann::json;
     json resp_json;
     json cluster_json = json::array();
     cluster_json.push_back(ClusterResponseJson(cluster_name));
@@ -979,7 +1061,6 @@ Status ControllerServicer::AddRemoveNode(std::string cluster_name,
     return Status(grpc::INVALID_ARGUMENT, logger_str);
   }
 
-  using json = nlohmann::json;
   try {
     // Parse command_params for nodes
     json params_json = json::parse(command_params);
@@ -1079,6 +1160,13 @@ Status ControllerServicer::AddRemoveNode(std::string cluster_name,
     json response;
     response["clusters"] = cluster_json;
     resp->set_command_response(response.dump());
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               "Cluster config changed. Notifying the event thread");
+
+    std::lock_guard<std::mutex> lock(gMutex);
+
+    this->set_config_changed(true);
+    gCondVar.notify_one();
 
     return Status::OK;
   } catch (json::exception &e) {
@@ -1090,6 +1178,7 @@ Status ControllerServicer::AddRemoveNode(std::string cluster_name,
     resp->set_error_code(SVK_STATUS_FAIL);
     return Status(grpc::INVALID_ARGUMENT, "Error parsing json command_params");
   }
+  return Status(grpc::INVALID_ARGUMENT, "Unsupported JSON data");
 }
 
 Status ControllerServicer::ClusterAPI(ServerContext *ctxt,
@@ -1145,7 +1234,6 @@ Status ControllerServicer::ListNodes(svk::NodeResponse *resp) {
   //       },
   //    ]
   // }
-  using json = nlohmann::json;
   json node_info;
   json node_array = json::array();
   for (auto &curr_node : m_registered_nodes) {
@@ -1346,222 +1434,613 @@ void signal_handler(int signal) {
   gSignalStatus.store(signal);
 }
 
-int StartSLAThreadForTiering(ControllerServicer *svcr) {
-  // A map of <node_name> with the socket
-  std::unordered_map<std::string, void *> socket_map;
+// Maintain a list of topic filters which are already set on the subscriber
+// socket to avoid duplicates
+std::vector<std::string> g_subscribed_topic_filter_list;
+
+/**
+ * This function adds the topic filters to the subscriber socket. This is purely
+ * an internal function and doesn't validate the inputs.
+ * If the topic filter is already added and present in
+ * g_subscribed_topic_filter_list, then it will be ignored and proceeds.
+ */
+
+int AddTopicsToSocket(std::vector<std::string> &topics_vector,
+                      void *zmq_socket) {
+  int status;
   std::string logger_str;
-  std::string topic = "alerts";
-  std::unordered_map<std::string, std::unordered_map<std::string, std::string>>
-      m_cluster_map;
-  std::string node_name;
-  std::string cluster_name;
-  int status = -1;
-  // TODO: Workaround to call TM module only once
-  bool tm_flag = false;
-  void *zmq_context = nullptr;
-  void *zmq_socket = nullptr;
-
-  uint8_t zmq_data[MAX_SIZE];
-  std::string sla_reported_device_name;
-  std::string sla_reported_host_name;
-  std::string sla_reported_app_name;
-  uint64_t sla_reported_avg_latency_ns;
-  std::string event_json;
-
-  using json = nlohmann::json;
-
-  while (true) {
-    if (svcr->get_stop_flag() == true) {
-      logger_str = "Detected the stop flag enabled";
+  for (std::string topic : topics_vector) {
+    if (std::find(g_subscribed_topic_filter_list.begin(),
+                  g_subscribed_topic_filter_list.end(),
+                  topic) != g_subscribed_topic_filter_list.end()) {
+      std::string logger_str =
+          "Topic filter " + topic + " already set for the subscriber";
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                  logger_str.c_str());
-      break;
+      continue;
     }
-    if (svcr->is_config_changed() == true) {
-      svcr->set_config_changed(false);
-      logger_str = "Detected the cluster config change";
-      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+
+    status = zmq_subscribe_topic(zmq_socket, topic.c_str());
+    if (status != 0) {
+      logger_str = "Error in setting the topic " + topic + "for the subscriber";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                  logger_str.c_str());
-      m_cluster_map = svcr->get_cluster_map();
-      for (auto itr = m_cluster_map.begin(); itr != m_cluster_map.end();
-           ++itr) {
-        cluster_name = itr->first;
-        for (auto nodes = itr->second.begin(); nodes != itr->second.end();
-             ++nodes) {
-          node_name = nodes->first;
-          if (zmq_context == nullptr) {
-            status = zmq_init_subscriber(
-                &zmq_context, &zmq_socket, node_name.c_str(),
-                gSubscriberPort.c_str(), topic.c_str());
-            if (status != 0) {
-              logger_str =
-                  "Error in initializing the subscriber for node " + node_name;
-              svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
-                         logger_str.c_str());
-              // Mark it as null
-              zmq_context = nullptr;
-              zmq_socket = nullptr;
-            } else {
-              logger_str = "Initialized the subscriber for node " + node_name +
-                           " with zmq context ptr " +
-                           std::to_string(reinterpret_cast<uintptr_t>(
-                               static_cast<void *>(zmq_context)));
-              svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-                         logger_str.c_str());
-              svcr->set_zmq_socket(zmq_context, zmq_socket);
-            }
-          } else {
-            status = zmq_add_publisher_endpoint_to_subscriber(
-                zmq_socket, node_name.c_str(), gSubscriberPort.c_str());
-            if (status != 0) {
-              logger_str =
-                  "Error in adding the subscriber for node " + node_name;
-              svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
-                         logger_str.c_str());
-            } else {
-              logger_str =
-                  "Added the node " + node_name + "to the subscriber socket";
-              svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-                         logger_str.c_str());
-            }
-          }
-        }
-      }
-    }
-
-    if (zmq_socket) {
-      try {
-        status =
-            zmq_receive_data(zmq_socket, (uint8_t *)&zmq_data, MAX_SIZE, true);
-        if (status < 0) {
-          // error
-          logger_str = "Error in receiving the data";
-          svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
-                     logger_str.c_str());
-        } else {
-          // TODO: Workaround to call TM module only once
-          if (tm_flag) {
-            continue;
-          }
-          tm_flag = true;
-          int data_size = status;
-
-          try {
-            event_json =
-                std::string(reinterpret_cast<char *>(zmq_data), data_size);
-            // Parse the JSON data in the buffer zmq_data of size data_size
-            json json_data = json::parse(event_json);
-
-            json observations_map = json_data.at("observations");
-
-            sla_reported_device_name = observations_map.at("device_name");
-            sla_reported_host_name = observations_map.at("host_name");
-            sla_reported_app_name = observations_map.at("app_name");
-            sla_reported_avg_latency_ns = observations_map.at("avg_latency_ns");
-          } catch (json::exception &e) {
-            std::string errorMessage = e.what();
-
-            logger_str = "Parse error for zmq data:[ " + event_json +
-                         " ] with error " + errorMessage;
-            svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::WARN,
-                       logger_str.c_str());
-            continue;
-          }
-          logger_str = "Device's numa " +
-                       std::string(sla_reported_device_name) + " on host " +
-                       std::string(sla_reported_host_name) + " for the app " +
-                       std::string(sla_reported_app_name) +
-                       " deviated than expected - Reported latency_ns = " +
-                       std::to_string(sla_reported_avg_latency_ns);
-          svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::WARN,
-                     logger_str.c_str());
-
-          // Received the event for SLA deviation. Send a command to TM
-          // module with the params expected at this point of time.
-          node_name = "";
-          for (auto itr = m_cluster_map.begin(); itr != m_cluster_map.end();
-               ++itr) {
-            cluster_name = itr->first;
-            for (auto nodes = itr->second.begin(); nodes != itr->second.end();
-                 ++nodes) {
-              if (nodes->first == sla_reported_host_name) {
-                node_name = sla_reported_host_name;
-                break;
-              }
-            }
-          }
-          if (node_name.length() != 0) {
-            svk::CommandRequest req;
-            svk::CommandResponse resp;
-            req.set_cluster_id(cluster_name);
-            req.set_node_id(node_name);
-            req.set_feature_name("me");
-            req.set_command_name("StartTuning");
-
-            json json_data;
-            json_data["command"] = "StartTuning";
-            json_data["application"] = "gemfire";
-            json_data["application_id"] = std::to_string(getpid());
-            json_data["dram_node"] = "0";
-            json_data["cxl_node"] = "1";
-            json_data["sla_iops"] = 150000;
-            json_data["sla_size"] = 1024;
-            json_data["sla_latencyus"] = 750;
-
-            std::string command_params = json_data.dump();
-            req.set_command_params(command_params);
-            Client client(svcr->get_svk_config_controller_id(),
-                          svcr->get_svk_config_controller_port());
-            Status client_grpc_status =
-                client.ProcessControllerCommand(&req, &resp);
-            if (client_grpc_status.ok()) {
-              logger_str = "Command to the TM module with feature_params " +
-                           command_params + "is successful";
-              svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-                         logger_str.c_str());
-            } else {
-              logger_str =
-                  "Command with feature_params " + command_params + "is failed";
-              svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
-                         logger_str.c_str());
-            }
-          }
-        }
-      } catch (zmq::error_t &e) {
-        std::string errorMessage = e.what();
-        logger_str =
-            "Exception in starting the subscriber poller" + errorMessage;
-        svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-                   logger_str.c_str());
-        return -1;
-      }
     } else {
-      // sleep for 2 seconds if no nodes are registered with the controller
-      sleep(2);
+      g_subscribed_topic_filter_list.push_back(topic);
     }
   }
   return 0;
 }
 
-int StopSLAThreadForTiering(ControllerServicer *svcr) {
+/**
+ * This function is to initialize socket or add the nodes (aka publishers) to
+ * the existing subscriber socket. This function will be called whenever there
+ * is a change in the cluster_map to add new nodes (publishers). Once the
+ * subscriber is initialized, it will add topic filters from the topics_vector
+ * to the subscriber socket.
+ *
+ * A vector list of nodes and the topics are maintained so that they are not
+ * added again and again when there is a change in the cluster_map.
+ *
+ * However, this function doesn't remove the nodes (publishers) whenever they
+ * are removed from the cluster as there is no explicit option.
+ *
+ * Initialize the subscriber socket for the given list of nodes registered with
+ * the cluster On success, the zmq_context and zmq_socket will be set to proper
+ * pointers. In case of failure, the \*zmq_context/\*zmq_socket are null
+ */
+
+// Maintain a list of nodes who are already added to the subscriber socket to
+// avoid duplicates
+std::vector<std::string> g_subscribed_node_list;
+
+void ConfigureSubscriberSocket(ControllerServicer *svcr,
+                               std::vector<std::string> &topics_vector,
+                               void **zmq_context, void **zmq_socket) {
+  std::unordered_map<std::string, std::unordered_map<std::string, std::string>>
+      m_cluster_map;
+  m_cluster_map = svcr->get_cluster_map();
+  std::string topic;
+
+  for (const auto &[cluster_name, nodes] : m_cluster_map) {
+    for (const auto &[node_name, node] : nodes) {
+      if (*zmq_context == nullptr) {
+        if (topics_vector.size() > 0) topic = topics_vector.front();
+        int status =
+            zmq_init_subscriber(zmq_context, zmq_socket, node_name.c_str(),
+                                gSubscriberPort.c_str(), topic.c_str());
+        if (status != 0) {
+          std::string logger_str =
+              "Error in initializing the subscriber for node " + node_name;
+          svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                     logger_str.c_str());
+          // Mark it as null
+          *zmq_context = nullptr;
+          *zmq_socket = nullptr;
+        } else {
+          std::string logger_str = "Initialized the subscriber for node " +
+                                   node_name + " with zmq context ptr " +
+                                   std::to_string(reinterpret_cast<uintptr_t>(
+                                       static_cast<void *>(*zmq_context)));
+          svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                     logger_str.c_str());
+          svcr->set_zmq_socket(*zmq_context, *zmq_socket);
+
+          // Add the node name and the first topic to the list so that it is not
+          //  added again
+          g_subscribed_topic_filter_list.clear();
+          g_subscribed_node_list.clear();
+          g_subscribed_node_list.push_back(node_name);
+          g_subscribed_topic_filter_list.push_back(topic);
+        }
+      } else {
+        if (std::find(g_subscribed_node_list.begin(),
+                      g_subscribed_node_list.end(),
+                      node_name) != g_subscribed_node_list.end()) {
+          std::string logger_str =
+              "Node " + node_name + " already added to the subscriber";
+          svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                     logger_str.c_str());
+          continue;
+        }
+        std::string logger_str = "subscriber socket already initialized";
+        svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                   logger_str.c_str());
+        int status = zmq_add_publisher_endpoint_to_subscriber(
+            *zmq_socket, node_name.c_str(), gSubscriberPort.c_str());
+        if (status != 0) {
+          std::string logger_str =
+              "Error in adding the node " + node_name + " to the subscriber";
+          svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                     logger_str.c_str());
+        } else {
+          std::string logger_str =
+              "Added the node " + node_name + " to the subscriber socket";
+          svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                     logger_str.c_str());
+        }
+      }
+    }
+  }
+
+  // Subscriber Socket is initialized. Add the rest of the topic filters
+  if (*zmq_socket) {
+    AddTopicsToSocket(topics_vector, *zmq_socket);
+  }
+}
+
+/**
+ * Send the command to the Node agent in the new format only.
+ *
+ * @return 0 if the command is succeeded,
+ *         -1 if the command failed to succeed.
+ */
+
+int SendCommandToNodeInJSON(std::string node_name, std::string node_port,
+                            svk::CommandRequest &req,
+                            svk::CommandResponse &resp) {
+  int status = -1;
+  Client client(node_name, node_port);
+  Status client_grpc_status = client.ProcessNodeCommand(&req, &resp);
+  if (client_grpc_status.ok()) {
+    std::string logger_str =
+        "Send command to the node with command_name: " + req.command_name() +
+        " and command_params: " + req.command_params() + "is successful";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
+    status = 0;
+  } else {
+    std::string logger_str =
+        "Command with command_name: " + req.command_name() +
+        " command_params: " + req.command_params() + "is failed";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+  }
+
+  return status;
+}
+
+/**
+ * For the given node info, get the cluster name and the node port to use
+ * for sending command to node.
+ *
+ * @return 0 if the cluster is found for the given node_name,
+ *         -1 if no cluster is associated.
+ */
+int GetNodeInfo(ControllerServicer *svcr, std::string node_name,
+                std::string &cluster_name, std::string &node_port) {
+  int status = -1;
+  std::unordered_map<std::string, std::unordered_map<std::string, std::string>>
+      m_cluster_map = svcr->get_cluster_map();
+
+  for (const auto &cluster : m_cluster_map) {
+    const auto &nodes = cluster.second;
+    auto it = nodes.find(node_name);
+    if (it != nodes.end()) {
+      node_port = it->second;
+      cluster_name = cluster.first;
+      status = 0;
+      break;
+    }
+  }
+  return status;
+}
+
+/**
+ * When the RAS event is received and move_all is initiated,
+ * disable the RAS tracking on this device.
+ *
+ * @return 0 if the device is disabled, -1 on failure.
+ */
+
+int DisableRASTrackingOnDevice(std::string node_name, std::string node_port,
+                               std::string device_id, std::string device_type,
+                               std::string device_numa) {
+  svk::CommandRequest req_node;
+  svk::CommandResponse resp;
+  int status = -1;
+  // Send each device to RAS feature module for reliability tracking
+  req_node.set_node_id(node_name);
+  req_node.set_feature_name(RAS_FEATURE_MODULE_NAME);
+  req_node.set_command_name("remove_reliability_monitoring_for_device");
+  json command_params_json = {
+      "device_id", device_id,     "device_type",
+      device_type, "device_numa", device_numa,
+  };
+
+  req_node.set_command_params(command_params_json.dump());
+  status = SendCommandToNodeInJSON(node_name, node_port, req_node, resp);
+
+  return status;
+}
+
+// Process the event received from RAS feature module
+// If the RAS error_cnt is reported, then the move_all command is called
+void ProcessRASEvent(json json_data, ControllerServicer *svcr) {
+  std::string node_name = "";
+  std::string node_port;
+  std::string cluster_name;
+
+  std::string device_id;
+  std::string ras_reported_device_name;
+  std::string ras_reported_host_name;
+  std::string ras_reported_app_name;
+  std::string ras_reported_device_type;
+  std::string ras_reported_device_numa;
+  uint64_t ras_error_cnt;
+  std::string logger_str;
+  DeviceInfo dev_info;
+  int status;
+
+  try {
+    json observations_map = json_data.at("observations");
+
+    device_id = observations_map.at("device_id");
+    status = g_sla_device_hlpr->GetDeviceInfo(device_id, dev_info);
+    if (status != 0) {
+      logger_str =
+          "Could not get the device info for the device_id " + device_id;
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                 logger_str.c_str());
+      return;
+    }
+    App_Info app_info;
+    status = g_sla_device_hlpr->GetAppInfo(device_id, app_info);
+    if (status != 0) {
+      logger_str = "No APP details found for the device_id " + device_id;
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                 logger_str.c_str());
+      return;
+    }
+    ras_reported_device_name = device_id;
+    ras_reported_host_name = dev_info.node_name;
+    ras_reported_app_name = app_info.app_name;
+    ras_reported_device_type = dev_info.device_type;
+    ras_reported_device_numa = std::to_string(dev_info.numa);
+    ras_error_cnt = observations_map.at("error_cnt");
+
+    logger_str = "Device " + ras_reported_device_name + " on host " +
+                 ras_reported_host_name + " for the app " +
+                 ras_reported_app_name +
+                 " reported the error cnt = " + std::to_string(ras_error_cnt);
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::WARN,
+               logger_str.c_str());
+
+  } catch (json::exception &e) {
+    std::string errorMessage = e.what();
+
+    logger_str = "Parse error for zmq data:[ " + json_data.dump() +
+                 " ] with error " + errorMessage;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::WARN,
+               logger_str.c_str());
+    return;
+  }
+
+  node_name = ras_reported_host_name;
+  GetNodeInfo(svcr, node_name, cluster_name, node_port);
+  if (cluster_name.length() != 0) {
+    // Get the device of similar or better latency from the same host
+    svk::CommandRequest req;
+    svk::CommandResponse resp;
+    req.set_cluster_id(cluster_name);
+    req.set_node_id(node_name);
+    req.set_feature_name(ME_FEATURE_MODULE_NAME);
+    req.set_command_name("move_all");
+
+    json json_data;
+    json_data["command"] = "move_all";
+    json_data["app"] = ras_reported_app_name;
+    json_data["app_pid"] = std::to_string(getpid());
+    // TODO: Fix this by getting appropriate numa's of the new and the old nodes
+    json_data["src"] = "0";
+    json_data["dst"] = "1";
+    json_data["tm_attr"] = "0";  // aggressiveness - 0 or 1
+
+    std::string command_params = json_data.dump();
+    req.set_command_params(command_params);
+    SendCommandToNodeInJSON(node_name, node_port, req, resp);
+  }
+
+  DisableRASTrackingOnDevice(node_name, node_port, ras_reported_device_name,
+                             ras_reported_device_type,
+                             ras_reported_device_numa);
+}
+
+/** Process the event received from SLAT feature module
+  If the SLA deviation is reported, then the move command is called to the ME
+ feature module
+
+ Since the SLAT keeps generating event continuously for the given device,
+ adding a workaround to ignore the same device reported again and again
+ until the "remove_device_from_sla_tracker" is supported
+*/
+
+std::vector<std::string> device_sla_blacklist;
+void ProcessSLAEvent(json json_data, ControllerServicer *svcr) {
+  std::string node_name = "";
+  std::string node_port;
+  std::string cluster_name;
+
+  std::string slat_reported_device_name;
+  std::string slat_reported_host_name;
+  std::string slat_reported_app_name;
+  uint64_t slat_reported_avg_latency_ns;
+  std::string logger_str;
+
+  try {
+    json observations_map = json_data.at("observations");
+
+    slat_reported_device_name = observations_map.at("device_name");
+    slat_reported_host_name = observations_map.at("host_name");
+    slat_reported_app_name = observations_map.at("app_name");
+    slat_reported_avg_latency_ns = observations_map.at("avg_latency_ns");
+
+    // TODO: Check if the device is already reported. Just blacklist it
+    // until the support is added in SLA Tracker
+    if (std::find(device_sla_blacklist.begin(), device_sla_blacklist.end(),
+                  slat_reported_device_name) != device_sla_blacklist.end()) {
+      return;
+    }
+
+    logger_str = "Device's numa " + slat_reported_device_name + " on host " +
+                 slat_reported_host_name + " for the app " +
+                 slat_reported_app_name +
+                 " deviated than expected - Reported latency_ns = " +
+                 std::to_string(slat_reported_avg_latency_ns);
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::WARN,
+               logger_str.c_str());
+
+    device_sla_blacklist.push_back(slat_reported_device_name);
+
+  } catch (json::exception &e) {
+    std::string errorMessage = e.what();
+
+    logger_str = "Parse error for zmq data:[ " + json_data.dump() +
+                 " ] with error " + errorMessage;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::WARN,
+               logger_str.c_str());
+    return;
+  }
+
+  node_name = slat_reported_host_name;
+  GetNodeInfo(svcr, node_name, cluster_name, node_port);
+
+  if (cluster_name.length() != 0) {
+    // Get the device of similar or low latency for the same host
+
+    svk::CommandRequest req;
+    svk::CommandResponse resp;
+    req.set_cluster_id(cluster_name);
+    req.set_node_id(node_name);
+    req.set_feature_name(ME_FEATURE_MODULE_NAME);
+    req.set_command_name("move");
+
+    json json_data;
+    json_data["command"] = "move";
+    json_data["app"] = slat_reported_app_name;
+    json_data["app_pid"] = std::to_string(getpid());
+    // TODO: Fix this by getting appropriate numa's of the new and the old nodes
+    json_data["slow_tier"] = "0";
+    json_data["fast_tier"] = "1";
+    json_data["tm_attr"] = "0";  // aggressiveness - 0 or 1
+
+    std::string command_params = json_data.dump();
+    req.set_command_params(command_params);
+    SendCommandToNodeInJSON(node_name, node_port, req, resp);
+  }
+}
+
+// Process the data received from the ZMQ subscriber socket
+// Calls the appropriate Process<Feature>Event
+void ProcessZMQData(ControllerServicer *svcr, uint8_t *zmq_data,
+                    int data_size) {
+  // TODO: Workaround to call TM module only once
+  std::string logger_str;
+  std::unordered_map<std::string, std::unordered_map<std::string, std::string>>
+      m_cluster_map = svcr->get_cluster_map();
+
+  std::string event_json =
+      std::string(reinterpret_cast<char *>(zmq_data), data_size);
+  logger_str = "Received data: " + event_json;
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+
+  try {
+    json json_data = json::parse(event_json);
+    json observations_map = json_data.at("observations");
+    std::string feature_name = observations_map.at("feature_name");
+
+    if (feature_name == SLAT_FEATURE_MODULE_NAME) {
+      // Send command to TM module
+      ProcessSLAEvent(json_data, svcr);
+    } else if (feature_name == RAS_FEATURE_MODULE_NAME) {
+      ProcessRASEvent(json_data, svcr);
+    }
+  } catch (json::exception &e) {
+    std::string errorMessage = e.what();
+
+    std::string logger_str =
+        "Parse error for zmq data:[ " + event_json +
+        " ] with error or missing feature_name in observations " + errorMessage;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::WARN,
+               logger_str.c_str());
+  }
+}
+
+// Receive the ZMQ Data from the subscriber socket created
+int ReceiveZMQData(void *zmq_socket, uint8_t *zmq_data, int data_size) {
+  std::string logger_str;
+  int data_rcvd = zmq_receive_data(zmq_socket, zmq_data, data_size, true);
+  if (data_rcvd < 0) {
+    // error
+    logger_str = "Error in receiving the data";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    return -1;
+  }
+
+  logger_str = "Received data of size " + std::to_string(data_rcvd);
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::DEBUG, logger_str.c_str());
+
+  return data_rcvd;
+}
+
+/**
+ * This function is started as a thread by the main controller process.
+ * It creates a subscriber socket with all the nodes registered in multiple
+ * clusters as publishers along with topic filters.
+ *
+ * The overall sequence is as follows
+ *  - Initialize subscriber socket if there are nodes registered with cluster
+ *  - Add new nodes as publishers to the socket if a new cluster is created or a
+ * cluster is modified through the svcr->is_config_changed()
+ *  - Set the topic filters (read from the mgmt_config.json file) on the
+ * subscriber socket
+ *
+ * TODO: This requires more fine tuning as the return status of multiple
+ * functions are not handled properly. Need to finalize whether to bail out the
+ * whole controller process or proceed with errors.
+ */
+int StartThreadForZMQSubscriberConfiguration(ControllerServicer *svcr) {
+  std::string logger_str;
+  void *zmq_context = nullptr;
+  void *zmq_socket = nullptr;
+
+  while (true) {
+    // Check for the stop_flag to see if we need to stop this thread
+    if (svcr->get_stop_flag() == true) {
+      logger_str = "Detected the stop flag enabled in Subscriber thread";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                 logger_str.c_str());
+      break;
+    }
+
+    // Handle cluster config changes when a node is added to cluster
+    // or a new cluster is created
+    if (svcr->is_config_changed() == true) {
+      svcr->set_config_changed(false);
+      logger_str =
+          "Detected the cluster config change. Initializing the subscriber "
+          "socket or adding the new node to the existing socket";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                 logger_str.c_str());
+      // configuration changed in the cluster_map
+      // Initialize the subscriber socket if not yet or add the new nodes
+      // to the subscriber socket
+      ConfigureSubscriberSocket(svcr, gTopicsVector, &zmq_context, &zmq_socket);
+    }
+
+    std::unique_lock<std::mutex> lock(gMutex);
+    // Wait for the earliest of the 2 seconds or is_config_changed() returns
+    // true
+    gCondVar.wait_for(lock, std::chrono::seconds(2),
+                      [svcr]() { return svcr->is_config_changed(); });
+  }
+  return 0;
+}
+
+/**
+ * This function is started as a thread by the main controller process.
+ * It receives the events based
+ * on the filters set on the subscriber socket and process those events and take
+ * corrective action accordingly. The overall sequence is as follows
+ *  - Checks if the subscriber socket is initialized. Otherwise waits for the
+ *    initialization to happen
+ *  - Receives the data (as per Cognos Observability document) over the ZMQ
+ * socket
+ *  - Process the data based on the feature_name in the "observations" entry in
+ * the json data
+ *  - Calls either SLA/RAS events processor
+ *  - Does the move/move_all as per the SLA/RAS functions
+ *  - Stops the thread when the svcr->get_stop_flag() is set to true as part of
+ * signal handler
+ *
+ * TODO: This requires more fine tuning as the return status of multiple
+ * functions are not handled properly. Need to finalize whether to bail out the
+ * whole controller process or proceed with errors.
+ */
+int StartEventProcessingThread(ControllerServicer *svcr) {
+  std::string logger_str;
+  void *zmq_socket = nullptr;
+  uint8_t zmq_data[ZMQ_MSG_MAX_SIZE];
+  int data_size = 0;
+
+  while (true) {
+    // Check for the stop_flag to see if we need to stop this thread
+    if (svcr->get_stop_flag() == true) {
+      logger_str = "Detected the stop flag enabled in Event Processing thread";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                 logger_str.c_str());
+      break;
+    }
+    zmq_socket = svcr->get_zmq_socket();
+
+    if (zmq_socket == nullptr) {
+      sleep(2);
+      continue;
+    }
+    try {
+      // Receive ZMQ data of 64KB
+      data_size = ReceiveZMQData(zmq_socket, zmq_data, ZMQ_MSG_MAX_SIZE);
+      if (data_size <= 0) {
+        continue;
+      }
+
+      // Process ZMQ data
+      ProcessZMQData(svcr, zmq_data, data_size);
+
+    } catch (zmq::error_t &e) {
+      std::string errorMessage = e.what();
+      logger_str = "Exception in processing the ZMQ data" + errorMessage;
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                 logger_str.c_str());
+      return -1;
+    }
+  }
+  return 0;
+}
+
+/**
+ * Stops the event processing thread.
+ *
+ * As part of signal handler, this function is called to set the stop_flag to
+ * true
+ *
+ * @param svcr The ControllerServicer instance to stop.
+ * @return 0 on success.
+ */
+int StopEventProcessingThread(ControllerServicer *svcr) {
+  // Log the start of the function
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-             "StopSLAThreadForTiering called");
+             "StopEventProcessingThread called");
+
+  // Set the stop flag to indicate the thread should stop
   svcr->set_stop_flag();
+
+  // Get the ZMQ context and socket
   void *zmq_context = svcr->get_zmq_context();
   void *zmq_socket = svcr->get_zmq_socket();
+
+  // Log the ZMQ context for debugging purposes
   std::string logger = "cleanup subscriber called with zmq context" +
                        std::to_string(reinterpret_cast<uintptr_t>(
                            static_cast<void *>(zmq_context)));
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger.c_str());
+
+  // Clean up the ZMQ subscriber
   zmq_cleanup_subscriber(zmq_context, zmq_socket);
+
+  // Log the completion of the cleanup
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
              "cleanup subscriber done");
+
+  // Return success
   return 0;
 }
 
 int StartServer(std::string svk_conf_file, bool blocking) {
   int status = -1;
   std::thread *sla_thread;
+  std::thread *subscriber_thread;
   std::signal(SIGTERM, signal_handler);
   std::signal(SIGSEGV, signal_handler);
   std::signal(SIGINT, signal_handler);
@@ -1577,22 +2056,32 @@ int StartServer(std::string svk_conf_file, bool blocking) {
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                "Starting the controller server to process the commands");
     if (blocking == true) {
-      sla_thread = new std::thread(&StartSLAThreadForTiering, svcr);
+      subscriber_thread =
+          new std::thread(&StartThreadForZMQSubscriberConfiguration, svcr);
+      if (subscriber_thread == nullptr) {
+        svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                   "Failed to start the thread "
+                   "StartThreadForZMQSubscriberConfiguration");
+        delete svcr;
+        return status;
+      }
+      sla_thread = new std::thread(&StartEventProcessingThread, svcr);
       if (sla_thread == nullptr) {
         svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
-                   "Failed in starting the thread SLAThreadForTiering");
+                   "Failed to start the thread StartEventProcessingThread");
         delete svcr;
         return status;
       }
 
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-                 "Started the SLA Thread for TM");
+                 "Started the Event Processing Thread");
 
       while (gSignalStatus.load() == -1) sleep(5);
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                  "The controller server is stopped gracefully");
-      StopSLAThreadForTiering(svcr);
+      StopEventProcessingThread(svcr);
       sla_thread->join();
+      subscriber_thread->join();
       delete svcr;
     }
     status = 0;
