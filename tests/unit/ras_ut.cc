@@ -147,17 +147,29 @@ TEST_F(ConfigUnitTest, SVKLicense) {
   unlink("conf.json");
 }
 
-TEST_F(ConfigUnitTest, SVKEXEC) {
+TEST_F(ConfigUnitTest, SVKEXECAddDevice) {
   setenv("SVK_RAS_CONFIG", "conf.json", true);
   initialize(nullptr);
   svk_pass_thru_cmd pass_thru;
   pass_thru.feat_id = ZERO_ETL;
   svk_input input;
-  std::string input_str = "Passing a RAS string";
+  std::string input_str = R"(
+    {
+      "command" : "add_reliability_monitoring_for_device",
+      "command_params" : {
+        "device" : "dev123",
+        "device_numa" : 0,
+        "configure_options" : {
+          "error_count_threshold" : 500
+        },
+        "test_param1" : "value1"
+      }
+    }
+  )";
   input.input_buffer = (uint8_t *)input_str.c_str();
   input.len = input_str.length();
   svk_output output;
-  output.output_buffer = (uint8_t *)malloc(128);
+  output.output_buffer = (uint8_t *)calloc(1, 128);
   output.len = 128;
   EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_SUCCESS, execute_sync(&pass_thru, &input, &output));
@@ -168,7 +180,6 @@ TEST_F(ConfigUnitTest, SVKEXEC) {
   logFile.close();
   EXPECT_NE(std::string::npos,
             logs.find("[ras] [info] ras execute_sync called."));
-  EXPECT_NE(std::string::npos, logs.find("input buffer: Passing a RAS string"));
   EXPECT_NE(std::string::npos, logs.find("output buffer:"));
   clean_up(nullptr);
   unlink("conf.json");

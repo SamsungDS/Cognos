@@ -5,7 +5,6 @@
 #include <filesystem>
 
 #include "ras_monitor.h"
-#include "utils/logic_module_manager.hpp"
 
 struct ras_context_s {
   ras_monitor *monitor_context;
@@ -172,22 +171,51 @@ extern "C" svk_status is_license_valid(void *) {
 // Assuming that input and output buffers contain strings
 extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
                                    svk_output *output) {
-  char *input_buf = (char *)input->input_buffer;
-  char *output_buf = (char *)output->output_buffer;
   char debug_info[2048];
-  ras_request request(
-      false, true,
-      g_ras_context
-          .monitor_context);  // Local variable okay since this will be sync
-  bool submit_okay = false;
-  snprintf(debug_info, sizeof(debug_info),
-           "ras execute_sync called.\ninput buffer: %s\noutput buffer:%s\n",
-           input_buf, output_buf);
-  svk_logger("ras", level_E::INFO, debug_info);
-  submit_okay = g_ras_context.monitor_context->ras_submit_request(&request);
-  if (submit_okay != true) {
+
+  if (cmd == nullptr || input == nullptr || output == nullptr ||
+      input->input_buffer == nullptr || output->output_buffer == nullptr) {
+    svk_logger(RAS_LOGGER, level_E::ERROR,
+               "execute_sync function called with nullptr params");
     return SVK_STATUS_FAIL;
   }
+
+  output->status = SVK_STATUS_FAIL;
+
+  // Assuming null terminated string with input->len set to length of the string
+  if (strnlen((char *)input->input_buffer, input->len + 1) == input->len + 1) {
+    return SVK_STATUS_FAIL;
+  }
+
+  snprintf(debug_info, sizeof(debug_info),
+           "ras execute_sync called.\ninput buffer: %s\noutput buffer:%s\n",
+           (char *)input->input_buffer, (char *)output->output_buffer);
+  svk_logger(RAS_LOGGER, level_E::INFO, debug_info);
+
+  ras_request request(
+      true, g_ras_context.monitor_context, false, (char *)input->input_buffer,
+      input->len);  // Local variable okay since this will be sync
+
+  // Initialize request command json
+  if (request.parse_input_command_to_json() == false) {
+    svk_logger(RAS_LOGGER, level_E::INFO, "json parse failed");
+    return SVK_STATUS_FAIL;
+  }
+
+  bool submit_okay = false;
+
+  submit_okay = g_ras_context.monitor_context->ras_submit_request(&request);
+  if (submit_okay != true) {
+    svk_logger(RAS_LOGGER, level_E::INFO, "submit failed");
+    return SVK_STATUS_FAIL;
+  }
+
+  if (request.is_successfull == false) {
+    output->status = SVK_STATUS_FAIL;
+    return SVK_STATUS_FAIL;
+  }
+
+  output->status = SVK_STATUS_SUCCESS;
   return SVK_STATUS_SUCCESS;
 }
 

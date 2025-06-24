@@ -1,12 +1,13 @@
 set(RAS_SRC
   ${CMAKE_SOURCE_DIR}/src/utils/logic_module_manager.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/ras_request_handler.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/ras_monitor.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/ras.cc)
 set(RAS_INC ${CMAKE_CURRENT_SOURCE_DIR}/../include/ras.hpp )
 set(RAS_LIB_DEST "lib64/")
 set(RAS_INCLUDE_DEST "include/")
 set(RAS "ras")
-set(RAS_LINK_LIBRARIES "stdc++fs fmt")
+set(RAS_LINK_LIBRARIES "stdc++fs fmt nlohmann_json::nlohmann_json")
 add_subdirectory(utils)
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../include)

@@ -4,7 +4,7 @@
 TEST(RasMonitorTest, TestClass) {
   std::unique_ptr<ras_monitor> test_mon_inst = std::make_unique<ras_monitor>();
   ras_request *dummy_request =
-      new ras_request(false, true, test_mon_inst.get());
+      new ras_request(true, test_mon_inst.get(), false);
   bool result = false;
 
   result = test_mon_inst->ras_submit_request(nullptr);

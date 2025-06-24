@@ -2,48 +2,15 @@
 #define _RAS_MONITOR_H_
 
 #include "RequestProcessor.h"
-
-class ras_monitor;
-
-struct ras_request {
-  ras_request(bool is_internal_request, bool is_sync_request,
-              ras_monitor *monitor_instance)
-      : is_internal_request(is_internal_request),
-        is_sync_request(is_sync_request),
-        monitor_instance(monitor_instance) {
-    is_completed = false;
-  }
-
-  bool is_internal_request;
-  bool is_sync_request;
-
-  bool is_completed;
-  std::mutex sync_mutex;
-  std::condition_variable sync_cv;
-
-  ras_monitor *monitor_instance;
-};
-
-struct ras_device {
-  std::string name;
-  std::string type;
-  struct {
-    bool valid;
-    uint64_t error_count_threshold;
-  } ect; /** Error Count Threshold - global error count above which device
-            should be marked as degrading */
-  struct {
-    bool valid;
-    uint64_t error_count;
-    uint64_t time_window;
-  } twt; /** Time Window Threshold - When error count within time window is
-            observed device should be marked as degrading */
-};
+#include "ras_command_handlers.hpp"
+#include "ras_device.h"
+#include "ras_request.h"
 
 class ras_monitor {
  private:
   std::unique_ptr<RequestProcessor<ras_request>> ras_monitor_;
-  std::vector<ras_device> devices;
+  std::unique_ptr<CommandHandler<ras_request>> ras_command_handlers_;
+  std::shared_ptr<ras_device_manager> ras_device_manager_;
 
   static void process_request(ras_request *req) {
     if (req->is_sync_request) {
@@ -59,7 +26,12 @@ class ras_monitor {
   ras_monitor(/* args */);
   ~ras_monitor();
   bool ras_submit_request(ras_request *req);
+
   bool ras_submit_timed_request(ras_request *req, int interval);
+
+  auto execute_request_by_monitor(ras_request &req);
+
+  auto get_device_manager(void) { return this->ras_device_manager_; }
 };
 
 #endif  // _RAS_MONITOR_H_
