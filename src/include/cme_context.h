@@ -55,7 +55,7 @@ typedef struct tm_attrs
 {
   	std::string mover_tag;
   	std::string profiler_tag;
-        int ag_level;
+        enum cme_mover_aggr ag_level;
 } tm_attrs;
 
 /**

@@ -7,6 +7,17 @@
 #include <string>
 #include <functional>
 
+/**
+ * @brief enum for cme_mover_aggressiveness
+ * @details damo cme_mover_aggressiveness
+ * presently supported: level 0 and 1
+ */
+enum cme_mover_aggr
+{
+    MOVER_AGGRESSIVENESS_LOW,
+    MOVER_AGGRESSIVENESS_HIGH
+};
+
 class cme_mover
 {
 public:
@@ -27,9 +38,9 @@ public:
 	 * 	void* callback function argument: Likely to be pointer to cme_context object.
 	 * */
         virtual int move_all(long, unsigned int, unsigned int, std::function<void(void*, int)> , void*, int) = 0;
-        virtual int move_hot(std::string,  long, unsigned int, unsigned int, unsigned int) = 0;
-        virtual int move_cold(std::string,  long, unsigned int, unsigned int, unsigned int) = 0;
-        virtual int move(std::string,  long, unsigned int, unsigned int, unsigned int) = 0;
+        virtual int move_hot(std::string,  long, unsigned int, unsigned int, enum cme_mover_aggr) = 0;
+        virtual int move_cold(std::string,  long, unsigned int, unsigned int, enum cme_mover_aggr) = 0;
+        virtual int move(std::string,  long, unsigned int, unsigned int, enum cme_mover_aggr) = 0;
         virtual int get_status() = 0;
         virtual int stop(std::string, long) = 0;
 };
