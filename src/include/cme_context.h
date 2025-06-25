@@ -15,6 +15,13 @@ typedef enum ctx_state
         CTX_ACTIVE
 } ctx_state;
 
+typedef enum stats_state
+{
+        STATS_INPROGRESS,
+        STATS_DONE,
+        STATS_INVALID
+} stats_state;
+
 /**
  * @brief structure for application parameters to relate to tuner context
  * @details tuner context :: tuner_element :: app_attrs
@@ -85,13 +92,25 @@ public:
   	mem_attrs mem_attr;
   	tm_attrs tm_attr;
 
-  	// This object state prevents multiple mover operations on the
-	// same application pid.
+  	/*
+        This object state prevents multiple mover operations on the  
+        same application pid.
+        */ 
+
 	ctx_state mover_state;
 	
-	// This maintains the status of the last mover operation command
-	// It will be used for get status command.
+	/* 
+        This maintains the status of the last mover operation command
+        It will be used for get status command.
+	*/ 
 	int mover_cmd_status;
+
+        /*
+        state to keep track of get _stats in progress
+        get stats will be async as time to completion is indeterminate with damo
+        A similar approach to move_all()
+        */ 
+        stats_state get_stats_state;
 
   	string process_attributes(string);
   	string process_result(string);

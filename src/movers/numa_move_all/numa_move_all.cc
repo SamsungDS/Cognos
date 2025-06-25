@@ -117,6 +117,12 @@ int numa_move_all::get_status()
         return 0;
 }
 
+std::string numa_move_all::get_stats(string app_name, long app_pid)
+{
+        cout << name << " Started  " <<  string (__FUNCTION__) << endl;
+        return "";
+}
+
 int numa_move_all::stop(string app_name, long app_pid)
 {
         cout << name << " Started  " <<  string (__FUNCTION__) << endl;

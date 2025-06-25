@@ -337,3 +337,29 @@ TEST_F(cmeTest, CheckCmdStartTuning) {
         EXPECT_EQ(cme_global_obj.clean_up(), 0);
 }
 
+TEST_F(cmeTest, CheckCmdGetStats) {
+        cme_global cme_global_obj;
+        ASSERT_EQ(cme_global_obj.read_cme_config_json("cme_config.json"), 0);
+        ASSERT_EQ(cme_global_obj.cme_discovery(), 0);
+        ASSERT_EQ(cme_global_obj.initialize(), 0);
+        int pid = getpid();
+
+        // Check valid command
+        string command = " {\"command_name\": \"move\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"tm_attr\": \"0\",\"slow_tier\": \"0\",\"fast_tier\": \"1\"}} ";
+        EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
+       
+        // Check get_stats
+        command = " {\"command_name\": \"get_stats\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" +  to_string(pid) + "\"}} ";
+        EXPECT_EQ(cme_global_obj.cme_command_handler(command), "");
+
+        // Check stop
+        command = " {\"command_name\": \"stop\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" +  to_string(pid) + "\"}} ";
+        EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
+
+        // Check get_stats, no context
+        command = " {\"command_name\": \"get_stats\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" +  to_string(pid) + "\"}} ";
+        EXPECT_EQ(cme_global_obj.cme_command_handler(command),  to_string(-EINVAL));
+
+        EXPECT_EQ(cme_global_obj.clean_up(), 0);
+}
+

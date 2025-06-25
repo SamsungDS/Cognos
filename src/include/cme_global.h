@@ -5,6 +5,7 @@
 #include "cme_profiler.h"
 #include "cme_mover.h"
 #include "cme_utils.h"
+#include "feature_module_conf.h"
 #include <map>
 #include <mutex>
 #include <unordered_map>

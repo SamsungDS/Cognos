@@ -27,7 +27,7 @@ string create_config_gen_command(string, string, string, string, string, string)
  *  output: output of the command in a string vector
  * @return: status of command execution
  */
-int execute_command(string, vector<string>, bool);
+int execute_command(string, vector<string>&, bool);
 
 
 #endif

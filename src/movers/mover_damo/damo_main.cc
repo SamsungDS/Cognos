@@ -15,12 +15,14 @@
 
 using namespace std;
 
-// Hard Coded Static config mapping from json file
-// Local utility functions needed for generation of damo config yaml file to be
-// used
+/* Hard Coded Static config mapping from json file
+ Local utility functions needed for generation of damo config yaml file to be
+ used
+*/
 int read_damo_config_json(damo_config_params*, int);
 static void populate_yaml(string, string, damo_config_params);
 static void squash_promote_regions_yaml(string, string);
+static string extract_damo_stats(vector<string> &, vector<string> &, string);
 bool remove_context_yaml(string, string, string);
 int yaml_generate();
 int cgroup_create();
@@ -635,4 +637,143 @@ int stop(string app_name, long app_pid)
         return 0;
 }
 
+/* 
+read damo_report_params : create array/list of kdamon index and memcg name and action
+read stats json file : get stats for relevant kdamon index: create json of memcg, action,stats : applied applied,qt exceeds
+*/
+static std::string extract_damo_stats(vector<string> &damon_stats_output, vector<string> &damon_params_output, string cg_name)
+{
+        try
+        {
+                namespace pt = boost::property_tree;
+                pt::ptree root;
+                pt::ptree result;
+                string damo_json_string;
+                for(auto s : damon_params_output)
+                {
+                        damo_json_string+=s;
+                }
+                        
+                stringstream jsonStream(damo_json_string);       
+                pt::read_json(jsonStream, root);
+                
+                unordered_map<string, string> kdamond_idx;
+                int kd_idx = 0;
+                for (const auto& item : root) 
+                {
+                        auto ctx =  item.second.get_child("contexts");
+                        for (const auto& ctx_item : ctx)
+                        {
+                                auto schemes =  ctx_item.second.get_child("schemes");
+                                for (const auto& sch_item : schemes)
+                                {
+                                        string action = sch_item.second.get<std::string>("action");
+                                        auto filters =  sch_item.second.get_child("filters");
+                                        for (const auto& filter : filters)
+                                        {
+                                                if ((!(filter.second.get<std::string>("filter_type").compare("memcg"))) && (!(filter.second.get<std::string>("memcg_path").compare("/"+cg_name))))
+                                                {
+                                                        kdamond_idx.emplace(to_string(kd_idx), action);
+                                                }
+                                        }
+                                }
+                        }
+                        kd_idx++;
+                }
 
+                // get stats
+                damo_json_string.clear();
+                for(auto s : damon_stats_output)
+                {
+                        damo_json_string+=s;
+                }
+                stringstream jsonStream_stats(damo_json_string);            
+                pt::read_json(jsonStream_stats, root);
+                bool to_add;
+                string kd = "";
+                pt::ptree item_node;
+                for (const auto& item : root)
+                {
+                        auto node = item.second.get_child("");
+                        boost::property_tree::ptree node_add;
+                        to_add = false;
+                        string action;
+                        for (auto it = node.begin(); it != node.end(); ++it)
+                        {
+                                for (auto it_ = it->second.begin(); it_ != it->second.end(); ++it_)
+                                {
+                                        if (it_->first == "kdamond")
+                                        {
+                                                kd = it_->second.data();
+                                                if ((kdamond_idx.find(kd) != kdamond_idx.end()))
+                                                {
+                                                        to_add = true ;
+                                                        action = kdamond_idx.at(kd);
+                                                }
+                                                break;
+                                        }
+                                        if (to_add)
+                                        {
+                                                if (it_->first == "nr_applied" || it_->first == "sz_applied" || it_->first == "qt_exceeds")
+                                                {
+                                                        boost::property_tree::ptree elem;
+                                                        elem.put("", it_->second.data());
+                                                        node_add.add_child(it_->first, elem);
+                                                }
+                                        }
+
+                                }
+                        }
+                        if(node_add.size())
+                        { 
+                                item_node.add_child(action, node_add);
+                        }
+                }
+                result.add_child(cg_name, item_node);
+
+                std::ostringstream op;
+                write_json(op, result);
+                return op.str();
+        }
+        catch(const std::exception& e)
+        {
+                std::cerr << e.what() << '\n';
+        }
+        return "";
+}
+
+std::string get_stats(string app_name, long app_pid)
+{
+        try
+        {
+                if (TEST_BUILD)
+                {
+                        return "";
+                }
+                
+                string cg_name = app_name + "_" + to_string(app_pid);
+                vector<string> output_stats;
+                vector<string> output_params;
+                string command = "sudo " + PM_DAMO_PYTHON3_PATH + " " + PM_DAMO_PATH + " report damon --damos_stats --json";
+                int ret = execute_command(command, output_stats, false);
+                if (ret)
+                {
+                   std::cerr << "Error in " + string (__FUNCTION__) + "ERROR in command: " + command << endl;
+                   return to_string(ret);
+                }
+                command = "sudo " + PM_DAMO_PYTHON3_PATH + " " + PM_DAMO_PATH + " report damon --damon_params --json";
+                ret = execute_command(command, output_params, false);
+                if (ret)
+                {
+                   std::cerr << "Error in " + string (__FUNCTION__) + "ERROR in command: " + command << endl;
+                   return to_string(ret);
+                }
+                string res = extract_damo_stats(output_stats, output_params, cg_name);
+                return res;
+        }
+        catch(const std::exception& e)
+        {
+                std::cerr << e.what() << '\n';
+        }
+        return "";
+}

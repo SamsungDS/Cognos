@@ -257,6 +257,7 @@ static cme_context* cg_find_context(cme_global* cg_obj, unordered_map<string, st
                         cme_ctx->app_attr.app_name = app_name;
                         cme_ctx->app_attr.app_pid  = app_pid;
 			cme_ctx->mover_state = CTX_INACTIVE;
+                        cme_ctx->get_stats_state = STATS_INVALID;
 
                         // Add context to list
                         cg_obj->cme_contexts_list.emplace(cme_ctx_key,cme_ctx);
@@ -418,8 +419,10 @@ static std::string cg_move_all(cme_global* cg_obj, unordered_map<string, string>
 
 /**
  * @brief get_status
+ *      For now it is used only for move_all()
  * @param command string
- * @return status code of tuner stop: 0 = success
+ * @return status code of previous async move command
+ * 
 */
 static std::string cg_get_status(cme_global* cg_obj, unordered_map<string, string> &tokens_map)
 {
@@ -448,6 +451,55 @@ static std::string cg_get_status(cme_global* cg_obj, unordered_map<string, strin
                 return std::to_string(-EINVAL);
         }
 	return std::to_string(-EINVAL);
+}
+
+/**
+ * @brief get_stats
+ * @param command string
+ * @return stats string for move command
+*/
+static std::string cg_get_stats(cme_global* cg_obj, unordered_map<string, string> &tokens_map)
+{
+        std::string ret;
+        try
+        {
+                std::string app_name = tokens_map["app"];
+		long app_pid = stol(tokens_map["app_pid"]);
+                cg_obj->cme_contexts_lock();
+                cme_context* cme_ctx = cg_find_context(cg_obj, tokens_map, true);
+		//cg_obj->cme_contexts_unlock();
+                if (cme_ctx == nullptr)
+                {
+			std::cerr << "Context not found" << endl;
+                        cg_obj->cme_contexts_unlock();
+			return std::to_string(-EINVAL);
+                }
+                if (cme_ctx->mover_obj == nullptr)
+                {
+                        std::cerr << "cg_get_stats. Error -> No mover for context" << endl;
+                        cg_obj->cme_contexts_unlock();
+                        return std::to_string(-EINVAL);
+                }
+                if (cme_ctx->get_stats_state == STATS_INPROGRESS)
+                {
+                        std::cerr << "cg_get_stats. Error -> get stats for context busy" << endl;
+                        cg_obj->cme_contexts_unlock();
+                        return std::to_string(-EBUSY);
+                }
+
+                cme_ctx->get_stats_state = STATS_INPROGRESS;
+                cg_obj->cme_contexts_unlock();
+                ret = cme_ctx->mover_obj->get_stats(app_name, app_pid);
+                cg_obj->cme_contexts_lock();
+                cme_ctx->get_stats_state = STATS_DONE;
+                cg_obj->cme_contexts_unlock();
+        }
+        catch (const std::exception &e)
+        {
+                std::cerr << "cg_get_status. Error -> " << e.what () << endl;
+                ret = std::to_string(-EINVAL);
+        }
+	return ret;
 }
 
 /**
@@ -789,6 +841,7 @@ int cme_global::initialize()
                 fw_hooks.emplace("stop", cg_move_stop);
                 fw_hooks.emplace("StartTuning", cg_StartTuning);
                 fw_hooks.emplace("StopTuning", cg_StopTuning);
+                fw_hooks.emplace("get_stats", cg_get_stats);
 
         }
         catch (const std::exception &e)
