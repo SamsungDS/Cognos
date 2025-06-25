@@ -2,6 +2,7 @@
 #define _RAS_MONITOR_H_
 
 #include "RequestProcessor.h"
+
 class ras_monitor;
 
 struct ras_request {
@@ -58,6 +59,7 @@ class ras_monitor {
   ras_monitor(/* args */);
   ~ras_monitor();
   bool ras_submit_request(ras_request *req);
+  bool ras_submit_timed_request(ras_request *req, int interval);
 };
 
 #endif  // _RAS_MONITOR_H_
