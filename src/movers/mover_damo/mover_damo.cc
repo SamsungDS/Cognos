@@ -47,6 +47,21 @@ int stop_damo_main(string app_name, long app_pid)
         return ret;
 }
 
+std::string stats_damo_main(string app_name, long app_pid)
+{
+        string ret;
+        try
+        {
+                ret = get_stats(app_name, app_pid);
+        }
+        catch (const std::exception& e)
+        {
+                cout << "Error in " + string(__FUNCTION__) + " : " + string(e.what()) << endl;
+                ret = to_string(-EINVAL);
+        }
+        return ret;
+}
+
 extern "C" cme_mover* register_cme_fn() {
 
                 cout << "Registering cme_mover mover_damo " + string (__FUNCTION__) << endl;
@@ -89,6 +104,12 @@ int mover_damo::get_status()
 {
         cout << name << " Started  " <<  string (__FUNCTION__) << endl;
         return 0;
+}
+
+std::string mover_damo::get_stats(string app_name, long app_pid)
+{
+                cout << name << " Started  " <<  string (__FUNCTION__) << endl;
+		return stats_damo_main(app_name, app_pid);
 }
 
 int mover_damo::stop(string app_name, long app_pid)

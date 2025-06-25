@@ -14,6 +14,7 @@ class cme_mover_dummy : public cme_mover
                 int move_cold(std::string,  long, unsigned int, unsigned int, enum cme_mover_aggr) override;
                 int move(std::string,  long, unsigned int, unsigned int, enum cme_mover_aggr) override;
                 int get_status() override;
+                std::string get_stats(std::string, long) override;
                 int stop(std::string, long) override;
                 std::string get_name() override;
 

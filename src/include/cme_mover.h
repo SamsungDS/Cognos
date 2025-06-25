@@ -42,6 +42,7 @@ public:
         virtual int move_cold(std::string,  long, unsigned int, unsigned int, enum cme_mover_aggr) = 0;
         virtual int move(std::string,  long, unsigned int, unsigned int, enum cme_mover_aggr) = 0;
         virtual int get_status() = 0;
+        virtual std::string get_stats(std::string, long) = 0;
         virtual int stop(std::string, long) = 0;
 };
 

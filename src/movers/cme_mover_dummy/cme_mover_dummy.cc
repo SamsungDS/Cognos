@@ -55,6 +55,11 @@ int cme_mover_dummy::get_status()
         cout << name << " Started  " <<  string (__FUNCTION__) << endl;
         return 0;
 }
+std::string cme_mover_dummy::get_stats(string app_name, long app_pid)
+{
+        cout << name << " Started  " <<  string (__FUNCTION__) << endl;
+        return "";
+}
 int cme_mover_dummy::stop(string app_name, long app_pid)
 {
         cout << name << " Started  " <<  string (__FUNCTION__) << endl;

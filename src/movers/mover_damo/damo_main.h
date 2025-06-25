@@ -72,5 +72,6 @@ typedef tuple<string, long, long, long> workload_param;
 
 int start(string, long, unsigned int, unsigned int, enum cme_mover_aggr, int);
 int stop(string, long);
+std::string get_stats(string app_name, long app_pid);
  
 #endif

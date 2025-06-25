@@ -7,7 +7,7 @@
 using namespace std;
 
 
-int execute_command(string cmd, vector<string> output, bool test_flag)
+int execute_command(string cmd, vector<string> &output, bool test_flag)
 {
         cout << "Executing Command: " << cmd << endl;
         if (test_flag)
