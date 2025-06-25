@@ -1,6 +1,8 @@
 #ifndef __DAMO_MAIN_H__
 #define __DAMO_MAIN_H__
 
+#include "mover_damo.h"
+
 using namespace std;
 
 const std::string SVK_DAMO_PATH = "/usr/local/svk/feature_modules/me/config/";
@@ -63,14 +65,12 @@ typedef struct damo_process_params
     string cgoup_name;
     unsigned int slow_tier;
     unsigned int fast_tier;
-    unsigned int ag_level;
+    enum cme_mover_aggr ag_level;
 } damo_process_params;
 
 typedef tuple<string, long, long, long> workload_param;
-//int move(name, pid, slow_tier, fast_tier, aggresiveness_level) override;
 
-
-int start(string, long, unsigned int, unsigned int, unsigned int, int);
+int start(string, long, unsigned int, unsigned int, enum cme_mover_aggr, int);
 int stop(string, long);
  
 #endif

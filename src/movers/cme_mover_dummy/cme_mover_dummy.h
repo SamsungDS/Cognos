@@ -10,9 +10,9 @@ class cme_mover_dummy : public cme_mover
                 std::string name;
                 
                 int move_all(long, unsigned int, unsigned int,  std::function<void(void*, int)>, void*, int) override;
-                int move_hot(std::string,  long, unsigned int, unsigned int, unsigned int) override;
-                int move_cold(std::string,  long, unsigned int, unsigned int, unsigned int) override;
-                int move(std::string,  long, unsigned int, unsigned int, unsigned int) override;
+                int move_hot(std::string,  long, unsigned int, unsigned int, enum cme_mover_aggr) override;
+                int move_cold(std::string,  long, unsigned int, unsigned int, enum cme_mover_aggr) override;
+                int move(std::string,  long, unsigned int, unsigned int, enum cme_mover_aggr) override;
                 int get_status() override;
                 int stop(std::string, long) override;
                 std::string get_name() override;

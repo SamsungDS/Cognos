@@ -34,18 +34,18 @@ int cme_mover_dummy::move_all(long target_pid, unsigned int node_src, unsigned i
         return 0;
 }
 
-int cme_mover_dummy::move_hot(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, unsigned int aggresiveness_level)
+int cme_mover_dummy::move_hot(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, enum cme_mover_aggr aggresiveness_level)
 {
         cout << name << " Started  " <<  string (__FUNCTION__) << endl;
         return 0;
 }
 
-int cme_mover_dummy::move_cold(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, unsigned int aggresiveness_level)
+int cme_mover_dummy::move_cold(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, enum cme_mover_aggr aggresiveness_level)
 {
         cout << name << " Started  " <<  string (__FUNCTION__) << endl;
         return 0;
 }
-int cme_mover_dummy::move(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, unsigned int aggresiveness_level)
+int cme_mover_dummy::move(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, enum cme_mover_aggr aggresiveness_level)
 {
         cout << name << " Started  " <<  string (__FUNCTION__) << endl;
         return 0;

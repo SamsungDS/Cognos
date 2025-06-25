@@ -516,9 +516,21 @@ static std::string cg_move(cme_global* cg_obj, unordered_map<string, string> &to
                 // update cme_context
                 cme_ctx->mem_attr.slow_tier = stoi (tokens_map["slow_tier"]);
                 cme_ctx->mem_attr.fast_tier = stoi (tokens_map["fast_tier"]);
-                cme_ctx->tm_attr.ag_level = stoi(tokens_map["tm_attr"]);
-                
-                
+
+                if (!(tokens_map["tm_attr"].compare("MOVER_AGGRESSIVENESS_LOW")))
+                {
+                        cme_ctx->tm_attr.ag_level = MOVER_AGGRESSIVENESS_LOW;
+                }
+                else if (!(tokens_map["tm_attr"].compare("MOVER_AGGRESSIVENESS_HIGH")))
+                {
+                        cme_ctx->tm_attr.ag_level = MOVER_AGGRESSIVENESS_HIGH;
+                }
+                else
+                {
+                        cg_obj->cme_contexts_unlock();
+                        throw runtime_error ("Error in " + string (__FUNCTION__) + " Invalid mover aggressiveness");
+                }
+
                 int slow_t = cme_ctx->mem_attr.slow_tier;
                 int fast_t = cme_ctx->mem_attr.fast_tier;
                 cme_ctx->mover_obj = cg_obj->movers_list.at("mover_damo");
@@ -689,7 +701,7 @@ static std::string cg_StartTuning(cme_global* cg_obj, unordered_map<string, stri
                 tokens_map.emplace("fast_tier", tokens_map["dram_node"]);
                 tokens_map.emplace("app_pid", tokens_map["application_id"]);
                 tokens_map.emplace("slow_tier", tokens_map["cxl_node"]);
-                tokens_map.emplace("tm_attr", "0");
+                tokens_map.emplace("tm_attr", "MOVER_AGGRESSIVENESS_LOW");
                 tokens_map["command"] = "move";
                 return cg_move(cg_obj, tokens_map);
                 

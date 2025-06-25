@@ -17,7 +17,7 @@
 using namespace std;
 
 //int move(name, pid, slow_tier, fast_tier, aggresiveness_level) override;
-int start_damo_main(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, unsigned int aggresiveness_level, int move_select)
+int start_damo_main(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, enum cme_mover_aggr aggresiveness_level, int move_select)
 {
         int ret;
         try
@@ -67,19 +67,19 @@ int mover_damo::move_all(long target_pid, unsigned int node_src, unsigned int no
         return 0;
 }
 
-int mover_damo::move_hot(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, unsigned int aggresiveness_level)
+int mover_damo::move_hot(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, enum cme_mover_aggr aggresiveness_level)
 {
         cout << name << " Started  " <<  string (__FUNCTION__) << endl;
         return start_damo_main(app_name, app_pid, slow_tier, fast_tier, aggresiveness_level, MOVE_HOT);
 }
 
-int mover_damo::move_cold(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, unsigned int aggresiveness_level)
+int mover_damo::move_cold(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, enum cme_mover_aggr aggresiveness_level)
 {
         cout << name << " Started  " <<  string (__FUNCTION__) << endl;
         return start_damo_main(app_name, app_pid, slow_tier, fast_tier, aggresiveness_level, MOVE_COLD);
 }
 
-int mover_damo::move(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, unsigned int aggresiveness_level)
+int mover_damo::move(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, enum cme_mover_aggr aggresiveness_level)
 {
         cout << name << " Started  " <<  string (__FUNCTION__) << endl;
         return start_damo_main(app_name, app_pid, slow_tier, fast_tier, aggresiveness_level, MOVE);
