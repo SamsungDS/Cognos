@@ -4,8 +4,19 @@
 
 std::optional<device_unique_identifier> get_device_identifier_from_request(
     const ras_request& req) {
-  // TODO: check if exists??
+  if (!req.command_object_valid()) {
+    return std::nullopt;
+  }
+
+  if (!req.command_obj.contains(RAS_COMMAND_PARAMS_STR)) {
+    return std::nullopt;
+  }
+
   json params = req.command_obj[RAS_COMMAND_PARAMS_STR];
+
+  if (!params.is_object()) {
+    return std::nullopt;
+  }
 
   if (!params.contains(RAS_COMMAND_DEVICE_STR)) {
     return std::nullopt;

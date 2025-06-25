@@ -90,6 +90,8 @@ struct ras_request {
     return this->command_obj.dump(2 /*Indent by two spaces*/);
   }
 
+  bool command_object_valid(void) const { return cmd_obj_valid; }
+
   void mark_request_unsupported(void) {
     auto cmd_res_str = RAS_COMMAND_RESULT_STR;
     this->is_successfull = false;
@@ -129,10 +131,6 @@ struct ras_request {
   bool cmd_obj_valid;
 
   std::optional<std::string> get_command_string(void) {
-    if (this->cmd_obj_valid == false) {
-      // Log this
-      return std::nullopt;
-    }
     if (this->command_obj.contains(RAS_COMMAND_COMMAND_STR) &&
         this->command_obj[RAS_COMMAND_COMMAND_STR].is_string()) {
       return this->command_obj[RAS_COMMAND_COMMAND_STR];
