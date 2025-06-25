@@ -4,6 +4,7 @@ import { ReactComponent as ConfigureIcon  } from '../assets/icons/ConfigureIcon.
 import { ReactComponent as DashboardIcon  } from '../assets/icons/DashboardIcon.svg';
 import { ReactComponent as MetricsIcon  } from '../assets/icons/ChartIcon.svg';
 import { ReactComponent as AboutIcon  } from '../assets/icons/AboutIcon.svg';
+import { ReactComponent as AutotierIcon } from '../assets/icons/AutoTierIcon.svg';
 
 const SideBar = ({children}) => {
 
@@ -22,6 +23,11 @@ const SideBar = ({children}) => {
     path:"/metrics",
     icon: <MetricsIcon/>,
     datatestid: 'menu-item-2',
+  },
+  {
+    path:"/jobs",
+    icon: <AutotierIcon/>,
+    datatestid: 'menu-item-4',
   },
   {
     path:"/about",

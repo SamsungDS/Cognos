@@ -8,6 +8,7 @@ import Metrics from './pages/Metrics';
 import Dashboard from './pages/Dashboard';
 import Configure from './pages/Configure';
 import About from './pages/About';
+import Jobs from './pages/Jobs';
 
 function App() {
 
@@ -20,6 +21,7 @@ function App() {
             <Routes><Route path='/Configure' element={<Configure/>}/></Routes>
             <Routes><Route path='/metrics' element={<Metrics/>}/></Routes>
             <Routes><Route path='/About' element={<About/>}/></Routes>
+            <Routes><Route path='/jobs' element={<Jobs/>}/></Routes>
           </SideBar>
         </BrowserRouter>
       </div>
