@@ -1,5 +1,7 @@
 #pragma once
 
+#include <jansson.h>
+
 #include <unordered_map>
 
 #include "sc_cxl_dev_adapter.h"
@@ -28,6 +30,10 @@ class MockCMMH : public CXLDeviceAdapter {
   int setup_info() override { return 0; }
 
   sc_device get_device_object(const sc_id& sid) const override;
+
+  QoSInfo parse_qos_info(json_t* entry);
+  Capabilities parse_capabilities(json_t* entry);
+  std::optional<cmmh_stat_sensor_t> parse_sensor_stats(json_t* obj);
 
  private:
   std::unordered_map<sc_id, sc_device, hash_sc_id> device_map_;

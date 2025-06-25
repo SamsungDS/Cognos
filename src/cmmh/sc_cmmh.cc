@@ -84,7 +84,7 @@ DevInfo DevCMMH::get_device_info(const sc_id& sid) const {
   const std::string& bdf = dinfo.static_info.location;
 
   // utility function to fetch updated NUMA node
-  int numa_node = get_numa_node_from_sysfs(bdf);
+  int numa_node = get_numa_node_from_bdf(bdf);
 
   // fetch updated memory info if node is valid
   uint64_t total_mb = 0, free_mb = 0;

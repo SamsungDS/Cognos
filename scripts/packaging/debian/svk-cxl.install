@@ -3,6 +3,7 @@
 /usr/local/svk/feature_modules/cxl/config/cxl_dev_id_map.json  /usr/local/svk/feature_modules/cxl/config/
 /usr/local/svk/feature_modules/cxl/config/cxl.conf  /usr/local/svk/feature_modules/cxl/config/
 /usr/local/svk/feature_modules/cxl/config/input.json /usr/local/svk/feature_modules/cxl/config/
+/usr/local/svk/feature_modules/cxl/config/cxl_utils.py /usr/local/svk/feature_modules/cxl/config/
 /usr/local/svk/feature_modules/cxl/logic_modules/cmmh/lib64/libcmmh* /usr/local/svk/feature_modules/cxl/logic_modules/cmmh/lib64/
 /usr/local/lib/cxl_memory_box/* /usr/local/lib/cxl_memory_box/
 /etc/ld.so.conf.d/* /etc/ld.so.conf.d/

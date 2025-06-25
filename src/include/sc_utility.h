@@ -1,11 +1,13 @@
 #ifndef _UTILITY_H
 #define _UTILITY_H
 
+#include <jansson.h>
 #include <numa.h>
 #include <numaif.h>
 
 #include <cstdint>
 #include <iostream>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -13,7 +15,6 @@
 
 #include "sc_device.h"
 #include "sc_logger.h"
-
 /**
  * @brief Generates a structured JSON error response based on a POSIX error
  * code.
@@ -101,31 +102,28 @@ struct pairHash {
 
 /**
  * @typedef DevTypeMap
- * @brief Maps (vendor_id, device_id) → device_type string.
+ * @brief Maps (vendor_id, device_id) → full device metadata from JSON config.
+ *
+ * This map is populated from the device mapping JSON file at startup in real
+ * mode. Each entry contains structured metadata (via DevJsonHints) used to
+ * enrich hardware-discovered CXL devices with additional information such as:
+ * - Device type name (e.g. "CMMD", "CMMH")
+ * - PCIe link configuration (lane speed, lane width)
+ * - Vendor information (manufacturer, serial number, firmware revision)
+ * - CXL protocol details (type, mode, connection type, domain type)
+ * - QoS and capability attributes
  *
  * Example:
+ * @code
  * {
- * {0x8086, 0x0A54} → "CMMD",
- * {0x1234, 0x5678} → "CMMH"
+ * {0x8086, 0x0A54} → DevJsonHints{ vendor_device_type = "CMMD", link_speed =
+ * 32, ... }, {0x1234, 0x5678} → DevJsonHints{ vendor_device_type = "CMMH",
+ * link_speed = 16, ... }
  * }
+ * @endcode
  */
 using DevTypeMap =
-    std::unordered_map<std::pair<uint16_t, uint16_t>, std::string, pairHash>;
-
-/**
- * @typedef LinkInfoMap
- * @brief Maps (vendor_id, device_id) → (link_speed, link_width).
- *
- * link_speed is in GT/s and link_width is the number of PCIe lanes.
- *
- * Example:
- * {
- * {0x8086, 0x0A54} → {32, 16},
- * {0x1234, 0x5678} → {16, 8}
- * }
- */
-using LinkInfoMap = std::unordered_map<std::pair<uint16_t, uint16_t>,
-                                       std::pair<int, int>, pairHash>;
+    std::unordered_map<std::pair<uint16_t, uint16_t>, DevJsonHints, pairHash>;
 
 /**
  * @brief Inject an external device type map (used when calling the library
@@ -140,49 +138,24 @@ using LinkInfoMap = std::unordered_map<std::pair<uint16_t, uint16_t>,
 void set_global_dev_type_map(const DevTypeMap& external_map);
 
 /**
- * @brief Set the global LinkInfoMap for lane speed and lane width lookup
- * @param external_map Reference to the external map to be used globally
- */
-void set_global_link_info_map(const LinkInfoMap& external_map);
-
-/**
  * @brief Access the global device type map if already set
  */
 const DevTypeMap* get_global_dev_type_map();
 
 /**
- * @brief Access the global link info map if already set
+ * @brief Load CXL device mapping JSON file and populate DevHintMap.
+ *
+ * This function reads the JSON file containing CXL device hints and populates
+ * a map from (vendor_id, device_id) to DevJsonHints. It is used in real mode
+ * to enrich PCIe-discovered devices with static metadata such as link config,
+ * vendor info, protocol, capabilities, and QoS metrics.
+ *
+ * @param filepath Path to the device mapping JSON file.
+ * @return 0 on success, -EINVAL if the file is invalid or malformed,
+ * -ERANGE if a vendor/device ID or serial conversion fails.
  */
-const LinkInfoMap* get_global_link_info_map();
 
-/**
- * @brief Loads the device type mapping from a JSON file, once per process.
- *
- * This function reads a structured JSON file containing device type mappings in
- * the following format:
- *
- * @code
- * {
- * "device_map": [
- * { "device_type": "CMM-H", "vendor_id": "1e98", "device_id": "0ddb" },
- * { "device_type": "CMM-D", "vendor_id": "1b00", "device_id": "c001" }
- * ]
- * }
- * @endcode
- *
- * It parses the vendor ID and device ID (as hex strings) and maps them to the
- * corresponding device type string. The mapping is cached and only loaded once
- * during the process lifetime. On subsequent calls, it returns the cached
- * result.
- *
- * The map is stored in a global singleton-style reference for use by
- * discovery functions.
- *
- * @param filepath Absolute path to the JSON file containing device type
- * mappings.
- * @return Reference to the internally cached device type map.
- */
-const DevTypeMap& load_dev_type_mapping_json(const std::string& filepath);
+int load_dev_type_mapping_json(const std::string& filepath);
 
 /**
  * @brief Get NUMA node memory capacity and free memory (in MB)
@@ -221,22 +194,171 @@ std::unordered_map<sc_id, sc_device, hash_sc_id> discover_cxl_devices_shared(
     const DevTypeMap& dev_type_map);
 
 /**
- * @brief Retrieves the NUMA node for a given PCI device based on its BDF
- * string.
- *
- * This function reads the `/sys/bus/pci/devices/<BDF>/numa_node` sysfs entry
- * to determine the NUMA node associated with the specified PCI device.
- *
- * @param bdf PCI address in the format "0000:xx:yy.z"
- * (domain:bus:device.function).
- * @return The NUMA node ID if found otherwise -1 if the file is missing or
- * unreadable.
- */
-int get_numa_node_from_sysfs(const std::string& bdf);
-
-/**
  * @brief Generate a 48-bit unique device ID
  */
 uint64_t generate_dev_id(uint16_t vendor_id, uint16_t device_id, uint8_t bus);
+
+using RangeToNumaMap = std::map<std::pair<uint64_t, uint64_t>, int>;
+
+/**
+ * @brief Retrieves a NUMA range-to-node mapping from the system's `lsmem`
+output.
+ *
+ * This is a convenience wrapper that uses the default command
+`* lsmem -o range,node -J` to extract memory address ranges and their
+ * associated NUMA node IDs. Internally, it delegates to the overloaded
+ * function that takes a command string.
+ *
+ * @return RangeToNumaMap A mapping of memory address ranges to NUMA nodes.
+ */
+RangeToNumaMap get_range_numa_map_from_lsmem();
+
+/**
+ * @brief Parses the memory range-to-NUMA mapping from `lsmem -o range,node -J`.
+ *
+ * This function runs the `lsmem` command in JSON output mode to obtain
+ * memory ranges and their associated NUMA nodes. It then parses the JSON output
+ * using the Jansson library and constructs a map where each key is a
+ * (start_addr, end_addr) range and the value is the corresponding NUMA node.
+ *
+ * This mapping is used to determine the NUMA node for a CXL device based on
+ * its memory-mapped address.
+ *
+ * @return A map from memory address ranges (start, end) to NUMA node indices.
+ *
+ * @throws std::runtime_error If the JSON output cannot be parsed.
+ */
+RangeToNumaMap get_range_numa_map_from_lsmem(const std::string& cmd);
+
+/**
+ * @brief Finds the NUMA node for a given device base address using a range map.
+ *
+ * This function searches the provided memory range-to-NUMA map for the first
+ * range that contains the given base address. It returns the corresponding
+ * NUMA node ID if found.
+ *
+ * This is used to map a CXL device's memory address to the correct NUMA node,
+ * ensuring accurate memory accounting and affinity settings.
+ *
+ * @param base_addr The physical base address of the device (e.g. from PCI BAR).
+ * @param range_map A map from address ranges (start, end) to NUMA node IDs.
+ * @return The NUMA node index if found; otherwise -1.
+ */
+int find_numa_node_from_range_map(
+    uint64_t base_addr,
+    const std::map<std::pair<uint64_t, uint64_t>, int>& range_map);
+
+/**
+ * @brief Executes a shell command and captures its standard output.
+ *
+ * This function runs the specified shell command using `popen()` and reads
+ * its output into a string. If the command fails to execute, it throws a
+ * `std::runtime_error` with a JSON-formatted POSIX error response using
+ * `posix_err_to_json()`. The function also logs execution and failure details.
+ *
+ * @param[in] cmd The shell command to execute.
+ * @return A string containing the full standard output of the command.
+ *
+ * @throws std::runtime_error if `popen()` fails or the command cannot be read.
+ *
+ * @note This is a general-purpose utility used for capturing CLI output
+ * (e.g. `lsmem`, `lspci`).
+ *
+ * @see posix_err_to_json
+ */
+std::string run_command(const std::string& cmd);
+
+/**
+ * @brief Extracts the physical CXL memory base address from lspci output.
+ *
+ * This function runs `lspci -vvv -s <BDF>` and parses the "Range1" field,
+ * which corresponds to the physical address range of the CXL memory exposed
+ * by the device's HDM decoder. It returns the start address of that range,
+ * which is required for mapping the device to its NUMA node.
+ *
+ * Logging is provided for traceability, and POSIX-style error messages
+ * are thrown in case of command failure, missing Range1 entry, or
+ * invalid address formatting.
+ *
+ * @param[in] bdf The PCI address of the device in the format
+ * "domain:bus:device.function" (e.g. "0000:27:00.0").
+ * @return The 64-bit physical base address (start of Range1) in bytes.
+ *
+ * @throws std::runtime_error if the lspci command fails, Range1 is missing,
+ * or the base address cannot be parsed.
+ *
+ * @note This function assumes the system supports CXL 2.x devices and has
+ * appropriate `lspci` output with DVSEC Range1 decoding.
+ *
+ * @see run_command, find_numa_node_from_range_map
+ */
+uint64_t get_physical_cxl_address_from_python(const std::string& bdf);
+
+/**
+@brief Stores a copy of the global memory range -> NUMA map.
+@param external_map Range-to-NUMA map parsed from lsmem.
+*/
+void set_global_range_numa_map(const RangeToNumaMap& external_map);
+
+/**
+@brief Access the global memory range -> NUMA map.
+@return A reference to the internal global map.
+@throws std::runtime_error if not initialized.
+*/
+const RangeToNumaMap& get_global_range_numa_map();
+
+/**
+ * @brief Resolves NUMA node for a given PCI BDF address.
+ *
+ * This function looks up the CXL device's physical base address
+ * using `lspci`, then matches that address against the cached
+ * memory range -> NUMA map loaded from `lsmem`.
+ *
+ * @param bdf_str PCI BDF address in "dddd:bb:dd.f" format.
+ * @return NUMA node ID on success, -1 on failure.
+ */
+int get_numa_node_from_bdf(const std::string& bdf_str);
+
+/**
+ * @brief Extract an integer value from a JSON object.
+ *
+ * Retrieves the integer value associated with the given key in a JSON object.
+ * If the key does not exist or is not an integer, the fallback value is
+ * returned.
+ *
+ * @param obj JSON object to search.
+ * @param key Key to extract from the JSON object.
+ * @param fallback Default integer to return if the key is missing or invalid.
+ * @return Extracted integer value, or the fallback if not found.
+ */
+int get_json_int(json_t* obj, const std::string& key, int fallback = 0);
+
+/**
+ * @brief Extract a string value from a JSON object.
+ *
+ * Looks up the key in the given JSON object and returns the string value
+ * if present and valid. If the key is missing or not a string, the fallback
+ * value is returned instead.
+ *
+ * @param obj JSON object to search.
+ * @param key Key to extract from the JSON object.
+ * @param fallback Default value to return if the key is missing or invalid.
+ * @return Extracted string value, or the fallback if not found.
+ */
+std::string get_json_str(json_t* obj, const std::string& key,
+                         const std::string& fallback = "");
+
+/**
+ * @brief Convert a 16-bit integer to a hexadecimal string.
+ *
+ * Formats the given integer as a hex string with a 0x prefix.
+ * Useful for logging vendor/device IDs in human-readable form.
+ *
+ * @param val The 16-bit integer to convert.
+ * @return Hexadecimal string representation (e.g., "0x1e98").
+ */
+std::string to_hex(uint16_t val);
+
+void set_bdf_to_numa_map(const std::unordered_map<std::string, int>& bdf_map);
 
 #endif

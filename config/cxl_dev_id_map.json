@@ -1,18 +1,119 @@
 {
+  "_comment": "In mock mode, all the values are used for CMM-H/D simulation else only certain fields like device_type, vendor_id, device_id, lane_speed, lane_width & latency fields are used in real mode device discovery. In mock mode, when mock_empty field is true then api (list_devices, get_device_info and get_device_stats) responses will be empty",
   "device_map": [
     {
+      "mock_empty": false,
       "device_type": "CMM-H",
       "vendor_id": "1e98",
       "device_id": "0ddb",
       "lane_width": 8,
-      "lane_speed": 32
+      "lane_speed": 32,
+      "manufacturer": "samsung",
+      "serial_number": "0x12345678",
+      "fw_revision": "1.0.0",
+      "location": "0000:27:00.0",
+      "total_capacity_MB": 8192,
+      "feature_supported": "basic",
+      "cxl_device_type": "Type3",
+      "domain_id": 100,
+      "domain_type": "PCIe",
+      "connection_type": "CXL.mem",
+      "mode_discovered": "auto",
+      "protocol": "CXL 2.0",
+      "port_type": "root",
+      "aspm_active": true,
+      "lock_active": false,
+      "available_capacity_MB": 4096,
+      "status": "Healthy",
+      "numa_attached": 0,
+      "capabilities": {
+        "power_management_version": 1,
+        "vendor_specific": {
+          "latency_hint": "enabled"
+        }
+      },
+      "advertised_qos": {
+        "avg_latency": 120,
+        "p99_latency": 350,
+        "io_per_sec": 50000,
+        "bw_per_sec": 1000000,
+        "io_size": 4096,
+        "qd": 32
+      },
+      "used_bandwidth": {
+        "window_size": 10,
+        "interval_sec": 10
+      },
+      "stat_info": {
+        "used_memory_MB": 4096,
+        "available_memory_MB": 4096,
+        "total_memory_MB": 8192,
+        "total_bandwidth_MBps": 20000,
+        "used_bandwidth_MBps": 1104548,
+        "rw_errors": 0,
+        "latency_us": 120,
+        "sensor_stats": {
+          "fpga_temp": 46
+        }
+      },
+      "mock_device_id": "1E3A5B7CDE00"
     },
     {
+      "mock_empty": false,
       "device_type": "CMM-D",
       "vendor_id": "1b00",
       "device_id": "c001",
       "lane_width": 8,
-      "lane_speed": 32
+      "lane_speed": 32,
+      "manufacturer": "samsung",
+      "serial_number": "0x12345679",
+      "fw_revision": "1.0.0",
+      "location": "0000:27:00.0",
+      "total_capacity_MB": 8192,
+      "feature_supported": "basic",
+      "cxl_device_type": "Type3",
+      "domain_id": 100,
+      "domain_type": "PCIe",
+      "connection_type": "CXL.mem",
+      "mode_discovered": "auto",
+      "protocol": "CXL 2.0",
+      "port_type": "root",
+      "aspm_active": true,
+      "lock_active": false,
+      "available_capacity_MB": 4096,
+      "status": "Healthy",
+      "numa_attached": 0,
+      "capabilities": {
+        "power_management_version": 1,
+        "vendor_specific": {
+          "latency_hint": "enabled"
+        }
+      },
+      "advertised_qos": {
+        "avg_latency": 120,
+        "p99_latency": 350,
+        "io_per_sec": 50000,
+        "bw_per_sec": 1000000,
+        "io_size": 4096,
+        "qd": 32
+      },
+      "used_bandwidth": {
+        "window_size": 10,
+        "interval_sec": 10
+      },
+      "stat_info": {
+        "used_memory_MB": 4096,
+        "available_memory_MB": 4096,
+        "total_memory_MB": 8192,
+        "total_bandwidth_MBps": 20000,
+        "used_bandwidth_MBps": 1104548,
+        "rw_errors": 0,
+        "latency_us": 120,
+        "sensor_stats": {
+          "fpga_temp": 42
+        }
+      },
+      "mock_device_id": "1E3A5B7ADE00"
     }
   ]
 }

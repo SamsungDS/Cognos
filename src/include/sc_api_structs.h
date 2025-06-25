@@ -76,4 +76,40 @@ struct StatInfo {
   std::optional<cmmh_stat_cache_t> cache_stats;
 };
 
+/**
+ * @brief Device configuration parsed from JSON.
+ *
+ * This struct holds device attributes from the config/cxl_dev_id_map.json file.
+ * It is used in real mode to augment discovered hardware information with
+ * additional configuration metadata such as link parameters, vendor info,
+ * protocol and QoS.
+ */
+struct DevJsonHints {
+  std::string vendor_device_type;
+  int lane_speed;
+  int lane_width;
+  std::string manufacturer;
+  uint64_t serial_number;
+  std::string fw_revision;
+  std::string feature_supported;
+  std::string cxl_device_type;
+  std::string domain_type;
+  std::string connection_type;
+  std::string mode_discovered;
+  std::string protocol;
+  std::string port_type;
+  std::string status;
+  Capabilities capabilities;
+  QoSInfo advertised_qos;
+};
+
+/**
+ * @brief Map of vendor/device ID pairs to their corresponding configuration.
+ *
+ * This map is populated from the config/cxl_dev_id_map.json file in real mode
+ * and used during PCIe-based discovery to associate metadata with discovered
+ * devices.
+ */
+// using DevHintMap = std::unordered_map<std::pair<uint16_t, uint16_t>,
+// DevJsonHints, pair_hash>;
 #endif

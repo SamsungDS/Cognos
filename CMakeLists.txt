@@ -133,6 +133,7 @@ install(FILES
 	config/log.conf 
 	config/cxl_dev_id_map.json 
 	"${PROJECT_SOURCE_DIR}/tests/input.json"
+	src/cxl_utils.py
 DESTINATION "${SVK_CONFIG_PATH}")
 
 install(FILES ${CMAKE_SOURCE_DIR}/third_party/libcmmh.h

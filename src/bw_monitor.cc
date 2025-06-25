@@ -4,6 +4,8 @@
 #include <unistd.h>       // for getpid()
 
 #include <chrono>
+#include <ctime>    // for std::time_t, std::localtime
+#include <iomanip>  // for std::put_time
 #include <iostream>
 #include <numeric>
 #include <thread>
@@ -12,8 +14,7 @@
 
 namespace {
 constexpr int WINDOW_SIZE = 10;  // fixed window size
-const uint64_t PAGE_SIZE = static_cast<uint64_t>(::sysconf(_SC_PAGESIZE));
-}  // namespace
+}
 
 /**
  * @brief Constructor initializes sampling interval and thread flag.
@@ -56,10 +57,11 @@ void BandwidthMonitor::stop() {
  */
 void* BandwidthMonitor::sampling_loop(void* arg) {
   pthread_setname_np(pthread_self(), "bw_monitor");
-
   auto* self = static_cast<BandwidthMonitor*>(arg);
-  std::deque<std::pair<uint64_t, uint64_t>> window;
+
+  uint64_t prev_read = 0, prev_write = 0;
   uint64_t sum_bytes = 0;
+  std::deque<uint64_t> byte_deltas;
   int sample_count = 0;
 
   while (self->running) {
@@ -67,24 +69,34 @@ void* BandwidthMonitor::sampling_loop(void* arg) {
     uint64_t curr_read = stats.cxl_read_count;
     uint64_t curr_write = stats.cxl_write_count;
 
-    // Store in window and update sum
-    window.push_back({curr_read, curr_write});
-    sum_bytes += (curr_read + curr_write) * PAGE_SIZE;
+    if (sample_count == 0) {
+      prev_read = curr_read;
+      prev_write = curr_write;
+    }
+
+    uint64_t delta_read = curr_read - prev_read;
+    uint64_t delta_write = curr_write - prev_write;
+    uint64_t delta_bytes = (delta_read + delta_write);
+
+    prev_read = curr_read;
+    prev_write = curr_write;
+
+    // Update deque + sum
+    byte_deltas.push_back(delta_bytes);
+    sum_bytes += delta_bytes;
     sample_count++;
 
     if (sample_count > WINDOW_SIZE) {
-      auto old = window.front();
-      window.pop_front();
-      sum_bytes -= (old.first + old.second) * PAGE_SIZE;
+      sum_bytes -= byte_deltas.front();
+      byte_deltas.pop_front();
       sample_count--;
     }
 
     if (sample_count == WINDOW_SIZE) {
-      double avg_MBps =
-          static_cast<double>(sum_bytes) / WINDOW_SIZE / (1024.0 * 1024.0);
+      double avg_MBps = static_cast<double>(sum_bytes) /
+                        (WINDOW_SIZE * self->interval_sec * 1024.0 * 1024.0);
       self->cached_avg_MBps.store(static_cast<uint64_t>(avg_MBps));
     }
-
     std::this_thread::sleep_for(std::chrono::seconds(self->interval_sec));
   }
 

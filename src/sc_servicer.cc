@@ -687,7 +687,6 @@ int init_cxl_plugin() {
   int mret = cmmb_a1_init();
   LOG(level_E::INFO,
       "CMMB A1 initialization returned: " + std::to_string(mret));
-  // fm_init();
   tm_init();
   return mret;
 }
@@ -740,14 +739,12 @@ svk_status initialize(void*) {
       return SVK_STATUS_FAIL;
     }
 
-    int json_status = validate_json_file(CXL_ID_TYPE_MAP_FILE);
-    if (json_status != 0) {
+    // Load device type map
+    int status = load_dev_type_mapping_json(CXL_ID_TYPE_MAP_FILE);
+    if (status != 0) {
       LOG(level_E::ERROR, "Device ID mapping JSON not found.");
       return SVK_STATUS_FAIL;
     }
-    // Load and cache device type map globally
-    const auto& map = load_dev_type_mapping_json(CXL_ID_TYPE_MAP_FILE);
-    set_global_dev_type_map(map);
     static DeviceManager mgr;
     g_dev_mgr = &mgr;
 
@@ -757,6 +754,17 @@ svk_status initialize(void*) {
     mgr.registerAdapter("mock_cmmh", &mock_cmmh);
     mgr.discover_devices();
 #else
+    // Load and cache memory range -> NUMA mapping globally
+    try {
+      RangeToNumaMap range_map = get_range_numa_map_from_lsmem();
+      set_global_range_numa_map(range_map);
+      LOG(level_E::INFO, "Global NUMA range map initialized successfully.");
+    } catch (const std::exception& ex) {
+      LOG(level_E::ERROR,
+          "Failed to load NUMA range map: " + std::string(ex.what()));
+      return SVK_STATUS_FAIL;
+    }
+
     static PluginManager plugin_mgr(mgr);
     plugin_mgr.loadAllPlugins(plugin_dir);
     mgr.discover_devices();

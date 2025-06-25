@@ -47,6 +47,7 @@ cp -f /etc/svk/damo_config.json %{buildroot}/%{installpath_tm_config}
 cp -f /etc/svk/tm_gen_config.py %{buildroot}/%{installpath_tm_config}
 cp -f %{getenv:CMAKE_INSTALL_PREFIX}/config/cxl.conf %{buildroot}/%{installpath_mgmt}
 cp -f %{getenv:CMAKE_INSTALL_PREFIX}/config/cxl_dev_id_map.json %{buildroot}/%{installpath_mgmt}
+cp -f %{getenv:CMAKE_INSTALL_PREFIX}/config/cxl_utils.py %{buildroot}/%{installpath_mgmt}
 cp -f %{getenv:CMAKE_INSTALL_PREFIX}/config/log.conf %{buildroot}/%{installpath_mgmt}
 cp -f %{getenv:CMAKE_INSTALL_PREFIX}/third_party/libcmmh.a %{buildroot}/%{installpath_cmmh_lib}/
 cp -f %{getenv:CMAKE_INSTALL_PREFIX}/third_party/libcmmh.h %{buildroot}/%{installpath_cmmh_include}/
@@ -65,6 +66,7 @@ cp -f /etc/svk/damo_config.json %{buildroot}/%{installpath_tm_config}
 cp -f /etc/svk/tm_gen_config.py %{buildroot}/%{installpath_tm_config}
 cp -f %{cxl_build_dir}/config/cxl.conf  %{buildroot}/%{installpath_mgmt}
 cp -f %{cxl_build_dir}/config/cxl_dev_id_map.json  %{buildroot}/%{installpath_mgmt}
+cp -f %{cxl_build_dir}/config/cxl_utils.py  %{buildroot}/%{installpath_mgmt}
 cp -f %{cxl_build_dir}/config/log.conf  %{buildroot}/%{installpath_mgmt}
 cp -f %{cxl_build_dir}/third_party/libcmmh.a %{buildroot}/%{installpath_cmmh_lib}/
 cp -f %{cxl_build_dir}/third_party/libcmmh.h %{buildroot}/%{installpath_cmmh_include}/

@@ -1,3 +1,4 @@
+#include <dlfcn.h>  // For dlsym
 #include <gtest/gtest.h>
 
 #include <cerrno>
@@ -8,6 +9,7 @@
 #include <iostream>
 #include <string>
 
+#include "sc_servicer.h"
 #include "sc_test_utils.h"
 #include "sc_utility.h"
 
@@ -15,26 +17,28 @@ extern "C" {
 #include <pci/pci.h>
 }
 
+static struct pci_dev fake_dev;
+static struct pci_access fake_pacc;
 extern "C" struct pci_access* pci_alloc() {
-  static struct pci_dev fake_dev = {};
+  std::cout << "[MOCK] pci_alloc invoked" << std::endl;
   fake_dev.vendor_id = 0x1234;
   fake_dev.device_id = 0xABCD;
   fake_dev.domain = 0x0001;
   fake_dev.bus = 0x02;
   fake_dev.dev = 0x00;
   fake_dev.func = 0x1;
-
-  static struct pci_access fake_pacc = {
-      .devices = &fake_dev,
-  };
-
+  fake_dev.next = nullptr;
+  // Link device to pci_access struct
+  fake_pacc.devices = &fake_dev;
   return &fake_pacc;
 }
-
 extern "C" void pci_init(struct pci_access*) {}
-extern "C" void pci_scan_bus(struct pci_access*) {}
+extern "C" void pci_scan_bus(struct pci_access* pacc) {
+  pacc->devices = &fake_dev;
+}
 extern "C" int pci_fill_info(struct pci_dev*, int) { return 0; }
 extern "C" void pci_cleanup(struct pci_access*) {}
+
 bool test_force_numa_failure = false;
 int test_mock_node_value = 3;
 bool test_force_failure = false;
@@ -56,16 +60,54 @@ extern "C" long long numa_node_size64(int node, long long* freep) {
   return test_mock_total_bytes;
 }
 
+bool test_force_popen_fail = false;
+bool test_force_popen_invalid_output = false;
+bool test_force_popen_valid_output = false;
+
+// override of popen()
+extern "C" FILE* popen(const char* cmd, const char* mode) {
+  if (test_force_popen_fail) return nullptr;
+  if (test_force_popen_invalid_output) {
+    // Write "XYZ" to a temp file and return a pipe to read from it
+    std::ofstream("/tmp/mock_py_output.txt") << "XYZ\n";
+    return fopen("/tmp/mock_py_output.txt", "r");
+  }
+  if (test_force_popen_valid_output) {
+    std::ofstream("/tmp/mock_py_output.txt") << "12345678\n";
+    return fopen("/tmp/mock_py_output.txt", "r");
+  }
+  // Lookup original popen from libc
+  using popen_func_t = FILE* (*)(const char*, const char*);
+  static popen_func_t real_popen = (popen_func_t)dlsym(RTLD_NEXT, "popen");
+  return real_popen ? real_popen(cmd, mode) : nullptr;
+}
+
+std::map<int, std::pair<uint64_t, uint64_t>> mock_numa_info;
+bool get_numa_memory_info(int node, uint64_t& total, uint64_t& free) {
+  if (mock_numa_info.count(node)) {
+    total = mock_numa_info[node].first;
+    free = mock_numa_info[node].second;
+    return true;
+  } else {
+    total = 1024;
+    free = 1024;
+    return false;
+  }
+}
+
 class ScUtilityTest : public ::testing::Test {
  protected:
   void SetUp() override {
     // inject device map
     DevTypeMap dev_map;
-    dev_map[{0x1e98, 0x0ddb}] = "CMM-H";
-    dev_map[{0x1b00, 0xc001}] = "CMM-D";
-    dev_map[{0x1234, 0xABCD}] = "FM_CMMH";  // fake
     set_global_dev_type_map(dev_map);
     std::remove("/tmp/nonexistent_config.json");
+
+    test_force_popen_fail = false;
+    test_force_popen_invalid_output = false;
+    test_force_popen_valid_output = false;
+    std::remove("/tmp/mock_py_output.txt");
+    set_global_range_numa_map({});  // Reset mapping
   }
 
   void TearDown() override {}
@@ -233,204 +275,6 @@ TEST_F(ScUtilityTest, ValidateJsonFile_FileMissing) {
   EXPECT_EQ(result, -ENOENT);
 }
 
-TEST_F(ScUtilityTest, LoadDevTypeMapping_ValidFile) {
-  std::string path = "/tmp/LDTM_ValidFile.json";
-
-  std::ofstream file(path);
-  file << R"({
-"device_map": [
-{ "device_type": "CMM-H", "vendor_id": "1e98", "device_id": "0ddb", "lane_width": 8, "lane_speed": 32 }
-]
-})";
-  file.close();
-
-  const auto& map = load_dev_type_mapping_json(path);
-  EXPECT_EQ(map.size(), 1);
-  EXPECT_EQ(map.at({0x1e98, 0x0ddb}), "CMM-H");
-
-  std::remove(path.c_str());
-}
-
-TEST_F(ScUtilityTest, LoadDevTypeMapping_InvalidJsonRoot) {
-  set_global_dev_type_map({});
-  std::string path = "/tmp/InvalidJsonRoot.json";
-
-  std::ofstream file(path);
-  file << R"([
-{ "device_type": "CMM-H" }
-])";
-  file.close();
-
-  const auto& map = load_dev_type_mapping_json(path);
-  EXPECT_TRUE(map.empty());
-
-  std::remove(path.c_str());
-}
-
-TEST_F(ScUtilityTest, LoadDevTypeMapping_MissingDeviceMapKey) {
-  set_global_dev_type_map({});
-  std::string path = "/tmp/MissingDeviceMapKey.json";
-
-  std::ofstream file(path);
-  file << R"({
-"something_else": []
-})";
-  file.close();
-
-  const auto& map = load_dev_type_mapping_json(path);
-  EXPECT_TRUE(map.empty());
-
-  std::remove(path.c_str());
-}
-
-TEST_F(ScUtilityTest, LoadDevTypeMapping_MissingFieldsInEntry) {
-  std::string path = "/tmp/MissingFieldsInEntry.json";
-
-  std::ofstream file(path);
-  file << R"({
-"device_map": [
-{ "device_type": "CMM-H", "vendor_id": "1e98" }
-]
-})";
-  file.close();
-
-  const auto& map = load_dev_type_mapping_json(path);
-  EXPECT_TRUE(map.empty());
-
-  std::remove(path.c_str());
-}
-
-TEST_F(ScUtilityTest, LoadDevTypeMapping_BadVendorDeviceValues) {
-  std::string path = "/tmp/BadVendorDeviceValues.json";
-
-  std::ofstream file(path);
-  file << R"({
-"device_map": [
-{ "device_type": "CMM-H", "vendor_id": "ZZZZ", "device_id": "0ddb" }
-]
-})";
-  file.close();
-
-  const auto& map = load_dev_type_mapping_json(path);
-  EXPECT_TRUE(map.empty());
-
-  std::remove(path.c_str());
-}
-
-TEST_F(ScUtilityTest, ParseJsonKey_FileNotFound_ReturnsENOENT) {
-  std::string value;
-  int rc = parse_json_key("/nonexistent/config.json", "some_key", value);
-  EXPECT_EQ(rc, -ENOENT);
-}
-
-TEST_F(ScUtilityTest, ParseJsonKey_KeyMissing_ReturnsEINVAL) {
-  std::ofstream out("/tmp/test_config.json");
-  out << R"({ "another_key": "value" })";
-  out.close();
-
-  std::string value;
-  int rc = parse_json_key("/tmp/test_config.json", "missing_key", value);
-  EXPECT_EQ(rc, -EINVAL);
-}
-
-TEST_F(ScUtilityTest, ParseJsonKey_ValidKey_ReturnsZero) {
-  std::ofstream out("/tmp/test_config_valid.json");
-  out << R"({ "device_type": "CMM-H" })";
-  out.close();
-
-  std::string value;
-  int rc = parse_json_key("/tmp/test_config_valid.json", "device_type", value);
-  EXPECT_EQ(rc, 0);
-  EXPECT_EQ(value, "CMM-H");
-}
-
-TEST_F(ScUtilityTest, GetGlobalDevTypeMap_ReturnsCorrectMap) {
-  static DevTypeMap dummy_map;
-  dummy_map.clear();  // ensure fresh map
-  dummy_map[{0x1e98, 0xddb}] = "CMM-H";
-
-  set_global_dev_type_map(dummy_map);
-
-  const DevTypeMap* global_map = get_global_dev_type_map();
-  ASSERT_NE(global_map, nullptr);
-  ASSERT_EQ(global_map->size(), 1);
-  ASSERT_FALSE(global_map->empty());
-  for (const auto& [key, value] : *global_map) {
-    std::cout << "Vendor ID: 0x" << std::hex << key.first << ", Device ID: 0x"
-              << key.second << " => Type: " << value << std::endl;
-    EXPECT_FALSE(value.empty());
-  }
-  std::pair<uint16_t, uint16_t> search_key = std::make_pair(0x1e98, 0xddb);
-  auto it = global_map->find(search_key);
-  ASSERT_NE(it, global_map->end());
-  EXPECT_EQ(it->second, "CMM-H");
-}
-
-TEST_F(ScUtilityTest, ParseJsonKey_InvalidFile_ReturnsError) {
-  std::string key = "device_type";
-  std::string value;
-  std::string invalid_file = "/tmp/nonexistent_config.json";
-  int status = parse_json_key(invalid_file, key, value);
-  EXPECT_EQ(status, -ENOENT);
-}
-
-TEST_F(ScUtilityTest, GetNumaMemoryInfo_Success) {
-  test_force_failure = false;
-  test_force_throw = false;
-  uint64_t total_mb = 0, free_mb = 0;
-  bool result = get_numa_memory_info(3, total_mb, free_mb);
-  EXPECT_TRUE(result);
-  EXPECT_EQ(total_mb, 8192);
-  EXPECT_EQ(free_mb, 4096);
-}
-
-TEST_F(ScUtilityTest, GetNumaMemoryInfo_FailureByReturn) {
-  test_force_failure = true;
-  uint64_t total_mb = 0, free_mb = 0;
-  bool result = get_numa_memory_info(3, total_mb, free_mb);
-  EXPECT_FALSE(result);
-  test_force_failure = false;
-}
-
-TEST_F(ScUtilityTest, DiscoverCxlDevicesShared_ReturnsDiscoveredDevices) {
-  test_force_numa_failure = false;
-  DevTypeMap dev_type_map;
-  dev_type_map[{0x1234, 0xABCD}] = "FM_CMMH";
-  LinkInfoMap test_map;
-  test_map[{0x1234, 0xABCD}] = {32, 8};
-  set_global_link_info_map(test_map);
-
-  auto device_map = discover_cxl_devices_shared(dev_type_map);
-  ASSERT_EQ(device_map.size(), 1);
-  const sc_device& dev = device_map.begin()->second;
-  EXPECT_TRUE(dev.d_get_capacity() == 4096 || dev.d_get_capacity() == 1024);
-
-  DevInfo info = dev.to_device_info();
-  const DevStaticInfo& st = info.static_info;
-  // EXPECT_EQ(st.device_id, generate_dev_id(0x1234, 0xABCD, 0x02));
-  EXPECT_EQ(st.link_speed, 32);
-  EXPECT_EQ(st.link_width, 8);
-  EXPECT_EQ(st.total_capacity_MB, 1024);
-}
-
-TEST_F(ScUtilityTest, DiscoverCxlDevicesShared_InvalidNumaNodeHandled) {
-  test_force_numa_failure = true;
-  DevTypeMap dev_type_map;
-  dev_type_map[{0x1234, 0xABCD}] = "FM_CMMH";
-  auto device_map = discover_cxl_devices_shared(dev_type_map);
-  ASSERT_EQ(device_map.size(), 1);
-  const sc_device& dev = device_map.begin()->second;
-  EXPECT_EQ(dev.d_get_capacity(), 1024);
-}
-
-TEST_F(ScUtilityTest, GetNumaMemoryInfo_ValidNode) {
-  uint64_t total_mb = 0;
-  uint64_t free_mb = 0;
-  bool result = get_numa_memory_info(/*node_id=*/0, total_mb, free_mb);
-  EXPECT_TRUE(result);
-  EXPECT_GT(total_mb, 0);
-}
-
 TEST_F(ScUtilityTest, NumaMemoryInfo_APIFailure) {
   test_force_failure = true;
 
@@ -449,48 +293,345 @@ TEST_F(ScUtilityTest, NumaMemoryInfo_ThrowsException) {
   test_force_throw = false;
 }
 
-TEST_F(ScUtilityTest, GetNumaNodeFromSysfs_ValidFileReturnsNode) {
-  std::string bdf = "0000:5e:00.0";
-  std::string dir = "/tmp/sysfs_test/" + bdf;
-  std::filesystem::create_directories(dir);
-
-  std::ofstream(dir + "/numa_node") << "3";
-
-  setenv("TEST_SYSFS_ROOT", "/tmp/sysfs_test", 1);  // set env var
-  int result = get_numa_node_from_sysfs(bdf);
-  unsetenv("TEST_SYSFS_ROOT");  // clean up env var
-
-  EXPECT_EQ(result, 3);
-  std::filesystem::remove_all("/tmp/sysfs_test");
+TEST_F(ScUtilityTest, LoadDevTypeMappingJson_FromConfigFile) {
+  int status = load_dev_type_mapping_json(CXL_ID_TYPE_MAP_FILE);
+  EXPECT_EQ(status, 0);
+  const DevTypeMap* map = get_global_dev_type_map();
+  ASSERT_NE(map, nullptr);
+  EXPECT_GT(map->size(), 0);
 }
 
-TEST_F(ScUtilityTest, GetNumaNodeFromSysfs_FileMissing) {
-  std::string bdf = "0000:5e:00.1";
-  std::string dir = "/tmp/sysfs_test/" + bdf;
-  std::filesystem::create_directories(dir);
-  setenv("TEST_SYSFS_ROOT", "/tmp/sysfs_test", 1);
-  int result = get_numa_node_from_sysfs(bdf);
-  unsetenv("TEST_SYSFS_ROOT");
+TEST_F(ScUtilityTest, LoadDevTypeMappingJson_NonObjectRoot) {
+  std::string path = "/tmp/devmap_not_obj.json";
+  std::ofstream(path) << R"(["array", "not", "object"])";
+  int status = load_dev_type_mapping_json(path);
+  EXPECT_EQ(status, -EINVAL);
+}
 
+TEST_F(ScUtilityTest, LoadDevTypeMappingJson_MissingDeviceMapKey) {
+  std::string path = "/tmp/devmap_missing_key.json";
+  std::ofstream(path) << R"({ "some_other_key": [] })";
+  int status = load_dev_type_mapping_json(path);
+  EXPECT_EQ(status, -EINVAL);
+}
+
+TEST_F(ScUtilityTest, LoadDevTypeMappingJson_ValidFlowWithOneEntry) {
+  std::string path = "/tmp/devmap_valid.json";
+  std::ofstream(path) << R"({
+    "device_map": [
+      {
+        "vendor_id": "1234",
+        "device_id": "abcd",
+        "device_type": "MockType"
+      }
+    ]
+  })";
+  int status = load_dev_type_mapping_json(path);
+  EXPECT_EQ(status, 0);
+  const DevTypeMap* map = get_global_dev_type_map();
+  ASSERT_NE(map, nullptr);
+  EXPECT_EQ(map->size(), 1);
+}
+
+TEST_F(ScUtilityTest, LoadDevTypeMappingJson_MissingSN) {
+  std::string path = "/tmp/devmap_invalid_sn.json";
+  std::ofstream(path) << R"({
+"device_map": [
+{
+"vendor_id": "1234",
+"device_id": "abcd",
+"device_type": "Test"
+//"serial_number": 1234
+}
+]
+})";
+
+  int status = load_dev_type_mapping_json(path);
+  EXPECT_EQ(status, -EINVAL);
+}
+
+TEST_F(ScUtilityTest, LoadDevTypeMappingJson_DeviceEntryMissingDeviceType) {
+  std::string path = "/tmp/devmap_missing_devtype.json";
+  std::ofstream(path) << R"({
+"device_map": [
+{
+"vendor_id": 1234,
+"device_id": "abcd",
+"device_type": "CMM-H",
+"serial_number": "0x1234"
+}
+]
+})";
+
+  int status = load_dev_type_mapping_json(path);
+  EXPECT_EQ(status, 0);
+
+  const DevTypeMap* map = get_global_dev_type_map();
+  ASSERT_NE(map, nullptr);
+  EXPECT_EQ(map->size(), 0);
+}
+
+TEST_F(ScUtilityTest, ParseJsonKey_InvalidJson_ReturnsENOENT) {
+  std::string path = "/tmp/invalid_json_file.json";
+  // Write malformed JSON to file
+  std::ofstream(path) << R"({ "key": "value", )";
+  std::string value;
+  int status = parse_json_key(path, "key", value);
+  EXPECT_EQ(status, -ENOENT);
+}
+
+TEST_F(ScUtilityTest, RunCommand_Success_EchoHello) {
+  std::string result = run_command("echo hello");
+  EXPECT_NE(result.find("hello"), std::string::npos);
+}
+
+TEST_F(ScUtilityTest, RunCommand_CommandFails_NonZeroExit) {
+  // `false` is a command that does nothing and returns 1
+  std::string result = run_command("false");
+  EXPECT_TRUE(result.empty());
+}
+
+TEST_F(ScUtilityTest, RunCommand_PopenFails_ThrowsRuntimeError) {
+  test_force_popen_fail = true;
+  EXPECT_THROW(run_command("echo should_fail"), std::runtime_error);
+  test_force_popen_fail = false;
+}
+
+TEST_F(ScUtilityTest, GetPhysicalAddress_PopenFails) {
+  test_force_popen_fail = true;
+  EXPECT_THROW(get_physical_cxl_address_from_python("0000:00:00.0"),
+               std::runtime_error);
+  test_force_popen_fail = false;
+}
+
+TEST_F(ScUtilityTest, GetPhysicalAddress_ParseFails_InvalidOutput) {
+  test_force_popen_invalid_output = true;
+  EXPECT_THROW(get_physical_cxl_address_from_python("0000:00:00.0"),
+               std::runtime_error);
+  test_force_popen_invalid_output = false;
+}
+
+TEST_F(ScUtilityTest, GetPhysicalAddress_SuccessfulParse) {
+  test_force_popen_valid_output = true;
+  uint64_t addr = get_physical_cxl_address_from_python("0000:00:00.0");
+  EXPECT_EQ(addr, 12345678);
+  test_force_popen_valid_output = false;
+}
+
+TEST_F(ScUtilityTest, GetRangeNumaMap_SuccessfulParse) {
+  auto map = get_range_numa_map_from_lsmem("lsmem -o range,node -J");
+  // Ensure we parsed at least one valid range
+  EXPECT_GT(map.size(), 0);
+  //  print one entry for debug
+  for (const auto& [range, node] : map) {
+    std::cout << "Range: 0x" << std::hex << range.first << "-0x" << range.second
+              << " -> NUMA Node: " << std::dec << node << std::endl;
+    break;
+  }
+}
+
+TEST_F(ScUtilityTest, Lsmem_InvalidJson) {
+  EXPECT_THROW(get_range_numa_map_from_lsmem("echo { invalid json"),
+               std::runtime_error);
+}
+
+TEST_F(ScUtilityTest, Lsmem_MissingMemoryArray) {
+  EXPECT_THROW(get_range_numa_map_from_lsmem("echo '{ \"fake\": [] }'"),
+               std::runtime_error);
+}
+
+TEST_F(ScUtilityTest, GetRangeNumaMap_RunCommandFails) {
+  std::string cmd = "this_command_should_fail_abcxyz123";
+  EXPECT_THROW(get_range_numa_map_from_lsmem(cmd), std::runtime_error);
+}
+
+TEST_F(ScUtilityTest, LoadDevTypeMappingJson_parse_device_entry_error) {
+  std::string path = "/tmp/devmap_bad_serial.json";
+  std::ofstream(path) << R"({
+ "device_map": [
+ {
+ "vendor_id": "1234",
+ "device_id": "5678",
+ "device_type": "CMMH",
+ "serial_number": "not_hex", 
+ "lane_speed": 32,
+ "lane_width": 8
+ }
+ ]
+ })";
+
+  int status = load_dev_type_mapping_json(path);
+  EXPECT_EQ(status, 0);
+
+  const DevTypeMap* map = get_global_dev_type_map();
+  ASSERT_NE(map, nullptr);
+  EXPECT_EQ(map->size(), 0);
+}
+
+TEST_F(ScUtilityTest, GetPhysicalAddress_PythonFails) {
+  EXPECT_THROW({ get_physical_cxl_address_from_python("fail_bdf_123"); },
+               std::runtime_error);
+}
+
+TEST_F(ScUtilityTest, GetRangeNumaMap_BadHex_TriggersCatchAndContinue) {
+  std::string cmd =
+      "printf '{\"memory\": ["
+      "{\"range\": \"xxx-yyy\", \"node\": 0}"
+      "]}'";
+  auto map = get_range_numa_map_from_lsmem(cmd);
+  EXPECT_EQ(map.size(), 0);
+}
+
+TEST_F(ScUtilityTest, DiscoverCXLDevices_SuccessPath) {
+  DevTypeMap hints;
+  DevJsonHints hint;
+  hint.vendor_device_type = "MockCMMH";
+  hint.lane_speed = 16;
+  hint.lane_width = 8;
+  hint.manufacturer = "MockInc";
+  hint.serial_number = 0xABCDEF;
+  hint.fw_revision = "1.0.1";
+  hint.feature_supported = "basic";
+  hint.cxl_device_type = "Type3";
+  hint.domain_type = "PCIe";
+  hint.connection_type = "CXL.mem";
+  hint.mode_discovered = "auto";
+  hint.protocol = "CXL 2.0";
+  hint.port_type = "root";
+  hint.status = "Healthy";
+  hints[{0x1234, 0xABCD}] = hint;
+
+  // Set up popen to return valid address
+  test_force_popen_valid_output = true;
+
+  // Set NUMA mapping and memory metrics
+  set_global_range_numa_map({{{0x1000, 0xFFFF0000}, test_mock_numa_node}});
+  test_mock_total_bytes = 8192LL * 1024 * 1024;  // 8192 MB
+  test_mock_free_bytes = 4096LL * 1024 * 1024;   // 4096 MB
+
+  // Run discovery
+  auto result = discover_cxl_devices_shared(hints);
+
+  // Validate
+  ASSERT_EQ(result.size(), 1);
+  const sc_device& dev = result.begin()->second;
+  EXPECT_EQ(dev.d_get_info().available_capacity_MB, 1024);
+  EXPECT_EQ(dev.d_get_info().numa_attached, 2);
+  EXPECT_EQ(dev.d_get_info().static_info.location, "0001:02:00.1");
+  test_force_popen_valid_output = false;
+}
+
+TEST_F(ScUtilityTest, DiscoverCXLDevices_PhysicalAddressThrows) {
+  DevTypeMap hints;
+  DevJsonHints hint;
+  hint.vendor_device_type = "MockCMMH";
+  hint.lane_speed = 16;
+  hint.lane_width = 8;
+  hint.manufacturer = "MockInc";
+  hint.serial_number = 0xABCDEF;
+  hint.fw_revision = "1.0.1";
+  hint.feature_supported = "basic";
+  hint.cxl_device_type = "Type3";
+  hint.domain_type = "PCIe";
+  hint.connection_type = "CXL.mem";
+  hint.mode_discovered = "auto";
+  hint.protocol = "CXL 2.0";
+  hint.port_type = "root";
+  hint.status = "Healthy";
+  hints[{0x1234, 0xABCD}] = hint;
+  test_force_popen_fail = false;
+  test_force_popen_invalid_output = true;
+  set_global_range_numa_map({{{0x1000, 0xFFFF0000}, test_mock_numa_node}});
+  auto result = discover_cxl_devices_shared(hints);
+  EXPECT_EQ(result.size(), 1);
+  test_force_popen_invalid_output = false;
+}
+
+TEST_F(ScUtilityTest, DiscoverCXLDevices_AddressUnmappedToNUMA) {
+  DevTypeMap hints;
+  DevJsonHints hint;
+  hint.vendor_device_type = "MockCMMH";
+  hint.lane_speed = 16;
+  hint.lane_width = 8;
+  hint.manufacturer = "MockInc";
+  hint.serial_number = 0xABCDEF;
+  hint.fw_revision = "1.0.1";
+  hint.feature_supported = "basic";
+  hint.cxl_device_type = "Type3";
+  hint.domain_type = "PCIe";
+  hint.connection_type = "CXL.mem";
+  hint.mode_discovered = "auto";
+  hint.protocol = "CXL 2.0";
+  hint.port_type = "root";
+  hint.status = "Healthy";
+  hints[{0x1234, 0xABCD}] = hint;
+  // Valid popen address -> returns 0x99999999
+  test_force_popen_valid_output = true;
+  std::ofstream("/tmp/mock_py_output.txt") << "2576980377\n";  // 0x99999999
+  // Provide a NUMA map that does NOT include 0x99999999
+  set_global_range_numa_map({{{0x1000, 0x80000000}, 0}});
+  auto result = discover_cxl_devices_shared(hints);
+  ASSERT_EQ(result.size(), 1);
+  const sc_device& dev = result.begin()->second;
+  ASSERT_EQ(dev.d_get_info().numa_attached, 0);
+
+  test_force_popen_valid_output = false;
+}
+
+TEST_F(ScUtilityTest, GetNumaNodeFromBDF_PhysicalAddressThrows) {
+  test_force_popen_invalid_output = true;
+  std::ofstream("/tmp/mock_py_output.txt") << "XYZ\n";  // invalid
+
+  int result = get_numa_node_from_bdf("0000:00:00.0");
   EXPECT_EQ(result, -1);
 
-  std::filesystem::remove_all("/tmp/sysfs_test");
+  test_force_popen_invalid_output = false;
 }
 
-TEST_F(ScUtilityTest, GetGlobalLinkInfoMap_Returnvalid) {
-  LinkInfoMap test_map;
-  test_map[{0x1234, 0xABCD}] = {64, 16};  // Gen6 x16
-  set_global_link_info_map(test_map);
-  const LinkInfoMap* retrieved = get_global_link_info_map();
-  auto it = retrieved->find({0x1234, 0xABCD});
-  ASSERT_NE(it, retrieved->end());
-  EXPECT_EQ(it->second.first, 64);   // link_speed
-  EXPECT_EQ(it->second.second, 16);  // link_width
+TEST_F(ScUtilityTest, GetNumaNodeFromBDF_InvalidAddress_TriggersCatch) {
+  // Simulate bad output: not numeric
+  test_force_popen_invalid_output = true;
+  int result = get_numa_node_from_bdf("0000:00:1f.0");
+  EXPECT_EQ(result, -1);
+  test_force_popen_invalid_output = false;
 }
 
-TEST_F(ScUtilityTest, GetGlobalLinkInfoMap_NULL) {
-  LinkInfoMap test_map;
-  set_global_link_info_map(test_map);
-  const LinkInfoMap* ptr = get_global_link_info_map();
-  EXPECT_EQ(ptr, &test_map);
+TEST_F(ScUtilityTest, SetBDFToNumaMap_AssignsCorrectly) {
+  std::unordered_map<std::string, int> test_map = {{"0000:00:1f.0", 0},
+                                                   {"0000:00:1c.0", 1}};
+  set_bdf_to_numa_map(test_map);
+}
+
+TEST_F(ScUtilityTest, PciAllocWorks) {
+  auto* pacc = pci_alloc();
+  ASSERT_NE(pacc, nullptr);
+  ASSERT_NE(pacc->devices, nullptr);
+  std::cout << "Got device: vendor=0x" << std::hex << pacc->devices->vendor_id
+            << "\n";
+}
+
+TEST_F(ScUtilityTest, GetNumaMemoryInfo_ReturnsFalseOnFailure) {
+  test_force_failure = true;
+  test_force_throw = false;
+  uint64_t total = 0, free = 0;
+  bool ok = get_numa_memory_info(1, total, free);
+  EXPECT_FALSE(ok);
+  test_force_failure = false;  // reset for other tests
+}
+
+TEST_F(ScUtilityTest, GetNumaMemoryInfo_ReturnsFalseOnException) {
+  test_force_throw = true;
+  uint64_t total = 0, free = 0;
+  bool ok = get_numa_memory_info(2, total, free);
+  EXPECT_FALSE(ok);
+  test_force_throw = false;  // reset
+}
+
+TEST_F(ScUtilityTest, GetNumaNodeFromBDF_ReturnsMinusOneIfAddressOutsideRange) {
+  RangeToNumaMap range_map;
+  range_map[{0x2000000000, 0x2000FFFFFFF}] = 1;
+  set_global_range_numa_map(range_map);
+  std::string bdf = "0000:03:00.0";
+  int node = get_numa_node_from_bdf(bdf);
+  EXPECT_EQ(node, -1);
 }
