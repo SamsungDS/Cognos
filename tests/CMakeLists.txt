@@ -6,3 +6,4 @@ add_subdirectory(unit)
 add_subdirectory(unit/adapter)
 
 add_subdirectory(tools/ras_err_inject)
+add_subdirectory(tools/mock_adapter_demo)
