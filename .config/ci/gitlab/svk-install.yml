@@ -38,7 +38,7 @@ svk-install:
     # since jq can modify json structures but cannot replace the file in place
     - apt-get update
     # Temporary resolution
-    - apt-get install svk-cxl-mock=0.8.0-ubuntu22.04 -y
+    - apt-get install svk-cxl-mock -y
     - apt-get install ./$ARTIFACTS_DIR/ubuntu22/svk-*.deb -y
 
     #### Configure '/etc/svk/mgmt_fw_config.json' (JSON) ####
