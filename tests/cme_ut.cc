@@ -345,7 +345,7 @@ TEST_F(cmeTest, CheckCmdGetStats) {
         int pid = getpid();
 
         // Check valid command
-        string command = " {\"command_name\": \"move\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"tm_attr\": \"0\",\"slow_tier\": \"0\",\"fast_tier\": \"1\"}} ";
+        string command = " {\"command_name\": \"move\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"tm_attr\": \"MOVER_AGGRESSIVENESS_LOW\",\"slow_tier\": \"0\",\"fast_tier\": \"1\"}} ";
         EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
        
         // Check get_stats

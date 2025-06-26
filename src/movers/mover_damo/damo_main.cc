@@ -131,21 +131,21 @@ bool remove_context_yaml(string input_file, string output_file, string cg_name)
                 for (long unsigned int i=0;i<kdamonds.size();i++)
                 {    
                         YAML::Node contexts = kdamonds[i]["contexts"];
-                                for (const auto& ops : contexts)
+                        for (const auto& ops : contexts)
+                        {
+                                YAML::Node schemes = ops["schemes"];
+                                for (const auto& action : schemes)
                                 {
-                                        YAML::Node schemes = ops["schemes"];
-                                        for (const auto& action : schemes)
+                                        YAML::Node filters = action["filters"];
+                                        for (const auto& filter : filters)
                                         {
-                                                YAML::Node filters = action["filters"];
-                                                for (const auto& filter : filters)
+                                                if ((!(filter["filter_type"].as<string>().compare("memcg"))) && (!(filter["memcg_path"].as<string>().compare("/"+cg_name))))
                                                 {
-                                                        if ((!(filter["filter_type"].as<string>().compare("memcg"))) && (!(filter["memcg_path"].as<string>().compare("/"+cg_name))))
-                                                        {
-                                                                to_remove_idx.emplace_back(i);
-                                                        }
+                                                        to_remove_idx.emplace_back(i);
                                                 }
                                         }
                                 }
+                        }
                 }
                 for (long unsigned int i =0;i<to_remove_idx.size();i++)
                 {
