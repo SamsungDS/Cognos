@@ -46,8 +46,7 @@ export const handleSelectChange = async (
 const Metrics = () => {
     const apiEndpoint = constants.Configs.api_endpoint;
     const [selectorOptions, setSelectorOptions] = useState([
-      { value: "Host 1", label: "Host 1" },
-      { value: "Host 2", label: "Host 2" },
+      { value: "", label: "Select Host" },
     ]);
     const selectorOptionsRef = useRef(selectorOptions);
     // eslint-disable-next-line
@@ -304,9 +303,6 @@ const Metrics = () => {
                         </h1>
                       </Col>
                       <Col sm={8} md={8} lg={8} xl={8}>
-                        <div className="bandwidth-legend">
-                          <span className="fs-22">CMM-D</span>
-                        </div>
                         <div>
                           <div
                             className="progres-bar-label-metrics"

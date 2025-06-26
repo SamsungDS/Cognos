@@ -14,3 +14,4 @@ release-build:
     matrix:
       - DOCKERFILE_NAME: rocky9
       - DOCKERFILE_NAME: ubuntu22
+      - DOCKERFILE_NAME: ubuntu24

@@ -56,7 +56,7 @@ run_ut() {
     APP_ROOT=$SCRIPT_DIR/../cognos
     mkdir -p "$REPORT_DIR"
 
-    python3 -m pytest --ignore-glob "$APP_ROOT"/ui/tests/it \
+    /usr/local/svk/sapp/venv/bin/python3 -m pytest --ignore-glob "$APP_ROOT"/ui/tests/it \
         --cov-report xml:"$REPORT_DIR"/coverage.xml \
         --cov-report term \
         --junit-xml="$REPORT_DIR"/junit.xml \
@@ -73,7 +73,7 @@ run_it_selenium(){
 	TEST_DIR=$SCRIPT_DIR/../cognos/ui/tests/it/selenium
 	mkdir -p "$TEST_DIR"
 	
-	python3 "$TEST_DIR"/test_runner.py
+	/usr/local/svk/sapp/venv/bin/python3 "$TEST_DIR"/test_runner.py
 }
 
 run_it() {

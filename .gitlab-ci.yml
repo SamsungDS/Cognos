@@ -48,6 +48,7 @@ build docker:
     matrix:
       - DOCKERFILE_NAME: rocky9
       - DOCKERFILE_NAME: ubuntu22
+      - DOCKERFILE_NAME: ubuntu24
 
 # Do not use artifacts from previous stage when scanning pycodestyle
 pycodestyle:
