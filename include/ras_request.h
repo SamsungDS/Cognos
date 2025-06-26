@@ -30,6 +30,10 @@ using json = nlohmann::json;
 #define RAS_RESULT_CODE_FAILED_STR "failed"
 #define RAS_RESULT_CODE_SUCCESS_STR "success"
 
+#define RAS_RESULT_MESSAGE_STR_CMD_UNSUPPORTED "Command Unsupported"
+#define RAS_RESULT_MESSAGE_STR_CMD_INVALID "Invalid command"
+#define RAS_RESULT_MESSAGE_STR_CMD_PARAMS_INVALID "Invalid command parameters"
+
 #define RAS_DEVICE_DEFAULT_MONITOR_INTERVAL (60)
 class ras_monitor;
 
@@ -78,7 +82,7 @@ struct ras_request {
     auto command_str = get_command_string();
     if (command_str == std::nullopt) {
       svk_logger(RAS_LOGGER, level_E::ERROR, "Command string not found");
-      mark_request_invalid_command();
+      mark_request_failed(RAS_RESULT_MESSAGE_STR_CMD_INVALID);
       return false;
     } else {
       this->command = *command_str;
@@ -92,29 +96,12 @@ struct ras_request {
 
   bool command_object_valid(void) const { return cmd_obj_valid; }
 
-  void mark_request_unsupported(void) {
-    auto cmd_res_str = RAS_COMMAND_RESULT_STR;
-    this->is_successfull = false;
-    this->command_obj[cmd_res_str][RAS_COMMAND_STATUS_CODE_STR] =
-        RAS_RESULT_CODE_FAILED_STR;
-    this->command_obj[RAS_COMMAND_RESULT_STR][RAS_COMMAND_STATUS_MESSAGE_STR] =
-        "Command Unsupported";
-  }
-
-  void mark_request_invalid_command(void) {
+  void mark_request_failed(std::string message_str) {
     this->is_successfull = false;
     this->command_obj[RAS_COMMAND_RESULT_STR][RAS_COMMAND_STATUS_CODE_STR] =
         RAS_RESULT_CODE_FAILED_STR;
     this->command_obj[RAS_COMMAND_RESULT_STR][RAS_COMMAND_STATUS_MESSAGE_STR] =
-        "Invalid command";
-  }
-
-  void mark_request_invalid_params(void) {
-    this->is_successfull = false;
-    this->command_obj[RAS_COMMAND_RESULT_STR][RAS_COMMAND_STATUS_CODE_STR] =
-        RAS_RESULT_CODE_FAILED_STR;
-    this->command_obj[RAS_COMMAND_RESULT_STR][RAS_COMMAND_STATUS_MESSAGE_STR] =
-        "Invalid command parameters";
+        message_str;
   }
 
   /**Derived or set during processing */

@@ -187,8 +187,7 @@ extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
     return SVK_STATUS_FAIL;
   }
 
-  snprintf(debug_info, sizeof(debug_info), "ras execute_sync called.");
-  svk_logger(RAS_LOGGER, level_E::INFO, debug_info);
+  svk_logger(RAS_LOGGER, level_E::INFO, "ras execute_sync called.");
 
   ras_request request(
       true, g_ras_context.monitor_context, false, (char *)input->input_buffer,

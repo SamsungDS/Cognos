@@ -31,7 +31,7 @@ class add_ras_monitor_for_device_handler
       auto valid = this->validate_nested_json(params, required_param);
       if (!valid) {
         // Mark the request as invalid if any parameter is missing
-        r.mark_request_invalid_params();
+        r.mark_request_failed(RAS_RESULT_MESSAGE_STR_CMD_PARAMS_INVALID);
         return false;
       }
     }
@@ -51,7 +51,7 @@ class add_ras_monitor_for_device_handler
     auto device_unique_id = get_device_identifier_from_request(r);
     if (device_unique_id == std::nullopt) {
       // Mark the request as invalid if the device identifier is missing
-      r.mark_request_invalid_params();
+      r.mark_request_failed(RAS_RESULT_MESSAGE_STR_CMD_PARAMS_INVALID);
       return;
     }
 

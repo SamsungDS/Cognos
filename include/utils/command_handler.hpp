@@ -59,15 +59,13 @@ class CommandHandler {
   /**
    * @brief Registers a new command handler.
    *
-   * @param command The command to be handled.
    * @param handler The handler for the command.
    */
-  void register_command(const std::string command,
-                        std::unique_ptr<CommandHandlerImpl<Request>> handler) {
+  void register_command(std::unique_ptr<CommandHandlerImpl<Request>> handler) {
     // Insert the command handler into the map.
     // Note: If the command already exists, it will be overwritten.
-    this->command_handlers_.insert(
-        std::make_pair(std::string(command), std::move(handler)));
+    std::string command = handler->get_command();
+    this->command_handlers_.insert(std::make_pair(command, std::move(handler)));
   }
 
   /**

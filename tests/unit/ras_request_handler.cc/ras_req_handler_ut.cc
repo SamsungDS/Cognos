@@ -140,7 +140,7 @@ TEST_F(RequestHandlerUnitTest, ParseJsonInvalidInputLen) {
 
 TEST_F(RequestHandlerUnitTest, MarkRequestInvalidParams) {
   ras_request req(true, nullptr);
-  req.mark_request_invalid_params();
+  req.mark_request_failed(RAS_RESULT_MESSAGE_STR_CMD_PARAMS_INVALID);
   EXPECT_EQ(req.is_successfull, false);
   EXPECT_EQ(
       std::string(
@@ -153,7 +153,7 @@ TEST_F(RequestHandlerUnitTest, MarkRequestInvalidParams) {
 
 TEST_F(RequestHandlerUnitTest, MarkRequestInvalidCommand) {
   ras_request req(true, nullptr);
-  req.mark_request_invalid_command();
+  req.mark_request_failed(RAS_RESULT_MESSAGE_STR_CMD_INVALID);
   EXPECT_EQ(req.is_successfull, false);
   EXPECT_EQ(
       std::string(
@@ -166,7 +166,7 @@ TEST_F(RequestHandlerUnitTest, MarkRequestInvalidCommand) {
 
 TEST_F(RequestHandlerUnitTest, MarkRequestUnsupported) {
   ras_request req(true, nullptr);
-  req.mark_request_unsupported();
+  req.mark_request_failed(RAS_RESULT_MESSAGE_STR_CMD_UNSUPPORTED);
   EXPECT_EQ(req.is_successfull, false);
   EXPECT_EQ(
       std::string(

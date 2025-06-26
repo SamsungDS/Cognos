@@ -4,12 +4,10 @@
 
 std::unique_ptr<CommandHandler<ras_request>> get_ras_command_handler(void) {
   auto rch = std::make_unique<CommandHandler<ras_request>>();
-  std::string command_str;
   auto add_ras_device_handler =
       std::make_unique<add_ras_monitor_for_device_handler>();
 
-  command_str = add_ras_device_handler->get_command();
-  rch->register_command(command_str, std::move(add_ras_device_handler));
+  rch->register_command(std::move(add_ras_device_handler));
 
   // Register new command handlers here.
 
@@ -70,7 +68,8 @@ bool ras_monitor::ras_submit_timed_request(ras_request *req, int interval) {
   return tcall;
 }
 
-auto ras_monitor::execute_request_by_monitor(ras_request &req) {
+CommandHandler<ras_request>::command_status
+ras_monitor::execute_request_by_monitor(ras_request &req) {
   return this->ras_command_handlers_->execute_command(req.command, req);
 }
 
@@ -78,7 +77,7 @@ void execute_request_by_monitor_(ras_request &req) {
   if (auto status = req.monitor_instance->execute_request_by_monitor(req);
       status ==
       CommandHandler<ras_request>::command_status::COMMAND_UNSUPPORTED) {
-    req.mark_request_unsupported();
+    req.mark_request_failed(RAS_RESULT_MESSAGE_STR_CMD_UNSUPPORTED);
   }
   // Other cases should be handled by validator/executor and mark the result
   // appropriately

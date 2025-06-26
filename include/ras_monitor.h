@@ -29,9 +29,12 @@ class ras_monitor {
 
   bool ras_submit_timed_request(ras_request *req, int interval);
 
-  auto execute_request_by_monitor(ras_request &req);
+  CommandHandler<ras_request>::command_status execute_request_by_monitor(
+      ras_request &req);
 
-  auto get_device_manager(void) { return this->ras_device_manager_; }
+  std::shared_ptr<ras_device_manager> get_device_manager(void) {
+    return this->ras_device_manager_;
+  }
 };
 
 #endif  // _RAS_MONITOR_H_
