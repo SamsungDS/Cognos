@@ -9,7 +9,6 @@
 #include <iostream>
 #include <map>
 #include <memory>
-#include <nlohmann/json.hpp>
 #include <ranges>
 
 #include "logic_interface/svk_logic_struct.h"
@@ -180,10 +179,11 @@ void SLATrackerSvc::publish_app_degraded_sla(slat_benchmark_config &config) {
   }
 }
 
-void SLATrackerSvc::add_pending_app_sla_monitoring(void) {
-  char log_msg[LOG_MSG_MAX_SIZE];
+inline void SLATrackerSvc::process_pending_requests(void) {
+  std::string logger_str;
 
-  this->th_data.benchmark_pending_list_lock.lock();
+  // Add any pending sla monitoring requests
+  std::lock_guard<std::mutex> guard(this->th_data.benchmark_pending_list_lock);
   for (slat_app_benchmark_sla_to_add &to_add :
        this->th_data.benchmark_pending_list_to_add) {
     const std::string app_name = to_add.app_sla.app_current_sla.app_name;
@@ -203,25 +203,36 @@ void SLATrackerSvc::add_pending_app_sla_monitoring(void) {
             cfg.app_sla_list[app_name].app_current_sla.device_name,
             device_numa.c_str(),
             sizeof(cfg.app_sla_list[app_name].app_current_sla.device_name) - 1);
-
-        snprintf(log_msg, LOG_MSG_MAX_SIZE, "Adding device %s. and app  %s\n",
-                 device_numa.c_str(), app_name.c_str());
-        svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, log_msg);
+        logger_str = "Adding device " + device_numa + ". and app " + app_name;
+        svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
 
         this->th_data.benchmark_device_config_list[device_numa] = cfg;
         continue;
       }
-      snprintf(log_msg, LOG_MSG_MAX_SIZE,
-               "Device already exist for %s. Updating for app %s\n",
-               device_numa.c_str(), app_name.c_str());
-      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, log_msg);
+      logger_str = "Device already exists for " + device_numa +
+                   ". Updating for app " + app_name;
+      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
       slat_benchmark_config &cfg = it->second;
       cfg.device_advertised_sla = device.device_advertised_sla;
       cfg.app_sla_list[app_name] = to_add.app_sla;
     }
   }
   this->th_data.benchmark_pending_list_to_add.clear();
-  this->th_data.benchmark_pending_list_lock.unlock();
+
+  // Go through devices to remove from sla monitoring
+  for (const auto &device : this->th_data.devices_to_remove_from_monitoring) {
+    // Try to remove devices from tracked device map
+    if (this->th_data.benchmark_device_config_list.erase(device)) {
+      logger_str = "Device " + device + " removed from sla monitoring";
+      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+    } else {
+      logger_str = "Device " + device +
+                   " could not be remove from monitoring since it is not being "
+                   "monitored currently.";
+      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+    }
+  }
+  this->th_data.devices_to_remove_from_monitoring.clear();
 }
 
 void SLATrackerSvc::benchmarking_thread_fn(void) {
@@ -230,7 +241,7 @@ void SLATrackerSvc::benchmarking_thread_fn(void) {
 
   std::cout << "Started benchmarking thread" << std::endl;
   while (1) {
-    this->add_pending_app_sla_monitoring();
+    this->process_pending_requests();
 
     for (auto &[device_numa, device_benchmark_config] :
          this->th_data.benchmark_device_config_list) {
@@ -318,9 +329,8 @@ svk_status SLATrackerSvc::parse_and_add_new_sla_monitor(
     return rc;
   }
 
-  strncpy(app_sla_to_add.sla_benchmark_tool, "mlc", 64);
-  rc = update_sla_details(sla_kv_pairs, "sla_benchmark_tool",
-                          app_sla_to_add.sla_benchmark_tool, 64);
+  // Hardcoding right now
+  app_sla_to_add.sla_benchmark_tool = "mlc";
 
   app_sla_to_add.app_sla.app_current_sla.avgLatencyns = 0;
   app_sla_to_add.app_sla.app_sla_tolerance_percent =
@@ -634,6 +644,140 @@ svk_status SLATrackerSvc::load_logic_modules(
   return status;
 }
 
+svk_status SLATrackerSvc::add_devices_to_sla_tracker(json command_params) {
+  svk_status status;
+  std::string logger_str;
+  slat_app_benchmark_sla_to_add app_sla_to_add = {};
+  std::map<std::string, std::string> sla_kv_pairs;
+
+  // Parse the command params
+  try {
+    // Update the structure with details
+    std::vector<std::tuple<std::string, std::string, char *>> sla_fields = {
+        {"app_name", command_params.at("app_name"),
+         app_sla_to_add.app_sla.app_current_sla.app_name},
+        {"host_name", command_params.at("host_name"),
+         app_sla_to_add.app_sla.app_current_sla.host_name}};
+
+    for (const auto &[key, value, target] : sla_fields) {
+      sla_kv_pairs[key] = value;
+      status =
+          update_sla_details(sla_kv_pairs, key.c_str(), target, MAX_LENGTH);
+      if (status != SVK_STATUS_SUCCESS) {
+        return status;
+      }
+    }
+
+    std::string logic_module = command_params.value("logic_module", "mlc");
+    app_sla_to_add.sla_benchmark_tool = logic_module;
+
+    uint64_t app_sla_latency_ns = command_params.at("app_sla_latency_ns");
+    app_sla_to_add.app_sla.app_requested_sla_ns = app_sla_latency_ns;
+
+    app_sla_to_add.app_sla.app_current_sla.avgLatencyns = 0;
+    app_sla_to_add.app_sla.app_sla_tolerance_percent =
+        APP_DEFAULT_TOLERANCE_PERCENT;
+
+    // Add the devices using numa
+    json device_list = command_params.at("devices");
+    for (json &device : device_list) {
+      slat_device_sla_config device_conf;
+
+      std::string device_numa = device.at("device_numa");
+      uint64_t device_sla_latency_ns = device.at("device_sla_latency_ns");
+
+      device_conf.device_current_sla = 0;
+      device_conf.device_advertised_sla = device_sla_latency_ns;
+      device_conf.device_numa_node = device_numa;
+      app_sla_to_add.device_sla_list.push_back(device_conf);
+    }
+
+  } catch (const json::out_of_range &e) {
+    logger_str =
+        "Failed to parse command_params while attempting to run "
+        "add_device_to_sla_tracker. Error: ";
+    logger_str += e.what();
+    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, logger_str.c_str());
+    return SVK_STATUS_FAIL;
+  }
+
+  // Add the new sla tracking to pending list
+  this->th_data.benchmark_pending_list_lock.lock();
+  this->th_data.benchmark_pending_list_to_add.push_back(app_sla_to_add);
+  this->th_data.benchmark_pending_list_lock.unlock();
+
+  logger_str = "Queued app [" +
+               std::string(app_sla_to_add.app_sla.app_current_sla.app_name) +
+               "] for sla monitoring.";
+  svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+  status = SVK_STATUS_SUCCESS;
+
+  return status;
+}
+
+svk_status SLATrackerSvc::remove_devices_from_sla_tracker(json command_params) {
+  svk_status status = SVK_STATUS_SUCCESS;
+  std::string logger_str;
+  this->th_data.benchmark_pending_list_lock.lock();
+  // Parse the command params
+  try {
+    json device_list = command_params.at("devices");
+    for (json &device : device_list) {
+      // For now we are using device_numa
+      // This throws error if the key is not found
+      std::string device_numa = device.at("device_numa");
+      this->th_data.devices_to_remove_from_monitoring.push_back(device_numa);
+    }
+
+  } catch (const json::out_of_range &e) {
+    logger_str =
+        "Failed to parse command_params while attempting to run "
+        "remove_device_from_sla_tracker. Error: ";
+    logger_str += e.what();
+    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, logger_str.c_str());
+    status = SVK_STATUS_FAIL;
+  }
+
+  this->th_data.benchmark_pending_list_lock.unlock();
+  return status;
+}
+
+svk_status SLATrackerSvc::process_json_cmd(svk_input *input,
+                                           svk_output *output) {
+  std::string logger_str;
+  svk_status status = SVK_STATUS_FAIL;
+
+  std::string cmd_json_str = std::string(
+      reinterpret_cast<const char *>(input->input_buffer), input->len);
+  std::string command_name;
+
+  try {
+    json command = json::parse(cmd_json_str);
+    logger_str = "JSON request: " + command.dump();
+    svk_logger(SLAT_FEATURE_MODULE_NAME, level_E::DEBUG, logger_str.c_str());
+    json command_params;
+    command_name = command.at("command_name");
+    command_params = command.at("command_params");
+
+    // Parse command_params in each command function
+    if (command_name == "add_devices_to_sla_tracker") {
+      status = this->add_devices_to_sla_tracker(command_params);
+    } else if (command_name == "remove_devices_from_sla_tracker") {
+      status = this->remove_devices_from_sla_tracker(command_params);
+    } else {
+      logger_str =
+          "Invalid command_name, could not process command: " + command_name;
+      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, logger_str.c_str());
+    }
+  } catch (json::exception &e) {
+    logger_str = "JSON request '" + cmd_json_str +
+                 "' could not be parsed: " + std::string(e.what());
+    svk_logger(SLAT_FEATURE_MODULE_NAME, level_E::ERROR, logger_str.c_str());
+  }
+  output->len = 0;
+  return status;
+}
+
 svk_status SLATrackerSvc::Initialize(const char *slat_config_file) {
   svk_status status = SVK_STATUS_FAIL;
   slat_config config;
@@ -790,61 +934,68 @@ extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
 
   output->status = SVK_STATUS_FAIL;
 
-  ptr = strstr((char *)input->input_buffer, "logic_module");
-  if (ptr == nullptr) {
-    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR,
-               "execute_sync function called without the keyword "
-               "'logic_module' in the input structure");
-    return SVK_STATUS_FAIL;
-  }
+  // Checking for new style command, only supporting start/stop device tracking
+  // for now
+  // TODO: Move all commands to json, ex. execute_logic_sync
+  if (cmd->len > 0) {
+    status = g_slat_service->process_json_cmd(input, output);
+  } else {
+    ptr = strstr((char *)input->input_buffer, "logic_module");
+    if (ptr == nullptr) {
+      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR,
+                 "execute_sync function called without the keyword "
+                 "'logic_module' in the input structure");
+      return SVK_STATUS_FAIL;
+    }
 
-  sscanf(ptr, "logic_module=%[a-zA-Z0-9]", logic_module_name);
-  details = g_slat_service->getLogicDetails(logic_module_name);
-  if (details == nullptr) {
-    snprintf(log_msg, LOG_MSG_MAX_SIZE,
-             "Matching logic module for the [%s] not found. Exiting.",
-             logic_module_name);
-    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, log_msg);
-    return SVK_STATUS_FAIL;
-  }
+    sscanf(ptr, "logic_module=%[a-zA-Z0-9]", logic_module_name);
+    details = g_slat_service->getLogicDetails(logic_module_name);
+    if (details == nullptr) {
+      snprintf(log_msg, LOG_MSG_MAX_SIZE,
+               "Matching logic module for the [%s] not found. Exiting.",
+               logic_module_name);
+      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, log_msg);
+      return SVK_STATUS_FAIL;
+    }
 
-  std::string input_str(reinterpret_cast<char *>(input->input_buffer),
-                        input->len);
+    std::string input_str(reinterpret_cast<char *>(input->input_buffer),
+                          input->len);
 
-  if (strstr(input_str.c_str(), "app_name") != nullptr) {
-    status = g_slat_service->parse_and_add_new_sla_monitor(input_str.c_str());
+    if (strstr(input_str.c_str(), "app_name") != nullptr) {
+      status = g_slat_service->parse_and_add_new_sla_monitor(input_str.c_str());
+      if (status == SVK_STATUS_SUCCESS) {
+        output->status = SVK_STATUS_SUCCESS;
+        output->len = 0;
+        return SVK_STATUS_SUCCESS;
+      }
+    }
+
+    if (details->execute_logic_sync == nullptr) {
+      snprintf(log_msg, LOG_MSG_MAX_SIZE,
+               "logic module [%s]'s execute_logic_sync is null. Exiting.",
+               logic_module_name);
+      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, log_msg);
+      return SVK_STATUS_FAIL;
+    }
+    strcpy(logic_cmd.logic_name, logic_module_name);
+    logic_input.input_buffer = input->input_buffer;
+    logic_input.input_len = input->len;
+    logic_output.output_buffer = output->output_buffer;
+    logic_output.output_len = output->len;
+    status =
+        details->execute_logic_sync(&logic_cmd, &logic_input, &logic_output);
     if (status == SVK_STATUS_SUCCESS) {
-      output->status = SVK_STATUS_SUCCESS;
+      output->len = logic_output.output_len;
+      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO,
+                 "execute_sync returned successfully.");
+    } else {
       output->len = 0;
-      return SVK_STATUS_SUCCESS;
+      snprintf(log_msg, LOG_MSG_MAX_SIZE,
+               "execute_sync for the logic module [%s] failed",
+               logic_module_name);
+      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, log_msg);
     }
   }
-
-  if (details->execute_logic_sync == nullptr) {
-    snprintf(log_msg, LOG_MSG_MAX_SIZE,
-             "logic module [%s]'s execute_logic_sync is null. Exiting.",
-             logic_module_name);
-    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, log_msg);
-    return SVK_STATUS_FAIL;
-  }
-  strcpy(logic_cmd.logic_name, logic_module_name);
-  logic_input.input_buffer = input->input_buffer;
-  logic_input.input_len = input->len;
-  logic_output.output_buffer = output->output_buffer;
-  logic_output.output_len = output->len;
-  status = details->execute_logic_sync(&logic_cmd, &logic_input, &logic_output);
-  if (status == SVK_STATUS_SUCCESS) {
-    output->len = logic_output.output_len;
-    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO,
-               "execute_sync returned successfully.");
-  } else {
-    output->len = 0;
-    snprintf(log_msg, LOG_MSG_MAX_SIZE,
-             "execute_sync for the logic module [%s] failed",
-             logic_module_name);
-    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, log_msg);
-  }
-
   // Copy status to be in sync with output status
   output->status = status;
   return status;

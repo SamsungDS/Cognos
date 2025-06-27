@@ -9,6 +9,7 @@
 #include <chrono>
 #include <iostream>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <thread>
 
 #include "framework_downstream.h"
@@ -116,7 +117,7 @@ svk_status testMlcLogicModule(svk_feature_details *details) {
 }
 
 svk_status load_slat_feature(std::string features_dir, std::string logic_module,
-                             svk_feature_details *details) {
+                             bool use_json, svk_feature_details *details) {
   svk_status status = SVK_STATUS_SUCCESS;
   int num_failed_libs = 0;
   char log_msg[LOG_MSG_MAX_SIZE];
@@ -295,32 +296,110 @@ svk_status load_slat_feature(std::string features_dir, std::string logic_module,
   svk_pass_thru_cmd cmd;
   svk_input input;
   svk_output output;
-  cmd.feat_id = feature_id::SLA_TRACKER;
-  input.input_buffer = (uint8_t *)calloc(1, 1024);
-  input.len = 1024;
-  std::string cmd_input_str = "logic_module=";
-  cmd_input_str += logic_module;
-  cmd_input_str += ";thread_count=3;time_limit=10";
-  strcpy((char *)input.input_buffer, cmd_input_str.c_str());
   output.output_buffer = (uint8_t *)calloc(1, 10240);
   output.len = 10240;
 
-  if (logic_module != "MlcLogic") {
+  // Test for JSON commands
+  if (use_json) {
+    using json = nlohmann::json;
+    cmd.len = 1;
+    json add_device;
+    add_device["command_name"] = "add_devices_to_sla_tracker";
+    std::string params = R"({
+        "app_name": "TestApp",
+        "app_sla_latency_ns": 300,
+        "host_name": "localhost",
+        "logic_module": "mlc"
+    })";
+    json command_params = json::parse(params);
+
+    // Try adding 2 devices
+    json devices = json::array();
+    json device;
+    device["device_numa"] = "0";
+    device["device_sla_latency_ns"] = 300;
+    devices.push_back(device);
+    // MLC may return error if numa 1 doesn't exist but just checking if it is
+    // added properly
+    device["device_numa"] = "1";
+    device["device_sla_latency_ns"] = 300;
+    devices.push_back(device);
+    command_params["devices"] = devices;
+
+    add_device["command_params"] = command_params;
+
+    std::string cmd_str = add_device.dump();
+    input.input_buffer = (uint8_t *)&cmd_str[0];
+    input.len = cmd_str.length();
     status = details->execute_sync(&cmd, &input, &output);
     if (status == SVK_STATUS_SUCCESS) {
-      std::cout << "Execute_sync worked successfully. Output buffer ["
-                << std::string((char *)output.output_buffer) << "]"
+      std::cout << "add device w/ json req succeeded, letting bg thread run "
+                   "for 20 seconds"
                 << std::endl;
+      std::this_thread::sleep_for(std::chrono::seconds(20));
+      // Try to remove the devices
+      std::cout << "removing device w/ json now" << std::endl;
+      json remove_device;
+      remove_device["command_name"] = "remove_devices_from_sla_tracker";
+      command_params = json::object();
+      command_params["devices"] = devices;
+      remove_device["command_params"] = command_params;
+
+      cmd_str = remove_device.dump();
+      input.input_buffer = (uint8_t *)&cmd_str[0];
+      input.len = cmd_str.length();
+
+      status = details->execute_sync(&cmd, &input, &output);
+      if (status == SVK_STATUS_SUCCESS) {
+        std::cout << "remove device succeeded, letting bg thread run for 15 "
+                     "seconds to check removal"
+                  << std::endl;
+        std::this_thread::sleep_for(std::chrono::seconds(15));
+      } else {
+        std::cout << "remove_devices_from_sla_tracker failed" << std::endl;
+      }
+      // Try removing devices that don't exist, for functionality and code
+      // coverage
+      std::cout << "Adding devices that don't exist to removal queue"
+                << std::endl;
+      status = details->execute_sync(&cmd, &input, &output);
+      if (status == SVK_STATUS_SUCCESS) {
+        std::cout << "remove devices returned success, sleeping for 10 sec to "
+                     "let bg thread attempt to remove nonexistent devices"
+                  << std::endl;
+        std::this_thread::sleep_for(std::chrono::seconds(10));
+      } else {
+        std::cout << "remove_devices_from_sla_tracker failed" << std::endl;
+      }
     } else {
-      std::cout << "Execute_sync failed" << std::endl;
+      std::cout << "add_device_to_sla_tracker failed" << std::endl;
     }
   } else {
-    testMlcLogicModule(details);
-    std::cout << "Waiting in main thread for 30 seconds" << std::endl;
-    std::this_thread::sleep_for(std::chrono::seconds(30));
+    cmd.feat_id = feature_id::SLA_TRACKER;
+    input.input_buffer = (uint8_t *)calloc(1, 1024);
+    input.len = 1024;
+    std::string cmd_input_str = "logic_module=";
+    cmd_input_str += logic_module;
+    cmd_input_str += ";thread_count=3;time_limit=10";
+    strcpy((char *)input.input_buffer, cmd_input_str.c_str());
+
+    if (logic_module != "MlcLogic") {
+      status = details->execute_sync(&cmd, &input, &output);
+      if (status == SVK_STATUS_SUCCESS) {
+        std::cout << "Execute_sync worked successfully. Output buffer ["
+                  << std::string((char *)output.output_buffer) << "]"
+                  << std::endl;
+      } else {
+        std::cout << "Execute_sync failed" << std::endl;
+      }
+    } else {
+      testMlcLogicModule(details);
+      std::cout << "Waiting in main thread for 30 seconds" << std::endl;
+      std::this_thread::sleep_for(std::chrono::seconds(30));
+    }
+    free(input.input_buffer);
   }
 
-  free(input.input_buffer);
   free(output.output_buffer);
 
   svk_pass_thru_cmd async_cmd;
@@ -356,7 +435,8 @@ int main(int argc, char **argv) {
       "slatconfig,c", po::value<string>(), "/path/to/slat_config.json")(
       "test_logic_module,m", po::value<string>()->default_value("SampleLogic"),
       "Logic module to test")("slatlogicconfig,l", po::value<string>(),
-                              "/path/to/slat_logic_config.json");
+                              "/path/to/slat_logic_config.json")(
+      "test_json_req,j", "Use JSON request for execute_sync");
 
   po::store(po::parse_command_line(argc, argv, argsDescription), argsMap);
   po::notify(argsMap);
@@ -382,13 +462,21 @@ int main(int argc, char **argv) {
     std::cout << "Invalid slat logic config file" << std::endl;
     return -1;
   }
+
   setenv("SVK_SLAT_CONFIG", argsMap["slatconfig"].as<string>().c_str(), true);
   setenv("SVK_SLAT_LOGIC_CONFIG",
          argsMap["slatlogicconfig"].as<string>().c_str(), true);
 
-  status =
-      load_slat_feature(argsMap["libdir"].as<string>(),
-                        argsMap["test_logic_module"].as<string>(), &details);
+  if (argsMap.count("test_json_req")) {
+    status = load_slat_feature(argsMap["libdir"].as<string>(),
+                               argsMap["test_logic_module"].as<string>(), true,
+                               &details);
+  } else {
+    status = load_slat_feature(argsMap["libdir"].as<string>(),
+                               argsMap["test_logic_module"].as<string>(), false,
+                               &details);
+  }
+
   std::cout << "Status from load_slat_feature - " << status << std::endl;
   if (status != SVK_STATUS_SUCCESS) {
     char *env_string = std::getenv("SVK_SLAT_SAMPLE_LOGIC_SUPPORT_FAIL");

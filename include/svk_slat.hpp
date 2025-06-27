@@ -6,6 +6,7 @@
 #include <sys/inotify.h>
 
 #include <mutex>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -40,6 +41,7 @@
 #define SLAT_MAX_LOGIC_MODULE_NAME_LEN SLAT_MAX_STR_LEN
 #define SLAT_MAX_FEATURE_NAME_LEN SLAT_MAX_STR_LEN
 
+using json = nlohmann::json;
 using slat_app_sla_config = struct slat_app_sla_config_s {
   uint64_t app_requested_sla_ns;
   uint64_t app_sla_tolerance_percent;
@@ -65,7 +67,7 @@ using slat_device_sla_config = struct slat_device_sla_config_s {
 using slat_app_benchmark_sla_to_add = struct slat_app_benchmark_sla_to_add_s {
   slat_app_sla_config app_sla;
   std::vector<slat_device_sla_config> device_sla_list;
-  char sla_benchmark_tool[64];
+  std::string sla_benchmark_tool;
 };
 
 using slat_config = struct slat_config {
@@ -84,6 +86,7 @@ using slat_thread_data = struct slat_thread_data_s {
   int64_t benchmark_run_interval;
 
   std::vector<slat_app_benchmark_sla_to_add> benchmark_pending_list_to_add;
+  std::vector<std::string> devices_to_remove_from_monitoring;
   std::mutex benchmark_pending_list_lock;
 };
 
@@ -105,7 +108,10 @@ class SLATrackerSvc {
   std::string run_benchmark(slat_benchmark_config &config);
   void parse_result(slat_benchmark_config &config, std::string result);
   void update_app_sla_with_device_sla(slat_benchmark_config &config);
-  void add_pending_app_sla_monitoring(void);
+  void process_pending_requests(void);
+  // Adding new fn to add the device
+  svk_status add_devices_to_sla_tracker(json command_params);
+  svk_status remove_devices_from_sla_tracker(json command_params);
 
  protected:
   void publish_app_degraded_sla(slat_benchmark_config &config);
@@ -122,6 +128,7 @@ class SLATrackerSvc {
   // TODO: Remove this
   void dummy_submit_async_all(void);
   svk_status parse_and_add_new_sla_monitor(std::string sla_details);
+  svk_status process_json_cmd(svk_input *input, svk_output *output);
 };
 
 extern "C" {

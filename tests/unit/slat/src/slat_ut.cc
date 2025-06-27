@@ -403,10 +403,201 @@ TEST_F(ConfigTest, ConfigureDeviceFnSuccess) {
   unlink("slat_conf.json");
 }
 
+TEST_F(ConfigTest, ExecuteSyncAddDevice) {
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+
+  svk_pass_thru_cmd cmd;
+  cmd.len = 1;
+  svk_input input;
+  svk_output output = {};
+  output.output_buffer = (uint8_t *)0xdeadbeef;
+
+  using json = nlohmann::json;
+
+  json command;
+  command["command_name"] = "add_devices_to_sla_tracker";
+
+  json command_params;
+  command_params["app_name"] = "test_app";
+  command_params["app_sla_latency_ns"] = 10;
+  command_params["host_name"] = "test_host";
+  command_params["logic_module"] = "test_logic_module";
+
+  json devices = json::array();
+  json device;
+  device["device_numa"] = "0";
+  device["device_sla_latency_ns"] = 10;
+  devices.push_back(device);
+  command_params["devices"] = devices;
+
+  command["command_params"] = command_params;
+  std::string cmd_str = command.dump();
+  input.input_buffer = (uint8_t *)&cmd_str[0];
+  input.len = cmd_str.length();
+  EXPECT_EQ(SVK_STATUS_SUCCESS, execute_sync(&cmd, &input, &output));
+}
+
+TEST_F(ConfigTest, ExecuteSyncInvalidCommandName) {
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+
+  svk_pass_thru_cmd cmd;
+  cmd.len = 1;
+  svk_input input;
+  svk_output output = {};
+
+  using json = nlohmann::json;
+
+  json command;
+  command["command_name"] = "invalid_command";
+  command["command_params"] = json::object();
+
+  std::string cmd_str = command.dump();
+  input.input_buffer = (uint8_t *)&cmd_str[0];
+  input.len = cmd_str.length();
+
+  output.output_buffer = (uint8_t *)0xdeadbeef;
+
+  setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&cmd, &input, &output));
+}
+
+TEST_F(ConfigTest, ExecuteSyncInvalidJsonReq) {
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+
+  svk_pass_thru_cmd cmd;
+  cmd.len = 1;
+  svk_input input;
+  svk_output output = {};
+
+  std::string invalid = "invalid";
+
+  input.input_buffer = (uint8_t *)&invalid[0];
+  input.len = invalid.length();
+
+  output.output_buffer = (uint8_t *)0xdeadbeef;
+
+  setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&cmd, &input, &output));
+}
+
+TEST_F(ConfigTest, ExecuteSyncAddDeviceInvalidCmdParams) {
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+
+  svk_pass_thru_cmd cmd;
+  cmd.len = 1;
+  svk_input input;
+  svk_output output = {};
+
+  using json = nlohmann::json;
+
+  json command;
+  command["command_name"] = "add_devices_to_sla_tracker";
+  json command_params = json::object();
+  command["command_params"] = command_params;
+
+  std::string cmd_str = command.dump();
+  input.input_buffer = (uint8_t *)&cmd_str[0];
+  input.len = cmd_str.length();
+  input.len = command.dump().length();
+
+  output.output_buffer = (uint8_t *)0xdeadbeef;
+
+  setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&cmd, &input, &output));
+
+  command_params["app_sla_latency_ns"] = 10;
+
+  std::string str(65, ' ');
+  command_params["app_name"] = str;
+  command["command_params"] = command_params;
+  cmd_str = command.dump();
+  input.input_buffer = (uint8_t *)&cmd_str[0];
+  input.len = cmd_str.length();
+  input.len = command.dump().length();
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&cmd, &input, &output));
+  command_params["app_name"] = "test_app";
+
+  command_params["host_name"] = str;
+  command["command_params"] = command_params;
+  cmd_str = command.dump();
+  input.input_buffer = (uint8_t *)&cmd_str[0];
+  input.len = cmd_str.length();
+  input.len = command.dump().length();
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&cmd, &input, &output));
+  command_params["host_name"] = "test_host";
+
+  command_params["logic_module"] = str;
+  command["command_params"] = command_params;
+  cmd_str = command.dump();
+  input.input_buffer = (uint8_t *)&cmd_str[0];
+  input.len = cmd_str.length();
+  input.len = command.dump().length();
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&cmd, &input, &output));
+}
+
+TEST_F(ConfigTest, RemoveDevicesFromSLATrackerSuccess) {
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+
+  svk_pass_thru_cmd cmd;
+  cmd.len = 1;
+  svk_input input;
+  svk_output output = {};
+  output.output_buffer = (uint8_t *)0xdeadbeef;
+
+  using json = nlohmann::json;
+
+  json command;
+  command["command_name"] = "remove_devices_from_sla_tracker";
+
+  json command_params;
+  json devices = json::array();
+  json device;
+  device["device_numa"] = "0";
+  devices.push_back(device);
+  command_params["devices"] = devices;
+
+  command["command_params"] = command_params;
+  std::string cmd_str = command.dump();
+  input.input_buffer = (uint8_t *)&cmd_str[0];
+  input.len = cmd_str.length();
+
+  EXPECT_EQ(SVK_STATUS_SUCCESS, execute_sync(&cmd, &input, &output));
+}
+
+TEST_F(ConfigTest, RemoveDevicesFromSLATrackerInvalidJSONArray) {
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+
+  svk_pass_thru_cmd cmd;
+  cmd.len = 1;
+  svk_input input;
+  svk_output output = {};
+  output.output_buffer = (uint8_t *)0xdeadbeef;
+
+  using json = nlohmann::json;
+
+  json command;
+  command["command_name"] = "remove_devices_from_sla_tracker";
+
+  json command_params;
+  json devices = json::array();
+  command_params["invalid"] = devices;
+
+  command["command_params"] = command_params;
+  std::string cmd_str = command.dump();
+  input.input_buffer = (uint8_t *)&cmd_str[0];
+  input.len = cmd_str.length();
+
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&cmd, &input, &output));
+}
+
 TEST_F(ConfigTest, ExecuteSyncFnFail) {
   boost::property_tree::write_json("slat_conf.json", slat_conf);
 
   svk_pass_thru_cmd cmd;
+  cmd.len = 0;
   svk_input input;
   svk_output output = {};
 
@@ -424,6 +615,7 @@ TEST_F(ConfigTest, ExecuteSyncFnFail) {
 
 TEST_F(ConfigTest, ExecuteSyncFnFailWithEmptyInputBuffer) {
   svk_pass_thru_cmd cmd;
+  cmd.len = 0;
   svk_input input;
   svk_output output;
 
@@ -437,6 +629,7 @@ TEST_F(ConfigTest, ExecuteSyncFnFailWithEmptyInputBuffer) {
 
 TEST_F(ConfigTest, ExecuteSyncFnFailWithInvalidLogicModule) {
   svk_pass_thru_cmd cmd;
+  cmd.len = 0;
   svk_input input;
   svk_output output;
 
