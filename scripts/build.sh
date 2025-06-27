@@ -168,6 +168,9 @@ execute_tests() {
     export SVK_SLAT_SAMPLE_LOGIC_INVALID_FEATURE=No
     ./tests/sample_app/sample_app -p ./src/ -c "${BUILD_DIR}/slat_config.json"  -l "${BUILD_DIR}/slat_logic_config.json"
 
+    # Test JSON requests using the sample logic
+    ./tests/sample_app/sample_app -p ./src/ -j -c "${BUILD_DIR}/slat_mlc_config.json"  -l "${BUILD_DIR}/slat_logic_config.json"
+
     ./tests/sample_app/sample_app -p ./src/ -m MlcLogic -c "${BUILD_DIR}/slat_mlc_config.json"  -l "${BUILD_DIR}/slat_logic_config.json"
     popd
   
