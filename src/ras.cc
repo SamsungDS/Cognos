@@ -6,12 +6,6 @@
 
 #include "ras_monitor.h"
 
-struct ras_context_s {
-  ras_monitor *monitor_context;
-  bool initialized;
-  logic_module_manager adapters;
-  std::mutex ctx_mutex;
-};
 struct ras_context_s g_ras_context = {.monitor_context = nullptr,
                                       .initialized = false};
 
@@ -87,14 +81,17 @@ static inline svk_status load_ras_adapters(
                                            entry.path().filename().string());
 
     if (validate_lib_entry(lib_path_str)) {
-      auto logic_module_name = g_ras_context.adapters.load_logic_module(
-          lib_path_str, std::string(RAS_FEATURE_MODULE_NAME));
+      auto logic_module_name =
+          g_ras_context.ras_adapter_helper_->adapters->load_logic_module(
+              lib_path_str, std::string(RAS_FEATURE_MODULE_NAME));
       if (logic_module_name == std::nullopt) {
         svk_logger(
             RAS_LOGGER, level_E::WARN,
             fmt::format("Failed to load adapter {}", lib_path_str).c_str());
         continue;
       }
+      svk_logger(RAS_LOGGER, level_E::INFO,
+                 fmt::format("Loaded adapter {}", *logic_module_name).c_str());
     } else {
       svk_logger(
           RAS_LOGGER, level_E::WARN,
@@ -137,6 +134,11 @@ extern "C" svk_status initialize(void *details) {
   }
 
   std::lock_guard<std::mutex> lock(g_ras_context.ctx_mutex);
+
+  g_ras_context.ras_adapter_helper_ = new ras_adapter_helper();
+  if (g_ras_context.ras_adapter_helper_ == nullptr) {
+    return SVK_STATUS_FAIL;
+  }
 
   // Load adapters
   load_ras_adapters(ras_configs->adapters_directory);
@@ -190,7 +192,7 @@ extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
   svk_logger(RAS_LOGGER, level_E::INFO, "ras execute_sync called.");
 
   ras_request request(
-      true, g_ras_context.monitor_context, false, (char *)input->input_buffer,
+      true, &g_ras_context, false, (char *)input->input_buffer,
       input->len);  // Local variable okay since this will be sync
 
   snprintf(debug_info, sizeof(debug_info), "input buffer: %s",

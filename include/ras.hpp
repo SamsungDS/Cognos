@@ -11,6 +11,7 @@
 #include <unordered_map>
 
 #include "framework_downstream.h"
+#include "ras_adapters_helper.hpp"
 #include "ras_exports.h"
 #include "svk_logger.hpp"
 #include "utils/logic_module_manager.hpp"
@@ -69,4 +70,12 @@ typedef struct {
   std::string adapters_directory;
 } ras_conf;
 
+class ras_monitor;
+
+struct ras_context_s {
+  ras_monitor *monitor_context;
+  bool initialized;
+  ras_adapter_helper *ras_adapter_helper_;
+  std::mutex ctx_mutex;
+};
 #endif  // __RAS_HPP__

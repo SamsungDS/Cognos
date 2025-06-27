@@ -40,7 +40,8 @@ class remove_ras_monitor_for_device_handler
    */
   void execute(ras_request& r) {
     // Get the device manager instance
-    auto device_manager = ras_monitor_get_device_manager(r.monitor_instance);
+    auto device_manager =
+        ras_monitor_get_device_manager(r.ras_context->monitor_context);
 
     // Get the device identifier from the request
     auto device_unique_id = get_device_identifier_from_request(r);

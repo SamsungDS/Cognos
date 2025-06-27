@@ -15,7 +15,7 @@ class ras_monitor {
 
   static void process_request(ras_request *req) {
     if (req->is_sync_request) {
-      req->monitor_instance->process_request_sync(req);
+      req->ras_context->monitor_context->process_request_sync(req);
     }
     return;
   }

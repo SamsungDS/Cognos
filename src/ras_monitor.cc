@@ -82,7 +82,7 @@ ras_monitor::execute_request_by_monitor(ras_request &req) {
 }
 
 void execute_request_by_monitor_(ras_request &req) {
-  if (auto status = req.monitor_instance->execute_request_by_monitor(req);
+  if (auto status = req.ras_context->monitor_context->execute_request_by_monitor(req);
       status == cognos::utils::CommandHandler<
                     ras_request>::command_status::COMMAND_UNSUPPORTED) {
     req.mark_request_failed(RAS_RESULT_MESSAGE_STR_CMD_UNSUPPORTED);

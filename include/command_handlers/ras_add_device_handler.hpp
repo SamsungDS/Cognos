@@ -4,6 +4,7 @@
 #include <iostream>
 #include <memory>
 
+#include "ras.hpp"
 #include "ras_device.h"
 #include "ras_request.h"
 #include "utils/command_handler.hpp"
@@ -40,7 +41,8 @@ class add_ras_monitor_for_device_handler
    */
   void execute(ras_request& r) {
     // Get the device manager instance
-    auto device_manager = ras_monitor_get_device_manager(r.monitor_instance);
+    auto device_manager =
+        ras_monitor_get_device_manager(r.ras_context->monitor_context);
 
     // Get the device identifier from the request
     auto device_unique_id = get_device_identifier_from_request(r);
@@ -49,6 +51,12 @@ class add_ras_monitor_for_device_handler
       r.mark_request_failed(RAS_RESULT_MESSAGE_STR_CMD_PARAMS_INVALID);
       return;
     }
+
+    auto adapter_name =
+        r.ras_context->ras_adapter_helper_->try_get_adapter_for_device(
+            *device_unique_id);
+    // TODO: handle error and use adapter when available. Needs a fake adapter
+    // implementation for unit tests to pass
 
     // Create a new device instance
     std::unique_ptr<ras_device> dev = std::make_unique<ras_device>(
