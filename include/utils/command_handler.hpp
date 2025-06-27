@@ -1,6 +1,9 @@
 #ifndef _COMMAND_HANDLER__HPP_
 #define _COMMAND_HANDLER__HPP_
 
+namespace cognos {
+namespace utils {
+
 #include <string>
 #include <unordered_map>
 
@@ -101,5 +104,6 @@ class CommandHandler {
   std::unordered_map<std::string, std::unique_ptr<CommandHandlerImpl<Request>>>
       command_handlers_;
 };
-
+}  // namespace utils
+}  // namespace cognos
 #endif  // _COMMAND_HANDLER__HPP_

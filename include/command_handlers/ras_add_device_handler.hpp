@@ -14,7 +14,7 @@
  * @brief Handles the command to add a reliability monitor for a device.
  */
 class add_ras_monitor_for_device_handler
-    : public CommandHandlerImpl<ras_request> {
+    : public cognos::utils::CommandHandlerImpl<ras_request> {
  public:
   /**
    * @brief Validates the incoming request.

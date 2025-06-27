@@ -9,7 +9,8 @@
 class ras_monitor {
  private:
   std::unique_ptr<RequestProcessor<ras_request>> ras_monitor_;
-  std::unique_ptr<CommandHandler<ras_request>> ras_command_handlers_;
+  std::unique_ptr<cognos::utils::CommandHandler<ras_request>>
+      ras_command_handlers_;
   std::shared_ptr<ras_device_manager> ras_device_manager_;
 
   static void process_request(ras_request *req) {
@@ -29,8 +30,8 @@ class ras_monitor {
 
   bool ras_submit_timed_request(ras_request *req, int interval);
 
-  CommandHandler<ras_request>::command_status execute_request_by_monitor(
-      ras_request &req);
+  cognos::utils::CommandHandler<ras_request>::command_status
+  execute_request_by_monitor(ras_request &req);
 
   std::shared_ptr<ras_device_manager> get_device_manager(void) {
     return this->ras_device_manager_;
