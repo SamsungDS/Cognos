@@ -1,5 +1,6 @@
 set(RAS_MONITOR_UT "ras_monitor_ut")
 set(RAS_MONITOR_UT_SOURCES
+${CMAKE_SOURCE_DIR}/src/ras_request_handler.cc
 ${CMAKE_SOURCE_DIR}/src/ras_monitor.cc 
 ras_monitor_ut.cc
 )
@@ -11,6 +12,7 @@ target_link_libraries(
   ${RAS_MONITOR_UT}
   GTest::gtest_main
   rte_ring
+  nlohmann_json::nlohmann_json
 )
 
 include(GoogleTest)

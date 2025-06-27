@@ -9,6 +9,8 @@ else()
     message(FATAL_ERROR "Global cmake file missing")
 endif()
 
+include (${CMAKE_SOURCE_DIR}/cmake/nlohmann_json.cmake)
+
 option(BUILD_SHARED_LIBS "shared libs" OFF)
 option(BUILD_TESTING "Run unit tests" OFF)
 

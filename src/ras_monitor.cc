@@ -1,8 +1,24 @@
 #include "ras_monitor.h"
 
+#include "ras_command_handlers.hpp"
+
+std::unique_ptr<CommandHandler<ras_request>> get_ras_command_handler(void) {
+  auto rch = std::make_unique<CommandHandler<ras_request>>();
+  auto add_ras_device_handler =
+      std::make_unique<add_ras_monitor_for_device_handler>();
+
+  rch->register_command(std::move(add_ras_device_handler));
+
+  // Register new command handlers here.
+
+  return rch;
+}
+
 ras_monitor::ras_monitor(/* args */) {
   ras_monitor_ = std::make_unique<RequestProcessor<ras_request>>(
       ras_monitor::process_request);
+  ras_command_handlers_ = get_ras_command_handler();
+  ras_device_manager_ = std::make_shared<ras_device_manager>();
 }
 
 ras_monitor::~ras_monitor() {}
@@ -12,8 +28,9 @@ void ras_monitor::set_sync_request_completed(ras_request *req) {
   req->is_completed = true;
 }
 void ras_monitor::process_request_sync(ras_request *req) {
-  // TODO
-
+  if (req->is_internal_request == false) {
+    req->execute_feature_command();
+  }
   set_sync_request_completed(req);
 
   req->sync_cv.notify_one();
@@ -22,7 +39,7 @@ void ras_monitor::process_request_sync(ras_request *req) {
 
 bool ras_monitor::ras_submit_request(ras_request *req) {
   if (req != nullptr) {
-    ras_monitor_->submitRequest(req);
+    this->ras_monitor_->submitRequest(req);
     if (req->is_sync_request) {
       std::unique_lock<std::mutex> lock(req->sync_mutex);
       req->sync_cv.wait(lock, [req] { return req->is_completed; });
@@ -49,4 +66,25 @@ bool ras_monitor::ras_submit_timed_request(ras_request *req, int interval) {
   std::thread(call_ras_submit_request, req, this, interval, std::ref(ret))
       .detach();
   return tcall;
+}
+
+CommandHandler<ras_request>::command_status
+ras_monitor::execute_request_by_monitor(ras_request &req) {
+  return this->ras_command_handlers_->execute_command(req.command, req);
+}
+
+void execute_request_by_monitor_(ras_request &req) {
+  if (auto status = req.monitor_instance->execute_request_by_monitor(req);
+      status ==
+      CommandHandler<ras_request>::command_status::COMMAND_UNSUPPORTED) {
+    req.mark_request_failed(RAS_RESULT_MESSAGE_STR_CMD_UNSUPPORTED);
+  }
+  // Other cases should be handled by validator/executor and mark the result
+  // appropriately
+  return;
+}
+
+std::shared_ptr<ras_device_manager> ras_monitor_get_device_manager(
+    ras_monitor *m) {
+  return m->get_device_manager();
 }

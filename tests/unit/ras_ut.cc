@@ -147,18 +147,248 @@ TEST_F(ConfigUnitTest, SVKLicense) {
   unlink("conf.json");
 }
 
-TEST_F(ConfigUnitTest, SVKEXEC) {
+TEST_F(ConfigUnitTest, SVKEXECInvalidInputPointer) {
+  setenv("SVK_RAS_CONFIG", "conf.json", true);
+  initialize(nullptr);
+  svk_pass_thru_cmd pass_thru;
+  pass_thru.feat_id = ZERO_ETL;
+  svk_input *input = nullptr;
+  svk_output output;
+  output.output_buffer = (uint8_t *)calloc(1, 128);
+  output.len = 128;
+  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, input, &output));
+  clean_up(nullptr);
+  unlink("conf.json");
+}
+
+TEST_F(ConfigUnitTest, SVKEXECInvalidOutputPointer) {
   setenv("SVK_RAS_CONFIG", "conf.json", true);
   initialize(nullptr);
   svk_pass_thru_cmd pass_thru;
   pass_thru.feat_id = ZERO_ETL;
   svk_input input;
-  std::string input_str = "Passing a RAS string";
+  input.input_buffer = (uint8_t *)"dummy";  // Invalid input buffer
+  input.len = 5;
+  svk_output *output = nullptr;
+  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, output));
+  clean_up(nullptr);
+  unlink("conf.json");
+}
+
+TEST_F(ConfigUnitTest, SVKEXECInvalidInputBuffer) {
+  setenv("SVK_RAS_CONFIG", "conf.json", true);
+  initialize(nullptr);
+  svk_pass_thru_cmd pass_thru;
+  pass_thru.feat_id = ZERO_ETL;
+  svk_input input;
+  input.input_buffer = nullptr;  // Invalid input buffer
+  input.len = 0;
+  svk_output output;
+  output.output_buffer = (uint8_t *)calloc(1, 128);
+  output.len = 128;
+  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
+  clean_up(nullptr);
+  unlink("conf.json");
+}
+
+TEST_F(ConfigUnitTest, SVKEXECNullOutputBuffer) {
+  setenv("SVK_RAS_CONFIG", "conf.json", true);
+  initialize(nullptr);
+  svk_pass_thru_cmd pass_thru;
+  pass_thru.feat_id = ZERO_ETL;
+  svk_input input;
+  std::string input_str = R"(
+    {
+      "command" : "add_reliability_monitoring_for_device",
+      "command_params" : {
+        "device" : "dev123",
+        "device_numa" : 0,
+        "configure_options" : {
+          "error_count_threshold" : 500
+        },
+        "test_param1" : "value1"
+      }
+    }
+  )";
   input.input_buffer = (uint8_t *)input_str.c_str();
   input.len = input_str.length();
   svk_output output;
-  output.output_buffer = (uint8_t *)malloc(128);
+  output.output_buffer = nullptr;  // Null output buffer
+  output.len = 0;
+  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
+  clean_up(nullptr);
+  unlink("conf.json");
+}
+
+TEST_F(ConfigUnitTest, SVKEXECINvalidInputLen) {
+  setenv("SVK_RAS_CONFIG", "conf.json", true);
+  initialize(nullptr);
+  svk_pass_thru_cmd pass_thru;
+  pass_thru.feat_id = ZERO_ETL;
+  svk_input input;
+  std::string input_str = R"(
+    {
+      "command" : "add_reliability_monitoring_for_device",
+      "command_params" : {
+        "device" : "dev123",
+        "device_numa" : 0,
+        "configure_options" : {
+          "error_count_threshold" : 500
+        },
+        "test_param1" : "value1"
+      }
+    }
+  )";
+  input.input_buffer = (uint8_t *)input_str.c_str();
+  input.len = input_str.length() - 1;
+  svk_output output;
+  output.output_buffer = nullptr;  // Null output buffer
+  output.len = 0;
+  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
+  clean_up(nullptr);
+  unlink("conf.json");
+}
+
+TEST_F(ConfigUnitTest, SVKEXECInvalidCommand) {
+  setenv("SVK_RAS_CONFIG", "conf.json", true);
+  initialize(nullptr);
+  svk_pass_thru_cmd pass_thru;
+  pass_thru.feat_id = ZERO_ETL;
+  svk_input input;
+  std::string input_str = R"(
+    {
+      "invalid_command" : "add_reliability_monitoring_for_device",
+      "command_params" : {
+        "device" : "dev123",
+        "device_numa" : 0,
+        "configure_options" : {
+          "error_count_threshold" : 500
+        },
+        "test_param1" : "value1"
+      }
+    }
+  )";
+  input.input_buffer = (uint8_t *)input_str.c_str();
+  input.len = input_str.length();
+  svk_output output;
+  output.output_buffer = (uint8_t *)calloc(1, 128);
   output.len = 128;
+  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
+  clean_up(nullptr);
+  unlink("conf.json");
+}
+
+TEST_F(ConfigUnitTest, SVKEXECMissingCommandParams) {
+  setenv("SVK_RAS_CONFIG", "conf.json", true);
+  initialize(nullptr);
+  svk_pass_thru_cmd pass_thru;
+  pass_thru.feat_id = ZERO_ETL;
+  svk_input input;
+  std::string input_str = R"(
+    {
+      "command" : "add_reliability_monitoring_for_device"
+    }
+  )";
+  input.input_buffer = (uint8_t *)input_str.c_str();
+  input.len = input_str.length();
+  svk_output output;
+  output.output_buffer = (uint8_t *)calloc(1, 128);
+  output.len = 128;
+  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
+  clean_up(nullptr);
+  unlink("conf.json");
+}
+
+TEST_F(ConfigUnitTest, SVKEXECInvalidJSONInput) {
+  setenv("SVK_RAS_CONFIG", "conf.json", true);
+  initialize(nullptr);
+  svk_pass_thru_cmd pass_thru;
+  pass_thru.feat_id = ZERO_ETL;
+  svk_input input;
+  std::string input_str = R"(
+    {
+      "invalid json"
+  )";
+  input.input_buffer = (uint8_t *)input_str.c_str();
+  input.len = input_str.length();
+  svk_output output;
+  output.output_buffer = (uint8_t *)calloc(1, 128);
+  output.len = 128;
+  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
+  clean_up(nullptr);
+  unlink("conf.json");
+}
+
+TEST_F(ConfigUnitTest, SVKEXECInsufficentOutputBufferLen) {
+  setenv("SVK_RAS_CONFIG", "conf.json", true);
+  initialize(nullptr);
+  svk_pass_thru_cmd pass_thru;
+  pass_thru.feat_id = ZERO_ETL;
+  svk_input input;
+  std::string input_str = R"(
+    {
+      "command" : "add_reliability_monitoring_for_device",
+      "command_params" : {
+        "device" : "dev123",
+        "device_numa" : 0,
+        "configure_options" : {
+          "error_count_threshold" : 500
+        },
+        "test_param1" : "value1"
+      }
+    }
+  )";
+  input.input_buffer = (uint8_t *)input_str.c_str();
+  input.len = input_str.length();
+  svk_output output;
+  output.output_buffer = (uint8_t *)calloc(1, 8);
+  output.len = 8;
+  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
+  sleep(WAIT_FOR_FLUSH);
+  std::ifstream logFile(RAS_LOG);
+  std::string logs((std::istreambuf_iterator<char>(logFile)),
+                   (std::istreambuf_iterator<char>()));
+  logFile.close();
+  EXPECT_NE(std::string::npos,
+            logs.find("[ras] [info] ras execute_sync called."));
+  EXPECT_NE(std::string::npos, logs.find("output buffer:"));
+  clean_up(nullptr);
+  unlink("conf.json");
+}
+
+TEST_F(ConfigUnitTest, SVKEXECAddDevice) {
+  setenv("SVK_RAS_CONFIG", "conf.json", true);
+  initialize(nullptr);
+  svk_pass_thru_cmd pass_thru;
+  pass_thru.feat_id = ZERO_ETL;
+  svk_input input;
+  std::string input_str = R"(
+    {
+      "command" : "add_reliability_monitoring_for_device",
+      "command_params" : {
+        "device" : "dev123",
+        "device_numa" : 0,
+        "configure_options" : {
+          "error_count_threshold" : 500
+        },
+        "test_param1" : "value1"
+      }
+    }
+  )";
+  input.input_buffer = (uint8_t *)input_str.c_str();
+  input.len = input_str.length();
+  svk_output output;
+  output.output_buffer = (uint8_t *)calloc(1, 512);
+  output.len = 512;
   EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_SUCCESS, execute_sync(&pass_thru, &input, &output));
   sleep(WAIT_FOR_FLUSH);
@@ -168,7 +398,6 @@ TEST_F(ConfigUnitTest, SVKEXEC) {
   logFile.close();
   EXPECT_NE(std::string::npos,
             logs.find("[ras] [info] ras execute_sync called."));
-  EXPECT_NE(std::string::npos, logs.find("input buffer: Passing a RAS string"));
   EXPECT_NE(std::string::npos, logs.find("output buffer:"));
   clean_up(nullptr);
   unlink("conf.json");

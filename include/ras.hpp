@@ -13,6 +13,7 @@
 #include "framework_downstream.h"
 #include "ras_exports.h"
 #include "svk_logger.hpp"
+#include "utils/logic_module_manager.hpp"
 
 #define RAS_LOG "ras_internal.log"
 
