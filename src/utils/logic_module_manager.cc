@@ -9,7 +9,7 @@
 logic_module_name logic_module_manager::load_logic_module(
     const std::string &logic_module_location, const std::string &feature_name) {
   std::stringstream logger_ss;
-
+  std::scoped_lock lk(modules_manager_lock);
   std::unique_ptr<logic_module_manager::logic_module_context> module_context =
       std::make_unique<logic_module_manager::logic_module_context>();
   void *handle = dlopen(logic_module_location.c_str(), RTLD_LAZY);
@@ -91,6 +91,7 @@ logic_module_name logic_module_manager::load_logic_module(
 
 void logic_module_manager::unload_logic_module(
     const std::string &logic_module_name) {
+  std::scoped_lock lk(modules_manager_lock);
   auto it = this->logic_modules_map.find(logic_module_name);
   if (it != this->logic_modules_map.end()) {
     // Remove the module from the map
