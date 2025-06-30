@@ -250,7 +250,7 @@ def test_main_valid_zeromq_subscription(
         "publisher_port": 5555,
         "publisher_topic": "topic",
         "interval": 5,
-        "cluster_id": "cluster123",
+        "cluster_id": ["cluster123"],
     }
     # Call the main function with config_file argument
     main(config_file="test_config.json")
@@ -356,7 +356,7 @@ def test_main_non_mock_mode(
         "publisher_port": 5555,
         "publisher_topic": "topic",
         "interval": 5,
-        "cluster_id": "cluster123",
+        "cluster_id": ["cluster123"],
     }
     # Run the main function with the mock config file
     main(config_file="test_config.json")

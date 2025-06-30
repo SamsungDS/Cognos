@@ -1,5 +1,6 @@
 import json
 import pytest
+import socket
 import sqlparse
 
 from requests.models import Response
@@ -8,6 +9,7 @@ from cognos.backend.test.data_constants import (
     DUMMY_REMOTE_LIST_DEVICES_OUTPUT,
     DUMMY_DEVICE_DIRECT_INFO
 )
+import cognos.backend.helper as helper
 
 
 def test_cognos_init(mocker):
@@ -61,6 +63,9 @@ def test_initialize_connections(mocker):
         return_value=DUMMY_REMOTE_LIST_DEVICES_OUTPUT
     )
     cognos = Cognos(mock=True)
+    cognos.cognos_system = {
+        "CL_ID_1": {"node1": [12345]}
+    }
     cognos._initialize_connections()
 
 
@@ -143,8 +148,41 @@ def test_intialize_host_devices_with_direct_devices(mocker):
         ]
     )
 
+    # test with no alias hostname
+    mocker.patch(
+        "socket.gethostbyaddr",
+        reutrn_value=('msl-ssg-vmxx.msl.lab', None, ['xxx.xxx.xx.xx'])
+    )
     cognos = Cognos(mock=True)
     cognos._initialize_hosts_devices()
+    del cognos
+
+    # test with alias hostname
+    mocker.patch(
+        "socket.gethostbyaddr",
+        reutrn_value=('msl-ssg-vmxx.msl.lab', ['msl-ssg-vmxx'], ['x.x.xx.xx'])
+    )
+    cognos = Cognos(mock=True)
+    cognos._initialize_hosts_devices()
+    del cognos
+
+    # test with no hostname but ip_addr
+    mocker.patch(
+        "socket.gethostbyaddr",
+        reutrn_value=(None, None, ['xxx.xxx.xx.xx'])
+    )
+    cognos = Cognos(mock=True)
+    cognos._initialize_hosts_devices()
+    del cognos
+
+    # test with no hostname or ip_addr
+    mocker.patch(
+        "socket.gethostbyaddr",
+        reutrn_value=(None, None, None)
+    )
+    cognos = Cognos(mock=True)
+    cognos._initialize_hosts_devices()
+    del cognos
 
 
 def test_initialize_host_devices(mocker):
@@ -214,8 +252,41 @@ def test_initialize_host_devices(mocker):
         ]
     )
 
+    # test with no alias hostname
+    mocker.patch(
+        "socket.gethostbyaddr",
+        reutrn_value=('msl-ssg-vmxx.msl.lab', None, ['xxx.xxx.xx.xx'])
+    )
     cognos = Cognos(mock=True)
     cognos._initialize_hosts_devices()
+    del cognos
+
+    # test with alias hostname
+    mocker.patch(
+        "socket.gethostbyaddr",
+        reutrn_value=('msl-ssg-vmxx.msl.lab', ['msl-ssg-vmxx'], ['x.x.xx.xx'])
+    )
+    cognos = Cognos(mock=True)
+    cognos._initialize_hosts_devices()
+    del cognos
+
+    # test with no hostname but ip_addr
+    mocker.patch(
+        "socket.gethostbyaddr",
+        reutrn_value=(None, None, ['xxx.xxx.xx.xx'])
+    )
+    cognos = Cognos(mock=True)
+    cognos._initialize_hosts_devices()
+    del cognos
+
+    # test with no hostname or ip_addr
+    mocker.patch(
+        "socket.gethostbyaddr",
+        reutrn_value=(None, None, None)
+    )
+    cognos = Cognos(mock=True)
+    cognos._initialize_hosts_devices()
+    del cognos
 
 
 def test_fetch_topology(mocker):
@@ -556,3 +627,30 @@ def test_get_metrics(test_client, mocker):
         "/metrics",
         json=dummy_metrics_request_args
     )
+
+
+# TODO: resolve sonar cloud issue in pipeline for not counting request context
+# def test_host_devices(mocker, test_client):
+#     mocker.patch(
+#         "flask.Request.get_json",
+#         return_value={}
+#     )
+#     input_host = "dummy_host"
+
+#     mocker.patch(
+#         'cognos.backend.sqlite_client.SqliteClient.exec_fetch_singlerecord_query',
+#         return_value="node1"
+#     )
+
+#     dummy_devices = [123, 5542342324, 10, 'CMM-D', 'direct', 'CMM-D.123']
+#     mocker.patch(
+#         'cognos.backend.sqlite_client.SqliteClient.exec_fetch_query',
+#         return_value=[dummy_devices]
+#     )
+
+#     mocker.patch(
+#         'cognos.backend.cognos_client.Cognos._initialize_cognos',
+#         return_value=True
+#     )
+#     cognos = Cognos(mock=True)
+#     cognos.host_devices(manual_call=True, input_host=input_host)

@@ -1,3 +1,4 @@
+import ipaddress
 import json
 import math
 import re
@@ -28,6 +29,42 @@ def is_hexadecimal(value: str) -> bool:
     if isinstance(value, str) and re.fullmatch(r"0x[0-9a-fA-F]+", value):
         return True
     return False
+
+
+def is_valid_ip_addr(ip: str) -> bool:
+    """
+    Validates if an ip addr is valid
+    """
+    try:
+        ipaddress.ip_address(ip)
+        return True
+    except ValueError:
+        return False
+
+
+def is_endpoint_reachable(ip_address, port, timeout=1) -> bool:
+    """
+    Validates if an endpoint is reachable
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    try:
+        s.connect((ip_address, port))
+        return True
+    except (socket.timeout, ConnectionRefusedError):
+        return False
+    finally:
+        s.close()
+
+
+def is_valid_device_type(type: str):
+    """
+    Checks if device is a valid Cognos Device Type
+    """
+    if type not in ['CMM-D', 'CMM-H']:
+        return False
+    else:
+        return True
 
 
 def create_empty_response() -> Response:
