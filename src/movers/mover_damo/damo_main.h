@@ -43,6 +43,10 @@ typedef struct damo_config_params
     string quota_time_ms;
     string quota_sz_bytes;
     string quota_rst_intr_ms;
+    string ap_nr_access_min;
+    string ap_age_min;
+    string quota_wt_nr_acc_permil;
+
 } damo_config_params;
   
 /**
