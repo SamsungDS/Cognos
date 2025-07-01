@@ -103,6 +103,12 @@ int read_damo_config_json(damo_config_params* damo_config_params_to_fill, int da
                 damo_action_node.get<std::string>("quota_sz_bytes", "50.000 GiB");
                 damo_config_params_to_fill->quota_rst_intr_ms =
                 damo_action_node.get<std::string>("quota_rst_intr_ms", "20 s");
+                damo_config_params_to_fill->ap_nr_access_min =
+                damo_action_node.get<std::string>("ap_nr_access_min", "50 %");
+                damo_config_params_to_fill->ap_age_min =
+                damo_action_node.get<std::string>("ap_age_min", "1000 ns");
+                damo_config_params_to_fill->quota_wt_nr_acc_permil =
+                damo_action_node.get<std::string>("quota_wt_nr_acc_permil", "100 %");
                 ret = 0;
         }
         catch (const std::exception& e)
@@ -449,10 +455,15 @@ damo_config_params damo_cfg_param)  // param in is from sla struct , should
                                 YAML::Node schemes = ops["schemes"];
                                 for (const auto& action : schemes)
                                 {
+                                        YAML::Node ap = action["access_pattern"];
+                                        ap["nr_accesses"]["min"] = damo_cfg_param.ap_nr_access_min;
+                                        ap["age"]["min"] = damo_cfg_param.ap_age_min;
                                         YAML::Node quotas = action["quotas"];
                                         quotas["time_ms"] = damo_cfg_param.quota_time_ms;
                                         quotas["sz_bytes"] = damo_cfg_param.quota_sz_bytes;
                                         quotas["reset_interval_ms"] = damo_cfg_param.quota_rst_intr_ms;
+                                        YAML::Node weights = quotas["weights"];
+                                        weights["nr_accesses_permil"] = damo_cfg_param.quota_wt_nr_acc_permil;
                                 }
                         }
                 }
