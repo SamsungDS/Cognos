@@ -24,6 +24,22 @@ struct ras_device {
   uint64_t monitor_interval;  // Monitoring interval for the device
   std::string adapter_name;   // RAS Adapter associated with the device
   int64_t numa_node;
+  ras_device(std::string name_, std::string type_, bool ect_valid_,
+             uint64_t ect_error_count_threshold_, bool twt_valid_,
+             uint64_t twt_error_count_, uint64_t twt_time_window_,
+             uint64_t monitor_interval_, std::string adapter_name_,
+             int64_t numa_node_) {
+    name = name_;
+    type = type_;
+    ect.valid = ect_valid_;
+    ect.error_count_threshold = ect_error_count_threshold_;
+    twt.valid = twt_valid_;
+    twt.error_count = twt_error_count_;
+    twt.time_window = twt_time_window_;
+    monitor_interval = monitor_interval_;
+    adapter_name = adapter_name_;
+    numa_node = numa_node_;
+  }
 };
 
 using device_unique_identifier = std::string;
@@ -75,6 +91,20 @@ class ras_device_manager {
     }
     // If the insertion succeeded, return true to indicate success.
     return true;
+  }
+
+  bool try_remove_device(device_unique_identifier device_unique_id) {
+    //                       std::unique_ptr<ras_device> device) {
+    // Acquire a scoped lock to ensure exclusive access to the device manager.
+    std::scoped_lock lk{device_manager_lock};
+
+    // Attempt to remove the device from the map.
+    auto num_rem = this->devices.erase(device_unique_id);
+
+    if ((num_rem == 0) || (num_rem == 1))
+      return true;
+    else
+      return false;
   }
 };
 

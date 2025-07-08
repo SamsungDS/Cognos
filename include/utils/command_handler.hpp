@@ -1,7 +1,11 @@
 #ifndef _COMMAND_HANDLER__HPP_
 #define _COMMAND_HANDLER__HPP_
 
+#include <string>
 #include <unordered_map>
+
+#include "ras_device.h"
+#include "ras_request.h"
 
 /**
  * @brief Abstract base class for command handlers.

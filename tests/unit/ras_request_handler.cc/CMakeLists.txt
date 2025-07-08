@@ -1,5 +1,6 @@
 set(RAS_REQ_HANDLER_UT "ras_req_handler_ut")
 set(RAS_REQ_HANDLER_UT_SOURCES
+${CMAKE_SOURCE_DIR}/src/utils/ras_json_validate.cpp
 ${CMAKE_SOURCE_DIR}/src/ras_request_handler.cc
 ${CMAKE_SOURCE_DIR}/src/ras_monitor.cc 
 ras_req_handler_ut.cc

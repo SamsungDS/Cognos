@@ -2,11 +2,12 @@
 #define _RAS_ADD_DEVICE_HANDLER__HPP_
 
 #include <iostream>
-#include <string>
+#include <memory>
 
 #include "ras_device.h"
 #include "ras_request.h"
 #include "utils/command_handler.hpp"
+#include "utils/ras_json_validate.hpp"
 
 /**
  * @class add_ras_monitor_for_device_handler
@@ -22,18 +23,12 @@ class add_ras_monitor_for_device_handler
    * @return True if the request is valid, false otherwise.
    */
   bool validate(ras_request& r) {
-    // Get the parameters from the request
-    json& params = r.command_obj[RAS_COMMAND_PARAMS_STR];
-
-    // Iterate over the required parameters
-    for (auto required_param : this->required_params) {
-      // Validate each required parameter
-      auto valid = this->validate_nested_json(params, required_param);
-      if (!valid) {
-        // Mark the request as invalid if any parameter is missing
-        r.mark_request_failed(RAS_RESULT_MESSAGE_STR_CMD_PARAMS_INVALID);
-        return false;
-      }
+    // Calling validate_json_request
+    bool ret = validate_ras_json_request(r.command_obj[RAS_COMMAND_PARAMS_STR],
+                                         required_params);
+    if (ret == false) {
+      r.mark_request_failed(RAS_RESULT_MESSAGE_STR_CMD_PARAMS_INVALID);
+      return false;
     }
     return true;
   }
@@ -56,31 +51,13 @@ class add_ras_monitor_for_device_handler
     }
 
     // Create a new device instance
-    auto dev = std::make_unique<ras_device>();
-
-    // TODO: This needs to be detected from loaded adapters
-    // Set the adapter name (currently hardcoded to "mock")
-    dev->adapter_name = "mock";
-
-    // Set the device name from the request
-    dev->name = r.command_obj[RAS_COMMAND_PARAMS_STR][RAS_COMMAND_DEVICE_STR];
-
-    // Set the NUMA node from the request
-    dev->numa_node =
-        r.command_obj[RAS_COMMAND_PARAMS_STR][RAS_COMMAND_DEVICE_NUMA_STR];
-
-    // Initialize the error count threshold
-    dev->ect.valid = true;
-    dev->ect.error_count_threshold =
+    std::unique_ptr<ras_device> dev = std::make_unique<ras_device>(
+        r.command_obj[RAS_COMMAND_PARAMS_STR][RAS_COMMAND_DEVICE_STR], "", true,
         r.command_obj[RAS_COMMAND_PARAMS_STR]
                      [RAS_COMMAND_PARAMS_CONFIGURE_OPTIONS_STR]
-                     [RAS_COMMAND_PARAMS_ERROR_COUNT_THRESHOLD];
-
-    // Initialize the time window threshold (currently not valid)
-    dev->twt.valid = false;
-
-    // Set the monitor interval (currently set to default)
-    dev->monitor_interval = RAS_DEVICE_DEFAULT_MONITOR_INTERVAL;
+                     [RAS_COMMAND_PARAMS_ERROR_COUNT_THRESHOLD],
+        false, 0, 0, RAS_DEVICE_DEFAULT_MONITOR_INTERVAL, "mock",
+        r.command_obj[RAS_COMMAND_PARAMS_STR][RAS_COMMAND_DEVICE_NUMA_STR]);
 
     // Attempt to add the device to the device manager
     r.is_successfull =
@@ -121,43 +98,6 @@ class add_ras_monitor_for_device_handler
    * @brief The command handled by this class.
    */
   std::string command = "add_reliability_monitoring_for_device";
-
-  /**
-   * @brief Validates a nested JSON object.
-   *
-   * @param obj The JSON object to be validated.
-   * @param dot_seperated_key_hierarchy The dot-separated key hierarchy.
-   * @return True if the JSON object is valid, false otherwise.
-   */
-  bool validate_nested_json(json& obj,
-                            std::string dot_seperated_key_hierarchy) {
-    char delimter = '.';
-    // Find the delimiter in the key hierarchy
-    size_t delim_pos = dot_seperated_key_hierarchy.find(delimter);
-
-    // If the delimiter is found, recursively validate the nested JSON
-    if (delim_pos != std::string::npos) {
-      std::string key = dot_seperated_key_hierarchy.substr(0, delim_pos);
-      std::string str_to_process =
-          dot_seperated_key_hierarchy.substr(delim_pos + 1);
-
-      // If the key exists in the JSON object, recursively validate the nested
-      // JSON
-      if (obj.contains(key)) {
-        return validate_nested_json(obj[key], str_to_process);
-      } else {
-        // Return false if the key does not exist
-        return false;
-      }
-    } else {
-      // If the delimiter is not found, check if the key exists in the JSON
-      // object
-      if (obj.contains(dot_seperated_key_hierarchy)) {
-        return true;
-      } else {
-        return false;
-      }
-    }
-  }
 };
+
 #endif  // _RAS_ADD_DEVICE_HANDLER__HPP_

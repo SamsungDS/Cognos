@@ -1,5 +1,6 @@
 set(RAS_MONITOR_UT "ras_monitor_ut")
 set(RAS_MONITOR_UT_SOURCES
+${CMAKE_SOURCE_DIR}/src/utils/ras_json_validate.cpp
 ${CMAKE_SOURCE_DIR}/src/ras_request_handler.cc
 ${CMAKE_SOURCE_DIR}/src/ras_monitor.cc 
 ras_monitor_ut.cc
