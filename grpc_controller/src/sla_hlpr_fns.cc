@@ -297,7 +297,25 @@ int SLADeviceHelper::GetDeviceDetails(std::string node_name, std::string port) {
                  logger_str.c_str());
       return status;
     }
-    this->m_device_info.push_back(dev_info);
+    bool duplicate_device = false;
+    for (size_t i = 0; i < this->m_device_info.size(); i++) {
+      DeviceInfo d = this->m_device_info[i];
+      if (dev_info.device_id == d.device_id && node_name == d.node_name) {
+        this->m_device_info[i] = dev_info;
+        logger_str = "Device id <" + std::to_string(device_id) +
+                     "> has already been added to controller for tracking, "
+                     "replacing the device info.";
+        duplicate_device = true;
+        break;
+      }
+    }
+    if (!duplicate_device) {
+      logger_str = "Device id <" + std::to_string(device_id) +
+                   "> added to controller for tracking.";
+      this->m_device_info.push_back(dev_info);
+    }
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
   }
 
   logger_str = "Successfully populated the devices for the node " + node_name;

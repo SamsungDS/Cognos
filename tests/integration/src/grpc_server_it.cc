@@ -1319,6 +1319,68 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForTMOperation) {
   unlink(conf_file.c_str());
 }
 
+TEST(InitIntegrationTest, ControllerNodeDuplicateDevices) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  ControllerServicer *c_svcr(new ControllerServicer(conf_file));
+  auto c_server = InitializeServicer(c_svcr);
+  ASSERT_NE(c_server, nullptr);
+  EXPECT_TRUE(c_svcr->get_state() == true);
+
+  Servicer *n_svcr(new FakeNodeServicerForTM(conf_file));
+  if (n_svcr->get_state() == false) {
+    std::cout << "Node Servicer is not initialized properly. Exiting"
+              << std::endl;
+    return;
+  }
+  auto n_server = InitializeNodeServicer(n_svcr);
+  ASSERT_NE(n_server, nullptr);
+
+  // delete c_svcr;
+  delete n_svcr;
+
+  Servicer *n_svcr2(new FakeNodeServicerForTM(conf_file));
+  if (n_svcr2->get_state() == false) {
+    std::cout << "Node Servicer is not initialized properly. Exiting"
+              << std::endl;
+    return;
+  }
+  auto n_server2 = InitializeNodeServicer(n_svcr2);
+  ASSERT_NE(n_server2, nullptr);
+
+  delete c_svcr;
+  delete n_svcr2;
+
+  std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  std::string filedata((std::istreambuf_iterator<char>(file)),
+                       (std::istreambuf_iterator<char>()));
+  file.close();
+  EXPECT_EQ(
+      true,
+      filedata.find(
+          "Device id <29690035288064> added to controller for tracking.") !=
+          std::string::npos);
+  EXPECT_EQ(
+      true,
+      filedata.find(
+          "Device id <30690035288064> added to controller for tracking.") !=
+          std::string::npos);
+  EXPECT_EQ(true, filedata.find(
+                      "Device id <29690035288064> has already been added to "
+                      "controller for tracking, replacing the device info.") !=
+                      std::string::npos);
+  EXPECT_EQ(true, filedata.find(
+                      "Device id <30690035288064> has already been added to "
+                      "controller for tracking, replacing the device info.") !=
+                      std::string::npos);
+  unlink(conf_file.c_str());
+}
+
 class FakeNodeServicerWithoutCXLDevices : public Servicer {
  public:
   FakeNodeServicerWithoutCXLDevices(std::string conf_file)
