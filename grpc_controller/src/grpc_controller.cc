@@ -734,7 +734,7 @@ Status ControllerServicer::ProcessControllerCommand(
     req_node.set_command_params(req->command_params());
     Client client(itr->first, m_cluster_map[req->cluster_id()][itr->first]);
     status = client.ProcessNodeCommand(&req_node, &resp_node);
-    if (status.ok() == true) {
+    if (status.ok() == true && resp_node.node_responses_size()) {
       CommandResponse_NodeResponse *response = resp->add_node_responses();
       response->set_output(resp_node.node_responses(0).output());
       response->set_node_id(resp_node.node_responses(0).node_id());
