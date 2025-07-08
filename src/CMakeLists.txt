@@ -1,4 +1,5 @@
 set(RAS_SRC
+  ${CMAKE_SOURCE_DIR}/src/utils/ras_json_validate.cpp
   ${CMAKE_SOURCE_DIR}/src/utils/logic_module_manager.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/ras_request_handler.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/ras_monitor.cc

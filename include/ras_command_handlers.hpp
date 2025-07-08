@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "command_handlers/ras_add_device_handler.hpp"
-#include "utils/command_handler.hpp"
+#include "command_handlers/ras_remove_device_handler.hpp"
 
 std::unique_ptr<CommandHandler<ras_request>> get_ras_command_handler(void);
 

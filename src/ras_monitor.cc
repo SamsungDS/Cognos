@@ -1,16 +1,24 @@
 #include "ras_monitor.h"
 
+#include <memory>
+
 #include "ras_command_handlers.hpp"
+#include "utils/ras_json_validate.hpp"
 
 std::unique_ptr<CommandHandler<ras_request>> get_ras_command_handler(void) {
-  auto rch = std::make_unique<CommandHandler<ras_request>>();
-  auto add_ras_device_handler =
-      std::make_unique<add_ras_monitor_for_device_handler>();
+  std::unique_ptr<CommandHandler<ras_request>> rch = nullptr;
+  rch = std::make_unique<CommandHandler<ras_request>>();
 
-  rch->register_command(std::move(add_ras_device_handler));
+  if (rch) {
+    auto add_ras_device_handler =
+        std::make_unique<add_ras_monitor_for_device_handler>();
+    rch->register_command(std::move(add_ras_device_handler));
 
-  // Register new command handlers here.
-
+    auto remove_ras_device_handler =
+        std::make_unique<remove_ras_monitor_for_device_handler>();
+    rch->register_command(std::move(remove_ras_device_handler));
+    // Register new command handlers here.
+  }
   return rch;
 }
 
