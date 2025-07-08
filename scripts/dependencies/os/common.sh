@@ -4,17 +4,22 @@ set -e
 # Path variables
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 REQUIREMENTS=$(realpath "$SCRIPT_DIR/../python/requirements.txt")
+VENV_DIR=/usr/local/svk/mgmt/venv
 
-# Install python3 pip
-UBUNTU_VER=${VERSION_ID%%.*}
-if [ "$UBUNTU_VER" == "24" ]; then
-    # PEP 668 - workaround
-    # This is not required for the Ubuntu 24 as the pip is installed as the deb package
-    # python3 -m pip install --break-system-packages --upgrade pip
-    echo ""
+# Create python venv if it does not exist
+if [[ ! -d $VENV_DIR ]]; then
+    echo "Creating Python virtual environment at $VENV_DIR"
+    virtualenv $VENV_DIR
 else
-    python3 -m pip install --upgrade pip
+    echo "Python virtual environment already exists at $VENV_DIR"
 fi
+
+# Activate Python virtual environment
+# shellcheck disable=SC1091
+source "$VENV_DIR/bin/activate"
+
+# Ensure pip is latest
+python3 -m pip install --upgrade pip
 
 # Install python modules from requirements.txt
 PIP_ARGS=(
@@ -25,11 +30,7 @@ PIP_ARGS=(
 # Optimizations for Docker build
 if [[ $DOCKER ]]
 then
-    PIP_ARGS+=("--no-cache-dir")
-fi
-
-if [ "$UBUNTU_VER" == "24" ]; then
-    PIP_ARGS+=("--break-system-packages")
+    PIP_ARGS+=(--no-cache-dir)
 fi
 
 # Install python modules from requirements.txt via pip

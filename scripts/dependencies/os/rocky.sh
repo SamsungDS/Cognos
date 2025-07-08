@@ -3,7 +3,17 @@ set -e
 
 # Build Dependencies
 install_build_deps() {
-    BUILD_DEPS=('epel-release')
+    BUILD_DEPS=(
+        'dnf'
+        'epel-release'
+    )
+    package_manager
+    
+    # Enable CodeReady Builder (CRB) repository
+    BUILD_DEPS=("'dnf-command(config-manager)'")
+    package_manager
+    /usr/bin/crb enable
+
     package_manager
     BUILD_DEPS=(
         'boost-devel'
@@ -15,6 +25,7 @@ install_build_deps() {
         'net-tools'
         'python3.11'
         'python3-pip'
+        'python3-virtualenv'
         'rpmdevtools'
         'spdlog-devel'
         'tar'

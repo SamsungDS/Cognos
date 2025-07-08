@@ -8,6 +8,7 @@ BUILD_DIR="$PROJECT_ROOT/build"
 ARTIFACTS_DIR="$BUILD_DIR/artifacts"
 REPORTS_DIR="$BUILD_DIR/reports"
 TESTS_DIR="$BUILD_DIR/tests"
+VENV_DIR=/usr/local/svk/mgmt/venv
 
 # Default build options
 CMAKE_OPTIONS=()
@@ -73,6 +74,17 @@ parse_options()
         ;;
     esac
     done
+}
+
+activate_venv() {
+    if [[ ! -d $VENV_DIR ]]; then
+        echo "Python virtual environment does not exist!"
+        echo "Execute dependency install script and try again: ./scripts/dependencies/install.sh"
+        exit 1
+    else
+        # shellcheck disable=SC1091
+        source "$VENV_DIR/bin/activate"
+    fi
 }
 
 get_os_version() {
@@ -249,6 +261,7 @@ build_deb() {
 parse_options "$@"
 get_os_version
 get_git_version
+activate_venv
 set_go_paths
 
 if $BUILD_RELEASE; then
