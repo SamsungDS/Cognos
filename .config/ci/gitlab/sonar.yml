@@ -3,19 +3,15 @@ sonar-scanner:
   image:
     name: $IMAGE_TAG
     pull_policy: always
-  before_script:
+  script:
       # Download sonar-scanner from SONAR_SCANNER_URL - Github-defined org var
       - export SONAR_SCANNER_FILENAME="${SONAR_SCANNER_URL##*/}"
       - wget --no-verbose --content-disposition -E -c "$SONAR_SCANNER_URL"
       # Get sonar-scanner root dir filename from printed contents of zip file
       - export SONAR_SCANNER_DIR=$(unzip -l "$SONAR_SCANNER_FILENAME" | awk '{print $4}' | grep '/' | cut -d '/' -f 1 | sort | uniq -c | sort -nr | head -n 1 | awk '{print $2}')
       - unzip -q "$SONAR_SCANNER_FILENAME" -d /
-      - rm -f "$SONAR_SCANNER_FILENAME"
-  script:
-    # Scan with sonar-scanner
-    # Uncomment below to scan once there is a real build
-    # - /"$SONAR_SCANNER_DIR"/bin/sonar-scanner -Dsonar.coverageReportPaths=$SONAR_COVERAGE_REPORT
-    echo "sonar-scanner command should run in this stage"
+      # Execute sonar-scanner and ingest coverage report      
+      - /"$SONAR_SCANNER_DIR"/bin/sonar-scanner -Dsonar.coverageReportPaths=$SONAR_COVERAGE_REPORT
   needs:
     - job: unit test
       parallel:

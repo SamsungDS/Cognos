@@ -4,7 +4,7 @@ set -e
 # Path variables
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 REQUIREMENTS=$(realpath "$SCRIPT_DIR/../python/requirements.txt")
-VENV_DIR=/usr/local/svk/template/venv
+VENV_DIR=/usr/local/svk/me/venv
 
 # Create python venv if it does not exist
 if [[ ! -d $VENV_DIR ]]; then
@@ -29,7 +29,7 @@ PIP_ARGS=(
 
 # Optimizations for Docker build - see scripts/docker/*.DOCKERFILE for $DOCKER var invocation
 if [[ $DOCKER ]]; then
-    PIP_ARGS+=(--no-cache-dir)
+    PIP_ARGS+=("--no-cache-dir")
 fi
 
 # Install python modules from requirements.txt via pip

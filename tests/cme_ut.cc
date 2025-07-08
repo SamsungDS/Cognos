@@ -239,7 +239,7 @@ TEST_F(cmeTest, CheckCmdMove) {
         int pid = getpid();
 
         // Check valid command mover_aggressiveness low
-        string command = " {\"command_name\": \"move\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"tm_attr\": \"MOVER_AGGRESSIVENESS_LOW\",\"slow_tier\": \"0\",\"fast_tier\": \"1\"}} ";
+        string command = " {\"command_name\": \"move\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"tm_attr\": \"MOVER_AGGRESSIVENESS_LOW\",\"slow_tier\": \"1\",\"fast_tier\": \"0\"}} ";
         EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
        
         // Check stop
@@ -257,7 +257,7 @@ TEST_F(cmeTest, CheckCmdMoveAggr) {
         int pid = getpid();
 
         // Check valid command mover_aggressiveness low
-        string command = " {\"command_name\": \"move\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"tm_attr\": \"MOVER_AGGRESSIVENESS_LOW\",\"slow_tier\": \"0\",\"fast_tier\": \"1\"}} ";
+        string command = " {\"command_name\": \"move\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"tm_attr\": \"MOVER_AGGRESSIVENESS_LOW\",\"slow_tier\": \"1\",\"fast_tier\": \"0\"}} ";
         EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
 
         // Check stop
@@ -265,7 +265,7 @@ TEST_F(cmeTest, CheckCmdMoveAggr) {
         EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
 
         // Check valid command, mover_aggressiveness high
-        command = " {\"command_name\": \"move\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"tm_attr\": \"MOVER_AGGRESSIVENESS_HIGH\",\"slow_tier\": \"0\",\"fast_tier\": \"1\"}} ";
+        command = " {\"command_name\": \"move\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"tm_attr\": \"MOVER_AGGRESSIVENESS_HIGH\",\"slow_tier\": \"1\",\"fast_tier\": \"0\"}} ";
         EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
 
         // Check stop
@@ -273,11 +273,11 @@ TEST_F(cmeTest, CheckCmdMoveAggr) {
         EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
 
         // Check valid command, mover_aggressiveness invalid
-        command = " {\"command_name\": \"move\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"tm_attr\": \"invalid_input\",\"slow_tier\": \"0\",\"fast_tier\": \"1\"}} ";
+        command = " {\"command_name\": \"move\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"tm_attr\": \"invalid_input\",\"slow_tier\": \"1\",\"fast_tier\": \"0\"}} ";
         EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(-EINVAL));
 
         // Check valid command, mover_aggressiveness invalid blank
-        command = " {\"command_name\": \"move\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"tm_attr\": \"\",\"slow_tier\": \"0\",\"fast_tier\": \"1\"}} ";
+        command = " {\"command_name\": \"move\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"tm_attr\": \"\",\"slow_tier\": \"1\",\"fast_tier\": \"0\"}} ";
         EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(-EINVAL));
        
         EXPECT_EQ(cme_global_obj.clean_up(), 0);
@@ -291,7 +291,7 @@ TEST_F(cmeTest, CheckCmdMoveHot) {
         int pid = getpid();
 
         // Check valid command
-        string command = " {\"command_name\": \"move_hot\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"tm_attr\": \"MOVER_AGGRESSIVENESS_LOW\",\"slow_tier\": \"0\",\"fast_tier\": \"1\"}} ";
+        string command = " {\"command_name\": \"move_hot\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"tm_attr\": \"MOVER_AGGRESSIVENESS_LOW\",\"slow_tier\": \"1\",\"fast_tier\": \"0\"}} ";
         EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
 
         // Check stop
@@ -309,7 +309,7 @@ TEST_F(cmeTest, CheckCmdMoveCold) {
         int pid = getpid();
 
         // Check valid command
-        string command = " {\"command_name\": \"move_cold\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"tm_attr\": \"MOVER_AGGRESSIVENESS_LOW\",\"slow_tier\": \"0\",\"fast_tier\": \"1\"}} ";
+        string command = " {\"command_name\": \"move_cold\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"tm_attr\": \"MOVER_AGGRESSIVENESS_LOW\",\"slow_tier\": \"1\",\"fast_tier\": \"0\"}} ";
         EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
 
         // Check stop
@@ -345,7 +345,7 @@ TEST_F(cmeTest, CheckCmdGetStats) {
         int pid = getpid();
 
         // Check valid command
-        string command = " {\"command_name\": \"move\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"tm_attr\": \"MOVER_AGGRESSIVENESS_LOW\",\"slow_tier\": \"0\",\"fast_tier\": \"1\"}} ";
+        string command = " {\"command_name\": \"move\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"tm_attr\": \"MOVER_AGGRESSIVENESS_LOW\",\"slow_tier\": \"1\",\"fast_tier\": \"0\"}} ";
         EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
        
         // Check get_stats
