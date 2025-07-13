@@ -4,5 +4,5 @@
   "publisher_port": 5555,
   "publisher_topic": "{TOPIC}",
   "interval": 5,
-  "cluster_id": "CL_ID_1"
+  "cluster_id": ["CL_ID_1"]
 }

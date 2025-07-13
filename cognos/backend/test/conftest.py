@@ -96,3 +96,13 @@ def test_client(mocker):
     )
     app = create_app(mock=True)
     return app
+
+
+@pytest.fixture
+def scmc_version_file():
+    root_dir = os.getcwd()
+    scmc_version_path = os.path.join(root_dir, 'SCMC_VERSION')
+    with open(scmc_version_path, 'w') as f:
+        pass  # Create the file
+    yield scmc_version_path
+    os.remove(scmc_version_path)

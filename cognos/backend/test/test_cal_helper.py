@@ -1,6 +1,7 @@
 import pytest
 import json
 import os
+import socket
 from pathlib import Path
 from unittest.mock import mock_open, patch
 import cognos.backend.helper as helper
@@ -64,6 +65,30 @@ def test_is_hexadecimal():
     assert helper.is_hexadecimal([]) is False
 
 
+def test_is_endpoint_reachable(mocker):
+    ip_addr = socket.gethostbyname(socket.gethostname())
+    assert not helper.is_endpoint_reachable(ip_addr, 4005)
+    mocker.patch(
+        "socket.socket.connect",
+        return_value=True
+    )
+    assert helper.is_endpoint_reachable(ip_addr, 4005)
+
+
+def test_is_valid_ip_addr():
+    ip_addr = socket.gethostbyname(socket.gethostname())
+    assert helper.is_valid_ip_addr(ip_addr)
+    invalid_ip = "321.12.12.1"
+    assert not helper.is_valid_ip_addr(invalid_ip)
+
+
+def test_is_valid_device_type():
+    dummy_valid_type = 'CMM-H'
+    dummy_invalid_type = 'CMMD'
+    assert helper.is_valid_device_type(dummy_valid_type)
+    assert not helper.is_valid_device_type(dummy_invalid_type)
+
+
 def test_fetch_cognos_configs():
     # Valid config file
     mock_config_data = (
@@ -95,10 +120,10 @@ def test_fetch_cal_api_version():
             helper.fetch_cal_api_version("/mock/parent_dir")
 
 
-def test_get_scmc_version_file():
-    scmc_version_file = helper.get_scmc_version_file()
-    assert scmc_version_file
-    assert scmc_version_file.split("/")[-1] == '.version'
+def test_get_scmc_version_file(scmc_version_file):
+    scmc_version_file_path = helper.get_scmc_version_file()
+    assert scmc_version_file_path == scmc_version_file
+    assert scmc_version_file_path.endswith('SCMC_VERSION')
 
 
 def test_mb_to_GB():

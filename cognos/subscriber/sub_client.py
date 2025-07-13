@@ -291,9 +291,12 @@ def main(config_file=None, mock_file=None):
         publisher_port = config["publisher_port"]
         publisher_topic = config["publisher_topic"]
         interval = config["interval"]
-        cluster_id = config["cluster_id"]
-        # Fetch node IDs from the controller
-        node_ids = get_node_ids(rest_ip, rest_port, cluster_id)
+        cluster_ids = config["cluster_id"]
+        node_ids = []
+        for cid in cluster_ids:
+            # Fetch node ID from the controller
+            node_ids.extend(get_node_ids(rest_ip, rest_port, cid))
+
         if not node_ids:
             print("No node IDs retrieved. Exiting.")
             sys.exit(1)
