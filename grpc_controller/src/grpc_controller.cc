@@ -7,7 +7,6 @@
 #include <thread>
 #include <zmq.hpp>
 
-#include "client_library.h"
 #include "sla_hlpr_fns.h"
 #include "svk_pub_sub_struct.h"
 #include "svk_zmq_api.h"
@@ -28,6 +27,11 @@ std::condition_variable gCondVar;
 
 const std::shared_ptr<SLADeviceHelper> g_sla_device_hlpr =
     std::make_shared<SLADeviceHelper>();
+
+std::unique_ptr<Client> CreateClient(const std::string &node_name,
+                                     const std::string &node_port) {
+  return std::make_unique<Client>(node_name, node_port);
+}
 
 int SendCommandToNodeInJSON(std::string node_name, std::string node_port,
                             svk::CommandRequest &req,

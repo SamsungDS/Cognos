@@ -45,11 +45,11 @@ target_link_libraries(${PROJECT_NAME} PUBLIC nlohmann_json::nlohmann_json)
 
 
 if(BUILD_TESTING)
-    add_library(svkgrpccontrollertest STATIC ${SRCS})
+    add_library(svkgrpccontrollertest SHARED ${SRCS})
     set_target_properties(svkgrpccontrollertest PROPERTIES COMPILE_DEFINITIONS "BUILD_TESTING")
     target_include_directories(svkgrpccontrollertest PUBLIC ${GRPC_PROTO_SRC})
     target_include_directories(svkgrpccontrollertest PUBLIC ${INC_DIR} ${COMMON_INC_DIR})
-
+    target_link_directories(${PROJECT_NAME} PUBLIC ${SVKFW_LIBRARY_DIRS})
     target_link_libraries(svkgrpccontrollertest PUBLIC "${GRPC_LINK_LIBRARIES_FLAG} ${SVK_FW_LIBS} -lutf8_validity -Wl,--no-as-needed -lgrpc++_reflection -Wl,--as-needed -ldl -lsvklogger")
     target_link_libraries(svkgrpccontrollertest PUBLIC ${SVK_FW_GRPC_CORE_LIB})
     target_link_libraries(svkgrpccontrollertest PUBLIC svkzmq)

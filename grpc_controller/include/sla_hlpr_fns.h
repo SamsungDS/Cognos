@@ -7,7 +7,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include "client_library.h"
 #include "framework/framework.grpc.pb.h"
 #include "framework_struct.h"
 #include "grpc_controller.h"

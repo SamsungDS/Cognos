@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 #include <unordered_map>
 
+#include "client_library.h"
 #include "framework/framework.grpc.pb.h"
 #include "framework_struct.h"
 #include "framework_upstream.h"
@@ -42,6 +43,9 @@ const std::map<std::string, std::string> command_name_to_desc = {
     {"delete_cluster", "Delete cluster"},
     {"add_node_to_cluster", "Add node to a cluster"},
     {"remove_node_from_cluster", "Remove node from a cluster"}};
+
+std::unique_ptr<Client> CreateClient(const std::string &node_name,
+                                     const std::string &node_port);
 
 using controller_config = struct grpc_controller_config {
   std::string controller_id;
