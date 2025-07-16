@@ -113,8 +113,8 @@ static int GetDeviceListFromCXLFeature(
   command_param["device_id"] = nlohmann::json::array();
   req_node.set_command_params(command_param.dump());
 
-  Client client(node_name, port);
-  cmd_status = client.ProcessNodeCommand(&req_node, &resp_node);
+  auto client = CreateClient(node_name, port);
+  cmd_status = client->ProcessNodeCommand(&req_node, &resp_node);
   if (cmd_status.ok() != true) {
     logger_str = "Got error for the command device_list " + node_name +
                  " with error:" + cmd_status.error_message();
@@ -211,8 +211,9 @@ static bool CheckIfCXLDeviceExistInNode(std::string node_name,
   req_node.set_feature_name(SVK_NODE_FEATURE_NAME);
   req_node.set_command_name("get_node_info");
   req_node.set_command_params("{\"info_type\":\"pci\"}");
-  Client client(node_name, port);
-  cmd_status = client.ProcessNodeCommand(&req_node, &resp_node);
+  auto client = CreateClient(node_name, port);
+  // Client client(node_name, port);
+  cmd_status = client->ProcessNodeCommand(&req_node, &resp_node);
   if (cmd_status.ok() != true) {
     logger_str = "Got error for the command get_node_info " + node_name +
                  " with error:" + cmd_status.error_message();
