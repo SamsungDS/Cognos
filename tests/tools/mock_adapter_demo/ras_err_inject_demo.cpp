@@ -18,6 +18,7 @@ enum cl_error {
   INVALID_COMMAND,
   NON_NUMERIC_NUMA_ID,
   INVALID_POLLING_INTERVAL,
+  INVALID_FP,
   CL_END
 };
 
@@ -95,9 +96,12 @@ int main(int argc, char* argv[]) {
   Response res;
 
   // Disable syslog output during startup
-  freopen("/dev/null", "a", stdout);
+  FILE* fp = freopen("/dev/null", "a", stdout);
+  if (fp == nullptr) return INVALID_FP;
+
   ret = startup(CFG);
-  freopen("/dev/tty", "a", stdout);
+  fp = freopen("/dev/tty", "a", stdout);
+  if (fp == nullptr) return INVALID_FP;
 
   chrono::duration<int> interv(interval);
   int num_nodes = 0;
