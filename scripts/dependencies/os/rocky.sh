@@ -29,6 +29,8 @@ install_packages() {
         rapidjson-devel
         numactl-devel
         rasdaemon
+        flex
+        bison
     )
     package_manager
 }
