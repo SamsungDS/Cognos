@@ -6,7 +6,6 @@
 
 #include "libmock.h"
 
-#define CFG "config/mock_config.json"
 #define LOW_POLL 15
 #define HIGH_POLL 120
 #define CRITICAL_ERROR_COUNT 25
@@ -99,7 +98,7 @@ int main(int argc, char* argv[]) {
   FILE* fp = freopen("/dev/null", "a", stdout);
   if (fp == nullptr) return INVALID_FP;
 
-  ret = startup(CFG);
+  ret = startup(nullptr);
   fp = freopen("/dev/tty", "a", stdout);
   if (fp == nullptr) return INVALID_FP;
 
