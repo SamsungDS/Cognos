@@ -20,7 +20,7 @@ TEST_F(ScDeviceTest, ToDeviceInfo) {
   paramDevice.d_set_static_info(sinfo);
 
   DevInfo dinfo;
-  dinfo.numa_attached = -1;
+  dinfo.numa_node = -1;
   dinfo.available_capacity_MB = 0;
   paramDevice.d_set_dynamic_info(dinfo);
   DevInfo result = paramDevice.to_device_info();

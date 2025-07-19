@@ -3,6 +3,7 @@
 #include <jansson.h>  // json_loads, json_dumps, json_array_foreach, json_object_get, json_load_file
 
 #include <cerrno>      // EINVAL, ENOENT, ERANGE, etc.
+#include <chrono>      // system_clock, duration_cast, seconds
 #include <filesystem>  // std::filesystem::exists
 #include <fstream>     // std::ifstream
 #include <iostream>    // std::cerr
@@ -28,8 +29,9 @@ extern "C" {
 static int parse_and_load_device_map(json_t* root, const std::string& filepath,
                                      DevTypeMap& map);
 static bool parse_device_entry(json_t* entry, size_t index, DevJsonHints& hint);
-static void parse_capabilities(json_t* entry, DevJsonHints& hint);
-static void parse_qos(json_t* entry, DevJsonHints& hint);
+static int parse_capabilities(json_t* entry, DevJsonHints& hint);
+static int parse_qos(json_t* entry, DevJsonHints& hint);
+static int parse_metrics_config(json_t* root, const std::string& filepath);
 
 bool str_to_int(const std::string& id_str, uint64_t& id,
                 std::string& error_response) {
@@ -172,18 +174,19 @@ bool is_device_list_empty(const std::string& json_response) {
 }
 
 static const DevTypeMap* global_dev_type_map = nullptr;
-
 void set_global_dev_type_map(const DevTypeMap& external_map) {
   global_dev_type_map = &external_map;
 }
-
 const DevTypeMap* get_global_dev_type_map() { return global_dev_type_map; }
+
+static MetricsInfo metrics_info;
+void set_metrics_info(const MetricsInfo& info) { metrics_info = info; }
+const MetricsInfo& get_metrics_info() { return metrics_info; }
 
 int load_dev_type_mapping_json(const std::string& filepath) {
   static DevTypeMap internal_map;
   static std::once_flag init_flag;
   static int load_status = 0;
-
   std::call_once(init_flag, [&]() {
     json_error_t error;
     json_t* root = json_load_file(filepath.c_str(), 0, &error);
@@ -193,17 +196,18 @@ int load_dev_type_mapping_json(const std::string& filepath) {
       load_status = -EINVAL;
       return;
     }
-
-    load_status = parse_and_load_device_map(root, filepath, internal_map);
+    int map_status = parse_and_load_device_map(root, filepath, internal_map);
+    int metrics_status = parse_metrics_config(root, filepath);
     json_decref(root);
-
-    if (load_status == 0) {
+    if (map_status == 0 && metrics_status == 0) {
       set_global_dev_type_map(internal_map);
+      load_status = 0;
       LOG(level_E::INFO, "Total CXL device entries loaded: " +
                              std::to_string(internal_map.size()));
+    } else {
+      load_status = (map_status != 0) ? map_status : metrics_status;
     }
   });
-
   return load_status;
 }
 
@@ -271,7 +275,7 @@ static bool parse_device_entry(json_t* entry, size_t index,
 
   try {
     hint.vendor_device_type = dev_type;
-    hint.lane_speed = get_json_int(entry, "lane_speed", 32);
+    hint.lane_speed_GT_s = get_json_int(entry, "lane_speed_GT_s", 32);
     hint.lane_width = get_json_int(entry, "lane_width", 8);
     hint.manufacturer = get_json_str(entry, "manufacturer", "Unknown");
     hint.fw_revision = get_json_str(entry, "fw_revision", "N/A");
@@ -289,8 +293,16 @@ static bool parse_device_entry(json_t* entry, size_t index,
       hint.serial_number = std::stoull(json_string_value(sn), nullptr, 16);
     }
 
-    parse_capabilities(entry, hint);
-    parse_qos(entry, hint);
+    if (parse_capabilities(entry, hint) < 0) {
+      LOG(level_E::WARN,
+          "Failed to parse capabilities at index " + std::to_string(index));
+      return false;
+    }
+    if (parse_qos(entry, hint) < 0) {
+      LOG(level_E::WARN,
+          "Failed to parse QoS at index " + std::to_string(index));
+      return false;
+    }
     return true;
 
   } catch (const std::exception& ex) {
@@ -306,23 +318,27 @@ static bool parse_device_entry(json_t* entry, size_t index,
  *
  * @param entry JSON object of the device
  * @param hint Output structure to store capabilities
+ * @return 0 on success, negative error code on failure
  */
-static void parse_capabilities(json_t* entry, DevJsonHints& hint) {
-  if (json_t* caps = json_object_get(entry, "capabilities");
-      json_is_object(caps)) {
-    hint.capabilities.power_management_version =
-        get_json_int(caps, "power_management_version", 0);
-    if (json_t* vs = json_object_get(caps, "vendor_specific");
-        json_is_object(vs)) {
-      const char* key;
-      json_t* val;
-      json_object_foreach(vs, key, val) {
-        if (json_is_string(val)) {
-          hint.capabilities.vendor_specific[key] = json_string_value(val);
-        }
+static int parse_capabilities(json_t* entry, DevJsonHints& hint) {
+  json_t* caps = json_object_get(entry, "capabilities");
+  if (!caps || !json_is_object(caps)) {
+    LOG(level_E::WARN, "`capabilities` missing or invalid");
+    return -EINVAL;
+  }
+  hint.capabilities.power_management_version =
+      get_json_int(caps, "power_management_version", 0);
+  json_t* vs = json_object_get(caps, "vendor_specific");
+  if (vs && json_is_object(vs)) {
+    const char* key;
+    json_t* val;
+    json_object_foreach(vs, key, val) {
+      if (json_is_string(val)) {
+        hint.capabilities.vendor_specific[key] = json_string_value(val);
       }
     }
   }
+  return 0;
 }
 
 /**
@@ -331,17 +347,70 @@ static void parse_capabilities(json_t* entry, DevJsonHints& hint) {
  *
  * @param entry JSON object of the device
  * @param hint Output structure to store QoS metrics
+ * @return 0 on success, negative error code on failure
  */
-static void parse_qos(json_t* entry, DevJsonHints& hint) {
-  if (json_t* qos = json_object_get(entry, "advertised_qos");
-      json_is_object(qos)) {
-    hint.advertised_qos.avg_latency = get_json_int(qos, "avg_latency");
-    hint.advertised_qos.p99_latency = get_json_int(qos, "p99_latency");
-    hint.advertised_qos.io_per_sec = get_json_int(qos, "io_per_sec");
-    hint.advertised_qos.bw_per_sec = get_json_int(qos, "bw_per_sec");
-    hint.advertised_qos.io_size = get_json_int(qos, "io_size");
-    hint.advertised_qos.qd = get_json_int(qos, "qd");
+static int parse_qos(json_t* entry, DevJsonHints& hint) {
+  json_t* qos = json_object_get(entry, "advertised_qos");
+  if (!qos || !json_is_object(qos)) {
+    LOG(level_E::WARN, "`advertised_qos` missing or not an object");
+    return -EINVAL;
   }
+  hint.advertised_qos.avg_latency_us = get_json_int(qos, "avg_latency_us");
+  hint.advertised_qos.p99_latency_us = get_json_int(qos, "p99_latency_us");
+  hint.advertised_qos.io_per_sec = get_json_int(qos, "io_per_sec");
+  hint.advertised_qos.bw_per_sec = get_json_int(qos, "bw_per_sec");
+  hint.advertised_qos.io_size_in_bytes = get_json_int(qos, "io_size_in_bytes");
+  hint.advertised_qos.qd = get_json_int(qos, "qd");
+  return 0;
+}
+
+/**
+ * @brief Parses the 'metrics' block in the given JSON root and updates
+ * MetricsInfo.
+ *
+ * @param root Parsed JSON root object
+ * @param filepath Path to the original JSON file
+ * @return int 0 on success, negative errno on failure
+ */
+static int parse_metrics_config(json_t* root, const std::string& filepath) {
+  json_t* metrics = json_object_get(root, "metrics");
+  if (!metrics || !json_is_object(metrics)) {
+    LOG(level_E::ERROR,
+        "`metrics` block missing or not an object in: " + filepath);
+    return -EINVAL;
+  }
+  try {
+    MetricsInfo cfg;
+    if (auto v = json_object_get(metrics, "domain"))
+      cfg.domain = json_string_value(v);
+    if (auto v = json_object_get(metrics, "feature_id"))
+      cfg.feature_id = json_integer_value(v);
+    if (auto v = json_object_get(metrics, "category"))
+      cfg.category = json_string_value(v);
+    if (auto v = json_object_get(metrics, "severity"))
+      cfg.severity = json_string_value(v);
+    if (auto v = json_object_get(metrics, "source_type"))
+      cfg.source_type = json_string_value(v);
+    if (auto v = json_object_get(metrics, "power_state"))
+      cfg.power_state = json_string_value(v);
+    if (auto v = json_object_get(metrics, "interval_seconds"))
+      cfg.interval_seconds = json_integer_value(v);
+
+    set_metrics_info(cfg);
+    LOG(level_E::INFO, "Loaded metrics configuration from: " + filepath);
+    return 0;
+  } catch (const std::exception& e) {
+    LOG(level_E::ERROR,
+        "Failed to parse 'metrics' block: " + std::string(e.what()));
+    return -EIO;
+  }
+}
+
+uint64_t get_epoch() {
+  auto now = std::chrono::system_clock::now();
+  return std::chrono::duration_cast<std::chrono::seconds>(
+             now.time_since_epoch())
+      .count();
 }
 
 int validate_json_file(const std::string& filepath) {
@@ -531,7 +600,7 @@ std::unordered_map<sc_id, sc_device, hash_sc_id> discover_cxl_devices_shared(
                            " type=" + hint.vendor_device_type);
 
     // Link info from hints
-    int link_speed = hint.lane_speed;
+    int link_speed = hint.lane_speed_GT_s;
     int link_width = hint.lane_width;
 
     // Build PCI BDF string
@@ -591,7 +660,7 @@ std::unordered_map<sc_id, sc_device, hash_sc_id> discover_cxl_devices_shared(
     static_info.connection_type = hint.connection_type;
     static_info.mode_discovered = hint.mode_discovered;
     static_info.protocol = hint.protocol;
-    static_info.link_speed = link_speed;
+    static_info.link_speed_GT_s = link_speed;
     static_info.link_width = link_width;
     static_info.port_type = hint.port_type;
     static_info.capabilities = hint.capabilities;
@@ -601,7 +670,7 @@ std::unordered_map<sc_id, sc_device, hash_sc_id> discover_cxl_devices_shared(
     DevInfo dyn_info;
     dyn_info.static_info = static_info;
     dyn_info.available_capacity_MB = free_mb;
-    dyn_info.numa_attached = numa_node;
+    dyn_info.numa_node = numa_node;
     dyn_info.status = hint.status;
 
     // Assign into sc_device

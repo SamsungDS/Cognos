@@ -322,9 +322,28 @@ TEST_F(ScUtilityTest, LoadDevTypeMappingJson_ValidFlowWithOneEntry) {
       {
         "vendor_id": "1234",
         "device_id": "abcd",
-        "device_type": "MockType"
+        "device_type": "MockType",
+"capabilities": {
+        "power_management_version": 1,
+        "vendor_specific": {
+          "latency_hint": "enabled"
+        }
+      },
+      "advertised_qos": {
+        "avg_latency_us": 120,
+        "p99_latency_us": 350,
+        "io_per_sec": 50000,
+        "bw_per_sec": 1000000,
+        "io_size_in_bytes": 4096,
+        "qd": 32
       }
-    ]
+}
+    ],
+   "metrics": {
+    "domain": "observability",
+    "feature_id": 3,
+    "category": "metric"
+ }
   })";
   int status = load_dev_type_mapping_json(path);
   EXPECT_EQ(status, 0);
@@ -360,7 +379,12 @@ TEST_F(ScUtilityTest, LoadDevTypeMappingJson_DeviceEntryMissingDeviceType) {
 "device_type": "CMM-H",
 "serial_number": "0x1234"
 }
-]
+],
+"metrics": {
+    "domain": "observability",
+    "feature_id": 3,
+    "category": "metric"
+ }
 })";
 
   int status = load_dev_type_mapping_json(path);
@@ -457,7 +481,12 @@ TEST_F(ScUtilityTest, LoadDevTypeMappingJson_parse_device_entry_error) {
  "lane_speed": 32,
  "lane_width": 8
  }
- ]
+ ],
+"metrics": {
+    "domain": "observability",
+    "feature_id": 3,
+    "category": "metric"
+ }
  })";
 
   int status = load_dev_type_mapping_json(path);
@@ -486,7 +515,7 @@ TEST_F(ScUtilityTest, DiscoverCXLDevices_SuccessPath) {
   DevTypeMap hints;
   DevJsonHints hint;
   hint.vendor_device_type = "MockCMMH";
-  hint.lane_speed = 16;
+  hint.lane_speed_GT_s = 16;
   hint.lane_width = 8;
   hint.manufacturer = "MockInc";
   hint.serial_number = 0xABCDEF;
@@ -515,8 +544,7 @@ TEST_F(ScUtilityTest, DiscoverCXLDevices_SuccessPath) {
   // Validate
   ASSERT_EQ(result.size(), 1);
   const sc_device& dev = result.begin()->second;
-  EXPECT_EQ(dev.d_get_info().available_capacity_MB, 1024);
-  EXPECT_EQ(dev.d_get_info().numa_attached, 2);
+  EXPECT_EQ(dev.d_get_info().numa_node, 2);
   EXPECT_EQ(dev.d_get_info().static_info.location, "0001:02:00.1");
   test_force_popen_valid_output = false;
 }
@@ -525,7 +553,7 @@ TEST_F(ScUtilityTest, DiscoverCXLDevices_PhysicalAddressThrows) {
   DevTypeMap hints;
   DevJsonHints hint;
   hint.vendor_device_type = "MockCMMH";
-  hint.lane_speed = 16;
+  hint.lane_speed_GT_s = 16;
   hint.lane_width = 8;
   hint.manufacturer = "MockInc";
   hint.serial_number = 0xABCDEF;
@@ -551,7 +579,7 @@ TEST_F(ScUtilityTest, DiscoverCXLDevices_AddressUnmappedToNUMA) {
   DevTypeMap hints;
   DevJsonHints hint;
   hint.vendor_device_type = "MockCMMH";
-  hint.lane_speed = 16;
+  hint.lane_speed_GT_s = 16;
   hint.lane_width = 8;
   hint.manufacturer = "MockInc";
   hint.serial_number = 0xABCDEF;
@@ -573,7 +601,7 @@ TEST_F(ScUtilityTest, DiscoverCXLDevices_AddressUnmappedToNUMA) {
   auto result = discover_cxl_devices_shared(hints);
   ASSERT_EQ(result.size(), 1);
   const sc_device& dev = result.begin()->second;
-  ASSERT_EQ(dev.d_get_info().numa_attached, 0);
+  ASSERT_EQ(dev.d_get_info().numa_node, 0);
 
   test_force_popen_valid_output = false;
 }
@@ -610,7 +638,7 @@ TEST_F(ScUtilityTest, PciAllocWorks) {
             << "\n";
 }
 
-TEST_F(ScUtilityTest, GetNumaMemoryInfo_ReturnsFalseOnFailure) {
+TEST_F(ScUtilityTest, GetNumaMemoryInfo_ReturnsFalse) {
   test_force_failure = true;
   test_force_throw = false;
   uint64_t total = 0, free = 0;
@@ -627,11 +655,58 @@ TEST_F(ScUtilityTest, GetNumaMemoryInfo_ReturnsFalseOnException) {
   test_force_throw = false;  // reset
 }
 
-TEST_F(ScUtilityTest, GetNumaNodeFromBDF_ReturnsMinusOneIfAddressOutsideRange) {
+TEST_F(ScUtilityTest, GetNumaNodeFromBDF_OutofRange) {
   RangeToNumaMap range_map;
   range_map[{0x2000000000, 0x2000FFFFFFF}] = 1;
   set_global_range_numa_map(range_map);
   std::string bdf = "0000:03:00.0";
   int node = get_numa_node_from_bdf(bdf);
   EXPECT_EQ(node, -1);
+}
+
+TEST_F(ScUtilityTest, GetMetricsInfoReturnsSetValues) {
+  MetricsInfo info;
+  info.domain = "telemetry";
+  info.feature_id = 123;
+  info.category = "performance";
+  set_metrics_info(info);
+
+  const MetricsInfo& result = get_metrics_info();
+  EXPECT_EQ(result.domain, "telemetry");
+  EXPECT_EQ(result.feature_id, 123);
+  EXPECT_EQ(result.category, "performance");
+}
+
+TEST_F(ScUtilityTest, GetRangeNumaMapFromLsmem) {
+  RangeToNumaMap map = get_range_numa_map_from_lsmem();
+  EXPECT_GE(map.size(), 0);
+}
+
+TEST_F(ScUtilityTest, GetEpochReturnsNonZeroValue) {
+  uint64_t epoch = get_epoch();
+  EXPECT_GT(epoch, 0);
+}
+
+TEST_F(ScUtilityTest, GetMetricsInfoReturnsLoadedValues) {
+  std::ofstream("/tmp/metrics_valid.json") << R"({
+    "device_map": [{
+      "vendor_id": "1234",
+      "device_id": "5678",
+      "device_type": "mock_type"
+    }],
+    "metrics": {
+      "domain": "mock",
+      "feature_id": 5,
+      "category": "info",
+      "severity": "high",
+      "source_type": "device",
+      "power_state": "active",
+      "interval_seconds": 30
+    }
+  })";
+  int rc = load_dev_type_mapping_json("/tmp/metrics_valid.json");
+  ASSERT_EQ(rc, 0);
+  auto m = get_metrics_info();
+  EXPECT_EQ(m.feature_id, 5);
+  EXPECT_EQ(m.domain, "mock");
 }

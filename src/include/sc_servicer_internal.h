@@ -50,4 +50,7 @@ std::string handle_get_device_info(
     const std::unordered_map<std::string, std::string>& params);
 std::string handle_get_device_stats(
     const std::unordered_map<std::string, std::string>& params);
+
+std::string handle_get_device_metrics(
+    const std::unordered_map<std::string, std::string>& params);
 #endif

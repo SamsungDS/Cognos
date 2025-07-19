@@ -25,6 +25,8 @@ class MockCMMH : public CXLDeviceAdapter {
 
   StatInfo get_device_stats(const sc_id& sid) const override;
 
+  MetricsInfo get_device_metrics(const sc_id& sid) const;
+
   void discover_devices(DeviceManager& mgr) override;
 
   int setup_info() override { return 0; }
@@ -34,6 +36,7 @@ class MockCMMH : public CXLDeviceAdapter {
   QoSInfo parse_qos_info(json_t* entry);
   Capabilities parse_capabilities(json_t* entry);
   std::optional<cmmh_stat_sensor_t> parse_sensor_stats(json_t* obj);
+  std::optional<cmmh_stat_cache_t> parse_cache_stats(json_t* obj);
 
  private:
   std::unordered_map<sc_id, sc_device, hash_sc_id> device_map_;

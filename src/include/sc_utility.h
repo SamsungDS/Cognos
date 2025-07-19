@@ -15,6 +15,7 @@
 
 #include "sc_device.h"
 #include "sc_logger.h"
+
 /**
  * @brief Generates a structured JSON error response based on a POSIX error
  * code.
@@ -331,7 +332,7 @@ int get_numa_node_from_bdf(const std::string& bdf_str);
  * @param fallback Default integer to return if the key is missing or invalid.
  * @return Extracted integer value, or the fallback if not found.
  */
-int get_json_int(json_t* obj, const std::string& key, int fallback = 0);
+int get_json_int(json_t* obj, const std::string& key, int fallback = -99);
 
 /**
  * @brief Extract a string value from a JSON object.
@@ -358,6 +359,25 @@ std::string get_json_str(json_t* obj, const std::string& key,
  * @return Hexadecimal string representation (e.g., "0x1e98").
  */
 std::string to_hex(uint16_t val);
+
+/**
+ * @brief Sets the MetricsInfo loaded from config file.
+ * @param info MetricsInfo struct containing the config values.
+ */
+void set_metrics_info(const MetricsInfo& info);
+
+/**
+ * @brief Returns the MetricsInfo previously loaded from config file.
+ * @return const reference to MetricsInfo.
+ */
+const MetricsInfo& get_metrics_info();
+
+/**
+ * @brief Returns the current Unix epoch time (in seconds) as a string.
+ *
+ * @return Epoch timestamp, e.g 1721173902
+ */
+uint64_t get_epoch();
 
 void set_bdf_to_numa_map(const std::unordered_map<std::string, int>& bdf_map);
 

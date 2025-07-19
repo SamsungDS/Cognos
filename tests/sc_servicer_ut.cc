@@ -946,7 +946,7 @@ TEST_F(ServicerTest, GetDeviceInfo_Success) {
   stat.vendor_device_type = "CMMB";
   stat.cxl_device_type = "type1";
   stat.protocol = "1.1";
-  stat.link_speed = 5;
+  stat.link_speed_GT_s = 5;
   stat.link_width = 16;
   stat.port_type = "dh";
   stat.mode_discovered = "system-mem";
@@ -959,11 +959,11 @@ TEST_F(ServicerTest, GetDeviceInfo_Success) {
   stat.capabilities = caps;
 
   QoSInfo qos;
-  qos.avg_latency = 1.5;
-  qos.p99_latency = 2.0;
+  qos.avg_latency_us = 1.5;
+  qos.p99_latency_us = 2.0;
   qos.io_per_sec = 5000;
   qos.bw_per_sec = 1000;
-  qos.io_size = 128;
+  qos.io_size_in_bytes = 128;
   qos.qd = 32;
   stat.advertised_qos = qos;
 
@@ -971,7 +971,7 @@ TEST_F(ServicerTest, GetDeviceInfo_Success) {
 
   DevInfo dyn;
   dyn.status = "active";
-  dyn.numa_attached = 0;
+  dyn.numa_node = 0;
   dyn.aspm_active = true;
   dyn.sris_active = true;
   dyn.lock_active = false;
@@ -1226,4 +1226,76 @@ TEST_F(ServicerTest, ListDevices_InvalidJsonArrayString) {
   std::string result = handle_list_devices(params);
   EXPECT_FALSE(result.find("Invalid device_id array format") !=
                std::string::npos);
+}
+
+TEST_F(ServicerTest, GetDeviceMetrics_WithCacheAndSensorStats) {
+  sc_device dev(1234, "metric_device", 8192, 1);
+
+  DevStaticInfo stat{};
+  stat.device_id = 1234;
+  stat.total_capacity_MB = 8192;
+  stat.protocol = "1.1";
+  stat.port_type = "ph";
+  dev.d_set_static_info(stat);
+
+  DevInfo dyn{};
+  dyn.numa_node = 1;
+  dyn.available_capacity_MB = 4096;
+  dyn.status = "Healthy";
+  dev.d_set_dynamic_info(dyn);
+
+  StatInfo sinfo{
+      .device_id = 1234,
+      .protocol = "1.1",
+      .port_type = "ph",
+      .status = "Healthy",
+      .total_memory_MB = 8192,
+      .used_memory_MB = 4096,
+      .available_memory_MB = 4096,
+      .total_bandwidth_MBps = 24000,
+      .used_bandwidth_MBps = 12000,
+      .rw_errors = 0,
+      .latency_us = 0,
+      .sensor_stats = cmmh_stat_sensor_t{.fpga_temp = 60},
+      .cache_stats = cmmh_stat_cache_t{.hit_perc = 95, .dirty_cache_gb = 5}};
+
+  g_dev_mgr->register_device(dev.d_get_id(), &testAdapter);
+  testAdapter.add_mock_device(dev);
+  testAdapter.set_stat_info_for_device(dev.d_get_id(), sinfo);
+
+  std::unordered_map<std::string, std::string> params = {{"device_id", "1234"}};
+  std::string response = handle_get_device_metrics(params);
+
+  json_error_t error;
+  json_t* root = json_loads(response.c_str(), 0, &error);
+  ASSERT_NE(root, nullptr) << "Invalid JSON: " << error.text;
+  EXPECT_EQ(json_integer_value(json_object_get(root, "source")), 1234);
+  json_t* obs = json_object_get(root, "observations");
+  ASSERT_NE(obs, nullptr) << "Missing 'observations' field in response";
+  EXPECT_EQ(json_integer_value(json_object_get(obs, "temperature")), 60);
+  EXPECT_EQ(json_integer_value(json_object_get(obs, "cache_hit_perc")), 95);
+  EXPECT_EQ(json_integer_value(json_object_get(obs, "dirty_cache_gb")), 5);
+  EXPECT_EQ(json_integer_value(json_object_get(obs, "total_memory")), 8192);
+  EXPECT_EQ(json_integer_value(json_object_get(obs, "used_bandwidth")), 12000);
+  json_decref(root);
+}
+
+TEST_F(ServicerTest, GetDeviceMetrics_MissingParam) {
+  std::unordered_map<std::string, std::string> params = {};
+  std::string response = handle_get_device_metrics(params);
+  EXPECT_EQ(get_json_value(response, "rc"), "EINVAL");
+  EXPECT_EQ(get_json_value(response, "message"),
+            "Missing parameter: device_id");
+}
+
+TEST_F(ServicerTest, GetDeviceMetrics_InvalidFormat) {
+  std::unordered_map<std::string, std::string> params = {{"device_id", "abc"}};
+  std::string response = handle_get_device_metrics(params);
+  EXPECT_EQ(get_json_value(response, "rc"), "EINVAL");
+  EXPECT_EQ(get_json_value(response, "message"), "Invalid id format");
+}
+
+TEST_F(ServicerTest, GetDeviceMetrics_DeviceNotFound) {
+  std::unordered_map<std::string, std::string> params = {{"device_id", "9999"}};
+  EXPECT_THROW({ handle_get_device_metrics(params); }, std::runtime_error);
 }

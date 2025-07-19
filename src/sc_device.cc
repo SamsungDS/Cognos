@@ -68,7 +68,7 @@ void sc_device::d_set_dynamic_info(const DevInfo& dynamic_info) {
   d_info.aspm_active = dynamic_info.aspm_active;
   d_info.sris_active = dynamic_info.sris_active;
   d_info.lock_active = dynamic_info.lock_active;
-  d_info.numa_attached = dynamic_info.numa_attached;
+  d_info.numa_node = dynamic_info.numa_node;
   d_info.available_capacity_MB = dynamic_info.available_capacity_MB;
 }
 

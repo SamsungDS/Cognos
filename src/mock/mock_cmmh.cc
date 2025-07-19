@@ -62,9 +62,9 @@ void MockCMMH::discover_devices(DeviceManager& mgr) {
   size_t index;
   json_t* entry;
   json_array_foreach(dev_map, index, entry) {
-    if (json_is_true(json_object_get(entry, "mock_empty"))) {
+    if (json_is_true(json_object_get(entry, "mock_disable"))) {
       LOG(level_E::INFO,
-          "Skipping mock_empty device at index: " + std::to_string(index));
+          "Skipping mock device at index: " + std::to_string(index));
       continue;
     }
 
@@ -88,7 +88,7 @@ void MockCMMH::discover_devices(DeviceManager& mgr) {
     static_info.connection_type = get_json_str(entry, "connection_type");
     static_info.mode_discovered = get_json_str(entry, "mode_discovered");
     static_info.protocol = get_json_str(entry, "protocol");
-    static_info.link_speed = get_json_int(entry, "lane_speed");
+    static_info.link_speed_GT_s = get_json_int(entry, "lane_speed_GT_s");
     static_info.link_width = get_json_int(entry, "lane_width");
     static_info.port_type = get_json_str(entry, "port_type");
     static_info.advertised_qos = parse_qos_info(entry);
@@ -99,7 +99,7 @@ void MockCMMH::discover_devices(DeviceManager& mgr) {
     dev_info.status = get_json_str(entry, "status");
     dev_info.available_capacity_MB =
         get_json_int(entry, "available_capacity_MB");
-    dev_info.numa_attached = get_json_int(entry, "numa_node");
+    dev_info.numa_node = get_json_int(entry, "numa_node");
 
     sc_device device(sid.get_sc_id(), static_info.vendor_device_type,
                      static_info.total_capacity_MB, 1);
@@ -123,6 +123,7 @@ void MockCMMH::discover_devices(DeviceManager& mgr) {
       stat_info.rw_errors = get_json_int(stat, "rw_errors");
       stat_info.latency_us = get_json_int(stat, "latency_us");
       stat_info.sensor_stats = parse_sensor_stats(stat);
+      stat_info.cache_stats = parse_cache_stats(stat);
     }
 
     device_map_[sid] = device;
@@ -154,11 +155,11 @@ QoSInfo MockCMMH::parse_qos_info(json_t* entry) {
     return qos;
   }
 
-  qos.avg_latency = get_json_int(qos_json, "avg_latency");
-  qos.p99_latency = get_json_int(qos_json, "p99_latency");
+  qos.avg_latency_us = get_json_int(qos_json, "avg_latency_us");
+  qos.p99_latency_us = get_json_int(qos_json, "p99_latency_us");
   qos.io_per_sec = get_json_int(qos_json, "io_per_sec");
   qos.bw_per_sec = get_json_int(qos_json, "bw_per_sec");
-  qos.io_size = get_json_int(qos_json, "io_size");
+  qos.io_size_in_bytes = get_json_int(qos_json, "io_size_in_bytes");
   qos.qd = get_json_int(qos_json, "qd");
 
   return qos;
@@ -193,6 +194,58 @@ std::optional<cmmh_stat_sensor_t> MockCMMH::parse_sensor_stats(json_t* obj) {
   cmmh_stat_sensor_t s{};
   json_t* stats = json_object_get(obj, "sensor_stats");
   if (!stats || !json_is_object(stats)) return std::nullopt;
-  s.fpga_temp = get_json_int(stats, "fpga_temp");
+  s.fpga_temp = get_json_int(stats, "fpga_temp_in_F");
   return s;
+}
+
+std::optional<cmmh_stat_cache_t> MockCMMH::parse_cache_stats(json_t* obj) {
+  cmmh_stat_cache_t cs{};
+  json_t* cache = json_object_get(obj, "cache_stats");
+  if (!cache || !json_is_object(cache)) return std::nullopt;
+
+  json_t* hit = json_object_get(cache, "hit_perc");
+  if (hit && json_is_number(hit)) cs.hit_perc = json_real_value(hit);
+
+  json_t* dirty = json_object_get(cache, "dirty_cache_gb");
+  if (dirty && json_is_integer(dirty))
+    cs.dirty_cache_gb = json_integer_value(dirty);
+
+  return cs;
+}
+
+MetricsInfo MockCMMH::get_device_metrics(const sc_id& sid) const {
+  auto info_it = device_map_.find(sid);
+  auto stat_it = stats_map_.find(sid);
+
+  if (info_it == device_map_.end() || stat_it == stats_map_.end()) {
+    LOG(level_E::ERROR, "MockCMMH: device metrics not found for sid=" +
+                            std::to_string(sid.get_sc_id()));
+    throw std::runtime_error("MockCMMH: device metrics not found for sid=" +
+                             std::to_string(sid.get_sc_id()));
+  }
+
+  const DevInfo& dev = info_it->second.d_get_info();
+  const StatInfo& stat = stat_it->second;
+
+  MetricsInfo metrics = get_metrics_info();
+  metrics.source = sid.get_sc_id();
+  metrics.timestamp = get_epoch();
+
+  // Observed fields
+  metrics.numa_node = dev.numa_node;
+  metrics.total_memory = stat.total_memory_MB;
+  metrics.used_memory = stat.used_memory_MB;
+  metrics.available_memory = stat.available_memory_MB;
+  metrics.total_bandwidth = stat.total_bandwidth_MBps;
+  metrics.used_bandwidth = stat.used_bandwidth_MBps;
+
+  // Optional sensor and cache stats
+  metrics.cache_hit_perc = stat.cache_stats ? stat.cache_stats->hit_perc : 0;
+  metrics.dirty_cache_gb =
+      stat.cache_stats ? stat.cache_stats->dirty_cache_gb : 0;
+  metrics.temperature = stat.sensor_stats ? stat.sensor_stats->fpga_temp : 0;
+
+  LOG(level_E::DEBUG, "MockCMMH: Returning device metrics for sid=" +
+                          std::to_string(sid.get_sc_id()));
+  return metrics;
 }

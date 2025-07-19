@@ -87,6 +87,22 @@ class DeviceManager {
   StatInfo get_device_stats(uint64_t d_id);
 
   /**
+   * @brief Retrieves real-time metrics information for a specific device.
+   *
+   * This method returns the metrics associated with the given device ID,
+   * such as bandwidth, temperature, memory usage, and other telemetry stats.
+   * It typically aggregates information from get_device_stats() &
+   * get_device_info().
+   *
+   * @param d_id device ID for which stats are requested.
+   * @return MetricsInfo structure containing the current metrics for the
+   * device.
+   * @throws std::runtime_error if the device is not found or metrics are
+   * unavailable.
+   */
+  // MetricsInfo get_device_metrics(uint64_t d_id);
+
+  /**
    * @brief Resolves a given device ID to its internal sc_id and associated
    * adapter.
    *

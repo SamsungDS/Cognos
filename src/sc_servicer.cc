@@ -531,8 +531,8 @@ std::string handle_get_device_info(
                       json_string(dev.static_info.domain_type.c_str()));
   json_object_set_new(root, "domain_id",
                       json_integer(dev.static_info.domain_id));
-  json_object_set_new(root, "link_speed",
-                      json_integer(dev.static_info.link_speed));
+  json_object_set_new(root, "link_speed_GT_s",
+                      json_integer(dev.static_info.link_speed_GT_s));
   json_object_set_new(root, "link_width",
                       json_integer(dev.static_info.link_width));
 
@@ -543,7 +543,7 @@ std::string handle_get_device_info(
   json_object_set_new(root, "aspm_active", json_boolean(dev.aspm_active));
   json_object_set_new(root, "sris_active", json_boolean(dev.sris_active));
   json_object_set_new(root, "lock_active", json_boolean(dev.lock_active));
-  json_object_set_new(root, "numa_attached", json_integer(dev.numa_attached));
+  json_object_set_new(root, "numa_node", json_integer(dev.numa_node));
   // Capabilities
   json_t* caps = json_object();
   json_object_set_new(
@@ -552,16 +552,19 @@ std::string handle_get_device_info(
   json_object_set_new(root, "capabilities", caps);
   // QoS
   json_t* qos = json_object();
-  json_object_set_new(qos, "avg_latency",
-                      json_integer(dev.static_info.advertised_qos.avg_latency));
-  json_object_set_new(qos, "p99_latency",
-                      json_integer(dev.static_info.advertised_qos.p99_latency));
+  json_object_set_new(
+      qos, "avg_latency_us",
+      json_integer(dev.static_info.advertised_qos.avg_latency_us));
+  json_object_set_new(
+      qos, "p99_latency_us",
+      json_integer(dev.static_info.advertised_qos.p99_latency_us));
   json_object_set_new(qos, "io_per_sec",
                       json_integer(dev.static_info.advertised_qos.io_per_sec));
   json_object_set_new(qos, "BW_per_sec",
                       json_integer(dev.static_info.advertised_qos.bw_per_sec));
-  json_object_set_new(qos, "io_size",
-                      json_integer(dev.static_info.advertised_qos.io_size));
+  json_object_set_new(
+      qos, "io_size_in_bytes",
+      json_integer(dev.static_info.advertised_qos.io_size_in_bytes));
   json_object_set_new(qos, "qd",
                       json_integer(dev.static_info.advertised_qos.qd));
   json_object_set_new(root, "advertised_qos", qos);
@@ -619,6 +622,89 @@ std::string handle_get_device_stats(
   std::string result(json_str);
   free(json_str);
   json_decref(root);
+  return result;
+}
+
+std::string handle_get_device_metrics(
+    const std::unordered_map<std::string, std::string>& params) {
+  std::unordered_map<std::string, std::string> values;
+  std::string error;
+  if (!extract_required_params(params, {"device_id"}, values, error)) {
+    LOG(level_E::WARN, "Missing required parameter: device_id");
+    return error;
+  }
+  uint64_t device_id;
+  if (!str_to_int(values["device_id"], device_id, error)) {
+    LOG(level_E::WARN, "Invalid device_id format: " + values["device_id"]);
+    return error;
+  }
+  LOG(level_E::INFO,
+      "Fetching metrics for device_id: " + std::to_string(device_id));
+  std::optional<DevInfo> info = g_dev_mgr->get_device_info(device_id);
+  std::optional<StatInfo> stats = g_dev_mgr->get_device_stats(device_id);
+  if (!info.has_value() || !stats.has_value()) {
+    LOG(level_E::ERROR, "Device not found or error occurred for device_id: " +
+                            std::to_string(device_id));
+    return posix_err_to_json(ENOENT, "Device not found or error occurred");
+  }
+  const DevInfo& dev = info.value();
+  const StatInfo& s = stats.value();
+  MetricsInfo metrics = get_metrics_info();
+  metrics.source = device_id;
+  metrics.timestamp = get_epoch();
+
+  // dynamic observation fields
+  metrics.numa_node = dev.numa_node;
+  metrics.total_memory = s.total_memory_MB;
+  metrics.used_memory = s.used_memory_MB;
+  metrics.available_memory = s.available_memory_MB;
+  metrics.total_bandwidth = s.total_bandwidth_MBps;
+  metrics.used_bandwidth = s.used_bandwidth_MBps;
+  metrics.cache_hit_perc =
+      s.cache_stats.has_value() ? s.cache_stats->hit_perc : 0;
+  metrics.dirty_cache_gb =
+      s.cache_stats.has_value() ? s.cache_stats->dirty_cache_gb : 0;
+  metrics.temperature =
+      s.sensor_stats.has_value() ? s.sensor_stats->fpga_temp : 0;
+
+  // Serialize to JSON
+  json_t* root = json_object();
+  json_object_set_new(root, "domain", json_string(metrics.domain.c_str()));
+  json_object_set_new(root, "feature_id", json_integer(metrics.feature_id));
+  json_object_set_new(root, "category", json_string(metrics.category.c_str()));
+  json_object_set_new(root, "severity", json_string(metrics.severity.c_str()));
+  json_object_set_new(root, "source", json_integer(metrics.source));
+  json_object_set_new(root, "source_type",
+                      json_string(metrics.source_type.c_str()));
+  json_object_set_new(root, "power_state",
+                      json_string(metrics.power_state.c_str()));
+  json_object_set_new(root, "timestamp", json_integer(metrics.timestamp));
+
+  // Observations
+  json_t* obs = json_object();
+  json_object_set_new(obs, "numa_node", json_integer(metrics.numa_node));
+  json_object_set_new(obs, "total_memory", json_integer(metrics.total_memory));
+  json_object_set_new(obs, "used_memory", json_integer(metrics.used_memory));
+  json_object_set_new(obs, "available_memory",
+                      json_integer(metrics.available_memory));
+  json_object_set_new(obs, "total_bandwidth",
+                      json_integer(metrics.total_bandwidth));
+  json_object_set_new(obs, "used_bandwidth",
+                      json_integer(metrics.used_bandwidth));
+  json_object_set_new(obs, "cache_hit_perc",
+                      json_integer(metrics.cache_hit_perc));
+  json_object_set_new(obs, "dirty_cache_gb",
+                      json_integer(metrics.dirty_cache_gb));
+  json_object_set_new(obs, "temperature", json_integer(metrics.temperature));
+
+  json_object_set_new(root, "observations", obs);
+
+  char* json_str = json_dumps(root, JSON_COMPACT);
+  std::string result(json_str);
+  free(json_str);
+  json_decref(root);
+  LOG(level_E::INFO, "Successfully generated metrics for device_id: " +
+                         std::to_string(device_id));
   return result;
 }
 
@@ -821,7 +907,8 @@ svk_status configure_device_if_any(void*, svk_device_ctx*, uint64_t length,
 const std::unordered_map<std::string, CommandFuncMap> command_map = {
     {"list_devices", handle_list_devices},
     {"get_device_info", handle_get_device_info},
-    {"get_device_stats", handle_get_device_stats}};
+    {"get_device_stats", handle_get_device_stats},
+    {"get_device_metrics", handle_get_device_metrics}};
 
 /**
  * @brief Dispatches a command to its corresponding legacy handler function.

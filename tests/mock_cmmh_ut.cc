@@ -100,7 +100,7 @@ TEST_F(MockCMMHTest, DiscoverSkipsMockEmptyDevice) {
   std::ofstream ofs(skip_mock_path);
   ofs << R"({
 "device_map": [
-{ "mock_device_id": "0x1", "mock_empty": true }
+{ "mock_device_id": "0x1", "mock_disable": true }
 ]
 })";
   ofs.close();
@@ -111,7 +111,41 @@ TEST_F(MockCMMHTest, DiscoverSkipsMockEmptyDevice) {
   testing::internal::CaptureStdout();
   empty_adapter.discover_devices(dm);
   std::string err = testing::internal::GetCapturedStdout();
-  EXPECT_TRUE(err.find("Skipping mock_empty device at index: 0") !=
+  EXPECT_TRUE(err.find("Skipping mock device at index: 0") !=
               std::string::npos);
   EXPECT_TRUE(empty_adapter.list_devices().empty());
+}
+
+TEST_F(MockCMMHTest, GetDeviceMetricsReturnsCorrectValues) {
+  sc_id sid(0x1E3A5B7CDE00);
+  MetricsInfo metrics = adapter.get_device_metrics(sid);
+
+  EXPECT_EQ(metrics.source, 0x1E3A5B7CDE00);
+  EXPECT_GT(metrics.timestamp, 0);
+
+  EXPECT_EQ(metrics.numa_node, 0);
+  EXPECT_EQ(metrics.total_memory, 8192);
+  EXPECT_EQ(metrics.used_memory, 4096);
+  EXPECT_EQ(metrics.available_memory, 4096);
+  EXPECT_EQ(metrics.total_bandwidth, 20000);
+  EXPECT_EQ(metrics.used_bandwidth, 1104548);
+
+  EXPECT_EQ(metrics.cache_hit_perc, 92);
+  EXPECT_EQ(metrics.dirty_cache_gb, 2);
+  EXPECT_EQ(metrics.temperature, 46);
+}
+
+TEST_F(MockCMMHTest, GetDeviceMetricsThrowsWhenDeviceMissing) {
+  sc_id unknown_sid(0xDEADBEEF1234);
+
+  try {
+    adapter.get_device_metrics(unknown_sid);
+    FAIL() << "Expected std::runtime_error for missing device";
+  } catch (const std::runtime_error& e) {
+    std::string msg = e.what();
+    EXPECT_NE(msg.find("MockCMMH: device metrics not found for sid="),
+              std::string::npos);
+  } catch (...) {
+    FAIL() << "Expected std::runtime_error but got different exception";
+  }
 }

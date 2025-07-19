@@ -12,11 +12,11 @@
 #endif
 
 struct QoSInfo {
-  uint64_t avg_latency = 0;
-  uint64_t p99_latency = 0;
+  uint64_t avg_latency_us = 0;
+  uint64_t p99_latency_us = 0;
   uint64_t io_per_sec = 0;
   uint64_t bw_per_sec = 0;
-  uint64_t io_size = 0;
+  uint64_t io_size_in_bytes = 0;
   uint64_t qd = 0;
 };
 
@@ -40,7 +40,7 @@ struct DevStaticInfo {
   std::string connection_type;
   std::string mode_discovered;
   std::string protocol;
-  int link_speed = 0;
+  int link_speed_GT_s = 0;
   int link_width = 0;
   std::string port_type;
   Capabilities capabilities;
@@ -55,7 +55,7 @@ struct DevInfo {
   bool lock_active = false;
   uint64_t available_capacity_MB = 0;
   std::string status;
-  int numa_attached = 0;
+  int numa_node = 0;
 };
 
 struct StatInfo {
@@ -86,7 +86,7 @@ struct StatInfo {
  */
 struct DevJsonHints {
   std::string vendor_device_type;
-  int lane_speed;
+  int lane_speed_GT_s;
   int lane_width;
   std::string manufacturer;
   uint64_t serial_number;
@@ -104,12 +104,42 @@ struct DevJsonHints {
 };
 
 /**
- * @brief Map of vendor/device ID pairs to their corresponding configuration.
- *
- * This map is populated from the config/cxl_dev_id_map.json file in real mode
- * and used during PCIe-based discovery to associate metadata with discovered
- * devices.
+ * @struct MetricsInfo
+ * @brief Holds metadata and observation values for a CXL device's runtime
+ * metrics. This structure encapsulates both metadata (e.g. domain, severity,
+ * source) and observation metrics (e.g. memory usage, bandwidth, temperature)
+ * for reporting device health and performance.
  */
-// using DevHintMap = std::unordered_map<std::pair<uint16_t, uint16_t>,
-// DevJsonHints, pair_hash>;
+struct MetricsInfo {
+  std::string domain;
+  uint32_t feature_id;
+  std::string category;
+  std::string severity;
+  // source ID of the metric, can refer to device ID or other context
+  uint64_t source;
+  // source of the event belongs to e.g device, node, application & cluster
+  std::string source_type;
+  /** PCIe power states for managing its power consumption.
+      L0 (Active State) - normal operating mode where the device is fully active
+     and functioning, consuming the most power. L0s (L0 Standby) a low-power
+     standby state that allows for fast recovery back to the L0 state. L1 (L1
+     Standby) a deeper low-power standby state compared to L0s L2 (L2 Standby)
+     an auxiliary-powered deep-energy-saving state. L3 (Link Off) deepest power
+     state where the link is completely powered off. */
+  std::string power_state;
+  uint64_t timestamp;
+  // sampling interval for metrics publisher
+  int interval_seconds;
+
+  // Observations
+  uint64_t temperature;
+  int numa_node;
+  uint64_t total_memory;
+  uint64_t used_memory;
+  uint64_t available_memory;
+  uint64_t total_bandwidth;
+  uint64_t used_bandwidth;
+  uint64_t cache_hit_perc;
+  uint64_t dirty_cache_gb;
+};
 #endif

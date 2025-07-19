@@ -2,7 +2,7 @@
 
 #include "sc_utility.h"  // generate_dev_id, get_numa_memory_info,
 // discover_cxl_devices_shared, get_global_dev_type_map,
-// get_numa_node_from_sysfs
+// get_numa_node_from_bdf, get_metrics_info
 
 /**
  * @brief DevCMMH constructor.
@@ -93,7 +93,7 @@ DevInfo DevCMMH::get_device_info(const sc_id& sid) const {
   }
 
   // update dynamic fields
-  dinfo.numa_attached = numa_node;
+  dinfo.numa_node = numa_node;
   dinfo.available_capacity_MB = free_mb;
 
   dev.d_set_dynamic_info(dinfo);
@@ -129,7 +129,7 @@ StatInfo DevCMMH::get_device_stats(const sc_id& sid) const {
    *   by 2
    */
   stats.total_bandwidth_MBps =
-      info.static_info.link_speed * info.static_info.link_width * 125;
+      info.static_info.link_speed_GT_s * info.static_info.link_width * 125;
 
   stats.rw_errors = 0;
   stats.latency_us = 0;
