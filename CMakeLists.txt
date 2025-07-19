@@ -28,6 +28,4 @@ add_subdirectory(src)
 add_subdirectory(adapters)
 add_subdirectory(config)
 
-if(BUILD_TESTING)
-    add_subdirectory(tests)
-endif()
+add_subdirectory(tests)

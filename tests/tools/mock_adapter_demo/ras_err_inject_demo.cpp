@@ -6,7 +6,6 @@
 
 #include "libmock.h"
 
-#define CFG "config/mock_config.json"
 #define LOW_POLL 15
 #define HIGH_POLL 120
 #define CRITICAL_ERROR_COUNT 25
@@ -18,6 +17,7 @@ enum cl_error {
   INVALID_COMMAND,
   NON_NUMERIC_NUMA_ID,
   INVALID_POLLING_INTERVAL,
+  INVALID_FP,
   CL_END
 };
 
@@ -95,9 +95,12 @@ int main(int argc, char* argv[]) {
   Response res;
 
   // Disable syslog output during startup
-  freopen("/dev/null", "a", stdout);
-  ret = startup(CFG);
-  freopen("/dev/tty", "a", stdout);
+  FILE* fp = freopen("/dev/null", "a", stdout);
+  if (fp == nullptr) return INVALID_FP;
+
+  ret = startup(nullptr);
+  fp = freopen("/dev/tty", "a", stdout);
+  if (fp == nullptr) return INVALID_FP;
 
   chrono::duration<int> interv(interval);
   int num_nodes = 0;

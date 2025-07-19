@@ -21,6 +21,8 @@ install_packages() {
         libnuma-dev
         libfmt-dev
         rasdaemon
+        flex
+        bison
     )
     package_manager
 }
