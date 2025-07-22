@@ -55,8 +55,10 @@ class add_ras_monitor_for_device_handler
     auto adapter_name =
         r.ras_context->ras_adapter_helper_->try_get_adapter_for_device(
             *device_unique_id);
-    // TODO: handle error and use adapter when available. Needs a fake adapter
-    // implementation for unit tests to pass
+    if (adapter_name == std::nullopt) {
+      r.mark_request_failed(RAS_RESULT_MESSAGE_STR_CMD_PARAMS_INVALID);
+      return;
+    }
 
     // Create a new device instance
     std::unique_ptr<ras_device> dev = std::make_unique<ras_device>(
@@ -64,7 +66,7 @@ class add_ras_monitor_for_device_handler
         r.command_obj[RAS_COMMAND_PARAMS_STR]
                      [RAS_COMMAND_PARAMS_CONFIGURE_OPTIONS_STR]
                      [RAS_COMMAND_PARAMS_ERROR_COUNT_THRESHOLD],
-        false, 0, 0, RAS_DEVICE_DEFAULT_MONITOR_INTERVAL, "mock",
+        false, 0, 0, RAS_DEVICE_DEFAULT_MONITOR_INTERVAL, *adapter_name,
         r.command_obj[RAS_COMMAND_PARAMS_STR][RAS_COMMAND_DEVICE_NUMA_STR]);
 
     // Attempt to add the device to the device manager

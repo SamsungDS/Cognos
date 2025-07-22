@@ -17,6 +17,7 @@ target_link_libraries(${LOGICMOCKTEST} GTest::gtest_main gmock_main mock numa )
 
 configure_file(${CMAKE_SOURCE_DIR}/adapters/mock_adapter/config/mock_config.json ${CMAKE_CURRENT_BINARY_DIR}/config/mock_config.json @ONLY)
 
+add_subdirectory(ras_ut)
 
 include(GoogleTest)
 gtest_discover_tests(${LIBMOCKTEST})

@@ -22,6 +22,8 @@ class ras_adapter_helper {
     logic_module_ctx adapter_details =
         adapters->get_logic_module_details(adapter);
     if (adapter_details == std::nullopt) {
+      svk_logger(RAS_LOGGER, level_E::ERROR,
+                 fmt::format("Invalid adapter {}", adapter).c_str());
       return std::nullopt;
     }
 
@@ -61,9 +63,8 @@ class ras_adapter_helper {
       const std::string &adapter_name) const {
     const std::string list_devices_cmd = R"(
       {
-      "command_name" : {
-          "getDeviceList" : {}
-        }
+      "command_name" : "getDeviceList",
+      "command_params" : {}
       }
     )";
 
@@ -71,9 +72,7 @@ class ras_adapter_helper {
         execute_adapter_sync_command(adapter_name, list_devices_cmd);
     if (device_list_response_o != std::nullopt) {
       json device_list_response = *device_list_response_o;
-      json device_list_json =
-          device_list_response["command_response"]["getDeviceList"]["result"]
-                              ["deviceList"];
+      json device_list_json = device_list_response["result"]["deviceList"];
       std::vector<std::string> device_list(device_list_json.begin(),
                                            device_list_json.end());
       if (device_list.size() != 0) {
@@ -99,6 +98,12 @@ class ras_adapter_helper {
               .c_str());
       if (device_name == device_id) {
         return true;
+      } else {
+        svk_logger(RAS_LOGGER, level_E::INFO,
+                   fmt::format("Adapter: {} device: {} does not match "
+                               "retrieved device name {}",
+                               adapter_name, device_id, device_name)
+                       .c_str());
       }
     }
     return false;
