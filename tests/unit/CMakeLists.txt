@@ -1,6 +1,24 @@
 set(RAS_UT "ras_ut")
 set(RAS_UT_INCLUDE_DEST ${CMAKE_SOURCE_DIR}/include)
 
+
+function(set_if_running_inside_container)
+  message(STATUS "Checking if running inside a container")
+  set(RAS_UT_INSIDE_CONTAINER 0 PARENT_SCOPE)
+  if(EXISTS /.dockerenv) #This checks if running inside docker container
+    set(RAS_UT_INSIDE_CONTAINER 1 PARENT_SCOPE)
+    message(STATUS "Running inside docker container")
+  # ADD more cases if other containers need to be supported
+  else()
+   message(STATUS "Not running inside any container")
+  endif()
+endfunction()
+
+set_if_running_inside_container()
+
+include_directories(${CMAKE_CURRENT_BINARY_DIR}/include)
+add_subdirectory(adapter)
+
 set(UNIT_TEST_MOCK_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 add_subdirectory(logic_module_manager.cc)

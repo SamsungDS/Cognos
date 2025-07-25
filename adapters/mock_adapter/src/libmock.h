@@ -99,7 +99,7 @@ using namespace std;
 
 // Response structure
 struct Response {
-  string function_name;
+  const string function_name;
   string return_value;
   string response_details;
 };
