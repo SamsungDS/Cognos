@@ -1,5 +1,6 @@
-from flask import Flask
+from flask import Flask, request
 import click
+import logging
 import os
 import sys
 from flask_cors import CORS
@@ -12,6 +13,7 @@ sys.path.append(
 
 import cognos.backend.helper as helper
 from cognos.backend.cognos_client import Cognos
+from cognos.backend.logger import create_logger
 
 
 current_script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -24,19 +26,27 @@ AGENT_ENDPOINT = CONFIGS["agent_endpoint"]
 global NODE_ENDPOINT
 NODE_ENDPOINT = CONFIGS["node_endpoint"]
 
+CAL_LOGGER = create_logger("svkapp-cal-logger", log_dir="/var/log/svk",
+                           level=logging.DEBUG)
+
 
 def create_app(mock=False):
     """Implements endpoints of Flask App"""
     app = Flask(__name__)
     CORS(app)
     app.config["CORS_HEADERS"] = "Content-Type"
-    cognos = Cognos(mock=mock)
+    cognos = Cognos(CAL_LOGGER, mock=mock)
 
     @app.get(f"/api/{CAL_API_VERSION}/scmc_version")
     def get_version():
         """
         Returns SCMC Version
         """
+        CAL_LOGGER.debug(
+            helper.serialize_request_metadata(
+                helper.get_request_metadata(request)
+            )
+        )
         if not cognos.scmc_version:
             return helper.create_notfound_response_from_payload({})
         elif "error" in cognos.scmc_version:
@@ -51,12 +61,22 @@ def create_app(mock=False):
         """
         Returns topology of Cognos System
         """
+        CAL_LOGGER.debug(
+            helper.serialize_request_metadata(
+                helper.get_request_metadata(request)
+            )
+        )
         return helper.create_response_from_payload(
             cognos.fetch_topology()
         )
 
     @app.get(f"/api/{CAL_API_VERSION}/hosts")
     def get_hosts():
+        CAL_LOGGER.debug(
+            helper.serialize_request_metadata(
+                helper.get_request_metadata(request)
+            )
+        )
         return helper.create_response_from_payload(
             cognos.get_remote_hosts()
         )
@@ -66,6 +86,11 @@ def create_app(mock=False):
         """
         Returns all node_names of Cognos System
         """
+        CAL_LOGGER.debug(
+            helper.serialize_request_metadata(
+                helper.get_request_metadata(request)
+            )
+        )
         return helper.create_response_from_payload(
             cognos.get_nodes()
         )
@@ -76,12 +101,22 @@ def create_app(mock=False):
         Gets device information for all remote
         attached devices
         """
+        CAL_LOGGER.debug(
+            helper.serialize_request_metadata(
+                helper.get_request_metadata(request)
+            )
+        )
         return helper.create_response_from_payload(
             cognos.get_remote_devices()
         )
 
     @app.post(f"/api/{CAL_API_VERSION}/membox_capacity")
     def membox_capacity():
+        CAL_LOGGER.debug(
+            helper.serialize_request_metadata(
+                helper.get_request_metadata(request)
+            )
+        )
         return helper.create_response_from_payload(
             cognos.membox_capacity()
         )
@@ -93,6 +128,11 @@ def create_app(mock=False):
         Returns: JSON of devices and their information that
                  are attached to the input host
         """
+        CAL_LOGGER.debug(
+            helper.serialize_request_metadata(
+                helper.get_request_metadata(request)
+            )
+        )
         return helper.create_response_from_payload(
             cognos.host_devices()
         )
@@ -102,6 +142,11 @@ def create_app(mock=False):
         """
         Returns list of device names
         """
+        CAL_LOGGER.debug(
+            helper.serialize_request_metadata(
+                helper.get_request_metadata(request)
+            )
+        )
         return helper.create_response_from_payload(
             cognos.available_remote_devices()
         )
@@ -113,6 +158,11 @@ def create_app(mock=False):
 
         Returns list of json objects containing attached device information
         """
+        CAL_LOGGER.debug(
+            helper.serialize_request_metadata(
+                helper.get_request_metadata(request)
+            )
+        )
         return helper.create_response_from_payload(
             cognos.detach_remote_device()
         )
@@ -124,6 +174,11 @@ def create_app(mock=False):
 
         Returns list of json objects containing attached device information
         """
+        CAL_LOGGER.debug(
+            helper.serialize_request_metadata(
+                helper.get_request_metadata(request)
+            )
+        )
         return helper.create_response_from_payload(
             cognos.attach_remote_device()
         )
@@ -133,6 +188,11 @@ def create_app(mock=False):
         """
         Returns list of hosts in format {"value": host, "label": host}
         """
+        CAL_LOGGER.debug(
+            helper.serialize_request_metadata(
+                helper.get_request_metadata(request)
+            )
+        )
         return helper.create_response_from_payload(
             cognos.get_hosts()
         )
@@ -145,6 +205,11 @@ def create_app(mock=False):
 
         TODO: Implement Cognos event schema, support custom query requests
         """
+        CAL_LOGGER.debug(
+            helper.serialize_request_metadata(
+                helper.get_request_metadata(request)
+            )
+        )
         return helper.create_response_from_payload(
             cognos.get_metrics()
         )

@@ -1,3 +1,4 @@
+import logging
 import os
 from pathlib import Path
 import pytest
@@ -106,3 +107,8 @@ def scmc_version_file():
         pass  # Create the file
     yield scmc_version_path
     os.remove(scmc_version_path)
+
+
+def mock_logger(mocker):
+    mock_logger = mocker.patch('logging.getLogger')
+    return mock_logger

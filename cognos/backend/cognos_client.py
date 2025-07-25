@@ -3,6 +3,7 @@ import math
 import os
 import requests
 import socket
+import sys
 from typing import Callable, List, Dict
 from cognos.backend.base_control_interface import BaseControlInterface
 
@@ -30,11 +31,12 @@ class Cognos(BaseControlInterface):
     Perform operations such as fetching topology,
     retrieving metrics, performing attach/detach operations
     """
-    def __init__(self, mock=False):
+    def __init__(self, logger, mock=False):
         self.headers = {
             "accept": "application/json",
             "Content-Type": "application/json"
         }
+        self.logger = logger
         self.sql_client = SqliteClient(mock=mock)
         self.remote_node_client = RemoteAttachedNodeInterface()
         self.direct_node_client = DirectAttachedNodeInterface()
@@ -55,6 +57,7 @@ class Cognos(BaseControlInterface):
         # used to help initialize underlying sql tables
         self.cognos_system = {}  # { cluster_name: {node_name: [device_id]} }
         self._initialize_cognos()
+        self.logger.info("Successfully initialized Cognos..")
 
     def _create_schema(self) -> None:
         """
@@ -133,11 +136,36 @@ class Cognos(BaseControlInterface):
 
         Refer to dbschema.md for what type of information is stored
         """
+        try:
+            self._create_schema()
+            self.logger.info("Created Cognos SQLITE Schema..")
+        except Exception as e:
+            self.logger.critical(f"Unable to create SQLITE Schema: {str(e)}")
+            sys.exit()
 
-        self._create_schema()
-        self._initialize_hosts_devices()
-        self._initialize_connections()
-        print("** Initialized Cognos DB Tables ***")
+        try:
+            self._initialize_hosts_devices()
+            self.logger.info(
+                "Successfully retrieved all hosts / devices info.."
+            )
+        except Exception as e:
+            self.logger.critical(
+                f"Unable to retrieve hosts & devices info of system: {str(e)}"
+            )
+            sys.exit()
+
+        try:
+            self._initialize_connections()
+            self.logger.info(
+                "Successfully retrieved all device to host mappings.."
+            )
+        except Exception as e:
+            self.logger.critical(
+                f"Unable to get host to device mapping: {str(e)}"
+            )
+            sys.exit()
+
+        self.logger.info("** Initialized Cognos DB Tables ***")
         self.sql_client.get_table_records("devices")
         self.sql_client.get_table_records("hosts")
         self.sql_client.get_table_records("connections")

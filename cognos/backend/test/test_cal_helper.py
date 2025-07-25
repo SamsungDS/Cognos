@@ -2,9 +2,11 @@ import pytest
 import json
 import os
 import socket
+import cognos.backend.helper as helper
+from flask import request
 from pathlib import Path
 from unittest.mock import mock_open, patch
-import cognos.backend.helper as helper
+from unittest.mock import patch
 
 
 # get API version
@@ -13,6 +15,81 @@ CONFIGS = helper.fetch_cognos_configs(backend_dir, "config.json")
 AGENT_ENDPOINT = CONFIGS["agent_endpoint"]
 NODE_ENDPOINT = CONFIGS["node_endpoint"]
 API_VERSION = helper.fetch_cal_api_version(backend_dir)
+
+
+def test_get_request_metadata(test_client):
+    dummy_request_metadata = {
+        'REQUEST_METHOD': 'GET',
+        'PATH_INFO': '/dummy/path/',
+        'SERVER_PROTOCOL': 'http1/1',
+        'SERVER_NAME': 'dummy_host',
+        'SERVER_ENVIRONMENT': 'linux',
+        'User-Agent': 'firefox',
+        'Referer': '/dummy/path/getinfo/',
+        'Referer-Policy': 'None'
+    }
+    with test_client.test_request_context('/'):
+        with patch.dict(request.environ, dummy_request_metadata):
+            helper.get_request_metadata(request)
+
+
+def test_serialize_request_metadata():
+    dummy_request_metadata = {
+        'REQUEST_METHOD': 'GET',
+        'PATH_INFO': '/dummy/path/',
+        'SERVER_PROTOCOL': 'http1/1',
+        'SERVER_NAME': 'dummy_host',
+        'SERVER_ENVIRONMENT': 'linux',
+        'User-Agent': 'firefox',
+        'Referer': '/dummy/path/getinfo/',
+        'Referer-Policy': 'None'
+    }
+    res = helper.serialize_request_metadata(dummy_request_metadata)
+    assert res is not None
+    assert isinstance(res, str)
+
+
+def test_check_service_running(mocker):
+    mocker.patch(
+        'os.system',
+        return_value=0
+    )
+    service_name = 'influxdb.service'
+    assert helper.check_service_running(service_name)
+
+
+def test_check_cognos_mgmt_services(mocker):
+    mocker.patch(
+        'os.system',
+        return_value=0
+    )
+    assert not helper.check_cognos_mgmt_services()
+    mocker.patch(
+        'os.system',
+        return_value=1
+    )
+    assert helper.check_cognos_mgmt_services()
+
+
+def test_service_status(mocker):
+    mocker.patch(
+        'os.system',
+        return_value='healthy'
+    )
+    assert 'healthy' == helper.get_service_status('dummy-service')
+
+
+def test_check_cognos_application_services(mocker):
+    mocker.patch(
+        'os.system',
+        return_value=0
+    )
+    assert not helper.check_cognos_application_services()
+    mocker.patch(
+        'os.system',
+        return_value=1
+    )
+    assert helper.check_cognos_application_services()
 
 
 def test_create_empty_response(client):

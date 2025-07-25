@@ -1,4 +1,5 @@
 import json
+import logging
 import pytest
 import socket
 import sqlparse
@@ -11,13 +12,15 @@ from cognos.backend.test.data_constants import (
 )
 import cognos.backend.helper as helper
 
+CAL_LOGGER = logging.getLogger('svkapp-cal-logger')
+
 
 def test_cognos_init(mocker):
     mocker.patch(
         'cognos.backend.cognos_client.Cognos._initialize_cognos',
         return_value=True
     )
-    Cognos(mock=True)
+    Cognos(CAL_LOGGER, mock=True)
 
 
 def test_scmc_version(mocker, scmc_version_file):
@@ -25,7 +28,7 @@ def test_scmc_version(mocker, scmc_version_file):
         'cognos.backend.cognos_client.Cognos._initialize_cognos',
         return_value=True
     )
-    cognos = Cognos(mock=True)
+    cognos = Cognos(CAL_LOGGER, mock=True)
     assert "version" in cognos.scmc_version
 
 
@@ -34,7 +37,7 @@ def test_cognos_endpoint(mocker):
         'cognos.backend.cognos_client.Cognos._initialize_cognos',
         return_value=True
     )
-    cognos = Cognos(mock=True)
+    cognos = Cognos(CAL_LOGGER, mock=True)
     assert cognos.cognos_endpoint is not None
 
 
@@ -43,7 +46,7 @@ def test_create_schema(mocker):
         'cognos.backend.cognos_client.Cognos._initialize_cognos',
         return_value=True
     )
-    cognos = Cognos(mock=True)
+    cognos = Cognos(CAL_LOGGER, mock=True)
     cognos._create_schema()
 
 
@@ -62,7 +65,7 @@ def test_initialize_connections(mocker):
         ".list_devices",
         return_value=DUMMY_REMOTE_LIST_DEVICES_OUTPUT
     )
-    cognos = Cognos(mock=True)
+    cognos = Cognos(CAL_LOGGER, mock=True)
     cognos.cognos_system = {
         "CL_ID_1": {"node1": [12345]}
     }
@@ -153,7 +156,7 @@ def test_intialize_host_devices_with_direct_devices(mocker):
         "socket.gethostbyaddr",
         reutrn_value=('msl-ssg-vmxx.msl.lab', None, ['xxx.xxx.xx.xx'])
     )
-    cognos = Cognos(mock=True)
+    cognos = Cognos(CAL_LOGGER, mock=True)
     cognos._initialize_hosts_devices()
     del cognos
 
@@ -162,7 +165,7 @@ def test_intialize_host_devices_with_direct_devices(mocker):
         "socket.gethostbyaddr",
         reutrn_value=('msl-ssg-vmxx.msl.lab', ['msl-ssg-vmxx'], ['x.x.xx.xx'])
     )
-    cognos = Cognos(mock=True)
+    cognos = Cognos(CAL_LOGGER, mock=True)
     cognos._initialize_hosts_devices()
     del cognos
 
@@ -171,7 +174,7 @@ def test_intialize_host_devices_with_direct_devices(mocker):
         "socket.gethostbyaddr",
         reutrn_value=(None, None, ['xxx.xxx.xx.xx'])
     )
-    cognos = Cognos(mock=True)
+    cognos = Cognos(CAL_LOGGER, mock=True)
     cognos._initialize_hosts_devices()
     del cognos
 
@@ -180,7 +183,7 @@ def test_intialize_host_devices_with_direct_devices(mocker):
         "socket.gethostbyaddr",
         reutrn_value=(None, None, None)
     )
-    cognos = Cognos(mock=True)
+    cognos = Cognos(CAL_LOGGER, mock=True)
     cognos._initialize_hosts_devices()
     del cognos
 
@@ -257,7 +260,7 @@ def test_initialize_host_devices(mocker):
         "socket.gethostbyaddr",
         reutrn_value=('msl-ssg-vmxx.msl.lab', None, ['xxx.xxx.xx.xx'])
     )
-    cognos = Cognos(mock=True)
+    cognos = Cognos(CAL_LOGGER, mock=True)
     cognos._initialize_hosts_devices()
     del cognos
 
@@ -266,7 +269,7 @@ def test_initialize_host_devices(mocker):
         "socket.gethostbyaddr",
         reutrn_value=('msl-ssg-vmxx.msl.lab', ['msl-ssg-vmxx'], ['x.x.xx.xx'])
     )
-    cognos = Cognos(mock=True)
+    cognos = Cognos(CAL_LOGGER, mock=True)
     cognos._initialize_hosts_devices()
     del cognos
 
@@ -275,7 +278,7 @@ def test_initialize_host_devices(mocker):
         "socket.gethostbyaddr",
         reutrn_value=(None, None, ['xxx.xxx.xx.xx'])
     )
-    cognos = Cognos(mock=True)
+    cognos = Cognos(CAL_LOGGER, mock=True)
     cognos._initialize_hosts_devices()
     del cognos
 
@@ -284,7 +287,7 @@ def test_initialize_host_devices(mocker):
         "socket.gethostbyaddr",
         reutrn_value=(None, None, None)
     )
-    cognos = Cognos(mock=True)
+    cognos = Cognos(CAL_LOGGER, mock=True)
     cognos._initialize_hosts_devices()
     del cognos
 
@@ -302,7 +305,7 @@ def test_fetch_topology(mocker):
         'cognos.backend.cognos_client.Cognos._initialize_cognos',
         return_value=True
     )
-    cognos = Cognos(mock=True)
+    cognos = Cognos(CAL_LOGGER, mock=True)
     cognos.fetch_topology()
 
 
@@ -319,7 +322,7 @@ def test_get_remote_hosts(mocker):
         'cognos.backend.cognos_client.Cognos._initialize_cognos',
         return_value=True
     )
-    cognos = Cognos(mock=True)
+    cognos = Cognos(CAL_LOGGER, mock=True)
     cognos.get_remote_hosts()
 
 
@@ -336,8 +339,25 @@ def test_get_hosts(mocker):
         'cognos.backend.cognos_client.Cognos._initialize_cognos',
         return_value=True
     )
-    cognos = Cognos(mock=True)
+    cognos = Cognos(CAL_LOGGER, mock=True)
     cognos.get_remote_hosts()
+
+
+def test_get_all_hosts(mocker):
+    dummy_db_lookup = [
+        ["host3"],
+        ["host4"]
+    ]
+    mocker.patch(
+        'cognos.backend.sqlite_client.SqliteClient.exec_fetch_query',
+        return_value=dummy_db_lookup
+    )
+    mocker.patch(
+        'cognos.backend.cognos_client.Cognos._initialize_cognos',
+        return_value=True
+    )
+    cognos = Cognos(CAL_LOGGER, mock=True)
+    cognos.get_hosts()
 
 
 def test_get_nodes(mocker):
@@ -353,7 +373,7 @@ def test_get_nodes(mocker):
         'cognos.backend.cognos_client.Cognos._initialize_cognos',
         return_value=True
     )
-    cognos = Cognos(mock=True)
+    cognos = Cognos(CAL_LOGGER, mock=True)
     cognos.get_nodes()
 
 
@@ -370,7 +390,7 @@ def test_get_remote_devices(mocker):
         'cognos.backend.cognos_client.Cognos._initialize_cognos',
         return_value=True
     )
-    cognos = Cognos(mock=True)
+    cognos = Cognos(CAL_LOGGER, mock=True)
     cognos.get_remote_devices()
 
 
@@ -402,7 +422,7 @@ def test_list_clusters(mocker):
         'cognos.backend.cognos_client.Cognos._initialize_cognos',
         return_value=True
     )
-    cognos = Cognos(mock=True)
+    cognos = Cognos(CAL_LOGGER, mock=True)
     cognos.list_clusters()
 
 
@@ -432,7 +452,7 @@ def test_list_nodes(mocker):
         'cognos.backend.cognos_client.Cognos._initialize_cognos',
         return_value=True
     )
-    cognos = Cognos(mock=True)
+    cognos = Cognos(CAL_LOGGER, mock=True)
     cognos.list_nodes()
 
 
@@ -467,7 +487,7 @@ def test_list_cluster_nodes(mocker):
         'cognos.backend.cognos_client.Cognos._initialize_cognos',
         return_value=True
     )
-    cognos = Cognos(mock=True)
+    cognos = Cognos(CAL_LOGGER, mock=True)
     cognos.list_cluster_nodes("CL_ID_3")
 
 
@@ -476,7 +496,7 @@ def test_create_cluster(mocker):
         'cognos.backend.cognos_client.Cognos._initialize_cognos',
         return_value=True
     )
-    cognos = Cognos(mock=True)
+    cognos = Cognos(CAL_LOGGER, mock=True)
     cognos.create_cluster()
 
 
@@ -485,7 +505,7 @@ def test_delete_cluster(mocker):
         'cognos.backend.cognos_client.Cognos._initialize_cognos',
         return_value=True
     )
-    cognos = Cognos(mock=True)
+    cognos = Cognos(CAL_LOGGER, mock=True)
     cognos.delete_cluster()
 
 
@@ -502,7 +522,7 @@ def test_available_remote_devices(mocker):
         'cognos.backend.cognos_client.Cognos._initialize_cognos',
         return_value=True
     )
-    cognos = Cognos(mock=True)
+    cognos = Cognos(CAL_LOGGER, mock=True)
     cognos.available_remote_devices()
 
 
