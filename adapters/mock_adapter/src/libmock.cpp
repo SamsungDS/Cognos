@@ -351,9 +351,6 @@ string createResponse(const string &device, const string &error_type,
 
   Document::AllocatorType &allocator = document.GetAllocator();
 
-  // Adding object for "command_response"
-  Value cmd_response(kObjectType);
-
   // Adding object for "getErrorCount/getHealthStatus/getDeviceList"
   Value request_function(kObjectType);
 
@@ -399,24 +396,23 @@ string createResponse(const string &device, const string &error_type,
       result.AddMember("deviceList", devlistarray, allocator);
     }
 
-  } else
+  } else {
     result.AddMember("commandSuccessful", false, allocator);
-
-  // Adding result to request_function
-  request_function.AddMember("result", result, allocator);
+  }
 
   // Adding request function under command response
   if (response.function_name == "getErrorCount")
-    cmd_response.AddMember("getErrorCount", request_function, allocator);
+    document.AddMember("command_response", "getErrorCount", allocator);
   else if (response.function_name == "getHealthStatus")
-    cmd_response.AddMember("getHealthStatus", request_function, allocator);
+    document.AddMember("command_response", "getHealthStatus", allocator);
   else if (response.function_name == "getDeviceList")
-    cmd_response.AddMember("getDeviceList", request_function, allocator);
+    document.AddMember("command_response", "getDeviceList", allocator);
   else
-    cmd_response.AddMember("None", request_function, allocator);
+    document.AddMember("command_response", "None", allocator);
 
-  // Adding command response to document
-  document.AddMember("command_response", cmd_response, allocator);
+  document.AddMember("command_params", request_function, allocator);
+  // Adding result to request_function
+  document.AddMember("result", result, allocator);
 
   StringBuffer buffer;
   Writer<StringBuffer> writer(buffer);
@@ -525,7 +521,6 @@ string processRequest(string &request) {
   // Create a rapidjson document
   Document document;
   string cmd_str, cmd, device_str, device, type_str, type, res, estring, fname;
-  Response out;
 
   // Parse the JSON string
   document.Parse(request.c_str());
@@ -533,40 +528,35 @@ string processRequest(string &request) {
   if (ret != 0) {
     ret = INPUT_JSON_PARSE_ERR;
     estring = GetParseError_En(document.GetParseError());
-    out.function_name = "processRequest";
+    Response out = {.function_name = "processRequest"};
     out.response_details = estring;
     res = createResponse(device, type, err_str[ret], out);
   } else {
     // Check if the document is an object
     if (document.IsObject()) {
-      if (document.HasMember("command_name")) {
-        const Value &cmdobj = document["command_name"];
-        if (cmdobj.IsObject()) {
-          const auto &t = cmdobj.GetObject();
-          for (auto &y : t) {
-            fname = y.name.GetString();
-            break;
-          }
-          if (cmdobj.HasMember(fname.c_str())) {
-            const Value &f = document["command_name"][fname.c_str()];
-            cmd = fname.c_str();
-            if (f.IsObject()) {
-              for (auto &x : f.GetObject()) {
-                if (x.name.IsString() && x.name == "device") {
-                  device_str = x.name.GetString();
-                  if (x.value.IsNumber()) {
-                    device = to_string(x.value.GetInt());
-                  } else if (x.value.IsString()) {
-                    device = x.value.GetString();
-                  }
+      if (document.HasMember("command_name") &&
+          document["command_name"].IsString()) {
+        fname = document["command_name"].GetString();
+        cmd = fname.c_str();
+
+        if (document.HasMember("command_params")) {
+          const Value &f = document["command_params"];
+          if (f.IsObject()) {
+            for (auto &x : f.GetObject()) {
+              if (x.name.IsString() && x.name == "device") {
+                device_str = x.name.GetString();
+                if (x.value.IsNumber()) {
+                  device = to_string(x.value.GetInt());
+                } else if (x.value.IsString()) {
+                  device = x.value.GetString();
                 }
-                if (x.name.IsString() && x.name == "errorType") {
-                  type_str = x.name.GetString();
-                  if (x.value.IsNumber()) {
-                    type = to_string(x.value.GetInt());
-                  } else if (x.value.IsString()) {
-                    type = x.value.GetString();
-                  }
+              }
+              if (x.name.IsString() && x.name == "errorType") {
+                type_str = x.name.GetString();
+                if (x.value.IsNumber()) {
+                  type = to_string(x.value.GetInt());
+                } else if (x.value.IsString()) {
+                  type = x.value.GetString();
                 }
               }
             }
@@ -576,21 +566,19 @@ string processRequest(string &request) {
     }
   }
 
+  Response out = {.function_name = cmd};
   if ((cmd == "getErrorCount") && (device_str == "device") &&
       ((type == "correctable") || (type == "uncorrectable"))) {
-    out.function_name = "getErrorCount";
     ret = getErrorCount(device, type, out);
     res = createResponse(device, type, err_str[ret], out);
     svk_logger(RAS_LOGGER, level_E::INFO, res.c_str());
 
   } else if ((cmd == "getHealthStatus") && (device_str == "device")) {
-    out.function_name = "getHealthStatus";
     ret = getHealthStatus(device, out);
     res = createResponse(device, type, err_str[ret], out);
     svk_logger(RAS_LOGGER, level_E::INFO, res.c_str());
 
   } else if (cmd == "getDeviceList") {
-    out.function_name = "getDeviceList";
     ret = getDeviceList(out);
     res = createResponse(device, type, err_str[ret], out);
     svk_logger(RAS_LOGGER, level_E::INFO, res.c_str());
@@ -600,7 +588,6 @@ string processRequest(string &request) {
     estring = res + ":Invalid/Missing Key Name and/or Invalid Value Provided";
     out.response_details = estring;
     res = createResponse(device, type, err_str[ret], out);
-    out.function_name = "processRequest";
     svk_logger(RAS_LOGGER, level_E::ERROR, estring.c_str());
   }
   return res;
