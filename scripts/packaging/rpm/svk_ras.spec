@@ -2,7 +2,7 @@ Name:           svk-ras
 Version:        %svk_rpm_version
 Release:        1%{?dist}.%svk_os_version
 Summary:        SVK RAS feature
-Requires:       svk-core
+Requires:       svk-core, libtraceevent, perl-DBD-SQLite
 License:        Samsung Internal
 
 %global svk_install_dir %_prefix/local/svk/feature_modules/ras
