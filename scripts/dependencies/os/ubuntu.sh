@@ -24,9 +24,9 @@ install_packages() {
         flex
         bison
         libdbd-sqlite3-perl
-        libsqlite3-0
+        libsqlite3-dev
         sqlite3
-        libtraceevent1
+        libtraceevent-dev
     )
     package_manager
 }
