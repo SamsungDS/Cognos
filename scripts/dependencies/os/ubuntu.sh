@@ -23,6 +23,10 @@ install_packages() {
         rasdaemon
         flex
         bison
+        libdbd-sqlite3-perl
+        libsqlite3-0
+        sqlite3
+        libtraceevent1
     )
     package_manager
 }

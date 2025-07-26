@@ -2,7 +2,7 @@ Name:           svk-ras
 Version:        %svk_rpm_version
 Release:        1%{?dist}.%svk_os_version
 Summary:        SVK RAS feature
-Requires:       svk-core, rasdaemon
+Requires:       svk-core
 License:        Samsung Internal
 
 %global svk_install_dir %_prefix/local/svk/feature_modules/ras
@@ -17,7 +17,7 @@ SVK RAS feature module & SVK RAS test tool.
 %package devel
 Summary:        SVK RAS devel package contains headers
 Provides:       svk-ras-devel = %version
-Requires:       svk-ras = %version svk-core, rasdaemon
+Requires:       svk-ras = %version svk-core
 
 %description devel
 SVK RAS downstream, upstream, and other related header files for app/feature development
