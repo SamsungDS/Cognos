@@ -4,7 +4,6 @@ include(FindPackageHandleStandardArgs)
 project(svk_ras_einj) # Project name
 
 find_program(MAKE_EXECUTABLE NAMES make gmake REQUIRED)
-include (ExternalProject)
 set(MCE_INJECT_DIR ${CMAKE_BINARY_DIR}/mce-inject)
 set(MCE_INJECT_EXECUTABLE mce-inject)
 ExternalProject_Add(mce-inject
@@ -15,7 +14,19 @@ ExternalProject_Add(mce-inject
     INSTALL_COMMAND ""
 )
 
+find_program(MAKE_CONFIG NAMES autoreconf REQUIRED)
+set(RASDAEMON_DIR ${CMAKE_BINARY_DIR}/rasdaemon)
+ExternalProject_Add(rasdaemon
+    GIT_REPOSITORY https://github.com/mchehab/rasdaemon.git
+    SOURCE_DIR        "${CMAKE_BINARY_DIR}/rasdaemon"
+    PATCH_COMMAND "${MAKE_CONFIG}" "-vfi"
+    CONFIGURE_COMMAND "${CMAKE_BINARY_DIR}/rasdaemon/configure" "--enable-mce" "--enable-sqlite3" "--enable-aer"
+    BUILD_COMMAND ${MAKE_EXECUTABLE} -j${Ncpu}
+    INSTALL_COMMAND ${MAKE_EXECUTABLE} DESTDIR=${RASDAEMON_DIR}/b1 install
+)
+
 install(FILES ${MCE_INJECT_DIR}/${MCE_INJECT_EXECUTABLE} DESTINATION "adapters/mock/tools" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+install(DIRECTORY "${RASDAEMON_DIR}/b1/" DESTINATION "adapters/mock/tools" PATTERN "*" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
 
 add_executable(svk_ras_einj main.cpp)
 

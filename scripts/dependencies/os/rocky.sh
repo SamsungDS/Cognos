@@ -31,6 +31,10 @@ install_packages() {
         rasdaemon
         flex
         bison
+        autoconf
+        automake
+        sqlite-devel
+        libtraceevent-devel
     )
     package_manager
 }
