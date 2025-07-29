@@ -5,7 +5,8 @@
 #include "ras_command_handlers.hpp"
 #include "utils/ras_json_validate.hpp"
 
-std::unique_ptr<cognos::utils::CommandHandler<ras_request>> get_ras_command_handler(void) {
+std::unique_ptr<cognos::utils::CommandHandler<ras_request>>
+get_ras_command_handler(void) {
   std::unique_ptr<cognos::utils::CommandHandler<ras_request>> rch = nullptr;
   rch = std::make_unique<cognos::utils::CommandHandler<ras_request>>();
 
@@ -82,7 +83,8 @@ ras_monitor::execute_request_by_monitor(ras_request &req) {
 }
 
 void execute_request_by_monitor_(ras_request &req) {
-  if (auto status = req.ras_context->monitor_context->execute_request_by_monitor(req);
+  if (auto status =
+          req.ras_context->monitor_context->execute_request_by_monitor(req);
       status == cognos::utils::CommandHandler<
                     ras_request>::command_status::COMMAND_UNSUPPORTED) {
     req.mark_request_failed(RAS_RESULT_MESSAGE_STR_CMD_UNSUPPORTED);
