@@ -105,8 +105,10 @@ def get_network_adapters_info():
         if not network_dev_name:
             continue
         pci_address_match = re.search(r"([0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]{0,2})", item.get("businfo", ""))
-        network_adapters_info[network_dev_name]["pci-address"] = pci_address_match.group(1)
-        network_adapters_info[network_dev_name]["device-vendor"] = item["vendor"]
+        if pci_address_match is not None:
+            network_adapters_info[network_dev_name]["pci-address"] = pci_address_match.group(1)
+        if "vendor" in item:
+            network_adapters_info[network_dev_name]["device-vendor"] = item["vendor"]
     
     return {'network-adapters-info': network_adapters_info}
 

@@ -213,6 +213,36 @@ def test_get_network_adapters_info_missing_files(monkeypatch):
         }
     }
 
+def test_get_network_adapters_info_missing_pci_address(monkeypatch):
+    """If not a pci device, pci address won't exist so skip it"""
+    snic_v4 = DummySnic(family=fn.socket.AF_INET,
+                        address="10.0.0.1",
+                        netmask="255.255.255.0")
+    monkeypatch.setattr(fn.psutil, "net_if_addrs",
+                        lambda: {"eth0": [snic_v4]})
+    # USB network adapter, srf13 has this
+    lshw_data = json.dumps([{"logicalname": "eth0", "businfo": "usb@2:3"}]
+    ).encode()
+    monkeypatch.setattr(fn.subprocess, "check_output",
+                        lambda *a, **kw: lshw_data)
+    
+    # no files exist -> os.path.exists returns False
+    monkeypatch.setattr(fn.os.path, "exists", lambda path: False)
+
+    # builtins.open will never be called, but patch defensively
+    monkeypatch.setattr(builtins, "open", make_open_map())
+    
+    result = fn.get_network_adapters_info()
+    assert result == {
+        "network-adapters-info" : {
+            "eth0": {
+                "ip-address": "10.0.0.1",
+                "ipv6-address": "",
+                "netmask": "255.255.255.0",
+            }
+        }
+    }
+
 
 # ------------- get_cpu_info ------------------------------------------------
 
