@@ -40,7 +40,6 @@ class ras_adapter_helper {
              adapter_details_p->logic_module_name);
     svk_status rc =
         adapter_details_p->execute_logic_sync(&lcmd, &linput, &loutput);
-    std::cout << std::string((char *)loutput.output_buffer) << std::endl;
     if (rc == SVK_STATUS_SUCCESS) {
       try {
         json out_json = json::parse(loutput.output_buffer);
