@@ -245,26 +245,9 @@ class Cognos(BaseControlInterface):
             node_info_map[n['node_name']] = {}
             ip_addr = n['node_ip']
             node_info_map[n['node_name']]['ip_addr'] = ip_addr
-            hostname = ""
-            try:
-                host_info = socket.gethostbyaddr(ip_addr)
-                try:
-                    if host_info[1]:
-                        # check if alias
-                        hostname = host_info[1][0]
-                    elif host_info[0]:
-                        # else use full hostname
-                        hostname = host_info[0]
-                    elif (helper.is_valid_ip_addr(ip_addr)
-                          and helper.is_endpoint_reachable(ip_addr, 8001)):
-                        # use ip addr if we can't fetch hostname
-                        hostname = ip_addr
-                    else:
-                        raise ValueError(f"Unable to get hostname: {ip_addr}")
-                except Exception as error:
-                    print(f"Could not retrieve host information: {str(error)}")
-            except socket.herror:
-                print(f"Hostname could not be resolved for ip addr: {ip_addr}")
+            # TODO: update to strictly use node_name from node feature module
+            # TODO: remove 'hostname' field
+            hostname = n['node_name']
             node_info_map[n['node_name']]['hostname'] = hostname
 
         for cluster in clusters:
