@@ -4,6 +4,7 @@
 #include <iostream>
 #include <memory>
 
+#include "ras.hpp"
 #include "ras_device.h"
 #include "ras_request.h"
 #include "utils/command_handler.hpp"
@@ -14,7 +15,7 @@
  * @brief Handles the command to add a reliability monitor for a device.
  */
 class add_ras_monitor_for_device_handler
-    : public CommandHandlerImpl<ras_request> {
+    : public cognos::utils::CommandHandlerImpl<ras_request> {
  public:
   /**
    * @brief Validates the incoming request.
@@ -40,12 +41,21 @@ class add_ras_monitor_for_device_handler
    */
   void execute(ras_request& r) {
     // Get the device manager instance
-    auto device_manager = ras_monitor_get_device_manager(r.monitor_instance);
+    auto device_manager =
+        ras_monitor_get_device_manager(r.ras_context->monitor_context);
 
     // Get the device identifier from the request
     auto device_unique_id = get_device_identifier_from_request(r);
     if (device_unique_id == std::nullopt) {
       // Mark the request as invalid if the device identifier is missing
+      r.mark_request_failed(RAS_RESULT_MESSAGE_STR_CMD_PARAMS_INVALID);
+      return;
+    }
+
+    auto adapter_name =
+        r.ras_context->ras_adapter_helper_->try_get_adapter_for_device(
+            *device_unique_id);
+    if (adapter_name == std::nullopt) {
       r.mark_request_failed(RAS_RESULT_MESSAGE_STR_CMD_PARAMS_INVALID);
       return;
     }
@@ -56,7 +66,7 @@ class add_ras_monitor_for_device_handler
         r.command_obj[RAS_COMMAND_PARAMS_STR]
                      [RAS_COMMAND_PARAMS_CONFIGURE_OPTIONS_STR]
                      [RAS_COMMAND_PARAMS_ERROR_COUNT_THRESHOLD],
-        false, 0, 0, RAS_DEVICE_DEFAULT_MONITOR_INTERVAL, "mock",
+        false, 0, 0, RAS_DEVICE_DEFAULT_MONITOR_INTERVAL, *adapter_name,
         r.command_obj[RAS_COMMAND_PARAMS_STR][RAS_COMMAND_DEVICE_NUMA_STR]);
 
     // Attempt to add the device to the device manager

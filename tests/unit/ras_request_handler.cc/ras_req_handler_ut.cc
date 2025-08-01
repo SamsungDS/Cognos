@@ -2,6 +2,7 @@
 #include <ras_monitor.h>
 
 #include "svk_logger.hpp"
+#include "utils/logic_module_manager.hpp"
 
 class RequestHandlerUnitTest : public testing::Test {
  protected:

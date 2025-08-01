@@ -44,8 +44,7 @@ svk_status execute_mock_logic_sync(svk_logic_cmd *cmd, svk_logic_input *input,
     boost::property_tree::read_json(ss, pt);
     snprintf((char *)output->output_buffer, output->output_len, "%s",
              out.c_str());
-    if (pt.get<std::string>("command_response.result.commandSuccessful") ==
-        "true") {
+    if (pt.get<std::string>("result.commandSuccessful") == "true") {
       output->status = SVK_STATUS_SUCCESS;
       ret = SVK_STATUS_SUCCESS;
     }

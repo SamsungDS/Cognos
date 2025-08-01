@@ -17,7 +17,6 @@ endfunction()
 set_if_running_inside_container()
 
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/include)
-add_subdirectory(adapter)
 
 set(UNIT_TEST_MOCK_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
@@ -34,22 +33,23 @@ include_directories(${RAS_UT_INCLUDE_DEST})
 link_directories(${CMAKE_SOURCE_DIR}/build/src)
 add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
 
-file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/adapters/mock/lib64)
-file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/adapters/ras/lib64)
+file(MAKE_DIRECTORY ${BUILD_ADAPTERS_DIR}/mock/lib64)
+file(MAKE_DIRECTORY ${BUILD_ADAPTERS_DIR}/ras/lib64)
 
 add_custom_target(copy_mock_adapter_lib
   COMMAND ${CMAKE_COMMAND} -E copy
   ${CMAKE_BINARY_DIR}/adapters/mock_adapter/libmock.so
-  ${CMAKE_BINARY_DIR}/adapters/mock/lib64/
+  ${BUILD_ADAPTERS_DIR}/mock/lib64/
   COMMAND ${CMAKE_COMMAND} -E copy
   ${CMAKE_BINARY_DIR}/src/libras.so
-  ${CMAKE_BINARY_DIR}/adapters/ras/lib64/
+  ${BUILD_ADAPTERS_DIR}/ras/lib64/
 )
 
 add_dependencies(copy_mock_adapter_lib mock ras)
 
 add_executable(${RAS_UT} ras_ut.cc)
 add_dependencies(${RAS_UT} copy_mock_adapter_lib)
+add_dependencies(${RAS_UT} copy_ras_ut_adapter_lib)
 target_include_directories(${RAS_UT} PUBLIC ${RAS_UT_INCLUDE_DEST} ${CMAKE_CURRENT_BINARY_DIR}/include)
 target_link_directories(${RAS_UT} PUBLIC ${SVKFW_LIBRARY_DIRS})
 
@@ -69,6 +69,8 @@ add_subdirectory(RequestManager.cpp)
 add_subdirectory(RequestProcessor)
 add_subdirectory(ras_monitor.cc)
 add_subdirectory(ras_request_handler.cc)
+
+add_subdirectory(adapter)
 
 include(GoogleTest)
 gtest_discover_tests(${RAS_UT})

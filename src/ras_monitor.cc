@@ -5,9 +5,10 @@
 #include "ras_command_handlers.hpp"
 #include "utils/ras_json_validate.hpp"
 
-std::unique_ptr<CommandHandler<ras_request>> get_ras_command_handler(void) {
-  std::unique_ptr<CommandHandler<ras_request>> rch = nullptr;
-  rch = std::make_unique<CommandHandler<ras_request>>();
+std::unique_ptr<cognos::utils::CommandHandler<ras_request>>
+get_ras_command_handler(void) {
+  std::unique_ptr<cognos::utils::CommandHandler<ras_request>> rch = nullptr;
+  rch = std::make_unique<cognos::utils::CommandHandler<ras_request>>();
 
   if (rch) {
     auto add_ras_device_handler =
@@ -76,15 +77,16 @@ bool ras_monitor::ras_submit_timed_request(ras_request *req, int interval) {
   return tcall;
 }
 
-CommandHandler<ras_request>::command_status
+cognos::utils::CommandHandler<ras_request>::command_status
 ras_monitor::execute_request_by_monitor(ras_request &req) {
   return this->ras_command_handlers_->execute_command(req.command, req);
 }
 
 void execute_request_by_monitor_(ras_request &req) {
-  if (auto status = req.monitor_instance->execute_request_by_monitor(req);
-      status ==
-      CommandHandler<ras_request>::command_status::COMMAND_UNSUPPORTED) {
+  if (auto status =
+          req.ras_context->monitor_context->execute_request_by_monitor(req);
+      status == cognos::utils::CommandHandler<
+                    ras_request>::command_status::COMMAND_UNSUPPORTED) {
     req.mark_request_failed(RAS_RESULT_MESSAGE_STR_CMD_UNSUPPORTED);
   }
   // Other cases should be handled by validator/executor and mark the result

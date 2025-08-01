@@ -4,6 +4,7 @@
 #include <dlfcn.h>
 
 #include <map>
+#include <mutex>
 #include <optional>
 
 #include "logic_interface/svk_logic_interface.h"
@@ -30,6 +31,7 @@ class logic_module_manager {
   };
   std::map<std::string, std::unique_ptr<logic_module_context>>
       logic_modules_map;
+  std::mutex modules_manager_lock;
 
  public:
   logic_module_manager() = default;
@@ -40,6 +42,18 @@ class logic_module_manager {
   void unload_logic_module(const std::string &logic_module_name);
   logic_module_ctx get_logic_module_details(
       const std::string &logic_module_name);
+
+  std::optional<std::vector<std::string>> get_loaded_modules(void) {
+    std::vector<std::string> modules;
+    std::scoped_lock lk(modules_manager_lock);
+    for (const auto &module_entry : logic_modules_map) {
+      modules.push_back(module_entry.first);
+    }
+    if (modules.size() == 0) {
+      return std::nullopt;
+    }
+    return modules;
+  }
 };
 
 #endif  // _LOGIC_MODULE_MANAGER_HPP_

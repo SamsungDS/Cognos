@@ -38,12 +38,12 @@ using json = nlohmann::json;
 class ras_monitor;
 
 struct ras_request {
-  ras_request(bool is_sync_request, ras_monitor *monitor_instance,
+  ras_request(bool is_sync_request, struct ras_context_s *ras_context,
               bool is_internal_request = true,
               std::optional<const char *> command_input_cstr = std::nullopt,
               std::optional<const size_t> command_input_len = std::nullopt)
       : is_sync_request(is_sync_request),
-        monitor_instance(monitor_instance),
+        ras_context(ras_context),
         is_internal_request(is_internal_request),
         command_input_cstr(command_input_cstr),
         command_input_len(command_input_len) {
@@ -52,7 +52,7 @@ struct ras_request {
   }
 
   bool is_sync_request;
-  ras_monitor *monitor_instance;
+  struct ras_context_s *ras_context;
   bool is_internal_request;
   std::optional<const char *> command_input_cstr;
   std::optional<const size_t> command_input_len;
