@@ -90,7 +90,7 @@ class ras_adapter_helper {
           fmt::format("No device found for adapter {}", adapter_name).c_str());
       return false;
     }
-    for (auto device_name : *device_list) {
+    for (auto &device_name : *device_list) {
       svk_logger(
           RAS_LOGGER, level_E::INFO,
           fmt::format("Adapter: {} device name {}", adapter_name, device_name)
