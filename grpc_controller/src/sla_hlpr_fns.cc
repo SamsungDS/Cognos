@@ -58,7 +58,7 @@ static int parseJSONOutputOfDeviceInfo(std::string node_name,
     dev_info.available_capacity_mb = response_json["available_capacity_MB"];
     // TODO: Need to fix on the correct way of reporting the numa_attached vs
     // the actual numa of the device
-    dev_info.numa_attached = response_json["numa_attached"];
+    dev_info.numa_attached = response_json["numa_node"];
     dev_info.numa = dev_info.numa_attached;
     dev_info.status = response_json["status"];
 

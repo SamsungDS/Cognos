@@ -1014,7 +1014,7 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStart) {
   "type\":\"CXL.mem\",\"domain_type\":\"PCIe\",\"domain_id\":0,\"link_"      \
   "speed\":16,\"link_width\":8,\"available_capacity_MB\":127080,\"status\":" \
   "\"active\",\"aspm_active\":false,\"sris_active\":false,\"lock_active\":"  \
-  "false,\"numa_attached\":1,\"capabilities\":{\"Power Management "          \
+  "false,\"numa_node\":1,\"capabilities\":{\"Power Management "              \
   "version\":1},\"advertised_qos\":{\"avg_latency\":120,\"p99_latency\":"    \
   "350,\"io_per_sec\":50000,\"BW_per_sec\":1000000,\"io_size\":4096,"        \
   "\"qd\":32}}"
@@ -1029,7 +1029,7 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStart) {
   "type\":\"CXL.mem\",\"domain_type\":\"PCIe\",\"domain_id\":0,\"link_"      \
   "speed\":16,\"link_width\":8,\"available_capacity_MB\":127080,\"status\":" \
   "\"active\",\"aspm_active\":false,\"sris_active\":false,\"lock_active\":"  \
-  "false,\"numa_attached\":1,\"capabilities\":{\"Power Management "          \
+  "false,\"numa_node\":1,\"capabilities\":{\"Power Management "              \
   "version\":1},\"advertised_qos\":{\"avg_latency\":320,\"p99_latency\":"    \
   "350,\"io_per_sec\":50000,\"BW_per_sec\":1000000,\"io_size\":4096,"        \
   "\"qd\":32}}"
