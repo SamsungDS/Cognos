@@ -1,6 +1,7 @@
 #ifndef DEV_CMMH_H
 #define DEV_CMMH_H
 
+#include <memory>
 #include <unordered_map>
 
 #include "bw_monitor.h"
@@ -78,9 +79,28 @@ class DevCMMH : public CXLDeviceAdapter {
    */
   int setup_info() override;
 
- private:
-  // background monitor
-  BandwidthMonitor bandwidth_monitor;
+  /**
+   * @brief Builds and sets the mapping between HDM base addresses and device
+   * indices from the CMMH driver module.
+   *
+   * This function retrieves the number of CXL devices and their specifications
+   * to build a mapping between the HDM base address and the device index.
+   *
+   * The resulting mapping is stored via set_hdm_base_to_device_index()
+   * and can be used later to associate with PCIe BDFs or physical memory ranges
+   * and CMMH APIs (cmmh_stat_cache, cmmh_stat_sensor and cmmh_stat_interface)
+   * that rely on device index.
+   *
+   * @note This function should be called early during device discovery so that
+   * later modules (ex: bandwidth monitoring, stat queries) can leverage
+   * the mapping.
+   */
+  void build_hdm_base_to_device_index_map();
+
+ protected:
+  // Bandwidth monitor map: device id -> monitor instance
+  std::unordered_map<sc_id, std::unique_ptr<BandwidthMonitor>, hash_sc_id>
+      dev_to_bwmon;
 };
 
 /**

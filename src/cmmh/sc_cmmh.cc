@@ -1,37 +1,30 @@
 #include "sc_cmmh.h"  // implements all functions declared in cmmh.h
 
 #include "sc_utility.h"  // generate_dev_id, get_numa_memory_info,
-// discover_cxl_devices_shared, get_global_dev_type_map,
-// get_numa_node_from_bdf, get_metrics_info
+// discover_cxl_devices_shared, find_dev_type_map,
+// get_numa_node_from_bdf, get_metrics_info, set_hdm_base_to_device_index
+
+#include "sc_api_structs.h"
 
 /**
  * @brief DevCMMH constructor.
  */
-DevCMMH::DevCMMH() : bandwidth_monitor(10) {
-  LOG(level_E::INFO, "DevCMMH adapter constructed");
-#if MOCK == 1
-  LOG(level_E::INFO, "cmmh in mock mode.");
-#else
-  if (cmmh_init() == 0) {
-    bandwidth_monitor.start();
-    LOG(level_E::INFO, "cmmh_init succeeded. Bandwidth monitoring started.");
-  } else {
-    LOG(level_E::ERROR, "cmmh_init failed. Bandwidth monitoring disabled.");
-  }
-#endif
-}
+DevCMMH::DevCMMH() { LOG(level_E::INFO, "DevCMMH adapter constructed"); }
 
 /**
  * @brief DevCMMH destructor.
  */
 DevCMMH::~DevCMMH() {
   LOG(level_E::INFO, "DevCMMH adapter destroyed");
-#if MOCK == 1
-  LOG(level_E::INFO, "Mock mode: skipping bandwidth monitor stop.");
-#else
-  bandwidth_monitor.stop();
+  // stop all per-device monitors
+  for (auto& [id, monitor] : dev_to_bwmon) {
+    if (monitor) {
+      monitor->stop();
+    }
+  }
+  dev_to_bwmon.clear();
   cmmh_close();
-#endif
+  LOG(level_E::DEBUG, "DevCMMH destroyed and bandwidth monitors stopped.");
 }
 
 /**
@@ -95,7 +88,6 @@ DevInfo DevCMMH::get_device_info(const sc_id& sid) const {
   // update dynamic fields
   dinfo.numa_node = numa_node;
   dinfo.available_capacity_MB = free_mb;
-
   dev.d_set_dynamic_info(dinfo);
 
   return dinfo;
@@ -134,9 +126,20 @@ StatInfo DevCMMH::get_device_stats(const sc_id& sid) const {
   stats.rw_errors = 0;
   stats.latency_us = 0;
 
-  stats.sensor_stats = cmmh_stat_sensor();
-  stats.cache_stats = cmmh_stat_cache();
-  stats.used_bandwidth_MBps = bandwidth_monitor.get_average_MBps();
+  stats.sensor_stats = cmmh_stat_sensor(info.static_info.device_index);
+  stats.cache_stats = cmmh_stat_cache(info.static_info.device_index);
+
+  // get bandwidth from per-device monitor
+  auto it = dev_to_bwmon.find(sid);
+  if (it != dev_to_bwmon.end() && it->second) {
+    stats.used_bandwidth_Bps = it->second->get_average_Bps();
+  } else {
+    LOG(level_E::WARN,
+        "BandwidthMonitor missing for scid=" + std::to_string(sid.get_sc_id()) +
+            "returning 0 MBps");
+    stats.used_bandwidth_Bps = 0;
+  }
+
   LOG(level_E::INFO, "DevCMMH::get_device_stats completed");
   return stats;
 }
@@ -158,19 +161,36 @@ StatInfo DevCMMH::get_device_stats(const sc_id& sid) const {
  */
 void DevCMMH::discover_devices(DeviceManager& mgr) {
   LOG(level_E::INFO, "DevCMMH::discover_devices started");
-  const auto* global_map = get_global_dev_type_map();
-  if (!global_map) {
+  // populate hdm_base -> device_index map
+  build_hdm_base_to_device_index_map();
+
+  // get device type map
+  const auto* dt_map = find_dev_type_map();
+  if (!dt_map || dt_map->empty()) {
     LOG(level_E::ERROR, "Device ID mapping not initialized.");
     return;
   }
 
-  // shared utility discover devices and return the map
-  auto discovered_devices = discover_cxl_devices_shared(*global_map);
+  // shared utility : discover devices and return the map
+  auto discovered_devices = discover_cxl_devices_shared(*dt_map);
 
   for (const auto& [scid, dev] : discovered_devices) {
     device_map_[scid] = dev;
     // registration
     mgr.register_device(scid, this);
+
+    // start bandwidth monitor for each device
+    DevStaticInfo sinfo = dev.d_get_info().static_info;
+    if (dev_to_bwmon.find(scid) == dev_to_bwmon.end()) {
+      auto monitor = std::make_unique<BandwidthMonitor>(sinfo.device_index,
+                                                        sinfo.bw_interval_sec);
+      monitor->start();
+      dev_to_bwmon[scid] = std::move(monitor);
+      LOG(level_E::INFO,
+          "Started BandwidthMonitor for scid=" +
+              std::to_string(sinfo.device_id) +
+              " with interval=" + std::to_string(sinfo.bw_interval_sec));
+    }
   }
 
   LOG(level_E::INFO, "DevCMMH::discover_devices completed");
@@ -183,6 +203,33 @@ void DevCMMH::discover_devices(DeviceManager& mgr) {
 int DevCMMH::setup_info() {
   LOG(level_E::INFO, "DevCMMH::setup_info called");
   return 0;
+}
+
+void DevCMMH::build_hdm_base_to_device_index_map() {
+  std::unordered_map<uint64_t, int> mapping;
+
+  if (cmmh_init() != 0) {
+    LOG(level_E::ERROR,
+        "cmmh_init failed. Skipping hdm_base to device index mapping.");
+    return;
+  }
+
+  int dev_count = cmmh_get_device_count();
+  LOG(level_E::INFO, "CMMH device count = " + std::to_string(dev_count));
+
+  for (int i = 0; i < dev_count; ++i) {
+    auto spec = cmmh_get_spec(i);
+    if (spec.status == CMMH_STAT_RC_SUCCESS) {
+      mapping[spec.hdm_base] = i;
+      LOG(level_E::DEBUG, "Mapped hdm_base=" + std::to_string(spec.hdm_base) +
+                              " to device_index=" + std::to_string(i));
+    } else {
+      LOG(level_E::WARN, "Skipping device index " + std::to_string(i) +
+                             " due to invalid spec status");
+    }
+  }
+
+  set_hdm_base_to_device_index(mapping);
 }
 
 /**

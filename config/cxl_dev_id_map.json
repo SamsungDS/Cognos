@@ -33,8 +33,8 @@
         }
       },
       "advertised_qos": {
-        "avg_latency_us": 120,
-        "p99_latency_us": 350,
+        "avg_latency_ns": 120,
+        "p99_latency_ns": 350,
         "io_per_sec": 50000,
         "bw_per_sec": 1000000,
         "io_size_in_bytes": 4096,
@@ -49,7 +49,7 @@
         "available_memory_MB": 4096,
         "total_memory_MB": 8192,
         "total_bandwidth_MBps": 20000,
-        "used_bandwidth_MBps": 1104548,
+        "used_bandwidth_Bps": 1104548,
         "rw_errors": 0,
         "latency_us": 120,
         "sensor_stats": {
@@ -94,8 +94,8 @@
         }
       },
       "advertised_qos": {
-        "avg_latency_us": 120,
-        "p99_latency_us": 350,
+        "avg_latency_ns": 120,
+        "p99_latency_ns": 350,
         "io_per_sec": 50000,
         "bw_per_sec": 1000000,
         "io_size_in_bytes": 4096,
@@ -110,7 +110,7 @@
         "available_memory_MB": 4096,
         "total_memory_MB": 8192,
         "total_bandwidth_MBps": 20000,
-        "used_bandwidth_MBps": 1104548,
+        "used_bandwidth_Bps": 1104548,
         "rw_errors": 0,
         "latency_us": 120,
         "sensor_stats": {
@@ -131,6 +131,6 @@
     "severity": "info",
     "source_type": "device",
     "power_state": "L0",
-    "interval_seconds": 10
+    "interval_seconds": 1
   }
 }

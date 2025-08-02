@@ -89,7 +89,7 @@ class DummyAdapter : public CXLDeviceAdapter {
     stats.available_memory_MB = 1024;
     stats.used_memory_MB = 1024;
     stats.total_bandwidth_MBps = 64000;
-    stats.used_bandwidth_MBps = 0;
+    stats.used_bandwidth_Bps = 0;
     stats.rw_errors = 0;
     stats.latency_us = 0;
     return stats;

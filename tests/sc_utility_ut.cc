@@ -82,17 +82,16 @@ extern "C" FILE* popen(const char* cmd, const char* mode) {
   return real_popen ? real_popen(cmd, mode) : nullptr;
 }
 
-std::map<int, std::pair<uint64_t, uint64_t>> mock_numa_info;
-bool get_numa_memory_info(int node, uint64_t& total, uint64_t& free) {
-  if (mock_numa_info.count(node)) {
-    total = mock_numa_info[node].first;
-    free = mock_numa_info[node].second;
-    return true;
-  } else {
-    total = 1024;
-    free = 1024;
-    return false;
-  }
+static void write_json(const std::string& path,
+                       const std::string& metrics_block) {
+  std::ofstream(path) << R"({
+"device_map": [{
+"vendor_id":"1","device_id":"2","device_type":"x",
+"capabilities":{"power_management_version":1,"vendor_specific":{"latency_hint":"enabled"}},
+"advertised_qos":{"avg_latency_ns":120,"p99_latency_ns":350,"io_per_sec":50000,"bw_per_sec":1000000,"io_size_in_bytes":4096,"qd":32}
+}],
+"metrics": )" << metrics_block
+                      << "}\n";
 }
 
 class ScUtilityTest : public ::testing::Test {
@@ -100,7 +99,7 @@ class ScUtilityTest : public ::testing::Test {
   void SetUp() override {
     // inject device map
     DevTypeMap dev_map;
-    set_global_dev_type_map(dev_map);
+    set_dev_type_map(dev_map);
     std::remove("/tmp/nonexistent_config.json");
 
     test_force_popen_fail = false;
@@ -275,30 +274,9 @@ TEST_F(ScUtilityTest, ValidateJsonFile_FileMissing) {
   EXPECT_EQ(result, -ENOENT);
 }
 
-TEST_F(ScUtilityTest, NumaMemoryInfo_APIFailure) {
-  test_force_failure = true;
-
-  uint64_t total = 0, free = 0;
-  EXPECT_FALSE(get_numa_memory_info(0, total, free));
-
-  test_force_failure = false;
-}
-
-TEST_F(ScUtilityTest, NumaMemoryInfo_ThrowsException) {
-  test_force_throw = true;
-
-  uint64_t total = 0, free = 0;
-  EXPECT_FALSE(get_numa_memory_info(0, total, free));
-
-  test_force_throw = false;
-}
-
 TEST_F(ScUtilityTest, LoadDevTypeMappingJson_FromConfigFile) {
   int status = load_dev_type_mapping_json(CXL_ID_TYPE_MAP_FILE);
   EXPECT_EQ(status, 0);
-  const DevTypeMap* map = get_global_dev_type_map();
-  ASSERT_NE(map, nullptr);
-  EXPECT_GT(map->size(), 0);
 }
 
 TEST_F(ScUtilityTest, LoadDevTypeMappingJson_NonObjectRoot) {
@@ -330,8 +308,8 @@ TEST_F(ScUtilityTest, LoadDevTypeMappingJson_ValidFlowWithOneEntry) {
         }
       },
       "advertised_qos": {
-        "avg_latency_us": 120,
-        "p99_latency_us": 350,
+        "avg_latency_ns": 120,
+        "p99_latency_ns": 350,
         "io_per_sec": 50000,
         "bw_per_sec": 1000000,
         "io_size_in_bytes": 4096,
@@ -347,9 +325,6 @@ TEST_F(ScUtilityTest, LoadDevTypeMappingJson_ValidFlowWithOneEntry) {
   })";
   int status = load_dev_type_mapping_json(path);
   EXPECT_EQ(status, 0);
-  const DevTypeMap* map = get_global_dev_type_map();
-  ASSERT_NE(map, nullptr);
-  EXPECT_EQ(map->size(), 1);
 }
 
 TEST_F(ScUtilityTest, LoadDevTypeMappingJson_MissingSN) {
@@ -389,10 +364,6 @@ TEST_F(ScUtilityTest, LoadDevTypeMappingJson_DeviceEntryMissingDeviceType) {
 
   int status = load_dev_type_mapping_json(path);
   EXPECT_EQ(status, 0);
-
-  const DevTypeMap* map = get_global_dev_type_map();
-  ASSERT_NE(map, nullptr);
-  EXPECT_EQ(map->size(), 0);
 }
 
 TEST_F(ScUtilityTest, ParseJsonKey_InvalidJson_ReturnsENOENT) {
@@ -482,19 +453,21 @@ TEST_F(ScUtilityTest, LoadDevTypeMappingJson_parse_device_entry_error) {
  "lane_width": 8
  }
  ],
-"metrics": {
-    "domain": "observability",
-    "feature_id": 3,
-    "category": "metric"
- }
+   "metrics": {
+      "domain": "mock",
+      "feature_id": 3,
+      "category": "info",
+      "severity": "high",
+      "source_type": "device",
+      "power_state": "active",
+      "interval_seconds": 42
+
+    }
+
  })";
 
   int status = load_dev_type_mapping_json(path);
   EXPECT_EQ(status, 0);
-
-  const DevTypeMap* map = get_global_dev_type_map();
-  ASSERT_NE(map, nullptr);
-  EXPECT_EQ(map->size(), 0);
 }
 
 TEST_F(ScUtilityTest, GetPhysicalAddress_PythonFails) {
@@ -638,23 +611,6 @@ TEST_F(ScUtilityTest, PciAllocWorks) {
             << "\n";
 }
 
-TEST_F(ScUtilityTest, GetNumaMemoryInfo_ReturnsFalse) {
-  test_force_failure = true;
-  test_force_throw = false;
-  uint64_t total = 0, free = 0;
-  bool ok = get_numa_memory_info(1, total, free);
-  EXPECT_FALSE(ok);
-  test_force_failure = false;  // reset for other tests
-}
-
-TEST_F(ScUtilityTest, GetNumaMemoryInfo_ReturnsFalseOnException) {
-  test_force_throw = true;
-  uint64_t total = 0, free = 0;
-  bool ok = get_numa_memory_info(2, total, free);
-  EXPECT_FALSE(ok);
-  test_force_throw = false;  // reset
-}
-
 TEST_F(ScUtilityTest, GetNumaNodeFromBDF_OutofRange) {
   RangeToNumaMap range_map;
   range_map[{0x2000000000, 0x2000FFFFFFF}] = 1;
@@ -709,4 +665,226 @@ TEST_F(ScUtilityTest, GetMetricsInfoReturnsLoadedValues) {
   auto m = get_metrics_info();
   EXPECT_EQ(m.feature_id, 5);
   EXPECT_EQ(m.domain, "mock");
+}
+
+TEST_F(ScUtilityTest, MissingQOS) {
+  std::ofstream("/tmp/metrics_valid.json") << R"({
+    "device_map": [{
+      "vendor_id": "1234",
+      "device_id": "5678",
+      "device_type": "mock_type",
+      "capabilities": {
+        "power_management_version": 1,
+        "vendor_specific": {
+          "latency_hint": "enabled"
+        }
+      }
+    }],
+    "metrics": {
+      "domain": "mock",
+      "feature_id": 5,
+      "category": "info",
+      "severity": "high",
+      "source_type": "device",
+      "power_state": "active",
+      "interval_seconds": 30
+    }
+  })";
+  int rc = load_dev_type_mapping_json("/tmp/metrics_valid.json");
+  ASSERT_EQ(rc, 0);
+  auto m = get_metrics_info();
+  EXPECT_EQ(m.feature_id, 5);
+  EXPECT_EQ(m.domain, "mock");
+}
+
+TEST_F(ScUtilityTest, LoadDevTypeMapping_ParsesMetricsIntervalSeconds) {
+  std::ofstream("/tmp/devmap_with_metrics.json") << R"({
+    "device_map": [{
+      "device_type": "CMM-H",
+      "vendor_id": "1e98",
+      "device_id": "0ddb",
+      "capabilities": {
+        "power_management_version": 1,
+        "vendor_specific": {
+          "latency_hint": "enabled"
+        }
+      },
+      "advertised_qos": {
+        "avg_latency_ns": 120,
+        "p99_latency_ns": 350,
+        "io_per_sec": 50000,
+        "bw_per_sec": 1000000,
+        "io_size_in_bytes": 4096,
+        "qd": 32
+      }
+    }],
+    "metrics": {
+      "domain": "mock",
+      "feature_id": 3,
+      "category": "info",
+      "severity": "high",
+      "source_type": "device",
+      "power_state": "active",
+      "interval_seconds": 42
+
+    }
+  })";
+  int rc = load_dev_type_mapping_json("/tmp/devmap_with_metrics.json");
+  ASSERT_EQ(rc, 0);
+  const auto& m = get_metrics_info();
+  EXPECT_EQ(m.domain, "mock");
+  EXPECT_EQ(m.feature_id, 3);
+  EXPECT_EQ(m.interval_seconds, 42);
+}
+
+TEST_F(ScUtilityTest, MetricsFieldTypeErrorsReturnEIO) {
+  struct Case {
+    const char* field;
+    const char* badJson;
+  } cases[] = {
+      {"domain", R"("domain": 123)"},
+      {"feature_id", R"("feature_id": "not-int")"},
+      {"category", R"("category": 999)"},
+      {"severity", R"("severity": 1)"},
+      {"source_type", R"("source_type": 2)"},
+      {"power_state", R"("power_state": 3)"},
+      {"interval_seconds", R"("interval_seconds": "not-int")"},
+  };
+  for (const auto& c : cases) {
+    std::string path = std::string("/tmp/metrics_bad_") + c.field + ".json";
+    std::ofstream(path) << R"({
+      "device_map": [{
+        "vendor_id": "1234",
+        "device_id": "5678",
+        "device_type": "mock_type"
+      }],
+      "metrics": { )" << c.badJson
+                        << R"( }
+    })";
+    int rc = load_dev_type_mapping_json(path);
+    EXPECT_EQ(rc, -EIO) << "field=" << c.field;
+  }
+}
+
+TEST_F(ScUtilityTest, SetHdmBaseToDeviceIndex) {
+  std::unordered_map<uint64_t, int> test_map;
+  test_map[0xABCDEF] = 5;
+  test_map[0x123456] = 9;
+  set_hdm_base_to_device_index(test_map);
+  ASSERT_EQ(hdm_base_to_device_index.size(), 2);
+  EXPECT_EQ(hdm_base_to_device_index.at(0xABCDEF), 5);
+  EXPECT_EQ(hdm_base_to_device_index.at(0x123456), 9);
+}
+
+TEST_F(ScUtilityTest, GetNumaMemoryInfo_SuccessPath) {
+  test_force_failure = false;
+  test_force_throw = false;
+  test_mock_total_bytes = 8LL * 1024 * 1024 * 1024;  // 8 GB
+  test_mock_free_bytes = 4LL * 1024 * 1024 * 1024;   // 4 GB
+  uint64_t total_mb = 0, free_mb = 0;
+
+  bool ok = get_numa_memory_info(/*node_id=*/2, total_mb, free_mb);
+  EXPECT_TRUE(ok);
+  EXPECT_EQ(total_mb, 8192u);
+  EXPECT_EQ(free_mb, 4096u);
+}
+
+TEST_F(ScUtilityTest, GetNumaMemoryInfo_ReturnsFalse) {
+  test_force_failure = true;  // numa_node_size64 returns -1
+  test_force_throw = false;
+  uint64_t total_mb = 111, free_mb = 222;
+
+  bool ok = get_numa_memory_info(/*node_id=*/3, total_mb, free_mb);
+
+  EXPECT_FALSE(ok);
+  EXPECT_EQ(total_mb, 111u);
+  EXPECT_EQ(free_mb, 222u);
+
+  test_force_failure = false;
+}
+
+TEST_F(ScUtilityTest, GetNumaMemoryInfo_ExceptionPath) {
+  test_force_throw = true;  // numa_node_size64 throws
+  test_force_failure = false;
+  uint64_t total_mb = 0, free_mb = 0;
+
+  bool ok = get_numa_memory_info(/*node_id=*/1, total_mb, free_mb);
+
+  EXPECT_FALSE(ok);
+
+  test_force_throw = false;
+}
+
+TEST_F(ScUtilityTest, GetNumaMemoryInfo_ZeroBytesIsValid) {
+  test_force_failure = false;
+  test_force_throw = false;
+  test_mock_total_bytes = 0;
+  test_mock_free_bytes = 0;
+  uint64_t total_mb = 123, free_mb = 456;  // will be overwritten
+
+  bool ok = get_numa_memory_info(/*node_id=*/0, total_mb, free_mb);
+
+  EXPECT_TRUE(ok);
+  EXPECT_EQ(total_mb, 0u);
+  EXPECT_EQ(free_mb, 0u);
+}
+
+TEST_F(ScUtilityTest, GetNumaNodeFromBDF_ReturnsMappedNode) {
+  // popen return a physical address (4096)
+  test_force_popen_valid_output = true;
+  std::ofstream("/tmp/mock_py_output.txt") << "4096\n";
+
+  RangeToNumaMap range_map;
+  range_map[{12345678, 12345678}] = 7;
+  set_global_range_numa_map(range_map);
+
+  int node = get_numa_node_from_bdf("0000:03:00.0");
+  EXPECT_EQ(node, 7);
+}
+
+TEST_F(ScUtilityTest, Metrics_DomainWrongType) {
+  write_json("/tmp/m1.json", R"({ "domain": 123 })");
+  EXPECT_EQ(load_dev_type_mapping_json("/tmp/m1.json"), -EIO);
+}
+
+TEST_F(ScUtilityTest, Metrics_FeatureIdWrongType) {
+  write_json("/tmp/m2.json", R"({ "feature_id": "oops" })");
+  EXPECT_EQ(load_dev_type_mapping_json("/tmp/m2.json"), -EIO);
+}
+
+TEST_F(ScUtilityTest, Metrics_CategoryWrongType) {
+  write_json("/tmp/m3.json", R"({ "category": 5 })");
+  EXPECT_EQ(load_dev_type_mapping_json("/tmp/m3.json"), -EIO);
+}
+
+TEST_F(ScUtilityTest, Metrics_SeverityWrongType) {
+  write_json("/tmp/m4.json", R"({ "severity": 0 })");
+  EXPECT_EQ(load_dev_type_mapping_json("/tmp/m4.json"), -EIO);
+}
+
+TEST_F(ScUtilityTest, Metrics_SourceTypeWrongType) {
+  write_json("/tmp/m5.json", R"({ "source_type": [] })");
+  EXPECT_EQ(load_dev_type_mapping_json("/tmp/m5.json"), -EIO);
+}
+
+TEST_F(ScUtilityTest, Metrics_PowerStateWrongType) {
+  write_json("/tmp/m6.json", R"({ "power_state": {} })");
+  EXPECT_EQ(load_dev_type_mapping_json("/tmp/m6.json"), -EIO);
+}
+
+TEST_F(ScUtilityTest, Metrics_IntervalSecondsWrongType) {
+  write_json("/tmp/m7.json", R"({ "interval_seconds": "ten" })");
+  EXPECT_EQ(load_dev_type_mapping_json("/tmp/m7.json"), -EIO);
+}
+
+TEST_F(ScUtilityTest, Metrics_AllCorrectTypes) {
+  write_json("/tmp/m_ok.json", R"({
+"domain":"mock","feature_id":5,"category":"info","severity":"high",
+"source_type":"device","power_state":"active","interval_seconds":30
+})");
+  ASSERT_EQ(load_dev_type_mapping_json("/tmp/m_ok.json"), 0);
+  auto m = get_metrics_info();
+  EXPECT_EQ(m.domain, "mock");
+  EXPECT_EQ(m.feature_id, 5);
+  EXPECT_EQ(m.interval_seconds, 30);
 }

@@ -553,11 +553,11 @@ std::string handle_get_device_info(
   // QoS
   json_t* qos = json_object();
   json_object_set_new(
-      qos, "avg_latency_us",
-      json_integer(dev.static_info.advertised_qos.avg_latency_us));
+      qos, "avg_latency_ns",
+      json_integer(dev.static_info.advertised_qos.avg_latency_ns));
   json_object_set_new(
-      qos, "p99_latency_us",
-      json_integer(dev.static_info.advertised_qos.p99_latency_us));
+      qos, "p99_latency_ns",
+      json_integer(dev.static_info.advertised_qos.p99_latency_ns));
   json_object_set_new(qos, "io_per_sec",
                       json_integer(dev.static_info.advertised_qos.io_per_sec));
   json_object_set_new(qos, "BW_per_sec",
@@ -602,19 +602,19 @@ std::string handle_get_device_stats(
   json_object_set_new(root, "device_protocol", json_string(s.protocol.c_str()));
   json_object_set_new(root, "port_type", json_string(s.port_type.c_str()));
   json_object_set_new(root, "status", json_string(s.status.c_str()));
-  json_object_set_new(root, "total_memory", json_integer(s.total_memory_MB));
-  json_object_set_new(root, "used_memory", json_integer(s.used_memory_MB));
-  json_object_set_new(root, "available_memory",
+  json_object_set_new(root, "total_memory_MB", json_integer(s.total_memory_MB));
+  json_object_set_new(root, "used_memory_MB", json_integer(s.used_memory_MB));
+  json_object_set_new(root, "available_memory_MB",
                       json_integer(s.available_memory_MB));
-  json_object_set_new(root, "total_bandwidth",
+  json_object_set_new(root, "total_bandwidth_MBps",
                       json_integer(s.total_bandwidth_MBps));
-  json_object_set_new(root, "used_bandwidth",
-                      json_integer(s.used_bandwidth_MBps));
+  json_object_set_new(root, "used_bandwidth_Bps",
+                      json_integer(s.used_bandwidth_Bps));
   json_object_set_new(root, "rw_errors", json_integer(s.rw_errors));
   json_object_set_new(root, "latency", json_integer(s.latency_us));
 
   if (s.sensor_stats.has_value()) {
-    json_object_set_new(root, "device_temperature",
+    json_object_set_new(root, "fpga_temp_in_F",
                         json_integer(s.sensor_stats->fpga_temp));
   }
 
@@ -655,16 +655,16 @@ std::string handle_get_device_metrics(
 
   // dynamic observation fields
   metrics.numa_node = dev.numa_node;
-  metrics.total_memory = s.total_memory_MB;
-  metrics.used_memory = s.used_memory_MB;
-  metrics.available_memory = s.available_memory_MB;
-  metrics.total_bandwidth = s.total_bandwidth_MBps;
-  metrics.used_bandwidth = s.used_bandwidth_MBps;
+  metrics.total_memory_MB = s.total_memory_MB;
+  metrics.used_memory_MB = s.used_memory_MB;
+  metrics.available_memory_MB = s.available_memory_MB;
+  metrics.total_bandwidth_MBps = s.total_bandwidth_MBps;
+  metrics.used_bandwidth_Bps = s.used_bandwidth_Bps;
   metrics.cache_hit_perc =
       s.cache_stats.has_value() ? s.cache_stats->hit_perc : 0;
   metrics.dirty_cache_gb =
       s.cache_stats.has_value() ? s.cache_stats->dirty_cache_gb : 0;
-  metrics.temperature =
+  metrics.fpga_temp_in_F =
       s.sensor_stats.has_value() ? s.sensor_stats->fpga_temp : 0;
 
   // Serialize to JSON
@@ -683,19 +683,22 @@ std::string handle_get_device_metrics(
   // Observations
   json_t* obs = json_object();
   json_object_set_new(obs, "numa_node", json_integer(metrics.numa_node));
-  json_object_set_new(obs, "total_memory", json_integer(metrics.total_memory));
-  json_object_set_new(obs, "used_memory", json_integer(metrics.used_memory));
-  json_object_set_new(obs, "available_memory",
-                      json_integer(metrics.available_memory));
-  json_object_set_new(obs, "total_bandwidth",
-                      json_integer(metrics.total_bandwidth));
-  json_object_set_new(obs, "used_bandwidth",
-                      json_integer(metrics.used_bandwidth));
+  json_object_set_new(obs, "total_memory_MB",
+                      json_integer(metrics.total_memory_MB));
+  json_object_set_new(obs, "used_memory_MB",
+                      json_integer(metrics.used_memory_MB));
+  json_object_set_new(obs, "available_memory_MB",
+                      json_integer(metrics.available_memory_MB));
+  json_object_set_new(obs, "total_bandwidth_MBps",
+                      json_integer(metrics.total_bandwidth_MBps));
+  json_object_set_new(obs, "used_bandwidth_Bps",
+                      json_integer(metrics.used_bandwidth_Bps));
   json_object_set_new(obs, "cache_hit_perc",
                       json_integer(metrics.cache_hit_perc));
   json_object_set_new(obs, "dirty_cache_gb",
                       json_integer(metrics.dirty_cache_gb));
-  json_object_set_new(obs, "temperature", json_integer(metrics.temperature));
+  json_object_set_new(obs, "fpga_temp_in_F",
+                      json_integer(metrics.fpga_temp_in_F));
 
   json_object_set_new(root, "observations", obs);
 

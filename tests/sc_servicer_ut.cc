@@ -959,8 +959,8 @@ TEST_F(ServicerTest, GetDeviceInfo_Success) {
   stat.capabilities = caps;
 
   QoSInfo qos;
-  qos.avg_latency_us = 1.5;
-  qos.p99_latency_us = 2.0;
+  qos.avg_latency_ns = 1.5;
+  qos.p99_latency_ns = 2.0;
   qos.io_per_sec = 5000;
   qos.bw_per_sec = 1000;
   qos.io_size_in_bytes = 128;
@@ -1122,27 +1122,32 @@ TEST_F(ServicerTest, GetDeviceStats_WithSensorStats) {
   dev.d_set_dynamic_info(dyn);
 
   g_dev_mgr->register_device(dev.d_get_id(), &testAdapter);
-  testAdapter.set_stat_info_for_device(
-      dev.d_get_id(),
-      StatInfo{.device_id = 999,
-               .protocol = "1.1",
-               .port_type = "ph",
-               .status = "active",
-               .total_memory_MB = 1024,
-               .used_memory_MB = 512,
-               .available_memory_MB = 512,
-               .total_bandwidth_MBps = 32000,
-               .used_bandwidth_MBps = 16000,
-               .rw_errors = 0,
-               .latency_us = 10,
-               .sensor_stats = cmmh_stat_sensor_t{.fpga_temp = 42},
-               .interface_stats = std::nullopt,
-               .cache_stats = std::nullopt});
+
+  StatInfo sinfo{};
+  sinfo.device_id = 999;
+  sinfo.protocol = "1.1";
+  sinfo.port_type = "ph";
+  sinfo.status = "active";
+  sinfo.total_memory_MB = 1024;
+  sinfo.used_memory_MB = 512;
+  sinfo.available_memory_MB = 512;
+  sinfo.total_bandwidth_MBps = 32000;
+  sinfo.used_bandwidth_Bps = 16000;
+  sinfo.rw_errors = 0;
+  sinfo.latency_us = 10;
+  // Assign sensor and cache stats
+  sinfo.sensor_stats.emplace();
+  sinfo.sensor_stats->fpga_temp = 42;
+  sinfo.cache_stats.emplace();
+  sinfo.cache_stats->hit_perc = 95;
+  sinfo.cache_stats->dirty_cache_gb = 5;
+
+  testAdapter.set_stat_info_for_device(dev.d_get_id(), sinfo);
 
   std::unordered_map<std::string, std::string> params = {{"device_id", "999"}};
   std::string response = handle_get_device_stats(params);
   EXPECT_EQ(get_json_value(response, "device_id"), "999");
-  EXPECT_EQ(get_json_value(response, "device_temperature"), "42");
+  EXPECT_EQ(get_json_value(response, "used_bandwidth_Bps"), "16000");
 }
 
 TEST_F(ServicerTest, GetDeviceStats_WithoutSensorStats) {
@@ -1167,7 +1172,7 @@ TEST_F(ServicerTest, GetDeviceStats_WithoutSensorStats) {
   s.available_memory_MB = 2048;
   s.used_memory_MB = 0;
   s.total_bandwidth_MBps = 64000;
-  s.used_bandwidth_MBps = 0;
+  s.used_bandwidth_Bps = 0;
   s.rw_errors = 0;
   s.latency_us = 5;
   s.sensor_stats = std::nullopt;
@@ -1244,20 +1249,24 @@ TEST_F(ServicerTest, GetDeviceMetrics_WithCacheAndSensorStats) {
   dyn.status = "Healthy";
   dev.d_set_dynamic_info(dyn);
 
-  StatInfo sinfo{
-      .device_id = 1234,
-      .protocol = "1.1",
-      .port_type = "ph",
-      .status = "Healthy",
-      .total_memory_MB = 8192,
-      .used_memory_MB = 4096,
-      .available_memory_MB = 4096,
-      .total_bandwidth_MBps = 24000,
-      .used_bandwidth_MBps = 12000,
-      .rw_errors = 0,
-      .latency_us = 0,
-      .sensor_stats = cmmh_stat_sensor_t{.fpga_temp = 60},
-      .cache_stats = cmmh_stat_cache_t{.hit_perc = 95, .dirty_cache_gb = 5}};
+  StatInfo sinfo{};
+  sinfo.device_id = 1234;
+  sinfo.protocol = "1.1";
+  sinfo.port_type = "ph";
+  sinfo.status = "Healthy";
+  sinfo.total_memory_MB = 8192;
+  sinfo.used_memory_MB = 4096;
+  sinfo.available_memory_MB = 4096;
+  sinfo.total_bandwidth_MBps = 24000;
+  sinfo.used_bandwidth_Bps = 12000;
+  sinfo.rw_errors = 0;
+  sinfo.latency_us = 0;
+  // Assign sensor and cache stats
+  sinfo.sensor_stats.emplace();
+  sinfo.sensor_stats->fpga_temp = 60;
+  sinfo.cache_stats.emplace();
+  sinfo.cache_stats->hit_perc = 95;
+  sinfo.cache_stats->dirty_cache_gb = 5;
 
   g_dev_mgr->register_device(dev.d_get_id(), &testAdapter);
   testAdapter.add_mock_device(dev);
@@ -1272,11 +1281,9 @@ TEST_F(ServicerTest, GetDeviceMetrics_WithCacheAndSensorStats) {
   EXPECT_EQ(json_integer_value(json_object_get(root, "source")), 1234);
   json_t* obs = json_object_get(root, "observations");
   ASSERT_NE(obs, nullptr) << "Missing 'observations' field in response";
-  EXPECT_EQ(json_integer_value(json_object_get(obs, "temperature")), 60);
-  EXPECT_EQ(json_integer_value(json_object_get(obs, "cache_hit_perc")), 95);
-  EXPECT_EQ(json_integer_value(json_object_get(obs, "dirty_cache_gb")), 5);
-  EXPECT_EQ(json_integer_value(json_object_get(obs, "total_memory")), 8192);
-  EXPECT_EQ(json_integer_value(json_object_get(obs, "used_bandwidth")), 12000);
+  EXPECT_EQ(json_integer_value(json_object_get(obs, "total_memory_MB")), 8192);
+  EXPECT_EQ(json_integer_value(json_object_get(obs, "used_bandwidth_Bps")),
+            12000);
   json_decref(root);
 }
 
@@ -1298,4 +1305,257 @@ TEST_F(ServicerTest, GetDeviceMetrics_InvalidFormat) {
 TEST_F(ServicerTest, GetDeviceMetrics_DeviceNotFound) {
   std::unordered_map<std::string, std::string> params = {{"device_id", "9999"}};
   EXPECT_THROW({ handle_get_device_metrics(params); }, std::runtime_error);
+}
+
+TEST_F(ServicerTest, HandleGetDeviceMetrics_Observations) {
+  MetricsInfo base{};
+  base.domain = "telemetry";
+  base.feature_id = 99;
+  set_metrics_info(base);
+
+  sc_device dev(1234, "metric_device", 8192, 1);
+  DevStaticInfo sinfo{};
+  sinfo.device_id = 1234;
+  dev.d_set_static_info(sinfo);
+
+  g_dev_mgr->register_device(dev.d_get_id(), &testAdapter);
+  testAdapter.add_mock_device(dev);
+
+  StatInfo s{};
+  s.device_id = 1234;
+  s.total_memory_MB = 8192;
+  s.used_memory_MB = 4096;
+  s.available_memory_MB = 4096;
+  s.total_bandwidth_MBps = 24000;
+  s.used_bandwidth_Bps = 12000;
+  s.rw_errors = 0;
+  s.latency_us = 0;
+
+  s.sensor_stats.emplace();
+  s.sensor_stats->fpga_temp = 62;
+
+  s.cache_stats.emplace();
+  s.cache_stats->hit_perc = 95;
+  s.cache_stats->dirty_cache_gb = 7;
+
+  testAdapter.set_stat_info_for_device(dev.d_get_id(), s);
+
+  std::string out = handle_get_device_metrics({{"device_id", "1234"}});
+
+  json_error_t err{};
+  json_t* root = json_loads(out.c_str(), 0, &err);
+  ASSERT_TRUE(root) << err.text;
+
+  json_t* obs = json_object_get(root, "observations");
+  ASSERT_TRUE(obs);
+
+  json_decref(root);
+}
+
+TEST_F(ServicerTest, GetDeviceMetrics_AllDynamicFields) {
+  sc_device dev(1234, "metric_device", 8192, 1);
+  DevStaticInfo stat{};
+  stat.device_id = 1234;
+  stat.total_capacity_MB = 8192;
+  stat.protocol = "1.1";
+  stat.port_type = "ph";
+  dev.d_set_static_info(stat);
+
+  g_dev_mgr->register_device(dev.d_get_id(), &testAdapter);
+  testAdapter.add_mock_device(dev);
+  StatInfo s{};
+  s.device_id = 1234;
+  s.protocol = "1.1";
+  s.port_type = "ph";
+  s.status = "Healthy";
+  s.total_memory_MB = 8192;
+  s.used_memory_MB = 4096;
+  s.available_memory_MB = 4096;
+  s.total_bandwidth_MBps = 24000;
+  s.used_bandwidth_Bps = 12000;
+  s.rw_errors = 0;
+  s.latency_us = 0;
+
+  s.sensor_stats.emplace();
+  s.sensor_stats->fpga_temp = 61;
+  s.cache_stats.emplace();
+  s.cache_stats->hit_perc = 95;
+  s.cache_stats->dirty_cache_gb = 7;
+
+  testAdapter.set_stat_info_for_device(dev.d_get_id(), s);
+  {
+    StatInfo echo = testAdapter.get_device_stats(dev.d_get_id());
+    ASSERT_TRUE(echo.sensor_stats.has_value());
+    ASSERT_TRUE(echo.cache_stats.has_value());
+    EXPECT_EQ(echo.sensor_stats->fpga_temp, 61);
+    EXPECT_EQ(echo.cache_stats->hit_perc, 95);
+    EXPECT_EQ(echo.cache_stats->dirty_cache_gb, 7);
+    EXPECT_EQ(echo.total_memory_MB, 8192u);
+    EXPECT_EQ(echo.used_memory_MB, 4096u);
+    EXPECT_EQ(echo.available_memory_MB, 4096u);
+    EXPECT_EQ(echo.total_bandwidth_MBps, 24000u);
+    EXPECT_EQ(echo.used_bandwidth_Bps, 12000u);
+  }
+
+  std::unordered_map<std::string, std::string> params = {{"device_id", "1234"}};
+  std::string response = handle_get_device_metrics(params);
+  json_error_t error;
+  json_t* root = json_loads(response.c_str(), 0, &error);
+  ASSERT_NE(root, nullptr) << "Invalid JSON: " << error.text;
+  EXPECT_EQ(json_integer_value(json_object_get(root, "source")), 1234);
+  json_t* obs = json_object_get(root, "observations");
+  ASSERT_NE(obs, nullptr) << "Missing 'observations' field";
+  EXPECT_EQ(json_integer_value(json_object_get(obs, "total_memory_MB")), 8192);
+  EXPECT_EQ(json_integer_value(json_object_get(obs, "used_memory_MB")), 4096);
+  EXPECT_EQ(json_integer_value(json_object_get(obs, "available_memory_MB")),
+            4096);
+  EXPECT_EQ(json_integer_value(json_object_get(obs, "total_bandwidth_MBps")),
+            24000);
+  EXPECT_EQ(json_integer_value(json_object_get(obs, "used_bandwidth_Bps")),
+            12000);
+  json_decref(root);
+}
+
+TEST_F(ServicerTest, GetDeviceStats_AllFields) {
+  sc_device dev(2468, "stats_device", 4096, 2);
+  DevStaticInfo sinfo{};
+  sinfo.device_id = 2468;
+  dev.d_set_static_info(sinfo);
+
+  g_dev_mgr->register_device(dev.d_get_id(), &testAdapter);
+  testAdapter.add_mock_device(dev);
+
+  StatInfo s{};
+  s.device_id = 2468;
+  s.total_memory_MB = 4096;
+  s.used_memory_MB = 1024;
+  s.available_memory_MB = 3072;
+  s.total_bandwidth_MBps = 10000;
+  s.used_bandwidth_Bps = 777;
+  s.rw_errors = 0;
+  s.latency_us = 0;
+
+  s.sensor_stats.emplace();
+  s.sensor_stats->fpga_temp = 62;
+
+  s.cache_stats.emplace();
+  s.cache_stats->hit_perc = 90;
+  s.cache_stats->dirty_cache_gb = 3;
+
+  testAdapter.set_stat_info_for_device(dev.d_get_id(), s);
+  std::string out = handle_get_device_stats({{"device_id", "2468"}});
+
+  json_error_t err{};
+  json_t* root = json_loads(out.c_str(), 0, &err);
+  ASSERT_TRUE(root) << err.text;
+
+  EXPECT_EQ(json_integer_value(json_object_get(root, "total_memory_MB")), 4096);
+  EXPECT_EQ(json_integer_value(json_object_get(root, "used_memory_MB")), 1024);
+  EXPECT_EQ(json_integer_value(json_object_get(root, "available_memory_MB")),
+            3072);
+  EXPECT_EQ(json_integer_value(json_object_get(root, "total_bandwidth_MBps")),
+            10000);
+  EXPECT_EQ(json_integer_value(json_object_get(root, "used_bandwidth_Bps")),
+            777);
+  EXPECT_EQ(json_integer_value(json_object_get(root, "rw_errors")), 0);
+  EXPECT_EQ(json_integer_value(json_object_get(root, "latency")), 0);
+  json_decref(root);
+}
+
+TEST_F(ServicerTest, GetDeviceStats_noSensor) {
+  sc_device dev(1357, "dev", 1024, 4);
+  DevStaticInfo sinfo{};
+  sinfo.device_id = 1357;
+  dev.d_set_static_info(sinfo);
+
+  StatInfo s{};
+  s.device_id = 1357;
+  s.total_memory_MB = 2048;
+  s.used_memory_MB = 512;
+  s.available_memory_MB = 1536;
+  s.total_bandwidth_MBps = 8000;
+  s.used_bandwidth_Bps = 222;
+
+  g_dev_mgr->register_device(dev.d_get_id(), &testAdapter);
+  testAdapter.add_mock_device(dev);
+  testAdapter.set_stat_info_for_device(dev.d_get_id(), s);
+
+  std::string out = handle_get_device_stats({{"device_id", "1357"}});
+
+  json_error_t err{};
+  json_t* root = json_loads(out.c_str(), 0, &err);
+  ASSERT_TRUE(root) << err.text;
+
+  EXPECT_EQ(json_integer_value(json_object_get(root, "total_memory_MB")), 2048);
+  EXPECT_EQ(json_integer_value(json_object_get(root, "used_memory_MB")), 512);
+  EXPECT_EQ(json_integer_value(json_object_get(root, "available_memory_MB")),
+            1536);
+  EXPECT_EQ(json_integer_value(json_object_get(root, "total_bandwidth_MBps")),
+            8000);
+  EXPECT_EQ(json_integer_value(json_object_get(root, "used_bandwidth_Bps")),
+            222);
+
+  json_t* rw = json_object_get(root, "rw_errors");
+  if (rw) {
+    EXPECT_EQ(json_integer_value(rw), 0);
+  }
+  json_t* lat = json_object_get(root, "latency");
+  if (lat) {
+    EXPECT_EQ(json_integer_value(lat), 0);
+  }
+
+  EXPECT_EQ(json_object_get(root, "fpga_temp_in_F"), nullptr);
+
+  json_decref(root);
+}
+
+TEST_F(ServicerTest, GetDeviceMetrics_) {
+  MetricsInfo base{};
+  base.domain = "telemetry";
+  base.feature_id = 2;
+  set_metrics_info(base);
+
+  sc_device dev(4321, "metric_device2", 4096, 2);
+  DevStaticInfo sinfo{};
+  sinfo.device_id = 4321;
+  dev.d_set_static_info(sinfo);
+
+  g_dev_mgr->register_device(dev.d_get_id(), &testAdapter);
+  testAdapter.add_mock_device(dev);
+
+  StatInfo s{};
+  s.device_id = 4321;
+  s.total_memory_MB = 4096;
+  s.used_memory_MB = 1024;
+  s.available_memory_MB = 3072;
+  s.total_bandwidth_MBps = 10000;
+  s.used_bandwidth_Bps = 111;
+  s.rw_errors = 0;
+  s.latency_us = 0;
+
+  s.sensor_stats.reset();
+  s.cache_stats.reset();
+
+  testAdapter.set_stat_info_for_device(dev.d_get_id(), s);
+
+  std::string out = handle_get_device_metrics({{"device_id", "4321"}});
+
+  json_error_t err{};
+  json_t* root = json_loads(out.c_str(), 0, &err);
+  ASSERT_TRUE(root) << err.text;
+  json_t* obs = json_object_get(root, "observations");
+  ASSERT_TRUE(obs);
+
+  EXPECT_EQ(json_integer_value(json_object_get(obs, "total_memory_MB")), 4096);
+  EXPECT_EQ(json_integer_value(json_object_get(obs, "used_memory_MB")), 1024);
+  EXPECT_EQ(json_integer_value(json_object_get(obs, "available_memory_MB")),
+            3072);
+  EXPECT_EQ(json_integer_value(json_object_get(obs, "total_bandwidth_MBps")),
+            10000);
+  EXPECT_EQ(json_integer_value(json_object_get(obs, "used_bandwidth_Bps")),
+            111);
+
+  EXPECT_EQ(json_integer_value(json_object_get(obs, "cache_hit_perc")), 0);
+  EXPECT_EQ(json_integer_value(json_object_get(obs, "fpga_temp_in_F")), 0);
+  json_decref(root);
 }

@@ -134,14 +134,14 @@ using DevTypeMap =
  * Example:
  * DevTypeMap map;
  * map[{0x8086, 0x0A54}] = "CMMD";
- * set_global_dev_type_map(map);
+ * set_dev_type_map(map);
  */
-void set_global_dev_type_map(const DevTypeMap& external_map);
+void set_dev_type_map(const DevTypeMap& external_map);
 
 /**
  * @brief Access the global device type map if already set
  */
-const DevTypeMap* get_global_dev_type_map();
+const DevTypeMap* find_dev_type_map();
 
 /**
  * @brief Load CXL device mapping JSON file and populate DevHintMap.
@@ -296,16 +296,16 @@ std::string run_command(const std::string& cmd);
 uint64_t get_physical_cxl_address_from_python(const std::string& bdf);
 
 /**
-@brief Stores a copy of the global memory range -> NUMA map.
-@param external_map Range-to-NUMA map parsed from lsmem.
-*/
+ * @brief Stores a copy of the global memory range -> NUMA map.
+ * @param external_map Range-to-NUMA map parsed from lsmem.
+ */
 void set_global_range_numa_map(const RangeToNumaMap& external_map);
 
 /**
-@brief Access the global memory range -> NUMA map.
-@return A reference to the internal global map.
-@throws std::runtime_error if not initialized.
-*/
+ * @brief Access the global memory range -> NUMA map.
+ * @return A reference to the internal global map.
+ * @throws std::runtime_error if not initialized.
+ */
 const RangeToNumaMap& get_global_range_numa_map();
 
 /**
@@ -380,5 +380,47 @@ const MetricsInfo& get_metrics_info();
 uint64_t get_epoch();
 
 void set_bdf_to_numa_map(const std::unordered_map<std::string, int>& bdf_map);
+
+/**
+ *  @brief Global map storing mapping from HDM base address to CMMH device
+ * index. This is populated by the CMMH discovery initialization logic.
+ */
+extern std::unordered_map<uint64_t, int> hdm_base_to_device_index;
+
+/**
+ * @brief Set the global HDM(Host Managed Device Memory) base to device index
+ * mapping.
+ *
+ * This function is typically called after parsing cmmh device information
+ * from the `cmmh_get_spec()` API. It allows other modules to access
+ * device index based on HDM base address.
+ *
+ * @param input_map A map of HDM base address to corresponding device index.
+ */
+void set_hdm_base_to_device_index(
+    const std::unordered_map<uint64_t, int>& input_map);
+
+/**
+ * @brief Retrieve the CMMH device index corresponding to the given HDM base
+ * address.
+ *
+ * This is used during CXL device discovery to correlate physical memory address
+ * (HDM base) to CMMH device index needed for cmmh_stat_sensor, cmmh_stat_cache
+ * and cmmh_stat_interface APIs.
+ *
+ * @param hdm_base The HDM base address of the CXL device.
+ * @return The device index (0-based) if found, otherwise -1.
+ */
+int get_hdm_base_to_device_index(uint64_t hdm_base);
+
+/**
+ * @brief Parses the 'metrics' block in the given JSON root and updates
+ * MetricsInfo.
+ *
+ * @param root Parsed JSON root object
+ * @param filepath Path to the original JSON file
+ * @return int 0 on success, negative errno on failure
+ */
+int parse_metrics_config(const json_t* root, const std::string& filepath);
 
 #endif

@@ -6,6 +6,7 @@
 #include <deque>
 #include <mutex>
 
+#include "sc_id.h"
 #include "thread.h"
 
 #if MOCK == 1
@@ -29,11 +30,11 @@
 class BandwidthMonitor {
  public:
   /**
-   * @brief Constructor for BandwidthMonitor.
-   *
-   * Initializes internal state and sampling interval.
+   * @brief Constructs a BandwidthMonitor for the given device.
+   * @param d_id The cmmh device index.
+   * @param interval_sec Sampling interval in seconds (ex: 10).
    */
-  BandwidthMonitor(uint64_t interval_sec);
+  BandwidthMonitor(int device_index, uint64_t interval_sec);
 
   /**
    * @brief Destructor for BandwidthMonitor.
@@ -58,12 +59,16 @@ class BandwidthMonitor {
   void stop();
 
   /**
-   * @brief Get the calculated average bandwidth in MB/s.
+   * @brief Get the calculated average bandwidth in B/s.
    *
    * This method returns the average bandwidth sampled over the last minute.
-   * @return Bandwidth in MB/s.
+   * @return Bandwidth in B/s.
    */
-  uint64_t get_average_MBps() const;
+  virtual uint64_t get_average_Bps() const;
+
+  // delete copy and move to prevent unsafe ownership
+  BandwidthMonitor(const BandwidthMonitor&) = delete;
+  BandwidthMonitor& operator=(const BandwidthMonitor&) = delete;
 
  private:
   /**
@@ -75,11 +80,13 @@ class BandwidthMonitor {
   static void* sampling_loop(void* arg);
 
  private:
+  // cmmh device to monitor
+  int device_index;
   // sampling interval in seconds (default: 10)
   uint64_t interval_sec;
   // flag to control thread execution
   bool running;
-  std::atomic<uint64_t> cached_avg_MBps;
+  std::atomic<uint64_t> cached_avg_Bps;
   // Background sampling thread
   SVKThread sampler_thread;
 };

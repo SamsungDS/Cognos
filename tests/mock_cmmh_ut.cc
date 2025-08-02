@@ -38,7 +38,7 @@ TEST_F(MockCMMHTest, GetDeviceStatsReturnsCorrectStats) {
   sc_id sid(0x1E3A5B7CDE00);
   StatInfo stats = adapter.get_device_stats(sid);
   EXPECT_EQ(stats.total_memory_MB, 8192);
-  EXPECT_EQ(stats.used_bandwidth_MBps, 1104548);
+  EXPECT_EQ(stats.used_bandwidth_Bps, 1104548);
   ASSERT_TRUE(stats.sensor_stats.has_value());
   EXPECT_EQ(stats.sensor_stats->fpga_temp, 46);
 }
@@ -124,15 +124,15 @@ TEST_F(MockCMMHTest, GetDeviceMetricsReturnsCorrectValues) {
   EXPECT_GT(metrics.timestamp, 0);
 
   EXPECT_EQ(metrics.numa_node, 0);
-  EXPECT_EQ(metrics.total_memory, 8192);
-  EXPECT_EQ(metrics.used_memory, 4096);
-  EXPECT_EQ(metrics.available_memory, 4096);
-  EXPECT_EQ(metrics.total_bandwidth, 20000);
-  EXPECT_EQ(metrics.used_bandwidth, 1104548);
+  EXPECT_EQ(metrics.total_memory_MB, 8192);
+  EXPECT_EQ(metrics.used_memory_MB, 4096);
+  EXPECT_EQ(metrics.available_memory_MB, 4096);
+  EXPECT_EQ(metrics.total_bandwidth_MBps, 20000);
+  EXPECT_EQ(metrics.used_bandwidth_Bps, 1104548);
 
   EXPECT_EQ(metrics.cache_hit_perc, 92);
   EXPECT_EQ(metrics.dirty_cache_gb, 2);
-  EXPECT_EQ(metrics.temperature, 46);
+  EXPECT_EQ(metrics.fpga_temp_in_F, 46);
 }
 
 TEST_F(MockCMMHTest, GetDeviceMetricsThrowsWhenDeviceMissing) {

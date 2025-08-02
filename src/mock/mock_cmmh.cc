@@ -119,7 +119,7 @@ void MockCMMH::discover_devices(DeviceManager& mgr) {
       stat_info.available_memory_MB = get_json_int(stat, "available_memory_MB");
       stat_info.total_bandwidth_MBps =
           get_json_int(stat, "total_bandwidth_MBps");
-      stat_info.used_bandwidth_MBps = get_json_int(stat, "used_bandwidth_MBps");
+      stat_info.used_bandwidth_Bps = get_json_int(stat, "used_bandwidth_Bps");
       stat_info.rw_errors = get_json_int(stat, "rw_errors");
       stat_info.latency_us = get_json_int(stat, "latency_us");
       stat_info.sensor_stats = parse_sensor_stats(stat);
@@ -155,8 +155,8 @@ QoSInfo MockCMMH::parse_qos_info(json_t* entry) {
     return qos;
   }
 
-  qos.avg_latency_us = get_json_int(qos_json, "avg_latency_us");
-  qos.p99_latency_us = get_json_int(qos_json, "p99_latency_us");
+  qos.avg_latency_ns = get_json_int(qos_json, "avg_latency_ns");
+  qos.p99_latency_ns = get_json_int(qos_json, "p99_latency_ns");
   qos.io_per_sec = get_json_int(qos_json, "io_per_sec");
   qos.bw_per_sec = get_json_int(qos_json, "bw_per_sec");
   qos.io_size_in_bytes = get_json_int(qos_json, "io_size_in_bytes");
@@ -233,17 +233,17 @@ MetricsInfo MockCMMH::get_device_metrics(const sc_id& sid) const {
 
   // Observed fields
   metrics.numa_node = dev.numa_node;
-  metrics.total_memory = stat.total_memory_MB;
-  metrics.used_memory = stat.used_memory_MB;
-  metrics.available_memory = stat.available_memory_MB;
-  metrics.total_bandwidth = stat.total_bandwidth_MBps;
-  metrics.used_bandwidth = stat.used_bandwidth_MBps;
+  metrics.total_memory_MB = stat.total_memory_MB;
+  metrics.used_memory_MB = stat.used_memory_MB;
+  metrics.available_memory_MB = stat.available_memory_MB;
+  metrics.total_bandwidth_MBps = stat.total_bandwidth_MBps;
+  metrics.used_bandwidth_Bps = stat.used_bandwidth_Bps;
 
   // Optional sensor and cache stats
   metrics.cache_hit_perc = stat.cache_stats ? stat.cache_stats->hit_perc : 0;
   metrics.dirty_cache_gb =
       stat.cache_stats ? stat.cache_stats->dirty_cache_gb : 0;
-  metrics.temperature = stat.sensor_stats ? stat.sensor_stats->fpga_temp : 0;
+  metrics.fpga_temp_in_F = stat.sensor_stats ? stat.sensor_stats->fpga_temp : 0;
 
   LOG(level_E::DEBUG, "MockCMMH: Returning device metrics for sid=" +
                           std::to_string(sid.get_sc_id()));

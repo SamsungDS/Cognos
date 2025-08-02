@@ -12,8 +12,8 @@
 #endif
 
 struct QoSInfo {
-  uint64_t avg_latency_us = 0;
-  uint64_t p99_latency_us = 0;
+  uint64_t avg_latency_ns = 0;
+  uint64_t p99_latency_ns = 0;
   uint64_t io_per_sec = 0;
   uint64_t bw_per_sec = 0;
   uint64_t io_size_in_bytes = 0;
@@ -45,6 +45,8 @@ struct DevStaticInfo {
   std::string port_type;
   Capabilities capabilities;
   QoSInfo advertised_qos;
+  int bw_interval_sec = 10;
+  uint64_t device_index;
 };
 
 // Full Device Info Struct (Static + Dynamic)
@@ -67,7 +69,7 @@ struct StatInfo {
   uint64_t used_memory_MB = 0;
   uint64_t available_memory_MB = 0;
   uint64_t total_bandwidth_MBps = 0;
-  uint64_t used_bandwidth_MBps = 0;
+  uint64_t used_bandwidth_Bps = 0;
   uint64_t rw_errors = 0;
   uint64_t latency_us = 0;
   // Device-specific stats
@@ -101,6 +103,7 @@ struct DevJsonHints {
   std::string status;
   Capabilities capabilities;
   QoSInfo advertised_qos;
+  int bw_interval_sec = 10;
 };
 
 /**
@@ -132,13 +135,13 @@ struct MetricsInfo {
   int interval_seconds;
 
   // Observations
-  uint64_t temperature;
+  uint64_t fpga_temp_in_F;
   int numa_node;
-  uint64_t total_memory;
-  uint64_t used_memory;
-  uint64_t available_memory;
-  uint64_t total_bandwidth;
-  uint64_t used_bandwidth;
+  uint64_t total_memory_MB;
+  uint64_t used_memory_MB;
+  uint64_t available_memory_MB;
+  uint64_t total_bandwidth_MBps;
+  uint64_t used_bandwidth_Bps;
   uint64_t cache_hit_perc;
   uint64_t dirty_cache_gb;
 };

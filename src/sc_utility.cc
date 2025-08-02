@@ -31,7 +31,10 @@ static int parse_and_load_device_map(json_t* root, const std::string& filepath,
 static bool parse_device_entry(json_t* entry, size_t index, DevJsonHints& hint);
 static int parse_capabilities(json_t* entry, DevJsonHints& hint);
 static int parse_qos(json_t* entry, DevJsonHints& hint);
-static int parse_metrics_config(json_t* root, const std::string& filepath);
+
+struct MetricsParseError : std::runtime_error {
+  using std::runtime_error::runtime_error;
+};
 
 bool str_to_int(const std::string& id_str, uint64_t& id,
                 std::string& error_response) {
@@ -173,11 +176,11 @@ bool is_device_list_empty(const std::string& json_response) {
   return count == 0;
 }
 
-static const DevTypeMap* global_dev_type_map = nullptr;
-void set_global_dev_type_map(const DevTypeMap& external_map) {
-  global_dev_type_map = &external_map;
+static const DevTypeMap* dev_type_map = nullptr;
+void set_dev_type_map(const DevTypeMap& external_map) {
+  dev_type_map = &external_map;
 }
-const DevTypeMap* get_global_dev_type_map() { return global_dev_type_map; }
+const DevTypeMap* find_dev_type_map() { return dev_type_map; }
 
 static MetricsInfo metrics_info;
 void set_metrics_info(const MetricsInfo& info) { metrics_info = info; }
@@ -200,7 +203,7 @@ int load_dev_type_mapping_json(const std::string& filepath) {
     int metrics_status = parse_metrics_config(root, filepath);
     json_decref(root);
     if (map_status == 0 && metrics_status == 0) {
-      set_global_dev_type_map(internal_map);
+      set_dev_type_map(internal_map);
       load_status = 0;
       LOG(level_E::INFO, "Total CXL device entries loaded: " +
                              std::to_string(internal_map.size()));
@@ -298,11 +301,30 @@ static bool parse_device_entry(json_t* entry, size_t index,
           "Failed to parse capabilities at index " + std::to_string(index));
       return false;
     }
+
     if (parse_qos(entry, hint) < 0) {
       LOG(level_E::WARN,
           "Failed to parse QoS at index " + std::to_string(index));
       return false;
     }
+
+    /*
+     parse 'interval_sec' from "used_bandwidth" in config/cxl_dev_id_map.json.
+     The 'interval_sec' value specifies how frequently the BandwidthMonitor's
+     sampling loop reads hardware I/O counters (read/write page counts) from
+     libcmmh. This ensures that the reported "used_bandwidth" metric is based on
+     measurements taken at the intended polling frequency.
+    */
+    const json_t* ub = json_object_get(entry, "used_bandwidth");
+    if (ub && json_is_object(ub)) {
+      const json_t* interval_json = json_object_get(ub, "interval_sec");
+      if (interval_json && json_is_integer(interval_json)) {
+        hint.bw_interval_sec = json_integer_value(interval_json);
+        LOG(level_E::INFO, "Parsed interval_seconds = " +
+                               std::to_string(hint.bw_interval_sec));
+      }
+    }
+
     return true;
 
   } catch (const std::exception& ex) {
@@ -355,8 +377,8 @@ static int parse_qos(json_t* entry, DevJsonHints& hint) {
     LOG(level_E::WARN, "`advertised_qos` missing or not an object");
     return -EINVAL;
   }
-  hint.advertised_qos.avg_latency_us = get_json_int(qos, "avg_latency_us");
-  hint.advertised_qos.p99_latency_us = get_json_int(qos, "p99_latency_us");
+  hint.advertised_qos.avg_latency_ns = get_json_int(qos, "avg_latency_ns");
+  hint.advertised_qos.p99_latency_ns = get_json_int(qos, "p99_latency_ns");
   hint.advertised_qos.io_per_sec = get_json_int(qos, "io_per_sec");
   hint.advertised_qos.bw_per_sec = get_json_int(qos, "bw_per_sec");
   hint.advertised_qos.io_size_in_bytes = get_json_int(qos, "io_size_in_bytes");
@@ -364,15 +386,7 @@ static int parse_qos(json_t* entry, DevJsonHints& hint) {
   return 0;
 }
 
-/**
- * @brief Parses the 'metrics' block in the given JSON root and updates
- * MetricsInfo.
- *
- * @param root Parsed JSON root object
- * @param filepath Path to the original JSON file
- * @return int 0 on success, negative errno on failure
- */
-static int parse_metrics_config(json_t* root, const std::string& filepath) {
+int parse_metrics_config(const json_t* root, const std::string& filepath) {
   json_t* metrics = json_object_get(root, "metrics");
   if (!metrics || !json_is_object(metrics)) {
     LOG(level_E::ERROR,
@@ -381,25 +395,47 @@ static int parse_metrics_config(json_t* root, const std::string& filepath) {
   }
   try {
     MetricsInfo cfg;
-    if (auto v = json_object_get(metrics, "domain"))
+
+    if (auto v = json_object_get(metrics, "domain")) {
+      if (!json_is_string(v))
+        throw MetricsParseError("metrics.domain must be string");
       cfg.domain = json_string_value(v);
-    if (auto v = json_object_get(metrics, "feature_id"))
+    }
+    if (auto v = json_object_get(metrics, "feature_id")) {
+      if (!json_is_integer(v))
+        throw MetricsParseError("metrics.feature_id must be integer");
       cfg.feature_id = json_integer_value(v);
-    if (auto v = json_object_get(metrics, "category"))
+    }
+    if (auto v = json_object_get(metrics, "category")) {
+      if (!json_is_string(v))
+        throw MetricsParseError("metrics.category must be string");
       cfg.category = json_string_value(v);
-    if (auto v = json_object_get(metrics, "severity"))
+    }
+    if (auto v = json_object_get(metrics, "severity")) {
+      if (!json_is_string(v))
+        throw MetricsParseError("metrics.severity must be string");
       cfg.severity = json_string_value(v);
-    if (auto v = json_object_get(metrics, "source_type"))
+    }
+    if (auto v = json_object_get(metrics, "source_type")) {
+      if (!json_is_string(v))
+        throw MetricsParseError("metrics.source_type must be string");
       cfg.source_type = json_string_value(v);
-    if (auto v = json_object_get(metrics, "power_state"))
+    }
+    if (auto v = json_object_get(metrics, "power_state")) {
+      if (!json_is_string(v))
+        throw MetricsParseError("metrics.power_state must be string");
       cfg.power_state = json_string_value(v);
-    if (auto v = json_object_get(metrics, "interval_seconds"))
+    }
+    if (auto v = json_object_get(metrics, "interval_seconds")) {
+      if (!json_is_integer(v))
+        throw MetricsParseError("metrics.interval_seconds must be integer");
       cfg.interval_seconds = json_integer_value(v);
+    }
 
     set_metrics_info(cfg);
     LOG(level_E::INFO, "Loaded metrics configuration from: " + filepath);
     return 0;
-  } catch (const std::exception& e) {
+  } catch (const MetricsParseError& e) {
     LOG(level_E::ERROR,
         "Failed to parse 'metrics' block: " + std::string(e.what()));
     return -EIO;
@@ -578,6 +614,18 @@ RangeToNumaMap get_range_numa_map_from_lsmem(
   return range_to_numa;
 }
 
+std::unordered_map<uint64_t, int> hdm_base_to_device_index;
+void set_hdm_base_to_device_index(
+    const std::unordered_map<uint64_t, int>& input_map) {
+  hdm_base_to_device_index = input_map;
+}
+
+int get_hdm_base_to_device_index(uint64_t hdm_base) {
+  auto it = hdm_base_to_device_index.find(hdm_base);
+  if (it != hdm_base_to_device_index.end()) return it->second;
+  return -1;
+}
+
 std::unordered_map<sc_id, sc_device, hash_sc_id> discover_cxl_devices_shared(
     const DevTypeMap& dev_hint_map) {
   std::unordered_map<sc_id, sc_device, hash_sc_id> device_map;
@@ -665,6 +713,8 @@ std::unordered_map<sc_id, sc_device, hash_sc_id> discover_cxl_devices_shared(
     static_info.port_type = hint.port_type;
     static_info.capabilities = hint.capabilities;
     static_info.advertised_qos = hint.advertised_qos;
+    static_info.bw_interval_sec = hint.bw_interval_sec;
+    static_info.device_index = get_hdm_base_to_device_index(base_addr);
 
     // Dynamic info
     DevInfo dyn_info;

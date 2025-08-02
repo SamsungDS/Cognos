@@ -1,7 +1,7 @@
 /*
- * 		The confidential and proprietary information contained in this
- * file may only be used by a person authorised under and to the extent
- * permitted by a subsisting licensing agreement from Samsung Electronics.
+ *	The confidential and proprietary information contained in this file may
+ *     	only be used by a person authorised under and to the extent permitted
+ *     	by a subsisting licensing agreement from Samsung Electronics.
  *
  *       (C) COPYRIGHT 2024-2025 Samsung Electronics
  *       ALL RIGHTS RESERVED
@@ -13,84 +13,126 @@
  *     	permitted to do so under the terms of a subsisting license agreement
  *     	from Samsung Electronics.
  *
- * 		Filename:        		libcmmh.h
- * 		Created:     			2024-10-05
- * 		Description: 			This a header file for CPE host
- * reference library. Primary Contact:
+ *
+ *	CMM-H API Library
+ *
+ *	The library provides access to the CMM-H advanced features including:
+ *	  - Prefetch : Move memory span on CMM-H into device cache.
+ *	  - Evict    : Remove memory span on the CMM-H from the device cache.
+ *
+ *	Operation completion has a couple of options:
+ *	  - Set and Forget
+ *	  - Register callback in cmmh_prefetch() or cmmh_evict()
+ *	  - Use cmmh_checkprogress() to monitor for progress_perc == 100.
+ *
+ *
+ *	The library also provides access to CMM-H information and statistics
+ *	including:
+ *	  - CXL capacity, version and type
+ *	  - CXL/NVMe interface counts
+ *	  - Cache hit rate
  *
  */
-
 #ifndef LIBCMMH_H
 #define LIBCMMH_H
 
 #include <cstdint>
 #include <string>
 
-/*
- *   Defining CMM-H commands return value
- *   @var status: contains the status of the command. CMD_SUCCESS for SUCCESS
- */
+/* CMM-H API return values */
 enum StatusCpe {
-  CMMH_STAT_RC_SUCCESS = 0,
-  CMMH_STAT_RC_INVALID_LEN = 1,
-  CMMH_STAT_RC_ADDR_NOT_MAPPED = 2,
-  CMMH_STAT_RC_ADDR_NOT_VALID = 3,
-  CMMH_STAT_RC_PENDING_QUEUE_FULL = 4,
-  CMMH_STAT_RC_EXT_THREAD_COUNT = 5,
-  CMMH_STAT_RC_ERROR = 6
+  CMMH_STAT_RC_SUCCESS = 0, /* command accepted, check progress if enabled */
+  CMMH_STAT_RC_INVALID_LEN =
+      1, /* invalid length - should be in 4096 increments */
+  CMMH_STAT_RC_ADDR_NOT_MAPPED = 2, /* physical address not mapped */
+  CMMH_STAT_RC_ADDR_NOT_VALID = 3, /* physical address not within CMM-H range */
+  CMMH_STAT_RC_PENDING_QUEUE_FULL =
+      4, /* pending queue is full. Application should retry */
+  CMMH_STAT_RC_EXT_THREAD_COUNT = 5, /* thread count exceeded maximum */
+  CMMH_STAT_RC_INVALID_ID = 6,       /* device ID is invalid */
+  CMMH_STAT_RC_ERROR = 7             /* command error */
 };
 
+/* CMM-H Check Progress API return values */
 enum StatusProgress {
-  CMMH_PROG_RC_COMPLETE = 0,
-  CMMH_PROG_RC_PENDING = 1,
-  CMMH_PROG_RC_INPROGRESS = 2,
-  CMMH_PROG_RC_EXPIRED = 3
+  CMMH_PROG_RC_COMPLETE = 0, /* command completed successfully */
+  CMMH_PROG_RC_PENDING =
+      1, /* command in the pending queue waiting to be submitted */
+  CMMH_PROG_RC_INPROGRESS =
+      2, /* command is submitted, waiting for completion */
+  CMMH_PROG_RC_EXPIRED =
+      3 /* command completed and was removed from pending table */
 };
 
-enum class CxlVersion { CXL1_1 = 0, CXL2_0 = 1, NO_CXL = 2 };
+/* CXL Version */
+enum class CxlVersion {
+  CXL1_1 = 0, /* CXL 1.1 */
+  CXL2_0 = 1,
+  NO_CXL = 2
+};
 
-enum class CxlType { NO_CXL = 0, TYPE1 = 1, TYPE2 = 2, TYPE3 = 3 };
+/* CXL Device Type */
+enum class CxlType {
+  NO_CXL = 0,
+  TYPE1 = 1,
+  TYPE2 = 2,
+  TYPE3 = 3 /* Memory Expander */
+};
 
 struct cmmh_cpe_t {
-  StatusCpe status;   /* 0 for success */
-  uint16_t commandID; /* command unique ID */
+  StatusCpe status;   /* API return value */
+  uint16_t commandID; /* unique command ID */
 };
 
 struct cmmh_cpe_prog_t {
-  StatusProgress progress_status;
-  uint8_t progress_perc; /* the command progress. 0-100 */
+  StatusProgress progress_status; /* Check Progress API return value */
+  uint8_t progress_perc;          /* command progress. 0-100 % */
 };
 
+/* Command completion options */
 struct cmmh_cpe_config_t {
-  int enable_checkprogress; /* 1 for monitoring with cmmh_checkprogress calss */
+  int enable_checkprogress; /* 1 for monitoring with cmmh_checkprogress calls */
   int has_callback;         /* 1 if there is a callback function */
   void (*callback_function)(cmmh_cpe_t status); /* function pointer - callback
                                                    upon completion (optional) */
 };
 
+/* CMM-H CXL details and capacity */
 struct cmmh_spec_t {
-  uint64_t total_capacity; /* total advertised capacity (multiple of 256 MB) */
-  uint64_t volatile_capcity; /* total volatile capacity (multiple of 256 MB) */
+  StatusCpe status; /* Other fields valid if status == CMMH_STAT_RC_SUCCESS */
+  uint64_t total_capacity; /* total advertised device capacity (multiple of 256
+                              MB) */
+  uint64_t volatile_capcity; /* device volatile capacity (multiple of 256 MB) */
   uint64_t
-      persist_capacity; /* total persistent capacity (multiple of 256 MB) */
-  CxlVersion cxl_version;
-  CxlType cxl_type;
+      persist_capacity;   /* device persistent capacity (multiple of 256 MB) */
+  CxlVersion cxl_version; /* CXL version */
+  CxlType cxl_type;       /* CXL type */
+  uint64_t uuid;          /* device unique ID */
+  uint64_t hdm_base;      /* HDM Base address */
+  uint64_t hdm_range;     /* HDM Range */
+  bool cpe_supported;     /* CPE APIs (prefetch/evict) supported */
 };
 
+/* CMM-H internal debug counters */
 struct cmmh_stat_interface_t {
-  uint64_t nvme_read_count;
-  uint64_t nvme_write_count;
-  uint64_t cxl_read_count;
-  uint64_t cxl_write_count;
+  StatusCpe status; /* Other fields valid if status == CMMH_STAT_RC_SUCCESS */
+  uint64_t nvme_read_count;  /* internal NVMe Read count */
+  uint64_t nvme_write_count; /* internal NVMe Write count */
+  uint64_t cxl_read_count;   /* CXL Load request count */
+  uint64_t cxl_write_count;  /* CXL Store request count */
 };
 
+/* CMM-H cache information */
 struct cmmh_stat_cache_t {
-  double hit_perc;         /* device cache hit percentage */
+  StatusCpe status; /* Other fields valid if status == CMMH_STAT_RC_SUCCESS */
+  double hit_perc;  /* device cache hit percentage */
   uint64_t dirty_cache_gb; /* dirty page in the device cache (GB) */
 };
 
+/* CMM-H sensor information */
 struct cmmh_stat_sensor_t {
-  uint64_t fpga_temp; /* the device temperature */
+  StatusCpe status;   /* Other fields valid if status == CMMH_STAT_RC_SUCCESS */
+  uint64_t fpga_temp; /* FPGA temperature (C) */
 };
 
 /* CMM-H API functions */
@@ -101,51 +143,54 @@ struct cmmh_stat_sensor_t {
 int cmmh_init(void);
 
 /// @brief cmmh close - close the library and do cleanup
-/// @return void
 void cmmh_close(void);
 
-/// @brief cmmh evict
+/// @brief cmmh_get_device_count
+/// @return the number of discovered CMM-H devices in the system
+int cmmh_get_device_count();
+
+/// @brief cmmh evict - evict (virt_addr - virt_addr+length) from device cache
 /// @param virtual address
 /// @param length in bytes. Should be multiple of 4K
 /// @return command status
 cmmh_cpe_t cmmh_evict(void* virt_addr, size_t length, cmmh_cpe_config_t config);
 
-/// @brief cmmh prefetch
+/// @brief cmmh prefetch - prefetch (virt_addr - virt_addr+length) to device
+/// cache
 /// @param virtual address
 /// @param length in bytes. Should be multiple of 4K
 /// @return command status
 cmmh_cpe_t cmmh_prefetch(void* virt_addr, size_t length,
                          cmmh_cpe_config_t config);
 
-/// @brief cmmh checkprogress
+/// @brief cmmh checkprogress - check progress of prefetch/evict
 /// @param commandID
 /// @return program progress status
 cmmh_cpe_prog_t cmmh_checkprogress(uint16_t commandID);
 
 /// @brief cmmh_get_spec
-/// @param None
-/// @return the device information
-cmmh_spec_t cmmh_get_spec();
+/// @param device_id - default:0
+/// @return the device information including capacity, cxl type and version
+cmmh_spec_t cmmh_get_spec(int device_id = 0);
 
 /// @brief cmmh_stat_interface
-/// @param None
+/// @param device_id - default:0
 /// @return the device interface information
-cmmh_stat_interface_t cmmh_stat_interface();
+cmmh_stat_interface_t cmmh_stat_interface(int device_id = 0);
 
 /// @brief cmmh_stat_cache_info
-/// @param None
+/// @param device_id - default:0
 /// @return the device cache related information
-cmmh_stat_cache_t cmmh_stat_cache();
+cmmh_stat_cache_t cmmh_stat_cache(int device_id = 0);
 
 /// @brief cmmh_stat_sensor
-/// @param None
+/// @param device_id - default:0
 /// @return the device sensor stats including temperature
-cmmh_stat_sensor_t cmmh_stat_sensor();
+cmmh_stat_sensor_t cmmh_stat_sensor(int device_id = 0);
 
 /// @brief cmmh_stat_reset
 //  reset the cache related HW counters
-/// @param None
-/// @return void
-void cmmh_stat_reset();
+/// @param device_id - default:0
+void cmmh_stat_reset(int device_id = 0);
 
-#endif /* LIBCPE_H */
+#endif /* LIBCMMH_H */
