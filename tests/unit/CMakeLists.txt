@@ -69,6 +69,7 @@ add_subdirectory(RequestManager.cpp)
 add_subdirectory(RequestProcessor)
 add_subdirectory(ras_monitor.cc)
 add_subdirectory(ras_request_handler.cc)
+add_subdirectory(ras_device.h)
 
 add_subdirectory(adapter)
 
