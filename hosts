@@ -6,3 +6,9 @@ msl-dpe-da1
 
 [kernel_upgrade_node]
 msl-dpe-da1
+
+[management_server]
+msl-dpe-da8
+
+[application_server]
+msl-dpe-da2

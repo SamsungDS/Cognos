@@ -1,0 +1,5 @@
+---
+artifacts_dir: "{{ inventory_dir }}/artifacts"
+svk_core_pkg_dir: "{{ artifacts_dir }}/SVK/Management_Server"
+svk_cxl_pkg_dir: "{{ artifacts_dir }}/SVK/Management_Server"
+svk_mgmt_fw_pkg_dir: "{{ artifacts_dir }}/SVK/Management_Server"

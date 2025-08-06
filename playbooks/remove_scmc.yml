@@ -1,0 +1,27 @@
+---
+- name: Remove app
+  hosts:
+    - management_server
+  roles:
+    - svk_app_remove
+
+- name: Remove cxl
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - svk_cxl_remove
+
+- name: Remove mgmt-fw
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - svk_mgmt-fw_remove
+
+- name: Remove core
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - svk_core_remove

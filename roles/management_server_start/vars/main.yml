@@ -1,0 +1,8 @@
+---
+feat_modules_bin_dir: "/usr/local/svk/feature_modules"
+rest_server_ip: "127.0.0.1"
+switch_ip: "127.0.0.1"
+influxdb_bucket_name: "internal"
+influxdb_org: "Samsung"
+api_version: 1
+MVP_version: 1

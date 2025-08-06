@@ -88,15 +88,15 @@ prefix_grub_default: 90
 
 
 _kernel_modules_location:
-  default: /usr/lib/modules/{{ kernel_version }}*
-  Ubuntu: /lib/modules/{{ kernel_version }}*
-  Rocky: /usr/lib/modules/{{ kernel_version }}*
+  default: /usr/lib/modules/{{ kernel_version }}
+  Ubuntu: /lib/modules/{{ kernel_version }}
+  Rocky: /usr/lib/modules/{{ kernel_version }}
 
 kernel_modules_location: "{{ _kernel_modules_location[ansible_distribution] | default(_kernel_modules_location['default']) }}"
 
 _kernel_installation_location:
   default: /boot/vmlinuz
-  Ubuntu: /boot/vmlinuz-{{ kernel_version }}*
+  Ubuntu: /boot/vmlinuz-{{ kernel_version }}
   Rocky: /boot/vmlinuz
 
 kernel_installation_location: "{{ _kernel_installation_location[ansible_distribution] | default(_kernel_installation_location['default']) }}"

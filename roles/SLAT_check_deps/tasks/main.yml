@@ -58,6 +58,18 @@
     name: wget
     state: present
 
+- name: Check pip on SLA Tracker node
+  become: yes
+  ansible.builtin.package:
+    name: pip
+    state: present
+
+- name: Check numactl on SLA Tracker node
+  become: yes
+  ansible.builtin.package:
+    name: numactl
+    state: present
+
 - name: Check damo on SLA Tracker node on Ubuntu 24.04+
   ansible.builtin.package:
     name: 
@@ -68,6 +80,7 @@
     - ansible_distribution == "Ubuntu"
     - ansible_distribution_version is version_compare("24.04", '>=') 
 
+
 - name: Install damo on SLA Tracker node on Ubuntu 22.04
   ansible.builtin.pip:
     name: 
@@ -77,9 +90,3 @@
   when: 
     - ansible_distribution == "Ubuntu"
     - ansible_distribution_version is version_compare("22.04", '==') 
-
-
-
-
-
-
