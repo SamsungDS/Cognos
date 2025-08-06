@@ -1,0 +1,89 @@
+{
+  "svk_mgmt_fw_node": {
+    "framework": {
+      "lib_path": "/usr/local/svk/core/lib64/libsvkframework.so",
+      "conf_file": "/etc/svk/mgmt_fw_config.json"
+    },
+    "cluster": {
+      "id": "CL_ID_1"
+    },
+    "controller": {
+      "id": "{{ ip }}",
+      "port": 9999
+    },
+    "node": {
+      "_comment": "id parameter should be populated with the IP address for now.",
+      "name": "node_1",
+      "id": "{{ ip }}",
+      "port": 9998
+    },
+    "logger": {
+      "log_level": "INFO",
+      "log_file_name": "/var/log/svk/svk_mgmt_fw_node.log",
+      "log_file_count": 10,
+      "log_file_size": 1048576,
+      "sink_type": "rotating_file"
+    }
+  },
+  "svk_mgmt_fw_controller": {
+    "controller": {
+      "id": "{{ ip }}",
+      "port": 9999
+    },
+    "logger": {
+      "log_level": "INFO",
+      "log_file_name": "/var/log/svk/svk_mgmt_fw_controller.log",
+      "log_file_count": 10,
+      "log_file_size": 1048576,
+      "sink_type": "rotating_file"
+    }
+  },
+  "svk_mgmt_rest_api": {
+    "controller": {
+      "id": "{{ ip }}",
+      "port": "9999"
+    },
+    "rest_server": {
+      "id": "{{ ip }}",
+      "port": "8001"
+    },
+    "logger": {
+      "log_file_name": "/var/log/svk/svk_mgmt_rest_api.log"
+    }
+  },
+  "core": {
+    "_comment": "All the feature libraries (ONLY) should be present in /usr/local/svk/cxl/lib64",
+    "feat_modules_dir": "{{ feat_modules_bin_dir }}",
+    "logger": {
+      "log_level": "INFO",
+      "log_file_name": "/var/log/svk/framework.log",
+      "log_file_count": 1,
+      "log_file_size": 1048576,
+      "sink_type": "rotating_file"
+    }
+  },
+  "svk_mgmt_fw_svc_mgr": {
+    "svc_mgr": {
+      "feat_sm_svcs_dir": "{{ feat_modules_bin_dir }}"
+    },
+    "logger": {
+      "log_level": "INFO",
+      "log_file_name": "/var/log/svk/svk_mgmt_fw_svc_mgr.log",
+      "log_file_count": 10,
+      "log_file_size": 1048576,
+      "sink_type": "rotating_file"
+    }
+  },
+  "pubsub":
+      {
+        "ip_address": "{{ ip }}",
+        "port": 5555,
+        "topics": [
+          "metrics",
+          "events",
+          "alerts"
+        ],
+        "transport_type": "zmq"
+      }
+}
+

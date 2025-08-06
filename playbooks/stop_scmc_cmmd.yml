@@ -1,0 +1,18 @@
+---
+- name: Stop Management Server
+  hosts:
+    - management_server
+  roles:
+    - management_server_stop_cmmd
+
+- name: Stop Application Server
+  hosts:
+    - application_server
+  roles:
+    - application_server_stop
+
+- name: Stop Cognos services
+  hosts:
+    - management_server
+  roles:
+    - cognos_stop_cmmd

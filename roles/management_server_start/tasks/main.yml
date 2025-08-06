@@ -1,0 +1,95 @@
+---
+- name: Configure mgmt_fw_config
+  ansible.builtin.template:
+    src: mgmt_fw_config.j2
+    dest: "/etc/svk/mgmt_fw_config.json"
+    mode: 0644
+  vars:
+    ip: "{{ ansible_default_ipv4.address }}"
+  become: true
+
+- name: Configure app_backend
+  ansible.builtin.template:
+    src: app_backend_config.j2
+    dest: "/usr/local/svk/svk-app/cognos/backend/config/config.json"
+    mode: 0644
+  vars:
+    ip: "{{ ansible_default_ipv4.address }}"
+  become: true
+
+- name: Get InfluxDB token
+  ansible.builtin.shell: influx auth list --user "{{ influxdb_org }}" --json | grep token | cut -d'"' -f4
+  register: influx_token
+  changed_when: false
+  failed_when: influx_token.rc != 0
+
+- name: Configure app_influxdb
+  ansible.builtin.template:
+    src: app_influxdb_config.j2
+    dest: "/usr/local/svk/svk-app/cognos/backend/config/influxdb_config.json"
+    mode: 0644
+  vars:
+    influxdb_token: "{{ influx_token.stdout }}"
+  become: true
+
+- name: Configure app_ui
+  ansible.builtin.template:
+    src: app_ui_config.j2
+    dest: "/usr/local/svk/svk-app/cognos/ui/src/config/config.json"
+    mode: 0644
+  vars:
+    ip: "{{ ansible_default_ipv4.address }}"
+  become: true
+
+- name: Configure app_cognos
+  ansible.builtin.template:
+    src: app_cognos_config.j2
+    dest: "/usr/local/svk/svk-app/cognos.config"
+    mode: 0644
+  vars:
+    management_ip: "{{ ansible_default_ipv4.address }}"
+    application_ip: "{{ hostvars[groups['application_server'][0]]['inventory_hostname'] }}"
+  become: true
+
+- name: Configure cxl_conf
+  ansible.builtin.template:
+    src: cxl_config.j2
+    dest: "/usr/local/svk/mgmt-fw/cxl.conf"
+    mode: 0644
+  become: true
+
+- name: Configure sub_conf
+  ansible.builtin.template:
+    src: app_sub_config.j2
+    dest: "/usr/local/svk/svk-app/cognos/subscriber/sub_config.json"
+    mode: 0644
+  vars:
+    ip: "{{ ansible_default_ipv4.address }}"
+  become: true
+
+- name: Start management services
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  become: true
+  loop:
+    - svk-controller.service
+    - svk-restserver.service
+    - svk-node.service
+
+- name: Gather service status
+  ansible.builtin.service_facts:
+  changed_when: false
+
+- name: Check service status on management server
+  ansible.builtin.assert:
+    that:
+      - "'{{ item }}' in ansible_facts.services"
+      - "ansible_facts.services['{{ item }}'].state == 'running'"
+    fail_msg: "{{ item }} failed to start!"
+    success_msg: "{{ item }} started successfully."
+  loop:
+    - svk-controller.service
+    - svk-restserver.service
+    - svk-node.service
