@@ -23,6 +23,9 @@ configure_file("cmake/${SVKFramework}.pc.in" "${pkg_config}" @ONLY)
 
 # Enable CTest for testing these code examples.
 # include(CTest)
+include(FetchContent)
+FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
+FetchContent_MakeAvailable(json)
 
 add_subdirectory(common)
 add_subdirectory(framework)

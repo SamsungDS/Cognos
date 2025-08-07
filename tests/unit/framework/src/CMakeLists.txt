@@ -1,4 +1,7 @@
-include_directories(${Framework_INC_DIR} ${Framework_INC_PRIVATE_DIR})
+set(TEST_CONFIG_DIR "${CMAKE_SOURCE_DIR}/config")
+configure_file(test_config.h.in ${CMAKE_CURRENT_BINARY_DIR}/test_config.h @ONLY)
+
+include_directories(${Framework_INC_DIR} ${Framework_INC_PRIVATE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 link_directories(${CMAKE_SOURCE_DIR}/build/framework)
 add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
 add_executable(framework_ut framework_ut.cc ${Framework_INC_DIR}/framework_upstream.h)

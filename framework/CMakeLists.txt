@@ -22,6 +22,7 @@ target_include_directories(${SVKFramework} PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/include_private>
         $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/common/include>
+        $<BUILD_INTERFACE:${json_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
         )
 target_link_directories(${SVKFramework} PRIVATE ${CMAKE_SOURCE_DIR}/build/common)

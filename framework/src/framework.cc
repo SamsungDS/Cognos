@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <iostream>
+#include <nlohmann/json.hpp>
 #include <utility>
 
 #include "framework_defs.hpp"
@@ -624,6 +625,40 @@ svk_status FrameworkSvc::FrameworkSvcInit(const char *svk_config,
   return status;
 }
 
+svk_status FrameworkSvc::FrameworkSvcGetRegisteredFeatures(
+    svk_output *output, const featureInterface &dep_inj) {
+  svk_status status = SVK_STATUS_FAIL;
+  std::string logger_str;
+  using json = nlohmann::json;
+  json feature_list = json::array();
+  for (const auto &feature_name : feature_name_map) {
+    feature_list.push_back(feature_name.first);
+  }
+  json ret;
+  ret["feature_list"] = feature_list;
+
+  std::string json_str = ret.dump();
+  int len = dep_inj.wrap_snprintf((char *)output->output_buffer, output->len,
+                                  json_str.c_str());
+  if (len < 0) {
+    logger_str =
+        "Error while copying json feature list to response buffer: " + json_str;
+    svk_logger(CORE_LOGGER_NAME, level_E::ERROR, logger_str.c_str());
+    output->status = status;
+    return status;
+  } else if (static_cast<uint64_t>(len) >= output->len) {
+    logger_str = "Output buffer too small, response truncated: " +
+                 std::string((char *)output->output_buffer, output->len);
+    svk_logger(CORE_LOGGER_NAME, level_E::ERROR, logger_str.c_str());
+    return status;
+  }
+  status = SVK_STATUS_SUCCESS;
+  output->status = SVK_STATUS_SUCCESS;
+  logger_str = "GetRegisteredFeatures json output: " + json_str;
+  svk_logger(CORE_LOGGER_NAME, level_E::DEBUG, logger_str.c_str());
+  return status;
+}
+
 svk_status FrameworkSvc::FrameworkSvcConfigureDev(
     svk_pass_thru_cmd const *pass_thru, void *config_details,
     svk_device_ctx *device_handles, uint64_t length, void *resp) const {
@@ -753,6 +788,10 @@ extern "C" svk_status initialize_svk(const char *svk_conf_file,
   }
 
   return status;
+}
+
+extern "C" svk_status get_registered_features(svk_output *output) {
+  return g_fw_service->FrameworkSvcGetRegisteredFeatures(output, dl);
 }
 
 extern "C" svk_status configure_svk_device_if_any(
