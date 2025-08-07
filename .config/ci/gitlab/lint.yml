@@ -1,0 +1,14 @@
+ansible-lint:
+  stage: test
+  image: 
+    name: $IMAGE_TAG
+    pull_policy: always
+  script:
+    - ansible-lint
+  variables:
+    DOCKERFILE_NAME: ubuntu22
+    IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
+    ANSIBLE_CONFIG: ansible.cfg
+  rules:
+    - !reference [.default_rules, merge_and_push]
+  allow_failure: true
