@@ -32,6 +32,9 @@ class featureInterface {
   }
   virtual int close_lib(void *handle) const { return dlclose(handle); }
   virtual DIR *open_dir(const char *dir_str) const { return opendir(dir_str); }
+  virtual int wrap_snprintf(char *str, size_t size, const char *resp) const {
+    return std::snprintf(str, size, "%s", resp);
+  }
 };
 
 // Making this global to be able to mock functions for testing
@@ -73,6 +76,8 @@ class FrameworkSvc {
   // cleanup from this class to ensure resources are managed properly
   svk_status FrameworkSvcInit(const char *svk_config, void *init_param,
                               const featureInterface &dep_inj);
+  svk_status FrameworkSvcGetRegisteredFeatures(svk_output *output,
+                                               const featureInterface &dep_inj);
   int initialize_inotify(int flags) const;
   int set_file_watch(int fd, char const *watch_file_path) const;
   int poll_for_config_change(int nfds, fd_set *readfds, fd_set *writefds,

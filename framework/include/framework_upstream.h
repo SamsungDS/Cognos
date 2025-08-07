@@ -26,6 +26,13 @@ extern "C" {
 svk_status initialize_svk(const char *svk_conf_file, void *);
 
 /**
+ * @brief Get the features loaded in SVK in a JSON object
+ *
+ * @return svk_status true if feature list was successfully formed, false if not
+ */
+svk_status get_registered_features(svk_output *output);
+
+/**
  * @brief API for feature modules that need to access/initialize a device
  * NOTE: This is an optional API, not all feature modules need to implement this
  *

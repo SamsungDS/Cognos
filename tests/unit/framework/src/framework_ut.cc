@@ -8,6 +8,7 @@
 
 #include "framework_service.hpp"
 #include "framework_upstream.h"
+#include "test_config.h"
 
 using ::testing::_;
 using ::testing::Return;
@@ -20,6 +21,8 @@ class MockFreeInterface : public featureInterface {
               (const, override));
   MOCK_METHOD(void *, open_lib, (const char *ft_lib_str), (const, override));
   MOCK_METHOD(DIR *, open_dir, (const char *dir_str), (const, override));
+  MOCK_METHOD(int, wrap_snprintf, (char *str, size_t size, const char *resp),
+              (const, override));
 };
 
 // Format for running code before specific test suite, in this case InitTest
@@ -279,8 +282,7 @@ TEST(InitTest, InitSuccess) {
   std::filesystem::copy(new_sample_feat_path, temp_sample_feat_path);
 
   // Using relative path to config in SVK core for testing
-  std::string conf =
-      current_working_dir + "/../../../../../config/test_config.json";
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
   svk_device_ctx ctx;
 
   EXPECT_EQ(SVK_STATUS_SUCCESS, initialize_svk(conf.c_str(), (void *)&ctx));
@@ -327,8 +329,7 @@ TEST(InitTest, InitFail) {
   getcwd(buff, FILENAME_MAX);
   std::string current_working_dir(buff);
 
-  std::string conf =
-      current_working_dir + "/../../../../../config/test_config.json";
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
   svk_device_ctx ctx;
   FrameworkSvc test_fwsvc1;
 
@@ -343,8 +344,7 @@ TEST(InitTest, FailMapEntry) {
   std::string current_working_dir(buff);
 
   // Using relative path to config in SVK core for testing
-  std::string conf =
-      current_working_dir + "/../../../../../config/test_config.json";
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
   svk_device_ctx ctx;
   initialize_svk(conf.c_str(), (void *)&ctx);
   EXPECT_EQ(SVK_STATUS_BAD_FEATURE_LIB,
@@ -379,8 +379,7 @@ TEST(InitTest, BadDir) {
   getcwd(buff, FILENAME_MAX);
   std::string current_working_dir(buff);
   // Using relative path to config in SVK core for testing
-  std::string conf =
-      current_working_dir + "/../../../../../config/test_config.json";
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
 
   FrameworkSvc fw_svc1;
   EXPECT_CALL(dep_inj, open_dir(::testing::A<const char *>()))
@@ -398,8 +397,7 @@ TEST(InitTest, FailedDlopen) {
   getcwd(buff, FILENAME_MAX);
   std::string current_working_dir(buff);
   // Using relative path to config in SVK core for testing
-  std::string conf =
-      current_working_dir + "/../../../../../config/test_config.json";
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
   ON_CALL(dep_inj, open_dir).WillByDefault([&dep_inj](const char *dir_str) {
     return dep_inj.featureInterface::open_dir(dir_str);
   });
@@ -495,8 +493,7 @@ TEST(InitTest, FailedDlsym) {
   getcwd(buff, FILENAME_MAX);
   std::string current_working_dir(buff);
 
-  std::string conf =
-      current_working_dir + "/../../../../../config/test_config.json";
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
   FrameworkSvc test_fwsvc1;
   int run1 =
       test_fwsvc1.FrameworkSvcInit(conf.c_str(), (void *)conf.c_str(), dep_inj);
@@ -530,8 +527,7 @@ TEST(ConfigureDeviceTest, ConfigureDevSuccess) {
   getcwd(buff, FILENAME_MAX);
   std::string current_working_dir(buff);
 
-  std::string conf =
-      current_working_dir + "/../../../../../config/test_config.json";
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
   svk_device_ctx ctx;
 
   EXPECT_EQ(SVK_STATUS_SUCCESS, initialize_svk(conf.c_str(), (void *)&ctx));
@@ -553,8 +549,7 @@ TEST(ConfigureDeviceTest, ConfigureDevInvalidFeature) {
   getcwd(buff, FILENAME_MAX);
   std::string current_working_dir(buff);
 
-  std::string conf =
-      current_working_dir + "/../../../../../config/test_config.json";
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
   svk_device_ctx ctx;
 
   EXPECT_EQ(SVK_STATUS_SUCCESS, initialize_svk(conf.c_str(), (void *)&ctx));
@@ -595,8 +590,7 @@ TEST(ConfigureDeviceTest, ConfigureDevFunctionNotLoaded) {
   getcwd(buff, FILENAME_MAX);
   std::string current_working_dir(buff);
 
-  std::string conf =
-      current_working_dir + "/../../../../../config/test_config.json";
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
 
   FrameworkSvc test_fwsvc;
   EXPECT_EQ(
@@ -614,14 +608,71 @@ TEST(ConfigureDeviceTest, ConfigureDevFunctionNotLoaded) {
                                                 1, &dummy_resp));
 }
 
+TEST(ExecTest, GetFeatures) {
+  // Using relative path to config in SVK core for testing
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
+  svk_device_ctx ctx;
+  EXPECT_EQ(0, initialize_svk(conf.c_str(), (void *)&ctx));
+
+  svk_output output;
+  output.output_buffer = (uint8_t *)malloc(1024);
+  output.len = 1024;
+
+  EXPECT_EQ(0, get_registered_features(&output));
+  std::string ret = (char *)output.output_buffer;
+  EXPECT_STREQ("{\"feature_list\":[\"new_sample_feature\"]}", ret.c_str());
+  free(output.output_buffer);
+}
+
+TEST(ExecTest, GetFeaturesTruncatedResp) {
+  // Using relative path to config in SVK core for testing
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
+  svk_device_ctx ctx;
+  EXPECT_EQ(0, initialize_svk(conf.c_str(), (void *)&ctx));
+
+  svk_output output;
+  output.output_buffer = (uint8_t *)malloc(32);
+  output.len = 32;
+
+  EXPECT_EQ(SVK_STATUS_FAIL, get_registered_features(&output));
+  std::string ret = (char *)output.output_buffer;
+  std::cout << ret.length() << std::endl;
+  EXPECT_STREQ("{\"feature_list\":[\"new_sample_fe", ret.c_str());
+  free(output.output_buffer);
+}
+
+TEST(ExecTest, GetFeaturesError) {
+  MockFreeInterface dep_inj;
+  ON_CALL(dep_inj, get_sym)
+      .WillByDefault([&dep_inj](void *handle, const char *fn_name) {
+        return dep_inj.featureInterface::get_sym(handle, fn_name);
+      });
+  ON_CALL(dep_inj, open_dir).WillByDefault([&dep_inj](const char *dir_str) {
+    return dep_inj.featureInterface::open_dir(dir_str);
+  });
+  ON_CALL(dep_inj, open_lib).WillByDefault([&dep_inj](const char *ft_lib_str) {
+    return dep_inj.featureInterface::open_lib(ft_lib_str);
+  });
+  EXPECT_CALL(dep_inj, wrap_snprintf(_, _, _)).Times(1).WillOnce(Return(-1));
+  // Using relative path to config in SVK core for testing
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
+
+  FrameworkSvc test_fwsvc1;
+  test_fwsvc1.FrameworkSvcInit(conf.c_str(), (void *)conf.c_str(), dep_inj);
+
+  svk_output output;
+  EXPECT_EQ(SVK_STATUS_FAIL,
+            test_fwsvc1.FrameworkSvcGetRegisteredFeatures(&output, dep_inj));
+  test_fwsvc1.FrameworkSvcCleanup((void *)conf.c_str());
+}
+
 TEST(ExecTest, ExecuteSyncSuccess) {
   char buff[FILENAME_MAX];
   getcwd(buff, FILENAME_MAX);
   std::string current_working_dir(buff);
 
   // Using relative path to config in SVK core for testing
-  std::string conf =
-      current_working_dir + "/../../../../../config/test_config.json";
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
   svk_device_ctx ctx;
   EXPECT_EQ(0, initialize_svk(conf.c_str(), (void *)&ctx));
 
@@ -653,8 +704,7 @@ TEST(ExecTest, ExecuteSyncWithStrKey) {
   std::string current_working_dir(buff);
 
   // Using relative path to config in SVK core for testing
-  std::string conf =
-      current_working_dir + "/../../../../../config/test_config.json";
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
   svk_device_ctx ctx;
   EXPECT_EQ(0, initialize_svk(conf.c_str(), (void *)&ctx));
 
@@ -686,8 +736,7 @@ TEST(ExecTest, ExecuteSyncFailureFromSampleFeature) {
   std::string current_working_dir(buff);
 
   // Using relative path to config in SVK core for testing
-  std::string conf =
-      current_working_dir + "/../../../../../config/test_config.json";
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
   svk_device_ctx ctx;
   EXPECT_EQ(0, initialize_svk(conf.c_str(), (void *)&ctx));
 
@@ -716,8 +765,7 @@ TEST(ExecTest, ExecuteSyncInvalidFeatureID) {
   std::string current_working_dir(buff);
 
   // Using relative path to config in SVK core for testing
-  std::string conf =
-      current_working_dir + "/../../../../../config/test_config.json";
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
   svk_device_ctx ctx;
   EXPECT_EQ(0, initialize_svk(conf.c_str(), (void *)&ctx));
 
@@ -761,8 +809,7 @@ TEST(ExecTest, ExecuteSyncFail) {
   std::string current_working_dir(buff);
 
   // Using relative path to config in SVK core for testing
-  std::string conf =
-      current_working_dir + "/../../../../../config/test_config.json";
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
   FrameworkSvc test_fwsvc1;
   test_fwsvc1.FrameworkSvcInit(conf.c_str(), (void *)conf.c_str(), dep_inj);
   svk_pass_thru_cmd pass_thru;
@@ -781,8 +828,7 @@ TEST(ExecTest, ExecuteAsyncSuccess) {
   std::string current_working_dir(buff);
 
   // Using relative path to config in SVK core for testing
-  std::string conf =
-      current_working_dir + "/../../../../../config/test_config.json";
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
   svk_device_ctx ctx;
   EXPECT_EQ(0, initialize_svk(conf.c_str(), (void *)&ctx));
 
@@ -825,8 +871,7 @@ TEST(ExecTest, ExecuteAsyncFail) {
   std::string current_working_dir(buff);
 
   // Using relative path to config in SVK core for testing
-  std::string conf =
-      current_working_dir + "/../../../../../config/test_config.json";
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
   FrameworkSvc test_fwsvc1;
   EXPECT_EQ(SVK_STATUS_SUCCESS,
             test_fwsvc1.FrameworkSvcInit(conf.c_str(), (void *)conf.c_str(),
@@ -850,8 +895,7 @@ TEST(CleanupTest, Cleanup) {
   std::string current_working_dir(buff);
 
   // Using relative path to config in SVK core for testing
-  std::string conf =
-      current_working_dir + "/../../../../../config/test_config.json";
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
   svk_device_ctx ctx;
   EXPECT_EQ(SVK_STATUS_SUCCESS, initialize_svk(conf.c_str(), (void *)&ctx));
 
