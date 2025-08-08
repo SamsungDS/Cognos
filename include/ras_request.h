@@ -113,6 +113,27 @@ struct ras_request {
   std::condition_variable sync_cv;
 
   void execute_feature_command(void);
+  std::optional<json> get_command_params_for(
+      std::string command_param_to_lookup) const {
+    if (!this->command_object_valid()) {
+      return std::nullopt;
+    }
+
+    if (!this->command_obj.contains(RAS_COMMAND_PARAMS_STR)) {
+      return std::nullopt;
+    }
+
+    json params = this->command_obj[RAS_COMMAND_PARAMS_STR];
+
+    if (!params.is_object()) {
+      return std::nullopt;
+    }
+
+    if (!params.contains(command_param_to_lookup)) {
+      return std::nullopt;
+    }
+    return params[command_param_to_lookup];
+  }
 
  private:
   bool cmd_obj_valid;
@@ -130,6 +151,9 @@ struct ras_request {
 void execute_request_by_monitor_(ras_request &req);
 std::optional<device_unique_identifier> get_device_identifier_from_request(
     const ras_request &req);
+
+std::optional<device_unique_identifier>
+get_numa_node_as_device_identifier_from_request(const ras_request &req);
 
 std::shared_ptr<ras_device_manager> ras_monitor_get_device_manager(
     ras_monitor *m);

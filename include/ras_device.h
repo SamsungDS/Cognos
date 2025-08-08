@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -23,6 +24,11 @@ struct ras_device {
             observed device should be marked as degrading */
   uint64_t monitor_interval;  // Monitoring interval for the device
   std::string adapter_name;   // RAS Adapter associated with the device
+  std::optional<std::string> device_name_in_adapter; /** This is the
+  name of the device in the adapter. This is set only if the device name in
+  adapter does not match the device unique identifier.
+  - mock adapter for cxl will report device as numa node string.
+  */
   int64_t numa_node;
   ras_device(std::string name_, std::string type_, bool ect_valid_,
              uint64_t ect_error_count_threshold_, bool twt_valid_,

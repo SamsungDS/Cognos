@@ -8,7 +8,7 @@
 using json = nlohmann::json;
 
 class ras_ut_adapter_command_handler {
-  std::vector<std::string> deviceList = {"dev123_0"};
+  std::vector<std::string> deviceList = {"dev123", "0"};
 
  public:
   json get_device_list(json command) {
