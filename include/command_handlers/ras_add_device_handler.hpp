@@ -52,12 +52,30 @@ class add_ras_monitor_for_device_handler
       return;
     }
 
+    std::optional<device_unique_identifier> numa_node_identifier = std::nullopt;
     auto adapter_name =
         r.ras_context->ras_adapter_helper_->try_get_adapter_for_device(
             *device_unique_id);
     if (adapter_name == std::nullopt) {
-      r.mark_request_failed(RAS_RESULT_MESSAGE_STR_CMD_PARAMS_INVALID);
-      return;
+      // TRY one more time with numa node as device name.
+      // If this needs to be a general approach for mutiple types of device IDs
+      // then this code needs refactoring
+      auto numa_node = get_numa_node_as_device_identifier_from_request(r);
+      if (numa_node == std::nullopt) {
+        // Mark the request as invalid if the device identifier is missing
+        r.mark_request_failed(RAS_RESULT_MESSAGE_STR_CMD_PARAMS_INVALID);
+        return;
+      }
+      adapter_name =
+          r.ras_context->ras_adapter_helper_->try_get_adapter_for_device(
+              *numa_node);
+      if (adapter_name == std::nullopt) {
+        // Mark the request as invalid no adapter detected for the device
+        r.mark_request_failed(RAS_RESULT_MESSAGE_STR_CMD_PARAMS_INVALID);
+        return;
+      }
+      // set the device identifier based on numa node
+      numa_node_identifier = *numa_node;
     }
 
     // Create a new device instance
@@ -68,6 +86,9 @@ class add_ras_monitor_for_device_handler
                      [RAS_COMMAND_PARAMS_ERROR_COUNT_THRESHOLD],
         false, 0, 0, RAS_DEVICE_DEFAULT_MONITOR_INTERVAL, *adapter_name,
         r.command_obj[RAS_COMMAND_PARAMS_STR][RAS_COMMAND_DEVICE_NUMA_STR]);
+
+    // Set the numa node identifier to the device
+    dev->device_name_in_adapter = numa_node_identifier;
 
     // Attempt to add the device to the device manager
     r.is_successfull =
