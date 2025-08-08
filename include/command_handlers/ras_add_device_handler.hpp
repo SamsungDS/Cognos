@@ -85,10 +85,8 @@ class add_ras_monitor_for_device_handler
                      [RAS_COMMAND_PARAMS_CONFIGURE_OPTIONS_STR]
                      [RAS_COMMAND_PARAMS_ERROR_COUNT_THRESHOLD],
         false, 0, 0, RAS_DEVICE_DEFAULT_MONITOR_INTERVAL, *adapter_name,
-        r.command_obj[RAS_COMMAND_PARAMS_STR][RAS_COMMAND_DEVICE_NUMA_STR]);
-
-    // Set the numa node identifier to the device
-    dev->device_name_in_adapter = numa_node_identifier;
+        r.command_obj[RAS_COMMAND_PARAMS_STR][RAS_COMMAND_DEVICE_NUMA_STR],
+        numa_node_identifier);
 
     // Attempt to add the device to the device manager
     r.is_successfull =
