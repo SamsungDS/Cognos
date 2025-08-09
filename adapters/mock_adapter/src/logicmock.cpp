@@ -1,6 +1,7 @@
 #include "logicmock.h"
 
 #include <boost/property_tree/json_parser.hpp>
+#include <cstring>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -78,8 +79,9 @@ extern "C" svk_status initialize_logic_module(void *init_param) {
 
 extern "C" svk_status get_supported_logic_details(
     svk_logic_module_details *details) {
-  strcpy(details->feature_name, "ras");
-  strcpy(details->logic_module_name, "mock");
+  strncpy(details->feature_name, "ras", sizeof(details->feature_name) - 1);
+  strncpy(details->logic_module_name, "mock",
+          sizeof(details->logic_module_name) - 1);
 
   details->execute_logic_sync = &execute_mock_logic_sync;
   details->execute_logic_async = &execute_mock_logic_async;
