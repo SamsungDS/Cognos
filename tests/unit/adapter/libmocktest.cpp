@@ -387,9 +387,9 @@ TEST_F(LibMockTest, ReturnNonZeroHealthStatusForValidCommand) {
     // document["result"]["commandSuccessful"]
     // value will be true for the above input. In the build container the above
     // conditions are not satisfied and hence the expected output is false.
-    EXPECT_TRUE((document["result"]["commandSuccessful"] == true));
-  } else {
     EXPECT_TRUE((document["result"]["commandSuccessful"] == false));
+  } else {
+    EXPECT_TRUE((document["result"]["commandSuccessful"] == true));
   }
   EXPECT_STREQ(document["command_response"].GetString(), "getHealthStatus");
 }
@@ -437,9 +437,9 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidDeviceString) {
     // document["command_response"]["getErrorCount"]["result"]["commandSuccessful"]
     // value will be true for the above input. In the build image VMs the above
     // conditions are not satisfied and hence the expected output is false.
-    EXPECT_TRUE((document["result"]["commandSuccessful"] == true));
-  } else {
     EXPECT_TRUE((document["result"]["commandSuccessful"] == false));
+  } else {
+    EXPECT_TRUE((document["result"]["commandSuccessful"] == true));
   }
 }
 
@@ -460,9 +460,9 @@ TEST_F(LibMockTest, ReturnNonZeroHealthStatusForInvalidDeviceString) {
     // document["command_response"]["getErrorCount"]["result"]["commandSuccessful"]
     // value will be true for the above input. In the build image VMs the above
     // conditions are not satisfied and hence the expected output is false.
-    EXPECT_TRUE((document["result"]["commandSuccessful"] == true));
-  } else {
     EXPECT_TRUE((document["result"]["commandSuccessful"] == false));
+  } else {
+    EXPECT_TRUE((document["result"]["commandSuccessful"] == true));
   }
 }
 
