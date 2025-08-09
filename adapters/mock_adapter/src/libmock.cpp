@@ -389,8 +389,9 @@ string createResponse(const string &device, const string &error_type,
       pch = strtok((char *)response.return_value.c_str(), " \n");
       while (pch != NULL) {
         Value stringValue;
-        stringValue.SetString(pch, strnlen(pch, response.return_value.length()),
-                              allocator);
+        stringValue.SetString(
+            pch, (unsigned long)strnlen(pch, response.return_value.length()),
+            allocator);
         devlistarray.PushBack(stringValue, allocator);
         pch = strtok(NULL, " \n");
       }
