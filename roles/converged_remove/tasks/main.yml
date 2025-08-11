@@ -29,20 +29,22 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # Author: June Liu
 # Contact: june.liu@samsung.com
-
+---
 - name: Check if svk_converged DEB is installed
-  ansible.builtin.shell: "apt list --installed | grep svk-converged"
-  register: svk_converged_deb_query
+  ansible.builtin.shell:
+    cmd: "set -o pipefail && apt list --installed | grep svk-converged; echo $?"
+    executable: /bin/bash
+  register: converged_remove_deb_query
   changed_when: false
   failed_when: false
   when: ansible_facts['distribution'] == "Ubuntu"
 
 - name: Remove svk_converged packages
-  apt:
+  ansible.builtin.apt:
     name: svk-converged
     state: absent
     purge: true
-  when: svk_converged_deb_query.rc == 0 and ansible_facts['distribution'] == "Ubuntu"
+  when: converged_remove_deb_query.stdout_lines[-1] == '0' and ansible_facts['distribution'] == "Ubuntu"
 
 - name: Uninstall converged storage dependencies[svk-core]
   ansible.builtin.include_tasks: ../../svk_core_remove/tasks/main.yml
@@ -53,8 +55,6 @@
     path: "{{ item }}"
     state: absent
   loop:
-    - "{{ cognos_converged_log_path }}"
-    - "{{ cognos_converged_conf_path }}"
+    - "{{ converged_remove_log_path }}"
+    - "{{ converged_remove_conf_path }}"
   become: true
-
-

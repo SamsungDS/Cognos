@@ -35,7 +35,7 @@
 #
 # Execute this playbook to deploy Cognos converged storage software to converged_node in your inventory.
 # This playbook will perform the following:
-# * Uninstall converged storage on all [converged_node] 
+# * Uninstall converged storage on all [converged_node]
 # * Remove configuration file and log file of converged storage on all [converged_node]
 # * Move NVMe devices to kernel mode
 #
@@ -50,12 +50,4 @@
   hosts: converged_node
   roles:
     - converged_remove
-
-# - name: Uninstall converged storage dependencies
-#   hosts: converged_node
-#   roles:
-#     - svk_core_remove
-
-
-
 

@@ -29,10 +29,10 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # Author: June Liu
 # Contact: june.liu@samsung.com
-
+---
 
 - name: Get service facts
-  service_facts:
+  ansible.builtin.service_facts:
   when: ansible_facts.services is not defined
 
 - name: Stop svk_converged systemd unit
@@ -48,4 +48,3 @@
     enabled: false
   when: "'svk-converged.service' in ansible_facts.services"
   become: true
-

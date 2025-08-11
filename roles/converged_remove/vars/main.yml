@@ -29,6 +29,6 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # Author: June Liu
 # Contact: june.liu@samsung.com
-cognos_converged_log_path: /var/log/svk/framework.log
-cognos_converged_conf_path: /usr/local/svk/converged/config/svk-converged.conf
-converged_bin_path: "/usr/local/svk/converged/"
+---
+converged_remove_log_path: /var/log/svk/framework.log
+converged_remove_conf_path: /usr/local/svk/converged/config/svk-converged.conf
