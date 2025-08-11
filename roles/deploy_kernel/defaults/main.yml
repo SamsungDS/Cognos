@@ -30,21 +30,21 @@
 ---
 
 ### Path defaults
-artifacts_dir: "{{ inventory_dir }}/artifacts"
+deploy_kernel_artifacts_dir: "{{ inventory_dir }}/artifacts"
 deploy_kernel_staging_dir: /tmp/kernel
 
 ### Kernel defaults
-kernel_version: 6.11.11
+deploy_kernel_version: 6.11.11
 
-kernel_source_code_url: "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-{{ kernel_version }}.tar.xz"
+deploy_kernel_source_code_url: "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-{{ deploy_kernel_version }}.tar.xz"
 
-###kernel dependencies packages name
-kernel_dependencies_apt:
+### kernel dependencies packages name
+deploy_kernel_dependencies_apt:
   - git
   - fakeroot
   - build-essential
-  - ncurses-dev 
-  - xz-utils 
+  - ncurses-dev
+  - xz-utils
   - libssl-dev
   - bc
   - flex
@@ -53,6 +53,4 @@ kernel_dependencies_apt:
 
 
 ### Reboot defaults
-reboot_timeout: 3600
-
-
+deploy_kernel_reboot_timeout: 3600

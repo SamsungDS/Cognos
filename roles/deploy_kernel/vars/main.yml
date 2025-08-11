@@ -31,22 +31,22 @@
 # Contact: june.liu@samsung.com
 ---
 ### Path defaults
-artifacts_dir: "{{ inventory_dir }}/artifacts"
+deploy_kernel_artifacts_dir: "{{ inventory_dir }}/artifacts"
 deploy_kernel_staging_dir: /tmp/kernel
 
 ### Kernel defaults
-kernel_version: "6.11.11"
+deploy_kernel_version: "6.11.11"
 
-kernel_source_code_url: "https://cdn.kernel.org/pub/linux/kernel/v{{ kernel_version[:1] }}.x/linux-{{ kernel_version }}.tar.xz"
+deploy_kernel_source_code_url: "https://cdn.kernel.org/pub/linux/kernel/v{{ deploy_kernel_version[:1] }}.x/linux-{{ deploy_kernel_version }}.tar.xz"
 
-###kernel dependencies packages name
-_kernel_requirements:
+### kernel dependencies packages name
+deploy_kernel_require:
   default:
     - git
     - fakeroot
     - build-essential
-    - ncurses-dev 
-    - xz-utils 
+    - ncurses-dev
+    - xz-utils
     - libssl-dev
     - bc
     - flex
@@ -56,8 +56,8 @@ _kernel_requirements:
     - git
     - fakeroot
     - build-essential
-    - ncurses-dev 
-    - xz-utils 
+    - ncurses-dev
+    - xz-utils
     - libssl-dev
     - bc
     - flex
@@ -73,30 +73,30 @@ _kernel_requirements:
     - elfutils-libelf-devel
 
 
-kernel_dependencies: "{{ _kernel_requirements[ansible_distribution] | default(_kernel_requirements['default']) }}"
-###compile timeout
-compile_timeout: 7200
-compile_check_retries: 120
-compile_check_interval: 60
-available_disk_size_gb: 29
+deploy_kernel_dependencies: "{{ deploy_kernel_require[ansible_distribution] | default(deploy_kernel_require['default']) }}"
+### compile timeout
+deploy_kernel_compile_timeout: 7200
+deploy_kernel_compile_check_retries: 120
+deploy_kernel_compile_check_interval: 60
+deploy_kernel_available_disk_size_gb: 29
 
 ### Reboot defaults
-reboot_timeout: 3600
+deploy_kernel_reboot_timeout: 3600
 
 ### update-grub.cfg order
-prefix_grub_default: 90
+deploy_kernel_prefix_grub_default: 90
 
 
-_kernel_modules_location:
-  default: /usr/lib/modules/{{ kernel_version }}
-  Ubuntu: /lib/modules/{{ kernel_version }}
-  Rocky: /usr/lib/modules/{{ kernel_version }}
+deploy_kernel_mod_location:
+  default: /usr/lib/modules/{{ deploy_kernel_version }}
+  Ubuntu: /lib/modules/{{ deploy_kernel_version }}
+  Rocky: /usr/lib/modules/{{ deploy_kernel_version }}
 
-kernel_modules_location: "{{ _kernel_modules_location[ansible_distribution] | default(_kernel_modules_location['default']) }}"
+deploy_kernel_modules_location: "{{ deploy_kernel_mod_location[ansible_distribution] | default(deploy_kernel_mod_location['default']) }}"
 
-_kernel_installation_location:
+deploy_kernel_install_location:
   default: /boot/vmlinuz
-  Ubuntu: /boot/vmlinuz-{{ kernel_version }}
+  Ubuntu: /boot/vmlinuz-{{ deploy_kernel_version }}
   Rocky: /boot/vmlinuz
 
-kernel_installation_location: "{{ _kernel_installation_location[ansible_distribution] | default(_kernel_installation_location['default']) }}"
+deploy_kernel_installation_location: "{{ deploy_kernel_install_location[ansible_distribution] | default(deploy_kernel_install_location['default']) }}"

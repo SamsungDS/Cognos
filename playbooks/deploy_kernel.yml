@@ -42,10 +42,3 @@
   hosts: kernel_upgrade_node
   roles:
     - deploy_kernel
-
-
-
-
-
-
-
