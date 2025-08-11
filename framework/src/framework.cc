@@ -510,17 +510,23 @@ svk_status FrameworkSvc::get_feature_details(
   char log_msg[LOG_MSG_MAX_SIZE];
   try {
     if (std::holds_alternative<std::string>(feat_key)) {
-      snprintf(log_msg, LOG_MSG_MAX_SIZE,
-               "Feature name given, using feature_name_map for getting feature "
-               "details.");
+      std::string feat_name = std::get<std::string>(feat_key);
+      snprintf(
+          log_msg, LOG_MSG_MAX_SIZE,
+          "Feature name %s given, using feature_name_map for getting feature "
+          "details.",
+          feat_name.c_str());
       svk_logger(CORE_LOGGER_NAME, level_E::INFO, log_msg);
-      *details = feature_name_map.at(std::get<std::string>(feat_key));
+      *details = feature_name_map.at(feat_name);
     } else {
-      snprintf(log_msg, LOG_MSG_MAX_SIZE,
-               "Feature name not given, using feature_id for getting feature "
-               "details.");
+      feature_id feat_id = std::get<feature_id>(feat_key);
+      snprintf(
+          log_msg, LOG_MSG_MAX_SIZE,
+          "Feature name not given, using feature_id %d for getting feature "
+          "details.",
+          feat_id);
       svk_logger(CORE_LOGGER_NAME, level_E::INFO, log_msg);
-      *details = feature_map.at(std::get<feature_id>(feat_key));
+      *details = feature_map.at(feat_id);
     }
   } catch (std::out_of_range &e) {
     snprintf(
