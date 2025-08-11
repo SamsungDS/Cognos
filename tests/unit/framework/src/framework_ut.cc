@@ -692,7 +692,7 @@ TEST(ExecTest, ExecuteSyncSuccess) {
   std::cout << "test exec_sync output buffer: " << (char *)output.output_buffer
             << std::endl;
   std::string search_str =
-      "Feature name not given, using feature_id for getting feature details.";
+      "Feature name not given, using feature_id 0 for getting feature details.";
   EXPECT_TRUE(is_str_in_log(search_str));
   cleanup_svk(&ctx, (void *)conf.c_str());
   free(output.output_buffer);
@@ -724,7 +724,8 @@ TEST(ExecTest, ExecuteSyncWithStrKey) {
   output.len = 128;
   EXPECT_EQ(0, execute_svk_feature_sync(&pass_thru, &input, &output));
   std::string search_str =
-      "Feature name given, using feature_name_map for getting feature details.";
+      "Feature name new_sample_feature given, using feature_name_map for "
+      "getting feature details.";
   EXPECT_TRUE(is_str_in_log(search_str));
   cleanup_svk(&ctx, (void *)conf.c_str());
   free(output.output_buffer);
