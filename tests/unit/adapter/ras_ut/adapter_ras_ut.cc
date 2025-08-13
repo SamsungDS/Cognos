@@ -15,8 +15,18 @@ class ras_ut_adapter_command_handler {
     json resp;
     resp["command_response"] = command["command_name"];
     resp["command_params"] = command["command_params"];
-    resp["result"]["commandSuccessfull"] = "true";
+    resp["result"]["commandSuccessfull"] = true;
     resp["result"]["deviceList"] = deviceList;
+
+    return resp;
+  }
+
+  json get_error_count(json command) {
+    json resp;
+    resp["command_response"] = command["command_name"];
+    resp["command_params"] = command["command_params"];
+    resp["result"]["commandSuccessfull"] = true;
+    resp["result"]["errorCount"] = 100;
 
     return resp;
   }
@@ -35,6 +45,11 @@ svk_status execute_ut_adapter_logic_sync(svk_logic_cmd *cmd,
 
   if (cmd_name_str == "getDeviceList") {
     output_json = handler_.get_device_list(input_command);
+  } else if (cmd_name_str == "getErrorCount") {
+    std::string device = input_command["command_params"]["device"];
+    if (device == "dev123") {
+      output_json = handler_.get_error_count(input_command);
+    }
   }
 
   std::string output_str = output_json.dump();
