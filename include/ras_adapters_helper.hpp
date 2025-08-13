@@ -3,6 +3,7 @@
 
 #include <fmt/format.h>
 
+#include <filesystem>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
@@ -11,7 +12,6 @@
 #include "ras_exports.h"
 #include "svk_logger.hpp"
 #include "utils/logic_module_manager.hpp"
-
 using json = nlohmann::json;
 
 #define MAX_OUTPUT_BUFFER_LEN (4096)
@@ -43,7 +43,11 @@ class ras_adapter_helper {
     if (rc == SVK_STATUS_SUCCESS) {
       try {
         json out_json = json::parse(loutput.output_buffer);
-        return out_json;
+        if (out_json.contains("result") &&
+            out_json["result"].contains("commandSuccessfull") &&
+            out_json["result"]["commandSuccessfull"].get<bool>()) {
+          return out_json;
+        }
       } catch (json::parse_error &e) {
         svk_logger(RAS_LOGGER, level_E::ERROR,
                    fmt::format("Invalid json output. Exception: {}", e.what())
@@ -107,6 +111,16 @@ class ras_adapter_helper {
     }
     return false;
   }
+  bool validate_lib_entry(const std::string &lib_path_str) const {
+    if (std::filesystem::path lib_path = lib_path_str;
+        !std::filesystem::exists(lib_path)) {
+      svk_logger(RAS_LOGGER, level_E::WARN,
+                 fmt::format("Library not found {}", lib_path_str).c_str());
+
+      return false;
+    }
+    return true;
+  }
 
  public:
   std::unique_ptr<logic_module_manager> adapters;
@@ -124,6 +138,93 @@ class ras_adapter_helper {
       }
     }
     return std::nullopt;
+  }
+
+  std::optional<uint64_t> get_device_correctable_error_count(
+      std::string adapter_name, device_unique_identifier device_id) {
+    std::string get_device_correctable_error_count_cmd = R"(
+      {{
+        "command_name" : "getErrorCount",
+        "command_params" : {{
+          "device" : "{}",
+          "errorType" : "correctable"
+        }}
+      }}
+    )";
+
+    get_device_correctable_error_count_cmd =
+        fmt::format(get_device_correctable_error_count_cmd, device_id);
+
+    if (auto error_count_response_o = execute_adapter_sync_command(
+            adapter_name, get_device_correctable_error_count_cmd);
+        error_count_response_o.has_value()) {
+      json error_count_response = error_count_response_o.value();
+      auto error_count = error_count_response["result"]["errorCount"];
+      if (error_count.is_number_integer()) {
+        return error_count.get<uint64_t>();
+      } else {
+        svk_logger(
+            RAS_LOGGER, level_E::WARN,
+            fmt::format("Got non-integer error count for adapter {} device {}",
+                        adapter_name, device_id)
+                .c_str());
+      }
+    } else {
+      svk_logger(RAS_LOGGER, level_E::WARN,
+                 fmt::format("Get device correctable error count failed for "
+                             "adapter  {} device {}",
+                             adapter_name, device_id)
+                     .c_str());
+    }
+
+    return std::nullopt;
+  }
+
+  /**
+   * NOTE: RAS adpaters are dynamic (.so) libraries that are compliant to svk
+   * logic interface. The loading is tried on each directory listing given in
+   * the load path `ras_adapters_dir`. If the directory name is <name> then if
+   * lib64/lib<name>.so exists then it will be loaded, if it complies with the
+   * svk logic interface.
+   */
+  int load_ras_adapters(const std::string &ras_adapters_dir) {
+    std::filesystem::path load_dir = ras_adapters_dir;
+    int number_of_adapter_loaded = 0;
+    for (const auto &entry : std::filesystem::directory_iterator(load_dir)) {
+      auto entry_path_str = entry.path().string();
+      if (!entry.is_directory()) {
+        svk_logger(
+            RAS_LOGGER, level_E::WARN,
+            fmt::format("Skipping non directory entry {}", entry_path_str)
+                .c_str());
+        continue;
+      }
+
+      std::string lib_path_str =
+          fmt::format("{}/lib64/lib{}.so", entry_path_str,
+                      entry.path().filename().string());
+
+      if (validate_lib_entry(lib_path_str)) {
+        auto logic_module_name = adapters->load_logic_module(
+            lib_path_str, std::string(RAS_FEATURE_MODULE_NAME));
+        if (logic_module_name == std::nullopt) {
+          svk_logger(
+              RAS_LOGGER, level_E::WARN,
+              fmt::format("Failed to load adapter {}", lib_path_str).c_str());
+          continue;
+        }
+        number_of_adapter_loaded++;
+        svk_logger(
+            RAS_LOGGER, level_E::INFO,
+            fmt::format("Loaded adapter {}", *logic_module_name).c_str());
+      } else {
+        svk_logger(
+            RAS_LOGGER, level_E::WARN,
+            fmt::format("Skipping non compliant directory {}", entry_path_str)
+                .c_str());
+      }
+    }
+    return number_of_adapter_loaded;
   }
 };
 #endif  // _RAS_ADAPTERS_HELPER__HPP_

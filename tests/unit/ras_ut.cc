@@ -817,3 +817,64 @@ TEST_F(ConfigUnitTest, SVKEXECASYNC) {
   clean_up(nullptr);
   unlink("conf.json");
 }
+
+TEST_F(ConfigUnitTest, TestAdapterDeviceCorrectableErrorCount) {
+  boost::property_tree::ptree root_conf;
+  ras_conf conf;
+
+  try {
+    boost::property_tree::read_json("conf.json", root_conf);
+  } catch (std::exception &e) {
+    std::cout << "Unable to read ras config. Error -> " << e.what() << "."
+              << std::endl
+              << "Using the default config" << std::endl;
+  }
+
+  conf.adapters_directory = root_conf.get<std::string>(
+      "adapters_directory", RAS_DEFAULT_ADAPTERS_DIRECTORY);
+  initialize(nullptr);
+  std::unique_ptr<ras_adapter_helper> adapter_helper_ =
+      std::make_unique<ras_adapter_helper>();
+
+  adapter_helper_->load_ras_adapters(conf.adapters_directory);
+  adapter_helper_->get_device_correctable_error_count("ras_adapter_ut",
+                                                      "dev123");
+
+  clean_up(nullptr);
+  top_conf.put_child("ras.logger", logger_conf);
+  unlink("missing_logger_conf.json");
+}
+
+TEST(RasAdapterHelperUnitTest, TestDeviceCorrectableErrorCount) {
+  std::unique_ptr<ras_adapter_helper> adapter_helper_ =
+      std::make_unique<ras_adapter_helper>();
+
+  auto num_adapters = adapter_helper_->load_ras_adapters(RAS_UT_ADAPTERS_DIR);
+  // Mock adapter and UT adapter are loaded
+  EXPECT_EQ(num_adapters, 2);
+  auto error_count_o = adapter_helper_->get_device_correctable_error_count(
+      "ras_adapter_ut", "dev123");
+  EXPECT_TRUE(error_count_o.has_value());
+  EXPECT_EQ(error_count_o.value(), 100);
+}
+
+TEST(RasAdapterHelperUnitTest, TestDeviceCorrectableErrorCountInvalidDevice) {
+  std::unique_ptr<ras_adapter_helper> adapter_helper_ =
+      std::make_unique<ras_adapter_helper>();
+
+  auto num_adapters = adapter_helper_->load_ras_adapters(RAS_UT_ADAPTERS_DIR);
+  // Mock adapter and UT adapter are loaded
+  EXPECT_EQ(num_adapters, 2);
+  auto error_count_o = adapter_helper_->get_device_correctable_error_count(
+      "ras_adapter_ut", "dev_invalid");
+  EXPECT_FALSE(error_count_o.has_value());
+}
+
+TEST(RasAdapterHelperUnitTest, TestLoadAdapters) {
+  std::unique_ptr<ras_adapter_helper> adapter_helper_ =
+      std::make_unique<ras_adapter_helper>();
+
+  auto num_adapters = adapter_helper_->load_ras_adapters(RAS_UT_ADAPTERS_DIR);
+  // Mock adapter and UT adapter are loaded
+  EXPECT_EQ(num_adapters, 2);
+}
