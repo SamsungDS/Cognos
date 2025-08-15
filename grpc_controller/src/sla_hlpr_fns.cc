@@ -66,14 +66,15 @@ static int parseJSONOutputOfDeviceInfo(std::string node_name,
     nlohmann::json qos_json = response_json["advertised_qos"];
 
     dev_info.device_qos.avg_latency_ns =
-        static_cast<uint64_t>(qos_json["avg_latency"]);
+        static_cast<uint64_t>(qos_json["avg_latency_ns"]);
     dev_info.device_qos.p99_latency =
-        static_cast<uint64_t>(qos_json["p99_latency"]);
+        static_cast<uint64_t>(qos_json["p99_latency_ns"]);
     dev_info.device_qos.io_per_sec =
         static_cast<uint64_t>(qos_json["io_per_sec"]);
     dev_info.device_qos.bw_per_sec =
         static_cast<uint64_t>(qos_json["BW_per_sec"]);
-    dev_info.device_qos.io_size = static_cast<uint64_t>(qos_json["io_size"]);
+    dev_info.device_qos.io_size =
+        static_cast<uint64_t>(qos_json["io_size_in_bytes"]);
     dev_info.device_qos.queue_depth = static_cast<uint64_t>(qos_json["qd"]);
     dev_info.free_flag = true;
   } catch (std::exception& e) {

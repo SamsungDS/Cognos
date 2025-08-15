@@ -535,7 +535,7 @@ Status ControllerServicer::ProcessAllocateMemory(const svk::CommandRequest *req,
   char logic_module[128];
   std::vector<DeviceInfo> app_devices;
   int status = -1;
-  bool device_found = false;
+  bool found_devices_flag = false;
 
   feature_params = req->feature_params();
 
@@ -569,10 +569,12 @@ Status ControllerServicer::ProcessAllocateMemory(const svk::CommandRequest *req,
     return Status(grpc::INVALID_ARGUMENT, "devices not met SLA");
   }
 
+  // Check the device's node_name and send the SLA Tracking requests to that
+  // node
+  json devices = json::array();
   for (auto itr = m_cluster_map[req->cluster_id()].begin();
        itr != m_cluster_map[req->cluster_id()].end(); ++itr) {
-    std::string device_names = "";
-    std::string device_latency_str = "";
+    json device;
     std::string node_name;
     std::string port;
     std::unordered_map<std::string, DeviceInfo> ras_device_map;
@@ -588,33 +590,34 @@ Status ControllerServicer::ProcessAllocateMemory(const svk::CommandRequest *req,
     for (auto dev : app_devices) {
       if (dev.node_name == node_name) {
         ras_device_map[std::to_string(dev.device_id)] = dev;
-        if (device_names.length() == 0) {
-          device_names = "devices=" + std::to_string(dev.numa);
-          device_latency_str = "device_sla_latency_ns=" +
-                               std::to_string(dev.device_qos.avg_latency_ns);
-        } else {
-          device_names += "," + std::to_string(dev.numa);
-          device_latency_str +=
-              "," + std::to_string(dev.device_qos.avg_latency_ns);
-        }
+
+        device["device_numa"] = std::to_string(dev.numa);
+        device["device_sla_latency_ns"] = dev.device_qos.avg_latency_ns;
+        device["device_id"] = std::to_string(dev.device_id);
+        devices.push_back(device);
+        found_devices_flag = true;
       }
     }
 
-    if (device_names.length() == 0) {
+    if (found_devices_flag == false) {
       continue;
     }
-    device_found = true;
+
+    // Enable SLA tracking for the devices
+    json command_params;
+    command_params["app_name"] = std::string(app_name);
+    command_params["app_sla_latency_ns"] = sla_latency_ns;
+    command_params["host_name"] = node_name;
+    command_params["logic_module"] = std::string(logic_module);
+    command_params["devices"] = devices;
+
     req_node.set_node_id(node_name);
-    req_node.set_feature_id(feature_id::SLA_TRACKER);
-    feature_params = "app_name=" + std::string(app_name) + ";" +
-                     "app_sla_latency_ns=" + std::to_string(sla_latency_ns) +
-                     ";" + device_names + ";" + device_latency_str +
-                     ";host_name=" + node_name;
-    if (ptr_logicmod) {
-      feature_params += ";logic_module=" + std::string(logic_module);
-    }
-    req_node.set_feature_params(feature_params);
-    logger_str = "Command with feature_params " + feature_params +
+    req_node.set_feature_name(SLAT_FEATURE_MODULE_NAME);
+    req_node.set_command_name("add_devices_to_sla_tracker");
+
+    std::string command_params_str = command_params.dump();
+    req_node.set_command_params(command_params_str);
+    logger_str = "Command with command_params " + command_params_str +
                  " is passed to node " + node_name;
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                logger_str.c_str());
@@ -625,8 +628,8 @@ Status ControllerServicer::ProcessAllocateMemory(const svk::CommandRequest *req,
       // If one of the nodes return failure for whatever reason, we are
       // returning error for the whole cluster. Need to handle partial
       // failures accordingly
-      logger_str = "ProcessNodeCommand with feature_params " + feature_params +
-                   " failed for node " + node_name;
+      logger_str = "ProcessNodeCommand with command_params " +
+                   command_params_str + " failed for node " + node_name;
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                  logger_str.c_str());
 
@@ -636,7 +639,7 @@ Status ControllerServicer::ProcessAllocateMemory(const svk::CommandRequest *req,
     EnableRASTrackingOnDevices(node_name, port, ras_device_map);
   }
 
-  if (device_found == false) {
+  if (found_devices_flag == false) {
     logger_str =
         "ProcessAllocateMemory failed because of the device details mismatch "
         "or no devices available for the given nodes";
@@ -1658,6 +1661,45 @@ int DisableRASTrackingOnDevice(std::string node_name, std::string node_port,
   return status;
 }
 
+/**
+ * Remove the device from SLA tracking to avoid further events on that device
+ *
+ * @return 0 if the device is disabled, -1 on failure.
+ */
+
+int DisableSLATrackingOnDevice(std::string node_name, std::string node_port,
+                               std::string device_name, std::string app_name) {
+  svk::CommandRequest req_node;
+  svk::CommandResponse resp;
+  int status = -1;
+  std::string log_msg;
+
+  // Send each device to RAS feature module for reliability tracking
+  req_node.set_node_id(node_name);
+  req_node.set_feature_name(SLAT_FEATURE_MODULE_NAME);
+  req_node.set_command_name("remove_devices_from_sla_tracker");
+  json devices = json::array();
+  json device;
+  device["device_numa"] = device_name;
+  devices.push_back(device);
+  json command_params_json = {"devices", devices, "app_name", app_name};
+
+  req_node.set_command_params(command_params_json.dump());
+  status = SendCommandToNodeInJSON(node_name, node_port, req_node, resp);
+  if (status == 0) {
+    log_msg = "Disabled SLA tracking on device " + device_name + " for app " +
+              app_name;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, log_msg.c_str());
+    status = 0;
+  } else {
+    log_msg = "Failed to disable SLA tracking on device " + device_name +
+              " for app " + app_name;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR, log_msg.c_str());
+  }
+
+  return status;
+}
+
 // Process the event received from RAS feature module
 // If the RAS error_cnt is reported, then the move_all command is called
 void ProcessRASEvent(json json_data, ControllerServicer *svcr) {
@@ -1745,6 +1787,10 @@ void ProcessRASEvent(json json_data, ControllerServicer *svcr) {
     SendCommandToNodeInJSON(node_name, node_port, req, resp);
   }
 
+  // Remove the device from the SLA and RAS tracking list
+  DisableSLATrackingOnDevice(node_name, node_port, ras_reported_device_name,
+                             ras_reported_app_name);
+
   DisableRASTrackingOnDevice(node_name, node_port, ras_reported_device_name,
                              ras_reported_device_type,
                              ras_reported_device_numa);
@@ -1752,14 +1798,10 @@ void ProcessRASEvent(json json_data, ControllerServicer *svcr) {
 
 /** Process the event received from SLAT feature module
   If the SLA deviation is reported, then the move command is called to the ME
- feature module
-
- Since the SLAT keeps generating event continuously for the given device,
- adding a workaround to ignore the same device reported again and again
- until the "remove_device_from_sla_tracker" is supported
+ feature module. Also disable SLA Tracking is called on that device to avoid
+ duplicate events
 */
 
-std::vector<std::string> device_sla_blacklist;
 void ProcessSLAEvent(json json_data, ControllerServicer *svcr) {
   std::string node_name = "";
   std::string node_port;
@@ -1779,13 +1821,6 @@ void ProcessSLAEvent(json json_data, ControllerServicer *svcr) {
     slat_reported_app_name = observations_map.at("app_name");
     slat_reported_avg_latency_ns = observations_map.at("avg_latency_ns");
 
-    // TODO: Check if the device is already reported. Just blacklist it
-    // until the support is added in SLA Tracker
-    if (std::find(device_sla_blacklist.begin(), device_sla_blacklist.end(),
-                  slat_reported_device_name) != device_sla_blacklist.end()) {
-      return;
-    }
-
     logger_str = "Device's numa " + slat_reported_device_name + " on host " +
                  slat_reported_host_name + " for the app " +
                  slat_reported_app_name +
@@ -1793,9 +1828,6 @@ void ProcessSLAEvent(json json_data, ControllerServicer *svcr) {
                  std::to_string(slat_reported_avg_latency_ns);
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::WARN,
                logger_str.c_str());
-
-    device_sla_blacklist.push_back(slat_reported_device_name);
-
   } catch (json::exception &e) {
     std::string errorMessage = e.what();
 

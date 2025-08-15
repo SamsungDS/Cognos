@@ -1004,35 +1004,35 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStart) {
   "D\",\"pcie_addr\":\"0000:b8:00.0\"}, "                                     \
   "{\"device_id\":30690035288064,\"vendor_device_type\":\"CMM-"               \
   "D\",\"pcie_addr\":\"0000:b8:00.0\"}]}"
-#define CXL_DEVICE_INFO_OUTPUT1                                              \
-  "{\"api_version\":1.0,\"device_id\":29690035288064,\"manufacturer\":"      \
-  "\"Samsung\",\"serial_number\":305419896,\"FW_revision\":\"1.0.0\","       \
-  "\"location\":\"0000:b8:00.0\",\"total_capacity_MB\":129007,\"feature_"    \
-  "supported\":\"basic\",\"vendor_device_type\":\"CMM-D\",\"cxl_device_"     \
-  "type\":\"Type3\",\"protocol\":\"CXL "                                     \
-  "2.0\",\"port_type\":\"root\",\"mode_discovered\":\"auto\",\"connection_"  \
-  "type\":\"CXL.mem\",\"domain_type\":\"PCIe\",\"domain_id\":0,\"link_"      \
-  "speed\":16,\"link_width\":8,\"available_capacity_MB\":127080,\"status\":" \
-  "\"active\",\"aspm_active\":false,\"sris_active\":false,\"lock_active\":"  \
-  "false,\"numa_node\":1,\"capabilities\":{\"Power Management "              \
-  "version\":1},\"advertised_qos\":{\"avg_latency\":120,\"p99_latency\":"    \
-  "350,\"io_per_sec\":50000,\"BW_per_sec\":1000000,\"io_size\":4096,"        \
-  "\"qd\":32}}"
+#define CXL_DEVICE_INFO_OUTPUT1                                                \
+  "{\"api_version\":1.0,\"device_id\":29690035288064,\"manufacturer\":"        \
+  "\"Samsung\",\"serial_number\":305419896,\"FW_revision\":\"1.0.0\","         \
+  "\"location\":\"0000:b8:00.0\",\"total_capacity_MB\":129007,\"feature_"      \
+  "supported\":\"basic\",\"vendor_device_type\":\"CMM-D\",\"cxl_device_"       \
+  "type\":\"Type3\",\"protocol\":\"CXL "                                       \
+  "2.0\",\"port_type\":\"root\",\"mode_discovered\":\"auto\",\"connection_"    \
+  "type\":\"CXL.mem\",\"domain_type\":\"PCIe\",\"domain_id\":0,\"link_"        \
+  "speed\":16,\"link_width\":8,\"available_capacity_MB\":127080,\"status\":"   \
+  "\"active\",\"aspm_active\":false,\"sris_active\":false,\"lock_active\":"    \
+  "false,\"numa_node\":1,\"capabilities\":{\"Power Management "                \
+  "version\":1},\"advertised_qos\":{\"avg_latency_ns\":120,\"p99_latency_"     \
+  "ns\":350,\"io_per_sec\":50000,\"BW_per_sec\":1000000,\"io_size_in_bytes\":" \
+  "4096,\"qd\":32}}"
 
-#define CXL_DEVICE_INFO_OUTPUT2                                              \
-  "{\"api_version\":1.0,\"device_id\":30690035288064,\"manufacturer\":"      \
-  "\"Samsung\",\"serial_number\":305419896,\"FW_revision\":\"1.0.0\","       \
-  "\"location\":\"0000:b8:00.0\",\"total_capacity_MB\":129007,\"feature_"    \
-  "supported\":\"basic\",\"vendor_device_type\":\"CMM-H\",\"cxl_device_"     \
-  "type\":\"Type3\",\"protocol\":\"CXL "                                     \
-  "2.0\",\"port_type\":\"root\",\"mode_discovered\":\"auto\",\"connection_"  \
-  "type\":\"CXL.mem\",\"domain_type\":\"PCIe\",\"domain_id\":0,\"link_"      \
-  "speed\":16,\"link_width\":8,\"available_capacity_MB\":127080,\"status\":" \
-  "\"active\",\"aspm_active\":false,\"sris_active\":false,\"lock_active\":"  \
-  "false,\"numa_node\":1,\"capabilities\":{\"Power Management "              \
-  "version\":1},\"advertised_qos\":{\"avg_latency\":320,\"p99_latency\":"    \
-  "350,\"io_per_sec\":50000,\"BW_per_sec\":1000000,\"io_size\":4096,"        \
-  "\"qd\":32}}"
+#define CXL_DEVICE_INFO_OUTPUT2                                                \
+  "{\"api_version\":1.0,\"device_id\":30690035288064,\"manufacturer\":"        \
+  "\"Samsung\",\"serial_number\":305419896,\"FW_revision\":\"1.0.0\","         \
+  "\"location\":\"0000:b8:00.0\",\"total_capacity_MB\":129007,\"feature_"      \
+  "supported\":\"basic\",\"vendor_device_type\":\"CMM-H\",\"cxl_device_"       \
+  "type\":\"Type3\",\"protocol\":\"CXL "                                       \
+  "2.0\",\"port_type\":\"root\",\"mode_discovered\":\"auto\",\"connection_"    \
+  "type\":\"CXL.mem\",\"domain_type\":\"PCIe\",\"domain_id\":0,\"link_"        \
+  "speed\":16,\"link_width\":8,\"available_capacity_MB\":127080,\"status\":"   \
+  "\"active\",\"aspm_active\":false,\"sris_active\":false,\"lock_active\":"    \
+  "false,\"numa_node\":1,\"capabilities\":{\"Power Management "                \
+  "version\":1},\"advertised_qos\":{\"avg_latency_ns\":320,\"p99_latency_"     \
+  "ns\":350,\"io_per_sec\":50000,\"BW_per_sec\":1000000,\"io_size_in_bytes\":" \
+  "4096,\"qd\":32}}"
 
 class FakeNodeServicer : public Servicer {
  public:
@@ -1126,7 +1126,7 @@ TEST(InitIntegrationTest,
   unlink(conf_file.c_str());
 }
 
-TEST(InitIntegrationTest, ControllerNodeServicerStartWithBlacklistedDevice) {
+TEST(InitIntegrationTest, ControllerNodeServicerStartWitMultipleSLAEvents) {
   char *cw_dir = get_current_dir_name();
   std::string conf_file = std::string(cw_dir) + "/conf.json";
   create_svk_mgmt_fw_conf_json(
@@ -1193,7 +1193,7 @@ TEST(InitIntegrationTest, ControllerNodeServicerStartWithBlacklistedDevice) {
           std::string::npos);
 
   EXPECT_EQ(
-      false,
+      true,
       filedata.find("Device's numa 12 on host localhost3 for the app TESTAPP3 "
                     "deviated than expected - Reported latency_ns = 1000") !=
           std::string::npos);
@@ -2024,6 +2024,166 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForRASOperation) {
           CONTROLLER_NODE_DEFAULT_LOG_FILE,
           ",\"command\":\"move_"
           "all\",\"dst\":\"1\",\"src\":\"0\",\"tm_attr\":\"0\"}is successful"));
+
+  unlink(conf_file.c_str());
+}
+
+class FakeNodeServicerFailForAddRemoveSLADeviceTracker : public Servicer {
+ public:
+  FakeNodeServicerFailForAddRemoveSLADeviceTracker(std::string conf_file,
+                                                   bool sla_add_fail)
+      : Servicer(conf_file) {
+    this->sla_add_fail = sla_add_fail;
+  };
+  Status ProcessNodeCommand(ServerContext *ctxt, const svk::CommandRequest *req,
+                            svk::CommandResponse *resp) override {
+    if (req->command_name().length() > 0) {
+      if (this->sla_add_fail == true &&
+          req->command_name() == "add_devices_to_sla_tracker") {
+        return Status(grpc::INVALID_ARGUMENT,
+                      "add_devices_to_sla_tracker failed");
+      } else if (this->sla_add_fail == false &&
+                 req->command_name() == "remove_devices_from_sla_tracker") {
+        return Status(grpc::INVALID_ARGUMENT,
+                      "remove_devices_from_sla_tracker failed");
+      }
+
+      if (req->command_name() == "get_node_info") {
+        svk::CommandResponse_NodeResponse *response =
+            resp->add_node_responses();
+        response->set_output(NODE_FEATURE_OUTPUT);
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      } else if (req->command_name() == "list_devices") {
+        svk::CommandResponse_NodeResponse *response =
+            resp->add_node_responses();
+        response->set_output(CXL_DEVICE_LIST_OUTPUT);
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      } else if (req->command_name() == "get_device_info") {
+        svk::CommandResponse_NodeResponse *response =
+            resp->add_node_responses();
+        if (req->command_params().find("29690035288064") != std::string::npos) {
+          response->set_output(CXL_DEVICE_INFO_OUTPUT1);
+        } else if (req->command_params().find("30690035288064") !=
+                   std::string::npos) {
+          response->set_output(CXL_DEVICE_INFO_OUTPUT2);
+        }
+
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      }
+    }
+
+    return Status::OK;
+  }
+
+ private:
+  // Flag to simulate failure for add_device_to_sla_tracker or
+  // remove_device_from_sla_tracker
+  bool sla_add_fail;
+};
+
+TEST(InitIntegrationTest, AllocateMemoryCommandWithAddSLADeviceTrackerFailure) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  Servicer *svcr(
+      new FakeNodeServicerFailForAddRemoveSLADeviceTracker(conf_file, true));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  svk::CommandRequest req;
+  svk::CommandResponse *resp = new (svk::CommandResponse);
+  req.set_cluster_id(DEFAULT_CLUSTER_ID);
+  req.set_command_id("allocate_memory");
+  req.set_feature_params(
+      "sla_latency_ns=1000;app_name=TestApp;size=1024;logic_module=default");
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status status = client.ProcessControllerCommand(&req, resp);
+  ASSERT_NE(status.ok(), true);
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest, ControllerNodeTMOperationWithRemoveSLADeviceFailure) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  ControllerServicer *c_svcr(new ControllerServicer(conf_file));
+  auto c_server = InitializeServicer(c_svcr);
+  ASSERT_NE(c_server, nullptr);
+  EXPECT_TRUE(c_svcr->get_state() == true);
+  std::thread *subscriber_thread =
+      new std::thread(&StartThreadForZMQSubscriberConfiguration, c_svcr);
+
+  std::thread *sla_thread =
+      new std::thread(&StartEventProcessingThread, c_svcr);
+
+  int rc = initialize_publisher(conf_file.c_str());
+  if (rc != 0) {
+    std::cout << "Failed to initialize publisher" << std::endl;
+    return;
+  }
+  Servicer *n_svcr(
+      new FakeNodeServicerFailForAddRemoveSLADeviceTracker(conf_file, false));
+  if (n_svcr->get_state() == false) {
+    std::cout << "Node Servicer is not initialized properly. Exiting"
+              << std::endl;
+    return;
+  }
+  auto n_server = InitializeNodeServicer(n_svcr);
+  ASSERT_NE(n_server, nullptr);
+
+  svk::CommandRequest req;
+  svk::CommandResponse *resp = new (svk::CommandResponse);
+  req.set_cluster_id(DEFAULT_CLUSTER_ID);
+  req.set_command_id("allocate_memory");
+  req.set_feature_params(
+      "sla_latency_ns=1000;app_name=TESTAPPRAS;size=1024;logic_module=default");
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status status = client.ProcessControllerCommand(&req, resp);
+  ASSERT_EQ(status.ok(), true);
+  sleep(5);
+
+  // std::string json_data_str = get_sla_deviation_data(
+  //     SLAT_FEATURE_MODULE_NAME, "DEVTM", "localhost", "TESTAPP1", 1000);
+  std::string json_data_str =
+      generate_ras_event(RAS_FEATURE_MODULE_NAME, "29690035288064", "localhost",
+                         "TESTAPPRAS", 2000);
+
+  rc = publish_data((char *)"alerts", (uint8_t *)json_data_str.c_str(),
+                    json_data_str.length());
+
+  std::cout << "Published data result " << rc << std::endl;
+  sleep(3);
+
+  StopEventProcessingThread(c_svcr);
+  sla_thread->join();
+  subscriber_thread->join();
+  delete c_svcr;
+  delete n_svcr;
+  cleanup_publisher();
+
+  std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  std::string filedata((std::istreambuf_iterator<char>(file)),
+                       (std::istreambuf_iterator<char>()));
+  file.close();
+  EXPECT_EQ(true,
+            filedata.find(
+                "Failed to disable SLA tracking on device 29690035288064") !=
+                std::string::npos);
 
   unlink(conf_file.c_str());
 }
