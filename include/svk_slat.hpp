@@ -55,6 +55,7 @@ using slat_benchmark_config = struct slat_benchmark_config_s {
   uint64_t device_sla_tolerance_percent;
   std::string benchmark_tool;
   std::string benchmark_out_field;
+  bool sla_deviation_reported_flag;
   std::map<std::string, slat_app_sla_config> app_sla_list;
 };
 

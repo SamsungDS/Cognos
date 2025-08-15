@@ -212,9 +212,9 @@ inline void SLATrackerSvc::process_pending_requests(void) {
       logger_str = "Device already exists for " + device_numa +
                    ". Updating for app " + app_name;
       svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
-      slat_benchmark_config &cfg = it->second;
-      cfg.device_advertised_sla = device.device_advertised_sla;
-      cfg.app_sla_list[app_name] = to_add.app_sla;
+
+      // TODO: Need to address for the new app addition or removal from the
+      // above list
     }
   }
   this->th_data.benchmark_pending_list_to_add.clear();
@@ -258,7 +258,22 @@ void SLATrackerSvc::benchmarking_thread_fn(void) {
                   << device_benchmark_config.device_sla_tolerance_percent
                   << "% of " << device_benchmark_config.device_advertised_sla
                   << std::endl;
-        this->publish_app_degraded_sla(device_benchmark_config);
+
+        // Check if the event is reported already. If no, publish the event and
+        // set the flag to true to avoid duplicate events
+        if (device_benchmark_config.sla_deviation_reported_flag == false) {
+          this->publish_app_degraded_sla(device_benchmark_config);
+          svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO,
+                     "Event reported for SLA deviation");
+          device_benchmark_config.sla_deviation_reported_flag = true;
+        }
+      } else {
+        // The SLA is within threshold levels. Check for SLA deviation reported
+        // before and reset to false to report the event again in case of
+        // deviation detected
+        if (device_benchmark_config.sla_deviation_reported_flag == true) {
+          device_benchmark_config.sla_deviation_reported_flag = false;
+        }
       }
     }
 
