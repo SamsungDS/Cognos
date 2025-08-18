@@ -26,7 +26,7 @@ void usage() {
   return;
 }
 
-void printTime(string& res) {
+void printTime(string &res) {
   auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::system_clock::now().time_since_epoch())
                     .count() %
@@ -40,14 +40,72 @@ void printTime(string& res) {
   res.assign(buffer);
 }
 
-int main(int argc, char* argv[]) {
+svk_status parsing_ras_conf(std::string ras_conf_path, ras_conf *ras_configs) {
+  boost::property_tree::ptree root_conf;
+  static boost::property_tree::ptree logger_conf;
+  try {
+    boost::property_tree::read_json(ras_conf_path, root_conf);
+  } catch (std::exception &e) {
+    std::cout << "Unable to read ras config. Error -> " << e.what() << "."
+              << std::endl
+              << "Using the default config" << std::endl;
+  }
+  try {
+    logger_conf = root_conf.get_child("ras.logger");
+  } catch (std::exception &e) {
+    std::cout << "Unable to read ras logger config. Error -> " << e.what()
+              << "." << std::endl
+              << "Using the default config" << std::endl;
+  }
+  ras_configs->log_file_name = logger_conf.get<std::string>(
+      "log_file_name", RAS_LOGGER_FILE_NAME_DEFAULT);
+  ras_configs->log_level =
+      logger_conf.get<std::string>("log_level", RAS_LOGGER_LEVEL_DEFAULT);
+  ras_configs->log_file_count =
+      logger_conf.get<int>("log_file_count", RAS_LOGGER_FILE_COUNT_DEFAULT);
+  ras_configs->log_file_size =
+      logger_conf.get<int>("log_file_size", RAS_LOGGER_FILE_SIZE_DEFAULT);
+  ras_configs->log_sink_type =
+      logger_conf.get<std::string>("sink_type", RAS_LOGGER_SINK_TYPE_DEFAULT);
+
+  return SVK_STATUS_SUCCESS;
+}
+
+int main(int argc, char *argv[]) {
   if (argc < 3) {
     usage();
     exit(INVALID_COMMAND);
   }
 
+  /*  SVK initialize() */
+  svk_status rc = SVK_STATUS_FAIL;
+  std::string ras_conf_path;
+  const char *env_p;
+  if ((env_p = std::getenv("SVK_RAS_CONFIG")) != nullptr) {
+    ras_conf_path = env_p;
+  } else {
+    ras_conf_path = RAS_CONFIG_FILE_DEFAULT;
+  }
+  ras_conf *ras_configs = new ras_conf();
+  rc = parsing_ras_conf(ras_conf_path, ras_configs);
+  if (rc != SVK_STATUS_SUCCESS) {
+    return rc;
+  }
+  // initialization in the ras_logger_init function
+  if (svk_logger_init(RAS_LOGGER, ras_configs->log_file_name.c_str(),
+                      log_level_map.at(ras_configs->log_level),
+                      ras_configs->log_file_count, ras_configs->log_file_size,
+                      ras_configs->log_sink_type.c_str()) == 0) {
+    svk_logger(RAS_LOGGER, level_E::INFO,
+               "ras init called & logger is initialized");
+  } else {
+    std::cerr << "ras logger init fail" << std::endl;
+    return SVK_STATUS_INVALID_CONFIG;
+  }
+
   int ret = 0, c;
-  string dev = "", type = "correctable", tres;
+  string dev = "";
+  string type = "correctable", tres;
   unsigned int interval = 5;
 
   while ((c = getopt(argc, argv, "n:i:h")) != -1) switch (c) {
@@ -95,7 +153,7 @@ int main(int argc, char* argv[]) {
   Response res;
 
   // Disable syslog output during startup
-  FILE* fp = freopen("/dev/null", "a", stdout);
+  FILE *fp = freopen("/dev/null", "a", stdout);
   if (fp == nullptr) return INVALID_FP;
 
   ret = startup(nullptr);

@@ -6,5 +6,5 @@
   "regex_addr_range": ".*mem[\\s]*([0-9a-z]+-[0-9a-z]+).*",
   "mce_inject_template_string": "CPU {cpu} BANK 1\nSTATUS CORRECTED\nADDR {addr}\n",
   "rasdaemon_exec_command": "rasdaemon -f -r /dev/null 2>&1 > ",
-  "ras_mc_ctl_error_addresses": "ras-mc-ctl --errors|awk -F',' '{printf \"\\n\" $7}'|cut -d'=' -f2"
+  "ras_mc_ctl_error_addresses": "ras-mc-ctl --errors|grep -Po '(?<=addr=)[^,]*'"
 }
