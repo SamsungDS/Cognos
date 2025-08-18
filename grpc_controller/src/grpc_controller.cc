@@ -495,24 +495,23 @@ int EnableRASTrackingOnDevices(
   svk::CommandRequest req_node;
   svk::CommandResponse resp;
   int status = -1;
+  std::string log_msg;
   // Send each device to RAS feature module for reliability tracking
   for (const auto &[device_id, device_info] : ras_device_map) {
     req_node.set_node_id(node_name);
     req_node.set_feature_name(RAS_FEATURE_MODULE_NAME);
     req_node.set_command_name("add_reliability_monitoring_for_device");
-    json command_params_json = {
-        "device_id",
-        device_id,
-        "device_numa",
-        std::to_string(device_info.numa),
-        "device_type",
-        device_info.device_type,
-        "configure_options",
-        {"error_count_threshold",
-         ERROR_COUNT_THRESHOLD,
-         "error_rate_threshold",
-         {"count", ERROR_RATE_THRESHOLD_COUNT, "time_window_in_seconds",
-          ERROR_RATE_THRESHOLD_TIME_WINDOW_IN_SECS}}};
+
+    json command_params_json;
+    json configure_options_json;
+    command_params_json["device_id"] = device_id;
+    command_params_json["device_numa"] = device_info.numa;
+    command_params_json["device_type"] = device_info.device_type;
+    configure_options_json["error_count_threshold"] = ERROR_COUNT_THRESHOLD;
+    command_params_json["configure_options"] = configure_options_json;
+
+    log_msg = "Enable RAS tracking with params" + command_params_json.dump();
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, log_msg.c_str());
 
     req_node.set_command_params(command_params_json.dump());
     SendCommandToNodeInJSON(node_name, node_port, req_node, resp);
@@ -1646,14 +1645,20 @@ int DisableRASTrackingOnDevice(std::string node_name, std::string node_port,
   svk::CommandRequest req_node;
   svk::CommandResponse resp;
   int status = -1;
+  std::string log_msg;
   // Send each device to RAS feature module for reliability tracking
   req_node.set_node_id(node_name);
   req_node.set_feature_name(RAS_FEATURE_MODULE_NAME);
   req_node.set_command_name("remove_reliability_monitoring_for_device");
-  json command_params_json = {
-      "device_id", device_id,     "device_type",
-      device_type, "device_numa", device_numa,
-  };
+
+  json command_params_json;
+  json configure_options_json;
+  command_params_json["device_id"] = device_id;
+  command_params_json["device_numa"] = device_numa;
+  command_params_json["device_type"] = device_type;
+
+  log_msg = "Disabling RAS tracking with params" + command_params_json.dump();
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, log_msg.c_str());
 
   req_node.set_command_params(command_params_json.dump());
   status = SendCommandToNodeInJSON(node_name, node_port, req_node, resp);
