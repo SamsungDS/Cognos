@@ -16,9 +16,9 @@
 #include "svk_logger.hpp"
 using json = nlohmann::json;
 
-#define RAS_COMMAND_COMMAND_STR "command"
+#define RAS_COMMAND_COMMAND_STR "command_name"
 #define RAS_COMMAND_PARAMS_STR "command_params"
-#define RAS_COMMAND_DEVICE_STR "device"
+#define RAS_COMMAND_DEVICE_STR "device_id"
 #define RAS_COMMAND_DEVICE_NUMA_STR "device_numa"
 #define RAS_COMMAND_RESULT_STR "result"
 #define RAS_COMMAND_STATUS_CODE_STR "ras_cmd_status_code"

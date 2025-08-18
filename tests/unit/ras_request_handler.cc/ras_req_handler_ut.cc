@@ -33,7 +33,7 @@ TEST_F(RequestHandlerUnitTest, GetDeviceIdentifierInvalidObj) {
 TEST_F(RequestHandlerUnitTest, GetDeviceIdentifierNoCommandParams) {
   std::string input_string = R"(
     {
-    "command" : "dummy_command"
+    "command_name" : "dummy_command"
     }
   )";
   ras_request req(true, nullptr, false, input_string.c_str(),
@@ -49,7 +49,7 @@ TEST_F(RequestHandlerUnitTest, GetDeviceIdentifierNoCommandParams) {
 TEST_F(RequestHandlerUnitTest, GetDeviceIdentifierNonObjectCommandParams) {
   std::string input_string = R"(
     {
-    "command" : "dummy_command",
+    "command_name" : "dummy_command",
     "command_params" : "non json param"
     }
   )";
@@ -66,7 +66,7 @@ TEST_F(RequestHandlerUnitTest, GetDeviceIdentifierNonObjectCommandParams) {
 TEST_F(RequestHandlerUnitTest, GetDeviceIdentifierCommandParamsWithoutDevice) {
   std::string input_string = R"(
     {
-    "command" : "dummy_command",
+    "command_name" : "dummy_command",
     "command_params" : {
       "dumm_params" : "dummy_param_value1"
       }
@@ -85,9 +85,9 @@ TEST_F(RequestHandlerUnitTest, GetDeviceIdentifierCommandParamsWithoutDevice) {
 TEST_F(RequestHandlerUnitTest, GetDeviceIdentifierSuccess) {
   std::string input_string = R"(
     {
-    "command" : "dummy_command",
+    "command_name" : "dummy_command",
     "command_params" : {
-      "device" : "dev123"
+      "device_id" : "dev123"
       }
     }
   )";
@@ -106,7 +106,7 @@ TEST_F(RequestHandlerUnitTest, GetCommandStringInvalidCommandObj) {
     {
     "command1" : "dummy_command",
     "command_params" : {
-      "device" : "dev123"
+      "device_id" : "dev123"
       }
     }
   )";
@@ -129,7 +129,7 @@ TEST_F(RequestHandlerUnitTest, ParseJsonInvalidInputLen) {
     {
     "command1" : "dummy_command",
     "command_params" : {
-      "device" : "dev123"
+      "device_id" : "dev123"
       }
     }
   )";

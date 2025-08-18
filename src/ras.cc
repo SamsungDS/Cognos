@@ -38,7 +38,7 @@ svk_status parsing_ras_conf(std::string ras_conf_path, ras_conf *ras_configs) {
       logger_conf.get<std::string>("sink_type", RAS_LOGGER_SINK_TYPE_DEFAULT);
 
   ras_configs->adapters_directory = root_conf.get<std::string>(
-      "adapters_directory", RAS_DEFAULT_ADAPTERS_DIRECTORY);
+      "ras.adapters_directory", RAS_DEFAULT_ADAPTERS_DIRECTORY);
   if (!(std::filesystem::exists(ras_configs->adapters_directory) &&
         std::filesystem::is_directory(ras_configs->adapters_directory))) {
     std::cout << "Adapters Directory does not exist." << std::endl;

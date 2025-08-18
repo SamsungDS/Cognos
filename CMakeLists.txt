@@ -23,6 +23,7 @@ pkg_check_modules(SVKFW REQUIRED svkframework)
 add_compile_options(${SVKFW_CFLAGS})
 
 set(PARENT_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+set(SVK_RAS_LIB_TARGET_NAME svkras)
 
 add_subdirectory(src)
 add_subdirectory(adapters)

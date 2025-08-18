@@ -30,7 +30,7 @@ class ConfigUnitTest : public testing::Test {
     logger_conf.put("sink_type", "rotating_file");
 
     top_conf.put_child("ras.logger", logger_conf);
-    top_conf.put("adapters_directory", RAS_UT_ADAPTERS_DIR);
+    top_conf.put("ras.adapters_directory", RAS_UT_ADAPTERS_DIR);
     boost::property_tree::write_json("conf.json", top_conf);
   }
 
@@ -202,9 +202,9 @@ TEST_F(ConfigUnitTest, SVKEXECNullOutputBuffer) {
   svk_input input;
   std::string input_str = R"(
     {
-      "command" : "add_reliability_monitoring_for_device",
+      "command_name" : "add_reliability_monitoring_for_device",
       "command_params" : {
-        "device" : "dev123",
+        "device_id" : "dev123",
         "device_numa" : 0,
         "configure_options" : {
           "error_count_threshold" : 500
@@ -232,9 +232,9 @@ TEST_F(ConfigUnitTest, SVKEXECINvalidInputLen) {
   svk_input input;
   std::string input_str = R"(
     {
-      "command" : "add_reliability_monitoring_for_device",
+      "command_name" : "add_reliability_monitoring_for_device",
       "command_params" : {
-        "device" : "dev123",
+        "device_id" : "dev123",
         "device_numa" : 0,
         "configure_options" : {
           "error_count_threshold" : 500
@@ -264,7 +264,7 @@ TEST_F(ConfigUnitTest, SVKEXECInvalidCommand) {
     {
       "invalid_command" : "add_reliability_monitoring_for_device",
       "command_params" : {
-        "device" : "dev123",
+        "device_id" : "dev123",
         "device_numa" : 0,
         "configure_options" : {
           "error_count_threshold" : 500
@@ -292,7 +292,7 @@ TEST_F(ConfigUnitTest, SVKEXECMissingCommandParams) {
   svk_input input;
   std::string input_str = R"(
     {
-      "command" : "add_reliability_monitoring_for_device"
+      "command_name" : "add_reliability_monitoring_for_device"
     }
   )";
   input.input_buffer = (uint8_t *)input_str.c_str();
@@ -314,9 +314,9 @@ TEST_F(ConfigUnitTest, SVKEXECNullOutputBufferRemDevice) {
   svk_input input;
   std::string input_str = R"(
     {
-      "command" : "remove_reliability_monitoring_for_device",
+      "command_name" : "remove_reliability_monitoring_for_device",
       "command_params" : {
-        "device" : "dev123",
+        "device_id" : "dev123",
         "device_numa" : 0,
         "configure_options" : {
           "error_count_threshold" : 500
@@ -344,9 +344,9 @@ TEST_F(ConfigUnitTest, SVKEXECINvalidInputLenRemDevice) {
   svk_input input;
   std::string input_str = R"(
     {
-      "command" : "remove_reliability_monitoring_for_device",
+      "command_name" : "remove_reliability_monitoring_for_device",
       "command_params" : {
-        "device" : "dev123",
+        "device_id" : "dev123",
         "device_numa" : 0,
         "configure_options" : {
           "error_count_threshold" : 500
@@ -376,7 +376,7 @@ TEST_F(ConfigUnitTest, SVKEXECInvalidCommandRemDevice) {
     {
       "invalid_command" : "remove_reliability_monitoring_for_device",
       "command_params" : {
-        "device" : "dev123",
+        "device_id" : "dev123",
         "device_numa" : 0,
         "configure_options" : {
           "error_count_threshold" : 500
@@ -404,7 +404,7 @@ TEST_F(ConfigUnitTest, SVKEXECMissingCommandParamsRemDevice) {
   svk_input input;
   std::string input_str = R"(
     {
-      "command" : "remove_reliability_monitoring_for_device"
+      "command_name" : "remove_reliability_monitoring_for_device"
     }
   )";
   input.input_buffer = (uint8_t *)input_str.c_str();
@@ -447,9 +447,9 @@ TEST_F(ConfigUnitTest, SVKEXECInsufficentOutputBufferLen) {
   svk_input input;
   std::string input_str = R"(
     {
-      "command" : "add_reliability_monitoring_for_device",
+      "command_name" : "add_reliability_monitoring_for_device",
       "command_params" : {
-        "device" : "dev123",
+        "device_id" : "dev123",
         "device_numa" : 0,
         "configure_options" : {
           "error_count_threshold" : 500
@@ -485,9 +485,9 @@ TEST_F(ConfigUnitTest, SVKEXECInsufficentOutputBufferLenRemDevice) {
   svk_input input;
   std::string input_str = R"(
     {
-      "command" : "remove_reliability_monitoring_for_device",
+      "command_name" : "remove_reliability_monitoring_for_device",
       "command_params" : {
-        "device" : "dev123",
+        "device_id" : "dev123",
         "device_numa" : 0,
         "configure_options" : {
           "error_count_threshold" : 500
@@ -523,9 +523,9 @@ TEST_F(ConfigUnitTest, SVKEXECAddDevice) {
   svk_input input;
   std::string input_str = R"(
     {
-      "command" : "add_reliability_monitoring_for_device",
+      "command_name" : "add_reliability_monitoring_for_device",
       "command_params" : {
-        "device" : "dev123",
+        "device_id" : "dev123",
         "device_numa" : 0,
         "configure_options" : {
           "error_count_threshold" : 500
@@ -563,9 +563,9 @@ TEST_F(ConfigUnitTest, SVKEXECAddNumaDevice) {
   svk_input input;
   std::string input_str = R"(
     {
-      "command" : "add_reliability_monitoring_for_device",
+      "command_name" : "add_reliability_monitoring_for_device",
       "command_params" : {
-        "device" : "dev234",
+        "device_id" : "dev234",
         "device_numa" : 0,
         "configure_options" : {
           "error_count_threshold" : 500
@@ -603,9 +603,9 @@ TEST_F(ConfigUnitTest, SVKEXECAddNonExistentDevice) {
   svk_input input;
   std::string input_str = R"(
     {
-      "command" : "add_reliability_monitoring_for_device",
+      "command_name" : "add_reliability_monitoring_for_device",
       "command_params" : {
-        "device" : "dev1234",
+        "device_id" : "dev1234",
         "device_numa" : 7,
         "configure_options" : {
           "error_count_threshold" : 500
@@ -642,9 +642,9 @@ TEST_F(ConfigUnitTest, SVKEXECAddNonExistentDeviceWithoutNumaInRequest) {
   svk_input input;
   std::string input_str = R"(
     {
-      "command" : "add_reliability_monitoring_for_device",
+      "command_name" : "add_reliability_monitoring_for_device",
       "command_params" : {
-        "device" : "dev1234",
+        "device_id" : "dev1234",
         "configure_options" : {
           "error_count_threshold" : 500
         }
@@ -680,7 +680,7 @@ TEST_F(ConfigUnitTest, SVKEXECRemDeviceNullDevice) {
   svk_input input;
   std::string input_str = R"(
     {
-      "command" : "remove_reliability_monitoring_for_device",
+      "command_name" : "remove_reliability_monitoring_for_device",
       "command_params" : {
         "configure_options" : {
           "error_count_threshold" : 500
@@ -716,9 +716,9 @@ TEST_F(ConfigUnitTest, SVKEXECRemNonExistingDevice) {
   svk_input input;
   std::string input_str = R"(
     {
-      "command" : "remove_reliability_monitoring_for_device",
+      "command_name" : "remove_reliability_monitoring_for_device",
       "command_params" : {
-        "device" : "dev123",
+        "device_id" : "dev123",
         "device_numa" : 0,
         "configure_options" : {
           "error_count_threshold" : 500
@@ -753,9 +753,9 @@ TEST_F(ConfigUnitTest, SVKEXECAddAndRemoveDevice) {
   svk_input input;
   std::string input_str = R"(
     {
-      "command" : "add_reliability_monitoring_for_device",
+      "command_name" : "add_reliability_monitoring_for_device",
       "command_params" : {
-        "device" : "dev1234",
+        "device_id" : "dev1234",
         "device_numa" : 0,
         "configure_options" : {
           "error_count_threshold" : 500
@@ -781,9 +781,9 @@ TEST_F(ConfigUnitTest, SVKEXECAddAndRemoveDevice) {
 
   input_str = R"(
     {
-      "command" : "remove_reliability_monitoring_for_device",
+      "command_name" : "remove_reliability_monitoring_for_device",
       "command_params" : {
-        "device" : "dev1234",
+        "device_id" : "dev1234",
         "device_numa" : 0,
         "configure_options" : {
           "error_count_threshold" : 500
@@ -831,7 +831,7 @@ TEST_F(ConfigUnitTest, TestAdapterDeviceCorrectableErrorCount) {
   }
 
   conf.adapters_directory = root_conf.get<std::string>(
-      "adapters_directory", RAS_DEFAULT_ADAPTERS_DIRECTORY);
+      "ras.adapters_directory", RAS_DEFAULT_ADAPTERS_DIRECTORY);
   initialize(nullptr);
   std::unique_ptr<ras_adapter_helper> adapter_helper_ =
       std::make_unique<ras_adapter_helper>();
