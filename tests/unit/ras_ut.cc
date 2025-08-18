@@ -17,8 +17,6 @@
 #include "ras_monitor.h"
 #include "ras_ut_config.h"
 
-#define WAIT_FOR_FLUSH 2
-
 //  Format for running code before specific test suite, in this case InitTest
 class ConfigUnitTest : public testing::Test {
  protected:
@@ -48,8 +46,7 @@ TEST_F(ConfigUnitTest, SVKCLEANUP) {
   setenv("SVK_RAS_CONFIG", "conf.json", true);
   initialize(nullptr);
   EXPECT_EQ(SVK_STATUS_SUCCESS, clean_up(nullptr));
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
-  sleep(WAIT_FOR_FLUSH);
+  EXPECT_EQ(0, svk_logger_flush(RAS_LOGGER));
   std::ifstream logFile(RAS_LOG);
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
@@ -85,8 +82,7 @@ TEST_F(ConfigUnitTest, MissingLoggerConfig) {
   boost::property_tree::write_json("missing_logger_conf.json", top_conf);
   setenv("SVK_RAS_CONFIG", "missing_logger_conf.json", true);
   EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
-  sleep(WAIT_FOR_FLUSH);
+  EXPECT_EQ(0, svk_logger_flush(RAS_LOGGER));
   std::ifstream logFile(RAS_LOG);
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
@@ -117,10 +113,9 @@ TEST_F(ConfigUnitTest, SVKGetFeatureList) {
   feature_id feature = feature_id::POWER_THROTTLE;
   char *feat_names = nullptr;
   initialize(nullptr);
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_SUCCESS,
             get_supported_feature_list(&feature, feat_names));
-  sleep(WAIT_FOR_FLUSH);
+  EXPECT_EQ(0, svk_logger_flush(RAS_LOGGER));
   std::ifstream logFile(RAS_LOG);
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
@@ -134,9 +129,8 @@ TEST_F(ConfigUnitTest, SVKGetFeatureList) {
 TEST_F(ConfigUnitTest, SVKLicense) {
   setenv("SVK_RAS_CONFIG", "conf.json", true);
   initialize(nullptr);
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_SUCCESS, is_license_valid(nullptr));
-  sleep(WAIT_FOR_FLUSH);
+  EXPECT_EQ(0, svk_logger_flush(RAS_LOGGER));
   std::ifstream logFile(RAS_LOG);
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
@@ -156,7 +150,6 @@ TEST_F(ConfigUnitTest, SVKEXECInvalidInputPointer) {
   svk_output output;
   output.output_buffer = (uint8_t *)calloc(1, 128);
   output.len = 128;
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, input, &output));
   clean_up(nullptr);
   unlink("conf.json");
@@ -171,7 +164,6 @@ TEST_F(ConfigUnitTest, SVKEXECInvalidOutputPointer) {
   input.input_buffer = (uint8_t *)"dummy";  // Invalid input buffer
   input.len = 5;
   svk_output *output = nullptr;
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, output));
   clean_up(nullptr);
   unlink("conf.json");
@@ -188,7 +180,6 @@ TEST_F(ConfigUnitTest, SVKEXECInvalidInputBuffer) {
   svk_output output;
   output.output_buffer = (uint8_t *)calloc(1, 128);
   output.len = 128;
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
   clean_up(nullptr);
   unlink("conf.json");
@@ -218,7 +209,6 @@ TEST_F(ConfigUnitTest, SVKEXECNullOutputBuffer) {
   svk_output output;
   output.output_buffer = nullptr;  // Null output buffer
   output.len = 0;
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
   clean_up(nullptr);
   unlink("conf.json");
@@ -248,7 +238,6 @@ TEST_F(ConfigUnitTest, SVKEXECINvalidInputLen) {
   svk_output output;
   output.output_buffer = nullptr;  // Null output buffer
   output.len = 0;
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
   clean_up(nullptr);
   unlink("conf.json");
@@ -278,7 +267,6 @@ TEST_F(ConfigUnitTest, SVKEXECInvalidCommand) {
   svk_output output;
   output.output_buffer = (uint8_t *)calloc(1, 128);
   output.len = 128;
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
   clean_up(nullptr);
   unlink("conf.json");
@@ -300,7 +288,6 @@ TEST_F(ConfigUnitTest, SVKEXECMissingCommandParams) {
   svk_output output;
   output.output_buffer = (uint8_t *)calloc(1, 128);
   output.len = 128;
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
   clean_up(nullptr);
   unlink("conf.json");
@@ -330,7 +317,6 @@ TEST_F(ConfigUnitTest, SVKEXECNullOutputBufferRemDevice) {
   svk_output output;
   output.output_buffer = nullptr;  // Null output buffer
   output.len = 0;
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
   clean_up(nullptr);
   unlink("conf.json");
@@ -360,7 +346,6 @@ TEST_F(ConfigUnitTest, SVKEXECINvalidInputLenRemDevice) {
   svk_output output;
   output.output_buffer = nullptr;  // Null output buffer
   output.len = 0;
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
   clean_up(nullptr);
   unlink("conf.json");
@@ -390,7 +375,6 @@ TEST_F(ConfigUnitTest, SVKEXECInvalidCommandRemDevice) {
   svk_output output;
   output.output_buffer = (uint8_t *)calloc(1, 128);
   output.len = 128;
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
   clean_up(nullptr);
   unlink("conf.json");
@@ -412,7 +396,6 @@ TEST_F(ConfigUnitTest, SVKEXECMissingCommandParamsRemDevice) {
   svk_output output;
   output.output_buffer = (uint8_t *)calloc(1, 128);
   output.len = 128;
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
   clean_up(nullptr);
   unlink("conf.json");
@@ -433,7 +416,6 @@ TEST_F(ConfigUnitTest, SVKEXECInvalidJSONInput) {
   svk_output output;
   output.output_buffer = (uint8_t *)calloc(1, 128);
   output.len = 128;
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
   clean_up(nullptr);
   unlink("conf.json");
@@ -463,9 +445,8 @@ TEST_F(ConfigUnitTest, SVKEXECInsufficentOutputBufferLen) {
   svk_output output;
   output.output_buffer = (uint8_t *)calloc(1, 8);
   output.len = 8;
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
-  sleep(WAIT_FOR_FLUSH);
+  EXPECT_EQ(0, svk_logger_flush(RAS_LOGGER));
   std::ifstream logFile(RAS_LOG);
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
@@ -501,9 +482,8 @@ TEST_F(ConfigUnitTest, SVKEXECInsufficentOutputBufferLenRemDevice) {
   svk_output output;
   output.output_buffer = (uint8_t *)calloc(1, 8);
   output.len = 8;
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
-  sleep(WAIT_FOR_FLUSH);
+  EXPECT_EQ(0, svk_logger_flush(RAS_LOGGER));
   std::ifstream logFile(RAS_LOG);
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
@@ -539,11 +519,10 @@ TEST_F(ConfigUnitTest, SVKEXECAddDevice) {
   svk_output output;
   output.output_buffer = (uint8_t *)calloc(1, 512);
   output.len = 512;
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_SUCCESS, execute_sync(&pass_thru, &input, &output));
-  sleep(WAIT_FOR_FLUSH);
+  EXPECT_EQ(0, svk_logger_flush(RAS_LOGGER));
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
-  sleep(WAIT_FOR_FLUSH);
+  EXPECT_EQ(0, svk_logger_flush(RAS_LOGGER));
   std::ifstream logFile(RAS_LOG);
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
@@ -579,11 +558,9 @@ TEST_F(ConfigUnitTest, SVKEXECAddNumaDevice) {
   svk_output output;
   output.output_buffer = (uint8_t *)calloc(1, 512);
   output.len = 512;
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_SUCCESS, execute_sync(&pass_thru, &input, &output));
-  sleep(WAIT_FOR_FLUSH);
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
-  sleep(WAIT_FOR_FLUSH);
+  EXPECT_EQ(0, svk_logger_flush(RAS_LOGGER));
   std::ifstream logFile(RAS_LOG);
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
@@ -618,11 +595,9 @@ TEST_F(ConfigUnitTest, SVKEXECAddNonExistentDevice) {
   svk_output output;
   output.output_buffer = (uint8_t *)calloc(1, 512);
   output.len = 512;
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
-  sleep(WAIT_FOR_FLUSH);
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
-  sleep(WAIT_FOR_FLUSH);
+  EXPECT_EQ(0, svk_logger_flush(RAS_LOGGER));
   std::ifstream logFile(RAS_LOG);
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
@@ -656,11 +631,9 @@ TEST_F(ConfigUnitTest, SVKEXECAddNonExistentDeviceWithoutNumaInRequest) {
   svk_output output;
   output.output_buffer = (uint8_t *)calloc(1, 512);
   output.len = 512;
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
-  sleep(WAIT_FOR_FLUSH);
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
-  sleep(WAIT_FOR_FLUSH);
+  EXPECT_EQ(0, svk_logger_flush(RAS_LOGGER));
   std::ifstream logFile(RAS_LOG);
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
@@ -694,9 +667,8 @@ TEST_F(ConfigUnitTest, SVKEXECRemDeviceNullDevice) {
   svk_output output;
   output.output_buffer = (uint8_t *)calloc(1, 512);
   output.len = 512;
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
-  sleep(WAIT_FOR_FLUSH);
+  EXPECT_EQ(0, svk_logger_flush(RAS_LOGGER));
   std::ifstream logFile(RAS_LOG);
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
@@ -732,9 +704,8 @@ TEST_F(ConfigUnitTest, SVKEXECRemNonExistingDevice) {
   svk_output output;
   output.output_buffer = (uint8_t *)calloc(1, 512);
   output.len = 512;
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
-  sleep(WAIT_FOR_FLUSH);
+  EXPECT_EQ(0, svk_logger_flush(RAS_LOGGER));
   std::ifstream logFile(RAS_LOG);
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
@@ -768,9 +739,8 @@ TEST_F(ConfigUnitTest, SVKEXECAddAndRemoveDevice) {
   svk_output output;
   output.output_buffer = (uint8_t *)calloc(1, 512);
   output.len = 512;
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_SUCCESS, execute_sync(&pass_thru, &input, &output));
-  sleep(WAIT_FOR_FLUSH);
+  EXPECT_EQ(0, svk_logger_flush(RAS_LOGGER));
   std::ifstream logFile(RAS_LOG);
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
@@ -794,7 +764,6 @@ TEST_F(ConfigUnitTest, SVKEXECAddAndRemoveDevice) {
   input.input_buffer = (uint8_t *)input_str.c_str();
   input.len = input_str.length();
   EXPECT_EQ(SVK_STATUS_SUCCESS, execute_sync(&pass_thru, &input, &output));
-  sleep(WAIT_FOR_FLUSH);
   clean_up(nullptr);
   unlink("conf.json");
 }
@@ -805,9 +774,8 @@ TEST_F(ConfigUnitTest, SVKEXECASYNC) {
   svk_pass_thru_cmd pass_thru;
   pass_thru.feat_id = ZERO_ETL;
   svk_postprocess_fn *postprocess_fn = nullptr;
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   EXPECT_EQ(SVK_STATUS_SUCCESS, execute_async(&pass_thru, postprocess_fn));
-  sleep(WAIT_FOR_FLUSH);
+  EXPECT_EQ(0, svk_logger_flush(RAS_LOGGER));
   std::ifstream logFile(RAS_LOG);
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
