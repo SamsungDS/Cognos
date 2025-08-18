@@ -44,8 +44,8 @@ class ras_adapter_helper {
       try {
         json out_json = json::parse(loutput.output_buffer);
         if (out_json.contains("result") &&
-            out_json["result"].contains("commandSuccessfull") &&
-            out_json["result"]["commandSuccessfull"].get<bool>()) {
+            out_json["result"].contains("commandSuccessful") &&
+            out_json["result"]["commandSuccessful"].get<bool>()) {
           return out_json;
         }
       } catch (json::parse_error &e) {
@@ -123,6 +123,7 @@ class ras_adapter_helper {
   }
 
  public:
+  friend class RasAdapterHelperUnitTest;
   std::unique_ptr<logic_module_manager> adapters;
   ras_adapter_helper() { adapters = std::make_unique<logic_module_manager>(); };
 

@@ -41,11 +41,12 @@ add_custom_target(copy_mock_adapter_lib
   ${CMAKE_BINARY_DIR}/adapters/mock_adapter/libmock.so
   ${BUILD_ADAPTERS_DIR}/mock/lib64/
   COMMAND ${CMAKE_COMMAND} -E copy
-  ${CMAKE_BINARY_DIR}/src/libras.so
+  ${CMAKE_BINARY_DIR}/src/lib${SVK_RAS_LIB_TARGET_NAME}.so
   ${BUILD_ADAPTERS_DIR}/ras/lib64/
 )
 
-add_dependencies(copy_mock_adapter_lib mock ras)
+add_dependencies(copy_mock_adapter_lib ${SVK_RAS_LIB_TARGET_NAME})
+add_dependencies(copy_mock_adapter_lib mock)
 
 add_executable(${RAS_UT} ras_ut.cc)
 add_dependencies(${RAS_UT} copy_mock_adapter_lib)
@@ -60,7 +61,7 @@ target_link_libraries(
   GTest::gtest_main
   svkframework
   svklogger
-  ras
+  ${SVK_RAS_LIB_TARGET_NAME}
   fmt
 )
 
@@ -70,6 +71,7 @@ add_subdirectory(RequestProcessor)
 add_subdirectory(ras_monitor.cc)
 add_subdirectory(ras_request_handler.cc)
 add_subdirectory(ras_device.h)
+add_subdirectory(ras_adapter_helper.hpp)
 
 add_subdirectory(adapter)
 

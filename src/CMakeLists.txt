@@ -7,7 +7,7 @@ set(RAS_SRC
 set(RAS_INC ${CMAKE_CURRENT_SOURCE_DIR}/../include/ras.hpp )
 set(RAS_LIB_DEST "lib64/")
 set(RAS_INCLUDE_DEST "include/")
-set(RAS "ras")
+set(RAS ${SVK_RAS_LIB_TARGET_NAME})
 set(RAS_LINK_LIBRARIES "stdc++fs fmt nlohmann_json::nlohmann_json")
 add_subdirectory(utils)
 
@@ -22,12 +22,13 @@ target_link_libraries(
   svkframework
   rte_ring
   dl
+  fmt
   svklogger
 )
 
 set_target_properties(${RAS} PROPERTIES 
-                        VERSION ${SVK_RAS_VERSION_FULL} 
-                        SOVERSION ${SVK_RAS_VERSION})
+                        VERSION ${PROJECT_VERSION} 
+                        SOVERSION ${PROJECT_VERSION_MAJOR})
 
 install(
     TARGETS ${RAS}

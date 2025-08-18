@@ -15,7 +15,7 @@ class ras_ut_adapter_command_handler {
     json resp;
     resp["command_response"] = command["command_name"];
     resp["command_params"] = command["command_params"];
-    resp["result"]["commandSuccessfull"] = true;
+    resp["result"]["commandSuccessful"] = true;
     resp["result"]["deviceList"] = deviceList;
 
     return resp;
@@ -25,8 +25,33 @@ class ras_ut_adapter_command_handler {
     json resp;
     resp["command_response"] = command["command_name"];
     resp["command_params"] = command["command_params"];
-    resp["result"]["commandSuccessfull"] = true;
+    resp["result"]["commandSuccessful"] = true;
     resp["result"]["errorCount"] = 100;
+
+    return resp;
+  }
+
+  json get_without_result(json command) {
+    json resp;
+    resp["command_response"] = command["command_name"];
+    resp["command_params"] = command["command_params"];
+
+    return resp;
+  }
+
+  json get_without_command_successful(json command) {
+    json resp;
+    resp["command_response"] = command["command_name"];
+    resp["command_params"] = command["command_params"];
+    resp["result"]["message"] = "No command successful";
+    return resp;
+  }
+
+  json get_result_false(json command) {
+    json resp;
+    resp["command_response"] = command["command_name"];
+    resp["command_params"] = command["command_params"];
+    resp["result"]["commandSuccessful"] = false;
 
     return resp;
   }
@@ -50,6 +75,12 @@ svk_status execute_ut_adapter_logic_sync(svk_logic_cmd *cmd,
     if (device == "dev123") {
       output_json = handler_.get_error_count(input_command);
     }
+  } else if (cmd_name_str == "getWithoutResult") {
+    output_json = handler_.get_without_result(input_command);
+  } else if (cmd_name_str == "getWithoutCommandSuccessful") {
+    output_json = handler_.get_without_result(input_command);
+  } else if (cmd_name_str == "getResultFalse") {
+    output_json = handler_.get_result_false(input_command);
   }
 
   std::string output_str = output_json.dump();
