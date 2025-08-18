@@ -55,6 +55,15 @@ override_dh_auto_install:
 	# Copy the VERSION file
 	cp $(CURDIR)/SCMC_VERSION $(CURDIR)/$(INSTALL_PATH)
 
+	# copying RBAC files
+	mkdir -p -v $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/
+	cp $(CURDIR)/../cognos/rbac/Dockerfile $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/
+	cp $(CURDIR)/../cognos/rbac/ecosystem.config.js $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/
+	cp -r $(CURDIR)/../cognos/rbac/rbac-client-repo $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/
+	cp -r $(CURDIR)/../cognos/rbac/rbac-service $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/
+	cp $(CURDIR)/../cognos/rbac/rbac-service/rbac.yaml $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/rbac-service/
+	cp -r $(CURDIR)/../cognos/rbac/rbac-service/rbac-module $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/rbac-service/
+
 override_dh_usrlocal:
 	# Do nothing, because we are installing to /usr/local even though this is non-standard practice
 
@@ -65,7 +74,7 @@ override_dh_install:
 
 override_dh_strip:
 	# Do not generate debug symbol packages
-	dh_strip --no-ddebs
+	dh_strip -X rbac-module --no-ddebs
 
 override_dh_shlibdeps:
 	# Set link path for shlibdeps TBD (if we are linking libs)
@@ -75,3 +84,4 @@ override_dh_installsystemd:
 	dh_installsystemd --name=cognos-subscriber
 	dh_installsystemd --name=cognos-app
 	dh_installsystemd --name=cognos-ui
+	dh_installsystemd --name=cognos-rbac

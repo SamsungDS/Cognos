@@ -49,6 +49,7 @@ Dependencies;
  - python3.10-venv
  - nodejs
  - npm
+ - Docker version 28.3.3, (https://docs.docker.com/engine/install/ubuntu/)
 
 Installation Instructions for svk-app debian package
 ```bash
@@ -95,11 +96,37 @@ sudo apt install influxdb2
 Use the InfluxDB UI to configure and setup the user/org/token/etc..
 navigate to http://<ip>:8086/ and follow the steps
 
+*** Configure the following configuration files appropiately ***
+```
+/usr/local/svk/svk-app/cognos/rbac/rbac-client-repo/src/config/config.json
+"mgmt_endpoint": "http://scmc-ip-addr:5000", 
+scmc-ip-addr	-> IP address (http://127.128.01.00:5000) of the SCMC UI.
+"rbac_backend_endpoint": "http://rbac-ip-addr:6721"
+rbac-ip-addr -> IP address (http://127.128.01.00:6721) of the RBAC backend service.
 
+/usr/local/svk/svk-app/cognos/rbac/rbac-service/rbac.yaml
+database:
+  uri: 'mongodb://admin:admin@<ip-addr>:1027/mongodb?authSource=admin'
+database.uri Replace <ip-addr> (admin@127.128.01.00:1027) with the MongoDB server host/IP address where the database is running.
+
+frontend:
+  url: 'http://<ip-addr>:6720'
+frontend.url :	Replace <ip-addr> (http://127.128.01.00:6720) with the host/IP where the frontend is accessible.  
+backend:
+  url: 'http://<ip-addr>:6721'
+backend.url : Replace <ip-addr> (http://127.128.01.00:6721) with the host/IP where the backend (RBAC) service is accessible.
+
+/usr/local/svk/svk-app/cognos/ui/src/config/config.json
+"rbac_endpoint": "http://127.0.0.1:6720"
+127.0.0.1 replace ip address with the host/IP where the login/SignUp frontend(rbac-client) is accessible.
+
+```
 3. Configure the following configuration files appropiately
 ```
 /usr/local/svk/svk-app/cognos/backend/config/config.json
 /usr/local/svk/svk-app/cognos/backend/config/influxdb_config.json
+/usr/local/svk/svk-app/cognos/rbac/rbac-client-repo/src/config/config.json
+/usr/local/svk/svk-app/cognos/rbac/rbac-service/rbac.yaml
 /usr/local/svk/svk-app/cognos/ui/src/config/config.json
 /usr/local/svk/svk-app/cognos/cognos.config
 ```
@@ -107,6 +134,7 @@ navigate to http://<ip>:8086/ and follow the steps
 ```
 sudo systemctl start cognos-subscriber
 sudo systemctl start cognos-app
+sudo systemctl start cognos-rbac
 sudo systemctl start cognos-ui
 ```
 
@@ -171,6 +199,8 @@ Installing SVK APP dependencies can simply be done by running the following comm
    ```txt
    cognos/backend/config/config.json
    cognos/backend/config/influxdb_config.json
+   cognos/rbac/rbac-client-repo/src/config/config.json
+   cognos/rbac/rbac-service/rbac.yaml
    cognos/ui/config/config.json
    ```
 
@@ -228,6 +258,7 @@ sudo systemctl start svk-restserver
 sudo /usr/local/svk/mgmt-fw/bin/svksvcmgr --svk_conf_file /etc/svk/mgmt_fw_config.json &
 sudo systemctl start cognos-subscriber
 sudo systemctl start cognos-app
+sudo systemctl start cognos-rbac
 sudo systemctl start cognos-ui
 ```
 

@@ -12,14 +12,10 @@ class TestDashboard(unittest.TestCase):
     logger = setup_logger()
 
     def setUp(self):
-        self.app_url = TestUtils.load_config()['dashboard_url']
-        self.options = Options()
-        self.options.add_argument('--headless')
-        self.options.add_argument('--no-sandbox')
-        self.options.add_argument('--disable-dev-shm-usage')
-        self.driver = webdriver.Chrome(options=self.options)
-        self.driver.get(self.app_url)
+        config = TestUtils.load_config()
+        self.app_url = config['dashboard_url']
         self.utils = TestUtils(self.app_url)
+        self.utils.login(config['username'], config['password'])
         self.logger = TestDashboard.logger
 
     def tearDown(self):
@@ -41,12 +37,12 @@ class TestDashboard(unittest.TestCase):
 
     def test_hosts_info_on_hover_in_toplogy(self):
         try:
-            host_elements = self.driver.find_elements(
+            host_elements = self.utils.driver.find_elements(
                 By.XPATH, "//*[@id='host-card-id']/div/div")
             self.assertGreater(len(host_elements), 0)
-            host_tooltip = self.driver.find_element(
+            host_tooltip = self.utils.driver.find_element(
                 By.XPATH, "//*[@id='host-card-id']/div[2]/div/span")
-            ActionChains(self.driver).move_to_element(
+            ActionChains(self.utils.driver).move_to_element(
                     host_tooltip).perform()
             assert host_tooltip.is_displayed()
             self.logger.info(
@@ -58,12 +54,12 @@ class TestDashboard(unittest.TestCase):
 
     def test_tooltip_display_CMM_D_devices_info_on_hover_in_toplogy(self):
         try:
-            device_elements = self.driver.find_elements(
+            device_elements = self.utils.driver.find_elements(
                 By.XPATH, "//*[@id='cxl-device-card-id']/div/div")
             self.assertGreater(len(device_elements), 0)
-            device_tooltip = self.driver.find_element(
+            device_tooltip = self.utils.driver.find_element(
                     By.XPATH, "//*[@id='cxl-device-card-id']/div/div[3]")
-            ActionChains(self.driver).move_to_element(
+            ActionChains(self.utils.driver).move_to_element(
                     device_tooltip).perform()
             device_tooltip.is_displayed()
             self.logger.info(
@@ -76,12 +72,12 @@ class TestDashboard(unittest.TestCase):
 
     def test_CMM_B_boxes_selection_in_toplogy(self):
         try:
-            cmm_b_boxes = self.driver.find_elements(
+            cmm_b_boxes = self.utils.driver.find_elements(
                 By.XPATH, "//*[@id='topology-card-id']/div/div/div[1]/span")
             self.assertGreater(len(cmm_b_boxes), 0)
             for cmm_b_box in cmm_b_boxes:
                 assert cmm_b_box.is_displayed()
-                ActionChains(self.driver).click(cmm_b_box).perform()
+                ActionChains(self.utils.driver).click(cmm_b_box).perform()
             self.logger.info(
                     "TestCase-HPOS-T123 :CMM_B_boxes selection - Passed")
         except Exception as e:

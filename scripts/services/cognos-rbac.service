@@ -1,0 +1,42 @@
+[Unit]
+Description=RBAC Docker Service
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+RemainAfterExit=yes
+
+# Cleanup old containers (ignore errors with - prefix)
+ExecStartPre=-/usr/bin/docker stop rbac-container
+ExecStartPre=-/usr/bin/docker rm rbac-container
+ExecStartPre=-/usr/bin/docker stop rbac-mongo-db
+ExecStartPre=-/usr/bin/docker rm rbac-mongo-db
+
+# Start MongoDB container
+ExecStartPre=/usr/bin/docker run -d \
+  --name rbac-mongo-db \
+  -p 1027:27017 \
+  -e MONGO_INITDB_ROOT_USERNAME=admin \
+  -e MONGO_INITDB_ROOT_PASSWORD=admin \
+  mongo:6.0
+
+# Wait for MongoDB to be ready
+ExecStartPre=/bin/sleep 10
+
+# Build the RBAC Docker image
+ExecStartPre=/usr/bin/docker build -t rbac-container:latest /usr/local/svk/svk-app/cognos/rbac
+
+# Start RBAC container
+ExecStart=/usr/bin/docker run -d \
+  --name rbac-container \
+  -p 6720:6720 \
+  -p 6721:6721 \
+  rbac-container:latest
+
+# Stop and clean up on service stop
+ExecStop=/usr/bin/docker stop rbac-container rbac-mongo-db
+ExecStopPost=/usr/bin/docker rm rbac-container rbac-mongo-db
+
+[Install]
+WantedBy=multi-user.target

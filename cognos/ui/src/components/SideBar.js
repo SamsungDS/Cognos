@@ -1,56 +1,70 @@
-import React from 'react';
+import React, { useContext } from 'react';
 import { NavLink } from 'react-router-dom'
-import { ReactComponent as ConfigureIcon  } from '../assets/icons/ConfigureIcon.svg';
-import { ReactComponent as DashboardIcon  } from '../assets/icons/DashboardIcon.svg';
-import { ReactComponent as MetricsIcon  } from '../assets/icons/ChartIcon.svg';
-import { ReactComponent as AboutIcon  } from '../assets/icons/AboutIcon.svg';
+import { ReactComponent as ConfigureIcon } from '../assets/icons/ConfigureIcon.svg';
+import { ReactComponent as DashboardIcon } from '../assets/icons/DashboardIcon.svg';
+import { ReactComponent as MetricsIcon } from '../assets/icons/ChartIcon.svg';
+import { ReactComponent as AboutIcon } from '../assets/icons/AboutIcon.svg';
 import { ReactComponent as AutotierIcon } from '../assets/icons/AutoTierIcon.svg';
+import { AuthContext } from './ProtectedRoute.js';
+const SideBar = ({ children }) => {
+  // Get userRole from AuthContext instead of props
+  const { userRole } = useContext(AuthContext);
 
-const SideBar = ({children}) => {
+  const menuItem = [
+    {
+      path: "/",
+      icon: <DashboardIcon />,
+      datatestid: 'menu-item-0',
+      allowedRoles: ['admin', 'guest'],
+    },
+    {
+      path: "/configure",
+      icon: <ConfigureIcon />,
+      datatestid: 'menu-item-1',
+      allowedRoles: ['admin']
+    },
+    {
+      path: "/metrics",
+      icon: <MetricsIcon />,
+      datatestid: 'menu-item-2',
+      allowedRoles: ['admin', 'guest']
+    },
+    {
+      path: "/jobs",
+      icon: <AutotierIcon />,
+      datatestid: 'menu-item-3',
+      allowedRoles: ['admin']
+    },
+    {
+      path: "/about",
+      icon: <AboutIcon />,
+      datatestid: 'menu-item-4',
+      allowedRoles: ['admin', 'guest']
+    }
+  ]
 
-  const  menuItem = [
-  {
-    path:"/",
-    icon: <DashboardIcon/>,
-    datatestid: 'menu-item-0',
-  },
-  {
-    path:"/configure",
-    icon: <ConfigureIcon/>,
-    datatestid: 'menu-item-1',
-  },
-  {
-    path:"/metrics",
-    icon: <MetricsIcon/>,
-    datatestid: 'menu-item-2',
-  },
-  {
-    path:"/jobs",
-    icon: <AutotierIcon/>,
-    datatestid: 'menu-item-4',
-  },
-  {
-    path:"/about",
-    icon: <AboutIcon/>,
-    datatestid: 'menu-item-3',
-  }
-]
+  // Filter based on user role
+  const visibleMenuItems = menuItem.filter(item =>
+    item.allowedRoles.includes(userRole)
+  );
+
+
   return (
     <>
-    <div className='sidebar-container' style={{width: "50px"}} id='side-bar-id' data-testid='sidebar-container'>
-      <div style={{width: "50px"}} className='sidebar'>
-         {
-          menuItem.map((item, index) => (
-                <NavLink to={item.path} key={item.datatestid} activeclassname="active" className="link">
-                     <div className='icon' data-testid={item.datatestid}>
-                         {item.icon}
-                     </div>
-                </NavLink>
-          ))
-         }
+      <div className='sidebar-container' style={{ width: "50px" }} id='side-bar-id' data-testid='sidebar-container'>
+        <div style={{ width: "50px" }} className='sidebar'>
+          {
+            visibleMenuItems.map((item, index) => (
+              <NavLink to={item.path} key={item.datatestid} activeclassname="active" className="link">
+                <div className='icon' data-testid={item.datatestid}>
+                  {item.icon}
+                </div>
+              </NavLink>
+            ))
+          }
+        </div>
       </div>
-    </div>
-    {children}
+      {children}
     </>
   )
 }

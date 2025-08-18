@@ -1,0 +1,19 @@
+body {
+  margin: 0;
+  font-family: 'Samsung sharp sans',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@font-face {
+  font-family: 'Samsung sharp sans', sans-serif;
+  src: local('Samsung'), url('./assets/fonts/SamsungSharpSans-Medium.ttf') format('truetype');
+}
+
+* {
+  font-family: 'Samsung sharp sans', sans-serif;
+}
+code {
+    font-family: 'Samsung sharp sans', sans-serif;
+}

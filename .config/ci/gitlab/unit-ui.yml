@@ -5,12 +5,13 @@ ui unit test:
     pull_policy: always
   before_script:
     # Install NPM modules
-    - cd $ui_dir
+    - cd $TEST_DIR
+    - npm ci
   script:
     # Execute unit tests and generate coverage report
     - npm run test:coverage
   artifacts:
-    name: ui unit test
+    name: $CI_JOB_NAME
     expire_in: 300 seconds
     paths:
      - $ui_reports_dir/lcov.info
@@ -18,11 +19,19 @@ ui unit test:
       coverage_report:
         coverage_format: cobertura
         path: $ui_reports_dir/cobertura-coverage.xml
-      junit: $ui_dir/junit.xml
+      junit: $TEST_DIR/junit.xml
   variables:
     DOCKERFILE_NAME: rocky9
+    TEST_DIR: "$ui_dir"
     IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
   rules:
     - !reference [.default_rules, merge_and_push]
   needs:
     - npm-build
+
+rbac unit test:
+  extends: ui unit test
+  variables:
+    TEST_DIR: "$rbac_dir"
+    ui_reports_dir: "$rbac_client_reports_dir"
+    

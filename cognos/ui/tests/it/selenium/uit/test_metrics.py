@@ -7,29 +7,26 @@ import unittest
 class TestMetrics(unittest.TestCase):
 
     def setUp(self):
-        self.app_url = TestUtils.load_config()['metrics_url']
-        self.host_name = TestUtils.load_config()['host_name']
+        config = TestUtils.load_config()
+        self.app_url = config['metrics_url']
+        self.host_name = config['host_name']
         self.utils = TestUtils(self.app_url)
+        self.utils.login(config['username'], config['password'])
 
     def tearDown(self):
         self.utils.tearDown()
 
     def test_select_application_server(self):
-        selected_host_element = self.utils.driver.find_element(
-            By.XPATH, "//*[@id='dropdown-container-id']/div")
-        selected_host = selected_host_element.text.strip()
-
-        if selected_host != self.host_name:
-            self.utils.click_element_and_assert(
-                "//*[@id='dropdown-container-id']/div/div/div[2]",
-                By.XPATH,
-                "TestCase-HPOS-T4: select_application_server_dropdown",
-                self.utils.assert_element_displayed)
-            self.utils.click_element_and_assert(
-                f"//div[text()='{self.host_name}']",
-                By.XPATH,
-                "TestCase-HPOS-T4: Select host from dropdown",
-                self.utils.assert_element_displayed)
+        self.utils.click_element_and_assert(
+            "//*[@id='dropdown-container-id']/div/div/div[2]",
+            By.XPATH,
+            "TestCase-HPOS-T4: select_application_server_dropdown",
+            self.utils.assert_element_displayed)
+        self.utils.click_element_and_assert(
+            f"//div[text()='{self.host_name}']",
+            By.XPATH,
+            "TestCase-HPOS-T4: Select host from dropdown",
+            self.utils.assert_element_displayed)
 
     def test_Memory_Bandwidth_Display(self):
         self.test_select_application_server()

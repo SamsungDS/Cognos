@@ -11,6 +11,8 @@ integration test:
     - jq --arg name "$VM_NAME.msl.lab" '.metrics_url = "http://\($name):5000/metrics"'  $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
     - jq --arg name "$VM_NAME.msl.lab" '.scmc_url = "http://\($name):5000"' $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
     - jq --arg name "$VM_NAME.msl.lab" '.host_name = $name' $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
+    - jq --arg username "$USERNAME" '.username = $username' $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
+    - jq --arg password "$PASSWORD" '.password = $password' $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json 
     # display the configuration file
     - cat $INTEGRATION_TEST_DIR/config/config.json
   script:
@@ -26,6 +28,8 @@ integration test:
     DOCKERFILE_NAME: ubuntu22
     IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
     INTEGRATION_TEST_DIR: cognos/ui/tests/it/selenium
+    USERNAME: admin
+    PASSWORD: Admin@123
   rules:
     - if: $CI_PIPELINE_SOURCE == "parent_pipeline"
 

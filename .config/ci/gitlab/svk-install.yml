@@ -7,9 +7,26 @@ svk-install:
     - curl -fsSL https://deb.nodesource.com/setup_21.x | bash -
     - apt-get update 
     # Install SVK App dependencies and jq, moreutils for configuration file substitution
-    - apt-get install jq python3-pip python3.10-venv mysql-server moreutils nodejs -y
+    - apt-get install jq python3-pip python3.10-venv moreutils nodejs -y
+    # Install yq manually from official GitHub releases
+    - wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+    - chmod +x /usr/local/bin/yq
     # Retrieve the IP of the host
     - export VM_IP=$(hostname -I | awk '{print $1}')
+
+    #### Install Docker Engine with documentation reference: https://docs.docker.com/engine/install/ubuntu/ ####
+    # Install dependencies, gpg keys and configure docker apt repository
+    - apt-get install -y ca-certificates curl
+    - |
+      install -m 0755 -d /etc/apt/keyrings/
+      curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+      chmod a+r /etc/apt/keyrings/docker.gpg
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+    # Install docker
+    - apt-get update
+    - DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin
+    # Start the docker service
+    - systemctl enable --now docker || true
 
     #### Influx installation implemented with documentation reference: https://docs.influxdata.com/influxdb/v2/install/?t=Linux ####
     # Step 1: Download the InfluxData archive key
@@ -60,7 +77,12 @@ svk-install:
     #### Management FW input.json configuration (JSON) ####
     - export SVK_MGMT_FW_INPUT='/usr/local/svk/mgmt-fw/input.json'
     # (SIM mode) Configure the input.json file to reflect the hostname of the machine being deployed
-    - 'echo ''{"Hosts": []}'' > "$SVK_MGMT_FW_INPUT"'
+    - jq --arg hn "$(hostname)" '.Hosts[0].host_name=$hn' $SVK_MGMT_FW_INPUT | sponge $SVK_MGMT_FW_INPUT
+
+    #### Configure 'cxl_dev_id_map.json' ####
+    - export CXL_DEV_CONF='/usr/local/svk/feature_modules/cxl/config/cxl_dev_id_map.json'
+    # Substitute the mock_disable flags to display CMM-B hosts in the configure page
+    - jq '.device_map |= map(.mock_disable = true)' $CXL_DEV_CONF | sponge $CXL_DEV_CONF
 
     #### Influx SVK App configuration (JSON) ####
     - export SVK_APP_INFLUX_CONF='/usr/local/svk/svk-app/cognos/backend/config/influxdb_config.json'
@@ -93,8 +115,26 @@ svk-install:
     # Substitute '.publisher_topic' value with the term "metric"
     - jq '.publisher_topic = "metric"' $SVK_APP_SUBSCRIBER_CONF | sponge $SVK_APP_SUBSCRIBER_CONF
 
+    #### RBAC configuration (JSON) ####
+    - export SVK_APP_RBAC_CONF='/usr/local/svk/svk-app/cognos/rbac/rbac-client-repo/src/config/config.json'
+    # Substitute '.rbac_backend_endpoint' value with RBAC_BACKEND_PORT value in SVK_APP_RBAC_CONF obtained from gitlab-ci.yml
+    - jq --arg ip "$VM_IP" --arg rbac_backend_port "$RBAC_BACKEND_PORT" '.rbac_backend_endpoint= "http://\($ip):\($rbac_backend_port)"' $SVK_APP_RBAC_CONF | sponge $SVK_APP_RBAC_CONF
+    # Substitute '.mgmt_endpoint' value with UI_PORT value in SVK_APP_UI_CONF obtained from gitlab-ci.yml
+    - jq --arg ip "$VM_IP" --arg ui_port "$UI_PORT" '.mgmt_endpoint = "http://\($ip):\($ui_port)"' $SVK_APP_RBAC_CONF | sponge $SVK_APP_RBAC_CONF
+
+    #### RBAC configuration (YAML) ####
+    - export SVK_APP_RBAC_YAML='/usr/local/svk/svk-app/cognos/rbac/rbac-service/rbac.yaml'
+    # Substitute '.database' value with MONGODB_PORT value in SVK_APP_RBAC_YAML obtained from gitlab-ci.yml
+    - yq eval --inplace ".database.uri = \"mongodb://admin:admin@${VM_IP}:${MONGODB_PORT}/mongodb?authSource=admin\""  "$SVK_APP_RBAC_YAML"
+    # Substitute '.frontend' value with RBAC_UI_PORT value in SVK_APP_RBAC_YAML obtained from gitlab-ci.yml
+    - yq eval --inplace ".frontend.url = \"http://${VM_IP}:${RBAC_UI_PORT}\"" "$SVK_APP_RBAC_YAML"
+    # Substitute '.backend' value with RBAC_BACKEND_PORT value in SVK_APP_RBAC_YAML obtained from gitlab-ci.yml
+    - yq eval --inplace ".backend.url = \"http://${VM_IP}:${RBAC_BACKEND_PORT}\"" "$SVK_APP_RBAC_YAML"
+
     #### SVK App UI configuration (JSON) ####
     - export SVK_APP_UI_CONF='/usr/local/svk/svk-app/cognos/ui/src/config/config.json'
+    # Substitute '.rbac_endpoint' value with RBAC_UI_PORT value in SVK_APP_UI_CONF obtained from gitlab-ci.yml
+    - jq --arg ip "$VM_IP" --arg rbac_ui_port "$RBAC_UI_PORT" '.rbac_endpoint= "http://\($ip):\($rbac_ui_port)"' $SVK_APP_UI_CONF | sponge $SVK_APP_UI_CONF
     # Substitute '.mgmt_endpoint' value with UI_PORT value in SVK_APP_UI_CONF obtained from gitlab-ci.yml
     - jq --arg ip "$VM_IP" --arg ui_port "$UI_PORT" '.mgmt_endpoint = "http://\($ip):\($ui_port)"' $SVK_APP_UI_CONF | sponge $SVK_APP_UI_CONF
     # Substitute '.data_endpoint' value with BACKEND_PORT value in SVK_APP_UI_CONF obtained from gitlab-ci.yml
@@ -124,8 +164,17 @@ svk-install:
     # Start the SCMC UI services
     - systemctl start cognos-subscriber
     - systemctl start cognos-app
+    - systemctl start cognos-rbac
     - systemctl start cognos-ui
+    #### Create Admin User ####
+    - systemctl status cognos-rbac.service --no-pager
+    - sleep 30
+    - |
+      curl -X POST "http://$VM_IP:$RBAC_BACKEND_PORT/api/signup" \
+        -H "Content-Type: application/json" \
+        -d '{"username": "admin", "email": "admin@gmail.com", "password": "Admin@123", "role": "admin"}'
 
+    #### SVK installation complete ####
   rules:
     - if: $CI_PIPELINE_SOURCE == "parent_pipeline"
   needs:
@@ -134,4 +183,3 @@ svk-install:
     - restore vmware snapshot
   tags:
     - svk-dev
-

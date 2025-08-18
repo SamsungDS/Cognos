@@ -1,0 +1,364 @@
+.App {
+    font-family: Arial, sans-serif;
+    text-align: center;
+
+}
+
+.App-logo {
+    height: 40vmin;
+    pointer-events: none;
+}
+.Home-page-style {
+    display: flex !important;
+    flex-direction: column !important;
+    min-height: 100vh;
+    justify-content: center !important;
+    align-items: center !important;
+    text-align: center !important;
+    background-image: url('assets/background/BG.png');
+    background-size: cover !important;
+    overflow-y: auto !important;
+}
+
+.Home-container {
+    display: 'flex';
+    flex-direction: 'row';
+    gap: '40px'; 
+    align-items: 'flex-start';
+    justify-content: 'center';
+    width: '100%';
+    max-width: '1200px';
+}
+@media (prefers-reduced-motion: no-preference) {
+    .App-logo {
+        animation: App-logo-spin infinite 20s linear;
+    }
+}
+
+.App-header {
+    background-color: #282c34;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-size: calc(10px + 2vmin);
+    color: white;
+}
+
+.App-link {
+    color: #61dafb;
+}
+
+@keyframes App-logo-spin {
+    from {
+        transform: rotate(0deg);
+    }
+
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+button {
+    margin: 10px;
+    padding: 10px 20px;
+    font-size: 16px;
+    cursor: pointer;
+}
+#rbac-login-body, #rbac-signup-body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%) !important;
+    background-attachment: fixed;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh !important;
+    margin: 0;
+    padding: 20px;
+    box-sizing: border-box;
+}
+
+#rbac-login-container, #rbac-signup-container {
+    background-color: rgba(0, 0, 0, 0.8) !important;
+    padding: 40px !important;
+    border-radius: 12px !important;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3) !important;
+    width: 100% !important;
+    max-width: 500px !important;
+    box-sizing: border-box !important;
+    backdrop-filter: blur(10px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+.rbac-header-logo {
+    text-align: center;
+    margin-bottom: 30px;
+    color: #fff;
+    font-size: 16px;
+    font-weight: 300;
+    letter-spacing: 1px;
+}
+
+.rbac-samsung-logo {
+    font-size: 24px;
+    font-weight: bold;
+    margin-bottom: 8px;
+    color: #fff;
+}
+
+#rbac-login-container h1, #rbac-signup-container h1 {
+    text-align: center !important;
+    margin-bottom: 30px !important;
+    color: #00B3E3 !important;
+    font-size: 28px !important;
+    font-weight: 400 !important;
+    letter-spacing: 1px !important;
+}
+
+#rbac-login-container h2 {
+    text-align: center !important;
+    margin-bottom: 24px !important;
+    color: #00B3E3 !important;
+    font-size: 22px !important;
+    font-weight: 300 !important;
+}
+
+.rbac-form-group, .rbac-signup-form-group {
+    margin-bottom: 20px !important;
+}
+
+.rbac-form-group label, .rbac-signup-form-group label {
+    display: block !important;
+    color: #00B3E3 !important;
+    margin-bottom: 8px !important;
+    font-size: 14px !important;
+    font-weight: 500 !important;
+    letter-spacing: 1px !important;
+}
+
+.rbac-form-group input, .rbac-signup-form-group input {
+    width: 100% !important;
+    padding: 12px 16px !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    border-radius: 6px !important;
+    font-size: 14px !important;
+    background-color: rgba(255, 255, 255, 0.1) !important;
+    color: #fff !important;
+    box-sizing: border-box !important;
+    transition: all 0.3s ease !important;
+}
+
+.rbac-form-group input:focus, .rbac-signup-form-group input:focus {
+    outline: none !important;
+    border-color: #4fc3f7 !important;
+    background-color: rgba(255, 255, 255, 0.15) !important;
+    box-shadow: 0 0 0 2px rgba(79, 195, 247, 0.2) !important;
+}
+
+.rbac-form-group input::placeholder, .rbac-signup-form-group input::placeholder {
+    color: rgba(255, 255, 255, 0.5) !important;
+}
+
+.rbac-submit-button {
+    width: 100% !important;
+    padding: 12px !important;
+    background: linear-gradient(135deg, #4fc3f7 0%, #29b6f6 100%) !important;
+    color: #fff !important;
+    border: none !important;
+    border-radius: 6px !important;
+    font-size: 16px !important;
+    font-weight: 500 !important;
+    cursor: pointer !important;
+    transition: all 0.3s ease !important;
+    margin-top: 10px !important;
+}
+
+.rbac-submit-button:hover {
+    background: linear-gradient(135deg, #29b6f6 0%, #0288d1 100%) !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 12px rgba(79, 195, 247, 0.3) !important;
+}
+
+.rbac-submit-button:active {
+    transform: translateY(0) !important;
+}
+
+.rbac-login-message, .rbac-signup-message {
+    text-align: center !important;
+    margin-top: 16px !important;
+    color: #1b9726 !important;
+    font-size: 14px !important;
+}
+
+.rbac-forgot-password {
+    text-align: center !important;
+    margin-top: 20px !important;
+}
+
+.rbac-forgot-password a {
+    color: #00B3E3 !important;
+    text-decoration: none;
+    cursor: pointer;
+    font-size: 14px;
+    transition: color 0.3s ease;
+}
+
+.rbac-forgot-password a:hover {
+    color: #29b6f6 !important;
+    text-decoration: underline;
+}
+
+.rbac-hidden {
+    display: none;
+}
+
+/* Responsive design */
+@media (max-width: 480px) {
+    #rbac-login-container {
+        padding: 30px 20px;
+        margin: 10px;
+    }
+
+    .rbac-samsung-logo {
+        font-size: 20px;
+    }
+
+    #rbac-login-container h1 {
+        font-size: 24px;
+    }
+}
+
+.rbac-signup-form-group select {
+    padding: 12px 16px !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    border-radius: 6px !important;
+    font-size: 16px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    background: rgba(255, 255, 255, 0.1) !important;
+    color: #ffffff !important;
+    transition: all 0.3s ease !important;
+    cursor: pointer !important;
+}
+
+
+.rbac-signup-form-group select:focus {
+    outline: none !important;
+    border-color: #00bcd4 !important;
+    box-shadow: 0 0 0 2px rgba(0, 188, 212, 0.2) !important;
+    background: rgba(255, 255, 255, 0.15) !important;
+}
+
+
+.rbac-signup-form-group select option {
+    background: #1a1a2e !important;
+    color: #ffffff !important;
+}
+
+.rbac-signup-form-group .rbac-info-container {
+    position: relative !important;
+    display: flex !important;
+    align-items: center !important;
+    width: 68% !important;
+}
+
+.rbac-signup-form-group .rbac-info-container input {
+    flex: 1 !important;
+}
+
+.rbac-signup-form-group .rbac-info-container #rbac-passwordIcon {
+    margin-left: 10px !important;
+    color: #00bcd4 !important;
+    font-size: 18px !important;
+    cursor: pointer !important;
+    transition: color 0.3s ease !important;
+}
+
+.rbac-signup-form-group .rbac-info-container #rbac-passwordIcon:hover {
+    color: #ffffff !important;
+}
+
+.rbac-password-requirements {
+    display: none !important;
+    background: rgba(0, 0, 0, 0.9) !important;
+    border: 1px solid rgba(0, 188, 212, 0.3) !important;
+    border-radius: 8px !important;
+    padding: 16px !important;
+    position: absolute !important;
+    z-index: 1000 !important;
+    top: -180px !important;
+    right: -270px !important;
+    width: 280px !important;
+    font-size: 13px !important;
+    backdrop-filter: blur(10px) !important;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5) !important;
+}
+
+.rbac-password-requirements p {
+    margin: 8px 0 !important;
+    color: #ffffff !important;
+}
+
+.rbac-password-requirements p:first-child {
+    color: #00bcd4 !important;
+    font-weight: 600 !important;
+    margin-bottom: 12px !important;
+}
+
+.rbac-requirements {
+    color: #ff6b6b !important;
+    transition: color 0.3s ease !important;
+}
+
+.rbac-requirements.valid {
+    color: #51cf66 !important;
+}
+
+.rbac-requirements::before {
+    content: '✗ ' !important;
+    margin-right: 8px !important;
+}
+
+.rbac-requirements.valid::before {
+    content: '✓ ' !important;
+}
+
+#rbac-passwordIcon {
+    cursor: pointer !important;
+    position: relative !important;
+    display: inline-block !important;
+}
+
+#rbac-passwordIcon:hover .rbac-password-requirements {
+    display: block !important;
+}
+
+.rbac-error-message {
+    color: #ff6b6b !important;
+    font-size: 12px !important;
+    margin-top: 8px !important;
+    display: none !important;
+    padding: 8px !important;
+    background: rgba(255, 107, 107, 0.1) !important;
+    border-radius: 4px !important;
+    border-left: 3px solid #ff6b6b !important;
+}
+
+.rbac-signup-message.success {
+    color: #51cf66 !important;
+    background: rgba(81, 207, 102, 0.1) !important;
+    border-color: rgba(81, 207, 102, 0.3) !important;
+}
+
+#rbac-role {
+    display: none !important;
+}
+
+.rbac-signup-form-group:has(#rbac-role) {
+    display: none !important;
+}
+
+#rbac-signup-container h1 {
+    color: #00b3e3 !important;
+}

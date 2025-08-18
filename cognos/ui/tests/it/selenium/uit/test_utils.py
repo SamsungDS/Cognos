@@ -4,6 +4,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from uit.logger import setup_logger
+from selenium.webdriver.common.by import By
 import time
 import os
 import json
@@ -21,6 +22,30 @@ class TestUtils:
         self.driver = webdriver.Chrome(options=options)
         self.driver.get(url)
 
+    def login(self, username, password):
+        try:
+            username_field = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located(
+                    (By.ID, "rbac-login-username")))
+            username_field.clear()
+            username_field.send_keys(username)
+
+            password_field = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located(
+                    (By.ID, "rbac-login-password")))
+            password_field.clear()
+            password_field.send_keys(password)
+
+            login_button = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located(
+                    (By.CLASS_NAME, "rbac-submit-button")))
+            login_button.click()
+            time.sleep(2)
+            self.logger.info("Login Successful to SCMC")
+        except Exception as e:
+            self.logger.error(f"Login Failed to SCMC: {str(e)}")
+            raise AssertionError("Login Failed")
+
     def tearDown(self):
         self.driver.quit()
 
@@ -34,7 +59,7 @@ class TestUtils:
     def find_element_and_assert(
             self, locator, locator_type, test_name, assertion_func):
         try:
-            element = WebDriverWait(self.driver, 90).until(
+            element = WebDriverWait(self.driver, 30).until(
                 EC.presence_of_element_located((locator_type, locator)))
             assert assertion_func(element)
             self.logger.info(f"{test_name} - Passed")
@@ -45,7 +70,7 @@ class TestUtils:
     def click_element_and_assert(
             self, locator, locator_type, test_name, assertion_func):
         try:
-            element = WebDriverWait(self.driver, 90).until(
+            element = WebDriverWait(self.driver, 30).until(
                 EC.presence_of_element_located((locator_type, locator)))
             assert assertion_func(element)
             element.click()

@@ -6,9 +6,11 @@ from selenium.webdriver.common.by import By
 class TestSelectDevices(unittest.TestCase):
 
     def setUp(self):
-        self.app_url = TestUtils.load_config()['configure_url']
-        self.host_name = TestUtils.load_config()['host_name']
+        config = TestUtils.load_config()
+        self.app_url = config['configure_url']
+        self.host_name = config['host_name']
         self.utils = TestUtils(self.app_url)
+        self.utils.login(config['username'], config['password'])
 
     def tearDown(self):
         self.utils.tearDown()

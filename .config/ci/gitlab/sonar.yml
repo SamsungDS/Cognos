@@ -14,10 +14,11 @@ sonar-scanner:
     - |
       sonar-scanner \
         -Dsonar.python.coverage.reportPaths=$backend_reports_dir/coverage.xml \
-        -Dsonar.javascript.lcov.reportPaths=$ui_reports_dir/lcov.info
+        -Dsonar.javascript.lcov.reportPaths=$ui_reports_dir/lcov.info,$rbac_client_reports_dir/lcov.info
   allow_failure: false
   needs:
     - backend unit test
     - ui unit test
+    - rbac unit test
   rules:
     - !reference [.default_rules, merge_and_push]

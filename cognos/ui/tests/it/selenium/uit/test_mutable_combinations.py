@@ -7,7 +7,8 @@ from uit.test_utils import TestUtils
 class TestMutableCombinations(unittest.TestCase):
 
     def setUp(self):
-        self.device_names = TestUtils.load_config()['device_names']
+        config = TestUtils.load_config()
+        self.device_names = config['device_names']
         if len(self.device_names) < 2:
             raise ValueError(
                 "Config must provide at least two devices for combinations.")

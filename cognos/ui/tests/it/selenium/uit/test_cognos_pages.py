@@ -7,8 +7,10 @@ from uit.test_utils import TestUtils
 class CognosPages(unittest.TestCase):
 
     def setUp(self):
-        self.app_url = TestUtils.load_config()['scmc_url']
+        config = TestUtils.load_config()
+        self.app_url = config['scmc_url']
         self.utils = TestUtils(self.app_url)
+        self.utils.login(config['username'], config['password'])
 
     def tearDown(self):
         self.utils.tearDown()

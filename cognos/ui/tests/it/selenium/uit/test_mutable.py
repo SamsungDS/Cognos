@@ -8,10 +8,12 @@ import time
 class TestMutable(unittest.TestCase):
 
     def setUp(self):
-        self.app_url = TestUtils.load_config()['configure_url']
-        self.host_name = TestUtils.load_config()['host_name']
-        self.device = TestUtils.load_config()['device_names'][1]
+        config = TestUtils.load_config()
+        self.app_url = config['configure_url']
+        self.host_name = config['host_name']
+        self.device = config['device_names'][1]
         self.utils = TestUtils(self.app_url)
+        self.utils.login(config['username'], config['password'])
 
     def tearDown(self):
         self.utils.tearDown()

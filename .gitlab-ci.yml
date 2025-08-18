@@ -30,7 +30,12 @@ variables:
   ARTIFACTS_DIR: build/artifacts
   ui_dir: cognos/ui
   ui_reports_dir: $ui_dir/coverage
+  rbac_dir: cognos/rbac/rbac-client-repo
+  rbac_client_reports_dir: $rbac_dir/coverage
   backend_reports_dir: scripts/test-reports/ut
+  RBAC_UI_PORT: 6720
+  RBAC_BACKEND_PORT: 6721
+  MONGODB_PORT: 1027
   UI_PORT: 5000
   BACKEND_PORT: 4000
   EXPORTER_PORT: 4001

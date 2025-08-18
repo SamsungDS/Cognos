@@ -1,70 +1,139 @@
 import React from 'react';
-import { render, screen} from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import '@testing-library/jest-dom';
 import App from './App';
-import { SelectedOptionProvider } from './contexts/SelectedOptionContext';
 
-describe('App', () => {
-  test('renders without crashing', () => {
+// Mock all the page components
+jest.mock('./pages/Dashboard', () => {
+  return function Dashboard() {
+    return <div data-testid="dashboard-page">Dashboard Page</div>;
+  };
+});
 
-    const devicesCountData = {
-      'num_hosts': 1
-    };
+jest.mock('./pages/Configure', () => {
+  return function Configure() {
+    return <div data-testid="configure-page">Configure Page</div>;
+  };
+});
 
-    const cmmbCapacityData = {
-      'total_capacity': 50
-    }
+jest.mock('./pages/Metrics', () => {
+  return function Metrics() {
+    return <div data-testid="metrics-page">Metrics Page</div>;
+  };
+});
 
-    const cmmbBandwidthData = {
-      'max_bandwidth': 100
-    }
+jest.mock('./pages/Jobs', () => {
+  return function Jobs() {
+    return <div data-testid="jobs-page">Jobs Page</div>;
+  };
+});
 
-    render(
-      <SelectedOptionProvider>
-        <App />
-      </SelectedOptionProvider>
+jest.mock('./pages/About', () => {
+  return function About() {
+    return <div data-testid="about-page">About Page</div>;
+  };
+});
+
+// Mock the components
+jest.mock('./components/Header', () => {
+  return function Header() {
+    return <div data-testid="header">Header Component</div>;
+  };
+});
+
+jest.mock('./components/SideBar', () => {
+  return function SideBar({ children }) {
+    return (
+      <div data-testid="sidebar">
+        <div>SideBar Component</div>
+        {children}
+      </div>
     );
+  };
+});
+
+// Mock ProtectedRoute to always render children
+jest.mock('./components/ProtectedRoute', () => {
+  return function ProtectedRoute({ children, allowedRoles }) {
+    return (
+      <div data-testid="protected-route" data-allowed-roles={allowedRoles?.join(',') || 'all'}>
+        {children}
+      </div>
+    );
+  };
+});
+
+// Mock CSS imports
+jest.mock('./App.css', () => ({}));
+jest.mock('bootstrap/dist/css/bootstrap.min.css', () => ({}));
+
+// Create a test wrapper that doesn't interfere with App's BrowserRouter
+const TestWrapper = ({ children, initialEntries = ['/'] }) => {
+  return children; // Let App handle its own routing
+};
+
+describe('App Component', () => {
+  let mockReplaceState;
+  let originalLocation;
+
+  beforeEach(() => {
+    // Mock window.history.replaceState
+    mockReplaceState = jest.fn();
+    Object.defineProperty(window, 'history', {
+      value: { replaceState: mockReplaceState },
+      writable: true,
+    });
+
+    // Store original location
+    originalLocation = window.location;
   });
 
-  test('renders header', () => {
-
-    const devicesCountData = {
-      'num_hosts': 5
-    };
-
-    const cmmbCapacityData = {
-      'total_capacity': 500
-    }
-
-    const cmmbBandwidthData = {
-      'max_bandwidth': 64
-    }
-
-    const { getByText } = render(
-      <SelectedOptionProvider>
-        <App />
-      </SelectedOptionProvider>
-    );
-    const headers = screen.queryAllByText(/Cognos Management Console/i);
-    expect(headers).toHaveLength(2);
+  afterEach(() => {
+    jest.clearAllMocks();
+    // Restore original location
+    window.location = originalLocation;
   });
-  test('renders sidebar', () => {
-    const devicesCountData = {
-      'num_hosts': 3
-    };
 
-    const cmmbCapacityData = {
-      'total_capacity': 10000
-    }
+  describe('Basic Rendering', () => {
+    it('renders without crashing', () => {
+      expect(() => render(<App />)).not.toThrow();
+    });
 
-    const cmmbBandwidthData = {
-      'max_bandwidth': 32
-    }
+    it('renders Dashboard page at root path', () => {
+      render(<App />);
 
-    const { getByTestId } = render(
-      <SelectedOptionProvider>
-        <App />
-      </SelectedOptionProvider>
-    );
-    expect(getByTestId('sidebar-container')).toBeInTheDocument();
+      expect(screen.getByTestId('protected-route')).toBeInTheDocument();
+      expect(screen.getByTestId('header')).toBeInTheDocument();
+      expect(screen.getByTestId('sidebar')).toBeInTheDocument();
+      expect(screen.getByTestId('dashboard-page')).toBeInTheDocument();
+    });
+
+    it('applies grid-container class', () => {
+      render(<App />);
+
+      const gridContainer = document.querySelector('.grid-container');
+      expect(gridContainer).toBeInTheDocument();
+    });
   });
+
+  describe('Component Structure', () => {
+    it('renders Header component', () => {
+      render(<App />);
+      expect(screen.getByTestId('header')).toBeInTheDocument();
+    });
+
+    it('renders SideBar component with children', () => {
+      render(<App />);
+      const sidebar = screen.getByTestId('sidebar');
+      expect(sidebar).toBeInTheDocument();
+      expect(screen.getByTestId('dashboard-page')).toBeInTheDocument();
+    });
+
+    it('wraps content in ProtectedRoute', () => {
+      render(<App />);
+      expect(screen.getByTestId('protected-route')).toBeInTheDocument();
+    });
+  });
+
 });

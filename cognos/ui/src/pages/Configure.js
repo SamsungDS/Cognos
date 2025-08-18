@@ -12,6 +12,7 @@ import './configure.css';
 import './metrics.css';
 import * as constants from '../../src/constant';
 
+
 export const getReadableStatus = (job) => {
   if (job.status === 'loading') {
     return "Rebooting Host";
@@ -20,7 +21,6 @@ export const getReadableStatus = (job) => {
 };
 
 const Configure = ({testMode}) => {
-
   const apiEndpoint = constants.Configs.api_endpoint;
   const AVAILABLE_DEVICES = 'available_devices';
   const HOST_DEVICES_ENDPT_SUFFIX = 'host_devices';

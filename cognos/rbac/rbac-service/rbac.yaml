@@ -1,0 +1,69 @@
+orgName: 'Samsung'
+database:
+  uri: 'mongodb://admin:admin@<ip-addr>:1027/mongodb?authSource=admin'
+frontend:
+  url: 'http://<ip-addr>:6720'
+backend:
+  url: 'http://<ip-addr>:6721'
+email:
+  service: ''  # Email service provider (e.g., 'gmail', 'yahoo', 'hotmail', 'outlook', 'smtp')
+  user: ''  # Your email address
+  pass: ''  # Your email password
+
+  # Other possible values for the 'service' field:
+  # - 'gmail': Use Google's Gmail service
+  # - 'yahoo': Use Yahoo Mail service
+  # - 'hotmail': Use Microsoft's Hotmail/Outlook service
+  # - 'outlook': Use Microsoft's Outlook service
+  # - 'smtp': Use a custom SMTP server (requires additional configuration such as host, port, and secure)
+  
+  # Example configuration for using a custom SMTP server:
+  # service: 'smtp'  # Use a custom SMTP server
+  # host: 'smtp.example.com'  # SMTP server hostname
+  # port: 587  # SMTP server port (usually 587 for TLS, 465 for SSL, or 25 for unencrypted)
+  # secure: false  # True for SSL (port 465), false for TLS (port 587)
+  # user: 'your-email@example.com'  # Your email address
+  # pass: 'your-email-password'  # Your email password
+pages:
+  - path: "/"
+    permission: "read:all"
+  - path: "/login"
+    permission: "read:all"
+  - path: "/signup"
+    permission: "read:all"
+  - path: "/profile"
+    permission: "write:admin"
+  - path: "/users"
+    permission: "write:admin"
+  - path: "/admin"
+    permission: "read:admin"
+  - path: "/dashboard"
+    permission: "write:admin"
+    additionalFields:
+      - ''
+
+roles:
+  admin:
+    permissions:
+      - "read:all"
+      - "write:all"
+      - "read:users"
+      - "read:admin"
+      - "read:dashboard"
+      - "write:admin"
+      - "write:profile"
+      - "write:dashbord" 
+      - "edit:dashbord" 
+    filters:
+      users: "*"
+
+  guest:
+    permissions:
+      - "read:all"
+      - "read:profile"
+    filters:
+      users: "self"
+license:
+  key: '86e690df8b5c7b7e71d5f508d507c06f:99b94debe948515eab2e9128c063c4cdc6cc20806e500c8d64be6bc70bc275b271c1b56db9be0a7cf2c6f3fc1969be7ea30f4106f0e9399b61ce85b88f9135ffadd74980aef4ebc28f29906392a170ba4fb9d3d3ba7bd0ba72e8e1d85d8291f5920b5208bb44df988eb1cb78f7e18c0077318999df631cd252fb7291183fe2de8a4ebfa801295db8b102191f1d18495da7a90d23180e9398ae2612d13949a89351b52405035580cc1ecdf3ece254655c51cc36003a1382faae7946e636d5ccd81b1e2a644d378845424053dcd6b5459a'
+  productID: 'prod-66hinoatktxdi'
+  subscriptionID: 'RBAC-prod-66hinoatktxdi-TRIAL'
