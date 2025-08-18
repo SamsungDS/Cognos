@@ -1989,10 +1989,9 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForRASOperation) {
       is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
                     "Send command to the node with command_name: "
                     "add_reliability_monitoring_for_device and command_params: "
-                    "[\"device_id\",\"29690035288064\",\"device_numa\",\"1\","
-                    "\"device_type\",\"CMM-D\",\"configure_options\",[\"error_"
-                    "count_threshold\",5,\"error_rate_threshold\",[\"count\",3,"
-                    "\"time_window_in_seconds\",300]]]is successful"));
+                    "{\"configure_options\":{\"error_count_threshold\":5},"
+                    "\"device_id\":\"29690035288064\",\"device_numa\":1,"
+                    "\"device_type\":\"CMM-D\"}is successful"));
 
   EXPECT_EQ(
       true,
@@ -2006,8 +2005,8 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForRASOperation) {
                 CONTROLLER_NODE_DEFAULT_LOG_FILE,
                 "Send command to the node with command_name: "
                 "remove_reliability_monitoring_for_device and command_params: "
-                "[\"device_id\",\"29690035288064\",\"device_type\",\"CMM-"
-                "D\",\"device_numa\",\"1\"]is successful"));
+                "{\"device_id\":\"29690035288064\",\"device_numa\":\"1\","
+                "\"device_type\":\"CMM-D\"}is successful"));
 
   // Since there is app_pid in the output, we need to split to two parts to
   // validate the output
