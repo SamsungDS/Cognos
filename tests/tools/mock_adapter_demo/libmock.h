@@ -13,8 +13,6 @@
 
 #include <string>
 
-#include "ras.hpp"
-
 #define STR(x) #x
 #define CONFIG_FILE "config/mock_config.json"
 

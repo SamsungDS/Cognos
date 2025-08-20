@@ -5,6 +5,7 @@
 #include <thread>
 
 #include "libmock.h"
+#include "ras.hpp"
 
 #define LOW_POLL 15
 #define HIGH_POLL 120
