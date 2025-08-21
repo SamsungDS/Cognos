@@ -24,3 +24,4 @@ sonar-scanner:
     GIT_DEPTH: 0
   rules:
     - !reference [.default_rules, merge_and_push]
+    

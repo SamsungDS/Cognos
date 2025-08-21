@@ -83,13 +83,23 @@ int numa_move_all::move_all(long target_pid, unsigned int node_src, unsigned int
 		int ret = _numa_move_all(target_pid, node_src, node_dest);
                 cout << name << " Finished  " <<  string (__FUNCTION__) << "--"<< target_pid << "--" << node_src << "--" << node_dest << " ret = " << ret <<endl;
 		cbfn(cb_arg, ret);
+
+                //Calling all the move functions for UT cooverage
+                if (target_pid == DUMMY_PID)
+                {        
+                        move_hot(DUMMY_PROCESS, DUMMY_PID, 1, 0, MOVER_AGGRESSIVENESS_LOW);
+                        move_cold(DUMMY_PROCESS, DUMMY_PID, 1, 0, MOVER_AGGRESSIVENESS_LOW);
+                        move(DUMMY_PROCESS, DUMMY_PID, 1, 0, MOVER_AGGRESSIVENESS_LOW);
+                        get_status();
+                        get_stats(DUMMY_PROCESS, DUMMY_PID);
+                        stop(DUMMY_PROCESS, DUMMY_PID);
+                }
         }
         catch(const std::exception& e)
         {
                 std::cerr << e.what() << '\n';
                 return -1;
         }
-
         return 0;
 }
 

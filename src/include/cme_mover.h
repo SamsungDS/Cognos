@@ -7,6 +7,9 @@
 #include <string>
 #include <functional>
 
+const int DUMMY_PID = -1000;
+const std::string DUMMY_PROCESS = "DUMMY_PROCESS";
+
 /**
  * @brief enum for cme_mover_aggressiveness
  * @details damo cme_mover_aggressiveness

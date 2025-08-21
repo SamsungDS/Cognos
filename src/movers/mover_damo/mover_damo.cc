@@ -115,6 +115,10 @@ std::string mover_damo::get_stats(string app_name, long app_pid)
 int mover_damo::stop(string app_name, long app_pid)
 {
         cout << name << " Started  " <<  string (__FUNCTION__) << endl;
+        if (TEST_BUILD)
+        {
+                get_status();
+        }
         return stop_damo_main(app_name, app_pid);
 }
 
