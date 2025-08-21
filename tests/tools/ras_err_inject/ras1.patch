@@ -1,0 +1,13 @@
+diff --git a/ras-events.c b/ras-events.c
+index 6692a31..9121936 100644
+--- a/ras-events.c
++++ b/ras-events.c
+@@ -859,7 +859,7 @@ static int add_event_handler(struct ras_events *ras, struct tep_handle *pevent,
+ 	}
+ 
+ 	do {
+-		rc = read(fd, page + size, page_size);
++		rc = read(fd, page + size, page_size/2);
+ 		if (rc < 0) {
+ 			log(TERM, LOG_ERR, "Can't get arch page size\n");
+ 			free(page);

@@ -19,7 +19,9 @@ set(RASDAEMON_DIR ${CMAKE_BINARY_DIR}/rasdaemon)
 ExternalProject_Add(rasdaemon
     GIT_REPOSITORY https://github.com/mchehab/rasdaemon.git
     SOURCE_DIR        "${CMAKE_BINARY_DIR}/rasdaemon"
-    PATCH_COMMAND "${MAKE_CONFIG}" "-vfi"
+    PATCH_COMMAND
+        COMMAND patch -p1 -i ${CMAKE_CURRENT_SOURCE_DIR}/ras1.patch
+        COMMAND "${MAKE_CONFIG}" "-vfi"
     CONFIGURE_COMMAND "${CMAKE_BINARY_DIR}/rasdaemon/configure" "--enable-mce" "--enable-sqlite3" "--enable-aer"
     BUILD_COMMAND ${MAKE_EXECUTABLE} -j${Ncpu}
     INSTALL_COMMAND ${MAKE_EXECUTABLE} DESTDIR=${RASDAEMON_DIR}/b1 install
