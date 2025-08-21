@@ -29,7 +29,16 @@ int cme_mover_dummy::move_all(long target_pid, unsigned int node_src, unsigned i
 {
         cout << name << " Started  " <<  string (__FUNCTION__) << endl;
         cout << "threadid=" << std::this_thread::get_id() << endl;
-	std::this_thread::sleep_for(std::chrono::seconds(2));
+        //Calling all the move functions for UT cooverage
+
+        move_hot(DUMMY_PROCESS, DUMMY_PID, 1, 0, MOVER_AGGRESSIVENESS_LOW);
+        move_cold(DUMMY_PROCESS, DUMMY_PID, 1, 0, MOVER_AGGRESSIVENESS_LOW);
+        move(DUMMY_PROCESS, DUMMY_PID, 1, 0, MOVER_AGGRESSIVENESS_LOW);
+        get_status();
+        get_stats(DUMMY_PROCESS, DUMMY_PID);
+        stop(DUMMY_PROCESS, DUMMY_PID);
+
+	std::this_thread::sleep_for(std::chrono::seconds(1));
 	cbfn(cb_arg, status);
         return 0;
 }

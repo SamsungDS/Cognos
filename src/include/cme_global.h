@@ -20,6 +20,8 @@ typedef enum
         CME_INVALID_TYPE
 } cme_type;
 
+
+
 /**
  * @brief cme global class.
  * This is for the global cme object for the CME feature module.
@@ -49,12 +51,15 @@ class cme_global
 		void cme_contexts_lock ();
                 void cme_contexts_unlock ();
                 int clean_up();
-        private:
-                
-                int _cme_discovery(std::string, int);
                 void profiler_register(std::string, cme_profiler*);
 		void mover_register(std::string, cme_mover*);
+                int _cme_discovery(std::string, int);
+                cme_context* cg_find_context(unordered_map<string, string> &, bool);
+                cme_mover* cg_find_mover(cme_context*);
+                
+        private:
 		std::map<std::string, CommandFunc> fw_hooks;
+
 };
 
 #endif

@@ -47,7 +47,7 @@ int damo_init()
                 {
                         return ret;
                 }
-                damo_config_static_mappings.emplace(damo_process_param.ag_level, damo_config_filled);
+                damo_config_static_mappings.try_emplace(damo_process_param.ag_level, damo_config_filled);
         }
         catch (const std::exception& e)
         {
@@ -567,18 +567,12 @@ int cgroup_delete(string cg_name)
                 vector<string> cmd_output;
 
                 cmd = "cgdelete -g memory:" + cg_name;
-                if (TEST_BUILD)
+                ret = execute_command(cmd, cmd_output, TEST_BUILD);
+                if (ret)
                 {
-                        ret = 0;
+                        cout << "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret) << endl;
                 }
-                else
-                {
-                        ret = execute_command(cmd, cmd_output, false);
-                        if (ret)
-                        {
-                                cout << "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret) << endl;
-                        }
-                }
+
         }
     catch (const std::exception& e)
     {
@@ -603,7 +597,7 @@ int stop(string app_name, long app_pid)
                 string cmd;
                 vector<string> cmd_output;
                 cmd = cmd = "sudo " + PM_DAMO_PYTHON3_PATH + " " + PM_DAMO_PATH + " stop";
-                ret = execute_command(cmd, cmd_output, false);
+                ret = execute_command(cmd, cmd_output, TEST_BUILD);
                 cout << "--damo--stop " << to_string(ret) << endl;
                 if (ret)
                 {
@@ -684,7 +678,7 @@ static std::string extract_damo_stats(vector<string> &damon_stats_output, vector
                                         {
                                                 if ((!(filter.second.get<std::string>("filter_type").compare("memcg"))) && (!(filter.second.get<std::string>("memcg_path").compare("/"+cg_name))))
                                                 {
-                                                        kdamond_idx.emplace(to_string(kd_idx), action);
+                                                        kdamond_idx.try_emplace(to_string(kd_idx), action);
                                                 }
                                         }
                                 }

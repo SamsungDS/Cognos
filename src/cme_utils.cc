@@ -46,11 +46,11 @@ bool command_parser_json(std::string input_cme_command, unordered_map<std::strin
                 std::istringstream json_stream(input_cme_command);                
 		pt::read_json(json_stream, root);
                 std::string command_name = root.get<std::string> ("command_name");
-                command_params_map.emplace("command", command_name);
+                command_params_map.try_emplace("command", command_name);
                 auto command_params = root.get_child("command_params");
                 for (const auto& item : command_params)
                 {
-			command_params_map.emplace(item.first, item.second.data());
+			command_params_map.try_emplace(item.first, item.second.data());
                 }
         }
         catch (const std::exception &e)

@@ -3,7 +3,6 @@
 
 #include "cme_mover.h"
 
-
 class numa_move_all : public cme_mover
 {
         public:

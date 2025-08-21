@@ -289,6 +289,8 @@ if $WITH_COVERAGE;then
     
     mkdir -p "$BUILD_DIR/tests/movers"
     mkdir -p "$BUILD_DIR/tests/profilers"
+    #touch "$BUILD_DIR/tests/movers/test_dummy.so"
+    #echo "test_dummy" >> "$BUILD_DIR/tests/movers/test_dummy.so"
     mkdir -p "/usr/local/svk/feature_modules/me/config/"
     cp "$BUILD_DIR/src/movers/cme_mover_dummy/libcme_mover_dummy.so" "$BUILD_DIR/tests/movers/"
     cp "$BUILD_DIR/src/movers/numa_move_all/libnuma_move_all.so" "$BUILD_DIR/tests/movers/"
