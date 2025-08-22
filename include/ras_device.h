@@ -15,6 +15,7 @@ struct ras_device {
   struct {
     bool valid;
     uint64_t error_count_threshold;
+    bool degraded;
   } ect; /** Error Count Threshold - global error count above which device
             should be marked as degrading */
   struct {
@@ -24,7 +25,6 @@ struct ras_device {
   } twt; /** Time Window Threshold - When error count within time window is
             observed device should be marked as degrading */
   uint64_t monitor_interval;  // Monitoring interval for the device
-  std::string adapter_name;   // RAS Adapter associated with the device
   int64_t numa_node;
   ras_device(std::string name_, std::string type_, bool ect_valid_,
              uint64_t ect_error_count_threshold_, bool twt_valid_,
@@ -37,6 +37,7 @@ struct ras_device {
     type = type_;
     ect.valid = ect_valid_;
     ect.error_count_threshold = ect_error_count_threshold_;
+    ect.degraded = false;
     twt.valid = twt_valid_;
     twt.error_count = twt_error_count_;
     twt.time_window = twt_time_window_;
@@ -55,6 +56,8 @@ struct ras_device {
     }
   }
 
+  std::string get_adapter_name() { return adapter_name; };
+
  private:
   device_unique_identifier name;
   std::optional<device_unique_identifier> device_name_in_adapter; /** This is
@@ -62,6 +65,7 @@ struct ras_device {
   adapter does not match the device name.
   - mock adapter for cxl will report device as numa node string.
   */
+  std::string adapter_name;  // RAS Adapter associated with the device
 };
 
 /**

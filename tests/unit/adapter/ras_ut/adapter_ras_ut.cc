@@ -72,7 +72,7 @@ svk_status execute_ut_adapter_logic_sync(svk_logic_cmd *cmd,
     output_json = handler_.get_device_list(input_command);
   } else if (cmd_name_str == "getErrorCount") {
     std::string device = input_command["command_params"]["device"];
-    if (device == "dev123") {
+    if (device != "dev_error") {
       output_json = handler_.get_error_count(input_command);
     }
   } else if (cmd_name_str == "getWithoutResult") {

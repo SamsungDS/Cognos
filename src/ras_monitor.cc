@@ -18,6 +18,11 @@ get_ras_command_handler(void) {
     auto remove_ras_device_handler =
         std::make_unique<remove_ras_monitor_for_device_handler>();
     rch->register_command(std::move(remove_ras_device_handler));
+
+    auto check_ras_device_status_handler =
+        std::make_unique<ras_check_device_status_handler>();
+    rch->register_command(std::move(check_ras_device_status_handler));
+
     // Register new command handlers here.
   }
   return rch;
@@ -39,6 +44,8 @@ void ras_monitor::set_sync_request_completed(ras_request *req) {
 void ras_monitor::process_request_sync(ras_request *req) {
   if (req->is_internal_request == false) {
     req->execute_feature_command();
+  } else {
+    req->execute_internal_command();
   }
   set_sync_request_completed(req);
 
@@ -92,6 +99,11 @@ void execute_request_by_monitor_(ras_request &req) {
   // Other cases should be handled by validator/executor and mark the result
   // appropriately
   return;
+}
+
+bool ras_submit_timed_request(ras_request *req, int interval) {
+  return req->ras_context->monitor_context->ras_submit_timed_request(req,
+                                                                     interval);
 }
 
 std::shared_ptr<ras_device_manager> ras_monitor_get_device_manager(

@@ -51,7 +51,7 @@ add_dependencies(copy_mock_adapter_lib mock)
 add_executable(${RAS_UT} ras_ut.cc)
 add_dependencies(${RAS_UT} copy_mock_adapter_lib)
 add_dependencies(${RAS_UT} copy_ras_ut_adapter_lib)
-target_include_directories(${RAS_UT} PUBLIC ${RAS_UT_INCLUDE_DEST} ${CMAKE_CURRENT_BINARY_DIR}/include)
+target_include_directories(${RAS_UT} PUBLIC ${RAS_UT_INCLUDE_DEST} ${CMAKE_CURRENT_BINARY_DIR}/include ${CMAKE_SOURCE_DIR}/src/utils/rte_ring)
 target_link_directories(${RAS_UT} PUBLIC ${SVKFW_LIBRARY_DIRS})
 
 
@@ -61,6 +61,7 @@ target_link_libraries(
   GTest::gtest_main
   svkframework
   svklogger
+  rte_ring
   ${SVK_RAS_LIB_TARGET_NAME}
   fmt
 )
@@ -72,6 +73,8 @@ add_subdirectory(ras_monitor.cc)
 add_subdirectory(ras_request_handler.cc)
 add_subdirectory(ras_device.h)
 add_subdirectory(ras_adapter_helper.hpp)
+add_subdirectory(ras_event_publisher.hpp)
+add_subdirectory(ras_add_device_handler.hpp)
 
 add_subdirectory(adapter)
 

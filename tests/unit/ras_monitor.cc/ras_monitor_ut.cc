@@ -3,14 +3,18 @@
 
 #include <ras.hpp>
 
+#include "../tests/unit/include/mock/mock.h"
+DEFINE_STUB(publish_data, int,
+            (char* topic, uint8_t* payload_data, uint64_t data_len), 0)
+
 struct ras_context_s ras_context;
 
 TEST(RasMonitorTest, TestClass) {
-  ras_monitor *test_mon_inst = new ras_monitor();
+  ras_monitor* test_mon_inst = new ras_monitor();
 
   ras_context.monitor_context = test_mon_inst;
 
-  ras_request *dummy_request = new ras_request(true, &ras_context, false);
+  ras_request* dummy_request = new ras_request(true, &ras_context, false);
   bool result = false;
 
   result = test_mon_inst->ras_submit_request(nullptr);

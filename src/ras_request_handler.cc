@@ -28,6 +28,16 @@ bool validate_generic_request(const ras_request& req) {
   return true;
 }
 
+ras_request* build_device_monitor_request(
+    ras_context_s* ras_context, device_unique_identifier device_name) {
+  ras_request* request = new ras_request(true, ras_context);
+  request->command_obj[RAS_COMMAND_COMMAND_STR] =
+      "ras_monitor_check_device_status ";
+  request->command_obj[RAS_COMMAND_PARAMS_STR][RAS_COMMAND_DEVICE_STR] =
+      device_name;
+  return request;
+}
+
 void ras_request::execute_feature_command(void) {
   if (this->is_internal_request == true) {
     // Expecting external request
@@ -45,5 +55,17 @@ void ras_request::execute_feature_command(void) {
   }
 
   execute_request_by_monitor_(*this);
+  return;
+}
+
+void ras_request::execute_internal_command(void) {
+  if (this->is_internal_request == false) {
+    // Expecting internal request
+    this->is_successfull = false;
+    return;
+  }
+
+  execute_request_by_monitor_(*this);
+
   return;
 }

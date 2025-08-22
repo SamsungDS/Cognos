@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "command_handlers/ras_add_device_handler.hpp"
+#include "command_handlers/ras_monitor_check_device_status.hpp"
 #include "command_handlers/ras_remove_device_handler.hpp"
 
 std::unique_ptr<cognos::utils::CommandHandler<ras_request>>
