@@ -685,6 +685,11 @@ TEST(ExecTest, ExecuteSyncSuccess) {
   input.input_buffer = (uint8_t *)input_str.c_str();
   input.len = input_str.length();
 
+  std::string node_name = "node1";
+  std::string cluster_name = "cluster1";
+  EXPECT_EQ(0, set_node_name(node_name.c_str(), node_name.length()));
+  EXPECT_EQ(0, set_cluster_name(cluster_name.c_str(), cluster_name.length()));
+
   svk_output output;
   output.output_buffer = (uint8_t *)malloc(128);
   output.len = 128;
@@ -696,6 +701,112 @@ TEST(ExecTest, ExecuteSyncSuccess) {
   EXPECT_TRUE(is_str_in_log(search_str));
   cleanup_svk(&ctx, (void *)conf.c_str());
   free(output.output_buffer);
+}
+
+TEST(ExecTest, GetSetClusterNodeNameValidationFailureCase) {
+  char buff[FILENAME_MAX];
+  getcwd(buff, FILENAME_MAX);
+  std::string current_working_dir(buff);
+  char node_var[256];
+  char cluster_var[256];
+  int node_var_length = sizeof(node_var);
+  int cluster_var_length = sizeof(cluster_var);
+
+  // Using relative path to config in SVK core for testing
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
+  svk_device_ctx ctx;
+  EXPECT_EQ(0, initialize_svk(conf.c_str(), (void *)&ctx));
+  // Invalid pointer
+  EXPECT_EQ(SVK_STATUS_FAIL, get_node_name(nullptr, &node_var_length));
+  EXPECT_EQ(SVK_STATUS_FAIL, get_cluster_name(nullptr, &cluster_var_length));
+  EXPECT_EQ(SVK_STATUS_FAIL, set_node_name(nullptr, node_var_length));
+  EXPECT_EQ(SVK_STATUS_FAIL, set_cluster_name(nullptr, cluster_var_length));
+
+  // Valid buffer, but zero length passed
+  node_var_length = 0;
+  cluster_var_length = 0;
+  EXPECT_EQ(SVK_STATUS_FAIL, get_node_name(node_var, &node_var_length));
+  EXPECT_EQ(SVK_STATUS_FAIL,
+            get_cluster_name(cluster_var, &cluster_var_length));
+  EXPECT_EQ(SVK_STATUS_FAIL, set_node_name(node_var, node_var_length));
+  EXPECT_EQ(SVK_STATUS_FAIL, set_cluster_name(cluster_var, cluster_var_length));
+
+  node_var_length = sizeof(node_var);
+  cluster_var_length = sizeof(cluster_var);
+
+  // Node name or cluster name not set yet
+  EXPECT_EQ(SVK_STATUS_FAIL, get_node_name(node_var, &node_var_length));
+}
+
+TEST(ExecTest, GetSetClusterNodeNameValidationSuccess) {
+  char buff[FILENAME_MAX];
+  getcwd(buff, FILENAME_MAX);
+  std::string current_working_dir(buff);
+  char node_var[256];
+  char cluster_var[256];
+  int node_var_length = sizeof(node_var);
+  int cluster_var_length = sizeof(cluster_var);
+
+  // Using relative path to config in SVK core for testing
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
+  svk_device_ctx ctx;
+  EXPECT_EQ(0, initialize_svk(conf.c_str(), (void *)&ctx));
+
+  // cluster_name not set. But success with zero length
+  EXPECT_EQ(SVK_STATUS_SUCCESS,
+            get_cluster_name(cluster_var, &cluster_var_length));
+  EXPECT_EQ(0, cluster_var_length);
+
+  // Set the node name and the cluster name
+  std::string node_name = "node1";
+  std::string cluster_name = "cluster1";
+  node_var_length = sizeof(node_var);
+  cluster_var_length = sizeof(cluster_var);
+  EXPECT_EQ(0, set_node_name(node_name.c_str(), node_name.length()));
+  EXPECT_EQ(0, set_cluster_name(cluster_name.c_str(), cluster_name.length()));
+
+  // Get the node name and cluster name and cross-check
+  EXPECT_EQ(SVK_STATUS_SUCCESS, get_node_name(node_var, &node_var_length));
+  EXPECT_EQ(SVK_STATUS_SUCCESS,
+            get_cluster_name(cluster_var, &cluster_var_length));
+  EXPECT_EQ(0, strcmp(node_name.c_str(), node_var));
+  EXPECT_EQ(0, strcmp(cluster_name.c_str(), cluster_var));
+}
+
+TEST(ExecTest, GetClusterNodeNameValidationFailureWithSmallBuffer) {
+  char buff[FILENAME_MAX];
+  getcwd(buff, FILENAME_MAX);
+  std::string current_working_dir(buff);
+  char node_var[256];
+  char cluster_var[256];
+  int node_var_length = sizeof(node_var);
+  int cluster_var_length = sizeof(cluster_var);
+
+  // Using relative path to config in SVK core for testing
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
+  svk_device_ctx ctx;
+  EXPECT_EQ(0, initialize_svk(conf.c_str(), (void *)&ctx));
+
+  // cluster_name not set. But success with zero length
+  EXPECT_EQ(SVK_STATUS_SUCCESS,
+            get_cluster_name(cluster_var, &cluster_var_length));
+  EXPECT_EQ(0, cluster_var_length);
+
+  // Set the node name and the cluster name
+  std::string node_name = "node1";
+  std::string cluster_name = "cluster1";
+  node_var_length = sizeof(node_var);
+  cluster_var_length = sizeof(cluster_var);
+  EXPECT_EQ(0, set_node_name(node_name.c_str(), node_name.length()));
+  EXPECT_EQ(0, set_cluster_name(cluster_name.c_str(), cluster_name.length()));
+
+  node_var_length = 3;
+  cluster_var_length = 3;
+  // Get the node name and cluster name and cross-check
+  EXPECT_EQ(SVK_STATUS_INSUFFICIENT_BUFFER,
+            get_node_name(node_var, &node_var_length));
+  EXPECT_EQ(SVK_STATUS_INSUFFICIENT_BUFFER,
+            get_cluster_name(cluster_var, &cluster_var_length));
 }
 
 TEST(ExecTest, ExecuteSyncWithStrKey) {

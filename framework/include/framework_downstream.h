@@ -7,6 +7,7 @@
 
 #ifndef FRAMEWORK_DOWNSTREAM_H
 #define FRAMEWORK_DOWNSTREAM_H
+#include "framework_extern.h"
 #include "framework_struct.h"
 
 #ifdef __cplusplus

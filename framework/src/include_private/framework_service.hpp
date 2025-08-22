@@ -56,6 +56,8 @@ class FrameworkSvc {
   std::thread conf_reload;
   std::atomic<bool> reload_flag;
   int conf_poll_timer;
+  std::string svk_node_name;
+  std::string svk_cluster_name;
   bool report_sym_error(void *fn, const dirent *entry, void *handle,
                         const char *sym_name, int &num_failed_libs,
                         svk_status &status,
@@ -90,6 +92,11 @@ class FrameworkSvc {
       svk_pass_thru_cmd *pass_thru, svk_input *input, svk_output *output,
       svk_postprocess_fn *postprocess_fn) const;
   svk_status FrameworkSvcCleanup(void *param);
+  // Functions to set the node name and cluster name.
+  svk_status GetNodeName(char *node_name, int *len);
+  svk_status SetNodeName(const char *node_name, int len);
+  svk_status GetClusterName(char *cluster_name, int *len);
+  svk_status SetClusterName(const char *cluster_name, int len);
 };
 
 #endif  // FRAMEWORK_SERVICE_H

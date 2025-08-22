@@ -5,6 +5,7 @@ set(SVKFramework_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/framework.cc ${CMAKE_CURREN
 set(SVKFramework_INC ${CMAKE_CURRENT_SOURCE_DIR}/include/framework_upstream.h
         ${CMAKE_CURRENT_SOURCE_DIR}/include/framework_struct.h
         ${CMAKE_CURRENT_SOURCE_DIR}/include/framework_downstream.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/framework_extern.h
         ${CMAKE_CURRENT_SOURCE_DIR}/src/include_private/framework_service.hpp
         ${CMAKE_CURRENT_SOURCE_DIR}/include/svk_publisher.h
         ${CMAKE_SOURCE_DIR}/common/include/svk_logger.hpp

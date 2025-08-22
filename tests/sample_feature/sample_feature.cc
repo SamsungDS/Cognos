@@ -44,6 +44,21 @@ extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
   buf = (char *)input->input_buffer;
   printf("Input buffer: %s\n", buf);
 
+  char node_name[256];
+  char cluster_name[256];
+  int len = 256;
+
+  status = get_node_name(node_name, &len);
+  if (status != SVK_STATUS_SUCCESS) {
+    return status;
+  }
+
+  len = 256;
+  status = get_cluster_name(cluster_name, &len);
+  if (status != SVK_STATUS_SUCCESS) {
+    return status;
+  }
+
   printf("sample feature execute_sync called\n");
   char *output_buf = (char *)output->output_buffer;
   if (strstr(buf, "SampleFeatureFailure")) {
