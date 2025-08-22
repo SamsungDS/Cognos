@@ -753,6 +753,116 @@ svk_status FrameworkSvc::FrameworkSvcCleanup(void *param) {
   return status;
 }
 
+svk_status FrameworkSvc::GetNodeName(char *node_name, int *len) {
+  svk_status status = SVK_STATUS_FAIL;
+  int actual_node_name_len;
+  std::string log_msg;
+
+  if (node_name == nullptr || len == nullptr) {
+    svk_logger(CORE_LOGGER_NAME, level_E::ERROR,
+               "GetNodeName - One of the input args is null");
+    return status;
+  }
+  if (*len == 0) {
+    svk_logger(CORE_LOGGER_NAME, level_E::ERROR,
+               "GetNodeName - Input buffer len is 0 and not valid");
+    return status;
+  }
+  actual_node_name_len = (int)this->svk_node_name.length();
+  if (actual_node_name_len == 0) {
+    svk_logger(CORE_LOGGER_NAME, level_E::INFO,
+               "GetNodeName - Node name is not updated at the core framework");
+    return status;
+  }
+
+  if (actual_node_name_len >= *len) {
+    log_msg = "Requested buffer size " + std::to_string(*len) +
+              " is smaller than the actual node name length " +
+              std::to_string(actual_node_name_len);
+    svk_logger(CORE_LOGGER_NAME, level_E::INFO, log_msg.c_str());
+
+    status = SVK_STATUS_INSUFFICIENT_BUFFER;
+    return status;
+  }
+
+  int actual_len =
+      snprintf(node_name, (*len) - 1, "%s", this->svk_node_name.c_str());
+  node_name[actual_len] = '\0';
+  *len = actual_len;
+
+  status = SVK_STATUS_SUCCESS;
+  return status;
+}
+
+svk_status FrameworkSvc::SetNodeName(const char *node_name, int len) {
+  svk_status status = SVK_STATUS_FAIL;
+
+  if (node_name == nullptr || len == 0) {
+    svk_logger(CORE_LOGGER_NAME, level_E::ERROR,
+               "SetNodeName - Invalid pointer or invalid node name given");
+    return status;
+  }
+  this->svk_node_name = std::string(node_name, len);
+  status = SVK_STATUS_SUCCESS;
+  return status;
+}
+
+svk_status FrameworkSvc::GetClusterName(char *cluster_name, int *len) {
+  svk_status status = SVK_STATUS_FAIL;
+  std::string log_msg;
+  int actual_cluster_name_len;
+
+  if (cluster_name == nullptr || len == nullptr) {
+    svk_logger(CORE_LOGGER_NAME, level_E::ERROR,
+               "GetNodeName - One of the input args is null");
+    return status;
+  }
+  if (*len == 0) {
+    svk_logger(CORE_LOGGER_NAME, level_E::ERROR,
+               "GetNodeName - Input buffer len is 0 and not valid");
+    return status;
+  }
+  actual_cluster_name_len = (int)this->svk_cluster_name.length();
+  if (actual_cluster_name_len == 0) {
+    svk_logger(
+        CORE_LOGGER_NAME, level_E::INFO,
+        "GetNodeName - cluster name is not updated at the core framework");
+    strcpy(cluster_name, "");
+    *len = 0;
+    return SVK_STATUS_SUCCESS;
+  }
+
+  if (actual_cluster_name_len >= *len) {
+    log_msg = "Requested buffer size " + std::to_string(*len) +
+              " is smaller than the actual cluster name " +
+              std::to_string(actual_cluster_name_len);
+    svk_logger(CORE_LOGGER_NAME, level_E::INFO, log_msg.c_str());
+    status = SVK_STATUS_INSUFFICIENT_BUFFER;
+    return status;
+  }
+
+  int actual_len =
+      snprintf(cluster_name, (*len) - 1, "%s", this->svk_cluster_name.c_str());
+  cluster_name[actual_len] = '\0';
+  *len = actual_len;
+
+  status = SVK_STATUS_SUCCESS;
+  return status;
+}
+
+svk_status FrameworkSvc::SetClusterName(const char *cluster_name, int len) {
+  svk_status status = SVK_STATUS_FAIL;
+
+  if (cluster_name == nullptr || len == 0) {
+    svk_logger(CORE_LOGGER_NAME, level_E::ERROR,
+               "SetNodeName - Invalid pointer or invalid cluster name given");
+    return status;
+  }
+  this->svk_cluster_name = std::string(cluster_name, len);
+  status = SVK_STATUS_SUCCESS;
+  return status;
+}
+
 /**
  * @endcond
  */
@@ -829,5 +939,33 @@ extern "C" svk_status cleanup_svk(svk_device_ctx *ctx, void *param) {
   status = g_fw_service->FrameworkSvcCleanup(param);
   svk_logger(CORE_LOGGER_NAME, level_E::INFO, "SVK Cleanup finished.");
   svk_logger_close(CORE_LOGGER_NAME);
+  return status;
+}
+
+extern "C" svk_status set_node_name(const char *node_name, int len) {
+  svk_status status;
+
+  status = g_fw_service->SetNodeName(node_name, len);
+  return status;
+}
+
+extern "C" svk_status get_node_name(char *node_name, int *len) {
+  svk_status status;
+
+  status = g_fw_service->GetNodeName(node_name, len);
+  return status;
+}
+
+extern "C" svk_status set_cluster_name(const char *cluster_name, int len) {
+  svk_status status;
+
+  status = g_fw_service->SetClusterName(cluster_name, len);
+  return status;
+}
+
+extern "C" svk_status get_cluster_name(char *cluster_name, int *len) {
+  svk_status status;
+
+  status = g_fw_service->GetClusterName(cluster_name, len);
   return status;
 }
