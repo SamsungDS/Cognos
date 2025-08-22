@@ -14,6 +14,7 @@
 #include <unordered_map>
 
 #include "ras.hpp"
+#include "ras_monitor.h"
 #include "ras_ut_config.h"
 
 #define WAIT_FOR_FLUSH 2
@@ -59,8 +60,7 @@ TEST_F(ConfigUnitTest, SVKCLEANUP) {
 TEST_F(ConfigUnitTest, SVKInit) {
   setenv("SVK_RAS_CONFIG", "conf.json", true);
   EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
-  EXPECT_EQ(0, svk_logger_set_flush_interval(1));
-  sleep(WAIT_FOR_FLUSH);
+  EXPECT_EQ(0, svk_logger_flush(RAS_LOGGER));
   std::ifstream logFile(RAS_LOG);
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
@@ -866,7 +866,7 @@ TEST(RasAdapterHelperUnitTest, TestDeviceCorrectableErrorCountInvalidDevice) {
   // Mock adapter and UT adapter are loaded
   EXPECT_EQ(num_adapters, 2);
   auto error_count_o = adapter_helper_->get_device_correctable_error_count(
-      "ras_adapter_ut", "dev_invalid");
+      "ras_adapter_ut", "dev_error");
   EXPECT_FALSE(error_count_o.has_value());
 }
 
@@ -877,4 +877,139 @@ TEST(RasAdapterHelperUnitTest, TestLoadAdapters) {
   auto num_adapters = adapter_helper_->load_ras_adapters(RAS_UT_ADAPTERS_DIR);
   // Mock adapter and UT adapter are loaded
   EXPECT_EQ(num_adapters, 2);
+}
+
+class CheckDeviceStatusUnitTest : public testing::Test {
+ protected:
+  static void SetUpTestSuite() {
+    adapter_helper_ = std::make_unique<ras_adapter_helper>();
+    adapter_helper_->load_ras_adapters(RAS_UT_ADAPTERS_DIR);
+    test_ras_ctx.ras_adapter_helper_ = adapter_helper_.get();
+    test_ras_ctx.monitor_context = new ras_monitor();
+
+    EXPECT_TRUE(
+        test_ras_ctx.monitor_context->get_device_manager()->try_add_device(
+            "dev_bad",
+            std::make_unique<ras_device>("dev_bad", "", true, 50, false, 0, 0,
+                                         RAS_DEVICE_DEFAULT_MONITOR_INTERVAL,
+                                         "ras_adapter_ut", 0)));
+    EXPECT_TRUE(
+        test_ras_ctx.monitor_context->get_device_manager()->try_add_device(
+            "dev_good",
+            std::make_unique<ras_device>("dev_good", "", true, 100, false, 0, 0,
+                                         RAS_DEVICE_DEFAULT_MONITOR_INTERVAL,
+                                         "ras_adapter_ut", 0)));
+
+    EXPECT_TRUE(
+        test_ras_ctx.monitor_context->get_device_manager()->try_add_device(
+            "dev_invalid_error_count_threshold",
+            std::make_unique<ras_device>(
+                "dev_invalid_error_count_threshold", "", false, 100, false, 0,
+                0, RAS_DEVICE_DEFAULT_MONITOR_INTERVAL, "ras_adapter_ut", 0)));
+
+    check_device_status_handler_ =
+        std::make_unique<ras_check_device_status_handler>();
+  }
+
+  bool ut_check_device_error_count_threshold_status(ras_context_s *ras_ctx,
+                                                    ras_device &device) {
+    return check_device_status_handler_
+        ->check_device_error_count_threshold_status(ras_ctx, device);
+  }
+
+  static std::unique_ptr<ras_adapter_helper> adapter_helper_;
+  static ras_context_s test_ras_ctx;
+  static std::unique_ptr<ras_check_device_status_handler>
+      check_device_status_handler_;
+};
+
+std::unique_ptr<ras_adapter_helper> CheckDeviceStatusUnitTest::adapter_helper_;
+std::unique_ptr<ras_check_device_status_handler>
+    CheckDeviceStatusUnitTest::check_device_status_handler_;
+ras_context_s CheckDeviceStatusUnitTest::test_ras_ctx;
+
+TEST_F(CheckDeviceStatusUnitTest, TestGetDevice) {
+  auto dev1 =
+      test_ras_ctx.monitor_context->get_device_manager()->try_get_device(
+          "dev_bad");
+  ASSERT_TRUE(dev1.has_value());
+  EXPECT_EQ(dev1->get_device_name(), "dev_bad");
+  EXPECT_EQ(dev1->get_device_name_in_adapter(), "dev_bad");
+  auto dev2 =
+      test_ras_ctx.monitor_context->get_device_manager()->try_get_device(
+          "dev_good");
+  ASSERT_TRUE(dev2.has_value());
+  EXPECT_EQ(dev2->get_device_name_in_adapter(), "dev_good");
+}
+
+TEST_F(CheckDeviceStatusUnitTest, CheckNonExistentDeviceGetCommand) {
+  ras_request req(true, &test_ras_ctx, true);
+  req.command_obj["command_name"] = "ras_monitor_check_device_status";
+  auto submit = test_ras_ctx.monitor_context->ras_submit_request(&req);
+  EXPECT_TRUE(submit);
+}
+
+TEST_F(CheckDeviceStatusUnitTest, CheckNonExistentDeviceINvalidCommand) {
+  ras_request req(true, &test_ras_ctx, true);
+  auto res = check_device_status_handler_->validate(req);
+  EXPECT_FALSE(res);
+}
+
+TEST_F(CheckDeviceStatusUnitTest, CheckNonExistentDeviceStatus) {
+  ras_request *req = new ras_request(true, &test_ras_ctx, true);
+  req->command_obj["command_name"] = "ras_monitor_check_device_status";
+  req->command_obj["command_params"]["device_id"] = "non_existent_device";
+  auto res = check_device_status_handler_->validate(*req);
+  EXPECT_TRUE(res);
+  check_device_status_handler_->execute(*req);
+  // EXPECT_FALSE(req.command_obj["result"]["commandSuccessfull"].get<bool>());
+}
+
+TEST_F(CheckDeviceStatusUnitTest, CheckDeviceStatusBadDevice) {
+  ras_request req(true, &test_ras_ctx, true);
+  req.command_obj["command_name"] = "ras_monitor_check_device_status";
+  req.command_obj["command_params"]["device_id"] = "dev_bad";
+  auto res = check_device_status_handler_->validate(req);
+  EXPECT_TRUE(res);
+  check_device_status_handler_->execute(req);
+  EXPECT_TRUE(req.is_successfull);
+}
+
+TEST_F(CheckDeviceStatusUnitTest, CheckDeviceStatusGoodDevice) {
+  ras_request req(true, &test_ras_ctx, true);
+  req.command_obj["command_name"] = "ras_monitor_check_device_status";
+  req.command_obj["command_params"]["device_id"] = "dev_good";
+  auto res = check_device_status_handler_->validate(req);
+  EXPECT_TRUE(res);
+  check_device_status_handler_->execute(req);
+  EXPECT_TRUE(req.is_successfull);
+}
+
+TEST_F(CheckDeviceStatusUnitTest, CheckDeviceStatusInvalidThreshold) {
+  ras_request *req = new ras_request(true, &test_ras_ctx, true);
+  req->command_obj["command_name"] = "ras_monitor_check_device_status";
+  req->command_obj["command_params"]["device_id"] =
+      "dev_invalid_error_count_threshold";
+  auto res = check_device_status_handler_->validate(*req);
+  EXPECT_TRUE(res);
+  check_device_status_handler_->execute(*req);
+  EXPECT_FALSE(req->is_successfull);
+}
+
+TEST_F(CheckDeviceStatusUnitTest, CheckDeviceStatusInvalidErrorCount) {
+  ras_request *req = new ras_request(true, &test_ras_ctx, true);
+  req->command_obj["command_name"] = "ras_monitor_check_device_status";
+  req->command_obj["command_params"]["device_id"] = "dev_error";
+  auto res = check_device_status_handler_->validate(*req);
+  EXPECT_TRUE(res);
+  check_device_status_handler_->execute(*req);
+  EXPECT_FALSE(req->is_successfull);
+}
+
+TEST_F(CheckDeviceStatusUnitTest, CheckDeviceStatusInvalidDevice) {
+  ras_device dev("dev_error", "", true, 50, false, 0, 0,
+                 RAS_DEVICE_DEFAULT_MONITOR_INTERVAL, "ras_adapter_ut", 0);
+
+  bool res = ut_check_device_error_count_threshold_status(&test_ras_ctx, dev);
+  EXPECT_FALSE(res);
 }

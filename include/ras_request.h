@@ -23,7 +23,7 @@ using json = nlohmann::json;
 #define RAS_COMMAND_RESULT_STR "result"
 #define RAS_COMMAND_STATUS_CODE_STR "ras_cmd_status_code"
 #define RAS_COMMAND_STATUS_MESSAGE_STR "ras_cmd_status_str"
-
+#define RAS_COMMAND_DEVICE_ADAPTER_NAME_STR "device_adapter"
 #define RAS_COMMAND_PARAMS_CONFIGURE_OPTIONS_STR "configure_options"
 #define RAS_COMMAND_PARAMS_ERROR_COUNT_THRESHOLD "error_count_threshold"
 
@@ -37,7 +37,8 @@ using json = nlohmann::json;
 #define RAS_DEVICE_DEFAULT_MONITOR_INTERVAL (60)
 class ras_monitor;
 
-struct ras_request {
+class ras_request {
+ public:
   ras_request(bool is_sync_request, struct ras_context_s *ras_context,
               bool is_internal_request = true,
               std::optional<const char *> command_input_cstr = std::nullopt,
@@ -113,6 +114,7 @@ struct ras_request {
   std::condition_variable sync_cv;
 
   void execute_feature_command(void);
+  void execute_internal_command(void);
   std::optional<json> get_command_params_for(
       std::string command_param_to_lookup) const {
     if (!this->command_object_valid()) {
@@ -134,6 +136,7 @@ struct ras_request {
     }
     return params[command_param_to_lookup];
   }
+  friend class RequestHandlerUnitTest;
 
  private:
   bool cmd_obj_valid;
@@ -148,7 +151,9 @@ struct ras_request {
   }
 };
 
+bool ras_submit_timed_request(ras_request *req, int interval);
 void execute_request_by_monitor_(ras_request &req);
+bool ras_submit_timed_request(ras_request *req, int interval);
 std::optional<device_unique_identifier> get_device_identifier_from_request(
     const ras_request &req);
 
@@ -157,4 +162,16 @@ get_numa_node_as_device_identifier_from_request(const ras_request &req);
 
 std::shared_ptr<ras_device_manager> ras_monitor_get_device_manager(
     ras_monitor *m);
+
+ras_request *build_device_monitor_request(ras_context_s *ras_context,
+                                          device_unique_identifier device_name);
+
+namespace cognos::ras {
+class request_helper {
+ public:
+  static void clear_results_from_request(ras_request &request) {
+    request.command_obj[RAS_COMMAND_RESULT_STR].clear();
+  }
+};
+}  // namespace cognos::ras
 #endif  // _RAS_REQUEST__HPP_

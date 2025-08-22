@@ -1,6 +1,8 @@
 #ifndef _RAS_ADD_DEVICE_HANDLER__HPP_
 #define _RAS_ADD_DEVICE_HANDLER__HPP_
 
+#include <fmt/format.h>
+
 #include <iostream>
 #include <memory>
 
@@ -9,7 +11,6 @@
 #include "ras_request.h"
 #include "utils/command_handler.hpp"
 #include "utils/ras_json_validate.hpp"
-
 /**
  * @class add_ras_monitor_for_device_handler
  * @brief Handles the command to add a reliability monitor for a device.
@@ -23,7 +24,7 @@ class add_ras_monitor_for_device_handler
    * @param r The request to be validated.
    * @return True if the request is valid, false otherwise.
    */
-  bool validate(ras_request& r) {
+  bool validate(ras_request &r) {
     // Calling validate_json_request
     bool ret = validate_ras_json_request(r.command_obj[RAS_COMMAND_PARAMS_STR],
                                          required_params);
@@ -39,7 +40,7 @@ class add_ras_monitor_for_device_handler
    *
    * @param r The request to be executed.
    */
-  void execute(ras_request& r) {
+  void execute(ras_request &r) {
     // Get the device manager instance
     auto device_manager =
         ras_monitor_get_device_manager(r.ras_context->monitor_context);
@@ -84,9 +85,12 @@ class add_ras_monitor_for_device_handler
         r.command_obj[RAS_COMMAND_PARAMS_STR]
                      [RAS_COMMAND_PARAMS_CONFIGURE_OPTIONS_STR]
                      [RAS_COMMAND_PARAMS_ERROR_COUNT_THRESHOLD],
-        false, 0, 0, RAS_DEVICE_DEFAULT_MONITOR_INTERVAL, *adapter_name,
+        false, 0, 0, RAS_DEVICE_DEFAULT_MONITOR_INTERVAL, adapter_name.value(),
         r.command_obj[RAS_COMMAND_PARAMS_STR][RAS_COMMAND_DEVICE_NUMA_STR],
         numa_node_identifier);
+
+    device_unique_identifier device_name_in_adapter =
+        dev->get_device_name_in_adapter();
 
     // Attempt to add the device to the device manager
     r.is_successfull =
@@ -99,11 +103,42 @@ class add_ras_monitor_for_device_handler
           RAS_RESULT_CODE_FAILED_STR;
       r.command_obj[RAS_COMMAND_RESULT_STR][RAS_COMMAND_STATUS_MESSAGE_STR] =
           "Failed to add device";
-    } else {
-      // Set the status code to indicate success
-      r.command_obj[RAS_COMMAND_RESULT_STR][RAS_COMMAND_STATUS_CODE_STR] =
-          RAS_RESULT_CODE_SUCCESS_STR;
+      return;
     }
+
+    // Set the status code to indicate success
+    r.command_obj[RAS_COMMAND_RESULT_STR][RAS_COMMAND_STATUS_CODE_STR] =
+        RAS_RESULT_CODE_SUCCESS_STR;
+
+    ras_request *monitor_req =
+        build_device_monitor_request(r.ras_context, device_unique_id.value());
+    if (monitor_req == nullptr) {
+      svk_logger(RAS_LOG, level_E::ERROR,
+                 fmt::format("Failed to build device monitor request for "
+                             "device {} ",
+                             device_unique_id.value())
+                     .c_str());
+      r.mark_request_failed(
+          fmt::format("Failed to start device monitoring for device {} ",
+                      device_unique_id.value()));
+      return;
+    }
+
+    // Execute request in 1 second for the first time
+    bool res = ras_submit_timed_request(monitor_req, 1);
+    if (res == false) {
+      delete monitor_req;
+      r.mark_request_failed(
+          fmt::format("Failed to start device monitoring for device {} ",
+                      device_unique_id.value()));
+      return;
+    }
+    svk_logger(RAS_LOG, level_E::INFO,
+               fmt::format("Started device monitoring for "
+                           "device {} ",
+                           device_unique_id.value())
+                   .c_str());
+
     return;
   }
 

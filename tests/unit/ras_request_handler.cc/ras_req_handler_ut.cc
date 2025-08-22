@@ -1,14 +1,23 @@
 #include <gtest/gtest.h>
 #include <ras_monitor.h>
 
+#include "../tests/unit/include/mock/mock.h"
 #include "svk_logger.hpp"
 #include "utils/logic_module_manager.hpp"
+DEFINE_STUB(publish_data, int,
+            (char* topic, uint8_t* payload_data, uint64_t data_len), 0)
 
 class RequestHandlerUnitTest : public testing::Test {
  protected:
   static void SetUpTestSuite() {
     monitor_instance = std::make_unique<ras_monitor>();
   }
+
+  void ut_req_handler_execute_internal_command(ras_request& req) {
+    req.execute_internal_command();
+    return;
+  }
+
   static std::unique_ptr<ras_monitor> monitor_instance;
 };
 
@@ -177,4 +186,9 @@ TEST_F(RequestHandlerUnitTest, MarkRequestUnsupported) {
   EXPECT_EQ(std::string(req.command_obj[RAS_COMMAND_RESULT_STR]
                                        [RAS_COMMAND_STATUS_MESSAGE_STR]),
             "Command Unsupported");
+}
+
+TEST_F(RequestHandlerUnitTest, InternalRequestFailure) {
+  ras_request req(true, nullptr, false);
+  ut_req_handler_execute_internal_command(req);
 }
