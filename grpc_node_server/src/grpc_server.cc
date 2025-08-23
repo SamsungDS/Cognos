@@ -129,6 +129,36 @@ Servicer::Servicer(const std::string &svk_conf_file) {
   } else {
     svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
                "initialize_svk called successfully");
+    ret_val = -1;
+    if (config.node_name.length()) {
+      ret_val =
+          set_node_name(config.node_name.c_str(), config.node_name.length());
+      logger_str =
+          "Node name " + config.node_name + " is set in the core framework";
+    } else if (config.node_id.length()) {
+      ret_val = set_node_name(config.node_id.c_str(), config.node_id.length());
+      logger_str =
+          "Node name " + config.node_id + " is set in the core framework";
+    }
+    if (ret_val != 0) {
+      svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR,
+                 "Error in setting the node_name or the node_id in the core "
+                 "framework");
+      svk_logger_close(MGMT_FW_LOGGER_MODULE_NAME);
+      m_initialized_flag = false;
+      return;
+    }
+    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+
+    if (config.cluster_id.length()) {
+      ret_val = set_cluster_name(config.cluster_id.c_str(),
+                                 config.cluster_id.length());
+    }
+    if (ret_val == 0) {
+      logger_str =
+          "Cluster name " + config.cluster_id + " is set in the core framework";
+      svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+    }
     m_initialized_flag = true;
   }
 }

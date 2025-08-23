@@ -111,6 +111,104 @@ TEST(InitTest, InitSuccess) {
   unlink(conf_file.c_str());
 }
 
+TEST(InitTest, InitFailureWithoutNodeNameOrID) {
+  char *cw_dir = get_current_dir_name();
+  std::string features_dir = FEATURES_DIR;
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(conf_file, conf_file, "rotating_file", 10,
+                               1048576, "INFO", features_dir);
+  std::ifstream config_file(conf_file);
+  nlohmann::json data = nlohmann::json::parse(config_file);
+  config_file.close();
+  data["svk_mgmt_fw_node"]["node"]["id"] = "";
+
+  std::ofstream outFile(conf_file);
+  outFile << data.dump(4);
+  outFile.close();
+
+  Servicer *svcr(new Servicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_EQ(server, nullptr);
+  unlink(conf_file.c_str());
+}
+
+TEST(InitTest, InitSuccessWithNodeIDOnly) {
+  char *cw_dir = get_current_dir_name();
+  char node_name[256];
+  char cluster_name[256];
+  int node_name_len = 256;
+  int cluster_name_len = 256;
+  std::string features_dir = FEATURES_DIR;
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(conf_file, conf_file, "rotating_file", 10,
+                               1048576, "INFO", features_dir);
+  std::ifstream config_file(conf_file);
+  nlohmann::json data = nlohmann::json::parse(config_file);
+  config_file.close();
+  data["svk_mgmt_fw_node"]["node"]["id"] = "localhost";
+
+  std::ofstream outFile(conf_file);
+  outFile << data.dump(4);
+  outFile.close();
+
+  Servicer *svcr(new Servicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+  ASSERT_EQ(0, get_node_name(node_name, &node_name_len));
+  ASSERT_EQ(0, get_cluster_name(cluster_name, &cluster_name_len));
+  ASSERT_EQ(0, strcmp(node_name, "localhost"));
+  ASSERT_EQ(0, strcmp(cluster_name, "CL_ID_1"));
+  unlink(conf_file.c_str());
+}
+
+TEST(InitTest, InitFailureWithNodeNameOnly) {
+  char *cw_dir = get_current_dir_name();
+  std::string features_dir = FEATURES_DIR;
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(conf_file, conf_file, "rotating_file", 10,
+                               1048576, "INFO", features_dir);
+  std::ifstream config_file(conf_file);
+  nlohmann::json data = nlohmann::json::parse(config_file);
+  config_file.close();
+
+  data["svk_mgmt_fw_node"]["node"]["id"] = "";
+  data["svk_mgmt_fw_node"]["node"]["name"] = "localhost";
+
+  std::ofstream outFile(conf_file);
+  outFile << data.dump(4);
+  outFile.close();
+
+  Servicer *svcr(new Servicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_EQ(server, nullptr);
+  unlink(conf_file.c_str());
+}
+
+TEST(InitTest, InitSuccessWithoutClusterID) {
+  char *cw_dir = get_current_dir_name();
+  char cluster_name[256];
+  int cluster_name_len = 256;
+  std::string features_dir = FEATURES_DIR;
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(conf_file, conf_file, "rotating_file", 10,
+                               1048576, "INFO", features_dir);
+  std::ifstream config_file(conf_file);
+  nlohmann::json data = nlohmann::json::parse(config_file);
+  config_file.close();
+  data["svk_mgmt_fw_node"]["cluster"]["id"] = "";
+
+  std::ofstream outFile(conf_file);
+  outFile << data.dump(4);
+  outFile.close();
+
+  Servicer *svcr(new Servicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+  ASSERT_EQ(0, get_cluster_name(cluster_name, &cluster_name_len));
+  ASSERT_EQ(0, strcmp(cluster_name, ""));
+  unlink(conf_file.c_str());
+}
+
 TEST(InitTest, InitSuccessWithInvalidFeatureDir) {
   char *cw_dir = get_current_dir_name();
   std::string features_dir = (char *)"/tmp/abcd";
