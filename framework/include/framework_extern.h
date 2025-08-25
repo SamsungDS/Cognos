@@ -7,6 +7,32 @@ extern "C" {
 #endif
 
 /**
+ * @brief  Extern function to publish the event data from the feature module.
+ * The core receives the event data and adds header information to the format
+ * {
+ *  "event_header":{
+ *      "cluster_name":"<str>>",
+ *      "node_name":"<str>>"
+ *  },
+ *  "event_payload":{
+ *      "feature-module's key-value data"
+ *  }
+ * }
+ *
+ * @param topic Topic to publish this data for (to which the subscriber
+ * subscribes)
+ * @param feature_module_event_data Feature module's event data which is output
+ * of event_json.dump()
+ * @param data_len Length of the buffer containing the feature_module_event_data
+ *
+ * @return Returns 0 on success or -1 on failure
+ */
+
+extern int publish_event_data_to_core(char *topic,
+                                      uint8_t *feature_module_event_data,
+                                      uint64_t data_len);
+
+/**
  * @brief  Extern function created in the core framework to be used by the
  * feature module. This function gets the node_name updated in the core
  * framework namespace.

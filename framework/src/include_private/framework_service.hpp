@@ -97,6 +97,8 @@ class FrameworkSvc {
   svk_status SetNodeName(const char *node_name, int len);
   svk_status GetClusterName(char *cluster_name, int *len);
   svk_status SetClusterName(const char *cluster_name, int len);
+  std::string get_node_name_str() { return svk_node_name; };
+  std::string get_cluster_name_str() { return svk_cluster_name; };
 };
 
 #endif  // FRAMEWORK_SERVICE_H

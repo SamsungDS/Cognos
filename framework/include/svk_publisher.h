@@ -33,6 +33,9 @@ int initialize_publisher(const char* config_json_file);
 /**
  * @brief Publish the data with the given topic.
  *
+ * TODO: Need to add support where the function expects total event data
+ * (event_header + event_payload) as part of payload_data
+ *
  * @param topic Topic for the subscriber to receive data
  * @param payload_data Payload data buffer pointer
  * @param data_len Data length of the payload
