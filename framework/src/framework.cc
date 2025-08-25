@@ -969,3 +969,50 @@ extern "C" svk_status get_cluster_name(char *cluster_name, int *len) {
   status = g_fw_service->GetClusterName(cluster_name, len);
   return status;
 }
+
+extern "C" int publish_event_data_to_core(char *topic,
+                                          uint8_t *feature_module_event_data,
+                                          uint64_t data_len) {
+  using json = nlohmann::json;
+  json event_data;
+  json event_header;
+  json event_payload;
+  std::string data_str;
+  int status = -1;
+
+  if (topic == nullptr || feature_module_event_data == nullptr ||
+      data_len == 0) {
+    svk_logger(CORE_LOGGER_NAME, level_E::ERROR,
+               "One of the input args is invalid");
+    return status;
+  }
+
+  if (g_fw_service->get_node_name_str().length() == 0) {
+    svk_logger(CORE_LOGGER_NAME, level_E::ERROR,
+               "Node name is not configured in the core framework yet. Cannot "
+               "publish event");
+    return status;
+  }
+
+  event_header["node_name"] = g_fw_service->get_node_name_str();
+  event_header["cluster_name"] = g_fw_service->get_cluster_name_str();
+
+  try {
+    event_payload =
+        json::parse(std::string((char *)feature_module_event_data, data_len));
+
+    event_data["event_header"] = event_header;
+    event_data["event_payload"] = event_payload;
+
+    data_str = event_data.dump();
+  } catch (std::exception &e) {
+    std::string log_msg = "Unable to parse or dump the json data. Error -> " +
+                          std::string(e.what());
+    svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg.c_str());
+    return status;
+  }
+  svk_logger(CORE_LOGGER_NAME, level_E::TRACE, data_str.c_str());
+
+  status = publish_data(topic, (uint8_t *)data_str.c_str(), data_str.length());
+  return status;
+}

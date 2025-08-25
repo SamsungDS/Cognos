@@ -5,6 +5,7 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <nlohmann/json.hpp>
 
 #include "framework_service.hpp"
 #include "framework_upstream.h"
@@ -932,6 +933,154 @@ TEST(ExecTest, ExecuteSyncFail) {
   EXPECT_EQ(SVK_STATUS_FAIL, test_fwsvc1.FrameworkSvcProcessCommand(
                                  &pass_thru, &input, &output, nullptr));
   test_fwsvc1.FrameworkSvcCleanup((void *)conf.c_str());
+}
+
+TEST(ExecTest, ExecuteSyncWithPublishEvent) {
+  char buff[FILENAME_MAX];
+  getcwd(buff, FILENAME_MAX);
+  std::string current_working_dir(buff);
+
+  // Using relative path to config in SVK core for testing
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
+
+  std::ifstream config_file(conf);
+  nlohmann::json orig_data = nlohmann::json::parse(config_file);
+  nlohmann::json data = orig_data;
+  config_file.close();
+  data["core"]["logger"]["log_level"] = "TRACE";
+
+  std::ofstream outFile(conf);
+  outFile << data.dump(2);
+  outFile.close();
+
+  svk_device_ctx ctx;
+  EXPECT_EQ(0, initialize_svk(conf.c_str(), (void *)&ctx));
+
+  svk_pass_thru_cmd pass_thru;
+  std::string feature_name = "new_sample_feature";
+  // Send null-terminated string
+  pass_thru.out_format = (void *)feature_name.c_str();
+  pass_thru.len = feature_name.length() + 1;
+
+  set_node_name("node1", strlen("node1"));
+  set_cluster_name("cluster1", strlen("cluster1"));
+
+  svk_input input;
+  std::string input_str = "PublishEvent";
+  input.input_buffer = (uint8_t *)input_str.c_str();
+  input.len = input_str.length();
+
+  svk_output output;
+  output.output_buffer = (uint8_t *)malloc(256);
+  output.len = 256;
+  EXPECT_EQ(0, execute_svk_feature_sync(&pass_thru, &input, &output));
+  std::string search_str =
+      "{\"event_header\":{\"cluster_name\":\"cluster1\",\"node_name\":"
+      "\"node1\"},\"event_payload\":{\"output_key\":\"output_value\"}}";
+  EXPECT_TRUE(is_str_in_log(search_str));
+  cleanup_svk(&ctx, (void *)conf.c_str());
+  free(output.output_buffer);
+  outFile.open(conf, std::ios_base::out | std::ios_base::trunc);
+  ASSERT_EQ(true, outFile.is_open());
+  outFile << orig_data.dump(2);
+  outFile.close();
+}
+
+TEST(ExecTest, ExecuteSyncWithPublishEventFailureWithoutNodeNameSet) {
+  char buff[FILENAME_MAX];
+  getcwd(buff, FILENAME_MAX);
+  std::string current_working_dir(buff);
+
+  // Using relative path to config in SVK core for testing
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
+
+  svk_device_ctx ctx;
+  EXPECT_EQ(0, initialize_svk(conf.c_str(), (void *)&ctx));
+
+  svk_pass_thru_cmd pass_thru;
+  std::string feature_name = "new_sample_feature";
+  // Send null-terminated string
+  pass_thru.out_format = (void *)feature_name.c_str();
+  pass_thru.len = feature_name.length() + 1;
+
+  // Node Name is not set. The PublishEvent should return failure
+  svk_input input;
+  std::string input_str = "PublishEvent";
+  input.input_buffer = (uint8_t *)input_str.c_str();
+  input.len = input_str.length();
+
+  svk_output output;
+  output.output_buffer = (uint8_t *)malloc(256);
+  output.len = 256;
+  EXPECT_NE(0, execute_svk_feature_sync(&pass_thru, &input, &output));
+  cleanup_svk(&ctx, (void *)conf.c_str());
+  free(output.output_buffer);
+}
+
+TEST(ExecTest, ExecuteSyncWithInvalidJSONData) {
+  char buff[FILENAME_MAX];
+  getcwd(buff, FILENAME_MAX);
+  std::string current_working_dir(buff);
+
+  // Using relative path to config in SVK core for testing
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
+  svk_device_ctx ctx;
+  EXPECT_EQ(0, initialize_svk(conf.c_str(), (void *)&ctx));
+
+  svk_pass_thru_cmd pass_thru;
+  std::string feature_name = "new_sample_feature";
+  // Send null-terminated string
+  pass_thru.out_format = (void *)feature_name.c_str();
+  pass_thru.len = feature_name.length() + 1;
+
+  set_node_name("node1", strlen("node1"));
+  set_cluster_name("cluster1", strlen("cluster1"));
+
+  svk_input input;
+  std::string input_str = "InvalidJSONData";
+  input.input_buffer = (uint8_t *)input_str.c_str();
+  input.len = input_str.length();
+
+  svk_output output;
+  output.output_buffer = (uint8_t *)malloc(256);
+  output.len = 256;
+  EXPECT_NE(0, execute_svk_feature_sync(&pass_thru, &input, &output));
+  std::string search_str = "Unable to parse or dump the json data";
+  EXPECT_TRUE(is_str_in_log(search_str));
+  cleanup_svk(&ctx, (void *)conf.c_str());
+  free(output.output_buffer);
+}
+
+TEST(ExecTest, ExecuteSyncForPublishEventFailureCheck) {
+  char buff[FILENAME_MAX];
+  getcwd(buff, FILENAME_MAX);
+  std::string current_working_dir(buff);
+
+  // Using relative path to config in SVK core for testing
+  std::string conf = TEST_CONFIG_DIR + std::string("/test_config.json");
+  svk_device_ctx ctx;
+  EXPECT_EQ(0, initialize_svk(conf.c_str(), (void *)&ctx));
+
+  svk_pass_thru_cmd pass_thru;
+  std::string feature_name = "new_sample_feature";
+  // Send null-terminated string
+  pass_thru.out_format = (void *)feature_name.c_str();
+  pass_thru.len = feature_name.length() + 1;
+
+  set_node_name("node1", strlen("node1"));
+  set_cluster_name("cluster1", strlen("cluster1"));
+
+  svk_input input;
+  std::string input_str = "FailureCheckForEvent";
+  input.input_buffer = (uint8_t *)input_str.c_str();
+  input.len = input_str.length();
+
+  svk_output output;
+  output.output_buffer = (uint8_t *)malloc(256);
+  output.len = 256;
+  EXPECT_NE(0, execute_svk_feature_sync(&pass_thru, &input, &output));
+  cleanup_svk(&ctx, (void *)conf.c_str());
+  free(output.output_buffer);
 }
 
 TEST(ExecTest, ExecuteAsyncSuccess) {
