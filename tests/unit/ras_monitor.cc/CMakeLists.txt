@@ -8,7 +8,11 @@ ras_monitor_ut.cc
 )
 add_executable(${RAS_MONITOR_UT} ${RAS_MONITOR_UT_SOURCES})
 add_dependencies(${RAS_MONITOR_UT} rte_ring)
-target_include_directories(${RAS_MONITOR_UT} PUBLIC ${CMAKE_SOURCE_DIR}/src/utils/rte_ring ${CMAKE_SOURCE_DIR}/include)
+target_include_directories(${RAS_MONITOR_UT} PUBLIC 
+    ${CMAKE_SOURCE_DIR}/src/utils/rte_ring 
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/tests/unit/include
+    )
 target_link_directories(${RAS_MONITOR_UT} PUBLIC ${SVKFW_LIBRARY_DIRS})
 
 

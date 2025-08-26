@@ -5,10 +5,11 @@
 
 #include "chrono"
 #include "fmt/format.h"
+#include "framework_extern.h"
 #include "ras_exports.h"
 #include "string"
 #include "svk_logger.h"
-#include "svk_publisher.h"
+
 namespace cognos::ras::publisher {
 static const std::string ras_err_threshold_warning_template = R"(
     {{
@@ -32,9 +33,10 @@ static int send_ras_threshold_warning_event(const std::string &device_id,
   std::string event_json = fmt::format(
       ras_err_threshold_warning_template, fmt::arg("device_id", device_id),
       fmt::arg("timestamp", time_stamp), fmt::arg("message", message));
-  int rc = publish_data((char *)"ras", (uint8_t *)event_json.c_str(),
-                        (uint64_t)event_json.size());
-  if (!rc) {
+  int rc = publish_event_data_to_core((char *)"alerts",
+                                      (uint8_t *)event_json.c_str(),
+                                      (uint64_t)event_json.size());
+  if (rc) {
     svk_logger(
         RAS_LOGGER, level_E::ALERT,
         fmt::format("Failed to publish RAS event", device_id, message).c_str());

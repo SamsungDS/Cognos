@@ -2,10 +2,9 @@
 #include <ras_monitor.h>
 
 #include "../tests/unit/include/mock/mock.h"
+#include "mock/mock_svk_publisher.h"
 #include "svk_logger.hpp"
 #include "utils/logic_module_manager.hpp"
-DEFINE_STUB(publish_data, int,
-            (char* topic, uint8_t* payload_data, uint64_t data_len), 0)
 
 class RequestHandlerUnitTest : public testing::Test {
  protected:
