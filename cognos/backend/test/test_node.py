@@ -26,9 +26,6 @@ def test_node_init(mock_sqlite_client):
 
 
 def test_insert_node_into_hosts_table(mock_sqlite_client):
-    mock_sqlite_client.cursor.execute.return_value = True
-    mock_sqlite_client.connection.commit.return_value = True
-
     node_name = DUMMY_NODE_INFO["node_name"]
     fm_type = DUMMY_NODE_INFO["fm_type"]
     mem_capacity = DUMMY_NODE_INFO["mem_capacity"]

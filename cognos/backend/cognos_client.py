@@ -4,6 +4,8 @@ import os
 import requests
 import socket
 import sys
+import time
+from pathlib import Path
 from typing import Callable, List, Dict
 from cognos.backend.base_control_interface import BaseControlInterface
 
@@ -37,7 +39,8 @@ class Cognos(BaseControlInterface):
             "Content-Type": "application/json"
         }
         self.logger = logger
-        self.sql_client = SqliteClient(mock=mock)
+
+        self.sql_client = SqliteClient(mock=mock, logger=self.logger)
         self.remote_node_client = RemoteAttachedNodeInterface()
         self.direct_node_client = DirectAttachedNodeInterface()
 
@@ -58,53 +61,6 @@ class Cognos(BaseControlInterface):
         self.cognos_system = {}  # { cluster_name: {node_name: [device_id]} }
         self._initialize_cognos()
         self.logger.info("Successfully initialized Cognos..")
-
-    def _create_schema(self) -> None:
-        """
-        Initializes tables used to track Cognos
-        relationships and metadata
-        """
-        # create devices table
-        create_device_table_query = (
-            "CREATE TABLE IF NOT EXISTS devices ("
-            "id BIGINT UNSIGNED NOT NULL, "
-            "mem_capacity BIGINT UNSIGNED, "
-            "port INT UNSIGNED, "
-            "type VARCHAR(32), "
-            "mode VARCHAR(15), "
-            "name VARCHAR(32), "
-            "PRIMARY KEY (id)"
-            ");"
-        )
-        self.sql_client.execute_query(create_device_table_query)
-        self.sql_client.table_description("devices")
-
-        # create hosts table
-        create_hosts_table_query = (
-            "CREATE TABLE IF NOT EXISTS hosts ("
-            "node_name VARCHAR(255) NOT NULL, "
-            "fm_type VARCHAR(32), "
-            "mem_capacity BIGINT UNSIGNED, "
-            "target_ports VARCHAR(64), "
-            "ip_addr VARCHAR(32), "
-            "hostname VARCHAR(255), "
-            "remote_id BIGINT UNSIGNED, "
-            "PRIMARY KEY (node_name)"
-            ");"
-        )
-        self.sql_client.execute_query(create_hosts_table_query)
-        self.sql_client.table_description("hosts")
-
-        # create connections table
-        create_connection_table_query = (
-            "CREATE TABLE IF NOT EXISTS connections ("
-            "cluster_name VARCHAR(64), "
-            "node_name VARCHAR(255), "
-            "device_id BIGINT UNSIGNED "
-            ");"
-        )
-        self.sql_client.execute_query(create_connection_table_query)
-        self.sql_client.table_description("connections")
 
     def _remove_connection(self, cluster_name: str, node_name: str,
                            dev_id: int) -> None:
@@ -136,13 +92,6 @@ class Cognos(BaseControlInterface):
 
         Refer to dbschema.md for what type of information is stored
         """
-        try:
-            self._create_schema()
-            self.logger.info("Created Cognos SQLITE Schema..")
-        except Exception as e:
-            self.logger.critical(f"Unable to create SQLITE Schema: {str(e)}")
-            sys.exit()
-
         try:
             self._initialize_hosts_devices()
             self.logger.info(
@@ -178,11 +127,22 @@ class Cognos(BaseControlInterface):
 
         Refer to dbschema.md for what type of information is stored
         """
+        self.logger.info(f"COGNOS SYSTEM: {self.cognos_system}")
         # update connections table
         for cluster in self.cognos_system.keys():
             for node in self.cognos_system[cluster]:
+                # add cluster node connection
+                self.logger.info(f"Adding Cluster Node connection")
+                self.logger.info(
+                    f"cluster_name: {cluster} "
+                    f"node_name: {node} "
+                )
+                self.sql_client.execute_query(
+                    "INSERT INTO connections "
+                    "(cluster_name, node_name) "
+                    f"VALUES ('{cluster}', '{node}')"
+                )
                 for device in self.cognos_system[cluster][node]:
-
                     # check to see if current node is direct attached
                     direct_node = (
                         True
@@ -205,20 +165,24 @@ class Cognos(BaseControlInterface):
                             ]
                         )
                         if device in attached_remote_device_ids:
+                            self.logger.info(f"Adding remote dev connection")
+                            self.logger.info(
+                                f"cluster_name: {cluster} "
+                                f"node_name: {node} "
+                                f"device: {device}"
+                            )
                             self.sql_client.execute_query(
                                 "INSERT INTO connections "
                                 "(cluster_name, node_name, device_id) "
                                 f"VALUES ('{cluster}', '{node}', {device})"
                             )
-                        else:
-                            # we still need to add the node
-                            # <--> cluster connection when device not attached
-                            self.sql_client.execute_query(
-                                "INSERT INTO connections "
-                                "(cluster_name, node_name) "
-                                f"VALUES ('{cluster}', '{node}')"
-                            )
                     else:
+                        self.logger.info(f"Adding direct dev connection")
+                        self.logger.info(
+                            f"cluster_name: {cluster} "
+                            f"node_name: {node} "
+                            f"device: {device}"
+                        )
                         # direct attached node, log connection
                         self.sql_client.execute_query(
                             "INSERT INTO connections "
@@ -611,20 +575,7 @@ class Cognos(BaseControlInterface):
                 return []
         return []
 
-    def host_devices(self, manual_call=False, input_host=None) -> List[Dict]:
-        """
-        Returns all attached devices, direct or remote, of a given host
-
-        Input host may be given directly from a request argument or manually
-        with a function call
-        """
-        request_data = request.get_json()
-        host = request_data["host"] if not manual_call else input_host
-
-        # check if default selection
-        if host == 'Select Host':
-            return []
-
+    def get_host_devices_from_db(self, host):
         node_name = self.sql_client.exec_fetch_singlerecord_query(
             "SELECT node_name FROM hosts WHERE hostname = ?",
             (host,)
@@ -636,6 +587,9 @@ class Cognos(BaseControlInterface):
             ");",
             (node_name,)
         )
+
+        if not host_devices:
+            return []
 
         payload = []
         for dev in host_devices:
@@ -649,6 +603,21 @@ class Cognos(BaseControlInterface):
             }
             payload.append(device_info)
         return payload
+
+    def host_devices(self) -> List[Dict]:
+        """
+        Returns all attached devices, direct or remote, of a given host
+
+        Input host is given directly as part of request args
+        """
+        request_data = request.get_json()
+        host = request_data["host"]
+
+        # check if default selection
+        if host == 'Select Host':
+            return []
+
+        return self.get_host_devices_from_db(host)
 
     def create_cluster(self):
         pass
@@ -667,15 +636,7 @@ class Cognos(BaseControlInterface):
         )
         return payload
 
-    def detach_remote_device(self) -> List[Dict]:
-        """
-        Performs Detach Operation and returns all associated
-        devices with the host along with the device metadata
-        """
-        request_data = request.get_json()
-        hostname = request_data["host_name"]
-        dev_name = request_data["dev_name"]
-
+    def get_remote_node_client_req_args(self, hostname, dev_name):
         node_name = self.sql_client.exec_fetch_singlerecord_query(
             "SELECT node_name FROM hosts WHERE hostname = ?",
             (hostname,)
@@ -693,13 +654,34 @@ class Cognos(BaseControlInterface):
             (dev_name,)
         )
 
+        self.logger.info(
+            f"node_name: {node_name}"
+            f"cluster_name: {cluster_name}"
+            f"host_id: {host_id}"
+            f"dev_id: {dev_id}"
+        )
+        return node_name, cluster_name, host_id, dev_id
+
+    def detach_remote_device(self) -> List[Dict]:
+        """
+        Performs Detach Operation and returns all associated
+        devices with the host along with the device metadata
+        """
+        request_data = request.get_json()
+        hostname = request_data["host_name"]
+        dev_name = request_data["dev_name"]
+
+        node_name, cluster_name, host_id, dev_id = (
+            self.get_remote_node_client_req_args(hostname, dev_name)
+        )
+
         # validate request args
         if any(
                 arg is None for arg in
                 [node_name, cluster_name, host_id, dev_id]
                 ):
-            print("Empty request args for detach operation")
-            return self.host_devices(manual_call=True, input_host=hostname)
+            self.logger.critical("Empty request args for detach operation")
+            return self.get_host_devices_from_db(hostname)
 
         detached_success = self.remote_node_client.detach_device(
             node_name, cluster_name, host_id, dev_id
@@ -709,9 +691,9 @@ class Cognos(BaseControlInterface):
             # detach successful, remove connection
             self._remove_connection(cluster_name, node_name, dev_id)
             # return updated attached host devices
-            return self.host_devices(manual_call=True, input_host=hostname)
-        print("Detach operation failed")
-        return self.host_devices(manual_call=True, input_host=hostname)
+            return self.get_host_devices_from_db(hostname)
+        self.logger.critical("Detach operation failed")
+        return self.get_host_devices_from_db(hostname)
 
     def attach_remote_device(self) -> List[Dict]:
         """
@@ -722,21 +704,8 @@ class Cognos(BaseControlInterface):
         hostname = request_data["host_name"]
         dev_name = request_data["dev_name"]
 
-        node_name = self.sql_client.exec_fetch_singlerecord_query(
-            "SELECT node_name FROM hosts WHERE hostname = ?",
-            (hostname,)
-        )
-        cluster_name = self.sql_client.exec_fetch_singlerecord_query(
-            "SELECT cluster_name FROM connections WHERE node_name = ?",
-            (node_name,)
-        )
-        host_id = self.sql_client.exec_fetch_singlerecord_query(
-            "SELECT remote_id FROM hosts WHERE hostname = ?",
-            (hostname,)
-        )
-        dev_id = self.sql_client.exec_fetch_singlerecord_query(
-            "SELECT id FROM devices WHERE name = ?",
-            (dev_name,)
+        node_name, cluster_name, host_id, dev_id = (
+            self.get_remote_node_client_req_args(hostname, dev_name)
         )
 
         # validate request args
@@ -744,8 +713,8 @@ class Cognos(BaseControlInterface):
                 arg is None for arg in
                 [node_name, cluster_name, host_id, dev_id]
                 ):
-            print("Empty request args for attach operation")
-            return self.host_devices(manual_call=True, input_host=hostname)
+            self.logger.critical("Empty request args for attach operation")
+            return self.get_host_devices_from_db(hostname)
 
         attached_success = self.remote_node_client.attach_device(
             node_name, cluster_name, host_id, dev_id
@@ -755,9 +724,9 @@ class Cognos(BaseControlInterface):
             # attach successful, add connection
             self._add_connection(cluster_name, node_name, dev_id)
             # return updated attached host devices
-            return self.host_devices(manual_call=True, input_host=hostname)
-        print("Attach operation failed")
-        return self.host_devices(manual_call=True, input_host=hostname)
+            return self.get_host_devices_from_db(hostname)
+        self.logger.critical("Attach operation failed")
+        return self.get_host_devices_from_db(hostname)
 
     def get_metrics(self) -> List:
         """

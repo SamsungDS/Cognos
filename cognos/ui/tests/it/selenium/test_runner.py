@@ -23,7 +23,6 @@ class TestSuite(unittest.TestCase):
             TestConfigure))
         suite.addTests(unittest.TestLoader().loadTestsFromTestCase(
             TestMetrics))
-        """
         suite.addTest(TestMutable(
             "test_device_detachment"))
         suite.addTest(TestMutable(
@@ -36,7 +35,6 @@ class TestSuite(unittest.TestCase):
             "test_combination_of_Attach_Detach"))
         suite.addTest(TestMutableCombinations(
             "test_combination_of_Attach_Attach"))
-        """
         suite.addTests(unittest.TestLoader().loadTestsFromTestCase(
             FrequentPageSwitchTest))
         suite.addTests(unittest.TestLoader().loadTestsFromTestCase(

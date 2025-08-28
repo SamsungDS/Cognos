@@ -183,7 +183,8 @@ def mock_subscription(mock_file, interval, stop_condition=None) -> None:
         print("DataFrame is empty, no data to send to InfluxDB!")
         return
     # Create an instance of CognosInfluxDBClient
-    dbobj = CognosInfluxDBClient()
+    sql_client = SqliteClient(in_mem=True)
+    dbobj = CognosInfluxDBClient(sql_client)
 
     # Set the default stop_condition to an always False condition
     stop_condition = stop_condition or (lambda: False)
@@ -231,7 +232,7 @@ def zeromq_subscription(
     socket.setsockopt_string(zmq.SUBSCRIBE, topic)
 
     # Create an instance of CognosInfluxDBClient
-    sql_client = SqliteClient()
+    sql_client = SqliteClient(in_mem=True)
     db_client = CognosInfluxDBClient(sql_client)
 
     # Set the default stop_condition to always False if none is provided

@@ -65,3 +65,15 @@ def test_get_devices_endpoint(test_client, mocker):
     with test_client.test_request_context(f"/api/{CAL_API_VERSION}/devices",
                                           method='GET'):
         assert request.path == f"/api/{CAL_API_VERSION}/devices"
+
+
+def test_init_sqlite_db_file():
+    app.init_sqlite_db_file()
+
+
+def test_init_cognos_db():
+    app.init_cognos_db(mock=True)
+
+
+def test_clear_cognos_db():
+    app.clear_cognos_db(mock=True)

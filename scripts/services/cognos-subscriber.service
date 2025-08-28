@@ -1,6 +1,7 @@
 [Unit]
 Description=Cognos Subscriber
-After=influxdb.service network.target
+After=influxdb.service network.target cognos-app.service
+Requires=cognos-app.service
 
 [Service]
 SyslogIdentifier=Cognos Subscriber
@@ -8,6 +9,7 @@ WorkingDirectory=/usr/local/svk/svk-app/cognos
 EnvironmentFile=/usr/local/svk/svk-app/cognos.config
 KillMode=control-group
 Restart=on-failure
+ExecStartPre=/bin/sleep 5
 ExecStart=/bin/bash -c '\
   if [ "${MODE}" = "mock" ]; then \
     /usr/local/svk/svk-app/env/bin/python3 subscriber/sub_client.py \

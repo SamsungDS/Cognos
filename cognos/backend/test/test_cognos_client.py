@@ -3,6 +3,7 @@ import logging
 import pytest
 import socket
 import sqlparse
+import sqlite3
 
 from requests.models import Response
 from cognos.backend.cognos_client import Cognos
@@ -41,15 +42,6 @@ def test_cognos_endpoint(mocker):
     assert cognos.cognos_endpoint is not None
 
 
-def test_create_schema(mocker):
-    mocker.patch(
-        'cognos.backend.cognos_client.Cognos._initialize_cognos',
-        return_value=True
-    )
-    cognos = Cognos(CAL_LOGGER, mock=True)
-    cognos._create_schema()
-
-
 def test_initialize_connections(mocker):
     mocker.patch(
         'cognos.backend.cognos_client.Cognos._initialize_cognos',
@@ -65,9 +57,32 @@ def test_initialize_connections(mocker):
         ".list_devices",
         return_value=DUMMY_REMOTE_LIST_DEVICES_OUTPUT
     )
+
     cognos = Cognos(CAL_LOGGER, mock=True)
     cognos.cognos_system = {
-        "CL_ID_1": {"node1": [12345]}
+        "CL_ID_1": {"node2": [549755813888]}
+    }
+    cognos._initialize_connections()
+
+
+def test_initialize_connections_direct_devices(mocker):
+    mocker.patch(
+        'cognos.backend.cognos_client.Cognos._initialize_cognos',
+        return_value=True
+    )
+    mocker.patch(
+        "cognos.backend.direct_node_interface.DirectAttachedNodeInterface"
+        ".list_devices",
+        return_value=True
+    )
+    mocker.patch(
+        "cognos.backend.remote_node_interface.RemoteAttachedNodeInterface"
+        ".list_devices",
+        return_value=DUMMY_REMOTE_LIST_DEVICES_OUTPUT
+    )
+    cognos = Cognos(CAL_LOGGER, mock=True)
+    cognos.cognos_system = {
+        "CL_ID_1": {"node2": [549755813888]}
     }
     cognos._initialize_connections()
 
@@ -377,6 +392,23 @@ def test_get_nodes(mocker):
     cognos.get_nodes()
 
 
+def test_get_remote_node_client_req_args(mocker):
+    sqlite_module_path = (
+        'cognos.backend.sqlite_client.'
+        'SqliteClient.exec_fetch_singlerecord_query'
+    )
+    mocker.patch(
+        sqlite_module_path,
+        return_value="dummy_val"
+    )
+    mocker.patch(
+        'cognos.backend.cognos_client.Cognos._initialize_cognos',
+        return_value=True
+    )
+    cognos = Cognos(CAL_LOGGER, mock=True)
+    cognos.get_remote_node_client_req_args("dummy_host", "dummy_device")
+
+
 def test_get_remote_devices(mocker):
     dummy_db_lookup = [
         [4324223, 654642456, 10, "cmmd", "host1", "dev1"],
@@ -649,6 +681,35 @@ def test_get_metrics(test_client, mocker):
     )
 
 
+def test_get_host_devices_from_db(mocker):
+    dummy_node = "nodex"
+    dummy_db_lookup = [[
+        43122,
+        7657565663,
+        10,
+        'CMM-D',
+        'Direct',
+        'DEV-10'
+    ]]
+    mocker.patch(
+        (
+            'cognos.backend.sqlite_client.SqliteClient'
+            '.exec_fetch_singlerecord_query'
+         ),
+        return_value=dummy_node
+    )
+    mocker.patch(
+        'cognos.backend.sqlite_client.SqliteClient.exec_fetch_query',
+        return_value=dummy_db_lookup
+    )
+    mocker.patch(
+        'cognos.backend.cognos_client.Cognos._initialize_cognos',
+        return_value=True
+    )
+    cognos = Cognos(CAL_LOGGER, mock=True)
+    cognos.get_host_devices_from_db("dummy_host")
+
+
 # TODO: resolve sonar cloud issue in pipeline for not counting request context
 # def test_host_devices(mocker, test_client):
 #     mocker.patch(
@@ -673,4 +734,4 @@ def test_get_metrics(test_client, mocker):
 #         return_value=True
 #     )
 #     cognos = Cognos(mock=True)
-#     cognos.host_devices(manual_call=True, input_host=input_host)
+#     cognos.host_devices(input_host=input_host)

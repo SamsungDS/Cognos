@@ -1,8 +1,10 @@
 from flask import Flask, request
 import click
 import logging
+from pathlib import Path
 import os
 import sys
+import time
 from flask_cors import CORS
 
 sys.path.append(
@@ -14,6 +16,7 @@ sys.path.append(
 import cognos.backend.helper as helper
 from cognos.backend.cognos_client import Cognos
 from cognos.backend.logger import create_logger
+from cognos.backend.sqlite_client import SqliteClient
 
 
 current_script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -231,11 +234,90 @@ def validate_ssl_enabled():
     return ssl_flag and os.path.exists(ssl_cert) and os.path.exists(ssl_key)
 
 
+def init_sqlite_db_file(svk_data_path="/var/lib/svk"):
+    # create Cognos.db file, only to be created by cognos-app service
+    db_file = svk_data_path + os.sep + 'cognos.db'
+    db_file_path = Path(db_file)
+
+    # create data directory
+    if not os.path.exists(svk_data_path):
+        os.makedirs(svk_data_path)
+
+    # create DB file
+    if not os.path.exists(db_file):
+        db_file_path.touch(exist_ok=True)
+
+
+def clear_cognos_db(mock=False):
+    sql_client = SqliteClient(mock=mock, logger=CAL_LOGGER)
+    with sql_client.get_sqlite_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE;")
+        try:
+            conn.executescript(
+                "DROP TABLE IF EXISTS devices;"
+                "DROP TABLE IF EXISTS hosts;"
+                "DROP TABLE IF EXISTS connections;"
+            )
+            conn.commit()
+            time.sleep(0.5)
+        except Exception as error:
+            CAL_LOGGER.critical("Unable to clear Cognos DB tables..")
+            conn.rollback()
+            raise
+
+
+def init_cognos_db(mock=False):
+    sql_client = SqliteClient(mock=mock, logger=CAL_LOGGER)
+
+    with sql_client.get_sqlite_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE;")
+        try:
+            conn.executescript(
+                "CREATE TABLE IF NOT EXISTS devices ("
+                "id BIGINT UNSIGNED NOT NULL, "
+                "mem_capacity BIGINT UNSIGNED, "
+                "port INT UNSIGNED, "
+                "type VARCHAR(32), "
+                "mode VARCHAR(15), "
+                "name VARCHAR(32), "
+                "PRIMARY KEY (id)"
+                ");"
+                "CREATE TABLE IF NOT EXISTS connections ("
+                "cluster_name VARCHAR(64), "
+                "node_name VARCHAR(255), "
+                "device_id BIGINT UNSIGNED"
+                ");"
+                "CREATE TABLE IF NOT EXISTS hosts ("
+                "node_name VARCHAR(255) NOT NULL, "
+                "fm_type VARCHAR(32), "
+                "mem_capacity BIGINT UNSIGNED, "
+                "target_ports VARCHAR(64), "
+                "ip_addr VARCHAR(32), "
+                "hostname VARCHAR(255), "
+                "remote_id BIGINT UNSIGNED, "
+                "PRIMARY KEY (node_name)"
+                ");"
+            )
+            conn.commit()
+            time.sleep(0.5)
+        except Exception:
+            CAL_LOGGER.critical("Unable to create Cognos DB schema..")
+            conn.rollback()
+            raise
+        finally:
+            sql_client.table_description("devices")
+            sql_client.table_description("hosts")
+            sql_client.table_description("connections")
+
+
 @click.command()
 @click.option("--mock", "-m", is_flag=True, help="mock mode")
 @click.option("--host", "-h", required=True, help="IP of host of CAL")
 @click.option("--port", "-p", required=True, help="Port to run CAL on")
 def main(mock, host, port):
+    init_sqlite_db_file()
+    clear_cognos_db(mock=mock)
+    init_cognos_db(mock=mock)
     app = create_app(mock)
 
     if validate_ssl_enabled():

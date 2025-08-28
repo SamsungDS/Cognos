@@ -56,11 +56,39 @@ def mock_sqlite_connection(mocker):
         "sqlite3.connect",
         return_value=mock_conn
     )
+    return mock_conn
 
 
 @pytest.fixture
-def mock_sqlite_client(mock_sqlite_connection):
-    return SqliteClient(svk_data_path=os.getcwd())
+def mock_sqlite_connection_bad_commit(mocker):
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+    mocker.patch(
+        "sqlite3.connect",
+        return_value=mock_conn
+    )
+    mock_conn.commit.side_effect = Exception("General Exception")
+    return mock_conn
+
+
+@pytest.fixture
+def mock_sqlite_client(mock_sqlite_connection, mock_logger):
+    return SqliteClient(svk_data_path=os.getcwd(), logger=mock_logger)
+
+
+@pytest.fixture
+def mock_sqlite_db():
+    svk_data_path = "/var/lib/svk"
+    db_file = svk_data_path + os.sep + 'cognos.db'
+    db_file_path = Path(db_file)
+
+    if not os.path.exists(svk_data_path):
+        # create data directory
+        os.makedirs(svk_data_path)
+
+    if not os.path.exists(db_file):
+        db_file_path.touch(exist_ok=True)
 
 
 @pytest.fixture
@@ -109,6 +137,7 @@ def scmc_version_file():
     os.remove(scmc_version_path)
 
 
+@pytest.fixture
 def mock_logger(mocker):
     mock_logger = mocker.patch('logging.getLogger')
     return mock_logger

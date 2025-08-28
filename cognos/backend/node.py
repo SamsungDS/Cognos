@@ -33,12 +33,18 @@ class Node():
         """
         Serializes Node Object and inserts it into hosts table
         """
-        self.sql_client.cursor.execute(
-            "INSERT INTO hosts "
-            "(node_name, fm_type, mem_capacity, target_ports, "
-            "ip_addr, hostname, remote_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (self.node_name, self.fm_type, self.mem_capacity,
-             self.target_ports, self.ip_addr, self.hostname, self.remote_id)
-        )
-        self.sql_client.connection.commit()
+        with self.sql_client.get_sqlite_connection() as conn:
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT INTO hosts "
+                    "(node_name, fm_type, mem_capacity, target_ports, "
+                    "ip_addr, hostname, remote_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (self.node_name, self.fm_type, self.mem_capacity,
+                     self.target_ports, self.ip_addr, self.hostname,
+                     self.remote_id)
+                )
+                conn.commit()
+            except Exception as error:
+                print(f"Failed to insert node into hosts table: {str(error)}")
