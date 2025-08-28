@@ -35,6 +35,6 @@ class CognosPages(unittest.TestCase):
 
     def test_about_page_click(self):
         self.utils.click_element_and_assert(
-            "//*[@id='side-bar-id']/div/a[5]", By.XPATH,
+            "//*[@id='side-bar-id']/div/a[6]", By.XPATH,
             "TestCase-HPOS-T49: test_about_page_click",
             self.utils.assert_element_displayed)

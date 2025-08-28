@@ -6,6 +6,7 @@ import { ReactComponent as MetricsIcon } from '../assets/icons/ChartIcon.svg';
 import { ReactComponent as AboutIcon } from '../assets/icons/AboutIcon.svg';
 import { ReactComponent as AutotierIcon } from '../assets/icons/AutoTierIcon.svg';
 import { AuthContext } from './ProtectedRoute.js';
+import NotificationBell from './NotificationBell';
 const SideBar = ({ children }) => {
   // Get userRole from AuthContext instead of props
   const { userRole } = useContext(AuthContext);
@@ -36,9 +37,15 @@ const SideBar = ({ children }) => {
       allowedRoles: ['admin']
     },
     {
+      path: "/events",
+      icon: <NotificationBell />,
+      datatestid: 'menu-item-4',
+      allowedRoles: ['admin']
+    },
+    {
       path: "/about",
       icon: <AboutIcon />,
-      datatestid: 'menu-item-4',
+      datatestid: 'menu-item-5',
       allowedRoles: ['admin', 'guest']
     }
   ]

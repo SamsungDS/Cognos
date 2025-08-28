@@ -22,7 +22,7 @@ class FrequentPageSwitchTest(unittest.TestCase):
              "locator": "//*[@id='side-bar-id']/div/a[3]",
              "component_xpath": "//*[@id='main-container-id']"},
             {"name": "About Page",
-             "locator": "//*[@id='side-bar-id']/div/a[5]",
+             "locator": "//*[@id='side-bar-id']/div/a[6]",
              "component_xpath": "//*[@id='main-container']"},
         ]
 

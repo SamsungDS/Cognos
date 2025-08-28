@@ -76,7 +76,7 @@ describe('SideBar Component', () => {
     expect(screen.queryByTestId('menu-item-1')).not.toBeInTheDocument(); // Configure (admin only)
     expect(screen.getByTestId('menu-item-2')).toBeInTheDocument(); // Metrics
     expect(screen.queryByTestId('menu-item-3')).not.toBeInTheDocument(); // Jobs (admin only)
-    expect(screen.getByTestId('menu-item-4')).toBeInTheDocument(); // About
+    expect(screen.getByTestId('menu-item-5')).toBeInTheDocument(); // About
   });
 
   it('renders correct NavLinks with proper paths', () => {
@@ -87,7 +87,7 @@ describe('SideBar Component', () => {
     );
 
     const links = screen.getAllByRole('link');
-    expect(links).toHaveLength(5);
+    expect(links).toHaveLength(6);
 
     // Check specific paths
     expect(screen.getByRole('link', { name: /dashboard icon/i })).toHaveAttribute('href', '/');
@@ -177,7 +177,7 @@ describe('SideBar Component', () => {
     );
 
     // Admin should see 5 items
-    expect(screen.getAllByRole('link')).toHaveLength(5);
+    expect(screen.getAllByRole('link')).toHaveLength(6);
 
     // Re-render with guest role
     rerender(
@@ -198,7 +198,7 @@ describe('SideBar Component', () => {
     );
 
     // Verify each menu item has the correct data-testid
-    const menuItems = ['menu-item-0', 'menu-item-1', 'menu-item-2', 'menu-item-3', 'menu-item-4'];
+    const menuItems = ['menu-item-0', 'menu-item-1', 'menu-item-2', 'menu-item-3', 'menu-item-4', 'menu-item-5'];
 
     menuItems.forEach(testId => {
       expect(screen.getByTestId(testId)).toBeInTheDocument();

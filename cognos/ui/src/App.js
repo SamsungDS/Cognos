@@ -9,6 +9,8 @@ import Dashboard from "./pages/Dashboard";
 import Configure from "./pages/Configure";
 import About from "./pages/About";
 import Jobs from "./pages/Jobs";
+import Events from './pages/Events';
+import { EventsProvider } from './contexts/EventsContext';
 import ProtectedRoute from "./components/ProtectedRoute";
 
 function App() {
@@ -25,80 +27,96 @@ function App() {
   }, []);
 
   return (
-    <BrowserRouter>
-      <Routes>
-        {/* Protected routes */}
-        <Route
-          path="/"
-          element={
-            <ProtectedRoute>
-              <div className="grid-container">
-                <Header />
-                <SideBar>
-                  <Dashboard />
-                </SideBar>
-              </div>
-            </ProtectedRoute>
-          }
-        />
+    <EventsProvider>
+      <BrowserRouter>
+        <Routes>
+          {/* Protected routes */}
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute>
+                <div className="grid-container">
+                  <Header />
+                  <SideBar>
+                    <Dashboard />
+                  </SideBar>
+                </div>
+              </ProtectedRoute>
+            }
+          />
 
-        <Route
-          path="/configure"
-          element={
-            <ProtectedRoute allowedRoles={["admin"]}>
-              <div className="grid-container">
-                <Header />
-                <SideBar>
-                  <Configure />
-                </SideBar>
-              </div>
-            </ProtectedRoute>
-          }
-        />
+          <Route
+            path="/configure"
+            element={
+              <ProtectedRoute allowedRoles={["admin"]}>
+                <div className="grid-container">
+                  <Header />
+                  <SideBar>
+                    <Configure />
+                  </SideBar>
+                </div>
+              </ProtectedRoute>
+            }
+          />
 
-        <Route
-          path="/metrics"
-          element={
-            <ProtectedRoute>
-              <div className="grid-container">
-                <Header />
-                <SideBar>
-                  <Metrics />
-                </SideBar>
-              </div>
-            </ProtectedRoute>
-          }
-        />
+          <Route
+            path="/metrics"
+            element={
+              <ProtectedRoute>
+                <div className="grid-container">
+                  <Header />
+                  <SideBar>
+                    <Metrics />
+                  </SideBar>
+                </div>
+              </ProtectedRoute>
+            }
+          />
 
-        <Route
-          path="/jobs"
-          element={
-            <ProtectedRoute allowedRoles={["admin"]}>
-              <div className="grid-container">
-                <Header />
-                <SideBar>
-                  <Jobs />
-                </SideBar>
-              </div>
-            </ProtectedRoute>
-          }
-        />
+          <Route
+            path="/jobs"
+            element={
+              <ProtectedRoute allowedRoles={["admin"]}>
+                <div className="grid-container">
+                  <Header />
+                  <SideBar>
+                    <Jobs />
+                  </SideBar>
+                </div>
+              </ProtectedRoute>
+            }
+          />
 
-        <Route
-          path="/about"
-          element={
-            <ProtectedRoute>
-              <div className="grid-container">
-                <Header />
-                <SideBar>
-                  <About />
-                </SideBar>
-              </div>
-            </ProtectedRoute>
-          }
-        />
-      </Routes>
-    </BrowserRouter>
+          <Route
+            path="/events"
+            element={
+              <ProtectedRoute allowedRoles={["admin"]}>
+                <div className="grid-container">
+                  <Header />
+                  <SideBar>
+                    <Events />
+                  </SideBar>
+                </div>
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/about"
+            element={
+              <ProtectedRoute>
+                <div className="grid-container">
+                  <Header />
+                  <SideBar>
+                    <About />
+                  </SideBar>
+                </div>
+              </ProtectedRoute>
+            }
+          />
+        </Routes>
+      </BrowserRouter>
+    </EventsProvider>
   );
 }
 
