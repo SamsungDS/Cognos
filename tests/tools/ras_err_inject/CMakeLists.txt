@@ -24,7 +24,9 @@ ExternalProject_Add(rasdaemon
         COMMAND "${MAKE_CONFIG}" "-vfi"
     CONFIGURE_COMMAND "${CMAKE_BINARY_DIR}/rasdaemon/configure" "--enable-mce" "--enable-sqlite3" "--enable-aer"
     BUILD_COMMAND ${MAKE_EXECUTABLE} -j${Ncpu}
-    INSTALL_COMMAND ${MAKE_EXECUTABLE} DESTDIR=${RASDAEMON_DIR}/b1 install
+    INSTALL_COMMAND
+        COMMAND ${MAKE_EXECUTABLE} DESTDIR=${RASDAEMON_DIR}/b1 install
+        COMMAND rm -Rf "${RASDAEMON_DIR}/b1/usr/local/include"
 )
 
 install(FILES ${MCE_INJECT_DIR}/${MCE_INJECT_EXECUTABLE} DESTINATION "adapters/mock/tools" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
