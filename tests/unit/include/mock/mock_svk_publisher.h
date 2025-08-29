@@ -22,7 +22,7 @@ extern "C" {
  * @param[in] data_len      The length of the data.
  * @return int              Always returns 0.
  */
-DEFINE_STUB(publish_data, int,
+DEFINE_STUB(publish_event_data_to_core, int,
             (char* topic, uint8_t* payload_data, uint64_t data_len), 0)
 }
 

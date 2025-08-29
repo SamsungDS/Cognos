@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.7)
 if(BUILD_TESTING)
 include(${CMAKE_SOURCE_DIR}/cmake/gtest.cmake)
 
+include_directories(unit/include)
 add_subdirectory(unit)
 endif()
 

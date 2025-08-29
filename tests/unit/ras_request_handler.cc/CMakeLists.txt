@@ -8,7 +8,11 @@ ras_req_handler_ut.cc
 )
 add_executable(${RAS_REQ_HANDLER_UT} ${RAS_REQ_HANDLER_UT_SOURCES})
 add_dependencies(${RAS_REQ_HANDLER_UT} rte_ring)
-target_include_directories(${RAS_REQ_HANDLER_UT} PUBLIC ${CMAKE_SOURCE_DIR}/src/utils/rte_ring ${CMAKE_SOURCE_DIR}/include)
+target_include_directories(${RAS_REQ_HANDLER_UT} PUBLIC 
+    ${CMAKE_SOURCE_DIR}/src/utils/rte_ring 
+    ${CMAKE_SOURCE_DIR}/include
+    )
+
 target_link_directories(${RAS_REQ_HANDLER_UT} PUBLIC ${SVKFW_LIBRARY_DIRS})
 
 target_link_libraries(

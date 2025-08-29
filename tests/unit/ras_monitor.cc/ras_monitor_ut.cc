@@ -3,9 +3,7 @@
 
 #include <ras.hpp>
 
-#include "../tests/unit/include/mock/mock.h"
-DEFINE_STUB(publish_data, int,
-            (char* topic, uint8_t* payload_data, uint64_t data_len), 0)
+#include "mock/mock_svk_publisher.h"
 
 struct ras_context_s ras_context;
 
