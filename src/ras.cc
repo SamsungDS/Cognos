@@ -99,7 +99,7 @@ extern "C" svk_status initialize(void *details) {
   }
 
   // Start rasdaemon process
-  system("pkill -9 -f RASDAEMON > /dev/null");
+  (void)system("pkill -9 -f RASDAEMON > /dev/null");
   execlp(RASDAEMON, RASDAEMON, "-r", ">/dev/null 2>&1", nullptr);
 
   return SVK_STATUS_SUCCESS;
@@ -199,7 +199,7 @@ extern "C" svk_status clean_up(void *) {
   std::lock_guard<std::mutex> lock(g_ras_context.ctx_mutex);
 
   // Cleanup related to termination of rasdaemon process
-  system("pkill -9 -f " RASDAEMON);
+  (void)system("pkill -9 -f " RASDAEMON);
 
   if (g_ras_context.initialized == true) {
     delete g_ras_context.monitor_context;

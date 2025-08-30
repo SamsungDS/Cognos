@@ -2,7 +2,9 @@
 #ifndef __RAS_HPP__
 #define __RAS_HPP__
 
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
@@ -16,23 +18,8 @@
 #include "svk_logger.hpp"
 #include "utils/logic_module_manager.hpp"
 
-// rasdaemon related include files
-#include <errno.h>
-#include <fcntl.h>
-#include <stdlib.h>
-#include <sys/file.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
-
-#include <string>
-#include <thread>
-
 #define RAS_LOG "ras_internal.log"
-// rasdaemon related defines
 #define RASDAEMON "rasdaemon"
-#define LOCKDIR "/tmp/"
-#define RASDAEMON_LOG "/tmp/rasdaemon.log"
 
 // TODO: Hardcoding this path for now. This will be provided by the header from
 // the svk-core repo in the future
