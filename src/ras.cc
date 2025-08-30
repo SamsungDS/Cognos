@@ -54,16 +54,12 @@ svk_status start_rasdaemon() {
   std::string lockf = std::string(LOCKDIR) + RASDAEMON;
   pid_file = open(lockf.c_str(), O_CREAT | O_RDWR, 0666);
   int rc = flock(pid_file, LOCK_EX | LOCK_NB);
-  if (rc == -1) {
-    if (EWOULDBLOCK == errno) {
-      return SVK_STATUS_FAIL;  // another instance is running
-    }
-  } else {
+  if (rc == 0) {
     // Use execlp to replace the current process image
-    execlp(RASDAEMON, RASDAEMON, "-r", ">/dev/null 2>&1", (char *)NULL);
+    execlp(RASDAEMON, RASDAEMON, "-r", ">/dev/null 2>&1", nullptr);
 
     // If execlp returns, it means an error occurred
-    perror("execlp failed");
+    // svk_logger(RAS_LOGGER, level_E::INFO, "execlp failed");
   }
   return SVK_STATUS_FAIL;  // This is never reached on success
 }
@@ -110,6 +106,10 @@ extern "C" svk_status initialize(void *details) {
   g_ras_context.ras_adapter_helper_->load_ras_adapters(
       ras_configs->adapters_directory);
 
+  // Start rasdaemon process
+  svk_status ret = start_rasdaemon();
+  if (ret == SVK_STATUS_FAIL) return SVK_STATUS_FAIL;
+
   if (g_ras_context.monitor_context == nullptr) {
     g_ras_context.monitor_context = new ras_monitor();
     if (g_ras_context.monitor_context == nullptr) {
@@ -118,10 +118,6 @@ extern "C" svk_status initialize(void *details) {
     }
     g_ras_context.initialized = true;
   }
-
-  // Start rasdaemon process
-  svk_status ret = start_rasdaemon();
-  if (ret == SVK_STATUS_FAIL) return SVK_STATUS_FAIL;
 
   return SVK_STATUS_SUCCESS;
 }
@@ -218,11 +214,7 @@ extern "C" svk_status clean_up(void *) {
   std::string msg = "ras clean_up called";
   svk_logger("ras", level_E::INFO, msg.c_str());
   std::lock_guard<std::mutex> lock(g_ras_context.ctx_mutex);
-  if (g_ras_context.initialized == true) {
-    delete g_ras_context.monitor_context;
-    g_ras_context.monitor_context = nullptr;
-    g_ras_context.initialized = false;
-  }
+
   // Cleanup related to termination of rasdaemon process
   flock(pid_file, LOCK_UN);  // Release the lock
   close(pid_file);
@@ -231,6 +223,12 @@ extern "C" svk_status clean_up(void *) {
   svk_logger("ras", level_E::INFO, std::to_string(ret).c_str());
   std::string fstr = std::string(LOCKDIR) + RASDAEMON;
   unlink(fstr.c_str());
+
+  if (g_ras_context.initialized == true) {
+    delete g_ras_context.monitor_context;
+    g_ras_context.monitor_context = nullptr;
+    g_ras_context.initialized = false;
+  }
 
   return SVK_STATUS_SUCCESS;
 }
