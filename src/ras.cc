@@ -9,6 +9,8 @@
 struct ras_context_s g_ras_context = {.monitor_context = nullptr,
                                       .initialized = false};
 
+static int pid_file;
+
 svk_status parsing_ras_conf(std::string ras_conf_path, ras_conf *ras_configs) {
   boost::property_tree::ptree root_conf;
   static boost::property_tree::ptree logger_conf;
@@ -45,6 +47,25 @@ svk_status parsing_ras_conf(std::string ras_conf_path, ras_conf *ras_configs) {
     return SVK_STATUS_FAIL;
   }
   return SVK_STATUS_SUCCESS;
+}
+
+// function to spawn rasdaemon program
+svk_status start_rasdaemon() {
+  std::string lockf = std::string(LOCKDIR) + RASDAEMON;
+  pid_file = open(lockf.c_str(), O_CREAT | O_RDWR, 0666);
+  int rc = flock(pid_file, LOCK_EX | LOCK_NB);
+  if (rc == -1) {
+    if (EWOULDBLOCK == errno) {
+      return SVK_STATUS_FAIL;  // another instance is running
+    }
+  } else {
+    // Use execlp to replace the current process image
+    execlp(RASDAEMON, RASDAEMON, "-r", ">/dev/null 2>&1", (char *)NULL);
+
+    // If execlp returns, it means an error occurred
+    perror("execlp failed");
+  }
+  return SVK_STATUS_FAIL;  // This is never reached on success
 }
 
 // initialize_svk(char* config_file, void *details) will initialize svk_logger_0
@@ -97,6 +118,10 @@ extern "C" svk_status initialize(void *details) {
     }
     g_ras_context.initialized = true;
   }
+
+  // Start rasdaemon process
+  svk_status ret = start_rasdaemon();
+  if (ret == SVK_STATUS_FAIL) return SVK_STATUS_FAIL;
 
   return SVK_STATUS_SUCCESS;
 }
@@ -198,5 +223,14 @@ extern "C" svk_status clean_up(void *) {
     g_ras_context.monitor_context = nullptr;
     g_ras_context.initialized = false;
   }
+  // Cleanup related to termination of rasdaemon process
+  flock(pid_file, LOCK_UN);  // Release the lock
+  close(pid_file);
+  std::string cmd = std::string("pkill -9 -f ") + RASDAEMON;
+  int ret = system(cmd.c_str());
+  svk_logger("ras", level_E::INFO, std::to_string(ret).c_str());
+  std::string fstr = std::string(LOCKDIR) + RASDAEMON;
+  unlink(fstr.c_str());
+
   return SVK_STATUS_SUCCESS;
 }
