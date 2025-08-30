@@ -53,8 +53,7 @@ svk_status parsing_ras_conf(std::string ras_conf_path, ras_conf *ras_configs) {
 svk_status start_rasdaemon() {
   std::string lockf = std::string(LOCKDIR) + RASDAEMON;
   pid_file = open(lockf.c_str(), O_CREAT | O_RDWR, 0666);
-  int rc = flock(pid_file, LOCK_EX | LOCK_NB);
-  if (rc == 0) {
+  if (flock(pid_file, LOCK_EX | LOCK_NB) == 0) {
     // Use execlp to replace the current process image
     execlp(RASDAEMON, RASDAEMON, "-r", ">/dev/null 2>&1", nullptr);
 
@@ -107,8 +106,8 @@ extern "C" svk_status initialize(void *details) {
       ras_configs->adapters_directory);
 
   // Start rasdaemon process
-  svk_status ret = start_rasdaemon();
-  if (ret == SVK_STATUS_FAIL) return SVK_STATUS_FAIL;
+  // svk_status ret = start_rasdaemon();
+  if (start_rasdaemon() == SVK_STATUS_FAIL) return SVK_STATUS_FAIL;
 
   if (g_ras_context.monitor_context == nullptr) {
     g_ras_context.monitor_context = new ras_monitor();
@@ -216,14 +215,15 @@ extern "C" svk_status clean_up(void *) {
   std::lock_guard<std::mutex> lock(g_ras_context.ctx_mutex);
 
   // Cleanup related to termination of rasdaemon process
-  flock(pid_file, LOCK_UN);  // Release the lock
-  close(pid_file);
-  std::string cmd = std::string("pkill -9 -f ") + RASDAEMON;
-  int ret = system(cmd.c_str());
-  svk_logger("ras", level_E::INFO, std::to_string(ret).c_str());
-  std::string fstr = std::string(LOCKDIR) + RASDAEMON;
-  unlink(fstr.c_str());
-
+  if (pid_file >= 0) {
+    flock(pid_file, LOCK_UN);  // Release the lock
+    close(pid_file);
+    std::string cmd = std::string("pkill -9 -f ") + RASDAEMON;
+    int ret = system(cmd.c_str());
+    svk_logger("ras", level_E::INFO, std::to_string(ret).c_str());
+    std::string fstr = std::string(LOCKDIR) + RASDAEMON;
+    unlink(fstr.c_str());
+  }
   if (g_ras_context.initialized == true) {
     delete g_ras_context.monitor_context;
     g_ras_context.monitor_context = nullptr;
