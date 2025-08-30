@@ -101,12 +101,7 @@ extern "C" svk_status initialize(void *details) {
   // Start rasdaemon process
   int ret;
   ret = system("pkill -9 -f RASDAEMON > /dev/null");
-  if (ret == 0)
-    svk_logger("ras", level_E::DEBUG, "rasdaemon process killed");
-
   ret = system("rasdaemon -r > /dev/null 2>&1");
-  if (ret == 0)
-    svk_logger("ras", level_E::DEBUG, "rasdaemon process started");
 
   return SVK_STATUS_SUCCESS;
 }
@@ -207,8 +202,6 @@ extern "C" svk_status clean_up(void *) {
   // Cleanup related to termination of rasdaemon process
   int ret;
   ret = system("pkill -9 -f RASDAEMON > /dev/null");
-  if (ret == 0)
-    svk_logger("ras", level_E::DEBUG, "rasdaemon process killed");
 
   if (g_ras_context.initialized == true) {
     delete g_ras_context.monitor_context;
