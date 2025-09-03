@@ -19,7 +19,6 @@
 #include "utils/logic_module_manager.hpp"
 
 #define RAS_LOG "ras_internal.log"
-#define RASDAEMON "rasdaemon"
 
 // TODO: Hardcoding this path for now. This will be provided by the header from
 // the svk-core repo in the future
