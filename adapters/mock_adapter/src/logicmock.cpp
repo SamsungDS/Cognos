@@ -63,11 +63,10 @@ inline svk_status execute_mock_logic_async(svk_logic_cmd *pass_thru,
 }
 
 inline svk_status cleanup_mock_logic_module(void *param) {
-    // Kill rasdaemon process
-    int ret;
-    ret = system("pkill -9 -f rasdaemon > /dev/null");
-    if (ret < 0)
-      return  SVK_STATUS_FAIL;
+  // Kill rasdaemon process
+  int ret;
+  ret = system("pkill -9 -f rasdaemon > /dev/null");
+  if (ret < 0) return SVK_STATUS_FAIL;
 
   return SVK_STATUS_SUCCESS;
 }
@@ -83,13 +82,11 @@ extern "C" svk_status initialize_logic_module(void *init_param) {
     // Kill all existing rasdaemon processes
     int ret;
     ret = system("pkill -9 -f rasdaemon > /dev/null");
-    if (ret < 0)
-      return  SVK_STATUS_FAIL;
+    if (ret < 0) return SVK_STATUS_FAIL;
 
     // Start a new rasdaemon process
     ret = system("rasdaemon -r > /dev/null 2>&1");
-    if (ret < 0)
-      return  SVK_STATUS_FAIL;
+    if (ret < 0) return SVK_STATUS_FAIL;
 
     return SVK_STATUS_SUCCESS;
   }
