@@ -8,6 +8,7 @@ int StartServer(std::string svk_conf_file, bool blocking);
 void signal_handler(int signal);
 int StartEventProcessingThread(ControllerServicer *svcr);
 int StopEventProcessingThread(ControllerServicer *svcr);
+int StopAllThreads(ControllerServicer *svcr);
 int StartThreadForZMQSubscriberConfiguration(ControllerServicer *svcr);
 void ProcessRASEvent(json json_data, ControllerServicer *svcr);
 void ProcessSLAEvent(json json_data, ControllerServicer *svcr);

@@ -13,7 +13,7 @@ set(GRPC_DEPS protobuf grpc++ absl_flags absl_flags_parse)
 
 set(COMMON_INC_DIR ${PARENT_DIR}/common/include/)
 set(COMMON_SRC_DIR ${PARENT_DIR}/common/src)
-set(SRCS ${GRPC_STUB_SRCS} ${CMAKE_CURRENT_SOURCE_DIR}/src/grpc_controller.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/sla_hlpr_fns.cc ${COMMON_SRC_DIR}/client_library.cc)
+set(SRCS ${GRPC_STUB_SRCS} ${CMAKE_CURRENT_SOURCE_DIR}/src/grpc_controller.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/events_handler.cc ${CMAKE_CURRENT_SOURCE_DIR}/src/sla_hlpr_fns.cc ${COMMON_SRC_DIR}/client_library.cc)
 if(BUILD_TESTING)
 set(GRPC_INC_FILES ${COMMON_INC_DIR}/grpc_hdr.h ${COMMON_INC_DIR}/client_library.h ${CMAKE_CURRENT_SOURCE_DIR}/include/grpc_controller.h PARENT_SCOPE)
 endif()

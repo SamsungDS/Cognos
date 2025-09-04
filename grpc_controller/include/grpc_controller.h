@@ -2,10 +2,14 @@
 #define __GRPC_CONTROLLER_H__
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
+#include <condition_variable>
+#include <mutex>
 #include <nlohmann/json.hpp>
+#include <queue>
 #include <unordered_map>
 
 #include "client_library.h"
+#include "events_handler.h"
 #include "framework/framework.grpc.pb.h"
 #include "framework_struct.h"
 #include "framework_upstream.h"
@@ -153,6 +157,30 @@ class ControllerServicer : public svk::Controller::Service {
   void *get_zmq_context() { return m_zmq_subscriber_context; };
   void *get_zmq_socket() { return m_zmq_subscriber_socket; };
 
+  // Queue operations
+  void insert_event_to_queue(json event_data) {
+    std::lock_guard<std::mutex> lock(m_event_q_mutex);
+    m_event_queue.push(std::move(event_data));
+    m_event_q_cond_var.notify_one();  // Notify one waiting thread
+  };
+
+  // Remove event from queue if available
+  //  Otherwise returns -1 if empty for 2 seconds
+  int remove_event_from_queue(json &event_data) {
+    std::unique_lock<std::mutex> lock(m_event_q_mutex);
+    m_event_q_cond_var.wait_for(lock, std::chrono::seconds(2), [this]() {
+      return (!m_event_queue.empty() || this->get_stop_flag());
+    });
+    if (m_event_queue.empty()) {
+      return -1;
+    }
+    event_data = std::move(m_event_queue.front());
+    m_event_queue.pop();
+    return 0;
+  }
+
+  bool check_event_queue_empty() { return m_event_queue.empty(); }
+
  private:
   nlohmann::json ClusterResponseJson(std::string cluster_name);
   controller_config m_svk_config;
@@ -171,6 +199,11 @@ class ControllerServicer : public svk::Controller::Service {
   // Store the ZMQ subscriber socket and context
   void *m_zmq_subscriber_socket = nullptr;
   void *m_zmq_subscriber_context = nullptr;
+
+  // Queue for storing and retrieving the events
+  std::queue<json> m_event_queue;
+  mutable std::mutex m_event_q_mutex;
+  std::condition_variable m_event_q_cond_var;
 };
 
 #endif /*__GRPC_CONTROLLER_H__*/
