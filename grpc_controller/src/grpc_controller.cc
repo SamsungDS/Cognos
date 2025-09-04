@@ -1724,7 +1724,7 @@ void ProcessRASEvent(json json_data, ControllerServicer *svcr) {
   int status;
 
   try {
-    json observations_map = json_data.at("observations");
+    json observations_map = json_data["event_payload"].at("observations");
 
     device_id = observations_map.at("device_id");
     status = g_sla_device_hlpr->GetDeviceInfo(device_id, dev_info);
@@ -1760,8 +1760,8 @@ void ProcessRASEvent(json json_data, ControllerServicer *svcr) {
   } catch (json::exception &e) {
     std::string errorMessage = e.what();
 
-    logger_str = "Parse error for zmq data:[ " + json_data.dump() +
-                 " ] with error " + errorMessage;
+    logger_str = "Parse json data error in ProcessRASEvent:[ " +
+                 json_data.dump() + " ] with error " + errorMessage;
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::WARN,
                logger_str.c_str());
     return;
@@ -1819,7 +1819,7 @@ void ProcessSLAEvent(json json_data, ControllerServicer *svcr) {
   std::string logger_str;
 
   try {
-    json observations_map = json_data.at("observations");
+    json observations_map = json_data["event_payload"].at("observations");
 
     slat_reported_device_name = observations_map.at("device_name");
     slat_reported_host_name = observations_map.at("host_name");
@@ -1836,8 +1836,8 @@ void ProcessSLAEvent(json json_data, ControllerServicer *svcr) {
   } catch (json::exception &e) {
     std::string errorMessage = e.what();
 
-    logger_str = "Parse error for zmq data:[ " + json_data.dump() +
-                 " ] with error " + errorMessage;
+    logger_str = "Parse json data error in ProcessSLAEvent:[ " +
+                 json_data.dump() + " ] with error " + errorMessage;
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::WARN,
                logger_str.c_str());
     return;
@@ -1873,35 +1873,89 @@ void ProcessSLAEvent(json json_data, ControllerServicer *svcr) {
 
 // Process the data received from the ZMQ subscriber socket
 // Calls the appropriate Process<Feature>Event
+void ProcessEventsFromQueueThread(ControllerServicer *svcr) {
+  json event_data;
+  int status;
+  std::string logger_str;
+
+  while (true) {
+    // Check for the stop_flag to see if we need to stop this thread
+    if (svcr->get_stop_flag() == true &&
+        svcr->check_event_queue_empty() == true) {
+      logger_str =
+          "Detected the stop flag enabled in ProcessEventsFromQueueThread";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                 logger_str.c_str());
+      break;
+    }
+
+    status = svcr->remove_event_from_queue(event_data);
+    if (status == -1) {
+      // No events in the queue. Just continue until either service get stopped
+      // or event is present
+      logger_str = "Queue is empty or got the stop signal";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::TRACE,
+                 logger_str.c_str());
+      continue;
+    }
+
+    logger_str = "Removed the event from the Queue";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::TRACE,
+               logger_str.c_str());
+
+    try {
+      if (event_data.contains("event_payload") == false) {
+        logger_str =
+            "Event data not per observability spec - event_payload missing - " +
+            event_data.dump();
+        svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::WARN,
+                   logger_str.c_str());
+        continue;
+      }
+      status = insert_event_to_controller_map(event_data);
+      if (status == -1) {
+        continue;
+      }
+
+      std::string feature_name = event_data["event_payload"].at("feature_name");
+
+      if (feature_name == SLAT_FEATURE_MODULE_NAME) {
+        // Send command to TM module
+        ProcessSLAEvent(event_data, svcr);
+      } else if (feature_name == RAS_FEATURE_MODULE_NAME) {
+        ProcessRASEvent(event_data, svcr);
+      }
+    } catch (json::exception &e) {
+      logger_str = "Feature name is not present in the event data - " +
+                   event_data.dump();
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::WARN,
+                 logger_str.c_str());
+    }
+  }
+}
+
+// Process the data received from the ZMQ subscriber socket
+// Inserts the data into a queue for processing further
 void ProcessZMQData(ControllerServicer *svcr, uint8_t *zmq_data,
                     int data_size) {
-  // TODO: Workaround to call TM module only once
   std::string logger_str;
-  std::unordered_map<std::string, std::unordered_map<std::string, std::string>>
-      m_cluster_map = svcr->get_cluster_map();
 
-  std::string event_json =
+  std::string event_json_str =
       std::string(reinterpret_cast<char *>(zmq_data), data_size);
-  logger_str = "Received data: " + event_json;
+  logger_str = "Received data: " + event_json_str;
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
 
   try {
-    json json_data = json::parse(event_json);
-    json observations_map = json_data.at("observations");
-    std::string feature_name = observations_map.at("feature_name");
-
-    if (feature_name == SLAT_FEATURE_MODULE_NAME) {
-      // Send command to TM module
-      ProcessSLAEvent(json_data, svcr);
-    } else if (feature_name == RAS_FEATURE_MODULE_NAME) {
-      ProcessRASEvent(json_data, svcr);
-    }
+    json json_data = json::parse(event_json_str);
+    svcr->insert_event_to_queue(json_data);
+    logger_str = "Inserted the event to the Queue for processing";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::TRACE,
+               logger_str.c_str());
   } catch (json::exception &e) {
     std::string errorMessage = e.what();
 
-    std::string logger_str =
-        "Parse error for zmq data:[ " + event_json +
-        " ] with error or missing feature_name in observations " + errorMessage;
+    std::string logger_str = "Parse error for zmq data:[ " + event_json_str +
+                             " ] with error" + errorMessage;
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::WARN,
                logger_str.c_str());
   }
@@ -2005,6 +2059,14 @@ int StartEventProcessingThread(ControllerServicer *svcr) {
   uint8_t zmq_data[ZMQ_MSG_MAX_SIZE];
   int data_size = 0;
 
+  std::thread *event_queue_processing_thread =
+      new std::thread(&ProcessEventsFromQueueThread, svcr);
+  if (event_queue_processing_thread == nullptr) {
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               "Failed to start the thread ProcessEventsFromQueueThread");
+    return -1;
+  }
+
   while (true) {
     // Check for the stop_flag to see if we need to stop this thread
     if (svcr->get_stop_flag() == true) {
@@ -2025,9 +2087,13 @@ int StartEventProcessingThread(ControllerServicer *svcr) {
       if (data_size <= 0) {
         continue;
       }
+      logger_str = "Received data of size " + std::to_string(data_size);
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                 logger_str.c_str());
 
       // Process ZMQ data
       ProcessZMQData(svcr, zmq_data, data_size);
+      data_size = -1;
 
     } catch (zmq::error_t &e) {
       std::string errorMessage = e.what();
@@ -2037,6 +2103,25 @@ int StartEventProcessingThread(ControllerServicer *svcr) {
       return -1;
     }
   }
+
+  event_queue_processing_thread->join();
+
+  return 0;
+}
+
+/**
+ * Stop all the threads by setting the stop_flag to true
+ *
+ * @param svcr The ControllerServicer instance to stop.
+ * @return 0 on success.
+ */
+int StopAllThreads(ControllerServicer *svcr) {
+  // Log the start of the function
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+             "StopAllThreads called");
+
+  // Set the stop flag to indicate the thread should stop
+  svcr->set_stop_flag();
   return 0;
 }
 
@@ -2053,9 +2138,6 @@ int StopEventProcessingThread(ControllerServicer *svcr) {
   // Log the start of the function
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
              "StopEventProcessingThread called");
-
-  // Set the stop flag to indicate the thread should stop
-  svcr->set_stop_flag();
 
   // Get the ZMQ context and socket
   void *zmq_context = svcr->get_zmq_context();
@@ -2093,43 +2175,53 @@ int StartServer(std::string svk_conf_file, bool blocking) {
     return status;
   }
   auto server = InitializeServicer(svcr);
-  if (server != nullptr) {
-    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-               "Starting the controller server to process the commands");
-    if (blocking == true) {
-      subscriber_thread =
-          new std::thread(&StartThreadForZMQSubscriberConfiguration, svcr);
-      if (subscriber_thread == nullptr) {
-        svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
-                   "Failed to start the thread "
-                   "StartThreadForZMQSubscriberConfiguration");
-        delete svcr;
-        return status;
-      }
-      sla_thread = new std::thread(&StartEventProcessingThread, svcr);
-      if (sla_thread == nullptr) {
-        svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
-                   "Failed to start the thread StartEventProcessingThread");
-        delete svcr;
-        return status;
-      }
-
-      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-                 "Started the Event Processing Thread");
-
-      while (gSignalStatus.load() == -1) sleep(5);
-      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-                 "The controller server is stopped gracefully");
-      StopEventProcessingThread(svcr);
-      sla_thread->join();
-      subscriber_thread->join();
-      delete svcr;
-    }
-    status = 0;
-  } else {
+  if (server == nullptr) {
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                "Error in starting the server instance");
+    return status;
   }
+
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+             "Starting the controller server to process the commands");
+  if (blocking == false) {
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               "Blocking mode is false. Exiting the server");
+    status = 0;
+    return status;
+  }
+  subscriber_thread =
+      new std::thread(&StartThreadForZMQSubscriberConfiguration, svcr);
+  if (subscriber_thread == nullptr) {
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               "Failed to start the thread "
+               "StartThreadForZMQSubscriberConfiguration");
+    StopAllThreads(svcr);
+    delete svcr;
+    return status;
+  }
+  sla_thread = new std::thread(&StartEventProcessingThread, svcr);
+  if (sla_thread == nullptr) {
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               "Failed to start the thread StartEventProcessingThread");
+    StopAllThreads(svcr);
+    subscriber_thread->join();
+    delete svcr;
+    return status;
+  }
+
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+             "Started the Event Processing Thread");
+
+  while (gSignalStatus.load() == -1) sleep(5);
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+             "The controller server is stopped gracefully");
+  StopAllThreads(svcr);
+  StopEventProcessingThread(svcr);
+  sla_thread->join();
+  subscriber_thread->join();
+  delete svcr;
+
+  status = 0;
   return status;
 }
 

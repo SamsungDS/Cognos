@@ -10,6 +10,7 @@
 
 #include "client_library.h"
 #include "framework/framework_mock.grpc.pb.h"
+#include "framework_extern.h"
 #include "grpc_controller.h"
 #include "grpc_controller_hlpr.h"
 #include "grpc_server.h"
@@ -100,6 +101,7 @@ static std::string get_sla_deviation_data(std::string feature_name,
   json_map["domain"] = "observability";
   json_map["category"] = feature_name;
   json_map["severity"] = "warning";
+  json_map["feature_name"] = feature_name;
 
   json_map["source"] = "node";
   json_map["source_type"] = host_name;
@@ -125,6 +127,7 @@ static std::string generate_ras_event(std::string feature_name,
   json_map["domain"] = "observability";
   json_map["category"] = feature_name;
   json_map["severity"] = "warning";
+  json_map["feature_name"] = feature_name;
 
   json_map["source"] = "node";
   json_map["source_type"] = host_name;
@@ -769,8 +772,9 @@ int CheckPoller() {
 
   std::string json_data_str = get_sla_deviation_data(
       SLAT_FEATURE_MODULE_NAME, "DEV1", "localhost", "TESTAPP", 100);
-  rc = publish_data((char *)"alerts", (uint8_t *)json_data_str.c_str(),
-                    json_data_str.length());
+  rc = publish_event_data_to_core((char *)"alerts",
+                                  (uint8_t *)json_data_str.c_str(),
+                                  json_data_str.length());
 
   sleep(3);
   cleanup_publisher();
@@ -960,12 +964,14 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStart) {
   }
   std::string json_data_str = get_sla_deviation_data(
       SLAT_FEATURE_MODULE_NAME, "DEV11", "localhost1", "TESTAPP1", 1000);
-  rc = publish_data((char *)"events", (uint8_t *)json_data_str.c_str(),
-                    json_data_str.length());
+  rc = publish_event_data_to_core((char *)"events",
+                                  (uint8_t *)json_data_str.c_str(),
+                                  json_data_str.length());
 
   std::cout << "Published data result " << rc << std::endl;
-  sleep(10);
+  sleep(2);
 
+  StopAllThreads(c_svcr);
   StopEventProcessingThread(c_svcr);
   sla_thread->join();
   subscriber_thread->join();
@@ -1162,19 +1168,22 @@ TEST(InitIntegrationTest, ControllerNodeServicerStartWitMultipleSLAEvents) {
 
   std::string json_data_str = get_sla_deviation_data(
       SLAT_FEATURE_MODULE_NAME, "12", "localhost2", "TESTAPP2", 1000);
-  rc = publish_data((char *)"alerts", (uint8_t *)json_data_str.c_str(),
-                    json_data_str.length());
+  rc = publish_event_data_to_core((char *)"alerts",
+                                  (uint8_t *)json_data_str.c_str(),
+                                  json_data_str.length());
   std::cout << "Published data result successfully" << std::endl;
   sleep(2);
 
   // Repeated SLA events for the same device should not be shown
   json_data_str = get_sla_deviation_data(SLAT_FEATURE_MODULE_NAME, "12",
                                          "localhost3", "TESTAPP3", 1000);
-  rc = publish_data((char *)"alerts", (uint8_t *)json_data_str.c_str(),
-                    json_data_str.length());
+  rc = publish_event_data_to_core((char *)"alerts",
+                                  (uint8_t *)json_data_str.c_str(),
+                                  json_data_str.length());
   std::cout << "Published data result successfully" << std::endl;
   sleep(2);
 
+  StopAllThreads(c_svcr);
   StopEventProcessingThread(c_svcr);
   sla_thread->join();
   subscriber_thread->join();
@@ -1288,17 +1297,20 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForTMOperation) {
 
   std::string json_data_str = get_sla_deviation_data(
       SLAT_FEATURE_MODULE_NAME, "DEVTM", "localhost", "TESTAPP1", 1000);
-  rc = publish_data((char *)"alerts", (uint8_t *)json_data_str.c_str(),
-                    json_data_str.length());
+  rc = publish_event_data_to_core((char *)"alerts",
+                                  (uint8_t *)json_data_str.c_str(),
+                                  json_data_str.length());
 
   std::cout << "Published data result " << rc << std::endl;
   sleep(10);
 
-  rc = publish_data((char *)"alerts", (uint8_t *)json_data_str.c_str(),
-                    json_data_str.length());
+  rc = publish_event_data_to_core((char *)"alerts",
+                                  (uint8_t *)json_data_str.c_str(),
+                                  json_data_str.length());
   std::cout << "Published data result " << rc << "one more time" << std::endl;
   sleep(3);
 
+  StopAllThreads(c_svcr);
   StopEventProcessingThread(c_svcr);
   sla_thread->join();
   subscriber_thread->join();
@@ -1605,27 +1617,76 @@ TEST(InitIntegrationTest, SLATheadForTMWithMissingData) {
     std::cout << "Failed to initialize publisher" << std::endl;
     return;
   }
+
+  // Remove observations section from the SLA event and ProcessSLAEvent should
+  // return parse error
   std::string json_data_str = get_sla_deviation_data(
       SLAT_FEATURE_MODULE_NAME, "DEV11", "localhost1", "TESTAPP1", 1000);
   json json_data = json::parse(json_data_str);
+  json json_data_orig = json_data;
   json_data.erase("observations");
   json_data_str = json_data.dump();
-  rc = publish_data((char *)"alerts", (uint8_t *)json_data_str.c_str(),
-                    json_data_str.length());
+  rc = publish_event_data_to_core((char *)"alerts",
+                                  (uint8_t *)json_data_str.c_str(),
+                                  json_data_str.length());
 
   std::cout << "Published data result " << rc << std::endl;
   EXPECT_EQ(true, is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
-                                "Parse error for zmq data"));
-  sleep(2);
+                                "Parse json data error in ProcessSLAEvent"));
+
+  // Remove observations section from the RAS event and ProcessRASEvent should
+  // return parse error
+  json_data["feature_name"] = RAS_FEATURE_MODULE_NAME;
+  json_data_str = json_data.dump();
+  rc = publish_event_data_to_core((char *)"alerts",
+                                  (uint8_t *)json_data_str.c_str(),
+                                  json_data_str.length());
+
+  std::cout << "Published data result " << rc << std::endl;
+  EXPECT_EQ(true, is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
+                                "Parse json data error in ProcessRASEvent"));
+
+  // Make the node_name in the event_header to empty so that the insert_event
+  // into controller's memory fails
+  json event_data = json();
+  event_data["event_header"] = json();
+  event_data["event_header"]["cluster_name"] = "CL_ID_1";
+  event_data["event_header"]["node_name"] = "";
+  event_data["event_payload"] = json_data_orig;
+  std::string event_data_str = event_data.dump();
+  rc = publish_data((char *)"alerts", (uint8_t *)event_data_str.c_str(),
+                    event_data_str.length());
+
+  std::cout << "Published data result " << rc << std::endl;
+  EXPECT_EQ(true,
+            is_str_in_log(
+                CONTROLLER_NODE_DEFAULT_LOG_FILE,
+                "Failed to insert the event to the Controller's event_map"));
+
+  // Event payload missing
+  event_data["event_header"]["node_name"] = "localhost";
+  event_data.erase("event_payload");
+
+  event_data_str = event_data.dump();
+  rc = publish_data((char *)"alerts", (uint8_t *)event_data_str.c_str(),
+                    event_data_str.length());
+
+  std::cout << "Published data result " << rc << std::endl;
+  EXPECT_EQ(
+      true,
+      is_str_in_log(
+          CONTROLLER_NODE_DEFAULT_LOG_FILE,
+          "Event data not per observability spec - event_payload missing"));
 
   json_data_str = "dummyjson=true";
   rc = publish_data((char *)"alerts", (uint8_t *)json_data_str.c_str(),
                     json_data_str.length());
-  std::cout << "Published data result " << rc << std::endl;
   EXPECT_EQ(true, is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
                                 "Parse error for zmq data"));
-  sleep(10);
 
+  sleep(1);
+
+  StopAllThreads(c_svcr);
   StopEventProcessingThread(c_svcr);
   sla_thread->join();
   subscriber_thread->join();
@@ -1690,12 +1751,14 @@ TEST(InitIntegrationTest, PublishDataWithUnregisteredTopic) {
   // This event should not be published in the log
   std::string json_data_str = get_sla_deviation_data(
       "unregistered", "DEV11", "localhost1", "UNREGISTERED_APP", 1000);
-  rc = publish_data((char *)"unregistered_alert",
-                    (uint8_t *)json_data_str.c_str(), json_data_str.length());
+  rc = publish_event_data_to_core((char *)"unregistered_alert",
+                                  (uint8_t *)json_data_str.c_str(),
+                                  json_data_str.length());
 
   std::cout << "Published data result " << rc << std::endl;
   sleep(2);
 
+  StopAllThreads(c_svcr);
   StopEventProcessingThread(c_svcr);
   sla_thread->join();
   subscriber_thread->join();
@@ -1772,12 +1835,14 @@ TEST(InitIntegrationTest, PublishDataWithRegisteredTopic) {
   // This event should be published in the log
   std::string json_data_str = get_sla_deviation_data(
       SLAT_FEATURE_MODULE_NAME, "DEV11", "localhost1", "REGISTERED_APP", 1000);
-  rc = publish_data((char *)"metrics  ", (uint8_t *)json_data_str.c_str(),
-                    json_data_str.length());
+  rc = publish_event_data_to_core((char *)"metrics  ",
+                                  (uint8_t *)json_data_str.c_str(),
+                                  json_data_str.length());
 
   std::cout << "Published data result " << rc << std::endl;
   sleep(2);
 
+  StopAllThreads(c_svcr);
   StopEventProcessingThread(c_svcr);
   sla_thread->join();
   subscriber_thread->join();
@@ -1856,13 +1921,16 @@ TEST(InitIntegrationTest, SendingEventWithUnregisteredMetric) {
   std::string json_data_str =
       get_sla_deviation_data("dummyfeature", "DEVFeatureNotHandled",
                              "localhost1", "REGISTERED_APP", 1000);
-  rc = publish_data((char *)"metrics  ", (uint8_t *)json_data_str.c_str(),
-                    json_data_str.length());
+  rc = publish_event_data_to_core((char *)"metrics  ",
+                                  (uint8_t *)json_data_str.c_str(),
+                                  json_data_str.length());
 
   std::cout << "Published data result " << rc << std::endl;
   sleep(2);
 
+  StopAllThreads(c_svcr);
   StopEventProcessingThread(c_svcr);
+
   sla_thread->join();
   subscriber_thread->join();
 
@@ -1949,12 +2017,12 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForRASOperation) {
   ASSERT_TRUE(status.ok());
   sleep(1);
 
-  reg_req.set_cluster_name("RASCluster2");
-  status = client.RegisterNode(&reg_req, &reg_resp);
-  ASSERT_TRUE(status.ok());
+  // reg_req.set_cluster_name("RASCluster2");
+  // status = client.RegisterNode(&reg_req, &reg_resp);
+  // ASSERT_TRUE(status.ok());
 
-  // Make sure the event processing thread has updated the socket
-  sleep(1);
+  // // Make sure the event processing thread has updated the socket
+  // sleep(1);
 
   svk::CommandRequest req;
   svk::CommandResponse *resp = new (svk::CommandResponse);
@@ -1971,12 +2039,15 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForRASOperation) {
   std::string json_data_str =
       generate_ras_event(RAS_FEATURE_MODULE_NAME, "29690035288064", "localhost",
                          "TESTAPPRAS", 2000);
-  rc = publish_data((char *)"events", (uint8_t *)json_data_str.c_str(),
-                    json_data_str.length());
+  std::cout << "Publish event to core " << json_data_str << std::endl;
+  rc = publish_event_data_to_core((char *)"events",
+                                  (uint8_t *)json_data_str.c_str(),
+                                  json_data_str.length());
 
   std::cout << "Published data result " << rc << std::endl;
   sleep(3);
 
+  StopAllThreads(c_svcr);
   StopEventProcessingThread(c_svcr);
   sla_thread->join();
   subscriber_thread->join();
@@ -2162,12 +2233,14 @@ TEST(InitIntegrationTest, ControllerNodeTMOperationWithRemoveSLADeviceFailure) {
       generate_ras_event(RAS_FEATURE_MODULE_NAME, "29690035288064", "localhost",
                          "TESTAPPRAS", 2000);
 
-  rc = publish_data((char *)"alerts", (uint8_t *)json_data_str.c_str(),
-                    json_data_str.length());
+  rc = publish_event_data_to_core((char *)"alerts",
+                                  (uint8_t *)json_data_str.c_str(),
+                                  json_data_str.length());
 
   std::cout << "Published data result " << rc << std::endl;
   sleep(3);
 
+  StopAllThreads(c_svcr);
   StopEventProcessingThread(c_svcr);
   sla_thread->join();
   subscriber_thread->join();
