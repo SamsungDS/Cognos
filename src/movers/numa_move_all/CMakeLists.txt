@@ -1,5 +1,5 @@
 # Collect source files
-file(GLOB SOURCES *.cc)
+file(GLOB SOURCES *.cc "${SVKME_SRC_PATH}/cme_utils.cc")
 file(GLOB HEADERS *.h)
 
 # Create a library

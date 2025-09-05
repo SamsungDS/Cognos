@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <thread>
 #include <functional>
+#include <memory>
 #include <chrono>
 #include <unistd.h>
 #include <boost/property_tree/json_parser.hpp>
@@ -19,7 +20,7 @@
 #include <boost/property_tree/xml_parser.hpp>
 #include <filesystem>
 
-#include "include/cme_global.h"
+#include "cme_global.h"
 
 using namespace std;
 
@@ -284,23 +285,6 @@ cme_mover* cme_global::cg_find_mover(cme_context* cme_ctx)
 }
 
 /**
- * @brief call back function for move_all
- *      This function canimplement diffrent actions to be done
- *      at the end on the move_all thread function like updating
- *      the corresponding CME context.
- * @param  cb_ctx: corresponding cme_context
- * @return None
-*/
-void callback_fn_move_all(void* cb_ctx, int status)
-{
-        std::cout << "Callback function callback_fn_move_all started"  << std::endl;
-        cme_context* ctx = (cme_context*) cb_ctx;
-        ctx->mover_cmd_status = status;
-        ctx->mover_state = CTX_INACTIVE;
-        cout << "Callback function callback_fn_move_all finished; updated context state=" << to_string(ctx->mover_state) << endl;
-}
-
-/**
  * @brief function to verify all params needed for move_all
  * 	are present
  * @param command tokens map
@@ -346,7 +330,6 @@ static std::string cg_move_all(cme_global* cg_obj, unordered_map<string, string>
                 {
                         throw runtime_error ("Error in " + string (__FUNCTION__) + " verify command error ");
                 }
-		long app_pid = stol(tokens_map.at("app_pid"));
                 // find cme_context
 		cg_obj->cme_contexts_lock();
 		cme_context* cme_ctx = cg_obj->cg_find_context(tokens_map, false);
@@ -365,20 +348,21 @@ static std::string cg_move_all(cme_global* cg_obj, unordered_map<string, string>
 		cme_ctx->mem_attr.src_numa_node = stoi (tokens_map.at("src"));
                 cme_ctx->mem_attr.dst_numa_node = stoi (tokens_map.at("dst"));
 		cme_ctx->tm_attr.mover_tag = tokens_map.at("tm_attr");
+                cme_ctx->operation = "numa_migration";
                 cme_ctx->mover_state = CTX_ACTIVE;
                 cg_obj->cme_contexts_unlock();
                 
 		int src = cme_ctx->mem_attr.src_numa_node;
                 int dst = cme_ctx->mem_attr.dst_numa_node;
-                cme_ctx->mover_obj = cg_obj->cg_find_mover(cme_ctx);
-                if (cme_ctx->mover_obj == nullptr)
+                cme_mover* mover_obj = cg_obj->cg_find_mover(cme_ctx);
+
+                if (mover_obj == nullptr)
 		{
 			throw runtime_error ("Error in " + string (__FUNCTION__) + " mover not found");
 		}
-		cout << "movername= " << cme_ctx->mover_obj->get_name() << " src=" << to_string(src) << " dst="<< to_string(dst) << endl;               
-		// Create detached thread for move_all function
-                std::thread mover_start_th(&cme_mover::move_all, cme_ctx->mover_obj , app_pid, src, dst, callback_fn_move_all  ,(void*)cme_ctx, 0);
-                mover_start_th.detach();;
+		cout << "movername= " << mover_obj->get_name() << " src=" << to_string(src) << " dst="<< to_string(dst) << endl;
+                std::thread mover_start_th(&cme_mover::move_all, mover_obj, cme_ctx);
+                mover_start_th.detach();
         }
 
         catch (const std::exception &e)
@@ -431,11 +415,10 @@ static std::string cg_get_status(cme_global* cg_obj, unordered_map<string, strin
 */
 static std::string cg_get_stats(cme_global* cg_obj, unordered_map<string, string> &tokens_map)
 {
-        std::string ret;
+        std::string json_stats;
         try
         {
-                std::string app_name = tokens_map.at("app");
-		long app_pid = stol(tokens_map.at("app_pid"));
+                std::string ret;
                 cg_obj->cme_contexts_lock();
                 cme_context* cme_ctx = cg_obj->cg_find_context(tokens_map, true);
                 if (cme_ctx == nullptr)
@@ -445,13 +428,8 @@ static std::string cg_get_stats(cme_global* cg_obj, unordered_map<string, string
 			return std::to_string(-EINVAL);
                 }
 
-                if ((cme_ctx->tm_attr.mover_tag).compare("mover_damo"))
-                {
-                        cg_obj->cme_contexts_unlock();
-                        throw runtime_error ("Error in " + string (__FUNCTION__) + " No valid prior mover for context");
-                }
-                cme_ctx->mover_obj = cg_obj->cg_find_mover(cme_ctx);
-                if (cme_ctx->mover_obj == nullptr)
+                cme_mover* mover_obj = cg_obj->cg_find_mover(cme_ctx);
+                if (mover_obj == nullptr)
                 {
                         cg_obj->cme_contexts_unlock();
                         throw runtime_error ("Error in " + string (__FUNCTION__) + " No mover for context");
@@ -466,7 +444,7 @@ static std::string cg_get_stats(cme_global* cg_obj, unordered_map<string, string
 
                 cme_ctx->get_stats_state = STATS_INPROGRESS;
                 cg_obj->cme_contexts_unlock();
-                ret = cme_ctx->mover_obj->get_stats(app_name, app_pid);
+                json_stats = mover_obj->get_stats(cme_ctx);
                 cg_obj->cme_contexts_lock();
                 cme_ctx->get_stats_state = STATS_DONE;
                 cg_obj->cme_contexts_unlock();
@@ -474,9 +452,10 @@ static std::string cg_get_stats(cme_global* cg_obj, unordered_map<string, string
         catch (const std::exception &e)
         {
                 std::cerr << "cg_get_stats. Error -> " << e.what () << endl;
-                ret = std::to_string(-EINVAL);
+                json_stats = std::to_string(-EINVAL);
         }
-	return ret;
+        cout << "GET_STATS result = " << json_stats << endl;
+	return json_stats;
 }
 
 /**
@@ -558,13 +537,13 @@ static std::string cg_move(cme_global* cg_obj, unordered_map<string, string> &to
                 int slow_t = cme_ctx->mem_attr.slow_tier;
                 int fast_t = cme_ctx->mem_attr.fast_tier;
                 cme_ctx->tm_attr.mover_tag = "mover_damo";
-                cme_ctx->mover_obj = cg_obj->cg_find_mover(cme_ctx);
-                if (cme_ctx->mover_obj == nullptr)
+                cme_mover* mover_obj = cg_obj->cg_find_mover(cme_ctx);
+                if (mover_obj == nullptr)
                 {
                         cg_obj->cme_contexts_unlock();
                         throw runtime_error ("Error in " + string (__FUNCTION__) + " mover not found");
                 }
-                cout << tokens_map.at("command") << " movername= " << cme_ctx->mover_obj->get_name() << " slow_tier=" << to_string(slow_t) << " fast_tier="<< to_string(fast_t) << endl;
+                cout << tokens_map.at("command") << " movername= " << mover_obj->get_name() << " slow_tier=" << to_string(slow_t) << " fast_tier="<< to_string(fast_t) << endl;
                 std::string app_name = tokens_map.at("app");
                 long app_pid = stol(tokens_map.at("app_pid"));
                 
@@ -573,16 +552,19 @@ static std::string cg_move(cme_global* cg_obj, unordered_map<string, string> &to
 
                 if (!(tokens_map.at("command").compare("move")))
                 {
-                        ret = cme_ctx->mover_obj->move(app_name, app_pid, slow_t, fast_t, cme_ctx->tm_attr.ag_level);
+                        cme_ctx->operation = "tier_memory";
+                        ret = mover_obj->move(app_name, app_pid, slow_t, fast_t, cme_ctx->tm_attr.ag_level);
                 }
                 
                 else if (!(tokens_map.at("command").compare("move_hot")))
                 {
-                        ret = cme_ctx->mover_obj->move_hot(app_name, app_pid, slow_t, fast_t, cme_ctx->tm_attr.ag_level);
+                        cme_ctx->operation = "promote";
+                        ret = mover_obj->move_hot(app_name, app_pid, slow_t, fast_t, cme_ctx->tm_attr.ag_level);
                 }
                 else if (!(tokens_map.at("command").compare("move_cold")))
                 {
-                        ret = cme_ctx->mover_obj->move_cold(app_name, app_pid, slow_t, fast_t, cme_ctx->tm_attr.ag_level);
+                        cme_ctx->operation = "demote";
+                        ret = mover_obj->move_cold(app_name, app_pid, slow_t, fast_t, cme_ctx->tm_attr.ag_level);
                 }
                 else
                 {
@@ -676,17 +658,17 @@ static std::string cg_move_stop(cme_global* cg_obj, unordered_map<string, string
                         cg_obj->cme_contexts_unlock();
                         throw runtime_error ("Error in " + string (__FUNCTION__) + " cme context not found");
                 }
-                cme_ctx->mover_obj = cg_obj->cg_find_mover(cme_ctx);
-                if (cme_ctx->mover_obj == nullptr)
+                cme_mover* mover_obj = cg_obj->cg_find_mover(cme_ctx);
+                if (mover_obj == nullptr)
                 {
                         std::cerr << "cg_move_stop. Error -> No mover for context" << endl;
                         cg_obj->cme_contexts_unlock();
                         return std::to_string(-EINVAL);
                 }
-                cout << "movername=" << cme_ctx->mover_obj->get_name() << " app_name=" << app_name << " app_pid="<< to_string(app_pid) << endl;
+                cout << "movername=" << mover_obj->get_name() << " app_name=" << app_name << " app_pid="<< to_string(app_pid) << endl;
                 if (cme_ctx->mover_state == CTX_ACTIVE)
                 {
-                        ret = cme_ctx->mover_obj->stop(app_name, app_pid);
+                        ret = mover_obj->stop(app_name, app_pid);
                         if (ret)
                         {
                                 std::cerr << "cg_move_stop. Error -> stop failed" << endl;

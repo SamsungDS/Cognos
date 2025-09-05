@@ -18,6 +18,8 @@
 #include <sys/stat.h>
 #include <thread>
 #include <chrono>
+#include <cstdio>
+#include "cme_context.h"
 
 using namespace std;
 
@@ -72,6 +74,23 @@ unordered_map<string, string> token_helper (string);
  * @return bool : true if incoming command is a valid json string
  *                false otherwise
 */
-bool command_parser_json(std::string, unordered_map<std::string, std::string> &);
+bool command_parser_json(const std::string &, unordered_map<std::string, std::string> &);
+
+/**
+ * @brief function executes command line/system command through popen
+ * @details
+ * @params:
+ *  input : command to be executed
+ *  output: output of the command in a string vector
+ * @return: status of command execution
+ */
+int execute_command(const std::string &, vector<string>&, bool);
+
+long get_invalid_pid(void);
+
+bool pid_exists(unsigned long pid);
+
+const long DUMMY_PID = -1000;
+const std::string DUMMY_PROCESS = "DUMMY_PROCESS";
 
 #endif

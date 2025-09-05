@@ -1,11 +1,12 @@
 #ifndef __CME_CONTEXT_H__
 #define __CME_CONTEXT_H__
 
-#include "cme_mover.h"
-#include "cme_profiler.h"
 #include <map>
 #include <mutex>
+#include <string>
 #include <unordered_map>
+#include <functional>
+#include <memory>
 
 using namespace std;
 
@@ -53,7 +54,22 @@ typedef struct mem_attrs
   	int dst_numa_node;
         int slow_tier;
   	int fast_tier;
+        double src_numa_start_usage;
+        double dst_numa_start_usage;
+        std::string usage_unit;
 } mem_attrs;
+
+
+/**
+ * @brief enum for cme_mover_aggressiveness
+ * @details damo cme_mover_aggressiveness
+ * presently supported: level 0 and 1
+ */
+enum cme_mover_aggr
+{
+    MOVER_AGGRESSIVENESS_LOW,
+    MOVER_AGGRESSIVENESS_HIGH
+};
 
 /**
  * @brief structure for host numa nodes for tiering
@@ -85,18 +101,14 @@ class cme_context
 public:
   	cme_context () = default;
   
-  	cme_mover* mover_obj;
-  	cme_profiler* profiler_obj;
   	app_attrs app_attr;
   	sla_attrs sla_attr;
   	mem_attrs mem_attr;
   	tm_attrs tm_attr;
-
   	/*
         This object state prevents multiple mover operations on the  
         same application pid.
         */ 
-
 	ctx_state mover_state;
 	
 	/* 
@@ -111,6 +123,7 @@ public:
         A similar approach to move_all()
         */ 
         stats_state get_stats_state;
+        std::string operation;
 
   	string process_attributes(string);
   	string process_result(string);

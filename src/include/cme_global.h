@@ -5,7 +5,6 @@
 #include "cme_profiler.h"
 #include "cme_mover.h"
 #include "cme_utils.h"
-#include "feature_module_conf.h"
 #include <map>
 #include <mutex>
 #include <unordered_map>
@@ -56,7 +55,7 @@ class cme_global
                 int _cme_discovery(std::string, int);
                 cme_context* cg_find_context(unordered_map<string, string> &, bool);
                 cme_mover* cg_find_mover(cme_context*);
-                
+
         private:
 		std::map<std::string, CommandFunc> fw_hooks;
 

@@ -10,9 +10,13 @@
 #include <chrono>
 #include <sstream>
 #include <functional>
+#include <boost/property_tree/json_parser.hpp>
+#include <boost/property_tree/ptree.hpp>
+#include <boost/property_tree/xml_parser.hpp>
 
 #include "mover_damo.h"
 #include "damo_main.h"
+#include "cme_utils.h"
 
 using namespace std;
 
@@ -47,19 +51,30 @@ int stop_damo_main(string app_name, long app_pid)
         return ret;
 }
 
-std::string stats_damo_main(string app_name, long app_pid)
+std::string stats_damo_main(cme_context *ctx)
 {
-        string ret;
+        std::string json_stats;
         try
         {
-                ret = get_stats(app_name, app_pid);
+                std::string ret;
+                ret = get_stats(ctx->app_attr.app_name, ctx->app_attr.app_pid);
+                std::stringstream json_stream;
+                namespace pt = boost::property_tree;
+                pt::ptree root;
+                pt::ptree child_node;
+                child_node.put("operation", ctx->operation);
+                child_node.put("app_context:", ctx->app_attr.app_name + "_ " + to_string(ctx->app_attr.app_pid));
+                child_node.put("memory_movement_stats", ret);
+                root.add_child("observations", child_node);
+                pt::write_json(json_stream, root);
+                json_stats = json_stream.str();
         }
         catch (const std::exception& e)
         {
                 cout << "Error in " + string(__FUNCTION__) + " : " + string(e.what()) << endl;
-                ret = to_string(-EINVAL);
+                json_stats = to_string(-EINVAL);
         }
-        return ret;
+        return json_stats;
 }
 
 extern "C" cme_mover* register_cme_fn() {
@@ -76,7 +91,7 @@ extern "C" void unregister_cme_fn(cme_mover* mover_obj) {
 
 }
 
-int mover_damo::move_all(long target_pid, unsigned int node_src, unsigned int node_dest, std::function<void(void*, int)> cbfn, void* cb_arg, int cmd_status)
+int mover_damo::move_all(cme_context* ctx)
 {
         cout << name << " Started  " <<  string (__FUNCTION__) << endl;
         return 0;
@@ -106,10 +121,10 @@ int mover_damo::get_status()
         return 0;
 }
 
-std::string mover_damo::get_stats(string app_name, long app_pid)
+std::string mover_damo::get_stats(cme_context* ctx)
 {
                 cout << name << " Started  " <<  string (__FUNCTION__) << endl;
-		return stats_damo_main(app_name, app_pid);
+		return stats_damo_main(ctx);
 }
 
 int mover_damo::stop(string app_name, long app_pid)
