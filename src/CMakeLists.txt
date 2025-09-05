@@ -22,6 +22,7 @@ add_definitions("-DBOOST_ALLOW_DEPRECATED_HEADERS")
 add_definitions("-DBOOST_BIND_GLOBAL_PLACEHOLDERS")
 
 set(SVKME_SRC_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/include/")
+set(SVKME_SRC_PATH "${CMAKE_CURRENT_SOURCE_DIR}/")
 add_subdirectory("profilers")
 add_subdirectory("movers")
 

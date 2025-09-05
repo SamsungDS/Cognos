@@ -726,7 +726,6 @@ static std::string extract_damo_stats(vector<string> &damon_stats_output, vector
                                                         node_add.add_child(it_->first, elem);
                                                 }
                                         }
-
                                 }
                         }
                         if(node_add.size())

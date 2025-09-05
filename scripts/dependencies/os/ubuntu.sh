@@ -18,6 +18,7 @@ install_packages() {
 	libboost-dev
 	libfmt-dev
 	libnuma-dev
+        numactl
 	libyaml-cpp-dev
 	pkgconf
         python3-virtualenv

@@ -1,29 +1,18 @@
 #ifndef __CME_MOVER_H__
 #define __CME_MOVER_H__
 
+#include <iostream>
 #include <map>
 #include <mutex>
 #include <unordered_map>
 #include <string>
 #include <functional>
-
-const int DUMMY_PID = -1000;
-const std::string DUMMY_PROCESS = "DUMMY_PROCESS";
-
-/**
- * @brief enum for cme_mover_aggressiveness
- * @details damo cme_mover_aggressiveness
- * presently supported: level 0 and 1
- */
-enum cme_mover_aggr
-{
-    MOVER_AGGRESSIVENESS_LOW,
-    MOVER_AGGRESSIVENESS_HIGH
-};
+#include "cme_context.h"
+#include "cme_utils.h"
 
 class cme_mover
 {
-public:
+        public:
         virtual ~cme_mover() {}
 	// mover name: can be used to identify mover object for mover selection logic.
         virtual std::string get_name() = 0;
@@ -40,12 +29,13 @@ public:
 	 * 		the cme_context after move all operation is completed.
 	 * 	void* callback function argument: Likely to be pointer to cme_context object.
 	 * */
-        virtual int move_all(long, unsigned int, unsigned int, std::function<void(void*, int)> , void*, int) = 0;
+        
+        virtual int move_all(cme_context*) = 0;
         virtual int move_hot(std::string,  long, unsigned int, unsigned int, enum cme_mover_aggr) = 0;
         virtual int move_cold(std::string,  long, unsigned int, unsigned int, enum cme_mover_aggr) = 0;
         virtual int move(std::string,  long, unsigned int, unsigned int, enum cme_mover_aggr) = 0;
         virtual int get_status() = 0;
-        virtual std::string get_stats(std::string, long) = 0;
+        virtual std::string get_stats(cme_context*) = 0;
         virtual int stop(std::string, long) = 0;
 };
 

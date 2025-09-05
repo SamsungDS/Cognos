@@ -3,7 +3,7 @@ include(gtest)
 
 link_directories( "${CMAKE_SOURCE_DIR}/build/src" "${CMAKE_MGMT_FW_LIBRARY_DIR}")
 
-file(GLOB TEST_SOURCES *.cc) 
+file(GLOB TEST_SOURCES *.cc)
 
 # Create executable for tests
 add_executable(svkme_ut ${TEST_SOURCES})
