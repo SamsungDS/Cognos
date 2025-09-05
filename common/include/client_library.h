@@ -28,6 +28,8 @@ class Client {
   virtual Status NodeAPI(const svk::NodeRequest* req, svk::NodeResponse* resp);
   virtual Status FeatureAPI(const svk::FeatureRequest* req,
                             svk::FeatureResponse* resp);
+  virtual Status EventAPI(const svk::EventRequest* req,
+                          svk::EventResponse* resp);
 
  private:
   std::shared_ptr<Channel> channel;

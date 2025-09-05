@@ -1386,6 +1386,40 @@ Status ControllerServicer::FeatureAPI(ServerContext *ctxt,
   return status;
 }
 
+Status ControllerServicer::EventAPI(ServerContext *ctxt,
+                                    const svk::EventRequest *req,
+                                    svk::EventResponse *resp) {
+  std::string logger_str;
+  Status status;
+  json events_data;
+  std::string events_data_str;
+
+  std::string command_name = req->command_name();
+  std::string command_params = req->command_params();
+
+  logger_str = "EventAPI is called with " + command_name;
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::TRACE, logger_str.c_str());
+  resp->set_api_version(API_VERSION);
+
+  if (command_name == "cluster_events") {
+    get_events_from_controller_map(events_data);
+  } else {
+    logger_str = "Unsupported command - " + command_name;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    status = Status(grpc::UNKNOWN, logger_str);
+    return status;
+  }
+  events_data_str = events_data.dump();
+
+  resp->set_error_id_or_string_if_any("");
+  resp->set_error_code(SVK_STATUS_SUCCESS);
+  resp->set_response(events_data_str);
+
+  status = Status::OK;
+  return status;
+}
+
 std::shared_ptr<Server> InitializeServicer(ControllerServicer *svcr) {
   std::string logger_str;
 

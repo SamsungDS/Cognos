@@ -21,6 +21,7 @@
 using ::testing::_;
 using ::testing::AtLeast;
 using ::testing::DoAll;
+using ::testing::HasSubstr;
 using ::testing::Return;
 using ::testing::SetArgPointee;
 using ::testing::StartsWith;
@@ -2258,4 +2259,174 @@ TEST(InitIntegrationTest, ControllerNodeTMOperationWithRemoveSLADeviceFailure) {
                 std::string::npos);
 
   unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest, ControllerNodeServicerWithEventValidation) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  // Add pubsub section
+  std::ifstream in_file(conf_file);
+  std::string conf_data((std::istreambuf_iterator<char>(in_file)),
+                        (std::istreambuf_iterator<char>()));
+  in_file.close();
+  json json_data = json::parse(conf_data);
+  json_data["pubsub"] = {{"ip_address", "127.0.0.1"},
+                         {"port", 5555},
+                         {"topics", {"metrics", "events", "alerts"}},
+                         {"transport_type", "zmq"}};
+
+  conf_data = json_data.dump();
+  std::ofstream out_file(conf_file);
+  if (out_file.is_open()) {
+    out_file << conf_data;
+    out_file.close();
+  }
+
+  ControllerServicer *c_svcr(new ControllerServicer(conf_file));
+  auto c_server = InitializeServicer(c_svcr);
+  ASSERT_NE(c_server, nullptr);
+  EXPECT_TRUE(c_svcr->get_state() == true);
+  std::thread *subscriber_thread =
+      new std::thread(&StartThreadForZMQSubscriberConfiguration, c_svcr);
+
+  std::thread *sla_thread =
+      new std::thread(&StartEventProcessingThread, c_svcr);
+
+  int rc = initialize_publisher(conf_file.c_str());
+  if (rc != 0) {
+    std::cout << "Failed to initialize publisher" << std::endl;
+    return;
+  }
+
+  sleep(1);
+  Servicer *n_svcr(new FakeNodeServicerForTM(conf_file));
+  if (n_svcr->get_state() == false) {
+    std::cout << "Node Servicer is not initialized properly. Exiting"
+              << std::endl;
+    return;
+  }
+  auto n_server = InitializeNodeServicer(n_svcr);
+  ASSERT_NE(n_server, nullptr);
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  svk::RegisterRequest reg_req;
+  svk::RegisterResponse reg_resp;
+  svk::EventRequest event_req;
+  Status status;
+  svk::EventResponse *event_resp = new (svk::EventResponse);
+  event_req.set_command_name("cluster_events");
+
+  status = client.EventAPI(&event_req, event_resp);
+  std::cout << "Error message - " << status.error_message() << std::endl;
+  ASSERT_EQ(status.ok(), true);
+  std::string expected_resp_str = "[]";
+  std::cout << "Event response - " << event_resp->response() << std::endl;
+  ASSERT_EQ(event_resp->response(), expected_resp_str);
+
+  reg_req.set_cluster_name("RASCluster1");
+  reg_req.set_node_name("testnode");
+  reg_req.set_node_ip("127.0.0.1");
+  reg_req.set_node_port("9998");
+
+  status = client.RegisterNode(&reg_req, &reg_resp);
+  ASSERT_TRUE(status.ok());
+
+  std::string json_data_str =
+      "{\"category\":\"test_feature\","
+      "\"domain\":\"observability\",\"feature_name\":\"test_feature\","
+      "\"observations\":{\"device_id\":\"29690035288064\",\"error_cnt\":2000,"
+      "\"feature_name\":\"test_feature\",\"message\":\"Device RAS error count "
+      "hit the "
+      "threshold\"},\"severity\":\"warning\",\"source\":\"node\",\"source_"
+      "type\":\"localhost\",\"timestamp\":1234567890}";
+  std::cout << "Publish event to core " << json_data_str << std::endl;
+  rc = publish_event_data_to_core((char *)"events",
+                                  (uint8_t *)json_data_str.c_str(),
+                                  json_data_str.length());
+
+  std::cout << "Published data result " << rc << std::endl;
+  sleep(3);
+
+  status = client.EventAPI(&event_req, event_resp);
+  ASSERT_EQ(status.ok(), true);
+  expected_resp_str =
+      "[{\"event_header\":{\"cluster_name\":\"CL_ID_1\",\"node_name\":"
+      "\"localhost\"},\"event_payload\":{\"category\":\"test_feature\","
+      "\"domain\":\"observability\",\"feature_name\":\"test_feature\","
+      "\"observations\":{\"device_id\":\"29690035288064\",\"error_cnt\":2000,"
+      "\"feature_name\":\"test_feature\",\"message\":\"Device RAS error count "
+      "hit the "
+      "threshold\"},\"severity\":\"warning\",\"source\":\"node\",\"source_"
+      "type\":\"localhost\",\"timestamp\":1234567890}}]";
+  std::cout << "Event response - " << event_resp->response() << std::endl;
+  ASSERT_EQ(event_resp->response(), expected_resp_str);
+
+  // Prior cluster events should clear the list. Check whether the list is
+  // empty.
+  event_req.set_command_name("cluster_events");
+  status = client.EventAPI(&event_req, event_resp);
+  std::cout << "Error message - " << status.error_message() << std::endl;
+  ASSERT_EQ(status.ok(), true);
+  expected_resp_str = "[]";
+  std::cout << "Event response - " << event_resp->response() << std::endl;
+  ASSERT_EQ(event_resp->response(), expected_resp_str);
+
+  StopAllThreads(c_svcr);
+  StopEventProcessingThread(c_svcr);
+  sla_thread->join();
+  subscriber_thread->join();
+  delete c_svcr;
+  delete n_svcr;
+  cleanup_publisher();
+
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest, ControllerNodeServicerWithInvalidEventCommand) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  // Add pubsub section
+  std::ifstream in_file(conf_file);
+  std::string conf_data((std::istreambuf_iterator<char>(in_file)),
+                        (std::istreambuf_iterator<char>()));
+  in_file.close();
+  json json_data = json::parse(conf_data);
+  json_data["pubsub"] = {{"ip_address", "127.0.0.1"},
+                         {"port", 5555},
+                         {"topics", {"metrics", "events", "alerts"}},
+                         {"transport_type", "zmq"}};
+
+  conf_data = json_data.dump();
+  std::ofstream out_file(conf_file);
+  if (out_file.is_open()) {
+    out_file << conf_data;
+    out_file.close();
+  }
+
+  ControllerServicer *c_svcr(new ControllerServicer(conf_file));
+  auto c_server = InitializeServicer(c_svcr);
+  ASSERT_NE(c_server, nullptr);
+  EXPECT_TRUE(c_svcr->get_state() == true);
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  svk::RegisterRequest reg_req;
+  svk::RegisterResponse reg_resp;
+  svk::EventRequest event_req;
+  Status status;
+  svk::EventResponse *event_resp = new (svk::EventResponse);
+  event_req.set_command_name("cluster_events_invalid_command");
+
+  status = client.EventAPI(&event_req, event_resp);
+  std::cout << "Error message - " << status.error_message() << std::endl;
+  ASSERT_NE(status.ok(), true);
 }

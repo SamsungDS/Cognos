@@ -69,3 +69,10 @@ Status Client::FeatureAPI(const svk::FeatureRequest* req,
   Status status = ctrlr_stub_->FeatureAPI(&ctxt, *req, resp);
   return status;
 }
+
+Status Client::EventAPI(const svk::EventRequest* req,
+                        svk::EventResponse* resp) {
+  ClientContext ctxt;
+  Status status = ctrlr_stub_->EventAPI(&ctxt, *req, resp);
+  return status;
+}
