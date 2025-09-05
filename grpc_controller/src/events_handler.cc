@@ -46,7 +46,15 @@ int get_events_from_controller_map(json &event_data) {
   std::string logger_str;
   std::lock_guard<std::mutex> lock(g_events_data_mutex);
 
-  event_data = g_events_data.value(EVENTS, json());
+  if (g_events_data.empty() || !g_events_data.contains(EVENTS)) {
+    event_data = json::array();
+  } else {
+    event_data = g_events_data[EVENTS];
+  }
+
+  logger_str = "Events from the controller's event_map - " + event_data.dump();
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::TRACE, logger_str.c_str());
+  g_events_data.clear();
 
   return 0;
 }

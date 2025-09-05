@@ -96,7 +96,7 @@ class ControllerServicer : public svk::Controller::Service {
                         svk::UnregisterResponse *resp) override;
   Status SetNodeStatus(ServerContext *ctxt,
                        const svk::SetNodeStatusRequest *req,
-                       svk::SetNodeStatusResponse *resp);
+                       svk::SetNodeStatusResponse *resp) override;
   Status ProcessControllerCommand(ServerContext *ctxt,
                                   const svk::CommandRequest *req,
                                   svk::CommandResponse *resp) override;
@@ -122,6 +122,8 @@ class ControllerServicer : public svk::Controller::Service {
 
   Status FeatureAPI(ServerContext *ctxt, const svk::FeatureRequest *req,
                     svk::FeatureResponse *resp) override;
+  Status EventAPI(ServerContext *ctxt, const svk::EventRequest *req,
+                  svk::EventResponse *resp) override;
 
   const std::string &get_svk_config_controller_id() {
     return m_svk_config.controller_id;
@@ -131,12 +133,13 @@ class ControllerServicer : public svk::Controller::Service {
     return m_svk_config.controller_port;
   };
   const controller_config &get_svk_config() { return m_svk_config; };
-  const bool get_state() { return m_initialized_flag; };
+  bool get_state() const { return m_initialized_flag; };
   void set_server(std::shared_ptr<Server> server) { m_server = server; };
-  std::shared_ptr<Server> get_server() { return m_server; };
+  const std::shared_ptr<Server> get_server() { return m_server; };
   void set_config_changed(bool state) { m_config_changed = state; };
-  bool is_config_changed() { return m_config_changed; };
-  std::unordered_map<std::string, std::unordered_map<std::string, std::string>>
+  bool is_config_changed() const { return m_config_changed; };
+  const std::unordered_map<std::string,
+                           std::unordered_map<std::string, std::string>>
   get_cluster_map() {
     return m_cluster_map;
   };
