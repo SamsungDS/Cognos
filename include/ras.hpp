@@ -2,7 +2,9 @@
 #ifndef __RAS_HPP__
 #define __RAS_HPP__
 
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>

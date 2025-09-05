@@ -193,10 +193,12 @@ extern "C" svk_status clean_up(void *) {
   std::string msg = "ras clean_up called";
   svk_logger("ras", level_E::INFO, msg.c_str());
   std::lock_guard<std::mutex> lock(g_ras_context.ctx_mutex);
+
   if (g_ras_context.initialized == true) {
     delete g_ras_context.monitor_context;
     g_ras_context.monitor_context = nullptr;
     g_ras_context.initialized = false;
   }
+
   return SVK_STATUS_SUCCESS;
 }
