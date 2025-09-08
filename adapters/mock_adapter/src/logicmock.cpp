@@ -85,7 +85,9 @@ extern "C" svk_status initialize_logic_module(void *init_param) {
     if (ret < 0) return SVK_STATUS_FAIL;
 
     // Start a new rasdaemon process
-    ret = system("rasdaemon -r > /dev/null 2>&1");
+    ret = system(
+        "/usr/local/svk/feature_modules/ras/adapters/mock/tools/usr/local/sbin/"
+        "rasdaemon -r > /dev/null 2>&1");
     if (ret < 0) return SVK_STATUS_FAIL;
 
     return SVK_STATUS_SUCCESS;
