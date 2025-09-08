@@ -130,6 +130,7 @@ int create_event_in_json_format(const svk_slat_logic_output &app_current_sla,
   json_map["domain"] = "observability";
   json_map["category"] = "slat";
   json_map["severity"] = "warning";
+  json_map["feature_name"] = "slat";
 
   json_map["source_type"] = "node";
   json_map["source"] = std::string(app_current_sla.host_name, 0, MAX_LENGTH);
@@ -169,8 +170,9 @@ void SLATrackerSvc::publish_app_degraded_sla(slat_benchmark_config &config) {
     svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, log_msg);
 
     topic_filter = ALERTS_TOPIC_FILTER;
-    rc = publish_data((char *)topic_filter.c_str(),
-                      (uint8_t *)json_data_str.c_str(), json_data_str.length());
+    rc = publish_event_data_to_core((char *)topic_filter.c_str(),
+                                    (uint8_t *)json_data_str.c_str(),
+                                    json_data_str.length());
     if (rc == -1) {
       snprintf(log_msg, LOG_MSG_MAX_SIZE, "Failed to publish the alert [%s]",
                json_data_str.c_str());
