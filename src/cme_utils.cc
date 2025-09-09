@@ -111,9 +111,25 @@ long get_invalid_pid( void)
         return((long)(max_pid + 1));
 }
 
-bool pid_exists(unsigned long pid) {
+bool pid_exists(long pid) {
     // Use kill with signal 0 to check if the process exists
     // This does not send a real signal, just checks for permission
     return kill((pid_t)pid, 0) == 0;
 }
 
+std::string getCurrentTimestamp() {
+    // Get the current time as a time_point
+    auto now = std::chrono::system_clock::now();
+
+    // Convert to time_t
+    std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+
+    // Convert to tm as UTC
+    std::tm now_tm = *std::gmtime(&now_c);
+
+    // Use stringstream to format the time
+    std::stringstream ss;
+    ss << std::put_time(&now_tm, "%Y-%m-%dT%H:%M:%SZ");
+
+    return ss.str();
+}

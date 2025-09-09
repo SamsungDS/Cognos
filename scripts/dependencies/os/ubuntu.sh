@@ -14,12 +14,12 @@ install_packages() {
 	dpkg-dev
         g++
         git
-	libjansson-dev
 	libboost-dev
 	libfmt-dev
 	libnuma-dev
         numactl
 	libyaml-cpp-dev
+        nlohmann-json3-dev
 	pkgconf
         python3-virtualenv
 	python3
