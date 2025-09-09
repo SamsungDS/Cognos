@@ -88,9 +88,11 @@ int execute_command(const std::string &, vector<string>&, bool);
 
 long get_invalid_pid(void);
 
-bool pid_exists(unsigned long pid);
+bool pid_exists(long pid);
 
 const long DUMMY_PID = -1000;
 const std::string DUMMY_PROCESS = "DUMMY_PROCESS";
+
+std::string getCurrentTimestamp(void);
 
 #endif

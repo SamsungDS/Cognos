@@ -1,4 +1,3 @@
-
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -9,8 +8,10 @@
 #include <stdexcept>
 #include <thread>
 #include <chrono>
+#include <memory>
 #include <sstream>
 #include <functional>
+#include <nlohmann/json.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
@@ -18,6 +19,7 @@
 #include "numa_move_all.h"
 #include "cme_utils.h"
 #include "cme_context.h"
+#include "cme_publisher.h"
 
 using namespace std;
 
@@ -26,16 +28,31 @@ using namespace std;
  *      This function canimplement diffrent actions to be done
  *      at the end on the move_all thread function like updating
  *      the corresponding CME context.
- * @param  cb_ctx: corresponding cme_context
+ * @param  cme_ctx: corresponding cme_context
  * @return None
 */
-static int post_fn_move_all(cme_context* cme_ctx, int status)
+static void post_fn_move_all(cme_context* cme_ctx)
 {   
-        cout << "Callback function callback_fn_move_all started"  << std::endl;
-        cme_ctx->mover_cmd_status = status;
-        cme_ctx->mover_state = CTX_INACTIVE;
-        cout << "Callback function callback_fn_move_all finished; updated context state=" << to_string(cme_ctx->mover_state) << endl;
-        return 0;
+        std::cout << string (__FUNCTION__) << " Started " << std::endl;
+        //Generate completion event
+        std::string app_ctx_id = cme_ctx->app_attr.app_name + "_" + to_string(cme_ctx->app_attr.app_pid);
+        nlohmann::json event_data;
+        std::string status_string = (cme_ctx->mover_cmd_status == 0) ? "success: " : "failure: ";
+        status_string += to_string(cme_ctx->mover_cmd_status);
+        event_data["operation"] = cme_ctx->operation;
+        event_data["src_numa_node"] = cme_ctx->mem_attr.src_numa_node;
+        event_data["dst_numa_node"] = cme_ctx->mem_attr.src_numa_node;
+        event_data["status"] = status_string;
+        std::cout << string (__FUNCTION__) << "event data string created" << endl;
+        int ret = publish_cme_event(app_ctx_id, event_data, getCurrentTimestamp());
+        if (ret)
+        {
+                std::cerr << "Failed to publish CME event, return = " << ret << std::endl;
+        }
+        else
+        {
+                std::cout << "Published CME event successful" << std::endl;
+        }
 }
 
 /**
@@ -206,8 +223,8 @@ int numa_move_all::move_all(cme_context* ctx)
 {
         try
         {
-                cout << "moveall try: "<< endl;
                 cout << name << " Started  " <<  string (__FUNCTION__) <<  "--"<< ctx->app_attr.app_pid << "--" << ctx->mem_attr.src_numa_node << "--" <<  ctx->mem_attr.dst_numa_node << endl;
+                
                 if (ctx->app_attr.app_pid == DUMMY_PID)
                 {        
                         move_hot(DUMMY_PROCESS, DUMMY_PID, 1, 0, MOVER_AGGRESSIVENESS_LOW);
@@ -217,25 +234,24 @@ int numa_move_all::move_all(cme_context* ctx)
                         stop(DUMMY_PROCESS, DUMMY_PID);
                         return 0;
                 }
-                int ret;
-                
                 cout << "threadid=" << std::this_thread::get_id() << endl;
+                ctx->mover_cmd_status = -1;
                 std::string stats = process_numastat(ctx->app_attr.app_pid);
-                cout << "initial stats=" << stats << endl;
-
                 int chk = pre_fn_move_all(ctx, stats);
                 if (chk)
                 {
                         std::cerr <<"Initial stats get failed" << std::endl;
                         return chk;
                 }
-                ret = _numa_move_all(ctx->app_attr.app_pid, ctx->mem_attr.src_numa_node , ctx->mem_attr.dst_numa_node);
-                cout << name << " Finished  " <<  string (__FUNCTION__) << "--"<< ctx->app_attr.app_pid << "--" << ctx->mem_attr.src_numa_node << "--" <<  ctx->mem_attr.dst_numa_node << " ret = " << ret <<endl;
-                post_fn_move_all(ctx, ret);
+                ctx->mover_cmd_status = _numa_move_all(ctx->app_attr.app_pid, ctx->mem_attr.src_numa_node , ctx->mem_attr.dst_numa_node);
+                cout << name << " Finished  " <<  string (__FUNCTION__) << "--"<< ctx->app_attr.app_pid << "--" << ctx->mem_attr.src_numa_node << "--" <<  ctx->mem_attr.dst_numa_node << " return = " << ctx->mover_cmd_status <<endl;
+                post_fn_move_all(ctx);
+                ctx->mover_state = CTX_INACTIVE;
         }
         catch(const std::exception& e)
         {
                 std::cerr << e.what() << '\n';
+                ctx->mover_state = CTX_INACTIVE;
                 return -errno;
         }
         return 0;

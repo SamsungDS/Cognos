@@ -3,17 +3,13 @@
 #include "cme_global.h"
 #include "cme_init.h"
 #include "cme_utils.h"
+#include "cme_publisher.h"
 #include "framework_downstream.h"
 #include <numa.h>
 #include <numaif.h>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
-
-extern "C"{
-#include "jansson.h"
-
-}
 
 using namespace std;
 
@@ -183,8 +179,36 @@ TEST_F(cmeTest, CheckCmeFindContext) {
         EXPECT_EQ(cme_global_obj.clean_up(), 0);
 }
 
+TEST_F(cmeTest, CheckCmePublisher) {
+        std::string app_ctx = "test_1234";
+        namespace pt = boost::property_tree;
+        pt::ptree root;
+        root.put("test_event", "event_data");
+        std::stringstream json_stream;
+        pt::write_json(json_stream, root);
+        std::string event_data = json_stream.str();
+        // For now we publisher function returns exception/failure.
+        EXPECT_NE(publish_cme_event(app_ctx, event_data, getCurrentTimestamp()), 0);
+}
+
+TEST_F(cmeTest, CheckCmdValidMoveAll) {
+        cme_global cme_global_obj;
+	ASSERT_EQ(cme_global_obj.read_cme_config_json("cme_config.json"), 0);
+	ASSERT_EQ(cme_global_obj.cme_discovery(), 0);
+        ASSERT_EQ(cme_global_obj.initialize(), 0);
+	int pid = getpid();
+        // move_all: Test valid context name and expected move_all success
+	std::string command = "command=move_all;tm_attr=0;app=test;app_pid=" + to_string(pid) + ";src=0;dst=0";
+	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
+	std::this_thread::sleep_for(std::chrono::seconds(2));
+	// get_status: Test valid context name and expected move_all success
+	command = "command=get_status;app=test;app_pid=" + to_string(pid);
+	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
+        EXPECT_EQ(cme_global_obj.clean_up(), 0);
+}
+
 // ## Check move_all() API
-TEST_F(cmeTest, CheckCmdMoveAllFlatStringInput) {
+TEST_F(cmeTest, CheckCmdMoveAllFlatString) {
         cme_global cme_global_obj;
 	ASSERT_EQ(cme_global_obj.read_cme_config_json("cme_config.json"), 0);
 	ASSERT_EQ(cme_global_obj.cme_discovery(), 0);

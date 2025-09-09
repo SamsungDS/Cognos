@@ -4,19 +4,11 @@ file(GLOB HEADERS include/*.h)
 
 # Create a library
 add_library(svkme ${SOURCES} ${HEADERS})
-
-#add_library(my_shared_lib SHARED samples/movers/cme_mover_1.cc)
-
-find_library(JSON NAMES "libjansson.so" REQUIRED)
-if (NOT JSON)
-  message(FATAL_ERROR "libjansson not found, install libjansson-dev for ubuntu, jansson-devel for fedora if you need to build libcxl back-end")
-else()
-  message(STATUS "found libjansson for libcme")
-endif()
+find_package(nlohmann_json REQUIRED)
 
 target_include_directories(svkme PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include/" ${SVKFRAMEWORK_INCLUDE_DIRS} ${SVKMGMTFW_INCLUDE_DIRS})
 target_link_directories(svkme PRIVATE ${SVKMGMTFW_LIB_DIRS} ${SVKFRAMEWORK_LIBRARY_DIRS})
-target_link_libraries(svkme jansson svklogger)
+target_link_libraries(svkme svklogger svkframework nlohmann_json)
 
 add_definitions("-DBOOST_ALLOW_DEPRECATED_HEADERS")
 add_definitions("-DBOOST_BIND_GLOBAL_PLACEHOLDERS")
@@ -25,7 +17,6 @@ set(SVKME_SRC_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/include/")
 set(SVKME_SRC_PATH "${CMAKE_CURRENT_SOURCE_DIR}/")
 add_subdirectory("profilers")
 add_subdirectory("movers")
-
 
 if(BUILD_TESTING)
   add_definitions(-DTEST_BUILD=1 )

@@ -17,7 +17,7 @@ option(BUILD_SHARED_LIBS "Generate shared libs" ON)
 
 set(PKG_CONFIG_INCLUDEDIR "\${prefix}/${CMAKE_INSTALL_INCLUDEDIR}")
 set(PKG_CONFIG_LIBDIR "\${exec_prefix}/${CMAKE_INSTALL_LIBDIR}")
-set(pkg_config "${CMAKE_BINARY_DIR}/${SVKME}.pc")
+set(pkg_config "${CMAKE_BINARY_DIR}/${SVKME}.pc") 
 set(pkgconfig_install_dir "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
 set(SVKME_LIB_DEST "lib64/")
 set(SVKME_INCLUDE_DEST "include/")
