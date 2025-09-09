@@ -39,7 +39,7 @@ class ras_check_device_status_handler
     if (device.has_value() == false) {
       r.is_successfull = false;
       svk_logger(
-          RAS_LOG, level_E::WARN,
+          RAS_LOGGER, level_E::WARN,
           fmt::format(
               "Device {} not found. Might have been removed from monitoring",
               device_id)
@@ -55,7 +55,7 @@ class ras_check_device_status_handler
     if (r.is_successfull == false) {
       // If device status check was not successfull then mark request as failed
       svk_logger(
-          RAS_LOG, level_E::ERROR,
+          RAS_LOGGER, level_E::ERROR,
           fmt::format("Device {} status check failed", device_id).c_str());
       /** NOTE: Since this request was dynamically allocated during add device
        * this needs to be deleted */
@@ -70,7 +70,7 @@ class ras_check_device_status_handler
         ras_submit_timed_request(&r, device.value().monitor_interval);
     if (submission_successfull == false) {
       r.mark_request_failed("Failed to submit monitor request");
-      svk_logger(RAS_LOG, level_E::ERROR,
+      svk_logger(RAS_LOGGER, level_E::ERROR,
                  fmt::format("Failed to submit monitor request for device {} ",
                              device_id)
                      .c_str());

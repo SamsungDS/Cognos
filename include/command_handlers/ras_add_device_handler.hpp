@@ -89,9 +89,6 @@ class add_ras_monitor_for_device_handler
         r.command_obj[RAS_COMMAND_PARAMS_STR][RAS_COMMAND_DEVICE_NUMA_STR],
         numa_node_identifier);
 
-    device_unique_identifier device_name_in_adapter =
-        dev->get_device_name_in_adapter();
-
     // Attempt to add the device to the device manager
     r.is_successfull =
         device_manager->try_add_device(*device_unique_id, std::move(dev));
@@ -113,7 +110,7 @@ class add_ras_monitor_for_device_handler
     ras_request *monitor_req =
         build_device_monitor_request(r.ras_context, device_unique_id.value());
     if (monitor_req == nullptr) {
-      svk_logger(RAS_LOG, level_E::ERROR,
+      svk_logger(RAS_LOGGER, level_E::ERROR,
                  fmt::format("Failed to build device monitor request for "
                              "device {} ",
                              device_unique_id.value())
@@ -133,7 +130,7 @@ class add_ras_monitor_for_device_handler
                       device_unique_id.value()));
       return;
     }
-    svk_logger(RAS_LOG, level_E::INFO,
+    svk_logger(RAS_LOGGER, level_E::INFO,
                fmt::format("Started device monitoring for "
                            "device {} ",
                            device_unique_id.value())
