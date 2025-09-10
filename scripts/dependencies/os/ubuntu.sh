@@ -20,7 +20,6 @@ install_packages() {
         rapidjson-dev
         libnuma-dev
         libfmt-dev
-        rasdaemon
         flex
         bison
         libsqlite3-dev
