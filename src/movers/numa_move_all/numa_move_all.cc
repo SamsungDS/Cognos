@@ -38,10 +38,10 @@ static void post_fn_move_all(cme_context* cme_ctx)
         std::string app_ctx_id = cme_ctx->app_attr.app_name + "_" + to_string(cme_ctx->app_attr.app_pid);
         nlohmann::json event_data;
         std::string status_string = (cme_ctx->mover_cmd_status == 0) ? "success: " : "failure: ";
-        status_string += to_string(cme_ctx->mover_cmd_status);
+        status_string += to_string(cme_ctx->mover_cmd_status) + ":" + strerror(-(cme_ctx->mover_cmd_status));
         event_data["operation"] = cme_ctx->operation;
         event_data["src_numa_node"] = cme_ctx->mem_attr.src_numa_node;
-        event_data["dst_numa_node"] = cme_ctx->mem_attr.src_numa_node;
+        event_data["dst_numa_node"] = cme_ctx->mem_attr.dst_numa_node;
         event_data["status"] = status_string;
         std::cout << string (__FUNCTION__) << "event data string created" << endl;
         int ret = publish_cme_event(app_ctx_id, event_data, getCurrentTimestamp());
