@@ -28,7 +28,6 @@ install_packages() {
         wget
         rapidjson-devel
         numactl-devel
-        rasdaemon
         flex
         bison
         autoconf
