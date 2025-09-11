@@ -5,6 +5,8 @@
 #include <iostream>
 
 using json = nlohmann::json;
+std::string g_nodes_node_name;
+std::string g_nodes_config_file;
 
 int initialize_logger(json logger_config) {
   std::string log_level_str =
@@ -45,6 +47,10 @@ int initialize_logger(json logger_config) {
 int find_node_info(std::string info_type, std::string node_info_script_path,
                    std::string &output) {
   std::string logger_str;
+  int node_name_len = 512;
+  char node_name[node_name_len];
+  int status;
+
   //  Valid node info types are system, memory, network, cpu, devices
   //  If info_type is an empty string, get all node info
   if (info_type.length() != 0 &&
@@ -53,6 +59,18 @@ int find_node_info(std::string info_type, std::string node_info_script_path,
     svk_logger(NODE_FEAT_MODULE_NAME, level_E::ERROR, logger_str.c_str());
     return -1;
   }
+
+  if (g_nodes_node_name.length() == 0) {
+    status = get_node_name(node_name, &node_name_len);
+    if (status != 0) {
+      logger_str = "Error getting node name from the core framework";
+      svk_logger(NODE_FEAT_MODULE_NAME, level_E::ERROR, logger_str.c_str());
+      return -1;
+    }
+
+    g_nodes_node_name = std::string(node_name, node_name_len);
+  }
+
   // set command string
   std::string info_type_option = "";
   std::string log_level_option = "";
@@ -73,6 +91,12 @@ int find_node_info(std::string info_type, std::string node_info_script_path,
   }
   std::string command =
       node_info_script_path + " " + info_type_option + " " + log_level_option;
+  // Add the node name to the command as the node name can be different from
+  // the host name
+  command += " -n " + g_nodes_node_name;
+  command += " -c " + g_nodes_config_file;
+  command += " 2>&1";
+
   logger_str = "Executing python script, full command to be run: " + command;
   svk_logger(NODE_FEAT_MODULE_NAME, level_E::DEBUG, logger_str.c_str());
   // Execute python command
@@ -91,7 +115,7 @@ int find_node_info(std::string info_type, std::string node_info_script_path,
     node_info_json_str += buffer;
   }
 
-  int status = pclose(pipe);
+  status = pclose(pipe);
   if (status == -1) {
     svk_logger(NODE_FEAT_MODULE_NAME, level_E::ERROR,
                "pclose returned an error after attempting to run "
@@ -108,8 +132,8 @@ int find_node_info(std::string info_type, std::string node_info_script_path,
     svk_logger(NODE_FEAT_MODULE_NAME, level_E::DEBUG, logger_str.c_str());
     output = j.dump();
   } catch (json::parse_error &e) {
-    logger_str = "Invalid JSON string from find_node_info.py; output:\n" +
-                 node_info_json_str;
+    logger_str = "Invalid JSON string from find_node_info.py; output: <" +
+                 node_info_json_str + ">";
     svk_logger(NODE_FEAT_MODULE_NAME, level_E::ERROR, logger_str.c_str());
     return -1;
   }
@@ -157,6 +181,9 @@ int run_command(const uint8_t *buffer, uint64_t len, std::string &output) {
 }
 
 svk_status initialize(void *init_param) {
+  int status;
+  std::string logger_str;
+
   std::string config_path = node_feature_path + "/config/node_mgmt_conf.json";
   std::ifstream config_file(config_path);
   json conf;
@@ -166,7 +193,6 @@ svk_status initialize(void *init_param) {
     std::cerr << "Unable to parse node mgmt config" << std::endl;
     return SVK_STATUS_INVALID_CONFIG;
   }
-  int status;
   try {
     status = initialize_logger(conf.at("logger"));
   } catch (const json::exception &e) {
@@ -177,6 +203,8 @@ svk_status initialize(void *init_param) {
   if (status != 0) {
     return SVK_STATUS_INVALID_CONFIG;
   }
+
+  g_nodes_config_file = config_path;
 
   return SVK_STATUS_SUCCESS;
 }

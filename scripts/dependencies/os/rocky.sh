@@ -21,6 +21,7 @@ install_packages() {
         gcc-c++
         git
         lshw
+        numactl
         pciutils
         python3-virtualenv
         rpmdevtools
