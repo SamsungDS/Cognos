@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import os
+import platform
 import sys
 import types
 
@@ -348,11 +349,115 @@ def test_get_all_info_aggregates(monkeypatch):
     monkeypatch.setattr(fn, "get_memory_info",
                         lambda: {"mem": 4})
     monkeypatch.setattr(fn, "get_pci_info",
-                        lambda: {"dev": 5})
+                        lambda: {"pci": 5})
+    monkeypatch.setattr(fn, "get_device_info",
+                        lambda: {"device": 6})
+
 
     result = fn.get_all_info()
-    assert result == {"system": 1, "cpu": 2, "net": 3, "mem": 4, "dev": 5}
+    assert result == {"system": 1, "cpu": 2, "net": 3, "mem": 4, "pci": 5,"device": 6}
 
+
+# -------------- get_device_info ---------------------
+def test_get_device_info(monkeypatch):
+    monkeypatch.setattr("find_node_info.node_name", "testnode")
+    monkeypatch.setattr("find_node_info.config_file", "/tmp/config.json")
+    get_max_node_out = 0
+    monkeypatch.setattr("find_node_info.numactl_info.get_max_node", lambda: get_max_node_out)
+    node_to_cpus_out = [1,2]
+    monkeypatch.setattr("find_node_info.numactl_info.node_to_cpus", lambda node: node_to_cpus_out)
+    node_memory_out = (1024*1024, 4096)
+    monkeypatch.setattr("find_node_info.memory_info.node_memory_info", lambda node: node_memory_out)
+    monkeypatch.setattr(fn.uuid, "uuid3", lambda ns, numa: "XYZ-ABC")
+
+    log_file = "/tmp/log_device_info.log"
+    fn.init_logger("INFO", log_file)
+    result = fn.get_device_info()
+    with open('/tmp/xyz.log', "w") as f:
+        f.write(json.dumps(result))
+    print(result)
+    assert result == {
+        'device-info': {
+            'XYZ-ABC': {
+                'device_id': 0,
+                'serial_number': 'XYZ-ABC',
+                'numa_node': 0,
+                'total_capacity_MB': 1,
+                'available_capacity_MB': 0,
+                'vendor_device_type': 'DRAM',
+                'status': 'online',
+                'advertised_qos': {
+                    'avg_latency_ns': 100,
+                    'p99_latency_ns': 100,
+                    'io_per_sec': 1000000,
+                    'BW_per_sec': 1000,
+                    'io_size_in_bytes': 4096,
+                    'qd': 32
+                }
+            }
+        }
+    }
+    # Remove the handlers since the actual logger functionality
+    # is tested below
+    for hdlr in fn.logger.handlers:
+        fn.logger.removeHandler(hdlr)
+
+    os.unlink(log_file)
+
+def test_get_device_info_with_qos_data_override(monkeypatch):
+    device_config_json = {
+        "device_qos": {
+            "avg_latency_ns": 200
+        }
+    }
+
+    config_file = "/tmp/config.json"
+    with open(config_file, "w") as fh:
+        fh.write(json.dumps(device_config_json))
+
+    monkeypatch.setattr("find_node_info.node_name", "testnode")
+    monkeypatch.setattr("find_node_info.config_file", config_file)
+    get_max_node_out = 0
+    monkeypatch.setattr("find_node_info.numactl_info.get_max_node", lambda: get_max_node_out)
+    node_to_cpus_out = [1,2]
+    monkeypatch.setattr("find_node_info.numactl_info.node_to_cpus", lambda node: node_to_cpus_out)
+    node_memory_out = (4*1024*1024, 2*1024*1024)
+    monkeypatch.setattr("find_node_info.memory_info.node_memory_info", lambda node: node_memory_out)
+    monkeypatch.setattr(fn.uuid, "uuid3", lambda namespace, numa: "XYZ-ABC")
+
+    log_file = "/tmp/log_device_info.log"
+    fn.init_logger("INFO", log_file)
+    result = fn.get_device_info()
+    with open('/tmp/xyz.log', "w") as f:
+        f.write(json.dumps(result))
+    print(result)
+    assert result == {
+        'device-info': {
+            'XYZ-ABC': {
+                'device_id': 0,
+                'serial_number': 'XYZ-ABC',
+                'numa_node': 0,
+                'total_capacity_MB': 4,
+                'available_capacity_MB': 2,
+                'vendor_device_type': 'DRAM',
+                'status': 'online',
+                'advertised_qos': {
+                    'avg_latency_ns': 200,
+                    'p99_latency_ns': 100,
+                    'io_per_sec': 1000000,
+                    'BW_per_sec': 1000,
+                    'io_size_in_bytes': 4096,
+                    'qd': 32
+                }
+            }
+        }
+    }
+    # Remove the handlers since the actual logger functionality
+    # is tested below
+    for hdlr in fn.logger.handlers:
+        fn.logger.removeHandler(hdlr)
+    os.unlink(config_file)
+    os.unlink(log_file)
 
 # ------------- parse_args --------------------------------------------------
 
@@ -365,6 +470,8 @@ def test_parse_args_defaults(monkeypatch):
         "info_type": "all",
         "log_level": "INFO",
         "log_file_path": "/var/log/svk/find_node_info.log",
+        'config_file': '/usr/local/svk/feature_modules/node/config/node_mgmt_conf.json',
+        'node_name': None
     }
 
 
@@ -374,13 +481,15 @@ def test_parse_args_custom_values(monkeypatch):
         sys,
         "argv",
         ["prog", "--info-type", "network",
-         "--log-level", "DEBUG"],
+         "--log-level", "DEBUG", "--node-name", "TestNode"],
     )
     args = fn.parse_args()
     assert args == {
         "info_type": "network",
         "log_level": "DEBUG",
         "log_file_path": "/var/log/svk/find_node_info.log",
+        'config_file': '/usr/local/svk/feature_modules/node/config/node_mgmt_conf.json',
+        'node_name': "TestNode"
     }
 
 
@@ -417,6 +526,7 @@ def test_init_logger_bad_directory(monkeypatch):
                           ("cpu", fn.get_cpu_info),
                           ("system", fn.get_system_info),
                           ("pci", fn.get_pci_info),
+                          ("device", fn.get_device_info),
                           ("all", fn.get_all_info)])
 def test_run_command_mapping(info_type, func):
     """get_command should return the function mapped to the info type."""
@@ -461,6 +571,8 @@ def test_main_success(monkeypatch):
         "info_type": "system",
         "log_level": "info",
         "log_file_path": "/tmp/out.log",
+        "node_name": "testserver",
+        "config_file": "/tmp/config.file"
     })
     monkeypatch.setattr(fn, "init_logger",
                         lambda level, path: setattr(fn, 'logger', logging.getLogger("test")))

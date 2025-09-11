@@ -9,6 +9,7 @@ target_link_libraries(
     GTest::gtest_main
     gmock_main
     svknode
+    svkframework
 )
 
 file(COPY "${CMAKE_SOURCE_DIR}/src/node_info/find_node_info.py" DESTINATION "node/scripts/")

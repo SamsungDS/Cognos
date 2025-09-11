@@ -7,6 +7,13 @@ import platform
 import psutil
 import socket
 import subprocess
+import uuid
+
+from numa import info as numactl_info
+from numa import memory as memory_info
+
+node_name = None
+config_file = None
 
 logger = None
 
@@ -201,6 +208,68 @@ def get_pci_info():
 
     return {'pci-info': pci_info}
 
+def read_device_qos_data_from_config_file(config_file):
+
+    if (os.path.exists(config_file) and os.path.isfile(config_file)) is False:
+        logger.error(f"Config file {config_file} doesn't exist")
+        return {}
+
+    try:
+        with open(config_file, 'r') as file:
+            config_data = json.load(file)
+            return config_data.get('device_qos', {})
+    except Exception as e:
+        logger.error(f"An error occurred in reading the config file for device QoS data: {e}")
+    return {}
+
+def get_device_info():
+    """
+    Get information of all the DRAM devices.
+
+    Returns:
+        dict: A dictionary containing DRAM device names.
+    """
+    device_info = dict()
+
+    logger.info(f"Node name is {node_name}")
+    if node_name is None:
+        return device_info
+
+    node_name_str = node_name
+    qos_data = read_device_qos_data_from_config_file(config_file)
+    try:
+        # Get the list of devices
+        max_nodes = numactl_info.get_max_node()
+        logger.debug(f"Max nodes is {max_nodes + 1}")
+        for node in range(max_nodes + 1):
+            cores = numactl_info.node_to_cpus(node)
+            if len(cores) == 0:
+                continue
+            mem_obj = memory_info.node_memory_info(node)
+            logger.debug(f"memory total, used for {node} is {mem_obj}")
+            device = {
+                'device_id': node,
+                'serial_number': str(uuid.uuid3(uuid.NAMESPACE_DNS, node_name_str + "_" + str(node))),
+                'numa_node': node,
+                'total_capacity_MB': int(mem_obj[0]/(1024*1024)),
+                'available_capacity_MB': int(mem_obj[1]/(1024*1024)),
+                'vendor_device_type': "DRAM",
+                'status': 'online',
+                'advertised_qos': {
+                    'avg_latency_ns': qos_data.get('avg_latency_ns', 100),
+                    'p99_latency_ns': qos_data.get('p99_latency_ns', 100),
+                    'io_per_sec': qos_data.get('io_per_sec', 1000000),
+                    'BW_per_sec': qos_data.get('BW_per_sec', 1000),
+                    'io_size_in_bytes': qos_data.get('io_size_in_bytes', 4096),
+                    'qd': qos_data.get('qd', 32)
+                }
+            }
+            device_info[device['serial_number']] = device
+    except Exception as e:
+        logger.error(f"Error in getting device info: {e}")
+
+    logger.info(f"Device info is {device_info}")
+    return {'device-info': device_info}
 
 def get_all_info():
     """
@@ -210,11 +279,10 @@ def get_all_info():
         dict: A dictionary containing aggregated system information.
     """
     func_list = [get_system_info, get_cpu_info, get_network_adapters_info,
-                 get_memory_info, get_pci_info]
+                 get_memory_info, get_pci_info, get_device_info]
     res = {k:v for func in func_list for k, v in func().items()}
 
     return res
-
 
 def parse_args():
 
@@ -228,21 +296,35 @@ def parse_args():
         "--info-type",
         type=str,
         default="all",
-        choices=["network", "memory", "cpu", "system", "pci", "all"],
+        choices=["network", "memory", "cpu", "system", "pci", "device", "all"],
         help="Type of info to retrieve about the node. If no info type is provided, retrieve all info."
-            "Types supported: network, memory, cpu, system, pci, all"
+            "Types supported: network, memory, cpu, system, pci, device, all"
     )
     
     parser.add_argument("-l", "--log-level", type=str, default="INFO",
                         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
                         help="Log level for python logger."
                         "Log levels: DEBUG, INFO, WARNING, ERROR, CRITICAL")
+
+    parser.add_argument(
+        "-n",
+        "--node-name",
+        type=str,
+        help="The node name used by the node server"
+    )
+    parser.add_argument(
+        "-c",
+        "--config-file",
+        type=str,
+        default="/usr/local/svk/feature_modules/node/config/node_mgmt_conf.json",
+        help="Configuration file to read the defaults for the QoS Data (default: %(default)s)"
+    )
     # Using hardcode default log file for now
     default_log_file = "/var/log/svk/find_node_info.log"
     args = parser.parse_args()
 
-    return {'info_type': args.info_type, 'log_level': args.log_level, 'log_file_path': default_log_file}
-
+    return {'info_type': args.info_type, 'log_level': args.log_level, 'log_file_path': default_log_file,
+            'node_name': args.node_name, 'config_file': args.config_file}
 
 def init_logger(log_level: str, log_file_path: str):
     """Initialize the logger for find_node_info.py
@@ -286,10 +368,13 @@ def init_logger(log_level: str, log_file_path: str):
 
 def get_command(info_type: str):
     command_map = {'network': get_network_adapters_info, 'memory': get_memory_info, 'cpu': get_cpu_info,
-                   'system': get_system_info, 'pci': get_pci_info, 'all': get_all_info}
+                   'system': get_system_info, 'pci': get_pci_info, 'device': get_device_info, 'all': get_all_info}
     return command_map[info_type]
 
 def main():
+    global node_name
+    global config_file
+
     if platform.system() != "Linux":
         print("Platform not supported")
         return
@@ -300,6 +385,10 @@ def main():
     if logger is None:
         print("Logger not initialized, couldn't run find node info")
         return
+
+    node_name = args["node_name"]
+    config_file = args["config_file"]
+
     print(json.dumps(get_command(args['info_type'])(), indent=4))
 
 if __name__ == "__main__":

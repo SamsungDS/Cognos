@@ -12,6 +12,7 @@ install_packages() {
         g++
         git
         lshw
+        numactl
         pciutils
         pkgconf
         python3-virtualenv

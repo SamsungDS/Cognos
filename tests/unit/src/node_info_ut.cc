@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 
+#include "framework_upstream.h"
 #include "helper_fns.hpp"
 #include "node_info.hpp"
 
@@ -33,6 +34,7 @@ TEST(HelperFnsTests, TestInitLoggerInvalidConfig) {
 
 TEST(HelperFnsTests, TestFindNodeInfoBadScriptPath) {
   std::string param = "";
+  EXPECT_EQ(0, set_node_name("node1", strlen("node1")));
   svk_status status = initialize((void *)param.c_str());
   EXPECT_EQ(0, status);
 
@@ -47,6 +49,8 @@ TEST(HelperFnsTests, TestFindNodeInfoBadScriptPath) {
 // Adding this test to try individual info call
 TEST(HelperFnsTests, TestFindNodeInfoCPU) {
   std::string param = "";
+  EXPECT_EQ(0, set_node_name("node1", strlen("node1")));
+
   svk_status status = initialize((void *)param.c_str());
   EXPECT_EQ(0, status);
 
@@ -62,6 +66,7 @@ TEST(HelperFnsTests, TestFindNodeInfoCPU) {
 
 TEST(DownstreamAPITests, TestInitialize) {
   std::string param = "";
+  EXPECT_EQ(0, set_node_name("node1", strlen("node1")));
   svk_status status = initialize((void *)param.c_str());
   EXPECT_EQ(0, status);
   clean_up((void *)param.c_str());
@@ -77,6 +82,7 @@ TEST(DownstreamAPITests, TestInitializeNoConfig) {
   std::remove(config_path.c_str());
   sleep(1);
 
+  EXPECT_EQ(0, set_node_name("node1", strlen("node1")));
   svk_status status = initialize((void *)param.c_str());
   EXPECT_EQ(SVK_STATUS_INVALID_CONFIG, status);
   sleep(1);
@@ -101,6 +107,7 @@ TEST(DownstreamAPITests, TestInitializeInvalidConfig) {
   output_file.close();
   sleep(1);
 
+  EXPECT_EQ(0, set_node_name("node1", strlen("node1")));
   svk_status status = initialize((void *)param.c_str());
   EXPECT_EQ(SVK_STATUS_INVALID_CONFIG, status);
   sleep(1);
@@ -125,6 +132,8 @@ TEST(DownstreamAPITests, TestInitializeInvalidLogLevel) {
   output_file.close();
   sleep(1);
 
+  EXPECT_EQ(0, set_node_name("node1", strlen("node1")));
+
   svk_status status = initialize((void *)param.c_str());
   EXPECT_EQ(SVK_STATUS_INVALID_CONFIG, status);
   sleep(1);
@@ -147,6 +156,8 @@ TEST(DownstreamAPITests, IsLicenseValid) {
 
 TEST(DownstreamAPITests, ExecuteSyncSuccess) {
   std::string param = "";
+  EXPECT_EQ(0, set_node_name("node1", strlen("node1")));
+
   svk_status status = initialize((void *)param.c_str());
   EXPECT_EQ(SVK_STATUS_SUCCESS, status);
 
@@ -175,6 +186,7 @@ TEST(DownstreamAPITests, ExecuteSyncSuccess) {
 
 TEST(DownstreamAPITests, ExecuteSyncNoInfoType) {
   std::string param = "";
+  EXPECT_EQ(0, set_node_name("node1", strlen("node1")));
   svk_status status = initialize((void *)param.c_str());
   EXPECT_EQ(SVK_STATUS_SUCCESS, status);
 
@@ -201,6 +213,8 @@ TEST(DownstreamAPITests, ExecuteSyncNoInfoType) {
 
 TEST(DownstreamAPITests, ExecuteSyncInvalidCommandName) {
   std::string param = "";
+  EXPECT_EQ(0, set_node_name("node1", strlen("node1")));
+
   svk_status status = initialize((void *)param.c_str());
   EXPECT_EQ(SVK_STATUS_SUCCESS, status);
 
@@ -229,6 +243,7 @@ TEST(DownstreamAPITests, ExecuteSyncInvalidCommandName) {
 
 TEST(DownstreamAPITests, ExecuteSyncInvalidCommandParams) {
   std::string param = "";
+  EXPECT_EQ(0, set_node_name("node1", strlen("node1")));
   svk_status status = initialize((void *)param.c_str());
   EXPECT_EQ(SVK_STATUS_SUCCESS, status);
 
@@ -248,6 +263,8 @@ TEST(DownstreamAPITests, ExecuteSyncInvalidCommandParams) {
 
 TEST(DownstreamAPITests, ExecuteSyncInvalidDataType) {
   std::string param = "";
+  EXPECT_EQ(0, set_node_name("node1", strlen("node1")));
+
   svk_status status = initialize((void *)param.c_str());
   EXPECT_EQ(SVK_STATUS_SUCCESS, status);
 
@@ -290,6 +307,7 @@ TEST(DownstreamAPITests, ExecuteSyncInvalidPythonLogLevel) {
   output_file.close();
   sleep(1);
 
+  EXPECT_EQ(0, set_node_name("node1", strlen("node1")));
   svk_status status = initialize((void *)param.c_str());
   EXPECT_EQ(SVK_STATUS_SUCCESS, status);
   sleep(1);
@@ -333,6 +351,8 @@ TEST(DownstreamAPITests, ExecuteAsync) {
 
 TEST(DownstreamAPITests, CleanupSuccess) {
   std::string param = "";
+  EXPECT_EQ(0, set_node_name("node1", strlen("node1")));
+
   svk_status status = initialize((void *)param.c_str());
   EXPECT_EQ(SVK_STATUS_SUCCESS, status);
 
