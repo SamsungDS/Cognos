@@ -562,7 +562,7 @@ TEST(ConfigureDeviceTest, ConfigureDevInvalidFeature) {
   svk_device_ctx device_handle;
   svk_device_ctx dummy_resp;
 
-  EXPECT_EQ(SVK_STATUS_FAIL,
+  EXPECT_EQ(SVK_STATUS_FEATURE_NOT_LOADED,
             configure_svk_device_if_any(&pass_thru, &dummy_config,
                                         &device_handle, 1, &dummy_resp));
 }
@@ -889,7 +889,8 @@ TEST(ExecTest, ExecuteSyncInvalidFeatureID) {
   svk_input input;
   svk_output output;
 
-  EXPECT_EQ(1, execute_svk_feature_sync(&pass_thru, &input, &output));
+  EXPECT_EQ(SVK_STATUS_FEATURE_NOT_LOADED,
+            execute_svk_feature_sync(&pass_thru, &input, &output));
 
   cleanup_svk(&ctx, (void *)conf.c_str());
 }
