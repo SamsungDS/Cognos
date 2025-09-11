@@ -536,7 +536,7 @@ svk_status FrameworkSvc::get_feature_details(
         "%s",
         e.what());
     svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
-    return SVK_STATUS_FAIL;
+    return SVK_STATUS_FEATURE_NOT_LOADED;
   }
   return SVK_STATUS_SUCCESS;
 }
@@ -656,6 +656,7 @@ svk_status FrameworkSvc::FrameworkSvcGetRegisteredFeatures(
     logger_str = "Output buffer too small, response truncated: " +
                  std::string((char *)output->output_buffer, output->len);
     svk_logger(CORE_LOGGER_NAME, level_E::ERROR, logger_str.c_str());
+    output->status = status;
     return status;
   }
   status = SVK_STATUS_SUCCESS;
@@ -703,7 +704,10 @@ svk_status FrameworkSvc::FrameworkSvcProcessCommand(
     exec_res = get_feature_details(&feature_details, pass_thru->feat_id);
   }
 
-  if (exec_res != SVK_STATUS_SUCCESS) return exec_res;
+  if (exec_res != SVK_STATUS_SUCCESS) {
+    output->status = exec_res;
+    return exec_res;
+  }
 
   // Synchrounous execute
   if (postprocess_fn == nullptr) {
@@ -714,6 +718,7 @@ svk_status FrameworkSvc::FrameworkSvcProcessCommand(
                (uint32_t)pass_thru->feat_id);
       svk_logger(CORE_LOGGER_NAME, level_E::ERROR, log_msg);
     }
+    output->status = exec_res;
   } else {  // Postprocess fn exists, this is async IO
     exec_res = feature_details->execute_async(pass_thru, postprocess_fn);
     if (exec_res != SVK_STATUS_SUCCESS) {
