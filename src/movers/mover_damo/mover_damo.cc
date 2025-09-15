@@ -17,6 +17,7 @@
 #include "mover_damo.h"
 #include "damo_main.h"
 #include "cme_utils.h"
+#include "cme_logger.h"
 
 using namespace std;
 
@@ -30,7 +31,7 @@ int start_damo_main(string app_name, long app_pid, unsigned int slow_tier, unsig
         }
         catch (const std::exception& e)
         {
-                cout << "Error in " + string(__FUNCTION__) + " : " + string(e.what()) << endl;
+                CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : " + string(e.what()));
                 ret = -EINVAL;
         }
         return ret;
@@ -45,7 +46,7 @@ int stop_damo_main(string app_name, long app_pid)
         }
         catch (const std::exception& e)
         {
-                cout << "Error in " + string(__FUNCTION__) + " : " + string(e.what()) << endl;
+                CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : " + string(e.what()));
                 ret = -EINVAL;
         }
         return ret;
@@ -71,7 +72,7 @@ std::string stats_damo_main(cme_context *ctx)
         }
         catch (const std::exception& e)
         {
-                cout << "Error in " + string(__FUNCTION__) + " : " + string(e.what()) << endl;
+                CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : " + string(e.what()));
                 json_stats = to_string(-EINVAL);
         }
         return json_stats;
@@ -79,57 +80,57 @@ std::string stats_damo_main(cme_context *ctx)
 
 extern "C" cme_mover* register_cme_fn() {
 
-                cout << "Registering cme_mover mover_damo " + string (__FUNCTION__) << endl;
+                CME_LOG("INFO", "Registering cme_mover mover_damo " + string (__FUNCTION__));
                 return new mover_damo(std::string("mover_damo"));
 
 }
 
 extern "C" void unregister_cme_fn(cme_mover* mover_obj) {
 
-        cout << "Unregistering cme mover mover_damo " + string (__FUNCTION__) << endl;
+        CME_LOG("INFO", "Unregistering cme mover mover_damo " + string (__FUNCTION__));
         delete mover_obj;
 
 }
 
 int mover_damo::move_all(cme_context* ctx)
 {
-        cout << name << " Started  " <<  string (__FUNCTION__) << endl;
+        CME_LOG("INFO", name, " Started  ",  string (__FUNCTION__));
         return 0;
 }
 
 int mover_damo::move_hot(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, enum cme_mover_aggr aggresiveness_level)
 {
-        cout << name << " Started  " <<  string (__FUNCTION__) << endl;
+        CME_LOG("INFO", name, " Started  ",  string (__FUNCTION__));
         return start_damo_main(app_name, app_pid, slow_tier, fast_tier, aggresiveness_level, MOVE_HOT);
 }
 
 int mover_damo::move_cold(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, enum cme_mover_aggr aggresiveness_level)
 {
-        cout << name << " Started  " <<  string (__FUNCTION__) << endl;
+        CME_LOG("INFO", name, " Started  ",  string (__FUNCTION__));
         return start_damo_main(app_name, app_pid, slow_tier, fast_tier, aggresiveness_level, MOVE_COLD);
 }
 
 int mover_damo::move(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, enum cme_mover_aggr aggresiveness_level)
 {
-        cout << name << " Started  " <<  string (__FUNCTION__) << endl;
+        CME_LOG("INFO", name, " Started  ",  string (__FUNCTION__));
         return start_damo_main(app_name, app_pid, slow_tier, fast_tier, aggresiveness_level, MOVE);
 }
 
 int mover_damo::get_status()
 {
-        cout << name << " Started  " <<  string (__FUNCTION__) << endl;
+        CME_LOG("INFO", name, " Started  ",  string (__FUNCTION__));
         return 0;
 }
 
 std::string mover_damo::get_stats(cme_context* ctx)
 {
-                cout << name << " Started  " <<  string (__FUNCTION__) << endl;
+                CME_LOG("INFO", name, " Started  ",  string (__FUNCTION__));
 		return stats_damo_main(ctx);
 }
 
 int mover_damo::stop(string app_name, long app_pid)
 {
-        cout << name << " Started  " <<  string (__FUNCTION__) << endl;
+        CME_LOG("INFO", name, " Started  ",  string (__FUNCTION__));
         if (TEST_BUILD)
         {
                 get_status();

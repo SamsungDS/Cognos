@@ -23,6 +23,7 @@
 
 using namespace std;
 
+
 /**
  * @brief struct to add hash function for a pair
  * @details When pair is used in an unordered_map, there is no

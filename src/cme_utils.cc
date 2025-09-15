@@ -1,5 +1,4 @@
 
-#include "cme_utils.h"
 #include <array>
 #include <functional>
 #include <csignal>
@@ -7,6 +6,8 @@
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
+#include "cme_utils.h"
+#include "cme_logger.h"
 
 using namespace std;
 
@@ -59,7 +60,7 @@ bool command_parser_json(const std::string& input_cme_command, unordered_map<std
         }
         catch (const std::exception &e)
         {
-                std::cerr << "command_parser_json. Error -> " << e.what () << endl;
+                CME_ERR("command_parser_json. Error -> ", e.what ());
                 return false;
         }
 
@@ -74,7 +75,7 @@ int execute_command(const std::string& cmd, std::vector<std::string>& output, bo
         }
         output.clear();
         string command = cmd;
-        cout << "Executing " << command << endl;
+        CME_LOG("INFO", "Executing ", command);
         std::unique_ptr<FILE, std::function<void(FILE*)>> pipe(
                 popen(command.c_str(), "r"),
                 [](FILE* f) { pclose(f); }
@@ -111,25 +112,19 @@ long get_invalid_pid( void)
         return((long)(max_pid + 1));
 }
 
-bool pid_exists(long pid) {
+bool pid_exists(long pid)
+{
     // Use kill with signal 0 to check if the process exists
     // This does not send a real signal, just checks for permission
     return kill((pid_t)pid, 0) == 0;
 }
 
-std::string getCurrentTimestamp() {
-    // Get the current time as a time_point
-    auto now = std::chrono::system_clock::now();
-
-    // Convert to time_t
-    std::time_t now_c = std::chrono::system_clock::to_time_t(now);
-
-    // Convert to tm as UTC
-    std::tm now_tm = *std::gmtime(&now_c);
-
-    // Use stringstream to format the time
-    std::stringstream ss;
-    ss << std::put_time(&now_tm, "%Y-%m-%dT%H:%M:%SZ");
-
-    return ss.str();
+std::string getCurrentTimestamp()
+{
+        // Get the current time as a time_point
+        auto now = std::chrono::system_clock::now();
+        // Get epoch
+        auto epoch_seconds_direct = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+        std::string epoch_seconds_str = std::to_string(epoch_seconds_direct);
+        return epoch_seconds_str;
 }

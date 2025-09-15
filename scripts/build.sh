@@ -292,12 +292,18 @@ if $WITH_COVERAGE;then
     mkdir -p "/usr/local/svk/feature_modules/me/config/"
     cp "$BUILD_DIR/src/movers/numa_move_all/libnuma_move_all.so" "$BUILD_DIR/tests/movers/"
     cp "$BUILD_DIR/src/movers/mover_damo/libmover_damo.so" "$BUILD_DIR/tests/movers/"
+    mkdir -p "$BUILD_DIR/tests/test_CmeDiscovery"
+    mkdir -p "$BUILD_DIR/tests/test_CmeDiscovery_fail"
+    cp "$BUILD_DIR/src/libsvkme.so" "$BUILD_DIR/tests/test_CmeDiscovery/"
+    cp "$BUILD_DIR/tests/mock_failures/libregister_mover.so" "$BUILD_DIR/tests/test_CmeDiscovery_fail/"
     cp "$PROJECT_ROOT/tests/cme_config.json" "$BUILD_DIR/tests/"
     cp "$PROJECT_ROOT/src/movers/mover_damo/config/damo_config.json" "/usr/local/svk/feature_modules/me/config/"
     cp "$PROJECT_ROOT/src/movers/mover_damo/tools/tm_gen_config.py" "/usr/local/svk/feature_modules/me/config/"
     mkdir -p "$REPORTS_DIR"
     ctest --output-junit "$REPORTS_DIR/gitlab_junit.xml"
     rm -rf "/usr/local/svk/feature_modules/me"
+    rm -rf "$BUILD_DIR/tests/test_CheckCmeDiscovery"
+    rm -rf "$BUILD_DIR/tests/test_CmeDiscovery_fail"
   else
     die "Can't generate code coverage without building tests, not running gcovr"
   fi

@@ -12,6 +12,7 @@
 
 #include "damo_main.h"
 #include "damo_utils.h"
+#include "cme_logger.h"
 
 using namespace std;
 
@@ -51,7 +52,7 @@ int damo_init()
         }
         catch (const std::exception& e)
         {
-                cout << "Error in " + string(__FUNCTION__) + " : " + string(e.what()) << endl;
+                CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : " + string(e.what()));
                 ret = -EINVAL;
         }
         return ret;
@@ -73,7 +74,7 @@ int read_damo_config_json(damo_config_params* damo_config_params_to_fill, int da
                 string conf_filename = SVK_DAMO_PATH + "damo_config.json";
                 namespace pt = boost::property_tree;
                 pt::ptree root;
-                cout << "reading damo config json = " << conf_filename << endl;
+                CME_LOG("INFO", "reading damo config json = ", conf_filename);
                 pt::read_json(conf_filename, root);
                 string damo_config_tag = "ag_level_" + to_string(damo_process_param.ag_level);
                 pt::ptree damo_params = root.get_child(damo_config_tag);
@@ -113,7 +114,7 @@ int read_damo_config_json(damo_config_params* damo_config_params_to_fill, int da
         }
         catch (const std::exception& e)
         {
-                std::cerr << "Unable to read damo config json. Error -> " << e.what() << '\n';
+                CME_ERR("Unable to read damo config json. Error -> ", e.what());
                 ret = -EINVAL;
         }
         return ret;
@@ -204,7 +205,7 @@ int cgroup_create()
                 ret = execute_command(cmd, cmd_output, TEST_BUILD);
                 if (ret)
                 {
-                        cout << "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret) << endl;
+                        CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret));
                         return ret;
                 }
 
@@ -214,7 +215,7 @@ int cgroup_create()
                 ret = execute_command(cmd, cmd_output, TEST_BUILD);
                 if (ret)
                 {
-                        cout << "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret) << endl;
+                        CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret));
                         return ret;
                 }
 
@@ -223,7 +224,7 @@ int cgroup_create()
                 ret = execute_command(cmd, cmd_output, TEST_BUILD);
                 if (ret)
                 {
-                        cout << "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret) << endl;
+                        CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret));
                         return ret;
                 }
 
@@ -233,12 +234,12 @@ int cgroup_create()
                 ret = execute_command(cmd, cmd_output, TEST_BUILD);
                 if (ret)
                 {
-                        cout << "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret) << endl;
+                        CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret));
                 }
         }
         catch (const std::exception& e)
         {
-                cout << "Error in " + string(__FUNCTION__) + " : " + string(e.what()) << endl;
+                CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : " + string(e.what()));
                 ret = -EINVAL;
         }
         return ret;
@@ -275,7 +276,7 @@ int yaml_generate(int move_select)
                 execute_command(cmd_demote, cmd_output, false);
                 if (ret)
                 {
-                        cout << "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret) << endl;
+                        CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret));
                         return ret;
                 }
         
@@ -292,7 +293,7 @@ int yaml_generate(int move_select)
                 execute_command(cmd_promote, cmd_output, false);
                 if (ret)
                 {
-                        cout << "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret) << endl;
+                        CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret));
                         return ret;
                 }
 
@@ -309,14 +310,14 @@ int yaml_generate(int move_select)
                         ret = execute_command(cmd, cmd_output, false);
                         if (ret)
                         {
-                                cout << "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret) << endl;
+                                CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret));
                                 return ret;
                         }
                         cmd = "printf \"\n\n%s\n\n\" \"$(sed '1d' " + yaml_file_promote_mod + ")\" >> " + yaml_file;
                         ret = execute_command(cmd, cmd_output, false);
                         if (ret)
                         {
-                                cout << "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret) << endl;
+                                CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret));
                                 return ret;
                         }
                 }
@@ -326,7 +327,7 @@ int yaml_generate(int move_select)
                         ret = execute_command(cmd, cmd_output, false);
                         if (ret)
                         {
-                                cout << "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret) << endl;
+                                CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret));
                                 return ret;
                         }
                 }
@@ -336,13 +337,13 @@ int yaml_generate(int move_select)
                         ret = execute_command(cmd, cmd_output, false);
                         if (ret)
                         {
-                                cout << "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret) << endl;
+                                CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret));
                                 return ret;
                         }
                 }
                 else
                 {
-                        std::cerr << "Wrong move command" << endl;
+                        CME_ERR("Wrong move command");
                         ret = -EINVAL;
                 }
 
@@ -350,23 +351,23 @@ int yaml_generate(int move_select)
         
                 if (filesystem::exists(filePath))
                 {
-                        cout << "GLOBAL_DAMO_CONFIG File exists.\n";
+                        CME_LOG("INFO", "GLOBAL_DAMO_CONFIG File exists.\n");
                         cmd = "printf \"\n\n%s\n\n\" \"$(sed '1d' " + yaml_file + ")\" >> " + GLOBAL_DAMO_CONFIG;
                         ret = execute_command(cmd, cmd_output, false);
                         if (ret)
                         {
-                                cout << "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret) << endl;
+                                CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret));
                                 return ret;
                         }
                 }
                 else
                 {
-                        cout << "GLOBAL_DAMO_CONFIG File does not exist.\n";
+                        CME_LOG("INFO", "GLOBAL_DAMO_CONFIG File does not exist.\n");
                         cmd = "printf \"%s\n\" \"$(cat " + yaml_file + ")\" > " + GLOBAL_DAMO_CONFIG;
                         ret = execute_command(cmd, cmd_output, false);
                         if (ret)
                         {
-                                cout << "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret) << endl;
+                                CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret));
                                 return ret;
                         }
                 }
@@ -376,7 +377,7 @@ int yaml_generate(int move_select)
         }
         catch (const std::exception& e)
         {
-                cout << "Error in " + string(__FUNCTION__) + " : " + string(e.what()) << endl;
+                CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : " + string(e.what()));
                 ret = -EINVAL;
         }
         return ret;
@@ -501,7 +502,7 @@ int start(string app_name, long app_pid, unsigned int slow_tier, unsigned int fa
                 ret = damo_init();
                 if (ret)
                 {
-                        cout << "ERROR in damo init" << endl;
+                        CME_LOG("INFO", "ERROR in damo init");
                         return ret;
                 }
                 string cmd;
@@ -513,21 +514,21 @@ int start(string app_name, long app_pid, unsigned int slow_tier, unsigned int fa
                 }
                 catch (const std::exception& e)
                 {
-                        cout << "damo not running" << endl;
+                        CME_LOG("INFO", "damo not running");
                 }
 
 
                 ret = cgroup_create();
                 if (ret)
                 {
-                        cout << "ERROR in cgroup creation" << endl;
+                        CME_LOG("INFO", "ERROR in cgroup creation");
                 return ret;
                 }
 
                 ret = yaml_generate(move_select);
                 if (ret)
                 {
-                        cout << "ERROR in damo config generation" << endl;
+                        CME_LOG("INFO", "ERROR in damo config generation");
                 return ret;
                 }
 
@@ -541,13 +542,13 @@ int start(string app_name, long app_pid, unsigned int slow_tier, unsigned int fa
                         ret = execute_command(cmd, cmd_output, false);
                         if (ret)
                         {
-                                cout << "ERROR in damo start" << endl;
+                                CME_LOG("INFO", "ERROR in damo start");
                         }
                 }
         }
         catch (const std::exception& e)
         {
-                cout << "Error in " + string(__FUNCTION__) + " : " + string(e.what()) << endl;
+                CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : " + string(e.what()));
                 ret = -EINVAL;
         }
         return ret;
@@ -570,13 +571,13 @@ int cgroup_delete(string cg_name)
                 ret = execute_command(cmd, cmd_output, TEST_BUILD);
                 if (ret)
                 {
-                        cout << "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret) << endl;
+                        CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret));
                 }
 
         }
     catch (const std::exception& e)
     {
-        cout << "Error in " + string(__FUNCTION__) + " : " + string(e.what()) << endl;
+        CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : " + string(e.what()));
         ret = -EINVAL;
     }
     return ret;
@@ -598,10 +599,10 @@ int stop(string app_name, long app_pid)
                 vector<string> cmd_output;
                 cmd = cmd = "sudo " + PM_DAMO_PYTHON3_PATH + " " + PM_DAMO_PATH + " stop";
                 ret = execute_command(cmd, cmd_output, TEST_BUILD);
-                cout << "--damo--stop " << to_string(ret) << endl;
+                CME_LOG("INFO", "--damo--stop ", to_string(ret));
                 if (ret)
                 {
-                        cout << "ERROR in command: " << cmd << endl;
+                        CME_LOG("INFO", "ERROR in command: ", cmd);
                         return -EINVAL;
                 }
 
@@ -611,7 +612,7 @@ int stop(string app_name, long app_pid)
                 int ret = cgroup_delete(cg_name);
                 if (ret)
                 {
-                        cout << "ERROR in cgroup_delete: " << endl;
+                        CME_LOG("INFO", "ERROR in cgroup_delete: ");
                         return ret;
                 }
 
@@ -628,7 +629,7 @@ int stop(string app_name, long app_pid)
                                 ret = execute_command(cmd, cmd_output, false);
                                 if (ret)
                                 {
-                                        cout << "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret) << endl;
+                                        CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret));
                                         return ret;
                                 }
                         }
@@ -636,7 +637,7 @@ int stop(string app_name, long app_pid)
         }
         catch (const std::exception& e)
         {
-                cout << "Error in " + string(__FUNCTION__) + " : " + string(e.what()) << endl;
+                CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : " + string(e.what()));
                 ret = -EINVAL;
         }
         return 0;
@@ -741,7 +742,7 @@ static std::string extract_damo_stats(vector<string> &damon_stats_output, vector
         }
         catch(const std::exception& e)
         {
-                std::cerr << e.what() << '\n';
+                CME_ERR(e.what());
         }
         return "";
 }
@@ -762,14 +763,14 @@ std::string get_stats(string app_name, long app_pid)
                 int ret = execute_command(command, output_stats, false);
                 if (ret)
                 {
-                   std::cerr << "Error in " + string (__FUNCTION__) + "ERROR in command: " + command << endl;
+                   CME_ERR("Error in " + string (__FUNCTION__) + "ERROR in command: " + command);
                    return to_string(ret);
                 }
                 command = "sudo " + PM_DAMO_PYTHON3_PATH + " " + PM_DAMO_PATH + " report damon --damon_params --json";
                 ret = execute_command(command, output_params, false);
                 if (ret)
                 {
-                   std::cerr << "Error in " + string (__FUNCTION__) + "ERROR in command: " + command << endl;
+                   CME_ERR("Error in " + string (__FUNCTION__) + "ERROR in command: " + command);
                    return to_string(ret);
                 }
                 string res = extract_damo_stats(output_stats, output_params, cg_name);
@@ -777,7 +778,7 @@ std::string get_stats(string app_name, long app_pid)
         }
         catch(const std::exception& e)
         {
-                std::cerr << e.what() << '\n';
+                CME_ERR(e.what());
         }
         return "";
 }
