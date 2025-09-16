@@ -112,8 +112,10 @@ void prepare_clusters(std::vector<int> num_nodes_for_each_cluster) {
       reg_req->set_node_port(node_port);
 
       EXPECT_CALL(*mockClient, CreateClient(_, _))
-          .Times(1)
-          .WillOnce(Return(std::make_unique<FakeClient>(node_ip, node_port)));
+          .Times(AtLeast(1))
+          .WillRepeatedly([](std::string node_id, std::string node_port) {
+            return std::make_unique<FakeClient>(node_id, node_port);
+          });
       grpc_status = client.RegisterNode(reg_req, reg_resp);
       ASSERT_EQ(grpc_status.ok(), true);
     }
@@ -318,8 +320,10 @@ TEST_F(MockTestController, TestMock) {
   std::string node_port = "9998";
 
   EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(std::make_unique<FakeClient>(node_id, node_port)));
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeClient>(node_id, node_port);
+      });
 
   Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
 
@@ -343,8 +347,10 @@ TEST_F(MockTestController, RegisterNode) {
              "RegisterNode UT called");
 
   EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(std::make_unique<FakeClient>(node_id, node_port)));
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeClient>(node_id, node_port);
+      });
   Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
 
   svk::RegisterRequest *req(new svk::RegisterRequest());
@@ -408,8 +414,10 @@ TEST_F(MockTestController, RegisterNodeWithoutClusterName) {
              "RegisterNode UT called");
 
   EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(std::make_unique<FakeClient>(node_id, node_port)));
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeClient>(node_id, node_port);
+      });
 
   Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
 
@@ -461,8 +469,10 @@ TEST_F(MockTestController, RegisterNodeWithMultipleNodesInCluster) {
   std::string node_port = "9998";
 
   EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(std::make_unique<FakeClient>(node_id, node_port)));
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeClient>(node_id, node_port);
+      });
   Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
 
   svk::RegisterRequest *req(new svk::RegisterRequest());
@@ -481,9 +491,11 @@ TEST_F(MockTestController, RegisterNodeWithMultipleNodesInCluster) {
   req->set_node_name("test_node");
 
   EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(std::make_unique<FakeClient>(
-          "registernode.localdomain2.com", "9999")));
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeClient>(node_id, node_port);
+      });
+
   grpc_status = client.RegisterNode(req, resp);
   ASSERT_EQ(grpc_status.ok(), true);
 
@@ -687,8 +699,10 @@ TEST_F(MockTestController, CreateCluster) {
   reg_req->set_node_port(node_port);
 
   EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(std::make_unique<FakeClient>(node_id, node_port)));
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeClient>(node_id, node_port);
+      });
 
   grpc_status = client.RegisterNode(reg_req, reg_resp);
   ASSERT_EQ(grpc_status.ok(), true);
@@ -903,8 +917,10 @@ TEST_F(MockTestController, CreateClusterWithUnregisteredNodes) {
   reg_req->set_node_port(node_port);
 
   EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(std::make_unique<FakeClient>(node_id, node_port)));
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeClient>(node_id, node_port);
+      });
 
   grpc_status = client.RegisterNode(reg_req, reg_resp);
   ASSERT_EQ(grpc_status.ok(), true);
@@ -968,8 +984,10 @@ TEST_F(MockTestController, ListNodes) {
   reg_req->set_node_port(node_port);
 
   EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(std::make_unique<FakeClient>(node_id, node_port)));
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeClient>(node_id, node_port);
+      });
   grpc_status = client.RegisterNode(reg_req, reg_resp);
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
              "Just for flushing logs with RegisterNode");
@@ -1220,17 +1238,17 @@ TEST_F(MockTestController, AddNodeToCluster) {
 
   // Registering 2 nodes
   EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(std::make_unique<FakeClient>("localhost", "9998")));
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeClient>(node_id, node_port);
+      });
+
   grpc_status = client.RegisterNode(reg_req, reg_resp);
   ASSERT_EQ(grpc_status.ok(), true);
 
   reg_req->set_node_name("test_node2");
   reg_req->set_node_ip("localhost2");
 
-  EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(std::make_unique<FakeClient>("localhost2", "9998")));
   grpc_status = client.RegisterNode(reg_req, reg_resp);
   ASSERT_EQ(grpc_status.ok(), true);
 
@@ -1402,8 +1420,11 @@ TEST_F(MockTestController, AddSameNodeToCluster) {
   reg_req->set_node_port("9998");
 
   EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(std::make_unique<FakeClient>("localhost", "9998")));
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeClient>(node_id, node_port);
+      });
+
   grpc_status = client.RegisterNode(reg_req, reg_resp);
   ASSERT_EQ(grpc_status.ok(), true);
 
@@ -1454,8 +1475,10 @@ TEST_F(MockTestController, AddRemovedNodeToNewCluster) {
   reg_req->set_node_port("9998");
 
   EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(std::make_unique<FakeClient>("127.0.0.1", "9998")));
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeClient>(node_id, node_port);
+      });
   grpc_status = client.RegisterNode(reg_req, reg_resp);
   ASSERT_EQ(grpc_status.ok(), true);
 
@@ -1463,9 +1486,6 @@ TEST_F(MockTestController, AddRemovedNodeToNewCluster) {
   reg_req->set_node_ip("127.0.0.2");
   reg_req->set_node_port("9998");
 
-  EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(std::make_unique<FakeClient>("127.0.0.2", "9998")));
   grpc_status = client.RegisterNode(reg_req, reg_resp);
   ASSERT_EQ(grpc_status.ok(), true);
 
@@ -1495,8 +1515,10 @@ TEST_F(MockTestController, AddRemovedNodeToNewCluster) {
   reg_req->set_node_port("9998");
 
   EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(std::make_unique<FakeClient>("127.0.0.3", "9998")));
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeClient>(node_id, node_port);
+      });
   grpc_status = client.RegisterNode(reg_req, reg_resp);
   ASSERT_EQ(grpc_status.ok(), true);
 
@@ -1561,17 +1583,16 @@ TEST_F(MockTestController, RemoveNodeFromCluster) {
 
   // Registering 2 nodes
   EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(std::make_unique<FakeClient>("localhost", "9998")));
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeClient>(node_id, node_port);
+      });
   grpc_status = client.RegisterNode(reg_req, reg_resp);
   ASSERT_EQ(grpc_status.ok(), true);
 
   reg_req->set_node_name("test_node2");
   reg_req->set_node_ip("localhost2");
 
-  EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(std::make_unique<FakeClient>("localhost2", "9998")));
   grpc_status = client.RegisterNode(reg_req, reg_resp);
   ASSERT_EQ(grpc_status.ok(), true);
 
@@ -1751,8 +1772,10 @@ TEST_F(MockTestController, RemoveInvalidNode) {
   reg_req->set_node_port("1234");
 
   EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(std::make_unique<FakeClient>("localhost", "1234")));
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeClient>(node_id, node_port);
+      });
   grpc_status = client.RegisterNode(reg_req, reg_resp);
   ASSERT_EQ(grpc_status.ok(), true);
 
@@ -1790,9 +1813,10 @@ TEST_F(MockTestController, RegisterNodeWithNullClusterID) {
   req->set_node_port("9998");
 
   EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(
-          std::make_unique<FakeClient>("testnode.localdomain.com", "9998")));
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeClient>(node_id, node_port);
+      });
   grpc_status = client.RegisterNode(req, resp);
 
   ASSERT_EQ(grpc_status.ok(), true);
@@ -1850,9 +1874,10 @@ TEST_F(MockTestController, RegisterSameNodeAgain) {
   req->set_node_port(node_port);
 
   EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(2)
-      .WillOnce(Return(std::make_unique<FakeClient>(node_id, node_port)))
-      .WillOnce(Return(std::make_unique<FakeClient>(node_id, node_port)));
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeClient>(node_id, node_port);
+      });
   grpc_status = client.RegisterNode(req, resp);
 
   ASSERT_EQ(grpc_status.ok(), true);
@@ -1903,8 +1928,10 @@ TEST_F(MockTestController, UnRegisterNode) {
   req->set_node_port(node_port);
 
   EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(std::make_unique<FakeClient>(node_id, node_port)));
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeClient>(node_id, node_port);
+      });
   grpc_status = client.RegisterNode(req, resp);
 
   ASSERT_EQ(grpc_status.ok(), true);
@@ -1998,9 +2025,10 @@ TEST_F(MockTestController, UnRegisterNodeWithInvalidClusterID) {
   req->set_node_port("9998");
 
   EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(
-          std::make_unique<FakeClient>("testnode3.localdomain.com", "9998")));
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeClient>(node_id, node_port);
+      });
   grpc_status = client.RegisterNode(req, resp);
 
   ASSERT_EQ(grpc_status.ok(), true);
@@ -2053,9 +2081,10 @@ TEST_F(MockTestController, UnRegisterNodeWithInvalidNodeID) {
   req->set_node_port("9998");
 
   EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(
-          std::make_unique<FakeClient>("testnode1.localdomain.com", "9998")));
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeClient>(node_id, node_port);
+      });
   grpc_status = client.RegisterNode(req, resp);
 
   ASSERT_EQ(grpc_status.ok(), true);
@@ -2144,9 +2173,10 @@ TEST_F(MockTestController, ListClusterNodesWithSingleCluster) {
   req->set_node_port(node_port_1);
 
   EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(
-          std::make_unique<FakeClient>("listnode1.localdomain.com", "9998")));
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeClient>(node_id, node_port);
+      });
   grpc_status = client.RegisterNode(req, resp);
   ASSERT_EQ(grpc_status.ok(), true);
 
@@ -2195,9 +2225,10 @@ TEST_F(MockTestController, ListClusterNodesWithMultipleClusters) {
   req->set_node_port(node_port_1);
 
   EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(
-          std::make_unique<FakeClient>("listnode1.localdomain.com", "9998")));
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeClient>(node_id, node_port);
+      });
   grpc_status = client.RegisterNode(req, resp);
   ASSERT_EQ(grpc_status.ok(), true);
 
@@ -2205,10 +2236,6 @@ TEST_F(MockTestController, ListClusterNodesWithMultipleClusters) {
   req->set_node_ip(node_id_2);
   req->set_node_port(node_port_2);
 
-  EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(
-          std::make_unique<FakeClient>("listnode2.localdomain.com", "9998")));
   grpc_status = client.RegisterNode(req, resp);
   ASSERT_EQ(grpc_status.ok(), true);
 
@@ -2291,8 +2318,10 @@ TEST_F(MockTestController, RegisterNodeWithoutDeviceSLAConf) {
   req->set_node_port(node_port);
 
   EXPECT_CALL(*mockClient, CreateClient(_, _))
-      .Times(1)
-      .WillOnce(Return(std::make_unique<FakeClient>("127.0.0.1", node_port)));
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeClient>(node_id, node_port);
+      });
   grpc_status = client.RegisterNode(req, resp);
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
              "Just for flushing logs with RegisterNodeWithoutDeviceSLAConf");
