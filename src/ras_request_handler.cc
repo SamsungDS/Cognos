@@ -32,7 +32,8 @@ ras_request* build_device_monitor_request(
     ras_context_s* ras_context, device_unique_identifier device_name) {
   ras_request* request = new ras_request(true, ras_context);
   request->command_obj[RAS_COMMAND_COMMAND_STR] =
-      "ras_monitor_check_device_status ";
+      "ras_monitor_check_device_status";
+  request->command = "ras_monitor_check_device_status";
   request->command_obj[RAS_COMMAND_PARAMS_STR][RAS_COMMAND_DEVICE_STR] =
       device_name;
   return request;
