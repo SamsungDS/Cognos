@@ -25,9 +25,10 @@ typedef struct {
 } DeviceQOS;
 
 typedef struct DeviceInfo_T {
+  std::string controller_generated_id;
   std::string node_name;
   uint64_t device_id;
-  uint64_t device_serial;
+  std::string device_serial;
   std::string device_type;
   std::string cxl_device_type;
   std::string cxl_protocol;

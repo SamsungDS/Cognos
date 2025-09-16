@@ -247,10 +247,13 @@ Status Servicer::ProcessNodeCommand(ServerContext *ctxt,
   if (svk_output.status == 0 && ret == 0) {
     status = Status::OK;
   } else {
-    status = Status(grpc::UNKNOWN, "Failed to run command");
+    std::string error_str = "Failed to run command with error: " +
+                            std::to_string(svk_output.status);
+    status = Status(grpc::UNKNOWN, error_str);
     logger_str = "Failed to run command for node_id " + req->node_id() +
                  " feature_id " + std::to_string(svk_cmd.feat_id) +
-                 " params [" + params + "]";
+                 " params [" + params + "] with error " +
+                 std::to_string(svk_output.status);
     svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR, logger_str.c_str());
     return status;
   }

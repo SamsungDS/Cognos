@@ -994,7 +994,7 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStart) {
 }
 
 // Trimmed down version of node feature output
-#define NODE_FEATURE_OUTPUT                                              \
+#define NODE_PCI_FEATURE_OUTPUT                                          \
   "{\"pci-info\":[{\"NUMA "                                              \
   "node\":\"0\",\"device_manufacturer\":\"Samsung Electronics Co "       \
   "Ltd\",\"device_type\":\"nvme\",\"pci_address\":\"2c:00.0\"},{\"NUMA " \
@@ -1006,6 +1006,19 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStart) {
   "Ltd\",\"device_type\":\"nvme\",\"pci_address\":\"6f:00.0\"},{\"NUMA " \
   "node\":\"1\",\"device_manufacturer\":\"Montage Technology Co., "      \
   "Ltd.\",\"device_type\":\"cxl\",\"pci_address\":\"b8:00.0\"}]}"
+
+#define NODE_DEVICE_FEATURE_OUTPUT                                             \
+  "{\"device-info\":{\"XYZ-ABC\":{\"device_id\":0,\"serial_number\":\"XYZ-"    \
+  "ABC\",\"numa_node\":0,\"total_capacity_MB\":409600,\"available_capacity_"   \
+  "MB\":204800, "                                                              \
+  "\"vendor_device_type\":\"DRAM\",\"status\":\"online\",\"advertised_qos\":{" \
+  "\"avg_latency_ns\":200,\"p99_latency_ns\":100,\"io_per_sec\":1000000,\"BW_" \
+  "per_sec\":1000,\"io_size_in_bytes\":4096,\"qd\":32}}}}"
+
+#define NODE_EMPTY_DEVICE_FEATURE_OUTPUT "{\"device-info\":{}}"
+#define NODE_INVALID_DEVICE_FEATURE_OUTPUT \
+  "{\"device-info\":\"dummy-failure-value\"}"
+
 #define CXL_DEVICE_LIST_OUTPUT                                                \
   "{\"devices\":[{\"device_id\":29690035288064,\"vendor_device_type\":\"CMM-" \
   "D\",\"pcie_addr\":\"0000:b8:00.0\"}, "                                     \
@@ -1021,7 +1034,7 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStart) {
   "type\":\"CXL.mem\",\"domain_type\":\"PCIe\",\"domain_id\":0,\"link_"        \
   "speed\":16,\"link_width\":8,\"available_capacity_MB\":127080,\"status\":"   \
   "\"active\",\"aspm_active\":false,\"sris_active\":false,\"lock_active\":"    \
-  "false,\"numa_node\":1,\"capabilities\":{\"Power Management "                \
+  "false,\"numa_node\":2,\"capabilities\":{\"Power Management "                \
   "version\":1},\"advertised_qos\":{\"avg_latency_ns\":120,\"p99_latency_"     \
   "ns\":350,\"io_per_sec\":50000,\"BW_per_sec\":1000000,\"io_size_in_bytes\":" \
   "4096,\"qd\":32}}"
@@ -1050,7 +1063,12 @@ class FakeNodeServicer : public Servicer {
       if (req->command_name() == "get_node_info") {
         svk::CommandResponse_NodeResponse *response =
             resp->add_node_responses();
-        response->set_output(NODE_FEATURE_OUTPUT);
+        if (req->command_params().find("pci") != std::string::npos) {
+          response->set_output(NODE_PCI_FEATURE_OUTPUT);
+        }
+        if (req->command_params().find("device") != std::string::npos) {
+          response->set_output(NODE_DEVICE_FEATURE_OUTPUT);
+        }
         response->set_node_id(req->node_id());
         return Status::OK;
       } else if (req->command_name() == "list_devices") {
@@ -1220,7 +1238,12 @@ class FakeNodeServicerForTM : public Servicer {
       if (req->command_name() == "get_node_info") {
         svk::CommandResponse_NodeResponse *response =
             resp->add_node_responses();
-        response->set_output(NODE_FEATURE_OUTPUT);
+        if (req->command_params().find("pci") != std::string::npos) {
+          response->set_output(NODE_PCI_FEATURE_OUTPUT);
+        }
+        if (req->command_params().find("device") != std::string::npos) {
+          response->set_output(NODE_DEVICE_FEATURE_OUTPUT);
+        }
         response->set_node_id(req->node_id());
         return Status::OK;
       } else if (req->command_name() == "list_devices") {
@@ -1351,6 +1374,8 @@ TEST(InitIntegrationTest, ControllerNodeDuplicateDevices) {
               << std::endl;
     return;
   }
+
+  // Register the node with the controller
   auto n_server = InitializeNodeServicer(n_svcr);
   ASSERT_NE(n_server, nullptr);
 
@@ -1363,6 +1388,8 @@ TEST(InitIntegrationTest, ControllerNodeDuplicateDevices) {
               << std::endl;
     return;
   }
+  // Register the same node again with the controller  to check duplicate device
+  // validation
   auto n_server2 = InitializeNodeServicer(n_svcr2);
   ASSERT_NE(n_server2, nullptr);
 
@@ -1373,24 +1400,18 @@ TEST(InitIntegrationTest, ControllerNodeDuplicateDevices) {
   std::string filedata((std::istreambuf_iterator<char>(file)),
                        (std::istreambuf_iterator<char>()));
   file.close();
-  EXPECT_EQ(
-      true,
-      filedata.find(
-          "Device id <29690035288064> added to controller for tracking.") !=
-          std::string::npos);
-  EXPECT_EQ(
-      true,
-      filedata.find(
-          "Device id <30690035288064> added to controller for tracking.") !=
-          std::string::npos);
   EXPECT_EQ(true, filedata.find(
-                      "Device id <29690035288064> has already been added to "
-                      "controller for tracking, replacing the device info.") !=
-                      std::string::npos);
+                      "Device id <29690035288064> from node localhost is added "
+                      "to controller for tracking.") != std::string::npos);
   EXPECT_EQ(true, filedata.find(
-                      "Device id <30690035288064> has already been added to "
-                      "controller for tracking, replacing the device info.") !=
-                      std::string::npos);
+                      "Device id <30690035288064> from node localhost is added "
+                      "to controller for tracking.") != std::string::npos);
+  EXPECT_EQ(true,
+            filedata.find("Device id <localhost-1> has already been added to "
+                          "controller for tracking") != std::string::npos);
+  EXPECT_EQ(true,
+            filedata.find("Device id <localhost-2> has already been added to "
+                          "controller for tracking") != std::string::npos);
   unlink(conf_file.c_str());
 }
 
@@ -1402,12 +1423,20 @@ class FakeNodeServicerWithoutCXLDevices : public Servicer {
                             svk::CommandResponse *resp) override {
     if (req->command_name().length() > 0) {
       if (req->command_name() == "get_node_info") {
-        std::string output = NODE_FEATURE_OUTPUT;
+        std::string output = NODE_PCI_FEATURE_OUTPUT;
+
+        // Replace all cxl strings with some dummy so that there are no CXL
+        // devices
         output = std::regex_replace(
             output, std::regex("cxl", std::regex_constants::icase), "test");
         svk::CommandResponse_NodeResponse *response =
             resp->add_node_responses();
-        response->set_output(output);
+        if (req->command_params().find("pci") != std::string::npos) {
+          response->set_output(output);
+        }
+        if (req->command_params().find("device") != std::string::npos) {
+          response->set_output(NODE_DEVICE_FEATURE_OUTPUT);
+        }
         response->set_node_id(req->node_id());
         return Status::OK;
       }
@@ -1455,7 +1484,12 @@ class FakeNodeServicerInvalidCXLDeviceList : public Servicer {
       if (req->command_name() == "get_node_info") {
         svk::CommandResponse_NodeResponse *response =
             resp->add_node_responses();
-        response->set_output(NODE_FEATURE_OUTPUT);
+        if (req->command_params().find("pci") != std::string::npos) {
+          response->set_output(NODE_PCI_FEATURE_OUTPUT);
+        }
+        if (req->command_params().find("device") != std::string::npos) {
+          response->set_output(NODE_INVALID_DEVICE_FEATURE_OUTPUT);
+        }
         response->set_node_id(req->node_id());
         return Status::OK;
       } else if (req->command_name() == "list_devices") {
@@ -1502,7 +1536,7 @@ TEST(InitIntegrationTest, AllocateMemoryFailureInvalidCXLDeviceList) {
 
   Servicer *svcr(new FakeNodeServicerInvalidCXLDeviceList(conf_file));
   auto server = InitializeNodeServicer(svcr);
-  ASSERT_EQ(server, nullptr);
+  ASSERT_NE(server, nullptr);
 
   svk::CommandRequest req;
   svk::CommandResponse *resp = new (svk::CommandResponse);
@@ -1527,7 +1561,12 @@ class FakeNodeServicerInvalidCXLDeviceInfo : public Servicer {
       if (req->command_name() == "get_node_info") {
         svk::CommandResponse_NodeResponse *response =
             resp->add_node_responses();
-        response->set_output(NODE_FEATURE_OUTPUT);
+        if (req->command_params().find("pci") != std::string::npos) {
+          response->set_output(NODE_PCI_FEATURE_OUTPUT);
+        }
+        if (req->command_params().find("device") != std::string::npos) {
+          response->set_output(NODE_INVALID_DEVICE_FEATURE_OUTPUT);
+        }
         response->set_node_id(req->node_id());
         return Status::OK;
       } else if (req->command_name() == "list_devices") {
@@ -1569,7 +1608,7 @@ TEST(InitIntegrationTest, AllocateMemoryFailureInvalidCXLDeviceInfo) {
 
   Servicer *svcr(new FakeNodeServicerInvalidCXLDeviceInfo(conf_file));
   auto server = InitializeNodeServicer(svcr);
-  ASSERT_EQ(server, nullptr);
+  ASSERT_NE(server, nullptr);
 
   svk::CommandRequest req;
   svk::CommandResponse *resp = new (svk::CommandResponse);
@@ -2062,7 +2101,7 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForRASOperation) {
                     "Send command to the node with command_name: "
                     "add_reliability_monitoring_for_device and command_params: "
                     "{\"configure_options\":{\"error_count_threshold\":5},"
-                    "\"device_id\":\"29690035288064\",\"device_numa\":1,"
+                    "\"device_id\":\"29690035288064\",\"device_numa\":2,"
                     "\"device_type\":\"CMM-D\"}is successful"));
 
   EXPECT_EQ(
@@ -2077,7 +2116,7 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForRASOperation) {
                 CONTROLLER_NODE_DEFAULT_LOG_FILE,
                 "Send command to the node with command_name: "
                 "remove_reliability_monitoring_for_device and command_params: "
-                "{\"device_id\":\"29690035288064\",\"device_numa\":\"1\","
+                "{\"device_id\":\"29690035288064\",\"device_numa\":\"2\","
                 "\"device_type\":\"CMM-D\"}is successful"));
 
   // Since there is app_pid in the output, we need to split to two parts to
@@ -2122,7 +2161,12 @@ class FakeNodeServicerFailForAddRemoveSLADeviceTracker : public Servicer {
       if (req->command_name() == "get_node_info") {
         svk::CommandResponse_NodeResponse *response =
             resp->add_node_responses();
-        response->set_output(NODE_FEATURE_OUTPUT);
+        if (req->command_params().find("pci") != std::string::npos) {
+          response->set_output(NODE_PCI_FEATURE_OUTPUT);
+        }
+        if (req->command_params().find("device") != std::string::npos) {
+          response->set_output(NODE_DEVICE_FEATURE_OUTPUT);
+        }
         response->set_node_id(req->node_id());
         return Status::OK;
       } else if (req->command_name() == "list_devices") {
