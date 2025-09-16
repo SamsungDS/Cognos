@@ -448,13 +448,17 @@ int calculateErrorCount(string &res, string &addr_range, Response &out) {
   long count = 0, val;
   stringstream ss(res);
   while (getline(ss, tok, '\n')) {
-    if (tok.empty() || (strcmp(tok.c_str(), NO_MCE_ERRORS) == 0)) {
+    if (tok.empty() || (tok == (const char *)NO_MCE_ERRORS)) {
       continue;
-    } else {
+    } else if (tok.compare(0, 2, "0x") == 0 && tok.size() > 2 &&
+               tok.find_first_not_of("0123456789abcdefABCDEF", 2) ==
+                   std::string::npos) {
       val = stol(tok, 0, 16);
       if (val >= low_addr && val <= high_addr) {
         ++count;
       }
+    } else {
+      count = -1;
     }
   }
 
