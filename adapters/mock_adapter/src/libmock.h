@@ -15,7 +15,8 @@
 
 #define STR(x) #x
 #define CONFIG_FILE "config/mock_config.json"
-#define NO_MCE_ERRORS "No MCE errors"
+
+const std::string NO_MCE_ERRORS = "No MCE errors";
 
 // Enum definition for errors
 // These errors are listed for failure for each library, system API

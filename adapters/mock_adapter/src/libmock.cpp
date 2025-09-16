@@ -46,7 +46,7 @@ struct Config {
   string ras_mc_ctl_health_status_command;
 };
 
-std::string mock_adapter_default_config = R"(
+const std::string mock_adapter_default_config = R"(
 {
   "grep_CXL": "cat /proc/iomem|grep CXL",
   "grep_acpi_srat": "cat /var/log/dmesg|grep -i acpi|grep -i srat",
@@ -448,7 +448,7 @@ int calculateErrorCount(string &res, string &addr_range, Response &out) {
   long count = 0, val;
   stringstream ss(res);
   while (getline(ss, tok, '\n')) {
-    if (tok.empty() || (tok == (const char *)NO_MCE_ERRORS)) {
+    if (tok.empty() || (tok == NO_MCE_ERRORS)) {
       continue;
     } else if (tok.compare(0, 2, "0x") == 0 && tok.size() > 2 &&
                tok.find_first_not_of("0123456789abcdefABCDEF", 2) ==
