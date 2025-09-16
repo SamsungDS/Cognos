@@ -55,7 +55,7 @@ std::string mock_adapter_default_config = R"(
   "regex_addr_range": ".*mem[\\s]*([0-9a-z]+-[0-9a-z]+).*",
   "mce_inject_template_string": "CPU {cpu} BANK 1\nSTATUS CORRECTED\nADDR {addr}\n",
   "rasdaemon_exec_command": "/usr/local/svk/feature_modules/ras/adapters/mock/tools/usr/local/sbin/rasdaemon -f -r /dev/null 2>&1 > ",
-  "ras_mc_ctl_error_addresses": "/usr/local/svk/feature_modules/ras/adapters/mock/tools/usr/local/sbin/ras-mc-ctl --errors|grep -Po '(?<=addr=)[^,]*'"
+  "ras_mc_ctl_error_addresses": "/usr/local/svk/feature_modules/ras/adapters/mock/tools/usr/local/sbin/ras-mc-ctl --errors|grep -Po '(?<=addr=)[^,]*|No MCE errors'"
 }
 )";
 
@@ -448,7 +448,7 @@ int calculateErrorCount(string &res, string &addr_range, Response &out) {
   long count = 0, val;
   stringstream ss(res);
   while (getline(ss, tok, '\n')) {
-    if (tok.empty()) {
+    if (tok.empty() || (strcmp(tok.c_str(), NO_MCE_ERRORS) == 0)) {
       continue;
     } else {
       val = stol(tok, 0, 16);
