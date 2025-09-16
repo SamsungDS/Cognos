@@ -1,21 +1,10 @@
-import React from "react";
+import React, { useContext } from "react";
 import SamsungLogo from "../assets/images/logos/samsung_logo_lettermark_white.PNG";
 import { Row, Col } from "react-bootstrap";
 import * as constants from '../constant';
-
+import { AuthContext } from './ProtectedRoute';
 const Header = () => {
-  const rbacEndpoint = constants.Configs.rbac_endpoint;
-  // istanbul ignore next
-  const handleLogout = () => {
-    const currentPath = window.location.pathname + window.location.search;
-    const currentUrl = window.location.origin + currentPath;
-
-    localStorage.removeItem("token");
-
-    // Pass redirect URL as query parameter
-    const redirectParam = encodeURIComponent(currentUrl);
-    window.location.href = `${rbacEndpoint}?redirect=${redirectParam}`;
-  };
+  const { logout } = useContext(AuthContext);
   // istanbul ignore next
   return (
     <div className="Header" id="header-container-id">
@@ -51,7 +40,7 @@ const Header = () => {
               </div>
 
               <button
-                onClick={handleLogout}
+                onClick={logout}
                 style={{
                   backgroundColor: "#dc3545",
                   color: "white",
