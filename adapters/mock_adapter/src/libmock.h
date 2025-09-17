@@ -56,6 +56,7 @@ enum {
   CMD_EXEC_ERR,
   RASMCCTL_HEALTH_STATUS_COMMAND_MISSING_ERR,
   GREP_NUMA_NODES_MISSING_ERR,
+  RASMCCTL_OUTPUT_ERR,
   END
 };
 
@@ -93,6 +94,7 @@ const char* err_str[] = {STR(OK),
                          STR(CMD_EXEC_ERR),
                          STR(RASMCCTL_HEALTH_STATUS_COMMAND_MISSING_ERR),
                          STR(GREP_NUMA_NODES_MISSING_ERR),
+                         STR(RASMCCTL_OUTPUT_ERR),
                          STR(END)};
 
 #define HEALTH_DECIDER_VALUE 10

@@ -363,16 +363,14 @@ TEST_F(LibMockTest, ReturnStatusUsingcalculateErrorCount7) {
   string ras_str = "z123", addr_range = "0x100000000-0x207fffffff";
   Response out;
   int ret = calculateErrorCount(ras_str, addr_range, out);
-  EXPECT_EQ(ret, 0);
-  EXPECT_EQ(out.return_value, "-1");
+  EXPECT_EQ(ret, RASMCCTL_OUTPUT_ERR);
 }
 
 TEST_F(LibMockTest, ReturnStatusUsingcalculateErrorCount8) {
   string ras_str = "0x1234 5678", addr_range = "0x100000000-0x207fffffff";
   Response out;
   int ret = calculateErrorCount(ras_str, addr_range, out);
-  EXPECT_EQ(ret, 0);
-  EXPECT_EQ(out.return_value, "-1");
+  EXPECT_EQ(ret, RASMCCTL_OUTPUT_ERR);
 }
 
 TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidCommand) {

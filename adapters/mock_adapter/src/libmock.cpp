@@ -458,7 +458,10 @@ int calculateErrorCount(string &res, string &addr_range, Response &out) {
         ++count;
       }
     } else {
-      count = -1;
+      ret = RASMCCTL_OUTPUT_ERR;
+      response = "Error in ras-mc-ctl output";
+      svk_logger(RAS_LOGGER, level_E::ERROR, response.c_str());
+      return ret;
     }
   }
 
