@@ -124,6 +124,48 @@ class CognosInfluxDBClient:
             "|> last(6)"
         )
 
+    def get_cognos_events_past(self, time_in_mins):
+        params = {"_desc": False}
+        cols_string = (
+            '["_time", "_measurement", "_field", "_value", '
+            '"cluster_name", "node_name", "domain", "feature_name", '
+            '"category", "severity", "source", "source_type"]'
+        ).strip('\n')
+        flux_query_output = {}
+        try:
+            tables = self.read_client.query(
+                f"""
+                from(bucket: "internal")
+                    |> range(start: -{time_in_mins}m)
+                    |> filter(fn: (r) => r._measurement == "events")
+                    |> keep(columns: {cols_string})
+                    |> sort(columns: ["_time"])
+                """,
+                params=params
+            )
+            flux_query_output = json.loads(tables.to_json())
+
+            response_payload = []
+            for measurement in flux_query_output:
+                point = {
+                    "timestamp": measurement['_time'],
+                    "event_name": measurement['_field'],
+                    "event_msg": measurement['_value'],
+                    "cluster_name": measurement['cluster_name'],
+                    "node_name": measurement['node_name'],
+                    "category": measurement['category'],
+                    "domain": measurement['domain'],
+                    "severity": measurement['severity'],
+                    "source": measurement['source'],
+                    "source_type": measurement['source_type'],
+                }
+                response_payload.append(point)
+            return response_payload
+        except Exception as error:
+            print(
+                f"Failed to query for cognos events..: {str(error)}"
+            )
+
     def get_recent_dram_cxl_usage_data(self) -> List[List]:
         """
         Returns a series of data points associated with recent DRAM and

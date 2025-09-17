@@ -165,3 +165,29 @@ def test_get_membox_capacity_mock_mode(cognos_influx_client):
     assert result["total_capacity"] == 512
     assert result["used_capacity"] == 256
     assert result["used_capacity_percentage"] == 50
+
+
+def test_get_cognos_events_past(cognos_influx_client, mocker):
+    dummy_data = [
+        {
+            '_time': '2025-09-18T01:04:30+00:00', '_field': 'fpga_temp_in_F',
+            '_value': 530, 'cluster_name': 'CL_ID_1', 'node_name': 'node_1',
+            'category': 'thermal', 'domain': 'cxl_device',
+            'severity': 'critical', 'source': '33235991846400',
+            'source_type': 'device'
+        },
+        {
+            '_time': '2025-09-18T01:04:40+00:00', '_field': 'fpga_temp_in_F',
+            '_value': 530, 'cluster_name': 'CL_ID_1', 'node_name': 'node_1',
+            'category': 'thermal', 'domain': 'cxl_device',
+            'severity': 'critical', 'source': '33235991846400',
+            'source_type': 'device'
+        }
+    ]
+
+    mocker.patch(
+        "influxdb_client.client.query_api.QueryApi.query",
+        return_value=MagicMock(),
+    )
+    mocker.patch("json.loads", return_value=dummy_data)
+    cognos_influx_client.get_cognos_events_past(1)

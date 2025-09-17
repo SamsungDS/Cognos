@@ -751,3 +751,6 @@ class Cognos(BaseControlInterface):
             helper.create_empty_response
         )()
         return payload
+
+    def get_events(self):
+        return self.influx_client.get_cognos_events_past(1)

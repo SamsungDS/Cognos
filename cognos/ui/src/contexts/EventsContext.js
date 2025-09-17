@@ -1,4 +1,6 @@
 import React, { useContext, useState, useEffect, createContext } from 'react';
+import * as constants from '../constant';
+
 
 // Mock data - moved to top for better organization
 const mockEventData = [
@@ -88,6 +90,7 @@ export const EventsProvider = ({ children }) => {
     const [events, setEvents] = useState(mockEventData);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState(null);
+    const apiEndpoint = constants.Configs.api_endpoint;
 
     // Fetch event data function
     // istanbul ignore next
@@ -96,7 +99,7 @@ export const EventsProvider = ({ children }) => {
         setError(null);
 
         try {
-            const response = await fetch('/api/events');
+            const response = await fetch(`${apiEndpoint}/events`);
 
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
@@ -106,6 +109,7 @@ export const EventsProvider = ({ children }) => {
 
             // Handle different API response formats
             const eventsData = Array.isArray(data) ? data : data.events || data.alerts || [];
+            console.log("Events Data: ", eventsData);
             setEvents(eventsData);
 
         } catch (error) {
@@ -147,11 +151,11 @@ export const EventsProvider = ({ children }) => {
     // Set up polling effect
     useEffect(() => {
         // Uncomment the line below if you want to fetch from API on mount
-        // fetchEventData();
+        fetchEventData();
 
         // Poll for updates every 30 seconds (commented out for development)
-        // const interval = setInterval(fetchEventData, 30000);
-        // return () => clearInterval(interval);
+        const interval = setInterval(fetchEventData, 5000);
+        return () => clearInterval(interval);
     }, []);
 
     // Helper functions

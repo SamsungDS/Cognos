@@ -67,6 +67,14 @@ def test_get_devices_endpoint(test_client, mocker):
         assert request.path == f"/api/{CAL_API_VERSION}/devices"
 
 
+def test_get_events(test_client, mocker):
+    mocker.patch('cognos.backend.cognos_client.Cognos.get_events',
+                 return_value={})
+    with test_client.test_request_context(f"/api/{CAL_API_VERSION}/events",
+                                          method='GET'):
+        assert request.path == f"/api/{CAL_API_VERSION}/events"
+
+
 def test_init_sqlite_db_file():
     app.init_sqlite_db_file()
 

@@ -217,6 +217,17 @@ def create_app(mock=False):
             cognos.get_metrics()
         )
 
+    @app.get(f"/api/{CAL_API_VERSION}/events")
+    def get_events():
+        CAL_LOGGER.debug(
+            helper.serialize_request_metadata(
+                helper.get_request_metadata(request)
+            )
+        )
+        return helper.create_response_from_payload(
+            cognos.get_events()
+        )
+
     return app
 
 

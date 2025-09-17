@@ -96,6 +96,10 @@ sudo apt install influxdb2
 Use the InfluxDB UI to configure and setup the user/org/token/etc..
 navigate to http://<ip>:8086/ and follow the steps
 
+3. Install Telegraf
+
+```sudo apt install telegraf```
+
 *** Configure the following configuration files appropiately ***
 ```
 /usr/local/svk/svk-app/cognos/rbac/rbac-client-repo/src/config/config.json
@@ -136,6 +140,7 @@ sudo systemctl start cognos-subscriber
 sudo systemctl start cognos-app
 sudo systemctl start cognos-rbac
 sudo systemctl start cognos-ui
+telegraf --config /usr/local/svk/svk-app/cognos/telegraf/telegraf.conf
 ```
 
 5. You can perform smoke testing by the following 
@@ -260,6 +265,7 @@ sudo systemctl start cognos-subscriber
 sudo systemctl start cognos-app
 sudo systemctl start cognos-rbac
 sudo systemctl start cognos-ui
+telegraf --config /usr/local/svk/svk-app/cognos/telegraf/telegraf.conf
 ```
 
 ### Requesting changes

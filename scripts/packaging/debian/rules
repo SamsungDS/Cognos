@@ -64,6 +64,10 @@ override_dh_auto_install:
 	cp $(CURDIR)/../cognos/rbac/rbac-service/rbac.yaml $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/rbac-service/
 	cp -r $(CURDIR)/../cognos/rbac/rbac-service/rbac-module $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/rbac-service/
 
+	# copying Telegraf files
+	mkdir -p -v $(CURDIR)/$(INSTALL_PATH)/cognos/telegraf/
+	cp -r $(CURDIR)/../cognos/telegraf/* $(CURDIR)/$(INSTALL_PATH)/cognos/telegraf/
+
 override_dh_usrlocal:
 	# Do nothing, because we are installing to /usr/local even though this is non-standard practice
 

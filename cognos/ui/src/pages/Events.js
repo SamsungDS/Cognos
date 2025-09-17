@@ -44,7 +44,7 @@ const Events = () => {
 
     const filteredEvents = events.filter(event => {
         const matchesFilter = selectedFilter === 'all' || event.severity === selectedFilter;
-        const matchesSearch = event.event_msg.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesSearch = event.event_name.toLowerCase().includes(searchTerm.toLowerCase());
         return matchesFilter && matchesSearch;
     });
 

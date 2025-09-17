@@ -5,7 +5,8 @@ pythonpath = [
     "cognos/backend/",
     "cognos/exporter/",
     "cognos/ssdp/",
-    "cognos/subscriber/"
+    "cognos/subscriber/",
+    "cognos/telegraf/"
 ]
 
 testpaths = [
@@ -13,7 +14,8 @@ testpaths = [
     "cognos/backend/test",
     "cognos/exporter/test",
     "cognos/ssdp/tests",
-    "cognos/subscriber/test"
+    "cognos/subscriber/test",
+    "cognos/telegraf/test"
 ]
 
 [tool.coverage.run]
