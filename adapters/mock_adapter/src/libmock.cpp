@@ -46,7 +46,7 @@ struct Config {
   string ras_mc_ctl_health_status_command;
 };
 
-std::string mock_adapter_default_config = R"(
+const std::string mock_adapter_default_config = R"(
 {
   "grep_CXL": "cat /proc/iomem|grep CXL",
   "grep_acpi_srat": "cat /var/log/dmesg|grep -i acpi|grep -i srat",
@@ -55,7 +55,7 @@ std::string mock_adapter_default_config = R"(
   "regex_addr_range": ".*mem[\\s]*([0-9a-z]+-[0-9a-z]+).*",
   "mce_inject_template_string": "CPU {cpu} BANK 1\nSTATUS CORRECTED\nADDR {addr}\n",
   "rasdaemon_exec_command": "/usr/local/svk/feature_modules/ras/adapters/mock/tools/usr/local/sbin/rasdaemon -f -r /dev/null 2>&1 > ",
-  "ras_mc_ctl_error_addresses": "/usr/local/svk/feature_modules/ras/adapters/mock/tools/usr/local/sbin/ras-mc-ctl --errors|grep -Po '(?<=addr=)[^,]*'"
+  "ras_mc_ctl_error_addresses": "/usr/local/svk/feature_modules/ras/adapters/mock/tools/usr/local/sbin/ras-mc-ctl --errors|grep -Po '(?<=addr=)[^,]*|No MCE errors'"
 }
 )";
 
@@ -448,13 +448,20 @@ int calculateErrorCount(string &res, string &addr_range, Response &out) {
   long count = 0, val;
   stringstream ss(res);
   while (getline(ss, tok, '\n')) {
-    if (tok.empty()) {
+    if (tok.empty() || (tok == NO_MCE_ERRORS)) {
       continue;
-    } else {
+    } else if (tok.compare(0, 2, "0x") == 0 && tok.size() > 2 &&
+               tok.find_first_not_of("0123456789abcdefABCDEF", 2) ==
+                   std::string::npos) {
       val = stol(tok, 0, 16);
       if (val >= low_addr && val <= high_addr) {
         ++count;
       }
+    } else {
+      ret = RASMCCTL_OUTPUT_ERR;
+      response = "Error in ras-mc-ctl output";
+      svk_logger(RAS_LOGGER, level_E::ERROR, response.c_str());
+      return ret;
     }
   }
 

@@ -16,6 +16,8 @@
 #define STR(x) #x
 #define CONFIG_FILE "config/mock_config.json"
 
+const std::string NO_MCE_ERRORS = "No MCE errors";
+
 // Enum definition for errors
 // These errors are listed for failure for each library, system API
 // or functions defined in this module. These are returned using the return
@@ -54,44 +56,46 @@ enum {
   CMD_EXEC_ERR,
   RASMCCTL_HEALTH_STATUS_COMMAND_MISSING_ERR,
   GREP_NUMA_NODES_MISSING_ERR,
+  RASMCCTL_OUTPUT_ERR,
   END
 };
 
 // Error string for errors using enums
-const char* err_str[] = {STR(OK),
-                         STR(USAGE_ERR),
-                         STR(CONFIG_FILE_NOT_AVAILABLE_ERR),
-                         STR(INVALID_CONFIG_FILE_ERR),
-                         STR(CONFIG_FILE_PARSE_ERR),
-                         STR(GREP_CXL_MISSING_ERR),
-                         STR(GREP_ACPI_SRAT_MISSING_ERR),
-                         STR(REGEX_IOMEM_MISSING_ERR),
-                         STR(REGEX_ADDR_RANGE_MISSING_ERR),
-                         STR(INIT_ERR),
-                         STR(NUMA_NOT_AVAILABLE_ERR),
-                         STR(OPT_ERR),
-                         STR(NUMA_MAX_NODE_ERR),
-                         STR(INVALID_NUMA_INDEX_ERR),
-                         STR(NOT_CXL_NODE_ERR),
-                         STR(NUMA_ALLOCATE_CPUMASK_ERR),
-                         STR(NUMA_NODE_TO_CPUS_ERR),
-                         STR(NOT_CPULESS_NODE_ERR),
-                         STR(ADDRESS_NOT_OF_NUMA_NODE_ERR),
-                         STR(IOMEM_NOT_MATCHING_ACPI_SRAT_ERR),
-                         STR(MCE_INJECT_TEMPLARE_STRING_MISSING_ERR),
-                         STR(RASDAEMON_EXEC_COMMAND_MISSING_ERR),
-                         STR(NUMA_NODE_PID_ERR),
-                         STR(GET_STACK_VIRTUAL_ADDRESS_ERR),
-                         STR(RASMCCTL_ERROR_ADDRESSES_MISSING_ERR),
-                         STR(REGISTER_FUNCTION_ERR),
-                         STR(GET_ERROR_COUNT_VALIDATION_ERR),
-                         STR(INPUT_JSON_PARSE_ERR),
-                         STR(INVALID_INPUT_ERR),
-                         STR(UNABLE_TO_GET_NUMA_ADDR_RANGE_ERR),
-                         STR(CMD_EXEC_ERR),
-                         STR(RASMCCTL_HEALTH_STATUS_COMMAND_MISSING_ERR),
-                         STR(GREP_NUMA_NODES_MISSING_ERR),
-                         STR(END)};
+const char* const err_str[] = {STR(OK),
+                               STR(USAGE_ERR),
+                               STR(CONFIG_FILE_NOT_AVAILABLE_ERR),
+                               STR(INVALID_CONFIG_FILE_ERR),
+                               STR(CONFIG_FILE_PARSE_ERR),
+                               STR(GREP_CXL_MISSING_ERR),
+                               STR(GREP_ACPI_SRAT_MISSING_ERR),
+                               STR(REGEX_IOMEM_MISSING_ERR),
+                               STR(REGEX_ADDR_RANGE_MISSING_ERR),
+                               STR(INIT_ERR),
+                               STR(NUMA_NOT_AVAILABLE_ERR),
+                               STR(OPT_ERR),
+                               STR(NUMA_MAX_NODE_ERR),
+                               STR(INVALID_NUMA_INDEX_ERR),
+                               STR(NOT_CXL_NODE_ERR),
+                               STR(NUMA_ALLOCATE_CPUMASK_ERR),
+                               STR(NUMA_NODE_TO_CPUS_ERR),
+                               STR(NOT_CPULESS_NODE_ERR),
+                               STR(ADDRESS_NOT_OF_NUMA_NODE_ERR),
+                               STR(IOMEM_NOT_MATCHING_ACPI_SRAT_ERR),
+                               STR(MCE_INJECT_TEMPLARE_STRING_MISSING_ERR),
+                               STR(RASDAEMON_EXEC_COMMAND_MISSING_ERR),
+                               STR(NUMA_NODE_PID_ERR),
+                               STR(GET_STACK_VIRTUAL_ADDRESS_ERR),
+                               STR(RASMCCTL_ERROR_ADDRESSES_MISSING_ERR),
+                               STR(REGISTER_FUNCTION_ERR),
+                               STR(GET_ERROR_COUNT_VALIDATION_ERR),
+                               STR(INPUT_JSON_PARSE_ERR),
+                               STR(INVALID_INPUT_ERR),
+                               STR(UNABLE_TO_GET_NUMA_ADDR_RANGE_ERR),
+                               STR(CMD_EXEC_ERR),
+                               STR(RASMCCTL_HEALTH_STATUS_COMMAND_MISSING_ERR),
+                               STR(GREP_NUMA_NODES_MISSING_ERR),
+                               STR(RASMCCTL_OUTPUT_ERR),
+                               STR(END)};
 
 #define HEALTH_DECIDER_VALUE 10
 

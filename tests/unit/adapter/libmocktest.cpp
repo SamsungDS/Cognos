@@ -335,6 +335,44 @@ TEST_F(LibMockTest, ReturnStatusUsingcalculateErrorCount3) {
   EXPECT_EQ(ret, UNABLE_TO_GET_NUMA_ADDR_RANGE_ERR);
 }
 
+TEST_F(LibMockTest, ReturnStatusUsingcalculateErrorCount4) {
+  string ras_str = "No MCE errors", addr_range = "0x100000000-0x207fffffff";
+  Response out;
+  int ret = calculateErrorCount(ras_str, addr_range, out);
+  EXPECT_EQ(ret, 0);
+  EXPECT_EQ(out.return_value, "0");
+}
+
+TEST_F(LibMockTest, ReturnStatusUsingcalculateErrorCount5) {
+  string ras_str = "0x123456", addr_range = "0x100000000-0x207fffffff";
+  Response out;
+  int ret = calculateErrorCount(ras_str, addr_range, out);
+  EXPECT_EQ(ret, 0);
+  EXPECT_EQ(out.return_value, "0");
+}
+
+TEST_F(LibMockTest, ReturnStatusUsingcalculateErrorCount6) {
+  string ras_str = "0x123456789", addr_range = "0x100000000-0x207fffffff";
+  Response out;
+  int ret = calculateErrorCount(ras_str, addr_range, out);
+  EXPECT_EQ(ret, 0);
+  EXPECT_EQ(out.return_value, "1");
+}
+
+TEST_F(LibMockTest, ReturnStatusUsingcalculateErrorCount7) {
+  string ras_str = "z123", addr_range = "0x100000000-0x207fffffff";
+  Response out;
+  int ret = calculateErrorCount(ras_str, addr_range, out);
+  EXPECT_EQ(ret, RASMCCTL_OUTPUT_ERR);
+}
+
+TEST_F(LibMockTest, ReturnStatusUsingcalculateErrorCount8) {
+  string ras_str = "0x1234 5678", addr_range = "0x100000000-0x207fffffff";
+  Response out;
+  int ret = calculateErrorCount(ras_str, addr_range, out);
+  EXPECT_EQ(ret, RASMCCTL_OUTPUT_ERR);
+}
+
 TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidCommand) {
   const char* jsonString =
       R"({"command_name": "getErrorCount1", "command_params": { "device": 0, "errorType": "correctable"} } )";
