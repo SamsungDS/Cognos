@@ -61,7 +61,7 @@ enum {
 };
 
 // Error string for errors using enums
-const char* err_str[] = {STR(OK),
+const char* const err_str[] = {STR(OK),
                          STR(USAGE_ERR),
                          STR(CONFIG_FILE_NOT_AVAILABLE_ERR),
                          STR(INVALID_CONFIG_FILE_ERR),
