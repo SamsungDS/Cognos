@@ -8,6 +8,8 @@ import sys
 import types
 
 import pytest
+from unittest.mock import MagicMock
+
 cwd = os.getcwd()
 # Assuming we are running from tests dir for now
 script_path = cwd + "/../../../src/node_info/"
@@ -352,10 +354,12 @@ def test_get_all_info_aggregates(monkeypatch):
                         lambda: {"pci": 5})
     monkeypatch.setattr(fn, "get_device_info",
                         lambda: {"device": 6})
+    monkeypatch.setattr(fn, "get_node_stats",
+                        lambda: {"stats": 7})
 
 
     result = fn.get_all_info()
-    assert result == {"system": 1, "cpu": 2, "net": 3, "mem": 4, "pci": 5,"device": 6}
+    assert result == {"system": 1, "cpu": 2, "net": 3, "mem": 4, "pci": 5, "device": 6, "stats": 7}
 
 
 # -------------- get_device_info ---------------------
@@ -373,9 +377,6 @@ def test_get_device_info(monkeypatch):
     log_file = "/tmp/log_device_info.log"
     fn.init_logger("INFO", log_file)
     result = fn.get_device_info()
-    with open('/tmp/xyz.log', "w") as f:
-        f.write(json.dumps(result))
-    print(result)
     assert result == {
         'device-info': {
             'XYZ-ABC': {
@@ -428,9 +429,6 @@ def test_get_device_info_with_qos_data_override(monkeypatch):
     log_file = "/tmp/log_device_info.log"
     fn.init_logger("INFO", log_file)
     result = fn.get_device_info()
-    with open('/tmp/xyz.log', "w") as f:
-        f.write(json.dumps(result))
-    print(result)
     assert result == {
         'device-info': {
             'XYZ-ABC': {
@@ -458,6 +456,54 @@ def test_get_device_info_with_qos_data_override(monkeypatch):
         fn.logger.removeHandler(hdlr)
     os.unlink(config_file)
     os.unlink(log_file)
+
+# -------------- get_node_stats ---------------------
+def test_get_node_stats(monkeypatch):
+    monkeypatch.setattr("find_node_info.node_name", "testnode")
+    monkeypatch.setattr("psutil.cpu_count", lambda: 4)
+    mock_cpu_times_percent = MagicMock()
+    mock_cpu_times_percent.user = 0.2
+    mock_cpu_times_percent.system = 0.1
+    mock_cpu_times_percent.idle = 99
+    mock_cpu_times_percent.iowait = 0.3
+
+    monkeypatch.setattr("psutil.cpu_times_percent", lambda: mock_cpu_times_percent)
+    monkeypatch.setattr("psutil.cpu_freq", lambda: MagicMock(current=2100))
+    monkeypatch.setattr("psutil.cpu_percent", lambda: 10)
+    monkeypatch.setattr("psutil.pids", lambda: [1, 2, 3])
+    monkeypatch.setattr("psutil.virtual_memory",
+                        lambda: MagicMock(total=8*(1024**3),
+                                          available=3*(1024**3),
+                                          free=2*(1024**3)))
+    monkeypatch.setattr("psutil.swap_memory",
+                        lambda: MagicMock(total=4*(1024**3),
+                                          available=1*(1024**3),
+                                          free=2*(1024**3)))
+
+    result = fn.get_node_stats()
+
+    assert result == {
+        "node-stats": {
+            "node_name": "testnode",
+            "cpu": {
+                "cores": 4,
+                "freq": 2100,
+                "usage": 10,
+                "user": 0.2,
+                "system": 0.1,
+                "idle": 99,
+                "iowait": 0.3,
+                "nr_processes": 3
+            },
+            "memory": {
+                "total_memory_mb": 8192,
+                "available_memory_mb": 3072,
+                "free_memory_mb": 2048,
+                "swap_total_mb": 4096,
+                "swap_free_mb": 2048
+            }
+        }
+    }
 
 # ------------- parse_args --------------------------------------------------
 
@@ -527,6 +573,7 @@ def test_init_logger_bad_directory(monkeypatch):
                           ("system", fn.get_system_info),
                           ("pci", fn.get_pci_info),
                           ("device", fn.get_device_info),
+                          ("stats", fn.get_node_stats),
                           ("all", fn.get_all_info)])
 def test_run_command_mapping(info_type, func):
     """get_command should return the function mapped to the info type."""

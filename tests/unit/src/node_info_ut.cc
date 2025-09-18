@@ -154,6 +154,31 @@ TEST(DownstreamAPITests, IsLicenseValid) {
   EXPECT_EQ(SVK_STATUS_FAIL, is_license_valid(nullptr));
 }
 
+TEST(DownstreamAPITests, ExecuteSyncSuccessForNodeStats) {
+  std::string param = "";
+  EXPECT_EQ(0, set_node_name("node1", strlen("node1")));
+
+  svk_status status = initialize((void *)param.c_str());
+  EXPECT_EQ(SVK_STATUS_SUCCESS, status);
+
+  svk_pass_thru_cmd cmd;
+  svk_input input;
+  svk_output output;
+
+  using json = nlohmann::json;
+  json command_json;
+  command_json["command_name"] = "node_stats";
+
+  std::string command_json_str = command_json.dump();
+  input.input_buffer =
+      reinterpret_cast<uint8_t *>(strdup(command_json_str.c_str()));
+  input.len = command_json_str.length();
+
+  status = execute_sync(&cmd, &input, &output);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, status);
+  clean_up((void *)param.c_str());
+}
+
 TEST(DownstreamAPITests, ExecuteSyncSuccess) {
   std::string param = "";
   EXPECT_EQ(0, set_node_name("node1", strlen("node1")));

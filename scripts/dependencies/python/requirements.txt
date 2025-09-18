@@ -5,4 +5,5 @@ psutil
 py-libnuma==1.2
 pytest
 pytest-cov
+pytest-mock
 distro

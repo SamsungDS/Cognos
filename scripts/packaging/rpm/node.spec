@@ -32,6 +32,7 @@ cmake -DWITH_RELEASE=ON -DPKG_CONFIG_PREFIX=%svk_install_dir -DCMAKE_INSTALL_PRE
 %post
 echo "%svk_install_dir/%_lib" > %_sysconfdir/ld.so.conf.d/svk-node-mgmt-%_arch.conf
 %__chmod a+r %_sysconfdir/ld.so.conf.d/svk-node-mgmt-%_arch.conf
+%__chmod a+x %svk_install_dir/scripts/*
 %_sbindir/ldconfig
 
 %preun
