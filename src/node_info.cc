@@ -159,6 +159,10 @@ int run_command(const uint8_t *buffer, uint64_t len, std::string &output) {
       if (command_params.is_object()) {
         info_type = command_params.value("info_type", "");
       }
+    } else if (command_name == "node_stats") {
+      // Give data type to find the proper node info, if none is specified then
+      // get all info
+      info_type = "stats";
     } else {
       logger_str = "Invalid command_name: " + command_name;
       svk_logger(NODE_FEAT_MODULE_NAME, level_E::ERROR, logger_str.c_str());

@@ -2,3 +2,4 @@
 set -e
 
 # post install steps go here
+chmod 755 /usr/local/svk/feature_modules/node/scripts/find_node_info.py

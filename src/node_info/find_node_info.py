@@ -233,7 +233,7 @@ def get_device_info():
 
     logger.info(f"Node name is {node_name}")
     if node_name is None:
-        return device_info
+        return {'device-info': device_info}
 
     node_name_str = node_name
     qos_data = read_device_qos_data_from_config_file(config_file)
@@ -271,6 +271,38 @@ def get_device_info():
     logger.info(f"Device info is {device_info}")
     return {'device-info': device_info}
 
+def get_node_stats():
+    node_stats = dict()
+
+    logger.info(f"Node name is {node_name}")
+
+    try:
+        node_stats["node_name"] = node_name
+
+        node_stats["cpu"] = dict()
+        node_stats["cpu"]["cores"] = psutil.cpu_count()
+        node_stats["cpu"]["freq"] = psutil.cpu_freq().current
+        node_stats["cpu"]["usage"] = psutil.cpu_percent()
+        cpu_times_obj = psutil.cpu_times_percent()
+        node_stats["cpu"]["user"] = cpu_times_obj.user
+        node_stats["cpu"]["system"] = cpu_times_obj.system
+        node_stats["cpu"]["idle"] = cpu_times_obj.idle
+        node_stats["cpu"]["iowait"] = cpu_times_obj.iowait
+        node_stats["cpu"]["nr_processes"] = len(psutil.pids())
+
+        node_stats["memory"] = dict()
+        virtual_memory_obj = psutil.virtual_memory()
+        node_stats["memory"]["total_memory_mb"] = int(virtual_memory_obj.total/(1024*1024))
+        node_stats["memory"]["available_memory_mb"] = int(virtual_memory_obj.available/(1024*1024))
+        node_stats["memory"]["free_memory_mb"] = int(virtual_memory_obj.free/(1024*1024))
+        swap_memory_obj = psutil.swap_memory()
+        node_stats["memory"]["swap_total_mb"] = int(swap_memory_obj.total/(1024*1024))
+        node_stats["memory"]["swap_free_mb"] = int(swap_memory_obj.free/(1024*1024))
+    except Exception as e:
+        logger.error(f"Error in getting node_stats: {e}")
+
+    return {'node-stats': node_stats}
+
 def get_all_info():
     """
     Get aggregated system information.
@@ -279,7 +311,7 @@ def get_all_info():
         dict: A dictionary containing aggregated system information.
     """
     func_list = [get_system_info, get_cpu_info, get_network_adapters_info,
-                 get_memory_info, get_pci_info, get_device_info]
+                 get_memory_info, get_pci_info, get_device_info, get_node_stats]
     res = {k:v for func in func_list for k, v in func().items()}
 
     return res
@@ -296,7 +328,7 @@ def parse_args():
         "--info-type",
         type=str,
         default="all",
-        choices=["network", "memory", "cpu", "system", "pci", "device", "all"],
+        choices=["network", "memory", "cpu", "system", "pci", "device", "stats", "all"],
         help="Type of info to retrieve about the node. If no info type is provided, retrieve all info."
             "Types supported: network, memory, cpu, system, pci, device, all"
     )
@@ -368,7 +400,8 @@ def init_logger(log_level: str, log_file_path: str):
 
 def get_command(info_type: str):
     command_map = {'network': get_network_adapters_info, 'memory': get_memory_info, 'cpu': get_cpu_info,
-                   'system': get_system_info, 'pci': get_pci_info, 'device': get_device_info, 'all': get_all_info}
+                   'system': get_system_info, 'pci': get_pci_info, 'device': get_device_info, 
+                   'stats':get_node_stats, 'all': get_all_info}
     return command_map[info_type]
 
 def main():
