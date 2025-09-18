@@ -7,7 +7,26 @@
 #include <string>
 #include <nlohmann/json.hpp>
 
-int publish_cme_event(const std::string&, const nlohmann::json &, const std::string&);
+struct cme_event
+{
+        nlohmann::json event_json;
+        
+        cme_event()
+        {
+                event_json["domain"] ="observability";
+                event_json["feature_name"] = "me",
+                event_json["type"] = "event";
+                event_json["name"] = "svkme_event";
+                event_json["category"] = "log",
+                event_json["severity"] = "info",
+                event_json["source_type"] = "application";
+                event_json["source"] = "application";
+                event_json["timestamp"] = "";
+                event_json["observations"] = "";
+        }
+};
+
+int publish_cme_event(struct cme_event&);
 
 #endif
 

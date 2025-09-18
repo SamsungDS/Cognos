@@ -21,6 +21,7 @@
 #include <filesystem>
 
 #include "cme_global.h"
+#include "cme_logger.h"
 
 using namespace std;
 
@@ -40,17 +41,16 @@ int cme_global::read_cme_config_json (std::string conf_filename)
 	{
       		namespace pt = boost::property_tree;
 		pt::ptree root;
-      		cout << "reading cme config json = " << conf_filename << endl;
+      		CME_LOG("INFO" , "reading cme config json = " , conf_filename);
       		pt::read_json (conf_filename, root);
 
       		profilers_lib = root.get<std::string> ("profilers_lib_path");
       		movers_lib = root.get<std::string> ("movers_lib_path");
-      		cout << profilers_lib << " -- " << movers_lib << endl;
+      		CME_LOG("INFO" , profilers_lib , " -- ", movers_lib);
     	}
   	catch (const std::exception &e)
     	{
-      		std::cerr << "Unable to read cme config json. Error -> " << e.what ()
-                	<< '\n';
+      		CME_ERR("Unable to read cme config json. Error -> " , e.what ());
       		return -EINVAL;
     	}
   	return 0;
@@ -79,12 +79,12 @@ int cme_global::_cme_discovery(std::string feat_sm_svcs_dir, int type)
 {
         try
         {
-                cout << "cme discovery in path = " << feat_sm_svcs_dir << endl;
+                CME_LOG("INFO", "cme discovery in path = ", feat_sm_svcs_dir);
                 DIR *dirfp = opendir(feat_sm_svcs_dir.c_str());
 
                 if (dirfp == nullptr)
                 {
-                        cout << "Invalid feature service directory" << endl;
+                        CME_LOG("INFO", "Invalid feature service directory");
                         return -EINVAL;
                 }
 
@@ -93,6 +93,7 @@ int cme_global::_cme_discovery(std::string feat_sm_svcs_dir, int type)
                 {
                         std::string entry_name(entry->d_name);
                         std::string feat_lib_suffix_so(".so");
+                        CME_LOG("INFO", " ^^^^ entry name = ", entry_name);
                         if (entry_name.compare(".") == 0 || entry_name.compare("..") == 0) continue;
                         std::string dfpath = feat_sm_svcs_dir + std::string("/") + entry_name;
                         if (isDirectory(dfpath)) _cme_discovery(dfpath, type);
@@ -100,7 +101,7 @@ int cme_global::_cme_discovery(std::string feat_sm_svcs_dir, int type)
                         entry_name.compare(entry_name.size() - feat_lib_suffix_so.size(),
                                                 feat_lib_suffix_so.size(),
                                                 feat_lib_suffix_so) != 0) {
-                        	cout << "No Service found" << endl;
+                        	CME_LOG("INFO", "No Service found");
                         	continue;
                         }
 
@@ -108,7 +109,7 @@ int cme_global::_cme_discovery(std::string feat_sm_svcs_dir, int type)
                         void *handle = dlopen(feature_lib_str.c_str(), RTLD_LAZY);
                         if (!handle)
                         {
-                                cerr << "Failed to load library " << feature_lib_str << " Reason: " << dlerror() << endl;
+                                CME_ERR("Failed to load library ", feature_lib_str, " Reason: ", dlerror());
                                 continue;
                         }
 
@@ -116,46 +117,28 @@ int cme_global::_cme_discovery(std::string feat_sm_svcs_dir, int type)
                         {
                                 auto register_cme_fn = reinterpret_cast<cme_mover* (*)()>(dlsym(handle, "register_cme_fn"));
                                 if (!register_cme_fn) {
-                                        cerr << "Cannot load symbols from library " << feature_lib_str << " Reason: " << dlerror() << endl;
+                                        CME_ERR("Cannot load symbols from library ", feature_lib_str, " Reason: ", dlerror());
                                         dlclose(handle);
                                         return 1;
                                 }
                                 cme_mover* cme_obj = register_cme_fn();
                                 if (!cme_obj) {
-                                        cerr << "Object creation failed" << endl;
+                                        CME_ERR("Object creation failed");
                                         dlclose(handle);
                                         continue;
                                 }
 				mover_register(cme_obj->get_name(), cme_obj);
                         }
-                        else if (type == CME_PROFILER)
-                        {
-                                
-                                auto register_cme_fn = reinterpret_cast<cme_profiler* (*)()>(dlsym(handle, "register_cme_fn"));
-                                if (!register_cme_fn) {
-                                        cerr << "Cannot load symbols from library " << feature_lib_str << " Reason: " << dlerror() << endl;
-                                        dlclose(handle);
-                                        return 1;
-                                }
-                                cme_profiler* cme_obj = register_cme_fn();
-                                if (!cme_obj) {
-                                        cerr << "Object creation failed" << endl;
-                                        dlclose(handle);
-                                        continue;
-                                }
-                                profilers_list.try_emplace(cme_obj->get_name(), cme_obj);
-				profiler_register(cme_obj->get_name(), cme_obj);
-                        }
                         else
                         {
-                                throw runtime_error ("Error in " + string (__FUNCTION__) + "Invalid CME type");
+                                throw runtime_error ("Error in " + string (__FUNCTION__) + " Invalid CME type");
                         }
                 }
         }
 
         catch (const std::exception &e)
         {
-                std::cerr << "Error in cme discovery: Error -> " << e.what () << endl;
+                CME_ERR("Error in cme discovery: Error -> ", e.what ());
                 return -EINVAL;
         }
         return 0;
@@ -168,29 +151,21 @@ int cme_global::_cme_discovery(std::string feat_sm_svcs_dir, int type)
 */
 int cme_global::cme_discovery()
 {
-        int rc1,rc2;
+        int rc1;
         try
         {
                 rc1 = _cme_discovery(movers_lib, CME_MOVER);
                 if (rc1 !=0)
                 {
-                        throw runtime_error ("Error in " + string (__FUNCTION__) + "cme_discovery failed for : " + movers_lib);
-                }
-                rc2 = _cme_discovery(profilers_lib, CME_PROFILER);
-                if (rc2 !=0)
-                {
-                         std::cerr << "Error in " + string (__FUNCTION__) + "cme_discovery failed for : " + profilers_lib << std::endl;
+                        throw runtime_error ("Error in " + string (__FUNCTION__) + " cme_discovery failed for : " + movers_lib);
                 }
         }
         catch (const std::exception &e)
         {
-          std::cerr << "cme_discovery. Error -> " << e.what ()
-                    << '\n';
-                    return -EINVAL;
+                CME_ERR("cme_discovery. Error -> ", e.what ());
+                return -EINVAL;
         }
-
-	std::cout << "Profilers discovered count = " << profilers_list.size() << std::endl;
-	std::cout << "Movers discovered count = " << movers_list.size() << std::endl;
+	CME_LOG("INFO", "Movers discovered count = " , movers_list.size());
 	return 0;
 }
 
@@ -224,7 +199,7 @@ cme_context* cme_global::cg_find_context(unordered_map<string, string> &tokens_m
                 // Check if the element was found
                 if (cme_contexts_list.find(cme_ctx_key) != (cme_contexts_list.end ()))
                 {
-                        cout << "cme context found for key:"  << cme_ctx_key.first << "_" << to_string(cme_ctx_key.second) <<endl;
+                        CME_LOG("INFO", "cme context found for key:"  , cme_ctx_key.first , "_" , to_string(cme_ctx_key.second));
                         cme_ctx = cme_contexts_list.at(cme_ctx_key);
                 }
                 else
@@ -247,8 +222,8 @@ cme_context* cme_global::cg_find_context(unordered_map<string, string> &tokens_m
         }
         catch (const std::exception &e)
         {
-          std::cerr << "cg_find_context. Error -> " << e.what () << endl;
-                    return nullptr;
+                CME_ERR("cg_find_context. Error -> ", e.what ());
+                return nullptr;
         }
 }
 
@@ -278,7 +253,7 @@ cme_mover* cme_global::cg_find_mover(cme_context* cme_ctx)
         }
         catch (const std::exception &e)
         {
-                std::cerr << "cg_find_mover. Error -> " << e.what () << endl;
+                CME_ERR("cg_find_mover. Error -> ", e.what ());
                 return nullptr;
         }
         return cme_mov;
@@ -311,7 +286,7 @@ static bool is_valid_cmd_move_all(cme_global* cg_obj, unordered_map<string, stri
 	}
         catch (const std::exception &e) 
         {
-                std::cerr << "Error -> " << e.what () << endl;
+                CME_ERR("Error -> ", e.what ());
                 return false;
         }
         return true;
@@ -340,7 +315,7 @@ static std::string cg_move_all(cme_global* cg_obj, unordered_map<string, string>
                 }
                 if (cme_ctx->mover_state == CTX_ACTIVE)
                 {
-                        std::cerr << "cg_move_all. Error -> mover for context busy" << endl;
+                        CME_ERR("cg_move_all. Error -> mover for context busy");
                         cg_obj->cme_contexts_unlock();
                         return std::to_string(-EBUSY);
                 }
@@ -349,6 +324,7 @@ static std::string cg_move_all(cme_global* cg_obj, unordered_map<string, string>
                 cme_ctx->mem_attr.dst_numa_node = stoi (tokens_map.at("dst"));
 		cme_ctx->tm_attr.mover_tag = tokens_map.at("tm_attr");
                 cme_ctx->operation = "numa_migration";
+                cme_ctx->mover_cmd_status = -1;
                 cme_ctx->mover_state = CTX_ACTIVE;
                 cg_obj->cme_contexts_unlock();
                 
@@ -360,14 +336,14 @@ static std::string cg_move_all(cme_global* cg_obj, unordered_map<string, string>
 		{
 			throw runtime_error ("Error in " + string (__FUNCTION__) + " mover not found");
 		}
-		cout << "movername= " << mover_obj->get_name() << " src=" << to_string(src) << " dst="<< to_string(dst) << endl;
+		CME_LOG("INFO", "movername= ", mover_obj->get_name(), " src=", to_string(src), " dst=", to_string(dst));
                 std::thread mover_start_th(&cme_mover::move_all, mover_obj, cme_ctx);
                 mover_start_th.detach();
         }
 
         catch (const std::exception &e)
         {
-                std::cerr << "cg_move_all. Error -> " << e.what () << endl;
+                CME_ERR("cg_move_all. Error -> ", e.what());
                 return std::to_string(-EINVAL);
         }
         return to_string (0);
@@ -397,12 +373,12 @@ static std::string cg_get_status(cme_global* cg_obj, unordered_map<string, strin
 		{
 			return to_string(-EBUSY);
 		}
-		cout << "status = " << to_string(cme_ctx->mover_cmd_status) << endl;
+		CME_LOG("INFO","status = ", to_string(cme_ctx->mover_cmd_status));
 		return to_string(cme_ctx->mover_cmd_status);
         }
         catch (const std::exception &e)
         {
-                std::cerr << "cg_get_status. Error -> " << e.what () << endl;
+                CME_ERR("cg_get_status. Error -> ", e.what ());
                 return std::to_string(-EINVAL);
         }
 	return std::to_string(-EINVAL);
@@ -423,7 +399,7 @@ static std::string cg_get_stats(cme_global* cg_obj, unordered_map<string, string
                 cme_context* cme_ctx = cg_obj->cg_find_context(tokens_map, true);
                 if (cme_ctx == nullptr)
                 {
-			std::cerr << "Context not found" << endl;
+			CME_ERR("Context not found");
                         cg_obj->cme_contexts_unlock();
 			return std::to_string(-EINVAL);
                 }
@@ -437,7 +413,7 @@ static std::string cg_get_stats(cme_global* cg_obj, unordered_map<string, string
 
                 if (cme_ctx->get_stats_state == STATS_INPROGRESS)
                 {
-                        std::cerr << "cg_get_stats. Error -> get stats for context busy" << endl;
+                       CME_ERR("cg_get_stats. Error -> get stats for context busy");
                         cg_obj->cme_contexts_unlock();
                         return std::to_string(-EBUSY);
                 }
@@ -451,10 +427,10 @@ static std::string cg_get_stats(cme_global* cg_obj, unordered_map<string, string
         }
         catch (const std::exception &e)
         {
-                std::cerr << "cg_get_stats. Error -> " << e.what () << endl;
+                CME_ERR( "cg_get_stats. Error -> ", e.what());
                 json_stats = std::to_string(-EINVAL);
         }
-        cout << "GET_STATS result = " << json_stats << endl;
+        CME_LOG("INFO", "GET_STATS result = ", json_stats);
 	return json_stats;
 }
 
@@ -480,7 +456,7 @@ static bool is_valid_cmd_move(cme_global* cg_obj, unordered_map<string, string> 
         }
         catch (const std::exception &e)
         {
-                std::cerr << "Error -> " << e.what () << endl;
+                CME_ERR( "Error -> ", e.what());
                 return false;
         }
         return true;
@@ -512,7 +488,7 @@ static std::string cg_move(cme_global* cg_obj, unordered_map<string, string> &to
                 }
                 if (cme_ctx->mover_state == CTX_ACTIVE)
                 {
-                        std::cerr << "cg_move_all. Error -> mover for context busy" << endl;
+                        CME_ERR( "cg_move_all. Error -> mover for context busy");
                         cg_obj->cme_contexts_unlock();
                         return std::to_string(-EBUSY);
                 }
@@ -543,7 +519,7 @@ static std::string cg_move(cme_global* cg_obj, unordered_map<string, string> &to
                         cg_obj->cme_contexts_unlock();
                         throw runtime_error ("Error in " + string (__FUNCTION__) + " mover not found");
                 }
-                cout << tokens_map.at("command") << " movername= " << mover_obj->get_name() << " slow_tier=" << to_string(slow_t) << " fast_tier="<< to_string(fast_t) << endl;
+                CME_LOG("INFO", tokens_map.at("command"), " movername= ", mover_obj->get_name(), " slow_tier=", to_string(slow_t), " fast_tier=", to_string(fast_t));
                 std::string app_name = tokens_map.at("app");
                 long app_pid = stol(tokens_map.at("app_pid"));
                 
@@ -580,7 +556,7 @@ static std::string cg_move(cme_global* cg_obj, unordered_map<string, string> &to
 
         catch (const std::exception &e)
         {
-                std::cerr << "cg_move. Error -> " << e.what () << endl;
+                CME_ERR( "cg_move. Error -> ", e.what());
                 return std::to_string(-EINVAL);
         }
         return to_string (ret);
@@ -627,7 +603,7 @@ static bool is_valid_cmd_move_stop(cme_global* cg_obj, unordered_map<string, str
         }
         catch (const std::exception &e)
         {
-                std::cerr << "Error -> " << e.what () << endl;
+                CME_ERR( "Error -> ", e.what());
                 return false;
         }
         return true;
@@ -661,17 +637,17 @@ static std::string cg_move_stop(cme_global* cg_obj, unordered_map<string, string
                 cme_mover* mover_obj = cg_obj->cg_find_mover(cme_ctx);
                 if (mover_obj == nullptr)
                 {
-                        std::cerr << "cg_move_stop. Error -> No mover for context" << endl;
+                        CME_ERR( "cg_move_stop. Error -> No mover for context");
                         cg_obj->cme_contexts_unlock();
                         return std::to_string(-EINVAL);
                 }
-                cout << "movername=" << mover_obj->get_name() << " app_name=" << app_name << " app_pid="<< to_string(app_pid) << endl;
+                CME_LOG("INFO", "movername=", mover_obj->get_name(), " app_name=", app_name, " app_pid=", to_string(app_pid));
                 if (cme_ctx->mover_state == CTX_ACTIVE)
                 {
                         ret = mover_obj->stop(app_name, app_pid);
                         if (ret)
                         {
-                                std::cerr << "cg_move_stop. Error -> stop failed" << endl;
+                                CME_ERR( "cg_move_stop. Error -> stop failed");
                                 cg_obj->cme_contexts_unlock();
                                 return std::to_string(-EINVAL);
                         }
@@ -683,7 +659,7 @@ static std::string cg_move_stop(cme_global* cg_obj, unordered_map<string, string
         }
         catch (const std::exception &e)
         {
-                std::cerr << "cg_move_stop. Error -> " << e.what () << endl;
+                CME_ERR( "cg_move_stop. Error -> ", e.what());
                 return std::to_string(-EINVAL);
         }
         return to_string (ret);
@@ -710,7 +686,7 @@ static std::string cg_StartTuning(cme_global* cg_obj, unordered_map<string, stri
         }
         catch(const std::exception& e)
         {
-                std::cerr << "StartTuning. Error -> " << e.what () << endl;
+                CME_ERR( "StartTuning. Error -> ", e.what());
                 return std::to_string(-EINVAL);
         }
 }
@@ -731,7 +707,7 @@ static std::string cg_StopTuning(cme_global* cg_obj, unordered_map<string, strin
         }
         catch(const std::exception& e)
         {
-                std::cerr << "cg_StopTuning. Error -> " << e.what () << endl;
+                CME_ERR( "cg_StopTuning. Error -> ", e.what());
                 return std::to_string(-EINVAL);
         }
 }
@@ -756,12 +732,12 @@ std::string cme_global::cme_command_handler(std::string input_cme_command)
                         command_params_map = token_helper (input_cme_command);
 		}
 		commandValue = command_params_map.at("command");
-		cout << "command=" << commandValue << endl;
+		CME_LOG("INFO", "command=", commandValue);
         	result = fw_hooks.at (commandValue) (this, command_params_map);
 	}
         catch (const std::exception &e)
         {
-                std::cerr << "cme_command_handler. Error -> " << e.what () << endl;
+                CME_ERR( "cme_command_handler. Error -> ", e.what());
                 throw runtime_error ("Error in " + string (__FUNCTION__) + "cme_command_handler. Error ->" + e.what());
         }
         return result;
@@ -790,7 +766,7 @@ int cme_global::initialize()
         }
         catch (const std::exception &e)
         {
-                std::cerr << "cme global initialize. Error -> " << e.what () << endl;
+                CME_ERR( "cme global initialize. Error -> ", e.what());
                 return (-EINVAL);
         }
         return 0;
@@ -804,10 +780,10 @@ int cme_global::clean_up()
                 filesystem::path filePath(global_damo_gen_config);
                 if (filesystem::exists(filePath))
                 {
-                        cout << "Global damo config File exists, deleting.\n";
+                        CME_LOG("INFO", "Global damo config File exists, deleting");
                         if (remove(global_damo_gen_config.c_str()) == 0)
                         {
-                                cout << "File: " + global_damo_gen_config + " deleted successfully." << endl;
+                                CME_LOG("INFO", "File: " + global_damo_gen_config + " deleted successfully.");
                         }
                 }
                 for (auto item : movers_list)
@@ -821,7 +797,7 @@ int cme_global::clean_up()
         }
         catch (const std::exception &e)
         {
-                std::cerr << "cme clean up. Error -> " << e.what () << endl;
+                CME_ERR( "cme clean up. Error -> ", e.what());
                 return (-EINVAL);
         }
         return 0;

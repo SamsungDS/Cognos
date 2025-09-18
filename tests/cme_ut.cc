@@ -4,6 +4,7 @@
 #include "cme_init.h"
 #include "cme_utils.h"
 #include "cme_publisher.h"
+#include "cme_logger.h"
 #include "framework_downstream.h"
 #include <numa.h>
 #include <numaif.h>
@@ -134,6 +135,17 @@ TEST_F(cmeTest, CheckCmeDiscovery) {
         EXPECT_EQ(cme_global_obj._cme_discovery("movers", CME_INVALID_TYPE), -EINVAL);
         ASSERT_EQ(cme_global_obj.cme_discovery(), -EINVAL);
         EXPECT_EQ(cme_global_obj.read_cme_config_json("cme_config.json"), 0);
+        vector<string> cmd_output;
+        EXPECT_EQ(execute_command("mkdir -p test_CmeDiscovery_invalid", cmd_output, false), 0);
+        EXPECT_EQ(cme_global_obj._cme_discovery(std::filesystem::current_path().string() + "/test_CmeDiscovery_invalid", CME_MOVER), 0);
+        EXPECT_EQ(execute_command("touch test_CmeDiscovery_invalid/test.aa", cmd_output, false), 0);
+        EXPECT_EQ(cme_global_obj._cme_discovery(std::filesystem::current_path().string() + "/test_CmeDiscovery_invalid", CME_MOVER), 0);
+        EXPECT_EQ(execute_command("touch test_CmeDiscovery_invalid/test.so", cmd_output, false), 0);
+        EXPECT_EQ(cme_global_obj._cme_discovery(std::filesystem::current_path().string() + "/test_CmeDiscovery_invalid", CME_MOVER), 0);
+        EXPECT_EQ(execute_command("rm -rf test_CmeDiscovery_invalid", cmd_output, false), 0);
+        EXPECT_EQ(cme_global_obj._cme_discovery(std::filesystem::current_path().string() + "/test_CmeDiscovery", CME_MOVER), 1);
+        EXPECT_EQ(cme_global_obj._cme_discovery(std::filesystem::current_path().string() + "/test_CmeDiscovery_fail", CME_MOVER), 0);
+        EXPECT_EQ(cme_global_obj.read_cme_config_json("cme_config.json"), 0);
         cme_global_obj.movers_lib.clear();
         ASSERT_EQ(cme_global_obj.cme_discovery(), -EINVAL);
         EXPECT_EQ(cme_global_obj.read_cme_config_json("cme_config.json"), 0);
@@ -180,15 +192,11 @@ TEST_F(cmeTest, CheckCmeFindContext) {
 }
 
 TEST_F(cmeTest, CheckCmePublisher) {
-        std::string app_ctx = "test_1234";
         namespace pt = boost::property_tree;
         pt::ptree root;
-        root.put("test_event", "event_data");
-        std::stringstream json_stream;
-        pt::write_json(json_stream, root);
-        std::string event_data = json_stream.str();
+        struct cme_event test_event;
         // For now we publisher function returns exception/failure.
-        EXPECT_NE(publish_cme_event(app_ctx, event_data, getCurrentTimestamp()), 0);
+        EXPECT_NE(publish_cme_event(test_event), 0);
 }
 
 TEST_F(cmeTest, CheckCmdValidMoveAll) {

@@ -14,6 +14,7 @@
 #include "yaml-cpp/yaml.h"
 #include "cme_global.h"
 #include "cme_utils.h"
+#include "cme_logger.h"
 
 /*
 extern "C"{
@@ -42,20 +43,20 @@ cme_init ()
         int rc = cme_global_obj.read_cme_config_json(CME_CONFIG_FILE);
         if (rc !=0)
         {
-                std::cerr << "read_cme_config_json failed for : " << std::endl;
+                CME_ERR("read_cme_config_json failed for : ");
                 return -EINVAL;
         }
 
         rc = cme_global_obj.cme_discovery();
         if (rc !=0)
         {
-                std::cerr << "cme_discovery failed" << std::endl;
+                CME_ERR("cme_discovery failed");
                 return -EINVAL;
         }
 	rc = cme_global_obj.initialize();
         if (rc !=0)
         {
-                std::cerr << "cme_initialize failed" << std::endl;
+                CME_ERR("cme_initialize failed");
                 return -EINVAL;
         }
         return 0;
@@ -71,7 +72,7 @@ cme_clean_up ()
  	int rc = cme_global_obj.clean_up();
         if (rc !=0)
         {
-                std::cerr << "de_init failed" << std::endl;
+                CME_ERR("de_init failed");
                 return -EINVAL;
         }
         return 0;
@@ -86,7 +87,7 @@ cme_clean_up ()
 int
 init_cme_plugin ()
 {
-        std::cout << "invoked init_cme_plugin" << std::endl;
+        CME_LOG("INFO", "invoked init_cme_plugin");
         int rc = cme_init();
         return rc;
 }
@@ -107,16 +108,16 @@ init_cme_plugin ()
 svk_status
 initialize (void *)
 {
-  std::cout << "initialize function called" << std::endl;
+        CME_LOG("INFO", "initialize function called");
 
-  if (init_cme_plugin () == 0)
-    {
-      return SVK_STATUS_SUCCESS;
-    }
-  else
-    {
-      return SVK_STATUS_FAIL;
-    }
+        if (init_cme_plugin () == 0)
+        {
+                return SVK_STATUS_SUCCESS;
+        }
+        else
+        {
+                return SVK_STATUS_FAIL;
+        }
 }
 
 
@@ -130,8 +131,8 @@ initialize (void *)
 svk_status
 get_supported_feature_list (feature_id *feat_id, char *feature_name)
 {
-  std::cout << "get_supported_feature_list function called" << std::endl;
-  return SVK_STATUS_FAIL;
+        CME_LOG("INFO", "get_supported_feature_list function called");
+        return SVK_STATUS_FAIL;
 }
 
 /**
@@ -143,8 +144,8 @@ get_supported_feature_list (feature_id *feat_id, char *feature_name)
 svk_status
 is_license_valid (void *)
 {
-  std::cout << "is_license_valid function called" << std::endl;
-  return SVK_STATUS_SUCCESS;
+        CME_LOG("INFO", "is_license_valid function called");
+        return SVK_STATUS_SUCCESS;
 }
 
 /**
@@ -154,8 +155,8 @@ is_license_valid (void *)
 svk_status
 configure_device_if_any (void *, svk_device_ctx *, uint64_t length, void *)
 {
-  std::cout << "configure_device_if_any function called" << std::endl;
-  return SVK_STATUS_SUCCESS;
+        CME_LOG("INFO", "configure_device_if_any function called");
+        return SVK_STATUS_SUCCESS;
 }
 
 
@@ -172,10 +173,10 @@ configure_device_if_any (void *, svk_device_ctx *, uint64_t length, void *)
 svk_status
 execute_sync (svk_pass_thru_cmd *, svk_input *input, svk_output *output)
 {
-        std::cout << "execute_sync function called" << std::endl;
+        CME_LOG("INFO", "execute_sync function called");
         std::string input_str (reinterpret_cast<char *> (input->input_buffer),
                                 input->len);
-        cout << "Input command received = " << input_str << endl;
+        CME_LOG("INFO", "Input command received = ", input_str);
 	std::string result;
   
         try  
@@ -184,7 +185,7 @@ execute_sync (svk_pass_thru_cmd *, svk_input *input, svk_output *output)
 	}
         catch (const std::exception &e)
         {
-                std::cerr << "cme_command_handler. Error -> " << e.what () << endl;
+                CME_ERR("cme_command_handler. Error -> ", e.what ());
                 return SVK_STATUS_FAIL;
         }
 
@@ -208,7 +209,7 @@ execute_sync (svk_pass_thru_cmd *, svk_input *input, svk_output *output)
 svk_status
 execute_async (svk_pass_thru_cmd *, svk_postprocess_fn *)
 {
-  std::cout << "execute_async function called" << std::endl;
+  CME_LOG("INFO", "execute_async function called");
   return SVK_STATUS_FAIL;
 }
 
@@ -219,7 +220,7 @@ execute_async (svk_pass_thru_cmd *, svk_postprocess_fn *)
 svk_status
 clean_up (void *)
 {
-  std::cout << "clean_up function called" << std::endl;
+  CME_LOG("INFO", "clean_up function called");
   cme_clean_up ();
   return SVK_STATUS_FAIL;
 }

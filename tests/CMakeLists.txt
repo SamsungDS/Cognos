@@ -5,6 +5,7 @@ link_directories( "${CMAKE_SOURCE_DIR}/build/src" "${CMAKE_MGMT_FW_LIBRARY_DIR}"
 find_package(nlohmann_json REQUIRED)
 file(GLOB TEST_SOURCES *.cc)
 
+add_subdirectory("mock_failures")
 # Create executable for tests
 add_executable(svkme_ut ${TEST_SOURCES})
 

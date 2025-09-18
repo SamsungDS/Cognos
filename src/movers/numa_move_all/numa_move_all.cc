@@ -15,44 +15,82 @@
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
-
 #include "numa_move_all.h"
 #include "cme_utils.h"
 #include "cme_context.h"
 #include "cme_publisher.h"
+#include "cme_logger.h"
 
 using namespace std;
 
 /**
- * @brief call back/post operation function for move_all
- *      This function canimplement diffrent actions to be done
- *      at the end on the move_all thread function like updating
- *      the corresponding CME context.
+ * @brief Function for start event for migration operation.
+ * Implements numa migration start event.
+ * @param  cme_ctx: corresponding cme_context
+ * @return None
+*/
+static void generate_start_migraion_event(cme_context* cme_ctx)
+{
+        CME_ENTRY();
+        struct cme_event event_obj;
+        nlohmann::json event_data;
+        std::string app_ctx_id = cme_ctx->app_attr.app_name + "_" + to_string(cme_ctx->app_attr.app_pid);
+        event_data["operation"] = cme_ctx->operation;
+        event_data["src_numa_node"] = cme_ctx->mem_attr.src_numa_node;
+        event_data["dst_numa_node"] = cme_ctx->mem_attr.dst_numa_node;
+        std::string status_string = (cme_ctx->mover_cmd_status == 0) ? "success: " : "failure: ";
+        status_string += to_string(cme_ctx->mover_cmd_status) + ":" + strerror(-(cme_ctx->mover_cmd_status));
+        event_data["status"] = status_string;
+        event_obj.event_json["name"] = "numa_migration_start";
+        event_obj.event_json["timestamp"] = getCurrentTimestamp();
+        event_obj.event_json["source"] = app_ctx_id;
+        event_obj.event_json["observations"] = event_data;
+        
+        int ret = publish_cme_event(event_obj);
+        if (ret)
+        {
+                CME_ERR("Failed to publish CME event, return = ", to_string(ret));
+        }
+        else
+        {
+                CME_LOG("INFO", "Published CME event successful");
+        }
+        CME_EXIT();
+}
+
+/**
+ * @brief Function for post numa miration operation.
+ * Implements numa migration completion event.
  * @param  cme_ctx: corresponding cme_context
  * @return None
 */
 static void post_fn_move_all(cme_context* cme_ctx)
 {   
-        std::cout << string (__FUNCTION__) << " Started " << std::endl;
+        CME_ENTRY();
         //Generate completion event
+        struct cme_event event_obj;
         std::string app_ctx_id = cme_ctx->app_attr.app_name + "_" + to_string(cme_ctx->app_attr.app_pid);
         nlohmann::json event_data;
         std::string status_string = (cme_ctx->mover_cmd_status == 0) ? "success: " : "failure: ";
-        status_string += to_string(cme_ctx->mover_cmd_status);
+        status_string += to_string(cme_ctx->mover_cmd_status) + ":" + strerror(-(cme_ctx->mover_cmd_status));
         event_data["operation"] = cme_ctx->operation;
         event_data["src_numa_node"] = cme_ctx->mem_attr.src_numa_node;
-        event_data["dst_numa_node"] = cme_ctx->mem_attr.src_numa_node;
+        event_data["dst_numa_node"] = cme_ctx->mem_attr.dst_numa_node;
         event_data["status"] = status_string;
-        std::cout << string (__FUNCTION__) << "event data string created" << endl;
-        int ret = publish_cme_event(app_ctx_id, event_data, getCurrentTimestamp());
+        event_obj.event_json["observations"] = event_data;
+        event_obj.event_json["name"] = "numa_migration_complete";
+        event_obj.event_json["timestamp"] = getCurrentTimestamp();
+        event_obj.event_json["source"] = app_ctx_id;
+        int ret = publish_cme_event(event_obj);
         if (ret)
         {
-                std::cerr << "Failed to publish CME event, return = " << ret << std::endl;
+                CME_ERR("Failed to publish CME event, return = ", to_string(ret));
         }
         else
         {
-                std::cout << "Published CME event successful" << std::endl;
+                CME_LOG("INFO", "Published CME event successful");
         }
+        CME_EXIT();
 }
 
 /**
@@ -94,7 +132,8 @@ static int pre_fn_move_all(cme_context* cme_ctx, const std::string& stats_string
 {
         try
         {
-                std::cout << "pre_fn_move_all started : statsstring = "  << stats_string << std::endl;
+                CME_ENTRY();
+                CME_LOG("INFO", "statsstring = ", stats_string);
                 //parse and update stats
                 std::istringstream stream(stats_string);
                 std::string data;
@@ -123,14 +162,12 @@ static int pre_fn_move_all(cme_context* cme_ctx, const std::string& stats_string
                                 dst_done = true;
                         }
                 }
-                cout << "pre_fn_move_all finished; updated src_numa_start_usage: " << cme_ctx->mem_attr.src_numa_start_usage << " dst_numa_start_usage: " <<  cme_ctx->mem_attr.dst_numa_start_usage << endl;
+                CME_LOG("INFO", "pre_fn_move_all finished; updated src_numa_start_usage: ", to_string(cme_ctx->mem_attr.src_numa_start_usage), " dst_numa_start_usage: ", to_string(cme_ctx->mem_attr.dst_numa_start_usage));
         }
         catch (const std::exception &e) 
         {
-                std::cerr << "Error -> " << e.what () << endl;
-                cme_ctx->mover_cmd_status = -errno;
-                cme_ctx->mover_state = CTX_INACTIVE;
-                return -errno;
+                CME_ERR("Error -> ",  e.what ());
+                return -EINVAL;
         }
         return 0;
 }
@@ -165,8 +202,8 @@ static std::string process_numastat(long app_pid)
 
 static int _numa_move_all(long target_pid, unsigned int node_src, unsigned int node_dest)
 {
-        cout << "Started " <<  string (__FUNCTION__) << "--"<< target_pid << "--" << node_src << "--" <<node_dest <<endl;
-	int ret = 0;
+	CME_ENTRY();
+        int ret = 0;
         try
         {
                 unsigned int numa_count_conf = numa_num_configured_nodes();
@@ -174,7 +211,7 @@ static int _numa_move_all(long target_pid, unsigned int node_src, unsigned int n
 
                 if( node_src < 0  || node_src >= numa_count_conf || node_dest < 0 || node_dest >= numa_count_conf)
                 {
-			std::cerr << "Error in " + string(__FUNCTION__) + " invalid NUMA node input" << endl;
+                        CME_ERR("Error in " + string(__FUNCTION__) + " invalid NUMA node input");
 			return -EINVAL;
                 }
 
@@ -184,38 +221,37 @@ static int _numa_move_all(long target_pid, unsigned int node_src, unsigned int n
                 numa_bitmask_setbit(src_nodes, node_src);
                 numa_bitmask_setbit(dst_nodes, node_dest);
 
-                cout << "starting numa migrate pages from node = " << node_src << " to node = " << node_dest << endl;
+                CME_LOG("INFO", "starting numa migrate pages from node = ", to_string(node_src), " to node = ", to_string(node_dest)) ;
                 int pid  = static_cast<int>(target_pid);
 		ret = numa_migrate_pages(pid, src_nodes, dst_nodes);
                 if (ret == 0)
                 {
-                        cout << "All pages moved" << endl;
+                        CME_LOG("INFO", "All pages moved");
                 }
                 else
                 {
-		cout << "numa_migrate_pages return val = " << ret << " Error = " << to_string(errno) << " : " << strerror(errno) << endl;
+                        CME_ERR("numa_migrate_pages return val = ", to_string(ret), " Error = ", to_string(errno), " : ", strerror(errno));
 			return -errno;
                 }
         }
         catch(const std::exception& e)
         {
-                std::cerr << e.what() << '\n';
+                CME_ERR(e.what());
 		return -errno;
 	}
-
 	return ret;
 }
 
 extern "C" cme_mover* register_cme_fn() {
 
-                cout << "Registering cme_mover numa_move_all " + string (__FUNCTION__) << endl;
+                CME_LOG("INFO","Registering cme_mover numa_move_all " + string (__FUNCTION__));
                 return new numa_move_all(std::string("numa_move_all"));
 
 }
 
 extern "C" void unregister_cme_fn(cme_mover* mover_obj) {
 
-        cout << "Unregistering cme mover numa_move_all " + string (__FUNCTION__) << endl;
+        CME_LOG("INFO","Unregistering cme mover numa_move_all " + string (__FUNCTION__));
         delete mover_obj;
 }
 
@@ -223,8 +259,8 @@ int numa_move_all::move_all(cme_context* ctx)
 {
         try
         {
-                cout << name << " Started  " <<  string (__FUNCTION__) <<  "--"<< ctx->app_attr.app_pid << "--" << ctx->mem_attr.src_numa_node << "--" <<  ctx->mem_attr.dst_numa_node << endl;
-                
+                CME_ENTRY();
+                CME_LOG("INFO", "--" , to_string(ctx->app_attr.app_pid) , "--" , to_string(ctx->mem_attr.src_numa_node) , "--" , to_string(ctx->mem_attr.dst_numa_node));
                 if (ctx->app_attr.app_pid == DUMMY_PID)
                 {        
                         move_hot(DUMMY_PROCESS, DUMMY_PID, 1, 0, MOVER_AGGRESSIVENESS_LOW);
@@ -234,56 +270,54 @@ int numa_move_all::move_all(cme_context* ctx)
                         stop(DUMMY_PROCESS, DUMMY_PID);
                         return 0;
                 }
-                cout << "threadid=" << std::this_thread::get_id() << endl;
-                ctx->mover_cmd_status = -1;
+                CME_LOG("INFO", "threadid=",std::this_thread::get_id());
                 std::string stats = process_numastat(ctx->app_attr.app_pid);
-                int chk = pre_fn_move_all(ctx, stats);
-                if (chk)
+                ctx->mover_cmd_status = pre_fn_move_all(ctx, stats);
+                generate_start_migraion_event(ctx);
+                if (ctx->mover_cmd_status)
                 {
-                        std::cerr <<"Initial stats get failed" << std::endl;
-                        return chk;
+                        throw runtime_error("Error in " + string(__FUNCTION__) + "pre processing error");
                 }
+                ctx->mover_cmd_status = -1;
                 ctx->mover_cmd_status = _numa_move_all(ctx->app_attr.app_pid, ctx->mem_attr.src_numa_node , ctx->mem_attr.dst_numa_node);
-                cout << name << " Finished  " <<  string (__FUNCTION__) << "--"<< ctx->app_attr.app_pid << "--" << ctx->mem_attr.src_numa_node << "--" <<  ctx->mem_attr.dst_numa_node << " return = " << ctx->mover_cmd_status <<endl;
+                CME_LOG("INFO", name, " Finished  ",  string (__FUNCTION__) , "--", ctx->app_attr.app_pid, "--" , ctx->mem_attr.src_numa_node, "--",  ctx->mem_attr.dst_numa_node, " return = ", ctx->mover_cmd_status);
                 post_fn_move_all(ctx);
-                ctx->mover_state = CTX_INACTIVE;
         }
         catch(const std::exception& e)
         {
-                std::cerr << e.what() << '\n';
-                ctx->mover_state = CTX_INACTIVE;
-                return -errno;
+                CME_ERR(e.what());
         }
+        ctx->mover_state = CTX_INACTIVE;
         return 0;
 }
 
 int numa_move_all::move_hot(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, enum cme_mover_aggr aggresiveness_level)
 {
-        cout << name << " Started  " <<  string (__FUNCTION__) << endl;
+        CME_ENTRY();
         return 0;
 }
 
 int numa_move_all::move_cold(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, enum cme_mover_aggr aggresiveness_level)
 {
-        cout << name << " Started  " <<  string (__FUNCTION__) << endl;
+        CME_ENTRY();
         return 0;
 }
 
 int numa_move_all::move(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, enum cme_mover_aggr aggresiveness_level)
 {
-        cout << name << " Started  " <<  string (__FUNCTION__) << endl;
+        CME_ENTRY();
         return 0;
 }
 
 int numa_move_all::get_status()
 {
-        cout << name << " Started  " <<  string (__FUNCTION__) << endl;
+        CME_ENTRY();
         return 0;
 }
 
 std::string numa_move_all::get_stats(cme_context* cme_ctx)
 {
-        cout << name << " Started  " <<  string (__FUNCTION__) << endl;
+        CME_ENTRY();
         std::string json_string_ret;
         try
         {
@@ -341,7 +375,7 @@ std::string numa_move_all::get_stats(cme_context* cme_ctx)
 
         catch(const std::exception& e)
         {
-                std::cerr << "Error in " + string(__FUNCTION__) + " : " + e.what() << endl;
+                CME_ERR("Error in " , string(__FUNCTION__) , " : ", e.what());
                 return std::string();
         }
         return json_string_ret;
@@ -349,7 +383,7 @@ std::string numa_move_all::get_stats(cme_context* cme_ctx)
 
 int numa_move_all::stop(string app_name, long app_pid)
 {
-        cout << name << " Started  " <<  string (__FUNCTION__) << endl;
+        CME_ENTRY();
         return 0;
 }
 

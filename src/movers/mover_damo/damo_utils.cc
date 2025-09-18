@@ -3,6 +3,7 @@
 
 #include "damo_utils.h"
 #include "damo_main.h"
+#include "cme_logger.h"
 
 using namespace std;
 
