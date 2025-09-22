@@ -11,7 +11,8 @@ class TestMutable(unittest.TestCase):
         config = TestUtils.load_config()
         self.app_url = config['configure_url']
         self.host_name = config['host_name']
-        self.device = config['device_names'][1]
+        self.device1 = config['device_names'][0]
+        self.device2 = config['device_names'][1]
         self.utils = TestUtils(self.app_url)
         self.utils.login(config['username'], config['password'])
 
@@ -52,6 +53,25 @@ class TestMutable(unittest.TestCase):
 
         return False
 
+    def check_devices_status_in_host_table(self, devices):
+        """Return dict of device:T/F based on presence in host table"""
+        self.select_application_server()
+        status = {}
+        for device in devices:
+            try:
+                x = f"//*[@id='app-server-card-id']//td[contains(text(), "
+                f"'{device}')]"
+                self.utils.find_element_and_assert(
+                    x,
+                    By.XPATH,
+                    f"Check presence of device '{device}' in host table",
+                    self.utils.assert_element_displayed
+                )
+                status[device] = True
+            except AssertionError:
+                status[device] = False
+        return status
+
     def perform_device_action(self, device, action_type='attach'):
         """
         Perform attach or detach action for the given device.
@@ -88,22 +108,33 @@ class TestMutable(unittest.TestCase):
                 f"Detach device '{device}'-->click on detach button",
                 self.utils.assert_element_displayed)
 
+    def test_ensure_devices_attached(self):
+        """Ensure all given devices are attached. Attach missing ones."""
+        devices_status = self.check_devices_status_in_host_table(
+                [self.device1, self.device2])
+        for device, present in devices_status.items():
+            if not present:
+                self.perform_device_action(device, action_type='attach')
+                device_attached = self.check_device_in_host_table(
+                    device, action_type='attach')
+                assert device_attached, f"The device '{device}' was not found"
+
     def test_device_detachment(self):
         """
         Test detachment of CXL devices and check the host table update.
         """
         self.select_application_server()
-        self.perform_device_action(self.device, action_type='detach')
+        self.perform_device_action(self.device2, action_type='detach')
         device_detached = self.check_device_in_host_table(
-            self.device, action_type='detach')
-        assert device_detached, f"The device '{self.device}' was still found."
+            self.device2, action_type='detach')
+        assert device_detached, f"The device '{self.device2}' was still found."
 
     def test_CXL_device_attachment(self):
         """
         Test attachment of CXL devices and check the host table update.
         """
         self.select_application_server()
-        self.perform_device_action(self.device, action_type='attach')
+        self.perform_device_action(self.device2, action_type='attach')
         device_attached = self.check_device_in_host_table(
-            self.device, action_type='attach')
-        assert device_attached, f"The device '{self.device}' was not found"
+            self.device2, action_type='attach')
+        assert device_attached, f"The device '{self.device2}' was not found"
