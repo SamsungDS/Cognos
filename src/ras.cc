@@ -197,6 +197,8 @@ extern "C" svk_status clean_up(void *) {
   if (g_ras_context.initialized == true) {
     delete g_ras_context.monitor_context;
     g_ras_context.monitor_context = nullptr;
+    delete g_ras_context.ras_adapter_helper_;
+    g_ras_context.ras_adapter_helper_ = nullptr;
     g_ras_context.initialized = false;
   }
 
