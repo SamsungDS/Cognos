@@ -29,70 +29,67 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # Author: June Liu
 # Contact: june.liu@samsung.com
-# tasks file for ./roles/SLAT_configure
-
+# tasks file for ./roles/slat_configure
+---
 - name: Stat feat_modules installed path
   ansible.builtin.stat:
-    path: "{{ feat_modules_bin_dir }}"
-  register: feat_modules_path
+    path: "{{ slat_configure_feat_modules_bin_dir }}"
+  register: slat_configure_feat_modules_path
 
 - name: Stat svk-cxl installed path
   ansible.builtin.stat:
-    path: "{{ svk_cxl_bin_dir }}"
-  register: svk_cxl_path
+    path: "{{ slat_configure_svk_cxl_bin_dir }}"
+  register: slat_configure_svk_cxl_path
 
 - name: Set symlink for libcxl.so
-  file:
-    src: "{{ svk_cxl_bin_dir }}/lib64/libcxl.so"
-    dest: "{{ feat_modules_bin_dir }}/libcxl.so"
+  ansible.builtin.file:
+    src: "{{ slat_configure_svk_cxl_bin_dir }}/lib64/libcxl.so"
+    dest: "{{ slat_configure_feat_modules_bin_dir }}/libcxl.so"
     state: link
     force: true
-  when: svk_cxl_path.stat.exists
+  when: slat_configure_svk_cxl_path.stat.exists
   become: true
 
 
 - name: SLAT configure for mgmt_fw_config.json
-  template:
+  ansible.builtin.template:
     src: mgmt_fw_config.json.j2
     dest: /etc/svk/mgmt_fw_config.json
+    mode: "0644"
   vars:
-    node_ip: "{{ ansible_default_ipv4.address }}"
-    rest_ip: "{{ ansible_default_ipv4.address }}"
-    controller_ip: "{{ ansible_default_ipv4.address }}"
-  when : feat_modules_path.stat.exists
+    slat_configure_node_ip: "{{ ansible_default_ipv4.address }}"
+    slat_configure_rest_ip: "{{ ansible_default_ipv4.address }}"
+    slat_configure_controller_ip: "{{ ansible_default_ipv4.address }}"
+  when: slat_configure_feat_modules_path.stat.exists
 
 - name: Stat svk-mgmt-fw install path
   ansible.builtin.stat:
-    path: "{{ mgmt_fw_bin_dir }}"
-  register: svk_mgmt_fw_path
+    path: "{{ slat_configure_mgmt_fw_bin_dir }}"
+  register: slat_configure_svk_mgmt_fw_path
 
 - name: Create conf dir for device_sla_config
-  file:
-    path: "{{ mgmt_fw_bin_dir }}/config/"
+  ansible.builtin.file:
+    path: "{{ slat_configure_mgmt_fw_bin_dir }}/config/"
     state: directory
     mode: 0644
-  when: svk_mgmt_fw_path.stat.exists
+  when: slat_configure_svk_mgmt_fw_path.stat.exists
   become: true
 
 - name: Get device numa and size details
-  command: "numactl -H"
-  register: numa_info
+  ansible.builtin.command: "numactl -H"
+  register: slat_configure_numa_info
+  changed_when: slat_configure_numa_info.rc != 0
 
 
 - name: Extract node id of device numa which not have cpus
-  set_fact:
-    nodes_info_lines: "{{ numa_info.stdout.splitlines() | map('regex_search', 'node (\\d+) cpus:$', '\\1') | reject('equalto', None) | flatten }}"
-
-
+  ansible.builtin.set_fact:
+    slat_configure_nodes_info: 
+      "{{ slat_configure_numa_info.stdout.splitlines() | map('regex_search', 'node (\\d+) cpus:$', '\\1') | reject('equalto', None) | flatten }}"
 
 - name: SLAT configure
-  template:
+  ansible.builtin.template:
     src: device_sla_config.json.j2
-    dest: "{{ mgmt_fw_bin_dir }}/config/device_sla_config.json"
+    dest: "{{ slat_configure_mgmt_fw_bin_dir }}/config/device_sla_config.json"
+    mode: "0644"
   vars:
-    controller_ip: "{{ ansible_default_ipv4.address }}"
-
-
-
-
-
+    slat_configure_controller_ip: "{{ ansible_default_ipv4.address }}"

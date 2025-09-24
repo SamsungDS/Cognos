@@ -9,12 +9,12 @@
           "id": "CL_ID_1"
         },
         "controller": {
-          "id": "{{ controller_ip }}",
+          "id": "{{ slat_configure_controller_ip }}",
           "port": 9999
         },
         "node": {
           "name": "node_1",
-          "id": "{{ node_ip }}",
+          "id": "{{ slat_configure_node_ip }}",
           "port": 9998
         },
         "logger": {
@@ -28,7 +28,7 @@
   "svk_mgmt_fw_controller":
       {
         "controller": {
-          "id": "{{ controller_ip }}",
+          "id": "{{ slat_configure_controller_ip }}",
           "port": 9999
         },
         "logger": {
@@ -42,11 +42,11 @@
   "svk_mgmt_rest_api":
       {
         "controller": {
-          "id": "{{ controller_ip }}",
+          "id": "{{ slat_configure_controller_ip }}",
           "port": "9999"
         },
         "rest_server": {
-          "id": "{{ rest_ip }}",
+          "id": "{{ slat_configure_rest_ip }}",
           "port": "8001"
         },
         "logger": {
@@ -56,7 +56,7 @@
   "core":
       {
         "_comment": "All the feature libraries (ONLY) should be present in /usr/local/svk/feature_modules",
-        "feat_modules_dir": "{{ feat_modules_bin_dir }}",
+        "feat_modules_dir": "{{ slat_configure_feat_modules_bin_dir }}",
         "logger": {
           "log_level": "INFO",
           "log_file_name": "/var/log/svk/framework.log",

@@ -29,10 +29,31 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # Author: June Liu
 # Contact: june.liu@samsung.com
-# vars file for ./roles/SLAT_configure
-feat_modules_bin_dir: "/usr/local/svk/feature_modules"
-mgmt_fw_bin_dir: "/usr/local/svk/mgmt-fw"
-svk_cxl_bin_dir: "/usr/local/svk/cxl"
-rest_ip: "localhost"
-controller_ip: "localhost"
-node_ip: "localhost"
+---
+- name: Get service facts
+  ansible.builtin.service_facts:
+  when: ansible_facts.services is not defined
+
+- name: Start svk-controller service
+  ansible.builtin.systemd:
+    enabled: true
+    state: started
+    name: svk-controller
+  when: "'svk-controller.service' in ansible_facts.services"
+  become: true
+
+- name: Start svk-restserver service
+  ansible.builtin.systemd:
+    enabled: true
+    state: started
+    name: svk-restserver
+  when: "'svk-restserver.service' in ansible_facts.services"
+  become: true
+
+- name: Start svk-node service
+  ansible.builtin.systemd:
+    enabled: true
+    state: started
+    name: svk-node
+  when: "'svk-node.service' in ansible_facts.services"
+  become: true

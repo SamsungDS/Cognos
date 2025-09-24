@@ -39,14 +39,12 @@
 # *  configure, and enable and start SLA tracker service on all [slat_node]
 #
 
-
 - name: Configure SLA Tracker service
   hosts: slat_node
   roles:
-    - SLAT_configure
+    - slat_configure
 
 - name: Start SLA Tracker service
   hosts: slat_node
   roles:
-    - SLAT_start
-
+    - slat_start
