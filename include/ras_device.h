@@ -153,14 +153,14 @@ class ras_device_manager {
    * @return An optional ras_device containing the device if found, std::nullopt
    * otherwise.
    */
-  std::optional<ras_device> try_get_device(
+  std::optional<std::reference_wrapper<ras_device>> try_get_device(
       device_unique_identifier device_unique_id) {
     std::scoped_lock lk{device_manager_lock};
     auto device = this->devices.find(device_unique_id);
     if (device == this->devices.end()) {
       return std::nullopt;
     }
-    return *device->second;
+    return std::ref(*device->second);
   }
 };
 

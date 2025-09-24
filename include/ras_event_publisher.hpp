@@ -13,11 +13,13 @@
 namespace cognos::ras::publisher {
 static const std::string ras_err_threshold_warning_template =
     "{{\"domain\": \"availability\", \"feature_name\": \"ras\", \"category\": "
-    "\"health\", \"severity\": \"warning\", \"source\": {device_id}, "
+    "\"health\", \"severity\": \"warning\", \"source\": \"{device_id}\", "
     "\"source_type\": \"device\", \"timestamp\": {timestamp}, "
-    "\"observations\": {{ \"message\" : \"{message}\" }} }}";
+    "\"observations\": {{ \"device_id\": \"{device_id}\", \"error_cnt\": "
+    "{error_count}, \"message\" : \"{message}\" }} }}";
 
 static int send_ras_threshold_warning_event(const std::string &device_id,
+                                            const int error_count,
                                             const std::string &message) {
   auto time_stamp = std::chrono::duration_cast<std::chrono::seconds>(
                         std::chrono::system_clock::now().time_since_epoch())
@@ -26,7 +28,7 @@ static int send_ras_threshold_warning_event(const std::string &device_id,
   std::string event_json = fmt::format(
       cognos::ras::publisher::ras_err_threshold_warning_template,
       fmt::arg("device_id", device_id), fmt::arg("timestamp", time_stamp),
-      fmt::arg("message", message));
+      fmt::arg("error_count", error_count), fmt::arg("message", message));
 
   int rc = publish_event_data_to_core((char *)"alerts",
                                       (uint8_t *)event_json.c_str(),
