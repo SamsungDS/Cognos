@@ -43,5 +43,4 @@
 - name: Stop SLA Tracker service
   hosts: slat_node
   roles:
-    - SLAT_stop
-
+    - slat_stop

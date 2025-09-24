@@ -1,3 +1,4 @@
+---
 # The Clear BSD License
 #
 # Copyright (c) 2025 Samsung Electronics Co., Ltd.
@@ -29,35 +30,34 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # Author: June Liu
 # Contact: june.liu@samsung.com
-- name: Get service facts
-  service_facts:
-  when: ansible_facts.services is not defined
 
-- name: Stop svk-node service
-  systemd:
-    enabled: false
-    state: stopped
-    name: svk-node
-  when: "'svk-node.service' in ansible_facts.services"
+- name: Remove svk_slat packages
+  ansible.builtin.apt:
+    name: svk-slat
+    state: absent
+    purge: true
+  when: ansible_facts['distribution'] == "Ubuntu"
+
+- name: Uninstall SLA Tracker dependencies[svk-mgmt-fw]
+  ansible.builtin.include_role:
+    name: svk_mgmt_fw_remove
+
+- name: Uninstall SLA Tracker dependencies[svk-core]
+  ansible.builtin.include_role:
+    name: svk_core_remove
+
+- name: Update systemd configuration
+  ansible.builtin.systemd:
+    daemon-reload: true
   become: true
 
-- name: Stop svk-restserver service
-  systemd:
-    enabled: false
-    state: stopped
-    name: svk-restserver
-  when: "'svk-restserver.service' in ansible_facts.services"
+- name: Delete log files, config and installation directories of SLA Tracker
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ slat_remove_log_path }}"
+    - "{{ slat_remove_conf_path }}"
+    - "{{ slat_remove_feat_modules_bin_dir }}"
+    - "{{ slat_remove_mgmt_fw_bin_dir }}"
   become: true
-
-
-- name: Stop svk-controller service
-  systemd:
-    enabled: false
-    state: stopped
-    name: svk-controller
-  when: "'svk-controller.service' in ansible_facts.services"
-  become: true
-
-
-
-

@@ -30,7 +30,9 @@
 # Author: June Liu
 # Contact: june.liu@samsung.com
 ---
-# meta file for ./roles/SLAT_install
+# defaults file for ./roles/slat_remove
 
-dependencies: 
-  - { role: svk_cxl_remove }
+slat_remove_log_path: "/var/log/svk/"
+slat_remove_conf_path: "/etc/svk/"
+slat_remove_feat_modules_bin_dir: "/usr/local/svk/feature_modules/"
+slat_remove_mgmt_fw_bin_dir: "/usr/local/svk/mgmt-fw/"

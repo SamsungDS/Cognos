@@ -30,9 +30,9 @@
 # Author: June Liu
 # Contact: june.liu@samsung.com
 ---
-# vars file for ./roles/SLAT_remove
+# vars file for ./roles/slat_remove
 
-cognos_slat_log_path: "/var/log/svk/"
-cognos_slat_conf_path: "/etc/svk/"
-feat_modules_bin_dir: "/usr/local/svk/feature_modules/"
-mgmt_fw_bin_dir: "/usr/local/svk/mgmt-fw/"
+slat_remove_log_path: "/var/log/svk/"
+slat_remove_conf_path: "/etc/svk/"
+slat_remove_feat_modules_bin_dir: "/usr/local/svk/feature_modules/"
+slat_remove_mgmt_fw_bin_dir: "/usr/local/svk/mgmt-fw/"

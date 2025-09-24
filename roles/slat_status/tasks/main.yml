@@ -29,16 +29,16 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # Author: June Liu
 # Contact: june.liu@samsung.com
-
+---
 - name: Get service facts
-  service_facts:
+  ansible.builtin.service_facts:
   when: ansible_facts.services is not defined
 
 
 - name: Check SLA Tracker services status are running
-  service:
+  ansible.builtin.service:
     name: "{{ item }}"
-  register: service_status
+  register: slat_status_service
   failed_when: service_status.status.ActiveState != "active"
   loop:
     - "svk-controller"
