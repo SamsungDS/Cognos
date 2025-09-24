@@ -1,0 +1,6 @@
+---
+dependencies:
+  - role: validate_ubuntu
+    vars:
+      validate_ubuntu_min_version: "{{ slat_check_deps_min_ver }}"
+      validate_ubuntu_max_version: "{{ slat_check_deps_max_ver }}"

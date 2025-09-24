@@ -29,11 +29,8 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # Author: June Liu
 # Contact: june.liu@samsung.com
-# defaults file for ./roles/SLAT_install
+---
+slat_check_deps_min_ver: '22.04'
+slat_check_deps_max_ver: '22.04'
 
-deploy_staging_dir: "/tmp"
-artifacts_dir: "{{ inventory_dir }}/artifacts"
-svk_slat_pkg_dir: "{{ artifacts_dir }}/SVK/SLA_Tracker"
-svk_core_pkg_dir: "{{ svk_slat_pkg_dir }}"
-svk_mgmt_fw_pkg_dir: "{{ svk_slat_pkg_dir }}"
-svk_cxl_pkg_dir: "{{ svk_slat_pkg_dir }}"
+slat_check_deps_supported_kernel: "6.11.0"

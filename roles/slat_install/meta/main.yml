@@ -30,11 +30,13 @@
 # Author: June Liu
 # Contact: june.liu@samsung.com
 ---
-# vars file for ./roles/SLAT_install
+# meta file for ./roles/SLAT_install
 
-deploy_staging_dir: "/tmp"
-artifacts_dir: "{{ inventory_dir }}/artifacts"
-svk_slat_pkg_dir: "{{ artifacts_dir }}/SVK/SLA_Tracker"
-svk_core_pkg_dir: "{{ svk_slat_pkg_dir }}"
-svk_mgmt_fw_pkg_dir: "{{ svk_slat_pkg_dir }}"
-svk_cxl_pkg_dir: "{{ svk_slat_pkg_dir }}"
+dependencies:
+  - role: svk_core_install
+    vars:
+      svk_core_install_dir: "{{ slat_install_pkg_dir }}"
+
+  - role: svk_mgmt_fw_install
+    vars:
+      svk_mgmt_fw_install_dir: "{{ slat_install_pkg_dir }}"

@@ -35,7 +35,7 @@
 #
 # Execute this playbook to deploy Cognos SLA Tracker software to slat_node in your inventory.
 # This playbook will perform the following:
-# * Check hardware and software environment that required by SLA Tracker on all [slat_node] 
+# * Check hardware and software environment that required by SLA Tracker on all [slat_node]
 # * Install SLA Tracker software on all [slat_node]
 #
 
@@ -44,20 +44,12 @@
   roles:
     - validate_ansible
 
-
 - name: Check dependecies of SLA Tracker node
   hosts: slat_node
   roles:
-    - SLAT_check_deps
-
+    - slat_check_deps
 
 - name: Install SLA Tracker related packages
   hosts: slat_node
   roles:
-    - SLAT_install
-
-
-
-
-
-
+    - slat_install

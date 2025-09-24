@@ -29,8 +29,63 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # Author: June Liu
 # Contact: june.liu@samsung.com
+---
 
-min_supported_major_versions: '24.04'
-max_supported_major_versions: '24.04'
+- name: Update all apt packages
+  ansible.builtin.apt:
+    update_cache: true
+  when: ansible_distribution == "Ubuntu"
 
-supported_kernel_versions: "6.8.0"
+- name: Get current kernel version
+  ansible.builtin.set_fact:
+    slat_check_deps_kernel_version: "{{ ansible_kernel.split('-')[0] }}"
+
+- name: Assert kernel version on SLA Tracker node
+  ansible.builtin.assert:
+    that: slat_check_deps_kernel_version is version_compare(slat_check_deps_supported_kernel, '==')
+    fail_msg: "Kernel version is must be == {{ slat_check_deps_supported_kernel }} . Current version is {{ slat_check_deps_kernel_version }}. >
+     Please run ansible-playbook playbooks/deploy_kernel.yml first."
+    success_msg: "Kernel version is correct: {{ slat_check_deps_kernel_version }}"
+
+- name: Check vim on SLA Tracker node
+  ansible.builtin.package:
+    name: vim
+    state: present
+  become: true
+
+- name: Check wget on SLA Tracker node
+  ansible.builtin.package:
+    name: wget
+    state: present
+  become: true
+
+- name: Check pip on SLA Tracker node
+  ansible.builtin.package:
+    name: pip
+    state: present
+  become: true
+
+- name: Check numactl on SLA Tracker node
+  ansible.builtin.package:
+    name: numactl
+    state: present
+  become: true
+
+- name: Check damo on SLA Tracker node on Ubuntu 24.04+
+  ansible.builtin.package:
+    name:
+      - damo
+    state: present
+  when:
+    - ansible_distribution == "Ubuntu"
+    - ansible_distribution_version is version_compare("24.04", '>=')
+
+- name: Install damo on SLA Tracker node on Ubuntu 22.04
+  ansible.builtin.pip:
+    name:
+      - damo
+      - pyyaml
+    state: present
+  when:
+    - ansible_distribution == "Ubuntu"
+    - ansible_distribution_version is version_compare("22.04", '==')

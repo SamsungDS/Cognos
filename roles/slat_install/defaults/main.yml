@@ -29,9 +29,8 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # Author: June Liu
 # Contact: june.liu@samsung.com
+# defaults file for ./roles/SLAT_install
 ---
-# meta file for ./roles/SLAT_install
-
-dependencies: 
-  - { role: svk_core_install } 
-  - { role: svk_mgmt-fw_install }
+slat_install_staging_dir: "/tmp"
+slat_install_artifacts_dir: "{{ inventory_dir }}/artifacts"
+slat_install_pkg_dir: "{{ slat_install_artifacts_dir }}/SVK/SLA_Tracker"

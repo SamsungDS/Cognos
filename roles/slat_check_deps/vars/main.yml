@@ -29,8 +29,8 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # Author: June Liu
 # Contact: june.liu@samsung.com
+---
+slat_check_deps_min_ver: '22.04'
+slat_check_deps_max_ver: '22.04'
 
-min_supported_major_versions: '22.04'
-max_supported_major_versions: '22.04'
-
-supported_kernel_versions: "6.11.11"
+slat_check_deps_kernel_ver: "6.11.0"

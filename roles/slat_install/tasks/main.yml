@@ -35,64 +35,58 @@
 
 - name: Determine OS type and version
   ansible.builtin.set_fact:
-    os_family: "{{ ansible_distribution }}"
-    os_version: "{{ ansible_distribution_version }}"
-    
+    slat_install_os_family: "{{ ansible_distribution }}"
+    slat_install_os_version: "{{ ansible_distribution_version }}"
+
 - name: Identify svk_slat package
   ansible.builtin.find:
-    path: "{{ svk_slat_pkg_dir }}"
-    patterns: "svk-slat_*-ubuntu{{ os_version }}_*.deb"
+    path: "{{ slat_install_pkg_dir }}"
+    patterns: "svk-slat_*-ubuntu{{ slat_install_os_version }}_*.deb"
   delegate_to: localhost
   run_once: true
-  register: svk_slat_deb
-  when: os_family == "Ubuntu"
+  register: slat_install_deb
+  when: slat_install_os_family == "Ubuntu"
 
 - name: Assert svk_slat deb found
   ansible.builtin.assert:
-    that: svk_slat_deb.files | length > 0
-    fail_msg: "No svk-slat deb found. Please download DEB to {{ artifacts_dir }}"
+    that: slat_install_deb.files | length > 0
+    fail_msg: "No svk-slat deb found. Please download DEB to {{ slat_install_artifacts_dir }}"
 
 - name: Identify newest version of svk-slat DEB found
   ansible.builtin.set_fact:
-    svk_slat_deb_file: "{{ (svk_slat_deb.files | sort(attribute='mtime', reverse=true) | first).path }}"
+    slat_install_deb_file: "{{ (slat_install_deb.files | sort(attribute='mtime', reverse=true) | first).path }}"
   run_once: true
 
-
-
 - name: Check if svk-slat DEB is installed
-  ansible.builtin.shell: "apt list --installed | grep svk-slat"
-  register: svk_slat_deb_query
+  ansible.builtin.shell:
+    cmd: "set -o pipefail && apt list --installed | grep svk-slat; echo $?"
+    executable: /bin/bash
+  register: slat_install_deb_query
   changed_when: false
-  failed_when: false
-  when: os_family == "Ubuntu"
+  when: slat_install_os_family == "Ubuntu"
 
 - name: Copy svk_slat DEB to staging directory
   ansible.builtin.copy:
-    src: "{{ svk_slat_deb_file }}"
-    dest: "{{ deploy_staging_dir }}"
-    mode: 0644
-  when: svk_slat_deb_query.rc != 0
+    src: "{{ slat_install_deb_file }}"
+    dest: "{{ slat_install_staging_dir }}"
+    mode: "0644"
+  when: slat_install_deb_query.stdout_lines[-1] != '0'
 
 
 - name: Install svk_slat DEB
   ansible.builtin.apt:
-    deb: "{{ deploy_staging_dir }}/{{ svk_slat_deb_file | basename }}"
+    deb: "{{ slat_install_staging_dir }}/{{ slat_install_deb_file | basename }}"
     state: present
   become: true
-  when: svk_slat_deb_query.rc != 0 and os_family == "Ubuntu"
+  when: slat_install_deb_query.stdout_lines[-1] != '0' and slat_install_os_family == "Ubuntu"
 
 - name: Delete svk_slat DEB from staging directory
   ansible.builtin.file:
-    path: "{{ deploy_staging_dir }}/{{ svk_slat_deb_file | basename }}"
+    path: "{{ slat_install_staging_dir }}/{{ slat_install_deb_file | basename }}"
     state: absent
-
 
 - name: Install svk_cxl on SLA Tracker node
   ansible.builtin.include_role:
     name: svk_cxl_install
-
-
-
-
-
-
+  vars:
+    svk_cxl_install_pkg_dir: "{{ slat_install_pkg_dir }}"
