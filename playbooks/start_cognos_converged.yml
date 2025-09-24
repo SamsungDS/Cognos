@@ -39,7 +39,6 @@
 # *  configure, and enable and start converged storage service on all [converged_node]
 #
 
-
 - name: Config SVK converged storage service
   hosts: converged_node
   roles:
@@ -49,4 +48,3 @@
   hosts: converged_node
   roles:
     - converged_start
-

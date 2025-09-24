@@ -29,7 +29,7 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # Author: June Liu
 # Contact: june.liu@samsung.com
-
-NRHUGE: 8192
-converged_bin_path: "/usr/local/svk/converged/"
-COREMASK: 0x1
+---
+converged_config_nrhuge: 8192
+converged_config_path: "/usr/local/svk/converged/"
+converged_config_coremask: 0x1
