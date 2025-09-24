@@ -1,2 +1,5 @@
-dependencies: 
-  - { role: svk_core_install } 
+---
+dependencies:
+  - role: svk_core_install
+    vars:
+      svk_core_install_dir: "{{ converged_install_svk_core_dir }}"

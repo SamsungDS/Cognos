@@ -11,4 +11,3 @@ ansible-lint:
     ANSIBLE_CONFIG: ansible.cfg
   rules:
     - !reference [.default_rules, merge_and_push]
-  allow_failure: true

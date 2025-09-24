@@ -29,63 +29,58 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # Author: June Liu
 # Contact: june.liu@samsung.com
-
+---
 - name: Determine OS type and version
   ansible.builtin.set_fact:
-    os_family: "{{ ansible_distribution }}"
-    os_version: "{{ ansible_distribution_version }}"
-    
+    converged_install_os_family: "{{ ansible_distribution }}"
+    converged_install_os_version: "{{ ansible_distribution_version }}"
+
 - name: Identify svk_converged package
   ansible.builtin.find:
-    path: "{{ svk_converged_pkg_dir }}"
-    patterns: "svk-converged_*-ubuntu{{ os_version }}_*.deb"
+    path: "{{ converged_install_pkg_dir }}"
+    patterns: "svk-converged_*-ubuntu{{ converged_install_os_version }}_*.deb"
   delegate_to: localhost
   run_once: true
-  register: svk_converged_deb
-  when: os_family == "Ubuntu"
+  register: converged_install_deb
+  when: converged_install_os_family == "Ubuntu"
 
 - name: Assert svk_converged deb found
   ansible.builtin.assert:
-    that: svk_converged_deb.files | length > 0
-    fail_msg: "No svk_converged deb found. Please download DEB to {{ artifacts_dir }}"
+    that: converged_install_deb.files | length > 0
+    fail_msg: "No svk_converged deb found. Please download DEB to {{ converged_install_artifacts_dir }}"
 
 - name: Identify newest version of svk_converged DEB found
   ansible.builtin.set_fact:
-    svk_converged_deb_file: "{{ (svk_converged_deb.files | sort(attribute='mtime', reverse=true) | first).path }}"
+    converged_install_deb_file: "{{ (converged_install_deb.files | sort(attribute='mtime', reverse=true) | first).path }}"
   run_once: true
 
-
-
 - name: Check if svk_converged DEB is installed
-  ansible.builtin.shell: "apt list --installed | grep svk-converged"
-  register: svk_converged_deb_query
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      apt list --installed | grep svk-converged; echo $?
+    executable: /bin/bash
+  register: converged_install_deb_query
   changed_when: false
   failed_when: false
-  when: os_family == "Ubuntu"
+  when: converged_install_os_family== "Ubuntu"
 
 - name: Copy svk_converged DEB to staging directory
   ansible.builtin.copy:
-    src: "{{ svk_converged_deb_file }}"
-    dest: "{{ deploy_staging_dir }}"
-    mode: 0644
-  when: svk_converged_deb_query.rc != 0
+    src: "{{ converged_install_deb_file }}"
+    dest: "{{ converged_install_staging_dir }}"
+    mode: "0644"
+  when: converged_install_deb_query.stdout_lines[-1] != 0
 
 
 - name: Install svk_converged DEB
   ansible.builtin.apt:
-    deb: "{{ deploy_staging_dir }}/{{ svk_converged_deb_file | basename }}"
+    deb: "{{ converged_install_staging_dir }}/{{ converged_install_deb_file | basename }}"
     state: present
   become: true
-  when: svk_converged_deb_query.rc != 0 and os_family == "Ubuntu"
+  when: converged_install_deb_query.stdout_lines[-1] != 0 and converged_install_os_family == "Ubuntu"
 
 - name: Delete svk_converged DEB from staging directory
   ansible.builtin.file:
-    path: "{{ deploy_staging_dir }}/{{ svk_converged_deb_file | basename }}"
+    path: "{{ converged_install_staging_dir }}/{{ converged_install_deb_file | basename }}"
     state: absent
-
-
-
-
-
-
-

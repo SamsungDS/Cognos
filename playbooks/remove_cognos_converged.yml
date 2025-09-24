@@ -50,4 +50,3 @@
   hosts: converged_node
   roles:
     - converged_remove
-

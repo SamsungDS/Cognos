@@ -29,65 +29,70 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # Author: June Liu
 # Contact: june.liu@samsung.com
-
+---
 - name: Assert converged kernel version
   ansible.builtin.assert:
-    that: 
-    - ansible_kernel is version_compare(supported_kernel_versions, '>=')
-    fail_msg: "Kernel version is must be >= {{ supported_kernel_versions }} . Current version is {{ ansible_kernel }}"
+    that:
+      - ansible_kernel is version_compare(converged_check_deps_kernel, '>=')
+    fail_msg: "Kernel version is must be >= {{ converged_check_deps_kernel }} . Current version is {{ ansible_kernel }}"
     success_msg: "Kernel version is correct: {{ ansible_kernel }}"
+
 
 - name: Check CPU numbers of converged node
   ansible.builtin.assert:
-    that: ansible_processor_vcpus >= {{ min_required_cpu_numbers }}
-    fail_msg: "CPU numbers is must be >= {{ min_required_cpu_numbers }} . Current number is {{ ansible_processor_vcpus }}"
+    that: ansible_processor_vcpus >= {{ converged_check_deps_min_cpu_num }}
+    fail_msg: "CPU numbers is must be >= {{ converged_check_deps_min_cpu_num }} . Current number is {{ ansible_processor_vcpus }}"
     success_msg: "CPU numbers is correct: {{ ansible_processor_vcpus }}"
 
 - name: Install nvme-cli on converged node
   ansible.builtin.package:
     name: nvme-cli
     state: present
-  
+
 - name: Get nvme devices count on converged node
-  ansible.builtin.shell: lspci | grep 'Non-Volatile memory' | wc -l
-  register: nvme_device_count
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      lspci | grep 'Non-Volatile memory' | wc -l
+    executable: /bin/bash
+  register: converged_check_deps_nvme_count
+  changed_when: converged_check_deps_nvme_count.stdout_lines[-1] != 0
 
 - name: Assert nvme devices count on converged node
   ansible.builtin.assert:
-    that: 
-    - nvme_device_count.stdout|int >= min_nvme_dev_nums
-    fail_msg: "Number of NVMe devices is not greater than {{ min_nvme_dev_nums }} . Current number of devices: {{ nvme_device_count.stdout }}"
-    success_msg: "Number of NVMe devices is correct: {{ nvme_device_count.stdout }}"
+    that:
+      - converged_check_deps_nvme_count.stdout|int >= converged_check_deps_min_nvme_nums
+    fail_msg: "Number of NVMe devices is not greater than {{ converged_check_deps_min_nvme_nums }}.Current is: {{ converged_check_deps_nvme_count.stdout }}"
+    success_msg: "Number of NVMe devices is correct: {{ converged_check_deps_nvme_count.stdout }}"
 
 - name: Get total memory in GB
-  ansible.builtin.shell: free -g | grep Mem | awk '{print $2}'
-  register: total_memory
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      free -g | grep Mem | awk '{print $2}'
+    executable: /bin/bash
+  register: converged_check_deps_total_memory
+  changed_when: converged_check_deps_total_memory.stdout_lines[-1] !=0
 
 - name: Assert memory is greater than 4GB in VM mode
   ansible.builtin.assert:
     that:
-      - total_memory.stdout|int >= min_host_memory_gb
-    fail_msg: "Memory is not sufficient in VM mode. Current memory: {{ total_memory.stdout }} GB"
-    success_msg: "Memory is sufficient: {{ total_memory.stdout }} GB"
-  when: host_type == "vm"
+      - converged_check_deps_total_memory.stdout|int >= converged_check_deps_min_mem_gb
+    fail_msg: "Memory is not sufficient in VM mode. Current memory: {{ converged_check_deps_total_memory.stdout }} GB"
+    success_msg: "Memory is sufficient: {{ converged_check_deps_total_memory.stdout }} GB"
+  when: converged_check_deps_host_type == "vm"
 
 - name: Assert memory is greater than 64GB in Server mode
   ansible.builtin.assert:
     that:
-      - total_memory.stdout|int >= min_host_memory_gb
-    fail_msg: "Memory is not sufficient in Server mode. Current memory: {{ total_memory.stdout }} GB"
-    success_msg: "Memory is sufficient: {{ total_memory.stdout }} GB"
-  when: host_type == "server"
+      - converged_check_deps_total_memory.stdout|int >= converged_check_deps_min_mem_gb
+    fail_msg: "Memory is not sufficient in Server mode. Current memory: {{ converged_check_deps_total_memory.stdout }} GB"
+    success_msg: "Memory is sufficient: {{ converged_check_deps_total_memory.stdout }} GB"
+  when: converged_check_deps_host_type == "server"
 
 
 - name: Check if ublk_drv module is installed on the OS
-  ansible.builtin.modprobe: 
+  community.general.modprobe:
     name: "ublk_drv"
     state: present
   become: true
-
-
-
-
-
-

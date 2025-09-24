@@ -83,7 +83,7 @@
 
 - name: Extract node id of device numa which not have cpus
   ansible.builtin.set_fact:
-    slat_configure_nodes_info: 
+    slat_configure_nodes_info:
       "{{ slat_configure_numa_info.stdout.splitlines() | map('regex_search', 'node (\\d+) cpus:$', '\\1') | reject('equalto', None) | flatten }}"
 
 - name: SLAT configure

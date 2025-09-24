@@ -29,8 +29,8 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # Author: June Liu
 # Contact: june.liu@samsung.com
-
-deploy_staging_dir: "/tmp"
-artifacts_dir: "{{ inventory_dir }}/artifacts"
-svk_converged_pkg_dir: "{{ artifacts_dir }}/SVK/Converged"
-svk_core_pkg_dir: "{{ svk_converged_pkg_dir }}"
+---
+converged_install_staging_dir: "/tmp"
+converged_install_artifacts_dir: "{{ inventory_dir }}/artifacts"
+converged_install_pkg_dir: "{{ converged_install_artifacts_dir }}/SVK/Converged"
+converged_install_svk_core_dir: "{{ converged_install_pkg_dir }}"

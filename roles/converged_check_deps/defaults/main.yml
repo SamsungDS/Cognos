@@ -29,12 +29,12 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # Author: June Liu
 # Contact: june.liu@samsung.com
+---
+converged_check_deps_min_ver: '24.04'
+converged_check_deps_max_ver: '24.04'
 
-min_supported_major_versions: '24.04'
-max_supported_major_versions: '24.04'
-
-supported_kernel_versions: "6.8.0"
-min_required_cpu_numbers: 1
-min_nvme_dev_nums: 1
-host_type: 'server'  #server #vm
-min_host_memory_gb: 64  #vm 4, server 64
+converged_check_deps_kernel: "6.8.0"
+converged_check_deps_min_cpu_num: 1
+converged_check_deps_min_nvme_nums: 1
+converged_check_deps_host_type: 'server'   # server,vm
+converged_check_deps_min_mem_gb: 64    # vm 4, server 64

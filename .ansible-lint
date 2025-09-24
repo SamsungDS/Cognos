@@ -2,6 +2,6 @@
 
 exclude_paths:
   - .cache/
-  - .gitlab/
+  - .config/
   - .gitlab-ci.yml
 use_default_rules: true
