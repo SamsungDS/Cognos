@@ -1,4 +1,9 @@
 ---
+- name: Get hostname
+  ansible.builtin.command: hostname
+  register: application_server_start_hostname
+  changed_when: false
+
 - name: Configure mgmt_fw_config
   ansible.builtin.template:
     src: mgmt_fw_config.j2
@@ -6,6 +11,16 @@
     mode: 0644
   vars:
     ip: "{{ ansible_default_ipv4.address }}"
+    node_name: "{{ application_server_start_hostname.stdout }}"
+  become: true
+
+- name: Configure input.json
+  ansible.builtin.template:
+    src: mgmt_fw_input.j2
+    dest: "/usr/local/svk/feature_modules/cxl/config/input.json"
+    mode: 0644
+  vars:
+    node_name: "{{ application_server_start_hostname.stdout }}"
   become: true
 
 - name: Configure zmq
@@ -16,6 +31,12 @@
   vars:
     ip: "{{ ansible_default_ipv4.address }}"
   become: true
+
+- name: Set mock_disable to be true
+  ansible.builtin.replace:
+    path: /usr/local/svk/feature_modules/cxl/config/cxl_dev_id_map.json
+    regexp: '"mock_disable"\s*:\s*false\s*(,?)'
+    replace: '"mock_disable": true\1'
 
 - name: Start application services
   ansible.builtin.service:

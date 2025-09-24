@@ -6,6 +6,6 @@
     enabled: false
   become: true
   loop:
-    - svk-controller
-    - svk-restserver
-    - svk-node
+    - svk-controller.service
+    - svk-restserver.service
+    - svk-node.service

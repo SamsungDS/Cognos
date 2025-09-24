@@ -1,0 +1,54 @@
+---
+- name: Determine OS type and version
+  ansible.builtin.set_fact:
+    svk_mgmt_fw_install_os_family: "{{ ansible_distribution }}"
+    svk_mgmt_fw_install_os_version: "{{ ansible_distribution_version }}"
+
+- name: Identify svk-mgmt-fw package
+  ansible.builtin.find:
+    path: "{{ svk_pkg_dir }}"
+    patterns: "svk-mgmt-fw*-ubuntu{{ svk_mgmt_fw_install_os_version }}_*.deb"
+  delegate_to: localhost
+  run_once: true
+  register: svk_mgmt_fw_install_deb
+  when: svk_mgmt_fw_install_os_family == "Ubuntu"
+
+- name: Assert svk-mgmt-fw deb found
+  ansible.builtin.assert:
+    that: svk_mgmt_fw_install_deb.files | length > 0
+    fail_msg: "No svk-mgmt-fw deb found. Please download DEB to {{ artifacts_dir }}"
+
+- name: Identify newest version of svk-mgmt-fw DEB found
+  ansible.builtin.set_fact:
+    svk_mgmt_fw_install_deb_file: "{{ (svk_mgmt_fw_install_deb.files | sort(attribute='mtime', reverse=true) | first).path }}"
+  run_once: true
+
+- name: Check if svk-mgmt-fw DEB is installed
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      apt list --installed | grep svk-mgmt-fw
+    executable: /bin/bash
+  register: svk_mgmt_fw_install_deb_query
+  changed_when: false
+  failed_when: false
+  when: ansible_facts['distribution'] == "Ubuntu"
+
+- name: Copy svk-mgmt-fw DEB to staging directory
+  ansible.builtin.copy:
+    src: "{{ svk_mgmt_fw_install_deb_file }}"
+    dest: "{{ deploy_staging_dir }}"
+    mode: 0644
+  when: svk_mgmt_fw_install_deb_query.rc != 0
+
+- name: Install svk-mgmt-fw DEB
+  ansible.builtin.apt:
+    deb: "{{ deploy_staging_dir }}/{{ svk_mgmt_fw_install_deb_file | basename }}"
+    state: present
+  become: true
+  when: svk_mgmt_fw_install_deb_query.rc != 0 and ansible_facts['distribution'] == "Ubuntu"
+
+- name: Delete svk_mgmt-fw DEB from staging directory
+  ansible.builtin.file:
+    path: "{{ deploy_staging_dir }}/{{ svk_mgmt_fw_install_deb_file | basename }}"
+    state: absent

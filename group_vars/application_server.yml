@@ -1,5 +1,2 @@
 ---
-artifacts_dir: "{{ inventory_dir }}/artifacts"
-svk_core_pkg_dir: "{{ artifacts_dir }}/SVK/Application_Server"
-svk_cxl_pkg_dir: "{{ artifacts_dir }}/SVK/Application_Server"
-svk_mgmt_fw_pkg_dir: "{{ artifacts_dir }}/SVK/Application_Server"
+svk_pkg_dir: "{{ inventory_dir }}/artifacts/SVK/Application_Server"

@@ -1,3 +1,4 @@
+---
 - name: Install svk core
   hosts:
     - management_server
@@ -10,7 +11,7 @@
     - management_server
     - application_server
   roles:
-    - svk_mgmt-fw_install
+    - svk_mgmt_fw_install
 
 - name: Install svk cxl
   hosts:
@@ -20,7 +21,10 @@
     - svk_cxl_install
 
 - name: Install svk app framework
-  hosts: 
+  hosts:
     - management_server
   roles:
     - svk_app_install
+
+- name: Start SCMC
+  ansible.builtin.import_playbook: start_scmc.yml

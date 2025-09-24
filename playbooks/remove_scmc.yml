@@ -17,7 +17,7 @@
     - management_server
     - application_server
   roles:
-    - svk_mgmt-fw_remove
+    - svk_mgmt_fw_remove
 
 - name: Remove core
   hosts:

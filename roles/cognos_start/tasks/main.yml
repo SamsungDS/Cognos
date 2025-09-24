@@ -1,3 +1,4 @@
+---
 - name: Start cognos services
   ansible.builtin.service:
     name: "{{ item }}"
@@ -5,9 +6,9 @@
     enabled: false
   become: true
   loop:
-    - cognos-subscriber
-    - cognos-app
-    - cognos-ui
+    - cognos-subscriber.service
+    - cognos-app.service
+    - cognos-ui.service
 
 - name: Gather service status
   ansible.builtin.service_facts:
@@ -21,6 +22,6 @@
     fail_msg: "{{ item }} failed to start!"
     success_msg: "{{ item }} started successfully."
   loop:
-      - cognos-subscriber.service
-      - cognos-app.service
-      - cognos-ui.service
+    - cognos-subscriber.service
+    - cognos-app.service
+    - cognos-ui.service

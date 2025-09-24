@@ -1,0 +1,56 @@
+---
+- name: Get hostname
+  ansible.builtin.command: hostname
+  register: application_server_start_da_hostname
+  changed_when: false
+
+- name: Configure mgmt_fw_config
+  ansible.builtin.template:
+    src: mgmt_fw_config.j2
+    dest: "/etc/svk/mgmt_fw_config.json"
+    mode: 0644
+  vars:
+    ip: "{{ ansible_default_ipv4.address }}"
+    node_name: "{{ application_server_start_da_hostname.stdout }}"
+  become: true
+
+- name: Configure zmq
+  ansible.builtin.template:
+    src: zmq_config.j2
+    dest: "/etc/svk/zmq_config.json"
+    mode: 0644
+  vars:
+    ip: "{{ ansible_default_ipv4.address }}"
+  become: true
+
+- name: Configure input.json
+  ansible.builtin.template:
+    src: mgmt_fw_input.j2
+    dest: "/usr/local/svk/feature_modules/cxl/config/input.json"
+    mode: 0644
+  become: true
+
+- name: Start application services
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: started
+    enabled: false
+  become: true
+  loop:
+    - svk-node.service
+    - svk-svc-mgr.service
+
+- name: Gather service status
+  ansible.builtin.service_facts:
+  changed_when: false
+
+- name: Check service status on application server
+  ansible.builtin.assert:
+    that:
+      - "'{{ item }}' in ansible_facts.services"
+      - "ansible_facts.services['{{ item }}'].state == 'running'"
+    fail_msg: "{{ item }} failed to start!"
+    success_msg: "{{ item }} started successfully."
+  loop:
+    - svk-node.service
+    - svk-svc-mgr.service

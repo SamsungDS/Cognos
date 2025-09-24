@@ -9,7 +9,7 @@
   hosts:
     - application_server
   roles:
-    - application_server_start
+    - application_server_start_da
 
 - name: Start Cognos services
   hosts:

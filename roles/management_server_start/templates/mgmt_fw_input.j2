@@ -1,3 +1,70 @@
-{
-  "Hosts": []
-}
+ {
+   "Board":
+         {
+           "board_name":"Example Direct Config",
+           "Mgmt_port_type":"PCIe",
+           "json_version":"0100",
+           "switch_mode":"direct",
+           "management_port": 1
+         },
+   "Hosts":[
+	{
+           "host_name":"{{ node_name }}",
+           "host_port":2,
+           "deinit_active":1,
+           "host_port_type":"CXL_11",
+           "classcode":0,
+           "host_aspm_active":1,
+           "host_sris_active":1,
+           "host_equalization":1,
+           "host_speed":5,
+           "host_width":8,
+           "host_addr":"0x008080000000",
+           "host_size":"0x007f80000000",
+           "endpoint":[
+               {
+                   "memdev":"mem- 10",
+                   "target":10,
+                   "mem_addr"  :"0x008080000000",
+                   "mem_size"  :"0x003f80000000",
+                   "dev_offset":"0"
+               },
+	       {
+                   "memdev":"mem- 11",
+                   "target":11,
+                   "mem_addr"  :"0x00C000000000",
+                   "mem_size"  :"0x004000000000",
+                   "dev_offset":"0"
+               }
+           ]
+         }
+   ],
+   "Devices":[
+         {
+           "dev_name":"DEV_10-256G",
+           "dev_port":10,
+           "dev_addr":"0x008000000000",
+           "dev_size":"0x004000000000",
+           "dev_aspm_active":1,
+           "dev_sris_active":1,
+           "dev_lock_active":1,
+           "dev_speed":5,
+           "dev_width":8,
+           "dev_port_type":"CXL_20"
+         },
+         {
+           "dev_name":"DEV_11-256G",
+           "dev_port":11,
+           "dev_addr":"0x00C000000000",
+           "dev_size":"0x004000000000",
+           "dev_aspm_active":1,
+           "dev_sris_active":1,
+           "dev_lock_active":1,
+           "dev_speed":5,
+           "dev_width":8,
+           "dev_port_type":"CXL_20"
+         }
+   ]
+ }
+
+

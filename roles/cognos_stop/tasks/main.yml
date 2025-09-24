@@ -1,3 +1,4 @@
+---
 - name: Stop cognos services
   ansible.builtin.service:
     name: "{{ item }}"
@@ -5,6 +6,6 @@
     enabled: false
   become: true
   loop:
-    - cognos-subscriber
-    - cognos-app
-    - cognos-ui
+    - cognos-subscriber.service
+    - cognos-app.service
+    - cognos-ui.service

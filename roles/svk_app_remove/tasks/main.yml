@@ -1,7 +1,11 @@
 ---
 - name: Check if svk_app DEB is installed
-  ansible.builtin.shell: "apt list --installed | grep svk-app"
-  register: svk_app_deb_query
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      apt list --installed | grep svk-app
+    executable: /bin/bash
+  register: svk_app_remove_svk_app_deb_query
   changed_when: false
   failed_when: false
   when: ansible_facts['distribution'] == "Ubuntu"
@@ -12,7 +16,7 @@
     state: absent
     purge: true
   become: true
-  when: svk_app_deb_query.rc == 0 and ansible_facts['distribution'] == "Ubuntu"
+  when: svk_app_remove_svk_app_deb_query.rc == 0 and ansible_facts['distribution'] == "Ubuntu"
 
 - name: Remove the svk-app directory
   ansible.builtin.file:

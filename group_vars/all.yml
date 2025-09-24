@@ -1,0 +1,16 @@
+---
+min_supported_major_versions: '22.04'
+max_supported_major_versions: '24.04'
+supported_distributions:
+  - Ubuntu
+min_ansible_version: 2.16.6
+max_ansible_version: 2.18.4
+min_python_version: 3.10.12
+artifacts_dir: "{{ inventory_dir }}/artifacts"
+deploy_staging_dir: "/tmp/"
+svk_install_dir: "/usr/local/svk/"
+influxdb_org: "Samsung"
+influxdb_bucket: "internal"
+influxdb_user: "svk"
+influxdb_pwd: "CXL123mem!"
+feat_modules_bin_dir: "/usr/local/svk/feature_modules"
