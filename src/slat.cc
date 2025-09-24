@@ -735,7 +735,7 @@ svk_status SLATrackerSvc::add_devices_to_sla_tracker(json command_params) {
 svk_status SLATrackerSvc::remove_devices_from_sla_tracker(json command_params) {
   svk_status status = SVK_STATUS_SUCCESS;
   std::string logger_str;
-  this->th_data.benchmark_pending_list_lock.lock();
+  std::lock_guard<std::mutex> guard(this->th_data.benchmark_pending_list_lock);
   // Parse the command params
   try {
     json device_list = command_params.at("devices");
@@ -746,7 +746,7 @@ svk_status SLATrackerSvc::remove_devices_from_sla_tracker(json command_params) {
       this->th_data.devices_to_remove_from_monitoring.push_back(device_numa);
     }
 
-  } catch (const json::out_of_range &e) {
+  } catch (const json::exception &e) {
     logger_str =
         "Failed to parse command_params while attempting to run "
         "remove_device_from_sla_tracker. Error: ";
@@ -755,7 +755,6 @@ svk_status SLATrackerSvc::remove_devices_from_sla_tracker(json command_params) {
     status = SVK_STATUS_FAIL;
   }
 
-  this->th_data.benchmark_pending_list_lock.unlock();
   return status;
 }
 
