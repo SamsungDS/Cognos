@@ -754,7 +754,7 @@ svk_status FrameworkSvc::FrameworkSvcCleanup(void *param) {
                "Closed the publisher successfully");
   }
 
-  svk_logger_close(CORE_LOGGER_NAME);
+  svk_logger_flush(CORE_LOGGER_NAME);
   return status;
 }
 
