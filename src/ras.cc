@@ -191,7 +191,7 @@ extern "C" svk_status execute_async(svk_pass_thru_cmd *pass_thru,
 
 extern "C" svk_status clean_up(void *) {
   std::string msg = "ras clean_up called";
-  svk_logger("ras", level_E::INFO, msg.c_str());
+  svk_logger(RAS_LOGGER, level_E::INFO, msg.c_str());
   std::lock_guard<std::mutex> lock(g_ras_context.ctx_mutex);
 
   if (g_ras_context.initialized == true) {
@@ -200,5 +200,8 @@ extern "C" svk_status clean_up(void *) {
     g_ras_context.initialized = false;
   }
 
+  msg = "ras clean_up finished";
+  svk_logger(RAS_LOGGER, level_E::INFO, msg.c_str());
+  svk_logger_close(RAS_LOGGER);
   return SVK_STATUS_SUCCESS;
 }

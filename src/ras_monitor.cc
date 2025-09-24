@@ -40,7 +40,9 @@ ras_monitor::~ras_monitor() {}
 void ras_monitor::set_sync_request_completed(ras_request *req) {
   std::lock_guard<std::mutex> lock(req->sync_mutex);
   req->is_completed = true;
+  return;
 }
+
 void ras_monitor::process_request_sync(ras_request *req) {
   if (req->is_internal_request == false) {
     req->execute_feature_command();
@@ -73,6 +75,7 @@ void call_ras_submit_request(ras_request *req, ras_monitor *m, int interval,
     std::this_thread::sleep_for(std::chrono::seconds(interval));
     ret = m->ras_submit_request(req);
   }
+  return;
 }
 
 // A timer based ras_submit_request wrapper

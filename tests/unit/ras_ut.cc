@@ -46,7 +46,6 @@ TEST_F(ConfigUnitTest, SVKCLEANUP) {
   setenv("SVK_RAS_CONFIG", "conf.json", true);
   initialize(nullptr);
   EXPECT_EQ(SVK_STATUS_SUCCESS, clean_up(nullptr));
-  EXPECT_EQ(0, svk_logger_flush(RAS_LOGGER));
   std::ifstream logFile(RAS_LOG);
   std::string logs((std::istreambuf_iterator<char>(logFile)),
                    (std::istreambuf_iterator<char>()));
@@ -901,13 +900,13 @@ TEST_F(CheckDeviceStatusUnitTest, TestGetDevice) {
       test_ras_ctx.monitor_context->get_device_manager()->try_get_device(
           "dev_bad");
   ASSERT_TRUE(dev1.has_value());
-  EXPECT_EQ(dev1->get_device_name(), "dev_bad");
-  EXPECT_EQ(dev1->get_device_name_in_adapter(), "dev_bad");
+  EXPECT_EQ(dev1->get().get_device_name(), "dev_bad");
+  EXPECT_EQ(dev1->get().get_device_name_in_adapter(), "dev_bad");
   auto dev2 =
       test_ras_ctx.monitor_context->get_device_manager()->try_get_device(
           "dev_good");
   ASSERT_TRUE(dev2.has_value());
-  EXPECT_EQ(dev2->get_device_name_in_adapter(), "dev_good");
+  EXPECT_EQ(dev2->get().get_device_name_in_adapter(), "dev_good");
 }
 
 TEST_F(CheckDeviceStatusUnitTest, CheckNonExistentDeviceGetCommand) {

@@ -50,6 +50,7 @@ class ras_check_device_status_handler
       return;
     }
 
+    auto device_ref = device->get();
     r.is_successfull =
         check_device_error_count_threshold_status(r.ras_context, *device);
     if (r.is_successfull == false) {
@@ -67,7 +68,7 @@ class ras_check_device_status_handler
     // resubmit request
     cognos::ras::request_helper::clear_results_from_request(r);
     bool submission_successfull =
-        ras_submit_timed_request(&r, device.value().monitor_interval);
+        ras_submit_timed_request(&r, device_ref.monitor_interval);
     if (submission_successfull == false) {
       r.mark_request_failed("Failed to submit monitor request");
       svk_logger(RAS_LOGGER, level_E::ERROR,
@@ -107,6 +108,11 @@ class ras_check_device_status_handler
                                                  ras_device& device) {
     if (device.ect.valid == false) {
       // Error count threshold to monitor not valid
+      svk_logger(
+          RAS_LOGGER, level_E::INFO,
+          fmt::format("Device numa node {} not configured for monitoring ",
+                      device.get_device_name_in_adapter())
+              .c_str());
       return false;
     }
 
@@ -116,14 +122,25 @@ class ras_check_device_status_handler
 
     if (device_error_count.has_value() == false) {
       // Device error count query failed
+      svk_logger(RAS_LOGGER, level_E::INFO,
+                 fmt::format("Device numa node {} polled failed ",
+                             device.get_device_name_in_adapter())
+                     .c_str());
       return false;
     }
+    svk_logger(
+        RAS_LOGGER, level_E::INFO,
+        fmt::format("Device numa node {} polled for error count got value {} ",
+                    device.get_device_name_in_adapter(),
+                    device_error_count.value())
+            .c_str());
 
     if (device_error_count.value() > device.ect.error_count_threshold) {
       if (device.ect.degraded == false) {
         // Publish the alert
         cognos::ras::publisher::send_ras_threshold_warning_event(
-            device.get_device_name(), "Correctable error threshold exceeded");
+            device.get_device_name(), device_error_count.value(),
+            "Correctable error threshold exceeded");
         device.ect.degraded = true;
       }
       return true;
