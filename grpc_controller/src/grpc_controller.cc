@@ -208,7 +208,7 @@ ControllerServicer::~ControllerServicer() {
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
              "Closing the logger instance as part of shutdown");
 
-  svk_logger_close(CONTROLLER_LOGGER_MODULE_NAME);
+  svk_logger_flush(CONTROLLER_LOGGER_MODULE_NAME);
 
   return;
 }
@@ -1680,6 +1680,10 @@ int DisableRASTrackingOnDevice(std::string node_name, std::string node_port,
   svk::CommandResponse resp;
   int status = -1;
   std::string log_msg;
+
+  log_msg = "Initiated Disable RAS tracking on device " + device_id;
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, log_msg.c_str());
+
   // Send each device to RAS feature module for reliability tracking
   req_node.set_node_id(node_name);
   req_node.set_feature_name(RAS_FEATURE_MODULE_NAME);
@@ -1712,6 +1716,8 @@ int DisableSLATrackingOnDevice(std::string node_name, std::string node_port,
   svk::CommandResponse resp;
   int status = -1;
   std::string log_msg;
+  log_msg = "Initiated Disable SLA tracking on device " + device_name;
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, log_msg.c_str());
 
   // Send each device to RAS feature module for reliability tracking
   req_node.set_node_id(node_name);
@@ -2254,6 +2260,7 @@ int StartServer(std::string svk_conf_file, bool blocking) {
   sla_thread->join();
   subscriber_thread->join();
   delete svcr;
+  svk_logger_close(CONTROLLER_LOGGER_MODULE_NAME);
 
   status = 0;
   return status;
