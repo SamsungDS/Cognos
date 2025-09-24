@@ -125,7 +125,7 @@ Servicer::Servicer(const std::string &svk_conf_file) {
     m_initialized_flag = false;
     svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR,
                "Closing the logger instance");
-    svk_logger_close(MGMT_FW_LOGGER_MODULE_NAME);
+    svk_logger_flush(MGMT_FW_LOGGER_MODULE_NAME);
   } else {
     svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
                "initialize_svk called successfully");
@@ -144,7 +144,7 @@ Servicer::Servicer(const std::string &svk_conf_file) {
       svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR,
                  "Error in setting the node_name or the node_id in the core "
                  "framework");
-      svk_logger_close(MGMT_FW_LOGGER_MODULE_NAME);
+      svk_logger_flush(MGMT_FW_LOGGER_MODULE_NAME);
       m_initialized_flag = false;
       return;
     }
@@ -175,7 +175,7 @@ Servicer::~Servicer() {
              "Closing the logger instance as part of shutdown");
   cleanup_svk(nullptr, nullptr);
 
-  svk_logger_close(MGMT_FW_LOGGER_MODULE_NAME);
+  svk_logger_flush(MGMT_FW_LOGGER_MODULE_NAME);
   return;
 }
 
@@ -409,7 +409,7 @@ int StartNodeServer(std::string svk_conf_file, bool blocking) {
       SetNodeStatus(svcr->get_svk_config(), "offline");
       gSignalNodeStatus = -1;
       svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
-                 "The node server is stopped gracefully");
+                 "Set the node status to offline");
     } else {
       svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
                  "The node server is started in non-blocking mode for UT");
@@ -422,6 +422,10 @@ int StartNodeServer(std::string svk_conf_file, bool blocking) {
   if (svcr) {
     delete svcr;
   }
+  svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
+             "The node server is stopped gracefully");
+  svk_logger_close(MGMT_FW_LOGGER_MODULE_NAME);
+
   return status;
 }
 
