@@ -93,7 +93,6 @@ int cme_global::_cme_discovery(std::string feat_sm_svcs_dir, int type)
                 {
                         std::string entry_name(entry->d_name);
                         std::string feat_lib_suffix_so(".so");
-                        CME_LOG("INFO", " ^^^^ entry name = ", entry_name);
                         if (entry_name.compare(".") == 0 || entry_name.compare("..") == 0) continue;
                         std::string dfpath = feat_sm_svcs_dir + std::string("/") + entry_name;
                         if (isDirectory(dfpath)) _cme_discovery(dfpath, type);
