@@ -14,9 +14,9 @@ namespace cognos::ras::publisher {
 static const std::string ras_err_threshold_warning_template =
     "{{\"domain\": \"availability\", \"feature_name\": \"ras\", \"category\": "
     "\"health\", \"severity\": \"warning\", \"source\": \"{device_id}\", "
-    "\"source_type\": \"device\", \"timestamp\": {timestamp}, "
-    "\"observations\": {{ \"device_id\": \"{device_id}\", \"error_cnt\": "
-    "{error_count}, \"message\" : \"{message}\" }} }}";
+    "\"msg\" : \"{message}\",\"source_type\": \"device\", \"timestamp\": "
+    "{timestamp}, \"observations\": {{ \"device_id\": \"{device_id}\", "
+    "\"error_cnt\": {error_count} }} }}";
 
 static int send_ras_threshold_warning_event(const std::string &device_id,
                                             const int error_count,
