@@ -41,9 +41,10 @@ static void generate_start_migraion_event(cme_context* cme_ctx)
         std::string status_string = (cme_ctx->mover_cmd_status == 0) ? "success: " : "failure: ";
         status_string += to_string(cme_ctx->mover_cmd_status) + ":" + strerror(-(cme_ctx->mover_cmd_status));
         event_data["status"] = status_string;
-        event_obj.event_json["name"] = "numa_migration_start";
+        event_data["name"] = "numa_migration_start";
         event_obj.event_json["timestamp"] = getCurrentTimestamp();
         event_obj.event_json["source"] = app_ctx_id;
+        event_obj.event_json["msg"] = "numa migration operation started";
         event_obj.event_json["observations"] = event_data;
         
         int ret = publish_cme_event(event_obj);
@@ -77,8 +78,9 @@ static void post_fn_move_all(cme_context* cme_ctx)
         event_data["src_numa_node"] = cme_ctx->mem_attr.src_numa_node;
         event_data["dst_numa_node"] = cme_ctx->mem_attr.dst_numa_node;
         event_data["status"] = status_string;
+        event_data["name"] = "numa_migration_completion";
         event_obj.event_json["observations"] = event_data;
-        event_obj.event_json["name"] = "numa_migration_complete";
+        event_obj.event_json["msg"] = "numa migration operation completed";
         event_obj.event_json["timestamp"] = getCurrentTimestamp();
         event_obj.event_json["source"] = app_ctx_id;
         int ret = publish_cme_event(event_obj);
