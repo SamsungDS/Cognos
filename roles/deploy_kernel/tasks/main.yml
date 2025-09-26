@@ -21,14 +21,14 @@
 - name: Download kernel
   ansible.builtin.get_url:
     url: "{{ deploy_kernel_source_code_url }}"
-    dest: "{{ deploy_kernel_artifacts_dir }}/linux-{{ deploy_kernel_version }}.tar.xz"
+    dest: "{{ deploy_kernel_artifacts_dir }}/linux-{{ deploy_kernel_version_download }}.tar.xz"
     mode: "0644"
   delegate_to: localhost
   run_once: true
 
 - name: Get kernel tarball status
   ansible.builtin.stat:
-    path: "{{ deploy_kernel_artifacts_dir }}/linux-{{ deploy_kernel_version }}.tar.xz"
+    path: "{{ deploy_kernel_artifacts_dir }}/linux-{{ deploy_kernel_version_download }}.tar.xz"
   delegate_to: localhost
   register: deploy_kernel_tgz_stat
 
@@ -43,8 +43,8 @@
 
 - name: Assert kernel version on target node
   ansible.builtin.assert:
-    that: deploy_kernel_curr_version is version_compare(deploy_kernel_version, '<')
-    fail_msg: "To upgrade kernel, current kernel version is must be < {{ deploy_kernel_version }} . Current version is {{ deploy_kernel_curr_version }}"
+    that: deploy_kernel_curr_version is version_compare(deploy_kernel_version, '!=')
+    fail_msg: "To upgrade kernel, current kernel version is must be != {{ deploy_kernel_version }} . Current version is {{ deploy_kernel_curr_version }}"
     success_msg: "Kernel version is correct: {{ deploy_kernel_curr_version }}"
   ignore_errors: true
   register: deploy_kernel_assert_version

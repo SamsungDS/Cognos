@@ -28,12 +28,12 @@
 
 - name: Check if unzipped kernel source directory exists
   ansible.builtin.stat:
-    path: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version }}"
+    path: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version_download }}"
   register: deploy_kernel_unzip_dir_stat
 
 - name: Unarchive kernel source code
   ansible.builtin.unarchive:
-    src: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version }}.tar.xz"
+    src: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version_download }}.tar.xz"
     dest: "{{ deploy_kernel_staging_dir }}"
     remote_src: true
   become: true
@@ -42,7 +42,7 @@
 - name: Copy current kernel config as kernel_source config file
   ansible.builtin.copy:
     src: "/boot/config-{{ ansible_kernel }}"
-    dest: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version }}/.config"
+    dest: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version_download }}/.config"
     owner: root
     group: root
     mode: "0644"
@@ -54,7 +54,7 @@
     ./scripts/config --disable SYSTEM_REVOCATION_KEYS
     ./scripts/config --disable SYSTEM_TRUSTED_KEYS
   args:
-    chdir: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version }}/"
+    chdir: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version_download }}/"
   become: true
   changed_when: false
 
@@ -69,7 +69,7 @@
     ./scripts/config --enable CONFIG_DAMON_RECLAIM
     ./scripts/config --enable CONFIG_DAMON_LRU_SORT
   args:
-    chdir: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version }}/"
+    chdir: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version_download }}/"
   become: true
   changed_when: false
 
@@ -80,7 +80,7 @@
       sh -c 'yes "" | make oldconfig'
     executable: /bin/bash
   args:
-    chdir: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version }}/"
+    chdir: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version_download }}/"
   become: true
   register: deploy_kernel_fix_symbol
   changed_when: deploy_kernel_fix_symbol.rc != 0
@@ -88,8 +88,8 @@
 - name: Compile kernel by source code - make
   ansible.builtin.command:
     cmd: make -j{{ ansible_processor_vcpus }}
-    chdir: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version }}"
-    creates: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version }}/vmlinux"
+    chdir: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version_download }}"
+    creates: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version_download }}/vmlinux"
   async: "{{ deploy_kernel_compile_timeout }}"
   poll: 0
   register: deploy_kernel_make
@@ -114,7 +114,7 @@
 - name: Make modules_install
   ansible.builtin.command:
     cmd: make INSTALL_MOD_STRIP=1 modules_install
-    chdir: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version }}"
+    chdir: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version_download }}"
     creates: "{{ deploy_kernel_modules_location }}"
   register: deploy_kernel_mod_install_status
   when: not deploy_kernel_wait_for_make.failed
@@ -128,7 +128,7 @@
 - name: Make install
   ansible.builtin.command:
     cmd: make install
-    chdir: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version }}"
+    chdir: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version_download }}"
     creates: "{{ deploy_kernel_installation_location }}"
   when: not deploy_kernel_mod_install_status.failed
 
