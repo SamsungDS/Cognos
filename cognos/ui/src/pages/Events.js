@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import PropTypes from 'prop-types';
-import { AlertTriangle, CheckCircle, Info, X, Bell, Search, ShieldAlert, Clock, Trash2, RefreshCw } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Info, X, Bell, Search, ShieldAlert, Clock, Trash2, RefreshCw, ChevronDown, ChevronUp, Calendar } from 'lucide-react';
 import './events.css';
 import { useEvents } from '../contexts/EventsContext';
 
@@ -9,7 +9,7 @@ const Events = () => {
     const [selectedFilter, setSelectedFilter] = useState('all');
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedEvents, setSelectedEvents] = useState([]);
-    const [showDetails, setShowDetails] = useState(null);
+    const [expandedEvent, setExpandedEvent] = useState(null); // Changed from showDetails to expandedEvent
 
     const severityConfig = {
         critical: {
@@ -44,15 +44,21 @@ const Events = () => {
 
     const filteredEvents = events.filter(event => {
         const matchesFilter = selectedFilter === 'all' || event.severity === selectedFilter;
-        const matchesSearch = event.event_name.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesSearch = event.node_name.toLowerCase().includes(searchTerm.toLowerCase());
         return matchesFilter && matchesSearch;
     });
 
+    
     const dismissEvent = (eventId) => {
         setEvents(events.filter(event => event.id !== eventId));
         setSelectedEvents(selectedEvents.filter(id => id !== eventId));
+        // Close expanded event if it's being dismissed
+        if (expandedEvent === eventId) {
+            setExpandedEvent(null);
+        }
     };
 
+    
     const toggleSelectEvent = (eventId) => {
         setSelectedEvents(prev =>
             prev.includes(eventId)
@@ -61,11 +67,14 @@ const Events = () => {
         );
     };
 
+    
     const clearSelectedEvents = () => {
         setEvents(events.filter(event => !selectedEvents.includes(event.id)));
         setSelectedEvents([]);
+        setExpandedEvent(null); // Close any expanded event
     };
-
+    
+    
     const clearAllEvents = () => {
         if (selectedFilter === 'all') {
             setEvents([]);
@@ -73,6 +82,10 @@ const Events = () => {
             setEvents(events.filter(event => event.severity !== selectedFilter));
         }
         setSelectedEvents([]);
+        setExpandedEvent(null); // Close any expanded event
+    };
+    const toggleEventExpansion = (eventId) => {
+        setExpandedEvent(expandedEvent === eventId ? null : eventId);
     };
 
     const getSeverityBadge = (severity) => {
@@ -99,16 +112,17 @@ const Events = () => {
     const EventCard = ({ event }) => {
         const config = severityConfig[event.severity];
         const isSelected = selectedEvents.includes(event.id);
+        const isExpanded = expandedEvent === event.id;
 
         return (
             <div
+                // NOSONAR - card container, not interactive
                 className="card mb-3 shadow-sm border-4"
                 style={{
                     borderLeft: `4px solid ${config.color}`,
                     backgroundColor: isSelected ? '#57595aff' : '#5b646dff',
-                    transition: 'all 0.2s ease',
-                    cursor: 'pointer',
-                    height: '110px'
+                    transition: 'all 0.3s ease',                   
+                    minHeight: isExpanded ? 'auto' : '110px'
                 }}
                 onMouseEnter={(e) => e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)'}
                 onMouseLeave={(e) => e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.1)'}
@@ -134,13 +148,10 @@ const Events = () => {
                                 </div>
 
                                 <h6 className="card-title mb-2 text-white" style={{ fontSize: '1rem', fontWeight: '600' }}>
-                                    {event.event_msg}
+                                    {event.msg}
                                 </h6>
 
                                 <div className="d-flex flex-wrap gap-2 mb-2">
-                                    <span className="events-page-badge events-page-text-dark events-page-border" style={{ fontSize: '0.7rem' }}>
-                                        <strong>Event Name:</strong> {event.event_name}
-                                    </span>
                                     <span className="events-page-badge events-page-text-dark events-page-border" style={{ fontSize: '0.7rem' }}>
                                         <strong>Source:</strong> {event.source}
                                     </span>
@@ -150,18 +161,37 @@ const Events = () => {
                                     <span className="events-page-badge events-page-text-dark events-page-border" style={{ fontSize: '0.7rem' }}>
                                         <strong>Node:</strong> {event.node_name}
                                     </span>
+                                    <span className="events-page-badge events-page-text-dark events-page-border" style={{ fontSize: '0.7rem' }}>
+                                        <strong>Cluster Name:</strong> {event.cluster_name}
+                                    </span>
+                                    <span className="events-page-badge events-page-text-dark events-page-border" style={{ fontSize: '0.7rem' }}>
+                                        <strong>Category:</strong> {event.category}
+                                    </span>
+                                    <span className="events-page-badge events-page-text-dark events-page-border" style={{ fontSize: '0.7rem' }}>
+                                        <strong>Domain:</strong> {event.domain}
+                                    </span>
                                 </div>
                             </div>
                         </div>
 
                         <div className="d-flex align-items-center gap-2">
                             <button
-                                onClick={() => setShowDetails(showDetails === event.id ? null : event.id)}
-                                className="btn btn-sm btn-outline-primary-refresh"
-                                style={{ fontSize: '0.75rem' }}
-                                disabled
+                                onClick={() => toggleEventExpansion(event.id)}
+                                className="btn btn-sm btn-outline-primary-refresh d-flex align-items-center"
+                                style={{ fontSize: '0.75rem', minWidth: '80px' }}
+                                title={isExpanded ? "Collapse details" : "Expand details"}
                             >
-                                Action
+                                {isExpanded ? (
+                                    <>
+                                        <ChevronUp size={14} className="me-1" />
+                                        Collapse
+                                    </>
+                                ) : (
+                                    <>
+                                        <ChevronDown size={14} className="me-1" />
+                                        Details
+                                    </>
+                                )}
                             </button>
                             <button
                                 onClick={() => dismissEvent(event.id)}
@@ -173,19 +203,35 @@ const Events = () => {
                         </div>
                     </div>
 
-                    {showDetails === event.id && (
-                        <div className="mt-3 pt-3 border-top">
+                    {/* Expandable Details Section */}
+                    {isExpanded && (
+                        <div
+                            className="mt-3 pt-3 border-top"
+                            style={{
+                                animation: 'fadeIn 0.3s ease-in-out',
+                                borderColor: 'rgba(255,255,255,0.1)'
+                            }}
+                        >
                             <div className="row g-3">
-                                <div className="col-md-6">
-                                    <div className="bg-light p-2 rounded">
-                                        <small className="text-muted d-block">Category</small>
-                                        <span style={{ fontSize: '0.9rem', fontWeight: '500' }}>{event.category}</span>
-                                    </div>
-                                </div>
-                                <div className="col-md-6">
-                                    <div className="bg-light p-2 rounded">
-                                        <small className="text-muted d-block">Full Source Path</small>
-                                        <span style={{ fontSize: '0.9rem', fontWeight: '500' }}>{event.source} → {event.source_type}</span>
+
+                                {/* Additional details section */}
+                                <div className="col-12">
+                                    <div
+                                        className="p-3 rounded"
+                                        style={{
+                                            backgroundColor: 'rgba(255,255,255,0.05)',
+                                            border: '1px solid rgba(255,255,255,0.1)'
+                                        }}
+                                    >
+                                        <div className="d-flex align-items-center mb-2">
+                                            <Calendar size={16} className="text-white me-2" />
+                                            <small className="text-white-50 fw-bold">Event Details</small>
+                                        </div>
+                                        <div className="text-white" style={{ fontSize: '0.85rem', lineHeight: '1.5' }}>
+                                            <p className="mb-2"><strong>Payload:</strong> {JSON.stringify(event.payload)}</p>
+                                            <p className="mb-2"><strong>Timestamp:</strong> {event.timestamp}</p>
+                                            <p className="mb-0"><strong>Severity Level:</strong> <span style={{ textTransform: 'uppercase' }}>{event.severity}</span></p>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -200,12 +246,15 @@ const Events = () => {
             id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
             severity: PropTypes.string.isRequired,
             timestamp: PropTypes.string.isRequired,
-            event_msg: PropTypes.string.isRequired,
+            msg: PropTypes.string.isRequired,
             event_name: PropTypes.string.isRequired,
             source: PropTypes.string.isRequired,
             source_type: PropTypes.string.isRequired,
             node_name: PropTypes.string.isRequired,
             category: PropTypes.string.isRequired,
+            domain: PropTypes.string.isRequired,
+            cluster_name: PropTypes.string.isRequired,
+            payload: PropTypes.string.isRequired
         }).isRequired,
     };
     return (
@@ -256,7 +305,7 @@ const Events = () => {
                                 <button
                                     className="card border-4 shadow-sm h-100"
                                     style={{
-                                        width:'21rem',
+                                        width: '21rem',
                                         borderLeft: `4px solid ${config.color}`,
                                         cursor: 'pointer',
                                         backgroundColor: selectedFilter === option.value ? config.bg : '#d7d2d2'
@@ -335,6 +384,7 @@ const Events = () => {
                                     {filteredEvents.length > 0 && (
                                         <div className="text-white" style={{ fontSize: '0.85rem' }}>
                                             {selectedEvents.length > 0 && `${selectedEvents.length} selected`}
+                                            {expandedEvent && " • 1 expanded"}
                                         </div>
                                     )}
                                 </div>
@@ -400,5 +450,4 @@ const Events = () => {
         </div>
     );
 };
-
 export default Events;

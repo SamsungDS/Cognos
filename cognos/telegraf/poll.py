@@ -16,6 +16,8 @@ try:
         configs = json.load(config_file)
         if configs.get("cognos_endpoint"):
             COGNOS_NORTHBOUND_ENDPOINT = configs.get("cognos_endpoint")
+            if not COGNOS_NORTHBOUND_ENDPOINT[-1] == "/":
+                COGNOS_NORTHBOUND_ENDPOINT += "/"
 # pragma: no cover
 except Exception as error:
     print(
@@ -30,7 +32,7 @@ REQUEST_HEADERS = {
 }
 
 TAG_KEYS = [
-    "cluster_name", "node_name", "domain", "feature_name",
+    "cluster_name", "node_name", "domain", "msg", "feature_name",
     "category", "severity", "source", "source_type"
 ]
 

@@ -128,9 +128,13 @@ class CognosInfluxDBClient:
         params = {"_desc": False}
         cols_string = (
             '["_time", "_measurement", "_field", "_value", '
-            '"cluster_name", "node_name", "domain", "feature_name", '
+            '"cluster_name", "node_name", "msg", "domain", "feature_name", '
             '"category", "severity", "source", "source_type"]'
         ).strip('\n')
+        tags_string = (
+            '["cluster_name", "node_name", "domain", "msg", "feature_name", '
+            '"category", "severity", "source", "source_type"]'
+        )
         flux_query_output = {}
         try:
             tables = self.read_client.query(
@@ -138,19 +142,69 @@ class CognosInfluxDBClient:
                 from(bucket: "internal")
                     |> range(start: -{time_in_mins}m)
                     |> filter(fn: (r) => r._measurement == "events")
-                    |> keep(columns: {cols_string})
-                    |> sort(columns: ["_time"])
+                    |> window(every: 5s)
+                    |> map(fn: (r) => ({{
+                        r with t: r.t,
+                        kv: (
+                            "\\\"" + string(v: r._field) +
+                            "\\\":\\\"" + string(v: r._value) + "\\\""
+                            )
+                        }}))
+                    |> group(columns: {tags_string})
+                    |> reduce(
+                        identity: ({{
+                            t: time(v: 0),
+                            cluster_name: "",
+                            node_name: "",
+                            domain: "",
+                            msg: "",
+                            feature_name: "",
+                            category: "",
+                            severity: "",
+                            source: "",
+                            source_type: "",
+                            payload: ""}}),
+                        fn: (r, accumulator) => (({{
+                            t: if exists r._stop then r._stop else accumulator.t,
+                            cluster_name: r.cluster_name,
+                            node_name: r.node_name,
+                            domain: r.domain,
+                            msg: r.msg,
+                            feature_name: r.feature_name,
+                            category: r.category,
+                            severity: r.severity,
+                            source: r.source,
+                            source_type: r.source_type,
+                            payload: (
+                                if accumulator.payload == "" then
+                                r.kv else accumulator.payload + "," + r.kv
+                            )
+                        }}))
+                       )
+                    |> map(fn: (r) => ({{
+                        _time: r.t,
+                        cluster_name: r.cluster_name,
+                        node_name: r.node_name,
+                        domain: r.domain,
+                        msg: r.msg,
+                        feature_name: r.feature_name,
+                        category: r.category,
+                        severity: r.severity,
+                        source: r.source,
+                        source_type: r.source_type,
+                        payload: "{{" + r.payload + "}}"
+                    }}))
+
                 """,
                 params=params
             )
             flux_query_output = json.loads(tables.to_json())
-
             response_payload = []
             for measurement in flux_query_output:
                 point = {
                     "timestamp": measurement['_time'],
-                    "event_name": measurement['_field'],
-                    "event_msg": measurement['_value'],
+                    "msg": measurement['msg'],
+                    "payload": measurement['payload'],
                     "cluster_name": measurement['cluster_name'],
                     "node_name": measurement['node_name'],
                     "category": measurement['category'],
