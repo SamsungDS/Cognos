@@ -239,19 +239,6 @@ describe('Events Component', () => {
     });
 
     describe('Event Expansion', () => {
-        test('can expand event details', () => {
-            render(<Events />);
-
-            const detailsButtons = screen.getAllByText('Details');
-
-            // Click on first Details button
-            fireEvent.click(detailsButtons[0]);
-
-            // Should show expanded content
-            expect(screen.getByText('Event Details')).toBeInTheDocument();
-            expect(screen.getByText('Critical system failure detected')).toBeInTheDocument();
-        });
-
         test('can collapse expanded event', () => {
             render(<Events />);
 

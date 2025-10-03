@@ -165,7 +165,8 @@ class CognosInfluxDBClient:
                             source_type: "",
                             payload: ""}}),
                         fn: (r, accumulator) => (({{
-                            t: if exists r._stop then r._stop else accumulator.t,
+                            t: if exists r._stop then r._stop
+                                else accumulator.t,
                             cluster_name: r.cluster_name,
                             node_name: r.node_name,
                             domain: r.domain,
