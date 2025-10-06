@@ -87,7 +87,7 @@ describe('SideBar Component', () => {
     );
 
     const links = screen.getAllByRole('link');
-    expect(links).toHaveLength(6);
+    expect(links).toHaveLength(7);
 
     // Check specific paths
     expect(screen.getByRole('link', { name: /dashboard icon/i })).toHaveAttribute('href', '/');
@@ -177,7 +177,7 @@ describe('SideBar Component', () => {
     );
 
     // Admin should see 5 items
-    expect(screen.getAllByRole('link')).toHaveLength(6);
+    expect(screen.getAllByRole('link')).toHaveLength(7);
 
     // Re-render with guest role
     rerender(

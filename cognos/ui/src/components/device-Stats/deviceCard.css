@@ -1,0 +1,45 @@
+.cursor-pointer {
+    cursor: pointer;
+}
+.card {
+    
+}
+.chart-container {
+    overflow: hidden;
+}
+.btn-primary {   
+    background-color: #000 !important;
+    border-color: #ffff !important;
+}
+.btn-group .btn {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.text-light {
+    color: #f8f9fa !important;
+}
+
+.bg-secondary {
+    background-color: #302e2eff !important;
+}
+
+.bg-dark {
+    background-color: #000 !important;
+}
+
+.border-secondary {
+    border-color: #6c757d !important;
+}
+.text-muted {
+    color: #ffff !important;
+}
+
+.text-success {
+    color: #97D653 !important;
+    stroke-width: 4px !important;
+}
+
+.text-primary {
+    color: #0d6efd !important;
+}

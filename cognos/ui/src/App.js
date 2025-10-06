@@ -10,6 +10,7 @@ import Configure from "./pages/Configure";
 import About from "./pages/About";
 import Jobs from "./pages/Jobs";
 import Events from './pages/Events';
+import DeviceStats from './pages/DeviceStats';
 import { EventsProvider } from './contexts/EventsContext';
 import ProtectedRoute from "./components/ProtectedRoute";
 
@@ -72,7 +73,19 @@ function App() {
               </ProtectedRoute>
             }
           />
-
+          <Route
+            path="/device-stats"
+            element={
+              <ProtectedRoute allowedRoles={["admin"]}>
+                <div className="grid-container">
+                  <Header />
+                  <SideBar>
+                    <DeviceStats />
+                  </SideBar>
+                </div>
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/jobs"
             element={

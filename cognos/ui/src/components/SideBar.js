@@ -1,5 +1,6 @@
 import React, { useContext } from 'react';
 import { NavLink } from 'react-router-dom'
+import { Cpu } from 'lucide-react';
 import { ReactComponent as ConfigureIcon } from '../assets/icons/ConfigureIcon.svg';
 import { ReactComponent as DashboardIcon } from '../assets/icons/DashboardIcon.svg';
 import { ReactComponent as MetricsIcon } from '../assets/icons/ChartIcon.svg';
@@ -29,6 +30,12 @@ const SideBar = ({ children }) => {
       icon: <MetricsIcon />,
       datatestid: 'menu-item-2',
       allowedRoles: ['admin', 'guest']
+    },
+    {
+      path: "/device-stats",
+      icon: <Cpu />,
+      datatestid: 'menu-item-6',
+      allowedRoles: ['admin']
     },
     {
       path: "/jobs",
