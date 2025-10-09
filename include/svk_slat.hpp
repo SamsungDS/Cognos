@@ -13,7 +13,6 @@
 #include <vector>
 
 #include "logger_util.hpp"
-#include "svk_pub_sub_struct.h"
 #include "svk_publisher.h"
 
 // Hardcoding this path for now. This will be provided by the header from the
@@ -41,6 +40,24 @@
 #define SLAT_MAX_LOGIC_MODULE_NAME_LEN SLAT_MAX_STR_LEN
 #define SLAT_MAX_FEATURE_NAME_LEN SLAT_MAX_STR_LEN
 
+using svk_slat_logic_output = struct svk_slat_logic_output_s {
+  char host_name[SLAT_MAX_STR_LEN];
+  char app_name[SLAT_MAX_STR_LEN];
+  char device_name[SLAT_MAX_STR_LEN];  // This may contain just numa of device
+  uint64_t avgLatencyns;               // Latency in nanoseconds
+  uint64_t iops;
+  uint64_t bandwidthGBps;
+  uint64_t avgReadLatency;
+  uint64_t avgWriteLatency;
+  uint64_t avgUpdateLatency;
+  uint64_t avgReadIOPS;
+  uint64_t avgWriteIOPS;
+  uint64_t avgP99Latency;
+  uint64_t ioBytesRead;
+  uint64_t ioBytesWritten;
+  uint64_t ioBytesRewrite;
+};
+
 using json = nlohmann::json;
 using slat_app_sla_config = struct slat_app_sla_config_s {
   uint64_t app_requested_sla_ns;
@@ -60,6 +77,7 @@ using slat_benchmark_config = struct slat_benchmark_config_s {
 };
 
 using slat_device_sla_config = struct slat_device_sla_config_s {
+  std::string device_name;
   std::string device_numa_node;
   uint64_t device_advertised_sla;
   uint64_t device_current_sla;
@@ -106,8 +124,6 @@ class SLATrackerSvc {
   svk_status initialize_logger(const slat_config config) const;
   svk_status load_logic_modules(const std::string &logic_modules_lib_dir) const;
   void benchmarking_thread_fn(void);
-  std::string run_benchmark(slat_benchmark_config &config);
-  void parse_result(slat_benchmark_config &config, std::string result);
   void update_app_sla_with_device_sla(slat_benchmark_config &config);
   void process_pending_requests(void);
   // Adding new fn to add the device
@@ -115,7 +131,9 @@ class SLATrackerSvc {
   svk_status remove_devices_from_sla_tracker(json command_params);
 
  protected:
+  std::string run_benchmark(slat_benchmark_config &config);
   void publish_app_degraded_sla(slat_benchmark_config &config);
+  void parse_result(slat_benchmark_config &config, std::string result);
 
  public:
   // In order to comply with Rule-of-Zero, manage class init and deletion
