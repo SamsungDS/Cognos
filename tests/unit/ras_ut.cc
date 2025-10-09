@@ -887,15 +887,12 @@ class CheckDeviceStatusUnitTest : public testing::Test {
   static ras_context_s test_ras_ctx;
   static std::unique_ptr<ras_check_device_status_handler>
       check_device_status_handler_;
-  static ras_request req;
 };
 
 std::unique_ptr<ras_adapter_helper> CheckDeviceStatusUnitTest::adapter_helper_;
 std::unique_ptr<ras_check_device_status_handler>
     CheckDeviceStatusUnitTest::check_device_status_handler_;
 ras_context_s CheckDeviceStatusUnitTest::test_ras_ctx;
-ras_request CheckDeviceStatusUnitTest::req = {
-    true, &CheckDeviceStatusUnitTest::test_ras_ctx, true};
 
 TEST_F(CheckDeviceStatusUnitTest, TestGetDevice) {
   auto dev1 =
@@ -912,12 +909,14 @@ TEST_F(CheckDeviceStatusUnitTest, TestGetDevice) {
 }
 
 TEST_F(CheckDeviceStatusUnitTest, CheckNonExistentDeviceGetCommand) {
+  ras_request req(true, &test_ras_ctx, true);
   req.command_obj["command_name"] = "ras_monitor_check_device_status";
   auto submit = test_ras_ctx.monitor_context->ras_submit_request(&req);
   EXPECT_TRUE(submit);
 }
 
 TEST_F(CheckDeviceStatusUnitTest, CheckNonExistentDeviceINvalidCommand) {
+  ras_request req(true, &test_ras_ctx, true);
   auto res = check_device_status_handler_->validate(req);
   EXPECT_FALSE(res);
 }
@@ -934,21 +933,23 @@ TEST_F(CheckDeviceStatusUnitTest, CheckNonExistentDeviceStatus) {
 }
 
 TEST_F(CheckDeviceStatusUnitTest, CheckDeviceStatusBadDevice) {
-  req.command_obj["command_name"] = "ras_monitor_check_device_status";
-  req.command_obj["command_params"]["device_id"] = "dev_bad";
-  auto res = check_device_status_handler_->validate(req);
+  ras_request *req = new ras_request(true, &test_ras_ctx, true);
+  req->command_obj["command_name"] = "ras_monitor_check_device_status";
+  req->command_obj["command_params"]["device_id"] = "dev_bad";
+  auto res = check_device_status_handler_->validate(*req);
   EXPECT_TRUE(res);
-  check_device_status_handler_->execute(req);
-  EXPECT_TRUE(req.is_successfull);
+  check_device_status_handler_->execute(*req);
+  EXPECT_TRUE(req->is_successfull);
 }
 
 TEST_F(CheckDeviceStatusUnitTest, CheckDeviceStatusGoodDevice) {
-  req.command_obj["command_name"] = "ras_monitor_check_device_status";
-  req.command_obj["command_params"]["device_id"] = "dev_good";
-  auto res = check_device_status_handler_->validate(req);
+  ras_request *req = new ras_request(true, &test_ras_ctx, true);
+  req->command_obj["command_name"] = "ras_monitor_check_device_status";
+  req->command_obj["command_params"]["device_id"] = "dev_good";
+  auto res = check_device_status_handler_->validate(*req);
   EXPECT_TRUE(res);
-  check_device_status_handler_->execute(req);
-  EXPECT_TRUE(req.is_successfull);
+  check_device_status_handler_->execute(*req);
+  EXPECT_TRUE(req->is_successfull);
 }
 
 TEST_F(CheckDeviceStatusUnitTest, CheckDeviceStatusInvalidThreshold) {
