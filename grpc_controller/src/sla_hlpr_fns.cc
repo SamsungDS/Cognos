@@ -4,6 +4,11 @@
 
 /* Helper functions */
 
+std::string generate_unique_device_id(const std::string& node_name,
+                                      const std::string& numa) {
+  return node_name + "_" + numa;
+}
+
 // The "output" param is valid only if the command is successful. Check the
 // value of return data structure "Status". if Status.ok() is true, the
 // command is successful. Else it is failure and can check the error message
@@ -307,8 +312,8 @@ static int GetDeviceInfoFromCXLFeature(std::string node_name, std::string port,
   if (status == 0) {
     // Update the ID to be unique as the serial number/device_id is not unique
     // across nodes
-    dev_info.controller_generated_id =
-        dev_info.node_name + "-" + std::to_string(dev_info.numa_attached);
+    dev_info.controller_generated_id = generate_unique_device_id(
+        dev_info.node_name, std::to_string(dev_info.numa_attached));
   }
 
   return status;
@@ -486,8 +491,8 @@ int GetDRAMDeviceDetails(std::string node_name, std::string port,
 
       // Update the ID to be unique as the serial number/device_id is not unique
       // across nodes
-      dev.controller_generated_id =
-          dev.node_name + std::to_string(dev.numa_attached);
+      dev.controller_generated_id = generate_unique_device_id(
+          dev.node_name, std::to_string(dev.numa_attached));
 
       device_map.push_back(dev);
     }
@@ -517,23 +522,24 @@ int SLADeviceHelper::GetDeviceDetails(std::string node_name, std::string port) {
   GetDRAMDeviceDetails(node_name, port, device_map);
   GetCXLDeviceDetails(node_name, port, device_map);
 
+  std::scoped_lock<std::mutex> lock(this->m_device_map_mutex);
   for (DeviceInfo dev_info : device_map) {
     bool duplicate_device = false;
-    for (size_t i = 0; i < this->m_device_info.size(); i++) {
-      DeviceInfo d = this->m_device_info[i];
-      if (dev_info.controller_generated_id == d.controller_generated_id) {
-        this->m_device_info[i] = dev_info;
-        logger_str = "Device id <" + dev_info.controller_generated_id +
-                     "> has already been added to controller for tracking";
-        duplicate_device = true;
-        break;
-      }
+    dev_info.internal_status = Device_Status_E::DEVICE_ONLINE;
+    dev_info.allocated_capacity_mb = 0;
+
+    if (auto it = this->m_device_map.find(dev_info.controller_generated_id);
+        it != this->m_device_map.end()) {
+      logger_str = "Device id <" + dev_info.controller_generated_id +
+                   "> has already been added to controller device map";
+      duplicate_device = true;
     }
+
     if (!duplicate_device) {
-      this->m_device_info.push_back(dev_info);
-      logger_str = "Device id <" + std::to_string(dev_info.device_id) +
+      this->m_device_map[dev_info.controller_generated_id] = dev_info;
+      logger_str = "Device id <" + dev_info.controller_generated_id +
                    "> from node " + dev_info.node_name +
-                   " is added to controller for tracking.";
+                   " is added to controller device map.";
     }
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                logger_str.c_str());
@@ -546,90 +552,296 @@ int SLADeviceHelper::GetDeviceDetails(std::string node_name, std::string port) {
   return status;
 }
 
-int SLADeviceHelper::GetDeviceForAppRequirements(
-    uint64_t sla_latency_ns, uint64_t size, std::vector<DeviceInfo>& devices) {
+/**
+ * Function to get the devices for the given requirements
+ *  - Only one APP per device (current)
+ *  - Latency lower or equal than the given latency requirement
+ *  - Device is ONLINE
+ *  - Device is not used by any other App
+ *  - Device replacement with the similar device attributes and the node name
+ * where the device is present
+ *
+ * @param sla_latency_ns App/Device Latency requirements. Device with latency
+ * equal or lower than the given will be taken
+ * @param size_in_mb Capacity requirement. For the given capacity, iterate over
+ * all the devices and club them. This can fail if the enough drives are not
+ * there to meet the capacity or the drive replacement with similar or larger
+ * capacity is not there
+ * @param node_name Node name where the devices should be present. Usually used
+ * for replacement scenarios
+ * @param max_count Maximum devices to be aggregated. If -1 is given, then any
+ * number of drives. Otherwise, only specific number of drives as per the input
+ * @param[out] devices Devices will be aggregated in the vector and returned to
+ * the caller
+ */
+
+int SLADeviceHelper::GetDeviceForLatencyRequirements(
+    uint64_t sla_latency_ns, uint64_t size_in_mb,
+    const std::string_view node_name, int max_count,
+    std::vector<DeviceInfo>& devices) {
   int status = 0;
   std::string logger_str;
+  uint64_t to_be_allocated = size_in_mb;
+  int count = 0;
 
-  // Sort the devices with high avg_latency_ns at the top
-  std::vector<DeviceInfo> sorted_devices = this->m_device_info;
-  std::sort(sorted_devices.begin(), sorted_devices.end(),
-            [](const DeviceInfo& a, const DeviceInfo& b) {
-              return a.device_qos.avg_latency_ns > b.device_qos.avg_latency_ns;
-            });
+  std::scoped_lock<std::mutex> lock(this->m_device_map_mutex);
+  if (this->m_device_map.empty()) {
+    logger_str = "No device registered in the controller map";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    status = -1;
+    return status;
+  }
 
-  for (DeviceInfo dev : sorted_devices) {
-    logger_str = "device " + std::to_string(dev.device_id) + " has latency " +
+  auto orig_device_map = this->m_device_map;
+  std::vector<DeviceInfo> sorted_devices;
+  for (const auto& [key, dev] : this->m_device_map) {
+    logger_str = "device " + dev.controller_generated_id + " has latency " +
                  std::to_string(dev.device_qos.avg_latency_ns);
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                logger_str.c_str());
-    if (dev.free_flag && sla_latency_ns >= dev.device_qos.avg_latency_ns) {
-      logger_str = "device " + std::to_string(dev.device_id) + " with numa " +
-                   std::to_string(dev.numa) +
-                   " added to the list for consumption";
-      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-                 logger_str.c_str());
-      // dev.free_flag = false;
-      devices.push_back(dev);
+
+    // Check for the device conditions before assigning
+    // If the devices belongs to a particular node if provided
+    // if the device is not assigned for any app.
+    // Check if the device is not marked faulty
+    // Latency meets the required requested latency
+    if (node_name.length() && dev.node_name != node_name) {
+      continue;
+    }
+
+    if (dev.free_flag &&
+        dev.internal_status == Device_Status_E::DEVICE_ONLINE &&
+        sla_latency_ns >= dev.device_qos.avg_latency_ns) {
+      sorted_devices.push_back(dev);
     }
   }
 
-  if (devices.size() == 0) {
+  if (sorted_devices.empty()) {
+    logger_str = "No device found for the given latency " + sla_latency_ns;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
     status = -1;
+    return status;
   }
+
+  // Sort the devices with high avg_latency_ns at the top.
+  std::sort(sorted_devices.begin(), sorted_devices.end(),
+            [](const DeviceInfo& a, const DeviceInfo& b) {
+              if (a.device_qos.avg_latency_ns == b.device_qos.avg_latency_ns) {
+                return a.controller_generated_id < b.controller_generated_id;
+              }
+              return a.device_qos.avg_latency_ns > b.device_qos.avg_latency_ns;
+            });
+
+  for (const DeviceInfo& dev : sorted_devices) {
+    this->m_device_map[dev.controller_generated_id].free_flag = false;
+    if (to_be_allocated >= dev.available_capacity_mb) {
+      this->m_device_map[dev.controller_generated_id].allocated_capacity_mb =
+          dev.available_capacity_mb;
+      this->m_device_map[dev.controller_generated_id].available_capacity_mb = 0;
+      to_be_allocated -= dev.available_capacity_mb;
+    } else {
+      this->m_device_map[dev.controller_generated_id].allocated_capacity_mb =
+          to_be_allocated;
+      this->m_device_map[dev.controller_generated_id].available_capacity_mb -=
+          to_be_allocated;
+      to_be_allocated = 0;
+    }
+    devices.push_back(dev);
+    logger_str = "device " + dev.controller_generated_id + " with numa " +
+                 std::to_string(dev.numa) + " and latency " +
+                 std::to_string(dev.device_qos.avg_latency_ns) +
+                 " added to the list for consumption";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
+
+    count++;
+
+    // Check only for the valid count. If -1 is given, ignore it
+    if ((to_be_allocated == 0) || (max_count > 0 && count >= max_count)) {
+      break;
+    }
+  }
+
+  if (devices.empty() || to_be_allocated > 0) {
+    logger_str =
+        "No device found for the given latency or enough free capacity "
+        "available";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+
+    status = -1;
+    this->m_device_map = orig_device_map;
+  }
+
   return status;
 }
 
 int SLADeviceHelper::UnregisterDevicesForNode(std::string node_name) {
   int status = -1;
   std::string logger_str;
-  for (DeviceInfo dev : this->m_device_info) {
-    if (dev.free_flag != true) {
-      // Should we return error as the device is associated with an app
-      // Ignoring for now
-      logger_str = "device " + std::to_string(dev.device_id) + " with numa " +
-                   std::to_string(dev.numa) + " is in use";
+
+  std::scoped_lock<std::mutex> lock(this->m_device_map_mutex);
+  logger_str = "Unregister devices for node " + node_name + " called";
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+  for (auto itr = this->m_device_map.begin();
+       itr != this->m_device_map.end();) {
+    DeviceInfo dev = itr->second;
+    if (node_name.length() && dev.node_name != node_name) continue;
+    if (dev.free_flag == true) {
+      itr = this->m_device_map.erase(itr);
+      svk_logger_flush(CONTROLLER_LOGGER_MODULE_NAME);
+      logger_str = "Device " + dev.controller_generated_id +
+                   " is removed from the controller map";
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                  logger_str.c_str());
-      return status;
+    } else {
+      // Should we return error as the device is associated with an app
+      // Ignoring for now
+      logger_str = "device " + dev.controller_generated_id + " with numa " +
+                   std::to_string(dev.numa) + " is still in use";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                 logger_str.c_str());
+
+      ++itr;
     }
   }
 
-  this->m_device_info.erase(
-      std::remove_if(
-          this->m_device_info.begin(), this->m_device_info.end(),
-          [node_name](DeviceInfo d) { return d.node_name == node_name; }),
-      this->m_device_info.end());
+  status = 0;
+
+  logger_str = "Unregister devices for node " + node_name + " is completed";
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+  return status;
+}
+
+/*
+ This function updates the status of all the devices for the given node_name or
+ all the nodes to the given status. This is primarily used during the following
+ scenarios
+ - RegisterNode - Mark all the devices to ONLINE except FAULTY ones
+ - SetNodeStatus - Mark all the devices to OFFLINE/ONLINE depending on the node
+ coming up/going down
+
+ Returns 0 on success or -1 on failure
+*/
+int SLADeviceHelper::UpdateAllDevicesWithStatus(
+    const std::string_view node_name, Device_Status_E dev_status) {
+  int status = -1;
+  std::string logger_str;
+  std::string device_status_str =
+      (dev_status == Device_Status_E::DEVICE_ONLINE) ? "online" : "offline";
+
+  std::scoped_lock<std::mutex> lock(this->m_device_map_mutex);
+
+  for (const auto& [key, dev] : this->m_device_map) {
+    if (node_name.length() && dev.node_name != node_name) continue;
+
+    if (dev.internal_status == Device_Status_E::DEVICE_FAULTY) continue;
+    this->m_device_map[dev.controller_generated_id].internal_status =
+        dev_status;
+    logger_str = "Device " + dev.controller_generated_id + " is marked " +
+                 device_status_str;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
+  }
 
   status = 0;
 
   return status;
 }
 
-int SLADeviceHelper::GetDeviceInfo(std::string device_id,
-                                   DeviceInfo& device_info) {
-  std::vector<DeviceInfo> devices = this->m_device_info;
-  for (DeviceInfo dev : devices) {
-    if (dev.device_id == std::stoull(device_id)) {
-      device_info = dev;
-      return 0;
-    }
+int SLADeviceHelper::GetDeviceInfo(
+    const std::string& controller_generated_device_id,
+    DeviceInfo& device_info) {
+  std::scoped_lock<std::mutex> lock(this->m_device_map_mutex);
+
+  if (auto it = this->m_device_map.find(controller_generated_device_id);
+      it != this->m_device_map.end()) {
+    device_info = it->second;
+    return 0;
   }
+
   return -1;
 }
 
-int SLADeviceHelper::GetAppInfo(std::string device_id, App_Info& app_info) {
-  auto it = this->m_device_app_data.find(device_id);
-  if (it != this->m_device_app_data.end()) {
+int SLADeviceHelper::GetAppInfo(
+    const std::string& controller_generated_device_id, App_Info& app_info) {
+  std::scoped_lock<std::mutex> lock(this->m_device_map_mutex);
+
+  if (auto it = this->m_device_app_data.find(controller_generated_device_id);
+      it != this->m_device_app_data.end()) {
     app_info = it->second;
     return 0;
   }
   return -1;
 }
 
-int SLADeviceHelper::SetSLADataForApp(std::string device_id,
-                                      App_Info app_info) {
-  this->m_device_app_data[device_id] = app_info;
+int SLADeviceHelper::MarkTheDeviceFaulty(
+    const std::string& controller_generated_device_id) {
+  std::string logger_str;
+  std::scoped_lock<std::mutex> lock(this->m_device_map_mutex);
+
+  if (auto it = this->m_device_map.find(controller_generated_device_id);
+      it != this->m_device_map.end()) {
+    DeviceInfo& dev = it->second;
+    dev.internal_status = Device_Status_E::DEVICE_FAULTY;
+    logger_str = "device " + controller_generated_device_id + "on node " +
+                 dev.node_name + " with numa " + std::to_string(dev.numa) +
+                 " is marked faulty";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
+    return 0;
+  }
+  logger_str = "device " + controller_generated_device_id + " is not found";
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR, logger_str.c_str());
+  return -1;
+}
+
+/**
+ * Get a replacement device
+ */
+
+int SLADeviceHelper::GetReplacementDevice(const DeviceInfo& dev_info,
+                                          DeviceInfo& replacement_dev) {
+  int status = -1;
+  std::vector<DeviceInfo> devices;
+  std::string logger_str;
+
+  logger_str =
+      "GetReplacementDevice called for " + dev_info.controller_generated_id;
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+  // Get the device of similar or low latency device
+  status = this->GetDeviceForLatencyRequirements(
+      dev_info.device_qos.avg_latency_ns, dev_info.allocated_capacity_mb,
+      dev_info.node_name, 1, devices);
+  if (status != 0 || devices.empty()) {
+    logger_str =
+        "Failed in getting another device with better values "
+        "than latency - " +
+        std::to_string(dev_info.device_qos.avg_latency_ns) + " size (mb) - " +
+        std::to_string(dev_info.total_capacity_mb) + " node - " +
+        dev_info.node_name;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    return status;
+  }
+
+  // Since the move/move_all accepts only one device numa for destination, get
+  // the first device
+  replacement_dev = devices.front();
+  logger_str = "Found a device for replacement - " +
+               replacement_dev.controller_generated_id;
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+  status = 0;
+  return status;
+}
+
+int SLADeviceHelper::SetSLADataForApp(
+    const std::string& controller_generated_device_id,
+    const App_Info& app_info) {
+  std::scoped_lock<std::mutex> lock(this->m_device_map_mutex);
+  this->m_device_app_data[controller_generated_device_id] = app_info;
   return 0;
 }
 

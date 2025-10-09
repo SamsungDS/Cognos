@@ -14,6 +14,7 @@
 #include "framework_struct.h"
 #include "framework_upstream.h"
 #include "grpc_hdr.h"
+#include "sla_hlpr_fns.h"
 #include "svk_logger.h"
 
 #define CONTROLLER_CONF_SECTION_TAG "svk_mgmt_fw_controller"
