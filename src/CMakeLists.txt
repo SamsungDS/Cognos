@@ -9,6 +9,8 @@ set(RAS_LIB_DEST "lib64/")
 set(RAS_INCLUDE_DEST "include/")
 set(RAS ${SVK_RAS_LIB_TARGET_NAME})
 set(RAS_LINK_LIBRARIES "stdc++fs fmt nlohmann_json::nlohmann_json")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
+
 add_subdirectory(utils)
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../include)

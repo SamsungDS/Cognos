@@ -6,6 +6,8 @@ ${CMAKE_SOURCE_DIR}/src/ras_request_handler.cc
 ${CMAKE_SOURCE_DIR}/src/ras_monitor.cc 
 ras_monitor_ut.cc
 )
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
+
 add_executable(${RAS_MONITOR_UT} ${RAS_MONITOR_UT_SOURCES})
 add_dependencies(${RAS_MONITOR_UT} rte_ring)
 target_include_directories(${RAS_MONITOR_UT} PUBLIC 
@@ -23,6 +25,7 @@ target_link_libraries(
   nlohmann_json::nlohmann_json
   fmt
   svklogger
+  svkras
 )
 
 include(GoogleTest)

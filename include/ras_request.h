@@ -34,7 +34,6 @@ using json = nlohmann::json;
 #define RAS_RESULT_MESSAGE_STR_CMD_INVALID "Invalid command"
 #define RAS_RESULT_MESSAGE_STR_CMD_PARAMS_INVALID "Invalid command parameters"
 
-#define RAS_DEVICE_DEFAULT_MONITOR_INTERVAL (60)
 class ras_monitor;
 
 class ras_request {

@@ -2,6 +2,7 @@
 set(LIBMOCKTEST "libmocktest")
 set(LOGICMOCKTEST "logicmocktest")
 set(LIBMOCK_INCLUDE_DEST ${CMAKE_SOURCE_DIR}/include/adapters/mock_adapter/include ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_SOURCE_DIR}/adapters/mock_adapter/src)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
 
 include_directories(${LIBMOCK_INCLUDE_DEST})
 link_directories(${CMAKE_SOURCE_DIR}/adapters/mock_adapter/lib64)

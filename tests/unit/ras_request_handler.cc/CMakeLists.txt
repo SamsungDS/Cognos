@@ -22,6 +22,7 @@ target_link_libraries(
   svklogger
   fmt
   nlohmann_json::nlohmann_json
+  svkras
 )
 
 include(GoogleTest)
