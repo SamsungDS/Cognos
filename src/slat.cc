@@ -84,7 +84,7 @@ void SLATrackerSvc::parse_result(slat_benchmark_config &config,
   if (config.benchmark_tool == "mlc") {
     ptr = strstr((char *)result.c_str(), "avgLatencyns");
     if (ptr == nullptr) {
-      std::cout << "Error parsing result" << std::endl;
+      std::cout << "Error parsing result - " << result << std::endl;
       return;
     }
     sscanf(ptr, "avgLatencyns=%[.0-9]", parsed_result);
@@ -104,36 +104,38 @@ void SLATrackerSvc::update_app_sla_with_device_sla(
   }
 }
 
-static std::string get_epoch() {
+// Get the epoch (timestamp)
+long get_epoch() {
   auto now = std::chrono::system_clock::now();
-  std::string epoch = std::to_string(
-      std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch())
-          .count());
-
-  // Convert the epoch time to a string
-  return epoch;
+  return std::chrono::duration_cast<std::chrono::seconds>(
+             now.time_since_epoch())
+      .count();
 }
 
-int create_event_in_json_format(const svk_slat_logic_output &app_current_sla,
+int create_event_in_json_format(const slat_benchmark_config &config,
+                                const svk_slat_logic_output &app_current_sla,
                                 json &json_data) {
   json json_map;
   json observations_map;
-  observations_map["device_name"] =
-      std::string(app_current_sla.device_name, 0, MAX_LENGTH);
+  auto app_name = std::string(app_current_sla.app_name, 0, SLAT_MAX_STR_LEN);
+  auto device_name =
+      std::string(app_current_sla.device_name, 0, SLAT_MAX_STR_LEN);
+  observations_map["device_id"] = device_name;
   observations_map["host_name"] =
-      std::string(app_current_sla.host_name, 0, MAX_LENGTH);
-  observations_map["app_name"] =
-      std::string(app_current_sla.app_name, 0, MAX_LENGTH);
+      std::string(app_current_sla.host_name, 0, SLAT_MAX_STR_LEN);
+  observations_map["app_name"] = app_name;
   observations_map["avg_latency_ns"] = app_current_sla.avgLatencyns;
-  observations_map["feature_name"] = SLAT_FEATURE_MODULE_NAME;
 
   json_map["domain"] = "observability";
+  json_map["feature_name"] = "slat";
   json_map["category"] = "slat";
   json_map["severity"] = "warning";
-  json_map["feature_name"] = "slat";
-
-  json_map["source_type"] = "node";
-  json_map["source"] = std::string(app_current_sla.host_name, 0, MAX_LENGTH);
+  json_map["msg"] =
+      "Downgraded SLA (" + std::to_string(config.device_current_sla) +
+      "ns against set " + std::to_string(config.device_advertised_sla) +
+      "ns) detected in " + app_name;
+  json_map["source_type"] = "device";
+  json_map["source"] = device_name;
   json_map["timestamp"] = get_epoch();
   json_map["observations"] = observations_map;
   json_data = json_map;
@@ -142,7 +144,6 @@ int create_event_in_json_format(const svk_slat_logic_output &app_current_sla,
 
 void SLATrackerSvc::publish_app_degraded_sla(slat_benchmark_config &config) {
   int rc;
-  std::string topic_filter;
   char log_msg[LOG_MSG_MAX_SIZE];
   std::string json_data_str;
 
@@ -150,31 +151,32 @@ void SLATrackerSvc::publish_app_degraded_sla(slat_benchmark_config &config) {
              "SLA publish_app_degraded_sla");
   for (const auto &[app_name, app_sla_config] : config.app_sla_list) {
     json json_data;
-    create_event_in_json_format(app_sla_config.app_current_sla, json_data);
+    create_event_in_json_format(config, app_sla_config.app_current_sla,
+                                json_data);
     if (json_data.empty()) {
-      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO,
+      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::WARN,
                  "JSON Data is empty. Continuing");
       continue;
     }
     try {
       json_data_str = json_data.dump();
     } catch (json::exception &e) {
-      std::string exception_str = e.what();
-      std::string logger_str =
-          "JSON error in converting the data to string: " + exception_str;
-      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, logger_str.c_str());
+      const char *exception_str = e.what();
+      snprintf(log_msg, LOG_MSG_MAX_SIZE,
+               "JSON error in converting the data to string: %s",
+               exception_str);
+      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, log_msg);
       continue;
     }
-    snprintf(log_msg, LOG_MSG_MAX_SIZE, "sending the alert [%s]",
+    snprintf(log_msg, LOG_MSG_MAX_SIZE, "sending the event [%s]",
              json_data_str.c_str());
     svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, log_msg);
 
-    topic_filter = ALERTS_TOPIC_FILTER;
-    rc = publish_event_data_to_core((char *)topic_filter.c_str(),
+    rc = publish_event_data_to_core((char *)ALERTS_TOPIC_FILTER,
                                     (uint8_t *)json_data_str.c_str(),
                                     json_data_str.length());
     if (rc == -1) {
-      snprintf(log_msg, LOG_MSG_MAX_SIZE, "Failed to publish the alert [%s]",
+      snprintf(log_msg, LOG_MSG_MAX_SIZE, "Failed to publish the event [%s]",
                json_data_str.c_str());
       svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR, log_msg);
     }
@@ -203,7 +205,7 @@ inline void SLATrackerSvc::process_pending_requests(void) {
         cfg.app_sla_list[app_name] = to_add.app_sla;
         strncpy(
             cfg.app_sla_list[app_name].app_current_sla.device_name,
-            device_numa.c_str(),
+            device.device_name.c_str(),
             sizeof(cfg.app_sla_list[app_name].app_current_sla.device_name) - 1);
         logger_str = "Adding device " + device_numa + ". and app " + app_name;
         svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
@@ -282,7 +284,7 @@ void SLATrackerSvc::benchmarking_thread_fn(void) {
     snprintf(log_msg, LOG_MSG_MAX_SIZE,
              "Benchmark thread sleeping for %d seconds\n",
              (int)this->th_data.benchmark_run_interval);
-    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, log_msg);
+    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::TRACE, log_msg);
 
     std::this_thread::sleep_for(
         std::chrono::seconds(this->th_data.benchmark_run_interval));
@@ -316,6 +318,7 @@ svk_status SLATrackerSvc::parse_and_add_new_sla_monitor(
     std::string sla_details) {
   svk_status rc;
   slat_app_benchmark_sla_to_add app_sla_to_add = {};
+  char log_msg[LOG_MSG_MAX_SIZE];
 
   std::map<std::string, std::string> sla_kv_pairs;
 
@@ -386,8 +389,6 @@ svk_status SLATrackerSvc::parse_and_add_new_sla_monitor(
   this->th_data.benchmark_pending_list_lock.lock();
   this->th_data.benchmark_pending_list_to_add.push_back(app_sla_to_add);
   this->th_data.benchmark_pending_list_lock.unlock();
-
-  char log_msg[LOG_MSG_MAX_SIZE];
 
   snprintf(log_msg, LOG_MSG_MAX_SIZE, "Queued app [%s] for sla monitoring\n",
            app_sla_to_add.app_sla.app_current_sla.app_name);
@@ -678,8 +679,8 @@ svk_status SLATrackerSvc::add_devices_to_sla_tracker(json command_params) {
 
     for (const auto &[key, value, target] : sla_fields) {
       sla_kv_pairs[key] = value;
-      status =
-          update_sla_details(sla_kv_pairs, key.c_str(), target, MAX_LENGTH);
+      status = update_sla_details(sla_kv_pairs, key.c_str(), target,
+                                  SLAT_MAX_STR_LEN);
       if (status != SVK_STATUS_SUCCESS) {
         return status;
       }
@@ -700,12 +701,14 @@ svk_status SLATrackerSvc::add_devices_to_sla_tracker(json command_params) {
     for (json &device : device_list) {
       slat_device_sla_config device_conf;
 
+      std::string device_name = device.at("device_id");
       std::string device_numa = device.at("device_numa");
       uint64_t device_sla_latency_ns = device.at("device_sla_latency_ns");
 
       device_conf.device_current_sla = 0;
       device_conf.device_advertised_sla = device_sla_latency_ns;
       device_conf.device_numa_node = device_numa;
+      device_conf.device_name = device_name;
       app_sla_to_add.device_sla_list.push_back(device_conf);
     }
 
