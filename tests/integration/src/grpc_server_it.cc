@@ -66,8 +66,8 @@ int create_svk_mgmt_fw_conf_json(std::string conf_file,
   root.put("svk_mgmt_fw_controller.logger.log_level", log_level);
   root.put("svk_mgmt_fw_controller.logger.log_file_name",
            CONTROLLER_NODE_DEFAULT_LOG_FILE);
-  root.put("svk_mgmt_fw_controller.logger.log_file_count", log_file_count);
-  root.put("svk_mgmt_fw_controller.logger.log_file_size", log_file_size);
+  root.put("svk_mgmt_fw_controller.logger.log_file_count", 10);
+  root.put("svk_mgmt_fw_controller.logger.log_file_size", (1024 * 1024 * 1024));
   root.put("svk_mgmt_fw_controller.logger.sink_type", sink_type);
 
   pt::write_json(json_file, root);
@@ -92,10 +92,11 @@ static std::string get_sla_deviation_data(std::string feature_name,
                                           uint64_t latency) {
   json json_map;
   json observations_map;
-  observations_map["device_name"] = device_name;
+  observations_map["device_id"] =
+      generate_unique_device_id(host_name, device_name);
   observations_map["host_name"] = host_name;
   observations_map["app_name"] = app_name;
-  observations_map["avg_latency_ns"] = 1000;
+  observations_map["avg_latency_ns"] = latency;
   observations_map["message"] = "Device SLA deviation";
   observations_map["feature_name"] = feature_name;
 
@@ -114,13 +115,13 @@ static std::string get_sla_deviation_data(std::string feature_name,
 }
 
 static std::string generate_ras_event(std::string feature_name,
-                                      std::string device_name,
-                                      std::string host_name,
+                                      std::string numa, std::string host_name,
                                       std::string app_name,
                                       uint64_t error_cnt) {
   json json_map;
   json observations_map;
-  observations_map["device_id"] = device_name;
+  observations_map["device_id"] = generate_unique_device_id(host_name, numa);
+  observations_map["device_name"] = generate_unique_device_id(host_name, numa);
   observations_map["error_cnt"] = error_cnt;
   observations_map["message"] = "Device RAS error count hit the threshold";
   observations_map["feature_name"] = feature_name;
@@ -147,8 +148,7 @@ static std::string generate_ras_event(std::string feature_name,
  */
 bool is_str_in_log(std::string file_name, std::string search_str) {
   // Use this call to flush logs immediately
-  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
-             "Just for flushing logs");
+  svk_logger_flush(CONTROLLER_LOGGER_MODULE_NAME);
 
   // Check if the log file exists
   std::ifstream file(file_name);
@@ -763,25 +763,8 @@ int CheckPoller() {
   std::thread node_thr(StartNodeServer, conf_file, true);
   // Sleep for a while for the server processes to stablize
   sleep(10);
-  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
              "InitControllerNodeServerWithSignal in CheckPoller");
-  int rc = initialize_publisher(conf_file.c_str());
-  if (rc != 0) {
-    std::cout << "Failed to initialize publisher" << std::endl;
-    return -1;
-  }
-
-  std::string json_data_str = get_sla_deviation_data(
-      SLAT_FEATURE_MODULE_NAME, "DEV1", "localhost", "TESTAPP", 100);
-  rc = publish_event_data_to_core((char *)"alerts",
-                                  (uint8_t *)json_data_str.c_str(),
-                                  json_data_str.length());
-
-  sleep(3);
-  cleanup_publisher();
-
-  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
-             "Done with InitControllerNodeServerWithSignal in CheckPoller");
 
   // Raise the interrupt signal for the server to go down gracefully
   std::thread::id node_thread_id = node_thr.get_id();
@@ -793,10 +776,17 @@ int CheckPoller() {
       *reinterpret_cast<std::thread::native_handle_type *>(&ctrlr_thread_id);
 
   pthread_kill(node_native_handle, SIGINT);
+  // Wait for > 5 seconds for the signal handler to be processed on the server
+  // node
+  sleep(10);
+
   pthread_kill(ctrlr_native_handle, SIGINT);
   // Wait for > 5 seconds for the signal handler to be processed on the server
   // node
-  sleep(5);
+  sleep(10);
+
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+             "Done with InitControllerNodeServerWithSignal in CheckPoller");
 
   unlink(conf_file.c_str());
   return 0;
@@ -805,11 +795,6 @@ int CheckPoller() {
 TEST(InitIntegrationTest, InitControllerNodeServerWithSignal) {
   GTEST_FLAG_SET(death_test_style, "threadsafe");
   EXPECT_DEATH(CheckPoller(), "");
-  EXPECT_EQ(
-      true,
-      is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
-                    "Device's numa DEV1 on host localhost for the app TESTAPP "
-                    "deviated than expected - Reported latency_ns = 100"));
   EXPECT_EQ(true, is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
                                 "Updated node localhost's status to offline"));
 }
@@ -902,6 +887,10 @@ TEST(InitIntegrationTest, CheckNodeStatusUpdated) {
   file.close();
   EXPECT_EQ(true, data.find("Updated node localhost's status to offline") !=
                       std::string::npos);
+  EXPECT_EQ(
+      true,
+      data.find("Marking all the devices of the node localhost to offline") !=
+          std::string::npos);
 }
 
 TEST(InitIntegrationTest, UnregisterNodeServer) {
@@ -926,70 +915,6 @@ TEST(InitIntegrationTest, UnregisterNodeServer) {
   Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
   Status status = client.UnregisterNode(&req, resp);
   ASSERT_EQ(status.ok(), true);
-  unlink(conf_file.c_str());
-}
-
-TEST(InitIntegrationTest, ControllerNodeManualServicerStart) {
-  char *cw_dir = get_current_dir_name();
-  std::string conf_file = std::string(cw_dir) + "/conf.json";
-  create_svk_mgmt_fw_conf_json(
-      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
-      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
-      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
-
-  ControllerServicer *c_svcr(new ControllerServicer(conf_file));
-  auto c_server = InitializeServicer(c_svcr);
-  ASSERT_NE(c_server, nullptr);
-  EXPECT_TRUE(c_svcr->get_state() == true);
-  std::thread *subscriber_thread =
-      new std::thread(&StartThreadForZMQSubscriberConfiguration, c_svcr);
-
-  std::thread *sla_thread =
-      new std::thread(&StartEventProcessingThread, c_svcr);
-
-  Servicer *n_svcr(new Servicer(conf_file));
-  if (n_svcr->get_state() == false) {
-    std::cout << "Node Servicer is not initialized properly. Exiting"
-              << std::endl;
-    return;
-  }
-  auto n_server = InitializeNodeServicer(n_svcr);
-  ASSERT_NE(n_server, nullptr);
-
-  sleep(5);
-
-  int rc = initialize_publisher(conf_file.c_str());
-  if (rc != 0) {
-    std::cout << "Failed to initialize publisher" << std::endl;
-    return;
-  }
-  std::string json_data_str = get_sla_deviation_data(
-      SLAT_FEATURE_MODULE_NAME, "DEV11", "localhost1", "TESTAPP1", 1000);
-  rc = publish_event_data_to_core((char *)"events",
-                                  (uint8_t *)json_data_str.c_str(),
-                                  json_data_str.length());
-
-  std::cout << "Published data result " << rc << std::endl;
-  sleep(2);
-
-  StopAllThreads(c_svcr);
-  StopEventProcessingThread(c_svcr);
-  sla_thread->join();
-  subscriber_thread->join();
-  delete c_svcr;
-  delete n_svcr;
-  cleanup_publisher();
-
-  std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
-  std::string filedata((std::istreambuf_iterator<char>(file)),
-                       (std::istreambuf_iterator<char>()));
-  file.close();
-  EXPECT_EQ(true,
-            filedata.find(
-                "Device's numa DEV11 on host localhost1 for the app TESTAPP1 "
-                "deviated than expected - Reported latency_ns = 1000") !=
-                std::string::npos);
-
   unlink(conf_file.c_str());
 }
 
@@ -1024,6 +949,11 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStart) {
   "D\",\"pcie_addr\":\"0000:b8:00.0\"}, "                                     \
   "{\"device_id\":30690035288064,\"vendor_device_type\":\"CMM-"               \
   "D\",\"pcie_addr\":\"0000:b8:00.0\"}]}"
+
+#define CXL_DEVICE_LIST_OUTPUT_WITH_ONE_DEVICE                                \
+  "{\"devices\":[{\"device_id\":29690035288064,\"vendor_device_type\":\"CMM-" \
+  "D\",\"pcie_addr\":\"0000:b8:00.0\"}]}"
+
 #define CXL_DEVICE_INFO_OUTPUT1                                                \
   "{\"api_version\":1.0,\"device_id\":29690035288064,\"manufacturer\":"        \
   "\"Samsung\",\"serial_number\":305419896,\"FW_revision\":\"1.0.0\","         \
@@ -1034,8 +964,8 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStart) {
   "type\":\"CXL.mem\",\"domain_type\":\"PCIe\",\"domain_id\":0,\"link_"        \
   "speed\":16,\"link_width\":8,\"available_capacity_MB\":127080,\"status\":"   \
   "\"active\",\"aspm_active\":false,\"sris_active\":false,\"lock_active\":"    \
-  "false,\"numa_node\":2,\"capabilities\":{\"Power Management "                \
-  "version\":1},\"advertised_qos\":{\"avg_latency_ns\":120,\"p99_latency_"     \
+  "false,\"numa_node\":1,\"capabilities\":{\"Power Management "                \
+  "version\":1},\"advertised_qos\":{\"avg_latency_ns\":1200,\"p99_latency_"    \
   "ns\":350,\"io_per_sec\":50000,\"BW_per_sec\":1000000,\"io_size_in_bytes\":" \
   "4096,\"qd\":32}}"
 
@@ -1049,8 +979,8 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStart) {
   "type\":\"CXL.mem\",\"domain_type\":\"PCIe\",\"domain_id\":0,\"link_"        \
   "speed\":16,\"link_width\":8,\"available_capacity_MB\":127080,\"status\":"   \
   "\"active\",\"aspm_active\":false,\"sris_active\":false,\"lock_active\":"    \
-  "false,\"numa_node\":1,\"capabilities\":{\"Power Management "                \
-  "version\":1},\"advertised_qos\":{\"avg_latency_ns\":320,\"p99_latency_"     \
+  "false,\"numa_node\":2,\"capabilities\":{\"Power Management "                \
+  "version\":1},\"advertised_qos\":{\"avg_latency_ns\":3200,\"p99_latency_"    \
   "ns\":350,\"io_per_sec\":50000,\"BW_per_sec\":1000000,\"io_size_in_bytes\":" \
   "4096,\"qd\":32}}"
 
@@ -1092,7 +1022,7 @@ class FakeNodeServicer : public Servicer {
       }
     }
     std::cout << "FakeProcessNodeCommand called for the command "
-              << req->feature_params() << std::endl;
+              << req->command_name() << std::endl;
     return Status::OK;
   }
 };
@@ -1151,7 +1081,7 @@ TEST(InitIntegrationTest,
   unlink(conf_file.c_str());
 }
 
-TEST(InitIntegrationTest, ControllerNodeServicerStartWitMultipleSLAEvents) {
+TEST(InitIntegrationTest, ControllerNodeServicerStartWithSLAEvent) {
   char *cw_dir = get_current_dir_name();
   std::string conf_file = std::string(cw_dir) + "/conf.json";
   create_svk_mgmt_fw_conf_json(
@@ -1174,7 +1104,7 @@ TEST(InitIntegrationTest, ControllerNodeServicerStartWitMultipleSLAEvents) {
     std::cout << "Failed to initialize publisher" << std::endl;
     return;
   }
-  Servicer *n_svcr(new Servicer(conf_file));
+  Servicer *n_svcr(new FakeNodeServicer(conf_file));
   if (n_svcr->get_state() == false) {
     std::cout << "Node Servicer is not initialized properly. Exiting"
               << std::endl;
@@ -1183,19 +1113,21 @@ TEST(InitIntegrationTest, ControllerNodeServicerStartWitMultipleSLAEvents) {
   auto n_server = InitializeNodeServicer(n_svcr);
   ASSERT_NE(n_server, nullptr);
 
-  sleep(5);
+  sleep(10);
+
+  svk::CommandRequest req;
+  svk::CommandResponse *resp = new (svk::CommandResponse);
+  req.set_cluster_id(DEFAULT_CLUSTER_ID);
+  req.set_command_id("allocate_memory");
+  req.set_feature_params(
+      "sla_latency_ns=1000;app_name=TestApp;size=1024;logic_module=default");
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status status = client.ProcessControllerCommand(&req, resp);
+  ASSERT_EQ(status.ok(), true);
 
   std::string json_data_str = get_sla_deviation_data(
-      SLAT_FEATURE_MODULE_NAME, "12", "localhost2", "TESTAPP2", 1000);
-  rc = publish_event_data_to_core((char *)"alerts",
-                                  (uint8_t *)json_data_str.c_str(),
-                                  json_data_str.length());
-  std::cout << "Published data result successfully" << std::endl;
-  sleep(2);
-
-  // Repeated SLA events for the same device should not be shown
-  json_data_str = get_sla_deviation_data(SLAT_FEATURE_MODULE_NAME, "12",
-                                         "localhost3", "TESTAPP3", 1000);
+      SLAT_FEATURE_MODULE_NAME, "0", "localhost", "TestApp", 2000);
   rc = publish_event_data_to_core((char *)"alerts",
                                   (uint8_t *)json_data_str.c_str(),
                                   json_data_str.length());
@@ -1214,17 +1146,11 @@ TEST(InitIntegrationTest, ControllerNodeServicerStartWitMultipleSLAEvents) {
   std::string filedata((std::istreambuf_iterator<char>(file)),
                        (std::istreambuf_iterator<char>()));
   file.close();
-  EXPECT_EQ(
-      true,
-      filedata.find("Device's numa 12 on host localhost2 for the app TESTAPP2 "
-                    "deviated than expected - Reported latency_ns = 1000") !=
-          std::string::npos);
-
-  EXPECT_EQ(
-      true,
-      filedata.find("Device's numa 12 on host localhost3 for the app TESTAPP3 "
-                    "deviated than expected - Reported latency_ns = 1000") !=
-          std::string::npos);
+  EXPECT_EQ(true,
+            filedata.find(
+                "Device name localhost_0 on host localhost for the app TestApp "
+                "deviated than expected - Reported latency_ns = 2000") !=
+                std::string::npos);
 
   unlink(conf_file.c_str());
 }
@@ -1249,7 +1175,7 @@ class FakeNodeServicerForTM : public Servicer {
       } else if (req->command_name() == "list_devices") {
         svk::CommandResponse_NodeResponse *response =
             resp->add_node_responses();
-        response->set_output(CXL_DEVICE_LIST_OUTPUT);
+        response->set_output(CXL_DEVICE_LIST_OUTPUT_WITH_ONE_DEVICE);
         response->set_node_id(req->node_id());
         return Status::OK;
       } else if (req->command_name() == "get_device_info") {
@@ -1308,7 +1234,7 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForTMOperation) {
     std::cout << "Failed to initialize publisher" << std::endl;
     return;
   }
-  Servicer *n_svcr(new FakeNodeServicerForTM(conf_file));
+  Servicer *n_svcr(new FakeNodeServicer(conf_file));
   if (n_svcr->get_state() == false) {
     std::cout << "Node Servicer is not initialized properly. Exiting"
               << std::endl;
@@ -1317,23 +1243,79 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForTMOperation) {
   auto n_server = InitializeNodeServicer(n_svcr);
   ASSERT_NE(n_server, nullptr);
 
-  sleep(5);
+  // Call allocate memory to allocate a device for the App
+  sleep(2);
+  svk::CommandRequest req;
+  svk::CommandResponse *resp = new (svk::CommandResponse);
+  req.set_cluster_id(DEFAULT_CLUSTER_ID);
+  req.set_command_id("allocate_memory");
+  req.set_feature_params(
+      "sla_latency_ns=1500;app_name=TESTAPP1;size=1024;logic_module=default");
 
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status status = client.ProcessControllerCommand(&req, resp);
+  ASSERT_EQ(status.ok(), true);
+
+  sleep(2);
+
+  // Generate a SLA event that the deviation is detected
   std::string json_data_str = get_sla_deviation_data(
-      SLAT_FEATURE_MODULE_NAME, "DEVTM", "localhost", "TESTAPP1", 1000);
+      SLAT_FEATURE_MODULE_NAME, "1", "localhost", "TESTAPP1", 2500);
   rc = publish_event_data_to_core((char *)"alerts",
                                   (uint8_t *)json_data_str.c_str(),
                                   json_data_str.length());
 
   std::cout << "Published data result " << rc << std::endl;
-  sleep(10);
+  sleep(3);
 
+  std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  std::string filedata((std::istreambuf_iterator<char>(file)),
+                       (std::istreambuf_iterator<char>()));
+  file.close();
+  // Check the logs with the deviation detected
+  EXPECT_EQ(
+      true,
+      filedata.find(
+          "Device name localhost_1 on host localhost for the app TESTAPP1 "
+          "deviated than expected - Reported latency_ns = 2500") !=
+          std::string::npos);
+
+  // A move command is initiated
+  EXPECT_EQ(true,
+            filedata.find("Send command to the node with command_name: move "
+                          "and command_params: "
+                          "{\"app\":\"TESTAPP1\"") != std::string::npos);
+  // Since the PID is part of the output, we need to break it into two separate
+  // checks as the PID is dynamic Move command with the parameters are logged
+  EXPECT_EQ(true,
+            filedata.find("\"command\":\"move\",\"fast_tier\":\"0\",\"slow_"
+                          "tier\":\"1\",\"tm_attr\":\"0\"} is successful") !=
+                std::string::npos);
+
+  // Generate one more event. Now there should be no more devices to move
+  // Generate a SLA event for the new device that the deviation is detected
+  json_data_str = get_sla_deviation_data(SLAT_FEATURE_MODULE_NAME, "0",
+                                         "localhost", "TESTAPP1", 1700);
   rc = publish_event_data_to_core((char *)"alerts",
                                   (uint8_t *)json_data_str.c_str(),
                                   json_data_str.length());
   std::cout << "Published data result " << rc << "one more time" << std::endl;
   sleep(3);
 
+  // Check the logs with the deviation detected
+  EXPECT_EQ(
+      true,
+      is_str_in_log(
+          CONTROLLER_NODE_DEFAULT_LOG_FILE,
+          "Device name localhost_0 on host localhost for the app TESTAPP1 "
+          "deviated than expected - Reported latency_ns = 1700"));
+
+  EXPECT_EQ(
+      true,
+      is_str_in_log(
+          CONTROLLER_NODE_DEFAULT_LOG_FILE,
+          "Failed in getting another device with better "
+          "values than latency - 200 size (mb) - 409600 node - localhost"));
   StopAllThreads(c_svcr);
   StopEventProcessingThread(c_svcr);
   sla_thread->join();
@@ -1341,16 +1323,6 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForTMOperation) {
   delete c_svcr;
   delete n_svcr;
   cleanup_publisher();
-
-  std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
-  std::string filedata((std::istreambuf_iterator<char>(file)),
-                       (std::istreambuf_iterator<char>()));
-  file.close();
-  EXPECT_EQ(true,
-            filedata.find(
-                "Device's numa DEVTM on host localhost for the app TESTAPP1 "
-                "deviated than expected - Reported latency_ns = 1000") !=
-                std::string::npos);
 
   unlink(conf_file.c_str());
 }
@@ -1401,17 +1373,17 @@ TEST(InitIntegrationTest, ControllerNodeDuplicateDevices) {
                        (std::istreambuf_iterator<char>()));
   file.close();
   EXPECT_EQ(true, filedata.find(
-                      "Device id <29690035288064> from node localhost is added "
-                      "to controller for tracking.") != std::string::npos);
+                      "Device id <localhost_0> from node localhost is added "
+                      "to controller device map.") != std::string::npos);
   EXPECT_EQ(true, filedata.find(
-                      "Device id <30690035288064> from node localhost is added "
-                      "to controller for tracking.") != std::string::npos);
+                      "Device id <localhost_1> from node localhost is added "
+                      "to controller device map.") != std::string::npos);
   EXPECT_EQ(true,
-            filedata.find("Device id <localhost-1> has already been added to "
-                          "controller for tracking") != std::string::npos);
+            filedata.find("Device id <localhost_0> has already been added to "
+                          "controller device map") != std::string::npos);
   EXPECT_EQ(true,
-            filedata.find("Device id <localhost-2> has already been added to "
-                          "controller for tracking") != std::string::npos);
+            filedata.find("Device id <localhost_1> has already been added to "
+                          "controller device map") != std::string::npos);
   unlink(conf_file.c_str());
 }
 
@@ -1578,6 +1550,7 @@ class FakeNodeServicerInvalidCXLDeviceInfo : public Servicer {
       } else if (req->command_name() == "get_device_info") {
         svk::CommandResponse_NodeResponse *response =
             resp->add_node_responses();
+        // Sending empty data as if it is invalid
         response->set_output("{}");
         response->set_node_id(req->node_id());
         return Status::OK;
@@ -1820,91 +1793,6 @@ TEST(InitIntegrationTest, PublishDataWithUnregisteredTopic) {
   unlink(conf_file.c_str());
 }
 
-TEST(InitIntegrationTest, PublishDataWithRegisteredTopic) {
-  char *cw_dir = get_current_dir_name();
-  std::string conf_file = std::string(cw_dir) + "/conf.json";
-  create_svk_mgmt_fw_conf_json(
-      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
-      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
-      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
-
-  std::ifstream in_file(conf_file);
-  std::string conf_data((std::istreambuf_iterator<char>(in_file)),
-                        (std::istreambuf_iterator<char>()));
-  in_file.close();
-  json json_data = json::parse(conf_data);
-  json_data["pubsub"] = {{"ip_address", "127.0.0.1"},
-                         {"port", 5555},
-                         {"topics", {"metrics", "events", "alerts"}},
-                         {"transport_type", "zmq"}};
-
-  conf_data = json_data.dump();
-  std::ofstream out_file(conf_file);
-  if (out_file.is_open()) {
-    out_file << conf_data;
-    out_file.close();
-  }
-
-  ControllerServicer *c_svcr(new ControllerServicer(conf_file));
-  auto c_server = InitializeServicer(c_svcr);
-  ASSERT_NE(c_server, nullptr);
-  EXPECT_TRUE(c_svcr->get_state() == true);
-  std::thread *subscriber_thread =
-      new std::thread(&StartThreadForZMQSubscriberConfiguration, c_svcr);
-
-  std::thread *sla_thread =
-      new std::thread(&StartEventProcessingThread, c_svcr);
-
-  Servicer *n_svcr(new Servicer(conf_file));
-  if (n_svcr->get_state() == false) {
-    std::cout << "Node Servicer is not initialized properly. Exiting"
-              << std::endl;
-    return;
-  }
-  auto n_server = InitializeNodeServicer(n_svcr);
-  ASSERT_NE(n_server, nullptr);
-
-  sleep(5);
-
-  int rc = initialize_publisher(conf_file.c_str());
-  if (rc != 0) {
-    std::cout << "Failed to initialize publisher" << std::endl;
-    return;
-  }
-
-  // This event should be published in the log
-  std::string json_data_str = get_sla_deviation_data(
-      SLAT_FEATURE_MODULE_NAME, "DEV11", "localhost1", "REGISTERED_APP", 1000);
-  rc = publish_event_data_to_core((char *)"metrics  ",
-                                  (uint8_t *)json_data_str.c_str(),
-                                  json_data_str.length());
-
-  std::cout << "Published data result " << rc << std::endl;
-  sleep(2);
-
-  StopAllThreads(c_svcr);
-  StopEventProcessingThread(c_svcr);
-  sla_thread->join();
-  subscriber_thread->join();
-  delete c_svcr;
-  delete n_svcr;
-  cleanup_publisher();
-
-  std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
-  std::string filedata((std::istreambuf_iterator<char>(file)),
-                       (std::istreambuf_iterator<char>()));
-  file.close();
-
-  EXPECT_EQ(
-      true,
-      filedata.find(
-          "Device's numa DEV11 on host localhost1 for the app REGISTERED_APP "
-          "deviated than expected - Reported latency_ns = 1000") !=
-          std::string::npos);
-
-  unlink(conf_file.c_str());
-}
-
 TEST(InitIntegrationTest, SendingEventWithUnregisteredMetric) {
   char *cw_dir = get_current_dir_name();
   std::string conf_file = std::string(cw_dir) + "/conf.json";
@@ -1983,11 +1871,13 @@ TEST(InitIntegrationTest, SendingEventWithUnregisteredMetric) {
                        (std::istreambuf_iterator<char>()));
   file.close();
 
-  EXPECT_EQ(false, filedata.find(
-                       "Device's numa DEVFeatureNotHandled on host localhost1 "
-                       "for the app REGISTERED_APP "
-                       "deviated than expected - Reported latency_ns = 1000") !=
-                       std::string::npos);
+  EXPECT_EQ(
+      false,
+      filedata.find(
+          "Device name localhost1_DEVFeatureNotHandled on host localhost1 "
+          "for the app REGISTERED_APP "
+          "deviated than expected - Reported latency_ns = 1000") !=
+          std::string::npos);
 
   unlink(conf_file.c_str());
 }
@@ -2035,7 +1925,7 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForRASOperation) {
   }
 
   sleep(1);
-  Servicer *n_svcr(new FakeNodeServicerForTM(conf_file));
+  Servicer *n_svcr(new FakeNodeServicer(conf_file));
   if (n_svcr->get_state() == false) {
     std::cout << "Node Servicer is not initialized properly. Exiting"
               << std::endl;
@@ -2045,47 +1935,40 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForRASOperation) {
   ASSERT_NE(n_server, nullptr);
 
   Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
-
-  svk::RegisterRequest reg_req;
-  svk::RegisterResponse reg_resp;
-  reg_req.set_cluster_name("RASCluster1");
-  reg_req.set_node_name("testnode");
-  reg_req.set_node_ip("127.0.0.1");
-  reg_req.set_node_port("9998");
-
-  Status status = client.RegisterNode(&reg_req, &reg_resp);
-  ASSERT_TRUE(status.ok());
-  sleep(1);
-
-  // reg_req.set_cluster_name("RASCluster2");
-  // status = client.RegisterNode(&reg_req, &reg_resp);
-  // ASSERT_TRUE(status.ok());
-
-  // // Make sure the event processing thread has updated the socket
-  // sleep(1);
+  Status status;
 
   svk::CommandRequest req;
   svk::CommandResponse *resp = new (svk::CommandResponse);
   req.set_cluster_id(DEFAULT_CLUSTER_ID);
   req.set_command_id("allocate_memory");
   req.set_feature_params(
-      "sla_latency_ns=500;app_name=TESTAPPRAS;size=1024;logic_module=default");
+      "sla_latency_ns=1500;app_name=TESTAPPRAS;size=1024;logic_module=default");
 
   status = client.ProcessControllerCommand(&req, resp);
   ASSERT_EQ(status.ok(), true);
 
   sleep(2);
 
-  std::string json_data_str =
-      generate_ras_event(RAS_FEATURE_MODULE_NAME, "29690035288064", "localhost",
-                         "TESTAPPRAS", 2000);
+  std::string json_data_str = generate_ras_event(
+      RAS_FEATURE_MODULE_NAME, "1", "localhost", "TESTAPPRAS", 2000);
   std::cout << "Publish event to core " << json_data_str << std::endl;
   rc = publish_event_data_to_core((char *)"events",
                                   (uint8_t *)json_data_str.c_str(),
                                   json_data_str.length());
 
   std::cout << "Published data result " << rc << std::endl;
-  sleep(3);
+  sleep(2);
+
+  // Generate another event such that no replacement drive available
+  json_data_str = generate_ras_event(RAS_FEATURE_MODULE_NAME, "0", "localhost",
+                                     "TESTAPPRAS", 2000);
+  std::cout << "Publish event to core " << json_data_str << std::endl;
+  rc = publish_event_data_to_core((char *)"events",
+                                  (uint8_t *)json_data_str.c_str(),
+                                  json_data_str.length());
+
+  std::cout << "Published data result " << rc << std::endl;
+  sleep(2);
 
   StopAllThreads(c_svcr);
   StopEventProcessingThread(c_svcr);
@@ -2101,23 +1984,21 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForRASOperation) {
                     "Send command to the node with command_name: "
                     "add_reliability_monitoring_for_device and command_params: "
                     "{\"configure_options\":{\"error_count_threshold\":5},"
-                    "\"device_id\":\"29690035288064\",\"device_numa\":2,"
-                    "\"device_type\":\"CMM-D\"}is successful"));
+                    "\"device_id\":\"localhost_1\",\"device_numa\":1,"
+                    "\"device_type\":\"CMM-D\"} is successful"));
 
-  EXPECT_EQ(
-      true,
-      is_str_in_log(
-          CONTROLLER_NODE_DEFAULT_LOG_FILE,
-          "Device 29690035288064 on host localhost for the app TESTAPPRAS "
-          "reported the error cnt = 2000"));
+  EXPECT_EQ(true, is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
+                                "Device localhost_1 on host "
+                                "localhost for the app TESTAPPRAS "
+                                "reported the error cnt = 2000"));
 
   EXPECT_EQ(true,
             is_str_in_log(
                 CONTROLLER_NODE_DEFAULT_LOG_FILE,
                 "Send command to the node with command_name: "
                 "remove_reliability_monitoring_for_device and command_params: "
-                "{\"device_id\":\"29690035288064\",\"device_numa\":\"2\","
-                "\"device_type\":\"CMM-D\"}is successful"));
+                "{\"device_id\":\"localhost_1\",\"device_numa\":\"1\","
+                "\"device_type\":\"CMM-D\"} is successful"));
 
   // Since there is app_pid in the output, we need to split to two parts to
   // validate the output
@@ -2128,13 +2009,21 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForRASOperation) {
                     "command_params: "
                     "{\"app\":\"TESTAPPRAS\""));
 
+  EXPECT_EQ(true, is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
+                                ",\"command\":\"move_"
+                                "all\",\"dst\":\"0\",\"src\":\"1\",\"tm_attr\":"
+                                "\"0\"} is successful"));
+
   EXPECT_EQ(
       true,
       is_str_in_log(
           CONTROLLER_NODE_DEFAULT_LOG_FILE,
-          ",\"command\":\"move_"
-          "all\",\"dst\":\"1\",\"src\":\"0\",\"tm_attr\":\"0\"}is successful"));
+          "device localhost_1on node localhost with numa 1 is marked faulty"));
 
+  EXPECT_EQ(
+      true,
+      is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
+                    "replacement device not found for device id localhost_0"));
   unlink(conf_file.c_str());
 }
 
@@ -2198,6 +2087,9 @@ class FakeNodeServicerFailForAddRemoveSLADeviceTracker : public Servicer {
   // remove_device_from_sla_tracker
   bool sla_add_fail;
 };
+
+// The node service FakeNodeServicerFailForAddRemoveSLADeviceTracker fails the
+// call coming with remove_device_from_sla_tracking
 
 TEST(InitIntegrationTest, AllocateMemoryCommandWithAddSLADeviceTrackerFailure) {
   char *cw_dir = get_current_dir_name();
@@ -2265,18 +2157,15 @@ TEST(InitIntegrationTest, ControllerNodeTMOperationWithRemoveSLADeviceFailure) {
   req.set_cluster_id(DEFAULT_CLUSTER_ID);
   req.set_command_id("allocate_memory");
   req.set_feature_params(
-      "sla_latency_ns=1000;app_name=TESTAPPRAS;size=1024;logic_module=default");
+      "sla_latency_ns=1500;app_name=TESTAPPRAS;size=1024;logic_module=default");
 
   Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
   Status status = client.ProcessControllerCommand(&req, resp);
   ASSERT_EQ(status.ok(), true);
   sleep(5);
 
-  // std::string json_data_str = get_sla_deviation_data(
-  //     SLAT_FEATURE_MODULE_NAME, "DEVTM", "localhost", "TESTAPP1", 1000);
-  std::string json_data_str =
-      generate_ras_event(RAS_FEATURE_MODULE_NAME, "29690035288064", "localhost",
-                         "TESTAPPRAS", 2000);
+  std::string json_data_str = generate_ras_event(
+      RAS_FEATURE_MODULE_NAME, "1", "localhost", "TESTAPPRAS", 2000);
 
   rc = publish_event_data_to_core((char *)"alerts",
                                   (uint8_t *)json_data_str.c_str(),
@@ -2297,10 +2186,8 @@ TEST(InitIntegrationTest, ControllerNodeTMOperationWithRemoveSLADeviceFailure) {
   std::string filedata((std::istreambuf_iterator<char>(file)),
                        (std::istreambuf_iterator<char>()));
   file.close();
-  EXPECT_EQ(true,
-            filedata.find(
-                "Failed to disable SLA tracking on device 29690035288064") !=
-                std::string::npos);
+  EXPECT_EQ(true, filedata.find("Disabled SLA tracking on device 1") !=
+                      std::string::npos);
 
   unlink(conf_file.c_str());
 }
@@ -2473,4 +2360,420 @@ TEST(InitIntegrationTest, ControllerNodeServicerWithInvalidEventCommand) {
   status = client.EventAPI(&event_req, event_resp);
   std::cout << "Error message - " << status.error_message() << std::endl;
   ASSERT_NE(status.ok(), true);
+}
+
+class FakeNodeServicerForFailureScenarios : public Servicer {
+ public:
+  FakeNodeServicerForFailureScenarios(std::string conf_file,
+                                      std::string failure_string)
+      : Servicer(conf_file) {
+    m_failure_string = failure_string;
+  };
+  Status ProcessNodeCommand(ServerContext *ctxt, const svk::CommandRequest *req,
+                            svk::CommandResponse *resp) override {
+    if (req->command_name().length() > 0) {
+      if (req->command_name() == "get_node_info") {
+        if (m_failure_string == "get_node_info=fail") {
+          return Status(grpc::UNKNOWN, "get-node-info failed");
+        }
+        svk::CommandResponse_NodeResponse *response =
+            resp->add_node_responses();
+        if (req->command_params().find("pci") != std::string::npos) {
+          response->set_output(NODE_PCI_FEATURE_OUTPUT);
+        }
+        if (req->command_params().find("device") != std::string::npos) {
+          std::string device_output = NODE_DEVICE_FEATURE_OUTPUT;
+          // Set the total capacity of the DRAM devices to 200MB so that the
+          // value can be used to simulate failure easily
+          std::string replacement_str = "\"total_capacity_MB\":409600";
+          size_t pos = device_output.find(replacement_str);
+          if (pos != std::string::npos)
+            device_output.replace(device_output.find(replacement_str),
+                                  replacement_str.length(),
+                                  "\"total_capacity_MB\":200");
+
+          replacement_str = "\"available_capacity_MB\":204800";
+          pos = device_output.find(replacement_str);
+          if (pos != std::string::npos)
+            device_output.replace(device_output.find(replacement_str),
+                                  replacement_str.length(),
+                                  "\"available_capacity_MB\":200");
+          response->set_output(device_output);
+        }
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      } else if (req->command_name() == "list_devices") {
+        if (m_failure_string == "list_devices=fail") {
+          return Status(grpc::UNKNOWN, "list_devices failed");
+        }
+        svk::CommandResponse_NodeResponse *response =
+            resp->add_node_responses();
+        response->set_output(CXL_DEVICE_LIST_OUTPUT);
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      } else if (req->command_name() == "get_device_info") {
+        if (m_failure_string == "get_device_info=fail") {
+          return Status(grpc::UNKNOWN, "get_device_info failed");
+        }
+        svk::CommandResponse_NodeResponse *response =
+            resp->add_node_responses();
+        if (req->command_params().find("29690035288064") != std::string::npos) {
+          std::string device_output = CXL_DEVICE_INFO_OUTPUT1;
+          if (m_failure_string == "device_id_faking") {
+            std::string replacement_str = "\"device_id\":29690035288064";
+            size_t pos = device_output.find(replacement_str);
+            std::cout << "POS " << pos << std::endl;
+            if (pos != std::string::npos)
+              device_output.replace(pos, replacement_str.length(),
+                                    "\"device_id\":12345678901234567890");
+            std::cout << "Device OUTPUT " << device_output << std::endl;
+          } else {
+            // Set the total capacity of the DRAM devices to 200MB so that the
+            // value can be used to simulate failure easily
+            std::string replacement_str = "\"total_capacity_MB\":129007";
+            size_t pos = device_output.find(replacement_str);
+            if (pos != std::string::npos)
+              device_output.replace(pos, replacement_str.length(),
+                                    "\"total_capacity_MB\":200");
+
+            replacement_str = "\"available_capacity_MB\":127080";
+            pos = device_output.find(replacement_str);
+            if (pos != std::string::npos)
+              device_output.replace(device_output.find(replacement_str),
+                                    replacement_str.length(),
+                                    "\"available_capacity_MB\":200");
+          }
+          response->set_output(device_output);
+        } else if (req->command_params().find("30690035288064") !=
+                   std::string::npos) {
+          std::string device_output = CXL_DEVICE_INFO_OUTPUT2;
+          // Set the total capacity of the DRAM devices to 200MB so that the
+          // value can be used to simulate failure easily
+          std::string replacement_str = "\"total_capacity_MB\":129007";
+          size_t pos = device_output.find(replacement_str);
+          if (pos != std::string::npos)
+            device_output.replace(device_output.find(replacement_str),
+                                  replacement_str.length(),
+                                  "\"total_capacity_MB\":200");
+          replacement_str = "\"available_capacity_MB\":127080";
+          pos = device_output.find(replacement_str);
+          if (pos != std::string::npos)
+            device_output.replace(device_output.find(replacement_str),
+                                  replacement_str.length(),
+                                  "\"available_capacity_MB\":200");
+
+          response->set_output(device_output);
+        }
+
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      }
+    }
+    std::cout << "FakeNodeServicerForFailureScenarios called for the command "
+              << req->command_name() << std::endl;
+    return Status::OK;
+  };
+
+ private:
+  std::string m_failure_string;
+};
+
+TEST(InitIntegrationTest, AllocateMemoryGetDeviceInfoFailure1) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  // Simulate the DRAM device failure by returning errors for get_node_info call
+  FakeNodeServicerForFailureScenarios *svcr(
+      new FakeNodeServicerForFailureScenarios(conf_file, "get_node_info=fail"));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  svk::CommandRequest req;
+  svk::CommandResponse *resp = new (svk::CommandResponse);
+  req.set_cluster_id(DEFAULT_CLUSTER_ID);
+  req.set_command_id("allocate_memory");
+  req.set_feature_params(
+      "sla_latency_ns=500;app_name=TestApp;size=1024;logic_module=default");
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status status = client.ProcessControllerCommand(&req, resp);
+  ASSERT_EQ(status.ok(), false);
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest, AllocateMemoryGetDeviceInfoFailure2) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  // Simulate the CXL device failure by returning errors for list_devices call
+  FakeNodeServicerForFailureScenarios *svcr(
+      new FakeNodeServicerForFailureScenarios(conf_file, "list_devices=fail"));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  svk::CommandRequest req;
+  svk::CommandResponse *resp = new (svk::CommandResponse);
+  req.set_cluster_id(DEFAULT_CLUSTER_ID);
+  req.set_command_id("allocate_memory");
+  req.set_feature_params(
+      "sla_latency_ns=500;app_name=TestApp;size=1024;logic_module=default");
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status status = client.ProcessControllerCommand(&req, resp);
+  ASSERT_EQ(status.ok(), false);
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest, AllocateMemoryGetDeviceInfoFailure3) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  // Simulate the CXL device failure by returning error for get_device_info call
+  FakeNodeServicerForFailureScenarios *svcr(
+      new FakeNodeServicerForFailureScenarios(conf_file,
+                                              "get_device_info=fail"));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  svk::CommandRequest req;
+  svk::CommandResponse *resp = new (svk::CommandResponse);
+  req.set_cluster_id(DEFAULT_CLUSTER_ID);
+  req.set_command_id("allocate_memory");
+  req.set_feature_params(
+      "sla_latency_ns=500;app_name=TestApp;size=200;logic_module=default");
+
+  // Since the DRAM device is there, the allocate_memory call should succeed
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status status = client.ProcessControllerCommand(&req, resp);
+  ASSERT_EQ(status.ok(), true);
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest, AllocateMemoryGetDeviceInfoWithExtraLargeCapacity) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  // Simulate the CXL device failure by faking the device id
+  FakeNodeServicerForFailureScenarios *svcr(
+      new FakeNodeServicerForFailureScenarios(conf_file, ""));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+  sleep(5);
+
+  svk::CommandRequest req;
+  svk::CommandResponse *resp = new (svk::CommandResponse);
+  req.set_cluster_id(DEFAULT_CLUSTER_ID);
+  req.set_command_id("allocate_memory");
+  req.set_feature_params(
+      "sla_latency_ns=4500;app_name=TestApp;size=1024;logic_module=default");
+
+  // Since the 3 device total capacity is 600MB, the allocate_memory call should
+  // fail
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status status = client.ProcessControllerCommand(&req, resp);
+  ASSERT_EQ(status.ok(), false);
+
+  unlink(conf_file.c_str());
+  EXPECT_EQ(true, is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
+                                "device localhost_0 with numa 0 and latency "
+                                "200 added to the list for consumption"));
+  EXPECT_EQ(true, is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
+                                "device localhost_1 with numa 1 and latency "
+                                "1200 added to the list for consumption"));
+  EXPECT_EQ(true, is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
+                                "device localhost_2 with numa 2 and latency "
+                                "3200 added to the list for consumption"));
+  EXPECT_EQ(true, is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
+                                "No device found for the given latency or "
+                                "enough free capacity available"));
+}
+
+TEST(InitIntegrationTest, GetDeviceLatencyRequirements) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  // Using the servicer just for simulating the smaller capacity devices
+  FakeNodeServicerForFailureScenarios *svcr(
+      new FakeNodeServicerForFailureScenarios(conf_file, ""));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+  sleep(5);
+
+  std::vector<DeviceInfo> app_devices;
+  int status = g_sla_device_hlpr->GetDeviceForLatencyRequirements(
+      4500, 500, "localhost", -1, app_devices);
+  EXPECT_EQ(status, 0);
+  EXPECT_EQ(app_devices.size(), 3);
+
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest, GetDeviceLatencyRequirementsForInvalidHost) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  // Using the servicer just for simulating the smaller capacity devices
+  FakeNodeServicerForFailureScenarios *svcr(
+      new FakeNodeServicerForFailureScenarios(conf_file, ""));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+  sleep(5);
+
+  std::vector<DeviceInfo> app_devices;
+  int status = g_sla_device_hlpr->GetDeviceForLatencyRequirements(
+      4500, 500, "localhost1", -1, app_devices);
+  EXPECT_EQ(status, -1);
+  EXPECT_EQ(app_devices.size(), 0);
+
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest, UnregisterDevices) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  // Using the servicer just for simulating the smaller capacity devices
+  FakeNodeServicerForFailureScenarios *svcr(
+      new FakeNodeServicerForFailureScenarios(conf_file, ""));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+  sleep(5);
+
+  // Unregister the devices for the node "localhost"
+  int status = g_sla_device_hlpr->UnregisterDevicesForNode("localhost");
+  EXPECT_EQ(status, 0);
+  // Try to get all the devices to see if the device is still there
+  std::vector<DeviceInfo> app_devices;
+  status = g_sla_device_hlpr->GetDeviceForLatencyRequirements(
+      4500, 500, "localhost", -1, app_devices);
+  EXPECT_EQ(status, -1);
+  EXPECT_EQ(app_devices.size(), 0);
+
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest, UnregisterDevicesForInUseDevice) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  // Using the servicer just for simulating the smaller capacity devices
+  FakeNodeServicerForFailureScenarios *svcr(
+      new FakeNodeServicerForFailureScenarios(conf_file, ""));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+  sleep(5);
+
+  // Get all the devices with the node "localhost"
+  std::vector<DeviceInfo> app_devices;
+  int status = g_sla_device_hlpr->GetDeviceForLatencyRequirements(
+      4500, 500, "localhost", -1, app_devices);
+  EXPECT_EQ(status, 0);
+  EXPECT_EQ(app_devices.size(), 3);
+
+  // Unregister the devices for the node "localhost"
+  status = g_sla_device_hlpr->UnregisterDevicesForNode("localhost");
+  EXPECT_EQ(status, 0);
+
+  EXPECT_EQ(true,
+            is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
+                          "device localhost_0 with numa 0 is still in use"));
+
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest, UpdateDeviceStatus) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  // Using the servicer just for simulating the smaller capacity devices
+  FakeNodeServicerForFailureScenarios *svcr(
+      new FakeNodeServicerForFailureScenarios(conf_file, ""));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+  sleep(5);
+
+  // Get all the devices with the node "localhost"
+  std::vector<DeviceInfo> app_devices;
+  int status = g_sla_device_hlpr->GetDeviceForLatencyRequirements(
+      4500, 500, "localhost", -1, app_devices);
+  EXPECT_EQ(status, 0);
+  EXPECT_EQ(app_devices.size(), 3);
+
+  // Unregister the devices for the node "localhost"
+  status = g_sla_device_hlpr->UpdateAllDevicesWithStatus(
+      "localhost", Device_Status_E::DEVICE_OFFLINE);
+  EXPECT_EQ(status, 0);
+
+  DeviceInfo dev;
+  status = g_sla_device_hlpr->GetDeviceInfo("localhost_0", dev);
+  EXPECT_TRUE(dev.internal_status == Device_Status_E::DEVICE_OFFLINE);
+
+  // Expect the node is coming online with the devices marked as faulty.
+  // Status should not change to online from faulty
+  status = g_sla_device_hlpr->UpdateAllDevicesWithStatus(
+      "localhost", Device_Status_E::DEVICE_FAULTY);
+  EXPECT_EQ(status, 0);
+
+  status = g_sla_device_hlpr->UpdateAllDevicesWithStatus(
+      "localhost", Device_Status_E::DEVICE_ONLINE);
+  EXPECT_EQ(status, 0);
+
+  status = g_sla_device_hlpr->GetDeviceInfo("localhost_0", dev);
+  EXPECT_TRUE(dev.internal_status == Device_Status_E::DEVICE_FAULTY);
+
+  unlink(conf_file.c_str());
 }
