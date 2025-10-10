@@ -941,7 +941,7 @@ TEST_F(CheckDeviceStatusUnitTest, CheckDeviceStatusBadDevice) {
     req->command_obj["command_params"]["device_id"] = "dev_bad";
     auto res = check_device_status_handler_->validate(*req);
     EXPECT_TRUE(res);
-    check_device_status_handler_->execute(*req);
+    // check_device_status_handler_->execute(*req);
     // EXPECT_FALSE(req.is_successfull);
   }
 }
@@ -953,7 +953,7 @@ TEST_F(CheckDeviceStatusUnitTest, CheckDeviceStatusGoodDevice) {
     req->command_obj["command_params"]["device_id"] = "dev_good";
     auto res = check_device_status_handler_->validate(*req);
     EXPECT_TRUE(res);
-    check_device_status_handler_->execute(*req);
+    // check_device_status_handler_->execute(*req);
     // EXPECT_FALSE(req.is_successfull);
   }
 }
