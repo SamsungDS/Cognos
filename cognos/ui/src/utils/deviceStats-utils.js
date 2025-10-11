@@ -20,15 +20,15 @@ export const ENABLE_TIME_FILTER = false;
 
 // Stat key mapping for different metrics
 export const STAT_KEYS = {
-    capacity: 'cxl_capacity',
-    usage: 'cxl_usage',
-    bandwidth: 'cxl_bandwidth',
+    capacity: 'total_memory_MB',
+    usage: 'used_memory_MB',
+    bandwidth: 'total_bandwidth_MBps',
     temperature: 'fpga_temp_in_F'
 };
 
 // API Configuration
 export const API_CONFIG = {
-    USE_MOCK: true, // Set to false when actual API is ready
+    USE_MOCK: false, // Set to false when actual API is ready
     BASE_URL: constants.Configs.api_endpoint,
     ENDPOINTS: {
         TOPOLOGY: '/topology',

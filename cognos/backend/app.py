@@ -228,6 +228,17 @@ def create_app(mock=False):
             cognos.get_events()
         )
 
+    @app.post(f"/api/{CAL_API_VERSION}/device_stats")
+    def get_device_stats():
+        CAL_LOGGER.debug(
+            helper.serialize_request_metadata(
+                helper.get_request_metadata(request)
+            )
+        )
+        return helper.create_response_from_payload(
+            cognos.get_device_stats()
+        )
+
     return app
 
 

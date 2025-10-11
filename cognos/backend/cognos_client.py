@@ -754,3 +754,14 @@ class Cognos(BaseControlInterface):
 
     def get_events(self):
         return self.influx_client.get_cognos_events_past(1)
+
+    def get_device_stats(self) -> List:
+        try:
+            request_data = request.get_json()
+            device_id = request_data["device_id"]
+            stat_key = request_data["stat_key"]
+            if not device_id or not stat_key:
+                raise ValueError("Failed to get input request data /device_stats")
+            return self.influx_client.get_cognos_device_stats(1, device_id, stat_key)
+        except Exception as error:
+            print(f"Failure in processing /device_stats request: {str(error)}")
