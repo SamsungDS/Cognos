@@ -104,6 +104,7 @@ static std::string get_sla_deviation_data(std::string feature_name,
   json_map["category"] = feature_name;
   json_map["severity"] = "warning";
   json_map["feature_name"] = feature_name;
+  json_map["msg"] = "Downgraded SLA detected";
 
   json_map["source"] = "node";
   json_map["source_type"] = host_name;
@@ -1120,19 +1121,36 @@ TEST(InitIntegrationTest, ControllerNodeServicerStartWithSLAEvent) {
   req.set_cluster_id(DEFAULT_CLUSTER_ID);
   req.set_command_id("allocate_memory");
   req.set_feature_params(
-      "sla_latency_ns=1000;app_name=TestApp;size=1024;logic_module=default");
+      "sla_latency_ns=1200;app_name=TestApp;size=1024;logic_module=default");
 
   Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
   Status status = client.ProcessControllerCommand(&req, resp);
   ASSERT_EQ(status.ok(), true);
 
   std::string json_data_str = get_sla_deviation_data(
-      SLAT_FEATURE_MODULE_NAME, "0", "localhost", "TestApp", 2000);
+      SLAT_FEATURE_MODULE_NAME, "1", "localhost", "TestApp", 2000);
   rc = publish_event_data_to_core((char *)"alerts",
                                   (uint8_t *)json_data_str.c_str(),
                                   json_data_str.length());
   std::cout << "Published data result successfully" << std::endl;
   sleep(2);
+
+  // Receive the events and check for SLA event as well as Auto tier event from
+  // controller itself
+  svk::EventRequest event_req;
+  Status event_status;
+  svk::EventResponse *event_resp = new (svk::EventResponse);
+  event_req.set_command_name("cluster_events");
+
+  event_status = client.EventAPI(&event_req, event_resp);
+  ASSERT_EQ(event_status.ok(), true);
+  std::cout << "event response is " << event_resp->response() << std::endl;
+  EXPECT_NE(std::string::npos,
+            event_resp->response().find(
+                "Initiated Auto-tiering for the app TestApp from the "
+                "NUMA node 1 to NUMA node 0"));
+  EXPECT_NE(std::string::npos,
+            event_resp->response().find("Downgraded SLA detected"));
 
   StopAllThreads(c_svcr);
   StopEventProcessingThread(c_svcr);
@@ -1148,7 +1166,7 @@ TEST(InitIntegrationTest, ControllerNodeServicerStartWithSLAEvent) {
   file.close();
   EXPECT_EQ(true,
             filedata.find(
-                "Device name localhost_0 on host localhost for the app TestApp "
+                "Device name localhost_1 on host localhost for the app TestApp "
                 "deviated than expected - Reported latency_ns = 2000") !=
                 std::string::npos);
 
@@ -1969,6 +1987,21 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForRASOperation) {
 
   std::cout << "Published data result " << rc << std::endl;
   sleep(2);
+
+  // Receive the events and check for SLA event as well as data migration event
+  // from controller itself
+  svk::EventRequest event_req;
+  Status event_status;
+  svk::EventResponse *event_resp = new (svk::EventResponse);
+  event_req.set_command_name("cluster_events");
+
+  event_status = client.EventAPI(&event_req, event_resp);
+  ASSERT_EQ(event_status.ok(), true);
+  std::cout << "event response is " << event_resp->response() << std::endl;
+  EXPECT_NE(std::string::npos,
+            event_resp->response().find(
+                "Initiated data migration for the app TESTAPPRAS from the "
+                "NUMA node 1 to NUMA node 0"));
 
   StopAllThreads(c_svcr);
   StopEventProcessingThread(c_svcr);

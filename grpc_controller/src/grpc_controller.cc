@@ -32,6 +32,49 @@ std::unique_ptr<Client> CreateClient(const std::string &node_name,
   return std::make_unique<Client>(node_name, node_port);
 }
 
+static long get_epoch_string() {
+  return std::chrono::duration_cast<std::chrono::seconds>(
+             std::chrono::system_clock::now().time_since_epoch())
+      .count();
+}
+
+int GenerateControllerEvent(std::string host_name, std::string app_name,
+                            std::string message) {
+  json event_data;
+  json event_header;
+  json event_payload;
+  json observations_map;
+
+  int status = -1;
+  std::string log_msg;
+
+  observations_map["host_name"] = host_name;
+  observations_map["app_name"] = app_name;
+
+  event_payload["domain"] = "observability";
+  event_payload["feature_name"] = "controller";
+  event_payload["category"] = "sla";
+  event_payload["severity"] = "info";
+  event_payload["msg"] = message;
+  event_payload["source"] = "node";
+  event_payload["source_type"] = host_name;
+  event_payload["timestamp"] = get_epoch_string();
+  event_payload["observations"] = observations_map;
+
+  event_header["node_name"] = host_name;
+  event_header["cluster_name"] = "";
+
+  event_data["event_header"] = event_header;
+  event_data["event_payload"] = event_payload;
+
+  status = insert_event_to_controller_map(event_data);
+  if (status != 0) {
+    log_msg = "Error in inserting the controller event into queue";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR, log_msg.c_str());
+  }
+  return status;
+}
+
 int SendCommandToNodeInJSON(std::string node_name, std::string node_port,
                             svk::CommandRequest &req,
                             svk::CommandResponse &resp);
@@ -1887,6 +1930,15 @@ void ProcessRASEvent(json json_data, ControllerServicer *svcr) {
     req.set_command_params(command_params);
     SendCommandToNodeInJSON(node_name, node_port, req, resp);
     // TODO: Add error checks
+
+    // Generate a controller event to indicate the move_all initiated
+    controller_config config = svcr->get_svk_config();
+    std::string message = "Initiated data migration for the app " +
+                          ras_reported_app_name + " from the NUMA node " +
+                          ras_reported_device_numa + " to NUMA node " +
+                          std::to_string(dst_numa);
+    GenerateControllerEvent(config.controller_id, ras_reported_app_name,
+                            message);
   }
 
   // Set App Info for the replacement device
@@ -1998,6 +2050,15 @@ void ProcessSLAEvent(json json_data, ControllerServicer *svcr) {
     std::string command_params_str = json_data.dump();
     req.set_command_params(command_params_str);
     SendCommandToNodeInJSON(node_name, node_port, req, resp);
+
+    // Generate an event for the "move" initiated by the controller
+    controller_config config = svcr->get_svk_config();
+    std::string message = "Initiated Auto-tiering for the app " +
+                          slat_reported_app_name + " from the NUMA node " +
+                          std::to_string(slat_reported_numa) +
+                          " to NUMA node " + std::to_string(dst_numa);
+    GenerateControllerEvent(config.controller_id, slat_reported_app_name,
+                            message);
 
     // Enable SLA tracking for the replacement device
     json devices = json::array();
