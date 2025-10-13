@@ -10,7 +10,8 @@
 #define LOW_POLL 15
 #define HIGH_POLL 120
 #define CRITICAL_ERROR_COUNT 25
-#define RAS_ERROR_INJECTION_MONITOR_LOG "/var/log/svk/ras_err_injection_monitor.log"
+#define RAS_ERROR_INJECTION_MONITOR_LOG \
+  "/var/log/svk/ras_err_injection_monitor.log"
 
 using namespace std;
 
