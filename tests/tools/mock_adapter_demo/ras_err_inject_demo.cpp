@@ -10,6 +10,7 @@
 #define LOW_POLL 15
 #define HIGH_POLL 120
 #define CRITICAL_ERROR_COUNT 25
+#define RAS_ERROR_INJECTION_MONITOR_LOG "/var/log/svk/ras_err_injection_monitor.log"
 
 using namespace std;
 
@@ -92,6 +93,10 @@ int main(int argc, char *argv[]) {
   if (rc != SVK_STATUS_SUCCESS) {
     return rc;
   }
+
+  // Over-ride the log file name for this application
+  ras_configs->log_file_name = RAS_ERROR_INJECTION_MONITOR_LOG;
+
   // initialization in the ras_logger_init function
   if (svk_logger_init(RAS_LOGGER, ras_configs->log_file_name.c_str(),
                       log_level_map.at(ras_configs->log_level),
