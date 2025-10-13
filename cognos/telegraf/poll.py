@@ -22,7 +22,10 @@ try:
 # pragma: no cover
 except Exception as error:
     print(
-        f"Unable to retrieve collector configs: {str(error)} config file path: {config_file_path}",
+        (
+            f"Unable to retrieve collector configs: {error}. "
+            f"Config file path: {config_file_path}"
+        ),
         file=sys.stderr
     )
     raise RuntimeError()
@@ -89,7 +92,8 @@ def get_cluster_nodes(cluster):
     payload = json.loads(output["commandResponse"])
     # print("CLuster nodes: ")
     # print(payload)
-    # {'clusters': [{'cluster_name': 'CL_ID_1', 'nodes': [{'node_name': 'node_1', 'status': 'online'}]}]}
+    # {'clusters': [{'cluster_name': 'CL_ID_1', 'nodes': [{'node_name':
+    #  'node_1', 'status': 'online'}]}]}
     nodes = []
     for c in payload['clusters']:
         for node in c['nodes']:

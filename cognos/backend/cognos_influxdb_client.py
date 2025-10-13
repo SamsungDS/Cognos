@@ -142,9 +142,13 @@ class CognosInfluxDBClient:
         try:
             tables = self.read_client.query(
                 f"""
-                from(bucket: "internal")
+                    from(bucket: "internal")
                     |> range(start: -{time_in_mins}m)
-                    |> filter(fn: (r) => r._measurement == "stats" and r.source == "{device}" and r._field == "{stats_key}")
+                    |> filter(
+                    fn: (r) => r._measurement == "stats" and
+                    r.source == "{device}" and
+                    r._field == "{stats_key}"
+                    )
                 """,
                 params=params
             )
@@ -169,7 +173,7 @@ class CognosInfluxDBClient:
                     data_set[curr_time] = {field: value}
                 elif field not in data_set[curr_time].keys():
                     data_set[curr_time][field] = value
-            
+
             ordered_timeset = sorted(list(time_set))
             export_data = {device_id: []}
             for t in ordered_timeset:
@@ -178,7 +182,11 @@ class CognosInfluxDBClient:
                 export_data[device_id].append([metric_time, stats_key, value])
             return export_data
         except Exception as error:
-            print(f"Failed to query for device stats from InfluxDB: {str(error)}")
+            print(
+                (
+                    f"Failed to query for device stats from InfluxDB: {error}"
+                )
+            )
 
     def get_cognos_events_past(self, time_in_mins):
         params = {"_desc": False}
@@ -284,7 +292,8 @@ class CognosInfluxDBClient:
     #         f"""
     #         from(bucket:"internal")
     #             |> range(start: -60s)
-    #             |> filter(fn: (r) => r.source_type == "device" and contains(value: r.source, set: {devices_str}))
+    #             |> filter(fn: (r) => r.source_type == "device" and
+    #                contains(value: r.source, set: {devices_str}))
     #             |> keep(columns: ["_time", "_field", "_value"])
     #             |> sort(columns: ["_time"], desc: _desc)
     #             |> filter(fn: (r) => r._field == "{metric_type}")
