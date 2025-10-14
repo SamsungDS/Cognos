@@ -71,8 +71,6 @@ extern "C" svk_status initialize(void *details) {
   // Definition of g_monitor_interval
   if ((ras_configs->monitor_interval >= 15))
     g_monitor_interval = ras_configs->monitor_interval;
-  else
-    g_monitor_interval = 60;
 
   // TODO: in the next version with more stuff to init in this function
   // we should refactor this init function and put logger related map &

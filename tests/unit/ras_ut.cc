@@ -1026,6 +1026,8 @@ TEST_F(CheckDeviceStatusUnitTest, CheckConfigFileWithoutMonitorInterval) {
     ras_conf_path = env_p;
   }
   EXPECT_TRUE(ras_conf_path.length() > 0);
+  initialize(nullptr);
+  EXPECT_EQ(SVK_STATUS_SUCCESS, clean_up(nullptr));
 
   ras_conf *ras_configs = new ras_conf();
   rc = parsing_ras_conf(ras_conf_path, ras_configs);
