@@ -69,7 +69,7 @@ extern "C" svk_status initialize(void *details) {
     return rc;
   }
   // Definition of g_monitor_interval
-  if ((ras_configs->monitor_interval >= 15))
+  if (ras_configs->monitor_interval >= 15)
     g_monitor_interval = ras_configs->monitor_interval;
 
   // TODO: in the next version with more stuff to init in this function
