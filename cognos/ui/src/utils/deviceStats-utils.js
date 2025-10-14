@@ -149,24 +149,29 @@ export const apiService = {
 
     // Format timestamp based on your time display needs
     formatTimestamp(timestamp) {
+        // Handle string format with colons (HH:MM or HH:MM:SS)
         if (typeof timestamp === 'string' && /^\d{1,2}:\d{2}(:\d{2})?$/.test(timestamp)) {
             const parts = timestamp.split(':');
-            return `${parts[0].padStart(2, '0')}:${parts[1]}`;
+            const hours = parts[0].padStart(2, '0');
+            const minutes = parts[1];
+            const seconds = parts[2] ? parts[2] : '00';
+            return `${hours}:${minutes}:${seconds}`;
         }
-
+        
+        // Handle Date object or timestamp number
         const date = new Date(timestamp);
-
         if (isNaN(date.getTime())) {
             console.warn(`Invalid timestamp: ${timestamp}`);
             return timestamp;
         }
-
+        
         return date.toLocaleTimeString('en-US', {
             hour: '2-digit',
             minute: '2-digit',
+            second: '2-digit',
             hour12: false
         });
-    },
+    }
 
 };
 

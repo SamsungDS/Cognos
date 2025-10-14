@@ -57,9 +57,6 @@ class CognosInfluxDBClient:
         self.selected_host = None
         self.mock = mock
 
-        # print("PRINTING OUT GET DEVICE STATS")
-        # self.get_cognos_device_stats(1, "33235991715328", 'fpga_temp_in_F')
-
     def write_cognos_event(self, event: Dict) -> None:
         """
         Takes the following schema from Cognos Agent event collectors and
@@ -129,15 +126,6 @@ class CognosInfluxDBClient:
 
     def get_cognos_device_stats(self, time_in_mins, device, stats_key):
         params = {"_desc": True}
-        # cols_string = (
-        #     '["_time", "_measurement", "_field", "_value", '
-        #     '"cluster_name", "node_name", "msg", "domain", "feature_name", '
-        #     '"category", "severity", "source", "source_type"]'
-        # ).strip('\n')
-        # tags_string = (
-        #     '["cluster_name", "node_name", "domain", "msg", "feature_name", '
-        #     '"category", "severity", "source", "source_type"]'
-        # )
 
         try:
             tables = self.read_client.query(
@@ -160,7 +148,6 @@ class CognosInfluxDBClient:
             }
             """
             device_id = flux_query_output[0]['source']
-            # data_points = []
             time_set = set()
             data_set = {}
             for data_point in flux_query_output:
@@ -284,25 +271,6 @@ class CognosInfluxDBClient:
             print(
                 f"Failed to query for cognos events..: {str(error)}"
             )
-
-    # def get_device_stats(self, devices, metric_type):
-    #     params = {"_desc": True}
-    #     devices_str = "[" + ",".join([f"\"{d}\"" for d in devices]) + "]"
-    #     tables = self.read_client.query(
-    #         f"""
-    #         from(bucket:"internal")
-    #             |> range(start: -60s)
-    #             |> filter(fn: (r) => r.source_type == "device" and
-    #                contains(value: r.source, set: {devices_str}))
-    #             |> keep(columns: ["_time", "_field", "_value"])
-    #             |> sort(columns: ["_time"], desc: _desc)
-    #             |> filter(fn: (r) => r._field == "{metric_type}")
-    #         """,
-    #         params=params,
-    #     )
-    #     output = tables.to_json()
-    #     data = json.loads(output)
-    #     print(f"DEVICE STATS DATA: {data}")
 
     def get_recent_dram_cxl_usage_data(self) -> List[List]:
         """
@@ -671,8 +639,3 @@ class CognosInfluxDBClient:
             "used_capacity": used_capacity,
             "used_capacity_percentage": used_capacity_percentage,
         }
-
-
-if __name__ == "__main__":
-    influx_cl
-    get_cognos_device_stats()

@@ -90,15 +90,12 @@ def get_cluster_nodes(cluster):
     )
     output = response.json()
     payload = json.loads(output["commandResponse"])
-    # print("CLuster nodes: ")
-    # print(payload)
     # {'clusters': [{'cluster_name': 'CL_ID_1', 'nodes': [{'node_name':
     #  'node_1', 'status': 'online'}]}]}
     nodes = []
     for c in payload['clusters']:
         for node in c['nodes']:
             nodes.append(node['node_name'])
-    # print(f"Nodes in cluster: {cluster} are {nodes}")
     return nodes
 
 
@@ -121,10 +118,8 @@ def get_device_ids(cluster, node):
     devices = (
         json.loads(response.json()['response'][0])['devices']
     )
-    # print(f"DEVICES: {devices}")
     for dev in devices:
         device_ids.append(dev['device_id'])
-    # print(f"DEVICE IDS: {device_ids}")
     return device_ids
 
 
@@ -172,7 +167,6 @@ def get_cognos_device_stats():
 
     # step 3: Format data into flux line protocol
     convert_stats_to_influx_line_protocol(device_stats)
-    return
 
 
 def get_cognos_events():

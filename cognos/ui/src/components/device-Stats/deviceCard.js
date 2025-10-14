@@ -198,8 +198,12 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
             .range([0, width])
             .padding(0.1);
 
+        const allValues = Object.values(deviceMetrics)
+            .flatMap(metricData => metricData.map(d => d.value));
+        const maxValue = Math.max(...allValues, 0);
+        const yMax = Math.ceil(maxValue * 2);
         const yScale = d3.scaleLinear()
-            .domain([0, 100])
+            .domain([0, yMax])
             .range([height, 0]);
 
         const line = d3.line()
@@ -240,6 +244,17 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
             .selectAll('text')
             .attr('fill', '#888')
             .style('font-size', fontSize);
+
+        const y_axis_label = Object.values(selectedMetrics)[0];
+        // Add Y-axis label with dynamic text
+        g.append('text')
+            .attr('transform', 'rotate(-90)')
+            .attr('x', -height / 2)
+            .attr('y', -margin.left + 7.5)
+            .attr('text-anchor', 'middle')
+            .attr('fill', '#fff')
+            .style('font-size', fontSize)
+            .text(`${y_axis_label}`);
 
         g.selectAll('.domain').attr('stroke', '#555');
         g.selectAll('.tick line').attr('stroke', '#555');
