@@ -1002,10 +1002,37 @@ TEST_F(CheckDeviceStatusUnitTest, CheckConfigFile) {
   ras_conf *ras_configs = new ras_conf();
   rc = parsing_ras_conf(ras_conf_path, ras_configs);
   EXPECT_TRUE(rc == SVK_STATUS_SUCCESS);
-  EXPECT_TRUE(ras_configs->monitor_interval >= 15 &&
-              ras_configs->monitor_interval <= 120);
+  EXPECT_TRUE(ras_configs->monitor_interval >= 15);
 }
 
+TEST_F(CheckDeviceStatusUnitTest, CheckConfigFileWithoutMonitorInterval) {
+  boost::property_tree::ptree top_conf;
+  boost::property_tree::ptree logger_conf;
+  logger_conf.put("log_level", "TRACE");  // disable the "INFO" level logging
+  logger_conf.put("log_file_name", RAS_LOG);
+  logger_conf.put("log_file_count", 1);
+  logger_conf.put("log_file_size", 1048576);
+  logger_conf.put("sink_type", "rotating_file");
+
+  top_conf.put_child("ras.logger", logger_conf);
+  top_conf.put("ras.adapters_directory", RAS_UT_ADAPTERS_DIR);
+  boost::property_tree::write_json("conf1.json", top_conf);
+
+  setenv("SVK_RAS_CONFIG1", "conf1.json", true);
+  svk_status rc = SVK_STATUS_FAIL;
+  std::string ras_conf_path;
+  const char *env_p;
+  if ((env_p = std::getenv("SVK_RAS_CONFIG1")) != nullptr) {
+    ras_conf_path = env_p;
+  }
+  EXPECT_TRUE(ras_conf_path.length() > 0);
+
+  ras_conf *ras_configs = new ras_conf();
+  rc = parsing_ras_conf(ras_conf_path, ras_configs);
+  EXPECT_TRUE(rc == SVK_STATUS_SUCCESS);
+  EXPECT_TRUE(ras_configs->monitor_interval >= 15);
+  EXPECT_TRUE(ras_configs->monitor_interval == 60);
+}
 TEST_F(CheckDeviceStatusUnitTest, AddReliabilityMonitoringForADevice) {
   setenv("SVK_RAS_CONFIG", "conf.json", true);
   initialize(nullptr);
