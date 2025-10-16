@@ -44,7 +44,5 @@ int SVKThread::stop(void) {
   rc = -pthread_join(st_h.h_id, NULL);
   if (rc == 0) st_state = STS_STOPPED;
 
-  pthread_exit(NULL);
-
   return rc;
 }
