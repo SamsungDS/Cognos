@@ -33,6 +33,7 @@
 #define RAS_LOGGER_FILE_NAME_DEFAULT "/var/log/svk/ras.log"
 #define RAS_LOGGER_FILE_COUNT_DEFAULT 1
 #define RAS_LOGGER_FILE_SIZE_DEFAULT 1048576
+#define RAS_MONITOR_INTERVAL_DEFAULT 60
 #define RAS_LOGGER_SINK_TYPE_DEFAULT "rotating_file"
 
 #define RAS_DEFAULT_ADAPTERS_DIRECTORY "/usr/local/svk/ras/adapters"
@@ -68,6 +69,7 @@ typedef struct {
   std::string log_file_name;
   uint64_t log_file_count;
   uint64_t log_file_size;
+  uint64_t monitor_interval;
   std::string log_sink_type;
   std::string adapters_directory;
 } ras_conf;
@@ -80,4 +82,6 @@ struct ras_context_s {
   ras_adapter_helper *ras_adapter_helper_;
   std::mutex ctx_mutex;
 };
+extern uint64_t g_monitor_interval;
+svk_status parsing_ras_conf(std::string, ras_conf *);
 #endif  // __RAS_HPP__

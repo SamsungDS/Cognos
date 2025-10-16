@@ -2,6 +2,7 @@
 #define _RAS_MONITOR_H_
 
 #include "RequestProcessor.h"
+#include "ras.hpp"
 #include "ras_command_handlers.hpp"
 #include "ras_device.h"
 #include "ras_request.h"

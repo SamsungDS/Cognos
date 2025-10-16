@@ -9,6 +9,8 @@
 struct ras_context_s g_ras_context = {.monitor_context = nullptr,
                                       .initialized = false};
 
+uint64_t g_monitor_interval;
+
 svk_status parsing_ras_conf(std::string ras_conf_path, ras_conf *ras_configs) {
   boost::property_tree::ptree root_conf;
   static boost::property_tree::ptree logger_conf;
@@ -34,6 +36,8 @@ svk_status parsing_ras_conf(std::string ras_conf_path, ras_conf *ras_configs) {
       logger_conf.get<int>("log_file_count", RAS_LOGGER_FILE_COUNT_DEFAULT);
   ras_configs->log_file_size =
       logger_conf.get<int>("log_file_size", RAS_LOGGER_FILE_SIZE_DEFAULT);
+  ras_configs->monitor_interval =
+      logger_conf.get<int>("monitor_interval", RAS_MONITOR_INTERVAL_DEFAULT);
   ras_configs->log_sink_type =
       logger_conf.get<std::string>("sink_type", RAS_LOGGER_SINK_TYPE_DEFAULT);
 
@@ -64,6 +68,10 @@ extern "C" svk_status initialize(void *details) {
   if (rc != SVK_STATUS_SUCCESS) {
     return rc;
   }
+  // Definition of g_monitor_interval
+  if (ras_configs->monitor_interval >= 15)
+    g_monitor_interval = ras_configs->monitor_interval;
+
   // TODO: in the next version with more stuff to init in this function
   // we should refactor this init function and put logger related map &
   // initialization in the ras_logger_init function

@@ -11,6 +11,7 @@
 #include <optional>
 #include <unordered_map>
 
+#include "ras.hpp"
 #include "ras_device.h"
 #include "ras_exports.h"
 #include "svk_logger.hpp"
@@ -34,7 +35,8 @@ using json = nlohmann::json;
 #define RAS_RESULT_MESSAGE_STR_CMD_INVALID "Invalid command"
 #define RAS_RESULT_MESSAGE_STR_CMD_PARAMS_INVALID "Invalid command parameters"
 
-#define RAS_DEVICE_DEFAULT_MONITOR_INTERVAL (60)
+#define RAS_DEVICE_DEFAULT_MONITOR_INTERVAL g_monitor_interval
+
 class ras_monitor;
 
 class ras_request {
