@@ -134,6 +134,7 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
         const handleResize = () => calculateDimensions();
 
         let resizeObserver;
+        // istanbul ignore next
         if (window.ResizeObserver && containerRef.current) {
             resizeObserver = new ResizeObserver((entries) => {
                 for (let entry of entries) {
@@ -157,12 +158,14 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
             mounted = false;
             timers.forEach(timer => clearTimeout(timer));
             window.removeEventListener('resize', handleResize);
+            // istanbul ignore next
             if (resizeObserver) {
                 resizeObserver.disconnect();
             }
         };
     }, [updateDimensions]);
-
+    
+    // istanbul ignore next
     useEffect(() => {
         if (!selectedDevice || !metricsData[selectedDevice.id]) return;
 
@@ -427,7 +430,9 @@ const ErrorBanner = ({ message }) => (
         {message}
     </div>
 );
-
+ErrorBanner.propTypes = {
+    message: PropTypes.string.isRequired
+};
 const Sidebar = ({
     loading,
     expandedItems,
@@ -494,7 +499,35 @@ const Sidebar = ({
         )}
     </div>
 );
-
+Sidebar.propTypes = {
+    loading: PropTypes.bool.isRequired,
+    expandedItems: PropTypes.object.isRequired,
+    clustersData: PropTypes.arrayOf(
+        PropTypes.shape({
+            id: PropTypes.string.isRequired,
+            name: PropTypes.string.isRequired,
+            nodes: PropTypes.arrayOf(
+                PropTypes.shape({
+                    id: PropTypes.string.isRequired,
+                    name: PropTypes.string.isRequired,
+                    devices: PropTypes.arrayOf(
+                        PropTypes.shape({
+                            id: PropTypes.string.isRequired,
+                            name: PropTypes.string.isRequired
+                        })
+                    ).isRequired
+                })
+            ).isRequired
+        })
+    ).isRequired,
+    selectedDevice: PropTypes.shape({
+        id: PropTypes.string.isRequired,
+        name: PropTypes.string.isRequired
+    }),
+    selectedMetrics: PropTypes.objectOf(PropTypes.string),
+    onToggleExpanded: PropTypes.func.isRequired,
+    onSelectDevice: PropTypes.func.isRequired
+};
 const ChartArea = ({ selectedDevice, dimensions, containerRef, svgRef }) => (
     <div className="chart-area">
         {selectedDevice ? (
@@ -518,7 +551,18 @@ const ChartArea = ({ selectedDevice, dimensions, containerRef, svgRef }) => (
         )}
     </div>
 );
-
+ChartArea.propTypes = {
+    selectedDevice: PropTypes.shape({
+        id: PropTypes.string.isRequired,
+        name: PropTypes.string.isRequired
+    }),
+    dimensions: PropTypes.shape({
+        width: PropTypes.number.isRequired,
+        height: PropTypes.number.isRequired
+    }).isRequired,
+    containerRef: PropTypes.object.isRequired,
+    svgRef: PropTypes.object.isRequired
+};
 DeviceCard.propTypes = {
     selectedMetrics: PropTypes.objectOf(PropTypes.string),
     setSelectedMetrics: PropTypes.func

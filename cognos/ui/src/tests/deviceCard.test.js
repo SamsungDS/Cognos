@@ -18,7 +18,7 @@ jest.mock('../utils/deviceStats-utils', () => ({
     ],
     apiService: {
         fetchClusters: jest.fn(),
-        fetchMetrics: jest.fn()
+        fetchDeviceStats: jest.fn()
     },
     getMarginForTimeFilter: jest.fn(() => ({
         top: 20,
@@ -28,17 +28,14 @@ jest.mock('../utils/deviceStats-utils', () => ({
     }))
 }));
 
-// Mock CSS import
 jest.mock('../components/device-Stats/deviceCard.css', () => ({}));
 
-// Mock MetricItem component
 jest.mock('../components/device-Stats/MetricItem', () => {
     return function MetricItem({ label }) {
         return <div data-testid={`metric-item-${label}`}>{label}</div>;
     };
 });
 
-// Mock TreeItem component
 jest.mock('../components/device-Stats/TreeItem', () => {
     return function TreeItem({ label, children, isExpanded, toggleExpanded, onClick, isSelected, level }) {
         return (
@@ -64,7 +61,6 @@ jest.mock('../components/device-Stats/TreeItem', () => {
     };
 });
 
-// Mock d3
 jest.mock('d3', () => ({
     select: jest.fn(() => ({
         selectAll: jest.fn().mockReturnThis(),
@@ -114,45 +110,42 @@ describe('DeviceCard Component', () => {
                         { id: 'device-1', name: 'Device 1' },
                         { id: 'device-2', name: 'Device 2' }
                     ]
+                },
+                {
+                    id: 'node-2',
+                    name: 'Node 2',
+                    devices: [
+                        { id: 'device-3', name: 'Device 3' }
+                    ]
                 }
             ]
         }
     ];
 
-    const mockMetricsData = {
-        capacity: [
-            { time: '10:00', value: 50 },
-            { time: '11:00', value: 60 }
-        ],
-        usage: [
-            { time: '10:00', value: 30 },
-            { time: '11:00', value: 40 }
-        ],
-        bandwidth: [
-            { time: '10:00', value: 70 },
-            { time: '11:00', value: 80 }
-        ]
-    };
+    const mockMetricsData = [
+        { time: '10:00', value: 50 },
+        { time: '11:00', value: 60 },
+        { time: '12:00', value: 55 }
+    ];
 
     const mockSelectedMetrics = {
-        'CXL Capacity': true,
-        'CXL Usage': true,
-        'CXL Bandwidth': true
+        'CXL Capacity': 'capacity',
+        'CXL Usage': 'usage',
+        'CXL Bandwidth': 'bandwidth'
     };
 
     beforeEach(() => {
         jest.clearAllMocks();
+        jest.useFakeTimers();
         apiService.fetchClusters.mockResolvedValue(mockClustersData);
-        apiService.fetchMetrics.mockResolvedValue(mockMetricsData);
+        apiService.fetchDeviceStats.mockResolvedValue(mockMetricsData);
 
-        // Mock ResizeObserver
         global.ResizeObserver = jest.fn().mockImplementation(() => ({
             observe: jest.fn(),
             unobserve: jest.fn(),
             disconnect: jest.fn()
         }));
 
-        // Mock getBoundingClientRect
         Element.prototype.getBoundingClientRect = jest.fn(() => ({
             width: 800,
             height: 600,
@@ -161,9 +154,16 @@ describe('DeviceCard Component', () => {
             bottom: 600,
             right: 800
         }));
+
+        global.requestAnimationFrame = jest.fn((cb) => {
+            cb();
+            return 1;
+        });
     });
 
     afterEach(() => {
+        jest.runOnlyPendingTimers();
+        jest.useRealTimers();
         jest.restoreAllMocks();
     });
 
@@ -194,7 +194,6 @@ describe('DeviceCard Component', () => {
         });
     });
 
-
     test('displays error message when data loading fails', async () => {
         apiService.fetchClusters.mockRejectedValue(new Error('Network error'));
 
@@ -210,8 +209,7 @@ describe('DeviceCard Component', () => {
         });
     });
 
-  
-    test('shows "Select a device" message when no device is selected', () => {
+    test('shows "Select a device" message when no device is selected', async () => {
         apiService.fetchClusters.mockResolvedValue([]);
 
         render(
@@ -221,13 +219,10 @@ describe('DeviceCard Component', () => {
             />
         );
 
-        // Will show after clusters load with no devices
-        waitFor(() => {
-            expect(screen.queryByText('Select a device to view metrics')).toBeInTheDocument();
+        await waitFor(() => {
+            expect(screen.getByText('Select a device to view metrics')).toBeInTheDocument();
         });
     });
-
-    
 
     test('collapses other clusters when expanding a new one', async () => {
         const multiClusterData = [
@@ -256,10 +251,8 @@ describe('DeviceCard Component', () => {
             expect(screen.getByTestId('toggle-Cluster 2')).toBeInTheDocument();
         });
 
-        // Expand Cluster 2 (Cluster 1 is already expanded by default)
         fireEvent.click(screen.getByTestId('toggle-Cluster 2'));
 
-        // Cluster 2 should now be expanded
         expect(screen.getByTestId('toggle-Cluster 2').textContent).toContain('▼');
     });
 
@@ -275,5 +268,397 @@ describe('DeviceCard Component', () => {
             const svg = document.querySelector('svg');
             expect(svg).toBeInTheDocument();
         });
+    });
+
+    // NEW TESTS FOR INCREASED COVERAGE
+
+    test('automatically expands first cluster, node, and selects first device on mount', async () => {
+        render(
+            <DeviceCard
+                selectedMetrics={mockSelectedMetrics}
+                setSelectedMetrics={jest.fn()}
+            />
+        );
+
+        await waitFor(() => {
+            expect(screen.getByTestId('tree-item-Cluster 1')).toBeInTheDocument();
+        });
+
+        await waitFor(() => {
+            expect(apiService.fetchDeviceStats).toHaveBeenCalledWith('device-1', 'capacity');
+            expect(apiService.fetchDeviceStats).toHaveBeenCalledWith('device-1', 'usage');
+            expect(apiService.fetchDeviceStats).toHaveBeenCalledWith('device-1', 'bandwidth');
+        });
+    });
+
+    test('fetches metrics for newly selected device', async () => {
+        render(
+            <DeviceCard
+                selectedMetrics={mockSelectedMetrics}
+                setSelectedMetrics={jest.fn()}
+            />
+        );
+
+        await waitFor(() => {
+            expect(screen.getByTestId('select-Device 2')).toBeInTheDocument();
+        });
+
+        apiService.fetchDeviceStats.mockClear();
+
+        fireEvent.click(screen.getByTestId('select-Device 2'));
+
+        await waitFor(() => {
+            expect(apiService.fetchDeviceStats).toHaveBeenCalledWith('device-2', 'capacity');
+            expect(apiService.fetchDeviceStats).toHaveBeenCalledWith('device-2', 'usage');
+            expect(apiService.fetchDeviceStats).toHaveBeenCalledWith('device-2', 'bandwidth');
+        });
+    });
+
+    test('handles metrics fetch error when selecting device', async () => {
+        render(
+            <DeviceCard
+                selectedMetrics={mockSelectedMetrics}
+                setSelectedMetrics={jest.fn()}
+            />
+        );
+
+        await waitFor(() => {
+            expect(screen.getByTestId('select-Device 2')).toBeInTheDocument();
+        });
+
+        apiService.fetchDeviceStats.mockRejectedValue(new Error('Metrics error'));
+
+        fireEvent.click(screen.getByTestId('select-Device 2'));
+
+        await waitFor(() => {
+            expect(screen.getByText('Failed to load metrics. Please try again.')).toBeInTheDocument();
+        });
+    });
+
+    test('collapses node when collapsing its parent cluster', async () => {
+        render(
+            <DeviceCard
+                selectedMetrics={mockSelectedMetrics}
+                setSelectedMetrics={jest.fn()}
+            />
+        );
+
+        await waitFor(() => {
+            expect(screen.getByTestId('toggle-Cluster 1')).toBeInTheDocument();
+        });
+
+        // Cluster 1 is expanded by default, collapse it
+        fireEvent.click(screen.getByTestId('toggle-Cluster 1'));
+
+        expect(screen.getByTestId('toggle-Cluster 1').textContent).toContain('▶');
+    });
+
+    test('collapses other nodes when expanding a node in same cluster', async () => {
+        render(
+            <DeviceCard
+                selectedMetrics={mockSelectedMetrics}
+                setSelectedMetrics={jest.fn()}
+            />
+        );
+
+        await waitFor(() => {
+            expect(screen.getByTestId('toggle-Node 2')).toBeInTheDocument();
+        });
+
+        // Node 1 is expanded by default, expand Node 2
+        fireEvent.click(screen.getByTestId('toggle-Node 2'));
+
+        expect(screen.getByTestId('toggle-Node 2').textContent).toContain('▼');
+    });
+
+    test('renders all metric items in sidebar', async () => {
+        render(
+            <DeviceCard
+                selectedMetrics={mockSelectedMetrics}
+                setSelectedMetrics={jest.fn()}
+            />
+        );
+
+        await waitFor(() => {
+            expect(screen.getByTestId('metric-item-CXL Capacity')).toBeInTheDocument();
+            expect(screen.getByTestId('metric-item-CXL Usage')).toBeInTheDocument();
+            expect(screen.getByTestId('metric-item-CXL Bandwidth')).toBeInTheDocument();
+        });
+    });
+
+
+
+    test('handles ResizeObserver updates', async () => {
+        let resizeCallback;
+        global.ResizeObserver = jest.fn().mockImplementation((callback) => {
+            resizeCallback = callback;
+            return {
+                observe: jest.fn(),
+                unobserve: jest.fn(),
+                disconnect: jest.fn()
+            };
+        });
+
+        render(
+            <DeviceCard
+                selectedMetrics={mockSelectedMetrics}
+                setSelectedMetrics={jest.fn()}
+            />
+        );
+
+        await waitFor(() => {
+            expect(screen.getByTestId('tree-item-Clusters')).toBeInTheDocument();
+        });
+
+        if (resizeCallback) {
+            act(() => {
+                resizeCallback([{
+                    contentRect: { width: 900, height: 700 }
+                }]);
+            });
+        }
+
+        expect(screen.getByTestId('tree-item-Clusters')).toBeInTheDocument();
+    });
+
+    test('updates dimensions when device is selected', async () => {
+        render(
+            <DeviceCard
+                selectedMetrics={mockSelectedMetrics}
+                setSelectedMetrics={jest.fn()}
+            />
+        );
+
+        await waitFor(() => {
+            expect(screen.getByTestId('select-Device 2')).toBeInTheDocument();
+        });
+
+        act(() => {
+            fireEvent.click(screen.getByTestId('select-Device 2'));
+        });
+
+        act(() => {
+            jest.advanceTimersByTime(100);
+        });
+
+        expect(screen.getByTestId('tree-item-Clusters')).toBeInTheDocument();
+    });
+
+    test('shows loading message for chart when dimensions are zero', async () => {
+        Element.prototype.getBoundingClientRect = jest.fn(() => ({
+            width: 0,
+            height: 0,
+            top: 0,
+            left: 0,
+            bottom: 0,
+            right: 0
+        }));
+
+        render(
+            <DeviceCard
+                selectedMetrics={mockSelectedMetrics}
+                setSelectedMetrics={jest.fn()}
+            />
+        );
+
+        await waitFor(() => {
+            expect(screen.getByText('Loading chart...')).toBeInTheDocument();
+        });
+    });
+
+    test('does not render chart when metricsData is empty', async () => {
+        apiService.fetchDeviceStats.mockResolvedValue([]);
+
+        render(
+            <DeviceCard
+                selectedMetrics={mockSelectedMetrics}
+                setSelectedMetrics={jest.fn()}
+            />
+        );
+
+        await waitFor(() => {
+            expect(apiService.fetchDeviceStats).toHaveBeenCalled();
+        });
+
+        // Chart should not crash with empty data
+        expect(screen.getByTestId('tree-item-Clusters')).toBeInTheDocument();
+    });
+
+
+    test('handles clusters with no nodes', async () => {
+        const emptyNodesData = [
+            {
+                id: 'cluster-1',
+                name: 'Empty Cluster',
+                nodes: []
+            }
+        ];
+
+        apiService.fetchClusters.mockResolvedValue(emptyNodesData);
+
+        render(
+            <DeviceCard
+                selectedMetrics={mockSelectedMetrics}
+                setSelectedMetrics={jest.fn()}
+            />
+        );
+
+        await waitFor(() => {
+            expect(screen.getByTestId('tree-item-Empty Cluster')).toBeInTheDocument();
+        });
+    });
+
+    test('handles nodes with no devices', async () => {
+        const noDevicesData = [
+            {
+                id: 'cluster-1',
+                name: 'Cluster 1',
+                nodes: [
+                    {
+                        id: 'node-1',
+                        name: 'Empty Node',
+                        devices: []
+                    }
+                ]
+            }
+        ];
+
+        apiService.fetchClusters.mockResolvedValue(noDevicesData);
+
+        render(
+            <DeviceCard
+                selectedMetrics={mockSelectedMetrics}
+                setSelectedMetrics={jest.fn()}
+            />
+        );
+
+        await waitFor(() => {
+            expect(screen.getByTestId('tree-item-Empty Node')).toBeInTheDocument();
+        });
+    });
+
+    test('cleans up timers on unmount', async () => {
+        const clearTimeoutSpy = jest.spyOn(global, 'clearTimeout');
+
+        const { unmount } = render(
+            <DeviceCard
+                selectedMetrics={mockSelectedMetrics}
+                setSelectedMetrics={jest.fn()}
+            />
+        );
+
+        await waitFor(() => {
+            expect(apiService.fetchClusters).toHaveBeenCalled();
+        });
+
+        unmount();
+
+        expect(clearTimeoutSpy).toHaveBeenCalled();
+    });
+
+
+
+    test('device selection maintains selected state visually', async () => {
+        render(
+            <DeviceCard
+                selectedMetrics={mockSelectedMetrics}
+                setSelectedMetrics={jest.fn()}
+            />
+        );
+
+        await waitFor(() => {
+            expect(screen.getByTestId('select-Device 1')).toBeInTheDocument();
+        });
+
+        const selectButton = screen.getByTestId('select-Device 1');
+        expect(selectButton).toHaveAttribute('data-selected', 'true');
+    });
+
+    test('renders ErrorBanner component with correct message', async () => {
+        apiService.fetchClusters.mockRejectedValue(new Error('Test error'));
+
+        render(
+            <DeviceCard
+                selectedMetrics={mockSelectedMetrics}
+                setSelectedMetrics={jest.fn()}
+            />
+        );
+
+        await waitFor(() => {
+            const errorBanner = screen.getByText('Failed to load data. Please try again.');
+            expect(errorBanner).toBeInTheDocument();
+            expect(errorBanner.closest('.error-banner')).toBeInTheDocument();
+        });
+    });
+
+    test('renders Sidebar component correctly', async () => {
+        render(
+            <DeviceCard
+                selectedMetrics={mockSelectedMetrics}
+                setSelectedMetrics={jest.fn()}
+            />
+        );
+
+        await waitFor(() => {
+            const sidebar = document.querySelector('.sidebar-device');
+            expect(sidebar).toBeInTheDocument();
+        });
+    });
+
+    test('renders ChartArea component correctly', async () => {
+        render(
+            <DeviceCard
+                selectedMetrics={mockSelectedMetrics}
+                setSelectedMetrics={jest.fn()}
+            />
+        );
+
+        await waitFor(() => {
+            const chartArea = document.querySelector('.chart-area');
+            expect(chartArea).toBeInTheDocument();
+        });
+    });
+
+    test('handles metrics fetch error in initial load', async () => {
+        apiService.fetchDeviceStats.mockRejectedValue(new Error('Metrics error'));
+
+        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => { });
+
+        render(
+            <DeviceCard
+                selectedMetrics={mockSelectedMetrics}
+                setSelectedMetrics={jest.fn()}
+            />
+        );
+
+        await waitFor(() => {
+            expect(consoleErrorSpy).toHaveBeenCalledWith(
+                'Metrics fetch error:',
+                expect.any(Error)
+            );
+        });
+
+        consoleErrorSpy.mockRestore();
+    });
+
+    test('re-expands collapsed cluster', async () => {
+        render(
+            <DeviceCard
+                selectedMetrics={mockSelectedMetrics}
+                setSelectedMetrics={jest.fn()}
+            />
+        );
+
+        await waitFor(() => {
+            expect(screen.getByTestId('toggle-Cluster 1')).toBeInTheDocument();
+        });
+
+        // Collapse
+        fireEvent.click(screen.getByTestId('toggle-Cluster 1'));
+        expect(screen.getByTestId('toggle-Cluster 1').textContent).toContain('▶');
+
+        // Re-expand
+        fireEvent.click(screen.getByTestId('toggle-Cluster 1'));
+        expect(screen.getByTestId('toggle-Cluster 1').textContent).toContain('▼');
     });
 });
