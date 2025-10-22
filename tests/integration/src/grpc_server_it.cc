@@ -46,6 +46,7 @@ int create_svk_mgmt_fw_conf_json(std::string conf_file,
   root.put("svk_mgmt_fw_node.controller.id", controller_id);
   root.put("svk_mgmt_fw_node.controller.port", DEFAULT_CONTROLLER_PORT);
   root.put("svk_mgmt_fw_node.node.id", DEFAULT_NODE_ID);
+  root.put("svk_mgmt_fw_node.node.ip", DEFAULT_NODE_ID);
   root.put("svk_mgmt_fw_node.node.port", DEFAULT_NODE_PORT);
   root.put("svk_mgmt_fw_node.logger.log_level", log_level);
   root.put("svk_mgmt_fw_node.logger.log_file_name",
@@ -1307,8 +1308,8 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForTMOperation) {
   // checks as the PID is dynamic Move command with the parameters are logged
   EXPECT_EQ(true,
             filedata.find("\"command\":\"move\",\"fast_tier\":\"0\",\"slow_"
-                          "tier\":\"1\",\"tm_attr\":\"0\"} is successful") !=
-                std::string::npos);
+                          "tier\":\"1\",\"tm_attr\":\"MOVER_AGGRESSIVENESS_"
+                          "LOW\"} is successful") != std::string::npos);
 
   // Generate one more event. Now there should be no more devices to move
   // Generate a SLA event for the new device that the deviation is detected
@@ -2663,8 +2664,10 @@ TEST(InitIntegrationTest, GetDeviceLatencyRequirements) {
   sleep(5);
 
   std::vector<DeviceInfo> app_devices;
+  std::vector<std::string> node_ips;
+  node_ips.push_back("localhost");
   int status = g_sla_device_hlpr->GetDeviceForLatencyRequirements(
-      4500, 500, "localhost", -1, app_devices);
+      4500, 500, node_ips, -1, app_devices);
   EXPECT_EQ(status, 0);
   EXPECT_EQ(app_devices.size(), 3);
 
@@ -2689,8 +2692,11 @@ TEST(InitIntegrationTest, GetDeviceLatencyRequirementsForInvalidHost) {
   sleep(5);
 
   std::vector<DeviceInfo> app_devices;
+  std::vector<std::string> node_ips;
+  node_ips.push_back("localhost1");
   int status = g_sla_device_hlpr->GetDeviceForLatencyRequirements(
-      4500, 500, "localhost1", -1, app_devices);
+      4500, 500, node_ips, -1, app_devices);
+
   EXPECT_EQ(status, -1);
   EXPECT_EQ(app_devices.size(), 0);
 
@@ -2719,8 +2725,11 @@ TEST(InitIntegrationTest, UnregisterDevices) {
   EXPECT_EQ(status, 0);
   // Try to get all the devices to see if the device is still there
   std::vector<DeviceInfo> app_devices;
+  std::vector<std::string> node_ips;
+  node_ips.push_back("localhost");
   status = g_sla_device_hlpr->GetDeviceForLatencyRequirements(
-      4500, 500, "localhost", -1, app_devices);
+      4500, 500, node_ips, -1, app_devices);
+
   EXPECT_EQ(status, -1);
   EXPECT_EQ(app_devices.size(), 0);
 
@@ -2729,6 +2738,7 @@ TEST(InitIntegrationTest, UnregisterDevices) {
 
 TEST(InitIntegrationTest, UnregisterDevicesForInUseDevice) {
   char *cw_dir = get_current_dir_name();
+  std::vector<std::string> node_ips;
   std::string conf_file = std::string(cw_dir) + "/conf.json";
   create_svk_mgmt_fw_conf_json(
       conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
@@ -2746,8 +2756,9 @@ TEST(InitIntegrationTest, UnregisterDevicesForInUseDevice) {
 
   // Get all the devices with the node "localhost"
   std::vector<DeviceInfo> app_devices;
+  node_ips.push_back("localhost");
   int status = g_sla_device_hlpr->GetDeviceForLatencyRequirements(
-      4500, 500, "localhost", -1, app_devices);
+      4500, 500, node_ips, -1, app_devices);
   EXPECT_EQ(status, 0);
   EXPECT_EQ(app_devices.size(), 3);
 
@@ -2764,6 +2775,7 @@ TEST(InitIntegrationTest, UnregisterDevicesForInUseDevice) {
 
 TEST(InitIntegrationTest, UpdateDeviceStatus) {
   char *cw_dir = get_current_dir_name();
+  std::vector<std::string> node_ips;
   std::string conf_file = std::string(cw_dir) + "/conf.json";
   create_svk_mgmt_fw_conf_json(
       conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
@@ -2781,8 +2793,9 @@ TEST(InitIntegrationTest, UpdateDeviceStatus) {
 
   // Get all the devices with the node "localhost"
   std::vector<DeviceInfo> app_devices;
+  node_ips.push_back("localhost");
   int status = g_sla_device_hlpr->GetDeviceForLatencyRequirements(
-      4500, 500, "localhost", -1, app_devices);
+      4500, 500, node_ips, -1, app_devices);
   EXPECT_EQ(status, 0);
   EXPECT_EQ(app_devices.size(), 3);
 
@@ -2807,6 +2820,320 @@ TEST(InitIntegrationTest, UpdateDeviceStatus) {
 
   status = g_sla_device_hlpr->GetDeviceInfo("localhost_0", dev);
   EXPECT_TRUE(dev.internal_status == Device_Status_E::DEVICE_FAULTY);
+
+  unlink(conf_file.c_str());
+}
+
+class SLAManagementServicer : public ControllerServicer {
+ public:
+  SLAManagementServicer(std::string conf_file)
+      : ControllerServicer(conf_file){};
+
+  Status SLAManagementServicer_SetAppSLACommand(
+      const std::string &cluster_name, const std::string &node_name,
+      const std::string &command_params_str, std::string &output) {
+    return SetAppSLACommand(cluster_name, node_name, command_params_str,
+                            output);
+  };
+};
+
+TEST(InitIntegrationTest, SLAManagementAPIFailure) {
+  char *cw_dir = get_current_dir_name();
+  std::vector<std::string> node_ips;
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  SLAManagementServicer *ctrl_svcr(new SLAManagementServicer(conf_file));
+  ASSERT_FALSE(ctrl_svcr->get_state() == false);
+  auto ctrl_server = InitializeServicer(ctrl_svcr);
+  ASSERT_FALSE(ctrl_server == nullptr);
+
+  // Using the servicer just for simulating the smaller capacity devices
+  FakeNodeServicer *svcr(new FakeNodeServicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+  sleep(5);
+
+  svk::SLAManagementRequest req;
+  svk::SLAManagementResponse resp;
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status status;
+
+  // Empty cluster/node name
+  req.set_cluster_name("");
+  req.set_node_name("");
+  req.set_command_name("get_devices_with_sla_info");
+
+  status = client.SLAManagementAPI(&req, &resp);
+  ASSERT_NE(status.ok(), true);
+  ASSERT_EQ(status.error_code(), grpc::INVALID_ARGUMENT);
+
+  // Invalid node name
+  req.set_cluster_name(DEFAULT_CLUSTER_ID);
+  req.set_node_name("invalid_host_name");
+  req.set_command_name("get_devices_with_sla_info");
+
+  status = client.SLAManagementAPI(&req, &resp);
+  ASSERT_NE(status.ok(), true);
+  ASSERT_EQ(status.error_code(), grpc::UNKNOWN);
+  ASSERT_EQ(status.error_message(),
+            "Invalid node name given - invalid_host_name");
+
+  // Empty command
+  req.set_cluster_name(DEFAULT_CLUSTER_ID);
+  req.set_node_name("localhost");
+  req.set_command_name("");
+
+  status = client.SLAManagementAPI(&req, &resp);
+  ASSERT_NE(status.ok(), true);
+  ASSERT_EQ(status.error_code(), grpc::INVALID_ARGUMENT);
+
+  // Empty command params
+  req.set_cluster_name(DEFAULT_CLUSTER_ID);
+  req.set_node_name("localhost");
+  req.set_command_name("set_app_sla");
+
+  status = client.SLAManagementAPI(&req, &resp);
+  ASSERT_NE(status.ok(), true);
+  ASSERT_EQ(status.error_code(), grpc::INVALID_ARGUMENT);
+
+  // Provide empty node name
+  std::string output;
+  std::string command_params_str;
+  status = ctrl_svcr->SLAManagementServicer_SetAppSLACommand(
+      "cluster1", "", command_params_str, output);
+  ASSERT_EQ(status.error_message(), "Empty node name provided");
+
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest, GetDevicesWithSLAInfo) {
+  char *cw_dir = get_current_dir_name();
+  std::vector<std::string> node_ips;
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  // Using the servicer just for simulating the smaller capacity devices
+  FakeNodeServicer *svcr(new FakeNodeServicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+  sleep(5);
+
+  svk::SLAManagementRequest req;
+  svk::SLAManagementResponse resp;
+
+  req.set_cluster_name(DEFAULT_CLUSTER_ID);
+  req.set_node_name(DEFAULT_NODE_ID);
+
+  req.set_command_name("get_devices_with_sla_info");
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status status = client.SLAManagementAPI(&req, &resp);
+  ASSERT_TRUE(status.ok());
+  std::cout << "OUTPUT " << resp.response() << std::endl;
+  json output = json::parse(resp.response());
+  json devices = output["localhost"];
+  ASSERT_EQ(output.size(), 1);
+  ASSERT_EQ(devices.size(), 3);
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest, SetAppSLACommand) {
+  char *cw_dir = get_current_dir_name();
+  std::vector<std::string> node_ips;
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  // Using the servicer just for simulating the smaller capacity devices
+  FakeNodeServicer *svcr(new FakeNodeServicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+  sleep(5);
+
+  json command_params;
+
+  command_params["app_name"] = "gemfire";
+  command_params["app_pid"] = 987654321;
+  command_params["app_total_data_set_MB"] = 4096;
+  command_params["hot_data_size_MB"] = 2048;
+
+  json qos_params;
+  qos_params["avg_latency_ns"] = 2500;
+  command_params["app_desired_qos"] = qos_params;
+
+  json device;
+  device["device_id"] = "localhost_2";
+  device["device_allocated_capacity_mb"] = 4096;
+  json device_array = json::array();
+  device_array.push_back(device);
+  command_params["devices"] = device_array;
+
+  std::cout << command_params.dump() << std::endl;
+
+  svk::SLAManagementRequest req;
+  svk::SLAManagementResponse resp;
+
+  req.set_cluster_name(DEFAULT_CLUSTER_ID);
+  req.set_node_name(DEFAULT_NODE_ID);
+  req.set_command_name("set_app_sla");
+  req.set_command_params(command_params.dump());
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+
+  DeviceInfo dev_info_1;
+  int status = g_sla_device_hlpr->GetDeviceInfo("localhost_2", dev_info_1);
+  ASSERT_TRUE(status == 0);
+  EXPECT_TRUE(dev_info_1.internal_status == Device_Status_E::DEVICE_ONLINE);
+
+  Status cmd_status = client.SLAManagementAPI(&req, &resp);
+  ASSERT_TRUE(cmd_status.ok());
+
+  // Get the device info to check the allocated capacity is accounted properly
+  DeviceInfo dev_info_2;
+  status = g_sla_device_hlpr->GetDeviceInfo("localhost_2", dev_info_2);
+  ASSERT_TRUE(status == 0);
+
+  ASSERT_EQ(dev_info_2.allocated_capacity_mb,
+            dev_info_1.allocated_capacity_mb + 4096);
+
+  std::cout << "Response - " << resp.response() << std::endl;
+
+  EXPECT_EQ(
+      true,
+      is_str_in_log(
+          CONTROLLER_NODE_DEFAULT_LOG_FILE,
+          "Command with command_params "
+          "{\"app_name\":\"gemfire\",\"app_sla_latency_ns\":2500,\"devices\":[{"
+          "\"device_id\":\"localhost_2\",\"device_numa\":\"2\",\"device_sla_"
+          "latency_ns\":3200}],\"host_name\":\"localhost\",\"logic_module\":"
+          "\"mlc\"} is passed to node localhost"));
+
+  EXPECT_EQ(
+      true,
+      is_str_in_log(
+          CONTROLLER_NODE_DEFAULT_LOG_FILE,
+          "Enable RAS tracking with "
+          "params{\"configure_options\":{\"error_count_threshold\":5},\"device_"
+          "id\":\"localhost_2\",\"device_numa\":2,\"device_type\":\"CMM-H\"}"));
+
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest, SetAppSLACommandFailureException) {
+  char *cw_dir = get_current_dir_name();
+  std::vector<std::string> node_ips;
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  // Using the servicer just for simulating the smaller capacity devices
+  FakeNodeServicer *svcr(new FakeNodeServicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+  sleep(5);
+
+  json command_params;
+  svk::SLAManagementRequest req;
+  svk::SLAManagementResponse resp;
+
+  req.set_cluster_name(DEFAULT_CLUSTER_ID);
+  req.set_node_name(DEFAULT_NODE_ID);
+  req.set_command_name("set_app_sla");
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  Status cmd_status;
+
+  // App name not set. Should throw exception and return grpc::UNKNOWN
+  command_params["app_pid"] = 987654321;
+  command_params["app_total_data_set_MB"] = 4096;
+  command_params["hot_data_size_MB"] = 2048;
+
+  json qos_params;
+  qos_params["avg_latency_ns"] = 2500;
+  command_params["app_desired_qos"] = qos_params;
+
+  json device;
+  device["device_id"] = "localhost_2";
+  device["device_allocated_capacity_mb"] = 4096;
+  json device_array = json::array();
+  device_array.push_back(device);
+  command_params["devices"] = device_array;
+  req.set_command_params(command_params.dump());
+
+  cmd_status = client.SLAManagementAPI(&req, &resp);
+  ASSERT_EQ(cmd_status.error_code(), grpc::UNKNOWN);
+
+  // Add the app name and make the device invalid
+  command_params["app_name"] = "gemfire";
+  device["device_id"] = "localhost_100";  // Invalid device
+  device["device_allocated_capacity_mb"] = 4096;
+  device_array.push_back(device);
+  command_params["devices"] = device_array;
+  req.set_command_params(command_params.dump());
+  cmd_status = client.SLAManagementAPI(&req, &resp);
+  ASSERT_EQ(cmd_status.error_code(), grpc::UNKNOWN);
+  ASSERT_EQ(cmd_status.error_message(),
+            "Invalid device id provided - localhost_100");
+
+  // Mark a device as faulty and should get a failure
+  g_sla_device_hlpr->MarkTheDeviceFaulty("localhost_2");
+  device["device_id"] = "localhost_2";
+  device["device_allocated_capacity_mb"] = 4096;
+  device_array.clear();
+  device_array.push_back(device);
+  command_params["devices"] = device_array;
+  req.set_command_params(command_params.dump());
+  cmd_status = client.SLAManagementAPI(&req, &resp);
+  ASSERT_EQ(cmd_status.error_code(), grpc::UNKNOWN);
+  ASSERT_EQ(cmd_status.error_message(),
+            "Device id provided - localhost_2 is invalid/faulty/offline");
+
+  // Allocate device capacity more than the actual capacity
+  device["device_id"] = "localhost_0";
+  device["device_allocated_capacity_mb"] = 409600000000000;
+  device_array.clear();
+  device_array.push_back(device);
+  command_params["devices"] = device_array;
+  req.set_command_params(command_params.dump());
+  cmd_status = client.SLAManagementAPI(&req, &resp);
+  ASSERT_EQ(cmd_status.error_code(), grpc::UNKNOWN);
+  ASSERT_EQ(cmd_status.error_message(),
+            "Device id provided - localhost_0 is allocated more than "
+            "the available capacity");
+
+  // Devices field is not an array
+  command_params["devices"] = "localhost_0";
+  req.set_command_params(command_params.dump());
+  cmd_status = client.SLAManagementAPI(&req, &resp);
+  ASSERT_EQ(cmd_status.error_code(), grpc::UNKNOWN);
+  ASSERT_EQ(cmd_status.error_message(),
+            "Device array is not provided in JSON input");
+
+  // Empty device array
+  device_array.clear();
+  command_params["devices"] = device_array;
+  req.set_command_params(command_params.dump());
+  cmd_status = client.SLAManagementAPI(&req, &resp);
+  ASSERT_EQ(cmd_status.error_code(), grpc::UNKNOWN);
+  ASSERT_EQ(cmd_status.error_message(), "Device array is empty");
 
   unlink(conf_file.c_str());
 }

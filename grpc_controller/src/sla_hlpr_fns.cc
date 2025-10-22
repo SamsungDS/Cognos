@@ -577,7 +577,7 @@ int SLADeviceHelper::GetDeviceDetails(std::string node_name, std::string port) {
 
 int SLADeviceHelper::GetDeviceForLatencyRequirements(
     uint64_t sla_latency_ns, uint64_t size_in_mb,
-    const std::string_view node_name, int max_count,
+    const std::vector<std::string>& node_names, int max_count,
     std::vector<DeviceInfo>& devices) {
   int status = 0;
   std::string logger_str;
@@ -606,7 +606,8 @@ int SLADeviceHelper::GetDeviceForLatencyRequirements(
     // if the device is not assigned for any app.
     // Check if the device is not marked faulty
     // Latency meets the required requested latency
-    if (node_name.length() && dev.node_name != node_name) {
+    if (std::find(node_names.begin(), node_names.end(), dev.node_name) ==
+        node_names.end()) {
       continue;
     }
 
@@ -715,6 +716,42 @@ int SLADeviceHelper::UnregisterDevicesForNode(std::string node_name) {
   return status;
 }
 
+void SLADeviceHelper::GetDevicesOfNode(const std::string& node_name,
+                                       std::vector<DeviceInfo>& devices) {
+  std::string logger_str;
+
+  std::scoped_lock<std::mutex> lock(this->m_device_map_mutex);
+  if (this->m_device_map.empty()) {
+    logger_str = "No device registered for the node " + node_name +
+                 " in the controller map";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
+    return;
+  }
+
+  for (const auto& [key, dev] : this->m_device_map) {
+    if (dev.node_name == node_name) {
+      devices.push_back(dev);
+    }
+  }
+  return;
+}
+
+void SLADeviceHelper::UpdateDeviceAllocatedCapacity(
+    const std::vector<DeviceInfo>& devices) {
+  std::string logger_str;
+
+  std::scoped_lock<std::mutex> lock(this->m_device_map_mutex);
+
+  for (const auto& dev : devices) {
+    this->m_device_map[dev.controller_generated_id].allocated_capacity_mb =
+        dev.allocated_capacity_mb;
+    this->m_device_map[dev.controller_generated_id].available_capacity_mb -=
+        dev.allocated_capacity_mb;
+  }
+  return;
+}
+
 /*
  This function updates the status of all the devices for the given node_name or
  all the nodes to the given status. This is primarily used during the following
@@ -807,14 +844,17 @@ int SLADeviceHelper::GetReplacementDevice(const DeviceInfo& dev_info,
   int status = -1;
   std::vector<DeviceInfo> devices;
   std::string logger_str;
+  std::vector<std::string> node_names;
 
   logger_str =
       "GetReplacementDevice called for " + dev_info.controller_generated_id;
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+
+  node_names.push_back(dev_info.node_name);
   // Get the device of similar or low latency device
   status = this->GetDeviceForLatencyRequirements(
       dev_info.device_qos.avg_latency_ns, dev_info.allocated_capacity_mb,
-      dev_info.node_name, 1, devices);
+      node_names, 1, devices);
   if (status != 0 || devices.empty()) {
     logger_str =
         "Failed in getting another device with better values "

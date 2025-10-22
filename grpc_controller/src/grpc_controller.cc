@@ -145,7 +145,7 @@ int initialize_logger(const controller_config &config) {
   return status;
 }
 
-int read_svk_conf_file(const std::string svk_conf_file,
+int read_svk_conf_file(const std::string &svk_conf_file,
                        controller_config *config) {
   int status = -1;
   namespace pt = boost::property_tree;
@@ -194,7 +194,8 @@ int read_svk_conf_file(const std::string svk_conf_file,
   return status;
 }
 
-int update_node_status_from_str(std::string status_str, node_status &status) {
+int update_node_status_from_str(const std::string &status_str,
+                                node_status &status) {
   for (const auto &pair : node_status_to_str) {
     if (pair.second == status_str) {
       status = pair.first;
@@ -393,7 +394,7 @@ Status ControllerServicer::RegisterNode(ServerContext *ctxt,
                                                 Device_Status_E::DEVICE_ONLINE);
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
              "Cluster config changed. Notifying the event thread");
-  std::lock_guard<std::mutex> lock(gMutex);
+  std::lock_guard lock(gMutex);
 
   this->set_config_changed(true);
   gCondVar.notify_one();
@@ -469,7 +470,7 @@ Status ControllerServicer::UnregisterNode(ServerContext *ctxt,
 
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
              "Cluster config changed. Notifying the event thread");
-  std::lock_guard<std::mutex> lock(gMutex);
+  std::lock_guard lock(gMutex);
 
   this->set_config_changed(true);
   gCondVar.notify_one();
@@ -599,6 +600,7 @@ Status ControllerServicer::ProcessAllocateMemory(const svk::CommandRequest *req,
   std::vector<DeviceInfo> app_devices;
   int status = -1;
   bool found_devices_flag = false;
+  std::vector<std::string> node_names;
 
   feature_params = req->feature_params();
 
@@ -620,9 +622,17 @@ Status ControllerServicer::ProcessAllocateMemory(const svk::CommandRequest *req,
   if (ptr_logicmod) {
     sscanf(ptr_logicmod, "logic_module=%[a-zA-Z0-9]", &logic_module[0]);
   }
+
+  // Get the node names of the given cluster so that the devices of those
+  // nodes alone are acquired
+  for (auto itr = m_cluster_map[req->cluster_id()].begin();
+       itr != m_cluster_map[req->cluster_id()].end(); ++itr) {
+    node_names.push_back(itr->first);
+  }
+
   sscanf(ptr_size, "size=%lu", &app_requested_capacity);
   status = g_sla_device_hlpr->GetDeviceForLatencyRequirements(
-      sla_latency_ns, app_requested_capacity, "", -1, app_devices);
+      sla_latency_ns, app_requested_capacity, node_names, -1, app_devices);
   if (status != 0) {
     logger_str =
         "ProcessControllerCommand allocate_memory failed in getting devices "
@@ -956,7 +966,7 @@ Status ControllerServicer::CreateCluster(std::string cluster_name,
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
              "Cluster config changed. Notifying the event thread");
 
-  std::lock_guard<std::mutex> lock(gMutex);
+  std::lock_guard lock(gMutex);
 
   this->set_config_changed(true);
   gCondVar.notify_one();
@@ -1028,7 +1038,7 @@ Status ControllerServicer::DeleteCluster(std::string cluster_name,
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
              "Cluster config changed. Notifying the event thread");
 
-  std::lock_guard<std::mutex> lock(gMutex);
+  std::lock_guard lock(gMutex);
 
   this->set_config_changed(true);
   gCondVar.notify_one();
@@ -1232,7 +1242,7 @@ Status ControllerServicer::AddRemoveNode(std::string cluster_name,
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                "Cluster config changed. Notifying the event thread");
 
-    std::lock_guard<std::mutex> lock(gMutex);
+    std::lock_guard lock(gMutex);
 
     this->set_config_changed(true);
     gCondVar.notify_one();
@@ -1480,6 +1490,367 @@ Status ControllerServicer::EventAPI(ServerContext *ctxt,
   resp->set_response(events_data_str);
 
   status = Status::OK;
+  return status;
+}
+
+/**
+ * Enables SLA tracking for devices on a node.
+ *
+ * @param node_name The name of the node.
+ * @param devices The list of devices to be added to SLA tracking.
+ * @param app_name The application name.
+ * @param sla_latency_ns The SLA latency in nanoseconds.
+ * @param logic_module The logic module name.
+ * @return The status of the command execution.
+ */
+Status EnableSLATracking(const std::string &node_ip, const std::string &port,
+                         const json &devices, const std::string &app_name,
+                         uint64_t sla_latency_ns,
+                         const std::string &logic_module) {
+  svk::CommandRequest req_node;
+  svk::CommandResponse resp_node;
+  Status cmd_status;
+  json command_params;
+  std::string logger_str;
+
+  logger_str = "Enabled SLA tracking called for the devices in node " + node_ip;
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+
+  command_params["app_name"] = std::string(app_name);
+  command_params["app_sla_latency_ns"] = sla_latency_ns;
+  command_params["host_name"] = node_ip;
+  command_params["logic_module"] = std::string(logic_module);
+  command_params["devices"] = devices;
+
+  req_node.set_node_id(node_ip);
+  req_node.set_feature_name(SLAT_FEATURE_MODULE_NAME);
+  req_node.set_command_name("add_devices_to_sla_tracker");
+
+  std::string command_params_str = command_params.dump();
+  req_node.set_command_params(command_params_str);
+  logger_str = "Command with command_params " + command_params_str +
+               " is passed to node " + node_ip;
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+
+  Client client(node_ip, port);
+  cmd_status = client.ProcessNodeCommand(&req_node, &resp_node);
+  if (!cmd_status.ok()) {
+    logger_str = "ProcessNodeCommand with command_params " +
+                 command_params_str + " failed for node " + node_ip;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+  }
+
+  return cmd_status;
+}
+
+Status ControllerServicer::GetDevicesWithSLAInfo(
+    const std::vector<std::string> &node_names, std::string &output) {
+  std::vector<DeviceInfo> devices;
+  json device_array_json = json::array();
+  std::string logger_str;
+  node_info node_details;
+  int status;
+  json json_data;
+  json device_json;
+  json device_qos;
+
+  for (const auto &node_name : node_names) {
+    devices.clear();
+    status = GetNodeInfo(node_name, node_details);
+    if (status != 0) {
+      logger_str = "Invalid node name given - " + node_name;
+      return Status(grpc::UNKNOWN, logger_str);
+    }
+
+    g_sla_device_hlpr->GetDevicesOfNode(node_details.node_ip, devices);
+
+    for (auto dev : devices) {
+      device_json["device_id"] = dev.controller_generated_id;
+      device_json["node_name"] = dev.node_name;
+      device_json["device_numa"] = dev.numa;
+      device_json["device_type"] = dev.device_type;
+      device_json["total_capacity_mb"] = dev.total_capacity_mb;
+      device_json["available_capacity_mb"] = dev.available_capacity_mb;
+      device_json["allocated_capacity_mb"] = dev.allocated_capacity_mb;
+      device_json["status"] = dev.internal_status;
+
+      device_qos["avg_latency_ns"] = dev.device_qos.avg_latency_ns;
+      device_qos["io_per_sec"] = dev.device_qos.io_per_sec;
+      device_qos["bw_per_sec"] = dev.device_qos.bw_per_sec;
+      device_qos["p99_latency"] = dev.device_qos.p99_latency;
+      device_qos["queue_depth"] = dev.device_qos.queue_depth;
+
+      device_json["device_qos"] = device_qos;
+
+      device_array_json.push_back(device_json);
+    }
+    json_data[node_name] = device_array_json;
+  }
+
+  output = json_data.dump();
+  return Status::OK;
+}
+
+/**
+ * @brief Enable SLA tracking on the devices where the application is already
+ * running This API works only for one node at a time.
+ * @param node_names List of nodes (only one node expected)
+ * @param command_params_str JSON string containing the command parameters
+ * {
+    "app_desired_qos": {
+      "avg_latency": 2500
+    },
+    "app_name": "gemfire",
+    "app_pid": 987654321,
+    "app_total_data_set_MB": 4096,
+    "devices": [
+      {
+        "device_allocated_capacity_mb": 4096,
+        "device_id": "localhost_2"
+      }
+    ],
+    "hot_data_size_MB": 2048
+  }
+ * @param[out] output JSON string containing the output
+ * @return Status  GRPC status
+ */
+Status ControllerServicer::SetAppSLACommand(
+    const std::string &cluster_name, const std::string &node_name,
+    const std::string &command_params_str, std::string &output) {
+  json command_params;
+  std::string logger_str;
+  DeviceInfo dev;
+  std::vector<DeviceInfo> user_devices;
+  Status cmd_status;
+  int status = -1;
+
+  uint64_t sla_latency_ns = 0;
+  std::string app_name;
+  std::string logic_module;
+  uint64_t app_allocated_capacity;
+  uint64_t app_hotdata_size;
+  pid_t app_pid;
+  node_info node_details;
+
+  if (node_name.empty()) {
+    logger_str = "Empty node name provided";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    return Status(grpc::INVALID_ARGUMENT, logger_str);
+  }
+
+  if (command_params_str.empty()) {
+    logger_str =
+        "SetAppSLACommand called with empty cluster/node name or command_name "
+        "or command_params";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    return Status(grpc::INVALID_ARGUMENT, logger_str);
+  }
+
+  status = GetNodeInfo(node_name, node_details);
+  if (status != 0) {
+    logger_str = "Invalid node name given - " + node_name;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    return Status(grpc::UNKNOWN, logger_str);
+  }
+
+  try {
+    command_params = json::parse(command_params_str);
+    // Extracting the required fields
+    app_name = command_params.at("app_name").get<std::string>();
+    app_pid = command_params.at("app_pid").get<pid_t>();
+    app_allocated_capacity =
+        command_params.at("app_total_data_set_MB").get<uint64_t>();
+    app_hotdata_size = command_params.value("hot_data_size_MB", -1);
+    logic_module = command_params.value("logic_module", "mlc");
+    sla_latency_ns =
+        command_params["app_desired_qos"]["avg_latency_ns"].get<uint64_t>();
+
+    // Extracting the array of devices
+    json devices_array = command_params.value("devices", json::array());
+    if (!devices_array.is_array()) {
+      logger_str = "Device array is not provided in JSON input";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                 logger_str.c_str());
+      return Status(grpc::UNKNOWN, logger_str);
+    }
+    if (devices_array.empty()) {
+      logger_str = "Device array is empty";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                 logger_str.c_str());
+      return Status(grpc::UNKNOWN, logger_str);
+    }
+
+    // Validate the devices checking for the following
+    // - device belongs to the node given in the input
+    // - device id is valid
+    // - device is not marked faulty
+    // - allocated memory is more than the available
+    for (const auto &device : devices_array) {
+      DeviceInfo tmp_device_info;
+      dev.controller_generated_id = device.at("device_id").get<std::string>();
+      status = g_sla_device_hlpr->GetDeviceInfo(dev.controller_generated_id,
+                                                tmp_device_info);
+      if (status != 0) {
+        logger_str =
+            "Invalid device id provided - " + dev.controller_generated_id;
+        svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                   logger_str.c_str());
+        return Status(grpc::UNKNOWN, logger_str);
+      }
+      if (tmp_device_info.node_name != node_details.node_ip) {
+        logger_str = "Device id provided - " + dev.controller_generated_id +
+                     " is not on node " + node_name;
+        svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                   logger_str.c_str());
+        return Status(grpc::UNKNOWN, logger_str);
+      }
+      if (tmp_device_info.internal_status != Device_Status_E::DEVICE_ONLINE) {
+        logger_str = "Device id provided - " + dev.controller_generated_id +
+                     " is invalid/faulty/offline";
+        svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                   logger_str.c_str());
+        return Status(grpc::UNKNOWN, logger_str);
+      }
+      dev.allocated_capacity_mb =
+          device.at("device_allocated_capacity_mb").get<uint64_t>();
+
+      if (dev.allocated_capacity_mb > tmp_device_info.available_capacity_mb) {
+        logger_str = "Device id provided - " + dev.controller_generated_id +
+                     " is allocated more than the available capacity";
+        svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                   logger_str.c_str());
+        return Status(grpc::UNKNOWN, logger_str);
+      }
+      dev.device_qos.avg_latency_ns = tmp_device_info.device_qos.avg_latency_ns;
+      dev.numa = tmp_device_info.numa;
+      dev.node_name = tmp_device_info.node_name;
+      dev.device_type = tmp_device_info.device_type;
+      user_devices.push_back(dev);
+    }
+
+  } catch (const json::exception &e) {
+    logger_str = "Exception in parsing the arguments" + std::string(e.what());
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    return Status(grpc::UNKNOWN, logger_str);
+  }
+
+  // Check the device's node_name and send the SLA Tracking requests to that
+  // node
+  json device_array_json = json::array();
+  json device;
+  std::unordered_map<std::string, DeviceInfo> ras_device_map;
+
+  ras_device_map.clear();
+  for (auto dev : user_devices) {
+    logger_str = "Device with node_name: " + dev.node_name +
+                 " and passed node info: " + node_details.node_ip;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::TRACE,
+               logger_str.c_str());
+    if (dev.node_name == node_details.node_ip) {
+      ras_device_map[dev.controller_generated_id] = dev;
+
+      device["device_numa"] = std::to_string(dev.numa);
+      device["device_sla_latency_ns"] = dev.device_qos.avg_latency_ns;
+      device["device_id"] = dev.controller_generated_id;
+      device_array_json.push_back(device);
+    }
+  }
+
+  g_sla_device_hlpr->UpdateDeviceAllocatedCapacity(user_devices);
+  cmd_status = EnableSLATracking(node_details.node_ip, node_details.node_port,
+                                 device_array_json, app_name, sla_latency_ns,
+                                 logic_module);
+  if (!cmd_status.ok()) {
+    return cmd_status;
+  }
+
+  EnableRASTrackingOnDevices(node_details.node_ip, node_details.node_port,
+                             ras_device_map);
+
+  App_Info app_info;
+
+  app_info.app_name = app_name;
+  app_info.appLatencyns = sla_latency_ns;
+  app_info.size = app_allocated_capacity;
+  app_info.pid = app_pid;
+  app_info.app_hotdata_size = app_hotdata_size;
+
+  for (const auto &dev : user_devices) {
+    g_sla_device_hlpr->SetSLADataForApp(dev.controller_generated_id, app_info);
+  }
+
+  json output_json;
+  json sla_json;
+  sla_json["avg_latency_ns"] = sla_latency_ns;
+
+  output_json["cluster_name"] = cluster_name;
+  output_json["node_name"] = node_name;
+  output_json["app_name"] = app_name;
+  output_json["app_pid"] = app_pid;
+  output_json["slat_enabled"] = true;
+  output_json["sla"] = sla_json;
+
+  output = output_json.dump();
+
+  logger_str = "SetAppSLACommand processed successfully";
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+  return Status::OK;
+}
+
+Status ControllerServicer::SLAManagementAPI(
+    ServerContext *ctxt, const svk::SLAManagementRequest *req,
+    svk::SLAManagementResponse *resp) {
+  std::string logger_str;
+  Status status;
+  std::vector<std::string> node_names;
+  std::string output;
+
+  std::string cluster_name = req->cluster_name();
+  std::string node_name = req->node_name();
+  std::string app_name = req->app_name();
+  std::string command_name = req->command_name();
+  std::string command_params_str = req->command_params();
+
+  if ((cluster_name.empty() && node_name.empty()) || command_name.empty()) {
+    logger_str =
+        "SLAManagementAPI called with empty cluster/node name or command_name "
+        "or command_params";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    return Status(grpc::INVALID_ARGUMENT, logger_str);
+  }
+
+  // Get the node names of the given cluster so that the devices of those
+  // nodes alone are acquired
+  if (node_name.length()) {
+    node_names.push_back(node_name);
+  } else {
+    for (auto itr = m_cluster_map[cluster_name].begin();
+         itr != m_cluster_map[cluster_name].end(); ++itr) {
+      node_names.push_back(itr->first);
+    }
+  }
+
+  if (command_name == "get_devices_with_sla_info") {
+    status = GetDevicesWithSLAInfo(node_names, output);
+  } else if (command_name == "set_app_sla") {
+    status =
+        SetAppSLACommand(cluster_name, node_name, command_params_str, output);
+  } else {
+    status = Status(grpc::UNKNOWN, "Invalid command_name passed");
+  }
+
+  if (status.ok()) {
+    resp->set_api_version(API_VERSION);
+    resp->set_response(output);
+    resp->set_error_code(SVK_STATUS_SUCCESS);
+  }
+
   return status;
 }
 
@@ -1920,7 +2291,8 @@ void ProcessRASEvent(json json_data, ControllerServicer *svcr) {
     json json_data;
     json_data["command"] = "move_all";
     json_data["app"] = ras_reported_app_name;
-    json_data["app_pid"] = std::to_string(getpid());
+    json_data["app_pid"] = (app_info.pid != 0) ? std::to_string(app_info.pid)
+                                               : std::to_string(getpid());
     json_data["src"] = ras_reported_device_numa;
     json_data["dst"] = std::to_string(dst_numa);
     // TODO; Should we pass as a parameter or config file?
@@ -2041,11 +2413,13 @@ void ProcessSLAEvent(json json_data, ControllerServicer *svcr) {
     json json_data;
     json_data["command"] = "move";
     json_data["app"] = slat_reported_app_name;
-    json_data["app_pid"] = std::to_string(getpid());
+    json_data["app_pid"] = (app_info.pid != 0) ? std::to_string(app_info.pid)
+                                               : std::to_string(getpid());
     json_data["slow_tier"] = std::to_string(slat_reported_numa);
     json_data["fast_tier"] = std::to_string(dst_numa);
     // TODO: Fix this by setting through REST API
-    json_data["tm_attr"] = "0";  // aggressiveness - 0 or 1
+    json_data["tm_attr"] =
+        "MOVER_AGGRESSIVENESS_LOW";  // aggressiveness - 0 or 1
 
     std::string command_params_str = json_data.dump();
     req.set_command_params(command_params_str);

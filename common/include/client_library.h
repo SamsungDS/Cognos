@@ -11,6 +11,7 @@ using svk::Controller;
 class Client {
  public:
   Client(std::string node, std::string port);
+  virtual ~Client() = default;
   virtual Status ProcessNodeCommand(const svk::CommandRequest* req,
                                     svk::CommandResponse* resp);
   virtual Status ProcessControllerCommand(const svk::CommandRequest* req,
@@ -30,6 +31,8 @@ class Client {
                             svk::FeatureResponse* resp);
   virtual Status EventAPI(const svk::EventRequest* req,
                           svk::EventResponse* resp);
+  virtual Status SLAManagementAPI(const svk::SLAManagementRequest* req,
+                                  svk::SLAManagementResponse* resp);
 
  private:
   std::shared_ptr<Channel> channel;

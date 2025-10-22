@@ -90,7 +90,7 @@ const std::unordered_map<std::string, level_E> ctrl_log_level_map = {
 class ControllerServicer : public svk::Controller::Service {
  public:
   explicit ControllerServicer(const std::string &svk_conf_file);
-  ~ControllerServicer();
+  ~ControllerServicer() override;
   Status RegisterNode(ServerContext *ctxt, const svk::RegisterRequest *req,
                       svk::RegisterResponse *resp) override;
   Status UnregisterNode(ServerContext *ctxt, const svk::UnregisterRequest *req,
@@ -125,6 +125,9 @@ class ControllerServicer : public svk::Controller::Service {
                     svk::FeatureResponse *resp) override;
   Status EventAPI(ServerContext *ctxt, const svk::EventRequest *req,
                   svk::EventResponse *resp) override;
+  Status SLAManagementAPI(ServerContext *ctxt,
+                          const svk::SLAManagementRequest *req,
+                          svk::SLAManagementResponse *resp) override;
 
   const std::string &get_svk_config_controller_id() {
     return m_svk_config.controller_id;
@@ -133,15 +136,14 @@ class ControllerServicer : public svk::Controller::Service {
   const std::string &get_svk_config_controller_port() {
     return m_svk_config.controller_port;
   };
-  const controller_config &get_svk_config() { return m_svk_config; };
+  const controller_config &get_svk_config() const { return m_svk_config; };
   bool get_state() const { return m_initialized_flag; };
   void set_server(std::shared_ptr<Server> server) { m_server = server; };
   const std::shared_ptr<Server> get_server() { return m_server; };
   void set_config_changed(bool state) { m_config_changed = state; };
   bool is_config_changed() const { return m_config_changed; };
-  const std::unordered_map<std::string,
-                           std::unordered_map<std::string, std::string>>
-  get_cluster_map() {
+  std::unordered_map<std::string, std::unordered_map<std::string, std::string>>
+  get_cluster_map() const {
     return m_cluster_map;
   };
 
@@ -152,7 +154,7 @@ class ControllerServicer : public svk::Controller::Service {
     m_cluster_map = cluster_map;
   }
 
-  bool get_stop_flag() { return stop_flag; };
+  bool get_stop_flag() const { return stop_flag; };
   void set_stop_flag() { stop_flag = true; };
   void set_zmq_socket(void *zmq_context, void *zmq_socket) {
     m_zmq_subscriber_socket = zmq_socket;
@@ -163,7 +165,7 @@ class ControllerServicer : public svk::Controller::Service {
 
   // Queue operations
   void insert_event_to_queue(json event_data) {
-    std::lock_guard<std::mutex> lock(m_event_q_mutex);
+    std::scoped_lock lock(m_event_q_mutex);
     m_event_queue.push(std::move(event_data));
     m_event_q_cond_var.notify_one();  // Notify one waiting thread
   };
@@ -171,7 +173,7 @@ class ControllerServicer : public svk::Controller::Service {
   // Remove event from queue if available
   //  Otherwise returns -1 if empty for 2 seconds
   int remove_event_from_queue(json &event_data) {
-    std::unique_lock<std::mutex> lock(m_event_q_mutex);
+    std::unique_lock lock(m_event_q_mutex);
     m_event_q_cond_var.wait_for(lock, std::chrono::seconds(2), [this]() {
       return (!m_event_queue.empty() || this->get_stop_flag());
     });
@@ -183,10 +185,26 @@ class ControllerServicer : public svk::Controller::Service {
     return 0;
   }
 
-  bool check_event_queue_empty() { return m_event_queue.empty(); }
+  bool check_event_queue_empty() const { return m_event_queue.empty(); }
+
+ protected:
+  Status SetAppSLACommand(const std::string &cluster_name,
+                          const std::string &node_names,
+                          const std::string &command_params_str,
+                          std::string &output);
 
  private:
   nlohmann::json ClusterResponseJson(std::string cluster_name);
+  Status GetDevicesWithSLAInfo(const std::vector<std::string> &node_names,
+                               std::string &output);
+  // Return the node_info for the given node name
+  int GetNodeInfo(const std::string &node_name, node_info &node_info) {
+    if (m_registered_nodes.find(node_name) == m_registered_nodes.end()) {
+      return -1;
+    }
+    node_info = m_registered_nodes[node_name];
+    return 0;
+  };
   controller_config m_svk_config;
   bool m_initialized_flag = false;
   // A cluster map with the cluster name to the map of <node_name, port>,
