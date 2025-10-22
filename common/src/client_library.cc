@@ -76,3 +76,10 @@ Status Client::EventAPI(const svk::EventRequest* req,
   Status status = ctrlr_stub_->EventAPI(&ctxt, *req, resp);
   return status;
 }
+
+Status Client::SLAManagementAPI(const svk::SLAManagementRequest* req,
+                                svk::SLAManagementResponse* resp) {
+  ClientContext ctxt;
+  Status status = ctrlr_stub_->SLAManagementAPI(&ctxt, *req, resp);
+  return status;
+}

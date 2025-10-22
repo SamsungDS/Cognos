@@ -57,6 +57,7 @@ typedef struct {
   uint64_t appLatencyns;
   uint64_t size;
   pid_t pid;
+  uint64_t app_hotdata_size;
 } App_Info;
 
 class SLADeviceHelper {
@@ -88,10 +89,14 @@ class SLADeviceHelper {
    * to the caller
    */
 
-  int GetDeviceForLatencyRequirements(uint64_t sla_latency_ns, uint64_t size,
-                                      const std::string_view node_name,
-                                      int max_count,
-                                      std::vector<DeviceInfo>& devices);
+  int GetDeviceForLatencyRequirements(
+      uint64_t sla_latency_ns, uint64_t size,
+      const std::vector<std::string>& node_names, int max_count,
+      std::vector<DeviceInfo>& devices);
+  void GetDevicesOfNode(const std::string& node_name,
+                        std::vector<DeviceInfo>& devices);
+  void UpdateDeviceAllocatedCapacity(const std::vector<DeviceInfo>& devices);
+
   int SetSLADataForApp(const std::string& controller_generated_device_id,
                        const App_Info& app_info);
   int UnregisterDevicesForNode(std::string node_name);
