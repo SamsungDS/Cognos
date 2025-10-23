@@ -1467,15 +1467,46 @@ Status ControllerServicer::EventAPI(ServerContext *ctxt,
   json events_data;
   std::string events_data_str;
 
+  std::string cluster_name = req->cluster_name();
+  std::string node_name = req->node_name();
   std::string command_name = req->command_name();
-  std::string command_params = req->command_params();
+  std::string command_params_str = req->command_params();
+  uint64_t min_epoch;
+  uint64_t num_events;
+  json command_params;
 
-  logger_str = "EventAPI is called with " + command_name;
-  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::TRACE, logger_str.c_str());
+  logger_str = "EventAPI is called with " + command_name + " and params " +
+               command_params_str;
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+
+  // Get the minimum timestamp, number of events
+  if (command_params_str.length()) {
+    try {
+      command_params = json::parse(command_params_str);
+    } catch (const json::parse_error &e) {
+      logger_str = "EventAPI is called with invalid JSON params " +
+                   command_params_str + ". Exception - " +
+                   std::string(e.what());
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                 logger_str.c_str());
+      status = Status(grpc::UNKNOWN, logger_str);
+      return status;
+    }
+  } else {
+    command_params = json::object();
+  }
+
   resp->set_api_version(API_VERSION);
 
   if (command_name == "cluster_events") {
-    get_events_from_controller_map(events_data);
+    min_epoch = command_params.value("min_timestamp", 0);
+    num_events = command_params.value("event_count", -1);
+    get_events_from_controller_map(cluster_name, node_name, min_epoch,
+                                   num_events, events_data);
+    events_data_str = events_data.dump();
+  } else if (command_name == "clear_events") {
+    clear_all_events_from_controller_map();
+    events_data_str = "";
   } else {
     logger_str = "Unsupported command - " + command_name;
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
@@ -1483,7 +1514,6 @@ Status ControllerServicer::EventAPI(ServerContext *ctxt,
     status = Status(grpc::UNKNOWN, logger_str);
     return status;
   }
-  events_data_str = events_data.dump();
 
   resp->set_error_id_or_string_if_any("");
   resp->set_error_code(SVK_STATUS_SUCCESS);
@@ -2548,7 +2578,8 @@ void ProcessZMQData(ControllerServicer *svcr, uint8_t *zmq_data,
 
   std::string event_json_str =
       std::string(reinterpret_cast<char *>(zmq_data), data_size);
-  logger_str = "Received data: " + event_json_str;
+  logger_str = "Received event data: " + event_json_str + " of size - " +
+               std::to_string(event_json_str.length());
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
 
   try {

@@ -45,6 +45,7 @@ set(COMMON_INC_DIR ${PARENT_DIR}/common/include/)
 set(COMMON_SRC_DIR ${PARENT_DIR}/common/src)
 set(SRCS
     ${GRPC_STUB_SRCS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/circular_queue.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/grpc_controller.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/events_handler.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/sla_hlpr_fns.cc
