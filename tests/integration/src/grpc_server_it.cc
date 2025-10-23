@@ -151,6 +151,7 @@ static std::string generate_ras_event(std::string feature_name,
 bool is_str_in_log(std::string file_name, std::string search_str) {
   // Use this call to flush logs immediately
   svk_logger_flush(CONTROLLER_LOGGER_MODULE_NAME);
+  sleep(0.5);
 
   // Check if the log file exists
   std::ifstream file(file_name);
@@ -1661,6 +1662,7 @@ TEST(InitIntegrationTest, SLATheadForTMWithMissingData) {
   rc = publish_event_data_to_core((char *)"alerts",
                                   (uint8_t *)json_data_str.c_str(),
                                   json_data_str.length());
+  sleep(1);
 
   std::cout << "Published data result " << rc << std::endl;
   EXPECT_EQ(true, is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
@@ -1674,6 +1676,7 @@ TEST(InitIntegrationTest, SLATheadForTMWithMissingData) {
                                   (uint8_t *)json_data_str.c_str(),
                                   json_data_str.length());
 
+  sleep(1);
   std::cout << "Published data result " << rc << std::endl;
   EXPECT_EQ(true, is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
                                 "Parse json data error in ProcessRASEvent"));
@@ -1690,10 +1693,10 @@ TEST(InitIntegrationTest, SLATheadForTMWithMissingData) {
                     event_data_str.length());
 
   std::cout << "Published data result " << rc << std::endl;
-  EXPECT_EQ(true,
-            is_str_in_log(
-                CONTROLLER_NODE_DEFAULT_LOG_FILE,
-                "Failed to insert the event to the Controller's event_map"));
+  EXPECT_EQ(
+      true,
+      is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
+                    "Failed to insert the event because of missing node name"));
 
   // Event payload missing
   event_data["event_header"]["node_name"] = "localhost";
@@ -2252,15 +2255,7 @@ TEST(InitIntegrationTest, ControllerNodeServicerWithEventValidation) {
     out_file.close();
   }
 
-  ControllerServicer *c_svcr(new ControllerServicer(conf_file));
-  auto c_server = InitializeServicer(c_svcr);
-  ASSERT_NE(c_server, nullptr);
-  EXPECT_TRUE(c_svcr->get_state() == true);
-  std::thread *subscriber_thread =
-      new std::thread(&StartThreadForZMQSubscriberConfiguration, c_svcr);
-
-  std::thread *sla_thread =
-      new std::thread(&StartEventProcessingThread, c_svcr);
+  std::thread server_thr(StartServer, conf_file, true);
 
   int rc = initialize_publisher(conf_file.c_str());
   if (rc != 0) {
@@ -2285,6 +2280,7 @@ TEST(InitIntegrationTest, ControllerNodeServicerWithEventValidation) {
   Status status;
   svk::EventResponse *event_resp = new (svk::EventResponse);
   event_req.set_command_name("cluster_events");
+  event_req.set_command_params("{}");
 
   status = client.EventAPI(&event_req, event_resp);
   std::cout << "Error message - " << status.error_message() << std::endl;
@@ -2315,7 +2311,7 @@ TEST(InitIntegrationTest, ControllerNodeServicerWithEventValidation) {
                                   json_data_str.length());
 
   std::cout << "Published data result " << rc << std::endl;
-  sleep(3);
+  sleep(5);
 
   status = client.EventAPI(&event_req, event_resp);
   ASSERT_EQ(status.ok(), true);
@@ -2331,23 +2327,227 @@ TEST(InitIntegrationTest, ControllerNodeServicerWithEventValidation) {
   std::cout << "Event response - " << event_resp->response() << std::endl;
   ASSERT_EQ(event_resp->response(), expected_resp_str);
 
-  // Prior cluster events should clear the list. Check whether the list is
-  // empty.
+  // Prior cluster events should not clear the list. Check whether the list is
+  // intact.
   event_req.set_command_name("cluster_events");
   status = client.EventAPI(&event_req, event_resp);
   std::cout << "Error message - " << status.error_message() << std::endl;
   ASSERT_EQ(status.ok(), true);
-  expected_resp_str = "[]";
   std::cout << "Event response - " << event_resp->response() << std::endl;
   ASSERT_EQ(event_resp->response(), expected_resp_str);
 
-  StopAllThreads(c_svcr);
-  StopEventProcessingThread(c_svcr);
-  sla_thread->join();
-  subscriber_thread->join();
-  delete c_svcr;
+  // Clear the events explicitly and check the list is empty
+  event_req.set_command_name("clear_events");
+
+  status = client.EventAPI(&event_req, event_resp);
+  std::cout << "Error message - " << status.error_message() << std::endl;
+  ASSERT_EQ(status.ok(), true);
+  expected_resp_str = "";
+  std::cout << "Event response - " << event_resp->response() << std::endl;
+  ASSERT_EQ(event_resp->response(), expected_resp_str);
+
   delete n_svcr;
   cleanup_publisher();
+
+  std::thread::id ctrlr_thread_id = server_thr.get_id();
+
+  auto ctrlr_native_handle =
+      *reinterpret_cast<std::thread::native_handle_type *>(&ctrlr_thread_id);
+
+  pthread_kill(ctrlr_native_handle, SIGINT);
+  server_thr.join();
+
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest, EventAPITests) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  // Add pubsub section
+  std::ifstream in_file(conf_file);
+  std::string conf_data((std::istreambuf_iterator<char>(in_file)),
+                        (std::istreambuf_iterator<char>()));
+  in_file.close();
+  json json_data = json::parse(conf_data);
+  json_data["pubsub"] = {{"ip_address", "127.0.0.1"},
+                         {"port", 5555},
+                         {"topics", {"metrics", "events", "alerts"}},
+                         {"transport_type", "zmq"}};
+
+  conf_data = json_data.dump();
+  std::ofstream out_file(conf_file);
+  if (out_file.is_open()) {
+    out_file << conf_data;
+    out_file.close();
+  }
+  std::thread server_thr(StartServer, conf_file, true);
+
+  int rc = initialize_publisher(conf_file.c_str());
+  if (rc != 0) {
+    std::cout << "Failed to initialize publisher" << std::endl;
+    return;
+  }
+
+  sleep(1);
+  Servicer *n_svcr(new FakeNodeServicerForTM(conf_file));
+  if (n_svcr->get_state() == false) {
+    std::cout << "Node Servicer is not initialized properly. Exiting"
+              << std::endl;
+    return;
+  }
+  auto n_server = InitializeNodeServicer(n_svcr);
+  ASSERT_NE(n_server, nullptr);
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  svk::RegisterRequest reg_req;
+  svk::RegisterResponse reg_resp;
+  svk::EventRequest event_req;
+  Status status;
+  svk::EventResponse *event_resp = new (svk::EventResponse);
+  json command_params_json;
+
+  // Clear the old events if any
+  event_req.set_command_name("clear_events");
+  status = client.EventAPI(&event_req, event_resp);
+  ASSERT_EQ(status.ok(), true);
+
+  reg_req.set_cluster_name("RASCluster1");
+  reg_req.set_node_name("testnode");
+  reg_req.set_node_ip("127.0.0.1");
+  reg_req.set_node_port("9998");
+
+  status = client.RegisterNode(&reg_req, &reg_resp);
+  ASSERT_TRUE(status.ok());
+
+  std::string json_data_str =
+      "{\"category\":\"test_feature\","
+      "\"domain\":\"observability\",\"feature_name\":\"test_feature\","
+      "\"observations\":{\"device_id\":\"29690035288064\",\"error_cnt\":2000,"
+      "\"feature_name\":\"test_feature\",\"message\":\"Device RAS error count "
+      "hit the "
+      "threshold\"},\"severity\":\"warning\",\"source\":\"node\",\"source_"
+      "type\":\"localhost\",\"timestamp\":1234567890}";
+  std::cout << "Publish event to core " << json_data_str << std::endl;
+  rc = publish_event_data_to_core((char *)"events",
+                                  (uint8_t *)json_data_str.c_str(),
+                                  json_data_str.length());
+
+  std::cout << "Published data result " << rc << std::endl;
+
+  // Create another event with later timestamp
+  json_data_str =
+      "{\"category\":\"test_feature\","
+      "\"domain\":\"observability\",\"feature_name\":\"test_feature\","
+      "\"observations\":{\"device_id\":\"29690035288064\",\"error_cnt\":2000,"
+      "\"feature_name\":\"test_feature\",\"message\":\"Device RAS error count "
+      "hit the "
+      "threshold\"},\"severity\":\"warning\",\"source\":\"node\",\"source_"
+      "type\":\"localhost\",\"timestamp\":1234567900}";
+  std::cout << "Publish event to core " << json_data_str << std::endl;
+  rc = publish_event_data_to_core((char *)"events",
+                                  (uint8_t *)json_data_str.c_str(),
+                                  json_data_str.length());
+
+  std::cout << "Published data result " << rc << std::endl;
+  sleep(5);
+
+  event_req.set_command_name("cluster_events");
+  event_req.set_command_params("{}");
+  status = client.EventAPI(&event_req, event_resp);
+  ASSERT_EQ(status.ok(), true);
+  std::string resp_str = event_resp->response();
+  std::cout << "All cluster events - Event response - " << resp_str
+            << std::endl;
+  json resp_json = json::parse(resp_str);
+  ASSERT_EQ(resp_json.size(), 2);
+
+  // Get just 1 event rather than all.
+  event_req.set_command_name("cluster_events");
+  command_params_json.clear();
+  command_params_json["event_count"] = 1;
+  event_req.set_command_params(command_params_json.dump());
+  status = client.EventAPI(&event_req, event_resp);
+  ASSERT_EQ(status.ok(), true);
+  resp_str = event_resp->response();
+  std::cout << "1 Cluster event - Event response - " << resp_str << std::endl;
+  resp_json = json::parse(resp_str);
+  ASSERT_EQ(resp_json.size(), 1);
+
+  // Call again. Prior cluster events should not be cleared. Check whether the
+  // list is intact.
+  event_req.set_cluster_name("CL_ID_1");
+  event_req.set_node_name("localhost");
+  command_params_json.clear();
+  // Set a time later than the first event
+  command_params_json["min_timestamp"] = 1234567891;
+  event_req.set_command_params(command_params_json.dump());
+  status = client.EventAPI(&event_req, event_resp);
+  ASSERT_EQ(status.ok(), true);
+  std::cout << "Minimum timestamp - Event response - " << event_resp->response()
+            << std::endl;
+  resp_str = event_resp->response();
+  resp_json = json::parse(resp_str);
+  ASSERT_EQ(resp_json.size(), 1);
+
+  // Call with invalid cluster name
+  event_req.set_cluster_name("CL_ID_2");
+  event_req.set_node_name("localhost");
+  event_req.clear_command_params();
+  status = client.EventAPI(&event_req, event_resp);
+  ASSERT_EQ(status.ok(), true);
+  std::cout << "Invalid cluster name - Event response - "
+            << event_resp->response() << std::endl;
+  resp_str = event_resp->response();
+  resp_json = json::parse(resp_str);
+  ASSERT_EQ(resp_json.size(), 0);
+
+  // Call with invalid node name
+  event_req.set_cluster_name("CL_ID_1");
+  event_req.set_node_name("localhost2");
+  event_req.clear_command_params();
+  status = client.EventAPI(&event_req, event_resp);
+  ASSERT_EQ(status.ok(), true);
+  std::cout << "Invalid node naem - Event response - " << event_resp->response()
+            << std::endl;
+  resp_str = event_resp->response();
+  resp_json = json::parse(resp_str);
+  ASSERT_EQ(resp_json.size(), 0);
+
+  // Call with timestamp later than the last event
+  event_req.set_cluster_name("CL_ID_1");
+  event_req.set_node_name("localhost");
+  command_params_json["min_timestamp"] = 1234567901;
+
+  event_req.set_command_params(command_params_json.dump());
+  status = client.EventAPI(&event_req, event_resp);
+  ASSERT_EQ(status.ok(), true);
+  std::cout << "Event response - " << event_resp->response() << std::endl;
+  resp_str = event_resp->response();
+  resp_json = json::parse(resp_str);
+  ASSERT_EQ(resp_json.size(), 0);
+
+  // Call with invalid json of command params
+  event_req.set_cluster_name("CL_ID_1");
+  event_req.set_node_name("localhost");
+
+  event_req.set_command_params("invalid_data_not_json_format");
+  status = client.EventAPI(&event_req, event_resp);
+  ASSERT_EQ(status.ok(), false);
+
+  delete n_svcr;
+  cleanup_publisher();
+  std::thread::id ctrlr_thread_id = server_thr.get_id();
+
+  auto ctrlr_native_handle =
+      *reinterpret_cast<std::thread::native_handle_type *>(&ctrlr_thread_id);
+
+  pthread_kill(ctrlr_native_handle, SIGINT);
+  server_thr.join();
 
   unlink(conf_file.c_str());
 }
