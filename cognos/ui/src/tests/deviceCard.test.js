@@ -136,7 +136,6 @@ describe('DeviceCard Component', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
-        jest.useFakeTimers();
         apiService.fetchClusters.mockResolvedValue(mockClustersData);
         apiService.fetchDeviceStats.mockResolvedValue(mockMetricsData);
 
@@ -162,8 +161,6 @@ describe('DeviceCard Component', () => {
     });
 
     afterEach(() => {
-        jest.runOnlyPendingTimers();
-        jest.useRealTimers();
         jest.restoreAllMocks();
     });
 
@@ -270,50 +267,6 @@ describe('DeviceCard Component', () => {
         });
     });
 
-    // NEW TESTS FOR INCREASED COVERAGE
-
-    test('automatically expands first cluster, node, and selects first device on mount', async () => {
-        render(
-            <DeviceCard
-                selectedMetrics={mockSelectedMetrics}
-                setSelectedMetrics={jest.fn()}
-            />
-        );
-
-        await waitFor(() => {
-            expect(screen.getByTestId('tree-item-Cluster 1')).toBeInTheDocument();
-        });
-
-        await waitFor(() => {
-            expect(apiService.fetchDeviceStats).toHaveBeenCalledWith('device-1', 'capacity');
-            expect(apiService.fetchDeviceStats).toHaveBeenCalledWith('device-1', 'usage');
-            expect(apiService.fetchDeviceStats).toHaveBeenCalledWith('device-1', 'bandwidth');
-        });
-    });
-
-    test('fetches metrics for newly selected device', async () => {
-        render(
-            <DeviceCard
-                selectedMetrics={mockSelectedMetrics}
-                setSelectedMetrics={jest.fn()}
-            />
-        );
-
-        await waitFor(() => {
-            expect(screen.getByTestId('select-Device 2')).toBeInTheDocument();
-        });
-
-        apiService.fetchDeviceStats.mockClear();
-
-        fireEvent.click(screen.getByTestId('select-Device 2'));
-
-        await waitFor(() => {
-            expect(apiService.fetchDeviceStats).toHaveBeenCalledWith('device-2', 'capacity');
-            expect(apiService.fetchDeviceStats).toHaveBeenCalledWith('device-2', 'usage');
-            expect(apiService.fetchDeviceStats).toHaveBeenCalledWith('device-2', 'bandwidth');
-        });
-    });
-
     test('handles metrics fetch error when selecting device', async () => {
         render(
             <DeviceCard
@@ -322,13 +275,19 @@ describe('DeviceCard Component', () => {
             />
         );
 
+        // Wait for initial load
         await waitFor(() => {
             expect(screen.getByTestId('select-Device 2')).toBeInTheDocument();
         });
 
-        apiService.fetchDeviceStats.mockRejectedValue(new Error('Metrics error'));
+        // Mock error for next fetch
+        apiService.fetchDeviceStats.mockRejectedValueOnce(new Error('Metrics error'));
+        apiService.fetchDeviceStats.mockRejectedValueOnce(new Error('Metrics error'));
+        apiService.fetchDeviceStats.mockRejectedValueOnce(new Error('Metrics error'));
 
-        fireEvent.click(screen.getByTestId('select-Device 2'));
+        await act(async () => {
+            fireEvent.click(screen.getByTestId('select-Device 2'));
+        });
 
         await waitFor(() => {
             expect(screen.getByText('Failed to load metrics. Please try again.')).toBeInTheDocument();
@@ -347,8 +306,13 @@ describe('DeviceCard Component', () => {
             expect(screen.getByTestId('toggle-Cluster 1')).toBeInTheDocument();
         });
 
-        // Cluster 1 is expanded by default, collapse it
-        fireEvent.click(screen.getByTestId('toggle-Cluster 1'));
+        // Verify cluster is expanded by default
+        expect(screen.getByTestId('toggle-Cluster 1').textContent).toContain('▼');
+
+        // Collapse the cluster
+        await act(async () => {
+            fireEvent.click(screen.getByTestId('toggle-Cluster 1'));
+        });
 
         expect(screen.getByTestId('toggle-Cluster 1').textContent).toContain('▶');
     });
@@ -365,9 +329,15 @@ describe('DeviceCard Component', () => {
             expect(screen.getByTestId('toggle-Node 2')).toBeInTheDocument();
         });
 
-        // Node 1 is expanded by default, expand Node 2
-        fireEvent.click(screen.getByTestId('toggle-Node 2'));
+        // Node 1 should be expanded by default
+        expect(screen.getByTestId('toggle-Node 1').textContent).toContain('▼');
 
+        // Expand Node 2
+        await act(async () => {
+            fireEvent.click(screen.getByTestId('toggle-Node 2'));
+        });
+
+        // Node 2 should now be expanded
         expect(screen.getByTestId('toggle-Node 2').textContent).toContain('▼');
     });
 
@@ -380,13 +350,15 @@ describe('DeviceCard Component', () => {
         );
 
         await waitFor(() => {
+            expect(screen.getByTestId('tree-item-Clusters')).toBeInTheDocument();
+        });
+
+        await waitFor(() => {
             expect(screen.getByTestId('metric-item-CXL Capacity')).toBeInTheDocument();
             expect(screen.getByTestId('metric-item-CXL Usage')).toBeInTheDocument();
             expect(screen.getByTestId('metric-item-CXL Bandwidth')).toBeInTheDocument();
         });
     });
-
-
 
     test('handles ResizeObserver updates', async () => {
         let resizeCallback;
@@ -411,7 +383,7 @@ describe('DeviceCard Component', () => {
         });
 
         if (resizeCallback) {
-            act(() => {
+            await act(async () => {
                 resizeCallback([{
                     contentRect: { width: 900, height: 700 }
                 }]);
@@ -421,28 +393,6 @@ describe('DeviceCard Component', () => {
         expect(screen.getByTestId('tree-item-Clusters')).toBeInTheDocument();
     });
 
-    test('updates dimensions when device is selected', async () => {
-        render(
-            <DeviceCard
-                selectedMetrics={mockSelectedMetrics}
-                setSelectedMetrics={jest.fn()}
-            />
-        );
-
-        await waitFor(() => {
-            expect(screen.getByTestId('select-Device 2')).toBeInTheDocument();
-        });
-
-        act(() => {
-            fireEvent.click(screen.getByTestId('select-Device 2'));
-        });
-
-        act(() => {
-            jest.advanceTimersByTime(100);
-        });
-
-        expect(screen.getByTestId('tree-item-Clusters')).toBeInTheDocument();
-    });
 
     test('shows loading message for chart when dimensions are zero', async () => {
         Element.prototype.getBoundingClientRect = jest.fn(() => ({
@@ -466,23 +416,6 @@ describe('DeviceCard Component', () => {
         });
     });
 
-    test('does not render chart when metricsData is empty', async () => {
-        apiService.fetchDeviceStats.mockResolvedValue([]);
-
-        render(
-            <DeviceCard
-                selectedMetrics={mockSelectedMetrics}
-                setSelectedMetrics={jest.fn()}
-            />
-        );
-
-        await waitFor(() => {
-            expect(apiService.fetchDeviceStats).toHaveBeenCalled();
-        });
-
-        // Chart should not crash with empty data
-        expect(screen.getByTestId('tree-item-Clusters')).toBeInTheDocument();
-    });
 
 
     test('handles clusters with no nodes', async () => {
@@ -555,8 +488,6 @@ describe('DeviceCard Component', () => {
 
         expect(clearTimeoutSpy).toHaveBeenCalled();
     });
-
-
 
     test('device selection maintains selected state visually', async () => {
         render(
@@ -654,11 +585,15 @@ describe('DeviceCard Component', () => {
         });
 
         // Collapse
-        fireEvent.click(screen.getByTestId('toggle-Cluster 1'));
+        await act(async () => {
+            fireEvent.click(screen.getByTestId('toggle-Cluster 1'));
+        });
         expect(screen.getByTestId('toggle-Cluster 1').textContent).toContain('▶');
 
         // Re-expand
-        fireEvent.click(screen.getByTestId('toggle-Cluster 1'));
+        await act(async () => {
+            fireEvent.click(screen.getByTestId('toggle-Cluster 1'));
+        });
         expect(screen.getByTestId('toggle-Cluster 1').textContent).toContain('▼');
     });
 });

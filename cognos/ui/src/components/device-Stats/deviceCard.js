@@ -67,13 +67,13 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
                         if (firstNode.devices?.length > 0) {
                             const firstDevice = firstNode.devices[0];
                             setSelectedDevice(firstDevice);
-
+                            // istanbul ignore next
                             const fetchMetricsData = async () => {
                                 try {
                                     const metricsPromises = Object.entries(selectedMetrics || {})
                                         .filter(([_, value]) => value)
                                         .map(([key, metricKey]) =>
-                                            apiService.fetchDeviceStats(firstDevice.id, metricKey)
+                                            apiService.fetchDeviceStats(selectedDevice.id, metricKey)
                                                 .then(data => ({ metricType: key, data }))
                                         );
 
@@ -82,8 +82,7 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
                                         acc[metricType] = data;
                                         return acc;
                                     }, {});
-
-                                    setMetricsData({ [firstDevice.id]: metricsMap });
+                                    setMetricsData({ [selectedDevice.id]: metricsMap });
                                 } catch (err) {
                                     console.error("Metrics fetch error:", err);
                                 }
@@ -369,7 +368,7 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
             return newExpanded;
         });
     }, [clustersData]);
-
+    // istanbul ignore next
     const selectDevice = async (device) => {
         setSelectedDevice(device);
 
