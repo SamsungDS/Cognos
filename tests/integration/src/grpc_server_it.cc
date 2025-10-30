@@ -947,6 +947,10 @@ TEST(InitIntegrationTest, UnregisterNodeServer) {
 #define NODE_INVALID_DEVICE_FEATURE_OUTPUT \
   "{\"device-info\":\"dummy-failure-value\"}"
 
+#define NODE_FEATURE_STATS_OUTPUT                                          \
+  "{\"node-stats\":{\"cpu\":{\"cores\":4},\"memory\":{\"available_memory_" \
+  "mb\":10663},\"node_name\":\"node_1\"}}"
+
 #define CXL_DEVICE_LIST_OUTPUT                                                \
   "{\"devices\":[{\"device_id\":29690035288064,\"vendor_device_type\":\"CMM-" \
   "D\",\"pcie_addr\":\"0000:b8:00.0\"}, "                                     \
@@ -1001,6 +1005,9 @@ class FakeNodeServicer : public Servicer {
         }
         if (req->command_params().find("device") != std::string::npos) {
           response->set_output(NODE_DEVICE_FEATURE_OUTPUT);
+        }
+        if (req->command_params().find("stats") != std::string::npos) {
+          response->set_output(NODE_FEATURE_STATS_OUTPUT);
         }
         response->set_node_id(req->node_id());
         return Status::OK;
@@ -3336,4 +3343,245 @@ TEST(InitIntegrationTest, SetAppSLACommandFailureException) {
   ASSERT_EQ(cmd_status.error_message(), "Device array is empty");
 
   unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest, NodeStatsSuccessful) {
+  Status status;
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  Servicer *svcr(new FakeNodeServicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+
+  // Register another node to validate multi-node cluster
+  svk::RegisterRequest *reg_req(new svk::RegisterRequest());
+  svk::RegisterResponse *reg_resp(new svk::RegisterResponse());
+  reg_req->set_cluster_name(DEFAULT_CLUSTER_ID);
+  reg_req->set_node_ip("127.0.0.1");
+  reg_req->set_node_port(DEFAULT_NODE_PORT);
+  reg_req->set_node_name("node-x");
+
+  status = client.RegisterNode(reg_req, reg_resp);
+  ASSERT_EQ(status.ok(), true);
+
+  svk::StatsRequest req;
+  svk::StatsResponse *resp = new (svk::StatsResponse);
+
+  // Only cluster name is set. No node name
+  req.set_cluster_name(DEFAULT_CLUSTER_ID);
+  req.set_feature_name("node");
+  req.set_command_name("get_node_info");
+  req.set_command_params("{\"info_type\":\"stats\"}");
+
+  status = client.StatsAPI(&req, resp);
+  ASSERT_EQ(status.ok(), true);
+
+  std::string expected_resp_str =
+      "{\"localhost\":{\"node-stats\":{\"cpu\":{\"cores\":4},\"memory\":{"
+      "\"available_memory_mb\":10663},\"node_name\":\"node_1\"}},\"node-x\":{"
+      "\"node-stats\":{\"cpu\":{\"cores\":4},\"memory\":{\"available_memory_"
+      "mb\":10663},\"node_name\":\"node_1\"}}}";
+  std::cout << "Only cluster name - Event response - " << resp->response()
+            << std::endl;
+  ASSERT_EQ(resp->response(), expected_resp_str);
+
+  // node name is set along with cluster name
+  req.set_cluster_name(DEFAULT_CLUSTER_ID);
+  req.set_feature_name("node");
+  req.set_node_name(DEFAULT_NODE_ID);
+  req.set_command_name("get_node_info");
+  req.set_command_params("{\"info_type\":\"stats\"}");
+
+  status = client.StatsAPI(&req, resp);
+  ASSERT_EQ(status.ok(), true);
+
+  expected_resp_str =
+      "{\"localhost\":{\"node-stats\":{\"cpu\":{\"cores\":4},\"memory\":{"
+      "\"available_memory_mb\":10663},\"node_name\":\"node_1\"}}}";
+  std::cout << "Node and cluster name set - Event response - "
+            << resp->response() << std::endl;
+  ASSERT_EQ(resp->response(), expected_resp_str);
+
+  // Only node name is set. No clustername
+  req.set_cluster_name("");
+  req.set_feature_name("node");
+  req.set_node_name("node-x");
+  req.set_command_name("get_node_info");
+  req.set_command_params("{\"info_type\":\"stats\"}");
+
+  status = client.StatsAPI(&req, resp);
+  ASSERT_EQ(status.ok(), true);
+
+  expected_resp_str =
+      "{\"node-x\":{\"node-stats\":{\"cpu\":{\"cores\":4},\"memory\":{"
+      "\"available_memory_mb\":10663},\"node_name\":\"node_1\"}}}";
+  std::cout << "Only node name - Event response - " << resp->response()
+            << std::endl;
+  ASSERT_EQ(resp->response(), expected_resp_str);
+
+  // No node name or cluster name set
+  req.set_cluster_name("");
+  req.set_node_name("");
+  req.set_feature_name("node");
+  req.set_command_name("get_node_info");
+  req.set_command_params("{\"info_type\":\"stats\"}");
+
+  status = client.StatsAPI(&req, resp);
+  ASSERT_EQ(status.ok(), true);
+
+  expected_resp_str =
+      "{\"localhost\":{\"node-stats\":{\"cpu\":{\"cores\":4},\"memory\":{"
+      "\"available_memory_mb\":10663},\"node_name\":\"node_1\"}},\"node-x\":{"
+      "\"node-stats\":{\"cpu\":{\"cores\":4},\"memory\":{\"available_memory_"
+      "mb\":10663},\"node_name\":\"node_1\"}}}";
+  std::cout << "No node or cluster name - Event response - " << resp->response()
+            << std::endl;
+  ASSERT_EQ(resp->response(), expected_resp_str);
+
+  // Invalid node name is set along with valid cluster name
+  req.set_cluster_name(DEFAULT_CLUSTER_ID);
+  req.set_feature_name("node");
+  req.set_node_name("node-invalid");
+  req.set_command_name("get_node_info");
+  req.set_command_params("{\"info_type\":\"stats\"}");
+
+  status = client.StatsAPI(&req, resp);
+  ASSERT_EQ(status.ok(), true);
+
+  json empty_obj;
+  expected_resp_str = empty_obj.dump();
+  std::cout << "invalid node and valid cluster - Event response - "
+            << resp->response() << std::endl;
+  ASSERT_EQ(resp->response(), expected_resp_str);
+
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest, NodeStatsFailureCases) {
+  Status status;
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  Servicer *svcr(new FakeNodeServicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+
+  svk::StatsRequest req;
+  svk::StatsResponse *resp = new (svk::StatsResponse);
+
+  // No command name set. Should fail
+  req.set_cluster_name(DEFAULT_CLUSTER_ID);
+  req.set_command_name("");
+  status = client.StatsAPI(&req, resp);
+  ASSERT_EQ(status.ok(), false);
+
+  // Invalid cluster name. Should fail
+  req.set_cluster_name("invalid-cluster");
+  req.set_command_name("get_node_info");
+  status = client.StatsAPI(&req, resp);
+  ASSERT_EQ(status.ok(), false);
+
+  // Invalid node name. Should fail
+  req.set_cluster_name("");
+  req.set_node_name("invalid_node");
+  req.set_feature_name("node");
+  req.set_command_name("get_node_info");
+  status = client.StatsAPI(&req, resp);
+  ASSERT_EQ(status.ok(), false);
+
+  unlink(conf_file.c_str());
+}
+
+class FakeNodeServicerWithInvalidDataForStats : public Servicer {
+ public:
+  FakeNodeServicerWithInvalidDataForStats(std::string conf_file)
+      : Servicer(conf_file){};
+  Status ProcessNodeCommand(ServerContext *ctxt, const svk::CommandRequest *req,
+                            svk::CommandResponse *resp) override {
+    if (req->command_name().length() > 0) {
+      if (req->command_name() == "get_node_info") {
+        svk::CommandResponse_NodeResponse *response =
+            resp->add_node_responses();
+        if (req->command_params().find("pci") != std::string::npos) {
+          response->set_output(NODE_PCI_FEATURE_OUTPUT);
+        }
+        if (req->command_params().find("device") != std::string::npos) {
+          response->set_output(NODE_DEVICE_FEATURE_OUTPUT);
+        }
+        if (req->command_params().find("stats") != std::string::npos) {
+          response->set_output("");
+        }
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      } else if (req->command_name() == "list_devices") {
+        svk::CommandResponse_NodeResponse *response =
+            resp->add_node_responses();
+        response->set_output(CXL_DEVICE_LIST_OUTPUT);
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      } else if (req->command_name() == "get_device_info") {
+        svk::CommandResponse_NodeResponse *response =
+            resp->add_node_responses();
+        if (req->command_params().find("29690035288064") != std::string::npos) {
+          response->set_output(CXL_DEVICE_INFO_OUTPUT1);
+        } else if (req->command_params().find("30690035288064") !=
+                   std::string::npos) {
+          response->set_output(CXL_DEVICE_INFO_OUTPUT2);
+        }
+
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      }
+    }
+    std::cout
+        << "FakeNodeServicerWithInvalidDataForStats called for the command "
+        << req->command_params() << std::endl;
+    return Status::OK;
+  }
+};
+
+TEST(InitIntegrationTest, NodeStatsWithInvalidJSONOutput) {
+  Status status;
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  Servicer *svcr(new FakeNodeServicerWithInvalidDataForStats(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+
+  svk::StatsRequest req;
+  svk::StatsResponse *resp = new (svk::StatsResponse);
+  req.set_cluster_name(DEFAULT_CLUSTER_ID);
+  req.set_command_name("get_node_info");
+  req.set_command_params("{\"info_type\":\"stats\"}");
+  req.set_feature_name("node");
+  status = client.StatsAPI(&req, resp);
+  ASSERT_EQ(status.ok(), false);
+  EXPECT_THAT(status.error_message(),
+              HasSubstr("Error in parsing the output json string"));
 }

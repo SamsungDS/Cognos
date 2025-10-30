@@ -24,7 +24,7 @@ std::vector<std::string> gTopicsVector;
 std::mutex gMutex;
 std::condition_variable gCondVar;
 
-std::shared_ptr<SLADeviceHelper> g_sla_device_hlpr =
+const std::shared_ptr<SLADeviceHelper> g_sla_device_hlpr =
     std::make_shared<SLADeviceHelper>();
 
 std::unique_ptr<Client> CreateClient(const std::string &node_name,
@@ -74,10 +74,6 @@ int GenerateControllerEvent(std::string host_name, std::string app_name,
   }
   return status;
 }
-
-int SendCommandToNodeInJSON(std::string node_name, std::string node_port,
-                            svk::CommandRequest &req,
-                            svk::CommandResponse &resp);
 
 static int read_subscriber_settings_from_config_file(
     const char *config_file, std::string &port, std::string &transport_type,
@@ -557,16 +553,12 @@ Status ControllerServicer::SetNodeStatus(ServerContext *ctxt,
 int EnableRASTrackingOnDevices(
     std::string node_name, std::string node_port,
     std::unordered_map<std::string, DeviceInfo> &ras_device_map) {
-  svk::CommandRequest req_node;
-  svk::CommandResponse resp;
   int status = -1;
   std::string log_msg;
+  std::string output;
+
   // Send each device to RAS feature module for reliability tracking
   for (const auto &[device_id, device_info] : ras_device_map) {
-    req_node.set_node_id(node_name);
-    req_node.set_feature_name(RAS_FEATURE_MODULE_NAME);
-    req_node.set_command_name("add_reliability_monitoring_for_device");
-
     json command_params_json;
     json configure_options_json;
     command_params_json["device_id"] = device_info.controller_generated_id;
@@ -578,8 +570,9 @@ int EnableRASTrackingOnDevices(
     log_msg = "Enable RAS tracking with params" + command_params_json.dump();
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, log_msg.c_str());
 
-    req_node.set_command_params(command_params_json.dump());
-    SendCommandToNodeInJSON(node_name, node_port, req_node, resp);
+    SendNodeCommand(node_name, node_port, RAS_FEATURE_MODULE_NAME,
+                    "add_reliability_monitoring_for_device",
+                    command_params_json.dump(), output);
   }
 
   status = 0;
@@ -1884,6 +1877,164 @@ Status ControllerServicer::SLAManagementAPI(
   return status;
 }
 
+int ControllerServicer::HlprGetNodeDetails(std::string const &node_name,
+                                           std::string &node_port,
+                                           std::string &cluster_name,
+                                           std::string &node_ip) {
+  int status = -1;
+  std::string logger_str;
+
+  if (node_name.length()) {
+    try {
+      // Note: must use the node_name to find the ip/cluster, not the IP
+      node_info n = m_registered_nodes.at(node_name);
+      cluster_name = n.cluster_name;
+      // Send the node_ip to ProcessControllerCommand for now
+      node_ip = n.node_ip;
+      node_port = n.node_port;
+    } catch (const std::out_of_range &e) {
+      logger_str = "Could not find node_info for node name <" + node_name +
+                   "> - " + std::string(e.what());
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                 logger_str.c_str());
+      return status;
+    }
+    status = 0;
+  }
+
+  return status;
+}
+
+Status RunStatsCommand(ControllerServicer *svcr, std::string const &node_name,
+                       const std::string &feature_name,
+                       const std::string &command_name,
+                       const std::string &command_params, json &output_json) {
+  std::string t_node_ip;
+  std::string t_node_port;
+  std::string t_cluster_name;
+  std::string output_str;
+  std::string logger_str;
+  int status = -1;
+  Status cmd_status;
+
+  status = svcr->HlprGetNodeDetails(node_name, t_node_port, t_cluster_name,
+                                    t_node_ip);
+  if (status != 0) {
+    logger_str = "Error in getting node details <" + node_name +
+                 ">. Internal structure looks corrupted";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    return Status(grpc::INVALID_ARGUMENT, logger_str);
+  }
+
+  cmd_status = SendNodeCommand(t_node_ip, t_node_port, feature_name,
+                               command_name, command_params, output_str);
+  if (cmd_status.ok() != true) {
+    logger_str = "Error in getting node stats for <" + node_name + ">.";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    return Status(grpc::UNKNOWN, logger_str);
+  }
+
+  try {
+    output_json = json::parse(output_str);
+  } catch (json::parse_error &e) {
+    logger_str = "Error in parsing the output json string for node <" +
+                 node_name + ">, output <" + output_str + "> - " +
+                 std::string(e.what());
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    return Status(grpc::UNKNOWN, logger_str);
+  }
+
+  return Status::OK;
+}
+
+Status ControllerServicer::StatsAPI(ServerContext *ctxt,
+                                    const svk::StatsRequest *req,
+                                    svk::StatsResponse *resp) {
+  std::string logger_str;
+  Status cmd_status;
+
+  std::string cluster_name = req->cluster_name();
+  std::string node_name = req->node_name();
+  std::string application_name = req->application_name();
+  std::string feature_name = req->feature_name();
+  std::string command_name = req->command_name();
+  std::string command_params = req->command_params();
+  json json_response;
+
+  resp->set_api_version(API_VERSION);
+
+  logger_str = "StatsAPI called with feature: " + feature_name +
+               " command: " + command_name + " params: " + command_params;
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+
+  if (command_name.length() == 0) {
+    logger_str = "StatsAPI called with empty command_name";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    cmd_status = Status(grpc::INVALID_ARGUMENT, logger_str);
+    return cmd_status;
+  }
+
+  if (cluster_name.length()) {
+    cluster_info cluster_details;
+    try {
+      // Note: must use the node_name to find the ip/cluster, not the IP
+      cluster_details = m_cluster_info.at(cluster_name);
+    } catch (const std::out_of_range &e) {
+      logger_str = "Could not find the cluster name <" + cluster_name +
+                   ">. - " + std::string(e.what());
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                 logger_str.c_str());
+      resp->set_error_id_or_string_if_any(logger_str);
+      resp->set_error_code(SVK_STATUS_FAIL);
+      return Status(grpc::INVALID_ARGUMENT, logger_str);
+    }
+
+    for (const auto &t_node_name : cluster_details.node_names) {
+      if (node_name.length() && node_name != t_node_name) {
+        continue;
+      }
+      json node_output_json;
+      cmd_status =
+          RunStatsCommand(this, t_node_name, feature_name, command_name,
+                          command_params, node_output_json);
+      if (cmd_status.ok() != true) {
+        return cmd_status;
+      }
+      json_response[t_node_name] = node_output_json;
+    }
+    resp->set_response(json_response.dump());
+
+  } else if (node_name.length()) {
+    json node_output_json;
+    cmd_status = RunStatsCommand(this, node_name, feature_name, command_name,
+                                 command_params, node_output_json);
+    if (cmd_status.ok() != true) {
+      return cmd_status;
+    }
+    json_response[node_name] = node_output_json;
+    resp->set_response(json_response.dump());
+  } else {
+    json node_output_json;
+    for (const auto &[key, node] : m_registered_nodes) {
+      cmd_status =
+          RunStatsCommand(this, node.node_name, feature_name, command_name,
+                          command_params, node_output_json);
+
+      if (cmd_status.ok() != true) {
+        continue;
+      }
+      json_response[node.node_name] = node_output_json;
+    }
+    resp->set_response(json_response.dump());
+  }
+
+  return Status(grpc::OK, "Success");
+}
+
 std::shared_ptr<Server> InitializeServicer(ControllerServicer *svcr) {
   std::string logger_str;
 
@@ -2073,37 +2224,6 @@ void ConfigureSubscriberSocket(ControllerServicer *svcr,
 }
 
 /**
- * Send the command to the Node agent in the new format only.
- *
- * @return 0 if the command is succeeded,
- *         -1 if the command failed to succeed.
- */
-
-int SendCommandToNodeInJSON(std::string node_name, std::string node_port,
-                            svk::CommandRequest &req,
-                            svk::CommandResponse &resp) {
-  int status = -1;
-  Client client(node_name, node_port);
-  Status client_grpc_status = client.ProcessNodeCommand(&req, &resp);
-  if (client_grpc_status.ok()) {
-    std::string logger_str =
-        "Send command to the node with command_name: " + req.command_name() +
-        " and command_params: " + req.command_params() + " is successful";
-    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-               logger_str.c_str());
-    status = 0;
-  } else {
-    std::string logger_str =
-        "Command with command_name: " + req.command_name() +
-        " command_params: " + req.command_params() + "is failed";
-    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
-               logger_str.c_str());
-  }
-
-  return status;
-}
-
-/**
  * For the given node info, get the cluster name and the node port to use
  * for sending command to node.
  *
@@ -2141,19 +2261,15 @@ int get_cluster_name_for_node(ControllerServicer *svcr,
 int DisableRASTrackingOnDevice(std::string node_name, std::string node_port,
                                std::string device_id, std::string device_type,
                                std::string device_numa) {
-  svk::CommandRequest req_node;
-  svk::CommandResponse resp;
+  Status cmd_status;
   int status = -1;
   std::string log_msg;
+  std::string output;
 
   log_msg = "Initiated Disable RAS tracking on device " + device_id;
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, log_msg.c_str());
 
   // Send each device to RAS feature module for reliability tracking
-  req_node.set_node_id(node_name);
-  req_node.set_feature_name(RAS_FEATURE_MODULE_NAME);
-  req_node.set_command_name("remove_reliability_monitoring_for_device");
-
   json command_params_json;
   command_params_json["device_id"] = device_id;
   command_params_json["device_numa"] = device_numa;
@@ -2162,8 +2278,14 @@ int DisableRASTrackingOnDevice(std::string node_name, std::string node_port,
   log_msg = "Disabling RAS tracking with params" + command_params_json.dump();
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, log_msg.c_str());
 
-  req_node.set_command_params(command_params_json.dump());
-  status = SendCommandToNodeInJSON(node_name, node_port, req_node, resp);
+  cmd_status = SendNodeCommand(node_name, node_port, RAS_FEATURE_MODULE_NAME,
+                               "remove_reliability_monitoring_for_device",
+                               command_params_json.dump(), output);
+  if (cmd_status.ok()) {
+    status = 0;
+  }
+
+  return status;
 
   return status;
 }
@@ -2176,17 +2298,14 @@ int DisableRASTrackingOnDevice(std::string node_name, std::string node_port,
 
 int DisableSLATrackingOnDevice(std::string node_name, std::string node_port,
                                std::string device_numa, std::string app_name) {
-  svk::CommandRequest req_node;
-  svk::CommandResponse resp;
+  Status cmd_status;
+  std::string output;
   int status = -1;
   std::string log_msg;
   log_msg = "Initiated Disable SLA tracking on device " + device_numa;
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, log_msg.c_str());
 
   // Send each device to RAS feature module for reliability tracking
-  req_node.set_node_id(node_name);
-  req_node.set_feature_name(SLAT_FEATURE_MODULE_NAME);
-  req_node.set_command_name("remove_devices_from_sla_tracker");
   json devices = json::array();
   json device;
   device["device_numa"] = device_numa;
@@ -2195,9 +2314,11 @@ int DisableSLATrackingOnDevice(std::string node_name, std::string node_port,
   command_params_json["devices"] = devices;
   command_params_json["app_name"] = app_name;
 
-  req_node.set_command_params(command_params_json.dump());
-  status = SendCommandToNodeInJSON(node_name, node_port, req_node, resp);
-  if (status == 0) {
+  cmd_status = SendNodeCommand(node_name, node_port, SLAT_FEATURE_MODULE_NAME,
+                               "remove_devices_from_sla_tracker",
+                               command_params_json.dump(), output);
+
+  if (cmd_status.ok()) {
     log_msg = "Disabled SLA tracking on device " + device_numa + " for app " +
               app_name;
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, log_msg.c_str());
@@ -2311,14 +2432,8 @@ void ProcessRASEvent(json json_data, ControllerServicer *svcr) {
   get_cluster_name_for_node(svcr, node_name, cluster_name, node_port);
   if (cluster_name.length() != 0) {
     // Get the device of similar or better latency from the same host
-    svk::CommandRequest req;
-    svk::CommandResponse resp;
-    req.set_cluster_id(cluster_name);
-    req.set_node_id(node_name);
-    req.set_feature_name(ME_FEATURE_MODULE_NAME);
-    req.set_command_name("move_all");
-
     json json_data;
+    std::string output;
     json_data["command"] = "move_all";
     json_data["app"] = ras_reported_app_name;
     json_data["app_pid"] = (app_info.pid != 0) ? std::to_string(app_info.pid)
@@ -2328,9 +2443,8 @@ void ProcessRASEvent(json json_data, ControllerServicer *svcr) {
     // TODO; Should we pass as a parameter or config file?
     json_data["tm_attr"] = "0";  // aggressiveness - 0 or 1
 
-    std::string command_params = json_data.dump();
-    req.set_command_params(command_params);
-    SendCommandToNodeInJSON(node_name, node_port, req, resp);
+    SendNodeCommand(node_name, node_port, ME_FEATURE_MODULE_NAME, "move_all",
+                    json_data.dump(), output);
     // TODO: Add error checks
 
     // Generate a controller event to indicate the move_all initiated
@@ -2370,6 +2484,7 @@ void ProcessSLAEvent(json json_data, ControllerServicer *svcr) {
   uint64_t slat_reported_numa;
   std::string logger_str;
   int status = -1;
+  Status cmd_status;
   DeviceInfo dev_info;
 
   try {
@@ -2433,14 +2548,9 @@ void ProcessSLAEvent(json json_data, ControllerServicer *svcr) {
   if (cluster_name.length() != 0) {
     // Get the device of similar or low latency for the same host
 
-    svk::CommandRequest req;
-    svk::CommandResponse resp;
-    req.set_cluster_id(cluster_name);
-    req.set_node_id(node_name);
-    req.set_feature_name(ME_FEATURE_MODULE_NAME);
-    req.set_command_name("move");
-
     json json_data;
+    std::string output;
+
     json_data["command"] = "move";
     json_data["app"] = slat_reported_app_name;
     json_data["app_pid"] = (app_info.pid != 0) ? std::to_string(app_info.pid)
@@ -2451,9 +2561,8 @@ void ProcessSLAEvent(json json_data, ControllerServicer *svcr) {
     json_data["tm_attr"] =
         "MOVER_AGGRESSIVENESS_LOW";  // aggressiveness - 0 or 1
 
-    std::string command_params_str = json_data.dump();
-    req.set_command_params(command_params_str);
-    SendCommandToNodeInJSON(node_name, node_port, req, resp);
+    SendNodeCommand(node_name, node_port, ME_FEATURE_MODULE_NAME, "move",
+                    json_data.dump(), output);
 
     // Generate an event for the "move" initiated by the controller
     controller_config config = svcr->get_svk_config();
@@ -2479,19 +2588,17 @@ void ProcessSLAEvent(json json_data, ControllerServicer *svcr) {
     sla_command_params["logic_module"] = (char *)"mlc";
     sla_command_params["devices"] = devices;
 
-    req.set_feature_name(SLAT_FEATURE_MODULE_NAME);
-    req.set_command_name("add_devices_to_sla_tracker");
-
-    command_params_str = sla_command_params.dump();
-    req.set_command_params(command_params_str);
     logger_str = "ProcessSLAEvent - Command with command_params " +
-                 command_params_str + " is passed to node " + node_name;
+                 sla_command_params.dump() + " is passed to node " + node_name;
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                logger_str.c_str());
 
-    status = SendCommandToNodeInJSON(node_name, node_port, req, resp);
+    std::string command_params_str = sla_command_params.dump();
+    cmd_status = SendNodeCommand(node_name, node_port, SLAT_FEATURE_MODULE_NAME,
+                                 "add_devices_to_sla_tracker",
+                                 command_params_str, output);
 
-    if (status != 0) {
+    if (cmd_status.ok() != true) {
       // If one of the nodes return failure for whatever reason, we are
       // returning error for the whole cluster. Need to handle partial
       // failures accordingly

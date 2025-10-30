@@ -33,6 +33,8 @@ class Client {
                           svk::EventResponse* resp);
   virtual Status SLAManagementAPI(const svk::SLAManagementRequest* req,
                                   svk::SLAManagementResponse* resp);
+  virtual Status StatsAPI(const svk::StatsRequest* req,
+                          svk::StatsResponse* resp);
 
  private:
   std::shared_ptr<Channel> channel;

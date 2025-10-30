@@ -83,3 +83,10 @@ Status Client::SLAManagementAPI(const svk::SLAManagementRequest* req,
   Status status = ctrlr_stub_->SLAManagementAPI(&ctxt, *req, resp);
   return status;
 }
+
+Status Client::StatsAPI(const svk::StatsRequest* req,
+                        svk::StatsResponse* resp) {
+  ClientContext ctxt;
+  Status status = ctrlr_stub_->StatsAPI(&ctxt, *req, resp);
+  return status;
+}
