@@ -175,6 +175,27 @@ service Controller {
       tags : "svk, controller, sla"
     };
   }
+
+  // stats based APIs
+  rpc StatsAPI(StatsRequest) returns (StatsResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/stats"
+      body : "*"
+      additional_bindings {
+        post : "/api/v1/clusters/{cluster_name}/features/{feature_name}/stats"
+        body : "*"
+      }
+      additional_bindings {
+        post : "/api/v1/nodes/{node_name}/features/{feature_name}/stats"
+        body : "*"
+      }
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary : "SVK Stats API"
+      description : "SVK Stats API"
+      tags : "svk, controller, stats"
+    };
+  }
 }
 
 // gRPC APIs related to Command Framework at the SVK Agent node
@@ -391,6 +412,27 @@ message SLAManagementRequest {
 // A SLAManagementResponse resource.
 message SLAManagementResponse {
   // Status of SLAManagementResponse with success or failure with error details
+  string error_id_or_string_if_any = 1;
+  int32 error_code = 2;
+  string api_version = 3;
+  // JSON format of the output response
+  string response = 4;
+}
+
+// A StatsRequest resource sent to the Controller node to handle stats API.
+message StatsRequest {
+  string cluster_name = 1;
+  string node_name = 2;
+  string application_name = 3;
+  string feature_name = 4;
+  string command_name = 5;
+  // JSON format of the input params to be passed
+  string command_params = 6;
+}
+
+// A StatsResponse resource.
+message StatsResponse {
+  // Status of StatsResponse with success or failure with error details
   string error_id_or_string_if_any = 1;
   int32 error_code = 2;
   string api_version = 3;

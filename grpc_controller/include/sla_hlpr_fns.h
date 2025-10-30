@@ -153,6 +153,6 @@ class SLAStatsManager {
 std::string generate_unique_device_id(const std::string& node_name,
                                       const std::string& numa);
 
-extern std::shared_ptr<SLADeviceHelper> g_sla_device_hlpr;
+extern const std::shared_ptr<SLADeviceHelper> g_sla_device_hlpr;
 
 #endif /* __SLA_HLPR_FNS_H__ */

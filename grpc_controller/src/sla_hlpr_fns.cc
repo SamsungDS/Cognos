@@ -13,33 +13,6 @@ std::string generate_unique_device_id(const std::string& node_name,
 // value of return data structure "Status". if Status.ok() is true, the
 // command is successful. Else it is failure and can check the error message
 // using Status.error_message()
-Status SendNodeCommand(std::string node_name, std::string node_port,
-                       std::string feature_name, std::string command_name,
-                       std::string command_params, std::string& output) {
-  svk::CommandRequest req_node;
-  svk::CommandResponse resp_node;
-  Status cmd_status;
-  std::string logger_str;
-
-  req_node.set_node_id(node_name);
-  req_node.set_feature_name(feature_name);
-  req_node.set_command_name(command_name);
-  req_node.set_command_params(command_params);
-
-  auto client = CreateClient(node_name, node_port);
-  cmd_status = client->ProcessNodeCommand(&req_node, &resp_node);
-  if (cmd_status.ok() != true) {
-    logger_str = "Got error for the command " + command_name + " on node " +
-                 node_name + " with error:" + cmd_status.error_message();
-    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
-               logger_str.c_str());
-  } else {
-    output = resp_node.node_responses(0).output();
-  }
-
-  return cmd_status;
-}
-
 /*
  The JSON output of CXL feature module's list_devices is as follows
  {

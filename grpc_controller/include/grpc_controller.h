@@ -14,6 +14,7 @@
 #include "framework_struct.h"
 #include "framework_upstream.h"
 #include "grpc_hdr.h"
+#include "node_cmd_helper_fns.h"
 #include "sla_hlpr_fns.h"
 #include "svk_logger.h"
 
@@ -128,6 +129,10 @@ class ControllerServicer : public svk::Controller::Service {
   Status SLAManagementAPI(ServerContext *ctxt,
                           const svk::SLAManagementRequest *req,
                           svk::SLAManagementResponse *resp) override;
+  Status StatsAPI(ServerContext *ctxt, const svk::StatsRequest *req,
+                  svk::StatsResponse *resp) override;
+  int HlprGetNodeDetails(std::string const &node_name, std::string &node_port,
+                         std::string &cluster_name, std::string &node_ip);
 
   const std::string &get_svk_config_controller_id() {
     return m_svk_config.controller_id;
