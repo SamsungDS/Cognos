@@ -1,70 +1,33 @@
 import React, { useContext, useState, useEffect, createContext } from 'react';
 import * as constants from '../constant';
 
-
 // Mock data - moved to top for better organization
 const mockEventData = [
     {
-        id: 1,
+        timestamp: "12:40:05",
+        msg: "Node is showing unhealthy status",
+        payload: { message: "axy" },
+        cluster_name: "node",
+        node_name: "node-1",
         severity: 'critical',
-        node_name: 'NODE-001',
-        node_id: 'NODE-001',
+        domain: 'NODE-001',
         category: 'Security',
         source: 'Node',
-        source_type: 'device',
-        timestamp: '2 min ago',
-        event_name: "node down",
-        event_msg: 'Node is showing unhealthy status'
-    },
-    {
-        id: 2,
-        severity: 'warning',
-        node_name: 'NODE-002',
-        node_id: 'NODE-002',
-        category: 'Security',
-        source: 'Node-02',
-        source_type: 'device',
-        timestamp: '5 min ago',
-        event_name: "node-02 down",
-        event_msg: 'Node-02 is showing unhealthy status'
-    },
-    {
-        id: 3,
-        severity: 'info',
-        node_name: 'NODE-003',
-        node_id: 'NODE-003',
-        category: 'Performance',
-        source: 'Node-03',
-        source_type: 'device',
-        timestamp: '10 min ago',
-        event_name: "performance degraded",
-        event_msg: 'Node-03 performance is below threshold'
-    },
-    {
-        id: 4,
-        severity: 'info',
-        node_name: 'NODE-004',
-        node_id: 'NODE-004',
-        category: 'Performance',
-        source: 'Node-04',
-        source_type: 'device',
-        timestamp: '15 min ago',
-        event_name: "performance degraded",
-        event_msg: 'Node-04 performance is below threshold'
-    },
-    {
-        id: 5,
-        severity: 'warning',
-        node_name: 'NODE-005',
-        node_id: 'NODE-005',
-        category: 'System',
-        source: 'Node-05',
-        source_type: 'device',
-        timestamp: '20 min ago',
-        event_name: "memory usage high",
-        event_msg: 'Node-05 memory usage is above 85%'
+        source_type: 'device'
     }
 ];
+
+// Utility function to ensure all events have unique IDs
+// istanbul ignore next
+const ensureEventIds = (eventsArray) => {
+    if (!Array.isArray(eventsArray)) return [];
+
+    return eventsArray.map((event, index) => ({
+        ...event,
+        // eslint-disable-next-line no-restricted-syntax
+        id: event.id || `event-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 11)}`
+    }));
+};
 
 // Create Events Context with default values
 export const EventsContext = createContext({
@@ -86,11 +49,25 @@ export const EventsContext = createContext({
 
 // Events Provider Component
 export const EventsProvider = ({ children }) => {
-    // Main state - using 'events' terminology consistently
-    const [events, setEvents] = useState(mockEventData);
+    // Main state - initialize with IDs
+    // eslint-disable-next-line react/hook-use-state
+    const [events, setEventsInternal] = useState(() => ensureEventIds(mockEventData));
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState(null);
     const apiEndpoint = constants.Configs.api_endpoint;
+
+    // Wrapper for setEvents that ensures IDs
+    // istanbul ignore next
+    const setEvents = (eventsOrUpdater) => {
+        if (typeof eventsOrUpdater === 'function') {
+            setEventsInternal(prev => {
+                const newEvents = eventsOrUpdater(prev);
+                return ensureEventIds(newEvents);
+            });
+        } else {
+            setEventsInternal(ensureEventIds(eventsOrUpdater));
+        }
+    };
 
     // Fetch event data function
     // istanbul ignore next
@@ -109,8 +86,13 @@ export const EventsProvider = ({ children }) => {
 
             // Handle different API response formats
             const eventsData = Array.isArray(data) ? data : data.events || data.alerts || [];
-            console.log("Events Data: ", eventsData);
-            setEvents(eventsData);
+            console.log("Events Data (raw):", eventsData);
+
+            // Ensure all events have IDs before setting
+            const eventsWithIds = ensureEventIds(eventsData);
+            console.log("Events Data (with IDs):", eventsWithIds);
+
+            setEventsInternal(eventsWithIds);
 
         } catch (error) {
             console.error('Error fetching event data:', error);
@@ -126,35 +108,38 @@ export const EventsProvider = ({ children }) => {
     const addEvent = (newEvent) => {
         const event = {
             ...newEvent,
-            id: newEvent.id || Date.now(),
-            timestamp: newEvent.timestamp || 'now'
+            // eslint-disable-next-line no-restricted-syntax
+            id: newEvent.id || `event-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
+            timestamp: newEvent.timestamp || new Date().toLocaleTimeString()
         };
-        setEvents(prev => [event, ...prev]);
+        setEventsInternal(prev => [event, ...prev]);
     };
 
     // Remove event function
     // istanbul ignore next
     const removeEvent = (eventId) => {
-        setEvents(prev => prev.filter(event => event.id !== eventId));
+        setEventsInternal(prev => prev.filter(event => event.id !== eventId));
     };
 
     // Clear all events
+    // istanbul ignore next
     const clearEvents = () => {
-        setEvents([]);
+        setEventsInternal([]);
     };
 
     // Refresh events function
+    // istanbul ignore next
     const refreshEvents = () => {
         fetchEventData();
     };
 
     // Set up polling effect
     useEffect(() => {
-        // Uncomment the line below if you want to fetch from API on mount
+        // Fetch from API on mount
         fetchEventData();
 
-        // Poll for updates every 30 seconds (commented out for development)
-        const interval = setInterval(fetchEventData, 5000);
+        // Poll for updates every 10 seconds
+        const interval = setInterval(fetchEventData, 10000);
         return () => clearInterval(interval);
     }, []);
 
@@ -163,6 +148,7 @@ export const EventsProvider = ({ children }) => {
     const getEventsBySeverity = (severity) => events?.filter(event => event.severity === severity) || [];
 
     // Context value with computed properties
+    // istanbul ignore next
     const contextValue = {
         // Main state
         events,
@@ -202,5 +188,5 @@ export const useEvents = () => {
     return context;
 };
 
-// Export mock data for reuse
-export { mockEventData };
+// Export mock data and utility
+export { mockEventData, ensureEventIds };

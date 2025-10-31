@@ -247,7 +247,6 @@ const Events = () => {
             severity: PropTypes.string.isRequired,
             timestamp: PropTypes.string.isRequired,
             msg: PropTypes.string.isRequired,
-            event_name: PropTypes.string.isRequired,
             source: PropTypes.string.isRequired,
             source_type: PropTypes.string.isRequired,
             node_name: PropTypes.string.isRequired,
