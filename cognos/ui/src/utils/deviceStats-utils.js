@@ -32,7 +32,7 @@ export const API_CONFIG = {
 // istanbul ignore next
 export const apiService = {
     // Fetch topology data (clusters, nodes, devices hierarchy)
-    async fetchTopology() {        
+    async fetchTopology() {
         try {
             const response = await fetch(`${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.TOPOLOGY}`, {
                 mode: "cors",
@@ -101,7 +101,7 @@ export const apiService = {
     },
 
     // Fetch device stats for a specific metric
-    async fetchDeviceStats(deviceId, statKey) {      
+    async fetchDeviceStats(deviceId, statKey) {
 
         try {
             const response = await fetch(
@@ -157,14 +157,14 @@ export const apiService = {
             const seconds = parts[2] ? parts[2] : '00';
             return `${hours}:${minutes}:${seconds}`;
         }
-        
+
         // Handle Date object or timestamp number
         const date = new Date(timestamp);
         if (isNaN(date.getTime())) {
             console.warn(`Invalid timestamp: ${timestamp}`);
             return timestamp;
         }
-        
+
         return date.toLocaleTimeString('en-US', {
             hour: '2-digit',
             minute: '2-digit',
@@ -190,4 +190,15 @@ export const getMarginForTimeFilter = (filter, containerWidth) => {
         default:
             return { top: 20, right: 30, bottom: baseBottom + 10, left: 50 };
     }
+};
+export const formatYAxisNumber = (value) => {
+    const absValue = Math.abs(value);
+    if (absValue >= 1e9) {
+        return (value / 1e9).toFixed(1) + 'B';
+    } else if (absValue >= 1e6) {
+        return (value / 1e6).toFixed(1) + 'M';
+    } else if (absValue >= 1e3) {
+        return (value / 1e3).toFixed(1) + 'K';
+    }
+    return value.toString();
 };

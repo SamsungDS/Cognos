@@ -4,7 +4,7 @@ import PropTypes from 'prop-types';
 import './deviceCard.css';
 import MetricItem from './MetricItem';
 import TreeItem from './TreeItem';
-import { metricColors, apiService, getMarginForTimeFilter } from '../../utils/deviceStats-utils';
+import { metricColors, apiService, getMarginForTimeFilter, formatYAxisNumber  } from '../../utils/deviceStats-utils';
 
 const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
     const svgRef = useRef();
@@ -241,12 +241,21 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
             .attr('dx', shouldRotate ? '-.8em' : '0')
             .attr('dy', shouldRotate ? '.15em' : '.71em');
 
-        g.append('g')
-            .call(d3.axisLeft(yScale))
-            .selectAll('text')
-            .attr('fill', '#888')
-            .style('font-size', fontSize);
+        const yAxisGroup = g.append('g')
+            .call(d3.axisLeft(yScale)
+                .ticks(5)
+                .tickFormat(d => formatYAxisNumber(d))
+            );
 
+        yAxisGroup.selectAll('text')
+            .attr('fill', '#888')
+            .style('font-size', fontSize)
+            .style('cursor', 'pointer')
+            .each(function (d) {
+                d3.select(this)
+                    .append('title')
+                    .text(d.toLocaleString());
+            });
         const y_axis_label = Object.values(selectedMetrics)[0];
         // Add Y-axis label with dynamic text
         g.append('text')
