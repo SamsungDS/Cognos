@@ -1,6 +1,10 @@
-#include "sla_hlpr_fns.h"
-
 #include <nlohmann/json.hpp>
+
+#include "framework/framework.grpc.pb.h"
+#include "grpc_controller.h"
+#include "grpc_hdr.h"
+#include "node_cmd_helper_fns.h"
+#include "svk_logger.h"
 
 /* Helper functions */
 
@@ -9,10 +13,11 @@ std::string generate_unique_device_id(const std::string& node_name,
   return node_name + "_" + numa;
 }
 
-// The "output" param is valid only if the command is successful. Check the
-// value of return data structure "Status". if Status.ok() is true, the
-// command is successful. Else it is failure and can check the error message
-// using Status.error_message()
+std::string generate_app_id(const std::string& app_name,
+                            const std::string& app_pid) {
+  return app_name + "_" + app_pid;
+}
+
 /*
  The JSON output of CXL feature module's list_devices is as follows
  {
@@ -362,7 +367,7 @@ int GetCXLDeviceDetails(std::string node_name, std::string port,
   std::vector<uint64_t> device_id_vector;
 
   logger_str =
-      "running GetDeviceDetails with node id " + node_name + " port " + port;
+      "running GetCXLDeviceDetails with node id " + node_name + " port " + port;
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
 
   // Check for CXL tag in the PCI device info from the node. If present,
@@ -491,6 +496,7 @@ int SLADeviceHelper::GetDeviceDetails(std::string node_name, std::string port) {
   int status = -1;
   std::vector<DeviceInfo> device_map;
   std::string logger_str;
+  std::unordered_map<std::string, DeviceInfo> ras_device_map;
 
   GetDRAMDeviceDetails(node_name, port, device_map);
   GetCXLDeviceDetails(node_name, port, device_map);
@@ -514,11 +520,23 @@ int SLADeviceHelper::GetDeviceDetails(std::string node_name, std::string port) {
                    "> from node " + dev_info.node_name +
                    " is added to controller device map.";
     }
+
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                logger_str.c_str());
+    // Add all the devices to ras_device_map to enable RAS tracking
+    // Ignore devices which are marked faulty/offline/invalid
+    if (this->m_device_map[dev_info.controller_generated_id].internal_status ==
+        Device_Status_E::DEVICE_ONLINE) {
+      ras_device_map[dev_info.controller_generated_id] = dev_info;
+    }
   }
 
   logger_str = "Successfully populated the devices for the node " + node_name;
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+
+  status = EnableRASTrackingOnDevices(node_name, port, ras_device_map);
+  logger_str = "Enabled RAS tracking on the devices for the node " + node_name +
+               " with status " + std::to_string(status);
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
 
   status = 0;
@@ -775,18 +793,6 @@ int SLADeviceHelper::GetDeviceInfo(
   return -1;
 }
 
-int SLADeviceHelper::GetAppInfo(
-    const std::string& controller_generated_device_id, App_Info& app_info) {
-  std::scoped_lock<std::mutex> lock(this->m_device_map_mutex);
-
-  if (auto it = this->m_device_app_data.find(controller_generated_device_id);
-      it != this->m_device_app_data.end()) {
-    app_info = it->second;
-    return 0;
-  }
-  return -1;
-}
-
 int SLADeviceHelper::MarkTheDeviceFaulty(
     const std::string& controller_generated_device_id) {
   std::string logger_str;
@@ -846,15 +852,147 @@ int SLADeviceHelper::GetReplacementDevice(const DeviceInfo& dev_info,
   logger_str = "Found a device for replacement - " +
                replacement_dev.controller_generated_id;
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+
   status = 0;
   return status;
 }
 
-int SLADeviceHelper::SetSLADataForApp(
+/**
+ * Get the tiered device within the set of devices already registered for the
+ * given app
+ */
+int SLADeviceHelper::GetTieredDevice(const DeviceInfo& dev_info,
+                                     DeviceInfo& new_tiered_dev) {
+  std::scoped_lock<std::mutex> lock(this->m_device_map_mutex);
+  std::string app_id;
+  std::string logger_str;
+
+  logger_str = "GetTieredDevice called for " + dev_info.controller_generated_id;
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+
+  app_id = this->m_device_app_data[dev_info.controller_generated_id];
+
+  // Get the app info using the app_id
+  auto app_itr = this->m_app_map.find(app_id);
+  if (app_itr == this->m_app_map.end()) {
+    logger_str = "GetTieredDevice- Invalid app_pid found " + app_id;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    return -1;
+  }
+
+  App_Info app_info = app_itr->second;
+
+  // For tiered device, get the device other than the given device which is not
+  // yet used for tiering
+  for (auto& [numa, app_dev_info] : app_info.app_device_map) {
+    if (app_dev_info.controller_generated_id ==
+        dev_info.controller_generated_id) {
+      app_dev_info.used_for_tiering = true;
+      continue;
+    }
+    if (app_dev_info.used_for_tiering) {
+      logger_str = "GetTieredDevice- app device already used for tiering " +
+                   app_dev_info.controller_generated_id;
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                 logger_str.c_str());
+      continue;
+    }
+    // Check if the device is not used for tiering and has better latency
+    if (this->m_device_map[dev_info.controller_generated_id]
+            .device_qos.avg_latency_ns <
+        this->m_device_map[app_dev_info.controller_generated_id]
+            .device_qos.avg_latency_ns) {
+      continue;
+    }
+
+    // TODO: Need to do capacity check as well. However, it is not yet supported
+    // in the set_app_sla
+    new_tiered_dev = this->m_device_map[app_dev_info.controller_generated_id];
+    app_dev_info.used_for_tiering = true;
+    logger_str = "GetTieredDevice- Found app device for tiering " +
+                 app_dev_info.controller_generated_id;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
+
+    // Update the app_info so that the flag "used_for_tiering" is updated for
+    // future checks
+    this->m_app_map[app_id] = app_info;
+
+    return 0;
+  }
+  logger_str =
+      "GetTieredDevice- No device found for tiering of the given device " +
+      dev_info.controller_generated_id;
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR, logger_str.c_str());
+  return -1;
+}
+
+int SLADeviceHelper::SetAppInfo(
     const std::string& controller_generated_device_id,
     const App_Info& app_info) {
   std::scoped_lock<std::mutex> lock(this->m_device_map_mutex);
-  this->m_device_app_data[controller_generated_device_id] = app_info;
+  std::string app_id;
+
+  app_id = generate_app_id(app_info.app_name, std::to_string(app_info.pid));
+  this->m_device_app_data[controller_generated_device_id] = app_id;
+
+  this->m_app_map[app_id] = app_info;
+  return 0;
+}
+
+int SLADeviceHelper::GetAppInfo(
+    const std::string& controller_generated_device_id, App_Info& app_info) {
+  std::scoped_lock<std::mutex> lock(this->m_device_map_mutex);
+  std::string app_id;
+
+  auto it = this->m_device_app_data.find(controller_generated_device_id);
+  if (it == this->m_device_app_data.end()) {
+    return -1;
+  }
+  app_id = it->second;
+
+  auto app_itr = this->m_app_map.find(app_id);
+  if (app_itr == this->m_app_map.end()) {
+    return -1;
+  }
+
+  app_info = app_itr->second;
+
+  return 0;
+}
+
+int SLADeviceHelper::UpdateAppInfoForReplacementDevice(
+    const std::string& old_controller_generated_device_id,
+    const std::string& new_controller_generated_device_id,
+    const App_Info& app_info) {
+  std::scoped_lock<std::mutex> lock(this->m_device_map_mutex);
+  std::string app_id;
+
+  uint64_t old_device_numa =
+      this->m_device_map[old_controller_generated_device_id].numa;
+  uint64_t new_device_numa =
+      this->m_device_map[new_controller_generated_device_id].numa;
+
+  // Remove the element from the device_app map as the device is marked faulty
+  this->m_device_app_data.erase(old_controller_generated_device_id);
+
+  // Update the app_info map to remove that device there as well
+  app_id = generate_app_id(app_info.app_name, std::to_string(app_info.pid));
+  App_Info& modified_app_info = this->m_app_map[app_id];
+
+  // Get the App device info for the old numa, erase the old numa details and
+  // replace it with the new numa
+  AppDeviceInfo old_device_info =
+      modified_app_info.app_device_map[old_device_numa];
+  modified_app_info.app_device_map.erase(old_device_numa);
+  AppDeviceInfo new_device_info;
+  new_device_info.controller_generated_id = new_controller_generated_device_id;
+  new_device_info.allocated_capacity_mb = old_device_info.allocated_capacity_mb;
+  new_device_info.used_for_tiering = false;
+  modified_app_info.app_device_map[new_device_numa] = new_device_info;
+
+  this->m_device_app_data[new_controller_generated_device_id] = app_id;
   return 0;
 }
 
