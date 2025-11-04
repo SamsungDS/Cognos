@@ -17,6 +17,7 @@
 #include "node_cmd_helper_fns.h"
 #include "sla_hlpr_fns.h"
 #include "svk_logger.h"
+#include "svk_pub_sub_struct.h"
 
 #define CONTROLLER_CONF_SECTION_TAG "svk_mgmt_fw_controller"
 #define CONTROLLER_NODE_DEFAULT_LOG_FILE \
