@@ -1937,6 +1937,110 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForRASOperation) {
   unlink(conf_file.c_str());
 }
 
+TEST(InitIntegrationTest, IntegrationTestRASOperationWithoutApp) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  // Add pubsub section
+  std::ifstream in_file(conf_file);
+  std::string conf_data((std::istreambuf_iterator<char>(in_file)),
+                        (std::istreambuf_iterator<char>()));
+  in_file.close();
+  json json_data = json::parse(conf_data);
+  json_data["pubsub"] = {{"ip_address", "127.0.0.1"},
+                         {"port", 5555},
+                         {"topics", {"metrics", "events", "alerts"}},
+                         {"transport_type", "zmq"}};
+
+  conf_data = json_data.dump();
+  std::ofstream out_file(conf_file);
+  if (out_file.is_open()) {
+    out_file << conf_data;
+    out_file.close();
+  }
+
+  ControllerServicer *c_svcr(new ControllerServicer(conf_file));
+  auto c_server = InitializeServicer(c_svcr);
+  ASSERT_NE(c_server, nullptr);
+  EXPECT_TRUE(c_svcr->get_state() == true);
+  std::thread *subscriber_thread =
+      new std::thread(&StartThreadForZMQSubscriberConfiguration, c_svcr);
+
+  std::thread *sla_thread =
+      new std::thread(&StartEventProcessingThread, c_svcr);
+
+  int rc = initialize_publisher(conf_file.c_str());
+  if (rc != 0) {
+    std::cout << "Failed to initialize publisher" << std::endl;
+    return;
+  }
+
+  sleep(1);
+  Servicer *n_svcr(new FakeNodeServicer(conf_file));
+  if (n_svcr->get_state() == false) {
+    std::cout << "Node Servicer is not initialized properly. Exiting"
+              << std::endl;
+    return;
+  }
+  auto n_server = InitializeNodeServicer(n_svcr);
+  ASSERT_NE(n_server, nullptr);
+
+  sleep(2);
+
+  std::string json_data_str = generate_ras_event(
+      RAS_FEATURE_MODULE_NAME, "1", "localhost", "NOAPPFORRAS", 2000);
+  std::cout << "Publish event to core " << json_data_str << std::endl;
+  rc = publish_event_data_to_core((char *)"events",
+                                  (uint8_t *)json_data_str.c_str(),
+                                  json_data_str.length());
+
+  std::cout << "Published data result " << rc << std::endl;
+  sleep(2);
+
+  StopAllThreads(c_svcr);
+  StopEventProcessingThread(c_svcr);
+  sla_thread->join();
+  subscriber_thread->join();
+  delete c_svcr;
+  delete n_svcr;
+  cleanup_publisher();
+
+  EXPECT_EQ(true, is_str_in_log(
+                      CONTROLLER_NODE_DEFAULT_LOG_FILE,
+                      "Enable RAS tracking with params "
+                      "{\"configure_options\":{\"error_count_threshold\":5},"
+                      "\"device_id\":\"localhost_1\",\"device_numa\":1,"
+                      "\"device_type\":\"CMM-D\"}"));
+
+  EXPECT_EQ(true, is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
+                                "Device localhost_1 on host "
+                                "localhost for the app  "
+                                "reported the error cnt = 2000"));
+
+  EXPECT_EQ(true, is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
+                                "Disabled RAS tracking on device localhost_1"));
+
+  // Since there is no app for the device, there shoud not be move_all command
+  // initiation log
+  EXPECT_NE(
+      true,
+      is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
+                    "Send command to the node with command_name: move_all and "
+                    "command_params: {\"app\":\"NOAPPFORRAS\""));
+
+  EXPECT_EQ(
+      true,
+      is_str_in_log(
+          CONTROLLER_NODE_DEFAULT_LOG_FILE,
+          "device localhost_1on node localhost with numa 1 is marked faulty"));
+
+  unlink(conf_file.c_str());
+}
+
 class FakeNodeServicerFailForAddRemoveSLADeviceTracker : public Servicer {
  public:
   FakeNodeServicerFailForAddRemoveSLADeviceTracker(std::string conf_file,
@@ -3076,6 +3180,86 @@ TEST(SLAMgmtIntegration, SetAppSLACommand) {
 
   ASSERT_EQ(dev_info_2.allocated_capacity_mb,
             dev_info_1.allocated_capacity_mb + 4096);
+
+  std::cout << "Response - " << resp.response() << std::endl;
+
+  EXPECT_EQ(
+      true,
+      is_str_in_log(
+          CONTROLLER_NODE_DEFAULT_LOG_FILE,
+          "Command with command_params "
+          "{\"app_name\":\"gemfire\",\"app_sla_latency_ns\":2500,\"devices\":[{"
+          "\"device_id\":\"localhost_2\",\"device_numa\":\"2\",\"device_sla_"
+          "latency_ns\":3200}],\"host_name\":\"localhost\",\"logic_module\":"
+          "\"mlc\"} is passed to node localhost"));
+
+  EXPECT_EQ(
+      true,
+      is_str_in_log(
+          CONTROLLER_NODE_DEFAULT_LOG_FILE,
+          "Enable RAS tracking with "
+          "params "
+          "{\"configure_options\":{\"error_count_threshold\":5},\"device_"
+          "id\":\"localhost_2\",\"device_numa\":2,\"device_type\":\"CMM-H\"}"));
+
+  unlink(conf_file.c_str());
+}
+
+TEST(SLAMgmtIntegration, SetAppSLACommandWithoutDeviceCapacity) {
+  char *cw_dir = get_current_dir_name();
+  std::vector<std::string> node_ips;
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  // Using the servicer just for simulating the smaller capacity devices
+  FakeNodeServicer *svcr(new FakeNodeServicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+  sleep(5);
+
+  json command_params;
+
+  command_params["app_name"] = "gemfire";
+  command_params["app_pid"] = 987654321;
+  command_params["app_total_data_set_MB"] = 40960;
+
+  json qos_params;
+  qos_params["avg_latency_ns"] = 2500;
+  command_params["app_desired_qos"] = qos_params;
+
+  json device;
+  device["device_numa"] = "2";
+  json device_array = json::array();
+  device_array.push_back(device);
+  command_params["devices"] = device_array;
+
+  std::cout << command_params.dump() << std::endl;
+
+  svk::SLAManagementRequest req;
+  svk::SLAManagementResponse resp;
+
+  req.set_cluster_name(DEFAULT_CLUSTER_ID);
+  req.set_node_name(DEFAULT_NODE_ID);
+  req.set_command_name("set_app_sla");
+  req.set_command_params(command_params.dump());
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+
+  Status cmd_status = client.SLAManagementAPI(&req, &resp);
+  ASSERT_TRUE(cmd_status.ok());
+
+  // Get the device info to check the allocated capacity is accounted properly
+  DeviceInfo dev_info;
+  int status = g_sla_device_hlpr->GetDeviceInfo("localhost_2", dev_info);
+  ASSERT_TRUE(status == 0);
+
+  // Available capacity should be 0 since the whole device is consumed
+  ASSERT_EQ(dev_info.available_capacity_mb, 0);
 
   std::cout << "Response - " << resp.response() << std::endl;
 

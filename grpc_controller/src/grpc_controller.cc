@@ -2310,7 +2310,6 @@ void ProcessRASEvent(json json_data, ControllerServicer *svcr) {
     }
     ras_reported_device_name = device_id;
     ras_reported_host_name = dev_info.node_name;
-    ras_reported_app_name = app_info.app_name;
     ras_reported_device_type = dev_info.device_type;
     ras_reported_device_numa = std::to_string(dev_info.numa);
     ras_error_cnt = observations_map.at("error_cnt");
@@ -2342,16 +2341,19 @@ void ProcessRASEvent(json json_data, ControllerServicer *svcr) {
                              ras_reported_device_type,
                              ras_reported_device_numa);
 
+  if (ras_reported_app_name.empty()) {
+    // Since there is no APP associated for the device, there is nothing to be
+    // done after disabling RAS on device
+    return;
+  }
+
+  // TODO: Assigning the self pid if app pid is not given is a workaround until
+  // we disable the ProcessAllocateMemory function
   std::string app_pid = (app_info.pid != 0) ? std::to_string(app_info.pid)
                                             : std::to_string(getpid());
-  if (ras_reported_app_name.length()) {
-    // If the app name is present, then the SLA tracking is enabled
-    DisableSLATrackingOnDevice(node_name, node_port, ras_reported_device_numa,
-                               ras_reported_app_name);
-  } else {
-    // Set the App PID to none if the app is not registered for the device
-    app_pid = "";
-  }
+  // If the app name is present, then the SLA tracking is enabled
+  DisableSLATrackingOnDevice(node_name, node_port, ras_reported_device_numa,
+                             ras_reported_app_name);
 
   DeviceInfo replacement_dev;
   status = g_sla_device_hlpr->GetReplacementDevice(dev_info, replacement_dev);
@@ -2402,21 +2404,15 @@ void ProcessRASEvent(json json_data, ControllerServicer *svcr) {
                             ras_reported_app_name, app_pid, message);
   }
 
-  // Check if the app name and the app pid are present.
-  // This may be missing if the device is not part of any app and RAS alert is
-  // generated
-  if (app_info.app_name.length() && app_info.pid > 0) {
-    // Remove the faulty device from the device_map if app details are valid
-    // Also remove the device from the app_info as well as this device is no
-    // more used Update the app_info as well as add the AppInfo for the new
-    // device as well
-    logger_str = "Updating the app info for the replacement device " +
-                 replacement_dev.controller_generated_id;
-    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-               logger_str.c_str());
-    g_sla_device_hlpr->UpdateAppInfoForReplacementDevice(
-        device_id, replacement_dev.controller_generated_id, app_info);
-  }
+  // Remove the faulty device from the device_map if app details are valid
+  // Also remove the device from the app_info as well as this device is no
+  // more used Update the app_info as well as add the AppInfo for the new
+  // device as well
+  logger_str = "Updating the app info for the replacement device " +
+               replacement_dev.controller_generated_id;
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+  g_sla_device_hlpr->UpdateAppInfoForReplacementDevice(
+      device_id, replacement_dev.controller_generated_id, app_info);
 }
 
 /** Process the event received from SLAT feature module

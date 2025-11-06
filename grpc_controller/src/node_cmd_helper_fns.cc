@@ -44,7 +44,9 @@ Status SendNodeCommand(const std::string& node_name,
 
     if (resp_node.node_responses_size() > 0) {
       output = resp_node.node_responses(0).output();
-      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, output.c_str());
+      logger_str = "Output of the command is " + output;
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                 logger_str.c_str());
     }
   }
 
