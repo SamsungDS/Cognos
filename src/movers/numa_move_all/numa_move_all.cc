@@ -62,6 +62,38 @@ static void generate_start_migraion_event(cme_context* cme_ctx)
 }
 
 /**
+ * @brief Function for app health numa migration operation.
+ * Implements numa migration completion app health event.
+ * @param  cme_ctx: corresponding cme_context
+ * @return None
+*/
+static void generate_health_event_app_good(cme_context* cme_ctx)
+{   
+        CME_ENTRY();
+        struct cme_event event_obj;
+        nlohmann::json event_data;
+        event_data["name"] = "App health event : Normal";
+        event_data["app_name"] = cme_ctx->app_attr.app_name;
+        event_data["app_pid"] = to_string(cme_ctx->app_attr.app_pid);
+        event_obj.event_json["observations"] = event_data;
+        event_obj.event_json["msg"] = "Data Migration completed";
+        event_obj.event_json["timestamp"] = getCurrentTimestamp();
+        event_obj.event_json["source"] = to_string(cme_ctx->app_attr.app_pid);
+        event_obj.event_json["tag"] = cme_ctx->event_tag;
+        event_obj.event_json["category"] = "health";
+        event_obj.event_json["severity"] = "Normal";
+        event_obj.event_json["source_type"] = "application";
+        if (int ret = publish_cme_event(event_obj);ret)
+        {
+                CME_ERR("Failed to publish CME event, return = ", to_string(ret));
+                CME_EXIT();
+        }
+
+        CME_LOG("INFO", "Published CME event successfully");
+        CME_EXIT();
+}
+
+/**
  * @brief Function for post numa miration operation.
  * Implements numa migration completion event.
  * @param  cme_ctx: corresponding cme_context
@@ -70,11 +102,17 @@ static void generate_start_migraion_event(cme_context* cme_ctx)
 static void post_fn_move_all(cme_context* cme_ctx)
 {   
         CME_ENTRY();
+        std::string status_string = "failure: ";
+        if (cme_ctx->mover_cmd_status == 0)
+        {
+                //Generate health event app is good
+                generate_health_event_app_good(cme_ctx);
+                status_string = "success: ";
+        }
         //Generate completion event
         struct cme_event event_obj;
         std::string app_ctx_id = cme_ctx->app_attr.app_name + "_" + to_string(cme_ctx->app_attr.app_pid);
         nlohmann::json event_data;
-        std::string status_string = (cme_ctx->mover_cmd_status == 0) ? "success: " : "failure: ";
         status_string += to_string(cme_ctx->mover_cmd_status) + ":" + strerror(-(cme_ctx->mover_cmd_status));
         event_data["operation"] = cme_ctx->operation;
         event_data["src_numa_node"] = cme_ctx->mem_attr.src_numa_node;
