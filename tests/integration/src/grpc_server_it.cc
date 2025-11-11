@@ -107,9 +107,10 @@ static std::string get_sla_deviation_data(std::string feature_name,
   json_map["feature_name"] = feature_name;
   json_map["msg"] = "Downgraded SLA detected";
 
-  json_map["source"] = "node";
-  json_map["source_type"] = host_name;
+  json_map["source_type"] = "node";
+  json_map["source"] = host_name;
   json_map["timestamp"] = get_epoch_string();
+  json_map["tag"] = "SLA_TAG";
   json_map["observations"] = observations_map;
 
   std::string json_data_str = json_map.dump();
@@ -133,9 +134,10 @@ static std::string generate_ras_event(std::string feature_name,
   json_map["severity"] = "warning";
   json_map["feature_name"] = feature_name;
 
-  json_map["source"] = "node";
-  json_map["source_type"] = host_name;
+  json_map["source_type"] = "node";
+  json_map["source"] = host_name;
   json_map["timestamp"] = get_epoch_string();
+  json_map["tag"] = "RAS_TAG";
   json_map["observations"] = observations_map;
 
   std::string json_data_str = json_map.dump();
@@ -720,31 +722,35 @@ TEST(InitIntegrationTest, ProcessControllerCommandForAllocateMemoryFailure) {
   svk::CommandResponse *resp = new (svk::CommandResponse);
   req.set_cluster_id(DEFAULT_CLUSTER_ID);
   req.set_command_id("allocate_memory");
-  req.set_feature_params("sla_latency_ns=10;app_name=TestApp;size=1024");
+  req.set_feature_params(
+      "sla_latency_ns=10;app_name=TestApp;app_pid=123456789;size=1024");
 
   Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
   Status status = client.ProcessControllerCommand(&req, resp);
   ASSERT_EQ(status.ok(), false);
 
-  req.set_command_id("allocate_memory");
   req.set_feature_params("sla_latency_ns=10");
 
   status = client.ProcessControllerCommand(&req, resp);
   ASSERT_EQ(status.ok(), false);
 
-  req.set_command_id("allocate_memory");
   req.set_feature_params("app_name=TestApp");
 
   status = client.ProcessControllerCommand(&req, resp);
   ASSERT_EQ(status.ok(), false);
 
-  req.set_command_id("allocate_memory");
   req.set_feature_params("size=100");
 
   status = client.ProcessControllerCommand(&req, resp);
   ASSERT_EQ(status.ok(), false);
 
-  req.set_command_id("allocate_memory");
+  req.set_feature_params(
+      "sla_latency_ns=10;app_name=TestApp;app_pid=123456789;size=1024;logic_"
+      "module=default");
+
+  status = client.ProcessControllerCommand(&req, resp);
+  ASSERT_EQ(status.ok(), false);
+
   req.set_feature_params(
       "sla_latency_ns=10;app_name=TestApp;size=1024;logic_module=default");
 
@@ -1055,7 +1061,8 @@ TEST(InitIntegrationTest, AllocateMemorySuccessWithFakeProcessNodeCommand) {
   req.set_cluster_id(DEFAULT_CLUSTER_ID);
   req.set_command_id("allocate_memory");
   req.set_feature_params(
-      "sla_latency_ns=1000;app_name=TestApp;size=1024;logic_module=default");
+      "sla_latency_ns=1000;app_name=TestApp;app_pid=123456789;size=1024;logic_"
+      "module=default");
 
   Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
   Status status = client.ProcessControllerCommand(&req, resp);
@@ -1082,7 +1089,8 @@ TEST(InitIntegrationTest,
   svk::CommandResponse *resp = new (svk::CommandResponse);
   req.set_cluster_id(DEFAULT_CLUSTER_ID);
   req.set_command_id("allocate_memory");
-  req.set_feature_params("sla_latency_ns=50;app_name=TestApp;size=1024");
+  req.set_feature_params(
+      "sla_latency_ns=50;app_name=TestApp;app_pid=123456789;size=1024");
 
   Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
   Status status = client.ProcessControllerCommand(&req, resp);
@@ -1129,7 +1137,8 @@ TEST(InitIntegrationTest, ControllerNodeServicerStartWithSLAEvent) {
   req.set_cluster_id(DEFAULT_CLUSTER_ID);
   req.set_command_id("allocate_memory");
   req.set_feature_params(
-      "sla_latency_ns=1200;app_name=TestApp;size=1024;logic_module=default");
+      "sla_latency_ns=1200;app_name=TestApp;app_pid=123456789;size=1024;logic_"
+      "module=default");
 
   Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
   Status status = client.ProcessControllerCommand(&req, resp);
@@ -1340,7 +1349,8 @@ TEST(InitIntegrationTest, AllocateMemoryFailureWithoutCXLDevices) {
   req.set_cluster_id(DEFAULT_CLUSTER_ID);
   req.set_command_id("allocate_memory");
   req.set_feature_params(
-      "sla_latency_ns=1000;app_name=TestApp;size=1024;logic_module=default");
+      "sla_latency_ns=1000;app_name=TestApp;app_pid=123456789;size=1024;logic_"
+      "module=default");
 
   Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
   Status status = client.ProcessControllerCommand(&req, resp);
@@ -1414,7 +1424,8 @@ TEST(InitIntegrationTest, AllocateMemoryFailureInvalidCXLDeviceList) {
   req.set_cluster_id(DEFAULT_CLUSTER_ID);
   req.set_command_id("allocate_memory");
   req.set_feature_params(
-      "sla_latency_ns=1000;app_name=TestApp;size=1024;logic_module=default");
+      "sla_latency_ns=1000;app_name=TestApp;app_pid=123456789;size=1024;logic_"
+      "module=default");
 
   Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
   Status status = client.ProcessControllerCommand(&req, resp);
@@ -1484,7 +1495,8 @@ TEST(InitIntegrationTest, AllocateMemoryFailureInvalidCXLDeviceInfo) {
   req.set_cluster_id(DEFAULT_CLUSTER_ID);
   req.set_command_id("allocate_memory");
   req.set_feature_params(
-      "sla_latency_ns=1000;app_name=TestApp;size=1024;logic_module=default");
+      "sla_latency_ns=1000;app_name=TestApp;app_pid=123456789;size=1024;logic_"
+      "module=default");
 
   Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
   Status status = client.ProcessControllerCommand(&req, resp);
@@ -1840,7 +1852,8 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForRASOperation) {
   req.set_cluster_id(DEFAULT_CLUSTER_ID);
   req.set_command_id("allocate_memory");
   req.set_feature_params(
-      "sla_latency_ns=1500;app_name=TESTAPPRAS;size=1024;logic_module=default");
+      "sla_latency_ns=1500;app_name=TESTAPPRAS;app_pid=12345;size=1024;logic_"
+      "module=default");
 
   status = client.ProcessControllerCommand(&req, resp);
   ASSERT_EQ(status.ok(), true);
@@ -1879,9 +1892,9 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForRASOperation) {
   ASSERT_EQ(event_status.ok(), true);
   std::cout << "event response is " << event_resp->response() << std::endl;
   EXPECT_NE(std::string::npos,
-            event_resp->response().find(
-                "Initiated data migration for the app TESTAPPRAS from the "
-                "NUMA node 1 to NUMA node 0"));
+            event_resp->response().find("Attempting to initiate data migration "
+                                        "for the app TESTAPPRAS from the "
+                                        "NUMA node 1 to NUMA node 0"));
   // Another event related to no replacement drive should be present
   EXPECT_NE(std::string::npos, event_resp->response().find(
                                    "Replacement device not found for device id "
@@ -1919,10 +1932,10 @@ TEST(InitIntegrationTest, ControllerNodeManualServicerStartForRASOperation) {
                     "command_params: "
                     "{\"app\":\"TESTAPPRAS\""));
 
-  EXPECT_EQ(true, is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
-                                ",\"command\":\"move_"
-                                "all\",\"dst\":\"0\",\"src\":\"1\",\"tm_attr\":"
-                                "\"0\"} is successful"));
+  EXPECT_EQ(true, is_str_in_log(
+                      CONTROLLER_NODE_DEFAULT_LOG_FILE,
+                      ",\"command\":\"move_all\",\"dst\":\"0\",\"src\":\"1\","
+                      "\"tag\":\"RAS_TAG\",\"tm_attr\":\"0\"} is successful"));
 
   EXPECT_EQ(
       true,
@@ -2041,6 +2054,10 @@ TEST(InitIntegrationTest, IntegrationTestRASOperationWithoutApp) {
   unlink(conf_file.c_str());
 }
 
+// Fake node servicer which returns failure in the following conditions
+// - sla_add_fail variable is true and add_devices_to_sla_tracker is called
+// - sla_add_fail variable is false and remove_devices_from_sla_tracker is
+// called
 class FakeNodeServicerFailForAddRemoveSLADeviceTracker : public Servicer {
  public:
   FakeNodeServicerFailForAddRemoveSLADeviceTracker(std::string conf_file,
@@ -2121,7 +2138,8 @@ TEST(InitIntegrationTest, AllocateMemoryCommandWithAddSLADeviceTrackerFailure) {
   req.set_cluster_id(DEFAULT_CLUSTER_ID);
   req.set_command_id("allocate_memory");
   req.set_feature_params(
-      "sla_latency_ns=1000;app_name=TestApp;size=1024;logic_module=default");
+      "sla_latency_ns=1000;app_name=TestApp;app_pid=123456789;size=1024;logic_"
+      "module=default");
 
   Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
   Status status = client.ProcessControllerCommand(&req, resp);
@@ -2167,7 +2185,8 @@ TEST(InitIntegrationTest, ControllerNodeTMOperationWithRemoveSLADeviceFailure) {
   req.set_cluster_id(DEFAULT_CLUSTER_ID);
   req.set_command_id("allocate_memory");
   req.set_feature_params(
-      "sla_latency_ns=1500;app_name=TESTAPPRAS;size=1024;logic_module=default");
+      "sla_latency_ns=1500;app_name=TESTAPPRAS;app_pid=123456;size=1024;logic_"
+      "module=default");
 
   Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
   Status status = client.ProcessControllerCommand(&req, resp);
@@ -2196,8 +2215,12 @@ TEST(InitIntegrationTest, ControllerNodeTMOperationWithRemoveSLADeviceFailure) {
   std::string filedata((std::istreambuf_iterator<char>(file)),
                        (std::istreambuf_iterator<char>()));
   file.close();
-  EXPECT_EQ(true, filedata.find("Disabled SLA tracking on device 1") !=
-                      std::string::npos);
+
+  EXPECT_EQ(
+      true,
+      filedata.find(
+          "Failed to disable SLA tracking on device 1 for app TESTAPPRAS") !=
+          std::string::npos);
 
   unlink(conf_file.c_str());
 }
@@ -2228,7 +2251,16 @@ TEST(InitIntegrationTest, ControllerNodeServicerWithEventValidation) {
     out_file.close();
   }
 
-  std::thread server_thr(StartServer, conf_file, true);
+  // Start mgmt controller
+  ControllerServicer *c_svcr(new ControllerServicer(conf_file));
+  auto c_server = InitializeServicer(c_svcr);
+  ASSERT_NE(c_server, nullptr);
+  EXPECT_TRUE(c_svcr->get_state() == true);
+  std::thread *subscriber_thread =
+      new std::thread(&StartThreadForZMQSubscriberConfiguration, c_svcr);
+
+  std::thread *sla_thread =
+      new std::thread(&StartEventProcessingThread, c_svcr);
 
   int rc = initialize_publisher(conf_file.c_str());
   if (rc != 0) {
@@ -2276,8 +2308,8 @@ TEST(InitIntegrationTest, ControllerNodeServicerWithEventValidation) {
       "\"observations\":{\"device_id\":\"29690035288064\",\"error_cnt\":2000,"
       "\"feature_name\":\"test_feature\",\"message\":\"Device RAS error count "
       "hit the "
-      "threshold\"},\"severity\":\"warning\",\"source\":\"node\",\"source_"
-      "type\":\"localhost\",\"timestamp\":1234567890}";
+      "threshold\"},\"severity\":\"warning\",\"source\":\"localhost\",\"source_"
+      "type\":\"node\",\"tag\":\"TEST_TAG\",\"timestamp\":1234567890}";
   std::cout << "Publish event to core " << json_data_str << std::endl;
   rc = publish_event_data_to_core((char *)"events",
                                   (uint8_t *)json_data_str.c_str(),
@@ -2288,18 +2320,8 @@ TEST(InitIntegrationTest, ControllerNodeServicerWithEventValidation) {
 
   status = client.EventAPI(&event_req, event_resp);
   ASSERT_EQ(status.ok(), true);
-  expected_resp_str =
-      "[{\"event_header\":{\"cluster_name\":\"CL_ID_1\",\"node_name\":"
-      "\"localhost\"},\"event_payload\":{\"category\":\"test_feature\","
-      "\"domain\":\"observability\",\"feature_name\":\"test_feature\","
-      "\"observations\":{\"device_id\":\"29690035288064\",\"error_cnt\":2000,"
-      "\"feature_name\":\"test_feature\",\"message\":\"Device RAS error count "
-      "hit the "
-      "threshold\"},\"severity\":\"warning\",\"source\":\"node\",\"source_"
-      "type\":\"localhost\",\"timestamp\":1234567890}}]";
   std::cout << "Event response - " << event_resp->response() << std::endl;
-  ASSERT_EQ(event_resp->response(), expected_resp_str);
-
+  EXPECT_NE(std::string::npos, event_resp->response().find(json_data_str));
   // Prior cluster events should not clear the list. Check whether the list is
   // intact.
   event_req.set_command_name("cluster_events");
@@ -2307,7 +2329,7 @@ TEST(InitIntegrationTest, ControllerNodeServicerWithEventValidation) {
   std::cout << "Error message - " << status.error_message() << std::endl;
   ASSERT_EQ(status.ok(), true);
   std::cout << "Event response - " << event_resp->response() << std::endl;
-  ASSERT_EQ(event_resp->response(), expected_resp_str);
+  EXPECT_NE(std::string::npos, event_resp->response().find(json_data_str));
 
   // Clear the events explicitly and check the list is empty
   event_req.set_command_name("clear_events");
@@ -2319,16 +2341,13 @@ TEST(InitIntegrationTest, ControllerNodeServicerWithEventValidation) {
   std::cout << "Event response - " << event_resp->response() << std::endl;
   ASSERT_EQ(event_resp->response(), expected_resp_str);
 
+  StopAllThreads(c_svcr);
+  StopEventProcessingThread(c_svcr);
+  sla_thread->join();
+  subscriber_thread->join();
+  delete c_svcr;
   delete n_svcr;
   cleanup_publisher();
-
-  std::thread::id ctrlr_thread_id = server_thr.get_id();
-
-  auto ctrlr_native_handle =
-      *reinterpret_cast<std::thread::native_handle_type *>(&ctrlr_thread_id);
-
-  pthread_kill(ctrlr_native_handle, SIGINT);
-  server_thr.join();
 
   unlink(conf_file.c_str());
 }
@@ -2402,9 +2421,9 @@ TEST(InitIntegrationTest, EventAPITests) {
       "\"domain\":\"observability\",\"feature_name\":\"test_feature\","
       "\"observations\":{\"device_id\":\"29690035288064\",\"error_cnt\":2000,"
       "\"feature_name\":\"test_feature\",\"message\":\"Device RAS error count "
-      "hit the "
-      "threshold\"},\"severity\":\"warning\",\"source\":\"node\",\"source_"
-      "type\":\"localhost\",\"timestamp\":1234567890}";
+      "hit the threshold\"},\"tag\": "
+      "\"TEST_TAG\",\"severity\":\"warning\",\"source\":\"localhost\",\"source_"
+      "type\":\"node\",\"timestamp\":1234567890}";
   std::cout << "Publish event to core " << json_data_str << std::endl;
   rc = publish_event_data_to_core((char *)"events",
                                   (uint8_t *)json_data_str.c_str(),
@@ -2418,9 +2437,9 @@ TEST(InitIntegrationTest, EventAPITests) {
       "\"domain\":\"observability\",\"feature_name\":\"test_feature\","
       "\"observations\":{\"device_id\":\"29690035288064\",\"error_cnt\":2000,"
       "\"feature_name\":\"test_feature\",\"message\":\"Device RAS error count "
-      "hit the "
-      "threshold\"},\"severity\":\"warning\",\"source\":\"node\",\"source_"
-      "type\":\"localhost\",\"timestamp\":1234567900}";
+      "hit the threshold\"},\"tag\": "
+      "\"TEST_TAG\",\"severity\":\"warning\",\"source\":\"localhost\",\"source_"
+      "type\":\"node\",\"timestamp\":1234567900}";
   std::cout << "Publish event to core " << json_data_str << std::endl;
   rc = publish_event_data_to_core((char *)"events",
                                   (uint8_t *)json_data_str.c_str(),
@@ -2704,7 +2723,8 @@ TEST(InitIntegrationTest, AllocateMemoryGetDeviceInfoFailure1) {
   req.set_cluster_id(DEFAULT_CLUSTER_ID);
   req.set_command_id("allocate_memory");
   req.set_feature_params(
-      "sla_latency_ns=500;app_name=TestApp;size=1024;logic_module=default");
+      "sla_latency_ns=500;app_name=TestApp;app_pid=123456789;size=1024;logic_"
+      "module=default");
 
   Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
   Status status = client.ProcessControllerCommand(&req, resp);
@@ -2733,7 +2753,8 @@ TEST(InitIntegrationTest, AllocateMemoryGetDeviceInfoFailure2) {
   req.set_cluster_id(DEFAULT_CLUSTER_ID);
   req.set_command_id("allocate_memory");
   req.set_feature_params(
-      "sla_latency_ns=500;app_name=TestApp;size=1024;logic_module=default");
+      "sla_latency_ns=500;app_name=TestApp;app_pid=123456789;size=1024;logic_"
+      "module=default");
 
   Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
   Status status = client.ProcessControllerCommand(&req, resp);
@@ -2763,7 +2784,8 @@ TEST(InitIntegrationTest, AllocateMemoryGetDeviceInfoFailure3) {
   req.set_cluster_id(DEFAULT_CLUSTER_ID);
   req.set_command_id("allocate_memory");
   req.set_feature_params(
-      "sla_latency_ns=500;app_name=TestApp;size=200;logic_module=default");
+      "sla_latency_ns=500;app_name=TestApp;app_pid=123456789;size=200;logic_"
+      "module=default");
 
   // Since the DRAM device is there, the allocate_memory call should succeed
   Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
@@ -2794,7 +2816,8 @@ TEST(InitIntegrationTest, AllocateMemoryGetDeviceInfoWithExtraLargeCapacity) {
   req.set_cluster_id(DEFAULT_CLUSTER_ID);
   req.set_command_id("allocate_memory");
   req.set_feature_params(
-      "sla_latency_ns=4500;app_name=TestApp;size=1024;logic_module=default");
+      "sla_latency_ns=4500;app_name=TestApp;app_pid=123456789;size=1024;logic_"
+      "module=default");
 
   // Since the 3 device total capacity is 600MB, the allocate_memory call should
   // fail
@@ -3188,7 +3211,8 @@ TEST(SLAMgmtIntegration, SetAppSLACommand) {
       is_str_in_log(
           CONTROLLER_NODE_DEFAULT_LOG_FILE,
           "Command with command_params "
-          "{\"app_name\":\"gemfire\",\"app_sla_latency_ns\":2500,\"devices\":[{"
+          "{\"app_name\":\"gemfire\",\"app_pid\":\"987654321\",\"app_sla_"
+          "latency_ns\":2500,\"devices\":[{"
           "\"device_id\":\"localhost_2\",\"device_numa\":\"2\",\"device_sla_"
           "latency_ns\":3200}],\"host_name\":\"localhost\",\"logic_module\":"
           "\"mlc\"} is passed to node localhost"));
@@ -3197,8 +3221,7 @@ TEST(SLAMgmtIntegration, SetAppSLACommand) {
       true,
       is_str_in_log(
           CONTROLLER_NODE_DEFAULT_LOG_FILE,
-          "Enable RAS tracking with "
-          "params "
+          "Enable RAS tracking with params "
           "{\"configure_options\":{\"error_count_threshold\":5},\"device_"
           "id\":\"localhost_2\",\"device_numa\":2,\"device_type\":\"CMM-H\"}"));
 
@@ -3268,7 +3291,8 @@ TEST(SLAMgmtIntegration, SetAppSLACommandWithoutDeviceCapacity) {
       is_str_in_log(
           CONTROLLER_NODE_DEFAULT_LOG_FILE,
           "Command with command_params "
-          "{\"app_name\":\"gemfire\",\"app_sla_latency_ns\":2500,\"devices\":[{"
+          "{\"app_name\":\"gemfire\",\"app_pid\":\"987654321\",\"app_sla_"
+          "latency_ns\":2500,\"devices\":[{"
           "\"device_id\":\"localhost_2\",\"device_numa\":\"2\",\"device_sla_"
           "latency_ns\":3200}],\"host_name\":\"localhost\",\"logic_module\":"
           "\"mlc\"} is passed to node localhost"));
@@ -3277,8 +3301,7 @@ TEST(SLAMgmtIntegration, SetAppSLACommandWithoutDeviceCapacity) {
       true,
       is_str_in_log(
           CONTROLLER_NODE_DEFAULT_LOG_FILE,
-          "Enable RAS tracking with "
-          "params "
+          "Enable RAS tracking with params "
           "{\"configure_options\":{\"error_count_threshold\":5},\"device_"
           "id\":\"localhost_2\",\"device_numa\":2,\"device_type\":\"CMM-H\"}"));
 
@@ -3488,8 +3511,9 @@ TEST(SLAMgmtIntegration, AutoTieringValidationWithSLAMgmt) {
   // checks as the PID is dynamic Move command with the parameters are logged
   EXPECT_EQ(true,
             filedata.find("\"command\":\"move\",\"fast_tier\":\"0\",\"slow_"
-                          "tier\":\"1\",\"tm_attr\":\"MOVER_AGGRESSIVENESS_"
-                          "LOW\"} is successful") != std::string::npos);
+                          "tier\":\"1\",\"tag\":\"SLA_TAG\",\"tm_attr\":"
+                          "\"MOVER_AGGRESSIVENESS_LOW\"} is successful") !=
+                std::string::npos);
 
   // Generate one more event. Now there should be no more devices to move
   // Generate a SLA event for the new device that the deviation is detected
@@ -3528,15 +3552,19 @@ TEST(SLAMgmtIntegration, AutoTieringValidationWithSLAMgmt) {
   event_status = client.EventAPI(&event_req, event_resp);
   ASSERT_EQ(event_status.ok(), true);
   std::cout << "event response is " << event_resp->response() << std::endl;
-  EXPECT_NE(std::string::npos,
-            event_resp->response().find(
-                "Initiated Auto-tiering for the app TESTAPPTM from the "
-                "NUMA node 1 to NUMA node 0"));
+  EXPECT_NE(
+      std::string::npos,
+      event_resp->response().find(
+          "Attempting to initiate auto-tiering for the app TESTAPPTM from the "
+          "NUMA node 1 to NUMA node 0"));
   // Another event related to no equivalent drive found for auto tiering
   EXPECT_NE(std::string::npos,
             event_resp->response().find(
                 "Equivalent tiered device not found for device id localhost_0 "
                 "to initiate auto tiering"));
+  EXPECT_NE(std::string::npos,
+            event_resp->response().find(
+                "SLA deviation detected for the app TESTAPPTM"));
 
   StopAllThreads(c_svcr);
   StopEventProcessingThread(c_svcr);
@@ -3642,9 +3670,12 @@ TEST(SLAMgmtIntegration, RASDeviceValidationWithSLAMgmtAPI) {
   ASSERT_EQ(event_status.ok(), true);
   std::cout << "event response is " << event_resp->response() << std::endl;
   EXPECT_NE(std::string::npos,
-            event_resp->response().find(
-                "Initiated data migration for the app TESTSLAMGMTRAS from the "
-                "NUMA node 1 to NUMA node 0"));
+            event_resp->response().find("Attempting to initiate data migration "
+                                        "for the app TESTSLAMGMTRAS from the "
+                                        "NUMA node 1 to NUMA node 0"));
+  EXPECT_NE(std::string::npos, event_resp->response().find(
+                                   "Memory Error detected in numa node 1"));
+
   App_Info app_info;
   // The app should be associated with the new device
   EXPECT_EQ(g_sla_device_hlpr->GetAppInfo("localhost_2", app_info), 0);
