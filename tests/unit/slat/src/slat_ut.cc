@@ -419,6 +419,7 @@ TEST_F(ConfigTest, ExecuteSyncAddDevice) {
 
   json command_params;
   command_params["app_name"] = "test_app";
+  command_params["app_pid"] = "4321";
   command_params["app_sla_latency_ns"] = 10;
   command_params["host_name"] = "test_host";
   command_params["logic_module"] = "test_logic_module";
@@ -513,6 +514,7 @@ TEST_F(ConfigTest, ExecuteSyncAddDeviceInvalidCmdParams) {
 
   std::string str(65, ' ');
   command_params["app_name"] = str;
+  command_params["app_pid"] = "4321";
   command["command_params"] = command_params;
   cmd_str = command.dump();
   input.input_buffer = (uint8_t *)&cmd_str[0];
@@ -520,6 +522,7 @@ TEST_F(ConfigTest, ExecuteSyncAddDeviceInvalidCmdParams) {
   input.len = command.dump().length();
   EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&cmd, &input, &output));
   command_params["app_name"] = "test_app";
+  command_params["app_pid"] = "4321";
 
   command_params["host_name"] = str;
   command["command_params"] = command_params;
@@ -727,6 +730,7 @@ TEST_F(ConfigTest, PublishSuccess) {
   app_config.app_sla_tolerance_percent = 10;
   strcpy(app_config.app_current_sla.host_name, "msl-ssg-dummy");
   strcpy(app_config.app_current_sla.app_name, "app1");
+  strcpy(app_config.app_current_sla.app_pid, "4321");
   strcpy(app_config.app_current_sla.device_name, "0");
   app_config.app_current_sla.avgLatencyns = 1000;
   config.app_sla_list["app1"] = app_config;
@@ -764,6 +768,7 @@ TEST_F(ConfigTest, SLATWithJSONException) {
   app_config.app_sla_tolerance_percent = 10;
   strcpy(app_config.app_current_sla.host_name, invalid_utf8);
   strcpy(app_config.app_current_sla.app_name, "app1");
+  strcpy(app_config.app_current_sla.app_pid, "4321");
   strcpy(app_config.app_current_sla.device_name, "0");
   app_config.app_current_sla.avgLatencyns = 1000;
   config.app_sla_list["app1"] = app_config;
@@ -786,6 +791,7 @@ TEST_F(ConfigTest, PublishFailure) {
   app_config.app_sla_tolerance_percent = 10;
   strcpy(app_config.app_current_sla.host_name, "msl-ssg-dummy");
   strcpy(app_config.app_current_sla.app_name, "app1");
+  strcpy(app_config.app_current_sla.app_pid, "4321");
   strcpy(app_config.app_current_sla.device_name, "0");
   app_config.app_current_sla.avgLatencyns = 1000;
   config.app_sla_list["app1"] = app_config;
@@ -811,6 +817,7 @@ TEST_F(ConfigTest, PublishEventToCoreFailure) {
   app_config.app_sla_tolerance_percent = 10;
   strcpy(app_config.app_current_sla.host_name, "msl-ssg-dummy");
   strcpy(app_config.app_current_sla.app_name, "app1");
+  strcpy(app_config.app_current_sla.app_pid, "4321");
   strcpy(app_config.app_current_sla.device_name, "0");
   app_config.app_current_sla.avgLatencyns = 1000;
   config.app_sla_list["app1"] = app_config;

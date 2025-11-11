@@ -55,7 +55,7 @@ int create_config_file(const char *file_name, const char *transport_type,
 }
 
 svk_status testMlcLogicModule(svk_feature_details *details) {
-  // app_name=TestApp;app_sla_latency_ns=10;devices=0;device_sla_latency_ns=10;host_name=localhost;logic_module=default
+  // app_pid=4321;app_name=TestApp;app_sla_latency_ns=10;devices=0;device_sla_latency_ns=10;host_name=localhost;logic_module=default
   svk_pass_thru_cmd pt_cmd;
   svk_input input;
   svk_output output;
@@ -65,32 +65,58 @@ svk_status testMlcLogicModule(svk_feature_details *details) {
   input.input_buffer = (uint8_t *)calloc(1, 1024);
   input.len = 1024;
   std::vector<std::string> cmds = {
-      "logic_module=MlcLogic;app_name=TestApp;app_sla_latency_ns=300;devices=0;"
-      "device_sla_latency_ns=300;",
-      "logic_module=MlcLogic;app_name="
+      // host name missing
+      "logic_module=MlcLogic;app_pid=4321;app_name=TestApp;app_sla_latency_ns="
+      "300;devices=0;device_sla_latency_ns=300;",
+
+      // app pid missing
+      "logic_module=MlcLogic;app_name=TestApp;app_sla_latency_ns="
+      "300;devices=0;device_sla_latency_ns=300;host_name=localhost",
+
+      // long app name
+      "logic_module=MlcLogic;app_pid=4321;app_name="
       "TestApp123456789012345678901234567890123456789012345678901234567890;app_"
       "sla_latency_ns=300;devices=0;device_sla_latency_ns=300;host_name="
       "localhost",
-      "logic_module=MlcLogic;app_name=TestApp;app_sla_latency_ns=300;devices=0;"
+
+      // long host name
+      "logic_module=MlcLogic;app_pid=4321;app_name=TestApp;app_sla_latency_ns="
+      "300;devices=0;"
       "device_sla_latency_ns=300;host_name="
       "localhost123456789012345678901234567890123456789012345678901234567890",
-      "logic_module=MlcLogic;app_name=TestApp;devices=0;device_sla_latency_ns="
-      "300;host_name=localhost",
-      "logic_module=MlcLogic;app_name=TestApp;app_sla_latency_ns=300=x;devices="
-      "0;"
+
+      // app sla latency missing
+      "logic_module=MlcLogic;app_pid=4321;app_name=TestApp;devices=0;device_"
+      "sla_latency_ns=300;host_name=localhost",
+
+      // invalid numerals for app latency
+      "logic_module=MlcLogic;app_pid=4321;app_name=TestApp;app_sla_latency_ns="
+      "300=x;devices=0;"
       "device_sla_latency_ns=300;host_name=localhost",
-      "logic_module=MlcLogic;app_name=TestApp;app_sla_latency_ns=300;devices=0;"
+
+      // non-existent logic module
+      "logic_module=non-existent-Logic;app_pid=4321;app_name=TestApp;app_sla_"
+      "latency_ns="
+      "300;devices=0;"
       "device_sla_latency_ns=300;host_name=localhost",
-      "logic_module=MlcLogic;app_name=TestApp;app_sla_latency_ns=10;devices=0,"
-      "1;device_sla_latency_ns=10,20;host_name=localhost;sla_benchmark_tool="
+
+      // non-existent benchmark tool
+      "logic_module=MlcLogic;app_pid=4321;app_name=TestApp;app_sla_latency_ns="
+      "10;devices=0"
+      ";device_sla_latency_ns=10;host_name=localhost;sla_benchmark_tool="
       "non-existent",
-      "logic_module=MlcLogic;app_name=TestApp;app_sla_latency_ns=10;devices=0,"
-      "1;device_sla_latency_ns=10,20;host_name=localhost"};
+
+      // invalid numa given
+      "logic_module=MlcLogic;app_pid=4321;app_name=TestApp;app_sla_latency_ns="
+      "10;devices=0,10"
+      ";device_sla_latency_ns=10,20;host_name=localhost"};
 
   output.output_buffer = (uint8_t *)calloc(1, 10240);
   output.len = 10240;
 
   for (auto cmd : cmds) {
+    pt_cmd.len = 0;
+    std::cout << "CMD to process - " << cmd << std::endl;
     strncpy((char *)input.input_buffer, cmd.c_str(), input.len);
     status = details->execute_sync(&pt_cmd, &input, &output);
     if (status == SVK_STATUS_SUCCESS) {

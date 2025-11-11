@@ -127,6 +127,7 @@ TEST_F(ConfigTestWithMock, SLATWithEmptyJSONData) {
   app_config.app_sla_tolerance_percent = 10;
   strcpy(app_config.app_current_sla.host_name, "dummyhost");
   strcpy(app_config.app_current_sla.app_name, "app1");
+  strcpy(app_config.app_current_sla.app_pid, "4321");
   strcpy(app_config.app_current_sla.device_name, "dummyhost_0");
   app_config.app_current_sla.avgLatencyns = 1000;
   config.app_sla_list["app1"] = app_config;
@@ -151,6 +152,7 @@ TEST_F(ConfigTestWithMock, SLATWithSkippingJSONError) {
   app_config.app_sla_tolerance_percent = 10;
   strcpy(app_config.app_current_sla.host_name, "dummyhost");
   strcpy(app_config.app_current_sla.app_name, "app1");
+  strcpy(app_config.app_current_sla.app_pid, "4321");
   strcpy(app_config.app_current_sla.device_name, "dummyhost_0");
   app_config.app_current_sla.avgLatencyns = 1000;
   config.app_sla_list["app1"] = app_config;

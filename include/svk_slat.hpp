@@ -44,7 +44,8 @@ using svk_slat_logic_output = struct svk_slat_logic_output_s {
   char host_name[SLAT_MAX_STR_LEN];
   char app_name[SLAT_MAX_STR_LEN];
   char device_name[SLAT_MAX_STR_LEN];  // This may contain just numa of device
-  uint64_t avgLatencyns;               // Latency in nanoseconds
+  char app_pid[SLAT_MAX_STR_LEN];  // Making as string for parsing workaround
+  uint64_t avgLatencyns;           // Latency in nanoseconds
   uint64_t iops;
   uint64_t bandwidthGBps;
   uint64_t avgReadLatency;
