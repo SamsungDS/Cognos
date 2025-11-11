@@ -240,6 +240,14 @@ TEST_F(cmeTest, CheckCmdMoveAllFlatString) {
 	command = "command=get_status;app=test;app_pid=" + to_string(pid);
 	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
 
+        // move_all: Test valid context name and expected move_all success with tag
+	command = "tag=TESTMOVEALLevent;command=move_all;tm_attr=0;app=testtag;app_pid=" + to_string(pid) + ";src=0;dst=0";
+	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
+	std::this_thread::sleep_for(std::chrono::seconds(2));
+	// get_status: Test valid context name and expected move_all success
+	command = "command=get_status;app=testtag;app_pid=" + to_string(pid);
+	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
+
 	// get_status: Test invalid context name (wrong pid)
 	command = "command=get_status;app=test;app_pid=" + to_string(pid-1);
 	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(-EINVAL));
@@ -305,12 +313,21 @@ TEST_F(cmeTest, CheckCmdMoveAllJsonStringInput) {
 	std::this_thread::sleep_for(std::chrono::seconds(2));
 	command = " {\"command_name\": \"get_status\", \"feature_name\": \"me\", \"feature_id\": \"0\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\"},\"cluster_id\": \"CL_ID_1\",\"node_id\": \"localhost\"} ";
 	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
+         
+        //Check with event tag
+        command = " {\"command_name\": \"move_all\", \"feature_name\": \"me\", \"feature_id\": \"0\", \"command_params\": {\"tm_attr\": \"0\", \"tag\": \"TESTMOVEALLevent\", \"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"src\": \"0\", \"dst\": \"0\"},\"cluster_id\": \"CL_ID_1\",\"node_id\": \"localhost\"} ";
+        EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
+	std::this_thread::sleep_for(std::chrono::seconds(2));
+	command = " {\"command_name\": \"get_status\", \"feature_name\": \"me\", \"feature_id\": \"0\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\"},\"cluster_id\": \"CL_ID_1\",\"node_id\": \"localhost\"} ";
+	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
+
 	command = " {\"command_name\": \"get_status\", \"feature_name\": \"me\", \"feature_id\": \"0\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid-1) + "\"},\"cluster_id\": \"CL_ID_1\",\"node_id\": \"localhost\"} ";
 	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(-EINVAL));
-	command = " {\"command_name\": \"move_all\", \"feature_name\": \"me\", \"feature_id\": \"0\", \"command_params\": {\"tm_attr\": \"0\", \"app\": \"test\", \"app_pid\":\"" + to_string(-1) + "\", \"src\": \"0\", \"dst\": \"0\"},\"cluster_id\": \"CL_ID_1\",\"node_id\": \"localhost\"} ";
+        int invalid_pid = get_invalid_pid();
+	command = " {\"command_name\": \"move_all\", \"feature_name\": \"me\", \"feature_id\": \"0\", \"command_params\": {\"tm_attr\": \"0\", \"app\": \"test\", \"app_pid\":\"" + to_string(invalid_pid) + "\", \"src\": \"0\", \"dst\": \"0\"},\"cluster_id\": \"CL_ID_1\",\"node_id\": \"localhost\"} ";
 	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
 	std::this_thread::sleep_for(std::chrono::seconds(2));
-	command = " {\"command_name\": \"get_status\", \"feature_name\": \"me\", \"feature_id\": \"0\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(-1) + "\"},\"cluster_id\": \"CL_ID_1\",\"node_id\": \"localhost\"} ";
+	command = " {\"command_name\": \"get_status\", \"feature_name\": \"me\", \"feature_id\": \"0\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(invalid_pid) + "\"},\"cluster_id\": \"CL_ID_1\",\"node_id\": \"localhost\"} ";
 	EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(-ESRCH));
 	unsigned int numa_count_conf = numa_num_configured_nodes();
 	command = " {\"command_name\": \"move_all\", \"feature_name\": \"me\", \"feature_id\": \"0\", \"command_params\": {\"tm_attr\": \"0\", \"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"src\": \"0\", \"dst\":\"" + to_string(numa_count_conf) + "\"},\"cluster_id\": \"CL_ID_1\",\"node_id\": \"localhost\"} ";
@@ -355,6 +372,24 @@ TEST_F(cmeTest, CheckNoMoverStop) {
         // Check valid stop with no movers
         command = "command=StopTuning;application=test;application_id="  + to_string(pid);
         EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(-EINVAL));
+        EXPECT_EQ(cme_global_obj.clean_up(), 0);
+}
+
+TEST_F(cmeTest, CheckCmdMoveTag) {
+        cme_global cme_global_obj;
+        ASSERT_EQ(cme_global_obj.read_cme_config_json("cme_config.json"), 0);
+        ASSERT_EQ(cme_global_obj.cme_discovery(), 0);
+        ASSERT_EQ(cme_global_obj.initialize(), 0);
+        int pid = getpid();
+
+        // Check valid command move
+        string command = " {\"command_name\": \"move\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" + to_string(pid) + "\", \"tag\": \"TESTMOVEtag\", \"tm_attr\": \"MOVER_AGGRESSIVENESS_LOW\",\"slow_tier\": \"1\",\"fast_tier\": \"0\"}} ";
+        EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
+
+        // Check valid stop
+        command = " {\"command_name\": \"stop\", \"command_params\": {\"app\": \"test\", \"app_pid\":\"" +  to_string(pid) + "\"}} ";
+        EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
+
         EXPECT_EQ(cme_global_obj.clean_up(), 0);
 }
 
@@ -539,6 +574,7 @@ TEST_F(cmeTest, CheckCmdGetStats) {
         unordered_map<string, string> tokens_map;
         tokens_map.try_emplace("app", "test2");
         tokens_map.try_emplace("app_pid", to_string(pid));
+        tokens_map.try_emplace("tag", "testtag");
         cme_context* ctx = cme_global_obj.cg_find_context(tokens_map, true);
         EXPECT_TRUE(ctx != nullptr);
         

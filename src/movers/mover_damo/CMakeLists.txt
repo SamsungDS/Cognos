@@ -5,8 +5,9 @@ file(GLOB HEADERS *.h)
 # Create a library
 add_library(mover_damo SHARED ${SOURCES} ${HEADERS})
 
-target_include_directories(mover_damo PUBLIC "${SVKME_SRC_INCLUDE}")
-target_link_libraries(mover_damo numa yaml-cpp)
+target_include_directories(mover_damo PUBLIC "${SVKME_SRC_INCLUDE}" ${SVKFRAMEWORK_INCLUDE_DIRS} ${SVKMGMTFW_INCLUDE_DIRS})
+target_link_directories(mover_damo PUBLIC  ${SVKMGMTFW_LIB_DIRS} ${SVKFRAMEWORK_LIBRARY_DIRS})
+target_link_libraries(mover_damo numa yaml-cpp svkframework svkme)
 
 add_definitions("-DBOOST_ALLOW_DEPRECATED_HEADERS")
 add_definitions("-DBOOST_BIND_GLOBAL_PLACEHOLDERS")

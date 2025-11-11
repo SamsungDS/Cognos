@@ -53,7 +53,7 @@ int damo_init()
         catch (const std::exception& e)
         {
                 CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : " + string(e.what()));
-                ret = -EINVAL;
+                ret =-EINVAL;
         }
         return ret;
 }
@@ -115,7 +115,7 @@ int read_damo_config_json(damo_config_params* damo_config_params_to_fill, int da
         catch (const std::exception& e)
         {
                 CME_ERR("Unable to read damo config json. Error -> ", e.what());
-                ret = -EINVAL;
+                ret =-EINVAL;
         }
         return ret;
 }
@@ -240,7 +240,7 @@ int cgroup_create()
         catch (const std::exception& e)
         {
                 CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : " + string(e.what()));
-                ret = -EINVAL;
+                ret =-EINVAL;
         }
         return ret;
 }
@@ -344,7 +344,7 @@ int yaml_generate(int move_select)
                 else
                 {
                         CME_ERR("Wrong move command");
-                        ret = -EINVAL;
+                        ret =-EINVAL;
                 }
 
                 filesystem::path filePath(GLOBAL_DAMO_CONFIG);
@@ -378,7 +378,7 @@ int yaml_generate(int move_select)
         catch (const std::exception& e)
         {
                 CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : " + string(e.what()));
-                ret = -EINVAL;
+                ret =-EINVAL;
         }
         return ret;
 }
@@ -578,7 +578,7 @@ int cgroup_delete(string cg_name)
     catch (const std::exception& e)
     {
         CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : " + string(e.what()));
-        ret = -EINVAL;
+        ret =-EINVAL;
     }
     return ret;
 }
@@ -638,7 +638,7 @@ int stop(string app_name, long app_pid)
         catch (const std::exception& e)
         {
                 CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : " + string(e.what()));
-                ret = -EINVAL;
+                ret =-EINVAL;
         }
         return 0;
 }

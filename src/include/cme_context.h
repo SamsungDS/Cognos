@@ -124,6 +124,7 @@ public:
         */ 
         stats_state get_stats_state;
         std::string operation;
+        std::string event_tag;
 
   	string process_attributes(string);
   	string process_result(string);

@@ -31,9 +31,9 @@ class cme_mover
 	 * */
         
         virtual int move_all(cme_context*) = 0;
-        virtual int move_hot(std::string,  long, unsigned int, unsigned int, enum cme_mover_aggr) = 0;
-        virtual int move_cold(std::string,  long, unsigned int, unsigned int, enum cme_mover_aggr) = 0;
-        virtual int move(std::string,  long, unsigned int, unsigned int, enum cme_mover_aggr) = 0;
+        virtual int move_hot(cme_context*) = 0;
+        virtual int move_cold(cme_context*) = 0;
+        virtual int move(cme_context*) = 0;
         virtual int get_status() = 0;
         virtual std::string get_stats(cme_context*) = 0;
         virtual int stop(std::string, long) = 0;

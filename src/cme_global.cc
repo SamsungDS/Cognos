@@ -217,6 +217,8 @@ cme_context* cme_global::cg_find_context(unordered_map<string, string> &tokens_m
                         // Add context to list
                         cme_contexts_list.try_emplace(cme_ctx_key,cme_ctx);
                 }
+                // Update tag for context
+                cme_ctx->event_tag = tokens_map.at("tag");
                 return cme_ctx;
         }
         catch (const std::exception &e)
@@ -519,27 +521,24 @@ static std::string cg_move(cme_global* cg_obj, unordered_map<string, string> &to
                         throw runtime_error ("Error in " + string (__FUNCTION__) + " mover not found");
                 }
                 CME_LOG("INFO", tokens_map.at("command"), " movername= ", mover_obj->get_name(), " slow_tier=", to_string(slow_t), " fast_tier=", to_string(fast_t));
-                std::string app_name = tokens_map.at("app");
-                long app_pid = stol(tokens_map.at("app_pid"));
-                
+              
                 // Since we are using Damo mover we can use this approach
                 // for future movers we can use async thread method similar to move all
-
                 if (!(tokens_map.at("command").compare("move")))
                 {
-                        cme_ctx->operation = "tier_memory";
-                        ret = mover_obj->move(app_name, app_pid, slow_t, fast_t, cme_ctx->tm_attr.ag_level);
+                        cme_ctx->operation = "tier_memory_movement";
+                        ret = mover_obj->move(cme_ctx);
                 }
                 
                 else if (!(tokens_map.at("command").compare("move_hot")))
                 {
                         cme_ctx->operation = "promote";
-                        ret = mover_obj->move_hot(app_name, app_pid, slow_t, fast_t, cme_ctx->tm_attr.ag_level);
+                        ret = mover_obj->move_hot(cme_ctx);
                 }
                 else if (!(tokens_map.at("command").compare("move_cold")))
                 {
                         cme_ctx->operation = "demote";
-                        ret = mover_obj->move_cold(app_name, app_pid, slow_t, fast_t, cme_ctx->tm_attr.ag_level);
+                        ret = mover_obj->move_cold(cme_ctx);
                 }
                 else
                 {
@@ -732,6 +731,12 @@ std::string cme_global::cme_command_handler(std::string input_cme_command)
 		}
 		commandValue = command_params_map.at("command");
 		CME_LOG("INFO", "command=", commandValue);
+                // Add empty tag by default
+                if (command_params_map.count("tag") == 0)
+                {
+                        command_params_map.try_emplace("tag", "");
+                        CME_LOG("INFO", "Add empty tag by default");
+                }
         	result = fw_hooks.at (commandValue) (this, command_params_map);
 	}
         catch (const std::exception &e)

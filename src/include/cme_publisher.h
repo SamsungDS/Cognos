@@ -16,6 +16,7 @@ struct cme_event
                 event_json["domain"] ="observability";
                 event_json["feature_name"] = "me",
                 event_json["type"] = "event";
+                event_json["tag"] = "";
                 event_json["msg"] = "svkme event msg";
                 event_json["category"] = "log",
                 event_json["severity"] = "info",

@@ -15,6 +15,7 @@
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
+#include <cstdlib>
 #include "numa_move_all.h"
 #include "cme_utils.h"
 #include "cme_context.h"
@@ -39,13 +40,14 @@ static void generate_start_migraion_event(cme_context* cme_ctx)
         event_data["src_numa_node"] = cme_ctx->mem_attr.src_numa_node;
         event_data["dst_numa_node"] = cme_ctx->mem_attr.dst_numa_node;
         std::string status_string = (cme_ctx->mover_cmd_status == 0) ? "success: " : "failure: ";
-        status_string += to_string(cme_ctx->mover_cmd_status) + ":" + strerror(-(cme_ctx->mover_cmd_status));
+        status_string += to_string(cme_ctx->mover_cmd_status) + ":" + strerror(abs(cme_ctx->mover_cmd_status));
         event_data["status"] = status_string;
         event_data["name"] = "numa_migration_start";
         event_obj.event_json["timestamp"] = getCurrentTimestamp();
         event_obj.event_json["source"] = app_ctx_id;
         event_obj.event_json["msg"] = "numa migration operation started";
         event_obj.event_json["observations"] = event_data;
+        event_obj.event_json["tag"] = cme_ctx->event_tag;
         
         int ret = publish_cme_event(event_obj);
         if (ret)
@@ -83,6 +85,7 @@ static void post_fn_move_all(cme_context* cme_ctx)
         event_obj.event_json["msg"] = "numa migration operation completed";
         event_obj.event_json["timestamp"] = getCurrentTimestamp();
         event_obj.event_json["source"] = app_ctx_id;
+        event_obj.event_json["tag"] = cme_ctx->event_tag;
         int ret = publish_cme_event(event_obj);
         if (ret)
         {
@@ -264,10 +267,15 @@ int numa_move_all::move_all(cme_context* ctx)
                 CME_ENTRY();
                 CME_LOG("INFO", "--" , to_string(ctx->app_attr.app_pid) , "--" , to_string(ctx->mem_attr.src_numa_node) , "--" , to_string(ctx->mem_attr.dst_numa_node));
                 if (ctx->app_attr.app_pid == DUMMY_PID)
-                {        
-                        move_hot(DUMMY_PROCESS, DUMMY_PID, 1, 0, MOVER_AGGRESSIVENESS_LOW);
-                        move_cold(DUMMY_PROCESS, DUMMY_PID, 1, 0, MOVER_AGGRESSIVENESS_LOW);
-                        move(DUMMY_PROCESS, DUMMY_PID, 1, 0, MOVER_AGGRESSIVENESS_LOW);
+                {       // Trigger other No op mover functions with Dummy PID
+                        // for unit test coverage. Ref: cme_ut.cc: cmeTest.CheckCmdMoveAllFlatString 
+                        ctx->app_attr.app_name = DUMMY_PROCESS;
+                        ctx->mem_attr.slow_tier = 1;
+                        ctx->mem_attr.fast_tier = 0;
+                        ctx->tm_attr.ag_level = MOVER_AGGRESSIVENESS_LOW;
+                        move_hot(ctx);
+                        move_cold(ctx);
+                        move(ctx);
                         get_status();
                         stop(DUMMY_PROCESS, DUMMY_PID);
                         return 0;
@@ -293,19 +301,19 @@ int numa_move_all::move_all(cme_context* ctx)
         return 0;
 }
 
-int numa_move_all::move_hot(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, enum cme_mover_aggr aggresiveness_level)
+int numa_move_all::move_hot(cme_context* ctx)
 {
         CME_ENTRY();
         return 0;
 }
 
-int numa_move_all::move_cold(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, enum cme_mover_aggr aggresiveness_level)
+int numa_move_all::move_cold(cme_context* ctx)
 {
         CME_ENTRY();
         return 0;
 }
 
-int numa_move_all::move(string app_name, long app_pid, unsigned int slow_tier, unsigned int fast_tier, enum cme_mover_aggr aggresiveness_level)
+int numa_move_all::move(cme_context* ctx)
 {
         CME_ENTRY();
         return 0;

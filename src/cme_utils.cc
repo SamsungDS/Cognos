@@ -63,7 +63,6 @@ bool command_parser_json(const std::string& input_cme_command, unordered_map<std
                 CME_ERR("command_parser_json. Error -> ", e.what ());
                 return false;
         }
-
         return true;
 }
 
