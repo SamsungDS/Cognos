@@ -20,3 +20,10 @@ TEST(EventPublisherUnitTest, TestCorretableErrorPublishFailure) {
   EXPECT_EQ(rc, -1);
   MOCK_CLEAR(publish_event_data_to_core);
 }
+
+TEST(EventPublisherUnitTest, TestFailedGetNodeName) {
+  MOCK_SET(get_node_name, SVK_STATUS_FAIL);
+  std::string res = cognos::ras::publisher::rasGetNodeName();
+  EXPECT_EQ(res, "");
+  MOCK_CLEAR(get_node_name);
+}
