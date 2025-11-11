@@ -17,7 +17,15 @@ std::string runMlc(std::string testType, argOpts args, std::string bin_path) {
   if (it != args.end()) {
     auto numa_node = stoi(it->second);
 
+    // Run the mlc command with buffer size of 200MB and time of 10sec
+    cmd_args += " -b200 -t10";
+
+    // -j initialize memory from numa node #n
     cmd_args += " -j";
+    cmd_args += std::to_string(numa_node);
+
+    // -c affinitize the latency measurement thread to core #n
+    cmd_args += " -c";
     cmd_args += std::to_string(numa_node);
   }
 
@@ -25,6 +33,7 @@ std::string runMlc(std::string testType, argOpts args, std::string bin_path) {
 
   if (rinfo.rc != 0) {
     rinfo.output = "status=failed";
+    return rinfo.output;
   }
 
   std::istringstream outstream(rinfo.output);

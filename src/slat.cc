@@ -117,6 +117,7 @@ int create_event_in_json_format(const slat_benchmark_config &config,
                                 json &json_data) {
   json json_map;
   json observations_map;
+  long epoch = get_epoch();
   auto app_name = std::string(app_current_sla.app_name, 0, SLAT_MAX_STR_LEN);
   auto device_name =
       std::string(app_current_sla.device_name, 0, SLAT_MAX_STR_LEN);
@@ -136,7 +137,9 @@ int create_event_in_json_format(const slat_benchmark_config &config,
       "ns) detected in " + app_name;
   json_map["source_type"] = "device";
   json_map["source"] = device_name;
-  json_map["timestamp"] = get_epoch();
+  json_map["tag"] = "SLA_" + std::string(app_current_sla.host_name) +
+                    device_name + std::to_string(epoch);
+  json_map["timestamp"] = epoch;
   json_map["observations"] = observations_map;
   json_data = json_map;
   return 0;
@@ -319,6 +322,7 @@ svk_status SLATrackerSvc::parse_and_add_new_sla_monitor(
   svk_status rc;
   slat_app_benchmark_sla_to_add app_sla_to_add = {};
   char log_msg[LOG_MSG_MAX_SIZE];
+  struct stat f_stat;
 
   std::map<std::string, std::string> sla_kv_pairs;
 
@@ -346,6 +350,13 @@ svk_status SLATrackerSvc::parse_and_add_new_sla_monitor(
                           app_sla_to_add.app_sla.app_current_sla.host_name,
                           HOSTNAME_MAX_LEN);
   if (rc != SVK_STATUS_SUCCESS) {
+    return rc;
+  }
+  rc = update_sla_details(sla_kv_pairs, "app_pid",
+                          app_sla_to_add.app_sla.app_current_sla.app_pid,
+                          APP_MAX_LEN);
+  if (rc != SVK_STATUS_SUCCESS) {
+    std::cout << "APP PID is missing or invalid" << std::endl;
     return rc;
   }
 
@@ -378,6 +389,12 @@ svk_status SLATrackerSvc::parse_and_add_new_sla_monitor(
   }
 
   for (auto d : device_numas) {
+    std::string numa_sysfs_file = "/sys/devices/system/node/node" + d;
+    if (stat(numa_sysfs_file.c_str(), &f_stat) != 0) {
+      std::cout << "Invalid numa number provided - " << d << std::endl;
+      return SVK_STATUS_FAIL;
+    }
+
     slat_device_sla_config dc;
     dc.device_current_sla = 0;
     dc.device_advertised_sla = dev_sla_list[i++];
@@ -674,6 +691,8 @@ svk_status SLATrackerSvc::add_devices_to_sla_tracker(json command_params) {
     std::vector<std::tuple<std::string, std::string, char *>> sla_fields = {
         {"app_name", command_params.at("app_name"),
          app_sla_to_add.app_sla.app_current_sla.app_name},
+        {"app_pid", command_params.at("app_pid"),
+         app_sla_to_add.app_sla.app_current_sla.app_pid},
         {"host_name", command_params.at("host_name"),
          app_sla_to_add.app_sla.app_current_sla.host_name}};
 
@@ -982,11 +1001,9 @@ extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
 
     if (strstr(input_str.c_str(), "app_name") != nullptr) {
       status = g_slat_service->parse_and_add_new_sla_monitor(input_str.c_str());
-      if (status == SVK_STATUS_SUCCESS) {
-        output->status = SVK_STATUS_SUCCESS;
-        output->len = 0;
-        return SVK_STATUS_SUCCESS;
-      }
+      output->status = status;
+      output->len = 0;
+      return status;
     }
 
     if (details->execute_logic_sync == nullptr) {
