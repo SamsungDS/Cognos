@@ -30,57 +30,57 @@ class sc_mbox : public sc_device {
    * exists.
    */
   // int mbox_delete_sld(sc_id d_id, uint32_t d_port);
-  int mbox_delete_sld(sc_sld sld);
+  virtual int mbox_delete_sld(sc_sld sld);
 
   /**
    * @brief delete memory box - mld device.
    * @details This method takes sc_id and deletes the matched mld device if
    * exists.
    */
-  int mbox_delete_mld(sc_mld mld);
+  virtual int mbox_delete_mld(sc_mld mld);
 
   /**
    * @brief get memory box switch information.
    * @details return switch info.
    */
-  std::string mbox_get_switch_info();
+  virtual std::string mbox_get_switch_info();
 
   /**
    * @brief list slds
    */
-  std::list<sc_sld> mbox_list_connected_slds();
+  virtual std::list<sc_sld> mbox_list_connected_slds();
 
   /**
    * @brief list mlds
    */
-  std::list<sc_mld> mbox_list_connected_mlds();
+  virtual std::list<sc_mld> mbox_list_connected_mlds();
 
   /**
    * @brief list slds
    */
-  std::list<sc_host> mbox_list_connected_hosts();
+  virtual std::list<sc_host> mbox_list_connected_hosts();
 
   /**
    * @brief create sld as per the capacity
    * @param capacity required capacity
    */
-  sc_sld mbox_create_sld(uint64_t capacity);
+  virtual sc_sld mbox_create_sld(uint64_t capacity);
 
   /**
    * @brief create mld as per the capacity
    * @param capacity required capacity
    */
-  sc_mld mbox_create_mld(uint64_t capacity);
+  virtual sc_mld mbox_create_mld(uint64_t capacity);
 
   /**
    * @brief verify if device port is part of the host endpoint.
    * @param d_id device id
    */
-  int fetch_device_port(uint64_t d_id);
+  virtual int fetch_device_port(uint64_t d_id);
 
-  int delete_d_ids(sc_device dev);
+  virtual int delete_d_ids(sc_device dev);
 
-  int delete_pdev(sc_device dev);
+  virtual int delete_pdev(sc_device dev);
 
   /**
    * @brief attach device to host.
@@ -88,7 +88,7 @@ class sc_mbox : public sc_device {
    * @param h_id downstream device id.
    * @param mode direct or shared.
    */
-  int d_attach(uint64_t d_id, uint64_t h_id, std::string mode);
+  virtual int d_attach(uint64_t d_id, uint64_t h_id, std::string mode);
 
   /**
    * @brief detach device to host.
@@ -96,35 +96,35 @@ class sc_mbox : public sc_device {
    * @param h_id downstream device id.
    * @param mode direct or shared.
    */
-  int d_detach(uint64_t d_id, uint64_t h_id, std::string mode);
+  virtual int d_detach(uint64_t d_id, uint64_t h_id, std::string mode);
 
   /**
    * @brief add sld object to map.
    */
-  void addSld(sc_sld& sld);
+  virtual void addSld(sc_sld& sld);
 
   /**
    * @brief add mld object to map.
    */
-  void addMld(sc_mld& mld);
+  virtual void addMld(sc_mld& mld);
 
   /**
    * @brief add host object to map.
    */
-  void addHost(sc_host& host);
+  virtual void addHost(sc_host& host);
 
   /**< get mbox_connected_slds*/
-  std::unordered_map<sc_id, sc_sld, hash_sc_id> get_slds_map() const;
+  virtual std::unordered_map<sc_id, sc_sld, hash_sc_id> get_slds_map() const;
 
   /**< get mbox_connected_mlds*/
-  std::unordered_map<sc_id, sc_mld, hash_sc_id> get_mlds_map() const;
+  virtual std::unordered_map<sc_id, sc_mld, hash_sc_id> get_mlds_map() const;
 
   /**< get mbox_connected_hosts*/
-  std::unordered_map<sc_id, sc_host, hash_sc_id> get_hosts_map() const;
+  virtual std::unordered_map<sc_id, sc_host, hash_sc_id> get_hosts_map() const;
 
-  std::unordered_map<uint64_t, sc_id> get_d_ids() const;
-  std::unordered_map<uint32_t, sc_id> get_pdev() const;
-  std::unordered_map<uint32_t, std::list<sc_id>>& get_phost();
+  virtual std::unordered_map<uint64_t, sc_id> get_d_ids() const;
+  virtual std::unordered_map<uint32_t, sc_id> get_pdev() const;
+  virtual std::unordered_map<uint32_t, std::list<sc_id>>& get_phost();
 
  private:
   /**< memory box fabric manager */
