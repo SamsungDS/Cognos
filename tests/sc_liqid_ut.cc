@@ -5,10 +5,10 @@
 #include "mbox_a1.h"
 #include "sc_device.h"
 #include "sc_host.h"
+#include "sc_liqid.h"
 #include "sc_mbox.h"
 #include "sc_mld.h"
 #include "sc_sld.h"
-#include "sc_liqid.h"
 
 using ::testing::Return;
 using namespace std;
@@ -182,7 +182,7 @@ TEST_F(ScLiqidTest, AttachDeviceToHostTest) {
   liqid->addSld(sld);
   liqid->addHost(host);
   int result = liqid->d_attach(sld.d_get_id().get_sc_id(),
-                              host.d_get_id().get_sc_id(), "test");
+                               host.d_get_id().get_sc_id(), "test");
   ASSERT_EQ(result, 0);
   auto hosts_map = liqid->get_hosts_map();
   ASSERT_TRUE(hosts_map.find(host.d_get_id()) != hosts_map.end());
@@ -209,9 +209,9 @@ TEST_F(ScLiqidTest, DetachDeviceToHostTest) {
   liqid->addSld(sld);
   liqid->addHost(host);
   liqid->d_attach(sld.d_get_id().get_sc_id(), host.d_get_id().get_sc_id(),
-                 "test");
+                  "test");
   int result = liqid->d_detach(sld.d_get_id().get_sc_id(),
-                              host.d_get_id().get_sc_id(), "test");
+                               host.d_get_id().get_sc_id(), "test");
   ASSERT_EQ(result, 0);
   auto hosts_map = liqid->get_hosts_map();
   ASSERT_TRUE(hosts_map.find(host.d_get_id()) != hosts_map.end());
@@ -224,7 +224,7 @@ TEST_F(ScLiqidTest, DetachDeviceToHostTestNeg) {
   liqid->addSld(sld);
   liqid->addHost(host);
   liqid->d_attach(sld.d_get_id().get_sc_id(), host.d_get_id().get_sc_id(),
-                 "test");
+                  "test");
   int result = liqid->d_detach(sld.d_get_id().get_sc_id(), 777, "test");
   ASSERT_EQ(result, -2);
 }

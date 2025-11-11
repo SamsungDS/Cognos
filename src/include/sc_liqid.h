@@ -5,9 +5,9 @@
 
 #include "mbox_a1.h"
 #include "sc_device.h"
+#include "sc_mbox.h"
 #include "sc_mld.h"
 #include "sc_sld.h"
-#include "sc_mbox.h"
 
 class sc_liqid : public sc_mbox {
  public:
@@ -32,25 +32,25 @@ class sc_liqid : public sc_mbox {
    * @param h_id downstream device id.
    * @param mode direct or shared.
    */
-   int d_attach(uint64_t d_id, uint64_t h_id, std::string mode) override;
+  int d_attach(uint64_t d_id, uint64_t h_id, std::string mode) override;
 
-   /**
+  /**
    * Override the method from sc_mbox`
    * @brief detach device to host.
    * @param d_id upstream host id.
    * @param h_id downstream device id.
    * @param mode direct or shared.
    */
-  int d_detach(uint64_t d_id, uint64_t h_id, std::string mode) override ;
+  int d_detach(uint64_t d_id, uint64_t h_id, std::string mode) override;
 
   /**< get liqid_connected_slds*/
-  virtual std::unordered_map<sc_id, sc_sld, hash_sc_id> get_slds_map() const override;
+  std::unordered_map<sc_id, sc_sld, hash_sc_id> get_slds_map() const override;
 
   /**< get liqid_connected_mlds*/
-  virtual std::unordered_map<sc_id, sc_mld, hash_sc_id> get_mlds_map() const override;
+  std::unordered_map<sc_id, sc_mld, hash_sc_id> get_mlds_map() const override;
 
   /**< get liqid_connected_hosts*/
-  virtual std::unordered_map<sc_id, sc_host, hash_sc_id> get_hosts_map() const override;
+  std::unordered_map<sc_id, sc_host, hash_sc_id> get_hosts_map() const override;
 };
 
 #endif

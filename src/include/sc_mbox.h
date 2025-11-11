@@ -19,7 +19,7 @@ class sc_mbox : public sc_device {
    */
   sc_mbox(uint64_t mb_id, uint64_t mb_fm_id, sc_switch mb_switch);
 
-  ~sc_mbox();
+  virtual ~sc_mbox();
 
   /* get sc_id class object */
   sc_id d_get_id() const override;

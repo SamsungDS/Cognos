@@ -35,7 +35,6 @@ sc_id sc_liqid::d_get_id() const { return sc_device::d_get_id(); }
  */
 int sc_liqid::d_detach(uint64_t d_id, uint64_t h_id, string mode) {
   return sc_mbox::d_detach(d_id, h_id, mode);
-
 }
 
 /**
@@ -43,7 +42,6 @@ int sc_liqid::d_detach(uint64_t d_id, uint64_t h_id, string mode) {
  */
 int sc_liqid::d_attach(uint64_t d_id, uint64_t h_id, string mode) {
   return sc_mbox::d_attach(d_id, h_id, mode);
-
 }
 
 // get mbox_connected_slds
@@ -63,4 +61,3 @@ unordered_map<sc_id, sc_host, hash_sc_id> sc_liqid::get_hosts_map() const {
   LOG(level_E::INFO, "Fetching liqid_connected_hosts map.");
   return sc_mbox::get_hosts_map();
 }
-
