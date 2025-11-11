@@ -163,7 +163,7 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
             }
         };
     }, [updateDimensions]);
-    
+
     // istanbul ignore next
     useEffect(() => {
         if (!selectedDevice || !metricsData[selectedDevice.id]) return;
@@ -280,6 +280,23 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
             .style('font-size', fontSize)
             .text('Time');
 
+        // Create tooltip (add this ONCE before the forEach loop)
+        const tooltip = d3.select('body')
+            .selectAll('.line-graph-tooltip')
+            .data([null])
+            .join('div')
+            .attr('class', 'line-graph-tooltip')
+            .style('position', 'absolute')
+            .style('background', 'rgba(0, 0, 0, 0.9)')
+            .style('color', 'white')
+            .style('padding', '8px 12px')
+            .style('border-radius', '6px')
+            .style('font-size', '13px')
+            .style('pointer-events', 'none')
+            .style('opacity', 0)
+            .style('z-index', 1000)
+            .style('box-shadow', '0 2px 8px rgba(0,0,0,0.3)');
+
         Object.entries(deviceMetrics).forEach(([metricType, data]) => {
             if (!data || data.length === 0) return;
 
@@ -301,7 +318,36 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
                 .attr('r', width < 400 ? 3 : 4)
                 .attr('fill', metricColors[metricType] || '#0d6efd')
                 .attr('stroke', '#1a1a1a')
-                .attr('stroke-width', 1);
+                .attr('stroke-width', 1)
+                .style('cursor', 'pointer')
+                .on('mouseenter', function (event, d) {
+                    d3.select(this)
+                        .transition()
+                        .duration(200)
+                        .attr('r', width < 400 ? 6 : 8);
+
+                    tooltip
+                        .style('opacity', 1)
+                        .html(`
+                    <div style="margin-bottom: 2px;">Time: ${d.time}</div>
+                    <div>Memory: <strong style="font-size: 15px;">${d.value.toLocaleString()} MB</strong></div>
+                `)
+                        .style('left', (event.pageX + 15) + 'px')
+                        .style('top', (event.pageY - 10) + 'px');
+                })
+                .on('mousemove', function (event) {
+                    tooltip
+                        .style('left', (event.pageX + 15) + 'px')
+                        .style('top', (event.pageY - 10) + 'px');
+                })
+                .on('mouseleave', function () {
+                    d3.select(this)
+                        .transition()
+                        .duration(200)
+                        .attr('r', width < 400 ? 3 : 4);
+
+                    tooltip.style('opacity', 0);
+                });
         });
 
         const legendWidth = Math.min(150, width * 0.3);
