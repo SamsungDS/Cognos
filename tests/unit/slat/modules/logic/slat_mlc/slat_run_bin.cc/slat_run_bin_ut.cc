@@ -35,18 +35,35 @@ TEST(TestRunBin, RunMlcBinarySuccess) {
   argOpts opts = {};
 
   out = runMlc("idle_latency", opts, std::string(MLC_TEST_BIN_PATH));
-  std::cout << out << std::endl;
-
-  out = runMlc("idle_latency", opts, std::string(TEST_BIN_PATH));
-  std::cout << out << std::endl;
+  EXPECT_EQ(out, "status=failed");
 
   out = runMlc("invalid_test", opts, std::string(TEST_BIN_PATH));
-  std::cout << out << std::endl;
+  EXPECT_EQ(out, "status=failed");
 
   opts.insert(std::make_pair("numa_node", "0"));
   out = runMlc("idle_latency", opts, std::string(MLC_TEST_BIN_PATH));
-  std::cout << out << std::endl;
+  EXPECT_NE(std::string::npos, out.find("status=success;avgLatencyns="));
 
   out = runMlc("idle_latency", opts, std::string("/path/does/not/exist"));
-  std::cout << out << std::endl;
+  EXPECT_EQ(out, "status=failed");
+}
+
+TEST(TestRunBinWithLatencyMatrix, RunMlcBinaryWithLatencyMatrixSuccess) {
+  std::string out;
+  argOpts opts = {};
+
+  // No numa provided
+  out = runMlc("latency_matrix", opts, std::string(MLC_TEST_BIN_PATH));
+  EXPECT_EQ(out, "status=failed");
+
+  // Valid numa
+  opts.insert(std::make_pair("numa_node", "0"));
+  out = runMlc("latency_matrix", opts, std::string(MLC_TEST_BIN_PATH));
+  EXPECT_NE(std::string::npos, out.find("status=success;avgLatencyns="));
+
+  // Invalid numa
+  opts = {};
+  opts.insert(std::make_pair("numa_node", "2"));
+  out = runMlc("latency_matrix", opts, std::string(MLC_TEST_BIN_PATH));
+  EXPECT_EQ(out, "status=failed");
 }
