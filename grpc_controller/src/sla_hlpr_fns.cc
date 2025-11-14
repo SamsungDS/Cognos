@@ -524,9 +524,9 @@ int SLADeviceHelper::GetDeviceDetails(std::string node_name, std::string port) {
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                logger_str.c_str());
     // Add all the devices to ras_device_map to enable RAS tracking
-    // Ignore devices which are marked faulty/offline/invalid
-    if (this->m_device_map[dev_info.controller_generated_id].internal_status ==
-        Device_Status_E::DEVICE_ONLINE) {
+    // Ignore devices which are marked faulty
+    if (this->m_device_map[dev_info.controller_generated_id].internal_status !=
+        Device_Status_E::DEVICE_FAULTY) {
       ras_device_map[dev_info.controller_generated_id] = dev_info;
     }
   }
