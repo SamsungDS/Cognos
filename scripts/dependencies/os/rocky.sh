@@ -28,6 +28,7 @@ install_packages() {
         wget
         rapidjson-devel
         numactl-devel
+        pciutils-devel
         flex
         bison
         autoconf

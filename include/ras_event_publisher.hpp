@@ -46,7 +46,7 @@ static const std::string ras_err_threshold_warning_template =
     "\"device_id\": \"{device_id}\", \"error_cnt\": {error_count} }} }}";
 
 static std::string get_new_event_tag(const std::string &device_id) {
-  auto epoch = std::chrono::duration_cast<std::chrono::seconds>(
+  auto epoch = std::chrono::duration_cast<std::chrono::nanoseconds>(
                    std::chrono::system_clock::now().time_since_epoch())
                    .count();
   std::string event_tag =
@@ -60,7 +60,7 @@ static std::string get_new_event_tag(const std::string &device_id) {
 static int send_ras_threshold_warning_event(const std::string &device_id,
                                             const int error_count,
                                             const std::string &message) {
-  auto time_stamp = std::chrono::duration_cast<std::chrono::seconds>(
+  auto time_stamp = std::chrono::duration_cast<std::chrono::nanoseconds>(
                         std::chrono::system_clock::now().time_since_epoch())
                         .count();
 

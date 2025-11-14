@@ -19,6 +19,7 @@ install_packages() {
         wget
         rapidjson-dev
         libnuma-dev
+        libpci-dev
         libfmt-dev
         flex
         bison
