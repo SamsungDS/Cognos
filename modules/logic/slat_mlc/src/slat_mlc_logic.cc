@@ -38,7 +38,7 @@ svk_status execute_mlc_logic_sync(svk_logic_cmd *cmd, svk_logic_input *input,
     opts["numa_node"] = numa_node;
   }
 
-  result_str = runMlc("idle_latency", opts, g_mlc_bin);
+  result_str = runMlc("latency_matrix", opts, g_mlc_bin);
   snprintf((char *)output->output_buffer, output->output_len, "%s",
            result_str.c_str());
   return SVK_STATUS_SUCCESS;
