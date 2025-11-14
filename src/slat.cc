@@ -104,11 +104,10 @@ void SLATrackerSvc::update_app_sla_with_device_sla(
   }
 }
 
-// Get the epoch (timestamp)
-long get_epoch() {
-  auto now = std::chrono::system_clock::now();
-  return std::chrono::duration_cast<std::chrono::seconds>(
-             now.time_since_epoch())
+// Get the epoch (timestamp) in nanoseconds
+static long long get_epoch() {
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(
+             std::chrono::system_clock::now().time_since_epoch())
       .count();
 }
 
