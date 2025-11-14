@@ -123,7 +123,7 @@ std::string getCurrentTimestamp()
         // Get the current time as a time_point
         auto now = std::chrono::system_clock::now();
         // Get epoch
-        auto epoch_seconds_direct = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
-        std::string epoch_seconds_str = std::to_string(epoch_seconds_direct);
-        return epoch_seconds_str;
+        auto epoch_nano_seconds_direct = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+        std::string epoch_nano_seconds_str = std::to_string(epoch_nano_seconds_direct);
+        return epoch_nano_seconds_str;
 }
