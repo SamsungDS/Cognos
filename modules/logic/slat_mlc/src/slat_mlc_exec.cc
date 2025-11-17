@@ -86,7 +86,6 @@ std::string parseMLCLatencyMatrixOutput(int numa_node,
       std::string word;
       int count = 0;
       while (iss >> word) {
-        count++;
         if (count == column_num) {
           double latency_result = std::stod(word);
           status =
@@ -94,6 +93,7 @@ std::string parseMLCLatencyMatrixOutput(int numa_node,
           found = true;
           break;
         }
+        count++;
       }
       if (!found) {
         std::cout << "Not enough data found in the output for numa "
@@ -114,6 +114,10 @@ std::string runMlc(std::string testType, argOpts args, std::string bin_path) {
   auto it = args.find("numa_node");
   if (it != args.end()) {
     numa_node = stoi(it->second);
+  }
+
+  if (numa_node < 0) {
+    return "status=failed";
   }
 
   if (testType == "idle_latency") {

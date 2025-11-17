@@ -66,4 +66,23 @@ TEST(TestRunBinWithLatencyMatrix, RunMlcBinaryWithLatencyMatrixSuccess) {
   opts.insert(std::make_pair("numa_node", "2"));
   out = runMlc("latency_matrix", opts, std::string(MLC_TEST_BIN_PATH));
   EXPECT_EQ(out, "status=failed");
+
+  // Read from the mock file (mlc_bin_mock.cc) to parse non-existent numas
+  opts = {};
+  opts.insert(std::make_pair("numa_node", "2"));
+  out =
+      runMlc("latency_matrix", opts, std::string(MLC_BIN_MOCK_EXECUTABLE_PATH));
+  EXPECT_NE(std::string::npos, out.find("status=success;avgLatencyns=781.4"));
+
+  opts = {};
+  opts.insert(std::make_pair("numa_node", "3"));
+  out =
+      runMlc("latency_matrix", opts, std::string(MLC_BIN_MOCK_EXECUTABLE_PATH));
+  EXPECT_NE(std::string::npos, out.find("status=success;avgLatencyns=809"));
+
+  opts = {};
+  opts.insert(std::make_pair("numa_node", "4"));
+  out =
+      runMlc("latency_matrix", opts, std::string(MLC_BIN_MOCK_EXECUTABLE_PATH));
+  EXPECT_EQ(out, "status=failed");
 }
