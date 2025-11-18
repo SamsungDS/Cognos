@@ -97,6 +97,7 @@ static std::string get_sla_deviation_data(std::string feature_name,
       generate_unique_device_id(host_name, device_name);
   observations_map["host_name"] = host_name;
   observations_map["app_name"] = app_name;
+  observations_map["app_pid"] = "1234";
   observations_map["avg_latency_ns"] = latency;
   observations_map["message"] = "Device SLA deviation";
   observations_map["feature_name"] = feature_name;
@@ -107,8 +108,8 @@ static std::string get_sla_deviation_data(std::string feature_name,
   json_map["feature_name"] = feature_name;
   json_map["msg"] = "Downgraded SLA detected";
 
-  json_map["source_type"] = "node";
-  json_map["source"] = host_name;
+  json_map["source_type"] = "device";
+  json_map["source"] = generate_unique_device_id(host_name, device_name);
   json_map["timestamp"] = get_epoch_string();
   json_map["tag"] = "SLA_TAG";
   json_map["observations"] = observations_map;
@@ -134,8 +135,8 @@ static std::string generate_ras_event(std::string feature_name,
   json_map["severity"] = "warning";
   json_map["feature_name"] = feature_name;
 
-  json_map["source_type"] = "node";
-  json_map["source"] = host_name;
+  json_map["source_type"] = "device";
+  json_map["source"] = generate_unique_device_id(host_name, numa);
   json_map["timestamp"] = get_epoch_string();
   json_map["tag"] = "RAS_TAG";
   json_map["observations"] = observations_map;
@@ -2308,8 +2309,9 @@ TEST(InitIntegrationTest, ControllerNodeServicerWithEventValidation) {
       "\"observations\":{\"device_id\":\"29690035288064\",\"error_cnt\":2000,"
       "\"feature_name\":\"test_feature\",\"message\":\"Device RAS error count "
       "hit the "
-      "threshold\"},\"severity\":\"warning\",\"source\":\"localhost\",\"source_"
-      "type\":\"node\",\"tag\":\"TEST_TAG\",\"timestamp\":1234567890}";
+      "threshold\"},\"severity\":\"warning\",\"source\":\"29690035288064\","
+      "\"source_"
+      "type\":\"device\",\"tag\":\"TEST_TAG\",\"timestamp\":1234567890}";
   std::cout << "Publish event to core " << json_data_str << std::endl;
   rc = publish_event_data_to_core((char *)"events",
                                   (uint8_t *)json_data_str.c_str(),
@@ -2422,8 +2424,9 @@ TEST(InitIntegrationTest, EventAPITests) {
       "\"observations\":{\"device_id\":\"29690035288064\",\"error_cnt\":2000,"
       "\"feature_name\":\"test_feature\",\"message\":\"Device RAS error count "
       "hit the threshold\"},\"tag\": "
-      "\"TEST_TAG\",\"severity\":\"warning\",\"source\":\"localhost\",\"source_"
-      "type\":\"node\",\"timestamp\":1234567890}";
+      "\"TEST_TAG\",\"severity\":\"warning\",\"source\":\"29690035288064\","
+      "\"source_"
+      "type\":\"device\",\"timestamp\":1234567890}";
   std::cout << "Publish event to core " << json_data_str << std::endl;
   rc = publish_event_data_to_core((char *)"events",
                                   (uint8_t *)json_data_str.c_str(),
@@ -2438,8 +2441,9 @@ TEST(InitIntegrationTest, EventAPITests) {
       "\"observations\":{\"device_id\":\"29690035288064\",\"error_cnt\":2000,"
       "\"feature_name\":\"test_feature\",\"message\":\"Device RAS error count "
       "hit the threshold\"},\"tag\": "
-      "\"TEST_TAG\",\"severity\":\"warning\",\"source\":\"localhost\",\"source_"
-      "type\":\"node\",\"timestamp\":1234567900}";
+      "\"TEST_TAG\",\"severity\":\"warning\",\"source\":\"29690035288064\","
+      "\"source_"
+      "type\":\"device\",\"timestamp\":1234567900}";
   std::cout << "Publish event to core " << json_data_str << std::endl;
   rc = publish_event_data_to_core((char *)"events",
                                   (uint8_t *)json_data_str.c_str(),
@@ -3508,7 +3512,8 @@ TEST(SLAMgmtIntegration, AutoTieringValidationWithSLAMgmt) {
                           "and command_params: "
                           "{\"app\":\"TESTAPPTM\"") != std::string::npos);
   // Since the PID is part of the output, we need to break it into two separate
-  // checks as the PID is dynamic Move command with the parameters are logged
+  // checks as the PID is dynamic value. Just check that the move command with
+  // the parameters are logged
   EXPECT_EQ(true,
             filedata.find("\"command\":\"move\",\"fast_tier\":\"0\",\"slow_"
                           "tier\":\"1\",\"tag\":\"SLA_TAG\",\"tm_attr\":"
@@ -3522,8 +3527,23 @@ TEST(SLAMgmtIntegration, AutoTieringValidationWithSLAMgmt) {
   rc = publish_event_data_to_core((char *)"alerts",
                                   (uint8_t *)json_data_str.c_str(),
                                   json_data_str.length());
-  std::cout << "Published data result " << rc << "one more time" << std::endl;
+  std::cout << "Published data result " << rc << " one more time" << std::endl;
   sleep(3);
+
+  // Publish event such that the device is back to normal SLA
+  json_data_str =
+      "{\"category\":\"slat\","
+      "\"domain\":\"observability\",\"feature_name\":\"slat\","
+      "\"observations\":{\"host_name\":\"localhost\",\"app_name\":"
+      "\"TESTAPPTM\",\"app_pid\":\"1234\""
+      "},\"severity\":\"info\",\"source\":\"localhost_1\","
+      "\"source_type\":\"device\",\"tag\":\"TEST_SLA_INFO_TAG\",\"timestamp\":"
+      "1234567890}";
+  std::cout << "Publish event to core " << json_data_str << std::endl;
+  rc = publish_event_data_to_core((char *)"events",
+                                  (uint8_t *)json_data_str.c_str(),
+                                  json_data_str.length());
+  sleep(2);
 
   // Check the logs with the deviation detected
   EXPECT_EQ(
@@ -3541,6 +3561,14 @@ TEST(SLAMgmtIntegration, AutoTieringValidationWithSLAMgmt) {
   EXPECT_EQ(true, is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
                                 "GetTieredDevice- No device found for tiering "
                                 "of the given device localhost_0"));
+
+  // Check for stop tiering command is sent
+  EXPECT_EQ(true, is_str_in_log(
+                      CONTROLLER_NODE_DEFAULT_LOG_FILE,
+                      "Send command to the node with command_name: stop and "
+                      "command_params: "
+                      "{\"app\":\"TESTAPPTM\",\"app_pid\":\"1234\",\"command\":"
+                      "\"stop\",\"tag\":\"TEST_SLA_INFO_TAG\"} is successful"));
 
   // Receive the events and check for SLA event as well as auto tiering event
   // from controller itself
@@ -3565,6 +3593,108 @@ TEST(SLAMgmtIntegration, AutoTieringValidationWithSLAMgmt) {
   EXPECT_NE(std::string::npos,
             event_resp->response().find(
                 "SLA deviation detected for the app TESTAPPTM"));
+
+  // Event for stopping auto-tiering when the device SLA is turned to normal
+  EXPECT_NE(std::string::npos,
+            event_resp->response().find(
+                "Stopping auto-tiering for the app TESTAPPTM"));
+
+  StopAllThreads(c_svcr);
+  StopEventProcessingThread(c_svcr);
+  sla_thread->join();
+  subscriber_thread->join();
+  delete c_svcr;
+  delete n_svcr;
+  cleanup_publisher();
+
+  unlink(conf_file.c_str());
+}
+
+TEST(SLAMgmtIntegration, ProcessSLAWithNonDeviceEvent) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  // Start mgmt controller
+  ControllerServicer *c_svcr(new ControllerServicer(conf_file));
+  auto c_server = InitializeServicer(c_svcr);
+  ASSERT_NE(c_server, nullptr);
+  EXPECT_TRUE(c_svcr->get_state() == true);
+  std::thread *subscriber_thread =
+      new std::thread(&StartThreadForZMQSubscriberConfiguration, c_svcr);
+
+  std::thread *sla_thread =
+      new std::thread(&StartEventProcessingThread, c_svcr);
+
+  int rc = initialize_publisher(conf_file.c_str());
+  EXPECT_EQ(rc, 0);
+
+  // Using the servicer just for simulating the smaller capacity devices
+  FakeNodeServicer *n_svcr(new FakeNodeServicer(conf_file));
+  auto n_server = InitializeNodeServicer(n_svcr);
+  ASSERT_NE(n_server, nullptr);
+  sleep(5);
+
+  json command_params;
+
+  command_params["app_name"] = "TESTAPPTM";
+  command_params["app_pid"] = 987654321;
+  command_params["app_total_data_set_MB"] = 4096;
+  command_params["hot_data_size_MB"] = 2048;
+
+  json qos_params;
+  qos_params["avg_latency_ns"] = 2500;
+  command_params["app_desired_qos"] = qos_params;
+
+  json device;
+  device["device_numa"] = "0";
+  device["device_allocated_capacity_mb"] = 4096;
+  json device_array = json::array();
+  device_array.push_back(device);
+  device["device_numa"] = "1";
+  device["device_allocated_capacity_mb"] = 4096;
+  device_array.push_back(device);
+
+  command_params["devices"] = device_array;
+
+  std::cout << command_params.dump() << std::endl;
+
+  svk::SLAManagementRequest req;
+  svk::SLAManagementResponse resp;
+
+  req.set_cluster_name(DEFAULT_CLUSTER_ID);
+  req.set_node_name(DEFAULT_NODE_ID);
+  req.set_command_name("set_app_sla");
+  req.set_command_params(command_params.dump());
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+
+  Status cmd_status = client.SLAManagementAPI(&req, &resp);
+  ASSERT_TRUE(cmd_status.ok());
+
+  sleep(2);
+
+  // Publish event such that the device is back to normal SLA
+  std::string json_data_str =
+      "{\"category\":\"slat\","
+      "\"domain\":\"observability\",\"feature_name\":\"slat\","
+      "\"observations\":{\"host_name\":\"localhost\",\"app_name\":"
+      "\"TESTAPPTM\",\"app_pid\":\"1234\""
+      "},\"severity\":\"info\",\"source\":\"localhost_1\","
+      "\"source_type\":\"node\",\"tag\":\"TEST_SLA_INFO_TAG\",\"timestamp\":"
+      "1234567890}";
+  std::cout << "Publish event to core " << json_data_str << std::endl;
+  rc = publish_event_data_to_core((char *)"events",
+                                  (uint8_t *)json_data_str.c_str(),
+                                  json_data_str.length());
+  sleep(2);
+  // Check the logs with the deviation detected
+  EXPECT_EQ(true,
+            is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
+                          "Event received from SLAT is not a device event"));
 
   StopAllThreads(c_svcr);
   StopEventProcessingThread(c_svcr);

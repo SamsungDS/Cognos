@@ -90,6 +90,7 @@ int GenerateControllerEvent(const ControllerEventData &event_data) {
   }
   return status;
 }
+
 static int read_subscriber_settings_from_config_file(
     const char *config_file, std::string &port, std::string &transport_type,
     std::vector<std::string> &topics_vector) {
@@ -2305,7 +2306,7 @@ void ProcessRASEvent(json json_data, ControllerServicer *svcr) {
     json observations_map = json_data["event_payload"].at("observations");
     event_tag = json_data["event_payload"].value("tag", "");
 
-    device_id = observations_map.at("device_id");
+    device_id = json_data["event_payload"].at("source");
     status = g_sla_device_hlpr->GetDeviceInfo(device_id, dev_info);
     if (status != 0) {
       logger_str =
@@ -2456,6 +2457,51 @@ void ProcessRASEvent(json json_data, ControllerServicer *svcr) {
       device_id, replacement_dev.controller_generated_id, app_info);
 }
 
+void StopTiering(json json_data, ControllerServicer *svcr) {
+  std::string node_name = "";
+  std::string node_port;
+  std::string cluster_name;
+
+  std::string slat_reported_host_name;
+  std::string slat_reported_app_name;
+  std::string logger_str;
+  std::string event_tag;
+  std::string app_pid;
+
+  json observations_map = json_data["event_payload"].at("observations");
+  event_tag = json_data["event_payload"].at("tag");
+
+  slat_reported_host_name = observations_map.at("host_name");
+  slat_reported_app_name = observations_map.at("app_name");
+  app_pid = observations_map.at("app_pid");
+
+  controller_config config = svcr->get_svk_config();
+  node_name = slat_reported_host_name;
+  get_cluster_name_for_node(svcr, node_name, cluster_name, node_port);
+
+  // Generate the SLA deviation health alert
+  std::string message =
+      "Stopping auto-tiering for the app " + slat_reported_app_name;
+  ControllerEventData event_data("log", "info", config.controller_id,
+                                 slat_reported_app_name, app_pid, event_tag,
+                                 "application", app_pid, message, cluster_name);
+
+  GenerateControllerEvent(event_data);
+
+  json json_data_stop;
+  std::string output;
+
+  json_data_stop["command"] = "stop";
+  json_data_stop["app"] = slat_reported_app_name;
+  json_data_stop["app_pid"] = app_pid;
+  json_data_stop["tag"] = event_tag;
+
+  SendNodeCommand(node_name, node_port, ME_FEATURE_MODULE_NAME, "stop",
+                  json_data_stop.dump(), output);
+
+  return;
+}
+
 /** Process the event received from SLAT feature module
   If the SLA deviation is reported, then the move command is called to the ME
  feature module.
@@ -2476,16 +2522,47 @@ void ProcessSLAEvent(json json_data, ControllerServicer *svcr) {
   Status cmd_status;
   DeviceInfo dev_info;
   std::string app_pid;
+  std::string message;
 
   controller_config config = svcr->get_svk_config();
 
   try {
     json observations_map = json_data["event_payload"].at("observations");
+    std::string source_type = json_data["event_payload"].at("source_type");
+    std::string severity = json_data["event_payload"].at("severity");
     event_tag = json_data["event_payload"].at("tag");
 
-    slat_reported_device_name = observations_map.at("device_id");
+    if (source_type != "device") {
+      // If the source type is not device, then need to figure out what to do.
+      // For now, only handling device based
+      logger_str = "Event received from SLAT is not a device event";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                 logger_str.c_str());
+      return;
+    }
+    slat_reported_device_name = json_data["event_payload"].at("source");
     slat_reported_host_name = observations_map.at("host_name");
     slat_reported_app_name = observations_map.at("app_name");
+    app_pid = observations_map.at("app_pid");
+
+    // Get the cluster name and other details
+    get_cluster_name_for_node(svcr, slat_reported_host_name, cluster_name,
+                              node_port);
+
+    if (severity == "info") {
+      // severity is info. So the app / device is back to normal SLA levels
+      message = "SLA is back to normalcy for the app " + slat_reported_app_name;
+
+      ControllerEventData event_data(
+          "health", "good", config.controller_id, slat_reported_app_name,
+          app_pid, event_tag, "application", app_pid, message, cluster_name);
+      GenerateControllerEvent(event_data);
+
+      StopTiering(json_data, svcr);
+
+      return;
+    }
+
     slat_reported_avg_latency_ns = observations_map.at("avg_latency_ns");
 
     status =
@@ -2529,8 +2606,6 @@ void ProcessSLAEvent(json json_data, ControllerServicer *svcr) {
   }
 
   node_name = slat_reported_host_name;
-  get_cluster_name_for_node(svcr, node_name, cluster_name, node_port);
-
   app_pid = std::to_string(app_info.pid);
   if (app_pid.empty()) {
     logger_str =
@@ -2541,8 +2616,7 @@ void ProcessSLAEvent(json json_data, ControllerServicer *svcr) {
   }
 
   // Generate the SLA deviation health alert
-  std::string message =
-      "SLA deviation detected for the app " + slat_reported_app_name;
+  message = "SLA deviation detected for the app " + slat_reported_app_name;
   ControllerEventData event_data("health", "degraded", config.controller_id,
                                  slat_reported_app_name, app_pid, event_tag,
                                  "application", app_pid, message, cluster_name);
