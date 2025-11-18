@@ -124,17 +124,17 @@ class SLATrackerSvc {
                                    slat_config *config) const;
   svk_status initialize_logger(const slat_config config) const;
   svk_status load_logic_modules(const std::string &logic_modules_lib_dir) const;
-  void benchmarking_thread_fn(void);
-  void update_app_sla_with_device_sla(slat_benchmark_config &config);
+  virtual void update_app_sla_with_device_sla(slat_benchmark_config &config);
   void process_pending_requests(void);
   // Adding new fn to add the device
-  svk_status add_devices_to_sla_tracker(json command_params);
   svk_status remove_devices_from_sla_tracker(json command_params);
 
  protected:
-  std::string run_benchmark(slat_benchmark_config &config);
-  void publish_app_degraded_sla(slat_benchmark_config &config);
-  void parse_result(slat_benchmark_config &config, std::string result);
+  void benchmarking_thread_fn(void);
+  virtual std::string run_benchmark(slat_benchmark_config &config);
+  virtual void publish_app_event(slat_benchmark_config &config);
+  virtual void parse_result(slat_benchmark_config &config, std::string result);
+  virtual svk_status add_devices_to_sla_tracker(json command_params);
 
  public:
   // In order to comply with Rule-of-Zero, manage class init and deletion

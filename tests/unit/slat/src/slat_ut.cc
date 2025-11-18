@@ -2,6 +2,7 @@
 #include <fcntl.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <gtest/internal/gtest-port.h>
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -15,13 +16,41 @@
 using ::testing::_;
 using ::testing::Return;
 using ::testing::StrEq;
-
+#define SLAT_LOG_FILE_NAME "/var/log/svk/test_slat.log"
 #define MOCK_STRUCT_INIT(...) \
   { __VA_ARGS__ }
 
 #define DEFINE_RETURN_MOCK(fn, ret) \
   bool ut_##fn##_mocked = false;    \
   ret ut_##fn
+
+/**
+ * Checks if a given string exists in the log file.
+ *
+ * @param search_str The string to search for in the log file.
+ * @return True if the string is found in the log file, false otherwise.
+ */
+bool is_str_in_log(std::string search_str) {
+  std::string file_name = SLAT_LOG_FILE_NAME;
+  // Use this call to flush logs immediately
+  svk_logger_flush(SLAT_LOGGER_MODULE_NAME);
+  sleep(0.5);
+
+  // Check if the log file exists
+  std::ifstream file(file_name);
+  if (!file.good()) {
+    return false;
+  }
+  // Read the entire log file into a string
+  std::string data((std::istreambuf_iterator<char>(file)),
+                   (std::istreambuf_iterator<char>()));
+
+  // Close the file
+  file.close();
+
+  // Check if the search string is found in the log file
+  return data.find(search_str) != std::string::npos;
+}
 
 svk_status my_initialize_logic_module_function(void *init_param) {
   const char *env_string_ilm;
@@ -114,7 +143,7 @@ class ConfigTest : public testing::Test {
     slat_conf.put("slat.disable_bg_thread", "true");
 
     logger_conf.put("log_level", "INFO");
-    logger_conf.put("log_file_name", "/var/log/svk/test_slat.log");
+    logger_conf.put("log_file_name", SLAT_LOG_FILE_NAME);
     logger_conf.put("log_file_count", 1);
     logger_conf.put("log_file_size", 1048576);
     logger_conf.put("sink_type", "rotating_file");
@@ -708,13 +737,14 @@ class SLATrackerSvc_Test : public SLATrackerSvc {
   SLATrackerSvc_Test(){};
   void test_publish_data(slat_benchmark_config &config) {
     std::cout << "TEST PUBLISH DATA CALLED" << std::endl;
-    publish_app_degraded_sla(config);
+    publish_app_event(config);
   }
   std::string test_benchmark(slat_benchmark_config &config) {
     return run_benchmark(config);
   }
 };
 
+// Publish event with SLA deviation and returning back to normal
 TEST_F(ConfigTest, PublishSuccess) {
   boost::property_tree::write_json("slat_conf.json", slat_conf);
   SLATrackerSvc_Test svc;
@@ -735,10 +765,116 @@ TEST_F(ConfigTest, PublishSuccess) {
   app_config.app_current_sla.avgLatencyns = 1000;
   config.app_sla_list["app1"] = app_config;
   svc.test_publish_data(config);
+  config.device_advertised_sla = 100;
+  config.device_current_sla = 95;
+  svc.test_publish_data(config);
   unlink("slat_conf.json");
 }
 
+class SLATrackerSvc_BenchMarkThread : public SLATrackerSvc {
+ public:
+  SLATrackerSvc_BenchMarkThread(uint64_t current_sla) {
+    thr_current_sla = current_sla;
+  };
+  virtual std::string run_benchmark(slat_benchmark_config &config) override {
+    std::cout << "RUN BENCHMARK called" << std::endl;
+    return "";
+  }
+  virtual void parse_result(slat_benchmark_config &config,
+                            std::string result) override {
+    std::cout << "PARSE RESULT called" << std::endl;
+    return;
+  }
+  void spl_benchmarking_thread_fn(void) { benchmarking_thread_fn(); }
+  virtual void update_app_sla_with_device_sla(
+      slat_benchmark_config &config) override {
+    slat_app_sla_config app_config;
+    config.device_numa_node = "0";
+    config.device_advertised_sla = 100;
+    config.device_current_sla = thr_current_sla;
+    config.device_sla_tolerance_percent = 10;
+    app_config.app_requested_sla_ns = 100;
+    app_config.app_sla_tolerance_percent = 10;
+    strcpy(app_config.app_current_sla.host_name, "msl-ssg-dummy");
+    strcpy(app_config.app_current_sla.app_name, "app1");
+    strcpy(app_config.app_current_sla.app_pid, "4321");
+    strcpy(app_config.app_current_sla.device_name, "0");
+    app_config.app_current_sla.avgLatencyns = 1000;
+    config.app_sla_list["app1"] = app_config;
+    return;
+  }
+  svk_status my_add_devices_to_sla_tracker(json command_params) {
+    return add_devices_to_sla_tracker(command_params);
+  }
+  void set_device_current_sla(uint64_t current_sla) {
+    thr_current_sla = current_sla;
+  }
+
+ private:
+  uint64_t thr_current_sla;
+};
+
 using json = nlohmann::json;
+
+// Benchmarking thread
+TEST_F(ConfigTest, BenchmarkingThreadForEvents) {
+  slat_conf.put("slat.disable_bg_thread", "false");
+  slat_conf.put("slat.benchmark_run_interval", 2);
+
+  boost::property_tree::write_json("slat_conf.json", slat_conf);
+
+  SLATrackerSvc_BenchMarkThread svc(70);
+  svc.Initialize("slat_conf.json");
+
+  sleep(2);
+  json devices = json::array();
+  json device;
+
+  device["device_numa"] = "0";
+  device["device_sla_latency_ns"] = 100;
+  device["device_id"] = "localhost_0";
+  devices.push_back(device);
+
+  // Enable SLA tracking for the devices
+  json command_params;
+  command_params["app_name"] = "app1";
+  command_params["app_pid"] = "1234";
+  command_params["app_sla_latency_ns"] = 120;
+  command_params["host_name"] = "localhost";
+  command_params["logic_module"] = "mlc";
+  command_params["devices"] = devices;
+  svc.my_add_devices_to_sla_tracker(command_params);
+  sleep(5);
+  // Set the current latency to above  the device threshold in the next
+  // command cycle to trigger degraded event
+  svc.set_device_current_sla(150);
+  sleep(5);
+  // Set the current latency to lower than the device threshold in the next
+  // command cycle to trigger normal event
+  svc.set_device_current_sla(90);
+  sleep(5);
+
+  // Strip the timestamp related and check the rest of message in the log
+  std::string msg =
+      "[{\"category\":\"slat\",\"domain\":\"observability\",\"feature_name\":"
+      "\"slat\",\"msg\":\"SLA degraded, current observed device latency 150ns, "
+      "expected  "
+      "100ns\",\"observations\":{\"app_name\":\"app1\",\"app_pid\":\"4321\","
+      "\"avg_latency_ns\":1000,\"device_id\":\"0\",\"host_name\":\"msl-ssg-"
+      "dummy\"},\"severity\":\"warning\",\"source\":\"0\",\"source_type\":"
+      "\"device\"";
+  EXPECT_EQ(true, is_str_in_log(msg));
+  msg =
+      "[{\"category\":\"slat\",\"domain\":\"observability\",\"feature_name\":"
+      "\"slat\",\"msg\":\"SLA corrected, current observed device latency 90ns, "
+      "expected  "
+      "100ns\",\"observations\":{\"app_name\":\"app1\",\"app_pid\":\"4321\","
+      "\"avg_latency_ns\":1000,\"device_id\":\"0\",\"host_name\":\"msl-ssg-"
+      "dummy\"},\"severity\":\"info\",\"source\":\"0\",\"source_type\":"
+      "\"device\"";
+  EXPECT_EQ(true, is_str_in_log(msg));
+  svc.clean_up();
+}
 
 // Create mock interface for the publish_event_data_to_core by default
 // The core framework is required for this API to run as there is node/cluster

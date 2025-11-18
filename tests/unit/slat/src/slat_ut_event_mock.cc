@@ -28,6 +28,7 @@ DEFINE_RETURN_MOCK(create_event_in_json_format, int);
 
 int create_event_in_json_format(const slat_benchmark_config &config,
                                 const svk_slat_logic_output &app_current_sla,
+                                std::string severity, std::string message,
                                 json &json_data) {
   std::cout << "create_event_in_json_format MOCK CALLED" << std::endl;
   if (ut_create_event_in_json_format_mocked) {
@@ -61,7 +62,8 @@ int create_event_in_json_format(const slat_benchmark_config &config,
 
   json_map["domain"] = "observability";
   json_map["category"] = "slat";
-  json_map["severity"] = "warning";
+  json_map["msg"] = message;
+  json_map["severity"] = severity;
 
   json_map["source_type"] = "node";
   json_map["source"] =
@@ -78,7 +80,7 @@ class SLATrackerSvc_Test : public SLATrackerSvc {
   SLATrackerSvc_Test(){};
   void test_publish_data(slat_benchmark_config &config) {
     std::cout << "TEST PUBLISH DATA CALLED" << std::endl;
-    publish_app_degraded_sla(config);
+    publish_app_event(config);
   }
   std::string test_benchmark(slat_benchmark_config &config) {
     return run_benchmark(config);

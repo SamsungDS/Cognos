@@ -113,7 +113,8 @@ static long long get_epoch() {
 
 int create_event_in_json_format(const slat_benchmark_config &config,
                                 const svk_slat_logic_output &app_current_sla,
-                                json &json_data) {
+                                const std::string &severity,
+                                const std::string &message, json &json_data) {
   json json_map;
   json observations_map;
   long epoch = get_epoch();
@@ -124,16 +125,15 @@ int create_event_in_json_format(const slat_benchmark_config &config,
   observations_map["host_name"] =
       std::string(app_current_sla.host_name, 0, SLAT_MAX_STR_LEN);
   observations_map["app_name"] = app_name;
+  observations_map["app_pid"] =
+      std::string(app_current_sla.app_pid, 0, SLAT_MAX_STR_LEN);
   observations_map["avg_latency_ns"] = app_current_sla.avgLatencyns;
 
   json_map["domain"] = "observability";
   json_map["feature_name"] = "slat";
   json_map["category"] = "slat";
-  json_map["severity"] = "warning";
-  json_map["msg"] =
-      "Downgraded SLA (" + std::to_string(config.device_current_sla) +
-      "ns against set " + std::to_string(config.device_advertised_sla) +
-      "ns) detected in " + app_name;
+  json_map["severity"] = severity;
+  json_map["msg"] = message;
   json_map["source_type"] = "device";
   json_map["source"] = device_name;
   json_map["tag"] = "SLA_" + std::string(app_current_sla.host_name) +
@@ -144,17 +144,35 @@ int create_event_in_json_format(const slat_benchmark_config &config,
   return 0;
 }
 
-void SLATrackerSvc::publish_app_degraded_sla(slat_benchmark_config &config) {
+void SLATrackerSvc::publish_app_event(slat_benchmark_config &config) {
   int rc;
   char log_msg[LOG_MSG_MAX_SIZE];
   std::string json_data_str;
 
-  svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::DEBUG,
-             "SLA publish_app_degraded_sla");
+  svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::DEBUG, "SLA publish_app_event");
   for (const auto &[app_name, app_sla_config] : config.app_sla_list) {
     json json_data;
+    std::string message;
+    std::string severity;
+
+    if (config.device_current_sla >
+        (config.device_advertised_sla +
+         ((config.device_advertised_sla * config.device_sla_tolerance_percent /
+           100)))) {
+      severity = "warning";
+
+      message = "SLA degraded, current observed device latency " +
+                std::to_string(config.device_current_sla) + "ns, expected  " +
+                std::to_string(config.device_advertised_sla) + "ns";
+    } else {
+      severity = "info";
+      message = "SLA corrected, current observed device latency " +
+                std::to_string(config.device_current_sla) + "ns, expected  " +
+                std::to_string(config.device_advertised_sla) + "ns";
+    }
+
     create_event_in_json_format(config, app_sla_config.app_current_sla,
-                                json_data);
+                                severity, message, json_data);
     if (json_data.empty()) {
       svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::WARN,
                  "JSON Data is empty. Continuing");
@@ -193,6 +211,9 @@ inline void SLATrackerSvc::process_pending_requests(void) {
   for (slat_app_benchmark_sla_to_add &to_add :
        this->th_data.benchmark_pending_list_to_add) {
     const std::string app_name = to_add.app_sla.app_current_sla.app_name;
+    logger_str = "Processing add request for app " + app_name;
+    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+
     for (const auto &device : to_add.device_sla_list) {
       std::string device_numa = device.device_numa_node;
       auto it = this->th_data.benchmark_device_config_list.find(device_numa);
@@ -244,6 +265,8 @@ inline void SLATrackerSvc::process_pending_requests(void) {
 void SLATrackerSvc::benchmarking_thread_fn(void) {
   std::string benchmark_result_str;
   char log_msg[LOG_MSG_MAX_SIZE];
+  svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO,
+             "Benchmarking thread started");
 
   std::cout << "Started benchmarking thread" << std::endl;
   while (1) {
@@ -268,7 +291,7 @@ void SLATrackerSvc::benchmarking_thread_fn(void) {
         // Check if the event is reported already. If no, publish the event and
         // set the flag to true to avoid duplicate events
         if (device_benchmark_config.sla_deviation_reported_flag == false) {
-          this->publish_app_degraded_sla(device_benchmark_config);
+          this->publish_app_event(device_benchmark_config);
           svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO,
                      "Event reported for SLA deviation");
           device_benchmark_config.sla_deviation_reported_flag = true;
@@ -278,6 +301,9 @@ void SLATrackerSvc::benchmarking_thread_fn(void) {
         // before and reset to false to report the event again in case of
         // deviation detected
         if (device_benchmark_config.sla_deviation_reported_flag == true) {
+          this->publish_app_event(device_benchmark_config);
+          svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO,
+                     "Event reported for back to SLA levels");
           device_benchmark_config.sla_deviation_reported_flag = false;
         }
       }
@@ -842,6 +868,8 @@ svk_status SLATrackerSvc::Initialize(const char *slat_config_file) {
 
     this->th_data.benchmarking_thread =
         std::thread(&SLATrackerSvc::benchmarking_thread_fn, this);
+    svk_logger(SLAT_FEATURE_MODULE_NAME, level_E::INFO,
+               "SLAT benchmarking thread spawned successfully");
     this->th_data.thread_running = true;
   }
 
