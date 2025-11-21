@@ -421,55 +421,50 @@ Status ControllerServicer::RegisterNode(ServerContext *ctxt,
 Status ControllerServicer::UnregisterNode(ServerContext *ctxt,
                                           const svk::UnregisterRequest *req,
                                           svk::UnregisterResponse *resp) {
-  std::string cluster_id = req->cluster_id();
-  std::string node_id = req->node_id();
-  std::string node_port = req->node_port();
+  std::string node_name = req->node_name();
+  std::string node_id;
   std::string logger_str;
   int status = -1;
 
-  logger_str = "UnregisterNode called with cluster_id:" + cluster_id +
-               " node_id:" + node_id;
+  logger_str = "UnregisterNode called with node_name:" + node_name;
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
 
-  if (cluster_id.length() == 0 || node_id.length() == 0) {
+  if (node_name.length() == 0) {
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
-               "Invalid input. One of the arguments is zero length");
+               "Invalid input. Node name is zero length");
     return Status(grpc::INVALID_ARGUMENT,
-                  "Invalid input - zero length arg given");
+                  "Invalid input - zero length node_name given");
   }
 
-  if (m_cluster_map.find(cluster_id) == m_cluster_map.end()) {
-    logger_str = "Unregistering the cluster_id: " + cluster_id + " not found";
+  // Check if node is registered with this controller
+  if (m_registered_nodes.find(node_name) == m_registered_nodes.end()) {
+    logger_str = "Node not registered " + node_name;
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                logger_str.c_str());
-
-    return Status(grpc::INVALID_ARGUMENT, "cluster_id not found");
+    return Status(grpc::INVALID_ARGUMENT, logger_str);
   }
-  logger_str = "Found the registered cluster_id: " + cluster_id;
+
+  logger_str = "Found Node with node_name " + node_name;
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
 
-  logger_str = "Checking the node_id: " + node_id;
-  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
-
-  if (m_cluster_map[req->cluster_id()].find(node_id) ==
-      m_cluster_map[req->cluster_id()].end()) {
-    logger_str = "Node with node_id " + node_id + " not found";
-    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
-               logger_str.c_str());
-    return Status(grpc::INVALID_ARGUMENT, "node_id not found");
-  } else {
-    logger_str = "Found Node with node_id " + node_id;
-    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-               logger_str.c_str());
-
-    int count = m_cluster_map[cluster_id].erase(node_id);
-    if (count == 1) {
-      logger_str = "Unregistered the node_id " + node_id + " successfully";
-      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+  // Check if node is part of any cluster
+  for (const auto &[cluster_name, cluster_info] : m_cluster_info) {
+    if (std::find(cluster_info.node_names.begin(),
+                  cluster_info.node_names.end(),
+                  node_name) != cluster_info.node_names.end()) {
+      logger_str = "Node with node_name " + node_name + " is part of cluster " +
+                   cluster_name + " . Remove it before unregistering";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                  logger_str.c_str());
-      status = 0;
+      return Status(grpc::INVALID_ARGUMENT,
+                    "Node is part of cluster. Remove from the cluster");
     }
   }
+
+  // Get the node ID (aka node.id) as this is used for the device mapping
+  node_id = m_registered_nodes[node_name].node_ip;
+
+  m_registered_nodes.erase(node_name);
   status = g_sla_device_hlpr->UnregisterDevicesForNode(node_id);
   if (status != 0) {
     logger_str =
@@ -492,6 +487,8 @@ Status ControllerServicer::UnregisterNode(ServerContext *ctxt,
 
   resp->set_status("Success");
   resp->set_error_code(status);
+  logger_str = "Unregistered the node_name " + node_name + " successfully";
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
 
   return Status::OK;
 }

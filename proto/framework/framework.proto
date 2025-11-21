@@ -233,11 +233,7 @@ message RegisterResponse {
 
 // A UnregisterRequest resource sent to the Controller node to unregister
 // given node_id from the already associated cluster.
-message UnregisterRequest {
-  string cluster_id = 1;
-  string node_id = 2;
-  string node_port = 3;
-}
+message UnregisterRequest { string node_name = 1; }
 
 // A UnregisterResponse resource.
 message UnregisterResponse {
