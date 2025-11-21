@@ -9,3 +9,5 @@ target_include_directories(svk_ras_einj_monitor PUBLIC ${CMAKE_SOURCE_DIR}/inclu
 target_link_libraries(svk_ras_einj_monitor numa mock) # Link library to target
 
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/svk_ras_einj_monitor DESTINATION "adapters/mock/tools" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+set_target_properties(svk_ras_einj_monitor PROPERTIES BUILD_WITH_INSTALL_RPATH TRUE)
+set_target_properties(svk_ras_einj_monitor PROPERTIES INSTALL_RPATH "/usr/local/svk/feature_modules/ras/adapters/mock/lib64")
