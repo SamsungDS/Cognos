@@ -2,4 +2,4 @@
 clang-format
 gcovr
 pyyaml
-damo
+damo==2.7.2
