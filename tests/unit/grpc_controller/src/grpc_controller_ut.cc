@@ -1909,7 +1909,7 @@ TEST_F(MockTestController, RegisterSameNodeAgain) {
   EXPECT_EQ(true, data.find(search_str) != std::string::npos);
 }
 
-TEST_F(MockTestController, UnRegisterNode) {
+TEST_F(MockTestController, UnRegisterNodeWithClusterID) {
   Status grpc_status;
   std::string cluster_id = "CLUSTER_UNREGISTER_NODE";
   std::string node_id = "unregisternode.localdomain.com";
@@ -1953,76 +1953,29 @@ TEST_F(MockTestController, UnRegisterNode) {
   // Now unregister the node
   svk::UnregisterRequest *ureq(new svk::UnregisterRequest());
   svk::UnregisterResponse *uresp(new svk::UnregisterResponse());
-  ureq->set_cluster_id(cluster_id);
-  ureq->set_node_id(node_id);
-  ureq->set_node_port(node_port);
+  ureq->set_node_name(node_id);
 
   grpc_status = client.UnregisterNode(ureq, uresp);
-
-  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
-             "Just for flushing logs");
-
-  ASSERT_EQ(grpc_status.ok(), true);
-  std::cout << "Resp message " << uresp->status() << std::endl;
-
-  std::ifstream file1(CONTROLLER_NODE_DEFAULT_LOG_FILE);
-  std::string data1((std::istreambuf_iterator<char>(file1)),
-                    (std::istreambuf_iterator<char>()));
-  file1.close();
-
-  search_str = "Found the registered cluster_id: " + cluster_id;
-  EXPECT_EQ(true, data1.find(search_str) != std::string::npos);
-  search_str = "Unregistered the node_id " + node_id + " successfully";
-  EXPECT_EQ(true, data1.find(search_str) != std::string::npos);
-}
-
-TEST_F(MockTestController, UnregisterNodeWithNullClusterID) {
-  Status grpc_status;
-
-  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
-
-  svk::UnregisterRequest *req(new svk::UnregisterRequest());
-  svk::UnregisterResponse *resp(new svk::UnregisterResponse());
-  req->set_node_id("testnode.localdomain.com");
-  req->set_node_port("9998");
-
-  grpc_status = client.UnregisterNode(req, resp);
-
-  ASSERT_EQ(grpc_status.ok(), false);
+  ASSERT_NE(grpc_status.ok(), true);
   ASSERT_EQ(grpc_status.error_message(),
-            "Invalid input - zero length arg given");
+            "Node is part of cluster. Remove from the cluster");
 }
 
-TEST_F(MockTestController, UnregisterNodeWithNullNodeID) {
+TEST_F(MockTestController, UnRegisterNodeWithoutClusterID) {
   Status grpc_status;
-
-  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
-
-  svk::UnregisterRequest *req(new svk::UnregisterRequest());
-  svk::UnregisterResponse *resp(new svk::UnregisterResponse());
-  req->set_cluster_id("DUMMY_CLUSTER");
-  req->set_node_port("9998");
-
-  grpc_status = client.UnregisterNode(req, resp);
-
-  ASSERT_EQ(grpc_status.ok(), false);
-  ASSERT_EQ(grpc_status.error_message(),
-            "Invalid input - zero length arg given");
-}
-
-TEST_F(MockTestController, UnRegisterNodeWithInvalidClusterID) {
-  Status grpc_status;
+  std::string node_id = "unregisternode.localdomain.com";
+  std::string node_port = "9998";
 
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-             "UnRegisterNodeWithInvalidClusterID UT called");
+             "UnRegisterNode UT called");
+
   Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
 
   // Register the node initially
   svk::RegisterRequest *req(new svk::RegisterRequest());
   svk::RegisterResponse *resp(new svk::RegisterResponse());
-  req->set_cluster_name("MY_CLUSTER_ID3");
-  req->set_node_ip("testnode3.localdomain.com");
-  req->set_node_port("9998");
+  req->set_node_ip(node_id);
+  req->set_node_port(node_port);
 
   EXPECT_CALL(*mockClient, CreateClient(_, _))
       .Times(AtLeast(1))
@@ -2035,37 +1988,48 @@ TEST_F(MockTestController, UnRegisterNodeWithInvalidClusterID) {
   std::cout << "Resp message " << resp->error_id_or_string_if_any()
             << std::endl;
 
-  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
-             "Just for flushing logs");
-
+  svk_logger_flush(CONTROLLER_LOGGER_MODULE_NAME);
+  // Read the file after 3 seconds to see whether the message is flushed
   std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
   std::string data((std::istreambuf_iterator<char>(file)),
                    (std::istreambuf_iterator<char>()));
   file.close();
-  EXPECT_EQ(true,
-            data.find("Registered the node_id testnode3.localdomain.com:9998 "
-                      "with cluster:MY_CLUSTER_ID3") != std::string::npos);
+  std::string search_str =
+      "Registered the node " + node_id + " with controller.";
+
+  EXPECT_EQ(true, data.find(search_str) != std::string::npos);
 
   // Now unregister the node
   svk::UnregisterRequest *ureq(new svk::UnregisterRequest());
   svk::UnregisterResponse *uresp(new svk::UnregisterResponse());
-  ureq->set_cluster_id("INVALID_CLUSTER_ID");
-  ureq->set_node_id("testnode3.localdomain.com");
-  ureq->set_node_port("9998");
+  ureq->set_node_name(node_id);
 
   grpc_status = client.UnregisterNode(ureq, uresp);
-  ASSERT_EQ(grpc_status.ok(), false);
-  ASSERT_EQ(grpc_status.error_message(), "cluster_id not found");
-  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
-             "Just for flushing logs");
+  svk_logger_flush(CONTROLLER_LOGGER_MODULE_NAME);
+  ASSERT_EQ(grpc_status.ok(), true);
+
   std::ifstream file1(CONTROLLER_NODE_DEFAULT_LOG_FILE);
   std::string data1((std::istreambuf_iterator<char>(file1)),
                     (std::istreambuf_iterator<char>()));
   file1.close();
-  EXPECT_EQ(true,
-            data1.find(
-                "Unregistering the cluster_id: INVALID_CLUSTER_ID not found") !=
-                std::string::npos);
+
+  search_str = "Unregistered the node_name " + node_id + " successfully";
+  EXPECT_EQ(true, data1.find(search_str) != std::string::npos);
+}
+
+TEST_F(MockTestController, UnregisterNodeWithNullNodeID) {
+  Status grpc_status;
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  svk::UnregisterRequest *req(new svk::UnregisterRequest());
+  svk::UnregisterResponse *resp(new svk::UnregisterResponse());
+
+  grpc_status = client.UnregisterNode(req, resp);
+
+  ASSERT_EQ(grpc_status.ok(), false);
+  ASSERT_EQ(grpc_status.error_message(),
+            "Invalid input - zero length node_name given");
 }
 
 TEST_F(MockTestController, UnRegisterNodeWithInvalidNodeID) {
@@ -2105,13 +2069,12 @@ TEST_F(MockTestController, UnRegisterNodeWithInvalidNodeID) {
   // Now unregister the node
   svk::UnregisterRequest *ureq(new svk::UnregisterRequest());
   svk::UnregisterResponse *uresp(new svk::UnregisterResponse());
-  ureq->set_cluster_id("CLUSTER_UNREGISTER_NODE_INVALID_ID");
-  ureq->set_node_id("testnode2.localdomain.com");
-  ureq->set_node_port("9998");
+  ureq->set_node_name("testnode2.localdomain.com");
 
   grpc_status = client.UnregisterNode(ureq, uresp);
   ASSERT_EQ(grpc_status.ok(), false);
-  ASSERT_EQ(grpc_status.error_message(), "node_id not found");
+  ASSERT_EQ(grpc_status.error_message(),
+            "Node not registered testnode2.localdomain.com");
 }
 
 int KillProcess() {

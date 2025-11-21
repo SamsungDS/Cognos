@@ -917,13 +917,34 @@ TEST(InitIntegrationTest, UnregisterNodeServer) {
   auto server = InitializeNodeServicer(svcr);
   ASSERT_NE(server, nullptr);
 
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+
+  // Remove node from cluster
+  svk::ClusterRequest *remove_node_req(new svk::ClusterRequest());
+  svk::ClusterResponse *remove_node_resp(new svk::ClusterResponse());
+  json nodes;
+  json single_node;
+  json command_params;
+
+  remove_node_req->set_cluster_name(DEFAULT_CLUSTER_ID);
+  remove_node_req->set_command_name("remove_node_from_cluster");
+  // Set up json req
+  nodes.clear();
+  single_node["node_name"] = DEFAULT_NODE_ID;
+  nodes.push_back(single_node);
+
+  command_params["nodes"] = nodes;
+
+  remove_node_req->set_command_params(command_params.dump());
+  Status status = client.ClusterAPI(remove_node_req, remove_node_resp);
+  ASSERT_EQ(status.ok(), true);
+
+  // unregister node
   svk::UnregisterRequest req;
   svk::UnregisterResponse *resp = new (svk::UnregisterResponse);
-  req.set_cluster_id(DEFAULT_CLUSTER_ID);
-  req.set_node_id(DEFAULT_NODE_ID);
+  req.set_node_name(DEFAULT_NODE_ID);
 
-  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
-  Status status = client.UnregisterNode(&req, resp);
+  status = client.UnregisterNode(&req, resp);
   ASSERT_EQ(status.ok(), true);
   unlink(conf_file.c_str());
 }
