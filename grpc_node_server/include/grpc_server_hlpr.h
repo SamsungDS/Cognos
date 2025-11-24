@@ -4,7 +4,7 @@
 #include "grpc_server.h"
 
 std::shared_ptr<Server> InitializeNodeServicer(Servicer *svcr);
-int StartNodeServer(std::string svk_conf_file, bool blocking);
+int StartNodeServer(const std::string &svk_conf_file, bool blocking);
 int SetNodeStatus(const node_config &config, std::string node_status);
 void signal_node_handler(int signal);
 

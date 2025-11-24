@@ -133,8 +133,8 @@ module is very similar except the cxl protocol and the transport type
 }
 
 */
-static int parseJSONOutputOfDeviceInfo(std::string node_name,
-                                       std::string& json_data,
+static int parseJSONOutputOfDeviceInfo(const std::string& node_name,
+                                       const std::string& json_data,
                                        DeviceInfo& dev_info) {
   int status = -1;
   nlohmann::json response_json;
@@ -204,7 +204,7 @@ static int parseJSONOutputOfDeviceInfo(std::string node_name,
  GetDeviceInfoFromCXLFeature.
 */
 static int GetDeviceListFromCXLFeature(
-    std::string node_name, std::string port,
+    const std::string& node_name, const std::string& port,
     std::vector<uint64_t>& device_id_vector) {
   std::string logger_str;
   std::string output;
@@ -243,7 +243,8 @@ static int GetDeviceListFromCXLFeature(
 /*
  The function is to get the CXL device info for the given device ID
 */
-static int GetDeviceInfoFromCXLFeature(std::string node_name, std::string port,
+static int GetDeviceInfoFromCXLFeature(const std::string& node_name,
+                                       const std::string& port,
                                        uint64_t device_id,
                                        DeviceInfo& dev_info) {
   std::string logger_str;
@@ -299,8 +300,8 @@ static int GetDeviceInfoFromCXLFeature(std::string node_name, std::string port,
 
 // Check if the CXL devices are present or not based on the node feature
 // module's pci information
-static bool CheckIfCXLDeviceExistInNode(std::string node_name,
-                                        std::string port) {
+static bool CheckIfCXLDeviceExistInNode(const std::string& node_name,
+                                        const std::string& port) {
   std::string logger_str;
   std::string output;
   bool status = false;
@@ -359,7 +360,7 @@ static bool CheckIfCXLDeviceExistInNode(std::string node_name,
 /*
   Get the list of CXL device IDs from the CXL feature module
 */
-int GetCXLDeviceDetails(std::string node_name, std::string port,
+int GetCXLDeviceDetails(const std::string& node_name, const std::string& port,
                         std::vector<DeviceInfo>& device_map) {
   std::string logger_str;
   std::string output;
@@ -416,7 +417,7 @@ int GetCXLDeviceDetails(std::string node_name, std::string port,
 /*
   Function to get only the DRAM devices from the node feature module.
 */
-int GetDRAMDeviceDetails(std::string node_name, std::string port,
+int GetDRAMDeviceDetails(const std::string& node_name, const std::string& port,
                          std::vector<DeviceInfo>& device_map) {
   std::string logger_str;
   std::string output;
@@ -492,7 +493,8 @@ int GetDRAMDeviceDetails(std::string node_name, std::string port,
 /*
   Get all the DRAM and CXL devices and update the controller's device array
 */
-int SLADeviceHelper::GetDeviceDetails(std::string node_name, std::string port) {
+int SLADeviceHelper::GetDeviceDetails(const std::string& node_name,
+                                      const std::string& port) {
   int status = -1;
   std::vector<DeviceInfo> device_map;
   std::string logger_str;
@@ -670,7 +672,7 @@ int SLADeviceHelper::GetDeviceForLatencyRequirements(
   return status;
 }
 
-int SLADeviceHelper::UnregisterDevicesForNode(std::string node_name) {
+int SLADeviceHelper::UnregisterDevicesForNode(const std::string& node_name) {
   int status = -1;
   std::string logger_str;
 
@@ -999,7 +1001,7 @@ int SLADeviceHelper::UpdateAppInfoForReplacementDevice(
 bool SLAStatsManager::addSLADataEntry(const std::string& app_name,
                                       const std::string& host_name,
                                       const std::string& device_name,
-                                      svk_slat_logic_output data) {
+                                      const svk_slat_logic_output& data) {
   std::string logger_str;
   auto key = std::make_tuple(app_name, host_name, device_name);
   if (stats.find(key) != stats.end()) {
@@ -1029,7 +1031,7 @@ svk_slat_logic_output SLAStatsManager::getSLAData(
 bool SLAStatsManager::updateSLAData(const std::string& app_name,
                                     const std::string& host_name,
                                     const std::string& device_name,
-                                    svk_slat_logic_output data) {
+                                    const svk_slat_logic_output& data) {
   std::string logger_str;
   auto key = std::make_tuple(app_name, host_name, device_name);
   if (stats.find(key) == stats.end()) {
@@ -1055,7 +1057,7 @@ SLAStatsManager::searchSLAData(const std::string& name) {
       results[key] = value;
     }
   }
-  if (results.size() == 0) {
+  if (!results.empty()) {
     std::string logger_str = "No SLA data found for the given name.";
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                logger_str.c_str());

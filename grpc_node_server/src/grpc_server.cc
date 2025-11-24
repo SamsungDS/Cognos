@@ -4,7 +4,7 @@
 #include <set>
 
 #include "client_library.h"
-#define MAX_SIZE 4096
+constexpr size_t MAX_SIZE = 4096;
 
 #ifndef BUILD_TESTING
 ABSL_FLAG(std::string, svk_conf_file, "", "svk configuration file to read");
@@ -31,7 +31,7 @@ int initialize_logger(const node_config &config) {
   return status;
 }
 
-int read_svk_conf_file(const std::string svk_conf_file, node_config *config) {
+int read_svk_conf_file(const std::string &svk_conf_file, node_config *config) {
   int status = -1;
   namespace pt = boost::property_tree;
 
@@ -383,7 +383,7 @@ void signal_node_handler(int signal) {
   gSignalNodeStatus.store(signal);
 }
 
-int StartNodeServer(std::string svk_conf_file, bool blocking) {
+int StartNodeServer(const std::string &svk_conf_file, bool blocking) {
   int status = -1;
 
   Servicer *svcr(new Servicer(svk_conf_file));
