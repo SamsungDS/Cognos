@@ -28,6 +28,14 @@ std::condition_variable gCondVar;
 const std::shared_ptr<SLADeviceHelper> g_sla_device_hlpr =
     std::make_shared<SLADeviceHelper>();
 
+// Maintain a list of topic filters which are already set on the subscriber
+// socket to avoid duplicates
+std::vector<std::string> g_subscribed_topic_filter_list;
+
+// Maintain a list of nodes who are already added to the subscriber socket to
+// avoid duplicates
+std::vector<std::string> g_subscribed_node_list;
+
 std::unique_ptr<Client> CreateClient(const std::string &node_name,
                                      const std::string &node_port) {
   return std::make_unique<Client>(node_name, node_port);
@@ -129,7 +137,7 @@ static int read_subscriber_settings_from_config_file(
 int tokenize(std::string node_id_list, std::set<std::string> &tokens) {
   int count = 0;
   char *s = (char *)node_id_list.c_str();
-  char *tok = strtok(s, ",");
+  const char *tok = strtok(s, ",");
   while (tok != NULL) {
     tokens.insert(tok);
     count++;
@@ -209,11 +217,11 @@ int read_svk_conf_file(const std::string &svk_conf_file,
   return status;
 }
 
-int update_node_status_from_str(const std::string &status_str,
+int update_node_status_from_str(const std::string &in_status_str,
                                 node_status &status) {
-  for (const auto &pair : node_status_to_str) {
-    if (pair.second == status_str) {
-      status = pair.first;
+  for (const auto &[status_enum, status_string] : node_status_to_str) {
+    if (status_string == in_status_str) {
+      status = status_enum;
       return 0;
     }
   }
@@ -330,12 +338,12 @@ Status ControllerServicer::RegisterNode(ServerContext *ctxt,
   node.status = NODE_ONLINE;
 
   bool node_exists = false;
-  for (const auto &curr_node : m_registered_nodes) {
-    if (curr_node.second.node_name == node.node_name) {
+  for (const auto &[m_node_name, m_node_info] : m_registered_nodes) {
+    if (m_node_info.node_name == node.node_name) {
       // Node already registered, coming online
-      m_registered_nodes[curr_node.second.node_name].status = NODE_ONLINE;
+      m_registered_nodes[m_node_info.node_name].status = NODE_ONLINE;
       node_exists = true;
-      logger_str = "Node " + curr_node.second.node_name +
+      logger_str = "Node " + m_node_info.node_name +
                    " is already registered with the "
                    "controller, coming online";
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
@@ -345,7 +353,7 @@ Status ControllerServicer::RegisterNode(ServerContext *ctxt,
   }
   // Node not registered yet, add to map
   if (!node_exists) {
-    m_registered_nodes.insert(std::make_pair(node.node_name, node));
+    m_registered_nodes.try_emplace(node.node_name, node);
     logger_str = "Registered the node " + node.node_name + " with controller.";
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                logger_str.c_str());
@@ -520,8 +528,9 @@ Status ControllerServicer::SetNodeStatus(ServerContext *ctxt,
     return Status(grpc::INVALID_ARGUMENT, logger_str);
   }
   node_info &node_to_update = node_itr->second;
-  int status = update_node_status_from_str(node_status, node_to_update.status);
-  if (status) {
+  if (int status =
+          update_node_status_from_str(node_status, node_to_update.status);
+      status) {
     logger_str = "Invalid status given: " + node_status +
                  ". Could not update node status.";
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
@@ -558,8 +567,9 @@ Status ControllerServicer::SetNodeStatus(ServerContext *ctxt,
   return Status::OK;
 }
 
-Status ControllerServicer::ProcessAllocateMemory(const svk::CommandRequest *req,
-                                                 svk::CommandResponse *resp) {
+Status ControllerServicer::ProcessAllocateMemory(
+    const svk::CommandRequest *req,
+    [[maybe_unused]] svk::CommandResponse *resp) {
   Status cmd_status;
   svk::CommandRequest req_node;
   svk::CommandResponse resp_node;
@@ -769,15 +779,13 @@ Status ControllerServicer::ProcessControllerCommand(
   feature_id = req->feature_id();
   feature_params = req->feature_params();
 
-  if (req->command_id().size() != 0) {
-    if (req->command_id() == "allocate_memory") {
-      logger_str = "ProcessAllocateMemory called";
-      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-                 logger_str.c_str());
+  if (!req->command_id().empty() && req->command_id() == "allocate_memory") {
+    logger_str = "ProcessAllocateMemory called";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
 
-      status = ProcessAllocateMemory(req, resp);
-      return status;
-    }
+    status = ProcessAllocateMemory(req, resp);
+    return status;
   }
 
   for (auto itr = m_cluster_map[req->cluster_id()].begin();
@@ -848,8 +856,8 @@ Status ControllerServicer::ListClusterNodes(
   return Status::OK;
 }
 
-Status ControllerServicer::CreateCluster(std::string cluster_name,
-                                         std::string command_params,
+Status ControllerServicer::CreateCluster(const std::string &cluster_name,
+                                         const std::string &command_params,
                                          svk::ClusterResponse *resp) {
   std::string logger_str;
   cluster_info clstr_info;
@@ -867,8 +875,8 @@ Status ControllerServicer::CreateCluster(std::string cluster_name,
   }
 
   try {
-    auto it = m_cluster_info.find(cluster_name);
-    if (it != m_cluster_info.end()) {
+    if (auto it = m_cluster_info.find(cluster_name);
+        it != m_cluster_info.end()) {
       logger_str = "Cluster id " + cluster_name + " already exists";
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                  logger_str.c_str());
@@ -963,7 +971,7 @@ Status ControllerServicer::CreateCluster(std::string cluster_name,
  * of deleted cluster.
  * @return Status indicating the success or failure of the operation.
  */
-Status ControllerServicer::DeleteCluster(std::string cluster_name,
+Status ControllerServicer::DeleteCluster(const std::string &cluster_name,
                                          svk::ClusterResponse *resp) {
   std::vector<std::string> node_names;
   std::string logger_str;
@@ -974,9 +982,9 @@ Status ControllerServicer::DeleteCluster(std::string cluster_name,
         "Invalid request parameters for DeleteCluster: cluster_name is null.";
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                logger_str.c_str());
-    resp->set_error_id_or_string_if_any(logger_str.c_str());
+    resp->set_error_id_or_string_if_any(logger_str);
     resp->set_error_code(SVK_STATUS_FAIL);
-    return Status(grpc::INVALID_ARGUMENT, logger_str.c_str());
+    return Status(grpc::INVALID_ARGUMENT, logger_str);
   }
 
   // Find the cluster by the given cluster_name
@@ -987,15 +995,15 @@ Status ControllerServicer::DeleteCluster(std::string cluster_name,
         " not found in deletion";
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                logger_str.c_str());
-    resp->set_error_id_or_string_if_any(logger_str.c_str());
+    resp->set_error_id_or_string_if_any(logger_str);
     resp->set_error_code(SVK_STATUS_FAIL);
-    return Status(grpc::INVALID_ARGUMENT, logger_str.c_str());
+    return Status(grpc::INVALID_ARGUMENT, logger_str);
   }
 
   // Iterate over all nodes in the cluster and remove the cluster_name in
   // node_info
   node_names = m_cluster_info[cluster_name].node_names;
-  for (auto &node_name : node_names) {
+  for (const auto &node_name : node_names) {
     node_info &node = m_registered_nodes[node_name];
     node.cluster_name = "";
     logger_str = "Node " + node.node_name + " changes its cluster_name to " +
@@ -1037,7 +1045,6 @@ Status ControllerServicer::DeleteCluster(std::string cluster_name,
  */
 Status ControllerServicer::ListClusters(svk::ClusterResponse *resp) {
   Status status;
-  std::string cluster_name;
   json cluster_names = nlohmann::json::array();
   json clusters_info;
 
@@ -1046,8 +1053,7 @@ Status ControllerServicer::ListClusters(svk::ClusterResponse *resp) {
   // Iterate through the m_cluster_info and add each cluster name to the
   // cluster_names array.
 
-  for (const auto &it : m_cluster_info) {
-    cluster_name = it.first;
+  for (const auto &[cluster_name, cluster_info] : m_cluster_info) {
     json name_json;
     name_json["cluster_name"] = cluster_name;
     cluster_names.push_back(name_json);
@@ -1067,7 +1073,7 @@ Status ControllerServicer::ListClusters(svk::ClusterResponse *resp) {
   return status;
 }
 
-Status ControllerServicer::ListNodesInCluster(std::string cluster_name,
+Status ControllerServicer::ListNodesInCluster(const std::string &cluster_name,
                                               svk::ClusterResponse *resp) {
   std::string logger_str;
   if (cluster_name.length() == 0) {
@@ -1104,9 +1110,9 @@ Status ControllerServicer::ListNodesInCluster(std::string cluster_name,
 }
 
 // Combining add and remove node from cluster to prevent duplicate code
-Status ControllerServicer::AddRemoveNode(std::string cluster_name,
-                                         std::string command_name,
-                                         std::string command_params,
+Status ControllerServicer::AddRemoveNode(const std::string &cluster_name,
+                                         const std::string &command_name,
+                                         const std::string &command_params,
                                          svk::ClusterResponse *resp) {
   Status status;
   std::string logger_str;
@@ -1165,8 +1171,10 @@ Status ControllerServicer::AddRemoveNode(std::string cluster_name,
           // Remove node from cluster
           std::vector<std::string> &node_names =
               m_cluster_info[cluster_name].node_names;
-          auto it = std::find(node_names.begin(), node_names.end(), node_name);
-          if (it != node_names.end()) {
+
+          if (auto it =
+                  std::find(node_names.begin(), node_names.end(), node_name);
+              it != node_names.end()) {
             node_names.erase(it);
           } else {
             logger_str = "Node " + node_name + " not found in cluster " +
@@ -1296,12 +1304,12 @@ Status ControllerServicer::ListNodes(svk::NodeResponse *resp) {
   // }
   json node_info;
   json node_array = json::array();
-  for (auto &curr_node : m_registered_nodes) {
+  for (auto &[m_node_name, m_node_info] : m_registered_nodes) {
     json curr_node_info;
-    curr_node_info["node_name"] = curr_node.second.node_name;
-    curr_node_info["node_port"] = curr_node.second.node_port;
-    curr_node_info["node_ip"] = curr_node.second.node_ip;
-    curr_node_info["status"] = node_status_to_str.at(curr_node.second.status);
+    curr_node_info["node_name"] = m_node_info.node_name;
+    curr_node_info["node_port"] = m_node_info.node_port;
+    curr_node_info["node_ip"] = m_node_info.node_ip;
+    curr_node_info["status"] = node_status_to_str.at(m_node_info.status);
     node_array.push_back(curr_node_info);
   }
   node_info["node_info"] = node_array;
@@ -1374,8 +1382,8 @@ Status ControllerServicer::FeatureAPI(ServerContext *ctxt,
       // Note: must use the node_name to find the ip/cluster, not the IP
       n = m_registered_nodes.at(node_name);
     } catch (const std::out_of_range &e) {
-      logger_str =
-          "Could not find node_info for node name <" + node_name + ">.";
+      logger_str = "Could not find node_info for node name <" + node_name +
+                   ">. Exception - " + std::string(e.what());
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                  logger_str.c_str());
       resp->set_error_id_or_string_if_any(logger_str);
@@ -2073,10 +2081,6 @@ void signal_handler(int signal) {
   gSignalStatus.store(signal);
 }
 
-// Maintain a list of topic filters which are already set on the subscriber
-// socket to avoid duplicates
-std::vector<std::string> g_subscribed_topic_filter_list;
-
 /**
  * This function adds the topic filters to the subscriber socket. This is purely
  * an internal function and doesn't validate the inputs.
@@ -2084,7 +2088,7 @@ std::vector<std::string> g_subscribed_topic_filter_list;
  * g_subscribed_topic_filter_list, then it will be ignored and proceeds.
  */
 
-int AddTopicsToSocket(std::vector<std::string> &topics_vector,
+int AddTopicsToSocket(const std::vector<std::string> &topics_vector,
                       void *zmq_socket) {
   int status;
   std::string logger_str;
@@ -2092,8 +2096,7 @@ int AddTopicsToSocket(std::vector<std::string> &topics_vector,
     if (std::find(g_subscribed_topic_filter_list.begin(),
                   g_subscribed_topic_filter_list.end(),
                   topic) != g_subscribed_topic_filter_list.end()) {
-      std::string logger_str =
-          "Topic filter " + topic + " already set for the subscriber";
+      logger_str = "Topic filter " + topic + " already set for the subscriber";
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                  logger_str.c_str());
       continue;
@@ -2129,10 +2132,6 @@ int AddTopicsToSocket(std::vector<std::string> &topics_vector,
  * pointers. In case of failure, the \*zmq_context/\*zmq_socket are null
  */
 
-// Maintain a list of nodes who are already added to the subscriber socket to
-// avoid duplicates
-std::vector<std::string> g_subscribed_node_list;
-
 void ConfigureSubscriberSocket(ControllerServicer *svcr,
                                std::vector<std::string> &topics_vector,
                                void **zmq_context, void **zmq_socket) {
@@ -2140,16 +2139,17 @@ void ConfigureSubscriberSocket(ControllerServicer *svcr,
       m_cluster_map;
   m_cluster_map = svcr->get_cluster_map();
   std::string topic;
+  std::string logger_str;
 
   for (const auto &[cluster_name, nodes] : m_cluster_map) {
     for (const auto &[node_name, node] : nodes) {
       if (*zmq_context == nullptr) {
-        if (topics_vector.size() > 0) topic = topics_vector.front();
+        if (!topics_vector.empty()) topic = topics_vector.front();
         int status =
             zmq_init_subscriber(zmq_context, zmq_socket, node_name.c_str(),
                                 gSubscriberPort.c_str(), topic.c_str());
         if (status != 0) {
-          std::string logger_str =
+          logger_str =
               "Error in initializing the subscriber for node " + node_name;
           svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                      logger_str.c_str());
@@ -2157,10 +2157,10 @@ void ConfigureSubscriberSocket(ControllerServicer *svcr,
           *zmq_context = nullptr;
           *zmq_socket = nullptr;
         } else {
-          std::string logger_str = "Initialized the subscriber for node " +
-                                   node_name + " with zmq context ptr " +
-                                   std::to_string(reinterpret_cast<uintptr_t>(
-                                       static_cast<void *>(*zmq_context)));
+          logger_str = "Initialized the subscriber for node " + node_name +
+                       " with zmq context ptr " +
+                       std::to_string(reinterpret_cast<uintptr_t>(
+                           static_cast<void *>(*zmq_context)));
           svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                      logger_str.c_str());
           svcr->set_zmq_socket(*zmq_context, *zmq_socket);
@@ -2176,24 +2176,23 @@ void ConfigureSubscriberSocket(ControllerServicer *svcr,
         if (std::find(g_subscribed_node_list.begin(),
                       g_subscribed_node_list.end(),
                       node_name) != g_subscribed_node_list.end()) {
-          std::string logger_str =
-              "Node " + node_name + " already added to the subscriber";
+          logger_str = "Node " + node_name + " already added to the subscriber";
           svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                      logger_str.c_str());
           continue;
         }
-        std::string logger_str = "subscriber socket already initialized";
+        logger_str = "subscriber socket already initialized";
         svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                    logger_str.c_str());
         int status = zmq_add_publisher_endpoint_to_subscriber(
             *zmq_socket, node_name.c_str(), gSubscriberPort.c_str());
         if (status != 0) {
-          std::string logger_str =
+          logger_str =
               "Error in adding the node " + node_name + " to the subscriber";
           svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                      logger_str.c_str());
         } else {
-          std::string logger_str =
+          logger_str =
               "Added the node " + node_name + " to the subscriber socket";
           svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                      logger_str.c_str());
@@ -2215,7 +2214,7 @@ void ConfigureSubscriberSocket(ControllerServicer *svcr,
  * @return 0 if the cluster is found for the given node_name,
  *         -1 if no cluster is associated.
  */
-int get_cluster_name_for_node(ControllerServicer *svcr,
+int get_cluster_name_for_node(const ControllerServicer *svcr,
                               const std::string &node_name,
                               std::string &cluster_name,
                               std::string &node_port) {
@@ -2223,12 +2222,10 @@ int get_cluster_name_for_node(ControllerServicer *svcr,
   std::unordered_map<std::string, std::unordered_map<std::string, std::string>>
       m_cluster_map = svcr->get_cluster_map();
 
-  for (const auto &cluster : m_cluster_map) {
-    const auto &nodes = cluster.second;
-    auto it = nodes.find(node_name);
-    if (it != nodes.end()) {
+  for (const auto &[m_cluster_name, m_node_info] : m_cluster_map) {
+    if (auto it = m_node_info.find(node_name); it != m_node_info.end()) {
       node_port = it->second;
-      cluster_name = cluster.first;
+      cluster_name = m_cluster_name;
       status = 0;
       break;
     }
@@ -2242,8 +2239,10 @@ int get_cluster_name_for_node(ControllerServicer *svcr,
  * @return 0 if the device is disabled, -1 on failure.
  */
 
-int DisableSLATrackingOnDevice(std::string node_name, std::string node_port,
-                               std::string device_numa, std::string app_name) {
+int DisableSLATrackingOnDevice(const std::string &node_name,
+                               const std::string &node_port,
+                               const std::string &device_numa,
+                               const std::string &app_name) {
   Status cmd_status;
   std::string output;
   int status = -1;
@@ -2724,7 +2723,7 @@ void ProcessEventsFromQueueThread(ControllerServicer *svcr) {
       }
     } catch (json::exception &e) {
       logger_str = "Feature name is not present in the event data - " +
-                   event_data.dump();
+                   event_data.dump() + ". Exception - " + std::string(e.what());
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::WARN,
                  logger_str.c_str());
     }
@@ -2752,8 +2751,8 @@ void ProcessZMQData(ControllerServicer *svcr, uint8_t *zmq_data,
   } catch (json::exception &e) {
     std::string errorMessage = e.what();
 
-    std::string logger_str = "Parse error for zmq data:[ " + event_json_str +
-                             " ] with error" + errorMessage;
+    logger_str = "Parse error for zmq data:[ " + event_json_str +
+                 " ] with error" + errorMessage;
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::WARN,
                logger_str.c_str());
   }
@@ -2822,7 +2821,7 @@ int StartThreadForZMQSubscriberConfiguration(ControllerServicer *svcr) {
       ConfigureSubscriberSocket(svcr, gTopicsVector, &zmq_context, &zmq_socket);
     }
 
-    std::unique_lock<std::mutex> lock(gMutex);
+    std::unique_lock lock(gMutex);
     // Wait for the earliest of the 2 seconds or is_config_changed() returns
     // true
     gCondVar.wait_for(lock, std::chrono::seconds(2),
@@ -2857,8 +2856,8 @@ int StartEventProcessingThread(ControllerServicer *svcr) {
   uint8_t zmq_data[ZMQ_MSG_MAX_SIZE];
   int data_size = 0;
 
-  std::thread *event_queue_processing_thread =
-      new std::thread(&ProcessEventsFromQueueThread, svcr);
+  auto event_queue_processing_thread(
+      new std::thread(&ProcessEventsFromQueueThread, svcr));
   if (event_queue_processing_thread == nullptr) {
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                "Failed to start the thread ProcessEventsFromQueueThread");
@@ -2958,7 +2957,7 @@ int StopEventProcessingThread(ControllerServicer *svcr) {
   return 0;
 }
 
-int StartServer(std::string svk_conf_file, bool blocking) {
+int StartServer(const std::string &svk_conf_file, bool blocking) {
   int status = -1;
   std::thread *sla_thread;
   std::thread *subscriber_thread;
@@ -2967,7 +2966,7 @@ int StartServer(std::string svk_conf_file, bool blocking) {
   std::signal(SIGINT, signal_handler);
   std::signal(SIGABRT, signal_handler);
 
-  ControllerServicer *svcr(new ControllerServicer(svk_conf_file));
+  auto svcr(new ControllerServicer(svk_conf_file));
   if (svcr->get_state() == false) {
     std::cout << "Servicer is not initialized properly. Exiting" << std::endl;
     return status;

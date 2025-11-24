@@ -18,7 +18,7 @@ std::mutex g_events_data_mutex;
 void resize_event_queue(uint64_t queue_size) {
   CircularQueue<json> new_event_queue(queue_size);
   json event_data;
-  std::lock_guard<std::mutex> lock(g_events_data_mutex);
+  std::scoped_lock lock(g_events_data_mutex);
 
   // Swap the contents
   while (!g_events_data_queue.isEmpty()) {
@@ -34,10 +34,10 @@ int insert_event_to_controller_map(const json event_data) {
   std::string logger_str;
   // Extract event header information
   auto event_header = event_data.value("event_header", json{});
-  std::string node_name = event_header.value("node_name", "");
 
   // Node name is the minimum requirement
-  if (node_name.empty()) {
+  if (std::string node_name = event_header.value("node_name", "");
+      node_name.empty()) {
     logger_str = "Failed to insert the event because of missing node name - " +
                  event_data.dump();
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
@@ -45,7 +45,7 @@ int insert_event_to_controller_map(const json event_data) {
     return -1;
   }
 
-  std::lock_guard<std::mutex> lock(g_events_data_mutex);
+  std::scoped_lock lock(g_events_data_mutex);
 
   g_events_data_queue.enqueue(event_data);
 

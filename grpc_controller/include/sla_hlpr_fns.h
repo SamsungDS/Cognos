@@ -76,7 +76,7 @@ typedef struct {
 class SLADeviceHelper {
  public:
   SLADeviceHelper(){};
-  int GetDeviceDetails(std::string node_name, std::string port);
+  int GetDeviceDetails(const std::string& node_name, const std::string& port);
 
   /**
    * Function to get the devices for the given requirements
@@ -112,7 +112,7 @@ class SLADeviceHelper {
 
   int SetAppInfo(const std::string& controller_generated_device_id,
                  const App_Info& app_info);
-  int UnregisterDevicesForNode(std::string node_name);
+  int UnregisterDevicesForNode(const std::string& node_name);
   int GetDeviceInfo(const std::string& controller_generated_device_id,
                     DeviceInfo& device_info);
   int GetAppInfo(const std::string& controller_generated_device_id,
@@ -166,14 +166,14 @@ class SLAStatsManager {
   bool addSLADataEntry(const std::string& app_name,
                        const std::string& host_name,
                        const std::string& device_name,
-                       svk_slat_logic_output data);
+                       const svk_slat_logic_output& data);
   // Get data based on specific tuple
   svk_slat_logic_output getSLAData(const std::string& app_name,
                                    const std::string& host_name,
                                    const std::string& device_name);
   bool updateSLAData(const std::string& app_name, const std::string& host_name,
                      const std::string& device_name,
-                     svk_slat_logic_output data);
+                     const svk_slat_logic_output& data);
   // Get all entries that include name in the tuple
   std::map<std::tuple<std::string, std::string, std::string>,
            svk_slat_logic_output>

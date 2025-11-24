@@ -110,14 +110,18 @@ class ControllerServicer : public svk::Controller::Service {
                                svk::CommandResponse *resp);
   Status ClusterAPI(ServerContext *ctxt, const svk::ClusterRequest *req,
                     svk::ClusterResponse *resp) override;
-  Status CreateCluster(std::string cluster_name, std::string command_params,
+  Status CreateCluster(const std::string &cluster_name,
+                       const std::string &command_params,
                        svk::ClusterResponse *resp);
-  Status DeleteCluster(std::string cluster_name, svk::ClusterResponse *resp);
+  Status DeleteCluster(const std::string &cluster_name,
+                       svk::ClusterResponse *resp);
   Status ListClusters(svk::ClusterResponse *resp);
-  Status ListNodesInCluster(std::string cluster_name,
+  Status ListNodesInCluster(const std::string &cluster_name,
                             svk::ClusterResponse *resp);
-  Status AddRemoveNode(std::string cluster_name, std::string command_name,
-                       std::string command_params, svk::ClusterResponse *resp);
+  Status AddRemoveNode(const std::string &cluster_name,
+                       const std::string &command_name,
+                       const std::string &command_params,
+                       svk::ClusterResponse *resp);
 
   Status NodeAPI(ServerContext *ctxt, const svk::NodeRequest *req,
                  svk::NodeResponse *resp) override;
@@ -145,7 +149,7 @@ class ControllerServicer : public svk::Controller::Service {
   const controller_config &get_svk_config() const { return m_svk_config; };
   bool get_state() const { return m_initialized_flag; };
   void set_server(std::shared_ptr<Server> server) { m_server = server; };
-  const std::shared_ptr<Server> get_server() { return m_server; };
+  std::shared_ptr<Server> get_server() const { return m_server; };
   void set_config_changed(bool state) { m_config_changed = state; };
   bool is_config_changed() const { return m_config_changed; };
   std::unordered_map<std::string, std::unordered_map<std::string, std::string>>
@@ -154,8 +158,8 @@ class ControllerServicer : public svk::Controller::Service {
   };
 
   void set_cluster_map(
-      std::unordered_map<std::string,
-                         std::unordered_map<std::string, std::string>>
+      const std::unordered_map<std::string,
+                               std::unordered_map<std::string, std::string>>
           &cluster_map) {
     m_cluster_map = cluster_map;
   }
