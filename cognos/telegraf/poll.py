@@ -258,6 +258,32 @@ def convert_stats_to_influx_line_protocol(stats):
         store_line_to_influx(line)
 
 
+def convert_stats_to_influx_line_protocol(stats):
+    for stat in stats:
+        ts = int(time.time()) * 1_000_000_000
+        tags = []
+        for k in TAG_KEYS:
+            tag = stat.get(k)
+            if tag is not None:
+                tags.append(f"{esc(k)}={esc(tag)}")
+        tag_str = ",".join(tags)
+
+        # get fields from observations
+        fields = []
+        obs = stat.get("observations", {})
+        for k, v in obs.items():
+            k_esc = esc(k)
+            if isinstance(v, bool):
+                fields.append(f"{k_esc}={'true' if v else 'false'}")
+            elif isinstance(v, int):
+                fields.append(f"{k_esc}={v}i")
+            elif isinstance(v, float):
+                fields.append(f"{k_esc}={esc_str(v)}")
+        if not fields:
+            return
+        print(f"stats,{tag_str} " + ",".join(fields) + f" {ts}")
+
+
 def convert_data_to_influx_line_protocol(events):
     for event in events:
         # get epoch timestamp and convert to ns for influxdb

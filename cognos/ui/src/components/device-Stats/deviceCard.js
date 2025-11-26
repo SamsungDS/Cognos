@@ -130,7 +130,6 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
                                         acc[metricType] = data;
                                         return acc;
                                     }, {});
-
                                     setMetricsData({ [selectedDevice.id]: metricsMap });
                                 } catch (err) {
                                     console.error("Metrics fetch error:", err);
@@ -549,7 +548,6 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
             return newExpanded;
         });
     }, [clustersData]);
-
     // istanbul ignore next
     const selectDevice = async (device) => {
         setSelectedDevice(device);
@@ -702,7 +700,6 @@ const Sidebar = ({
         )}
     </div>
 );
-
 Sidebar.propTypes = {
     loading: PropTypes.bool.isRequired,
     expandedItems: PropTypes.object.isRequired,
@@ -732,7 +729,6 @@ Sidebar.propTypes = {
     onToggleExpanded: PropTypes.func.isRequired,
     onSelectDevice: PropTypes.func.isRequired
 };
-
 const ChartArea = ({ selectedDevice, dimensions, containerRef, svgRef }) => (
     <div className="chart-area">
         {selectedDevice ? (
@@ -756,7 +752,6 @@ const ChartArea = ({ selectedDevice, dimensions, containerRef, svgRef }) => (
         )}
     </div>
 );
-
 ChartArea.propTypes = {
     selectedDevice: PropTypes.shape({
         id: PropTypes.string.isRequired,
@@ -769,7 +764,6 @@ ChartArea.propTypes = {
     containerRef: PropTypes.object.isRequired,
     svgRef: PropTypes.object.isRequired
 };
-
 DeviceCard.propTypes = {
     selectedMetrics: PropTypes.objectOf(PropTypes.string),
     setSelectedMetrics: PropTypes.func
