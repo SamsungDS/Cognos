@@ -25,9 +25,9 @@ const Login = () => {
             const roleGroup = roleSelect?.closest('.rbac-signup-form-group');
 
             if (roleSelect && title && roleGroup) {
-                roleSelect.value = 'guest';
+                roleSelect.value = 'admin';
                 roleGroup.style.display = 'none';
-                title.textContent = 'Register As Guest User';
+                title.textContent = 'Register as a New User';
                 clearInterval(interval);
             }
         }, 100);

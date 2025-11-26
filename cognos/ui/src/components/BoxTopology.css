@@ -29,6 +29,7 @@
     border: 1px solid #4F4F4F;
     height: 232px;
     padding-top: 20px;
+    box-shadow: rgb(0 212 255) 0px 0px 20px;
 }
 .cxl-switch-box {
     margin-top: 24px;
@@ -38,6 +39,9 @@
     justify-content: center;
     align-items: center;
     margin-left: 42px;
+}
+.carousel-inner {
+    overflow: visible !important;
 }
 
 .card-box {
@@ -304,7 +308,7 @@
   .toggle-text.right {
     display: inline-block;
     padding: 0px;
-    padding-left: 18px;
+    padding-left: 5px;
     /* border: solid #535353 ; */
     border-width: 0;
     transform: rotate(-45deg);
@@ -319,7 +323,7 @@
     background-color: #6d6b6b;
     border-radius: 50%;
     top: 4px;
-    left: 2px;
+    left: 5px;
     transition: transform 0.3s ease;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
   }
@@ -484,6 +488,7 @@
     .badge-container {
         margin-left: 82px;
     }
+
     .badge {
         width: 100px;
     }
@@ -518,8 +523,9 @@
         margin-left: 12px;
     }
     .device-img {
-        margin: 2px;
-        width: 64px;
+        margin: 4px;
+        width: 82px;
+        height: 46px;
     }
     .device-Id {
         margin-left: 1px;

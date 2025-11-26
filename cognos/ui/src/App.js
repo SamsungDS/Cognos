@@ -87,7 +87,7 @@ function App() {
             }
           />
           <Route
-            path="/jobs"
+            path="/application_view"
             element={
               <ProtectedRoute allowedRoles={["admin"]}>
                 <div className="grid-container">

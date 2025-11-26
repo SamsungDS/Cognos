@@ -1,32 +1,183 @@
-import React, { useContext, useState, useEffect, useRef } from "react";
-import { Container, Row, Col, Spinner } from "react-bootstrap";
-import Chart from "react-google-charts";
-import ProgressBar from "react-bootstrap/ProgressBar";
+import React, { useState, useEffect, useRef } from "react";
+import { Container, Row, Col } from "react-bootstrap";
 import BoxTopology from "../components/BoxTopology";
 import "./metrics.css";
 import "./dashboard.css";
 import "rc-slider/assets/index.css";
 import * as constants from '../constant';
 import { useSelectedOption } from "../contexts/SelectedOptionContext";
+import { VIEW_MODES, DeviceCountCard, CapacityCard, BandwidthCard, MemoryUsageChart } from '../utils/dashboard-utils';
+
+const POLL_INTERVAL = 3000;
+
+// Enable/disable mock mode for testing
+const MOCK_MODE = false;
+
+const MOCK_DATA = {
+  version: { version: "01.02.03" },
+  cluster_metrics: {
+    memory_usage: [
+      ["Time", "DRAM", "CXL"],
+      ["5", 151, 142],
+      ["4", 481, 211],
+      ["3", 831, 418],
+      ["2", 996, 642],
+      ["1", 1030, 795],
+      ["Current", 120, 400]
+    ],
+    capacity: {
+      total_capacity: 5057,
+      used_capacity: 0,
+      used_capacity_percentage: 0
+    },
+    bandwidth: {
+      max_bandwidth: 64,
+      used_bandwidth: 32,
+      used_percentage_bandwidth: 50
+    },
+    devices_count: {
+      num_hosts: 1,
+      num_cxl_devices: 2
+    }
+  },
+  cmmb_usage: [
+    ["Time", "Usage"],
+    ["10:00", 3200],
+    ["10:05", 3500],
+    ["10:10", 3800],
+    ["10:15", 4100],
+    ["10:20", 4400]
+  ],
+  cmmb_capacity: {
+    total_capacity: 256,
+    used_capacity: 128,
+    used_capacity_percentage: 50
+  },
+  cmmb_bandwidth: {
+    max_bandwidth: 32,
+    used_bandwidth: 16,
+    used_percentage_bandwidth: 50
+  },
+  devices_count: {
+    num_hosts: 4,
+    num_cxl_devices: 12
+  },
+  memserver_capacity: [
+    ["Memtype", "Capacity Used"],
+    ["DRAM", 1031],
+    ["CXL", 4026],
+  ]
+};
+// istanbul ignore next
+const mockFetch = (url, options) => {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+
+      if (url.includes('/scmc_version')) {
+        resolve({
+          ok: true,
+          json: async () => MOCK_DATA.version
+        });
+      } else if (url.includes('/cluster_metrics')) {
+        resolve({
+          ok: true,
+          json: async () => MOCK_DATA.cluster_metrics
+        });
+      } else if (url.includes('/metrics')) {
+        const payload = options?.body ? JSON.parse(options.body) : {};
+        const metricType = payload.metric_type;
+
+        const mockResponse = MOCK_DATA[metricType] || {};
+        resolve({
+          ok: true,
+          json: async () => mockResponse
+        });
+      }
+    }, 500); // Simulate network delay
+  });
+};
+
+/**
+ * Custom hook for polling metrics data
+ * @param {string} metricType - The type of metric to fetch
+ * @param {object} additionalPayload - Additional payload parameters
+ * @param {number} interval - Polling interval in milliseconds
+ */
+// istanbul ignore next
+const useMetricsPoll = (metricType, additionalPayload = {}, interval = POLL_INTERVAL) => {
+  const [data, setData] = useState([]);
+  const dataRef = useRef({});
+  const apiEndpoint = MOCK_MODE ? '' : constants.Configs.api_endpoint;
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const payload = {
+          metric_type: metricType,
+          ...additionalPayload
+        };
+
+        let response;
+        if (MOCK_MODE) {
+          response = await mockFetch(`${apiEndpoint}/metrics`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+          });
+        } else {
+          response = await constants.fetchMetrics(
+            `${apiEndpoint}/metrics`,
+            payload
+          );
+        }
+
+        if (response?.ok) {
+          const result = await response.json();
+          dataRef.current = result;
+          setData(result);
+        } else {
+          console.error(`Unable to fetch ${metricType} data`);
+        }
+      } catch (error) {
+        console.error(`Error fetching ${metricType}:`, error);
+      }
+    };
+
+    fetchData();
+    const intervalId = setInterval(fetchData, interval);
+
+    return () => clearInterval(intervalId);
+  }, [metricType, interval, apiEndpoint, JSON.stringify(additionalPayload)]);
+
+  return data;
+};
 
 const Dashboard = () => {
   const { selectedOption } = useSelectedOption();
   const [version, setVersion] = useState('00.00.00');
+  const [viewMode, setViewMode] = useState(VIEW_MODES.HOST); // Default to host view
+  const apiEndpoint = MOCK_MODE ? '' : constants.Configs.api_endpoint;
 
-  const apiEndpoint = constants.Configs.api_endpoint;
-  // istanbul ignore next
-  useEffect(() =>{
-    async function getVersion() {
+  // Fetch version
+  useEffect(() => {
+    const getVersion = async () => {
       try {
-        const response = await fetch(`${apiEndpoint}/scmc_version`, {
-          mode: 'cors',
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            'accept': 'application/json',
-            'Access-Control-Allow-Origin':'*'
-          },
-        })
+        let response;
+        if (MOCK_MODE) {
+          response = await mockFetch(`${apiEndpoint}/scmc_version`, {
+            mode: 'cors',
+            method: 'GET',
+          });
+        } else {
+          response = await fetch(`${apiEndpoint}/scmc_version`, {
+            mode: 'cors',
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+              'accept': 'application/json',
+              'Access-Control-Allow-Origin': '*'
+            },
+          });
+        }
 
         if (response.ok) {
           const data = await response.json();
@@ -35,158 +186,47 @@ const Dashboard = () => {
           console.log("unable to fetch version number");
         }
       } catch (error) {
-        console.log(error);
+        console.error("Error fetching version:", error);
       }
-    }
-    getVersion()
-  },
-  // eslint-disable-next-line react-hooks/exhaustive-deps 
-  []);
+    };
+    getVersion();
+  }, [apiEndpoint]);
 
-  const cmmbMemoryDataRef = useRef({});
-  const [cmmbMemoryDataState, setcmmbMemoryDataState] = useState([]);
-  // poll for cmmb memory data
+  // Update view mode based on selectedOption
   useEffect(() => {
-    async function getCmmbMemoryUsage() {
-      let payload = {};
-      payload.metric_type = "cmmb_usage";
-      
-      const response = await constants.fetchMetrics(`${apiEndpoint}/metrics`, payload);
+    const newViewMode = selectedOption === VIEW_MODES.CMMB ? VIEW_MODES.CMMB : VIEW_MODES.HOST;
+    setViewMode(newViewMode);
+  }, [selectedOption]);
 
-      if (response?.ok) {
-          const data = await response.json();
-          cmmbMemoryDataRef.current = data;
-          setcmmbMemoryDataState(cmmbMemoryDataRef.current);
+  // Fetch metrics using custom hooks
+  const cmmbMemoryData = useMetricsPoll("cmmb_usage");
+  const cmmbCapacityData = useMetricsPoll("cmmb_capacity");
+  const cmmbBandwidthData = useMetricsPoll("cmmb_bandwidth")
+  const devicesCountData = useMetricsPoll("devices_count");
+
+  // Fetch cluster metrics for host view
+  // const clusterMetrics = useClusterMetrics(viewMode);
+  const clusterMetrics = {
+    "memory_usage": useMetricsPoll("hostview_usage"),
+    "capacity": useMetricsPoll("hostview_capacity"),
+    "bandwidth": useMetricsPoll("hostview_bandwidth"),
+    "devices_count": devicesCountData
+  }
+
+  // Determine data source based on view mode
+  const displayData = viewMode === VIEW_MODES.HOST && clusterMetrics
+    ? {
+        memory: clusterMetrics.memory_usage || cmmbMemoryData,
+        capacity: clusterMetrics.capacity || cmmbCapacityData,
+        bandwidth: clusterMetrics.bandwidth || cmmbBandwidthData,
+        devices: clusterMetrics.devices_count || devicesCountData
       }
-      else {
-          console.log("unable to fetch memory cpu data..");
-      }
-    }
-
-    getCmmbMemoryUsage()
-    const interval = setInterval(() => getCmmbMemoryUsage(), 3000)
-    return () => {
-      clearInterval(interval);
-    }
-  }, [])
-
-  const cmmbCapacityDataRef = useRef({});
-  const [cmmbCapacityDataState, setcmmbCapacityDataState] = useState([]);
-  // poll for cmmb capacity data
-  useEffect(() => {
-    async function getCmmbCapacityUsage() {
-      let payload = {};
-      payload.metric_type = "cmmb_capacity";
-      
-      const response = await constants.fetchMetrics(`${apiEndpoint}/metrics`, payload);
-
-      if (response?.ok) {
-          const data = await response.json();
-          cmmbCapacityDataRef.current = data;
-          setcmmbCapacityDataState(cmmbCapacityDataRef.current);
-      }
-      else {
-          console.log("unable to fetch memory cpu data..");
-      }
-    }
-
-    getCmmbCapacityUsage()
-    const interval = setInterval(() => getCmmbCapacityUsage(), 3000)
-    return () => {
-      clearInterval(interval);
-    }
-  }, [])
-
-  const cmmbBandwidthDataRef = useRef({});
-  const [cmmbBandwidthDataState, setCmmbBandwidthDataState] = useState([]);
-  // poll for cmmb bandwidth usage
-  useEffect(() => {
-    async function getCmmbBandwidthUsage() {
-      let payload = {};
-      payload.metric_type = "cmmb_bandwidth";
-
-      const response = await constants.fetchMetrics(`${apiEndpoint}/metrics`, payload);
-
-      if (response?.ok) {
-          const data = await response.json();
-          cmmbBandwidthDataRef.current = data;
-          setCmmbBandwidthDataState(cmmbBandwidthDataRef.current);
-      }
-      else {
-          console.log("unable to fetch memory cpu data..");
-      }
-    }
-
-    getCmmbBandwidthUsage()
-    const interval = setInterval(() => getCmmbBandwidthUsage(), 3000)
-    return () => {
-      clearInterval(interval);
-    }
-  }, [])
-
-  const devicesCountDataRef = useRef({});
-  const [devicesCountDataState, setdevicesCountDataState] = useState([]);
-  // poll for devices count
-  useEffect(() => {
-    async function getDevicesCount() {
-      let payload = {};
-      payload.metric_type = "devices_count";
-      
-      const response = await constants.fetchMetrics(`${apiEndpoint}/metrics`, payload);
-
-      if (response?.ok) {
-          const data = await response.json();
-          devicesCountDataRef.current = data;
-          setdevicesCountDataState(devicesCountDataRef.current);
-      }
-      else {
-          console.log("unable to fetch memory cpu data..");
-      }
-    }
-
-    getDevicesCount()
-    const interval = setInterval(() => getDevicesCount(), 3000)
-    return () => {
-      clearInterval(interval);
-    }
-  }, [])
-
-
-  const cmmbMemoryDataOptions = {
-    isStacked: true,
-    height: 180,
-    titleTextStyle: { color: "#FFFFFD", fontSize: 25, bold: true },
-    colors: ["#00B3E3"],
-    hAxis: {
-      title: "Time",
-      textStyle: { color: "#FFFFFD" },
-      titleTextStyle: { color: "#FFFFFD" },
-      gridlines: { color: "#4C4C3B" },
-    },
-    vAxis: {
-      minValue: 100,
-      title: "Usage (MB)",
-      textStyle: { color: "#FFFFFD" },
-      titleTextStyle: { color: "#FFFFFD" },
-    },
-    curveType: "function",
-    lineWidth: 5,
-    chartArea: { width: "70%", height: "100%", top: 50, bottom: 50 },
-    backgroundColor: { fill: "transparent" },
-    animation: { startup: true },
-    annotations: {
-      textStyle: {
-        fontName: "Times-Roman",
-        fontSize: 18,
-        bold: true,
-        italic: true,
-        color: "#FFFFFD",
-        auraColor: "#FFFFFD",
-        opacity: 0.8,
-      },
-    },
-    legend: { textStyle: { color: "#FFFFFD" } },
-  };
+    : {
+        memory: cmmbMemoryData,
+        capacity: cmmbCapacityData,
+        bandwidth: cmmbBandwidthData,
+        devices: devicesCountData
+      };
 
   return (
     <div className="Content content_root" id="dashboard-container-id">
@@ -198,10 +238,13 @@ const Dashboard = () => {
               data-testid="memory-box-overview"
               id="memory-box-overview-id"
             >
-              <h4 className="memory-box-title">MEMORY BOX OVERVIEW</h4>
+              <h4 className="memory-box-title">
+                Dashboard - {viewMode === VIEW_MODES.HOST ? 'Host View' : 'CMM-B View'}
+              </h4>
             </div>
           </Col>
         </Row>
+
         <Row>
           <Col sm={12} md={12} lg={12} xl={8}>
             <div
@@ -212,304 +255,51 @@ const Dashboard = () => {
               <BoxTopology />
             </div>
           </Col>
+
           <Col sm={12} md={12} lg={12} xl={4}>
-            {selectedOption === "Host" ? (
-              <>
-                <div className="device_card info-memo-com">
-                  <div className="spinner-style" style={{ height: 150 }}>
-                    <div
-                      style={{
-                        color: "white",
-                        textAlign: "center",
-                      }}
-                    >
-                      This data is not available for this host
-                    </div>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <>
-                {devicesCountDataState.num_hosts ? (
-                  <div
-                    className="device_card info-memo-com"
-                    id="mem-info"
-                    style={{ fontFamily: "Samsung One", verticalAlign: "top" }}
-                  >
-                    <Row className="row-info-memo">
-                      <Col>
-                        <div
-                          style={{
-                            color: "white",
-                            display: "inline",
-                            fontWeight: "bold",
-                          }}
-                        >
-                          {" "}
-                          Attached Hosts &nbsp;{" "}
-                        </div>
-                      </Col>
-                      <Col>
-                        <span className="arrow">
-                          <i className="right"></i>
-                        </span>
-                      </Col>
-                      <Col>
-                        <span
-                          className="circle"
-                          style={{ color: "#00B3E3" }}
-                        >{`${
-                          devicesCountDataState.num_hosts
-                            ? devicesCountDataState.num_hosts
-                            : 0
-                        }`}</span>
-                      </Col>
-                    </Row>
-                    <Row className="row-info-memo">
-                      <Col>
-                        <div
-                          style={{
-                            color: "white",
-                            display: "inline",
-                            fontWeight: "bold",
-                          }}
-                        >
-                          {" "}
-                          CXL Devices{" "}
-                        </div>
-                      </Col>
-                      <Col>
-                        <span className="arrow">
-                          <i className="right"></i>
-                        </span>
-                      </Col>
-                      <Col>
-                        <div
-                          className="circle"
-                          style={{ color: "#00B3E3" }}
-                        >{`${
-                          devicesCountDataState.num_cxl_devices
-                            ? devicesCountDataState.num_cxl_devices
-                            : 0
-                        }`}</div>
-                      </Col>
-                    </Row>
-                  </div>
-                ) : (
-                  <div className="device_card info-memo-com" id="mem-info">
-                    <div className="spinner-style" style={{ height: 150 }}>
-                      <Spinner animation="border" variant="secondary" />
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
+            <DeviceCountCard
+              hostsCount={displayData.devices.num_hosts}
+              devicesCount={displayData.devices.num_cxl_devices}
+              isLoading={!displayData.devices.num_hosts}
+            />
+
             <Row>
               <Col>
-                <div
-                  className="device_card system-memory-allocated"
-                  id="sys-mem-allocated-id"
-                >
-                  {selectedOption === "Host" ? (
-                    <>
-                      <div className="spinner-style" style={{ height: 150 }}>
-                        <div
-                          style={{
-                            color: "white",
-                            textAlign: "center",
-                          }}
-                        >
-                          This data is not available for this host
-                        </div>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div
-                        style={{
-                          color: "white",
-                          fontWeight: "bold",
-                          fontFamily: "Samsung",
-                        }}
-                      >
-                        <h4 className="cmmb-memory-heading">
-                          CMM-B <span style={{ color: "white" }}>Capacity</span>
-                        </h4>
-                      </div>
-                      <div>
-                        {cmmbCapacityDataState.total_capacity ? (
-                          <div style={{ paddingTop: 12 }}>
-                            <div
-                              className="progres-bar-label"
-                              style={{ color: "white" }}
-                            >
-                              {`${
-                                cmmbCapacityDataState.total_capacity
-                                  ? cmmbCapacityDataState.total_capacity
-                                  : 0
-                              } GB`}
-                            </div>
-                            <ProgressBar
-                              style={{ height: 24, fontWeight: "bold" }}
-                              now={cmmbCapacityDataState.used_capacity_percentage}
-                              key={1}
-                              className="host1"
-                            />
-                            <div
-                              style={{ color: "white", marginLeft: 200 }}
-                            >{`Used Capacity ${
-                              cmmbCapacityDataState.used_capacity
-                                ? cmmbCapacityDataState.used_capacity
-                                : 0
-                            } GB`}</div>
-                          </div>
-                        ) : (
-                          <div
-                            className="spinner-style"
-                            style={{ height: 150 }}
-                          >
-                            <Spinner animation="border" variant="secondary" />
-                          </div>
-                        )}
-                      </div>
-                    </>
-                  )}
-                </div>
+                <CapacityCard
+                  viewMode={viewMode}
+                  capacityData={displayData?.capacity?.hostview_capacity}
+                  memCapacityData={displayData?.capacity?.hostview_memserver_capacity}
+                  isLoading={!displayData?.capacity?.hostview_capacity}
+                />
               </Col>
             </Row>
           </Col>
         </Row>
+
         <Row>
           <Col sm={12} md={12} lg={12} xl={8}>
-            <div className="device_card graph-container" id="rack-graph-id">
-              {selectedOption === "Host" ? (
-                <>
-                  <div className="spinner-style" style={{ height: 150 }}>
-                    <div
-                      style={{
-                        color: "white",
-                        textAlign: "center",
-                        marginTop: 50,
-                      }}
-                    >
-                      This data is not available for this host
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <Row>
-                  <Col sm={3} md={4} lg={4} xl={2}>
-                    <div style={{ padding: 12 }}>
-                      <h6 className="cmmb-memory-heading">
-                        CMM-B Memory{" "}
-                        <span style={{ color: "white" }}>Usage</span>
-                      </h6>
-                    </div>
-                  </Col>
-                  <Col
-                    sm={3}
-                    md={8}
-                    lg={8}
-                    xl={10}
-                    data-testid="rackBandwidth-id"
-                  >
-                    {cmmbMemoryDataState?.length > 1 ? (
-                      <Chart
-                        data-testid="chart"
-                        chartType="AreaChart"
-                        width="100%"
-                        height="150px"
-                        data={cmmbMemoryDataState}
-                        options={cmmbMemoryDataOptions}
-                      />
-                    ) : (
-                      <div
-                        className="spinner-style"
-                        style={{ height: 150, marginTop: 40 }}
-                      >
-                        <Spinner animation="border" variant="secondary" />
-                      </div>
-                    )}
-                  </Col>
-                </Row>
-              )}
-            </div>
+            <MemoryUsageChart
+              viewMode={viewMode}
+              memoryData={displayData.memory}
+              isLoading={!displayData.memory || displayData.memory.length <= 1}
+            />
           </Col>
+
           <Col sm={12} md={12} lg={12} xl={4}>
-            <div
-              className="device_card system-memory-allocated"
-              id="sys-mem-allocated-id"
-            >
-              {selectedOption === "Host" ? (
-                <>
-                  <div
-                    style={{
-                      color: "white",
-                      textAlign: "center",
-                      marginTop: 65,
-                    }}
-                  >
-                    This data is not available for this host
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div
-                    style={{
-                      color: "white",
-                      fontWeight: "bold",
-                      fontFamily: "Samsung",
-                    }}
-                  >
-                    <h4 className="cmmb-memory-heading">
-                      CMM-B Memory{" "}
-                      <span style={{ color: "white" }}>Bandwidth</span>
-                    </h4>
-                  </div>
-                  <div>
-                    {cmmbBandwidthDataState.max_bandwidth ? (
-                      <div style={{ paddingTop: 12 }}>
-                        <div
-                          className="progres-bar-label"
-                          style={{ color: "white" }}
-                        >
-                          {`${
-                            cmmbBandwidthDataState.max_bandwidth
-                              ? cmmbBandwidthDataState.max_bandwidth
-                              : 0
-                          } GBps`}
-                        </div>
-                        <ProgressBar
-                          style={{ height: 24, fontWeight: "bold" }}
-                          now={cmmbBandwidthDataState.used_percentage_bandwidth}
-                          key={1}
-                          className="host1"
-                        />
-                        <div
-                          style={{ color: "white", marginLeft: 200 }}
-                        >{`Used Bandwidth ${
-                          cmmbBandwidthDataState.used_bandwidth
-                            ? cmmbBandwidthDataState.used_bandwidth
-                            : 0
-                        } GBps`}</div>
-                      </div>
-                    ) : (
-                      <div className="spinner-style" style={{ height: 150 }}>
-                        <Spinner animation="border" variant="secondary" />
-                      </div>
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
+            <BandwidthCard
+              viewMode={viewMode}
+              bandwidthData={displayData.bandwidth}
+              isLoading={!displayData.bandwidth.max_bandwidth}
+            />
           </Col>
         </Row>
+
         <Row>
           <Col>
-            <div
-              className="device_card memory-box-overview-height text-center"
-            >
-              <h4 className="memory-box-title1">Samsung Cognos Management Console ({version.version})</h4>
+            <div className="device_card memory-box-overview-height text-center">
+              <h4 className="memory-box-title1">
+                Samsung Cognos Management Console ({version.version})
+              </h4>
             </div>
           </Col>
         </Row>

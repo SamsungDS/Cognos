@@ -5,13 +5,13 @@ const SelectedOptionContext = createContext();
 
 // Provider component
 export const SelectedOptionProvider = ({ children }) => {
-  const [selectedOption, setSelectedOption] = useState("CMM-B");
+  const [selectedOption, setSelectedOption] = useState("Host");
 
   // Function to toggle selectedOption
   // istanbul ignore next
   const handleToggle = () => {
     setSelectedOption((prevOption) =>
-      prevOption === "CMM-B" ? "Host" : "CMM-B"
+      prevOption === "Host" ? "CMM-B" : "Host"
     );
   };
 

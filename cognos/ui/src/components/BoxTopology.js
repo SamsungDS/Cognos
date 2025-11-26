@@ -30,6 +30,7 @@ import { ReactComponent as DeviceIcon } from "../assets/icons/deviceSVGIcon.svg"
 import { ReactComponent as CMMDIcon } from "../assets/icons/CMM-D-Icon.svg";
 import { ReactComponent as CMMHIcon } from "../assets/icons/CMM-H-Icon.svg";
 import { useSelectedOption } from "../contexts/SelectedOptionContext";
+import ShimmerUI, { NavigationShimmer } from './ShimmerUI';
 
 const BoxTopology = () => {
   const [hostToDeviceMapping, setHostToDeviceMapping] = useState({});
@@ -57,7 +58,7 @@ const BoxTopology = () => {
     useState([]);
   const [transformedData, setTransformedData] = useState([]);
 
-  // istanbul ignore next
+  
   useEffect(
     () => {
       fetchData(hostDeviceMapEndpoint, setHostToDeviceMapping);
@@ -80,7 +81,7 @@ const BoxTopology = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
-  // istanbul ignore next
+  
   useEffect(() => {
      const names = Array.isArray(hostToDeviceMapping.clusters) ? hostToDeviceMapping.clusters.map(cluster => cluster.cluster_name): [];
      setClusterList(prev => [...new Set([...prev, ...names])]);
@@ -151,7 +152,7 @@ const BoxTopology = () => {
 
   const hostDirectView = updateHostListAttached(mergeHosts(filteredDirectDevice));
 
-  // istanbul ignore next
+  
   const hostDirectViewList = hostDirectView.map((item) => ({
     title: item.host,
     deviceComponents: item.details.flatMap((detail) =>
@@ -160,16 +161,16 @@ const BoxTopology = () => {
   }));
 
   useEffect(() => {
-    if (hostDirectViewList.length > 0) {
+    if (hostlistRemote.length > 0) {
       setIsToggleEnabled(true);
     } else {
       setIsToggleEnabled(false);
     }
-  }, [hostDirectViewList]);
+  }, [hostlistRemote]);
 
   const cmmList = [
     {
-      title: "CMM-B1",
+      title: "Chessis1",
       hostComponents: mappedHostList(hostList, filteredDataHost),
       deviceComponents: mappedDeviceList(
         DeviceList,
@@ -178,7 +179,7 @@ const BoxTopology = () => {
       ),
     },
     {
-      title: "CMM-B2",
+      title: "Chessis2",
       hostComponents: mappedHostList(hostList, hostToDeviceMappingB2),
       deviceComponents: mappedDeviceList(
         DeviceList1,
@@ -187,7 +188,7 @@ const BoxTopology = () => {
       ),
     },
     {
-      title: "CMM-B3",
+      title: "Chessis3",
       hostComponents: mappedHostList(hostList, filteredDataHost),
       deviceComponents: mappedDeviceList(
         DeviceList,
@@ -196,7 +197,7 @@ const BoxTopology = () => {
       ),
     },
     {
-      title: "CMM-B4",
+      title: "Chessis4",
       hostComponents: mappedHostList(hostList, hostActiveList),
       deviceComponents: mappedDeviceList(
         DeviceList,
@@ -205,7 +206,7 @@ const BoxTopology = () => {
       ),
     },
     {
-      title: "CMM-B5",
+      title: "Chessis5",
       hostComponents: mappedHostList(hostList, hostActiveList),
       deviceComponents: mappedDeviceList(
         DeviceList,
@@ -214,7 +215,7 @@ const BoxTopology = () => {
       ),
     },
     {
-      title: "CMM-B6",
+      title: "Chessis6",
       hostComponents: mappedHostList(hostList, hostActiveList),
       deviceComponents: mappedDeviceList(
         DeviceList,
@@ -312,11 +313,10 @@ const BoxTopology = () => {
       );
     });
   };
-  // istanbul ignore next
+  
   const renderHostViewDevice = (devices = []) => {
     return devices.map((device) => {
       const part = device.dev_name // .split("-")[0];
-      console.log("DEVICE IN REDNER HOST VIEW DEVICE ", device);
       const D1Metadata = `name: ${part}
           type: ${device.type}
           `.replace(/ +/g, "");
@@ -346,28 +346,28 @@ const BoxTopology = () => {
     });
   };
   // Navigation handlers
-  // istanbul ignore next
+
   const handlePrev = () => {
     setCurrentCMM((prevCMM) => (prevCMM === 0 ? 5 : prevCMM - 1));
   };
-  // istanbul ignore next
+  
   const handleNext = () => {
     setCurrentCMM((prevCMM) => (prevCMM === 5 ? 0 : prevCMM + 1));
   };
-  // istanbul ignore next
+  
   const handlePrevHostView = () => {
     setCurrentHostView((prevCMM) =>
       prevCMM === 0 ? hostDirectView.length - 1 : prevCMM - 1
     );
   };
-  // istanbul ignore next
+
   const handleNextHostView = () => {
     setCurrentHostView((prevCMM) =>
       prevCMM === hostDirectView.length - 1 ? 0 : prevCMM + 1
     );
   };
 
-  // istanbul ignore next
+  
   return (
     <Container className="box-container" id="topology-card-id">
       <Row>
@@ -403,7 +403,7 @@ const BoxTopology = () => {
                   type="checkbox"
                   id="switch"
                   className="toggle-input"
-                  checked={selectedOption === "Host"}
+                  checked={selectedOption === "CMM-B"}
                   onChange={handleToggle}
                   disabled={!isToggleEnabled}
                 />
@@ -414,24 +414,53 @@ const BoxTopology = () => {
                   }`}
                 >
                   <span
-                    className={`toggle-text left ${
-                      selectedOption === "CMM-B" ? "visible" : "hidden"
-                    }`}
-                    // style={{ color: "#535353" }}
-                  >
-                    CMM-B
-                  </span>
-                  <span
-                    className={`toggle-text right ${
-                      selectedOption === "Host" ? "visible" : "hidden"
-                    }`}
+                    className={`toggle-text left ${selectedOption === "Host" ? "visible" : "hidden"
+                      }`}
+                  // style={{ color: "#535353" }}
                   >
                     Host
+                  </span>
+                  <span
+                    className={`toggle-text right ${selectedOption === "CMM-B" ? "visible" : "hidden"
+                      }`}
+                  >
+                    Chessis
                   </span>
                 </label>
               </div>{" "}
             </div>
-            {selectedOption === "CMM-B" ? (
+            {selectedOption === "Host" ? (
+              hostDirectViewList.length === 0 ? (
+                // Show shimmer when no host data
+                <NavigationShimmer tabCount={4} />
+              ) : (
+                <>
+                  <button
+                    className="arrow-button left-arrow"
+                    onClick={handlePrevHostView}
+                  >
+                    <img src={ArrowLeft} alt="Previous" />
+                  </button>
+                  {hostDirectViewList.map((cmm, index) => (
+                    <span
+                      key={index}
+                      className={`cmm-title ${index === currentHostView ? "active" : ""
+                        }`}
+                      onClick={() => setCurrentHostView(index)}
+                    >
+                      {cmm.title}
+                    </span>
+                  ))}
+                  <button
+                    className="arrow-button right-arrow"
+                    onClick={handleNextHostView}
+                    disabled={hostDirectView.length - 1 === currentHostView}
+                  >
+                    <img src={ArrowRight} alt="Next" />
+                  </button>
+                </>
+                )
+             ) : (
               <>
                 <button
                   className="arrow-button left-arrow"
@@ -443,9 +472,8 @@ const BoxTopology = () => {
                 {cmmList.map((cmm, index) => (
                   <span
                     key={index}
-                    className={`cmm-title ${
-                      index === currentCMM ? "active" : ""
-                    }`}
+                    className={`cmm-title ${index === currentCMM ? "active" : ""
+                      }`}
                     data-testid="specific-button"
                     onClick={() => setCurrentCMM(index)}
                   >
@@ -460,36 +488,56 @@ const BoxTopology = () => {
                   <img src={ArrowRight} alt="Next" />
                 </button>
               </>
-            ) : (
-              <>
-                <button
-                  className="arrow-button left-arrow"
-                  onClick={handlePrevHostView}
-                >
-                  <img src={ArrowLeft} alt="Previous" />
-                </button>
-                {hostDirectViewList.map((cmm, index) => (
-                  <span
-                    key={index}
-                    className={`cmm-title ${
-                      index === currentHostView ? "active" : ""
-                    }`}
-                    onClick={() => setCurrentHostView(index)}
-                  >
-                    {cmm.title}
-                  </span>
-                ))}
-                <button
-                  className="arrow-button right-arrow"
-                  onClick={handleNextHostView}
-                  disabled={hostDirectView.length - 1 === currentHostView}
-                >
-                  <img src={ArrowRight} alt="Next" />
-                </button>
-              </>
             )}
           </div>
-          {selectedOption === "CMM-B" ? (
+          {selectedOption === "Host" ? filteredDirectDevice.length ? (
+            <Carousel
+              activeIndex={currentHostView}
+              controls={false}
+              indicators={false}
+              interval={null}
+            >
+              {hostDirectViewList.map((cmm, index) => (
+                <Carousel.Item key={index}>
+                  <div className="carousel-content">
+                    <div
+                      className="badge-container"
+                      id="host-card-id"
+                      style={{
+                        display: "flex",
+                        justifyContent: "center",
+                        alignItems: "center",
+                        textAlign: "center",
+                        marginTop: 12,
+                      }}
+                    ></div>
+                    <div
+                      className="device-box"
+                      style={{
+                        display: "flex",
+                        justifyContent: "center",
+                        alignItems: "center",
+                      }}
+                      id="cxl-device-card-id"
+                    >
+                      <div
+                        className="cxl-device"
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          fontFamily: "Samsung",
+                          textAlign: "center",
+                          justifyContent: "space-around",
+                        }}
+                      >
+                        {renderHostViewDevice(cmm.deviceComponents || [])}
+                      </div>
+                    </div>
+                  </div>
+                </Carousel.Item>
+              ))}
+            </Carousel>
+          ) : (<ShimmerUI />) : (
             <Carousel
               activeIndex={currentCMM}
               controls={false}
@@ -537,54 +585,7 @@ const BoxTopology = () => {
                 </Carousel.Item>
               ))}
             </Carousel>
-          ) : filteredDirectDevice.length ? (
-            <Carousel
-              activeIndex={currentHostView}
-              controls={false}
-              indicators={false}
-              interval={null}
-            >
-              {hostDirectViewList.map((cmm, index) => (
-                <Carousel.Item key={index}>
-                  <div className="carousel-content">
-                    <div
-                      className="badge-container"
-                      id="host-card-id"
-                      style={{
-                        display: "flex",
-                        justifyContent: "center",
-                        alignItems: "center",
-                        textAlign: "center",
-                        marginTop: 12,
-                      }}
-                    ></div>
-                    <div
-                      className="device-box"
-                      style={{
-                        display: "flex",
-                        justifyContent: "center",
-                        alignItems: "center",
-                      }}
-                      id="cxl-device-card-id"
-                    >
-                      <div
-                        className="cxl-device"
-                        style={{
-                          display: "flex",
-                          flexWrap: "wrap",
-                          fontFamily: "Samsung",
-                          textAlign: "center",
-                          justifyContent: "space-around",
-                        }}
-                      >
-                        {renderHostViewDevice(cmm.deviceComponents || [])}
-                      </div>
-                    </div>
-                  </div>
-                </Carousel.Item>
-              ))}
-            </Carousel>
-          ): <div style={{color: "white"}}>For selecting a cluster, the host is not Available.</div>}
+          )}
         </Col>
       </Row>
     </Container>

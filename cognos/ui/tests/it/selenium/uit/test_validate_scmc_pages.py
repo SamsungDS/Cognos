@@ -60,7 +60,7 @@ class PageValidationTest(unittest.TestCase):
             },
             {
                 "name": "About Page",
-                "locator": "//*[@id='side-bar-id']/div/a[6]",
+                "locator": "//*[@id='side-bar-id']/div/a[7]",
                 "widgets": [
                     {"name": "About widget1",
                      "xpath": ("//*[@id='main-container']/div/div[1]/"

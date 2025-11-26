@@ -53,8 +53,8 @@
   
   /* Custom create button styling */
   .custom-create-btn {
-    background-color: #2563eb !important;
-    border-color: #2563eb !important;
+    background-color: #00B3E3 !important;
+    border-color: #00B3E3 !important;
     padding: 0.75rem 1.5rem !important;
     border-radius: 0.5rem !important;
     box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05) !important;
@@ -63,15 +63,15 @@
   }
   
   .custom-create-btn:hover {
-    background-color: #1d4ed8 !important;
-    border-color: #1d4ed8 !important;
+    background-color: #00B3E3 !important;
+    border-color: #00B3E3 !important;
     box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04) !important;
     transform: scale(1.05) !important;
   }
   
   .custom-create-btn:focus {
-    background-color: #1d4ed8 !important;
-    border-color: #1d4ed8 !important;
+    background-color: #00B3E3 !important;
+    border-color: #00B3E3 !important;
     box-shadow: 0 0 0 0.2rem rgba(37, 99, 235, 0.25) !important;
   }
   
@@ -99,7 +99,6 @@
   /* Table body with scroll */
   .custom-tbody {
     max-height: 400px;
-    overflow-y: auto;
     display: block;
   }
   
@@ -253,25 +252,23 @@
     background-color: #dbeafe !important; /* bg-blue-100 */
     color: #1e40af !important; /* text-blue-800 */
   }
+    /* Completed status - green */
+    .custom-badge-completed {
+      background-color: #166534 !important; /* bg-green-100 */
+      color: #fff !important; /* text-white */
+    }
   
-  /* Completed status - green */
-  .custom-badge-completed {
-    background-color: #dcfce7 !important; /* bg-green-100 */
-    color: #166534 !important; /* text-green-800 */
-  }
+    /* Failed status - red */
+    .custom-badge-failed {
+      background-color:  #991B1B!important; /* red */
+      color: #fff !important; /* text-white */
+    }
   
-  /* Failed status - red */
-  .custom-badge-failed {
-    background-color: #fee2e2 !important; /* bg-red-100 */
-    color: #991b1b !important; /* text-red-800 */
-  }
-  
-  /* Pending status - yellow */
-  .custom-badge-pending {
-    background-color: #fef3c7 !important; /* bg-yellow-100 */
-    color: #92400e !important; /* text-yellow-800 */
-  }
-  
+    /* Pending status - yellow */
+    .custom-badge-pending {
+      background-color: #BA8E23 !important; /* yellow */
+      color: #fff !important; /* text-white */
+    }
   /* Default status - gray */
   .custom-badge-default {
     background-color: #f3f4f6 !important; /* bg-gray-100 */

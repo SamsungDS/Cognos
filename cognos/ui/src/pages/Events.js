@@ -19,6 +19,13 @@ const Events = () => {
             border: 'rgb(252, 165, 165)',
             text: 'rgb(153, 27, 27)'
         },
+        failed: {
+            icon: ShieldAlert,
+            color: 'rgb(239, 68, 68)',
+            bg: 'rgb(254, 242, 242)',
+            border: 'rgb(252, 165, 165)',
+            text: 'rgb(153, 27, 27)'
+        },
         warning: {
             icon: AlertTriangle,
             color: 'rgb(245, 158, 11)',
@@ -26,7 +33,28 @@ const Events = () => {
             border: 'rgb(253, 230, 138)',
             text: 'rgb(146, 64, 14)'
         },
+        degraded: {
+            icon: AlertTriangle,
+            color: 'rgb(245, 158, 11)',
+            bg: 'rgb(255, 251, 235)',
+            border: 'rgb(253, 230, 138)',
+            text: 'rgb(146, 64, 14)'
+        },
         info: {
+            icon: Info,
+            color: 'rgb(59, 130, 246)',
+            bg: 'rgb(239, 246, 255)',
+            border: 'rgb(147, 197, 253)',
+            text: 'rgb(30, 64, 175)'
+        },
+        Normal: {
+            icon: Info,
+            color: 'rgb(59, 130, 246)',
+            bg: 'rgb(239, 246, 255)',
+            border: 'rgb(147, 197, 253)',
+            text: 'rgb(30, 64, 175)'
+        },
+        good: {
             icon: Info,
             color: 'rgb(59, 130, 246)',
             bg: 'rgb(239, 246, 255)',
@@ -247,7 +275,6 @@ const Events = () => {
             severity: PropTypes.string.isRequired,
             timestamp: PropTypes.string.isRequired,
             msg: PropTypes.string.isRequired,
-            event_name: PropTypes.string.isRequired,
             source: PropTypes.string.isRequired,
             source_type: PropTypes.string.isRequired,
             node_name: PropTypes.string.isRequired,

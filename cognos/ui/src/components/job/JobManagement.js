@@ -1,68 +1,72 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Container, Button, Table } from "react-bootstrap";
 import CreateJobDialog from "./createJobDialog";
 import "../../pages/jobs.css";
-import { JobRow, EmptyState } from "../../utils/jobs-utils";
+import { JobRow, EmptyState, jobApiService, columnHeader } from "../../utils/jobs-utils";
 
 // Main Job Management Component
 const JobManagement = () => {
   // Jobs State
-  const [jobs, setJobs] = useState([
-    {
-      id: 1749801058815,
-      name: "host-002",
-      type: "tier",
-      status: "running",
-      created: "2024-06-05 10:30",
-      dramNumaNode: "1",
-      cxlNumaNode: "0",
-      aggregate: "LOW",
-      applicationPID: "23567",
-      applicationName: "Cx045",
-    },
-    {
-      id: 1749801058816,
-      name: "host-003",
-      type: "migrate",
-      status: "completed",
-      created: "2024-06-05 09:15",
-      aggregate: "LOW",
-      source: "1",
-      destination: "2",
-      applicationPID: "23567",
-      applicationName: "Cx045",
-    },
-    {
-      id: 1749801058820,
-      name: "host-001",
-      type: "tier",
-      status: "failed",
-      created: "2024-06-05 08:45",
-      dramNumaNode: "1",
-      cxlNumaNode: "0",
-      aggregate: "LOW",
-      applicationPID: "23567",
-      applicationName: "Cx045",
-    },
-  ]);
+  const [jobs, setJobs] = useState([]);
 
   // Modal State
   const [showCreateModal, setShowCreateModal] = useState(false);
+
+  // Fetch jobs on component mount
+  useEffect(() => {
+    fetchJobs();
+  }, []);
+
+  // updates every 10 seconds
+  // istanbul ignore next
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (!showCreateModal) {
+        console.log("10 sec interval");
+        fetchJobs(true); // Silent refresh (no loading state)
+      }
+    }, 10000); // 10 seconds
+
+    return () => clearInterval(interval);
+  }, [showCreateModal]);
+
+  // Fetch jobs from API
+  // istanbul ignore next
+  const fetchJobs = async (silent = false) => {
+    try {
+      const data = await jobApiService.getAllJobs();
+
+      // Handle different response formats
+      const jobsArray = Array.isArray(data) ? data : (data.jobs || data.data || []);
+
+      setJobs(jobsArray);
+    } catch (err) {
+      console.error('Failed to fetch jobs:', err);
+    }
+  };
 
   // Handlers
   // istanbul ignore next
   const handleDeleteJob = (jobId) => {
     setJobs((prevJobs) => prevJobs.filter((job) => job.id !== jobId));
   };
+
+  // Handle new job creation
   // istanbul ignore next
   const handleJobCreated = (newJob) => {
-    setJobs((prevJobs) => [newJob, ...prevJobs]); // Add to beginning of array
+    setJobs(prevJobs => [newJob, ...prevJobs]);
     setShowCreateModal(false);
+
+    // refresh from server to ensure sync
+    fetchJobs(true);
   };
+
+  // Modal handlers
   // istanbul ignore next
   const openCreateModal = () => {
     setShowCreateModal(true);
   };
+  
   // istanbul ignore next
   const closeCreateModal = () => {
     setShowCreateModal(false);
@@ -75,18 +79,17 @@ const JobManagement = () => {
         <div className="d-flex justify-content-between align-items-center mb-4">
           <div>
             <h1 className="auto-tier-heading custom-tracking-wider">
-              Job Management
+              Application View
             </h1>
             <p className="custom-text-gray-500 mt-1">
-              Manage SCMC job configuration and monitor their status
+              Manage SCMC SLA configuration and monitor their status
             </p>
           </div>
-          <Button
-            variant="primary"
+          <Button         
             onClick={openCreateModal}
             className="custom-create-btn d-flex align-items-center gap-2 fw-medium"
           >
-            Create Job
+            Create SLA
           </Button>
         </div>
 
@@ -97,12 +100,7 @@ const JobManagement = () => {
               {/* Table Header */}
               <thead>
                 <tr>
-                  <th className="text-center custom-th">Job ID</th>
-                  <th className="text-center custom-th">Host Name</th>
-                  <th className="text-center custom-th">Type</th>
-                  <th className="text-center custom-th">Status</th>
-                  <th className="text-center custom-th">Created</th>
-                  <th className="text-center custom-th">Actions</th>
+                  {columnHeader.map((head) => <th className="text-center custom-th" key={head}>{head}</th>)}                
                 </tr>
               </thead>
               {/* Table Body */}

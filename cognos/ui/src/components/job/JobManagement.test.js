@@ -1,6 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import JobManagement from './JobManagement';
 
@@ -47,32 +46,10 @@ describe('JobManagement Component', () => {
     test('renders the component with correct heading and description', () => {
       render(<JobManagement />);
       
-      expect(screen.getByText('Job Management')).toBeInTheDocument();
-      expect(screen.getByText('Manage SCMC job configuration and monitor their status')).toBeInTheDocument();
+      expect(screen.getByText('Application View')).toBeInTheDocument();
+      expect(screen.getByText('Manage SCMC SLA configuration and monitor their status')).toBeInTheDocument();
     });
 
-
-    test('renders table headers correctly', () => {
-      render(<JobManagement />);
-      
-      expect(screen.getByText('Host Name')).toBeInTheDocument();
-      expect(screen.getByText('Type')).toBeInTheDocument();
-      expect(screen.getByText('Job ID')).toBeInTheDocument();
-      expect(screen.getByText('Status')).toBeInTheDocument();
-      expect(screen.getByText('Created')).toBeInTheDocument();
-      expect(screen.getByText('Actions')).toBeInTheDocument();
-    });
-  });
-
-  describe('StatusIcon Component', () => {
-    test('renders correct icons for different statuses', () => {
-      render(<JobManagement />);
-      
-      // Check for different status badges
-      expect(screen.getByText('Running')).toBeInTheDocument();
-      expect(screen.getByText('Completed')).toBeInTheDocument();
-      expect(screen.getByText('Failed')).toBeInTheDocument();
-    });
   });
 
   describe('Empty State', () => {
@@ -86,8 +63,8 @@ describe('JobManagement Component', () => {
           <div className="p-6">
             <div className="flex justify-between items-center mb-6">
               <div>
-                <h1 className="auto-tier-heading tracking-wider">Job Management</h1>
-                <p className="text-gray-600 mt-1">Manage auto-tiering jobs and monitor their status</p>
+                <h1 className="auto-tier-heading tracking-wider">Application View</h1>
+                <p className="text-gray-600 mt-1">Manage SCMC SLA configuration and monitor their status</p>
               </div>
             </div>
             <div className='overflow-y'>

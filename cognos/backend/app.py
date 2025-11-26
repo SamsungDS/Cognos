@@ -228,6 +228,65 @@ def create_app(mock=False):
             cognos.get_events()
         )
 
+    @app.post(f"/api/{CAL_API_VERSION}/device_stats")
+    def get_device_stats():
+        CAL_LOGGER.debug(
+            helper.serialize_request_metadata(
+                helper.get_request_metadata(request)
+            )
+        )
+        return helper.create_response_from_payload(
+            cognos.get_device_stats()
+        )
+
+    @app.get(f"/api/{CAL_API_VERSION}/application_status")
+    def get_application_status():
+        """
+        # TODO: replace data_moved with msg
+        Application | PID | Server Node | Target Throughput (OP/s) |
+        Target Read P99 Latency (us) | Target Write P99 Latency (us) |
+        Status | Msg
+
+        Returns:
+        [
+            {
+                "app_name": "<app name>",
+                "app_pid": <app_pid>,
+                "server_name": "<server_name>",
+                "throughput_ops_per_sec": "<throughput_ops_per_sec>",
+                "targetread_p99_latency": "<targetread_p99_latency>",
+                "targetwrite_p99_latency": "<targetwrite_p99_latency>",
+                "status": "<status>",
+                "message": "",
+                "data_moved": "<data_moved>"
+            },
+            {
+            },
+            ....
+        ]
+        """
+        # get applications
+        data = cognos.get_applications()
+        return helper.create_response_from_payload(data if data else {})
+
+    @app.post(f"/api/{CAL_API_VERSION}/set_app_sla")
+    def set_app_sla():
+        """
+        {"app_pid":64452,"app_name":"testapp","server_name":"localhost","avg_latency_ns":9339832429,"throughput_ops_per_sec":5000,"targetread_p99_latency":4999,"targetwrite_p99_latency":2999}
+        Args: {
+            "app_name": <app_name>,
+            "app_pid": <app_pid>,
+            "server_name": <server_name>,
+            "avg_latency_ns": <avg_latency_ns>,
+            "throughput_ops_per_sec": <throughput_ops_per_sec>,
+            "targetread_p99_latency": <targetread_p99_latency>,
+            "targetwrite_p99_latency": <targetwrite_p99_latency>
+        }
+        Returns: 200 status code
+        """
+        cognos.set_app_sla()
+        return helper.create_response_from_payload({})
+
     return app
 
 
@@ -268,6 +327,7 @@ def clear_cognos_db(mock=False):
                 "DROP TABLE IF EXISTS devices;"
                 "DROP TABLE IF EXISTS hosts;"
                 "DROP TABLE IF EXISTS connections;"
+                "DROP TABLE IF EXISTS applications;"
             )
             conn.commit()
             time.sleep(0.5)
@@ -308,9 +368,22 @@ def init_cognos_db(mock=False):
                 "remote_id BIGINT UNSIGNED, "
                 "PRIMARY KEY (node_name)"
                 ");"
+                "CREATE TABLE IF NOT EXISTS applications ("
+                "app_name VARCHAR(255) NOT NULL, "
+                "app_pid BIGINT UNSIGNED NOT NULL, "
+                "server_name VARCHAR(64) NOT NULL, "
+                "throughput_ops_per_sec BIGINT UNSIGNED, "
+                "targetread_p99_latency BIGINT UNSIGNED, "
+                "targetwrite_p99_latency BIGINT UNSIGNED, "
+                "status VARCHAR(32), "
+                "message VARCHAR(255), "
+                "data_moved VARCHAR(128), "
+                "PRIMARY KEY (app_pid)"
+                ");"
             )
             conn.commit()
             time.sleep(0.5)
+            CAL_LOGGER.info("Successfully created Cognos DB schema..")
         except Exception:
             CAL_LOGGER.critical("Unable to create Cognos DB schema..")
             conn.rollback()
@@ -329,6 +402,7 @@ def main(mock, host, port):
     init_sqlite_db_file()
     clear_cognos_db(mock=mock)
     init_cognos_db(mock=mock)
+    # time.sleep(5)
     app = create_app(mock)
 
     if validate_ssl_enabled():

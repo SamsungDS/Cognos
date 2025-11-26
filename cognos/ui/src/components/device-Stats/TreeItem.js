@@ -1,4 +1,6 @@
 import React from 'react';
+import PropTypes from 'prop-types';
+import './deviceCard.css';
 const TreeItem = ({ label, level = 0, hasChildren, isExpanded, toggleExpanded, onClick, isSelected, children }) => {
     const handleClick = (e) => {
         e.stopPropagation();
@@ -11,17 +13,11 @@ const TreeItem = ({ label, level = 0, hasChildren, isExpanded, toggleExpanded, o
 
     return (
         <div style={{ marginLeft: `${level * 15}px` }}>
-            <div
+            <div className='tree-style'
                 onClick={handleClick}
-                style={{
-                    padding: '6px 8px',
-                    cursor: 'pointer',
+                style={{             
                     backgroundColor: isSelected ? '#195cc2ff' : 'transparent',
-                    borderRadius: '4px',
-                    color: isSelected ? 'white' : '#ccc',
-                    display: 'flex',
-                    alignItems: 'center',
-                    marginBottom: '2px'
+                    color: isSelected ? 'white' : '#ccc',  
                 }}
                 onMouseEnter={(e) => {
                     if (!isSelected) e.currentTarget.style.backgroundColor = '#2a2a2a';
@@ -35,10 +31,20 @@ const TreeItem = ({ label, level = 0, hasChildren, isExpanded, toggleExpanded, o
                         {isExpanded ? '▼' : '▶'}
                     </span>
                 )}
-                <span style={{ fontSize: '14px' }}>{label}</span>
+                <span style={{ fontSize: '16px' }} title={label}>{label}</span>
             </div>
             {hasChildren && isExpanded && <div>{children}</div>}
         </div>
     );
 };
+TreeItem.propTypes = {
+    label: PropTypes.string.isRequired,
+    level: PropTypes.number,
+    hasChildren: PropTypes.bool,
+    isExpanded: PropTypes.bool,
+    onClick: PropTypes.func,
+    isSelected: PropTypes.bool,
+    toggleExpanded: PropTypes.func,
+    children: PropTypes.node,
+}
 export default TreeItem;

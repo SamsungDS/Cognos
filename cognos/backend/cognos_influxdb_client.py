@@ -124,6 +124,79 @@ class CognosInfluxDBClient:
             "|> last(6)"
         )
 
+    def get_cognos_device_stats(self, time_in_mins, device, stats_key):
+        params = {"_desc": True}
+
+        try:
+            tables = self.read_client.query(
+                f"""
+                    from(bucket: "internal")
+                    |> range(start: -{time_in_mins}m)
+                    |> filter(
+                    fn: (r) => r._measurement == "stats" and
+                    r.source == "{device}" and
+                    r._field == "{stats_key}"
+                    )
+                """,
+                params=params
+            )
+            flux_query_output = json.loads(tables.to_json())
+            """
+            paylaod format
+            {
+              'device_id1': [[ts, key, value], [ts, key, value], ...],
+            }
+            """
+            device_id = flux_query_output[0]['source']
+            time_set = set()
+            data_set = {}
+            for data_point in flux_query_output:
+                timestamp = data_point["_time"].replace("+00:00", "+0000")
+                curr_time = datetime.strptime(timestamp, '%Y-%m-%dT%H:%M:%S%z')
+                time_set.add(curr_time)
+                field = data_point["_field"]
+                value = data_point["_value"]
+                if curr_time not in data_set:
+                    data_set[curr_time] = {field: value}
+                elif field not in data_set[curr_time].keys():
+                    data_set[curr_time][field] = value
+
+            ordered_timeset = sorted(list(time_set))
+            export_data = {device_id: []}
+            for t in ordered_timeset:
+                metric_time = t.strftime("%H:%M:%S")
+                value = data_set[t][stats_key]
+                export_data[device_id].append([metric_time, stats_key, value])
+            return export_data
+        except Exception as error:
+            print(
+                (
+                    f"Failed to query for device stats from InfluxDB: {error}"
+                )
+            )
+
+    def get_latest_application_event(self, app_pid):
+        try:
+            tables = self.read_client.query(
+                f'''
+                from(bucket: "internal")
+                    |> range(start: -5m)
+                    |> filter(fn: (r) => r._measurement == "events")
+                    |> filter(fn: (r) => r.source_type == "application")
+                    |> filter(fn: (r) => r.source =~ /{str(app_pid)}/)
+                    |> keep(columns: ["_time", "severity", "msg"])
+                    |> group(columns: [])
+                    |> sort(columns: ["_time"], desc: true)
+                    |> limit(n: 1)
+                '''
+            )
+            flux_query_output = json.loads(tables.to_json())
+            print(f"***** LATEST APP EVENT FROM FLUX QUERY ******")
+            print(flux_query_output)
+            return flux_query_output
+        except Exception as error:
+            print(f"ERROR testing cognos events: {str(error)}")
+
     def get_cognos_events_past(self, time_in_mins):
         params = {"_desc": False}
         cols_string = (
@@ -364,6 +437,46 @@ class CognosInfluxDBClient:
         except Exception as error:
             print(f"failed to send recent CPU vs mem usage data {str(error)}")
 
+    def get_hostview_capacity(self):
+        tables = self.read_client.query(
+            f'''
+            from(bucket: "internal")
+            |> range(start: -5m)
+            |> filter(fn: (r) => r._measurement == "metric"
+                and (r._field == "cxl_capacity_mb" or
+                        r._field == "dram_capacity_mb")
+                and r.source_type == "application server"
+            )
+            |> group(columns: ["source", "_field"])
+            |> last()
+            |> group(columns: ["_field"])
+            |> sum(column: "_value")
+            |> map(fn: (r) => ({{ r with key: "total" }}))
+            |> pivot(
+                rowKey: ["key"],
+                columnKey: ["_field"],
+                valueColumn: "_value"
+            )
+            |> keep(columns: ["cxl_capacity_mb", "dram_capacity_mb"])
+        '''
+        )
+        flux_query_output = json.loads(tables.to_json())
+        dram_capacity = flux_query_output[0]['dram_capacity_mb']
+        cxl_capacity = flux_query_output[0]['cxl_capacity_mb']
+        total_capacity = dram_capacity + cxl_capacity
+
+        payload = {
+            "hostview_capacity": {
+                "total_capacity": total_capacity,
+            },
+            "hostview_memserver_capacity": [
+                ["Memtype", "Capacity Used"],
+                ["DRAM", dram_capacity],
+                ["CXL", cxl_capacity],
+            ]
+        }
+        return payload
+
     def get_memserver_capacity(self) -> List[List]:
         """
         Returns a series of data points associated with recent
@@ -402,6 +515,46 @@ class CognosInfluxDBClient:
 
             except Exception as e:
                 print(f"Failed to process memserver capacity data {str(e)}")
+
+    def get_hostview_usage(self):
+        tables = self.read_client.query(
+            f'''
+            from(bucket: "internal")
+                |> range(start: -5m)
+                |> filter(fn: (r) =>
+                        r._measurement == "metric" and
+                        (r._field == "dram_usage_mb"
+                            or r._field == "cxl_usage_mb")
+                        and r.source_type == "application server"
+                    )
+                |> keep(columns: ["_time", "_value", "source", "_field"])
+                |> group(columns: ["source", "_field"])
+                |> aggregateWindow(every: 5s, fn: last, createEmpty: false)
+                |> group(columns: ["_time", "_field"])
+                |> sum(column: "_value")
+                |> group(columns: ["_time"])
+                |> pivot(
+                    rowKey: ["_time"],
+                    columnKey: ["_field"],
+                    valueColumn: "_value"
+                )
+                |> keep(columns: ["_time", "dram_usage_mb", "cxl_usage_mb"])
+                |> group()
+                |> sort(columns: ["_time"], desc: true)
+                |> tail(n: 6)
+                |> sort(columns: ["_time"])
+            '''
+        )
+        flux_query_output = json.loads(tables.to_json())
+        output = [["Time", "DRAM", "CXL"]]
+        for m in flux_query_output:
+            curr_time = datetime.strptime(
+                    m["_time"].split("+")[0].split(".")[0], "%Y-%m-%dT%H:%M:%S"
+            ).strftime("%H:%M:%S")
+            output.append(
+                [curr_time, m["dram_usage_mb"], m["cxl_usage_mb"]]
+            )
+        return output
 
     def get_membox_usage(self) -> List[List]:
         """
@@ -452,6 +605,77 @@ class CognosInfluxDBClient:
         except Exception as error:
             # pragma: no cover
             print(f"failed to process membox usage data: {str(error)}")
+
+    def get_hostview_bandwidth(self):
+        tables = self.read_client.query(
+            f'''
+            from(bucket: "internal")
+                |> range(start: -5m)
+                |> filter(fn: (r) => r._measurement == "stats"
+                    and (r._field == "used_bandwidth_Bps"
+                            or r._field == "total_bandwidth_MBps")
+                )
+                |> filter(fn: (r) => r.source_type == "device")
+                |> toFloat()
+                |> group(columns: ["source", "_field"])
+                |> last()
+                |> pivot(
+                    rowKey: ["_time", "source"],
+                    columnKey: ["_field"],
+                    valueColumn: "_value"
+                )
+                |> group()
+                |> reduce(
+                    identity: {{totalUsed: 0.0, totalTotal: 0.0}},
+                    fn: (r, accumulator) => ({{
+                        totalUsed:
+                            accumulator.totalUsed + r.used_bandwidth_Bps,
+                        totalTotal:
+                            accumulator.totalTotal + r.total_bandwidth_MBps
+                    }})
+
+                )
+            '''
+        )
+        flux_query_output = json.loads(tables.to_json())
+        # Bps, convert to GBps
+        total_used_bw = round(
+            flux_query_output[0]['totalUsed'] / 1_000_000_000, 4
+        )
+        # MBps, convert to GBps
+        total_total_bw = round(flux_query_output[0]['totalTotal'] / 1000, 4)
+        used_bw_percentage = round(total_used_bw / total_total_bw * 100, 2)
+        payload = {
+            "max_bandwidth": total_total_bw,
+            "used_bandwidth": total_used_bw,
+            "used_percentage_bandwidth": used_bw_percentage
+        }
+        return payload
+
+    def get_hostview_devices_count(self):
+        """
+        Output Format:  {"num_cxl_devices":1,"num_hosts":1}
+        """
+        try:
+            num_hosts = (
+                self.sql_client.exec_fetch_singlerecord_query(
+                    "SELECT COUNT(*) FROM hosts ",
+                    tuple()
+                )
+            )
+            num_cxl_devices = (
+                self.sql_client.exec_fetch_singlerecord_query(
+                    "SELECT COUNT(*) FROM devices ",
+                    tuple()
+                )
+            )
+            payload = {
+                "num_cxl_devices": num_cxl_devices,
+                "num_hosts": num_hosts
+            }
+            return payload
+        except Exception as error:
+            print(f"ERROR: {str(error)}")
 
     def get_membox_bandwidth(self) -> List[List]:
         """

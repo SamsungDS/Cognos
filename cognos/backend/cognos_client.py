@@ -25,6 +25,12 @@ from cognos.backend.remote_node_interface import RemoteAttachedNodeInterface
 from cognos.backend.cognos_influxdb_client import CognosInfluxDBClient
 import cognos.backend.helper as helper
 
+current_script_dir = os.path.dirname(os.path.abspath(__file__))
+NUMA_CONFIGS = helper.fetch_cognos_configs(
+    current_script_dir,
+    "numa_config.json"
+)
+
 
 class Cognos(BaseControlInterface):
     """
@@ -45,6 +51,7 @@ class Cognos(BaseControlInterface):
         self.direct_node_client = DirectAttachedNodeInterface()
 
         self.influx_client = CognosInfluxDBClient(self.sql_client)
+
         self.cognos_metric_functions = {
             "dram_cxl_usage": (
                 self.influx_client.get_recent_dram_cxl_usage_data
@@ -54,7 +61,13 @@ class Cognos(BaseControlInterface):
             "cmmb_usage": self.influx_client.get_membox_usage,
             "cmmb_capacity": self.influx_client.get_membox_capacity,
             "cmmb_bandwidth": self.influx_client.get_membox_bandwidth,
-            "devices_count": self.influx_client.get_attached_devices_count
+            "devices_count": self.influx_client.get_attached_devices_count,
+            "hostview_bandwidth": self.influx_client.get_hostview_bandwidth,
+            "hostview_usage": self.influx_client.get_hostview_usage,
+            "hostview_capacity": self.influx_client.get_hostview_capacity,
+            "hostview_devices_count": (
+                self.influx_client.get_hostview_devices_count
+            )
         }
 
         # used to help initialize underlying sql tables
@@ -510,7 +523,7 @@ class Cognos(BaseControlInterface):
                     ]
                 )
             except Exception as error:
-                print(f"Failed to parse ListClusters response from controller")
+                print(f"Failed to parse ListClusters from controller")
                 return []
         return []
 
@@ -753,4 +766,261 @@ class Cognos(BaseControlInterface):
         return payload
 
     def get_events(self):
-        return self.influx_client.get_cognos_events_past(1)
+        return self.influx_client.get_cognos_events_past(5)
+
+    def get_device_stats(self) -> List:
+        try:
+            request_data = request.get_json()
+            device_id = request_data["device_id"]
+            stat_key = request_data["stat_key"]
+            if not device_id or not stat_key:
+                raise ValueError(
+                    "Failed to get input request data "
+                    "/device_stats"
+                )
+            return self.influx_client.get_cognos_device_stats(
+                1,
+                device_id,
+                stat_key,
+            )
+        except Exception as error:
+            print(f"Failure in processing/device_stats request: {str(error)}")
+
+    def get_data_moved_percentage(self, app_pid, app_name):
+        self.logger.info("GETTING CME STATS -------------")
+
+        node_name = self.sql_client.exec_fetch_singlerecord_query(
+            "SELECT node_name FROM applications WHERE app_pid = ?",
+            (app_pid,)
+        )
+
+        request_url = (
+            COGNOS_NORTHBOUND_ENDPOINTS["get_cme_stats_prefix"] +
+            node_name +
+            COGNOS_NORTHBOUND_ENDPOINTS["get_cme_stats_suffix"]
+        )
+
+        command_params = json.dumps({
+            "app": app_name,
+            "app_pid": str(app_pid),
+        })
+
+        request_args = {
+            "cluster_name": "CL_ID_1",
+            "command_name": "get_stats",
+            "command_params": command_params
+        }
+
+        response = requests.post(
+            request_url,
+            json=request_args,
+            headers=self.headers
+        )
+        if response.ok:
+            self.logger.info("GET STATS CALL SUCCESSFUL")
+            self.logger.info(f"RESPONSE CODE: {response.status_code}")
+        else:
+            self.logger.info("GET STATS CALL FAILED")
+            self.logger.info(f"RESPONSE CODE: {response.status_code}")
+            self.logger.info(f"RESPONSE TEXT: {response.text}")
+
+        response_data = response.json()
+        self.logger.info(f"RESPONSE DATA: {response_data}")
+        if response_data["response"] == ["-22"]:
+            self.logger.info("NO ACTIVE DATA MOVEMENT")
+            return None
+        else:
+            try:
+                x = float(json.loads(
+                    response_data["response"][0])['observations']['%_moved']
+                )
+                percent_moved = (round(x, 2))
+                percent_moved_string = str(percent_moved)  # + '%'
+                self.logger.info(f" % PERCENT MOVED {percent_moved_string}")
+                return percent_moved_string
+            except Exception as error:
+                self.logger.error(f"failed to parse get stats: {str(error)}")
+                return None
+
+    def get_applications(self):
+        # Loop for all active applications
+        running_apps = self.sql_client.exec_fetch_query(
+            "SELECT app_pid, app_name FROM applications;",
+            tuple()
+        )
+
+        # update the status and msg fields with latest event
+        for app in running_apps:
+            app_pid = app[0]
+            app_name = app[1]
+
+            # app_name = "gemfireTest"
+            app_event = (
+                self.influx_client.get_latest_application_event(app_pid)
+            )
+
+            # check for data moved
+            data_moved = self.get_data_moved_percentage(app_pid, app_name)
+
+            if app_event:
+                updated_status = (
+                    'good' if app_event[0]['severity'] in ["good", "Normal"]
+                    else app_event[0]['severity']
+                )
+                # TODO: remove this logic once fixes are made to ME module
+                if updated_status == "info":
+                    updated_status = "degraded"
+                updated_msg = app_event[0]['msg']
+
+                if data_moved and float(data_moved) < 100:
+                    updated_status = "degraded"
+                    updated_msg = 'numa_migration_operation_started'
+
+                self.sql_client.execute_query(
+                    "UPDATE applications "
+                    f"SET status = '{updated_status}', "
+                    f"message = '{updated_msg}' "
+                    f"WHERE app_pid = {app_pid};"
+                )
+
+            if data_moved:
+                self.sql_client.execute_query(
+                    "UPDATE applications "
+                    f"SET data_moved = '{data_moved}' "
+                    f"WHERE app_pid = {app_pid};"
+                )
+
+        # get apps from DB
+        data = self.sql_client.exec_fetch_query(
+            "SELECT app_name, app_pid, server_name, throughput_ops_per_sec, "
+            "targetread_p99_latency, targetwrite_p99_latency, status, "
+            "message, data_moved FROM applications ",
+            tuple()
+        )
+        apps = []
+        for x in data:
+            app = {
+                "app_name": x[0],
+                "app_pid": x[1],
+                "server_name": x[2],
+                "throughput_ops_per_sec": x[3],
+                "targetread_p99_latency": x[4],
+                "targetwrite_p99_latency": x[5],
+                "status": x[6],
+                "message": x[7],
+                "data_moved": x[8]
+            }
+            apps.append(app)
+
+        return apps
+
+    def insert_application(self, app):
+        app_name = app["app_name"]
+        app_pid = app["app_pid"]
+        server_name = app["server_name"]
+        throughput_ops_per_sec = app["throughput_ops_per_sec"]
+        targetread_p99_latency = app["targetread_p99_latency"]
+        targetwrite_p99_latency = app["targetwrite_p99_latency"]
+        status = app["status"]
+        message = app["message"]
+        data_moved = app["data_moved"]
+
+        self.sql_client.execute_query(
+            "INSERT INTO applications "
+            "(app_name, app_pid, server_name, throughput_ops_per_sec, "
+            "targetread_p99_latency, targetwrite_p99_latency, status, "
+            "message, data_moved) "
+            f"VALUES ('{app_name}', {app_pid}, '{server_name}', "
+            f"{throughput_ops_per_sec}, {targetread_p99_latency}, "
+            f"{targetwrite_p99_latency}, '{status}', '{message}', "
+            f"'{data_moved}')"
+        )
+
+    def set_app_sla(self):
+        """
+        {
+            "app_name": <app_name>,
+            "app_pid": <app_pid>,
+            "server_name": <server_name>,
+            "avg_latency_ns": <avg_latency_ns>,
+            "throughput_ops_per_sec": <throughput_ops_per_sec>,
+            "targetread_p99_latency": <targetread_p99_latency>,
+            "targetwrite_p99_latency": <targetwrite_p99_latency>
+        }
+        """
+        try:
+            request_data = request.get_json()
+            app_name = request_data["app_name"]
+            app_pid = request_data["app_pid"]
+            server_name = request_data["server_name"]
+            avg_latency_ns = request_data["avg_latency_ns"]
+            throughput_ops_per_sec = request_data["throughput_ops_per_sec"]
+            targetread_p99_latency = request_data["targetread_p99_latency"]
+            targetwrite_p99_latency = request_data["targetwrite_p99_latency"]
+
+            # get cluster of node
+            data = self.sql_client.exec_fetch_query(
+                "SELECT node_name, cluster_name FROM connections ",
+                tuple()
+            )
+
+            cluster_name = ""
+            for pair in data:
+                if server_name == pair[0]:
+                    cluster_name = pair[1]
+            # TODO: add check if cluster name is empty
+
+            numa_nodes = NUMA_CONFIGS[server_name]
+
+            device_numa_nodes = []
+            for numa in numa_nodes:
+                if numa < 2:
+                    device_numa_nodes.append({"device_numa": str(numa)})
+                else:
+                    device_numa_nodes.append(
+                        {"device_numa": str(numa),
+                         "device_allocated_capacity_mb": 600000}
+                    )
+
+            command_params = json.dumps({
+                "app_name": app_name,
+                "app_pid": app_pid,
+                "app_desired_qos": {
+                    "avg_latency_ns": avg_latency_ns
+                },
+                "devices": device_numa_nodes
+            })
+            request_args = {
+                "command_name": "set_app_sla",
+                "cluster_name": cluster_name,
+                "node_name": server_name,
+                "command_params": command_params
+            }
+            response = requests.post(
+                COGNOS_NORTHBOUND_ENDPOINTS["sla"],
+                json=request_args,
+                headers=self.headers
+            )
+            if response.ok:
+                # create record for application
+                app = {
+                    "app_name": app_name,
+                    "app_pid": app_pid,
+                    "server_name": server_name,
+                    "throughput_ops_per_sec": throughput_ops_per_sec,
+                    "targetread_p99_latency": targetread_p99_latency,
+                    "targetwrite_p99_latency": targetwrite_p99_latency,
+                    "status": "good",
+                    "message": "",
+                    "data_moved": ""  # use get stats API from CME
+                }
+                self.insert_application(app)
+
+                # send payload back of all registered applications
+                return self.get_applications()
+            else:
+                self.logger.error("SLA CALL FAILED")
+                self.logger.error(f"SLA ERROR: {response.status_code}")
+                self.logger.error(f"SLA TEXT: {response.text}")
+        except Exception as error:
+            self.logger.error(f"Failed to set app sla {str(error)}")

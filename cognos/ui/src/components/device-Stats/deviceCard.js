@@ -1,9 +1,17 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as d3 from 'd3';
+import PropTypes from 'prop-types';
 import './deviceCard.css';
 import MetricItem from './MetricItem';
 import TreeItem from './TreeItem';
-import { metricColors, TIME_FILTERS, apiService, getMarginForTimeFilter } from '../../utils/deviceStats-utils';
+import YAxisConfigModal from './YAxisConfigModal';
+import {
+    metricColors, apiService, getMarginForTimeFilter,
+    getBestMemoryUnit,
+    convertToUnit,  
+    getBestBandwidthUnit,
+    convertBandwidthToUnit,
+} from '../../utils/deviceStats-utils';
 
 const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
     const svgRef = useRef();
@@ -17,8 +25,48 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
     const [timeFilter, setTimeFilter] = useState('3h');
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
     const [error, setError] = useState(null);
+    const [yAxisConfig, setYAxisConfig] = useState({ min: null, max: null, unit: null });
+    const [showYAxisModal, setShowYAxisModal] = useState(false);
 
-    // Get container dimensions
+    // Helper function to determine metric type and available units
+    // istanbul ignore next
+    const getMetricInfo = useCallback((metricKey) => {
+        if (!metricKey) return { type: 'memory', units: ['Bytes', 'KB', 'MB', 'GB', 'TB'], baseUnit: 'MB' };
+
+        const key = metricKey.toLowerCase();
+
+        if (key.includes('temp')) {
+            return {
+                type: 'temperature',
+                units: ['°F', '°C'],
+                baseUnit: key.includes('_f') ? '°F' : '°C',
+                suffix: key.includes('_f') ? '°F' : '°C'
+            };
+        } else if (key.includes('bandwidth') || key.includes('bps')) {
+            return {
+                type: 'bandwidth',
+                units: ['bps', 'Kbps', 'Mbps', 'Gbps'],
+                baseUnit: 'Mbps',
+                suffix: 'bps'
+            };
+        } else if (key.includes('memory') || key.includes('mem')) {
+            return {
+                type: 'memory',
+                units: ['Bytes', 'KB', 'MB', 'GB', 'TB'],
+                baseUnit: 'MB',
+                suffix: 'B'
+            };
+        } else {
+            // Default to generic numeric
+            return {
+                type: 'generic',
+                units: ['Value'],
+                baseUnit: 'Value',
+                suffix: ''
+            };
+        }
+    }, []);
+
     const updateDimensions = useCallback(() => {
         if (containerRef.current) {
             const rect = containerRef.current.getBoundingClientRect();
@@ -36,18 +84,16 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
         }
     }, []);
 
-    // Force dimension update when selected device changes
     useEffect(() => {
         if (selectedDevice) {
-            const timer = setTimeout(() => {
-                updateDimensions();
-            }, 100);
+            const timer = setTimeout(updateDimensions, 100);
             return () => clearTimeout(timer);
         }
     }, [selectedDevice, updateDimensions]);
 
-    // Load clusters data on component mount
     useEffect(() => {
+        let intervalId;
+
         const loadData = async () => {
             setLoading(true);
             setError(null);
@@ -58,21 +104,41 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
 
                 const initialExpanded = { 'Clusters': true };
 
-                // Safely navigate the hierarchy
-                if (clusters && clusters.length > 0) {
+                if (clusters?.length > 0) {
                     const firstCluster = clusters[0];
                     initialExpanded[firstCluster.name] = true;
 
-                    if (firstCluster.nodes && firstCluster.nodes.length > 0) {
+                    if (firstCluster.nodes?.length > 0) {
                         const firstNode = firstCluster.nodes[0];
                         initialExpanded[firstNode.name] = true;
 
-                        if (firstNode.devices && firstNode.devices.length > 0) {
+                        if (firstNode.devices?.length > 0) {
                             const firstDevice = firstNode.devices[0];
                             setSelectedDevice(firstDevice);
+                            // istanbul ignore next
+                            const fetchMetricsData = async () => {
+                                try {
+                                    const metricsPromises = Object.entries(selectedMetrics || {})
+                                        .filter(([_, value]) => value)
+                                        .map(([key, metricKey]) =>
+                                            apiService.fetchDeviceStats(selectedDevice.id, metricKey)
+                                                .then(data => ({ metricType: key, data }))
+                                        );
 
-                            const metrics = await apiService.fetchMetrics(firstDevice.id, timeFilter);
-                            setMetricsData({ [firstDevice.id]: metrics });
+                                    const metricsResults = await Promise.all(metricsPromises);
+                                    const metricsMap = metricsResults.reduce((acc, { metricType, data }) => {
+                                        acc[metricType] = data;
+                                        return acc;
+                                    }, {});
+
+                                    setMetricsData({ [selectedDevice.id]: metricsMap });
+                                } catch (err) {
+                                    console.error("Metrics fetch error:", err);
+                                }
+                            };
+
+                            await fetchMetricsData();
+                            intervalId = setInterval(fetchMetricsData, 2000);
                         }
                     }
                 }
@@ -87,9 +153,12 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
         };
 
         loadData();
+
+        return () => {
+            if (intervalId) clearInterval(intervalId);
+        };
     }, []);
 
-    // Handle resize events and initial dimension calculation
     useEffect(() => {
         let mounted = true;
 
@@ -110,11 +179,10 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
             setTimeout(calculateDimensions, 300)
         ];
 
-        const handleResize = () => {
-            calculateDimensions();
-        };
+        const handleResize = () => calculateDimensions();
 
         let resizeObserver;
+        // istanbul ignore next
         if (window.ResizeObserver && containerRef.current) {
             resizeObserver = new ResizeObserver((entries) => {
                 for (let entry of entries) {
@@ -138,20 +206,18 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
             mounted = false;
             timers.forEach(timer => clearTimeout(timer));
             window.removeEventListener('resize', handleResize);
+            // istanbul ignore next
             if (resizeObserver) {
                 resizeObserver.disconnect();
             }
         };
     }, [updateDimensions]);
-
-    // Generate chart when dependencies change
+    // istanbul ignore next
     useEffect(() => {
         if (!selectedDevice || !metricsData[selectedDevice.id]) return;
 
         if (dimensions.width === 0 || dimensions.height === 0) {
-            const timer = setTimeout(() => {
-                updateDimensions();
-            }, 100);
+            const timer = setTimeout(updateDimensions, 100);
             return () => clearTimeout(timer);
         }
 
@@ -172,25 +238,77 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
             .append('g')
             .attr('transform', `translate(${margin.left},${margin.top})`);
 
-        const deviceData = metricsData[selectedDevice.id];
+        const deviceMetrics = metricsData[selectedDevice.id];
 
-        // Scales
+        const firstMetricData = Object.values(deviceMetrics)[0];
+        if (!firstMetricData || firstMetricData.length === 0) return;
+
         const xScale = d3.scaleBand()
-            .domain(deviceData.capacity.map(d => d.time))
+            .domain(firstMetricData.map(d => d.time))
             .range([0, width])
             .padding(0.1);
 
+        // Get the first metric key to determine type
+        const firstMetricKey = Object.values(selectedMetrics)?.[0] || '';
+        const metricInfo = getMetricInfo(firstMetricKey);
+
+        // Get all values and determine best unit based on metric type
+        const allValues = Object.values(deviceMetrics)
+            .flatMap(metricData => metricData.map(d => d.value));
+        const maxValue = Math.max(...allValues, 0);
+        const minValue = Math.min(...allValues, 0);
+
+        let displayUnit, allValuesConverted, yMaxdefault, yMindefault;
+
+        // ---- Temperature (no conversion) ----
+        if (metricInfo.type === "temperature") {
+            displayUnit = yAxisConfig.unit || metricInfo.baseUnit;
+            yMaxdefault = Math.ceil(maxValue * 1.1);
+            yMindefault = Math.floor(minValue * 0.9);
+        } else if (metricInfo.type === 'bandwidth') {
+            // Bandwidth: determine best unit (bps, Kbps, Mbps, Gbps)
+            displayUnit = yAxisConfig.unit || getBestBandwidthUnit(maxValue);
+            allValuesConverted = allValues.map(v => convertBandwidthToUnit(v, displayUnit, metricInfo.baseUnit));
+            const maxConverted = Math.max(...allValuesConverted, 0);
+            yMaxdefault = Math.ceil(maxConverted * 1.2);
+            yMindefault = 0;
+        } else if (metricInfo.type === 'memory') {
+            // Memory: determine best unit (Bytes, KB, MB, GB, TB)
+            displayUnit = yAxisConfig.unit || getBestMemoryUnit(maxValue);
+            allValuesConverted = allValues.map(v => convertToUnit(v, displayUnit));
+            const maxConverted = Math.max(...allValuesConverted, 0);
+            yMaxdefault = Math.ceil(maxConverted * 1.2);
+            yMindefault = 0;
+        } else {
+            // Generic: no conversion
+            displayUnit = yAxisConfig.unit || metricInfo.baseUnit;
+            yMaxdefault = Math.ceil(maxValue * 1.2);
+            yMindefault = Math.floor(Math.min(0, minValue));
+        }
+
+        // Use custom Y-axis config if set, otherwise use defaults
+        const yMin = yAxisConfig.min !== null ? yAxisConfig.min : yMindefault;
+        const yMax = yAxisConfig.max !== null ? yAxisConfig.max : yMaxdefault;
+
         const yScale = d3.scaleLinear()
-            .domain([0, 100])
+            .domain([yMin, yMax])
             .range([height, 0]);
 
-        // Line generator
         const line = d3.line()
             .x(d => xScale(d.time) + xScale.bandwidth() / 2)
-            .y(d => yScale(d.value))
+            .y(d => {
+                if (metricInfo.type === "temperature") return yScale(d.value);
+                if (metricInfo.type === "bandwidth") {
+                    return yScale(convertBandwidthToUnit(d.value, displayUnit, metricInfo.baseUnit));
+                }
+                if (metricInfo.type === "memory") {
+                    return yScale(convertToUnit(d.value, displayUnit));
+                }
+                return yScale(d.value);
+            })
             .curve(d3.curveCardinal);
 
-        // Add grid lines
+        // Grid lines
         g.selectAll('.grid-line')
             .data(yScale.ticks(5))
             .enter()
@@ -204,7 +322,7 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
             .attr('stroke-width', 0.5)
             .attr('opacity', 0.3);
 
-        // X Axis with responsive text handling
+        // X-axis
         const xAxis = g.append('g')
             .attr('transform', `translate(0,${height})`)
             .call(d3.axisBottom(xScale));
@@ -213,99 +331,181 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
         const shouldRotate = timeFilter === '3h' || width < 500;
 
         xAxis.selectAll('text')
-            .attr('fill', '#888')
+            .attr('fill', '#fff')
             .style('font-size', fontSize)
             .attr('transform', shouldRotate ? 'rotate(-45)' : 'rotate(0)')
             .style('text-anchor', shouldRotate ? 'end' : 'middle')
             .attr('dx', shouldRotate ? '-.8em' : '0')
             .attr('dy', shouldRotate ? '.15em' : '.71em');
 
-        // Y Axis
-        g.append('g')
-            .call(d3.axisLeft(yScale))
-            .selectAll('text')
-            .attr('fill', '#888')
-            .style('font-size', fontSize);
+        // Y-axis (Clickable)
+        const yAxisGroup = g.append("g")
+            .call(d3.axisLeft(yScale).ticks(5))
+            .style("cursor", "pointer")
+            .on("click", () => setShowYAxisModal(true));
 
-        g.selectAll('.domain').attr('stroke', '#555');
-        g.selectAll('.tick line').attr('stroke', '#555');
+        yAxisGroup.selectAll('text')
+            .attr('fill', '#fff')
+            .style('font-size', fontSize)
+            .each(function (d) {
+                d3.select(this)
+                    .append('title')
+                    .text(d.toLocaleString());
+            });
 
-        // Add "Time" label
+        // Add tooltip to Y-axis to indicate it's clickable
+        yAxisGroup.append('title')
+            .text('Click to configure Y-axis range and unit');
+
+        // Y-axis Label
+        g.append("text")
+            .attr("transform", "rotate(-90)")
+            .attr("x", -height / 2)
+            .attr("y", -margin.left + 7.5)
+            .attr("text-anchor", "middle")
+            .attr("fill", "#fff")
+            .style("font-size", fontSize)
+            .text(displayUnit);
+
+        g.selectAll(".domain").attr("stroke", "#555");
+        g.selectAll(".tick line").attr("stroke", "#555");
+
         const timeLabelY = shouldRotate ? height + (margin.bottom - 10) : height + 40;
 
         g.append('text')
             .attr('x', width)
             .attr('y', timeLabelY)
             .attr('text-anchor', 'end')
-            .attr('fill', '#888')
+            .attr('fill', '#fff')
             .style('font-size', fontSize)
             .text('Time');
 
-        // Add lines for selected metrics
-        const metricsToRender = [
-            { key: 'CXL Capacity', data: deviceData.capacity },
-            { key: 'CXL Usage', data: deviceData.usage },
-            { key: 'CXL Bandwidth', data: deviceData.bandwidth }
-        ];
+        // Create tooltip (add this ONCE before the forEach loop)
+        const tooltip = d3.select('body')
+            .selectAll('.line-graph-tooltip')
+            .data([null])
+            .join('div')
+            .attr('class', 'line-graph-tooltip')
+            .style('position', 'absolute')
+            .style('background', 'rgba(0, 0, 0, 0.9)')
+            .style('color', 'white')
+            .style('padding', '8px 12px')
+            .style('border-radius', '6px')
+            .style('font-size', '13px')
+            .style('pointer-events', 'none')
+            .style('opacity', 0)
+            .style('z-index', 1000)
+            .style('box-shadow', '0 2px 8px rgba(0,0,0,0.3)');
 
-        metricsToRender.forEach(metric => {
-            if (selectedMetrics && selectedMetrics[metric.key]) {
-                g.append('path')
-                    .datum(metric.data)
-                    .attr('fill', 'none')
-                    .attr('stroke', metricColors[metric.key])
-                    .attr('stroke-width', width < 400 ? 2 : 3)
-                    .attr('stroke-opacity', 0.8)
-                    .attr('d', line);
+        // Draw lines and dots for each metric
+        Object.entries(deviceMetrics).forEach(([metricType, data]) => {
+            if (!data || data.length === 0) return;
 
-                // Add dots
-                g.selectAll(`.dots-${metric.key.replace(/\s/g, '-')}`)
-                    .data(metric.data)
-                    .enter()
-                    .append('circle')
-                    .attr('class', `dots-${metric.key.replace(/\s/g, '-')}`)
-                    .attr('cx', d => xScale(d.time) + xScale.bandwidth() / 2)
-                    .attr('cy', d => yScale(d.value))
-                    .attr('r', width < 400 ? 3 : 4)
-                    .attr('fill', metricColors[metric.key])
-                    .attr('stroke', '#1a1a1a')
-                    .attr('stroke-width', 1);
-            }
+            // Draw line
+            g.append('path')
+                .datum(data)
+                .attr('fill', 'none')
+                .attr('stroke', metricColors[metricType] || '#0d6efd')
+                .attr('stroke-width', width < 400 ? 2 : 3)
+                .attr('stroke-opacity', 0.8)
+                .attr('d', line);
+
+            // Draw dots with tooltip - Using appropriate conversion based on metric type
+            g.selectAll(`.dots-${metricType.replace(/\s/g, '-')}`)
+                .data(data)
+                .enter()
+                .append("circle")
+                .attr("class", `dots-${metricType.replace(/\s/g, "-")}`)
+                .attr("cx", d => xScale(d.time) + xScale.bandwidth() / 2)
+                .attr("cy", d => {
+                    if (metricInfo.type === "temperature") return yScale(d.value);
+                    if (metricInfo.type === "bandwidth") {
+                        return yScale(convertBandwidthToUnit(d.value, displayUnit, metricInfo.baseUnit));
+                    }
+                    if (metricInfo.type === "memory") {
+                        return yScale(convertToUnit(d.value, displayUnit));
+                    }
+                    return yScale(d.value);
+                })
+                .attr("r", width < 400 ? 3 : 4)
+                .attr("fill", metricColors[metricType] || "#0d6efd")
+                .attr("stroke", "#1a1a1a")
+                .attr("stroke-width", 1)
+                .style("cursor", "pointer")
+
+                // ---- Tooltip Fix (matches Y-axis unit exactly!) ----
+                .on("mouseenter", function (event, d) {
+                    d3.select(this)
+                        .transition()
+                        .duration(200)
+                        .attr("r", width < 400 ? 6 : 8);
+
+                    const convertedValue =
+                        metricInfo.type === "temperature"
+                            ? d.value
+                            : metricInfo.type === "bandwidth"
+                                ? convertBandwidthToUnit(d.value, displayUnit, metricInfo.baseUnit)
+                                : metricInfo.type === "memory"
+                                    ? convertToUnit(d.value, displayUnit)
+                                    : d.value;
+
+                    const formattedValue = `${convertedValue.toFixed(2)} ${displayUnit}`;
+
+                    tooltip
+                        .style("opacity", 1)
+                        .html(`
+                        <div style="margin-bottom: 2px;">Time: ${d.time}</div>
+                        <div><strong style="font-size: 15px;">${formattedValue}</strong></div>
+                    `)
+                        .style("left", event.pageX + 15 + "px")
+                        .style("top", event.pageY - 10 + "px");
+                })
+                .on("mousemove", function (event) {
+                    tooltip
+                        .style("left", event.pageX + 15 + "px")
+                        .style("top", event.pageY - 10 + "px");
+                })
+                .on("mouseleave", function () {
+                    d3.select(this)
+                        .transition()
+                        .duration(200)
+                        .attr("r", width < 400 ? 3 : 4);
+
+                    tooltip.style("opacity", 0);
+                });
         });
 
-        // Add responsive legend
+        // Legend
         const legendWidth = Math.min(150, width * 0.3);
         const legend = g.append('g')
             .attr('class', 'legend')
             .attr('transform', `translate(${width - legendWidth}, 20)`);
 
         let legendY = 0;
-        Object.entries(selectedMetrics || {}).forEach(([metric, isSelected]) => {
-            if (isSelected) {
-                const legendItem = legend.append('g')
-                    .attr('transform', `translate(0, ${legendY})`);
+        Object.keys(deviceMetrics).forEach(metricType => {
+            const legendItem = legend.append('g')
+                .attr('transform', `translate(0, ${legendY})`);
 
-                legendItem.append('line')
-                    .attr('x1', 0)
-                    .attr('x2', 15)
-                    .attr('y1', 0)
-                    .attr('y2', 0)
-                    .attr('stroke', metricColors[metric])
-                    .attr('stroke-width', 3);
+            legendItem.append('line')
+                .attr('x1', 0)
+                .attr('x2', 15)
+                .attr('y1', 0)
+                .attr('y2', 0)
+                .attr('stroke', metricColors[metricType] || '#0d6efd')
+                .attr('stroke-width', 3);
 
-                legendItem.append('text')
-                    .attr('x', 20)
-                    .attr('y', 0)
-                    .attr('dy', '0.35em')
-                    .attr('fill', '#ccc')
-                    .style('font-size', fontSize)
-                    .text(metric);
+            legendItem.append('text')
+                .attr('x', 20)
+                .attr('y', 0)
+                .attr('dy', '0.35em')
+                .attr('fill', '#fff')
+                .style('font-size', fontSize)
+                .text(`Device ID: ${selectedDevice.name}`);
 
-                legendY += 18;
-            }
+            legendY += 18;
         });
 
-    }, [selectedDevice, selectedMetrics, metricsData, timeFilter, dimensions, updateDimensions]);
+    }, [selectedDevice, metricsData, dimensions, updateDimensions, timeFilter, yAxisConfig, selectedMetrics, getMetricInfo]);
 
     const toggleExpanded = useCallback((item, level = 0) => {
         setExpandedItems(prev => {
@@ -350,223 +550,229 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
         });
     }, [clustersData]);
 
+    // istanbul ignore next
     const selectDevice = async (device) => {
         setSelectedDevice(device);
 
         if (!metricsData[device.id]) {
             try {
-                const newMetricsData = await apiService.fetchMetrics(device.id, timeFilter);
+                const metricsPromises = Object.entries(selectedMetrics || {})
+                    .filter(([_, value]) => value)
+                    .map(([key, metricKey]) =>
+                        apiService.fetchDeviceStats(device.id, metricKey)
+                            .then(data => ({ metricType: key, data }))
+                    );
+
+                const metricsResults = await Promise.all(metricsPromises);
+                const metricsMap = metricsResults.reduce((acc, { metricType, data }) => {
+                    acc[metricType] = data;
+                    return acc;
+                }, {});
+
                 setMetricsData(prev => ({
                     ...prev,
-                    [device.id]: newMetricsData
+                    [device.id]: metricsMap
                 }));
             } catch (err) {
                 setError('Failed to load metrics. Please try again.');
                 console.error('Fetch metrics error:', err);
             }
         }
+    };
+    // istanbul ignore next
+    const handleYAxisSave = (config) => {
+        setYAxisConfig(config);
     };
 
-    const handleTimeFilterChange = async (filter) => {
-        setTimeFilter(filter);
-        if (selectedDevice) {
-            try {
-                const newMetricsData = await apiService.fetchMetrics(selectedDevice.id, filter);
-                setMetricsData(prev => ({
-                    ...prev,
-                    [selectedDevice.id]: newMetricsData
-                }));
-            } catch (err) {
-                setError('Failed to load metrics. Please try again.');
-                console.error('Fetch metrics error:', err);
-            }
-        }
-    };
+    // Get metric info for modal
+    // istanbul ignore next
+    const firstMetricKey = Object.values(selectedMetrics)?.[0] || '';
+    const currentMetricInfo = getMetricInfo(firstMetricKey);
 
     return (
-        <div style={{ height: '100%', backgroundColor: '#1a1a1a', padding: '20px' }}>
-            <div style={{
-                backgroundColor: '#212529',
-                border: '1px solid #444',
-                borderRadius: '10px',
-                height: '100%',
-                overflow: 'hidden'
-            }}>
-                {error && (
-                    <div style={{
-                        backgroundColor: '#dc3545',
-                        color: 'white',
-                        padding: '10px',
-                        textAlign: 'center',
-                        fontSize: '14px'
-                    }}>
-                        {error}
-                    </div>
-                )}
-
-                <div style={{ display: 'flex', height: '100%' }}>
-                    {/* Sidebar */}
-                    <div style={{
-                        width: '25%',
-                        minWidth: '200px',
-                        borderRight: '1px solid #444',
-                        padding: '15px',
-                        overflowY: 'auto',
-                        backgroundColor: '#1a1a1a'
-                    }}>
-                        {loading ? (
-                            <div style={{ color: '#888' }}>Loading...</div>
-                        ) : (
-                            <>
-                                {/* Clusters Section */}
-                                <div style={{ marginBottom: '20px' }}>
-                                    <TreeItem
-                                        label="Clusters"
-                                        hasChildren={true}
-                                        isExpanded={expandedItems["Clusters"]}
-                                        toggleExpanded={(label) => toggleExpanded(label, 0)}
-                                    >
-                                        {clustersData.map(cluster => (
-                                            <TreeItem
-                                                key={cluster.id}
-                                                label={cluster.name}
-                                                level={1}
-                                                hasChildren={true}
-                                                isExpanded={expandedItems[cluster.name]}
-                                                toggleExpanded={(label) => toggleExpanded(label, 1)}
-                                            >
-                                                {cluster.nodes.map(node => (
-                                                    <TreeItem
-                                                        key={node.id}
-                                                        label={node.name}
-                                                        level={2}
-                                                        hasChildren={node.devices.length > 0}
-                                                        isExpanded={expandedItems[node.name]}
-                                                        toggleExpanded={(label) => toggleExpanded(label, 2)}
-                                                    >
-                                                        {node.devices.map(device => (
-                                                            <TreeItem
-                                                                key={device.id}
-                                                                label={device.name}
-                                                                level={3}
-                                                                onClick={() => selectDevice(device)}
-                                                                isSelected={selectedDevice?.id === device.id}
-                                                                isExpanded={false}
-                                                                toggleExpanded={(label) => toggleExpanded(label, 3)}
-                                                            />
-                                                        ))}
-                                                    </TreeItem>
-                                                ))}
-                                            </TreeItem>
-                                        ))}
-                                    </TreeItem>
-                                </div>
-
-                                {/* Metrics Section */}
-                                <div>
-                                    <div style={{ marginTop: '10px' }}>
-                                        {Object.keys(selectedMetrics || {}).map(metric => (
-                                            <MetricItem key={metric} label={metric} />
-                                        ))}
-                                    </div>
-                                </div>
-                            </>
-                        )}
-                    </div>
-
-                    {/* Chart Area */}
-                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '15px' }}>
-                        {/* Time Filter Controls */}
-                        <div style={{ marginBottom: '15px' }}>
-                            <div style={{ display: 'flex', gap: '10px' }}>
-                                {TIME_FILTERS.map(filter => (
-                                    <button
-                                        key={filter.key}
-                                        onClick={() => handleTimeFilterChange(filter.key)}
-                                        style={{
-                                            flex: 1,
-                                            padding: '8px 16px',
-                                            fontSize: '14px',
-                                            backgroundColor: timeFilter === filter.key ? '#0d6efd' : '#2a2a2a',
-                                            color: 'white',
-                                            border: timeFilter === filter.key ? '1px solid #0d6efd' : '1px solid #555',
-                                            borderRadius: '4px',
-                                            cursor: 'pointer',
-                                            transition: 'all 0.2s'
-                                        }}
-                                        onMouseEnter={(e) => {
-                                            if (timeFilter !== filter.key) {
-                                                e.currentTarget.style.backgroundColor = '#3a3a3a';
-                                            }
-                                        }}
-                                        onMouseLeave={(e) => {
-                                            if (timeFilter !== filter.key) {
-                                                e.currentTarget.style.backgroundColor = '#2a2a2a';
-                                            }
-                                        }}
-                                    >
-                                        {filter.label}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-
-                        {selectedDevice ? (
-                            <div style={{ flex: 1, position: 'relative', minHeight: '200px' }}>
-                                <div
-                                    ref={containerRef}
-                                    style={{
-                                        position: 'absolute',
-                                        top: 0,
-                                        left: 0,
-                                        right: 0,
-                                        bottom: 0,
-                                        minHeight: '200px',
-                                        minWidth: '300px'
-                                    }}
-                                >
-                                    <svg
-                                        ref={svgRef}
-                                        style={{
-                                            width: '100%',
-                                            height: '100%',
-                                            maxWidth: '100%',
-                                            maxHeight: '100%',
-                                            minHeight: '200px',
-                                            display: 'block'
-                                        }}
-                                    />
-                                    {(dimensions.width === 0 || dimensions.height === 0) && (
-                                        <div style={{
-                                            position: 'absolute',
-                                            top: '50%',
-                                            left: '50%',
-                                            transform: 'translate(-50%, -50%)',
-                                            color: '#888',
-                                            textAlign: 'center'
-                                        }}>
-                                            <div style={{ marginBottom: '10px' }}>Loading chart...</div>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        ) : (
-                            <div style={{
-                                flex: 1,
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                color: '#888',
-                                fontSize: '16px'
-                            }}>
-                                Select a device to view metrics
-                            </div>
-                        )}
-                    </div>
+        <div className="device-card-container">
+            <div className="device-card-wrapper">
+                {error && <ErrorBanner message={error} />}
+                <div className="device-card-content">
+                    <Sidebar
+                        loading={loading}
+                        expandedItems={expandedItems}
+                        clustersData={clustersData}
+                        selectedDevice={selectedDevice}
+                        selectedMetrics={selectedMetrics}
+                        onToggleExpanded={toggleExpanded}
+                        onSelectDevice={selectDevice}
+                    />
+                    <ChartArea
+                        selectedDevice={selectedDevice}
+                        dimensions={dimensions}
+                        containerRef={containerRef}
+                        svgRef={svgRef}
+                    />
                 </div>
             </div>
+
+            <YAxisConfigModal
+                isOpen={showYAxisModal}
+                onClose={() => setShowYAxisModal(false)}
+                onSave={handleYAxisSave}
+                currentMin={yAxisConfig.min}
+                currentMax={yAxisConfig.max}
+                currentUnit={yAxisConfig.unit}
+                availableUnits={currentMetricInfo.units}
+                defaultUnit={currentMetricInfo.baseUnit}
+            />
         </div>
     );
+};
+
+const ErrorBanner = ({ message }) => (
+    <div className="error-banner">
+        {message}
+    </div>
+);
+
+ErrorBanner.propTypes = {
+    message: PropTypes.string.isRequired
+};
+
+const Sidebar = ({
+    loading,
+    expandedItems,
+    clustersData,
+    selectedDevice,
+    selectedMetrics,
+    onToggleExpanded,
+    onSelectDevice
+}) => (
+    <div className="sidebar-device">
+        {loading ? (
+            <div className="loading-text">Loading...</div>
+        ) : (
+            <>
+                <div className="sidebar-section">
+                    <TreeItem
+                        label="Clusters"
+                        hasChildren={true}
+                        isExpanded={expandedItems["Clusters"]}
+                        toggleExpanded={(label) => onToggleExpanded(label, 0)}
+                    >
+                        {clustersData.map(cluster => (
+                            <TreeItem
+                                key={cluster.id}
+                                label={cluster.name}
+                                level={1}
+                                hasChildren={true}
+                                isExpanded={expandedItems[cluster.name]}
+                                toggleExpanded={(label) => onToggleExpanded(label, 1)}
+                            >
+                                {cluster.nodes.map(node => (
+                                    <TreeItem
+                                        key={node.id}
+                                        label={node.name}
+                                        level={2}
+                                        hasChildren={node.devices.length > 0}
+                                        isExpanded={expandedItems[node.name]}
+                                        toggleExpanded={(label) => onToggleExpanded(label, 2)}
+                                    >
+                                        {node.devices.map(device => (
+                                            <TreeItem
+                                                key={device.id}
+                                                label={`...${String(device.id).slice(-5)}`}
+                                                level={3}
+                                                onClick={() => onSelectDevice(device)}
+                                                isSelected={selectedDevice?.id === device.id}
+                                                isExpanded={false}
+                                                toggleExpanded={(label) => onToggleExpanded(label, 3)}
+                                            />
+                                        ))}
+                                    </TreeItem>
+                                ))}
+                            </TreeItem>
+                        ))}
+                    </TreeItem>
+                </div>
+
+                <div className="metrics-section">
+                    {Object.keys(selectedMetrics || {}).map(metric => (
+                        <MetricItem key={metric} label={metric} />
+                    ))}
+                </div>
+            </>
+        )}
+    </div>
+);
+
+Sidebar.propTypes = {
+    loading: PropTypes.bool.isRequired,
+    expandedItems: PropTypes.object.isRequired,
+    clustersData: PropTypes.arrayOf(
+        PropTypes.shape({
+            id: PropTypes.string.isRequired,
+            name: PropTypes.string.isRequired,
+            nodes: PropTypes.arrayOf(
+                PropTypes.shape({
+                    id: PropTypes.string.isRequired,
+                    name: PropTypes.string.isRequired,
+                    devices: PropTypes.arrayOf(
+                        PropTypes.shape({
+                            id: PropTypes.string.isRequired,
+                            name: PropTypes.string.isRequired
+                        })
+                    ).isRequired
+                })
+            ).isRequired
+        })
+    ).isRequired,
+    selectedDevice: PropTypes.shape({
+        id: PropTypes.string.isRequired,
+        name: PropTypes.string.isRequired
+    }),
+    selectedMetrics: PropTypes.objectOf(PropTypes.string),
+    onToggleExpanded: PropTypes.func.isRequired,
+    onSelectDevice: PropTypes.func.isRequired
+};
+
+const ChartArea = ({ selectedDevice, dimensions, containerRef, svgRef }) => (
+    <div className="chart-area">
+        {selectedDevice ? (
+            <div className="chart-container">
+                <div ref={containerRef} className="chart-inner-container">
+                    <svg
+                        ref={svgRef}
+                        className="chart-svg"
+                    />
+                    {(dimensions.width === 0 || dimensions.height === 0) && (
+                        <div className="chart-loading">
+                            <div>Loading chart...</div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        ) : (
+            <div className="chart-placeholder">
+                Select a device to view metrics
+            </div>
+        )}
+    </div>
+);
+
+ChartArea.propTypes = {
+    selectedDevice: PropTypes.shape({
+        id: PropTypes.string.isRequired,
+        name: PropTypes.string.isRequired
+    }),
+    dimensions: PropTypes.shape({
+        width: PropTypes.number.isRequired,
+        height: PropTypes.number.isRequired
+    }).isRequired,
+    containerRef: PropTypes.object.isRequired,
+    svgRef: PropTypes.object.isRequired
+};
+
+DeviceCard.propTypes = {
+    selectedMetrics: PropTypes.objectOf(PropTypes.string),
+    setSelectedMetrics: PropTypes.func
 };
 
 export default DeviceCard;

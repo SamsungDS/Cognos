@@ -93,7 +93,7 @@ describe('SideBar Component', () => {
     expect(screen.getByRole('link', { name: /dashboard icon/i })).toHaveAttribute('href', '/');
     expect(screen.getByRole('link', { name: /configure icon/i })).toHaveAttribute('href', '/configure');
     expect(screen.getByRole('link', { name: /metrics icon/i })).toHaveAttribute('href', '/metrics');
-    expect(screen.getByRole('link', { name: /autotier icon/i })).toHaveAttribute('href', '/jobs');
+    expect(screen.getByRole('link', { name: /autotier icon/i })).toHaveAttribute('href', '/application_view');
     expect(screen.getByRole('link', { name: /about icon/i })).toHaveAttribute('href', '/about');
   });
 

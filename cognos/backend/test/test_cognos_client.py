@@ -710,6 +710,143 @@ def test_get_host_devices_from_db(mocker):
     cognos.get_host_devices_from_db("dummy_host")
 
 
+def test_get_events(mocker):
+    mocker.patch(
+        'cognos.backend.cognos_client.Cognos._initialize_cognos',
+        return_value=True
+    )
+    mocker.patch(
+        "cognos.backend.cognos_influxdb_client.CognosInfluxDBClient"
+        ".get_cognos_events_past",
+        return_value={}
+    )
+    cognos = Cognos(CAL_LOGGER, mock=True)
+    cognos.get_events()
+
+
+def test_get_data_moved_percentage(mocker):
+    dummy_node = "dummynode.xyz"
+    mocker.patch(
+        'cognos.backend.cognos_client.Cognos._initialize_cognos',
+        return_value=True
+    )
+    mocker.patch(
+        (
+            'cognos.backend.sqlite_client.SqliteClient'
+            '.exec_fetch_singlerecord_query'
+         ),
+        return_value=dummy_node
+    )
+
+    json_string = json.dumps({
+        "observations": {
+            "%_moved": "50"
+        }
+    })
+
+    dummy_get_stats_data = {
+        'response': [json_string]
+    }
+
+    dummy_response = Response()
+    dummy_response.status_code = 200
+    dummy_response._content = (
+        json.dumps(dummy_get_stats_data).encode("utf-8")
+    )
+    mock_response = mocker.patch(
+        'requests.post',
+        return_value=dummy_response
+    )
+    cognos = Cognos(CAL_LOGGER, mock=True)
+    cognos.get_data_moved_percentage("54212", "gemfire")
+
+    mock_response.reset_mock()
+    # testing not running get stats state
+    dummy_get_stats_data = {
+        "response": ["-22"]
+    }
+    dummy_response = Response()
+    dummy_response.status_code = 200
+    dummy_response._content = (
+        json.dumps(dummy_get_stats_data).encode("utf-8")
+    )
+    mock_response.return_value = dummy_response
+    cognos.get_data_moved_percentage("54212", "gemfire")
+
+
+def test_get_applications(mocker):
+    dummy_db_apps = [
+        [3123112, "gemfire"],
+        [3231554, "gemfire2"]
+    ]
+    dummy_db_final_response = [
+        [
+            "gemfire", 3213213, "dummyserver", 1000, 1000, 1000,
+            "good", "all good", "50"
+        ]
+    ]
+    mocker.patch(
+        (
+            'cognos.backend.sqlite_client.SqliteClient'
+            '.exec_fetch_query'
+        ),
+        side_effect=[dummy_db_apps, dummy_db_final_response]
+    )
+    dummy_event = [{
+        "severity": "good",
+        "msg": "all good"
+    }]
+    mocker.patch(
+        "cognos.backend.cognos_influxdb_client.CognosInfluxDBClient"
+        ".get_latest_application_event",
+        return_value=dummy_event
+    )
+    mocker.patch(
+        "cognos.backend.cognos_client.Cognos.get_data_moved_percentage",
+        return_value=None
+    )
+    mocker.patch(
+        (
+            'cognos.backend.sqlite_client.SqliteClient'
+            '.execute_query'
+         ),
+        return_value=True
+    )
+    mocker.patch(
+        'cognos.backend.cognos_client.Cognos._initialize_cognos',
+        return_value=True
+    )
+    cognos = Cognos(CAL_LOGGER, mock=True)
+    cognos.get_applications()
+
+
+def test_insert_application(mocker):
+    dummy_app = {
+        "app_name": "gemfire",
+        "app_pid": 432243,
+        "server_name": "xxx",
+        "throughput_ops_per_sec": 1000,
+        "targetread_p99_latency": 1000,
+        "targetwrite_p99_latency": 1000,
+        "status": "good",
+        "message": "ok",
+        "data_moved": "0"
+    }
+    mocker.patch(
+        (
+            'cognos.backend.sqlite_client.SqliteClient'
+            '.execute_query'
+         ),
+        return_value=True
+    )
+    mocker.patch(
+        'cognos.backend.cognos_client.Cognos._initialize_cognos',
+        return_value=True
+    )
+    cognos = Cognos(CAL_LOGGER, mock=True)
+    cognos.insert_application(dummy_app)
+
+
 # TODO: resolve sonar cloud issue in pipeline for not counting request context
 # def test_host_devices(mocker, test_client):
 #     mocker.patch(

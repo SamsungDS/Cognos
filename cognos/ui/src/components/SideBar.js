@@ -38,7 +38,7 @@ const SideBar = ({ children }) => {
       allowedRoles: ['admin']
     },
     {
-      path: "/jobs",
+      path: "/application_view",
       icon: <AutotierIcon />,
       datatestid: 'menu-item-3',
       allowedRoles: ['admin']
