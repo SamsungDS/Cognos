@@ -7,7 +7,7 @@ Standards-Version: 4.1.4
 
 Package: svk-ras
 Architecture: amd64
-Depends: svk-core, libdbd-sqlite3-perl, sqlite3
+Depends: svk-core, libdbd-sqlite3-perl, sqlite3, libtraceevent1
 Description: SVK RAS Feature Module
 
 Package: svk-ras-dev

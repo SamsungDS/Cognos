@@ -2,3 +2,4 @@
 set -e
 
 # post install steps go here
+mkdir -p /usr/local/var/lib/rasdaemon

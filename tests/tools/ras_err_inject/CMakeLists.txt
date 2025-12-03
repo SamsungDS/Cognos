@@ -18,6 +18,7 @@ find_program(MAKE_CONFIG NAMES autoreconf REQUIRED)
 set(RASDAEMON_DIR ${CMAKE_BINARY_DIR}/rasdaemon)
 ExternalProject_Add(rasdaemon
     GIT_REPOSITORY https://github.com/mchehab/rasdaemon.git
+    GIT_TAG "v0.8.3"
     SOURCE_DIR        "${CMAKE_BINARY_DIR}/rasdaemon"
     PATCH_COMMAND
         COMMAND patch -p1 -N -i ${CMAKE_CURRENT_SOURCE_DIR}/ras1.patch || true
