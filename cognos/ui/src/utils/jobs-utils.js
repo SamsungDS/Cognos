@@ -109,7 +109,7 @@ export const JobRow = ({ job, onDelete }) => (
     <td className="custom-table-cell">
       <div className="small fw-medium text-white">{job.targetwrite_p99_latency}</div>
     </td>
-    <td className="custom-table-cell" title={`data moved: ${job.data_moved}`}>     
+    <td className="custom-table-cell" title={`data moved: ${job.data_moved}%`}>     
         <StatusBadge status={job.status} />
     </td>
     <td className="custom-table-cell">

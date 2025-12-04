@@ -183,6 +183,7 @@ class CognosInfluxDBClient:
                     |> range(start: -5m)
                     |> filter(fn: (r) => r._measurement == "events")
                     |> filter(fn: (r) => r.source_type == "application")
+                    |> filter(fn: (r) => r.category == "health")
                     |> filter(fn: (r) => r.source =~ /{str(app_pid)}/)
                     |> keep(columns: ["_time", "severity", "msg"])
                     |> group(columns: [])
@@ -638,6 +639,7 @@ class CognosInfluxDBClient:
             '''
         )
         flux_query_output = json.loads(tables.to_json())
+        print(f"HOST VIEW BANDWIDTH: {flux_query_output}")
         # Bps, convert to GBps
         total_used_bw = round(
             flux_query_output[0]['totalUsed'] / 1_000_000_000, 4
