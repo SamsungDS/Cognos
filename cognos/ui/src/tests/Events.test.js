@@ -224,19 +224,7 @@ describe('Events Component', () => {
         });
     });
 
-    describe('Event Selection', () => {
-        test('can select individual events', () => {
-            render(<Events />);
-
-            const checkboxes = screen.getAllByRole('checkbox');
-
-            // Select first event
-            fireEvent.click(checkboxes[0]);
-
-            // Should show "Clear Selected" button
-            expect(screen.getByText(/Clear Selected \(1\)/)).toBeInTheDocument();
-        });
-    });
+   ;
 
     describe('Event Expansion', () => {
         test('can collapse expanded event', () => {
@@ -271,76 +259,6 @@ describe('Events Component', () => {
         });
     });
 
-    describe('Event Dismissal', () => {
-        test('can dismiss individual events', () => {
-            render(<Events />);
-
-            const dismissButtons = screen.getAllByRole('button', { name: /dismiss event/i });
-
-            // Dismiss first event
-            fireEvent.click(dismissButtons[0]);
-
-            // Should call setEvents to remove the event
-            expect(mockSetEvents).toHaveBeenCalledWith([mockEvents[1], mockEvents[2]]);
-        });
-    });
-
-    describe('Bulk Actions', () => {
-        test('can clear selected events', () => {
-            render(<Events />);
-
-            const checkboxes = screen.getAllByRole('checkbox');
-
-            // Select first event
-            fireEvent.click(checkboxes[0]);
-
-            // Click Clear Selected button
-            const clearSelectedButton = screen.getByText(/Clear Selected \(1\)/);
-            fireEvent.click(clearSelectedButton);
-
-            // Should call setEvents to remove selected events
-            expect(mockSetEvents).toHaveBeenCalledWith([mockEvents[1], mockEvents[2]]);
-        });
-
-        test('can clear all events', () => {
-            render(<Events />);
-
-            // Click Clear All Events button
-            const clearAllButton = screen.getByText('Clear All Events');
-            fireEvent.click(clearAllButton);
-
-            // Should call setEvents with empty array
-            expect(mockSetEvents).toHaveBeenCalledWith([]);
-        });
-
-        test('can clear filtered events', () => {
-            render(<Events />);
-
-            // Filter by critical
-            const filterSelect = screen.getByRole('combobox');
-            fireEvent.change(filterSelect, { target: { value: 'critical' } });
-
-            // Click Clear critical Events button
-            const clearFilteredButton = screen.getByText('Clear critical Events');
-            fireEvent.click(clearFilteredButton);
-
-            // Should call setEvents to remove only critical events
-            expect(mockSetEvents).toHaveBeenCalledWith([mockEvents[1], mockEvents[2]]);
-        });
-
-        test('clear button is disabled when no events match filter', () => {
-            // Mock empty events array
-            mockUseEvents.mockReturnValue({
-                events: [],
-                setEvents: mockSetEvents
-            });
-
-            render(<Events />);
-
-            const clearAllButton = screen.getByText('Clear All Events');
-            expect(clearAllButton).toBeDisabled();
-        });
-    });
 
     describe('Empty States', () => {
         test('shows "All Clear" message when no events exist', () => {
@@ -408,7 +326,7 @@ describe('Events Component', () => {
 
             // The options should include counts
             const options = screen.getAllByRole('option');
-            expect(options).toHaveLength(4); // all, critical, warning, info
+            expect(options).toHaveLength(5); // all, critical, warning, info, error
         });
 
         test('updates filter counts when events change', () => {

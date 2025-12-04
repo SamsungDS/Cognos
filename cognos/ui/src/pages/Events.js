@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import PropTypes from 'prop-types';
-import { AlertTriangle, CheckCircle, Info, X, Bell, Search, ShieldAlert, Clock, Trash2, RefreshCw, ChevronDown, ChevronUp, Calendar } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Info, Bell, Search, ShieldAlert, Clock, RefreshCw, ChevronDown, ChevronUp, Calendar } from 'lucide-react';
 import './events.css';
 import { useEvents } from '../contexts/EventsContext';
 
@@ -60,14 +60,22 @@ const Events = () => {
             bg: 'rgb(239, 246, 255)',
             border: 'rgb(147, 197, 253)',
             text: 'rgb(30, 64, 175)'
-        }
+        },
+        error: {
+            icon: AlertTriangle,
+            color: 'rgba(245, 27, 11, 1)',
+            bg: 'rgba(207, 173, 173, 1)',
+            border: 'rgba(218, 46, 23, 1)',
+            text: 'rgb(146, 64, 14)'
+        },
     };
 
     const filterOptions = [
         { value: 'all', label: 'All Events', count: events.length },
         { value: 'critical', label: 'Critical', count: events.filter(e => e.severity === 'critical').length },
         { value: 'warning', label: 'Warnings', count: events.filter(e => e.severity === 'warning').length },
-        { value: 'info', label: 'Info', count: events.filter(e => e.severity === 'info').length }
+        { value: 'info', label: 'Info', count: events.filter(e => e.severity === 'info').length },
+        { value: 'error', label: 'Error', count: events.filter(e => e.severity === 'error').length }
     ];
 
     const filteredEvents = events.filter(event => {
@@ -77,14 +85,14 @@ const Events = () => {
     });
 
     
-    const dismissEvent = (eventId) => {
-        setEvents(events.filter(event => event.id !== eventId));
-        setSelectedEvents(selectedEvents.filter(id => id !== eventId));
-        // Close expanded event if it's being dismissed
-        if (expandedEvent === eventId) {
-            setExpandedEvent(null);
-        }
-    };
+    // const dismissEvent = (eventId) => {
+    //     setEvents(events.filter(event => event.id !== eventId));
+    //     setSelectedEvents(selectedEvents.filter(id => id !== eventId));
+    //     // Close expanded event if it's being dismissed
+    //     if (expandedEvent === eventId) {
+    //         setExpandedEvent(null);
+    //     }
+    // };
 
     
     const toggleSelectEvent = (eventId) => {
@@ -96,22 +104,22 @@ const Events = () => {
     };
 
     
-    const clearSelectedEvents = () => {
-        setEvents(events.filter(event => !selectedEvents.includes(event.id)));
-        setSelectedEvents([]);
-        setExpandedEvent(null); // Close any expanded event
-    };
+    // const clearSelectedEvents = () => {
+    //     setEvents(events.filter(event => !selectedEvents.includes(event.id)));
+    //     setSelectedEvents([]);
+    //     setExpandedEvent(null); // Close any expanded event
+    // };
     
     
-    const clearAllEvents = () => {
-        if (selectedFilter === 'all') {
-            setEvents([]);
-        } else {
-            setEvents(events.filter(event => event.severity !== selectedFilter));
-        }
-        setSelectedEvents([]);
-        setExpandedEvent(null); // Close any expanded event
-    };
+    // const clearAllEvents = () => {
+    //     if (selectedFilter === 'all') {
+    //         setEvents([]);
+    //     } else {
+    //         setEvents(events.filter(event => event.severity !== selectedFilter));
+    //     }
+    //     setSelectedEvents([]);
+    //     setExpandedEvent(null); // Close any expanded event
+    // };
     const toggleEventExpansion = (eventId) => {
         setExpandedEvent(expandedEvent === eventId ? null : eventId);
     };
@@ -130,7 +138,7 @@ const Events = () => {
                 }}
             >
                 <IconComponent size={12} className="me-1" />
-                <span style={{ fontSize: '0.75rem', fontWeight: '600', textTransform: 'capitalize' }}>
+                <span style={{ fontSize: '0.75rem', fontWeight: '600', textTransform: 'capitalize', color: `${config.text}` }}>
                     {severity}
                 </span>
             </div>
@@ -221,13 +229,13 @@ const Events = () => {
                                     </>
                                 )}
                             </button>
-                            <button
+                            {/* <button
                                 onClick={() => dismissEvent(event.id)}
                                 className="btn btn-sm btn-outline-danger d-flex align-items-center"
                                 title="Dismiss event"
                             >
                                 <X size={14} />
-                            </button>
+                            </button> */}
                         </div>
                     </div>
 
@@ -309,7 +317,7 @@ const Events = () => {
                             Refresh
                         </button>
 
-                        {selectedEvents.length > 0 && (
+                        {/* {selectedEvents.length > 0 && (
                             <button
                                 className="btn btn-danger d-flex align-items-center"
                                 onClick={clearSelectedEvents}
@@ -317,7 +325,7 @@ const Events = () => {
                                 <Trash2 size={16} className="me-2" />
                                 Clear Selected ({selectedEvents.length})
                             </button>
-                        )}
+                        )} */}
                     </div>
                 </div>
             </div>
@@ -350,7 +358,7 @@ const Events = () => {
                                             <div className="h4 mb-0 fw-bold" style={{ color: config.color }}>
                                                 {option.count}
                                             </div>
-                                            <div className="text-muted" style={{ fontSize: '0.9rem' }}>
+                                            <div style={{ fontSize: '0.9rem', color: config.color }}>
                                                 {option.label}
                                             </div>
                                         </div>
@@ -380,7 +388,7 @@ const Events = () => {
                                 </select>
                             </div>
 
-                            <div className="col-md-6 text-end">
+                            {/* <div className="col-md-6 text-end">
                                 <button
                                     className="btn btn-outline-danger"
                                     onClick={clearAllEvents}
@@ -388,7 +396,7 @@ const Events = () => {
                                 >
                                     Clear {selectedFilter === 'all' ? 'All' : selectedFilter} Events
                                 </button>
-                            </div>
+                            </div> */}
                         </div>
                     </div>
                 </div>

@@ -180,6 +180,36 @@ export const CapacityCard = ({ viewMode, capacityData, memCapacityData, isLoadin
         return `${converted.value} ${converted.unit}`;
     };
 
+    // Calculate memory per core multiplier
+    // istanbul ignore next
+    const calculateMemoryPerCore = () => {
+        if (!memCapacityData || memCapacityData.length <= 1) return null;
+
+        // Find DRAM capacity from memCapacityData
+        let dramCapacity = 0;
+        let cxlCapacity = 0;
+
+        memCapacityData.slice(1).forEach(item => {
+            const label = item[0].toLowerCase();
+            const value = item[1];
+
+            if (label.includes('dram')) {
+                dramCapacity = value;
+            } else if (label.includes('cxl')) {
+                cxlCapacity = value;
+            }
+        });
+
+        // Calculate (total (cxl+dram) capacity / dram capacity)
+        if (dramCapacity > 0) {
+            const totalCapacity = cxlCapacity + dramCapacity;
+            const multiplier = totalCapacity / dramCapacity;
+            return multiplier.toFixed(1); // One decimal place
+        }
+
+        return null;
+    };
+
     // Transform memCapacityData for the pie chart tooltip/legend
     // Keep numeric values in GB for the chart, but we'll update the options for display
     // istanbul ignore next
@@ -208,9 +238,6 @@ export const CapacityCard = ({ viewMode, capacityData, memCapacityData, isLoadin
         };
     };
 
-    console.log("CAPACITY DATA*******", capacityData);
-    console.log("MEMCAPACITY DATA*** ", memCapacityData);
-
     if (isLoading) {
         return (
             <div className="device_card system-memory-allocated" id="sys-mem-allocated-id">
@@ -227,6 +254,7 @@ export const CapacityCard = ({ viewMode, capacityData, memCapacityData, isLoadin
     // Convert capacity values for display
     const usedCapacityDisplay = formatCapacity(capacityData.used_capacity || 0);
     const totalCapacityDisplay = formatCapacity(capacityData.total_capacity || 0);
+    const memoryPerCore = calculateMemoryPerCore();
 
     return (
         <div className="device_card system-memory-allocated" id="sys-mem-allocated-id">
@@ -250,14 +278,39 @@ export const CapacityCard = ({ viewMode, capacityData, memCapacityData, isLoadin
                     </>
                 ) : (
                     <>
-                        <Chart
-                            chartType="PieChart"
-                            data={getTransformedMemCapacityData()}
-                            options={getUpdatedMemCapacityOptions()}
-                            width="100%"
-                            height="250px"
-                            style={{ marginTop: "-40px", marginLeft: "-40px" }}
-                        />
+                        <div style={{ display: "flex", alignItems: "center" }}>
+                            {/* Memory per core display - Left side */}
+                            {memoryPerCore && (
+                                <div style={{
+                                    color: "white",
+                                    fontSize: "16px",
+                                    fontWeight: "bold",
+                                    marginRight: "50px",
+                                    marginLeft: "5px",
+                                    textAlign: "center"
+                                }}>
+                                    <div style={{ fontSize: "24px", color: "#4CAF50" }}>
+                                        {memoryPerCore}
+                                    </div>
+                                    <div style={{ fontSize: "12px", marginTop: "5px" }}>
+                                        more memory<br />per core
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Pie Chart */}
+                            <div style={{ flex: 1 }}>
+                                <Chart
+                                    chartType="PieChart"
+                                    data={getTransformedMemCapacityData()}
+                                    options={getUpdatedMemCapacityOptions()}
+                                    width="100%"
+                                    height="250px"
+                                    style={{ marginTop: "-40px", marginLeft: "-40px" }}
+                                />
+                            </div>
+                        </div>
+
                         {/* Custom legend with TB values */}
                         <div style={{
                             color: "white",
@@ -298,14 +351,14 @@ CapacityCard.propTypes = {
 
 export const BandwidthCard = ({ viewMode, bandwidthData, isLoading }) => {
     const isCMMB = viewMode === VIEW_MODES.CMMB;
-    const title = isCMMB ? "Expansion Chessis" : "Aggregated cluster CXL";
+    const title = isCMMB ? "Expansion Chessis" : "Aggregated Cluster CXL";
 
     if (isLoading) {
         return (
             <div className="device_card system-memory-allocated" id="sys-mem-allocated-id">
-                <div style={{ color: "white", fontWeight: "bold", fontFamily: "Samsung" }}>
-                    <h4 className="cmmb-memory-heading">
-                        {title} <span style={{ color: "white" }}>Bandwidth</span>
+                <div className="text-white fw-bold" style={{ fontFamily: "Samsung" }}>
+                    <h4 className="cmmb-memory-heading mb-0">
+                        {title} <span className="text-white">Bandwidth</span>
                     </h4>
                 </div>
                 <LoadingSpinner />
@@ -313,25 +366,45 @@ export const BandwidthCard = ({ viewMode, bandwidthData, isLoading }) => {
         );
     }
 
+    const maxBandwidth = bandwidthData.max_bandwidth || 0;
+    const usedBandwidth = bandwidthData.used_bandwidth || 0;
+    const usedPercentage = bandwidthData.used_percentage_bandwidth || 0;
+
     return (
         <div className="device_card system-memory-allocated" id="sys-mem-allocated-id">
-            <div style={{ color: "white", fontWeight: "bold", fontFamily: "Samsung" }}>
-                <h4 className="cmmb-memory-heading">
-                    {title} <span style={{ color: "white" }}>Bandwidth</span>
+            {/* Header */}
+            <div className="text-white fw-bold mb-3" style={{ fontFamily: "Samsung" }}>
+                <h4 className="cmmb-memory-heading mb-0">
+                    {title} <span className="text-white">Bandwidth</span>
                 </h4>
             </div>
-            <div style={{ paddingTop: 12 }}>
-                <div className="progres-bar-label" style={{ color: "white" }}>
-                    {`${bandwidthData.max_bandwidth || 0} GBps`}
-                </div>
+
+            {/* Progress Bar Section */}
+            <div className="pt-3">
+                {/* Progress Bar */}
                 <ProgressBar
+                    now={usedPercentage}
+                    className="host1 mb-2"
                     style={{ height: 24, fontWeight: "bold" }}
-                    now={bandwidthData.used_percentage_bandwidth}
-                    key={1}
-                    className="host1"
                 />
-                <div style={{ color: "white", marginLeft: 200 }}>
-                    {`Used Bandwidth ${bandwidthData.used_bandwidth || 0} GBps`}
+
+                {/* Labels Container */}
+                <div className="d-flex justify-content-between align-items-center text-white">
+                    {/* Left Label - 0 */}
+                    <div className="flex-shrink-0">
+                        <small>0 GBps</small>
+                    </div>
+
+                    {/* Center Label - Used Bandwidth */}
+                    <div className="text-center flex-grow-1 px-2">
+                        <span className="d-none d-md-inline">Used Bandwidth </span>
+                        <span className="fw-bold">{usedBandwidth} GBps</span>
+                    </div>
+
+                    {/* Right Label - Max Bandwidth */}
+                    <div className="flex-shrink-0">
+                        <small>{maxBandwidth} GBps</small>
+                    </div>
                 </div>
             </div>
         </div>

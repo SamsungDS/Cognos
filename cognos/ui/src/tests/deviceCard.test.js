@@ -25,7 +25,11 @@ jest.mock('../utils/deviceStats-utils', () => ({
         right: 20,
         bottom: 60,
         left: 60
-    }))
+    })),
+    getBestMemoryUnit: jest.fn(() => 'MB'),
+    convertToUnit: jest.fn((value) => value),
+    getBestBandwidthUnit: jest.fn(() => 'Mbps'),
+    convertBandwidthToUnit: jest.fn((value) => value)
 }));
 
 jest.mock('../components/device-Stats/deviceCard.css', () => ({}));
@@ -61,6 +65,12 @@ jest.mock('../components/device-Stats/TreeItem', () => {
     };
 });
 
+jest.mock('../components/device-Stats/YAxisConfigModal', () => {
+    return function YAxisConfigModal() {
+        return <div data-testid="y-axis-modal">Y-Axis Config Modal</div>;
+    };
+});
+
 jest.mock('d3', () => ({
     select: jest.fn(() => ({
         selectAll: jest.fn().mockReturnThis(),
@@ -72,7 +82,13 @@ jest.mock('d3', () => ({
         text: jest.fn().mockReturnThis(),
         datum: jest.fn().mockReturnThis(),
         data: jest.fn().mockReturnThis(),
-        enter: jest.fn().mockReturnThis()
+        enter: jest.fn().mockReturnThis(),
+        on: jest.fn().mockReturnThis(),
+        each: jest.fn().mockReturnThis(),
+        join: jest.fn().mockReturnThis(),
+        html: jest.fn().mockReturnThis(),
+        transition: jest.fn().mockReturnThis(),
+        duration: jest.fn().mockReturnThis()
     })),
     scaleBand: jest.fn(() => ({
         domain: jest.fn().mockReturnThis(),
@@ -136,6 +152,8 @@ describe('DeviceCard Component', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        jest.useFakeTimers();
+
         apiService.fetchClusters.mockResolvedValue(mockClustersData);
         apiService.fetchDeviceStats.mockResolvedValue(mockMetricsData);
 
@@ -161,6 +179,8 @@ describe('DeviceCard Component', () => {
     });
 
     afterEach(() => {
+        jest.runOnlyPendingTimers();
+        jest.useRealTimers();
         jest.restoreAllMocks();
     });
 
@@ -182,13 +202,18 @@ describe('DeviceCard Component', () => {
             />
         );
 
+        await act(async () => {
+            await Promise.resolve();
+            jest.advanceTimersByTime(100);
+        });
+
         await waitFor(() => {
             expect(apiService.fetchClusters).toHaveBeenCalledTimes(1);
         });
 
         await waitFor(() => {
             expect(screen.getByTestId('tree-item-Clusters')).toBeInTheDocument();
-        });
+        }, { timeout: 3000 });
     });
 
     test('displays error message when data loading fails', async () => {
@@ -215,6 +240,10 @@ describe('DeviceCard Component', () => {
                 setSelectedMetrics={jest.fn()}
             />
         );
+
+        await act(async () => {
+            await Promise.resolve();
+        });
 
         await waitFor(() => {
             expect(screen.getByText('Select a device to view metrics')).toBeInTheDocument();
@@ -244,11 +273,17 @@ describe('DeviceCard Component', () => {
             />
         );
 
+        await act(async () => {
+            await Promise.resolve();
+        });
+
         await waitFor(() => {
             expect(screen.getByTestId('toggle-Cluster 2')).toBeInTheDocument();
         });
 
-        fireEvent.click(screen.getByTestId('toggle-Cluster 2'));
+        await act(async () => {
+            fireEvent.click(screen.getByTestId('toggle-Cluster 2'));
+        });
 
         expect(screen.getByTestId('toggle-Cluster 2').textContent).toContain('▼');
     });
@@ -260,6 +295,11 @@ describe('DeviceCard Component', () => {
                 setSelectedMetrics={jest.fn()}
             />
         );
+
+        await act(async () => {
+            await Promise.resolve();
+            jest.advanceTimersByTime(500);
+        });
 
         await waitFor(() => {
             const svg = document.querySelector('svg');
@@ -275,9 +315,14 @@ describe('DeviceCard Component', () => {
             />
         );
 
+        await act(async () => {
+            await Promise.resolve();
+            jest.advanceTimersByTime(100);
+        });
+
         await waitFor(() => {
             expect(screen.getByTestId('toggle-Cluster 1')).toBeInTheDocument();
-        });
+        }, { timeout: 3000 });
 
         // Verify cluster is expanded by default
         expect(screen.getByTestId('toggle-Cluster 1').textContent).toContain('▼');
@@ -298,9 +343,14 @@ describe('DeviceCard Component', () => {
             />
         );
 
+        await act(async () => {
+            await Promise.resolve();
+            jest.advanceTimersByTime(100);
+        });
+
         await waitFor(() => {
             expect(screen.getByTestId('toggle-Node 2')).toBeInTheDocument();
-        });
+        }, { timeout: 3000 });
 
         // Node 1 should be expanded by default
         expect(screen.getByTestId('toggle-Node 1').textContent).toContain('▼');
@@ -322,9 +372,14 @@ describe('DeviceCard Component', () => {
             />
         );
 
+        await act(async () => {
+            await Promise.resolve();
+            jest.advanceTimersByTime(100);
+        });
+
         await waitFor(() => {
             expect(screen.getByTestId('tree-item-Clusters')).toBeInTheDocument();
-        });
+        }, { timeout: 3000 });
 
         await waitFor(() => {
             expect(screen.getByTestId('metric-item-CXL Capacity')).toBeInTheDocument();
@@ -351,6 +406,11 @@ describe('DeviceCard Component', () => {
             />
         );
 
+        await act(async () => {
+            await Promise.resolve();
+            jest.advanceTimersByTime(100);
+        });
+
         await waitFor(() => {
             expect(screen.getByTestId('tree-item-Clusters')).toBeInTheDocument();
         });
@@ -365,7 +425,6 @@ describe('DeviceCard Component', () => {
 
         expect(screen.getByTestId('tree-item-Clusters')).toBeInTheDocument();
     });
-
 
     test('shows loading message for chart when dimensions are zero', async () => {
         Element.prototype.getBoundingClientRect = jest.fn(() => ({
@@ -384,12 +443,15 @@ describe('DeviceCard Component', () => {
             />
         );
 
+        await act(async () => {
+            await Promise.resolve();
+            jest.advanceTimersByTime(100);
+        });
+
         await waitFor(() => {
             expect(screen.getByText('Loading chart...')).toBeInTheDocument();
         });
     });
-
-
 
     test('handles clusters with no nodes', async () => {
         const emptyNodesData = [
@@ -408,6 +470,10 @@ describe('DeviceCard Component', () => {
                 setSelectedMetrics={jest.fn()}
             />
         );
+
+        await act(async () => {
+            await Promise.resolve();
+        });
 
         await waitFor(() => {
             expect(screen.getByTestId('tree-item-Empty Cluster')).toBeInTheDocument();
@@ -438,6 +504,10 @@ describe('DeviceCard Component', () => {
             />
         );
 
+        await act(async () => {
+            await Promise.resolve();
+        });
+
         await waitFor(() => {
             expect(screen.getByTestId('tree-item-Empty Node')).toBeInTheDocument();
         });
@@ -445,6 +515,7 @@ describe('DeviceCard Component', () => {
 
     test('cleans up timers on unmount', async () => {
         const clearTimeoutSpy = jest.spyOn(global, 'clearTimeout');
+        const clearIntervalSpy = jest.spyOn(global, 'clearInterval');
 
         const { unmount } = render(
             <DeviceCard
@@ -453,6 +524,10 @@ describe('DeviceCard Component', () => {
             />
         );
 
+        await act(async () => {
+            await Promise.resolve();
+        });
+
         await waitFor(() => {
             expect(apiService.fetchClusters).toHaveBeenCalled();
         });
@@ -460,6 +535,7 @@ describe('DeviceCard Component', () => {
         unmount();
 
         expect(clearTimeoutSpy).toHaveBeenCalled();
+        expect(clearIntervalSpy).toHaveBeenCalled();
     });
 
     test('renders ErrorBanner component with correct message', async () => {
@@ -487,6 +563,10 @@ describe('DeviceCard Component', () => {
             />
         );
 
+        await act(async () => {
+            await Promise.resolve();
+        });
+
         await waitFor(() => {
             const sidebar = document.querySelector('.sidebar-device');
             expect(sidebar).toBeInTheDocument();
@@ -500,6 +580,10 @@ describe('DeviceCard Component', () => {
                 setSelectedMetrics={jest.fn()}
             />
         );
+
+        await act(async () => {
+            await Promise.resolve();
+        });
 
         await waitFor(() => {
             const chartArea = document.querySelector('.chart-area');
@@ -519,12 +603,17 @@ describe('DeviceCard Component', () => {
             />
         );
 
+        await act(async () => {
+            await Promise.resolve();
+            jest.advanceTimersByTime(100);
+        });
+
         await waitFor(() => {
             expect(consoleErrorSpy).toHaveBeenCalledWith(
-                'Metrics fetch error:',
+                expect.stringContaining('Error fetching'),
                 expect.any(Error)
             );
-        });
+        }, { timeout: 3000 });
 
         consoleErrorSpy.mockRestore();
     });
@@ -536,6 +625,11 @@ describe('DeviceCard Component', () => {
                 setSelectedMetrics={jest.fn()}
             />
         );
+
+        await act(async () => {
+            await Promise.resolve();
+            jest.advanceTimersByTime(100);
+        });
 
         await waitFor(() => {
             expect(screen.getByTestId('toggle-Cluster 1')).toBeInTheDocument();

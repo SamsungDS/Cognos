@@ -17,15 +17,14 @@ const JobManagement = () => {
     fetchJobs();
   }, []);
 
-  // updates every 10 seconds
+  // updates every 5 seconds
   // istanbul ignore next
   useEffect(() => {
     const interval = setInterval(() => {
-      if (!showCreateModal) {
-        console.log("10 sec interval");
+      if (!showCreateModal) {      
         fetchJobs(true); // Silent refresh (no loading state)
       }
-    }, 10000); // 10 seconds
+    }, 5000); // 5 seconds
 
     return () => clearInterval(interval);
   }, [showCreateModal]);

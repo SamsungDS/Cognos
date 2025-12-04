@@ -115,29 +115,12 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
                         if (firstNode.devices?.length > 0) {
                             const firstDevice = firstNode.devices[0];
                             setSelectedDevice(firstDevice);
-                            // istanbul ignore next
-                            const fetchMetricsData = async () => {
-                                try {
-                                    const metricsPromises = Object.entries(selectedMetrics || {})
-                                        .filter(([_, value]) => value)
-                                        .map(([key, metricKey]) =>
-                                            apiService.fetchDeviceStats(selectedDevice.id, metricKey)
-                                                .then(data => ({ metricType: key, data }))
-                                        );
 
-                                    const metricsResults = await Promise.all(metricsPromises);
-                                    const metricsMap = metricsResults.reduce((acc, { metricType, data }) => {
-                                        acc[metricType] = data;
-                                        return acc;
-                                    }, {});
-                                    setMetricsData({ [selectedDevice.id]: metricsMap });
-                                } catch (err) {
-                                    console.error("Metrics fetch error:", err);
-                                }
-                            };
-
-                            await fetchMetricsData();
-                            intervalId = setInterval(fetchMetricsData, 2000);
+                            // Wait for next render cycle to ensure selectedDevice state is updated
+                            // Then start polling with the correct device
+                            setTimeout(() => {
+                                startMetricsPolling(firstDevice);
+                            }, 0);
                         }
                     }
                 }
@@ -151,12 +134,113 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
             }
         };
 
+        const startMetricsPolling = (device) => {
+            // Clear any existing interval
+            if (intervalId) {
+                clearInterval(intervalId);
+            }
+
+            const fetchMetricsData = async () => {
+                if (!device?.id || !selectedMetrics) {
+                    return;
+                }
+
+                try {
+                    const activeMetrics = Object.entries(selectedMetrics)
+                        .filter(([_, value]) => value);
+
+                    if (activeMetrics.length === 0) {
+                        return;
+                    }
+
+                    const metricsPromises = activeMetrics.map(([key, metricKey]) =>
+                        apiService.fetchDeviceStats(device.id, metricKey)
+                            .then(data => ({ metricType: key, data }))
+                            .catch(err => {
+                                console.error(`Error fetching ${key}:`, err);
+                                return { metricType: key, data: [] };
+                            })
+                    );
+
+                    const metricsResults = await Promise.all(metricsPromises);
+                    const metricsMap = metricsResults.reduce((acc, { metricType, data }) => {
+                        acc[metricType] = data;
+                        return acc;
+                    }, {});
+
+                    setMetricsData({ [device.id]: metricsMap });
+                } catch (err) {
+                    console.error("Metrics fetch error:", err);
+                }
+            };
+
+            // Initial fetch
+            fetchMetricsData();
+
+            // Set up polling interval - 5 seconds for production (changed from 2s)
+            intervalId = setInterval(fetchMetricsData, 5000);
+        };
+
         loadData();
 
         return () => {
-            if (intervalId) clearInterval(intervalId);
+            if (intervalId) {
+                clearInterval(intervalId);
+            }
         };
-    }, []);
+    }, []); // Empty dependency array - runs once on mount
+
+    // Add a separate useEffect to handle device/metrics changes
+    useEffect(() => {
+        if (!selectedDevice?.id || !selectedMetrics) {
+            return;
+        }
+
+        let intervalId;
+
+        const fetchMetricsData = async () => {
+            try {
+                const activeMetrics = Object.entries(selectedMetrics)
+                    .filter(([_, value]) => value);
+
+                if (activeMetrics.length === 0) {
+                    setMetricsData({});
+                    return;
+                }
+
+                const metricsPromises = activeMetrics.map(([key, metricKey]) =>
+                    apiService.fetchDeviceStats(selectedDevice.id, metricKey)
+                        .then(data => ({ metricType: key, data }))
+                        .catch(err => {
+                            console.error(`Error fetching ${key}:`, err);
+                            return { metricType: key, data: [] };
+                        })
+                );
+
+                const metricsResults = await Promise.all(metricsPromises);
+                const metricsMap = metricsResults.reduce((acc, { metricType, data }) => {
+                    acc[metricType] = data;
+                    return acc;
+                }, {});
+
+                setMetricsData({ [selectedDevice.id]: metricsMap });
+            } catch (err) {
+                console.error("Metrics fetch error:", err);
+            }
+        };
+
+        // Initial fetch
+        fetchMetricsData();
+
+        // Set up polling interval - 5 seconds
+        intervalId = setInterval(fetchMetricsData, 5000);
+
+        return () => {
+            if (intervalId) {
+                clearInterval(intervalId);
+            }
+        };
+    }, [selectedDevice, selectedMetrics]); // Re-run when device or metrics change
 
     useEffect(() => {
         let mounted = true;

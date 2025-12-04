@@ -81,24 +81,24 @@ const YAxisConfigModal = ({ isOpen, onClose, onSave, currentMin, currentMax }) =
                     </div>
                 )}
 
-                <div className="button-group">
+                <div className="button-yaxis-group">
                     <button
                         onClick={handleReset}
-                        className="btn btn-reset"
+                        className="btn-yaxis btn-yaxis-reset"
                         aria-label="Reset to default values"
                     >
                         Reset to Default
                     </button>
                     <button
                         onClick={handleClose}
-                        className="btn btn-cancel"
+                        className="btn-yaxis btn-yaxis-cancel"
                         aria-label="Cancel"
                     >
                         Cancel
                     </button>
                     <button
                         onClick={handleSave}
-                        className="btn btn-primary"
+                        className="btn-yaxis btn-yaxis-primary"
                         aria-label="Apply changes"
                     >
                         Apply

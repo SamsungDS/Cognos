@@ -1,4 +1,4 @@
-import React, { useContext, useState, useEffect, createContext } from 'react';
+import React, { useContext, useState, useEffect, createContext, useMemo } from 'react';
 import * as constants from '../constant';
 
 // Mock data - moved to top for better organization
@@ -17,16 +17,54 @@ const mockEventData = [
     }
 ];
 
-// Utility function to ensure all events have unique IDs
+// Utility function to parse timestamp to Date object for comparison
+// istanbul ignore next
+const parseTimestamp = (timestamp) => {
+    if (!timestamp) return new Date();
+
+    // Handle ISO 8601 format
+    if (timestamp.includes('T') || timestamp.includes('Z')) {
+        return new Date(timestamp);
+    }
+
+    // Handle time-only format (HH:MM:SS) - use today's date
+    if (/^\d{2}:\d{2}:\d{2}$/.test(timestamp)) {
+        const today = new Date();
+        const [hours, minutes, seconds] = timestamp.split(':').map(Number);
+        today.setHours(hours, minutes, seconds, 0);
+        return today;
+    }
+
+    // Try to parse as standard date string
+    const parsed = new Date(timestamp);
+    return isNaN(parsed.getTime()) ? new Date() : parsed;
+};
+
+// Sort events by timestamp (newest first)
+// istanbul ignore next
+const sortEventsByTime = (eventsArray) => {
+    if (!Array.isArray(eventsArray)) return [];
+
+    return [...eventsArray].sort((a, b) => {
+        const dateA = parseTimestamp(a.timestamp);
+        const dateB = parseTimestamp(b.timestamp);
+        return dateB.getTime() - dateA.getTime(); // Descending order (newest first)
+    });
+};
+
+// Utility function to ensure all events have unique IDs and are sorted by time
 // istanbul ignore next
 const ensureEventIds = (eventsArray) => {
     if (!Array.isArray(eventsArray)) return [];
 
-    return eventsArray.map((event, index) => ({
+    const eventsWithIds = eventsArray.map((event, index) => ({
         ...event,
         // eslint-disable-next-line no-restricted-syntax
         id: event.id || `event-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 11)}`
     }));
+
+    // Sort by time after adding IDs
+    return sortEventsByTime(eventsWithIds);
 };
 
 // Create Events Context with default values
@@ -41,6 +79,7 @@ export const EventsContext = createContext({
     criticalEvents: [],
     warningEvents: [],
     infoEvents: [],
+    errorEvents: [],
     addEvent: () => { },
     removeEvent: () => { },
     clearEvents: () => { },
@@ -49,14 +88,14 @@ export const EventsContext = createContext({
 
 // Events Provider Component
 export const EventsProvider = ({ children }) => {
-    // Main state - initialize with IDs
+
     // eslint-disable-next-line react/hook-use-state
     const [events, setEventsInternal] = useState(() => ensureEventIds(mockEventData));
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState(null);
     const apiEndpoint = constants.Configs.api_endpoint;
 
-    // Wrapper for setEvents that ensures IDs
+    // Wrapper for setEvents that ensures IDs and sorts by time
     // istanbul ignore next
     const setEvents = (eventsOrUpdater) => {
         if (typeof eventsOrUpdater === 'function') {
@@ -86,12 +125,10 @@ export const EventsProvider = ({ children }) => {
 
             // Handle different API response formats
             const eventsData = Array.isArray(data) ? data : data.events || data.alerts || [];
-            console.log("Events Data (raw):", eventsData);
 
-            // Ensure all events have IDs before setting
+            // Complete replacement - API data replaces all old events
+            // Ensure all events have IDs and are sorted by time
             const eventsWithIds = ensureEventIds(eventsData);
-            console.log("Events Data (with IDs):", eventsWithIds);
-
             setEventsInternal(eventsWithIds);
 
         } catch (error) {
@@ -103,16 +140,17 @@ export const EventsProvider = ({ children }) => {
         }
     };
 
-    // Add new event function
+    // Add new event function - automatically maintains time-based sorting
     // istanbul ignore next
     const addEvent = (newEvent) => {
         const event = {
             ...newEvent,
             // eslint-disable-next-line no-restricted-syntax
             id: newEvent.id || `event-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
-            timestamp: newEvent.timestamp || new Date().toLocaleTimeString()
+            timestamp: newEvent.timestamp || new Date().toISOString()
         };
-        setEventsInternal(prev => [event, ...prev]);
+        // Add new event and re-sort to maintain time order
+        setEventsInternal(prev => sortEventsByTime([event, ...prev]));
     };
 
     // Remove event function
@@ -145,11 +183,14 @@ export const EventsProvider = ({ children }) => {
 
     // Helper functions
     const getTotalCount = () => events?.length || 0;
-    const getEventsBySeverity = (severity) => events?.filter(event => event.severity === severity) || [];
+    const getEventsBySeverity = (severity) => {
+        const filtered = events?.filter(event => event.severity === severity) || [];
+        return sortEventsByTime(filtered);
+    };
 
-    // Context value with computed properties
+    // Context value with computed properties - memoized to prevent unnecessary re-renders
     // istanbul ignore next
-    const contextValue = {
+    const contextValue = useMemo(() => ({
         // Main state
         events,
         setEvents,
@@ -168,8 +209,9 @@ export const EventsProvider = ({ children }) => {
         eventCount: events?.length || 0,
         criticalEvents: getEventsBySeverity('critical'),
         warningEvents: getEventsBySeverity('warning'),
-        infoEvents: getEventsBySeverity('info')
-    };
+        infoEvents: getEventsBySeverity('info'),
+        errorEvents: getEventsBySeverity('error')
+    }), [events, isLoading, error]);
 
     return (
         <EventsContext.Provider value={contextValue}>

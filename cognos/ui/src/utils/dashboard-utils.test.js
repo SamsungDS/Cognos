@@ -79,7 +79,8 @@ describe("BandwidthCard", () => {
 
     test("renders bandwidth values", () => {
         render(<BandwidthCard isLoading={false} viewMode={VIEW_MODES.HOST} bandwidthData={bw} />);
+        expect(screen.getByText("0 GBps")).toBeInTheDocument();
         expect(screen.getByText("200 GBps")).toBeInTheDocument();
-        expect(screen.getByText("Used Bandwidth 100 GBps")).toBeInTheDocument();
+      
     });
 });

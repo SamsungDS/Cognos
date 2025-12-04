@@ -76,14 +76,14 @@
 }
 
 /* Button Group */
-.button-group {
+.button-yaxis-group {
     display: flex;
     gap: 10px;
     justify-content: flex-end;
 }
 
 /* Base Button Styles */
-.btn {
+.btn-yaxis {
     padding: 10px 16px;
     color: #fff;
     border: none;
@@ -95,28 +95,28 @@
 }
 
 /* Reset Button */
-.btn-reset {
+.btn-yaxis-reset {
     background-color: #6c757d;
 }
 
-.btn-reset:hover {
+.btn-yaxis-reset:hover {
     background-color: #5a6268;
 }
 
 /* Cancel Button */
-.btn-cancel {
+.btn-yaxis-cancel {
     background-color: #444;
 }
 
-.btn-cancel:hover {
+.btn-yaxis-cancel:hover {
     background-color: #555;
 }
 
 /* Primary Button */
-.btn-primary {
+.btn-yaxis-primary {
     background-color: #0d6efd;
 }
 
-.btn-primary:hover {
+.btn-yaxis-primary:hover {
     background-color: #0b5ed7;
 }
