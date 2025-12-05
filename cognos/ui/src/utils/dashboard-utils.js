@@ -290,7 +290,7 @@ export const CapacityCard = ({ viewMode, capacityData, memCapacityData, isLoadin
                                     textAlign: "center"
                                 }}>
                                     <div style={{ fontSize: "24px", color: "#4CAF50" }}>
-                                        {memoryPerCore}
+                                        {memoryPerCore}x
                                     </div>
                                     <div style={{ fontSize: "12px", marginTop: "5px" }}>
                                         more memory<br />per core

@@ -9,7 +9,7 @@ export const hostSelectorOptions = [
     {value: '', label: 'Select' },
     { value: 'host_1', label: 'Host 1 LNK0' }
   ];
-export const memboxSelectorTitle = 'Select CMM-B:';
+export const memboxSelectorTitle = 'Select MemBox:';
 export const memboxSelectorOptions = [
     {value: 'mb-1', label: 'mb-1'}
   ];

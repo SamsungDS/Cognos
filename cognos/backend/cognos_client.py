@@ -831,7 +831,7 @@ class Cognos(BaseControlInterface):
         self.logger.info(f"RESPONSE DATA: {response_data}")
         if not response_data["response"] or response_data["response"] == ["-22"]:
             self.logger.info("NO ACTIVE DATA MOVEMENT")
-            return None
+            return "0"
         else:
             self.logger.info("--------- DATA BEING MOVED! ----------")
             try:
@@ -1068,7 +1068,7 @@ class Cognos(BaseControlInterface):
                     "targetwrite_p99_latency": targetwrite_p99_latency,
                     "status": "good",
                     "message": "",
-                    "data_moved": ""  # use get stats API from CME
+                    "data_moved": "0"  # use get stats API from CME
                 }
                 self.insert_application(app)
 
