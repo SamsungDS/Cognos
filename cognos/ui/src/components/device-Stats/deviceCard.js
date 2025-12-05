@@ -8,28 +8,34 @@ import YAxisConfigModal from './YAxisConfigModal';
 import {
     metricColors, apiService, getMarginForTimeFilter,
     getBestMemoryUnit,
-    convertToUnit,  
+    convertToUnit,
     getBestBandwidthUnit,
     convertBandwidthToUnit,
 } from '../../utils/deviceStats-utils';
 
-const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
+const DeviceCard = ({
+    selectedMetrics,
+    setSelectedMetrics,
+    globalSelectedDevice,
+    setGlobalSelectedDevice
+}) => {
     const svgRef = useRef();
     const containerRef = useRef();
 
     const [expandedItems, setExpandedItems] = useState({});
-    const [selectedDevice, setSelectedDevice] = useState(null);
     const [clustersData, setClustersData] = useState([]);
     const [metricsData, setMetricsData] = useState({});
     const [loading, setLoading] = useState(true);
     const [timeFilter, setTimeFilter] = useState('3h');
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
     const [error, setError] = useState(null);
-    const [yAxisConfig, setYAxisConfig] = useState({ min: null, max: null, unit: null });
+    const [yAxisConfig, setYAxisConfig] = useState({ min: null, max: null });
     const [showYAxisModal, setShowYAxisModal] = useState(false);
 
+    // Use global selected device instead of local state
+    const selectedDevice = globalSelectedDevice;
+
     // Helper function to determine metric type and available units
-    // istanbul ignore next
     const getMetricInfo = useCallback((metricKey) => {
         if (!metricKey) return { type: 'memory', units: ['Bytes', 'KB', 'MB', 'GB', 'TB'], baseUnit: 'MB' };
 
@@ -57,7 +63,6 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
                 suffix: 'B'
             };
         } else {
-            // Default to generic numeric
             return {
                 type: 'generic',
                 units: ['Value'],
@@ -65,6 +70,34 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
                 suffix: ''
             };
         }
+    }, []);
+    // Calculate automatic Y-axis range with 20% padding
+    const calculateYAxisRange = useCallback((values, metricInfo) => {
+        if (!values || values.length === 0) return { min: 0, max: 100 };
+
+        const maxValue = Math.max(...values);
+        const minValue = Math.min(...values);
+        const range = maxValue - minValue;
+
+        // If all values are the same, create a reasonable range
+        if (range === 0) {
+            const padding = Math.abs(maxValue) * 0.2 || 10;
+            return {
+                min: maxValue - padding,
+                max: maxValue + padding
+            };
+        }
+
+        // Add 20% padding above and below
+        const padding = range * 0.2;
+
+        // For certain metric types, ensure min doesn't go below 0
+        const shouldFloorAtZero = ['bandwidth', 'memory'].includes(metricInfo.type);
+
+        return {
+            min: shouldFloorAtZero ? Math.max(0, minValue - padding) : minValue - padding,
+            max: maxValue + padding
+        };
     }, []);
 
     const updateDimensions = useCallback(() => {
@@ -112,12 +145,10 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
                         const firstNode = firstCluster.nodes[0];
                         initialExpanded[firstNode.name] = true;
 
-                        if (firstNode.devices?.length > 0) {
+                        if (firstNode.devices?.length > 0 && !globalSelectedDevice) {
                             const firstDevice = firstNode.devices[0];
-                            setSelectedDevice(firstDevice);
+                            setGlobalSelectedDevice(firstDevice);
 
-                            // Wait for next render cycle to ensure selectedDevice state is updated
-                            // Then start polling with the correct device
                             setTimeout(() => {
                                 startMetricsPolling(firstDevice);
                             }, 0);
@@ -135,7 +166,6 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
         };
 
         const startMetricsPolling = (device) => {
-            // Clear any existing interval
             if (intervalId) {
                 clearInterval(intervalId);
             }
@@ -174,10 +204,7 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
                 }
             };
 
-            // Initial fetch
             fetchMetricsData();
-
-            // Set up polling interval - 5 seconds for production (changed from 2s)
             intervalId = setInterval(fetchMetricsData, 5000);
         };
 
@@ -188,9 +215,9 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
                 clearInterval(intervalId);
             }
         };
-    }, []); // Empty dependency array - runs once on mount
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Add a separate useEffect to handle device/metrics changes
+    // Separate useEffect to handle device/metrics changes
     useEffect(() => {
         if (!selectedDevice?.id || !selectedMetrics) {
             return;
@@ -229,10 +256,7 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
             }
         };
 
-        // Initial fetch
         fetchMetricsData();
-
-        // Set up polling interval - 5 seconds
         intervalId = setInterval(fetchMetricsData, 5000);
 
         return () => {
@@ -240,7 +264,7 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
                 clearInterval(intervalId);
             }
         };
-    }, [selectedDevice, selectedMetrics]); // Re-run when device or metrics change
+    }, [selectedDevice, selectedMetrics]);
 
     useEffect(() => {
         let mounted = true;
@@ -265,7 +289,6 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
         const handleResize = () => calculateDimensions();
 
         let resizeObserver;
-        // istanbul ignore next
         if (window.ResizeObserver && containerRef.current) {
             resizeObserver = new ResizeObserver((entries) => {
                 for (let entry of entries) {
@@ -289,13 +312,12 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
             mounted = false;
             timers.forEach(timer => clearTimeout(timer));
             window.removeEventListener('resize', handleResize);
-            // istanbul ignore next
             if (resizeObserver) {
                 resizeObserver.disconnect();
             }
         };
     }, [updateDimensions]);
-    // istanbul ignore next
+
     useEffect(() => {
         if (!selectedDevice || !metricsData[selectedDevice.id]) return;
 
@@ -331,51 +353,41 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
             .range([0, width])
             .padding(0.1);
 
-        // Get the first metric key to determine type
         const firstMetricKey = Object.values(selectedMetrics)?.[0] || '';
         const metricInfo = getMetricInfo(firstMetricKey);
 
-        // Get all values and determine best unit based on metric type
+        // Get all values and convert them based on metric type
         const allValues = Object.values(deviceMetrics)
             .flatMap(metricData => metricData.map(d => d.value));
-        const maxValue = Math.max(...allValues, 0);
-        const minValue = Math.min(...allValues, 0);
 
-        let displayUnit, allValuesConverted, yMaxdefault, yMindefault;
+        let displayUnit, allValuesConverted, yAxisRange;
 
-        // ---- Temperature (no conversion) ----
         if (metricInfo.type === "temperature") {
-            displayUnit = yAxisConfig.unit || metricInfo.baseUnit;
-            yMaxdefault = Math.ceil(maxValue * 1.1);
-            yMindefault = Math.floor(minValue * 0.9);
+            displayUnit = metricInfo.baseUnit;
+            yAxisRange = calculateYAxisRange(allValues, metricInfo);
         } else if (metricInfo.type === 'bandwidth') {
-            // Bandwidth: determine best unit (bps, Kbps, Mbps, Gbps)
-            displayUnit = yAxisConfig.unit || getBestBandwidthUnit(maxValue);
+            const maxValue = Math.max(...allValues, 0);
+            displayUnit = getBestBandwidthUnit(maxValue);
             allValuesConverted = allValues.map(v => convertBandwidthToUnit(v, displayUnit, metricInfo.baseUnit));
-            const maxConverted = Math.max(...allValuesConverted, 0);
-            yMaxdefault = Math.ceil(maxConverted * 1.2);
-            yMindefault = 0;
+            yAxisRange = calculateYAxisRange(allValuesConverted, metricInfo);
         } else if (metricInfo.type === 'memory') {
-            // Memory: determine best unit (Bytes, KB, MB, GB, TB)
-            displayUnit = yAxisConfig.unit || getBestMemoryUnit(maxValue);
+            const maxValue = Math.max(...allValues, 0);
+            displayUnit = getBestMemoryUnit(maxValue);
             allValuesConverted = allValues.map(v => convertToUnit(v, displayUnit));
-            const maxConverted = Math.max(...allValuesConverted, 0);
-            yMaxdefault = Math.ceil(maxConverted * 1.2);
-            yMindefault = 0;
+            yAxisRange = calculateYAxisRange(allValuesConverted, metricInfo);
         } else {
-            // Generic: no conversion
-            displayUnit = yAxisConfig.unit || metricInfo.baseUnit;
-            yMaxdefault = Math.ceil(maxValue * 1.2);
-            yMindefault = Math.floor(Math.min(0, minValue));
+            displayUnit = metricInfo.baseUnit;
+            yAxisRange = calculateYAxisRange(allValues, metricInfo);
         }
 
-        // Use custom Y-axis config if set, otherwise use defaults
-        const yMin = yAxisConfig.min !== null ? yAxisConfig.min : yMindefault;
-        const yMax = yAxisConfig.max !== null ? yAxisConfig.max : yMaxdefault;
+        // Use custom Y-axis config if set, otherwise use auto-calculated with 20% padding
+        const yMin = yAxisConfig.min !== null ? yAxisConfig.min : yAxisRange.min;
+        const yMax = yAxisConfig.max !== null ? yAxisConfig.max : yAxisRange.max;
 
         const yScale = d3.scaleLinear()
             .domain([yMin, yMax])
-            .range([height, 0]);
+            .range([height, 0])
+            .nice(); // Makes the axis values "nice" round numbers
 
         const line = d3.line()
             .x(d => xScale(d.time) + xScale.bandwidth() / 2)
@@ -421,7 +433,7 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
             .attr('dx', shouldRotate ? '-.8em' : '0')
             .attr('dy', shouldRotate ? '.15em' : '.71em');
 
-        // Y-axis (Clickable)
+        // Y-axis (Clickable to configure)
         const yAxisGroup = g.append("g")
             .call(d3.axisLeft(yScale).ticks(5))
             .style("cursor", "pointer")
@@ -436,19 +448,21 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
                     .text(d.toLocaleString());
             });
 
-        // Add tooltip to Y-axis to indicate it's clickable
+        // Add tooltip to Y-axis
         yAxisGroup.append('title')
-            .text('Click to configure Y-axis range and unit');
+            .text('Click to manually configure Y-axis range (currently ' +
+                (yAxisConfig.min !== null || yAxisConfig.max !== null ? 'manual' : 'auto with 20% padding') + ')');
 
-        // Y-axis Label
-        g.append("text")
+        // Y-axis Label with indicator
+        const yAxisLabel = g.append("text")
             .attr("transform", "rotate(-90)")
             .attr("x", -height / 2)
             .attr("y", -margin.left + 7.5)
             .attr("text-anchor", "middle")
             .attr("fill", "#fff")
-            .style("font-size", fontSize)
-            .text(displayUnit);
+            .style("font-size", fontSize);
+
+        yAxisLabel.text(displayUnit);        
 
         g.selectAll(".domain").attr("stroke", "#555");
         g.selectAll(".tick line").attr("stroke", "#555");
@@ -463,7 +477,7 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
             .style('font-size', fontSize)
             .text('Time');
 
-        // Create tooltip (add this ONCE before the forEach loop)
+        // Tooltip
         const tooltip = d3.select('body')
             .selectAll('.line-graph-tooltip')
             .data([null])
@@ -493,7 +507,7 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
                 .attr('stroke-opacity', 0.8)
                 .attr('d', line);
 
-            // Draw dots with tooltip - Using appropriate conversion based on metric type
+            // Draw dots with tooltip
             g.selectAll(`.dots-${metricType.replace(/\s/g, '-')}`)
                 .data(data)
                 .enter()
@@ -515,8 +529,6 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
                 .attr("stroke", "#1a1a1a")
                 .attr("stroke-width", 1)
                 .style("cursor", "pointer")
-
-                // ---- Tooltip Fix (matches Y-axis unit exactly!) ----
                 .on("mouseenter", function (event, d) {
                     d3.select(this)
                         .transition()
@@ -588,7 +600,7 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
             legendY += 18;
         });
 
-    }, [selectedDevice, metricsData, dimensions, updateDimensions, timeFilter, yAxisConfig, selectedMetrics, getMetricInfo]);
+    }, [selectedDevice, metricsData, dimensions, updateDimensions, timeFilter, selectedMetrics, getMetricInfo, calculateYAxisRange, yAxisConfig]);
 
     const toggleExpanded = useCallback((item, level = 0) => {
         setExpandedItems(prev => {
@@ -632,9 +644,10 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
             return newExpanded;
         });
     }, [clustersData]);
-    // istanbul ignore next
+
     const selectDevice = async (device) => {
-        setSelectedDevice(device);
+        // Update global selected device - this will propagate to all widgets
+        setGlobalSelectedDevice(device);
 
         if (!metricsData[device.id]) {
             try {
@@ -661,15 +674,14 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
             }
         }
     };
-    // istanbul ignore next
+
     const handleYAxisSave = (config) => {
         setYAxisConfig(config);
     };
 
-    // Get metric info for modal
-    // istanbul ignore next
-    const firstMetricKey = Object.values(selectedMetrics)?.[0] || '';
-    const currentMetricInfo = getMetricInfo(firstMetricKey);
+    const handleYAxisReset = () => {
+        setYAxisConfig({ min: null, max: null });
+    };
 
     return (
         <div className="device-card-container">
@@ -698,11 +710,9 @@ const DeviceCard = ({ selectedMetrics, setSelectedMetrics }) => {
                 isOpen={showYAxisModal}
                 onClose={() => setShowYAxisModal(false)}
                 onSave={handleYAxisSave}
+                onReset={handleYAxisReset}
                 currentMin={yAxisConfig.min}
                 currentMax={yAxisConfig.max}
-                currentUnit={yAxisConfig.unit}
-                availableUnits={currentMetricInfo.units}
-                defaultUnit={currentMetricInfo.baseUnit}
             />
         </div>
     );
@@ -850,7 +860,12 @@ ChartArea.propTypes = {
 };
 DeviceCard.propTypes = {
     selectedMetrics: PropTypes.objectOf(PropTypes.string),
-    setSelectedMetrics: PropTypes.func
+    setSelectedMetrics: PropTypes.func,
+    globalSelectedDevice: PropTypes.shape({
+        id: PropTypes.string.isRequired,
+        name: PropTypes.string.isRequired
+    }),
+    setGlobalSelectedDevice: PropTypes.func.isRequired
 };
 
 export default DeviceCard;

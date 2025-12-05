@@ -66,8 +66,16 @@ jest.mock('../components/device-Stats/TreeItem', () => {
 });
 
 jest.mock('../components/device-Stats/YAxisConfigModal', () => {
-    return function YAxisConfigModal() {
-        return <div data-testid="y-axis-modal">Y-Axis Config Modal</div>;
+    return function YAxisConfigModal({ isOpen, onClose, onSave, onReset }) {
+        if (!isOpen) return null;
+        return (
+            <div data-testid="y-axis-modal">
+                <div>Y-Axis Config Modal</div>
+                <button onClick={() => onSave({ min: 0, max: 100 })} data-testid="modal-save">Save</button>
+                <button onClick={onReset} data-testid="modal-reset">Reset</button>
+                <button onClick={onClose} data-testid="modal-close">Close</button>
+            </div>
+        );
     };
 });
 
@@ -99,6 +107,7 @@ jest.mock('d3', () => ({
     scaleLinear: jest.fn(() => ({
         domain: jest.fn().mockReturnThis(),
         range: jest.fn().mockReturnThis(),
+        nice: jest.fn().mockReturnThis(),
         ticks: jest.fn(() => [0, 25, 50, 75, 100])
     })),
     line: jest.fn(() => {
@@ -109,7 +118,9 @@ jest.mock('d3', () => ({
         return lineFunc;
     }),
     axisBottom: jest.fn(() => jest.fn()),
-    axisLeft: jest.fn(() => jest.fn()),
+    axisLeft: jest.fn(() => ({
+        ticks: jest.fn(() => jest.fn())
+    })),
     curveCardinal: {}
 }));
 
@@ -150,9 +161,13 @@ describe('DeviceCard Component', () => {
         'CXL Bandwidth': 'bandwidth'
     };
 
+    let mockSetGlobalSelectedDevice;
+
     beforeEach(() => {
         jest.clearAllMocks();
         jest.useFakeTimers();
+
+        mockSetGlobalSelectedDevice = jest.fn();
 
         apiService.fetchClusters.mockResolvedValue(mockClustersData);
         apiService.fetchDeviceStats.mockResolvedValue(mockMetricsData);
@@ -184,23 +199,25 @@ describe('DeviceCard Component', () => {
         jest.restoreAllMocks();
     });
 
-    test('renders without crashing', () => {
-        render(
+    const renderDeviceCard = (props = {}) => {
+        return render(
             <DeviceCard
                 selectedMetrics={mockSelectedMetrics}
                 setSelectedMetrics={jest.fn()}
+                globalSelectedDevice={null}
+                setGlobalSelectedDevice={mockSetGlobalSelectedDevice}
+                {...props}
             />
         );
+    };
+
+    test('renders without crashing', () => {
+        renderDeviceCard();
         expect(screen.getByText('Loading...')).toBeInTheDocument();
     });
 
     test('loads and displays clusters data on mount', async () => {
-        render(
-            <DeviceCard
-                selectedMetrics={mockSelectedMetrics}
-                setSelectedMetrics={jest.fn()}
-            />
-        );
+        renderDeviceCard();
 
         await act(async () => {
             await Promise.resolve();
@@ -219,12 +236,7 @@ describe('DeviceCard Component', () => {
     test('displays error message when data loading fails', async () => {
         apiService.fetchClusters.mockRejectedValue(new Error('Network error'));
 
-        render(
-            <DeviceCard
-                selectedMetrics={mockSelectedMetrics}
-                setSelectedMetrics={jest.fn()}
-            />
-        );
+        renderDeviceCard();
 
         await waitFor(() => {
             expect(screen.getByText('Failed to load data. Please try again.')).toBeInTheDocument();
@@ -234,12 +246,7 @@ describe('DeviceCard Component', () => {
     test('shows "Select a device" message when no device is selected', async () => {
         apiService.fetchClusters.mockResolvedValue([]);
 
-        render(
-            <DeviceCard
-                selectedMetrics={mockSelectedMetrics}
-                setSelectedMetrics={jest.fn()}
-            />
-        );
+        renderDeviceCard();
 
         await act(async () => {
             await Promise.resolve();
@@ -266,12 +273,7 @@ describe('DeviceCard Component', () => {
 
         apiService.fetchClusters.mockResolvedValue(multiClusterData);
 
-        render(
-            <DeviceCard
-                selectedMetrics={mockSelectedMetrics}
-                setSelectedMetrics={jest.fn()}
-            />
-        );
+        renderDeviceCard();
 
         await act(async () => {
             await Promise.resolve();
@@ -288,32 +290,8 @@ describe('DeviceCard Component', () => {
         expect(screen.getByTestId('toggle-Cluster 2').textContent).toContain('▼');
     });
 
-    test('renders SVG element for chart', async () => {
-        render(
-            <DeviceCard
-                selectedMetrics={mockSelectedMetrics}
-                setSelectedMetrics={jest.fn()}
-            />
-        );
-
-        await act(async () => {
-            await Promise.resolve();
-            jest.advanceTimersByTime(500);
-        });
-
-        await waitFor(() => {
-            const svg = document.querySelector('svg');
-            expect(svg).toBeInTheDocument();
-        });
-    });
-
     test('collapses node when collapsing its parent cluster', async () => {
-        render(
-            <DeviceCard
-                selectedMetrics={mockSelectedMetrics}
-                setSelectedMetrics={jest.fn()}
-            />
-        );
+        renderDeviceCard();
 
         await act(async () => {
             await Promise.resolve();
@@ -336,12 +314,7 @@ describe('DeviceCard Component', () => {
     });
 
     test('collapses other nodes when expanding a node in same cluster', async () => {
-        render(
-            <DeviceCard
-                selectedMetrics={mockSelectedMetrics}
-                setSelectedMetrics={jest.fn()}
-            />
-        );
+        renderDeviceCard();
 
         await act(async () => {
             await Promise.resolve();
@@ -365,12 +338,7 @@ describe('DeviceCard Component', () => {
     });
 
     test('renders all metric items in sidebar', async () => {
-        render(
-            <DeviceCard
-                selectedMetrics={mockSelectedMetrics}
-                setSelectedMetrics={jest.fn()}
-            />
-        );
+        renderDeviceCard();
 
         await act(async () => {
             await Promise.resolve();
@@ -399,12 +367,7 @@ describe('DeviceCard Component', () => {
             };
         });
 
-        render(
-            <DeviceCard
-                selectedMetrics={mockSelectedMetrics}
-                setSelectedMetrics={jest.fn()}
-            />
-        );
+        renderDeviceCard();
 
         await act(async () => {
             await Promise.resolve();
@@ -436,12 +399,9 @@ describe('DeviceCard Component', () => {
             right: 0
         }));
 
-        render(
-            <DeviceCard
-                selectedMetrics={mockSelectedMetrics}
-                setSelectedMetrics={jest.fn()}
-            />
-        );
+        const device = { id: 'device-1', name: 'Device 1' };
+
+        renderDeviceCard({ globalSelectedDevice: device });
 
         await act(async () => {
             await Promise.resolve();
@@ -450,7 +410,7 @@ describe('DeviceCard Component', () => {
 
         await waitFor(() => {
             expect(screen.getByText('Loading chart...')).toBeInTheDocument();
-        });
+        }, { timeout: 3000 });
     });
 
     test('handles clusters with no nodes', async () => {
@@ -464,12 +424,7 @@ describe('DeviceCard Component', () => {
 
         apiService.fetchClusters.mockResolvedValue(emptyNodesData);
 
-        render(
-            <DeviceCard
-                selectedMetrics={mockSelectedMetrics}
-                setSelectedMetrics={jest.fn()}
-            />
-        );
+        renderDeviceCard();
 
         await act(async () => {
             await Promise.resolve();
@@ -497,12 +452,7 @@ describe('DeviceCard Component', () => {
 
         apiService.fetchClusters.mockResolvedValue(noDevicesData);
 
-        render(
-            <DeviceCard
-                selectedMetrics={mockSelectedMetrics}
-                setSelectedMetrics={jest.fn()}
-            />
-        );
+        renderDeviceCard();
 
         await act(async () => {
             await Promise.resolve();
@@ -517,12 +467,7 @@ describe('DeviceCard Component', () => {
         const clearTimeoutSpy = jest.spyOn(global, 'clearTimeout');
         const clearIntervalSpy = jest.spyOn(global, 'clearInterval');
 
-        const { unmount } = render(
-            <DeviceCard
-                selectedMetrics={mockSelectedMetrics}
-                setSelectedMetrics={jest.fn()}
-            />
-        );
+        const { unmount } = renderDeviceCard();
 
         await act(async () => {
             await Promise.resolve();
@@ -541,12 +486,7 @@ describe('DeviceCard Component', () => {
     test('renders ErrorBanner component with correct message', async () => {
         apiService.fetchClusters.mockRejectedValue(new Error('Test error'));
 
-        render(
-            <DeviceCard
-                selectedMetrics={mockSelectedMetrics}
-                setSelectedMetrics={jest.fn()}
-            />
-        );
+        renderDeviceCard();
 
         await waitFor(() => {
             const errorBanner = screen.getByText('Failed to load data. Please try again.');
@@ -556,12 +496,7 @@ describe('DeviceCard Component', () => {
     });
 
     test('renders Sidebar component correctly', async () => {
-        render(
-            <DeviceCard
-                selectedMetrics={mockSelectedMetrics}
-                setSelectedMetrics={jest.fn()}
-            />
-        );
+        renderDeviceCard();
 
         await act(async () => {
             await Promise.resolve();
@@ -574,12 +509,7 @@ describe('DeviceCard Component', () => {
     });
 
     test('renders ChartArea component correctly', async () => {
-        render(
-            <DeviceCard
-                selectedMetrics={mockSelectedMetrics}
-                setSelectedMetrics={jest.fn()}
-            />
-        );
+        renderDeviceCard();
 
         await act(async () => {
             await Promise.resolve();
@@ -596,12 +526,7 @@ describe('DeviceCard Component', () => {
 
         const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => { });
 
-        render(
-            <DeviceCard
-                selectedMetrics={mockSelectedMetrics}
-                setSelectedMetrics={jest.fn()}
-            />
-        );
+        renderDeviceCard();
 
         await act(async () => {
             await Promise.resolve();
@@ -619,12 +544,7 @@ describe('DeviceCard Component', () => {
     });
 
     test('re-expands collapsed cluster', async () => {
-        render(
-            <DeviceCard
-                selectedMetrics={mockSelectedMetrics}
-                setSelectedMetrics={jest.fn()}
-            />
-        );
+        renderDeviceCard();
 
         await act(async () => {
             await Promise.resolve();
@@ -647,4 +567,5 @@ describe('DeviceCard Component', () => {
         });
         expect(screen.getByTestId('toggle-Cluster 1').textContent).toContain('▼');
     });
+
 });

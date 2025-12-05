@@ -19,12 +19,12 @@ const SideBar = ({ children }) => {
       datatestid: 'menu-item-0',
       allowedRoles: ['admin', 'guest'],
     },
-    {
-      path: "/configure",
-      icon: <ConfigureIcon />,
-      datatestid: 'menu-item-1',
-      allowedRoles: ['admin']
-    },
+    // {
+    //   path: "/configure",
+    //   icon: <ConfigureIcon />,
+    //   datatestid: 'menu-item-1',
+    //   allowedRoles: ['admin']
+    // },
     {
       path: "/metrics",
       icon: <MetricsIcon />,

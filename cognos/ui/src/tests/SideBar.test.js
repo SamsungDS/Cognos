@@ -58,7 +58,7 @@ describe('SideBar Component', () => {
 
     // All menu items should be visible for admin
     expect(screen.getByTestId('menu-item-0')).toBeInTheDocument(); // Dashboard
-    expect(screen.getByTestId('menu-item-1')).toBeInTheDocument(); // Configure
+    // expect(screen.getByTestId('menu-item-1')).toBeInTheDocument(); // Configure
     expect(screen.getByTestId('menu-item-2')).toBeInTheDocument(); // Metrics
     expect(screen.getByTestId('menu-item-3')).toBeInTheDocument(); // Jobs
     expect(screen.getByTestId('menu-item-4')).toBeInTheDocument(); // About
@@ -73,7 +73,7 @@ describe('SideBar Component', () => {
 
     // Guest should only see Dashboard, Metrics, and About
     expect(screen.getByTestId('menu-item-0')).toBeInTheDocument(); // Dashboard
-    expect(screen.queryByTestId('menu-item-1')).not.toBeInTheDocument(); // Configure (admin only)
+    // expect(screen.queryByTestId('menu-item-1')).not.toBeInTheDocument(); // Configure (admin only)
     expect(screen.getByTestId('menu-item-2')).toBeInTheDocument(); // Metrics
     expect(screen.queryByTestId('menu-item-3')).not.toBeInTheDocument(); // Jobs (admin only)
     expect(screen.getByTestId('menu-item-5')).toBeInTheDocument(); // About
@@ -87,11 +87,11 @@ describe('SideBar Component', () => {
     );
 
     const links = screen.getAllByRole('link');
-    expect(links).toHaveLength(7);
+    expect(links).toHaveLength(6);
 
     // Check specific paths
     expect(screen.getByRole('link', { name: /dashboard icon/i })).toHaveAttribute('href', '/');
-    expect(screen.getByRole('link', { name: /configure icon/i })).toHaveAttribute('href', '/configure');
+    // expect(screen.getByRole('link', { name: /configure icon/i })).toHaveAttribute('href', '/configure');
     expect(screen.getByRole('link', { name: /metrics icon/i })).toHaveAttribute('href', '/metrics');
     expect(screen.getByRole('link', { name: /autotier icon/i })).toHaveAttribute('href', '/application_view');
     expect(screen.getByRole('link', { name: /about icon/i })).toHaveAttribute('href', '/about');
@@ -118,7 +118,7 @@ describe('SideBar Component', () => {
     );
 
     expect(screen.getByTestId('dashboard-icon')).toBeInTheDocument();
-    expect(screen.getByTestId('configure-icon')).toBeInTheDocument();
+    // expect(screen.getByTestId('configure-icon')).toBeInTheDocument();
     expect(screen.getByTestId('metrics-icon')).toBeInTheDocument();
     expect(screen.getByTestId('autotier-icon')).toBeInTheDocument();
     expect(screen.getByTestId('about-icon')).toBeInTheDocument();
@@ -148,7 +148,7 @@ describe('SideBar Component', () => {
 
     // No menu items should be visible for unknown role
     expect(screen.queryByTestId('menu-item-0')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('menu-item-1')).not.toBeInTheDocument();
+    // expect(screen.queryByTestId('menu-item-1')).not.toBeInTheDocument();
     expect(screen.queryByTestId('menu-item-2')).not.toBeInTheDocument();
     expect(screen.queryByTestId('menu-item-3')).not.toBeInTheDocument();
     expect(screen.queryByTestId('menu-item-4')).not.toBeInTheDocument();
@@ -177,7 +177,7 @@ describe('SideBar Component', () => {
     );
 
     // Admin should see 5 items
-    expect(screen.getAllByRole('link')).toHaveLength(7);
+    expect(screen.getAllByRole('link')).toHaveLength(6);
 
     // Re-render with guest role
     rerender(
@@ -198,7 +198,7 @@ describe('SideBar Component', () => {
     );
 
     // Verify each menu item has the correct data-testid
-    const menuItems = ['menu-item-0', 'menu-item-1', 'menu-item-2', 'menu-item-3', 'menu-item-4', 'menu-item-5'];
+    const menuItems = ['menu-item-0', 'menu-item-2', 'menu-item-3', 'menu-item-4', 'menu-item-5'];
 
     menuItems.forEach(testId => {
       expect(screen.getByTestId(testId)).toBeInTheDocument();

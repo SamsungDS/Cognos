@@ -46,7 +46,7 @@ function App() {
             }
           />
 
-          <Route
+          {/* <Route
             path="/configure"
             element={
               <ProtectedRoute allowedRoles={["admin"]}>
@@ -58,7 +58,7 @@ function App() {
                 </div>
               </ProtectedRoute>
             }
-          />
+          /> */}
 
           <Route
             path="/metrics"

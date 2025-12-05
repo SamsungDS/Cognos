@@ -9,7 +9,7 @@ const Events = () => {
     const [selectedFilter, setSelectedFilter] = useState('all');
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedEvents, setSelectedEvents] = useState([]);
-    const [expandedEvent, setExpandedEvent] = useState(null); // Changed from showDetails to expandedEvent
+    const [expandedEvent, setExpandedEvent] = useState(null);
 
     const severityConfig = {
         critical: {
@@ -70,31 +70,41 @@ const Events = () => {
         },
     };
 
+    // Severity grouping for filtering and counting
+    const severityGroups = {
+        critical: ['critical', 'failed'],
+        warning: ['warning', 'degraded'],
+        info: ['info', 'Normal', 'good'],
+        error: ['error']
+    };
+
+    // Helper function to check if an event matches a filter group
+    const eventMatchesFilterGroup = (eventSeverity, filterValue) => {
+        if (filterValue === 'all') return true;
+        return severityGroups[filterValue]?.includes(eventSeverity) || false;
+    };
+
+    // Calculate counts for each filter group
+    const getFilterCount = (filterValue) => {
+        if (filterValue === 'all') return events.length;
+        return events.filter(e => eventMatchesFilterGroup(e.severity, filterValue)).length;
+    };
+
     const filterOptions = [
-        { value: 'all', label: 'All Events', count: events.length },
-        { value: 'critical', label: 'Critical', count: events.filter(e => e.severity === 'critical').length },
-        { value: 'warning', label: 'Warnings', count: events.filter(e => e.severity === 'warning').length },
-        { value: 'info', label: 'Info', count: events.filter(e => e.severity === 'info').length },
-        { value: 'error', label: 'Error', count: events.filter(e => e.severity === 'error').length }
+        { value: 'all', label: 'All Events', count: getFilterCount('all') },
+        { value: 'critical', label: 'Critical', count: getFilterCount('critical') },
+        { value: 'warning', label: 'Warnings', count: getFilterCount('warning') },
+        { value: 'info', label: 'Info', count: getFilterCount('info') },
+        { value: 'error', label: 'Error', count: getFilterCount('error') }
     ];
 
+    // Updated filtering logic to use severity groups
     const filteredEvents = events.filter(event => {
-        const matchesFilter = selectedFilter === 'all' || event.severity === selectedFilter;
+        const matchesFilter = eventMatchesFilterGroup(event.severity, selectedFilter);
         const matchesSearch = event.node_name.toLowerCase().includes(searchTerm.toLowerCase());
         return matchesFilter && matchesSearch;
     });
 
-    
-    // const dismissEvent = (eventId) => {
-    //     setEvents(events.filter(event => event.id !== eventId));
-    //     setSelectedEvents(selectedEvents.filter(id => id !== eventId));
-    //     // Close expanded event if it's being dismissed
-    //     if (expandedEvent === eventId) {
-    //         setExpandedEvent(null);
-    //     }
-    // };
-
-    
     const toggleSelectEvent = (eventId) => {
         setSelectedEvents(prev =>
             prev.includes(eventId)
@@ -103,23 +113,6 @@ const Events = () => {
         );
     };
 
-    
-    // const clearSelectedEvents = () => {
-    //     setEvents(events.filter(event => !selectedEvents.includes(event.id)));
-    //     setSelectedEvents([]);
-    //     setExpandedEvent(null); // Close any expanded event
-    // };
-    
-    
-    // const clearAllEvents = () => {
-    //     if (selectedFilter === 'all') {
-    //         setEvents([]);
-    //     } else {
-    //         setEvents(events.filter(event => event.severity !== selectedFilter));
-    //     }
-    //     setSelectedEvents([]);
-    //     setExpandedEvent(null); // Close any expanded event
-    // };
     const toggleEventExpansion = (eventId) => {
         setExpandedEvent(expandedEvent === eventId ? null : eventId);
     };
@@ -152,12 +145,11 @@ const Events = () => {
 
         return (
             <div
-                // NOSONAR - card container, not interactive
                 className="card mb-3 shadow-sm border-4"
                 style={{
                     borderLeft: `4px solid ${config.color}`,
                     backgroundColor: isSelected ? '#57595aff' : '#5b646dff',
-                    transition: 'all 0.3s ease',                   
+                    transition: 'all 0.3s ease',
                     minHeight: isExpanded ? 'auto' : '110px'
                 }}
                 onMouseEnter={(e) => e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)'}
@@ -229,17 +221,9 @@ const Events = () => {
                                     </>
                                 )}
                             </button>
-                            {/* <button
-                                onClick={() => dismissEvent(event.id)}
-                                className="btn btn-sm btn-outline-danger d-flex align-items-center"
-                                title="Dismiss event"
-                            >
-                                <X size={14} />
-                            </button> */}
                         </div>
                     </div>
 
-                    {/* Expandable Details Section */}
                     {isExpanded && (
                         <div
                             className="mt-3 pt-3 border-top"
@@ -249,8 +233,6 @@ const Events = () => {
                             }}
                         >
                             <div className="row g-3">
-
-                                {/* Additional details section */}
                                 <div className="col-12">
                                     <div
                                         className="p-3 rounded"
@@ -277,6 +259,7 @@ const Events = () => {
             </div>
         );
     };
+
     EventCard.propTypes = {
         event: PropTypes.shape({
             id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
@@ -292,6 +275,7 @@ const Events = () => {
             payload: PropTypes.string.isRequired
         }).isRequired,
     };
+
     return (
         <div className="custom-container">
             {/* Header */}
@@ -305,27 +289,6 @@ const Events = () => {
                         <p className="text-white mb-0" style={{ fontSize: '0.9rem' }}>
                             Monitor and manage system events
                         </p>
-                    </div>
-
-                    <div className="d-flex align-items-center gap-3">
-                        <button
-                            className="btn btn-outline-primary-refresh memory-box-title d-flex align-items-center"
-                            onClick={() => setEvents()}
-                            disabled
-                        >
-                            <RefreshCw size={16} className="me-2" />
-                            Refresh
-                        </button>
-
-                        {/* {selectedEvents.length > 0 && (
-                            <button
-                                className="btn btn-danger d-flex align-items-center"
-                                onClick={clearSelectedEvents}
-                            >
-                                <Trash2 size={16} className="me-2" />
-                                Clear Selected ({selectedEvents.length})
-                            </button>
-                        )} */}
                     </div>
                 </div>
             </div>
@@ -387,16 +350,6 @@ const Events = () => {
                                     ))}
                                 </select>
                             </div>
-
-                            {/* <div className="col-md-6 text-end">
-                                <button
-                                    className="btn btn-outline-danger"
-                                    onClick={clearAllEvents}
-                                    disabled={filteredEvents.length === 0}
-                                >
-                                    Clear {selectedFilter === 'all' ? 'All' : selectedFilter} Events
-                                </button>
-                            </div> */}
                         </div>
                     </div>
                 </div>

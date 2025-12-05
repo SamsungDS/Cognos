@@ -100,13 +100,6 @@ describe('Events Component', () => {
             expect(screen.getByTestId('bell')).toBeInTheDocument();
         });
 
-        test('renders refresh button', () => {
-            render(<Events />);
-
-            const refreshButton = screen.getByRole('button', { name: /refresh/i });
-            expect(refreshButton).toBeInTheDocument();
-            expect(refreshButton).toBeDisabled();
-        });
 
         test('renders stats cards for each severity level', () => {
             render(<Events />);
