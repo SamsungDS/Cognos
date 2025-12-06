@@ -769,7 +769,7 @@ class Cognos(BaseControlInterface):
         return payload
 
     def get_events(self):
-        return self.influx_client.get_cognos_events_past(5)
+        return self.influx_client.get_cognos_events_past(720)
 
     def get_device_stats(self) -> List:
         try:

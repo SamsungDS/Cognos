@@ -208,10 +208,10 @@ export const formatYAxisNumber = (value) => {
  * @returns {string} Best unit for display
  */
 export const getBestBandwidthUnit = (maxValue) => {
-    if (maxValue >= 1000) return 'Gbps';
-    if (maxValue >= 1) return 'Mbps';
+    if (maxValue >= 1000) return 'GBps';
+    if (maxValue >= 1) return 'MBps';
     if (maxValue >= 0.001) return 'Kbps';
-    return 'bps';
+    return 'Bps';
 };
 
 /**
@@ -223,38 +223,41 @@ export const getBestBandwidthUnit = (maxValue) => {
  */
 export const convertBandwidthToUnit = (value, targetUnit, baseUnit = 'Mbps') => {
     // First convert to bps (base)
-    let valueInBps = value;
+    // let valueInBps = value;
 
-    switch (baseUnit) {
-        case 'Gbps':
-            valueInBps = value * 1000000000;
-            break;
-        case 'Mbps':
-            valueInBps = value * 1000000;
-            break;
-        case 'Kbps':
-            valueInBps = value * 1000;
-            break;
-        case 'bps':
-            valueInBps = value;
-            break;
-        default:
-            valueInBps = value * 1000000; // Default to Mbps
-    }
+    // switch (baseUnit) {
+    //     case 'GBps':
+    //         valueInBps = value * 1000000000;
+    //         break;
+    //     case 'MBps':
+    //         valueInBps = value * 1000000;
+    //         break;
+    //     case 'KBps':
+    //         valueInBps = value * 1000;
+    //         break;
+    //     case 'Bps':
+    //         valueInBps = value;
+    //         break;
+    //     default:
+    //         valueInBps = value * 1000000; // Default to Mbps
+    // }
 
     // Then convert from bps to target unit
-    switch (targetUnit) {
-        case 'Gbps':
-            return valueInBps / 1000000000;
-        case 'Mbps':
-            return valueInBps / 1000000;
-        case 'Kbps':
-            return valueInBps / 1000;
-        case 'bps':
-            return valueInBps;
-        default:
-            return valueInBps / 1000000; // Default to Mbps
-    }
+    // switch (targetUnit) {
+    //     case 'Gbps':
+    //         return valueInBps / 1000000000;
+    //     case 'Mbps':
+    //         return valueInBps / 1000000;
+    //     case 'Kbps':
+    //         return valueInBps / 1000;
+    //     case 'bps':
+    //         return valueInBps;
+    //     default:
+    //         return valueInBps / 1000000; // Default to Mbps
+    // }
+
+    // input comes in as Bps, convert to GBps
+    return value / 1000000000;
 };
 
 /**

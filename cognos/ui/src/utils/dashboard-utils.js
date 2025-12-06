@@ -283,9 +283,9 @@ export const CapacityCard = ({ viewMode, capacityData, memCapacityData, isLoadin
                             {memoryPerCore && (
                                 <div style={{
                                     color: "white",
-                                    fontSize: "16px",
+                                    fontSize: "40px",
                                     fontWeight: "bold",
-                                    marginRight: "50px",
+                                    marginRight: "30px",
                                     marginLeft: "5px",
                                     textAlign: "center"
                                 }}>
@@ -305,7 +305,7 @@ export const CapacityCard = ({ viewMode, capacityData, memCapacityData, isLoadin
                                     data={getTransformedMemCapacityData()}
                                     options={getUpdatedMemCapacityOptions()}
                                     width="100%"
-                                    height="250px"
+                                    height="200px"
                                     style={{ marginTop: "-40px", marginLeft: "-40px" }}
                                 />
                             </div>

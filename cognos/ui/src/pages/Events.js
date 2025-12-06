@@ -181,10 +181,10 @@ const Events = () => {
 
                                 <div className="d-flex flex-wrap gap-2 mb-2">
                                     <span className="events-page-badge events-page-text-dark events-page-border" style={{ fontSize: '0.7rem' }}>
-                                        <strong>Source:</strong> {event.source}
+                                        <strong>Source type:</strong> {event.source_type}
                                     </span>
                                     <span className="events-page-badge events-page-text-dark events-page-border" style={{ fontSize: '0.7rem' }}>
-                                        <strong>Source type:</strong> {event.source_type}
+                                        <strong>Source:</strong> {event.source}
                                     </span>
                                     <span className="events-page-badge events-page-text-dark events-page-border" style={{ fontSize: '0.7rem' }}>
                                         <strong>Node:</strong> {event.node_name}
