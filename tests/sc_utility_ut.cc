@@ -301,6 +301,7 @@ TEST_F(ScUtilityTest, LoadDevTypeMappingJson_ValidFlowWithOneEntry) {
         "vendor_id": "1234",
         "device_id": "abcd",
         "device_type": "MockType",
+        "location": "0000:c6:00.0",
 "capabilities": {
         "power_management_version": 1,
         "vendor_specific": {
@@ -501,7 +502,7 @@ TEST_F(ScUtilityTest, DiscoverCXLDevices_SuccessPath) {
   hint.protocol = "CXL 2.0";
   hint.port_type = "root";
   hint.status = "Healthy";
-  hints[{0x1234, 0xABCD}] = hint;
+  hints[{0x1234, 0xABCD, "0001:02:00.1"}] = hint;
 
   // Set up popen to return valid address
   test_force_popen_valid_output = true;
@@ -539,7 +540,7 @@ TEST_F(ScUtilityTest, DiscoverCXLDevices_PhysicalAddressThrows) {
   hint.protocol = "CXL 2.0";
   hint.port_type = "root";
   hint.status = "Healthy";
-  hints[{0x1234, 0xABCD}] = hint;
+  hints[{0x1234, 0xABCD, ""}] = hint;
   test_force_popen_fail = false;
   test_force_popen_invalid_output = true;
   set_global_range_numa_map({{{0x1000, 0xFFFF0000}, test_mock_numa_node}});
@@ -565,7 +566,7 @@ TEST_F(ScUtilityTest, DiscoverCXLDevices_AddressUnmappedToNUMA) {
   hint.protocol = "CXL 2.0";
   hint.port_type = "root";
   hint.status = "Healthy";
-  hints[{0x1234, 0xABCD}] = hint;
+  hints[{0x1234, 0xABCD, ""}] = hint;
   // Valid popen address -> returns 0x99999999
   test_force_popen_valid_output = true;
   std::ofstream("/tmp/mock_py_output.txt") << "2576980377\n";  // 0x99999999

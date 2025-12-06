@@ -234,7 +234,7 @@ TEST_F(DevCMMHTest, DiscoverDevices_RegistersDiscoveredDevices) {
   hint.vendor_device_type = "TestType";
   hint.protocol = "CXL";
   hint.port_type = "Upstream";
-  mock_dev_type_map[{0x1234, 0x5678}] = hint;
+  mock_dev_type_map[{0x1234, 0x5678, "0000:27:00.0"}] = hint;
   set_dev_type_map(mock_dev_type_map);
   DeviceManager mgr;
   adapter.discover_devices(mgr);
@@ -252,7 +252,8 @@ TEST_F(DevCMMHTest, DiscoverDevicesRealPath) {
   hint.port_type = "Upstream";
   uint16_t vendor_id = 0x0000;
   uint16_t device_id = 0x0055;
-  mock_dev_type_map[{vendor_id, device_id}] = hint;
+  std::string bdf = "0000:27:00.0";
+  mock_dev_type_map[{vendor_id, device_id, bdf}] = hint;
   set_dev_type_map(mock_dev_type_map);
 
   adapter.clear_device_map();

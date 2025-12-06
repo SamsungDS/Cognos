@@ -244,7 +244,8 @@ static int parse_and_load_device_map(json_t* root, const std::string& filepath,
         json_string_value(json_object_get(entry, "vendor_id")), nullptr, 16);
     uint16_t device = std::stoul(
         json_string_value(json_object_get(entry, "device_id")), nullptr, 16);
-    map[{vendor, device}] = hint;
+    std::string bdf = json_string_value(json_object_get(entry, "location"));
+    map[{vendor, device, bdf}] = hint;
 
     LOG(level_E::INFO, "Loaded: vendor=0x" + to_hex(vendor) + " device=0x" +
                            to_hex(device) + " type=" + hint.vendor_device_type);
@@ -639,7 +640,13 @@ std::unordered_map<sc_id, sc_device, hash_sc_id> discover_cxl_devices_shared(
 
     uint16_t vendor = dev->vendor_id;
     uint16_t device = dev->device_id;
-    auto it = dev_hint_map.find({vendor, device});
+    // Build PCI BDF string
+    char bdf[32];
+    snprintf(bdf, sizeof(bdf), "%04x:%02x:%02x.%x", dev->domain, dev->bus,
+             dev->dev, dev->func);
+    std::string bdf_str(bdf);
+
+    auto it = dev_hint_map.find({vendor, device, bdf_str});
     if (it == dev_hint_map.end()) continue;
 
     const DevJsonHints& hint = it->second;
@@ -650,12 +657,6 @@ std::unordered_map<sc_id, sc_device, hash_sc_id> discover_cxl_devices_shared(
     // Link info from hints
     int link_speed = hint.lane_speed_GT_s;
     int link_width = hint.lane_width;
-
-    // Build PCI BDF string
-    char bdf[32];
-    snprintf(bdf, sizeof(bdf), "%04x:%02x:%02x.%x", dev->domain, dev->bus,
-             dev->dev, dev->func);
-    std::string bdf_str(bdf);
 
     // Get physical address and map to NUMA node
     uint64_t base_addr = 0;

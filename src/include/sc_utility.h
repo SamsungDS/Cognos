@@ -101,6 +101,19 @@ struct pairHash {
   }
 };
 
+
+struct TupleHash {
+    std::size_t operator()(const std::tuple<uint16_t, uint16_t, std::string>& t) const noexcept {
+        // Simple hash combination technique (implement a robust one if needed)
+        std::size_t h1 = std::hash<unsigned short>{}(std::get<0>(t));
+        std::size_t h2 = std::hash<unsigned short>{}(std::get<1>(t));
+        std::size_t h3 = std::hash<std::string>{}(std::get<2>(t));
+
+        // Combine the hashes (e.g., using a simple xor combination)
+        return h1 ^ (h2 << 1) ^ (h3 << 2);
+    }
+};
+
 /**
  * @typedef DevTypeMap
  * @brief Maps (vendor_id, device_id) → full device metadata from JSON config.
@@ -124,7 +137,7 @@ struct pairHash {
  * @endcode
  */
 using DevTypeMap =
-    std::unordered_map<std::pair<uint16_t, uint16_t>, DevJsonHints, pairHash>;
+    std::unordered_map<std::tuple<uint16_t, uint16_t, std::string>, DevJsonHints, TupleHash>;
 
 /**
  * @brief Inject an external device type map (used when calling the library
