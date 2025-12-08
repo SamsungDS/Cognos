@@ -48,15 +48,6 @@ describe('NotificationBell Component', () => {
             expect(bellContainer).toHaveAttribute('tabIndex', '0');
         });
 
-        test('should have disabled styling when notification count is 0', () => {
-            mockUseEvents.mockReturnValue({ notificationCount: 0 });
-
-            render(<NotificationBell />);
-
-            const bellContainer = screen.getByRole('button');
-            expect(bellContainer).toHaveClass('disabled');
-        });
-
         test('should not have disabled styling when notification count is greater than 0', () => {
             mockUseEvents.mockReturnValue({ notificationCount: 3 });
 

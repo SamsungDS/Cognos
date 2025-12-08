@@ -2,49 +2,66 @@ import React, { useEffect, useState } from 'react';
 import { Bell } from 'lucide-react';
 import { useEvents } from '../contexts/EventsContext';
 import './notificationBell.css';
+
 const NotificationBell = () => {
-  const { notificationCount } = useEvents();
+  const { unreadCount, markAllAsRead } = useEvents(); // Use unreadCount instead of notificationCount
   const [isAnimating, setIsAnimating] = useState(false);
-  const isDisabled = notificationCount === 0;
+  const [prevCount, setPrevCount] = useState(0);
+
+  const isDisabled = unreadCount === 0;
+
+  // Trigger animation when new messages arrive (count increases)
+  useEffect(() => {
+    if (unreadCount > prevCount && unreadCount > 0) {
+      setIsAnimating(true);
+      setTimeout(() => setIsAnimating(false), 2000);
+    }
+    setPrevCount(unreadCount);
+  }, [unreadCount]);
+
+  // Periodic animation for persistent notifications
   useEffect(() => {
     if (isDisabled) return;
+
     const interval = setInterval(() => {
       setIsAnimating(true);
       setTimeout(() => setIsAnimating(false), 2000);
-    }, 3000);
+    }, 10000); // Every 10 seconds instead of 3
 
     return () => clearInterval(interval);
   }, [isDisabled]);
 
+  // Mark all notifications as read when user clicks the bell
   // istanbul ignore next
-  const clearNotifications = () => {
+  const handleBellClick = () => {
     if (isDisabled) return;
+
     setIsAnimating(false);
+    markAllAsRead(); // This will reset the unread count to 0
   };
 
   return (
     <div
       className={`notification-bell d-inline-block ${isAnimating ? 'animating' : ''} ${isDisabled ? 'disabled' : ''}`}
-      onClick={clearNotifications}
+      onClick={handleBellClick}
       role="button"
       tabIndex={0}
-      onKeyPress={(e) => e.key === 'Enter' && clearNotifications()}
-
+      onKeyPress={(e) => e.key === 'Enter' && handleBellClick()}
+      aria-label={`${unreadCount} unread notifications`}
     >
       <Bell className={`bell-icon ${isAnimating ? 'pulse' : ''}`} />
-
-      {notificationCount > 0 && (
+      {unreadCount > 0 && (
         <>
           <span
             className={`notification-badge badge bg-danger text-white d-flex align-items-center justify-content-center ${isAnimating ? 'bounce' : ''}`}
           >
-            {notificationCount > 10 ? '10+' : notificationCount}
+            {unreadCount > 9 ? '9+' : unreadCount}
           </span>
-
           {isAnimating && <span className="ping-ring"></span>}
         </>
       )}
     </div>
   );
 };
+
 export default NotificationBell;

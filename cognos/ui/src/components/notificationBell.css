@@ -17,8 +17,9 @@
 }
 
 .bell-icon {
-    width: 20px;
-    height: 20px;
+    display: flex;
+    width: 24px;
+    height: 24px;
 }
 
 .bell-icon.pulse {
@@ -27,10 +28,10 @@
 
 .notification-badge {
     position: absolute;
-    top: -15px;
-    right: -23px !important;
-    width: 6px !important;
-    height: 18px !important;
+    top: -14px;
+    right: -20px !important;
+    width: 19px !important;
+    height: 20px !important;
     font-size: 0.75rem;
 }
 .notification-badge.bounce {

@@ -60,7 +60,8 @@ const ensureEventIds = (eventsArray) => {
     const eventsWithIds = eventsArray.map((event, index) => ({
         ...event,
         // eslint-disable-next-line no-restricted-syntax
-        id: event.id || `event-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 11)}`
+        id: event.id || `event-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 11)}`,
+        isRead: event.isRead || false // Track read status for each event
     }));
 
     // Sort by time after adding IDs
@@ -74,6 +75,7 @@ export const EventsContext = createContext({
     isLoading: false,
     error: null,
     notificationCount: 0,
+    unreadCount: 0, // NEW: Track unread messages
     hasEvents: false,
     eventCount: 0,
     criticalEvents: [],
@@ -83,7 +85,10 @@ export const EventsContext = createContext({
     addEvent: () => { },
     removeEvent: () => { },
     clearEvents: () => { },
-    refreshEvents: () => { }
+    refreshEvents: () => { },
+    markAllAsRead: () => { }, // NEW: Mark all messages as read
+    markAsRead: () => { }, // NEW: Mark specific message as read
+    getUnreadEvents: () => [] // NEW: Get only unread events
 });
 
 // Events Provider Component
@@ -126,10 +131,20 @@ export const EventsProvider = ({ children }) => {
             // Handle different API response formats
             const eventsData = Array.isArray(data) ? data : data.events || data.alerts || [];
 
-            // Complete replacement - API data replaces all old events
-            // Ensure all events have IDs and are sorted by time
-            const eventsWithIds = ensureEventIds(eventsData);
-            setEventsInternal(eventsWithIds);
+            // NEW: Preserve read status for existing events
+            setEventsInternal(prevEvents => {
+                const existingEventIds = new Set(prevEvents.map(e => e.id));
+                const eventsWithIds = eventsData.map((event, index) => {
+                    const existingEvent = prevEvents.find(e => e.id === event.id);
+                    return {
+                        ...event,
+                        // eslint-disable-next-line no-restricted-syntax
+                        id: event.id || `event-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 11)}`,
+                        isRead: existingEvent ? existingEvent.isRead : false // Preserve read status or mark new as unread
+                    };
+                });
+                return sortEventsByTime(eventsWithIds);
+            });
 
         } catch (error) {
             console.error('Error fetching event data:', error);
@@ -147,7 +162,8 @@ export const EventsProvider = ({ children }) => {
             ...newEvent,
             // eslint-disable-next-line no-restricted-syntax
             id: newEvent.id || `event-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
-            timestamp: newEvent.timestamp || new Date().toISOString()
+            timestamp: newEvent.timestamp || new Date().toISOString(),
+            isRead: false // NEW: New events are always unread
         };
         // Add new event and re-sort to maintain time order
         setEventsInternal(prev => sortEventsByTime([event, ...prev]));
@@ -163,6 +179,30 @@ export const EventsProvider = ({ children }) => {
     // istanbul ignore next
     const clearEvents = () => {
         setEventsInternal([]);
+    };
+
+    // NEW: Mark all events as read
+    // istanbul ignore next
+    const markAllAsRead = () => {
+        setEventsInternal(prev =>
+            prev.map(event => ({ ...event, isRead: true }))
+        );
+    };
+
+    // NEW: Mark specific event as read
+    // istanbul ignore next
+    const markAsRead = (eventId) => {
+        setEventsInternal(prev =>
+            prev.map(event =>
+                event.id === eventId ? { ...event, isRead: true } : event
+            )
+        );
+    };
+
+    // NEW: Get only unread events
+    // istanbul ignore next
+    const getUnreadEvents = () => {
+        return events?.filter(event => !event.isRead) || [];
     };
 
     // Refresh events function
@@ -183,6 +223,7 @@ export const EventsProvider = ({ children }) => {
 
     // Helper functions
     const getTotalCount = () => events?.length || 0;
+    const getUnreadCount = () => events?.filter(event => !event.isRead).length || 0;
     const getEventsBySeverity = (severity) => {
         const filtered = events?.filter(event => event.severity === severity) || [];
         return sortEventsByTime(filtered);
@@ -202,9 +243,13 @@ export const EventsProvider = ({ children }) => {
         removeEvent,
         clearEvents,
         refreshEvents,
+        markAllAsRead, // NEW
+        markAsRead, // NEW
+        getUnreadEvents, // NEW
 
         // Computed values
         notificationCount: getTotalCount(),
+        unreadCount: getUnreadCount(), // NEW: Unread count for notifications
         hasEvents: events && events.length > 0,
         eventCount: events?.length || 0,
         criticalEvents: getEventsBySeverity('critical'),
