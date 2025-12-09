@@ -161,7 +161,6 @@ export const CapacityCard = ({ viewMode, capacityData, memCapacityData, isLoadin
         const numericValue = typeof gbValue === 'string' ? parseFloat(gbValue.replace(/,/g, '')) : gbValue;
 
         // Convert to TB if value is 1000 GB or more
-        // istanbul ignore next
         if (numericValue >= 1000) {
             return {
                 value: (numericValue / 1024).toFixed(2),
@@ -181,11 +180,9 @@ export const CapacityCard = ({ viewMode, capacityData, memCapacityData, isLoadin
     };
 
     // Calculate memory per core multiplier
-    // istanbul ignore next
     const calculateMemoryPerCore = () => {
         if (!memCapacityData || memCapacityData.length <= 1) return null;
 
-        // Find DRAM capacity from memCapacityData
         let dramCapacity = 0;
         let cxlCapacity = 0;
 
@@ -200,41 +197,76 @@ export const CapacityCard = ({ viewMode, capacityData, memCapacityData, isLoadin
             }
         });
 
-        // Calculate (total (cxl+dram) capacity / dram capacity)
         if (dramCapacity > 0) {
             const totalCapacity = cxlCapacity + dramCapacity;
             const multiplier = totalCapacity / dramCapacity;
-            return multiplier.toFixed(1); // One decimal place
+            return multiplier.toFixed(1);
         }
 
         return null;
     };
 
-    // Transform memCapacityData for the pie chart tooltip/legend
-    // Keep numeric values in GB for the chart, but we'll update the options for display
-    // istanbul ignore next
+    // Calculate total capacity
+    const calculateTotalCapacity = () => {
+        if (!memCapacityData || memCapacityData.length <= 1) return 0;
+
+        let total = 0;
+        memCapacityData.slice(1).forEach(item => {
+            total += item[1];
+        });
+
+        return total;
+    };
+
+    // Transform memCapacityData to add GB suffix for tooltip display
     const getTransformedMemCapacityData = () => {
         if (!memCapacityData || memCapacityData.length <= 1) return memCapacityData;
 
-        // Chart needs numeric values, so keep them in GB
-        // We'll handle TB conversion in the chart options formatter
-        return memCapacityData;
+        // Create a copy and add formatted strings for tooltips
+        const transformedData = memCapacityData.map((row, index) => {
+            if (index === 0) {
+                // Header row - add a column for formatted values
+                return [...row, { role: 'tooltip', type: 'string' }];
+            } else {
+                // Data rows - add formatted tooltip value with GB suffix
+                const label = row[0];
+                const value = row[1];
+                const tooltip = `${label}: ${value} GB`;
+                return [...row, tooltip];
+            }
+        });
+
+        return transformedData;
     };
 
-    // Update chart options to show TB in tooltips and labels
-    // istanbul ignore next
+    // Updated chart options with GB values in tooltip - merges with base options
     const getUpdatedMemCapacityOptions = () => {
         const baseOptions = getMemCapacityOptions();
 
         return {
             ...baseOptions,
-            tooltip: { trigger: 'none' },
-            text: 'percentage',
-            pieSliceText: 'percentage',
+            tooltip: {
+                trigger: 'item',
+                isHtml: false,
+                textStyle: {
+                    color: '#000000',
+                    fontSize: 14
+                }
+            },
+            legend: {
+                position: 'none' // Hide legend since we removed the custom legend
+            },
+            pieSliceText: 'percentage', // Show percentages in slices
             pieSliceTextStyle: {
-                ...baseOptions?.pieSliceTextStyle,
-                fontSize: 14
-            }
+                color: 'black',
+                fontSize: 12,
+                bold: true
+            },
+            chartArea: {
+                width: '95%',
+                height: '95%'
+            },
+            pieStartAngle: 0 // Ensures slices start at top for better percentage visibility
         };
     };
 
@@ -255,6 +287,7 @@ export const CapacityCard = ({ viewMode, capacityData, memCapacityData, isLoadin
     const usedCapacityDisplay = formatCapacity(capacityData.used_capacity || 0);
     const totalCapacityDisplay = formatCapacity(capacityData.total_capacity || 0);
     const memoryPerCore = calculateMemoryPerCore();
+    const totalMemoryCapacity = calculateTotalCapacity();
 
     return (
         <div className="device_card system-memory-allocated" id="sys-mem-allocated-id">
@@ -272,63 +305,54 @@ export const CapacityCard = ({ viewMode, capacityData, memCapacityData, isLoadin
                             key={1}
                             className="host1"
                         />
-                        <div style={{ color: "white", marginLeft: 200 }}>
+                        <div style={{
+                            color: "white",
+                            textAlign: "center",
+                            marginTop: "10px"
+                        }}>
                             {`Used Memory ${usedCapacityDisplay}`}
+                        </div>
+                        <div style={{
+                            color: "white",
+                            textAlign: "center",
+                            marginTop: "5px"
+                        }}>
+                            {`Total: ${totalCapacityDisplay}`}
                         </div>
                     </>
                 ) : (
-                    <>
-                        <div style={{ display: "flex", alignItems: "center" }}>
-                            {/* Memory per core display - Left side */}
-                            {memoryPerCore && (
-                                <div style={{
-                                    color: "white",
-                                    fontSize: "40px",
-                                    fontWeight: "bold",
-                                    marginRight: "30px",
-                                    marginLeft: "5px",
-                                    textAlign: "center"
-                                }}>
-                                    <div style={{ fontSize: "40px", color: "#4CAF50" }}>
-                                        {memoryPerCore}x
+                        <div className="capacity-grid-container">
+                            {/* Left Half - Memory per core display */}
+                            <div className="memory-per-core-container">
+                                {memoryPerCore && (
+                                    <div className="memory-per-core-content">
+                                        <div className="memory-multiplier">
+                                            {memoryPerCore}
+                                        </div>
+                                        <div className="memory-multiplier-label">
+                                            more memory<br />per core
+                                        </div>
                                     </div>
-                                    <div style={{ fontSize: "12px", marginTop: "5px" }}>
-                                        more memory<br />per core
-                                    </div>
-                                </div>
-                            )}
+                                )}
+                            </div>
 
-                            {/* Pie Chart */}
-                            <div style={{ flex: 1 }}>
-                                <Chart
-                                    chartType="PieChart"
-                                    data={getTransformedMemCapacityData()}
-                                    options={getUpdatedMemCapacityOptions()}
-                                    width="80%"
-                                    height="250px"
-                                    style={{ marginTop: "-40px", marginLeft: "5px" }}
-                                />
+                            {/* Right Half - Pie Chart with Total */}
+                            <div className="pie-chart-container">
+                                <div className="pie-chart-wrapper">
+                                    <Chart
+                                        chartType="PieChart"
+                                        data={getTransformedMemCapacityData()}
+                                        options={getUpdatedMemCapacityOptions()}
+                                        width="100%"
+                                        height="130px"
+                                    />
+                                </div>
+                                <div className="pie-chart-total">
+                                        Total: {totalMemoryCapacity} GB
+                                </div>
                             </div>
                         </div>
-
-                        {/* Custom legend with TB values */}
-                        <div style={{
-                            color: "white",
-                            marginTop: "-123px",
-                            marginLeft: "22rem",
-                            fontSize: "12px"
-                        }}>
-                            {memCapacityData?.slice(1).map((item, idx) => (
-                                <div key={idx} style={{ marginBottom: "5px" }}>
-                                    <strong>{item[0]}:</strong> {formatCapacity(item[1])}
-                                </div>
-                            ))}
-                        </div>
-                    </>
                 )}
-                <div className="progres-bar-label" style={{ color: "white", marginTop: isCMMB ? "-100px" : "10px", marginLeft: isCMMB ? "-100px" : "22rem", }}>
-                    {`Total: ${totalCapacityDisplay}`}
-                </div>
             </div>
         </div>
     );

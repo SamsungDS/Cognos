@@ -88,7 +88,7 @@ const JobManagement = () => {
             onClick={openCreateModal}
             className="custom-create-btn d-flex align-items-center gap-2 fw-medium"
           >
-            Create SLA
+            Register
           </Button>
         </div>
 
