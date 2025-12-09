@@ -814,6 +814,9 @@ class Cognos(BaseControlInterface):
             "command_params": command_params
         }
 
+        # add delay to reduce frequency of calling GET STATS
+        time.sleep(15)
+
         response = requests.post(
             request_url,
             json=request_args,

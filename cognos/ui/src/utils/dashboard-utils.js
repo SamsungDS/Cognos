@@ -289,7 +289,7 @@ export const CapacityCard = ({ viewMode, capacityData, memCapacityData, isLoadin
                                     marginLeft: "5px",
                                     textAlign: "center"
                                 }}>
-                                    <div style={{ fontSize: "24px", color: "#4CAF50" }}>
+                                    <div style={{ fontSize: "40px", color: "#4CAF50" }}>
                                         {memoryPerCore}x
                                     </div>
                                     <div style={{ fontSize: "12px", marginTop: "5px" }}>
@@ -304,9 +304,9 @@ export const CapacityCard = ({ viewMode, capacityData, memCapacityData, isLoadin
                                     chartType="PieChart"
                                     data={getTransformedMemCapacityData()}
                                     options={getUpdatedMemCapacityOptions()}
-                                    width="100%"
-                                    height="200px"
-                                    style={{ marginTop: "-40px", marginLeft: "-40px" }}
+                                    width="80%"
+                                    height="250px"
+                                    style={{ marginTop: "-40px", marginLeft: "5px" }}
                                 />
                             </div>
                         </div>
