@@ -156,7 +156,7 @@ const CreateJobDialog = ({ isOpen, onClose, onJobCreated }) => {
             <div className="config-header">
               <div className="d-flex">
                 <h2 className="config-title">
-                  Create SLA
+                  Register App
                 </h2>
               </div>
             </div>
@@ -323,7 +323,7 @@ const CreateJobDialog = ({ isOpen, onClose, onJobCreated }) => {
                   {loading.submitting ? (
                     <LoadingSpinner />
                   ) : (
-                    "Submit SLA"
+                    "Register"
                   )}
                 </Button>
               </div>

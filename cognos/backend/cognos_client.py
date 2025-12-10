@@ -888,6 +888,11 @@ class Cognos(BaseControlInterface):
                 (app_pid,)
             )
 
+            app_message = self.sql_client.exec_fetch_singlerecord_query(
+                "SELECT message FROM applications WHERE app_pid = ?",
+                (app_pid,)
+            )
+
             if app_status == "degraded":
                 # create get stats thread
                 # check for data moved if there is no existing thread checking PID
@@ -899,11 +904,15 @@ class Cognos(BaseControlInterface):
                     get_stats_workers[app_pid] = thread
                     thread.start()
 
+
             if app_event:
                 updated_status = (
                     'good' if app_event[0]['severity'] in ["good", "Normal", "normal"]
                     else app_event[0]['severity']
                 )
+
+                if updated_status == "degraded" and app_message and "sla" in app_message.lower():
+                    updated_status = "device_degraded"
 
                 # # TODO: remove this logic once fixes are made to ME module
                 # if updated_status == "info":

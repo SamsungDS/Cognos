@@ -327,10 +327,10 @@ export const CapacityCard = ({ viewMode, capacityData, memCapacityData, isLoadin
                                 {memoryPerCore && (
                                     <div className="memory-per-core-content">
                                         <div className="memory-multiplier">
-                                            {memoryPerCore}
+                                            {memoryPerCore}x
                                         </div>
                                         <div className="memory-multiplier-label">
-                                            more memory<br />per core
+                                            memory<br />per core
                                         </div>
                                     </div>
                                 )}

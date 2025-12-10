@@ -462,8 +462,8 @@ class CognosInfluxDBClient:
         '''
         )
         flux_query_output = json.loads(tables.to_json())
-        dram_capacity = flux_query_output[0]['dram_capacity_mb']
-        cxl_capacity = flux_query_output[0]['cxl_capacity_mb']
+        dram_capacity = flux_query_output[0]['dram_capacity_mb'] // 1000
+        cxl_capacity = flux_query_output[0]['cxl_capacity_mb'] // 1000
         total_capacity = dram_capacity + cxl_capacity
 
         payload = {

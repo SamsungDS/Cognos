@@ -52,17 +52,38 @@ const sortEventsByTime = (eventsArray) => {
     });
 };
 
+// Generate unique event signature for tracking (based on content, not just ID)
+// istanbul ignore next
+const generateEventSignature = (event) => {
+    // Create a signature based on event content that won't change
+    const signatureData = {
+        timestamp: event.timestamp,
+        msg: event.msg,
+        cluster_name: event.cluster_name,
+        node_name: event.node_name,
+        severity: event.severity,
+        domain: event.domain
+    };
+    return JSON.stringify(signatureData);
+};
+
 // Utility function to ensure all events have unique IDs and are sorted by time
 // istanbul ignore next
-const ensureEventIds = (eventsArray) => {
+const ensureEventIds = (eventsArray, seenSignatures = new Set()) => {
     if (!Array.isArray(eventsArray)) return [];
 
-    const eventsWithIds = eventsArray.map((event, index) => ({
-        ...event,
-        // eslint-disable-next-line no-restricted-syntax
-        id: event.id || `event-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 11)}`,
-        isRead: event.isRead || false // Track read status for each event
-    }));
+    const eventsWithIds = eventsArray.map((event, index) => {
+        const signature = generateEventSignature(event);
+        const wasSeenBefore = seenSignatures.has(signature);
+
+        return {
+            ...event,
+            // eslint-disable-next-line no-restricted-syntax
+            id: event.id || `event-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 11)}`,
+            signature: signature,
+            isRead: event.isRead !== undefined ? event.isRead : wasSeenBefore // Keep existing or mark based on signature
+        };
+    });
 
     // Sort by time after adding IDs
     return sortEventsByTime(eventsWithIds);
@@ -75,7 +96,7 @@ export const EventsContext = createContext({
     isLoading: false,
     error: null,
     notificationCount: 0,
-    unreadCount: 0, // NEW: Track unread messages
+    unreadCount: 0,
     hasEvents: false,
     eventCount: 0,
     criticalEvents: [],
@@ -86,16 +107,25 @@ export const EventsContext = createContext({
     removeEvent: () => { },
     clearEvents: () => { },
     refreshEvents: () => { },
-    markAllAsRead: () => { }, // NEW: Mark all messages as read
-    markAsRead: () => { }, // NEW: Mark specific message as read
-    getUnreadEvents: () => [] // NEW: Get only unread events
+    markAllAsRead: () => { },
+    markAsRead: () => { },
+    getUnreadEvents: () => []
 });
 
 // Events Provider Component
 export const EventsProvider = ({ children }) => {
+    // Track signatures of all events we've ever seen (persists across fetches)
+    const [seenEventSignatures, setSeenEventSignatures] = useState(new Set());
 
     // eslint-disable-next-line react/hook-use-state
-    const [events, setEventsInternal] = useState(() => ensureEventIds(mockEventData));
+    const [events, setEventsInternal] = useState(() => {
+        const initialEvents = ensureEventIds(mockEventData, new Set());
+        // Mark initial mock data as seen
+        const signatures = new Set(initialEvents.map(e => e.signature));
+        setSeenEventSignatures(signatures);
+        return initialEvents;
+    });
+
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState(null);
     const apiEndpoint = constants.Configs.api_endpoint;
@@ -106,10 +136,10 @@ export const EventsProvider = ({ children }) => {
         if (typeof eventsOrUpdater === 'function') {
             setEventsInternal(prev => {
                 const newEvents = eventsOrUpdater(prev);
-                return ensureEventIds(newEvents);
+                return ensureEventIds(newEvents, seenEventSignatures);
             });
         } else {
-            setEventsInternal(ensureEventIds(eventsOrUpdater));
+            setEventsInternal(ensureEventIds(eventsOrUpdater, seenEventSignatures));
         }
     };
 
@@ -131,19 +161,34 @@ export const EventsProvider = ({ children }) => {
             // Handle different API response formats
             const eventsData = Array.isArray(data) ? data : data.events || data.alerts || [];
 
-            // NEW: Preserve read status for existing events
+            // Process new events and preserve read status
             setEventsInternal(prevEvents => {
-                const existingEventIds = new Set(prevEvents.map(e => e.id));
-                const eventsWithIds = eventsData.map((event, index) => {
-                    const existingEvent = prevEvents.find(e => e.id === event.id);
+                // Create a map of existing events by signature for quick lookup
+                const existingEventMap = new Map();
+                prevEvents.forEach(event => {
+                    if (event.signature) {
+                        existingEventMap.set(event.signature, event);
+                    }
+                });
+
+                // Process incoming events
+                const processedEvents = eventsData.map((event, index) => {
+                    const signature = generateEventSignature(event);
+                    const existingEvent = existingEventMap.get(signature);
+                    const wasSeenBefore = seenEventSignatures.has(signature);
+
                     return {
                         ...event,
                         // eslint-disable-next-line no-restricted-syntax
-                        id: event.id || `event-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 11)}`,
-                        isRead: existingEvent ? existingEvent.isRead : false // Preserve read status or mark new as unread
+                        id: event.id || existingEvent?.id || `event-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 11)}`,
+                        signature: signature,
+                        // If we have seen this exact event before (by signature), preserve its read status
+                        // If it's completely new (not in seenEventSignatures), mark as unread
+                        isRead: existingEvent ? existingEvent.isRead : wasSeenBefore
                     };
                 });
-                return sortEventsByTime(eventsWithIds);
+
+                return sortEventsByTime(processedEvents);
             });
 
         } catch (error) {
@@ -158,13 +203,16 @@ export const EventsProvider = ({ children }) => {
     // Add new event function - automatically maintains time-based sorting
     // istanbul ignore next
     const addEvent = (newEvent) => {
+        const signature = generateEventSignature(newEvent);
         const event = {
             ...newEvent,
             // eslint-disable-next-line no-restricted-syntax
             id: newEvent.id || `event-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
             timestamp: newEvent.timestamp || new Date().toISOString(),
-            isRead: false // NEW: New events are always unread
+            signature: signature,
+            isRead: false // New events are always unread
         };
+
         // Add new event and re-sort to maintain time order
         setEventsInternal(prev => sortEventsByTime([event, ...prev]));
     };
@@ -179,27 +227,47 @@ export const EventsProvider = ({ children }) => {
     // istanbul ignore next
     const clearEvents = () => {
         setEventsInternal([]);
+        // Don't clear seenEventSignatures - we want to remember what we've seen
     };
 
-    // NEW: Mark all events as read
+    // Mark all events as read and update seen signatures
     // istanbul ignore next
     const markAllAsRead = () => {
-        setEventsInternal(prev =>
-            prev.map(event => ({ ...event, isRead: true }))
-        );
+        setEventsInternal(prev => {
+            const updatedEvents = prev.map(event => ({ ...event, isRead: true }));
+
+            // Add all current event signatures to seen set
+            const newSignatures = new Set(seenEventSignatures);
+            updatedEvents.forEach(event => {
+                if (event.signature) {
+                    newSignatures.add(event.signature);
+                }
+            });
+            setSeenEventSignatures(newSignatures);
+
+            return updatedEvents;
+        });
     };
 
-    // NEW: Mark specific event as read
+    // Mark specific event as read and update seen signatures
     // istanbul ignore next
     const markAsRead = (eventId) => {
-        setEventsInternal(prev =>
-            prev.map(event =>
-                event.id === eventId ? { ...event, isRead: true } : event
-            )
-        );
+        setEventsInternal(prev => {
+            const updatedEvents = prev.map(event => {
+                if (event.id === eventId) {
+                    // Add this event's signature to seen set
+                    if (event.signature) {
+                        setSeenEventSignatures(prev => new Set([...prev, event.signature]));
+                    }
+                    return { ...event, isRead: true };
+                }
+                return event;
+            });
+            return updatedEvents;
+        });
     };
 
-    // NEW: Get only unread events
+    // Get only unread events
     // istanbul ignore next
     const getUnreadEvents = () => {
         return events?.filter(event => !event.isRead) || [];
@@ -243,13 +311,13 @@ export const EventsProvider = ({ children }) => {
         removeEvent,
         clearEvents,
         refreshEvents,
-        markAllAsRead, // NEW
-        markAsRead, // NEW
-        getUnreadEvents, // NEW
+        markAllAsRead,
+        markAsRead,
+        getUnreadEvents,
 
         // Computed values
         notificationCount: getTotalCount(),
-        unreadCount: getUnreadCount(), // NEW: Unread count for notifications
+        unreadCount: getUnreadCount(),
         hasEvents: events && events.length > 0,
         eventCount: events?.length || 0,
         criticalEvents: getEventsBySeverity('critical'),

@@ -40,6 +40,13 @@ const Events = () => {
             border: 'rgb(253, 230, 138)',
             text: 'rgb(146, 64, 14)'
         },
+        device_degraded: {
+            icon: AlertTriangle,
+            color: 'rgb(245, 158, 11)',
+            bg: 'rgb(255, 251, 235)',
+            border: 'rgb(253, 230, 138)',
+            text: 'rgb(146, 64, 14)'
+        },
         info: {
             icon: Info,
             color: 'rgb(59, 130, 246)',

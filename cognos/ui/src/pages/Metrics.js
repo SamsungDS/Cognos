@@ -372,7 +372,7 @@ const Metrics = () => {
                       >
                         <h4 className="dram-cxl-title-pieChart">
                           Memory{" "}
-                          <span style={{ color: "white" }}>Capacity (MB)</span>
+                          <span style={{ color: "white" }}>Capacity (GB)</span>
                         </h4>
                       </div>
                     </Col>

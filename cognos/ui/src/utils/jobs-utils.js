@@ -70,6 +70,7 @@ export const StatusBadge = ({ status }) => {
   const statusStyles = {
     good: "custom-badge-completed",
     degraded: "custom-badge-pending",
+    device_degraded: "custom-badge-pending",
     failed: "custom-badge-failed"
   };
 
