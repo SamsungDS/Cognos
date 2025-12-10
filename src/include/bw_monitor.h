@@ -66,23 +66,22 @@ class BandwidthMonitor {
    */
   virtual uint64_t get_average_Bps() const;
 
+  void set_average_Bps(uint64_t avg_Bps);
+
+  uint32_t get_device_index();
+
+  uint64_t get_interval();
+
+  bool bw_mon_is_running();
+
   // delete copy and move to prevent unsafe ownership
   BandwidthMonitor(const BandwidthMonitor&) = delete;
   BandwidthMonitor& operator=(const BandwidthMonitor&) = delete;
 
  private:
-  /**
-   * @brief Internal thread loop that performs periodic sampling.
-   *
-   * This method is invoked by the SVKThread and runs in a loop until stopped.
-   * @return nullptr
-   */
-  static void* sampling_loop(void* arg);
-
- private:
   // cmmh device to monitor
-  int device_index;
-  // sampling interval in seconds (default: 10)
+  uint32_t device_index;
+  // sampling interval in seconds
   uint64_t interval_sec;
   // flag to control thread execution
   bool running;

@@ -126,10 +126,13 @@ StatInfo DevCMMH::get_device_stats(const sc_id& sid) const {
   stats.rw_errors = 0;
   stats.latency_us = 0;
 
+  LOG(level_E::INFO, "DevCMMH::getting sensor and cache stats");
   stats.sensor_stats = cmmh_stat_sensor(info.static_info.device_index);
   stats.cache_stats = cmmh_stat_cache(info.static_info.device_index);
+  LOG(level_E::INFO, "DevCMMH::got sensor and cache stats");
 
   // get bandwidth from per-device monitor
+  LOG(level_E::INFO, "DevCMMH::getting bandwidth stats");
   auto it = dev_to_bwmon.find(sid);
   if (it != dev_to_bwmon.end() && it->second) {
     stats.used_bandwidth_Bps = it->second->get_average_Bps();

@@ -86,7 +86,7 @@ static void write_json(const std::string& path,
                        const std::string& metrics_block) {
   std::ofstream(path) << R"({
 "device_map": [{
-"vendor_id":"1","device_id":"2","device_type":"x",
+"vendor_id":"1","device_id":"2", "location":"3", "device_type":"x",
 "capabilities":{"power_management_version":1,"vendor_specific":{"latency_hint":"enabled"}},
 "advertised_qos":{"avg_latency_ns":120,"p99_latency_ns":350,"io_per_sec":50000,"bw_per_sec":1000000,"io_size_in_bytes":4096,"qd":32}
 }],
@@ -526,6 +526,7 @@ TEST_F(ScUtilityTest, DiscoverCXLDevices_SuccessPath) {
 TEST_F(ScUtilityTest, DiscoverCXLDevices_PhysicalAddressThrows) {
   DevTypeMap hints;
   DevJsonHints hint;
+  char bdf[32];
   hint.vendor_device_type = "MockCMMH";
   hint.lane_speed_GT_s = 16;
   hint.lane_width = 8;
@@ -540,7 +541,9 @@ TEST_F(ScUtilityTest, DiscoverCXLDevices_PhysicalAddressThrows) {
   hint.protocol = "CXL 2.0";
   hint.port_type = "root";
   hint.status = "Healthy";
-  hints[{0x1234, 0xABCD, ""}] = hint;
+  snprintf(bdf, sizeof(bdf), "%04x:%02x:%02x.%x", 0x0001, 0x02, 0x00, 0x1);
+  std::string bdf_str(bdf);
+  hints[{0x1234, 0xABCD, bdf_str}] = hint;
   test_force_popen_fail = false;
   test_force_popen_invalid_output = true;
   set_global_range_numa_map({{{0x1000, 0xFFFF0000}, test_mock_numa_node}});
@@ -566,7 +569,10 @@ TEST_F(ScUtilityTest, DiscoverCXLDevices_AddressUnmappedToNUMA) {
   hint.protocol = "CXL 2.0";
   hint.port_type = "root";
   hint.status = "Healthy";
-  hints[{0x1234, 0xABCD, ""}] = hint;
+  char bdf[32];
+  snprintf(bdf, sizeof(bdf), "%04x:%02x:%02x.%x", 0x0001, 0x02, 0x00, 0x1);
+  std::string bdf_str(bdf);
+  hints[{0x1234, 0xABCD, bdf_str}] = hint;
   // Valid popen address -> returns 0x99999999
   test_force_popen_valid_output = true;
   std::ofstream("/tmp/mock_py_output.txt") << "2576980377\n";  // 0x99999999
@@ -704,6 +710,7 @@ TEST_F(ScUtilityTest, LoadDevTypeMapping_ParsesMetricsIntervalSeconds) {
       "device_type": "CMM-H",
       "vendor_id": "1e98",
       "device_id": "0ddb",
+      "location": "0000:5a:00.0",
       "capabilities": {
         "power_management_version": 1,
         "vendor_specific": {

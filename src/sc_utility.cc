@@ -640,12 +640,13 @@ std::unordered_map<sc_id, sc_device, hash_sc_id> discover_cxl_devices_shared(
 
     uint16_t vendor = dev->vendor_id;
     uint16_t device = dev->device_id;
-    // Build PCI BDF string
-    char bdf[32];
-    snprintf(bdf, sizeof(bdf), "%04x:%02x:%02x.%x", dev->domain, dev->bus,
-             dev->dev, dev->func);
-    std::string bdf_str(bdf);
 
+    std::ostringstream oss;
+    oss << std::hex << std::setfill('0') << std::setw(4) << +dev->domain << ":"
+        << std::setw(2) << +dev->bus << ":" << std::setw(2) << +dev->dev << "."
+        << std::hex << +dev->func;
+
+    std::string bdf_str = oss.str();
     auto it = dev_hint_map.find({vendor, device, bdf_str});
     if (it == dev_hint_map.end()) continue;
 

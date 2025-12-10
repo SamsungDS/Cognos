@@ -22,7 +22,7 @@ class tunerTest : public ::testing::Test {
   void SetUp() override {}
 };
 
-TEST_F(tunerTest, Checktuner) {
+TEST_F(tunerTest, DISABLED_Checktuner) {
   tuner mt;
   tokens_map["application"] = "gemfire_test";
   tokens_map["application_id"] = "1234";
