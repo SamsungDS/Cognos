@@ -713,9 +713,7 @@ class MockTest : public ::testing::Test {
   void ResetStub() {
     std::shared_ptr<Channel> channel = grpc::CreateChannel(
         "127.0.0.1:9998", grpc::InsecureChannelCredentials());
-    ;
     fwk_stub_ = svk::CommandFwk::NewStub(channel);
-    ;
   }
 
   std::unique_ptr<svk::CommandFwk::Stub> fwk_stub_;

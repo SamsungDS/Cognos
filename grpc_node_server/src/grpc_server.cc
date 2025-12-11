@@ -285,11 +285,21 @@ int RegisterNodeWithController(const node_config &config) {
                " at port " + config.controller_port;
   svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
 
+  logger_str =
+      "Waiting for the controller to accept the node registration request";
+  svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+  std::cout << logger_str << std::endl;
+
   grpc_status = client.RegisterNode(req, resp);
   if (grpc_status.ok() != true) {
-    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR,
-               "Failed to register with the controller");
+    logger_str = "Failed to register with the controller";
+    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR, logger_str.c_str());
+    std::cout << logger_str << std::endl;
     return status;
+  } else {
+    logger_str = "Successfully registered with the controller";
+    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+    std::cout << logger_str << std::endl;
   }
 
   status = 0;
@@ -395,7 +405,7 @@ int StartNodeServer(const std::string &svk_conf_file, bool blocking) {
   auto server = InitializeNodeServicer(svcr);
   if (server != nullptr) {
     svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
-               "Starting the node server to process the commands");
+               "The node server is ready to process the commands");
 
     std::signal(SIGTERM, signal_node_handler);
     std::signal(SIGSEGV, signal_node_handler);
