@@ -136,9 +136,9 @@ JobRow.propTypes = {
 // Empty State Component
 export const EmptyState = () => (
   <div className="text-center custom-empty-state">
-    <h3 className="custom-text-gray-500 fw-medium mb-1">No SLA found</h3>
+    <h3 className="custom-text-gray-500 fw-medium mb-1">No apps found</h3>
     <p className="custom-text-gray-500 small">
-      Create a new SLA to get started
+      No apps currently being monitored, please register application
     </p>
   </div>
 );

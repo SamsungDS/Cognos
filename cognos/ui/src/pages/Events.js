@@ -183,7 +183,7 @@ const Events = () => {
                                 </div>
 
                                 <h6 className="card-title mb-2 text-white" style={{ fontSize: '1rem', fontWeight: '600' }}>
-                                    {event.msg}
+                                    {event.msg?.replaceAll('_', ' ')}
                                 </h6>
 
                                 <div className="d-flex flex-wrap gap-2 mb-2">

@@ -34,7 +34,7 @@ describe('MetricItem Component', () => {
         test('applies correct text color to label', () => {
             render(<MetricItem label="Test Metric" />);
             const labelSpan = screen.getByText('Test Metric');
-            expect(labelSpan).toHaveStyle({ color: '#ccc' });
+            expect(labelSpan).toHaveStyle({ color: '#00B3E3' });
         });
 
         test('applies correct font size to label', () => {

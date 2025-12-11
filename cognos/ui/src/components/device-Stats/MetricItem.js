@@ -4,7 +4,7 @@ import './deviceCard.css';
 const MetricItem = ({ label }) => {
     return (
         <div className="metric">
-            <span style={{ color: '#ccc', fontSize: '14px' }}>{label}</span>
+            <span style={{ color: '#00B3E3', fontSize: '14px', fontWeight: "bold" }}>{label}</span>
         </div>
     );
 };
