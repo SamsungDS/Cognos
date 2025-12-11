@@ -660,29 +660,6 @@ TEST(InitIntegrationTest, ProcessControllerCommandWithInvalidFeatureParams) {
   unlink(conf_file.c_str());
 }
 
-TEST(InitIntegrationTest, InitControllerAndNodeServerWithInvalidController) {
-  char *cw_dir = get_current_dir_name();
-  std::string conf_file = std::string(cw_dir) + "/conf.json";
-  create_svk_mgmt_fw_conf_json(
-      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
-      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
-      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
-
-  StartServer(conf_file, false);
-
-  std::string conf_file1 = std::string(cw_dir) + "/conf1.json";
-  create_svk_mgmt_fw_conf_json(
-      conf_file1, conf_file1, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
-      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
-      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, "Invalid_Controller");
-
-  Servicer *svcr(new Servicer(conf_file1));
-  auto server = InitializeNodeServicer(svcr);
-  ASSERT_EQ(server, nullptr);
-  unlink(conf_file.c_str());
-  unlink(conf_file1.c_str());
-}
-
 TEST(InitIntegrationTest, ProcessControllerCommandWithoutNodeRegistration) {
   char *cw_dir = get_current_dir_name();
   std::string conf_file = std::string(cw_dir) + "/conf.json";
@@ -4083,4 +4060,114 @@ TEST(InitIntegrationTest, NodeStatsWithInvalidJSONOutput) {
   ASSERT_EQ(status.ok(), false);
   EXPECT_THAT(status.error_message(),
               HasSubstr("Error in parsing the output json string"));
+}
+
+class FakeControllerServicer : public ControllerServicer {
+ public:
+  FakeControllerServicer(std::string conf_file)
+      : ControllerServicer(conf_file){};
+  Status RegisterNode(ServerContext *ctxt, const svk::RegisterRequest *req,
+                      svk::RegisterResponse *resp) override {
+    return Status(grpc::UNKNOWN, "Failed to register node");
+  }
+};
+
+TEST(InitIntegrationTest, RegisterNodeFailure) {
+  Status status;
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  auto ctrlr_server = InitializeServicer(new FakeControllerServicer(conf_file));
+  ASSERT_NE(ctrlr_server, nullptr);
+
+  // Servicer *svcr(new Servicer(conf_file));
+  auto server = InitializeNodeServicer(new Servicer(conf_file));
+  ASSERT_EQ(server, nullptr);
+}
+
+// A fake node server where the command takes more than 180 seconds
+class FakeNodeServicerWithGRPCTimeout : public Servicer {
+ public:
+  FakeNodeServicerWithGRPCTimeout(std::string conf_file)
+      : Servicer(conf_file){};
+  Status ProcessNodeCommand(ServerContext *ctxt, const svk::CommandRequest *req,
+                            svk::CommandResponse *resp) override {
+    std::cout << "FakeNodeServicerWithGRPCTimeout called for the command "
+              << req->command_name() << std::endl;
+
+    if (req->command_name().length() > 0) {
+      svk::CommandResponse_NodeResponse *response = resp->add_node_responses();
+      if (req->command_name() == "get_node_info") {
+        if (req->command_params().find("pci") != std::string::npos) {
+          response->set_output(NODE_PCI_FEATURE_OUTPUT);
+        }
+        if (req->command_params().find("device") != std::string::npos) {
+          response->set_output(NODE_DEVICE_FEATURE_OUTPUT);
+        }
+        if (req->command_params().find("stats") != std::string::npos) {
+          response->set_output(NODE_FEATURE_STATS_OUTPUT);
+        }
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      } else if (req->command_name() == "list_devices") {
+        response->set_output(CXL_DEVICE_LIST_OUTPUT);
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      } else if (req->command_name() == "get_device_info") {
+        if (req->command_params().find("29690035288064") != std::string::npos) {
+          response->set_output(CXL_DEVICE_INFO_OUTPUT1);
+        } else if (req->command_params().find("30690035288064") !=
+                   std::string::npos) {
+          response->set_output(CXL_DEVICE_INFO_OUTPUT2);
+        } else {
+          response->set_output("FakeNodeServicerWithGRPCTimeout");
+        }
+
+        response->set_node_id(req->node_id());
+        return Status::OK;
+      } else if (req->command_name() == "get_fake_node_info") {
+        sleep(GRPC_COMMAND_DEADLINE_TIMEOUT + 20);
+        return Status::OK;
+      }
+      response->set_output("FakeNodeServicerWithGRPCTimeout");
+    }
+    return Status::OK;
+  }
+};
+
+// Validate the gRPC connection timeout exceeded as the command is taking more
+// than the expected GRPC_COMMAND_DEADLINE_TIMEOUT(180) seconds
+TEST(InitIntegrationTest, NodeCommandTimeoutExceeded) {
+  Status status;
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  Servicer *svcr(new FakeNodeServicerWithGRPCTimeout(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+
+  svk::StatsRequest req;
+  svk::StatsResponse *resp = new (svk::StatsResponse);
+  req.set_cluster_name(DEFAULT_CLUSTER_ID);
+  req.set_command_name("get_fake_node_info");
+  req.set_feature_name("node");
+  status = client.StatsAPI(&req, resp);
+  std::cout << "Status " << status.error_message() << std::endl;
+  ASSERT_EQ(status.ok(), false);
+  ASSERT_EQ(status.error_code(), grpc::StatusCode::DEADLINE_EXCEEDED);
+
+  // Stop the node servicer
+  delete svcr;
 }

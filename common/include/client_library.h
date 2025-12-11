@@ -3,6 +3,10 @@
 #include "framework/framework.grpc.pb.h"
 #include "grpc_hdr.h"
 
+// gRPC connection timeout for each command executed between controller to node
+// server and vice-versa
+#define GRPC_COMMAND_DEADLINE_TIMEOUT (180)
+
 using svk::CommandFwk;
 using svk::CommandRequest;
 using svk::CommandResponse;
@@ -10,7 +14,7 @@ using svk::Controller;
 
 class Client {
  public:
-  Client(std::string node, std::string port);
+  Client(const std::string& node, const std::string& port);
   virtual ~Client() = default;
   virtual Status ProcessNodeCommand(const svk::CommandRequest* req,
                                     svk::CommandResponse* resp);
