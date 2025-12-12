@@ -131,6 +131,9 @@ std::string runMlc(std::string testType, argOpts args, std::string bin_path) {
     // -c affinitize the latency measurement thread to core #n
     cmd_args += " -c";
     cmd_args += std::to_string(numa_node);
+  } else if (testType == "latency_matrix") {
+    // set the MLC command to run with 2MB buffer size
+    cmd_args += " -b2000 ";
   }
 
   rinfo = runExecutable(bin_path, cmd_args);

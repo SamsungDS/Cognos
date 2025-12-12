@@ -1,6 +1,7 @@
 {
   "slat": {
     "logic_lib_dir": "@SLAT_FEATURE_DIR@/logic_modules",
+    "benchmark_run_interval": 60,
     "logger": {
       "log_level": "INFO",
       "log_file_name": "/var/log/svk/slat.log",

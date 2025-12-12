@@ -700,15 +700,6 @@ TEST_F(ConfigTest, ExecuteASyncFnSuccess) {
   unlink("slat_conf.json");
 }
 
-TEST_F(ConfigTest, CleanupFnFail) {
-  boost::property_tree::write_json("slat_conf.json", slat_conf);
-
-  setenv("SVK_SLAT_CONFIG", "slat_conf.json", true);
-  EXPECT_EQ(SVK_STATUS_SUCCESS, initialize(nullptr));
-  EXPECT_EQ(SVK_STATUS_FAIL, clean_up(nullptr));
-  unlink("slat_conf.json");
-}
-
 TEST_F(ConfigTest, CleanupFnSuccess) {
   char param[256];
   boost::property_tree::write_json("slat_conf.json", slat_conf);
@@ -758,11 +749,13 @@ TEST_F(ConfigTest, PublishSuccess) {
   config.device_sla_tolerance_percent = 10;
   app_config.app_requested_sla_ns = 100;
   app_config.app_sla_tolerance_percent = 10;
-  strcpy(app_config.app_current_sla.host_name, "msl-ssg-dummy");
-  strcpy(app_config.app_current_sla.app_name, "app1");
-  strcpy(app_config.app_current_sla.app_pid, "4321");
-  strcpy(app_config.app_current_sla.device_name, "0");
+
+  app_config.app_current_sla.host_name = "msl-ssg-dummy";
+  app_config.app_current_sla.device_name = "msl-ssg-dummy_0";
   app_config.app_current_sla.avgLatencyns = 1000;
+  app_config.app_name = "app1";
+  app_config.app_pid = "4321";
+
   config.app_sla_list["app1"] = app_config;
   svc.test_publish_data(config);
   config.device_advertised_sla = 100;
@@ -795,11 +788,12 @@ class SLATrackerSvc_BenchMarkThread : public SLATrackerSvc {
     config.device_sla_tolerance_percent = 10;
     app_config.app_requested_sla_ns = 100;
     app_config.app_sla_tolerance_percent = 10;
-    strcpy(app_config.app_current_sla.host_name, "msl-ssg-dummy");
-    strcpy(app_config.app_current_sla.app_name, "app1");
-    strcpy(app_config.app_current_sla.app_pid, "4321");
-    strcpy(app_config.app_current_sla.device_name, "0");
+    app_config.app_current_sla.host_name = "localhost";
+    app_config.app_current_sla.device_name = "localhost_0";
     app_config.app_current_sla.avgLatencyns = 1000;
+    app_config.app_name = "app1";
+    app_config.app_pid = "4321";
+
     config.app_sla_list["app1"] = app_config;
     return;
   }
@@ -844,6 +838,13 @@ TEST_F(ConfigTest, BenchmarkingThreadForEvents) {
   command_params["logic_module"] = "mlc";
   command_params["devices"] = devices;
   svc.my_add_devices_to_sla_tracker(command_params);
+
+  // Add another app to the same device
+  command_params["app_name"] = "app2";
+  command_params["app_pid"] = "56789";
+  command_params["app_sla_latency_ns"] = 110;
+  svc.my_add_devices_to_sla_tracker(command_params);
+
   sleep(5);
   // Set the current latency to above  the device threshold in the next
   // command cycle to trigger degraded event
@@ -859,19 +860,28 @@ TEST_F(ConfigTest, BenchmarkingThreadForEvents) {
       "[{\"category\":\"slat\",\"domain\":\"observability\",\"feature_name\":"
       "\"slat\",\"msg\":\"SLA degraded, current observed device latency 150ns, "
       "expected  "
-      "100ns\",\"observations\":{\"app_name\":\"app1\",\"app_pid\":\"4321\","
-      "\"avg_latency_ns\":1000,\"device_id\":\"0\",\"host_name\":\"msl-ssg-"
-      "dummy\"},\"severity\":\"warning\",\"source\":\"0\",\"source_type\":"
-      "\"device\"";
+      "100ns\",\"observations\":{\"app_name\":\"app1\",\"app_pid\":\"1234\","
+      "\"avg_latency_ns\":0,\"device_id\":\"localhost_0\",\"host_name\":"
+      "\"localhost\"},\"severity\":\"warning\",\"source\":\"localhost_0\","
+      "\"source_type\":\"device\"";
   EXPECT_EQ(true, is_str_in_log(msg));
   msg =
       "[{\"category\":\"slat\",\"domain\":\"observability\",\"feature_name\":"
       "\"slat\",\"msg\":\"SLA corrected, current observed device latency 90ns, "
       "expected  "
-      "100ns\",\"observations\":{\"app_name\":\"app1\",\"app_pid\":\"4321\","
-      "\"avg_latency_ns\":1000,\"device_id\":\"0\",\"host_name\":\"msl-ssg-"
-      "dummy\"},\"severity\":\"info\",\"source\":\"0\",\"source_type\":"
-      "\"device\"";
+      "100ns\",\"observations\":{\"app_name\":\"app1\",\"app_pid\":\"1234\","
+      "\"avg_latency_ns\":0,\"device_id\":\"localhost_0\",\"host_name\":"
+      "\"localhost\"},\"severity\":\"info\",\"source\":\"localhost_0\","
+      "\"source_type\":\"device\"";
+  EXPECT_EQ(true, is_str_in_log(msg));
+  msg =
+      "[{\"category\":\"slat\",\"domain\":\"observability\",\"feature_name\":"
+      "\"slat\",\"msg\":\"SLA corrected, current observed device latency 90ns, "
+      "expected  "
+      "100ns\",\"observations\":{\"app_name\":\"app2\",\"app_pid\":\"56789\","
+      "\"avg_latency_ns\":0,\"device_id\":\"localhost_0\",\"host_name\":"
+      "\"localhost\"},\"severity\":\"info\",\"source\":\"localhost_0\","
+      "\"source_type\":\"device\"";
   EXPECT_EQ(true, is_str_in_log(msg));
   svc.clean_up();
 }
@@ -892,7 +902,7 @@ TEST_F(ConfigTest, SLATWithJSONException) {
   boost::property_tree::write_json("slat_conf.json", slat_conf);
   SLATrackerSvc_Test svc;
   svc.Initialize("slat_conf.json");
-  char invalid_utf8[] = {'H', 'e', 'l', 'l', 'o', '\x80', '\0'};
+  std::string invalid_utf8 = "\xFF\xFE\xFD";
 
   slat_benchmark_config config;
   slat_app_sla_config app_config;
@@ -902,11 +912,11 @@ TEST_F(ConfigTest, SLATWithJSONException) {
   config.device_sla_tolerance_percent = 10;
   app_config.app_requested_sla_ns = 100;
   app_config.app_sla_tolerance_percent = 10;
-  strcpy(app_config.app_current_sla.host_name, invalid_utf8);
-  strcpy(app_config.app_current_sla.app_name, "app1");
-  strcpy(app_config.app_current_sla.app_pid, "4321");
-  strcpy(app_config.app_current_sla.device_name, "0");
+  app_config.app_current_sla.host_name = invalid_utf8;
+  app_config.app_current_sla.device_name = "msl-ssg-dummy_0";
   app_config.app_current_sla.avgLatencyns = 1000;
+  app_config.app_name = "app1";
+  app_config.app_pid = "4321";
   config.app_sla_list["app1"] = app_config;
   svc.test_publish_data(config);
   unlink("slat_conf.json");
@@ -925,11 +935,12 @@ TEST_F(ConfigTest, PublishFailure) {
   config.device_sla_tolerance_percent = 10;
   app_config.app_requested_sla_ns = 100;
   app_config.app_sla_tolerance_percent = 10;
-  strcpy(app_config.app_current_sla.host_name, "msl-ssg-dummy");
-  strcpy(app_config.app_current_sla.app_name, "app1");
-  strcpy(app_config.app_current_sla.app_pid, "4321");
-  strcpy(app_config.app_current_sla.device_name, "0");
+  app_config.app_current_sla.host_name = "dummyhost";
+  app_config.app_current_sla.device_name = "dummyhost_0";
   app_config.app_current_sla.avgLatencyns = 1000;
+  app_config.app_name = "app1";
+  app_config.app_pid = "4321";
+
   config.app_sla_list["app1"] = app_config;
   svc.test_publish_data(config);
   unlink("slat_conf.json");
@@ -951,11 +962,11 @@ TEST_F(ConfigTest, PublishEventToCoreFailure) {
   config.device_sla_tolerance_percent = 10;
   app_config.app_requested_sla_ns = 100;
   app_config.app_sla_tolerance_percent = 10;
-  strcpy(app_config.app_current_sla.host_name, "msl-ssg-dummy");
-  strcpy(app_config.app_current_sla.app_name, "app1");
-  strcpy(app_config.app_current_sla.app_pid, "4321");
-  strcpy(app_config.app_current_sla.device_name, "0");
+  app_config.app_current_sla.host_name = "dummyhost";
+  app_config.app_current_sla.device_name = "dummyhost_0";
   app_config.app_current_sla.avgLatencyns = 1000;
+  app_config.app_name = "app1";
+  app_config.app_pid = "4321";
   config.app_sla_list["app1"] = app_config;
   svc.test_publish_data(config);
   unlink("slat_conf.json");

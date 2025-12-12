@@ -40,12 +40,10 @@
 #define SLAT_MAX_LOGIC_MODULE_NAME_LEN SLAT_MAX_STR_LEN
 #define SLAT_MAX_FEATURE_NAME_LEN SLAT_MAX_STR_LEN
 
-using svk_slat_logic_output = struct svk_slat_logic_output_s {
-  char host_name[SLAT_MAX_STR_LEN];
-  char app_name[SLAT_MAX_STR_LEN];
-  char device_name[SLAT_MAX_STR_LEN];  // This may contain just numa of device
-  char app_pid[SLAT_MAX_STR_LEN];  // Making as string for parsing workaround
-  uint64_t avgLatencyns;           // Latency in nanoseconds
+using svk_slat_metrics_output = struct svk_slat_metrics_output_s {
+  std::string host_name;
+  std::string device_name;  // This may contain just numa of device
+  uint64_t avgLatencyns;    // Latency in nanoseconds
   uint64_t iops;
   uint64_t bandwidthGBps;
   uint64_t avgReadLatency;
@@ -61,9 +59,11 @@ using svk_slat_logic_output = struct svk_slat_logic_output_s {
 
 using json = nlohmann::json;
 using slat_app_sla_config = struct slat_app_sla_config_s {
+  std::string app_name;
+  std::string app_pid;
   uint64_t app_requested_sla_ns;
   uint64_t app_sla_tolerance_percent;
-  svk_slat_logic_output app_current_sla;
+  svk_slat_metrics_output app_current_sla;
 };
 
 using slat_benchmark_config = struct slat_benchmark_config_s {

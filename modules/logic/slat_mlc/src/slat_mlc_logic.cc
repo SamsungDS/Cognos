@@ -68,8 +68,9 @@ svk_status configure_slat_mlc_logic(const std::string slat_logic_conf_file) {
     status = read_slat_logger_config(logger_info_pt, config);
 
   } catch (std::exception &e) {
-    std::cerr << "Error processing SLAT config file. Assigning default value. "
-                 "Error -> "
+    std::cout << "Exception in processing SLAT logic JSON config file. "
+                 "Assigning default values. "
+                 "Exception  -> "
               << e.what() << std::endl;
 
     // Assign defaults
