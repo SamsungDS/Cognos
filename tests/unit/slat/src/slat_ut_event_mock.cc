@@ -27,7 +27,9 @@ using ::testing::StrEq;
 DEFINE_RETURN_MOCK(create_event_in_json_format, int);
 
 int create_event_in_json_format(const slat_benchmark_config &config,
-                                const svk_slat_logic_output &app_current_sla,
+                                const std::string &app_name,
+                                const std::string &app_pid,
+                                const svk_slat_metrics_output &app_current_sla,
                                 std::string severity, std::string message,
                                 json &json_data) {
   std::cout << "create_event_in_json_format MOCK CALLED" << std::endl;
@@ -51,12 +53,9 @@ int create_event_in_json_format(const slat_benchmark_config &config,
   }
   json json_map;
   json observations_map;
-  observations_map["device_name"] =
-      std::string(app_current_sla.device_name, 0, SLAT_MAX_STR_LEN);
-  observations_map["host_name"] =
-      std::string(app_current_sla.host_name, 0, SLAT_MAX_STR_LEN);
-  observations_map["app_name"] =
-      std::string(app_current_sla.app_name, 0, SLAT_MAX_STR_LEN);
+  observations_map["device_name"] = app_current_sla.device_name;
+  observations_map["host_name"] = app_current_sla.host_name;
+  observations_map["app_name"] = "app1";
   observations_map["avg_latency_ns"] = app_current_sla.avgLatencyns;
   observations_map["feature_name"] = SLAT_FEATURE_MODULE_NAME;
 
@@ -127,11 +126,11 @@ TEST_F(ConfigTestWithMock, SLATWithEmptyJSONData) {
   config.device_sla_tolerance_percent = 10;
   app_config.app_requested_sla_ns = 100;
   app_config.app_sla_tolerance_percent = 10;
-  strcpy(app_config.app_current_sla.host_name, "dummyhost");
-  strcpy(app_config.app_current_sla.app_name, "app1");
-  strcpy(app_config.app_current_sla.app_pid, "4321");
-  strcpy(app_config.app_current_sla.device_name, "dummyhost_0");
+  app_config.app_current_sla.host_name = "dummyhost";
+  app_config.app_current_sla.device_name = "dummyhost_0";
   app_config.app_current_sla.avgLatencyns = 1000;
+  app_config.app_name = "app1";
+  app_config.app_pid = "4321";
   config.app_sla_list["app1"] = app_config;
   svc.test_publish_data(config);
   unlink("slat_conf.json");
@@ -152,11 +151,11 @@ TEST_F(ConfigTestWithMock, SLATWithSkippingJSONError) {
   config.device_sla_tolerance_percent = 10;
   app_config.app_requested_sla_ns = 100;
   app_config.app_sla_tolerance_percent = 10;
-  strcpy(app_config.app_current_sla.host_name, "dummyhost");
-  strcpy(app_config.app_current_sla.app_name, "app1");
-  strcpy(app_config.app_current_sla.app_pid, "4321");
-  strcpy(app_config.app_current_sla.device_name, "dummyhost_0");
+  app_config.app_current_sla.host_name = "dummyhost";
+  app_config.app_current_sla.device_name = "dummyhost_0";
   app_config.app_current_sla.avgLatencyns = 1000;
+  app_config.app_name = "app1";
+  app_config.app_pid = "4321";
   config.app_sla_list["app1"] = app_config;
   svc.test_publish_data(config);
   unlink("slat_conf.json");

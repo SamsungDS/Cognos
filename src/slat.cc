@@ -91,7 +91,7 @@ void SLATrackerSvc::parse_result(slat_benchmark_config &config,
     uint64_t avgReadLatency = atof(parsed_result);
     config.device_current_sla = avgReadLatency;
 
-    for (auto [app_name, app_sla] : config.app_sla_list) {
+    for (auto [slat_app_id, app_sla] : config.app_sla_list) {
       app_sla.app_current_sla.avgLatencyns = avgReadLatency;
     }
   }
@@ -99,7 +99,7 @@ void SLATrackerSvc::parse_result(slat_benchmark_config &config,
 
 void SLATrackerSvc::update_app_sla_with_device_sla(
     slat_benchmark_config &config) {
-  for (auto &[app_name, app_sla_config] : config.app_sla_list) {
+  for (auto &[slat_app_id, app_sla_config] : config.app_sla_list) {
     app_sla_config.app_current_sla.avgLatencyns = config.device_current_sla;
   }
 }
@@ -112,21 +112,19 @@ static long long get_epoch() {
 }
 
 int create_event_in_json_format(const slat_benchmark_config &config,
-                                const svk_slat_logic_output &app_current_sla,
+                                const std::string &app_name,
+                                const std::string &app_pid,
+                                const svk_slat_metrics_output &app_current_sla,
                                 const std::string &severity,
                                 const std::string &message, json &json_data) {
   json json_map;
   json observations_map;
   long epoch = get_epoch();
-  auto app_name = std::string(app_current_sla.app_name, 0, SLAT_MAX_STR_LEN);
-  auto device_name =
-      std::string(app_current_sla.device_name, 0, SLAT_MAX_STR_LEN);
+  auto device_name = app_current_sla.device_name;
   observations_map["device_id"] = device_name;
-  observations_map["host_name"] =
-      std::string(app_current_sla.host_name, 0, SLAT_MAX_STR_LEN);
+  observations_map["host_name"] = app_current_sla.host_name;
   observations_map["app_name"] = app_name;
-  observations_map["app_pid"] =
-      std::string(app_current_sla.app_pid, 0, SLAT_MAX_STR_LEN);
+  observations_map["app_pid"] = app_pid;
   observations_map["avg_latency_ns"] = app_current_sla.avgLatencyns;
 
   json_map["domain"] = "observability";
@@ -136,8 +134,8 @@ int create_event_in_json_format(const slat_benchmark_config &config,
   json_map["msg"] = message;
   json_map["source_type"] = "device";
   json_map["source"] = device_name;
-  json_map["tag"] = "SLA_" + std::string(app_current_sla.host_name) +
-                    device_name + std::to_string(epoch);
+  json_map["tag"] = "SLA_" + app_current_sla.host_name + "_" + device_name +
+                    std::to_string(epoch);
   json_map["timestamp"] = epoch;
   json_map["observations"] = observations_map;
   json_data = json_map;
@@ -150,7 +148,7 @@ void SLATrackerSvc::publish_app_event(slat_benchmark_config &config) {
   std::string json_data_str;
 
   svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::DEBUG, "SLA publish_app_event");
-  for (const auto &[app_name, app_sla_config] : config.app_sla_list) {
+  for (const auto &[slat_app_id, app_sla_config] : config.app_sla_list) {
     json json_data;
     std::string message;
     std::string severity;
@@ -171,8 +169,9 @@ void SLATrackerSvc::publish_app_event(slat_benchmark_config &config) {
                 std::to_string(config.device_advertised_sla) + "ns";
     }
 
-    create_event_in_json_format(config, app_sla_config.app_current_sla,
-                                severity, message, json_data);
+    create_event_in_json_format(
+        config, app_sla_config.app_name, app_sla_config.app_pid,
+        app_sla_config.app_current_sla, severity, message, json_data);
     if (json_data.empty()) {
       svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::WARN,
                  "JSON Data is empty. Continuing");
@@ -210,8 +209,10 @@ inline void SLATrackerSvc::process_pending_requests(void) {
   std::lock_guard<std::mutex> guard(this->th_data.benchmark_pending_list_lock);
   for (slat_app_benchmark_sla_to_add &to_add :
        this->th_data.benchmark_pending_list_to_add) {
-    const std::string app_name = to_add.app_sla.app_current_sla.app_name;
-    logger_str = "Processing add request for app " + app_name;
+    const std::string app_name = to_add.app_sla.app_name;
+    const std::string app_pid = to_add.app_sla.app_pid;
+    std::string slat_app_id = app_name + "_" + app_pid;
+    logger_str = "Processing add request for app " + slat_app_id;
     svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
 
     for (const auto &device : to_add.device_sla_list) {
@@ -225,23 +226,29 @@ inline void SLATrackerSvc::process_pending_requests(void) {
         cfg.device_advertised_sla = device.device_advertised_sla;
         cfg.device_numa_node = device_numa;
         cfg.device_sla_tolerance_percent = APP_DEFAULT_TOLERANCE_PERCENT;
-        cfg.app_sla_list[app_name] = to_add.app_sla;
-        strncpy(
-            cfg.app_sla_list[app_name].app_current_sla.device_name,
-            device.device_name.c_str(),
-            sizeof(cfg.app_sla_list[app_name].app_current_sla.device_name) - 1);
-        logger_str = "Adding device " + device_numa + ". and app " + app_name;
+        cfg.app_sla_list[slat_app_id] = to_add.app_sla;
+        cfg.app_sla_list[slat_app_id].app_current_sla.device_name =
+            device.device_name;
+        logger_str = "Adding device " + device_numa + ". and app " +
+                     slat_app_id + " with SLA " +
+                     std::to_string(device.device_advertised_sla);
         svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
 
         this->th_data.benchmark_device_config_list[device_numa] = cfg;
-        continue;
-      }
-      logger_str = "Device already exists for " + device_numa +
-                   ". Updating for app " + app_name;
-      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+      } else {
+        logger_str = "Device already exists in the slat map for " +
+                     device_numa + ". Adding the app " + slat_app_id +
+                     " with SLA " +
+                     std::to_string(device.device_advertised_sla);
+        svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+        slat_benchmark_config cfg =
+            this->th_data.benchmark_device_config_list[device_numa];
+        cfg.app_sla_list[slat_app_id] = to_add.app_sla;
+        cfg.app_sla_list[slat_app_id].app_current_sla.device_name =
+            device.device_name;
 
-      // TODO: Need to address for the new app addition or removal from the
-      // above list
+        this->th_data.benchmark_device_config_list[device_numa] = cfg;
+      }
     }
   }
   this->th_data.benchmark_pending_list_to_add.clear();
@@ -317,6 +324,8 @@ void SLATrackerSvc::benchmarking_thread_fn(void) {
     std::this_thread::sleep_for(
         std::chrono::seconds(this->th_data.benchmark_run_interval));
     if (this->th_data.shutdown_bm_thread) {
+      svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO,
+                 "Shutting down the background monitoring thread");
       break;
     }
   }
@@ -324,20 +333,13 @@ void SLATrackerSvc::benchmarking_thread_fn(void) {
 }
 
 svk_status update_sla_details(
-    const std::map<std::string, std::string> &param_map, const char *key,
-    char *dest, unsigned int max_len) {
-  auto it = param_map.find(key);
-  if (it == param_map.end()) {
+    const std::map<std::string, std::string> &param_map, const std::string &key,
+    std::string &dest) {
+  if (auto it = param_map.find(key); it == param_map.end()) {
     std::cout << key << " not found" << std::endl;
     return SVK_STATUS_FAIL;
   } else {
-    std::string value = it->second;
-    if (value.length() >= max_len) {
-      std::cout << key << " length greater than " << max_len << " not supported"
-                << std::endl;
-      return SVK_STATUS_FAIL;
-    }
-    strncpy(dest, value.c_str(), max_len);
+    dest = it->second;
   }
   return SVK_STATUS_SUCCESS;
 }
@@ -366,20 +368,17 @@ svk_status SLATrackerSvc::parse_and_add_new_sla_monitor(
   }
 
   rc = update_sla_details(sla_kv_pairs, "app_name",
-                          app_sla_to_add.app_sla.app_current_sla.app_name,
-                          APP_MAX_LEN);
+                          app_sla_to_add.app_sla.app_name);
   if (rc != SVK_STATUS_SUCCESS) {
     return rc;
   }
   rc = update_sla_details(sla_kv_pairs, "host_name",
-                          app_sla_to_add.app_sla.app_current_sla.host_name,
-                          HOSTNAME_MAX_LEN);
+                          app_sla_to_add.app_sla.app_current_sla.host_name);
   if (rc != SVK_STATUS_SUCCESS) {
     return rc;
   }
   rc = update_sla_details(sla_kv_pairs, "app_pid",
-                          app_sla_to_add.app_sla.app_current_sla.app_pid,
-                          APP_MAX_LEN);
+                          app_sla_to_add.app_sla.app_pid);
   if (rc != SVK_STATUS_SUCCESS) {
     std::cout << "APP PID is missing or invalid" << std::endl;
     return rc;
@@ -433,7 +432,7 @@ svk_status SLATrackerSvc::parse_and_add_new_sla_monitor(
   this->th_data.benchmark_pending_list_lock.unlock();
 
   snprintf(log_msg, LOG_MSG_MAX_SIZE, "Queued app [%s] for sla monitoring\n",
-           app_sla_to_add.app_sla.app_current_sla.app_name);
+           app_sla_to_add.app_sla.app_name.c_str());
   svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, log_msg);
 
   return SVK_STATUS_SUCCESS;
@@ -485,9 +484,8 @@ svk_status SLATrackerSvc::read_slat_config_file(
       config->logger_config.log_sink_type = SLAT_LOGGER_SINK_TYPE_DEFAULT;
     }
   } catch (std::exception &e) {
-    std::cerr << "Unable to read SLAT config file. Assigning default value. "
-                 "Error -> "
-              << e.what() << std::endl;
+    std::cout << "Exception in processing SLAT JSON config file - " << e.what()
+              << ". Assigning default values." << std::endl;
     config->slat_logic_lib_dir = SLAT_FEATURE_LOGIC_MODULES_PATH;
 
     // Assign defaults
@@ -713,18 +711,18 @@ svk_status SLATrackerSvc::add_devices_to_sla_tracker(json command_params) {
   // Parse the command params
   try {
     // Update the structure with details
-    std::vector<std::tuple<std::string, std::string, char *>> sla_fields = {
-        {"app_name", command_params.at("app_name"),
-         app_sla_to_add.app_sla.app_current_sla.app_name},
-        {"app_pid", command_params.at("app_pid"),
-         app_sla_to_add.app_sla.app_current_sla.app_pid},
-        {"host_name", command_params.at("host_name"),
-         app_sla_to_add.app_sla.app_current_sla.host_name}};
+    std::vector<std::tuple<std::string, std::string,
+                           std::reference_wrapper<std::string>>>
+        sla_fields = {{"app_name", command_params.at("app_name"),
+                       app_sla_to_add.app_sla.app_name},
+                      {"app_pid", command_params.at("app_pid"),
+                       app_sla_to_add.app_sla.app_pid},
+                      {"host_name", command_params.at("host_name"),
+                       app_sla_to_add.app_sla.app_current_sla.host_name}};
 
-    for (const auto &[key, value, target] : sla_fields) {
+    for (const auto &[key, value, target_ref] : sla_fields) {
       sla_kv_pairs[key] = value;
-      status = update_sla_details(sla_kv_pairs, key.c_str(), target,
-                                  SLAT_MAX_STR_LEN);
+      status = update_sla_details(sla_kv_pairs, key, target_ref.get());
       if (status != SVK_STATUS_SUCCESS) {
         return status;
       }
@@ -770,8 +768,7 @@ svk_status SLATrackerSvc::add_devices_to_sla_tracker(json command_params) {
   this->th_data.benchmark_pending_list_to_add.push_back(app_sla_to_add);
   this->th_data.benchmark_pending_list_lock.unlock();
 
-  logger_str = "Queued app [" +
-               std::string(app_sla_to_add.app_sla.app_current_sla.app_name) +
+  logger_str = "Queued app [" + std::string(app_sla_to_add.app_sla.app_name) +
                "] for sla monitoring.";
   svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
   status = SVK_STATUS_SUCCESS;
@@ -1080,15 +1077,10 @@ extern "C" svk_status execute_async(svk_pass_thru_cmd *pass_thru,
 }
 
 extern "C" svk_status clean_up(void *param) {
-  if (param == nullptr) {
-    svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::ERROR,
-               "clean_up function called with nullptr param");
-    return SVK_STATUS_FAIL;
-  }
   svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO,
-             "clean_up returned successfully.");
-
+             "clean_up function called");
   g_slat_service->clean_up();
-
+  svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO,
+             "clean_up completed successfully.");
   return SVK_STATUS_SUCCESS;
 }
