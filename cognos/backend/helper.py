@@ -166,6 +166,10 @@ def create_empty_response() -> Response:
     return make_response('', 204)
 
 
+def create_empty_payload() -> Dict:
+    return {}
+
+
 def create_response_from_payload(payload) -> Response:
     """
     Creates a successful flask response wrapped around

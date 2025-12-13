@@ -175,6 +175,40 @@ const Metrics = () => {
     }
   }, [])
 
+
+const memBWDataRef = useRef({});
+  const [memBWDataState, setMemBWDataState] = useState([]);
+  // poll for memory capacity data for selected host
+  useEffect(() => {
+    async function getMemoryBWData() {
+      let payload = {};
+      payload.metric_type = "node_bandwidth";
+      if (lastSelectedHost.current && lastSelectedHost.current.value) {
+        payload.host = lastSelectedHost.current.value;
+      }
+      else {
+        payload.host = ""
+      }
+
+      const response = await constants.fetchMetrics(`${apiEndpoint}/metrics`, payload)
+
+      if (response?.ok) {
+          const data = await response.json();
+          memCapacityDataRef.current = data;
+          setMemBWDataState(memCapacityDataRef.current);
+      }
+      else {
+          console.log("unable to fetch memory cpu data..");
+      }
+    }
+
+    getMemoryBWData()
+    const interval = setInterval(() => getMemoryBWData(), 3000)
+    return () => {
+      clearInterval(interval);
+    }
+  }, [])
+
   const memCapacityDataRef = useRef({});
   const [memCapacityDataState, setMemCapacityDataState] = useState([]);
   // poll for memory capacity data for selected host
@@ -308,13 +342,13 @@ const Metrics = () => {
                             className="progres-bar-label-metrics"
                             style={{ color: "white" }}
                           >
-                            {`128 GBps`}
+                            {`${memBWDataState?.max_bandwidth} GBps`}
                           </div>
-                          <ProgressBar now="50" key={2} className="host2" />
+                          <ProgressBar now={`${memBWDataState?.used_percentage_bandwidth}`} key={2} className="host2" />
                           <div
                             className="progres-bar-title-metrics"
                             style={{ color: "white" }}
-                          >{`Used Bandwidth 64 GBps`}</div>
+                          >{`${memBWDataState?.used_bandwidth} GBps`}</div>
                         </div>
                       </Col>
                     </Row>

@@ -679,59 +679,69 @@ class CognosInfluxDBClient:
         except Exception as error:
             print(f"ERROR: {str(error)}")
 
-    def get_membox_bandwidth(self) -> List[List]:
+    def get_node_bandwidth(self) -> List[List]:
         """
-        Returns bandwidth usage data of the memory box
+        Returns CXL bandwidth usage data of a single server
+        """
 
-        Calculate membox bandwidth:
-        Upstream port bandwidth: 8 lanes per port * 4GB/s per
-        lane = 32GB per upstream port
-        Max bandwidth: 512GB
-        """
-        max_bandwidth = 512
-        default_upstream_ports = 1
-        default_used_percentage_bandwidth = 0
-        if self.mock:
-            # Return mock data if in mock mode
-            return {
-                "max_bandwidth": max_bandwidth,
-                "used_bandwidth": 32 * default_upstream_ports,
-                "used_percentage_bandwidth": default_used_percentage_bandwidth,
-            }
-        try:
-            # Fetch the number of upstream ports
-            upstream_ports_result = (
-                self.sql_client.exec_fetch_singlerecord_query(
-                    "SELECT COUNT(*) FROM hosts "
-                    "WHERE fm_type = 'FM_REMOTE_CMMD';",
-                    tuple()
+        # get all applicable CXL devices based on host
+        data = self.sql_client.exec_fetch_query(
+            "SELECT device_id FROM connections WHERE node_name = ?",
+            (self.selected_host,)
+        )
+
+        device_ids = []
+        for row in data:
+            if row and row[0]:
+                device_ids.append(int(row[0]))
+
+        flux_devices_list = ", ".join(f'"{d}"' for d in device_ids)
+
+        tables = self.read_client.query(
+            f'''
+            from(bucket: "internal")
+                |> range(start: -5m)
+                |> filter(fn: (r) => r._measurement == "stats"
+                    and (r._field == "used_bandwidth_Bps"
+                            or r._field == "total_bandwidth_MBps")
                 )
-            )
-            num_upstream_ports = (
-                upstream_ports_result
-                if upstream_ports_result
-                else default_upstream_ports
-            )
-            # Calculate used bandwidth and percentage
-            used_bandwidth = 32 * num_upstream_ports
-            used_percentage_bandwidth = (
-                math.floor((used_bandwidth / max_bandwidth) * 100)
-                if max_bandwidth > 0
-                else default_used_percentage_bandwidth
-            )
-            return {
-                "max_bandwidth": max_bandwidth,
-                "used_bandwidth": used_bandwidth,
-                "used_percentage_bandwidth": used_percentage_bandwidth,
-            }
-        except Exception as error:
-            print(f"Error processing membox bandwidth: {str(error)}")
-            return {
-                "max_bandwidth": max_bandwidth,
-                # Default to 0 in case of error
-                "used_bandwidth": 32,
-                "used_percentage_bandwidth": default_used_percentage_bandwidth,
-            }
+                |> filter(fn: (r) => r.source_type == "device")
+                |> filter(fn: (r) => contains(value: r.source, set: [{flux_devices_list}]))
+                |> toFloat()
+                |> group(columns: ["source", "_field"])
+                |> last()
+                |> pivot(
+                    rowKey: ["_time", "source"],
+                    columnKey: ["_field"],
+                    valueColumn: "_value"
+                )
+                |> group()
+                |> reduce(
+                    identity: {{totalUsed: 0.0, totalTotal: 0.0}},
+                    fn: (r, accumulator) => ({{
+                        totalUsed:
+                            accumulator.totalUsed + r.used_bandwidth_Bps,
+                        totalTotal:
+                            accumulator.totalTotal + r.total_bandwidth_MBps
+                    }})
+
+                )
+            '''
+        )
+        flux_query_output = json.loads(tables.to_json())
+        # Bps, convert to GBps
+        total_used_bw = round(
+            flux_query_output[0]['totalUsed'] / 1_000_000_000, 4
+        )
+        # MBps, convert to GBps
+        total_total_bw = round(flux_query_output[0]['totalTotal'] / 1000, 4)
+        used_bw_percentage = round(total_used_bw / total_total_bw * 100, 2)
+        payload = {
+            "max_bandwidth": total_total_bw,
+            "used_bandwidth": total_used_bw,
+            "used_percentage_bandwidth": used_bw_percentage
+        }
+        return payload
 
     def get_attached_devices_count(self) -> Dict:
         """

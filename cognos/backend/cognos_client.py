@@ -63,7 +63,7 @@ class Cognos(BaseControlInterface):
             "memserver_capacity": self.influx_client.get_memserver_capacity,
             "cmmb_usage": self.influx_client.get_membox_usage,
             "cmmb_capacity": self.influx_client.get_membox_capacity,
-            "cmmb_bandwidth": self.influx_client.get_membox_bandwidth,
+            "node_bandwidth": self.influx_client.get_node_bandwidth,
             "devices_count": self.influx_client.get_attached_devices_count,
             "hostview_bandwidth": self.influx_client.get_hostview_bandwidth,
             "hostview_usage": self.influx_client.get_hostview_usage,
@@ -764,7 +764,7 @@ class Cognos(BaseControlInterface):
 
         payload = self.cognos_metric_functions.get(
             metric_type,
-            helper.create_empty_response
+            helper.create_empty_payload
         )()
         return payload
 
@@ -797,6 +797,11 @@ class Cognos(BaseControlInterface):
             (app_pid,)
         )
 
+        cluster_name = self.sql_client.exec_fetch_singlerecord_query(
+            "SELECT cluster_name FROM connections WHERE node_name = ? AND device_id = NULL",
+            (node_name,)
+        )
+
         request_url = (
             COGNOS_NORTHBOUND_ENDPOINTS["get_cme_stats_prefix"] +
             node_name +
@@ -809,7 +814,7 @@ class Cognos(BaseControlInterface):
         })
 
         request_args = {
-            "cluster_name": "CL_ID_1",
+            "cluster_name": cluster_name,
             "command_name": "get_stats",
             "command_params": command_params
         }
