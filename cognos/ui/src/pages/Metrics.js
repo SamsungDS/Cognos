@@ -83,40 +83,25 @@ const Metrics = () => {
       legend: {textStyle: {color: '#FFFFFD', fontSize: 16}},
       chartArea: { width: "95%", height: "95%", top: 50, bottom: 40 },
   }
-  const dramCxlMemUsageOptions = {
-    isStacked: true,
-    height: 220,
-    colors: ["#0077C8", "#FFB546", "#00B3E3"],
-    hAxis: {
-      title: "Time",
-      textStyle: { color: "#FFFFFD" },
-      titleTextStyle: { color: "#FFFFFD" },
-      gridlines: { color: "#8D8D8D", count: 0 },
-    },
-    vAxis: {
-      title: "Memory Usage (%)",
-      textStyle: { color: "#FFFFFD" },
-      titleTextStyle: { color: "#FFFFFD" },
-      viewWindow: { min: 0, max: 100 },
-      gridlines: { color: "#8D8D8D", count: 0 },
-    },
-    curveType: "function",
-    lineWidth: 5,
-    legend: { position: "bottom", textStyle: { color: "#FFFFFD" } },
-    chartArea: { width: "85%", height: "100%", top: 50, bottom: 50 },
-    backgroundColor: { fill: "transparent" },
-    animation: { startup: true },
-    annotations: {
-      textStyle: {
-        fontName: "Times-Roman",
-        fontSize: 18,
-        bold: true,
-        italic: true,
-        color: "#FFFFFD",
-        auraColor: "#FFFFFD",
-        opacity: 0.8,
-      },
-    },
+  // Function to calculate auto-scaled viewWindow with 20% buffer
+  const getAutoScaledViewWindow = (data) => {
+    // Skip header row and extract all y-values from all series
+    const values = data.slice(1).flatMap(row =>
+      row.slice(1).filter(val => typeof val === 'number')
+    );
+
+    if (values.length === 0) return { min: 0, max: 100 };
+
+    const dataMin = Math.min(...values);
+    const dataMax = Math.max(...values);
+    const range = dataMax - dataMin;
+
+    // Add 20% buffer above and below
+    const buffer = range * 0.20;
+    const min = dataMin - buffer;
+    const max = dataMax + buffer;
+
+    return { min, max };
   };
 
   const memoryCpuDatOptions = {
@@ -244,6 +229,42 @@ const memBWDataRef = useRef({});
 
   const dramCxlMemUsageDataRef = useRef({});
   const [dramCxlMemUsageDataState, setDramCxlMemUsageDataState] = useState([]);
+  // Update your options
+  const dramCxlMemUsageOptions = {
+    isStacked: true,
+    height: 220,
+    colors: ["#0077C8", "#FFB546", "#00B3E3"],
+    hAxis: {
+      title: "Time",
+      textStyle: { color: "#FFFFFD" },
+      titleTextStyle: { color: "#FFFFFD" },
+      gridlines: { color: "#8D8D8D", count: 0 },
+    },
+    vAxis: {
+      title: "Memory Usage (%)",
+      textStyle: { color: "#FFFFFD" },
+      titleTextStyle: { color: "#FFFFFD" },
+      viewWindow: getAutoScaledViewWindow(dramCxlMemUsageDataState), // Dynamic calculation
+      gridlines: { color: "#8D8D8D", count: 0 },
+    },
+    curveType: "function",
+    lineWidth: 5,
+    legend: { position: "bottom", textStyle: { color: "#FFFFFD" } },
+    chartArea: { width: "85%", height: "100%", top: 50, bottom: 50 },
+    backgroundColor: { fill: "transparent" },
+    animation: { startup: true },
+    annotations: {
+      textStyle: {
+        fontName: "Times-Roman",
+        fontSize: 18,
+        bold: true,
+        italic: true,
+        color: "#FFFFFD",
+        auraColor: "#FFFFFD",
+        opacity: 0.8,
+      },
+    },
+  };
   // poll for memory capacity data for selected host
   useEffect(() => {
     async function getDramCxlMemUsage() {
@@ -337,19 +358,35 @@ const memBWDataRef = useRef({});
                         </h1>
                       </Col>
                       <Col sm={8} md={8} lg={8} xl={8}>
-                        <div>
-                          <div
-                            className="progres-bar-label-metrics"
-                            style={{ color: "white" }}
-                          >
-                            {`${memBWDataState?.max_bandwidth} GBps`}
+                        {memBWDataState?.used_percentage_bandwidth ? (<div className="pt-3">
+                          {/* Progress Bar */}
+                          <ProgressBar
+                            now={`${memBWDataState?.used_percentage_bandwidth}`}
+                            className="host1 mb-2"
+                            style={{ height: 24, fontWeight: "bold" }}
+                          />
+
+                          {/* Labels Container */}
+                          <div className="d-flex justify-content-between align-items-center text-white">
+                            {/* Left Label - 0 */}
+                            <div className="flex-shrink-0">
+                              <small>0 GBps</small>
+                            </div>
+
+                            {/* Center Label - Used Bandwidth */}
+                            <div className="text-center flex-grow-1 px-2">
+                              <span className="d-none d-md-inline">Used Bandwidth </span>
+                              <span className="fw-bold">{`${memBWDataState?.used_bandwidth} GBps`}</span>
+                            </div>
+
+                            {/* Right Label - Max Bandwidth */}
+                            <div className="flex-shrink-0">
+                              <small>{`${memBWDataState?.max_bandwidth} GBps`}</small>
+                            </div>
                           </div>
-                          <ProgressBar now={`${memBWDataState?.used_percentage_bandwidth}`} key={2} className="host2" />
-                          <div
-                            className="progres-bar-title-metrics"
-                            style={{ color: "white" }}
-                          >{`${memBWDataState?.used_bandwidth} GBps`}</div>
-                        </div>
+                        </div>) : (<div className="spinner-style" style={{ height: 80 }}>
+                          <Spinner animation="border" variant="secondary" />
+                        </div>)}
                       </Col>
                     </Row>
                   </div>
