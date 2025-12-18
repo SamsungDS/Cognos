@@ -50,6 +50,7 @@ const BoxTopology = () => {
   const [clusterList, setClusterList] = useState([
     "None"
   ]);
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
   // Filtered data
   const [filteredDataHost, setFilteredDataHost] = useState([]);
   const [filteredDataDevice, setFilteredDataDevice] =
@@ -58,7 +59,13 @@ const BoxTopology = () => {
     useState([]);
   const [transformedData, setTransformedData] = useState([]);
 
-  
+  // Default cluster selection configuration
+  const DEFAULT_CLUSTER_CONFIG = {
+    enabled: true, // Set to false to disable default cluster selection
+    preferredCluster: null, // Set to specific cluster name like "Cluster1" or null for first available
+    fallbackToNone: true // If preferred cluster not found, fall back to "None"
+  };
+
   useEffect(
     () => {
       fetchData(hostDeviceMapEndpoint, setHostToDeviceMapping);
@@ -83,13 +90,41 @@ const BoxTopology = () => {
   );
   
   useEffect(() => {
-     const names = Array.isArray(hostToDeviceMapping.clusters) ? hostToDeviceMapping.clusters.map(cluster => cluster.cluster_name): [];
-     setClusterList(prev => [...new Set([...prev, ...names])]);
-     const transformResponse = transformData(hostToDeviceMapping);
-     setTransformedData(transformResponse);
-  }, [hostToDeviceMapping]);
+    const names = Array.isArray(hostToDeviceMapping.clusters)
+      ? hostToDeviceMapping.clusters.map(cluster => cluster.cluster_name)
+      : [];
 
-  // Filtering hosts and device names based on fm-type: "FM_REMOTE_CMMD" for CMM-B view and others for Direct Host view.
+    const updatedClusterList = [...new Set(["None", ...names])];
+    setClusterList(updatedClusterList);
+
+    const transformResponse = transformData(hostToDeviceMapping);
+    setTransformedData(transformResponse);
+
+    // Default cluster selection logic
+    if (isInitialLoad && DEFAULT_CLUSTER_CONFIG.enabled && names.length > 0) {
+      let defaultCluster = "None";
+
+      if (DEFAULT_CLUSTER_CONFIG.preferredCluster) {
+        // Check if preferred cluster exists
+        if (names.includes(DEFAULT_CLUSTER_CONFIG.preferredCluster)) {
+          defaultCluster = DEFAULT_CLUSTER_CONFIG.preferredCluster;
+        } else if (!DEFAULT_CLUSTER_CONFIG.fallbackToNone && names.length > 0) {
+          // Use first available cluster if fallback disabled
+          defaultCluster = names[0];
+        }
+      } else {
+        // No preferred cluster, use first available
+        defaultCluster = names[0];
+      }
+
+      setSelectedCluster(defaultCluster);
+      setIsInitialLoad(false);
+
+      console.log(`Default cluster selected: ${defaultCluster}`);
+    }
+  }, [hostToDeviceMapping, isInitialLoad]);
+
+  // Filtering hosts and device names based on fm-type
   let hostlistRemote = transformedData.filter(mapping => mapping.fm_type === "FM_REMOTE_CMMD");
   let hostlistDirect = transformedData.filter(mapping => mapping.fm_type !== "FM_REMOTE_CMMD");
   // Function to assign clusters
@@ -140,6 +175,9 @@ const BoxTopology = () => {
   // istanbul ignore next
   const filterByCluster = (clusterName) => {
     setSelectedCluster(clusterName);
+    // Reset carousel positions when changing clusters
+    setCurrentCMM(0);
+    setCurrentHostView(0);
   };
 
   const mappedDeviceViewList = (devices, type) => {
@@ -316,7 +354,7 @@ const BoxTopology = () => {
   
   const renderHostViewDevice = (devices = []) => {
     return devices.map((device) => {
-      const part = device.dev_name // .split("-")[0];
+      const part = device.dev_name;
       const D1Metadata = `name: ${part}
           type: ${device.type}
           `.replace(/ +/g, "");
@@ -328,12 +366,15 @@ const BoxTopology = () => {
         padding: sizePadding,
       };
 
-      const dynamicIcons =  device.type === "FM_DIRECT_CMMD" ? <CMMDIcon className="device-img"/> : <CMMHIcon className="device-img"/>
+      const dynamicIcons = device.type === "FM_DIRECT_CMMD"
+        ? <CMMDIcon className="device-img" />
+        : <CMMHIcon className="device-img" />
+
       return (
         <div
           className="cxl-dev"
           title={D1Metadata}
-          key={device.device}
+          key={device.dev_name}
           style={cardStyle}
         >
           {dynamicIcons}
@@ -373,12 +414,13 @@ const BoxTopology = () => {
       <Row>
         <Col>
           <div className="cmm-navigation">
-            {/* Add the cluster dropdown here */}
+            {/* Cluster dropdown with visual indicator for default selection */}
             <div className="cluster-dropdown-container">
               <Dropdown>
                 <Dropdown.Toggle
                   variant="outline-secondary"
                   id="dropdown-cluster"
+                  className={selectedCluster !== "None" ? "cluster-active" : ""}
                 >
                   Cluster: {selectedCluster}
                 </Dropdown.Toggle>
@@ -409,20 +451,16 @@ const BoxTopology = () => {
                 />
                 <label
                   htmlFor="switch"
-                  className={`toggle-label ${
-                    isToggleEnabled ? "enabled" : "disabled"
-                  }`}
+                  className={`toggle-label ${isToggleEnabled ? "enabled" : "disabled"
+                    }`}
                 >
                   <span
-                    className={`toggle-text left ${selectedOption === "Host" ? "visible" : "hidden"
-                      }`}
-                  // style={{ color: "#535353" }}
+                    className={`toggle-text left ${selectedOption === "Host" ? "visible" : "hidden"}`}
                   >
                     Host
                   </span>
                   <span
-                    className={`toggle-text right ${selectedOption === "CMM-B" ? "visible" : "hidden"
-                      }`}
+                    className={`toggle-text right ${selectedOption === "CMM-B" ? "visible" : "hidden"}`}
                   >
                     Chessis
                   </span>
@@ -444,8 +482,7 @@ const BoxTopology = () => {
                   {hostDirectViewList.map((cmm, index) => (
                     <span
                       key={index}
-                      className={`cmm-title ${index === currentHostView ? "active" : ""
-                        }`}
+                      className={`cmm-title ${index === currentHostView ? "active" : ""}`}
                       onClick={() => setCurrentHostView(index)}
                     >
                       {cmm.title}
@@ -459,8 +496,8 @@ const BoxTopology = () => {
                     <img src={ArrowRight} alt="Next" />
                   </button>
                 </>
-                )
-             ) : (
+              )
+            ) : (
               <>
                 <button
                   className="arrow-button left-arrow"
@@ -472,8 +509,7 @@ const BoxTopology = () => {
                 {cmmList.map((cmm, index) => (
                   <span
                     key={index}
-                    className={`cmm-title ${index === currentCMM ? "active" : ""
-                      }`}
+                    className={`cmm-title ${index === currentCMM ? "active" : ""}`}
                     data-testid="specific-button"
                     onClick={() => setCurrentCMM(index)}
                   >

@@ -1,5 +1,4 @@
 // Load App Configs
-const clusterPolicies = require('../src/components/clusterPolicies');
 export const Configs = require('../src/config/config.json');
 export const BackgroundsImage = require('../src/assets/images/backgrounds/BackGroundImage.png');
 export const AddIcon = require('../src/assets/icons/Icon-Add-Light.png');

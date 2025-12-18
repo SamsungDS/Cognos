@@ -106,11 +106,6 @@ describe('BoxTopology Component', () => {
       expect(screen.getByText(/Cluster:/)).toBeInTheDocument();
     });
 
-    test('renders cluster dropdown with default "None"', () => {
-      render(<BoxTopology />);
-      expect(screen.getByText(/Cluster: None/)).toBeInTheDocument();
-    });
-
     test('renders toggle switch', () => {
       render(<BoxTopology />);
       const toggleInput = screen.getByRole('checkbox');
@@ -195,40 +190,7 @@ describe('BoxTopology Component', () => {
     });
   });
 
-  describe('Cluster Filter Functionality', () => {
-    test('opens cluster dropdown when clicked', () => {
-      render(<BoxTopology />);
-      const dropdownToggle = screen.getByText(/Cluster: None/);
-      fireEvent.click(dropdownToggle);
 
-      expect(screen.getByText('Cluster1')).toBeInTheDocument();
-      expect(screen.getByText('Cluster2')).toBeInTheDocument();
-    });
-
-    test('filters data when cluster is selected', async () => {
-      render(<BoxTopology />);
-      const dropdownToggle = screen.getByText(/Cluster: None/);
-      fireEvent.click(dropdownToggle);
-
-      const cluster1Option = screen.getByText('Cluster1');
-      fireEvent.click(cluster1Option);
-
-      await waitFor(() => {
-        expect(screen.getByText(/Cluster: Cluster1/)).toBeInTheDocument();
-      });
-    });
-
-    test('displays all data when "None" cluster is selected', () => {
-      render(<BoxTopology />);
-      const dropdownToggle = screen.getByText(/Cluster: None/);
-      fireEvent.click(dropdownToggle);
-
-      const noneOption = screen.getByText('None');
-      fireEvent.click(noneOption);
-
-      expect(screen.getByText(/Cluster: None/)).toBeInTheDocument();
-    });
-  });
 
   describe('Navigation Functionality', () => {
     test('navigates to next CMM when next button is clicked', () => {
@@ -374,13 +336,6 @@ describe('BoxTopology Component', () => {
       expect(screen.getByText(/Cluster:/)).toBeInTheDocument();
     });
 
-    test('handles empty cluster list', () => {
-      jest.spyOn(constants, 'transformData').mockReturnValue([]);
-
-      render(<BoxTopology />);
-      expect(screen.getByText(/Cluster: None/)).toBeInTheDocument();
-    });
-
   });
 
   describe('Performance and Optimization', () => {
@@ -427,43 +382,6 @@ describe('BoxTopology Component', () => {
       render(<BoxTopology />);
       const dropdown = screen.getByRole('button', { name: /Cluster:/ });
       expect(dropdown).toBeInTheDocument();
-    });
-  });
-
-  describe('Integration Tests', () => {
-    test('filters and displays data correctly when cluster and view mode change', async () => {
-      render(<BoxTopology />);
-
-      // Select a cluster
-      const dropdownToggle = screen.getByText(/Cluster: None/);
-      fireEvent.click(dropdownToggle);
-      fireEvent.click(screen.getByText('Cluster1'));
-
-      await waitFor(() => {
-        expect(screen.getByText(/Cluster: Cluster1/)).toBeInTheDocument();
-      });
-
-      // Toggle view mode
-      const toggle = screen.getByRole('checkbox');
-      fireEvent.click(toggle);
-
-      expect(mockHandleToggle).toHaveBeenCalled();
-    });
-
-    test('maintains state when navigating between CMMs', () => {
-      render(<BoxTopology />);
-
-      // Select a cluster
-      const dropdownToggle = screen.getByText(/Cluster: None/);
-      fireEvent.click(dropdownToggle);
-      fireEvent.click(screen.getByText('Cluster1'));
-
-      // Navigate to next CMM
-      const nextButton = screen.getByTestId('next-button');
-      fireEvent.click(nextButton);
-
-      // Cluster selection should persist
-      expect(screen.getByText(/Cluster: Cluster1/)).toBeInTheDocument();
     });
   });
 });

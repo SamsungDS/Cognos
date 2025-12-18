@@ -1,11 +1,11 @@
 import React from 'react';
 import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import DeviceCard from '../components/device-Stats/deviceCard';
-import { apiService } from '../utils/deviceStats-utils';
+import DeviceCard from './deviceCard';
+import { apiService } from '../../utils/deviceStats-utils';
 
 // Mock the utility modules
-jest.mock('../utils/deviceStats-utils', () => ({
+jest.mock('../../utils/deviceStats-utils', () => ({
     metricColors: {
         'CXL Capacity': '#4CAF50',
         'CXL Usage': '#2196F3',
@@ -32,15 +32,15 @@ jest.mock('../utils/deviceStats-utils', () => ({
     convertBandwidthToUnit: jest.fn((value) => value)
 }));
 
-jest.mock('../components/device-Stats/deviceCard.css', () => ({}));
+jest.mock('./deviceCard.css', () => ({}));
 
-jest.mock('../components/device-Stats/MetricItem', () => {
+jest.mock('./MetricItem', () => {
     return function MetricItem({ label }) {
         return <div data-testid={`metric-item-${label}`}>{label}</div>;
     };
 });
 
-jest.mock('../components/device-Stats/TreeItem', () => {
+jest.mock('./TreeItem', () => {
     return function TreeItem({ label, children, isExpanded, toggleExpanded, onClick, isSelected, level }) {
         return (
             <div data-testid={`tree-item-${label}`} data-level={level}>
@@ -65,7 +65,7 @@ jest.mock('../components/device-Stats/TreeItem', () => {
     };
 });
 
-jest.mock('../components/device-Stats/YAxisConfigModal', () => {
+jest.mock('./YAxisConfigModal', () => {
     return function YAxisConfigModal({ isOpen, onClose, onSave, onReset }) {
         if (!isOpen) return null;
         return (

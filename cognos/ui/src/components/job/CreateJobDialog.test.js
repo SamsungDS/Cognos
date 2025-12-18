@@ -25,14 +25,14 @@ describe('Create Job Component', () => {
     test('renders modal when isOpen is true', async () => {
       render(<CreateJobDialog {...defaultProps} />);
       
-      expect(screen.getByText('Create SLA')).toBeInTheDocument();
+      expect(screen.getByText('Register')).toBeInTheDocument();
       expect(screen.getByText('Cancel')).toBeInTheDocument();
     });
 
     test('does not render when isOpen is false', () => {
       render(<CreateJobDialog {...defaultProps} isOpen={false} />);
       
-      expect(screen.queryByText('Create SLA')).not.toBeInTheDocument();
+      expect(screen.queryByText('Register')).not.toBeInTheDocument();
     });
 
   });

@@ -3,7 +3,7 @@ import PropTypes from "prop-types";
 import "../pages/jobs.css";
 import { Configs } from "../constant";
 
-// istanbul ignore next
+
 export const columnHeader = [
   "App Name",
   "App PID",
@@ -16,10 +16,10 @@ export const columnHeader = [
 ];
 
 // Components
-// istanbul ignore next
+
 export const LoadingSpinner = () => <div className="custom-spinner"></div>;
 
-// istanbul ignore next
+
 export const ErrorMessage = ({ error, show = true }) => {
   if (!show || !error) return null;
 
@@ -30,7 +30,7 @@ export const ErrorMessage = ({ error, show = true }) => {
   );
 };
 
-// istanbul ignore next
+
 export const FormField = ({
   label,
   value,
@@ -65,7 +65,7 @@ export const FormField = ({
 );
 
 // Status Badge Component
-// istanbul ignore next
+
 export const StatusBadge = ({ status }) => {
   const statusStyles = {
     good: "custom-badge-completed",
@@ -89,7 +89,7 @@ StatusBadge.propTypes = {
   status: PropTypes.string.isRequired,
 };
 // Job Table Row Component
-// istanbul ignore next
+
 export const JobRow = ({ job, onDelete }) => (
   <tr>
     <td className="custom-table-cell">
@@ -114,7 +114,7 @@ export const JobRow = ({ job, onDelete }) => (
         <StatusBadge status={job.status} />
     </td>
     <td className="custom-table-cell">
-      <div className="small fw-medium text-white">{job.message}</div>
+      <div className="small fw-medium text-white">{job.message?.replaceAll('_', ' ')}</div>
     </td>
   </tr>
 );
@@ -143,7 +143,7 @@ export const EmptyState = () => (
   </div>
 );
 // API Service
-// istanbul ignore next
+
 export const jobApiService = {
   // Fetch all jobs
   getAllJobs: async () => {
@@ -173,7 +173,7 @@ export const jobApiService = {
     }
   },
 };
-// istanbul ignore next
+
 export const validateForm = (formData) => {
   const errors = {};
 
@@ -183,8 +183,6 @@ export const validateForm = (formData) => {
     errors.avg_latency_ns = "Average Latency is required";
   if (!formData.throughput_ops_per_sec)
     errors.throughput_ops_per_sec = "Throughput is required";
-  if (!formData.throughput_ops_per_sec)
-    errors.throughput_ops_per_sec = "Server Name is required";
   if (!formData.targetread_p99_latency)
     errors.targetread_p99_latency = "target read p99 latency is required";
   if (!formData.targetwrite_p99_latency)
