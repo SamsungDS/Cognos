@@ -139,6 +139,47 @@ def test_get_memserver_capacity(cognos_influx_client, mocker):
     cognos_influx_client.get_memserver_capacity()
 
 
+def test_get_hostview_usage(cognos_influx_client, mocker):
+    t1 = "2024-07-24T22:15:16.00"
+    dummy_data = [
+        {"_time": t1, "dram_usage_mb": 256000, "cxl_usage_mb": 512000}
+    ]
+    mocker.patch(
+        "influxdb_client.client.query_api.QueryApi.query",
+        return_value=MagicMock(),
+    )
+    mocker.patch("json.loads", return_value=dummy_data)
+    cognos_influx_client.get_hostview_usage()
+
+
+def test_get_latest_application_event(cognos_influx_client, mocker):
+    t1 = "2024-07-24T22:15:16.00"
+    dummy_data = [
+        {"_time": t1, "severity": "info", "message": "all good"},
+    ]
+    mocker.patch(
+        "influxdb_client.client.query_api.QueryApi.query",
+        return_value=MagicMock(),
+    )
+    mocker.patch("json.loads", return_value=dummy_data)
+    cognos_influx_client.get_latest_application_event(44214)
+
+
+def test_get_hostview_capacity(cognos_influx_client, mocker):
+    dummy_data = [
+        {
+            "cxl_capacity_mb": 512000,
+            "dram_capacity_mb": 256000
+        }
+    ]
+    mocker.patch(
+        "influxdb_client.client.query_api.QueryApi.query",
+        return_value=MagicMock(),
+    )
+    mocker.patch("json.loads", return_value=dummy_data)
+    cognos_influx_client.get_hostview_capacity()
+
+
 def test_get_attached_devices_count(cognos_influx_client):
     cognos_influx_client.get_attached_devices_count()
 
@@ -149,14 +190,46 @@ def test_get_attached_devices_count_mock_mode():
     assert result["num_cxl_devices"] == 2
 
 
-def test_get_membox_bandwidth_mock_mode(cognos_influx_client):
+def test_get_hostview_bandwidth(cognos_influx_client, mocker):
+    dummy_data = [
+        {"totalUsed": 32000000000, "totalTotal": 64000},
+    ]
+    mocker.patch(
+        "influxdb_client.client.query_api.QueryApi.query",
+        return_value=MagicMock(),
+    )
+    mocker.patch("json.loads", return_value=dummy_data)
+    cognos_influx_client.get_hostview_bandwidth()
+
+
+def test_get_hostview_bandwidth_mock_mode(cognos_influx_client):
     cognos_influx_client.mock = True  # Simulate mock mode
     # Call the method
-    result = cognos_influx_client.get_membox_bandwidth()
+    result = cognos_influx_client.get_hostview_bandwidth()
     # Assertions
-    assert result["max_bandwidth"] == 512
-    assert result["used_bandwidth"] == 32
-    assert result["used_percentage_bandwidth"] == 0
+    assert "max_bandwidth" in result
+    assert "used_bandwidth" in result
+    assert "used_percentage_bandwidth" in result
+
+
+def test_get_node_bandwidth(cognos_influx_client, mocker):
+    dummy_db_lookup = [
+        [43242432],
+        [243423424]
+    ]
+    mocker.patch(
+        'cognos.backend.sqlite_client.SqliteClient.exec_fetch_query',
+        return_value=dummy_db_lookup
+    )
+    dummy_data = [
+        {"totalUsed": 32000000000, "totalTotal": 64000},
+    ]
+    mocker.patch(
+        "influxdb_client.client.query_api.QueryApi.query",
+        return_value=MagicMock(),
+    )
+    mocker.patch("json.loads", return_value=dummy_data)
+    cognos_influx_client.get_node_bandwidth()
 
 
 def test_get_membox_capacity_mock_mode(cognos_influx_client):

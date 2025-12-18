@@ -133,7 +133,12 @@ backend.url : Replace <ip-addr> (http://127.128.01.00:6721) with the host/IP whe
 /usr/local/svk/svk-app/cognos/rbac/rbac-service/rbac.yaml
 /usr/local/svk/svk-app/cognos/ui/src/config/config.json
 /usr/local/svk/svk-app/cognos/cognos.config
+/usr/local/svk/svk-app/cognos/backend/config/numa_config.json
 ```
+When configuring numa_config.json file ensure you list all hosts in the system
+along with all applicable PIDs the user would like monitored. For each PID
+mention a list of numa nodes that apply to that PID.
+
 4. Run the services
 ```
 sudo systemctl start cognos-subscriber

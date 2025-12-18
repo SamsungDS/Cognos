@@ -798,7 +798,8 @@ class Cognos(BaseControlInterface):
         )
 
         cluster_name = self.sql_client.exec_fetch_singlerecord_query(
-            "SELECT cluster_name FROM connections WHERE node_name = ? AND device_id = NULL",
+            "SELECT cluster_name FROM connections "
+            "WHERE node_name = ? AND device_id = NULL",
             (node_name,)
         )
 
@@ -837,7 +838,10 @@ class Cognos(BaseControlInterface):
 
         response_data = response.json()
         self.logger.info(f"RESPONSE DATA: {response_data}")
-        if not response_data["response"] or response_data["response"] == ["-22"]:
+        if (
+            not response_data["response"]
+            or response_data["response"] == ["-22"]
+        ):
             self.logger.info("NO ACTIVE DATA MOVEMENT")
             return "0"
         else:
@@ -849,17 +853,15 @@ class Cognos(BaseControlInterface):
                 percent_moved = (round(x, 4))
                 percent_moved_string = str(percent_moved)  # + '%'
                 self.logger.info(f" % PERCENT MOVED {percent_moved_string}")
-                
+
                 if percent_moved_string:
                     self.sql_client.execute_query(
                         "UPDATE applications "
                         f"SET data_moved = '{percent_moved_string}' "
                         f"WHERE app_pid = {app_pid};"
                     )
-                
+
                 return percent_moved_string
-
-
             except Exception as error:
                 self.logger.error(f"failed to parse get stats: {str(error)}")
                 return None
@@ -876,17 +878,9 @@ class Cognos(BaseControlInterface):
             app_pid = app[0]
             app_name = app[1]
 
-            # app_name = "gemfireTest"
             app_event = (
                 self.influx_client.get_latest_application_event(app_pid)
             )
-
-            # # check for data moved if there is no existing thread checking PID
-            # thread = threading.Thread(target=self.get_data_moved_percentage, args=(app_pid, app_name,))
-            # thread.daemon = True
-            # thread.start()
-
-            # data_moved = self.get_data_moved_percentage(app_pid, app_name)
 
             app_status = self.sql_client.exec_fetch_singlerecord_query(
                 "SELECT status FROM applications WHERE app_pid = ?",
@@ -898,42 +892,33 @@ class Cognos(BaseControlInterface):
                 (app_pid,)
             )
 
-            if app_status == "degraded":
+            if app_status == "degraded" or app_status == "device_degraded":
                 # create get stats thread
-                # check for data moved if there is no existing thread checking PID
                 task = get_stats_workers.get(app_pid)
 
                 if (not task) or (not task.is_alive()):
-                    thread = threading.Thread(target=self.get_data_moved_percentage, args=(app_pid, app_name,))
+                    thread = threading.Thread(
+                        target=self.get_data_moved_percentage,
+                        args=(app_pid, app_name,)
+                    )
                     thread.daemon = True
                     get_stats_workers[app_pid] = thread
                     thread.start()
 
-
             if app_event:
                 updated_status = (
-                    'good' if app_event[0]['severity'] in ["good", "Normal", "normal"]
+                    'good' if app_event[0]['severity']
+                    in ["good", "Normal", "normal"]
                     else app_event[0]['severity']
                 )
 
-                if updated_status == "degraded" and app_message and "sla" in app_message.lower():
+                if updated_status == "degraded" and (
+                    app_message and "sla"
+                    in app_message.lower()
+                ):
                     updated_status = "device_degraded"
 
-                # # TODO: remove this logic once fixes are made to ME module
-                # if updated_status == "info":
-                #     updated_status = "degraded"
                 updated_msg = app_event[0]['msg']
-
-
-                # get data moved to update status, recently added
-                # data_moved = self.sql_client.exec_fetch_singlerecord_query(
-                #     "SELECT data_moved FROM applications WHERE app_pid = ?",
-                #     (app_pid,)
-                # )
-
-                # if data_moved and (str(data_moved) != '') and float(data_moved) < 100:
-                #     updated_status = "degraded"
-                #     updated_msg = 'numa_migration_operation_started'
 
                 self.sql_client.execute_query(
                     "UPDATE applications "
@@ -941,20 +926,6 @@ class Cognos(BaseControlInterface):
                     f"message = '{updated_msg}' "
                     f"WHERE app_pid = {app_pid};"
                 )
-
-            # if data_moved:
-            #     self.sql_client.execute_query(
-            #         "UPDATE applications "
-            #         f"SET data_moved = '{data_moved}' "
-            #         f"WHERE app_pid = {app_pid};"
-            #     )
-
-        # count # of get stats calls
-        count = 0
-        for pid, t in get_stats_workers.items():
-            if t.is_alive():
-                count += 1
-        self.logger.info(f"TOTAL # OF GET STAT CALLS IN PROGRESS FROM SCMC: {count} ----")
 
         # get apps from DB
         data = self.sql_client.exec_fetch_query(
@@ -965,18 +936,18 @@ class Cognos(BaseControlInterface):
         )
         apps = []
         for x in data:
-            app = {
-                "app_name": x[0],
-                "app_pid": x[1],
-                "server_name": x[2],
-                "throughput_ops_per_sec": x[3],
-                "targetread_p99_latency": x[4],
-                "targetwrite_p99_latency": x[5],
-                "status": x[6],
-                "message": x[7],
-                "data_moved": x[8]
-            }
-            apps.append(app)
+            app = helper.App(
+                app_name=x[0],
+                app_pid=x[1],
+                server_name=x[2],
+                throughput_ops_per_sec=x[3],
+                targetread_p99_latency=x[4],
+                targetwrite_p99_latency=x[5],
+                status=x[6],
+                message=x[7],
+                data_moved=x[8]
+            )
+            apps.append(app.to_dict())
 
         return apps
 
@@ -1036,8 +1007,6 @@ class Cognos(BaseControlInterface):
                     cluster_name = pair[1]
             # TODO: add check if cluster name is empty
 
-            # numa_nodes = NUMA_CONFIGS[server_name]
-            # updated config
             numa_nodes = NUMA_CONFIGS[server_name][str(app_pid)]
 
             device_numa_nodes = []
@@ -1076,18 +1045,19 @@ class Cognos(BaseControlInterface):
             )
             if response.ok:
                 # create record for application
-                app = {
-                    "app_name": app_name,
-                    "app_pid": app_pid,
-                    "server_name": server_name,
-                    "throughput_ops_per_sec": throughput_ops_per_sec,
-                    "targetread_p99_latency": targetread_p99_latency,
-                    "targetwrite_p99_latency": targetwrite_p99_latency,
-                    "status": "good",
-                    "message": "",
-                    "data_moved": "0"  # use get stats API from CME
-                }
-                self.insert_application(app)
+                app = helper.App(
+                    app_name=app_name,
+                    app_pid=app_pid,
+                    server_name=server_name,
+                    throughput_ops_per_sec=throughput_ops_per_sec,
+                    targetread_p99_latency=targetread_p99_latency,
+                    targetwrite_p99_latency=targetwrite_p99_latency,
+                    status="good",
+                    message="",
+                    data_moved="0"
+                )
+
+                self.insert_application(app.to_dict())
 
                 # send payload back of all registered applications
                 return self.get_applications()

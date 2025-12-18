@@ -8,6 +8,7 @@ import sys
 import ast
 import socket
 from collections import defaultdict, namedtuple
+from dataclasses import dataclass, asdict
 from flask import Flask, jsonify, make_response, Response, request
 from typing import Dict, List
 
@@ -22,6 +23,22 @@ COGNOS_TABLES = ["devices", "hosts", "mem_box", "host_device_connections"]
 current_script_dir = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE_PATH = os.path.join(current_script_dir, "config", "config.json")
 CAL_LOGGER = logging.getLogger('svkapp-cal-logger')
+
+
+@dataclass
+class App:
+    app_name: str
+    app_pid: int
+    server_name: str
+    throughput_ops_per_sec: int
+    targetread_p99_latency: int
+    targetwrite_p99_latency: int
+    status: str
+    message: str
+    data_moved: str
+
+    def to_dict(self) -> dict:
+        return asdict(self)
 
 
 def get_request_metadata(request) -> Dict[str, str]:

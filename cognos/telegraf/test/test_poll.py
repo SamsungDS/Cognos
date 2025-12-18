@@ -152,6 +152,37 @@ def test_get_cxl_device_metrics(mocker):
     poll.get_cxl_device_metrics("CL_ID_1", "node_1", 23123132)
 
 
+def test_convert_stats_to_influx_line_protocol():
+    dummy_stats = [
+        {
+            "response": [
+                json.dumps({
+                    "domain": "observability",
+                    "feature_id": 3,
+                    "category": "metric",
+                    "severity": "info",
+                    "source": 33235991715328,
+                    "source_type": "device",
+                    "power_state": "L0",
+                    "timestamp": 1754385158,
+                    "observability": {
+                        "numa_node": 0,
+                        "total_memory_MB": 8192,
+                        "used_memory_MB": 4096,
+                        "available_memory_MB": 4096,
+                        "total_bandwidth_MBps": 20000,
+                        "used_bandwidth_Bps": 1104548,
+                        "cache_hit_perc": 98,
+                        "dirty_cache_gb": 3,
+                        "fpga_temp_in_F": 42
+                    }
+                })
+            ]
+        }
+    ]
+    poll.convert_stats_to_influx_line_protocol(dummy_stats)
+
+
 def test_get_cognos_events(mocker):
     dummy_detach_response = {
         "errorIdOrStringIfAny": "", "errorCode": 0, "apiVersion": "0.1",

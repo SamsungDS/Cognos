@@ -284,8 +284,11 @@ def create_app(mock=False):
         }
         Returns: 200 status code
         """
-        cognos.set_app_sla()
-        return helper.create_response_from_payload({})
+        try:
+            cognos.set_app_sla()
+            return helper.create_response_from_payload({})
+        except Exception as error:
+            return helper.failed_response(str(error))
 
     return app
 
@@ -402,7 +405,6 @@ def main(mock, host, port):
     init_sqlite_db_file()
     clear_cognos_db(mock=mock)
     init_cognos_db(mock=mock)
-    # time.sleep(5)
     app = create_app(mock)
 
     if validate_ssl_enabled():

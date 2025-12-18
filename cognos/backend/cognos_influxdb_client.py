@@ -608,6 +608,13 @@ class CognosInfluxDBClient:
             print(f"failed to process membox usage data: {str(error)}")
 
     def get_hostview_bandwidth(self):
+        if self.mock:
+            return {
+                "max_bandwidth": 128.0,
+                "used_bandwidth": 32.0,
+                "used_percentage_bandwidth": 25.0
+            }
+
         tables = self.read_client.query(
             f'''
             from(bucket: "internal")
@@ -679,7 +686,7 @@ class CognosInfluxDBClient:
         except Exception as error:
             print(f"ERROR: {str(error)}")
 
-    def get_node_bandwidth(self) -> List[List]:
+    def get_node_bandwidth(self) -> dict:
         """
         Returns CXL bandwidth usage data of a single server
         """
@@ -706,7 +713,12 @@ class CognosInfluxDBClient:
                             or r._field == "total_bandwidth_MBps")
                 )
                 |> filter(fn: (r) => r.source_type == "device")
-                |> filter(fn: (r) => contains(value: r.source, set: [{flux_devices_list}]))
+                |> filter(fn: (r) =>
+                    contains(
+                        value: r.source,
+                        set: [{flux_devices_list}]
+                    )
+                )
                 |> toFloat()
                 |> group(columns: ["source", "_field"])
                 |> last()
