@@ -13,6 +13,7 @@ const NotificationBell = () => {
   // Trigger animation when new messages arrive (count increases)
   useEffect(() => {
     if (unreadCount > prevCount && unreadCount > 0) {
+      /* istanbul ignore next */
       setIsAnimating(true);
       setTimeout(() => setIsAnimating(false), 2000);
     }

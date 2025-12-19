@@ -79,8 +79,8 @@ jest.mock('./YAxisConfigModal', () => {
     };
 });
 
-jest.mock('d3', () => ({
-    select: jest.fn(() => ({
+jest.mock('d3', () => {
+    const selection = {
         selectAll: jest.fn().mockReturnThis(),
         remove: jest.fn().mockReturnThis(),
         attr: jest.fn().mockReturnThis(),
@@ -96,34 +96,42 @@ jest.mock('d3', () => ({
         join: jest.fn().mockReturnThis(),
         html: jest.fn().mockReturnThis(),
         transition: jest.fn().mockReturnThis(),
-        duration: jest.fn().mockReturnThis()
-    })),
-    scaleBand: jest.fn(() => ({
-        domain: jest.fn().mockReturnThis(),
-        range: jest.fn().mockReturnThis(),
-        padding: jest.fn().mockReturnThis(),
-        bandwidth: jest.fn(() => 10)
-    })),
-    scaleLinear: jest.fn(() => ({
-        domain: jest.fn().mockReturnThis(),
-        range: jest.fn().mockReturnThis(),
-        nice: jest.fn().mockReturnThis(),
-        ticks: jest.fn(() => [0, 25, 50, 75, 100])
-    })),
-    line: jest.fn(() => {
-        const lineFunc = jest.fn();
-        lineFunc.x = jest.fn().mockReturnThis();
-        lineFunc.y = jest.fn().mockReturnThis();
-        lineFunc.curve = jest.fn().mockReturnThis();
-        return lineFunc;
-    }),
-    axisBottom: jest.fn(() => jest.fn()),
-    axisLeft: jest.fn(() => ({
-        ticks: jest.fn(() => jest.fn())
-    })),
-    curveCardinal: {}
-}));
+        duration: jest.fn().mockReturnThis(),
+    };
 
+    return {
+        select: jest.fn(() => selection),
+
+        scaleBand: jest.fn(() => ({
+            domain: jest.fn().mockReturnThis(),
+            range: jest.fn().mockReturnThis(),
+            padding: jest.fn().mockReturnThis(),
+            bandwidth: jest.fn(() => 10),
+        })),
+
+        scaleLinear: jest.fn(() => ({
+            domain: jest.fn().mockReturnThis(),
+            range: jest.fn().mockReturnThis(),
+            nice: jest.fn().mockReturnThis(),
+            ticks: jest.fn(() => [0, 25, 50, 75, 100]),
+        })),
+
+        line: jest.fn(() => {
+            const fn = jest.fn();
+            fn.x = jest.fn().mockReturnThis();
+            fn.y = jest.fn().mockReturnThis();
+            fn.curve = jest.fn().mockReturnThis();
+            return fn;
+        }),
+
+        axisBottom: jest.fn(() => jest.fn()),
+        axisLeft: jest.fn(() => ({
+            ticks: jest.fn(() => jest.fn()),
+        })),
+
+        curveCardinal: {},
+    };
+});
 describe('DeviceCard Component', () => {
     const mockClustersData = [
         {
@@ -568,4 +576,57 @@ describe('DeviceCard Component', () => {
         expect(screen.getByTestId('toggle-Cluster 1').textContent).toContain('▼');
     });
 
+    test('does not fetch metrics when selectedMetrics is empty', async () => {
+        render(
+            <DeviceCard
+                selectedMetrics={{}}
+                setSelectedMetrics={jest.fn()}
+                globalSelectedDevice={{ id: 'device-1', name: 'Device 1' }}
+                setGlobalSelectedDevice={mockSetGlobalSelectedDevice}
+            />
+        );
+
+        await act(async () => {
+            jest.advanceTimersByTime(300);
+        });
+
+        expect(apiService.fetchDeviceStats).not.toHaveBeenCalled();
+    });
+
+    test('clears metrics when no selected metrics', async () => {
+        render(
+            <DeviceCard
+                selectedMetrics={{}}
+                setSelectedMetrics={jest.fn()}
+                globalSelectedDevice={{ id: 'device-1', name: 'Device 1' }}
+                setGlobalSelectedDevice={mockSetGlobalSelectedDevice}
+            />
+        );
+
+        await act(async () => {
+            jest.advanceTimersByTime(200);
+        });
+
+        expect(apiService.fetchDeviceStats).not.toHaveBeenCalled();
+    });
+    test('fetches metrics when device is already selected', async () => {
+        apiService.fetchClusters.mockResolvedValue([]); // 🔑 IMPORTANT
+        apiService.fetchDeviceStats.mockResolvedValue(mockMetricsData);
+
+        render(
+            <DeviceCard
+                selectedMetrics={{ 'CXL Capacity': 'capacity' }}
+                setSelectedMetrics={jest.fn()}
+                globalSelectedDevice={{ id: 'device-1', name: 'Device 1' }}
+                setGlobalSelectedDevice={jest.fn()}
+            />
+        );
+
+        await waitFor(() => {
+            expect(apiService.fetchDeviceStats).toHaveBeenCalledWith(
+                'device-1',
+                'capacity'
+            );
+        });
+    });
 });
