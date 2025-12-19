@@ -71,6 +71,8 @@ execute_process(
 
 file(COPY ${PARENT_DIR}/rest_api/cmd
      DESTINATION ${PARENT_DIR}/build/rest_api/tests)
+file(COPY ${PARENT_DIR}/rest_api/ut_ca_certs
+     DESTINATION ${PARENT_DIR}/build/rest_api/tests)
 file(COPY ${PARENT_DIR}/rest_api/third_party
      DESTINATION ${PARENT_DIR}/build/rest_api/tests)
 file(COPY ${GOPATH_DIR}/go_files_dir/go.mod
