@@ -10,7 +10,7 @@ StartLimitBurst=5
 KillMode=process
 WorkingDirectory = /usr/local/svk/mgmt-fw
 
-ExecStart = /usr/local/svk/mgmt-fw/rest_api/svk_rest_server --config-file /etc/svk/mgmt_fw_config.json
+ExecStart = /usr/local/svk/mgmt-fw/rest_api/svk_rest_server --config_file /etc/svk/mgmt_fw_config.json
 ExecReload = /bin/kill -s HUP $MAINPID
 ExecStop = /bin/kill -s INT $MAINPID
 Restart=always

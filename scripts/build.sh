@@ -162,7 +162,7 @@ execute_tests() {
     # Run go code coverage tests as well for REST API server
     cp "$PROJECT_ROOT/config/mgmt_fw_config.json" /usr/local/svk/conf.json
     go mod tidy -C "$BUILD_DIR/rest_api/tests"
-    go test -C "$BUILD_DIR/rest_api/tests/cmd/app" -coverprofile="$REPORTS_DIR/go_coverage.out"
+    go test -C "$BUILD_DIR/rest_api/tests/cmd/app" -coverprofile="$REPORTS_DIR/go_coverage.out" -v
     
     # Generate coverage reports and display results with summary to terminal
     echo "Generating coverage reports"

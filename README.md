@@ -114,3 +114,39 @@ Once `svk-core` and `svk-mgmt-fw` artifacts are installed, the user needs to run
 - Enable the services to start across reboot using the command `systemctl enable svk-<servertype>`
 - Start SVK service manager on controller or node server as `systemctl start svk-svc-mgr` on RHEL systems or as `service svk-svc-mgr start` on Debian based systems.
   - Make sure to update feature libs directory (`feat_sm_svcs_dir`) in `svk_mgmt_fw_svc_mgr` section of `/etc/svk/mgmt_fw_config.json`
+
+## REST Server in HTTPS mode
+
+Before starting the REST server, the admin needs to either download the CA Certificate/Key files from the appropriate authority or generate a self signing certificate.
+
+To generate a self signing certificate, follow these steps
+- Generate the RSA based Key file
+  - openssl genrsa -out key.pem 2048
+- Create a Certificate Signing Request (CSR) file
+  - openssl req -new -key key.pem -out csr.pem
+  - This procedure asks several questions, which are self explanatory, as part of CSR file generation
+    - The `Organization` should be the name of the organization hosting the REST server
+    - The `Country` should be the country code of the organization hosting the REST server
+    - The `State` should be the state of the organization hosting the REST server
+    - The `Locality` should be the locality of the organization hosting the REST server
+    - The `Organizational Unit` should be the organizational unit of the organization hosting the REST 
+    - The `Common Name` should be the hostname of the server hosting the REST server
+    - The `Email` should be the email of the organization hosting the REST server
+    - The `Challenge Password` should be the password of the organization hosting the REST server
+- Create the certificate file
+  - openssl x509 -req -days 365 -in csr.pem -signkey key.pem -out cert.pem
+- Copy the key.pem and cert.pem files to the `/etc/svk/certificates` directory of the server hosting the REST server.
+- Restart the svk-restserver service
+
+### curl command usage
+To run the curl commands with HTTPS mode, there are two options
+- With CA certificate
+  - curl --cacert /path/to/cert.pem https://<rest_server_ip>:8001/api/v1/clusters/CL_ID_1 -d '{"command_name": "list_nodes_in_cluster"}'
+- Bypassing the certificates (**Risky to use, use only for testing purposes, may not work with trusted CA certs**)
+  - curl -k  https://<rest_server_ip>:8001/api/v1/clusters/CL_ID_1 -d '{"command_name": "list_nodes_in_cluster"}'
+
+### Updating certificates through REST call
+The certificates can be uploaded through REST call which are automatically saved at the default location `/etc/svk/certificates/` directory. Once the upload call is successful, the service `svk-restserver` needs to be restarted through `systemctl restart svk-restserver` command to bring up the HTTPS mode.
+
+The cURL command to upload the certificates is
+- curl -X POST http://<rest_server_ip>:8001/UpdateCertificate -H 'Content-Type: multipart/form-data' -F 'certificate_pem_file=@/local/path/to/cert.pem' -F 'key_pem_file=@/local/path/to/key.pem'
