@@ -44,7 +44,7 @@ svk-install:
     - export INFLUX_TOKEN=$(influx auth list --user $INFLUX_ORG --json | jq -r '.[0].token')
 
     # Install Telegraf
-    - apt install telegraf
+    # - apt install telegraf
 
     #### Configure SVK Nexus repository ####
     - wget --quiet --output-document /usr/share/keyrings/ssg-nexus.pgp http://ssg-nexus.msl.lab:8081/repository/svk_common/public.pgp
@@ -82,11 +82,6 @@ svk-install:
     # (SIM mode) Configure the input.json file to reflect the hostname of the machine being deployed
     - jq --arg hn "$(hostname)" '.Hosts[0].host_name=$hn' $SVK_MGMT_FW_INPUT | sponge $SVK_MGMT_FW_INPUT
 
-    #### Configure 'cxl_dev_id_map.json' ####
-    - export CXL_DEV_CONF='/usr/local/svk/feature_modules/cxl/config/cxl_dev_id_map.json'
-    # Substitute the mock_disable flags to display CMM-B hosts in the configure page
-    - jq '.device_map |= map(.mock_disable = true)' $CXL_DEV_CONF | sponge $CXL_DEV_CONF
-
     #### Influx SVK App configuration (JSON) ####
     - export SVK_APP_INFLUX_CONF='/usr/local/svk/svk-app/cognos/backend/config/influxdb_config.json'
     # Influx bucket variable reused from gitlab-ci.yml, to substitute the bucket value
@@ -99,8 +94,12 @@ svk-install:
     - jq --arg org "$INFLUX_ORG" '.org = $org' $SVK_APP_INFLUX_CONF | sponge $SVK_APP_INFLUX_CONF
     
     #### Telegraf configuration
-    - sudo sed -i -E 's|^[[:space:]]*token[[:space:]]*=.*|    token = "'"$INFLUX_TOKEN"'"|' /usr/local/svk/svk-app/cognos/telegraf/telegraf.conf
-    - jq --arg ip "$VM_IP" --arg restport "$RESTSERVER_PORT" '.cognos_endpoint = "http://\($ip):\($restport)/api/v1/"' /usr/local/svk/svk-app/cognos/telegraf/config/config.json | sponge /usr/local/svk/svk-app/cognos/telegraf/config/config.json
+    # - sudo sed -i -E 's|^[[:space:]]*token[[:space:]]*=.*|    token = "'"$INFLUX_TOKEN"'"|' /usr/local/svk/svk-app/cognos/telegraf/telegraf.conf
+    # - jq --arg ip "$VM_IP" --arg restport "$RESTSERVER_PORT" '.cognos_endpoint = "http://\($ip):\($restport)/api/v1/"' /usr/local/svk/svk-app/cognos/telegraf/config/config.json | sponge /usr/local/svk/svk-app/cognos/telegraf/config/config.json
+    # - jq --arg token "$INFLUX_TOKEN" '.token = $token' /usr/local/svk/svk-app/cognos/telegraf/config/config.json | sponge /usr/local/svk/svk-app/cognos/telegraf/config/config.json
+
+    #### Configure nodes, pids, and numa nodes for backend
+    - jq --arg hn "$(hostname)" '.[$hn]=.["<host1>"] | del(.["<host1>"])' /usr/local/svk/svk-app/cognos/backend/config/numa_config.json | sponge /usr/local/svk/svk-app/cognos/backend/config/numa_config.json
 
     #### SVK APP Backend configuration (JSON) ####
     - export SVK_APP_BACKEND_CONF='/usr/local/svk/svk-app/cognos/backend/config/config.json'
@@ -172,7 +171,9 @@ svk-install:
     - systemctl start cognos-subscriber
     - systemctl start cognos-app
     - systemctl start cognos-rbac
-    - telegraf --config /usr/local/svk/svk-app/cognos/telegraf/telegraf.conf > /var/log/telegraf.log 2>&1 &
+    # - telegraf --config /usr/local/svk/svk-app/cognos/telegraf/telegraf.conf > /var/log/telegraf.log 2>&1 &
+    # - cd /usr/local/svk/svk-app/cognos/telegraf/
+    # - /usr/local/svk/svk-app/env/bin/python3 poll.py
     - systemctl start cognos-ui
     #### Create Admin User ####
     - systemctl status cognos-rbac.service --no-pager

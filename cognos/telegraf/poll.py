@@ -11,9 +11,9 @@ from influxdb_client import InfluxDBClient
 URL = "http://localhost:8086"
 ORG = "Samsung"
 BUCKET = "internal"
-TOKEN = "<token>"
 
 COGNOS_NORTHBOUND_ENDPOINT = ""
+TOKEN = ""
 config_file_path = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "config",
@@ -27,6 +27,9 @@ try:
             COGNOS_NORTHBOUND_ENDPOINT = configs.get("cognos_endpoint")
             if not COGNOS_NORTHBOUND_ENDPOINT[-1] == "/":
                 COGNOS_NORTHBOUND_ENDPOINT += "/"
+            TOKEN = configs.get("token")
+            if not TOKEN or TOKEN == "":
+                raise ValueError("InfluxDB token not found")
 # pragma: no cover
 except Exception as error:
     print(
@@ -153,13 +156,16 @@ def get_cognos_device_stats():
     # step 1: Get Topology
     device_stats = []
     clusters = get_clusters()
+    print(f"GOT CLUSTERS: {clusters}")
     topology = []  # [{cluster: [{node: [device_ids]}]}]
     i = 0
     for cluster in clusters:
         topology.append({cluster: []})
         cluster_nodes = get_cluster_nodes(cluster)
+        print(f"GOT CLUSTER NODES: {cluster_nodes}")
         for node in cluster_nodes:
             device_ids = get_device_ids(cluster, node)
+            print(f"GOT DEVICE IDS: {device_ids}")
             topology[i][cluster].append({node: device_ids})
         i += 1
 
@@ -172,6 +178,7 @@ def get_cognos_device_stats():
                         device_stats.append(
                             get_cxl_device_metrics(cluster_name, node_name, id)
                         )
+                        print(f"GOT DEVICE METRICS: {device_stats}")
 
     # step 3: Format data into flux line protocol
     convert_stats_to_influx_line_protocol(device_stats)
@@ -282,6 +289,8 @@ def convert_stats_to_influx_line_protocol(stats):
         if not fields:
             return
         print(f"stats,{tag_str} " + ",".join(fields) + f" {ts}")
+        line = f"stats,{tag_str} " + ",".join(fields) + f" {ts}"
+        store_line_to_influx(line)
 
 
 def convert_data_to_influx_line_protocol(events):
@@ -341,11 +350,14 @@ def store_line_to_influx(line):
 
 if __name__ == "__main__":
     while True:
+        print("GETTING COGNOS EVENTS")
         # get cognos events
         get_cognos_events()
 
+        print("GETTING DEVICE STATS")
         # get device stats
         get_cognos_device_stats()
 
+        print("GOT EVERYTHING")
         # next poll
         time.sleep(5)

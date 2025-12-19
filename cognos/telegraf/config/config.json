@@ -1,3 +1,4 @@
 {
-    "cognos_endpoint": "http://<agentip/hostname>:<agent_port>/api/v<version_number>/"
+    "cognos_endpoint": "http://<agentip/hostname>:<agent_port>/api/v<version_number>/",
+    "token": "<token>"
 }
