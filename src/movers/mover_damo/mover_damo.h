@@ -19,6 +19,15 @@ class mover_damo : public cme_mover
                 std::string get_name() override;
 	private:
 		std::string name;
+                 const std::map<std::string, uint32_t> to_bytes = {
+                                {"B", 1},
+                                {"KB", 1000},
+                                {"KiB", 1024},
+                                {"MB", (1000 * 1000)},
+                                {"MiB", (1024 * 1024)},
+                                {"GB", (1000 * 1000 * 1000)},
+                                {"GiB", (1024 * 1024 * 1024)}
+                 };
 };
 
 #endif

@@ -23,7 +23,6 @@
 
 using namespace std;
 
-
 /**
  * @brief struct to add hash function for a pair
  * @details When pair is used in an unordered_map, there is no
@@ -95,5 +94,14 @@ const long DUMMY_PID = -1000;
 const std::string DUMMY_PROCESS = "DUMMY_PROCESS";
 
 std::string getCurrentTimestamp(void);
+
+/**
+ * @brief function executes numastat and returns the output string
+ * @details
+ * @params:
+ *  numa_node : NUMA node to check memory used for
+  * @return: output of the command in a string vector
+ */
+long long process_numastat_light(int numa_node);
 
 #endif

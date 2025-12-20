@@ -127,3 +127,20 @@ std::string getCurrentTimestamp()
         std::string epoch_nano_seconds_str = std::to_string(epoch_nano_seconds_direct);
         return epoch_nano_seconds_str;
 }
+
+long long process_numastat_light(int numa_node)
+{
+        std::string result;
+        string cmd;
+        vector<string> cmd_output;
+
+        // Offset for MemUsed column for the node in numastat output
+        cmd = "numastat -zncm | grep MemUsed | awk '{print $" + to_string(numa_node + 2) + "}'" + " 2>&1";
+        if (auto ret = execute_command(cmd, cmd_output, false); ret !=0)
+        {
+                return -1;
+        }
+
+        CME_LOG("INFO", " Output : ", cmd_output[0]);
+        return stoll(cmd_output[0]);
+}

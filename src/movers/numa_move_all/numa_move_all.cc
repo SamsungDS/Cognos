@@ -30,7 +30,7 @@ using namespace std;
  * @param  cme_ctx: corresponding cme_context
  * @return None
 */
-static void generate_start_migraion_event(cme_context* cme_ctx)
+static void generate_start_migration_event(cme_context* cme_ctx)
 {
         CME_ENTRY();
         struct cme_event event_obj;
@@ -63,25 +63,26 @@ static void generate_start_migraion_event(cme_context* cme_ctx)
 
 /**
  * @brief Function for app health numa migration operation.
- * Implements numa migration completion app health event.
+ * Implements numa migration start/completion app health event.
  * @param  cme_ctx: corresponding cme_context
+ * @param  severity: severity of the event
  * @return None
 */
-static void generate_health_event_app_good(cme_context* cme_ctx)
+static void generate_health_event(cme_context* cme_ctx, std::string severity)
 {   
         CME_ENTRY();
         struct cme_event event_obj;
         nlohmann::json event_data;
-        event_data["name"] = "App health event : Normal";
+        event_data["name"] = "App health event : " + severity;
         event_data["app_name"] = cme_ctx->app_attr.app_name;
         event_data["app_pid"] = to_string(cme_ctx->app_attr.app_pid);
         event_obj.event_json["observations"] = event_data;
-        event_obj.event_json["msg"] = "Data Migration completed";
+        event_obj.event_json["msg"] = "Data Migration " + (severity.compare("Normal") == 0 ? std::string("Completed") : std::string("Started"));
         event_obj.event_json["timestamp"] = getCurrentTimestamp();
         event_obj.event_json["source"] = to_string(cme_ctx->app_attr.app_pid);
         event_obj.event_json["tag"] = cme_ctx->event_tag;
         event_obj.event_json["category"] = "health";
-        event_obj.event_json["severity"] = "Normal";
+        event_obj.event_json["severity"] = severity;
         event_obj.event_json["source_type"] = "application";
         if (int ret = publish_cme_event(event_obj);ret)
         {
@@ -106,7 +107,7 @@ static void post_fn_move_all(cme_context* cme_ctx)
         if (cme_ctx->mover_cmd_status == 0)
         {
                 //Generate health event app is good
-                generate_health_event_app_good(cme_ctx);
+                generate_health_event(cme_ctx, "Normal");
                 status_string = "success: ";
         }
         //Generate completion event
@@ -139,7 +140,7 @@ static void post_fn_move_all(cme_context* cme_ctx)
 /**
  * @brief helper function  for stats processing for numa migration
 
- * @param  stats string from numa_move_all mover and reference to output string components
+ * @param  stats string from numa movers and reference to output string components
  * @return None
 */
 static void process_stats_string(std::string_view str, std::string& key, std::string& numberPart, std::string& unitPart)
@@ -215,6 +216,13 @@ static int pre_fn_move_all(cme_context* cme_ctx, const std::string& stats_string
         return 0;
 }
 
+/**
+ * @brief function executes numastat and returns the output string
+ * @details
+ * @params:
+ *  app_pid : PID of the process to check numastat for
+  * @return: output of the command in a string vector
+ */
 static std::string process_numastat(long app_pid)
 {
         std::string result;
@@ -320,12 +328,16 @@ int numa_move_all::move_all(cme_context* ctx)
                 }
                 CME_LOG("INFO", "threadid=",std::this_thread::get_id());
                 std::string stats = process_numastat(ctx->app_attr.app_pid);
+
                 ctx->mover_cmd_status = pre_fn_move_all(ctx, stats);
-                generate_start_migraion_event(ctx);
                 if (ctx->mover_cmd_status)
                 {
                         throw runtime_error("Error in " + string(__FUNCTION__) + "pre processing error");
                 }
+
+                generate_start_migration_event(ctx);
+                generate_health_event(ctx, "degraded");
+
                 ctx->mover_cmd_status = -1;
                 ctx->mover_cmd_status = _numa_move_all(ctx->app_attr.app_pid, ctx->mem_attr.src_numa_node , ctx->mem_attr.dst_numa_node);
                 CME_LOG("INFO", name, " Finished  ",  string (__FUNCTION__) , "--", ctx->app_attr.app_pid, "--" , ctx->mem_attr.src_numa_node, "--",  ctx->mem_attr.dst_numa_node, " return = ", ctx->mover_cmd_status);
@@ -405,7 +417,24 @@ std::string numa_move_all::get_stats(cme_context* cme_ctx)
                                 dst_done = true;
                         }
                 }
-                percent_moved = ((cme_ctx->mem_attr.src_numa_start_usage - src_current_usage) / (cme_ctx->mem_attr.src_numa_start_usage)) * 100.00;
+
+                if (cme_ctx->mem_attr.src_numa_start_usage == 0 || src_current_usage == 0)
+		{
+                        percent_moved = 100;
+		}
+                else
+		{
+			/*
+			 * XXX: Reporting percentage is not a good idea during concurrent writes.
+			 * Moved data percentage can drop to less than the earlier reported moved
+			 * data percentage, confusing the user. Instead report "bytes moved".
+			 */
+		        if (src_current_usage >= cme_ctx->mem_attr.src_numa_start_usage)
+			{
+			        cme_ctx->mem_attr.src_numa_start_usage = src_current_usage;
+			}
+                        percent_moved = ((cme_ctx->mem_attr.src_numa_start_usage - src_current_usage) / (cme_ctx->mem_attr.src_numa_start_usage)) * 100.00;
+		}
 
                 child_node.put("operation", cme_ctx->operation);
                 child_node.put("app_context:", cme_ctx->app_attr.app_name + "_" + to_string(cme_ctx->app_attr.app_pid));

@@ -514,6 +514,10 @@ static std::string cg_move(cme_global* cg_obj, unordered_map<string, string> &to
                 int slow_t = cme_ctx->mem_attr.slow_tier;
                 int fast_t = cme_ctx->mem_attr.fast_tier;
                 cme_ctx->tm_attr.mover_tag = "mover_damo";
+
+                cme_ctx->mem_attr.src_numa_node = slow_t;
+                cme_ctx->mem_attr.dst_numa_node = fast_t;
+
                 cme_mover* mover_obj = cg_obj->cg_find_mover(cme_ctx);
                 if (mover_obj == nullptr)
                 {

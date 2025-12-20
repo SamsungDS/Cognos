@@ -649,6 +649,7 @@ read stats json file : get stats for relevant kdamon index: create json of memcg
 */
 static std::string extract_damo_stats(vector<string> &damon_stats_output, vector<string> &damon_params_output, string cg_name)
 {
+        CME_LOG("INFO", " Started  ",  string (__FUNCTION__));
         try
         {
                 namespace pt = boost::property_tree;

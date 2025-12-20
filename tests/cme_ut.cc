@@ -641,3 +641,8 @@ TEST_F(cmeTest, CheckMoverDamoInvalidDamoConfigGen) {
         EXPECT_EQ(cme_global_obj.cme_command_handler(command), to_string(0));
         EXPECT_EQ(cme_global_obj.clean_up(), 0);
 }
+
+TEST_F(cmeTest, CheckNumastatLightException) {
+        long long ret = process_numastat_light(-3);
+        EXPECT_EQ(ret, -1);
+}
