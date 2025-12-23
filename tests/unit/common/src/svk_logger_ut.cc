@@ -73,7 +73,16 @@ TEST(SVKCommon, SVKLoggerReInitSyslog) {
 TEST(SVKCommon, SVKLoggerChangeLevel) {
   EXPECT_EQ(0, svk_logger_init("framework", LOG_FILE, TRACE, 2, 100,
                                "rotating_file"));
-  EXPECT_EQ(0, svk_logger_change_log_level("framework", CRITICAL));
+  EXPECT_EQ(0, svk_logger_change_log_level("framework", INFO));
+  svk_logger_flush("framework");
+  std::ifstream file(LOG_FILE);
+  std::string data((std::istreambuf_iterator<char>(file)),
+                   (std::istreambuf_iterator<char>()));
+  file.close();
+
+  EXPECT_EQ(true, data.find("Log level for feature framework is changed from "
+                            "trace to info") != std::string::npos);
+
   unlink(LOG_FILE);
 }
 
@@ -129,6 +138,7 @@ TEST(SVKCommon, SVKLogDebugMessageFlush) {
   EXPECT_EQ(0, svk_logger_set_flush_interval(5));
   EXPECT_EQ(0, svk_logger("framework", DEBUG, input.c_str()));
   EXPECT_EQ(0, svk_logger_flush("framework"));
+
   std::ifstream file(LOG_FILE);
   std::string data((std::istreambuf_iterator<char>(file)),
                    (std::istreambuf_iterator<char>()));
@@ -174,6 +184,11 @@ TEST(SVKCommon, SVKLogMessageWithChangeLevel) {
 
   EXPECT_EQ(true, data.find("Test Message") != std::string::npos);
   EXPECT_EQ(true, data.find("second message") == std::string::npos);
+  EXPECT_EQ(
+      true,
+      data.find(
+          "Log level for feature framework is changed from trace to info") !=
+          std::string::npos);
   unlink(LOG_FILE);
 }
 

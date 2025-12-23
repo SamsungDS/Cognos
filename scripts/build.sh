@@ -27,7 +27,7 @@ help()
     echo "Syntax: build.sh [-r|t|p|h]"
     echo "options:"
     echo "-r | --release"
-    echo "  Release build. Generates RPMs on Rockylinux or Debian Packages on Ubuntu."
+    echo "  Release build. Generates RPMs on Rocky/Oracle Linux or Debian Packages on Ubuntu."
     echo "  If selected, all other build options are ignored."
     echo "-t | --run-tests"
     echo "  Execute unit tests for SVK Framework and generate code coverage reports."
@@ -178,7 +178,7 @@ build_rpm() {
     local RPM_VERSION=${GIT_VERSION//-/_}
 
     # Only build RPM on supported OS
-    if [[ "$ID" == "rocky" ]]; then
+    if [[ "$ID" == "rocky" || "$ID" == "ol" ]]; then
         # Prepare RPMBUILD directories - inside our build directory
         rm -rf "$BUILD_DIR"
         mkdir --verbose --parents "$RPMBUILD_DIR"/{BUILD,RPMS,SPECS}
