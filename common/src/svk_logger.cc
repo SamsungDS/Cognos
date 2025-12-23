@@ -14,35 +14,16 @@
 
 typedef spdlog::level::level_enum spd_level_E;
 
+static const std::unordered_map<level_E, spd_level_E> log_level_map = {
+    {TRACE, spdlog::level::trace},       {DEBUG, spdlog::level::debug},
+    {INFO, spdlog::level::info},         {NOTICE, spdlog::level::info},
+    {WARN, spdlog::level::warn},         {ERROR, spdlog::level::err},
+    {CRITICAL, spdlog::level::critical}, {ALERT, spdlog::level::critical},
+    {FATAL, spdlog::level::critical},    {OFF, spdlog::level::off}};
+
 spd_level_E map_user_log_level_to_libray_log_level(level_E level) {
-  spd_level_E val = spdlog::level::off;
-  switch (level) {
-    case TRACE:
-      val = spdlog::level::trace;
-      break;
-    case DEBUG:
-      val = spdlog::level::debug;
-      break;
-    case INFO:
-    case NOTICE:
-      val = spdlog::level::info;
-      break;
-    case WARN:
-      val = spdlog::level::warn;
-      break;
-    case ERROR:
-      val = spdlog::level::err;
-      break;
-    case CRITICAL:
-    case ALERT:
-    case FATAL:
-      val = spdlog::level::critical;
-      break;
-    case OFF:
-      val = spdlog::level::off;
-      break;
-  }
-  return val;
+  auto it = log_level_map.find(level);
+  return (it != log_level_map.end()) ? it->second : spdlog::level::off;
 }
 
 int svk_logger_init(const char *feature, const char *filename,
@@ -113,9 +94,10 @@ int svk_logger_change_log_level(const char *feature, level_E base_log_level) {
     spd_level_E new_level =
         map_user_log_level_to_libray_log_level(base_log_level);
     svk_logger->set_level(new_level);
-    svk_logger->log(spdlog::level::info,
-                    "Log level for feature {} is changed from {} to {}",
-                    feature, curr_level, new_level);
+    svk_logger->log(new_level,
+                    "Log level for feature {} is changed from {:s} to {:s}",
+                    feature, spdlog::level::to_string_view(curr_level),
+                    spdlog::level::to_string_view(new_level));
   } catch (std::exception &ex) {
     std::cout << "Exception in changing log_level from spdlog for feature "
               << feature << ": " << ex.what() << std::endl;

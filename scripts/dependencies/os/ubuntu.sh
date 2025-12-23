@@ -24,7 +24,7 @@ install_packages() {
         libspdlog-dev
         libzmq3-dev
         pkg-config
-        python3-virtualenv
+        python3-venv
         tar
         unzip
         wget
