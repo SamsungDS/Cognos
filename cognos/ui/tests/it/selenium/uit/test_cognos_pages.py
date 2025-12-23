@@ -21,20 +21,32 @@ class CognosPages(unittest.TestCase):
             "TestCase-HPOS-T82: test_application_launched_to_dashboard",
             self.utils.assert_element_displayed)
 
-    def test_configure_page_click(self):
-        self.utils.click_element_and_assert(
-            "//*[@id='side-bar-id']/div/a[2]", By.XPATH,
-            "TestCase-HPOS-T34: test_configure_page_click",
-            self.utils.assert_element_displayed)
-
     def test_metrics_page_click(self):
         self.utils.click_element_and_assert(
+            "//*[@id='side-bar-id']/div/a[2]", By.XPATH,
+            "TestCase-HPOS-T34: test_metrics_page_click",
+            self.utils.assert_element_displayed)
+
+    def test_device_metrics_page_click(self):
+        self.utils.click_element_and_assert(
             "//*[@id='side-bar-id']/div/a[3]", By.XPATH,
-            "TestCase-HPOS-T25: test_metrics_page_click",
+            "TestCase-HPOS-T25: test_device_metrics_page_click",
+            self.utils.assert_element_displayed)
+
+    def test_application_view_page_click(self):
+        self.utils.click_element_and_assert(
+            "//*[@id='side-bar-id']/div/a[4]", By.XPATH,
+            "TestCase-HPOS-T25: test_application_view_page_click",
+            self.utils.assert_element_displayed)
+
+    def test_systemc_alerts_page_click(self):
+        self.utils.click_element_and_assert(
+            "//*[@id='side-bar-id']/div/a[5]", By.XPATH,
+            "TestCase-HPOS-T25: test_system_alerts_page_click",
             self.utils.assert_element_displayed)
 
     def test_about_page_click(self):
         self.utils.click_element_and_assert(
-            "//*[@id='side-bar-id']/div/a[7]", By.XPATH,
+            "//*[@id='side-bar-id']/div/a[6]", By.XPATH,
             "TestCase-HPOS-T49: test_about_page_click",
             self.utils.assert_element_displayed)

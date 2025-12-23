@@ -44,7 +44,7 @@ class PageValidationTest(unittest.TestCase):
             },
             {
                 "name": "Metrics Page",
-                "locator": "//*[@id='side-bar-id']/div/a[3]",
+                "locator": "//*[@id='side-bar-id']/div/a[2]",
                 "widgets": [
                     {"name": "Host Selectot",
                      "xpath": "//*[@id='app-server-card-id']"},
@@ -60,7 +60,7 @@ class PageValidationTest(unittest.TestCase):
             },
             {
                 "name": "About Page",
-                "locator": "//*[@id='side-bar-id']/div/a[7]",
+                "locator": "//*[@id='side-bar-id']/div/a[6]",
                 "widgets": [
                     {"name": "About widget1",
                      "xpath": ("//*[@id='main-container']/div/div[1]/"
@@ -83,6 +83,8 @@ class PageValidationTest(unittest.TestCase):
     def test_validate_widgets(self):
         """Validate all widgets on the page."""
         for page in self.pages:
+            if page["name"] == "Configure Page":
+                self.skipTest("Configure page temporarily diabled")
             with self.subTest(page=page["name"]):
                 self.utils.click_element_and_assert(
                     page["locator"], By.XPATH,
@@ -143,6 +145,8 @@ class PageValidationTest(unittest.TestCase):
 
     def test_ui_break_checks(self):
         for page in self.pages:
+            if page["name"] == "Configure Page":
+                self.skipTest("Configure page temporarily diabled")
             with self.subTest(page=page["name"]):
                 self.utils.click_element_and_assert(
                     page["locator"], By.XPATH,

@@ -35,6 +35,8 @@ class TestDashboard(unittest.TestCase):
             "TestCase-HPOS-T3: System Toplogy widget displayed",
             self.utils.assert_element_displayed)
 
+    '''
+    disbaling this test as not supported in cmmh view
     def test_hosts_info_on_hover_in_toplogy(self):
         try:
             host_elements = self.utils.driver.find_elements(
@@ -52,24 +54,6 @@ class TestDashboard(unittest.TestCase):
                 f"TestCase-HPOS-T57:test_hosts_info_on_hover- Failed:{str(e)}")
             self.fail("TestCase-HPOS-T57: test_hosts_info_on_hover - Failed:")
 
-    def test_tooltip_display_CMM_D_devices_info_on_hover_in_toplogy(self):
-        try:
-            device_elements = self.utils.driver.find_elements(
-                By.XPATH, "//*[@id='cxl-device-card-id']/div/div")
-            self.assertGreater(len(device_elements), 0)
-            device_tooltip = self.utils.driver.find_element(
-                    By.XPATH, "//*[@id='cxl-device-card-id']/div/div[3]")
-            ActionChains(self.utils.driver).move_to_element(
-                    device_tooltip).perform()
-            device_tooltip.is_displayed()
-            self.logger.info(
-                "TestCase-HPOS-T58:Displayed devices info in tooltip - Passed")
-        except Exception as e:
-            self.logger.error(
-                f"TestCase-HPOS-T58:test_CMM_D_devices_info- Failed: {str(e)}")
-            self.fail(
-                f"TestCase-HPOS-T58:test_CMM_D_devices_info- Failed: {str(e)}")
-
     def test_CMM_B_boxes_selection_in_toplogy(self):
         try:
             cmm_b_boxes = self.utils.driver.find_elements(
@@ -85,6 +69,25 @@ class TestDashboard(unittest.TestCase):
              f"TestCase-HPOS-T123:test_CMM_B_boxes_selection-Failed: {str(e)}")
             self.fail(
              f"TestCase-HPOS-T123:test_CMM_B_boxes_selection-Failed: {str(e)}")
+    '''
+
+    def test_tooltip_display_CMM_H_devices_info_on_hover_in_toplogy(self):
+        try:
+            device_elements = self.utils.driver.find_elements(
+                By.XPATH, "//*[@id='cxl-device-card-id']/div")
+            self.assertGreater(len(device_elements), 0)
+            device_tooltip = self.utils.driver.find_element(
+                    By.XPATH, "//*[@id='cxl-device-card-id']/div/div[1]")
+            ActionChains(self.utils.driver).move_to_element(
+                    device_tooltip).perform()
+            device_tooltip.is_displayed()
+            self.logger.info(
+                "TestCase-HPOS-T58:Displayed devices info in tooltip - Passed")
+        except Exception as e:
+            self.logger.error(
+                f"TestCase-HPOS-T58:test_CMM_H_devices_info- Failed: {str(e)}")
+            self.fail(
+                f"TestCase-HPOS-T58:test_CMM_H_devices_info- Failed: {str(e)}")
 
     def test_selecting_next_arrow_in_toplogy(self):
         self.utils.find_element_and_assert(
@@ -105,7 +108,7 @@ class TestDashboard(unittest.TestCase):
             "mem-info", By.ID, "TestCase-HPOS-T15: test_system_information",
             self.utils.assert_element_displayed)
 
-    def test_CMM_B_memory_bandwidth(self):
+    def test_cluster_memory_bandwidth(self):
         self.utils.find_element_and_assert(
             "sys-mem-allocated-id", By.ID,
             "TestCase-HPOS-T16: test_CMM-B_memory_bandwidth",
@@ -117,7 +120,7 @@ class TestDashboard(unittest.TestCase):
             "TestCase-HPOS-T16: CMM-B Memory Bandwith Progress bar displayed",
             self.utils.assert_element_displayed)
 
-    def test_CMM_B_memory_capacity(self):
+    def test_cluster_memory_capacity(self):
         self.utils.find_element_and_assert(
             "sys-mem-allocated-id", By.ID,
             "TestCase-HPOS-T18: test_CMM-B_memory_capacity",
@@ -129,7 +132,7 @@ class TestDashboard(unittest.TestCase):
             "TestCase-HPOS-T18: CMM-B Memory Capacity Progress bar displayed",
             self.utils.assert_element_displayed)
 
-    def test_CMM_B_memory_usage_graph(self):
+    def test_cluster_memory_usage_graph(self):
 
         self.utils.find_element_and_assert(
             "rack-graph-id",
@@ -138,9 +141,9 @@ class TestDashboard(unittest.TestCase):
             self.utils.assert_element_displayed)
 
         self.utils.find_element_and_assert(
-         "//h6[contains(text(), 'CMM-B Memory')]",
+         "//h6[contains(text(), 'Cluster Memory')]",
          By.XPATH,
-         "TestCase-HPOS-T21: CMM-B Memory Usage Text displayed",
+         "TestCase-HPOS-T21: Cluster Memory Usage Text displayed",
          self.utils.assert_element_displayed)
 
         self.utils.find_element_and_assert(
