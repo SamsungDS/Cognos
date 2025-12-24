@@ -201,7 +201,7 @@ build_rpm() {
     local RPM_SHORT_VERSION=${GIT_VERSION/-*}
 
     # Only build RPM on supported OS
-    if [[ "$ID" == "rocky" ]]; then
+    if [[ "$ID" == "rocky" || "$ID" == "ol" ]]; then
         # Prepare RPMBUILD directories - inside our build directory
         rm -rf "$BUILD_DIR"
         mkdir --verbose --parents "$RPMBUILD_DIR"/{BUILD,RPMS,SPECS}
