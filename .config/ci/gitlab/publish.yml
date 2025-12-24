@@ -63,5 +63,6 @@ publish release artifacts - Nexus:
   parallel:
     matrix:
       - OS: rocky9
+      - OS: ol10
       - OS: ubuntu22
       - OS: ubuntu24

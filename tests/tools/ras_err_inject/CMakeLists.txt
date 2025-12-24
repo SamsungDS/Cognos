@@ -10,7 +10,7 @@ ExternalProject_Add(mce-inject
     GIT_REPOSITORY https://github.com/andikleen/mce-inject.git
     SOURCE_DIR        "${CMAKE_BINARY_DIR}/mce-inject"
     CONFIGURE_COMMAND ""
-    BUILD_COMMAND ${MAKE_EXECUTABLE} -j${Ncpu} -C ${MCE_INJECT_DIR}
+    BUILD_COMMAND ${MAKE_EXECUTABLE} CFLAGS='-fPIE' -j${Ncpu} -C ${MCE_INJECT_DIR}
     INSTALL_COMMAND ""
 )
 
@@ -35,6 +35,7 @@ install(DIRECTORY "${RASDAEMON_DIR}/b1/" DESTINATION "adapters/mock/tools" PATTE
 install(CODE "file(MAKE_DIRECTORY \"/usr/local/var/lib/rasdaemon\")")
 
 add_executable(svk_ras_einj main.cpp)
+target_compile_options(svk_ras_einj PRIVATE -fPIE)
 
 find_path(rapidjson_INCLUDE_DIR NAMES "rapidjson/document.h")
 if(NOT rapidjson_INCLUDE_DIR)

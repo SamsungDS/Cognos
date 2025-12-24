@@ -13,7 +13,7 @@ install_packages() {
         git
         libboost-thread-dev
         pkg-config
-        python3-virtualenv
+        python3-venv
         tar
         unzip
         wget
