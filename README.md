@@ -6,6 +6,7 @@ SVK Node feature provides the node information such as CPU, Memory, PCI device i
 
 ### Supported OS List
 
+- Oracle Linux 10
 - Rockylinux 9
 - Ubuntu 22.04
 - Ubuntu 24.04
@@ -36,6 +37,14 @@ apt-get install svk-node svk-node-dev -y
 ```bash
 curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
 dnf install epel-release -y
+dnf install svk-node svk-node-devel -y
+```
+
+### Oracle Linux Installation
+
+```bash
+curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
+dnf install oracle-epel-release-el10 -y
 dnf install svk-node svk-node-devel -y
 ```
 
