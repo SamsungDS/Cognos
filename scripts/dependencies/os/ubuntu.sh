@@ -15,7 +15,7 @@ install_packages() {
         numactl
         pciutils
         pkgconf
-        python3-virtualenv
+        python3-venv
         tar
         unzip
         wget
