@@ -9,6 +9,7 @@ The SVK Management Framework repository contains code related to REST API Server
 - Rockylinux 9
 - Ubuntu 22.04
 - Ubuntu 24.04
+- Oracle Linux 10
 
 ## Installation
 
@@ -30,7 +31,6 @@ wget --quiet --output-document /usr/share/keyrings/ssg-nexus.pgp  http://ssg-nex
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ssg-nexus.pgp] http://ssg-nexus.msl.lab:8081/repository/svk_apt_ubuntu${UBUNTU_VER} $(. /etc/os-release && echo $UBUNTU_CODENAME) main" > /etc/apt/sources.list.d/ssg-nexus.list
 apt update
 apt-get install svk-mgmt-fw svk-mgmt-fw-dev -y
-
 ```
 
 ### Rockylinux Installation
@@ -38,6 +38,14 @@ apt-get install svk-mgmt-fw svk-mgmt-fw-dev -y
 ```bash
 curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
 dnf install epel-release -y
+dnf install svk-mgmt-fw svk-mgmt-fw-devel -y
+```
+
+### Oracle Linux Installation
+
+```bash
+curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
+dnf install oracle-epel-release-el10 -y
 dnf install svk-mgmt-fw svk-mgmt-fw-devel -y
 ```
 

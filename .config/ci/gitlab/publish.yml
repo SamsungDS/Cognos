@@ -65,3 +65,4 @@ publish release artifacts - Nexus:
       - OS: rocky9
       - OS: ubuntu22
       - OS: ubuntu24
+      - OS: ol10
