@@ -31,7 +31,7 @@ static std::string rasGetNodeName() {
   } else {
     svk_logger(RAS_LOGGER, level_E::WARN,
                fmt::format("get_node_name failed with error {error_code}\n",
-                           fmt::arg("error_code", status))
+                           fmt::arg("error_code", static_cast<int>(status)))
                    .c_str());
   }
 

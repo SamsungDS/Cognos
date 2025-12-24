@@ -5,6 +5,7 @@ project(svk_ras_einj_monitor) # Project name
 
 link_directories(${CMAKE_SOURCE_DIR}/build/adapters/mock_adapter)
 add_executable(svk_ras_einj_monitor ras_err_inject_demo.cpp)
+target_compile_options(svk_ras_einj_monitor PRIVATE -fPIE)
 target_include_directories(svk_ras_einj_monitor PUBLIC ${CMAKE_SOURCE_DIR}/include )
 target_link_libraries(svk_ras_einj_monitor numa mock) # Link library to target
 
