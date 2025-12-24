@@ -77,7 +77,7 @@ func TestInitRestServer(t *testing.T) {
 	server, err := InitRestServer("localhost:8001", "localhost:9999", ctx, certFile, keyFile)
 	if server == nil {
 		t.Logf("Failed to start server: %v", err)
-		t.Fatalf(errorString)
+		t.Fatal(errorString)
 	}
 }
 
@@ -108,7 +108,7 @@ func TestRunRestServer(t *testing.T) {
 	server, err := InitRestServer("localhost:8001", "localhost:9999", ctx, certFile, keyFile)
 	if server == nil {
 		t.Logf("Failed to start server: %v", err)
-		t.Fatalf(errorString)
+		t.Fatal(errorString)
 	}
 	go RunRestServer(server, restServerChannel, useTLS)
 	go IssueSignal(restServerChannel)
@@ -132,7 +132,7 @@ func TestRunRestServerWithCACertificates(t *testing.T) {
 	server, err := InitRestServer("localhost:8001", "localhost:9999", ctx, certFile, keyFile)
 	if server == nil {
 		t.Logf("Failed to load TLS certificates: %v", err)
-		t.Fatalf(errorString)
+		t.Fatal(errorString)
 	}
 	go RunRestServer(server, restServerChannel, useTLS)
 	go IssueSignal(restServerChannel)
