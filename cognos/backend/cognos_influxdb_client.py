@@ -295,7 +295,7 @@ class CognosInfluxDBClient:
                 f"Failed to query for cognos events..: {str(error)}"
             )
 
-    def get_recent_dram_cxl_usage_data(self) -> List[List]:
+    def get_recent_dram_cxl_usage_data(self, cluster="") -> List[List]:
         """
         Returns a series of data points associated with recent DRAM and
         CXL usage data
@@ -365,7 +365,7 @@ class CognosInfluxDBClient:
         except Exception as error:
             print(f"ERROR during recent_dram vs cxl processing {str(error)}")
 
-    def get_cpu_mem_usage(self) -> List[List]:
+    def get_cpu_mem_usage(self, cluster="") -> List[List]:
         """
         Returns a series of data points associated with recent
         CPU and MEM usage data
@@ -438,47 +438,78 @@ class CognosInfluxDBClient:
         except Exception as error:
             print(f"failed to send recent CPU vs mem usage data {str(error)}")
 
-    def get_hostview_capacity(self):
-        tables = self.read_client.query(
-            f'''
-            from(bucket: "internal")
-            |> range(start: -5m)
-            |> filter(fn: (r) => r._measurement == "metric"
-                and (r._field == "cxl_capacity_mb" or
-                        r._field == "dram_capacity_mb")
-                and r.source_type == "application server"
+    def get_hostview_capacity(self, cluster=""):
+        try:
+            query_nodes = (
+                "SELECT DISTINCT(node_name) FROM connections "
+                f"WHERE cluster_name = '{cluster}' "
+                "and (node_name IS NOT NULL and node_name <> '');"
             )
-            |> group(columns: ["source", "_field"])
-            |> last()
-            |> group(columns: ["_field"])
-            |> sum(column: "_value")
-            |> map(fn: (r) => ({{ r with key: "total" }}))
-            |> pivot(
-                rowKey: ["key"],
-                columnKey: ["_field"],
-                valueColumn: "_value"
+            query_nodes_result = self.sql_client.exec_fetch_query(
+                    query_nodes,
+                    tuple()
+                )
+            cluster_nodes = [x[0] for x in query_nodes_result]
+            nodes_flux = json.dumps(cluster_nodes)
+
+            tables = self.read_client.query(
+                f'''
+                nodes = {nodes_flux}
+                from(bucket: "internal")
+                |> range(start: -5m)
+                |> filter(fn: (r) => r._measurement == "metric"
+                    and (r._field == "cxl_capacity_mb" or
+                            r._field == "dram_capacity_mb")
+                    and r.source_type == "application server"
+                )
+                |> filter(fn: (r) => contains(
+                    value: r.source,
+                    set: nodes
+                ))
+                |> group(columns: ["source", "_field"])
+                |> last()
+                |> group(columns: ["_field"])
+                |> sum(column: "_value")
+                |> map(fn: (r) => ({{ r with key: "total" }}))
+                |> pivot(
+                    rowKey: ["key"],
+                    columnKey: ["_field"],
+                    valueColumn: "_value"
+                )
+                |> keep(columns: ["cxl_capacity_mb", "dram_capacity_mb"])
+            '''
             )
-            |> keep(columns: ["cxl_capacity_mb", "dram_capacity_mb"])
-        '''
-        )
-        flux_query_output = json.loads(tables.to_json())
-        dram_capacity = flux_query_output[0]['dram_capacity_mb'] // 1000
-        cxl_capacity = flux_query_output[0]['cxl_capacity_mb'] // 1000
-        total_capacity = dram_capacity + cxl_capacity
+            flux_query_output = json.loads(tables.to_json())
+            dram_capacity = flux_query_output[0]['dram_capacity_mb'] // 1000
+            cxl_capacity = flux_query_output[0]['cxl_capacity_mb'] // 1000
+            total_capacity = dram_capacity + cxl_capacity
 
-        payload = {
-            "hostview_capacity": {
-                "total_capacity": total_capacity,
-            },
-            "hostview_memserver_capacity": [
-                ["Memtype", "Capacity Used"],
-                ["DRAM", dram_capacity],
-                ["CXL", cxl_capacity],
-            ]
-        }
-        return payload
+            payload = {
+                "hostview_capacity": {
+                    "total_capacity": total_capacity,
+                },
+                "hostview_memserver_capacity": [
+                    ["Memtype", "Capacity Used"],
+                    ["DRAM", dram_capacity],
+                    ["CXL", cxl_capacity],
+                ]
+            }
+            return payload
+        except Exception as error:
+            print(f"Unable to get host view usage for cluster: {cluster}")
+            payload = {
+                "hostview_capacity": {
+                    "total_capacity": None,
+                },
+                "hostview_memserver_capacity": [
+                    ["Memtype", "Capacity Used"],
+                    ["DRAM", None],
+                    ["CXL", None],
+                ]
+            }
+            return payload
 
-    def get_memserver_capacity(self) -> List[List]:
+    def get_memserver_capacity(self, cluster="") -> List[List]:
         """
         Returns a series of data points associated with recent
         Memserver Capacity Data
@@ -517,47 +548,72 @@ class CognosInfluxDBClient:
             except Exception as e:
                 print(f"Failed to process memserver capacity data {str(e)}")
 
-    def get_hostview_usage(self):
-        tables = self.read_client.query(
-            f'''
-            from(bucket: "internal")
-                |> range(start: -5m)
-                |> filter(fn: (r) =>
-                        r._measurement == "metric" and
-                        (r._field == "dram_usage_mb"
-                            or r._field == "cxl_usage_mb")
-                        and r.source_type == "application server"
-                    )
-                |> keep(columns: ["_time", "_value", "source", "_field"])
-                |> group(columns: ["source", "_field"])
-                |> aggregateWindow(every: 5s, fn: last, createEmpty: false)
-                |> group(columns: ["_time", "_field"])
-                |> sum(column: "_value")
-                |> group(columns: ["_time"])
-                |> pivot(
-                    rowKey: ["_time"],
-                    columnKey: ["_field"],
-                    valueColumn: "_value"
-                )
-                |> keep(columns: ["_time", "dram_usage_mb", "cxl_usage_mb"])
-                |> group()
-                |> sort(columns: ["_time"], desc: true)
-                |> tail(n: 6)
-                |> sort(columns: ["_time"])
-            '''
-        )
-        flux_query_output = json.loads(tables.to_json())
-        output = [["Time", "DRAM", "CXL"]]
-        for m in flux_query_output:
-            curr_time = datetime.strptime(
-                    m["_time"].split("+")[0].split(".")[0], "%Y-%m-%dT%H:%M:%S"
-            ).strftime("%H:%M:%S")
-            output.append(
-                [curr_time, m["dram_usage_mb"], m["cxl_usage_mb"]]
+    def get_hostview_usage(self, cluster=""):
+        try:
+            query_string = (
+                "SELECT DISTINCT(node_name) FROM connections "
+                f"WHERE cluster_name = '{cluster}' "
+                "and (node_name IS NOT NULL and node_name <> '');"
             )
-        return output
+            sql_query = self.sql_client.exec_fetch_query(
+                query_string,
+                tuple()
+            )
+            cluster_nodes = [x[0] for x in sql_query]
+            nodes_flux = json.dumps(cluster_nodes)
 
-    def get_membox_usage(self) -> List[List]:
+            tables = self.read_client.query(
+                f'''
+                nodes = {nodes_flux}
+                from(bucket: "internal")
+                    |> range(start: -5m)
+                    |> filter(fn: (r) =>
+                            r._measurement == "metric" and
+                            (r._field == "dram_usage_mb"
+                                or r._field == "cxl_usage_mb")
+                            and r.source_type == "application server"
+                        )
+                    |> filter(fn: (r) => contains(
+                        value: r.source,
+                        set: nodes
+                    ))
+                    |> keep(columns: ["_time", "_value", "source", "_field"])
+                    |> group(columns: ["source", "_field"])
+                    |> aggregateWindow(every: 5s, fn: last, createEmpty: false)
+                    |> group(columns: ["_time", "_field"])
+                    |> sum(column: "_value")
+                    |> group(columns: ["_time"])
+                    |> pivot(
+                        rowKey: ["_time"],
+                        columnKey: ["_field"],
+                        valueColumn: "_value"
+                    )
+                    |> keep(
+                        columns: ["_time", "dram_usage_mb", "cxl_usage_mb"]
+                    )
+                    |> group()
+                    |> sort(columns: ["_time"], desc: true)
+                    |> tail(n: 6)
+                    |> sort(columns: ["_time"])
+                '''
+            )
+            flux_query_output = json.loads(tables.to_json())
+            output = [["Time", "DRAM", "CXL"]]
+            for m in flux_query_output:
+                curr_time = datetime.strptime(
+                        m["_time"].split("+")[0].split(".")[0],
+                        "%Y-%m-%dT%H:%M:%S"
+                ).strftime("%H:%M:%S")
+                output.append(
+                    [curr_time, m["dram_usage_mb"], m["cxl_usage_mb"]]
+                )
+            return output
+        except Exception as error:
+            print(f"Unable to get host view usage for {cluster}")
+            output = [[None, None, None]]
+            return output
+
+    def get_membox_usage(self, cluster="") -> List[List]:
         """
         Returns a series of data points associated with recent
         memory box mem usage data
@@ -607,7 +663,7 @@ class CognosInfluxDBClient:
             # pragma: no cover
             print(f"failed to process membox usage data: {str(error)}")
 
-    def get_hostview_bandwidth(self):
+    def get_hostview_bandwidth(self, cluster=""):
         if self.mock:
             return {
                 "max_bandwidth": 128.0,
@@ -615,67 +671,111 @@ class CognosInfluxDBClient:
                 "used_percentage_bandwidth": 25.0
             }
 
-        tables = self.read_client.query(
-            f'''
-            from(bucket: "internal")
-                |> range(start: -5m)
-                |> filter(fn: (r) => r._measurement == "stats"
-                    and (r._field == "used_bandwidth_Bps"
-                            or r._field == "total_bandwidth_MBps")
-                )
-                |> filter(fn: (r) => r.source_type == "device")
-                |> toFloat()
-                |> group(columns: ["source", "_field"])
-                |> last()
-                |> pivot(
-                    rowKey: ["_time", "source"],
-                    columnKey: ["_field"],
-                    valueColumn: "_value"
-                )
-                |> group()
-                |> reduce(
-                    identity: {{totalUsed: 0.0, totalTotal: 0.0}},
-                    fn: (r, accumulator) => ({{
-                        totalUsed:
-                            accumulator.totalUsed + r.used_bandwidth_Bps,
-                        totalTotal:
-                            accumulator.totalTotal + r.total_bandwidth_MBps
-                    }})
+        try:
+            tables = self.read_client.query(
+                f'''
+                from(bucket: "internal")
+                    |> range(start: -5m)
+                    |> filter(fn: (r) => r.cluster_name == "{cluster}")
+                    |> filter(fn: (r) => r._measurement == "stats"
+                        and (r._field == "used_bandwidth_Bps"
+                                or r._field == "total_bandwidth_MBps")
+                    )
+                    |> filter(fn: (r) => r.source_type == "device")
+                    |> toFloat()
+                    |> group(
+                        columns: [
+                            "cluster_name",
+                            "node_name",
+                            "source",
+                            "_field"
+                        ]
+                    )
+                    |> last()
+                    |> pivot(
+                        rowKey: [
+                            "_time",
+                            "cluster_name",
+                            "node_name",
+                            "source"
+                        ],
+                        columnKey: ["_field"],
+                        valueColumn: "_value"
+                    )
+                    |> group(columns: ["cluster_name", "node_name", "source"])
+                    |> reduce(
+                        identity: {{totalUsed: 0.0, totalTotal: 0.0}},
+                        fn: (r, accumulator) => ({{
+                            totalUsed:
+                                accumulator.totalUsed + r.used_bandwidth_Bps,
+                            totalTotal:
+                                accumulator.totalTotal + r.total_bandwidth_MBps
+                        }})
 
-                )
-            '''
-        )
-        flux_query_output = json.loads(tables.to_json())
-        print(f"HOST VIEW BANDWIDTH: {flux_query_output}")
-        # Bps, convert to GBps
-        total_used_bw = round(
-            flux_query_output[0]['totalUsed'] / 1_000_000_000, 4
-        )
-        # MBps, convert to GBps
-        total_total_bw = round(flux_query_output[0]['totalTotal'] / 1000, 4)
-        used_bw_percentage = round(total_used_bw / total_total_bw * 100, 2)
-        payload = {
-            "max_bandwidth": total_total_bw,
-            "used_bandwidth": total_used_bw,
-            "used_percentage_bandwidth": used_bw_percentage
-        }
-        return payload
+                    )
+                    |> group()
+                    |> reduce(
+                        identity: {{totalUsed: 0.0, totalTotal: 0.0}},
+                        fn: (r, accumulator) => ({{
+                        totalUsed: accumulator.totalUsed + r.totalUsed,
+                        totalTotal: accumulator.totalTotal + r.totalTotal
+                        }})
+                    )
+                '''
+            )
+            flux_query_output = json.loads(tables.to_json())
+            # Bps, convert to GBps
+            total_used_bw = round(
+                flux_query_output[0]['totalUsed'] / 1_000_000_000, 4
+            )
+            # MBps, convert to GBps
+            total_total_bw = round(
+                flux_query_output[0]['totalTotal'] / 1000,
+                4
+            )
+            used_bw_percentage = round(
+                total_used_bw / total_total_bw * 100,
+                2
+            )
+            payload = {
+                "max_bandwidth": total_total_bw,
+                "used_bandwidth": total_used_bw,
+                "used_percentage_bandwidth": used_bw_percentage
+            }
+            return payload
+        except Exception as error:
+            print(f"Unable to get bandwidth data for cluster: {cluster}")
+            payload = {
+                "max_bandwidth": None,
+                "used_bandwidth": None,
+                "used_percentage_bandwidth": None
+            }
+            return payload
 
-    def get_hostview_devices_count(self):
+    def get_hostview_devices_count(self, cluster=""):
         """
         Output Format:  {"num_cxl_devices":1,"num_hosts":1}
         """
         try:
+            num_hosts_query = (
+                "SELECT COUNT(DISTINCT(node_name)) FROM "
+                "connections WHERE cluster_name = ?"
+            )
             num_hosts = (
                 self.sql_client.exec_fetch_singlerecord_query(
-                    "SELECT COUNT(*) FROM hosts ",
-                    tuple()
+                    num_hosts_query,
+                    (cluster,)
                 )
+            )
+            num_cxl_devices_query = (
+                "SELECT COUNT(*) FROM (SELECT DISTINCT node_name, device_id "
+                "FROM connections WHERE device_id IS NOT NULL AND "
+                "cluster_name = ?);"
             )
             num_cxl_devices = (
                 self.sql_client.exec_fetch_singlerecord_query(
-                    "SELECT COUNT(*) FROM devices ",
-                    tuple()
+                    num_cxl_devices_query,
+                    (cluster,)
                 )
             )
             payload = {
@@ -686,7 +786,7 @@ class CognosInfluxDBClient:
         except Exception as error:
             print(f"ERROR: {str(error)}")
 
-    def get_node_bandwidth(self) -> dict:
+    def get_node_bandwidth(self, cluster="") -> dict:
         """
         Returns CXL bandwidth usage data of a single server
         """
@@ -755,7 +855,7 @@ class CognosInfluxDBClient:
         }
         return payload
 
-    def get_attached_devices_count(self) -> Dict:
+    def get_attached_devices_count(self, cluster="") -> Dict:
         """
         Returns the total # of devices in the cognos system
         """
@@ -782,7 +882,7 @@ class CognosInfluxDBClient:
                 num_cxl_devices = 0
         return {"num_hosts": num_hosts, "num_cxl_devices": num_cxl_devices}
 
-    def get_membox_capacity(self) -> Dict:
+    def get_membox_capacity(self, cluster="") -> Dict:
         """
         Returns Memory Box memory capacity and usage data
         """

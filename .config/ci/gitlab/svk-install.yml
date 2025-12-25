@@ -95,8 +95,8 @@ svk-install:
     
     #### Telegraf configuration
     # - sudo sed -i -E 's|^[[:space:]]*token[[:space:]]*=.*|    token = "'"$INFLUX_TOKEN"'"|' /usr/local/svk/svk-app/cognos/telegraf/telegraf.conf
-    # - jq --arg ip "$VM_IP" --arg restport "$RESTSERVER_PORT" '.cognos_endpoint = "http://\($ip):\($restport)/api/v1/"' /usr/local/svk/svk-app/cognos/telegraf/config/config.json | sponge /usr/local/svk/svk-app/cognos/telegraf/config/config.json
-    # - jq --arg token "$INFLUX_TOKEN" '.token = $token' /usr/local/svk/svk-app/cognos/telegraf/config/config.json | sponge /usr/local/svk/svk-app/cognos/telegraf/config/config.json
+    - jq --arg ip "$VM_IP" --arg restport "$RESTSERVER_PORT" '.cognos_endpoint = "http://\($ip):\($restport)/api/v1/"' /usr/local/svk/svk-app/cognos/telegraf/config/config.json | sponge /usr/local/svk/svk-app/cognos/telegraf/config/config.json
+    - jq --arg token "$INFLUX_TOKEN" '.token = $token' /usr/local/svk/svk-app/cognos/telegraf/config/config.json | sponge /usr/local/svk/svk-app/cognos/telegraf/config/config.json
 
     #### Configure nodes, pids, and numa nodes for backend
     - jq --arg hn "$(hostname)" '.[$hn]=.["<host1>"] | del(.["<host1>"])' /usr/local/svk/svk-app/cognos/backend/config/numa_config.json | sponge /usr/local/svk/svk-app/cognos/backend/config/numa_config.json
@@ -172,8 +172,8 @@ svk-install:
     - systemctl start cognos-app
     - systemctl start cognos-rbac
     # - telegraf --config /usr/local/svk/svk-app/cognos/telegraf/telegraf.conf > /var/log/telegraf.log 2>&1 &
-    # - cd /usr/local/svk/svk-app/cognos/telegraf/
-    # - /usr/local/svk/svk-app/env/bin/python3 poll.py
+    - cd /usr/local/svk/svk-app/cognos/telegraf/
+    - nohup /usr/local/svk/svk-app/env/bin/python3 poll.py > /dev/null 2>&1 &
     - systemctl start cognos-ui
     #### Create Admin User ####
     - systemctl status cognos-rbac.service --no-pager

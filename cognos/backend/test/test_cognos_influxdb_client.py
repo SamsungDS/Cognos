@@ -151,6 +151,13 @@ def test_get_hostview_usage(cognos_influx_client, mocker):
     mocker.patch("json.loads", return_value=dummy_data)
     cognos_influx_client.get_hostview_usage()
 
+    # patch query to produce error
+    mocker.patch(
+        "influxdb_client.client.query_api.QueryApi.query",
+        side_effect=RuntimeError("Failed flux query"),
+    )
+    cognos_influx_client.get_hostview_usage()
+
 
 def test_get_latest_application_event(cognos_influx_client, mocker):
     t1 = "2024-07-24T22:15:16.00"
@@ -179,6 +186,13 @@ def test_get_hostview_capacity(cognos_influx_client, mocker):
     mocker.patch("json.loads", return_value=dummy_data)
     cognos_influx_client.get_hostview_capacity()
 
+    # patch query to produce error
+    mocker.patch(
+        "influxdb_client.client.query_api.QueryApi.query",
+        side_effect=RuntimeError("Failed flux query"),
+    )
+    cognos_influx_client.get_hostview_capacity()
+
 
 def test_get_attached_devices_count(cognos_influx_client):
     cognos_influx_client.get_attached_devices_count()
@@ -199,6 +213,13 @@ def test_get_hostview_bandwidth(cognos_influx_client, mocker):
         return_value=MagicMock(),
     )
     mocker.patch("json.loads", return_value=dummy_data)
+    cognos_influx_client.get_hostview_bandwidth()
+
+    # patch query to produce error
+    mocker.patch(
+        "influxdb_client.client.query_api.QueryApi.query",
+        side_effect=RuntimeError("Failed flux query"),
+    )
     cognos_influx_client.get_hostview_bandwidth()
 
 

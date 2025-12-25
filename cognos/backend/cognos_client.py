@@ -64,7 +64,7 @@ class Cognos(BaseControlInterface):
             "cmmb_usage": self.influx_client.get_membox_usage,
             "cmmb_capacity": self.influx_client.get_membox_capacity,
             "node_bandwidth": self.influx_client.get_node_bandwidth,
-            "devices_count": self.influx_client.get_attached_devices_count,
+            "devices_count": self.influx_client.get_hostview_devices_count,
             "hostview_bandwidth": self.influx_client.get_hostview_bandwidth,
             "hostview_usage": self.influx_client.get_hostview_usage,
             "hostview_capacity": self.influx_client.get_hostview_capacity,
@@ -752,9 +752,12 @@ class Cognos(BaseControlInterface):
         """
         metric_type = ""
         host = None
+        cluster = ""
         try:
             request_data = request.get_json()
             metric_type = request_data["metric_type"]
+            if "cluster" in request_data:
+                cluster = request_data["cluster"]
             host = request_data.get("host", None)
         except Exception:
             print("Failed to get input request data")
@@ -762,10 +765,12 @@ class Cognos(BaseControlInterface):
             self.influx_client.selected_host = host
             self.influx_client.filter = True
 
-        payload = self.cognos_metric_functions.get(
-            metric_type,
-            helper.create_empty_payload
-        )()
+        metrics_fn = self.cognos_metric_functions.get(metric_type, None)
+        payload = (
+            metrics_fn(cluster=cluster)
+            if metrics_fn
+            else helper.create_empty_payload()
+        )
         return payload
 
     def get_events(self):

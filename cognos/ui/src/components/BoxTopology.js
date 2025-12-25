@@ -32,7 +32,7 @@ import { ReactComponent as CMMHIcon } from "../assets/icons/CMM-H-Icon.svg";
 import { useSelectedOption } from "../contexts/SelectedOptionContext";
 import ShimmerUI, { NavigationShimmer } from './ShimmerUI';
 
-const BoxTopology = () => {
+const BoxTopology = ({onClusterChange}) => {
   const [hostToDeviceMapping, setHostToDeviceMapping] = useState({});
   // eslint-disable-next-line
   const [hostToDeviceMappingB2, setHostToDeviceMappingB2] = useState([]);
@@ -118,6 +118,7 @@ const BoxTopology = () => {
       }
 
       setSelectedCluster(defaultCluster);
+      onClusterChange(defaultCluster);
       setIsInitialLoad(false);
 
       console.log(`Default cluster selected: ${defaultCluster}`);
@@ -175,6 +176,7 @@ const BoxTopology = () => {
   // istanbul ignore next
   const filterByCluster = (clusterName) => {
     setSelectedCluster(clusterName);
+    onClusterChange(clusterName);
     // Reset carousel positions when changing clusters
     setCurrentCMM(0);
     setCurrentHostView(0);

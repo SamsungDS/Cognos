@@ -104,7 +104,7 @@ const mockFetch = (url, options) => {
  * @param {number} interval - Polling interval in milliseconds
  */
 // istanbul ignore next
-const useMetricsPoll = (metricType, additionalPayload = {}, interval = POLL_INTERVAL) => {
+const useMetricsPoll = (clusterRef, metricType, additionalPayload = {}, interval = POLL_INTERVAL) => {
   const [data, setData] = useState([]);
   const dataRef = useRef({});
   const apiEndpoint = MOCK_MODE ? '' : constants.Configs.api_endpoint;
@@ -113,6 +113,7 @@ const useMetricsPoll = (metricType, additionalPayload = {}, interval = POLL_INTE
     const fetchData = async () => {
       try {
         const payload = {
+          cluster: clusterRef.current,
           metric_type: metricType,
           ...additionalPayload
         };
@@ -156,6 +157,14 @@ const Dashboard = () => {
   const [version, setVersion] = useState('00.00.00');
   const [viewMode, setViewMode] = useState(VIEW_MODES.HOST); // Default to host view
   const apiEndpoint = MOCK_MODE ? '' : constants.Configs.api_endpoint;
+  const [metricsCluster, setMetricsCluster] = useState("None");
+  const metricsClusterRef = useRef(metricsCluster);
+
+  // check selected cluster
+  useEffect(() => {
+    console.log("DASHBOARD SELECTED CLUSTER: ", metricsCluster);
+    metricsClusterRef.current = metricsCluster;
+  }, [metricsCluster]);
 
   // Fetch version
   useEffect(() => {
@@ -199,17 +208,17 @@ const Dashboard = () => {
   }, [selectedOption]);
 
   // Fetch metrics using custom hooks
-  const cmmbMemoryData = useMetricsPoll("cmmb_usage");
-  const cmmbCapacityData = useMetricsPoll("cmmb_capacity");
-  const cmmbBandwidthData = useMetricsPoll("cmmb_bandwidth")
-  const devicesCountData = useMetricsPoll("devices_count");
+  const cmmbMemoryData = useMetricsPoll(metricsClusterRef, "cmmb_usage");
+  const cmmbCapacityData = useMetricsPoll(metricsClusterRef, "cmmb_capacity");
+  const cmmbBandwidthData = useMetricsPoll(metricsClusterRef, "cmmb_bandwidth")
+  const devicesCountData = useMetricsPoll(metricsClusterRef, "devices_count");
 
   // Fetch cluster metrics for host view
   // const clusterMetrics = useClusterMetrics(viewMode);
   const clusterMetrics = {
-    "memory_usage": useMetricsPoll("hostview_usage"),
-    "capacity": useMetricsPoll("hostview_capacity"),
-    "bandwidth": useMetricsPoll("hostview_bandwidth"),
+    "memory_usage": useMetricsPoll(metricsClusterRef, "hostview_usage"),
+    "capacity": useMetricsPoll(metricsClusterRef, "hostview_capacity"),
+    "bandwidth": useMetricsPoll(metricsClusterRef, "hostview_bandwidth"),
     "devices_count": devicesCountData
   }
 
@@ -252,7 +261,7 @@ const Dashboard = () => {
               data-testid="box-topology-id"
               id="box-topology-id"
             >
-              <BoxTopology />
+              <BoxTopology onClusterChange={setMetricsCluster} />
             </div>
           </Col>
 

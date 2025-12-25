@@ -102,18 +102,21 @@ describe('BoxTopology Component', () => {
 
   describe('Component Rendering', () => {
     test('renders BoxTopology component', () => {
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
       expect(screen.getByText(/Cluster:/)).toBeInTheDocument();
     });
 
     test('renders toggle switch', () => {
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
       const toggleInput = screen.getByRole('checkbox');
       expect(toggleInput).toBeInTheDocument();
     });
 
     test('renders carousel navigation buttons', () => {
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
       const prevButtons = screen.getAllByAltText('Previous');
       const nextButtons = screen.getAllByAltText('Next');
       expect(prevButtons.length).toBeGreaterThan(0);
@@ -121,23 +124,24 @@ describe('BoxTopology Component', () => {
     });
 
     test('renders CMM titles', () => {
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
       expect(screen.getByText('Chessis1')).toBeInTheDocument();
     });
   });
 
   describe('Data Fetching', () => {
     test('fetches data on component mount', async () => {
-      render(<BoxTopology />);
-
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
       await waitFor(() => {
         expect(constants.fetchData).toHaveBeenCalledTimes(2);
       });
     });
 
     test('updates cluster list when data is fetched', async () => {
-      render(<BoxTopology />);
-
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
       await waitFor(() => {
         const dropdown = screen.getByText(/Cluster:/);
         expect(dropdown).toBeInTheDocument();
@@ -145,8 +149,8 @@ describe('BoxTopology Component', () => {
     });
 
     test('transforms data correctly', async () => {
-      render(<BoxTopology />);
-
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
       await waitFor(() => {
         expect(constants.transformData).toHaveBeenCalled();
       });
@@ -155,13 +159,15 @@ describe('BoxTopology Component', () => {
 
   describe('Toggle Switch Functionality', () => {
     test('toggle switch reflects selected option', () => {
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
       const toggleInput = screen.getByRole('checkbox');
       expect(toggleInput).toBeChecked();
     });
 
     test('calls handleToggle when toggle is clicked', () => {
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
       const toggleInput = screen.getByRole('checkbox');
       fireEvent.click(toggleInput);
       expect(mockHandleToggle).toHaveBeenCalled();
@@ -172,7 +178,8 @@ describe('BoxTopology Component', () => {
         { fm_type: 'FM_DIRECT_CMMD' }
       ]);
 
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
       const toggleInput = screen.getByRole('checkbox');
 
       waitFor(() => {
@@ -181,7 +188,8 @@ describe('BoxTopology Component', () => {
     });
 
     test('toggle is enabled when remote hosts exist', async () => {
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
       const toggleInput = screen.getByRole('checkbox');
 
       await waitFor(() => {
@@ -194,7 +202,8 @@ describe('BoxTopology Component', () => {
 
   describe('Navigation Functionality', () => {
     test('navigates to next CMM when next button is clicked', () => {
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
       const nextButton = screen.getByTestId('next-button');
       fireEvent.click(nextButton);
 
@@ -204,7 +213,8 @@ describe('BoxTopology Component', () => {
     });
 
     test('navigates to previous CMM when prev button is clicked', () => {
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
       const prevButton = screen.getByTestId('prev-button');
       fireEvent.click(prevButton);
 
@@ -214,7 +224,8 @@ describe('BoxTopology Component', () => {
     });
 
     test('navigates to specific CMM when title is clicked', () => {
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
       const chessis3 = screen.getByText('Chessis3');
       fireEvent.click(chessis3);
 
@@ -222,7 +233,8 @@ describe('BoxTopology Component', () => {
     });
 
     test('cycles through all CMMs', () => {
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
       const nextButton = screen.getByTestId('next-button');
 
       // Click through all 6 CMMs
@@ -245,7 +257,8 @@ describe('BoxTopology Component', () => {
     });
 
     test('renders Host view when toggle is set to Host', () => {
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
       expect(screen.getByText('Host')).toBeInTheDocument();
     });
 
@@ -253,14 +266,16 @@ describe('BoxTopology Component', () => {
       jest.spyOn(constants, 'transformData').mockReturnValue([]);
       jest.spyOn(constants, 'assignClusters').mockReturnValue([]);
 
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
       expect(screen.getByText('ShimmerUI')).toBeInTheDocument();
     });
 
     test('shows NavigationShimmer when no host direct view list', () => {
       jest.spyOn(constants, 'updateHostListAttached').mockReturnValue([]);
 
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
       expect(screen.getByText('NavigationShimmer')).toBeInTheDocument();
     });
 
@@ -276,7 +291,8 @@ describe('BoxTopology Component', () => {
         }
       ]);
 
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
 
       const nextButtons = screen.getAllByAltText('Next');
       if (nextButtons.length > 0) {
@@ -289,7 +305,8 @@ describe('BoxTopology Component', () => {
 
   describe('Component Rendering - Host and Device Components', () => {
     test('renders host components with correct styling', () => {
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
 
       // Host components should be rendered
       const container = screen.getByTestId || screen.queryByTestId;
@@ -297,13 +314,15 @@ describe('BoxTopology Component', () => {
     });
 
     test('renders device components with correct styling', () => {
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
 
       expect(document.querySelector('.device-box')).toBeInTheDocument();
     });
 
     test('applies correct colors to active hosts', () => {
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
 
       const badges = document.querySelectorAll('.badge');
       expect(badges.length).toBeGreaterThan(0);
@@ -314,7 +333,8 @@ describe('BoxTopology Component', () => {
         { host: 'Host1', color: '#00ff00', isActive: false }
       ]);
 
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
 
       const badges = document.querySelectorAll('.badge');
       expect(badges.length).toBeGreaterThan(0);
@@ -325,14 +345,16 @@ describe('BoxTopology Component', () => {
     test('handles empty host list', () => {
       jest.spyOn(constants, 'mappedHostList').mockReturnValue([]);
 
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
       expect(screen.getByText(/Cluster:/)).toBeInTheDocument();
     });
 
     test('handles empty device list', () => {
       jest.spyOn(constants, 'mappedDeviceList').mockReturnValue([]);
 
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
       expect(screen.getByText(/Cluster:/)).toBeInTheDocument();
     });
 
@@ -340,25 +362,27 @@ describe('BoxTopology Component', () => {
 
   describe('Performance and Optimization', () => {
     test('does not re-render unnecessarily when same data is set', async () => {
-      const { rerender } = render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      const { rerender } = render(<BoxTopology onClusterChange={onClusterChange}/>);
 
       const initialRenderCount = screen.getAllByText(/Chessis/).length;
 
-      rerender(<BoxTopology />);
+      rerender(<BoxTopology onClusterChange={onClusterChange}/>);
 
       const afterRerenderCount = screen.getAllByText(/Chessis/).length;
       expect(initialRenderCount).toBe(afterRerenderCount);
     });
 
     test('updates state only when filtered data changes', async () => {
-      const { rerender } = render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      const { rerender } = render(<BoxTopology onClusterChange={onClusterChange}/>);
 
       await waitFor(() => {
         expect(constants.assignClusters).toHaveBeenCalled();
       });
 
       const callCount = constants.assignClusters.mock.calls.length;
-      rerender(<BoxTopology />);
+      rerender(<BoxTopology onClusterChange={onClusterChange}/>);
 
       // Should not call assignClusters again if data hasn't changed
       expect(constants.assignClusters.mock.calls.length).toBeGreaterThanOrEqual(callCount);
@@ -367,19 +391,22 @@ describe('BoxTopology Component', () => {
 
   describe('Accessibility', () => {
     test('toggle switch has proper aria attributes', () => {
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
       const toggle = screen.getByRole('checkbox');
       expect(toggle).toHaveAttribute('type', 'checkbox');
     });
 
     test('buttons have proper alt text', () => {
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
       expect(screen.getAllByAltText('Previous')).toBeTruthy();
       expect(screen.getAllByAltText('Next')).toBeTruthy();
     });
 
     test('dropdown has proper accessibility labels', () => {
-      render(<BoxTopology />);
+      const onClusterChange = jest.fn();
+      render(<BoxTopology onClusterChange={onClusterChange}/>);
       const dropdown = screen.getByRole('button', { name: /Cluster:/ });
       expect(dropdown).toBeInTheDocument();
     });

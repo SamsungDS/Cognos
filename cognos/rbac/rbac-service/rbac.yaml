@@ -1,10 +1,10 @@
 orgName: 'Samsung'
 database:
-  uri: 'mongodb://admin:admin@<ip-addr>:1027/mongodb?authSource=admin'
+  uri: 'mongodb://admin:admin@105.128.44.94:1027/mongodb?authSource=admin'
 frontend:
-  url: 'http://<ip-addr>:6720'
+  url: 'http://105.128.44.94:6720'
 backend:
-  url: 'http://<ip-addr>:6721'
+  url: 'http://105.128.44.94:6721'
 email:
   service: ''  # Email service provider (e.g., 'gmail', 'yahoo', 'hotmail', 'outlook', 'smtp')
   user: ''  # Your email address

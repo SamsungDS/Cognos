@@ -175,10 +175,14 @@ def get_cognos_device_stats():
             for node in nodes:
                 for node_name, device_ids in node.items():
                     for id in device_ids:
-                        device_stats.append(
-                            get_cxl_device_metrics(cluster_name, node_name, id)
+                        single_device_stats = get_cxl_device_metrics(
+                            cluster_name,
+                            node_name,
+                            id
                         )
-                        print(f"GOT DEVICE METRICS: {device_stats}")
+                        single_device_stats["cluster_name"] = cluster_name
+                        single_device_stats["node_name"] = node_name
+                        device_stats.append(single_device_stats)
 
     # step 3: Format data into flux line protocol
     convert_stats_to_influx_line_protocol(device_stats)
