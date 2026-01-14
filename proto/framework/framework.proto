@@ -227,8 +227,9 @@ message RegisterRequest {
 // A RegisterResponse resource.
 message RegisterResponse {
   // Status of RegisterNode with success or failure with error details
-  string error_id_or_string_if_any = 1;
-  int32 error_code = 2;
+  string error_id_or_string_if_any = 1
+      [ json_name = "error_id_or_string_if_any" ];
+  int32 error_code = 2 [ json_name = "error_code" ];
 }
 
 // A UnregisterRequest resource sent to the Controller node to unregister
@@ -239,7 +240,7 @@ message UnregisterRequest { string node_name = 1; }
 message UnregisterResponse {
   // Status of UnregisterNode with success or failure with error details
   string status = 1;
-  int32 error_code = 2;
+  int32 error_code = 2 [ json_name = "error_code" ];
 }
 
 message SetNodeStatusRequest {
@@ -248,8 +249,9 @@ message SetNodeStatusRequest {
 }
 
 message SetNodeStatusResponse {
-  string error_id_or_string_if_any = 1;
-  int32 error_code = 2;
+  string error_id_or_string_if_any = 1
+      [ json_name = "error_id_or_string_if_any" ];
+  int32 error_code = 2 [ json_name = "error_code" ];
 }
 
 // A CommandRequest resource sent either to the Controller node or the Agent
@@ -288,16 +290,16 @@ message CommandRequest {
 // the controller node
 message CommandResponse {
   message NodeResponse {
-    string node_id = 1;
-    string output = 2;
+    string node_id = 1 [ json_name = "node_id" ];
+    string output = 2 [ json_name = "output" ];
   }
-  repeated NodeResponse node_responses = 1;
+  repeated NodeResponse node_responses = 1 [ json_name = "node_responses" ];
 }
 
 message NodeDetails {
   // Node ID and other details
-  string node_id = 1;
-  string node_port = 2;
+  string node_id = 1 [ json_name = "node_id" ];
+  string node_port = 2 [ json_name = "node_port" ];
 }
 
 message ListClusterCommandRequest {
@@ -310,10 +312,10 @@ message ListClusterCommandRequest {
 
 message ListClusterCommandResponse {
   message ClusterDetails {
-    string cluster_id = 1;
-    repeated NodeDetails node_info = 2;
+    string cluster_id = 1 [ json_name = "cluster_id" ];
+    repeated NodeDetails node_info = 2 [ json_name = "node_info" ];
   }
-  repeated ClusterDetails cluster_info = 1;
+  repeated ClusterDetails cluster_info = 1 [ json_name = "cluster_info" ];
 }
 
 // A ClusterRequest resource sent to the Controller node to handle cluster API.
@@ -327,11 +329,12 @@ message ClusterRequest {
 // A ClusterResponse resource.
 message ClusterResponse {
   // Status of ClusterResponse with success or failure with error details
-  string error_id_or_string_if_any = 1;
-  int32 error_code = 2;
-  string api_version = 3;
+  string error_id_or_string_if_any = 1
+      [ json_name = "error_id_or_string_if_any" ];
+  int32 error_code = 2 [ json_name = "error_code" ];
+  string api_version = 3 [ json_name = "api_version" ];
   // JSON format of the output response
-  string command_response = 4;
+  string command_response = 4 [ json_name = "command_response" ];
 }
 
 // A NodeRequest resource sent to the Controller node to handle cluster API.
@@ -347,11 +350,12 @@ message NodeRequest {
 // A NodeResponse resource.
 message NodeResponse {
   // Status of NodeResponse with success or failure with error details
-  string error_id_or_string_if_any = 1;
-  int32 error_code = 2;
-  string api_version = 3;
+  string error_id_or_string_if_any = 1
+      [ json_name = "error_id_or_string_if_any" ];
+  int32 error_code = 2 [ json_name = "error_code" ];
+  string api_version = 3 [ json_name = "api_version" ];
   // JSON format of the output response
-  string command_response = 4;
+  string command_response = 4 [ json_name = "command_response" ];
 }
 
 // A FeatureRequest resource sent to the Controller node to handle cluster API.
@@ -367,11 +371,12 @@ message FeatureRequest {
 // A FeatureResponse resource.
 message FeatureResponse {
   // Status of FeatureResponse with success or failure with error details
-  string error_id_or_string_if_any = 1;
-  int32 error_code = 2;
-  string api_version = 3;
+  string error_id_or_string_if_any = 1
+      [ json_name = "error_id_or_string_if_any" ];
+  int32 error_code = 2 [ json_name = "error_code" ];
+  string api_version = 3 [ json_name = "api_version" ];
   // JSON format of the output response
-  repeated string response = 4;
+  repeated string response = 4 [ json_name = "response" ];
 }
 
 // A EventRequest resource sent to the Controller node to handle Event handling
@@ -387,11 +392,12 @@ message EventRequest {
 // A EventResponse resource.
 message EventResponse {
   // Status of FeatureResponse with success or failure with error details
-  string error_id_or_string_if_any = 1;
-  int32 error_code = 2;
-  string api_version = 3;
+  string error_id_or_string_if_any = 1
+      [ json_name = "error_id_or_string_if_any" ];
+  int32 error_code = 2 [ json_name = "error_code" ];
+  string api_version = 3 [ json_name = "api_version" ];
   // JSON format of the output response
-  string response = 4;
+  string response = 4 [ json_name = "response" ];
 }
 
 // A SLAManagementRequest resource sent to the Controller node to handle SLA
@@ -408,11 +414,12 @@ message SLAManagementRequest {
 // A SLAManagementResponse resource.
 message SLAManagementResponse {
   // Status of SLAManagementResponse with success or failure with error details
-  string error_id_or_string_if_any = 1;
-  int32 error_code = 2;
-  string api_version = 3;
+  string error_id_or_string_if_any = 1
+      [ json_name = "error_id_or_string_if_any" ];
+  int32 error_code = 2 [ json_name = "error_code" ];
+  string api_version = 3 [ json_name = "api_version" ];
   // JSON format of the output response
-  string response = 4;
+  string response = 4 [ json_name = "response" ];
 }
 
 // A StatsRequest resource sent to the Controller node to handle stats API.
@@ -429,9 +436,10 @@ message StatsRequest {
 // A StatsResponse resource.
 message StatsResponse {
   // Status of StatsResponse with success or failure with error details
-  string error_id_or_string_if_any = 1;
-  int32 error_code = 2;
-  string api_version = 3;
+  string error_id_or_string_if_any = 1
+      [ json_name = "error_id_or_string_if_any" ];
+  int32 error_code = 2 [ json_name = "error_code" ];
+  string api_version = 3 [ json_name = "api_version" ];
   // JSON format of the output response
-  string response = 4;
+  string response = 4 [ json_name = "response" ];
 }
