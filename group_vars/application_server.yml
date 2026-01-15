@@ -1,2 +1,2 @@
 ---
-svk_pkg_dir: "{{ inventory_dir }}/artifacts/SVK/Application_Server"
+svk_pkg_dir: "{{ inventory_dir }}/artifacts/SVK"

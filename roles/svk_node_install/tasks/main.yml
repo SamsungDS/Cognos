@@ -1,0 +1,55 @@
+---
+# tasks file for roles/svk_node_install
+# Author: June Liu
+# Contact: june.liu@samsung.com
+
+- name: Determine OS type and version
+  ansible.builtin.set_fact:
+    svk_node_install_os_family: "{{ ansible_distribution }}"
+    svk_node_install_os_version: "{{ ansible_distribution_version }}"
+
+- name: Identify svk_node package
+  ansible.builtin.find:
+    path: "{{ svk_pkg_dir }}"
+    patterns: "svk-node*-ubuntu{{ svk_node_install_os_version }}_*.deb"
+  delegate_to: localhost
+  run_once: true
+  register: svk_node_install_deb
+  when: svk_node_install_os_family == "Ubuntu"
+
+- name: Assert svk_node deb found
+  ansible.builtin.assert:
+    that: svk_node_install_deb.files | length > 0
+    fail_msg: "No svk-node deb found. Please download DEB to {{ svk_node_install_artifacts_dir }}"
+
+- name: Identify newest version of svk_node DEB found
+  ansible.builtin.set_fact:
+    svk_node_install_deb_file: "{{ (svk_node_install_deb.files | sort(attribute='mtime', reverse=true) | first).path }}"
+  run_once: true
+
+- name: Check if svk_node DEB is installed
+  ansible.builtin.shell:
+    cmd: "set -o pipefail && apt list --installed | grep svk-node; echo $?"
+    executable: /bin/bash
+  register: svk_node_install_deb_query
+  changed_when: false
+  when: ansible_facts['distribution'] == "Ubuntu"
+
+- name: Copy svk_node DEB to staging directory
+  ansible.builtin.copy:
+    src: "{{ svk_node_install_deb_file }}"
+    dest: "{{ svk_node_install_staging_dir }}"
+    mode: "0644"
+  when: svk_node_install_deb_query.stdout_lines[-1] != '0'
+
+- name: Install svk_node DEB
+  ansible.builtin.apt:
+    deb: "{{ svk_node_install_staging_dir }}/{{ svk_node_install_deb_file | basename }}"
+    state: present
+  become: true
+  when: svk_node_install_deb_query.stdout_lines[-1] != '0' and ansible_facts['distribution'] == "Ubuntu"
+
+- name: Delete svk_node DEB from staging directory
+  ansible.builtin.file:
+    path: "{{ svk_node_install_staging_dir }}/{{ svk_node_install_deb_file | basename }}"
+    state: absent

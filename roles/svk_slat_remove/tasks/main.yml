@@ -1,0 +1,10 @@
+---
+# Author: June Liu
+# Contact: june.liu@samsung.com
+
+- name: Remove svk_slat packages
+  ansible.builtin.apt:
+    name: svk-slat
+    state: absent
+    purge: true
+  when: ansible_facts['distribution'] == "Ubuntu"

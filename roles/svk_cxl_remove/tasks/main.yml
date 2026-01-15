@@ -1,19 +1,18 @@
 ---
-- name: Check if svk_cxl DEB is installed
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      apt list --installed | grep svk-cxl
-    executable: /bin/bash
-  register: svk_cxl_remove_deb_query
-  changed_when: false
-  failed_when: false
-  when: ansible_facts['distribution'] == "Ubuntu"
+- name: Set svk-cxl package name in hardware mode
+  ansible.builtin.set_fact:
+    svk_cxl_remove_name: "svk-cxl_"
+  when: not scmc_cxl_mock_enable
+
+- name: Set svk-cxl package name in mock mode
+  ansible.builtin.set_fact:
+    svk_cxl_remove_name: "svk-cxl-mock"
+  when: scmc_cxl_mock_enable
 
 - name: Remove the installed svk-cxl
   ansible.builtin.apt:
-    name: svk-cxl
+    name: "{{ svk_cxl_remove_name }}"
     state: absent
     purge: true
   become: true
-  when: svk_cxl_remove_deb_query.rc == 0 and ansible_facts['distribution'] == "Ubuntu"
+  when: ansible_facts['distribution'] == "Ubuntu"

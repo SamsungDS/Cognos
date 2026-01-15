@@ -14,3 +14,9 @@ influxdb_bucket: "internal"
 influxdb_user: "svk"
 influxdb_pwd: "CXL123mem!"
 feat_modules_bin_dir: "/usr/local/svk/feature_modules"
+
+scmc_cxl_mock_enable: "{{ scmc_mock_enable | bool }}"
+
+rbac_username: "admin"
+rbac_email: "admin@gmail.com"
+rbac_password: "Admin@123"

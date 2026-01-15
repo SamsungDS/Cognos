@@ -1,0 +1,12 @@
+# Author: June Liu
+# Contact: june.liu@samsung.com
+---
+# tasks file for roles/svk_me_remove
+
+- name: Remove the installed svk-me
+  ansible.builtin.apt:
+    name: svk-me
+    state: absent
+    purge: true
+  become: true
+  when: ansible_facts['distribution'] == "Ubuntu"

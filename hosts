@@ -8,7 +8,10 @@ msl-dpe-da1
 msl-dpe-da1
 
 [management_server]
-msl-dpe-da8
+msl-dpe-da8 type=''
 
 [application_server]
-msl-dpe-da2
+msl-ssg-srf05 type='CMMD'
+
+[all:vars]
+scmc_mock_enable=true

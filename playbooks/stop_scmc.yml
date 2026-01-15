@@ -3,7 +3,15 @@
   hosts:
     - management_server
   roles:
-    - management_server_stop
+    - role: management_server_stop_mock
+      when: scmc_cxl_mock_enable
+
+- name: Stop Management Server with direct attached devices
+  hosts:
+    - management_server
+  roles:
+    - role: management_server_stop_hw
+      when: not scmc_cxl_mock_enable
 
 - name: Stop Application Server
   hosts:

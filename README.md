@@ -97,8 +97,10 @@ Please reference the official documentation:
 
 #### Example Inventory File
 
-Configure an Ansible inventory file for the cluster.
-Below is an example inventory file defining a cluster of one host in the [slat_node] group, with one also in the [converged_node] group.
+Set up an Ansible inventory file for the cluster.
+Below is an example inventory file defining a cluster with one host in the [slat_node] group, one in the [converged_node] group, one in the [management_server] group, and two hosts in the [application_server] group.
+
+**NOTE**: The 'type' of hosts in the [management_server] and [application_server] groups must be set to either 'CMMB' or 'CMMD'.
 
     [slat_node]
     hostname1/host_ip1
@@ -110,10 +112,11 @@ Below is an example inventory file defining a cluster of one host in the [slat_n
     hostname3/host_ip3
 
     [management_server]
-    hostname4/host_ip4
+    hostname4/host_ip4 type='CMMB'
 
     [application_server]
-    hostname5/host_ip5
+    hostname5/host_ip5 type='CMMD'
+    hostname6/host_ip6 type='CMMB'
 
 
 #### Inventory Groups
@@ -137,65 +140,56 @@ Your inventory file should contain hosts in the following groups:
 
 * [management_server]
   * Hosts running the scmc-managment side services, including:
-    * svk-core
-    * svk-cxl
-    * svk-mgmt-fw
     * svk-app
+    * svk-core
+    * svk-cxl/svk-cxl-mock
+    * svk-me
+    * svk-mgmt-fw
+    * svk-node
+    * svk-ras
+    * svk-slat
 
 * [applicaition_server]
   * Hosts running the scmc-application side services, including:
     * svk-core
-    * svk-cxl
+    * svk-cxl/svk-cxl-mock
+    * svk-me
     * svk-mgmt-fw
+    * svk-node
+    * svk-ras
+    * svk-slat
 
 ### Prepare the artifacts:
 The cognos packages to be installed should be placed in the artifacts directory in advance.
 1. Enter $project_dir and create a directory named artifacts. 
     * cd ./svk-ansible
-    * mkdir artifacts'
+    * mkdir artifacts
 2. Download the cognos packages into artifacts directory.
 3. Enter artifacts directory.
-    * cd./artifacts
+    * cd ./artifacts
 4. Extract the packages, and packages in artifacts are listed as follows:
-    * tar xvf cognos_runner_mvp3.tar.gz
-    * tree -L 3 artifacts/
-        *       artifacts
-                ├── cognos_runner_mvp5.tar.gz
-                └── SVK
-                ├── Application_Server
-                │   ├── svk-core_0.7.2-ubuntu22.04_amd64.deb
-                │   ├── svk-cxl_0.7.1-ubuntu22.04_amd64.deb
-                │   └── svk-mgmt-fw_0.7.5-ubuntu22.04_amd64.deb
+    * tar xvf cognos_runner_mvp9.tar.gz
+    * tree -L 2 artifacts/
+    *       artifacts/
+            └── SVK
                 ├── Converged
-                │   ├── svk-converged_0.7.0-ubuntu24.04_amd64.deb
-                │   └── svk-core_0.7.2-ubuntu24.04_amd64.deb
-                ├── Management_Server
-                │   ├── svk-app_0.7.8-ubuntu22.04_amd64.deb
-                │   ├── svk-core_0.7.2-ubuntu22.04_amd64.deb
-                │   ├── svk-cxl_0.7.1-ubuntu22.04_amd64.deb
-                │   └── svk-mgmt-fw_0.7.5-ubuntu22.04_amd64.deb
-                ├── Memory_Engine
-                │   ├── svk-core_0.7.2-ubuntu22.04_amd64.deb
-                │   ├── svk-me_0.7.0-ubuntu22.04_amd64.deb
-                │   └── svk-mgmt-fw_0.7.5-ubuntu22.04_amd64.deb
-                ├── Node_Management
-                │   ├── svk-core_0.7.2-ubuntu22.04_amd64.deb
-                │   └── svk-node_0.7.0-ubuntu22.04_amd64.deb
-                └── SLA_Tracker
-                    ├── svk-core_0.7.2-ubuntu22.04_amd64.deb
-                    ├── svk-cxl_0.7.1-ubuntu22.04_amd64.deb
-                    ├── svk-mgmt-fw_0.7.5-ubuntu22.04_amd64.deb
-                    └── svk-slat_0.7.0-ubuntu22.04_amd64.deb
+                ├── svk-app_0.11.5-ubuntu22.04_amd64.deb
+                ├── svk-core_0.11.5-ubuntu22.04_amd64.deb
+                ├── svk-cxl_0.11.0-ubuntu22.04_amd64.deb
+                ├── svk-cxl-mock_0.11.0-ubuntu22.04_amd64.deb
+                ├── svk-me_0.11.3-3-gb13f-ubuntu22.04_amd64.deb
+                ├── svk-mgmt-fw_0.11.7-ubuntu22.04_amd64.deb
+                ├── svk-node_0.11.2-ubuntu22.04_amd64.deb
+                ├── svk-ras_0.11.14-ubuntu22.04_amd64.deb
+                └── svk-slat_0.11.3-ubuntu22.04_amd64.deb
 
-                7 directories, 19 files
-
-
+            2 directories, 9 files
 
 ## Deploy SVK Software Stack (Quick-Start)
 
 ### SVK Converged:
 
-Perform the deployment of SVK Converged:
+Perform the deployment and start of SVK Converged:
   
     ansible-playbook -i your_inventory playbooks/deploy_cognos_converged.yml
 
@@ -238,23 +232,38 @@ Perform the kernel upgrade and default to upgrading to version 6.11.11:
     ansible-playbook -i your_inventory playbooks/deploy_kernel.yml
 
 ### SVK SCMC:
-Perform the deployment of SCMC:
 
-    ansible-playbook -i your_inventory playbooks/deploy_scmc.yml
+1. Download cognos relase bundle to `artifacts` directory and extract it.
 
-Configure and start SCMC Tracker:
+2. Edit the `scmc_mock_enable` setting in the `[all:vars]` section of `hosts` inventory file:
 
-    Update the values in roles/management_server_start/vars/main.yml & roles/application_server_start/vars/main.yml, then    
+    *  Set `scmc_mock_enable=false` to deploy SCMC in hardware mode.
+    *  Set `scmc_mock_enable=true` to deploy SCMC in mock mode.
 
-    ansible-playbook -i your_inventory playbooks/start_scmc.yml
+3. Edit `[management_server]` and `[application_server]` groups in `hosts` inventory file.
 
-Stop SCMC service:
+    * If you deploy SCMC in `hardware` mode, the `hosts in [application_server]` must be servers **equipped with** physical CMMB or CMMD/CMMH devices.
+    * Set host `type` to `'CMMD'` for hosts equipped with CMMD or CMMH devices.
 
-    ansible-playbook -i your_inventory playbooks/start_scmc.yml
+4. Update variables in `group_vars/all.yaml`, `group_vars/management_server.yaml`, and `group_vars/application_server.yml` as needed. 
 
-Remove or uninstall SCMC related packages:
+   **No changes are required by default.**
 
-    ansible-playbook -i your_inventory playbooks/remove_scmc.yml
+5. Perform the deployment of SCMC to install the required packages and start SCMC services:
+
+        ansible-playbook -i your_inventory playbooks/deploy_scmc.yml
+
+6. Configure and start SCMC services:
+
+        ansible-playbook -i your_inventory playbooks/start_scmc.yml
+
+7. Stop SCMC service:
+
+        ansible-playbook -i your_inventory playbooks/stop_scmc.yml
+
+8. Remove or uninstall SCMC related packages:
+
+        ansible-playbook -i your_inventory playbooks/remove_scmc.yml
 
 
 ### Complete Playbook Documentation
@@ -322,8 +331,7 @@ Execute this playbook to automatically stop SVK SLA Tracker service accross all 
 
 #### playbooks/deploy_scmc.yml
 
-Execute this playbooks to install svk-core, svk-mgmt-fw, svk-cxl to management & application servers, and install svk-app to management servers, as well as their dependencies.
-
+Execute this playbook to install required packages and configure and start the necessary services on both the management and application servers.
 **NOTE:** _It's currently tested in Ubuntu22.04. You may want to keep the influxdb token displayed during execution for later use._
 
 #### playbooks/start_scmc.yml

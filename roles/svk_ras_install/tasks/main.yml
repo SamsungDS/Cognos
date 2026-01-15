@@ -1,0 +1,70 @@
+---
+# Author: June Liu
+# Contact: june.liu@samsung.com
+
+- name: Determine OS type and version
+  ansible.builtin.set_fact:
+    svk_ras_install_os_family: "{{ ansible_distribution }}"
+    svk_ras_install_os_version: "{{ ansible_distribution_version }}"
+
+- name: Identify svk-ras package
+  ansible.builtin.find:
+    path: "{{ svk_pkg_dir }}"
+    patterns: "svk-ras*-ubuntu{{ svk_ras_install_os_version }}_*.deb"
+  delegate_to: localhost
+  run_once: true
+  register: svk_ras_install_deb
+  when: svk_ras_install_os_family == "Ubuntu"
+
+- name: Assert svk-ras deb found
+  ansible.builtin.assert:
+    that: svk_ras_install_deb.files | length > 0
+    fail_msg: "No svk-ras deb found. Please download DEB to {{ svk_ras_install_artifacts_dir }}"
+
+- name: Identify newest version of svk-ras DEB found
+  ansible.builtin.set_fact:
+    svk_ras_install_deb_file: "{{ (svk_ras_install_deb.files | sort(attribute='mtime', reverse=true) | first).path }}"
+  run_once: true
+
+- name: Remove the installed rasdaemon
+  ansible.builtin.apt:
+    name: rasdaemon
+    state: absent
+    purge: true
+  become: true
+  when: svk_ras_install_os_family == "Ubuntu"
+
+- name: Delete the installation directories of rasdaemon
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ svk_ras_install_rasdaemon_dir }}"
+  become: true
+
+- name: Check if svk-ras DEB is installed
+  ansible.builtin.shell:
+    cmd: "set -o pipefail && apt list --installed | grep svk-ras; echo $?"
+    executable: /bin/bash
+  register: svk_ras_install_deb_query
+  changed_when: false
+  when: svk_ras_install_os_family == "Ubuntu"
+
+- name: Copy svk-ras DEB to staging directory
+  ansible.builtin.copy:
+    src: "{{ svk_ras_install_deb_file }}"
+    dest: "{{ svk_ras_install_staging_dir }}"
+    mode: "0644"
+  when: svk_ras_install_deb_query.stdout_lines[-1] != '0'
+
+- name: Install svk-ras DEB
+  ansible.builtin.apt:
+    deb: "{{ svk_ras_install_staging_dir }}/{{ svk_ras_install_deb_file | basename }}"
+    state: present
+  become: true
+  when: svk_ras_install_deb_query.stdout_lines[-1] != '0' and svk_ras_install_os_family == "Ubuntu"
+
+- name: Delete svk-ras DEB from staging directory
+  ansible.builtin.file:
+    path: "{{ svk_ras_install_staging_dir }}/{{ svk_ras_install_deb_file | basename }}"
+    state: absent

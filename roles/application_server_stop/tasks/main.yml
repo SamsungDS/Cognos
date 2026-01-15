@@ -8,3 +8,8 @@
   loop:
     - svk-node.service
     - svk-svc-mgr.service
+
+- name: Conduct systemd daemon-reload
+  ansible.builtin.systemd:
+    daemon-reload: true
+  become: true

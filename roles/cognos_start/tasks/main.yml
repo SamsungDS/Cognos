@@ -8,6 +8,7 @@
   loop:
     - cognos-subscriber.service
     - cognos-app.service
+    - cognos-rbac.service
     - cognos-ui.service
 
 - name: Gather service status
@@ -17,11 +18,67 @@
 - name: Check service status on management server
   ansible.builtin.assert:
     that:
-      - "'{{ item }}' in ansible_facts.services"
-      - "ansible_facts.services['{{ item }}'].state == 'running'"
+      - item in ansible_facts.services
+      - ansible_facts.services[item].state == 'running'
     fail_msg: "{{ item }} failed to start!"
     success_msg: "{{ item }} started successfully."
   loop:
     - cognos-subscriber.service
     - cognos-app.service
     - cognos-ui.service
+  register: cognos_start_check
+  ignore_errors: true
+
+- name: Set flag if any service failed the check
+  ansible.builtin.set_fact:
+    cognos_start_flag: "{{ cognos_start_check.results |
+      selectattr('failed', 'defined') |
+      selectattr('failed') |
+      list | length > 0 }}"
+
+- name: Restart all service after systemd daemon reload
+  ansible.builtin.include_role:
+    name: cognos_service_restart
+  vars:
+    cognos_service_restart_list:
+      - cognos-subscriber.service
+      - cognos-app.service
+      - cognos-ui.service
+  when: cognos_start_flag | default(false)
+
+- name: Wait up to 60 seconds for port 6721 to become available
+  ansible.builtin.wait_for:
+    host: "{{ ip }}"
+    port: 6721
+    delay: 5
+    timeout: 60
+  vars:
+    ip: "{{ ansible_default_ipv4.address }}"
+
+- name: Create an admin user to access RBAC console
+  ansible.builtin.uri:
+    url: "http://{{ ip }}:6721/api/signup"
+    method: POST
+    body: |
+      {
+        "username": "{{ rbac_username }}",
+        "email": "{{ rbac_email }}",
+        "password": "{{ rbac_password }}",
+        "role": "admin"
+      }
+    body_format: json
+    headers:
+      Content-Type: application/json
+    status_code: 200
+    validate_certs: false
+  register: cognos_start_rbac_result
+  vars:
+    ip: "{{ ansible_default_ipv4.address }}"
+  become: true
+
+- name: Check if signup RBAC was successful
+  ansible.builtin.assert:
+    that:
+      - cognos_start_rbac_result.json.message == "User created successfully"
+    fail_msg: "User signup failed. Response: {{ cognos_start_rbac_result.json }}"
+    success_msg: "Admin user created successfully."

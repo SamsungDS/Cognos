@@ -4,10 +4,20 @@
     svk_cxl_install_os_family: "{{ ansible_distribution }}"
     svk_cxl_install_os_version: "{{ ansible_distribution_version }}"
 
+- name: Set svk-cxl package name in hardware mode
+  ansible.builtin.set_fact:
+    svk_cxl_install_name: "svk-cxl_"
+  when: not scmc_cxl_mock_enable
+
+- name: Set svk-cxl package name in mock mode
+  ansible.builtin.set_fact:
+    svk_cxl_install_name: "svk-cxl-mock"
+  when: scmc_cxl_mock_enable
+
 - name: Identify svk_cxl package
   ansible.builtin.find:
     path: "{{ svk_pkg_dir }}"
-    patterns: "svk-cxl*-ubuntu{{ svk_cxl_install_os_version }}_*.deb"
+    patterns: "{{ svk_cxl_install_name }}*-ubuntu{{ svk_cxl_install_os_version }}_*.deb"
   delegate_to: localhost
   run_once: true
   register: svk_cxl_install_deb
@@ -27,7 +37,7 @@
   ansible.builtin.shell:
     cmd: |
       set -o pipefail
-      apt list --installed | grep svk-cxl
+      apt list --installed | grep {{ svk_cxl_install_name }}
     executable: /bin/bash
   register: svk_cxl_install_deb_query
   changed_when: false
@@ -38,9 +48,8 @@
   ansible.builtin.copy:
     src: "{{ svk_cxl_install_deb_file }}"
     dest: "{{ deploy_staging_dir }}"
-    mode: 0644
+    mode: "0644"
   when: svk_cxl_install_deb_query.rc != 0
-
 
 - name: Install svk_cxl DEB
   ansible.builtin.apt:

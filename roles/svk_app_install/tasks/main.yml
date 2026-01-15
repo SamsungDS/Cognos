@@ -4,81 +4,6 @@
     svk_app_install_os_family: "{{ ansible_distribution }}"
     svk_app_install_os_version: "{{ ansible_distribution_version }}"
 
-- name: Configure apt repository of influx DB
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      curl -fsSL https://repos.influxdata.com/influxdata-archive_compat.key | gpg --batch --yes --dearmor -o /etc/apt/trusted.gpg.d/influxdata.gpg
-    executable: /bin/bash
-  register: svk_app_install_influx_db_apt
-  failed_when: svk_app_install_influx_db_apt.rc != 0
-  when: svk_app_install_os_family == 'Ubuntu'
-  changed_when: false
-  become: true
-
-- name: Configure apt source list for influx DB
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      echo 'deb [signed-by=/etc/apt/trusted.gpg.d/influxdata.gpg] https://repos.influxdata.com/debian stable main' | tee /etc/apt/sources.list.d/influxdata.list
-    executable: /bin/bash
-  register: svk_app_install_influx_db_source_list
-  failed_when: svk_app_install_influx_db_source_list.rc != 0
-  when: svk_app_install_os_family == 'Ubuntu'
-  changed_when: false
-  become: true
-
-- name: Update apt package cache after adding influxDB source
-  ansible.builtin.apt:
-    update_cache: true
-  when: svk_app_install_os_family == 'Ubuntu'
-  become: true
-
-- name: Install influx DB
-  ansible.builtin.apt:
-    name: influxdb2
-    state: present
-  when: svk_app_install_os_family == 'Ubuntu'
-  become: true
-
-- name: Start influx DB service
-  ansible.builtin.service:
-    name: influxdb
-    state: started
-    enabled: true
-  when: svk_app_install_os_family == 'Ubuntu'
-  become: true
-
-- name: Setup influxDB
-  ansible.builtin.shell: |
-    influx setup --username "{{ influxdb_user }}" --password "{{ influxdb_pwd }}" --org "{{ influxdb_org }}" --bucket "{{ influxdb_bucket }}" --force
-  changed_when: false
-  failed_when: false
-
-- name: Fetch & run NodeJS setup script
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      curl -fsSL https://deb.nodesource.com/setup_21.x | bash -
-    executable: /bin/bash
-  changed_when: false
-  when: svk_app_install_os_family == 'Ubuntu'
-  become: true
-
-- name: Install NodeJS
-  ansible.builtin.apt:
-    name: nodejs
-    state: present
-  when: svk_app_install_os_family == 'Ubuntu'
-  become: true
-
-- name: Install python3.10-venv
-  ansible.builtin.apt:
-    name: python3.10-venv
-    state: present
-  when: svk_app_install_os_family == 'Ubuntu'
-  become: true
-
 - name: Identify svk_app package
   ansible.builtin.find:
     path: "{{ svk_pkg_dir }}"
@@ -113,7 +38,7 @@
   ansible.builtin.copy:
     src: "{{ svk_app_install_deb_file }}"
     dest: "{{ deploy_staging_dir }}"
-    mode: 0644
+    mode: "0644"
   when: svk_app_install_deb_query.rc != 0
 
 - name: Install svk_app DEB

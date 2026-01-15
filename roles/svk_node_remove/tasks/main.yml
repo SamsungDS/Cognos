@@ -1,0 +1,12 @@
+# Author: June Liu
+# Contact: june.liu@samsung.com
+---
+# tasks file for roles/svk_node_remove
+
+- name: Remove the installed svk-node
+  ansible.builtin.apt:
+    name: svk-node
+    state: absent
+    purge: true
+  become: true
+  when: ansible_facts['distribution'] == "Ubuntu"

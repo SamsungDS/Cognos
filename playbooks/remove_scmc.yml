@@ -5,12 +5,40 @@
   roles:
     - svk_app_remove
 
-- name: Remove cxl
+- name: Remove svk_ras
   hosts:
     - management_server
     - application_server
   roles:
-    - svk_cxl_remove
+    - role: svk_ras_remove
+
+- name: Remove svk_me
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - role: svk_me_remove
+
+- name: Remove svk_node
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - role: svk_node_remove
+
+- name: Remove svk-slat
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - svk_slat_remove
+
+- name: Remove svk-cxl
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - role: svk_cxl_remove
 
 - name: Remove mgmt-fw
   hosts:

@@ -8,4 +8,10 @@
   loop:
     - cognos-subscriber.service
     - cognos-app.service
+    - cognos-rbac.service
     - cognos-ui.service
+
+- name: Conduct systemd daemon-reload
+  ansible.builtin.systemd:
+    daemon-reload: true
+  become: true

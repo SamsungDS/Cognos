@@ -38,7 +38,7 @@
   ansible.builtin.copy:
     src: "{{ svk_mgmt_fw_install_deb_file }}"
     dest: "{{ deploy_staging_dir }}"
-    mode: 0644
+    mode: "0644"
   when: svk_mgmt_fw_install_deb_query.rc != 0
 
 - name: Install svk-mgmt-fw DEB

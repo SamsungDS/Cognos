@@ -1,15 +1,37 @@
 ---
-- name: Start Management Server
+- name: Get IP of application_server from role
+  hosts:
+    - application_server
+    - management_server
+  gather_facts: true
+
+- name: Start Management Server with mock devices
   hosts:
     - management_server
   roles:
-    - management_server_start
+    - role: management_server_start_mock
+      when: scmc_cxl_mock_enable
 
-- name: Start Application Server
+- name: Start Management Server in hardware mode
+  hosts:
+    - management_server
+  roles:
+    - role: management_server_start_hw
+      when: not scmc_cxl_mock_enable
+
+- name: Start Application Server with mock devices
   hosts:
     - application_server
   roles:
-    - application_server_start_da
+    - role: application_server_start_mock
+      when: scmc_cxl_mock_enable
+
+- name: Start Application Server in hardware mode
+  hosts:
+    - application_server
+  roles:
+    - role: application_server_start_hw
+      when: not scmc_cxl_mock_enable
 
 - name: Start Cognos services
   hosts:

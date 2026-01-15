@@ -1,0 +1,42 @@
+---
+- name: Stop management services
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  become: true
+  loop:
+    - svk-controller.service
+    - svk-restserver.service
+
+- name: Check if telegraf is already running (pgrep)
+  ansible.builtin.command: pgrep -f telegraf
+  register: management_server_stop_mock_telegraf_ps
+  ignore_errors: true
+  failed_when: false
+  changed_when: false
+
+- name: "Kill existing telegraf process(s) if any"
+  ansible.builtin.shell: |
+    pkill -f telegraf
+  args:
+    executable: /bin/bash
+  async: 0
+  poll: 0
+  when: management_server_stop_mock_telegraf_ps.rc == 0
+  changed_when: false
+
+- name: Verify telegraf is stopped
+  ansible.builtin.command: pgrep -f telegraf
+  register: management_server_stop_mock_verify
+  retries: 10
+  delay: 2
+  until: management_server_stop_mock_verify.rc != 0
+  failed_when: false
+  ignore_errors: true
+  changed_when: false
+
+- name: Conduct systemd daemon-reload
+  ansible.builtin.systemd:
+    daemon-reload: true
+  become: true
