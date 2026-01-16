@@ -21,7 +21,7 @@ install_packages() {
 	libyaml-cpp-dev
         nlohmann-json3-dev
 	pkgconf
-        python3-virtualenv
+        python3-venv
 	python3
         python3-pip
 	sudo

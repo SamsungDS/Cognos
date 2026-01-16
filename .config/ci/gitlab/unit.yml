@@ -1,6 +1,8 @@
 unit test:
   extends: release build
   stage: test
+  before_script:
+    - chmod 644 /etc/shadow
   script:
     # Install latest build-wrapper
     - wget --no-verbose --content-disposition -E -c "$SONAR_HOST_URL/static/cpp/build-wrapper-linux-x86.zip"
@@ -21,12 +23,13 @@ unit test:
         path: $GITLAB_COVERAGE_REPORT
       junit: $GITLAB_JUNIT_REPORT
   variables:
-    BUILD_COMMAND: ./scripts/build.sh --build-tests --with-coverage
+    BUILD_COMMAND: ./scripts/build.sh --build-tests
   parallel:
     matrix:
-      # - DOCKERFILE_NAME: rocky9
+      - DOCKERFILE_NAME: rocky9
       - DOCKERFILE_NAME: ubuntu22
       - DOCKERFILE_NAME: ubuntu24
+      - DOCKERFILE_NAME: ol10
   rules:
     - !reference [.default_rules, merge_and_push]
   tags:

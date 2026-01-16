@@ -13,13 +13,15 @@ SCRIPT_DIR=$(cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd)
 PROJECT_ROOT=$(realpath "$SCRIPT_DIR/../")
 BUILD_DIR="$PROJECT_ROOT/build"
 ARTIFACTS_DIR="$BUILD_DIR/artifacts"
+TESTS_DIR="$BUILD_DIR/tests"
 REPORTS_DIR="$BUILD_DIR/reports"
 VENV_DIR="/usr/local/svk/me/venv"
 
 # Default build options
-RELEASE=false
+BUILD_RELEASE=false
 BUILD_TESTING=false
 WITH_COVERAGE=false
+MAKE_INSTALL=false
 
 export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/local/lib64/pkgconfig:/usr/local/lib/pkgconfig:/usr/lib/pkgconfig
 
@@ -42,16 +44,8 @@ help()
   echo "  Build with code coverage report. Must build unit tests for this."
   echo "-h | --help"
   echo "  Print this help."
-  echo "-p | --install-prefix"
-  echo "  Install libraries and related files to specified dir."
   echo "-r | --release"
   echo "  Release build. Generates a tarball called svk-core-<version>.tgz by default."
-  echo "-f | --filename"
-  echo "  Filename prefix to use for release tarball. Only applicable when building with release flag."
-  echo "-b | --build-package"
-  echo "  Generate SVK CME FW RPMs/DEB packages."
-  echo "-i | --install-path"
-  echo "  Path that RPMs should install svk cxl to (Default: /usr/local/svk/me). Only applicable when building with release flag."
   exit
 }
 
@@ -62,36 +56,15 @@ parse_options()
   case $1 in
       -t|--build-tests)
       BUILD_TESTING=true
-      shift
-      ;;
-      -c|--with-coverage)
-      WITH_COVERAGE=true
+      CMAKE_OPTIONS+=("-DBUILD_TESTING=ON")
+      CMAKE_OPTIONS+=("-DWITH_COVERAGE=ON")
       shift
       ;;
       -h|--help)
       help
       ;;
-      -p|--install-prefix)
-      CMAKE_INSTALL_PREFIX="$2"
-      shift
-      shift
-      ;;
       -r|--release)
-      RELEASE=true
-      shift
-      ;;
-      -f|--filename)
-      RELEASE_FILENAME_PREFIX="$2"
-      shift
-      shift
-      ;;
-      -b|--build-package)
-      GENERATE_PACKAGE=true
-      shift
-      ;;
-      -i|--install-path)
-      PACKAGE_INSTALL_PATH="$2"
-      shift
+      BUILD_RELEASE=true
       shift
       ;;
       *)
@@ -128,10 +101,8 @@ get_os_version() {
 get_git_version() {
   # Get Git version from tag
   echo "Determining version from git tag"
-  GIT_VERSION=$("$SCRIPT_DIR/get_version.sh")
+  GIT_VERSION=$("$SCRIPT_DIR/get_version.sh" -v)
 
-  # Strip 'v' character from version string
-  GIT_VERSION=${GIT_VERSION/v/}
   echo "Building SVK ME version: $GIT_VERSION"
 }
 
@@ -148,26 +119,35 @@ move_artifacts() {
   mv --verbose "$MOVE_ARTIFACTS_DIR"/*."$MOVE_ARTIFACTS_SUFFIX" "$OS_ARTIFACTS_DIR"
 }
 
-create_rpm()
-{
-  local rpmBuildDir=$1
-  local installpath=$2
+build_rpm() {
+    # RPM vars
+    local SPECFILE='svk_me.spec'
+    local RPMBUILD_DIR="$BUILD_DIR/rpmbuild"
 
-  # Replace '-' with '_' in version string, in case current commit is not an exact tag
-  local RPM_VERSION=${GIT_VERSION//-/_}
+    # Replace '-' with '_' in version string, in case current commit is not an exact tag
+    local RPM_VERSION=${GIT_VERSION//-/_}
+    # Exclude everything after '-' for Go version (must be semantic version with integers only)
+    local RPM_SHORT_VERSION=${GIT_VERSION/-*}
 
-  export GIT_VERSION
-  export CMAKE_INSTALL_PREFIX
+    # Only build RPM on supported OS
+    if [[ "$ID" == "rocky" || "$ID" == "ol" ]]; then
+        # Prepare RPMBUILD directories - inside our build directory
+        rm -rf "$BUILD_DIR"
+        mkdir --verbose --parents "$RPMBUILD_DIR"/{BUILD,RPMS,SPECS}
 
-  rpmbuild -bb --clean "$PROJECT_ROOT/scripts/packaging/rpm/svk_me.spec" \
-    --define "_topdir $rpmBuildDir" \
-    --define "installpath $installpath" \
-    --define "svk_me_version $RPM_VERSION" \
-    --define "svk_os_version $ID$VERSION_ID"
+        # Build RPM
+        echo "Building $SPECFILE RPM..."
+        rpmbuild -bb --clean "$SCRIPT_DIR"/packaging/rpm/"$SPECFILE" \
+            --define "_topdir $RPMBUILD_DIR" \
+            --define "svk_rpm_version $RPM_VERSION" \
+            --define "svk_short_version $RPM_SHORT_VERSION" \
+            --define "svk_os_version $ID$VERSION_ID"
 
-  # Move RPMs to artifacts dir
-  move_artifacts "$RPMBUILD_DIR/RPMS/$(rpm --eval '%{_arch}')" rpm
-
+        # Move RPMs to artifacts dir
+        move_artifacts "$RPMBUILD_DIR/RPMS/$(rpm --eval '%{_arch}')" rpm
+    else
+        echo "Skipping $SPECFILE RPM build for OS: $ID"
+    fi
 }
 
 create_deb()
@@ -199,8 +179,6 @@ create_deb()
     sed -i -e "s@DEB_PACKAGE_NAME@$DEB_PACKAGE_NAME@g" "$DEBIAN_DIR/rules"
     sed -i -e "s@DEB_PACKAGE_NAME@$DEB_PACKAGE_NAME@g" "$DEBIAN_DIR/changelog"
     sed -i -e "s@DEB_PACKAGE_NAME@$DEB_PACKAGE_NAME@g" "$DEBIAN_DIR/control"
-
-    sed -i -e "s@PACKAGE_INSTALL_PATH_VAL@$1@g" "$DEBIAN_DIR/rules"
     pushd "$BUILD_DIR"
       echo "Building SVK Memory Engine Debian packages.."
       # Build Debian packages - generate binaries only, do not sign packages
@@ -217,96 +195,33 @@ create_deb()
   fi
 }
 
-if [[ -e /etc/os-release ]]; then
-  # shellcheck source=/dev/null
-  source /etc/os-release
-else
-  ID=unknown
-fi
-
 parse_options "$@"
 get_os_version
 get_git_version
 activate_venv
 
-echo "Build tests: $BUILD_TESTING"
-echo "Build with code coverage: $WITH_COVERAGE"
-echo "CMake install prefix: $CMAKE_INSTALL_PREFIX"
+execute_tests() {
 
-mkdir -p "$BUILD_DIR"
-
-pushd "$BUILD_DIR"
-  # If building release, don't build tests and code coverage
-if $RELEASE;then
-  BUILD_TESTING=false
-  WITH_COVERAGE=false
-  if [ -z "$CMAKE_INSTALL_PREFIX" ];then
-    CMAKE_INSTALL_PREFIX="me" # Need to use this path to generate release tarball properly
-  fi
-  if [ -z "$RELEASE_FILENAME_PREFIX" ];then
-    RELEASE_FILENAME_PREFIX="me"
-  fi
-  CMAKE_OPTIONS+=("-DWITH_RELEASE=ON")
-  if [ -z "$PACKAGE_INSTALL_PATH" ];then
-    PACKAGE_INSTALL_PATH="usr/local/svk/feature_modules/me" # Location that rpm -ivh will install to
-  fi
-fi
-
-# Add unit test option
-if $BUILD_TESTING;then
-  CMAKE_OPTIONS+=("-DBUILD_TESTING=ON")
-fi
-
-# Add code coverage option
-if $WITH_COVERAGE;then
-  CMAKE_OPTIONS+=("-DWITH_COVERAGE=ON")
-fi
-
-# Add cmake install prefix option
-if [ -n "$CMAKE_INSTALL_PREFIX" ];then
-  CMAKE_OPTIONS+=("-DCMAKE_INSTALL_PREFIX=$CMAKE_INSTALL_PREFIX")
-fi
-
-printf "Cmake options: %s\n" "${CMAKE_OPTIONS[@]}"
-
-echo "Running cmake..."
-cmake "${CMAKE_OPTIONS[@]}" ..
-echo "Building libraries..."
-
-if [ -n "$CMAKE_INSTALL_PREFIX" ];then
-  echo "make install..."
-  make install
-else
-  echo "make..."
-  make
-fi
-
-if $WITH_COVERAGE;then
-  if $BUILD_TESTING;then
-    pushd tests
-    echo "Running unit tests..."
-
-    
-    mkdir -p "$BUILD_DIR/tests/movers"
-    mkdir -p "$BUILD_DIR/tests/profilers"
-    mkdir -p "/usr/local/svk/feature_modules/me/config/"
-    cp "$BUILD_DIR/src/movers/numa_move_all/libnuma_move_all.so" "$BUILD_DIR/tests/movers/"
-    cp "$BUILD_DIR/src/movers/mover_damo/libmover_damo.so" "$BUILD_DIR/tests/movers/"
-    mkdir -p "$BUILD_DIR/tests/test_CmeDiscovery"
-    mkdir -p "$BUILD_DIR/tests/test_CmeDiscovery_fail"
-    cp "$BUILD_DIR/src/libsvkme.so" "$BUILD_DIR/tests/test_CmeDiscovery/"
-    cp "$BUILD_DIR/tests/mock_failures/libregister_mover.so" "$BUILD_DIR/tests/test_CmeDiscovery_fail/"
-    cp "$PROJECT_ROOT/tests/cme_config.json" "$BUILD_DIR/tests/"
-    cp "$PROJECT_ROOT/src/movers/mover_damo/config/damo_config.json" "/usr/local/svk/feature_modules/me/config/"
-    cp "$PROJECT_ROOT/src/movers/mover_damo/tools/tm_gen_config.py" "/usr/local/svk/feature_modules/me/config/"
-    mkdir -p "$REPORTS_DIR"
-    ctest --output-junit "$REPORTS_DIR/gitlab_junit.xml"
-    rm -rf "/usr/local/svk/feature_modules/me"
-    rm -rf "$BUILD_DIR/tests/test_CheckCmeDiscovery"
-    rm -rf "$BUILD_DIR/tests/test_CmeDiscovery_fail"
-  else
-    die "Can't generate code coverage without building tests, not running gcovr"
-  fi
+  pushd "$BUILD_DIR"
+  echo "Running unit tests..."   
+  mkdir -p "$BUILD_DIR/tests/movers"
+  mkdir -p "$BUILD_DIR/tests/profilers"
+  mkdir -p "/usr/local/svk/feature_modules/me/config/"
+  cp "$BUILD_DIR/src/movers/numa_move_all/libnuma_move_all.so" "$BUILD_DIR/tests/movers/"
+  cp "$BUILD_DIR/src/movers/mover_damo/libmover_damo.so" "$BUILD_DIR/tests/movers/"
+  mkdir -p "$BUILD_DIR/tests/test_CmeDiscovery"
+  mkdir -p "$BUILD_DIR/tests/test_CmeDiscovery_fail"
+  cp "$BUILD_DIR/src/libsvkme.so" "$BUILD_DIR/tests/test_CmeDiscovery/"
+  cp "$BUILD_DIR/tests/mock_failures/libregister_mover.so" "$BUILD_DIR/tests/test_CmeDiscovery_fail/"
+  cp "$PROJECT_ROOT/tests/cme_config.json" "$BUILD_DIR/tests/"
+  cp "$PROJECT_ROOT/src/movers/mover_damo/config/damo_config.json" "/usr/local/svk/feature_modules/me/config/"
+  cp "$PROJECT_ROOT/src/movers/mover_damo/tools/tm_gen_config.py" "/usr/local/svk/feature_modules/me/config/"
+  mkdir -p "$REPORTS_DIR"
+  ctest --output-junit "$REPORTS_DIR/gitlab_junit.xml" --test-dir "$TESTS_DIR"
+  rm -rf "/usr/local/svk/feature_modules/me"
+  rm -rf "$BUILD_DIR/tests/test_CheckCmeDiscovery"
+  rm -rf "$BUILD_DIR/tests/test_CmeDiscovery_fail"
+  rm -rf "$BUILD_DIR/tests/test_CmeDiscovery/"
 
   echo "Generating coverage reports"
   # Using path to framework object files
@@ -318,27 +233,47 @@ if $WITH_COVERAGE;then
     --exclude "$BUILD_DIR" \
     --exclude "$PROJECT_ROOT/tests" \
     --exclude-throw-branches \
-      "$BUILD_DIR"
+    "$BUILD_DIR"
+}
 
-  #rm -rf "$PROJECT_ROOT/tests/usr/"
-
-elif $RELEASE;then
-  
-  tar -zcf "$RELEASE_FILENAME_PREFIX-$ID-$GIT_VERSION.tgz" "$CMAKE_INSTALL_PREFIX"
-  
-  echo "Generate Package = $GENERATE_PACKAGE"
-  if [ -n "$GENERATE_PACKAGE" ];then
-    if [ "$ID" == "ubuntu" ]; then
-      echo "Generating Ubuntu package"
-      create_deb "$PACKAGE_INSTALL_PATH"
-    else
-      echo "Generating release RPM..."
-      RPMBUILD_DIR="$BUILD_DIR/rpmbuild"
-      mkdir -p rpmbuild/{BUILD,RPMS,SPECS}
-      cp -rf "$CMAKE_INSTALL_PREFIX/" "$RPMBUILD_DIR/BUILD"
-      create_rpm "$RPMBUILD_DIR" "/$PACKAGE_INSTALL_PATH"
+build_feature() {
+    # Append INSTALL_PREFIX to CMAKE_OPTIONS if we are installing
+    if $MAKE_INSTALL; then
+        CMAKE_OPTIONS+=("-DCMAKE_INSTALL_PREFIX=me")
     fi
-  fi
-fi
 
-popd
+    # Display CMAKE_OPTIONS before building
+    printf "CMake options: %s\n" "${CMAKE_OPTIONS[@]}"
+    
+    # Build SVK Feature
+    mkdir --verbose --parents "$BUILD_DIR"
+    pushd "$BUILD_DIR"
+        # Build Commands below
+        echo "Building $SVK_PROJECT_NAME"
+        cmake "${CMAKE_OPTIONS[@]}" ..
+        make "-j$(nproc)"
+    popd
+
+    # Optionally execute tests
+    if $BUILD_TESTING; then
+        execute_tests
+    else
+        echo "Skipping test execution"
+    fi
+
+    # Optionally install
+    if $MAKE_INSTALL; then
+        pushd "$BUILD_DIR"
+            make install
+        popd
+    else
+        echo "Skipping make install"
+    fi
+}
+
+if $BUILD_RELEASE;then
+  create_deb
+  build_rpm
+else
+  build_feature
+fi

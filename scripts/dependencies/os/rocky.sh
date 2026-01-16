@@ -22,10 +22,12 @@ install_packages() {
         gcc-c++
         git
 	jansson-devel
+        nlohmann-json-devel
         numactl
         numactl-devel
         python3-virtualenv
         rpmdevtools
+        sudo
         tar
         unzip
         wget

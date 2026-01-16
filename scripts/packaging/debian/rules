@@ -2,7 +2,7 @@
 
 # We can get a version string if needed
 SHORT_VERSION := $(shell $(CURDIR)/../scripts/get_version.sh -s)
-INSTALL_PATH = PACKAGE_INSTALL_PATH_VAL
+INSTALL_PATH = usr/local/svk/feature_modules/me
 
 %:
 	dh $@

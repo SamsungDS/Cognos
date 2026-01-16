@@ -1,5 +1,5 @@
 Name:           svk-me
-Version:        %svk_me_version
+Version:        %svk_rpm_version
 Release:        1%{?dist}.%svk_os_version
 Summary:        SVK ME Plugin
 License:        Samsung Internal
@@ -7,55 +7,40 @@ BuildRequires:  jansson
 Requires:       svk-core, svk-mgmt-fw, jansson
 
 
-%{!?installpath: %global installpath /usr/local/svk/me}
-%{!?installpath_mgmt: %global installpath_mgmt /usr/local/svk/mgmt-fw}
-%{!?installpath_me_config: %global installpath_me_config /etc/svk}
-%{!?me_build_dir: %global me_build_dir me}
-
+%global svk_install_dir %_prefix/local/svk/feature_modules/me
+# We can assume _topdir is set to "build/rpmbuild" dir in project root (set in build.sh)
+%global svk_build_dir %_topdir/..
+%global svk_script_dir %svk_build_dir/../scripts
+%global svk_me_ldconf ld.so.conf.d/svk-me-%_arch.conf
 
 %description
 SVK Memory Engine - APIs and functions for application memory monitoring and management.
 
-# Always installing to /usr/local/svk/me for now
 %install
-rm -rf %{buildroot}
-mkdir -p %{buildroot}/%{installpath}
-mkdir -p %{buildroot}/%{installpath_mgmt}
-mkdir -p %{buildroot}/%{installpath_me_config}
-
-# If rpmbuild is run in the build script, use CMAKE_INSTALL_PREFIX as temp dir in %{_topdir}/BUILD
-%if "%{getenv:CMAKE_INSTALL_PREFIX}" != ""
-cp -rf %{getenv:CMAKE_INSTALL_PREFIX}/%{_lib} %{buildroot}/%{installpath}
-cp -f %{getenv:CMAKE_INSTALL_PREFIX}/cme_config.json %{buildroot}/%{installpath_me_config}
-
-# If rpmbuild is run manually, use default build dir svk-core, unless user gives a different name
-%else
-cp -rf %{me_build_dir}/%{_lib} %{buildroot}/%{installpath}
-cp -f %{me_build_dir}/config/cme_config.json %{buildroot}/%{installpath_me_config}
-%endif
+cd %svk_build_dir
+cmake -DWITH_RELEASE=ON -DCMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES:STRING="/usr/include" \
+        -DCMAKE_C_IMPLICIT_INCLUDE_DIRECTORIES:STRING="/usr/include" \
+        -DCMAKE_INSTALL_PREFIX=%svk_install_dir ..
+%make_install
+# Remove the include directory and .h files
+rm -rf %{buildroot}/usr/local/svk/feature_modules/me/include/
 
 %files
-#%license add-license-file-here
-#%doc add-docs-here
 %defattr(-,root,root,-)
-%{installpath}/%{_lib}
-%{installpath_mgmt}
-%{installpath_me_config}
-
-%clean
+%dir %svk_install_dir/
+%svk_install_dir/%_lib
+%svk_install_dir/config
+%svk_install_dir/logic_modules
+%ghost %_sysconfdir/%svk_me_ldconf
 
 %post
-# export the SVK_LDCONFIG if a separate install path was given
-if [ -z "$SVK_LDCONFIG" ];then
-    installpath="/usr/local/svk/me"
-fi
-touch /etc/ld.so.conf.d/svk-me-x86_64.conf
-chmod a+r /etc/ld.so.conf.d/svk-me-x86_64.conf
-echo "$installpath/%{_lib}" | tee -a /etc/ld.so.conf.d/svk-me-x86_64.conf
-echo "/usr/local/svk/mgmt-fw/lib64" | tee -a /etc/ld.so.conf.d/svk-me-x86_64.conf
-/usr/sbin/ldconfig
+echo "%svk_install_dir/%_lib" > %_sysconfdir/%svk_me_ldconf
+%__chmod a+r %_sysconfdir/%svk_me_ldconf
+%_sbindir/ldconfig
 
 %postun
-rm /etc/ld.so.conf.d/svk-me-x86_64.conf
-rm -rf /usr/local/svk/me
-/usr/sbin/ldconfig
+%_sbindir/ldconfig
+
+%changelog
+* Wed Jan 07 2026 Karthik Krishna <karthik1.k@samsung.com>
+- Fix rpm packaging
