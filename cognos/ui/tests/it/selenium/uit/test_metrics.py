@@ -12,16 +12,25 @@ class TestMetrics(unittest.TestCase):
         self.host_name = config['host_name']
         self.utils = TestUtils(self.app_url)
         self.utils.login(config['username'], config['password'])
+        base = self.utils.driver.current_url.split("/", 3)[0:3]
+        base_url = "/".join(base)
+        self.utils.driver.get(f"{base_url}/metrics")
 
     def tearDown(self):
         self.utils.tearDown()
 
     def test_select_application_server(self):
+        dropdown_try_all = (
+                "//*[@id='dropdown-container-id']//*"
+                "[@aria-haspopup='listbox' or "
+                "@aria-expanded or @role='button' or @tabindex]"
+        )
         self.utils.click_element_and_assert(
-            "//*[@id='dropdown-container-id']/div/div/div[2]",
+            dropdown_try_all,
             By.XPATH,
             "TestCase-HPOS-T4: select_application_server_dropdown",
             self.utils.assert_element_displayed)
+
         self.utils.click_element_and_assert(
             f"//div[text()='{self.host_name}']",
             By.XPATH,

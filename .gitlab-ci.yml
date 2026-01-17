@@ -30,7 +30,7 @@ variables:
   ARTIFACTS_DIR: build/artifacts
   ui_dir: cognos/ui
   ui_reports_dir: $ui_dir/coverage
-  rbac_dir: cognos/rbac/rbac-client-repo
+  rbac_dir: cognos/rbac/core/bin/rbac-client-repo
   rbac_client_reports_dir: $rbac_dir/coverage
   backend_reports_dir: scripts/test-reports/ut
   RBAC_UI_PORT: 6720
@@ -47,6 +47,15 @@ variables:
   INFLUX_BUCKET: internal
   MYSQL_DEV_PASSWORD: CXL123mem!
   SVK_DIR: /usr/local/svk
+  SSL_ENABLED: "false"  # or "true"
+  # RBAC Super Admin Configuration
+  SUPER_ADMIN_USERNAME: "super_admin"
+  SUPER_ADMIN_EMAIL: "super_admin@samsung.com"
+  SUPER_ADMIN_PASSWORD: "Admin@123"
+  NEW_ADMIN_USERNAME: "admin"
+  NEW_ADMIN_EMAIL: "admin@samsung.com"
+  NEW_ADMIN_PASSWORD: "Admin@123"
+  NEW_ADMIN_ROLE: "admin"  
 
 build docker:
   parallel:

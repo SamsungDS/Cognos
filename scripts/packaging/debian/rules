@@ -57,12 +57,22 @@ override_dh_auto_install:
 
 	# copying RBAC files
 	mkdir -p -v $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/
+	mkdir -p $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/bin
+	mkdir -p $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/etc
+	mkdir -p $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/ssl
+	mkdir -p $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/lib
 	cp $(CURDIR)/../cognos/rbac/Dockerfile $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/
+	cp $(CURDIR)/../cognos/rbac/docker-config.env $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/
+	cp $(CURDIR)/../cognos/rbac/docker-env-setup.sh $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/
 	cp $(CURDIR)/../cognos/rbac/ecosystem.config.js $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/
-	cp -r $(CURDIR)/../cognos/rbac/rbac-client-repo $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/
-	cp -r $(CURDIR)/../cognos/rbac/rbac-service $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/
-	cp $(CURDIR)/../cognos/rbac/rbac-service/rbac.yaml $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/rbac-service/
-	cp -r $(CURDIR)/../cognos/rbac/rbac-service/rbac-module $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/rbac-service/
+	cp -r $(CURDIR)/../cognos/rbac/core/bin/rbac-client-repo $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/bin/
+	cp -r $(CURDIR)/../cognos/rbac/core/bin/rbac-service $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/bin/
+	cp $(CURDIR)/../cognos/rbac/core/etc/rbac.yaml $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/etc/
+	cp -r $(CURDIR)/../cognos/rbac/core/bin/rbac-service/rbac-module $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/bin/rbac-service/
+	cp $(CURDIR)/../cognos/rbac/core/etc/ports.txt $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/etc/
+	cp $(CURDIR)/../cognos/rbac/core/etc/version.txt $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/etc/
+	cp $(CURDIR)/../cognos/rbac/core/etc/rbac_*.json $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/etc/
+	cp -r $(CURDIR)/../cognos/rbac/core/lib/licensing $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/lib/
 
 	# copying Telegraf files
 	mkdir -p -v $(CURDIR)/$(INSTALL_PATH)/cognos/telegraf/

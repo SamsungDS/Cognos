@@ -122,20 +122,45 @@ svk-install:
     - jq '.publisher_topic = "metric"' $SVK_APP_SUBSCRIBER_CONF | sponge $SVK_APP_SUBSCRIBER_CONF
 
     #### RBAC configuration (JSON) ####
-    - export SVK_APP_RBAC_CONF='/usr/local/svk/svk-app/cognos/rbac/rbac-client-repo/src/config/config.json'
+    # - export SVK_APP_RBAC_CONF='/usr/local/svk/svk-app/cognos/rbac/rbac-client-repo/src/config/config.json'
     # Substitute '.rbac_backend_endpoint' value with RBAC_BACKEND_PORT value in SVK_APP_RBAC_CONF obtained from gitlab-ci.yml
-    - jq --arg ip "$VM_IP" --arg rbac_backend_port "$RBAC_BACKEND_PORT" '.rbac_backend_endpoint= "http://\($ip):\($rbac_backend_port)"' $SVK_APP_RBAC_CONF | sponge $SVK_APP_RBAC_CONF
+    # - jq --arg ip "$VM_IP" --arg rbac_backend_port "$RBAC_BACKEND_PORT" '.rbac_backend_endpoint= "http://\($ip):\($rbac_backend_port)"' $SVK_APP_RBAC_CONF | sponge $SVK_APP_RBAC_CONF
     # Substitute '.mgmt_endpoint' value with UI_PORT value in SVK_APP_UI_CONF obtained from gitlab-ci.yml
-    - jq --arg ip "$VM_IP" --arg ui_port "$UI_PORT" '.mgmt_endpoint = "http://\($ip):\($ui_port)"' $SVK_APP_RBAC_CONF | sponge $SVK_APP_RBAC_CONF
+    # - jq --arg ip "$VM_IP" --arg ui_port "$UI_PORT" '.mgmt_endpoint = "http://\($ip):\($ui_port)"' $SVK_APP_RBAC_CONF | sponge $SVK_APP_RBAC_CONF
 
     #### RBAC configuration (YAML) ####
-    - export SVK_APP_RBAC_YAML='/usr/local/svk/svk-app/cognos/rbac/rbac-service/rbac.yaml'
+    - export SVK_APP_RBAC_YAML='/usr/local/svk/svk-app/cognos/rbac/core/etc/rbac.yaml'
     # Substitute '.database' value with MONGODB_PORT value in SVK_APP_RBAC_YAML obtained from gitlab-ci.yml
-    - yq eval --inplace ".database.uri = \"mongodb://admin:admin@${VM_IP}:${MONGODB_PORT}/mongodb?authSource=admin\""  "$SVK_APP_RBAC_YAML"
+    - yq eval --inplace ".database.uri = \"mongodb://admin:admin@${VM_IP}:${MONGODB_PORT}\""  "$SVK_APP_RBAC_YAML"
     # Substitute '.frontend' value with RBAC_UI_PORT value in SVK_APP_RBAC_YAML obtained from gitlab-ci.yml
     - yq eval --inplace ".frontend.url = \"http://${VM_IP}:${RBAC_UI_PORT}\"" "$SVK_APP_RBAC_YAML"
     # Substitute '.backend' value with RBAC_BACKEND_PORT value in SVK_APP_RBAC_YAML obtained from gitlab-ci.yml
     - yq eval --inplace ".backend.url = \"http://${VM_IP}:${RBAC_BACKEND_PORT}\"" "$SVK_APP_RBAC_YAML"
+
+    #### RBAC docker-config.env configuration ####
+    - export SVK_APP_RBAC_ENV='/usr/local/svk/svk-app/cognos/rbac/docker-config.env'
+
+    # Substitute FRONTEND_PORT
+    - sed -i "s|^FRONTEND_PORT=.*|FRONTEND_PORT=${RBAC_UI_PORT}|" "$SVK_APP_RBAC_ENV"
+
+    # Substitute BACKEND_PORT
+    - sed -i "s|^BACKEND_PORT=.*|BACKEND_PORT=${RBAC_BACKEND_PORT}|" "$SVK_APP_RBAC_ENV"
+
+    # Substitute MONGODB_URI
+    - sed -i "s|^MONGODB_URI=.*|MONGODB_URI=mongodb://admin:admin@${VM_IP}:${MONGODB_PORT}|" "$SVK_APP_RBAC_ENV"
+
+    # Substitute SUPER_ADMIN credentials from GitLab variables
+    - sed -i "s|^SUPER_ADMIN_USERNAME=.*|SUPER_ADMIN_USERNAME=${SUPER_ADMIN_USERNAME}|" "$SVK_APP_RBAC_ENV"
+    - sed -i "s|^SUPER_ADMIN_EMAIL=.*|SUPER_ADMIN_EMAIL=${SUPER_ADMIN_EMAIL}|" "$SVK_APP_RBAC_ENV"
+    - sed -i "s|^SUPER_ADMIN_PASSWORD=.*|SUPER_ADMIN_PASSWORD=${SUPER_ADMIN_PASSWORD}|" "$SVK_APP_RBAC_ENV"
+    # Substitute BACKEND_URL based on SSL_ENABLED
+    - |
+      if [ "${SSL_ENABLED}" = "true" ]; then
+        PROTOCOL="https"
+      else
+        PROTOCOL="http"
+      fi
+      sed -i "s|^BACKEND_URL=.*|BACKEND_URL=${PROTOCOL}://${VM_IP}:${RBAC_BACKEND_PORT}|" "$SVK_APP_RBAC_ENV"
 
     #### SVK App UI configuration (JSON) ####
     - export SVK_APP_UI_CONF='/usr/local/svk/svk-app/cognos/ui/src/config/config.json'
@@ -178,10 +203,123 @@ svk-install:
     #### Create Admin User ####
     - systemctl status cognos-rbac.service --no-pager
     - sleep 30
+    
+    #### Create Admin User Automatically ####
+    - echo "Waiting for cognos-rbac service to be ready..."
+    - systemctl status cognos-rbac.service --no-pager
+    - export API_BASE_URL="http://${VM_IP}:${RBAC_BACKEND_PORT}/api"
+    - echo "Checking RBAC API availability at ${API_BASE_URL}..."
+    - echo "Note RBAC service typically takes 87+ seconds to start..."
+    - export MAX_RETRIES=40
+    - export RETRY_COUNT=0
+    - export WAIT_TIME=5
     - |
-      curl -X POST "http://$VM_IP:$RBAC_BACKEND_PORT/api/signup" \
-        -H "Content-Type: application/json" \
-        -d '{"username": "admin", "email": "admin@gmail.com", "password": "Admin@123", "role": "admin"}'
+      while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${API_BASE_URL}/login" -H "Content-Type: application/json" -d '{"username":"test","password":"test"}' 2>/dev/null || echo "000")
+        # Check if we got a valid 3-digit HTTP code (200-599)
+        if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 600 ] 2>/dev/null; then
+          ELAPSED_TIME=$((RETRY_COUNT * WAIT_TIME))
+          echo "✓ RBAC API is responding (HTTP $HTTP_CODE) after ${ELAPSED_TIME} seconds"
+          break
+        fi
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        ELAPSED_TIME=$((RETRY_COUNT * WAIT_TIME))
+        echo "Attempt $RETRY_COUNT/$MAX_RETRIES (${ELAPSED_TIME}s elapsed): Got HTTP ${HTTP_CODE}, waiting ${WAIT_TIME} seconds..."
+        sleep $WAIT_TIME
+      done
+      if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+        TOTAL_WAIT=$((MAX_RETRIES * WAIT_TIME))
+        echo "ERROR: RBAC API did not become available after ${TOTAL_WAIT} seconds"
+        echo ""
+        echo "=== RBAC Service Logs (last 100 lines) ==="
+        journalctl -u cognos-rbac.service -n 100 --no-pager || true
+        echo ""
+        echo "=== Port Listening Check ==="
+        netstat -tlnp | grep ${RBAC_BACKEND_PORT} || ss -tlnp | grep ${RBAC_BACKEND_PORT} || echo "Port ${RBAC_BACKEND_PORT} not listening"
+        echo ""
+        echo "=== Docker Container Status ==="
+        docker ps -a | grep rbac || echo "No RBAC containers found"
+        echo ""
+        echo "=== Direct curl test ==="
+        curl -v "http://localhost:${RBAC_BACKEND_PORT}/api/login" 2>&1 || true
+        exit 1
+      fi
+    - |
+      if [ -n "$NEW_ADMIN_USERNAME" ]; then
+        set +e
+        echo "================================================"
+        echo "Creating and approving new admin user"
+        echo "================================================"
+        echo "API Base URL: ${API_BASE_URL}"
+        echo "New user: ${NEW_ADMIN_USERNAME} (${NEW_ADMIN_EMAIL})"
+        echo ""
+        echo "[Step 1/4] Creating user: ${NEW_ADMIN_USERNAME}"
+        SIGNUP_RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "${API_BASE_URL}/signup" -H "Content-Type: application/json" -d "{\"username\":\"${NEW_ADMIN_USERNAME}\",\"email\":\"${NEW_ADMIN_EMAIL}\",\"password\":\"${NEW_ADMIN_PASSWORD}\",\"role\":\"${NEW_ADMIN_ROLE:-admin}\"}")
+        HTTP_CODE=$(echo "$SIGNUP_RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
+        SIGNUP_BODY=$(echo "$SIGNUP_RESPONSE" | sed '/HTTP_CODE:/d')
+        echo "HTTP Status: $HTTP_CODE"
+        echo "Response: $SIGNUP_BODY"
+        if echo "$SIGNUP_BODY" | grep -qi "already exists"; then
+          echo "Warning: User already exists, continuing with approval..."
+        elif echo "$SIGNUP_BODY" | grep -qi "Internal server error"; then
+          echo "Note: Got expected 'Internal server error' - user should be created"
+        fi
+        sleep 3
+        echo ""
+        echo "[Step 2/4] Logging in as super admin..."
+        LOGIN_RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "${API_BASE_URL}/login" -H "Content-Type: application/json" -d "{\"username\":\"${SUPER_ADMIN_USERNAME}\",\"password\":\"${SUPER_ADMIN_PASSWORD}\"}")
+        HTTP_CODE=$(echo "$LOGIN_RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
+        LOGIN_BODY=$(echo "$LOGIN_RESPONSE" | sed '/HTTP_CODE:/d')
+        echo "HTTP Status: $HTTP_CODE"
+        TOKEN=$(echo "$LOGIN_BODY" | grep -o '"token":"[^"]*' | cut -d'"' -f4)
+        if [ -z "$TOKEN" ]; then
+          echo "ERROR: Failed to get authentication token"
+          echo "Login response: $LOGIN_BODY"
+          echo "Please check SUPER_ADMIN credentials and RBAC service status"
+          set -e
+          exit 1
+        fi
+        echo "✓ Authentication successful"
+        echo ""
+        echo "[Step 3/4] Fetching user ID..."
+        USER_LIST=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X GET "${API_BASE_URL}/all-users" -H "Content-Type: application/json" -H "Authorization: Bearer ${TOKEN}")
+        HTTP_CODE=$(echo "$USER_LIST" | grep "HTTP_CODE:" | cut -d: -f2)
+        USER_LIST_BODY=$(echo "$USER_LIST" | sed '/HTTP_CODE:/d')
+        echo "HTTP Status: $HTTP_CODE"
+        USER_ID=$(echo "$USER_LIST_BODY" | grep -o "\"id\":\"[^\"]*\"[^}]*\"username\":\"${NEW_ADMIN_USERNAME}\"" | grep -o "\"id\":\"[^\"]*" | cut -d'"' -f4)
+        if [ -z "$USER_ID" ]; then
+          echo "ERROR: Could not find user ID for: ${NEW_ADMIN_USERNAME}"
+          echo "User list response (first 1000 chars):"
+          echo "$USER_LIST_BODY" | head -c 1000
+          set -e
+          exit 1
+        fi
+        echo "✓ Found user ID: $USER_ID"
+        echo ""
+        echo "[Step 4/4] Approving user..."
+        APPROVAL_RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "${API_BASE_URL}/update-user-approval" -H "Content-Type: application/json" -H "Authorization: Bearer ${TOKEN}" -d "{\"userId\":\"${USER_ID}\",\"action\":\"approve\"}")
+        HTTP_CODE=$(echo "$APPROVAL_RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
+        APPROVAL_BODY=$(echo "$APPROVAL_RESPONSE" | sed '/HTTP_CODE:/d')
+        echo "HTTP Status: $HTTP_CODE"
+        echo "Response: $APPROVAL_BODY"
+        if echo "$APPROVAL_BODY" | grep -q "approved successfully"; then
+          echo ""
+          echo "================================================"
+          echo "✓ SUCCESS: User ${NEW_ADMIN_USERNAME} created and approved!"
+          echo "================================================"
+          set -e
+        else
+          echo ""
+          echo "================================================"
+          echo "✗ ERROR: User approval failed"
+          echo "================================================"
+          echo "Full response: $APPROVAL_BODY"
+          set -e
+          exit 1
+        fi
+      else
+        echo "Skipping new admin user creation (NEW_ADMIN_USERNAME not provided)"
+      fi
 
     #### SVK installation complete ####
   rules:
@@ -192,3 +330,4 @@ svk-install:
     - restore vmware snapshot
   tags:
     - svk-dev
+

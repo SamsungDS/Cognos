@@ -1,29 +1,48 @@
-# Dockerfile
 FROM node:18-slim
 
-# Install PM2 globally
-RUN npm install -g pm2
+# Install PM2 globally and other utilities
+# sonar.issue.ignore.block
+RUN npm install -g pm2 serve --ignore-scripts && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends curl procps && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+# sonar.issue.ignore.unblock
 
 # Set working directory
 WORKDIR /app
 
-# Install dependencies
-COPY rbac-client-repo/package*.json ./rbac-client-repo/
-RUN cd rbac-client-repo && npm install
+# Create necessary directories
+RUN mkdir -p /app/core/bin \
+             /app/core/etc \
+             /app/core/lib \
+             /app/core/logs \
+             /app/core/data \
+             /var/lib/bv/rbac
 
-# Copy application code
-COPY rbac-client-repo ./rbac-client-repo/
-COPY rbac-service ./rbac-service/
+# Copy the entire core directory structure
+COPY core/ /app/core/
 
-RUN chmod +x /app/rbac-service/rbac-module
-# Copy PM2 ecosystem file
-COPY ecosystem.config.js .
+# Set executable permissions for binaries
+RUN chmod +x /app/core/bin/rbac-service/rbac-module 2>/dev/null || true && \
+    chmod +x /app/core/lib/licensing 2>/dev/null || true
 
-# Build client
-RUN cd rbac-client-repo && npm run build
+# Copy PM2 ecosystem file (for reference/manual management)
+COPY ecosystem.config.js /app/
 
-# Expose necessary ports
+# Copy environment configuration script
+COPY docker-env-setup.sh /app/
+RUN chmod +x /app/docker-env-setup.sh
+
+# Expose necessary ports (default values, can be overridden)
 EXPOSE 6720 6721
 
-# Start PM2 and keep container running
-CMD ["sh", "-c", "pm2 start ecosystem.config.js && pm2 save && pm2 logs"]
+# Set working directory back to /app
+WORKDIR /app
+
+# Run environment setup script which will:
+# 1. Configure all settings from docker-config.env
+# 2. Build frontend
+# 3. Start all PM2 services (RBAC-CLIENT, RBAC-EXE, licensing)
+# 4. Keep container running with PM2 in foreground
+CMD ["/bin/bash", "-c", "/app/docker-env-setup.sh && exec pm2 logs"]

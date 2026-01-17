@@ -1,5 +1,0 @@
-{
-    "mgmt_endpoint": "http://scmc-ip-addr:5000",
-    "rbac_backend_endpoint": "http://rbac-ip-addr:6721",
-    "ssl": false    
-}

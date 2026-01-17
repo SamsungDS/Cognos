@@ -18,9 +18,11 @@ class TestSuite(unittest.TestCase):
         loader = unittest.TestLoader()
         suite = loader.loadTestsFromTestCase(CognosPages)
         suite.addTests(unittest.TestLoader().loadTestsFromTestCase(
-            TestDashboard))
-        suite.addTests(unittest.TestLoader().loadTestsFromTestCase(
             TestMetrics))
+        suite.addTests(unittest.TestLoader().loadTestsFromTestCase(
+            TestDashboard))
+        # suite.addTests(unittest.TestLoader().loadTestsFromTestCase(
+        #     TestMetrics))
         '''
         Disabling tests for configure page & mutable functions, as
         current demo changes default support host view changes.
