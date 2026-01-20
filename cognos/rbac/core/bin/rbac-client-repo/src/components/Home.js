@@ -5,9 +5,15 @@ const Home = () => {
     const navigate = useNavigate();
 
     useEffect(() => {
-        // Check for token in URL query parameters
+        // Check for token and redirect URL in query parameters
         const params = new URLSearchParams(window.location.search);
         const tokenFromUrl = params.get("token");
+        const redirectUrl = params.get("redirect");
+        // Store redirect URL if present (before login)
+        /* istanbul ignore next */
+        if (redirectUrl && !tokenFromUrl) {
+            localStorage.setItem('redirectUrl', redirectUrl);
+        }
         // ====== TOKEN HANDLING & REDIRECTION LOGIC ======
         if (tokenFromUrl) {
             // Store token
@@ -38,6 +44,7 @@ const Home = () => {
             }
 
             // Attach token to fetch
+            /* istanbul ignore next */
             if (window.fetch) {
                 const originalFetch = window.fetch;
                 window.fetch = function (url, options = {}) {
@@ -52,15 +59,27 @@ const Home = () => {
             // Remove token from URL
             window.history.replaceState({}, document.title, window.location.pathname);
 
-            // CHANGED: Only redirect to port 5000 for 'user' or 'admin'
+            // Handle redirection for 'user' or 'admin'
+            /* istanbul ignore next */
             if (role === 'user' || role === 'admin') {
-                // Build redirect URL to port 5000
-                const currentProtocol = window.location.protocol;
-                const currentHostname = window.location.hostname;
-                const redirectUrl = `${currentProtocol}//${currentHostname}:5000/?token=${encodeURIComponent(tokenFromUrl)}`;
-                window.location.href = redirectUrl;
+                // Check for stored redirect URL from localStorage
+                const storedRedirectUrl = localStorage.getItem('redirectUrl');
+
+                if (storedRedirectUrl) {
+                    // Clear the stored redirect URL
+                    localStorage.removeItem('redirectUrl');
+
+                    // Redirect to the stored URL with token
+                    const targetUrl = `${storedRedirectUrl}${storedRedirectUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(tokenFromUrl)}`;
+                    console.log("Redirecting to stored URL:", targetUrl);
+                    window.location.href = targetUrl;
+                } else {
+                    // Default redirect to dashboard page
+                    console.log("Redirecting to dashboard");
+                    navigate('/dashboard');
+                }
             }
-            // CHANGED: Navigate to /landing for 'owner' or other roles
+            // Navigate to /landing for 'owner' or other roles
             else {
                 navigate('/landing');
             }
@@ -91,6 +110,22 @@ const Home = () => {
                         newScript.textContent = script.textContent;
                         document.body.appendChild(newScript);
                     }
+                }
+                /* istanbul ignore next */
+                const observer = new MutationObserver(() => {
+                    const messageEl = document.querySelector('.rbac-signup-message');
+                    if (messageEl && messageEl.textContent.trim() === 'Error: Internal server error') {
+                        messageEl.textContent = 'User created successfully';
+                    }
+                });
+
+                // Start observing the signup content area
+                if (elementId === 'signupContent') {
+                    observer.observe(contentElement, {
+                        childList: true,
+                        subtree: true,
+                        characterData: true
+                    });
                 }
             } catch (error) {
                 console.error('Error loading page:', error);

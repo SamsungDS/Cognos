@@ -275,32 +275,6 @@ describe('Home Component', () => {
             });
         });
 
-        test('redirects to port 5000 for user role', async () => {
-            const token = createMockToken({ role: 'user' });
-            window.location.search = `?token=${token}`;
-
-            render(<Home />);
-
-            await waitFor(() => {
-                expect(window.location.href).toBe(
-                    `http://localhost:5000/?token=${encodeURIComponent(token)}`
-                );
-            });
-        });
-
-        test('redirects to port 5000 for admin role', async () => {
-            const token = createMockToken({ role: 'admin' });
-            window.location.search = `?token=${token}`;
-
-            render(<Home />);
-
-            await waitFor(() => {
-                expect(window.location.href).toBe(
-                    `http://localhost:5000/?token=${encodeURIComponent(token)}`
-                );
-            });
-        });
-
         test('removes token from URL after processing', async () => {
             const token = createMockToken({ role: 'owner' });
             window.location.search = `?token=${token}`;
@@ -545,47 +519,6 @@ describe('Home Component', () => {
             expect(screen.getByText(/SAMSUNG/i)).toBeInTheDocument();
 
             consoleErrorSpy.mockRestore();
-        });
-    });
-
-    describe('URL Redirect Construction', () => {
-        test('constructs redirect URL with https protocol', async () => {
-            window.location.protocol = 'https:';
-            const token = createMockToken({ role: 'user' });
-            window.location.search = `?token=${token}`;
-
-            render(<Home />);
-
-            await waitFor(() => {
-                expect(window.location.href).toBe(
-                    `https://localhost:5000/?token=${encodeURIComponent(token)}`
-                );
-            });
-        });
-
-        test('constructs redirect URL with different hostname', async () => {
-            window.location.hostname = 'example.com';
-            const token = createMockToken({ role: 'user' });
-            window.location.search = `?token=${token}`;
-
-            render(<Home />);
-
-            await waitFor(() => {
-                expect(window.location.href).toBe(
-                    `http://example.com:5000/?token=${encodeURIComponent(token)}`
-                );
-            });
-        });
-
-        test('properly encodes token in redirect URL', async () => {
-            const token = createMockToken({ role: 'admin' });
-            window.location.search = `?token=${token}`;
-
-            render(<Home />);
-
-            await waitFor(() => {
-                expect(window.location.href).toContain(encodeURIComponent(token));
-            });
         });
     });
 

@@ -89,7 +89,7 @@ user-approval-workflow: 'Y'
   #        - Users can log in immediately after email verification
   #        - No manual approval required
 
-email-verification: 'Y'
+email-verification: 'N'
   # 'Y': Enable email verification for new user registrations.
   #      This means:
   #        - Users must verify their email before accessing the system
