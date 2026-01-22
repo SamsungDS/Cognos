@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"flag"
+	"fmt"
 	"google.golang.org/grpc/grpclog"
 	"io"
 	"io/ioutil"
@@ -11,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -50,23 +54,28 @@ func TestConfigFile(t *testing.T) {
 	setup(t)
 	str := `{"svk_mgmt_rest_api":{"controller": {"id": "localhost","port": "9999"},"rest_server": {"id": "localhost","port": "8001"}}}`
 
+	logFileHandle := InitLogger(logFile)
+	defer logFileHandle.Close()
 	err := os.WriteFile("conf.json", []byte(str), 0644)
 	if err != nil {
 		t.Fatalf("Error in creating conf.json file")
 	}
-	restServerId, controllerId := readConfigFileForServer("conf.json")
-	if restServerId != "localhost:8001" {
-		t.Fatalf("Result was incorrect, got: %s expected %s", restServerId, "localhost:8001")
+	http_server_endpoint, https_server_endpoint, controller_endpoint := ReadConfigFileForServer("conf.json")
+	if http_server_endpoint != "localhost:8001" {
+		t.Fatalf("Result was incorrect, got: %s expected %s", http_server_endpoint, "localhost:8001")
 	}
-	if controllerId != "localhost:9999" {
-		t.Fatalf("Result was incorrect, got: %s expected %s", controllerId, "localhost:9999")
+	if https_server_endpoint != "localhost:8443" {
+		t.Fatalf("Result was incorrect, got: %s expected %s", https_server_endpoint, "localhost:8443")
+	}
+	if controller_endpoint != "localhost:9999" {
+		t.Fatalf("Result was incorrect, got: %s expected %s", controller_endpoint, "localhost:9999")
 	}
 	os.Remove("conf.json")
 }
 
 func TestInitRestServer(t *testing.T) {
 	setup(t)
-	logFileHandle, _ := os.OpenFile(logFile, os.O_WRONLY|os.O_APPEND, 0644)
+	logFileHandle := InitLogger(logFile)
 
 	svk_logger = grpclog.NewLoggerV2(logFileHandle, ioutil.Discard, ioutil.Discard)
 	grpclog.SetLoggerV2(svk_logger)
@@ -74,11 +83,12 @@ func TestInitRestServer(t *testing.T) {
 	ctx := context.Background()
 	certFile := ""
 	keyFile := ""
-	server, err := InitRestServer("localhost:8001", "localhost:9999", ctx, certFile, keyFile)
+	server, err := InitHTTPRestServer("localhost:8001", "localhost:9999", ctx, certFile, keyFile)
 	if server == nil {
 		t.Logf("Failed to start server: %v", err)
 		t.Fatal(errorString)
 	}
+	CloseLogger(logFileHandle)
 }
 
 func IssueSignal(restServerChannel <-chan int) int {
@@ -96,7 +106,7 @@ func IssueSignal(restServerChannel <-chan int) int {
 
 func TestRunRestServer(t *testing.T) {
 	setup(t)
-	logFileHandle, _ := os.OpenFile(logFile, os.O_WRONLY|os.O_APPEND, 0644)
+	logFileHandle := InitLogger(logFile)
 
 	svk_logger = grpclog.NewLoggerV2(logFileHandle, ioutil.Discard, ioutil.Discard)
 	restServerChannel := make(chan int, 2)
@@ -105,20 +115,22 @@ func TestRunRestServer(t *testing.T) {
 	certFile := ""
 	keyFile := ""
 	useTLS := false
-	server, err := InitRestServer("localhost:8001", "localhost:9999", ctx, certFile, keyFile)
+	server, err := InitHTTPRestServer("localhost:8001", "localhost:9999", ctx, certFile, keyFile)
 	if server == nil {
 		t.Logf("Failed to start server: %v", err)
 		t.Fatal(errorString)
 	}
-	go RunRestServer(server, restServerChannel, useTLS)
+	InitSignalHandler(restServerChannel)
+	go RunRestServer(server, useTLS)
 	go IssueSignal(restServerChannel)
-	StopRestServer(server, ctx)
+	StopRestServer(ctx)
 	close(restServerChannel)
+	CloseLogger(logFileHandle)
 }
 
 func TestRunRestServerWithCACertificates(t *testing.T) {
 	setup(t)
-	logFileHandle, _ := os.OpenFile(logFile, os.O_WRONLY|os.O_APPEND, 0644)
+	logFileHandle := InitLogger(logFile)
 
 	log := grpclog.NewLoggerV2(logFileHandle, ioutil.Discard, ioutil.Discard)
 
@@ -129,40 +141,182 @@ func TestRunRestServerWithCACertificates(t *testing.T) {
 	certFile := filepath.Join(dir, "../../ut_ca_certs/cert.pem.test")
 	keyFile := filepath.Join(dir, "../../ut_ca_certs/key.pem.test")
 	useTLS := true
-	server, err := InitRestServer("localhost:8001", "localhost:9999", ctx, certFile, keyFile)
+	server, err := InitHTTPSRestServer("localhost:8443", "localhost:9999", ctx, certFile, keyFile)
 	if server == nil {
 		t.Logf("Failed to load TLS certificates: %v", err)
 		t.Fatal(errorString)
 	}
-	go RunRestServer(server, restServerChannel, useTLS)
+	InitSignalHandler(restServerChannel)
+	go RunRestServer(server, useTLS)
 	go IssueSignal(restServerChannel)
-	StopRestServer(server, ctx)
+	StopRestServer(ctx)
 	close(restServerChannel)
+	CloseLogger(logFileHandle)
 }
 
 func TestRunRestServerWithInvalidCACertificates(t *testing.T) {
 	setup(t)
-	logFileHandle, _ := os.OpenFile(logFile, os.O_WRONLY|os.O_APPEND, 0644)
+	logFileHandle := InitLogger(logFile)
 	svk_logger = grpclog.NewLoggerV2(logFileHandle, ioutil.Discard, ioutil.Discard)
 	grpclog.SetLoggerV2(svk_logger)
 
 	ctx := context.Background()
 	dir, _ := os.Getwd()
 
-	certFile := filepath.Join(dir, "../../ut_ca_certs/cert.pem.test")
-	keyFile := filepath.Join(dir, "../../ut_ca_certs/cert.pem.test")
-	server, err := InitRestServer("localhost:8001", "localhost:9999", ctx, certFile, keyFile)
+	certFile := filepath.Join(dir, "../../ut_ca_certs/cert.pem.testx")
+	keyFile := filepath.Join(dir, "../../ut_ca_certs/cert.pem.testx")
+	server, err := InitHTTPSRestServer("localhost:8001", "localhost:9999", ctx, certFile, keyFile)
 	if server != nil {
 		t.Fatalf("Expected to fail in loading TLS certificates: %v", err)
 	}
+	CloseLogger(logFileHandle)
 }
+
+func createAndSendMultipartFormRequest(t *testing.T, url, certPath, keyPath string) (*http.Response, error) {
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	// Create form file for certificate
+	certPart, err := writer.CreateFormFile("certificate_pem_file", "cert.pem")
+	if err != nil {
+		return nil, err
+	}
+
+	certFile, err := os.Open(certPath)
+	if err != nil {
+		t.Fatalf("Error opening key file: %v", err)
+	}
+	defer certFile.Close()
+	_, err = io.Copy(certPart, certFile)
+	if err != nil {
+		t.Fatalf("Error copying cert file: %v", err)
+	}
+
+	// Create form file for key
+	keyPart, err := writer.CreateFormFile("key_pem_file", "key.pem")
+	if err != nil {
+		return nil, err
+	}
+	keyFile, err := os.Open(keyPath)
+	if err != nil {
+		t.Fatalf("Error opening key file: %v", err)
+	}
+	defer keyFile.Close()
+
+	_, err = io.Copy(keyPart, keyFile)
+	if err != nil {
+		t.Fatalf("Error copying cert file: %v", err)
+	}
+
+	// Close the writer
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+
+	// Create and send the request
+	req, err := http.NewRequest("POST", url, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
+func createAndSendMultipartFormRequestForHTTPS(t *testing.T, url, certPath, keyPath string) (*http.Response, error) {
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	oldCertPath := filepath.Join(certsDir, "cert.pem")
+	oldKeyPath := filepath.Join(certsDir, "key.pem")
+
+	// Load the certificate and key
+	cert, load_err := tls.LoadX509KeyPair(oldCertPath, oldKeyPath)
+	if load_err != nil {
+		t.Fatalf("Error loading certificate: %v", load_err)
+	}
+
+	// Create a TLS configuration
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		// You might need to adjust this depending on your server's certificate
+		InsecureSkipVerify: true, // For testing with self-signed certificates
+	}
+
+	// Create an HTTP client with the TLS configuration
+	tr := &http.Transport{
+		TLSClientConfig: tlsConfig,
+	}
+	client := &http.Client{Transport: tr}
+
+	// Create form file for certificate
+	certPart, err := writer.CreateFormFile("certificate_pem_file", "cert.pem")
+	if err != nil {
+		return nil, err
+	}
+
+	certFile, err := os.Open(certPath)
+	if err != nil {
+		t.Fatalf("Error opening key file: %v", err)
+	}
+	defer certFile.Close()
+	_, err = io.Copy(certPart, certFile)
+	if err != nil {
+		t.Fatalf("Error copying cert file: %v", err)
+	}
+
+	// Create form file for key
+	keyPart, err := writer.CreateFormFile("key_pem_file", "key.pem")
+	if err != nil {
+		return nil, err
+	}
+	keyFile, err := os.Open(keyPath)
+	if err != nil {
+		t.Fatalf("Error opening key file: %v", err)
+	}
+	defer keyFile.Close()
+
+	_, err = io.Copy(keyPart, keyFile)
+	if err != nil {
+		t.Fatalf("Error copying cert file: %v", err)
+	}
+
+	// Close the writer
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+
+	// Create and send the request
+	req, err := http.NewRequest("POST", url, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
+var parseFlags = false
 
 func TestMainFunction(t *testing.T) {
 	setup(t)
-
 	go func() {
 		main()
 	}()
+	// svk_logger.Info("Testing main function")
+
+	parseFlags = true
 	time.Sleep(5 * time.Second)
 
 	dir, _ := os.Getwd()
@@ -172,59 +326,25 @@ func TestMainFunction(t *testing.T) {
 	certPath := filepath.Join(dir, "../../ut_ca_certs/cert.pem.test")
 	keyPath := filepath.Join(dir, "../../ut_ca_certs/key.pem.test")
 
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-	certPart, err := writer.CreateFormFile("certificate_pem_file", "cert.pem")
-	if err != nil {
-		t.Fatalf("Error creating form file for cert: %v", err)
-	}
-	certFile, err := os.Open(certPath)
-	if err != nil {
-		t.Fatalf("Error opening cert file: %v", err)
-	}
-	defer certFile.Close()
-	_, err = io.Copy(certPart, certFile)
-	if err != nil {
-		t.Fatalf("Error copying cert file: %v", err)
-	}
-
-	keyPart, err := writer.CreateFormFile("key_pem_file", "key.pem")
-	if err != nil {
-		t.Fatalf("Error creating form file for key: %v", err)
-	}
-
-	keyFile, err := os.Open(keyPath)
-	if err != nil {
-		t.Fatalf("Error opening key file: %v", err)
-	}
-	defer keyFile.Close()
-	_, err = io.Copy(keyPart, keyFile)
-	if err != nil {
-		t.Fatalf("Error copying key file: %v", err)
-	}
-
-	err = writer.Close()
-	if err != nil {
-		t.Fatalf("Error closing writer: %v", err)
-	}
-
-	req, err := http.NewRequest("POST", url, body)
-	if err != nil {
-		t.Fatalf("Error creating request: %v", err)
-	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-
-	// Send the request
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := createAndSendMultipartFormRequest(t, url, certPath, keyPath)
 	if err != nil {
 		t.Fatalf("Error sending request: %v", err)
 	}
 	defer resp.Body.Close()
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Error reading response body: %v", err)
+	}
+
 	// Check the response
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected status code %d, got %d", http.StatusOK, resp.StatusCode)
+	}
+
+	expectedStatusMessage := "Certificates created successfully. Requires a REST server restart to take effect"
+	if !strings.Contains(string(body), expectedStatusMessage) {
+		t.Fatalf("Expected status message to contain '%s', got '%s'", expectedStatusMessage, string(body))
 	}
 
 	defaultCertPath := certsDir + "/cert.pem"
@@ -243,9 +363,44 @@ func copyFile(src, dest string) error {
 	return os.WriteFile(dest, data, 0644)
 }
 
+// generateCerts generates cert.pem and key.pem files in the specified directory.
+func generateCerts() error {
+	// Create the certificates directory if it doesn't exist
+	err := os.MkdirAll(certsDir, 0755)
+	if err != nil {
+		return err
+	}
+
+	// Generate private key
+	keyPath := filepath.Join(certsDir, "new_key.pem")
+	cmd := exec.Command("openssl", "genrsa", "-out", keyPath, "2048")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("error generating private key: %v, output: %s", err, output)
+	}
+
+	// Generate certificate
+	certPath := filepath.Join(certsDir, "new_cert.pem")
+	cmd = exec.Command("openssl", "req", "-x509", "-new", "-nodes", "-key", keyPath, "-subj", "/C=US/ST=CA/L=SanJose/O=Samsung/CN=localhost", "-out", certPath)
+	output, err = cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("error generating certificate: %v, output: %s", err, output)
+	}
+
+	return nil
+}
+
 // This function is to run the REST server in HTTPS mode by copying the certificates.
 func TestHTTPSValidation(t *testing.T) {
 	setup(t)
+
+	if parseFlags == false {
+		InitRestServerFlags()
+		flag.Parse()
+		parseFlags = true
+		logFileHandle := InitLogger(logFile)
+		defer logFileHandle.Close()
+	}
 
 	dir, _ := os.Getwd()
 	certPath := filepath.Join(dir, "../../ut_ca_certs/cert.pem.test")
@@ -267,33 +422,72 @@ func TestHTTPSValidation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	go func() {
-		mainWithContext(ctx)
+		MainWithContext(ctx)
 	}()
 	time.Sleep(2 * time.Second)
 
-	cancel()
-	time.Sleep(2 * time.Second)
-
-	// Check for the string  "TLS key and cert files exist. Running in HTTPS mode" in the log file
+	// Check for the string  "TLS key and cert files exist. Running the HTTPS mode" in the log file
 	logContent, err := ioutil.ReadFile(logFile)
 	if err != nil {
 		t.Fatalf("Error reading log file: %v", err)
 	}
 
-	expectedString := "TLS key and cert files exist. Running in HTTPS mode"
+	expectedString := "TLS key and cert files exist. Running the HTTPS mode as well"
 	if !bytes.Contains(logContent, []byte(expectedString)) {
 		t.Errorf("Expected log to contain '%s', but it did not", expectedString)
 	}
+
+	// Upload the new certificate and check whether the command succeeds or not
+	err = generateCerts()
+	if err != nil {
+		t.Fatalf("Error generating certs: %v", err)
+	}
+
+	url := "https://localhost:8443/UpdateCertificate"
+	certPath = filepath.Join(certsDir, "new_cert.pem")
+	keyPath = filepath.Join(certsDir, "new_key.pem")
+
+	resp, err := createAndSendMultipartFormRequestForHTTPS(t, url, certPath, keyPath)
+	if err != nil {
+		t.Fatalf("Error sending request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Error reading response body: %v", err)
+	}
+
+	// Check the response
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected status code %d, got %d", http.StatusOK, resp.StatusCode)
+	}
+
+	expectedStatusMessage := "Certificates updated successfully. Use the new certificate to access the HTTPS server"
+	if !strings.Contains(string(body), expectedStatusMessage) {
+		t.Errorf("Expected status message to contain '%s', got '%s'", expectedStatusMessage, string(body))
+	}
+
 	stopServer(t)
+
+	cancel()
 }
 
 func TestMainWithInvalidURL(t *testing.T) {
 	setup(t)
 
+	if parseFlags == false {
+		InitRestServerFlags()
+		flag.Parse()
+		parseFlags = true
+		logFileHandle := InitLogger(logFile)
+		defer logFileHandle.Close()
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	go func() {
-		mainWithContext(ctx)
+		MainWithContext(ctx)
 	}()
 	time.Sleep(5 * time.Second)
 
@@ -304,51 +498,7 @@ func TestMainWithInvalidURL(t *testing.T) {
 	keyPath := filepath.Join(dir, "../../ut_ca_certs/key.pem.test")
 	invalidUrl := "http://localhost:8001/DummyUpdateCertificate"
 
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-	certPart, err := writer.CreateFormFile("certificate_pem_file", "cert.pem")
-	if err != nil {
-		t.Fatalf("Error creating form file for cert: %v", err)
-	}
-	certFile, err := os.Open(certPath)
-	if err != nil {
-		t.Fatalf("Error opening cert file: %v", err)
-	}
-	defer certFile.Close()
-	_, err = io.Copy(certPart, certFile)
-	if err != nil {
-		t.Fatalf("Error copying cert file: %v", err)
-	}
-
-	keyPart, err := writer.CreateFormFile("key_pem_file", "key.pem")
-	if err != nil {
-		t.Fatalf("Error creating form file for key: %v", err)
-	}
-
-	keyFile, err := os.Open(keyPath)
-	if err != nil {
-		t.Fatalf("Error opening key file: %v", err)
-	}
-	defer keyFile.Close()
-	_, err = io.Copy(keyPart, keyFile)
-	if err != nil {
-		t.Fatalf("Error copying key file: %v", err)
-	}
-
-	err = writer.Close()
-	if err != nil {
-		t.Fatalf("Error closing writer: %v", err)
-	}
-
-	req, err := http.NewRequest("POST", invalidUrl, body)
-	if err != nil {
-		t.Fatalf("Error creating request: %v", err)
-	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-
-	// Send the request
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := createAndSendMultipartFormRequest(t, invalidUrl, certPath, keyPath)
 	if err != nil {
 		t.Fatalf("Error sending request: %v", err)
 	}

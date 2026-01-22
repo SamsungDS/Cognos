@@ -14,7 +14,7 @@ install_build_deps() {
     # Enable CodeReady Builder (CRB) repository
     BUILD_DEPS=("'dnf-command(config-manager)'")
     package_manager
-    dnf config-manager --set-enabled ol10_codeready_builder
+    dnf config-manager --set-enabled "ol${MAJOR_VER}_codeready_builder"
 
     package_manager
     BUILD_DEPS=(
@@ -25,6 +25,7 @@ install_build_deps() {
         'git'
         'golang'
         'net-tools'
+        'openssl'
         'python3'
         'rpmdevtools'
         'spdlog-devel'

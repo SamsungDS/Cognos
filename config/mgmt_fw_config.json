@@ -48,7 +48,8 @@
         },
         "rest_server": {
           "id": "localhost",
-          "port": "8001"
+          "port": "8001",
+          "https_port": "8443"
         },
         "logger": {
           "log_file_name": "/var/log/svk/svk_mgmt_rest_api.log"
