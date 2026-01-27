@@ -102,15 +102,38 @@ navigate to http://<ip>:8086/ and follow the steps
 
 *** Configure the following configuration files appropiately ***
 ```
-/usr/local/svk/svk-app/cognos/rbac/rbac-client-repo/src/config/config.json
-"mgmt_endpoint": "http://scmc-ip-addr:5000", 
-scmc-ip-addr	-> IP address (http://127.128.01.00:5000) of the SCMC UI.
-"rbac_backend_endpoint": "http://rbac-ip-addr:6721"
-rbac-ip-addr -> IP address (http://127.128.01.00:6721) of the RBAC backend service.
+/usr/local/svk/svk-app/cognos/rbac/docker-config.env
+SSL/HTTPS CONFIGURATION
+Enable SSL/HTTPS (true/false)
+
+SSL_ENABLED=false
+
+Set to 'true' to enable HTTPS with SSL certificates -> attach combined.crt and private.key inside /usr/local/svk/svk-app/cognos/rbac/core/ssl folder.
+
+Set to 'false' to use HTTP only
+
+BACKEND URL CONFIGURATION
+BACKEND_URL=http://<ip-addr>:6721
+Replace <ip-addr> (http://127.128.01.00:6721) with the host/IP where the backend (RBAC)
+
+MongoDB connection URI
+MONGODB_URI=mongodb://admin:admin@<ip-addr>:1027
+
+SUPER ADMIN (OWNER) CONFIGURATION
+
+Username (3-20 alphanumeric characters only)
+SUPER_ADMIN_USERNAME=super_admin
+
+Email address (valid email format required)
+SUPER_ADMIN_EMAIL=super_admin@samsung.com
+
+Password (minimum 8 characters)
+IMPORTANT: Change this default password!
+SUPER_ADMIN_PASSWORD=Admin@123
 
 /usr/local/svk/svk-app/cognos/rbac/rbac-service/rbac.yaml
 database:
-  uri: 'mongodb://admin:admin@<ip-addr>:1027/mongodb?authSource=admin'
+  uri: 'mongodb://admin:admin@<ip-addr>:1027'
 database.uri Replace <ip-addr> (admin@127.128.01.00:1027) with the MongoDB server host/IP address where the database is running.
 
 frontend:

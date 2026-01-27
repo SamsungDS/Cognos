@@ -26,11 +26,11 @@ get_config_value() {
 }
 
 # Load configuration values
-FRONTEND_PORT=$(get_config_value "FRONTEND_PORT" "6720")
-BACKEND_PORT=$(get_config_value "BACKEND_PORT" "6721")
-SSL_ENABLED=$(get_config_value "SSL_ENABLED" "false")
-SSL_KEY_PATH=$(get_config_value "SSL_KEY_PATH" "")
-SSL_CERT_PATH=$(get_config_value "SSL_CERT_PATH" "")
+FRONTEND_PORT=$(get_config_value "FRONTEND_PORT")
+BACKEND_PORT=$(get_config_value "BACKEND_PORT")
+SSL_ENABLED=$(get_config_value "SSL_ENABLED")
+SSL_KEY_PATH=$(get_config_value "SSL_KEY_PATH")
+SSL_CERT_PATH=$(get_config_value "SSL_CERT_PATH")
 BACKEND_URL=$(get_config_value "BACKEND_URL")
 INTERNET_COMM_PREF=$(get_config_value "INTERNET_COMM_PREF")
 APPROVAL_WORKFLOW_ENABLED=$(get_config_value "APPROVAL_WORKFLOW_ENABLED")

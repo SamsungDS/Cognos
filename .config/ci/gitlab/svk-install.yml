@@ -121,13 +121,6 @@ svk-install:
     # Substitute '.publisher_topic' value with the term "metric"
     - jq '.publisher_topic = "metric"' $SVK_APP_SUBSCRIBER_CONF | sponge $SVK_APP_SUBSCRIBER_CONF
 
-    #### RBAC configuration (JSON) ####
-    # - export SVK_APP_RBAC_CONF='/usr/local/svk/svk-app/cognos/rbac/rbac-client-repo/src/config/config.json'
-    # Substitute '.rbac_backend_endpoint' value with RBAC_BACKEND_PORT value in SVK_APP_RBAC_CONF obtained from gitlab-ci.yml
-    # - jq --arg ip "$VM_IP" --arg rbac_backend_port "$RBAC_BACKEND_PORT" '.rbac_backend_endpoint= "http://\($ip):\($rbac_backend_port)"' $SVK_APP_RBAC_CONF | sponge $SVK_APP_RBAC_CONF
-    # Substitute '.mgmt_endpoint' value with UI_PORT value in SVK_APP_UI_CONF obtained from gitlab-ci.yml
-    # - jq --arg ip "$VM_IP" --arg ui_port "$UI_PORT" '.mgmt_endpoint = "http://\($ip):\($ui_port)"' $SVK_APP_RBAC_CONF | sponge $SVK_APP_RBAC_CONF
-
     #### RBAC configuration (YAML) ####
     - export SVK_APP_RBAC_YAML='/usr/local/svk/svk-app/cognos/rbac/core/etc/rbac.yaml'
     # Substitute '.database' value with MONGODB_PORT value in SVK_APP_RBAC_YAML obtained from gitlab-ci.yml
@@ -154,6 +147,7 @@ svk-install:
     - sed -i "s|^SUPER_ADMIN_EMAIL=.*|SUPER_ADMIN_EMAIL=${SUPER_ADMIN_EMAIL}|" "$SVK_APP_RBAC_ENV"
     - sed -i "s|^SUPER_ADMIN_PASSWORD=.*|SUPER_ADMIN_PASSWORD=${SUPER_ADMIN_PASSWORD}|" "$SVK_APP_RBAC_ENV"
     # Substitute BACKEND_URL based on SSL_ENABLED
+    - sed -i "s|^SSL_ENABLED=.*|SSL_ENABLED=${SSL_ENABLED}|" "$SVK_APP_RBAC_ENV"
     - |
       if [ "${SSL_ENABLED}" = "true" ]; then
         PROTOCOL="https"
