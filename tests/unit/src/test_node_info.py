@@ -60,12 +60,12 @@ def test_get_system_info(monkeypatch):
 
     result = fn.get_system_info()
     assert result == {
-        "server-info": {
+        "server_info": {
             "hostname": "testnode",
             "fqdn": "testnode.example.com",
-            "ip-address": "10.1.1.1",
-            "os-release": "MyLinux",
-            "kernel-version": "5.10.0",
+            "ip_address": "10.1.1.1",
+            "os_release": "MyLinux",
+            "kernel_version": "5.10.0",
         }
     }
 
@@ -81,12 +81,12 @@ def test_get_system_info_localhost_ip(monkeypatch):
 
     result = fn.get_system_info()
     assert result == {
-        "server-info": {
+        "server_info": {
             "hostname": "testnode",
             "fqdn": "testnode.example.com",
-            "ip-address": "10.1.1.1",
-            "os-release": "MyLinux",
-            "kernel-version": "5.10.0",
+            "ip_address": "10.1.1.1",
+            "os_release": "MyLinux",
+            "kernel_version": "5.10.0",
         }
     }
     
@@ -102,12 +102,12 @@ def test_get_system_info_default_ip(monkeypatch):
 
     result = fn.get_system_info()
     assert result == {
-        "server-info": {
+        "server_info": {
             "hostname": "testnode",
             "fqdn": "testnode.example.com",
-            "ip-address": "10.0.1.1",
-            "os-release": "MyLinux",
-            "kernel-version": "5.10.0",
+            "ip_address": "10.0.1.1",
+            "os_release": "MyLinux",
+            "kernel_version": "5.10.0",
         }
     }
     
@@ -123,12 +123,12 @@ def test_get_system_info_ipv6_localhost(monkeypatch):
 
     result = fn.get_system_info()
     assert result == {
-        "server-info": {
+        "server_info": {
             "hostname": "testnode",
             "fqdn": "testnode.example.com",
-            "ip-address": "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
-            "os-release": "MyLinux",
-            "kernel-version": "5.10.0",
+            "ip_address": "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
+            "os_release": "MyLinux",
+            "kernel_version": "5.10.0",
         }
     }
 
@@ -166,18 +166,18 @@ def test_get_network_adapters_info_single_adapter(monkeypatch):
 
     result = fn.get_network_adapters_info()
     assert result == {
-        "network-adapters-info": {
+        "network_adapters_info": {
             "eth0": {
-                "ip-address": "192.168.0.2",
-                "ipv6-address": "fe80::1",
+                "ip_address": "192.168.0.2",
+                "ipv6_address": "fe80::1",
                 "netmask": "255.255.255.0",
                 "mtu": "1500",
-                "operational-state": "up",
-                "link-detected": True,
+                "operational_state": "up",
+                "link_detected": True,
                 "speed": "1000",
                 "duplex": "full",
-                "pci-address": "01:00.0",
-                "device-vendor": "Intel",
+                "pci_address": "01:00.0",
+                "device_vendor": "Intel",
             }
         }
     }
@@ -205,13 +205,13 @@ def test_get_network_adapters_info_missing_files(monkeypatch):
 
     result = fn.get_network_adapters_info()
     assert result == {
-        "network-adapters-info": {
+        "network_adapters_info": {
             "eth0": {
-                "ip-address": "10.0.0.1",
-                "ipv6-address": "",
+                "ip_address": "10.0.0.1",
+                "ipv6_address": "",
                 "netmask": "255.255.255.0",
-                "pci-address": "02:00.0",
-                "device-vendor": "Vendor",
+                "pci_address": "02:00.0",
+                "device_vendor": "Vendor",
             }
         }
     }
@@ -237,10 +237,10 @@ def test_get_network_adapters_info_missing_pci_address(monkeypatch):
     
     result = fn.get_network_adapters_info()
     assert result == {
-        "network-adapters-info" : {
+        "network_adapters_info" : {
             "eth0": {
-                "ip-address": "10.0.0.1",
-                "ipv6-address": "",
+                "ip_address": "10.0.0.1",
+                "ipv6_address": "",
                 "netmask": "255.255.255.0",
             }
         }
@@ -260,12 +260,12 @@ def test_get_cpu_info(monkeypatch):
     result = fn.get_cpu_info()
     assert result == {
         "cpu_info": {
-            "physical-cores": 4,
-            "total-cores": 8,
-            "current-frequency": 2500.0,
-            "max-frequency": 3500.0,
-            "min-frequency": 800.0,
-            "cpu-percentage": 12.5,
+            "physical_cores": 4,
+            "total_cores": 8,
+            "current_frequency": 2500.0,
+            "max_frequency": 3500.0,
+            "min_frequency": 800.0,
+            "cpu_percentage": 12.5,
         }
     }
 
@@ -321,7 +321,7 @@ def test_get_pci_info(monkeypatch):
 
     result = fn.get_pci_info()
     assert result == {
-        "pci-info": [
+        "pci_info": [
             {
                 "pci_address": "00:01.0",
                 "device_manufacturer": "Samsung",
@@ -378,7 +378,7 @@ def test_get_device_info(monkeypatch):
     fn.init_logger("INFO", log_file)
     result = fn.get_device_info()
     assert result == {
-        'device-info': {
+        'device_info': {
             'XYZ-ABC': {
                 'device_id': 0,
                 'serial_number': 'XYZ-ABC',
@@ -430,7 +430,7 @@ def test_get_device_info_with_qos_data_override(monkeypatch):
     fn.init_logger("INFO", log_file)
     result = fn.get_device_info()
     assert result == {
-        'device-info': {
+        'device_info': {
             'XYZ-ABC': {
                 'device_id': 0,
                 'serial_number': 'XYZ-ABC',
@@ -483,7 +483,7 @@ def test_get_node_stats(monkeypatch):
     result = fn.get_node_stats()
 
     assert result == {
-        "node-stats": {
+        "node_stats": {
             "node_name": "testnode",
             "cpu": {
                 "cores": 4,

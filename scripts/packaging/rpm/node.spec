@@ -2,7 +2,7 @@ Name:           svk-node
 Version:        %svk_rpm_version
 Release:        1%{?dist}.%svk_os_version
 Summary:        SVK Node Information
-Requires:       svk-core
+Requires:       svk-core, lshw, numactl
 License:        Samsung Internal
 
 %global svk_install_dir %_prefix/local/svk/feature_modules/node
@@ -27,13 +27,9 @@ cmake -DWITH_RELEASE=ON -DPKG_CONFIG_PREFIX=%svk_install_dir -DCMAKE_INSTALL_PRE
 %svk_install_dir/%_lib
 %svk_install_dir/scripts
 %svk_install_dir/config
-%ghost %_sysconfdir/ld.so.conf.d/svk-node-mgmt-%_arch.conf
 
 %post
-echo "%svk_install_dir/%_lib" > %_sysconfdir/ld.so.conf.d/svk-node-mgmt-%_arch.conf
-%__chmod a+r %_sysconfdir/ld.so.conf.d/svk-node-mgmt-%_arch.conf
 %__chmod a+x %svk_install_dir/scripts/*
-%_sbindir/ldconfig
 
 %preun
 # pre-uninstall commands go here
