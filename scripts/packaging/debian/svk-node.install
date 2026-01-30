@@ -1,4 +1,3 @@
 usr/local/svk/feature_modules/node/lib64/* /usr/local/svk/feature_modules/node/lib64
 usr/local/svk/feature_modules/node/config/* /usr/local/svk/feature_modules/node/config
 usr/local/svk/feature_modules/node/scripts/* /usr/local/svk/feature_modules/node/scripts
-etc/ld.so.conf.d/svk-node.conf /etc/ld.so.conf.d/

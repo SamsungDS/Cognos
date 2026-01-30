@@ -7,5 +7,5 @@ Standards-Version: 4.1.4
 
 Package: svk-node
 Architecture: amd64
-Depends: ${shlibs:Depends}, ${misc:Depends}, svk-core
+Depends: ${shlibs:Depends}, ${misc:Depends}, svk-core, lshw, numactl
 Description: SVK Node feature module to get the node's information

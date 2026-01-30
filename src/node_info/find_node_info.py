@@ -32,13 +32,13 @@ def get_system_info():
     server_info = {
         "hostname": hostname,
         "fqdn": socket.getfqdn(),
-        "ip-address": next((ip for ip in socket.gethostbyname_ex(platform.node())[2] if ip not in localhost_ips), 
+        "ip_address": next((ip for ip in socket.gethostbyname_ex(platform.node())[2] if ip not in localhost_ips),
                            socket.gethostbyname(hostname)),
-        "os-release": distro.name(pretty=True),
-        "kernel-version": platform.uname().release if hasattr(platform, 'uname') else None,
+        "os_release": distro.name(pretty=True),
+        "kernel_version": platform.uname().release if hasattr(platform, 'uname') else None,
     }
     
-    return {'server-info': server_info}
+    return {'server_info': server_info}
 
 def get_network_adapters_info():
     """
@@ -62,8 +62,8 @@ def get_network_adapters_info():
             
             # Get IPs, netmask
             network_adapters_info[adapter] = {
-                "ip-address": next((addr.address for addr in info if addr.family == socket.AF_INET), ""),
-                "ipv6-address": next((addr.address for addr in info if addr.family == socket.AF_INET6), ""),
+                "ip_address": next((addr.address for addr in info if addr.family == socket.AF_INET), ""),
+                "ipv6_address": next((addr.address for addr in info if addr.family == socket.AF_INET6), ""),
                 "netmask": getattr(info[0], 'netmask', ""),
             }
             
@@ -84,13 +84,13 @@ def get_network_adapters_info():
                     operstate = f.read().strip()
                     if operstate == None:
                         operstate = ""
-                    network_adapters_info[adapter]["operational-state"] = operstate
+                    network_adapters_info[adapter]["operational_state"] = operstate
 
             link_detected_path = f"/sys/class/net/{adapter}/carrier"
             if os.path.exists(link_detected_path):
                 with open(link_detected_path, "r") as f:
                     link_detected = f.read().strip()
-                    network_adapters_info[adapter]["link-detected"] = link_detected == "1"
+                    network_adapters_info[adapter]["link_detected"] = link_detected == "1"
             # These 2 may not be valid for all net devices, put them last
             speed_path = f"/sys/class/net/{adapter}/speed"
             if os.path.exists(speed_path):
@@ -113,11 +113,11 @@ def get_network_adapters_info():
             continue
         pci_address_match = re.search(r"([0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]{0,2})", item.get("businfo", ""))
         if pci_address_match is not None:
-            network_adapters_info[network_dev_name]["pci-address"] = pci_address_match.group(1)
+            network_adapters_info[network_dev_name]["pci_address"] = pci_address_match.group(1)
         if "vendor" in item:
-            network_adapters_info[network_dev_name]["device-vendor"] = item["vendor"]
+            network_adapters_info[network_dev_name]["device_vendor"] = item["vendor"]
     
-    return {'network-adapters-info': network_adapters_info}
+    return {'network_adapters_info': network_adapters_info}
 
 def get_cpu_info():
     """
@@ -129,12 +129,12 @@ def get_cpu_info():
     #numa, cpu type
     # interval is being set, if not set it may return 0
     cpu_info = {
-        "physical-cores": psutil.cpu_count(logical=False),
-        "total-cores": psutil.cpu_count(logical=True),
-        "current-frequency": psutil.cpu_freq().current,
-        "max-frequency": psutil.cpu_freq().max,
-        "min-frequency": psutil.cpu_freq().min,
-        "cpu-percentage": psutil.cpu_percent(interval=0.5),
+        "physical_cores": psutil.cpu_count(logical=False),
+        "total_cores": psutil.cpu_count(logical=True),
+        "current_frequency": psutil.cpu_freq().current,
+        "max_frequency": psutil.cpu_freq().max,
+        "min_frequency": psutil.cpu_freq().min,
+        "cpu_percentage": psutil.cpu_percent(interval=0.5),
     }
     return {'cpu_info': cpu_info}
 
@@ -206,7 +206,7 @@ def get_pci_info():
     except Exception as e:
         logger.error(f"Error in getting pci info: {e}")
 
-    return {'pci-info': pci_info}
+    return {'pci_info': pci_info}
 
 def read_device_qos_data_from_config_file(config_file):
 
@@ -233,7 +233,7 @@ def get_device_info():
 
     logger.info(f"Node name is {node_name}")
     if node_name is None:
-        return {'device-info': device_info}
+        return {'device_info': device_info}
 
     node_name_str = node_name
     qos_data = read_device_qos_data_from_config_file(config_file)
@@ -269,7 +269,7 @@ def get_device_info():
         logger.error(f"Error in getting device info: {e}")
 
     logger.info(f"Device info is {device_info}")
-    return {'device-info': device_info}
+    return {'device_info': device_info}
 
 def get_node_stats():
     node_stats = dict()
@@ -301,7 +301,7 @@ def get_node_stats():
     except Exception as e:
         logger.error(f"Error in getting node_stats: {e}")
 
-    return {'node-stats': node_stats}
+    return {'node_stats': node_stats}
 
 def get_all_info():
     """

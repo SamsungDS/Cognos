@@ -24,10 +24,7 @@ override_dh_usrlocal:
 	# Do nothing, because we are installing to /usr/local even though this is non-standard practice
 
 override_dh_install:
-	# Create ld.conf.so.d file if needed
-	mkdir --verbose --parent $(CURDIR)/etc/ld.so.conf.d
-	echo "/$(INSTALL_PATH)/lib64" > $(CURDIR)/etc/ld.so.conf.d/svk-node.conf
-
+	# install
 	dh_install
 
 override_dh_strip:
