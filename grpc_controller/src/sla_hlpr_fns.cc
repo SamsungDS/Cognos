@@ -72,7 +72,7 @@ module is very similar except the cxl protocol and the transport type
 
  Output from node feature module is
  {
-  "device-info": {
+  "device_info": {
     "24598aa6-edf7-3cce-a962-5e60d75d546a": {
       "advertised_qos": {
         "BW_per_sec": 35000000000,
@@ -328,8 +328,8 @@ static bool CheckIfCXLDeviceExistInNode(const std::string& node_name,
 
   try {
     response_json = nlohmann::json::parse(output);
-    if (response_json.contains("pci-info")) {
-      for (const auto& pci : response_json["pci-info"]) {
+    if (response_json.contains("pci_info")) {
+      for (const auto& pci : response_json["pci_info"]) {
         std::string device_type = pci.at("device_type");
         if (device_type == "cxl") {
           status = true;
@@ -340,7 +340,7 @@ static bool CheckIfCXLDeviceExistInNode(const std::string& node_name,
         }
       }
     } else {
-      logger_str = "pci-info not found in JSON output";
+      logger_str = "pci_info not found in JSON output";
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                  logger_str.c_str());
       status = false;
@@ -453,11 +453,11 @@ int GetDRAMDeviceDetails(const std::string& node_name, const std::string& port,
 
   try {
     response_json = nlohmann::json::parse(output);
-    if (!response_json.contains("device-info")) {
+    if (!response_json.contains("device_info")) {
       return status;
     }
     std::string json_data;
-    for (const auto& device_id : response_json["device-info"].items()) {
+    for (const auto& device_id : response_json["device_info"].items()) {
       DeviceInfo dev;
       json_data = device_id.value().dump();
       status = parseJSONOutputOfDeviceInfo(node_name, json_data, dev);

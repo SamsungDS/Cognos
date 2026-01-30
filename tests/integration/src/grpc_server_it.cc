@@ -928,7 +928,7 @@ TEST(InitIntegrationTest, UnregisterNodeServer) {
 
 // Trimmed down version of node feature output
 #define NODE_PCI_FEATURE_OUTPUT                                          \
-  "{\"pci-info\":[{\"NUMA "                                              \
+  "{\"pci_info\":[{\"NUMA "                                              \
   "node\":\"0\",\"device_manufacturer\":\"Samsung Electronics Co "       \
   "Ltd\",\"device_type\":\"nvme\",\"pci_address\":\"2c:00.0\"},{\"NUMA " \
   "node\":\"0\",\"device_manufacturer\":\"Montage Technology Co., "      \
@@ -941,19 +941,19 @@ TEST(InitIntegrationTest, UnregisterNodeServer) {
   "Ltd.\",\"device_type\":\"cxl\",\"pci_address\":\"b8:00.0\"}]}"
 
 #define NODE_DEVICE_FEATURE_OUTPUT                                             \
-  "{\"device-info\":{\"XYZ-ABC\":{\"device_id\":0,\"serial_number\":\"XYZ-"    \
+  "{\"device_info\":{\"XYZ-ABC\":{\"device_id\":0,\"serial_number\":\"XYZ-"    \
   "ABC\",\"numa_node\":0,\"total_capacity_MB\":409600,\"available_capacity_"   \
   "MB\":204800, "                                                              \
   "\"vendor_device_type\":\"DRAM\",\"status\":\"online\",\"advertised_qos\":{" \
   "\"avg_latency_ns\":200,\"p99_latency_ns\":100,\"io_per_sec\":1000000,\"BW_" \
   "per_sec\":1000,\"io_size_in_bytes\":4096,\"qd\":32}}}}"
 
-#define NODE_EMPTY_DEVICE_FEATURE_OUTPUT "{\"device-info\":{}}"
+#define NODE_EMPTY_DEVICE_FEATURE_OUTPUT "{\"device_info\":{}}"
 #define NODE_INVALID_DEVICE_FEATURE_OUTPUT \
-  "{\"device-info\":\"dummy-failure-value\"}"
+  "{\"device_info\":\"dummy-failure-value\"}"
 
 #define NODE_FEATURE_STATS_OUTPUT                                          \
-  "{\"node-stats\":{\"cpu\":{\"cores\":4},\"memory\":{\"available_memory_" \
+  "{\"node_stats\":{\"cpu\":{\"cores\":4},\"memory\":{\"available_memory_" \
   "mb\":10663},\"node_name\":\"node_1\"}}"
 
 #define CXL_DEVICE_LIST_OUTPUT                                                \
@@ -3862,9 +3862,9 @@ TEST(InitIntegrationTest, NodeStatsSuccessful) {
   ASSERT_EQ(status.ok(), true);
 
   std::string expected_resp_str =
-      "{\"localhost\":{\"node-stats\":{\"cpu\":{\"cores\":4},\"memory\":{"
+      "{\"localhost\":{\"node_stats\":{\"cpu\":{\"cores\":4},\"memory\":{"
       "\"available_memory_mb\":10663},\"node_name\":\"node_1\"}},\"node-x\":{"
-      "\"node-stats\":{\"cpu\":{\"cores\":4},\"memory\":{\"available_memory_"
+      "\"node_stats\":{\"cpu\":{\"cores\":4},\"memory\":{\"available_memory_"
       "mb\":10663},\"node_name\":\"node_1\"}}}";
   std::cout << "Only cluster name - Event response - " << resp->response()
             << std::endl;
@@ -3881,7 +3881,7 @@ TEST(InitIntegrationTest, NodeStatsSuccessful) {
   ASSERT_EQ(status.ok(), true);
 
   expected_resp_str =
-      "{\"localhost\":{\"node-stats\":{\"cpu\":{\"cores\":4},\"memory\":{"
+      "{\"localhost\":{\"node_stats\":{\"cpu\":{\"cores\":4},\"memory\":{"
       "\"available_memory_mb\":10663},\"node_name\":\"node_1\"}}}";
   std::cout << "Node and cluster name set - Event response - "
             << resp->response() << std::endl;
@@ -3898,7 +3898,7 @@ TEST(InitIntegrationTest, NodeStatsSuccessful) {
   ASSERT_EQ(status.ok(), true);
 
   expected_resp_str =
-      "{\"node-x\":{\"node-stats\":{\"cpu\":{\"cores\":4},\"memory\":{"
+      "{\"node-x\":{\"node_stats\":{\"cpu\":{\"cores\":4},\"memory\":{"
       "\"available_memory_mb\":10663},\"node_name\":\"node_1\"}}}";
   std::cout << "Only node name - Event response - " << resp->response()
             << std::endl;
@@ -3915,9 +3915,9 @@ TEST(InitIntegrationTest, NodeStatsSuccessful) {
   ASSERT_EQ(status.ok(), true);
 
   expected_resp_str =
-      "{\"localhost\":{\"node-stats\":{\"cpu\":{\"cores\":4},\"memory\":{"
+      "{\"localhost\":{\"node_stats\":{\"cpu\":{\"cores\":4},\"memory\":{"
       "\"available_memory_mb\":10663},\"node_name\":\"node_1\"}},\"node-x\":{"
-      "\"node-stats\":{\"cpu\":{\"cores\":4},\"memory\":{\"available_memory_"
+      "\"node_stats\":{\"cpu\":{\"cores\":4},\"memory\":{\"available_memory_"
       "mb\":10663},\"node_name\":\"node_1\"}}}";
   std::cout << "No node or cluster name - Event response - " << resp->response()
             << std::endl;
