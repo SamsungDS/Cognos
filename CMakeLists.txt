@@ -86,6 +86,8 @@ if(BUILD_TESTING)
     add_subdirectory(tests)
 endif()
 
+add_subdirectory(utils)
+
 include(CMakePackageConfigHelpers)
 write_basic_package_version_file(
         SVKCXLConfigVersion.cmake

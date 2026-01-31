@@ -61,6 +61,7 @@ cmake -DWITH_RELEASE=ON -DPKG_CONFIG_PREFIX=%svk_install_dir -DCMAKE_INSTALL_PRE
 %defattr(-,root,root,-)
 %dir %svk_install_dir/
 %svk_install_dir/config
+%svk_install_dir/scripts/cxl_device_info.py
 %svk_install_dir/logic_modules
 %{installpath_mgmt}
 %{installpath_mbox}
@@ -88,6 +89,7 @@ if [ -z "$SVK_LDCONFIG" ];then
 fi
 touch /etc/ld.so.conf.d/svk-cxl-x86_64.conf
 chmod a+r /etc/ld.so.conf.d/svk-cxl-x86_64.conf
+chmod +x %svk_install_dir/scripts/cxl_device_info.py
 echo "$installpath/%{_lib}" | tee -a /etc/ld.so.conf.d/svk-cxl-x86_64.conf
 echo "/usr/local/lib/cxl_memory_box" | tee -a /etc/ld.so.conf.d/svk-cxl-x86_64.conf
 echo "/usr/local/svk/mgmt-fw/lib64" | tee -a /etc/ld.so.conf.d/svk-cxl-x86_64.conf

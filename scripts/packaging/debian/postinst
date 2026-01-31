@@ -13,7 +13,8 @@ ln -sf "$CXL_CONFIG_DIR/$file" "$MGMT_DIR/$file"
 fi
 done
 
-#set permissions for driver and service file
+#set permissions device generation script for driver and service file
+chmod +x /usr/local/svk/feature_modules/cxl/scripts/cxl_device_info.py
 chmod 755 /usr/local/bin/cmmh_driver
 chmod 644 /etc/systemd/system/cmmh_driver.service 
 
