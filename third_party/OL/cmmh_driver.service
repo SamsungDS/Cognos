@@ -1,0 +1,16 @@
+# CPE driver installation
+# Copy cmmh_driver to /usr/local/bin/
+# Copy this script into /etc/systemd/system/
+# Start the service $ sudo systemctl start cmmh_driver.service 
+
+[Unit]
+Description=CMMH_DRIVER
+
+[Service]
+ExecStart=/usr/local/bin/cmmh_driver
+User=root
+RuntimeDirectoryMode=0777
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

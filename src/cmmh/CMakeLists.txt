@@ -1,7 +1,6 @@
 # Set the plugin name
 set(PLUGIN_NAME cmmh)
 
-set(CMMH_STATIC_LIB "${PROJECT_SOURCE_DIR}/third_party/libcmmh.a")
 if(NOT EXISTS ${CMMH_STATIC_LIB})
  message(FATAL_ERROR "libcmmh.a not found at ${CMMH_STATIC_LIB}")
 endif()
@@ -23,7 +22,7 @@ add_dependencies(${PLUGIN_NAME} svkcxl)
 target_include_directories(${PLUGIN_NAME} PRIVATE
 "${CMAKE_CURRENT_SOURCE_DIR}/include"
 "${PROJECT_SOURCE_DIR}/src/include"
-"${PROJECT_SOURCE_DIR}/third_party"
+${CMMH_THIRD_PARTY_DIR}
 ${SVKMGMTFW_INCLUDE_DIRS}
 ${SVKFRAMEWORK_INCLUDE_DIRS}
 )
@@ -31,7 +30,7 @@ ${SVKFRAMEWORK_INCLUDE_DIRS}
 target_link_directories(${PLUGIN_NAME} PRIVATE
 ${SVKMGMTFW_LIB_DIRS}
 ${SVKFRAMEWORK_LIBRARY_DIRS}
-"${PROJECT_SOURCE_DIR}/third_party"
+${CMMH_THIRD_PARTY_DIR}
 )
 
 #force linker to retain libpci symbols

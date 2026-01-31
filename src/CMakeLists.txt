@@ -29,7 +29,7 @@ target_include_directories(svkcxl PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}/include/" 
   "${CMAKE_CURRENT_SOURCE_DIR}/tm/include/"
   "${CMAKE_CURRENT_SOURCE_DIR}/mock/"
-  "${PROJECT_SOURCE_DIR}/third_party"	
+  ${CMMH_THIRD_PARTY_DIR}
   ${SVKFRAMEWORK_INCLUDE_DIRS} 
   ${SVKMGMTFW_INCLUDE_DIRS} 
   ${FMAPI_INCLUDE_PATH}

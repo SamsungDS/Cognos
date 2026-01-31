@@ -63,5 +63,6 @@ publish release artifacts - Nexus:
         ' shell {} \;
   parallel:
     matrix:
-      #- OS: rocky9
+      - OS: rocky9
       - OS: ubuntu22
+      - OS: ol10

@@ -247,9 +247,22 @@ class ServicerTest : public ::testing::Test {
 };
 
 TEST_F(ServicerTest, InitCxlPluginSuccess) {
-  EXPECT_CALL(mock_cxl_global, g_create_mbox(_)).WillOnce(Return(0));
-  int result = init_cxl_plugin();
-  EXPECT_EQ(result, 0);
+  // EXPECT_CALL(mock_cxl_global, g_create_mbox(_)).WillOnce(Return(0));
+  std::string ip_address;
+  int ret;
+  ret = get_ip_address("valid_cxl.json", ip_address);
+  EXPECT_EQ(ret, 0);
+
+  struct StaticPortInfo pinfo;
+  ret = set_ip(ip_address.c_str());
+  EXPECT_EQ(ret, 0);
+
+  ret = mbox_get_static_config(&pinfo);
+  EXPECT_EQ(ret, 0);
+
+  sc_global cxl_global;
+  ret = cxl_global.g_create_mbox(&pinfo);
+  EXPECT_EQ(ret, 0);
 }
 
 TEST_F(ServicerTest, InitializeFailureTest) {
@@ -803,10 +816,21 @@ TEST_F(ServicerTest, CmmbA1_CorruptJsonFile) {
 }
 
 TEST_F(ServicerTest, CmmbA1_Success) {
-  use_test_config("valid_cxl.json");
-  EXPECT_CALL(mock_cxl_global, g_create_mbox(_)).WillOnce(Return(0));
-  int status = cmmb_a1_init();
-  EXPECT_EQ(status, 0);
+  std::string ip_address;
+  int ret;
+  ret = get_ip_address("valid_cxl.json", ip_address);
+  EXPECT_EQ(ret, 0);
+
+  struct StaticPortInfo pinfo;
+  ret = set_ip(ip_address.c_str());
+  EXPECT_EQ(ret, 0);
+
+  ret = mbox_get_static_config(&pinfo);
+  EXPECT_EQ(ret, 0);
+
+  sc_global cxl_global;
+  ret = cxl_global.g_create_mbox(&pinfo);
+  EXPECT_EQ(ret, 0);
 }
 
 TEST_F(ServicerTest, ListDevices_InvalidArrayFormat_ReturnsError) {

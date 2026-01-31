@@ -5,7 +5,7 @@ pkg_check_modules(SVKFRAMEWORK REQUIRED svkframework)
 
 include(${CMAKE_SOURCE_DIR}/cmake/svk_global.cmake)
 
-# Set this project's name.
+#Set this project's name.
 set(SVK_CXL_VERSION ${GIT_REPO_VERSION})
 set(SVKCXL "svkcxl")
 project(${SVKCXL} VERSION ${SVK_CXL_VERSION}
@@ -13,16 +13,35 @@ project(${SVKCXL} VERSION ${SVK_CXL_VERSION}
 
 include(GNUInstallDirs)
 
-# Centralized install paths
+#Centralized install paths
 set(SVK_BASE_PATH "/usr/local/svk/feature_modules/cxl")
 set(SVK_CONFIG_PATH "${SVK_BASE_PATH}/config")
 set(SVK_LIB_PATH "${SVK_BASE_PATH}/lib64")
 set(SVK_LOGIC_MODULE_PATH "${SVK_BASE_PATH}/logic_modules")
 
-# Subpath for logic modules
+#Subpath for logic modules
 set(CMMH_LIB_PATH "${SVK_LOGIC_MODULE_PATH}/cmmh/lib64")
 
-# For header/library install destinations
+#Third party lib paths
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  message(STATUS "-----------BUILD ON LINUX -----------------")
+#Check for distribution ID
+  execute_process(COMMAND cat /etc/os-release COMMAND grep -e "^ID=" COMMAND awk -F= "{ print $2 }" COMMAND sed "s/\"//g" OUTPUT_VARIABLE os_distro OUTPUT_STRIP_TRAILING_WHITESPACE)
+  message (STATUS "DISTRO FOUND ${os_distro}")
+#Check for Ubuntu / Oracle Linux / Rocky specific ID
+  if ("${os_distro}" STREQUAL "ubuntu")
+    set(CMMH_THIRD_PARTY_DIR "${PROJECT_SOURCE_DIR}/third_party/" CACHE STRING "Path to third party directory")
+    set(CMMH_STATIC_LIB "${PROJECT_SOURCE_DIR}/third_party/libcmmh.a" CACHE STRING "static lib path to cmmh")
+  elseif ("${os_distro}" MATCHES "^(ol|rocky)$")
+    set(CMMH_THIRD_PARTY_DIR "${PROJECT_SOURCE_DIR}/third_party/OL" CACHE STRING "Path to third party directory")
+    set(CMMH_STATIC_LIB "${PROJECT_SOURCE_DIR}/third_party/OL/libcmmh.a" CACHE STRING "static lib path to cmmh")
+  else()
+    message(FATAL_ERROR "Unsupported Linux distribution: ${os_distro}")
+  endif()
+
+endif()
+
+#For header / library install destinations
 set(SVKCXL_INCLUDE_DEST "include")
 set(SVKCXL_LIB_DEST "${SVK_LIB_PATH}")
 
@@ -43,15 +62,15 @@ configure_file("cmake/${SVKCXL}.pc.in" "${pkg_config}" @ONLY)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SVKFRAMEWORK REQUIRED svkframework)
 
-# Set C++ standard
+#Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -rdynamic")
 
-# Include custom cmake modules
+#Include custom cmake modules
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
-# Set coverage flags for GCC/Clang
+#Set coverage flags for GCC / Clang
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     if(WITH_COVERAGE)
         message(STATUS "Building with coverage")
@@ -61,7 +80,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     endif()
 endif()
 
-# Add subdirectories
+#Add subdirectories
 add_subdirectory(src)
 if(BUILD_TESTING)
     add_subdirectory(tests)
@@ -136,14 +155,12 @@ install(FILES
 	src/cxl_utils.py
 DESTINATION "${SVK_CONFIG_PATH}")
 
-install(FILES ${CMAKE_SOURCE_DIR}/third_party/libcmmh.h
+#Check for Ubuntu / Oracle Linux / Rocky specific ID
+install(FILES ${CMMH_THIRD_PARTY_DIR}/libcmmh.h
         DESTINATION /usr/local/include)
-
-install(FILES ${CMAKE_SOURCE_DIR}/third_party/libcmmh.a
+install(FILES ${CMMH_THIRD_PARTY_DIR}/libcmmh.a
         DESTINATION /usr/local/lib)
-
-install(FILES ${CMAKE_SOURCE_DIR}/third_party/cmmh_driver
+install(FILES ${CMMH_THIRD_PARTY_DIR}/cmmh_driver
         DESTINATION /usr/local/bin)
-
-install(FILES ${CMAKE_SOURCE_DIR}/third_party/cmmh_driver.service
+install(FILES ${CMMH_THIRD_PARTY_DIR}/cmmh_driver.service
         DESTINATION /etc/systemd/system)
