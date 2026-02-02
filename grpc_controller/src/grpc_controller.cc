@@ -880,7 +880,7 @@ Status ControllerServicer::CreateCluster(const std::string &cluster_name,
       logger_str = "Cluster id " + cluster_name + " already exists";
       svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                  logger_str.c_str());
-      status = Status(grpc::ALREADY_EXISTS, "Cluster id already exists");
+      status = Status(grpc::ALREADY_EXISTS, "Cluster name already exists");
       clstr_info = m_cluster_info[cluster_name];
     } else {
       // Create a new cluster with nodes in command_params
@@ -997,7 +997,7 @@ Status ControllerServicer::DeleteCluster(const std::string &cluster_name,
                logger_str.c_str());
     resp->set_error_id_or_string_if_any(logger_str);
     resp->set_error_code(SVK_STATUS_FAIL);
-    return Status(grpc::INVALID_ARGUMENT, logger_str);
+    return Status(grpc::INVALID_ARGUMENT, "Invalid cluster name passed");
   }
 
   // Iterate over all nodes in the cluster and remove the cluster_name in
@@ -1082,7 +1082,7 @@ Status ControllerServicer::ListNodesInCluster(const std::string &cluster_name,
                logger_str.c_str());
     resp->set_error_id_or_string_if_any(logger_str);
     resp->set_error_code(SVK_STATUS_FAIL);
-    return Status(grpc::INVALID_ARGUMENT, logger_str);
+    return Status(grpc::INVALID_ARGUMENT, "Empty cluster name passed");
   }
 
   const auto &cluster = m_cluster_info.find(cluster_name);
@@ -1124,7 +1124,8 @@ Status ControllerServicer::AddRemoveNode(const std::string &cluster_name,
                logger_str.c_str());
     resp->set_error_id_or_string_if_any(logger_str);
     resp->set_error_code(SVK_STATUS_FAIL);
-    return Status(grpc::INVALID_ARGUMENT, logger_str);
+    return Status(grpc::INVALID_ARGUMENT,
+                  "Empty cluster name or empty command parameters passed");
   }
 
   try {
@@ -1138,7 +1139,7 @@ Status ControllerServicer::AddRemoveNode(const std::string &cluster_name,
                  logger_str.c_str());
       resp->set_error_id_or_string_if_any(logger_str);
       resp->set_error_code(SVK_STATUS_FAIL);
-      return Status(grpc::INVALID_ARGUMENT, logger_str);
+      return Status(grpc::INVALID_ARGUMENT, "Empty nodes are passed");
     }
     // Add or remove given nodes from cluster
     for (auto &[key, value] : nodes.items()) {
@@ -1183,7 +1184,7 @@ Status ControllerServicer::AddRemoveNode(const std::string &cluster_name,
                        logger_str.c_str());
             resp->set_error_id_or_string_if_any(logger_str);
             resp->set_error_code(SVK_STATUS_FAIL);
-            return Status(grpc::NOT_FOUND, logger_str);
+            return Status(grpc::NOT_FOUND, "Invalid node name passed");
           }
           // Remove node from old cluster data structure
           if (!m_cluster_map[cluster_name].erase(curr_node.node_ip)) {
@@ -1193,7 +1194,7 @@ Status ControllerServicer::AddRemoveNode(const std::string &cluster_name,
                        logger_str.c_str());
             resp->set_error_id_or_string_if_any(logger_str);
             resp->set_error_code(SVK_STATUS_FAIL);
-            return Status(grpc::NOT_FOUND, logger_str);
+            return Status(grpc::NOT_FOUND, "Invalid node name passed");
           }
           // Update internal node_info
           curr_node.cluster_name = "";
@@ -1214,7 +1215,8 @@ Status ControllerServicer::AddRemoveNode(const std::string &cluster_name,
                    logger_str.c_str());
         resp->set_error_id_or_string_if_any(logger_str);
         resp->set_error_code(SVK_STATUS_FAIL);
-        return Status(grpc::INVALID_ARGUMENT, logger_str);
+        return Status(grpc::INVALID_ARGUMENT,
+                      "Invalid node name or cluster name passed");
       }
     }
     logger_str =
@@ -1405,7 +1407,8 @@ Status ControllerServicer::FeatureAPI(ServerContext *ctxt,
     logger_str = "FeatureAPI called with empty cluster name or command_name";
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                logger_str.c_str());
-    status = Status(grpc::INVALID_ARGUMENT, logger_str);
+    status = Status(grpc::INVALID_ARGUMENT,
+                    "Emtpy cluster name or empty command name is passed");
     resp->set_error_id_or_string_if_any(logger_str);
     resp->set_error_code(SVK_STATUS_FAIL);
     return status;

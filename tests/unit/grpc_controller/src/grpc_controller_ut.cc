@@ -1071,7 +1071,7 @@ TEST_F(MockTestController, DeleteClusterNotFound) {
       " not found in deletion";
   EXPECT_EQ(is_str_in_log(error_str), true);
 
-  EXPECT_EQ(grpc_status.error_message(), error_str);
+  EXPECT_EQ(grpc_status.error_message(), "Invalid cluster name passed");
 }
 
 TEST_F(MockTestController, DeleteCluster) {
