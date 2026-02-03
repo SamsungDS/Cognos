@@ -11,5 +11,5 @@
 /etc/svk/* /etc/svk/
 /usr/local/lib/libcmmh.a /usr/local/lib/
 /usr/local/include/libcmmh.h /usr/local/include/
-/etc/systemd/system/cmmh_driver.service /etc/systemd/system/
+/usr/lib/systemd/system/cmmh_driver.service /usr/lib/systemd/system/
 /usr/local/bin/cmmh_driver /usr/local/bin/

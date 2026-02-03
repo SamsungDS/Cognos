@@ -165,4 +165,4 @@ install(FILES ${CMMH_THIRD_PARTY_DIR}/libcmmh.a
 install(FILES ${CMMH_THIRD_PARTY_DIR}/cmmh_driver
         DESTINATION /usr/local/bin)
 install(FILES ${CMMH_THIRD_PARTY_DIR}/cmmh_driver.service
-        DESTINATION /etc/systemd/system)
+        DESTINATION /usr/lib/systemd/system)

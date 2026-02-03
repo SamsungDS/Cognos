@@ -27,7 +27,7 @@ SVK CXL downstream, upstream, and other related header files for app/feature dev
 %{!?cxl_build_dir: %global cxl_build_dir svk-cxl}
 %{!?installpath_cmmh_lib: %global installpath_cmmh_lib /usr/local/lib}
 %{!?installpath_cmmh_include: %global installpath_cmmh_include /usr/local/include}
-%{!?installpath_cmmh_service: %global installpath_cmmh_service /etc/systemd/system}
+%{!?installpath_cmmh_service: %global installpath_cmmh_service /usr/lib/systemd/system}
 %{!?installpath_cmmh_driver: %global installpath_cmmh_driver /usr/local/bin}
 %{!?installpath_zmq: %global installpath_zmq /etc/svk}
 %{!?installpath_tm_config: %global installpath_tm_config /etc/svk}

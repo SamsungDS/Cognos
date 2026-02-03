@@ -5,12 +5,20 @@
 
 [Unit]
 Description=CMMH_DRIVER
+Requires=svk-node.service
+Before=svk-node.service
+BindsTo=svk-node.service
 
 [Service]
 ExecStart=/usr/local/bin/cmmh_driver
+# Added this sleep as this service is clubbed to svk-node.service
+# Giving enough time for the driver to initialize even though
+# not required.
+ExecStartPost=/bin/sleep 2
 User=root
 RuntimeDirectoryMode=0777
 Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
+WantedBy=svk-node.service
