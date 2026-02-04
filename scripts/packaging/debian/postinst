@@ -3,3 +3,14 @@ set -e
 
 # post install steps go here
 mkdir -p /usr/local/var/lib/rasdaemon
+
+# Add mce_inject to load modules across reboot
+mkdir -p /usr/lib/modules-load.d
+
+cat > /usr/lib/modules-load.d/svk-ras.conf  << EOF
+# MCE Inject module required for SVK Cognos RAS
+mce_inject
+EOF
+
+# Load the mce inject as one time
+lsmod|grep mce || modprobe mce_inject
