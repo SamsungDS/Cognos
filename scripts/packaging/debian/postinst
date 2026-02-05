@@ -16,6 +16,6 @@ done
 #set permissions device generation script for driver and service file
 chmod +x /usr/local/svk/feature_modules/cxl/scripts/cxl_device_info.py
 chmod 755 /usr/local/bin/cmmh_driver
-chmod 644 /etc/systemd/system/cmmh_driver.service 
+chmod 644 /usr/lib/systemd/system/cmmh_driver.service
 
 exit 0
