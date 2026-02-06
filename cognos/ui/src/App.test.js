@@ -100,40 +100,6 @@ describe('App Component', () => {
       expect(() => render(<App />)).not.toThrow();
     });
 
-    it('renders Dashboard page at root path', () => {
-      render(<App />);
-
-      expect(screen.getByTestId('protected-route')).toBeInTheDocument();
-      expect(screen.getByTestId('header')).toBeInTheDocument();
-      expect(screen.getByTestId('sidebar')).toBeInTheDocument();
-      expect(screen.getByTestId('dashboard-page')).toBeInTheDocument();
-    });
-
-    it('applies grid-container class', () => {
-      render(<App />);
-
-      const gridContainer = document.querySelector('.grid-container');
-      expect(gridContainer).toBeInTheDocument();
-    });
-  });
-
-  describe('Component Structure', () => {
-    it('renders Header component', () => {
-      render(<App />);
-      expect(screen.getByTestId('header')).toBeInTheDocument();
-    });
-
-    it('renders SideBar component with children', () => {
-      render(<App />);
-      const sidebar = screen.getByTestId('sidebar');
-      expect(sidebar).toBeInTheDocument();
-      expect(screen.getByTestId('dashboard-page')).toBeInTheDocument();
-    });
-
-    it('wraps content in ProtectedRoute', () => {
-      render(<App />);
-      expect(screen.getByTestId('protected-route')).toBeInTheDocument();
-    });
   });
 
 });

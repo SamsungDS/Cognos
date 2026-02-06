@@ -210,7 +210,7 @@ const BoxTopology = ({onClusterChange}) => {
 
   const cmmList = [
     {
-      title: "Chessis1",
+      title: "Chassis1",
       hostComponents: mappedHostList(hostList, filteredDataHost),
       deviceComponents: mappedDeviceList(
         DeviceList,
@@ -219,7 +219,7 @@ const BoxTopology = ({onClusterChange}) => {
       ),
     },
     {
-      title: "Chessis2",
+      title: "Chassis2",
       hostComponents: mappedHostList(hostList, hostToDeviceMappingB2),
       deviceComponents: mappedDeviceList(
         DeviceList1,
@@ -228,7 +228,7 @@ const BoxTopology = ({onClusterChange}) => {
       ),
     },
     {
-      title: "Chessis3",
+      title: "Chassis3",
       hostComponents: mappedHostList(hostList, filteredDataHost),
       deviceComponents: mappedDeviceList(
         DeviceList,
@@ -237,7 +237,7 @@ const BoxTopology = ({onClusterChange}) => {
       ),
     },
     {
-      title: "Chessis4",
+      title: "Chassis4",
       hostComponents: mappedHostList(hostList, hostActiveList),
       deviceComponents: mappedDeviceList(
         DeviceList,
@@ -246,7 +246,7 @@ const BoxTopology = ({onClusterChange}) => {
       ),
     },
     {
-      title: "Chessis5",
+      title: "Chassis5",
       hostComponents: mappedHostList(hostList, hostActiveList),
       deviceComponents: mappedDeviceList(
         DeviceList,
@@ -255,7 +255,7 @@ const BoxTopology = ({onClusterChange}) => {
       ),
     },
     {
-      title: "Chessis6",
+      title: "Chassis6",
       hostComponents: mappedHostList(hostList, hostActiveList),
       deviceComponents: mappedDeviceList(
         DeviceList,
@@ -464,7 +464,7 @@ const BoxTopology = ({onClusterChange}) => {
                   <span
                     className={`toggle-text right ${selectedOption === "CMM-B" ? "visible" : "hidden"}`}
                   >
-                    Chessis
+                    Chassis
                   </span>
                 </label>
               </div>{" "}

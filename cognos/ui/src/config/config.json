@@ -5,6 +5,7 @@
     "exporter_endpoint": "127.0.0.1:4001",
     "rbac_endpoint": "http://127.0.0.1:6720",
     "ssl": false,
+    "download_only_mode": false,
     "clusterPolicy": "roundRobin", 
     "policyOptions": {
       "roundRobin": {

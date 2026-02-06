@@ -126,7 +126,7 @@ describe('BoxTopology Component', () => {
     test('renders CMM titles', () => {
       const onClusterChange = jest.fn();
       render(<BoxTopology onClusterChange={onClusterChange}/>);
-      expect(screen.getByText('Chessis1')).toBeInTheDocument();
+      expect(screen.getByText('Chassis1')).toBeInTheDocument();
     });
   });
 
@@ -208,8 +208,8 @@ describe('BoxTopology Component', () => {
       fireEvent.click(nextButton);
 
       // Check if the active CMM changed
-      const chessis2 = screen.getByText('Chessis2');
-      expect(chessis2).toHaveClass('active');
+      const Chassis2 = screen.getByText('Chassis2');
+      expect(Chassis2).toHaveClass('active');
     });
 
     test('navigates to previous CMM when prev button is clicked', () => {
@@ -219,17 +219,17 @@ describe('BoxTopology Component', () => {
       fireEvent.click(prevButton);
 
       // Should wrap around to last CMM
-      const chessis6 = screen.getByText('Chessis6');
-      expect(chessis6).toHaveClass('active');
+      const Chassis6 = screen.getByText('Chassis6');
+      expect(Chassis6).toHaveClass('active');
     });
 
     test('navigates to specific CMM when title is clicked', () => {
       const onClusterChange = jest.fn();
       render(<BoxTopology onClusterChange={onClusterChange}/>);
-      const chessis3 = screen.getByText('Chessis3');
-      fireEvent.click(chessis3);
+      const Chassis3 = screen.getByText('Chassis3');
+      fireEvent.click(Chassis3);
 
-      expect(chessis3).toHaveClass('active');
+      expect(Chassis3).toHaveClass('active');
     });
 
     test('cycles through all CMMs', () => {
@@ -243,8 +243,8 @@ describe('BoxTopology Component', () => {
       }
 
       // Should be back at first CMM
-      const chessis1 = screen.getByText('Chessis1');
-      expect(chessis1).toHaveClass('active');
+      const Chassis1 = screen.getByText('Chassis1');
+      expect(Chassis1).toHaveClass('active');
     });
   });
 
@@ -365,11 +365,11 @@ describe('BoxTopology Component', () => {
       const onClusterChange = jest.fn();
       const { rerender } = render(<BoxTopology onClusterChange={onClusterChange}/>);
 
-      const initialRenderCount = screen.getAllByText(/Chessis/).length;
+      const initialRenderCount = screen.getAllByText(/Chassis/).length;
 
       rerender(<BoxTopology onClusterChange={onClusterChange}/>);
 
-      const afterRerenderCount = screen.getAllByText(/Chessis/).length;
+      const afterRerenderCount = screen.getAllByText(/Chassis/).length;
       expect(initialRenderCount).toBe(afterRerenderCount);
     });
 
