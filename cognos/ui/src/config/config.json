@@ -2,7 +2,6 @@
     "mgmt_endpoint": "http://<frontend_ip>:<frontend_port>",
     "data_endpoint": "http://127.0.0.1:4000",
     "api_endpoint": "http://127.0.0.1:4000/api/v2.0.1",
-    "exporter_endpoint": "127.0.0.1:4001",
     "rbac_endpoint": "http://127.0.0.1:6720",
     "ssl": false,
     "download_only_mode": false,

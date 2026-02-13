@@ -15,7 +15,7 @@ install_build_deps() {
         gnupg
         pip
         python3
-        python3-virtualenv
+        python3-venv
         unzip
         wget
     )

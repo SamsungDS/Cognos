@@ -134,20 +134,26 @@ build_rpm() {
     local RPMBUILD_DIR="$BUILD_DIR/rpmbuild"
 
     # Replace '-' with '_' in version string, in case current commit is not an exact tag
-    local RPM_VERSION=${GIT_VERSION//-/_}
+    local RPM_VERSION="$GIT_VERSION"
+    RPM_VERSION="${RPM_VERSION//-/_}"
+    RPM_VERSION="${RPM_VERSION/./.}"
+    # shellcheck disable=SC2001
+    RPM_VERSION="$(echo "$RPM_VERSION" | sed 's/\./_/2g')"
+
 
     # Only build RPM on supported OS
-    if [[ "$ID" == "rocky" ]]; then
+    if [[ "$ID" == "rocky" || "${ID}" == "ol" ]]; then
         # Prepare RPMBUILD directories - inside our build directory
         rm -rf "$BUILD_DIR"
-        mkdir --verbose --parents "$RPMBUILD_DIR"/{BUILD,RPMS,SPECS}
+        mkdir --verbose --parents "$RPMBUILD_DIR"/{BUILD,RPMS,SOURCES,SPECS}
 
         # Build RPM
         echo "Building $SPECFILE RPM..."
         rpmbuild -bb --clean "$SCRIPT_DIR"/packaging/rpm/"$SPECFILE" \
             --define "_topdir $RPMBUILD_DIR" \
             --define "svk_rpm_version $RPM_VERSION" \
-            --define "svk_os_version $ID$VERSION_ID"
+            --define "svk_os_version $ID$VERSION_ID" \
+            --define "_projectdir $PROJECT_ROOT"
 
         # Move RPMs to artifacts dir
         move_artifacts "$RPMBUILD_DIR/RPMS/$(rpm --eval '%{_arch}')" rpm

@@ -128,24 +128,6 @@ check_app_process() {
     fi
 }
 
-# Check if exporter.py is running
-check_exporter_process() {
-    local service_name="$1"
-    if systemctl is-active --quiet "$service_name"; then
-        echo "exporter.py process $service_name is active (running)."
-    else
-        echo "exporter.py process $service_name is not active."
-
-        # Debugging: Print systemctl status output
-        echo "Detailed systemctl status output:"
-        systemctl status "$service_name"
-
-        # Debugging: Check the result of is-active command
-        local status_check=""
-        status_check=$(systemctl is-active "$service_name")
-        echo "Output of systemctl is-active: $status_check"
-    fi
-}
 
 # Check if UI is running
 check_ui_process() {
@@ -224,10 +206,9 @@ elif [[ "$IP_ADDRESS" == "105.128.44.84" ]]; then
   # Run the Influex DB checks
   check_influxdb_service "influxdb"
  
-  # Run checks for cognos-ui and cognos-app cognos-subscribe cognos-exporter
+  # Run checks for cognos-ui and cognos-app cognos-subscriber
   check_ui_process "cognos-ui"
   check_subscriber_process "cognos-subscriber"
-  check_exporter_process "cognos-exporter"
   check_app_process "cognos-app"
 
   # List of API endpoints to test

@@ -1,7 +1,8 @@
 [Unit]
 Description=Cognos Subscriber
-After=influxdb.service network.target cognos-app.service
-Requires=cognos-app.service
+Wants=network-online.target
+After=influxdb.service network-online.target cognos-app.service
+Requires=svk-svc-mgr
 
 [Service]
 SyslogIdentifier=Cognos Subscriber

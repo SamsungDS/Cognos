@@ -45,10 +45,7 @@ ExecStartPre=/usr/bin/docker run -d \
 ExecStartPre=/bin/sleep 20
 
 # Build RBAC Docker image
-ExecStartPre=/usr/bin/docker build \
-  -t rbac-container:latest \
-  -f /usr/local/svk/svk-app/cognos/rbac/Dockerfile \
-  /usr/local/svk/svk-app/cognos/rbac
+ExecStartPre=/usr/local/svk/svk-app/cognos/rbac/rbac-docker-build-by-os.sh
 
 # Start RBAC container in FOREGROUND (no -d flag, add --rm)
 ExecStart=/usr/bin/docker run --rm \

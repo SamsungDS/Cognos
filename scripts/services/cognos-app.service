@@ -1,6 +1,8 @@
 [Unit]
 Description=Cognos Management Abstraction Layer
-After=mysql.service network.target
+Wants=network-online.target
+After=network-online.target
+Requires=svk-controller svk-restserver
 
 [Service]
 SyslogIdentifier=Cognos Abstraction Layer

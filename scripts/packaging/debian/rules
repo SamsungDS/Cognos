@@ -61,7 +61,8 @@ override_dh_auto_install:
 	mkdir -p $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/etc
 	mkdir -p $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/ssl
 	mkdir -p $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/lib
-	cp $(CURDIR)/../cognos/rbac/Dockerfile $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/
+	cp $(CURDIR)/../cognos/rbac/rbac-docker-build-by-os.sh $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/
+	cp $(CURDIR)/../cognos/rbac/ubuntu_Dockerfile $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/
 	cp $(CURDIR)/../cognos/rbac/docker-config.env $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/
 	cp $(CURDIR)/../cognos/rbac/docker-env-setup.sh $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/
 	cp $(CURDIR)/../cognos/rbac/ecosystem.config.js $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/
@@ -73,6 +74,8 @@ override_dh_auto_install:
 	cp $(CURDIR)/../cognos/rbac/core/etc/version.txt $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/etc/
 	cp $(CURDIR)/../cognos/rbac/core/etc/rbac_*.json $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/etc/
 	cp -r $(CURDIR)/../cognos/rbac/core/lib/licensing $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/lib/
+
+
 
 	# copying Telegraf files
 	mkdir -p -v $(CURDIR)/$(INSTALL_PATH)/cognos/telegraf/
