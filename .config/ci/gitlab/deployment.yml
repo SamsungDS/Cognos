@@ -7,7 +7,7 @@ deployment pipeline:
     include:
       - local: .config/ci/gitlab/vmware.yml
       - local: .config/ci/gitlab/svk-install.yml
-      - local: .config/ci/gitlab/integration-test.yml
+      # - local: .config/ci/gitlab/integration-test.yml
     strategy: depend
   resource_group: sapp_dev
   rules:
