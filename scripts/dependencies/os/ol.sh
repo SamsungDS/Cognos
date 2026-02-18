@@ -17,6 +17,7 @@ install_packages() {
 
     BUILD_DEPS=("'dnf-command(config-manager)'")
     package_manager
+    dnf config-manager --set-enabled "ol${MAJOR_VER}_codeready_builder"
 
     # Project build dependencies
     # shellcheck disable=SC2034

@@ -38,6 +38,16 @@ dnf install epel-release -y
 dnf install svk-ras svk-ras-devel -y
 ```
 
+### Oracle Linux
+
+```bash
+source /etc/os-release
+MAJOR_VER="${VERSION_ID%%.*}"
+curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
+dnf install oracle-epel-release-el${MAJOR_VER} -y
+dnf install svk-ras svk-ras-devel -y
+```
+
 ## Build & Installation
 
 ### Build Dependencies
