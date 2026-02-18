@@ -15,7 +15,7 @@ install_packages() {
     # Add CRB if required
     BUILD_DEPS=("'dnf-command(config-manager)'")
     package_manager
-    dnf config-manager --enable ol10_codeready_builder
+    dnf config-manager --enable ol"${MAJOR_VER}"_codeready_builder
 
     # Project build dependencies
     BUILD_DEPS=(
