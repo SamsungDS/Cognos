@@ -49,8 +49,8 @@ struct Config {
 const std::string mock_adapter_default_config = R"(
 {
   "grep_CXL": "cat /proc/iomem|grep CXL",
-  "grep_acpi_srat": "cat /var/log/dmesg|grep -i acpi|grep -i srat",
-  "grep_numa_nodes": "cat /var/log/dmesg|grep -i acpi|grep -i srat|grep -oP '(?<=Node).* (?=PXM)'|uniq",
+  "grep_acpi_srat": "journalctl -k|grep -i acpi|grep -i srat",
+  "grep_numa_nodes": "journalctl -k|grep -i acpi|grep -i srat|grep -oP '(?<=Node).* (?=PXM)'|uniq",
   "regex_iomem": "^[\\s]*[0-9a-z]+-[0-9a-z]+[\\s]*:[\\s]*CXL[\\s]*Window[\\s]*[0-9]+$",
   "regex_addr_range": ".*mem[\\s]*([0-9a-z]+-[0-9a-z]+).*",
   "mce_inject_template_string": "CPU {cpu} BANK 1\nSTATUS CORRECTED\nADDR {addr}\n",
@@ -164,7 +164,7 @@ int get_numa_node_address_range(const int &node_index, const bool cxl_node,
   return ret;
 }
 
-// Use kernel log (/var/log/dmesg) to get all the registered NUMA nodes
+// Use kernel log (journalctl) to get all the registered NUMA nodes
 int get_numa_nodes(Response &out) {
   int ret = 0;
 

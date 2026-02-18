@@ -439,7 +439,7 @@ int get_numa_node_address_range(const int &node_index, const bool cxl_node,
   stack<string> st;
 
   // Find the appropriate CXL device entry from /proc/iomem (if any) for the
-  // NUMA node using the memory address range mentioned in /var/log/dmesg. The
+  // NUMA node using the memory address range mentioned in journalctl -k. The
   // memory address range mentioned in dmesg output for the concerned NUMA node
   // will be a subset of the range mentioned in /proc/iomem entry for the found
   // CXL device entry.
@@ -509,7 +509,7 @@ int get_numa_node_address_range(const int &node_index, const bool cxl_node,
     if (ret != 0) {
       ras_log(LOG_DEBUG,
               "Cannot find physical address in ACPI:SRAT entries of "
-              "/var/log/dmesg with the CXL node in /proc/iomem output");
+              "journalctl -k with the CXL node in /proc/iomem output");
       return ret;
     }
   }
@@ -534,7 +534,7 @@ int verify_numa_node_addr(const int &node_index, const bool cxl_node,
     stringstream ss(res);
 
     // Verify if the address provided is valid in the range specified in
-    // the `cat /proc/iomem` output or from the /var/log/dmesg output
+    // the `cat /proc/iomem` output or from the journalctl -k output
     while (getline(ss, tok, '-')) {
       if (low.empty()) {
         low = tok;

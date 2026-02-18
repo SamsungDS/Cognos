@@ -2,7 +2,7 @@ Name:           svk-ras
 Version:        %svk_rpm_version
 Release:        1%{?dist}.%svk_os_version
 Summary:        SVK RAS feature
-Requires:       svk-core, libtraceevent, perl-DBD-SQLite
+Requires:       svk-core, libtraceevent, perl-DBD-SQLite, mce-inject, perl-File-Find
 License:        Samsung Internal
 
 %global svk_install_dir %_prefix/local/svk/feature_modules/ras
@@ -47,6 +47,8 @@ echo "%svk_install_dir/%_lib" > %_sysconfdir/%svk_ras_ldconf
 %__chmod a+r %_sysconfdir/%svk_ras_ldconf
 %_sbindir/ldconfig
 
+# Create directory for rasdaemon sqlite db
+mkdir -p /usr/local/var/lib/rasdaemon
 
 # Add mce_inject kernel module to load across reboots
 mkdir -p /usr/lib/modules-load.d
@@ -57,7 +59,7 @@ mce_inject
 EOF
 
 # Load the mce_inject module as one-time call
-lsmod|grep mce || modprobe mce_inject
+lsmod|grep mce_inject || modprobe mce_inject
 
 %preun
 # pre-uninstall commands go here
