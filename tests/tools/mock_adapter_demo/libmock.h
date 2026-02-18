@@ -151,7 +151,7 @@ long get_file_size(string filename);
 // output
 string find_address_range_from_rasmcctl(string& dev, string& type);
 
-// Get the numa nodes using kernel log (/var/log/dmesg)
+// Get the numa nodes using kernel log (journalctl -k)
 int get_numa_nodes(Response& res);
 
 #endif

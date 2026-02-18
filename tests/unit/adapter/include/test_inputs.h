@@ -59,7 +59,7 @@ const char* ras_err =
 const char* badconfig_json = R"(
 {
   "grep_CXL": "cat /proc/iomem|grep CXL",
-  "grep_acpi_srat": "[ -f /var/log/dmesg ] && cat /var/log/dmesg || [ -x dmesg ] && dmesg|grep -i acpi|grep -i srat",
+  "grep_acpi_srat": "[ -x journalctl ] && journalctl -k || [ -x dmesg ] && dmesg|grep -i acpi|grep -i srat",
   "regex_iomem" "^[\\s]*[0-9a-z]+-[0-9a-z]+[\\s]*:[\\s]*CXL[\\s]*Window[\\s]*[0-9]+$",
   "regex_addr_range": ".*mem[\\s]*([0-9a-z]+-[0-9a-z]+).*",
   "mce_inject_template_string": "CPU {cpu} BANK 1\nSTATUS CORRECTED\nADDR {addr}\n",
@@ -76,8 +76,8 @@ unsigned int config0_json_len = 0;
 const char config_json[] = R"(
 {
   "grep_CXL": "cat /proc/iomem|grep CXL",
-  "grep_acpi_srat": "cat /var/log/dmesg|grep -i acpi|grep -i srat",
-  "grep_numa_nodes": "cat /var/log/dmesg|grep -i acpi|grep -i srat|grep -oP '(?<=Node).* (?=PXM)'|uniq",
+  "grep_acpi_srat": "journalctl -k|grep -i acpi|grep -i srat",
+  "grep_numa_nodes": "journalctl -k|grep -i acpi|grep -i srat|grep -oP '(?<=Node).* (?=PXM)'|uniq",
   "regex_iomem": "^[\\s]*[0-9a-z]+-[0-9a-z]+[\\s]*:[\\s]*CXL[\\s]*Window[\\s]*[0-9]+$",
   "regex_addr_range": ".*mem[\\s]*([0-9a-z]+-[0-9a-z]+).*",
   "mce_inject_template_string": "CPU {cpu} BANK 1\nSTATUS CORRECTED\nADDR {addr}\n",
@@ -89,8 +89,8 @@ const char config_json[] = R"(
 // Input from a Json file that lacks the entry for "grep_CXL" key
 const char config1_json[] = R"(
 {
-  "grep_acpi_srat": "cat /var/log/dmesg|grep -i acpi|grep -i srat",
-  "grep_numa_nodes": "cat /var/log/dmesg|grep -i acpi|grep -i srat|grep -oP '(?<=Node).* (?=PXM)'|uniq",
+  "grep_acpi_srat": "journalctl -k|grep -i acpi|grep -i srat",
+  "grep_numa_nodes": "journalctl -k|grep -i acpi|grep -i srat|grep -oP '(?<=Node).* (?=PXM)'|uniq",
   "regex_iomem": "^[\\s]*[0-9a-z]+-[0-9a-z]+[\\s]*:[\\s]*CXL[\\s]*Window[\\s]*[0-9]+$",
   "regex_addr_range": ".*mem[\\s]*([0-9a-z]+-[0-9a-z]+).*",
   "mce_inject_template_string": "CPU {cpu} BANK 1\nSTATUS CORRECTED\nADDR {addr}\n",
@@ -103,7 +103,7 @@ const char config1_json[] = R"(
 const char config2_json[] = R"(
 {
   "grep_CXL": "cat /proc/iomem|grep CXL",
-  "grep_numa_nodes": "cat /var/log/dmesg|grep -i acpi|grep -i srat|grep -oP '(?<=Node).* (?=PXM)'|uniq",
+  "grep_numa_nodes": "journalctl -k|grep -i acpi|grep -i srat|grep -oP '(?<=Node).* (?=PXM)'|uniq",
   "regex_iomem": "^[\\s]*[0-9a-z]+-[0-9a-z]+[\\s]*:[\\s]*CXL[\\s]*Window[\\s]*[0-9]+$",
   "regex_addr_range": ".*mem[\\s]*([0-9a-z]+-[0-9a-z]+).*",
   "mce_inject_template_string": "CPU {cpu} BANK 1\nSTATUS CORRECTED\nADDR {addr}\n",
@@ -116,8 +116,8 @@ const char config2_json[] = R"(
 const char config3_json[] = R"(
 {
   "grep_CXL": "cat /proc/iomem|grep CXL",
-  "grep_acpi_srat": "cat /var/log/dmesg|grep -i acpi|grep -i srat",
-  "grep_numa_nodes": "cat /var/log/dmesg|grep -i acpi|grep -i srat|grep -oP '(?<=Node).* (?=PXM)'|uniq",
+  "grep_acpi_srat": "journalctl -k|grep -i acpi|grep -i srat",
+  "grep_numa_nodes": "journalctl -k|grep -i acpi|grep -i srat|grep -oP '(?<=Node).* (?=PXM)'|uniq",
   "regex_addr_range": ".*mem[\\s]*([0-9a-z]+-[0-9a-z]+).*",
   "mce_inject_template_string": "CPU {cpu} BANK 1\nSTATUS CORRECTED\nADDR {addr}\n",
   "rasdaemon_exec_command": "rasdaemon -f -r /dev/null 2>&1 > ",
@@ -129,8 +129,8 @@ const char config3_json[] = R"(
 const char config4_json[] = R"(
 {
   "grep_CXL": "cat /proc/iomem|grep CXL",
-  "grep_acpi_srat": "cat /var/log/dmesg|grep -i acpi|grep -i srat",
-  "grep_numa_nodes": "cat /var/log/dmesg|grep -i acpi|grep -i srat|grep -oP '(?<=Node).* (?=PXM)'|uniq",
+  "grep_acpi_srat": "journalctl -k|grep -i acpi|grep -i srat",
+  "grep_numa_nodes": "journalctl -k|grep -i acpi|grep -i srat|grep -oP '(?<=Node).* (?=PXM)'|uniq",
   "regex_iomem": "^[\\s]*[0-9a-z]+-[0-9a-z]+[\\s]*:[\\s]*CXL[\\s]*Window[\\s]*[0-9]+$",
   "mce_inject_template_string": "CPU {cpu} BANK 1\nSTATUS CORRECTED\nADDR {addr}\n",
   "rasdaemon_exec_command": "rasdaemon -f -r /dev/null 2>&1 > ",
@@ -142,8 +142,8 @@ const char config4_json[] = R"(
 const char config5_json[] = R"(
 {
   "grep_CXL": "cat /proc/iomem|grep CXL",
-  "grep_acpi_srat": "cat /var/log/dmesg|grep -i acpi|grep -i srat",
-  "grep_numa_nodes": "cat /var/log/dmesg|grep -i acpi|grep -i srat|grep -oP '(?<=Node).* (?=PXM)'|uniq",
+  "grep_acpi_srat": "journalctl -k|grep -i acpi|grep -i srat",
+  "grep_numa_nodes": "journalctl -k|grep -i acpi|grep -i srat|grep -oP '(?<=Node).* (?=PXM)'|uniq",
   "regex_iomem": "^[\\s]*[0-9a-z]+-[0-9a-z]+[\\s]*:[\\s]*CXL[\\s]*Window[\\s]*[0-9]+$",
   "regex_addr_range": ".*mem[\\s]*([0-9a-z]+-[0-9a-z]+).*",
   "mce_inject_template_string": "CPU {cpu} BANK 1\nSTATUS CORRECTED\nADDR {addr}\n",
@@ -156,8 +156,8 @@ const char config5_json[] = R"(
 unsigned char config6_json[] = R"(
 {
   "grep_CXL": "cat /proc/iomem|grep CXL",
-  "grep_acpi_srat": "cat /var/log/dmesg|grep -i acpi|grep -i srat",
-  "grep_numa_nodes": "cat /var/log/dmesg|grep -i acpi|grep -i srat|grep -oP '(?<=Node).* (?=PXM)'|uniq",
+  "grep_acpi_srat": "journalctl -k|grep -i acpi|grep -i srat",
+  "grep_numa_nodes": "journalctl -k|grep -i acpi|grep -i srat|grep -oP '(?<=Node).* (?=PXM)'|uniq",
   "regex_iomem": "^[\\s]*[0-9a-z]+-[0-9a-z]+[\\s]*:[\\s]*CXL[\\s]*Window[\\s]*[0-9]+$",
   "regex_addr_range": ".*mem[\\s]*([0-9a-z]+-[0-9a-z]+).*",
   "mce_inject_template_string": "CPU {cpu} BANK 1\nSTATUS CORRECTED\nADDR {addr}\n",
@@ -170,7 +170,7 @@ unsigned char config6_json[] = R"(
 unsigned char config7_json[] = R"(
 {
   "grep_CXL": "cat /proc/iomem|grep CXL",
-  "grep_acpi_srat": "cat /var/log/dmesg|grep -i acpi|grep -i srat",
+  "grep_acpi_srat": "journalctl -k|grep -i acpi|grep -i srat",
   "regex_iomem": "^[\\s]*[0-9a-z]+-[0-9a-z]+[\\s]*:[\\s]*CXL[\\s]*Window[\\s]*[0-9]+$",
   "regex_addr_range": ".*mem[\\s]*([0-9a-z]+-[0-9a-z]+).*",
   "mce_inject_template_string": "CPU {cpu} BANK 1\nSTATUS CORRECTED\nADDR {addr}\n",

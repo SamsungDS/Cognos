@@ -397,7 +397,7 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForValidCommand) {
   Document document;
   document.Parse(res.c_str());
   // In a properly set up host that includes
-  // 1) NUMA node entries are recorded in kernel logs ( e.g //var/log/dmesg
+  // 1) NUMA node entries are recorded in kernel logs ( e.g journalctl -k
   // 2) cat /proc/iomem has the due CXL device address allocations
   // the
   // document["result"]["commandSuccessful"]
@@ -419,7 +419,7 @@ TEST_F(LibMockTest, ReturnNonZeroHealthStatusForValidCommand) {
   document.Parse(res.c_str());
   if (RAS_UT_INSIDE_CONTAINER) {
     // In a properly set up host that includes
-    // 1) NUMA node entries are recorded in kernel logs ( e.g //var/log/dmesg
+    // 1) NUMA node entries are recorded in kernel logs ( e.g journalctl -k
     // 2) cat /proc/iomem has the due CXL device address allocations
     // the
     // document["result"]["commandSuccessful"]
@@ -469,7 +469,7 @@ TEST_F(LibMockTest, ReturnNonZeroStatusForInvalidDeviceString) {
   document.Parse(res.c_str());
   if (RAS_UT_INSIDE_CONTAINER) {
     // In a properly set up host that includes
-    // 1) NUMA node entries are recorded in kernel logs ( e.g //var/log/dmesg
+    // 1) NUMA node entries are recorded in kernel logs ( e.g journalctl -k
     // 2) cat /proc/iomem has the due CXL device address allocations
     // the
     // document["command_response"]["getErrorCount"]["result"]["commandSuccessful"]
@@ -492,7 +492,7 @@ TEST_F(LibMockTest, ReturnNonZeroHealthStatusForInvalidDeviceString) {
   document.Parse(res.c_str());
   if (RAS_UT_INSIDE_CONTAINER) {
     // In a properly set up host that includes
-    // 1) NUMA node entries are recorded in kernel logs ( e.g //var/log/dmesg
+    // 1) NUMA node entries are recorded in kernel logs ( e.g journalctl -k
     // 2) cat /proc/iomem has the due CXL device address allocations
     // the
     // document["command_response"]["getErrorCount"]["result"]["commandSuccessful"]
@@ -602,7 +602,7 @@ TEST_F(LibMockTest, ReturnEmptyget_numa_nodes) {
   EXPECT_EQ(ret, 0);
   if (RAS_UT_INSIDE_CONTAINER) {
     // In a properly set up host that includes
-    // 1) NUMA node entries are recorded in kernel logs ( e.g /var/log/dmesg
+    // 1) NUMA node entries are recorded in kernel logs ( e.g journalctl -k
     // 2) cat /proc/iomem has the due CXL device address allocations
     // the res.return_value will have the NUMA node entries. In the build
     // image VMs the above conditions are not satisfied and hence the
@@ -619,7 +619,7 @@ TEST_F(LibMockTest, ReturnEmptygetDeviceList) {
   EXPECT_EQ(ret, 0);
   if (RAS_UT_INSIDE_CONTAINER) {
     // In a properly set up host that includes
-    // 1) NUMA node entries are recorded in kernel logs ( e.g /var/log/dmesg
+    // 1) NUMA node entries are recorded in kernel logs ( e.g journalctl -k
     // 2) cat /proc/iomem has the due CXL device address allocations
     // the res.return_value will have the NUMA node entries. In the build
     // image VMs the above conditions are not satisfied and hence the
