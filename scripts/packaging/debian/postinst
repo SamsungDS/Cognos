@@ -13,4 +13,4 @@ mce_inject
 EOF
 
 # Load the mce inject as one time
-lsmod|grep mce || modprobe mce_inject
+lsmod|grep mce_inject || modprobe mce_inject

@@ -22,6 +22,7 @@ release build:
   parallel:
     matrix:
       - DOCKERFILE_NAME: rocky9
+      - DOCKERFILE_NAME: ol9
       - DOCKERFILE_NAME: ol10
       - DOCKERFILE_NAME: ubuntu22
       - DOCKERFILE_NAME: ubuntu24
