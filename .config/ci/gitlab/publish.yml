@@ -7,7 +7,7 @@ publish release artifacts - Gitlab:
     # Get the latest tagged version
     - export VERSION=$(git describe --abbrev=4 --always --tags)
     - echo "Tagged Version - $VERSION"
-    # publish artifacts to Gitlab 
+    # publish artifacts to Gitlab
     - |
       find ./$ARTIFACTS_DIR/ -type f \( -name "*.tgz" -o -name "*.rpm" -o -name "*.deb" \) -exec sh -c \
       ' \
@@ -29,7 +29,7 @@ publish release artifacts - Gitlab:
 publish release artifacts - Nexus:
   extends: publish release artifacts - Gitlab
   script:
-    # publish RPMs to Nexus 
+    # publish RPMs to Nexus
     - |
       find ./$ARTIFACTS_DIR/$OS/ -type f -name "*.rpm" -exec sh -c \
         ' \
@@ -65,3 +65,4 @@ publish release artifacts - Nexus:
       - OS: rocky9
       - OS: ubuntu22
       - OS: ubuntu24
+      - OS: ol10
