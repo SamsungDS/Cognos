@@ -16,7 +16,6 @@ install_build_deps() {
     package_manager
     dnf config-manager --set-enabled "ol${MAJOR_VER}_codeready_builder"
 
-    package_manager
     BUILD_DEPS=(
         'boost-devel'
         'cmake'
