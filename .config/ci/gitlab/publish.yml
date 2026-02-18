@@ -65,4 +65,5 @@ publish release artifacts - Nexus:
     matrix:
       - OS: rocky9
       - OS: ubuntu22
+      - OS: ol9
       - OS: ol10

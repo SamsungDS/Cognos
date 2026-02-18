@@ -61,6 +61,18 @@ apt-get install svk-mgmt-fw -y
 # Optional - install devel package
 apt-get install svk-mgmt-fw-dev -y
 ```
+### Oracle Linux
+
+```bash
+source /etc/os-release
+MAJOR_VER="${VERSION_ID%%.*}"
+curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
+dnf install oracle-epel-release-el${MAJOR_VER} -y
+dnf install svk-core svk-core-devel -y
+dnf install svk-mgmt-fw -y
+# Optional - install devel package
+dnf install svk-mgmt-fw-devel -y
+```
 
 ### Get the Sources
 

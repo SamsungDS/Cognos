@@ -8,7 +8,8 @@ Release:        1%{?dist}.%svk_os_version
 Summary:        SVK CXL Plugin
 License:        Samsung Internal
 BuildRequires:  jansson
-Requires:       svk-core, svk-mgmt-fw, jansson
+Requires:       svk-core, svk-mgmt-fw, jansson, pciutils >= 3.10.0, dstat
+Provides:	libmbox_a1_shared.so()(64bit)
 
 %package devel
 Summary:        SVK CXL devel package contains headers
