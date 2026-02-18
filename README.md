@@ -27,7 +27,7 @@ Enable the SSG Nexus repo for your distro, then install the `svk-slat` packages 
 wget --quiet --output-document /usr/share/keyrings/ssg-nexus.pgp  http://ssg-nexus.msl.lab:8081/repository/svk_common/public.pgp
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ssg-nexus.pgp] http://ssg-nexus.msl.lab:8081/repository/svk_apt_$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}") $(. /etc/os-release && echo $UBUNTU_CODENAME) main" > /etc/apt/sources.list.d/ssg-nexus.list
 apt update
-apt-get install svk-slat svk-slat-dev -y
+apt-get install svk-slat -y
 
 ```
 
@@ -36,15 +36,17 @@ apt-get install svk-slat svk-slat-dev -y
 ```bash
 curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
 dnf install epel-release -y
-dnf install svk-slat svk-slat-devel -y
+dnf install svk-slat -y
 ```
 
 ### Oracle Linux Installation
 
 ```bash
+source /etc/os-release
+MAJOR_VER="${VERSION_ID%%.*}"
 curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
-dnf install oracle-epel-release-el10 -y
-dnf install svk-slat svk-slat-devel -y
+dnf install oracle-epel-release-el${MAJOR_VER} -y
+dnf install svk-slat -y
 ```
 
 ## Build & Installation

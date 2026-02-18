@@ -31,6 +31,7 @@ unit test:
       - DOCKERFILE_NAME: rocky9
       - DOCKERFILE_NAME: ubuntu22
       - DOCKERFILE_NAME: ubuntu24
+      - DOCKERFILE_NAME: ol9
       - DOCKERFILE_NAME: ol10
   tags:
     - svk-slat
