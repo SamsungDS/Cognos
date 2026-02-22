@@ -786,6 +786,56 @@ TEST(InitIntegrationTest, InitControllerNodeServerWithSignal) {
                                 "Updated node localhost's status to offline"));
 }
 
+int CheckPollerForSIGSEGV() {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  std::thread server_thr(StartServer, conf_file, true);
+  std::thread node_thr(StartNodeServer, conf_file, true);
+  // Sleep for a while for the server processes to stablize
+  sleep(5);
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+             "InitControllerNodeServerWithFatalSignal in CheckPoller");
+
+  // Raise the interrupt signal for the server to go down gracefully
+  std::thread::id node_thread_id = node_thr.get_id();
+  std::thread::id ctrlr_thread_id = server_thr.get_id();
+
+  auto node_native_handle =
+      *reinterpret_cast<std::thread::native_handle_type *>(&node_thread_id);
+  auto ctrlr_native_handle =
+      *reinterpret_cast<std::thread::native_handle_type *>(&ctrlr_thread_id);
+
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+             "Before sending the signal - CheckPollerForSIGSEGV");
+  pthread_kill(ctrlr_native_handle, SIGSEGV);
+
+  pthread_kill(node_native_handle, SIGABRT);
+  // Wait for > 5 seconds for the signal handler to be processed on the server
+  // node
+  sleep(2);
+
+  unlink(conf_file.c_str());
+  return 0;
+}
+
+TEST(InitIntegrationTest, InitControllerNodeServerWithFatalSignal) {
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  EXPECT_DEATH(CheckPollerForSIGSEGV(), "");
+  EXPECT_EQ(true,
+            is_str_in_log(
+                CONTROLLER_NODE_DEFAULT_LOG_FILE,
+                "Fatal signal to Controller received. Aborting the service"));
+  EXPECT_EQ(true,
+            is_str_in_log(
+                MGMT_FW_NODE_DEFAULT_LOG_FILE,
+                "Fatal signal to Node Server received. Aborting the service"));
+}
+
 int CheckNodeStatus() {
   char *cw_dir = get_current_dir_name();
   std::string conf_file = std::string(cw_dir) + "/conf.json";

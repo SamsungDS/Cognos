@@ -867,7 +867,7 @@ TEST_F(GRPCServer, ProcessSampleCommandWithFailure) {
   std::cout << "OUTPUT UT: " << status.error_message() << std::endl;
 }
 
-int KillProcess() {
+int KillProcess(int signal) {
   char *cw_dir = get_current_dir_name();
   std::string features_dir = FEATURES_DIR;
 
@@ -881,7 +881,7 @@ int KillProcess() {
   svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
              "sending the signal to kill the process");
   // Raise the interrupt signal for the server to go down gracefully
-  std::raise(SIGINT);
+  std::raise(signal);
   // Wait for > 5 seconds for the signal handler to be processed on the server
   // node
   sleep(7);
@@ -889,9 +889,9 @@ int KillProcess() {
   return 0;
 }
 
-TEST(InitTest, InitNodeServerWithSignal) {
+TEST(InitTest, InitNodeServerWithSignalSIGINT) {
   GTEST_FLAG_SET(death_test_style, "threadsafe");
-  EXPECT_DEATH(KillProcess(), "");
+  EXPECT_DEATH(KillProcess(SIGINT), "");
   sleep(5);
   std::ifstream file(MGMT_FW_NODE_DEFAULT_LOG_FILE);
   std::string data((std::istreambuf_iterator<char>(file)),
@@ -900,6 +900,57 @@ TEST(InitTest, InitNodeServerWithSignal) {
   EXPECT_EQ(true, data.find("Received signal 2") != std::string::npos);
   EXPECT_EQ(true,
             data.find("gRPC Node server is shutdown") != std::string::npos);
+  unlink(MGMT_FW_NODE_DEFAULT_LOG_FILE);
+}
+
+TEST(InitTest, InitNodeServerWithSignalSIGSEGV) {
+  char *cw_dir = get_current_dir_name();
+  std::string features_dir = FEATURES_DIR;
+
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(conf_file, conf_file, "rotating_file", 10,
+                               1048576, "INFO", features_dir);
+
+  Servicer *svcr(new Servicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+  signal_node_handler(SIGSEGV);
+  sleep(1);
+  std::ifstream file(MGMT_FW_NODE_DEFAULT_LOG_FILE);
+  std::string data((std::istreambuf_iterator<char>(file)),
+                   (std::istreambuf_iterator<char>()));
+  file.close();
+  EXPECT_EQ(true, data.find("Received signal 11") != std::string::npos);
+  EXPECT_EQ(
+      true,
+      data.find("Fatal signal to Node Server received. Aborting the service") !=
+          std::string::npos);
+  std::cout << "LOG FILE DURING ABORT - " << data << std::endl;
+  unlink(MGMT_FW_NODE_DEFAULT_LOG_FILE);
+}
+
+TEST(InitTest, InitNodeServerWithSignalSIGABRT) {
+  char *cw_dir = get_current_dir_name();
+  std::string features_dir = FEATURES_DIR;
+
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(conf_file, conf_file, "rotating_file", 10,
+                               1048576, "INFO", features_dir);
+
+  Servicer *svcr(new Servicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+  signal_node_handler(SIGABRT);
+  sleep(1);
+  std::ifstream file(MGMT_FW_NODE_DEFAULT_LOG_FILE);
+  std::string data((std::istreambuf_iterator<char>(file)),
+                   (std::istreambuf_iterator<char>()));
+  file.close();
+  EXPECT_EQ(true, data.find("Received signal 6") != std::string::npos);
+  EXPECT_EQ(
+      true,
+      data.find("Fatal signal to Node Server received. Aborting the service") !=
+          std::string::npos);
   unlink(MGMT_FW_NODE_DEFAULT_LOG_FILE);
 }
 
