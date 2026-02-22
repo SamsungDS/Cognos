@@ -391,6 +391,20 @@ void signal_node_handler(int signal) {
   svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::WARN, logger_str.c_str());
 
   gSignalNodeStatus.store(signal);
+
+  // If the signal is SIGSEGV, SIGABRT, or other fatal signals,
+  // it's generally not safe to continue execution.
+  if (signal == SIGSEGV || signal == SIGABRT) {
+    // Log the error and exit or abort
+    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::FATAL,
+               "Fatal signal to Node Server received. Aborting the service");
+    // Reset to signal default handler
+    std::signal(signal, SIG_DFL);
+  } else {
+    // Re-register the signal handler
+    std::signal(signal, signal_node_handler);
+  }
+  return;
 }
 
 int StartNodeServer(const std::string &svk_conf_file, bool blocking) {

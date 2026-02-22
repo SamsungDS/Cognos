@@ -2077,7 +2077,7 @@ TEST_F(MockTestController, UnRegisterNodeWithInvalidNodeID) {
             "Node not registered testnode2.localdomain.com");
 }
 
-int KillProcess() {
+int KillProcess(int signal) {
   char *cw_dir = get_current_dir_name();
   std::string conf_file = std::string(cw_dir) + "/conf.json";
   create_svk_mgmt_fw_conf_json(
@@ -2089,7 +2089,7 @@ int KillProcess() {
   // Sleep for a while for the server process to stablize
   sleep(3);
   // Raise the interrupt signal for the server to go down gracefully
-  std::raise(SIGINT);
+  std::raise(signal);
   // Wait for > 5 seconds for the signal handler to be processed on the server
   // node
   sleep(7);
@@ -2097,15 +2097,63 @@ int KillProcess() {
   return 0;
 }
 
-TEST(InitControllerTest, InitControllerWithSignal) {
+TEST(InitControllerTest, InitControllerWithSignalSIGINT) {
   GTEST_FLAG_SET(death_test_style, "threadsafe");
-  EXPECT_DEATH(KillProcess(), "");
+  EXPECT_DEATH(KillProcess(SIGINT), "");
   std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
   std::string data((std::istreambuf_iterator<char>(file)),
                    (std::istreambuf_iterator<char>()));
   file.close();
   EXPECT_EQ(true, data.find("gRPC Controller server is shutdown") !=
                       std::string::npos);
+}
+
+TEST(InitTest, InitControllerWithSignalSIGSEGV) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL);
+
+  ControllerServicer *svcr(new ControllerServicer(conf_file));
+  auto server = InitializeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+  signal_handler(SIGSEGV);
+  sleep(1);
+  std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  std::string data((std::istreambuf_iterator<char>(file)),
+                   (std::istreambuf_iterator<char>()));
+  file.close();
+  EXPECT_EQ(true, data.find("Received signal 11") != std::string::npos);
+  EXPECT_EQ(
+      true,
+      data.find("Fatal signal to Controller received. Aborting the service") !=
+          std::string::npos);
+}
+
+TEST(InitTest, InitControllerWithSignalSIGABRT) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL);
+
+  ControllerServicer *svcr(new ControllerServicer(conf_file));
+  auto server = InitializeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+  signal_handler(SIGABRT);
+  sleep(1);
+  std::ifstream file(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  std::string data((std::istreambuf_iterator<char>(file)),
+                   (std::istreambuf_iterator<char>()));
+  file.close();
+  EXPECT_EQ(true, data.find("Received signal 6") != std::string::npos);
+  EXPECT_EQ(
+      true,
+      data.find("Fatal signal to Controller received. Aborting the service") !=
+          std::string::npos);
 }
 
 TEST(InitControllerTest, InitControllerServerInNonBlocking) {

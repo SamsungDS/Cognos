@@ -2082,6 +2082,20 @@ void signal_handler(int signal) {
   logger_str = "Received signal " + std::to_string(signal);
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::WARN, logger_str.c_str());
   gSignalStatus.store(signal);
+
+  // If the signal is SIGSEGV, SIGABRT, or other fatal signals,
+  // it's generally not safe to continue execution.
+  if (signal == SIGSEGV || signal == SIGABRT) {
+    // Log the error and exit or abort
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::FATAL,
+               "Fatal signal to Controller received. Aborting the service");
+    // Reset to default signal handler
+    std::signal(signal, SIG_DFL);
+  } else {
+    // Re-register the signal handler
+    std::signal(signal, signal_handler);
+  }
+  return;
 }
 
 /**
