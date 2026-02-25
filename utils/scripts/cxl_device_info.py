@@ -23,6 +23,38 @@ DEVICE_TYPES = {
     ("1b00", "c001"): "CMM-D"
 }
 
+
+# Determine if range1 is a subset of range2
+def range_subset(range1 :range, range2 :range) -> bool:
+    try:
+        if not range1 or not range2:
+            return False  # empty range is  invalid input
+
+        return range1.start in range2 and range1[-1] in range2
+    except TypeError as e:
+        print(f"Error:: {e}")
+        return False
+
+
+# Convert a hyphen delimited string of 2 hex numbers to a range
+def hex_string_to_range(range_string :str) -> range:
+    try:
+        start_str, stop_str = range_string.split('-')
+
+        # Convert the resulting hex strings to integers
+        start = int(start_str,16)
+        stop = int(stop_str,16)
+
+        # Create range by adding 1 to the stop value
+        return range(start, stop + 1)
+
+    except ValueError as e:
+        print(f"Error:: {e} Invalid input:'{range_string}'")
+        return []
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        return []
+
 def run_command(cmd):
     """Executes a shell command and returns the output string."""
     try:
@@ -35,7 +67,7 @@ def run_command(cmd):
         return None
 
 # lsmem output to obtain device range
-def get_numa_map_from_lsmem():
+def get_numa_map_from_lsmem() -> dict[str,int]:
     output = run_command("lsmem --output-all")
     range_to_node_map = {}
     if not output:
@@ -56,21 +88,27 @@ def get_numa_map_from_lsmem():
     return range_to_node_map
 
 # Map the lsmem output to obtain numa node
-def get_numa_node_for_device(bdf, lsmem_map):
+def get_numa_node_for_device(bdf :str, lsmem_map :dict[str,int]) -> int:
     cmd = f"lspci -vvv -s {bdf} | grep 'Range1'"
     output = run_command(cmd)
     if not output:
-        return 0
+        return -1 
     match = re.search(r"([0-9a-fA-F]+-[0-9a-fA-F]+)", output)
 
     if match:
         device_range = match.group(1).lower()
+
         if device_range in lsmem_map:
             return lsmem_map[device_range]
-        for mem_range, node in lsmem_map.items():
-            if device_range == mem_range:
-                return node
-    return 0
+
+        cmd_range = hex_string_to_range(device_range)
+        if cmd_range:
+            for mem_range, node in lsmem_map.items():
+                lsmem_range = hex_string_to_range(mem_range)
+                if lsmem_range:
+                    if range_subset(cmd_range, lsmem_range) == True :
+                        return node
+    return -1
 
 # Populate the protocol
 def get_protocol(bdf):
