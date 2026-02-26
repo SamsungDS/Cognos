@@ -10,6 +10,7 @@ Before=svk-node.service
 BindsTo=svk-node.service
 
 [Service]
+ExecStartPre=/usr/bin/rm -f /dev/shm/cmmh_shm_req_0 /dev/shm/cmmh_shm_rsp_0 /dev/shm/cmmh_socket
 ExecStart=/usr/local/bin/cmmh_driver
 # Added this sleep as this service is clubbed to svk-node.service
 # Giving enough time for the driver to initialize even though
