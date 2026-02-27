@@ -33,6 +33,7 @@ esac
 echo "BUILDING ${TAG} using ${DOCKERFILE} (os=${ID})"
 
 docker buildx build \
+    --platform linux/amd64 \
 	-t "${TAG}" \
 	-f "${DOCKERFILE}" \
 	"${SOURCE_CONTEXT}"

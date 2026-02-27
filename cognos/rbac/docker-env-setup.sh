@@ -103,6 +103,7 @@ PORT=$FRONTEND_PORT
 EOF
 echo "✓ Frontend environment configured"
 
+
 # Configure backend environment
 BACKEND_ENV="/app/core/bin/rbac-service/.env"
 cat > "$BACKEND_ENV" << EOF
@@ -116,7 +117,6 @@ LOG_LEVEL=info
 JWT_SECRET=$(openssl rand -hex 32)
 SESSION_SECRET=$(openssl rand -hex 32)
 EOF
-
 # Copy backend .env to service directory
 #cp "$BACKEND_ENV" /app/core/bin/rbac-service/.env
 echo "✓ Backend environment configured"
@@ -276,19 +276,63 @@ echo ""
 echo "======================================"
 echo "   Starting Licensing Service"
 echo "======================================"
+sleep 20
 
 if [[ -f "/app/core/lib/licensing" ]]; then
     chmod +x /app/core/lib/licensing
-    cd /app || exit 1
-    pm2 start /app/core/lib/licensing --name licensing || {
-        echo "⚠ Warning: Failed to start licensing service (non-critical)"
+
+    # Extract configuration from rbac.yaml
+    LICENSE_KEY=$(grep -A 1 "key:" /app/core/etc/rbac.yaml | tail -1 | sed "s/.*key: '\(.*\)'/\1/" | tr -d ' ')
+    PRODUCT_ID=$(grep "productID:" /app/core/etc/rbac.yaml | sed "s/.*productID: '\(.*\)'/\1/" | tr -d ' ')
+    SUBSCRIPTION_ID=$(grep "subscriptionID:" /app/core/etc/rbac.yaml | sed "s/.*subscriptionID: '\(.*\)'/\1/" | tr -d ' ')
+    INTERNET_COMM=$(grep "internet-communication:" /app/core/etc/rbac.yaml | sed "s/.*internet-communication: '\(.*\)'/\1/" | tr -d ' ')
+
+    echo "License configuration:"
+    echo "  Product ID: $PRODUCT_ID"
+    echo "  Subscription ID: $SUBSCRIPTION_ID"
+    echo "  Internet Communication: $INTERNET_COMM"
+
+    # Set working directory
+    cd /app/core/lib || exit 1
+
+    # Create environment file for licensing service
+    cat > /app/core/lib/.env << LICENV
+PRODUCT_ID=$PRODUCT_ID
+SUBSCRIPTION_ID=$SUBSCRIPTION_ID
+LICENSE_KEY=$LICENSE_KEY
+INTERNET_COMMUNICATION=$INTERNET_COMM
+RBAC_CONFIG_PATH=/app/core/etc/rbac.yaml
+PORT=54323
+LICENV
+
+    echo "✓ Licensing environment file created at /app/core/lib/.env"
+
+    # Stop any existing licensing process
+    pm2 delete licensing 2>/dev/null || true
+    sleep 2
+
+    echo "Starting licensing service from: $(pwd)"
+
+    # Start with PM2 (using only compatible flags)
+    pm2 start ./licensing \
+        --name licensing \
+        --cwd /app/core/lib \
+        --max-restarts 10 \
+        --restart-delay 30000 || {
+        echo "⚠ Warning: Failed to start licensing service"
     }
+
+    # Wait and check status
+    sleep 5
+    echo ""
+    echo "Licensing service status:"
+    pm2 show licensing 2>/dev/null || echo "Licensing service not running"
+
     echo "✓ Licensing service started"
 else
-    echo "⚠ Licensing service not found at /app/core/lib/licensing (skipping)"
+    echo "⚠ Licensing binary not found at /app/core/lib/licensing"
 fi
 
-echo ""
 echo "======================================"
 echo "   Auto-Verification Setup"
 echo "======================================"

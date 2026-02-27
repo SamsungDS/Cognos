@@ -10,17 +10,24 @@ RUN microdnf install -y nodejs ca-certificates && \
     microdnf clean all
 
 # Copy host CA certs into the container
-COPY tls-ca-bundle.pem /usr/local/share/ca-certificates/
+COPY tls-ca-bundle.pem /etc/pki/ca-trust/source/anchors/custom-ca-bundle.crt
 
 # Update the container’s trust store
 RUN update-ca-trust extract
 
+# Configure npm AND Node.js to use the CA bundle
+ENV NODE_EXTRA_CA_CERTS=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+ENV SSL_CERT_FILE=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+ENV REQUESTS_CA_BUNDLE=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+
 # Configure npm to use cert
 # Install PM2 globally and other utilities
 # sonar.issue.ignore.block
-RUN npm config set cafile /usr/local/share/ca-certificates/tls-ca-bundle.pem && \
+RUN npm config set cafile ${NODE_EXTRA_CA_CERTS} && \
+    npm config set strict-ssl true && \
     npm install -g pm2 serve --ignore-scripts && \
-    microdnf install -y curl procps
+    microdnf install -y curl procps && \
+    microdnf clean all
 
 # Set working directory
 WORKDIR /app

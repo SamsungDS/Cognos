@@ -206,7 +206,7 @@ svk-install:
     - echo "Note RBAC service typically takes 87+ seconds to start..."
     - export MAX_RETRIES=40
     - export RETRY_COUNT=0
-    - export WAIT_TIME=5
+    - export WAIT_TIME=10
     - |
       while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
         HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${API_BASE_URL}/login" -H "Content-Type: application/json" -d '{"username":"test","password":"test"}' 2>/dev/null || echo "000")
