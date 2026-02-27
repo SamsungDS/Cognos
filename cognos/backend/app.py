@@ -1,4 +1,4 @@
-from flask import Flask, request
+from flask import Flask, request, jsonify,  make_response,  send_file
 import click
 import logging
 from pathlib import Path
@@ -31,6 +31,10 @@ NODE_ENDPOINT = CONFIGS["node_endpoint"]
 
 CAL_LOGGER = create_logger("svkapp-cal-logger", log_dir="/var/log/svk",
                            level=logging.DEBUG)
+ARTIFACTS_DIR = os.path.join(current_script_dir, "artifacts")
+ARTIFACTS = [
+        {"id": 1, "name": "cognos_runner_mvp1.tar.gz", "version": "1.1.0"}
+    ]
 
 
 def create_app(mock=False):
@@ -290,6 +294,49 @@ def create_app(mock=False):
         except Exception as error:
             return helper.failed_response(str(error))
 
+    @app.get(f"/api/{CAL_API_VERSION}/list_artifact")
+    def list_artifact():
+        """
+            GET /api/list_artifact
+            Returns all registered artifacts with an `available` flag
+            indicating whether the file actually exists on disk.
+        """
+        enriched = []
+        for artifact in ARTIFACTS:
+            file_path = os.path.join(ARTIFACTS_DIR, artifact["name"])
+            enriched.append({
+                **artifact,
+                "available": os.path.isfile(file_path),
+            })
+        return jsonify({"artifacts": enriched}), 200
+
+    @app.get(f"/api/{CAL_API_VERSION}/artifact/<int:artifact_id>/download_artifact")
+    def download_artifact(artifact_id: int):
+        """
+            GET /api/artifacts/{artifact_id}/download_artifact
+            Streams the real .tar file from the /artifacts folder.
+        """
+        artifact = next((a for a in ARTIFACTS if a["id"] == artifact_id), None)
+
+        if artifact is None:
+            return jsonify({"error": f"Artifact id={artifact_id} not found."}), 404
+
+        file_path = os.path.join(ARTIFACTS_DIR, artifact["name"])
+
+        if not os.path.isfile(file_path):
+            return jsonify({
+                "error": (
+                    f"File '{artifact['name']}' is registered but missing on system. "
+                    f"Please place it in: {ARTIFACTS_DIR}"
+                )
+            }), 404
+
+        return send_file(
+            file_path,
+            mimetype="application/x-tar",
+            as_attachment=True,
+            download_name=artifact["name"],
+        )
     return app
 
 

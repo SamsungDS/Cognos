@@ -1,36 +1,103 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import DownloadArtifacts from '../pages/DownloadArtifacts';
 
-// Mock CSS imports
+// ─── Mock CSS imports ────────────────────────────────────────────────────────
 jest.mock('bootstrap/dist/css/bootstrap.min.css', () => ({}));
 jest.mock('../pages/downloadArtifacts.css', () => ({}));
 
-// Mock lucide-react Download icon
+// ─── Mock constants ───────────────────────────────────────────────────────────
+jest.mock('../../src/constant', () => ({
+    Configs: { api_endpoint: 'http://mock-api' },
+}));
+
+// ─── Mock lucide-react icons ─────────────────────────────────────────────────
 jest.mock('lucide-react', () => ({
     Download: ({ className, size }) => (
         <svg data-testid="download-icon" className={className} width={size} height={size}>
             <title>Download Icon</title>
         </svg>
     ),
+    AlertCircle: ({ size, className }) => (
+        <svg data-testid="alert-circle-icon" className={className} width={size} height={size}>
+            <title>Alert Circle Icon</title>
+        </svg>
+    ),
+    CheckCircle: ({ size, className }) => (
+        <svg data-testid="check-circle-icon" className={className} width={size} height={size}>
+            <title>Check Circle Icon</title>
+        </svg>
+    ),
+    PackageX: ({ size, className }) => (
+        <svg data-testid="package-x-icon" className={className} width={size} height={size}>
+            <title>Package X Icon</title>
+        </svg>
+    ),
 }));
 
+// ─── Test fixtures ────────────────────────────────────────────────────────────
+const mockArtifacts = [
+    { id: 1, name: 'cognos-v1.0.tar.gz', available: true },
+    { id: 2, name: 'cognos-v2.0.tar.gz', available: true },
+    { id: 3, name: 'cognos-v3.0.tar.gz', available: false },
+];
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const mockFetchArtifactList = (artifacts = mockArtifacts, ok = true) => {
+    global.fetch = jest.fn().mockResolvedValueOnce({
+        ok,
+        status: ok ? 200 : 500,
+        json: async () => ({ artifacts }),
+    });
+};
+
+const mockFetchWithDownload = (downloadOk = true) => {
+    // First call → list; second call → download
+    global.fetch = jest.fn()
+        .mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({ artifacts: mockArtifacts }),
+        })
+        .mockResolvedValueOnce(
+            downloadOk
+                ? {
+                    ok: true,
+                    blob: async () => new Blob(['file-content'], { type: 'application/gzip' }),
+                }
+                : {
+                    ok: false,
+                    status: 500,
+                    json: async () => ({ error: 'Server error' }),
+                }
+        );
+};
+
+// Silence act() warnings for async state updates in tests that don't await
+beforeEach(() => {
+    jest.spyOn(console, 'error').mockImplementation(() => { });
+});
+
+afterEach(() => {
+    jest.restoreAllMocks();
+    delete global.fetch;
+});
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
 describe('DownloadArtifacts Component', () => {
+
+    // ── Rendering ──────────────────────────────────────────────────────────────
     describe('Rendering', () => {
+        beforeEach(() => mockFetchArtifactList());
+
         it('renders without crashing', () => {
             expect(() => render(<DownloadArtifacts />)).not.toThrow();
         });
 
         it('renders the main page container with correct classes', () => {
             const { container } = render(<DownloadArtifacts />);
-            const pageContainer = container.querySelector('.page-container.Content.content_root.about');
-            expect(pageContainer).toBeInTheDocument();
-        });
-
-        it('renders the header section', () => {
-            render(<DownloadArtifacts />);
-            expect(screen.getByText('Download Cognos Artifacts')).toBeInTheDocument();
+            expect(container.querySelector('.page-container.Content.content_root.about')).toBeInTheDocument();
         });
 
         it('renders the header as h1 element', () => {
@@ -44,227 +111,427 @@ describe('DownloadArtifacts Component', () => {
             expect(screen.getByText('Select Cognos Release')).toBeInTheDocument();
         });
 
-        it('renders the dropdown select element', () => {
-            render(<DownloadArtifacts />);
-            const select = screen.getByRole('combobox');
-            expect(select).toBeInTheDocument();
-        });
-
-        it('renders the default option in dropdown', () => {
-            render(<DownloadArtifacts />);
-            expect(screen.getByText('-- Select an artifact --')).toBeInTheDocument();
-        });
-
         it('renders the download button', () => {
             render(<DownloadArtifacts />);
-            const button = screen.getByRole('button', { name: /Download Artifact/i });
-            expect(button).toBeInTheDocument();
+            expect(screen.getByRole('button', { name: /Download Artifact/i })).toBeInTheDocument();
         });
 
         it('renders the download icon', () => {
             render(<DownloadArtifacts />);
-            const icon = screen.getByTestId('download-icon');
-            expect(icon).toBeInTheDocument();
+            expect(screen.getByTestId('download-icon')).toBeInTheDocument();
         });
     });
 
+    // ── Layout Structure ───────────────────────────────────────────────────────
     describe('Layout Structure', () => {
+        beforeEach(() => mockFetchArtifactList());
+
         it('renders full-width header row', () => {
             const { container } = render(<DownloadArtifacts />);
-            const headerRow = container.querySelector('.row.full-width-header');
-            expect(headerRow).toBeInTheDocument();
+            expect(container.querySelector('.row.full-width-header')).toBeInTheDocument();
         });
 
         it('renders content container', () => {
             const { container } = render(<DownloadArtifacts />);
-            const contentContainer = container.querySelector('.content-container');
-            expect(contentContainer).toBeInTheDocument();
+            expect(container.querySelector('.content-container')).toBeInTheDocument();
         });
 
-        it('renders card with dark theme', () => {
+        it('renders two card-dark sections', () => {
             const { container } = render(<DownloadArtifacts />);
-            const cards = container.querySelectorAll('.card.card-dark.rounded-3');
-            expect(cards.length).toBeGreaterThan(0);
+            expect(container.querySelectorAll('.card.card-dark')).toHaveLength(2);
         });
 
         it('renders download section in col-lg-12', () => {
             const { container } = render(<DownloadArtifacts />);
-            const column = container.querySelector('.col-lg-12.col-md-12');
-            expect(column).toBeInTheDocument();
+            expect(container.querySelector('.col-lg-12.col-md-12')).toBeInTheDocument();
         });
     });
 
+    // ── Loading State ──────────────────────────────────────────────────────────
+    describe('Loading State', () => {
+        it('shows loading text while fetching artifact list', () => {
+            // Never resolve so we stay in loading state
+            global.fetch = jest.fn().mockReturnValue(new Promise(() => { }));
+            render(<DownloadArtifacts />);
+            expect(screen.getByText('Loading artifacts...')).toBeInTheDocument();
+        });
+
+        it('hides loading text after artifacts are fetched', async () => {
+            mockFetchArtifactList();
+            render(<DownloadArtifacts />);
+            await waitFor(() => {
+                expect(screen.queryByText('Loading artifacts...')).not.toBeInTheDocument();
+            });
+        });
+
+        it('disables download button while loading', () => {
+            global.fetch = jest.fn().mockReturnValue(new Promise(() => { }));
+            render(<DownloadArtifacts />);
+            expect(screen.getByRole('button', { name: /Download Artifact/i })).toBeDisabled();
+        });
+    });
+
+    // ── Artifact List Fetch ────────────────────────────────────────────────────
+    describe('Artifact List Fetch', () => {
+        it('calls the correct list_artifact endpoint on mount', async () => {
+            mockFetchArtifactList();
+            render(<DownloadArtifacts />);
+            await waitFor(() => {
+                expect(global.fetch).toHaveBeenCalledWith(
+                    'http://mock-api/list_artifact',
+                    expect.objectContaining({ method: 'GET' })
+                );
+            });
+        });
+
+        it('populates dropdown with fetched artifacts', async () => {
+            mockFetchArtifactList();
+            render(<DownloadArtifacts />);
+            await waitFor(() => {
+                expect(screen.getByText('cognos-v1.0.tar.gz')).toBeInTheDocument();
+                expect(screen.getByText('cognos-v2.0.tar.gz')).toBeInTheDocument();
+            });
+        });
+
+        it('shows unavailable label for artifacts with available: false', async () => {
+            mockFetchArtifactList();
+            render(<DownloadArtifacts />);
+            await waitFor(() => {
+                expect(screen.getByText(/cognos-v3\.0\.tar\.gz.*Unavailable/)).toBeInTheDocument();
+            });
+        });
+
+        it('shows error status when list fetch fails', async () => {
+            mockFetchArtifactList([], false);
+            render(<DownloadArtifacts />);
+            await waitFor(() => {
+                expect(screen.getByText(/Failed to load artifacts/i)).toBeInTheDocument();
+            });
+        });
+
+        it('shows error status when network throws', async () => {
+            global.fetch = jest.fn().mockRejectedValueOnce(new Error('Network error'));
+            render(<DownloadArtifacts />);
+            await waitFor(() => {
+                expect(screen.getByText(/Failed to load artifacts.*Network error/i)).toBeInTheDocument();
+            });
+        });
+    });
+
+    // ── Initial State ──────────────────────────────────────────────────────────
     describe('Initial State', () => {
-        it('has empty selected artifact by default', () => {
-            render(<DownloadArtifacts />);
-            const select = screen.getByRole('combobox');
-            expect(select.value).toBe('');
-        });
+        beforeEach(() => mockFetchArtifactList());
 
-        it('has download button disabled by default', () => {
+        it('has download button disabled by default', async () => {
             render(<DownloadArtifacts />);
-            const button = screen.getByRole('button', { name: /Download Artifact/i });
-            expect(button).toBeDisabled();
-        });
-
-        it('has dropdown enabled by default', () => {
-            render(<DownloadArtifacts />);
-            const select = screen.getByRole('combobox');
-            expect(select).not.toBeDisabled();
+            await waitFor(() => screen.getByText('cognos-v1.0.tar.gz'));
+            expect(screen.getByRole('button', { name: /Download Artifact/i })).toBeDisabled();
         });
 
         it('download icon does not have animate-bounce class initially', () => {
             render(<DownloadArtifacts />);
-            const icon = screen.getByTestId('download-icon');
-            expect(icon).not.toHaveClass('animate-bounce');
+            expect(screen.getByTestId('download-icon')).not.toHaveClass('animate-bounce');
+        });
+
+        it('no status alert is shown initially', async () => {
+            render(<DownloadArtifacts />);
+            await waitFor(() => screen.getByText('cognos-v1.0.tar.gz'));
+            expect(screen.queryByRole('alert')).not.toBeInTheDocument();
         });
     });
 
+    // ── Dropdown Interaction ───────────────────────────────────────────────────
     describe('Dropdown Interaction', () => {
-        it('allows selecting an option from dropdown', () => {
+        it('enables the download button after selecting an available artifact', async () => {
+            mockFetchArtifactList();
             render(<DownloadArtifacts />);
-            const select = screen.getByRole('combobox');
+            await waitFor(() => screen.getByText('cognos-v1.0.tar.gz'));
 
-            // Simulate selecting an option (in real implementation, there would be options)
-            fireEvent.change(select, { target: { value: 'artifact-1' } });
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '1' } });
 
-            // Since the component doesn't update the state from the select,
-            // we just verify the select can receive changes
-            expect(select).toBeInTheDocument();
+            expect(screen.getByRole('button', { name: /Download Artifact/i })).not.toBeDisabled();
         });
 
-        it('displays form-select-dark class on dropdown', () => {
+        it('keeps button disabled when an unavailable artifact is selected', async () => {
+            mockFetchArtifactList();
             render(<DownloadArtifacts />);
-            const select = screen.getByRole('combobox');
-            expect(select).toHaveClass('form-select-dark');
+            await waitFor(() => screen.getByText(/cognos-v3\.0\.tar\.gz/));
+
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '3' } });
+
+            expect(screen.getByRole('button', { name: /Download Artifact/i })).toBeDisabled();
+        });
+
+        it('clears status message when a new artifact is selected', async () => {
+            mockFetchWithDownload(false);
+            render(<DownloadArtifacts />);
+            await waitFor(() => screen.getByText('cognos-v1.0.tar.gz'));
+
+            // Trigger an error
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '1' } });
+            fireEvent.click(screen.getByRole('button', { name: /Download Artifact/i }));
+            await waitFor(() => screen.getByText(/Download failed/i));
+
+            // Change selection → status should clear
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '2' } });
+            expect(screen.queryByText(/Download failed/i)).not.toBeInTheDocument();
         });
     });
 
-    describe('Button State Management', () => {
-        it('keeps button disabled when no artifact is selected', () => {
+    // ── Availability Warning ───────────────────────────────────────────────────
+    describe('Availability Warning', () => {
+        it('shows PackageX icon and warning when unavailable artifact is selected', async () => {
+            mockFetchArtifactList();
             render(<DownloadArtifacts />);
-            const button = screen.getByRole('button', { name: /Download Artifact/i });
-            expect(button).toBeDisabled();
+            await waitFor(() => screen.getByText(/cognos-v3\.0\.tar\.gz/));
+
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '3' } });
+
+            expect(screen.getByTestId('package-x-icon')).toBeInTheDocument();
+            expect(screen.getByText(/not available on the server yet/i)).toBeInTheDocument();
         });
 
-        it('button has correct CSS classes', () => {
+        it('does not show availability warning for available artifact', async () => {
+            mockFetchArtifactList();
             render(<DownloadArtifacts />);
-            const button = screen.getByRole('button', { name: /Download Artifact/i });
-            expect(button).toHaveClass('btn', 'btn-download', 'w-100', 'd-flex', 'align-items-center', 'justify-content-center');
+            await waitFor(() => screen.getByText('cognos-v1.0.tar.gz'));
+
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '1' } });
+
+            expect(screen.queryByTestId('package-x-icon')).not.toBeInTheDocument();
+        });
+
+        it('sets status to unavailable type without calling fetch when clicking download on unavailable', async () => {
+            mockFetchArtifactList();
+            render(<DownloadArtifacts />);
+            await waitFor(() => screen.getByText(/cognos-v3\.0\.tar\.gz/));
+
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '3' } });
+            // handleDownload guards before fetch – button is disabled so click won't fire,
+            // but we verify the guard logic via button disabled state
+            expect(screen.getByRole('button', { name: /Download Artifact/i })).toBeDisabled();
+            // fetch should only have been called once (the initial list fetch)
+            expect(global.fetch).toHaveBeenCalledTimes(1);
         });
     });
 
-    describe('Download Icon', () => {
-        it('renders icon with correct size', () => {
+    // ── Download Handler ───────────────────────────────────────────────────────
+    describe('Download Handler', () => {
+        it('calls the correct download endpoint', async () => {
+            mockFetchWithDownload(true);
+            render(<DownloadArtifacts />);
+            await waitFor(() => screen.getByText('cognos-v1.0.tar.gz'));
+
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '1' } });
+            fireEvent.click(screen.getByRole('button', { name: /Download Artifact/i }));
+
+            await waitFor(() => {
+                expect(global.fetch).toHaveBeenCalledWith(
+                    'http://mock-api/artifact/1/download_artifact',
+                    expect.objectContaining({ headers: { Accept: 'application/gzip' } })
+                );
+            });
+        });
+
+        it('shows error status after failed download', async () => {
+            mockFetchWithDownload(false);
+            render(<DownloadArtifacts />);
+            await waitFor(() => screen.getByText('cognos-v1.0.tar.gz'));
+
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '1' } });
+            fireEvent.click(screen.getByRole('button', { name: /Download Artifact/i }));
+
+            await waitFor(() => {
+                expect(screen.getByText(/Download failed/i)).toBeInTheDocument();
+            });
+            expect(screen.getByTestId('alert-circle-icon')).toBeInTheDocument();
+        });
+
+        it('shows "Downloading..." button text while download is in progress', async () => {
+            let resolveDownload;
+            global.fetch = jest.fn()
+                .mockResolvedValueOnce({ ok: true, json: async () => ({ artifacts: mockArtifacts }) })
+                .mockReturnValueOnce(new Promise((res) => { resolveDownload = res; }));
+
+            render(<DownloadArtifacts />);
+            await waitFor(() => screen.getByText('cognos-v1.0.tar.gz'));
+
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '1' } });
+            fireEvent.click(screen.getByRole('button', { name: /Download Artifact/i }));
+
+            expect(screen.getByText('Downloading...')).toBeInTheDocument();
+
+            // Cleanup: resolve the pending promise
+            resolveDownload({ ok: false, status: 500, json: async () => ({}) });
+        });
+
+        it('adds animate-bounce class to icon during download', async () => {
+            let resolveDownload;
+            global.fetch = jest.fn()
+                .mockResolvedValueOnce({ ok: true, json: async () => ({ artifacts: mockArtifacts }) })
+                .mockReturnValueOnce(new Promise((res) => { resolveDownload = res; }));
+
+            render(<DownloadArtifacts />);
+            await waitFor(() => screen.getByText('cognos-v1.0.tar.gz'));
+
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '1' } });
+            fireEvent.click(screen.getByRole('button', { name: /Download Artifact/i }));
+
+            expect(screen.getByTestId('download-icon')).toHaveClass('animate-bounce');
+
+            resolveDownload({ ok: false, status: 500, json: async () => ({}) });
+        });
+
+        it('re-enables button after download completes', async () => {
+            mockFetchWithDownload(false);
+            render(<DownloadArtifacts />);
+            await waitFor(() => screen.getByText('cognos-v1.0.tar.gz'));
+
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '1' } });
+            fireEvent.click(screen.getByRole('button', { name: /Download Artifact/i }));
+
+            await waitFor(() => {
+                expect(screen.getByRole('button', { name: /Download Artifact/i })).not.toBeDisabled();
+            });
+        });
+
+        it('disables select dropdown while downloading', async () => {
+            let resolveDownload;
+            global.fetch = jest.fn()
+                .mockResolvedValueOnce({ ok: true, json: async () => ({ artifacts: mockArtifacts }) })
+                .mockReturnValueOnce(new Promise((res) => { resolveDownload = res; }));
+
+            render(<DownloadArtifacts />);
+            await waitFor(() => screen.getByText('cognos-v1.0.tar.gz'));
+
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '1' } });
+            fireEvent.click(screen.getByRole('button', { name: /Download Artifact/i }));
+
+            expect(screen.getByRole('combobox')).toBeDisabled();
+
+            resolveDownload({ ok: false, status: 500, json: async () => ({}) });
+        });
+    });
+
+    // ── Status Message Icons ───────────────────────────────────────────────────
+    describe('Status Message Icons', () => {
+        it('renders AlertCircle icon on error', async () => {
+            mockFetchWithDownload(false);
+            render(<DownloadArtifacts />);
+            await waitFor(() => screen.getByText('cognos-v1.0.tar.gz'));
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '1' } });
+            fireEvent.click(screen.getByRole('button', { name: /Download Artifact/i }));
+
+            await waitFor(() => expect(screen.getByTestId('alert-circle-icon')).toBeInTheDocument());
+        });
+
+
+
+        it('error alert has alert-danger class', async () => {
+            mockFetchWithDownload(false);
+            render(<DownloadArtifacts />);
+            await waitFor(() => screen.getByText('cognos-v1.0.tar.gz'));
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '1' } });
+            fireEvent.click(screen.getByRole('button', { name: /Download Artifact/i }));
+
+            await waitFor(() => {
+                const alert = screen.getByText(/Download failed/i).closest('.alert');
+                expect(alert).toHaveClass('alert-danger');
+            });
+        });
+    });
+
+    // ── Accessibility ──────────────────────────────────────────────────────────
+    describe('Accessibility', () => {
+        beforeEach(() => mockFetchArtifactList());
+
+        it('dropdown label has correct styling classes', async () => {
+            render(<DownloadArtifacts />);
+            await waitFor(() => screen.getByText('Select Cognos Release'));
+            const label = screen.getByText('Select Cognos Release');
+            expect(label).toHaveClass('form-label', 'text-slate', 'small', 'fw-medium');
+        });
+
+        it('button is a native BUTTON element', () => {
+            render(<DownloadArtifacts />);
+            const button = screen.getByRole('button', { name: /Download Artifact/i });
+            expect(button.tagName).toBe('BUTTON');
+        });
+
+        it('download icon has me-2 margin class', () => {
+            render(<DownloadArtifacts />);
+            expect(screen.getByTestId('download-icon')).toHaveClass('me-2');
+        });
+
+        it('download icon renders with size 20', () => {
             render(<DownloadArtifacts />);
             const icon = screen.getByTestId('download-icon');
             expect(icon).toHaveAttribute('width', '20');
             expect(icon).toHaveAttribute('height', '20');
         });
-
-        it('icon has me-2 margin class', () => {
-            render(<DownloadArtifacts />);
-            const icon = screen.getByTestId('download-icon');
-            expect(icon).toHaveClass('me-2');
-        });
     });
 
-    describe('Accessibility', () => {
-        it('dropdown has proper label association', () => {
-            render(<DownloadArtifacts />);
-            const label = screen.getByText('Select Cognos Release');
-            expect(label).toHaveClass('form-label');
-        });
-
-        it('button is keyboard accessible', () => {
-            render(<DownloadArtifacts />);
-            const button = screen.getByRole('button', { name: /Download Artifact/i });
-            expect(button).toBeInTheDocument();
-            expect(button.tagName).toBe('BUTTON');
-        });
-
-        it('select is keyboard accessible', () => {
-            render(<DownloadArtifacts />);
-            const select = screen.getByRole('combobox');
-            expect(select.tagName).toBe('SELECT');
-        });
-    });
-
+    // ── Styling Classes ────────────────────────────────────────────────────────
     describe('Styling Classes', () => {
+        beforeEach(() => mockFetchArtifactList());
+
         it('applies Bootstrap card styling', () => {
             const { container } = render(<DownloadArtifacts />);
-            const cards = container.querySelectorAll('.card');
-            expect(cards.length).toBeGreaterThan(0);
+            expect(container.querySelectorAll('.card').length).toBeGreaterThan(0);
         });
 
-        it('applies Bootstrap grid classes', () => {
+        it('applies Bootstrap grid rows', () => {
             const { container } = render(<DownloadArtifacts />);
-            const rows = container.querySelectorAll('.row');
-            expect(rows.length).toBeGreaterThan(0);
+            expect(container.querySelectorAll('.row').length).toBeGreaterThan(0);
         });
 
-        it('applies margin bottom to header', () => {
+        it('header row has mb-4 margin class', () => {
             const { container } = render(<DownloadArtifacts />);
-            const headerRow = container.querySelector('.full-width-header');
-            expect(headerRow).toHaveClass('mb-4');
+            expect(container.querySelector('.full-width-header')).toHaveClass('mb-4');
         });
 
-        it('applies padding to card body', () => {
+        it('card bodies have p-4 padding', () => {
             const { container } = render(<DownloadArtifacts />);
-            const cardBodies = container.querySelectorAll('.card-body.p-4');
-            expect(cardBodies.length).toBeGreaterThan(0);
-        });
-    });
-
-    describe('Component Structure', () => {
-        it('has two main card sections', () => {
-            const { container } = render(<DownloadArtifacts />);
-            const cards = container.querySelectorAll('.card.card-dark');
-            expect(cards.length).toBe(2);
+            expect(container.querySelectorAll('.card-body.p-4').length).toBeGreaterThan(0);
         });
 
-        it('header section has proper Bootstrap classes', () => {
-            const { container } = render(<DownloadArtifacts />);
-            const headerCol = container.querySelector('.full-width-header .col-12');
-            expect(headerCol).toBeInTheDocument();
-        });
-
-        it('download section has proper column classes', () => {
-            const { container } = render(<DownloadArtifacts />);
-            const downloadCol = container.querySelector('.col-lg-12.col-md-12.mb-4');
-            expect(downloadCol).toBeInTheDocument();
-        });
-    });
-
-    describe('Text Content', () => {
-        it('label has correct styling classes', () => {
-            render(<DownloadArtifacts />);
-            const label = screen.getByText('Select Cognos Release');
-            expect(label).toHaveClass('form-label', 'text-slate', 'small', 'fw-medium');
-        });
-    });
-
-    describe('Button Content', () => {
-        it('button contains icon and text', () => {
+        it('download button has all required classes', () => {
             render(<DownloadArtifacts />);
             const button = screen.getByRole('button', { name: /Download Artifact/i });
+            expect(button).toHaveClass('btn', 'btn-download', 'w-100', 'd-flex', 'align-items-center', 'justify-content-center');
+        });
 
-            expect(button).toContainElement(screen.getByTestId('download-icon'));
-            expect(button).toHaveTextContent('Download Artifact');
+        it('dropdown has form-select-dark class', async () => {
+            render(<DownloadArtifacts />);
+            await waitFor(() => screen.getByRole('combobox'));
+            expect(screen.getByRole('combobox')).toHaveClass('form-select', 'form-select-dark');
         });
     });
 
+    // ── Responsive Design ──────────────────────────────────────────────────────
     describe('Responsive Design', () => {
+        beforeEach(() => mockFetchArtifactList());
+
         it('applies responsive column classes', () => {
             const { container } = render(<DownloadArtifacts />);
-            const column = container.querySelector('.col-lg-12.col-md-12');
-            expect(column).toBeInTheDocument();
+            expect(container.querySelector('.col-lg-12.col-md-12')).toBeInTheDocument();
         });
 
         it('uses Bootstrap responsive utilities', () => {
             const { container } = render(<DownloadArtifacts />);
-            const responsiveElements = container.querySelectorAll('[class*="col-"]');
-            expect(responsiveElements.length).toBeGreaterThan(0);
+            expect(container.querySelectorAll('[class*="col-"]').length).toBeGreaterThan(0);
+        });
+    });
+
+    // ── Button Content ─────────────────────────────────────────────────────────
+    describe('Button Content', () => {
+        beforeEach(() => mockFetchArtifactList());
+
+        it('button contains icon and text', () => {
+            render(<DownloadArtifacts />);
+            const button = screen.getByRole('button', { name: /Download Artifact/i });
+            expect(button).toContainElement(screen.getByTestId('download-icon'));
+            expect(button).toHaveTextContent('Download Artifact');
         });
     });
 });

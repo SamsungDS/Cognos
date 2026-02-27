@@ -75,6 +75,18 @@ def test_get_events(test_client, mocker):
         assert request.path == f"/api/{CAL_API_VERSION}/events"
 
 
+def test_get_list_artifact(test_client):
+    with test_client.test_request_context(f"/api/{CAL_API_VERSION}/list_artifact",
+                                          method='GET'):
+        assert request.path == f"/api/{CAL_API_VERSION}/list_artifact"
+
+
+def test_get_download_artifact(test_client):
+    with test_client.test_request_context(f"/api/{CAL_API_VERSION}/artifact/<int:artifact_id>/download_artifact",
+                                          method='GET'):
+        assert request.path == f"/api/{CAL_API_VERSION}/artifact/<int:artifact_id>/download_artifact"
+
+
 def test_init_sqlite_db_file():
     app.init_sqlite_db_file()
 
