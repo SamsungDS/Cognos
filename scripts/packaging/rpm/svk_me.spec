@@ -4,7 +4,7 @@ Release:        1%{?dist}.%svk_os_version
 Summary:        SVK ME Plugin
 License:        Samsung Internal
 BuildRequires:  jansson
-Requires:       svk-core, svk-mgmt-fw, jansson
+Requires:       svk-core, svk-mgmt-fw, jansson, libcgroup-original-tools, yaml-cpp
 
 
 %global svk_install_dir %_prefix/local/svk/feature_modules/me
