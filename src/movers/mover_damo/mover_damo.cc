@@ -64,6 +64,10 @@ int start_damo_main(cme_context* ctx, int move_select)
         int ret;
         try
         {
+                // pre processing to get initial NUMA memory footprint, assuming the applicaiotn is the predominant user of the NUMA node
+                ctx->mem_attr.src_numa_start_usage = process_numastat_light(ctx->mem_attr.src_numa_node);
+                ctx->mem_attr.dst_numa_start_usage = process_numastat_light(ctx->mem_attr.dst_numa_node);
+                ctx->mover_cmd_status = 0;
                 ret = start(ctx->app_attr.app_name, ctx->app_attr.app_pid, ctx->mem_attr.slow_tier, ctx->mem_attr.fast_tier, ctx->tm_attr.ag_level, move_select);
                 generate_start_data_movement_event(ctx, ret);
         }
@@ -153,10 +157,6 @@ int mover_damo::move(cme_context* ctx)
 {
         CME_ENTRY();
         CME_LOG("INFO", "--" , to_string(ctx->app_attr.app_pid) , "--" , to_string(ctx->mem_attr.src_numa_node) , "--" , to_string(ctx->mem_attr.dst_numa_node));
-        // pre processing to get initial NUMA memory footprint, assuming the applicaiotn is the predominant user of the NUMA node
-        ctx->mem_attr.src_numa_start_usage = process_numastat_light(ctx->mem_attr.src_numa_node);
-        ctx->mem_attr.dst_numa_start_usage = process_numastat_light(ctx->mem_attr.dst_numa_node);
-        ctx->mover_cmd_status = 0;
         return start_damo_main(ctx, MOVE);
 }
 
@@ -225,35 +225,60 @@ std::string mover_damo::get_stats(cme_context* ctx)
                                         double pbytes = 0;
                                         double dbytes = 0;
                                         std::string unit;
-
-                                        auto pmsize = mmst_item.second.get<std::string>("migrate_hot.sz_applied");
-                                        /* split output string and use the value TODO: use json parsing instead */
                                         char delimiter = ' ';
                                         size_t delimiterPos;
-
-                                        delimiterPos = pmsize.find(delimiter);
-                                        if (delimiterPos != std::string::npos) {
-                                                pmbytes = pmsize.substr(0, delimiterPos);
-                                                unit = pmsize.substr(delimiterPos + 1);
-                                                CME_LOG("INFO", name, " promote damo stats ", pmbytes, " units ", unit);
-                                                pbytes = stod(pmbytes) * to_bytes.find(unit)->second;
-                                                double pbytes_mb = pbytes / to_bytes.find("MiB")->second; // convert to MiB for reporting
-                                                promoted_bytes_mb += pbytes_mb;
-                                                // slow tier is the source for promote operation
-                                                percent_promoted +=  (pbytes_mb / ctx->mem_attr.src_numa_start_usage) * 100.00;
+                                        bool promote = true;
+                                        bool demote = true;
+                                        std::string pmsize;
+                                        std::string dmsize;
+                                        try
+                                        {
+                                                pmsize = mmst_item.second.get<std::string>("migrate_hot.sz_applied");
+                                                /* split output string and use the value TODO: use json parsing instead */
+                                        }
+                                        catch (const std::exception& e)
+                                        {
+                                                CME_LOG("INFO", name, " No promote Data:  ", e.what());
+                                                promote = false;
+                                        }
+                                        try
+                                        {
+                                                dmsize = mmst_item.second.get<std::string>("migrate_cold.sz_applied");
+                                        }
+                                        catch (const std::exception& e)
+                                        {
+                                                CME_LOG("INFO", name, " No demote Data:  ", e.what());
+                                                demote = false;
                                         }
 
-                                        auto dmsize = mmst_item.second.get<std::string>("migrate_cold.sz_applied");
-                                        delimiterPos = dmsize.find(delimiter);
-                                        if (delimiterPos != std::string::npos) {
-                                                dmbytes = dmsize.substr(0, delimiterPos);
-                                                unit = dmsize.substr(delimiterPos + 1);
-                                                CME_LOG("INFO", name, " demote damo stats ", dmbytes, " units ", unit);
-                                                dbytes = stod(dmbytes) * to_bytes.find(unit)->second;
-                                                double dbytes_mb = dbytes / to_bytes.find("MiB")->second; // convert to MiB for reporting
-                                                demoted_bytes_mb += dbytes_mb;
-                                                // fast tier is the source for demote operation
-                                                percent_demoted +=  (dbytes_mb / ctx->mem_attr.dst_numa_start_usage) * 100.00;
+                                        if (promote)
+                                        {
+                                                delimiterPos = pmsize.find(delimiter);
+                                                if (delimiterPos != std::string::npos) {
+                                                        pmbytes = pmsize.substr(0, delimiterPos);
+                                                        unit = pmsize.substr(delimiterPos + 1);
+                                                        CME_LOG("INFO", name, " promote damo stats ", pmbytes, " units ", unit);
+                                                        pbytes = stod(pmbytes) * to_bytes.find(unit)->second;
+                                                        double pbytes_mb = pbytes / to_bytes.find("MiB")->second; // convert to MiB for reporting
+                                                        promoted_bytes_mb += pbytes_mb;
+                                                        // slow tier is the source for promote operation
+                                                        percent_promoted +=  (pbytes_mb / ctx->mem_attr.src_numa_start_usage) * 100.00;
+                                                }
+                                        }
+
+                                        if (demote)
+                                        {
+                                                delimiterPos = dmsize.find(delimiter);
+                                                if (delimiterPos != std::string::npos) {
+                                                        dmbytes = dmsize.substr(0, delimiterPos);
+                                                        unit = dmsize.substr(delimiterPos + 1);
+                                                        CME_LOG("INFO", name, " demote damo stats ", dmbytes, " units ", unit);
+                                                        dbytes = stod(dmbytes) * to_bytes.find(unit)->second;
+                                                        double dbytes_mb = dbytes / to_bytes.find("MiB")->second; // convert to MiB for reporting
+                                                        demoted_bytes_mb += dbytes_mb;
+                                                        // fast tier is the source for demote operation
+                                                        percent_demoted +=  (dbytes_mb / ctx->mem_attr.dst_numa_start_usage) * 100.00;
+                                                }
                                         }
 
                                         // accumulate total moved bytes for both promote and demote, for reporting, currently only printing as debug info

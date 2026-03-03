@@ -7,10 +7,10 @@ Standards-Version: 4.1.4
 
 Package: DEB_PACKAGE_NAME
 Architecture: amd64
-Depends: svk-core, svk-mgmt-fw, numactl
+Depends: svk-core, svk-mgmt-fw, numactl, cgroup-tools, libyaml-cpp-dev
 Description: SVK Memory Engine - APIs and functions for application memory monitoring and management
 
 Package: DEB_PACKAGE_NAME-dev
 Architecture: amd64
-Depends: svk-core-dev, svk-mgmt-fw-dev, numactl, DEB_PACKAGE_NAME (= ${binary:Version})
+Depends: svk-core-dev, svk-mgmt-fw-dev, numactl, cgroup-tools, libyaml-cpp-dev, DEB_PACKAGE_NAME (= ${binary:Version})
 Description: SVK Memory Engine - APIs and functions for application memory monitoring and management
