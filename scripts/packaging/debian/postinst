@@ -1,5 +1,12 @@
 #!/bin/sh
 set -e
 
+NODE_FEATURE_PATH="/usr/local/svk/feature_modules/node"
+NODE_VENV_DIR="/usr/local/svk/venv/node"
 # post install steps go here
-chmod 755 /usr/local/svk/feature_modules/node/scripts/find_node_info.py
+chmod 755 ${NODE_FEATURE_PATH}/scripts/find_node_info.py
+
+# Create python venv on the deployment machine
+/usr/bin/python3 -m venv "${NODE_VENV_DIR}"
+"${NODE_VENV_DIR}"/bin/python3 -m pip install --upgrade pip
+"${NODE_VENV_DIR}"/bin/pip3 install -r ${NODE_FEATURE_PATH}/scripts/dependencies/python/requirements_deploy.txt

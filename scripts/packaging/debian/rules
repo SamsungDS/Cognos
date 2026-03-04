@@ -2,7 +2,9 @@
 
 # We can get a version string if needed
 SHORT_VERSION := $(shell $(CURDIR)/../scripts/get_version.sh -s)
+SCRIPTS_DIR = $(CURDIR)/../scripts
 INSTALL_PATH = usr/local/svk/feature_modules/node
+PYTHON_DEPS_PATH = $(INSTALL_PATH)/scripts/dependencies/python
 
 %:
 	dh $@
@@ -19,6 +21,9 @@ override_dh_auto_install:
 	# install steps below (eg: make install)
 	make install DESTDIR=$(CURDIR)
 	mkdir -p $(INSTALL_PATH)
+	mkdir -p $(PYTHON_DEPS_PATH)
+
+	install -D -m 0644 $(SCRIPTS_DIR)/dependencies/python/requirements_deploy.txt $(PYTHON_DEPS_PATH)/
 
 override_dh_usrlocal:
 	# Do nothing, because we are installing to /usr/local even though this is non-standard practice

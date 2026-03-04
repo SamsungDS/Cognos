@@ -175,7 +175,7 @@ int run_command(const uint8_t *buffer, uint64_t len, std::string &output) {
     return -1;
   }
   std::string node_info_script_path =
-      "python3 " + node_feature_path + "/scripts/find_node_info.py";
+      node_feature_path + "/scripts/find_node_info.py";
   logger_str =
       "Successfully parsed json from input buffer, finding node info with "
       "python script located at <" +
