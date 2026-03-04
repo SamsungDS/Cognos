@@ -2768,3 +2768,7 @@ TEST(InitControllerTest, ProcessSLAEventWithParseErrorWithMissingField) {
   ProcessSLAEvent(json_data, svcr);
   unlink(conf_file.c_str());
 }
+
+TEST(InitControllerTest, SystemdNotify) {
+  systemd_notify(1, "Service is running and healthy.");
+}
