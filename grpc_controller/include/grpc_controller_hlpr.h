@@ -65,4 +65,5 @@ int StopAllThreads(ControllerServicer* svcr);
 int StartThreadForZMQSubscriberConfiguration(ControllerServicer* svcr);
 void ProcessRASEvent(json json_data, ControllerServicer* svcr);
 void ProcessSLAEvent(json json_data, ControllerServicer* svcr);
+void systemd_notify(int ready, const char* status);
 #endif /*__GRPC_CONTROLLER_HLPR_H__*/

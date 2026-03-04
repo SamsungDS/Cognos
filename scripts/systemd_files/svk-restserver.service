@@ -3,12 +3,13 @@ Description=SVK Rest API Server service
 After=svk-controller.service
 Requires=svk-controller.service
 StartLimitBurst=5
-
+PartOf=svk-controller.service
 
 [Service]
 #User=svk
 KillMode=process
 WorkingDirectory = /usr/local/svk/mgmt-fw
+Type=notify
 
 ExecStart = /usr/local/svk/mgmt-fw/rest_api/svk_rest_server --config_file /etc/svk/mgmt_fw_config.json
 ExecReload = /bin/kill -s HUP $MAINPID
@@ -17,4 +18,4 @@ Restart=always
 
 [Install]
 WantedBy=multi-user.target
-
+RequiredBy=svk-controller.service

@@ -7,6 +7,7 @@ StartLimitBurst=5
 #User=svk
 KillMode=process
 WorkingDirectory = /usr/local/svk/mgmt-fw
+Type=notify
 
 ExecStart = /usr/local/svk/mgmt-fw/bin/svkgrpccontroller --svk_conf_file /etc/svk/mgmt_fw_config.json
 ExecReload = /bin/kill -s HUP $MAINPID

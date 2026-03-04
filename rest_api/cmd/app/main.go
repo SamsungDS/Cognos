@@ -25,6 +25,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/coreos/go-systemd/daemon"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/grpclog"
@@ -701,8 +702,24 @@ func MainWithContext(ctx context.Context) {
 		go RunRestServer(httpsServer, useTLS)
 	}
 
+	// Notify systemd that the service is ready
+	_, err = daemon.SdNotify(false, daemon.SdNotifyReady)
+	if err != nil {
+		svk_logger.Errorf("Failed to send READY=1 notification: %v", err)
+	}
+
+	// Send a message as well
+	_, err = daemon.SdNotify(false, "STATUS=Service is running and healthy.")
+	if err != nil {
+		svk_logger.Errorf("Failed to send STATUS notification: %v", err)
+	}
+
 	StopRestServer(ctx)
 	close(restServerChannel)
+	_, err = daemon.SdNotify(false, "STATUS=Service is stopped")
+	if err != nil {
+		svk_logger.Errorf("Failed to send STATUS notification: %v", err)
+	}
 	CloseLogger(logFileHandle)
 }
 

@@ -1,5 +1,7 @@
 #include "grpc_controller.h"
 
+#include <systemd/sd-daemon.h>
+
 #include <condition_variable>
 #include <csignal>
 #include <mutex>
@@ -45,6 +47,11 @@ static long long get_epoch_string() {
   return std::chrono::duration_cast<std::chrono::nanoseconds>(
              std::chrono::system_clock::now().time_since_epoch())
       .count();
+}
+
+void systemd_notify(int ready, const char *status) {
+  sd_notifyf(0, "READY=%d\nSTATUS=%s", ready, status);
+  return;
 }
 
 /**
@@ -3026,17 +3033,22 @@ int StartServer(const std::string &svk_conf_file, bool blocking) {
 
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
              "Started the Event Processing Thread");
+  systemd_notify(1, "Service is running and healthy.");
 
   while (gSignalStatus.load() == -1) sleep(5);
+  systemd_notify(1, "Stopping the service ...");
+
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
              "Stopping all threads");
   StopAllThreads(svcr);
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
              "Stopping Event Processing thread");
   StopEventProcessingThread(svcr);
+  gSignalStatus = -1;
   sla_thread->join();
   subscriber_thread->join();
   delete svcr;
+  systemd_notify(1, "Service is stopped");
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
              "The controller server is stopped gracefully");
   svk_logger_flush(CONTROLLER_LOGGER_MODULE_NAME);

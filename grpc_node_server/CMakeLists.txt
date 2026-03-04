@@ -89,6 +89,7 @@ target_link_libraries(
     "${GRPC_LINK_LIBRARIES_FLAG} ${SVK_FW_LIBS} -lutf8_validity -Wl,--no-as-needed -lgrpc++_reflection -Wl,--as-needed -ldl -lsvklogger -lsvkframework"
 )
 target_link_libraries(${PROJECT_NAME} PUBLIC ${SVK_FW_GRPC_CORE_LIB})
+target_link_libraries(${PROJECT_NAME} PUBLIC systemd)
 
 if(BUILD_TESTING)
   add_library(svkgrpcnodetest STATIC ${SRCS})
@@ -104,6 +105,7 @@ if(BUILD_TESTING)
       "${GRPC_LINK_LIBRARIES_FLAG} ${SVK_FW_LIBS} -lutf8_validity -Wl,--no-as-needed -lgrpc++_reflection -Wl,--as-needed -ldl -lsvklogger -lsvkframework"
   )
   target_link_libraries(svkgrpcnodetest PUBLIC ${SVK_FW_GRPC_CORE_LIB})
+  target_link_libraries(svkgrpcnodetest PUBLIC systemd)
   install(FILES ${GRPC_INC_FILES} DESTINATION ${SVKGRPCFW_INCLUDE_DEST})
 endif()
 

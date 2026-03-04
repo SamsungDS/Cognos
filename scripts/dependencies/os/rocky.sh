@@ -28,6 +28,7 @@ install_build_deps() {
         'python3-virtualenv'
         'rpmdevtools'
         'spdlog-devel'
+        'systemd-devel'
         'tar'
         'unzip'
         'wget'

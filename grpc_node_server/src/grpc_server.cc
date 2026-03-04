@@ -1,5 +1,7 @@
 #include "grpc_server.h"
 
+#include <systemd/sd-daemon.h>
+
 #include <csignal>
 #include <set>
 
@@ -14,6 +16,11 @@ using namespace std;
 using namespace svk;
 
 std::atomic<int> gSignalNodeStatus = -1;
+
+void systemd_notify(int ready, const char *status) {
+  sd_notifyf(0, "READY=%d\nSTATUS=%s", ready, status);
+  return;
+}
 
 int initialize_logger(const node_config &config) {
   int status = -1;
@@ -117,6 +124,7 @@ Servicer::Servicer(const std::string &svk_conf_file) {
              "Initializing the svk framework");
 
   m_svk_config = config;
+  systemd_notify(0, "Loading Cognos feature modules ...");
 
   ret_val = initialize_svk(config.framework_conf_file.c_str(), nullptr);
   if (ret_val) {
@@ -373,6 +381,7 @@ std::shared_ptr<Server> InitializeNodeServicer(Servicer *svcr) {
              "Server instance successfully created");
 
   if (config.controller_id.length()) {
+    systemd_notify(0, "Waiting for the controller to register the node ...");
     status = RegisterNodeWithController(config);
     if (status) {
       svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
@@ -426,10 +435,13 @@ int StartNodeServer(const std::string &svk_conf_file, bool blocking) {
     std::signal(SIGINT, signal_node_handler);
     std::signal(SIGABRT, signal_node_handler);
 
+    systemd_notify(1, "Service is running and healthy.");
+
     if (blocking == true) {
       while (gSignalNodeStatus.load() == -1) {
         sleep(5);
       }
+      systemd_notify(1, "Stopping the service ...");
       SetNodeStatus(svcr->get_svk_config(), "offline");
       gSignalNodeStatus = -1;
       svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
@@ -446,6 +458,7 @@ int StartNodeServer(const std::string &svk_conf_file, bool blocking) {
   if (svcr) {
     delete svcr;
   }
+  systemd_notify(1, "Service is Stopped");
   svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
              "The node server is stopped gracefully");
   svk_logger_close(MGMT_FW_LOGGER_MODULE_NAME);
