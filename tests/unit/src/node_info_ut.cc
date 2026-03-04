@@ -55,7 +55,7 @@ TEST(HelperFnsTests, TestFindNodeInfoCPU) {
   EXPECT_EQ(0, status);
 
   std::string info_type = "cpu";
-  std::string script_path = "python3 node/scripts/find_node_info.py";
+  std::string script_path = "node/scripts/find_node_info.py";
   std::string output;
 
   EXPECT_EQ(0, find_node_info(info_type, script_path, output));

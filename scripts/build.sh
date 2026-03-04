@@ -11,7 +11,7 @@ BUILD_DIR="$PROJECT_ROOT/build"
 ARTIFACTS_DIR="$BUILD_DIR/artifacts"
 REPORTS_DIR="$BUILD_DIR/reports"
 TESTS_DIR="$BUILD_DIR/tests"
-VENV_DIR=/usr/local/svk/node/venv
+VENV_DIR=/usr/local/svk/venv/node
 
 # Default build options
 CMAKE_OPTIONS=()
@@ -150,7 +150,7 @@ build_feature() {
 
 execute_python_tests() {
     echo "Running python unit tests"
-    /usr/local/svk/node/venv/bin/python3 -m pytest \
+    "${VENV_DIR}"/bin/python3 -m pytest \
         "$PROJECT_ROOT"/tests/unit/src/test_node_info.py \
         --cov-report xml:"$REPORTS_DIR"/python_coverage.xml \
         --cov-report term \

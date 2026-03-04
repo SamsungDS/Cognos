@@ -1,3 +1,5 @@
+#! /usr/local/svk/venv/node/bin/python3
+
 import argparse
 import distro
 import json

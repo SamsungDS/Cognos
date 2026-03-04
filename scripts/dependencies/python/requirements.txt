@@ -1,9 +1,8 @@
-# Python dependencies
+# Python dependencies for build and code coverage
 clang-format
 gcovr
-psutil
-py-libnuma==1.2
 pytest
 pytest-cov
 pytest-mock
-distro
+
+-r requirements_deploy.txt
