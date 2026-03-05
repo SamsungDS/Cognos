@@ -2,6 +2,7 @@
 click
 flask
 flask_cors
+gunicorn
 influxdb-client[ciso]
 pandas
 pytest

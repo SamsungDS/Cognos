@@ -224,6 +224,7 @@ def zeromq_subscription(
     try:
         # Connect to the publisher
         socket.connect(f"tcp://{node_id}:{publisher_port}")
+        print(f"Successfully connected to publisher for node: {node_id}:{publisher_port}")
     except zmq.ZMQError as e:
         print(
             f"Failed to connect to server at {node_id}:{publisher_port}: {e}"
@@ -242,9 +243,11 @@ def zeromq_subscription(
     try:
         while not stop_condition():
             try:
+                print("Attempting to receive data....")
                 # Receive a message from the server
                 string = socket.recv()
                 payload = str(string, "utf-8")
+                print(f"Data received... {payload}")
                 # Ensure payload contains colon (':') to split
                 if ":" not in payload:
                     print("Invalid message format: missing ':' separator")

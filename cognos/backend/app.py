@@ -6,6 +6,8 @@ import os
 import sys
 import time
 from flask_cors import CORS
+from gunicorn.app.base import BaseApplication
+import multiprocessing
 
 sys.path.append(
     os.path.abspath(  # noqa: E402
@@ -397,6 +399,26 @@ def init_cognos_db(mock=False):
             sql_client.table_description("connections")
 
 
+class StandaloneApplication(BaseApplication):
+    """Custom Gunicorn application to run from Python code."""
+
+    def __init__(self, app, options=None):
+        self.options = options or {}
+        self.application = app
+        super().__init__()
+
+    def load_config(self):
+        """Load Gunicorn config from self.options dict."""
+        config = {key: value for key, value in self.options.items()
+                  if key in self.cfg.settings and value is not None}
+        for key, value in config.items():
+            self.cfg.set(key.lower(), value)
+
+    def load(self):
+        """Return WSGI application."""
+        return self.application
+
+
 @click.command()
 @click.option("--mock", "-m", is_flag=True, help="mock mode")
 @click.option("--host", "-h", required=True, help="IP of host of CAL")
@@ -407,10 +429,18 @@ def main(mock, host, port):
     init_cognos_db(mock=mock)
     app = create_app(mock)
 
-    if validate_ssl_enabled():
-        app.run(host=host, port=port, ssl_context=get_ssl_context())
-    else:
-        app.run(host=host, port=port)
+    options = {
+        "bind": f"{host}:{port}",  # Host:Port
+        "workers": multiprocessing.cpu_count() // 2 + 1,  # 1 worker max per 2 CPU
+        "worker_class": "sync",  # Could be 'gevent', 'uvicorn.workers.UvicornWorker', etc.
+        "timeout": 30
+    }
+    StandaloneApplication(app, options).run()
+
+    # if validate_ssl_enabled():
+    #     app.run(host=host, port=port, ssl_context=get_ssl_context())
+    # else:
+    #     app.run(host=host, port=port)
 
 
 if __name__ == "__main__":
