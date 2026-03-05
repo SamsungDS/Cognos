@@ -4,4 +4,5 @@ set -e
 # post remove steps go here
 
 rm -f /usr/lib/modules-load.d/svk-ras.conf
-rmmod mce_inject
+modprobe -r mce_inject
+exit 0
