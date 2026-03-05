@@ -59,7 +59,7 @@ mce_inject
 EOF
 
 # Load the mce_inject module as one-time call
-lsmod|grep mce_inject || modprobe mce_inject
+modprobe mce_inject
 
 %preun
 # pre-uninstall commands go here
@@ -68,7 +68,7 @@ lsmod|grep mce_inject || modprobe mce_inject
 # post-uninstall commands go here
 %_sbindir/ldconfig
 rm -f /usr/lib/modules-load.d/svk-ras.conf
-rmmod mce_inject
+modprobe -r mce_inject
 
 %changelog
 * Wed Feb 5 2025 Mike Xu <pengfei.xu@samsung.com>
