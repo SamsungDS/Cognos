@@ -1,3 +1,8 @@
 #!/bin/sh
 set -e
-ldconfig
+ME_VENV_DIR="/usr/local/svk/venv/me"
+
+# Remove venv created as part of install
+rm -rf "${ME_VENV_DIR}"
+
+dconfig

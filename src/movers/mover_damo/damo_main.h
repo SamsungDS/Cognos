@@ -6,8 +6,8 @@
 using namespace std;
 
 const std::string SVK_DAMO_PATH = "/usr/local/svk/feature_modules/me/config/";
-const std::string PM_DAMO_PATH = "/usr/local/svk/me/venv/bin/damo";
-const std::string PM_DAMO_PYTHON3_PATH = "/usr/local/svk/me/venv/bin/python3";
+const std::string PM_DAMO_PATH = "/usr/local/svk/venv/me/bin/damo";
+const std::string PM_DAMO_PYTHON3_PATH = "/usr/local/svk/venv/me/bin/python3";
 const std::string PM_DAMO_CONFIG_GEN_SCRIPT = "tm_gen_config.py";
 const std::string GLOBAL_DAMO_CONFIG = SVK_DAMO_PATH + "global_damo_config.yaml";
 

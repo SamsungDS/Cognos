@@ -105,7 +105,7 @@ def main():
         print("error: Run as root")
         sys.exit(1)
 
-    damo = "/usr/local/svk/me/venv/bin/damo"
+    damo = "/usr/local/svk/venv/me/bin/damo"
     node_jsons = []
 
     common_opts = f"{monitoring_intervals} {monitoring_nr_regions_range}"

@@ -1,3 +1,9 @@
 #!/bin/sh
 set -e
 ldconfig
+ME_FEATURE_PATH="/usr/local/svk/feature_modules/me"
+ME_VENV_DIR="/usr/local/svk/venv/me"
+/usr/bin/python3 -m venv "${ME_VENV_DIR}"
+"${ME_VENV_DIR}"/bin/python3 -m pip install --upgrade pip
+"${ME_VENV_DIR}"/bin/pip3 install -r ${ME_FEATURE_PATH}/scripts/dependencies/python/requirements_deploy.txt
+exit 0

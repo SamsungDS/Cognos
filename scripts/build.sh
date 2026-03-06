@@ -15,7 +15,7 @@ BUILD_DIR="$PROJECT_ROOT/build"
 ARTIFACTS_DIR="$BUILD_DIR/artifacts"
 TESTS_DIR="$BUILD_DIR/tests"
 REPORTS_DIR="$BUILD_DIR/reports"
-VENV_DIR="/usr/local/svk/me/venv"
+VENV_DIR="/usr/local/svk/venv/me"
 
 # Default build options
 BUILD_RELEASE=false
@@ -225,7 +225,7 @@ execute_tests() {
 
   echo "Generating coverage reports"
   # Using path to framework object files
-  /usr/local/svk/me/venv/bin/gcovr \
+  "${VENV_DIR}"/bin/gcovr \
     --xml "$REPORTS_DIR/gitlab_coverage.xml" \
     --sonarqube "$REPORTS_DIR/sonar_coverage.xml" \
     --txt \

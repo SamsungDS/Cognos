@@ -4,12 +4,12 @@ set -e
 # Path variables
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 REQUIREMENTS=$(realpath "$SCRIPT_DIR/../python/requirements.txt")
-VENV_DIR=/usr/local/svk/me/venv
+VENV_DIR=/usr/local/svk/venv/me
 
 # Create python venv if it does not exist
 if [[ ! -d $VENV_DIR ]]; then
     echo "Creating Python virtual environment at $VENV_DIR"
-     python3 -m venv $VENV_DIR
+    python3 -m venv $VENV_DIR
 else
     echo "Python virtual environment already exists at $VENV_DIR"
 fi
