@@ -114,6 +114,7 @@ int main(int argc, char *argv[]) {
   string dev = "";
   string type = "correctable", tres;
   unsigned int interval = 5;
+  bool poll = false;
 
   while ((c = getopt(argc, argv, "n:i:h")) != -1) switch (c) {
       case 'n':
@@ -143,7 +144,7 @@ int main(int argc, char *argv[]) {
           usage();
           return INVALID_POLLING_INTERVAL;
         }
-
+        poll = true;
         break;
 
       case 'h':
@@ -199,6 +200,9 @@ int main(int argc, char *argv[]) {
                << endl;
         }
       }
+    }
+    if (!poll) {
+      break;
     }
     cout << "++++++++++++++++++++" << endl;
     this_thread::sleep_for(interv);
