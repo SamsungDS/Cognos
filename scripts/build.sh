@@ -134,12 +134,9 @@ build_rpm() {
     local RPMBUILD_DIR="$BUILD_DIR/rpmbuild"
 
     # Replace '-' with '_' in version string, in case current commit is not an exact tag
-    local RPM_VERSION="$GIT_VERSION"
-    RPM_VERSION="${RPM_VERSION//-/_}"
-    RPM_VERSION="${RPM_VERSION/./.}"
-    # shellcheck disable=SC2001
-    RPM_VERSION="$(echo "$RPM_VERSION" | sed 's/\./_/2g')"
-
+    local RPM_VERSION=${GIT_VERSION//-/_}
+    # Exclude everything after '-' for Go version (must be semantic version with integers only)
+    local RPM_SHORT_VERSION=${GIT_VERSION/-*}
 
     # Only build RPM on supported OS
     if [[ "$ID" == "rocky" || "${ID}" == "ol" ]]; then
@@ -153,6 +150,7 @@ build_rpm() {
             --define "_topdir $RPMBUILD_DIR" \
             --define "svk_rpm_version $RPM_VERSION" \
             --define "svk_os_version $ID$VERSION_ID" \
+            --define "svk_short_version $RPM_SHORT_VERSION" \
             --define "_projectdir $PROJECT_ROOT"
 
         # Move RPMs to artifacts dir
