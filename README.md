@@ -1,7 +1,7 @@
-# SVK CXL Plugin
+# Cognos CXL Plugin
 
 ## Description
-SVK CXL plugin interfaces with connected CXL devices downstream through fabric management and Cognos GUI upstream. It defines interfaces to read and update the CXL device state using fabric management interface. 
+Cognos CXL plugin interfaces with connected CXL devices downstream through fabric management and Cognos GUI upstream. It defines interfaces to read and update the CXL device state using fabric management interface. 
 For more details, see http://sj-confluence.ssi.samsung.com:8090/display/MPL/High+Level+Design+of+Samsung+Cognos+Management+Console.
 
 ## Supported Build and Runtime Platforms
@@ -14,40 +14,40 @@ For more details, see http://sj-confluence.ssi.samsung.com:8090/display/MPL/High
 ./scripts/dependencies/install.sh
 ```
 
-### SVK Dependencies
+### Cognos Dependencies
 
 The [dependencies install script](#Install-build-dependencies) will configure your build environment to pull packages from [SSG Nexus](http://ssg-nexus.msl.lab:8081).
 
-The following SVK dependencies are installed automatically by the above script, but can be manually updated, if necessary, using your OS's package manager:
+The following Cognos dependencies are installed automatically by the above script, but can be manually updated, if necessary, using your OS's package manager:
 
-- `svk-core`
-- `svk-core-dev` (Ubuntu) or `svk-core-devel` (Rockylinux)
-- `svk-grpc`
-- `svk-go-modules`
-- `svk-mgmt-fw`
+- `cognos-core`
+- `cognos-core-dev` (Ubuntu) or `cognos-core-devel` (Rockylinux)
+- `cognos-grpc`
+- `cognos-go-modules`
+- `cognos-mgmt-fw`
 
-### Manual upgrade of SVK Packages
+### Manual upgrade of Cognos Packages
 
 #### Rockylinux
 
 ```bash
 dnf clean all
 dnf config-manager --add-repo=http://ssg-nexus.msl.lab:8081/repository/svk_yum_rocky9/
-dnf install svk-core-devel svk-grpc svk-go-modules  -y
-dnf install svk-mgmt-fw
+dnf install cognos-core-devel cognos-grpc cognos-go-modules  -y
+dnf install cognos-mgmt-fw
 
 # Optional - install devel package
-dnf install svk-mgmt-fw-devel -y
+dnf install cognos-mgmt-fw-devel -y
 ```
 
 #### Oracle Linux
 ```bash
 curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
 dnf install oracle-epel-release-el10 -y
-dnf install svk-core-devel svk-grpc svk-go-modules svk-mgmt-fw -y
+dnf install cognos-core-devel cognos-grpc cognos-go-modules cognos-mgmt-fw -y
 
 # Optional - install devel package
-dnf install svk-mgmt-fw-devel -y
+dnf install cognos-mgmt-fw-devel -y
 ```
 
 #### Ubuntu
@@ -56,10 +56,10 @@ dnf install svk-mgmt-fw-devel -y
 wget --quiet --output-document /usr/share/keyrings/ssg-nexus.pgp  http://ssg-nexus.msl.lab:8081/repository/svk_common/public.pgp
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ssg-nexus.pgp] http://ssg-nexus.msl.lab:8081/repository/svk_apt_ubuntu22 $(. /etc/os-release && echo $UBUNTU_CODENAME) main" > /etc/apt/sources.list.d/ssg-nexus.list
 apt-get update
-apt-get install svk-core-dev svk-grpc svk-go-modules -y
-apt-get install svk-mgmt-fw -y
+apt-get install cognos-core-dev cognos-grpc cognos-go-modules -y
+apt-get install cognos-mgmt-fw -y
 # Optional - install devel package
-apt-get install svk-mgmt-fw-dev -y
+apt-get install cognos-mgmt-fw-dev -y
 ```
 ### Oracle Linux
 
@@ -68,20 +68,20 @@ source /etc/os-release
 MAJOR_VER="${VERSION_ID%%.*}"
 curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
 dnf install oracle-epel-release-el${MAJOR_VER} -y
-dnf install svk-core svk-core-devel -y
-dnf install svk-mgmt-fw -y
+dnf install cognos-core cognos-core-devel -y
+dnf install cognos-mgmt-fw -y
 # Optional - install devel package
-dnf install svk-mgmt-fw-devel -y
+dnf install cognos-mgmt-fw-devel -y
 ```
 
 ### Get the Sources
 
-#### SVK CXL
+#### Cognos CXL
 
 git clone --recursive https://cxl-gitlab.ssi.samsung.com/dfs/svk/cxl.git
 
 #### CXL Mem box API (cxl_memory_box)
-CXL Mem box API implements a low level cxl fabric management API for Samsung CXL memory box. SVK CXL plugin uses the same to execute immutable and mutable functions on Samsung CXL memory box, e.g. attach/detach CXL memory device to and from an application server.
+CXL Mem box API implements a low level cxl fabric management API for Samsung CXL memory box. Cognos CXL plugin uses the same to execute immutable and mutable functions on Samsung CXL memory box, e.g. attach/detach CXL memory device to and from an application server.
 
 For more details, please see http://sj-confluence.ssi.samsung.com:8090/display/MPL/CXL+memory+box+FM+APIs.
 
@@ -118,7 +118,7 @@ cmake.. && make
 ```
 
 
-#### Link FM API with SVK CXL
+#### Link FM API with Cognos CXL
 
 For example,
 ```
@@ -151,16 +151,16 @@ make...
 
 ## Building and executing unit tests
 
-- Execute `./scripts/build.sh` script from the top level directory. The `-h` option will show what options are available for building SVK CXL Plugin:
+- Execute `./scripts/build.sh` script from the top level directory. The `-h` option will show what options are available for building Cognos CXL Plugin:
 
 ```bash
 ./scripts/build.sh -h
-Build script for SVK CXL Plugin
+Build script for Cognos CXL Plugin
 
 Syntax: build.sh [-t|c|h|p|r|f]
 options:
 -t | --build-tests
-  Build the unit tests for SVK Framework.
+  Build the unit tests for Cognos Framework.
 -c | --with-coverage
   Build with code coverage report. Must build unit tests for this.
 -h | --help
@@ -168,7 +168,7 @@ options:
 -p | --install-prefix
   Install libraries and related files to specified dir.
 -r | --release
-  Release build. Generates a tarball called svk-core-<version>.tgz by default.
+  Release build. Generates a tarball called cognos-core-<version>.tgz by default.
 -f | --filename
   Filename prefix to use for release tarball. Only applicable when building with release flag.
 --with-fmapi <FMAPI_LIB_PATH> <FMAPI_INCLUDE_PATH>
@@ -257,7 +257,7 @@ Note: for mock binary use "--mock" flag
 
 
 ## Contributing
-Thank you for your interest in contributing to SVK CXL
+Thank you for your interest in contributing to Cognos CXL
 
 ### Sending patches
 
@@ -282,7 +282,7 @@ Thank you for your interest in contributing to SVK CXL
 
 ### Coding Style Guidelines
 
-SVK CXL uses style check tools for C++ code, shell and python scripts.
+Cognos CXL uses style check tools for C++ code, shell and python scripts.
 As a prerequisite, install the tools with specific versions mentioned at http://sj-confluence.ssi.samsung.com:8090/pages/viewpage.action?pageId=322801744#SVKCodingStandards&Styles-Consensus to be in sync with the gitlab pipelines.
 
 #### Running shellcheck

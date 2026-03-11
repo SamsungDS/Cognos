@@ -7,13 +7,13 @@ Standards-Version: 4.1.4
 
 Package: DEB_PACKAGE_NAME
 Architecture: amd64
-Depends: ${shlibs:Depends}, ${misc:Depends}, svk-mgmt-fw, dstat, pciutils (>=3.10)
-Description: SVK Management framework - APIs and services for monitoring and management.
- This package provides APIs and services related to the SVK Management framework,
+Depends: ${shlibs:Depends}, ${misc:Depends}, cognos-mgmt-fw, dstat, pciutils (>=3.10)
+Description: Cognos Management framework - APIs and services for monitoring and management.
+ This package provides APIs and services related to the Cognos Management framework,
  including tools for system monitoring and performance analysis.
  It includes `dstat` to support real-time resource usage tracking and diagnostic capabilities.
 
 Package: DEB_PACKAGE_NAME-dev
 Architecture: amd64
-Depends: svk-mgmt-fw-dev, DEB_PACKAGE_NAME (= ${binary:Version})
-Description: SVK CXL Plugin, services
+Depends: cognos-mgmt-fw-dev, DEB_PACKAGE_NAME (= ${binary:Version})
+Description: Cognos CXL Plugin, services

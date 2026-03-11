@@ -5,14 +5,14 @@
 
 [Unit]
 Description=CMMH_DRIVER
-Requires=svk-node.service
-Before=svk-node.service
-BindsTo=svk-node.service
+Requires=cognos-node.service
+Before=cognos-node.service
+BindsTo=cognos-node.service
 
 [Service]
 ExecStartPre=/usr/bin/rm -f /dev/shm/cmmh_shm_req_0 /dev/shm/cmmh_shm_rsp_0 /dev/shm/cmmh_socket
 ExecStart=/usr/local/bin/cmmh_driver
-# Added this sleep as this service is clubbed to svk-node.service
+# Added this sleep as this service is clubbed to cognos-node.service
 # Giving enough time for the driver to initialize even though
 # not required.
 ExecStartPost=/bin/sleep 2
@@ -22,4 +22,4 @@ Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
-WantedBy=svk-node.service
+WantedBy=cognos-node.service

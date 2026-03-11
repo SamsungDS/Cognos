@@ -33,12 +33,12 @@ die() {
 help()
 {
   # Display Help
-  echo "Build script for SVK Framework"
+  echo "Build script for Cognos Framework"
   echo
   echo "Syntax: build.sh [-t|c|h|p|r|f]"
   echo "options:"
   echo "-t | --build-tests"
-  echo "  Build the unit tests for SVK Framework."
+  echo "  Build the unit tests for Cognos Framework."
   echo "-c | --with-coverage"
   echo "  Build with code coverage report. Must build unit tests for this."
   echo "-h | --help"
@@ -46,14 +46,14 @@ help()
   echo "-p | --install-prefix"
   echo "  Install libraries and related files to specified dir."
   echo "-r | --release"
-  echo "  Release build. Generates a tarball called svk-core-<version>.tgz by default."
+  echo "  Release build. Generates a tarball called cognos-core-<version>.tgz by default."
   echo "-f | --filename"
   echo "  Filename prefix to use for release tarball. Only applicable when building with release flag."
   echo "--with-fmapi <FMAPI_LIB_PATH> <FMAPI_INCLUDE_PATH>"
   echo "  Builds with fmapi. Requires fmapi library and source paths."
   echo "e.g. scripts/build.sh --with-fmapi /cxl_memory_box/mbox_a1/build/libmbox_a1_shared.so /cxl_memory_box/mbox_a1"
   echo "-b | --build-package"
-  echo "  Generate SVK CXL FW RPMs/DEB packages."
+  echo "  Generate Cognos CXL FW RPMs/DEB packages."
   echo "-i | --install-path"
   echo "  Path that RPMs should install svk cxl to (Default: /usr/local/svk/cxl). Only applicable when building with release flag."
   echo "--mock"
@@ -143,7 +143,7 @@ get_git_version() {
 
   # Strip 'v' character from version string
   GIT_VERSION=${GIT_VERSION/v/}
-  echo "Building SVK Core version: $GIT_VERSION"
+  echo "Building Cognos Core version: $GIT_VERSION"
 }
 
 move_artifacts() {
@@ -192,7 +192,7 @@ create_deb()
   # We're passing $PACKAGE_INSTALL_PATH as $1 below but not capturing it? - Someone please fix this! - Matt
 
   # Define a dynamic package name which reflects whether we are producting a release or simulation artifact
-  local DEB_PACKAGE_NAME='svk-cxl'
+  local DEB_PACKAGE_NAME='cognos-cxl'
   if [[ $MOCK == true ]]; then
     DEB_PACKAGE_NAME="$DEB_PACKAGE_NAME-mock"
   fi
@@ -223,15 +223,15 @@ create_deb()
     sed -i -e "s@DEB_PACKAGE_NAME@$DEB_PACKAGE_NAME@g" "$DEBIAN_DIR/control"
     if [[ $MOCK == true ]]; then
       # Rename the .install packages if MOCK - to refelect above renamed package in rules / changelog / control
-      mv -v "$DEBIAN_DIR/svk-cxl.install" "$DEBIAN_DIR/$DEB_PACKAGE_NAME.install"
-      mv -v "$DEBIAN_DIR/svk-cxl-dev.install" "$DEBIAN_DIR/$DEB_PACKAGE_NAME-dev.install"
+      mv -v "$DEBIAN_DIR/cognos-cxl.install" "$DEBIAN_DIR/$DEB_PACKAGE_NAME.install"
+      mv -v "$DEBIAN_DIR/cognos-cxl-dev.install" "$DEBIAN_DIR/$DEB_PACKAGE_NAME-dev.install"
     fi
 
     sed -i -e "s@ZMQ_CONF_VAL@$PROJECT_ROOT@g" "$DEBIAN_DIR/rules"
     sed -i -e "s@CXL_CONF_VAL@$PROJECT_ROOT@g" "$DEBIAN_DIR/rules"
 
     pushd "$BUILD_DIR"
-      echo "Building SVK Management Framework Debian packages..."
+      echo "Building Cognos Management Framework Debian packages..."
       # Build Debian packages - generate binaries only, do not sign packages
       dpkg-buildpackage -b -us -uc --no-sign
 
@@ -242,7 +242,7 @@ create_deb()
       move_artifacts "$PROJECT_ROOT" deb
     popd
   else
-    echo "Skipping SVK Management Framework Debian package build for OS: $ID"
+    echo "Skipping Cognos Management Framework Debian package build for OS: $ID"
   fi
 }
 
@@ -272,7 +272,7 @@ if $RELEASE;then
     CMAKE_INSTALL_PREFIX="/usr/local/svk/feature_modules/cxl" # Need to use this path to generate release tarball properly
   fi
   if [ -z "$RELEASE_FILENAME_PREFIX" ];then
-    RELEASE_FILENAME_PREFIX="svk-cxl"
+    RELEASE_FILENAME_PREFIX="cognos-cxl"
   fi
   CMAKE_OPTIONS+=("-DWITH_RELEASE=ON")
   if [ -z "$PACKAGE_INSTALL_PATH" ];then

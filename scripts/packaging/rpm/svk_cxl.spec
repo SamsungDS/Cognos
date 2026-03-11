@@ -1,31 +1,31 @@
 %if "%{mock_flag}" == "true"
-Name:           svk-cxl-mock
+Name:           cognos-cxl-mock
 %else
-Name:           svk-cxl
+Name:           cognos-cxl
 %endif
 Version:        %svk_cxl_version
 Release:        1%{?dist}.%svk_os_version
-Summary:        SVK CXL Plugin
+Summary:        Cognos CXL Plugin
 License:        Samsung Internal
 BuildRequires:  jansson
-Requires:       svk-core, svk-mgmt-fw, jansson, pciutils >= 3.10.0, dstat
+Requires:       cognos-core, cognos-mgmt-fw, jansson, pciutils >= 3.10.0, dstat
 Provides:	libmbox_a1_shared.so()(64bit)
 
 %package devel
-Summary:        SVK CXL devel package contains headers
-Provides:       svk-cxl-devel = %version
-Requires:       svk-cxl = %version
+Summary:        Cognos CXL devel package contains headers
+Provides:       cognos-cxl-devel = %version
+Requires:       cognos-cxl = %version
 
 %description
-SVK CXL plugin to manage and access CXL devices.
+Cognos CXL plugin to manage and access CXL devices.
 
 %description devel
-SVK CXL downstream, upstream, and other related header files for app/feature development
+Cognos CXL downstream, upstream, and other related header files for app/feature development
 
 %{!?installpath: %global installpath /usr/local/svk/cxl}
 %{!?installpath_mgmt: %global installpath_mgmt /usr/local/svk/mgmt-fw}
 %{!?installpath_mbox: %global installpath_mbox /usr/local/lib/cxl_memory_box}
-%{!?cxl_build_dir: %global cxl_build_dir svk-cxl}
+%{!?cxl_build_dir: %global cxl_build_dir cognos-cxl}
 %{!?installpath_cmmh_lib: %global installpath_cmmh_lib /usr/local/lib}
 %{!?installpath_cmmh_include: %global installpath_cmmh_include /usr/local/include}
 %{!?installpath_cmmh_service: %global installpath_cmmh_service /usr/lib/systemd/system}
@@ -123,5 +123,5 @@ done
 
 %changelog
 * Tue Jan 20 2026 FSL-JIRA@ssi.samsung.com
-- Initial RPM spec which creates a release and a devel RPM for SVK-CXL. Devel RPM includes headers for feature development
+- Initial RPM spec which creates a release and a devel RPM for Cognos-CXL. Devel RPM includes headers for feature development
 

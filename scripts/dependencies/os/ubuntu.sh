@@ -63,12 +63,12 @@ configure_nexus() {
     BUILD_DEPS=()
     apt-get update
 
-    # Install svk-core, svk-extras packages from Nexus
+    # Install cognos-core, cognos-extras packages from Nexus
     BUILD_DEPS=(
-        svk-core
-        svk-core-dev
-        svk-mgmt-fw
-        svk-mgmt-fw-dev
+        cognos-core
+        cognos-core-dev
+        cognos-mgmt-fw
+        cognos-mgmt-fw-dev
     )
     package_manager
 }
