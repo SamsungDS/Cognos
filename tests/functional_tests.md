@@ -18,24 +18,24 @@ Step1: execute the below services
 
   1. controller service  
      
-     option1: systemctl start svk-controller
-              systemctl status svk-controller
+     option1: systemctl start cognos-controller
+              systemctl status cognos-controller
       
      option2: if system controller command doesnt work - 
               /usr/local/svk/mgmt-fw/bin/svkgrpccontroller  --svk_conf_file /etc/svk/controller.json
 
   2. Node service 
 
-     option1: systemctl start svk-node
-              systemctl status svk-node
+     option1: systemctl start cognos-node
+              systemctl status cognos-node
      
      option2:
               /usr/local/svk/mgmt-fw/bin/svkgrpcnode  --svk_conf_file /etc/svk/node_agent.json
 
   3. Rest service  
 
-     option1: systemctl start svk-restserver
-              systemctl status svk-restserver
+     option1: systemctl start cognos-restserver
+              systemctl status cognos-restserver
 
      option2:
               /usr/local/svk/mgmt-fw/rest_api/svk_rest_server --config-file /etc/svk/rest_server.json

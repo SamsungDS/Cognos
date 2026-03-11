@@ -1,10 +1,10 @@
-Name:           svk-me
+Name:           cognos-me
 Version:        %svk_rpm_version
 Release:        1%{?dist}.%svk_os_version
-Summary:        SVK ME Plugin
+Summary:        Cognos ME Plugin
 License:        Samsung Internal
 BuildRequires:  jansson
-Requires:       svk-core, svk-mgmt-fw, jansson, libcgroup-original-tools, yaml-cpp
+Requires:       cognos-core, cognos-mgmt-fw, jansson, libcgroup-original-tools, yaml-cpp
 
 
 %global svk_install_dir %_prefix/local/svk/feature_modules/me
@@ -15,7 +15,7 @@ Requires:       svk-core, svk-mgmt-fw, jansson, libcgroup-original-tools, yaml-c
 %global me_venv_dir /usr/local/svk/venv/me
 
 %description
-SVK Memory Engine - APIs and functions for application memory monitoring and management.
+Cognos Memory Engine - APIs and functions for application memory monitoring and management.
 
 %install
 cd %svk_build_dir

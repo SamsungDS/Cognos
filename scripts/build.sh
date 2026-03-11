@@ -157,7 +157,7 @@ create_deb()
 
   # Define a dynamic package name which reflects whether we are producting a release or simulation artifact
   # This name needs to match the .install file name in the debian directory
-  local DEB_PACKAGE_NAME='svk-me'
+  local DEB_PACKAGE_NAME='cognos-me'
 
   # Only build Debian Package on supported OS
   if [[ "$ID" == "ubuntu" ]]; then
