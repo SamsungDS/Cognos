@@ -1,11 +1,11 @@
-Source: svk-node
+Source: cognos-node
 Section: utils
 Priority: optional
 Maintainer: Suresh Grandhi(suresh.g@samsung.com)
 Build-Depends: debhelper (>=12)
 Standards-Version: 4.1.4
 
-Package: svk-node
+Package: cognos-node
 Architecture: amd64
-Depends: ${shlibs:Depends}, ${misc:Depends}, svk-core, lshw, numactl
-Description: SVK Node feature module to get the node's information
+Depends: ${shlibs:Depends}, ${misc:Depends}, cognos-core, lshw, numactl
+Description: Cognos Node feature module to get the node's information

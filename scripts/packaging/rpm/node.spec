@@ -1,8 +1,8 @@
-Name:           svk-node
+Name:           cognos-node
 Version:        %svk_rpm_version
 Release:        1%{?dist}.%svk_os_version
-Summary:        SVK Node Information
-Requires:       svk-core, lshw, numactl
+Summary:        Cognos Node Information
+Requires:       cognos-core, lshw, numactl
 License:        Samsung Internal
 
 %global svk_install_dir %_prefix/local/svk/feature_modules/node
@@ -13,7 +13,7 @@ License:        Samsung Internal
 
 
 %description
-SVK Node feature module to get the node's information such as CPU, Memory, PCI devices etc.
+Cognos Node feature module to get the node's information such as CPU, Memory, PCI devices etc.
 
 %install
 cd %svk_build_dir
