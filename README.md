@@ -19,7 +19,7 @@ SVK Core's CI/CD automatically produces release artifacts which are published to
 
 Release artifacts are also published to the [SVK Core Package Registry on Gitlab](https://cxl-gitlab.ssi.samsung.com/dfs/svk/core/-/packages).
 
-Enable the SSG Nexus repo for your distro, then install the `svk-core` packages via the package manager:
+Enable the SSG Nexus repo for your distro, then install the `cognos-core` packages via the package manager:
 
 ### Ubuntu
 
@@ -27,7 +27,7 @@ Enable the SSG Nexus repo for your distro, then install the `svk-core` packages 
 wget --quiet --output-document /usr/share/keyrings/ssg-nexus.pgp  http://ssg-nexus.msl.lab:8081/repository/svk_common/public.pgp
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ssg-nexus.pgp] http://ssg-nexus.msl.lab:8081/repository/svk_apt_ubuntu22 $(. /etc/os-release && echo $UBUNTU_CODENAME) main" > /etc/apt/sources.list.d/ssg-nexus.list
 apt update
-apt-get install svk-core svk-core-dev -y
+apt-get install cognos-core cognos-core-dev -y
 
 ```
 
@@ -36,7 +36,7 @@ apt-get install svk-core svk-core-dev -y
 ```bash
 curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
 dnf install epel-release -y
-dnf install svk-core svk-core-devel -y
+dnf install cognos-core cognos-core-devel -y
 ```
 
 ### Oracle Linux
@@ -46,7 +46,7 @@ source /etc/os-release
 MAJOR_VER="${VERSION_ID%%.*}"
 curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
 dnf install oracle-epel-release-el${MAJOR_VER} -y
-dnf install svk-core svk-core-devel -y
+dnf install cognos-core cognos-core-devel -y
 ```
 
 ## Build & Installation
@@ -91,8 +91,8 @@ To execute a release build, execute:
 
 This will build and package RPM or Debian Packages (on Rockylinux or Ubuntu, respectively), which are staged in the `build/artifacts` dir in the project root. The packages produced include:
 
-- `svk-core`: Runtime files
-- `svk-core-dev(el)`: Development header files
+- `cognos-core`: Runtime files
+- `cognos-core-dev(el)`: Development header files
 
 ### Manual Build
 

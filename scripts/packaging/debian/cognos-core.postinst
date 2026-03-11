@@ -1,0 +1,6 @@
+#!/bin/sh
+set -e
+
+mkdir --verbose --parent /etc/ld.so.conf.d
+echo "/usr/local/svk/core/lib" > /etc/ld.so.conf.d/svk-core.conf
+ldconfig

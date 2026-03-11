@@ -1,4 +1,4 @@
-svk-core (DEB_VERSION) DEB_OSVER; urgency=medium
+cognos-core (DEB_VERSION) DEB_OSVER; urgency=medium
 
   * DEB_CHANGELOG
 
