@@ -1,16 +1,16 @@
-Source: svk-core
+Source: cognos-core
 Section: utils
 Priority: optional
 Maintainer: Aaron Lee (a.lee03@samsung.com)
 Build-Depends: debhelper (>=12)
 Standards-Version: 4.1.4
 
-Package: svk-core
+Package: cognos-core
 Architecture: amd64
 Depends: ${shlibs:Depends}, ${misc:Depends}, libspdlog1 | libspdlog1.12, libfmt8 | libfmt9, libzmq5
-Description: SVK Core Framework to load the feature modules and service the commands from the Management module
+Description: Cognos Core Framework to load the feature modules and service the commands from the Management module
 
-Package: svk-core-dev
+Package: cognos-core-dev
 Architecture: amd64
-Depends: ${shlibs:Depends}, ${misc:Depends}, svk-core (= ${binary:Version}), libspdlog-dev, libzmq3-dev
-Description: SVK Core Framework development headers/libraries
+Depends: ${shlibs:Depends}, ${misc:Depends}, cognos-core (= ${binary:Version}), libspdlog-dev, libzmq3-dev
+Description: Cognos Core Framework development headers/libraries

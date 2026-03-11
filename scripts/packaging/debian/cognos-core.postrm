@@ -1,0 +1,7 @@
+#!/bin/sh
+set -e
+
+rm -f /etc/ld.so.conf.d/svk-core.conf
+
+ldconfig
+exit 0

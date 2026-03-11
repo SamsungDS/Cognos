@@ -16,14 +16,7 @@ override_dh_usrlocal:
 	# Do nothing, because we are installing to /usr/local even though it is against best practices
 
 override_dh_install:
-	# Create symlink for Package Config file
-	mkdir --verbose --parent $(CURDIR)/debian/svk-core/usr/lib/pkgconfig
-	ln -sf /usr/local/svk/core/lib/pkgconfig/svkframework.pc $(CURDIR)/debian/svk-core/usr/lib/pkgconfig/svkframework.pc
-
 	# Create ld.conf.so.d file for SVK Core
-	mkdir --verbose --parent $(CURDIR)/debian/svk-core/etc/ld.so.conf.d
-	echo "/usr/local/svk/core/lib" > $(CURDIR)/debian/svk-core/etc/ld.so.conf.d/svk-core.conf
-
 	dh_install
 
 override_dh_strip:
@@ -32,4 +25,3 @@ override_dh_strip:
 
 override_dh_shlibdeps:
 	# Set link path for shlibdeps - because it can't find libs in non-standard path in /usr/local
-	dh_shlibdeps -l$(CURDIR)/debian/svk-core/usr/local/svk/core/lib
