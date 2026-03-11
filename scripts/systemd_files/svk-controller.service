@@ -1,5 +1,5 @@
 [Unit]
-Description=SVK gRPC Controller service
+Description=Cognos gRPC Controller service
 After=network.target
 StartLimitBurst=5
 

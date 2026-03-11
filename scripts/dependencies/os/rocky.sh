@@ -74,12 +74,12 @@ configure_nexus() {
     NEXUS_YUM_REPO_FILE="http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$ID${VERSION_ID%%.*}.repo"
     wget --no-verbose --output-document /etc/yum.repos.d/ssg-nexus.repo "$NEXUS_YUM_REPO_FILE"
 
-    # Install svk-core, svk-extras packages from Nexus
+    # Install cognos-core, cognos-extras packages from Nexus
     BUILD_DEPS=(
-        'svk-core'
-        'svk-core-devel'
-        'svk-go-modules'
-        'svk-grpc'
+        'cognos-core'
+        'cognos-core-devel'
+        'cognos-go-modules'
+        'cognos-grpc'
     )
     package_manager
 }

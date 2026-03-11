@@ -19,7 +19,7 @@ SVK Management Framework's CI/CD automatically produces release artifacts which 
 
 Release artifacts are also published to the [SVK Management Framework Package Registry on Gitlab](https://cxl-gitlab.ssi.samsung.com/dfs/svk/mgmt-fw/-/packages).
 
-Enable the SSG Nexus repo for your distro, then install the `svk-mgmt-fw` packages via the package manager:
+Enable the SSG Nexus repo for your distro, then install the `cognos-mgmt-fw` packages via the package manager:
 
 ### Ubuntu Installation
 
@@ -30,7 +30,7 @@ UBUNTU_VER="${VERSION_ID%%.*}"
 wget --quiet --output-document /usr/share/keyrings/ssg-nexus.pgp  http://ssg-nexus.msl.lab:8081/repository/svk_common/public.pgp
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ssg-nexus.pgp] http://ssg-nexus.msl.lab:8081/repository/svk_apt_ubuntu${UBUNTU_VER} $(. /etc/os-release && echo $UBUNTU_CODENAME) main" > /etc/apt/sources.list.d/ssg-nexus.list
 apt update
-apt-get install svk-mgmt-fw svk-mgmt-fw-dev -y
+apt-get install cognos-mgmt-fw cognos-mgmt-fw-dev -y
 ```
 
 ### Rockylinux Installation
@@ -38,7 +38,7 @@ apt-get install svk-mgmt-fw svk-mgmt-fw-dev -y
 ```bash
 curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
 dnf install epel-release -y
-dnf install svk-mgmt-fw svk-mgmt-fw-devel -y
+dnf install cognos-mgmt-fw cognos-mgmt-fw-devel -y
 ```
 
 ### Oracle Linux Installation
@@ -48,7 +48,7 @@ source /etc/os-release
 MAJOR_VER="${VERSION_ID%%.*}"
 curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
 dnf install oracle-epel-release-el${MAJOR_VER} -y
-dnf install svk-mgmt-fw svk-mgmt-fw-devel -y
+dnf install cognos-mgmt-fw cognos-mgmt-fw-devel -y
 ```
 
 ## Build & Installation
@@ -93,17 +93,17 @@ To execute a release build, execute:
 
 This will build and package RPM or Debian Packages (on Rockylinux or Ubuntu, respectively), which are staged in the `build/artifacts` dir in the project root. The packages produced include:
 
-- `svk-mgmt-fw`: Runtime files
-- `svk-mgmt-fw-dev(el)`: Development header files
+- `cognos-mgmt-fw`: Runtime files
+- `cognos-mgmt-fw-dev(el)`: Development header files
 
 ## Usage
 
-Once `svk-core` and `svk-mgmt-fw` artifacts are installed, the user needs to run the commands in the following manner
+Once `cognos-core` and `cognos-mgmt-fw` artifacts are installed, the user needs to run the commands in the following manner
 
 - Edit the JSON configuration file `/etc/svk/mgmt_fw_config.json` depending on the system configuration
 - The server hosting `controller` should have the **svk_mgmt_fw_controller** section updated as per the system configuration
 - The server hosting `node agent` should have the following
-  - svk-core rpm/deb should be installed as the prerequisite
+  - cognos-core rpm/deb should be installed as the prerequisite
   - **core** section in the JSON configuration file. The **feat_modules_dir** should be updated to the proper directory containing feature module's libraries.
   - **svk_mgmt_fw_node** section in the JSON configuration file. The `lib_path` in *framework* section should point to the file path of *libsvkframework.so*. The `conf_file` in *framework* section should point to the JSON file path having the **core** section. The controller details need to be updated with the appropriate IP address or host name to which this node connects to.
 - The server hosting `REST server` should have the **svk_mgmt_rest_api** section in the JSON configuration file and updated as per the system configuration. The controller details need to be updated with the appropriate IP address or host name to which the REST API Server connects to.
@@ -118,11 +118,11 @@ Once `svk-core` and `svk-mgmt-fw` artifacts are installed, the user needs to run
 
 - Copy the appropriate files from the *systemd_files* directory in the repository to `/etc/systemd/system` and run the command `systemctl daemon-reload`
 
-- Run the controller server on the controller node. Controller runs on the port 9999 by default. It can be run using `systemctl start svk-controller`. This is a prerequisite for the Node Server and the REST API server.
-- Run the node server on the agent nodes. By default node server runs on port 9998. It can be run using `systemctl start svk-node`. Please make sure that the controller is started before starting the node server.
-- Run the REST API server on the controller node using the command `systemctl start svk-restserver`. By default, the REST server runs on port 8001. Please make sure that the controller is started before starting the REST API server.
-- Enable the services to start across reboot using the command `systemctl enable svk-<servertype>`
-- Start SVK service manager on controller or node server as `systemctl start svk-svc-mgr` on RHEL systems or as `service svk-svc-mgr start` on Debian based systems.
+- Run the controller server on the controller node. Controller runs on the port 9999 by default. It can be run using `systemctl start cognos-controller`. This is a prerequisite for the Node Server and the REST API server.
+- Run the node server on the agent nodes. By default node server runs on port 9998. It can be run using `systemctl start cognos-node`. Please make sure that the controller is started before starting the node server.
+- Run the REST API server on the controller node using the command `systemctl start cognos-restserver`. By default, the REST server runs on port 8001. Please make sure that the controller is started before starting the REST API server.
+- Enable the services to start across reboot using the command `systemctl enable cognos-<servertype>`
+- Start SVK service manager on controller or node server as `systemctl start cognos-svc-mgr` on RHEL systems or as `service cognos-svc-mgr start` on Debian based systems.
   - Make sure to update feature libs directory (`feat_sm_svcs_dir`) in `svk_mgmt_fw_svc_mgr` section of `/etc/svk/mgmt_fw_config.json`
 
 ## REST Server in HTTPS mode
@@ -146,7 +146,7 @@ To generate a self signing certificate, follow these steps
 - Create the certificate file
   - openssl x509 -req -days 365 -in csr.pem -signkey key.pem -out cert.pem
 - Copy the key.pem and cert.pem files to the `/etc/svk/certificates` directory of the server hosting the REST server.
-- Restart the svk-restserver service
+- Restart the cognos-restserver service
 
 ### curl command usage
 To run the curl commands with HTTPS mode, there are two options
@@ -156,7 +156,7 @@ To run the curl commands with HTTPS mode, there are two options
   - curl -k  https://<rest_server_ip>:8001/api/v1/clusters/CL_ID_1 -d '{"command_name": "list_nodes_in_cluster"}'
 
 ### Updating certificates through REST call
-The certificates can be uploaded through REST call which are automatically saved at the default location `/etc/svk/certificates/` directory. Once the upload call is successful, the service `svk-restserver` needs to be restarted through `systemctl restart svk-restserver` command to bring up the HTTPS mode.
+The certificates can be uploaded through REST call which are automatically saved at the default location `/etc/svk/certificates/` directory. Once the upload call is successful, the service `cognos-restserver` needs to be restarted through `systemctl restart cognos-restserver` command to bring up the HTTPS mode.
 
 The cURL command to upload the certificates is
 - curl -X POST http://<rest_server_ip>:8001/UpdateCertificate -H 'Content-Type: multipart/form-data' -F 'certificate_pem_file=@/local/path/to/cert.pem' -F 'key_pem_file=@/local/path/to/key.pem'

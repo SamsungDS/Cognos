@@ -1,9 +1,9 @@
 [Unit]
-Description=SVK Rest API Server service
-After=svk-controller.service
-Requires=svk-controller.service
+Description=Cognos Rest API Server service
+After=cognos-controller.service
+Requires=cognos-controller.service
 StartLimitBurst=5
-PartOf=svk-controller.service
+PartOf=cognos-controller.service
 
 [Service]
 #User=svk
@@ -18,4 +18,4 @@ Restart=always
 
 [Install]
 WantedBy=multi-user.target
-RequiredBy=svk-controller.service
+RequiredBy=cognos-controller.service

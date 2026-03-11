@@ -1,5 +1,5 @@
 [Unit]
-Description=SVK gRPC Node Agent service
+Description=Cognos gRPC Node Agent service
 After=network.target
 StartLimitBurst=5
 

@@ -65,12 +65,12 @@ configure_nexus() {
     BUILD_DEPS=()
     apt-get update
 
-    # Install svk-core, svk-extras packages from Nexus
+    # Install cognos-core, cognos-extras packages from Nexus
     BUILD_DEPS=(
-        'svk-core'
-        'svk-core-dev'
-        'svk-grpc'
-        'svk-go-modules'
+        'cognos-core'
+        'cognos-core-dev'
+        'cognos-grpc'
+        'cognos-go-modules'
     )
     package_manager
 }
