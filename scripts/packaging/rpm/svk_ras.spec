@@ -1,8 +1,8 @@
-Name:           svk-ras
+Name:           cognos-ras
 Version:        %svk_rpm_version
 Release:        1%{?dist}.%svk_os_version
-Summary:        SVK RAS feature
-Requires:       svk-core, libtraceevent, perl-DBD-SQLite, mce-inject, perl-File-Find
+Summary:        Cognos RAS feature
+Requires:       cognos-core, libtraceevent, perl-DBD-SQLite, mce-inject, perl-File-Find
 License:        Samsung Internal
 
 %global svk_install_dir %_prefix/local/svk/feature_modules/ras
@@ -12,15 +12,15 @@ License:        Samsung Internal
 %global svk_ras_ldconf ld.so.conf.d/svk-ras-%_arch.conf
 
 %description
-SVK RAS feature module & SVK RAS test tool.
+Cognos RAS feature module & Cognos RAS test tool.
 
 %package devel
-Summary:        SVK RAS devel package contains headers
-Provides:       svk-ras-devel = %version
-Requires:       svk-ras = %version svk-core
+Summary:        Cognos RAS devel package contains headers
+Provides:       cognos-ras-devel = %version
+Requires:       cognos-ras = %version cognos-core
 
 %description devel
-SVK RAS downstream, upstream, and other related header files for app/feature development
+Cognos RAS downstream, upstream, and other related header files for app/feature development
 
 %install
 cd %svk_build_dir
@@ -54,7 +54,7 @@ mkdir -p /usr/local/var/lib/rasdaemon
 mkdir -p /usr/lib/modules-load.d
 
 cat > /usr/lib/modules-load.d/svk-ras.conf  << EOF
-# MCE Inject module required for SVK Cognos RAS
+# MCE Inject module required for Cognos RAS
 mce_inject
 EOF
 

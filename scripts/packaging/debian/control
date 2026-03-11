@@ -1,16 +1,16 @@
-Source: svk-ras
+Source: cognos-ras
 Section: utils
 Priority: optional
 Maintainer: Mike Xu (pengfei.xu@samsung.com)
 Build-Depends: debhelper (>=12)
 Standards-Version: 4.1.4
 
-Package: svk-ras
+Package: cognos-ras
 Architecture: amd64
-Depends: svk-core, libdbd-sqlite3-perl, sqlite3, libtraceevent1
-Description: SVK RAS Feature Module
+Depends: cognos-core, libdbd-sqlite3-perl, sqlite3, libtraceevent1
+Description: Cognos RAS Feature Module
 
-Package: svk-ras-dev
+Package: cognos-ras-dev
 Architecture: amd64
-Depends: svk-core, svk-core-dev
-Description: SVK RAS Feature Module Development Package. This package contains the development files for the SVK RAS Feature Module.
+Depends: cognos-core, cognos-core-dev
+Description: Cognos RAS Feature Module Development Package. This package contains the development files for the Cognos RAS Feature Module.

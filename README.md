@@ -1,8 +1,8 @@
-# SVK RAS
+# Cognos RAS
 
 ## Description
 
-SVK RAS is a feature module of SVK, providing the CXL memory related RAS functionality.
+Cognos RAS is a feature module of Cognos, providing the CXL memory related RAS functionality.
 
 ### Supported OS List
 
@@ -12,13 +12,13 @@ SVK RAS is a feature module of SVK, providing the CXL memory related RAS functio
 
 ## Installation
 
-The prefered method to install SVK RAS is through your OS package manager.
+The prefered method to install Cognos RAS is through your OS package manager.
 
-SVK RAS's CI/CD automatically produces release artifacts which are published to [SSG-Nexus](http://ssg-nexus.msl.lab:8081/), which you can browse from within the SSG lab network.
+Cognos RAS's CI/CD automatically produces release artifacts which are published to [SSG-Nexus](http://ssg-nexus.msl.lab:8081/), which you can browse from within the SSG lab network.
 
-Release artifacts are also published to the [SVK RAS Package Registry on Gitlab](https://cxl-gitlab.ssi.samsung.com/dfs/svk/ras/-/packages).
+Release artifacts are also published to the [Cognos RAS Package Registry on Gitlab](https://cxl-gitlab.ssi.samsung.com/dfs/svk/ras/-/packages).
 
-Enable the SSG Nexus repo for your distro, then install the `svk-ras` packages via the package manager:
+Enable the SSG Nexus repo for your distro, then install the `cognos-ras` packages via the package manager:
 
 ### Ubuntu
 
@@ -26,7 +26,7 @@ Enable the SSG Nexus repo for your distro, then install the `svk-ras` packages v
 wget --quiet --output-document /usr/share/keyrings/ssg-nexus.pgp  http://ssg-nexus.msl.lab:8081/repository/svk_common/public.pgp
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ssg-nexus.pgp] http://ssg-nexus.msl.lab:8081/repository/svk_apt_ubuntu22 $(. /etc/os-release && echo $UBUNTU_CODENAME) main" > /etc/apt/sources.list.d/ssg-nexus.list
 apt update
-apt-get install svk-ras svk-ras-dev -y
+apt-get install cognos-ras cognos-ras-dev -y
 
 ```
 
@@ -35,7 +35,7 @@ apt-get install svk-ras svk-ras-dev -y
 ```bash
 curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
 dnf install epel-release -y
-dnf install svk-ras svk-ras-devel -y
+dnf install cognos-ras cognos-ras-devel -y
 ```
 
 ### Oracle Linux
@@ -45,7 +45,7 @@ source /etc/os-release
 MAJOR_VER="${VERSION_ID%%.*}"
 curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
 dnf install oracle-epel-release-el${MAJOR_VER} -y
-dnf install svk-ras svk-ras-devel -y
+dnf install cognos-ras cognos-ras-devel -y
 ```
 
 ## Build & Installation
@@ -58,21 +58,21 @@ Execute the dependencies installation script to install all build dependencies f
 ./scripts/dependencies/install.sh
 ```
 
-### Build SVK RAS
+### Build Cognos RAS
 
-[After installing build dependencies](#build-dependencies), execute the `./scripts/build.sh` script. The `-h` option will show what options are available for building SVK RAS:
+[After installing build dependencies](#build-dependencies), execute the `./scripts/build.sh` script. The `-h` option will show what options are available for building Cognos RAS:
 
 ```bash
 ./scripts/build.sh -h
 ```
 
-To build SVK RAS, run unit tests and generate code coverage reports, execute:
+To build Cognos RAS, run unit tests and generate code coverage reports, execute:
 
 ```bash
 ./scripts/build.sh -t
 ```
 
-To build and install SVK RAS to a specified directory, execute:
+To build and install Cognos RAS to a specified directory, execute:
 
 ```bash
 ./scripts/build.sh -p install_dir
@@ -90,8 +90,8 @@ To execute a release build, execute:
 
 This will build and package RPM or Debian Packages (on Rockylinux or Ubuntu, respectively), which are staged in the `build/artifacts` dir in the project root. The packages produced include:
 
-- `svk-ras`: Runtime files
-- `svk-ras-dev(el)`: Development header files
+- `cognos-ras`: Runtime files
+- `cognos-ras-dev(el)`: Development header files
 
 ### Manual Build
 
@@ -104,11 +104,11 @@ cmake3 ../  -DCMAKE_INSTALL_PREFIX=svk_ras
 make install
 ```
 
-In the above example, SVK RAS is installed to the `build/svk_ras` directory.
+In the above example, Cognos RAS is installed to the `build/svk_ras` directory.
 
 ### Unit Testing
 
-To build the SVK RAS with tests (GTest) and code coverage, run the `cmake3` command with `-DBUILD_TESTING` and `-DWITH_COVERAGE` flags enabled:
+To build the Cognos RAS with tests (GTest) and code coverage, run the `cmake3` command with `-DBUILD_TESTING` and `-DWITH_COVERAGE` flags enabled:
 
 ```bash
 mkdir build
