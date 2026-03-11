@@ -52,10 +52,10 @@ configure_nexus() {
     $NEXUS_APT_URL $UBUNTU_CODENAME main" > /etc/apt/sources.list.d/ssg-nexus.list
     apt-get update
 
-    # Install svk-core packages from Nexus
+    # Install cognos-core packages from Nexus
     BUILD_DEPS=(
-        svk-core
-        svk-core-dev
+        cognos-core
+        cognos-core-dev
     )
     package_manager
 }
