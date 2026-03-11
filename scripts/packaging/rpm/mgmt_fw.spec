@@ -1,8 +1,8 @@
-Name:           svk-mgmt-fw
+Name:           cognos-mgmt-fw
 Version:        %svk_rpm_version
 Release:        1%{?dist}.%svk_os_version
-Summary:        SVK Management framework
-Requires:       re2, svk-core, zeromq
+Summary:        Cognos Management framework
+Requires:       re2, cognos-core, zeromq
 License:        Samsung Internal
 
 %global svk_install_dir %_prefix/local/svk/mgmt-fw
@@ -11,15 +11,15 @@ License:        Samsung Internal
 %global svk_script_dir %svk_build_dir/../scripts
 
 %description
-SVK Management framework related APIs, services
+Cognos Management framework related APIs, services
 
 %package devel
-Summary:        SVK Management framework devel package contains headers and sample_feature
-Provides:       svk-mgmt-fw-devel = %version
-Requires:       svk-mgmt-fw = %version
+Summary:        Cognos Management framework devel package contains headers and sample_feature
+Provides:       cognos-mgmt-fw-devel = %version
+Requires:       cognos-mgmt-fw = %version
 
 %description devel
-SVK downstream, upstream, and other related header files for app/feature development
+Cognos downstream, upstream, and other related header files for app/feature development
 
 %install
 cd %svk_build_dir
@@ -35,10 +35,10 @@ go build -C %svk_build_dir/rest_api/tests/cmd/app -o %buildroot/%svk_install_dir
 %__ln_s svk_rest_server-%svk_short_version %buildroot/%svk_install_dir/rest_api/svk_rest_server
 
 # Install systemd scripts
-install -D -m 0644 %svk_script_dir/systemd_files/svk-controller.service %buildroot/%_unitdir/svk-controller.service
-install -D -m 0644 %svk_script_dir/systemd_files/svk-node.service %buildroot/%_unitdir/svk-node.service
-install -D -m 0644 %svk_script_dir/systemd_files/svk-restserver.service %buildroot/%_unitdir/svk-restserver.service
-install -D -m 0644 %svk_script_dir/systemd_files/svk-svc-mgr.service %buildroot/%_unitdir/svk-svc-mgr.service
+install -D -m 0644 %svk_script_dir/systemd_files/svk-controller.service %buildroot/%_unitdir/cognos-controller.service
+install -D -m 0644 %svk_script_dir/systemd_files/svk-node.service %buildroot/%_unitdir/cognos-node.service
+install -D -m 0644 %svk_script_dir/systemd_files/svk-restserver.service %buildroot/%_unitdir/cognos-restserver.service
+install -D -m 0644 %svk_script_dir/systemd_files/svk-svc-mgr.service %buildroot/%_unitdir/cognos-svc-mgr.service
 
 %files
 %defattr(-,root,root,-)
@@ -47,10 +47,10 @@ install -D -m 0644 %svk_script_dir/systemd_files/svk-svc-mgr.service %buildroot/
 %svk_install_dir/%_lib
 %svk_install_dir/bin
 %svk_install_dir/rest_api
-%_unitdir/svk-controller.service
-%_unitdir/svk-node.service
-%_unitdir/svk-restserver.service
-%_unitdir/svk-svc-mgr.service
+%_unitdir/cognos-controller.service
+%_unitdir/cognos-node.service
+%_unitdir/cognos-restserver.service
+%_unitdir/cognos-svc-mgr.service
 %_sysconfdir/svk/mgmt_fw_config.json
 %_sysconfdir/svk/device_sla_config.json.example
 %ghost %_sysconfdir/ld.so.conf.d/svk-mgmt-fw-%_arch.conf
@@ -62,23 +62,23 @@ install -D -m 0644 %svk_script_dir/systemd_files/svk-svc-mgr.service %buildroot/
 echo "%svk_install_dir/%_lib" > %_sysconfdir/ld.so.conf.d/svk-mgmt-fw-%_arch.conf
 %__chmod a+r %_sysconfdir/ld.so.conf.d/svk-mgmt-fw-%_arch.conf
 %_sbindir/ldconfig
-%systemd_post svk-controller.service
-%systemd_post svk-node.service
-%systemd_post svk-restserver.service
-%systemd_post svk-svc-mgr.service
+%systemd_post cognos-controller.service
+%systemd_post cognos-node.service
+%systemd_post cognos-restserver.service
+%systemd_post cognos-svc-mgr.service
 
 %preun
-%systemd_preun svk-controller.service
-%systemd_preun svk-node.service
-%systemd_preun svk-restserver.service
-%systemd_preun svk-svc-mgr.service 
+%systemd_preun cognos-controller.service
+%systemd_preun cognos-node.service
+%systemd_preun cognos-restserver.service
+%systemd_preun cognos-svc-mgr.service 
 
 %postun
 %_sbindir/ldconfig
-%systemd_postun_with_restart svk-controller.service
-%systemd_postun_with_restart svk-node.service
-%systemd_postun_with_restart svk-restserver.service
-%systemd_postun_with_restart svk-svc-mgr.service 
+%systemd_postun_with_restart cognos-controller.service
+%systemd_postun_with_restart cognos-node.service
+%systemd_postun_with_restart cognos-restserver.service
+%systemd_postun_with_restart cognos-svc-mgr.service 
 
 %changelog
 * Mon Jun 24 2024 Suresh Grandhi <suresh.g@samsung.com>

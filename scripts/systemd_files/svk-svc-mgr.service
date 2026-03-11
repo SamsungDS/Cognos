@@ -1,5 +1,5 @@
 [Unit]
-Description=SVK Service Manager
+Description=Cognos Service Manager
 After=network.target
 StartLimitBurst=5
 
