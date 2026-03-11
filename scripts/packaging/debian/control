@@ -5,7 +5,7 @@ Maintainer: Nadim Sarras (nadim.s@samsung.com)
 Build-Depends: debhelper (>=12)
 Standards-Version: 4.1.4
 
-Package: svk-app
+Package: cognos-app
 Architecture: amd64
 Depends: ${shlibs:Depends}, ${misc:Depends}, nodejs (>=21)
-Description: SVK Application, Cognos
+Description: Cognos Application, Cognos

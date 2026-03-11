@@ -19,6 +19,7 @@ cognos-ui: UI for Samsung Management Console
 - Rockylinux 9
 - Ubuntu 22.04
 - Oracle linux 10
+- Oracle linux 9
 
 ## Versioning
 
@@ -191,9 +192,16 @@ dnf install svk-app -y
 #### Oracle Linux
 ```bash
 curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
-dnf install oracle-epel-release-el10 -y
+dnf install oracle-epel-release-el${MAJOR_VER} -y
 dnf install svk-core svk-mgmt-fw -y
 ```
+
+```bash
+curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
+dnf install oracle-epel-release-el${MAJOR_VER} -y
+dnf install svk-core svk-mgmt-fw -y
+```
+
 
 ### SSL Configuration
 SSL mode must be configured in cognos-app. This will enable https REST requests

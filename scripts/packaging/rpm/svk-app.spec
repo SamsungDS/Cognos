@@ -1,6 +1,6 @@
 #!/bin/bash
 
-Name:           svk-app
+Name:           cognos-app
 Version:        %{svk_rpm_version}
 Release:        1%{?dist}.%{svk_os_version}
 Summary:        Samsung Cognos Management Console
