@@ -1,8 +1,8 @@
-Name:           svk-slat
+Name:           cognos-slat
 Version:        %svk_rpm_version
 Release:        1%{?dist}.%svk_os_version
-Summary:        SVK SLA Tracker feature
-Requires:       svk-core
+Summary:        Cognos SLA Tracker feature
+Requires:       cognos-core
 Requires:       boost-filesystem
 License:        Samsung Internal
 
@@ -13,7 +13,7 @@ License:        Samsung Internal
 %global svk_slat_ldconf ld.so.conf.d/svk-slat-%_arch.conf
 
 %description
-SVK SLA Tracker feature module
+Cognos SLA Tracker feature module
 
 %install
 cd %svk_build_dir

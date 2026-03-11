@@ -1,4 +1,4 @@
-svk-slat (DEB_VERSION) DEB_OSVER; urgency=medium
+cognos-slat (DEB_VERSION) DEB_OSVER; urgency=medium
 
   * DEB_CHANGELOG
 
