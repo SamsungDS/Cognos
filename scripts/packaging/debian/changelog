@@ -1,4 +1,4 @@
-svk-node (DEB_VERSION) DEB_OSVER; urgency=medium
+cognos-node (DEB_VERSION) DEB_OSVER; urgency=medium
 
   * DEB_CHANGELOG
 

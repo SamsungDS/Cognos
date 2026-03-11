@@ -1,8 +1,8 @@
-# SVK Node
+# Cognos Node
 
 ## Description
 
-SVK Node feature provides the node information such as CPU, Memory, PCI device information.
+Cognos Node feature provides the node information such as CPU, Memory, PCI device information.
 
 ### Supported OS List
 
@@ -13,13 +13,13 @@ SVK Node feature provides the node information such as CPU, Memory, PCI device i
 
 ## Installation
 
-The prefered method to install SVK Node is through your OS package manager.
+The prefered method to install Cognos Node is through your OS package manager.
 
-SVK Node's CI/CD automatically produces release artifacts which are published to [SSG-Nexus](http://ssg-nexus.msl.lab:8081/), which you can browse from within the SSG lab network.
+Cognos Node's CI/CD automatically produces release artifacts which are published to [SSG-Nexus](http://ssg-nexus.msl.lab:8081/), which you can browse from within the SSG lab network.
 
-Release artifacts are also published to the [SVK Node Package Registry on Gitlab](https://cxl-gitlab.ssi.samsung.com/dfs/svk/test/node/-/packages).
+Release artifacts are also published to the [Cognos Node Package Registry on Gitlab](https://cxl-gitlab.ssi.samsung.com/dfs/svk/test/node/-/packages).
 
-Enable the SSG Nexus repo for your distro, then install the `svk-node` packages via the package manager:
+Enable the SSG Nexus repo for your distro, then install the `cognos-node` packages via the package manager:
 
 ### Ubuntu
 
@@ -28,7 +28,7 @@ source /etc/os-release
 wget --quiet --output-document /usr/share/keyrings/ssg-nexus.pgp  http://ssg-nexus.msl.lab:8081/repository/svk_common/public.pgp
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ssg-nexus.pgp] http://ssg-nexus.msl.lab:8081/repository/svk_apt_ubuntu22 $(. /etc/os-release && echo $UBUNTU_CODENAME) main" > /etc/apt/sources.list.d/ssg-nexus.list
 apt update
-apt-get install svk-node -y
+apt-get install cognos-node -y
 
 ```
 
@@ -37,7 +37,7 @@ apt-get install svk-node -y
 ```bash
 curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
 dnf install epel-release -y
-dnf install svk-node -y
+dnf install cognos-node -y
 ```
 
 ### Oracle Linux Installation
@@ -47,7 +47,7 @@ source /etc/os-release
 MAJOR_VER="${VERSION_ID%%.*}"
 curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
 dnf install oracle-epel-release-el${MAJOR_VER} -y
-dnf install svk-node -y
+dnf install cognos-node -y
 ```
 
 ## Build & Installation
@@ -60,21 +60,21 @@ Execute the dependencies installation script to install all build dependencies f
 ./scripts/dependencies/install.sh
 ```
 
-### Build SVK Node
+### Build Cognos Node
 
-[After installing build dependencies](#build-dependencies), execute the `./scripts/build.sh` script. The `-h` option will show what options are available for building SVK Node:
+[After installing build dependencies](#build-dependencies), execute the `./scripts/build.sh` script. The `-h` option will show what options are available for building Cognos Node:
 
 ```bash
 ./scripts/build.sh -h
 ```
 
-To build SVK Node, run unit tests and generate code coverage reports, execute:
+To build Cognos Node, run unit tests and generate code coverage reports, execute:
 
 ```bash
 ./scripts/build.sh -t
 ```
 
-To build and install SVK Node to a specified directory, execute:
+To build and install Cognos Node to a specified directory, execute:
 
 ```bash
 ./scripts/build.sh -p install_dir
@@ -92,12 +92,11 @@ To execute a release build, execute:
 
 This will build and package RPM or Debian Packages (on Rockylinux or Ubuntu, respectively), which are staged in the `build/artifacts` dir in the project root. The packages produced include:
 
-- `svk-node`: Runtime files
-- `svk-node-dev(el)`: Development header files
+- `cognos-node`: Runtime files
 
 ### Manual Build
 
-SVK Node manual build without tests:
+Cognos Node manual build without tests:
 
 ```bash
 mkdir build
@@ -106,11 +105,11 @@ cmake3 ../  -DCMAKE_INSTALL_PREFIX=svk_node
 make install
 ```
 
-In the above example, SVK Node is installed to the `build/svk_node` directory.
+In the above example, Cognos Node is installed to the `build/svk_node` directory.
 
 ### Unit Testing
 
-To build the SVK Node with tests (GTest) and code coverage, run the `cmake3` command with `-DBUILD_TESTING` and `-DWITH_COVERAGE` flags enabled:
+To build the Cognos Node with tests (GTest) and code coverage, run the `cmake3` command with `-DBUILD_TESTING` and `-DWITH_COVERAGE` flags enabled:
 
 ```bash
 mkdir build
