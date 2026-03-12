@@ -1075,7 +1075,7 @@ Status ControllerServicer::ListClusters(svk::ClusterResponse *resp) {
   std::string logger_str = "ListClusters returns " +
                            std::to_string(std::size(cluster_names)) +
                            " cluster names";
-  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::DEBUG, logger_str.c_str());
   resp->set_error_code(SVK_STATUS_SUCCESS);
   return status;
 }
@@ -1270,7 +1270,7 @@ Status ControllerServicer::ClusterAPI(ServerContext *ctxt,
   resp->set_api_version(API_VERSION);
 
   logger_str = command_name + " called for cluster " + cluster_name;
-  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::DEBUG, logger_str.c_str());
   if (command_name == "create_cluster") {
     status = CreateCluster(cluster_name, command_params, resp);
   } else if (command_name == "delete_cluster") {
