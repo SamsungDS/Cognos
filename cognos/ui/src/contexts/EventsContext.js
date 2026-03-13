@@ -2,20 +2,7 @@ import React, { useContext, useState, useEffect, createContext, useMemo } from '
 import * as constants from '../constant';
 
 // Mock data - moved to top for better organization
-const mockEventData = [
-    {
-        timestamp: "12:40:05",
-        msg: "Node is showing unhealthy status",
-        payload: { message: "axy" },
-        cluster_name: "node",
-        node_name: "node-1",
-        severity: 'critical',
-        domain: 'NODE-001',
-        category: 'Security',
-        source: 'Node',
-        source_type: 'device'
-    }
-];
+const mockEventData = [];
 
 // Utility function to parse timestamp to Date object for comparison
 // istanbul ignore next

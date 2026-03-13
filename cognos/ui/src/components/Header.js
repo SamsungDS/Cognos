@@ -3,9 +3,13 @@ import SamsungLogo from "../assets/images/logos/samsung_logo_lettermark_white.PN
 import { Row, Col } from "react-bootstrap";
 import * as constants from '../constant';
 import { AuthContext } from './ProtectedRoute';
+
+const RBAC_ENABLED = constants.Configs.rbac_enabled;
+
 const Header = () => {
-  const { logout } = useContext(AuthContext);
-  // istanbul ignore next
+  const auth = useContext(AuthContext);
+  const logout = RBAC_ENABLED ? auth?.logout : null;
+
   return (
     <div className="Header" id="header-container-id">
       <Row>
@@ -39,30 +43,33 @@ const Header = () => {
                 </span>
               </div>
 
-              <button
-                onClick={logout}
-                style={{
-                  backgroundColor: "#dc3545",
-                  color: "white",
-                  border: "none",
-                  padding: "8px 16px",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                  fontSize: "14px",
-                  fontWeight: "500",
-                  marginRight: "20px",
-                  transition: "background-color 0.3s ease",
-                  boxShadow: "0 2px 4px rgba(0,0,0,0.1)"
-                }}
-                onMouseOver={(e) => {
-                  e.target.style.backgroundColor = "#c82333";
-                }}
-                onMouseOut={(e) => {
-                  e.target.style.backgroundColor = "#dc3545";
-                }}
-              >
-                Logout
-              </button>
+              {/* Only render logout button when login is enabled */}
+              {RBAC_ENABLED && (
+                <button
+                  onClick={logout}
+                  style={{
+                    backgroundColor: "#dc3545",
+                    color: "white",
+                    border: "none",
+                    padding: "8px 16px",
+                    borderRadius: "4px",
+                    cursor: "pointer",
+                    fontSize: "14px",
+                    fontWeight: "500",
+                    marginRight: "20px",
+                    transition: "background-color 0.3s ease",
+                    boxShadow: "0 2px 4px rgba(0,0,0,0.1)"
+                  }}
+                  onMouseOver={(e) => {
+                    e.target.style.backgroundColor = "#c82333";
+                  }}
+                  onMouseOut={(e) => {
+                    e.target.style.backgroundColor = "#dc3545";
+                  }}
+                >
+                  Logout
+                </button>
+              )}
             </div>
           </header>
         </Col>
