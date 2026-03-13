@@ -203,7 +203,7 @@ Status Servicer::ProcessNodeCommand(ServerContext *ctxt,
     // If using feature_name (string) for execute
     logger_str =
         "ProcessNodeCommand using feature_name: " + req->feature_name();
-    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::DEBUG, logger_str.c_str());
     svk_cmd.out_format = (void *)req->feature_name().c_str();
     svk_cmd.len = req->feature_name().size();
 
@@ -234,7 +234,7 @@ Status Servicer::ProcessNodeCommand(ServerContext *ctxt,
     // If using feature_id for execute
     logger_str = "ProcessNodeCommand using feature_id: " +
                  std::to_string(req->feature_id());
-    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::DEBUG, logger_str.c_str());
     svk_cmd.feat_id = (feature_id)req->feature_id();
     svk_cmd.len = 0;
     params = req->feature_params();

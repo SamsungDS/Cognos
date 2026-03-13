@@ -291,6 +291,15 @@ class MockTestController : public ::testing::Test {
         conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
         CONTROLLER_LOGGER_DEFAULT_FILE_COUNT,
         CONTROLLER_LOGGER_DEFAULT_FILE_SIZE, CONTROLLER_LOGGER_DEFAULT_LEVEL);
+
+    // Changed some of the log messages to DEBUG.
+    // Change the log level to DEBUG for those messages to be logged
+    boost::property_tree::ptree pt;
+
+    boost::property_tree::read_json(conf_file, pt);
+    pt.put("svk_mgmt_fw_controller.logger.log_level", "DEBUG");
+    boost::property_tree::write_json(conf_file, pt);
+
     ControllerServicer *svcr(new ControllerServicer(conf_file));
     server_ = InitializeServicer(svcr);
 
