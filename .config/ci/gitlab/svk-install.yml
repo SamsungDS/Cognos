@@ -59,7 +59,7 @@ svk-install:
     - apt-get update
     # Temporary resolution
     - apt-get install svk-cxl-mock -y
-    - apt-get install ./$ARTIFACTS_DIR/ubuntu22/svk-*.deb -y
+    - apt-get install ./$ARTIFACTS_DIR/ubuntu22/cognos-*.deb -y
 
     #### Configure '/etc/svk/mgmt_fw_config.json' (JSON) ####
     - export SVK_MGMT_FW_CONF='/etc/svk/mgmt_fw_config.json'

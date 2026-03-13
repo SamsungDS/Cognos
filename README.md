@@ -190,6 +190,18 @@ dnf install svk-app -y
 
 
 #### Oracle Linux
+set OEL major version number by running the following;
+
+if OEL 9
+```
+export MAJOR_VER=9
+```
+
+if OEL 10
+```
+export MAJOR_VER=10
+```
+
 ```bash
 curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
 dnf install oracle-epel-release-el${MAJOR_VER} -y
