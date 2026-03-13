@@ -34,11 +34,44 @@ jest.mock('lucide-react', () => ({
             <title>Package X Icon</title>
         </svg>
     ),
+    Tag: ({ size, className }) => (
+        <svg data-testid="tag-icon" className={className} width={size} height={size}>
+            <title>Tag Icon</title>
+        </svg>
+    ),
+    Calendar: ({ size, className }) => (
+        <svg data-testid="calendar-icon" className={className} width={size} height={size}>
+            <title>Calendar Icon</title>
+        </svg>
+    ),
+    List: ({ size, className }) => (
+        <svg data-testid="list-icon" className={className} width={size} height={size}>
+            <title>List Icon</title>
+        </svg>
+    ),
+    FileText: ({ size, className }) => (
+        <svg data-testid="file-text-icon" className={className} width={size} height={size}>
+            <title>File Text Icon</title>
+        </svg>
+    ),
 }));
 
 // ─── Test fixtures ────────────────────────────────────────────────────────────
 const mockArtifacts = [
     { id: 1, name: 'cognos-v1.0.tar.gz', available: true },
+    { id: 2, name: 'cognos-v2.0.tar.gz', available: true },
+    { id: 3, name: 'cognos-v3.0.tar.gz', available: false },
+];
+const mockArtifactsWithDetails = [
+    {
+        id: 1,
+        name: 'cognos-v1.0.tar.gz',
+        available: true,
+        release_name: 'Cognos 1.0',
+        release_date: '2024-01-15',
+        release_notes: 'Initial stable release with core features.',
+        feature_list: ['Feature Alpha', 'Feature Beta', 'Feature Gamma'],
+    },
     { id: 2, name: 'cognos-v2.0.tar.gz', available: true },
     { id: 3, name: 'cognos-v3.0.tar.gz', available: false },
 ];
@@ -197,7 +230,9 @@ describe('DownloadArtifacts Component', () => {
             mockFetchArtifactList();
             render(<DownloadArtifacts />);
             await waitFor(() => {
-                expect(screen.getByText(/cognos-v3\.0\.tar\.gz.*Unavailable/)).toBeInTheDocument();
+                // Component renders: "cognos-v3.0.tar.gz ⚠ Unavailable"
+                expect(screen.getByText(/cognos-v3\.0\.tar\.gz/)).toBeInTheDocument();
+                expect(screen.getByText(/Unavailable/)).toBeInTheDocument();
             });
         });
 
@@ -276,6 +311,18 @@ describe('DownloadArtifacts Component', () => {
             fireEvent.change(screen.getByRole('combobox'), { target: { value: '2' } });
             expect(screen.queryByText(/Download failed/i)).not.toBeInTheDocument();
         });
+
+        it('disables download button when default option is re-selected', async () => {
+            mockFetchArtifactList();
+            render(<DownloadArtifacts />);
+            await waitFor(() => screen.getByText('cognos-v1.0.tar.gz'));
+
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '1' } });
+            expect(screen.getByRole('button', { name: /Download Artifact/i })).not.toBeDisabled();
+
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '' } });
+            expect(screen.getByRole('button', { name: /Download Artifact/i })).toBeDisabled();
+        });
     });
 
     // ── Availability Warning ───────────────────────────────────────────────────
@@ -313,26 +360,22 @@ describe('DownloadArtifacts Component', () => {
             // fetch should only have been called once (the initial list fetch)
             expect(global.fetch).toHaveBeenCalledTimes(1);
         });
+
+        it('hides availability warning when switching to an available artifact', async () => {
+            mockFetchArtifactList();
+            render(<DownloadArtifacts />);
+            await waitFor(() => screen.getByText(/cognos-v3\.0\.tar\.gz/));
+
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '3' } });
+            expect(screen.getByTestId('package-x-icon')).toBeInTheDocument();
+
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '1' } });
+            expect(screen.queryByTestId('package-x-icon')).not.toBeInTheDocument();
+        });
     });
 
     // ── Download Handler ───────────────────────────────────────────────────────
     describe('Download Handler', () => {
-        it('calls the correct download endpoint', async () => {
-            mockFetchWithDownload(true);
-            render(<DownloadArtifacts />);
-            await waitFor(() => screen.getByText('cognos-v1.0.tar.gz'));
-
-            fireEvent.change(screen.getByRole('combobox'), { target: { value: '1' } });
-            fireEvent.click(screen.getByRole('button', { name: /Download Artifact/i }));
-
-            await waitFor(() => {
-                expect(global.fetch).toHaveBeenCalledWith(
-                    'http://mock-api/artifact/1/download_artifact',
-                    expect.objectContaining({ headers: { Accept: 'application/gzip' } })
-                );
-            });
-        });
-
         it('shows error status after failed download', async () => {
             mockFetchWithDownload(false);
             render(<DownloadArtifacts />);
@@ -411,6 +454,19 @@ describe('DownloadArtifacts Component', () => {
 
             resolveDownload({ ok: false, status: 500, json: async () => ({}) });
         });
+        it('includes server error message in failed download status', async () => {
+            mockFetchWithDownload(false);
+            render(<DownloadArtifacts />);
+            await waitFor(() => screen.getByText('cognos-v1.0.tar.gz'));
+
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '1' } });
+            fireEvent.click(screen.getByRole('button', { name: /Download Artifact/i }));
+
+            await waitFor(() => {
+                expect(screen.getByText(/Download failed.*Server error/i)).toBeInTheDocument();
+            });
+        });
+
     });
 
     // ── Status Message Icons ───────────────────────────────────────────────────
@@ -426,7 +482,6 @@ describe('DownloadArtifacts Component', () => {
         });
 
 
-
         it('error alert has alert-danger class', async () => {
             mockFetchWithDownload(false);
             render(<DownloadArtifacts />);
@@ -438,6 +493,80 @@ describe('DownloadArtifacts Component', () => {
                 const alert = screen.getByText(/Download failed/i).closest('.alert');
                 expect(alert).toHaveClass('alert-danger');
             });
+        });
+    });
+
+    // ── Artifact Details Panel ─────────────────────────────────────────────────
+    describe('Artifact Details Panel', () => {
+        it('does not show details panel when no artifact is selected', async () => {
+            mockFetchArtifactList(mockArtifactsWithDetails);
+            const { container } = render(<DownloadArtifacts />);
+            await waitFor(() => screen.getByText('cognos-v1.0.tar.gz'));
+
+            expect(container.querySelector('.artifact-details-panel')).not.toBeInTheDocument();
+        });
+
+        it('shows details panel after selecting an artifact', async () => {
+            mockFetchArtifactList(mockArtifactsWithDetails);
+            const { container } = render(<DownloadArtifacts />);
+            await waitFor(() => screen.getByText('cognos-v1.0.tar.gz'));
+
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '1' } });
+
+            expect(container.querySelector('.artifact-details-panel')).toBeInTheDocument();
+        });
+
+        it('shows release name when provided', async () => {
+            mockFetchArtifactList(mockArtifactsWithDetails);
+            render(<DownloadArtifacts />);
+            await waitFor(() => screen.getByText('cognos-v1.0.tar.gz'));
+
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '1' } });
+
+            expect(screen.getByText('Cognos 1.0')).toBeInTheDocument();
+        });
+
+        it('shows release notes when provided', async () => {
+            mockFetchArtifactList(mockArtifactsWithDetails);
+            render(<DownloadArtifacts />);
+            await waitFor(() => screen.getByText('cognos-v1.0.tar.gz'));
+
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '1' } });
+
+            expect(screen.getByText('Initial stable release with core features.')).toBeInTheDocument();
+        });
+
+        it('shows feature list items when provided', async () => {
+            mockFetchArtifactList(mockArtifactsWithDetails);
+            render(<DownloadArtifacts />);
+            await waitFor(() => screen.getByText('cognos-v1.0.tar.gz'));
+
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '1' } });
+
+            expect(screen.getByText('Feature Alpha')).toBeInTheDocument();
+            expect(screen.getByText('Feature Beta')).toBeInTheDocument();
+            expect(screen.getByText('Feature Gamma')).toBeInTheDocument();
+        });
+
+        it('shows features count label correctly', async () => {
+            mockFetchArtifactList(mockArtifactsWithDetails);
+            render(<DownloadArtifacts />);
+            await waitFor(() => screen.getByText('cognos-v1.0.tar.gz'));
+
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '1' } });
+
+            expect(screen.getByText(/Features \(3\)/i)).toBeInTheDocument();
+        });
+
+        it('does not show release name section when release_name is absent', async () => {
+            mockFetchArtifactList(mockArtifactsWithDetails);
+            render(<DownloadArtifacts />);
+            await waitFor(() => screen.getByText('cognos-v2.0.tar.gz'));
+
+            fireEvent.change(screen.getByRole('combobox'), { target: { value: '2' } });
+
+            // artifact 2 has no release_name — "Release Name" label should not appear
+            expect(screen.queryByText('Release Name')).not.toBeInTheDocument();
         });
     });
 

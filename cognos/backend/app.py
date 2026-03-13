@@ -5,6 +5,7 @@ from pathlib import Path
 import os
 import sys
 import time
+import json
 from flask_cors import CORS
 
 sys.path.append(
@@ -31,10 +32,11 @@ NODE_ENDPOINT = CONFIGS["node_endpoint"]
 
 CAL_LOGGER = create_logger("svkapp-cal-logger", log_dir="/var/log/svk",
                            level=logging.DEBUG)
+with open(os.path.join(current_script_dir, "artifacts", "artifact_info.json"), "r") as f:
+    artifact_config = json.load(f)
+
+ARTIFACTS = artifact_config.get("ARTIFACTS", [])
 ARTIFACTS_DIR = os.path.join(current_script_dir, "artifacts")
-ARTIFACTS = [
-        {"id": 1, "name": "cognos_runner_mvp1.tar.gz", "version": "1.1.0"}
-    ]
 
 
 def create_app(mock=False):
@@ -304,9 +306,15 @@ def create_app(mock=False):
         enriched = []
         for artifact in ARTIFACTS:
             file_path = os.path.join(ARTIFACTS_DIR, artifact["name"])
+            details = artifact.get("ARTIFACT_DETAILS", {})
             enriched.append({
-                **artifact,
+                "id": artifact.get("id"),
+                "name": artifact.get("name"),
                 "available": os.path.isfile(file_path),
+                "release_name": details.get("release_name"),
+                "release_date": details.get("release_date"),
+                "feature_list": details.get("feature_list", []),
+                "release_notes": details.get("release_notes")
             })
         return jsonify({"artifacts": enriched}), 200
 

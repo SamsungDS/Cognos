@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Download, AlertCircle, CheckCircle, PackageX } from 'lucide-react';
+import { Download, AlertCircle, CheckCircle, PackageX, Tag, Calendar, List, FileText } from 'lucide-react';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import './downloadArtifacts.css';
 import * as constants from '../../src/constant';
@@ -93,6 +93,7 @@ const DownloadArtifacts = () => {
   // Derived state
   const selectedObj = artifacts.find(a => a.id === parseInt(selectedArtifact));
   const isUnavailable = selectedObj && !selectedObj.available;
+  const details = selectedObj;
 
   // Render
   return (
@@ -144,6 +145,88 @@ const DownloadArtifacts = () => {
                     </select>
                   )}
                 </div>
+
+                {/* Artifact Details Panel */}
+                {selectedObj && details && (
+                  <div
+                    className="artifact-details-panel mb-4 rounded-3 p-3"
+                  >
+                    <div className="d-flex align-items-center mb-3">
+                      <FileText size={15} className="me-2 text-info flex-shrink-0" />
+                      <span className="small fw-semibold text-info" style={{ letterSpacing: '0.04em', textTransform: 'uppercase', fontSize: '0.7rem' }}>
+                        Release Information
+                      </span>
+                    </div>
+
+                    <div className="row g-3">
+                      {/* Release Name */}
+                      {details.release_name && (
+                        <div className="col-sm-6">
+                          <div className="d-flex align-items-start gap-2">
+                            <Tag size={14} className="flex-shrink-0 text-muted" />
+                            <div>
+                              <div className="text-muted" style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Release Name</div>
+                              <div className="small fw-medium">{details.release_name}</div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Release Notes */}
+                      {details.release_notes && (
+                        <div className="col-sm-6">
+                          <div className="d-flex align-items-start gap-2">
+                            <FileText size={14} className="flex-shrink-0 text-muted" />
+                            <div className="w-100">
+                              <div className="text-muted mb-1" style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Release Notes</div>
+                              <div className="small" style={{ lineHeight: '1.6', opacity: 0.85 }}>{details.release_notes}</div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Release Date */}
+                      {details.release_date && (
+                        <div className="col-sm-6">
+                          <div className="d-flex align-items-start gap-2">
+                            <Calendar size={14} className="flex-shrink-0 text-muted" />
+                            <div>
+                              <div className="text-muted" style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Release Date</div>
+                              <div className="small fw-medium">
+                                {new Date(details.release_date).toLocaleDateString('en-US', {
+                                  year: 'numeric', month: 'long', day: 'numeric'
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      {/* Feature List */}
+                      {details.feature_list && details.feature_list.length > 0 && (
+                        <div className="col-sm-6">
+                          <div className="d-flex align-items-start gap-2">
+                            <List size={14} className="flex-shrink-0 text-muted" />
+                            <div className="w-100">
+                              <div className="text-muted mb-2" style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                Features ({details.feature_list.length})
+                              </div>
+                              <ul className="list-unstyled mb-0" style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                                {details.feature_list.map((feature, idx) => (
+                                  <li key={idx} className="d-flex align-items-start gap-2 small" style={{ opacity: 0.85 }}>
+                                    <span
+                                      className='feature-span-style'
+                                    />
+                                    {feature}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {/* Availability warning */}
                 {isUnavailable && (
