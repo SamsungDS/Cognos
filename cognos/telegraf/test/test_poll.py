@@ -15,7 +15,7 @@ def test_esc_str():
 
 def test_get_nodes(mocker):
     dummy_list_nodes_response = {
-        "commandResponse": json.dumps({
+        "command_response": json.dumps({
             "node_info": [
                 {
                     "node_name": "cognos_node1",
@@ -40,7 +40,7 @@ def test_get_nodes(mocker):
 
 def test_get_clusters(mocker):
     dummy_list_clusters_response = {
-        "commandResponse": json.dumps({
+        "command_response": json.dumps({
             "clusters": [
                 {"cluster_name": "cluster_name_0"},
                 {"cluster_name": "cluster_name_1"},
@@ -62,7 +62,7 @@ def test_get_clusters(mocker):
 
 def test_get_cluster_nodes(mocker):
     dummy_list_cluster_nodes_response = {
-        "commandResponse": json.dumps({
+        "command_response": json.dumps({
             "clusters": [{
                 "cluster_name": "name",
                 "nodes": [
@@ -185,7 +185,7 @@ def test_convert_stats_to_influx_line_protocol():
 
 def test_get_cognos_events(mocker):
     dummy_detach_response = {
-        "errorIdOrStringIfAny": "", "errorCode": 0, "apiVersion": "0.1",
+        "error_id_or_string_if_any": "", "error_code": 0, "api_version": "0.1",
         "response": (
             "[{\"event_header\":{\"cluster_name\":\"CL_ID_1\","
             "\"node_name\":\"node_1\"},\"event_payload\":"

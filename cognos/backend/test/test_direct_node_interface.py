@@ -11,7 +11,7 @@ def test_init_directnode_interface():
 
 def test_list_devices(mocker):
     dummy_raw_list_devices_output = {
-        "errorIdOrStringIfAny": "", "errorCode": 0, "apiVersion": "0.1",
+        "error_id_or_string_if_any": "", "error_code": 0, "api_version": "0.1",
         "response": [
             "{\"devices\":[{\"device_id\":33638416341504,"
             "\"vendor_device_type\":\"CMM-H\",\"pcie_addr\":\"0000:5a:00.0\"}"
@@ -34,7 +34,7 @@ def test_list_devices(mocker):
 
 def test_list_devices_w_exception(mocker):
     dummy_raw_list_devices_output = {
-        "errorIdOrStringIfAny": "", "errorCode": 0, "apiVersion": "0.1",
+        "error_id_or_string_if_any": "", "error_code": 0, "api_version": "0.1",
         "response": [
             "{\"devices\":[{\"device_id\":33638416341504,"
             "\"vendor_device_type\":\"CMM-H\",\"pcie_addr\":\"0000:5a:00.0\"}"
@@ -61,7 +61,7 @@ def test_list_devices_w_exception(mocker):
 
 def test_get_device_info(mocker):
     dummy_raw_get_devices_output = {
-        "errorIdOrStringIfAny": "", "errorCode": 0, "apiVersion": "0.1",
+        "error_id_or_string_if_any": "", "error_code": 0, "api_version": "0.1",
         "response": [
             "{\"api_version\":1.0,\"device_id\":33638416369152,"
             "\"manufacturer\":\"Samsung\",\"serial_number\":305419896,"
@@ -98,7 +98,7 @@ def test_get_device_info(mocker):
 
 def test_get_device_info_w_exception(mocker):
     dummy_raw_get_devices_output = {
-        "errorIdOrStringIfAny": "", "errorCode": 0, "apiVersion": "0.1",
+        "error_id_or_string_if_any": "", "error_code": 0, "api_version": "0.1",
         "response": [
             "{\"api_version\":1.0,\"device_id\":33638416369152,"
             "\"manufacturer\":\"Samsung\",\"serial_number\":305419896,"
