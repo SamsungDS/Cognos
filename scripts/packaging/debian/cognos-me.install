@@ -3,5 +3,5 @@
 /usr/local/svk/feature_modules/me/config/damo_config.json /usr/local/svk/feature_modules/me/config/
 /usr/local/svk/feature_modules/me/lib64/libsvkme* /usr/local/svk/feature_modules/me/lib64/
 /usr/local/svk/feature_modules/me/logic_modules/movers/lib64/lib* /usr/local/svk/feature_modules/me/logic_modules/movers/lib64/
-/usr/local/svk/feature_modules/me/scripts/dependencies/python/requirements_deploy.txt /usr/local/svk/feature_modules/me/scripts/dependencies/python/requirements_deploy.txt
+/usr/local/svk/feature_modules/me/scripts/dependencies/python/requirements_deploy.txt /usr/local/svk/feature_modules/me/scripts/dependencies/python/
 
