@@ -4,3 +4,5 @@ usr/local/svk/svk-app/cognos/subscriber/* /usr/local/svk/svk-app/cognos/subscrib
 usr/local/svk/svk-app/* /usr/local/svk/svk-app/
 usr/local/svk/svk-app/cognos/rbac/* /usr/local/svk/svk-app/cognos/rbac/
 usr/local/svk/svk-app/cognos/telegraf/* /usr/local/svk/svk-app/cognos/telegraf/
+etc/caddy/Caddyfile /etc/caddy/Caddyfile
+var/www/scmc/* /var/www/scmc/

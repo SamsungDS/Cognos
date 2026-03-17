@@ -142,7 +142,7 @@ build_rpm() {
 
 
     # Only build RPM on supported OS
-    if [[ "$ID" == "rocky" || "${ID}" == "ol" ]]; then
+    if [[ "${ID}" == "ol" ]]; then
         # Prepare RPMBUILD directories - inside our build directory
         rm -rf "$BUILD_DIR"
         mkdir --verbose --parents "$RPMBUILD_DIR"/{BUILD,RPMS,SOURCES,SPECS}

@@ -26,6 +26,11 @@ install_build_deps() {
     BUILD_DEPS=(nodejs)
     package_manager
 
+    # Install Caddy
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
+    BUILD_DEPS=(caddy)
+
     # Install chrome
     wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add -
     sh -c 'echo "deb http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list'

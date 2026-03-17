@@ -2,6 +2,8 @@
 
 SVK_VERSION := $(shell $(CURDIR)/../scripts/get_version.sh)
 INSTALL_PATH = usr/local/svk/svk-app
+STATIC_REACT_PATH = var/www/scmc
+CADDY_PATH = etc/caddy
 
 %:
 	dh $@
@@ -16,15 +18,26 @@ override_dh_auto_build:
 	# Create Cognos UI directory
 	mkdir -p -v $(CURDIR)/$(INSTALL_PATH)/
 
-	# Turning off for now until we refactor configs of Cognos UI
-	# Build release Cognos UI (React App)
-	# BUILD_PATH=$(CURDIR)/$(INSTALL_PATH)/cognos-ui npm --prefix $(CURDIR)/../cognos/ui run build
+	# Create React static bundle directory
+	mkdir -p -v $(CURDIR)/$(STATIC_REACT_PATH)/
+
+	# Create Caddy directory
+	mkdir -p -v ${CURDIR}/${CADDY_PATH}/
 
 	# create SCMC_VERSION file
 	$(CURDIR)/../scripts/get_version.sh > $(CURDIR)/SCMC_VERSION
 
+	# build React code into Static Bundle
+	npm --prefix $(CURDIR)/../cognos/ui run build
+
 override_dh_auto_install:
 	# Custom auto-install steps TBD (might include things like symlinks, conf file creation etc)
+
+	# copying Caddy file
+	cp $(CURDIR)/../Caddyfile ${CURDIR}/${CADDY_PATH}/
+
+	# copying React static bundle
+	cp -a $(CURDIR)/../cognos/ui/build/. $(CURDIR)/$(STATIC_REACT_PATH)/
 
 	# copying CAL files
 	mkdir -p -v $(CURDIR)/$(INSTALL_PATH)/cognos/backend/config/

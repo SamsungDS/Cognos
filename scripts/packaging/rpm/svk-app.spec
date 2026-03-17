@@ -26,14 +26,28 @@ Samsung Cognos Management Console
 %build
 # create SCMC_VERSION file
 %{_projectdir}/scripts/get_version.sh > %{_projectdir}/cognos/SCMC_VERSION
+# Clean install Cognos UI dependencies
+npm --prefix %{_projectdir}/cognos/ui ci
+# build react code into static bundle
+npm --prefix %{_projectdir}/cognos/ui run build
+
 
 %install
 rm -rf %{buildroot}
 mkdir -p %{buildroot}
+STATIC_REACT_PATH=%{buildroot}/var/www/scmc
 INSTALL_PATH=%{buildroot}/usr/local/svk/svk-app
 FINAL_PATH=/usr/local/svk/svk-app
 BUILDROOT_PREFIX=${INSTALL_PATH}
+
 mkdir -p ${INSTALL_PATH}
+
+# Setup Caddy
+mkdir -p ${STATIC_REACT_PATH}
+cp -a %{_projectdir}/cognos/ui/build/. ${STATIC_REACT_PATH}/
+chown -R caddy:caddy ${STATIC_REACT_PATH}
+chmod -R a+rX ${STATIC_REACT_PATH}
+cp %{_projectdir}/Caddyfile /etc/caddy/Caddyfile
 
 # copying CAL files
 mkdir -p -v ${INSTALL_PATH}/cognos/backend/config/
@@ -102,6 +116,10 @@ install -m 0644 %{_projectdir}/scripts/cognos.config ${INSTALL_PATH}/cognos.conf
 %{svk_install_dir}/cognos.config
 # SCMC VERSION FILE
 %{svk_install_dir}/SCMC_VERSION
+# Caddy files
+%dir /var/www/
+%dir /var/www/scmc/
+/var/www/scmc/*
 # source code
 %dir %{svk_install_dir}/
 %{svk_install_dir}/*
@@ -166,6 +184,7 @@ else
     "$VENV/bin/python" -m pip install -r "$REQ"
 fi
 
+systemctl reload caddy
 %systemd_post cognos-app.service
 %systemd_post cognos-subscriber.service
 %systemd_post cognos-ui.service
