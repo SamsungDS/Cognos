@@ -23,7 +23,7 @@
     node_name: "{{ application_server_start_mock_hostname.stdout }}"
   become: true
   when:
-    - hostvars[inventory_hostname].type == 'CMMB'
+    - application_server_type == 'CMMB'
 
 - name: Set mock_disable to be true
   ansible.builtin.replace:
@@ -31,16 +31,15 @@
     regexp: '"mock_disable"\s*:\s*false\s*(,?)'
     replace: '"mock_disable": true\1'
   when:
-    - hostvars[inventory_hostname].type == 'CMMB'
+    - application_server_type == 'CMMB'
 
-- name: Configure input.json when device type is CMMD
+- name: Configure input.json when device type is CMMH
   ansible.builtin.template:
     src: cmmd_mgmt_fw_input.j2
     dest: "/usr/local/svk/feature_modules/cxl/config/input.json"
     mode: "0644"
   become: true
-  when:
-    - hostvars[inventory_hostname].type == 'CMMD'
+  when: application_server_type == 'CMMH'
 
 - name: Configure zmq
   ansible.builtin.template:
@@ -57,9 +56,11 @@
     state: started
     enabled: false
   become: true
+  failed_when: false
   loop:
-    - svk-node.service
-    - svk-svc-mgr.service
+    - cmmh_driver.service
+    - cognos-node.service
+    - cognos-svc-mgr.service
 
 - name: Gather service status
   ansible.builtin.service_facts:
@@ -73,8 +74,9 @@
     fail_msg: "{{ item }} failed to start!"
     success_msg: "{{ item }} started successfully."
   loop:
-    - svk-node.service
-    - svk-svc-mgr.service
+    - cmmh_driver.service
+    - cognos-node.service
+    - cognos-svc-mgr.service
   register: application_server_start_mock_check
   ignore_errors: true
 
@@ -90,6 +92,7 @@
     name: cognos_service_restart
   vars:
     cognos_service_restart_list:
-      - svk-node.service
-      - svk-svc-mgr.service
+      - cmmh_driver.service
+      - cognos-node.service
+      - cognos-svc-mgr.service
   when: application_server_start_mock_flag | default(false)

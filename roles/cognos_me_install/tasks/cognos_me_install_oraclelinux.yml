@@ -1,0 +1,58 @@
+---
+# tasks file for roles/cognos_me_install
+# Author: June Liu
+# Contact: june.liu@samsung.com
+
+- name: Check if cognos_me RPM is installed
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      dnf list --installed | grep cognos-me
+    executable: /bin/bash
+  register: cognos_me_install_pkg_query
+  changed_when: false
+  failed_when: false
+
+- name: Determine OS type and version
+  ansible.builtin.set_fact:
+    cognos_me_install_os_family: "{{ ansible_distribution }}"
+    cognos_me_install_os_version: "{{ ansible_distribution_version }}"
+
+- name: Identify cognos_me package for OEL
+  ansible.builtin.find:
+    path: "{{ svk_pkg_dir }}"
+    patterns: "cognos-me*el{{ ansible_distribution_major_version }}*.rpm"
+  delegate_to: localhost
+  run_once: true
+  register: cognos_me_install_pkg
+
+- name: Assert cognos_me package found
+  ansible.builtin.assert:
+    that: cognos_me_install_pkg.files | length > 0
+    fail_msg: "No cognos-me rpm found. Please download rpm to {{ cognos_me_install_artifacts_dir }}"
+
+- name: Identify newest version of cognos_me package found
+  ansible.builtin.set_fact:
+    cognos_me_install_pkg_file: "{{ (cognos_me_install_pkg.files | sort(attribute='mtime', reverse=true) | first).path }}"
+  run_once: true
+
+- name: Copy cognos_me package to staging directory
+  ansible.builtin.copy:
+    src: "{{ cognos_me_install_pkg_file }}"
+    dest: "{{ cognos_me_install_staging_dir }}"
+    mode: "0644"
+  when: cognos_me_install_pkg_query.rc != 0
+
+- name: Install cognos_me RPM
+  ansible.builtin.dnf:
+    name: "{{ cognos_me_install_staging_dir }}/{{ cognos_me_install_pkg_file | basename }}"
+    state: present
+    disable_gpg_check: true
+  become: true
+  when: cognos_me_install_pkg_query.rc != 0
+
+- name: Delete cognos_me package from staging directory
+  ansible.builtin.file:
+    path: "{{ cognos_me_install_staging_dir }}/{{ cognos_me_install_pkg_file | basename }}"
+    state: absent
+  when: cognos_me_install_pkg_file is defined

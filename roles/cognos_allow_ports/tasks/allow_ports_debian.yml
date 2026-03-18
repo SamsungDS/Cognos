@@ -1,0 +1,24 @@
+# Author: June Liu
+# Contact: june.liu@samsung.com
+---
+
+- name: Check if ufw is active
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      ufw status
+    executable: /bin/bash
+  register: cognos_allow_ports_ufw_status
+  changed_when: false
+
+- name: Parse ufw status
+  ansible.builtin.set_fact:
+    cognos_allow_ports_ufw_active: "{{ 'Status: active' in cognos_allow_ports_ufw_status.stdout }}"
+
+- name: Open ports for cognos services with UFW
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}/tcp"
+  loop: "{{ ports | dict2items | map(attribute='value') | list }}"
+  when: cognos_allow_ports_ufw_active | default(false)
+  failed_when: false

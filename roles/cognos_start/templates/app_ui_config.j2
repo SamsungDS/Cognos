@@ -1,0 +1,16 @@
+{
+  "mgmt_endpoint": "http://{{ip}}:{{ mgmt_ports_frontend['mgmt_endpoint'] }}",
+  "data_endpoint": "http://{{ip}}:{{ mgmt_ports_frontend['cal_port'] }}",
+  "api_endpoint": "http://{{ip}}:{{ mgmt_ports_frontend['cal_port'] }}/api/v2.0.1",
+  "exporter_endpoint": "{{ip}}:{{ mgmt_ports_frontend['exporter'] }}",
+  "rbac_endpoint": "{{ cognos_start_protocol }}://{{ip}}:{{ rbac_front_port }}",
+  "download_only_mode": false,
+  "ssl": false,
+  "clusterPolicy": "roundRobin",
+  "policyOptions": {
+    "roundRobin": {
+      "comment": "the use case is that the user wants to have minimum number of application server for redundancy",
+      "minHostsPerCluster": 2
+    }
+  }
+}

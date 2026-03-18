@@ -1,0 +1,89 @@
+---
+# Author: June Liu
+# Contact: june.liu@samsung.com
+
+- name: Check if certificates directory exists
+  ansible.builtin.stat:
+    path: "{{ cognos_rbac_start_cert_dir }}"
+  register: cognos_rbac_start_certs_dir
+  when: cognos_certificates_enabled | default(false)
+
+- name: Find certificate files in artifacts directory
+  ansible.builtin.find:
+    path: "{{ cognos_rbac_start_cert_dir }}"
+    file_type: file
+  register: cognos_rbac_start_certs_file
+  when:
+    - cognos_certificates_enabled | default(false)
+    - cognos_rbac_start_certs_dir.stat.exists
+
+- name: Check if all required certificate files exist
+  ansible.builtin.set_fact:
+    cognos_rbac_start_certs_founds: >-
+      {% if cognos_rbac_start_certs_file is defined %}
+      {% set found_basenames = cognos_rbac_start_certs_file.files | map(attribute='path') | map('basename') | list %}
+      {% set required_count = cognos_certs_files | length %}
+      {% set matched_count = (cognos_certs_files | intersect(found_basenames)) | length %}
+      {{ matched_count == required_count }}
+      {% else %} false {% endif %}
+  when:
+    - cognos_certificates_enabled | default(false)
+    - cognos_rbac_start_certs_file.files is defined
+
+- name: Set cognos_rbac_start_https_enable
+  ansible.builtin.set_fact:
+    cognos_rbac_start_https_enable: "{{ cognos_rbac_start_certs_founds | trim | bool }}"
+  when: cognos_rbac_start_certs_founds is defined
+
+- name: Set facts for https
+  ansible.builtin.set_fact:
+    cognos_rbac_start_protocol: 'https'
+    cognos_rbac_start_ssl_cert: "{{ cognos_rbac_start_cert_dir }}/cert.pem"
+    cognos_rbac_start_ssl_key: "{{ cognos_rbac_start_cert_dir }}/key.pem"
+  when: cognos_rbac_start_https_enable
+
+- name: Configure yaml file in rbac-client-repo
+  ansible.builtin.template:
+    src: app_rbac_yaml.j2
+    dest: "/usr/local/svk/svk-app/cognos/rbac/core/etc/rbac.yaml"
+    mode: "0644"
+  vars:
+    ip: "{{ ansible_default_ipv4.address }}"
+  become: true
+
+- name: Configure the docker-config.env file
+  ansible.builtin.template:
+    src: app_docker_config_env.j2
+    dest: "/usr/local/svk/svk-app/cognos/rbac/docker-config.env"
+    mode: "0644"
+  vars:
+    ip: "{{ ansible_default_ipv4.address }}"
+  become: true
+
+- name: Update certificate path in cognos-rbac service file
+  ansible.builtin.template:
+    src: cognos_rbac_service.j2
+    dest: "/lib/systemd/system/cognos-rbac.service"
+    mode: "0644"
+  when: cognos_rbac_start_https_enable
+
+- name: Reload systemd daemon
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: cognos_rbac_start_https_enable
+
+- name: Start cognos-rbac services
+  ansible.builtin.service:
+    name: cognos-rbac.service
+    state: started
+    enabled: true
+  become: true
+
+- name: Wait up to 120 seconds for port 6721 to become available
+  ansible.builtin.wait_for:
+    host: "{{ ip }}"
+    port: 6721
+    delay: 5
+    timeout: 120
+  vars:
+    ip: "{{ ansible_default_ipv4.address }}"

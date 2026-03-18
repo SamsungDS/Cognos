@@ -1,0 +1,46 @@
+---
+- name: Check if cognos_app DEB is installed
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      apt list --installed | grep cognos-app
+    executable: /bin/bash
+  register: cognos_app_remove_pkg_query
+  changed_when: false
+  failed_when: false
+  when: ansible_facts['distribution'] == "Ubuntu"
+
+- name: Remove the installed cognos-app on Ubuntu
+  ansible.builtin.apt:
+    name: cognos-app
+    state: absent
+    purge: true
+  become: true
+  when:
+    - ansible_facts['distribution'] == "Ubuntu"
+    - cognos_app_remove_pkg_query.rc == 0
+
+- name: Check if cognos_app RPM is installed
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      dnf list --installed | grep cognos-app
+    executable: /bin/bash
+  register: cognos_app_remove_pkg_query
+  changed_when: false
+  failed_when: false
+  when: ansible_facts['distribution'] == "OracleLinux"
+
+- name: Remove the installed cognos-app on OEL
+  ansible.builtin.dnf:
+    name: cognos-app
+    state: absent
+  become: true
+  when:
+    - ansible_facts['distribution'] == "OracleLinux"
+    - cognos_app_remove_pkg_query.rc == 0
+
+- name: Remove the cognos-app directory
+  ansible.builtin.file:
+    path: "{{ svk_install_dir }}"
+    state: absent

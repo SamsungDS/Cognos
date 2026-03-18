@@ -1,5 +1,0 @@
-# Author: June Liu
-# Contact: june.liu@samsung.com
----
-converged_remove_log_path: /var/log/svk/framework.log
-converged_remove_conf_path: /usr/local/svk/converged/config/svk-converged.conf

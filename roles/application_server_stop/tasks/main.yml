@@ -1,15 +1,16 @@
 ---
-- name: Stop application services
+- name: Gather service facts
+  ansible.builtin.service_facts:
+
+- name: Stop application services if they exist
   ansible.builtin.service:
     name: "{{ item }}"
     state: stopped
     enabled: false
   become: true
+  failed_when: false
   loop:
-    - svk-node.service
-    - svk-svc-mgr.service
-
-- name: Conduct systemd daemon-reload
-  ansible.builtin.systemd:
-    daemon-reload: true
-  become: true
+    - cognos-node.service
+    - cognos-svc-mgr.service
+    - cmmh_driver.service
+  when: item in ansible_facts.services

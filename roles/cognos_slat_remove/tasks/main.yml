@@ -1,0 +1,16 @@
+---
+# Author: June Liu
+# Contact: june.liu@samsung.com
+
+- name: Remove cognos_slat packages on Ubuntu
+  ansible.builtin.apt:
+    name: cognos-slat
+    state: absent
+    purge: true
+  when: ansible_facts['distribution'] == "Ubuntu"
+
+- name: Remove cognos_slat packages on OEL
+  ansible.builtin.dnf:
+    name: cognos-slat
+    state: absent
+  when: ansible_facts['distribution'] == "OracleLinux"

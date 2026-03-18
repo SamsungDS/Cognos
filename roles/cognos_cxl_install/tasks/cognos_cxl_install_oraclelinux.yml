@@ -1,0 +1,64 @@
+---
+- name: Install pciutils on OEL9
+  ansible.builtin.include_tasks:
+    cognos_cxl_install_pciutils.yml
+  when: ansible_distribution_major_version == '9'
+
+- name: Set cognos-cxl package name in hardware mode
+  ansible.builtin.set_fact:
+    cognos_cxl_install_name: "cognos-cxl-{{ scmc_ver }}"
+  when: not scmc_cxl_mock_enable
+
+- name: Set cognos-cxl package name in mock mode
+  ansible.builtin.set_fact:
+    cognos_cxl_install_name: "cognos-cxl-mock"
+  when: scmc_cxl_mock_enable
+
+- name: Check if cognos_cxl RPM is installed
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      dnf list --installed | grep {{ cognos_cxl_install_name }}
+    executable: /bin/bash
+  register: cognos_cxl_install_pkg_query
+  changed_when: false
+  failed_when: false
+
+- name: Identify cognos_cxl package
+  ansible.builtin.find:
+    path: "{{ svk_pkg_dir }}"
+    patterns: "{{ cognos_cxl_install_name }}*el{{ ansible_distribution_major_version }}*.rpm"
+  delegate_to: localhost
+  run_once: true
+  register: cognos_cxl_install_pkg
+
+- name: Assert cognos_cxl package found
+  ansible.builtin.assert:
+    that: cognos_cxl_install_pkg.files | length > 0
+    fail_msg: "No cognos-cxl package found. Please download package to {{ artifacts_dir }}"
+
+- name: Identify newest version of cognos_cxl package found
+  ansible.builtin.set_fact:
+    cognos_cxl_install_pkg_file: "{{ (cognos_cxl_install_pkg.files | sort(attribute='mtime', reverse=true) | first).path }}"
+  run_once: true
+
+- name: Copy cognos_cxl package to staging directory
+  ansible.builtin.copy:
+    src: "{{ cognos_cxl_install_pkg_file }}"
+    dest: "{{ deploy_staging_dir }}"
+    mode: "0644"
+  when: cognos_cxl_install_pkg_query.rc != 0
+
+- name: Install cognos_cxl RPM
+  ansible.builtin.dnf:
+    name: "{{ deploy_staging_dir }}/{{ cognos_cxl_install_pkg_file | basename }}"
+    state: present
+    disable_gpg_check: true
+  become: true
+  when: cognos_cxl_install_pkg_query.rc != 0
+
+- name: Delete cognos_cxl package from staging directory
+  ansible.builtin.file:
+    path: "{{ deploy_staging_dir }}/{{ cognos_cxl_install_pkg_file | basename }}"
+    state: absent
+  when: cognos_cxl_install_pkg_file is defined

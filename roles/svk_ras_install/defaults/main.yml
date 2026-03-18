@@ -1,8 +1,0 @@
-# Author: June Liu
-# Contact: june.liu@samsung.com
----
-# vars file for ./roles/ras_install
-
-svk_ras_install_staging_dir: "/tmp"
-svk_ras_install_artifacts_dir: "{{ inventory_dir }}/artifacts"
-svk_ras_install_rasdaemon_dir: "/usr/local/var/lib/rasdaemon"

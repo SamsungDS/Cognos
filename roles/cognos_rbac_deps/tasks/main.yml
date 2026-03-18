@@ -1,0 +1,5 @@
+---
+
+- name: Prepare dependencies for start cognos rbac
+  ansible.builtin.include_tasks:
+    cognos_rbac_deps_{{ ansible_distribution_file_variety | lower }}.yml

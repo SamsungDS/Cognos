@@ -1,5 +1,41 @@
 ---
 
-- name: Validate Ansible
-  ansible.builtin.include_tasks: validate_ansible.yml
-  when: not validate_ansible_validated | d(false)
+- name: Get Ansible's python version
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      ansible --version | grep -oP "python version = \K[^ ]+"
+    executable: /bin/bash
+  register: validate_ansible_local_python_version
+  changed_when: false
+
+- name: Validate Ansible python version
+  ansible.builtin.assert:
+    that: validate_ansible_local_python_version.stdout is version(validate_ansible_py_min_ver, '>=')
+    msg: |
+      Ansible must be installed under python {{ validate_ansible_py_min_ver }} or newer.
+      Ansible is currently installed under python {{ validate_ansible_local_python_version.stdout }}.
+      Remove package-manager version of ansible (eg: 'apt remove ansible').
+      Remove pip2 version of ansible (eg: 'python -m pip uninstall ansible').
+      Remove ansible-base && ansible-core if present.
+      Install ansible via pip3:
+      python3 -m pip install ansible-core=={{ validate_ansible_min_ver }}
+
+- name: Validate Ansible version
+  ansible.builtin.assert:
+    that:
+      - ansible_version.full is version(validate_ansible_min_ver, '>=')
+      - ansible_version.full is version(validate_ansible_max_ver, '<=')
+    msg: |
+      Ansible version must be >= {{ validate_ansible_min_ver }}, <= {{ validate_ansible_max_ver }}
+      Installed version is {{ ansible_version.full }}
+      Remove ansible && ansible-base && ansible-core if present.
+      Install Ansible via python3 pip module:
+      python3 -m pip install ansible-core=={{ validate_ansible_min_ver }}
+
+- name: Validate python modules
+  ansible.builtin.include_tasks: validate_python_modules.yml
+  loop: "{{ validate_ansible_py_mod_req }}"
+  vars:
+    python_module: "{{ item.name }}"
+    python_module_version: "{{ item.version }}"

@@ -1,2 +1,0 @@
----
-svk_pkg_dir: "{{ inventory_dir }}/artifacts/SVK/Converged"

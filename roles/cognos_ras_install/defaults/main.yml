@@ -1,0 +1,9 @@
+# Author: June Liu
+# Contact: june.liu@samsung.com
+---
+# vars file for ./roles/ras_install
+
+cognos_ras_install_staging_dir: "/tmp"
+cognos_ras_install_artifacts_dir: "{{ inventory_dir }}/artifacts"
+cognos_ras_install_rasdaemon_dir:
+  - "/usr/local/var/lib/rasdaemon"

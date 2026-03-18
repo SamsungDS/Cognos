@@ -1,17 +1,9 @@
-[slat_node]
-msl-dpe-da1
-
-[converged_node]
-msl-dpe-da1
-
 [kernel_upgrade_node]
-msl-dpe-da1
+hostname1/host_ip1
 
 [management_server]
-msl-dpe-da8 type=''
+hostname2/host_ip2
 
 [application_server]
-msl-ssg-srf05 type='CMMD'
-
-[all:vars]
-scmc_mock_enable=true
+hostname3/host_ip3
+hostname4/host_ip4

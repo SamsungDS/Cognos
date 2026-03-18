@@ -1,0 +1,59 @@
+---
+# tasks file for roles/cognos_me_install
+# Author: June Liu
+# Contact: june.liu@samsung.com
+
+- name: Check if cognos_me DEB is installed
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      apt list --installed | grep cognos-me
+    executable: /bin/bash
+  register: cognos_me_install_pkg_query
+  changed_when: false
+  failed_when: false
+
+- name: Determine OS type and version
+  ansible.builtin.set_fact:
+    cognos_me_install_os_family: "{{ ansible_distribution }}"
+    cognos_me_install_os_version: "{{ ansible_distribution_version }}"
+
+- name: Identify cognos_me package for Ubuntu
+  ansible.builtin.find:
+    path: "{{ svk_pkg_dir }}"
+    patterns: "cognos-me*-ubuntu{{ cognos_me_install_os_version }}_*.deb"
+  delegate_to: localhost
+  run_once: true
+  register: cognos_me_install_pkg
+
+- name: Assert cognos_me deb found
+  ansible.builtin.assert:
+    that: cognos_me_install_pkg.files | length > 0
+    fail_msg: "No cognos-me deb found. Please download DEB to {{ cognos_me_install_artifacts_dir }}"
+
+- name: Identify newest version of cognos_me DEB found
+  ansible.builtin.set_fact:
+    cognos_me_install_pkg_file: "{{ (cognos_me_install_pkg.files | sort(attribute='mtime', reverse=true) | first).path }}"
+  run_once: true
+
+- name: Copy cognos_me package to staging directory
+  ansible.builtin.copy:
+    src: "{{ cognos_me_install_pkg_file }}"
+    dest: "{{ cognos_me_install_staging_dir }}"
+    mode: "0644"
+  when: cognos_me_install_pkg_query.rc != 0
+
+- name: Install cognos_me DEB
+  ansible.builtin.apt:
+    deb: "{{ cognos_me_install_staging_dir }}/{{ cognos_me_install_pkg_file | basename }}"
+    state: present
+  become: true
+  when: cognos_me_install_pkg_query.rc != 0
+
+- name: Delete cognos_me DEB from staging directory
+  ansible.builtin.file:
+    path: "{{ cognos_me_install_staging_dir }}/{{ cognos_me_install_pkg_file | basename }}"
+    state: absent
+  when:
+    - cognos_me_install_pkg_query.rc != 0
+    - cognos_me_install_pkg_file is defined

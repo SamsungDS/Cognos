@@ -8,27 +8,25 @@ Ansible automation for configuration, deployment and orchestration of SVK softwa
 
 ### Cognos Cluster Considerations
 
-Presently, SVK is supported and tested on Ubuntu 22.04 and Ubuntu 24.04.
+Presently, SVK is supported and tested on Ubuntu 22.04 and OEL 10.
 
 It is not posible to deploy to other Linux distributions at this time.
 
 ### Ansible Host Setup
 
-On a linux host, on the same management network as all hosts in the Cognos cluster, install the version of Ansible version is >= 2.16.6 and <= 2.18.4.
+On a linux host, on the same management network as all hosts in the Cognos cluster, install the version of ansible-core version is >= 2.16.6 and <= 2.18.4,  _**preferably 2.17.14**_.
 
 And installed Python version is larger than or equal to 3.10.12.
 
 The above dependencies will be validated on runtime, and if not met, will fail assertion, preventing Ansible playbook execution.
 
-To install python & ansible, use the following commands (on Ubuntu22.04 or Ubuntu24.04):
+To install python & ansible, use the following commands (example for Ubuntu):
 ```
-sudo apt update
+sudo python3 -m pip install --upgrade pip
 
-sudo apt install python3.10
+sudo python3 -m pip install ansible-core==2.17.14
 
-sudo python3.10 -m pip install --upgrade pip
-
-sudo python3.10 -m pip install ansible
+sudo ansible-galaxy collection install community.general
 ```
 
 ### SVK Host Setup
@@ -98,66 +96,45 @@ Please reference the official documentation:
 #### Example Inventory File
 
 Set up an Ansible inventory file for the cluster.
-Below is an example inventory file defining a cluster with one host in the [slat_node] group, one in the [converged_node] group, one in the [management_server] group, and two hosts in the [application_server] group.
-
-**NOTE**: The 'type' of hosts in the [management_server] and [application_server] groups must be set to either 'CMMB' or 'CMMD'.
-
-    [slat_node]
-    hostname1/host_ip1
-
-    [converged_node]
-    hostname2/host_ip2
+Below is an example inventory file defining a cluster with one host in the `[kernel_upgrade_node]` group, one in the `[management_server]` group, and two hosts in the `[application_server]` group.
 
     [kernel_upgrade_node]
     hostname3/host_ip3
 
     [management_server]
-    hostname4/host_ip4 type='CMMB'
+    hostname4/host_ip4
 
     [application_server]
-    hostname5/host_ip5 type='CMMD'
-    hostname6/host_ip6 type='CMMB'
+    hostname5/host_ip5
+    hostname6/host_ip6
 
 
 #### Inventory Groups
 
 Your inventory file should contain hosts in the following groups:
 
-* [slat_node]
-  * Hosts running the SLA Tracker related packages,includes:
-    * svk-core
-    * svk-cxl
-    * svk-mgmt-fw
-    * svk-slat
-* [converged_node]
-  * Hosts running converged related packages, includes:
-    * svk-converged
-    * svk-core
-
 * [kernel_upgrade_node]
   * Hosts for conducting the kernel upgrade, the default is upgrade kernel to version 6.11.11.
-  * kernel upgrading will be done on hosts of slat_node which available capacity >= 29G and current kernel version < 6.11.11, and hosts that do not meet the conditions will be ignored.
+  * kernel upgrading will be done on hosts of slat_node which available capacity >= 29G and current kernel version != 6.11.11, and hosts that do not meet the conditions will be ignored.
+  * **Note:** kernel upgrade module is `only support to Ubuntu` now.
 
 * [management_server]
-  * Hosts running the scmc-managment side services, including:
-    * svk-app
-    * svk-core
-    * svk-cxl/svk-cxl-mock
-    * svk-me
-    * svk-mgmt-fw
-    * svk-node
-    * svk-ras
-    * svk-slat
+  * Hosts running the cognos-managment side services, including:
+    * cognos-app
+    * cognos-core
+    * cognos-grpc(OEL 10 only)
+    * cognos-mgmt-fw
 
 * [applicaition_server]
-  * Hosts running the scmc-application side services, including:
-    * svk-core
-    * svk-cxl/svk-cxl-mock
-    * svk-me
-    * svk-mgmt-fw
-    * svk-node
-    * svk-ras
-    * svk-slat
+  * Hosts running the cognos-application side services, including:
+    * cognos-core
+    * cognos-cxl/cognos-cxl-mock
+    * cognos-me
+    * cognos-grpc(OEL 10 only)
+    * cognos-mgmt-fw
+    * cognos-node
+    * cognos-ras
+    * cognos-slat
 
 ### Prepare the artifacts:
 The cognos packages to be installed should be placed in the artifacts directory in advance.
@@ -172,176 +149,170 @@ The cognos packages to be installed should be placed in the artifacts directory 
     * tree -L 2 artifacts/
     *       artifacts/
             └── SVK
-                ├── Converged
-                ├── svk-app_0.11.5-ubuntu22.04_amd64.deb
-                ├── svk-core_0.11.5-ubuntu22.04_amd64.deb
-                ├── svk-cxl_0.11.0-ubuntu22.04_amd64.deb
-                ├── svk-cxl-mock_0.11.0-ubuntu22.04_amd64.deb
-                ├── svk-me_0.11.3-3-gb13f-ubuntu22.04_amd64.deb
-                ├── svk-mgmt-fw_0.11.7-ubuntu22.04_amd64.deb
-                ├── svk-node_0.11.2-ubuntu22.04_amd64.deb
-                ├── svk-ras_0.11.14-ubuntu22.04_amd64.deb
-                └── svk-slat_0.11.3-ubuntu22.04_amd64.deb
+                ├── cognos-app-1.1_9-1.el10.ol10.1.x86_64.rpm
+                ├── cognos-core-1.1.1-1.el10.ol10.1.x86_64.rpm
+                ├── cognos-cxl-1.1.8-1.el10.ol10.1.x86_64.rpm
+                ├── cognos-grpc-1.59.2-1.el10.x86_64.rpm
+                ├── cognos-me-1.1.0_1_gc82f-1.el10.ol10.1.x86_64.rpm
+                ├── cognos-mgmt-fw-1.1.5-1.el10.ol10.1.x86_64.rpm
+                ├── cognos-node-1.1.1-1.el10.ol10.1.x86_64.rpm
+                ├── cognos-ras-1.1.3-1.el10.ol10.1.x86_64.rpm
+                └── cognos-slat-1.1.0-1.el10.ol10.1.x86_64.rpm
 
-            2 directories, 9 files
 
 ## Deploy SVK Software Stack (Quick-Start)
-
-### SVK Converged:
-
-Perform the deployment and start of SVK Converged:
-  
-    ansible-playbook -i your_inventory playbooks/deploy_cognos_converged.yml
-
-Enable and start SVK Converged service:
-  
-    ansible-playbook -i your_inventory playbooks/start_cognos_converged.yml
-
-Stop SVK Converged service:
-  
-    ansible-playbook -i your_inventory playbooks/stop_cognos_converged.yml
-
-Remove or uninstall SVK Converged related packages:
-  
-    ansible-playbook -i your_inventory playbooks/remove_cognos_converged.yml
-
-
-### SVK SLA Tracker:
-
-Perform the deployment of SVK SLA Tracker:
-  
-    ansible-playbook -i your_inventory playbooks/deploy_cognos_slat.yml
-
-Enable and start SVK SLA Tracker:
-  
-    ansible-playbook -i your_inventory playbooks/start_cognos_slat.yml
-
-Stop SVK SLA Tracker service:
-  
-    ansible-playbook -i your_inventory playbooks/stop_cognos_slat.yml
-
-Remove or uninstall SVK SLA Tracker related packages:
-  
-    ansible-playbook -i your_inventory playbooks/remove_cognos_slat.yml
   
 
-### Upgrade Kernel:
+### Upgrade Kernel(only for Ubuntu):
 
 Perform the kernel upgrade and default to upgrading to version 6.11.11:
   
     ansible-playbook -i your_inventory playbooks/deploy_kernel.yml
 
-### SVK SCMC:
+### Deploy Cognos:
 
 1. Download cognos relase bundle to `artifacts` directory and extract it.
 
-2. Edit the `scmc_mock_enable` setting in the `[all:vars]` section of `hosts` inventory file:
+2. Edit `[management_server]` and `[application_server]` groups in `hosts` inventory file.
 
-    *  Set `scmc_mock_enable=false` to deploy SCMC in hardware mode.
-    *  Set `scmc_mock_enable=true` to deploy SCMC in mock mode.
+3. Edit the `scmc_cxl_mock_enable` setting in the `group_vars/all.yml`:
 
-3. Edit `[management_server]` and `[application_server]` groups in `hosts` inventory file.
+    *  Set `scmc_cxl_mock_enable: false` to deploy Cognos in hardware mode.
+    *  Set `scmc_cxl_mock_enable: true` to deploy Cognos in mock mode.
+    
+    If you deploy Cognos in `hardware` mode, the `hosts in [application_server]` must be servers **equipped with** physical CMMB or CMMD/CMMH devices. **Hardware mode is enabled by default.**
 
-    * If you deploy SCMC in `hardware` mode, the `hosts in [application_server]` must be servers **equipped with** physical CMMB or CMMD/CMMH devices.
-    * Set host `type` to `'CMMD'` for hosts equipped with CMMD or CMMH devices.
+4. Edit the `cognos_install_gui_enabled` setting in the `group_vars/all.yml`:
 
-4. Update variables in `group_vars/all.yaml`, `group_vars/management_server.yaml`, and `group_vars/application_server.yml` as needed. 
+    - Set `cognos_install_gui_enabled: false` to deploy Cognos without the GUI. This is the default.
+    - Set `cognos_install_gui_enabled: true` to deploy Cognos with the GUI.
+
+5. Edit the `cognos_certificates_enabled` setting in the `group_vars/all.yml` file:
+    
+    - Set `cognos_certificates_enabled: false` to deploy Cognos in HTTP-only mode. This is the default configuration.
+    - Set `cognos_certificates_enabled: true` to enable HTTPS support with automatically generated self-signed certificates during deployment.
+
+6. Edit the `influxdb_uninstall_flag` setting in the `group_vars/all.yml`:
+    
+    * Set `influxdb_uninstall_flag: false` to keep InfluxDB installed.
+    * Set `influxdb_uninstall_flag: true`. **Warning:** This will permanently delete all InfluxDB data and uninstall the database.
+
+7. Edit the `cognos_cleanup_enable_log_collection` setting in the `group_vars/all.yml`:
+    
+    - Set `cognos_cleanup_enable_log_collection: true` to collect logs when running the remove_cognos.yml playbook.
+    - Set `cognos_cleanup_enable_log_collection: false` to skip log collection when running the remove_cognos.yml playbook. **The default is false.**
+
+8. Update variables in `group_vars/all.yml`, `group_vars/management_server.yml`, and `group_vars/application_server.yml` as needed.
 
    **No changes are required by default.**
 
-5. Perform the deployment of SCMC to install the required packages and start SCMC services:
+   **NOTE**: 
+   - The 'application_server_type' in `group_vars/all.yaml` must be set to either 'CMMB' or 'CMMH'.**The default is 'CMMH'** for application hosts equipped with CMMD or CMMH.
+   - The 'management_server_type' in `group_vars/all.yaml` can be '', 'CMMB' or 'CMMH'. The default is ''.
 
-        ansible-playbook -i your_inventory playbooks/deploy_scmc.yml
 
-6. Configure and start SCMC services:
+9. Perform the deployment of Cognos to install the required packages and start Cognos services:
 
-        ansible-playbook -i your_inventory playbooks/start_scmc.yml
+        ansible-playbook -i your_inventory playbooks/deploy_cognos.yml
 
-7. Stop SCMC service:
+10. Configure and start Cognos services:
 
-        ansible-playbook -i your_inventory playbooks/stop_scmc.yml
+        ansible-playbook -i your_inventory playbooks/start_cognos.yml
 
-8. Remove or uninstall SCMC related packages:
+11. Stop Cognos services:
 
-        ansible-playbook -i your_inventory playbooks/remove_scmc.yml
+        ansible-playbook -i your_inventory playbooks/stop_cognos.yml
+
+12. Stop Cognos services and remove Cognos related packages:
+
+        ansible-playbook -i your_inventory playbooks/remove_cognos.yml
 
 
 ### Complete Playbook Documentation
 
-#### playbooks/deploy_cognos_converged.yml
-
-Execute this playbook to deploy the SVK Converged application accross all [converged_node]
-
-**SVK converged hosts need to meet the following conditions:**
-* OS versions == '24.04'
-* Kernel version >= 6.8.0
-* CPU numbers >= 1
-* NVMe devices >= 1
-* Host memory >= 64 GB 
-    * When host type is 'server', Host memory >= 64GB
-    * when host type is 'vm',Host memory >= 4 GB.
-    * _All converged nodes are either physical machines or virtual machines._
-
-**NOTE:** _This playbook will terminate if converged_node do not meet the above conditions._
-
-#### playbooks/deploy_cognos_slat.yml
-
-Execute this playbook to deploy the SVK SLA Tracker application accross all [slat_node]
-
-**SVK SLA Tracker hosts need to meet the following conditions:**
-* OS versions == '24.04'
-* Kernel version == 6.11.11
-
-**NOTE:** _This playbook will terminate if slat_node do not meet the above conditions._
-
-#### playbooks/deploy_kernel.yml
+#### playbooks/deploy_kernel.yml (only for Ubuntu)
 
 Execute this playbook to automatically upgrade the kernel accross all [kernel_upgrade_node], and the default is upgrade kernel to version 6.11.11.
  
 **Hosts for conducting the kernel upgrade need to meet the following conditions:**
 * Available capacity of hosts >= 29G
-* Current kernel version < 6.11.11
+* Current kernel version != 6.11.11
 
 **NOTE:** _hosts that do not meet the conditions will be ignored._
 
-
-#### playbooks/remove_cognos_converged.yml
-
-Execute this playbook to clean up all installed SVK converged related packages on all [converged_node].
-
-#### playbooks/remove_cognos_slat.yml
-
-Execute this playbook to clean up all installed SVK SLA Tracker related packages on all [slat_node].
-
-#### playbooks/start_cognos_converged.yml
-
-Execute this playbook to automatically configure, enable and start SVK converged service accross all [converged_node].
-
-#### playbooks/start_cognos_slat.yml
-
-Execute this playbook to automatically configure and start SVK SLA Tracker accross all [slat_node].
-
-#### playbooks/stop_cognos_converged.yml
-
-Execute this playbook to automatically stop and disable SVK converged service accross all [converged_node].
-
-#### playbooks/stop_cognos_slat.yml
-
-Execute this playbook to automatically stop SVK SLA Tracker service accross all [slat_node].
-
-#### playbooks/deploy_scmc.yml
+#### playbooks/deploy_cognos.yml
 
 Execute this playbook to install required packages and configure and start the necessary services on both the management and application servers.
-**NOTE:** _It's currently tested in Ubuntu22.04. You may want to keep the influxdb token displayed during execution for later use._
 
-#### playbooks/start_scmc.yml
+* **Installed packages are:**
+    * cognos-core
+    * cognos-cxl
+    * cognos-me
+    * cognos-mgmt-fw
+    * cognos-node
+    * cognos-ras
+    * cognos-slat
+* **Service started on management servers:**
+    * cognos-controller.service
+    * cognos-restserver.service
+* **Service started on application servers:**
+    * cmmd_driver.service
+    * cognos-node.service
+    * cognos-svc-mgr.service
 
-Execute this playbook to automatically configure and start services running on management and application servers
+**NOTE:** 
+    - By default, cognos-app is not installed and frontend services are not started. To deploy Cognos with the GUI, set `cognos_install_gui_enabled: true` before running the `deploy_cognos.yml` playbook.
+    - _It's currently tested on Ubuntu22.04 and OEL10. You may want to keep the influxdb token displayed during execution for later use._
 
-#### playbooks/stop_scmc.yml
+At default, It is not install cognos-app and not start frontend servervices.
 
-Execute this playbook to stop services running on management and application servers
+#### playbooks/start_cognos.yml
 
-#### playbooks/remove_scmc.yml
+Execute this playbook to automatically configure and start all services running on management and application servers
 
-Execute this playbook to automatically remove all scmc-related packages on management and application servers
+#### playbooks/stop_cognos.yml
+
+Execute this playbook to stop all services running on management and application servers
+
+#### playbooks/remove_cognos.yml
+
+Execute this playbook to automatically stop all services and remove all svk packages on management and application servers
+
+#### playbooks/deploy_frontend_cognos.yml
+
+If you've deployed Cognos without GUI enabled and now need to access the Cognos UI, run this playbook.
+
+Execute this playbook to install `cognos-app` package and configure and start the `cognos-*.service` on the management server.
+* **Cognos-*.service services are:**
+    * cognos-subscriber.service
+    * cognos-app.service
+    * cognos-ui.service
+    * cognos-rbac.service
+
+**NOTE:** _It's currently tested on Ubuntu22.04 and OEL10. You may want to keep the influxdb token displayed during execution for later use._
+
+#### playbooks/start_frontend_cognos.yml
+
+Execute this playbook to automatically configure and start `cognos-*.service` running on the management server.
+
+#### playbooks/stop_frontend_cognos.yml
+
+Execute this playbook to stop `cognos-*.service` running on management server.
+
+#### playbooks/remove_frontend_cognos.yml
+
+Execute this playbook to automatically stop the `cognos-*.service` and remove cognos-app package on management server.
+
+#### playbooks/collect_logs_cognos.yml
+
+Run this playbook to automatically gather logs from application and management servers.
+
+Collected information includes:
+- All files in the /var/log/svk directory
+- dmesg output
+- /var/log/messages* (kernel and system journal messages)
+- journalctl -u svk-<node/controller/restserver/app/rbac>.service -b, if the service exists
+- journalctl --list-boots (boot history)
+- uptime (boot details)
+- uname -a (kernel information)
+- ps -auxww (running processes)

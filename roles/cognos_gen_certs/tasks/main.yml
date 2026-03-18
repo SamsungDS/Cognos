@@ -1,0 +1,79 @@
+---
+- name: Create certificates directory
+  ansible.builtin.file:
+    path: "{{ cognos_gen_certs_dest_dir }}"
+    state: directory
+    mode: "0755"
+  become: true
+
+- name: Generate RSA private key (key.pem)
+  ansible.builtin.command:
+    cmd: openssl genrsa -out {{ cognos_gen_certs_dest_dir }}/key.pem 2048
+    creates: "{{ cognos_gen_certs_dest_dir }}/key.pem"
+  become: true
+  register: cognos_gen_certs_key_result
+
+- name: Set common name default to hostname if not provided
+  ansible.builtin.set_fact:
+    cognos_gen_certs_cn: "{{ ansible_default_ipv4.address }}"
+  when: cognos_gen_certs_cn is not defined or cognos_gen_certs_cn == ""
+
+- name: Generate Certificate Signing Request (CSR) with configured values
+  ansible.builtin.command:
+    cmd: >
+      openssl req -new
+      -key {{ cognos_gen_certs_dest_dir }}/key.pem
+      -out {{ cognos_gen_certs_dest_dir }}/csr.pem
+      -subj "/C={{ cognos_gen_certs_country }}/ST={{ cognos_gen_certs_state }}/L={{ cognos_gen_certs_local }}\
+      /O={{ cognos_gen_certs_org }}/OU={{ cognos_gen_certs_org_unit }}/CN={{ cognos_gen_certs_cn }}/emailAddress={{ cognos_gen_certs_email }}"
+    creates: "{{ cognos_gen_certs_dest_dir }}/csr.pem"
+  become: true
+  register: cognos_gen_certs_csr_result
+
+- name: Generate self-signed certificate (cert.pem)
+  ansible.builtin.command:
+    cmd: >
+      openssl x509 -req -days {{ cognos_gen_certs_days }}
+      -in {{ cognos_gen_certs_dest_dir }}/csr.pem -signkey {{ cognos_gen_certs_dest_dir }}/key.pem -out {{ cognos_gen_certs_dest_dir }}/cert.pem
+    creates: "{{ cognos_gen_certs_dest_dir }}/cert.pem"
+  become: true
+  register: cognos_gen_certs_cert_result
+
+- name: Set certificate file permissions
+  ansible.builtin.file:
+    path: "{{ item }}"
+    mode: "0644"
+  loop:
+    - "{{ cognos_gen_certs_dest_dir }}/key.pem"
+    - "{{ cognos_gen_certs_dest_dir }}/cert.pem"
+    - "{{ cognos_gen_certs_dest_dir }}/csr.pem"
+  become: true
+
+- name: Delete old certificates directory on ansible controller node
+  ansible.builtin.file:
+    path: "{{ cognos_certs_dir }}"
+    state: absent
+  delegate_to: localhost
+  when: cognos_gen_certs_cert_result.rc == 0
+
+- name: Create an empty certificates directory on ansible controller node
+  ansible.builtin.file:
+    path: "{{ cognos_certs_dir }}"
+    state: absent
+  delegate_to: localhost
+  when: cognos_gen_certs_cert_result.rc == 0
+
+- name: Sync generated certificates to ansible controller node
+  ansible.builtin.fetch:
+    src: "{{ cognos_gen_certs_dest_dir }}/{{ item }}"
+    dest: "{{ cognos_certs_dir }}/{{ item }}"
+    flat: true
+  loop:
+    - "key.pem"
+    - "cert.pem"
+  when: cognos_gen_certs_cert_result.rc == 0
+
+- name: Cleanup temporary certificates files on remote host
+  ansible.builtin.file:
+    path: "{{ cognos_gen_certs_dest_dir }}"
+    state: absent

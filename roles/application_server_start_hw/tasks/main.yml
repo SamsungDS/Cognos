@@ -29,15 +29,73 @@
     regexp: '"mock_disable"\s*:\s*false\s*(,?)'
     replace: '"mock_disable": true\1'
 
+- name: Configure input.json when device type is CMMH
+  ansible.builtin.template:
+    src: cmmd_mgmt_fw_input.j2
+    dest: "/usr/local/svk/feature_modules/cxl/config/input.json"
+    mode: "0644"
+  become: true
+  when: application_server_type == 'CMMH'
+
+- name: Ensure python3 interpreter is set
+  ansible.builtin.set_fact:
+    application_server_start_hw_py3: >-
+      {{
+        (ansible_python_interpreter is defined
+          and 'python3' in ansible_python_interpreter
+          and ansible_python_interpreter | basename | regex_search('^python3$')
+        ) | ternary(
+          ansible_python_interpreter,
+          '/usr/bin/python3'
+        )
+      }}
+
+- name: Check python3 binary exists
+  ansible.builtin.stat:
+    path: "{{ application_server_start_hw_py3 }}"
+  register: application_server_start_hw_py3_stat
+  changed_when: false
+
+- name: Fail if python3 not found
+  ansible.builtin.fail:
+    msg: "python3 interpreter not found at {{ application_server_start_hw_py3 }}"
+  when: not (application_server_start_hw_py3_stat.stat.exists | bool)
+
+- name: Count CXL devices using lspci
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      lspci 2>/dev/null | grep -i 'cxl' | wc -l
+    executable: /bin/bash
+  register: application_server_start_hw_cxl_raw
+  changed_when: false
+  failed_when: false
+
+- name: Parse CXL device count
+  ansible.builtin.set_fact:
+    application_server_start_hw_cxl_cnt: "{{ application_server_start_hw_cxl_raw.stdout | default('0') | trim | int }}"
+
+- name: Run cxl_device_info.py
+  ansible.builtin.command:
+    cmd: "{{ application_server_start_hw_py3 }} /usr/local/svk/feature_modules/cxl/scripts/cxl_device_info.py"
+  register: application_server_start_hw_cxl
+  when:
+    - application_server_start_hw_py3_stat.stat.exists | bool
+    - application_server_start_hw_cxl_cnt | int > 0
+  changed_when: false
+  failed_when: application_server_start_hw_cxl.rc != 0
+
 - name: Start application services
   ansible.builtin.service:
     name: "{{ item }}"
     state: started
     enabled: true
   become: true
+  failed_when: false
   loop:
-    - svk-node.service
-    - svk-svc-mgr.service
+    - cmmh_driver.service
+    - cognos-node.service
+    - cognos-svc-mgr.service
 
 - name: Gather service status
   ansible.builtin.service_facts:
@@ -51,9 +109,11 @@
     fail_msg: "{{ item }} failed to start!"
     success_msg: "{{ item }} started successfully."
   loop:
-    - svk-node.service
-    - svk-svc-mgr.service
+    - cmmh_driver.service
+    - cognos-node.service
+    - cognos-svc-mgr.service
   register: application_server_start_hw_check
+  failed_when: false
   ignore_errors: true
 
 - name: Set flag if any service failed the check
@@ -68,6 +128,7 @@
     name: cognos_service_restart
   vars:
     cognos_service_restart_list:
-      - svk-node.service
-      - svk-svc-mgr.service
+      - cmmh_driver.service
+      - cognos-node.service
+      - cognos-svc-mgr.service
   when: application_server_start_hw_flag | default(false)

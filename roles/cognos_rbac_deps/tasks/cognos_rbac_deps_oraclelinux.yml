@@ -1,0 +1,42 @@
+---
+
+- name: Setup docker repository of install dnf-plugins-core
+  ansible.builtin.dnf:
+    name: dnf-plugins-core
+    state: present
+  become: true
+
+- name: Add Docker CE repo
+  ansible.builtin.command:
+    dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
+  changed_when: false
+
+- name: Install Docker packages
+  ansible.builtin.dnf:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+- name: Restart Docker service
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+
+- name: Add current user to docker group
+  ansible.builtin.user:
+    name: "{{ ansible_user_id }}"
+    groups: docker
+    append: true
+    # Note: This task will fail if user is not in sudoers or system doesn't support `usermod`
+
+- name: Notify user about Docker group
+  ansible.builtin.debug:
+    msg: |
+      User "{{ ansible_user_id }}" has been added to the 'docker' group.
+      You may need to re-login or restart your session.

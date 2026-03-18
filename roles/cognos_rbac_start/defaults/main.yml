@@ -1,0 +1,6 @@
+---
+cognos_rbac_start_cert_dir: "/etc/svk/certificates/"
+cognos_rbac_start_https_enable: false
+cognos_rbac_start_protocol: "http"
+cognos_rbac_start_ssl_key: "{{ scmc_ssl_key }}"
+cognos_rbac_start_ssl_cert: "{{ scmc_ssl_cert }}"

@@ -1,0 +1,126 @@
+---
+- name: Check ansible version
+  hosts: localhost
+  roles:
+    - validate_ansible
+
+- name: Check OS version
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - validate_os
+
+- name: Check kernel version
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - validate_kernel
+
+- name: Check ports are available for start management server backend
+  hosts: management_server
+  become: true
+  vars:
+    ports: "{{ mgmt_ports_backend }}"
+  roles:
+    - cognos_check_ports
+
+- name: Check ports are available for start management server frontend
+  hosts: management_server
+  become: true
+  vars:
+    ports: "{{ mgmt_ports_frontend }}"
+  roles:
+    - role: cognos_check_ports
+      when: cognos_install_gui_enabled
+
+- name: Check ports are available for start application server
+  hosts: application_server
+  become: true
+  vars:
+    ports: "{{ app_ports }}"
+  roles:
+    - cognos_check_ports
+
+- name: Add epel-release repo
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - cognos_add_epel
+
+- name: Install svk core
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - cognos_core_install
+
+- name: Install svk grpc
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - cognos_grpc_install
+
+- name: Install svk mgmt-fw
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - cognos_mgmt_fw_install
+
+- name: Install cognos-cxl
+  hosts: application_server
+  roles:
+    - role: cognos_cxl_install
+
+- name: Install cognos-slat
+  hosts: application_server
+  roles:
+    - cognos_slat_install
+
+- name: Install cognos_node
+  hosts:
+    - application_server
+  roles:
+    - role: cognos_node_install
+
+- name: Install cognos_me
+  hosts:
+    - application_server
+  roles:
+    - role: cognos_me_install
+
+- name: Install cognos_ras
+  hosts:
+    - application_server
+  roles:
+    - role: cognos_ras_install
+
+- name: Install required packages for management server
+  hosts:
+    - management_server
+  roles:
+    - role: management_server_deps
+      when: cognos_install_gui_enabled
+
+- name: Install svk app framework
+  hosts:
+    - management_server
+  roles:
+    - role: cognos_app_install
+      when: cognos_install_gui_enabled
+
+- name: Install docker for cognos rbac
+  hosts:
+    - management_server
+  roles:
+    - role: cognos_rbac_deps
+      when:
+        - cognos_install_gui_enabled
+        - cognos_rbac_enabled
+
+- name: Start Cognos
+  ansible.builtin.import_playbook: start_cognos.yml

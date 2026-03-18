@@ -5,17 +5,17 @@
       "conf_file": "/etc/svk/mgmt_fw_config.json"
     },
     "cluster": {
-      "id": "CL_ID_1"
+      "id": "{{ cognos_cluster_id }}"
     },
     "controller": {
       "id": "{{ ip }}",
-      "port": 9999
+      "port": {{ mgmt_ports_backend['controller'] }}
     },
     "node": {
       "_comment": "id parameter should be populated with the IP address for now.",
       "name": "{{ node_name }}",
       "id": "{{ node_ip }}",
-      "port": 9998
+      "port": {{ app_ports['node_endpoint'] }}
     },
     "logger": {
       "log_level": "INFO",
@@ -28,7 +28,7 @@
   "svk_mgmt_fw_controller": {
     "controller": {
       "id": "{{ ip }}",
-      "port": 9999
+      "port": {{ mgmt_ports_backend['controller'] }}
     },
     "logger": {
       "log_level": "INFO",
@@ -41,11 +41,12 @@
   "svk_mgmt_rest_api": {
     "controller": {
       "id": "{{ ip }}",
-      "port": "9999"
+      "port": "{{ mgmt_ports_backend['controller'] }}"
     },
     "rest_server": {
       "id": "{{ ip }}",
-      "port": "8001"
+      "port": "{{ mgmt_ports_backend['rest_http'] }}",
+      "https_port": "{{ mgmt_ports_backend['rest_https'] }}"
     },
     "logger": {
       "log_file_name": "/var/log/svk/svk_mgmt_rest_api.log"
@@ -77,7 +78,7 @@
   "pubsub":
       {
         "ip_address": "{{ ip }}",
-        "port": 5555,
+        "port": {{ app_ports['pubsub'] }},
         "topics": [
           "metrics",
           "events",

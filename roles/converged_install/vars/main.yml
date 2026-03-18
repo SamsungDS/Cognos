@@ -1,7 +1,0 @@
-# Author: June Liu
-# Contact: june.liu@samsung.com
----
-converged_install_staging_dir: "/tmp"
-converged_install_artifacts_dir: "{{ inventory_dir }}/artifacts"
-converged_install_pkg_dir: "{{ converged_install_artifacts_dir }}/SVK/Converged"
-converged_install_svk_core_dir: "{{ converged_install_pkg_dir }}"

@@ -2,7 +2,7 @@
 
 ### Playbook Documentation ###
 #
-# #### playbooks/deploy_kenel.yml
+# #### playbooks/deploy_kernel.yml
 #
 # Execute this playbook to upgrade kernel to specified version on kernel_upgrade_node in your inventory.
 # This playbook will perform the following:

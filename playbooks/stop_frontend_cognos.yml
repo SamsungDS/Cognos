@@ -1,0 +1,6 @@
+---
+- name: Stop Cognos services
+  hosts:
+    - management_server
+  roles:
+    - cognos_stop

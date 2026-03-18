@@ -16,11 +16,9 @@
   when: deploy_kernel_version is defined
   changed_when: deploy_kernel_menuentry_id.rc != 0
 
-
 - name: Transform kernel_version to regex
   ansible.builtin.set_fact:
     deploy_kernel_ver_trans: "{{ deploy_kernel_version | regex_replace('\\.', '\\.') }}"
-
 
 - name: Get parent menuentry id
   ansible.builtin.set_fact:

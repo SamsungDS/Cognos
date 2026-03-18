@@ -1,0 +1,7 @@
+---
+- name: Install cognos-grpc
+  ansible.builtin.include_tasks:
+    "cognos_grpc_install_oraclelinux.yml"
+  when:
+    - ansible_distribution == "OracleLinux"
+    - ansible_distribution_major_version == "10"

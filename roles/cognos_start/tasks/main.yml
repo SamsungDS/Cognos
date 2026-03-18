@@ -1,14 +1,169 @@
 ---
+# Author: June Liu
+# Contact: june.liu@samsung.com
+
+- name: Check if certificates directory exists
+  ansible.builtin.stat:
+    path: "{{ cognos_start_cert_dir }}"
+  register: cognos_start_certs_dir
+  when: cognos_certificates_enabled | default(false)
+
+- name: Find certificate files in artifacts directory
+  ansible.builtin.find:
+    path: "{{ cognos_start_cert_dir }}"
+    file_type: file
+  register: cognos_start_certs_file
+  when:
+    - cognos_certificates_enabled | default(false)
+    - cognos_start_certs_dir.stat.exists
+
+- name: Check if all required certificate files exist
+  ansible.builtin.set_fact:
+    cognos_start_certs_founds: >-
+      {% if cognos_start_certs_file is defined %}
+      {% set found_basenames = cognos_start_certs_file.files | map(attribute='path') | map('basename') | list %}
+      {% set required_count = cognos_certs_files | length %}
+      {% set matched_count = (cognos_certs_files | intersect(found_basenames)) | length %}
+      {{ matched_count == required_count }}
+      {% else %} false {% endif %}
+  when:
+    - cognos_certificates_enabled | default(false)
+    - cognos_start_certs_file.files is defined
+
+- name: Set cognos_start_https_enable
+  ansible.builtin.set_fact:
+    cognos_start_https_enable: "{{ cognos_start_certs_founds | trim | bool }}"
+  when: cognos_start_certs_founds is defined
+
+- name: Set facts for https
+  ansible.builtin.set_fact:
+    cognos_start_protocol: 'https'
+    cognos_start_rest_port: "{{ mgmt_ports_backend['rest_https'] }}"
+    cognos_start_ssl_cert: "{{ cognos_start_cert_dir }}/cert.pem"
+    cognos_start_ssl_key: "{{ cognos_start_cert_dir }}/key.pem"
+  when: cognos_start_https_enable
+
+- name: Configure app_backend
+  ansible.builtin.template:
+    src: app_backend_config.j2
+    dest: "/usr/local/svk/svk-app/cognos/backend/config/config.json"
+    mode: "0644"
+  vars:
+    ip: "{{ ansible_default_ipv4.address }}"
+  become: true
+
+- name: Get InfluxDB token
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      influx auth list --user "{{ influxdb_org }}" --json | grep token | cut -d'"' -f4
+    executable: /bin/bash
+  register: cognos_start_influx_token
+  changed_when: false
+  failed_when: cognos_start_influx_token.rc != 0
+
+- name: Configure app_influxdb
+  ansible.builtin.template:
+    src: app_influxdb_config.j2
+    dest: "/usr/local/svk/svk-app/cognos/backend/config/influxdb_config.json"
+    mode: "0644"
+  vars:
+    influxdb_token: "{{ cognos_start_influx_token.stdout }}"
+  become: true
+
+- name: Configure telegraf
+  ansible.builtin.template:
+    src: telegraf_config.j2
+    dest: "/usr/local/svk/svk-app/cognos/telegraf/config/config.json"
+    mode: "0644"
+  vars:
+    ip: "{{ ansible_default_ipv4.address }}"
+    influxdb_token: "{{ cognos_start_influx_token.stdout }}"
+  become: true
+
+- name: Add influx DB credentials and Cognos endpoints into telegraf.conf
+  ansible.builtin.template:
+    src: telegraf_conf.j2
+    dest: "/usr/local/svk/svk-app/cognos/telegraf/telegraf.conf"
+    mode: "0644"
+  vars:
+    ip: "{{ ansible_default_ipv4.address }}"
+    influxdb_token: "{{ cognos_start_influx_token.stdout }}"
+  become: true
+
+- name: Check if telegraf is already running (pgrep)
+  ansible.builtin.command: pgrep -f telegraf
+  register: cognos_start_telegraf_ps
+  ignore_errors: true
+  failed_when: false
+  changed_when: false
+
+- name: Start telegraf in background with log redirection
+  ansible.builtin.shell: |
+    nohup telegraf --config /usr/local/svk/svk-app/cognos/telegraf/telegraf.conf \
+      > /var/log/svk/telegraf.log 2>&1 &
+  args:
+    executable: /bin/bash
+  async: 0
+  poll: 0
+  when: cognos_start_telegraf_ps.rc != 0
+  changed_when: false
+
+- name: Verify telegraf started
+  ansible.builtin.command: pgrep -f telegraf
+  register: cognos_start_verify
+  retries: 10
+  delay: 2
+  until: cognos_start_verify.rc == 0
+  changed_when: false
+  failed_when: false
+  ignore_errors: true
+
+- name: Configure numa_config.json in backend
+  ansible.builtin.template:
+    src: app_numa_config.j2
+    dest: "/usr/local/svk/svk-app/cognos/backend/config/numa_config.json"
+    mode: "0644"
+  become: true
+
+- name: Configure app_ui
+  ansible.builtin.template:
+    src: app_ui_config.j2
+    dest: "/usr/local/svk/svk-app/cognos/ui/src/config/config.json"
+    mode: "0644"
+  vars:
+    ip: "{{ ansible_default_ipv4.address }}"
+  become: true
+
+- name: Configure app_cognos
+  ansible.builtin.template:
+    src: app_cognos_config.j2
+    dest: "/usr/local/svk/svk-app/cognos.config"
+    mode: "0644"
+  vars:
+    ip: "{{ ansible_default_ipv4.address }}"
+    node_ip: "{{ hostvars[groups['application_server'][0]].ansible_default_ipv4.address }}"
+  become: true
+
+- name: Configure sub_conf
+  ansible.builtin.template:
+    src: app_sub_config.j2
+    dest: "/usr/local/svk/svk-app/cognos/subscriber/sub_config.json"
+    mode: "0644"
+  vars:
+    ip: "{{ ansible_default_ipv4.address }}"
+  become: true
+
 - name: Start cognos services
   ansible.builtin.service:
     name: "{{ item }}"
     state: started
-    enabled: false
+    enabled: true
   become: true
+  failed_when: false
   loop:
     - cognos-subscriber.service
     - cognos-app.service
-    - cognos-rbac.service
     - cognos-ui.service
 
 - name: Gather service status
@@ -46,39 +201,55 @@
       - cognos-ui.service
   when: cognos_start_flag | default(false)
 
-- name: Wait up to 60 seconds for port 6721 to become available
-  ansible.builtin.wait_for:
-    host: "{{ ip }}"
-    port: 6721
-    delay: 5
-    timeout: 60
-  vars:
-    ip: "{{ ansible_default_ipv4.address }}"
+- name: Check if poll.py exists
+  ansible.builtin.stat:
+    path: /usr/local/svk/svk-app/cognos/telegraf/poll.py
+  register: cognos_start_poll_file
+  changed_when: false
 
-- name: Create an admin user to access RBAC console
-  ansible.builtin.uri:
-    url: "http://{{ ip }}:6721/api/signup"
-    method: POST
-    body: |
-      {
-        "username": "{{ rbac_username }}",
-        "email": "{{ rbac_email }}",
-        "password": "{{ rbac_password }}",
-        "role": "admin"
-      }
-    body_format: json
-    headers:
-      Content-Type: application/json
-    status_code: 200
-    validate_certs: false
-  register: cognos_start_rbac_result
-  vars:
-    ip: "{{ ansible_default_ipv4.address }}"
-  become: true
+- name: Check if python3 executable exists
+  ansible.builtin.stat:
+    path: /usr/local/svk/svk-app/env/bin/python3
+  register: cognos_start_py3_bin
+  changed_when: false
 
-- name: Check if signup RBAC was successful
-  ansible.builtin.assert:
-    that:
-      - cognos_start_rbac_result.json.message == "User created successfully"
-    fail_msg: "User signup failed. Response: {{ cognos_start_rbac_result.json }}"
-    success_msg: "Admin user created successfully."
+- name: Fail if poll.py does not exist
+  ansible.builtin.fail:
+    msg: "poll.py does not exist at /usr/local/svk/svk-app/cognos/telegraf/poll.py"
+  when: not cognos_start_poll_file.stat.exists
+
+- name: Fail if python3 executable does not exist
+  ansible.builtin.fail:
+    msg: "python3 executable does not exist at /usr/local/svk/svk-app/env/bin/python3"
+  when: not cognos_start_py3_bin.stat.exists
+
+# Start poller using command (nohup + &)
+- name: Start cognos-app poller process in background
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      nohup /usr/local/svk/svk-app/env/bin/python3 /usr/local/svk/svk-app/cognos/telegraf/poll.py \
+        > /dev/null 2>&1 &
+    executable: /bin/bash
+  args:
+    chdir: /usr/local/svk/svk-app/cognos/telegraf
+  register: cognos_start_poller
+  changed_when: false
+
+# Check if process is running (pgrep avoids grep-self issue)
+- name: Check if poller process is running
+  ansible.builtin.command:
+    pgrep -f poll.py
+  register: cognos_start_check_poller
+  changed_when: false
+  failed_when: false
+
+- name: Display poller process status
+  ansible.builtin.debug:
+    msg: "Poller process status:\n{{ cognos_start_check_poller.stdout_lines | default([]) | join('\n') }}"
+  when: cognos_start_check_poller.stdout_lines | default([]) | length > 0
+
+- name: Fail if poller is not running
+  ansible.builtin.fail:
+    msg: "cognos-app poller process is not running. Check logs or restart."
+  when: cognos_start_check_poller.rc is defined and cognos_start_check_poller.rc != 0

@@ -1,7 +1,0 @@
-# Author: June Liu
-# Contact: june.liu@samsung.com
----
-slat_check_deps_min_ver: '22.04'
-slat_check_deps_max_ver: '22.04'
-
-slat_check_deps_kernel_ver: "6.11.0"

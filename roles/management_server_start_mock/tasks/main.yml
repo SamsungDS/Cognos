@@ -21,135 +21,16 @@
     node_ip: "{{ hostvars[groups['application_server'][0]].ansible_default_ipv4.address }}"
   become: true
 
-- name: Configure app_backend
-  ansible.builtin.template:
-    src: app_backend_config.j2
-    dest: "/usr/local/svk/svk-app/cognos/backend/config/config.json"
-    mode: "0644"
-  vars:
-    ip: "{{ ansible_default_ipv4.address }}"
-  become: true
-
-- name: Get InfluxDB token
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      influx auth list --user "{{ influxdb_org }}" --json | grep token | cut -d'"' -f4
-    executable: /bin/bash
-  register: management_server_start_mock_influx_token
-  changed_when: false
-  failed_when: management_server_start_mock_influx_token.rc != 0
-
-- name: Configure app_influxdb
-  ansible.builtin.template:
-    src: app_influxdb_config.j2
-    dest: "/usr/local/svk/svk-app/cognos/backend/config/influxdb_config.json"
-    mode: "0644"
-  vars:
-    influxdb_token: "{{ management_server_start_mock_influx_token.stdout }}"
-  become: true
-
-- name: Configure telegraf
-  ansible.builtin.template:
-    src: telegraf_config.j2
-    dest: "/usr/local/svk/svk-app/cognos/telegraf/config/config.json"
-    mode: "0644"
-  vars:
-    ip: "{{ ansible_default_ipv4.address }}"
-  become: true
-
-- name: Add influx DB credentials and Cognos endpoints into telegraf.conf
-  ansible.builtin.template:
-    src: telegraf_conf.j2
-    dest: "{{ telegraf_conf }}"
-    mode: "0644"
-  vars:
-    ip: "{{ ansible_default_ipv4.address }}"
-    influxdb_token: "{{ management_server_start_mock_influx_token.stdout }}"
-  become: true
-
-- name: Check if telegraf is already running (pgrep)
-  ansible.builtin.command: pgrep -f telegraf
-  register: management_server_start_mock_telegraf_ps
-  ignore_errors: true
-  failed_when: false
-  changed_when: false
-
-- name: Start telegraf in background with log redirection
-  ansible.builtin.shell: |
-    nohup telegraf --config {{ telegraf_conf }} \
-      > {{ telegraf_log }} 2>&1 &
-  args:
-    executable: /bin/bash
-  async: 0
-  poll: 0
-  when: management_server_start_mock_telegraf_ps.rc != 0
-  changed_when: false
-
-- name: Verify telegraf started
-  ansible.builtin.command: pgrep -f telegraf
-  register: management_server_start_mock_verify
-  retries: 10
-  delay: 2
-  until: management_server_start_mock_verify.rc == 0
-  failed_when: false
-  ignore_errors: true
-  changed_when: false
-
-- name: Configure config file in rbac-client-repo
-  ansible.builtin.template:
-    src: app_rbac_config.j2
-    dest: "/usr/local/svk/svk-app/cognos/rbac/rbac-client-repo/src/config/config.json"
-    mode: "0644"
-  vars:
-    ip: "{{ ansible_default_ipv4.address }}"
-  become: true
-
-- name: Configure yaml file in rbac-client-repo
-  ansible.builtin.template:
-    src: app_rbac_yaml.j2
-    dest: "/usr/local/svk/svk-app/cognos/rbac/rbac-service/rbac.yaml"
-    mode: "0644"
-  vars:
-    ip: "{{ ansible_default_ipv4.address }}"
-  become: true
-
-- name: Configure app_ui
-  ansible.builtin.template:
-    src: app_ui_config.j2
-    dest: "/usr/local/svk/svk-app/cognos/ui/src/config/config.json"
-    mode: "0644"
-  vars:
-    ip: "{{ ansible_default_ipv4.address }}"
-  become: true
-
-- name: Configure app_cognos
-  ansible.builtin.template:
-    src: app_cognos_config.j2
-    dest: "/usr/local/svk/svk-app/cognos.config"
-    mode: "0644"
-  vars:
-    management_ip: "{{ ansible_default_ipv4.address }}"
-  become: true
-
-- name: Configure sub_conf
-  ansible.builtin.template:
-    src: app_sub_config.j2
-    dest: "/usr/local/svk/svk-app/cognos/subscriber/sub_config.json"
-    mode: "0644"
-  vars:
-    ip: "{{ ansible_default_ipv4.address }}"
-  become: true
-
 - name: Start management services
   ansible.builtin.service:
     name: "{{ item }}"
     state: started
     enabled: true
   become: true
+  failed_when: false
   loop:
-    - svk-controller.service
-    - svk-restserver.service
+    - cognos-controller.service
+    - cognos-restserver.service
 
 - name: Gather service status
   ansible.builtin.service_facts:
@@ -163,8 +44,8 @@
     fail_msg: "{{ item }} failed to start!"
     success_msg: "{{ item }} started successfully."
   loop:
-    - svk-controller.service
-    - svk-restserver.service
+    - cognos-controller.service
+    - cognos-restserver.service
   register: management_server_start_mock_check
   ignore_errors: true
 
@@ -180,6 +61,6 @@
     name: cognos_service_restart
   vars:
     cognos_service_restart_list:
-      - svk-controller.service
-      - svk-restserver.service
+      - cognos-controller.service
+      - cognos-restserver.service
   when: management_server_start_mock_flag | default(false)

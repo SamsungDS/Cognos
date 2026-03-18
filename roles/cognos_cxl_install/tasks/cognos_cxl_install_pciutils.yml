@@ -1,0 +1,104 @@
+---
+- name: Check if pciutils-libs RPM is installed
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      dnf list --installed | grep "^pciutils-libs"
+    executable: /bin/bash
+  register: cognos_cxl_install_pciutils_libs_query
+  changed_when: false
+  failed_when: false
+
+- name: Identify pciutils-libs package
+  ansible.builtin.find:
+    path: "{{ svk_pkg_dir }}"
+    patterns: "pciutils-libs*el{{ ansible_distribution_major_version }}*.rpm"
+  delegate_to: localhost
+  run_once: true
+  register: cognos_cxl_install_pciutils_libs
+  when: cognos_cxl_install_pciutils_libs_query.rc != 0
+
+- name: Assert pciutils-libs package found
+  ansible.builtin.assert:
+    that: cognos_cxl_install_pciutils_libs.files | length > 0
+    fail_msg: "No pciutils-libs package found. Please download package to {{ artifacts_dir }}"
+  when: cognos_cxl_install_pciutils_libs_query.rc != 0
+
+- name: Identify newest version of pciutils-libs package found
+  ansible.builtin.set_fact:
+    cognos_cxl_install_pciutils_libs_file: "{{ (cognos_cxl_install_pciutils_libs.files | sort(attribute='mtime', reverse=true) | first).path }}"
+  run_once: true
+  when: cognos_cxl_install_pciutils_libs_query.rc != 0
+
+- name: Copy pciutils-libs package to staging directory
+  ansible.builtin.copy:
+    src: "{{ cognos_cxl_install_pciutils_libs_file }}"
+    dest: "{{ deploy_staging_dir }}"
+    mode: "0644"
+  when: cognos_cxl_install_pciutils_libs_query.rc != 0
+
+- name: Install pciutils-libs RPM
+  ansible.builtin.dnf:
+    name: "{{ deploy_staging_dir }}/{{ cognos_cxl_install_pciutils_libs_file | basename }}"
+    state: present
+    disable_gpg_check: true
+  become: true
+  when: cognos_cxl_install_pciutils_libs_query.rc != 0
+
+- name: Delete pciutils-libs package from staging directory
+  ansible.builtin.file:
+    path: "{{ deploy_staging_dir }}/{{ cognos_cxl_install_pciutils_libs_file | basename }}"
+    state: absent
+  when: cognos_cxl_install_pciutils_libs_file is defined
+
+- name: Check if pciutils RPM is installed
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      dnf list --installed | grep "^pciutils" | grep -v "pciutils-libs"
+    executable: /bin/bash
+  register: cognos_cxl_install_pciutils_query
+  changed_when: false
+  failed_when: false
+
+- name: Identify pciutils package
+  ansible.builtin.find:
+    path: "{{ svk_pkg_dir }}"
+    patterns: "pciutils-[0-9]*el{{ ansible_distribution_major_version }}*.rpm"
+  delegate_to: localhost
+  run_once: true
+  register: cognos_cxl_install_pciutils
+  when: cognos_cxl_install_pciutils_query.rc != 0
+
+- name: Assert pciutils package found
+  ansible.builtin.assert:
+    that: cognos_cxl_install_pciutils.files | length > 0
+    fail_msg: "No pciutils package found. Please download package to {{ artifacts_dir }}"
+  when: cognos_cxl_install_pciutils_query.rc != 0
+
+- name: Identify newest version of pciutils package found
+  ansible.builtin.set_fact:
+    cognos_cxl_install_pciutils_file: "{{ (cognos_cxl_install_pciutils.files | sort(attribute='mtime', reverse=true) | first).path }}"
+  run_once: true
+  when: cognos_cxl_install_pciutils_query.rc != 0
+
+- name: Copy pciutils package to staging directory
+  ansible.builtin.copy:
+    src: "{{ cognos_cxl_install_pciutils_file }}"
+    dest: "{{ deploy_staging_dir }}"
+    mode: "0644"
+  when: cognos_cxl_install_pciutils_query.rc != 0
+
+- name: Install pciutils RPM
+  ansible.builtin.dnf:
+    name: "{{ deploy_staging_dir }}/{{ cognos_cxl_install_pciutils_file | basename }}"
+    state: present
+    disable_gpg_check: true
+  become: true
+  when: cognos_cxl_install_pciutils_query.rc != 0
+
+- name: Delete pciutils package from staging directory
+  ansible.builtin.file:
+    path: "{{ deploy_staging_dir }}/{{ cognos_cxl_install_pciutils_file | basename }}"
+    state: absent
+  when: cognos_cxl_install_pciutils_file is defined

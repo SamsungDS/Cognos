@@ -1,0 +1,53 @@
+---
+- name: Check if cognos_core DEB is installed
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      apt list --installed | grep cognos-core
+    executable: /bin/bash
+  register: cognos_core_install_query
+  changed_when: false
+  failed_when: false
+
+- name: Determine OS type and version
+  ansible.builtin.set_fact:
+    cognos_core_install_os_family: "{{ ansible_distribution }}"
+    cognos_core_install_os_version: "{{ ansible_distribution_version }}"
+
+- name: Identify cognos_core package for Ubuntu
+  ansible.builtin.find:
+    path: "{{ svk_pkg_dir }}"
+    patterns: "cognos-core*-ubuntu{{ cognos_core_install_os_version }}_*.deb"
+  delegate_to: localhost
+  run_once: true
+  register: cognos_core_install_pkg
+
+- name: Assert cognos_core package found for Ubuntu
+  ansible.builtin.assert:
+    that: cognos_core_install_pkg.files | length > 0
+    fail_msg: "No cognos_core package found. Please download package to {{ artifacts_dir }}"
+
+- name: Identify newest version of cognos_core DEB found
+  ansible.builtin.set_fact:
+    cognos_core_install_pkg_file: "{{ (cognos_core_install_pkg.files | sort(attribute='mtime', reverse=true) | first).path }}"
+  run_once: true
+
+- name: Copy cognos_core DEB to staging directory
+  ansible.builtin.copy:
+    src: "{{ cognos_core_install_pkg_file }}"
+    dest: "{{ deploy_staging_dir }}"
+    mode: "0644"
+  when: cognos_core_install_query.rc != 0
+
+- name: Install cognos_core DEB
+  ansible.builtin.apt:
+    deb: "{{ deploy_staging_dir }}/{{ cognos_core_install_pkg_file | basename }}"
+    state: present
+  become: true
+  when: cognos_core_install_query.rc != 0
+
+- name: Delete cognos_core from staging directory
+  ansible.builtin.file:
+    path: "{{ deploy_staging_dir }}/{{ cognos_core_install_pkg_file | basename }}"
+    state: absent
+  when: cognos_core_install_pkg_file is defined

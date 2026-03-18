@@ -1,6 +1,0 @@
-# Author: June Liu
-# Contact: june.liu@samsung.com
----
-converged_config_nrhuge: 8192
-converged_config_path: "/usr/local/svk/converged/"
-converged_config_coremask: 0x1

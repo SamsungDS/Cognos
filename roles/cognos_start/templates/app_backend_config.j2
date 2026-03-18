@@ -1,0 +1,9 @@
+{
+    "cognos_endpoint": "http://{{ip}}:{{ mgmt_ports_backend['rest_http'] }}/api/v{{ scmc_ver }}/",
+    "agent_endpoint": "http://{{ip}}:{{ mgmt_ports_backend['rest_http'] }}/api/v1/process_controller_command",
+    "node_endpoint": "{{ip}}:{{ app_ports['node_endpoint'] }}",
+    "list_cluster_ep": "http//{{ip}}:{{ mgmt_ports_backend['rest_http'] }}/api/v{{ scmc_ver }}/list_cluster_nodes",
+    "ssl_cert": "{{ cognos_start_ssl_cert }}",
+    "ssl_key": "{{ cognos_start_ssl_key }}",
+    "ssl": false
+}

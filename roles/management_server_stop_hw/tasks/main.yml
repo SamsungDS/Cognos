@@ -1,22 +1,27 @@
 ---
-- name: Stop management services
+- name: Gather service facts
+  ansible.builtin.service_facts:
+
+- name: Stop management services if they exist
   ansible.builtin.service:
     name: "{{ item }}"
     state: stopped
     enabled: false
   become: true
   loop:
-    - svk-controller.service
-    - svk-restserver.service
+    - cognos-controller.service
+    - cognos-restserver.service
+  when: item in ansible_facts.services
 
-- name: Stop svk-node service on management server
+- name: Stop cognos-node service on management server
   ansible.builtin.service:
-    name: svk-node.service
+    name: cognos-node.service
     state: stopped
     enabled: false
   become: true
   when:
-    hostvars[inventory_hostname].type == 'CMMB'
+    - management_server_type == 'CMMB'
+    - cognos-node.service in ansible_facts.services
 
 - name: Check if telegraf is already running (pgrep)
   ansible.builtin.command: pgrep -f telegraf
@@ -44,8 +49,3 @@
   failed_when: false
   ignore_errors: true
   changed_when: false
-
-- name: Conduct systemd daemon-reload
-  ansible.builtin.systemd:
-    daemon-reload: true
-  become: true

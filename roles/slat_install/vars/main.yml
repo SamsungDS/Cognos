@@ -1,7 +1,0 @@
-# Author: June Liu
-# Contact: june.liu@samsung.com
----
-# vars file for ./roles/slat_install
-slat_install_staging_dir: "/tmp"
-slat_install_artifacts_dir: "{{ inventory_dir }}/artifacts"
-slat_install_pkg_dir: "{{ slat_install_artifacts_dir }}/SVK/SLA_Tracker"

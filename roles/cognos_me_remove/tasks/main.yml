@@ -1,0 +1,19 @@
+# Author: June Liu
+# Contact: june.liu@samsung.com
+---
+# tasks file for roles/cognos_me_remove
+
+- name: Remove the installed cognos-me on Ubuntu
+  ansible.builtin.apt:
+    name: cognos-me
+    state: absent
+    purge: true
+  become: true
+  when: ansible_facts['distribution'] == "Ubuntu"
+
+- name: Remove the installed cognos-me on OEL
+  ansible.builtin.dnf:
+    name: cognos-me
+    state: absent
+  become: true
+  when: ansible_facts['distribution'] == "OracleLinux"

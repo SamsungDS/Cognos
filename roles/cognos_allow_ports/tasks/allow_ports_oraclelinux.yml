@@ -1,0 +1,20 @@
+# Author: June Liu
+# Contact: june.liu@samsung.com
+---
+
+- name: Gather service facts
+  ansible.builtin.service_facts:
+
+- name: Check if firewalld is active
+  ansible.builtin.set_fact:
+    cognos_allow_ports_ufw_active: "{{ 'firewalld.service' in services and services['firewalld.service']['state'] == 'running' }}"
+
+- name: Open ports with firewalld
+  ansible.posix.firewalld:
+    port: "{{ item }}/tcp"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: "{{ ports | dict2items | map(attribute='value') | list }}"
+  when: cognos_allow_ports_ufw_active | default(false)
+  failed_when: false
