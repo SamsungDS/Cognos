@@ -151,7 +151,7 @@ class DummyCfg:
             "timeout": object()
         }
         self.set_calls = []
-    
+
     def set(self, key, value):
         self.set_calls.append((key, value))
 

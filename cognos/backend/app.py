@@ -432,15 +432,16 @@ def main(mock, host, port):
     options = {
         "bind": f"{host}:{port}",  # Host:Port
         "workers": multiprocessing.cpu_count() // 2 + 1,  # 1 worker max per 2 CPU
-        "worker_class": "sync",  # Could be 'gevent', 'uvicorn.workers.UvicornWorker', etc.
+        "worker_class": "sync",
         "timeout": 30
     }
-    StandaloneApplication(app, options).run()
 
-    # if validate_ssl_enabled():
-    #     app.run(host=host, port=port, ssl_context=get_ssl_context())
-    # else:
-    #     app.run(host=host, port=port)
+    # Check if https mode
+    if validate_ssl_enabled():
+        options["certfile"] = CONFIGS["ssl_cert"]
+        options["keyfile"] = CONFIGS["ssl_key"]
+
+    StandaloneApplication(app, options).run()
 
 
 if __name__ == "__main__":
