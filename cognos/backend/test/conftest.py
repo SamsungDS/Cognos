@@ -13,7 +13,7 @@ sys.path.append(
 from cognos.backend.base_control_interface import BaseControlInterface
 from cognos.backend.cognos_client import Cognos
 from cognos.backend.helper import fetch_cognos_configs
-from cognos.backend.app import create_app
+from cognos.backend.app import create_app, StandaloneApplication
 from cognos.backend.cognos_influxdb_client import CognosInfluxDBClient
 from cognos.backend.sqlite_client import SqliteClient
 
@@ -141,3 +141,39 @@ def scmc_version_file():
 def mock_logger(mocker):
     mock_logger = mocker.patch('logging.getLogger')
     return mock_logger
+
+
+class DummyCfg:
+    def __init__(self):
+        self.settings = {
+            "bind": object(),
+            "workers": object(),
+            "timeout": object()
+        }
+        self.set_calls = []
+    
+    def set(self, key, value):
+        self.set_calls.append((key, value))
+
+
+@pytest.fixture
+def dummy_app():
+    return object()
+
+
+@pytest.fixture
+def standalone_app(dummy_app, monkeypatch):
+    def fake_base_init(self):
+        self.cfg = DummyCfg()
+    monkeypatch.setattr(
+        "cognos.backend.app.BaseApplication.__init__",
+        fake_base_init
+    )
+    options = {
+        "bind": "127.0.0.1:8000",
+        "workers": 2,
+        "timeout": None,
+        "invalid_key": "test"
+    }
+
+    return StandaloneApplication(dummy_app, options)

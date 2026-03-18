@@ -2,7 +2,7 @@ from click.testing import CliRunner
 from flask import request
 import pytest
 import cognos.backend.app as app
-from cognos.backend.app import main, get_ssl_context, validate_ssl_enabled
+from cognos.backend.app import main, get_ssl_context, validate_ssl_enabled, StandaloneApplication
 
 
 CAL_API_VERSION = "2.0.1"
@@ -85,3 +85,18 @@ def test_init_cognos_db():
 
 def test_clear_cognos_db():
     app.clear_cognos_db(mock=True)
+
+
+def test_init_sets_app_and_options(standalone_app, dummy_app):
+    standalone_app.load_config()
+
+    assert ("bind", "127.0.0.1:8000") in standalone_app.cfg.set_calls
+    assert ("workers", 2) in standalone_app.cfg.set_calls
+
+    assert ("timeout", None) not in standalone_app.cfg.set_calls
+
+    assert not any(key == "invalid_key" for key, _ in standalone_app.cfg.set_calls)
+
+
+def test_load_returns_application(standalone_app, dummy_app):
+    assert standalone_app.load() is dummy_app
