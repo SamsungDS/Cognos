@@ -3,7 +3,7 @@
 SVK_VERSION := $(shell $(CURDIR)/../scripts/get_version.sh)
 INSTALL_PATH = usr/local/svk/svk-app
 STATIC_REACT_PATH = var/www/scmc
-CADDY_PATH = etc/caddy
+CADDY_PATH = etc/caddy/Caddyfile.d/
 
 %:
 	dh $@
@@ -34,7 +34,7 @@ override_dh_auto_install:
 	# Custom auto-install steps TBD (might include things like symlinks, conf file creation etc)
 
 	# copying Caddy file
-	cp $(CURDIR)/../Caddyfile ${CURDIR}/${CADDY_PATH}/
+	cp $(CURDIR)/../scmc.conf ${CURDIR}/${CADDY_PATH}/
 
 	# copying React static bundle
 	cp -a $(CURDIR)/../cognos/ui/build/. $(CURDIR)/$(STATIC_REACT_PATH)/
