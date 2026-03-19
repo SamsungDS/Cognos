@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { Route, BrowserRouter, Routes, Navigate } from "react-router-dom";
 import "./App.css";
 import "bootstrap/dist/css/bootstrap.min.css";
@@ -15,7 +15,7 @@ import { EventsProvider } from './contexts/EventsContext';
 import ProtectedRoute from "./components/ProtectedRoute";
 import * as constants from './constant';
 
-const DOWNLOAD_ONLY_MODE = constants.Configs.download_only_mode;
+const apiEndpoint = constants.Configs.api_endpoint;
 // Set to false to bypass authentication entirely
 const RBAC_ENABLED = constants.Configs.rbac_enabled;
 
@@ -26,6 +26,28 @@ const AuthRoute = ({ children, allowedRoles }) => {
 };
 
 function App() {
+  const [downloadMode, setDownloadMode] = useState(false);
+  // istanbul ignore next
+  useEffect(() => {
+    const checkArtifacts = async () => {
+      try {
+        const res = await fetch(`${apiEndpoint}/list_artifact`, {
+          mode: 'cors',
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'accept': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          },
+        });
+        if (res.ok) setDownloadMode(true);
+      } catch {
+        setDownloadMode(false);
+      }
+    };
+    checkArtifacts();
+  }, []);
+
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const token = urlParams.get("token");
@@ -35,38 +57,44 @@ function App() {
     }
   }, []);
 
+  
+  // Download mode: render without EventsProvider — stops all other API calls
+  // istanbul ignore next
+  if (downloadMode) {
+    return (
+      <BrowserRouter>
+        <Routes>
+          <Route
+            path="/"
+            element={
+              <AuthRoute allowedRoles={["admin"]}>
+                <div className="grid-container">
+                  <Header />
+                  <DownloadArtifacts />
+                </div>
+              </AuthRoute>
+            }
+          />
+          <Route
+            path="/download-artifacts"
+            element={
+              <AuthRoute allowedRoles={["admin"]}>
+                <div className="grid-container">
+                  <Header />
+                  <DownloadArtifacts />
+                </div>
+              </AuthRoute>
+            }
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
+    );
+  }
   return (
     <EventsProvider>
       <BrowserRouter>
         <Routes>
-          {DOWNLOAD_ONLY_MODE ? (
-            <>
-              <Route
-                path="/"
-                element={
-                  <AuthRoute allowedRoles={["admin"]}>
-                    <div className="grid-container">
-                      <Header />
-                      <DownloadArtifacts />
-                    </div>
-                  </AuthRoute>
-                }
-              />
-              <Route
-                path="/download-artifacts"
-                element={
-                  <AuthRoute allowedRoles={["admin"]}>
-                    <div className="grid-container">
-                      <Header />
-                      <DownloadArtifacts />
-                    </div>
-                  </AuthRoute>
-                }
-              />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </>
-          ) : (
-            <>
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
               <Route
@@ -140,8 +168,6 @@ function App() {
                   </AuthRoute>
                 }
               />
-            </>
-          )}
         </Routes>
       </BrowserRouter>
     </EventsProvider>

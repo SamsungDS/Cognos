@@ -141,3 +141,16 @@ def scmc_version_file():
 def mock_logger(mocker):
     mock_logger = mocker.patch('logging.getLogger')
     return mock_logger
+
+
+@pytest.fixture
+def artifact_client(mocker):
+    mocker.patch(
+        'cognos.backend.cognos_client.Cognos._initialize_cognos',
+        return_value=True
+    )
+    app = create_app(mock=True)
+    app.config["TESTING"] = True
+    with app.test_client() as client:
+        with app.app_context():
+            yield client

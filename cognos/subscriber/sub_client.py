@@ -1,3 +1,4 @@
+
 import argparse
 import errno
 import os
@@ -144,11 +145,11 @@ def get_node_ids(rest_ip, rest_port, cluster_id):
         response.raise_for_status()
         data = response.json()
         # Extract node IDs from the response
-        node_info = data.get("clusterInfo", [{}])[0].get("nodeInfo", [])
+        node_info = data.get("cluster_info", [{}])[0].get("node_info", [])
         return [
-            node["nodeId"]
+            node["node_id"]
             for node in node_info
-            if is_valid_ip_or_fqdn(node["nodeId"])
+            if is_valid_ip_or_fqdn(node["node_id"])
         ]
     except requests.exceptions.RequestException as e:
         print(f"Error calling API: {e}")

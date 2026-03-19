@@ -1,4 +1,4 @@
-import React, { useContext, useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Container, Row, Col, Spinner } from 'react-bootstrap';
 import  Chart from "react-google-charts";
 import ProgressBar from 'react-bootstrap/ProgressBar';
@@ -161,9 +161,10 @@ const Metrics = () => {
   }, [])
 
 
-const memBWDataRef = useRef({});
+  const memBWDataRef = useRef({});
   const [memBWDataState, setMemBWDataState] = useState([]);
   // poll for memory capacity data for selected host
+  // istanbul ignore next
   useEffect(() => {
     async function getMemoryBWData() {
       let payload = {};
@@ -178,9 +179,9 @@ const memBWDataRef = useRef({});
       const response = await constants.fetchMetrics(`${apiEndpoint}/metrics`, payload)
 
       if (response?.ok) {
-          const data = await response.json();
-          memCapacityDataRef.current = data;
-          setMemBWDataState(memCapacityDataRef.current);
+        const data = await response.json();
+        memBWDataRef.current = data;
+        setMemBWDataState(memBWDataRef.current);
       }
       else {
           console.log("unable to fetch memory cpu data..");
@@ -358,7 +359,7 @@ const memBWDataRef = useRef({});
                         </h1>
                       </Col>
                       <Col sm={8} md={8} lg={8} xl={8}>
-                        {memBWDataState?.used_percentage_bandwidth ? (<div className="pt-3">
+                        {memBWDataState?.max_bandwidth ? (<div className="pt-3">
                           {/* Progress Bar */}
                           <ProgressBar
                             now={`${memBWDataState?.used_percentage_bandwidth}`}

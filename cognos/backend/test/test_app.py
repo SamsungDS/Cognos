@@ -97,3 +97,119 @@ def test_init_cognos_db():
 
 def test_clear_cognos_db():
     app.clear_cognos_db(mock=True)
+
+
+def test_list_artifact_disabled(artifact_client, mocker):
+    mocker.patch('cognos.backend.app.DOWNLOAD_ARTIFACT_MODE', False)
+    response = artifact_client.get("/api/v2.0.1/list_artifact")
+    assert response.status_code == 503
+    assert response.get_json() == {"error": "Artifact download is not enabled"}
+
+
+def test_list_artifact_empty(artifact_client, mocker):
+    mocker.patch('cognos.backend.app.DOWNLOAD_ARTIFACT_MODE', True)
+    mocker.patch('cognos.backend.app.ARTIFACTS', [])
+    response = artifact_client.get("/api/v2.0.1/list_artifact")
+    assert response.status_code == 200
+    assert response.get_json() == {"artifacts": []}
+
+
+def test_list_artifact_with_existing_file(artifact_client, mocker, tmp_path):
+    artifact = {
+        "id": 1,
+        "name": "release-1.0.tar.gz",
+        "ARTIFACT_DETAILS": {
+            "release_name": "v1.0",
+            "release_date": "2024-01-01",
+            "feature_list": ["feature_a", "feature_b"],
+            "release_notes": "Initial release"
+        }
+    }
+    fake_file = tmp_path / "release-1.0.tar.gz"
+    fake_file.write_bytes(b"fake tar content")
+    mocker.patch('cognos.backend.app.DOWNLOAD_ARTIFACT_MODE', True)
+    mocker.patch('cognos.backend.app.ARTIFACTS', [artifact])
+    mocker.patch('cognos.backend.app.ARTIFACTS_DIR', str(tmp_path))
+    response = artifact_client.get("/api/v2.0.1/list_artifact")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert len(data["artifacts"]) == 1
+    assert data["artifacts"][0]["id"] == 1
+    assert data["artifacts"][0]["name"] == "release-1.0.tar.gz"
+    assert data["artifacts"][0]["available"] is True
+    assert data["artifacts"][0]["release_name"] == "v1.0"
+    assert data["artifacts"][0]["release_date"] == "2024-01-01"
+    assert data["artifacts"][0]["feature_list"] == ["feature_a", "feature_b"]
+    assert data["artifacts"][0]["release_notes"] == "Initial release"
+
+
+def test_list_artifact_with_missing_file(artifact_client, mocker, tmp_path):
+    artifact = {
+        "id": 2,
+        "name": "release-2.0.tar.gz",
+        "ARTIFACT_DETAILS": {
+            "release_name": "v2.0",
+            "release_date": "2024-06-01",
+            "feature_list": [],
+            "release_notes": None
+        }
+    }
+    mocker.patch('cognos.backend.app.DOWNLOAD_ARTIFACT_MODE', True)
+    mocker.patch('cognos.backend.app.ARTIFACTS', [artifact])
+    mocker.patch('cognos.backend.app.ARTIFACTS_DIR', str(tmp_path))
+    response = artifact_client.get("/api/v2.0.1/list_artifact")
+    assert response.status_code == 200
+    assert response.get_json()["artifacts"][0]["available"] is False
+
+
+def test_list_artifact_missing_details_keys(artifact_client, mocker, tmp_path):
+    artifact = {"id": 3, "name": "release-3.0.tar.gz"}
+    mocker.patch('cognos.backend.app.DOWNLOAD_ARTIFACT_MODE', True)
+    mocker.patch('cognos.backend.app.ARTIFACTS', [artifact])
+    mocker.patch('cognos.backend.app.ARTIFACTS_DIR', str(tmp_path))
+    response = artifact_client.get("/api/v2.0.1/list_artifact")
+    assert response.status_code == 200
+    result = response.get_json()["artifacts"][0]
+    assert result["release_name"] is None
+    assert result["release_date"] is None
+    assert result["feature_list"] == []
+    assert result["release_notes"] is None
+
+
+def test_download_artifact_disabled(artifact_client, mocker):
+    mocker.patch('cognos.backend.app.DOWNLOAD_ARTIFACT_MODE', False)
+    response = artifact_client.get("/api/v2.0.1/artifact/1/download_artifact")
+    assert response.status_code == 403
+    assert response.get_json() == {"error": "Artifact download is not enabled."}
+
+
+def test_download_artifact_not_found(artifact_client, mocker):
+    mocker.patch('cognos.backend.app.DOWNLOAD_ARTIFACT_MODE', True)
+    mocker.patch('cognos.backend.app.ARTIFACTS', [])
+    response = artifact_client.get("/api/v2.0.1/artifact/99/download_artifact")
+    assert response.status_code == 404
+    assert "not found" in response.get_json()["error"]
+
+
+def test_download_artifact_file_missing_on_disk(artifact_client, mocker, tmp_path):
+    artifact = {"id": 1, "name": "release-1.0.tar.gz"}
+    mocker.patch('cognos.backend.app.DOWNLOAD_ARTIFACT_MODE', True)
+    mocker.patch('cognos.backend.app.ARTIFACTS', [artifact])
+    mocker.patch('cognos.backend.app.ARTIFACTS_DIR', str(tmp_path))
+    response = artifact_client.get("/api/v2.0.1/artifact/1/download_artifact")
+    assert response.status_code == 404
+    assert "missing on system" in response.get_json()["error"]
+
+
+def test_download_artifact_success(artifact_client, mocker, tmp_path):
+    artifact = {"id": 1, "name": "release-1.0.tar.gz"}
+    fake_file = tmp_path / "release-1.0.tar.gz"
+    fake_file.write_bytes(b"fake tar content")
+    mocker.patch('cognos.backend.app.DOWNLOAD_ARTIFACT_MODE', True)
+    mocker.patch('cognos.backend.app.ARTIFACTS', [artifact])
+    mocker.patch('cognos.backend.app.ARTIFACTS_DIR', str(tmp_path))
+    response = artifact_client.get("/api/v2.0.1/artifact/1/download_artifact")
+    assert response.status_code == 200
+    assert response.mimetype == "application/x-tar"
+    assert b"fake tar content" in response.data
+    assert "attachment" in response.headers.get("Content-Disposition", "")

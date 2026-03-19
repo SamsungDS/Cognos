@@ -271,11 +271,11 @@ def test_main_valid_zeromq_subscription(
 def test_get_node_ids_success_2(mock_post, mock_validation):
     mock_post.return_value.status_code = 200
     mock_post.return_value.json.return_value = {
-        "clusterInfo": [
+        "cluster_info": [
             {
-                "nodeInfo": [
-                    {"nodeId": "10.105.81.34"},
-                    {"nodeId": "ssl-ssg-v9m.msl.lab"},
+                "node_info": [
+                    {"node_id": "10.105.81.34"},
+                    {"node_id": "ssl-ssg-v9m.msl.lab"},
                 ]
             }
         ]

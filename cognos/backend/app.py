@@ -29,13 +29,20 @@ AGENT_ENDPOINT = CONFIGS["agent_endpoint"]
 # TODO: support multiple Node Servers / Agents at scale
 global NODE_ENDPOINT
 NODE_ENDPOINT = CONFIGS["node_endpoint"]
+global DOWNLOAD_ARTIFACT_MODE
+DOWNLOAD_ARTIFACT_MODE = CONFIGS["download_artifact_mode"]
 
 CAL_LOGGER = create_logger("svkapp-cal-logger", log_dir="/var/log/svk",
                            level=logging.DEBUG)
-with open(os.path.join(current_script_dir, "artifacts", "artifact_info.json"), "r") as f:
-    artifact_config = json.load(f)
+artifact_config_path = os.path.join(current_script_dir, "artifacts", "artifact_info.json")
 
-ARTIFACTS = artifact_config.get("ARTIFACTS", [])
+if os.path.isfile(artifact_config_path):
+    with open(artifact_config_path, "r") as f:
+        artifact_config = json.load(f)
+    ARTIFACTS = artifact_config.get("ARTIFACTS", [])
+else:
+    ARTIFACTS = []
+
 ARTIFACTS_DIR = os.path.join(current_script_dir, "artifacts")
 
 
@@ -298,11 +305,9 @@ def create_app(mock=False):
 
     @app.get(f"/api/{CAL_API_VERSION}/list_artifact")
     def list_artifact():
-        """
-            GET /api/list_artifact
-            Returns all registered artifacts with an `available` flag
-            indicating whether the file actually exists on disk.
-        """
+        if not DOWNLOAD_ARTIFACT_MODE:
+            return jsonify({"error": "Artifact download is not enabled"}), 503
+
         enriched = []
         for artifact in ARTIFACTS:
             file_path = os.path.join(ARTIFACTS_DIR, artifact["name"])
@@ -320,10 +325,9 @@ def create_app(mock=False):
 
     @app.get(f"/api/{CAL_API_VERSION}/artifact/<int:artifact_id>/download_artifact")
     def download_artifact(artifact_id: int):
-        """
-            GET /api/artifacts/{artifact_id}/download_artifact
-            Streams the real .tar file from the /artifacts folder.
-        """
+        if not DOWNLOAD_ARTIFACT_MODE:
+            return jsonify({"error": "Artifact download is not enabled."}), 403
+
         artifact = next((a for a in ARTIFACTS if a["id"] == artifact_id), None)
 
         if artifact is None:
