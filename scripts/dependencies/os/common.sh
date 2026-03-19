@@ -4,7 +4,7 @@ set -e
 # Path variables
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 REQUIREMENTS=$(realpath "$SCRIPT_DIR/../python/requirements.txt")
-VENV_DIR=/usr/local/svk/sapp/venv
+VENV_DIR=/usr/local/svk/svk-app/env
 
 # Create python venv if it does not exist
 if [[ ! -d $VENV_DIR ]]; then

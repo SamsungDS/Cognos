@@ -6,7 +6,7 @@ SCRIPT_DIR=$(cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd)
 PROJECT_ROOT=$(realpath "$SCRIPT_DIR/..")
 BUILD_DIR="$PROJECT_ROOT/build"
 ARTIFACTS_DIR="$BUILD_DIR/artifacts"
-VENV_DIR=/usr/local/svk/sapp/venv
+VENV_DIR=/usr/local/svk/svk-app/env
 
 
 help()

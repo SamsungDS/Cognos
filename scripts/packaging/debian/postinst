@@ -7,4 +7,3 @@ cd /usr/local/svk/svk-app/cognos/ui/
 # npm install
 chown -R caddy:caddy /var/www/scmc
 chmod -R a+rX /var/www/scmc
-systemctl reload caddy
