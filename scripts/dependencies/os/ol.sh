@@ -14,17 +14,12 @@ install_packages() {
     # Add NodeJS 21 repo
     curl -fsSL https://rpm.nodesource.com/setup_22.x | bash
 
-    # Add Caddy repo
-    dnf install -y dnf-plugins-core
-    dnf copr enable @caddy/caddy
-
     # Enable CodeReady Builder (CRB) repository
     BUILD_DEPS=("'dnf-command(config-manager)'")
     package_manager
     dnf config-manager --enable ol"${MAJOR_VER}"_codeready_builder
 
     BUILD_DEPS=(
-        caddy
         chromedriver
         chromium
         findutils

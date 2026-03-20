@@ -51,14 +51,6 @@ override_dh_auto_install:
 	cp $(CURDIR)/../cognos/subscriber/*.output $(CURDIR)/$(INSTALL_PATH)/cognos/subscriber/; 2>/dev/null
 	cp $(CURDIR)/../cognos/subscriber/*.json $(CURDIR)/$(INSTALL_PATH)/cognos/subscriber/; 2>/dev/null
 
-	# copying UI files
-	mkdir -p -v $(CURDIR)/$(INSTALL_PATH)/cognos/ui/
-	# cp -r $(CURDIR)/../cognos/ui/ $(CURDIR)/$(INSTALL_PATH)/cognos/ui
-	# rsync -av --exclude 'node_modules' $(CURDIR)/../cognos/ui/ $(CURDIR)/$(INSTALL_PATH)/cognos/ui
-	cp -r $(CURDIR)/../cognos/ui/public $(CURDIR)/$(INSTALL_PATH)/cognos/ui/public
-	cp -r $(CURDIR)/../cognos/ui/src $(CURDIR)/$(INSTALL_PATH)/cognos/ui/src
-	cp $(CURDIR)/../cognos/ui/package.json $(CURDIR)/$(INSTALL_PATH)/cognos/ui/package.json
-
 	# copy cognos config file
 	cp $(CURDIR)/../scripts/cognos.config $(CURDIR)/$(INSTALL_PATH)/cognos.config
 
@@ -113,5 +105,4 @@ override_dh_installsystemd:
 	# systemd steps TBD (for service files)
 	dh_installsystemd --name=cognos-subscriber
 	dh_installsystemd --name=cognos-app
-	dh_installsystemd --name=cognos-ui
 	dh_installsystemd --name=cognos-rbac

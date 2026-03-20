@@ -10,7 +10,7 @@ License:        Samsung Internal
 BuildRequires: systemd-rpm-macros nodejs npm
 
 # Runtime dependencies
-Requires: systemd python3 nodejs npm libgfortran libquadmath docker-ce-cli
+Requires: systemd python3 nodejs npm libgfortran libquadmath docker-ce-cli caddy
 
 %global debug_package %{nil}
 %global __strip /bin/true
@@ -36,6 +36,7 @@ npm --prefix %{_projectdir}/cognos/ui run build
 rm -rf %{buildroot}
 mkdir -p %{buildroot}
 STATIC_REACT_PATH=%{buildroot}/var/www/scmc
+CADDY_PATH=%{buildroot}/etc/caddy/Caddyfile.d
 INSTALL_PATH=%{buildroot}/usr/local/svk/svk-app
 FINAL_PATH=/usr/local/svk/svk-app
 BUILDROOT_PREFIX=${INSTALL_PATH}
@@ -44,10 +45,9 @@ mkdir -p ${INSTALL_PATH}
 
 # Setup Caddy
 mkdir -p ${STATIC_REACT_PATH}
+mkdir -p ${CADDY_PATH}
 cp -a %{_projectdir}/cognos/ui/build/. ${STATIC_REACT_PATH}/
-chown -R caddy:caddy ${STATIC_REACT_PATH}
-chmod -R a+rX ${STATIC_REACT_PATH}
-cp %{_projectdir}/Caddyfile /etc/caddy/Caddyfile
+cp %{_projectdir}/scmc.conf ${CADDY_PATH}/
 
 # copying CAL files
 mkdir -p -v ${INSTALL_PATH}/cognos/backend/config/
@@ -60,12 +60,6 @@ mkdir -p -v ${INSTALL_PATH}/cognos/subscriber/
 cp %{_projectdir}/cognos/subscriber/*.py ${INSTALL_PATH}/cognos/subscriber/; 2>/dev/null
 cp %{_projectdir}/cognos/subscriber/*.output ${INSTALL_PATH}/cognos/subscriber/; 2>/dev/null
 cp %{_projectdir}/cognos/subscriber/*.json ${INSTALL_PATH}/cognos/subscriber/; 2>/dev/null
-
-# copying UI files
-mkdir -p -v ${INSTALL_PATH}/cognos/ui/
-cp -r %{_projectdir}/cognos/ui/public ${INSTALL_PATH}/cognos/ui/public; 2>/dev/null
-cp -r %{_projectdir}/cognos/ui/src ${INSTALL_PATH}/cognos/ui/src; 2>/dev/null
-cp %{_projectdir}/cognos/ui/package.json ${INSTALL_PATH}/cognos/ui/package.json
 
 # copying python requirements file
 cp %{_projectdir}/scripts/dependencies/python/requirements.txt ${INSTALL_PATH}/requirements.txt
@@ -103,7 +97,6 @@ mkdir -p %{buildroot}%{_unitdir}
 install -d %{buildroot}%{_unitdir}
 install -m 0644 %{_projectdir}/scripts/services/cognos-app.service           %{buildroot}%{_unitdir}/cognos-app.service
 install -m 0644 %{_projectdir}/scripts/services/cognos-subscriber.service    %{buildroot}%{_unitdir}/cognos-subscriber.service
-install -m 0644 %{_projectdir}/scripts/services/cognos-ui.service            %{buildroot}%{_unitdir}/cognos-ui.service
 install -m 0644 %{_projectdir}/scripts/services/cognos-rbac.service          %{buildroot}%{_unitdir}/cognos-rbac.service
 
 # copy/install cognos.config
@@ -120,6 +113,7 @@ install -m 0644 %{_projectdir}/scripts/cognos.config ${INSTALL_PATH}/cognos.conf
 %dir /var/www/
 %dir /var/www/scmc/
 /var/www/scmc/*
+/etc/caddy/Caddyfile.d/scmc.conf
 # source code
 %dir %{svk_install_dir}/
 %{svk_install_dir}/*
@@ -129,13 +123,6 @@ install -m 0644 %{_projectdir}/scripts/cognos.config ${INSTALL_PATH}/cognos.conf
 %{svk_install_dir}/cognos/backend/config/*
 %dir %{svk_install_dir}/cognos/subscriber/
 %{svk_install_dir}/cognos/subscriber/*
-%dir %{svk_install_dir}/cognos/ui/
-%{svk_install_dir}/cognos/ui/*
-%dir %{svk_install_dir}/cognos/ui/src/
-%{svk_install_dir}/cognos/ui/src/*
-%dir %{svk_install_dir}/cognos/ui/public/
-%{svk_install_dir}/cognos/ui/public/*
-%{svk_install_dir}/cognos/ui/package.json
 %dir %{svk_install_dir}/cognos/rbac/
 %{svk_install_dir}/cognos/rbac/*
 %dir %{svk_install_dir}/cognos/rbac/core/bin/
@@ -151,7 +138,6 @@ install -m 0644 %{_projectdir}/scripts/cognos.config ${INSTALL_PATH}/cognos.conf
 # systemd units
 %{_unitdir}/cognos-app.service
 %{_unitdir}/cognos-subscriber.service
-%{_unitdir}/cognos-ui.service
 %{_unitdir}/cognos-rbac.service
 
 %post
@@ -184,16 +170,29 @@ else
     "$VENV/bin/python" -m pip install -r "$REQ"
 fi
 
-systemctl reload caddy
+# import scmc conf to Caddy
+CADDYFILE=/etc/caddy/Caddyfile
+IMPORT_LINE='import /etc/caddy/Caddyfile.d/*'
+
+if [ ! -f "$CADDYFILE" ]; then
+    echo "$IMPORT_LINE" > "$CADDYFILE"
+else
+    if ! grep -qF "$IMPORT_LINE" "$CADDYFILE"; then
+        echo "" >> "$CADDYFILE"
+        echo "$IMPORT_LINE" >> "$CADDYFILE"
+    fi
+fi
+
+chown -R caddy:caddy ${STATIC_REACT_PATH}
+chmod -R a+rX ${STATIC_REACT_PATH}
+
 %systemd_post cognos-app.service
 %systemd_post cognos-subscriber.service
-%systemd_post cognos-ui.service
 %systemd_post cognos-rbac.service
 
 %preun
 %systemd_preun cognos-app.service
 %systemd_preun cognos-subscriber.service
-%systemd_preun cognos-ui.service
 %systemd_preun cognos-rbac.service
 if [ $1 -eq 0 ]; then
     rm -rf /usr/local/svk/svk-app
@@ -202,9 +201,10 @@ fi
 %postun
 %systemd_postun_with_restart cognos-app.service
 %systemd_postun_with_restart cognos-subscriber.service
-%systemd_postun_with_restart cognos-ui.service
 %systemd_postun_with_restart cognos-rbac.service
 
 %changelog
+* Wed Mar 19 2026 Nadim Sarras <nadim.s@samsung.com>
+- SCMC Production Grade Webserver Packaging
 * Wed Feb 04 2026 Nadim Sarras <nadim.s@samsung.com>
 - Initial RPM packaging for OEL10
