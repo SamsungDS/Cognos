@@ -161,16 +161,30 @@ svk-install:
       fi
       sed -i "s|^BACKEND_URL=.*|BACKEND_URL=${PROTOCOL}://${VM_IP}:${RBAC_BACKEND_PORT}|" "$SVK_APP_RBAC_ENV"
 
-    #### SVK App UI configuration (JSON) ####
-    # - export SVK_APP_UI_CONF='/usr/local/svk/svk-app/cognos/ui/src/config/config.json'
-    # # Substitute '.rbac_endpoint' value with RBAC_UI_PORT value in SVK_APP_UI_CONF obtained from gitlab-ci.yml
-    # - jq --arg ip "$VM_IP" --arg rbac_ui_port "$RBAC_UI_PORT" '.rbac_endpoint= "http://\($ip):\($rbac_ui_port)"' $SVK_APP_UI_CONF | sponge $SVK_APP_UI_CONF
-    # # Substitute '.mgmt_endpoint' value with UI_PORT value in SVK_APP_UI_CONF obtained from gitlab-ci.yml
-    # - jq --arg ip "$VM_IP" --arg ui_port "$UI_PORT" '.mgmt_endpoint = "http://\($ip):\($ui_port)"' $SVK_APP_UI_CONF | sponge $SVK_APP_UI_CONF
-    # # Substitute '.data_endpoint' value with BACKEND_PORT value in SVK_APP_UI_CONF obtained from gitlab-ci.yml
-    # - jq --arg ip "$VM_IP" --arg backend_port "$BACKEND_PORT" '.data_endpoint = "http://\($ip):\($backend_port)"' $SVK_APP_UI_CONF| sponge $SVK_APP_UI_CONF
-    # # Substitute '.api_endpoint' value with BACKEND_PORT value in SVK_APP_UI_CONF obtained from gitlab-ci.yml
-    # - jq --arg ip "$VM_IP" --arg backend_port "$BACKEND_PORT" '.api_endpoint = "http://\($ip):\($backend_port)/api/v2.0.1"' $SVK_APP_UI_CONF | sponge $SVK_APP_UI_CONF
+    #### SVK App UI configuration (JS) ####
+    - |
+      CONFIG_JS="/var/www/scmc/config.js"
+      MGMT_ENDPOINT="http://${VM_IP}:${UI_PORT}"
+      DATA_ENDPOINT="http://${VM_IP}:${BACKEND_PORT}"
+      API_ENDPOINT="http://${VM_IP}:${BACKEND_PORT}/api/v2.0.1"
+      RBAC_ENDPOINT="http://${VM_IP}:${RBAC_UI_PORT}"
+      RBAC_ENABLED="true"
+      cat > "$CONFIG_JS" <<EOF
+      window.CONFIGS = {
+          "mgmt_endpoint": "$MGMT_ENDPOINT",
+          "data_endpoint": "$DATA_ENDPOINT",
+          "api_endpoint": "$API_ENDPOINT",
+          "rbac_endpoint": "$RBAC_ENDPOINT",
+          "rbac_enabled": $RBAC_ENABLED,
+          "clusterPolicy": "roundRobin", 
+          "policyOptions": {
+            "roundRobin": {
+              "comment": "the use case is that the user wants to have minimum number of application server for redundancy",
+              "minHostsPerCluster": 2
+            }
+          }
+      }
+      EOF
 
     #### Cognos.config configuration changes ####
     # Step 1: Set MODE to 'real' to populate metrics using service manager
@@ -198,7 +212,6 @@ svk-install:
     # - telegraf --config /usr/local/svk/svk-app/cognos/telegraf/telegraf.conf > /var/log/telegraf.log 2>&1 &
     - cd /usr/local/svk/svk-app/cognos/telegraf/
     - nohup /usr/local/svk/svk-app/env/bin/python3 poll.py > /dev/null 2>&1 &
-    # - systemctl start cognos-ui
     #### Create Admin User ####
     - systemctl status cognos-rbac.service --no-pager
     - sleep 30

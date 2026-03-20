@@ -21,3 +21,6 @@ fi
 # update permissions of compiled ui code
 chown -R caddy:caddy /var/www/scmc
 chmod -R a+rX /var/www/scmc
+
+#restart caddy
+systemctl restart caddy

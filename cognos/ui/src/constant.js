@@ -1,5 +1,5 @@
 // Load App Configs
-export const Configs = require('../src/config/config.json');
+export const Configs = window.CONFIGS || {};
 export const BackgroundsImage = require('../src/assets/images/backgrounds/BackGroundImage.png');
 export const AddIcon = require('../src/assets/icons/Icon-Add-Light.png');
 export const MinusIcon = require('../src/assets/icons/Icon-Remove-Light.png');

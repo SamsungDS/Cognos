@@ -47,6 +47,7 @@ mkdir -p ${INSTALL_PATH}
 mkdir -p ${STATIC_REACT_PATH}
 mkdir -p ${CADDY_PATH}
 cp -a %{_projectdir}/cognos/ui/build/. ${STATIC_REACT_PATH}/
+cp %{_projectdir}/cognos/ui/public/config.js ${STATIC_REACT_PATH}/
 cp %{_projectdir}/scmc.conf ${CADDY_PATH}/
 
 # copying CAL files
@@ -185,6 +186,7 @@ fi
 
 chown -R caddy:caddy ${STATIC_REACT_PATH}
 chmod -R a+rX ${STATIC_REACT_PATH}
+systemctl restart caddy
 
 %systemd_post cognos-app.service
 %systemd_post cognos-subscriber.service

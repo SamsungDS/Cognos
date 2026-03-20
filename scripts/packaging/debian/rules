@@ -38,6 +38,7 @@ override_dh_auto_install:
 
 	# copying React static bundle
 	cp -a $(CURDIR)/../cognos/ui/build/. $(CURDIR)/$(STATIC_REACT_PATH)/
+	cp $(CURDIR)/../cognos/ui/public/config.js $(CURDIR)/$(STATIC_REACT_PATH)/
 
 	# copying CAL files
 	mkdir -p -v $(CURDIR)/$(INSTALL_PATH)/cognos/backend/config/
