@@ -15,7 +15,9 @@ release build:
     DOCKERFILE_NAME: ubuntu22
     IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
   needs:
-    - build docker
+    - job: "build docker"
+    - job: "tag semantic version"
+      optional: true
   parallel:
     matrix:
       - DOCKERFILE_NAME: rocky9
