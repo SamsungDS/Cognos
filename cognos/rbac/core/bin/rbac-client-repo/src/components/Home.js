@@ -59,9 +59,9 @@ const Home = () => {
             // Remove token from URL
             window.history.replaceState({}, document.title, window.location.pathname);
 
-            // Handle redirection for 'user' or 'admin'
+            // Handle redirection for 'guest' or 'admin'
             /* istanbul ignore next */
-            if (role === 'user' || role === 'admin') {
+            if (role === 'admin' || role === 'guest') {
                 // Check for stored redirect URL from localStorage
                 const storedRedirectUrl = localStorage.getItem('redirectUrl');
 

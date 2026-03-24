@@ -1,16 +1,24 @@
 import React, { useContext } from 'react';
 import { NavLink } from 'react-router-dom'
 import { Cpu } from 'lucide-react';
-import { ReactComponent as ConfigureIcon } from '../assets/icons/ConfigureIcon.svg';
+// import { ReactComponent as ConfigureIcon } from '../assets/icons/ConfigureIcon.svg';
 import { ReactComponent as DashboardIcon } from '../assets/icons/DashboardIcon.svg';
 import { ReactComponent as MetricsIcon } from '../assets/icons/ChartIcon.svg';
 import { ReactComponent as AboutIcon } from '../assets/icons/AboutIcon.svg';
 import { ReactComponent as AutotierIcon } from '../assets/icons/AutoTierIcon.svg';
 import { AuthContext } from './ProtectedRoute.js';
 import NotificationBell from './NotificationBell';
+import * as constants from '../constant';
+
+// When login is disabled, treat everyone as admin (full access)
+const RBAC_ENABLED = constants.Configs.rbac_enabled;
+
 const SideBar = ({ children }) => {
-  // Get userRole from AuthContext instead of props
-  const { userRole } = useContext(AuthContext);
+  const auth = useContext(AuthContext);
+  // If login is disabled, default to 'admin' so all menu items are visible
+  const effectiveRole = RBAC_ENABLED ? (auth?.userRole) : 'admin';
+
+
 
   const menuItem = [
     {
@@ -55,20 +63,19 @@ const SideBar = ({ children }) => {
       datatestid: 'menu-item-5',
       allowedRoles: ['admin', 'guest']
     }
-  ]
+  ];
 
-  // Filter based on user role
+  // Filter menu items based on effectiveRole
   const visibleMenuItems = menuItem.filter(item =>
-    item.allowedRoles.includes(userRole)
+    item.allowedRoles.includes(effectiveRole)
   );
-
 
   return (
     <>
       <div className='sidebar-container' style={{ width: "50px" }} id='side-bar-id' data-testid='sidebar-container'>
         <div style={{ width: "50px" }} className='sidebar'>
           {
-            visibleMenuItems.map((item, index) => (
+            visibleMenuItems.map((item) => (
               <NavLink to={item.path} key={item.datatestid} activeclassname="active" className="link">
                 <div className='icon' data-testid={item.datatestid}>
                   {item.icon}
@@ -80,7 +87,7 @@ const SideBar = ({ children }) => {
       </div>
       {children}
     </>
-  )
+  );
 }
 
 export default SideBar;

@@ -33,6 +33,7 @@ ExecStartPre=/bin/bash -c '[ -f /usr/local/svk/svk-app/cognos/rbac/docker-config
 # Start MongoDB container (detached is OK for pre-start)
 ExecStartPre=/usr/bin/docker run -d \
   --name rbac-mongo-db \
+  --platform linux/amd64 \
   --network bridge \
   -p 1027:27017 \
   -v /usr/local/svk/svk-app/cognos/rbac/data/mongodb:/data/db \
@@ -51,6 +52,7 @@ ExecStartPre=/usr/local/svk/svk-app/cognos/rbac/rbac-docker-build-by-os.sh
 ExecStart=/usr/bin/docker run --rm \
   --name rbac-container \
   --network bridge \
+  --platform linux/amd64 \
   --link rbac-mongo-db:rbac-mongo-db \
   -p 6720:6720 \
   -p 6721:6721 \

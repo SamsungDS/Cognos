@@ -1,10 +1,11 @@
-from flask import Flask, request
+from flask import Flask, request, jsonify,  make_response,  send_file
 import click
 import logging
 from pathlib import Path
 import os
 import sys
 import time
+import json
 from flask_cors import CORS
 from gunicorn.app.base import BaseApplication
 import multiprocessing
@@ -30,9 +31,21 @@ AGENT_ENDPOINT = CONFIGS["agent_endpoint"]
 # TODO: support multiple Node Servers / Agents at scale
 global NODE_ENDPOINT
 NODE_ENDPOINT = CONFIGS["node_endpoint"]
+global DOWNLOAD_ARTIFACT_MODE
+DOWNLOAD_ARTIFACT_MODE = CONFIGS["download_artifact_mode"]
 
 CAL_LOGGER = create_logger("svkapp-cal-logger", log_dir="/var/log/svk",
                            level=logging.DEBUG)
+artifact_config_path = os.path.join(current_script_dir, "artifacts", "artifact_info.json")
+
+if os.path.isfile(artifact_config_path):
+    with open(artifact_config_path, "r") as f:
+        artifact_config = json.load(f)
+    ARTIFACTS = artifact_config.get("ARTIFACTS", [])
+else:
+    ARTIFACTS = []
+
+ARTIFACTS_DIR = os.path.join(current_script_dir, "artifacts")
 
 
 def create_app(mock=False):
@@ -292,6 +305,52 @@ def create_app(mock=False):
         except Exception as error:
             return helper.failed_response(str(error))
 
+    @app.get(f"/api/{CAL_API_VERSION}/list_artifact")
+    def list_artifact():
+        if not DOWNLOAD_ARTIFACT_MODE:
+            return jsonify({"error": "Artifact download is not enabled"}), 503
+
+        enriched = []
+        for artifact in ARTIFACTS:
+            file_path = os.path.join(ARTIFACTS_DIR, artifact["name"])
+            details = artifact.get("ARTIFACT_DETAILS", {})
+            enriched.append({
+                "id": artifact.get("id"),
+                "name": artifact.get("name"),
+                "available": os.path.isfile(file_path),
+                "release_name": details.get("release_name"),
+                "release_date": details.get("release_date"),
+                "feature_list": details.get("feature_list", []),
+                "release_notes": details.get("release_notes")
+            })
+        return jsonify({"artifacts": enriched}), 200
+
+    @app.get(f"/api/{CAL_API_VERSION}/artifact/<int:artifact_id>/download_artifact")
+    def download_artifact(artifact_id: int):
+        if not DOWNLOAD_ARTIFACT_MODE:
+            return jsonify({"error": "Artifact download is not enabled."}), 403
+
+        artifact = next((a for a in ARTIFACTS if a["id"] == artifact_id), None)
+
+        if artifact is None:
+            return jsonify({"error": f"Artifact id={artifact_id} not found."}), 404
+
+        file_path = os.path.join(ARTIFACTS_DIR, artifact["name"])
+
+        if not os.path.isfile(file_path):
+            return jsonify({
+                "error": (
+                    f"File '{artifact['name']}' is registered but missing on system. "
+                    f"Please place it in: {ARTIFACTS_DIR}"
+                )
+            }), 404
+
+        return send_file(
+            file_path,
+            mimetype="application/x-tar",
+            as_attachment=True,
+            download_name=artifact["name"],
+        )
     return app
 
 

@@ -11,7 +11,7 @@ def test_init_remoteattached_node_interface():
 
 def test_list_devices(mocker):
     dummy_remote_list_devices_output = {
-        "errorIdOrStringIfAny": "", "errorCode": 0, "apiVersion": "0.1",
+        "error_id_or_string_if_any": "", "error_code": 0, "api_version": "0.1",
         "response": [
             "{\"devices\": [{\"dev_id\": 549755813888, "
             "\"dev_capacity\": 274877906944, \"dev_port\": 10, "
@@ -35,7 +35,7 @@ def test_list_devices(mocker):
 
 def test_list_hosts(mocker):
     dummy_remote_list_hosts_output = {
-        "errorIdOrStringIfAny": "", "errorCode": 0, "apiVersion": "0.1",
+        "error_id_or_string_if_any": "", "error_code": 0, "api_version": "0.1",
         "response": [
             "{\"hosts\": [{\"id\": 551903297536, \"name\": \"node2\", "
             "\"mem_capacity\": 547608330240, \"host_target_ports\": "
@@ -57,7 +57,7 @@ def test_list_hosts(mocker):
 
 def test_setup_info(mocker):
     dummy_remote_setup_info_output = {
-        "errorIdOrStringIfAny": "", "errorCode": 0, "apiVersion": "0.1",
+        "error_id_or_string_if_any": "", "error_code": 0, "api_version": "0.1",
         "response": [
             "{\"Board\": {\"board_name\": \"Example Direct Config\", "
             "\"Mgmt_port_type\": \"PCIe\", \"json_version\": \"0100\", "
@@ -101,7 +101,7 @@ def test_setup_info(mocker):
 
 def test_attach_device(mocker):
     dummy_attach_response = {
-        "errorIdOrStringIfAny": "", "errorCode": 0, "apiVersion": "0.1",
+        "error_id_or_string_if_any": "", "error_code": 0, "api_version": "0.1",
         "response": ["{\"rc\": 0}"]
     }
     dummy_response = Response()
@@ -119,7 +119,7 @@ def test_attach_device(mocker):
 
 def test_detach_device(mocker):
     dummy_detach_response = {
-        "errorIdOrStringIfAny": "", "errorCode": 0, "apiVersion": "0.1",
+        "error_id_or_string_if_any": "", "error_code": 0, "api_version": "0.1",
         "response": ["{\"rc\": 0}"]
     }
     dummy_response = Response()

@@ -177,3 +177,16 @@ def standalone_app(dummy_app, monkeypatch):
     }
 
     return StandaloneApplication(dummy_app, options)
+
+
+@pytest.fixture
+def artifact_client(mocker):
+    mocker.patch(
+        'cognos.backend.cognos_client.Cognos._initialize_cognos',
+        return_value=True
+    )
+    app = create_app(mock=True)
+    app.config["TESTING"] = True
+    with app.test_client() as client:
+        with app.app_context():
+            yield client

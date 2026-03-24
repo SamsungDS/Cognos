@@ -518,7 +518,7 @@ class Cognos(BaseControlInterface):
         )
         if response.ok:
             try:
-                data = json.loads(response.json()['commandResponse'])
+                data = json.loads(response.json()['command_response'])
                 return (
                     [
                         v for cluster in data["clusters"]
@@ -551,7 +551,7 @@ class Cognos(BaseControlInterface):
             headers=self.headers
         )
         data = response.json()
-        return json.loads(data['commandResponse'])
+        return json.loads(data['command_response'])
 
     def list_cluster_nodes(self, cluster_name: str) -> Dict[str, List]:
         """
@@ -580,7 +580,7 @@ class Cognos(BaseControlInterface):
         )
         if response.ok:
             try:
-                data = json.loads(response.json()['commandResponse'])
+                data = json.loads(response.json()['command_response'])
                 nodes = []
                 for c in data["clusters"]:
                     for n in c["nodes"]:

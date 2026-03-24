@@ -54,6 +54,14 @@ roles:
       - "admin"
     filters:
       users: "limited"
+  guest:
+    permissions:
+      - "read:dashboard"
+      - "read:profile"
+    roles:
+      - "guest"
+    filters:
+      users: "own"
   user:
     permissions:
       - "read:dashboard"
@@ -63,7 +71,7 @@ roles:
     filters:
       users: "own"
 license:
-  key: '3d346cfbb6f7770a715a629856fd607f:93beec0d20fab4a483c4812e15248096203e9d55a1fe86aa06197250b5d3cdb9c4dea50cdf5fea1938893131d3405444e7aef96c4c2227396624c56ec8927f3a004357c33a013004442dc1140f5238bbd6ce6cce871a71e66b742d231a63eeb41ff81e568aa83ad7d31fb2a6000db1df78e63735238d7373d543130a063d244f9f6257df1802bffa79a9a00d8009fe90d7a1559122cc363245a2bf4dc366f24529e1233df6260d045b8a8e0a5babe9c0e9e418c61da17d19bc419f68a8f5c8c9ead2b97a7f83fb2ddbf9a4bd7e462fa3'
+  key: 'fba4b841d79b58d53ff9e9071f3c98ba:88dc197e52c87ff86f732c0b69c781b0d4af31b33fb1838fa723d3c29a803a37424bb1e3fb7da20cf4e7e425d1640b9b5b032c7e40f591ebb13853652d30227bca3f2ee1bbd8b295a4ad80278536f35d172df27223a6a95e1ef22a51b5bab81e239c035f266a13ecf72298e68fb4bf5b217049601c2986f69c57ac3198e4340aa7d6c150198b77cfcdb2bd79a4e8d7414cab2a5edbd1f99c3c2ccf23b1201d297009a7b9ec4af3bbb9ea0a9f69375cc4acba4e941a038af7e976028cb377fc477a9302979a0f291f4fe976bb197ade21'
   productID: 'prod-66hinoatktxdi'
   subscriptionID: 'RBAC-prod-66hinoatktxdi-TRIAL'
 internet-communication: 'Y'
@@ -100,5 +108,5 @@ email-verification: 'N'
   #        - No email verification required
 
 signupRoles:  # Roles that users can select during registration
-  - "user"
   - "admin"
+  - "guest"

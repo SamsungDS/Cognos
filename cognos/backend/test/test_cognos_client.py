@@ -428,7 +428,7 @@ def test_get_remote_devices(mocker):
 
 def test_list_clusters(mocker):
     dummy_list_clusters_data = {
-        'commandResponse': json.dumps({"clusters": [
+        'command_response': json.dumps({"clusters": [
                 {
                     "cluster_name": "cluster_name_0",
                 },
@@ -460,7 +460,7 @@ def test_list_clusters(mocker):
 
 def test_list_nodes(mocker):
     dummy_list_nodes_data = {
-        'commandResponse': json.dumps({
+        'command_response': json.dumps({
             "node_info": [
                 {
                     "node_name": "cognos_node1",
@@ -490,7 +490,7 @@ def test_list_nodes(mocker):
 
 def test_list_cluster_nodes(mocker):
     dummy_list_cluster_nodes = {
-        'commandResponse': json.dumps({
+        'command_response': json.dumps({
             "clusters": [{
                 "cluster_name": "CL_ID_1",
                 "nodes": [

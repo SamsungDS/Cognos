@@ -43,7 +43,27 @@
     max-width: fit-content;
     overflow-x: scroll;
   }
+  table th {
+    color: #00B3E3 !important;
+    font-weight: 700 !important;
+  }
   
+  .table>:not(caption)>*>* {
+    background-color: black !important;
+  }
+    
+  .table-div {
+    width: 100%;
+  }
+  
+  thead,
+  tbody {
+    display: block;
+  }
+  
+  tbody {
+    max-height: 200px;
+  }
   /* JobManagement.css */
   
   /* Custom tracking for heading */

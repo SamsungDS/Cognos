@@ -68,7 +68,7 @@ def get_nodes():
         headers=REQUEST_HEADERS
     )
     output = response.json()
-    payload = json.loads(output['commandResponse'])
+    payload = json.loads(output['command_response'])
     nodes = []
     for node in payload['node_info']:
         nodes.append(node["node_name"])
@@ -83,7 +83,7 @@ def get_clusters():
         headers=REQUEST_HEADERS
     )
     output = response.json()
-    payload = json.loads(output['commandResponse'])
+    payload = json.loads(output['command_response'])
     return (
         [
             v for cluster in payload["clusters"]
@@ -100,7 +100,7 @@ def get_cluster_nodes(cluster):
         headers=REQUEST_HEADERS
     )
     output = response.json()
-    payload = json.loads(output["commandResponse"])
+    payload = json.loads(output["command_response"])
     nodes = []
     for c in payload['clusters']:
         for node in c['nodes']:
