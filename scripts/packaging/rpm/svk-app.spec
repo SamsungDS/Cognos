@@ -149,11 +149,6 @@ VENV=$APPDIR/env
 REQ=$APPDIR/requirements.txt
 WHEELS=$APPDIR/scripts/dependencies/python/wheels
 
-# install UI deps
-pushd ${APPDIR}/cognos/ui
-npm install
-popd
-
 # setup python venv and install dependencies
 if [ ! -x "$VENV/bin/python" ]; then
     /usr/bin/python3 -m venv --upgrade-deps "$VENV"
