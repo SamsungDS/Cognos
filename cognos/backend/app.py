@@ -458,7 +458,7 @@ def init_cognos_db(mock=False):
             sql_client.table_description("connections")
 
 
-class StandaloneApplication(BaseApplication):
+class GunicornServer(BaseApplication):
     """Custom Gunicorn application to run from Python code."""
 
     def __init__(self, app, options=None):
@@ -474,7 +474,6 @@ class StandaloneApplication(BaseApplication):
             self.cfg.set(key.lower(), value)
 
     def load(self):
-        """Return WSGI application."""
         return self.application
 
 
@@ -488,11 +487,17 @@ def main(mock, host, port):
     init_cognos_db(mock=mock)
     app = create_app(mock)
 
+    # set default worker count to 1 worker max per 2 CPU if not set
+    worker_count = (
+        multiprocessing.cpu_count() // 2 + 1
+        if CONFIGS["worker_count"] == 0
+        else CONFIGS["worker_count"]
+    )
     options = {
         "bind": f"{host}:{port}",  # Host:Port
-        "workers": multiprocessing.cpu_count() // 2 + 1,  # 1 worker max per 2 CPU
+        "workers": worker_count,
         "worker_class": "sync",
-        "timeout": 30
+        "timeout": 30  # seconds worker waits for request
     }
 
     # Check if https mode
@@ -500,7 +505,7 @@ def main(mock, host, port):
         options["certfile"] = CONFIGS["ssl_cert"]
         options["keyfile"] = CONFIGS["ssl_key"]
 
-    StandaloneApplication(app, options).run()
+    GunicornServer(app, options).run()
 
 
 if __name__ == "__main__":

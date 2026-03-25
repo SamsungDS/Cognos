@@ -12,11 +12,10 @@ cognos-app: Responsible for backend support of the webapplication, communicating
 
 cognos-subscriber: Consumes metrics published from publisher and stores them into InfluxDB
 
-cognos-ui: UI for Samsung Management Console
+caddy: service that runs compiled UI for Samsung Management Console
 
 ## Supported OS List
 
-- Rockylinux 9
 - Ubuntu 22.04
 - Oracle linux 10
 - Oracle linux 9
@@ -52,6 +51,7 @@ Dependencies;
  - nodejs
  - npm
  - Docker version 28.3.3, (https://docs.docker.com/engine/install/ubuntu/)
+ - caddy
 
 Installation Instructions for svk-app debian package
 ```bash
@@ -62,118 +62,10 @@ apt-get install svk-app -y
 
 ```
 
-Post Installtion Steps;
-1. Install MySQL
+#### Dependency, Installation & Configuration Steps
+Follow instructions here: http://sj-confluence.ssi.samsung.com:8090/x/re0jHw
 
-```sudo apt install mysql-server```
-```sudo mysql_secure_installation```
-
-login with root user to Mysql console
-```sudo mysql -u root```
-
-Create Dev User
-```
-CREATE USER 'dev'@'localhost' IDENTIFIED BY 'my-password';
-GRANT ALL ON *.* To 'dev'@'localhost';
-```
-Run DB setup script
-```
-/usr/local/svk/svk-app/env/bin/python3 /usr/local/svk/svk-app/cognos/backend/db_setup.py
-```
-
-2. Install InfluxDB
-```sudo apt update```
-Import repository key
-```
-curl -fsSL https://repos.influxdata.com/influxdata-archive_compat.key|sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/influxdata.gpg
-```
-Add InfluxDB APT repository
-```
-echo 'deb [signed-by=/etc/apt/trusted.gpg.d/influxdata.gpg] https://repos.influxdata.com/debian stable main' | sudo tee /etc/apt/sources.list.d/influxdata.list
-```
-Update apt index and install InfluxDB
-```
-sudo apt install influxdb2
-```
-Use the InfluxDB UI to configure and setup the user/org/token/etc..
-navigate to http://<ip>:8086/ and follow the steps
-
-3. Install Telegraf
-
-```sudo apt install telegraf```
-
-*** Configure the following configuration files appropiately ***
-```
-/usr/local/svk/svk-app/cognos/rbac/docker-config.env
-SSL/HTTPS CONFIGURATION
-Enable SSL/HTTPS (true/false)
-
-SSL_ENABLED=false
-
-Set to 'true' to enable HTTPS with SSL certificates -> attach combined.crt and private.key inside /usr/local/svk/svk-app/cognos/rbac/core/ssl folder.
-
-Set to 'false' to use HTTP only
-
-BACKEND URL CONFIGURATION
-BACKEND_URL=http://<ip-addr>:6721
-Replace <ip-addr> (http://127.128.01.00:6721) with the host/IP where the backend (RBAC)
-
-MongoDB connection URI
-MONGODB_URI=mongodb://admin:admin@<ip-addr>:1027
-
-SUPER ADMIN (OWNER) CONFIGURATION
-
-Username (3-20 alphanumeric characters only)
-SUPER_ADMIN_USERNAME=super_admin
-
-Email address (valid email format required)
-SUPER_ADMIN_EMAIL=super_admin@samsung.com
-
-Password (minimum 8 characters)
-IMPORTANT: Change this default password!
-SUPER_ADMIN_PASSWORD=Admin@123
-
-/usr/local/svk/svk-app/cognos/rbac/rbac-service/rbac.yaml
-database:
-  uri: 'mongodb://admin:admin@<ip-addr>:1027'
-database.uri Replace <ip-addr> (admin@127.128.01.00:1027) with the MongoDB server host/IP address where the database is running.
-
-frontend:
-  url: 'http://<ip-addr>:6720'
-frontend.url :	Replace <ip-addr> (http://127.128.01.00:6720) with the host/IP where the frontend is accessible.  
-backend:
-  url: 'http://<ip-addr>:6721'
-backend.url : Replace <ip-addr> (http://127.128.01.00:6721) with the host/IP where the backend (RBAC) service is accessible.
-
-/usr/local/svk/svk-app/cognos/ui/src/config/config.json
-"rbac_endpoint": "http://127.0.0.1:6720"
-127.0.0.1 replace ip address with the host/IP where the login/SignUp frontend(rbac-client) is accessible.
-
-```
-3. Configure the following configuration files appropiately
-```
-/usr/local/svk/svk-app/cognos/backend/config/config.json
-/usr/local/svk/svk-app/cognos/backend/config/influxdb_config.json
-/usr/local/svk/svk-app/cognos/rbac/rbac-client-repo/src/config/config.json
-/usr/local/svk/svk-app/cognos/rbac/rbac-service/rbac.yaml
-/usr/local/svk/svk-app/cognos/ui/src/config/config.json
-/usr/local/svk/svk-app/cognos/cognos.config
-/usr/local/svk/svk-app/cognos/backend/config/numa_config.json
-```
-When configuring numa_config.json file ensure you list all hosts in the system
-along with all applicable PIDs the user would like monitored. For each PID
-mention a list of numa nodes that apply to that PID.
-
-4. Run the services
-```
-sudo systemctl start cognos-subscriber
-sudo systemctl start cognos-app
-sudo systemctl start cognos-rbac
-sudo systemctl start cognos-ui
-telegraf --config /usr/local/svk/svk-app/cognos/telegraf/telegraf.conf
-```
-
-5. You can perform smoke testing by the following 
+* You can perform smoke testing by the following 
 navigate to /usr/local/svk/svk-app/cognos/health/test folder
 ```
 chmod +x ./smoke_test.sh
@@ -182,6 +74,7 @@ chmod +x ./smoke_test.sh
 
 ### Rockylinux Installation
 
+* Not Currently Supported *
 ```bash
 curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
 dnf install epel-release -y
@@ -189,7 +82,7 @@ dnf install svk-app -y
 ```
 
 
-#### Oracle Linux
+### Oracle Linux
 set OEL major version number by running the following;
 
 if OEL 9
@@ -213,6 +106,9 @@ curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /et
 dnf install oracle-epel-release-el${MAJOR_VER} -y
 dnf install svk-core svk-mgmt-fw -y
 ```
+
+#### Dependency, Installation & Configuration Steps
+http://sj-confluence.ssi.samsung.com:8090/x/qu0jHw
 
 
 ### SSL Configuration
@@ -239,53 +135,6 @@ To create a release build, execute the `scripts/build.sh` script with the `--rel
 This will produce either an RPM or Debian package, depending on whether the build is performed on a Rocky or Ubuntu OS repsectively.
 
 Release artifacts can be found in the `./build/artifacts` directory after executing the build script.
-
-## Developer installation
-
-Installing SVK APP dependencies can simply be done by running the following command from the sapp directory
-
-```bash
-./scripts/dependencies/install.sh
-```
-
-1. Install Mysql, [follow instructions in Mysql section of README](#mysql)
-2. Install reactjs and required  packages with npm:
-
-   ```bash
-   cd cognos/backend/ui
-   npm install
-   ```
-
-3. Ensure the following config files are properly set:
-
-   ```txt
-   cognos/backend/config/config.json
-   cognos/backend/config/influxdb_config.json
-   cognos/rbac/rbac-client-repo/src/config/config.json
-   cognos/rbac/rbac-service/rbac.yaml
-   cognos/ui/config/config.json
-   ```
-
-4. Run CAL layer with:
-
-   ```bash
-   cd cognos/backend
-   python3 -m flask run -h <localip> -p 4000 --mock
-   ```
-
-5. Run Subscriber:
-
-   ```bash
-   cd cognos
-   python3 subscriber/sub_client.py subscriber/mock_publisher_events.output
-   ```
-
-6. Run UI:
-
-   ```bash
-   cd cognos/ui
-   npm start
-   ```
 
 ## Usage
 
@@ -319,10 +168,10 @@ sudo systemctl start svk-node
 sudo systemctl start svk-restserver
 sudo /usr/local/svk/mgmt-fw/bin/svksvcmgr --svk_conf_file /etc/svk/mgmt_fw_config.json &
 sudo systemctl start cognos-subscriber
+telegraf --config /usr/local/svk/svk-app/cognos/telegraf/telegraf.conf
 sudo systemctl start cognos-app
 sudo systemctl start cognos-rbac
-sudo systemctl start cognos-ui
-telegraf --config /usr/local/svk/svk-app/cognos/telegraf/telegraf.conf
+sudo systemctl restart caddy
 ```
 
 ### Requesting changes

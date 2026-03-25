@@ -13,7 +13,7 @@ sys.path.append(
 from cognos.backend.base_control_interface import BaseControlInterface
 from cognos.backend.cognos_client import Cognos
 from cognos.backend.helper import fetch_cognos_configs
-from cognos.backend.app import create_app, StandaloneApplication
+from cognos.backend.app import create_app, GunicornServer
 from cognos.backend.cognos_influxdb_client import CognosInfluxDBClient
 from cognos.backend.sqlite_client import SqliteClient
 
@@ -162,7 +162,7 @@ def dummy_app():
 
 
 @pytest.fixture
-def standalone_app(dummy_app, monkeypatch):
+def gunicorn_app(dummy_app, monkeypatch):
     def fake_base_init(self):
         self.cfg = DummyCfg()
     monkeypatch.setattr(
@@ -176,7 +176,7 @@ def standalone_app(dummy_app, monkeypatch):
         "invalid_key": "test"
     }
 
-    return StandaloneApplication(dummy_app, options)
+    return GunicornServer(dummy_app, options)
 
 
 @pytest.fixture

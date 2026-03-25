@@ -7,5 +7,6 @@
     "ssl_cert": "<path to ssl cert file>",
     "ssl_key": "<path to ssl key file",
     "ssl": false,
-    "download_artifact_mode": false
+    "download_artifact_mode": false,
+    "worker_count": 0
 }
