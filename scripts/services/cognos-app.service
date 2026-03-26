@@ -2,7 +2,7 @@
 Description=Cognos Management Abstraction Layer
 Wants=network-online.target
 After=network-online.target
-Requires=svk-controller svk-restserver
+Requires=cognos-controller cognos-restserver
 
 [Service]
 SyslogIdentifier=Cognos Abstraction Layer
