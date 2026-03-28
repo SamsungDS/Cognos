@@ -40,6 +40,8 @@ cme_global cme_global_obj;
 int 
 cme_init ()
 {
+        CME_LOG("INFO", "Verification of Cognos-me clean state");
+        cme_global_obj.clean_up();
         int rc = cme_global_obj.read_cme_config_json(CME_CONFIG_FILE);
         if (rc !=0)
         {
@@ -75,6 +77,7 @@ cme_clean_up ()
                 CME_ERR("de_init failed");
                 return -EINVAL;
         }
+        CME_LOG("INFO", "cme_global_obj clean up completed");
         return 0;
 }
 
@@ -218,11 +221,12 @@ execute_async (svk_pass_thru_cmd *, svk_postprocess_fn *)
  * @return svk_status Refer to framework_struct.h for return codes
  */
 svk_status
-clean_up (void *)
+clean_up (void*)
 {
   CME_LOG("INFO", "clean_up function called");
-  cme_clean_up ();
-  return SVK_STATUS_FAIL;
+  cme_clean_up();
+  CME_LOG("INFO", "clean_up function Completed");
+  return SVK_STATUS_SUCCESS;
 }
 
 /**

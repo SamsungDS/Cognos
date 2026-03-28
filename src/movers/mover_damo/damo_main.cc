@@ -126,63 +126,84 @@ int read_damo_config_json(damo_config_params* damo_config_params_to_fill, int da
  * It deletes all the kdamonds context matching the cgroup_name
  * @return: None
  */
+
 bool remove_context_yaml(string input_file, string output_file, string cg_name)
 {
-        bool cleanup = false;
-        try
-        {
-                YAML::Node config = YAML::LoadFile(input_file);
-                YAML::Node kdamonds = config["kdamonds"];
-                vector<int> to_remove_idx;
+    bool cleanup = false;
+    try
+    {
+        YAML::Node config = YAML::LoadFile(input_file);
         
-                for (long unsigned int i=0;i<kdamonds.size();i++)
-                {    
-                        YAML::Node contexts = kdamonds[i]["contexts"];
-                        for (const auto& ops : contexts)
-                        {
-                                YAML::Node schemes = ops["schemes"];
-                                for (const auto& action : schemes)
-                                {
-                                        YAML::Node filters = action["filters"];
-                                        for (const auto& filter : filters)
-                                        {
-                                                if ((!(filter["filter_type"].as<string>().compare("memcg"))) && (!(filter["memcg_path"].as<string>().compare("/"+cg_name))))
-                                                {
-                                                        to_remove_idx.emplace_back(i);
-                                                }
-                                        }
-                                }
-                        }
-                }
-                for (long unsigned int i =0;i<to_remove_idx.size();i++)
-                {
-                        kdamonds.remove(to_remove_idx[i] -i);
-                }
-                YAML::Node kdamonds_ = config["kdamonds"];
-                if (kdamonds_.size() == 0)
-                {
-                        cleanup = true;
-                }
+        if (!config["kdamonds"] || !config["kdamonds"].IsSequence()) {
+            return false;
+        }
 
-                std::ofstream fout(output_file);
-                fout << config;
-                fout.close();
-                if (cleanup)
-                {
-                        string cmd = "printf \"%s\n\n\" \"$(sed '2,$d' " + output_file + ")\" > " + output_file;
-                        vector<string> cmd_output;
-                        int ret = execute_command(cmd, cmd_output, false);
-                        if (ret)
-                        {
-                                throw runtime_error("Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret));
-                        }
-                }
-        }
-        catch (const std::exception& e)
+        // build a NEW sequence instead of trying to delete from the old one
+        YAML::Node updated_kdamonds = YAML::Node(YAML::NodeType::Sequence);
+
+        for (std::size_t i = 0; i < config["kdamonds"].size(); i++)
         {
-                throw runtime_error("Error in " + string(__FUNCTION__) + " : " + string(e.what()));
+            bool found_match = false;
+            YAML::Node current_kdamond = config["kdamonds"][i];
+            
+            // Check if this specific kdamond matches the cg_name
+            for (const auto& ops : current_kdamond["contexts"])
+            {
+                if (found_match) break;
+                for (const auto& action : ops["schemes"])
+                {
+                    if (found_match) break;
+                    for (const auto& filter : action["filters"])
+                    {
+                        if (filter["filter_type"].as<string>("") == "memcg" && 
+                            filter["memcg_path"].as<string>("") == ("/" + cg_name))
+                        {
+                            found_match = true;
+                            break; 
+                        }
+                    }
+                }
+            }
+
+            if (!found_match)
+            {
+                updated_kdamonds.push_back(current_kdamond);
+            }
+            else
+            {
+                CME_LOG("INFO", "Found context to remove at index " + std::to_string(i));
+            }
         }
-        return !(cleanup);
+
+        // Replace the old sequence with the new one
+        config["kdamonds"] = updated_kdamonds;
+
+        std::size_t final_size = config["kdamonds"].size();
+        CME_LOG("INFO", "kdsize=" + std::to_string(final_size));
+
+        if (final_size == 0)
+        {
+            cleanup = true;
+        }
+
+        std::ofstream fout(output_file);
+        if (cleanup)
+        {
+            CME_LOG("INFO", "clean_up detected");
+            fout << "kdamonds:" << std::endl;
+        }
+        else
+        {
+            CME_LOG("INFO", "clean_up not detected");
+            fout << config;
+        }
+        fout.close();
+    }
+    catch (const std::exception& e)
+    {
+        throw std::runtime_error("Error in " + string(__FUNCTION__) + " : " + string(e.what()));
+    }
+    return !cleanup;
 }
 
 /**
@@ -498,7 +519,6 @@ int start(string app_name, long app_pid, unsigned int slow_tier, unsigned int fa
                 damo_process_param.app_name = app_name;
                 damo_process_param.app_pid = to_string(app_pid);
 
-                
                 ret = damo_init();
                 if (ret)
                 {
@@ -516,7 +536,6 @@ int start(string app_name, long app_pid, unsigned int slow_tier, unsigned int fa
                 {
                         CME_LOG("INFO", "damo not running");
                 }
-
 
                 ret = cgroup_create();
                 if (ret)
@@ -542,7 +561,16 @@ int start(string app_name, long app_pid, unsigned int slow_tier, unsigned int fa
                         ret = execute_command(cmd, cmd_output, false);
                         if (ret)
                         {
-                                CME_LOG("INFO", "ERROR in damo start");
+                                CME_ERR("ERROR in damo start: " + std::to_string(ret));
+                                CME_LOG("INFO","Damo output:");
+                                for (const auto& line : cmd_output)
+                                {
+                                        CME_LOG("INFO", line);
+                                }
+                        }
+                        else
+                        {
+                              CME_LOG("INFO","Damo Start: Success");  
                         }
                 }
         }
@@ -582,7 +610,7 @@ int cgroup_delete(string cg_name)
     }
     return ret;
 }
-  
+
   /**
    * @brief function to stop damo pagemover
    * @details function to stop damo pagemover:
@@ -599,11 +627,16 @@ int stop(string app_name, long app_pid)
                 vector<string> cmd_output;
                 cmd = cmd = "sudo " + PM_DAMO_PYTHON3_PATH + " " + PM_DAMO_PATH + " stop";
                 ret = execute_command(cmd, cmd_output, TEST_BUILD);
-                CME_LOG("INFO", "--damo--stop ", to_string(ret));
+
                 if (ret)
                 {
                         CME_LOG("INFO", "ERROR in command: ", cmd);
+                        CME_LOG("INFO", "damo stop failed: ", to_string(ret));
                         return -EINVAL;
+                }
+                else
+                {
+                        CME_LOG("INFO","Damo Stop: Success");  
                 }
 
                 string cg_name = app_name + "_" + to_string(app_pid);
@@ -629,8 +662,13 @@ int stop(string app_name, long app_pid)
                                 ret = execute_command(cmd, cmd_output, false);
                                 if (ret)
                                 {
+                                        CME_LOG("INFO", "Damo restart error");
                                         CME_LOG("INFO", "Error in " + string(__FUNCTION__) + " : execute_command return value = " + to_string(ret));
                                         return ret;
+                                }
+                                else
+                                {
+                                        CME_LOG("INFO","Damo Restart: Success");  
                                 }
                         }
                 }

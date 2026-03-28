@@ -784,6 +784,7 @@ int cme_global::clean_up()
 {
         try
         { 
+                CME_LOG("INFO", "Trying to delete global damo config File");
                 std::string global_damo_gen_config = CME_CONFIG_PATH + "global_damo_config.yaml";
                 filesystem::path filePath(global_damo_gen_config);
                 if (filesystem::exists(filePath))

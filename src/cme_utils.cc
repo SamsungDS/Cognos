@@ -97,6 +97,14 @@ int execute_command(const std::string& cmd, std::vector<std::string>& output, bo
 
         // Extract the exit status
         int exit_status = WEXITSTATUS(status);
+        if (exit_status)
+        {
+                CME_ERR("ERROR in execute_command: "+ command);
+                for (const auto& line : output)
+                {
+                        CME_LOG("INFO", line);
+                }
+        }
         return exit_status;
 }
 

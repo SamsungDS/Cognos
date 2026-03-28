@@ -51,7 +51,7 @@ TEST_F(cmeTest, ExecuteAsyncTest) {
 
 TEST_F(cmeTest, CleanUpTest) {
     svk_status status = clean_up(nullptr);
-    ASSERT_EQ(status, SVK_STATUS_FAIL);
+    ASSERT_EQ(status, SVK_STATUS_SUCCESS);
 }
 
 TEST_F(cmeTest, TokenizeTest) {
