@@ -89,25 +89,32 @@ def get_numa_map_from_lsmem() -> dict[str,int]:
 
 # Map the lsmem output to obtain numa node
 def get_numa_node_for_device(bdf :str, lsmem_map :dict[str,int]) -> int:
+    node_list = []
     cmd = f"lspci -vvv -s {bdf} | grep 'Range1'"
     output = run_command(cmd)
     if not output:
-        return -1 
+        return -1
+
     match = re.search(r"([0-9a-fA-F]+-[0-9a-fA-F]+)", output)
 
     if match:
         device_range = match.group(1).lower()
 
-        if device_range in lsmem_map:
-            return lsmem_map[device_range]
-
-        cmd_range = hex_string_to_range(device_range)
-        if cmd_range:
+        lspci_range = hex_string_to_range(device_range)
+        if lspci_range:
             for mem_range, node in lsmem_map.items():
                 lsmem_range = hex_string_to_range(mem_range)
                 if lsmem_range:
-                    if range_subset(cmd_range, lsmem_range) == True :
-                        return node
+                    if range_subset(lsmem_range, lspci_range) == True or \
+                       range_subset(lspci_range, lsmem_range) == True :
+                        node_list.append(node)
+
+            uniq_node_list = list(dict.fromkeys(node_list))
+            if len(uniq_node_list) == 1:
+                return uniq_node_list[0]
+            else:
+                return -1
+
     return -1
 
 # Populate the protocol
