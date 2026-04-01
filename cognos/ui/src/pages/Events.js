@@ -112,14 +112,6 @@ const Events = () => {
         return matchesFilter && matchesSearch;
     });
 
-    const toggleSelectEvent = (eventId) => {
-        setSelectedEvents(prev =>
-            prev.includes(eventId)
-                ? prev.filter(id => id !== eventId)
-                : [...prev, eventId]
-        );
-    };
-
     const toggleEventExpansion = (eventId) => {
         setExpandedEvent(expandedEvent === eventId ? null : eventId);
     };
@@ -162,17 +154,9 @@ const Events = () => {
                 onMouseEnter={(e) => e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)'}
                 onMouseLeave={(e) => e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.1)'}
             >
-                <div className="card-body p-1">
+                <div className="card-body p-3">
                     <div className="d-flex align-items-start justify-content-between">
                         <div className="d-flex align-items-start flex-grow-1">
-                            <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={() => toggleSelectEvent(event.id)}
-                                className="form-check-input me-3 mt-1"
-                                style={{ cursor: 'pointer' }}
-                            />
-
                             <div className="flex-grow-1">
                                 <div className="d-flex align-items-center mb-2">
                                     {getSeverityBadge(event.severity)}

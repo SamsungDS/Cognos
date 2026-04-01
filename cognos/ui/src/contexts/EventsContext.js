@@ -55,6 +55,15 @@ const generateEventSignature = (event) => {
 };
 
 // Utility function to ensure all events have unique IDs and are sorted by time
+const generateStableId = (signature, index) => {
+    // Simple hash based on content, not time
+    let hash = 0;
+    for (let i = 0; i < signature.length; i++) {
+        hash = ((hash << 5) - hash) + signature.charCodeAt(i);
+        hash |= 0;
+    }
+    return `event-${Math.abs(hash)}-${index}`;
+};
 // istanbul ignore next
 const ensureEventIds = (eventsArray, seenSignatures = new Set()) => {
     if (!Array.isArray(eventsArray)) return [];
@@ -66,7 +75,7 @@ const ensureEventIds = (eventsArray, seenSignatures = new Set()) => {
         return {
             ...event,
             // eslint-disable-next-line no-restricted-syntax
-            id: event.id || `event-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 11)}`,
+            id: event.id || generateStableId(signature, index),
             signature: signature,
             isRead: event.isRead !== undefined ? event.isRead : wasSeenBefore // Keep existing or mark based on signature
         };
