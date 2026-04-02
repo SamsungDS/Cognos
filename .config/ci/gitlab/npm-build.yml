@@ -7,7 +7,7 @@ npm-build:
     - cd $ui_dir
     - npm ci
   variables:
-    DOCKERFILE_NAME: rocky9
+    DOCKERFILE_NAME: ol9
     IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
   artifacts:
     paths:
