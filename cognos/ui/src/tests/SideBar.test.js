@@ -5,6 +5,11 @@ import '@testing-library/jest-dom';
 import SideBar from '../components/SideBar.js';
 import { AuthContext } from '../components/ProtectedRoute.js';
 
+jest.mock('../constant', () => ({
+  Configs: {
+    rbac_enabled: true,  // Force RBAC on during tests
+  },
+}));
 // Mock the SVG components
 jest.mock('../assets/icons/ConfigureIcon.svg', () => ({
   ReactComponent: () => <div data-testid="configure-icon">Configure Icon</div>
@@ -144,13 +149,12 @@ describe('SideBar Component', () => {
       </TestWrapper>
     );
 
-    // TODO: Fix UI Unit tests for RBAC based permissions
     // No menu items should be visible for unknown role
-    // expect(screen.queryByTestId('menu-item-0')).not.toBeInTheDocument();
-    // expect(screen.queryByTestId('menu-item-1')).not.toBeInTheDocument();
-    // expect(screen.queryByTestId('menu-item-2')).not.toBeInTheDocument();
-    // expect(screen.queryByTestId('menu-item-3')).not.toBeInTheDocument();
-    // expect(screen.queryByTestId('menu-item-4')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('menu-item-0')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('menu-item-1')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('menu-item-2')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('menu-item-3')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('menu-item-4')).not.toBeInTheDocument();
   });
 
   it('maintains correct structure when no menu items are visible', () => {
@@ -185,9 +189,8 @@ describe('SideBar Component', () => {
       </TestWrapper>
     );
 
-    // TODO: Fix to correctly filter RBAC role
     // Guest should see 3 items
-    // expect(screen.getAllByRole('link')).toHaveLength(3);
+    expect(screen.getAllByRole('link')).toHaveLength(3);
   });
 
   it('uses correct test ids for menu items', () => {
