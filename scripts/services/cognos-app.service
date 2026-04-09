@@ -1,7 +1,7 @@
 [Unit]
 Description=Cognos Management Abstraction Layer
 Wants=network-online.target
-After=network-online.target
+After=network-online.target cognos-controller cognos-restserver
 Requires=cognos-controller cognos-restserver
 
 [Service]

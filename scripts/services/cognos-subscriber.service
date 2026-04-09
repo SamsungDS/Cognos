@@ -2,7 +2,6 @@
 Description=Cognos Subscriber
 Wants=network-online.target
 After=influxdb.service network-online.target cognos-app.service
-Requires=svk-svc-mgr
 
 [Service]
 SyslogIdentifier=Cognos Subscriber
