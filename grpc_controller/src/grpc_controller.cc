@@ -1,6 +1,7 @@
 #include "grpc_controller.h"
 
 #include <systemd/sd-daemon.h>
+#include <unistd.h>
 
 #include <condition_variable>
 #include <csignal>
@@ -235,7 +236,8 @@ int update_node_status_from_str(const std::string &in_status_str,
   return -1;
 }
 
-ControllerServicer::ControllerServicer(const std::string &svk_conf_file) {
+ControllerServicer::ControllerServicer(const std::string &svk_conf_file,
+                                       bool hb_mgr_flag) {
   struct stat buf;
   int ret_val = -1;
   controller_config config;
@@ -267,11 +269,17 @@ ControllerServicer::ControllerServicer(const std::string &svk_conf_file) {
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
              "Controller servicer initialized");
 
+  // Initialize heartbeat manager
+  if (hb_mgr_flag) {
+    InitializeHeartbeatManager();
+  }
+
   m_initialized_flag = true;
 }
 
 ControllerServicer::~ControllerServicer() {
-  auto server = this->get_server();
+  auto server = get_server();
+  StopNodeHealthMonitoring();
 
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
              "Shutting down the gRPC Controller server");
@@ -322,8 +330,8 @@ Status ControllerServicer::RegisterNode(ServerContext *ctxt,
   int status = -1;
   int device_info_status;
 
-  logger_str =
-      "RegisterNode called with node_name:" + node_name + " node_ip:" + node_ip;
+  logger_str = "RegisterNode called with node_name:" + node_name +
+               " node_ip:" + node_ip + " port: " + node_port;
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
 
   if (node_ip.length() == 0 || node_port.length() == 0) {
@@ -411,6 +419,14 @@ Status ControllerServicer::RegisterNode(ServerContext *ctxt,
     }
   }
 
+  auto client = CreateClient(node_name, node_port);
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+             "Checking the node's grpc channel state");
+  int ch_status = client->WaitForConnected();
+  logger_str =
+      "Channel status is ready. Return value - " + std::to_string(ch_status);
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+
   device_info_status =
       g_sla_device_hlpr->GetDeviceDetails(node.node_ip, node.node_port);
   if (device_info_status != 0) {
@@ -422,6 +438,20 @@ Status ControllerServicer::RegisterNode(ServerContext *ctxt,
 
   g_sla_device_hlpr->UpdateAllDevicesWithStatus(node.node_ip,
                                                 Device_Status_E::DEVICE_ONLINE);
+
+  // Add node to heartbeat monitoring
+  if (m_ctrlr_heartbeat_manager) {
+    std::string log = "Added peer node " + node.node_name + ":" + node.node_ip +
+                      ":" + node.node_port + ":tag-" +
+                      NODE_SERVICE_HEALTHCHECK_TAG;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, log.c_str());
+    m_ctrlr_heartbeat_manager->AddPeer(node.node_name, node.node_ip,
+                                       node.node_port,
+                                       NODE_SERVICE_HEALTHCHECK_TAG);
+    // Start heartbeat monitoring if not already running
+    StartNodeHealthMonitoring();
+  }
+
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
              "Cluster config changed. Notifying the event thread");
   std::lock_guard lock(gMutex);
@@ -478,6 +508,11 @@ Status ControllerServicer::UnregisterNode(ServerContext *ctxt,
 
   // Get the node ID (aka node.id) as this is used for the device mapping
   node_id = m_registered_nodes[node_name].node_ip;
+
+  // Remove node from heartbeat monitoring
+  if (m_ctrlr_heartbeat_manager) {
+    m_ctrlr_heartbeat_manager->RemovePeer(node_name);
+  }
 
   m_registered_nodes.erase(node_name);
   status = g_sla_device_hlpr->UnregisterDevicesForNode(node_id);
@@ -2038,6 +2073,26 @@ Status ControllerServicer::StatsAPI(ServerContext *ctxt,
   return Status(grpc::OK, "Success");
 }
 
+void ControllerHealthCheckServicer(std::shared_ptr<Server> ctrl_server,
+                                   bool enable) {
+  if (auto *ctrlr_health_service = ctrl_server->GetHealthCheckService();
+      ctrlr_health_service != nullptr) {
+    if (enable) {
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                 "HealthCheck enabled for Controller");
+    } else {
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                 "HealthCheck disabled for Controller");
+    }
+    ctrlr_health_service->SetServingStatus(CONTROLLER_SERVICE_HEALTHCHECK_TAG,
+                                           enable);
+  } else {
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::WARN,
+               "HealthCheck not enabled for Controller");
+  }
+  return;
+}
+
 std::shared_ptr<Server> InitializeServicer(ControllerServicer *svcr) {
   std::string logger_str;
 
@@ -2067,6 +2122,17 @@ std::shared_ptr<Server> InitializeServicer(ControllerServicer *svcr) {
   // clients. In this case it corresponds to an *synchronous* service.
   // builder.RegisterService(new Servicer(svk_conf_file, framework_lib_path));
   builder.RegisterService(svcr);
+
+  // Set the Keepalive settings
+  builder.AddChannelArgument(GRPC_ARG_KEEPALIVE_TIME_MS, 20000);
+  builder.AddChannelArgument(GRPC_ARG_KEEPALIVE_TIMEOUT_MS, 5000);
+  builder.AddChannelArgument(GRPC_ARG_KEEPALIVE_PERMIT_WITHOUT_CALLS, 1);
+  builder.AddChannelArgument(
+      GRPC_ARG_HTTP2_MIN_RECV_PING_INTERVAL_WITHOUT_DATA_MS, 20000);
+  builder.AddChannelArgument(GRPC_ARG_HTTP2_MAX_PINGS_WITHOUT_DATA, 0);
+  builder.AddChannelArgument(GRPC_ARG_HTTP2_MAX_PING_STRIKES, 2);
+  builder.AddChannelArgument(GRPC_ARG_MAX_MESSAGE_LENGTH, 1024 * 1024 * 8);
+
   // Finally assemble the server.
   std::shared_ptr<Server> server(builder.BuildAndStart());
   if (server == nullptr) {
@@ -2074,7 +2140,6 @@ std::shared_ptr<Server> InitializeServicer(ControllerServicer *svcr) {
                "Controller Server failed to start");
     return nullptr;
   }
-
   svcr->set_server(server);
 
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
@@ -2981,6 +3046,83 @@ int StopEventProcessingThread(ControllerServicer *svcr) {
   return 0;
 }
 
+void ControllerServicer::InitializeHeartbeatManager() {
+  std::string logger_str;
+
+  try {
+    HeartbeatConfig config;
+    // Read heartbeat config from config file if available
+    // For now, use defaults
+    m_ctrlr_heartbeat_manager = std::make_unique<HeartbeatManager>(config);
+
+    // GCOVR_EXCL_START
+    // Excluding this block from gcov since the callback happens by the thread
+    // in heartbeat manager worker. Any code in thread will be ignored by gcov
+    // dropping the code coverage. Setting the markers to exclude this block
+    // from code coverage
+
+    // Set up the health status change callback
+    m_ctrlr_heartbeat_manager->SetHealthCallback(
+        [this](const std::string &node_id,
+               [[maybe_unused]] const std::string &node_ip,
+               [[maybe_unused]] HeartbeatStatus old_status,
+               HeartbeatStatus new_status) {
+          std::string logger_str;
+
+          // TODO: Generate an event
+          // Update the node status in registered_nodes
+          std::lock_guard<std::mutex> lock(m_registered_nodes_mutex);
+          for (auto &[node_name, node_info] : m_registered_nodes) {
+            if (node_info.node_ip == node_id ||
+                node_info.node_name == node_id) {
+              if (new_status == HeartbeatStatus::HEALTHY) {
+                node_info.status = NODE_ONLINE;
+              } else if (new_status == HeartbeatStatus::UNHEALTHY ||
+                         new_status == HeartbeatStatus::TIMEOUT) {
+                node_info.status = NODE_OFFLINE;
+              }
+              logger_str = "Updated node " + node_name + " status to " +
+                           node_status_to_str.at(node_info.status);
+              svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                         logger_str.c_str());
+              break;
+            }
+          }
+        });
+    // GCOVR_EXCL_STOP
+
+    logger_str = "Heartbeat manager initialized";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
+  } catch (const std::exception &e) {
+    logger_str =
+        "Failed to initialize heartbeat manager: " + std::string(e.what());
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+  }
+}
+
+void ControllerServicer::StartNodeHealthMonitoring() {
+  if (!m_ctrlr_heartbeat_manager) {
+    std::string logger_str =
+        "Heartbeat manager not initialized, skipping node health monitoring";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::WARN,
+               logger_str.c_str());
+    return;
+  }
+
+  // Start the heartbeat manager if not already running
+  if (!m_ctrlr_heartbeat_manager->IsRunning()) {
+    m_ctrlr_heartbeat_manager->Start();
+  }
+}
+
+void ControllerServicer::StopNodeHealthMonitoring() {
+  if (m_ctrlr_heartbeat_manager && m_ctrlr_heartbeat_manager->IsRunning()) {
+    m_ctrlr_heartbeat_manager->Stop();
+  }
+}
+
 int StartServer(const std::string &svk_conf_file, bool blocking) {
   int status = -1;
   std::thread *sla_thread;
@@ -2990,7 +3132,14 @@ int StartServer(const std::string &svk_conf_file, bool blocking) {
   std::signal(SIGINT, signal_handler);
   std::signal(SIGABRT, signal_handler);
 
-  auto svcr(new ControllerServicer(svk_conf_file));
+  bool hb_mgr_flag = false;
+
+  // In blocking mode, enable the heartbeat manager as the service will be
+  // running fully The non-blocking mode is for testing purpose only. So the
+  // heartbeat manager may or may not be required
+  if (blocking) hb_mgr_flag = true;
+
+  auto svcr = (new ControllerServicer(svk_conf_file, hb_mgr_flag));
   if (svcr->get_state() == false) {
     std::cout << "Servicer is not initialized properly. Exiting" << std::endl;
     return status;
@@ -3030,6 +3179,8 @@ int StartServer(const std::string &svk_conf_file, bool blocking) {
     delete svcr;
     return status;
   }
+
+  ControllerHealthCheckServicer(server, true);
 
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
              "Started the Event Processing Thread");

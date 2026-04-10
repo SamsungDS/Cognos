@@ -2,10 +2,14 @@
 
 #include <systemd/sd-daemon.h>
 
+#include <condition_variable>
 #include <csignal>
+#include <mutex>
 #include <set>
+#include <thread>
 
 #include "client_library.h"
+#include "grpc/health/v1/health.grpc.pb.h"
 constexpr size_t MAX_SIZE = 4096;
 
 #ifndef BUILD_TESTING
@@ -16,6 +20,8 @@ using namespace std;
 using namespace svk;
 
 std::atomic<int> gSignalNodeStatus = -1;
+std::mutex gNodeSrvMutex;
+std::condition_variable gNodeSrvCondVar;
 
 void systemd_notify(int ready, const char *status) {
   sd_notifyf(0, "READY=%d\nSTATUS=%s", ready, status);
@@ -167,13 +173,20 @@ Servicer::Servicer(const std::string &svk_conf_file) {
           "Cluster name " + config.cluster_id + " is set in the core framework";
       svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
     }
+
+    // Initialize heartbeat manager for monitoring controller health
+    InitializeHeartbeatManager();
+
     m_initialized_flag = true;
   }
 }
 
 Servicer::~Servicer() {
-  auto server = this->get_server();
-
+  auto server = get_server();
+  // Stop heartbeat manager before cleanup
+  if (m_heartbeat_manager) {
+    m_heartbeat_manager->Stop();
+  }
   svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
              "Shutting down the gRPC Node server");
   if (server) server->Shutdown();
@@ -368,6 +381,17 @@ std::shared_ptr<Server> InitializeNodeServicer(Servicer *svcr) {
   // clients. In this case it corresponds to an *synchronous* service.
   // builder.RegisterService(new Servicer(svk_conf_file, framework_lib_path));
   builder.RegisterService(svcr);
+
+  // Set the Keepalive settings
+  builder.AddChannelArgument(GRPC_ARG_KEEPALIVE_TIME_MS, 20000);
+  builder.AddChannelArgument(GRPC_ARG_KEEPALIVE_TIMEOUT_MS, 5000);
+  builder.AddChannelArgument(GRPC_ARG_KEEPALIVE_PERMIT_WITHOUT_CALLS, 1);
+  builder.AddChannelArgument(
+      GRPC_ARG_HTTP2_MIN_RECV_PING_INTERVAL_WITHOUT_DATA_MS, 20000);
+  builder.AddChannelArgument(GRPC_ARG_HTTP2_MAX_PINGS_WITHOUT_DATA, 0);
+  builder.AddChannelArgument(GRPC_ARG_HTTP2_MAX_PING_STRIKES, 2);
+  builder.AddChannelArgument(GRPC_ARG_MAX_MESSAGE_LENGTH, 1024 * 1024 * 8);
+
   // Finally assemble the server.
   std::shared_ptr<Server> server(builder.BuildAndStart());
   if (server == nullptr) {
@@ -390,6 +414,17 @@ std::shared_ptr<Server> InitializeNodeServicer(Servicer *svcr) {
       return nullptr;
     }
   }
+
+  if (auto *node_health_service = server->GetHealthCheckService();
+      node_health_service != nullptr) {
+    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
+               "HealthCheck enabled for Node Server");
+    node_health_service->SetServingStatus(NODE_SERVICE_HEALTHCHECK_TAG, true);
+  } else {
+    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::WARN,
+               "HealthCheck not enabled for Node Server");
+  }
+  systemd_notify(1, "Service is running and healthy.");
 
   return server;
 }
@@ -416,6 +451,93 @@ void signal_node_handler(int signal) {
   return;
 }
 
+int Servicer::StartMonitorControllerThread() const {
+  std::string logger_str;
+  node_config config;
+
+  svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
+             "Starting the Controller monitoring thread");
+  config = this->get_svk_config();
+
+  if (config.controller_id.length() == 0) {
+    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::WARN,
+               "Controller is not configured");
+    return -1;
+  }
+
+  // Use heartbeat manager to monitor controller health
+  if (m_heartbeat_manager) {
+    // Set up callback for controller health status changes
+    m_heartbeat_manager->SetHealthCallback(
+        [this, &config]([[maybe_unused]] const std::string &controller_id,
+                        [[maybe_unused]] const std::string &controller_ip,
+                        HeartbeatStatus old_status,
+                        HeartbeatStatus new_status) {
+          std::string logger_str;
+          if (new_status == HeartbeatStatus::HEALTHY &&
+              old_status != HeartbeatStatus::HEALTHY) {
+            svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
+                       "Controller is alive again. Registering with the "
+                       "controller again");
+            int reg_status = RegisterNodeWithController(config);
+            if (reg_status) {
+              svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR,
+                         "Node Server failed to register with the controller "
+                         "through heartbeat callback");
+            } else {
+              systemd_notify(1, "Service is running and healthy.");
+            }
+          } else if (new_status != HeartbeatStatus::HEALTHY) {
+            svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::WARN,
+                       "Lost connection to the controller");
+            systemd_notify(
+                0,
+                "Lost connection to controller. Waiting for the controller to "
+                "reconnect ...");
+          }
+        });
+
+    // Add controller as a peer to monitor
+    m_heartbeat_manager->AddPeer(config.controller_id, config.controller_id,
+                                 config.controller_port,
+                                 CONTROLLER_SERVICE_HEALTHCHECK_TAG);
+
+    // Start heartbeat monitoring
+    m_heartbeat_manager->Start();
+  }
+
+  while (this->get_stop_flag() == false) {
+    std::unique_lock lock(gNodeSrvMutex);
+
+    // Sleep for 10 seconds or until the stop flag is set to true
+    gNodeSrvCondVar.wait_for(
+        lock, std::chrono::seconds(HEALTH_CHECK_RECONNECT_INTERVAL),
+        [this]() { return this->get_stop_flag(); });
+  }
+
+  svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
+             "Exiting the Controller monitoring thread");
+  return 0;
+}
+
+void Servicer::InitializeHeartbeatManager() {
+  std::string logger_str;
+
+  try {
+    HeartbeatConfig config;
+    // Read heartbeat config from config file if available
+    // For now, use defaults
+    m_heartbeat_manager = std::make_unique<HeartbeatManager>(config);
+
+    logger_str = "Heartbeat manager initialized for node";
+    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+  } catch (const std::exception &e) {
+    logger_str =
+        "Failed to initialize heartbeat manager: " + std::string(e.what());
+    svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR, logger_str.c_str());
+  }
+}
+
 int StartNodeServer(const std::string &svk_conf_file, bool blocking) {
   int status = -1;
 
@@ -438,14 +560,21 @@ int StartNodeServer(const std::string &svk_conf_file, bool blocking) {
     systemd_notify(1, "Service is running and healthy.");
 
     if (blocking == true) {
+      auto monitor_thread =
+          std::thread(&Servicer::StartMonitorControllerThread, svcr);
+
       while (gSignalNodeStatus.load() == -1) {
         sleep(5);
       }
       systemd_notify(1, "Stopping the service ...");
+      svcr->set_stop_flag();
+      gNodeSrvCondVar.notify_one();
+
       SetNodeStatus(svcr->get_svk_config(), "offline");
       gSignalNodeStatus = -1;
+      monitor_thread.join();
       svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
-                 "Set the node status to offline");
+                 "Updated the node status to offline");
     } else {
       svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::INFO,
                  "The node server is started in non-blocking mode for UT");

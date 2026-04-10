@@ -1,16 +1,30 @@
 #ifndef __CLIENT_LIBRARY_H__
 #define __CLIENT_LIBRARY_H__
+#include <mutex>
+#include <unordered_map>
+
 #include "framework/framework.grpc.pb.h"
+#include "grpc/health/v1/health.grpc.pb.h"
 #include "grpc_hdr.h"
+
+#define CONTROLLER_SERVICE_HEALTHCHECK_TAG "cognos_controller"
+#define NODE_SERVICE_HEALTHCHECK_TAG "cognos_node"
 
 // gRPC connection timeout for each command executed between controller to node
 // server and vice-versa
 #define GRPC_COMMAND_DEADLINE_TIMEOUT (180)
 
+using grpc::health::v1::Health;
+using grpc::health::v1::HealthCheckRequest;
+using grpc::health::v1::HealthCheckResponse;
 using svk::CommandFwk;
 using svk::CommandRequest;
 using svk::CommandResponse;
 using svk::Controller;
+
+struct ClientResources {
+  std::shared_ptr<grpc::Channel> channel;
+};
 
 class Client {
  public:
@@ -39,10 +53,15 @@ class Client {
                                   svk::SLAManagementResponse* resp);
   virtual Status StatsAPI(const svk::StatsRequest* req,
                           svk::StatsResponse* resp);
+  virtual bool CheckServerHealth(const std::string& service_name);
+  virtual int GetChannelState(grpc_connectivity_state& state);
+  virtual int WaitForConnected();
 
  private:
-  std::shared_ptr<Channel> channel;
+  std::string node_and_port_;
+  std::shared_ptr<Channel> channel_;
   std::unique_ptr<CommandFwk::Stub> fwk_stub_;
   std::unique_ptr<Controller::Stub> ctrlr_stub_;
+  std::unique_ptr<Health::Stub> health_stub_;
 };
 #endif /* __CLIENT_LIBRARY_H__ */

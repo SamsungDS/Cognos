@@ -300,8 +300,8 @@ class MockTestController : public ::testing::Test {
     pt.put("svk_mgmt_fw_controller.logger.log_level", "DEBUG");
     boost::property_tree::write_json(conf_file, pt);
 
-    ControllerServicer *svcr(new ControllerServicer(conf_file));
-    server_ = InitializeServicer(svcr);
+    svcr_ = new ControllerServicer(conf_file);
+    server_ = InitializeServicer(svcr_);
 
     mockClient = new MockClient;
     // auto c = std::make_unique<Client>("localhost", "9998");
@@ -310,16 +310,18 @@ class MockTestController : public ::testing::Test {
     // "9998")));
 
     ASSERT_NE(server_, nullptr);
-    EXPECT_TRUE(svcr->get_state() == true);
+    EXPECT_TRUE(svcr_->get_state() == true);
     EXPECT_EQ(0, svk_logger_set_flush_interval(1));
   }
 
   void TearDown() override {
     server_->Shutdown();
+    delete svcr_;
     delete mockClient;
   }
 
   std::shared_ptr<Server> server_;
+  ControllerServicer *svcr_;
 };
 
 TEST_F(MockTestController, TestMock) {

@@ -1,8 +1,11 @@
 #include <dirent.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <gtest/internal/gtest-port.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include <csignal>
 #include <regex>
@@ -15,6 +18,7 @@
 #include "grpc_controller_hlpr.h"
 #include "grpc_server.h"
 #include "grpc_server_hlpr.h"
+#include "mock_client.hpp"
 #include "sla_hlpr_fns.h"
 #include "svk_publisher.h"
 
@@ -142,6 +146,7 @@ static std::string generate_ras_event(std::string feature_name,
   json_map["observations"] = observations_map;
 
   std::string json_data_str = json_map.dump();
+  std::cout << "JSON DATA " << json_data_str << std::endl;
   return json_data_str;
 }
 
@@ -160,7 +165,7 @@ bool is_str_in_log(std::string file_name, std::string search_str) {
   std::ifstream file(file_name);
   if (!file.good()) {
     const char *message = (file_name + " doesn't exist").c_str();
-    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR, message);
+    std::cout << message << std::endl;
     return false;
   }
   // Read the entire log file into a string
@@ -172,6 +177,38 @@ bool is_str_in_log(std::string file_name, std::string search_str) {
 
   // Check if the search string is found in the log file
   return data.find(search_str) != std::string::npos;
+}
+
+pid_t ForkController(const std::string &conf_file) {
+  pid_t ctrlr_pid = fork();
+  if (ctrlr_pid == -1) {
+    // Error handling for fork failure
+    std::cerr << "Failed to create a new process for the controller"
+              << std::endl;
+    return ctrlr_pid;
+  } else if (ctrlr_pid == 0) {
+    // Child process: Run the controller
+    std::cout << "Starting the controller in fork mode" << std::endl;
+    StartServer(conf_file, true);
+    _exit(0);  // Exit child process after server stops
+  }
+  return ctrlr_pid;
+}
+
+pid_t ForkNodeServer(const std::string &conf_file) {
+  pid_t node_srvr_pid = fork();
+  if (node_srvr_pid == -1) {
+    // Error handling for fork failure
+    std::cerr << "Failed to create a new process for the node server"
+              << std::endl;
+    return node_srvr_pid;
+  } else if (node_srvr_pid == 0) {
+    // Child process: Run the node server
+    std::cout << "Starting the node server in fork mode" << std::endl;
+    StartNodeServer(conf_file, true);
+    _exit(0);  // Exit child process after server stops
+  }
+  return node_srvr_pid;
 }
 
 TEST(InitIntegrationTest, InitControllerAndNodeServerSuccess) {
@@ -187,6 +224,7 @@ TEST(InitIntegrationTest, InitControllerAndNodeServerSuccess) {
   Servicer *svcr(new Servicer(conf_file));
   auto server = InitializeNodeServicer(svcr);
   ASSERT_NE(server, nullptr);
+  delete svcr;
   unlink(conf_file.c_str());
 }
 
@@ -362,6 +400,16 @@ TEST(InitIntegrationTest, FeatureAPIRegisteredNodeNotInCluster) {
       CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
       CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
 
+  // Add mockclient to handle the channel state calls for the non-existent host
+  // been registered for validation purpose
+  mockClient = new MockClient;
+
+  EXPECT_CALL(*mockClient, CreateClient(_, _))
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeControllerClient>(node_id, node_port);
+      });
+
   StartServer(conf_file, false);
 
   Servicer *svcr(new Servicer(conf_file));
@@ -393,6 +441,7 @@ TEST(InitIntegrationTest, FeatureAPIRegisteredNodeNotInCluster) {
   ASSERT_FALSE(status.ok());
 
   unlink(conf_file.c_str());
+  delete mockClient;
 }
 
 TEST(InitIntegrationTest, ProcessControllerCommandSuccess) {
@@ -750,8 +799,6 @@ int CheckPoller() {
   std::thread node_thr(StartNodeServer, conf_file, true);
   // Sleep for a while for the server processes to stablize
   sleep(10);
-  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-             "InitControllerNodeServerWithSignal in CheckPoller");
 
   // Raise the interrupt signal for the server to go down gracefully
   std::thread::id node_thread_id = node_thr.get_id();
@@ -772,9 +819,6 @@ int CheckPoller() {
   // node
   sleep(10);
 
-  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-             "Done with InitControllerNodeServerWithSignal in CheckPoller");
-
   unlink(conf_file.c_str());
   return 0;
 }
@@ -794,30 +838,14 @@ int CheckPollerForSIGSEGV() {
       CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
       CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
 
-  std::thread server_thr(StartServer, conf_file, true);
-  std::thread node_thr(StartNodeServer, conf_file, true);
-  // Sleep for a while for the server processes to stablize
-  sleep(5);
-  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-             "InitControllerNodeServerWithFatalSignal in CheckPoller");
+  pid_t ctrlr_pid = ForkController(conf_file);
+  pid_t node_srvr_pid = ForkNodeServer(conf_file);
 
-  // Raise the interrupt signal for the server to go down gracefully
-  std::thread::id node_thread_id = node_thr.get_id();
-  std::thread::id ctrlr_thread_id = server_thr.get_id();
-
-  auto node_native_handle =
-      *reinterpret_cast<std::thread::native_handle_type *>(&node_thread_id);
-  auto ctrlr_native_handle =
-      *reinterpret_cast<std::thread::native_handle_type *>(&ctrlr_thread_id);
-
-  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
-             "Before sending the signal - CheckPollerForSIGSEGV");
-  pthread_kill(ctrlr_native_handle, SIGSEGV);
-
-  pthread_kill(node_native_handle, SIGABRT);
-  // Wait for > 5 seconds for the signal handler to be processed on the server
-  // node
-  sleep(2);
+  sleep(15);
+  kill(ctrlr_pid, SIGSEGV);
+  kill(node_srvr_pid, SIGABRT);
+  waitpid(node_srvr_pid, nullptr, 0);
+  waitpid(ctrlr_pid, nullptr, 0);
 
   unlink(conf_file.c_str());
   return 0;
@@ -825,7 +853,7 @@ int CheckPollerForSIGSEGV() {
 
 TEST(InitIntegrationTest, InitControllerNodeServerWithFatalSignal) {
   GTEST_FLAG_SET(death_test_style, "threadsafe");
-  EXPECT_DEATH(CheckPollerForSIGSEGV(), "");
+  CheckPollerForSIGSEGV();
   EXPECT_EQ(true,
             is_str_in_log(
                 CONTROLLER_NODE_DEFAULT_LOG_FILE,
@@ -2299,6 +2327,15 @@ TEST(InitIntegrationTest, ControllerNodeServicerWithEventValidation) {
     out_file << conf_data;
     out_file.close();
   }
+  // Add mockclient to handle the channel state calls for the non-existent host
+  // been registered for validation purpose
+  mockClient = new MockClient;
+
+  EXPECT_CALL(*mockClient, CreateClient(_, _))
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeControllerClient>(node_id, node_port);
+      });
 
   // Start mgmt controller
   ControllerServicer *c_svcr(new ControllerServicer(conf_file));
@@ -2398,6 +2435,7 @@ TEST(InitIntegrationTest, ControllerNodeServicerWithEventValidation) {
   delete c_svcr;
   delete n_svcr;
   cleanup_publisher();
+  delete mockClient;
 
   unlink(conf_file.c_str());
 }
@@ -2457,6 +2495,16 @@ TEST(InitIntegrationTest, EventAPITests) {
   event_req.set_command_name("clear_events");
   status = client.EventAPI(&event_req, event_resp);
   ASSERT_EQ(status.ok(), true);
+
+  // Add mockclient to handle the channel state calls for the non-existent host
+  // been registered for validation purpose
+  mockClient = new MockClient;
+
+  EXPECT_CALL(*mockClient, CreateClient(_, _))
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeControllerClient>(node_id, node_port);
+      });
 
   reg_req.set_cluster_name("RASCluster1");
   reg_req.set_node_name("testnode");
@@ -2558,7 +2606,7 @@ TEST(InitIntegrationTest, EventAPITests) {
   event_req.clear_command_params();
   status = client.EventAPI(&event_req, event_resp);
   ASSERT_EQ(status.ok(), true);
-  std::cout << "Invalid node naem - Event response - " << event_resp->response()
+  std::cout << "Invalid node name - Event response - " << event_resp->response()
             << std::endl;
   resp_str = event_resp->response();
   resp_json = json::parse(resp_str);
@@ -2567,7 +2615,7 @@ TEST(InitIntegrationTest, EventAPITests) {
   // Call with timestamp later than the last event
   event_req.set_cluster_name("CL_ID_1");
   event_req.set_node_name("localhost");
-  command_params_json["min_timestamp"] = 1234567901;
+  command_params_json["min_timestamp"] = 4774912555955870035;
 
   event_req.set_command_params(command_params_json.dump());
   status = client.EventAPI(&event_req, event_resp);
@@ -2594,7 +2642,7 @@ TEST(InitIntegrationTest, EventAPITests) {
 
   pthread_kill(ctrlr_native_handle, SIGINT);
   server_thr.join();
-
+  delete mockClient;
   unlink(conf_file.c_str());
 }
 
@@ -3885,6 +3933,15 @@ TEST(InitIntegrationTest, NodeStatsSuccessful) {
   Servicer *svcr(new FakeNodeServicer(conf_file));
   auto server = InitializeNodeServicer(svcr);
   ASSERT_NE(server, nullptr);
+  // Add mockclient to handle the channel state calls for the non-existent host
+  // been registered for validation purpose
+  mockClient = new MockClient;
+
+  EXPECT_CALL(*mockClient, CreateClient(_, _))
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeControllerClient>(node_id, node_port);
+      });
 
   Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
 
@@ -3989,6 +4046,7 @@ TEST(InitIntegrationTest, NodeStatsSuccessful) {
             << resp->response() << std::endl;
   ASSERT_EQ(resp->response(), expected_resp_str);
 
+  delete mockClient;
   unlink(conf_file.c_str());
 }
 
@@ -4220,4 +4278,218 @@ TEST(InitIntegrationTest, NodeCommandTimeoutExceeded) {
 
   // Stop the node servicer
   delete svcr;
+}
+
+// Integration test to validate the node registration when the
+// controller goes for a reboot or disconnect/connect
+TEST(InitIntegrationTest, ReconnectWithController) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  unlink(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  unlink(MGMT_FW_NODE_DEFAULT_LOG_FILE);
+
+  // Start the controller
+  ControllerServicer *c_svcr(new ControllerServicer(conf_file));
+  auto c_server = InitializeServicer(c_svcr);
+  ASSERT_NE(c_server, nullptr);
+  EXPECT_TRUE(c_svcr->get_state() == true);
+
+  // Start the node service
+  sleep(1);
+  Servicer *n_svcr(new FakeNodeServicer(conf_file));
+  if (n_svcr->get_state() == false) {
+    std::cout << "Node Servicer is not initialized properly. Exiting"
+              << std::endl;
+    delete c_svcr;
+    return;
+  }
+  auto n_server = InitializeNodeServicer(n_svcr);
+  ASSERT_NE(n_server, nullptr);
+  std::thread monitor_thread(&Servicer::StartMonitorControllerThread, n_svcr);
+
+  sleep(5);
+  EXPECT_EQ(true, is_str_in_log(MGMT_FW_NODE_DEFAULT_LOG_FILE,
+                                "HealthCheck enabled for Node Server"));
+  EXPECT_EQ(true, is_str_in_log(MGMT_FW_NODE_DEFAULT_LOG_FILE,
+                                "Successfully registered with the controller"));
+  // Disable the Healthcheck for Controller to simulate the lost connection
+  ControllerHealthCheckServicer(c_server, false);
+  sleep(20);
+  // Enable the healthcheck again for the node service to reconnect
+  ControllerHealthCheckServicer(c_server, true);
+  sleep(15);
+  EXPECT_EQ(
+      true,
+      is_str_in_log(
+          MGMT_FW_NODE_DEFAULT_LOG_FILE,
+          "Controller is alive again. Registering with the controller again"));
+  EXPECT_EQ(true, is_str_in_log(MGMT_FW_NODE_DEFAULT_LOG_FILE,
+                                "Lost connection to the controller"));
+
+  // Stop the services
+  n_svcr->set_stop_flag();
+  monitor_thread.join();
+
+  delete n_svcr;
+  delete c_svcr;
+
+  unlink(conf_file.c_str());
+}
+
+TEST(InitIntegrationTest, ReconnectWithControllerInDaemonMode) {
+  Status status;
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  unlink(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  unlink(MGMT_FW_NODE_DEFAULT_LOG_FILE);
+
+  pid_t ctrlr_pid = ForkController(conf_file);
+  pid_t node_srvr_pid = ForkNodeServer(conf_file);
+
+  sleep(5);
+  // Terminate the controller with SIGINT to simulate the lost connectivity to
+  // controller
+  kill(ctrlr_pid, SIGINT);
+  sleep(45);
+  // restart the controller again
+  ctrlr_pid = ForkController(conf_file);
+
+  sleep(45);
+  kill(node_srvr_pid, SIGINT);
+  kill(ctrlr_pid, SIGINT);
+  waitpid(node_srvr_pid, nullptr, 0);
+  waitpid(ctrlr_pid, nullptr, 0);
+
+  sleep(2);
+  EXPECT_EQ(true, is_str_in_log(MGMT_FW_NODE_DEFAULT_LOG_FILE,
+                                "HealthCheck enabled for Node Server"));
+  EXPECT_EQ(true, is_str_in_log(MGMT_FW_NODE_DEFAULT_LOG_FILE,
+                                "Successfully registered with the controller"));
+  EXPECT_EQ(
+      true,
+      is_str_in_log(
+          MGMT_FW_NODE_DEFAULT_LOG_FILE,
+          "Controller is alive again. Registering with the controller again"));
+  EXPECT_EQ(true, is_str_in_log(MGMT_FW_NODE_DEFAULT_LOG_FILE,
+                                "Lost connection to the controller"));
+  unlink(conf_file.c_str());
+}
+
+/**
+ * @brief Test to check the node status on the controller end when the services
+ * goes up/down
+ */
+// Since the heartbeat_manager.cc is compiled by both node and controller
+// modules and linked statically, the logs of heartbeat_manager may show up
+// either in stdout (depending on the library it is linking to) or one of the
+// log files of controller or node.
+
+TEST(InitIntegrationTest, NodeStatusCheckAtControllerWithSvcRestart) {
+  testing::internal::CaptureStdout();
+
+  Status status;
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  unlink(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+  unlink(MGMT_FW_NODE_DEFAULT_LOG_FILE);
+
+  pid_t ctrlr_pid = ForkController(conf_file);
+  sleep(2);
+  pid_t node_srvr_pid = ForkNodeServer(conf_file);
+
+  sleep(10);
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+  // Check internal structure is updated
+  svk::NodeRequest *n_req(new svk::NodeRequest());
+  svk::NodeResponse *n_resp(new svk::NodeResponse());
+
+  n_req->set_command_name("list_nodes");
+
+  Status grpc_status = client.NodeAPI(n_req, n_resp);
+  EXPECT_EQ(grpc_status.ok(), true);
+  std::string command_resp = n_resp->command_response();
+  std::string expected_resp =
+      "{\"node_info\":[{\"node_ip\":\"localhost\",\"node_"
+      "name\":\"localhost\",\"node_port\":\"9998\","
+      "\"status\":\"online\"}]}";
+  std::cout << "List nodes response on startup: " << command_resp << std::endl;
+  EXPECT_EQ(command_resp, expected_resp);
+
+  kill(node_srvr_pid, SIGABRT);
+  waitpid(node_srvr_pid, nullptr, 0);
+
+  sleep(30);
+
+  grpc_status = client.NodeAPI(n_req, n_resp);
+  EXPECT_EQ(grpc_status.ok(), true);
+  command_resp = n_resp->command_response();
+  expected_resp =
+      "{\"node_info\":[{\"node_ip\":\"localhost\",\"node_"
+      "name\":\"localhost\",\"node_port\":\"9998\","
+      "\"status\":\"offline\"}]}";
+  std::cout << "List nodes response after the service is down: " << command_resp
+            << std::endl;
+  EXPECT_EQ(command_resp, expected_resp);
+
+  auto svcr1 = new Servicer(conf_file);
+  auto server1 = InitializeNodeServicer(svcr1);
+  ASSERT_NE(server1, nullptr);
+
+  sleep(45);
+
+  grpc_status = client.NodeAPI(n_req, n_resp);
+  EXPECT_EQ(grpc_status.ok(), true);
+  command_resp = n_resp->command_response();
+  expected_resp =
+      "{\"node_info\":[{\"node_ip\":\"localhost\",\"node_"
+      "name\":\"localhost\",\"node_port\":\"9998\","
+      "\"status\":\"online\"}]}";
+  std::cout << "List nodes response after the service is up: " << command_resp
+            << std::endl;
+  EXPECT_EQ(command_resp, expected_resp);
+
+  delete svcr1;
+  kill(ctrlr_pid, SIGINT);
+  sleep(2);
+  unlink(conf_file.c_str());
+  std::string output = testing::internal::GetCapturedStdout();
+
+  EXPECT_THAT(output, HasSubstr("Peer localhost (localhost:9998) health status "
+                                "changed from unhealthy to healthy"));
+  EXPECT_THAT(output, HasSubstr("Peer localhost (localhost:9998) health status "
+                                "changed from healthy to unhealthy"));
+}
+
+TEST(InitIntegrationTest, HeartbeatNodeMonitorCheckWithoutEnabling) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  ControllerServicer *c_svcr(new ControllerServicer(conf_file));
+  auto c_server = InitializeServicer(c_svcr);
+  ASSERT_NE(c_server, nullptr);
+  EXPECT_TRUE(c_svcr->get_state() == true);
+  c_svcr->StartNodeHealthMonitoring();
+  EXPECT_EQ(true, is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
+                                "Heartbeat manager not initialized, skipping "
+                                "node health monitoring"));
+  delete c_svcr;
 }
