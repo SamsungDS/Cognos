@@ -3,47 +3,11 @@ project(
   VERSION ${SVK_GRPC_FW_VERSION}
   DESCRIPTION "SVK GRPC Node Server")
 
-set(PROTOBUF_ABSL_DEPS
-    absl_absl_check
-    absl_absl_log
-    absl_algorithm
-    absl_base
-    absl_bind_front
-    absl_bits
-    absl_btree
-    absl_cleanup
-    absl_cord
-    absl_core_headers
-    absl_debugging
-    absl_die_if_null
-    absl_dynamic_annotations
-    absl_flags
-    absl_flat_hash_map
-    absl_flat_hash_set
-    absl_function_ref
-    absl_hash
-    absl_layout
-    absl_log_initialize
-    absl_log_severity
-    absl_memory
-    absl_node_hash_map
-    absl_node_hash_set
-    absl_optional
-    absl_span
-    absl_status
-    absl_statusor
-    absl_strings
-    absl_synchronization
-    absl_time
-    absl_type_traits
-    absl_utility
-    absl_variant)
-
-set(GRPC_DEPS protobuf grpc++ absl_flags absl_flags_parse)
-
 set(COMMON_INC_DIR ${PARENT_DIR}/common/include/)
 set(COMMON_SRC_DIR ${PARENT_DIR}/common/src)
+set(HEARTBEAT_INC_DIR ${PARENT_DIR}/heartbeat/include/)
 set(SRCS ${GRPC_STUB_SRCS} ${CMAKE_CURRENT_SOURCE_DIR}/src/grpc_server.cc
+         ${PARENT_DIR}/heartbeat/src/heartbeat_manager.cc
          ${COMMON_SRC_DIR}/client_library.cc)
 if(BUILD_TESTING)
   set(GRPC_INC_FILES
@@ -56,16 +20,6 @@ add_definitions(-DBOOST_BIND_GLOBAL_PLACEHOLDERS)
 
 add_executable(${PROJECT_NAME} ${SRCS})
 
-string(REPLACE ";" " " absl_deps "${PROTOBUF_ABSL_DEPS}")
-execute_process(
-  COMMAND pkg-config --libs --static protobuf grpc++ absl_flags absl_flags_parse
-          "${absl_deps}"
-  OUTPUT_VARIABLE GRPC_LINK_LIBRARIES_FLAG
-  OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_STRIP_TRAILING_WHITESPACE)
-execute_process(
-  COMMAND pkg-config --cflags protobuf grpc absl_flags absl_flags_parse
-  OUTPUT_VARIABLE GRPC_CFLAGS
-  OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_STRIP_TRAILING_WHITESPACE)
 execute_process(
   COMMAND pkg-config --cflags svkframework
   OUTPUT_VARIABLE SVK_FW_CFLAGS
@@ -80,8 +34,11 @@ set_target_properties(
   ${PROJECT_NAME} PROPERTIES VERSION ${PROJECT_VERSION}
                              SOVERSION ${PROJECT_VERSION_MAJOR})
 
+set(HEARTBEAT_LOGGER_MODULE_NAME_NODE "mgmt_fw_node")
+target_compile_definitions(${PROJECT_NAME} PRIVATE "HEARTBEAT_LOGGER_MODULE_NAME=\"${HEARTBEAT_LOGGER_MODULE_NAME_NODE}\"")
 target_include_directories(${PROJECT_NAME} PUBLIC ${GRPC_PROTO_SRC})
-target_include_directories(${PROJECT_NAME} PUBLIC ${INC_DIR} ${COMMON_INC_DIR})
+target_include_directories(${PROJECT_NAME} PUBLIC ${INC_DIR} ${COMMON_INC_DIR}
+                                                 ${HEARTBEAT_INC_DIR})
 
 target_link_libraries(
   ${PROJECT_NAME}
@@ -95,9 +52,11 @@ if(BUILD_TESTING)
   add_library(svkgrpcnodetest STATIC ${SRCS})
   set_target_properties(svkgrpcnodetest PROPERTIES COMPILE_DEFINITIONS
                                                    "BUILD_TESTING")
+target_compile_definitions(svkgrpcnodetest PRIVATE "HEARTBEAT_LOGGER_MODULE_NAME=\"${HEARTBEAT_LOGGER_MODULE_NAME_NODE}\"")                                                   
   target_include_directories(svkgrpcnodetest PUBLIC ${GRPC_PROTO_SRC})
   target_include_directories(svkgrpcnodetest PUBLIC ${INC_DIR}
-                                                    ${COMMON_INC_DIR})
+                                                    ${COMMON_INC_DIR}
+                                                    ${HEARTBEAT_INC_DIR})
 
   target_link_libraries(
     svkgrpcnodetest

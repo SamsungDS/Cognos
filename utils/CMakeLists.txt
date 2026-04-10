@@ -1,0 +1,1 @@
+add_subdirectory(svk_grpc_probe)

@@ -10,7 +10,11 @@ include_directories(${GRPC_CONTROLLER_INC_DIR})
 include_directories(${COMMON_INC_DIR})
 link_directories(${CMAKE_SOURCE_DIR}/build/grpc_node_server)
 link_directories(${CMAKE_SOURCE_DIR}/build/grpc_controller)
-add_executable(svkgrpcserver_it grpc_server_it.cc)
+add_executable(svkgrpcserver_it grpc_server_it.cc
+		${CMAKE_SOURCE_DIR}/tests/mocks/client/mock_client.cpp)
+
+target_include_directories(svkgrpcserver_it
+                           PRIVATE ${CMAKE_SOURCE_DIR}/tests/mocks/client)
 
 target_link_libraries(
   svkgrpcserver_it

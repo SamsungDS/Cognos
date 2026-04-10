@@ -9,6 +9,7 @@
 #include "framework_struct.h"
 #include "framework_upstream.h"
 #include "grpc_hdr.h"
+#include "heartbeat_manager.h"
 #include "svk_logger.h"
 
 #define MGMT_FW_NODE_DEFAULT_LOG_FILE "/var/log/svk/svk_mgmt_fw_node.log"
@@ -24,6 +25,8 @@ constexpr size_t MGMT_FW_LOGGER_DEFAULT_FILE_SIZE = 1048576ULL;
 #define DEFAULT_CONTROLLER_PORT "9999"
 #define DEFAULT_NODE_ID "localhost"
 #define DEFAULT_NODE_PORT "9998"
+
+#define HEALTH_CHECK_RECONNECT_INTERVAL (10)
 
 using node_config = struct grpc_node_server_config {
   std::string framework_lib_path;
@@ -65,11 +68,19 @@ class Servicer : public svk::CommandFwk::Service {
   bool get_state() const { return m_initialized_flag; };
   void set_server(std::shared_ptr<Server> server) { m_server = server; };
   std::shared_ptr<Server> get_server() const { return m_server; };
+  bool get_stop_flag() const { return stop_flag; };
+  void set_stop_flag() { stop_flag = true; };
+  int StartMonitorControllerThread() const;
+  // Heartbeat management
+  void InitializeHeartbeatManager();
 
  private:
   node_config m_svk_config;
   bool m_initialized_flag = false;
   std::shared_ptr<Server> m_server;
+  bool stop_flag = false;
+  // Heartbeat manager for monitoring controller health
+  std::unique_ptr<HeartbeatManager> m_heartbeat_manager;
 };
 
 std::shared_ptr<Server> Init(Servicer *svcr);

@@ -14,6 +14,7 @@
 #include "framework_struct.h"
 #include "framework_upstream.h"
 #include "grpc_hdr.h"
+#include "heartbeat_manager.h"
 #include "node_cmd_helper_fns.h"
 #include "sla_hlpr_fns.h"
 #include "svk_logger.h"
@@ -22,7 +23,7 @@
 #define CONTROLLER_CONF_SECTION_TAG "svk_mgmt_fw_controller"
 #define CONTROLLER_NODE_DEFAULT_LOG_FILE \
   "/var/log/svk/svk_mgmt_fw_controller.log"
-#define CONTROLLER_LOGGER_MODULE_NAME "controller"
+#define CONTROLLER_LOGGER_MODULE_NAME "mgmt_fw_controller"
 #define CONTROLLER_LOGGER_DEFAULT_FILE_COUNT 10
 #define CONTROLLER_LOGGER_DEFAULT_FILE_SIZE \
   1048576ULL  // 1MB default max file size
@@ -91,7 +92,8 @@ const std::unordered_map<std::string, level_E> ctrl_log_level_map = {
 
 class ControllerServicer : public svk::Controller::Service {
  public:
-  explicit ControllerServicer(const std::string &svk_conf_file);
+  explicit ControllerServicer(const std::string &svk_conf_file,
+                              bool hb_mgr_flag = false);
   ~ControllerServicer() override;
   Status RegisterNode(ServerContext *ctxt, const svk::RegisterRequest *req,
                       svk::RegisterResponse *resp) override;
@@ -173,6 +175,11 @@ class ControllerServicer : public svk::Controller::Service {
   void *get_zmq_context() { return m_zmq_subscriber_context; };
   void *get_zmq_socket() { return m_zmq_subscriber_socket; };
 
+  // Heartbeat management
+  void InitializeHeartbeatManager();
+  void StartNodeHealthMonitoring();
+  void StopNodeHealthMonitoring();
+
   // Queue operations
   void insert_event_to_queue(json event_data) {
     std::scoped_lock lock(m_event_q_mutex);
@@ -236,6 +243,12 @@ class ControllerServicer : public svk::Controller::Service {
   std::queue<json> m_event_queue;
   mutable std::mutex m_event_q_mutex;
   std::condition_variable m_event_q_cond_var;
+
+  // Mutex for protecting registered nodes map
+  mutable std::mutex m_registered_nodes_mutex;
+
+  // Heartbeat manager for monitoring node health
+  std::unique_ptr<HeartbeatManager> m_ctrlr_heartbeat_manager;
 };
 
 #endif /*__GRPC_CONTROLLER_H__*/

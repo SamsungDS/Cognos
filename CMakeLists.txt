@@ -36,6 +36,7 @@ add_subdirectory(grpc_controller)
 add_subdirectory(rest_api)
 add_subdirectory(svc_mgr)
 add_subdirectory(config)
+add_subdirectory(utils)
 
 if(BUILD_TESTING)
   add_subdirectory(tests)

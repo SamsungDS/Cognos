@@ -66,4 +66,7 @@ int StartThreadForZMQSubscriberConfiguration(ControllerServicer* svcr);
 void ProcessRASEvent(json json_data, ControllerServicer* svcr);
 void ProcessSLAEvent(json json_data, ControllerServicer* svcr);
 void systemd_notify(int ready, const char* status);
+void ControllerHealthCheckServicer(std::shared_ptr<Server> ctrl_server,
+                                   bool enable);
+
 #endif /*__GRPC_CONTROLLER_HLPR_H__*/
