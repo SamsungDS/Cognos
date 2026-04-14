@@ -35,7 +35,7 @@ ras_monitor::ras_monitor(/* args */) {
   ras_device_manager_ = std::make_shared<ras_device_manager>();
 }
 
-ras_monitor::~ras_monitor() {}
+ras_monitor::~ras_monitor() { shutdown_ = true; }
 
 void ras_monitor::set_sync_request_completed(ras_request *req) {
   std::lock_guard<std::mutex> lock(req->sync_mutex);
@@ -56,6 +56,9 @@ void ras_monitor::process_request_sync(ras_request *req) {
 }
 
 bool ras_monitor::ras_submit_request(ras_request *req) {
+  if (shutdown_.load()) {
+    return false;
+  }
   if (req != nullptr) {
     this->ras_monitor_->submitRequest(req);
     if (req->is_sync_request) {
@@ -73,6 +76,10 @@ void call_ras_submit_request(ras_request *req, ras_monitor *m, int interval,
                              bool &ret) {
   if (req != nullptr) {
     std::this_thread::sleep_for(std::chrono::seconds(interval));
+    // Check global shutdown flag first - this persists beyond object lifetime
+    if (ras_is_shutdown()) {
+      return;
+    }
     ret = m->ras_submit_request(req);
   }
   return;
@@ -93,6 +100,10 @@ ras_monitor::execute_request_by_monitor(ras_request &req) {
 }
 
 void execute_request_by_monitor_(ras_request &req) {
+  // Check global shutdown before accessing monitor_context
+  if (ras_is_shutdown() || req.ras_context->monitor_context == nullptr) {
+    return;
+  }
   if (auto status =
           req.ras_context->monitor_context->execute_request_by_monitor(req);
       status == cognos::utils::CommandHandler<
@@ -105,6 +116,10 @@ void execute_request_by_monitor_(ras_request &req) {
 }
 
 bool ras_submit_timed_request(ras_request *req, int interval) {
+  // Check global shutdown before accessing monitor_context
+  if (ras_is_shutdown() || req->ras_context->monitor_context == nullptr) {
+    return false;
+  }
   return req->ras_context->monitor_context->ras_submit_timed_request(req,
                                                                      interval);
 }
