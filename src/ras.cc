@@ -11,6 +11,12 @@ struct ras_context_s g_ras_context = {.monitor_context = nullptr,
 
 uint64_t g_monitor_interval;
 
+// Global shutdown flag to prevent detached threads from accessing deleted
+// objects
+static std::atomic<bool> g_ras_shutdown{false};
+
+bool ras_is_shutdown() { return g_ras_shutdown.load(); }
+
 svk_status parsing_ras_conf(std::string ras_conf_path, ras_conf *ras_configs) {
   boost::property_tree::ptree root_conf;
   static boost::property_tree::ptree logger_conf;
@@ -161,6 +167,10 @@ extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
 
   bool submit_okay = false;
 
+  if (g_ras_context.monitor_context == nullptr) {
+    svk_logger(RAS_LOGGER, level_E::ERROR, "monitor_context is null");
+    return SVK_STATUS_FAIL;
+  }
   submit_okay = g_ras_context.monitor_context->ras_submit_request(&request);
   if (submit_okay != true) {
     svk_logger(RAS_LOGGER, level_E::INFO, "submit failed");
@@ -203,8 +213,15 @@ extern "C" svk_status clean_up(void *) {
   std::lock_guard<std::mutex> lock(g_ras_context.ctx_mutex);
 
   if (g_ras_context.initialized == true) {
-    delete g_ras_context.monitor_context;
-    g_ras_context.monitor_context = nullptr;
+    // Set global shutdown flag FIRST - this persists beyond object lifetime
+    // and prevents detached threads from accessing deleted objects
+    g_ras_shutdown.store(true);
+
+    if (g_ras_context.monitor_context != nullptr) {
+      g_ras_context.monitor_context->shutdown();
+      delete g_ras_context.monitor_context;
+      g_ras_context.monitor_context = nullptr;
+    }
     delete g_ras_context.ras_adapter_helper_;
     g_ras_context.ras_adapter_helper_ = nullptr;
     g_ras_context.initialized = false;

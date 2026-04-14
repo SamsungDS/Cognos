@@ -84,4 +84,7 @@ struct ras_context_s {
 };
 extern uint64_t g_monitor_interval;
 svk_status parsing_ras_conf(std::string, ras_conf *);
+
+// Check if RAS shutdown has been initiated (for detached threads)
+bool ras_is_shutdown();
 #endif  // __RAS_HPP__

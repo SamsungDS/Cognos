@@ -13,6 +13,7 @@ class ras_monitor {
   std::unique_ptr<cognos::utils::CommandHandler<ras_request>>
       ras_command_handlers_;
   std::shared_ptr<ras_device_manager> ras_device_manager_;
+  std::atomic<bool> shutdown_ = false;
 
   static void process_request(ras_request *req) {
     if (req->is_sync_request) {
@@ -30,6 +31,8 @@ class ras_monitor {
   bool ras_submit_request(ras_request *req);
 
   bool ras_submit_timed_request(ras_request *req, int interval);
+
+  void shutdown() { shutdown_ = true; }
 
   cognos::utils::CommandHandler<ras_request>::command_status
   execute_request_by_monitor(ras_request &req);

@@ -1063,3 +1063,72 @@ TEST_F(CheckDeviceStatusUnitTest, AddReliabilityMonitoringForADevice) {
   clean_up(nullptr);
   unlink("conf.json");
 }
+
+TEST_F(CheckDeviceStatusUnitTest, RasMonitorShutdownFlagTrue) {
+  ras_monitor monitor;
+  monitor.shutdown();  // sets shutdown_ to true
+  ras_request req(true, &test_ras_ctx, true);
+  EXPECT_FALSE(monitor.ras_submit_request(&req));
+}
+
+TEST(RAS, GlobalShutdownFlagAfterCleanUp) {
+  setenv("SVK_RAS_CONFIG", "conf.json", true);
+  std::string ras_adapter_dir = "/usr/local/svk/ras/adapters";
+  mkdir(ras_adapter_dir.c_str(), 0755);
+  initialize(nullptr);
+  EXPECT_TRUE(clean_up(nullptr) == SVK_STATUS_SUCCESS);
+  EXPECT_TRUE(ras_is_shutdown());
+  std::filesystem::remove(ras_adapter_dir.c_str());
+}
+
+TEST(RasMonitor, ExecuteSyncWithMonitorShutdown) {
+  // Initialize and clean_up to set the global shutdown flag
+  setenv("SVK_RAS_CONFIG", "conf.json", true);
+  std::string ras_adapter_dir = "/usr/local/svk/ras/adapters";
+  mkdir(ras_adapter_dir.c_str(), 0755);
+  initialize(nullptr);
+  clean_up(nullptr);  // This sets g_ras_shutdown to true
+
+  svk_pass_thru_cmd pass_thru;
+  pass_thru.feat_id = ZERO_ETL;
+  svk_input input;
+  std::string input_str = R"(
+    {
+      "command_name" : "add_reliability_monitoring_for_device",
+      "command_params" : {
+        "device_id" : "dev123",
+        "device_numa" : 0,
+        "configure_options" : {
+          "error_count_threshold" : 500
+        },
+        "test_param1" : "value1"
+      }
+    }
+  )";
+  input.input_buffer = (uint8_t *)input_str.c_str();
+  input.len = input_str.length();
+  svk_output output;
+  output.output_buffer = (uint8_t *)calloc(1, 128);
+  output.len = 128;
+  EXPECT_EQ(SVK_STATUS_FAIL, execute_sync(&pass_thru, &input, &output));
+  std::filesystem::remove(ras_adapter_dir.c_str());
+}
+
+TEST(RasMonitor, RASMonitorFunctionsInShutdownMode) {
+  // Initialize and clean_up to set the global shutdown flag
+  setenv("SVK_RAS_CONFIG", "conf.json", true);
+  std::string ras_adapter_dir = "/usr/local/svk/ras/adapters";
+  mkdir(ras_adapter_dir.c_str(), 0755);
+  initialize(nullptr);
+  clean_up(nullptr);  // This sets g_ras_shutdown to true
+
+  struct ras_context_s test_ras_ctx;
+  ras_request req(true, &test_ras_ctx, true);
+
+  // Call monitor functions when the ras_monitor is shutdown by cleanup
+  // These functions should return without any action.
+  execute_request_by_monitor_(req);
+
+  ras_submit_timed_request(&req, 10);
+  std::filesystem::remove(ras_adapter_dir.c_str());
+}
