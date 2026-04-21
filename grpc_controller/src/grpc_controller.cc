@@ -1101,7 +1101,7 @@ Status ControllerServicer::ListNodesInCluster(const std::string &cluster_name,
 
     logger_str = "Listed " + std::to_string(cluster->second.node_names.size()) +
                  " nodes in cluster " + cluster_name;
-    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::DEBUG,
                logger_str.c_str());
     resp->set_error_code(SVK_STATUS_SUCCESS);
     resp->set_command_response(resp_json.dump());

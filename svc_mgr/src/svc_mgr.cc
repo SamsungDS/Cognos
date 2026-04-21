@@ -145,11 +145,13 @@ static int _load_services(std::string &feat_sm_svcs_dir,
         entry_name.compare(entry_name.size() - feat_lib_suffix_so.size(),
                            feat_lib_suffix_so.size(),
                            feat_lib_suffix_so) != 0) {
-      SVC_MGR_LOG(level_E::INFO, "No Service found");
       continue;
     }
 
     std::string feature_lib_str = feat_sm_svcs_dir + "/" + entry_name;
+    SVC_MGR_LOG(level_E::INFO,
+                "Checking for register_svk_service in the library ",
+                feature_lib_str);
     void *handle = dlopen(feature_lib_str.c_str(), RTLD_LAZY);
     if (!handle) {
       SVC_MGR_LOG(level_E::ERROR, "Failed to open ", feature_lib_str,
