@@ -5,6 +5,7 @@ import { ReactComponent as DashboardIcon } from '../assets/icons/DashboardIcon.s
 import { ReactComponent as MetricsIcon } from '../assets/icons/ChartIcon.svg';
 import { ReactComponent as AboutIcon } from '../assets/icons/AboutIcon.svg';
 import { ReactComponent as AutotierIcon } from '../assets/icons/AutoTierIcon.svg';
+import { ReactComponent as BeakerIcon } from '../assets/icons/Beaker.svg';
 import { AuthContext } from './ProtectedRoute.js';
 import NotificationBell from './NotificationBell';
 import * as constants from '../constant';
@@ -54,6 +55,12 @@ const SideBar = ({ children }) => {
       path: "/about",
       icon: <AboutIcon />,
       datatestid: 'menu-item-5',
+      allowedRoles: ['admin', 'guest']
+    },
+    {
+      path: "/developer",
+      icon: <BeakerIcon />,
+      datatestid: 'menu-item-6',
       allowedRoles: ['admin', 'guest']
     }
   ];

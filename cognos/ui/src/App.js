@@ -9,6 +9,7 @@ import Dashboard from "./pages/Dashboard";
 import About from "./pages/About";
 import Jobs from "./pages/Jobs";
 import Events from './pages/Events';
+import Developer from "./pages/Developer";
 import DeviceStats from './pages/DeviceStats';
 import DownloadArtifacts from "./pages/DownloadArtifacts";
 import { EventsProvider } from './contexts/EventsContext';
@@ -152,6 +153,18 @@ function App() {
                     <div className="grid-container">
                       <Header />
                       <SideBar><Events /></SideBar>
+                    </div>
+                  </AuthRoute>
+                }
+              />
+
+              <Route
+                path="/developer"
+                element={
+                  <AuthRoute>
+                    <div className="grid-container">
+                      <Header />
+                      <SideBar><Developer /></SideBar>
                     </div>
                   </AuthRoute>
                 }
