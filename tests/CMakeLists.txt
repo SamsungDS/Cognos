@@ -27,15 +27,23 @@ COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:dummy_plugin> ${CMAKE_CURRENT_BIN
 )
 
 # Main test executable
+find_package(Python REQUIRED COMPONENTS Interpreter Development)
+find_package(pybind11 REQUIRED)
 add_executable(cxl_ut ${TEST_SOURCES} ${ADAPTER_SOURCES})
 target_sources(cxl_ut PRIVATE ${MOCK_ADAPTER_SRC} ${MOCK_CMMH_CALLS})
 target_compile_definitions(cxl_ut PRIVATE MOCK=1 TEST_BUILD=1)
 target_link_options(cxl_ut PRIVATE "-Wl,--allow-multiple-definition")
 
-target_include_directories(cxl_ut PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMMH_THIRD_PARTY_DIR} "${CMAKE_SOURCE_DIR}/src/include" "${CMAKE_SOURCE_DIR}/src/cmmh/include" "${CMAKE_SOURCE_DIR}/src/tm/include" ${SVKFRAMEWORK_INCLUDE_DIRS} ${SVKMGMTFW_INCLUDE_DIRS} ${FMAPI_INCLUDE_PATH})
+target_include_directories(cxl_ut PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMMH_THIRD_PARTY_DIR} "${CMAKE_SOURCE_DIR}/src/include" "${CMAKE_SOURCE_DIR}/src/cmmh/include" "${CMAKE_SOURCE_DIR}/src/tm/include" ${SVKFRAMEWORK_INCLUDE_DIRS} ${SVKMGMTFW_INCLUDE_DIRS} ${FMAPI_INCLUDE_PATH} ${Python_INCLUDE_DIRS})
 target_link_directories(cxl_ut PRIVATE "${FMAPI_INCLUDE_PATH}/build" ${CMMH_THIRD_PARTY_DIR} ${SVKMGMTFW_LIB_DIRS} ${SVKFRAMEWORK_LIBRARY_DIRS})
-target_link_libraries(cxl_ut PRIVATE svkcxl gtest gtest_main gmock gmock_main svcmgr jansson zmq numa mbox_a1_shared yaml-cpp pci ${CMMH_STATIC_LIB})
+target_link_libraries(cxl_ut PRIVATE svkcxl gtest gtest_main gmock gmock_main svcmgr jansson zmq numa mbox_a1_shared yaml-cpp pci ${CMMH_STATIC_LIB} pybind11::embed Python::Python)
 target_compile_definitions(cxl_ut PRIVATE TEST_PLUGIN_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+target_compile_definitions(cxl_ut PRIVATE TEST_PYTHON_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+add_custom_command(TARGET cxl_ut POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+            ${CMAKE_SOURCE_DIR}/utils/scripts/cxl_device_info.py
+            $<TARGET_FILE_DIR:cxl_ut>
+)
 
 include(GoogleTest)
 gtest_discover_tests(cxl_ut)

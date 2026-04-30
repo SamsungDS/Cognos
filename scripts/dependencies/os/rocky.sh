@@ -26,7 +26,10 @@ install_packages() {
         numactl
 	numactl-devel
 	python3.11
+        pybind11-devel
+        python3.11-devel
         python3-pip
+        python3-pybind11
         rpm-build
         spdlog-devel
         sudo

@@ -28,7 +28,10 @@ install_packages() {
         net-tools
         pkgconf
         python3.11
+        pybind11-dev
+        python3-dev
         python3-pip
+        python3-pybind11
         sudo
         tar
         unzip
