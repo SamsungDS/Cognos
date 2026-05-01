@@ -10,5 +10,6 @@
         "comment": "the use case is that the user wants to have minimum number of application server for redundancy",
         "minHostsPerCluster": 2
       }
-    }    
+    },
+    "dev_mode": false    
 }

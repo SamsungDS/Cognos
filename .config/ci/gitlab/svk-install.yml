@@ -169,6 +169,7 @@ svk-install:
       API_ENDPOINT="http://${VM_IP}:${BACKEND_PORT}/api/v2.0.1"
       RBAC_ENDPOINT="http://${VM_IP}:${RBAC_UI_PORT}"
       RBAC_ENABLED="true"
+      DEV_MODE="true"
       cat > "$CONFIG_JS" <<EOF
       window.CONFIGS = {
           "mgmt_endpoint": "$MGMT_ENDPOINT",
@@ -182,7 +183,8 @@ svk-install:
               "comment": "the use case is that the user wants to have minimum number of application server for redundancy",
               "minHostsPerCluster": 2
             }
-          }
+          },
+          "dev_mode": $DEV_MODE
       }
       EOF
 

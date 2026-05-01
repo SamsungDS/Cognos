@@ -1,3 +1,21 @@
+.about{
+  background-color: rgba(0, 0, 0, 0.55) !important;
+}
+.about-heading {
+  color: #18A0FB;
+  font-size: 40px;
+  font-family: sans-serif;
+  font-weight: 500;
+}
+.sub-heading {
+  color: #fff;
+  font-size: medium;
+  font-weight: 300;
+  margin-top: 20px;
+}
+.about-col-1{
+  padding-left: 80px;
+}
 .heading-row {
     margin-top: 12px;
 }

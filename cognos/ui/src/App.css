@@ -3,14 +3,19 @@
   src: local('Samsung'), url('./assets/fonts/SamsungSharpSans-Medium.ttf') format('truetype');
 }
 
+/* Default Font Style */
 * {
    font-family: 'Samsung sharp sans', sans-serif;
 }
+
+/* Background Image */
 .grid-container {
   background-image: url('assets/images/backgrounds/BackGroundImage.png'); 
   background-size: cover; 
   overflow-y: auto;
 }
+
+/* Top Header Card */
 .heading{
   flex-grow: 1;
   position: static;
@@ -21,6 +26,8 @@
   z-index: 1100;
   box-shadow: none;
 }
+
+/* Title Style */
 .heading_name {
   padding-left: 20px;
   padding-top: 16px;
@@ -31,6 +38,8 @@
   line-height: 1.17;
   letter-spacing: 0.00735em;
 }
+
+/* Main Container Layout */
 .content_root {
   grid-area: Content;
   background-size: cover;
@@ -38,25 +47,28 @@
   background-repeat: no-repeat;
   overflow-y: scroll;
 }
+
+/* Sidebar Container Layout */
 .sidebar-container{
 color: #fff;
 height: 100vh;
 width: 50px;
 transition: all 0.5s;
 }
-.top_section {
-display: flex;
-align-items: center;
-padding: 20px 15px;
-}
+
+/* SCMC Logo Size */
 .logo {
 font-size: 30px;
 }
+
+/* Dashboard Page Layout */
 .dashboard-root {
   height: 100%;
   padding: 10px;
   flex-grow: 1;
 }
+
+/* Dashboard Grid Layout */
 .dashboard-grid-container{
   height: 100%;
   width: calc(100% + 16px);
@@ -65,7 +77,9 @@ font-size: 30px;
   display: flex;
   flex-wrap: wrap;
 }
-.dashboard-card {
+
+/* Currently not used */
+/* .dashboard-card {
   color: rgba(0, 0, 0, 0.54);
   height: 100%;
   border-radius: 0;
@@ -73,15 +87,19 @@ font-size: 30px;
   box-shadow: 0px 1px 3px 0px rgba(0,0,0,0.2), 0px 1px 1px 0px rgba(0,0,0,0.14), 0px 2px 1px -1px rgba(0,0,0,0.12);
   background-color: #fff;
   padding: 8px;
-}
+} */
+
+/* Built-in css for Column */
 .col {
   padding-right: 0px !important;
 }
 
+/* Built-in css for Row */
 .row>* {
   padding-right: 0px !important;
 }
 
+/* Container for Widgets */
 .device_card {
   margin-top: 8px;
   padding: 8px;
@@ -94,16 +112,7 @@ font-size: 30px;
   justify-content: center;
 }
 
-.about{
-  background-color: rgba(0, 0, 0, 0.55) !important;
-}
-
-.bars {
-display: flex;
-font-size: 25px;
-margin-left: 30px;
-cursor: pointer;
-}
+/* Styling for Sidebar Icons */
 .link {
   display: flex;
   color: #4A4A4A;
@@ -116,6 +125,8 @@ cursor: pointer;
   color: #cfcccc;
   transition: all 0.5s;
 }
+
+/* Styling for active page/icon in Sidebar */
 .active {
   color: #fff;
   transition: all 0.5s;
@@ -123,16 +134,22 @@ cursor: pointer;
 .icon, .link_text {
   font-size: 20px;
 }
-.main {
+
+
+/* .main {
   background-color: #c3c5ca;
   padding: 25px;
   height: 40rem;
-}
+} */
+
+/* Card container for Events & Download Artifacts */
 .card {
   background-color: #f6f7f9;
   height: 100%;
   border-radius: 10px;
 }
+
+/* Main header for entire SCMC */
 .header {
   background: #7898d8;
   align-items: center;
@@ -141,28 +158,13 @@ cursor: pointer;
   height: 40px;
   border-radius: 10px;
 }
+
+/* Subtitle */
 h2{
   padding-left: 8px;
 }
-.topology-table {
-  height: 34rem;
-}
-.pie_chart_card{
-  height: 24rem;
-}
-.pie_chart{
-  display: flex;
-}
 
-.pl-4 {
-  padding-left: 4px;
-}
-.pl-8 {
-  padding-left: 8px;
-}
-.mt-8 {
-  margin-top: 8px;
-}
+/* Font size for some widgets and dropdowns */
 .fs-24 {
   font-size: 24px;
   font-weight: 600;
@@ -173,65 +175,50 @@ h2{
   font-weight: 400;
   color: white;
 }
-.chart_card {
-  border-radius: 4px !important;
-  padding-bottom: 12px;
-}
 
-.tree {
+
+
+/* .tree {
   display: flex;
-}
+} */
 
-.node circle {
+/* .node circle {
   fill: #112d4e !important;
   stroke: #112d4e !important;
   stroke-width: 1.5px;
   width: 50px !important;
   height: 50px !important;
 
-}
-.node text {
+} */
+/* .node text {
   font-size: 11px;
   background-color: white;
   fill: white;
 
-}
+} */
 circle {
   width: 20px !important;
 }
-path.link {
+
+/* path.link {
   fill: none;
   stroke: #b0cae9 !important;
   stroke-width: 2px;
-}
-g.node {
+} */
+/* g.node {
   width: 40px;
-}
+} */
 
 
-.about-heading {
-  color: #18A0FB;
-  font-size: 40px;
-  font-family: sans-serif;
-  font-weight: 500;
-}
-.sub-heading {
-  color: #fff;
-  font-size: medium;
-  font-weight: 300;
-  margin-top: 20px;
-}
-.about-col-1{
-  padding-left: 80px;
-}
-.pl-12 {
-  padding-left: 12px;
-}
-.mt{
+
+
+
+
+/* .mt{
   margin-top: 12px;
-}
+} */
 
-/* Configure CSS start */
+/* Configure Page Margin */
 .config-host {
   margin: 12px;
 }
@@ -248,6 +235,8 @@ g.node {
 .basic-multi-select {
   width: 40%;
 }
+
+/* Metrics Page Drop Down */
 .app-server {
   font-size: 22px;
   font-family: 'Samsung Sharp Sans', sans-serif;
@@ -255,20 +244,18 @@ g.node {
   color: #00B3E3; 
   margin-right: 8px;
 }
+
+/* Used for all tables */
 table {
   font-family: Arial, Helvetica, sans-serif;
   border-collapse: collapse;
   width: 100%;
 }
-
 table td, table th {
   border: 1px solid #ddd;
   padding: 8px;
   text-align: center;
 }
-
-
-
 table th {
   padding-top: 12px;
   padding-bottom: 12px;
@@ -276,28 +263,13 @@ table th {
   background-color: #080324;
   color: white;
 }
-.pagination {
-  padding: 8px;
-  display: flex;
-}
-.page_details{
-  margin: 4px;
-  padding: 4px;
-}
-.pagination_button {
-  margin: 4px;
-  cursor: pointer;
-  color: black;
-  float: left;
-  padding: 8px 16px;
-  text-decoration: none;
-  transition: background-color .3s;
-  border: 1px solid #dddbdb;
-  border-radius: 4px;
-}
+
+/* Common for all pages */
 .memory-box-overview-height {
   height: 44px;
 }
+
+/* Loading Spinner icon */
 .spinner-style {
   color: grey;
   display: flex;
@@ -305,9 +277,7 @@ table th {
   justify-content: center;
   flex-direction: column;
 }
-.heading-col {
-  margin-top: 14px;
-}
+
 /* Media Query as per device size */
 @media screen and (min-width: 2560px) {
   .sidebar {

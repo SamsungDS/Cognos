@@ -1,5 +1,11 @@
-// Load App Configs
-export const Configs = window.CONFIGS || {};
+
+// configs used when running in dev mode locally
+export const FileConfigs = require('../src/config/config.json');
+// configs used during production deployment
+export const WindowConfigs = window.CONFIGS || {}
+// get configs based on running mode
+export const Configs = FileConfigs.dev_mode ? FileConfigs : WindowConfigs
+
 export const BackgroundsImage = require('../src/assets/images/backgrounds/BackGroundImage.png');
 export const AddIcon = require('../src/assets/icons/Icon-Add-Light.png');
 export const MinusIcon = require('../src/assets/icons/Icon-Remove-Light.png');
