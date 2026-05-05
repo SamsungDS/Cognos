@@ -11,9 +11,6 @@ jest.mock('../constant', () => ({
   },
 }));
 // Mock the SVG components
-jest.mock('../assets/icons/ConfigureIcon.svg', () => ({
-  ReactComponent: () => <div data-testid="configure-icon">Configure Icon</div>
-}));
 
 jest.mock('../assets/icons/DashboardIcon.svg', () => ({
   ReactComponent: () => <div data-testid="dashboard-icon">Dashboard Icon</div>

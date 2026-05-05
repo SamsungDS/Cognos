@@ -1,6 +1,7 @@
 import React from 'react';
 import PropTypes from 'prop-types';
 import './deviceCard.css';
+// TreeItem Component is used as dropdown selection in device stats page
 const TreeItem = ({ label, level = 0, hasChildren, isExpanded, toggleExpanded, onClick, isSelected, children }) => {
     const handleClick = (e) => {
         e.stopPropagation();

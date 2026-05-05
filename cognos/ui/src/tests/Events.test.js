@@ -23,7 +23,6 @@ jest.mock('lucide-react', () => ({
     ShieldAlert: ({ size, className }) => <div data-testid="shield-alert" data-size={size} className={className} />,
     Clock: ({ size, className }) => <div data-testid="clock" data-size={size} className={className} />,
     Trash2: ({ size, className }) => <div data-testid="trash2" data-size={size} className={className} />,
-    RefreshCw: ({ size, className }) => <div data-testid="refresh-cw" data-size={size} className={className} />,
     ChevronDown: ({ size, className }) => <div data-testid="chevron-down" data-size={size} className={className} />,
     ChevronUp: ({ size, className }) => <div data-testid="chevron-up" data-size={size} className={className} />,
     Calendar: ({ size, className }) => <div data-testid="calendar" data-size={size} className={className} />,

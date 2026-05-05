@@ -11,6 +11,7 @@ import {
     convertBandwidthToUnit,
 } from '../../utils/deviceStats-utils';
 import { ErrorBanner, Sidebar, ChartArea } from './deviceGraphUtil';
+//Device Card Component is graph in device stats page
 const DeviceCard = ({
     selectedMetrics,
     setSelectedMetrics,
@@ -24,7 +25,7 @@ const DeviceCard = ({
     const [clustersData, setClustersData] = useState([]);
     const [metricsData, setMetricsData] = useState({});
     const [loading, setLoading] = useState(true);
-    const [timeFilter, setTimeFilter] = useState('3h');
+    const timeFilter = '3h';
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
     const [error, setError] = useState(null);
     const [yAxisConfig, setYAxisConfig] = useState({ min: null, max: null });

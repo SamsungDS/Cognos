@@ -32,6 +32,7 @@ import { ReactComponent as CMMHIcon } from "../assets/icons/CMM-H-Icon.svg";
 import { useSelectedOption } from "../contexts/SelectedOptionContext";
 import ShimmerUI, { NavigationShimmer } from './ShimmerUI';
 
+// BoxTopology using inside dashboard page, showing host and devices
 const BoxTopology = ({onClusterChange}) => {
   const [hostToDeviceMapping, setHostToDeviceMapping] = useState({});
   // eslint-disable-next-line
@@ -42,7 +43,6 @@ const BoxTopology = ({onClusterChange}) => {
   const [hostActiveList, setHostActiveList] = useState([]);
 
   const hostDeviceMapEndpoint = Configs.api_endpoint + "/topology";
-  const hostMapEndpoint = Configs.api_endpoint + "/hosts";
   const getNodesEndpoint = Configs.api_endpoint + "/nodes"
   const { handleToggle, selectedOption } = useSelectedOption();
   const [isToggleEnabled, setIsToggleEnabled] = useState(false);
@@ -69,7 +69,6 @@ const BoxTopology = ({onClusterChange}) => {
   useEffect(
     () => {
       fetchData(hostDeviceMapEndpoint, setHostToDeviceMapping);
-      // fetchData(hostMapEndpoint, setHostActiveList);
       fetchData(getNodesEndpoint, setHostActiveList);
       // Function to map hosts dynamically from a list
       const mapHosts = (hostNames) => {

@@ -1,7 +1,6 @@
 import React, { useContext } from 'react';
 import { NavLink } from 'react-router-dom'
 import { Cpu } from 'lucide-react';
-// import { ReactComponent as ConfigureIcon } from '../assets/icons/ConfigureIcon.svg';
 import { ReactComponent as DashboardIcon } from '../assets/icons/DashboardIcon.svg';
 import { ReactComponent as MetricsIcon } from '../assets/icons/ChartIcon.svg';
 import { ReactComponent as AboutIcon } from '../assets/icons/AboutIcon.svg';
@@ -12,7 +11,7 @@ import * as constants from '../constant';
 
 // When login is disabled, treat everyone as admin (full access)
 const RBAC_ENABLED = constants.Configs.rbac_enabled;
-
+// Sider Bar Component is used for show navigation icon to pages
 const SideBar = ({ children }) => {
   const auth = useContext(AuthContext);
   // If login is disabled, default to 'admin' so all menu items are visible
@@ -27,12 +26,6 @@ const SideBar = ({ children }) => {
       datatestid: 'menu-item-0',
       allowedRoles: ['admin', 'guest'],
     },
-    // {
-    //   path: "/configure",
-    //   icon: <ConfigureIcon />,
-    //   datatestid: 'menu-item-1',
-    //   allowedRoles: ['admin']
-    // },
     {
       path: "/metrics",
       icon: <MetricsIcon />,

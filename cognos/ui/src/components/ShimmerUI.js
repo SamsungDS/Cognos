@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import PropTypes from 'prop-types';
 import './ShimmerUI.css';
-
+// Shimmer UI Component used in topology section on dashboard page when api is off.
 const ShimmerUI = ({ type = 'host', deviceCount = 8 }) => {
     // Generate stable unique IDs for shimmer items
     const deviceIds = useMemo(() =>

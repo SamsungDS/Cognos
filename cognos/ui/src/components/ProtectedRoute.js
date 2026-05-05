@@ -47,6 +47,7 @@ export const isTokenValid= (token) => {
         return false;
     }
 };
+// ProtectedRoute is allow permission to users
 const ProtectedRoute = ({ children, allowedRoles = [] }) => {
     const rbacEndpoint = constants.Configs.rbac_endpoint;
     const [isAuthenticated, setIsAuthenticated] = useState(null);

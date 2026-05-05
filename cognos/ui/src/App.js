@@ -24,7 +24,7 @@ const AuthRoute = ({ children, allowedRoles }) => {
   if (!RBAC_ENABLED) return children;
   return <ProtectedRoute allowedRoles={allowedRoles}>{children}</ProtectedRoute>;
 };
-
+// this Entry Point of Application
 function App() {
   const [downloadMode, setDownloadMode] = useState(false);
   // istanbul ignore next

@@ -91,7 +91,9 @@ export const LoadingSpinner = ({ height = 150 }) => (
 LoadingSpinner.propTypes = {
     height: PropTypes.number
 };
-
+// ============================================================================
+// Device Count
+// ============================================================================
 export const DeviceCountCard = ({ hostsCount, devicesCount, isLoading }) => {
     if (isLoading) {
         return (
@@ -372,7 +374,9 @@ CapacityCard.propTypes = {
     ),
     isLoading: PropTypes.bool.isRequired
 };
-
+// ============================================================================
+// Bandwidth Card 
+// ============================================================================
 export const BandwidthCard = ({ viewMode, bandwidthData, isLoading }) => {
     const isCMMB = viewMode === VIEW_MODES.CMMB;
     const title = isCMMB ? "Expansion Chessis" : "Aggregated Cluster CXL";
@@ -444,7 +448,9 @@ BandwidthCard.propTypes = {
     }).isRequired,
     isLoading: PropTypes.bool.isRequired
 };
-
+// ============================================================================
+// Chart Memory Usage
+// ============================================================================
 export const MemoryUsageChart = ({ viewMode, memoryData, isLoading }) => {
     const isCMMB = viewMode === VIEW_MODES.CMMB;
     const title = isCMMB ? "Expansion Chessis" : "Cluster Memory";

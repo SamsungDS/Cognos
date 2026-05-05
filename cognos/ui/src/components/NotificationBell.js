@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Bell } from 'lucide-react';
 import { useEvents } from '../contexts/EventsContext';
 import './notificationBell.css';
-
+// NotificationBell Component used for shown alert icon on event page.
 const NotificationBell = () => {
   const { unreadCount, markAllAsRead } = useEvents(); // Use unreadCount instead of notificationCount
   const [isAnimating, setIsAnimating] = useState(false);

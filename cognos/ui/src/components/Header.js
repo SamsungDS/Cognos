@@ -5,7 +5,7 @@ import * as constants from '../constant';
 import { AuthContext } from './ProtectedRoute';
 
 const RBAC_ENABLED = constants.Configs.rbac_enabled;
-
+// Header Component used for show main title on top of page
 const Header = () => {
   const auth = useContext(AuthContext);
   const logout = RBAC_ENABLED ? auth?.logout : null;

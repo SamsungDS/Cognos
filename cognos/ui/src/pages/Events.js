@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import PropTypes from 'prop-types';
-import { AlertTriangle, CheckCircle, Info, Bell, Search, ShieldAlert, Clock, RefreshCw, ChevronDown, ChevronUp, Calendar } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Info, Bell, Search, ShieldAlert, Clock, ChevronDown, ChevronUp, Calendar } from 'lucide-react';
 import './events.css';
 import { useEvents } from '../contexts/EventsContext';
 
