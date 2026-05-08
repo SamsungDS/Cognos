@@ -1072,3 +1072,208 @@ class Cognos(BaseControlInterface):
                 self.logger.error(f"SLA TEXT: {response.text}")
         except Exception as error:
             self.logger.error(f"Failed to set app sla {str(error)}")
+
+    def move(self):
+        try:
+            status = ""
+            request_data = request.get_json()
+            cluster = request_data["cluster"]
+            node = request_data["node"]
+            app = request_data["app"]
+            app_pid = request_data["app_pid"]
+            tm_attr = request_data["tm_attr"]
+            slow_tier = request_data["slow_tier"]
+            fast_tier = request_data["fast_tier"]
+
+            if any([app, app_pid, tm_attr, slow_tier, fast_tier]):
+                request_url = (
+                    COGNOS_NORTHBOUND_ENDPOINTS["get_cme_stats_prefix"] +
+                    node +
+                    COGNOS_NORTHBOUND_ENDPOINTS["get_cme_stats_suffix"]
+                )
+
+                command_params = json.dumps({
+                    "app": app,
+                    "app_pid": str(app_pid),
+                    "tm_attr": tm_attr,
+                    "slow_tier": slow_tier,
+                    "fast_tier": fast_tier
+                })
+
+                request_args = {
+                    "cluster_name": cluster,
+                    "command_name": "move",
+                    "command_params": command_params
+                }
+
+                response = requests.post(
+                    request_url,
+                    json=request_args,
+                    headers=self.headers
+                )
+                if response.ok:
+                    response_data = response.json()
+                    status = "move successful" if response_data["response"] == ["0"] else "move failed"
+                else:
+                    status = "failed request"
+                return {
+                    "status": status
+                }
+
+        except Exception as error:
+            self.logger.error(f"failed move request: {str(error)}")
+            return {
+                "status": "request error"
+            }
+
+    def move_all(self):
+        try:
+            status = ""
+            request_data = request.get_json()
+            cluster = request_data["cluster"]
+            node = request_data["node"]
+            app = request_data["app"]
+            app_pid = request_data["app_pid"]
+            tm_attr = request_data["tm_attr"]
+            src = request_data["src"]
+            dst = request_data["dst"]
+
+            if any([app, app_pid, tm_attr, src, dst]):
+                request_url = (
+                    COGNOS_NORTHBOUND_ENDPOINTS["get_cme_stats_prefix"] +
+                    node +
+                    COGNOS_NORTHBOUND_ENDPOINTS["get_cme_stats_suffix"]
+                )
+
+                command_params = json.dumps({
+                    "app": app,
+                    "app_pid": str(app_pid),
+                    "tm_attr": tm_attr,
+                    "src": src,
+                    "dst": dst
+                })
+
+                request_args = {
+                    "cluster_name": cluster,
+                    "command_name": "move_all",
+                    "command_params": command_params
+                }
+
+                response = requests.post(
+                    request_url,
+                    json=request_args,
+                    headers=self.headers
+                )
+                if response.ok:
+                    response_data = response.json()
+                    status = "move_all successful" if response_data["response"] == ["0"] else "move_all failed"
+                else:
+                    status = "failed request"
+                return {
+                    "status": status
+                }
+
+        except Exception as error:
+            self.logger.error(f"failed move_all request: {str(error)}")
+            return {
+                "status": "request error"
+            }
+
+    def get_move_stats(self):
+        try:
+            status = ""
+            request_data = request.get_json()
+            cluster = request_data["cluster"]
+            node = request_data["node"]
+            app = request_data["app"]
+            app_pid = request_data["app_pid"]
+
+            if any([app, app_pid]):
+                request_url = (
+                    COGNOS_NORTHBOUND_ENDPOINTS["get_cme_stats_prefix"] +
+                    node +
+                    COGNOS_NORTHBOUND_ENDPOINTS["get_cme_stats_suffix"]
+                )
+
+                command_params = json.dumps({
+                    "app": app,
+                    "app_pid": str(app_pid)
+                })
+
+                request_args = {
+                    "cluster_name": cluster,
+                    "command_name": "get_stats",
+                    "command_params": command_params
+                }
+
+                response = requests.post(
+                    request_url,
+                    json=request_args,
+                    headers=self.headers
+                )
+                if response.ok:
+                    try:
+                        response_data = response.json()
+                        x = float(json.loads(
+                            response_data["response"][0])
+                            ['observations']['%_moved']
+                        )
+                        percent_moved = (round(x, 4))
+                        percent_moved_string = str(percent_moved)
+                        status = f"DATA MOVED: {percent_moved_string}%"
+                    except Exception as error:
+                        self.logger.error("FAILED TO PARSE GET STATS RESPONSE")
+                else:
+                    status = "failed request"
+                return {
+                    "status": status
+                }
+
+        except Exception as error:
+            self.logger.error(f"failed get_move_stats request: {str(error)}")
+            return {
+                "status": "request error"
+            }
+
+    def valid_move_configs(self, op, configs):
+        move_keys = (
+            ["cluster", "node", "app", "app_pid", "tm_attr",
+             "slow_tier", "fast_tier"]
+        )
+        move_all_keys = (
+            ["cluster", "node", "app", "app_pid", "tm_attr", "src", "dst"]
+        )
+        get_stats_keys = (
+            ["cluster", "node", "app", "app_pid"]
+        )
+
+        if op == "move":
+            for k in move_keys:
+                if k not in configs:
+                    return False
+        elif op == "move_all":
+            for k in move_all_keys:
+                if k not in configs:
+                    return False
+        elif op == "get_move_stats":
+            for k in get_stats_keys:
+                if k not in configs:
+                    return False
+
+        return True
+
+    def valid_tm_attrs(self, op, attr):
+        move_tm_attrs = [
+            "MOVER_AGGRESSIVENESS_LOW",
+            "MOVER_AGGRESSIVENESS_HIGH",
+        ]
+        move_all_tm_attrs = [
+            "0"
+        ]
+
+        if op == "move" and attr in move_tm_attrs:
+            return True
+        elif op == "move_all" and attr in move_all_tm_attrs:
+            return True
+        else:
+            return False

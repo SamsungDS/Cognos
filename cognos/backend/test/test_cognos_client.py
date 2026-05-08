@@ -847,6 +847,230 @@ def test_insert_application(mocker):
     cognos.insert_application(dummy_app)
 
 
+def test_move_endpoint(test_client, mocker):
+    dummy_move_request_args = {
+        "cluster": "CL_ID_1",
+        "node": "node1",
+        "app": "MOVE",
+        "app_pid": "1231",
+        "tm_attr": "MOVE_AGGRESSIVE_HIGH",
+        "slow_tier": "0",
+        "fast_tier": "2"
+    }
+    mocker.patch(
+        'cognos.backend.cognos_client.Cognos._initialize_cognos',
+        return_value=True
+    )
+    dummy_move_response_payload = {
+        "error_id_or_string_if_any": "",
+        "error_code": 0,
+        "api_version": "0.1",
+        "response": ["0"]
+    }
+    dummy_response = Response()
+    dummy_response.status_code = 200
+    dummy_response._content = (
+        json.dumps(dummy_move_response_payload).encode("utf-8")
+    )
+    mocker.patch(
+        'requests.post',
+        return_value=dummy_response
+    )
+    response = test_client.post(
+        "/move",
+        json=dummy_move_request_args
+    )
+
+
+def test_move(mocker):
+    dummy_move_request_args = {
+        "cluster": "CL_ID_1",
+        "node": "node1",
+        "app": "MOVE",
+        "app_pid": "1231",
+        "tm_attr": "MOVE_AGGRESSIVE_HIGH",
+        "slow_tier": "0",
+        "fast_tier": "2"
+    }
+
+    dummy_move_response_payload = {
+        "error_id_or_string_if_any": "",
+        "error_code": 0,
+        "api_version": "0.1",
+        "response": ["0"]
+    }
+    dummy_response = Response()
+    dummy_response.status_code = 200
+    dummy_response._content = (
+        json.dumps(dummy_move_response_payload).encode("utf-8")
+    )
+
+    mocker.patch(
+        "flask.Request.get_json",
+        return_value=dummy_move_request_args
+    )
+
+    mocker.patch(
+        'requests.post',
+        return_value=dummy_response
+    )
+    mocker.patch(
+        'cognos.backend.cognos_client.Cognos._initialize_cognos',
+        return_value=True
+    )
+    cognos = Cognos(CAL_LOGGER, mock=True)
+    cognos.move()
+
+
+def test_move_all(mocker):
+    dummy_move_all_request_args = {
+        "cluster": "CL_ID_1",
+        "node": "node1",
+        "app": "MOVEALL",
+        "app_pid": "1232",
+        "tm_attr": "0",
+        "src": "1",
+        "dst": "3"
+    }
+
+    mocker.patch(
+        "flask.Request.get_json",
+        return_value=dummy_move_all_request_args
+    )
+
+    dummy_move_all_response_payload = {
+        "error_id_or_string_if_any": "",
+        "error_code": 0,
+        "api_version": "0.1",
+        "response": ["0"]
+    }
+    dummy_response = Response()
+    dummy_response.status_code = 200
+    dummy_response._content = (
+        json.dumps(dummy_move_all_response_payload).encode("utf-8")
+    )
+
+    mocker.patch(
+        'requests.post',
+        return_value=dummy_response
+    )
+    mocker.patch(
+        'cognos.backend.cognos_client.Cognos._initialize_cognos',
+        return_value=True
+    )
+    cognos = Cognos(CAL_LOGGER, mock=True)
+    cognos.move_all()
+
+
+def test_get_move_stats(mocker):
+    dummy_get_move_stats_request_args = {
+        "cluster": "CL_ID_1",
+        "node": "node1",
+        "app": "MOVEALL",
+        "app_pid": "1232"
+    }
+
+    mocker.patch(
+        "flask.Request.get_json",
+        return_value=dummy_get_move_stats_request_args
+    )
+    dummy_get_move_stats_payload = {
+        "error_id_or_string_if_any": "",
+        "error_code": 0,
+        "api_version": "0.1",
+        "response": [
+            """{\n\"observations\": {\n\"operation\": \"numa_migration\","""
+            """\n\"app_context:\": \"MOVEALLTEST_1359437\",\n"""
+            """\"src_numa_node\": \"3\",\n\"dst_numa_node\": \"1\",\n"""
+            """\"src_numa_start_usage\": \"2048.610000MB\",\n"""
+            """\"dst_numa_start_usage\": \"0.000000MB\",\n"""
+            """\"src_numa_current_usage\": \"0.000000MB\",\n"""
+            """\"dst_numa_current_usage\": \"2048.610000MB\",\n"""
+            """\"%_moved\": \"100\"\n}\n}\n"""
+        ]
+    }
+    dummy_response = Response()
+    dummy_response.status_code = 200
+    dummy_response._content = (
+        json.dumps(dummy_get_move_stats_payload).encode("utf-8")
+    )
+
+    mocker.patch(
+        'requests.post',
+        return_value=dummy_response
+    )
+    mocker.patch(
+        'cognos.backend.cognos_client.Cognos._initialize_cognos',
+        return_value=True
+    )
+    cognos = Cognos(CAL_LOGGER, mock=True)
+    cognos.get_move_stats()
+
+
+def test_valid_move_configs(mocker):
+    mocker.patch(
+        'cognos.backend.cognos_client.Cognos._initialize_cognos',
+        return_value=True
+    )
+    cognos = Cognos(CAL_LOGGER, mock=True)
+
+    # test move
+    move_configs = {
+        "cluster": "CL_ID_1",
+        "node": "node1",
+        "app": "MOVE",
+        "app_pid": "1231",
+        "tm_attr": "MOVE_AGGRESSIVE_HIGH",
+        "slow_tier": "0",
+        "fast_tier": "2"
+    }
+    assert cognos.valid_move_configs("move", move_configs)
+
+    move_configs["extra_key"] = "x"
+    assert cognos.valid_move_configs("move", move_configs)
+
+    # test move_all
+    move_all_configs = {
+        "cluster": "CL_ID_1",
+        "node": "node1",
+        "app": "MOVEALL",
+        "app_pid": "1232",
+        "tm_attr": "0",
+        "src": "1",
+        "dst": "3"
+    }
+    assert cognos.valid_move_configs("move_all", move_all_configs)
+
+    move_all_configs["extra_key"] = "x"
+    assert cognos.valid_move_configs("move_all", move_all_configs)
+
+    # test get_move_stats
+    get_move_stats_configs = {
+        "cluster": "CL_ID_1",
+        "node": "node1",
+        "app": "MOVEALL",
+        "app_pid": "1232"
+    }
+    assert cognos.valid_move_configs("get_move_stats",
+                                     get_move_stats_configs)
+
+    get_move_stats_configs["extra_key"] = "x"
+    assert cognos.valid_move_configs("get_move_stats", get_move_stats_configs)
+
+
+def test_valid_tm_attrs(mocker):
+    mocker.patch(
+        'cognos.backend.cognos_client.Cognos._initialize_cognos',
+        return_value=True
+    )
+    cognos = Cognos(CAL_LOGGER, mock=True)
+    assert cognos.valid_tm_attrs("move", "MOVER_AGGRESSIVENESS_LOW")
+    assert not cognos.valid_tm_attrs("move", "MOVER_AGG")
+    assert not cognos.valid_tm_attrs("move_all", 0)
+    assert cognos.valid_tm_attrs("move_all", "0")
+    assert not cognos.valid_tm_attrs("move_all", "1")
+
+
 # TODO: resolve sonar cloud issue in pipeline for not counting request context
 # def test_host_devices(mocker, test_client):
 #     mocker.patch(

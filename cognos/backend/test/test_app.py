@@ -75,6 +75,42 @@ def test_get_events(test_client, mocker):
         assert request.path == f"/api/{CAL_API_VERSION}/events"
 
 
+def test_move(test_client, mocker):
+    mocker.patch(
+        'cognos.backend.cognos_client.Cognos.move',
+        return_value={}
+    )
+    with test_client.test_request_context(
+        f"/api/{CAL_API_VERSION}/move",
+        method='POST'
+    ):
+        assert request.path == f"/api/{CAL_API_VERSION}/move"
+
+
+def test_move_all(test_client, mocker):
+    mocker.patch(
+        'cognos.backend.cognos_client.Cognos.move_all',
+        return_value={}
+    )
+    with test_client.test_request_context(
+        f"/api/{CAL_API_VERSION}/move_all",
+        method='POST'
+    ):
+        assert request.path == f"/api/{CAL_API_VERSION}/move_all"
+
+
+def test_get_move_stats(test_client, mocker):
+    mocker.patch(
+        'cognos.backend.cognos_client.Cognos.get_move_stats',
+        return_value={}
+    )
+    with test_client.test_request_context(
+        f"/api/{CAL_API_VERSION}/get_move_stats",
+        method='POST'
+    ):
+        assert request.path == f"/api/{CAL_API_VERSION}/get_move_stats"
+
+
 def test_get_list_artifact(test_client):
     with test_client.test_request_context(f"/api/{CAL_API_VERSION}/list_artifact",
                                           method='GET'):

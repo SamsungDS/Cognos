@@ -351,6 +351,34 @@ def create_app(mock=False):
             as_attachment=True,
             download_name=artifact["name"],
         )
+
+    @app.post(f"/api/{CAL_API_VERSION}/move")
+    def move():
+        try:
+            res = cognos.move()
+            return helper.create_response_from_payload(res)
+        except Exception as error:
+            CAL_LOGGER.critical(f"move failed: {str(error)}")
+            return helper.failed_response(str(error))
+
+    @app.post(f"/api/{CAL_API_VERSION}/move_all")
+    def move_all():
+        try:
+            res = cognos.move_all()
+            return helper.create_response_from_payload(res)
+        except Exception as error:
+            CAL_LOGGER.critical(f"move all failed: {str(error)}")
+            return helper.failed_response(str(error))
+
+    @app.post(f"/api/{CAL_API_VERSION}/get_move_stats")
+    def get_move_stats():
+        try:
+            res = cognos.get_move_stats()
+            return helper.create_response_from_payload(res)
+        except Exception as error:
+            CAL_LOGGER.critical(f"get move stats failed: {str(error)}")
+            return helper.failed_response(str(error))
+
     return app
 
 

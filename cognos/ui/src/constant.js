@@ -1,3 +1,5 @@
+import { text } from 'd3';
+import { alignPropType } from 'react-bootstrap/esm/types';
 
 // configs used when running in dev mode locally
 export const FileConfigs = require('../src/config/config.json');
@@ -327,4 +329,109 @@ export const transformData = function(inputData) {
   }
   
   return result;
+}
+
+const clusterField = {
+  field_name: "cluster",
+  label: "cluster",
+  type: "text",
+  description: "<string: cluster name>",
+  required: true
+};
+
+const nodeField = {
+  field_name: "node",
+  label: "node",
+  type: "text",
+  description: "<string: node name>",
+  required: true
+};
+
+const appField = {
+  field_name: "app",
+  label: "app",
+  type: "text",
+  description: "<string: application name>",
+  required: true
+};
+
+const appPidField = {
+  field_name: "app_pid",
+  label: "app_pid",
+  type: "number",
+  description: "<string: application pid>",
+  required: true
+}
+
+const tmAttrField = {
+  field_name: "tm_attr",
+  label: "tm_attr",
+  type: "text",
+  description: "<string: me attr, possible vals are: MOVER_AGGRESSIVENESS_LOW / MOVER_AGGRESSIVENESS_HIGH>",
+  required: true
+}
+
+
+
+export const CognosMoveAPIArgs = {
+  title: "move",
+  endpoint: "/move",
+  fields: [
+    { ...clusterField },
+    { ...nodeField },
+    { ...appField },
+    { ...appPidField },
+    { ...tmAttrField },
+    {
+      field_name: "slow_tier",
+      label: "slow_tier",
+      type: "number",
+      description: "<string: NUMA node number for higher latency NUMA node>",
+      required: true
+    },
+    {
+      field_name: "fast_tier",
+      label: "fast_tier",
+      type: "number",
+      description: "<string: NUMA node number for lower latency NUMA node>",
+      required: true
+    }
+  ]
+}
+
+export const CognosMoveAllAPIArgs = {
+  title: "move_all",
+  endpoint: "/move_all",
+  fields: [
+    { ...clusterField },
+    { ...nodeField },
+    { ...appField },
+    { ...appPidField },
+    { ...tmAttrField },
+    {
+      field_name: "src",
+      label: "src",
+      type: "number",
+      description: "<string: NUMA node number for source NUMA node>",
+      required: true
+    },
+    {
+      field_name: "dst",
+      label: "dst",
+      type: "number",
+      description: "<string: NUMA node number for destination NUMA node>",
+      required: true
+    }
+  ]
+}
+
+export const CognosMoveStatsAPIArgs = {
+  title: "get_move_stats",
+  endpoint: "/get_move_stats",
+  fields: [
+    { ...clusterField },
+    { ...nodeField },
+    { ...appField },
+    { ...appPidField }
+  ]
 }
