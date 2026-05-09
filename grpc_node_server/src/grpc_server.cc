@@ -22,6 +22,7 @@ using namespace svk;
 std::atomic<int> gSignalNodeStatus = -1;
 std::mutex gNodeSrvMutex;
 std::condition_variable gNodeSrvCondVar;
+std::mutex gConfigFileMutex;
 
 void systemd_notify(int ready, const char *status) {
   sd_notifyf(0, "READY=%d\nSTATUS=%s", ready, status);
@@ -102,11 +103,44 @@ int read_svk_conf_file(const std::string &svk_conf_file, node_config *config) {
   return status;
 }
 
+int update_svk_conf_file(const std::string &svk_conf_file,
+                         const svk::NodeConfigRequest *req) {
+  int status = -1;
+  using json = nlohmann::json;
+
+  std::unique_lock lock(gConfigFileMutex);
+  try {
+    std::ifstream ifs_file(svk_conf_file);
+    if (!ifs_file.is_open()) {
+      svk_logger(MGMT_FW_LOGGER_MODULE_NAME, level_E::ERROR,
+                 "Error in opening the config file");
+      return status;
+    }
+    json data = json::parse(ifs_file);
+    ifs_file.close();
+
+    if (req->cluster_name_flag()) {
+      data["svk_mgmt_fw_node"]["cluster"]["id"] = req->cluster_name();
+    }
+
+    std::ofstream out_file(svk_conf_file);
+    out_file << data.dump(4);  // 4 space indentation
+    out_file.close();
+
+    status = 0;
+  } catch (std::exception &e) {
+    cerr << "Unable to update SVK config. Error -> " << e.what() << endl;
+  }
+  return status;
+}
+
 Servicer::Servicer(const std::string &svk_conf_file) {
   struct stat buf;
   int ret_val = -1;
   node_config config;
   std::string logger_str;
+
+  this->svk_conf_file = svk_conf_file;
 
   if (stat(svk_conf_file.c_str(), &buf) != 0) {
     std::cout << "Invalid path given for config file - " << svk_conf_file
@@ -344,6 +378,22 @@ int SetNodeStatus(const node_config &config, std::string node_status) {
     return -1;
   }
   return 0;
+}
+
+Status Servicer::ProcessNodeConfiguration(ServerContext *ctxt,
+                                          const svk::NodeConfigRequest *req,
+                                          svk::NodeConfigResponse *resp) {
+  std::string logger_str;
+  int ret_val;
+  Status grpc_status = Status::OK;
+
+  ret_val = update_svk_conf_file(this->svk_conf_file, req);
+  if (ret_val != 0) {
+    std::string error_str = "Error in updating the config file";
+    grpc_status = Status(grpc::UNKNOWN, error_str);
+  }
+
+  return grpc_status;
 }
 
 std::shared_ptr<Server> InitializeNodeServicer(Servicer *svcr) {

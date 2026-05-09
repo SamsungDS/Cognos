@@ -209,6 +209,8 @@ service CommandFwk {
       tags : "svk, node, command"
     };
   }
+  rpc ProcessNodeConfiguration(NodeConfigRequest) returns (NodeConfigResponse) {
+  }
 }
 
 // A RegisterRequest resource sent to the Controller node to register
@@ -442,4 +444,35 @@ message StatsResponse {
   string api_version = 3 [ json_name = "api_version" ];
   // JSON format of the output response
   string response = 4 [ json_name = "response" ];
+}
+
+// Controller configuration propagated to node server for
+// node registered at the controller
+message ControllerConfig {
+  string controller_name = 1;
+  string controller_port = 2;
+}
+
+// A NodeConfigRequest is sent to the Cognos node server to update
+// controller_name/port, cluster name etc
+message NodeConfigRequest {
+  // Set this field if the cluster_name needs to be updated
+  // Since the delete cluster or remove_node_from_cluster needs to remove the
+  // cluster name, the empty string cannot be distinguished whether it is set
+  // intentionally or not
+  bool cluster_name_flag = 1;
+  // Cluster name to which the node should be set to as part of reboot
+  string cluster_name = 2;
+  // Set the controller_field if the controller details are to be considered
+  bool controller_flag = 3;
+  // Controller configuration to which the node should connect to
+  ControllerConfig controller = 4;
+}
+
+// A NodeConfigResponse resource.
+message NodeConfigResponse {
+  // Status of NodeConfigResponse with success or failure with error details
+  string error_id_or_string_if_any = 1
+      [ json_name = "error_id_or_string_if_any" ];
+  int32 error_code = 2 [ json_name = "error_code" ];
 }

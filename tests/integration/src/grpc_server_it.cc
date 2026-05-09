@@ -4493,3 +4493,232 @@ TEST(InitIntegrationTest, HeartbeatNodeMonitorCheckWithoutEnabling) {
                                 "node health monitoring"));
   delete c_svcr;
 }
+
+int read_svk_conf_file_in_test(const std::string &svk_conf_file, json &data) {
+  int status = -1;
+  std::ifstream ifs_file(svk_conf_file);
+  if (!ifs_file.is_open()) {
+    return status;
+  }
+  data = json::parse(ifs_file);
+  ifs_file.close();
+  status = 0;
+  return status;
+}
+
+TEST(InitIntegrationTest, UpdateConfFileWithClusterManagementOperations) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  Servicer *svcr(new Servicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  std::string command_name = "delete_cluster";
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+
+  // delete the cluster and check the conf file whether the cluster.id is empty
+  // string
+  req->set_command_name(command_name);
+  req->set_cluster_name(DEFAULT_CLUSTER_ID);
+  req->set_command_params("");
+
+  auto grpc_status = client.ClusterAPI(req, resp);
+
+  EXPECT_EQ(grpc_status.ok(), true);
+
+  std::string search_str =
+      "Cluster " + std::string(DEFAULT_CLUSTER_ID) + " removed.";
+  EXPECT_EQ(is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE, search_str), true);
+
+  json data;
+
+  EXPECT_EQ(read_svk_conf_file_in_test(conf_file, data), 0);
+  std::cout << "JSON DATA AFTER DELETE CLUSTER " << data["svk_mgmt_fw_node"]
+            << std::endl;
+  EXPECT_EQ(data["svk_mgmt_fw_node"]["cluster"]["id"], "");
+
+  // Add node to cluster and check the conf file with the new cluster name in
+  // the cluster.id
+  json command_params;
+  json nodes = json::array();
+  json single_node;
+  single_node["node_name"] = DEFAULT_NODE_ID;
+  nodes.push_back(single_node);
+  command_params["nodes"] = nodes;
+
+  req->set_cluster_name("NewCluster");
+  req->set_command_name("create_cluster");
+  req->set_command_params(command_params.dump());
+
+  grpc_status = client.ClusterAPI(req, resp);
+  EXPECT_EQ(grpc_status.ok(), true);
+
+  EXPECT_EQ(read_svk_conf_file_in_test(conf_file, data), 0);
+  std::cout << "JSON DATA AFTER CREATE CLUSTER " << data["svk_mgmt_fw_node"]
+            << std::endl;
+  EXPECT_EQ(data["svk_mgmt_fw_node"]["cluster"]["id"], "NewCluster");
+
+  // Remove the same node from the cluster and check the conf file again
+  req->set_command_name("remove_node_from_cluster");
+
+  grpc_status = client.ClusterAPI(req, resp);
+  EXPECT_EQ(grpc_status.ok(), true);
+
+  EXPECT_EQ(read_svk_conf_file_in_test(conf_file, data), 0);
+  std::cout << "JSON DATA AFTER REMOVE NODE FROM CLUSTER "
+            << data["svk_mgmt_fw_node"] << std::endl;
+  EXPECT_EQ(data["svk_mgmt_fw_node"]["cluster"]["id"], "");
+
+  // Add the node to cluster again
+  req->set_command_name("add_node_to_cluster");
+
+  grpc_status = client.ClusterAPI(req, resp);
+  EXPECT_EQ(grpc_status.ok(), true);
+
+  EXPECT_EQ(read_svk_conf_file_in_test(conf_file, data), 0);
+  std::cout << "JSON DATA AFTER ADD NODE TO CLUSTER "
+            << data["svk_mgmt_fw_node"] << std::endl;
+  EXPECT_EQ(data["svk_mgmt_fw_node"]["cluster"]["id"], "NewCluster");
+
+  unlink(conf_file.c_str());
+}
+
+class FakeNodeServicerForProcessNodeConfigurationForDeleteCluster
+    : public Servicer {
+ public:
+  FakeNodeServicerForProcessNodeConfigurationForDeleteCluster(
+      std::string conf_file)
+      : Servicer(conf_file){};
+  Status ProcessNodeConfiguration(ServerContext *ctxt,
+                                  const svk::NodeConfigRequest *req,
+                                  svk::NodeConfigResponse *resp) {
+    return grpc::Status(grpc::UNKNOWN, "Failed updating configuration");
+  };
+};
+
+TEST(InitIntegrationTest,
+     UpdateConfFileFailedWithDeleteClusterManagementOperations) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  Servicer *svcr(
+      new FakeNodeServicerForProcessNodeConfigurationForDeleteCluster(
+          conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  std::string command_name = "delete_cluster";
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+
+  // delete the cluster and check the conf file whether the cluster.id is empty
+  // string
+  req->set_command_name(command_name);
+  req->set_cluster_name(DEFAULT_CLUSTER_ID);
+  req->set_command_params("");
+
+  auto grpc_status = client.ClusterAPI(req, resp);
+
+  EXPECT_EQ(grpc_status.ok(), false);
+
+  std::string search_str =
+      "Got error in rollback of the cluster name on node localhost with "
+      "error:Failed updating configuration";
+  EXPECT_EQ(is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE, search_str), true);
+  search_str =
+      "Got error in updating the cluster name on node localhost with "
+      "error:Failed updating configuration";
+  EXPECT_EQ(is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE, search_str), true);
+  unlink(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+}
+
+class FakeNodeServicerForProcessNodeConfigurationForCreateCluster
+    : public Servicer {
+ public:
+  FakeNodeServicerForProcessNodeConfigurationForCreateCluster(
+      std::string conf_file)
+      : Servicer(conf_file){};
+  Status ProcessNodeConfiguration(ServerContext *ctxt,
+                                  const svk::NodeConfigRequest *req,
+                                  svk::NodeConfigResponse *resp) {
+    if (req->cluster_name().length()) {
+      return grpc::Status(grpc::UNKNOWN, "Failed updating configuration");
+    } else {
+      return Status::OK;
+    }
+  };
+};
+
+TEST(InitIntegrationTest,
+     UpdateConfFileFailedWithCreateClusterManagementOperations) {
+  char *cw_dir = get_current_dir_name();
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(
+      conf_file, conf_file, CONTROLLER_LOGGER_DEFAULT_SINK_TYPE,
+      CONTROLLER_LOGGER_DEFAULT_FILE_COUNT, CONTROLLER_LOGGER_DEFAULT_FILE_SIZE,
+      CONTROLLER_LOGGER_DEFAULT_LEVEL, FEATURES_DIR, DEFAULT_CONTROLLER_ID);
+
+  StartServer(conf_file, false);
+
+  Servicer *svcr(
+      new FakeNodeServicerForProcessNodeConfigurationForCreateCluster(
+          conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  std::string command_name = "delete_cluster";
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  svk::ClusterRequest *req(new svk::ClusterRequest());
+  svk::ClusterResponse *resp(new svk::ClusterResponse());
+
+  // delete the cluster and check the conf file whether the cluster.id is empty
+  // string
+  req->set_command_name(command_name);
+  req->set_cluster_name(DEFAULT_CLUSTER_ID);
+  req->set_command_params("");
+
+  auto grpc_status = client.ClusterAPI(req, resp);
+
+  EXPECT_EQ(grpc_status.ok(), true);
+
+  // Add node to cluster and check the conf file with the new cluster name in
+  // the cluster.id
+  json command_params;
+  json nodes = json::array();
+  json single_node;
+  single_node["node_name"] = DEFAULT_NODE_ID;
+  nodes.push_back(single_node);
+  command_params["nodes"] = nodes;
+
+  req->set_cluster_name("NewCluster");
+  req->set_command_name("create_cluster");
+  req->set_command_params(command_params.dump());
+
+  grpc_status = client.ClusterAPI(req, resp);
+  EXPECT_EQ(grpc_status.ok(), false);
+
+  auto search_str =
+      "Got error in updating the cluster name on node localhost with "
+      "error:Failed updating configuration";
+  EXPECT_EQ(is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE, search_str), true);
+  unlink(CONTROLLER_NODE_DEFAULT_LOG_FILE);
+}

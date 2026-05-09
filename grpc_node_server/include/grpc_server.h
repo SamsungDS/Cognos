@@ -58,6 +58,9 @@ class Servicer : public svk::CommandFwk::Service {
 
   Status ProcessNodeCommand(ServerContext *ctxt, const svk::CommandRequest *req,
                             svk::CommandResponse *resp) override;
+  Status ProcessNodeConfiguration(ServerContext *ctxt,
+                                  const svk::NodeConfigRequest *req,
+                                  svk::NodeConfigResponse *resp) override;
   const std::string &get_svk_config_node_id() const {
     return m_svk_config.node_id;
   };
@@ -75,6 +78,7 @@ class Servicer : public svk::CommandFwk::Service {
   void InitializeHeartbeatManager();
 
  private:
+  std::string svk_conf_file;
   node_config m_svk_config;
   bool m_initialized_flag = false;
   std::shared_ptr<Server> m_server;

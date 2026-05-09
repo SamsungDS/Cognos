@@ -753,6 +753,78 @@ TEST_F(MockTestController, CreateCluster) {
   EXPECT_EQ(true, data2.find(search_str) != std::string::npos);
 }
 
+TEST_F(MockTestController, CreateClusterWithOfflineNode) {
+  Status grpc_status;
+
+  std::string cluster_name = "CLUSTER_CREATE_CLUSTER";
+  std::string command_name = "create_cluster";
+
+  namespace pt = boost::property_tree;
+  pt::ptree cmd;
+  pt::ptree nodes;
+
+  pt::ptree node;
+  node.put("node_name", "NODE_CREATE_CLUSTER");
+
+  nodes.push_back(std::make_pair("", node));
+  cmd.add_child("nodes", nodes);
+
+  std::stringstream ss;
+  pt::write_json(ss, cmd, false);
+  std::string json_str = ss.str();
+
+  Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
+
+  std::string node_id = "registernodesla.localdomain.com";
+  std::string node_port = "9998";
+  std::string node_name = "NODE_CREATE_CLUSTER";
+
+  svk::RegisterRequest *reg_req(new svk::RegisterRequest());
+  svk::RegisterResponse *reg_resp(new svk::RegisterResponse());
+
+  reg_req->set_node_name(node_name);
+  reg_req->set_node_ip(node_id);
+  reg_req->set_node_port(node_port);
+
+  EXPECT_CALL(*mockClient, CreateClient(_, _))
+      .Times(AtLeast(1))
+      .WillRepeatedly([](std::string node_id, std::string node_port) {
+        return std::make_unique<FakeClient>(node_id, node_port);
+      });
+
+  grpc_status = client.RegisterNode(reg_req, reg_resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+
+  // Mark the node offline
+  svk::SetNodeStatusRequest *req(new svk::SetNodeStatusRequest());
+  svk::SetNodeStatusResponse *resp(new svk::SetNodeStatusResponse());
+
+  req->set_node_name(node_name);
+  req->set_node_status("offline");
+
+  grpc_status = client.SetNodeStatus(req, resp);
+  EXPECT_TRUE(grpc_status.ok());
+
+  svk::ClusterRequest *c_req(new svk::ClusterRequest());
+  svk::ClusterResponse *c_resp(new svk::ClusterResponse());
+  c_req->set_cluster_name(cluster_name);
+  c_req->set_command_name(command_name);
+  c_req->set_command_params(json_str);
+
+  grpc_status = client.ClusterAPI(c_req, c_resp);
+  ASSERT_NE(grpc_status.ok(), true);
+
+  // Set the node status to online and create the cluster
+  req->set_node_name(node_name);
+  req->set_node_status("online");
+
+  grpc_status = client.SetNodeStatus(req, resp);
+  EXPECT_TRUE(grpc_status.ok());
+
+  grpc_status = client.ClusterAPI(c_req, c_resp);
+  ASSERT_EQ(grpc_status.ok(), true);
+}
+
 TEST_F(MockTestController, InvalidParamsClusterAPI) {
   Status grpc_status;
   std::string cluster_name = "";

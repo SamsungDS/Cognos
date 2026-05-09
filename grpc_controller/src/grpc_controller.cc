@@ -904,6 +904,7 @@ Status ControllerServicer::CreateCluster(const std::string &cluster_name,
   std::string logger_str;
   cluster_info clstr_info;
   Status status;
+  std::vector<node_info> node_list;
 
   if (cluster_name.length() == 0 || command_params.length() == 0) {
     logger_str = "Cluster command called with invalid parameters";
@@ -953,6 +954,10 @@ Status ControllerServicer::CreateCluster(const std::string &cluster_name,
             m_cluster_map[cluster_name][n.node_ip] = n.node_port;
             n.cluster_name = cluster_name;
             m_registered_nodes[node_name] = n;
+
+            // Add the node details to the vector to update the cluster name
+            // on those nodes
+            node_list.push_back(n);
             node_added = true;
           }
         }
@@ -964,6 +969,11 @@ Status ControllerServicer::CreateCluster(const std::string &cluster_name,
                      logger_str.c_str());
           m_cluster_map.erase(cluster_name);
           m_cluster_info.erase(cluster_name);
+          for (const auto &n : node_list) {
+            auto tmp_node = m_registered_nodes[n.node_name];
+            tmp_node.cluster_name = "";
+            m_registered_nodes[n.node_name] = tmp_node;
+          }
           resp->set_error_id_or_string_if_any(logger_str);
           resp->set_error_code(SVK_STATUS_FAIL);
           return Status(grpc::INVALID_ARGUMENT, logger_str);
@@ -975,6 +985,26 @@ Status ControllerServicer::CreateCluster(const std::string &cluster_name,
                  logger_str.c_str());
       status = Status::OK;
     }
+
+    int update_status = UpdateClusterName(cluster_name, node_list);
+    if (update_status != 0) {
+      // Update cluster name on all nodes failed. Remove the entry
+      // from the global list
+      m_cluster_map.erase(cluster_name);
+      m_cluster_info.erase(cluster_name);
+      for (const auto &n : node_list) {
+        auto tmp_node = m_registered_nodes[n.node_name];
+        tmp_node.cluster_name = "";
+        m_registered_nodes[n.node_name] = tmp_node;
+      }
+      logger_str =
+          "Failed to update cluster name on the nodes as part of create "
+          "cluster";
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                 logger_str.c_str());
+      return Status(grpc::UNKNOWN, logger_str);
+    }
+
     // Create response with nodes in the cluster
     json cluster = json::array();
     json nodes_in_cluster = ClusterResponseJson(cluster_name);
@@ -1017,6 +1047,7 @@ Status ControllerServicer::DeleteCluster(const std::string &cluster_name,
                                          svk::ClusterResponse *resp) {
   std::vector<std::string> node_names;
   std::string logger_str;
+  std::vector<node_info> node_list;
 
   // If cluster_name is empty, return invalid argument error.
   if (cluster_name.length() == 0) {
@@ -1045,6 +1076,23 @@ Status ControllerServicer::DeleteCluster(const std::string &cluster_name,
   // Iterate over all nodes in the cluster and remove the cluster_name in
   // node_info
   node_names = m_cluster_info[cluster_name].node_names;
+
+  // Add the node to the list on which the cluster name should be updated
+  for (const auto &node_name : node_names) {
+    node_info &node = m_registered_nodes[node_name];
+    node_list.push_back(node);
+  }
+  // Remove the cluster_name from the node's DB(file) so that it doesn't
+  // automatically used across reboots
+  int update_status = UpdateClusterName("", node_list);
+  if (update_status != 0) {
+    logger_str =
+        "Failed to update cluster name on the node as part of delete_cluster";
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+               logger_str.c_str());
+    return Status(grpc::UNKNOWN, logger_str);
+  }
+
   for (const auto &node_name : node_names) {
     node_info &node = m_registered_nodes[node_name];
     node.cluster_name = "";
@@ -1158,6 +1206,7 @@ Status ControllerServicer::AddRemoveNode(const std::string &cluster_name,
                                          svk::ClusterResponse *resp) {
   Status status;
   std::string logger_str;
+  std::vector<node_info> node_list;
 
   if (cluster_name.length() == 0 || command_params.length() == 0) {
     logger_str =
@@ -1201,6 +1250,18 @@ Status ControllerServicer::AddRemoveNode(const std::string &cluster_name,
             resp->set_error_code(SVK_STATUS_FAIL);
             return Status(grpc::ALREADY_EXISTS, logger_str);
           }
+
+          node_list.push_back(curr_node);
+          // Update the cluster name on the node to get it persisted
+          int update_status = UpdateClusterName(cluster_name, node_list);
+          if (update_status != 0) {
+            logger_str = "Failed to update cluster name on the node: " +
+                         curr_node.node_ip + " as part of add_node_to_cluster";
+            svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                       logger_str.c_str());
+            return Status(grpc::UNKNOWN, logger_str);
+          }
+
           // Add node to new and old cluster data structures
           m_cluster_info[cluster_name].node_names.push_back(node_name);
           m_cluster_map[cluster_name][curr_node.node_ip] = curr_node.node_port;
@@ -1211,6 +1272,21 @@ Status ControllerServicer::AddRemoveNode(const std::string &cluster_name,
           svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::DEBUG,
                      logger_str.c_str());
         } else {
+          // Remove the cluster_name from the node's DB(file) so that it doesn't
+          // automatically used across reboots
+          node_list.push_back(curr_node);
+          // Update the cluster name to empty value on the node to get it
+          // persisted
+          int update_status = UpdateClusterName("", node_list);
+          if (update_status != 0) {
+            logger_str = "Failed to update cluster name on the node: " +
+                         curr_node.node_ip +
+                         " as part of remove_node_from_cluster";
+            svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                       logger_str.c_str());
+            return Status(grpc::UNKNOWN, logger_str);
+          }
+
           // Remove node from cluster
           std::vector<std::string> &node_names =
               m_cluster_info[cluster_name].node_names;
@@ -1228,6 +1304,7 @@ Status ControllerServicer::AddRemoveNode(const std::string &cluster_name,
             resp->set_error_code(SVK_STATUS_FAIL);
             return Status(grpc::NOT_FOUND, "Invalid node name passed");
           }
+
           // Remove node from old cluster data structure
           if (!m_cluster_map[cluster_name].erase(curr_node.node_ip)) {
             logger_str = "Node " + node_name + " not found in cluster " +

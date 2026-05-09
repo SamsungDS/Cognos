@@ -158,6 +158,14 @@ Status Client::StatsAPI(const svk::StatsRequest* req,
   return status;
 }
 
+Status Client::ProcessNodeConfiguration(const svk::NodeConfigRequest* req,
+                                        svk::NodeConfigResponse* resp) {
+  ClientContext ctxt;
+  configureClientContext(ctxt);
+  Status status = fwk_stub_->ProcessNodeConfiguration(&ctxt, *req, resp);
+  return status;
+}
+
 int Client::GetChannelState(grpc_connectivity_state& state) {
   if (channel_) {
     state = channel_->GetState(true);

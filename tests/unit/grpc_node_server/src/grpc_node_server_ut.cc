@@ -19,6 +19,8 @@ using ::testing::SetArgPointee;
 using ::testing::StartsWith;
 using ::testing::StrEq;
 
+using json = nlohmann::json;
+
 #define FEATURES_DIR "/usr/local/svk/core/tests/sample_feature/";
 
 int create_svk_mgmt_fw_conf_json(std::string conf_file,
@@ -1085,4 +1087,70 @@ TEST(InitTest, InitStartServerSuccessWithDestructor) {
 TEST(InitTest, InitStartServerWithNullConfFile) {
   int ret = StartNodeServer("", true);
   ASSERT_NE(ret, 0);
+}
+
+int read_svk_conf_file_in_test(const std::string &svk_conf_file, json &data) {
+  int status = -1;
+  std::ifstream ifs_file(svk_conf_file);
+  if (!ifs_file.is_open()) {
+    return status;
+  }
+  data = json::parse(ifs_file);
+  ifs_file.close();
+  status = 0;
+  return status;
+}
+
+TEST(InitTest, ProcessNodeConfiguration) {
+  char *cw_dir = get_current_dir_name();
+  std::string features_dir = FEATURES_DIR;
+
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(conf_file, conf_file, "rotating_file", 10,
+                               1048576, "INFO", features_dir);
+
+  Servicer *svcr(new Servicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  svk::NodeConfigRequest req;
+  svk::NodeConfigResponse resp;
+
+  req.set_cluster_name_flag(true);
+  req.set_cluster_name("NewCluster");
+
+  auto grpc_status = svcr->ProcessNodeConfiguration(nullptr, &req, &resp);
+  EXPECT_EQ(grpc_status.ok(), true);
+  unlink(MGMT_FW_NODE_DEFAULT_LOG_FILE);
+  json data;
+  EXPECT_EQ(read_svk_conf_file_in_test(conf_file, data), 0);
+  EXPECT_EQ(data["svk_mgmt_fw_node"]["cluster"]["id"], "NewCluster");
+}
+
+TEST(InitTest, ProcessNodeConfigurationWithJSONException) {
+  char *cw_dir = get_current_dir_name();
+  std::string features_dir = FEATURES_DIR;
+
+  std::string conf_file = std::string(cw_dir) + "/conf.json";
+  create_svk_mgmt_fw_conf_json(conf_file, conf_file, "rotating_file", 10,
+                               1048576, "INFO", features_dir);
+
+  Servicer *svcr(new Servicer(conf_file));
+  auto server = InitializeNodeServicer(svcr);
+  ASSERT_NE(server, nullptr);
+
+  EXPECT_EQ(truncate(conf_file.c_str(), 20), 0);
+
+  svk::NodeConfigRequest req;
+  svk::NodeConfigResponse resp;
+
+  req.set_cluster_name_flag(true);
+  req.set_cluster_name("NewCluster");
+
+  auto grpc_status = svcr->ProcessNodeConfiguration(nullptr, &req, &resp);
+  EXPECT_NE(grpc_status.ok(), true);
+  EXPECT_EQ(grpc_status.error_message(), "Error in updating the config file");
+
+  unlink(MGMT_FW_NODE_DEFAULT_LOG_FILE);
+  unlink(conf_file.c_str());
 }
