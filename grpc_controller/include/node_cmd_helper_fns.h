@@ -1,6 +1,6 @@
 #ifndef __NODE_CMD_HELPER_FNS_H__
 #define __NODE_CMD_HELPER_FNS_H__
-#include "grpc_hdr.h"
+#include "grpc_controller.h"
 #include "sla_hlpr_fns.h"
 
 // Need to move these thresholds to JSON file for configuring
@@ -45,4 +45,12 @@ int DisableRASTrackingOnDevice(const std::string& node_name,
                                const std::string& device_type,
                                const std::string& device_numa);
 
+/**
+ * Update the cluster name on all the nodes in the vector node_list.
+ * If the  update fails partially midway, rollback the changes on all the nodes
+ *
+ * Returns 0 on success or -1 on failure
+ */
+int UpdateClusterName(const std::string& cluster_name,
+                      const std::vector<struct node_info>& node_list);
 #endif /*__NODE_CMD_HELPER_FNS_H__*/

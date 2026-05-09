@@ -53,6 +53,9 @@ class Client {
                                   svk::SLAManagementResponse* resp);
   virtual Status StatsAPI(const svk::StatsRequest* req,
                           svk::StatsResponse* resp);
+  virtual Status ProcessNodeConfiguration(const svk::NodeConfigRequest* req,
+                                          svk::NodeConfigResponse* resp);
+
   virtual bool CheckServerHealth(const std::string& service_name);
   virtual int GetChannelState(grpc_connectivity_state& state);
   virtual int WaitForConnected();

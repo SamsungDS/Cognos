@@ -39,6 +39,12 @@ class FakeClient : public Client {
     // Mocking returning false to simulate no devices
     return Status(grpc::UNKNOWN, "Returning error to mock no devices in node");
   }
+
+  Status ProcessNodeConfiguration(const svk::NodeConfigRequest *req,
+                                  svk::NodeConfigResponse *resp) override {
+    return Status::OK;
+  }
+
   int WaitForConnected() {
     std::cout << "WaitForConnected returning success" << std::endl;
     return 0;

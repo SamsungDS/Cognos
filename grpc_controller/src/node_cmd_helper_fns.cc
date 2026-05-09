@@ -123,3 +123,73 @@ int DisableRASTrackingOnDevice(const std::string& node_name,
 
   return status;
 }
+
+int UpdateClusterName(const std::string& cluster_name,
+                      const std::vector<node_info>& node_list) {
+  svk::NodeConfigRequest req_node;
+  svk::NodeConfigResponse resp_node;
+  int status = 0;
+  Status cmd_status;
+  std::string logger_str;
+
+  req_node.set_cluster_name_flag(true);
+  req_node.set_cluster_name(cluster_name);
+
+  for (const auto& n : node_list) {
+    logger_str =
+        "Updating the cluster name on node with the following - node_name: " +
+        n.node_name + " node_port: " + n.node_port;
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               logger_str.c_str());
+
+    auto client = CreateClient(n.node_ip, n.node_port);
+    cmd_status = client->ProcessNodeConfiguration(&req_node, &resp_node);
+    if (cmd_status.ok() != true) {
+      logger_str = "Got error in updating the cluster name on node " +
+                   n.node_name + " with error:" + cmd_status.error_message();
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                 logger_str.c_str());
+      status = -1;
+      break;
+    } else {
+      logger_str =
+          "Update of cluster name is successful on node " + n.node_name;
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                 logger_str.c_str());
+    }
+  }
+
+  if (status == 0) {
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               "Successfully updated the cluster name on all nodes");
+  } else {
+    // Remove the cluster name if partially done on those nodes
+
+    req_node.set_cluster_name("");
+
+    for (const auto& n : node_list) {
+      logger_str =
+          "Rollbacking the changes of cluster name on node with the following "
+          "- node_name: " +
+          n.node_name + " node_port: " + n.node_port;
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                 logger_str.c_str());
+
+      auto client = CreateClient(n.node_ip, n.node_port);
+      cmd_status = client->ProcessNodeConfiguration(&req_node, &resp_node);
+      if (cmd_status.ok() != true) {
+        logger_str = "Got error in rollback of the cluster name on node " +
+                     n.node_name + " with error:" + cmd_status.error_message();
+        svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
+                   logger_str.c_str());
+      } else {
+        logger_str =
+            "Rollback of the cluster name is successful on node " + n.node_name;
+        svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                   logger_str.c_str());
+      }
+    }
+  }
+
+  return status;
+}
