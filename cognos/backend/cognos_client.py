@@ -1085,7 +1085,8 @@ class Cognos(BaseControlInterface):
             slow_tier = request_data["slow_tier"]
             fast_tier = request_data["fast_tier"]
 
-            if any([app, app_pid, tm_attr, slow_tier, fast_tier]):
+            if all([app, app_pid, tm_attr, slow_tier, fast_tier, cluster,
+                    node]):
                 request_url = (
                     COGNOS_NORTHBOUND_ENDPOINTS["get_cme_stats_prefix"] +
                     node +
@@ -1138,7 +1139,7 @@ class Cognos(BaseControlInterface):
             src = request_data["src"]
             dst = request_data["dst"]
 
-            if any([app, app_pid, tm_attr, src, dst]):
+            if all([app, app_pid, tm_attr, src, dst, cluster, node]):
                 request_url = (
                     COGNOS_NORTHBOUND_ENDPOINTS["get_cme_stats_prefix"] +
                     node +
@@ -1188,7 +1189,7 @@ class Cognos(BaseControlInterface):
             app = request_data["app"]
             app_pid = request_data["app_pid"]
 
-            if any([app, app_pid]):
+            if all([app, app_pid, cluster, node]):
                 request_url = (
                     COGNOS_NORTHBOUND_ENDPOINTS["get_cme_stats_prefix"] +
                     node +

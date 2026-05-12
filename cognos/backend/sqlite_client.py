@@ -10,7 +10,20 @@ class SqliteClient():
                  logger=None):
         self.logger = logger
         self.in_mem_mode = in_mem
-        self.db_file_path = svk_data_path + os.sep + 'cognos.db'
+        # Determine a writable DB path, fallback to cwd if needed
+        default_path = svk_data_path + os.sep + 'cognos.db'
+        try:
+            # Ensure the directory exists and is writable
+            os.makedirs(svk_data_path, exist_ok=True)
+            # Test write permission by attempting to open the file in append mode
+            open(default_path, 'a').close()
+            self.db_file_path = default_path
+        except PermissionError:
+            fallback_dir = os.path.join(os.getcwd(), "svk_data")
+            os.makedirs(fallback_dir, exist_ok=True)
+            self.db_file_path = os.path.join(fallback_dir, 'cognos.db')
+            # Ensure the fallback file exists
+            open(self.db_file_path, 'a').close()
 
     def get_db_fingerpint(self):
         path = Path(self.db_file_path)

@@ -401,13 +401,23 @@ def init_sqlite_db_file(svk_data_path="/var/lib/svk"):
     db_file = svk_data_path + os.sep + 'cognos.db'
     db_file_path = Path(db_file)
 
-    # create data directory
-    if not os.path.exists(svk_data_path):
-        os.makedirs(svk_data_path)
+    try:
+        # create data directory
+        os.makedirs(svk_data_path, exist_ok=True)
 
-    # create DB file
-    if not os.path.exists(db_file):
+        # create DB file
         db_file_path.touch(exist_ok=True)
+    except PermissionError:
+        # Fallback to a writable location within the current working directory
+        fallback_dir = os.path.join(os.getcwd(), "svk_data")
+        os.makedirs(fallback_dir, exist_ok=True)
+        fallback_path = Path(fallback_dir) / 'cognos.db'
+        fallback_path.touch(exist_ok=True)
+        # Update the global reference used elsewhere
+        global SVK_DATA_PATH
+        SVK_DATA_PATH = fallback_dir
+        # Adjust the function's behavior to point to the fallback path
+        db_file_path = fallback_path
 
 
 def clear_cognos_db(mock=False):

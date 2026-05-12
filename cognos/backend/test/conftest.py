@@ -179,6 +179,63 @@ def gunicorn_app(dummy_app, monkeypatch):
     return GunicornServer(dummy_app, options)
 
 
+# ----------------------------------------------------------------------
+# New shared fixtures for inner‑function tests
+# ----------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def disable_sys_exit(monkeypatch):
+    """Prevent sys.exit from terminating the test suite."""
+    monkeypatch.setattr("sys.exit", lambda *args, **kwargs: None)
+
+
+@pytest.fixture(autouse=True)
+def mock_scmc_version(mocker):
+    """Make Cognos report a sane version string."""
+    mocker.patch.object(
+        Cognos,
+        "scmc_version",
+        {"version": "test-version"},
+        create=True,
+    )
+
+
+@pytest.fixture
+def flask_app(mock_initialize_cognos, mocker):
+    """Create a single Flask app instance (mock mode) for inner‑function tests."""
+    # Mock Cognos methods that would otherwise hit the SQLite DB
+    mocker.patch(
+        'cognos.backend.cognos_client.Cognos.fetch_topology',
+        return_value={}
+    )
+    mocker.patch(
+        'cognos.backend.cognos_client.Cognos.get_remote_hosts',
+        return_value={}
+    )
+    app = create_app(mock=True)
+    return app
+
+
+# ----------------------------------------------------------------------
+# Autouse fixtures to mock Cognos methods that hit the SQLite DB
+# ----------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def mock_fetch_topology(mocker):
+    """Mock Cognos.fetch_topology to avoid DB access in inner‑function tests."""
+    mocker.patch(
+        'cognos.backend.cognos_client.Cognos.fetch_topology',
+        return_value={}
+    )
+
+
+@pytest.fixture(autouse=True)
+def mock_get_remote_hosts(mocker):
+    """Mock Cognos.get_remote_hosts to avoid DB access in inner‑function tests."""
+    mocker.patch(
+        'cognos.backend.cognos_client.Cognos.get_remote_hosts',
+        return_value={}
+    )
+
+
 @pytest.fixture
 def artifact_client(mocker):
     mocker.patch(

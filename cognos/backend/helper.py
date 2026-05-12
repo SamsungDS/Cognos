@@ -221,20 +221,28 @@ def failed_response(msg: str) -> Response:
 
 def get_scmc_version_file() -> str:
     """
-    Returns: Filepath of VERSION file containing svk-app version
-             VERSION file will always be located in the root of
-             the install location or the development repository
+    Returns the absolute path to the SCMC_VERSION file.
+    The file is typically located at the project root or installed location.
     """
+    cwd_path = os.path.join(os.getcwd(), 'SCMC_VERSION')
+    if os.path.isfile(cwd_path):
+        return cwd_path
+
     root_folder = (
         os.path.dirname(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         )
     )
-    return (
-        os.path.join(root_folder, 'SCMC_VERSION')
-        if os.path.exists(root_folder + os.sep + 'SCMC_VERSION')
-        else None
-    )
+    version_file = os.path.join(root_folder, 'SCMC_VERSION')
+    if os.path.isfile(version_file):
+        return version_file
+    else:
+        # Fallback to original logic (three levels up from this file)
+        fallback_folder = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), '../../..')
+        )
+        fallback_path = os.path.join(fallback_folder, 'SCMC_VERSION')
+        return fallback_path if os.path.isfile(fallback_path) else None
 
 
 def fetch_cognos_configs(parent_dir: str, file_name: str) -> Dict:
