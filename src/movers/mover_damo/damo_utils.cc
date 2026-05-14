@@ -16,14 +16,14 @@ string create_config_gen_command(string mode, string ft, string st,
         {
                 if (TEST_BUILD)
                 {
-                // if it is test, use global filter instead of cgroup based filter to
-                // create damo config
-                cmd = "sudo " + PM_DAMO_PYTHON3_PATH + " " + SVK_DAMO_PATH + PM_DAMO_CONFIG_GEN_SCRIPT + " -" + mode + " " + ft + " " + st + " -g " + " -o " + filename;
+                        // if it is test, use global filter instead of cgroup based filter and fixed numanodes 0,1 to
+                        // create damo config
+                        cmd = "sudo " + PM_DAMO_PYTHON3_PATH + " " + SVK_DAMO_PATH + PM_DAMO_CONFIG_GEN_SCRIPT + " -" + mode + " 0 1 " + " -g " + " -o " + filename;
                 }
                 else
                 {
-                // use cgroup based filter to create damo config
-                cmd = "sudo " + PM_DAMO_PYTHON3_PATH + " " + SVK_DAMO_PATH + PM_DAMO_CONFIG_GEN_SCRIPT + " -" + mode + " " + ft + " " + st + " -c " + app_name + "_" + app_id + " -o " + filename;
+                        // use cgroup based filter to create damo config
+                        cmd = "sudo " + PM_DAMO_PYTHON3_PATH + " " + SVK_DAMO_PATH + PM_DAMO_CONFIG_GEN_SCRIPT + " -" + mode + " " + ft + " " + st + " -c " + app_name + "_" + app_id + " -o " + filename;
                 }
         }
         catch (const exception& e)

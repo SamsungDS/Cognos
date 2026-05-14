@@ -257,15 +257,7 @@ static int _numa_move_all(long target_pid, unsigned int node_src, unsigned int n
         int ret = 0;
         try
         {
-                unsigned int numa_count_conf = numa_num_configured_nodes();
                 unsigned int numa_count_possible = numa_num_possible_nodes();
-
-                if( node_src < 0  || node_src >= numa_count_conf || node_dest < 0 || node_dest >= numa_count_conf)
-                {
-                        CME_ERR("Error in " + string(__FUNCTION__) + " invalid NUMA node input");
-			return -EINVAL;
-                }
-
                 struct bitmask *src_nodes = numa_bitmask_alloc(numa_count_possible);
                 struct bitmask *dst_nodes = numa_bitmask_alloc(numa_count_possible);
                 

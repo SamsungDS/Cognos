@@ -261,6 +261,35 @@ cme_mover* cme_global::cg_find_mover(cme_context* cme_ctx)
 }
 
 /**
+ * @brief function to verify params needed for move commands
+ * 	are valid
+ * @param command pid, numa node 1, numa node 2
+ * @return true if valid params for move
+*/
+static bool is_valid_cmd_move_param(long app_pid, int n1, int n2)
+{
+        try
+        {
+                if (!(pid_exists(app_pid)))
+                {
+                        CME_ERR("Error in " + string (__FUNCTION__) + " Invalid app pid input");
+                        return false;
+                }
+                if ( (!(is_valid_numa_node(n1))) || (!(is_valid_numa_node(n2))) )
+                {
+                        CME_ERR("Error in " + string (__FUNCTION__) + " Invalid Numa node input");
+                        return false;
+                }
+        }
+        catch (const std::exception &e) 
+        {
+                CME_ERR("Error -> ", e.what ());
+                return false;
+        }
+        return true;
+}
+
+/**
  * @brief function to verify all params needed for move_all
  * 	are present
  * @param command tokens map
@@ -283,14 +312,16 @@ static bool is_valid_cmd_move_all(cme_global* cg_obj, unordered_map<string, stri
 		{
 			throw runtime_error ("Error in " + string (__FUNCTION__) + " :move_all tm_attr param invalid");
 		}
-				
+                int node_i = stoi (tokens_map.at("src"));
+                int node_j = stoi (tokens_map.at("dst"));
+                long app_pid = stol (tokens_map.at("app_pid"));
+                return is_valid_cmd_move_param(app_pid, node_i, node_j);
 	}
         catch (const std::exception &e) 
         {
                 CME_ERR("Error -> ", e.what ());
                 return false;
         }
-        return true;
 }
 
 /**
@@ -454,13 +485,17 @@ static bool is_valid_cmd_move(cme_global* cg_obj, unordered_map<string, string> 
                 {
 			throw runtime_error ("Error in " + string (__FUNCTION__) + " move command parameters not found ");
                 }
+
+                int node_i = stoi (tokens_map.at("slow_tier"));
+                int node_j = stoi (tokens_map.at("fast_tier"));
+                long app_pid = stol (tokens_map.at("app_pid"));
+                return is_valid_cmd_move_param(app_pid, node_i, node_j);
         }
         catch (const std::exception &e)
         {
                 CME_ERR( "Error -> ", e.what());
                 return false;
         }
-        return true;
 }
 
 
@@ -668,53 +703,6 @@ static std::string cg_move_stop(cme_global* cg_obj, unordered_map<string, string
 }
 
 /**
- * @brief StartTuning
- * @param command string
- * @return status code of StartTuning
- *  StartTuning redirects to move 
-*/
-static std::string cg_StartTuning(cme_global* cg_obj, unordered_map<string, string> &tokens_map)
-{
-        try
-        {
-                tokens_map.try_emplace("app", tokens_map.at("application"));
-                tokens_map.try_emplace("fast_tier", tokens_map.at("dram_node"));
-                tokens_map.try_emplace("app_pid", tokens_map.at("application_id"));
-                tokens_map.try_emplace("slow_tier", tokens_map.at("cxl_node"));
-                tokens_map.try_emplace("tm_attr", "MOVER_AGGRESSIVENESS_LOW");
-                tokens_map["command"] = "move";
-                return cg_move(cg_obj, tokens_map);
-                
-        }
-        catch(const std::exception& e)
-        {
-                CME_ERR( "StartTuning. Error -> ", e.what());
-                return std::to_string(-EINVAL);
-        }
-}
-
-/**
- * @brief StopTuning
- * @param command string
- * @return status code of StopTuning
- *  StopTuning redirects to move
-*/
-static std::string cg_StopTuning(cme_global* cg_obj, unordered_map<string, string> &tokens_map)
-{
-        try
-        {
-                tokens_map.try_emplace("app", tokens_map.at("application"));
-                tokens_map.try_emplace("app_pid", tokens_map.at("application_id"));
-                return cg_move_stop(cg_obj, tokens_map);
-        }
-        catch(const std::exception& e)
-        {
-                CME_ERR( "cg_StopTuning. Error -> ", e.what());
-                return std::to_string(-EINVAL);
-        }
-}
-
-/**
  * @brief cme_command_handler
  * @param command string
  * @return result of command execution functions
@@ -767,10 +755,7 @@ int cme_global::initialize()
                 fw_hooks.try_emplace("move_hot", cg_move_hot);
                 fw_hooks.try_emplace("move_cold", cg_move_cold);
                 fw_hooks.try_emplace("stop", cg_move_stop);
-                fw_hooks.try_emplace("StartTuning", cg_StartTuning);
-                fw_hooks.try_emplace("StopTuning", cg_StopTuning);
                 fw_hooks.try_emplace("get_stats", cg_get_stats);
-
         }
         catch (const std::exception &e)
         {

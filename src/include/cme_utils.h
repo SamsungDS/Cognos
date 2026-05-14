@@ -93,6 +93,8 @@ bool pid_exists(long pid);
 const long DUMMY_PID = -1000;
 const std::string DUMMY_PROCESS = "DUMMY_PROCESS";
 
+bool is_valid_numa_node(int);
+
 std::string getCurrentTimestamp(void);
 
 /**

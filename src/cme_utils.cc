@@ -1,8 +1,11 @@
 
 #include <array>
 #include <functional>
+#include <filesystem>
 #include <csignal>
 #include <unistd.h>
+#include <numa.h>
+#include <numaif.h>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
@@ -121,9 +124,24 @@ long get_invalid_pid( void)
 
 bool pid_exists(long pid)
 {
-    // Use kill with signal 0 to check if the process exists
-    // This does not send a real signal, just checks for permission
-    return kill((pid_t)pid, 0) == 0;
+        if (pid == DUMMY_PID)
+        {
+                return true;
+        }
+        // Construct the path string: /proc/<pid>
+        std::string procPath = "/proc/" + std::to_string(pid);
+        // Check if the directory path physically exists on the system
+        return std::filesystem::is_directory(procPath);
+}
+
+bool is_valid_numa_node(int node_i)
+{
+        unsigned int numa_count_conf = numa_num_configured_nodes();
+        if( node_i < 0  || static_cast<unsigned int>(node_i) >= numa_count_conf)
+        {
+                return false;
+        }
+        return true;
 }
 
 std::string getCurrentTimestamp()
