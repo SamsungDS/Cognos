@@ -77,8 +77,9 @@ management_server_type: ''
 application_server_type: 'CMMH'
 
 cognos_install_gui_enabled: false
+cognos_rbac_enabled: true
 cognos_certificates_enabled: false
-cognos_rbac_enabled: false
+cognos_download_artifacts_enabled: false
 cognos_cleanup_enable_log_collection: false
 
 

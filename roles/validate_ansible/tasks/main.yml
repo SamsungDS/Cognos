@@ -31,7 +31,7 @@
       Installed version is {{ ansible_version.full }}
       Remove ansible && ansible-base && ansible-core if present.
       Install Ansible via python3 pip module:
-      python3 -m pip install ansible-core=={{ validate_ansible_min_ver }}
+      sudo python3 -m pip install ansible-core=={{ validate_ansible_min_ver }}
 
 - name: Validate python modules
   ansible.builtin.include_tasks: validate_python_modules.yml

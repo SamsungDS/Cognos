@@ -7,25 +7,43 @@
       - gnupg
       - tar
     state: present
+  become: true
 
-- name: Configure GPG key of influx DB
+- name: Add Caddy repo
   ansible.builtin.shell:
     cmd: |
       set -o pipefail
-      curl -fsSL https://repos.influxdata.com/influxdata-archive.key | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/influxdata-archive.gpg > /dev/null
+      curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor --batch --no-tty -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+      curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
     executable: /bin/bash
-  register: management_server_deps_influx_db_apt
-  failed_when: management_server_deps_influx_db_apt.rc != 0
+  register: management_server_deps_caddy_repo
+  failed_when: management_server_deps_caddy_repo.rc != 0
   changed_when: false
+  become: true
+
+- name: Update apt package cache after adding Caddy source
+  ansible.builtin.apt:
+    update_cache: true
+  become: true
+
+- name: Install caddy
+  ansible.builtin.apt:
+    name: caddy
+    state: present
   become: true
 
 - name: Configure apt source list for influx DB
   ansible.builtin.shell:
     cmd: |
       set -o pipefail
-      set -o pipefail
-      echo "deb [signed-by=/etc/apt/trusted.gpg.d/influxdata-archive.gpg] https://repos.influxdata.com/debian stable main" |
-      sudo tee /etc/apt/sources.list.d/influxdata.list
+      curl --silent --location -O https://repos.influxdata.com/influxdata-archive.key
+      gpg --show-keys --with-fingerprint --with-colons ./influxdata-archive.key 2>&1 \
+      | grep -q '^fpr:\+24C975CBA61A024EE1B631787C3D57159FC2F927:$' \
+      && cat influxdata-archive.key \
+      | gpg --dearmor \
+      | sudo tee /etc/apt/keyrings/influxdata-archive.gpg > /dev/null \
+      && echo 'deb [signed-by=/etc/apt/keyrings/influxdata-archive.gpg] https://repos.influxdata.com/debian stable main' \
+      | sudo tee /etc/apt/sources.list.d/influxdata.list
     executable: /bin/bash
   register: management_server_deps_influx_db_source_list
   failed_when: management_server_deps_influx_db_source_list.rc != 0
@@ -57,12 +75,17 @@
       influx config list | grep "{{ influxdb_org }}"
     executable: /bin/bash
   register: management_server_deps_instance
+  become: true
   changed_when: false
   failed_when: false
 
 - name: Setup influxDB
-  ansible.builtin.shell: |
-    influx setup --username "{{ influxdb_user }}" --password "{{ influxdb_pwd }}" --org "{{ influxdb_org }}" --bucket "{{ influxdb_bucket }}" --force
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      influx setup --username "{{ influxdb_user }}" --password "{{ influxdb_pwd }}" --org "{{ influxdb_org }}" --bucket "{{ influxdb_bucket }}" --force
+    executable: /bin/bash
+  become: true
   changed_when: false
   when: management_server_deps_instance.rc
 
@@ -87,8 +110,49 @@
     state: present
   become: true
 
-- name: Install required packages[telegraf]
+- name: Create keyrings directory
+  ansible.legacy.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+  become: true
+
+- name: Download and install Docker GPG key
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+    force: true
+  become: true
+
+- name: Get system architecture (amd64, arm64, etc.)
+  ansible.builtin.command: dpkg --print-architecture
+  register: management_server_deps_arch_result
+  changed_when: false
+
+- name: Generate Docker APT repository entry
+  ansible.builtin.apt_repository:
+    repo: >
+      deb [arch={{ management_server_deps_arch_result.stdout }} signed-by=/etc/apt/keyrings/docker.asc]
+      https://download.docker.com/linux/ubuntu
+      {{ ansible_lsb.codename | default(ansible_distribution_release) }} stable
+    filename: docker
+    state: present
+  become: true
+
+- name: Update apt package cache after adding Docker source
+  ansible.builtin.apt:
+    update_cache: true
+  become: true
+
+- name: Install Docker packages
   ansible.builtin.apt:
     name:
-      - telegraf
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
     state: present
+    update_cache: true
+  become: true

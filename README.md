@@ -14,7 +14,7 @@ It is not posible to deploy to other Linux distributions at this time.
 
 ### Ansible Host Setup
 
-On a linux host, on the same management network as all hosts in the Cognos cluster, install the version of ansible-core version is >= 2.16.6 and <= 2.18.4,  _**preferably 2.17.14**_.
+On a linux host, on the same management network as all hosts in the Cognos cluster, install the version of ansible-core version is >= 2.16.6 and <= 2.18.4,  _**preferably 2.17.4**_.
 
 And installed Python version is larger than or equal to 3.10.12.
 
@@ -24,9 +24,11 @@ To install python & ansible, use the following commands (example for Ubuntu):
 ```
 sudo python3 -m pip install --upgrade pip
 
-sudo python3 -m pip install ansible-core==2.17.14
+sudo python3 -m pip install ansible-core==2.17.4
 
 sudo ansible-galaxy collection install community.general
+
+sudo ansible-galaxy collection install ansible.posix
 ```
 
 ### SVK Host Setup

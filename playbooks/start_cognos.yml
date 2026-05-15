@@ -66,7 +66,7 @@
       when: cognos_install_gui_enabled
 
 - name: Ensure ports are open for cognos rbac
-  hosts: application_server
+  hosts: management_server
   become: true
   vars:
     ports: "{{ rbac_ports }}"

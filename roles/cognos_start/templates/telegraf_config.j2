@@ -1,4 +1,4 @@
 {
-    "cognos_endpoint": "http://{{ip}}:{{ mgmt_ports_backend['rest_http'] }}/api/v{{ scmc_ver }}/",
+    "cognos_endpoint": "{{ cognos_start_protocol }}://{{ip}}:{{ cognos_start_rest_port }}/api/v{{ scmc_ver }}/",
     "token": "{{ influxdb_token }}"
 }

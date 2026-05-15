@@ -27,7 +27,15 @@
     - cognos-subscriber.service
     - cognos-app.service
     - cognos-rbac.service
-    - cognos-ui.service
+    - caddy.service
   when:
     - item in ansible_facts.services
     - ansible_facts.services[item].state == 'running'
+
+- name: Stop Docker service
+  ansible.builtin.systemd:
+    name: docker
+    state: stopped
+    enabled: false
+  failed_when: false
+  changed_when: true

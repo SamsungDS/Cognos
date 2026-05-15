@@ -52,15 +52,18 @@
     ip: "{{ ansible_default_ipv4.address }}"
   become: true
 
-- name: Get InfluxDB token
+- name: Get InfluxDB token from CLI config
   ansible.builtin.shell:
     cmd: |
       set -o pipefail
-      influx auth list --user "{{ influxdb_org }}" --json | grep token | cut -d'"' -f4
+      grep -m1 "token =" ~/.influxdbv2/configs | awk -F '"' '{print $2}'
     executable: /bin/bash
   register: cognos_start_influx_token
+  become: true
   changed_when: false
-  failed_when: cognos_start_influx_token.rc != 0
+  failed_when:
+    - cognos_start_influx_token.rc != 0
+    - cognos_start_influx_token.stdout | trim | length == 0
 
 - name: Configure app_influxdb
   ansible.builtin.template:
@@ -81,44 +84,6 @@
     influxdb_token: "{{ cognos_start_influx_token.stdout }}"
   become: true
 
-- name: Add influx DB credentials and Cognos endpoints into telegraf.conf
-  ansible.builtin.template:
-    src: telegraf_conf.j2
-    dest: "/usr/local/svk/svk-app/cognos/telegraf/telegraf.conf"
-    mode: "0644"
-  vars:
-    ip: "{{ ansible_default_ipv4.address }}"
-    influxdb_token: "{{ cognos_start_influx_token.stdout }}"
-  become: true
-
-- name: Check if telegraf is already running (pgrep)
-  ansible.builtin.command: pgrep -f telegraf
-  register: cognos_start_telegraf_ps
-  ignore_errors: true
-  failed_when: false
-  changed_when: false
-
-- name: Start telegraf in background with log redirection
-  ansible.builtin.shell: |
-    nohup telegraf --config /usr/local/svk/svk-app/cognos/telegraf/telegraf.conf \
-      > /var/log/svk/telegraf.log 2>&1 &
-  args:
-    executable: /bin/bash
-  async: 0
-  poll: 0
-  when: cognos_start_telegraf_ps.rc != 0
-  changed_when: false
-
-- name: Verify telegraf started
-  ansible.builtin.command: pgrep -f telegraf
-  register: cognos_start_verify
-  retries: 10
-  delay: 2
-  until: cognos_start_verify.rc == 0
-  changed_when: false
-  failed_when: false
-  ignore_errors: true
-
 - name: Configure numa_config.json in backend
   ansible.builtin.template:
     src: app_numa_config.j2
@@ -129,10 +94,17 @@
 - name: Configure app_ui
   ansible.builtin.template:
     src: app_ui_config.j2
-    dest: "/usr/local/svk/svk-app/cognos/ui/src/config/config.json"
-    mode: "0644"
+    dest: "/var/www/scmc/config.js"
+    mode: "0755"
   vars:
     ip: "{{ ansible_default_ipv4.address }}"
+  become: true
+
+- name: Add certs to /etc/caddy/Caddyfile.d/scmc.conf
+  ansible.builtin.template:
+    src: caddyfile_scmc_config.j2
+    dest: "/etc/caddy/Caddyfile.d/scmc.conf"
+    mode: "0644"
   become: true
 
 - name: Configure app_cognos
@@ -164,7 +136,7 @@
   loop:
     - cognos-subscriber.service
     - cognos-app.service
-    - cognos-ui.service
+    - caddy.service
 
 - name: Gather service status
   ansible.builtin.service_facts:
@@ -180,7 +152,7 @@
   loop:
     - cognos-subscriber.service
     - cognos-app.service
-    - cognos-ui.service
+    - caddy.service
   register: cognos_start_check
   ignore_errors: true
 
@@ -198,7 +170,7 @@
     cognos_service_restart_list:
       - cognos-subscriber.service
       - cognos-app.service
-      - cognos-ui.service
+      - caddy.service
   when: cognos_start_flag | default(false)
 
 - name: Check if poll.py exists

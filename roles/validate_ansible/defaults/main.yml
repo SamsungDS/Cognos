@@ -8,6 +8,11 @@ validate_ansible_ver_req:
     ansible_min_ver: 2.17.4
     ansible_max_ver: 2.17.14
     py_min_ver: 3.12
+  RedHat:
+    ansible_min_ver: 2.16.0
+    ansible_max_ver: 2.19.14
+    py_min_ver: 3.12
+
 validate_ansible_min_ver: "{{ validate_ansible_ver_req[ansible_distribution]['ansible_min_ver'] }}"
 validate_ansible_max_ver: "{{ validate_ansible_ver_req[ansible_distribution]['ansible_max_ver'] }}"
 validate_ansible_py_min_ver: "{{ validate_ansible_ver_req[ansible_distribution]['py_min_ver'] }}"

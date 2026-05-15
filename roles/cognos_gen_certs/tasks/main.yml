@@ -53,6 +53,7 @@
   ansible.builtin.file:
     path: "{{ cognos_certs_dir }}"
     state: absent
+  become: true
   delegate_to: localhost
   when: cognos_gen_certs_cert_result.rc == 0
 
@@ -60,6 +61,7 @@
   ansible.builtin.file:
     path: "{{ cognos_certs_dir }}"
     state: absent
+  become: true
   delegate_to: localhost
   when: cognos_gen_certs_cert_result.rc == 0
 
@@ -71,9 +73,11 @@
   loop:
     - "key.pem"
     - "cert.pem"
+  become: true
   when: cognos_gen_certs_cert_result.rc == 0
 
 - name: Cleanup temporary certificates files on remote host
   ansible.builtin.file:
     path: "{{ cognos_gen_certs_dest_dir }}"
     state: absent
+  become: true

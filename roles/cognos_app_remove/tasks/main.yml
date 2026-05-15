@@ -44,3 +44,4 @@
   ansible.builtin.file:
     path: "{{ svk_install_dir }}"
     state: absent
+  become: true

@@ -7,3 +7,7 @@ hostname2/host_ip2
 [application_server]
 hostname3/host_ip3
 hostname4/host_ip4
+
+[all:vars]
+ansible_user=<user name>
+

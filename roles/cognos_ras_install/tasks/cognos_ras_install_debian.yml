@@ -18,7 +18,7 @@
 
 - name: Identify cognos-ras package on Ubuntu
   ansible.builtin.find:
-    path: "{{ svk_pkg_dir }}"
+    path: "{{ cognos_pkg_dir }}"
     patterns: "cognos-ras*-ubuntu{{ cognos_ras_install_os_version }}_*.deb"
   delegate_to: localhost
   run_once: true

@@ -54,12 +54,12 @@ roles:
       - "admin"
     filters:
       users: "limited"
-  user:
+  guest:
     permissions:
       - "read:dashboard"
       - "read:profile"
     roles:
-      - "user"
+      - "guest"
     filters:
       users: "own"
 license:
@@ -100,5 +100,5 @@ email-verification: 'N'
   #        - No email verification required
  
 signupRoles:  # Roles that users can select during registration
-  - "user"
+  - "guest"
   - "admin"

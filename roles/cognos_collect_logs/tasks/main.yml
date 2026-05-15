@@ -7,6 +7,7 @@
     mode: '0755'
   delegate_to: localhost
   run_once: true
+  become: true
 
 - name: Ensure temp backup directory is empty and ready
   ansible.builtin.shell:
@@ -123,10 +124,58 @@
     dest: "{{ svk_logs_temp_dir }}_{{ inventory_hostname }}/ps_auxww.txt"
     mode: '0644'
 
+- name: Check if lsof command exists
+  ansible.builtin.command: which lsof
+  register: cognos_collect_logs_lsof
+  failed_when: false
+  changed_when: false
+
+- name: Collect lsof result
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      lsof > {{ svk_logs_temp_dir }}_{{ inventory_hostname }}/lsof.txt
+    executable: /bin/bash
+  become: true
+  changed_when: false
+  when: cognos_collect_logs_lsof.rc == 0
+
+- name: Check if ss command exists
+  ansible.builtin.command: which ss
+  register: cognos_collect_logs_ss
+  failed_when: false
+  changed_when: false
+
+- name: Execute ss -a and append to temp file
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      ss -a > {{ svk_logs_temp_dir }}_{{ inventory_hostname }}/ss_a.txt
+    executable: /bin/bash
+  become: true
+  changed_when: false
+  when: cognos_collect_logs_ss.rc == 0
+
+- name: Check if netstat command exists
+  ansible.builtin.command: which netstat
+  register: cognos_collect_logs_netstat
+  failed_when: false
+  changed_when: false
+
+- name: Execute netstat -pan and append to temp file
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      netstat -pan > {{ svk_logs_temp_dir }}_{{ inventory_hostname }}/netstat_pan.txt
+    executable: /bin/bash
+  become: true
+  changed_when: false
+  when: cognos_collect_logs_netstat.rc == 0
+
 # ============================================
-# Collect journalctl for SVK services
+# Collect journalctl for Cognos backend services
 # ============================================
-- name: Collect journalctl for svk-*.service directly to file
+- name: Collect journalctl for cognos-*.service directly to file
   ansible.builtin.shell:
     cmd: |
       set -o pipefail
@@ -137,7 +186,7 @@
   failed_when: false
   when: "'management_server' in group_names"
 
-- name: Collect journalctl for application server directly to file
+- name: Collect journalctl for application services directly to file
   ansible.builtin.shell:
     cmd: |
       set -o pipefail
@@ -149,14 +198,14 @@
   failed_when: false
   when: "'application_server' in group_names"
 
-- name: Collect journalctl for cognos-*.service directly to file
+- name: Collect journalctl for frontend cognos-*.service directly to file
   ansible.builtin.shell:
     cmd: |
       set -o pipefail
       journalctl -u cognos-subscriber.service -b > {{ svk_logs_temp_dir }}_{{ inventory_hostname }}/journalctl_cognos-subscriber.service.txt
       journalctl -u cognos-app.service -b > {{ svk_logs_temp_dir }}_{{ inventory_hostname }}/journalctl_cognos-app.service.txt
-      journalctl -u cognos-ui.service -b > {{ svk_logs_temp_dir }}_{{ inventory_hostname }}/journalctl_cognos-ui.service.txt
       journalctl -u cognos-rbac.service -b > {{ svk_logs_temp_dir }}_{{ inventory_hostname }}/journalctl_cognos-rbac.service.txt
+      journalctl -u caddy.service -b > {{ svk_logs_temp_dir }}_{{ inventory_hostname }}/journalctl_caddy.service.txt
     executable: /bin/bash
   changed_when: false
   failed_when: false
@@ -165,7 +214,7 @@
 # ============================================
 # Create unified archive with hostname and timestamp
 # ============================================
-- name: Create unified archive with hostname and timestamp
+- name: Set unified archive file name with hostname and timestamp
   ansible.builtin.set_fact:
     cognos_collect_logs_archive_file: "cognos_logs_{{ inventory_hostname }}_{{ ansible_date_time.iso8601 }}.tar.gz"
 
@@ -182,6 +231,7 @@
     src: "{{ svk_logs_temp_dir }}_{{ inventory_hostname }}/../{{ cognos_collect_logs_archive_file }}"
     dest: "{{ svk_logs_backup_dir }}/{{ cognos_collect_logs_archive_file }}"
     flat: true
+  become: true
   when: cognos_collect_logs_uni_archive.archived is defined
 
 - name: Cleanup temporary files on remote host

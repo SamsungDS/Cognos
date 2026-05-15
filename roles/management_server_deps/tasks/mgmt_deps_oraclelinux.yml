@@ -7,6 +7,7 @@
       - gnupg
       - tar
     state: present
+  become: true
 
 - name: Configure GPG key for InfluxDB (OEL)
   ansible.builtin.shell:
@@ -34,11 +35,13 @@
       enabled = 1
       gpgcheck = 1
       gpgkey = file:///etc/pki/rpm-gpg/RPM-GPG-KEY-influxdata
+  become: true
 
 - name: Install InfluxDB 2
   ansible.builtin.dnf:
     name: influxdb2
     state: present
+  become: true
 
 - name: Start influx DB service
   ansible.builtin.service:
@@ -87,6 +90,7 @@
     src: "{{ management_server_deps_influxdb_tar.stdout }}"
     dest: /tmp/influxdb2-client.tar.gz
     mode: '0644'
+  become: true
   when:
     - management_server_deps_influxdb_stat.rc
     - not management_server_deps_influxdb_tar.rc
@@ -97,6 +101,7 @@
     dest: /usr/local/bin
     mode: '0755'
     remote_src: true
+  become: true
   when:
     - management_server_deps_influxdb_stat.rc
 
@@ -104,9 +109,10 @@
   ansible.builtin.shell:
     cmd: |
       set -o pipefail
-      influx config list | grep "{{ influxdb_org }}"
+      /usr/local/bin/influx config list | grep "{{ influxdb_org }}"
     executable: /bin/bash
   register: management_server_deps_instance
+  become: true
   changed_when: false
   failed_when: false
 
@@ -114,10 +120,20 @@
   ansible.builtin.file:
     path: /tmp/influxdb2-client.tar.gz
     state: absent
+  become: true
 
 - name: Setup influxDB
-  ansible.builtin.shell: |
-    influx setup --username "{{ influxdb_user }}" --password "{{ influxdb_pwd }}" --org "{{ influxdb_org }}" --bucket "{{ influxdb_bucket }}" --force
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      /usr/local/bin/influx setup \
+        --username "{{ influxdb_user }}" \
+        --password "{{ influxdb_pwd }}" \
+        --org "{{ influxdb_org }}" \
+        --bucket "{{ influxdb_bucket }}" \
+        --force
+    executable: /bin/bash
+  become: true
   when: management_server_deps_instance.rc
   changed_when: false
 
@@ -136,7 +152,41 @@
     state: present
   become: true
 
-- name: Install required packages[telegraf]
+- name: Install dnf-plugins-core
   ansible.builtin.dnf:
-    name: telegraf
+    name: dnf-plugins-core
     state: present
+  become: true
+
+- name: Enable Copr Repo @caddy/caddy
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      dnf copr enable @caddy/caddy -y
+    executable: /bin/bash
+  args:
+    creates: /etc/yum.repos.d/copr_caddy-caddy.repo
+  become: true
+
+- name: Update dnf cache
+  ansible.builtin.dnf:
+    update_cache: true
+  become: true
+
+- name: Add Docker CE repo
+  ansible.builtin.command:
+    dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
+  changed_when: false
+  become: true
+
+- name: Install Docker packages
+  ansible.builtin.dnf:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+  become: true

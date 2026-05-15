@@ -113,14 +113,5 @@
     - role: cognos_app_install
       when: cognos_install_gui_enabled
 
-- name: Install docker for cognos rbac
-  hosts:
-    - management_server
-  roles:
-    - role: cognos_rbac_deps
-      when:
-        - cognos_install_gui_enabled
-        - cognos_rbac_enabled
-
 - name: Start Cognos
   ansible.builtin.import_playbook: start_cognos.yml

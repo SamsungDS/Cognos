@@ -17,4 +17,5 @@
     state: enabled
   loop: "{{ ports | dict2items | map(attribute='value') | list }}"
   when: cognos_allow_ports_ufw_active | default(false)
+  become: true
   failed_when: false

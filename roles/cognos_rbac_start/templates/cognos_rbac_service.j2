@@ -59,8 +59,13 @@ ExecStart=/usr/bin/docker run --rm \
   -v /usr/local/svk/svk-app/cognos/rbac/docker-config.env:/app/docker-config.env:ro \
   -v /usr/local/svk/svk-app/cognos/rbac/core/logs:/app/core/logs \
   -v /usr/local/svk/svk-app/cognos/rbac/core/data:/app/core/data \
+{% if cognos_rbac_start_https_enable %}
   -v {{ cognos_rbac_start_ssl_key }}:/app/private.pem:ro \
   -v {{ cognos_rbac_start_ssl_cert }}:/app/fullchain.pem:ro \
+{% else %}
+  -v /usr/local/svk/svk-app/cognos/rbac/core/ssl/private.key:/app/private.key:ro \
+  -v /usr/local/svk/svk-app/cognos/rbac/core/ssl/combined.crt:/app/combined.crt:ro \
+{% endif %}
   rbac-container:latest
 
 # SSL_KEY_PATH=/app/private.pem

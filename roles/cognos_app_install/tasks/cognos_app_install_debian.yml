@@ -16,7 +16,7 @@
 
 - name: Identify cognos_app package for Ubuntu
   ansible.builtin.find:
-    path: "{{ svk_pkg_dir }}"
+    path: "{{ cognos_pkg_dir }}"
     patterns: "cognos-app*-ubuntu{{ cognos_app_install_os_version }}_*.deb"
   delegate_to: localhost
   run_once: true
@@ -50,6 +50,7 @@
   ansible.builtin.file:
     path: "{{ deploy_staging_dir }}/{{ cognos_app_install_pkg_file | basename }}"
     state: absent
+  become: true
   when:
     - cognos_app_install_pkg_file is defined
     - cognos_app_install_pkg_query.rc != 0

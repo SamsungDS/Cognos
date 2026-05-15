@@ -6,16 +6,16 @@
 - name: Stop Cognos
   ansible.builtin.import_playbook: stop_cognos.yml
 
-- name: Remove influxdb data and influx
-  hosts: management_server
-  roles:
-    - role: cognos_remove_influx
-
 - name: Remove app
   hosts:
     - management_server
   roles:
     - cognos_app_remove
+
+- name: Remove influxdb data and influx
+  hosts: management_server
+  roles:
+    - role: cognos_influx_remove
 
 - name: Remove cognos_ras
   hosts:
@@ -78,7 +78,7 @@
     - management_server
     - application_server
   roles:
-    - cognos_remove_files
+    - cognos_files_remove
   vars:
     cognos_conf_log_files:
       - /etc/svk

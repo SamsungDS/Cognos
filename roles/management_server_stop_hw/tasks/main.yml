@@ -1,6 +1,7 @@
 ---
 - name: Gather service facts
   ansible.builtin.service_facts:
+  become: true
 
 - name: Stop management services if they exist
   ansible.builtin.service:
@@ -22,30 +23,3 @@
   when:
     - management_server_type == 'CMMB'
     - cognos-node.service in ansible_facts.services
-
-- name: Check if telegraf is already running (pgrep)
-  ansible.builtin.command: pgrep -f telegraf
-  register: management_server_stop_hw_telegraf_ps
-  ignore_errors: true
-  failed_when: false
-  changed_when: false
-
-- name: "Kill existing telegraf process(s) if any"
-  ansible.builtin.shell: |
-    pkill -f telegraf
-  args:
-    executable: /bin/bash
-  async: 0
-  poll: 0
-  when: management_server_stop_hw_telegraf_ps.rc == 0
-  changed_when: false
-
-- name: Verify telegraf is stopped
-  ansible.builtin.command: pgrep -f telegraf
-  register: management_server_stop_hw_verify
-  retries: 10
-  delay: 2
-  until: management_server_stop_hw_verify.rc != 0
-  failed_when: false
-  ignore_errors: true
-  changed_when: false

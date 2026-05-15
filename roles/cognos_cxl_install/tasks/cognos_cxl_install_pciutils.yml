@@ -1,4 +1,12 @@
 ---
+- name: Remove the installed pciutils on OEL9
+  ansible.builtin.dnf:
+    name:
+      - pciutils-libs
+      - pciutils
+    state: absent
+  become: true
+
 - name: Check if pciutils-libs RPM is installed
   ansible.builtin.shell:
     cmd: |
@@ -11,7 +19,7 @@
 
 - name: Identify pciutils-libs package
   ansible.builtin.find:
-    path: "{{ svk_pkg_dir }}"
+    path: "{{ cognos_pkg_dir }}"
     patterns: "pciutils-libs*el{{ ansible_distribution_major_version }}*.rpm"
   delegate_to: localhost
   run_once: true
@@ -63,7 +71,7 @@
 
 - name: Identify pciutils package
   ansible.builtin.find:
-    path: "{{ svk_pkg_dir }}"
+    path: "{{ cognos_pkg_dir }}"
     patterns: "pciutils-[0-9]*el{{ ansible_distribution_major_version }}*.rpm"
   delegate_to: localhost
   run_once: true

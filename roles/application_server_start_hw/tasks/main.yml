@@ -28,6 +28,7 @@
     path: /usr/local/svk/feature_modules/cxl/config/cxl_dev_id_map.json
     regexp: '"mock_disable"\s*:\s*false\s*(,?)'
     replace: '"mock_disable": true\1'
+  become: true
 
 - name: Configure input.json when device type is CMMH
   ansible.builtin.template:
@@ -79,6 +80,7 @@
   ansible.builtin.command:
     cmd: "{{ application_server_start_hw_py3 }} /usr/local/svk/feature_modules/cxl/scripts/cxl_device_info.py"
   register: application_server_start_hw_cxl
+  become: true
   when:
     - application_server_start_hw_py3_stat.stat.exists | bool
     - application_server_start_hw_cxl_cnt | int > 0

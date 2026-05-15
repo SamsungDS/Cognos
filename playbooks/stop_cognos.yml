@@ -24,3 +24,39 @@
     - management_server
   roles:
     - cognos_stop
+
+- name: Deny the allowed ports on the management server
+  hosts: management_server
+  become: true
+  vars:
+    ports: "{{ mgmt_ports_backend }}"
+  roles:
+    - cognos_deny_ports
+
+- name: Ensure ports are denied on the application server
+  hosts: application_server
+  become: true
+  vars:
+    ports: "{{ app_ports }}"
+  roles:
+    - cognos_deny_ports
+
+- name: Ensure frontend ports are denied on the management server
+  hosts: management_server
+  become: true
+  vars:
+    ports: "{{ mgmt_ports_frontend}}"
+  roles:
+    - role: cognos_deny_ports
+      when: cognos_install_gui_enabled
+
+- name: Ensure ports are denied for cognos rbac
+  hosts: management_server
+  become: true
+  vars:
+    ports: "{{ rbac_ports }}"
+  roles:
+    - role: cognos_deny_ports
+      when:
+        - cognos_install_gui_enabled
+        - cognos_rbac_enabled

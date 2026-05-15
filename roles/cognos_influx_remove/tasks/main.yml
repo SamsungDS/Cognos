@@ -1,0 +1,75 @@
+---
+- name: Remove default InfluxDB config on Redhat
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      /usr/local/bin/influx config rm default
+    executable: /bin/bash
+  changed_when: false
+  failed_when: false
+  become: true
+  when:
+    - influxdb_uninstall_flag
+    - ansible_facts.os_family == "RedHat"
+
+- name: Remove default InfluxDB config on Debian
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      influx config rm default
+    executable: /bin/bash
+  changed_when: false
+  failed_when: false
+  become: true
+  when:
+    - influxdb_uninstall_flag
+    - ansible_facts.os_family == "Debian"
+
+- name: Gather service facts
+  ansible.builtin.service_facts:
+
+- name: Stop InfluxDB
+  ansible.builtin.service:
+    name: influxdb
+    state: stopped
+    enabled: false
+  failed_when: false
+  become: true
+  when:
+    - "'influxdb.service' in ansible_facts.services"
+    - ansible_facts.services['influxdb.service'].state == 'running'
+
+- name: Remove InfluxDB dpkg data
+  ansible.builtin.file:
+    path: "/var/lib/dpkg/info/influxdb2.postrm"
+    state: absent
+  become: true
+  when:
+    - ansible_facts.os_family == "Debian"
+    - influxdb_uninstall_flag
+
+- name: Remove InfluxDB package on Debian/Ubuntu
+  ansible.builtin.apt:
+    name: influxdb2
+    purge: true
+    state: absent
+  become: true
+  when:
+    - ansible_facts.os_family == "Debian"
+    - influxdb_uninstall_flag
+
+- name: Remove InfluxDB package on OEL/RHEL
+  ansible.legacy.dnf:
+    name: influxdb2
+    state: absent
+  become: true
+  when:
+    - ansible_facts.os_family == "RedHat"
+    - influxdb_uninstall_flag
+
+- name: Remove InfluxDB data directory
+  ansible.builtin.file:
+    path: "{{ influxdb_data_dir }}"
+    state: absent
+  become: true
+  when: influxdb_uninstall_flag

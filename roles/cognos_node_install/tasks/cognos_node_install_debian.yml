@@ -3,6 +3,12 @@
 # Author: June Liu
 # Contact: june.liu@samsung.com
 
+- name: Install python3.10-venv
+  ansible.builtin.apt:
+    name: python3.10-venv
+    state: present
+  become: true
+
 - name: Check if cognos_node DEB is installed
   ansible.builtin.shell:
     cmd: |
@@ -20,7 +26,7 @@
 
 - name: Identify cognos_node package for Ubuntu
   ansible.builtin.find:
-    path: "{{ svk_pkg_dir }}"
+    path: "{{ cognos_pkg_dir }}"
     patterns: "cognos-node*-ubuntu{{ cognos_node_install_os_version }}_*.deb"
   delegate_to: localhost
   run_once: true

@@ -3,3 +3,4 @@
   ansible.builtin.dnf:
     name: "oracle-epel-release-el{{ ansible_distribution_major_version }}"
     state: present
+  become: true

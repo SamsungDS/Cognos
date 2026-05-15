@@ -2,6 +2,27 @@
 # Author: June Liu
 # Contact: june.liu@samsung.com
 
+- name: Start Docker service
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+  become: true
+
+- name: Add current user to docker group
+  ansible.builtin.user:
+    name: "{{ ansible_user_id }}"
+    groups: docker
+    append: true
+  become: true
+  # Note: This task will fail if user is not in sudoers or system doesn't support `usermod`
+
+- name: Notify user about Docker group
+  ansible.builtin.debug:
+    msg: |
+      User "{{ ansible_user_id }}" has been added to the 'docker' group.
+      You may need to re-login or restart your session.
+
 - name: Check if certificates directory exists
   ansible.builtin.stat:
     path: "{{ cognos_rbac_start_cert_dir }}"
@@ -65,11 +86,13 @@
     src: cognos_rbac_service.j2
     dest: "/lib/systemd/system/cognos-rbac.service"
     mode: "0644"
+  become: true
   when: cognos_rbac_start_https_enable
 
 - name: Reload systemd daemon
   ansible.builtin.systemd:
     daemon_reload: true
+  become: true
   when: cognos_rbac_start_https_enable
 
 - name: Start cognos-rbac services
@@ -79,10 +102,10 @@
     enabled: true
   become: true
 
-- name: Wait up to 120 seconds for port 6721 to become available
+- name: Wait up to 120 seconds for rbac api port to become available
   ansible.builtin.wait_for:
     host: "{{ ip }}"
-    port: 6721
+    port: "{{ rbac_api_port }}"
     delay: 5
     timeout: 120
   vars:

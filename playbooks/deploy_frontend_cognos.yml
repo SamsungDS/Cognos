@@ -37,12 +37,5 @@
   roles:
     - cognos_app_install
 
-- name: Install docker for cognos rbac
-  hosts:
-    - management_server
-  roles:
-    - role: cognos_rbac_deps
-      when: cognos_rbac_enabled
-
 - name: Start Cognos
   ansible.builtin.import_playbook: start_frontend_cognos.yml

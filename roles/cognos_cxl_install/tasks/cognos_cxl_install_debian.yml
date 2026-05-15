@@ -26,7 +26,7 @@
 
 - name: Identify cognos_cxl package
   ansible.builtin.find:
-    path: "{{ svk_pkg_dir }}"
+    path: "{{ cognos_pkg_dir }}"
     patterns: "{{ cognos_cxl_install_name }}*-ubuntu{{ cognos_cxl_install_os_version }}_*.deb"
   delegate_to: localhost
   run_once: true

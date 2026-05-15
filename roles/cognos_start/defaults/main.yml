@@ -1,7 +1,8 @@
 ---
-cognos_start_cert_dir: "/etc/svk/certificates/"
+cognos_start_cert_dir: "/etc/svk/certificates"
 cognos_start_https_enable: false
 cognos_start_protocol: "http"
 cognos_start_rest_port: "{{ mgmt_ports_backend['rest_http'] }}"
 cognos_start_ssl_key: "{{ scmc_ssl_key }}"
 cognos_start_ssl_cert: "{{ scmc_ssl_cert }}"
+cognos_start_download_artifacts: "{{ cognos_download_artifacts_enabled }}"

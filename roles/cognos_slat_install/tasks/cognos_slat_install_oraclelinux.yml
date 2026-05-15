@@ -19,7 +19,7 @@
 
 - name: Identify cognos_slat package for OEL
   ansible.builtin.find:
-    path: "{{ svk_pkg_dir }}"
+    path: "{{ cognos_pkg_dir }}"
     patterns: "cognos-slat*el{{ ansible_distribution_major_version }}*.rpm"
   delegate_to: localhost
   run_once: true

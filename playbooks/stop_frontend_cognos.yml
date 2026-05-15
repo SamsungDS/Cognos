@@ -4,3 +4,20 @@
     - management_server
   roles:
     - cognos_stop
+
+- name: Ensure ports are denied on the management server
+  hosts: management_server
+  become: true
+  vars:
+    ports: "{{ mgmt_ports_frontend }}"
+  roles:
+    - cognos_deny_ports
+
+- name: Ensure rbac ports are denied on the management server
+  hosts: management_server
+  become: true
+  vars:
+    ports: "{{ rbac_ports }}"
+  roles:
+    - role: cognos_deny_ports
+      when: cognos_rbac_enabled
