@@ -12,7 +12,6 @@ install_packages() {
         debhelper
         diffutils
         dpkg-dev
-        dstat
 	    file
         g++
         git

@@ -20,7 +20,6 @@ install_packages() {
         boost-devel
         cmake
         diffutils
-        dstat
         file
         gcc-c++
         git

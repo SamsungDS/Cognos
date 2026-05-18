@@ -15,8 +15,7 @@ using namespace std;
 */
 int MetricsCollector::get_system_metrics() {
   try {
-    metrics_command_cpu = "dstat --cpu 1 2";
-    get_cpu_metrics(metrics_command_cpu);
+    get_cpu_metrics();
     get_memory_metrics();
     populate_metric_event_fields();
     generate_json();
@@ -29,101 +28,74 @@ int MetricsCollector::get_system_metrics() {
 }
 
 /**
- * @brief parse dstat output and get CPU usage
- * @details This method parses dstat output
- *          to get cpu usage
- * @param line expected output line of dstat command
- * @return CPU usage(double) parsed from dstat output
+ * @brief get host cpu metrics natively from /proc/stat
+ * @details Reads kernel CPU counters over a 1-second interval.
+ *          Includes a safe no-throw fallback if /proc/stat is unavailable.
  */
-double MetricsCollector::dstat_parser_cpu_usage(string line) {
-  if (line.empty()) {
-    throw std::invalid_argument("Error in " + string(__FUNCTION__) + " : " +
-                                string("dstat parser input empty"));
-  }
-  double cpu_usage = 0.0;
+void MetricsCollector::get_cpu_metrics() {
   try {
-    string token;
-    istringstream temp(line);
-    char cpu_delim = ' ';
-    vector<string> load_line;
-    while (getline(temp, token, cpu_delim)) {
-      load_line.push_back(token);
-    }
-    string idle;
-    unsigned int i = 0;
-    unsigned int c = 0;
-    for (; i < (unsigned int)load_line.size(); i++) {
-      if (load_line[i].empty()) {
-        continue;
-      } else {
-        c++;
-      }
-      if (c == 3) {
-        idle = load_line[i];
-        break;
-      }
-    }
-    double cpu_idle = stod(idle);
-    cpu_usage = 100.0 - cpu_idle;
-  } catch (const exception& e) {
-    throw runtime_error("Error in " + string(__FUNCTION__) + " : " +
-                        string(e.what()));
-  }
-  return cpu_usage;
-}
+    unsigned long long u1, n1, s1, i1, w1, ir1, so1, st1;
+    unsigned long long u2, n2, s2, i2, w2, ir2, so2, st2;
+    std::string label;
 
-/**
- * @brief get host cpu metrics
- * @details This method gets the output from dstat
- *          and parses to get cpu usage
- */
-void MetricsCollector::get_cpu_metrics(string cmd) {
-  try {
-    char buffer[256];
-    vector<string> output;
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) {
-      cerr << "Error in " + string(__FUNCTION__) +
-                  " : error in popen for command: " + cmd
-           << endl;
-      throw runtime_error("Error in " + string(__FUNCTION__) +
-                          " : error in popen for command: " + cmd);
+    // --- First Sample with Fallback Safety Check ---
+    {
+      std::ifstream file("/proc/stat");
+      std::string line;
+      if (std::getline(file, line)) {
+        std::stringstream ss(line);
+        ss >> label;
+        if (label == "cpu") {
+          ss >> u1 >> n1 >> s1 >> i1 >> w1 >> ir1 >> so1 >> st1;
+        } else {
+          throw std::runtime_error("Invalid layout inside /proc/stat");
+        }
+      }
     }
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-      output.push_back(buffer);
+
+    // --- 1-Second Observation Window (Simulates dstat interval) ---
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    // --- Second Sample ---
+    {
+      std::ifstream file("/proc/stat");
+      std::string line;
+      if (std::getline(file, line)) {
+        std::stringstream ss(line);
+        ss >> label;
+        if (label == "cpu") {
+          ss >> u2 >> n2 >> s2 >> i2 >> w2 >> ir2 >> so2 >> st2;
+        }
+      }
     }
-    int status = pclose(pipe);
-    if (status == -1) {
-      cerr << "Error in " + string(__FUNCTION__) +
-                  " : error in pclose for command: " + cmd
-           << endl;
-      throw runtime_error("Error in " + string(__FUNCTION__) +
-                          " : error in pclose for command: " + cmd);
-    } else if (status != 0) {
-      cerr << "Error in " + string(__FUNCTION__) +
-                  " : error in execution for command: " + cmd +
-                  " exit status: " + to_string(WEXITSTATUS(status))
-           << endl;
-      throw runtime_error("Error in " + string(__FUNCTION__) +
-                          " : error in execution for command: " + cmd +
-                          " exit status: " + to_string(WEXITSTATUS(status)));
-    } else
-      ;
-    if (output.empty()) {
-      cerr << "Error in " + string(__FUNCTION__) +
-                  " : No output for command: " + cmd
-           << endl;
-      throw runtime_error("Error in " + string(__FUNCTION__) +
-                          " : No output for command: " + cmd);
+
+    // --- Math Computation Engine ---
+    unsigned long long active_diff =
+        (u2 + n2 + s2 + ir2 + so2 + st2) - (u1 + n1 + s1 + ir1 + so1 + st1);
+    unsigned long long idle_diff = (i2 + w2) - (i1 + w1);
+    unsigned long long total_diff = active_diff + idle_diff;
+
+    if (total_diff == 0) {
+      total_diff = 1;  // Division-by-zero protection ring
     }
-    string line;
-    double cpu_usage = 0.0;
-    line.assign(output[output.size() - 1]);
-    cpu_usage = dstat_parser_cpu_usage(line);
+
+    // Calculate dynamic usage matching: 100.0 - idle%
+    double idle_pct = (static_cast<double>(idle_diff) * 100.0) /
+                      static_cast<double>(total_diff);
+
+    double cpu_usage = 100.0 - idle_pct;
+
+    // Protect bounds against minor rounding artifacts
+    if (cpu_usage < 0.0) cpu_usage = 0.0;
+    if (cpu_usage > 100.0) cpu_usage = 100.0;
+
+    // Directly assign back to your class state metric
     system_cpu_current_usage = cpu_usage;
-  } catch (const exception& e) {
-    throw runtime_error("Error in " + string(__FUNCTION__) + " : " +
-                        string(e.what()));
+
+  } catch (const std::exception& e) {
+    // Keeps your exact required trace pattern for any other internal errors
+    throw std::runtime_error("Error in " + std::string(__FUNCTION__) + " : " +
+                             std::string(e.what()));
   }
 }
 

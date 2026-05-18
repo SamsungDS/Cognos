@@ -43,8 +43,7 @@ class MetricsCollector {
   std::string metrics_command_cpu;
   int get_system_metrics();
   void get_memory_metrics();
-  double dstat_parser_cpu_usage(std::string line);
-  void get_cpu_metrics(std::string cmd);
+  void get_cpu_metrics();
   void populate_metric_event_fields(void);
   void generate_json(void);
 };
