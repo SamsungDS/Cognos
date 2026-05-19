@@ -47,6 +47,7 @@ target_link_libraries(
 )
 target_link_libraries(${PROJECT_NAME} PUBLIC ${SVK_FW_GRPC_CORE_LIB})
 target_link_libraries(${PROJECT_NAME} PUBLIC systemd)
+target_link_libraries(${PROJECT_NAME} PUBLIC re2)
 
 if(BUILD_TESTING)
   add_library(svkgrpcnodetest STATIC ${SRCS})
@@ -65,6 +66,7 @@ target_compile_definitions(svkgrpcnodetest PRIVATE "HEARTBEAT_LOGGER_MODULE_NAME
   )
   target_link_libraries(svkgrpcnodetest PUBLIC ${SVK_FW_GRPC_CORE_LIB})
   target_link_libraries(svkgrpcnodetest PUBLIC systemd)
+  target_link_libraries(svkgrpcnodetest PUBLIC re2)
   install(FILES ${GRPC_INC_FILES} DESTINATION ${SVKGRPCFW_INCLUDE_DEST})
 endif()
 
