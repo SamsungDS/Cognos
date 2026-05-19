@@ -73,12 +73,14 @@ target_link_libraries(
     "${SVK_FW_LIBS} -lutf8_validity -Wl,--no-as-needed -lgrpc++_reflection -lzmq -lpthread -Wl,--as-needed -ldl -lsvklogger"
 )
 target_link_libraries(${PROJECT_NAME} PUBLIC ${SVK_FW_GRPC_CORE_LIB})
+target_link_libraries(${PROJECT_NAME} PUBLIC re2)
 target_link_libraries(
   svcmgr
   PUBLIC
     "${SVK_FW_LIBS} -lutf8_validity -Wl,--no-as-needed -lgrpc++_reflection -lzmq -lpthread -Wl,--as-needed -ldl -lsvklogger"
 )
 target_link_libraries(svcmgr PUBLIC ${SVK_FW_GRPC_CORE_LIB})
+target_link_libraries(svcmgr PUBLIC re2)
 if(BUILD_TESTING)
   add_library(svksvcmgrtest STATIC ${SRCS})
   set_target_properties(svksvcmgrtest PROPERTIES COMPILE_DEFINITIONS
@@ -86,6 +88,7 @@ if(BUILD_TESTING)
   target_include_directories(svksvcmgrtest PUBLIC ${GRPC_PROTO_SRC})
   target_include_directories(svksvcmgrtest PUBLIC ${INC_DIR} ${COMMON_INC_DIR})
   target_link_libraries(svksvcmgrtest PUBLIC svcmgr)
+  target_link_libraries(svksvcmgrtest PUBLIC re2)
   install(FILES ${GRPC_INC_FILES} DESTINATION ${SVKGRPCFW_INCLUDE_DEST})
 endif()
 install(DIRECTORY ${INC_DIR} DESTINATION ${SVKGRPCFW_INCLUDE_DEST})
