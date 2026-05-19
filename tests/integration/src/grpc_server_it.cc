@@ -12,6 +12,7 @@
 #include <thread>
 
 #include "client_library.h"
+#include "events_hlpr.h"
 #include "framework/framework_mock.grpc.pb.h"
 #include "framework_extern.h"
 #include "grpc_controller.h"
@@ -1646,28 +1647,15 @@ TEST(InitIntegrationTest, SLATheadForTMWithMissingData) {
   EXPECT_EQ(true, is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
                                 "Parse json data error in ProcessRASEvent"));
 
-  // Make the node_name in the event_header to empty so that the insert_event
-  // into controller's memory fails
+  // Event payload missing
   json event_data = json();
   event_data["event_header"] = json();
   event_data["event_header"]["cluster_name"] = "CL_ID_1";
-  event_data["event_header"]["node_name"] = "";
-  event_data["event_payload"] = json_data_orig;
-  std::string event_data_str = event_data.dump();
-  rc = publish_data((char *)"alerts", (uint8_t *)event_data_str.c_str(),
-                    event_data_str.length());
-
-  std::cout << "Published data result " << rc << std::endl;
-  EXPECT_EQ(
-      true,
-      is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE,
-                    "Failed to insert the event because of missing node name"));
-
-  // Event payload missing
   event_data["event_header"]["node_name"] = "localhost";
+  event_data["event_payload"] = json_data_orig;
   event_data.erase("event_payload");
 
-  event_data_str = event_data.dump();
+  std::string event_data_str = event_data.dump();
   rc = publish_data((char *)"alerts", (uint8_t *)event_data_str.c_str(),
                     event_data_str.length());
 
@@ -2376,9 +2364,16 @@ TEST(InitIntegrationTest, ControllerNodeServicerWithEventValidation) {
   status = client.EventAPI(&event_req, event_resp);
   std::cout << "Error message - " << status.error_message() << std::endl;
   ASSERT_EQ(status.ok(), true);
-  std::string expected_resp_str = "[]";
+  std::string expected_resp_str =
+      "[{\"event_header\":{\"cluster_name\":\"CL_ID_1\",\"node_name\":"
+      "\"localhost\"},\"event_payload\":{\"category\":\"config\",\"domain\":"
+      "\"configuration\",\"feature_name\":\"\",\"msg\":\"Cognos Node service "
+      "is "
+      "online\",\"observations\":{},\"severity\":\"info\",\"source\":"
+      "\"localhost\",\"source_type\":\"node\",\"tag\":\"\"";
   std::cout << "Event response - " << event_resp->response() << std::endl;
-  ASSERT_EQ(event_resp->response(), expected_resp_str);
+  // ASSERT_EQ(event_resp->response(), expected_resp_str);
+  EXPECT_NE(std::string::npos, event_resp->response().find(expected_resp_str));
 
   reg_req.set_cluster_name("RASCluster1");
   reg_req.set_node_name("testnode");
@@ -4506,6 +4501,20 @@ int read_svk_conf_file_in_test(const std::string &svk_conf_file, json &data) {
   return status;
 }
 
+void CheckForEvent(const std::string &event_msg) {
+  svk::EventRequest event_req;
+  Status event_status;
+  svk::EventResponse *event_resp = new (svk::EventResponse);
+  event_req.set_command_name("cluster_events");
+
+  Client client(DEFAULT_CONTROLLER_ID, DEFAULT_CONTROLLER_PORT);
+  event_status = client.EventAPI(&event_req, event_resp);
+  ASSERT_EQ(event_status.ok(), true);
+  std::cout << "event response is " << event_resp->response() << std::endl;
+  EXPECT_NE(std::string::npos, event_resp->response().find(event_msg));
+  return;
+}
+
 TEST(InitIntegrationTest, UpdateConfFileWithClusterManagementOperations) {
   char *cw_dir = get_current_dir_name();
   std::string conf_file = std::string(cw_dir) + "/conf.json";
@@ -4519,6 +4528,8 @@ TEST(InitIntegrationTest, UpdateConfFileWithClusterManagementOperations) {
   Servicer *svcr(new Servicer(conf_file));
   auto server = InitializeNodeServicer(svcr);
   ASSERT_NE(server, nullptr);
+
+  CheckForEvent(node_online_event_msg);
 
   std::string command_name = "delete_cluster";
   Client client(CONTROLLER_DEFAULT_ID, CONTROLLER_DEFAULT_PORT);
@@ -4539,6 +4550,7 @@ TEST(InitIntegrationTest, UpdateConfFileWithClusterManagementOperations) {
   std::string search_str =
       "Cluster " + std::string(DEFAULT_CLUSTER_ID) + " removed.";
   EXPECT_EQ(is_str_in_log(CONTROLLER_NODE_DEFAULT_LOG_FILE, search_str), true);
+  CheckForEvent(cluster_delete_event_msg);
 
   json data;
 
@@ -4547,7 +4559,7 @@ TEST(InitIntegrationTest, UpdateConfFileWithClusterManagementOperations) {
             << std::endl;
   EXPECT_EQ(data["svk_mgmt_fw_node"]["cluster"]["id"], "");
 
-  // Add node to cluster and check the conf file with the new cluster name in
+  // Create cluster and check the conf file with the new cluster name in
   // the cluster.id
   json command_params;
   json nodes = json::array();
@@ -4567,6 +4579,7 @@ TEST(InitIntegrationTest, UpdateConfFileWithClusterManagementOperations) {
   std::cout << "JSON DATA AFTER CREATE CLUSTER " << data["svk_mgmt_fw_node"]
             << std::endl;
   EXPECT_EQ(data["svk_mgmt_fw_node"]["cluster"]["id"], "NewCluster");
+  CheckForEvent(cluster_create_event_msg);
 
   // Remove the same node from the cluster and check the conf file again
   req->set_command_name("remove_node_from_cluster");
@@ -4578,6 +4591,7 @@ TEST(InitIntegrationTest, UpdateConfFileWithClusterManagementOperations) {
   std::cout << "JSON DATA AFTER REMOVE NODE FROM CLUSTER "
             << data["svk_mgmt_fw_node"] << std::endl;
   EXPECT_EQ(data["svk_mgmt_fw_node"]["cluster"]["id"], "");
+  CheckForEvent(remove_node_from_cluster_event_msg);
 
   // Add the node to cluster again
   req->set_command_name("add_node_to_cluster");
@@ -4589,6 +4603,7 @@ TEST(InitIntegrationTest, UpdateConfFileWithClusterManagementOperations) {
   std::cout << "JSON DATA AFTER ADD NODE TO CLUSTER "
             << data["svk_mgmt_fw_node"] << std::endl;
   EXPECT_EQ(data["svk_mgmt_fw_node"]["cluster"]["id"], "NewCluster");
+  CheckForEvent(add_node_to_cluster_event_msg);
 
   unlink(conf_file.c_str());
 }

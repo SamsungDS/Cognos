@@ -10,6 +10,7 @@
 #include <thread>
 #include <zmq.hpp>
 
+#include "events_hlpr.h"
 #include "grpc_controller_hlpr.h"
 #include "svk_pub_sub_struct.h"
 #include "svk_zmq_api.h"
@@ -456,6 +457,16 @@ Status ControllerServicer::RegisterNode(ServerContext *ctxt,
              "Cluster config changed. Notifying the event thread");
   std::lock_guard lock(gMutex);
 
+  json event_data;
+  auto ret =
+      GenerateEventForNodeOnline(cluster_name, node.node_name, event_data);
+  if (ret != 0) {
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               "Failed to update the event when the node service is online");
+  } else {
+    insert_event_to_controller_map(event_data);
+  }
+
   this->set_config_changed(true);
   gCondVar.notify_one();
   status = 0;
@@ -606,6 +617,17 @@ Status ControllerServicer::SetNodeStatus(ServerContext *ctxt,
   // TODO: if the node is going offline, need to update the drive's status to
   // OFFLINE as well
   //  Remove the device from SLA/RAS tracker as well.
+  if (node_status == "offline") {
+    json event_data;
+    auto ret = GenerateEventForNodeOffline(node_to_update.cluster_name,
+                                           node_name, event_data);
+    if (ret != 0) {
+      svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                 "Failed to update the event when the node service is offline");
+    } else {
+      insert_event_to_controller_map(event_data);
+    }
+  }
   return Status::OK;
 }
 
@@ -910,9 +932,6 @@ Status ControllerServicer::CreateCluster(const std::string &cluster_name,
     logger_str = "Cluster command called with invalid parameters";
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
                "Invalid request parameters for CreateCluster");
-    resp->set_error_id_or_string_if_any(
-        "Invalid request parameters for CreateCluster");
-    resp->set_error_code(SVK_STATUS_FAIL);
     return Status(grpc::INVALID_ARGUMENT,
                   "Invalid request parameters for CreateCluster");
   }
@@ -925,6 +944,7 @@ Status ControllerServicer::CreateCluster(const std::string &cluster_name,
                  logger_str.c_str());
       status = Status(grpc::ALREADY_EXISTS, "Cluster name already exists");
       clstr_info = m_cluster_info[cluster_name];
+      return status;
     } else {
       // Create a new cluster with nodes in command_params
       // Go through each node in command_params add to cluster
@@ -1032,6 +1052,15 @@ Status ControllerServicer::CreateCluster(const std::string &cluster_name,
   this->set_config_changed(true);
   gCondVar.notify_one();
 
+  json event_data;
+  auto ret =
+      GenerateEventForClusterCreateSuccessful(cluster_name, "", event_data);
+  if (ret != 0) {
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               "Failed to update the event for the cluster created");
+  } else {
+    insert_event_to_controller_map(event_data);
+  }
   return status;
 }
 
@@ -1121,6 +1150,16 @@ Status ControllerServicer::DeleteCluster(const std::string &cluster_name,
 
   this->set_config_changed(true);
   gCondVar.notify_one();
+
+  json event_data;
+  auto ret =
+      GenerateEventForClusterDeleteSuccessful(cluster_name, "", event_data);
+  if (ret != 0) {
+    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+               "Failed to update the event for the cluster deleted");
+  } else {
+    insert_event_to_controller_map(event_data);
+  }
 
   return Status::OK;
 }
@@ -1271,6 +1310,17 @@ Status ControllerServicer::AddRemoveNode(const std::string &cluster_name,
                        m_registered_nodes[node_name].cluster_name;
           svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::DEBUG,
                      logger_str.c_str());
+          json event_data;
+          auto ret = GenerateEventForAddNodeToClusterSuccessful(
+              cluster_name, node_name, event_data);
+          if (ret != 0) {
+            svk_logger(
+                CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                "Failed to update the event for add node to the cluster");
+          } else {
+            insert_event_to_controller_map(event_data);
+          }
+
         } else {
           // Remove the cluster_name from the node's DB(file) so that it doesn't
           // automatically used across reboots
@@ -1323,6 +1373,16 @@ Status ControllerServicer::AddRemoveNode(const std::string &cluster_name,
                        " nodes.";
           svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::DEBUG,
                      logger_str.c_str());
+          json event_data;
+          auto ret = GenerateEventForRemoveNodeFromClusterSuccessful(
+              cluster_name, node_name, event_data);
+          if (ret != 0) {
+            svk_logger(
+                CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                "Failed to update the event for remove node from the cluster");
+          } else {
+            insert_event_to_controller_map(event_data);
+          }
         }
 
       } else {
@@ -3146,7 +3206,6 @@ void ControllerServicer::InitializeHeartbeatManager() {
                HeartbeatStatus new_status) {
           std::string logger_str;
 
-          // TODO: Generate an event
           // Update the node status in registered_nodes
           std::lock_guard<std::mutex> lock(m_registered_nodes_mutex);
           for (auto &[node_name, node_info] : m_registered_nodes) {
@@ -3156,7 +3215,23 @@ void ControllerServicer::InitializeHeartbeatManager() {
                 node_info.status = NODE_ONLINE;
               } else if (new_status == HeartbeatStatus::UNHEALTHY ||
                          new_status == HeartbeatStatus::TIMEOUT) {
+                auto old_status = node_info.status;
                 node_info.status = NODE_OFFLINE;
+
+                // Generate event only if the node status is not offline and
+                // detected by heartbeat
+                if (old_status != node_info.status) {
+                  json event_data;
+                  auto ret = GenerateEventForDetectedNodeOfflineByHeartbeat(
+                      node_info.cluster_name, node_name, event_data);
+                  if (ret != 0) {
+                    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
+                               "Failed to update the event when the node "
+                               "service is detected offline");
+                  } else {
+                    insert_event_to_controller_map(event_data);
+                  }
+                }
               }
               logger_str = "Updated node " + node_name + " status to " +
                            node_status_to_str.at(node_info.status);
