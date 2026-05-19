@@ -10,6 +10,7 @@ set(SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/circular_queue.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/grpc_controller.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/events_handler.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/events_hlpr.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/sla_hlpr_fns.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/node_cmd_helper_fns.cc
     ${PARENT_DIR}/heartbeat/src/heartbeat_manager.cc

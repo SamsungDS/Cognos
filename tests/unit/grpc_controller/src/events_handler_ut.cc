@@ -8,6 +8,7 @@
 #include <thread>
 
 #include "events_handler.h"
+#include "events_hlpr.h"
 
 using ::testing::_;
 using ::testing::AtLeast;
@@ -34,7 +35,7 @@ TEST(EventHandler, InsertEventSuccess) {
 
 TEST(EventHandler, InsertEventFailure) {
   json event_data = create_json_event("c1", "", "c1_d1");
-  EXPECT_NE(insert_event_to_controller_map(event_data), 0);
+  EXPECT_EQ(insert_event_to_controller_map(event_data), 0);
 }
 
 TEST(EventHandler, InsertEventWithoutClusterName) {
@@ -87,4 +88,11 @@ TEST_F(EventHandlerSetup, GetEvents) {
   // Get all events
   EXPECT_EQ(get_events_from_controller_map("", "", 0, -1, event_data), 0);
   EXPECT_EQ(event_data.size(), 4);
+}
+
+TEST(EventsHlprFns, DetectNodeOffline) {
+  json event_data;
+  EXPECT_EQ(GenerateEventForDetectedNodeOfflineByHeartbeat("cluster1", "node1",
+                                                           event_data),
+            0);
 }

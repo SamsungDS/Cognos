@@ -35,16 +35,6 @@ int insert_event_to_controller_map(const json event_data) {
   // Extract event header information
   auto event_header = event_data.value("event_header", json{});
 
-  // Node name is the minimum requirement
-  if (std::string node_name = event_header.value("node_name", "");
-      node_name.empty()) {
-    logger_str = "Failed to insert the event because of missing node name - " +
-                 event_data.dump();
-    svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::ERROR,
-               logger_str.c_str());
-    return -1;
-  }
-
   std::scoped_lock lock(g_events_data_mutex);
 
   g_events_data_queue.enqueue(event_data);
