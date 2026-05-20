@@ -247,6 +247,9 @@ class ControllerServicer : public svk::Controller::Service {
   // Mutex for protecting registered nodes map
   mutable std::mutex m_registered_nodes_mutex;
 
+  // Mutex for protecting cluster map
+  mutable std::mutex m_cluster_info_mutex;
+
   // Heartbeat manager for monitoring node health
   std::unique_ptr<HeartbeatManager> m_ctrlr_heartbeat_manager;
 };
