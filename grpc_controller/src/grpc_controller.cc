@@ -378,6 +378,9 @@ Status ControllerServicer::RegisterNode(ServerContext *ctxt,
   // If cluster_name is given, add to old m_cluster_map for backwards
   // compatibility
   if (cluster_name.length() != 0) {
+    // Since cluster name is valid, protect the cluster structure
+    std::scoped_lock cluster_info_lock(m_cluster_info_mutex);
+
     logger_str = "cluster_name given in node_register request";
     svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
                logger_str.c_str());
@@ -499,6 +502,9 @@ Status ControllerServicer::UnregisterNode(ServerContext *ctxt,
                logger_str.c_str());
     return Status(grpc::INVALID_ARGUMENT, logger_str);
   }
+
+  // Protect the cluster structure
+  std::scoped_lock cluster_info_lock(m_cluster_info_mutex);
 
   logger_str = "Found Node with node_name " + node_name;
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
@@ -1441,6 +1447,8 @@ Status ControllerServicer::ClusterAPI(ServerContext *ctxt,
 
   resp->set_api_version(API_VERSION);
 
+  std::scoped_lock cluster_info_lock(m_cluster_info_mutex);
+
   logger_str = command_name + " called for cluster " + cluster_name;
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::DEBUG, logger_str.c_str());
   if (command_name == "create_cluster") {
@@ -2156,6 +2164,7 @@ Status ControllerServicer::StatsAPI(ServerContext *ctxt,
   if (cluster_name.length()) {
     cluster_info cluster_details;
     try {
+      std::scoped_lock cluster_info_lock(m_cluster_info_mutex);
       // Note: must use the node_name to find the ip/cluster, not the IP
       cluster_details = m_cluster_info.at(cluster_name);
     } catch (const std::out_of_range &e) {
@@ -3207,7 +3216,7 @@ void ControllerServicer::InitializeHeartbeatManager() {
           std::string logger_str;
 
           // Update the node status in registered_nodes
-          std::lock_guard<std::mutex> lock(m_registered_nodes_mutex);
+          std::scoped_lock lock(m_registered_nodes_mutex);
           for (auto &[node_name, node_info] : m_registered_nodes) {
             if (node_info.node_ip == node_id ||
                 node_info.node_name == node_id) {
