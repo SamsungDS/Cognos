@@ -750,3 +750,195 @@ Screenshots or section names that look wrong:
 ```
 
 This makes it much easier to distinguish missing data from report wiring bugs.
+
+## v1.28 — Layered Stack Report Layout and Setup Details
+
+The static and interactive reports are now organized around the AI workload stack layered-cake model:
+
+1. **A5 — Application Layer**: benchmark summary, request mix, prompt/output token distribution, TTFT, TPOT, E2E latency, and P50/P90/P99 time-series.
+2. **A4 — Inference Runtime + AI Model**: SGLang runtime behavior, token throughput, cache-hit methodology, KV-cache tier residency, eviction, load-back, backup/prefetch movement, and model/cache config.
+3. **A3/A2/A1 — L1 HBM / CUDA / GPU**: GPU utilization, HBM occupancy, GPU power, and HBM bandwidth pressure.
+4. **A3/A2/A1 — L2 DRAM / OS Memory Manager**: host DRAM bandwidth, page-fault pressure, swap storm analysis, NUMA/OS memory symptoms.
+5. **A3/A2/A1 — L3 SSD / OS Block / NVMe**: NVMe/iostat, blktrace, biosnoop, request-size distribution, inter-arrival distribution, read/write/trim windows, per-stream bandwidth, and hot/cold LBA regions.
+6. **Cross-layer diagnosis**: bottleneck scorecard, formulas, and recommendations.
+
+The static report includes a visual mini stack diagram and uses browser-side reordering so the report appears in the same stack order without changing the underlying chart data. The interactive Plotly report emits sections in the layered order directly.
+
+### Setup / Server Configuration panel
+
+Both reports now include a **Setup / Server Configuration** section near the top. The analyzer fills this using best-effort sources:
+
+- `sglang_summary.json` fields such as `model_name`, `instance`, `job`, `engine_type`, `runtime`, `tp_size`, `dtype`, `kv_cache_dtype`, `context_length`, `page_size`, `num_pages`, and HiCache-related fields.
+- Prometheus-labelled SGLang time-series columns, especially cache config labels such as `page_size`, `num_pages`, `model_name`, `instance`, `job`, and `engine_type`.
+- Optional manual override files in the raw directory: `setup_details.json` or `setup.json`.
+
+Example manual setup file:
+
+```json
+{
+  "Model": "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+  "Runtime": "SGLang 0.5.2",
+  "Instance": "msl-ssg-dgx1.msl.lab:30000",
+  "GPU": "8x A100 40GB",
+  "TP size": "8",
+  "dtype": "bfloat16",
+  "KV dtype": "fp8_e4m3",
+  "Context length": "131072",
+  "Page size": "1",
+  "HiCache": "enabled, L2 DRAM + L3 NVMe",
+  "Attention backend": "triton",
+  "Schedule policy": "lpm"
+}
+```
+
+Pass this file directly to `amoprof analyze` or `amoprof collect` with `--setup-details`:
+
+```bash
+amoprof analyze \
+  --run-dir /path/to/metrics_run_xxx \
+  --setup-details ./setup_details.json \
+  --amoprof-report \
+  --interactive-report
+```
+
+The CLI validates that the file is JSON with a top-level object, then copies it into:
+
+```text
+/path/to/metrics_run_xxx/raw/setup_details.json
+```
+
+This keeps the run directory self-contained. You can still manually place `setup_details.json` or `setup.json` in the raw directory if preferred. Manual fields are displayed verbatim and override matching auto-detected setup fields. This is useful when the SGLang metrics endpoint does not export the full command-line server configuration.
+
+
+## v1.29 — `--setup-details` CLI Argument
+
+`amoprof analyze` and `amoprof collect` now accept a direct setup-details override:
+
+```bash
+amoprof analyze \
+  --run-dir /path/to/metrics_run_xxx \
+  --prometheus http://prometheus:9090 \
+  --start 1778871540 \
+  --end 1778877078 \
+  --prom-instance msl-ssg-dgx1.msl.lab:30000 \
+  --setup-details ./setup_details.json \
+  --amoprof-report \
+  --interactive-report
+```
+
+Behavior:
+
+- The file must be valid JSON.
+- The top-level JSON value must be an object.
+- The file is copied to `raw/setup_details.json` before static or interactive report generation.
+- The copied file is used by both the static layered report and the interactive Plotly report.
+- Auto-detected model/runtime/server fields are still used for missing keys.
+- Manual keys in `setup_details.json` override matching auto-detected values in the Setup / Server Configuration panel.
+
+Example:
+
+```json
+{
+  "Model": "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+  "Runtime": "SGLang 0.5.2",
+  "Instance": "msl-ssg-dgx1.msl.lab:30000",
+  "GPU": "8x A100 40GB",
+  "TP size": "8",
+  "dtype": "bfloat16",
+  "KV dtype": "fp8_e4m3",
+  "Context length": "131072",
+  "Page size": "1",
+  "HiCache": "enabled; L2 DRAM + L3 NVMe",
+  "Attention backend": "triton",
+  "Schedule policy": "lpm"
+}
+```
+
+## v1.30 — Default SGLang Setup Profile for Missing Parameters
+
+Some SGLang launch parameters are not consistently exported by `/metrics`, especially command-line options such as tensor/data parallel size, HiCache write policy, parser settings, and storage backend. Starting in v1.30, both the static and interactive reports fill remaining missing setup fields from a built-in **SGLang DeepSeek-R1-70B HiCache reference profile**.
+
+The default profile is based on this representative launch command:
+
+```bash
+python -m sglang.launch_server \
+  --model-path deepseek-ai/DeepSeek-R1-Distill-Llama-70B \
+  --tp-size 8 \
+  --dp-size 1 \
+  --port 30000 \
+  --host 0.0.0.0 \
+  --attention-backend triton \
+  --mem-fraction-static 0.8 \
+  --enable-hierarchical-cache \
+  --hicache-size 50 \
+  --trust-remote-code \
+  --enable-metrics \
+  --enable-cache-report \
+  --reasoning-parser deepseek-r1 \
+  --tool-call-parser deepseekv3 \
+  --hicache-storage-backend file \
+  --hicache-write-policy write_through
+```
+
+Defaulted fields include:
+
+```text
+Model / Model path
+Runtime
+Host / Port
+TP size / DP size
+Attention backend
+Mem fraction static
+Hierarchical cache
+HiCache size
+HiCache storage backend
+HiCache write policy
+Trust remote code
+Metrics enabled
+Cache report enabled
+Reasoning parser
+Tool call parser
+Reference launch command
+```
+
+The report also adds two explanatory fields when defaults are used:
+
+```text
+Default profile
+Defaulted fields
+```
+
+This is important: **defaulted values are assumptions, not observed values**. Auto-detected metrics and manual `setup_details.json` values always take precedence. The default profile is only used when the value is missing, empty, or `unknown` after auto-detection and manual overrides.
+
+You can override any default by passing `--setup-details`:
+
+```json
+{
+  "Model": "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+  "Runtime": "SGLang 0.5.2",
+  "Instance": "msl-ssg-dgx1.msl.lab:30000",
+  "GPU": "8x A100 40GB",
+  "TP size": "8",
+  "DP size": "1",
+  "dtype": "bfloat16",
+  "KV dtype": "fp8_e4m3",
+  "Context length": "131072",
+  "Page size": "1",
+  "Attention backend": "triton",
+  "Mem fraction static": "0.8",
+  "Hierarchical cache": "enabled",
+  "HiCache size": "50",
+  "HiCache storage backend": "file",
+  "HiCache write policy": "write_through",
+  "Reasoning parser": "deepseek-r1",
+  "Tool call parser": "deepseekv3"
+}
+```
+
+Alternatively, put the exact launch command in the setup JSON and the report will parse common SGLang flags into display fields:
+
+```json
+{
+  "Launch command": "python -m sglang.launch_server --model-path deepseek-ai/DeepSeek-R1-Distill-Llama-70B --tp-size 8 --dp-size 1 --port 30000 --host 0.0.0.0 --attention-backend triton --mem-fraction-static 0.8 --enable-hierarchical-cache --hicache-size 50 --trust-remote-code --enable-metrics --enable-cache-report --reasoning-parser deepseek-r1 --tool-call-parser deepseekv3 --hicache-storage-backend file --hicache-write-policy write_through"
+}
+```

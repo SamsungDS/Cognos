@@ -1050,6 +1050,51 @@ def _section(title: str, chart_id: str, fig: dict | None,
   </script>
 </section>"""
 
+def _layer_header(layer_id: str, title: str, note: str, color: str) -> str:
+    return f"""
+<section class="card layer-header" id="{layer_id}" style="background:{color};color:#fff;border-color:{color}">
+  <h2 style="color:#fff;border-bottom:1px solid rgba(255,255,255,.35)">{title}</h2>
+  <div style="font-size:13px;opacity:.95">{note}</div>
+</section>"""
+
+
+def _setup_section(setup: dict) -> str:
+    import html as _html
+    rows = []
+    for k, v in setup.items():
+        key_l = str(k).lower()
+        klass = "setup-row-defaulted" if key_l in ("default profile", "defaulted fields") else ""
+        rows.append(
+            f'<tr class="{klass}"><td class="setup-key">{_html.escape(str(k))}</td>'
+            f'<td class="setup-value">{_html.escape(str(v))}</td></tr>'
+        )
+    return f"""
+<section class="card setup-panel">
+  <h2>⚙️ Setup / Server Configuration</h2>
+  <div class="setup-grid">
+    <div><table class="setup-table"><tbody>{''.join(rows)}</tbody></table></div>
+    <div class="setup-info-box">
+      <div class="setup-info-title">How setup fields were populated</div>
+      <p><b>Auto-detected:</b> read from <code>sglang_summary.json</code>, Prometheus labels, and cache config labels when present.</p>
+      <p><b>Manual override:</b> <code>setup_details.json</code> or <code>setup.json</code> values override auto-detection.</p>
+      <p><b>Defaults:</b> remaining missing SGLang launch parameters use the built-in DeepSeek-R1-70B HiCache reference profile and are listed under <code>Defaulted fields</code>.</p>
+    </div>
+  </div>
+</section>"""
+
+
+def _stack_overview_section() -> str:
+    return """
+<section class="card" style="border-left:4px solid #0f766e">
+  <h2>🍰 AI Workload Stack — Layered Memory-Tier View</h2>
+  <div class="stack-cake">
+    <div class="stack-row full a5"><b>A5 · Application Layer</b><span>benchmarks, prompt/output mix, TTFT, TPOT, P99 request latency</span></div>
+    <div class="stack-row pair"><div class="a4"><b>A4 · Inference Runtime</b><span>SGLang scheduling, batching, KV$ eviction/load-back</span></div><div class="model"><b>AI Models</b><span>model config, dtype, context length, KV$/token</span></div></div>
+    <div class="stack-row trio"><div class="l1"><b>A3/A2/A1 · L1 HBM</b><span>CUDA kernels, GPU driver, HBM capacity/BW</span></div><div class="l2"><b>A3/A2/A1 · L2 DRAM</b><span>OS memory manager, page faults, swap, DRAM BW</span></div><div class="l3"><b>A3/A2/A1 · L3 SSD</b><span>OS block layer, NVMe driver, NAND, blktrace/biosnoop</span></div></div>
+  </div>
+  <div class="caption">Report sections below are ordered to match this layered view.</div>
+</section>"""
+
 
 # ─── Main entry ──────────────────────────────────────────────────────────────
 def build_report(raw_dir: Path, out_html: Path,
@@ -1076,6 +1121,106 @@ def build_report(raw_dir: Path, out_html: Path,
     bw_stream   = _read_csv(raw_dir / "bandwidth_per_stream.csv")
     hot_regions = _read_csv(raw_dir / "hot_regions_overall.csv")
     bt_summary  = _read_json(raw_dir / "summary.json")
+    manual_setup = _read_json(raw_dir / "setup_details.json") or _read_json(raw_dir / "setup.json")
+    setup = {
+        "Model": sglang_sum.get("model_name", "unknown"),
+        "Runtime": sglang_sum.get("runtime", sglang_sum.get("server_type", "SGLang")),
+        "Instance": sglang_sum.get("instance", sglang_sum.get("prom_instance", "unknown")),
+        "Job": sglang_sum.get("job", "unknown"),
+        "Engine": sglang_sum.get("engine_type", "unknown"),
+        "TP size": sglang_sum.get("tp_size", sglang_sum.get("tensor_parallel_size", "unknown")),
+        "dtype": sglang_sum.get("dtype", "unknown"),
+        "KV dtype": sglang_sum.get("kv_cache_dtype", "unknown"),
+        "Context length": sglang_sum.get("context_length", sglang_sum.get("max_context_len", "unknown")),
+        "Page size": sglang_sum.get("page_size", sglang_sum.get("sglang_page_size", "unknown")),
+        "Num pages/tokens": sglang_sum.get("num_pages", sglang_sum.get("max_total_num_tokens", "unknown")),
+        "HiCache": sglang_sum.get("hicache_size", sglang_sum.get("hicache_mem_layout", "unknown")),
+    }
+
+    def _is_missing_setup_value(v):
+        if v is None:
+            return True
+        try:
+            sv = str(v).strip()
+        except Exception:
+            return True
+        return sv == "" or sv.lower() in {"unknown", "none", "nan", "null", "n/a", "—", "-"}
+
+    def _parse_launch_command_to_setup(cmd: str) -> dict:
+        if not cmd:
+            return {}
+        try:
+            import shlex as _shlex_setup
+            toks = _shlex_setup.split(str(cmd))
+        except Exception:
+            toks = str(cmd).split()
+        out = {"Reference launch command": str(cmd)}
+        mapping = {
+            "--model-path": "Model path", "--tp-size": "TP size", "--dp-size": "DP size",
+            "--port": "Port", "--host": "Host", "--attention-backend": "Attention backend",
+            "--mem-fraction-static": "Mem fraction static", "--hicache-size": "HiCache size",
+            "--hicache-storage-backend": "HiCache storage backend",
+            "--hicache-write-policy": "HiCache write policy", "--reasoning-parser": "Reasoning parser",
+            "--tool-call-parser": "Tool call parser", "--dtype": "dtype",
+            "--kv-cache-dtype": "KV dtype", "--context-length": "Context length",
+            "--page-size": "Page size", "--schedule-policy": "Schedule policy",
+        }
+        bool_flags = {
+            "--enable-hierarchical-cache": ("Hierarchical cache", "enabled"),
+            "--trust-remote-code": ("Trust remote code", "true"),
+            "--enable-metrics": ("Metrics enabled", "true"),
+            "--enable-cache-report": ("Cache report enabled", "true"),
+        }
+        i = 0
+        while i < len(toks):
+            t = toks[i]
+            if t in bool_flags:
+                k, v = bool_flags[t]; out[k] = v; i += 1; continue
+            if t in mapping and i + 1 < len(toks):
+                out[mapping[t]] = toks[i+1]; i += 2; continue
+            i += 1
+        if "Model path" in out and _is_missing_setup_value(out.get("Model")):
+            out["Model"] = out["Model path"]
+        return out
+
+    if isinstance(manual_setup, dict):
+        setup.update({str(k): str(v) for k, v in manual_setup.items()})
+        launch_cmd = (setup.get("Launch command") or setup.get("launch_command") or
+                      setup.get("SGLang launch command") or setup.get("sglang_launch_command"))
+        if launch_cmd:
+            for k, v in _parse_launch_command_to_setup(launch_cmd).items():
+                if _is_missing_setup_value(setup.get(k)):
+                    setup[k] = str(v)
+
+    sglang_default_setup = {
+        "Model": "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+        "Model path": "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+        "Runtime": "SGLang",
+        "Host": "0.0.0.0",
+        "Port": "30000",
+        "TP size": "8",
+        "DP size": "1",
+        "Attention backend": "triton",
+        "Mem fraction static": "0.8",
+        "Hierarchical cache": "enabled",
+        "HiCache size": "50",
+        "HiCache storage backend": "file",
+        "HiCache write policy": "write_through",
+        "Trust remote code": "true",
+        "Metrics enabled": "true",
+        "Cache report enabled": "true",
+        "Reasoning parser": "deepseek-r1",
+        "Tool call parser": "deepseekv3",
+        "Reference launch command": "python -m sglang.launch_server --model-path deepseek-ai/DeepSeek-R1-Distill-Llama-70B --tp-size 8 --dp-size 1 --port 30000 --host 0.0.0.0 --attention-backend triton --mem-fraction-static 0.8 --enable-hierarchical-cache --hicache-size 50 --trust-remote-code --enable-metrics --enable-cache-report --reasoning-parser deepseek-r1 --tool-call-parser deepseekv3 --hicache-storage-backend file --hicache-write-policy write_through",
+    }
+    defaulted = []
+    for k, v in sglang_default_setup.items():
+        if _is_missing_setup_value(setup.get(k)):
+            setup[k] = v
+            defaulted.append(k)
+    if defaulted:
+        setup["Default profile"] = "SGLang DeepSeek-R1-70B HiCache reference launch; defaulted fields are assumed, not observed"
+        setup["Defaulted fields"] = ", ".join(defaulted)
 
     # ── Bench summary (per-request benchmark output) ────────────────────────
     # Auto-discover bench_summary.{json,txt} in raw/; the parser handles
@@ -1201,6 +1346,9 @@ def build_report(raw_dir: Path, out_html: Path,
                 "%", "From bench summary (post-run aggregate)"))
 
     sections_html = []
+    sections_html.append(_setup_section(setup))
+    sections_html.append(_stack_overview_section())
+    sections_html.append(_layer_header("layer-a5", "A5 · Application Layer", "Benchmark workload, request mix, prompt/output token distributions, TTFT/TPOT and tail latency.", "#24577f"))
     if bench:
         sections_html.append(_section(
             "Bench Summary — Per-Request Latency Percentiles",
@@ -1262,29 +1410,40 @@ def build_report(raw_dir: Path, out_html: Path,
             sections_html.append(_section(
                 title, f"ch_pct_{metric_key}", chart_spec, body))
 
+    sections_html.append(_layer_header("layer-a4", "A4 · Inference Runtime + AI Model", "SGLang runtime behavior, model/cache configuration, token throughput, cache-hit, tier residency and KV eviction/load-back.", "#317bb8"))
     sections_html.append(_section("Token Throughput & Cache Hit Rate",
                                    "ch_thru",
                                    _chart_sglang_throughput(sglang_ts),
                                    "SGLang Prometheus scrape — hover any point for values"))
-    sections_html.append(_section("GPU Utilization & HBM (per GPU)",
-                                   "ch_gpu", _chart_gpu(gpu_ts),
-                                   "Per-GPU lines — click legend entries to isolate one GPU"))
-    sections_html.append(_section("Total GPU Power Draw",
-                                   "ch_power", _chart_power(power_ts)))
     sections_html.append(_section("KV Cache Tier Occupancy",
                                    "ch_kv_tiers", _chart_kv_tiers(sglang_ts),
                                    "L1=Device(HBM), L2=Host(DRAM), L3=Storage(SSD) — stacked"))
     sections_html.append(_section("KV Cache Eviction / Load-back / Backup Rates",
                                    "ch_evict", _chart_eviction(sglang_ts)))
+
+    sections_html.append(_layer_header("layer-l1", "A3/A2/A1 · L1 HBM / CUDA / GPU", "GPU kernel/runtime layer, HBM occupancy, HBM bandwidth pressure, GPU power and utilization.", "#2f8a4e"))
+    sections_html.append(_section("GPU Utilization & HBM (per GPU)",
+                                   "ch_gpu", _chart_gpu(gpu_ts),
+                                   "Per-GPU lines — click legend entries to isolate one GPU"))
+    sections_html.append(_section("Total GPU Power Draw",
+                                   "ch_power", _chart_power(power_ts)))
+
+    sections_html.append(_layer_header("layer-l2", "A3/A2/A1 · L2 DRAM / OS Memory Manager", "Host DRAM and OS memory behavior: page faults, swap activity, NUMA effects and DRAM bandwidth.", "#7a3f97"))
+    sections_html.append(_section("Swap Storm — Page Activity",
+                                   "ch_swap", _chart_swap_storm(vmstat_ts),
+                                   "Per-second rates derived from /proc/vmstat cumulative counters"))
+    sections_html.append(_section("System DRAM Bandwidth (AMD EPYC PMU)",
+                                   "ch_dram",
+                                   _chart_dram_bw(raw_dir / "amduprof_pcm_raw.txt"),
+                                   "From AMDuProf PCM raw output (Data Fabric counters, 1.2s interval)"))
+
+    sections_html.append(_layer_header("layer-l3", "A3/A2/A1 · L3 SSD / OS Block / NVMe", "Storage-tier behavior: NVMe driver, OS block layer, NAND, request-size/IAT distributions, stream bandwidth, and hot/cold regions.", "#a45714"))
     sections_html.append(_section("NVMe IOPS (Read / Write / Trim)",
                                    "ch_nvme_iops", _chart_nvme_iops(nvme_ts)))
     sections_html.append(_section("NVMe Bandwidth",
                                    "ch_nvme_bw", _chart_nvme_bw(nvme_ts)))
     sections_html.append(_section("NVMe Latency & Device Utilization",
                                    "ch_nvme_lat", _chart_nvme_latency(nvme_ts)))
-    sections_html.append(_section("Swap Storm — Page Activity",
-                                   "ch_swap", _chart_swap_storm(vmstat_ts),
-                                   "Per-second rates derived from /proc/vmstat cumulative counters"))
     sections_html.append(_section("Request Size Distribution",
                                    "ch_reqsize", _chart_request_size_dist(reqsize),
                                    "From blktrace request_size_distribution.csv — bucketed by IO size"))
@@ -1300,10 +1459,8 @@ def build_report(raw_dir: Path, out_html: Path,
                                    "ch_hot",
                                    _chart_hot_regions(hot_regions),
                                    "Top regions of LBA space by bytes accessed"))
-    sections_html.append(_section("System DRAM Bandwidth (AMD EPYC PMU)",
-                                   "ch_dram",
-                                   _chart_dram_bw(raw_dir / "amduprof_pcm_raw.txt"),
-                                   "From AMDuProf PCM raw output (Data Fabric counters, 1.2s interval)"))
+
+    sections_html.append(_layer_header("layer-cross", "Cross-layer Diagnosis", "Use these charts together to connect A5 request symptoms back to A4 runtime behavior and A1–A3 memory/storage tiers.", "#0f172a"))
 
     # ─── Render full HTML ────────────────────────────────────────────────────
     head_title = f"AMOprof Report — {run_label}" if run_label else "AMOprof Report"
@@ -1387,6 +1544,38 @@ def build_report(raw_dir: Path, out_html: Path,
       color: #78350f; padding: 10px 14px; border-radius: 6px;
       margin: 0 auto 18px auto; max-width: 1400px; font-size: 13px;
     }}
+
+    .setup-panel {{
+      background: linear-gradient(135deg, #eef2ff 0%, #f8fafc 100%) !important;
+      border: 1px solid #a5b4fc !important;
+      border-left: 6px solid #4f46e5 !important;
+      color: #0f172a !important;
+      box-shadow: 0 4px 14px rgba(79,70,229,0.12) !important;
+    }}
+    .setup-panel h2 {{ color: #1e1b4b !important; }}
+    .setup-grid {{ display:grid; grid-template-columns: 1.35fr .85fr; gap:16px; align-items:start; }}
+    .setup-table {{ width:100%; border-collapse:separate; border-spacing:0; overflow:hidden; border-radius:10px; border:1px solid #c7d2fe; background:#ffffff; }}
+    .setup-table tr:nth-child(even) td {{ background:#f8fafc; }}
+    .setup-table tr:nth-child(odd) td {{ background:#ffffff; }}
+    .setup-table tr:hover td {{ background:#dbeafe !important; }}
+    .setup-key {{ padding:9px 12px; font-weight:800; color:#1e293b !important; width:34%; border-bottom:1px solid #e2e8f0; vertical-align:top; }}
+    .setup-value {{ padding:9px 12px; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; color:#0f172a !important; border-bottom:1px solid #e2e8f0; vertical-align:top; overflow-wrap:anywhere; word-break:break-word; }}
+    .setup-row-defaulted .setup-key, .setup-row-defaulted .setup-value {{ background:#fff7ed !important; color:#7c2d12 !important; }}
+    .setup-info-box {{ background:#ffffff !important; border:1px solid #c7d2fe; border-radius:10px; padding:14px 16px; font-size:12px; color:#334155 !important; line-height:1.65; }}
+    .setup-info-box p {{ margin:0 0 9px 0; }}
+    .setup-info-box code {{ background:#eef2ff !important; color:#3730a3 !important; padding:1px 4px; border-radius:4px; }}
+    .setup-info-title {{ font-size:12px; font-weight:800; color:#312e81; text-transform:uppercase; letter-spacing:.5px; margin-bottom:8px; }}
+    .stack-cake {{ display:grid; gap:8px; margin-top:8px; }}
+    .stack-row {{ display:grid; gap:8px; }}
+    .stack-row.full {{ grid-template-columns:1fr; }}
+    .stack-row.pair {{ grid-template-columns:1.6fr 1fr; }}
+    .stack-row.trio {{ grid-template-columns:1fr 1fr 1fr; }}
+    .stack-row > div, .stack-row.full {{ border-radius:10px; padding:14px 16px; color:#fff; }}
+    .stack-row b {{ display:block; font-size:15px; margin-bottom:4px; }}
+    .stack-row span {{ font-size:11px; opacity:.92; }}
+    .a5 {{ background:#24577f; }} .a4 {{ background:#317bb8; }} .model {{ background:#b89a05; }}
+    .l1 {{ background:#2f8a4e; }} .l2 {{ background:#7a3f97; }} .l3 {{ background:#a45714; }}
+    @media(max-width:768px) {{ .setup-grid,.stack-row.pair,.stack-row.trio {{ grid-template-columns:1fr; }} }}
   </style>
 </head>
 <body>

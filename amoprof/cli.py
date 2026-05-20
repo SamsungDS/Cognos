@@ -64,6 +64,41 @@ def _copy_bench_summary(args, raw_dir: Path) -> None:
         log.warning("bench summary copy failed: %s", e)
 
 
+def _copy_setup_details(args, raw_dir: Path) -> None:
+    """Copy --setup-details JSON into raw/setup_details.json so both the
+    static and interactive reports can render the Setup / Server Configuration
+    panel from the same canonical location.
+
+    The file is intentionally copied, not symlinked, so the run directory is
+    self-contained and can be archived or copied to another machine.
+    """
+    src_path = getattr(args, "setup_details", "") or ""
+    if not src_path:
+        return
+    src = Path(src_path).expanduser()
+    if not src.exists():
+        log.warning("--setup-details file not found: %s", src)
+        return
+    if src.stat().st_size == 0:
+        log.warning("--setup-details file is empty: %s", src)
+        return
+    try:
+        with open(src, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+        if not isinstance(payload, dict):
+            log.warning("--setup-details must be a JSON object at top level: %s", src)
+            return
+    except Exception as e:
+        log.warning("--setup-details is not valid JSON: %s (%s)", src, e)
+        return
+    dst = raw_dir / "setup_details.json"
+    try:
+        shutil.copyfile(src, dst)
+        log.info("Copied setup details: %s → %s", src, dst)
+    except Exception as e:
+        log.warning("setup details copy failed: %s", e)
+
+
 def _setup_logging(verbose: bool) -> None:
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
@@ -1074,6 +1109,7 @@ def _collect(args: argparse.Namespace) -> int:
         log.info("Analysis operations: %s", ", ".join(manifest.get("operations", [])))
 
     if getattr(args, "amoprof_report", False):
+        _copy_setup_details(args, raw_dir)
         report_path = out_dir / "amoprof_report.html"
         rc = _run_amoprof(raw_dir, report_path,
                           verbose=args.verbose,
@@ -1096,6 +1132,7 @@ def _collect(args: argparse.Namespace) -> int:
     if getattr(args, "interactive_report", False):
         try:
             _copy_bench_summary(args, raw_dir)
+            _copy_setup_details(args, raw_dir)
             from .report.interactive import build_report as _build_interactive
             out_path = out_dir / "amoprof_interactive.html"
             label = getattr(args, "label", "") or out_dir.name
@@ -1238,6 +1275,11 @@ def _build_parser() -> argparse.ArgumentParser:
                         "P99/Max, prompt/output token length distributions, "
                         "input/output token throughput) to the interactive "
                         "report. File is copied to raw/bench_summary.* on save.")
+    c.add_argument("--setup-details", default="",
+                   help="Path to a setup_details.json file to embed in both "
+                        "static and interactive reports. The JSON must be a "
+                        "top-level object. It is copied to raw/setup_details.json "
+                        "so the run directory remains self-contained.")
     c.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
 
     a = sub.add_parser("analyze", help="Generate operation-aligned CSVs and reports "
@@ -1318,6 +1360,12 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Path to a benchmark summary file (JSON or plaintext). "
                         "Same as the collect-side flag — adds per-request "
                         "percentile charts to the interactive report.")
+    a.add_argument("--setup-details", default="",
+                   help="Path to a setup_details.json file to embed in both "
+                        "static and interactive reports. The JSON must be a "
+                        "top-level object. It is copied to raw/setup_details.json "
+                        "before report generation. This overrides/augments "
+                        "auto-detected SGLang/Prometheus server-info labels.")
     a.add_argument("--amoprof-extra-arg", action="append", default=[],
                    help="Extra argument passed through to amoprof. Repeatable. "
                         "Example: --amoprof-extra-arg --excel")
@@ -1502,6 +1550,7 @@ def _analyze(args) -> int:
 
     # ── 5. Static amoprof HTML report ───────────────────────────────────────
     if getattr(args, "amoprof_report", False):
+        _copy_setup_details(args, raw_dir)
         report_path = run_dir / "amoprof_report.html"
         rc = _run_amoprof(raw_dir, report_path,
                           verbose=args.verbose,
@@ -1525,6 +1574,7 @@ def _analyze(args) -> int:
     if getattr(args, "interactive_report", False):
         try:
             _copy_bench_summary(args, raw_dir)
+            _copy_setup_details(args, raw_dir)
             from .report.interactive import build_report as _build_interactive
             out_path = run_dir / "amoprof_interactive.html"
             _build_interactive(raw_dir, out_path, run_label=run_dir.name)

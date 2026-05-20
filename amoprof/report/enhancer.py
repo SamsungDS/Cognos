@@ -511,6 +511,74 @@ DARK_THEME_CSS = """
   div[style*="color:#64748b"] {
     color: #94a3b8 !important;
   }
+
+
+  /* ── Dark theme contrast fixes for generated inline styles ───────────── */
+  body > div:first-of-type span[style*="font-size:22px"][style*="font-weight:900"] {
+    color: #f8fafc !important;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.35);
+  }
+  body > div:first-of-type span[style*="font-size:22px"][style*="color:#4f46e5"] {
+    color: #a5b4fc !important;
+  }
+  .card:not(.setup-panel) span[style*="color:#0f172a"],
+  .card:not(.setup-panel) span[style*="color: #0f172a"],
+  .card:not(.setup-panel) span[style*="color:#334155"],
+  .card:not(.setup-panel) span[style*="color: #334155"],
+  .card:not(.setup-panel) span[style*="color:#1e293b"],
+  .card:not(.setup-panel) td[style*="color:#0f172a"],
+  .card:not(.setup-panel) td[style*="color: #0f172a"],
+  .card:not(.setup-panel) td[style*="color:#334155"],
+  .card:not(.setup-panel) td[style*="color: #334155"],
+  .card:not(.setup-panel) td[style*="color:#1e293b"],
+  .card:not(.setup-panel) b[style*="color:#0f172a"],
+  .card:not(.setup-panel) b[style*="color: #0f172a"],
+  .card:not(.setup-panel) div[style*="color:#0f172a"],
+  .card:not(.setup-panel) div[style*="color: #0f172a"],
+  .card:not(.setup-panel) div[style*="color:#334155"],
+  .card:not(.setup-panel) div[style*="color: #334155"],
+  .card:not(.setup-panel) div[style*="color:#1e293b"] {
+    color: #cbd5e1 !important;
+  }
+
+  /* Keep setup/config section intentionally light even in dark theme. */
+  .setup-panel {
+    background: linear-gradient(135deg, #eef2ff 0%, #ffffff 55%, #f8fafc 100%) !important;
+    border: 1px solid #a5b4fc !important;
+    border-left: 6px solid #818cf8 !important;
+    color: #0f172a !important;
+    box-shadow: 0 6px 18px rgba(15,23,42,0.35) !important;
+  }
+  .setup-panel h2,
+  .setup-panel .setup-info-title {
+    color: #1e1b4b !important;
+    text-shadow: none !important;
+  }
+  .setup-panel .setup-table,
+  .setup-panel .setup-info-box,
+  .setup-panel table {
+    background: #ffffff !important;
+    color: #0f172a !important;
+  }
+  .setup-panel th,
+  .setup-panel td,
+  .setup-panel .setup-key,
+  .setup-panel .setup-value,
+  .setup-panel p,
+  .setup-panel div,
+  .setup-panel span {
+    color: #0f172a !important;
+  }
+  .setup-panel .setup-row-defaulted .setup-key,
+  .setup-panel .setup-row-defaulted .setup-value {
+    background: #fff7ed !important;
+    color: #7c2d12 !important;
+  }
+  .setup-panel code {
+    background: #eef2ff !important;
+    color: #3730a3 !important;
+  }
+
   /* Wrapper around each chart image — adds tooltip parent */
   figure.amoprof-chart {
     position: relative;

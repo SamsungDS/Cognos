@@ -13,6 +13,7 @@ HTML report with charts and bottleneck analysis.
 import argparse
 import base64
 import glob
+import html
 import io
 import json
 import os
@@ -3692,6 +3693,23 @@ def resolve_input(raw_arg: str) -> dict:
 class Metrics:
     # SGLang
     model: str = "unknown"
+    # Setup / server configuration (best-effort from SGLang/Prometheus + manual overrides)
+    setup_model: str = "unknown"
+    setup_instance: str = "unknown"
+    setup_job: str = "unknown"
+    setup_engine_type: str = "unknown"
+    setup_runtime: str = "SGLang"
+    setup_gpu: str = "A100"
+    setup_tp_size: str = "unknown"
+    setup_dtype: str = "unknown"
+    setup_kv_cache_dtype: str = "unknown"
+    setup_context_length: str = "unknown"
+    setup_page_size: str = "unknown"
+    setup_num_pages: str = "unknown"
+    setup_hicache: str = "unknown"
+    setup_attention_backend: str = "unknown"
+    setup_schedule_policy: str = "unknown"
+    setup_details: dict = field(default_factory=dict)
     run_duration_s: float = 0
     ttft_ms: float = 0
     tpot_ms: float = 0
@@ -4117,6 +4135,166 @@ def extract_metrics(data: dict) -> Metrics:
     # ── SGLang summary ────────────────────────────────────────────────────────
     sg = data.get("sglang_summary", {})
     m.model = sg.get("model_name") or "unknown"
+
+    def _first_sg(*keys, default="unknown"):
+        for k in keys:
+            v = sg.get(k)
+            if v is not None and str(v).strip() not in ("", "0", "0.0", "nan", "None"):
+                return str(v)
+        return default
+
+    # Best-effort setup/server config extraction. Most SGLang versions expose
+    # model_name / instance / engine_type, while newer versions may also expose
+    # cache_config_info or server args as labels/summary keys. Manual values can
+    # be merged into sglang_summary.json by the wrapper in future without changing
+    # this renderer.
+    #
+    # v1.30 also carries a conservative default SGLang launch profile for fields
+    # that are often not exposed by /metrics. These defaults are only applied
+    # when a field is still missing/unknown after auto-detection and manual
+    # setup_details.json overrides. The report marks such fields as assumed so
+    # operators can distinguish observed values from profile defaults.
+    _sglang_default_setup = {
+        "Model": "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+        "Model path": "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+        "Runtime": "SGLang",
+        "Host": "0.0.0.0",
+        "Port": "30000",
+        "TP size": "8",
+        "DP size": "1",
+        "Attention backend": "triton",
+        "Mem fraction static": "0.8",
+        "Hierarchical cache": "enabled",
+        "HiCache size": "50",
+        "HiCache storage backend": "file",
+        "HiCache write policy": "write_through",
+        "Trust remote code": "true",
+        "Metrics enabled": "true",
+        "Cache report enabled": "true",
+        "Reasoning parser": "deepseek-r1",
+        "Tool call parser": "deepseekv3",
+        "Reference launch command": "python -m sglang.launch_server --model-path deepseek-ai/DeepSeek-R1-Distill-Llama-70B --tp-size 8 --dp-size 1 --port 30000 --host 0.0.0.0 --attention-backend triton --mem-fraction-static 0.8 --enable-hierarchical-cache --hicache-size 50 --trust-remote-code --enable-metrics --enable-cache-report --reasoning-parser deepseek-r1 --tool-call-parser deepseekv3 --hicache-storage-backend file --hicache-write-policy write_through",
+    }
+
+    def _is_missing_setup_value(v):
+        if v is None:
+            return True
+        try:
+            sv = str(v).strip()
+        except Exception:
+            return True
+        return sv == "" or sv.lower() in {"unknown", "none", "nan", "null", "n/a", "—", "-"}
+
+    def _apply_setup_defaults(details: dict) -> list:
+        defaulted = []
+        for k, v in _sglang_default_setup.items():
+            if _is_missing_setup_value(details.get(k)):
+                details[k] = v
+                defaulted.append(k)
+        return defaulted
+
+    def _parse_launch_command_to_setup(cmd: str) -> dict:
+        """Parse an SGLang launch command into display-friendly setup keys.
+        This is intentionally best-effort and avoids failing report generation
+        on shell quoting edge cases.
+        """
+        if not cmd:
+            return {}
+        try:
+            import shlex as _shlex_setup
+            toks = _shlex_setup.split(str(cmd))
+        except Exception:
+            toks = str(cmd).split()
+        out = {"Reference launch command": str(cmd)}
+        mapping = {
+            "--model-path": "Model path", "--tp-size": "TP size", "--dp-size": "DP size",
+            "--port": "Port", "--host": "Host", "--attention-backend": "Attention backend",
+            "--mem-fraction-static": "Mem fraction static", "--hicache-size": "HiCache size",
+            "--hicache-storage-backend": "HiCache storage backend",
+            "--hicache-write-policy": "HiCache write policy", "--reasoning-parser": "Reasoning parser",
+            "--tool-call-parser": "Tool call parser", "--dtype": "dtype",
+            "--kv-cache-dtype": "KV dtype", "--context-length": "Context length",
+            "--page-size": "Page size", "--schedule-policy": "Schedule policy",
+        }
+        bool_flags = {
+            "--enable-hierarchical-cache": ("Hierarchical cache", "enabled"),
+            "--trust-remote-code": ("Trust remote code", "true"),
+            "--enable-metrics": ("Metrics enabled", "true"),
+            "--enable-cache-report": ("Cache report enabled", "true"),
+        }
+        i = 0
+        while i < len(toks):
+            t = toks[i]
+            if t in bool_flags:
+                k, v = bool_flags[t]; out[k] = v; i += 1; continue
+            if t in mapping and i + 1 < len(toks):
+                out[mapping[t]] = toks[i+1]; i += 2; continue
+            i += 1
+        if "Model path" in out and _is_missing_setup_value(out.get("Model")):
+            out["Model"] = out["Model path"]
+        return out
+
+    m.setup_model = m.model
+    m.setup_instance = _first_sg("instance", "prom_instance")
+    m.setup_job = _first_sg("job", "prom_job")
+    m.setup_engine_type = _first_sg("engine_type")
+    m.setup_runtime = _first_sg("runtime", "server_type", default="SGLang")
+    m.setup_tp_size = _first_sg("tp_size", "tensor_parallel_size", "tensor_parallel", "tp")
+    m.setup_dtype = _first_sg("dtype", "model_dtype")
+    m.setup_kv_cache_dtype = _first_sg("kv_cache_dtype", "kv_dtype")
+    m.setup_context_length = _first_sg("context_length", "max_context_len", "max_model_len", "max_seq_len")
+    m.setup_page_size = _first_sg("page_size", "sglang_page_size")
+    m.setup_num_pages = _first_sg("num_pages", "token_pool_num_pages", "max_total_num_tokens")
+    m.setup_hicache = _first_sg("hicache_size", "hicache_capacity", "hicache_mem_layout", "hicache_io_backend")
+    m.setup_attention_backend = _first_sg("attention_backend", "attn_backend")
+    m.setup_schedule_policy = _first_sg("schedule_policy", "scheduler_policy")
+    m.setup_details = {
+        "Model": m.setup_model, "Runtime": m.setup_runtime, "Instance": m.setup_instance,
+        "Job": m.setup_job, "Engine": m.setup_engine_type, "TP size": m.setup_tp_size,
+        "dtype": m.setup_dtype, "KV dtype": m.setup_kv_cache_dtype,
+        "Context length": m.setup_context_length, "Page size": m.setup_page_size,
+        "Num pages/tokens": m.setup_num_pages, "HiCache": m.setup_hicache,
+        "Attention backend": m.setup_attention_backend, "Schedule policy": m.setup_schedule_policy,
+    }
+    # Optional manual setup override: place setup_details.json or setup.json in the
+    # raw directory. Keys are displayed verbatim; common keys also update the
+    # canonical fields above.
+    _manual_setup = data.get("setup_details") or data.get("setup") or {}
+    if isinstance(_manual_setup, dict):
+        m.setup_details.update({str(k): str(v) for k, v in _manual_setup.items()})
+        m.setup_model = m.setup_details.get("Model", m.setup_details.get("model", m.setup_model))
+        m.setup_runtime = m.setup_details.get("Runtime", m.setup_details.get("runtime", m.setup_runtime))
+        m.setup_instance = m.setup_details.get("Instance", m.setup_details.get("instance", m.setup_instance))
+        m.setup_tp_size = m.setup_details.get("TP size", m.setup_details.get("tp_size", m.setup_tp_size))
+        m.setup_dtype = m.setup_details.get("dtype", m.setup_dtype)
+        m.setup_kv_cache_dtype = m.setup_details.get("KV dtype", m.setup_details.get("kv_cache_dtype", m.setup_kv_cache_dtype))
+        m.setup_context_length = m.setup_details.get("Context length", m.setup_details.get("context_length", m.setup_context_length))
+        # Optional: setup_details.json may contain an exact SGLang launch command.
+        # Parse it so individual fields show up even if the user does not provide
+        # them as separate JSON keys.
+        _launch_cmd = (m.setup_details.get("Launch command") or
+                       m.setup_details.get("launch_command") or
+                       m.setup_details.get("SGLang launch command") or
+                       m.setup_details.get("sglang_launch_command"))
+        if _launch_cmd:
+            _parsed_launch = _parse_launch_command_to_setup(_launch_cmd)
+            for _k, _v in _parsed_launch.items():
+                if _is_missing_setup_value(m.setup_details.get(_k)):
+                    m.setup_details[_k] = str(_v)
+    _defaulted_setup_fields = _apply_setup_defaults(m.setup_details)
+    if _defaulted_setup_fields:
+        m.setup_details["Default profile"] = "SGLang DeepSeek-R1-70B HiCache reference launch; defaulted fields are assumed, not observed"
+        m.setup_details["Defaulted fields"] = ", ".join(_defaulted_setup_fields)
+    # Refresh canonical convenience fields after manual/default setup merge.
+    m.setup_model = m.setup_details.get("Model", m.setup_details.get("model", m.setup_model))
+    m.setup_runtime = m.setup_details.get("Runtime", m.setup_details.get("runtime", m.setup_runtime))
+    m.setup_instance = m.setup_details.get("Instance", m.setup_details.get("instance", m.setup_instance))
+    m.setup_tp_size = m.setup_details.get("TP size", m.setup_details.get("tp_size", m.setup_tp_size))
+    m.setup_dtype = m.setup_details.get("dtype", m.setup_dtype)
+    m.setup_kv_cache_dtype = m.setup_details.get("KV dtype", m.setup_details.get("kv_cache_dtype", m.setup_kv_cache_dtype))
+    m.setup_context_length = m.setup_details.get("Context length", m.setup_details.get("context_length", m.setup_context_length))
+    m.setup_page_size = m.setup_details.get("Page size", m.setup_page_size)
+    m.setup_attention_backend = m.setup_details.get("Attention backend", m.setup_attention_backend)
     # fall back to finding model name in timeseries column headers
     m.run_duration_s = float(sg.get("server_e2e_ms", 0) / 1000 or
                              data.get("power_summary", {}).get("power_elapsed_s", 0) or
@@ -4142,6 +4320,34 @@ def extract_metrics(data: dict) -> Metrics:
     # Fallback to SGLang timeseries when summary fields are missing or zero.
     sg_ts_fallback = data.get("sglang_timeseries")
     if isinstance(sg_ts_fallback, pd.DataFrame) and not sg_ts_fallback.empty:
+        # Parse useful labels embedded in Prometheus-style CSV column names, e.g.
+        # sglang_cache_config_info{page_size="1",num_pages="..."}.
+        try:
+            import re as _re_setup
+            label_blob = " ".join(map(str, sg_ts_fallback.columns))
+            def _label_value(name):
+                mm = _re_setup.search(r'(?:^|[, {])' + _re_setup.escape(name) + r'\s*=\s*"?([^",} ]+)"?', label_blob)
+                return mm.group(1) if mm else None
+            for attr, labels in {
+                "setup_page_size": ("page_size",),
+                "setup_num_pages": ("num_pages", "max_total_num_tokens"),
+                "setup_model": ("model_name", "model"),
+                "setup_instance": ("instance",),
+                "setup_job": ("job",),
+                "setup_engine_type": ("engine_type",),
+            }.items():
+                if getattr(m, attr, "unknown") == "unknown":
+                    for lab in labels:
+                        vv = _label_value(lab)
+                        if vv:
+                            setattr(m, attr, str(vv)); break
+            m.setup_details.update({
+                "Model": m.setup_model, "Instance": m.setup_instance, "Job": m.setup_job,
+                "Engine": m.setup_engine_type, "Page size": m.setup_page_size,
+                "Num pages/tokens": m.setup_num_pages,
+            })
+        except Exception:
+            pass
         if m.run_duration_s <= 0 and "time_sec" in sg_ts_fallback.columns:
             try:
                 m.run_duration_s = float(sg_ts_fallback["time_sec"].iloc[-1] - sg_ts_fallback["time_sec"].iloc[0])
@@ -9605,6 +9811,50 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
         '</div>'
     )
 
+    def _setup_table_html():
+        import html as _html_mod
+        rows = []
+        for k, v in m.setup_details.items():
+            key_l = str(k).lower()
+            val = str(v)
+            klass = "setup-row-defaulted" if key_l in ("default profile", "defaulted fields") else ""
+            rows.append(
+                f'<tr class="{klass}"><td class="setup-key">{_html_mod.escape(str(k))}</td>'
+                f'<td class="setup-value">{_html_mod.escape(val)}</td></tr>'
+            )
+        return '<table class="setup-table"><tbody>' + ''.join(rows) + '</tbody></table>'
+
+    setup_panel_html = f'''
+<div class="card stack-noreorder setup-panel">
+  <h2>⚙️ Setup / Server Configuration</h2>
+  <div class="setup-grid">
+    <div>{_setup_table_html()}</div>
+    <div class="setup-info-box">
+      <div class="setup-info-title">How setup fields were populated</div>
+      <p><b>Auto-detected:</b> fields are read from <code>sglang_summary.json</code>, Prometheus labels such as <code>model_name</code>/<code>instance</code>/<code>engine_type</code>, and cache config labels such as <code>page_size</code>/<code>num_pages</code> when present.</p>
+      <p><b>Manual override:</b> <code>setup_details.json</code> values override auto-detection.</p>
+      <p><b>Defaults:</b> remaining missing SGLang launch parameters are filled from the built-in DeepSeek-R1-70B HiCache reference launch profile and listed under <code>Defaulted fields</code>.</p>
+      <p><b>Memory tier mapping:</b> L1=HBM/GPU, L2=host DRAM/OS memory, L3=NVMe SSD/local or fabric-backed storage.</p>
+    </div>
+  </div>
+</div>
+'''
+
+    layered_overview_html = f'''
+<div class="card stack-noreorder" id="stack-layer-overview" style="border-left:4px solid #0f766e">
+  <h2>🍰 AI Workload Stack — Layered Memory-Tier View</h2>
+  <div class="stack-cake">
+    <div class="stack-row full a5"><b>A5 · Application Layer</b><span>benchmarks, prompt/output mix, TTFT, TPOT, P99 request latency</span></div>
+    <div class="stack-row pair"><div class="a4"><b>A4 · Inference Runtime</b><span>SGLang/vLLM scheduling, continuous batching, KV eviction/load-back</span></div><div class="model"><b>AI Models</b><span>model config, dtype, context length, FLOPs/token, KV$/token</span></div></div>
+    <div class="stack-row trio"><div class="l1"><b>A3/A2/A1 · L1 HBM</b><span>CUDA kernels, GPU driver, HBM capacity/BW, SM util</span></div><div class="l2"><b>A3/A2/A1 · L2 DRAM</b><span>OS memory manager, page faults, swap, DRAM BW</span></div><div class="l3"><b>A3/A2/A1 · L3 SSD</b><span>OS block layer, io_uring/NVMe driver, NAND, blktrace/biosnoop</span></div></div>
+  </div>
+  <div class="stack-nav">
+    <a href="#layer-a5">A5 Application</a><a href="#layer-a4">A4 Runtime &amp; Model</a><a href="#layer-l1">L1 HBM</a><a href="#layer-l2">L2 DRAM</a><a href="#layer-l3">L3 SSD</a><a href="#layer-cross">Cross-layer</a>
+  </div>
+</div>
+<div id="stack-layered-report-anchor" class="stack-noreorder"></div>
+'''
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -9615,6 +9865,8 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   body {{ background: #f8fafc; color: #0f172a; font-family: 'Inter', system-ui, sans-serif; padding: 24px; }}
   h2 {{ font-size: 13px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 14px; color: #1e293b; }}
+  .report-title-prefix {{ color:#0f172a; }}
+  .report-title-accent {{ color:#4f46e5; }}
   .card {{ background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 18px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }}
   .grid2 {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }}
   .kpis {{ display: flex; gap: 10px; flex-wrap: wrap; }}
@@ -9648,9 +9900,45 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
     border-radius: 6px;
     padding: 4px 10px;
   }}
+
+  .setup-panel {{
+    background: linear-gradient(135deg, #eef2ff 0%, #f8fafc 100%) !important;
+    border: 1px solid #a5b4fc !important;
+    border-left: 6px solid #4f46e5 !important;
+    color: #0f172a !important;
+    box-shadow: 0 4px 14px rgba(79,70,229,0.12) !important;
+  }}
+  .setup-panel h2 {{ color: #1e1b4b !important; }}
+  .setup-grid {{ display:grid; grid-template-columns: 1.35fr .85fr; gap:16px; align-items:start; }}
+  .setup-table {{ width:100%; border-collapse:separate; border-spacing:0; overflow:hidden; border-radius:10px; border:1px solid #c7d2fe; background:#ffffff; }}
+  .setup-table tr:nth-child(even) td {{ background:#f8fafc; }}
+  .setup-table tr:nth-child(odd) td {{ background:#ffffff; }}
+  .setup-table tr:hover td {{ background:#dbeafe !important; }}
+  .setup-key {{ padding:9px 12px; font-weight:800; color:#1e293b !important; width:34%; border-bottom:1px solid #e2e8f0; vertical-align:top; }}
+  .setup-value {{ padding:9px 12px; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; color:#0f172a !important; border-bottom:1px solid #e2e8f0; vertical-align:top; overflow-wrap:anywhere; word-break:break-word; }}
+  .setup-row-defaulted .setup-key, .setup-row-defaulted .setup-value {{ background:#fff7ed !important; color:#7c2d12 !important; }}
+  .setup-info-box {{ background:#ffffff !important; border:1px solid #c7d2fe; border-radius:10px; padding:14px 16px; font-size:12px; color:#334155 !important; line-height:1.65; }}
+  .setup-info-box p {{ margin:0 0 9px 0; }}
+  .setup-info-box code {{ background:#eef2ff !important; color:#3730a3 !important; padding:1px 4px; border-radius:4px; }}
+  .setup-info-title {{ font-size:12px; font-weight:800; color:#312e81; text-transform:uppercase; letter-spacing:.5px; margin-bottom:8px; }}
   .recs {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }}
   .phase-bar {{ display: flex; border-radius: 6px; overflow: hidden; height: 22px; }}
-  @media(max-width:768px) {{ .grid2,.recs {{ grid-template-columns: 1fr; }} }}
+  .stack-cake {{ display:grid; gap:8px; margin:8px 0 12px 0; }}
+  .stack-row {{ display:grid; gap:8px; }}
+  .stack-row.full {{ grid-template-columns:1fr; }}
+  .stack-row.pair {{ grid-template-columns:1.6fr 1fr; }}
+  .stack-row.trio {{ grid-template-columns:1fr 1fr 1fr; }}
+  .stack-row > div, .stack-row.full {{ border-radius:10px; padding:14px 16px; color:#fff; }}
+  .stack-row b {{ display:block; font-size:15px; margin-bottom:4px; letter-spacing:.2px; }}
+  .stack-row span {{ font-size:11px; opacity:.92; line-height:1.5; }}
+  .a5 {{ background:#24577f; }} .a4 {{ background:#317bb8; }} .model {{ background:#b89a05; }}
+  .l1 {{ background:#2f8a4e; }} .l2 {{ background:#7a3f97; }} .l3 {{ background:#a45714; }}
+  .stack-nav {{ display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }}
+  .stack-nav a {{ font-size:11px; text-decoration:none; color:#0f172a; background:#e2e8f0; border:1px solid #cbd5e1; border-radius:999px; padding:5px 10px; }}
+  .stack-layer-header {{ margin:20px 0 10px 0; padding:12px 16px; border-radius:10px; color:#fff; box-shadow:0 1px 3px rgba(0,0,0,.08); }}
+  .stack-layer-header h2 {{ color:#fff !important; margin:0 0 4px 0; border:0; font-size:14px; }}
+  .stack-layer-header p {{ font-size:12px; opacity:.95; margin:0; }}
+  @media(max-width:768px) {{ .grid2,.recs,.setup-grid,.stack-row.pair,.stack-row.trio {{ grid-template-columns: 1fr; }} }}
 </style>
 <script>
 // Fix contrast: darken #94a3b8 labels to #475569, and amber #fbbf24 to #92400e
@@ -9702,6 +9990,43 @@ document.addEventListener('DOMContentLoaded', function(){{
     }});
   }});
 }});
+
+// Re-arrange report cards into the AI workload stack layered-cake order.
+// The underlying metrics/charts remain unchanged; this is only presentation order.
+document.addEventListener('DOMContentLoaded', function(){{
+  const anchor = document.getElementById('stack-layered-report-anchor');
+  if(!anchor) return;
+  const layerDefs = [
+    ['layer-a5','A5 · Application Layer','Benchmark workload, request mix, token throughput, TTFT/TPOT and P50/P90/P99 latency.','#24577f'],
+    ['layer-a4','A4 · Inference Runtime + AI Model','SGLang runtime behavior, KV-cache accounting, model config, batching, eviction, load-back and cache-hit methodology.','#317bb8'],
+    ['layer-l1','A3/A2/A1 · L1 HBM / CUDA / GPU','GPU utilization, HBM capacity, HBM bandwidth and device-side runtime pressure.','#2f8a4e'],
+    ['layer-l2','A3/A2/A1 · L2 DRAM / OS Memory Manager','Host DRAM bandwidth, page faults, swap pressure, NUMA and OS memory effects.','#7a3f97'],
+    ['layer-l3','A3/A2/A1 · L3 SSD / OS Block / NVMe','NVMe driver, blktrace/biosnoop, request sizes, inter-arrivals, hot/cold LBAs, read/write/trim workload.','#a45714'],
+    ['layer-cross','Cross-layer Diagnosis','End-to-end bottleneck scorecard, formulas, recommendations and layer-to-layer spill/evict interpretation.','#0f172a']
+  ];
+  const classify = (txt) => {{
+    txt = (txt || '').toLowerCase();
+    if(txt.includes('cache hit methodology') || txt.includes('p50') || txt.includes('phase analysis') || txt.includes('session') || txt.includes('percentile')) return 'layer-a5';
+    if(txt.includes('kv cache footprint') || txt.includes('kv tier') || txt.includes('kv$b') || txt.includes('model')) return 'layer-a4';
+    if(txt.includes('gpu utilisation') || txt.includes('gpu utilization') || txt.includes('hbm bandwidth')) return 'layer-l1';
+    if(txt.includes('dram bandwidth') || txt.includes('swap storm')) return 'layer-l2';
+    if(txt.includes('nvme') || txt.includes('deep io') || txt.includes('ssd read') || txt.includes('ssd write') || txt.includes('trim') || txt.includes('per-stream') || txt.includes('hot/cold')) return 'layer-l3';
+    if(txt.includes('cross-layer') || txt.includes('bottleneck') || txt.includes('formulas') || txt.includes('recommendations')) return 'layer-cross';
+    return 'layer-cross';
+  }};
+  const cards = Array.from(document.querySelectorAll('.card')).filter(c => !c.classList.contains('stack-noreorder'));
+  const buckets = {{}}; layerDefs.forEach(d => buckets[d[0]] = []);
+  cards.forEach(c => {{ const h = c.querySelector('h2'); buckets[classify(h ? h.textContent : '')].push(c); }});
+  let insertAfter = anchor;
+  layerDefs.forEach(([id,title,desc,color]) => {{
+    const header = document.createElement('div');
+    header.className = 'stack-layer-header stack-noreorder'; header.id = id; header.style.background = color;
+    header.innerHTML = '<h2>'+title+'</h2><p>'+desc+'</p>';
+    insertAfter.parentNode.insertBefore(header, insertAfter.nextSibling);
+    insertAfter = header;
+    (buckets[id] || []).forEach(c => {{ insertAfter.parentNode.insertBefore(c, insertAfter.nextSibling); insertAfter = c; }});
+  }});
+}});
 </script>
 </head>
 <body>
@@ -9714,8 +10039,8 @@ document.addEventListener('DOMContentLoaded', function(){{
   <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
     <div>
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-        <span style="font-size:22px;font-weight:900;letter-spacing:-0.5px;color:#0f172a">AI STACK</span>
-        <span style="font-size:22px;font-weight:900;letter-spacing:-0.5px;color:#4f46e5">BOTTLENECK REPORT</span>
+        <span class="report-title-prefix" style="font-size:22px;font-weight:900;letter-spacing:-0.5px;color:#0f172a">AI STACK</span>
+        <span class="report-title-accent" style="font-size:22px;font-weight:900;letter-spacing:-0.5px;color:#4f46e5">BOTTLENECK REPORT</span>
         <span style="font-size:10px;background:#eef2ff;color:#4338ca;padding:3px 10px;
                      border-radius:20px;font-weight:700;border:1px solid #c7d2fe">AMOprof v1.0</span>
       </div>
@@ -9726,6 +10051,8 @@ document.addEventListener('DOMContentLoaded', function(){{
   <div class="kpis" style="margin-top:16px">{kpis}</div>
 </div>
 
+{setup_panel_html}
+{layered_overview_html}
 
 <!-- CACHE HIT METHODOLOGY -->
 <div class="card" style="border-color:#22d3ee">
@@ -12020,7 +12347,7 @@ th{padding:7px 12px;background:#1e3a5f;color:#fff;font-size:11px;font-weight:700
             border-left:4px solid #4f46e5;
             box-shadow:0 1px 4px rgba(0,0,0,0.06)">
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap">
-    <span style="font-size:22px;font-weight:900;letter-spacing:-0.5px;color:#0f172a">AI STACK</span>
+    <span class="report-title-prefix" style="font-size:22px;font-weight:900;letter-spacing:-0.5px;color:#0f172a">AI STACK</span>
     <span style="font-size:22px;font-weight:900;letter-spacing:-0.5px;color:#4f46e5">MULTI-RUN COMPARISON</span>
     <span style="font-size:10px;background:#eef2ff;color:#4338ca;padding:3px 10px;
                  border-radius:20px;font-weight:700;border:1px solid #c7d2fe">AMOprof v1.0</span>
