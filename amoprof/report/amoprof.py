@@ -195,6 +195,92 @@ def _find_metric_col_with_parts(df: pd.DataFrame, base_partial: str, *required_p
     return matches[0] if matches else None
 
 
+def _find_metric_cols_with_parts(df: pd.DataFrame, base_partial: str, *required_parts: str,
+                                 prefer_unified: bool = True,
+                                 exclude_buckets: bool = True) -> list[str]:
+    """Return ALL matching metric columns, not just the first label series.
+
+    Several SGLang metrics are exported as multiple labelled series, e.g.
+    realtime_tokens_total{mode="prefill_cache"} or cached_tokens_total{source="..."}.
+    Using the first matching column undercounts/overcounts aggregate cache-hit
+    ratios depending on label ordering. Aggregate calculations must sum deltas
+    across all relevant series.
+    """
+    matches = _prefer_metric_columns(df, base_partial, prefer_unified=prefer_unified,
+                                     exclude_buckets=exclude_buckets)
+    if required_parts:
+        matches = [c for c in matches if all(part in c for part in required_parts)]
+    return matches
+
+
+def _delta_sum_metric(df: pd.DataFrame, base_partial: str, *required_parts: str) -> float:
+    """Sum positive counter deltas across all matching labelled series."""
+    total = 0.0
+    for col in _find_metric_cols_with_parts(df, base_partial, *required_parts):
+        try:
+            vals = pd.to_numeric(df[col], errors="coerce").dropna()
+            if len(vals) >= 2:
+                d = float(vals.iloc[-1] - vals.iloc[0])
+            elif len(vals) == 1:
+                d = float(vals.iloc[0])
+            else:
+                d = 0.0
+            # Counters can reset; do not let a reset make the aggregate negative.
+            if d > 0:
+                total += d
+        except Exception:
+            pass
+    return total
+
+
+
+def _cache_hit_gauge_stats(df: pd.DataFrame) -> dict:
+    """Script-compatible stats for sglang_cache_hit_rate over the full window.
+
+    This intentionally matches the standalone script semantics:
+      - collect every sglang_cache_hit_rate sample in the selected start/end window
+      - overall average includes zero/idle samples
+      - active average filters value > 0
+      - peak is max(sample)
+    Values are returned as percentages. Multiple labelled series are flattened.
+    """
+    stats = {
+        "overall_pct": 0.0,
+        "active_pct": 0.0,
+        "peak_pct": 0.0,
+        "total_samples": 0,
+        "active_samples": 0,
+        "columns": [],
+    }
+    if df is None or getattr(df, "empty", True):
+        return stats
+    cols = _find_metric_cols_with_parts(df, "cache_hit_rate")
+    cols = [c for c in cols if "bucket" not in c and "_sum" not in c and "_count" not in c]
+    if not cols:
+        return stats
+    vals = []
+    for c in cols:
+        try:
+            ser = pd.to_numeric(df[c], errors="coerce").dropna()
+            if len(ser):
+                vals.extend(float(x) for x in ser.tolist())
+        except Exception:
+            pass
+    if not vals:
+        return stats
+    import numpy as _np
+    arr = _np.asarray(vals, dtype=float)
+    # SGLang exports 0..1. Some derived files may already be 0..100; normalize.
+    pct = _np.where(arr <= 1.0, arr * 100.0, arr)
+    active = pct[pct > 0]
+    stats["overall_pct"] = float(_np.mean(pct))
+    stats["peak_pct"] = float(_np.max(pct))
+    stats["total_samples"] = int(len(pct))
+    stats["active_samples"] = int(len(active))
+    stats["active_pct"] = float(_np.mean(active)) if len(active) else 0.0
+    stats["columns"] = cols
+    return stats
+
 
 # ── Prometheus live collector ──────────────────────────────────────────────────
 
@@ -933,12 +1019,22 @@ def collect_from_prometheus_api(
     pgmaj = node_dfs.get("node_vmstat_pgmajfault", pd.DataFrame())
     pgin  = node_dfs.get("node_vmstat_pgpgin", pd.DataFrame())
     pgout = node_dfs.get("node_vmstat_pgpgout", pd.DataFrame())
+    pswpin  = node_dfs.get("node_vmstat_pswpin", pd.DataFrame())
+    pswpout = node_dfs.get("node_vmstat_pswpout", pd.DataFrame())
+    swapfree_b = node_dfs.get("node_memory_SwapFree_bytes", pd.DataFrame())
+    memavail_b = node_dfs.get("node_memory_MemAvailable_bytes", pd.DataFrame())
     if not pgf.empty:
         for _, row in pgf.iterrows():
             t_s = float(row["time_sec"])
             def _v(df): return float(df[df["time_sec"]==t_s]["value"].iloc[0]) if not df.empty and (df["time_sec"]==t_s).any() else 0
-            vmstat_rows2.append({"time_sec": t_s, "pgfault": _v(pgf),
-                                  "pgmajfault": _v(pgmaj), "pgpgin": _v(pgin), "pgpgout": _v(pgout)})
+            vmstat_rows2.append({
+                "time_sec": t_s,
+                "pgfault": _v(pgf), "pgmajfault": _v(pgmaj),
+                "pgpgin":  _v(pgin), "pgpgout":  _v(pgout),
+                "pswpin":  _v(pswpin), "pswpout": _v(pswpout),
+                "swap_free_mb":   _v(swapfree_b) / (1024 * 1024),
+                "mem_avail_mb":   _v(memavail_b) / (1024 * 1024),
+            })
     vmstat_df2 = pd.DataFrame(vmstat_rows2) if vmstat_rows2 else pd.DataFrame()
 
     # ── SMART supplement from DCGM total_energy_consumption ──────────────────
@@ -987,14 +1083,42 @@ def collect_from_prometheus_api(
     gen_tp_col = _find_metric_col(master, "gen_throughput")
     gen_tp_peak = float(master[gen_tp_col].max()) if gen_tp_col else 0
 
+    # Cache hit rate: keep both benchmark-style token accounting and the
+    # script-compatible gauge averages.  The primary report KPI intentionally
+    # uses the gauge active average when present, because that is what the
+    # standalone validation script computes from sglang_cache_hit_rate.
+    _d_rt_cache = _delta_sum_metric(master, "realtime_tokens_total", "mode=prefill_cache")
+    _d_rt_compute = _delta_sum_metric(master, "realtime_tokens_total", "mode=prefill_compute")
+    _token_weighted_hit = 0.0
+    if (_d_rt_cache + _d_rt_compute) > 0:
+        _token_weighted_hit = (_d_rt_cache / (_d_rt_cache + _d_rt_compute)) * 100.0
+    _gstats = _cache_hit_gauge_stats(master)
+    if _gstats["active_samples"] > 0:
+        _alt_cache_hit = _gstats["active_pct"]
+        _alt_method = "gauge_active_average_script_compatible"
+    elif _gstats["total_samples"] > 0:
+        _alt_cache_hit = _gstats["overall_pct"]
+        _alt_method = "gauge_timeline_average_script_compatible"
+    elif _token_weighted_hit > 0:
+        _alt_cache_hit = _token_weighted_hit
+        _alt_method = "realtime_tokens_delta"
+    else:
+        _alt_cache_hit = 0.0
+        _alt_method = "none"
+
     sglang_summary = {
         "model_name":                  "unknown",
         "server_ttft_ms":              round(ttft_ms, 2),
         "server_itl_ms":               round(tpot_ms, 2),
         "server_e2e_ms":               round(e2e_ms,  2),
-        "cache_hit_rate_realtime_pct": round(_last_col2("cache_hit_rate") * 100
-                                             if _last_col2("cache_hit_rate") <= 1
-                                             else _last_col2("cache_hit_rate"), 2),
+        "cache_hit_rate_realtime_pct": round(_alt_cache_hit, 2),
+        "cache_hit_calc_method":       _alt_method,
+        "cache_hit_token_weighted_pct": round(_token_weighted_hit, 2),
+        "cache_hit_gauge_overall_pct":  round(_gstats.get("overall_pct", 0.0), 2),
+        "cache_hit_gauge_active_pct":   round(_gstats.get("active_pct", 0.0), 2),
+        "cache_hit_gauge_peak_pct":     round(_gstats.get("peak_pct", 0.0), 2),
+        "cache_hit_gauge_total_samples": int(_gstats.get("total_samples", 0)),
+        "cache_hit_gauge_active_samples": int(_gstats.get("active_samples", 0)),
         "hicache_host_fill_pct":       round(
             _last_col2("hicache_host_used_tokens") /
             max(_last_col2("hicache_host_total_tokens"), 1) * 100, 2),
@@ -1232,7 +1356,7 @@ def collect_from_prometheus(
         raise RuntimeError("No metrics collected — check Prometheus endpoint and interval")
 
     # ── Convert to DataFrames ─────────────────────────────────────────────────
-    sglang_df  = pd.DataFrame(sglang_rows).fillna(method="ffill").fillna(0)
+    sglang_df  = pd.DataFrame(sglang_rows).ffill().fillna(0)
     gpu_df     = pd.DataFrame(gpu_rows)     if gpu_rows     else pd.DataFrame()
     vmstat_df  = pd.DataFrame(vmstat_rows)  if vmstat_rows  else pd.DataFrame()
     power_df   = pd.DataFrame(power_rows)   if power_rows   else pd.DataFrame()
@@ -1263,6 +1387,15 @@ def collect_from_prometheus(
     e2e_cnt_col    = _find_col("e2e_request_latency_seconds_count",  sglang_df)
     gen_tp_col     = _find_col("gen_throughput",                     sglang_df)
     cache_col      = _find_col("cache_hit_rate",                     sglang_df)
+    # Counter-based cache hit (matches what bench_serving reports): cumulative
+    # cached tokens / cumulative prompt tokens across the run. This is the
+    # ground-truth aggregate weighted by token volume — the gauge column
+    # alone is a per-tick snapshot that decays to 0 during idle windows,
+    # and a naive .mean() of it gives a meaningless number (e.g. 4.6%) on
+    # bursty workloads where most ticks are idle. See cache_hit calculation
+    # below for the chosen formula.
+    cached_tok_col = _find_col("cached_tokens_total",                sglang_df)
+    prompt_tok_col = _find_col("prompt_tokens_total",                sglang_df)
     hi_used_col    = _find_col("hicache_host_used_tokens",           sglang_df)
     hi_total_col   = _find_col("hicache_host_total_tokens",          sglang_df)
     decode_tok_col = _find_metric_col_with_parts(sglang_df, 'realtime_tokens_total', 'mode=decode')
@@ -1299,23 +1432,92 @@ def collect_from_prometheus(
             e2e_ms = abs_e2e / abs_cnt * 1000
 
     gen_tp_peak = float(sglang_df[gen_tp_col].max()) if gen_tp_col else 0
-    cache_hit   = float(sglang_df[cache_col].mean()) * 100 if cache_col else 0
+
+    # Cache hit rate — strategies, in order of fidelity:
+    #
+    # Cache-hit methodology.  We keep all variants, but the primary KPI
+    # is script-compatible: active average of every sglang_cache_hit_rate
+    # sample in the selected Prometheus window.  This should match the
+    # standalone validation script posted with the issue.
+    d_rt_cache = _delta_sum_metric(sglang_df, "realtime_tokens_total", "mode=prefill_cache")
+    d_rt_compute = _delta_sum_metric(sglang_df, "realtime_tokens_total", "mode=prefill_compute")
+    cache_hit_token_weighted = 0.0
+    if (d_rt_cache + d_rt_compute) > 0:
+        cache_hit_token_weighted = (d_rt_cache / (d_rt_cache + d_rt_compute)) * 100.0
+
+    d_cached = _delta_sum_metric(sglang_df, "cached_tokens_total")
+    d_prompt = _delta_sum_metric(sglang_df, "prompt_tokens_total")
+    cache_hit_cached_prompt_pct = (d_cached / d_prompt * 100.0) if d_prompt > 0 else 0.0
+
+    _gstats = _cache_hit_gauge_stats(sglang_df)
+    cache_hit_gauge_overall = float(_gstats.get("overall_pct", 0.0))
+    cache_hit_gauge_active = float(_gstats.get("active_pct", 0.0))
+    cache_hit_gauge_peak = float(_gstats.get("peak_pct", 0.0))
+    cache_hit_gauge_total_samples = int(_gstats.get("total_samples", 0))
+    cache_hit_gauge_active_samples = int(_gstats.get("active_samples", 0))
+
+    if cache_hit_gauge_active_samples > 0:
+        cache_hit = cache_hit_gauge_active
+        cache_hit_method = "gauge_active_average_script_compatible"
+    elif cache_hit_gauge_total_samples > 0:
+        cache_hit = cache_hit_gauge_overall
+        cache_hit_method = "gauge_timeline_average_script_compatible"
+    elif cache_hit_token_weighted > 0:
+        cache_hit = cache_hit_token_weighted
+        cache_hit_method = "realtime_tokens_delta"
+    elif cache_hit_cached_prompt_pct > 0:
+        cache_hit = cache_hit_cached_prompt_pct
+        cache_hit_method = "cached_tokens_over_prompt_tokens"
+    else:
+        cache_hit = 0.0
+        cache_hit_method = "none"
 
     hi_used  = _last(hi_used_col)  if hi_used_col  else 0
     hi_total = _last(hi_total_col) if hi_total_col else 0
     hi_fill  = (hi_used / hi_total * 100) if hi_total > 0 else 0
 
-    rt_decode   = _last(decode_tok_col)  if decode_tok_col  else 0
-    rt_pfc      = _last(pfc_col)         if pfc_col         else 0
-    rt_pfc_cache= _last(pfc_cache_col)   if pfc_cache_col   else 0
+    # Use deltas for cumulative token counters so the report reflects the run
+    # window, not server lifetime before the benchmark started.
+    rt_decode    = _delta_sum_metric(sglang_df, "realtime_tokens_total", "mode=decode")
+    rt_pfc       = _delta_sum_metric(sglang_df, "realtime_tokens_total", "mode=prefill_compute")
+    rt_pfc_cache = _delta_sum_metric(sglang_df, "realtime_tokens_total", "mode=prefill_cache")
+
+    # Decode throughput — same idle-tick pitfall as cache_hit. The gauge
+    # gen_throughput drops to 0 between request bursts, so a naive .mean()
+    # would underreport sustained throughput. Use active-window mean.
+    if gen_tp_col:
+        try:
+            _ser = sglang_df[gen_tp_col].astype(float)
+            _active = _ser[_ser > 0]
+            if len(_active) > 0:
+                _gen_tp_mean = float(_active.mean())
+                _gen_tp_method = "active_mean"
+            else:
+                _gen_tp_mean = float(_ser.mean())
+                _gen_tp_method = "all_zeros"
+        except Exception:
+            _gen_tp_mean = 0.0
+            _gen_tp_method = "error"
+    else:
+        _gen_tp_mean = 0.0
+        _gen_tp_method = "no_column"
 
     sglang_summary = {
         "model_name":                   model_name,
         "server_ttft_ms":               round(ttft_ms, 2),
         "server_itl_ms":                round(tpot_ms, 2),
         "server_e2e_ms":                round(e2e_ms,  2),
-        "ai_op_decode_tok_s":           round(float(sglang_df[gen_tp_col].mean()) if gen_tp_col else 0, 3),
+        "ai_op_decode_tok_s":           round(_gen_tp_mean, 3),
+        "ai_op_decode_tok_s_method":    _gen_tp_method,
         "cache_hit_rate_realtime_pct":  round(cache_hit, 2),
+        "cache_hit_calc_method":        cache_hit_method,
+        "cache_hit_token_weighted_pct": round(cache_hit_token_weighted, 2),
+        "cache_hit_cached_prompt_pct":  round(cache_hit_cached_prompt_pct, 2),
+        "cache_hit_gauge_overall_pct":  round(cache_hit_gauge_overall, 2),
+        "cache_hit_gauge_active_pct":   round(cache_hit_gauge_active, 2),
+        "cache_hit_gauge_peak_pct":     round(cache_hit_gauge_peak, 2),
+        "cache_hit_gauge_total_samples": cache_hit_gauge_total_samples,
+        "cache_hit_gauge_active_samples": cache_hit_gauge_active_samples,
         "hicache_host_fill_pct":        round(hi_fill, 2),
         "rt_decode_tokens":             int(rt_decode),
         "rt_prefill_compute_tokens":    int(rt_pfc),
@@ -2050,8 +2252,18 @@ new Chart(document.getElementById("{dim_chart_id}"), {{type:"bar",
         if(wrap.querySelector(':scope > .amoprof-hover-readout')) return;
         const box = document.createElement('div');
         box.className = 'amoprof-hover-readout';
-        box.style.cssText = 'margin-top:6px;min-height:18px;font:12px/1.4 system-ui,sans-serif;color:#334155;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:6px 8px;';
-        box.textContent = 'Hover over chart to inspect values';
+        box.style.cssText = [
+          'margin-top:6px',
+          'min-height:22px',
+          'font:12px/1.5 system-ui,sans-serif',
+          'color:#0f172a',
+          'background:#f1f5f9',
+          'border:1px solid #cbd5e1',
+          'border-radius:6px',
+          'padding:5px 10px',
+          'transition:background 0.1s',
+        ].join(';');
+        box.textContent = 'Hover over chart to see values';
         wrap.appendChild(box);
         chart.$amoprofReadout = box;
       }},
@@ -2059,24 +2271,58 @@ new Chart(document.getElementById("{dim_chart_id}"), {{type:"bar",
         const box = chart.$amoprofReadout;
         if(!box) return;
         const ev = args && args.event;
-        if(!ev){{ return; }}
-        const pts = chart.getElementsAtEventForMode(ev, 'nearest', {{intersect:false}}, false) || [];
+        if(!ev || !['mousemove','click'].includes(ev.type)){{ return; }}
+        const pts = chart.getElementsAtEventForMode(
+          (ev.native || ev), 'nearest', {{intersect:false, axis:'x'}}, false
+        ) || [];
         if(!pts.length){{
-          box.textContent = 'Hover over chart to inspect values';
+          box.style.background='#f1f5f9';
+          box.innerHTML='<span style="color:#94a3b8;font-style:italic">Hover over chart to see values</span>';
           return;
         }}
+        box.style.background='#ffffff';
         const p = pts[0];
-        const labels = chart.data.labels || [];
-        const label = labels[p.index] != null ? labels[p.index] : `Index ${{p.index}}`;
+        const labels = chart.data && chart.data.labels ? chart.data.labels : [];
+        const rawPoint = chart.data.datasets[p.datasetIndex] &&
+                         chart.data.datasets[p.datasetIndex].data &&
+                         chart.data.datasets[p.datasetIndex].data[p.index];
+        let xLabel;
+        if(rawPoint != null && typeof rawPoint === 'object' && 'x' in rawPoint){{
+          const xv = rawPoint.x;
+          xLabel = Number.isFinite(xv) ? xv.toLocaleString(undefined,{{maximumFractionDigits:3}}) : String(xv);
+        }} else {{
+          xLabel = labels[p.index] != null ? String(labels[p.index]) : `#${{p.index}}`;
+        }}
         const parts = [];
-        (chart.data.datasets || []).forEach(ds => {{
-          if(ds.hidden) return;
-          const val = ds.data && ds.data[p.index];
-          const num = (typeof val === 'number') ? val : parseFloat(val);
-          const shown = Number.isFinite(num) ? num.toLocaleString(undefined,{{maximumFractionDigits:4}}) : String(val);
-          parts.push(`${{ds.label || 'value'}}: ${{shown}}`);
+        (chart.data.datasets || []).forEach((ds, di) => {{
+          const meta = chart.getDatasetMeta(di);
+          if(meta && meta.hidden) return;
+          const raw = ds.data && ds.data[p.index];
+          if(raw == null) return;
+          let shown;
+          if(typeof raw === 'object' && raw !== null && 'y' in raw){{
+            const y = raw.y;
+            shown = Number.isFinite(y) ? y.toLocaleString(undefined,{{maximumFractionDigits:4}}) : String(y);
+          }} else {{
+            const num = Number(raw);
+            shown = Number.isFinite(num) ? num.toLocaleString(undefined,{{maximumFractionDigits:4}}) : String(raw);
+          }}
+          const color = ds.borderColor || ds.backgroundColor || '#475569';
+          parts.push(
+            `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;` +
+            `background:${{color}};margin-right:4px;vertical-align:middle"></span>` +
+            `<b style="color:#0f172a">${{ds.label || 'value'}}:</b> ` +
+            `<span style="color:#1e3a5f;font-family:monospace">${{shown}}</span>`
+          );
         }});
-        box.textContent = `${{label}} — ${{parts.join(' | ')}}`;
+        if(!parts.length){{
+          box.innerHTML=`<span style="color:#94a3b8;font-style:italic">No data at ${{xLabel}}</span>`;
+          return;
+        }}
+        box.innerHTML =
+          `<span style="color:#64748b;font-size:11px">${{xLabel}}</span>` +
+          `<span style="color:#cbd5e1;margin:0 6px">|</span>` +
+          parts.join('<span style="color:#cbd5e1;margin:0 5px">·</span>');
       }}
     }};
     Chart.register(plugin);
@@ -2112,6 +2358,22 @@ body{{background:#f8fafc;color:#0f172a;font-family:"Inter",system-ui,sans-serif;
 .adp-schema-table th{{padding:7px 10px;background:#f8fafc;color:#475569;font-weight:600;
   font-size:10px;text-align:left;border-bottom:2px solid #e2e8f0}}
 .adp-schema-table td{{padding:6px 10px;border-bottom:1px solid #f1f5f9}}
+/* Hover readout box below charts */
+.amoprof-hover-readout{{
+  min-height:22px;
+  font:12px/1.5 system-ui,sans-serif;
+  color:#0f172a;
+  background:#f1f5f9;
+  border:1px solid #cbd5e1;
+  border-radius:6px;
+  padding:5px 10px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  transition:background 0.1s;
+}}
+/* Fix adp-chart-label — was #94a3b8 (too light on white) */
+.adp-chart-label{{color:#64748b!important}}
 @media(max-width:800px){{.adp-chart-row{{grid-template-columns:1fr}}}}
 </style></head><body>
 
@@ -2939,10 +3201,16 @@ def _compute_blktrace_metrics(
         # Correlation: size vs random
         if len(seq_flags) > 3:
             from scipy.stats import pearsonr as _pr
+            import warnings as _w
             try:
-                corr, _ = _pr(sub["size_bytes"].values.astype(float),
-                               (~seq_flags).astype(float))
-                out["size_rand_corr"] = round(float(corr), 3)
+                x = sub["size_bytes"].values.astype(float)
+                y = (~seq_flags).astype(float)
+                # Skip if either input is constant (pearsonr raises ConstantInputWarning)
+                if x.std() > 0 and y.std() > 0:
+                    with _w.catch_warnings():
+                        _w.simplefilter("ignore")
+                        corr, _ = _pr(x, y)
+                    out["size_rand_corr"] = round(float(corr), 3)
             except Exception:
                 pass
 
@@ -3050,6 +3318,61 @@ def _normalise_blktrace_df(df_raw: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values("time_sec").reset_index(drop=True) if rows else pd.DataFrame()
 
 
+def _normalise_biosnoop_df(df_raw: pd.DataFrame) -> pd.DataFrame:
+    """Convert biosnoop CSV output to the normalised blkio/blktrace schema.
+
+    Supports both BCC biosnoop variants:
+      TIME(s),COMM,PID,DISK,T,SECTOR,BYTES,LAT(ms)
+    and AMOprof's normalized collector output:
+      ts,comm,pid,disk,op,sector,size_bytes,latency_ms
+    """
+    if df_raw is None or getattr(df_raw, "empty", True):
+        return pd.DataFrame()
+    cols = {c.lower().strip().replace(" ", "_").replace("/", "_").replace("(", "").replace(")", ""): c for c in df_raw.columns}
+    rows = []
+    for _, row in df_raw.iterrows():
+        try:
+            def _get(*names, default=""):
+                for n in names:
+                    if n in cols:
+                        return row[cols[n]]
+                return default
+            t = float(_get("ts", "times", "time_s", "time", default=0) or 0)
+            op_raw = str(_get("op", "t", "rwbs", "type", default="")).upper().strip()
+            if "D" in op_raw or "DISCARD" in op_raw:
+                iotype = "D"
+            elif "W" in op_raw:
+                iotype = "W"
+            elif "R" in op_raw:
+                iotype = "R"
+            else:
+                iotype = "?"
+            sector = int(float(_get("sector", "lba", default=0) or 0))
+            size = int(float(_get("size_bytes", "bytes", "size", default=0) or 0))
+            lat = float(_get("latency_ms", "latms", "lat_ms", "lat", default=0) or 0)
+            rows.append({
+                "time_sec": t,
+                "type": iotype,
+                "op": iotype,
+                "sector": sector,
+                "size_bytes": size,
+                "offset_bytes": sector * 512,
+                "lat_ms": lat,
+                "pid": str(_get("pid", default="")),
+                "comm": str(_get("comm", "command", default="")),
+                "disk": str(_get("disk", "dev", "device", default="")),
+                "stream": str(_get("comm", "command", "pid", default="")),
+            })
+        except Exception:
+            continue
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    out = out[pd.to_numeric(out["time_sec"], errors="coerce").notna()]
+    out = out[pd.to_numeric(out["size_bytes"], errors="coerce").fillna(0) > 0]
+    return out.sort_values("time_sec").reset_index(drop=True)
+
+
 def _load_blktrace_analysis_dir(analysis_dir: Path) -> dict:
     """
     Load all pre-computed blktrace analysis files from a directory.
@@ -3138,6 +3461,23 @@ def load_raw_dir_with_extras(
     """
     data = load_raw_dir(raw_path) if raw_path and Path(raw_path).is_dir() else {}
 
+    # ── biosnoop CSVs captured by AMOprof collectors ─────────────────────────
+    # load_raw_dir() reads biosnoop_events.csv/biosnoop.csv as generic frames,
+    # but the chart path expects blkio_trace/blkio_timeseries.  Normalize and
+    # alias them here so biosnoop can populate per-PID/process IO charts even
+    # when blkparse fails.
+    for _bio_key in ("biosnoop_events", "biosnoop", "biosnoop_timeseries"):
+        _bio_df = data.get(_bio_key)
+        if isinstance(_bio_df, pd.DataFrame) and not _bio_df.empty:
+            _bio_norm = _normalise_biosnoop_df(_bio_df)
+            if not _bio_norm.empty:
+                data["biosnoop_normalized"] = _bio_norm
+                if not isinstance(data.get("blkio_trace"), pd.DataFrame) or data.get("blkio_trace").empty:
+                    data["blkio_trace"] = _bio_norm
+                    data["blkio_timeseries"] = _bio_norm
+                print(f"  [biosnoop] normalized {len(_bio_norm):,} events from {_bio_key}")
+                break
+
     # ── blktrace analysis directory (pre-computed results) ────────────────────
     if blktrace_analysis_dir:
         ad = Path(blktrace_analysis_dir)
@@ -3148,42 +3488,48 @@ def load_raw_dir_with_extras(
             # Also load raw events CSV if present for existing charts
             raw_csv = ad / "blkparse_events.generated.csv"
             if raw_csv.exists():
-                print(f"    Loading raw events CSV ({raw_csv.stat().st_size//1024//1024} MB)...")
-                try:
-                    fsize = raw_csv.stat().st_size
-                    # Read with comment handling for blkparse info lines
-                    # ("Input file ...", "CPU X ..." lines start with non-data text)
-                    read_kw = dict(low_memory=False, comment=None, on_bad_lines='skip')
-                    if fsize > 50 * 1024 * 1024:  # >50MB: sample 1-in-5
-                        blkt = pd.read_csv(raw_csv, skiprows=lambda i: i > 0 and i % 5 != 0,
-                                           **read_kw)
-                        print(f"    Sampled 1-in-5 rows: {len(blkt):,} events")
-                    else:
+                fsize = raw_csv.stat().st_size
+                max_raw_mb = int(os.environ.get("AMOPROF_MAX_RAW_BLKTRACE_CSV_MB", "256"))
+                if fsize > max_raw_mb * 1024 * 1024:
+                    print(f"    Skipping raw events CSV load ({fsize//1024//1024} MB); "
+                          f"using compact blktrace-analysis CSVs only. "
+                          f"Set AMOPROF_MAX_RAW_BLKTRACE_CSV_MB to override.")
+                else:
+                    print(f"    Loading raw events CSV ({fsize//1024//1024} MB)...")
+                    try:
+                        read_kw = dict(low_memory=False, comment=None, on_bad_lines='skip')
                         blkt = pd.read_csv(raw_csv, **read_kw)
-                    # Drop rows where timestamp column is not numeric
-                    ts_col = next((c for c in blkt.columns
-                                   if c.lower() in ("ts","time_sec","timestamp")), None)
-                    if ts_col:
-                        blkt = blkt[pd.to_numeric(blkt[ts_col], errors='coerce').notna()]
-                    blkt_norm = _normalise_blktrace_df(blkt)
-                    if not blkt_norm.empty:
-                        data["blktrace"]         = blkt_norm
-                        data["blkio_trace"]      = blkt_norm
-                        data["blkio_timeseries"] = blkt_norm
-                        nr = int((blkt_norm["type"]=="R").sum())
-                        nw = int((blkt_norm["type"]=="W").sum())
-                        print(f"    {len(blkt_norm):,} events  R={nr:,}  W={nw:,}")
-                except Exception as e:
-                    print(f"    [warn] raw CSV load: {e}")
-            keys = [k for k in bt_analysis if not isinstance(bt_analysis[k], pd.DataFrame)]
-            print(f"    Analysis keys: {keys}")
+                        ts_col = next((c for c in blkt.columns
+                                       if c.lower() in ("ts","time_sec","timestamp")), None)
+                        if ts_col:
+                            blkt = blkt[pd.to_numeric(blkt[ts_col], errors='coerce').notna()]
+                        blkt_norm = _normalise_blktrace_df(blkt)
+                        if not blkt_norm.empty:
+                            data["blktrace"]         = blkt_norm
+                            data["blkio_trace"]      = blkt_norm
+                            data["blkio_timeseries"] = blkt_norm
+                            nr = int((blkt_norm["type"]=="R").sum())
+                            nw = int((blkt_norm["type"]=="W").sum())
+                            print(f"    {len(blkt_norm):,} events  R={nr:,}  W={nw:,}")
+                    except Exception as e:
+                        print(f"    [warn] raw CSV load: {e}")
+            scalar_keys = [k for k, v in bt_analysis.items() if not isinstance(v, pd.DataFrame)]
+            df_keys = [f"{k}({len(v)})" for k, v in bt_analysis.items() if isinstance(v, pd.DataFrame)]
+            print(f"    Analysis keys: scalar={scalar_keys} dataframes={df_keys}")
         else:
             print(f"    [warn] analysis directory appears empty or unreadable")
 
     # ── blktrace / blkparse ───────────────────────────────────────────────────
     if blktrace_file:
-        print(f"  [blktrace] Loading: {blktrace_file}", flush=True)
-        blkt = parse_blktrace(blktrace_file, device=nvme_device)
+        bf = Path(blktrace_file)
+        max_raw_mb = int(os.environ.get("AMOPROF_MAX_RAW_BLKTRACE_CSV_MB", "256"))
+        if bf.exists() and bf.stat().st_size > max_raw_mb * 1024 * 1024:
+            print(f"  [blktrace] Skipping raw per-event load ({bf.stat().st_size//1024//1024} MB); "
+                  f"use --blktrace-analysis-dir / pre-aggregated CSVs instead.", flush=True)
+            blkt = pd.DataFrame()
+        else:
+            print(f"  [blktrace] Loading: {blktrace_file}", flush=True)
+            blkt = parse_blktrace(blktrace_file, device=nvme_device)
         if not blkt.empty:
             data["blktrace"]         = blkt
             data["blkio_trace"]      = blkt   # alias
@@ -3353,6 +3699,14 @@ class Metrics:
     gen_tp_mean: float = 0
     gen_tp_peak: float = 0
     cache_hit_pct: float = 0
+    cache_hit_calc_method: str = "unknown"
+    cache_hit_token_weighted_pct: float = 0
+    cache_hit_cached_prompt_pct: float = 0
+    cache_hit_gauge_overall_pct: float = 0
+    cache_hit_gauge_active_pct: float = 0
+    cache_hit_gauge_peak_pct: float = 0
+    cache_hit_gauge_total_samples: int = 0
+    cache_hit_gauge_active_samples: int = 0
     hicache_fill_pct: float = 0
     decode_tokens: int = 0
     prefill_compute_tokens: int = 0
@@ -3378,6 +3732,23 @@ class Metrics:
     nvme_wr_lat_ms: float = 0
     # vmstat
     page_faults_per_s: float = 0
+    # ── Swap activity & swap storm detection ─────────────────────────────────
+    swap_in_pages_per_s_mean:    float = 0   # pswpin rate (pages/s, 4KB pages)
+    swap_in_pages_per_s_peak:    float = 0
+    swap_out_pages_per_s_mean:   float = 0   # pswpout rate
+    swap_out_pages_per_s_peak:   float = 0
+    swap_in_mb_per_s_mean:       float = 0   # MiB/s = pages/s × 4 / 1024
+    swap_out_mb_per_s_mean:      float = 0
+    swap_total_mb:               float = 0
+    swap_free_mb_min:            float = 0   # minimum free swap observed
+    swap_used_pct_max:           float = 0   # peak swap utilization
+    swap_thrashing_pct:          float = 0   # % of samples with significant swap activity
+    swap_storm_episode_count:    int   = 0   # number of distinct storm intervals
+    swap_storm_total_duration_s: float = 0
+    swap_storm_worst_pages_per_s:float = 0   # peak page rate during any storm
+    swap_storm_threshold_pages_per_s: float = 1000  # config threshold (pages/s)
+    swap_write_amp_ratio:        float = 0   # nvme_write_pages / pswpout (write amplification)
+    swap_majfault_correlation:   float = 0   # pearson(pswpin, pgmajfault)
     numa_migrations_per_s: float = 0
     # Power
     system_power_w: float = 0
@@ -3710,7 +4081,23 @@ class Metrics:
 
 
 def extract_metrics(data: dict) -> Metrics:
+    import numpy as _np
+    import warnings as _warnings
+    # Suppress numpy divide/invalid and scipy ConstantInput warnings globally
+    # for this function — all division-by-zero cases produce safe_float(0) fallbacks
+    _np.seterr(divide='ignore', invalid='ignore')
+    _warnings.filterwarnings('ignore', category=RuntimeWarning, message='.*divide.*')
+    _warnings.filterwarnings('ignore', category=RuntimeWarning, message='.*invalid.*')
+    _warnings.filterwarnings('ignore', message='.*ConstantInput.*')
     m = Metrics()
+
+    # Apply the CLI override (--kv-block-size N). load_raw_dir stashes the
+    # user's choice in data["_kv_block_size_tokens_override"]; if present and
+    # > 0, it wins over later auto-detection from sglang_page_size metrics.
+    # Default Metrics().kvb_block_size_tokens stays 16 when no override given.
+    _kvb_override = int(data.get("_kv_block_size_tokens_override", 0) or 0)
+    if _kvb_override > 0:
+        m.kvb_block_size_tokens = _kvb_override
 
     # ── Safe conversion helpers (NaN/inf/None → default) ─────────────────────
     def safe_int(v, default: int = 0) -> int:
@@ -3739,6 +4126,14 @@ def extract_metrics(data: dict) -> Metrics:
     m.e2e_ms  = float(sg.get("server_e2e_ms", 0))
     m.gen_tp_mean = float(sg.get("ai_op_decode_tok_s", 0))
     m.cache_hit_pct = float(sg.get("cache_hit_rate_realtime_pct", 0))
+    m.cache_hit_calc_method = str(sg.get("cache_hit_calc_method", "unknown"))
+    m.cache_hit_token_weighted_pct = float(sg.get("cache_hit_token_weighted_pct", 0))
+    m.cache_hit_cached_prompt_pct = float(sg.get("cache_hit_cached_prompt_pct", 0))
+    m.cache_hit_gauge_overall_pct = float(sg.get("cache_hit_gauge_overall_pct", 0))
+    m.cache_hit_gauge_active_pct = float(sg.get("cache_hit_gauge_active_pct", 0))
+    m.cache_hit_gauge_peak_pct = float(sg.get("cache_hit_gauge_peak_pct", 0))
+    m.cache_hit_gauge_total_samples = safe_int(sg.get("cache_hit_gauge_total_samples", 0))
+    m.cache_hit_gauge_active_samples = safe_int(sg.get("cache_hit_gauge_active_samples", 0))
     m.hicache_fill_pct = float(sg.get("hicache_host_fill_pct", 0))
     m.decode_tokens = safe_int(sg.get("rt_decode_tokens", 0))
     m.prefill_compute_tokens = safe_int(sg.get("rt_prefill_compute_tokens", 0))
@@ -3810,6 +4205,81 @@ def extract_metrics(data: dict) -> Metrics:
     vs = data.get("vmstat_summary", {})
     m.page_faults_per_s = float(vs.get("page_faults_per_s", 0))
     m.numa_migrations_per_s = float(vs.get("numa_migrations_per_s", 0))
+
+    # ── Swap activity & storm analysis ────────────────────────────────────────
+    # Swap storm: sustained period where swap I/O is high enough to materially
+    # slow execution. Uses delta(pswpin)+delta(pswpout) > threshold pages/s.
+    vmst = data.get("vmstat_timeseries")
+    if isinstance(vmst, pd.DataFrame) and not vmst.empty and \
+       "pswpin" in vmst.columns and "pswpout" in vmst.columns:
+        try:
+            v = vmst.sort_values("time_sec").reset_index(drop=True).copy()
+            dt = v["time_sec"].diff().fillna(1.0).clip(lower=0.1)
+            # pswpin/pswpout are monotonically-increasing counters; rate = d/dt
+            in_rate  = v["pswpin"].diff().fillna(0).clip(lower=0)  / dt
+            out_rate = v["pswpout"].diff().fillna(0).clip(lower=0) / dt
+            total_rate = in_rate + out_rate
+
+            m.swap_in_pages_per_s_mean    = safe_float(in_rate.mean())
+            m.swap_in_pages_per_s_peak    = safe_float(in_rate.max())
+            m.swap_out_pages_per_s_mean   = safe_float(out_rate.mean())
+            m.swap_out_pages_per_s_peak   = safe_float(out_rate.max())
+            # 1 page = 4 KiB on x86_64 → 4096/1024^2 = 1/256 MiB
+            m.swap_in_mb_per_s_mean       = round(m.swap_in_pages_per_s_mean / 256, 3)
+            m.swap_out_mb_per_s_mean      = round(m.swap_out_pages_per_s_mean / 256, 3)
+
+            # Storm detection: contiguous samples above threshold
+            thr = m.swap_storm_threshold_pages_per_s
+            active = (total_rate >= thr).astype(int)
+            edges  = active.diff().fillna(active.iloc[0])
+            starts = v["time_sec"][edges == 1].tolist()
+            ends   = v["time_sec"][edges == -1].tolist()
+            if len(starts) > len(ends):
+                ends.append(v["time_sec"].iloc[-1])
+            episodes = list(zip(starts, ends))
+            m.swap_storm_episode_count    = len(episodes)
+            m.swap_storm_total_duration_s = round(sum(e - s for s, e in episodes), 2)
+            if active.sum() > 0:
+                m.swap_thrashing_pct      = round(100 * active.mean(), 2)
+                m.swap_storm_worst_pages_per_s = safe_float(total_rate.max())
+
+            # Swap free min / used pct max
+            if "swap_free_mb" in v.columns:
+                free_vals = v["swap_free_mb"].dropna()
+                if not free_vals.empty:
+                    m.swap_free_mb_min = round(safe_float(free_vals.min()), 1)
+                    m.swap_total_mb    = round(safe_float(free_vals.max()), 1)
+                    if m.swap_total_mb > 0:
+                        used_pct = 100 * (1 - free_vals / m.swap_total_mb)
+                        m.swap_used_pct_max = round(safe_float(used_pct.max()), 2)
+
+            # Major page fault correlation — high pswpin correlates with majflt
+            if "pgmajfault" in v.columns:
+                mf_rate = v["pgmajfault"].diff().fillna(0).clip(lower=0) / dt
+                if in_rate.std() > 0 and mf_rate.std() > 0:
+                    try:
+                        from scipy.stats import pearsonr as _ps
+                        import warnings as _ws
+                        with _ws.catch_warnings():
+                            _ws.simplefilter("ignore")
+                            m.swap_majfault_correlation = round(
+                                float(_ps(in_rate.values, mf_rate.values)[0]), 3)
+                    except Exception:
+                        pass
+
+            # Swap write amplification: writes hitting NVMe / pages swapped out
+            nvts = data.get("nvme_driver_timeseries")
+            if isinstance(nvts, pd.DataFrame) and not nvts.empty and \
+               "wr_ios" in nvts.columns and out_rate.sum() > 0:
+                # Align on time_sec — use total deltas over the run
+                wr_io_delta = max(safe_float(nvts["wr_ios"].iloc[-1] -
+                                              nvts["wr_ios"].iloc[0]), 0)
+                pswpout_delta = max(safe_float(v["pswpout"].iloc[-1] -
+                                                v["pswpout"].iloc[0]), 0)
+                if pswpout_delta > 0:
+                    m.swap_write_amp_ratio = round(wr_io_delta / pswpout_delta, 3)
+        except Exception as _swap_err:
+            print(f"      [swap analysis] skipped: {type(_swap_err).__name__}: {_swap_err}")
 
     # ── Power summary ─────────────────────────────────────────────────────────
     pw = data.get("power_summary", {})
@@ -4573,13 +5043,59 @@ def extract_metrics(data: dict) -> Metrics:
     # Priority 1: pre-computed analysis directory (richest data)
     ba = data.get("blktrace_analysis")
     if isinstance(ba, dict) and ba:
+        # IMPORTANT: the static §C/§D/§E chart is gated on blktrace_available,
+        # while the large-file path intentionally avoids loading the 6+ GB raw
+        # event CSV and instead loads compact blktrace-analysis CSVs.  Treat the
+        # analysis directory as a valid blktrace source; otherwise the report
+        # shows "blktrace not loaded" even though summary/request-size/temporal
+        # data is present and the interactive report can show Block IO counts.
+        m.blktrace_available = True
         m.blkio_available    = True
         m.blkio_has_analysis = True
         m.blktrace_analysis  = ba
 
         summary = ba.get("summary", {})
-        rd = summary.get("read",  {})
-        wr = summary.get("write", {})
+
+        # summary.json has two supported shapes:
+        #   old rich analyzer: {"read": {...}, "write": {...}}
+        #   streaming analyzer: flat keys such as read_bytes_total/read_bw_mb_s_mean
+        # Normalize both shapes so downstream §C/§D/§E code does not show zeros.
+        if isinstance(summary, dict) and ("read" in summary or "write" in summary):
+            rd = summary.get("read",  {}) or {}
+            wr = summary.get("write", {}) or {}
+        else:
+            rd = {
+                "bandwidth_mib_s_avg_over_trace": summary.get("read_bw_mb_s_mean", summary.get("read_bw_mib_s_mean", 0)),
+                "count": summary.get("read_events", 0),
+                "total_bytes": summary.get("read_bytes_total", 0),
+                "estimated_bytes_per_day": (summary.get("read_bytes_total", 0) / max(summary.get("duration_sec", 0) or 0, 1e-9)) * 86400,
+                "request_size_bytes_avg": (summary.get("read_bytes_total", 0) / max(summary.get("read_events", 0) or 0, 1)),
+                "request_size_bytes_p50": 0,
+                "request_size_bytes_p99": 0,
+                "inter_arrival_sec_avg": (1.0 / max(summary.get("read_iops_mean", 0) or 0, 1e-9)),
+                "inter_arrival_sec_p50": 0,
+                "inter_arrival_sec_p99": 0,
+                "random_count": summary.get("read_events", 0),
+                "sequential_count": 0,
+                "not_kv_block_aligned_count": 0,
+                "not_page_aligned_count": 0,
+            }
+            wr = {
+                "bandwidth_mib_s_avg_over_trace": summary.get("write_bw_mb_s_mean", summary.get("write_bw_mib_s_mean", 0)),
+                "count": summary.get("write_events", 0),
+                "total_bytes": summary.get("write_bytes_total", 0),
+                "estimated_bytes_per_day": (summary.get("write_bytes_total", 0) / max(summary.get("duration_sec", 0) or 0, 1e-9)) * 86400,
+                "request_size_bytes_avg": (summary.get("write_bytes_total", 0) / max(summary.get("write_events", 0) or 0, 1)),
+                "request_size_bytes_p50": 0,
+                "request_size_bytes_p99": 0,
+                "inter_arrival_sec_avg": (1.0 / max(summary.get("write_iops_mean", 0) or 0, 1e-9)),
+                "inter_arrival_sec_p50": 0,
+                "inter_arrival_sec_p99": 0,
+                "random_count": summary.get("write_events", 0),
+                "sequential_count": 0,
+                "not_kv_block_aligned_count": 0,
+                "not_page_aligned_count": 0,
+            }
 
         # §C scalar values from summary.json
         m.ssd_rd_bw_mbs_mean     = round(rd.get("bandwidth_mib_s_avg_over_trace", 0), 2)
@@ -4659,12 +5175,14 @@ def extract_metrics(data: dict) -> Metrics:
             for _, row in ask.iterrows():
                 try:
                     if row["op"] == "read":
-                        m.ssd_rd_skewness           = round(float(row.get("skewness_bytes", 0)), 3)
-                        m.ssd_rd_gini               = round(float(row.get("gini_bytes", 0)), 3)
-                        m.ssd_rd_top1pct_byte_share = round(float(row.get("top_1pct_byte_share", 0))*100, 2)
+                        m.ssd_rd_skewness           = round(float(row.get("skewness_bytes", row.get("skewness", 0))), 3)
+                        m.ssd_rd_gini               = round(float(row.get("gini_bytes", row.get("gini_coefficient", row.get("gini", 0)))), 3)
+                        _top1 = float(row.get("top_1pct_byte_share", row.get("top1pct_byte_share", 0)) or 0)
+                        m.ssd_rd_top1pct_byte_share = round(_top1 * (100 if _top1 <= 1 else 1), 2)
                     elif row["op"] == "write":
-                        m.ssd_wr_skewness           = round(float(row.get("skewness_bytes", 0)), 3)
-                        m.ssd_wr_top1pct_byte_share = round(float(row.get("top_1pct_byte_share", 0))*100, 2)
+                        m.ssd_wr_skewness           = round(float(row.get("skewness_bytes", row.get("skewness", 0))), 3)
+                        _top1 = float(row.get("top_1pct_byte_share", row.get("top1pct_byte_share", 0)) or 0)
+                        m.ssd_wr_top1pct_byte_share = round(_top1 * (100 if _top1 <= 1 else 1), 2)
                 except Exception: pass
 
         # BW degradation
@@ -4672,7 +5190,7 @@ def extract_metrics(data: dict) -> Metrics:
         if isinstance(bwd, pd.DataFrame) and not bwd.empty:
             for _, row in bwd.iterrows():
                 try:
-                    v = round(float(row.get("degradation_ratio_late_over_early", 1)), 4)
+                    v = round(float(row.get("degradation_ratio_late_over_early", row.get("ratio_late_early", 1))), 4)
                     if row["op"] == "read":  m.ssd_rd_bw_degradation = v
                     elif row["op"] == "write": m.ssd_wr_bw_degradation = v
                 except Exception: pass
@@ -4694,7 +5212,7 @@ def extract_metrics(data: dict) -> Metrics:
         if isinstance(src_df, pd.DataFrame) and not src_df.empty:
             for _, row in src_df.iterrows():
                 try:
-                    v = float(row.get("request_size_vs_is_sequential_corr",0))
+                    v = float(row.get("request_size_vs_is_sequential_corr", row.get("size_rand_corr", 0)))
                     if not np.isnan(v):
                         if row["op"]=="read":  m.ssd_rd_size_rand_corr = round(v,3)
                         elif row["op"]=="write": m.ssd_wr_size_rand_corr = round(v,3)
@@ -4778,49 +5296,251 @@ def extract_metrics(data: dict) -> Metrics:
         # ── Build synthetic ssd_rd_ts from iat_dist when raw events absent ──
         if (isinstance(getattr(m, "ssd_rd_ts", pd.DataFrame()), pd.DataFrame) and
                 getattr(m, "ssd_rd_ts", pd.DataFrame()).empty):
-            iat_df = ba.get("iat_dist", pd.DataFrame())
-            if isinstance(iat_df, pd.DataFrame) and not iat_df.empty:
-                for op_col in ("op", "operation", "type"):
-                    if op_col in iat_df.columns:
-                        rd_iat = iat_df[iat_df[op_col].str.lower() == "read"]
-                        if not rd_iat.empty:
-                            iat_col = next((c for c in rd_iat.columns
-                                            if "inter_arrival" in c or "iat" in c.lower()), None)
-                            if iat_col:
-                                # Reconstruct synthetic timestamps from IAT values
-                                iats = rd_iat[iat_col].values
-                                ts_syn = np.concatenate([[0], np.cumsum(iats)])
-                                n = len(ts_syn)
-                                rd_sz_b = int(m.ssd_rd_size_mean_kb * 1024) or 131072
-                                m.ssd_rd_ts = pd.DataFrame({
-                                    "time_sec":    ts_syn,
-                                    "type":        ["R"] * n,
-                                    "size_bytes":  [rd_sz_b] * n,
-                                    "sector":      list(range(n)),
-                                    "offset_bytes":[rd_sz_b * i for i in range(n)],
-                                    "lat_ms":      [m.ssd_rd_iat_mean_us / 1000] * n,
-                                })
-                        break
+            # Prefer req_size_dist (has per-event size+access_area) over synthetic from IAT
+            rsd = ba.get("req_size_dist", pd.DataFrame())
+            if isinstance(rsd, pd.DataFrame) and not rsd.empty:
+                rd_rsd = rsd[rsd.get("op", rsd.get("type", pd.Series())).str.upper().str.startswith("R")] \
+                         if any(c in rsd.columns for c in ("op","type")) else rsd
+                if not rd_rsd.empty:
+                    # Build a minimal ssd_rd_ts compatible with the chart functions
+                    sz_col = next((c for c in ("size_bytes","size","bytes") if c in rd_rsd.columns), None)
+                    sz = rd_rsd[sz_col].values if sz_col else np.full(len(rd_rsd), int(m.ssd_rd_size_mean_kb*1024) or 4096)
+                    n = len(sz)
+                    # Reconstruct timestamps using mean IAT
+                    mean_iat_s = m.ssd_rd_iat_mean_us / 1e6 if m.ssd_rd_iat_mean_us > 0 else 1e-5
+                    ts_syn = np.arange(n) * mean_iat_s
+                    seq_col = next((c for c in ("access_area","is_sequential","sequential") if c in rd_rsd.columns), None)
+                    if seq_col:
+                        seq_flag = rd_rsd[seq_col].astype(str).str.lower().isin(("sequential","true","1","seq"))
+                    else:
+                        seq_flag = pd.Series([False] * n)
+                    m.ssd_rd_ts = pd.DataFrame({
+                        "time_sec":    ts_syn,
+                        "type":        ["R"] * n,
+                        "size_bytes":  sz,
+                        "sector":      np.cumsum(sz // 512),
+                        "offset_bytes":np.cumsum(sz),
+                        "is_sequential": seq_flag.values,
+                        "lat_ms":      [m.ssd_rd_iat_mean_us / 1000] * n,
+                    })
+            else:
+                # Fall back to synthetic from IAT distribution
+                iat_df = ba.get("iat_dist", pd.DataFrame())
+                if isinstance(iat_df, pd.DataFrame) and not iat_df.empty:
+                    for op_col in ("op", "operation", "type"):
+                        if op_col in iat_df.columns:
+                            rd_iat = iat_df[iat_df[op_col].str.lower() == "read"]
+                            if not rd_iat.empty:
+                                iat_col = next((c for c in rd_iat.columns
+                                                if "inter_arrival" in c or "iat" in c.lower()), None)
+                                if iat_col:
+                                    iats = rd_iat[iat_col].values
+                                    ts_syn = np.concatenate([[0], np.cumsum(iats)])
+                                    n = len(ts_syn)
+                                    rd_sz_b = int(m.ssd_rd_size_mean_kb * 1024) or 131072
+                                    m.ssd_rd_ts = pd.DataFrame({
+                                        "time_sec":    ts_syn,
+                                        "type":        ["R"] * n,
+                                        "size_bytes":  [rd_sz_b] * n,
+                                        "sector":      list(range(n)),
+                                        "offset_bytes":[rd_sz_b * i for i in range(n)],
+                                        "lat_ms":      [m.ssd_rd_iat_mean_us / 1000] * n,
+                                    })
+                            break
+
+
+        # ── Make compact analysis data visible to the legacy §C/§D/§E chart ──
+        # Older chart code reads rd_*/wr_* fields and m.blkio_ts.  The compact
+        # analyzer fills ssd_rd_*/ssd_wr_* fields, so sync the aliases here.
+        m.rd_req_size_mean_kb = m.rd_req_size_mean_kb or m.ssd_rd_size_mean_kb
+        m.rd_req_size_p50_kb  = m.rd_req_size_p50_kb  or m.ssd_rd_size_p50_kb
+        m.rd_req_size_p95_kb  = m.rd_req_size_p95_kb  or m.ssd_rd_size_p99_kb
+        m.rd_req_size_p99_kb  = m.rd_req_size_p99_kb  or m.ssd_rd_size_p99_kb
+        m.rd_iat_mean_us      = m.rd_iat_mean_us      or m.ssd_rd_iat_mean_us
+        m.rd_iat_p95_us       = m.rd_iat_p95_us       or m.ssd_rd_iat_p99_us
+        m.rd_iat_p99_us       = m.rd_iat_p99_us       or m.ssd_rd_iat_p99_us
+        m.rd_seq_pct          = m.rd_seq_pct          or m.ssd_rd_seq_pct
+        m.rd_rand_pct         = m.rd_rand_pct         or m.ssd_rd_rand_pct
+        m.rd_kvb_aligned_pct  = m.rd_kvb_aligned_pct  or m.ssd_rd_kvb_aligned_pct
+        m.rd_page_aligned_pct = m.rd_page_aligned_pct or m.ssd_rd_page_aligned_pct
+        m.rd_lba_skewness     = m.rd_lba_skewness     or m.ssd_rd_skewness
+        m.rd_lba_gini         = m.rd_lba_gini         or m.ssd_rd_gini
+        m.rd_size_rand_corr   = m.rd_size_rand_corr   or m.ssd_rd_size_rand_corr
+        m.rd_total_bytes      = m.rd_total_bytes      or m.ssd_rd_bytes_total
+
+        m.wr_req_size_mean_kb = m.wr_req_size_mean_kb or m.ssd_wr_size_mean_kb
+        m.wr_req_size_p50_kb  = m.wr_req_size_p50_kb  or m.ssd_wr_size_mean_kb
+        m.wr_req_size_p95_kb  = m.wr_req_size_p95_kb  or m.ssd_wr_size_p99_kb
+        m.wr_req_size_p99_kb  = m.wr_req_size_p99_kb  or m.ssd_wr_size_p99_kb
+        m.wr_iat_mean_us      = m.wr_iat_mean_us      or m.ssd_wr_iat_mean_us
+        m.wr_iat_p95_us       = m.wr_iat_p95_us       or m.ssd_wr_iat_p99_us
+        m.wr_seq_pct          = m.wr_seq_pct          or m.ssd_wr_seq_pct
+        m.wr_rand_pct         = m.wr_rand_pct         or m.ssd_wr_rand_pct
+        m.wr_kvb_aligned_pct  = m.wr_kvb_aligned_pct  or m.ssd_wr_kvb_aligned_pct
+        m.wr_page_aligned_pct = m.wr_page_aligned_pct or m.ssd_wr_page_aligned_pct
+        m.wr_lba_skewness     = m.wr_lba_skewness     or m.ssd_wr_skewness
+        m.wr_size_rand_corr   = m.wr_size_rand_corr   or m.ssd_wr_size_rand_corr
+        m.wr_total_bytes      = m.wr_total_bytes      or m.ssd_wr_bytes_total
+
+        # Request-size histogram and synthetic scatter data from the sampled
+        # compact request_size_distribution.csv.  This avoids loading the huge
+        # raw event CSV while still populating the §C/D/E plots.
+        rsd_all = ba.get("req_size_dist", pd.DataFrame())
+        if isinstance(rsd_all, pd.DataFrame) and not rsd_all.empty:
+            op_col = next((c for c in ("op", "type", "operation") if c in rsd_all.columns), None)
+            sz_col = next((c for c in ("size_bytes", "size", "bytes") if c in rsd_all.columns), None)
+            ts_col = next((c for c in ("ts_sec", "time_sec", "timestamp", "ts") if c in rsd_all.columns), None)
+            if op_col and sz_col:
+                tmp = rsd_all.copy()
+                op_s = tmp[op_col].astype(str).str.lower()
+                tmp["type"] = op_s.map(lambda x: "R" if x.startswith("r") else ("W" if x.startswith("w") else ("D" if x.startswith(("t","d")) else "")))
+                tmp["size_bytes"] = pd.to_numeric(tmp[sz_col], errors="coerce").fillna(0).astype(float)
+                tmp = tmp[tmp["type"].isin(["R","W","D"]) & (tmp["size_bytes"] > 0)].copy()
+                if not tmp.empty:
+                    if ts_col:
+                        tmp["time_sec"] = pd.to_numeric(tmp[ts_col], errors="coerce").ffill().fillna(0.0).astype(float)
+                    else:
+                        tmp["time_sec"] = np.arange(len(tmp), dtype=float) * 1e-5
+                    if "access_area" in tmp.columns:
+                        tmp["is_seq"] = tmp["access_area"].astype(str).str.lower().str.contains("seq")
+                    elif "is_sequential" in tmp.columns:
+                        tmp["is_seq"] = tmp["is_sequential"].astype(bool)
+                    else:
+                        tmp["is_seq"] = False
+                    tmp["is_sequential"] = tmp["is_seq"]
+                    tmp["offset_bytes"] = tmp["size_bytes"].cumsum()
+                    tmp["sector"] = (tmp["offset_bytes"] // 512).astype(int)
+                    tmp["lat_ms"] = 0.0
+                    if m.blkio_ts.empty:
+                        # Keep plotting bounded even if the sample CSV is large.
+                        m.blkio_ts = tmp[["time_sec","type","size_bytes","sector","offset_bytes","is_seq","is_sequential","lat_ms"]].head(200000).copy()
+
+                    rd_sz = tmp.loc[tmp["type"] == "R", "size_bytes"] / 1024.0
+                    wr_sz = tmp.loc[tmp["type"] == "W", "size_bytes"] / 1024.0
+                    if not rd_sz.empty and not m.rd_req_size_hist_kb:
+                        m.rd_req_size_hist_kb = rd_sz.head(200000).tolist()
+                    if not wr_sz.empty and not m.wr_req_size_hist_kb:
+                        m.wr_req_size_hist_kb = wr_sz.head(200000).tolist()
+                    # Fill scalar request-size percentiles from the bounded sample
+                    # when the streaming summary only had totals/counts.
+                    if not rd_sz.empty:
+                        m.ssd_rd_size_mean_kb = m.ssd_rd_size_mean_kb or round(float(rd_sz.mean()), 2)
+                        m.ssd_rd_size_p50_kb  = m.ssd_rd_size_p50_kb  or round(float(rd_sz.quantile(0.50)), 2)
+                        m.ssd_rd_size_p99_kb  = m.ssd_rd_size_p99_kb  or round(float(rd_sz.quantile(0.99)), 2)
+                        m.rd_req_size_mean_kb = m.rd_req_size_mean_kb or m.ssd_rd_size_mean_kb
+                        m.rd_req_size_p50_kb  = m.rd_req_size_p50_kb  or m.ssd_rd_size_p50_kb
+                        m.rd_req_size_p99_kb  = m.rd_req_size_p99_kb  or m.ssd_rd_size_p99_kb
+                    if not wr_sz.empty:
+                        m.ssd_wr_size_mean_kb = m.ssd_wr_size_mean_kb or round(float(wr_sz.mean()), 2)
+                        m.ssd_wr_size_p50_kb  = m.ssd_wr_size_p50_kb  or round(float(wr_sz.quantile(0.50)), 2)
+                        m.ssd_wr_size_p99_kb  = m.ssd_wr_size_p99_kb  or round(float(wr_sz.quantile(0.99)), 2)
+                        m.wr_req_size_mean_kb = m.wr_req_size_mean_kb or m.ssd_wr_size_mean_kb
+                        m.wr_req_size_p50_kb  = m.wr_req_size_p50_kb  or m.ssd_wr_size_p50_kb
+                        m.wr_req_size_p99_kb  = m.wr_req_size_p99_kb  or m.ssd_wr_size_p99_kb
+
+        # IAT histograms from compact interarrival_distribution.csv.  The file is
+        # binned, so expand only a bounded representative sample per bin.
+        iat_df2 = ba.get("iat_dist", pd.DataFrame())
+        if isinstance(iat_df2, pd.DataFrame) and not iat_df2.empty:
+            for _, row in iat_df2.iterrows():
+                try:
+                    op = str(row.get("op", "")).lower()
+                    cnt = int(float(row.get("count", 0) or 0))
+                    if cnt <= 0:
+                        continue
+                    lo = float(row.get("lower_us", 0) or 0)
+                    hi = float(row.get("upper_us", lo) or lo)
+                    val = (lo + hi) / 2.0 if hi < 1e15 else lo
+                    vals = [val] * min(cnt, 5000)
+                    if op.startswith("r") and not m.rd_iat_hist_us:
+                        m.rd_iat_hist_us.extend(vals)
+                    elif op.startswith("w") and not m.wr_iat_hist_us:
+                        m.wr_iat_hist_us.extend(vals)
+                except Exception:
+                    pass
+
+        if m.rd_iat_hist_us:
+            _rd_iat_s = pd.Series(m.rd_iat_hist_us, dtype=float)
+            m.rd_iat_mean_us = m.rd_iat_mean_us or round(float(_rd_iat_s.mean()), 4)
+            m.rd_iat_p95_us  = m.rd_iat_p95_us  or round(float(_rd_iat_s.quantile(0.95)), 4)
+            m.rd_iat_p99_us  = m.rd_iat_p99_us  or round(float(_rd_iat_s.quantile(0.99)), 4)
+            m.ssd_rd_iat_mean_us = m.ssd_rd_iat_mean_us or m.rd_iat_mean_us
+            m.ssd_rd_iat_p99_us  = m.ssd_rd_iat_p99_us  or m.rd_iat_p99_us
+        if m.wr_iat_hist_us:
+            _wr_iat_s = pd.Series(m.wr_iat_hist_us, dtype=float)
+            m.wr_iat_mean_us = m.wr_iat_mean_us or round(float(_wr_iat_s.mean()), 4)
+            m.wr_iat_p95_us  = m.wr_iat_p95_us  or round(float(_wr_iat_s.quantile(0.95)), 4)
+            m.ssd_wr_iat_mean_us = m.ssd_wr_iat_mean_us or m.wr_iat_mean_us
+            m.ssd_wr_iat_p99_us  = m.ssd_wr_iat_p99_us  or round(float(_wr_iat_s.quantile(0.99)), 4)
+
+        # Trim summary from compact temporal windows.
+        tp3 = ba.get("temporal_pattern", pd.DataFrame())
+        if isinstance(tp3, pd.DataFrame) and not tp3.empty:
+            trim_bytes = float(tp3.get("trim", pd.Series([0])).sum())
+            trim_count = int(float(tp3.get("trim_count", pd.Series([0])).sum()))
+            if trim_bytes > 0 or trim_count > 0:
+                m.trim_present = True
+                m.trim_ops_total = m.trim_ops_total or trim_count
+                m.trim_bytes_total = m.trim_bytes_total or int(trim_bytes)
+                if trim_count > 0:
+                    m.trim_req_size_mean_kb = m.trim_req_size_mean_kb or (trim_bytes / trim_count / 1024.0)
 
     # Priority 2: raw blkparse events CSV
     blkt = data.get("blktrace_raw")
     if isinstance(blkt, pd.DataFrame) and not blkt.empty:
+      try:
+        # ── Auto-normalize if columns aren't in the canonical schema ──────────
+        # Canonical: time_sec, type, sector, size_bytes, offset_bytes, lat_ms
+        # Raw blkparse CSV:  ts, pid, action, rwbs, sector, nsectors, comm, ...
+        _need_normalize = (
+            "type" not in blkt.columns or
+            "size_bytes" not in blkt.columns or
+            "time_sec" not in blkt.columns
+        )
+        if _need_normalize and ("rwbs" in blkt.columns or "op" in blkt.columns or "action" in blkt.columns):
+            # Filter blkparse info lines (non-numeric ts), then normalize
+            ts_col = next((c for c in ("ts","time_sec","timestamp")
+                           if c in blkt.columns), None)
+            if ts_col:
+                blkt = blkt[pd.to_numeric(blkt[ts_col], errors='coerce').notna()].copy()
+                blkt[ts_col] = blkt[ts_col].astype(float)
+            blkt = _normalise_blktrace_df(blkt)
+            if blkt.empty:
+                raise ValueError("normalization yielded empty DataFrame")
+
         m.blktrace_available = True
+        m.blkio_available = True
         kv_blk_bytes = m.kvb_block_size_mb * 1024 * 1024 if m.kvb_block_size_mb > 0 else 0
 
         # Re-compute alignment with correct kv_block_bytes now that we know it
-        if kv_blk_bytes > 0 and "offset_bytes" in blkt.columns:
+        if kv_blk_bytes > 0 and "offset_bytes" in blkt.columns and "size_bytes" in blkt.columns:
             blkt["kvb_aligned"] = (
                 (blkt["offset_bytes"] % kv_blk_bytes == 0) &
                 (blkt["size_bytes"]   % kv_blk_bytes == 0)
             )
 
-        df_r = blkt[blkt["op"] == "R"]
-        df_w = blkt[blkt["op"] == "W"]
-        df_d = blkt[blkt["op"] == "D"]
+        # Determine op column with multiple fallbacks
+        _op_col = None
+        for _c in ("type", "op", "rw"):
+            if _c in blkt.columns:
+                _op_col = _c
+                break
+        if _op_col is None and "rwbs" in blkt.columns:
+            blkt = blkt.copy()
+            blkt["type"] = blkt["rwbs"].astype(str).str.upper().str[0].map(
+                lambda x: "R" if x == "R" else ("D" if x in ("D","T") else "W"))
+            _op_col = "type"
+        if _op_col is None:
+            # Truly nothing — skip raw blkt analysis (analysis dir already populated)
+            print(f"      [blktrace raw] No op/type/rwbs column; skipping raw analysis")
+            raise StopIteration
+
+        df_r = blkt[blkt[_op_col] == "R"]
+        df_w = blkt[blkt[_op_col] == "W"]
+        df_d = blkt[blkt[_op_col] == "D"]
 
         # Section C: reads
-        rd = _compute_blktrace_analytics(df_r, "R", int(kv_blk_bytes), 4096)
+        rd = _compute_blktrace_metrics(df_r, "R", int(kv_blk_bytes), 4096)
         m.rd_req_size_mean_kb  = rd.get("req_size_mean_kb", 0)
         m.rd_req_size_p50_kb   = rd.get("req_size_p50_kb",  0)
         m.rd_req_size_p95_kb   = rd.get("req_size_p95_kb",  0)
@@ -4843,7 +5563,7 @@ def extract_metrics(data: dict) -> Metrics:
         m.rd_hot_area_pct      = rd.get("hot_area_top20pct_bytes", 0)
 
         # Section D: writes
-        wr = _compute_blktrace_analytics(df_w, "W", int(kv_blk_bytes), 4096)
+        wr = _compute_blktrace_metrics(df_w, "W", int(kv_blk_bytes), 4096)
         m.wr_req_size_mean_kb  = wr.get("req_size_mean_kb", 0)
         m.wr_req_size_p50_kb   = wr.get("req_size_p50_kb",  0)
         m.wr_req_size_p95_kb   = wr.get("req_size_p95_kb",  0)
@@ -4868,19 +5588,80 @@ def extract_metrics(data: dict) -> Metrics:
             m.trim_present          = True
             m.trim_ops_total        = int(len(df_d))
             m.trim_total_bytes      = safe_int(df_d["size_bytes"].sum())
-            tm = _compute_blktrace_analytics(df_d, "D", int(kv_blk_bytes), 4096)
+            tm = _compute_blktrace_metrics(df_d, "D", int(kv_blk_bytes), 4096)
             m.trim_iat_mean_us      = tm.get("iat_mean_us",       0)
             m.trim_req_size_mean_kb = tm.get("req_size_mean_kb",  0)
             m.trim_kvb_aligned_pct  = tm.get("kvb_aligned_pct",   0)
 
-        # Cross-layer correlations
-        xc = _compute_blktrace_cross_correlations(df_r, df_w, df_d)
-        m.corr_rw               = xc.get("corr_rw", 0)
-        m.corr_wd               = xc.get("corr_wd", 0)
-        m.rw_ratio_mean         = round(float(pd.Series(xc.get("rw_ratio_ts", [0])).mean()), 3)
-        m.tw_ratio_mean         = round(float(pd.Series(xc.get("tw_ratio_ts", [0])).mean()), 3)
-        m.read_seasonal_period_s = xc.get("read_seasonal_period_s", 0)
+        # Cross-layer correlations (inline — no separate helper function)
+        try:
+            rd_ts = df_r["time_sec"].values if not df_r.empty else []
+            wr_ts = df_w["time_sec"].values if not df_w.empty else []
+            if len(rd_ts) > 1 and len(wr_ts) > 1:
+                from scipy.stats import pearsonr as _pr
+                import warnings as _wcc
+                # Bin both into common 1s windows
+                _tmax = max(rd_ts[-1], wr_ts[-1]) if len(rd_ts) and len(wr_ts) else 1
+                _bins = max(int(_tmax), 1)
+                _r_hist, _ = np.histogram(rd_ts, bins=_bins, range=(0, _tmax))
+                _w_hist, _ = np.histogram(wr_ts, bins=_bins, range=(0, _tmax))
+                if _r_hist.std() > 0 and _w_hist.std() > 0:
+                    with _wcc.catch_warnings():
+                        _wcc.simplefilter("ignore")
+                        m.corr_rw = round(float(_pr(_r_hist, _w_hist)[0]), 3)
+            # R/W byte ratio from raw events
+            if not df_r.empty and not df_w.empty:
+                rd_b = df_r["size_bytes"].sum(); wr_b = df_w["size_bytes"].sum()
+                if wr_b > 0: m.rw_ratio_mean = round(float(rd_b / wr_b), 3)
+            if not df_w.empty and not df_d.empty:
+                wr_b2 = df_w["size_bytes"].sum(); tr_b = df_d["size_bytes"].sum()
+                if wr_b2 > 0: m.tw_ratio_mean = round(float(tr_b / wr_b2), 3)
+        except Exception:
+            pass
         m.blkio_ts = blkt  # store full trace for chart
+        # Populate SSD chart dataframes directly from raw blktrace.
+        if _op_col in m.blkio_ts.columns:
+            m.ssd_rd_ts = m.blkio_ts[m.blkio_ts[_op_col] == "R"].copy()
+            m.ssd_wr_ts = m.blkio_ts[m.blkio_ts[_op_col] == "W"].copy()
+        # Mirror raw blktrace-derived values into SSD chart fields when analysis-dir fields are absent.
+        if m.ssd_rd_size_mean_kb <= 0:
+            m.ssd_rd_size_mean_kb = m.rd_req_size_mean_kb
+            m.ssd_rd_size_p50_kb = m.rd_req_size_p50_kb
+            m.ssd_rd_size_p99_kb = m.rd_req_size_p99_kb
+            m.ssd_rd_iat_mean_us = m.rd_iat_mean_us
+            m.ssd_rd_iat_p50_us = getattr(m, "rd_iat_p50_us", 0)
+            m.ssd_rd_iat_p99_us = m.rd_iat_p99_us
+            m.ssd_rd_seq_pct = m.rd_seq_pct
+            m.ssd_rd_rand_pct = m.rd_rand_pct
+            m.ssd_rd_kvb_aligned_pct = m.rd_kvb_aligned_pct
+            m.ssd_rd_page_aligned_pct = m.rd_page_aligned_pct
+            m.ssd_rd_skewness = m.rd_lba_skewness
+            m.ssd_rd_gini = m.rd_lba_gini
+            m.ssd_rd_bytes_total = m.rd_total_bytes
+            m.ssd_rd_burst_count = m.rd_burst_count
+        if m.ssd_wr_size_mean_kb <= 0:
+            m.ssd_wr_size_mean_kb = m.wr_req_size_mean_kb
+            m.ssd_wr_size_p50_kb = m.wr_req_size_p50_kb
+            m.ssd_wr_size_p99_kb = m.wr_req_size_p99_kb
+            m.ssd_wr_iat_mean_us = m.wr_iat_mean_us
+            m.ssd_wr_iat_p99_us = getattr(m, "wr_iat_p99_us", 0)
+            m.ssd_wr_seq_pct = m.wr_seq_pct
+            m.ssd_wr_rand_pct = m.wr_rand_pct
+            m.ssd_wr_kvb_aligned_pct = m.wr_kvb_aligned_pct
+            m.ssd_wr_page_aligned_pct = m.wr_page_aligned_pct
+            m.ssd_wr_skewness = m.wr_lba_skewness
+            m.ssd_wr_gini = m.wr_lba_gini
+            m.ssd_wr_bytes_total = m.wr_total_bytes
+            m.ssd_wr_burst_count = m.wr_burst_count
+        # Add "op" alias column for backward compatibility with chart functions
+        # that still use blkio_ts["op"] instead of blkio_ts["type"]
+        if "type" in m.blkio_ts.columns and "op" not in m.blkio_ts.columns:
+            m.blkio_ts = m.blkio_ts.copy()
+            m.blkio_ts["op"] = m.blkio_ts["type"]
+      except StopIteration:
+          pass   # Skipped due to missing columns (already logged)
+      except Exception as _bt_err:
+          print(f"      [blktrace raw] Skipped due to error: {type(_bt_err).__name__}: {_bt_err}")
 
     # ── §F: DRAM BW from Intel PCM ────────────────────────────────────────────
     pcm_df = data.get("pcm_memory_timeseries")
@@ -5383,8 +6164,11 @@ def score_bottlenecks(m: Metrics) -> list[dict]:
 # ── Chart generation ──────────────────────────────────────────────────────────
 
 def fig_to_b64(fig) -> str:
+    import numpy as _np
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=110, bbox_inches="tight", facecolor=fig.get_facecolor())
+    with _np.errstate(divide='ignore', invalid='ignore'):
+        fig.savefig(buf, format="png", dpi=110, bbox_inches="tight",
+                    facecolor=fig.get_facecolor())
     plt.close(fig)
     return base64.b64encode(buf.getvalue()).decode()
 
@@ -5395,6 +6179,76 @@ def downsample(df: pd.DataFrame, n: int = 200) -> pd.DataFrame:
     step = max(1, len(df) // n)
     return df.iloc[::step].reset_index(drop=True)
 
+
+
+def chart_percentile_summary(m: Metrics) -> str:
+    """P50/P90/P99 summary for latency, tokens, and SSD request-level metrics."""
+    fig, axes = plt.subplots(2, 2, figsize=(13, 8))
+    fig.patch.set_facecolor("#ffffff")
+    fig.suptitle("P50 / P90 / P99 Percentile Summary", fontsize=12, fontweight="bold", color="#0f172a", y=1.02)
+
+    def _style(ax):
+        ax.set_facecolor("#f8fafc")
+        ax.grid(True, axis="y", alpha=0.3, color="#e2e8f0")
+        ax.tick_params(labelsize=8)
+        for sp in ax.spines.values(): sp.set_edgecolor("#94a3b8")
+
+    def _plot(ax, title, labels, p50, p90, p99, unit=""):
+        _style(ax)
+        vals = [p50 or 0, p90 or 0, p99 or 0]
+        bars = ax.bar(["P50", "P90", "P99"], vals, alpha=0.85, edgecolor="#94a3b8", linewidth=0.5)
+        ymax = max(vals) if max(vals) > 0 else 1
+        for bar, val in zip(bars, vals):
+            if val > 0:
+                ax.text(bar.get_x()+bar.get_width()/2, val + ymax*0.03, f"{val:.2f}{unit}",
+                        ha="center", va="bottom", fontsize=8, fontweight="bold", color="#0f172a")
+        ax.set_title(title, fontsize=9, fontweight="bold")
+        ax.set_ylabel(unit.strip() or "value", fontsize=8)
+        ax.set_ylim(0, ymax*1.20)
+
+    # Request/session latency percentiles, when benchmark summary is available.
+    _plot(axes[0,0], "Request E2E Latency Percentiles", ["P50","P90","P99"],
+          getattr(m, "sess_e2e_p50_s", 0), getattr(m, "sess_e2e_p90_s", 0), getattr(m, "sess_e2e_p99_s", 0), "s")
+    _plot(axes[0,1], "TTFT Percentiles", ["P50","P90","P99"],
+          getattr(m, "sess_ttft_p50_ms", 0), getattr(m, "p90_ttft", 0) or getattr(m, "sess_ttft_p90_ms", 0), getattr(m, "sess_ttft_p99_ms", 0), "ms")
+
+    # Token distribution: only P90 is sometimes exported by bench summary, so show what exists.
+    _style(axes[1,0])
+    labels = ["Input P90", "Input P99", "Output P90", "Output P99"]
+    vals = [getattr(m, "sess_input_tok_p90", 0), getattr(m, "sess_input_tok_p99", 0),
+            getattr(m, "sess_output_tok_p90", 0), getattr(m, "sess_output_tok_p99", 0)]
+    bars = axes[1,0].bar(labels, vals, alpha=0.85, edgecolor="#94a3b8", linewidth=0.5)
+    ymax = max(vals) if max(vals) > 0 else 1
+    for bar, val in zip(bars, vals):
+        if val > 0:
+            axes[1,0].text(bar.get_x()+bar.get_width()/2, val + ymax*0.03, f"{val:.0f}",
+                           ha="center", va="bottom", fontsize=8, fontweight="bold")
+    axes[1,0].set_title("Prompt / Output Token Percentiles", fontsize=9, fontweight="bold")
+    axes[1,0].tick_params(axis='x', rotation=20)
+    axes[1,0].set_ylim(0, ymax*1.20)
+
+    # SSD request-size percentiles from blktrace / analysis dir.
+    _style(axes[1,1])
+    labels = ["Read P50", "Read P99", "Write P50", "Write P99"]
+    vals = [getattr(m, "ssd_rd_size_p50_kb", 0) or getattr(m, "rd_req_size_p50_kb", 0),
+            getattr(m, "ssd_rd_size_p99_kb", 0) or getattr(m, "rd_req_size_p99_kb", 0),
+            getattr(m, "ssd_wr_size_p50_kb", 0) or getattr(m, "wr_req_size_p50_kb", 0),
+            getattr(m, "ssd_wr_size_p99_kb", 0) or getattr(m, "wr_req_size_p99_kb", 0)]
+    bars = axes[1,1].bar(labels, vals, alpha=0.85, edgecolor="#94a3b8", linewidth=0.5)
+    ymax = max(vals) if max(vals) > 0 else 1
+    for bar, val in zip(bars, vals):
+        if val > 0:
+            axes[1,1].text(bar.get_x()+bar.get_width()/2, val + ymax*0.03, f"{val:.1f}KB",
+                           ha="center", va="bottom", fontsize=8, fontweight="bold")
+    axes[1,1].set_title("SSD Request Size Percentiles", fontsize=9, fontweight="bold")
+    axes[1,1].tick_params(axis='x', rotation=20)
+    axes[1,1].set_ylim(0, ymax*1.20)
+
+    try:
+        plt.tight_layout(pad=0.6)
+    except Exception:
+        pass
+    return fig_to_b64(fig)
 
 def chart_gpu_timeline(m: Metrics) -> str:
     gdf = m.gpu_ts
@@ -5454,7 +6308,16 @@ def chart_gpu_timeline(m: Metrics) -> str:
         for sp in ax.spines.values():
             sp.set_edgecolor(BORDER)
 
-    plt.tight_layout()
+    try:
+        import warnings as _wtl
+        with _wtl.catch_warnings():
+            _wtl.simplefilter('ignore', UserWarning)
+            try:
+                plt.tight_layout()
+            except Exception:
+                pass
+    except Exception:
+        pass
     return fig_to_b64(fig)
 
 
@@ -5499,7 +6362,16 @@ def chart_inference_metrics(m: Metrics) -> str:
 
     axes[0].set_title("SGLang Inference Metrics", fontsize=11, fontweight="bold", pad=8)
     axes[-1].set_xlabel("Time (minutes)", fontsize=9)
-    plt.tight_layout()
+    try:
+        import warnings as _wtl
+        with _wtl.catch_warnings():
+            _wtl.simplefilter('ignore', UserWarning)
+            try:
+                plt.tight_layout()
+            except Exception:
+                pass
+    except Exception:
+        pass
     return fig_to_b64(fig)
 
 
@@ -5547,7 +6419,7 @@ def chart_memory(m: Metrics) -> str:
         ax.axhline(m.hbm_total_mb / 1024, color=WARN_C, lw=1, ls="--", label="Capacity")
         ax.set_title("Peak HBM per GPU (GB)", fontsize=9)
         ax.set_ylabel("GB", fontsize=8)
-        ax.legend(fontsize=8)
+        if ax.get_legend_handles_labels()[0]: ax.legend(fontsize=8)
     ax.set_facecolor(BG3)
     ax.grid(True, alpha=0.3, axis="y")
     ax.tick_params(labelsize=8)
@@ -5557,7 +6429,16 @@ def chart_memory(m: Metrics) -> str:
             sp.set_edgecolor(BORDER)
 
     fig.suptitle("Memory Profile", fontsize=11, fontweight="bold", y=1.02, color=TEXT_C)
-    plt.tight_layout()
+    try:
+        import warnings as _wtl
+        with _wtl.catch_warnings():
+            _wtl.simplefilter('ignore', UserWarning)
+            try:
+                plt.tight_layout()
+            except Exception:
+                pass
+    except Exception:
+        pass
     return fig_to_b64(fig)
 
 
@@ -5575,7 +6456,7 @@ def chart_storage(m: Metrics) -> str:
         t = ndf2["time_sec"].values / 60
         ax.bar(t, wr, width=1.5, color=NVME_C, alpha=0.8, label="Write IOPS")
         ax.bar(t, rd, width=1.5, bottom=wr, color=PGF_C, alpha=0.7, label="Read IOPS")
-        ax.legend(fontsize=8)
+        if ax.get_legend_handles_labels()[0]: ax.legend(fontsize=8)
     ax.set_title(f"NVMe I/O (max {m.nvme_wr_iops_max:.0f} wr IOPS)", fontsize=9)
     ax.set_xlabel("Time (min)", fontsize=8)
     ax.set_ylabel("IOPS", fontsize=8)
@@ -5603,7 +6484,16 @@ def chart_storage(m: Metrics) -> str:
             sp.set_edgecolor(BORDER)
 
     fig.suptitle("Storage & OS Memory Activity", fontsize=11, fontweight="bold", y=1.02, color=TEXT_C)
-    plt.tight_layout()
+    try:
+        import warnings as _wtl
+        with _wtl.catch_warnings():
+            _wtl.simplefilter('ignore', UserWarning)
+            try:
+                plt.tight_layout()
+            except Exception:
+                pass
+    except Exception:
+        pass
     return fig_to_b64(fig)
 
 
@@ -5653,7 +6543,16 @@ def chart_bottleneck_radar(bottlenecks: list[dict]) -> str:
         sp.set_edgecolor(BORDER)
 
     fig.patch.set_facecolor(BG2)
-    plt.tight_layout()
+    try:
+        import warnings as _wtl
+        with _wtl.catch_warnings():
+            _wtl.simplefilter('ignore', UserWarning)
+            try:
+                plt.tight_layout()
+            except Exception:
+                pass
+    except Exception:
+        pass
     return fig_to_b64(fig)
 
 
@@ -5718,7 +6617,16 @@ def chart_latency_breakdown(m: Metrics) -> str:
 
     fig.suptitle("Inference Phase Analysis — Prefill vs Decode", fontsize=11,
                  fontweight="bold", y=1.02, color=TEXT_C)
-    plt.tight_layout()
+    try:
+        import warnings as _wtl
+        with _wtl.catch_warnings():
+            _wtl.simplefilter('ignore', UserWarning)
+            try:
+                plt.tight_layout()
+            except Exception:
+                pass
+    except Exception:
+        pass
     return fig_to_b64(fig)
 
 
@@ -5753,7 +6661,7 @@ def chart_hbm_bandwidth(m: Metrics) -> str:
                label=f"Peak {m.hbm_peak_bw_gbs:.0f} GB/s")
     ax.set_ylabel("GB/s", fontsize=9)
     ax.set_title("HBM R/W Bandwidth Timeline", fontsize=10, fontweight="bold")
-    ax.legend(fontsize=8)
+    if ax.get_legend_handles_labels()[0]: ax.legend(fontsize=8)
 
     # 2. Read vs Write stacked area
     ax2 = axes[0, 1]
@@ -5763,7 +6671,7 @@ def chart_hbm_bandwidth(m: Metrics) -> str:
                      alpha=0.5, color="#f97316", label="Write")
     ax2.set_ylabel("GB/s (stacked)", fontsize=9)
     ax2.set_title("HBM Stacked Read + Write BW", fontsize=10, fontweight="bold")
-    ax2.legend(fontsize=8)
+    if ax2.get_legend_handles_labels()[0]: ax2.legend(fontsize=8)
 
     # 3. Transaction rate timeline
     ax3 = axes[1, 0]
@@ -5773,7 +6681,7 @@ def chart_hbm_bandwidth(m: Metrics) -> str:
     ax3.plot(t, hts["hbm_write_txn_M_s"], color="#f97316", lw=1.5, label="Write Txns", ls="--")
     ax3.set_ylabel("Transactions / s  (Millions)", fontsize=9)
     ax3.set_title("HBM Cache-Line Transactions (64B)", fontsize=10, fontweight="bold")
-    ax3.legend(fontsize=8)
+    if ax3.get_legend_handles_labels()[0]: ax3.legend(fontsize=8)
 
     # 4. BW efficiency gauge (bar)
     ax4 = axes[1, 1]
@@ -5805,7 +6713,16 @@ def chart_hbm_bandwidth(m: Metrics) -> str:
             for sp in ax.spines.values():
                 sp.set_edgecolor("#94a3b8")
 
-    plt.tight_layout()
+    try:
+        import warnings as _wtl
+        with _wtl.catch_warnings():
+            _wtl.simplefilter('ignore', UserWarning)
+            try:
+                plt.tight_layout()
+            except Exception:
+                pass
+    except Exception:
+        pass
     return fig_to_b64(fig)
 
 
@@ -5846,7 +6763,7 @@ def chart_dram_bandwidth(m: Metrics) -> str:
                alpha=0.4, label=f"Peak {m.dram_peak_theoretical_gbs:.0f} GB/s")
     ax.set_ylabel("GB/s", fontsize=9)
     ax.set_title("DRAM R/W Bandwidth Timeline (AMD EPYC PCM)", fontsize=10, fontweight="bold")
-    ax.legend(fontsize=8)
+    if ax.get_legend_handles_labels()[0]: ax.legend(fontsize=8)
 
     # 2. Stacked BW area
     ax2 = axes[0, 1]
@@ -5855,7 +6772,7 @@ def chart_dram_bandwidth(m: Metrics) -> str:
                      alpha=0.5, color=PREFILL, label="Write")
     ax2.set_ylabel("GB/s (stacked)", fontsize=9)
     ax2.set_title("DRAM Stacked Read + Write BW", fontsize=10, fontweight="bold")
-    ax2.legend(fontsize=8)
+    if ax2.get_legend_handles_labels()[0]: ax2.legend(fontsize=8)
 
     # 3. Transaction rate
     ax3 = axes[1, 0]
@@ -5865,7 +6782,7 @@ def chart_dram_bandwidth(m: Metrics) -> str:
     ax3.plot(t, dts["write_txn_M_s"], color=PREFILL, lw=1.5, label="Write Txns", ls="--")
     ax3.set_ylabel("Transactions / s  (Millions)", fontsize=9)
     ax3.set_title("DRAM Cache-Line Transactions (64B)", fontsize=10, fontweight="bold")
-    ax3.legend(fontsize=8)
+    if ax3.get_legend_handles_labels()[0]: ax3.legend(fontsize=8)
 
     # 4. BW summary + read/write ratio bar
     ax4 = axes[1, 1]
@@ -5902,7 +6819,223 @@ def chart_dram_bandwidth(m: Metrics) -> str:
             for sp in ax.spines.values():
                 sp.set_edgecolor("#94a3b8")
 
-    plt.tight_layout()
+    try:
+        import warnings as _wtl
+        with _wtl.catch_warnings():
+            _wtl.simplefilter('ignore', UserWarning)
+            try:
+                plt.tight_layout()
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return fig_to_b64(fig)
+
+
+def chart_swap_storm(m: "Metrics") -> str:
+    """Swap Storm Analysis — 6-panel chart showing swap activity, storm episodes,
+    swap-fault correlation, and NVMe write amplification.
+
+    A 'swap storm' is a sustained period of high pswpin+pswpout rates that
+    triggers significant write amplification on the underlying swap device
+    and correlates with major page faults blocking forward progress.
+    """
+    fig, axes = plt.subplots(2, 3, figsize=(15, 8.5))
+    fig.patch.set_facecolor("#ffffff")
+    fig.suptitle("§G: Swap Storm Analysis — Swap Activity, Storm Episodes & Write Amplification",
+                 fontsize=12, fontweight="bold", color="#0f172a", y=0.995)
+    BG = "#f8fafc"
+
+    vmst = getattr(m, "vmstat_ts", None)
+    if not isinstance(vmst, pd.DataFrame) or vmst.empty or \
+       "pswpin" not in vmst.columns or "pswpout" not in vmst.columns:
+        # Placeholder when swap data isn't available
+        for ax in axes.flat:
+            ax.set_facecolor(BG)
+            ax.text(0.5, 0.5,
+                    "No swap data available\n\nEnable node_exporter with\n"
+                    "node_vmstat_pswpin / pswpout / pgmajfault\n"
+                    "and node_memory_SwapFree_bytes",
+                    ha="center", va="center", fontsize=9, color="#64748b",
+                    transform=ax.transAxes)
+            ax.set_xticks([]); ax.set_yticks([])
+            for sp in ax.spines.values(): sp.set_edgecolor("#94a3b8")
+        try:
+            import warnings as _wtl
+            with _wtl.catch_warnings():
+                _wtl.simplefilter('ignore', UserWarning)
+                plt.tight_layout()
+        except Exception: pass
+        return fig_to_b64(fig)
+
+    v = vmst.sort_values("time_sec").reset_index(drop=True).copy()
+    t_min = (v["time_sec"] - v["time_sec"].iloc[0]) / 60.0
+    dt = v["time_sec"].diff().fillna(1.0).clip(lower=0.1)
+    in_rate  = v["pswpin"].diff().fillna(0).clip(lower=0)  / dt
+    out_rate = v["pswpout"].diff().fillna(0).clip(lower=0) / dt
+    total = in_rate + out_rate
+    thr = m.swap_storm_threshold_pages_per_s
+    storm_mask = total >= thr
+
+    # ── Panel 1: Swap I/O rate timeline ──────────────────────────────────────
+    ax1 = axes[0, 0]; ax1.set_facecolor(BG)
+    ax1.fill_between(t_min, 0, in_rate,  alpha=0.4, color="#3b82f6", label="swap in (pswpin)")
+    ax1.fill_between(t_min, 0, -out_rate, alpha=0.4, color="#ef4444", label="swap out (pswpout)")
+    ax1.axhline(thr,  color="#f59e0b", lw=1, ls="--", alpha=0.7)
+    ax1.axhline(-thr, color="#f59e0b", lw=1, ls="--", alpha=0.7,
+                label=f"storm threshold ±{thr:.0f} pg/s")
+    ax1.axhline(0, color="#475569", lw=0.8)
+    ax1.set_xlabel("Time (min)", fontsize=8); ax1.set_ylabel("Pages/s (4 KiB pages)", fontsize=8)
+    ax1.set_title("Swap I/O Rate Timeline", fontsize=10, fontweight="bold")
+    if ax1.get_legend_handles_labels()[0]: ax1.legend(fontsize=7, loc="upper right")
+    ax1.grid(True, alpha=0.3); ax1.tick_params(labelsize=7)
+
+    # ── Panel 2: Storm episodes Gantt ───────────────────────────────────────
+    ax2 = axes[0, 1]; ax2.set_facecolor(BG)
+    if storm_mask.any():
+        edges = storm_mask.astype(int).diff().fillna(int(storm_mask.iloc[0]))
+        starts = t_min[edges == 1].tolist()
+        ends   = t_min[edges == -1].tolist()
+        if len(starts) > len(ends): ends.append(t_min.iloc[-1])
+        for s, e in zip(starts, ends):
+            ax2.axvspan(s, e, color="#ef4444", alpha=0.45)
+        ax2.text(0.02, 0.95,
+                 f"{m.swap_storm_episode_count} storms · "
+                 f"{m.swap_storm_total_duration_s:.0f}s total ({m.swap_thrashing_pct:.1f}%)",
+                 transform=ax2.transAxes, fontsize=8, fontweight="bold",
+                 color="#7f1d1d", va="top",
+                 bbox=dict(boxstyle="round,pad=0.3", facecolor="#fef2f2", edgecolor="#fca5a5"))
+    else:
+        ax2.text(0.5, 0.5, "No storm episodes\ndetected", ha="center", va="center",
+                 fontsize=11, color="#16a34a", fontweight="bold", transform=ax2.transAxes)
+    ax2.plot(t_min, total, color="#0f172a", lw=0.8, alpha=0.7)
+    ax2.axhline(thr, color="#f59e0b", lw=1, ls="--", alpha=0.7)
+    ax2.set_xlabel("Time (min)", fontsize=8); ax2.set_ylabel("Total swap I/O (pg/s)", fontsize=8)
+    ax2.set_title("Storm Episodes (red bands) vs Total Swap Rate", fontsize=10, fontweight="bold")
+    ax2.grid(True, alpha=0.3); ax2.tick_params(labelsize=7)
+
+    # ── Panel 3: Swap utilization timeline ──────────────────────────────────
+    ax3 = axes[0, 2]; ax3.set_facecolor(BG)
+    if "swap_free_mb" in v.columns and v["swap_free_mb"].max() > 0:
+        used_pct = 100 * (1 - v["swap_free_mb"] / v["swap_free_mb"].max())
+        ax3.fill_between(t_min, 0, used_pct, color="#dc2626", alpha=0.3)
+        ax3.plot(t_min, used_pct, color="#dc2626", lw=1.5)
+        ax3.set_ylim(0, max(10, used_pct.max() * 1.15))
+        ax3.set_ylabel("Swap used (%)", fontsize=8)
+        ax3.text(0.02, 0.95,
+                 f"Peak: {m.swap_used_pct_max:.1f}%\n"
+                 f"Free min: {m.swap_free_mb_min:.0f} MiB\n"
+                 f"Total: {m.swap_total_mb:.0f} MiB",
+                 transform=ax3.transAxes, fontsize=7.5, va="top", fontfamily="monospace",
+                 bbox=dict(boxstyle="round,pad=0.3", facecolor="#fff", edgecolor="#cbd5e1"))
+    else:
+        ax3.text(0.5, 0.5, "SwapFree metric\nnot collected", ha="center", va="center",
+                 fontsize=9, color="#64748b", transform=ax3.transAxes)
+        ax3.set_xticks([]); ax3.set_yticks([])
+    ax3.set_xlabel("Time (min)", fontsize=8)
+    ax3.set_title("Swap Space Utilization", fontsize=10, fontweight="bold")
+    ax3.grid(True, alpha=0.3); ax3.tick_params(labelsize=7)
+
+    # ── Panel 4: Swap-in vs major page fault correlation ────────────────────
+    ax4 = axes[1, 0]; ax4.set_facecolor(BG)
+    if "pgmajfault" in v.columns:
+        mf_rate = v["pgmajfault"].diff().fillna(0).clip(lower=0) / dt
+        ax4.scatter(in_rate, mf_rate, s=10, alpha=0.35, color="#7c3aed")
+        if in_rate.max() > 0:
+            try:
+                _x = in_rate.values; _y = mf_rate.values
+                if _x.std() > 0 and _y.std() > 0:
+                    z = np.polyfit(_x, _y, 1); p = np.poly1d(z)
+                    xs = np.linspace(_x.min(), _x.max(), 50)
+                    ax4.plot(xs, p(xs), color="#0f172a", lw=1.5, alpha=0.7,
+                             label=f"fit: y={z[0]:.2g}x+{z[1]:.0f}")
+                    if ax4.get_legend_handles_labels()[0]: ax4.legend(fontsize=7)
+            except Exception: pass
+        ax4.text(0.05, 0.95,
+                 f"Pearson r = {m.swap_majfault_correlation:.3f}",
+                 transform=ax4.transAxes, fontsize=8, fontweight="bold",
+                 va="top", color="#5b21b6",
+                 bbox=dict(boxstyle="round,pad=0.3", facecolor="#f5f3ff",
+                           edgecolor="#c4b5fd"))
+    ax4.set_xlabel("Swap-in rate (pg/s)", fontsize=8)
+    ax4.set_ylabel("Major page faults/s", fontsize=8)
+    ax4.set_title("Swap-in ↔ Major Page Fault Correlation", fontsize=10, fontweight="bold")
+    ax4.grid(True, alpha=0.3); ax4.tick_params(labelsize=7)
+
+    # ── Panel 5: NVMe write amplification from swap ─────────────────────────
+    ax5 = axes[1, 1]; ax5.set_facecolor(BG)
+    nv_ts = getattr(m, "nvme_ts", None)
+    if isinstance(nv_ts, pd.DataFrame) and not nv_ts.empty and "wr_ios" in nv_ts.columns:
+        nv_v = nv_ts.sort_values("time_sec").reset_index(drop=True)
+        nv_t_min = (nv_v["time_sec"] - nv_v["time_sec"].iloc[0]) / 60.0
+        nv_dt = nv_v["time_sec"].diff().fillna(1.0).clip(lower=0.1)
+        wr_rate = nv_v["wr_ios"].diff().fillna(0).clip(lower=0) / nv_dt
+        ax5.plot(nv_t_min, wr_rate, color="#dc2626", lw=1.2, label="NVMe writes/s")
+        ax5b = ax5.twinx()
+        ax5b.plot(t_min, out_rate, color="#3b82f6", lw=1.2, label="pswpout (pg/s)", alpha=0.8)
+        ax5b.set_ylabel("Swap out (pg/s)", fontsize=8, color="#3b82f6")
+        ax5.set_xlabel("Time (min)", fontsize=8)
+        ax5.set_ylabel("NVMe write IOPS", fontsize=8, color="#dc2626")
+        ax5.text(0.5, 0.95,
+                 f"Write amp: {m.swap_write_amp_ratio:.2f}× "
+                 f"(NVMe writes / swap-out pages)",
+                 ha="center", transform=ax5.transAxes, fontsize=8, fontweight="bold",
+                 va="top", color="#7f1d1d",
+                 bbox=dict(boxstyle="round,pad=0.3", facecolor="#fef2f2",
+                           edgecolor="#fca5a5"))
+        ax5.tick_params(labelsize=7); ax5b.tick_params(labelsize=7)
+    else:
+        ax5.text(0.5, 0.5, "NVMe timeseries\nnot available", ha="center", va="center",
+                 fontsize=9, color="#64748b", transform=ax5.transAxes)
+        ax5.set_xticks([]); ax5.set_yticks([])
+    ax5.set_title("Swap-Out ↔ NVMe Write Amplification", fontsize=10, fontweight="bold")
+    ax5.grid(True, alpha=0.3)
+
+    # ── Panel 6: KPI summary box ────────────────────────────────────────────
+    ax6 = axes[1, 2]; ax6.set_facecolor(BG)
+    ax6.set_xticks([]); ax6.set_yticks([])
+    for sp in ax6.spines.values(): sp.set_edgecolor("#94a3b8")
+    kpis = [
+        ("Mean swap-in",      f"{m.swap_in_pages_per_s_mean:>9.1f} pg/s   ({m.swap_in_mb_per_s_mean:.2f} MiB/s)"),
+        ("Peak swap-in",      f"{m.swap_in_pages_per_s_peak:>9.1f} pg/s"),
+        ("Mean swap-out",     f"{m.swap_out_pages_per_s_mean:>9.1f} pg/s   ({m.swap_out_mb_per_s_mean:.2f} MiB/s)"),
+        ("Peak swap-out",     f"{m.swap_out_pages_per_s_peak:>9.1f} pg/s"),
+        ("Storm episodes",    f"{m.swap_storm_episode_count:>9d}        ({m.swap_storm_total_duration_s:.0f}s, {m.swap_thrashing_pct:.1f}% of run)"),
+        ("Worst storm peak",  f"{m.swap_storm_worst_pages_per_s:>9.1f} pg/s"),
+        ("Swap utilization",  f"{m.swap_used_pct_max:>9.2f}% peak ({m.swap_free_mb_min:.0f} MiB free min)"),
+        ("Write amp ratio",   f"{m.swap_write_amp_ratio:>9.2f}× NVMe writes / pswpout"),
+        ("Swap↔majflt corr",  f"{m.swap_majfault_correlation:>9.3f} (Pearson r)"),
+    ]
+    y = 0.92
+    ax6.text(0.5, 0.99, "Swap Storm KPIs", transform=ax6.transAxes,
+             ha="center", va="top", fontsize=10.5, fontweight="bold", color="#0f172a")
+    for label, val in kpis:
+        ax6.text(0.04, y, label, transform=ax6.transAxes, fontsize=8.5,
+                 color="#475569", va="top")
+        ax6.text(0.45, y, val, transform=ax6.transAxes, fontsize=8.5,
+                 color="#0f172a", fontfamily="monospace", va="top")
+        y -= 0.095
+    # Verdict
+    verdict, vcolor = ("HEALTHY",  "#16a34a")
+    if m.swap_thrashing_pct > 1 or m.swap_storm_episode_count > 0:
+        verdict, vcolor = ("DEGRADED", "#f59e0b")
+    if m.swap_thrashing_pct > 10 or m.swap_used_pct_max > 50:
+        verdict, vcolor = ("STORM RISK", "#dc2626")
+    ax6.text(0.5, 0.04, f"Status: {verdict}", transform=ax6.transAxes,
+             ha="center", va="bottom", fontsize=10, fontweight="bold", color=vcolor,
+             bbox=dict(boxstyle="round,pad=0.4", facecolor="#ffffff",
+                       edgecolor=vcolor, linewidth=1.5))
+
+    try:
+        import warnings as _wtl
+        with _wtl.catch_warnings():
+            _wtl.simplefilter('ignore', UserWarning)
+            try:
+                plt.tight_layout(rect=[0, 0, 1, 0.97])
+            except Exception:
+                pass
+    except Exception:
+        pass
     return fig_to_b64(fig)
 
 
@@ -5970,7 +7103,7 @@ def chart_kv_analysis(m: "Metrics") -> str:
                   f"Current: {m.kv_dtype_name}  ({m.kv_attention_type})",
                   fontsize=10, fontweight="bold")
     ax2.tick_params(labelsize=8); ax2.grid(True, axis="y", alpha=0.3, color="#e2e8f0")
-    ax2.legend(handles=ax2b.get_lines(), loc="upper right", fontsize=8)
+    if ax2b.get_lines(): ax2.legend(handles=ax2b.get_lines(), loc="upper right", fontsize=8)
     for sp in ax2.spines.values(): sp.set_edgecolor("#94a3b8")
 
     # 3. HBM pool allocation
@@ -5999,11 +7132,20 @@ def chart_kv_analysis(m: "Metrics") -> str:
     ax3.set_title(f"HBM Allocation per GPU\n"
                   f"Max context: {m.kv_hbm_max_tokens:,} tokens",
                   fontsize=10, fontweight="bold")
-    ax3.legend(fontsize=8)
+    if ax3.get_legend_handles_labels()[0]: ax3.legend(fontsize=8)
     ax3.tick_params(labelsize=8); ax3.grid(True, axis="x", alpha=0.3, color="#e2e8f0")
     for sp in ax3.spines.values(): sp.set_edgecolor("#94a3b8")
 
-    plt.tight_layout()
+    try:
+        import warnings as _wtl
+        with _wtl.catch_warnings():
+            _wtl.simplefilter('ignore', UserWarning)
+            try:
+                plt.tight_layout()
+            except Exception:
+                pass
+    except Exception:
+        pass
     return fig_to_b64(fig)
 
 
@@ -6047,7 +7189,7 @@ def chart_kv_tiers(m: "Metrics") -> str:
     ax.set_xlabel("Tokens", fontsize=9, color="#475569")
     ax.set_title("Runtime Token Distribution Across Cache Tiers",
                  fontsize=10, fontweight="bold")
-    ax.legend(fontsize=8, loc="lower right")
+    if ax.get_legend_handles_labels()[0]: ax.legend(fontsize=8, loc="lower right")
     ax.tick_params(labelsize=8)
     for sp in ax.spines.values(): sp.set_edgecolor("#94a3b8")
     ax.grid(True, axis="x", alpha=0.3, color="#e2e8f0")
@@ -6097,7 +7239,7 @@ def chart_kv_tiers(m: "Metrics") -> str:
     if m.ttft_ms > 0:
         ax3.axhline(m.ttft_ms, color="#ef4444", lw=1.5, ls="--",
                     label=f"Observed TTFT {m.ttft_ms:.0f}ms")
-        ax3.legend(fontsize=8)
+        if ax3.get_legend_handles_labels()[0]: ax3.legend(fontsize=8)
     ax3.set_ylabel("Estimated TTFT (ms)", fontsize=9, color="#475569")
     ax3.set_title(f"TTFT Estimate by Cache Tier\n"
                   f"({m.prefill_cache_tokens:,} cached tokens in context)",
@@ -6127,12 +7269,21 @@ def chart_kv_tiers(m: "Metrics") -> str:
     ax4.set_ylabel("Pool Fill %", fontsize=9, color="#475569")
     ax4.set_title(f"KV Tier Fill & Capacity\nWeighted avg read lat: {m.kv_weighted_lat_ms:.4f} ms/token",
                   fontsize=10, fontweight="bold")
-    ax4.legend(fontsize=8)
+    if ax4.get_legend_handles_labels()[0]: ax4.legend(fontsize=8)
     ax4.tick_params(labelsize=8)
     for sp in ax4.spines.values(): sp.set_edgecolor("#94a3b8")
     ax4.grid(True, axis="y", alpha=0.3, color="#e2e8f0")
 
-    plt.tight_layout()
+    try:
+        import warnings as _wtl
+        with _wtl.catch_warnings():
+            _wtl.simplefilter('ignore', UserWarning)
+            try:
+                plt.tight_layout()
+            except Exception:
+                pass
+    except Exception:
+        pass
     return fig_to_b64(fig)
 
 
@@ -6162,7 +7313,7 @@ def chart_session_analysis(m: "Metrics") -> str:
     ax.set_xlabel("Time (min)", fontsize=8, color="#475569")
     ax.set_ylabel("Active sessions", fontsize=9, color="#475569")
     ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
-    ax.legend(fontsize=8)
+    if ax.get_legend_handles_labels()[0]: ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3, color="#e2e8f0")
     ax.tick_params(labelsize=8)
     for sp in ax.spines.values(): sp.set_edgecolor("#94a3b8")
@@ -6189,7 +7340,7 @@ def chart_session_analysis(m: "Metrics") -> str:
                   fontsize=9, fontweight="bold")
     ax2.set_xlabel("E2E latency (s)", fontsize=8, color="#475569")
     ax2.set_ylabel("Count", fontsize=9, color="#475569")
-    ax2.legend(fontsize=8)
+    if ax2.get_legend_handles_labels()[0]: ax2.legend(fontsize=8)
     ax2.grid(True, axis="y", alpha=0.3, color="#e2e8f0")
     ax2.tick_params(labelsize=8)
     for sp in ax2.spines.values(): sp.set_edgecolor("#94a3b8")
@@ -6216,7 +7367,7 @@ def chart_session_analysis(m: "Metrics") -> str:
                   fontsize=9, fontweight="bold")
     ax3.set_xlabel("Prompt tokens", fontsize=8, color="#475569")
     ax3.set_ylabel("Count", fontsize=9, color="#475569")
-    ax3.legend(fontsize=8)
+    if ax3.get_legend_handles_labels()[0]: ax3.legend(fontsize=8)
     ax3.grid(True, axis="y", alpha=0.3, color="#e2e8f0")
     ax3.tick_params(labelsize=8)
     for sp in ax3.spines.values(): sp.set_edgecolor("#94a3b8")
@@ -6243,12 +7394,21 @@ def chart_session_analysis(m: "Metrics") -> str:
                   fontsize=9, fontweight="bold")
     ax4.set_xlabel("Generated tokens", fontsize=8, color="#475569")
     ax4.set_ylabel("Count", fontsize=9, color="#475569")
-    ax4.legend(fontsize=8)
+    if ax4.get_legend_handles_labels()[0]: ax4.legend(fontsize=8)
     ax4.grid(True, axis="y", alpha=0.3, color="#e2e8f0")
     ax4.tick_params(labelsize=8)
     for sp in ax4.spines.values(): sp.set_edgecolor("#94a3b8")
 
-    plt.tight_layout()
+    try:
+        import warnings as _wtl
+        with _wtl.catch_warnings():
+            _wtl.simplefilter('ignore', UserWarning)
+            try:
+                plt.tight_layout()
+            except Exception:
+                pass
+    except Exception:
+        pass
     return fig_to_b64(fig)
 
 
@@ -6291,7 +7451,7 @@ def chart_kvb_events(m: "Metrics") -> str:
         fontsize=9, fontweight="bold")
     ax.set_xlabel("Time (min)", fontsize=8, color="#475569")
     ax.set_ylabel("Resident KV blocks", fontsize=9, color="#475569")
-    ax.legend(fontsize=8)
+    if ax.get_legend_handles_labels()[0]: ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3, color="#e2e8f0")
     ax.tick_params(labelsize=8)
     for sp in ax.spines.values(): sp.set_edgecolor("#94a3b8")
@@ -6340,7 +7500,7 @@ def chart_kvb_events(m: "Metrics") -> str:
         fontsize=9, fontweight="bold")
     ax2.set_xlabel("Time (min)", fontsize=8, color="#475569")
     ax2.set_ylabel("Blocks / s", fontsize=9, color="#475569")
-    ax2.legend(fontsize=8)
+    if ax2.get_legend_handles_labels()[0]: ax2.legend(fontsize=8)
     ax2.grid(True, alpha=0.3, color="#e2e8f0")
     ax2.tick_params(labelsize=8)
     for sp in ax2.spines.values(): sp.set_edgecolor("#94a3b8")
@@ -6373,7 +7533,7 @@ def chart_kvb_events(m: "Metrics") -> str:
         "L3 derived from backup - prefetch counters",
         fontsize=9, fontweight="bold")
     ax3.set_ylabel("KV Blocks", fontsize=9, color="#475569")
-    ax3.legend(fontsize=8)
+    if ax3.get_legend_handles_labels()[0]: ax3.legend(fontsize=8)
     ax3.grid(True, axis="y", alpha=0.3, color="#e2e8f0")
     ax3.tick_params(labelsize=8)
     for sp in ax3.spines.values(): sp.set_edgecolor("#94a3b8")
@@ -6405,7 +7565,7 @@ def chart_kvb_events(m: "Metrics") -> str:
                           label=f"Mean session E2E {m.sess_e2e_mean_s:.1f}s")
         ax4_2.set_ylabel("Seconds", fontsize=8, color="#475569")
         ax4_2.tick_params(labelsize=8)
-        ax4_2.legend(fontsize=8, loc="upper right")
+        if ax4_2.get_legend_handles_labels()[0]: ax4_2.legend(fontsize=8, loc="upper right")
         for sp in ax4_2.spines.values(): sp.set_edgecolor("#94a3b8")
     ann = (
         f"L2 pool: {m.kvb_l2_pool_blocks:,} blocks\n"
@@ -6422,7 +7582,16 @@ def chart_kvb_events(m: "Metrics") -> str:
     ax4.tick_params(labelsize=8)
     for sp in ax4.spines.values(): sp.set_edgecolor("#94a3b8")
 
-    plt.tight_layout()
+    try:
+        import warnings as _wtl
+        with _wtl.catch_warnings():
+            _wtl.simplefilter('ignore', UserWarning)
+            try:
+                plt.tight_layout()
+            except Exception:
+                pass
+    except Exception:
+        pass
     return fig_to_b64(fig)
 
 def chart_nvme_io(m: "Metrics") -> str:
@@ -6457,7 +7626,7 @@ def chart_nvme_io(m: "Metrics") -> str:
                  fontsize=9, fontweight="bold")
     ax.set_xlabel("Time (min)", fontsize=8, color="#475569")
     ax.set_ylabel("IOPS", fontsize=9, color="#475569")
-    ax.legend(fontsize=8)
+    if ax.get_legend_handles_labels()[0]: ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3, color="#e2e8f0")
     ax.tick_params(labelsize=8)
     for sp in ax.spines.values(): sp.set_edgecolor("#94a3b8")
@@ -6475,7 +7644,7 @@ def chart_nvme_io(m: "Metrics") -> str:
                         label=f"Mean {m.nvme_wr_lat_mean_ms:.3f}ms")
             ax2.axvline(float(wl_active.quantile(0.99)), color="#9333ea", lw=1, ls=":",
                         label=f"P99 {float(wl_active.quantile(0.99)):.3f}ms")
-            ax2.legend(fontsize=8)
+            if ax2.get_legend_handles_labels()[0]: ax2.legend(fontsize=8)
         elif m.nvme_wr_lat_mean_ms > 0:
             ax2.bar(["Write\nLatency"], [m.nvme_wr_lat_mean_ms],
                     color="#f97316", alpha=0.8)
@@ -6554,7 +7723,16 @@ def chart_nvme_io(m: "Metrics") -> str:
     ax4.tick_params(labelsize=8)
     for sp in ax4.spines.values(): sp.set_edgecolor("#94a3b8")
 
-    plt.tight_layout()
+    try:
+        import warnings as _wtl
+        with _wtl.catch_warnings():
+            _wtl.simplefilter('ignore', UserWarning)
+            try:
+                plt.tight_layout()
+            except Exception:
+                pass
+    except Exception:
+        pass
     return fig_to_b64(fig)
 
 
@@ -6597,7 +7775,7 @@ def chart_blkio_deep(m: "Metrics") -> str:
         ax.axvline(4, color="#f97316", lw=1, ls=":", label="4KB page size")
         ax.set_xlabel("Request size (KB)", fontsize=8)
         ax.set_ylabel("Count", fontsize=9)
-        ax.legend(fontsize=8)
+        if ax.get_legend_handles_labels()[0]: ax.legend(fontsize=8)
         ax.grid(True, axis="y", alpha=0.3, color="#e2e8f0")
         ax.tick_params(labelsize=8)
         for sp in ax.spines.values(): sp.set_edgecolor("#94a3b8")
@@ -6655,7 +7833,7 @@ def chart_blkio_deep(m: "Metrics") -> str:
                         label=f"Mean {ia_us.mean():.1f}µs")
             ax4.set_xlabel("Inter-arrival time (µs)", fontsize=8)
             ax4.set_ylabel("Count", fontsize=9)
-            ax4.legend(fontsize=8)
+            if ax4.get_legend_handles_labels()[0]: ax4.legend(fontsize=8)
             ax4.grid(True, axis="y", alpha=0.3, color="#e2e8f0")
             ax4.tick_params(labelsize=8)
             for sp in ax4.spines.values(): sp.set_edgecolor("#94a3b8")
@@ -6694,7 +7872,7 @@ def chart_blkio_deep(m: "Metrics") -> str:
         import pandas as _pd
         rolling = _pd.Series(wr6).rolling(window=10, min_periods=1).mean().values
         ax6.plot(t6, rolling, color="#ef4444", lw=2, ls="--", label="10-sample trend")
-        ax6.legend(fontsize=8)
+        if ax6.get_legend_handles_labels()[0]: ax6.legend(fontsize=8)
         if m.nvme_io_ts.empty or (m.nvme_io_ts["wr_iops"].fillna(0) > 0).sum() == 0:
             ax6.text(0.5, 0.5, "No write activity\nobserved in this run",
                      ha="center", va="center", transform=ax6.transAxes,
@@ -6709,7 +7887,16 @@ def chart_blkio_deep(m: "Metrics") -> str:
     ax6.tick_params(labelsize=8)
     for sp in ax6.spines.values(): sp.set_edgecolor("#94a3b8")
 
-    plt.tight_layout()
+    try:
+        import warnings as _wtl
+        with _wtl.catch_warnings():
+            _wtl.simplefilter('ignore', UserWarning)
+            try:
+                plt.tight_layout()
+            except Exception:
+                pass
+    except Exception:
+        pass
     return fig_to_b64(fig)
 
 
@@ -6749,7 +7936,7 @@ def chart_kvssd_io(m: "Metrics") -> str:
         if kvb_kb > 0:
             ax.axvline(kvb_kb, color="#ef4444", lw=1.5, ls="--", label=f"KV blk {kvb_kb:.0f}KB")
         ax.axvline(4, color="#a855f7", lw=1, ls=":", label="4KB page")
-        ax.legend(fontsize=7); ax.grid(True, axis="y", alpha=0.3, color="#e2e8f0")
+        if ax.get_legend_handles_labels()[0]: ax.legend(fontsize=7); ax.grid(True, axis="y", alpha=0.3, color="#e2e8f0")
         ax.set_xlabel("Request size (KB)", fontsize=8); ax.set_ylabel("Count", fontsize=8)
     else:
         _ph(ax, "R/W Request Size Distribution\n(KB)")
@@ -6771,7 +7958,7 @@ def chart_kvssd_io(m: "Metrics") -> str:
             ax2.hist(iat_w, bins=25, color="#f97316", alpha=0.65, edgecolor="#c2410c", lw=0.5, label="Write IAT")
         ax2.axvline(m.rd_iat_mean_us, color="#ef4444", lw=1.5, ls="--",
                     label=f"R mean {m.rd_iat_mean_us:.0f}µs")
-        ax2.legend(fontsize=7); ax2.grid(True, axis="y", alpha=0.3, color="#e2e8f0")
+        if ax2.get_legend_handles_labels()[0]: ax2.legend(fontsize=7); ax2.grid(True, axis="y", alpha=0.3, color="#e2e8f0")
         ax2.set_xlabel("Inter-arrival time (µs)", fontsize=8)
     else:
         _ph(ax2, "Request Inter-Arrival Time (µs)\nBurst Temporal Dynamics")
@@ -6833,8 +8020,8 @@ def chart_kvssd_io(m: "Metrics") -> str:
     ax5.set_facecolor("#f8fafc")
     if has_blktrace and not m.blkio_ts.empty and "offset_bytes" in m.blkio_ts.columns:
         import numpy as _np
-        df_r5 = m.blkio_ts[m.blkio_ts["op"] == "R"]
-        df_w5 = m.blkio_ts[m.blkio_ts["op"] == "W"]
+        df_r5 = m.blkio_ts[m.blkio_ts["type"] == "R"]
+        df_w5 = m.blkio_ts[m.blkio_ts["type"] == "W"]
         if not df_r5.empty:
             t5r = df_r5["time_sec"].values / 60
             o5r = df_r5["offset_bytes"].values / 1e9
@@ -6843,7 +8030,7 @@ def chart_kvssd_io(m: "Metrics") -> str:
             t5w = df_w5["time_sec"].values / 60
             o5w = df_w5["offset_bytes"].values / 1e9
             ax5.scatter(t5w, o5w, s=1.5, alpha=0.3, color="#f97316", label="Write")
-        ax5.legend(fontsize=7, markerscale=4)
+        if ax5.get_legend_handles_labels()[0]: ax5.legend(fontsize=7, markerscale=4)
         ax5.set_xlabel("Time (min)", fontsize=8)
         ax5.set_ylabel("LBA offset (GB)", fontsize=8)
         ax5.grid(True, alpha=0.15, color="#e2e8f0")
@@ -6859,7 +8046,7 @@ def chart_kvssd_io(m: "Metrics") -> str:
     ax6 = axes[1, 2]
     ax6.set_facecolor("#f8fafc")
     if has_blktrace and not m.blkio_ts.empty and "is_seq" in m.blkio_ts.columns:
-        df_r6 = m.blkio_ts[m.blkio_ts["op"] == "R"].sample(min(500, len(m.blkio_ts[m.blkio_ts["op"]=="R"])))
+        df_r6 = m.blkio_ts[m.blkio_ts["type"] == "R"].sample(min(500, len(m.blkio_ts[m.blkio_ts["type"]=="R"])))
         ax6.scatter(df_r6["size_bytes"] / 1024,
                     df_r6["is_seq"].astype(int) + (0.1 * (2*__import__("random").random()-1)),
                     s=4, alpha=0.3, color="#3b82f6")
@@ -6911,9 +8098,9 @@ def chart_kvssd_io(m: "Metrics") -> str:
         t_min = _np.linspace(0, dt8, min(100, len(bk)))
         # Bin into 100 windows
         bins8 = (bk["time_sec"] / max(bk["time_sec"].max(), 1) * 99).astype(int)
-        r_bw  = bk[bk["op"]=="R"].groupby(bins8[bk["op"]=="R"])["size_bytes"].sum() / 1e6
-        w_bw  = bk[bk["op"]=="W"].groupby(bins8[bk["op"]=="W"])["size_bytes"].sum() / 1e6
-        d_bw  = bk[bk["op"]=="D"].groupby(bins8[bk["op"]=="D"])["size_bytes"].sum() / 1e6
+        r_bw  = bk[bk["type"]=="R"].groupby(bins8[bk["type"]=="R"])["size_bytes"].sum() / 1e6
+        w_bw  = bk[bk["type"]=="W"].groupby(bins8[bk["type"]=="W"])["size_bytes"].sum() / 1e6
+        d_bw  = bk[bk["type"]=="D"].groupby(bins8[bk["type"]=="D"])["size_bytes"].sum() / 1e6
         all_b = range(100)
         r_bw  = r_bw.reindex(all_b, fill_value=0)
         w_bw  = w_bw.reindex(all_b, fill_value=0)
@@ -6926,7 +8113,7 @@ def chart_kvssd_io(m: "Metrics") -> str:
         if d_bw.sum() > 0:
             ax8.fill_between(t_ax, d_bw, alpha=0.3, color="#ef4444")
             ax8.plot(t_ax, d_bw, color="#ef4444", lw=1.2, label="Discard")
-        ax8.legend(fontsize=7); ax8.grid(True, alpha=0.3, color="#e2e8f0")
+        if ax8.get_legend_handles_labels()[0]: ax8.legend(fontsize=7); ax8.grid(True, alpha=0.3, color="#e2e8f0")
         ax8.set_xlabel("Time (min)", fontsize=8)
         ax8.set_ylabel("MB/window", fontsize=8)
     else:
@@ -6958,7 +8145,7 @@ def chart_kvssd_io(m: "Metrics") -> str:
                      transform=ax9.transAxes, ha="right", va="top", fontsize=8,
                      color="#ef4444" if deg > 5 else "#059669",
                      bbox=dict(boxstyle="round,pad=0.3", facecolor="#f1f5f9", edgecolor="#e2e8f0"))
-        ax9.legend(fontsize=7); ax9.grid(True, alpha=0.3, color="#e2e8f0")
+        if ax9.get_legend_handles_labels()[0]: ax9.legend(fontsize=7); ax9.grid(True, alpha=0.3, color="#e2e8f0")
         ax9.set_xlabel("Time (min)", fontsize=8); ax9.set_ylabel("Est. Write BW (MB/s)", fontsize=8)
     else:
         _ph(ax9, "Write BW Trend\nDegradation Over Time", "needs nvme_driver_timeseries")
@@ -6969,7 +8156,16 @@ def chart_kvssd_io(m: "Metrics") -> str:
     ax9.tick_params(labelsize=7)
     for sp in ax9.spines.values(): sp.set_edgecolor("#94a3b8")
 
-    plt.tight_layout()
+    try:
+        import warnings as _wtl
+        with _wtl.catch_warnings():
+            _wtl.simplefilter('ignore', UserWarning)
+            try:
+                plt.tight_layout()
+            except Exception:
+                pass
+    except Exception:
+        pass
     return fig_to_b64(fig)
 
 
@@ -7020,7 +8216,7 @@ def chart_kvssd_cross_layer(m: "Metrics") -> str:
     if kvb_kb > 0:
         ax2.axhline(kvb_kb, color="#a855f7", lw=1, ls="--", alpha=0.7,
                     label=f"KV/tok={kvb_kb:.0f}KB")
-        ax2.legend(fontsize=8)
+        if ax2.get_legend_handles_labels()[0]: ax2.legend(fontsize=8)
     ax2.set_title(f"SSD Cost per Token\n"
                   f"§88: Rd/output-tok={m.ssd_read_per_output_token_kb:.3f}KB\n"
                   f"§89: Wr/input-tok={m.ssd_write_per_input_token_kb:.3f}KB",
@@ -7045,7 +8241,7 @@ def chart_kvssd_cross_layer(m: "Metrics") -> str:
     ax3.axhline(0.5,  color="#22c55e", lw=0.8, ls=":", alpha=0.6, label="strong +corr")
     ax3.axhline(-0.5, color="#ef4444", lw=0.8, ls=":", alpha=0.6, label="strong −corr")
     ax3.set_ylim(-1.1, 1.1)
-    ax3.legend(fontsize=7)
+    if ax3.get_legend_handles_labels()[0]: ax3.legend(fontsize=7)
     ax3.set_title(f"§90–§92 Cross-Layer Correlations\n"
                   f"R/W={m.corr_rw:.3f}  W/Trim={m.corr_wd:.3f}\n"
                   f"Seasonal period={m.read_seasonal_period_s:.0f}s",
@@ -7055,7 +8251,16 @@ def chart_kvssd_cross_layer(m: "Metrics") -> str:
     ax3.tick_params(labelsize=8)
     for sp in ax3.spines.values(): sp.set_edgecolor("#94a3b8")
 
-    plt.tight_layout()
+    try:
+        import warnings as _wtl
+        with _wtl.catch_warnings():
+            _wtl.simplefilter('ignore', UserWarning)
+            try:
+                plt.tight_layout()
+            except Exception:
+                pass
+    except Exception:
+        pass
     return fig_to_b64(fig)
 
 
@@ -7094,7 +8299,7 @@ def chart_ssd_read_workload(m: "Metrics") -> str:
                 mean_bw = m.ssd_rd_bw_mbs_mean if 0 < m.ssd_rd_bw_mbs_mean < 100000 else float(np.nanmean(rd_vals[rd_vals>0]))
                 ax.axhline(mean_bw, color="#ef4444", lw=1, ls="--",
                            label=f"Mean {mean_bw:.0f} MB/s")
-                ax.legend(fontsize=8)
+                if ax.get_legend_handles_labels()[0]: ax.legend(fontsize=8)
     # Show scalar summary if timeline has too few points or no read activity in iostat
     if not (not m.nvme_io_ts.empty and len(m.nvme_io_ts) > 5 and
             m.nvme_io_ts.get("rd_bw_mbs", pd.Series([0])).max() > 0):
@@ -7125,7 +8330,7 @@ def chart_ssd_read_workload(m: "Metrics") -> str:
         kv_kb = m.kvb_block_size_mb * 1024
         ax2.axvline(kv_kb, color="#ef4444", lw=1.5, ls="--", label=f"KV$B {kv_kb:.0f}KB")
         ax2.axvline(4, color="#f97316", lw=1, ls=":", label="4KB page")
-        ax2.legend(fontsize=8)
+        if ax2.get_legend_handles_labels()[0]: ax2.legend(fontsize=8)
         ax2.set_xlabel("Request size (KB)", fontsize=8); ax2.set_ylabel("Count", fontsize=8)
     else:
         _ph(ax2, f"Read Request Size Distribution\nMean={m.ssd_rd_size_mean_kb:.1f}KB (node_exporter est.)")
@@ -7196,7 +8401,7 @@ def chart_ssd_read_workload(m: "Metrics") -> str:
                         ax4.axvline(float(np.mean(ia_pos)), color="#ef4444", lw=1.5, ls="--",
                                     label=f"Mean {np.mean(ia_pos):.3f}µs")
                         ax4.axvline(1000, color="#f97316", lw=1, ls=":", label="1ms burst thresh")
-                        ax4.legend(fontsize=8)
+                        if ax4.get_legend_handles_labels()[0]: ax4.legend(fontsize=8)
                         ax4.set_xlabel("IAT (µs, log y-axis)", fontsize=8)
                         iat_plotted = True
                 break
@@ -7209,7 +8414,7 @@ def chart_ssd_read_workload(m: "Metrics") -> str:
             ax4.axvline(float(ia_us.mean()), color="#ef4444", lw=1.5, ls="--",
                         label=f"Mean {ia_us.mean():.1f}µs")
             ax4.axvline(1000, color="#f97316", lw=1, ls=":", label="1ms burst threshold")
-            ax4.legend(fontsize=8)
+            if ax4.get_legend_handles_labels()[0]: ax4.legend(fontsize=8)
             ax4.set_xlabel("Inter-arrival time (µs)", fontsize=8)
             iat_plotted = True
     if not iat_plotted:
@@ -7280,7 +8485,17 @@ def chart_ssd_read_workload(m: "Metrics") -> str:
     ax6.grid(True, axis="y", alpha=0.3, color="#e2e8f0"); ax6.tick_params(labelsize=8)
     for sp in ax6.spines.values(): sp.set_edgecolor("#94a3b8")
 
-    plt.tight_layout(); return fig_to_b64(fig)
+    try:
+        import warnings as _wtl
+        with _wtl.catch_warnings():
+            _wtl.simplefilter('ignore', UserWarning)
+            try:
+                plt.tight_layout(pad=0.5)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return fig_to_b64(fig)
 
 
 def chart_ssd_write_workload(m: "Metrics") -> str:
@@ -7314,7 +8529,7 @@ def chart_ssd_write_workload(m: "Metrics") -> str:
                 mean_wr = m.ssd_wr_bw_mbs_mean if m.ssd_wr_bw_mbs_mean > 0 else float(np.nanmean(wr))
                 ax.axhline(mean_wr, color="#ef4444", lw=1, ls="--",
                            label=f"Mean {mean_wr:.0f} MB/s")
-                ax.legend(fontsize=8)
+                if ax.get_legend_handles_labels()[0]: ax.legend(fontsize=8)
                 ax.set_ylabel("Write MB/s", fontsize=8)
             else:
                 ax.text(0.5, 0.5, f"Mean BW: {m.nvme_wr_bw_mbs_mean:.1f} MB/s\n"
@@ -7341,7 +8556,7 @@ def chart_ssd_write_workload(m: "Metrics") -> str:
             ax2.hist(sk, bins=min(25, len(sk)), color=C, alpha=0.75, edgecolor="#c2410c", lw=0.5)
             kv_kb = m.kvb_block_size_mb * 1024
             ax2.axvline(kv_kb, color="#ef4444", lw=1.5, ls="--", label=f"KV$B {kv_kb:.0f}KB")
-            ax2.legend(fontsize=8)
+            if ax2.get_legend_handles_labels()[0]: ax2.legend(fontsize=8)
     else:
         _ph(ax2, f"Write Request Size Distribution\nMean≈{m.ssd_wr_size_mean_kb:.1f}KB")
         ax2.text(0.5, 0.25, f"Mean≈{m.ssd_wr_size_mean_kb:.1f}KB\nP99≈{m.ssd_wr_size_p99_kb:.1f}KB",
@@ -7388,7 +8603,17 @@ def chart_ssd_write_workload(m: "Metrics") -> str:
     ax4.grid(True, axis="y", alpha=0.3, color="#e2e8f0"); ax4.tick_params(labelsize=8)
     for sp in ax4.spines.values(): sp.set_edgecolor("#94a3b8")
 
-    plt.tight_layout(); return fig_to_b64(fig)
+    try:
+        import warnings as _wtl
+        with _wtl.catch_warnings():
+            _wtl.simplefilter('ignore', UserWarning)
+            try:
+                plt.tight_layout(pad=0.5)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return fig_to_b64(fig)
 
 
 def chart_trim_seasonal(m: "Metrics") -> str:
@@ -7440,7 +8665,7 @@ def chart_trim_seasonal(m: "Metrics") -> str:
         if wr_col:
             wr_v = ts2[wr_col].fillna(0).values
             ax2.plot(t2, wr_v, color=CW, lw=1.5, label=f"Write ({wr_v.mean():.1f} mean)")
-        ax2.legend(fontsize=8); ax2.set_ylabel("IOPS / BW", fontsize=8)
+        if ax2.get_legend_handles_labels()[0]: ax2.legend(fontsize=8); ax2.set_ylabel("IOPS / BW", fontsize=8)
     elif not tp_e.empty:
         # Use temporal_pattern.csv bytes per window
         ts_col = next((c for c in tp_e.columns if "window" in c.lower() or "time" in c.lower()), None)
@@ -7457,7 +8682,7 @@ def chart_trim_seasonal(m: "Metrics") -> str:
             ax2.plot(t2, rd_bw, color=CR, lw=1.5, label=f"Read ({rd_bw.mean():.1f} MB/win)")
             ax2.fill_between(t2, wr_bw, alpha=0.25, color=CW)
             ax2.plot(t2, wr_bw, color=CW, lw=1.5, label=f"Write ({wr_bw.mean():.1f} MB/win)")
-            ax2.legend(fontsize=8); ax2.set_ylabel("MB per window", fontsize=8)
+            if ax2.get_legend_handles_labels()[0]: ax2.legend(fontsize=8); ax2.set_ylabel("MB per window", fontsize=8)
     else:
         _ph(ax2, "Read vs Write Rate Timeline")
     ax2.set_title(f"R/W Timeline & Ratio (§E72)\nR/W ratio={m.rw_ratio_mean:.2f}",
@@ -7553,7 +8778,17 @@ def chart_trim_seasonal(m: "Metrics") -> str:
     ax6.grid(True, axis="y", alpha=0.3, color="#e2e8f0"); ax6.tick_params(labelsize=8)
     for sp in ax6.spines.values(): sp.set_edgecolor("#94a3b8")
 
-    plt.tight_layout(); return fig_to_b64(fig)
+    try:
+        import warnings as _wtl
+        with _wtl.catch_warnings():
+            _wtl.simplefilter('ignore', UserWarning)
+            try:
+                plt.tight_layout(pad=0.5)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return fig_to_b64(fig)
 
 
 def chart_cross_layer_kpi(m: "Metrics") -> str:
@@ -7578,7 +8813,7 @@ def chart_cross_layer_kpi(m: "Metrics") -> str:
     if m.kv_bytes_per_token > 0:
         ax.axhline(m.kv_bytes_per_token, color="#ef4444", lw=1.5, ls="--",
                    label=f"KV$/tok {m.kv_bytes_per_token:,}B (if all from SSD)")
-        ax.legend(fontsize=8)
+        if ax.get_legend_handles_labels()[0]: ax.legend(fontsize=8)
     ax.set_title("SSD Dependency per Token (§G88-89)\nHigh = decode strongly depends on SSD",
                  fontsize=9, fontweight="bold")
     ax.set_ylabel("Bytes per token", fontsize=8)
@@ -7633,7 +8868,7 @@ def chart_cross_layer_kpi(m: "Metrics") -> str:
     ax3.axhline(0, color="#475569", lw=0.5)
     ax3.axhline(0.7, color="#22c55e", lw=0.5, ls="--", alpha=0.5, label="High corr (0.7)")
     ax3.axhline(-0.7, color="#ef4444", lw=0.5, ls="--", alpha=0.5)
-    ax3.legend(fontsize=8)
+    if ax3.get_legend_handles_labels()[0]: ax3.legend(fontsize=8)
     ax3.set_title("Cross-Layer Correlation & Alignment (§G90-91)\n"
                   "+1=perfect, 0=none, -1=inverse",
                   fontsize=9, fontweight="bold")
@@ -7664,7 +8899,17 @@ def chart_cross_layer_kpi(m: "Metrics") -> str:
     ax4.grid(True, axis="y", alpha=0.3, color="#e2e8f0"); ax4.tick_params(labelsize=8)
     for sp in ax4.spines.values(): sp.set_edgecolor("#94a3b8")
 
-    plt.tight_layout(); return fig_to_b64(fig)
+    try:
+        import warnings as _wtl
+        with _wtl.catch_warnings():
+            _wtl.simplefilter('ignore', UserWarning)
+            try:
+                plt.tight_layout(pad=0.5)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return fig_to_b64(fig)
 
 
 def chart_blktrace_streams(m: "Metrics") -> str:
@@ -7721,7 +8966,7 @@ def chart_blktrace_streams(m: "Metrics") -> str:
                 med = float(bw_vals.median())
                 ax.axvline(med, color="#ef4444", lw=1.5, ls="--",
                            label=f"Median {med:.0f} MiB/s")
-                ax.legend(fontsize=8)
+                if ax.get_legend_handles_labels()[0]: ax.legend(fontsize=8)
                 ax.set_xscale("log")  # log x because BW spans 3 orders of magnitude
     ax.set_title(f"Read BW per Stream (bandwidth_per_stream.csv)\n"
                  f"{m.ssd_rd_stream_count} streams  "
@@ -7749,7 +8994,7 @@ def chart_blktrace_streams(m: "Metrics") -> str:
                 medw = float(bw_vals2.median())
                 ax2.axvline(medw, color="#ef4444", lw=1.5, ls="--",
                             label=f"Median {medw:.0f} MiB/s")
-                ax2.legend(fontsize=8)
+                if ax2.get_legend_handles_labels()[0]: ax2.legend(fontsize=8)
                 ax2.set_xscale("log")
     ax2.set_title(f"Write BW per Stream\n"
                   f"{m.ssd_wr_stream_count} streams  "
@@ -7805,7 +9050,17 @@ def chart_blktrace_streams(m: "Metrics") -> str:
     ax6.grid(True, axis="y", alpha=0.3, color="#e2e8f0"); ax6.tick_params(labelsize=8)
     for sp in ax6.spines.values(): sp.set_edgecolor("#94a3b8")
 
-    plt.tight_layout(); return fig_to_b64(fig)
+    try:
+        import warnings as _wtl
+        with _wtl.catch_warnings():
+            _wtl.simplefilter('ignore', UserWarning)
+            try:
+                plt.tight_layout(pad=0.5)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return fig_to_b64(fig)
 
 
 def chart_blktrace_hotcold(m: "Metrics") -> str:
@@ -7888,11 +9143,21 @@ def chart_blktrace_hotcold(m: "Metrics") -> str:
                   fontsize=9, fontweight="bold")
     ax3.set_xlabel("Time window (s)", fontsize=8)
     ax3.set_ylabel("Distinct hot regions", fontsize=8)
-    ax3.legend(fontsize=8)
+    if ax3.get_legend_handles_labels()[0]: ax3.legend(fontsize=8)
     ax3.grid(True, alpha=0.3, color="#e2e8f0"); ax3.tick_params(labelsize=8)
     for sp in ax3.spines.values(): sp.set_edgecolor("#94a3b8")
 
-    plt.tight_layout(); return fig_to_b64(fig)
+    try:
+        import warnings as _wtl
+        with _wtl.catch_warnings():
+            _wtl.simplefilter('ignore', UserWarning)
+            try:
+                plt.tight_layout(pad=0.5)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return fig_to_b64(fig)
 
 
 def build_recommendations(m: Metrics, bottlenecks: list[dict]) -> list[dict]:
@@ -8033,12 +9298,27 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
     ])
 
     # Bottleneck rows
+    # Map chart fill colors → accessible text colors (WCAG AA ≥4.5:1 on white)
+    def _text_color(hex_color):
+        _dark_map = {
+            "#fbbf24": "#92400e",  # amber-400 → amber-800 (dark enough on white)
+            "#f59e0b": "#78350f",  # amber-500 → amber-900
+            "#f43f5e": "#9f1239",  # rose-400  → rose-800
+            "#fb923c": "#7c2d12",  # orange-400 → orange-900
+            "#fcd34d": "#78350f",  # yellow-300 → amber-900
+            "#facc15": "#713f12",  # yellow-400 → yellow-900
+            "#34d399": "#065f46",  # emerald-400 → emerald-800
+            "#86efac": "#14532d",  # green-300 → green-900
+            "#4ade80": "#14532d",  # green-400 → green-900
+        }
+        return _dark_map.get(hex_color.lower(), hex_color)
+
     bn_rows = ""
     for b in bottlenecks:
         pct = b["score"]
         bn_rows += f"""
         <tr style="border-bottom:1px solid #e2e8f0">
-          <td style="padding:8px 12px;color:{b['color']};font-weight:600">{b['layer']}</td>
+          <td style="padding:8px 12px;color:{_text_color(b['color'])};font-weight:600">{b['layer']}</td>
           <td style="padding:8px 12px">
             <div style="display:flex;align-items:center;gap:8px">
               <div style="width:80px;background:#e2e8f0;border-radius:4px;height:8px;overflow:hidden">
@@ -8342,10 +9622,87 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
   th {{ padding: 7px 12px; text-align: left; color: #475569; font-weight: 600; font-size: 11px;
         text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #e2e8f0; background: #f8fafc; }}
   td {{ border-bottom: 1px solid #f1f5f9; }}
+  /* ── Row hover highlight ── */
+  tr:hover td {{ background: #eff6ff !important; }}
+  tr:hover {{ outline: 1px solid #bfdbfe; }}
+  /* ── KPI card hover ── */
+  .kpi-card:hover, [class*="kpi"]:hover {{
+    box-shadow: 0 4px 12px rgba(79,70,229,0.15) !important;
+    border-color: #818cf8 !important;
+    transform: translateY(-1px);
+    transition: all 0.15s;
+  }}
+  /* ── Fix low-contrast metric labels ── */
+  .metric-label {{ color: #475569 !important; }}  /* was #94a3b8 */
+  /* ── Chart image hover: show a "zoom" cursor and subtle outline ── */
+  .chart-wrap {{ position: relative; cursor: crosshair; }}
+  .chart-wrap:hover img {{ outline: 2px solid #c7d2fe; border-radius: 4px; }}
+  /* ── Readout bar below each chart ── */
+  .chart-readout {{
+    margin-top: 4px;
+    min-height: 22px;
+    font: 12px/1.5 system-ui, sans-serif;
+    color: #0f172a;
+    background: #f1f5f9;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 4px 10px;
+  }}
   .recs {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }}
   .phase-bar {{ display: flex; border-radius: 6px; overflow: hidden; height: 22px; }}
   @media(max-width:768px) {{ .grid2,.recs {{ grid-template-columns: 1fr; }} }}
 </style>
+<script>
+// Fix contrast: darken #94a3b8 labels to #475569, and amber #fbbf24 to #92400e
+document.addEventListener('DOMContentLoaded', function(){{
+  document.querySelectorAll('[style]').forEach(function(el){{
+    const s = el.getAttribute('style');
+    if(!s) return;
+    let ns = s
+      .replace(/color:\\s*#94a3b8/gi,  'color:#475569')
+      .replace(/color:\\s*#cbd5e1/gi,  'color:#475569')
+      .replace(/color:\\s*#fbbf24/gi,  'color:#92400e')
+      .replace(/color:\\s*#f59e0b/gi,  'color:#78350f')
+      .replace(/color:\\s*#fb923c/gi,  'color:#7c2d12');
+    if(ns !== s) el.setAttribute('style', ns);
+  }});
+  // Wrap all chart images in .chart-wrap and add readout bars
+  document.querySelectorAll('img[src^="data:image/png"]').forEach(function(img){{
+    const parent = img.parentNode;
+    if(parent && parent.classList.contains('chart-wrap')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'chart-wrap';
+    parent.insertBefore(wrap, img);
+    wrap.appendChild(img);
+    const readout = document.createElement('div');
+    readout.className = 'chart-readout';
+    readout.textContent = img.alt || 'Chart — hover to inspect';
+    wrap.appendChild(readout);
+    // On hover: show the chart title from the alt attribute
+    wrap.addEventListener('mouseenter', function(){{
+      readout.style.background = '#ffffff';
+      readout.style.borderColor = '#818cf8';
+      readout.innerHTML =
+        '<span style="color:#4f46e5;font-weight:600">\u2197 Click chart to open full-size</span>' +
+        (img.alt ? ' <span style="color:#64748b;margin-left:8px">' + img.alt + '</span>' : '');
+    }});
+    wrap.addEventListener('mouseleave', function(){{
+      readout.style.background = '#f1f5f9';
+      readout.style.borderColor = '#cbd5e1';
+      readout.textContent = img.alt || 'Chart — hover to inspect';
+    }});
+    // Click opens chart in full window
+    img.style.cursor = 'zoom-in';
+    img.addEventListener('click', function(){{
+      const w = window.open('', '_blank');
+      w.document.write('<html><body style="margin:0;background:#111">' +
+        '<img src="' + img.src + '" style="max-width:100%;display:block;margin:auto">' +
+        '</body></html>');
+      w.document.close();
+    }});
+  }});
+}});
+</script>
 </head>
 <body>
 
@@ -8367,6 +9724,37 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
     </div>
   </div>
   <div class="kpis" style="margin-top:16px">{kpis}</div>
+</div>
+
+
+<!-- CACHE HIT METHODOLOGY -->
+<div class="card" style="border-color:#22d3ee">
+  <h2>🎯 Cache Hit Methodology — Benchmark vs Gauge Calculations</h2>
+  <div style="font-size:12px;color:#64748b;line-height:1.6;margin-bottom:12px">
+    This section separates the benchmark-equivalent token-weighted cache hit from Prometheus gauge summaries.
+    The main KPI uses the <b>script-compatible active gauge average</b> when <code>sglang_cache_hit_rate</code> samples are available, so it matches the standalone Prometheus validation script. Token-weighted accounting is still shown separately because it is useful for benchmark-style token accounting.
+  </div>
+  <table>
+    <thead><tr><th>Calculation</th><th>Value</th><th>How to interpret</th></tr></thead>
+    <tbody>
+      <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Token-weighted / benchmark-style</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{m.cache_hit_token_weighted_pct or m.cache_hit_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Δprefill_cache / (Δprefill_cache + Δprefill_compute). This is the preferred KPI and should track benchmark cache hit.</td></tr>
+      <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Gauge active average</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#0891b2">{m.cache_hit_gauge_active_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Mean of non-zero <code>sglang_cache_hit_rate</code> samples. Active windows: {m.cache_hit_gauge_active_samples} / {m.cache_hit_gauge_total_samples}.</td></tr>
+      <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Gauge timeline average</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#f97316">{m.cache_hit_gauge_overall_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Mean across all collected gauge samples, including idle/dead-space intervals.</td></tr>
+      <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Gauge peak</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#7c3aed">{m.cache_hit_gauge_peak_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Maximum observed instantaneous/rolling cache-hit gauge value.</td></tr>
+    </tbody>
+  </table>
+  <details class="fml" style="margin-top:10px"><summary>📐 Formula</summary><div class="fml-body"><code>Token weighted = Δsglang:realtime_tokens_total{{mode="prefill_cache"}} / (Δprefill_cache + Δprefill_compute) × 100
+Gauge active average = avg(sglang_cache_hit_rate samples where value > 0) × 100
+Gauge timeline average = avg(all sglang_cache_hit_rate samples) × 100
+Gauge peak = max(sglang_cache_hit_rate samples) × 100
+Cached/prompt fallback = Δcached_tokens_total / Δprompt_tokens_total × 100
+Calculation method used for main KPI: {m.cache_hit_calc_method}</code></div></details>
+</div>
+
+<!-- PERCENTILE SUMMARY -->
+<div class="card">
+  <h2>📊 P50 / P90 / P99 Summary</h2>
+  {img(charts.get("percentiles", ""), "P50 P90 P99 percentile summary")}
 </div>
 
 <!-- PHASE ANALYSIS -->
@@ -9229,6 +10617,92 @@ NUMA migrations/s  : rate(node_vmstat_numa_pages_migrated)</code>
     Measured {m.dram_total_bw_gbs:.2f} GB/s total = {m.dram_bw_util_pct:.1f}% of peak.
     Read/Write ratio = {rw_r:.1f}×.
     <b style="color:#0f172a">Source:</b> AMDuProfPcm -m memory, DF METRICS, 1.2s sample interval.
+  </div>
+</div>
+
+<!-- §G: SWAP STORM ANALYSIS -->
+<div class="card">
+  <h2>🌪️ §G: Swap Storm Analysis</h2>
+  <div style="font-size:12px;color:#475569;line-height:1.5;margin-bottom:14px">
+    Identifies sustained host-memory swap activity that can stall inference. A
+    <b>swap storm</b> is a continuous interval where combined pswpin + pswpout
+    rate exceeds <b>{m.swap_storm_threshold_pages_per_s:.0f} pages/s</b>
+    (≈ {m.swap_storm_threshold_pages_per_s/256:.1f} MiB/s). When detected,
+    correlates with major page faults and quantifies the write-amplification
+    cost on the underlying NVMe device.
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">
+    <div class="kpi-box" style="background:#f1f5f9;padding:10px;border-radius:6px;border-left:3px solid #3b82f6">
+      <div style="font-size:10px;color:#475569;text-transform:uppercase">Mean Swap-In</div>
+      <div style="font-size:18px;font-weight:700;color:#0f172a">{m.swap_in_pages_per_s_mean:.1f}<span style="font-size:11px;color:#64748b"> pg/s</span></div>
+      <div style="font-size:10px;color:#64748b">{m.swap_in_mb_per_s_mean:.2f} MiB/s</div>
+    </div>
+    <div class="kpi-box" style="background:#f1f5f9;padding:10px;border-radius:6px;border-left:3px solid #ef4444">
+      <div style="font-size:10px;color:#475569;text-transform:uppercase">Mean Swap-Out</div>
+      <div style="font-size:18px;font-weight:700;color:#0f172a">{m.swap_out_pages_per_s_mean:.1f}<span style="font-size:11px;color:#64748b"> pg/s</span></div>
+      <div style="font-size:10px;color:#64748b">{m.swap_out_mb_per_s_mean:.2f} MiB/s</div>
+    </div>
+    <div class="kpi-box" style="background:#f1f5f9;padding:10px;border-radius:6px;border-left:3px solid #dc2626">
+      <div style="font-size:10px;color:#475569;text-transform:uppercase">Storm Episodes</div>
+      <div style="font-size:18px;font-weight:700;color:#0f172a">{m.swap_storm_episode_count}</div>
+      <div style="font-size:10px;color:#64748b">{m.swap_storm_total_duration_s:.0f}s · {m.swap_thrashing_pct:.1f}%</div>
+    </div>
+    <div class="kpi-box" style="background:#f1f5f9;padding:10px;border-radius:6px;border-left:3px solid #f59e0b">
+      <div style="font-size:10px;color:#475569;text-transform:uppercase">Worst Storm Peak</div>
+      <div style="font-size:18px;font-weight:700;color:#0f172a">{m.swap_storm_worst_pages_per_s:.0f}<span style="font-size:11px;color:#64748b"> pg/s</span></div>
+      <div style="font-size:10px;color:#64748b">{m.swap_storm_worst_pages_per_s/256:.1f} MiB/s</div>
+    </div>
+    <div class="kpi-box" style="background:#f1f5f9;padding:10px;border-radius:6px;border-left:3px solid #7c3aed">
+      <div style="font-size:10px;color:#475569;text-transform:uppercase">Write Amp</div>
+      <div style="font-size:18px;font-weight:700;color:#0f172a">{m.swap_write_amp_ratio:.2f}<span style="font-size:11px;color:#64748b">×</span></div>
+      <div style="font-size:10px;color:#64748b">NVMe wr / pswpout</div>
+    </div>
+    <div class="kpi-box" style="background:#f1f5f9;padding:10px;border-radius:6px;border-left:3px solid #64748b">
+      <div style="font-size:10px;color:#475569;text-transform:uppercase">Swap Used Peak</div>
+      <div style="font-size:18px;font-weight:700;color:#0f172a">{m.swap_used_pct_max:.1f}<span style="font-size:11px;color:#64748b">%</span></div>
+      <div style="font-size:10px;color:#64748b">{m.swap_free_mb_min:.0f} MiB free min</div>
+    </div>
+  </div>
+  {img(charts.get("swap_storm",""), "Swap Storm Analysis")}
+  <details class="fml" style="margin-top:10px">
+    <summary>📐 Formula &amp; Derivation</summary>
+    <div class="fml-body">
+      <div class="fml-src">📊 vmstat_timeseries.csv · /proc/vmstat (node_exporter Prometheus job) + nvme_driver_timeseries.csv</div>
+      <code>swap_in_rate    = Δ(node_vmstat_pswpin)  / Δt    [pages/s, 4 KiB pages]
+swap_out_rate   = Δ(node_vmstat_pswpout) / Δt    [pages/s]
+swap_total_rate = swap_in_rate + swap_out_rate
+
+storm_active    = swap_total_rate &gt;= STORM_THRESHOLD     (default: 1000 pg/s)
+storm_episode   = maximal contiguous run of storm_active = True
+thrashing_pct   = 100 × (count(storm_active) / total_samples)
+
+majfault_corr   = pearsonr( swap_in_rate , Δ(pgmajfault)/Δt )
+                  → r near +1.0 means swap-in directly triggers major page faults
+                    (the page being swapped back in was demand-paged → I/O wait)
+
+write_amp_ratio = Δ(nvme_wr_ios) / Δ(pswpout)
+                  → ratio of NVMe writes hitting the device vs swap-out pages.
+                    &gt;1.0 = filesystem journals, metadata updates amplify writes
+                    &lt;1.0 = swap I/O is batched (typical for ZSWAP/multi-page swap)
+
+swap_used_pct   = 100 × (1 - SwapFree/SwapTotal)</code>
+      <div class="fml-note">
+        <b>Interpretation:</b> A swap storm directly slows inference: every major page fault stalls the
+        GPU memory pinning path while waiting on synchronous swap-in I/O.
+        <b>Triggers:</b> oversubscribed model loader (model + KV + buffers &gt; DRAM),
+        memory-mapped weight files, large hicache L2 footprint, or transient memory spike
+        from concurrent requests. <b>Mitigations:</b> reduce hicache L2 size,
+        enable zswap, increase vm.swappiness=10 (less eager swap),
+        add physical DRAM, or pin SGLang RSS with cgroups.
+      </div>
+    </div>
+  </details>
+  <div style="background:#f1f5f9;border-left:3px solid #f59e0b;border-radius:0 6px 6px 0;
+              padding:10px 14px;margin-top:10px;font-size:11px;color:#334155;line-height:1.6">
+    <b style="color:#0f172a">Verdict:</b>
+    {("✅ <b style='color:#16a34a'>Healthy</b> — swap activity well below storm threshold." if m.swap_storm_episode_count == 0 and m.swap_thrashing_pct < 1 else
+      "⚠️ <b style='color:#f59e0b'>Degraded</b> — " + str(m.swap_storm_episode_count) + " storm(s) detected, " + f"{m.swap_thrashing_pct:.1f}%" + " of run thrashing. Investigate hicache sizing." if m.swap_thrashing_pct < 10 else
+      "🚨 <b style='color:#dc2626'>STORM RISK</b> — sustained swap thrashing. Inference latency severely impacted. Reduce hicache L2 or add DRAM immediately.")}
   </div>
 </div>
 
@@ -10379,8 +11853,18 @@ def build_comparison_html(runs, all_bottlenecks, timestamp):
         if(wrap.querySelector(':scope > .amoprof-hover-readout')) return;
         const box = document.createElement('div');
         box.className = 'amoprof-hover-readout';
-        box.style.cssText = 'margin-top:6px;min-height:18px;font:12px/1.4 system-ui,sans-serif;color:#334155;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:6px 8px;';
-        box.textContent = 'Hover over chart to inspect values';
+        box.style.cssText = [
+          'margin-top:6px',
+          'min-height:22px',
+          'font:12px/1.5 system-ui,sans-serif',
+          'color:#0f172a',                     // dark text — high contrast
+          'background:#f1f5f9',                // slightly darker bg than before
+          'border:1px solid #cbd5e1',
+          'border-radius:6px',
+          'padding:5px 10px',
+          'transition:background 0.1s',
+        ].join(';');
+        box.textContent = 'Hover over chart to see values';
         wrap.appendChild(box);
         chart.$amoprofReadout = box;
       },
@@ -10388,24 +11872,81 @@ def build_comparison_html(runs, all_bottlenecks, timestamp):
         const box = chart.$amoprofReadout;
         if(!box) return;
         const ev = args && args.event;
-        if(!ev){ return; }
-        const pts = chart.getElementsAtEventForMode(ev, 'nearest', {intersect:false}, false) || [];
-        if(!pts.length){
-          box.textContent = 'Hover over chart to inspect values';
+        if(!ev || !['mousemove','click'].includes(ev.type)){
           return;
         }
+
+        // Support both indexed (bar/line) and xy (scatter/parsing:false) data
+        const pts = chart.getElementsAtEventForMode(
+          ev.native || ev,
+          'nearest',
+          {intersect: false, axis: 'x'},
+          false
+        ) || [];
+
+        if(!pts.length){
+          box.style.background = '#f1f5f9';
+          box.innerHTML = '<span style="color:#94a3b8;font-style:italic">Hover over chart to see values</span>';
+          return;
+        }
+
+        box.style.background = '#ffffff';
         const p = pts[0];
         const labels = chart.data && chart.data.labels ? chart.data.labels : [];
-        const label = labels[p.index] != null ? labels[p.index] : `Index ${p.index}`;
+
+        // Resolve the x-axis label — works for both indexed and {x,y} data
+        let xLabel;
+        const rawPoint = chart.data.datasets[p.datasetIndex] &&
+                         chart.data.datasets[p.datasetIndex].data &&
+                         chart.data.datasets[p.datasetIndex].data[p.index];
+        if(rawPoint != null && typeof rawPoint === 'object' && 'x' in rawPoint){
+          // scatter / parsing:false — use raw.x as the axis label
+          const xv = rawPoint.x;
+          xLabel = Number.isFinite(xv)
+            ? xv.toLocaleString(undefined, {maximumFractionDigits:3})
+            : String(xv);
+        } else {
+          xLabel = labels[p.index] != null ? String(labels[p.index]) : `#${p.index}`;
+        }
+
+        // Collect values from all visible datasets
         const parts = [];
-        (chart.data.datasets || []).forEach(ds => {
-          const val = ds && ds.data ? ds.data[p.index] : undefined;
-          if(val == null || val === '') return;
-          const num = Number(val);
-          const shown = Number.isFinite(num) ? num.toLocaleString(undefined,{maximumFractionDigits:4}) : String(val);
-          parts.push(`${ds.label || 'value'}: ${shown}`);
+        (chart.data.datasets || []).forEach((ds, di) => {
+          const meta = chart.getDatasetMeta(di);
+          if(meta && meta.hidden) return;
+          const raw = ds.data && ds.data[p.index];
+          if(raw == null) return;
+
+          let shown;
+          if(typeof raw === 'object' && raw !== null && 'y' in raw){
+            // {x,y} point
+            const y = raw.y;
+            shown = Number.isFinite(y)
+              ? y.toLocaleString(undefined, {maximumFractionDigits:4})
+              : String(y);
+          } else {
+            const num = Number(raw);
+            shown = Number.isFinite(num)
+              ? num.toLocaleString(undefined, {maximumFractionDigits:4})
+              : String(raw);
+          }
+          const color = ds.borderColor || ds.backgroundColor || '#475569';
+          parts.push(
+            `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;` +
+            `background:${color};margin-right:4px;vertical-align:middle"></span>` +
+            `<b style="color:#0f172a">${ds.label || 'value'}:</b> ` +
+            `<span style="color:#1e3a5f;font-family:monospace">${shown}</span>`
+          );
         });
-        box.textContent = `${label} — ${parts.join(' | ')}`;
+
+        if(!parts.length){
+          box.innerHTML = `<span style="color:#94a3b8;font-style:italic">No data at ${xLabel}</span>`;
+          return;
+        }
+        box.innerHTML =
+          `<span style="color:#64748b;font-size:11px">${xLabel}</span>` +
+          `<span style="color:#cbd5e1;margin:0 6px">|</span>` +
+          parts.join('<span style="color:#cbd5e1;margin:0 5px">·</span>');
       }
     };
     Chart.register(plugin);
@@ -10455,6 +11996,20 @@ details.fml[open]>summary::before{content:"\25BC  "}
 table{width:100%;border-collapse:collapse;font-size:12px}
 th{padding:7px 12px;background:#1e3a5f;color:#fff;font-size:11px;font-weight:700;text-align:center;border:1px solid #e2e8f0}
 .flex{display:flex;gap:12px;flex-wrap:wrap}
+/* Hover readout box below charts */
+.amoprof-hover-readout{
+  min-height:22px;
+  font:12px/1.5 system-ui,sans-serif;
+  color:#0f172a;
+  background:#f1f5f9;
+  border:1px solid #cbd5e1;
+  border-radius:6px;
+  padding:5px 10px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  transition:background 0.1s;
+}
 @media(max-width:900px){.grid2{grid-template-columns:1fr}}
 </style></head><body>
 ''')
@@ -13009,11 +14564,11 @@ def main():
                     if m:
                         n, unit = int(m.group(1)), m.group(2)
                         return now - n * {"h":3600,"m":60,"d":86400}[unit]
-                    # Try ISO datetime
-                    from datetime import datetime
+                    # Try ISO datetime — always treat as UTC to avoid TZ offsets
+                    from datetime import datetime, timezone as _tz
                     for fmt in ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
                         try:
-                            return datetime.strptime(s, fmt).timestamp()
+                            return datetime.strptime(s, fmt).replace(tzinfo=_tz.utc).timestamp()
                         except ValueError:
                             pass
                     return 0
@@ -13041,6 +14596,46 @@ def main():
                     },
                 )
                 data["_nvme_device_hint"] = args.nvme_device
+
+                # ── Load blktrace / NVMe-smart / iostat extras in Prometheus mode ──
+                # These are supplemental offline files, independent of the API query
+                bt_adir = getattr(args, 'blktrace_analysis_dir', '')
+                if bt_adir:
+                    ad = Path(bt_adir)
+                    print(f"  [blktrace-analysis] Loading directory: {ad}", flush=True)
+                    bt_analysis = _load_blktrace_analysis_dir(ad)
+                    if bt_analysis:
+                        data["blktrace_analysis"] = bt_analysis
+                        print(f"    Loaded: {len(bt_analysis)} analysis objects")
+                        # Also bring in raw events CSV if present
+                        raw_csv = ad / "blkparse_events.generated.csv"
+                        if raw_csv.exists():
+                            try:
+                                blkt_raw = pd.read_csv(raw_csv, low_memory=False,
+                                                       on_bad_lines='skip')
+                                blkt_raw.columns = [c.strip() for c in blkt_raw.columns]
+                                # Filter out blkparse info lines (non-numeric timestamp)
+                                ts_col = next((c for c in ("ts","time_sec","timestamp")
+                                               if c in blkt_raw.columns), None)
+                                if ts_col:
+                                    blkt_raw = blkt_raw[
+                                        pd.to_numeric(blkt_raw[ts_col], errors='coerce').notna()
+                                    ].copy()
+                                    blkt_raw[ts_col] = blkt_raw[ts_col].astype(float)
+                                # Normalize to standard schema (type, time_sec, size_bytes, sector…)
+                                blkt_norm = _normalise_blktrace_df(blkt_raw)
+                                if not blkt_norm.empty:
+                                    data["blktrace_raw"] = blkt_norm
+                                    print(f"    Loaded raw events: {len(blkt_norm)} rows "
+                                          f"(R={int((blkt_norm['type']=='R').sum())} "
+                                          f"W={int((blkt_norm['type']=='W').sum())} "
+                                          f"D={int((blkt_norm['type']=='D').sum())})")
+                            except Exception as e:
+                                print(f"    [blktrace-analysis] Could not load raw CSV: {e}")
+                if getattr(args, 'nvme_smart', ''):
+                    data.update(_load_nvme_smart(args.nvme_smart))
+                if getattr(args, 'iostat', ''):
+                    data.update(_load_iostat(args.iostat))
             else:
                 # ── Live scrape mode (direct /metrics endpoint) ───────────────
                 data = collect_from_prometheus(
@@ -13106,6 +14701,7 @@ def main():
             charts["inference"]    = chart_inference_metrics(m)
             charts["memory"]       = chart_memory(m)
             charts["latency"]      = chart_latency_breakdown(m)
+            charts["percentiles"]  = chart_percentile_summary(m)
             charts["storage"]      = chart_storage(m)
             charts["radar"]        = chart_bottleneck_radar(bns)
             charts["kv_analysis"]  = chart_kv_analysis(m)
@@ -13124,6 +14720,7 @@ def main():
             charts["kvssd_cross"]  = chart_kvssd_cross_layer(m)
             charts["hbm_bw"]       = chart_hbm_bandwidth(m)
             charts["dram_bw"]      = chart_dram_bandwidth(m)
+            charts["swap_storm"]   = chart_swap_storm(m)
             html_path = out_dir / f"{prefix}.html"
             html = build_html(m, bns, recs, charts, label)
             html_path.write_text(html, encoding="utf-8")
