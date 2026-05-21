@@ -62,6 +62,12 @@ Status Client::ProcessNodeCommand(const svk::CommandRequest* req,
                                   svk::CommandResponse* resp) {
   ClientContext ctxt;
   configureClientContext(ctxt);
+
+  // Since this is the first command as part of register node,
+  // lets set the context to make sure the connection is fully
+  // established to make the call
+  ctxt.set_wait_for_ready(true);
+
   Status status = fwk_stub_->ProcessNodeCommand(&ctxt, *req, resp);
   return status;
 }
@@ -196,7 +202,6 @@ int Client::WaitForConnected() {
     } else if (ch_state == grpc_connectivity_state::GRPC_CHANNEL_READY) {
       logger_str = "Channel status for node is ready";
       std::cout << logger_str << std::endl;
-
       status = 0;
       break;
     }
