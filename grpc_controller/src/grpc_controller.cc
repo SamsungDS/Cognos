@@ -1507,7 +1507,7 @@ Status ControllerServicer::ListNodes(svk::NodeResponse *resp) {
   resp->set_command_response(node_info.dump());
   logger_str = "list_nodes called successfully, found " +
                std::to_string(m_registered_nodes.size()) + " nodes";
-  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
+  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::DEBUG, logger_str.c_str());
 
   return Status::OK;
 }
