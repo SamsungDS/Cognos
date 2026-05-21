@@ -13,6 +13,7 @@ install_build_deps() {
         findutils
         git
         gnupg
+        openssh-client
         python3-pip
         unzip
         wget

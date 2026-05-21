@@ -10,4 +10,3 @@ hostname4/host_ip4
 
 [all:vars]
 ansible_user=<user name>
-

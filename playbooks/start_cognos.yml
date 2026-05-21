@@ -16,6 +16,13 @@
     - role: cognos_allow_ports
       when: cognos_install_gui_enabled
 
+- name: Allow SELinux to bind frontend port on the management server
+  hosts: management_server
+  become: true
+  roles:
+    - role: cognos_allow_se_ports
+      when: cognos_install_gui_enabled
+
 - name: Ensure ports are open on the application server
   hosts: application_server
   become: true

@@ -59,13 +59,6 @@
   roles:
     - cognos_mgmt_fw_remove
 
-- name: Remove cognos-grpc
-  hosts:
-    - management_server
-    - application_server
-  roles:
-    - cognos_grpc_remove
-
 - name: Remove core
   hosts:
     - management_server

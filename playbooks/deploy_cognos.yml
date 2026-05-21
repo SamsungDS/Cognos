@@ -57,13 +57,6 @@
   roles:
     - cognos_core_install
 
-- name: Install svk grpc
-  hosts:
-    - management_server
-    - application_server
-  roles:
-    - cognos_grpc_install
-
 - name: Install svk mgmt-fw
   hosts:
     - management_server

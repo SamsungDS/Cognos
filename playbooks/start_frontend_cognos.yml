@@ -7,6 +7,12 @@
   roles:
     - cognos_allow_ports
 
+- name: Allow SELinux to bind frontend port on the management server
+  hosts: management_server
+  become: true
+  roles:
+    - cognos_allow_se_ports
+
 - name: Get IP of application_server from role
   hosts:
     - application_server
