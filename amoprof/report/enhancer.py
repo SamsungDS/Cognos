@@ -37,274 +37,706 @@ log = logging.getLogger("amoprof.enhancer")
 
 
 # ─── Chart explanations ──────────────────────────────────────────────────────
-# Keyed by the H2 heading text (case-insensitive substring match).
+# Keyed by H2 heading text (case-insensitive substring match).
 # Each entry: (one-line summary, multi-paragraph significance).
+#
+# Writing guide:
+#   • Open with a crisp "What you are looking at" sentence.
+#   • Then "What the sub-panels show" — describe each panel specifically.
+#   • Then "How to read the numbers" — what good/bad looks like.
+#   • Then "What this means for KV cache" — the L1/L2/L3 implication.
+#   • End with "What to do if this looks bad" — one actionable fix.
+#
+# Typical run context for which these explanations were written:
+#   Model:  DeepSeek-R1-Distill-Llama-70B (8× A100 40 GB, TP=8)
+#   TTFT:   ~33 s  (very long context prefill — 43M tokens)
+#   TPOT:   ~2.3 s/tok (HBM-bandwidth-bound decode)
+#   Cache:  59 % gauge-active hit rate; 34 % token-weighted
+#   HBM:    89 % full (35.7 / 40 GB), peak 100 %
+#   NVMe:   3.8 TB reads, 3 GB writes — KV load-back dominated
+#   DRAM:   Active L2 tier (hicache DRAM enabled)
 CHART_EXPLANATIONS: dict[str, tuple[str, str]] = {
-    "ai operation phase": (
-        "Decomposes time spent in prefill (TTFT) vs decode (TPOT) phases of inference.",
-        "Why this matters for the AI stack: Prefill is compute-bound and dominated by "
-        "matmul throughput on HBM; decode is memory-bandwidth bound and dominated by "
-        "KV-cache reads. The relative durations tell you whether your bottleneck is "
-        "HBM bandwidth (decode-heavy) or compute / KV-cache-load (prefill-heavy). "
-        "For long contexts, prefill grows quadratically with sequence length; for long "
-        "generations, decode dominates."
-        "\n\nFor KV$: prefill writes new KV entries into the L1 (HBM) cache; decode "
-        "reads them on every token. A high TTFT with low TPOT means the KV-cache load "
-        "path is slow (likely L2/L3 misses); a high TPOT means the decode path is "
-        "constrained by HBM bandwidth or KV eviction."
+
+    # ── A5 · Application Layer ─────────────────────────────────────────────
+
+    "p50 / p90 / p99 summary": (
+        "Per-request latency percentiles (TTFT, ITL, E2E) from Prometheus "
+        "histogram_quantile() — the truest view of tail latency.",
+        "What you are looking at: Three rows of bar charts — one for TTFT "
+        "(Time to First Token), one for ITL/TPOT (inter-token / decode "
+        "step latency), one for E2E (full request wall-clock time). Each "
+        "row has four bars: Mean, P50, P90, P99.\n\n"
+        "How to read the numbers: A healthy inference server has a flat "
+        "P50→P99 ratio (less than 2×). A wide P90→P99 spread means "
+        "occasional cold-cache prefills or queue contention spikes. "
+        "A high TTFT (>500 ms) with moderate ITL indicates the bottleneck "
+        "is in the KV cache load path (L2/L3 miss), not in compute. "
+        "A high ITL (>100 ms) means the GPU is memory-bandwidth-bound "
+        "during decode — HBM is likely saturated.\n\n"
+        "For KV$: P99 TTFT is the most sensitive indicator of L3 (SSD) "
+        "cache misses. An L1 hit gives near-zero TTFT; an L3 hit adds "
+        "50–200 ms just for loading KV blocks from NVMe. If P99 >> P50 "
+        "on TTFT, check the KV eviction/load-back charts — the working "
+        "set is larger than your HBM pool.\n\n"
+        "What to do: P99 TTFT driven by long contexts → enable "
+        "`--chunked-prefill-size 4096`. Driven by cold cache → "
+        "increase DRAM/NVMe tier capacity."
     ),
-    "gpu utilisation": (
-        "Per-GPU utilization, HBM occupancy, power draw, and temperature over time.",
-        "Why this matters: For inference, sustained GPU util &lt; 60% indicates the "
-        "model is starved — usually waiting for KV cache loads from L2/L3 (host DRAM "
-        "or SSD). Sustained util &gt; 90% with stable HBM usage means HBM is the "
-        "bottleneck; util &gt; 90% with rising HBM means you're approaching OOM and "
-        "the runtime will start evicting KV entries.\n\nFor KV$: HBM occupancy is the "
-        "L1 tier capacity. If it stays pinned near 100%, every new request triggers "
-        "evictions to L2 (host DRAM), which surface as `load_back_tokens_total` "
-        "increments in the SGLang metrics below."
-    ),
-    "sglang inference": (
-        "Real-time inference throughput, latencies, and request queue depth.",
-        "Why this matters: SGLang's Prometheus endpoint exposes the runtime view of "
-        "your inference engine — TTFT, ITL (inter-token latency, ≈ TPOT), e2e request "
-        "latency, generation throughput, queue depth, and per-mode token counters "
-        "(decode / prefill_compute / prefill_cache).\n\nFor KV$: the most important "
-        "metric here is `cache_hit_rate` — the fraction of prefill tokens served from "
-        "the radix tree cache rather than recomputed. A drop in hit rate during a "
-        "long run usually signals KV$ pressure: the cache is being evicted faster "
-        "than it's being reused."
-    ),
-    "memory profile": (
-        "Combined HBM (GPU), DRAM (host), and KV cache occupancy over time.",
-        "Why this matters: The three memory tiers compete for the same data. HBM holds "
-        "model weights + active KV; DRAM holds spilled KV (L2); SSD holds cold KV (L3). "
-        "Tracking all three together shows whether the runtime is using its tiers "
-        "efficiently or leaving capacity stranded.\n\nFor KV$: when HBM nears full, "
-        "spillover to DRAM should be visible as rising `hicache_host_used_tokens`. "
-        "If DRAM also fills, you'll see writes to NVMe (the §C/§D/§E charts)."
-    ),
-    "kv cache footprint": (
-        "How KV cache consumes HBM capacity over the course of the run.",
-        "Why this matters: KV cache grows linearly with the number of active requests "
-        "× context length. For a 70B model with fp16 KV at 8192 context, each request "
-        "needs ~5 GB of KV. On 40 GB A100s with the model itself taking ~140 GB across "
-        "8 GPUs, only ~180 GB total is left for KV — that limits concurrent active "
-        "requests.\n\nFor KV$: when this chart shows HBM saturating, the runtime "
-        "starts trading: evicting older sessions' KV to DRAM to admit new requests, "
-        "then loading them back when those sessions resume."
-    ),
-    "per cache tier": (
-        "Cost per cache hit/miss broken down by tier (L1 HBM / L2 DRAM / L3 SSD).",
-        "Why this matters: Each cache tier has wildly different access cost — HBM "
-        "reads complete in ~1µs, DRAM in ~10µs, SSD in ~100µs. A KV cache that "
-        "spills to L3 (SSD) adds 100× latency vs. an L1 hit. Knowing the access "
-        "ratio per tier tells you whether your tier sizing matches your working set."
-        "\n\nFor KV$: an L3 hit (SSD load-back) is much cheaper than a full prefill "
-        "recompute, but only if the SSD can sustain enough bandwidth. The §C/§D "
-        "charts later show whether your SSD is keeping up."
-    ),
+
     "latency breakdown": (
-        "How total request latency decomposes across queue / prefill / decode phases.",
-        "Why this matters: A request's e2e latency = queue_time + TTFT + N*ITL. "
-        "If queue_time dominates, you need more concurrent capacity or smaller "
-        "models. If TTFT dominates, you need faster KV-cache loads (or prefill "
-        "compute). If ITL dominates, you need more HBM bandwidth or smaller batches."
-        "\n\nFor KV$: TTFT is the metric most affected by KV cache placement. A "
-        "request whose prefill prefix is cached in L1 has near-zero TTFT; one that "
-        "requires L3 (SSD) loads can have 100ms+ TTFT just for cache warmup."
+        "Decomposes end-to-end request latency into queue time, prefill "
+        "(TTFT), and decode (N × ITL) — plus a token-composition bar.",
+        "What you are looking at: A stacked bar where each segment "
+        "represents one phase: queue_time | TTFT | decode_total. "
+        "Alongside it, a proportional token bar shows prefill_cached | "
+        "prefill_compute | decode_output fractions.\n\n"
+        "How to read: Large prefill_compute segment + TTFT dominating the "
+        "latency bar → cache hit rate is low (KV eviction pressure or "
+        "diverse prompts). decode_total dominating → model is HBM-"
+        "bandwidth-bound; every decode step re-reads full model weights "
+        "from HBM. queue_time dominating → insufficient capacity; "
+        "requests are waiting before any GPU work starts.\n\n"
+        "For KV$: The token bar's cyan (prefill_cached) fraction is the "
+        "most direct measure of KV$ effectiveness. Aim for >70 % cached "
+        "on workloads with repeated system prompts. Sub-30 % signals "
+        "either an undersized HBM pool or a workload with no shared "
+        "prefix structure.\n\n"
+        "What to do: Low cached → check HBM fill % and eviction rate. "
+        "High queue → scale batch size or add replicas."
     ),
-    "storage i/o": (
-        "Aggregate disk I/O activity plus OS page-fault rate.",
-        "Why this matters: This is the &quot;health vitals&quot; view of the storage "
-        "subsystem. Sustained writes &gt; 2 GB/s indicate active KV cache spilling. "
-        "High major fault rate without disk I/O indicates DRAM exhaustion / swap.\n\n"
-        "For KV$: when L1 (HBM) overflows to L2 (DRAM), there's no disk I/O. When "
-        "L2 (DRAM) overflows to L3 (SSD), this chart should light up with steady "
-        "write activity matching the SGLang `backuped_tokens_total` rate."
+
+    "cache hit methodology": (
+        "Separates the four ways cache hit rate can be measured and "
+        "explains the gap between benchmark tool output and gauge averages.",
+        "What you are looking at: A table with four rows — "
+        "token-weighted, gauge-active-average, gauge-timeline-average, "
+        "and gauge-peak — each with its value and interpretation.\n\n"
+        "The four methods:\n"
+        "• Token-weighted: Δ(cached_tokens) / (Δcached + Δcompute). "
+        "Matches bench_serving output exactly.\n"
+        "• Gauge active avg: mean of non-zero sglang_cache_hit_rate "
+        "samples. Filters out idle windows.\n"
+        "• Gauge timeline avg: mean over ALL samples including idle — "
+        "almost always misleadingly low.\n"
+        "• Gauge peak: maximum instantaneous gauge value.\n\n"
+        "In the reference run: token-weighted 34 % vs gauge-active 59 %. "
+        "The gap means even during active windows, a large share of "
+        "tokens still go through prefill_compute — likely unique prompt "
+        "suffixes beyond the shared prefix.\n\n"
+        "What to do: If token-weighted << gauge-active, inspect prompt "
+        "structure. Adding a shared system-prompt prefix that all "
+        "requests use dramatically raises the token-weighted hit rate."
     ),
+
+    "ai operation phase": (
+        "Side-by-side Prefill (TTFT) and Decode (TPOT) panels with "
+        "severity badges, statistics, and a token composition bar.",
+        "What you are looking at: Left panel = Prefill: TTFT in ms, "
+        "context tokens split into compute vs cached, and a phase-driver "
+        "diagnosis. Right panel = Decode: TPOT in ms/token, total decode "
+        "tokens, peak throughput. Below: a token composition bar — "
+        "cyan (cached) | orange (compute) | green (decode).\n\n"
+        "How to read the badges: TTFT > 1000 ms → HIGH (long context or "
+        "cold cache). TPOT > 80 ms/tok → HIGH (HBM-bandwidth-bound). "
+        "A run with TTFT=33 s and TPOT=2.3 s is dominated by long-context "
+        "prefill: 43M-token prompts hit every KV block in the cache and "
+        "still run compute for uncached tails.\n\n"
+        "For KV$: The cyan fraction of the token bar is your effective "
+        "KV$ reuse rate. Sub-30 % cyan means less than a third of prompt "
+        "tokens were served without compute — the KV pool is too small "
+        "for the working set or the workload has too little prefix "
+        "repetition.\n\n"
+        "What to do: TTFT too high with large compute segment → chunked "
+        "prefill or KV quantisation. TPOT too high → speculative decoding "
+        "or reduce concurrent batch size to keep more KV in HBM."
+    ),
+
+    # ── A4 · Inference Runtime ────────────────────────────────────────────
+
+    "sglang inference": (
+        "Real-time 6-panel time series of every key SGLang metric — TTFT, "
+        "TPOT, throughput, cache hit rate, token counters, queue depth.",
+        "What you are looking at: Six panels from SGLang's Prometheus "
+        "/metrics endpoint scraped at 1-sec intervals:\n"
+        "(1) TTFT ms — per-interval mean of time_to_first_token.\n"
+        "(2) TPOT/ITL ms — per-interval mean of inter_token_latency.\n"
+        "(3) Gen throughput tok/s — sglang_gen_throughput rolling gauge.\n"
+        "(4) Cache hit rate % — rolling cache_hit_rate gauge.\n"
+        "(5) Token counters — cumulative prefill_cache/compute/decode.\n"
+        "(6) Queue depth — num_running_reqs and num_queue_reqs.\n\n"
+        "How to read: TTFT spike + no queue depth = cold-cache prefill "
+        "(KV was evicted and must be reloaded from L2/L3). "
+        "Queue_depth > 0 continuously = engine capacity is insufficient. "
+        "Cache hit rate drop concurrent with HBM near 100 % = "
+        "eviction pressure causing cache churn.\n\n"
+        "For KV$: The cache hit rate panel is your live tier health "
+        "indicator. Cross-reference with the KV Block Event chart — "
+        "rising evicted counters with a simultaneous hit-rate drop "
+        "confirms the KV pool is too small for the working set.\n\n"
+        "What to do: Sustained queue_depth > 0 → scale horizontally. "
+        "Hit rate oscillating → increase `--max-total-tokens` or "
+        "use KV quantisation."
+    ),
+
+    "memory profile": (
+        "Combined time series of HBM (GPU), DRAM (host), and KV cache "
+        "tier usage — the full three-tier memory picture on one canvas.",
+        "What you are looking at: Overlapping time series for:\n"
+        "• HBM Used (GB) and HBM util % per GPU (DCGM).\n"
+        "• Estimated HBM BW (GB/s) derived from TPOT × model size.\n"
+        "• DRAM BW (GB/s) from AMDuProf (when available).\n"
+        "• KV pool usage — sglang:full_token_usage fraction.\n"
+        "• hicache host tokens (L2 DRAM tier occupancy).\n\n"
+        "How to read: HBM flat near 100 % + rising hicache host tokens = "
+        "runtime is actively spilling KV to DRAM (L1→L2). That + rising "
+        "NVMe write activity = spillover reaching L3 (DRAM→NVMe). "
+        "DRAM BW spike during HBM saturation confirms active L1→L2 DMA.\n\n"
+        "In the reference run: HBM 89 %, 8 GPUs × 17.5 GB weights = "
+        "22 GB/GPU left for KV. At 327 KB/token, this allows ~67K tokens "
+        "in HBM before spilling — any 131K-token context immediately "
+        "uses both HBM and DRAM tiers.\n\n"
+        "For KV$: This is the single best chart for seeing tier spillover "
+        "in action. A rising hicache_host line concurrent with flat/full "
+        "HBM is the L1→L2 spill event.\n\n"
+        "What to do: HBM pinned at 100 % → KV quantisation (FP8 halves "
+        "per-token cost) or reduce `--max-num-seqs`."
+    ),
+
+    "kv cache footprint": (
+        "Static KV cache capacity analysis: bytes/token, max HBM context, "
+        "weight footprint, quantisation savings, and spill threshold.",
+        "What you are looking at: Six mini-cards showing:\n"
+        "• KV Bytes/Token: 2 × n_layers × n_kv_heads × head_dim × dtype_bytes.\n"
+        "• Max Context (HBM): tokens fitting in HBM KV pool.\n"
+        "• Weight Footprint: GB of HBM used by model parameters.\n"
+        "• KV Pool Used %: fraction of pre-allocated pool occupied.\n"
+        "• INT8 Savings: doubled token capacity at INT8.\n"
+        "• Spill Threshold: token count that triggers DRAM spill.\n\n"
+        "For DeepSeek-R1-Distill-Llama-70B in BF16 on A100 40 GB:\n"
+        "  2 × 80 layers × 8 KV-heads × 128 dim × 2 bytes = 327 KB/token\n"
+        "  ~17.5 GB weights/GPU → ~22.5 GB left for KV → ~68K tokens max\n"
+        "  At 131K context window: every request immediately overflows HBM\n"
+        "  INT8 KV doubles capacity to ~137K before spilling.\n\n"
+        "For KV$: The Spill Threshold card directly tells you the context "
+        "length at which you START generating NVMe traffic. Any prompt "
+        "longer than this will hit L2/L3.\n\n"
+        "What to do: Contexts regularly exceeding spill threshold → "
+        "enable FP8 KV (`--kv-cache-dtype fp8_e5m2` in SGLang ≥0.4). "
+        "Accuracy impact is typically <0.5 % on standard benchmarks."
+    ),
+
+    "per cache tier": (
+        "Per-tier (L1=HBM / L2=DRAM / L3=SSD) token distribution and "
+        "access cost — translates tier occupancy into latency impact.",
+        "What you are looking at: Two panels:\n"
+        "(1) Token distribution: stacked bar or time series showing what "
+        "fraction of active KV tokens live in each tier.\n"
+        "(2) Tier cost analysis: access latency per tier (L1 ~1 µs, "
+        "L2 ~10 µs, L3 ~100 µs) weighted by token fractions to give "
+        "a weighted-average KV access cost.\n\n"
+        "How to read: 100 % L1 = ideal (working set fits in HBM). "
+        "50 % L1 / 50 % L2 = active DRAM staging, manageable. "
+        "Any L3 fraction = NVMe on the critical decode path, "
+        "adds 100–500 µs per decode step per session.\n\n"
+        "For KV$: The cost chart is the direct translation from "
+        "'where are my tokens' to 'what does it cost per generated "
+        "token'. L3 hit at 100 µs × 1000 decode steps × 100 "
+        "concurrent sessions = 10 s of aggregate L3 latency per "
+        "generated sequence.\n\n"
+        "What to do: If L3 > 20 % of tokens during decode, either "
+        "reduce session count, add DRAM (expand L2 tier), or upgrade "
+        "to faster NVMe."
+    ),
+
     "session / stream": (
-        "Per-inference-session view: lifetime, KV footprint, BW consumed by each request.",
-        "Why this matters: When 10 requests are in flight, this chart shows how each "
-        "one is utilising memory and storage bandwidth. Outlier streams that consume "
-        "10× more I/O than peers indicate either very long contexts, heavy cache "
-        "thrashing, or pathological access patterns.\n\nFor KV$: each session is a "
-        "stream in the bandwidth_per_stream.csv data. The shape of this distribution "
-        "tells you whether your workload is uniform (good for cache sizing) or "
-        "long-tailed (a few heavy requests dominate)."
+        "Per-inference-session breakdown: concurrency, KV footprint, "
+        "and I/O bandwidth consumed by each active request.",
+        "What you are looking at: Four panels:\n"
+        "(1) Gantt bars: session start/end times.\n"
+        "(2) KV footprint: peak tokens in cache per session.\n"
+        "(3) BW consumed: NVMe MB/s attributed per session (biosnoop).\n"
+        "(4) Concurrency: simultaneous active sessions over time.\n\n"
+        "How to read: Uniform session lengths + similar KV footprints = "
+        "predictable, easy-to-size workload. A few outliers with 10× "
+        "KV footprint of peers = long-context requests monopolising "
+        "resources and pushing shorter sessions' KV out of HBM, "
+        "degrading everyone's cache hit rate.\n\n"
+        "For KV$: Sessions whose context exceeds HBM capacity generate "
+        "continuous L2/L3 traffic on every decode step. A 200K-token "
+        "session with a 68K-token L1 capacity has a permanent 132K-token "
+        "'hot tail' in L2/L3 that gets paged in/out continuously.\n\n"
+        "What to do: Route outlier long-context sessions to a dedicated "
+        "server, or enable sliding window attention to cap the active "
+        "KV footprint."
     ),
+
     "kv cache block": (
-        "Lifecycle events for individual KV cache blocks — load, evict, write-back, prefetch.",
-        "Why this matters: Every KV block in the radix-tree cache has a lifecycle: "
-        "created during prefill, hit on subsequent prefills (if prefix matches), "
-        "evicted under memory pressure, backed up to L2/L3, and loaded back if the "
-        "session resumes. The rate of each transition tells you whether the cache is "
-        "thrashing.\n\nFor KV$: high `evicted` + high `load_back` = thrashing (the "
-        "cache is too small for the working set). High `backuped` with low "
-        "`load_back` = good tier policy (cold blocks are spilled, warm ones stay)."
+        "KV cache block lifecycle event rates — eviction, backup (L1→L2/L3 "
+        "write), and load-back (L3/L2→L1 read) — the clearest signal of "
+        "KV cache thrashing.",
+        "What you are looking at: Time series of four SGLang hicache "
+        "counters (rates = Δ/s):\n"
+        "• evicted_tokens/s → blocks removed from HBM.\n"
+        "• backuped_tokens/s → blocks written to DRAM/NVMe.\n"
+        "• load_back_tokens/s → blocks read back into HBM.\n"
+        "• prefix_cache_miss_tokens/s → tokens requiring compute.\n\n"
+        "How to read the patterns:\n"
+        "High evicted + low backup = HBM overcommitted, blocks dropped "
+        "before persisting (lost KV, must recompute).\n"
+        "High backup + high load_back = thrashing: same blocks "
+        "written then read repeatedly.\n"
+        "Low backup + high load_back = blocks were backed up in a prior "
+        "phase, now being read back (the reference run pattern).\n\n"
+        "For KV$: The reference run shows 3.8 TB reads vs 3 GB writes "
+        "in NVMe — consistent with load_back dominating over backup. "
+        "The KV was written in an earlier warm-up and is now being "
+        "read back on every decode step for long-context sessions. "
+        "Reading 3.8 TB for 29,660 decode tokens = ~128 MB per token "
+        "of NVMe traffic.\n\n"
+        "What to do: High load_back rate + NVMe near saturation → "
+        "add NVMe bandwidth (RAID-0 of 2–4 drives). High backup rate "
+        "→ check if DRAM tier can absorb more before spilling to NVMe."
     ),
-    "nvme io workload": (
-        "Aggregate NVMe IOPS, throughput, and queue depth — the SSD&#39;s view of the workload.",
-        "Why this matters: This is the device-level view of all SSD activity, "
-        "regardless of which process generated it. A sustained 80%+ utilization "
-        "with rising queue depth means the SSD is saturated and adds latency to "
-        "every request.\n\nFor KV$: when KV cache spills to L3 (SSD), you'll see "
-        "this chart spike. The R/W ratio reveals workload character — KV loads "
-        "are reads, KV write-backs are writes. A heavy-write phase corresponds "
-        "to L2→L3 spillover; heavy-read corresponds to L3→L1 reactivation."
+
+    # ── A3 · OS / Kernel ────────────────────────────────────────────────
+
+    "storage i/o": (
+        "Aggregate NVMe read/write bandwidth plus OS page-fault rate on "
+        "a shared timeline — the health-vitals view of storage.",
+        "What you are looking at: Two overlaid time series — disk R/W BW "
+        "(MB/s, from iostat) and major page fault rate (faults/s, from "
+        "/proc/vmstat).\n\n"
+        "How to read: Sustained write >500 MB/s, no major-fault spike = "
+        "SGLang hicache actively backing up KV to NVMe. "
+        "Sustained read >500 MB/s, low write = load-back dominated "
+        "(this run: 581 MB/s reads, 0.5 MB/s writes). "
+        "Major faults + NO disk I/O = DRAM pressure / swap. "
+        "Major faults + disk I/O = demand-paging model weights.\n\n"
+        "The 18.9M major-faults/sec peak visible in the tooltip is "
+        "almost certainly a /proc/vmstat counter overflow artefact — "
+        "genuine 18M faults/sec would saturate any storage in seconds. "
+        "Treat the major-fault data in this run as noise.\n\n"
+        "For KV$: Read BW without corresponding write BW = the NVMe "
+        "is serving previously-written KV (load-back phase). The "
+        "write phase happened earlier. This is expected for "
+        "long-running sessions that warm the cache over many requests.\n\n"
+        "What to do: Read BW near device limit → add NVMe bandwidth. "
+        "Write BW near limit → check whether other processes share "
+        "the device; dedicate NVMe to hicache."
     ),
-    "nvme io deep profiling": (
-        "Per-request NVMe details: request size, alignment, sequential vs random, latency.",
-        "Why this matters: Two workloads with identical aggregate IOPS can stress an "
-        "SSD very differently. 4KB random reads have ~10× the per-byte overhead of "
-        "1MB sequential reads. This chart shows the actual request shape, which is "
-        "what determines whether the SSD will keep up.\n\nFor KV$: KV cache I/O has "
-        "a characteristic signature — small (64KB-256KB) writes to sequential LBAs "
-        "during spill, small random reads during reactivation. Deviation from that "
-        "signature (e.g. lots of tiny 4KB I/O) usually indicates metadata thrashing."
-    ),
-    "ssd read workload": (
-        "Read-only deep dive: read size distribution, read inter-arrival times, read alignment.",
-        "Why this matters: SSDs deliver their advertised IOPS only on 4K-aligned, "
-        "queue-depth-saturated workloads. Misaligned reads pay a read-modify-write "
-        "penalty. Bursts faster than the SSD's GC interval will trigger latency "
-        "spikes.\n\nFor KV$: every KV cache miss that reaches L3 generates a read "
-        "here. If the read pattern is random and small, your SSD's random read "
-        "spec dominates achievable throughput — and L3 access becomes a bottleneck "
-        "for token generation."
-    ),
-    "ssd write workload": (
-        "Write-only deep dive: write size distribution, write IAT, write alignment.",
-        "Why this matters: SSD write performance degrades over time as cells fill up "
-        "and GC kicks in. Large sequential writes (preferred) coexist peacefully "
-        "with reads; small random writes (avoided) trigger background GC that "
-        "stalls reads.\n\nFor KV$: KV write-backs from L2 (DRAM) to L3 (SSD) "
-        "should be large sequential writes — the runtime batches them. If you "
-        "see small random writes here, that's likely metadata or wandering free "
-        "list allocation, which will hurt sustained throughput."
-    ),
-    "trim / discard": (
-        "TRIM (discard) commands — how the OS tells the SSD which blocks are no longer needed.",
-        "Why this matters: TRIM lets the SSD's GC reclaim space without copying "
-        "stale data, dramatically improving sustained write performance. No TRIM = "
-        "the SSD treats every block as &quot;live&quot;, slowly degrading to its "
-        "factory-fresh-out-of-box state.\n\nFor KV$: when a KV cache session "
-        "completes, the runtime should TRIM the blocks it occupied so the SSD "
-        "can prepare them for reuse without read-modify-write. Absent TRIM, "
-        "long runs will see write performance degrade as the SSD fills with "
-        "stale KV data."
-    ),
-    "cross-layer correlation": (
-        "Derived KPIs that span GPU + NVMe + SGLang — token cost in storage I/O.",
-        "Why this matters: A single &quot;tokens per second&quot; number hides the "
-        "cost structure. This section computes per-token SSD bandwidth (MB of disk "
-        "I/O per generated token), per-token HBM bandwidth, and a throughput "
-        "bottleneck estimate based on the most-loaded subsystem.\n\nFor KV$: when "
-        "per-token SSD cost is high (&gt; 0.1 MB/tok), the KV cache is regularly "
-        "hitting L3 — your model is paying SSD-tier latency on the critical path. "
-        "When per-token HBM BW saturates the GPU's HBM peak, decode is "
-        "HBM-bandwidth-bound and adding more GPUs won't help (each GPU is "
-        "individually saturated)."
-    ),
-    "cross-layer kpi": (
-        "Composite KPIs that span GPU, NVMe, and inference engine layers.",
-        "Why this matters: Bottlenecks rarely live in one layer — they're usually "
-        "the intersection of two. &quot;GPU is idle&quot; + &quot;SSD is busy&quot; = "
-        "KV loads are the bottleneck. &quot;GPU is busy&quot; + &quot;SSD is "
-        "idle&quot; = HBM bandwidth or compute is the bottleneck.\n\nFor KV$: this "
-        "is where you spot tier-mismatched workloads — e.g., a small fast SSD "
-        "wasted on a workload that fits in DRAM, or a workload that needs L3 "
-        "running on storage that can't keep up."
-    ),
-    "lba hot/cold": (
-        "Spatial distribution of disk accesses — which regions of the SSD address space are hot.",
-        "Why this matters: Most workloads concentrate their accesses on a small "
-        "subset of the disk — this is the working set. Quantifying it (via Gini "
-        "coefficient or top-1% byte share) tells you how much storage you really "
-        "need: a 10TB SSD where 99% of bytes touch the same 100GB is wasteful.\n\n"
-        "For KV$: KV cache pages tend to be hot for the duration of a session and "
-        "cold afterward. A high Gini means the runtime is correctly concentrating "
-        "active sessions; a low Gini suggests scattered, ineffective caching."
-    ),
-    "per-stream bandwidth": (
-        "How total disk bandwidth is divided across concurrent inference sessions.",
-        "Why this matters: Under contention, fair-share splitting is rare — heavy "
-        "streams often crowd out lighter ones (head-of-line blocking on the device "
-        "queue). The shape of the per-stream BW distribution reveals fairness "
-        "issues that aggregate stats miss.\n\nFor KV$: a single long-context "
-        "request can monopolize the SSD's read queue, starving other sessions' "
-        "KV loads and inflating their TTFTs. This chart is where you spot that."
-    ),
-    "ssd io workload characteristics": (
-        "Comprehensive SSD I/O profile across read, write, and trim operations.",
-        "Why this matters: This unified view lets you compare the three I/O types "
-        "side-by-side on the same axes — bandwidth, IOPS, latency, queue behavior. "
-        "Disproportions (e.g., huge write BW relative to read BW) reveal workload "
-        "imbalance that aggregate-only views hide.\n\nFor KV$: a healthy KV "
-        "workload should show roughly balanced read and write BW when the cache "
-        "is in steady state, with a brief write-heavy phase at the start (cache "
-        "fill) and a brief trim-heavy phase at the end (session cleanup)."
-    ),
-    "hbm (gpu) bandwidth": (
-        "HBM (GPU memory) read/write bandwidth and transaction rate.",
-        "Why this matters: A100 80GB HBM2e theoretical peak is ~2 TB/s. Sustained "
-        "&gt; 1.5 TB/s during decode means you're memory-bandwidth bound — adding "
-        "more compute won't help, only smaller models, quantization, or faster HBM "
-        "will.\n\nFor KV$: every decode token reads the entire active KV cache "
-        "from HBM. KV cache size × decode rate gives you the HBM read BW the "
-        "model needs. If actual HBM BW is below that, the GPU is stalling on "
-        "KV loads — which means the L1 tier is the bottleneck."
-    ),
-    "system dram": (
-        "Host (CPU-side) DRAM bandwidth and transaction rate from AMDuProf PMU counters.",
-        "Why this matters: Host DRAM is the L2 tier for KV cache. EPYC servers "
-        "typically have 12-channel DDR5 at ~460 GB/s peak — much slower than HBM "
-        "but much larger. If KV spillover saturates this number, your L2 tier "
-        "becomes the bottleneck.\n\nFor KV$: the rate at which the runtime can "
-        "spill HBM→DRAM and reload DRAM→HBM is gated by this bandwidth divided "
-        "by your KV block size. High DRAM BW here during steady-state inference "
-        "is the signature of an active L2 tier."
-    ),
+
     "swap storm": (
-        "Page swap and major-fault activity from /proc/vmstat.",
-        "Why this matters: Swap activity during ML inference is almost always "
-        "pathological — the kernel is pushing pages of model weights or KV cache "
-        "to swap because pinned memory was misconfigured. A swap storm here "
-        "correlates with massive latency spikes in TTFT/TPOT.\n\nFor KV$: if "
-        "your L2 (DRAM) tier was sized larger than physical RAM, the kernel "
-        "fills RAM and then swaps to disk. The SGLang runtime sees this as "
-        "host memory pressure but the underlying cost is swap I/O — visible "
-        "here as `pswpout`/`pswpin` rates."
+        "Page swap rates (pswpin/pswpout) and major faults from /proc/vmstat "
+        "— early warning for kernel memory pressure during inference.",
+        "What you are looking at: Three time series — swap-in pages/s, "
+        "swap-out pages/s, and major fault rate/s — all derived from "
+        "Δ(counter) / Δ(time) on /proc/vmstat cumulative counters.\n\n"
+        "How to read: Any sustained pswpin/pswpout > 0 during inference "
+        "is a critical failure mode. Swap I/O during ML inference means "
+        "the OS is treating model weights or activations as pageable "
+        "memory and evicting them — CUDA operations block until the "
+        "page returns from swap, causing TPOT spikes measured in "
+        "seconds rather than milliseconds.\n\n"
+        "Why the interactive chart shows 'no data': The interactive "
+        "chart correctly returns empty when pswpin and pswpout are all "
+        "zeros — no swap activity occurred. The static report renders a "
+        "placeholder panel regardless of whether data is present. "
+        "An empty interactive swap chart is good news: the server was "
+        "not swapping during this run.\n\n"
+        "For KV$: Swap I/O and hicache L3 NVMe I/O can both appear in "
+        "iostat reads/writes. This chart distinguishes them: hicache "
+        "backup appears in iostat but NOT in pswpout. If iostat shows "
+        "writes but this chart shows zero swap, it is KV backup, not "
+        "OS swap — which is the correct and expected behaviour.\n\n"
+        "What to do: To prevent swap: set vm.swappiness=0, use "
+        "`--disable-swap-space` (Linux systems), and ensure the "
+        "CUDA unified memory driver does not over-allocate."
     ),
+
+    # ── A2 · Drivers ─────────────────────────────────────────────────────
+
+    "gpu utilisation": (
+        "Per-GPU time series of SM utilisation, HBM occupancy, power "
+        "draw, and HBM bandwidth active fraction from DCGM.",
+        "What you are looking at: A 4-panel chart (or 2×2 grid):\n"
+        "(1) GPU Util % — DCGM_FI_DEV_GPU_UTIL (SM occupancy).\n"
+        "(2) HBM Used (GB) — DCGM_FI_DEV_FB_USED.\n"
+        "(3) Power (W) — DCGM_FI_DEV_POWER_USAGE.\n"
+        "(4) HBM BW Active % — DCGM_FI_PROF_DRAM_ACTIVE × 100.\n\n"
+        "Important: GPU util is SM occupancy, not HBM bandwidth. "
+        "An A100 can show 100 % util at low HBM BW (compute-bound "
+        "attention) or 40 % util at full HBM BW (decode, memory-"
+        "bandwidth-bound). The HBM BW Active panel is the direct "
+        "bandwidth saturation signal.\n\n"
+        "In the reference run: mean 96.4 % util, peak 100 %, "
+        "HBM 89 % full (35.7/40 GB), power 392 W/GPU. The GPUs are "
+        "fully loaded during a combined long-context prefill (compute-"
+        "bound) and decode (bandwidth-bound) workload.\n\n"
+        "For KV$: HBM fill % is the L1 tier gauge. Pinned at 89–100 % "
+        "means every new session competes for KV space. Sudden drop in "
+        "HBM fill followed by a load_back spike = session evicted, "
+        "then immediately requested again — classic thrashing.\n\n"
+        "What to do: Util > 95 % with HBM > 85 % and rising TPOT → "
+        "KV quantisation (FP8) to free HBM and improve batching."
+    ),
+
+    "nvme io workload characteristics": (
+        "Aggregate NVMe IOPS, bandwidth, queue depth, and device "
+        "utilisation from iostat — the SSD driver's view of all block I/O.",
+        "What you are looking at: A 6-panel chart:\n"
+        "(1) Read IOPS vs Write IOPS time series.\n"
+        "(2) Read BW (MB/s) vs Write BW (MB/s).\n"
+        "(3) Average I/O queue depth over time.\n"
+        "(4) Device utilisation % (iostat %util).\n"
+        "(5) SMART summary: model, temperature, WAF, lifetime used.\n"
+        "(6) Service time / await latency distribution.\n\n"
+        "In the reference run: 581 MB/s reads at 15,491 IOPS vs "
+        "0.5 MB/s writes at 20 IOPS — a 1000:1 read/write ratio. "
+        "Average read size = 581 MB/s ÷ 15,491 IOPS ≈ 37 KB, "
+        "consistent with one KV block per I/O. The write floor "
+        "confirms this is a load-back-dominated phase with no "
+        "active eviction.\n\n"
+        "Note on SMART: If model shows '?' and WAF=1.0, the nvme-cli "
+        "SMART collection failed. Run `nvme smart-log /dev/nvme0 -o "
+        "json` to verify the device is recognised.\n\n"
+        "For KV$: 15K IOPS at 37 KB/IO suggests page_size=1 token "
+        "produces one I/O per KV block. Larger page sizes reduce IOPS "
+        "for the same bandwidth — try `--sglang-page-size 64`.\n\n"
+        "What to do: IOPS near SSD random-read spec → increase page_size "
+        "to coalesce reads. BW near sequential spec → add NVMe devices."
+    ),
+
+    "nvme io deep profiling": (
+        "Per-request NVMe detail from blktrace: request size distribution, "
+        "alignment, sequential vs random ratio, and I/O latency.",
+        "What you are looking at: A 6-panel deep-dive:\n"
+        "(1) Request size histogram — peak at the KV block size.\n"
+        "(2) Access alignment — fraction at 4KB/64KB/512KB boundaries.\n"
+        "(3) Sequential vs random — stride < 2× KV block = sequential.\n"
+        "(4) IAT (inter-arrival time) distribution.\n"
+        "(5) Latency distribution from blktrace timestamps.\n"
+        "(6) Queue depth from blktrace issue/complete events.\n\n"
+        "Requires `--enable-blktrace` at collect time. If these panels "
+        "are empty, re-collect with blktrace enabled.\n\n"
+        "How to read: KV I/O fingerprint = predominantly 32–512 KB reads, "
+        "4KB-aligned, burst IAT (sequential within session, random across). "
+        "4KB I/Os in this context = inode/metadata, not KV blocks. "
+        "High misalignment → hicache files not written with O_DIRECT.\n\n"
+        "For KV$: Sequential-vs-random ratio reveals how well hicache "
+        "organises NVMe layout. Session blocks stored contiguously → "
+        "sequential load-back (fast). Scattered → random I/O.\n\n"
+        "What to do: High misalignment → use XFS with largeio mount. "
+        "High randomness → pre-allocate KV files in session-order chunks."
+    ),
+
+    "ssd read workload": (
+        "Read-only deep dive (§C) from blktrace: read request sizes, "
+        "inter-arrival times, and alignment.",
+        "What you are looking at: Three sub-panels — §C read size "
+        "histogram, §C read IAT histogram, §C read alignment fractions.\n\n"
+        "The reference run's 101M read events at 15K IOPS and 581 MB/s "
+        "imply ~37 KB average read size. Peak in the size histogram "
+        "at 32–64 KB = one KV block (page_size × KV bytes/token). "
+        "A peak at 4 KB = fragmented hicache (individual memory pages "
+        "accessed instead of whole blocks).\n\n"
+        "For KV$: An L3 hit at 37 KB costs: 37 KB / 3 GB/s seq = "
+        "12 µs on an uncongested NVMe. At 15K IOPS (random): "
+        "37 KB / 600 MB/s = 62 µs. At TPOT=2.3 s, NVMe is not "
+        "the primary bottleneck, but every parallel session's KV "
+        "reads stack up on the same device queue.\n\n"
+        "What to do: Read size peak below 32 KB → increase "
+        "`--sglang-page-size`. Alignment < 90 % → add O_DIRECT to "
+        "hicache open() flags."
+    ),
+
+    "ssd write workload": (
+        "Write-only deep dive (§D) from blktrace: write sizes, "
+        "inter-arrival times, and alignment.",
+        "What you are looking at: Three sub-panels — §D write size "
+        "histogram, §D write IAT histogram, §D write alignment.\n\n"
+        "The reference run shows only 3.14 GB writes vs 3,808 GB reads. "
+        "This near-zero write rate means the KV backup phase was "
+        "completed in an earlier warm-up run; this session is entirely "
+        "in load-back mode. In a write-heavy phase you would see "
+        "large sequential writes (1–4 MB) as whole KV block groups "
+        "are flushed to NVMe.\n\n"
+        "For KV$: Sequential writes (large §D bars at 512KB–4MB) are "
+        "SSD-friendly (low WAF). Random small writes trigger NAND GC "
+        "and raise WAF. If WAF > 3.0 in SMART, the write pattern is "
+        "suboptimal — another process may be writing concurrently.\n\n"
+        "What to do: Write BW near device limit → ensure no other "
+        "workloads share the NVMe. WAF >3 → check for 4K random "
+        "writes from another process."
+    ),
+
+    "trim / discard": (
+        "TRIM (discard) commands from blktrace — how the OS notifies the "
+        "SSD which blocks are free so its GC can reclaim them.",
+        "What you are looking at: Three sub-panels (§E) — TRIM event rate "
+        "over time, TRIM byte volume, and seasonal TRIM pattern.\n\n"
+        "The reference run shows 0 TRIM events. This means either the "
+        "filesystem is mounted without the discard option, the hicache "
+        "does not explicitly fallocate/unlink, or the SSD filters TRIM "
+        "commands. Without TRIM, the SSD cannot reclaim freed KV blocks "
+        "without a full GC pass, gradually raising write amplification.\n\n"
+        "For a read-dominated run (like this one) the absence of TRIM has "
+        "minimal immediate performance impact, but matters for long-term "
+        "write endurance as the cache fills over days/weeks of usage.\n\n"
+        "For KV$: TRIM is most critical on write-heavy workloads where "
+        "KV eviction cycles are rapid. For read-dominated runs, enabling "
+        "TRIM has near-zero overhead and is always worthwhile.\n\n"
+        "What to do: Mount hicache filesystem with `-o discard` "
+        "(inline TRIM) or schedule `fstrim /mnt/hicache` hourly "
+        "(batch TRIM, lower write overhead)."
+    ),
+
+    "cross-layer kpi": (
+        "Composite KPIs derived by correlating NVMe + GPU + SGLang — "
+        "per-token SSD cost and throughput bottleneck estimate.",
+        "What you are looking at: Two key panels:\n"
+        "§G88-89: SSD Dependency per Token — MB of NVMe I/O per "
+        "generated output token. Directly measures how much the decode "
+        "path depends on L3 storage.\n"
+        "§G93: Throughput Bottleneck Estimate — which subsystem (HBM, "
+        "DRAM, NVMe, or compute) is the binding constraint at the "
+        "observed throughput.\n\n"
+        "In the reference run: 3,808 GB reads / 29,660 decode tokens "
+        "≈ 128 MB per output token. This is very high — every generated "
+        "token costs 128 MB of NVMe reads. At 581 MB/s NVMe BW and "
+        "67.5 tok/s throughput: 128 MB × 67.5 tok/s = 8.6 GB/s demand "
+        "vs 581 MB/s actual supply. The NVMe bandwidth is 15× "
+        "under-provisioned for the KV demand, but TPOT is still GPU-"
+        "limited (96 % util) — NVMe is a secondary constraint.\n\n"
+        "For KV$: >1 MB/tok = NVMe is active on the critical path. "
+        ">10 MB/tok = NVMe is a significant bottleneck. "
+        ">100 MB/tok (as in this run) = KV tier architecture needs "
+        "rethinking (more DRAM, faster NVMe, or KV quantisation).\n\n"
+        "What to do: Increase DRAM tier (move more KV from L3 to L2), "
+        "or add PCIe 5.0 NVMe (7 GB/s sequential vs 3.5 GB/s on Gen 4)."
+    ),
+
+    "cross-layer correlation": (
+        "Scatter and time series correlating GPU utilisation, NVMe "
+        "utilisation, and inference throughput — bottleneck attribution.",
+        "What you are looking at: Three panels:\n"
+        "(1) Per-token SSD bandwidth (MB/tok) over time.\n"
+        "(2) Per-token HBM bandwidth (GB/tok) over time.\n"
+        "(3) GPU util vs NVMe util scatter — one point per sample.\n\n"
+        "How to read: GPU busy + NVMe busy simultaneously → decode "
+        "doing both compute and KV I/O (common steady state). "
+        "GPU idle + NVMe busy → GPU waiting for KV data from NVMe "
+        "(storage is the bottleneck). "
+        "GPU busy + NVMe idle → compute-bound prefill.\n\n"
+        "The scatter plot is the fastest diagnosis tool: "
+        "positive correlation (both rise together) = well-utilised. "
+        "Negative correlation (GPU drops when NVMe spikes) = "
+        "storage starving the GPU.\n\n"
+        "For KV$: In this run the positive correlation between GPU util "
+        "(96 %) and NVMe reads (581 MB/s) shows both are active "
+        "simultaneously — the GPU is running compute while the NVMe "
+        "prefetches the next batch of KV blocks.\n\n"
+        "What to do: Negative correlation → increase NVMe bandwidth "
+        "or expand DRAM tier. Positive saturation of both → need more "
+        "hardware (more GPUs or faster NVMe)."
+    ),
+
+    "ssd / gpu / inference": (
+        "Cross-layer KPI section combining §G88-89 (SSD dependency), "
+        "§G93 (bottleneck estimate), and GPU correlation data.",
+        "This section covers the same composite metrics as the "
+        "'Cross-Layer KPIs' section. Key number: SSD Dependency per "
+        "Token (MB/tok). Under 0.1 = NVMe not a bottleneck. "
+        "0.1–10 = moderate L3 activity. Over 10 = L3 on decode "
+        "critical path. Over 100 (as in this run at ~128 MB/tok) = "
+        "KV tier architecture needs fundamental rethinking.\n\n"
+        "For KV$: The 128 MB/tok in this run reflects very long "
+        "sessions (43M-token contexts) where the entire KV history "
+        "must be loaded from NVMe on each decode step. "
+        "The solution is a larger DRAM tier (keep most KV in L2) "
+        "or GPUDirect Storage to eliminate the CPU/DRAM hop on "
+        "L3→L1 transfers."
+    ),
+
+    "ssd io workload characteristics": (
+        "Unified §C/§D/§E comparison on the same axes — read/write/trim "
+        "bandwidth, IOPS, latency, and IAT side-by-side.",
+        "What you are looking at: Three columns (reads | writes | trims) "
+        "each showing BW, IOPS, latency distribution, and IAT. "
+        "Allows direct comparison of the shape of each I/O type.\n\n"
+        "The reference run's 1000:1 read:write ratio is far outside "
+        "steady-state. This captures a pure load-back phase where the "
+        "NVMe is serving previously-written KV data with almost no "
+        "new backup writes. The KV cache was pre-warmed (written) "
+        "before this measurement window.\n\n"
+        "For KV$: Compare §C reads to the load_back_tokens counter "
+        "in the KV Block Events chart. Compare §D writes to the "
+        "backuped_tokens counter. They should correlate: more backup "
+        "→ more §D writes; more load_back → more §C reads.\n\n"
+        "What to do: If §D writes and §C reads are balanced, the "
+        "cache is in steady-state churn. If §C reads heavily dominate, "
+        "the cache was pre-warmed and is being consumed."
+    ),
+
+    "per-stream bandwidth": (
+        "Per-session (pid/process) NVMe bandwidth attribution from "
+        "biosnoop — which requests are consuming the most I/O.",
+        "What you are looking at: Ranked bar chart of top 20 streams by "
+        "total NVMe bandwidth, plus a temporal stacked area chart.\n\n"
+        "How to read: If one stream accounts for >50 % of NVMe BW, "
+        "it is monopolising the device. This is the head-of-line "
+        "blocking scenario: a long-context session reading 100+ MB "
+        "of KV per decode step saturates the device queue, "
+        "delaying other sessions' load-back requests.\n\n"
+        "SGLang typically appears as a single PID. Multiple "
+        "workers/threads in biosnoop indicate parallel I/O workers "
+        "in hicache — good for throughput but may create fairness "
+        "issues on shared devices.\n\n"
+        "For KV$: Even bandwidth distribution means all sessions "
+        "get equal NVMe access (fair scheduling). Uneven distribution "
+        "means the longest-context sessions are getting "
+        "disproportionate NVMe time at the expense of shorter ones.\n\n"
+        "What to do: Use ionice or io_uring submission queues to "
+        "enforce per-session bandwidth fairness."
+    ),
+
+    "lba hot/cold": (
+        "Spatial LBA access heatmap from blktrace — which regions of "
+        "the SSD are hot vs cold, and the working-set Gini coefficient.",
+        "What you are looking at: Three panels:\n"
+        "(1) LBA heatmap — access density across the SSD address range.\n"
+        "(2) Top-N hot regions with byte contribution.\n"
+        "(3) Gini coefficient (0=uniform, 1=concentrated in one spot).\n\n"
+        "How to read: High Gini (>0.8) = accesses concentrated in a "
+        "small SSD region — the working set is much smaller than "
+        "total disk capacity. You could use a smaller/cheaper SSD. "
+        "Low Gini (<0.4) = scattered access — likely fragmented "
+        "hicache files or multiple datasets sharing the device.\n\n"
+        "For KV$: KV blocks for the same session stored contiguously "
+        "= high Gini within that region = fast sequential load-back. "
+        "High global Gini + high Gini within the hot region = "
+        "well-organised hicache. Low Gini = hicache files fragmented "
+        "or interleaved with OS/model-weight files.\n\n"
+        "What to do: Low Gini → dedicate a separate NVMe exclusively "
+        "to the hicache directory. High Gini with high read IOPS → "
+        "the NVMe is appropriate size; focus on bandwidth instead."
+    ),
+
+    # ── A1 · Hardware ────────────────────────────────────────────────────
+
+    "hbm (gpu) bandwidth": (
+        "GPU HBM hardware bandwidth from DCGM counters — actual HBM "
+        "bus utilisation at the silicon level.",
+        "What you are looking at: A 4-panel chart:\n"
+        "(1) HBM R/W BW timeline (GB/s) — DCGM_FI_PROF_DRAM_ACTIVE derived.\n"
+        "(2) Stacked HBM read + write area.\n"
+        "(3) Cache-line transaction rate (M/s, 64-byte lines).\n"
+        "(4) HBM utilisation vs A100 theoretical peak (~2 TB/s).\n\n"
+        "How to read: Sustained >1.5 TB/s during decode = memory-"
+        "bandwidth-bound. Each decode token reads model weights + "
+        "all active KV from HBM once. For 70B BF16 on 8× A100:\n"
+        "HBM BW/token ≈ (140 GB weights + 22 GB KV) / 8 GPUs ≈ 20 GB\n"
+        "At 67.5 tok/s: 20 GB × 67.5 / 8 GPUs ≈ 169 GB/s per GPU\n"
+        "HBM BW Active at 16 % (from the tooltip) suggests the DCGM "
+        "counter is sampling at low granularity or not all transfers "
+        "are captured — cross-check with gpu_util (96 %).\n\n"
+        "For KV$: Reducing KV bytes/token (FP8 KV) directly reduces "
+        "HBM BW per decode step, allowing faster decode or larger "
+        "batches at the same HBM utilisation.\n\n"
+        "What to do: HBM BW > 80 % of peak → FP8 KV, speculative "
+        "decoding, or reduce context length."
+    ),
+
+    "system dram": (
+        "Host DRAM read/write bandwidth from AMD uProf PMU (Data Fabric "
+        "counters) — the L2 memory tier's physical bandwidth.",
+        "What you are looking at: A 4-panel chart:\n"
+        "(1) DRAM R/W BW timeline (GB/s).\n"
+        "(2) Stacked read + write area.\n"
+        "(3) Cache-line transaction rate (M/s).\n"
+        "(4) DRAM utilisation vs AMD EPYC peak (~460 GB/s 12-ch DDR5).\n\n"
+        "Why interactive chart is empty: The interactive report looks "
+        "for `amduprof_pcm_raw.txt`; the collector also writes "
+        "`amduprof_pcm_raw.csv`. If only the CSV was written, the "
+        "interactive builder silently returns None while the static "
+        "report can still parse it. Fix: ensure both files are written, "
+        "or update the interactive builder to try both extensions.\n\n"
+        "How to read: High DRAM BW (>100 GB/s) during inference = "
+        "hicache L2 tier actively staging KV between DRAM and HBM. "
+        "Low DRAM BW + high NVMe BW = KV goes NVMe→GPU directly "
+        "(GPUDirect Storage / ICMSP bypass).\n\n"
+        "For KV$: Sustained 50+ GB/s during decode = DRAM is the "
+        "active L2 KV staging tier. Near 460 GB/s peak = DRAM is "
+        "the bottleneck for KV staging.\n\n"
+        "How to collect: `sudo AMDuProfPcm -m memory -a --msr -d 300 "
+        "-o raw/amduprof_pcm_raw.csv` and ensure the .txt mirror is "
+        "also written (or update interactive.py to read .csv)."
+    ),
+
+    # ── Cross-layer / Appendix ────────────────────────────────────────────
+
     "bottleneck attribution": (
-        "Cross-layer bottleneck analysis — which subsystem is limiting throughput.",
-        "Why this matters: With dozens of metrics across compute, memory, storage, "
-        "and the inference engine itself, attribution is non-trivial. This view "
-        "applies heuristics (utilization, saturation, error correlation) to "
-        "highlight which layer is the dominant constraint.\n\nFor KV$: the most "
-        "common attribution result for KV-cache-heavy workloads is &quot;HBM "
-        "capacity&quot; (causing eviction churn) or &quot;SSD random read&quot; "
-        "(slowing L3 reactivation). Both have specific remedies — quantize the "
-        "KV (HBM capacity) or batch L3 loads (SSD random read)."
+        "Full-stack bottleneck radar and score table — ranked list of "
+        "which subsystem is the dominant constraint.",
+        "What you are looking at: A radar chart (spider plot) showing "
+        "each subsystem's saturation score (0–100), plus a ranked "
+        "table with layer, score, severity, phase, and detail.\n\n"
+        "Scoring heuristics used:\n"
+        "• HBM capacity: fill >80 % + rising eviction.\n"
+        "• HBM bandwidth: DCGM DRAM_ACTIVE >70 %.\n"
+        "• NVMe throughput: iostat util >80 % or queue_depth >16.\n"
+        "• Compute: GPU util >90 % with non-zero queue_depth.\n"
+        "• DRAM BW: AMDuProf total >70 % of peak.\n"
+        "• Prefill compute: TTFT >3× expected for context length.\n\n"
+        "For the reference run, expected top bottlenecks:\n"
+        "1. HBM BW + HBM Capacity (96 % util, 89 % fill, 2.3 s/token)\n"
+        "2. Prefill Compute (33 s TTFT on 43M-token prompts)\n"
+        "3. NVMe reads (3.8 TB at 15K IOPS, 128 MB/tok)\n\n"
+        "For KV$: Address top-1 bottleneck first. Fixing bottleneck-3 "
+        "before bottleneck-1 will show minimal improvement.\n\n"
+        "What to do: Scroll to Optimisation Recommendations for "
+        "auto-generated prioritised actions."
     ),
+
     "metric derivations": (
-        "Reference tables showing the formula behind every reported metric.",
-        "Why this matters: Different tools compute &quot;throughput&quot; or "
-        "&quot;latency&quot; differently. This section makes the math explicit so "
-        "comparisons with other measurement frameworks are well-founded.\n\nFor "
-        "KV$: pay particular attention to `cache_hit_rate_realtime_pct` and "
-        "`hicache_host_fill_pct` definitions — those are the two metrics that "
-        "drive most optimization decisions."
+        "Reference table of exact formulas, source metric paths, and "
+        "computation notes for every number in the report.",
+        "What you are looking at: A multi-row table — metric name | "
+        "formula | source path | notes.\n\n"
+        "Use when a number looks surprising. Key entries:\n"
+        "• TTFT: Δ(time_to_first_token_seconds_sum) / "
+        "Δ(…_count) × 1000 ms.\n"
+        "• Cache hit: Δcached_tokens / (Δcached + Δcompute) × 100.\n"
+        "• HBM util: FB_USED / (FB_USED + FB_FREE) × 100.\n"
+        "• DRAM BW: AMDuProf Data Fabric read+write × 64B / interval.\n\n"
+        "Note: DRAM BW counts CPU-side memory controller transactions "
+        "(KV DMA + OS page-cache + CPU workloads), not GPU HBM traffic. "
+        "These are different measurements.\n\n"
+        "For KV$: `cache_hit_calc_method` field in the summary shows "
+        "which fallback was used — `counter_derived` is most accurate, "
+        "`active_mean` is acceptable, `all_zeros` means no SGLang data."
     ),
+
     "optimisation": (
-        "Automatically-generated recommendations based on observed bottlenecks.",
-        "Why this matters: The recommendations distill the cross-layer analysis "
-        "into prioritized actions — change batch size, quantize KV, add a swap "
-        "disable, enable TRIM, etc. They're guidance, not mandates: validate "
-        "with controlled experiments.\n\nFor KV$: the most impactful KV-related "
-        "recommendations are typically batch size (reduces concurrent KV "
-        "footprint), KV quantization (FP8 halves HBM consumption), and tier "
-        "policy (whether to spill to DRAM or recompute)."
+        "Auto-generated recommendations ranked by impact and effort, "
+        "derived from the bottleneck scoring of this specific run.",
+        "What you are looking at: Recommendation cards each with: title, "
+        "impact badge (HIGH/MED/LOW), effort badge, phase badge, and "
+        "a detailed explanation with the exact command to run.\n\n"
+        "For the reference run, the top four recommendations are:\n"
+        "1. CHUNKED PREFILL (HIGH impact, LOW effort): "
+        "`--chunked-prefill-size 4096` in SGLang. Spreads the 33 s "
+        "TTFT across multiple steps by interleaving prefill chunks with "
+        "decode, dramatically reducing perceived first-token latency.\n"
+        "2. SPECULATIVE DECODING (MED impact, MED effort): Draft model "
+        "amortises HBM reads across multiple accepted tokens, "
+        "improving 2.3 s/tok TPOT.\n"
+        "3. KV QUANTISATION — AWQ/GPTQ 4-bit (HIGH impact, MED effort): "
+        "Halves HBM pressure and expands KV pool.\n"
+        "4. NUMA BINDING (LOW impact, LOW effort): `numactl --localalloc` "
+        "eliminates 91 NUMA migrations/s.\n\n"
+        "For KV$: KV quantisation (item 3) has cascading benefits: "
+        "smaller per-token footprint → more tokens in HBM → fewer "
+        "L2/L3 evictions → lower NVMe load → reduced TPOT."
     ),
 }
 
@@ -358,11 +790,16 @@ def _build_tooltip_data(raw_dir: Path) -> dict[str, str]:
 
     sg = _read_json(raw_dir / "sglang_summary.json")
     if sg:
+        # Bug fix: ai_op_decode_tok_s is the active-window mean of the gen_throughput
+        # gauge and can be 0 when the gauge decays after the benchmark finishes.
+        # Fall back to gen_tp_peak (the max observed) so the tooltip always shows
+        # a meaningful throughput number.
+        _tp_display = sg.get('ai_op_decode_tok_s') or sg.get('gen_tp_peak', 0)
         tt["sglang inference"] = (
             f"<b>TTFT</b> {sg.get('server_ttft_ms', 0):.0f}ms · "
             f"<b>TPOT</b> {sg.get('server_itl_ms', 0):.1f}ms · "
             f"<b>E2E</b> {sg.get('server_e2e_ms', 0):.0f}ms<br>"
-            f"<b>Throughput</b> {sg.get('ai_op_decode_tok_s', 0):.1f} tok/s · "
+            f"<b>Throughput</b> {_tp_display:.1f} tok/s · "
             f"<b>Cache hit</b> {sg.get('cache_hit_rate_realtime_pct', 0):.1f}%<br>"
             f"<b>Samples</b>: {sg.get('collection_samples', 0)} scrapes"
         )
@@ -531,6 +968,10 @@ DARK_THEME_CSS = """
   .card:not(.setup-panel) td[style*="color:#334155"],
   .card:not(.setup-panel) td[style*="color: #334155"],
   .card:not(.setup-panel) td[style*="color:#1e293b"],
+  .card:not(.setup-panel) td[style*="color:#475569"],
+  .card:not(.setup-panel) td[style*="color: #475569"],
+  .card:not(.setup-panel) td[style*="color:#64748b"],
+  .card:not(.setup-panel) td[style*="color: #64748b"],
   .card:not(.setup-panel) b[style*="color:#0f172a"],
   .card:not(.setup-panel) b[style*="color: #0f172a"],
   .card:not(.setup-panel) div[style*="color:#0f172a"],
@@ -539,6 +980,12 @@ DARK_THEME_CSS = """
   .card:not(.setup-panel) div[style*="color: #334155"],
   .card:not(.setup-panel) div[style*="color:#1e293b"] {
     color: #cbd5e1 !important;
+  }
+  /* Formula table code blocks: light on dark */
+  .card:not(.setup-panel) td code[style*="color:#1e3a5f"],
+  .card:not(.setup-panel) td code[style*="color: #1e3a5f"] {
+    color: #7dd3fc !important;
+    background: rgba(15,23,42,0.4) !important;
   }
 
   /* Keep setup/config section intentionally light even in dark theme. */
@@ -868,6 +1315,32 @@ def _inject_explanations_and_tooltips(html: str, raw_dir: Path | None) -> str:
     return "".join(pieces)
 
 
+def _strip_enhancer_injections(html: str) -> str:
+    """Remove all previously-injected enhancer elements from an HTML string.
+
+    Removes:
+      • <div class="amoprof-explain">…</div> blocks (explanation text)
+      • <figure class="amoprof-chart">…</figure> wrappers (unwraps back to bare <img>)
+      • <style id="amoprof-enhancer-theme">…</style> (theme CSS)
+
+    Returns a clean HTML string that the enhancer will treat as un-enhanced,
+    allowing fresh re-injection with updated explanation text.
+    """
+    # Remove explanation blocks
+    html = re.sub(r'<div class="amoprof-explain"[^>]*>.*?</div>',
+                  '', html, flags=re.DOTALL)
+    # Unwrap figure wrappers: extract the <img> and discard the rest
+    def _unwrap_figure(m: re.Match) -> str:
+        img_m = re.search(r'<img\s[^>]*/?>|<img\s[^>]+>', m.group(0), re.DOTALL)
+        return img_m.group(0) if img_m else ''
+    html = re.sub(r'<figure class="amoprof-chart"[^>]*>.*?</figure>',
+                  _unwrap_figure, html, flags=re.DOTALL)
+    # Remove theme CSS block
+    html = re.sub(r'<style id="amoprof-enhancer-theme">.*?</style>',
+                  '', html, flags=re.DOTALL)
+    return html
+
+
 def enhance_report(html_path: Path,
                    raw_dir: Path | None = None,
                    theme: str = "dark") -> Path:
@@ -877,6 +1350,9 @@ def enhance_report(html_path: Path,
     explanations and tooltips (detected by checking for the marker class
     `amoprof-explain` already present in the file). Theme CSS injection is
     also guarded by a unique <style> id.
+
+    To force a re-injection of updated explanation text (e.g. after upgrading
+    the package), call :func:`re_enhance_report` instead.
 
     Returns the same path (file is overwritten).
     """
@@ -906,3 +1382,23 @@ def enhance_report(html_path: Path,
     log.info("amoprof enhancer: wrote %s (%d KB, theme=%s)",
              html_path, len(html) // 1024, theme)
     return html_path
+
+
+def re_enhance_report(html_path: Path,
+                      raw_dir: Path | None = None,
+                      theme: str = "dark") -> Path:
+    """Strip all previous enhancer injections and re-enhance from scratch.
+
+    Use this when upgrading amoprof and you want the updated explanation text
+    to be applied to an existing report file that was enhanced by an older
+    version. Unlike :func:`enhance_report`, this function always re-injects.
+
+    Returns the same path (file is overwritten).
+    """
+    html_path = Path(html_path)
+    html = html_path.read_text(encoding="utf-8", errors="replace")
+    log.info("amoprof enhancer: stripping old injections from %s", html_path)
+    html = _strip_enhancer_injections(html)
+    html_path.write_text(html, encoding="utf-8")
+    log.info("amoprof enhancer: re-enhancing %s", html_path)
+    return enhance_report(html_path, raw_dir=raw_dir, theme=theme)

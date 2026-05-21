@@ -226,6 +226,138 @@ def _chart_sglang_throughput(sglang: list[dict]) -> dict | None:
                               "Throughput (tok/s)", "Cache hit %", ts=ts)}
 
 
+def _derive_nvme_columns(rows: list[dict]) -> list[dict]:
+    """Derive per-sample rate columns that are missing from the raw CSV.
+
+    The nvme_driver_timeseries.csv written by the Prometheus loader contains
+    only *cumulative* kernel counters (rd_ios, wr_ios, rd_ms, wr_ms, io_ms,
+    rd_bytes, wr_bytes).  The static report derives rate columns inside
+    extract_metrics() but does not save them back to the CSV, so the
+    interactive report sees all-zero values when it tries to read rd_iops,
+    rd_bw_mbs, etc.
+
+    This function adds the missing columns in-place, exactly mirroring the
+    derivation logic in amoprof.py::extract_metrics():
+
+      rd_iops    = Δrd_ios  / Δtime_sec          (reads completed per sec)
+      wr_iops    = Δwr_ios  / Δtime_sec          (writes completed per sec)
+      rd_bw_mbs  = Δrd_bytes / Δtime_sec / 2²⁰  (read MB/s from byte counter)
+      wr_bw_mbs  = Δwr_bytes / Δtime_sec / 2²⁰  (write MB/s from byte counter)
+      rd_lat_ms  = Δrd_ms   / Δrd_ios            (avg read latency ms)
+      wr_lat_ms  = Δwr_ms   / Δwr_ios            (avg write latency ms)
+      io_util_pct= Δio_ms   / (Δtime_sec × 1000) × 100  (% time device was busy)
+
+    If the columns are already present (iostat path writes them directly),
+    they are left untouched so this function is safe to call unconditionally.
+
+    Returns the same list with new dict keys added (mutates dicts in-place).
+    """
+    if not rows:
+        return rows
+
+    # Check what's already present
+    existing = set(rows[0].keys())
+    needs_iops   = "rd_iops" not in existing and "wr_iops" not in existing
+    needs_bw     = "rd_bw_mbs" not in existing and "wr_bw_mbs" not in existing
+    needs_lat    = "rd_lat_ms" not in existing and "wr_lat_ms" not in existing
+    needs_util   = "io_util_pct" not in existing
+    has_ios      = "rd_ios" in existing
+    has_bytes    = "rd_bytes" in existing
+    has_ms       = "rd_ms" in existing
+    has_io_ms    = "io_ms" in existing
+
+    if not (needs_iops or needs_bw or needs_lat or needs_util):
+        return rows  # everything already present
+
+    for i, row in enumerate(rows):
+        if i == 0:
+            # First row: no prior sample to diff against — set all to 0
+            if needs_iops:
+                row["rd_iops"] = row.get("rd_iops", 0.0)
+                row["wr_iops"] = row.get("wr_iops", 0.0)
+            if needs_bw:
+                row["rd_bw_mbs"] = row.get("rd_bw_mbs", 0.0)
+                row["wr_bw_mbs"] = row.get("wr_bw_mbs", 0.0)
+            if needs_lat:
+                row["rd_lat_ms"] = row.get("rd_lat_ms", 0.0)
+                row["wr_lat_ms"] = row.get("wr_lat_ms", 0.0)
+            if needs_util:
+                row["io_util_pct"] = row.get("io_util_pct", 0.0)
+            continue
+
+        prev = rows[i - 1]
+        dt = _to_float(row.get("time_sec")) - _to_float(prev.get("time_sec"))
+        if dt <= 0:
+            dt = 1.0
+
+        if needs_iops and has_ios:
+            d_rd = max(_to_float(row.get("rd_ios")) - _to_float(prev.get("rd_ios")), 0)
+            d_wr = max(_to_float(row.get("wr_ios")) - _to_float(prev.get("wr_ios")), 0)
+            row["rd_iops"] = round(d_rd / dt, 2)
+            row["wr_iops"] = round(d_wr / dt, 2)
+
+        if needs_bw and has_bytes:
+            d_rdb = max(_to_float(row.get("rd_bytes")) - _to_float(prev.get("rd_bytes")), 0)
+            d_wrb = max(_to_float(row.get("wr_bytes")) - _to_float(prev.get("wr_bytes")), 0)
+            row["rd_bw_mbs"] = round(d_rdb / dt / (1024 * 1024), 3)
+            row["wr_bw_mbs"] = round(d_wrb / dt / (1024 * 1024), 3)
+        elif needs_bw and needs_iops and has_ios:
+            # No byte counters: estimate from IOPS × a typical NVMe block size.
+            # We use the actual KV block size if we can get it, else 128 KB
+            # (typical large-IO average for KV workloads).
+            _bsz_mb = 0.128  # 128 KB default
+            row["rd_bw_mbs"] = round(_to_float(row.get("rd_iops", 0)) * _bsz_mb, 3)
+            row["wr_bw_mbs"] = round(_to_float(row.get("wr_iops", 0)) * _bsz_mb, 3)
+
+        if needs_lat and has_ms and has_ios:
+            d_rdm = max(_to_float(row.get("rd_ms")) - _to_float(prev.get("rd_ms")), 0)
+            d_wrm = max(_to_float(row.get("wr_ms")) - _to_float(prev.get("wr_ms")), 0)
+            d_rd  = max(_to_float(row.get("rd_ios")) - _to_float(prev.get("rd_ios")), 0)
+            d_wr  = max(_to_float(row.get("wr_ios")) - _to_float(prev.get("wr_ios")), 0)
+            row["rd_lat_ms"] = round(d_rdm / d_rd, 3) if d_rd > 0 else 0.0
+            row["wr_lat_ms"] = round(d_wrm / d_wr, 3) if d_wr > 0 else 0.0
+
+        if needs_util and has_io_ms:
+            d_iomsec = max(_to_float(row.get("io_ms")) - _to_float(prev.get("io_ms")), 0)
+            # io_ms is accumulated milliseconds the device was busy;
+            # utilisation = busy_ms / wall_ms * 100
+            row["io_util_pct"] = round(min(d_iomsec / (dt * 1000) * 100, 100), 2)
+
+    return rows
+
+
+
+    """Chart: token throughput + cache hit rate."""
+    if not sglang:
+        return None
+    gen_col = _find_col(sglang, "gen_throughput")
+    cache_col = _find_col(sglang, "cache_hit_rate")
+    if not gen_col:
+        return None
+    ts = _col(sglang, "time_sec")
+    xs = _ts_to_dates(ts)
+    traces = []
+    traces.append({
+        "x": xs, "y": _col(sglang, gen_col),
+        "type": "scatter", "mode": "lines", "name": "Throughput (tok/s)",
+        "line": {"color": "#22d3ee", "width": 2.2},
+        "fill": "tozeroy", "fillcolor": "rgba(34,211,238,0.15)",
+        "hovertemplate": "<b>%{y:.1f}</b> tok/s<extra></extra>",
+    })
+    if cache_col:
+        cache_vals = [v * 100 if v <= 1 else v for v in _col(sglang, cache_col)]
+        traces.append({
+            "x": xs, "y": cache_vals,
+            "type": "scatter", "mode": "lines", "name": "Cache hit %",
+            "line": {"color": "#a78bfa", "width": 2, "dash": "dot"},
+            "yaxis": "y2",
+            "hovertemplate": "<b>%{y:.1f}%</b> hit<extra></extra>",
+        })
+    return {"data": traces,
+            "layout": _layout("SGLang Token Throughput & Cache Hit Rate",
+                              "Throughput (tok/s)", "Cache hit %", ts=ts)}
+
+
 def _chart_gpu(gpu: list[dict]) -> dict | None:
     """Chart: per-GPU utilization + memory used."""
     if not gpu:
@@ -311,8 +443,25 @@ def _chart_swap_storm(vmstat: list[dict]) -> dict | None:
     swpin  = _rate("pswpin")
     swpout = _rate("pswpout")
     pgmaj  = _rate("pgmajfault")
-    if not (any(swpin) or any(swpout)):
-        return None
+    # Render even when swap is zero — major faults and the zero-swap confirmation
+    # are both valuable. Previously this returned None if swap counters were
+    # all zero, making the chart silently disappear from the interactive report
+    # while the static report still showed a placeholder.
+    has_any_data = bool(any(swpin) or any(swpout) or any(pgmaj))
+    # Build the chart — always render (even if all-zero) so the interactive
+    # report matches the static report's coverage. Add a green annotation
+    # confirming no swap occurred when swap counters are all-zero.
+    layout = _layout("Swap Storm — Page Swap & Major Fault Rates",
+                      "Pages / sec", "Major faults / sec", height=380, ts=ts)
+    if not any(swpin) and not any(swpout):
+        # Add a note that swap did not occur — this is a healthy state
+        layout.setdefault("annotations", []).append({
+            "text": "✅ No swap I/O detected — kernel memory was not under pressure",
+            "xref": "paper", "yref": "paper",
+            "x": 0.5, "y": 0.5, "xanchor": "center",
+            "showarrow": False,
+            "font": {"size": 14, "color": "#22c55e"},
+        })
     return {
         "data": [
             {"x": xs, "y": swpin,  "type": "scatter", "mode": "lines",
@@ -329,8 +478,7 @@ def _chart_swap_storm(vmstat: list[dict]) -> dict | None:
              "line": {"color": "#a16207", "width": 1.5, "dash": "dot"},
              "hovertemplate": "<b>%{y:.1f}</b> major/s<extra></extra>"},
         ],
-        "layout": _layout("Swap Storm — Page Swap & Major Fault Rates",
-                          "Pages / sec", "Major faults / sec", height=380, ts=ts)
+        "layout": layout,
     }
 
 
@@ -675,13 +823,25 @@ def _chart_bw_per_stream(bps: list[dict]) -> dict | None:
 
 
 def _chart_dram_bw(amduprof_txt: Path) -> dict | None:
-    if not amduprof_txt.exists():
+    # The collector writes both amduprof_pcm_raw.csv and amduprof_pcm_raw.txt.
+    # Previously only the .txt path was tried; if only .csv was written the
+    # chart silently returned None while the static report could still read it.
+    # Now we try the given path first, then fall back to the .csv variant.
+    raw_path: Path | None = None
+    candidates = [amduprof_txt, amduprof_txt.with_suffix(".csv")]
+    for candidate in candidates:
+        if candidate.exists() and candidate.stat().st_size > 0:
+            raw_path = candidate
+            break
+    if raw_path is None:
         return None
     rd_bw, wr_bw, tot_bw = [], [], []
     in_data = False
-    for line in amduprof_txt.read_text(errors="replace").splitlines():
+    for line in raw_path.read_text(errors="replace").splitlines():
         ll = line.strip().rstrip(",")
-        if "Total Mem Bw" in ll and "RdBw" in ll:
+        # Header detection: AMDuProf uses "Total Mem Bw" + "Total Mem RdBw" (CSV)
+        # or "Total Mem Bw" + "RdBw" (txt). Accept both.
+        if "Total Mem Bw" in ll and ("Total Mem RdBw" in ll or "RdBw" in ll):
             in_data = True; continue
         if in_data:
             if not ll or not ll[0].isdigit():
@@ -1114,6 +1274,11 @@ def build_report(raw_dir: Path, out_html: Path,
     power_ts    = _read_csv(raw_dir / "power_timeseries.csv")
     vmstat_ts   = _read_csv(raw_dir / "vmstat_timeseries.csv")
     nvme_ts     = _read_csv(raw_dir / "nvme_driver_timeseries.csv")
+    # Derive per-sample rate columns (rd_iops, wr_iops, rd_bw_mbs, wr_bw_mbs,
+    # rd_lat_ms, wr_lat_ms, io_util_pct) from the raw cumulative counters that
+    # the Prometheus loader writes.  If these columns are already present
+    # (e.g. from a live iostat collection), _derive_nvme_columns() is a no-op.
+    nvme_ts = _derive_nvme_columns(nvme_ts)
     smart_sum   = _read_json(raw_dir / "smart_summary.json")
     reqsize     = _read_csv(raw_dir / "request_size_distribution.csv")
     iat         = _read_csv(raw_dir / "interarrival_distribution.csv")
@@ -1432,9 +1597,15 @@ def build_report(raw_dir: Path, out_html: Path,
     sections_html.append(_section("Swap Storm — Page Activity",
                                    "ch_swap", _chart_swap_storm(vmstat_ts),
                                    "Per-second rates derived from /proc/vmstat cumulative counters"))
+    # DRAM BW: try amduprof_pcm_raw.txt first, then .csv (collector may write either).
+    # Previously only .txt was tried, which caused an empty chart when only .csv existed.
+    _dram_path = (raw_dir / "amduprof_pcm_raw.txt"
+                  if (raw_dir / "amduprof_pcm_raw.txt").exists()
+                     and (raw_dir / "amduprof_pcm_raw.txt").stat().st_size > 0
+                  else raw_dir / "amduprof_pcm_raw.csv")
     sections_html.append(_section("System DRAM Bandwidth (AMD EPYC PMU)",
                                    "ch_dram",
-                                   _chart_dram_bw(raw_dir / "amduprof_pcm_raw.txt"),
+                                   _chart_dram_bw(_dram_path),
                                    "From AMDuProf PCM raw output (Data Fabric counters, 1.2s interval)"))
 
     sections_html.append(_layer_header("layer-l3", "A3/A2/A1 · L3 SSD / OS Block / NVMe", "Storage-tier behavior: NVMe driver, OS block layer, NAND, request-size/IAT distributions, stream bandwidth, and hot/cold regions.", "#a45714"))

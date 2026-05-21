@@ -837,6 +837,179 @@ def _validate_collection_outputs(out_dir: Path, collectors: dict[str, Any], summ
     return manifest
 
 
+
+
+# ── Stop-condition wait loop ───────────────────────────────────────────────────
+# This is the mechanism that lets amoprof run exactly as long as the benchmark,
+# without a pre-specified --duration-s, even when the benchmark runs on a
+# different node.
+#
+# Three stop strategies (can be combined; first one to fire wins):
+#
+#   --until-idle       Watch SGLang's own /metrics endpoint.  When
+#                      num_running_reqs == 0 and num_queue_reqs == 0 for
+#                      --idle-grace-s consecutive seconds, the benchmark
+#                      has drained and collection stops.  No coordination
+#                      with the remote node required; amoprof already polls
+#                      this endpoint every --interval-s for SGLang metrics.
+#
+#   --stop-file PATH   amoprof polls for a sentinel file every --stop-poll-s.
+#                      The remote benchmark node creates this file when it
+#                      finishes (e.g. via a shared NFS/sshfs mount, or by
+#                      SSHing to the collection host):
+#                          ssh dgx1 "touch /tmp/bench_done.sentinel"
+#
+#   --stop-url URL     amoprof HTTP-GETs a URL every --stop-poll-s.  The
+#                      remote benchmark node serves HTTP 200 on this path
+#                      only when the run is complete. A one-liner server
+#                      works fine:
+#                          # on bench node, after run finishes:
+#                          python3 -m http.server 9999 &  # serves 200 for any path
+#                      Or use nginx with a 200-stub location.
+#
+# All three strategies respect --max-duration-s as a hard ceiling.
+
+
+def _wait_for_stop(args: argparse.Namespace, collectors: "dict[str, Any]") -> None:
+    """Block until a stop condition fires or the timeout is reached.
+
+    Stop conditions (first to trigger wins):
+      1. args.duration_s — fixed time, as before.
+      2. args.until_idle — SGLang becomes idle for idle_grace_s seconds.
+      3. args.stop_file  — sentinel file appears on disk.
+      4. args.stop_url   — HTTP endpoint returns 200.
+      5. args.max_duration_s — hard ceiling (used as fallback when
+         duration_s is None and a stop condition is given).
+
+    Raises KeyboardInterrupt on Ctrl-C (caller catches it).
+    """
+    import socket
+
+    duration_s    = getattr(args, "duration_s", None)
+    max_duration  = float(getattr(args, "max_duration_s", 7200.0))
+    until_idle    = bool(getattr(args, "until_idle", False))
+    idle_grace    = float(getattr(args, "idle_grace_s", 15.0))
+    stop_file     = getattr(args, "stop_file", None)
+    stop_url      = getattr(args, "stop_url", None)
+    stop_poll     = float(getattr(args, "stop_poll_s", 5.0))
+
+    # ── Case 1: plain fixed duration (original behaviour) ─────────────────
+    if duration_s is not None and not until_idle and not stop_file and not stop_url:
+        time.sleep(float(duration_s))
+        return
+
+    # ── Case 2: stop-condition mode ────────────────────────────────────────
+    deadline = time.monotonic() + (float(duration_s) if duration_s is not None else max_duration)
+
+    # For --until-idle we watch the SGLang scraper that is already running
+    # as a collector, rather than opening a separate HTTP connection.
+    sglang_collector = collectors.get("sglang")
+
+    idle_since: float | None = None    # monotonic timestamp when idle began
+    poll_interval = min(stop_poll, 2.0)  # inner poll cadence
+
+    log.info(
+        "Collection running with stop condition(s): %s",
+        ", ".join(filter(None, [
+            "--until-idle" if until_idle else "",
+            f"--stop-file {stop_file}" if stop_file else "",
+            f"--stop-url {stop_url}" if stop_url else "",
+            f"--duration-s {duration_s}" if duration_s is not None else
+            f"--max-duration-s {max_duration} (ceiling)",
+        ]))
+    )
+
+    def _check_stop_file() -> bool:
+        if not stop_file:
+            return False
+        if Path(stop_file).exists():
+            log.info("Stop sentinel file detected: %s — stopping collection", stop_file)
+            return True
+        return False
+
+    def _check_stop_url() -> bool:
+        if not stop_url:
+            return False
+        try:
+            import urllib.request
+            req = urllib.request.Request(stop_url, method="GET")
+            req.add_header("User-Agent", f"amoprof/{__version__} stop-check")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                if resp.status == 200:
+                    log.info("Stop URL returned 200: %s — stopping collection", stop_url)
+                    return True
+        except Exception:
+            pass   # any error (404, timeout, refused) = not done yet
+        return False
+
+    def _check_sglang_idle() -> bool:
+        """Return True once SGLang has been idle for idle_grace_s seconds."""
+        nonlocal idle_since
+        if not until_idle:
+            return False
+        # Pull the latest scrape row from the sglang collector
+        if sglang_collector is None:
+            log.debug("--until-idle: no sglang collector running; skipping idle check")
+            return False
+        try:
+            rows = list(getattr(sglang_collector, "_rows", []) or [])
+            if not rows:
+                return False
+            last = rows[-1]
+            running = float(last.get("sglang:num_running_reqs", 1) or 1)
+            queued  = float(last.get("sglang:num_queue_reqs",  1) or 1)
+            is_idle = running <= 0 and queued <= 0
+        except Exception:
+            is_idle = False
+
+        now = time.monotonic()
+        if is_idle:
+            if idle_since is None:
+                idle_since = now
+                log.info("--until-idle: SGLang became idle — waiting %.0f s grace period", idle_grace)
+            elif now - idle_since >= idle_grace:
+                log.info("--until-idle: SGLang idle for %.0f s — stopping collection", now - idle_since)
+                return True
+        else:
+            if idle_since is not None:
+                log.info("--until-idle: SGLang active again after %.1f s idle — resetting grace timer", now - idle_since)
+            idle_since = None
+        return False
+
+    # ── Main wait loop ─────────────────────────────────────────────────────
+    elapsed_log_interval = 60.0          # log progress every 60 s
+    last_log = time.monotonic()
+
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            log.info(
+                "Collection time limit reached (%.0f s) — stopping",
+                float(duration_s) if duration_s is not None else max_duration,
+            )
+            break
+
+        # Check all stop conditions each tick
+        if _check_stop_file():
+            break
+        if _check_stop_url():
+            break
+        if _check_sglang_idle():
+            break
+
+        # Progress heartbeat
+        now = time.monotonic()
+        if now - last_log >= elapsed_log_interval:
+            elapsed = (float(duration_s or max_duration)) - remaining
+            log.info(
+                "Collection in progress — %.0f s elapsed, %.0f s remaining until hard limit",
+                elapsed, remaining,
+            )
+            last_log = now
+
+        time.sleep(min(poll_interval, remaining))
+
+
 def _collect(args: argparse.Namespace) -> int:
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = Path(args.output_dir).expanduser().resolve() / f"metrics_run_{run_id}"
@@ -909,10 +1082,31 @@ def _collect(args: argparse.Namespace) -> int:
             if pid:
                 log.info("Detected PID %s listening on port %s", pid, args.sglang_port)
 
+    # ── Resolve effective duration ─────────────────────────────────────────────
+    # When --duration-s is not set, we run until a stop condition fires.
+    # Collectors that require a fixed duration upfront (blktrace, biosnoop,
+    # AMDuProfPcm) get --max-duration-s so they don't terminate early.
+    # Polling collectors (iostat, vmstat, gpu, …) are stopped via .stop().
+    _has_stop_condition = (
+        getattr(args, "until_idle", False)
+        or getattr(args, "stop_file", None)
+        or getattr(args, "stop_url", None)
+    )
+    _effective_duration: float
+    if args.duration_s is not None:
+        _effective_duration = float(args.duration_s)
+    elif _has_stop_condition:
+        # Use max-duration-s as the ceiling for fixed-duration sub-tools
+        _effective_duration = float(args.max_duration_s)
+    else:
+        # Neither duration-s nor a stop condition — fall back to 300 s default
+        _effective_duration = 300.0
+        log.info("No --duration-s or stop condition given — defaulting to 300 s")
+
     collectors: dict[str, Any] = {
         "iostat": IostatMonitor(args.ssd_device, args.interval_s),
         "smart": NvmeSmartMonitor(args.ssd_device, poll_s=max(int(args.interval_s), 1)),
-        "biolatency": BiolatencyCollector(args.ssd_device, duration_s=max(int(args.duration_s), 1)),
+        "biolatency": BiolatencyCollector(args.ssd_device, duration_s=max(int(_effective_duration), 1)),
         "vmstat": VmstatMonitor(args.interval_s),
         "nvlink_pcie": NvlinkPcieMonitor(max(args.interval_s, 1.0)),
         "nvme_driver": NvmeDriverMonitor(args.ssd_device, args.interval_s),
@@ -929,7 +1123,7 @@ def _collect(args: argparse.Namespace) -> int:
     if getattr(args, "enable_blktrace", False):
         collectors["blktrace"] = BlktraceCollector(
             args.ssd_device,
-            duration_s=max(int(args.duration_s), 1),
+            duration_s=max(int(_effective_duration), 1),
             work_dir=raw_dir,
             blktrace_bin=getattr(args, "blktrace_bin", "blktrace"),
             blkparse_bin=getattr(args, "blkparse_bin", "blkparse"),
@@ -938,7 +1132,7 @@ def _collect(args: argparse.Namespace) -> int:
     # New: biosnoop per-IO events with PID attribution (opt-in, requires BCC)
     if getattr(args, "enable_biosnoop", False):
         collectors["biosnoop"] = BiosnoopCollector(
-            duration_s=max(int(args.duration_s), 1),
+            duration_s=max(int(_effective_duration), 1),
             work_dir=raw_dir,
             device=args.ssd_device,
             binary=getattr(args, "biosnoop_bin", "biosnoop-bpfcc"),
@@ -946,7 +1140,7 @@ def _collect(args: argparse.Namespace) -> int:
         )
     if args.enable_amduprof_pcm:
         collectors["amduprof_pcm"] = AMDuProfPcmMemoryCollector(
-            duration_s=args.amduprof_duration_s or args.duration_s,
+            duration_s=args.amduprof_duration_s or _effective_duration,
             interval_s=args.interval_s,
             binary=args.amduprof_pcm_bin,
             output_csv=str(raw_dir / "amduprof_pcm_raw.csv"),
@@ -1011,7 +1205,7 @@ def _collect(args: argparse.Namespace) -> int:
 
     interrupted = False
     try:
-        time.sleep(args.duration_s)
+        _wait_for_stop(args, collectors)
     except KeyboardInterrupt:
         interrupted = True
         log.warning("Interrupted; stopping collectors")
@@ -1059,7 +1253,16 @@ def _collect(args: argparse.Namespace) -> int:
         "label": args.label,
         "timestamp": datetime.now().isoformat(),
         "t0_epoch": t0,
-        "duration_s": args.duration_s,
+        "duration_s": round(time.time() - t0, 1),   # actual elapsed, not requested
+        "requested_duration_s": args.duration_s,
+        "stop_condition": (
+            "duration_s" if args.duration_s is not None and not
+                (getattr(args,"until_idle",False) or getattr(args,"stop_file",None) or getattr(args,"stop_url",None))
+            else "until_idle" if getattr(args,"until_idle",False)
+            else "stop_file" if getattr(args,"stop_file",None)
+            else "stop_url" if getattr(args,"stop_url",None)
+            else "max_duration_s"
+        ),
         "interval_s": args.interval_s,
         "pid": pid or "",
         "sglang_port": args.sglang_port or "",
@@ -1108,7 +1311,15 @@ def _collect(args: argparse.Namespace) -> int:
         manifest = _run_analysis(out_dir, verbose=args.verbose)
         log.info("Analysis operations: %s", ", ".join(manifest.get("operations", [])))
 
-    if getattr(args, "amoprof_report", False):
+    # ── Resolve effective report flags (same logic as _analyze) ─────────────
+    _combined       = getattr(args, "combined_report",    False)
+    _do_static      = getattr(args, "amoprof_report",     False) or _combined
+    _do_interactive = getattr(args, "interactive_report", False) or _combined
+    _theme          = getattr(args, "report_theme", "dark")
+    _static_path:      "Path | None" = None
+    _interactive_path: "Path | None" = None
+
+    if _do_static:
         _copy_setup_details(args, raw_dir)
         report_path = out_dir / "amoprof_report.html"
         rc = _run_amoprof(raw_dir, report_path,
@@ -1116,30 +1327,47 @@ def _collect(args: argparse.Namespace) -> int:
                           sglang_page_size=getattr(args, "sglang_page_size", 0))
         if rc == 0:
             log.info("Wrote amoprof report: %s", report_path)
-            # Apply optional dark theme + tooltips + per-chart explanations.
-            theme = getattr(args, "report_theme", "dark")
-            if theme != "off":
+            if _theme != "off":
                 try:
                     from .report.enhancer import enhance_report
-                    enhance_report(report_path, raw_dir=raw_dir, theme=theme)
-                    log.info("Enhanced report (%s theme, tooltips, explanations): %s",
-                             theme, report_path)
+                    enhance_report(report_path, raw_dir=raw_dir, theme=_theme)
+                    log.info("Enhanced report (%s theme): %s", _theme, report_path)
                 except Exception as e:
                     log.warning("report enhancer failed: %s", e)
+            _static_path = report_path
         else:
             log.warning("amoprof report generation returned %s", rc)
 
-    if getattr(args, "interactive_report", False):
+    if _do_interactive:
         try:
             _copy_bench_summary(args, raw_dir)
             _copy_setup_details(args, raw_dir)
             from .report.interactive import build_report as _build_interactive
-            out_path = out_dir / "amoprof_interactive.html"
+            int_path = out_dir / "amoprof_interactive.html"
             label = getattr(args, "label", "") or out_dir.name
-            _build_interactive(raw_dir, out_path, run_label=str(label))
-            log.info("Wrote interactive report: %s", out_path)
+            _build_interactive(raw_dir, int_path, run_label=str(label))
+            log.info("Wrote interactive report: %s", int_path)
+            _interactive_path = int_path
         except Exception as e:
             log.warning("interactive report failed: %s", e)
+
+    if _combined and _static_path and _interactive_path:
+        try:
+            from .report.combined import build_combined_report
+            combined_path = out_dir / "amoprof_combined.html"
+            build_combined_report(
+                raw_dir=raw_dir,
+                out_html=combined_path,
+                static_html_path=_static_path,
+                interactive_html_path=_interactive_path,
+                run_label=out_dir.name,
+                theme=_theme,
+            )
+            log.info("Wrote combined report: %s", combined_path)
+        except Exception as e:
+            log.warning("combined report failed: %s", e)
+    elif _combined:
+        log.warning("combined report skipped — static or interactive generation failed")
 
     log.info("Wrote summary CSV: %s", out_dir / "summary.csv")
     log.info("Wrote summary JSON: %s", out_dir / "summary.json")
@@ -1160,8 +1388,43 @@ def _build_parser() -> argparse.ArgumentParser:
     c.add_argument("--output-dir", default=os.environ.get("AMOPROF_OUTPUT_DIR", "./amoprof_results"),
                    help="Directory for summary CSV/JSON and raw time series output")
     c.add_argument("--label", default="", help="Optional run label stored in outputs")
-    c.add_argument("--duration-s", type=float, default=60.0,
-                   help="How long to collect metrics for. Default: 60")
+    c.add_argument("--duration-s", type=float, default=None,
+                   help="How long to collect metrics, in seconds. "
+                        "If omitted, collection runs until a stop condition fires "
+                        "(--until-idle, --stop-file, or --stop-url) or until "
+                        "--max-duration-s is reached. Default when no stop "
+                        "condition is given: 300 s.")
+    c.add_argument("--max-duration-s", type=float, default=7200.0,
+                   help="Hard upper limit (seconds) when a stop condition is used "
+                        "(--until-idle / --stop-file / --stop-url). Prevents "
+                        "runaway collection if the remote benchmark hangs. "
+                        "Default: 7200 (2 h). Ignored when --duration-s is set.")
+    c.add_argument("--until-idle", action="store_true",
+                   help="Stop collection automatically when SGLang becomes idle "
+                        "(num_running_reqs == 0 and num_queue_reqs == 0 for "
+                        "--idle-grace-s consecutive seconds). The benchmark node "
+                        "does not need any special support — amoprof watches the "
+                        "SGLang /metrics endpoint it is already polling.")
+    c.add_argument("--idle-grace-s", type=float, default=15.0,
+                   help="With --until-idle: number of consecutive seconds "
+                        "SGLang must be idle before collection stops. "
+                        "Protects against momentary queue drains between bursts. "
+                        "Default: 15 s.")
+    c.add_argument("--stop-file", default=None,
+                   help="Path to a sentinel file. Collection stops as soon as "
+                        "this file appears on disk. The remote benchmark node "
+                        "creates the file (e.g. via NFS/sshfs mount or by SSHing "
+                        "to this host) when it finishes. "
+                        "Example: --stop-file /tmp/bench_done.sentinel")
+    c.add_argument("--stop-url", default=None,
+                   help="HTTP URL polled every --stop-poll-s seconds. Collection "
+                        "stops when the URL returns HTTP 200. The remote benchmark "
+                        "node exposes a tiny HTTP server (or nginx stub) that "
+                        "returns 200 only after the run completes. "
+                        "Example: --stop-url http://bench-node:9999/done")
+    c.add_argument("--stop-poll-s", type=float, default=5.0,
+                   help="Polling interval (seconds) for --stop-file and --stop-url "
+                        "checks. Default: 5 s.")
     c.add_argument("--interval-s", type=float, default=1.0,
                    help="Polling interval for time-series collectors. Default: 1.0")
     c.add_argument("--ssd-device", default=os.environ.get("AMOPROF_SSD_DEVICE", "/dev/nvme0n1"),
@@ -1244,20 +1507,18 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Also generate operation-aligned analysis CSVs after collection")
     c.add_argument("--amoprof-report", action="store_true",
                    help="Run the bundled amoprof analyzer after collection and "
-                        "produce <run-dir>/amoprof_report.html. amoprof reads the "
-                        "amoprof-compatible CSV/JSON files written into raw/.")
+                        "produce <run-dir>/amoprof_report.html.")
+    c.add_argument("--interactive-report", action="store_true",
+                   help="Also produce <run-dir>/amoprof_interactive.html — "
+                        "Plotly hover charts, drag-to-zoom, legend toggling.")
+    c.add_argument("--combined-report", action="store_true",
+                   help="Generate a single amoprof_combined.html that embeds BOTH "
+                        "reports in two tabs. Implies --amoprof-report and "
+                        "--interactive-report.")
     c.add_argument("--report-theme", default="dark",
                    choices=["dark", "light", "off"],
-                   help="Apply a theme + per-chart explanations + hover tooltips "
-                        "to the amoprof report. 'dark' uses a slate-900 background "
-                        "for high contrast (default). 'light' keeps the original "
-                        "amoprof palette but still adds tooltips and explanations. "
-                        "'off' disables post-processing entirely.")
-    c.add_argument("--interactive-report", action="store_true",
-                   help="Also produce <run-dir>/amoprof_interactive.html — a Plotly-"
-                        "powered HTML report where every chart supports hover tooltips, "
-                        "drag-to-zoom, and legend toggling. Loads plotly.js from CDN; "
-                        "no extra Python deps required.")
+                   help="Theme applied to the static amoprof report via the enhancer. "
+                        "'dark' (default) / 'light' / 'off' to skip.")
     c.add_argument("--model", default=os.environ.get("AMOPROF_MODEL", "unknown"),
                    help="Model name to record in sglang_summary.json (e.g. "
                         "'deepseek-ai/DeepSeek-R1-Distill-Llama-70B'). Env: AMOPROF_MODEL.")
@@ -1335,16 +1596,29 @@ def _build_parser() -> argparse.ArgumentParser:
                         "Prometheus server at --prometheus and exit. Useful for "
                         "discovering valid --prom-instance / --prom-job values.")
     a.add_argument("--output-dir", default="",
-                   help="Base directory for new prom_run_* directories when "
-                        "--run-dir is not given. Default: current directory.")
+                   help="Directory where report files (amoprof_report.html, "
+                        "amoprof_interactive.html) are written. "
+                        "When --run-dir is also given, raw data stays in "
+                        "--run-dir but all report files are written here instead "
+                        "(useful for re-analyzing an existing run into a different "
+                        "output location). "
+                        "When --run-dir is NOT given (Prometheus-only mode), "
+                        "a new prom_run_<timestamp>/ directory is created here "
+                        "and both raw data and reports land in it. "
+                        "Default: the run-dir itself (original behaviour).")
     # ── Report flags (apply in all modes) ───────────────────────────────────
     a.add_argument("--amoprof-report", action="store_true",
-                   help="Also run the bundled amoprof analyzer to produce "
-                        "<run-dir>/amoprof_report.html. If blktrace binaries are "
-                        "present but no CSV was produced, blkparse will be run.")
+                   help="Generate the static amoprof_report.html (matplotlib PNGs "
+                        "with full bottleneck analysis, KPI cards, and formulas).")
     a.add_argument("--interactive-report", action="store_true",
-                   help="Also produce <run-dir>/amoprof_interactive.html — a Plotly-"
-                        "powered HTML report with hover tooltips and drag-to-zoom.")
+                   help="Generate the interactive amoprof_interactive.html "
+                        "(Plotly hover charts, cake-ordered sections).")
+    a.add_argument("--combined-report", action="store_true",
+                   help="Generate a single amoprof_combined.html that embeds BOTH "
+                        "the static and interactive reports in two tabs "
+                        "(⚡ Interactive | 📊 Static). Implies --amoprof-report "
+                        "and --interactive-report — both are generated and then "
+                        "merged. Use this as the default one-file-to-share output.")
     a.add_argument("--report-theme", default="dark",
                    choices=["dark", "light", "off"],
                    help="Theme + tooltips + explanations applied to the amoprof "
@@ -1471,15 +1745,31 @@ def _analyze(args) -> int:
                   "(or both for merge mode). Use --help for options.")
         return 2
 
-    # ── 2. Determine the working run_dir ────────────────────────────────────
+    # ── 2. Determine the working run_dir and report_dir ─────────────────────
+    # run_dir  = where raw data lives (source for the report builder)
+    # report_dir = where HTML report files are written
+    #
+    # When --run-dir + --output-dir are both given:
+    #   raw data stays in --run-dir; reports go to --output-dir.
+    # When only --run-dir is given:
+    #   reports go into run-dir (original behaviour).
+    # When only --output-dir is given (Prometheus-only mode):
+    #   a new prom_run_* dir is created inside --output-dir for everything.
     if run_dir_arg:
         run_dir = Path(run_dir_arg).expanduser().resolve()
         run_dir.mkdir(parents=True, exist_ok=True)
+        if args.output_dir:
+            report_dir = Path(args.output_dir).expanduser().resolve()
+            report_dir.mkdir(parents=True, exist_ok=True)
+            log.info("Reports will be written to --output-dir: %s", report_dir)
+        else:
+            report_dir = run_dir   # original behaviour
     else:
         # Prom-only mode: create a fresh prom_run_* dir
         base = Path(args.output_dir or ".").expanduser().resolve()
         run_dir = base / f"prom_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         run_dir.mkdir(parents=True, exist_ok=True)
+        report_dir = run_dir
         log.info("Prometheus-only mode → created run dir: %s", run_dir)
 
     raw_dir = run_dir / "raw"
@@ -1548,39 +1838,68 @@ def _analyze(args) -> int:
     except Exception as e:
         log.debug("raw-dir audit failed: %s", e)
 
+    # ── Resolve effective report flags ──────────────────────────────────────
+    # --combined-report implies both --amoprof-report and --interactive-report
+    _combined = getattr(args, "combined_report", False)
+    _do_static      = getattr(args, "amoprof_report",    False) or _combined
+    _do_interactive = getattr(args, "interactive_report", False) or _combined
+
+    _static_path:      "Path | None" = None
+    _interactive_path: "Path | None" = None
+    _theme = getattr(args, "report_theme", "dark")
+
     # ── 5. Static amoprof HTML report ───────────────────────────────────────
-    if getattr(args, "amoprof_report", False):
+    if _do_static:
         _copy_setup_details(args, raw_dir)
-        report_path = run_dir / "amoprof_report.html"
+        report_path = report_dir / "amoprof_report.html"
         rc = _run_amoprof(raw_dir, report_path,
                           verbose=args.verbose,
                           extra_args=args.amoprof_extra_arg or [],
                           sglang_page_size=getattr(args, "sglang_page_size", 0))
         if rc == 0:
             log.info("Wrote amoprof report: %s", report_path)
-            theme = getattr(args, "report_theme", "dark")
-            if theme != "off":
+            if _theme != "off":
                 try:
                     from .report.enhancer import enhance_report
-                    enhance_report(report_path, raw_dir=raw_dir, theme=theme)
-                    log.info("Enhanced report (%s theme): %s",
-                             theme, report_path)
+                    enhance_report(report_path, raw_dir=raw_dir, theme=_theme)
+                    log.info("Enhanced report (%s theme): %s", _theme, report_path)
                 except Exception as e:
                     log.warning("report enhancer failed: %s", e)
+            _static_path = report_path
         else:
             log.warning("amoprof report generation returned %s", rc)
 
     # ── 6. Interactive Plotly report ────────────────────────────────────────
-    if getattr(args, "interactive_report", False):
+    if _do_interactive:
         try:
             _copy_bench_summary(args, raw_dir)
             _copy_setup_details(args, raw_dir)
             from .report.interactive import build_report as _build_interactive
-            out_path = run_dir / "amoprof_interactive.html"
-            _build_interactive(raw_dir, out_path, run_label=run_dir.name)
-            log.info("Wrote interactive report: %s", out_path)
+            int_path = report_dir / "amoprof_interactive.html"
+            _build_interactive(raw_dir, int_path, run_label=run_dir.name)
+            log.info("Wrote interactive report: %s", int_path)
+            _interactive_path = int_path
         except Exception as e:
             log.warning("interactive report failed: %s", e)
+
+    # ── 7. Combined tabbed report ────────────────────────────────────────────
+    if _combined and _static_path and _interactive_path:
+        try:
+            from .report.combined import build_combined_report
+            combined_path = report_dir / "amoprof_combined.html"
+            build_combined_report(
+                raw_dir=raw_dir,
+                out_html=combined_path,
+                static_html_path=_static_path,
+                interactive_html_path=_interactive_path,
+                run_label=run_dir.name,
+                theme=_theme,
+            )
+            log.info("Wrote combined report: %s", combined_path)
+        except Exception as e:
+            log.warning("combined report failed: %s", e)
+    elif _combined:
+        log.warning("combined report skipped — static or interactive generation failed")
 
     return 0
 

@@ -1009,6 +1009,12 @@ def collect_from_prometheus_api(
             nrow["inflight"] = _val(io_now,   t_s)
             nrow["disc_ios"] = _val(disc_cmds, t_s)
             nrow["disc_sectors"] = _val(disc_secs, t_s)
+            # Include cumulative byte counters — these are differenced later in
+            # extract_metrics to produce rd_bw_mbs / wr_bw_mbs.  Without them
+            # the BW columns are estimated from IOPS × block_size, which gives
+            # wrong (often zero) write BW when write IOPS are very low.
+            nrow["rd_bytes"] = _val(rd_bytes, t_s)
+            nrow["wr_bytes"] = _val(wr_bytes, t_s)
             nvme_rows.append(nrow)
 
     nvme_df = pd.DataFrame(nvme_rows).sort_values("time_sec").reset_index(drop=True) \
@@ -4389,7 +4395,7 @@ def extract_metrics(data: dict) -> Metrics:
     m.gpu_count = safe_int(gp.get("gpu_count", 8), default=8)
     m.gpu_util_mean = float(gp.get("gpu_util_mean", 0))
     m.gpu_util_peak = float(gp.get("gpu_util_peak", 0))
-    m.hbm_util_pct = float(gp.get("hbm_util_pct_mean", 0))
+    m.hbm_util_pct = max(0.0, min(100.0, float(gp.get("hbm_util_pct_mean", 0) or 0)))
     m.hbm_used_mb_mean = float(gp.get("hbm_used_mb_mean", 0))
     m.hbm_total_mb = float(gp.get("hbm_total_mb_per_gpu", 40960))
     m.gpu_power_mean_w = float(gp.get("power_all_gpus_w_mean", 0))
@@ -5086,13 +5092,29 @@ def extract_metrics(data: dict) -> Metrics:
         nv["io_util_pct"] = (nv["io_ms"].diff().clip(0) / (dt2 * 1000).replace(0, np.nan) * 100).clip(0, 100) \
                             if "io_ms" in nv.columns else nv.get("util_pct", pd.Series([0.0]*len(nv)))
 
-        # BW columns: from MB/s direct (iostat) or compute from IOPS
+        # BW columns: priority order:
+        #  1. Direct MB/s from iostat (r_mb_s / w_mb_s) — most accurate
+        #  2. Differenced byte counters from Prometheus (rd_bytes / wr_bytes) —
+        #     node_disk_read_bytes_total / node_disk_written_bytes_total.
+        #     These are cumulative; diff + divide by interval → MB/s.
+        #     Previously this data was fetched from Prometheus but never written
+        #     into the nvme_rows dict, so BW fell back to IOPS × block_size
+        #     which gave wrong (often zero) write BW. Fixed by adding rd_bytes/
+        #     wr_bytes to nvme_rows in the Prometheus loader above.
+        #  3. IOPS × KV block size estimate — least accurate, last resort.
         kvb_mb2 = m.kvb_block_size_mb if m.kvb_block_size_mb > 0 else 5.0
+
+        # Derive BW from byte counters if present (Prometheus path)
+        for bytes_col, bw_col in [("rd_bytes", "rd_bw_mbs"), ("wr_bytes", "wr_bw_mbs")]:
+            if bytes_col in nv.columns and bw_col not in nv.columns:
+                byte_diff = nv[bytes_col].diff().clip(0)
+                nv[bw_col] = (byte_diff / dt2.replace(0, np.nan) / (1024 * 1024)).fillna(0).clip(0)
+
         if "rd_bw_mbs" not in nv.columns:
             nv["rd_bw_mbs"] = nv["rd_iops"].fillna(0) * kvb_mb2
         if "wr_bw_mbs" not in nv.columns:
             nv["wr_bw_mbs"] = nv["wr_iops"].fillna(0) * kvb_mb2
-        # Override BW from iostat direct columns if present
+        # Override BW from iostat direct columns if present (highest priority)
         for mb_col, dst_col in [("r_mb_s","rd_bw_mbs"), ("w_mb_s","wr_bw_mbs")]:
             if mb_col in nv.columns:
                 nv[dst_col] = nv[mb_col].fillna(0)
@@ -6311,26 +6333,72 @@ def score_bottlenecks(m: Metrics) -> list[dict]:
         "severity": "LOW" if dram_score<20 else "MED" if dram_score<50 else "HIGH",
     })
 
-    # NVMe I/O — use blktrace analysis BW if no timeseries IOPS
-    rd_bw_for_score = m.ssd_rd_bw_mbs_mean if m.ssd_rd_bw_mbs_mean > 0 else 0
-    wr_bw_for_score = m.ssd_wr_bw_mbs_mean if m.ssd_wr_bw_mbs_mean > 0 else 0
-    peak_nvme_iops  = max(m.nvme_wr_iops_max, m.nvme_rd_iops_max)
-    # Score from IOPS if available, else from BW relative to NVMe Gen4 peak (~3500 MB/s random)
+    # NVMe I/O bottleneck scoring
+    # ── BW sources (priority: blktrace §C/D > node_exporter timeseries) ────
+    # Bug fix: previously wr_bw_for_score was 0 when blktrace was not enabled
+    # (ssd_wr_bw_mbs_mean=0) even though node_exporter captured 0.5 MB/s write
+    # traffic. Now falls back to nvme_wr/rd_bw_mbs_mean (node_exporter) when
+    # the blktrace-derived scalar is not available.
+    rd_bw_for_score = (m.ssd_rd_bw_mbs_mean if m.ssd_rd_bw_mbs_mean > 0
+                       else m.nvme_rd_bw_mbs_mean)
+    wr_bw_for_score = (m.ssd_wr_bw_mbs_mean if m.ssd_wr_bw_mbs_mean > 0
+                       else m.nvme_wr_bw_mbs_mean)
+
+    # ── IOPS source (priority: timeseries max > sysfs snapshot) ────────────
+    # Bug fix: nvme_wr_iops_max was previously loaded from a single sysfs
+    # snapshot (nvme_driver_summary["nvme_wr_iops_sysfs"]) which only covers
+    # one collection period and severely underestimates the peak when reads
+    # dominate. nvme_rd_iops_max is already the timeseries max; use that as
+    # the primary signal so a read-heavy workload (15K IOPS) scores correctly.
+    # nvme_wr_iops_max may still reflect the sysfs snapshot; guard it by also
+    # considering the timeseries write max from nvme_io_ts.
+    _nvme_io_ts_rd_max = 0.0
+    _nvme_io_ts_wr_max = 0.0
+    if isinstance(m.nvme_io_ts, pd.DataFrame) and not m.nvme_io_ts.empty:
+        if "rd_iops" in m.nvme_io_ts.columns:
+            _nvme_io_ts_rd_max = float(m.nvme_io_ts["rd_iops"].max(skipna=True))
+        if "wr_iops" in m.nvme_io_ts.columns:
+            _nvme_io_ts_wr_max = float(m.nvme_io_ts["wr_iops"].max(skipna=True))
+    peak_nvme_iops = max(
+        m.nvme_rd_iops_max,          # timeseries read max (most reliable)
+        _nvme_io_ts_rd_max,          # nvme_io_ts read max (same, insurance)
+        m.nvme_wr_iops_max,          # may be sysfs snapshot (less reliable)
+        _nvme_io_ts_wr_max,          # nvme_io_ts write max
+    )
+
+    # ── Score ────────────────────────────────────────────────────────────────
+    # Score from IOPS if available (relative to NVMe Gen4 random read peak
+    # ~100K IOPS at QD32 for 4KB; ~15K IOPS at QD1 for typical KV block sizes).
+    # Using /100 denominator gives a more proportional score:
+    #   15K IOPS → 150 → clamped to 100 (HIGH)
+    #   220 IOPS  →   2 → LOW (correct for light write traffic)
+    # Previously /10 was used which always clamped reads to 100 immediately.
     if peak_nvme_iops > 0:
-        nvme_score = min(100, peak_nvme_iops / 10)
+        nvme_score = min(100, peak_nvme_iops / 150)
     elif rd_bw_for_score > 0 or wr_bw_for_score > 0:
         peak_bw = max(rd_bw_for_score, wr_bw_for_score)
         nvme_score = min(100, peak_bw / 3500 * 80)   # NVMe Gen4 rand 128KB ≈ 3.5 GB/s
     else:
         nvme_score = 0
-    io_detail = (f"Write {wr_bw_for_score:.0f} MB/s, Read {rd_bw_for_score:.0f} MB/s  "
-                 f"({'from blktrace analysis' if peak_nvme_iops == 0 and rd_bw_for_score > 0 else 'from node_exporter'}). "
+
+    def _bw_fmt(v: float) -> str:
+        """Format BW: show 1 decimal place for sub-10 MB/s, integer otherwise."""
+        if v <= 0:     return "0"
+        if v < 10:     return f"{v:.1f}"
+        return f"{v:.0f}"
+
+    _bw_source = ("blktrace §C/§D" if m.ssd_rd_bw_mbs_mean > 0 or m.ssd_wr_bw_mbs_mean > 0
+                  else "node_exporter/Prometheus")
+    io_detail = (f"Write {_bw_fmt(wr_bw_for_score)} MB/s, "
+                 f"Read {_bw_fmt(rd_bw_for_score)} MB/s "
+                 f"(from {_bw_source}). "
+                 f"Peak {peak_nvme_iops:.0f} IOPS. "
                  f"Util {m.nvme_io_util_pct:.1f}%. Wear {m.nvme_smart_wear_pct:.0f}%.")
     layers.append({
         "layer": "NVMe I/O", "score": round(nvme_score),
         "phase": "Storage", "color": NVME_C,
         "detail": io_detail,
-        "severity": "LOW" if nvme_score<10 else "MED" if nvme_score<40 else "HIGH",
+        "severity": "LOW" if nvme_score < 10 else "MED" if nvme_score < 40 else "HIGH",
     })
 
     # GPU Power (thermal/power limit headroom)
@@ -6587,15 +6655,26 @@ def chart_memory(m: Metrics) -> str:
 
     # 1. HBM gauge
     ax = axes[0]
-    hbm_pct = m.hbm_util_pct / 100
+    # hbm_util_pct can be NaN (missing DCGM data), negative (DCGM sentinel -1),
+    # or >100 (DCGM mem_total briefly reported as 0 → division anomaly).
+    # Clamp to [0, 100] before converting to a pie fraction so matplotlib
+    # never receives a negative wedge size.
+    raw_hbm_pct = m.hbm_util_pct
+    try:
+        raw_hbm_pct = float(raw_hbm_pct)
+    except (TypeError, ValueError):
+        raw_hbm_pct = 0.0
+    if raw_hbm_pct != raw_hbm_pct:   # NaN check (NaN != NaN is True)
+        raw_hbm_pct = 0.0
+    hbm_pct = max(0.0, min(1.0, raw_hbm_pct / 100.0))
     ax.pie(
-        [hbm_pct, 1 - hbm_pct],
+        [hbm_pct, max(0.0, 1.0 - hbm_pct)],
         colors=[HBM_C, BORDER],
         startangle=90,
         counterclock=False,
         wedgeprops=dict(width=0.4, edgecolor=BG3),
     )
-    ax.text(0, 0, f"{m.hbm_util_pct:.1f}%", ha="center", va="center",
+    ax.text(0, 0, f"{raw_hbm_pct:.1f}%", ha="center", va="center",
             fontsize=16, fontweight="bold", color=HBM_C)
     ax.set_title(f"HBM per GPU\n{m.hbm_used_mb_mean/1024:.1f}/{m.hbm_total_mb/1024:.0f} GB", fontsize=9)
     ax.set_facecolor(BG3)
@@ -9679,12 +9758,12 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
         formula_rows += (
             f'<tr style="border-bottom:1px solid #e2e8f0">'
             f'<td style="padding:7px 12px;color:#0f172a;font-weight:600;background:{bg};white-space:nowrap">{metric}</td>'
-            f'<td style="padding:7px 12px;color:#64748b;font-family:monospace;font-size:10px;background:{bg};white-space:nowrap">{unit}</td>'
-            f'<td style="padding:7px 12px;color:#475569;font-family:monospace;font-size:10px;background:{bg}">{collector}</td>'
+            f'<td style="padding:7px 12px;color:#0f172a;font-family:monospace;font-size:10px;background:{bg};white-space:nowrap">{unit}</td>'
+            f'<td style="padding:7px 12px;color:#0f172a;font-family:monospace;font-size:10px;background:{bg}">{collector}</td>'
             f'<td style="padding:7px 12px;background:{bg}">'
             f'<code style="font-size:10px;color:#1e3a5f;white-space:pre-wrap;line-height:1.7">{formula}</code>'
             f'</td>'
-            f'<td style="padding:7px 12px;color:#334155;font-size:11px;background:{bg};line-height:1.5">{interp}</td>'
+            f'<td style="padding:7px 12px;color:#0f172a;font-size:11px;background:{bg};line-height:1.5">{interp}</td>'
             f'</tr>'
         )
 
