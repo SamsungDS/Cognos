@@ -6,9 +6,11 @@
 #include <boost/algorithm/string.hpp>
 #include <boost/tokenizer.hpp>
 #include <chrono>
+#include <condition_variable>
 #include <iostream>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <ranges>
 
 #include "logic_interface/svk_logic_struct.h"
@@ -24,6 +26,9 @@
 // Global variable to use for Framework service commands
 const std::unique_ptr<SLATrackerSvc> g_slat_service =
     std::make_unique<SLATrackerSvc>();
+
+std::mutex gSlatMutex;
+std::condition_variable gSlatCondVar;
 
 using json = nlohmann::json;
 
@@ -321,8 +326,13 @@ void SLATrackerSvc::benchmarking_thread_fn(void) {
              (int)this->th_data.benchmark_run_interval);
     svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::TRACE, log_msg);
 
-    std::this_thread::sleep_for(
-        std::chrono::seconds(this->th_data.benchmark_run_interval));
+    std::unique_lock lock(gSlatMutex);
+    // Wait for the earliest of the interval seconds or shutdown thread returns
+    // true
+    gSlatCondVar.wait_for(
+        lock, std::chrono::seconds(this->th_data.benchmark_run_interval),
+        [this] { return this->th_data.shutdown_bm_thread; });
+
     if (this->th_data.shutdown_bm_thread) {
       svk_logger(SLAT_LOGGER_MODULE_NAME, level_E::INFO,
                  "Shutting down the background monitoring thread");
@@ -896,6 +906,7 @@ void SLATrackerSvc::clean_up(void) {
   }
   if (this->th_data.thread_running) {
     this->th_data.shutdown_bm_thread = true;
+    gSlatCondVar.notify_one();
     this->th_data.benchmarking_thread.join();
   }
 }
