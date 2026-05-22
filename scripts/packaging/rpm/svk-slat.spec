@@ -43,5 +43,5 @@ echo "%svk_install_dir/%_lib" > %_sysconfdir/%svk_slat_ldconf
 %_sbindir/ldconfig
 
 %changelog
-* Fri Oct 10 2024 Suresh Grandhi <suresh.g@samsung.com>
+* Thu Oct 10 2024 Suresh Grandhi <suresh.g@samsung.com>
 - Initial RPM spec which creates a release and a devel RPM.
