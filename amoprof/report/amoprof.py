@@ -3717,6 +3717,7 @@ class Metrics:
     setup_schedule_policy: str = "unknown"
     setup_details: dict = field(default_factory=dict)
     run_duration_s: float = 0
+    t0_epoch: float = 0          # Unix timestamp of collection-window start (from summary.json)
     ttft_ms: float = 0
     tpot_ms: float = 0
     e2e_ms: float = 0
@@ -3887,6 +3888,8 @@ class Metrics:
     nvme_host_read_cmds: int = 0          # total host read commands (SMART)
     nvme_wr_bw_mbs_mean: float = 0        # write bandwidth MB/s mean
     nvme_wr_bw_mbs_max: float = 0
+    nvme_rd_bw_mbs_mean: float = 0        # read bandwidth MB/s mean
+    nvme_rd_bw_mbs_max: float = 0
     nvme_inflight_mean: float = 0         # mean queue depth
     nvme_inflight_max: float = 0
     nvme_io_ts: pd.DataFrame = field(default_factory=pd.DataFrame)
@@ -4305,6 +4308,16 @@ def extract_metrics(data: dict) -> Metrics:
     m.run_duration_s = float(sg.get("server_e2e_ms", 0) / 1000 or
                              data.get("power_summary", {}).get("power_elapsed_s", 0) or
                              data.get("bpf_summary", {}).get("bpf_duration_s", 0))
+    # Wall-clock anchor — stored in summary.json by both live collect and analyze paths
+    _meta = data.get("meta", data)
+    for _t0_key in ("t0_epoch", "start_time", "prom_start"):
+        try:
+            _v = float(_meta.get(_t0_key, 0) or 0)
+            if _v > 1_000_000_000:
+                m.t0_epoch = _v
+                break
+        except (TypeError, ValueError):
+            pass
     m.ttft_ms = float(sg.get("server_ttft_ms", 0))
     m.tpot_ms = float(sg.get("server_itl_ms", 0))
     m.e2e_ms  = float(sg.get("server_e2e_ms", 0))
@@ -4886,10 +4899,26 @@ def extract_metrics(data: dict) -> Metrics:
         try:
             lines = amd_raw.split("\n")
             dram_rows = []
+            col_total_idx = 0
+            col_rd_idx    = 1
+            col_wr_idx    = 2
             in_data = False
             for line in lines:
                 l = line.strip().rstrip(",")
-                if "Total Mem Bw" in l and "Total Mem RdBw" in l:
+                if not l:
+                    continue
+                if "Total Mem Bw" in l and ("Total Mem RdBw" in l or "RdBw" in l):
+                    # Resolve column indices from the header — AMDuProf CSVs have
+                    # many prefix columns (RecordId, Package, Core, …) before the
+                    # BW columns. Taking parts[0:3] blindly gives RecordId/zeros.
+                    cols = [c.strip().lower() for c in l.split(",")]
+                    for ci, c in enumerate(cols):
+                        if "total mem bw" in c and "rdbw" not in c and "wrbw" not in c:
+                            col_total_idx = ci
+                        elif "total mem rdbw" in c or c == "rdbw" or "mem rdbw" in c:
+                            col_rd_idx = ci
+                        elif "total mem wrbw" in c or c == "wrbw" or "mem wrbw" in c:
+                            col_wr_idx = ci
                     in_data = True
                     continue
                 if in_data:
@@ -4897,8 +4926,12 @@ def extract_metrics(data: dict) -> Metrics:
                         in_data = False
                         continue
                     parts = [float(x) for x in l.split(",") if x]
-                    if len(parts) >= 3:
-                        dram_rows.append(parts[:3])
+                    n = len(parts)
+                    i_t = col_total_idx if col_total_idx < n else 0
+                    i_r = col_rd_idx    if col_rd_idx    < n else 1
+                    i_w = col_wr_idx    if col_wr_idx    < n else 2
+                    if n > max(i_t, i_r, i_w):
+                        dram_rows.append([parts[i_t], parts[i_r], parts[i_w]])
             if dram_rows:
                 dram_bw = pd.DataFrame(dram_rows,
                     columns=["total_gb_s", "read_gb_s", "write_gb_s"])
@@ -5141,6 +5174,13 @@ def extract_metrics(data: dict) -> Metrics:
         else:
             m.nvme_wr_bw_mbs_mean = round(m.nvme_wr_iops_mean * kvb_mb2, 2)
             m.nvme_wr_bw_mbs_max  = round(float(wr_a.max()) * kvb_mb2, 2) if len(wr_a) else 0
+
+        if len(rd_bw_series) > 0:
+            m.nvme_rd_bw_mbs_mean = round(float(rd_bw_series.mean()), 2)
+            m.nvme_rd_bw_mbs_max  = round(float(rd_bw_series.max()), 2)
+        else:
+            m.nvme_rd_bw_mbs_mean = round(float(rd_a.mean()) * kvb_mb2, 2) if len(rd_a) else 0
+            m.nvme_rd_bw_mbs_max  = round(float(rd_a.max()) * kvb_mb2, 2) if len(rd_a) else 0
 
         cols_to_keep = ["time_sec", "wr_iops", "rd_iops", "wr_lat_ms",
                         "io_util_pct", "inflight", "rd_bw_mbs", "wr_bw_mbs",
@@ -5927,6 +5967,10 @@ def extract_metrics(data: dict) -> Metrics:
         m.iostat_available = True
         if "rkB_s" in iostat_df.columns:
             m.rd_bw_gbs = round(float(iostat_df["rkB_s"].mean() / 1e6), 4)
+            m.nvme_rd_bw_mbs_mean = max(getattr(m, "nvme_rd_bw_mbs_mean", 0.0),
+                                        float(iostat_df["rkB_s"].mean() / 1024))
+            m.nvme_rd_bw_mbs_max = max(getattr(m, "nvme_rd_bw_mbs_max", 0.0),
+                                       float(iostat_df["rkB_s"].max() / 1024))
         if "wkB_s" in iostat_df.columns:
             m.wr_bw_gbs = round(float(iostat_df["wkB_s"].mean() / 1e6), 4)
             m.nvme_wr_bw_mbs_mean = max(m.nvme_wr_bw_mbs_mean,
@@ -6340,9 +6384,9 @@ def score_bottlenecks(m: Metrics) -> list[dict]:
     # traffic. Now falls back to nvme_wr/rd_bw_mbs_mean (node_exporter) when
     # the blktrace-derived scalar is not available.
     rd_bw_for_score = (m.ssd_rd_bw_mbs_mean if m.ssd_rd_bw_mbs_mean > 0
-                       else m.nvme_rd_bw_mbs_mean)
+                       else getattr(m, "nvme_rd_bw_mbs_mean", 0.0))
     wr_bw_for_score = (m.ssd_wr_bw_mbs_mean if m.ssd_wr_bw_mbs_mean > 0
-                       else m.nvme_wr_bw_mbs_mean)
+                       else getattr(m, "nvme_wr_bw_mbs_mean", 0.0))
 
     # ── IOPS source (priority: timeseries max > sysfs snapshot) ────────────
     # Bug fix: nvme_wr_iops_max was previously loaded from a single sysfs
@@ -6524,6 +6568,26 @@ def chart_percentile_summary(m: Metrics) -> str:
         pass
     return fig_to_b64(fig)
 
+
+def _time_xlabel(m: "Metrics", unit: str = "min") -> str:
+    """Build an X-axis label that includes the real wall-clock time range
+    when m.t0_epoch is set (Prometheus or live-collect path).
+
+    Examples:
+      unit="min"  → "Time (min)  |  18:59 – 20:31 UTC"
+      unit="sec"  → "Time (sec)  |  18:59:00 – 20:31:18 UTC"
+    """
+    base = f"Time ({unit})"
+    if not m.t0_epoch or m.t0_epoch < 1_000_000_000:
+        return base
+    from datetime import datetime, timezone, timedelta
+    _fmt = "%H:%M UTC" if unit == "min" else "%H:%M:%S UTC"
+    t_start = datetime.fromtimestamp(m.t0_epoch, tz=timezone.utc)
+    t_end   = datetime.fromtimestamp(m.t0_epoch + max(m.run_duration_s, 1),
+                                      tz=timezone.utc)
+    return f"{base}  |  {t_start.strftime(_fmt)} – {t_end.strftime(_fmt)}"
+
+
 def chart_gpu_timeline(m: Metrics) -> str:
     gdf = m.gpu_ts
     if gdf.empty:
@@ -6573,7 +6637,7 @@ def chart_gpu_timeline(m: Metrics) -> str:
         axes[2].fill_between(agg["time_sec"] / 60, agg["mem_used"] / 1024, alpha=0.3, color=HBM_C)
         axes[2].plot(agg["time_sec"] / 60, agg["mem_used"] / 1024, color=HBM_C, lw=1.5)
     axes[2].set_ylabel("HBM Used GB\n(mean/GPU)", fontsize=9)
-    axes[2].set_xlabel("Time (minutes)", fontsize=9)
+    axes[2].set_xlabel(_time_xlabel(m), fontsize=9)
     axes[2].grid(True, alpha=0.3)
 
     for ax in axes:
@@ -6635,7 +6699,7 @@ def chart_inference_metrics(m: Metrics) -> str:
             sp.set_edgecolor(BORDER)
 
     axes[0].set_title("SGLang Inference Metrics", fontsize=11, fontweight="bold", pad=8)
-    axes[-1].set_xlabel("Time (minutes)", fontsize=9)
+    axes[-1].set_xlabel(_time_xlabel(m), fontsize=9)
     try:
         import warnings as _wtl
         with _wtl.catch_warnings():
@@ -6689,7 +6753,7 @@ def chart_memory(m: Metrics) -> str:
         ymax = ddf["used_gb"].max() + 2
         ax.set_ylim(ymin, ymax)
     ax.set_title(f"DRAM Used GB\n{m.dram_util_pct:.1f}% of {m.dram_total_gb:.0f} GB", fontsize=9)
-    ax.set_xlabel("Time (min)", fontsize=8)
+    ax.set_xlabel(_time_xlabel(m), fontsize=8)
     ax.set_ylabel("GB", fontsize=8)
     ax.set_facecolor(BG3)
     ax.grid(True, alpha=0.3)
@@ -6743,7 +6807,7 @@ def chart_storage(m: Metrics) -> str:
         ax.bar(t, rd, width=1.5, bottom=wr, color=PGF_C, alpha=0.7, label="Read IOPS")
         if ax.get_legend_handles_labels()[0]: ax.legend(fontsize=8)
     ax.set_title(f"NVMe I/O (max {m.nvme_wr_iops_max:.0f} wr IOPS)", fontsize=9)
-    ax.set_xlabel("Time (min)", fontsize=8)
+    ax.set_xlabel(_time_xlabel(m), fontsize=8)
     ax.set_ylabel("IOPS", fontsize=8)
 
     # vmstat page faults
@@ -6758,7 +6822,7 @@ def chart_storage(m: Metrics) -> str:
         ax.fill_between(t, pgf, alpha=0.3, color=PGF_C)
         ax.plot(t, pgf, color=PGF_C, lw=1.2)
     ax.set_title(f"Page Faults/s (mean {m.page_faults_per_s:.0f})", fontsize=9)
-    ax.set_xlabel("Time (min)", fontsize=8)
+    ax.set_xlabel(_time_xlabel(m), fontsize=8)
     ax.set_ylabel("Faults/s", fontsize=8)
 
     for ax in axes:
@@ -6992,7 +7056,7 @@ def chart_hbm_bandwidth(m: Metrics) -> str:
     for row in axes:
         for ax in row:
             ax.set_facecolor(BG3)
-            ax.set_xlabel("Time (min)", fontsize=8)
+            ax.set_xlabel(_time_xlabel(m), fontsize=8)
             ax.grid(True, alpha=0.3)
             ax.tick_params(labelsize=8)
             for sp in ax.spines.values():
@@ -7098,7 +7162,7 @@ def chart_dram_bandwidth(m: Metrics) -> str:
     for row in axes:
         for ax in row:
             ax.set_facecolor(BG3)
-            ax.set_xlabel("Time (min)", fontsize=8)
+            ax.set_xlabel(_time_xlabel(m), fontsize=8)
             ax.grid(True, alpha=0.3)
             ax.tick_params(labelsize=8)
             for sp in ax.spines.values():
@@ -7170,7 +7234,7 @@ def chart_swap_storm(m: "Metrics") -> str:
     ax1.axhline(-thr, color="#f59e0b", lw=1, ls="--", alpha=0.7,
                 label=f"storm threshold ±{thr:.0f} pg/s")
     ax1.axhline(0, color="#475569", lw=0.8)
-    ax1.set_xlabel("Time (min)", fontsize=8); ax1.set_ylabel("Pages/s (4 KiB pages)", fontsize=8)
+    ax1.set_xlabel(_time_xlabel(m), fontsize=8); ax1.set_ylabel("Pages/s (4 KiB pages)", fontsize=8)
     ax1.set_title("Swap I/O Rate Timeline", fontsize=10, fontweight="bold")
     if ax1.get_legend_handles_labels()[0]: ax1.legend(fontsize=7, loc="upper right")
     ax1.grid(True, alpha=0.3); ax1.tick_params(labelsize=7)
@@ -7195,7 +7259,7 @@ def chart_swap_storm(m: "Metrics") -> str:
                  fontsize=11, color="#16a34a", fontweight="bold", transform=ax2.transAxes)
     ax2.plot(t_min, total, color="#0f172a", lw=0.8, alpha=0.7)
     ax2.axhline(thr, color="#f59e0b", lw=1, ls="--", alpha=0.7)
-    ax2.set_xlabel("Time (min)", fontsize=8); ax2.set_ylabel("Total swap I/O (pg/s)", fontsize=8)
+    ax2.set_xlabel(_time_xlabel(m), fontsize=8); ax2.set_ylabel("Total swap I/O (pg/s)", fontsize=8)
     ax2.set_title("Storm Episodes (red bands) vs Total Swap Rate", fontsize=10, fontweight="bold")
     ax2.grid(True, alpha=0.3); ax2.tick_params(labelsize=7)
 
@@ -7217,7 +7281,7 @@ def chart_swap_storm(m: "Metrics") -> str:
         ax3.text(0.5, 0.5, "SwapFree metric\nnot collected", ha="center", va="center",
                  fontsize=9, color="#64748b", transform=ax3.transAxes)
         ax3.set_xticks([]); ax3.set_yticks([])
-    ax3.set_xlabel("Time (min)", fontsize=8)
+    ax3.set_xlabel(_time_xlabel(m), fontsize=8)
     ax3.set_title("Swap Space Utilization", fontsize=10, fontweight="bold")
     ax3.grid(True, alpha=0.3); ax3.tick_params(labelsize=7)
 
@@ -7259,7 +7323,7 @@ def chart_swap_storm(m: "Metrics") -> str:
         ax5b = ax5.twinx()
         ax5b.plot(t_min, out_rate, color="#3b82f6", lw=1.2, label="pswpout (pg/s)", alpha=0.8)
         ax5b.set_ylabel("Swap out (pg/s)", fontsize=8, color="#3b82f6")
-        ax5.set_xlabel("Time (min)", fontsize=8)
+        ax5.set_xlabel(_time_xlabel(m), fontsize=8)
         ax5.set_ylabel("NVMe write IOPS", fontsize=8, color="#dc2626")
         ax5.text(0.5, 0.95,
                  f"Write amp: {m.swap_write_amp_ratio:.2f}× "
@@ -7595,7 +7659,7 @@ def chart_session_analysis(m: "Metrics") -> str:
                    alpha=0.7, label=f"Mean {m.sess_mean_concurrent:.2f}")
     ax.set_title(f"Simultaneous Active Sessions\nPeak={m.sess_max_concurrent}  Mean={m.sess_mean_concurrent:.2f}",
                  fontsize=10, fontweight="bold")
-    ax.set_xlabel("Time (min)", fontsize=8, color="#475569")
+    ax.set_xlabel(_time_xlabel(m), fontsize=8, color="#475569")
     ax.set_ylabel("Active sessions", fontsize=9, color="#475569")
     ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
     if ax.get_legend_handles_labels()[0]: ax.legend(fontsize=8)
@@ -7734,7 +7798,7 @@ def chart_kvb_events(m: "Metrics") -> str:
         f"L1→L2 mean {m.kvb_l1_offload_rate_blk_s:.4f} blk/s  |  "
         f"L3 active {'yes' if isinstance(l3_ts, pd.DataFrame) and not l3_ts.empty else 'no'}",
         fontsize=9, fontweight="bold")
-    ax.set_xlabel("Time (min)", fontsize=8, color="#475569")
+    ax.set_xlabel(_time_xlabel(m), fontsize=8, color="#475569")
     ax.set_ylabel("Resident KV blocks", fontsize=9, color="#475569")
     if ax.get_legend_handles_labels()[0]: ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3, color="#e2e8f0")
@@ -7783,7 +7847,7 @@ def chart_kvb_events(m: "Metrics") -> str:
         "KV Block Movement Rates Across Tiers\n"
         "Uses SGLang counters first; blktrace/iostat only for cross-check",
         fontsize=9, fontweight="bold")
-    ax2.set_xlabel("Time (min)", fontsize=8, color="#475569")
+    ax2.set_xlabel(_time_xlabel(m), fontsize=8, color="#475569")
     ax2.set_ylabel("Blocks / s", fontsize=9, color="#475569")
     if ax2.get_legend_handles_labels()[0]: ax2.legend(fontsize=8)
     ax2.grid(True, alpha=0.3, color="#e2e8f0")
@@ -7909,7 +7973,7 @@ def chart_nvme_io(m: "Metrics") -> str:
                  f"Wr mean={m.nvme_wr_iops_mean:.1f} IOPS  "
                  f"Wr BW≈{m.nvme_wr_bw_mbs_mean:.1f} MB/s",
                  fontsize=9, fontweight="bold")
-    ax.set_xlabel("Time (min)", fontsize=8, color="#475569")
+    ax.set_xlabel(_time_xlabel(m), fontsize=8, color="#475569")
     ax.set_ylabel("IOPS", fontsize=9, color="#475569")
     if ax.get_legend_handles_labels()[0]: ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3, color="#e2e8f0")
@@ -7969,7 +8033,7 @@ def chart_nvme_io(m: "Metrics") -> str:
                   f"Mean util={m.nvme_io_util_pct:.3f}%  "
                   f"Mean inflight={m.nvme_inflight_mean:.2f}",
                   fontsize=9, fontweight="bold")
-    ax3.set_xlabel("Time (min)", fontsize=8, color="#475569")
+    ax3.set_xlabel(_time_xlabel(m), fontsize=8, color="#475569")
     ax3.set_ylabel("IO Util %", fontsize=9, color="#475569")
     ax3.grid(True, alpha=0.3, color="#e2e8f0")
     ax3.tick_params(labelsize=8)
@@ -8134,7 +8198,7 @@ def chart_blkio_deep(m: "Metrics") -> str:
         offs = m.blkio_ts["offset_bytes"].values / 1e9  # GB
         t5   = m.blkio_ts["time_sec"].values / 60
         ax5.scatter(t5, offs, s=2, alpha=0.4, color="#f97316")
-        ax5.set_xlabel("Time (min)", fontsize=8)
+        ax5.set_xlabel(_time_xlabel(m), fontsize=8)
         ax5.set_ylabel("LBA offset (GB)", fontsize=9)
         ax5.grid(True, alpha=0.2, color="#e2e8f0")
         ax5.tick_params(labelsize=8)
@@ -8166,7 +8230,7 @@ def chart_blkio_deep(m: "Metrics") -> str:
         _placeholder(ax6, "Write BW Trend\n(degradation over time)")
     ax6.set_title("Write BW & Temporal Pattern\n(seasonal/burst detection)",
                   fontsize=9, fontweight="bold")
-    ax6.set_xlabel("Time (min)", fontsize=8, color="#475569")
+    ax6.set_xlabel(_time_xlabel(m), fontsize=8, color="#475569")
     ax6.set_ylabel("Est. Write BW (MB/s)", fontsize=9, color="#475569")
     ax6.grid(True, alpha=0.3, color="#e2e8f0")
     ax6.tick_params(labelsize=8)
@@ -8316,7 +8380,7 @@ def chart_kvssd_io(m: "Metrics") -> str:
             o5w = df_w5["offset_bytes"].values / 1e9
             ax5.scatter(t5w, o5w, s=1.5, alpha=0.3, color="#f97316", label="Write")
         if ax5.get_legend_handles_labels()[0]: ax5.legend(fontsize=7, markerscale=4)
-        ax5.set_xlabel("Time (min)", fontsize=8)
+        ax5.set_xlabel(_time_xlabel(m), fontsize=8)
         ax5.set_ylabel("LBA offset (GB)", fontsize=8)
         ax5.grid(True, alpha=0.15, color="#e2e8f0")
     else:
@@ -8399,7 +8463,7 @@ def chart_kvssd_io(m: "Metrics") -> str:
             ax8.fill_between(t_ax, d_bw, alpha=0.3, color="#ef4444")
             ax8.plot(t_ax, d_bw, color="#ef4444", lw=1.2, label="Discard")
         if ax8.get_legend_handles_labels()[0]: ax8.legend(fontsize=7); ax8.grid(True, alpha=0.3, color="#e2e8f0")
-        ax8.set_xlabel("Time (min)", fontsize=8)
+        ax8.set_xlabel(_time_xlabel(m), fontsize=8)
         ax8.set_ylabel("MB/window", fontsize=8)
     else:
         _ph(ax8, "R/W/T Bandwidth Over Time\nSeasonal/Burst Pattern")
@@ -8431,7 +8495,7 @@ def chart_kvssd_io(m: "Metrics") -> str:
                      color="#ef4444" if deg > 5 else "#059669",
                      bbox=dict(boxstyle="round,pad=0.3", facecolor="#f1f5f9", edgecolor="#e2e8f0"))
         if ax9.get_legend_handles_labels()[0]: ax9.legend(fontsize=7); ax9.grid(True, alpha=0.3, color="#e2e8f0")
-        ax9.set_xlabel("Time (min)", fontsize=8); ax9.set_ylabel("Est. Write BW (MB/s)", fontsize=8)
+        ax9.set_xlabel(_time_xlabel(m), fontsize=8); ax9.set_ylabel("Est. Write BW (MB/s)", fontsize=8)
     else:
         _ph(ax9, "Write BW Trend\nDegradation Over Time", "needs nvme_driver_timeseries")
     ax9.set_title(f"Write BW Trend / Degradation\n"
@@ -8603,7 +8667,7 @@ def chart_ssd_read_workload(m: "Metrics") -> str:
     ax.set_title(f"Read BW Timeline\nMean {m.ssd_rd_bw_mbs_mean:.2f} MB/s  "
                  f"Bytes/day≈{m.ssd_rd_bytes_per_day_gb:.2f}GB",
                  fontsize=9, fontweight="bold")
-    ax.set_xlabel("Time (min)", fontsize=8); ax.set_ylabel("Est. MB/s", fontsize=8)
+    ax.set_xlabel(_time_xlabel(m), fontsize=8); ax.set_ylabel("Est. MB/s", fontsize=8)
     ax.grid(True, alpha=0.3, color="#e2e8f0"); ax.tick_params(labelsize=8)
     for sp in ax.spines.values(): sp.set_edgecolor("#94a3b8")
 
@@ -8828,7 +8892,7 @@ def chart_ssd_write_workload(m: "Metrics") -> str:
     ax.set_title(f"Write IOPS Timeline (§D47)\nMean={m.nvme_wr_iops_mean:.1f} IOPS  "
                  f"BW≈{m.nvme_wr_bw_mbs_mean:.1f}MB/s",
                  fontsize=9, fontweight="bold")
-    ax.set_xlabel("Time (min)", fontsize=8)
+    ax.set_xlabel(_time_xlabel(m), fontsize=8)
     ax.grid(True, alpha=0.3, color="#e2e8f0"); ax.tick_params(labelsize=8)
     for sp in ax.spines.values(): sp.set_edgecolor("#94a3b8")
 
@@ -8931,7 +8995,7 @@ def chart_trim_seasonal(m: "Metrics") -> str:
                  f"Present={m.trim_present}  "
                  f"IOPS={m.trim_iops_mean:.4f}  BW={m.trim_bw_mbs:.4f}MB/s",
                  fontsize=9, fontweight="bold")
-    ax.set_xlabel("Time (min)", fontsize=8)
+    ax.set_xlabel(_time_xlabel(m), fontsize=8)
     ax.grid(True, alpha=0.3, color="#e2e8f0"); ax.tick_params(labelsize=8)
     for sp in ax.spines.values(): sp.set_edgecolor("#94a3b8")
 
@@ -8972,7 +9036,7 @@ def chart_trim_seasonal(m: "Metrics") -> str:
         _ph(ax2, "Read vs Write Rate Timeline")
     ax2.set_title(f"R/W Timeline & Ratio (§E72)\nR/W ratio={m.rw_ratio_mean:.2f}",
                   fontsize=9, fontweight="bold")
-    ax2.set_xlabel("Time (min)", fontsize=8)
+    ax2.set_xlabel(_time_xlabel(m), fontsize=8)
     ax2.grid(True, alpha=0.3, color="#e2e8f0"); ax2.tick_params(labelsize=8)
     for sp in ax2.spines.values(): sp.set_edgecolor("#94a3b8")
 
@@ -9754,16 +9818,19 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
 
     formula_rows = ""
     for fi, (metric, unit, collector, formula, interp) in enumerate(_METRIC_FORMULAS + _METRIC_FORMULAS_EXTRA):
-        bg = "#ffffff" if fi % 2 == 0 else "#f8fafc"
+        # Keep the Metrics & Formulas table readable in dark-themed reports.
+        # The report enhancer may darken surrounding cards, so use explicit dark
+        # row backgrounds with light text here instead of slate-on-dark inline text.
+        bg = "#0f172a" if fi % 2 == 0 else "#111827"
         formula_rows += (
-            f'<tr style="border-bottom:1px solid #e2e8f0">'
-            f'<td style="padding:7px 12px;color:#0f172a;font-weight:600;background:{bg};white-space:nowrap">{metric}</td>'
-            f'<td style="padding:7px 12px;color:#0f172a;font-family:monospace;font-size:10px;background:{bg};white-space:nowrap">{unit}</td>'
-            f'<td style="padding:7px 12px;color:#0f172a;font-family:monospace;font-size:10px;background:{bg}">{collector}</td>'
+            f'<tr style="border-bottom:1px solid #334155">'
+            f'<td style="padding:7px 12px;color:#f8fafc;font-weight:700;background:{bg};white-space:nowrap">{metric}</td>'
+            f'<td style="padding:7px 12px;color:#e2e8f0;font-family:monospace;font-size:10px;background:{bg};white-space:nowrap">{unit}</td>'
+            f'<td style="padding:7px 12px;color:#cbd5e1;font-family:monospace;font-size:10px;background:{bg}">{collector}</td>'
             f'<td style="padding:7px 12px;background:{bg}">'
-            f'<code style="font-size:10px;color:#1e3a5f;white-space:pre-wrap;line-height:1.7">{formula}</code>'
+            f'<code style="font-size:10px;color:#93c5fd;background:#020617;border:1px solid #334155;border-radius:4px;padding:3px 5px;white-space:pre-wrap;line-height:1.7;display:block">{formula}</code>'
             f'</td>'
-            f'<td style="padding:7px 12px;color:#0f172a;font-size:11px;background:{bg};line-height:1.5">{interp}</td>'
+            f'<td style="padding:7px 12px;color:#e2e8f0;font-size:11px;background:{bg};line-height:1.5">{interp}</td>'
             f'</tr>'
         )
 

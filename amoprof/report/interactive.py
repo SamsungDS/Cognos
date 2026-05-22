@@ -26,6 +26,15 @@ from typing import Any
 # Plotly.js version pinned to a known-stable release with broad browser support.
 PLOTLY_CDN = "https://cdn.plot.ly/plotly-2.35.2.min.js"
 
+# ─── Run-wide wall-clock anchor ──────────────────────────────────────────────
+# Set once by build_report() from summary.json "t0_epoch" (Unix timestamp of
+# the collection-window start).  All chart functions read this automatically
+# via _ts_to_dates() and _layout() so every chart's X axis is anchored to the
+# same real wall-clock time — matching the --start / --end the user specified.
+#
+# When 0 (default), charts fall back to elapsed time from 0.
+_T0_EPOCH: float = 0.0
+
 
 # ─── Data loading ────────────────────────────────────────────────────────────
 def _read_csv(path: Path) -> list[dict]:
@@ -69,21 +78,15 @@ def _find_col(rows: list[dict], partial: str) -> str | None:
 
 
 def _time_axis_config(ts_seconds: list[float] | None = None,
-                       max_ts: float | None = None) -> dict:
-    """Return Plotly xaxis config that renders elapsed-seconds as
-    HH:MM:SS / MM:SS / SS depending on the total run length.
+                       max_ts: float | None = None,
+                       t0_epoch: float | None = None) -> dict:
+    """Return Plotly xaxis config.
 
-    Plotly's date axis renders nicely when X values are datetime strings or
-    epoch milliseconds. Since our `time_sec` is elapsed-seconds-from-t0,
-    we set tickformat manually based on the observed max value:
-
-      < 60 sec  →  "SS"     (seconds only, integer)
-      < 1 hour  →  "MM:SS"  (minutes:seconds)
-      ≥ 1 hour  →  "HH:MM:SS"
-
-    All charts in the report use the SAME format for the SAME run, so the
-    same minute appears at the same X position across every chart.
+    Uses the module-level _T0_EPOCH when t0_epoch is not explicitly given.
+    When t0 > 0 labels show real wall-clock datetimes matching --start/--end.
+    When t0 == 0 labels show elapsed time (HH:MM:SS / MM:SS / SS).
     """
+    t0 = _T0_EPOCH if t0_epoch is None else t0_epoch
     if max_ts is None:
         if ts_seconds:
             try:
@@ -94,69 +97,78 @@ def _time_axis_config(ts_seconds: list[float] | None = None,
             max_ts = 0
 
     cfg = {
-        "title": {"text": "Elapsed time", "font": {"size": 13}},
         "gridcolor": "#cbd5e1",
         "zerolinecolor": "#94a3b8",
         "linecolor": "#475569",
         "tickcolor": "#475569",
         "tickfont": {"size": 12, "color": "#0f172a"},
+        "type": "date",
     }
-    if max_ts >= 3600:
+
+    if t0 > 0:
         cfg["tickformat"] = "%H:%M:%S"
-        cfg["title"]["text"] = "Elapsed time (HH:MM:SS)"
+        cfg["title"] = {"text": "Wall-clock time (UTC)", "font": {"size": 13}}
+        cfg["hoverformat"] = "%Y-%m-%d %H:%M:%S UTC"
+    elif max_ts >= 3600:
+        cfg["tickformat"] = "%H:%M:%S"
+        cfg["title"] = {"text": "Elapsed time (HH:MM:SS)", "font": {"size": 13}}
     elif max_ts >= 60:
         cfg["tickformat"] = "%M:%S"
-        cfg["title"]["text"] = "Elapsed time (MM:SS)"
+        cfg["title"] = {"text": "Elapsed time (MM:SS)", "font": {"size": 13}}
     else:
         cfg["tickformat"] = "%Ss"
-        cfg["title"]["text"] = "Elapsed time (sec)"
-    cfg["type"] = "date"
+        cfg["title"] = {"text": "Elapsed time (sec)", "font": {"size": 13}}
+
     return cfg
 
 
-def _ts_to_dates(ts_seconds: list[float]) -> list[str]:
-    """Convert elapsed seconds (since t0) into ISO 8601 datetime strings
-    anchored at the Unix epoch. This lets Plotly's date axis handle the
-    tick formatting via `tickformat` (HH:MM:SS / MM:SS).
+def _ts_to_dates(ts_seconds: list[float],
+                  t0_epoch: float | None = None) -> list[str]:
+    """Convert elapsed-seconds-from-t0 into ISO 8601 datetime strings for Plotly.
 
-    We use 1970-01-01T00:00:00 + elapsed_seconds so the displayed clock
-    time IS the elapsed time. This is a presentation trick — the actual
-    semantic value is still 'seconds since run start'.
+    Uses the module-level _T0_EPOCH (set by build_report from summary.json)
+    when t0_epoch is not explicitly given.
+
+    When the resolved t0 is 0, anchors at 1970-01-01 so tick labels show
+    elapsed time (00:00:00 .. HH:MM:SS).
+
+    When t0 > 0 (a real Unix timestamp), anchors at the actual wall-clock
+    start of the collection window so every chart aligns with the
+    --start / --end timestamps the user specified.
     """
+    from datetime import datetime, timezone, timedelta
+    t0 = _T0_EPOCH if t0_epoch is None else t0_epoch
+    base = datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=t0)
     out: list[str] = []
     for t in ts_seconds:
         try:
             sec = float(t)
-        except (ValueError, TypeError):
+        except (TypeError, ValueError):
             sec = 0.0
         if sec < 0:
             sec = 0.0
-        total_ms = int(sec * 1000)
-        h = total_ms // 3_600_000
-        m = (total_ms % 3_600_000) // 60_000
-        s = (total_ms % 60_000) // 1000
-        ms = total_ms % 1000
-        # Plotly accepts ISO 8601 strings; format manually to avoid the
-        # full datetime import cost.
-        out.append(f"1970-01-01T{h:02d}:{m:02d}:{s:02d}.{ms:03d}")
+        dt = base + timedelta(seconds=sec)
+        out.append(dt.strftime("%Y-%m-%dT%H:%M:%S.") +
+                   f"{dt.microsecond // 1000:03d}")
     return out
 
 
 # ─── Chart builders — each returns a Plotly figure-spec dict ────────────────
 def _layout(title: str, ylabel: str = "", ylabel2: str = "",
-            height: int = 380, ts: list[float] | None = None) -> dict:
-    """Default layout with dark text on light, high-contrast grids,
-    legible 13-14px fonts, and hover unified across traces.
+            height: int = 380, ts: list[float] | None = None,
+            t0_epoch: float | None = None) -> dict:
+    """Default Plotly layout.
 
-    When `ts` is provided (list of elapsed-seconds), the X-axis is
-    configured as a date axis with tickformat HH:MM:SS / MM:SS / SS
-    chosen automatically. Callers must pass the same `ts` they pass
-    as the chart's x values (run through `_ts_to_dates`).
+    Uses the module-level _T0_EPOCH when t0_epoch is not explicitly given.
+    When t0 > 0 the X axis shows real wall-clock datetimes so every chart
+    lines up with the --start / --end window the user specified.
     """
+    t0 = _T0_EPOCH if t0_epoch is None else t0_epoch
     layout = {
         "title": {
             "text": title,
-            "font": {"size": 15, "color": "#0f172a", "family": "Inter, system-ui, sans-serif"},
+            "font": {"size": 15, "color": "#0f172a",
+                     "family": "Inter, system-ui, sans-serif"},
             "x": 0.02, "y": 0.96, "xanchor": "left",
         },
         "height": height,
@@ -164,11 +176,13 @@ def _layout(title: str, ylabel: str = "", ylabel2: str = "",
         "plot_bgcolor": "#f8fafc",
         "paper_bgcolor": "#ffffff",
         "font": {"color": "#0f172a", "size": 13, "family": "Inter, system-ui, sans-serif"},
-        "xaxis": (_time_axis_config(ts) if ts is not None else {
-            "title": {"text": "Time (sec)", "font": {"size": 13}},
+        "xaxis": (_time_axis_config(ts, t0_epoch=t0) if ts is not None else {
+            "title": {"text": "Wall-clock time (UTC)" if t0 > 0 else "Time",
+                      "font": {"size": 13}},
             "gridcolor": "#cbd5e1", "zerolinecolor": "#94a3b8",
             "linecolor": "#475569", "tickcolor": "#475569",
             "tickfont": {"size": 12, "color": "#0f172a"},
+            "type": "date",
         }),
         "yaxis": {
             "title": {"text": ylabel, "font": {"size": 13}},
@@ -824,9 +838,7 @@ def _chart_bw_per_stream(bps: list[dict]) -> dict | None:
 
 def _chart_dram_bw(amduprof_txt: Path) -> dict | None:
     # The collector writes both amduprof_pcm_raw.csv and amduprof_pcm_raw.txt.
-    # Previously only the .txt path was tried; if only .csv was written the
-    # chart silently returned None while the static report could still read it.
-    # Now we try the given path first, then fall back to the .csv variant.
+    # Try the supplied path first, then the .csv variant.
     raw_path: Path | None = None
     candidates = [amduprof_txt, amduprof_txt.with_suffix(".csv")]
     for candidate in candidates:
@@ -835,40 +847,90 @@ def _chart_dram_bw(amduprof_txt: Path) -> dict | None:
             break
     if raw_path is None:
         return None
+
     rd_bw, wr_bw, tot_bw = [], [], []
+    # Column indices resolved from the header line — AMDuProf CSVs have many
+    # columns before "Total Mem Bw" (RecordId, Package, Core, Thread, cache
+    # hit-rates, …).  Previously the parser assumed fixed indices [0,1,2] which
+    # produced RecordId/zeros instead of the actual bandwidth values.
+    col_total: int | None = None
+    col_rd:    int | None = None
+    col_wr:    int | None = None
     in_data = False
+
     for line in raw_path.read_text(errors="replace").splitlines():
         ll = line.strip().rstrip(",")
-        # Header detection: AMDuProf uses "Total Mem Bw" + "Total Mem RdBw" (CSV)
-        # or "Total Mem Bw" + "RdBw" (txt). Accept both.
+        if not ll:
+            continue
+
+        # Header detection — accept both "Total Mem RdBw" and bare "RdBw"
         if "Total Mem Bw" in ll and ("Total Mem RdBw" in ll or "RdBw" in ll):
-            in_data = True; continue
-        if in_data:
-            if not ll or not ll[0].isdigit():
-                in_data = False; continue
-            parts = [_to_float(p) for p in ll.split(",") if p]
-            if len(parts) >= 3:
-                tot_bw.append(parts[0]); rd_bw.append(parts[1]); wr_bw.append(parts[2])
+            cols = [c.strip() for c in ll.split(",")]
+            # Resolve indices for each BW column (case-insensitive substring)
+            for i, c in enumerate(cols):
+                cl = c.lower()
+                if col_total is None and "total mem bw" in cl:
+                    col_total = i
+                elif col_rd is None and ("total mem rdbw" in cl or
+                                         (cl == "rdbw") or
+                                         ("mem rdbw" in cl)):
+                    col_rd = i
+                elif col_wr is None and ("total mem wrbw" in cl or
+                                         (cl == "wrbw") or
+                                         ("mem wrbw" in cl)):
+                    col_wr = i
+            if col_total is not None:
+                in_data = True
+            continue
+
+        if not in_data:
+            continue
+
+        # Data rows: first character must be a digit (catches RecordId rows,
+        # timestamp rows, etc.) and stop on section separators
+        if not ll[0].isdigit():
+            in_data = False
+            continue
+
+        parts = [_to_float(p) for p in ll.split(",")]
+        n = len(parts)
+
+        # Use header-resolved indices when available; fall back to [0,1,2]
+        # only if the header didn't have enough columns (shouldn't happen).
+        i_tot = col_total if col_total is not None and col_total < n else 0
+        i_rd  = col_rd    if col_rd    is not None and col_rd    < n else 1
+        i_wr  = col_wr    if col_wr    is not None and col_wr    < n else 2
+
+        if n > max(i_tot, i_rd, i_wr):
+            tot_bw.append(parts[i_tot])
+            rd_bw.append(parts[i_rd])
+            wr_bw.append(parts[i_wr])
+
     if not tot_bw:
         return None
-    ts = [i * 1.0 for i in range(len(tot_bw))]
+
+    # Use actual AMDuProf sampling interval (1.2 s default) so the DRAM BW
+    # x-axis aligns with all other charts that share the same _T0_EPOCH anchor.
+    interval_s = 1.2
+    ts_elapsed = [i * interval_s for i in range(len(tot_bw))]
+    xs = _ts_to_dates(ts_elapsed)   # picks up _T0_EPOCH automatically
     return {
         "data": [
-            {"x": ts, "y": tot_bw, "type": "scatter", "mode": "lines",
+            {"x": xs, "y": tot_bw, "type": "scatter", "mode": "lines",
              "name": "Total (GB/s)",
              "line": {"color": "#a78bfa", "width": 2.2},
              "hovertemplate": "<b>%{y:.2f}</b> GB/s total<extra></extra>"},
-            {"x": ts, "y": rd_bw, "type": "scatter", "mode": "lines",
+            {"x": xs, "y": rd_bw, "type": "scatter", "mode": "lines",
              "name": "Read (GB/s)",
              "line": {"color": "#22c55e", "width": 1.8},
              "hovertemplate": "<b>%{y:.2f}</b> GB/s read<extra></extra>"},
-            {"x": ts, "y": wr_bw, "type": "scatter", "mode": "lines",
+            {"x": xs, "y": wr_bw, "type": "scatter", "mode": "lines",
              "name": "Write (GB/s)",
              "line": {"color": "#f43f5e", "width": 1.8},
              "hovertemplate": "<b>%{y:.2f}</b> GB/s write<extra></extra>"},
         ],
         "layout": _layout("System DRAM Bandwidth (AMDuProf PCM)",
-                          "GB / sec")
+                          "GB / sec", ts=ts_elapsed)
     }
 
 
@@ -1263,6 +1325,7 @@ def build_report(raw_dir: Path, out_html: Path,
 
     Returns the path to the written HTML file.
     """
+    global _T0_EPOCH
     raw_dir = Path(raw_dir)
     out_html = Path(out_html)
 
@@ -1287,6 +1350,29 @@ def build_report(raw_dir: Path, out_html: Path,
     hot_regions = _read_csv(raw_dir / "hot_regions_overall.csv")
     bt_summary  = _read_json(raw_dir / "summary.json")
     manual_setup = _read_json(raw_dir / "setup_details.json") or _read_json(raw_dir / "setup.json")
+
+    # ── Set module-level wall-clock anchor ────────────────────────────────────
+    # t0_epoch is the Unix timestamp of the collection-window start, stored in
+    # summary.json during both live collect and Prometheus analyze runs.
+    # All _ts_to_dates() calls pick this up automatically so every chart's
+    # X axis is anchored to the same real wall-clock time — consistent with
+    # the --start / --end the user specified on the command line.
+    _t0_candidates = [
+        bt_summary.get("t0_epoch"),           # live collect primary
+        sglang_sum.get("t0_epoch"),            # sglang_summary fallback
+        sglang_sum.get("start_time"),          # Prometheus analyze fallback
+        bt_summary.get("start_time"),
+        bt_summary.get("prom_start"),
+    ]
+    _T0_EPOCH = 0.0
+    for _t0c in _t0_candidates:
+        try:
+            v = float(_t0c)
+            if v > 1_000_000_000:   # sanity: must be a plausible Unix timestamp (> year 2001)
+                _T0_EPOCH = v
+                break
+        except (TypeError, ValueError):
+            pass
     setup = {
         "Model": sglang_sum.get("model_name", "unknown"),
         "Runtime": sglang_sum.get("runtime", sglang_sum.get("server_type", "SGLang")),
