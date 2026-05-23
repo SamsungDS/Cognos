@@ -1,9 +1,16 @@
 #ifndef __COLLECTOR_H__
 #define __COLLECTOR_H__
 
+#include <atomic>
+#include <exception>
+#include <stdexcept>
+
 #include "metrics_collector.h"
+#include "sc_logger.h"
 #include "svc.h"
 #include "svc_mgr.h"
+
+using namespace std;
 
 const std::string SVK_CXL_HOST_TAG = "svk_cxl_host_node";
 const std::string SVK_CXL_HOST_IP_CONFIG = "/etc/svk/zmq_config.json";
@@ -25,6 +32,9 @@ class Collector : public Service {
   // parameterized constructor
   Collector(std::string bind_addr, std::string svc_name,
             void *(*svc_func)(void *arg));
+  // Virtual destructor
+  virtual ~Collector() = default;
+
   MetricsCollector sys_metrics;
   int ServiceStart(void);
   void ServiceStop(void);
@@ -39,6 +49,9 @@ std::string get_zmq_bindaddr(std::string);
 extern "C" {
 int register_svk_service(ServiceManager *svc_mgr);
 }
+
 void *_run(void *arg);
+
+std::atomic<int> c_flag(0);
 
 #endif

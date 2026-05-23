@@ -2,7 +2,6 @@
 
 #include <zmq.h>
 
-#include <stdexcept>
 using namespace std;
 inline const char *zmq_topic = "metric";
 
@@ -40,39 +39,49 @@ string get_zmq_bindaddr(string conf_filename) {
 */
 void *_run(void *arg) {
   int rc;
+  string emsg = "Error in " + string(__FUNCTION__) + " : " +
+                "##HOST_METRIC zmq_send failed, errno = " + to_string(errno) +
+                "; error = " + strerror(errno);
+
   if (!arg) {
-    cerr << "##HOST_METRIC collector run arg null" << endl;
-    return nullptr;
+    cerr << "##HOST_METRIC collector run arg is null" << endl;
+    return (char *)"##HOST_METRIC collector run arg is null";
   }
 
   cout << "##HOST_METRIC collector run function" << endl;
-  Collector *c = (Collector *)arg;
+
+  string zmq_message;
   while (true) {
-    if (int ret = c->sys_metrics.get_system_metrics(); ret == -1) {
-      string msg = "Error in " + string(__FUNCTION__) + " : " +
-                   "getting system metrics failed, ret = " + to_string(ret);
-      cerr << msg << endl;
-      throw runtime_error(msg);
-    }
-    string zmq_message;
-    zmq_message =
-        string(zmq_topic) + ":" + c->sys_metrics.metric_event_json_string;
-    cout << "##HOST_METRIC zmq_send:" << zmq_message << endl;
-    rc = zmq_send(c->c_pub, (void *)zmq_message.c_str(), zmq_message.length(),
-                  0);
-    if (rc == -1) {
-      string msg =
-          "Error in " + string(__FUNCTION__) + " : " +
-          "##HOST_METRIC zmq_send failed, errno = " + to_string(errno) +
-          "; error = " + strerror(errno);
-      cerr << msg << endl;
-      throw runtime_error(msg);
-    }
-    sleep(COLLECTION_FREQUENCY_S);  // Run every COLLECTION_FREQUENCY_S seconds
-    if (TEST_BUILD) {
-      throw invalid_argument("test");
+    try {
+      Collector *c = static_cast<Collector *>(arg);
+      rc = c->sys_metrics.get_system_metrics();
+      if (rc == -1) {
+        string msg = "Error in " + string(__FUNCTION__) + " : " +
+                     "getting system metrics failed, rc = " + to_string(rc);
+        cerr << msg << endl;
+        throw runtime_error(msg);
+      }
+      zmq_message =
+          string(zmq_topic) + ":" + c->sys_metrics.metric_event_json_string;
+      cout << "##HOST_METRIC zmq_send:" << zmq_message << endl;
+      rc = zmq_send(c->c_pub, (void *)zmq_message.c_str(), zmq_message.length(),
+                    0);
+      if (rc == -1) {
+        cerr << emsg << endl;
+        throw runtime_error(emsg.c_str());
+      }
+      sleep(
+          COLLECTION_FREQUENCY_S);  // Run every COLLECTION_FREQUENCY_S seconds
+      if (TEST_BUILD) {
+        throw runtime_error("test");
+      }
+    } catch (const std::runtime_error &e) {
+      // Catch by const reference to handle specifically
+      ++c_flag;
+      cerr << c_flag << "::" << e.what() << endl;
     }
   }
+  return (void *)(0);
 }
 
 int Collector::ServiceStart(void) {
