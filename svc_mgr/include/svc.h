@@ -14,6 +14,7 @@ class Service {
  public:
   Service();
   Service(std::string svc_name, void *(*svc_func)(void *arg));
+  virtual ~Service() = default;
 
   /**
    * @brief Creates a thread corresponding to a service and executes

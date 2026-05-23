@@ -161,9 +161,10 @@ static int _load_services(std::string &feat_sm_svcs_dir,
     int (*register_svk_service)(ServiceManager *svc_mgr) =
         (int (*)(ServiceManager *svc_mgr))dlsym(handle, "register_svk_service");
     if (register_svk_service == nullptr) {
-      SVC_MGR_LOG(level_E::ERROR, "cannot find any service in ", dlerror());
       continue;
     }
+    SVC_MGR_LOG(level_E::INFO, "Loading register_svk_service from the library",
+                feature_lib_str);
     rc = register_svk_service(svc_mgr);
     if (rc != 0)
       SVC_MGR_LOG(level_E::ERROR, "Service registration failed for ",
@@ -246,8 +247,11 @@ int svc_mgr_server_start(std::string svk_conf_file, bool blocking) {
     return rc;
   }
 
-  SVC_MGR_LOG(level_E::INFO, "Service Manager initialized, blocking now ");
+  SVC_MGR_LOG(level_E::INFO, "Service Manager initialized");
+
   if (blocking == true) {
+    SVC_MGR_LOG(level_E::INFO,
+                "Blocking flag enabled. Starting in daemon mode");
     while (gSVCMGRSignalStatus.load() == -1) sleep(5);
   }
   SVC_MGR_LOG(level_E::INFO, "Shutting down Service Manager");
