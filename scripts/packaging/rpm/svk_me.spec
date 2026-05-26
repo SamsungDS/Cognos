@@ -4,7 +4,7 @@ Release:        1%{?dist}.%svk_os_version
 Summary:        Cognos ME Plugin
 License:        Samsung Internal
 BuildRequires:  jansson
-Requires:       cognos-core, cognos-mgmt-fw, jansson, libcgroup-original-tools, yaml-cpp
+Requires:       cognos-core, cognos-mgmt-fw, jansson, libcgroup-original-tools, yaml-cpp, numactl
 
 
 %global svk_install_dir %_prefix/local/svk/feature_modules/me

@@ -8,7 +8,7 @@ find_package(nlohmann_json REQUIRED)
 
 target_include_directories(svkme PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include/" ${SVKFRAMEWORK_INCLUDE_DIRS} ${SVKMGMTFW_INCLUDE_DIRS})
 target_link_directories(svkme PRIVATE ${SVKMGMTFW_LIB_DIRS} ${SVKFRAMEWORK_LIBRARY_DIRS})
-target_link_libraries(svkme svklogger svkframework nlohmann_json)
+target_link_libraries(svkme svklogger svkframework nlohmann_json numa)
 
 add_definitions("-DBOOST_ALLOW_DEPRECATED_HEADERS")
 add_definitions("-DBOOST_BIND_GLOBAL_PLACEHOLDERS")
