@@ -901,13 +901,14 @@ svk_logic_module_details *SLATrackerSvc::getLogicDetails(
 }
 
 void SLATrackerSvc::clean_up(void) {
-  for (auto [module, detail] : this->logic_modules_map) {
-    detail->cleanup_logic_module(nullptr);
-  }
   if (this->th_data.thread_running) {
     this->th_data.shutdown_bm_thread = true;
     gSlatCondVar.notify_one();
     this->th_data.benchmarking_thread.join();
+  }
+
+  for (auto [module, detail] : this->logic_modules_map) {
+    detail->cleanup_logic_module(nullptr);
   }
 }
 
