@@ -5,8 +5,8 @@
     "logger": {
       "log_level": "INFO",
       "log_file_name": "/var/log/svk/slat.log",
-      "log_file_count": 1,
-      "log_file_size": 1048576,
+      "log_file_count": 10,
+      "log_file_size": 10485760,
       "sink_type": "rotating_file"
     }
   }
