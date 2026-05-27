@@ -1,5 +1,3 @@
-# Author: June Liu
-# Contact: june.liu@samsung.com
 ---
 
 - name: Check if ufw is active
@@ -15,7 +13,7 @@
   ansible.builtin.set_fact:
     cognos_deny_ports_ufw_active: "{{ 'Status: active' in cognos_deny_ports_ufw_status.stdout }}"
 
-- name: Open ports for cognos services with UFW
+- name: Deny ports for cognos services with UFW
   community.general.ufw:
     rule: deny
     port: "{{ item }}/tcp"

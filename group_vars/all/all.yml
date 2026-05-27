@@ -24,7 +24,7 @@ min_supported_kernel_version: "{{ kernel_version_require[ansible_distribution]['
 max_supported_kernel_version: "{{ kernel_version_require[ansible_distribution]['max_ver'] }}"
 
 artifacts_dir: "{{ inventory_dir }}/artifacts"
-deploy_staging_dir: "/tmp/"
+deploy_staging_dir: "{{ ansible_env.HOME }}"
 svk_install_dir: "/usr/local/svk/"
 svk_logs_backup_dir: "{{ inventory_dir }}/logs"
 svk_logs_temp_dir: "{{ deploy_staging_dir }}/logs"

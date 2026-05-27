@@ -141,7 +141,7 @@
   ansible.builtin.shell:
     cmd: |
       set -o pipefail
-      curl -fsSL https://rpm.nodesource.com/setup_21.x | bash -
+      curl -fsSL https://rpm.nodesource.com/setup_24.x | bash -
     executable: /bin/bash
   changed_when: false
   become: true

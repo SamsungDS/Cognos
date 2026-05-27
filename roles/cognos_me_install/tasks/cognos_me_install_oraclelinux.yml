@@ -1,7 +1,5 @@
 ---
 # tasks file for roles/cognos_me_install
-# Author: June Liu
-# Contact: june.liu@samsung.com
 
 - name: Check if cognos_me RPM is installed
   ansible.builtin.shell:

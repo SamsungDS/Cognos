@@ -1,7 +1,6 @@
 ---
 # tasks file for roles/cognos_me_install
-# Author: June Liu
-# Contact: june.liu@samsung.com
+
 
 - name: Install cognos-me
   ansible.builtin.include_tasks:

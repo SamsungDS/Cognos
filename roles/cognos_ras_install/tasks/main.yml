@@ -1,6 +1,5 @@
 ---
-# Author: June Liu
-# Contact: june.liu@samsung.com
+
 
 - name: Install cognos-ras
   ansible.builtin.include_tasks:

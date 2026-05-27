@@ -1,0 +1,5 @@
+---
+
+- name: Deny the allowed SELinux http_port_t tcp port
+  ansible.builtin.include_tasks: deny_se_ports_oraclelinux.yml
+  when: ansible_distribution == 'OracleLinux'

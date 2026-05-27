@@ -1,0 +1,21 @@
+---
+### Ansible User defaults ###
+create_ansible_user_name: "ansible"
+create_ansible_user_shell: "/bin/bash"
+
+### Password defaults ###
+# Note: The password will be set during playbook execution
+# For production use, consider using ansible-vault or secrets management
+create_ansible_user_password: "{{ vault_ansible_password | default('changeme') | password_hash('sha512') }}"
+
+### Sudoers defaults ###
+# The sudoers configuration varies between the Cognos nodes and the Ansible controller node.
+# For cognos nodes: ansible ALL=(ALL) NOPASSWD: /bin/sh,/usr/bin/python,/usr/bin/python3
+# For ansible controller node: ansible ALL=(ALL) NOPASSWD: /bin/sh,/usr/bin/python,/usr/bin/python3,/usr/bin/dnf install python3-pip
+# However, since running playbooks to create users implies that Ansible packages are already installed,
+# there's no need to create users on the Ansible controller node.
+create_ansible_user_sudoers_cognos: "{{ create_ansible_user_name }} ALL=(ALL) NOPASSWD: /bin/sh,/usr/bin/python,/usr/bin/python3"
+
+### Custom path defaults ###
+# If a custom home directory is needed, set this variable
+create_ansible_user_custom_parent_path: "/root"

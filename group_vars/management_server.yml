@@ -1,3 +1,2 @@
 ---
 cognos_pkg_dir: "{{ inventory_dir }}/artifacts/SVK"
-switch_ip: "105.140.86.13"

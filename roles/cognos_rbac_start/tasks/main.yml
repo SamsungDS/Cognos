@@ -1,6 +1,5 @@
 ---
-# Author: June Liu
-# Contact: june.liu@samsung.com
+
 
 - name: Start Docker service
   ansible.builtin.systemd:

@@ -1,6 +1,4 @@
 ---
-# Author: June Liu
-# Contact: june.liu@samsung.com
 
 - name: Deny the allowed ports when firewalld service running
   ansible.builtin.include_tasks:

@@ -1,0 +1,24 @@
+---
+### Playbook Documentation ###
+#
+# #### playbooks/create_ansible_user.yml
+#
+# Execute this playbook to create an Ansible user with NOPASSWD sudo access on all hosts of [management_server] and [application_server] group.
+# This playbook will perform the following:
+# * Create ansible user on hosts in [management_server] and [application_server] group
+# * Set password for the ansible user
+# * Configure NOPASSWD sudo privileges for the ansible user
+#
+# Usage:
+#   ansible-playbook -i your_inventory playbooks/create_ansible_user.yml --ask-vault-pass
+#
+# Note: This playbook requires root or sudo access on target hosts.
+
+- name: Create Ansible User
+  hosts:
+    - management_server
+    - application_server
+  become: true
+  gather_facts: true
+  roles:
+    - create_ansible_user

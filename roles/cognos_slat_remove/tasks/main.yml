@@ -1,6 +1,5 @@
 ---
-# Author: June Liu
-# Contact: june.liu@samsung.com
+
 
 - name: Remove cognos_slat packages on Ubuntu
   ansible.builtin.apt:

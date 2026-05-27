@@ -1,5 +1,3 @@
-# Author: June Liu
-# Contact: june.liu@samsung.com
 ---
 # This set_grub_ubuntu.yml works for the bootable kernels in a submenu like follows:
 # submenu 'Advanced options for Ubuntu' $menuentry_id_option 'gnulinux-advanced-fd7a9e9d-2e34-4852-9e70-e3a37a54272e' {

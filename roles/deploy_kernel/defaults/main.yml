@@ -1,13 +1,11 @@
-# Author: June Liu
-# Contact: june.liu@samsung.com
 ---
 ### Path defaults
 deploy_kernel_artifacts_dir: "{{ inventory_dir }}/artifacts"
 deploy_kernel_staging_dir: /tmp/kernel
 
 ### Kernel defaults
-deploy_kernel_version: "6.11.11"
-deploy_kernel_version_download: "6.11.11"
+deploy_kernel_version: "6.11.0"
+deploy_kernel_version_download: "6.11"
 
 deploy_kernel_source_code_url: "https://cdn.kernel.org/pub/linux/kernel/v{{ deploy_kernel_version[:1] }}.x/linux-{{ deploy_kernel_version_download }}.tar.xz"
 

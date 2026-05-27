@@ -1,0 +1,32 @@
+---
+
+- name: Check if SELinux is enforcing (optional check)
+  ansible.builtin.command: getenforce
+  register: cognos_deny_se_ports_selinux_stat
+  changed_when: false
+
+- name: Check if the port is mapped to SELinux http_port_t (TCP)
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      semanage port -l | grep -E "^http_port_t\s+.*(tcp|udp)\s+.*{{ mgmt_ports_frontend['mgmt_endpoint'] }}"
+    executable: /bin/bash
+  register: cognos_deny_se_ports_check
+  become: true
+  changed_when: false
+  failed_when: false
+  when:
+    - cognos_deny_se_ports_selinux_stat is defined
+    - cognos_deny_se_ports_selinux_stat.stdout == "Enforcing"
+
+- name: Delete SELinux policy for port {{ mgmt_ports_frontend['mgmt_endpoint'] }}
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      semanage port -d -t http_port_t -p tcp {{ mgmt_ports_frontend['mgmt_endpoint'] }}
+    executable: /bin/bash
+  become: true
+  changed_when: false
+  when:
+    - cognos_deny_se_ports_selinux_stat.stdout == "Enforcing"
+    - cognos_deny_se_ports_check.rc == 0

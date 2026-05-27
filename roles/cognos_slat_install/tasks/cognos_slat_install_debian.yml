@@ -1,6 +1,5 @@
 ---
-# Author: June Liu
-# Contact: june.liu@samsung.com
+
 
 - name: Check if cognos-slat DEB is installed
   ansible.builtin.shell:

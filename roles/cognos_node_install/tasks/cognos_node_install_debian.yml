@@ -1,7 +1,6 @@
 ---
 # tasks file for roles/cognos_node_install
-# Author: June Liu
-# Contact: june.liu@samsung.com
+
 
 - name: Install python3.10-venv
   ansible.builtin.apt:

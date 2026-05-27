@@ -50,6 +50,13 @@
     - role: cognos_deny_ports
       when: cognos_install_gui_enabled
 
+- name: Deny allowed SELinux http_port_t TCP port on management server
+  hosts: management_server
+  become: true
+  roles:
+    - role: cognos_deny_se_ports
+      when: cognos_install_gui_enabled
+
 - name: Ensure ports are denied for cognos rbac
   hosts: management_server
   become: true
