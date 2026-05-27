@@ -577,6 +577,10 @@ static std::string cg_move(cme_global* cg_obj, unordered_map<string, string> &to
                 else if (!(tokens_map.at("command").compare("move_cold")))
                 {
                         cme_ctx->operation = "demote";
+                        // Make faster numa node as the source numa
+                        // Make slower numa node as the destination numa 
+                        cme_ctx->mem_attr.src_numa_node = fast_t;
+                        cme_ctx->mem_attr.dst_numa_node = slow_t;
                         ret = mover_obj->move_cold(cme_ctx);
                 }
                 else
