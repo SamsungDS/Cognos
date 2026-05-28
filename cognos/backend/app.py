@@ -65,6 +65,7 @@ def create_app(mock=False):
                 helper.get_request_metadata(request)
             )
         )
+
         if not cognos.scmc_version:
             return helper.create_notfound_response_from_payload({})
         elif "error" in cognos.scmc_version:
@@ -126,17 +127,6 @@ def create_app(mock=False):
         )
         return helper.create_response_from_payload(
             cognos.get_remote_devices()
-        )
-
-    @app.post(f"/api/{CAL_API_VERSION}/membox_capacity")
-    def membox_capacity():
-        CAL_LOGGER.debug(
-            helper.serialize_request_metadata(
-                helper.get_request_metadata(request)
-            )
-        )
-        return helper.create_response_from_payload(
-            cognos.membox_capacity()
         )
 
     @app.post(f"/api/{CAL_API_VERSION}/host_devices")

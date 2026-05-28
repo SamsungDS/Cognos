@@ -19,6 +19,8 @@ from cognos.backend.cmmh import CMMH
 from cognos.backend.constants import (
     COGNOS_NORTHBOUND_ENDPOINTS, COGNOS_ENDPOINT
 )
+import cognos.backend.mock_constants as mock_response
+import cognos.backend.mock_metrics as mock_metrics
 
 from cognos.backend.sqlite_client import SqliteClient
 from cognos.backend.direct_node_interface import DirectAttachedNodeInterface
@@ -48,12 +50,13 @@ class Cognos(BaseControlInterface):
             "Content-Type": "application/json"
         }
         self.logger = logger
+        self.mock = mock
 
         self.sql_client = SqliteClient(mock=mock, logger=self.logger)
         self.remote_node_client = RemoteAttachedNodeInterface()
-        self.direct_node_client = DirectAttachedNodeInterface()
+        self.direct_node_client = DirectAttachedNodeInterface(mock=mock)
 
-        self.influx_client = CognosInfluxDBClient(self.sql_client)
+        self.influx_client = CognosInfluxDBClient(self.sql_client, mock=mock)
 
         self.cognos_metric_functions = {
             "dram_cxl_usage": (
@@ -316,6 +319,9 @@ class Cognos(BaseControlInterface):
 
     @property
     def scmc_version(self):
+        if self.mock:
+            return mock_response.MOCK_VERSION_NUMBER
+
         payload = {}
         scmc_version_file = helper.get_scmc_version_file()
         if scmc_version_file:
@@ -493,23 +499,16 @@ class Cognos(BaseControlInterface):
             payload.append(device_info)
         return payload
 
-    def list_clusters(self) -> Dict[str, List]:
+    def list_clusters(self) -> List[str]:
         """
         Retrieves all logical clusters in the Cognos System
 
         Returns:
-        {"clusters":[
-            {
-            "cluster_name": "cluster_name_0",
-            },
-            {
-            "cluster_name": "cluster_name_1",
-            },
-            {
-            "cluster_name": "cluster_name_2",
-            }
-        ]}
+        ['CL_ID_1', 'CL_ID_2']
         """
+        if self.mock:
+            return mock_response.MOCK_CLUSTERS
+
         request_args = {"command_name": "list_clusters"}
         response = requests.post(
             COGNOS_NORTHBOUND_ENDPOINTS["list_clusters"],
@@ -530,7 +529,7 @@ class Cognos(BaseControlInterface):
                 return []
         return []
 
-    def list_nodes(self) -> Dict[str, List]:
+    def list_nodes(self) -> Dict[str, List[Dict[str, str]]]:
         """
         Retrives all nodes in the Cognos System with metadata
 
@@ -544,6 +543,9 @@ class Cognos(BaseControlInterface):
             }
         ]}
         """
+        if self.mock:
+            return mock_response.MOCK_NODES
+
         request_args = {"command_name": "list_nodes"}
         response = requests.post(
             COGNOS_NORTHBOUND_ENDPOINTS["list_nodes"],
@@ -557,7 +559,7 @@ class Cognos(BaseControlInterface):
         """
         Retrieves all nodes for the given cluster
 
-        Returns:
+        Northbound Reponse Format:
         {"clusters":[{
             "cluster_name": "name",
             "nodes":[
@@ -571,7 +573,13 @@ class Cognos(BaseControlInterface):
                 }
             ]
         }]}
+
+        Returns:
+        [node1, node2]
         """
+        if self.mock:
+            return mock_response.MOCK_CLUSTER_NODES
+
         request_args = {"command_name": "list_nodes_in_cluster"}
         response = requests.post(
             COGNOS_NORTHBOUND_ENDPOINTS["list_cluster_nodes"] + cluster_name,
@@ -786,6 +794,9 @@ class Cognos(BaseControlInterface):
                     "Failed to get input request data "
                     "/device_stats"
                 )
+            if self.mock:
+                return mock_metrics.get_mock_device_stats(device_id, stat_key)
+
             return self.influx_client.get_cognos_device_stats(
                 1,
                 device_id,
@@ -796,6 +807,18 @@ class Cognos(BaseControlInterface):
 
     def get_data_moved_percentage(self, app_pid, app_name):
         self.logger.info("GETTING CME STATS -------------")
+
+        if self.mock:
+            percent_moved_string = "100%"  # + '%'
+
+            if percent_moved_string:
+                self.sql_client.execute_query(
+                    "UPDATE applications "
+                    f"SET data_moved = '{percent_moved_string}' "
+                    f"WHERE app_pid = {app_pid};"
+                )
+
+            return percent_moved_string
 
         node_name = self.sql_client.exec_fetch_singlerecord_query(
             "SELECT server_name FROM applications WHERE app_pid = ?",
@@ -872,65 +895,66 @@ class Cognos(BaseControlInterface):
                 return None
 
     def get_applications(self):
-        # Loop for all active applications
-        running_apps = self.sql_client.exec_fetch_query(
-            "SELECT app_pid, app_name FROM applications;",
-            tuple()
-        )
-
-        # update the status and msg fields with latest event
-        for app in running_apps:
-            app_pid = app[0]
-            app_name = app[1]
-
-            app_event = (
-                self.influx_client.get_latest_application_event(app_pid)
+        if not self.mock:
+            # Loop for all active applications
+            running_apps = self.sql_client.exec_fetch_query(
+                "SELECT app_pid, app_name FROM applications;",
+                tuple()
             )
 
-            app_status = self.sql_client.exec_fetch_singlerecord_query(
-                "SELECT status FROM applications WHERE app_pid = ?",
-                (app_pid,)
-            )
+            # update the status and msg fields with latest event
+            for app in running_apps:
+                app_pid = app[0]
+                app_name = app[1]
 
-            app_message = self.sql_client.exec_fetch_singlerecord_query(
-                "SELECT message FROM applications WHERE app_pid = ?",
-                (app_pid,)
-            )
+                app_event = (
+                    self.influx_client.get_latest_application_event(app_pid)
+                )
 
-            if app_status == "degraded" or app_status == "device_degraded":
-                # create get stats thread
-                task = get_stats_workers.get(app_pid)
+                app_status = self.sql_client.exec_fetch_singlerecord_query(
+                    "SELECT status FROM applications WHERE app_pid = ?",
+                    (app_pid,)
+                )
 
-                if (not task) or (not task.is_alive()):
-                    thread = threading.Thread(
-                        target=self.get_data_moved_percentage,
-                        args=(app_pid, app_name,)
+                app_message = self.sql_client.exec_fetch_singlerecord_query(
+                    "SELECT message FROM applications WHERE app_pid = ?",
+                    (app_pid,)
+                )
+
+                if app_status == "degraded" or app_status == "device_degraded":
+                    # create get stats thread
+                    task = get_stats_workers.get(app_pid)
+
+                    if (not task) or (not task.is_alive()):
+                        thread = threading.Thread(
+                            target=self.get_data_moved_percentage,
+                            args=(app_pid, app_name,)
+                        )
+                        thread.daemon = True
+                        get_stats_workers[app_pid] = thread
+                        thread.start()
+
+                if app_event:
+                    updated_status = (
+                        'good' if app_event[0]['severity']
+                        in ["good", "Normal", "normal"]
+                        else app_event[0]['severity']
                     )
-                    thread.daemon = True
-                    get_stats_workers[app_pid] = thread
-                    thread.start()
 
-            if app_event:
-                updated_status = (
-                    'good' if app_event[0]['severity']
-                    in ["good", "Normal", "normal"]
-                    else app_event[0]['severity']
-                )
+                    if updated_status == "degraded" and (
+                        app_message and "sla"
+                        in app_message.lower()
+                    ):
+                        updated_status = "device_degraded"
 
-                if updated_status == "degraded" and (
-                    app_message and "sla"
-                    in app_message.lower()
-                ):
-                    updated_status = "device_degraded"
+                    updated_msg = app_event[0]['msg']
 
-                updated_msg = app_event[0]['msg']
-
-                self.sql_client.execute_query(
-                    "UPDATE applications "
-                    f"SET status = '{updated_status}', "
-                    f"message = '{updated_msg}' "
-                    f"WHERE app_pid = {app_pid};"
-                )
+                    self.sql_client.execute_query(
+                        "UPDATE applications "
+                        f"SET status = '{updated_status}', "
+                        f"message = '{updated_msg}' "
+                        f"WHERE app_pid = {app_pid};"
+                    )
 
         # get apps from DB
         data = self.sql_client.exec_fetch_query(
@@ -999,6 +1023,20 @@ class Cognos(BaseControlInterface):
             throughput_ops_per_sec = request_data["throughput_ops_per_sec"]
             targetread_p99_latency = request_data["targetread_p99_latency"]
             targetwrite_p99_latency = request_data["targetwrite_p99_latency"]
+
+            if self.mock:
+                app = helper.App(
+                    app_name=app_name,
+                    app_pid=app_pid,
+                    server_name=server_name,
+                    throughput_ops_per_sec=throughput_ops_per_sec,
+                    targetread_p99_latency=targetread_p99_latency,
+                    targetwrite_p99_latency=targetwrite_p99_latency,
+                    status="good",
+                    message="",
+                    data_moved="0"
+                )
+                self.insert_application(app.to_dict())
 
             # get cluster of node
             data = self.sql_client.exec_fetch_query(
@@ -1074,6 +1112,10 @@ class Cognos(BaseControlInterface):
             self.logger.error(f"Failed to set app sla {str(error)}")
 
     def move(self):
+        if self.mock:
+            return {
+                "status": "move successful"
+            }
         try:
             status = ""
             request_data = request.get_json()
@@ -1128,6 +1170,10 @@ class Cognos(BaseControlInterface):
             }
 
     def move_all(self):
+        if self.mock:
+            return {
+                "status": "move_all successful"
+            }
         try:
             status = ""
             request_data = request.get_json()
@@ -1181,6 +1227,10 @@ class Cognos(BaseControlInterface):
             }
 
     def get_move_stats(self):
+        if self.mock:
+            return {
+                "status": "DATA MOVED: 100%"
+            }
         try:
             status = ""
             request_data = request.get_json()

@@ -16,7 +16,9 @@ sys.path.append(
 )  # noqa: E402
 import cognos.backend.helper as helper
 import cognos.backend.db_query_constants as dbq
-from cognos.backend.mock_constants import MOCK_CXL_SETUP
+from cognos.backend.mock_constants import MOCK_CXL_SETUP, MOCK_EVENTS
+
+import cognos.backend.mock_metrics as mock_metrics
 
 
 class CognosInfluxDBClient:
@@ -199,6 +201,9 @@ class CognosInfluxDBClient:
             print(f"ERROR testing cognos events: {str(error)}")
 
     def get_cognos_events_past(self, time_in_mins):
+        if self.mock:
+            return MOCK_EVENTS
+
         params = {"_desc": False}
         cols_string = (
             '["_time", "_measurement", "_field", "_value", '
@@ -300,6 +305,8 @@ class CognosInfluxDBClient:
         Returns a series of data points associated with recent DRAM and
         CXL usage data
         """
+        if self.mock:
+            return mock_metrics.MOCK_RECENT_DRAM_CXL_USAGE
         params = {"_desc": True}
 
         tables = self.read_client.query(
@@ -370,6 +377,9 @@ class CognosInfluxDBClient:
         Returns a series of data points associated with recent
         CPU and MEM usage data
         """
+        if self.mock:
+            return mock_metrics.MOCK_GET_CPU_MEM_USAGE
+
         params = {"_desc": True}
 
         tables = self.read_client.query(
@@ -439,6 +449,9 @@ class CognosInfluxDBClient:
             print(f"failed to send recent CPU vs mem usage data {str(error)}")
 
     def get_hostview_capacity(self, cluster=""):
+        if self.mock:
+            return mock_metrics.MOCK_HOSTVIEW_CAPACITY
+
         try:
             query_nodes = (
                 "SELECT DISTINCT(node_name) FROM connections "
@@ -514,6 +527,9 @@ class CognosInfluxDBClient:
         Returns a series of data points associated with recent
         Memserver Capacity Data
         """
+        if self.mock:
+            return mock_metrics.MOCK_MEMSERVER_CAPACITY
+
         params = {"_desc": True}
 
         tables = self.read_client.query(
@@ -542,13 +558,15 @@ class CognosInfluxDBClient:
                     export_data.append(
                         [memtype, helper.mb_to_GB(metric["_value"])]
                     )
-
                 return export_data
 
             except Exception as e:
                 print(f"Failed to process memserver capacity data {str(e)}")
 
     def get_hostview_usage(self, cluster=""):
+        if self.mock:
+            return mock_metrics.MOCK_HOSTVIEW_USAGE
+
         try:
             query_string = (
                 "SELECT DISTINCT(node_name) FROM connections "
@@ -618,6 +636,9 @@ class CognosInfluxDBClient:
         Returns a series of data points associated with recent
         memory box mem usage data
         """
+        if self.mock:
+            return mock_metrics.MOCK_MEMBOX_USAGE
+
         params = {"_desc": True}
 
         tables = self.read_client.query(
@@ -756,6 +777,9 @@ class CognosInfluxDBClient:
         """
         Output Format:  {"num_cxl_devices":1,"num_hosts":1}
         """
+        if self.mock:
+            return mock_metrics.MOCK_HOSTVIEW_DEVICES_COUNT
+
         try:
             num_hosts_query = (
                 "SELECT COUNT(DISTINCT(node_name)) FROM "
@@ -790,6 +814,8 @@ class CognosInfluxDBClient:
         """
         Returns CXL bandwidth usage data of a single server
         """
+        if self.mock:
+            return mock_metrics.MOCK_NODE_BANDWIDTH
 
         # get all applicable CXL devices based on host
         data = self.sql_client.exec_fetch_query(

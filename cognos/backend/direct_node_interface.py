@@ -1,5 +1,6 @@
 from cognos.backend.base_node_interface import BaseNodeInterface
 from cognos.backend.db_query_constants import APPLICATION_JSON
+import cognos.backend.mock_constants as mock_response
 import cognos.backend.helper as helper
 import json
 import os
@@ -22,11 +23,12 @@ class DirectAttachedNodeInterface(BaseNodeInterface):
     Interface for all CXL API for application servers that
     deal with direct-attached devices
     """
-    def __init__(self):
+    def __init__(self, mock=False):
         self.request_headers = {
             "accept": APPLICATION_JSON,
             "Content-Type": APPLICATION_JSON,
         }
+        self.mock = mock
 
     @property
     def node_type(self):
@@ -36,6 +38,9 @@ class DirectAttachedNodeInterface(BaseNodeInterface):
         """
         Returns all direct-attached devices and their metadata
         """
+        if self.mock:
+            return mock_response.MOCK_DEVICES[node_name]
+
         request_url = f"{COGNOS_ENDPOINT}nodes/{node_name}/features/cxl"
         request_body = {
             "cluster_name": cluster_name,
@@ -62,6 +67,9 @@ class DirectAttachedNodeInterface(BaseNodeInterface):
         Returns more detailed information for a given devices such as
         link speed, domain type, serial number, etc..
         """
+        if self.mock:
+            return mock_response.MOCK_DEVICE_INFO[node_name][device_id]
+
         request_url = f"{COGNOS_ENDPOINT}nodes/{node_name}/features/cxl"
         request_body = {
             "cluster_name": cluster_name,

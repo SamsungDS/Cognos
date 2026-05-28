@@ -1,3 +1,188 @@
+
+MOCK_VERSION_NUMBER = "v1.1.11-1-g22d4"
+
+MOCK_CLUSTERS = ['CL_ID_1']
+
+MOCK_NODES = {
+    'node_info': [
+        {'node_ip': '000.000.00.001', 'node_name': 'msl-ssg-srf01',
+         'node_port': '9998', 'status': 'online'},
+        {'node_ip': '000.000.00.003', 'node_name': 'msl-ssg-srf03',
+         'node_port': '9998', 'status': 'online'},
+    ]
+}
+
+MOCK_CLUSTER_NODES = ["msl-ssg-srf01", "msl-ssg-srf03"]
+
+MOCK_DEVICES = {
+    "msl-ssg-srf01": [{'device_id': 33638416328448, 'vendor_device_type': 'CMM-H', 'pcie_addr': '0000:27:00.0'}],
+    "msl-ssg-srf03": [
+        {'device_id': 33638416328448, 'vendor_device_type': 'CMM-H', 'pcie_addr': '0000:27:00.0'},
+        {'device_id': 33638416341504, 'vendor_device_type': 'CMM-H', 'pcie_addr': '0000:5a:00.0'},
+        {'device_id': 33638416369152, 'vendor_device_type': 'CMM-H', 'pcie_addr': '0000:c6:00.0'},
+        {'device_id': 33638416360448, 'vendor_device_type': 'CMM-H', 'pcie_addr': '0000:a4:00.0'}
+    ]
+}
+
+
+BASE_DEVICE_INFO = {
+    'feature_supported': 'basic',
+    'vendor_device_type': 'CMM-H',
+    'cxl_device_type': 'Type3',
+    'protocol': 'CXL 2.0',
+    'port_type': 'root',
+    'mode_discovered': 'auto',
+    'connection_type': 'CXL.mem',
+    'domain_type': 'PCIe',
+    'domain_id': 0,
+    'link_speed_GT_s': 32,
+    'link_width': 8,
+    'available_capacity_MB': 0,
+    'status': 'Healthy',
+    'aspm_active': False,
+    'sris_active': False,
+    'lock_active': False,
+    'numa_node': -1,
+    'capabilities': {'Power Management version': 1},
+    'advertised_qos': {
+        'avg_latency_ns': 120,
+        'p99_latency_ns': 350,
+        'io_per_sec': 50000,
+        'BW_per_sec': 1000000,
+        'io_size_in_bytes': 4096,
+        'qd': 32
+    }
+}
+
+MOCK_DEVICE_INFO = {
+    "msl-ssg-srf01": {
+        33638416328448: {
+            'api_version': 1.0,
+            'device_id': 33638416328448,
+            'manufacturer': 'samsung',
+            'serial_number': 305419896,
+            'FW_revision': '1.0.0',
+            'location': '0000:27:00.0',
+            'total_capacity_MB': 2064382,
+            'feature_supported': 'basic',
+            'vendor_device_type': 'CMM-H',
+            'cxl_device_type': 'Type3',
+            'protocol': 'CXL 2.0',
+            'port_type': 'root',
+            'mode_discovered': 'auto',
+            'connection_type': 'CXL.mem',
+            'domain_type': 'PCIe',
+            'domain_id': 0,
+            'link_speed_GT_s': 32,
+            'link_width': 8,
+            'available_capacity_MB': 42845,
+            'status': 'Healthy',
+            'aspm_active': False,
+            'sris_active': False,
+            'lock_active': False,
+            'numa_node': 2,
+            'capabilities': {'Power Management version': 1},
+            'advertised_qos': {
+                'avg_latency_ns': 120,
+                'p99_latency_ns': 350,
+                'io_per_sec': 50000,
+                'BW_per_sec': 1000000,
+                'io_size_in_bytes': 4096,
+                'qd': 32
+            }
+        }
+    },
+    "msl-ssg-srf03": {
+        33638416369152: {
+            'api_version': 1.0,
+            'device_id': 33638416369152,
+            'manufacturer': 'samsung',
+            'serial_number': 0,
+            'FW_revision': '1.0.0',
+            'location': '0000:c6:00.0',
+            'total_capacity_MB': 2064312
+        }.update(BASE_DEVICE_INFO),
+        33638416328448: {
+            'api_version': 1.0,
+            'device_id': 33638416328448,
+            'manufacturer': 'samsung',
+            'serial_number': 0,
+            'FW_revision': '1.0.0',
+            'location': '0000:27:00.0',
+            'total_capacity_MB': 2064331
+        }.update(BASE_DEVICE_INFO),
+        33638416341504: {
+            'api_version': 1.0,
+            'device_id': 33638416341504,
+            'manufacturer': 'samsung',
+            'serial_number': 0,
+            'FW_revision': '1.0.0',
+            'location': '0000:5a:00.0',
+            'total_capacity_MB': 2064313,
+        }.update(BASE_DEVICE_INFO),
+        33638416360448: {
+            'api_version': 1.0,
+            'device_id': 33638416360448,
+            'manufacturer': 'samsung',
+            'serial_number': 0,
+            'FW_revision': '1.0.0',
+            'location': '0000:a4:00.0',
+            'total_capacity_MB': 2064398
+        }.update(BASE_DEVICE_INFO)
+    }
+}
+
+MOCK_EVENTS = [
+    {
+        "timestamp": "2025-07-17T14:32:10Z",
+        "msg": "CPU usage exceeded threshold",
+        "payload": {
+            "cpu_usage": "92",
+            "threshold": "85",
+            "process": "analytics-service"
+        },
+        "cluster_name": "CL_ID_1",
+        "node_name": "msl-ssg-srf01",
+        "category": "performance",
+        "domain": "infrastructure",
+        "severity": "critical",
+        "source": "msl-ssg-srf01",
+        "source_type": "node"
+    },
+    {
+        "timestamp": "2025-07-17T14:35:42Z",
+        "msg": "Disk space low",
+        "payload": {
+            "disk_used_percent": "96",
+            "mount": "/var/log",
+            "available_gb": "4"
+        },
+        "cluster_name": "CL_ID_1",
+        "node_name": "msl-ssg-srf01",
+        "category": "storage",
+        "domain": "infrastructure",
+        "severity": "warning",
+        "source": "msl-ssg-srf01",
+        "source_type": "node"
+    },
+    {
+        "timestamp": "2025-07-17T14:40:01Z",
+        "msg": "User login failed",
+        "payload": {
+            "username": "admin",
+            "ip_address": "10.0.1.45",
+            "reason": "invalid_password"
+        },
+        "cluster_name": "CL_ID_1",
+        "node_name": "msl-ssg-srf03",
+        "category": "security",
+        "domain": "authentication",
+        "severity": "warning",
+        "source": "auth-service",
+        "source_type": "application"
+    }
+]
+
 MOCK_FM_CXL_SETUP = {
     "fabric_managers": [
         {
