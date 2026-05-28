@@ -38,12 +38,12 @@ install_build_deps() {
     package_manager
 
     # install re2-devel only for OL10 as OL9 cognos-grpc has the library libre2.so
-    if [[ "$MAJOR_VER" == "10" ]]; then
-        BUILD_DEPS=(
-            're2-devel'
-        )
-        package_manager
-    fi
+    # if [[ "$MAJOR_VER" == "10" ]]; then
+    #     BUILD_DEPS=(
+    #         're2-devel'
+    #     )
+    #     package_manager
+    # fi
 }
 
 # Install from package mananger
