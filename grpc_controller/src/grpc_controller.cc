@@ -426,10 +426,6 @@ Status ControllerServicer::RegisterNode(ServerContext *ctxt,
   auto client = CreateClient(node_name, node_port);
   svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO,
              "Checking the node's grpc channel state");
-  int ch_status = client->WaitForConnected();
-  logger_str =
-      "Channel status is ready. Return value - " + std::to_string(ch_status);
-  svk_logger(CONTROLLER_LOGGER_MODULE_NAME, level_E::INFO, logger_str.c_str());
 
   device_info_status =
       g_sla_device_hlpr->GetDeviceDetails(node.node_ip, node.node_port);
