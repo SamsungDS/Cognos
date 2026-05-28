@@ -270,3 +270,4 @@ if $BUILD_RELEASE; then
 else
     build_mgmt_fw
 fi
+
