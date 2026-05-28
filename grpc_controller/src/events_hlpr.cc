@@ -89,12 +89,13 @@ int GenerateBaseClusterManagementEvent(const std::string& cluster_name,
 
 int GenerateBaseNodeManagementEvent(const std::string& cluster_name,
                                     const std::string& node_name,
+                                    const std::string& severity,
                                     const std::string& msg, json& event_json) {
   svk::EventData event_data;
   PopulateBasicEventDetails(cluster_name, node_name, event_data);
   svk::EventPayload* payload = event_data.mutable_event_payload();
   payload->set_msg(msg);
-  payload->set_severity("info");
+  payload->set_severity(severity);
   payload->set_source(node_name);
   payload->set_source_type("node");
 
@@ -132,14 +133,14 @@ int GenerateEventForRemoveNodeFromClusterSuccessful(
 
 int GenerateEventForNodeOnline(const std::string& cluster_name,
                                const std::string& node_name, json& event_json) {
-  return GenerateBaseNodeManagementEvent(cluster_name, node_name,
+  return GenerateBaseNodeManagementEvent(cluster_name, node_name, "info",
                                          node_online_event_msg, event_json);
 }
 
 int GenerateEventForNodeOffline(const std::string& cluster_name,
                                 const std::string& node_name,
                                 json& event_json) {
-  return GenerateBaseNodeManagementEvent(cluster_name, node_name,
+  return GenerateBaseNodeManagementEvent(cluster_name, node_name, "warning",
                                          node_offline_event_msg, event_json);
 }
 
@@ -147,6 +148,6 @@ int GenerateEventForNodeOffline(const std::string& cluster_name,
 int GenerateEventForDetectedNodeOfflineByHeartbeat(
     const std::string& cluster_name, const std::string& node_name,
     json& event_json) {
-  return GenerateBaseNodeManagementEvent(cluster_name, node_name,
+  return GenerateBaseNodeManagementEvent(cluster_name, node_name, "warning",
                                          hb_node_offline_event_msg, event_json);
 }
