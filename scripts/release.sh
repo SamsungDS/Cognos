@@ -11,9 +11,9 @@ NEXUS_URL="http://ssg-nexus.msl.lab:8081"
 declare -A PKG_NAME=(
     [slat]="cognos-slat"      [svk-me]="cognos-me"     [ras]="cognos-ras"
     [svk-node]="cognos-node"  [sapp]="cognos-app"       [core]="cognos-core"
-    [mgmt-fw]="cognos-mgmt-fw" [cxl]="cognos-cxl"
+    [mgmt-fw]="cognos-mgmt-fw" [cxl]="cognos-cxl"       [grpc]="cognos-grpc"
 )
-ALL_PROJECTS="slat svk-me ras svk-node sapp core mgmt-fw cxl"
+ALL_PROJECTS="slat svk-me ras svk-node sapp core mgmt-fw cxl grpc"
 
 declare -A PINNED_VERSION
 MOCK_MODE=false

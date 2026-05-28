@@ -59,12 +59,26 @@
   roles:
     - cognos_mgmt_fw_remove
 
+- name: Remove cognos-grpc
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - cognos_grpc_remove
+
 - name: Remove core
   hosts:
     - management_server
     - application_server
   roles:
     - cognos_core_remove
+
+- name: Remove residual cognos packages
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - cognos_residual_pkg_rm
 
 - name: Remove residual configuration files and logs
   hosts:

@@ -50,14 +50,21 @@
   roles:
     - cognos_add_epel
 
-- name: Install svk core
+- name: Install cognos core
   hosts:
     - management_server
     - application_server
   roles:
     - cognos_core_install
 
-- name: Install svk mgmt-fw
+- name: Install cognos grpc
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - cognos_grpc_install
+
+- name: Install cognos mgmt-fw
   hosts:
     - management_server
     - application_server
@@ -99,7 +106,7 @@
     - role: management_server_deps
       when: cognos_install_gui_enabled
 
-- name: Install svk app framework
+- name: Install cognos app framework
   hosts:
     - management_server
   roles:

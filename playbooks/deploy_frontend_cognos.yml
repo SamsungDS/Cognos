@@ -31,7 +31,7 @@
   roles:
     - management_server_deps
 
-- name: Install svk app framework
+- name: Install cognos app framework
   hosts:
     - management_server
   roles:

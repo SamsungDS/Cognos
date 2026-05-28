@@ -118,6 +118,7 @@ Your inventory file should contain hosts in the following groups:
   * Hosts running the cognos-management side services, including the following packages:
     * cognos-app
     * cognos-core
+    * cognos-grpc(OEL 10 only)
     * cognos-mgmt-fw
 
 * [applicaition_server]
@@ -125,6 +126,7 @@ Your inventory file should contain hosts in the following groups:
     * cognos-core
     * cognos-cxl/cognos-cxl-mock
     * cognos-me
+    * cognos-grpc(OEL 10 only)
     * cognos-mgmt-fw
     * cognos-node
     * cognos-ras
@@ -170,6 +172,7 @@ The cognos packages to be installed should be placed in the artifacts directory 
                 ├── cognos-app-<version>-1.el10.ol10.1.x86_64.rpm
                 ├── cognos-core-<version>-1.el10.ol10.1.x86_64.rpm
                 ├── cognos-cxl-<version>-1.el10.ol10.1.x86_64.rpm
+                ├── cognos-grpc-<version>-1.el10.x86_64.rpm
                 ├── cognos-me-<version>-1.el10.ol10.1.x86_64.rpm
                 ├── cognos-mgmt-fw-<version>-1.el10.ol10.1.x86_64.rpm
                 ├── cognos-node-<version>-1.el10.ol10.1.x86_64.rpm
@@ -285,9 +288,11 @@ Execute this playbook to install required packages and configure and start the n
 * **Default installed packages are:**
   * management_server
     * cognos-core
+    * cognos-grpc (OEL10 only)
     * cognos-mgmt-fw
   * management_server
     * cognos-core
+    * cognos-grpc (OEL10 only)
     * cognos-mgmt-fw
     * cognos-cxl
     * cognos-me

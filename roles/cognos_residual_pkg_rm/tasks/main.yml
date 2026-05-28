@@ -1,0 +1,48 @@
+---
+- name: Determine OS family and package manager
+  ansible.builtin.set_fact:
+    cognos_residual_pkg_rm_manager: "{{ 'apt' if ansible_facts['distribution'] == 'Ubuntu' else ('dnf' if ansible_facts['distribution'] == 'OracleLinux') }}"
+
+- name: Find all packages starting with 'cognos'
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      case "{{ cognos_residual_pkg_rm_manager }}" in
+        apt)
+          dpkg -l | grep '^ii' | awk '{print $2}' | grep '^cognos'
+          ;;
+        dnf)
+          rpm -qa --queryformat '%{NAME}\n' | grep '^cognos'
+          ;;
+        *)
+          echo "Unsupported package manager"
+          exit 1
+          ;;
+      esac
+    executable: /bin/bash
+  register: cognos_residual_pkg_rm_found
+  changed_when: false
+  failed_when: false
+
+- name: Debug found packages
+  ansible.builtin.debug:
+    msg: "Found Cognos packages: {{ cognos_residual_pkg_rm_found.stdout_lines }}"
+
+- name: Remove each Cognos package (Ubuntu/Debian)
+  ansible.builtin.apt:
+    name: "{{ item }}"
+    state: absent
+    purge: true
+  become: true
+  loop: "{{ cognos_residual_pkg_rm_found.stdout_lines | default([]) }}"
+  when: cognos_residual_pkg_rm_manager == 'apt'
+  register: cognos_residual_pkg_rm_apt_result
+
+- name: Remove each Cognos package (Oracle Linux/RHEL)
+  ansible.builtin.dnf:
+    name: "{{ item }}"
+    state: absent
+  become: true
+  loop: "{{ cognos_residual_pkg_rm_found.stdout_lines | default([]) }}"
+  when: cognos_residual_pkg_rm_manager == 'dnf'
+  register: cognos_residual_pkg_rm_dnf_result
