@@ -11,7 +11,22 @@ struct cmmh_stat_cache_t {
   double hit_perc;          // device cache hit percentage
   uint64_t dirty_cache_gb;  // dirty pages in the device
 };
+
+enum StatusCpe {
+  CMMH_STAT_RC_SUCCESS = 0, /* command accepted, check progress if enabled */
+  CMMH_STAT_RC_INVALID_LEN =
+      1, /* invalid length - should be in 4096 increments */
+  CMMH_STAT_RC_ADDR_NOT_MAPPED = 2, /* physical address not mapped */
+  CMMH_STAT_RC_ADDR_NOT_VALID = 3, /* physical address not within CMM-H range */
+  CMMH_STAT_RC_PENDING_QUEUE_FULL =
+      4, /* pending queue is full. Application should retry */
+  CMMH_STAT_RC_EXT_THREAD_COUNT = 5, /* thread count exceeded maximum */
+  CMMH_STAT_RC_INVALID_ID = 6,       /* device ID is invalid */
+  CMMH_STAT_RC_ERROR = 7             /* command error */
+};
+
 struct cmmh_stat_sensor_t {
+  StatusCpe status;
   uint64_t fpga_temp;  // the device temperature
 };
 
@@ -27,19 +42,6 @@ enum class CxlType {
   TYPE1 = 1,
   TYPE2 = 2,
   TYPE3 = 3 /* Memory Expander */
-};
-
-enum StatusCpe {
-  CMMH_STAT_RC_SUCCESS = 0, /* command accepted, check progress if enabled */
-  CMMH_STAT_RC_INVALID_LEN =
-      1, /* invalid length - should be in 4096 increments */
-  CMMH_STAT_RC_ADDR_NOT_MAPPED = 2, /* physical address not mapped */
-  CMMH_STAT_RC_ADDR_NOT_VALID = 3, /* physical address not within CMM-H range */
-  CMMH_STAT_RC_PENDING_QUEUE_FULL =
-      4, /* pending queue is full. Application should retry */
-  CMMH_STAT_RC_EXT_THREAD_COUNT = 5, /* thread count exceeded maximum */
-  CMMH_STAT_RC_INVALID_ID = 6,       /* device ID is invalid */
-  CMMH_STAT_RC_ERROR = 7             /* command error */
 };
 
 struct cmmh_spec_t {

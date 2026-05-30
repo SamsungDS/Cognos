@@ -9,6 +9,11 @@ Requires=cognos-node.service
 Before=cognos-node.service
 BindsTo=cognos-node.service
 
+# Number of starts/restarts allowed within the interval
+StartLimitBurst=5
+# Time window for counting starts (defaults to 10s if not set)
+StartLimitIntervalSec=20
+
 [Service]
 ExecStartPre=/usr/bin/rm -f /dev/shm/cmmh_shm_req_0 /dev/shm/cmmh_shm_rsp_0 /dev/shm/cmmh_socket
 ExecStart=/usr/local/bin/cmmh_driver
@@ -16,6 +21,9 @@ ExecStart=/usr/local/bin/cmmh_driver
 # Giving enough time for the driver to initialize even though
 # not required.
 ExecStartPost=/bin/sleep 2
+# Stop node service when cmmh_driver service stops
+ExecStopPost=/usr/bin/systemctl stop cognos-node.service
+
 User=root
 RuntimeDirectoryMode=0777
 Restart=on-failure

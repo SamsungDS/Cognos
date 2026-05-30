@@ -7,6 +7,9 @@
 #include "bw_monitor.h"
 #include "sc_cxl_dev_adapter.h"
 #include "sc_logger.h"
+
+#define CXL_CONF_FILE "cxl.conf"
+
 /**
  * @class DevCMMH
  * @brief CXL Adapter implementation for CMM-H devices.
@@ -112,5 +115,7 @@ class DevCMMH : public CXLDeviceAdapter {
  * @param mgr Reference to DeviceManager for adapter registration.
  */
 extern "C" void register_plugin(DeviceManager& mgr);
+
+void restart_cmmh_driver();
 
 #endif

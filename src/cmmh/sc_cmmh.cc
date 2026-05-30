@@ -4,6 +4,8 @@
 // discover_cxl_devices_shared, find_dev_type_map,
 // get_numa_node_from_bdf, get_metrics_info, set_hdm_base_to_device_index
 
+#include <string>
+
 #include "sc_api_structs.h"
 
 /**
@@ -25,6 +27,61 @@ DevCMMH::~DevCMMH() {
   dev_to_bwmon.clear();
   cmmh_close();
   LOG(level_E::DEBUG, "DevCMMH destroyed and bandwidth monitors stopped.");
+}
+
+/**
+ * @brief Check if users wants to restart cmmh_driver service via boolean
+ * value in cxl.conf
+ */
+bool check_for_cmmh_driver_restart() {
+  json_t* root;
+  json_error_t error;
+
+  // Load the JSON file
+  root = json_load_file(CXL_CONF_FILE, 0, &error);
+  if (!root) {
+    LOG(level_E::ERROR,
+        "Unable to load " + std::string(CXL_CONF_FILE) + " json file");
+    return false;
+  }
+
+  // Ensure the root is an object
+  if (!json_is_object(root)) {
+    json_decref(root);
+    return false;
+  }
+
+  // Extract the boolean value
+  // The "b" format character expects a C int variable
+  int is_enabled = 0;
+  if (json_unpack(root, "{s:b}", "auto_restart_cmmh_driver", &is_enabled) !=
+      0) {
+    LOG(level_E::ERROR,
+        "Error: failed to unpack 'auto_restart_cmmh_driver' key-value pair");
+    json_decref(root);
+    return false;
+  }
+
+  if (is_enabled) {
+    LOG(level_E::INFO, "Restart of cmmh_driver service enabled");
+    json_decref(root);
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * @brief Function to restart CMMH driver service
+ */
+void restart_cmmh_driver() {
+  int result = std::system("systemctl restart cmmh_driver.service &");
+
+  if (result != 0) {
+    LOG(level_E::ERROR, "Unable to restart cmmh_driver service");
+    return;
+  }
+  LOG(level_E::INFO, "Successfuly restarted cmmh_driver service");
 }
 
 /**
@@ -128,6 +185,44 @@ StatInfo DevCMMH::get_device_stats(const sc_id& sid) const {
 
   LOG(level_E::INFO, "DevCMMH::getting sensor and cache stats");
   stats.sensor_stats = cmmh_stat_sensor(info.static_info.device_index);
+
+  uint64_t t;
+  if (stats.sensor_stats.has_value()) {
+    // Log temperature reading and check if returned status is
+    // CMMH_STAT_RC_SUCCESS If not, restart CMMH driver service
+    if (stats.sensor_stats->status == CMMH_STAT_RC_SUCCESS) {
+      t = stats.sensor_stats->fpga_temp;
+
+      LOG(level_E::INFO, "Temperature recorded for device id: " +
+                             std::to_string(sid.get_sc_id()) + " is " +
+                             std::to_string(t) + " degree F");
+      // Restart CMMH driver service if temperarture recorded is ouside of valid
+      // operational range
+      if ((t < 32) || (t > 212)) {
+        LOG(level_E::ERROR, "Temperature recorded for device id: " +
+                                std::to_string(sid.get_sc_id()) +
+                                " is outside of operational range.");
+        stats.sensor_stats->fpga_temp = 0;
+
+        if (check_for_cmmh_driver_restart()) {
+          LOG(level_E::INFO, "Restarting CMMH driver service.");
+          restart_cmmh_driver();
+        }
+      }
+    } else {
+      stats.sensor_stats->fpga_temp = 0;
+      if (check_for_cmmh_driver_restart()) {
+        LOG(level_E::INFO,
+            "Sensor stats status did not return success. Restarting CMMH "
+            "driver service.");
+        restart_cmmh_driver();
+      }
+    }
+  } else {
+    stats.sensor_stats->fpga_temp = 0;
+    LOG(level_E::INFO, "Sensor stats did not record any value.");
+  }
+
   stats.cache_stats = cmmh_stat_cache(info.static_info.device_index);
   LOG(level_E::INFO, "DevCMMH::got sensor and cache stats");
 

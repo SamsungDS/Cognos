@@ -44,6 +44,16 @@ add_custom_command(TARGET cxl_ut POST_BUILD
             ${CMAKE_SOURCE_DIR}/utils/scripts/cxl_device_info.py
             $<TARGET_FILE_DIR:cxl_ut>
 )
+add_custom_command(TARGET cxl_ut POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+            ${CMMH_THIRD_PARTY_DIR}/cmmh_driver
+            $<TARGET_FILE_DIR:cxl_ut>
+)
+add_custom_command(TARGET cxl_ut POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+            ${PROJECT_BINARY_DIR}/src/cmmh/libcmmh.so
+            $<TARGET_FILE_DIR:cxl_ut>
+)
 
 include(GoogleTest)
 gtest_discover_tests(cxl_ut)

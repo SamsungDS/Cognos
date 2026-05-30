@@ -386,10 +386,49 @@ pycodestyle ./ --show-source --show-pep8
 
 6. A "Correct Patch" is one that satisfies the above requirements.
 
+7. Auto-restart for CMM-H driver service
+a) What is the feature
+It was observed that occasionally the CMMH driver reported unusually high value for
+temperature recorded by sensors in CMMH drives.  Restarting the CMMH driver stops the
+reporting of those unusually high temperature values for a certain amount time before
+reporting those unusual values again. So, it was decided that we need to restart
+the CMMH driver whenever we observe high temperature from CMMH sensors.
+
+b) How to enable/disable it
+We can control this auto-restart of CMMH driver using the boolean value mentioned
+for the key "auto_restart_cmmh_driver" in /usr/local/svk/feature_modules/cxl/config/cxl.conf.
+By default, the value for the above-mentioned key is "false". If it is set to "true", the
+auto-start will occur if the temperature recorded by the sensor is outside of the
+normal operation range of 0 degree C and 100 degree C (32 degree F and 212 degree F).
+In order to stop the auto-restart of CMM driver using the associated CMMH driver
+service, we need to change the value of key "auto_restart_cmmh_driver" to be "false".
+If the value for "auto_restart_cmmh_driver" key is false, the auto-restart of CMMH
+driver does not happen but the requests for "get_device_stats" or "get_device_info"
+will return responses with temperature value as 0.
+
+c) Details of CMMH driver auto-restart
+Whenever the temperature recorded is ouside the acceptable operational range mentioned
+above and the "auto_restart_cmmh_driver" is set to "true", the CMMH driver service
+restarts the CMMH driver executable located at /usr/local/bin/cmmh_driver.  Now, as
+part of the restart of the CMMH driver service it first stops the Cognos Node service
+that stops the associated Node process on the host.
+The Node process is due executable located at /usr/local/svk/mgmt-fw/bin/svkgrpcnode.
+Once the Node process stops, the CMMH driver process is stopped as well. For details
+about the details of the CMMH driver service and the Node service please consult the
+service details at /usr/lib/systemd/system/cmmh_driver.service and
+/usr/lib/systemd/system/cognos-node.service files. As per the the relationship mentioned
+in those service files, subsequently the CMMH driver service starts the CMMH driver
+process and once the successful start of CMMH driver process is confirmed it starts the
+Cognos Node service that starts the Node process on the host.
+So, every time the CMMH driver service is restarted, any pending SCMC request that has
+reached the Node process or is in queue to be placed for service by Node process will
+get timed out since Node process gets restarted as well.
+
+
 ## Authors and acknowledgment
 * Sukesh Nagaraja
 * Rajashekhar Payagond
 * Mandar Sawant
-
+* Samaresh Singh
 ## License
 For open source projects, say how it is licensed.
