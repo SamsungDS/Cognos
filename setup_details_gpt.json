@@ -1,0 +1,19 @@
+{
+  "Model": "openai/gpt-oss-120b",
+  "Runtime": "SGLang 0.5.10",
+  "Instance": "msl-ssg-dgx1.msl.lab:30000",
+  "GPU": "8x A100 40GB",
+  "TP size": "8",
+  "dtype": "default",
+  "KV dtype": "default",
+  "Context length": "131072",
+  "Page size": "1",
+  "HiCache": "enabled, L2 DRAM + L3 NVMe",
+  "Attention backend": "triton",
+  "Schedule policy": "default",
+  "Host": "msl-ssg-dgx1.msl.lab",
+  "Reference launch command": "python -m sglang.launch_server --model-path deepseek-ai/DeepSeek-R1-Distill-Llama-70B --tp-size 8 --dp-size 1 --port 30000 --host 0.0.0.0 --attention-backend triton --mem-fraction-static 0.8 --enable-hierarchical-cache --hicache-size 50 --trust-remote-code --enable-metrics --enable-cache-report --reasoning-parser deepseek-r1 --tool-call-parser deepseekv3 --hicache-storage-backend file --hicache-write-policy write_through",
+  "Mem fraction static": "0.8",
+  "Hierarchical cache": "enabled",
+  "Hicache size": "50"
+}

@@ -228,6 +228,33 @@ def _derive_sglang_summary(samples: list[dict],
         if last_cnt > 0:
             e2e_ms = _last(samples, e2e_sum) / last_cnt * 1000
 
+    # Second fallback: when histogram sum/count counters give 0 (e.g. SGLang
+    # versions that emit empty sum/count but accumulate bucket counts), use
+    # the last-scrape p50 from the bucket-derived quantile (which is computed
+    # by Prometheus and still meaningful). The interactive report's
+    # "Server E2E (Prom)" tile already uses this — keep mean-tile in sync.
+    def _hist_p50_ms(metric_base: str) -> float:
+        # Look for a percentiles-source column like
+        # "sglang:<base>_seconds_bucket{le=...}" via histogram_quantile precomputed
+        # at scrape time, or a precomputed *_p50_seconds column.
+        for q_col in (
+            f"{metric_base}_seconds_p50",
+            f"{metric_base}_p50_seconds",
+            f"{metric_base}_seconds_quantile0.5",
+        ):
+            c = _find_col(cols, q_col)
+            if c:
+                v = _last(samples, c)
+                if v and v > 0:
+                    return float(v) * 1000  # seconds → ms
+        return 0.0
+    if ttft_ms == 0:
+        ttft_ms = _hist_p50_ms("time_to_first_token") or _hist_p50_ms("ttft")
+    if tpot_ms == 0:
+        tpot_ms = _hist_p50_ms("inter_token_latency") or _hist_p50_ms("itl")
+    if e2e_ms == 0:
+        e2e_ms = _hist_p50_ms("e2e_request_latency") or _hist_p50_ms("request_latency")
+
     cache_mean = _mean(samples, cache) if cache else 0.0
     cache_pct = cache_mean * 100 if 0 <= cache_mean <= 1 else cache_mean
 
@@ -325,7 +352,13 @@ def write_gpu_timeseries(raw_dir: Path, t0: float) -> Path | None:
 
 
 def write_power_timeseries(raw_dir: Path, t0: float) -> Path | None:
-    """Build `power_timeseries.csv` from power_timeseries.jsonl."""
+    """Build `power_timeseries.csv` from power_timeseries.jsonl.
+
+    PowerMonitor logs one row per GPU per sample, so multiple JSONL rows share
+    the same timestamp. Sum the per-GPU `gpu_power` values into a single
+    `gpu_power` column representing total system GPU draw per timestamp, which
+    is what the report chart_power/chart_gpu_timeline both expect.
+    """
     src = raw_dir / "power_timeseries.jsonl"
     if not src.exists():
         return None
@@ -333,18 +366,39 @@ def write_power_timeseries(raw_dir: Path, t0: float) -> Path | None:
     if not rows:
         return None
     dst = raw_dir / "power_timeseries.csv"
+    # Group rows by (time_bucket, source) and sum gpu_power across GPUs
+    from collections import defaultdict
+    grouped: dict[tuple[float, str], float] = defaultdict(float)
+    order: list[tuple[float, str]] = []
+    seen = set()
+    for r in rows:
+        ts = float(r.get("time_sec") or r.get("_ts") or r.get("ts") or 0.0)
+        time_sec = round(ts - t0, 3) if ts > 1e9 else round(ts, 3)
+        # Quantize to interval bucket to merge per-GPU readings that share a
+        # sample window. nvidia-smi --loop-ms emits all GPUs in quick succession
+        # with sub-second jitter, so round to nearest 0.5s.
+        bucket = round(time_sec * 2) / 2.0
+        src_tag = r.get("source", "nvidia-smi")
+        # For non-GPU sources (e.g. ipmi system_power), keep their own value
+        gp = (r.get("gpu_power_total_w")
+              or r.get("total_power_w")
+              or r.get("gpu_power")
+              or r.get("power_w")
+              or r.get("system_power")
+              or 0)
+        try:
+            gp = float(gp)
+        except (TypeError, ValueError):
+            gp = 0.0
+        key = (bucket, src_tag)
+        if key not in seen:
+            order.append(key); seen.add(key)
+        grouped[key] += gp
     with open(dst, "w", encoding="utf-8", newline="") as f:
         w = _csv.writer(f)
         w.writerow(["time_sec", "source", "gpu_power"])
-        for r in rows:
-            ts = float(r.get("time_sec") or r.get("_ts") or r.get("ts") or 0.0)
-            time_sec = round(ts - t0, 3) if ts > 1e9 else round(ts, 3)
-            src_tag = r.get("source", "nvidia-smi")
-            gp = (r.get("gpu_power_total_w")
-                  or r.get("total_power_w")
-                  or r.get("gpu_power")
-                  or r.get("power_w") or 0)
-            w.writerow([time_sec, src_tag, gp])
+        for key in order:
+            w.writerow([key[0], key[1], round(grouped[key], 2)])
     return dst
 
 
@@ -441,6 +495,42 @@ def write_nvme_driver_timeseries(raw_dir: Path, t0: float) -> Path | None:
     primary = iostat_rows or drv_rows
     if not primary:
         return None
+    # NvmeDriverMonitor stores cumulative counters (rd_ios, wr_ios, rd_ms,
+    # wr_ms, io_ms). When that's the source, derive per-window rates from
+    # consecutive samples. IostatMonitor already stores rates (riops, wiops,
+    # rMBs, wMBs, rawt, wawt, util), so skip derivation for it.
+    is_iostat_src = bool(iostat_rows)
+    if not is_iostat_src and drv_rows:
+        derived = []
+        prev = None
+        for r in drv_rows:
+            cur = dict(r)
+            if prev is not None:
+                dt = max(float(cur.get("ts", cur.get("_ts", 0))) -
+                         float(prev.get("ts", prev.get("_ts", 0))), 1e-6)
+                d_rd  = max(float(cur.get("rd_ios", 0)) - float(prev.get("rd_ios", 0)), 0)
+                d_wr  = max(float(cur.get("wr_ios", 0)) - float(prev.get("wr_ios", 0)), 0)
+                d_rms = max(float(cur.get("rd_ms",  0)) - float(prev.get("rd_ms",  0)), 0)
+                d_wms = max(float(cur.get("wr_ms",  0)) - float(prev.get("wr_ms",  0)), 0)
+                d_iom = max(float(cur.get("io_ms",  0)) - float(prev.get("io_ms",  0)), 0)
+                cur["riops"] = round(d_rd / dt, 2)
+                cur["wiops"] = round(d_wr / dt, 2)
+                # avg completion latency per IO over this window
+                cur["rawt"]  = round(d_rms / max(d_rd, 1), 3)
+                cur["wawt"]  = round(d_wms / max(d_wr, 1), 3)
+                # device-busy fraction (io_ms / wall_ms; clamp to 100)
+                cur["util"]  = round(min(d_iom / (dt * 10), 100), 2)
+                # BW unavailable from /sys/block/<dev>/stat (no byte counters
+                # in pre-4.18 layout); leave to be filled by blktrace synthesis
+                cur.setdefault("rMBs", 0)
+                cur.setdefault("wMBs", 0)
+            else:
+                cur.setdefault("riops", 0); cur.setdefault("wiops", 0)
+                cur.setdefault("rawt", 0);  cur.setdefault("wawt", 0)
+                cur.setdefault("util", 0);  cur.setdefault("rMBs", 0)
+                cur.setdefault("wMBs", 0)
+            derived.append(cur); prev = r
+        primary = derived
 
     # Load discard rates indexed by approximate time
     discards: dict[float, tuple[float, float]] = {}
@@ -471,15 +561,18 @@ def write_nvme_driver_timeseries(raw_dir: Path, t0: float) -> Path | None:
         for r in primary:
             ts = float(r.get("time_sec") or r.get("_ts") or r.get("ts") or 0.0)
             time_sec = round(ts - t0, 3) if ts > 1e9 else round(ts, 3)
-            rd_iops = r.get("r_iops", r.get("rd_iops", 0))
-            wr_iops = r.get("w_iops", r.get("wr_iops", 0))
-            rd_bw   = r.get("r_mb_s", r.get("rd_bw_mbs", 0))
-            wr_bw   = r.get("w_mb_s", r.get("wr_bw_mbs", 0))
-            rd_lat  = r.get("r_await_ms", r.get("rd_lat_ms", r.get("r_await", 0)))
-            wr_lat  = r.get("w_await_ms", r.get("wr_lat_ms", r.get("w_await", 0)))
-            util    = r.get("util_pct", r.get("io_util_pct", r.get("%util", 0)))
-            infl    = r.get("aqu-sz", r.get("aqu_sz", r.get("queue_depth",
-                            r.get("inflight", 0))))
+            # Field aliases — IostatMonitor uses rMBs/wMBs/riops/wiops/rawt/wawt/util,
+            # NvmeDriverMonitor uses rd_ios/wr_ios/rd_ms/wr_ms/inflight/io_ms.
+            # Accept all forms so the canonical CSV is populated either way.
+            rd_iops = r.get("riops", r.get("r_iops", r.get("rd_iops", 0)))
+            wr_iops = r.get("wiops", r.get("w_iops", r.get("wr_iops", 0)))
+            rd_bw   = r.get("rMBs",  r.get("r_mb_s", r.get("rd_bw_mbs", 0)))
+            wr_bw   = r.get("wMBs",  r.get("w_mb_s", r.get("wr_bw_mbs", 0)))
+            rd_lat  = r.get("rawt",  r.get("r_await_ms", r.get("rd_lat_ms", r.get("r_await", 0))))
+            wr_lat  = r.get("wawt",  r.get("w_await_ms", r.get("wr_lat_ms", r.get("w_await", 0))))
+            util    = r.get("util",  r.get("util_pct", r.get("io_util_pct", r.get("%util", 0))))
+            infl    = r.get("avgqu", r.get("aqu-sz", r.get("aqu_sz", r.get("queue_depth",
+                            r.get("inflight", 0)))))
             disc    = discards.get(round(time_sec, 1), (0, 0))
             w.writerow([time_sec, rd_iops, wr_iops, rd_bw, wr_bw,
                         rd_lat, wr_lat, util, infl, disc[0], disc[1]])

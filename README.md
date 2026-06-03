@@ -692,3 +692,21 @@ Reports generated (yes/no):
 Symptom:
   (which section, which chart, what looks wrong)
 ```
+
+## Combined Report Executive Summary Tab
+
+When `--combined-report` is used, AMOprof now generates `amoprof_combined.html` with three tabs:
+
+1. **Executive** — default landing tab with quick findings, setup snapshot, data-source health, top KPIs, and layer-by-layer stack status.
+2. **Interactive** — Plotly time-series charts with hover values.
+3. **Static** — full static PNG report, formulas, bottleneck tables, and detailed explanations.
+
+Keyboard shortcuts:
+
+```text
+Alt+1  Executive
+Alt+2  Interactive
+Alt+3  Static
+```
+
+The Executive tab is generated from the run `raw/` directory and uses the same `setup_details.json`, `sglang_summary.json`, GPU/NVMe/DRAM summaries, and compact blktrace analysis files used elsewhere in the report. It does not require loading the large raw blktrace event CSV.

@@ -46,10 +46,22 @@ class IostatMonitor:
             parts = line.split()
             if len(parts) != len(hdrs): continue
             d = dict(zip(hdrs, parts))
+            # iostat may report BW in either MB/s or kB/s depending on version /
+            # locale. Detect which key is present (substring match against keys,
+            # not against d itself — `"rMB" in d` checks key equality, not
+            # substring) and convert kB→MB when needed.
+            rMB_key = next((k for k in d if k.startswith("rMB")), None)
+            rkB_key = next((k for k in d if k.startswith("rkB")), None)
+            wMB_key = next((k for k in d if k.startswith("wMB")), None)
+            wkB_key = next((k for k in d if k.startswith("wkB")), None)
+            r_bw = self._f(d.get(rMB_key, "0")) if rMB_key else \
+                   self._f(d.get(rkB_key, "0")) / 1024.0
+            w_bw = self._f(d.get(wMB_key, "0")) if wMB_key else \
+                   self._f(d.get(wkB_key, "0")) / 1024.0
             self.samples.append({
                 "ts":    time.time(),
-                "rMBs":  self._f(d.get("rMB/s",  d.get("rkB/s","0"))) * (1 if "rMB" in d else 1/1024),
-                "wMBs":  self._f(d.get("wMB/s",  d.get("wkB/s","0"))) * (1 if "wMB" in d else 1/1024),
+                "rMBs":  r_bw,
+                "wMBs":  w_bw,
                 "riops": self._f(d.get("r/s",    d.get("tps","0"))),
                 "wiops": self._f(d.get("w/s",    "0")),
                 "rawt":  self._f(d.get("r_await",d.get("await","0"))),
@@ -173,53 +185,6 @@ class BiolatencyCollector:
 
 # ── GpuMonitor ────────────────────────────────────────────────────────────────
 
-class GpuMonitor:
-    def __init__(self, interval_s: float = 1.0):
-        self.interval=interval_s; self.samples=[]
-        self._thread=None; self._stop=threading.Event()
-
-    def _has_gpu(self):
-        try: subprocess.check_output(["nvidia-smi"],stderr=subprocess.DEVNULL); return True
-        except: return False
-
-    def start(self):
-        if not self._has_gpu(): return
-        self._stop.clear(); self.samples.clear()
-        self._thread=threading.Thread(target=self._poll,daemon=True); self._thread.start()
-
-    def _poll(self):
-        cmd=["nvidia-smi","--query-gpu=utilization.gpu,utilization.memory,"
-             "memory.used,memory.total,power.draw",
-             "--format=csv,noheader,nounits",
-             f"--loop-ms={int(self.interval*1000)}"]
-        try:
-            proc=subprocess.Popen(cmd,stdout=subprocess.PIPE,
-                                  stderr=subprocess.DEVNULL,text=True)
-            for line in proc.stdout:
-                if self._stop.is_set(): proc.terminate(); break
-                p=[x.strip() for x in line.split(",")]
-                if len(p)>=5:
-                    try:
-                        self.samples.append({
-                            "gpu_util":float(p[0]),"mem_util":float(p[1]),
-                            "mem_used":float(p[2]),"mem_total":float(p[3]),
-                            "power":   float(p[4]) if p[4]!="N/A" else 0.0})
-                    except: pass
-        except FileNotFoundError: pass
-
-    def stop(self) -> dict:
-        self._stop.set()
-        if self._thread: self._thread.join(timeout=5)
-        if not self.samples: return {"gpu_available":False}
-        def m(k): return round(statistics.mean(s[k] for s in self.samples),2)
-        def pk(k): return round(max(s[k] for s in self.samples),2)
-        return {"gpu_available":True,
-                "gpu_util_mean":m("gpu_util"),"gpu_util_peak":pk("gpu_util"),
-                "hbm_util_mean":m("mem_util"),"hbm_used_mb_peak":pk("mem_used"),
-                "power_w_mean": m("power"),   "power_w_peak":   pk("power")}
-
-
-# ── PowerMonitor ──────────────────────────────────────────────────────────────
 
 class PowerMonitor:
     """
@@ -1197,6 +1162,40 @@ class SsdHardwareMonitor:
         self.hicache_path = hicache_path
         self.rated_tbw    = rated_tbw   # rated TBW for DWPD calc (Dell CM7 = ~7.3 PBW)
         self._start: dict = {}
+        self.nvme_capacity_gb = self._read_device_capacity_gb()
+
+    def _read_device_capacity_gb(self) -> float:
+        """Read NVMe device capacity in GB from /sys/block/<dev>/size.
+
+        Falls back to `nvme id-ctrl ... tnvmcap` if the /sys path is missing
+        (e.g. partition device passed in — strip the pN suffix and retry).
+        Returns 0.0 if neither source works, so the collector keeps running.
+        """
+        try:
+            dev_name = os.path.basename(self.device)
+            # /sys/block has whole-device entries only — strip pN suffix
+            dev_base = re.sub(r"p\d+$", "", dev_name)
+            size_path = f"/sys/block/{dev_base}/size"
+            if os.path.exists(size_path):
+                with open(size_path) as f:
+                    sectors = int(f.read().strip())
+                # /sys/block exposes 512-byte sector count regardless of the
+                # device's physical sector size, so 512 is correct here.
+                return round(sectors * 512 / (1024 ** 3), 2)
+        except Exception:
+            pass
+        # Fallback: nvme id-ctrl tnvmcap (total NVM capacity in bytes)
+        try:
+            out = subprocess.check_output(
+                ["nvme", "id-ctrl", self.device, "-o", "json"],
+                stderr=subprocess.DEVNULL, timeout=10)
+            j = json.loads(out)
+            tn = j.get("tnvmcap", 0)
+            if tn:
+                return round(int(tn) / (1024 ** 3), 2)
+        except Exception:
+            pass
+        return 0.0
 
     def _smart(self) -> dict:
         try:
@@ -1307,6 +1306,31 @@ class SsdHardwareMonitor:
         }
         result.update(self._latency_stats())
         result.update(self._hicache_stats())
+        # NVMe device total capacity
+        if self.nvme_capacity_gb > 0:
+            result["nvme_device_capacity_gb"] = self.nvme_capacity_gb
+        # HiCache filesystem df stats
+        try:
+            _df = subprocess.run(
+                ["df", "-B1", "--output=size,used,avail", self.hicache_path],
+                capture_output=True, text=True, timeout=5)
+            if _df.returncode == 0:
+                _ln = []
+                for _l in _df.stdout.strip().splitlines():
+                    _ps = _l.split()
+                    if _ps and _ps[0].isdigit():
+                        _ln.append(_l)
+                if _ln:
+                    _p = _ln[0].split()
+                    if len(_p) >= 3:
+                        _G = 1024 ** 3
+                        result["hicache_fs_total_gb"] = round(int(_p[0]) / _G, 2)
+                        result["hicache_fs_used_gb"]  = round(int(_p[1]) / _G, 2)
+                        result["hicache_fs_avail_gb"] = round(int(_p[2]) / _G, 2)
+                        result["hicache_fs_used_pct"] = round(
+                            int(_p[1]) / max(int(_p[0]), 1) * 100, 1)
+        except Exception:
+            pass
         return result
 
 

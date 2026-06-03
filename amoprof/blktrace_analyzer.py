@@ -60,19 +60,38 @@ def _read_events(csv_path: Path) -> list[dict]:
         r = csv.DictReader(f)
         for row in r:
             try:
+                # Only count completion events (action='C').
+                # The blkparse CSV contains all event types (Q, G, I, D, C, …);
+                # counting every type would 3–5× overcount bytes per I/O.
+                action = row.get("action", "C")
+                if action and action.upper() != "C":
+                    continue
                 ts = float(row["ts"])
                 size = int(row.get("size_bytes") or
                            (int(row.get("nsectors", 0)) * 512))
                 if size <= 0:
                     continue
+                # Derive op from the 'op' column, then from 'rwbs', then from
+                # 'action' if the first two are absent (some blkparse formats
+                # omit RWBS on C events — fall back to the preceding D/Q op via
+                # the file's own op column which was set at queue time).
+                op_raw = (row.get("op") or row.get("rwbs") or "?")
+                op = op_raw[:1].upper() if op_raw else "?"
+                if op not in ("R", "W", "D"):
+                    # Unknown op on a completion event with non-zero size.
+                    # Writes/discards always carry W/D in RWBS on Linux ≥4.18;
+                    # so an unclassified non-zero completion is almost certainly
+                    # a read (e.g. kernel omits RWBS on some C events).
+                    action_val = row.get("action", "C")
+                    op = "R" if action_val.upper() == "C" else "?"
                 rows.append({
                     "ts":     ts,
                     "pid":    int(row.get("pid", 0) or 0),
                     "comm":   row.get("comm", "") or "",
-                    "op":     row.get("op", row.get("rwbs", "?"))[:1].upper(),
+                    "op":     op,
                     "sector": int(row.get("sector", 0) or 0),
                     "size":   size,
-                    "action": row.get("action", ""),
+                    "action": action,
                 })
             except (ValueError, KeyError):
                 continue
@@ -153,6 +172,91 @@ SIZE_BINS = [
 OP_NAME = {"R": "read", "W": "write", "D": "trim"}
 
 
+def _merge_collector_diagnostics_into_summary(summary: dict, bt_sum_path: Path) -> None:
+    """Pull collector-side /sys/block deltas + dropped-event info into the
+    analyzer summary, and emit a coverage_warning string when blktrace's
+    captured bytes are far below the kernel counter.
+
+    This handles two related signals the reader needs to interpret op counts:
+
+      1. captured_vs_kernel_ratio — if blktrace bytes << kernel sectors_written,
+         events were dropped or the wrong device was traced (real measurement gap).
+      2. sys_block_*_merge_ratio — fraction of submitted BIOs that got coalesced
+         by the block layer before dispatch. HIGH merge ratios mean the kernel
+         issued fewer, larger I/Os to the device than the FS submitted — this is
+         healthy behaviour, not data loss. XFS extent-based allocation triggers
+         this much more than ext4 block-based allocation.
+
+    Without these two together, a reader seeing "fewer ops on XFS than ext4"
+    cannot tell whether they lost data or whether the FS just did its job better.
+    """
+    try:
+        if not bt_sum_path.exists():
+            return
+        import json as _json
+        bts = _json.loads(bt_sum_path.read_text(encoding="utf-8"))
+    except Exception as _e:
+        log.debug("could not read blktrace collector summary: %s", _e)
+        return
+
+    kernel_wr_gb   = float(bts.get("sys_block_wr_gb_delta") or 0)
+    captured_wr_gb = summary.get("write_bytes_total", 0) / 1e9
+    if kernel_wr_gb > 0 and captured_wr_gb > 0:
+        ratio = captured_wr_gb / kernel_wr_gb
+        summary["kernel_wr_gb_delta"]       = round(kernel_wr_gb, 2)
+        summary["captured_vs_kernel_ratio"] = round(ratio, 3)
+        summary["blktrace_device"]          = bts.get("blktrace_device", "")
+        if ratio < 0.5:
+            summary["coverage_warning"] = (
+                f"⚠ blktrace captured only {captured_wr_gb:.1f} GB of writes "
+                f"but the kernel's /sys/block/<dev>/stat write counter "
+                f"advanced by {kernel_wr_gb:.1f} GB during the trace window "
+                f"({ratio*100:.0f}% capture). "
+                f"Likely causes: (1) blktrace ring buffer overran (check "
+                f"blktrace_summary.json :: blktrace_dropped_events and "
+                f"blktrace_per_cpu_dropped — raise blktrace -b to 16384+); "
+                f"(2) wrong device traced (collected {bts.get('blktrace_device','?')} "
+                f"but writes hit a different namespace); "
+                f"(3) cache striped across multiple NVMes (trace each)."
+            )
+
+    # Propagate the collector's own dropped-events warning if present
+    if bts.get("blktrace_coverage_warning"):
+        summary["blktrace_collector_warning"] = bts["blktrace_coverage_warning"]
+    if bts.get("blktrace_dropped_events", 0) > 0:
+        summary["blktrace_dropped_events"]  = bts["blktrace_dropped_events"]
+        summary["blktrace_per_cpu_dropped"] = bts.get("blktrace_per_cpu_dropped", {})
+
+    # ── Block-layer merge diagnostics ────────────────────────────────────────
+    # These let the report distinguish "captured ops dropped because of XFS
+    # merging" from "captured ops dropped because of trace loss". Both can
+    # produce the same superficial symptom (fewer events than expected).
+    for k in ("sys_block_rd_ios_delta",     "sys_block_wr_ios_delta",
+              "sys_block_rd_merges_delta",  "sys_block_wr_merges_delta",
+              "sys_block_rd_merge_ratio",   "sys_block_wr_merge_ratio",
+              "sys_block_avg_rd_io_kb",     "sys_block_avg_wr_io_kb",
+              "sys_block_rd_gb_delta"):
+        if k in bts:
+            summary[k] = bts[k]
+
+    # ── Emit a positive (informational) finding when block-layer merging is
+    # significant. Without this, a user comparing op counts before/after a
+    # filesystem swap (ext4→XFS) would see "fewer ops" and assume data loss.
+    wr_merge_ratio = float(bts.get("sys_block_wr_merge_ratio") or 0)
+    rd_merge_ratio = float(bts.get("sys_block_rd_merge_ratio") or 0)
+    avg_wr_io_kb   = float(bts.get("sys_block_avg_wr_io_kb")   or 0)
+    if wr_merge_ratio >= 0.3 or rd_merge_ratio >= 0.3:
+        summary["block_layer_merge_note"] = (
+            f"Block layer coalesced "
+            f"{wr_merge_ratio*100:.0f}% of write BIOs and "
+            f"{rd_merge_ratio*100:.0f}% of read BIOs before dispatching to the "
+            f"device. Average dispatched I/O size: {avg_wr_io_kb:.1f} KB write. "
+            f"Fewer captured ops on this FS than ext4 is expected and not a "
+            f"measurement gap — the filesystem merged adjacent operations into "
+            f"larger BIOs."
+        )
+
+
 def _classify_access(prev_end_sector: int | None,
                       cur_sector: int,
                       cur_nsec: int) -> str:
@@ -164,6 +268,406 @@ def _classify_access(prev_end_sector: int | None,
         return "sequential"
     return "random"
 
+
+def _compute_queue_depth_timeseries(bin_dir: Path, output_dir: Path,
+                                     blkparse_bin: str = "blkparse",
+                                     bucket_s: float = 1.0) -> dict:
+    """Compute true SSD queue-depth time series + distribution from blktrace.
+
+    A request enters the block-layer queue at action 'Q' and leaves at 'C'
+    (completion). The number of outstanding (queued + in-flight) requests at
+    any instant = count('Q' so far) - count('C' so far). Walking the events
+    in chronological order with a running counter gives the *exact* queue
+    depth a function of time — no approximation, no Little's law.
+
+    This differs from iostat's `aqu-sz` (which is time-averaged via
+    integral(inflight) / interval) and from /sys/block/<dev>/inflight (which
+    is an instantaneous snapshot the sampler happens to catch). blktrace is
+    the ground truth.
+
+    Produces:
+      queue_depth_timeseries.csv  — t_sec, qd, qd_read, qd_write
+      queue_depth_distribution.csv — bucket, count, pct (histogram of QD)
+      queue_depth_summary.json     — mean/p50/p95/p99/max + cap-saturation %
+
+    Bucketing: events grouped into `bucket_s` (default 1s) windows for the
+    time series; the QD reported per bucket is the time-weighted mean across
+    that window. The histogram uses all individual QD transitions.
+    """
+    import subprocess as _sp
+    import re as _re
+
+    if not bin_dir.exists():
+        return {}
+    bins = sorted(bin_dir.glob("trace.blktrace.*"))
+    if not bins:
+        return {}
+
+    cmd = [blkparse_bin, "-i", str(bin_dir / "trace"), "-f",
+            "%T.%t %a %d %S %N %C\n"]
+    # Format breakdown: %T=ts_sec %t=ts_nsec %a=action %d=RWBS %S=sector
+    #                   %N=nbytes %C=command
+    # We need: ts, action, op (from RWBS). The sector/nbytes/comm are unused
+    # here but cheap to capture in case we want them later.
+
+    _LINE = _re.compile(
+        r"^\s*(?P<sec>\d+)\.(?P<nsec>\d+)\s+"
+        r"(?P<action>[A-Z])\s+"
+        r"(?P<rwbs>[A-Z]*)\s+"
+        r"(?P<sector>\d+)\s+"
+        r"(?P<nbytes>\d+)\s+"
+        r"(?P<cmd>\S*)"
+    )
+
+    # Track outstanding I/Os
+    qd_total   = 0
+    qd_read    = 0
+    qd_write   = 0
+    qd_samples: list[tuple[float, int, int, int]] = []  # (t_sec, total, rd, wr)
+
+    # For the histogram: count *time* (seconds) spent at each QD value, not
+    # count of events — that way "the device was at QD=8 for 12% of the run"
+    # is meaningful. We do this by tracking the duration between consecutive
+    # transitions and adding to time_at_qd[qd].
+    time_at_qd: dict[int, float] = {}
+    last_event_t: float | None = None
+
+    # Cap detection: SSD hardware queue caps are typically 32/64/128/256/1024
+    # depending on the device class. We don't know the cap a priori, but if QD
+    # ever reaches >= 0.9× a power-of-two boundary for sustained periods, it's
+    # likely saturated at that boundary.
+    qd_max = 0
+    t0: float | None = None
+
+    try:
+        with _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.DEVNULL, text=True) as proc:
+            for raw in proc.stdout:
+                m = _LINE.match(raw)
+                if not m:
+                    continue
+                action = m.group("action")
+                if action not in ("Q", "C"):
+                    continue
+                t = int(m.group("sec")) + int(m.group("nsec")) / 1e9
+                if t0 is None:
+                    t0 = t
+                t_rel = t - t0
+                rwbs = m.group("rwbs") or ""
+                # Determine op from RWBS flags (writes always carry 'W'; trims 'D')
+                if "D" in rwbs:
+                    op = "D"
+                elif "W" in rwbs:
+                    op = "W"
+                else:
+                    op = "R"
+
+                # Accumulate time-at-current-QD before transitioning
+                if last_event_t is not None:
+                    dt = t_rel - last_event_t
+                    if dt > 0:
+                        time_at_qd[qd_total] = time_at_qd.get(qd_total, 0.0) + dt
+                last_event_t = t_rel
+
+                if action == "Q":
+                    qd_total += 1
+                    if op == "R":   qd_read  += 1
+                    elif op == "W": qd_write += 1
+                    if qd_total > qd_max:
+                        qd_max = qd_total
+                else:  # action == "C"
+                    qd_total = max(qd_total - 1, 0)
+                    if op == "R":   qd_read  = max(qd_read  - 1, 0)
+                    elif op == "W": qd_write = max(qd_write - 1, 0)
+
+                # Bucketed time-series sample (one row per bucket boundary)
+                if qd_samples and (t_rel - qd_samples[-1][0]) < bucket_s:
+                    # Update the running bucket — record the *max* QD seen in
+                    # this bucket. Mean would smooth over short bursts.
+                    last = qd_samples[-1]
+                    qd_samples[-1] = (last[0],
+                                       max(last[1], qd_total),
+                                       max(last[2], qd_read),
+                                       max(last[3], qd_write))
+                else:
+                    qd_samples.append((t_rel, qd_total, qd_read, qd_write))
+            try:
+                proc.wait(timeout=max(60, len(bins) * 2))
+            except _sp.TimeoutExpired:
+                proc.kill(); proc.wait(timeout=5)
+    except FileNotFoundError:
+        log.warning("queue depth: %s not found", blkparse_bin)
+        return {}
+    except Exception as e:
+        log.warning("queue depth pass failed: %s", e)
+        return {}
+
+    if not qd_samples or not time_at_qd:
+        return {}
+
+    # ── Write time-series CSV ─────────────────────────────────────────────
+    ts_csv = output_dir / "queue_depth_timeseries.csv"
+    with ts_csv.open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["t_sec", "qd_total", "qd_read", "qd_write"])
+        for t_rel, qd, qr, qw in qd_samples:
+            w.writerow([f"{t_rel:.3f}", qd, qr, qw])
+
+    # ── Histogram (time-weighted) ─────────────────────────────────────────
+    total_time = sum(time_at_qd.values())
+    hist_csv = output_dir / "queue_depth_distribution.csv"
+    with hist_csv.open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["qd_value", "time_sec", "pct_of_run"])
+        for qd in sorted(time_at_qd):
+            t = time_at_qd[qd]
+            w.writerow([qd, f"{t:.3f}", f"{(t/total_time*100):.2f}" if total_time > 0 else "0"])
+
+    # ── Summary: mean/p50/p95/p99 from the time-weighted distribution ─────
+    def _time_weighted_percentile(p: float) -> float:
+        cum = 0.0
+        target = p * total_time
+        for qd in sorted(time_at_qd):
+            cum += time_at_qd[qd]
+            if cum >= target:
+                return float(qd)
+        return float(max(time_at_qd) if time_at_qd else 0)
+
+    # Time-weighted mean = sum(qd * time_at_qd) / total_time
+    qd_mean = (sum(qd * t for qd, t in time_at_qd.items()) / total_time
+                if total_time > 0 else 0)
+
+    # Cap-saturation detection: what fraction of time spent at QD ≥ likely cap
+    # candidates? Useful to surface "your SSD saturated at QD=32 for 78% of
+    # the run, indicating it's the bottleneck for this workload".
+    sat_pcts = {}
+    for cap_candidate in (32, 64, 128, 256, 1024):
+        t_at_or_above = sum(t for qd, t in time_at_qd.items() if qd >= cap_candidate)
+        sat_pcts[f"pct_at_qd_ge_{cap_candidate}"] = round(
+            t_at_or_above / total_time * 100, 2) if total_time > 0 else 0
+
+    summary = {
+        "qd_mean":   round(qd_mean, 2),
+        "qd_p50":    round(_time_weighted_percentile(0.50), 1),
+        "qd_p95":    round(_time_weighted_percentile(0.95), 1),
+        "qd_p99":    round(_time_weighted_percentile(0.99), 1),
+        "qd_max":    qd_max,
+        "qd_samples_count": len(qd_samples),
+        "qd_bucket_s":      bucket_s,
+        "qd_total_time_s":  round(total_time, 3),
+        **sat_pcts,
+    }
+    (output_dir / "queue_depth_summary.json").write_text(json.dumps(summary, indent=2))
+
+    log.info("queue depth: mean=%.1f, p95=%.0f, max=%d (%d samples over %.1fs)",
+             qd_mean, _time_weighted_percentile(0.95), qd_max,
+             len(qd_samples), total_time)
+    return {"queue_depth_timeseries.csv":  ts_csv,
+            "queue_depth_distribution.csv": hist_csv,
+            "queue_depth_summary.json":     output_dir / "queue_depth_summary.json"}
+
+
+
+def analyze_from_binaries(bin_dir: Path, output_dir: Path,
+                           blkparse_bin: str = "blkparse",
+                           max_events: int = 10_000_000) -> dict:
+    """Run blktrace analysis by streaming directly from binary trace files.
+
+    This is the preferred path when blkparse_events.generated.csv is missing
+    or was capped.  It spawns blkparse, pipes its output through the event
+    parser, and feeds a temporary CSV to analyze().
+
+    The temporary CSV contains only completion events (action='C'), which is
+    the subset the analyzer actually uses.  This reduces the in-memory footprint
+    by ~4× compared to keeping Q/M/G events.
+
+    Args:
+        bin_dir:      Directory containing trace.blktrace.* binary files.
+        output_dir:   Where to write analysis CSVs (same as analyze()).
+        blkparse_bin: Path to the blkparse binary.
+        max_events:   Cap on events written to the temporary CSV.  The cap is
+                      applied uniformly: 1-in-N events are kept so the full
+                      time range is always represented.  Default 10M events
+                      keeps RAM under ~1.5 GB.
+
+    Returns the same dict as analyze().
+    """
+    import subprocess as _sp
+    import tempfile
+    import os as _os
+
+    bins = sorted(bin_dir.glob("trace.blktrace.*"))
+    if not bins:
+        log.warning("analyze_from_binaries: no trace.blktrace.* files in %s", bin_dir)
+        return {}
+
+    log.info("analyze_from_binaries: streaming %d binaries (%d MB) from %s",
+             len(bins),
+             sum(p.stat().st_size for p in bins) // (1024 * 1024),
+             bin_dir)
+
+    # Line regex (same as BlktraceCollector)
+    import re as _re
+    _LINE_RE = _re.compile(
+        r"^\s*(?P<major>\d+),(?P<minor>\d+)\s+(?P<cpu>\d+)\s+\d+\s+"
+        r"(?P<ts>[\d.]+)\s+(?P<pid>\d+)\s+"
+        r"(?P<action>[A-Z])\s+(?P<rwbs>[A-Z]*)\s*"
+        r"(?P<sector>\d+)\s+\+\s+(?P<nsec>\d+)"
+        r"(?:\s+\[(?P<comm>[^\]]+)])?"
+    )
+
+    prefix = bin_dir / "trace"
+    cmd = [blkparse_bin, "-i", str(prefix)]
+
+    # ── First pass: count total events for sampling ratio ──────────────────
+    # We only count quickly; blkparse must be run twice (count, then write).
+    # For very large traces this doubles the parse time but keeps RAM bounded.
+    log.info("analyze_from_binaries: counting events (pass 1/2)...")
+    total_c_events = 0
+    try:
+        with _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.DEVNULL, text=True) as proc:
+            for raw in proc.stdout:
+                m = _LINE_RE.match(raw)
+                if m and m.group("action") == "C":
+                    total_c_events += 1
+            # Drain + wait
+            try:
+                proc.wait(timeout=max(60, len(bins) * 2))
+            except _sp.TimeoutExpired:
+                proc.kill(); proc.wait(timeout=5)
+    except Exception as e:
+        log.warning("analyze_from_binaries: count pass failed: %s", e)
+        total_c_events = 0
+
+    keep_ratio = 1
+    if total_c_events > max_events:
+        keep_ratio = (total_c_events + max_events - 1) // max_events
+        log.info("analyze_from_binaries: %d completion events; keeping 1-in-%d "
+                 "(~%d events) for analysis",
+                 total_c_events, keep_ratio,
+                 total_c_events // keep_ratio)
+    else:
+        log.info("analyze_from_binaries: %d completion events — keeping all",
+                 total_c_events)
+
+    # ── Second pass: write sampled CSV ────────────────────────────────────
+    log.info("analyze_from_binaries: writing sampled CSV (pass 2/2)...")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    tmp_csv = output_dir / "_blkparse_sampled.csv"
+    written_events = 0
+    seq = 0   # event counter for 1-in-N selection
+
+    try:
+        with _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.DEVNULL, text=True) as proc,              open(tmp_csv, "w", encoding="utf-8", newline="") as fp:
+            w = csv.writer(fp)
+            w.writerow(["ts", "pid", "action", "rwbs", "op",
+                         "sector", "nsectors", "size_bytes", "comm", "dev", "cpu"])
+            for raw in proc.stdout:
+                m = _LINE_RE.match(raw)
+                if not m:
+                    continue
+                if m.group("action") != "C":
+                    continue          # completions only
+                seq += 1
+                if (seq % keep_ratio) != 0:
+                    continue          # skip non-sampled events
+                d = m.groupdict()
+                rwbs = d.get("rwbs") or ""
+                # Classify op from RWBS.
+                # For completion events (action='C'): writes always have 'W' in
+                # RWBS (e.g. 'WS', 'WM'); discards always have 'D'; reads have
+                # 'R' or 'RA', or RWBS may be empty/missing on some kernels.
+                # A non-zero-length completion with no W/D flag → READ.
+                nsec = int(d["nsec"])
+                if "D" in rwbs:
+                    op = "D"
+                elif "W" in rwbs:
+                    op = "W"
+                elif "R" in rwbs:
+                    op = "R"
+                elif nsec > 0:
+                    # No explicit type flag but non-zero I/O → assume READ
+                    # (writes/discards always carry their flag in Linux ≥4.18)
+                    op = "R"
+                else:
+                    op = "?"
+                w.writerow([d["ts"], d["pid"], d["action"], rwbs, op,
+                             d["sector"], nsec, nsec * 512,
+                             d.get("comm") or "",
+                             f"{d['major']},{d['minor']}",
+                             d.get("cpu") or "0"])
+                written_events += 1
+            # Drain any remaining output so blkparse can exit
+            try:
+                proc.stdout.read()
+            except Exception:
+                pass
+            _wait_s = max(60, min(sum(p.stat().st_size for p in bins) // (1024 * 1024), 600))
+            try:
+                proc.wait(timeout=_wait_s)
+            except _sp.TimeoutExpired:
+                log.warning("analyze_from_binaries: blkparse still running after %ds — killing",
+                            _wait_s)
+                try:
+                    proc.kill(); proc.wait(timeout=5)
+                except Exception:
+                    pass
+    except Exception as e:
+        log.error("analyze_from_binaries: write pass failed: %s", e)
+        return {}
+
+    log.info("analyze_from_binaries: wrote %d events to %s", written_events, tmp_csv)
+
+    if written_events == 0:
+        log.warning("analyze_from_binaries: no events written — check blkparse output")
+        try:
+            tmp_csv.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return {}
+
+    # ── Run the standard analyzer on the sampled CSV ───────────────────────
+    result = analyze(tmp_csv, output_dir)
+
+    # ── Run the queue-depth pass (separate from analyze() because it needs
+    # both 'Q' and 'C' events, not just completions). Best-effort: if blkparse
+    # fails or there's no useful QD data, just skip — main analysis is intact.
+    try:
+        qd_outputs = _compute_queue_depth_timeseries(bin_dir, output_dir,
+                                                      blkparse_bin=blkparse_bin)
+        result.update(qd_outputs)
+    except Exception as e:
+        log.warning("queue depth analysis skipped: %s", e)
+
+    # Store the sampling ratio in the summary so downstream consumers know
+    if (output_dir / "summary.json").exists():
+        try:
+            import json as _json
+            s = _json.loads((output_dir / "summary.json").read_text())
+            s["sampling_ratio"]        = keep_ratio
+            s["sampled_events"]        = written_events
+            s["total_c_events_raw"]    = total_c_events
+            s["source"]                = "blktrace_binaries"
+            # Scale totals back to full population when sampled
+            if keep_ratio > 1:
+                for key in ("read_events", "write_events", "trim_events", "total_events"):
+                    if key in s:
+                        s[key] = s[key] * keep_ratio
+                for key in ("read_bytes_total", "write_bytes_total", "trim_bytes_total"):
+                    if key in s:
+                        s[key] = s[key] * keep_ratio
+                # Rates are computed from duration, not event count — leave as-is
+            (output_dir / "summary.json").write_text(
+                _json.dumps(s, indent=2), encoding="utf-8")
+        except Exception as e:
+            log.warning("analyze_from_binaries: could not annotate summary.json: %s", e)
+
+    # Clean up the temporary CSV (the compact analysis outputs remain)
+    try:
+        tmp_csv.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    return result
 
 def analyze(events_csv: Path, output_dir: Path) -> dict:
     """Compute all analysis CSVs from a blkparse events CSV.
@@ -209,6 +713,17 @@ def analyze(events_csv: Path, output_dir: Path) -> dict:
         "write_bw_mb_s_mean": round(sum(e["size"] for e in wr_evts) / 1e6 / duration, 2),
         "trim_present":       len(tr_evts) > 0,
     }
+    # ── Cross-check captured bytes against kernel-side ground truth ─────────
+    # Read /sys/block/<dev>/stat delta that the collector recorded in
+    # blktrace_summary.json (BlktraceCollector.stop). If blktrace bytes are
+    # significantly less than the kernel's write counter, events were dropped
+    # or the trace ran on the wrong device. Surfaces the discrepancy directly
+    # in the summary so the reader doesn't have to dig.
+    # Cross-check captured bytes vs kernel /sys/block delta + merge stats.
+    # See _merge_collector_diagnostics_into_summary for what gets propagated
+    # and why it matters when explaining FS-driven op-count changes.
+    _merge_collector_diagnostics_into_summary(
+        summary, output_dir.parent / "blktrace_summary.json")
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2))
     written["summary.json"] = output_dir / "summary.json"
 
@@ -275,6 +790,29 @@ def analyze(events_csv: Path, output_dir: Path) -> dict:
                             (bucket + 1) * LBA_BUCKET,
                             b, count])
     written["hot_regions_overall.csv"] = output_dir / "hot_regions_overall.csv"
+
+    # ─── 3b. lba_distribution_full.csv ────────────────────────────────────────
+    # Complete per-bucket I/O distribution across the device — required to
+    # understand SSD usage (the hot regions CSV only keeps the top 50 buckets,
+    # which on this workload represents ~15% of total bytes). Each row is one
+    # 16 MB LBA bucket; columns: op, lba_bucket_start, bytes, count. Buckets
+    # with zero traffic are omitted to keep file size sane (5,000-50,000 rows
+    # typical vs ~250,000 for a 4 TB device with all buckets emitted).
+    with open(output_dir / "lba_distribution_full.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["op", "lba_bucket_start", "lba_bucket_end", "bytes", "count"])
+        # Group by op for predictable file ordering, sort by LBA within each op.
+        for op in ("R", "W", "D"):
+            buckets = sorted(b for (eo, b) in region_bytes if eo == op)
+            for bucket in buckets:
+                w.writerow([
+                    OP_NAME.get(op, op),
+                    bucket * LBA_BUCKET,
+                    (bucket + 1) * LBA_BUCKET,
+                    region_bytes[(op, bucket)],
+                    region_count[(op, bucket)],
+                ])
+    written["lba_distribution_full.csv"] = output_dir / "lba_distribution_full.csv"
 
     # ─── 4. hot_regions_by_time_window.csv ───────────────────────────────────
     with open(output_dir / "hot_regions_by_time_window.csv", "w", newline="") as f:
@@ -660,6 +1198,10 @@ def analyze(events_csv: Path, output_dir: Path) -> dict:  # type: ignore[overrid
         "streaming_analyzer": True,
         "request_size_sampled_events": sample_written,
     }
+    # Cross-check captured bytes vs kernel /sys/block delta + merge stats.
+    # See _merge_collector_diagnostics_into_summary for what gets propagated.
+    _merge_collector_diagnostics_into_summary(
+        summary, output_dir.parent / "blktrace_summary.json")
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2))
     written["summary.json"] = output_dir / "summary.json"
 
@@ -688,6 +1230,21 @@ def analyze(events_csv: Path, output_dir: Path) -> dict:  # type: ignore[overrid
             for bucket,count,b in sorted(items, key=lambda x:x[2], reverse=True)[:50]:
                 w.writerow([OP_NAME.get(op,op), bucket, bucket*LBA_BUCKET, (bucket+1)*LBA_BUCKET, b, count])
     written["hot_regions_overall.csv"] = output_dir / "hot_regions_overall.csv"
+
+    # Complete per-bucket distribution for the SSD-usage chart. The hot
+    # regions CSV only keeps the top 50 per op (~15% of bytes on this
+    # workload); the chart needs the full distribution to show how I/O
+    # really spreads across the device's LBA range.
+    with open(output_dir / "lba_distribution_full.csv", "w", newline="") as f:
+        w=csv.writer(f); w.writerow(["op","lba_bucket_start","lba_bucket_end","bytes","count"])
+        for op in ("R","W","D"):
+            buckets = sorted(b for (eo, b) in region_bytes if eo == op)
+            for bucket in buckets:
+                w.writerow([OP_NAME.get(op, op),
+                            bucket * LBA_BUCKET, (bucket+1) * LBA_BUCKET,
+                            region_bytes[(op, bucket)],
+                            region_count[(op, bucket)]])
+    written["lba_distribution_full.csv"] = output_dir / "lba_distribution_full.csv"
 
     with open(output_dir / "hot_regions_by_time_window.csv", "w", newline="") as f:
         w=csv.writer(f); w.writerow(["window_start_sec","op","lba_bucket_start","lba_bucket_end","bytes"])

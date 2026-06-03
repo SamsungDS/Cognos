@@ -6,9 +6,10 @@ import re
 import json
 import logging
 import os
+import textwrap
 import shutil
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,7 @@ from .collectors import (
     PcmMemoryCollector,
     PerfStatCollector,
     PowerMonitor,
+    SsdHardwareMonitor,
     VmstatMonitor,
 )
 from .collectors_extra import (
@@ -568,21 +570,54 @@ def _run_amoprof(raw_dir: Path, output_html: Path,
             with open(blkparse_csv, "r", encoding="utf-8") as _fh:
                 _hdr = _fh.readline()
                 if _fh.readline().strip():
-                    expected = raw_dir / "summary.json"
+                    # Write blktrace analysis to a dedicated subdir so it
+                    # never overwrites the collect-time summary.json.
+                    ba_dir   = raw_dir / "blktrace_analysis"
+                    sentinel = ba_dir  / "temporal_read_write_trim_pattern.csv"
                     need_analyze = (
-                        not expected.exists()
-                        or expected.stat().st_mtime < blkparse_csv.stat().st_mtime
+                        not sentinel.exists()
+                        or sentinel.stat().st_mtime < blkparse_csv.stat().st_mtime
                     )
                     if need_analyze:
-                        from .blktrace_analyzer import analyze as _bt_analyze
-                        n_files = _bt_analyze(blkparse_csv, raw_dir)
+                        ba_dir.mkdir(parents=True, exist_ok=True)
+                        from .blktrace_analyzer import (
+                            analyze as _bt_analyze,
+                            analyze_from_binaries as _bt_analyze_bins,
+                        )
+                        # If the CSV is capped/missing but raw binaries exist,
+                        # stream analysis directly from the binaries.
+                        _bin_dir = raw_dir / "blktrace_data"
+                        # Re-read csv_has_data now: _blkparse_to_csv may have
+                        # just regenerated the CSV, making the earlier check stale.
+                        _csv_has_data_now = False
+                        if blkparse_csv.exists() and blkparse_csv.stat().st_size > 0:
+                            try:
+                                with open(blkparse_csv, "r",
+                                          encoding="utf-8") as _fh2:
+                                    _fh2.readline()  # header
+                                    _csv_has_data_now = bool(_fh2.readline().strip())
+                            except Exception:
+                                _csv_has_data_now = False
+                        _use_bins = (
+                            _bin_dir.exists()
+                            and any(_bin_dir.glob("trace.blktrace.*"))
+                            and not _csv_has_data_now   # prefer CSV when available
+                        )
+                        if _use_bins:
+                            log.info("blktrace_analyzer: CSV missing/capped — "
+                                     "streaming analysis from %d binary file(s) in %s",
+                                     len(list(_bin_dir.glob("trace.blktrace.*"))),
+                                     _bin_dir)
+                            n_files = _bt_analyze_bins(_bin_dir, ba_dir)
+                        else:
+                            n_files = _bt_analyze(blkparse_csv, ba_dir)
                         if n_files:
                             log.info("blktrace_analyzer: produced %d analysis CSVs",
                                      len(n_files))
                     else:
                         log.info("blktrace_analyzer: reusing existing analysis CSVs in %s", raw_dir)
-                    if expected.exists():
-                        cmd.extend(["--blktrace-analysis-dir", str(raw_dir)])
+                    if sentinel.exists():
+                        cmd.extend(["--blktrace-analysis-dir", str(ba_dir)])
         except Exception as e:
             log.warning("blktrace_analyzer failed: %s", e)
     log.info("Running amoprof: %s", " ".join(cmd))
@@ -655,9 +690,26 @@ def _blkparse_to_csv(bin_dir: Path, out_csv: Path,
                             d.get("comm") or "",
                             f"{d['major']},{d['minor']}", d["cpu"]])
                 events += 1
-            proc.wait(timeout=30)
+            # Drain stdout to ensure blkparse can exit even if the loop broke early.
+            try:
+                if proc.stdout:
+                    proc.stdout.read()
+            except Exception:
+                pass
+            _trace_mb_cli = sum(
+                p.stat().st_size for p in bin_dir.glob("trace.blktrace.*") if p.exists()
+            ) / (1024 * 1024) if bin_dir.exists() else 0
+            _wait_cli = max(60, min(int(_trace_mb_cli), 600))
+            try:
+                proc.wait(timeout=_wait_cli)
+            except subprocess.TimeoutExpired:
+                log.warning("blkparse still running after %ds — killing", _wait_cli)
+                try:
+                    proc.kill(); proc.wait(timeout=5)
+                except Exception:
+                    pass
             stderr_output = (proc.stderr.read() if proc.stderr else "") or ""
-            rc = proc.returncode
+            rc = proc.returncode if proc.returncode is not None else 0
 
         if rc != 0:
             err_tail = stderr_output.strip().splitlines()
@@ -1106,6 +1158,11 @@ def _collect(args: argparse.Namespace) -> int:
     collectors: dict[str, Any] = {
         "iostat": IostatMonitor(args.ssd_device, args.interval_s),
         "smart": NvmeSmartMonitor(args.ssd_device, poll_s=max(int(args.interval_s), 1)),
+        # Captures NVMe device capacity (/sys/block/<dev>/size) and HiCache
+        # filesystem usage (df on hicache_path) into smart_summary.json so the
+        # L3 HiCache capacity tile and L3 NVMe SSD layer row populate.
+        "ssd_hw": SsdHardwareMonitor(args.ssd_device,
+                                     hicache_path=args.hicache_path),
         "biolatency": BiolatencyCollector(args.ssd_device, duration_s=max(int(_effective_duration), 1)),
         "vmstat": VmstatMonitor(args.interval_s),
         "nvlink_pcie": NvlinkPcieMonitor(max(args.interval_s, 1.0)),
@@ -1194,6 +1251,18 @@ def _collect(args: argparse.Namespace) -> int:
     # Nsight Systems profiles an already-running PID; AMOprof does not launch the workload.
 
     t0 = time.time()
+    t0_dt = datetime.fromtimestamp(t0, tz=timezone.utc)
+
+    # Print start timestamp immediately so the user can record it for --start
+    print(
+        f"\n{'='*68}\n"
+        f"  COLLECTION STARTED\n"
+        f"  Start time : {t0_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC"
+        f"  (epoch: {t0:.0f})\n"
+        f"  Run dir    : {out_dir}\n"
+        f"{'='*68}\n",
+        flush=True,
+    )
     for name, collector in collectors.items():
         if name in started:
             continue
@@ -1209,6 +1278,29 @@ def _collect(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         interrupted = True
         log.warning("Interrupted; stopping collectors")
+
+    t_end = time.time()
+    t_end_dt = datetime.fromtimestamp(t_end, tz=timezone.utc)
+    elapsed_s = t_end - t0
+
+    # Print end timestamp immediately (visible even before post-processing)
+    status_str = "INTERRUPTED" if interrupted else "COMPLETED"
+    print(
+        f"\n{'='*68}\n"
+        f"  COLLECTION {status_str}\n"
+        f"  Start time : {t0_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC"
+        f"  (epoch: {t0:.0f})\n"
+        f"  End time   : {t_end_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC"
+        f"  (epoch: {t_end:.0f})\n"
+        f"  Duration   : {elapsed_s:.1f} s"
+        f"  ({elapsed_s/60:.1f} min)\n"
+        f"\n"
+        f"  To analyse this run with Prometheus, use:\n"
+        f"    --start {t0:.0f} --end {t_end:.0f}\n"
+        f"  Run dir    : {out_dir}\n"
+        f"{'='*68}\n",
+        flush=True,
+    )
 
     summary: dict[str, dict[str, Any]] = {}
     raw_paths: dict[str, str] = {}
@@ -1233,6 +1325,24 @@ def _collect(args: argparse.Namespace) -> int:
         if rows:
             all_series.extend(rows)
 
+        # Merge ssd_hw (device capacity + df-based HiCache filesystem usage)
+        # into the smart_summary.json that the report reads, so the L3 HiCache
+        # capacity tile and L3 NVMe SSD layer text populate with df-derived
+        # values without the report needing to read two separate files.
+        if name == "ssd_hw":
+            _smart_path = raw_dir / "smart_summary.json"
+            try:
+                _existing = (json.loads(_smart_path.read_text(encoding="utf-8"))
+                              if _smart_path.exists() else {})
+                _existing.update({k: v for k, v in result.items()
+                                  if k.startswith("hicache_fs_")
+                                  or k in ("nvme_device_capacity_gb",
+                                           "hicache_size_gb", "hicache_file_count")})
+                _smart_path.write_text(json.dumps(_existing, indent=2),
+                                       encoding="utf-8")
+            except Exception as _e:
+                log.warning("ssd_hw → smart_summary merge failed: %s", _e)
+
         _write_json(raw_dir / f"{name}_summary.json", result)
         raw_paths[f"{name}_summary_json"] = str(raw_dir / f"{name}_summary.json")
         raw_text_keys = [k for k in result if isinstance(result[k], str) and ("raw" in k or "output" in k)]
@@ -1253,7 +1363,10 @@ def _collect(args: argparse.Namespace) -> int:
         "label": args.label,
         "timestamp": datetime.now().isoformat(),
         "t0_epoch": t0,
-        "duration_s": round(time.time() - t0, 1),   # actual elapsed, not requested
+        "t_end_epoch": t_end,
+        "start_time_utc": t0_dt.strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "end_time_utc":   t_end_dt.strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "duration_s": round(elapsed_s, 1),   # actual elapsed, not requested
         "requested_duration_s": args.duration_s,
         "stop_condition": (
             "duration_s" if args.duration_s is not None and not
@@ -1267,6 +1380,7 @@ def _collect(args: argparse.Namespace) -> int:
         "pid": pid or "",
         "sglang_port": args.sglang_port or "",
         "ssd_device": args.ssd_device,
+        "hicache_path": getattr(args, "hicache_path", "/mnt/sglang_dv3"),
         "interrupted": interrupted,
     }
     summary_row = _flatten_summary(meta, summary, raw_paths)
@@ -1369,10 +1483,41 @@ def _collect(args: argparse.Namespace) -> int:
     elif _combined:
         log.warning("combined report skipped — static or interactive generation failed")
 
-    log.info("Wrote summary CSV: %s", out_dir / "summary.csv")
+    log.info("Wrote summary CSV:  %s", out_dir / "summary.csv")
     log.info("Wrote summary JSON: %s", out_dir / "summary.json")
     if all_series:
         log.info("Wrote combined timeseries: %s", raw_dir / "all_timeseries.jsonl")
+
+    # Final console summary — repeat timestamps so they're easy to find after
+    # report generation may have pushed the earlier banner off-screen.
+    _reports = []
+    if _static_path:
+        _reports.append(f"  Static:      {_static_path}")
+    if _do_interactive and _interactive_path:
+        _reports.append(f"  Interactive: {_interactive_path}")
+    if _combined and _static_path and _interactive_path:
+        _reports.append(f"  Combined:    {out_dir / 'amoprof_combined.html'}")
+    _reports_str = "\n".join(_reports) + "\n" if _reports else ""
+
+    print(
+        f"\n{'='*68}\n"
+        f"  COLLECTION {'INTERRUPTED' if interrupted else 'COMPLETE'} — SUMMARY\n"
+        f"  Start      : {t0_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC  (epoch: {t0:.0f})\n"
+        f"  End        : {t_end_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC  (epoch: {t_end:.0f})\n"
+        f"  Duration   : {elapsed_s:.1f} s  ({elapsed_s/60:.1f} min)\n"
+        f"  Run dir    : {out_dir}\n"
+        + (_reports_str)
+        + f"\n"
+        f"  Analyse with Prometheus:\n"
+        f"    amoprof analyze \\\n"
+        f"      --run-dir {out_dir} \\\n"
+        f"      --prometheus <URL> \\\n"
+        f"      --start {t0:.0f} --end {t_end:.0f} \\\n"
+        f"      --combined-report\n"
+        f"{'='*68}\n",
+        flush=True,
+    )
+
     return 130 if interrupted else 0
 
 
@@ -1429,6 +1574,12 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Polling interval for time-series collectors. Default: 1.0")
     c.add_argument("--ssd-device", default=os.environ.get("AMOPROF_SSD_DEVICE", "/dev/nvme0n1"),
                    help="Block device for SSD/NVMe collectors")
+    c.add_argument("--hicache-path",
+                   default=os.environ.get("AMOPROF_HICACHE_PATH", "/mnt/sglang_dv3"),
+                   help="Mount path where HiCache stores L3 KV blocks. df is "
+                        "run on this path each collect, and re-run during "
+                        "analyze when the path is reachable. Default: "
+                        "/mnt/sglang_dv3.  Env: AMOPROF_HICACHE_PATH.")
     c.add_argument("--pid", type=int, default=None,
                    help="Attach perf/bpf collectors to this already-running process")
     c.add_argument("--sglang-port", type=int, default=None,
@@ -1671,31 +1822,438 @@ def _build_parser() -> argparse.ArgumentParser:
     r.add_argument("--verbose", "-v", action="store_true",
                    help="Enable debug logging")
 
+    # ── aggregate: merge multiple run dirs for a shared Prometheus window ────
+    ag = sub.add_parser(
+        "aggregate",
+        help="Merge multiple local run directories (collected at different "
+             "times or under different configs) into a single merged run, "
+             "then optionally pull Prometheus data for a shared window and "
+             "generate a combined report.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=textwrap.dedent("""\
+            Aggregate multiple local run directories for a given Prometheus
+            time window.
+
+            Use-cases:
+              • Combine several short test runs (e.g. concurrency sweeps) into
+                one report covering the full measurement campaign.
+              • Re-analyse a set of per-experiment run-dirs against a shared
+                Prometheus window to produce a unified comparison report.
+              • Fill in gaps: some collectors ran only in certain dirs; the
+                merge picks the best available data per CSV column.
+
+            Example:
+              amoprof aggregate \\
+                --run-dirs ./run_c1 ./run_c4 ./run_c8 \\
+                --start 1778871540 --end 1778877078 \\
+                --prometheus http://prometheus:9090 \\
+                --output-dir ./aggregated \\
+                --combined-report
+        """),
+    )
+    ag.add_argument(
+        "--run-dirs", nargs="+", required=True, metavar="DIR",
+        help="Two or more run directories (metrics_run_* or any directory "
+             "containing a raw/ sub-directory). All are merged into a single "
+             "synthetic run in --output-dir.")
+    ag.add_argument(
+        "--start", default="",
+        help="Prometheus window start: Unix timestamp, ISO-8601, or relative "
+             "offset (e.g. =-1h). Used to (a) filter merged timeseries rows "
+             "to this window and (b) pull Prometheus when --prometheus is given.")
+    ag.add_argument(
+        "--end", default="",
+        help="Prometheus window end: Unix timestamp, ISO-8601, or '=now'.")
+    ag.add_argument(
+        "--prometheus", default="", metavar="URL",
+        help="Prometheus server URL. When given, the merged run is further "
+             "enriched by fetching any missing metrics (same as analyze "
+             "merge-mode). Optional — aggregation works without Prometheus.")
+    ag.add_argument("--prom-step", type=int, default=30, metavar="SECS")
+    ag.add_argument("--prom-instance", default="", metavar="HOST:PORT")
+    ag.add_argument("--prom-job", default="", metavar="JOB")
+    ag.add_argument("--prom-labels", default="", metavar="K=V,...")
+    ag.add_argument("--nvme-device", default="", metavar="DEV")
+    ag.add_argument(
+        "--output-dir", default=".", metavar="DIR",
+        help="Parent directory for the merged_run_<ts>/ output directory. "
+             "Default: current directory.")
+    ag.add_argument(
+        "--run-label", default="", metavar="LABEL",
+        help="Name for the merged run directory. Default: merged_<timestamp>.")
+    # Report flags (same as analyze)
+    ag.add_argument("--amoprof-report", action="store_true",
+                    help="Generate amoprof_report.html after aggregation.")
+    ag.add_argument("--interactive-report", action="store_true",
+                    help="Generate amoprof_interactive.html after aggregation.")
+    ag.add_argument("--combined-report", action="store_true",
+                    help="Generate amoprof_combined.html after aggregation "
+                         "(implies --amoprof-report + --interactive-report).")
+    ag.add_argument("--report-theme", default="dark",
+                    choices=["dark", "light", "off"])
+    ag.add_argument("--setup-details", default="", metavar="FILE",
+                    help="Path to setup_details.json to inject into the merged run.")
+    ag.add_argument("--sglang-page-size", type=int, default=0, metavar="N")
+    ag.add_argument("--amoprof-extra-arg", action="append", default=[])
+    ag.add_argument("--prefer", default="local",
+                    choices=["local", "prometheus"],
+                    help="Which source wins when both local CSV and Prometheus "
+                         "have data for the same metric. Default: local.")
+    ag.add_argument("--verbose", "-v", action="store_true")
+
+    # ── compare: side-by-side comparison of multiple runs ────────────────────
+    cmp = sub.add_parser(
+        "compare",
+        help="Compare metrics across multiple run directories side-by-side. "
+             "Each run can have its own Prometheus time window and label. "
+             "Produces a single HTML report with delta tables, bar charts, "
+             "and a performance radar chart.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=textwrap.dedent("""\
+            Compare multiple runs side-by-side.
+
+            Each --run argument is a colon-separated spec:
+              label:raw_dir[:start[:end]]
+
+            Examples:
+              amoprof compare \\
+                --run "Baseline:./run_c1:1778871540:1778877078" \\
+                --run "4-way concurrency:./run_c4:1778881540:1778887078" \\
+                --run "FP8 KV:./run_fp8:1778891540:1778897078" \\
+                --output-dir ./comparison
+
+              # Without timestamps (no window filtering):
+              amoprof compare \\
+                --run "BF16:./metrics_run_20260515" \\
+                --run "FP8:./metrics_run_20260516" \\
+                --output comparison.html
+        """),
+    )
+    cmp.add_argument(
+        "--run", dest="runs", action="append", required=True,
+        metavar="LABEL:DIR[:START[:END]]",
+        help="Run specification. Format: label:raw_dir[:prom_start[:prom_end]]. "
+             "Repeat for each run to compare. First run is the baseline. "
+             "START/END are Unix timestamps or ISO-8601 strings. "
+             "Example: 'Baseline:./run_c1:1778871540:1778877078'")
+    cmp.add_argument(
+        "--output-dir", default=".", metavar="DIR",
+        help="Directory where comparison.html is written. Default: current dir.")
+    cmp.add_argument(
+        "--output", default="", metavar="FILE",
+        help="Output filename. Default: amoprof_comparison_<timestamp>.html")
+    cmp.add_argument(
+        "--title", default="",
+        help="Report title. Default: 'AMOprof Comparison — N runs'.")
+    cmp.add_argument("--verbose", "-v", action="store_true")
+
+    # ── bench-lc: render lc_bm_results.json as a benchmark summary ───────────
+    blc = sub.add_parser(
+        "bench-lc",
+        help="Parse a long-context benchmark results JSON (lc_bm_results.json "
+             "format) and generate a self-contained HTML benchmark summary report.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=textwrap.dedent("""            Parse a long-context benchmark results JSON and generate a benchmark
+            summary report with load-level analysis, latency/throughput curves,
+            and saturation analysis.
+
+            The JSON file contains one record per (request_rate, metric) pair
+            measured at each load level. Multiple load levels are shown as a
+            sweep (latency vs load, throughput vs load) to characterise the
+            system under increasing request pressure.
+
+            Example:
+              amoprof bench-lc \
+                --input lc_bm_results.json \
+                --output lc_benchmark_report.html \
+                --title "DeepSeek-R1-70B Long-Context Benchmark"
+        """),
+    )
+    blc.add_argument("--input",  "-i", required=True, metavar="FILE",
+                     help="Path to lc_bm_results.json")
+    blc.add_argument("--output", "-o", default="", metavar="FILE",
+                     help="Output HTML path. Default: <input_stem>_report.html")
+    blc.add_argument("--title",  default="", metavar="TITLE",
+                     help="Report title (appears in the HTML heading).")
+    blc.add_argument("--run-label", default="", metavar="LABEL",
+                     help="Short label shown in the report subtitle.")
+    blc.add_argument("--verbose", "-v", action="store_true")
+
     return p
 
 
-def main(argv: list[str] | None = None) -> int:
-    import sys as _sys
-    parser = _build_parser()
-    raw_argv = list(_sys.argv[1:] if argv is None else argv)
-    # Backward-compatible direct form: `amoprof --duration-s 30 ...`
-    # argparse subparsers do not allow unknown top-level options, so prepend
-    # `collect` before parsing whenever the first token is not a subcommand.
-    if not raw_argv or raw_argv[0] not in {"collect", "analyze", "retime", "--version", "-h", "--help"}:
-        raw_argv = ["collect"] + raw_argv
-    args = parser.parse_args(raw_argv)
-    _setup_logging(getattr(args, "verbose", False))
-    if args.command == "analyze":
-        return _analyze(args)
-    if args.command == "retime":
-        from .retime import retime_run_dir
-        return retime_run_dir(
-            run_dir=Path(args.run_dir),
-            sglang_offset_s=args.sglang_offset_s,
-            dry_run=args.dry_run,
-            use_heuristic=args.use_heuristic,
-        )
-    return _collect(args)
+def _refresh_smart_capacity(run_dir: Path) -> bool:
+    """Re-snapshot NVMe device capacity + HiCache df stats during analyze.
+
+    The collect-time df snapshot stale-ages fast — a long run can fill another
+    100 GB of L3 KV blocks between collect-end and analyze. Worse, if a run
+    was collected with an amoprof version that pre-dates SsdHardwareMonitor,
+    `smart_summary.json` has no `hicache_fs_*` fields at all and the L3
+    HiCache capacity tile renders blank.
+
+    This function:
+      - Reads `ssd_device` and `hicache_path` from `summary.json :: meta`
+      - Re-reads `/sys/block/<dev>/size` for raw device capacity
+      - Re-runs `df -B1 <hicache_path>` for live filesystem usage
+      - Merges the fresh values into the existing `smart_summary.json`,
+        preserving SMART fields (temperature, critical_warning, etc.)
+
+    Silently no-ops if the device or path isn't reachable from the analysis
+    host (cross-host analysis). Returns True iff smart_summary.json was
+    updated.
+    """
+    raw_dir = run_dir / "raw"
+    sum_path = run_dir / "summary.json"
+    if not raw_dir.exists() or not sum_path.exists():
+        return False
+    try:
+        s = json.loads(sum_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    meta = s.get("meta", {}) if isinstance(s.get("meta"), dict) else s
+    device = meta.get("ssd_device") or ""
+    hicache_path = meta.get("hicache_path") or "/mnt/sglang_dv3"
+    if not device:
+        return False
+
+    fresh: dict = {}
+    # ── 1. Device capacity from /sys/block/<dev>/size ───────────────────────
+    try:
+        dev_name = Path(device).name
+        dev_base = re.sub(r"p\d+$", "", dev_name)
+        size_path = Path(f"/sys/block/{dev_base}/size")
+        if size_path.exists():
+            sectors = int(size_path.read_text().strip())
+            fresh["nvme_device_capacity_gb"] = round(sectors * 512 / (1024 ** 3), 1)
+    except Exception:
+        pass
+
+    # ── 2. HiCache filesystem usage from df ──────────────────────────────────
+    try:
+        import subprocess as _sp
+        if Path(hicache_path).exists():
+            r = _sp.run(["df", "-B1", "--output=source,size,used,avail", hicache_path],
+                        capture_output=True, text=True, timeout=5)
+            if r.returncode == 0:
+                # df output starts with a header line; data lines have a
+                # /dev/... source followed by all-numeric size/used/avail.
+                lines = []
+                for l in r.stdout.strip().splitlines():
+                    parts = l.split()
+                    # source field starts with / on real filesystems
+                    if len(parts) >= 4 and parts[0].startswith("/") and parts[1].isdigit():
+                        lines.append(l)
+                if lines:
+                    parts = lines[0].split()
+                    G = 1024 ** 3
+                    fresh["hicache_fs_source"]   = parts[0]
+                    fresh["hicache_fs_total_gb"] = round(int(parts[1]) / G, 2)
+                    fresh["hicache_fs_used_gb"]  = round(int(parts[2]) / G, 2)
+                    fresh["hicache_fs_avail_gb"] = round(int(parts[3]) / G, 2)
+                    fresh["hicache_fs_used_pct"] = round(
+                        int(parts[2]) / max(int(parts[1]), 1) * 100, 1)
+    except Exception:
+        pass
+
+    # ── 2b. Partition geometry: compare what blktrace traced vs the FS backs ─
+    # The block device's partition layout is needed to interpret hot-LBA
+    # offsets. If the FS lives on /dev/nvme7n1p1 but blktrace traced
+    # /dev/nvme7n1 (the whole device), then file-offset 0 in the FS shows
+    # up at LBA = partition_start_sectors × 512 in blktrace — explaining
+    # why writes appear at LBA offsets far beyond df-used.
+    try:
+        import subprocess as _sp
+        fs_source = fresh.get("hicache_fs_source", "")
+        if fs_source.startswith("/dev/"):
+            fs_dev = Path(fs_source).name  # e.g. 'nvme7n1p1' or 'nvme7n1'
+            traced_dev = Path(device).name  # what we asked blktrace to trace
+            fresh["traced_device"] = traced_dev
+            fresh["fs_backing_device"] = fs_dev
+            # Read partition start offset (sectors) from
+            # /sys/class/block/<part>/start. This is 0 for whole devices.
+            start_path = Path(f"/sys/class/block/{fs_dev}/start")
+            if start_path.exists():
+                try:
+                    part_start_sec = int(start_path.read_text().strip())
+                    fresh["fs_partition_start_sectors"] = part_start_sec
+                    fresh["fs_partition_start_gb"] = round(part_start_sec * 512 / G, 2)
+                except Exception:
+                    pass
+            # If FS lives on a partition but we traced the whole device,
+            # flag it — that produces "writes at LBA 1.9 TB on a 511 GB FS"
+            # confusion.
+            fs_is_part = re.search(r"p\d+$", fs_dev) is not None
+            traced_is_whole = re.search(r"p\d+$", traced_dev) is None
+            if fs_is_part and traced_is_whole and fs_dev != traced_dev:
+                fresh["lba_offset_warning"] = (
+                    f"FS lives on partition /dev/{fs_dev} (starts at LBA "
+                    f"{fresh.get('fs_partition_start_gb', 0):.0f} GB on device) but "
+                    f"blktrace traced whole device /dev/{traced_dev}. LBAs in the "
+                    f"SSD I/O Distribution chart are device-absolute, so write "
+                    f"hot spots will appear shifted by the partition offset."
+                )
+    except Exception:
+        pass
+        pass
+
+    # ── 2c. Filesystem type + block size on the L3 mount ────────────────────
+    # Captured so the report can explain "fewer captured ops on XFS is expected
+    # because XFS extent-based allocation merges adjacent writes more
+    # aggressively than ext4's block-based allocation." Without this we can't
+    # tell the user whether op counts dropped because of measurement loss or
+    # because the FS did a better job consolidating I/O.
+    try:
+        import subprocess as _sp
+        # `stat -f -c '%T %s'` returns "FStype block_size" portably across distros.
+        r = _sp.run(["stat", "-f", "-c", "%T %S %b %f", hicache_path],
+                    capture_output=True, text=True, timeout=5)
+        if r.returncode == 0 and r.stdout.strip():
+            parts = r.stdout.strip().split()
+            if len(parts) >= 2:
+                fresh["fs_type"] = parts[0]            # e.g. "xfs", "ext4"
+                fresh["fs_block_size"] = int(parts[1]) # filesystem block size
+    except Exception:
+        pass
+    # XFS-specific extra geometry (sunit/swidth, sectsz, agcount) when available.
+    # These determine how XFS aggregates I/O into block-layer BIOs.
+    try:
+        if fresh.get("fs_type") == "xfs":
+            import subprocess as _sp
+            r = _sp.run(["xfs_info", hicache_path],
+                        capture_output=True, text=True, timeout=5)
+            if r.returncode == 0:
+                xtxt = r.stdout
+                # Parse the lines we care about. Each looks like:
+                #   data     =   sectsz=4096  attr=2, projid32bit=1
+                #   data     =   bsize=4096   blocks=854703040
+                #   data     =   sunit=0      swidth=0 blks
+                m_bsize = re.search(r"bsize=(\d+)",  xtxt)
+                m_sectsz = re.search(r"sectsz=(\d+)", xtxt)
+                m_sunit  = re.search(r"sunit=(\d+)",  xtxt)
+                m_agc    = re.search(r"agcount=(\d+)", xtxt)
+                if m_bsize:  fresh["xfs_bsize"]   = int(m_bsize.group(1))
+                if m_sectsz: fresh["xfs_sectsz"]  = int(m_sectsz.group(1))
+                if m_sunit:  fresh["xfs_sunit"]   = int(m_sunit.group(1))
+                if m_agc:    fresh["xfs_agcount"] = int(m_agc.group(1))
+    except Exception:
+        pass
+
+    # ── 2d. Block-layer queue + merge characteristics ────────────────────────
+    # /sys/block/<dev>/queue/* tells us what BIO size the block layer is
+    # willing to issue (max_sectors_kb, optimal_io_size). The merge counts
+    # are in /sys/block/<dev>/stat columns 1 (rd_merges) and 5 (wr_merges).
+    # We can't compute a true rate here (we don't have the trace-start
+    # baseline — that's owned by BlktraceCollector), but we record the
+    # *snapshot* values so the analyzer's coverage-cross-check can subtract
+    # them later. Falling back gracefully on partial reads.
+    try:
+        dev_base = re.sub(r"p\d+$", "", Path(device).name)
+        q_dir = Path(f"/sys/block/{dev_base}/queue")
+        for f in ("max_sectors_kb", "optimal_io_size", "nr_requests",
+                  "logical_block_size", "physical_block_size",
+                  "minimum_io_size", "rotational"):
+            p = q_dir / f
+            if p.exists():
+                try:
+                    v = p.read_text().strip()
+                    fresh[f"q_{f}"] = int(v) if v.lstrip("-").isdigit() else v
+                except Exception:
+                    pass
+        # Snapshot block-layer stat counters. The BlktraceCollector records
+        # the start baseline (sys_block_wr_sectors_start) at trace begin so we
+        # only need the END values here — analyzer subtracts to get deltas.
+        stat_p = Path(f"/sys/block/{dev_base}/stat")
+        if stat_p.exists():
+            cols = stat_p.read_text().split()
+            # Linux /sys/block/<dev>/stat columns (from kernel iostats docs):
+            #  0=rd_ios 1=rd_merges 2=rd_sectors 3=rd_ticks
+            #  4=wr_ios 5=wr_merges 6=wr_sectors 7=wr_ticks
+            #  8=in_flight 9=io_ticks 10=time_in_queue
+            #  11=discard_ios 12=discard_merges 13=discard_sectors 14=discard_ticks
+            if len(cols) >= 8:
+                fresh["sys_block_rd_ios_end"]     = int(cols[0])
+                fresh["sys_block_rd_merges_end"]  = int(cols[1])
+                fresh["sys_block_rd_sectors_end"] = int(cols[2])
+                fresh["sys_block_wr_ios_end"]     = int(cols[4])
+                fresh["sys_block_wr_merges_end"]  = int(cols[5])
+                fresh["sys_block_wr_sectors_end"] = int(cols[6])
+    except Exception:
+        pass
+
+    if not fresh:
+        return False
+
+    # ── 3. Merge into smart_summary.json (preserve existing SMART fields) ───
+    smart_path = raw_dir / "smart_summary.json"
+    try:
+        existing = (json.loads(smart_path.read_text(encoding="utf-8"))
+                     if smart_path.exists() else {})
+        existing.update(fresh)
+        smart_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+        log.info("Refreshed L3 capacity in smart_summary.json: %s",
+                 ", ".join(f"{k}={v}" for k, v in fresh.items()))
+        return True
+    except Exception as e:
+        log.warning("smart_summary.json refresh failed: %s", e)
+        return False
+
+
+def _rebuild_canonical_csvs(run_dir: Path) -> list[str]:
+    """Rebuild canonical per-collector CSVs from preserved JSONLs.
+
+    The collector writes both `<name>_timeseries.jsonl` (raw, faithful) and
+    `<name>_timeseries.csv` (canonical, for the report). Older versions had
+    bugs in the canonical-CSV writers (wrong field aliases, missing per-GPU
+    power summation, kB/MB unit confusion), so analyze unconditionally rebuilds
+    the canonical CSVs from the JSONLs using the current writers. That way
+    upgrading amoprof + re-running analyze on an old run dir produces
+    consistent reports without re-collecting.
+
+    Returns the list of CSV filenames actually rebuilt.
+    """
+    try:
+        from .writer import (write_gpu_timeseries, write_power_timeseries,
+                              write_vmstat_timeseries, write_nvme_driver_timeseries)
+    except Exception as e:
+        log.debug("canonical-CSV rebuild: writer import failed: %s", e)
+        return []
+
+    raw_dir = run_dir / "raw"
+    if not raw_dir.exists():
+        return []
+
+    # Recover t0 from summary.json (collect-time epoch anchor)
+    t0 = 0.0
+    sum_path = run_dir / "summary.json"
+    if sum_path.exists():
+        try:
+            s = json.loads(sum_path.read_text(encoding="utf-8"))
+            t0 = float(s.get("t0_epoch") or s.get("meta", {}).get("t0_epoch") or 0.0)
+        except Exception:
+            pass
+
+    rebuilt: list[str] = []
+    for name, writer_fn in [
+        ("gpu_timeseries",         write_gpu_timeseries),
+        ("power_timeseries",       write_power_timeseries),
+        ("vmstat_timeseries",      write_vmstat_timeseries),
+        ("nvme_driver_timeseries", write_nvme_driver_timeseries),
+    ]:
+        # The nvme writer reads either iostat_timeseries.jsonl or
+        # nvme_driver_timeseries.jsonl; check both as candidate sources.
+        candidates = ([raw_dir / "iostat_timeseries.jsonl",
+                        raw_dir / "nvme_driver_timeseries.jsonl"]
+                       if name == "nvme_driver_timeseries"
+                       else [raw_dir / f"{name}.jsonl"])
+        if not any(p.exists() and p.stat().st_size > 0 for p in candidates):
+            continue
+        try:
+            p = writer_fn(raw_dir, t0)
+            if p:
+                rebuilt.append(p.name)
+        except Exception as e:
+            log.warning("analyze: failed to rebuild %s.csv: %s", name, e)
+    return rebuilt
 
 
 def _analyze(args) -> int:
@@ -1825,6 +2383,487 @@ def _analyze(args) -> int:
             except Exception as e:
                 log.error("Prometheus fetch failed: %s", e)
                 return 3
+
+    # ── 3b. Rebuild canonical CSVs from preserved JSONLs ────────────────────
+    # Ensures reports reflect any fixes in the writer logic even when re-running
+    # analyze on a run dir collected with an older amoprof version.
+    rebuilt = _rebuild_canonical_csvs(run_dir)
+    if rebuilt:
+        log.info("Rebuilt canonical CSVs from JSONLs: %s", ", ".join(rebuilt))
+
+    # ── 3c. Refresh L3 NVMe device capacity + HiCache df stats ─────────────
+    # Re-snapshot df + /sys/block size from the analysis host. No-op if the
+    # mount/device aren't reachable (cross-host analyze).
+    if _refresh_smart_capacity(run_dir):
+        log.info("Refreshed L3 HiCache capacity (df + /sys/block) in smart_summary.json")
+
+    # ── 4. Operation-aligned CSV analysis (existing behaviour) ──────────────
+    try:
+        _run_analysis(run_dir, verbose=args.verbose)
+    except Exception as e:
+        log.warning("operation-aligned analysis skipped: %s", e)
+
+    # ── 4b. Raw-dir audit — tell the user up-front which charts will be empty
+    try:
+        _print_audit(_audit_raw_dir(raw_dir))
+    except Exception as e:
+        log.debug("raw-dir audit failed: %s", e)
+
+    # ── Resolve effective report flags ──────────────────────────────────────
+    # --combined-report implies both --amoprof-report and --interactive-report
+    _combined = getattr(args, "combined_report", False)
+    _do_static      = getattr(args, "amoprof_report",    False) or _combined
+    _do_interactive = getattr(args, "interactive_report", False) or _combined
+
+    _static_path:      "Path | None" = None
+    _interactive_path: "Path | None" = None
+    _theme = getattr(args, "report_theme", "dark")
+
+    # ── 5. Static amoprof HTML report ───────────────────────────────────────
+    if _do_static:
+        _copy_setup_details(args, raw_dir)
+        report_path = report_dir / "amoprof_report.html"
+        rc = _run_amoprof(raw_dir, report_path,
+                          verbose=args.verbose,
+                          extra_args=args.amoprof_extra_arg or [],
+                          sglang_page_size=getattr(args, "sglang_page_size", 0))
+        if rc == 0:
+            log.info("Wrote amoprof report: %s", report_path)
+            if _theme != "off":
+                try:
+                    from .report.enhancer import enhance_report
+                    enhance_report(report_path, raw_dir=raw_dir, theme=_theme)
+                    log.info("Enhanced report (%s theme): %s", _theme, report_path)
+                except Exception as e:
+                    log.warning("report enhancer failed: %s", e)
+            _static_path = report_path
+        else:
+            log.warning("amoprof report generation returned %s", rc)
+
+    # ── 6. Interactive Plotly report ────────────────────────────────────────
+    if _do_interactive:
+        try:
+            _copy_bench_summary(args, raw_dir)
+            _copy_setup_details(args, raw_dir)
+            from .report.interactive import build_report as _build_interactive
+            int_path = report_dir / "amoprof_interactive.html"
+            _build_interactive(raw_dir, int_path, run_label=run_dir.name)
+            log.info("Wrote interactive report: %s", int_path)
+            _interactive_path = int_path
+        except Exception as e:
+            log.warning("interactive report failed: %s", e)
+
+    # ── 7. Combined tabbed report ────────────────────────────────────────────
+    if _combined and _static_path and _interactive_path:
+        try:
+            from .report.combined import build_combined_report
+            combined_path = report_dir / "amoprof_combined.html"
+            build_combined_report(
+                raw_dir=raw_dir,
+                out_html=combined_path,
+                static_html_path=_static_path,
+                interactive_html_path=_interactive_path,
+                run_label=run_dir.name,
+                theme=_theme,
+            )
+            log.info("Wrote combined report: %s", combined_path)
+        except Exception as e:
+            log.warning("combined report failed: %s", e)
+    elif _combined:
+        log.warning("combined report skipped — static or interactive generation failed")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
+
+def main(argv: list[str] | None = None) -> int:
+    import sys as _sys
+    parser = _build_parser()
+    raw_argv = list(_sys.argv[1:] if argv is None else argv)
+    # Backward-compatible direct form: `amoprof --duration-s 30 ...`
+    if not raw_argv or raw_argv[0] not in {
+            "collect", "analyze", "retime", "aggregate", "compare", "bench-lc",
+            "--version", "-h", "--help"}:
+        raw_argv = ["collect"] + raw_argv
+    args = parser.parse_args(raw_argv)
+    _setup_logging(getattr(args, "verbose", False))
+    if args.command == "analyze":
+        return _analyze(args)
+    if args.command == "retime":
+        from .retime import retime_run_dir
+        return retime_run_dir(
+            run_dir=Path(args.run_dir),
+            sglang_offset_s=args.sglang_offset_s,
+            dry_run=args.dry_run,
+            use_heuristic=args.use_heuristic,
+        )
+    if args.command == "aggregate":
+        return _aggregate(args)
+    if args.command == "compare":
+        return _compare(args)
+    if args.command == "bench-lc":
+        from .bench_lc_results import main_bench_lc
+        return main_bench_lc(args)
+    return _collect(args)
+
+
+def _compare(args) -> int:
+    """compare subcommand: extract metrics from each --run spec and write comparison HTML."""
+    from .comparator import RunSpec, compare_runs
+    from .prometheus_source import parse_time_arg
+
+    now = datetime.now(tz=timezone.utc).timestamp()
+
+    # ── Parse --run specs ──────────────────────────────────────────────────
+    run_specs: list[RunSpec] = []
+    for spec_str in args.runs:
+        parts = spec_str.split(":", 3)
+        if len(parts) < 2:
+            log.error("compare: invalid --run spec %r — expected label:dir[:start[:end]]",
+                      spec_str)
+            return 2
+        label   = parts[0].strip()
+        raw_dir = Path(parts[1].strip()).expanduser().resolve()
+        if not raw_dir.exists():
+            log.error("compare: --run %r: directory not found: %s", label, raw_dir)
+            return 2
+        # Accept both run_dir/raw and run_dir directly
+        actual_raw = raw_dir / "raw" if (raw_dir / "raw").is_dir() else raw_dir
+
+        t_start = parse_time_arg(parts[2].strip(), now=now) if len(parts) >= 3 and parts[2].strip() else 0.0
+        t_end   = parse_time_arg(parts[3].strip(), now=now) if len(parts) >= 4 and parts[3].strip() else 0.0
+
+        run_specs.append(RunSpec(
+            label=label, raw_dir=actual_raw,
+            t_start=t_start, t_end=t_end,
+        ))
+        log.info("compare: run '%s' → %s (window: %s → %s)",
+                 label, actual_raw,
+                 t_start or "—", t_end or "—")
+
+    if len(run_specs) < 2:
+        log.error("compare requires at least 2 --run arguments")
+        return 2
+
+    # ── Output path ────────────────────────────────────────────────────────
+    out_dir = Path(args.output_dir).expanduser().resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fname = args.output or f"amoprof_comparison_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+    out_html = out_dir / fname
+
+    # ── Run comparison ─────────────────────────────────────────────────────
+    try:
+        compare_runs(
+            runs=run_specs,
+            out_html=out_html,
+            title=args.title or "",
+        )
+    except Exception as e:
+        log.error("compare failed: %s", e)
+        if getattr(args, "verbose", False):
+            import traceback; traceback.print_exc()
+        return 3
+
+    print(f"\nComparison report → {out_html}")
+    return 0
+
+
+
+def _aggregate(args) -> int:
+    """aggregate subcommand: merge multiple run directories, optionally pull
+    Prometheus for the shared window, then run the standard report pipeline."""
+
+    from .aggregator import aggregate_run_dirs
+    from .prometheus_source import parse_time_arg
+
+    # ── 1. Resolve run directories ─────────────────────────────────────────
+    run_dirs: list[Path] = []
+    for d in args.run_dirs:
+        p = Path(d).expanduser().resolve()
+        if not p.exists():
+            log.error("aggregate: --run-dirs: directory not found: %s", p)
+            return 2
+        run_dirs.append(p)
+
+    if len(run_dirs) < 2:
+        log.error("aggregate requires at least two --run-dirs")
+        return 2
+
+    # ── 2. Parse time window ───────────────────────────────────────────────
+    now   = datetime.now(tz=timezone.utc).timestamp()
+    t_start = parse_time_arg(args.start, now=now) if args.start else 0.0
+    t_end   = parse_time_arg(args.end,   now=now) if args.end   else 0.0
+
+    if t_start > 0 and t_end > 0:
+        dur_min = (t_end - t_start) / 60
+        from datetime import datetime as _dt, timezone as _tz
+        t0_str = _dt.fromtimestamp(t_start, tz=_tz.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        t1_str = _dt.fromtimestamp(t_end,   tz=_tz.utc).strftime("%H:%M:%S UTC")
+        log.info("Time window: %s → %s (%.1f min)", t0_str, t1_str, dur_min)
+
+    # ── 3. Aggregate raw directories ───────────────────────────────────────
+    output_dir = Path(args.output_dir).expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    run_label = args.run_label or f"merged_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    merged_run = aggregate_run_dirs(
+        run_dirs=run_dirs,
+        output_dir=output_dir,
+        t_start=t_start,
+        t_end=t_end,
+        run_label=run_label,
+    )
+    merged_raw = merged_run / "raw"
+    log.info("Merged run directory: %s", merged_run)
+
+    # ── 4. Optional: enrich from Prometheus ───────────────────────────────
+    prom_url = getattr(args, "prometheus", "") or ""
+    if prom_url:
+        if not t_start or not t_end:
+            log.error("--prometheus requires --start and --end when used with aggregate")
+            return 2
+        try:
+            from .prometheus_source import (
+                fetch_from_prometheus, merge_prometheus_into_local,
+                parse_labels_arg,
+            )
+        except Exception as e:
+            log.error("Failed to import prometheus_source: %s", e)
+            return 2
+
+        prom_kwargs = dict(
+            start=args.start, end=args.end,
+            step_s=int(args.prom_step),
+            instance=args.prom_instance, job=args.prom_job,
+            extra_labels=parse_labels_arg(args.prom_labels),
+            nvme_device=args.nvme_device,
+            label=run_label,
+        )
+        log.info("Enriching merged run with Prometheus: %s", prom_url)
+        try:
+            manifest = merge_prometheus_into_local(
+                prom_url=prom_url,
+                local_raw_dir=merged_raw,
+                prefer=args.prefer,
+                **prom_kwargs,
+            )
+            log.info("Prometheus merge: kept_local=%s, from_prom=%s, skipped=%s",
+                     manifest["kept_local"],
+                     manifest["copied_from_prom"],
+                     manifest["skipped_empty_prom"])
+        except Exception as e:
+            log.warning("Prometheus enrichment failed (continuing without): %s", e)
+
+    # ── 5. setup_details override ─────────────────────────────────────────
+    if getattr(args, "setup_details", ""):
+        _copy_setup_details(args, merged_raw)
+
+    # ── 6. Reports (same logic as _analyze) ───────────────────────────────
+    _combined       = getattr(args, "combined_report",    False)
+    _do_static      = getattr(args, "amoprof_report",     False) or _combined
+    _do_interactive = getattr(args, "interactive_report", False) or _combined
+    _theme          = getattr(args, "report_theme", "dark")
+    _static_path:      "Path | None" = None
+    _interactive_path: "Path | None" = None
+    report_dir = merged_run
+
+    if _do_static:
+        report_path = report_dir / "amoprof_report.html"
+        rc = _run_amoprof(merged_raw, report_path,
+                          verbose=args.verbose,
+                          extra_args=args.amoprof_extra_arg or [],
+                          sglang_page_size=getattr(args, "sglang_page_size", 0))
+        if rc == 0:
+            log.info("Wrote static report: %s", report_path)
+            if _theme != "off":
+                try:
+                    from .report.enhancer import enhance_report
+                    enhance_report(report_path, raw_dir=merged_raw, theme=_theme)
+                except Exception as e:
+                    log.warning("Enhancer failed: %s", e)
+            _static_path = report_path
+        else:
+            log.warning("Static report generation returned rc=%s", rc)
+
+    if _do_interactive:
+        try:
+            from .report.interactive import build_report as _build_int
+            int_path = report_dir / "amoprof_interactive.html"
+            _build_int(merged_raw, int_path, run_label=run_label)
+            log.info("Wrote interactive report: %s", int_path)
+            _interactive_path = int_path
+        except Exception as e:
+            log.warning("Interactive report failed: %s", e)
+
+    if _combined and _static_path and _interactive_path:
+        try:
+            from .report.combined import build_combined_report
+            combined_path = report_dir / "amoprof_combined.html"
+            build_combined_report(
+                raw_dir=merged_raw,
+                out_html=combined_path,
+                static_html_path=_static_path,
+                interactive_html_path=_interactive_path,
+                run_label=run_label,
+                theme=_theme,
+            )
+            log.info("Wrote combined report: %s", combined_path)
+        except Exception as e:
+            log.warning("Combined report failed: %s", e)
+    elif _combined:
+        log.warning("Combined report skipped — static or interactive failed")
+
+    print(f"\nAggregate complete → {merged_run}")
+    if _do_static and _static_path:
+        print(f"  Static:      {_static_path}")
+    if _do_interactive and _interactive_path:
+        print(f"  Interactive: {_interactive_path}")
+    if _combined:
+        print(f"  Combined:    {report_dir / 'amoprof_combined.html'}")
+    return 0
+    """analyze subcommand dispatcher — supports three modes:
+
+      1. Prom-only:   --prometheus URL  (creates a fresh prom_run_* dir)
+      2. Local-only:  --run-dir DIR     (existing behaviour)
+      3. Merge:       both flags        (fill local gaps from Prometheus)
+    """
+    prom_url   = getattr(args, "prometheus", None)
+    run_dir_arg = getattr(args, "run_dir", None)
+
+    # ── 0. --list-targets short-circuit ─────────────────────────────────────
+    if getattr(args, "list_targets", False):
+        if not prom_url:
+            log.error("--list-targets requires --prometheus URL")
+            return 2
+        try:
+            from .prometheus_source import discover_targets
+        except Exception as e:
+            log.error("failed to import prometheus_source: %s", e)
+            return 2
+        hostname = (args.prom_instance or "").split(":")[0]
+        targets = discover_targets(prom_url, hostname=hostname)
+        if not targets:
+            log.warning("No active targets returned by %s/api/v1/targets "
+                        "(or hostname filter %r excluded all). Either the "
+                        "server is unreachable or none of its scrape jobs "
+                        "are up.", prom_url, hostname)
+            return 1
+        print(f"Active scrape targets on {prom_url}:")
+        print(f"  {'job':<22} {'instance(s)'}")
+        print(f"  {'-'*22} {'-'*44}")
+        for job, instances in sorted(targets.items()):
+            for i, inst in enumerate(instances):
+                tag = job if i == 0 else ""
+                print(f"  {tag:<22} {inst}")
+        print()
+        print("Use any of these with:")
+        print("  amoprof analyze --prometheus", prom_url, "\\")
+        print("    --prom-job <job> --prom-instance <instance>")
+        return 0
+
+    # ── 1. Argument validation ──────────────────────────────────────────────
+    if not prom_url and not run_dir_arg:
+        log.error("analyze requires either --run-dir or --prometheus "
+                  "(or both for merge mode). Use --help for options.")
+        return 2
+
+    # ── 2. Determine the working run_dir and report_dir ─────────────────────
+    # run_dir  = where raw data lives (source for the report builder)
+    # report_dir = where HTML report files are written
+    #
+    # When --run-dir + --output-dir are both given:
+    #   raw data stays in --run-dir; reports go to --output-dir.
+    # When only --run-dir is given:
+    #   reports go into run-dir (original behaviour).
+    # When only --output-dir is given (Prometheus-only mode):
+    #   a new prom_run_* dir is created inside --output-dir for everything.
+    if run_dir_arg:
+        run_dir = Path(run_dir_arg).expanduser().resolve()
+        run_dir.mkdir(parents=True, exist_ok=True)
+        if args.output_dir:
+            report_dir = Path(args.output_dir).expanduser().resolve()
+            report_dir.mkdir(parents=True, exist_ok=True)
+            log.info("Reports will be written to --output-dir: %s", report_dir)
+        else:
+            report_dir = run_dir   # original behaviour
+    else:
+        # Prom-only mode: create a fresh prom_run_* dir
+        base = Path(args.output_dir or ".").expanduser().resolve()
+        run_dir = base / f"prom_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        report_dir = run_dir
+        log.info("Prometheus-only mode → created run dir: %s", run_dir)
+
+    raw_dir = run_dir / "raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── 3. Prometheus fetch (if requested) ──────────────────────────────────
+    if prom_url:
+        try:
+            from .prometheus_source import (
+                fetch_from_prometheus, merge_prometheus_into_local,
+                parse_labels_arg,
+            )
+        except Exception as e:
+            log.error("failed to import prometheus_source: %s", e)
+            return 2
+
+        prom_kwargs = dict(
+            start=args.start, end=args.end,
+            step_s=int(args.prom_step),
+            instance=args.prom_instance, job=args.prom_job,
+            extra_labels=parse_labels_arg(args.prom_labels),
+            nvme_device=args.nvme_device,
+            label=run_dir.name,
+        )
+
+        if run_dir_arg:
+            # MERGE mode — keep local files, fill gaps from Prometheus.
+            log.info("Merge mode: local=%s, prometheus=%s, prefer=%s",
+                     run_dir, prom_url, args.prefer)
+            try:
+                manifest = merge_prometheus_into_local(
+                    prom_url=prom_url,
+                    local_raw_dir=raw_dir,
+                    prefer=args.prefer,
+                    **prom_kwargs,
+                )
+                log.info("Merge result: kept_local=%s, "
+                         "copied_from_prom=%s, prom_had_no_data=%s",
+                         manifest["kept_local"],
+                         manifest["copied_from_prom"],
+                         manifest["skipped_empty_prom"])
+            except Exception as e:
+                log.error("Prometheus merge failed: %s", e)
+                return 3
+        else:
+            # PROM-ONLY mode
+            try:
+                result = fetch_from_prometheus(
+                    prom_url=prom_url, output_dir=raw_dir, **prom_kwargs)
+                log.info("Wrote %d Prometheus files: %s",
+                         len(result["new_files"]),
+                         ", ".join(result["new_files"]))
+            except Exception as e:
+                log.error("Prometheus fetch failed: %s", e)
+                return 3
+
+    # ── 3b. Rebuild canonical CSVs from preserved JSONLs ────────────────────
+    # Ensures reports reflect any fixes in the writer logic even when re-running
+    # analyze on a run dir collected with an older amoprof version.
+    rebuilt = _rebuild_canonical_csvs(run_dir)
+    if rebuilt:
+        log.info("Rebuilt canonical CSVs from JSONLs: %s", ", ".join(rebuilt))
+
+    # ── 3c. Refresh L3 NVMe device capacity + HiCache df stats ─────────────
+    # Re-snapshot df + /sys/block size from the analysis host. No-op if the
+    # mount/device aren't reachable (cross-host analyze).
+    if _refresh_smart_capacity(run_dir):
+        log.info("Refreshed L3 HiCache capacity (df + /sys/block) in smart_summary.json")
 
     # ── 4. Operation-aligned CSV analysis (existing behaviour) ──────────────
     try:

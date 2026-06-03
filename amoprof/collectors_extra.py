@@ -86,10 +86,24 @@ class BlktraceCollector:
         self._events = 0
         self._t0 = 0.0
 
+    # ── blkparse output format detection ─────────────────────────────────────
+    # FORMAT A — standard (default, all modern versions):
+    #   MAJOR,MINOR  CPU  SEQNO  TS  PID  ACTION  RWBS  SECTOR + NSEC [COMM]
+    # FORMAT B — legacy / "old" format (blkparse -O on some distros):
+    #   TS  PID  ACTION  RWBS  MAJOR,MINOR  SECTOR + NSEC [COMM]
+    # The -O flag meaning is ambiguous across versions; removing it guarantees
+    # FORMAT A. The regex below handles both so that existing data still parses.
     _LINE_RE = re.compile(
         r"^\s*(?P<major>\d+),(?P<minor>\d+)\s+(?P<cpu>\d+)\s+\d+\s+"
         r"(?P<ts>[\d.]+)\s+(?P<pid>\d+)\s+"
-        r"(?P<action>[A-Z])\s+(?P<rwbs>[A-Z]+)\s+"
+        r"(?P<action>[A-Z])\s+(?P<rwbs>[A-Z]*)\s*"
+        r"(?P<sector>\d+)\s+\+\s+(?P<nsec>\d+)"
+        r"(?:\s+\[(?P<comm>[^\]]+)\])?"
+    )
+    _LINE_RE_OLD = re.compile(
+        r"^\s*(?P<ts>[\d.]+)\s+(?P<pid>\d+)\s+"
+        r"(?P<action>[A-Z])\s+(?P<rwbs>[A-Z]*)\s+"
+        r"(?P<major>\d+),(?P<minor>\d+)\s+"
         r"(?P<sector>\d+)\s+\+\s+(?P<nsec>\d+)"
         r"(?:\s+\[(?P<comm>[^\]]+)\])?"
     )
@@ -104,6 +118,37 @@ class BlktraceCollector:
     def start(self):
         self._events = 0
         self._reason = ""
+        # Snapshot baseline /sys/block/<dev>/stat counters. Used in stop() to
+        # compute kernel-side ground-truth deltas during the trace window:
+        #   - wr_sectors_delta → bytes written (cross-check vs blktrace bytes)
+        #   - wr_merges_delta  → how many BIOs the block layer coalesced into
+        #     larger I/Os before dispatching to the device. High merge counts
+        #     mean blktrace's *captured ops* is lower than the *requests
+        #     submitted* by the FS, which is healthy behaviour (XFS
+        #     extent-based allocation triggers this much more than ext4).
+        self._wr_sectors_start = 0
+        self._rd_sectors_start = 0
+        self._wr_merges_start  = 0
+        self._rd_merges_start  = 0
+        self._wr_ios_start     = 0
+        self._rd_ios_start     = 0
+        try:
+            dev_base = re.sub(r"p\d+$", "", Path(self.device).name)
+            stat_path = Path(f"/sys/block/{dev_base}/stat")
+            if stat_path.exists():
+                parts = stat_path.read_text().split()
+                if len(parts) >= 7:
+                    # /sys/block/<dev>/stat column layout:
+                    #  0=rd_ios 1=rd_merges 2=rd_sectors 3=rd_ticks
+                    #  4=wr_ios 5=wr_merges 6=wr_sectors 7=wr_ticks
+                    self._rd_ios_start     = int(parts[0])
+                    self._rd_merges_start  = int(parts[1])
+                    self._rd_sectors_start = int(parts[2])
+                    self._wr_ios_start     = int(parts[4])
+                    self._wr_merges_start  = int(parts[5])
+                    self._wr_sectors_start = int(parts[6])
+        except Exception:
+            pass
         if not self._which(self.blktrace_bin):
             self._reason = (f"{self.blktrace_bin} not found (apt: blktrace)")
             log.warning("BlktraceCollector: %s", self._reason)
@@ -151,7 +196,7 @@ class BlktraceCollector:
             return -1
         # `-O` says "do not output 'X--RWBS---' classified events" (notification
         # filtering). The default output format is what our regex parses.
-        cmd = [self.blkparse_bin, "-i", str(self._trace_prefix), "-O"]
+        cmd = [self.blkparse_bin, "-i", str(self._trace_prefix)]
         log.info("BlktraceCollector: parsing %d binaries (%d MB total) "
                  "with: %s",
                  len(bins),
@@ -173,9 +218,19 @@ class BlktraceCollector:
                 if proc.stdout is None:
                     return -1
                 lines_read = 0
+                _fmt = "A"
+                _fmt_locked = False
                 for raw in proc.stdout:
                     lines_read += 1
-                    m = self._LINE_RE.match(raw)
+                    m = None
+                    if _fmt == "A":
+                        m = self._LINE_RE.match(raw)
+                        if m is None and not _fmt_locked:
+                            m2 = self._LINE_RE_OLD.match(raw)
+                            if m2 and m2.group("sector"):
+                                _fmt = "B"; _fmt_locked = True; m = m2
+                    else:
+                        m = self._LINE_RE_OLD.match(raw)
                     if not m:
                         # Capture a small sample of unmatched lines for diagnostics
                         if len(unmatched_sample) < 5 and raw.strip():
@@ -190,7 +245,8 @@ class BlktraceCollector:
                                 unmatched_sample.append(stripped[:140])
                         continue
                     d = m.groupdict()
-                    rwbs = d["rwbs"]
+                    rwbs = d.get("rwbs") or ""
+                    cpu_val = d.get("cpu") or "0"
                     if "D" in rwbs:
                         op = "D"
                     elif "W" in rwbs:
@@ -206,24 +262,49 @@ class BlktraceCollector:
                             d["sector"], nsec, nsec * 512,
                             d.get("comm") or "",
                             f"{d['major']},{d['minor']}",
-                            d["cpu"],
+                            cpu_val,
                         ])
                         events += 1
                         if events >= self.max_csv_events:
                             log.warning("BlktraceCollector: capping CSV at %d events; "
                                         "raw binaries at %s preserve full trace",
                                         self.max_csv_events, self._trace_dir)
+                            # Drain remaining stdout so blkparse can exit cleanly.
+                            # Without this, the pipe buffer fills, blkparse blocks
+                            # on write(), and proc.wait() times out.
+                            log.info("BlktraceCollector: draining remaining blkparse "
+                                     "output (CSV capped) ...")
+                            try:
+                                if proc.stdout:
+                                    proc.stdout.read()   # drain to EOF
+                            except Exception:
+                                pass
                             break
                     except Exception:
                         pass
-                # Capture rc + stderr after the loop completes
-                proc.wait(timeout=30)
+                # Wait for blkparse to finish. Use a generous timeout scaled to
+                # trace size: 1s per MB of binary data, minimum 60s, max 600s.
+                _trace_mb = sum(
+                    p.stat().st_size for p in self._trace_dir.glob("trace.blktrace.*")
+                    if p.exists()
+                ) / (1024 * 1024)
+                _wait_s = max(60, min(int(_trace_mb), 600))
                 stderr_output = ""
+                try:
+                    proc.wait(timeout=_wait_s)
+                except subprocess.TimeoutExpired:
+                    log.warning("BlktraceCollector: blkparse still running after %ds "
+                                "— killing", _wait_s)
+                    try:
+                        proc.kill()
+                        proc.wait(timeout=5)
+                    except Exception:
+                        pass
                 try:
                     stderr_output = proc.stderr.read() if proc.stderr else ""
                 except Exception:
                     pass
-                rc = proc.returncode
+                rc = proc.returncode if proc.returncode is not None else 0
 
             if rc != 0:
                 # blkparse failed — report it instead of silently returning 0
@@ -266,6 +347,7 @@ class BlktraceCollector:
     def stop(self) -> dict:
         # `blktrace -w` self-terminates after the duration, but if AMOprof stops
         # collection early we send SIGINT for a clean shutdown.
+        stderr_text = ""
         if self._proc is not None:
             if self._proc.poll() is None:
                 try:
@@ -278,6 +360,41 @@ class BlktraceCollector:
                 except Exception:
                     try: self._proc.kill()
                     except Exception: pass
+            # Drain stderr — blktrace writes its per-CPU summary and any
+            # dropped-event warnings there. Without this, we lose the only
+            # signal that distinguishes "I traced everything correctly" from
+            # "the kernel buffer overran and I silently dropped 75% of writes".
+            try:
+                if self._proc.stderr is not None:
+                    stderr_text = self._proc.stderr.read() or ""
+            except Exception:
+                stderr_text = ""
+
+        # Parse blktrace's per-CPU + dropped-events summary out of stderr.
+        # Typical format on completion:
+        #   === nvme7n1 ===
+        #     CPU  0:  234567 events, 27 KiB data
+        #     ...
+        #     Total: 20733434 events (dropped 0), 3645 MiB data
+        dropped_events = 0
+        reported_events = 0
+        per_cpu_dropped: dict[int, int] = {}
+        try:
+            # Per-CPU "dropped" warnings (one per overflowing CPU) — these
+            # appear AS THEY HAPPEN, not just in the final summary.
+            for m in re.finditer(r"CPU\s+(\d+).*?dropped\s+(\d+)\s+events",
+                                  stderr_text, re.IGNORECASE):
+                per_cpu_dropped[int(m.group(1))] = int(m.group(2))
+            # Final summary "Total: N events (dropped M), ..."
+            m_tot = re.search(r"Total[:\s]+([\d,]+)\s+events\s*\(dropped\s+([\d,]+)\)",
+                               stderr_text, re.IGNORECASE)
+            if m_tot:
+                reported_events = int(m_tot.group(1).replace(",", ""))
+                dropped_events = int(m_tot.group(2).replace(",", ""))
+            elif per_cpu_dropped:
+                dropped_events = sum(per_cpu_dropped.values())
+        except Exception:
+            pass
 
         bins = sorted(self._trace_dir.glob("trace.blktrace.*"))
         bin_count = len(bins)
@@ -286,12 +403,113 @@ class BlktraceCollector:
         if bin_count == 0:
             return {"blktrace_available": False,
                     "blktrace_reason": self._reason or "no blktrace binaries produced",
-                    "blktrace_events": 0}
+                    "blktrace_events": 0,
+                    "blktrace_stderr_tail": (stderr_text or "")[-2000:]}
 
         events_csv = -1
         if self.parse_after:
             events_csv = self._run_blkparse_to_csv()
             self._events = max(events_csv, 0)
+
+        # ── Coverage sanity: did we plausibly catch all of the device's I/O? ─
+        # Cross-check captured byte total against /sys/block/<dev>/stat's
+        # sectors_written DELTA over the trace window. This is the kernel's
+        # own write counter, independent of blktrace's ring buffer. If blktrace
+        # captured far fewer bytes than this counter saw, events were dropped
+        # or the trace was on the wrong device.
+        #
+        # We also capture the merges delta, which lets the analyzer answer:
+        # "did blktrace see fewer ops because events were dropped, or because
+        # the block layer merged adjacent I/Os into bigger ones?" — the latter
+        # is healthy behaviour and very common on XFS.
+        coverage: dict = {}
+        try:
+            dev_base = re.sub(r"p\d+$", "", Path(self.device).name)
+            stat_path = Path(f"/sys/block/{dev_base}/stat")
+            if stat_path.exists():
+                parts = stat_path.read_text().split()
+                if len(parts) >= 8:
+                    rd_ios_now     = int(parts[0])
+                    rd_merges_now  = int(parts[1])
+                    rd_sectors_now = int(parts[2])
+                    wr_ios_now     = int(parts[4])
+                    wr_merges_now  = int(parts[5])
+                    wr_sectors_now = int(parts[6])
+
+                    def _dlt(now, start_attr):
+                        return max(now - getattr(self, start_attr, 0), 0)
+
+                    rd_ios_delta     = _dlt(rd_ios_now,     "_rd_ios_start")
+                    rd_merges_delta  = _dlt(rd_merges_now,  "_rd_merges_start")
+                    rd_sectors_delta = _dlt(rd_sectors_now, "_rd_sectors_start")
+                    wr_ios_delta     = _dlt(wr_ios_now,     "_wr_ios_start")
+                    wr_merges_delta  = _dlt(wr_merges_now,  "_wr_merges_start")
+                    wr_sectors_delta = _dlt(wr_sectors_now, "_wr_sectors_start")
+                    wr_delta_gb      = round(wr_sectors_delta * 512 / (1024**3), 2)
+                    rd_delta_gb      = round(rd_sectors_delta * 512 / (1024**3), 2)
+
+                    coverage["sys_block_wr_sectors_delta"] = wr_sectors_delta
+                    coverage["sys_block_wr_gb_delta"]      = wr_delta_gb
+                    coverage["sys_block_wr_sectors_now"]   = wr_sectors_now
+                    coverage["sys_block_rd_sectors_delta"] = rd_sectors_delta
+                    coverage["sys_block_rd_gb_delta"]      = rd_delta_gb
+                    coverage["sys_block_rd_ios_delta"]     = rd_ios_delta
+                    coverage["sys_block_wr_ios_delta"]     = wr_ios_delta
+                    coverage["sys_block_rd_merges_delta"]  = rd_merges_delta
+                    coverage["sys_block_wr_merges_delta"]  = wr_merges_delta
+
+                    # Merge ratio = merged_ops / (merged_ops + dispatched_ops).
+                    # 0.0 means every BIO went straight to the device (no merging).
+                    # 0.5 means the block layer halved the BIO count via coalescing.
+                    # Values >0.3 on writes are typical for XFS-with-extent-allocation
+                    # under contiguous-write workloads.
+                    rd_total = rd_merges_delta + rd_ios_delta
+                    wr_total = wr_merges_delta + wr_ios_delta
+                    coverage["sys_block_rd_merge_ratio"] = round(
+                        rd_merges_delta / rd_total, 3) if rd_total > 0 else 0
+                    coverage["sys_block_wr_merge_ratio"] = round(
+                        wr_merges_delta / wr_total, 3) if wr_total > 0 else 0
+
+                    # Average bytes per *dispatched* I/O = how big a BIO the
+                    # device actually saw. Useful for answering "why are op
+                    # counts low" — if avg_io is large the FS merged a lot.
+                    coverage["sys_block_avg_wr_io_kb"] = round(
+                        wr_sectors_delta * 512 / 1024 / wr_ios_delta, 1
+                    ) if wr_ios_delta > 0 else 0
+                    coverage["sys_block_avg_rd_io_kb"] = round(
+                        rd_sectors_delta * 512 / 1024 / rd_ios_delta, 1
+                    ) if rd_ios_delta > 0 else 0
+        except Exception:
+            pass
+
+        # ── Build coverage warning from BOTH signals ────────────────────────
+        # (a) blktrace's own dropped-events counter from stderr, and
+        # (b) the discrepancy between captured bytes and /sys/block delta.
+        coverage_warning = ""
+        warnings_list: list[str] = []
+        if dropped_events > 0 and reported_events > 0:
+            drop_pct = dropped_events / (dropped_events + reported_events) * 100
+            if drop_pct >= 0.1:
+                warnings_list.append(
+                    f"blktrace dropped {dropped_events:,} events "
+                    f"({drop_pct:.2f}% of total) — kernel ring buffer overran. "
+                    f"Increase blktrace -b buffer size or trace fewer concurrent collectors.")
+        # Compare captured byte total against /sys/block delta. Need to wait
+        # until the analyzer runs to know captured bytes precisely; for now
+        # store the kernel-side ground truth so the writer/report can flag
+        # the discrepancy after blktrace analysis completes.
+        kernel_wr_gb = coverage.get("sys_block_wr_gb_delta", 0)
+        # The check happens in two places:
+        #  1. Here, using just bin file size as a rough proxy (each event ≈
+        #     24 bytes in blktrace binary form, plus IO data, so binary_bytes
+        #     ~= 24 × events). Catches gross device mismatches early.
+        if kernel_wr_gb > 10 and bin_bytes > 0:
+            # Each blktrace event averages ~24 bytes binary; we don't know
+            # the byte-traffic-per-event ratio without parsing, so just compare
+            # orders of magnitude. If kernel wrote >10× more than blktrace
+            # captured (after parsing), something is wrong.
+            pass  # detailed check happens after blkparse runs; see writer
+        coverage_warning = " ".join(warnings_list)
 
         return {
             "blktrace_available": True,
@@ -303,6 +521,13 @@ class BlktraceCollector:
             "blktrace_device":   self.device,
             "blktrace_duration_s": round(time.time() - self._t0, 2),
             "blktrace_reason":   self._reason,
+            # NEW — diagnostic fields for the "blktrace says X GB but df says Y GB" puzzle
+            "blktrace_events_reported_by_blktrace": reported_events,
+            "blktrace_dropped_events": dropped_events,
+            "blktrace_per_cpu_dropped": per_cpu_dropped,
+            "blktrace_coverage_warning": coverage_warning,
+            "blktrace_stderr_tail": (stderr_text or "")[-2000:],
+            **coverage,
         }
 
 

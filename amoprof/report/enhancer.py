@@ -494,25 +494,28 @@ CHART_EXPLANATIONS: dict[str, tuple[str, str]] = {
         "Composite KPIs derived by correlating NVMe + GPU + SGLang — "
         "per-token SSD cost and throughput bottleneck estimate.",
         "What you are looking at: Two key panels:\n"
-        "§G88-89: SSD Dependency per Token — MB of NVMe I/O per "
+        "§G88-89: SSD Dependency per Token — MB of L3 I/O per "
         "generated output token. Directly measures how much the decode "
         "path depends on L3 storage.\n"
         "§G93: Throughput Bottleneck Estimate — which subsystem (HBM, "
-        "DRAM, NVMe, or compute) is the binding constraint at the "
+        "DRAM, L3 storage, or compute) is the binding constraint at the "
         "observed throughput.\n\n"
-        "In the reference run: 3,808 GB reads / 29,660 decode tokens "
-        "≈ 128 MB per output token. This is very high — every generated "
-        "token costs 128 MB of NVMe reads. At 581 MB/s NVMe BW and "
-        "67.5 tok/s throughput: 128 MB × 67.5 tok/s = 8.6 GB/s demand "
-        "vs 581 MB/s actual supply. The NVMe bandwidth is 15× "
-        "under-provisioned for the KV demand, but TPOT is still GPU-"
-        "limited (96 % util) — NVMe is a secondary constraint.\n\n"
-        "For KV$: >1 MB/tok = NVMe is active on the critical path. "
-        ">10 MB/tok = NVMe is a significant bottleneck. "
-        ">100 MB/tok (as in this run) = KV tier architecture needs "
-        "rethinking (more DRAM, faster NVMe, or KV quantisation).\n\n"
+        "Reference framework (worked example, NOT this run's numbers): "
+        "if a workload reads 3,808 GB from L3 over 29,660 decode tokens, "
+        "that's ~128 MB per output token — every generated token costs "
+        "128 MB of L3 reads. At 581 MB/s L3 BW and 67.5 tok/s "
+        "throughput, the KV demand is 128 MB × 67.5 = 8.6 GB/s while "
+        "supply is 581 MB/s. The L3 bandwidth is 15× under-provisioned "
+        "for the KV demand. Whether L3 is actually the binding "
+        "constraint depends on GPU util — if the GPU is already saturated, "
+        "L3 is a secondary constraint.\n\n"
+        "For KV$: >1 MB/tok = L3 is active on the critical path. "
+        ">10 MB/tok = L3 is a significant bottleneck. "
+        ">100 MB/tok = KV tier architecture needs "
+        "rethinking (more DRAM, faster L3 backend, or KV quantisation).\n\n"
         "What to do: Increase DRAM tier (move more KV from L3 to L2), "
-        "or add PCIe 5.0 NVMe (7 GB/s sequential vs 3.5 GB/s on Gen 4)."
+        "or upgrade the L3 backend (PCIe 5.0 NVMe at 7 GB/s vs 3.5 GB/s on Gen 4; "
+        "or move to an AI Memory Node / Mooncake-style remote cache)."
     ),
 
     "cross-layer correlation": (
@@ -923,6 +926,56 @@ DARK_THEME_CSS = """
     background: #1e293b !important;
     border-color: #475569 !important;
     color: #e2e8f0 !important;
+  }
+  /* ── Metric Derivations table: readable dark-mode cells ─────────────────
+     The div[background:#ffffff] rule above turns td cell backgrounds dark,
+     but the td's own inline color (#64748b, #475569, #334155) remains set
+     for a light background — producing dark-on-dark invisible text.
+     Fix: override td/th backgrounds to a readable dark shade and force
+     text to a light slate so every column is legible in dark mode.      */
+  /* Dark table cells for all cards EXCEPT the setup-panel (which keeps a light bg) */
+  .card:not(.setup-panel) table td,
+  .card:not(.setup-panel) table th {
+    background: #1e293b !important;
+    color: #cbd5e1 !important;
+    border-color: #334155 !important;
+  }
+  .card:not(.setup-panel) table tr:nth-child(even) td {
+    background: #1e3a5b !important;
+  }
+  .card:not(.setup-panel) table td[style*="font-weight:600"],
+  .card:not(.setup-panel) table td[style*="font-weight: 600"] {
+    color: #f1f5f9 !important;
+  }
+  .card:not(.setup-panel) table td code {
+    color: #7dd3fc !important;
+    background: rgba(15,23,42,0.55) !important;
+  }
+  .card:not(.setup-panel) table th {
+    background: #0f172a !important;
+    color: #94a3b8 !important;
+  }
+  /* Setup-panel keeps a bright, light background in both light and dark mode */
+  .setup-panel,
+  .setup-panel table,
+  .setup-panel table td,
+  .setup-panel table th,
+  .setup-panel .setup-info-box,
+  .setup-panel div {
+    background: #ffffff !important;
+    color: #1e293b !important;
+    border-color: #c7d2fe !important;
+  }
+  .setup-panel table tr:nth-child(even) td {
+    background: #f0f4ff !important;
+  }
+  .setup-panel table th {
+    background: #eef2ff !important;
+    color: #3730a3 !important;
+    font-weight: 700 !important;
+  }
+  .setup-panel h2, .setup-panel .setup-info-title {
+    color: #1e1b4b !important;
   }
   /* Headings */
   h1, h2, h3, h4 {
