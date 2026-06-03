@@ -2247,6 +2247,34 @@ def _rebuild_canonical_csvs(run_dir: Path) -> list[str]:
                        else [raw_dir / f"{name}.jsonl"])
         if not any(p.exists() and p.stat().st_size > 0 for p in candidates):
             continue
+
+        # Skip the rebuild if the CSV already exists AND is at least as
+        # recent as the newest candidate JSONL. This protects against the
+        # v56-era divergence bug where the Prometheus collector wrote a
+        # correct gpu_timeseries.csv (with matching gpu_summary.json) and
+        # then this rebuilder overwrote the CSV from a stale JSONL whose
+        # mem_used_mb column was 0/missing, leaving the chart at 0 MB while
+        # the summary tile still showed 21 GB. The JSONL exists only from
+        # local collection paths; if a Prometheus fetch ran in this analyze
+        # call, the CSV is the canonical source and must be preserved.
+        csv_path = raw_dir / f"{name}.csv"
+        try:
+            if csv_path.exists():
+                csv_mtime = csv_path.stat().st_mtime
+                newest_jsonl_mtime = max(p.stat().st_mtime
+                                          for p in candidates
+                                          if p.exists())
+                if csv_mtime >= newest_jsonl_mtime:
+                    log.info(
+                        "analyze: skipping %s.csv rebuild — existing CSV "
+                        "(mtime %.1f) is at least as fresh as source JSONL "
+                        "(mtime %.1f); preserving the canonical write from "
+                        "the most recent collector.",
+                        name, csv_mtime, newest_jsonl_mtime)
+                    continue
+        except Exception as e:
+            log.debug("mtime check failed for %s: %s", name, e)
+
         try:
             p = writer_fn(raw_dir, t0)
             if p:

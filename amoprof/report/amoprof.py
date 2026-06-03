@@ -919,25 +919,42 @@ def collect_from_prometheus_api(
     dcgm_dram_act = dcgm_dfs.get("DCGM_FI_PROF_DRAM_ACTIVE", pd.DataFrame())
 
     if not dcgm_util.empty:
+        # Helper: filter a DCGM dataframe to the rows matching (t_s, gpu_id).
+        # The Prometheus collector can return gpu labels as either ints or
+        # strings depending on the exporter version; if we compare without
+        # normalising types, the filter yields zero rows and the metric
+        # silently reads as 0 for every sample. This is exactly the bug
+        # that caused the GPU chart's "Mean mem used (MB)" trace to render
+        # all-zero in v56 reports while util/power rendered correctly.
+        def _per_gpu(df: pd.DataFrame, t_s: float, gpu_id) -> pd.DataFrame:
+            if df.empty:
+                return df
+            # Time match
+            t_mask = df["time_sec"] == t_s
+            # GPU label match — coerce both sides to str. The label
+            # column may be "gpu" (DCGM exporter) or "UUID" (older).
+            label_col = "gpu" if "gpu" in df.columns else (
+                "UUID" if "UUID" in df.columns else None)
+            if label_col is None:
+                # No per-gpu label → assume single-GPU data and just match
+                # on time. Mean across rows is still semantically correct.
+                return df[t_mask]
+            g_mask = df[label_col].astype(str) == str(gpu_id)
+            return df[t_mask & g_mask]
+
         for _, row in dcgm_util.iterrows():
             t_s = float(row["time_sec"])
             gpu_id = row.get("gpu","0") or row.get("UUID","0") or "0"
-            g_row = {"time_sec": t_s, "gpu_idx": gpu_id, "gpu_util": float(row["value"])}
-            # Match FB_USED at same time
-            if not dcgm_fb.empty:
-                sub = dcgm_fb[(dcgm_fb["time_sec"] == t_s) &
-                              (dcgm_fb.get("gpu", dcgm_fb.get("UUID", pd.Series())) == gpu_id
-                               if "gpu" in dcgm_fb.columns else slice(None))]
-                g_row["mem_used"] = float(sub["value"].mean()) if not sub.empty else 0
-            if not dcgm_pwr.empty:
-                sub = dcgm_pwr[dcgm_pwr["time_sec"] == t_s]
-                g_row["power"] = float(sub["value"].mean()) if not sub.empty else 0
-            if not dcgm_temp.empty:
-                sub = dcgm_temp[dcgm_temp["time_sec"] == t_s]
-                g_row["temp_c"] = float(sub["value"].mean()) if not sub.empty else 0
-            if not dcgm_dram_act.empty:
-                sub = dcgm_dram_act[dcgm_dram_act["time_sec"] == t_s]
-                g_row["hbm_bw_pct"] = float(sub["value"].mean()) * 100 if not sub.empty else 0
+            g_row = {"time_sec": t_s, "gpu_idx": str(gpu_id),
+                     "gpu_util": float(row["value"])}
+            sub = _per_gpu(dcgm_fb, t_s, gpu_id)
+            g_row["mem_used"] = float(sub["value"].mean()) if not sub.empty else 0
+            sub = _per_gpu(dcgm_pwr, t_s, gpu_id)
+            g_row["power"] = float(sub["value"].mean()) if not sub.empty else 0
+            sub = _per_gpu(dcgm_temp, t_s, gpu_id)
+            g_row["temp_c"] = float(sub["value"].mean()) if not sub.empty else 0
+            sub = _per_gpu(dcgm_dram_act, t_s, gpu_id)
+            g_row["hbm_bw_pct"] = float(sub["value"].mean()) * 100 if not sub.empty else 0
             gpu_rows.append(g_row)
 
     gpu_df = pd.DataFrame(gpu_rows) if gpu_rows else pd.DataFrame()
@@ -1179,6 +1196,25 @@ def collect_from_prometheus_api(
         dt2 = vmstat_df2["time_sec"].iloc[-1] - vmstat_df2["time_sec"].iloc[0]
         d_pgf = vmstat_df2["pgfault"].iloc[-1] - vmstat_df2["pgfault"].iloc[0]
         vmstat_summary = {"page_faults_per_s": round(d_pgf / max(dt2, 1), 2)}
+
+    # Sanity check: detect the v56 divergence bug — if util & power show
+    # real activity but mem_used aggregates to 0, DCGM_FI_DEV_FB_USED was
+    # not joined correctly per timestamp. v57's _per_gpu helper resolves
+    # the common case (label type mismatch); this warning helps surface
+    # any residual case that still slips through.
+    try:
+        if not gpu_df.empty and "mem_used" in gpu_df.columns:
+            mem_mean = float(gpu_df["mem_used"].mean())
+            util_mean = float(gpu_df["gpu_util"].mean()) if "gpu_util" in gpu_df.columns else 0
+            if mem_mean == 0 and util_mean > 0:
+                log.warning(
+                    "GPU mem_used is all-zero in collected timeseries despite "
+                    "non-zero GPU util (%.1f%% mean). DCGM_FI_DEV_FB_USED was "
+                    "probably not retrieved or did not join to dcgm_util. "
+                    "Chart will render a warning and fall back to gpu_summary "
+                    "if available.", util_mean)
+    except Exception:
+        pass
 
     power_summary = {"power_elapsed_s": window}
 
@@ -5300,6 +5336,12 @@ def extract_metrics(data: dict) -> Metrics:
             m.dram_total_bw_gbs = round(float(real["dram_total_gb_s"].mean()), 2)
 
             m.dram_total_bw_gbs = round(float(real["dram_total_gb_s"].mean()), 2)
+            # Recompute the utilisation percentage too. Without this, the
+            # static report's DRAM BW tile renders "0.0% of peak" while the
+            # measured value is non-zero — the audit bug from v52.
+            if m.dram_peak_theoretical_gbs > 0:
+                m.dram_bw_util_pct = round(
+                    m.dram_total_bw_gbs / m.dram_peak_theoretical_gbs * 100, 2)
 
     # ── Session / Stream analysis ─────────────────────────────────────────────
     sg_ts_full = data.get("sglang_timeseries")
@@ -6383,6 +6425,100 @@ def extract_metrics(data: dict) -> Metrics:
             # Override the AMD-based DRAM BW with PCM measurement
             if m.dram_total_bw_gbs == 0:
                 m.dram_total_bw_gbs = m.pcm_dram_total_bw_gbs
+                # Also bring read/write into the main fields so all downstream
+                # tiles populate (not just the dram_bw_util_pct calculation).
+                if m.dram_read_bw_gbs == 0:
+                    m.dram_read_bw_gbs  = m.pcm_dram_read_bw_gbs
+                    m.dram_write_bw_gbs = m.pcm_dram_write_bw_gbs
+                # Peaks too
+                if m.dram_read_bw_peak_gbs == 0 and "read_bw_gbs" in pcm_df.columns:
+                    m.dram_read_bw_peak_gbs  = round(float(pcm_df["read_bw_gbs"].max()),  2)
+                    m.dram_write_bw_peak_gbs = round(float(pcm_df["write_bw_gbs"].max()), 2)
+                # Recompute utilisation percentage. Without this, the static
+                # report renders "0.0% of peak" while the executive renders
+                # the correct 3.2% — the audit bug from v52.
+                if m.dram_peak_theoretical_gbs > 0:
+                    m.dram_bw_util_pct = round(
+                        m.dram_total_bw_gbs / m.dram_peak_theoretical_gbs * 100, 2)
+
+    # ── DRAM BW: third-tier fallback (raw CSV text in data dict) ─────────────
+    # If both AMD-summary and pre-parsed-PCM paths produced 0 GB/s but the
+    # raw amduprof_pcm_raw.csv content is in the data dict, parse it
+    # directly using the same parser combined.py uses. Without this
+    # fallback, the static report shows "0.0% of peak" while the executive
+    # (which calls _parse_amduprof_pcm_raw directly) shows the correct
+    # 3.2% — the audit bug from v52. The two reports must show the same
+    # number.
+    if m.dram_total_bw_gbs == 0:
+        amd_raw_text = data.get("amduprof_pcm_raw")
+        if isinstance(amd_raw_text, str) and amd_raw_text.strip():
+            try:
+                # Parse inline using the same strict header detection as
+                # combined.py's _parse_amduprof_pcm_raw. Inlined here (a
+                # ~30-line text scanner) to avoid a circular dependency on
+                # the executive's builder, which would pull in builders we
+                # don't want to import at metric-extraction time.
+                total_rows: list = []
+                read_rows:  list = []
+                write_rows: list = []
+                col_total_idx = 0
+                col_rd_idx    = 1
+                col_wr_idx    = 2
+                in_data = False
+                for raw_line in amd_raw_text.splitlines():
+                    l = raw_line.strip().rstrip(",")
+                    if not l:
+                        continue
+                    if ("Total Mem Bw" in l and
+                            ("Total Mem RdBw" in l or "RdBw" in l)):
+                        cols = [c.strip().lower() for c in l.split(",")]
+                        for ci, c in enumerate(cols):
+                            if ("total mem bw" in c and "rdbw" not in c
+                                    and "wrbw" not in c):
+                                col_total_idx = ci
+                            elif ("total mem rdbw" in c or c == "rdbw"
+                                    or "mem rdbw" in c):
+                                col_rd_idx = ci
+                            elif ("total mem wrbw" in c or c == "wrbw"
+                                    or "mem wrbw" in c):
+                                col_wr_idx = ci
+                        in_data = True
+                        continue
+                    if not in_data:
+                        continue
+                    if not l[0].isdigit():
+                        in_data = False
+                        continue
+                    try:
+                        parts = [float(x) for x in l.split(",") if x]
+                    except ValueError:
+                        continue
+                    n_parts = len(parts)
+                    if n_parts <= max(col_total_idx, col_rd_idx, col_wr_idx):
+                        continue
+                    total_rows.append(parts[col_total_idx])
+                    read_rows.append(parts[col_rd_idx])
+                    write_rows.append(parts[col_wr_idx])
+
+                if total_rows:
+                    total_mean = sum(total_rows) / len(total_rows)
+                    if total_mean > 0:
+                        m.dram_total_bw_gbs = round(total_mean, 2)
+                        if m.dram_read_bw_gbs == 0:
+                            m.dram_read_bw_gbs = round(
+                                sum(read_rows) / len(read_rows), 2)
+                            m.dram_write_bw_gbs = round(
+                                sum(write_rows) / len(write_rows), 2)
+                        if m.dram_read_bw_peak_gbs == 0:
+                            m.dram_read_bw_peak_gbs = round(max(read_rows), 2)
+                            m.dram_write_bw_peak_gbs = round(max(write_rows), 2)
+                        if m.dram_peak_theoretical_gbs > 0:
+                            m.dram_bw_util_pct = round(
+                                m.dram_total_bw_gbs
+                                / m.dram_peak_theoretical_gbs * 100, 2)
+            except Exception as _e:
+                # Best-effort fallback; never break the report build
+                print(f"  [warn] DRAM BW raw-text fallback skipped: {_e}")
 
     # ── §F: nvme-smart snapshot ───────────────────────────────────────────────
     smart_snap = data.get("nvme_smart_snapshot")

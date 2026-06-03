@@ -343,8 +343,22 @@ def write_gpu_timeseries(raw_dir: Path, t0: float) -> Path | None:
             for g in sub:
                 gpu_idx = g.get("gpu_idx", g.get("gpu_id", 0))
                 util    = g.get("gpu_util", g.get("util_gpu", g.get("utilization_gpu", 0)))
-                m_used  = g.get("mem_used_mb", g.get("memory_used", g.get("fb_used", 0)))
-                m_total = g.get("mem_total_mb", g.get("memory_total", g.get("fb_total", 0)))
+                # Try a broader set of mem_used keys, in priority order.
+                # The canonical Prometheus collector writes `mem_used` (MB);
+                # local-collect's JSONL writer typically uses `mem_used_mb`;
+                # some older sources use `memory_used` or `fb_used`. Default
+                # to 0 only when none of these are present.
+                m_used  = g.get("mem_used",
+                          g.get("mem_used_mb",
+                          g.get("memory_used",
+                          g.get("fb_used",
+                          g.get("hbm_used_mb",
+                          g.get("FB_USED", 0))))))
+                m_total = g.get("mem_total",
+                          g.get("mem_total_mb",
+                          g.get("memory_total",
+                          g.get("fb_total",
+                          g.get("hbm_total_mb", 0)))))
                 power   = g.get("power_w", g.get("power", g.get("power_draw", 0)))
                 temp    = g.get("temp_c", g.get("temperature", g.get("gpu_temp", 0)))
                 w.writerow([time_sec, gpu_idx, util, m_used, m_total, power, temp])

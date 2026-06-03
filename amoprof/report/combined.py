@@ -289,7 +289,8 @@ def _per_layer_takeaways_html(*,
                                backuped_tokens: float, loadback_tokens: float,
                                evicted_tokens: float,
                                kv_bytes_tok_kb: float,
-                               l3_source: str = "blktrace") -> str:
+                               l3_source: str = "blktrace",
+                               interactive_figures: "dict | None" = None) -> str:
     """Render the Chart-by-Chart Takeaways block when full blktrace charts
     aren't available (Prom-only mode).
 
@@ -369,7 +370,47 @@ def _per_layer_takeaways_html(*,
 
     # ── Build per-layer rows ────────────────────────────────────────────────
     def _row(tag, tag_color, layer_title, headline, verdict, verdict_color,
-             takeaway):
+             takeaway, chart_id: str = "", chart_fig: str = ""):
+        # Optional Plotly chart block. When chart_fig is provided (a JSON
+        # string suitable for fig.data / fig.layout consumption), render an
+        # inline div and a one-shot script that calls Plotly.newPlot on it.
+        # The script uses a small retry loop: even though <script src> is
+        # synchronous in HTML parsing, some preview environments (sandboxed
+        # iframes, browser extensions) can interfere with synchronous
+        # script loading. Retry every 50ms up to 100 times (5s) before
+        # giving up — this protects against the race seen in user reports
+        # where the slot renders empty.
+        chart_html = ""
+        if chart_fig and chart_id:
+            slot_id = f"cbc-{chart_id}"
+            chart_html = (
+                f'<div id="{slot_id}" style="min-height:280px;background:#fff;'
+                f'border-radius:6px;padding:6px;margin:8px 0"></div>'
+                f'<script>(function(){{'
+                f'  var tries = 0;'
+                f'  function render() {{'
+                f'    if (typeof Plotly === "undefined") {{'
+                f'      if (++tries < 100) return setTimeout(render, 50);'
+                f'      var slot = document.getElementById("{slot_id}");'
+                f'      if (slot) slot.innerHTML = \'<div style="padding:24px;'
+                f'color:#64748b;font-style:italic">Plotly library failed to '
+                f'load — check network access to cdn.plot.ly</div>\';'
+                f'      return;'
+                f'    }}'
+                f'    try {{'
+                f'      var fig = {chart_fig};'
+                f'      Plotly.newPlot("{slot_id}", fig.data, fig.layout,'
+                f'        {{responsive:true, displayModeBar:false}});'
+                f'    }} catch(e) {{'
+                f'      var slot = document.getElementById("{slot_id}");'
+                f'      if (slot) slot.innerHTML = \'<div style="padding:24px;'
+                f'color:#64748b;font-style:italic">Chart unavailable in this '
+                f'view (\' + e.message + \')</div>\';'
+                f'    }}'
+                f'  }}'
+                f'  render();'
+                f'}})();</script>'
+            )
         return (
             f'<div style="background:#0f172a;border:1px solid #1e293b;'
             f'border-radius:10px;padding:14px 16px;margin:10px 0">'
@@ -384,6 +425,7 @@ def _per_layer_takeaways_html(*,
             f'font-weight:700;font-size:10px;letter-spacing:.4px;border-radius:999px;'
             f'padding:3px 10px;border:1px solid {verdict_color}66">{verdict}</span>'
             f'</div>'
+            f'{chart_html}'
             f'<div style="padding:10px 12px;background:#1e293b;border-radius:6px;'
             f'color:#e2e8f0;font-size:13px;line-height:1.6;'
             f'border-left:3px solid {tag_color}">{takeaway}</div>'
@@ -514,31 +556,53 @@ def _per_layer_takeaways_html(*,
             "or the workload's KV footprint stayed within HBM."
         )
 
+    # Map each layer's chart_id to its figure JSON (if provided).
+    # Layers may degrade gracefully to text-only when a figure is missing.
+    figs = interactive_figures or {}
+    def _fig(cid):
+        return figs.get(cid, "")
+
+    # Plotly script include — only loaded once, only when at least one chart
+    # has data to render. Avoids dead CDN requests when callers don't pass
+    # interactive_figures.
+    plotly_inc = ""
+    if any(_fig(cid) for cid in
+           ("ch_pct_ttft","ch_thru","ch_gpu","ch_swap","ch_l3_bw","ch_evict")):
+        plotly_inc = (
+            '<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>'
+        )
+
     rows = [
         _row("A5", "#3b82f6", "Application Layer",
              f"TTFT {ttft_ms/1000:.1f}s · TPOT {itl_ms:.0f}ms · "
              f"{throughput:.0f} tok/s",
-             a5_verdict, a5_color, a5_takeaway),
+             a5_verdict, a5_color, a5_takeaway,
+             chart_id="ch_pct_ttft", chart_fig=_fig("ch_pct_ttft")),
         _row("A4", "#317bb8", "Inference Runtime",
              f"Cache hit {cache_hit:.1f}% / token-weighted {cache_hit_tw:.1f}%",
-             a4_verdict, a4_color, a4_takeaway),
+             a4_verdict, a4_color, a4_takeaway,
+             chart_id="ch_thru", chart_fig=_fig("ch_thru")),
         _row("L1", "#2f8a4e", "HBM / CUDA / GPU",
              f"HBM {hbm_used_gb:.0f}GB ({hbm_pct:.0f}%) · GPU "
              f"{gpu_util:.0f}% util · {gpu_power:.0f}W",
-             l1_verdict, l1_color, l1_takeaway),
+             l1_verdict, l1_color, l1_takeaway,
+             chart_id="ch_gpu", chart_fig=_fig("ch_gpu")),
         _row("L2", "#7a3f97", "DRAM / OS Memory",
              f"Swap {swap_pages:.0f} pages/s",
-             l2_verdict, l2_color, l2_takeaway),
+             l2_verdict, l2_color, l2_takeaway,
+             chart_id="ch_swap", chart_fig=_fig("ch_swap")),
         _row("L3", "#a45714", "SSD / Block / NVMe",
              f"R {nvme_rd_bw:.0f} MB/s · W {nvme_wr_bw:.0f} MB/s · "
              f"util {nvme_util:.0f}%",
-             l3_verdict, l3_color, l3_takeaway),
+             l3_verdict, l3_color, l3_takeaway,
+             chart_id="ch_l3_bw", chart_fig=_fig("ch_l3_bw")),
         _row("Cross", "#0f172a", "KV Cache Flow",
              f"Evict {int(evicted_tokens):,} · Backup {int(backuped_tokens):,} · "
              f"Loadback {int(loadback_tokens):,}",
-             x_verdict, x_color, x_takeaway),
+             x_verdict, x_color, x_takeaway,
+             chart_id="ch_evict", chart_fig=_fig("ch_evict")),
     ]
-    return ''.join(rows) + (
+    return plotly_inc + ''.join(rows) + (
         '<p style="color:#94a3b8;font-size:11px;font-style:italic;margin-top:12px">'
         'Per-layer summary derived from this run\'s available metrics. '
         'Full interactive charts available in the Interactive tab.'
@@ -549,7 +613,94 @@ def _per_layer_takeaways_html(*,
 
 
 
-def build_executive_summary_html(raw_dir: Path, run_label: str = "") -> str:
+def _nvme_status_phrase(nvme_util: float, nvme_rd_lat: float = -1.0) -> str:
+    """Return a short status-phrase describing the SSD's current state.
+
+    Used everywhere the report calls out NVMe util to avoid the
+    "100% util shows headroom" / "0.00 ms is sub-millisecond" contradictions
+    that v53 only partially fixed (only patched one chart_card; other 4+
+    sites still hardcoded "headroom remains" / "is not stressed" /
+    "substantial remaining capacity" regardless of measured values).
+
+    The returned phrase is suitable for inline use as a sentence clause.
+    Caller should provide enough surrounding context that the phrase reads
+    naturally.
+
+    Examples:
+      util=100, lat=0   → "saturated — IO queueing is now part of loadback latency"
+      util=60,  lat=0.5 → "actively engaged — monitor for sustained saturation"
+      util=20,  lat=0.3 → "lightly utilised — substantial headroom remains"
+      util=0,   lat=0   → "not captured by iostat for this run"
+    """
+    if nvme_util >= 90:
+        return ("saturated — IO queueing is now part of loadback latency "
+                "and is constraining decode throughput")
+    if nvme_util >= 50:
+        return ("actively engaged — monitor for sustained saturation as "
+                "concurrent sessions scale")
+    if nvme_util > 0:
+        return "lightly utilised — substantial headroom remains"
+    # nvme_util == 0
+    return "not captured by iostat for this run"
+
+
+def _nvme_latency_phrase(nvme_rd_lat: float, nvme_wr_lat: float) -> str:
+    """Return a value-aware latency-clause for inline use.
+
+    Examples:
+      rd=0, wr=0       → "Latency from iostat not captured for this run"
+      rd=0.25, wr=0.4  → "Read latency 0.25ms mean (sub-millisecond)"
+      rd=2.5, wr=0.4   → "Read latency 2.50ms mean (above the 1ms threshold)"
+    """
+    if nvme_rd_lat <= 0:
+        return "Latency from iostat not captured for this run"
+    if nvme_rd_lat < 1.0:
+        return (f"Read latency {nvme_rd_lat:.2f}ms mean (sub-millisecond) · "
+                f"write latency {nvme_wr_lat:.1f}ms")
+    return (f"Read latency {nvme_rd_lat:.2f}ms mean (above the 1ms threshold "
+            f"— each loadback adds non-trivial TPOT)")
+
+
+def _extract_interactive_figures(interactive_html: str,
+                                  chart_ids: "list[str] | None" = None
+                                  ) -> "dict[str, str]":
+    """Extract Plotly figure JSON for specific chart IDs from interactive HTML.
+
+    The interactive report embeds each chart as `var fig = {...};
+    Plotly.newPlot('chart_id', fig.data, fig.layout, ...)`. This helper
+    scans those blocks and returns a dict mapping chart_id → figure JSON
+    string for the requested IDs.
+
+    Used by build_combined_report() to feed live chart data into the
+    executive's Chart-by-Chart Takeaways section. If interactive_html is
+    empty or no matching IDs are found, returns an empty dict — callers
+    should treat that as "render text-only takeaways".
+    """
+    import re as _re
+    if not interactive_html:
+        return {}
+    if chart_ids is None:
+        chart_ids = ["ch_pct_ttft", "ch_thru", "ch_gpu", "ch_swap",
+                     "ch_l3_bw", "ch_evict"]
+    wanted = set(chart_ids)
+    found: dict = {}
+    # Non-greedy match between `var fig = ` and the matching
+    # `Plotly.newPlot('id'` — captures the figure JSON literal.
+    pat = _re.compile(
+        r"var\s+fig\s*=\s*(\{.*?\});\s*Plotly\.newPlot\(['\"]([^'\"]+)['\"]",
+        _re.DOTALL,
+    )
+    for m in pat.finditer(interactive_html):
+        fig_json, cid = m.group(1), m.group(2)
+        if cid in wanted and cid not in found:
+            found[cid] = fig_json
+            if len(found) == len(wanted):
+                break
+    return found
+
+
+def build_executive_summary_html(raw_dir: Path, run_label: str = "",
+                                  interactive_figures: "dict | None" = None) -> str:
     """Generate a self-contained executive summary HTML page from a run's raw/ directory.
 
     Reads sglang_summary.json, gpu_summary.json, summary.json, setup_details.json,
@@ -562,6 +713,11 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "") -> str:
       • Bottleneck mapping  — every AI stack layer with score, root cause, action
 
     Called automatically by build_combined_report() when --combined-report is used.
+
+    When `interactive_figures` is provided (a dict mapping chart_id -> figure
+    JSON string), the Prom-only per-layer takeaways section will embed live
+    Plotly charts inline. The expected chart IDs are: ch_pct_ttft, ch_thru,
+    ch_gpu, ch_swap, ch_l3_bw, ch_evict. Missing IDs render text-only rows.
     """
     raw_dir = Path(raw_dir)
 
@@ -1060,8 +1216,54 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "") -> str:
         return (f'<li><span class="fi-tag">[{_html.escape(tag)}]</span>'
                 f'{plain_html}{details_html}</li>')
 
-    def chart_card(title: str, subtitle: str, takeaway: str, implication: str) -> str:
-        return (f'<div class="chart-card">'                f'<div class="chart-title">{_html.escape(title)}</div>'                f'<div class="chart-sub">{_html.escape(subtitle)}</div>'                f'<div class="takeaway">{takeaway}</div>'                f'<div class="data-note"><strong>Requirement implication:</strong> '                f'{implication}</div></div>')
+    def chart_card(title: str, subtitle: str, takeaway: str, implication: str,
+                   chart_id: str = "", chart_fig: str = "") -> str:
+        # Optional inline Plotly chart. When chart_fig is provided (a JSON
+        # string), embed a div slot + a one-shot script that renders the
+        # figure. Same robust retry pattern as _per_layer_takeaways_html row:
+        # waits up to 5s for Plotly to be defined before giving up, so the
+        # chart works even if CDN script loading races with inline script
+        # execution (observed in some sandboxed iframe contexts).
+        chart_html = ""
+        if chart_fig and chart_id:
+            slot_id = f"cbc-{chart_id}"
+            chart_html = (
+                f'<div id="{slot_id}" style="min-height:280px;background:#fff;'
+                f'border-radius:6px;padding:6px;margin:6px 0"></div>'
+                f'<script>(function(){{'
+                f'  var tries = 0;'
+                f'  function render() {{'
+                f'    if (typeof Plotly === "undefined") {{'
+                f'      if (++tries < 100) return setTimeout(render, 50);'
+                f'      var slot = document.getElementById("{slot_id}");'
+                f'      if (slot) slot.innerHTML = \'<div style="padding:24px;'
+                f'color:#64748b;font-style:italic">Plotly library failed to '
+                f'load — check network access to cdn.plot.ly</div>\';'
+                f'      return;'
+                f'    }}'
+                f'    try {{'
+                f'      var fig = {chart_fig};'
+                f'      Plotly.newPlot("{slot_id}", fig.data, fig.layout,'
+                f'        {{responsive:true, displayModeBar:false}});'
+                f'    }} catch(e) {{'
+                f'      var slot = document.getElementById("{slot_id}");'
+                f'      if (slot) slot.innerHTML = \'<div style="padding:24px;'
+                f'color:#64748b;font-style:italic">Chart unavailable in this '
+                f'view (\' + e.message + \')</div>\';'
+                f'    }}'
+                f'  }}'
+                f'  render();'
+                f'}})();</script>'
+            )
+        return (
+            f'<div class="chart-card">'
+            f'<div class="chart-title">{_html.escape(title)}</div>'
+            f'<div class="chart-sub">{_html.escape(subtitle)}</div>'
+            f'{chart_html}'
+            f'<div class="takeaway">{takeaway}</div>'
+            f'<div class="data-note"><strong>Requirement implication:</strong> '
+            f'{implication}</div></div>'
+        )
 
     # ── Derived KPIs ──────────────────────────────────────────────────────────
     hbm_free_gb    = max(hbm_total - hbm_gb, 0.0)
@@ -1445,14 +1647,34 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "") -> str:
                        f"traffic.")))
 
     if read_gb > 10 and has_blktrace:
+        # Branch the action prose on the actual util — at saturation, "spare
+        # capacity" is wrong and the right action is to expand L2 OR provision
+        # more NVMe BW. At low util, "headroom remains" is honest and the
+        # only action is to expand L2.
+        _nvme_status = _nvme_status_phrase(nvme_util, nvme_rd_lat)
         findings_items.append(finding(
             "KV CACHE · L3 NVMe",
-            f'HiCache L3 is active: <strong>{read_gb:,.1f} GB SSD reads</strong> vs '            f'{write_gb:.1f} GB writes ({rw_ratio:.0f}:1 ratio) — a load-back dominated phase. '            + (f'Estimated <strong>{mb_per_out_token:.0f} MB per output token</strong> '               f'of SSD read traffic — a key KV$ SSD sizing input. ' if mb_per_out_token > 1 else "") +
-            f'Device utilisation {nvme_util:.1f}% mean shows NVMe headroom remains. '            f'<strong>Action:</strong> expand DRAM L2 tier to absorb more KV blocks '            f'before they reach L3 NVMe.',
-            plain=(f"The SSD cache is being read heavily ({read_gb:,.0f} GB) — the model "
-                   f"keeps fetching previously-saved context from disk. The SSD has spare "
-                   f"capacity. Recommended: give the system more RAM cache so fewer reads "
-                   f"reach the SSD.")))
+            f'HiCache L3 is active: <strong>{read_gb:,.1f} GB SSD reads</strong> vs '
+            f'{write_gb:.1f} GB writes ({rw_ratio:.0f}:1 ratio) — a load-back dominated phase. '
+            + (f'Estimated <strong>{mb_per_out_token:.0f} MB per output token</strong> '
+               f'of SSD read traffic — a key KV$ SSD sizing input. '
+               if mb_per_out_token > 1 else "") +
+            f'Device utilisation {nvme_util:.1f}% mean — the SSD is '
+            f'<strong>{_nvme_status}</strong>. '
+            + ('<strong>Action:</strong> expand DRAM L2 tier to absorb more '
+               'KV blocks before they reach L3 NVMe — and provision additional '
+               'NVMe bandwidth (faster device or RAID-0 pair) since the current '
+               'SSD is at saturation.'
+               if nvme_util >= 90 else
+               '<strong>Action:</strong> expand DRAM L2 tier to absorb more KV blocks '
+               'before they reach L3 NVMe.'),
+            plain=(
+                f"The SSD cache is being read heavily ({read_gb:,.0f} GB). "
+                + ("The SSD is at its limit — to keep up as load grows, give the "
+                   "system more RAM cache AND consider a faster SSD."
+                   if nvme_util >= 90 else
+                   "The SSD has spare capacity. Recommended: give the system "
+                   "more RAM cache so fewer reads reach the SSD."))))
     elif write_gb > 10 and has_blktrace and rw_ratio < 0.1:
         # Write-dominant: HiCache is offloading KV blocks to L3 NVMe but
         # rarely loading them back. Often means L1+L2 fit the working set,
@@ -1903,8 +2125,11 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "") -> str:
         kpi_card("NVMe device busy",
                  _fmt_num(nvme_util, "%", 1),
                  f"iostat %util (time servicing I/O) · "
-                 + (f"{nvme_util:.0f}% mean | well under capacity"
-                    if nvme_util < 50 else f"{nvme_util:.0f}% mean | elevated"))
+                 + (f"{nvme_util:.0f}% mean | saturated"
+                    if nvme_util >= 90 else
+                    f"{nvme_util:.0f}% mean | elevated"
+                    if nvme_util >= 50 else
+                    f"{nvme_util:.0f}% mean | well under capacity"))
     )
 
     # ── KV SSD requirement bullets ────────────────────────────────────────────
@@ -1929,7 +2154,26 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "") -> str:
     if discard_total > 0:
         discard_note = (f' The Discard IOPS trace shows a constant {discard_total:,.0f} — '                        f'this is a <strong>cumulative counter snapshot</strong>, not a per-second rate. '                        f'It represents the total TRIM/Discard commands issued to the SSD '                        f'across the run history captured at collection start; the counter was '                        f'static during this interval (no new TRIMs). This confirms HiCache '                        f'had already reclaimed its KV pages in a prior phase.')
 
-    charts_html = (
+    # Pull chart figures for the per-chart_card embedding. When the executive
+    # is built with interactive_figures provided (the default in
+    # build_combined_report), each chart_card below renders an inline Plotly
+    # chart in addition to its takeaway prose. Without figures it degrades
+    # gracefully to text-only.
+    _figs = interactive_figures or {}
+    def _fig(cid):
+        return _figs.get(cid, "")
+
+    # One Plotly CDN script for the whole has_blktrace branch's charts.
+    # The empty branch produces this for its own per-layer rows; if both
+    # branches end up active in the same render this would inject twice,
+    # but the branches are mutually exclusive (if has_blktrace else ...).
+    _plotly_inc_blk = ""
+    if any(_fig(cid) for cid in ("ch_nvme_iops", "ch_nvme_bw", "ch_nvme_lat")):
+        _plotly_inc_blk = (
+            '<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>'
+        )
+
+    charts_html_legacy = _plotly_inc_blk + (
         chart_card(
             "NVMe IOPS (Read / Write / Trim)",
             "blktrace — all block-layer I/O operations",
@@ -1938,7 +2182,8 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "") -> str:
             f"Write IOPS are minimal (mean {nvme_wr_iops:.0f}/s) confirming this is a pure load-back run."
             + discard_note,
             f"The KV$ SSD only needs ~{max(nvme_rd_iops*1.5, 500):.0f} random read IOPS at peak — "
-            f"far below typical NVMe capabilities. IOPS is not the bottleneck; bandwidth is."
+            f"far below typical NVMe capabilities. IOPS is not the bottleneck; bandwidth is.",
+            chart_id="ch_nvme_iops", chart_fig=_fig("ch_nvme_iops")
         ) +
         chart_card(
             "NVMe Bandwidth",
@@ -1950,21 +2195,71 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "") -> str:
             f"concurrent session decode.",
             f"KV$ SSD must sustain &ge;{max(nvme_rd_bw*1.1, 600):.0f} MB/s sequential read BW "
             f"for &gt;{duration_min:.0f} minutes without thermal throttling or endurance degradation. "
-            f"Write endurance is a non-issue for this workload pattern."
+            f"Write endurance is a non-issue for this workload pattern.",
+            chart_id="ch_nvme_bw", chart_fig=_fig("ch_nvme_bw")
         ) +
         chart_card(
             "NVMe Latency & Device Utilization",
             "Read/Write service time and %util from iostat",
-            f"Read latency is <strong>{nvme_rd_lat:.2f} ms mean / {nvme_rd_lat*3:.1f} ms P90</strong> "
-            f"— sub-millisecond throughout. Write latency is higher at "
-            f"<strong>{nvme_wr_lat:.1f} ms mean</strong> but affects only the "
-            f"{nvme_wr_bw:.1f} MB/s write stream (negligible impact). "
-            f'<span style="color:#4ade80;font-weight:700">Device utilisation is '
-            f"{nvme_util:.1f}% mean</span> — the SSD is operating far below capacity.",
-            f"The current KV$ SSD comfortably handles this load. "
-            f"A minimal-spec NVMe supporting {max(nvme_rd_bw*1.1, 600):.0f} MB/s read BW "
-            f"is adequate; high IOPS specs are not required. "
-            f"The {min(nvme_util*2, 100):.0f}% peak utilisation shows burst headroom for larger workloads."
+            # Branch the prose on actual measurements so the report doesn't
+            # claim "sub-millisecond throughout" when latency is 0.00 (data
+            # missing) or "far below capacity" when util reads 100%. These
+            # contradictions were the v52 audit's bug-1 + bug-2.
+            (
+                # Latency clause: 0 = no capture; <1ms = sub-ms; ≥1ms = above
+                (f"Read latency is <strong>{nvme_rd_lat:.2f} ms mean / "
+                 f"{nvme_rd_lat*3:.1f} ms P90</strong> — sub-millisecond throughout. "
+                 if 0 < nvme_rd_lat < 1.0 else
+                 f"Read latency is <strong>{nvme_rd_lat:.2f} ms mean / "
+                 f"{nvme_rd_lat*3:.1f} ms P90</strong> — above the 1ms threshold; "
+                 f"each loadback adds non-trivial time to TPOT. "
+                 if nvme_rd_lat >= 1.0 else
+                 "Read latency from iostat was not captured for this run "
+                 "(value is 0.00 ms — likely a collection gap; iostat needs "
+                 "--enable-iostat at collect time). ")
+                +
+                # Write latency: only mention if non-zero
+                (f"Write latency is higher at <strong>{nvme_wr_lat:.1f} ms mean</strong> "
+                 f"but affects only the {nvme_wr_bw:.1f} MB/s write stream "
+                 f"(negligible impact). "
+                 if nvme_wr_lat > 0 else
+                 "Write latency similarly not captured. ")
+                +
+                # Util clause: ≥90 saturated; 50–90 active; <50 idle/headroom; 0 no data
+                (f'<span style="color:#dc2626;font-weight:700">Device utilisation is '
+                 f'{nvme_util:.1f}% mean</span> — the SSD is saturated; '
+                 f'IO queueing is now part of the loadback latency.'
+                 if nvme_util >= 90 else
+                 f'<span style="color:#d97706;font-weight:700">Device utilisation is '
+                 f'{nvme_util:.1f}% mean</span> — actively engaged; '
+                 f'monitor for sustained saturation under heavier load.'
+                 if nvme_util >= 50 else
+                 f'<span style="color:#4ade80;font-weight:700">Device utilisation is '
+                 f'{nvme_util:.1f}% mean</span> — the SSD has substantial headroom.'
+                 if nvme_util > 0 else
+                 'iostat %util not captured for this run.')
+            ),
+            # Recommendation prose — also branches on util
+            (
+                f"Device is saturated at {nvme_util:.0f}% — provision additional "
+                f"NVMe bandwidth (a faster device, or aggregate two devices), or "
+                f"expand HiCache L2 DRAM allocation to reduce loadback frequency. "
+                f"Targeting a faster NVMe alone won't help if the working set "
+                f"keeps growing past HBM+L2 combined."
+                if nvme_util >= 90 else
+                f"The current KV$ SSD is actively engaged at {nvme_util:.0f}% mean. "
+                f"Plan headroom for ~{min(nvme_util*1.5, 100):.0f}% peak under load growth; "
+                f"watch for sustained periods above 90%."
+                if nvme_util >= 50 else
+                f"The current KV$ SSD comfortably handles this load. "
+                f"A minimal-spec NVMe supporting "
+                f"{max(nvme_rd_bw*1.1, 600):.0f} MB/s read BW is adequate; "
+                f"high IOPS specs are not required."
+                if nvme_util > 0 else
+                "Cannot make sizing recommendations without iostat data. "
+                "Re-collect with iostat enabled to characterize the device under load."
+            ),
+            chart_id="ch_nvme_lat", chart_fig=_fig("ch_nvme_lat")
         ) +
         chart_card(
             "Request Size Distribution",
@@ -2020,7 +2315,16 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "") -> str:
             f"at near-DRAM speed. Request candidates to provide "
             f"'sustained random read BW to a fixed hot-zone' benchmarks."
         )
-    ) if has_blktrace else _per_layer_takeaways_html(
+    )
+
+    # Per-layer Chart-by-Chart Takeaways. Always rendered now (was previously
+    # gated on `if has_blktrace else _per_layer_takeaways_html(...)`, which
+    # meant blktrace runs got the old per-chart text-only block while
+    # Prom-only got the better per-layer block). Now every report gets
+    # the layer classification with embedded charts — and when blktrace
+    # is present we additionally append the legacy per-chart KV$ SSD
+    # detail section below for deeper-dive inspection.
+    per_layer_block = _per_layer_takeaways_html(
         # Application layer signals
         ttft_ms=ttft_ms, itl_ms=tpot_ms, throughput=throughput,
         # SGLang runtime
@@ -2030,7 +2334,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "") -> str:
         gpu_power=gpu_power,
         # DRAM / OS
         dram_bw=dram_total_bw, swap_pages=swap_pages,
-        # L3 SSD (numbers populated by SGLang fallback when blktrace absent)
+        # L3 SSD
         nvme_rd_bw=nvme_rd_bw, nvme_wr_bw=nvme_wr_bw,
         read_gb=read_gb, write_gb=write_gb,
         nvme_util=nvme_util,
@@ -2040,7 +2344,27 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "") -> str:
         kv_bytes_tok_kb=kv_bytes_tok_kb,
         # L3 source tag for the takeaway provenance footnote
         l3_source=l3_traffic_source,
+        # Interactive chart figures — when provided, each layer row embeds
+        # a live Plotly chart inline. When None, rows render text-only.
+        interactive_figures=interactive_figures,
     )
+
+    # Legacy per-chart KV$ SSD detail block — rendered ONLY when blktrace
+    # captured the necessary distributions. Appended below the per-layer
+    # block as a "deeper-dive" section for users who want chart-by-chart
+    # detail of the I/O characteristics.
+    blktrace_detail_block = (
+        '<div class="section-label" style="margin-top:24px">'
+        'KV$ SSD I/O deeper-dive — per-chart detail (blktrace)</div>'
+        '<div class="card">'
+        '<h2>💾 KV$ SSD Per-Chart Detail '
+        '<span class="tag">BLKTRACE DEEP-DIVE</span></h2>'
+        + charts_html_legacy + '</div>'
+    ) if has_blktrace else ""
+
+    # `{charts_html}` template slot below gets per-layer block always +
+    # blktrace detail block when relevant.
+    charts_html = per_layer_block + blktrace_detail_block
 
     # ── Assemble full HTML ────────────────────────────────────────────────────
     title_suffix = f" · {_html.escape(run_label)}" if run_label else ""
@@ -2172,8 +2496,9 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "") -> str:
   <strong>{read_gb:,.2f} GB reads vs {write_gb:.1f} GB writes</strong>
   ({('1:' + str(int(round(1/rw_ratio))) if 0 < rw_ratio < 0.5 else f'{rw_ratio:.1f}:1')} R/W ratio) — 
   {('a write-dominated KV-offload pattern (HiCache backups outpacing load-backs).' if rw_ratio < 0.5 else 'a sustained load-back pattern.')}
-  The <strong>{nvme_util:.1f}% mean device utilisation</strong> and sub-millisecond read latency
-  ({nvme_rd_lat:.2f} ms mean) confirm the SSD has substantial remaining capacity.</p>
+  The <strong>{nvme_util:.1f}% mean device utilisation</strong> indicates the SSD is
+  <strong>{_nvme_status_phrase(nvme_util, nvme_rd_lat)}</strong>.
+  {_nvme_latency_phrase(nvme_rd_lat, nvme_wr_lat)}.</p>
   <p><strong>Device characteristic implication:</strong> KV$ SSD requirement is primarily
   <strong>random-read throughput at 16–64 KB block size</strong>, with <strong>low read latency</strong>
   (&lt;{max(nvme_rd_lat*2, 0.5):.1f} ms). Write endurance is secondary — only {write_gb:.1f} GB written in {duration_min:.0f} min.</p>
@@ -2186,8 +2511,8 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "") -> str:
   <strong>read-dominated, small-to-medium block, bursty, concentrated in a narrow LBA region</strong>.
   Key requirement drivers:</p>
   <ul>{kvssd_req_html}</ul>
-  <p class="sub" style="margin-top:10px">Device utilisation at {nvme_util:.1f}% mean confirms the SSD is not stressed —
-  headroom exists to increase L3 KV pool allocation or add parallel sessions.</p>
+  <p class="sub" style="margin-top:10px">Device utilisation at {nvme_util:.1f}% mean — the SSD is
+  {_nvme_status_phrase(nvme_util, nvme_rd_lat)}.</p>
 </div>
 
 <div class="section-label">Per-chart takeaways — KV$ SSD I/O characterisation</div>
@@ -2409,7 +2734,21 @@ def build_combined_report(
         log.info("combined: generated interactive report (%d KB)", len(interactive_html) // 1024)
 
     try:
-        executive_html = build_executive_summary_html(raw_dir, run_label=run_label)
+        # Extract figure JSON for the per-layer Chart-by-Chart Takeaways
+        # section. When the run has full blktrace data the executive uses
+        # the original per-chart code path and ignores these; when it
+        # doesn't, the per-layer rows will embed these live Plotly charts.
+        try:
+            interactive_figures = _extract_interactive_figures(interactive_html)
+            log.info("combined: extracted %d chart figures from interactive HTML",
+                     len(interactive_figures))
+        except Exception as _e:
+            log.warning("combined: figure extraction failed (%s) — "
+                        "executive will render text-only takeaways", _e)
+            interactive_figures = {}
+        executive_html = build_executive_summary_html(
+            raw_dir, run_label=run_label,
+            interactive_figures=interactive_figures)
         log.info("combined: generated executive summary (%d KB)", len(executive_html) // 1024)
     except Exception as e:
         log.warning("combined: executive summary generation failed: %s", e)

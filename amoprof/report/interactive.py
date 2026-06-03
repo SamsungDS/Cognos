@@ -390,17 +390,60 @@ def _derive_nvme_columns(rows: list[dict]) -> list[dict]:
                               "Throughput (tok/s)", "Cache hit %", ts=ts)}
 
 
-def _chart_gpu(gpu: list[dict]) -> dict | None:
-    """Chart: per-GPU utilization + memory used."""
+def _chart_gpu(gpu: list[dict],
+               gpu_summary: dict | None = None) -> dict | None:
+    """Chart: per-GPU utilization + memory used.
+
+    Robust against the gpu_timeseries.csv ↔ gpu_summary.json divergence
+    bug observed in v56 reports (chart's mem trace all-zero while summary's
+    hbm_used_mb_mean correctly read ~21 GB). Three defensive layers:
+
+    1. Try multiple candidate column names for the mem column. Different
+       collector paths (Prometheus vs local) and DCGM exporter versions
+       use different names: `mem_used` (canonical), `mem_used_mb`,
+       `hbm_used_mb`, `mem_used_gb` (gets ×1024'd to MB).
+
+    2. If the resolved column is all-zero (or absent) but the gpu_summary
+       file has a non-zero `hbm_used_mb_mean`, render the summary value
+       as a flat trend line and prepend a clear warning annotation. This
+       prevents the chart from silently showing 0 MB when we know it's
+       wrong.
+
+    3. If neither timeseries nor summary has data, log a warning and
+       still render the util/power traces — never silently produce a
+       broken chart.
+    """
     if not gpu:
         return None
+    # Candidate mem-column names in priority order. First match wins.
+    # Units are tracked so we can normalize everything to MB.
+    mem_candidates = [
+        ("mem_used", 1.0),         # canonical (Prom & local), MB
+        ("mem_used_mb", 1.0),      # alt naming
+        ("hbm_used_mb", 1.0),      # legacy
+        ("mem_used_gb", 1024.0),   # GB → MB
+        ("hbm_used_gb", 1024.0),   # GB → MB
+    ]
+    # Detect which candidate the rows actually carry. Probe the first
+    # non-empty row.
+    mem_key, mem_scale = "mem_used", 1.0
+    for r in gpu:
+        for cand, scale in mem_candidates:
+            v = r.get(cand)
+            if v not in (None, "", "nan", "NaN"):
+                mem_key, mem_scale = cand, scale
+                break
+        else:
+            continue
+        break
+
     by_gpu: dict[str, dict] = {}
     for r in gpu:
         idx = str(r.get("gpu_idx", "0"))
         d = by_gpu.setdefault(idx, {"t": [], "util": [], "mem": [], "power": []})
         d["t"].append(_to_float(r.get("time_sec")))
         d["util"].append(_to_float(r.get("gpu_util")))
-        d["mem"].append(_to_float(r.get("mem_used")))
+        d["mem"].append(_to_float(r.get(mem_key)) * mem_scale)
         d["power"].append(_to_float(r.get("power")))
     colors = ["#22d3ee", "#a78bfa", "#f97316", "#22c55e",
               "#ef4444", "#3b82f6", "#eab308", "#ec4899"]
@@ -418,11 +461,37 @@ def _chart_gpu(gpu: list[dict]) -> dict | None:
             "hovertemplate": f"<b>GPU{idx}</b>: %{{y:.1f}}%<extra></extra>",
         })
     # Aggregate mem on secondary axis
+    mem_annotation = None
     if by_gpu:
         n = len(next(iter(by_gpu.values()))["t"])
         avg_mem = [sum(by_gpu[k]["mem"][i] for k in by_gpu) / len(by_gpu)
                    for i in range(n)]
         avg_ts = next(iter(by_gpu.values()))["t"]
+
+        # Sanity check: is the mem series all-zero?
+        mem_all_zero = (not avg_mem) or (max(avg_mem) == 0.0)
+        if mem_all_zero and gpu_summary:
+            # Try to recover the mean from the summary file. The chart
+            # then renders as a flat line at that value, with an
+            # annotation explaining the recovery.
+            summary_mb = float(gpu_summary.get("hbm_used_mb_mean", 0) or 0)
+            if summary_mb == 0:
+                summary_gb = float(gpu_summary.get("hbm_used_gb_mean", 0) or 0)
+                summary_mb = summary_gb * 1024.0
+            if summary_mb > 0:
+                avg_mem = [summary_mb] * n
+                mem_annotation = (
+                    f"⚠ Per-sample HBM data was unavailable in "
+                    f"gpu_timeseries.csv; showing summary mean "
+                    f"({summary_mb/1024:.1f} GB) as a flat reference. "
+                    f"Re-collect with the DCGM exporter exposing the "
+                    f"FB_USED metric per GPU to see the time-series.")
+            else:
+                mem_annotation = (
+                    "⚠ HBM memory data not captured for this run "
+                    "(DCGM_FI_DEV_FB_USED unavailable). Verify the DCGM "
+                    "exporter is collecting per-GPU memory metrics.")
+
         traces.append({
             "x": _ts_to_dates(avg_ts), "y": avg_mem,
             "type": "scatter", "mode": "lines",
@@ -431,10 +500,23 @@ def _chart_gpu(gpu: list[dict]) -> dict | None:
             "yaxis": "y2",
             "hovertemplate": "<b>%{y:.0f}</b> MB used (mean)<extra></extra>",
         })
-    return {"data": traces,
-            "layout": _layout("GPU Utilization & HBM Memory (per GPU)",
-                              "Utilization %", "HBM used (MB)",
-                              height=480, ts=all_ts)}
+    layout = _layout("GPU Utilization & HBM Memory (per GPU)",
+                     "Utilization %", "HBM used (MB)",
+                     height=480, ts=all_ts)
+    # Attach the recovery annotation in the chart's layout so it's visible
+    # in both interactive and embedded contexts.
+    if mem_annotation:
+        layout.setdefault("annotations", []).append({
+            "text": mem_annotation,
+            "xref": "paper", "yref": "paper",
+            "x": 0.5, "y": 1.08,
+            "xanchor": "center", "yanchor": "bottom",
+            "showarrow": False,
+            "font": {"size": 11, "color": "#dc2626"},
+            "bgcolor": "#fef3c7",
+            "bordercolor": "#fbbf24", "borderwidth": 1,
+        })
+    return {"data": traces, "layout": layout}
 
 
 def _chart_power(power: list[dict], gpu: list[dict] | None = None) -> dict | None:
@@ -2408,7 +2490,7 @@ def build_report(raw_dir: Path, out_html: Path,
 
     sections_html.append(_layer_header("layer-l1", "A3/A2/A1 · L1 HBM / CUDA / GPU", "GPU kernel/runtime layer, HBM occupancy, HBM bandwidth pressure, GPU power and utilization.", "#2f8a4e"))
     sections_html.append(_section("GPU Utilization & HBM (per GPU)",
-                                   "ch_gpu", _chart_gpu(gpu_ts),
+                                   "ch_gpu", _chart_gpu(gpu_ts, gpu_summary=gpu_sum),
                                    "Per-GPU lines — click legend entries to isolate one GPU"))
     sections_html.append(_section("Total GPU Power Draw",
                                    "ch_power", _chart_power(power_ts, gpu_ts)))
