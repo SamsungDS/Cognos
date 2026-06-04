@@ -3965,8 +3965,8 @@ class Metrics:
     # Per-tier token distribution and read latency costs
     kv_l1_hbm_tokens: int = 0         # tokens resident in L1 HBM (on-GPU)
     kv_l2_dram_tokens: int = 0        # tokens resident in L2 hicache DRAM
-    kv_l3_nvme_tokens: int = 0        # tokens resident in L3 cache tier
-    l3_storage_type: str = "NVMe SSD" # display label for L3 backend
+    kv_l3_nvme_tokens: int = 0        # tokens resident in L3 storage cache tier
+    l3_storage_type: str = "NVMe SSD" # display label for L3 storage backend
                                        # ("NVMe SSD" / "AI Memory Node" /
                                        # "Mooncake" / "CXL" / etc.). Sourced
                                        # from setup["L3 storage type"].
@@ -3980,7 +3980,7 @@ class Metrics:
     kv_l2_capacity_tokens: int = 0    # L2 DRAM pool capacity (tokens)
     kv_l1_bw_gbs: float = 2000.0      # L1 bandwidth: A100 HBM2e GB/s
     kv_l2_bw_gbs: float = 200.0       # L2 bandwidth: AMD EPYC DDR4 GB/s
-    kv_l3_bw_gbs: float = 3.5         # L3 bandwidth: NVMe sequential read GB/s
+    kv_l3_bw_gbs: float = 3.5         # L3 storage bandwidth: NVMe sequential read GB/s
     kv_l1_read_lat_ms: float = 0      # ms to read one token's KV from L1 HBM
     kv_l2_read_lat_ms: float = 0      # ms to read one token's KV from L2 DRAM
     kv_l3_read_lat_ms: float = 0      # ms to read one token's KV from L3
@@ -4585,7 +4585,7 @@ def extract_metrics(data: dict) -> Metrics:
     # can be produced by node-exporter /sys/block statistics even when the run did
     # not configure L3 storage. In that case a small amount of host write I/O
     # must NOT be interpreted as L3/NVMe cache activity. Only promote the label
-    # to "L3 Storage I/O" when setup_details explicitly identifies an L3
+    # to "L3 storage I/O" when setup_details explicitly identifies an L3
     # storage backend/device/path. Defaulted profile fields are deliberately
     # ignored as evidence.
     _defaulted_names = {x.strip().lower() for x in str(m.setup_details.get("Defaulted fields", "")).split(",") if x.strip()}
@@ -4596,20 +4596,26 @@ def extract_metrics(data: dict) -> Metrics:
                 if _v and _v.lower() not in {"unknown", "none", "n/a", "null", "default", "disabled", "false", "0", "-", "—"}:
                     return _v
         return ""
-    _explicit_l3_backend = _explicit_setup_value(
-        "L3 Device", "L3 device", "L3 Mount Path", "L3 mount path",
-        "L3 Storage Type", "L3 storage type", "l3_storage_type",
-        "HiCache storage backend", "hicache_storage_backend",
-        "HiCache storage path", "hicache_storage_path")
-    _explicit_hicache = _explicit_setup_value("HiCache", "Hierarchical cache", "enable_hierarchical_cache")
-    m.storage_io_is_l3 = bool(_explicit_l3_backend or (_explicit_hicache and "l3" in _explicit_hicache.lower()))
+    # A generic L3 storage type (for example "Mooncake") does NOT prove that
+    # node-exporter block-device counters belong to that L3 backend. Promote
+    # host block metrics to L3 storage only when the setup explicitly maps a
+    # concrete block device or mount/path to L3 storage. Otherwise this section
+    # remains Host block I/O, and SGLang L3 storage activity is shown separately
+    # from sglang_backuped/load_back/prefetched/evicted token counters.
+    _explicit_l3_block_mapping = _explicit_setup_value(
+        "L3 Device", "L3 device", "L3 block device", "l3_device",
+        "L3 Mount Path", "L3 mount path", "L3 mount",
+        "HiCache storage path", "hicache_storage_path",
+        "L3 filesystem path", "L3 storage path")
+    _l3_type_only = _explicit_setup_value("L3 storage Type", "L3 storage type", "l3_storage_type", "L3 type")
+    m.storage_io_is_l3 = bool(_explicit_l3_block_mapping)
     if m.storage_io_is_l3:
-        _l3_type = _explicit_setup_value("L3 Storage Type", "L3 storage type", "l3_storage_type", "L3 type") or m.l3_storage_type or "Storage"
-        m.storage_io_label = f"L3 {_l3_type} I/O" if "l3" not in str(_l3_type).lower() else f"{_l3_type} I/O"
-        m.storage_io_formula_note = "Block-device metrics are interpreted as L3 only because setup_details explicitly declares an L3 storage backend/device."
+        _l3_type = _l3_type_only or m.l3_storage_type or "storage"
+        m.storage_io_label = f"L3 storage block I/O ({_l3_type})"
+        m.storage_io_formula_note = "Block-device metrics are interpreted as L3 storage only because setup_details explicitly maps a concrete block device/mount/path to the L3 storage backend."
     else:
         m.storage_io_label = "Host block I/O"
-        m.storage_io_formula_note = "Host OS block-device metrics only; not interpreted as L3 cache/storage activity because setup_details does not explicitly declare an L3 device/backend."
+        m.storage_io_formula_note = "Host OS block-device metrics only; not interpreted as L3 storage activity. L3 storage type alone is metadata; SGLang L3 storage activity is derived from sglang_backuped_tokens_total, sglang_load_back_tokens_total, sglang_prefetched_tokens_total, and sglang_evicted_tokens_total."
 
     # fall back to finding model name in timeseries column headers
     m.run_duration_s = float(sg.get("server_e2e_ms", 0) / 1000 or
@@ -5292,7 +5298,7 @@ def extract_metrics(data: dict) -> Metrics:
         # (net offload). NOT backuped - prefetched, which subtracts a
         # speculative event count and often coincidentally equals zero,
         # making the L3 Peak Resident tile read "0 blk" even on runs with
-        # heavy L3 activity. If load_back is unavailable, fall back to
+        # heavy L3 storage activity. If load_back is unavailable, fall back to
         # backuped alone (an upper bound on resident tokens).
         if l3_used == 0:
             def _last_ctr(partial):
@@ -5933,7 +5939,7 @@ def extract_metrics(data: dict) -> Metrics:
         # m.ssd_wr_bytes_total — which are zero on Prom-only runs because
         # they normally come from blktrace. Derive them from SGLang token
         # counters (the same way the executive does) so the End Report tab
-        # also renders non-zero L3 traffic in those cases.
+        # also renders non-zero L3 storage traffic in those cases.
         #
         # GATING: Only fall back when the user is in true Prom-only mode —
         # detected by the absence of blktrace_analysis/summary.json. If a
@@ -8707,7 +8713,7 @@ def chart_session_analysis(m: "Metrics") -> str:
 
 
 def chart_kvb_events(m: "Metrics") -> str:
-    """KV$B block event traces across L2/L3 using SGLang-derived counters first."""
+    """KV$B block event traces across L2/L3 storage using SGLang-derived counters first."""
     l3_ts = getattr(m, "kvb_l3_io_ts", pd.DataFrame())
     if m.kvb_offload_ts.empty and l3_ts.empty and m.kvb_l1_pool_blocks == 0:
         return ""
@@ -8756,7 +8762,7 @@ def chart_kvb_events(m: "Metrics") -> str:
     ax.tick_params(labelsize=8)
     for sp in ax.spines.values(): sp.set_edgecolor("#94a3b8")
 
-    # 2. Movement rates timeline: L1→L2, L2→L3, L3→memory
+    # 2. Movement rates timeline: L1→L2, L2→L3 storage, L3 storage→memory
     ax2 = axes[0, 1]
     ax2.set_facecolor("#f8fafc")
     have_rate = False
@@ -8772,16 +8778,16 @@ def chart_kvb_events(m: "Metrics") -> str:
         t3 = ts3["time_sec"].values / 60
         if "backup_tok_s" in ts3.columns:
             bkp = ts3["backup_tok_s"].fillna(0).values / bs
-            ax2.plot(t3, bkp, color="#f97316", lw=1.4, label="L2→L3 backup blk/s")
+            ax2.plot(t3, bkp, color="#f97316", lw=1.4, label="L2→L3 storage backup blk/s")
             have_rate = True
         if "prefetch_tok_s" in ts3.columns:
             pft = ts3["prefetch_tok_s"].fillna(0).values / bs
-            ax2.plot(t3, pft, color="#3b82f6", lw=1.4, label="L3→prefetch blk/s")
+            ax2.plot(t3, pft, color="#3b82f6", lw=1.4, label="L3 storage→prefetch blk/s")
             have_rate = True
         if "loadback_tok_s" in ts3.columns:
             lbd = ts3["loadback_tok_s"].fillna(0).values / bs
             if np.nanmax(lbd) > 0:
-                ax2.plot(t3, lbd, color="#0f766e", lw=1.4, label="L3→load_back blk/s")
+                ax2.plot(t3, lbd, color="#0f766e", lw=1.4, label="L3 storage→load_back blk/s")
                 have_rate = True
         if "evicted_tok_s" in ts3.columns:
             evt = ts3["evicted_tok_s"].fillna(0).values / bs
@@ -8850,7 +8856,7 @@ def chart_kvb_events(m: "Metrics") -> str:
         max(m.kvb_loadback_tokens_total / bs, 0),
         max(m.kvb_evicted_tokens_total / bs, 0),
     ]
-    labels = ["backup\nL2→L3", "prefetch\nL3→mem", "load_back\nL3→mem", "evicted"]
+    labels = ["backup\nL2→L3 storage", "prefetch\nL3 storage→mem", "load_back\nL3 storage→mem", "evicted"]
     colors4 = ["#f97316", "#3b82f6", "#0f766e", "#be123c"]
     bars4 = ax4.bar(labels, totals, color=colors4, alpha=0.85, width=0.55)
     ymax4 = max(totals + [m.kvb_lifetime_mean_s, 1])
@@ -8899,7 +8905,7 @@ def chart_kvb_events(m: "Metrics") -> str:
 
 def chart_nvme_io(m: "Metrics") -> str:
     """NVMe IO workload: IOPS/BW timeline, latency, util%, SMART wear.
-    Falls back to SGLang HiCache L3 counters when host NVMe traces are unavailable."""
+    Falls back to SGLang HiCache L3 storage counters when host NVMe traces are unavailable."""
     if m.nvme_io_ts.empty and m.nvme_wr_iops_mean == 0 and getattr(m, "kvb_l3_io_ts", pd.DataFrame()).empty:
         return ""
 
@@ -10975,7 +10981,7 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
              "derived from SGLang backup - prefetch"),
         _kpi("L1→L2 Offload", f"{m.kvb_l1_offload_rate_blk_s:.4f}", "blk/s", "#fff7ed", "#9a3412",
              "HBM → DRAM"),
-        _kpi("L2→L3 Backup", f"{m.kvb_offload_tok_rate/max(m.kvb_block_size_tokens,1):.4f}", "blk/s", "#fff7ed", "#c2410c",
+        _kpi("L2→L3 storage Backup", f"{m.kvb_offload_tok_rate/max(m.kvb_block_size_tokens,1):.4f}", "blk/s", "#fff7ed", "#c2410c",
              f"{m.kvb_backuped_tokens_total:,} tokens total"),
         _kpi("L3 Onboard", f"{m.kvb_onboard_tokens_rate/max(m.kvb_block_size_tokens,1):.4f}", "blk/s", "#eff6ff", "#1d4ed8",
              f"prefetch={m.kvb_prefetched_tokens_total:,} load_back={m.kvb_loadback_tokens_total:,}"),
@@ -11060,10 +11066,10 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
   <div class="stack-cake">
     <div class="stack-row full a5"><b>A5 · Application Layer</b><span>benchmarks, prompt/output mix, TTFT, TPOT, P99 request latency</span></div>
     <div class="stack-row pair"><div class="a4"><b>A4 · Inference Runtime</b><span>SGLang/vLLM scheduling, continuous batching, KV eviction/load-back</span></div><div class="model"><b>AI Models</b><span>model config, dtype, context length, FLOPs/token, KV$/token</span></div></div>
-    <div class="stack-row trio"><div class="l1"><b>A3/A2/A1 · L1 HBM</b><span>CUDA kernels, GPU driver, HBM capacity/BW, SM util</span></div><div class="l2"><b>A3/A2/A1 · L2 DRAM</b><span>OS memory manager, page faults, swap, DRAM BW</span></div><div class="l3"><b>A3/A2/A1 · L3 Storage</b><span>OS block layer, io_uring/NVMe driver, NAND, blktrace/biosnoop</span></div></div>
+    <div class="stack-row trio"><div class="l1"><b>A3/A2/A1 · L1 HBM</b><span>CUDA kernels, GPU driver, HBM capacity/BW, SM util</span></div><div class="l2"><b>A3/A2/A1 · L2 DRAM</b><span>OS memory manager, page faults, swap, DRAM BW</span></div><div class="l3"><b>A3/A2/A1 · L3 storage</b><span>OS block layer, io_uring/NVMe driver, NAND, blktrace/biosnoop</span></div></div>
   </div>
   <div class="stack-nav">
-    <a href="#layer-a5">A5 Application</a><a href="#layer-a4">A4 Runtime &amp; Model</a><a href="#layer-l1">L1 HBM</a><a href="#layer-l2">L2 DRAM</a><a href="#layer-l3">L3 Storage</a><a href="#layer-cross">Cross-layer</a>
+    <a href="#layer-a5">A5 Application</a><a href="#layer-a4">A4 Runtime &amp; Model</a><a href="#layer-l1">L1 HBM</a><a href="#layer-l2">L2 DRAM</a><a href="#layer-l3">L3 storage</a><a href="#layer-cross">Cross-layer</a>
   </div>
 </div>
 <div id="stack-layered-report-anchor" class="stack-noreorder"></div>
@@ -11215,7 +11221,7 @@ document.addEventListener('DOMContentLoaded', function(){{
     ['layer-a4','A4 · Inference Runtime + AI Model','SGLang runtime behavior, KV-cache accounting, model config, batching, eviction, load-back and cache-hit methodology.','#317bb8'],
     ['layer-l1','A3/A2/A1 · L1 HBM / CUDA / GPU','GPU utilization, HBM capacity, HBM bandwidth and device-side runtime pressure.','#2f8a4e'],
     ['layer-l2','A3/A2/A1 · L2 DRAM / OS Memory Manager','Host DRAM bandwidth, page faults, swap pressure, NUMA and OS memory effects.','#7a3f97'],
-    ['layer-l3','A3/A2/A1 · L3 Storage / OS Block / NVMe','NVMe driver, blktrace/biosnoop, request sizes, inter-arrivals, hot/cold LBAs, read/write/trim workload.','#a45714'],
+    ['layer-l3','A3/A2/A1 · L3 storage / OS Block / NVMe','NVMe driver, blktrace/biosnoop, request sizes, inter-arrivals, hot/cold LBAs, read/write/trim workload.','#a45714'],
     ['layer-cross','Cross-layer Diagnosis','End-to-end bottleneck scorecard, formulas, recommendations and layer-to-layer spill/evict interpretation.','#0f172a']
   ];
   const classify = (txt) => {{
@@ -11606,7 +11612,7 @@ Cache diagnostics = sglang_cache_hit_rate and sglang_realtime_tokens_total{{mode
   <details class="fml" style="margin-top:12px">
     <summary>&#128208; Formula &amp; Metrics Used — Storage I/O &amp; OS Page Activity</summary>
     <div class="fml-body">
-      <div class="fml-src">&#128202; nvme_driver_timeseries.csv / node-exporter block-device stats + vmstat_timeseries.csv</div>
+      <div class="fml-src">&#128202; node-exporter / nvme_driver_timeseries.csv block-device stats + vmstat_timeseries.csv</div>
       <code>Storage chart label : {m.storage_io_label}
 Interpretation       : {m.storage_io_formula_note}
 
@@ -11622,7 +11628,7 @@ Major faults/sec     : rate(vmstat_pgmajfault)
 Swap-in pages/sec    : rate(vmstat_pswpin)
 Swap-out pages/sec   : rate(vmstat_pswpout)</code>
       <div class="fml-note">
-        These are host block-device and OS page-activity counters. They should be interpreted as L3 storage activity only when setup_details.json explicitly maps the collected block device to the L3 backend, for example via <code>L3 Device</code>, <code>L3 Storage Type</code>, <code>HiCache storage backend</code>, or <code>HiCache storage path</code>. Otherwise small write IOPS may be normal OS/background disk activity and not KV cache traffic.
+        These are host block-device and OS page-activity counters. They should be interpreted as L3 storage activity only when setup_details.json explicitly maps the collected block device or mount path to the L3 storage backend, for example via <code>L3 Device</code>, <code>L3 Mount Path</code>, or <code>HiCache storage path</code>. A generic <code>L3 storage Type</code> such as Mooncake is not sufficient to relabel host block I/O as L3 storage I/O. Otherwise small write IOPS may be normal OS/background disk activity and not KV cache traffic.
       </div>
     </div>
   </details>
@@ -12394,7 +12400,7 @@ DRAM / hicache     = dram_bw_util_pct × 0.6 + kv_l2_fill_pct / 100 × 40
                      High score = hicache DRAM tier saturated
 
 NVMe / SSD score   = nvme_io_util_pct × 0.7 + kvb_offload_rate_blk_s × 10
-                     High score = KV$B overflowing to NVMe L3 tier
+                     High score = KV$B overflowing to NVMe L3 storage tier
 
 TTFT / Prefill     = ttft_ms / (n_prefill_tokens × 0.001 + 1) × 0.5
                      High score = prefill-limited TTFT
@@ -15411,7 +15417,7 @@ new Chart(document.getElementById("c_kv_lat_cmp"), {{
       }}}}
     }}}},
     scales:{{x:{{ticks:{{color:"#475569",font:{{size:10}}}},grid:{{color:"#e2e8f0"}}}},
-             y:{{title:{{display:true,text:"ms per token (note: L3 >> L1/L2)",color:"#475569"}},
+             y:{{title:{{display:true,text:"ms per token (note: L3 storage >> L1/L2)",color:"#475569"}},
                 ticks:{{color:"#475569",font:{{size:10}}}},grid:{{color:"#e2e8f0"}}}}}}
   }}
 }});
@@ -15583,7 +15589,7 @@ SMART <code style="background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#1
 <canvas id="c_nvme_iops"></canvas>
 <div class="insight" style="border-color:#f97316">
 <b>What to look for:</b> Non-zero write IOPS = KV$B offloading to NVMe L3.
-A run with higher IOPS + higher latency = NVMe L3 is being used as a spillover tier.
+A run with higher IOPS + higher latency = NVMe L3 storage is being used as a spillover tier.
 Write latency &lt;1ms = device is fast enough for KV use; &gt;5ms = NVMe becoming a bottleneck.
 </div>
 </div>

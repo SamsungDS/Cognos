@@ -58,7 +58,7 @@ Every chart in AMOprof is tagged with a **layer badge** (`[A2 · L3]`) that plac
  │ A2 GPU Driver    │ A2 CPU Driver    │ A2 io_uring / NVMe Driver  │
  │ dcgmi · CUDA     │ perf sched · IRQ │ SQ/CQ · IOPS vs QD        │
  ├──────────────────┼──────────────────┼────────────────────────────┤
- │ A1 L1 HBM HW     │ A1 L2 DRAM HW    │ A1 L3 Storage HW (NAND)       │
+ │ A1 L1 HBM HW     │ A1 L2 DRAM HW    │ A1 L3 storage HW (NAND)       │
  │ ~3.35 TB/s       │ ~300 GB/s DDR5   │ Seq BW · P99 · WAF        │
  └──────────────────┴──────────────────┴────────────────────────────┘
    L1 = HBM (GPU)     L2 = Host DRAM     L3 = NVMe SSD
@@ -718,9 +718,9 @@ For Prometheus-only analysis, pass the SGLang `bench_serving` summary with `--be
 
 SGLang 0.5.x exposes metrics with underscore names such as `sglang_cache_hit_rate` and `sglang_realtime_tokens_total`; the report code matches underscore names and legacy colon-style labels where present.
 
-### v1.53 L3 activity semantics
+### v1.53 L3 storage activity semantics
 
-For Prometheus-only reports, L3 activity is now derived from SGLang hierarchical-cache counters when blktrace is absent. Any non-zero delta in `backuped_tokens_total`, `load_back_tokens_total`, `prefetched_tokens_total`, or `evicted_tokens_total` is treated as evidence of L3/cache-tier activity. Directional read/write byte estimates are only computed where the counter direction is clear: `backuped_tokens_total` contributes to estimated L3 writes, while `load_back_tokens_total` and `prefetched_tokens_total` contribute to estimated L3 reads. `evicted_tokens_total` is reported as cache-tier pressure/activity but is not converted to disk bytes by itself. If neither blktrace nor these SGLang counters are present, L3 activity is reported as unavailable/none instead of inferred.
+For Prometheus-only reports, L3 storage activity is now derived from SGLang hierarchical-cache counters when blktrace is absent. Any non-zero delta in `backuped_tokens_total`, `load_back_tokens_total`, `prefetched_tokens_total`, or `evicted_tokens_total` is treated as evidence of L3/cache-tier activity. Directional read/write byte estimates are only computed where the counter direction is clear: `backuped_tokens_total` contributes to estimated L3 storage writes, while `load_back_tokens_total` and `prefetched_tokens_total` contribute to estimated L3 storage reads. `evicted_tokens_total` is reported as cache-tier pressure/activity but is not converted to disk bytes by itself. If neither blktrace nor these SGLang counters are present, L3 storage activity is reported as unavailable/none instead of inferred.
 
 ### Formula and metric-name convention
 
@@ -736,12 +736,17 @@ effective_cache_hit_pct =
   × 100
 ```
 
-L3 activity is inferred from SGLang hierarchical-cache counters when blktrace is unavailable: `sglang_backuped_tokens_total`, `sglang_load_back_tokens_total`, `sglang_prefetched_tokens_total`, and `sglang_evicted_tokens_total`.
+L3 storage activity is inferred from SGLang hierarchical-cache counters when blktrace is unavailable: `sglang_backuped_tokens_total`, `sglang_load_back_tokens_total`, `sglang_prefetched_tokens_total`, and `sglang_evicted_tokens_total`.
 
+
+## v1.67 Version metadata bump
+
+- Bumped package metadata to `1.67.0` so `amoprof --version`, the generated combined-report tab bar, and pip/package metadata are consistent.
+- Includes all prior fixes through the L3 storage busy consistency update.
 
 ## v1.55 Storage I/O / OS Page Activity semantics
 
-The **Storage I/O & OS Page Activity** section now treats block-device counters as host OS block I/O by default. A small amount of write IOPS from `nvme_driver_timeseries.csv`, node-exporter, or `/sys/block/*/stat` is not automatically interpreted as L3 cache traffic. The report only labels it as L3 storage I/O when `setup_details.json` explicitly maps the collected block device to the L3 backend, for example with `L3 Device`, `L3 Storage Type`, `HiCache storage backend`, or `HiCache storage path`.
+The **Storage I/O & OS Page Activity** section now treats block-device counters as host OS block I/O by default. A small amount of write IOPS from `nvme_driver_timeseries.csv`, node-exporter, or `/sys/block/*/stat` is not automatically interpreted as L3 storage cache traffic. The report only labels it as L3 storage I/O when `setup_details.json` explicitly maps the collected block device to the L3 storage backend, for example with `L3 Device`, `L3 storage Type`, `HiCache storage backend`, or `HiCache storage path`.
 
 The section now includes a formula subsection documenting the exact parameters used:
 
@@ -758,7 +763,7 @@ Swap-in pages/sec    = rate(vmstat_pswpin)
 Swap-out pages/sec   = rate(vmstat_pswpout)
 ```
 
-This avoids misleading reports such as “NVMe I/O write activity” when no NVMe-backed L3 tier was configured.
+This avoids misleading reports such as “NVMe I/O write activity” when no NVMe-backed L3 storage tier was configured.
 
 ## v1.56 metric methodology updates
 
@@ -769,6 +774,6 @@ This avoids misleading reports such as “NVMe I/O write activity” when no NVM
   - `Δsglang_inter_token_latency_seconds_sum / Δsglang_inter_token_latency_seconds_count`
   - `Δsglang_e2e_request_latency_seconds_sum / Δsglang_e2e_request_latency_seconds_count`
 - Percentile charts use `histogram_quantile()` over SGLang histogram buckets and are displayed separately from mean KPI tiles.
-- L3 activity is inferred from SGLang hierarchy movement counters (`sglang_backuped_tokens_total`, `sglang_load_back_tokens_total`, `sglang_prefetched_tokens_total`, `sglang_evicted_tokens_total`) or direct blktrace data if present.
+- L3 storage activity is inferred from SGLang hierarchy movement counters (`sglang_backuped_tokens_total`, `sglang_load_back_tokens_total`, `sglang_prefetched_tokens_total`, `sglang_evicted_tokens_total`) or direct blktrace data if present.
 - Host block I/O and OS page activity sections document node-exporter/iostat/vmstat metric sources and are not labeled as L3 unless the setup explicitly maps the block device to L3 storage.
 - Major report sections now include a Formula & Metrics Used subsection so that each displayed value has an auditable source.

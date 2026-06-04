@@ -852,7 +852,7 @@ def _chart_kv_tiers(sglang: list[dict]) -> dict | None:
     if storage_col:
         traces.append({"x": xs, "y": _col(sglang, storage_col),
                        "type": "scatter", "mode": "lines", "stackgroup": "kv",
-                       "name": "L3 Storage",
+                       "name": "L3 storage",
                        "line": {"color": "#f97316", "width": 0},
                        "fillcolor": "rgba(249,115,22,0.6)",
                        "hovertemplate": "<b>L3</b>: %{y:.0f} tok<extra></extra>"})
@@ -874,7 +874,7 @@ def _chart_kv_tiers(sglang: list[dict]) -> dict | None:
             resident = [max(b - p - l, 0.0) for b, p, l in zip(bk, pf, lb)]
             if any(resident):
                 traces.append({"x": xs, "y": resident, "type": "scatter",
-                               "mode": "lines", "name": "Approx L3 Storage resident tokens",
+                               "mode": "lines", "name": "Approx L3 storage resident tokens",
                                "fill": "tozeroy", "fillcolor": "rgba(249,115,22,0.18)",
                                "line": {"color": "#f97316", "width": 2},
                                "hovertemplate": "<b>%{y:.0f}</b> approx resident tok<extra></extra>"})
@@ -885,7 +885,7 @@ def _chart_kv_tiers(sglang: list[dict]) -> dict | None:
                                "hovertemplate": "<b>%{y:.0f}</b> evicted tok<extra></extra>"})
             if any(lb):
                 traces.append({"x": xs, "y": lb, "type": "scatter",
-                               "mode": "lines", "name": "Cumulative L3 load-back tokens",
+                               "mode": "lines", "name": "Cumulative L3 storage load-back tokens",
                                "line": {"color": "#22c55e", "width": 1.8},
                                "hovertemplate": "<b>%{y:.0f}</b> load-back tok<extra></extra>"})
             if any(bk):
@@ -901,7 +901,7 @@ def _chart_kv_tiers(sglang: list[dict]) -> dict | None:
     if not traces:
         return None
     return {"data": traces,
-            "layout": _layout("KV Cache Tier / L3 Movement Occupancy",
+            "layout": _layout("KV Cache Tier / L3 storage movement Occupancy",
                               "Tokens", height=480, ts=ts)}
 
 
@@ -949,7 +949,7 @@ def _kv_bytes_per_token_for_model(model_name: str, kv_dtype: str) -> float:
     """Estimate KV cache bytes per token from model architecture.
 
     Mirrored from amoprof.KV_ARCH_DB / combined._kv_bytes_per_token_kb so
-    the interactive tab can derive byte-level L3 BW from token-level SGLang
+    the interactive tab can derive byte-level L3 storage BW from token-level SGLang
     counters without depending on the static-report module.
     """
     arch_db = {
@@ -996,12 +996,12 @@ def _kv_bytes_per_token_for_model(model_name: str, kv_dtype: str) -> float:
 
 def _chart_l3_prom_bandwidth(sglang: list[dict],
                               kv_bytes_per_token: float) -> dict | None:
-    """Interactive estimated L3 bandwidth in MB/s (Prometheus-derived).
+    """Interactive estimated L3 storage bandwidth in MB/s (Prometheus-derived).
 
     Multiplies per-second backuped/load-back token rates by kv_bytes_per_token
     to give an estimate of L3 read / write bandwidth that's directly usable
     for sizing. This is the Prometheus-only analog of the blktrace-derived
-    NVMe BW chart; it's the only L3 BW signal available in Prom-only runs.
+    NVMe BW chart; it's the only L3 storage BW signal available in Prom-only runs.
 
     Caveat: byte estimate is "useful work" not raw device bytes (the device
     sees additional metadata / FS overhead). Accurate to within 5-15% for
@@ -1037,7 +1037,7 @@ def _chart_l3_prom_bandwidth(sglang: list[dict],
         rd_mbs = _rate_mbs(lb_col)
         traces.append({
             "x": xs, "y": rd_mbs,
-            "type": "scatter", "mode": "lines", "name": "L3 Read MB/s (est)",
+            "type": "scatter", "mode": "lines", "name": "L3 storage read MB/s (est)",
             "line": {"color": "#22c55e", "width": 2.2},
             "fill": "tozeroy", "fillcolor": "rgba(34,197,94,0.15)",
             "hovertemplate": "<b>%{y:.1f}</b> MB/s estimated read<extra></extra>",
@@ -1046,7 +1046,7 @@ def _chart_l3_prom_bandwidth(sglang: list[dict],
         wr_mbs = _rate_mbs(bk_col)
         traces.append({
             "x": xs, "y": wr_mbs,
-            "type": "scatter", "mode": "lines", "name": "L3 Write MB/s (est)",
+            "type": "scatter", "mode": "lines", "name": "L3 storage write MB/s (est)",
             "line": {"color": "#3b82f6", "width": 2.2},
             "fill": "tozeroy", "fillcolor": "rgba(59,130,246,0.15)",
             "hovertemplate": "<b>%{y:.1f}</b> MB/s estimated write<extra></extra>",
@@ -1054,7 +1054,7 @@ def _chart_l3_prom_bandwidth(sglang: list[dict],
     return {
         "data": traces,
         "layout": _layout(
-            f"L3 Cache Bandwidth — Prometheus-derived  "
+            f"L3 storage cache Bandwidth — Prometheus-derived  "
             f"(× {kv_bytes_per_token/1024:.0f} KB/tok)",
             "MB/s (estimated)", ts=ts),
     }
@@ -1064,7 +1064,7 @@ def _chart_l3_prom_cumulative(sglang: list[dict],
                                kv_bytes_per_token: float) -> dict | None:
     """Cumulative L3 read/write bytes over time (Prometheus-derived).
 
-    Useful for sizing the endurance footprint of an L3 backend over a
+    Useful for sizing the endurance footprint of an L3 storage backend over a
     representative window. Plots cumulative tokens × bytes/tok / 1e9 = GB.
     """
     if not sglang or kv_bytes_per_token <= 0:
@@ -1088,21 +1088,21 @@ def _chart_l3_prom_cumulative(sglang: list[dict],
     if lb_col:
         traces.append({
             "x": xs, "y": _cum_gb(lb_col),
-            "type": "scatter", "mode": "lines", "name": "L3 reads (cumulative GB)",
+            "type": "scatter", "mode": "lines", "name": "L3 storage reads (cumulative GB)",
             "line": {"color": "#22c55e", "width": 2.2},
             "hovertemplate": "<b>%{y:.2f}</b> GB cumulative read<extra></extra>",
         })
     if bk_col:
         traces.append({
             "x": xs, "y": _cum_gb(bk_col),
-            "type": "scatter", "mode": "lines", "name": "L3 writes (cumulative GB)",
+            "type": "scatter", "mode": "lines", "name": "L3 storage writes (cumulative GB)",
             "line": {"color": "#3b82f6", "width": 2.2},
             "hovertemplate": "<b>%{y:.2f}</b> GB cumulative write<extra></extra>",
         })
     return {
         "data": traces,
         "layout": _layout(
-            "L3 Cache Traffic — Cumulative Bytes (Prometheus-derived)",
+            "L3 storage cache Traffic — Cumulative Bytes (Prometheus-derived)",
             "Cumulative GB (estimated)", ts=ts),
     }
 
@@ -1959,7 +1959,7 @@ def _section(title: str, chart_id: str, fig: dict | None,
     a single-line muted summary. The user can expand to see the explanation
     of why no data is available, but the section doesn't take up vertical
     real estate by default. This addresses long pages with many "requires
-    blktrace / requires AMDuProf / no L3 activity" sections that scroll
+    blktrace / requires AMDuProf / no L3 storage activity" sections that scroll
     interesting content off-screen.
 
     Sections WITH data render expanded as before — no extra clicks needed.
@@ -2040,7 +2040,7 @@ def _stack_overview_section() -> str:
   <div class="stack-cake">
     <div class="stack-row full a5"><b>A5 · Application Layer</b><span>benchmarks, prompt/output mix, TTFT, TPOT, P99 request latency</span></div>
     <div class="stack-row pair"><div class="a4"><b>A4 · Inference Runtime</b><span>SGLang scheduling, batching, KV$ eviction/load-back</span></div><div class="model"><b>AI Models</b><span>model config, dtype, context length, KV$/token</span></div></div>
-    <div class="stack-row trio"><div class="l1"><b>A3/A2/A1 · L1 HBM</b><span>CUDA kernels, GPU driver, HBM capacity/BW</span></div><div class="l2"><b>A3/A2/A1 · L2 DRAM</b><span>OS memory manager, page faults, swap, DRAM BW</span></div><div class="l3"><b>A3/A2/A1 · L3 Storage</b><span>OS block layer, NVMe driver, NAND, blktrace/biosnoop</span></div></div>
+    <div class="stack-row trio"><div class="l1"><b>A3/A2/A1 · L1 HBM</b><span>CUDA kernels, GPU driver, HBM capacity/BW</span></div><div class="l2"><b>A3/A2/A1 · L2 DRAM</b><span>OS memory manager, page faults, swap, DRAM BW</span></div><div class="l3"><b>A3/A2/A1 · L3 storage</b><span>OS block layer, NVMe driver, NAND, blktrace/biosnoop</span></div></div>
   </div>
   <div class="caption">Report sections below are ordered to match this layered view.</div>
 </section>"""
@@ -2338,6 +2338,30 @@ def build_report(raw_dir: Path, out_html: Path,
                 return str(v)
         return default
 
+    def _setup_float(*keys, default=0.0) -> float:
+        for k in keys:
+            v = setup.get(k)
+            if not _is_missing_setup_value(v):
+                try:
+                    return float(str(v).replace(",", "").split()[0])
+                except Exception:
+                    pass
+        return float(default)
+
+    def _setup_gpu_count() -> float:
+        c = _setup_float("GPU Count", "gpu_count", "num_gpus", "Number of GPUs", default=0.0)
+        if c > 0:
+            return c
+        try:
+            import re as _re
+            desc = str(_setup_value("GPU", "gpu", default=""))
+            m = _re.search(r"(\d+)\s*[xX]", desc)
+            if m:
+                return float(m.group(1))
+        except Exception:
+            pass
+        return 1.0
+
     def _active_sglang_throughput() -> tuple[str, str]:
         """Return display value/note for throughput KPI.
 
@@ -2398,14 +2422,40 @@ def build_report(raw_dir: Path, out_html: Path,
         kpis += [
             _kpi_tile("GPU util", f"{gpu_sum.get('gpu_util_mean', 0):.1f}", "%",
                       f"Peak {gpu_sum.get('gpu_util_peak', 0):.0f}%"),
-            _kpi_tile("HBM used", f"{gpu_sum.get('hbm_used_mb_mean', 0)/1024:.1f}",
-                      "GB", f"{gpu_sum.get('hbm_util_pct_mean', 0):.0f}% of HBM"),
+            (lambda _gpu_n, _per_gb, _per_total: _kpi_tile(
+                "HBM used (all GPUs)",
+                f"{_per_gb*_gpu_n:.1f} / {_per_total*_gpu_n:.0f}",
+                "GB",
+                f"{((_per_gb*_gpu_n)/max(_per_total*_gpu_n,1)*100):.0f}% full · {int(_gpu_n)} GPU(s) · {_per_gb:.1f} GB/GPU avg"
+            ))(_setup_gpu_count(), float(gpu_sum.get('hbm_used_mb_mean', 0) or 0)/1024.0,
+               float(gpu_sum.get('hbm_total_gb', _setup_float('GPU Memory per Device GB', default=40.0)) or 40.0)),
             _kpi_tile("GPU power", f"{gpu_sum.get('power_w_peak', 0):.0f}", "W",
                       "Peak per-GPU draw"),
         ]
+    # Capacity tiles from setup_details/raw summaries. These are capacity
+    # views, separate from bandwidth/IOPS.
+    dram_total_gb = _setup_float("Host DRAM GB", "DRAM capacity GB", "DRAM total GB", default=0.0)
+    dram_used_gb = _setup_float("Host DRAM used GB", "DRAM used GB", default=0.0)
+    if dram_total_gb > 0:
+        kpis.append(_kpi_tile("DRAM used",
+                              (f"{dram_used_gb:.1f} / {dram_total_gb:.0f}" if dram_used_gb > 0 else f"— / {dram_total_gb:.0f}"),
+                              "GB",
+                              (f"{dram_used_gb/max(dram_total_gb,1)*100:.0f}% full" if dram_used_gb > 0 else "used capacity unavailable")))
+
+    l3_total_gb = _setup_float("L3 storage capacity GB", "L3 Capacity GB", "L3 total capacity GB", "l3_storage_capacity_gb", default=0.0)
+    l3_used_gb = _setup_float("L3 storage used GB", "L3 used capacity GB", "l3_storage_used_gb", default=0.0)
     if smart_sum:
+        l3_total_gb = float(smart_sum.get('hicache_fs_total_gb', l3_total_gb) or l3_total_gb)
+        l3_used_gb = float(smart_sum.get('hicache_fs_used_gb', l3_used_gb) or l3_used_gb)
+    if l3_total_gb > 0:
+        kpis.append(_kpi_tile("L3 storage used",
+                              (f"{l3_used_gb:.1f} / {l3_total_gb:.0f}" if l3_used_gb > 0 else f"— / {l3_total_gb:.0f}"),
+                              "GB",
+                              (f"{l3_used_gb/max(l3_total_gb,1)*100:.0f}% full" if l3_used_gb > 0 else "used capacity unavailable")))
+
+    if smart_sum and str(_setup_value("L3 storage type", "L3 Storage Type", default="")).lower() in {"nvme", "nvme ssd", "ssd"}:
         kpis += [
-            _kpi_tile("SSD", str(smart_sum.get('model', '—'))[:24], "",
+            _kpi_tile("L3 storage device", str(smart_sum.get('model', '—'))[:24], "",
                       f"Temp {smart_sum.get('temperature_c', 0)}°C  "
                       f"WAF {smart_sum.get('waf', 0):.2f}"),
         ]
@@ -2481,15 +2531,15 @@ Cache hit primary = avg(sglang_cache_hit_rate where value > 0) × 100
 Cache diagnostics = Δsglang_realtime_tokens_total{mode="prefill_cache"} / (Δprefill_cache + Δprefill_compute) × 100; effective counter reuse = (Δsglang_cached_tokens_total + Δprefill_cache) / (Δsglang_cached_tokens_total + Δprefill_cache + Δprefill_compute) × 100"""
     formula_kv_tiers = """L1/HBM tokens = sglang_kv_used_tokens or sglang_token_usage-derived fields
 L2/host cache occupancy = sglang_hicache_host_used_tokens / sglang_hicache_host_total_tokens × 100
-L3 movement = Δsglang_backuped_tokens_total, Δsglang_load_back_tokens_total, Δsglang_prefetched_tokens_total, Δsglang_evicted_tokens_total
+L3 storage movement = Δsglang_backuped_tokens_total, Δsglang_load_back_tokens_total, Δsglang_prefetched_tokens_total, Δsglang_evicted_tokens_total
 Bytes estimate = token_delta × KV bytes per token from setup/model profile"""
     formula_latency_pct = """P50/P90/P99 = histogram_quantile(q, rate(metric_bucket[window]))
 TTFT metric = sglang_time_to_first_token_seconds_bucket
 ITL metric = sglang_inter_token_latency_seconds_bucket
 E2E metric = sglang_e2e_request_latency_seconds_bucket
 Prompt/output token percentile metrics use prompt/generation token histogram buckets when exported."""
-    formula_l3_bw = """L3 read tokens = Δsglang_load_back_tokens_total + Δsglang_prefetched_tokens_total
-L3 write tokens = Δsglang_backuped_tokens_total
+    formula_l3_bw = """L3 storage read tokens = Δsglang_load_back_tokens_total + Δsglang_prefetched_tokens_total
+L3 storage write tokens = Δsglang_backuped_tokens_total
 Estimated read MB/s = read_tokens × KV_bytes_per_token / Δtime_sec / 2^20
 Estimated write MB/s = write_tokens × KV_bytes_per_token / Δtime_sec / 2^20
 These are SGLang/Mooncake tier movement estimates, not block-device measurements."""
@@ -2573,33 +2623,33 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
                                    formula_token_cache))
     sections_html.append(_section("KV Cache Tier Occupancy",
                                    "ch_kv_tiers", _chart_kv_tiers(sglang_ts),
-                                   "L1=Device(HBM), L2=Host(DRAM), L3=Storage — stacked",
+                                   "L1=Device(HBM), L2=Host(DRAM), L3 storage — stacked",
                                    formula_kv_tiers))
     sections_html.append(_section("KV Cache Eviction / Load-back / Backup Rates",
                                    "ch_evict", _chart_eviction(sglang_ts),
                                    "SGLang hierarchical-cache movement counters",
                                    formula_kv_tiers))
 
-    # ── L3 cache bandwidth (Prometheus-derived) ───────────────────────────
+    # ── L3 storage cache bandwidth (Prometheus-derived) ───────────────────────────
     # When the operator runs in Prom-only mode (no blktrace), the only L3
     # bandwidth signal available is the per-second delta of SGLang's
     # cumulative token counters multiplied by KV-bytes-per-token. These two
     # charts surface that signal in the interactive tab so users can see when
-    # L3 was active, identify burst patterns, and read endurance footprint
+    # L3 storage was active, identify burst patterns, and read endurance footprint
     # off the cumulative trace. Both gracefully no-op if the counters are
     # zero or absent.
     _kv_b_pt = _kv_bytes_per_token_for_model(
         sglang_sum.get("model_name", ""),
         sglang_sum.get("kv_cache_dtype", "fp16"))
     sections_html.append(_section(
-        "L3 Cache Bandwidth — Prometheus-derived (MB/s)",
+        "L3 storage cache Bandwidth — Prometheus-derived (MB/s)",
         "ch_l3_bw",
         _chart_l3_prom_bandwidth(sglang_ts, _kv_b_pt),
         f"Estimated from SGLang backuped/load-back token counters × "
         f"{_kv_b_pt/1024:.0f} KB/tok (model arch). Useful work, not raw "
         f"device bytes. Accurate to within 5-15% for KV-cache workloads."))
     sections_html.append(_section(
-        "L3 Cache Traffic — Cumulative GB (Prometheus-derived)",
+        "L3 storage cache Traffic — Cumulative GB (Prometheus-derived)",
         "ch_l3_cum",
         _chart_l3_prom_cumulative(sglang_ts, _kv_b_pt),
         "Endurance footprint over the collection window. Use for SSD TBW "
@@ -2631,7 +2681,7 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
                                    _dram_fig,
                                    "From AMDuProf PCM normalized timeseries or raw Data Fabric counters (1.2s interval)"))
 
-    sections_html.append(_layer_header("layer-l3", "A3/A2/A1 · L3 Storage / OS Block", "Storage-tier behavior: OS block layer, device counters, request-size/IAT distributions, stream bandwidth, and hot/cold regions.", "#a45714"))
+    sections_html.append(_layer_header("layer-l3", "A3/A2/A1 · L3 storage / host block layer", "L3 storage and host block-layer behavior: OS block layer, device counters, request-size/IAT distributions, stream bandwidth, and hot/cold regions.", "#a45714"))
     sections_html.append(_section("Host Block IOPS (Read / Write / Trim)",
                                    "ch_nvme_iops", _chart_nvme_iops(nvme_ts, "Host Block I/O"),
                                    "Host block-device counters; not interpreted as L3 unless setup_details explicitly maps the device to L3 storage."))
