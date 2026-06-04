@@ -1173,21 +1173,26 @@ def collect_from_prometheus_api(
     elif _d_prompt > 0 and (_d_cached + _d_rt_cache) > 0:
         _effective_prompt_hit = ((_d_cached + _d_rt_cache) / _d_prompt) * 100.0
     _gstats = _cache_hit_gauge_stats(master)
-    if _effective_prompt_hit > 0:
+    # Benchmark-comparable primary KPI: use active-only average of the
+    # SGLang cache-hit gauge when available.  bench_serving's cache_hit_rate
+    # is request/window oriented; low-level token ratios are useful diagnostics
+    # but can significantly under-report when prompt-cache and prefill-cache
+    # paths are split across metrics.
+    if _gstats["active_samples"] > 0:
+        _alt_cache_hit = _gstats["active_pct"]
+        _alt_method = "sglang_cache_hit_rate_active_average_prometheus"
+    elif _effective_prompt_hit > 0:
         _alt_cache_hit = _effective_prompt_hit
-        _alt_method = "combined_cached_plus_prefill_cache_prometheus"
+        _alt_method = "combined_cached_plus_prefill_cache_prometheus_fallback"
     elif _cached_prompt_hit > 0:
         _alt_cache_hit = _cached_prompt_hit
-        _alt_method = "cached_tokens_over_prompt_tokens_prometheus"
+        _alt_method = "cached_tokens_over_prompt_tokens_prometheus_fallback"
     elif _token_weighted_hit > 0:
         _alt_cache_hit = _token_weighted_hit
-        _alt_method = "realtime_tokens_delta_prometheus"
-    elif _gstats["active_samples"] > 0:
-        _alt_cache_hit = _gstats["active_pct"]
-        _alt_method = "gauge_active_average_prometheus_fallback"
+        _alt_method = "realtime_tokens_delta_prometheus_fallback"
     elif _gstats["total_samples"] > 0:
         _alt_cache_hit = _gstats["overall_pct"]
-        _alt_method = "gauge_timeline_average_prometheus_fallback"
+        _alt_method = "sglang_cache_hit_rate_timeline_average_prometheus_fallback"
     else:
         _alt_cache_hit = 0.0
         _alt_method = "none"
@@ -1208,6 +1213,9 @@ def collect_from_prometheus_api(
         "server_ttft_ms":              round(ttft_ms, 2),
         "server_itl_ms":               round(tpot_ms, 2),
         "server_e2e_ms":               round(e2e_ms,  2),
+        "server_ttft_ms_method":        "delta_sglang_time_to_first_token_seconds_sum_over_count",
+        "server_itl_ms_method":         "delta_sglang_inter_token_latency_seconds_sum_over_count",
+        "server_e2e_ms_method":         "delta_sglang_e2e_request_latency_seconds_sum_over_count",
         "cache_hit_rate_realtime_pct": round(_alt_cache_hit, 2),
         "cache_hit_calc_method":       _alt_method,
         "cache_hit_token_weighted_pct": round(_token_weighted_hit, 2),
@@ -1586,21 +1594,24 @@ def collect_from_prometheus(
     cache_hit_gauge_total_samples = int(_gstats.get("total_samples", 0))
     cache_hit_gauge_active_samples = int(_gstats.get("active_samples", 0))
 
-    if cache_hit_effective_prompt_pct > 0:
+    # Primary cache-hit KPI should be benchmark-comparable, not merely
+    # token-weighted.  Use the active average of sglang_cache_hit_rate first;
+    # keep token/counter ratios as diagnostics in the methodology section.
+    if cache_hit_gauge_active_samples > 0:
+        cache_hit = cache_hit_gauge_active
+        cache_hit_method = "sglang_cache_hit_rate_active_average_prometheus"
+    elif cache_hit_effective_prompt_pct > 0:
         cache_hit = cache_hit_effective_prompt_pct
-        cache_hit_method = "combined_cached_plus_prefill_cache_prometheus"
+        cache_hit_method = "combined_cached_plus_prefill_cache_prometheus_fallback"
     elif cache_hit_cached_prompt_pct > 0:
         cache_hit = cache_hit_cached_prompt_pct
-        cache_hit_method = "cached_tokens_over_prompt_tokens_prometheus"
+        cache_hit_method = "cached_tokens_over_prompt_tokens_prometheus_fallback"
     elif cache_hit_token_weighted > 0:
         cache_hit = cache_hit_token_weighted
-        cache_hit_method = "realtime_tokens_delta_prometheus"
-    elif cache_hit_gauge_active_samples > 0:
-        cache_hit = cache_hit_gauge_active
-        cache_hit_method = "gauge_active_average_prometheus_fallback"
+        cache_hit_method = "realtime_tokens_delta_prometheus_fallback"
     elif cache_hit_gauge_total_samples > 0:
         cache_hit = cache_hit_gauge_overall
-        cache_hit_method = "gauge_timeline_average_prometheus_fallback"
+        cache_hit_method = "sglang_cache_hit_rate_timeline_average_prometheus_fallback"
     else:
         cache_hit = 0.0
         cache_hit_method = "none"
@@ -1657,6 +1668,9 @@ def collect_from_prometheus(
         "server_ttft_ms":               round(ttft_ms, 2),
         "server_itl_ms":                round(tpot_ms, 2),
         "server_e2e_ms":                round(e2e_ms,  2),
+        "server_ttft_ms_method":         "delta_sglang_time_to_first_token_seconds_sum_over_count",
+        "server_itl_ms_method":          "delta_sglang_inter_token_latency_seconds_sum_over_count",
+        "server_e2e_ms_method":          "delta_sglang_e2e_request_latency_seconds_sum_over_count",
         "ai_op_decode_tok_s":           round(_gen_tp_mean, 3),
         "ai_op_decode_tok_s_method":    _gen_tp_method,
         "gen_tp_peak":                  round(gen_tp_peak, 3),
@@ -3928,7 +3942,7 @@ class Metrics:
     swap_storm_total_duration_s: float = 0
     swap_storm_worst_pages_per_s:float = 0   # peak page rate during any storm
     swap_storm_threshold_pages_per_s: float = 1000  # config threshold (pages/s)
-    swap_write_amp_ratio:        float = 0   # nvme_write_pages / pswpout (write amplification)
+    swap_write_amp_ratio:        float = 0   # storage_write_pages / pswpout (write amplification)
     swap_majfault_correlation:   float = 0   # pearson(pswpin, pgmajfault)
     numa_migrations_per_s: float = 0
     # Power
@@ -3996,6 +4010,9 @@ class Metrics:
     dram_peak_theoretical_gbs: float = 204.8  # AMD EPYC 7742 2S: 8ch DDR4-3200 × 2 sockets
     dram_peak_label: str = ""  # human label set by CPU autodetect at runtime
     ssd_device: str = "nvme0n1"  # device name (no /dev/ prefix) for formula text
+    storage_io_label: str = "Host block I/O"  # display label for OS block metrics
+    storage_io_is_l3: bool = False  # True only when setup explicitly maps block metrics to L3
+    storage_io_formula_note: str = "Host OS block-device metrics; not necessarily L3 storage."
     dram_bw_util_pct: float = 0      # % of AMD EPYC DRAM peak BW
     dram_read_txn_M_s: float = 0     # millions of 64B transactions/s
     dram_write_txn_M_s: float = 0
@@ -4563,6 +4580,37 @@ def extract_metrics(data: dict) -> Metrics:
     m.setup_context_length = m.setup_details.get("Context length", m.setup_details.get("context_length", m.setup_context_length))
     m.setup_page_size = m.setup_details.get("Page size", m.setup_page_size)
     m.setup_attention_backend = m.setup_details.get("Attention backend", m.setup_attention_backend)
+
+    # Decide how to label host block-device metrics. The nvme_driver_timeseries.csv
+    # can be produced by node-exporter /sys/block statistics even when the run did
+    # not configure L3 storage. In that case a small amount of host write I/O
+    # must NOT be interpreted as L3/NVMe cache activity. Only promote the label
+    # to "L3 Storage I/O" when setup_details explicitly identifies an L3
+    # storage backend/device/path. Defaulted profile fields are deliberately
+    # ignored as evidence.
+    _defaulted_names = {x.strip().lower() for x in str(m.setup_details.get("Defaulted fields", "")).split(",") if x.strip()}
+    def _explicit_setup_value(*keys):
+        for _k in keys:
+            if _k in m.setup_details and _k.lower() not in _defaulted_names:
+                _v = str(m.setup_details.get(_k, "")).strip()
+                if _v and _v.lower() not in {"unknown", "none", "n/a", "null", "default", "disabled", "false", "0", "-", "—"}:
+                    return _v
+        return ""
+    _explicit_l3_backend = _explicit_setup_value(
+        "L3 Device", "L3 device", "L3 Mount Path", "L3 mount path",
+        "L3 Storage Type", "L3 storage type", "l3_storage_type",
+        "HiCache storage backend", "hicache_storage_backend",
+        "HiCache storage path", "hicache_storage_path")
+    _explicit_hicache = _explicit_setup_value("HiCache", "Hierarchical cache", "enable_hierarchical_cache")
+    m.storage_io_is_l3 = bool(_explicit_l3_backend or (_explicit_hicache and "l3" in _explicit_hicache.lower()))
+    if m.storage_io_is_l3:
+        _l3_type = _explicit_setup_value("L3 Storage Type", "L3 storage type", "l3_storage_type", "L3 type") or m.l3_storage_type or "Storage"
+        m.storage_io_label = f"L3 {_l3_type} I/O" if "l3" not in str(_l3_type).lower() else f"{_l3_type} I/O"
+        m.storage_io_formula_note = "Block-device metrics are interpreted as L3 only because setup_details explicitly declares an L3 storage backend/device."
+    else:
+        m.storage_io_label = "Host block I/O"
+        m.storage_io_formula_note = "Host OS block-device metrics only; not interpreted as L3 cache/storage activity because setup_details does not explicitly declare an L3 device/backend."
+
     # fall back to finding model name in timeseries column headers
     m.run_duration_s = float(sg.get("server_e2e_ms", 0) / 1000 or
                              data.get("power_summary", {}).get("power_elapsed_s", 0) or
@@ -7231,7 +7279,7 @@ def score_bottlenecks(m: Metrics) -> list[dict]:
         "severity": "LOW" if dram_score<20 else "MED" if dram_score<50 else "HIGH",
     })
 
-    # NVMe I/O bottleneck scoring
+    # Storage I/O bottleneck scoring
     # ── BW sources (priority: blktrace §C/D > node_exporter timeseries) ────
     # Bug fix: previously wr_bw_for_score was 0 when blktrace was not enabled
     # (ssd_wr_bw_mbs_mean=0) even though node_exporter captured 0.5 MB/s write
@@ -7293,7 +7341,7 @@ def score_bottlenecks(m: Metrics) -> list[dict]:
                  f"Peak {peak_nvme_iops:.0f} IOPS. "
                  f"Util {m.nvme_io_util_pct:.1f}%. Wear {m.nvme_smart_wear_pct:.0f}%.")
     layers.append({
-        "layer": "NVMe I/O", "score": round(nvme_score),
+        "layer": "Storage I/O", "score": round(nvme_score),
         "phase": "Storage", "color": NVME_C,
         "detail": io_detail,
         "severity": "LOW" if nvme_score < 10 else "MED" if nvme_score < 40 else "HIGH",
@@ -7668,7 +7716,7 @@ def chart_storage(m: Metrics) -> str:
     fig, axes = plt.subplots(1, 2, figsize=(11, 4))
     fig.patch.set_facecolor(BG2)
 
-    # NVMe IOPS timeline
+    # Host/L3 block IOPS timeline
     ax = axes[0]
     ndf = m.nvme_ts
     if not ndf.empty and "wr_iops" in ndf.columns:
@@ -7679,7 +7727,7 @@ def chart_storage(m: Metrics) -> str:
         ax.bar(t, wr, width=1.5, color=NVME_C, alpha=0.8, label="Write IOPS")
         ax.bar(t, rd, width=1.5, bottom=wr, color=PGF_C, alpha=0.7, label="Read IOPS")
         if ax.get_legend_handles_labels()[0]: ax.legend(fontsize=8)
-    ax.set_title(f"NVMe I/O (max {m.nvme_wr_iops_max:.0f} wr IOPS)", fontsize=9)
+    ax.set_title(f"{m.storage_io_label} (max {m.nvme_wr_iops_max:.0f} wr IOPS)", fontsize=9)
     ax.set_xlabel(_time_xlabel(m), fontsize=8)
     ax.set_ylabel("IOPS", fontsize=8)
 
@@ -11225,12 +11273,13 @@ document.addEventListener('DOMContentLoaded', function(){{
   <h2>🎯 Cache Hit Methodology — Prometheus Cache Calculations</h2>
   <div style="font-size:12px;color:#64748b;line-height:1.6;margin-bottom:12px">
     This section separates Prometheus-derived cache-hit calculations using SGLang 0.5.10 metric names. Older colon-style aliases may be normalized internally, but formulas below show the exported underscore metric names.
-    The main KPI is derived from SGLang/Prometheus counters for the selected time window. Gauge and token-weighted variants are shown separately because they answer different questions and can diverge on bursty long-prompt workloads.
+    The main KPI is the benchmark-comparable active average of <code>sglang_cache_hit_rate</code> over non-idle samples. Counter-based token ratios are shown separately because they answer different questions and can diverge on bursty long-prompt workloads.
   </div>
   <table>
     <thead><tr><th>Calculation</th><th>Value</th><th>How to interpret</th></tr></thead>
     <tbody>
-      <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Effective prompt cache hit</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{m.cache_hit_effective_prompt_pct or m.cache_hit_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">(Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{{mode="prefill_cache"}}) / (Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{{mode="prefill_cache"}} + Δsglang_realtime_tokens_total{{mode="prefill_compute"}}). This is the primary Prometheus KPI.</td></tr>
+      <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Primary cache hit</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{m.cache_hit_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Benchmark-comparable active average of <code>sglang_cache_hit_rate</code> samples where value &gt; 0. Active windows: {m.cache_hit_gauge_active_samples} / {m.cache_hit_gauge_total_samples}.</td></tr>
+      <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Effective prompt counter diagnostic</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{m.cache_hit_effective_prompt_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">(Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{{mode="prefill_cache"}}) / (Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{{mode="prefill_cache"}} + Δsglang_realtime_tokens_total{{mode="prefill_compute"}}).</td></tr>
       <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Prefill-only token weighted</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{m.cache_hit_token_weighted_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Δsglang_realtime_tokens_total{{mode="prefill_cache"}} / (Δsglang_realtime_tokens_total{{mode="prefill_cache"}} + Δsglang_realtime_tokens_total{{mode="prefill_compute"}}). Diagnostic only; it excludes prompt-cache hits already counted by sglang_cached_tokens_total.</td></tr>
 
       <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Gauge active average</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#0891b2">{m.cache_hit_gauge_active_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Mean of non-zero <code>sglang_cache_hit_rate</code> samples. Active windows: {m.cache_hit_gauge_active_samples} / {m.cache_hit_gauge_total_samples}.</td></tr>
@@ -11238,7 +11287,8 @@ document.addEventListener('DOMContentLoaded', function(){{
       <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Gauge peak</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#7c3aed">{m.cache_hit_gauge_peak_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Maximum observed instantaneous/rolling cache-hit gauge value.</td></tr>
     </tbody>
   </table>
-  <details class="fml" style="margin-top:10px"><summary>📐 Formula</summary><div class="fml-body"><code>Effective prompt cache hit = (Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{{mode="prefill_cache"}}) / (Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{{mode="prefill_cache"}} + Δsglang_realtime_tokens_total{{mode="prefill_compute"}}) × 100
+  <details class="fml" style="margin-top:10px"><summary>📐 Formula</summary><div class="fml-body"><code>Primary cache hit = avg(sglang_cache_hit_rate samples where value > 0) × 100
+Effective prompt counter diagnostic = (Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{{mode="prefill_cache"}}) / (Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{{mode="prefill_cache"}} + Δsglang_realtime_tokens_total{{mode="prefill_compute"}}) × 100
 Prefill-only token weighted = Δsglang_realtime_tokens_total{{mode="prefill_cache"}} / (Δsglang_realtime_tokens_total{{mode="prefill_cache"}} + Δsglang_realtime_tokens_total{{mode="prefill_compute"}}) × 100
 Gauge active average = avg(sglang_cache_hit_rate samples where value > 0) × 100
 Gauge timeline average = avg(all sglang_cache_hit_rate samples) × 100
@@ -11251,6 +11301,11 @@ Calculation method used for main KPI: {m.cache_hit_calc_method}</code></div></de
 <div class="card">
   <h2>📊 P50 / P90 / P99 Summary</h2>
   {img(charts.get("percentiles", ""), "P50 P90 P99 percentile summary")}
+  <details class="fml" style="margin-top:12px"><summary>&#128208; Formula &amp; Metrics Used</summary><div class="fml-body"><div class="fml-src">&#128202; SGLang Prometheus histogram bucket metrics</div><code>TTFT P50/P90/P99 = histogram_quantile(0.50/0.90/0.99, rate(sglang_time_to_first_token_seconds_bucket[window])) × 1000
+ITL  P50/P90/P99 = histogram_quantile(0.50/0.90/0.99, rate(sglang_inter_token_latency_seconds_bucket[window])) × 1000
+E2E  P50/P90/P99 = histogram_quantile(0.50/0.90/0.99, rate(sglang_e2e_request_latency_seconds_bucket[window])) × 1000
+Prompt token percentiles = histogram_quantile(..., rate(sglang_prompt_tokens_bucket[window]))
+Output token percentiles = histogram_quantile(..., rate(sglang_generation_tokens_bucket[window]))</code><div class="fml-note">Percentile charts are tail/shape diagnostics. They are not used as the mean TTFT/ITL/E2E KPI tiles.</div></div></details>
 </div>
 
 <!-- PHASE ANALYSIS -->
@@ -11298,6 +11353,13 @@ Calculation method used for main KPI: {m.cache_hit_calc_method}</code></div></de
       {''.join(f'<div style="display:flex;align-items:center;gap:5px;font-size:11px;color:#64748b"><div style="width:10px;height:10px;border-radius:2px;background:{c}"></div>{l}</div>' for l,c in [('Prefill Cached','#0891b2'),('Prefill Compute',PREFILL),('Decode Output',DECODE)])}
     </div>
   </div>
+  <details class="fml" style="margin-top:12px"><summary>&#128208; Formula &amp; Metrics Used</summary><div class="fml-body"><div class="fml-src">&#128202; sglang_summary.json derived from SGLang Prometheus counters</div><code>Mean TTFT ms = Δsglang_time_to_first_token_seconds_sum / Δsglang_time_to_first_token_seconds_count × 1000
+Mean TPOT/ITL ms = Δsglang_inter_token_latency_seconds_sum / Δsglang_inter_token_latency_seconds_count × 1000
+Mean E2E ms = Δsglang_e2e_request_latency_seconds_sum / Δsglang_e2e_request_latency_seconds_count × 1000
+Prefill cached tokens = Δsglang_realtime_tokens_total{{mode="prefill_cache"}}
+Prefill compute tokens = Δsglang_realtime_tokens_total{{mode="prefill_compute"}}
+Decode tokens = Δsglang_realtime_tokens_total{{mode="decode"}} or Δsglang_generation_tokens_total
+Decode throughput = active_mean(sglang_gen_throughput) or Δsglang_generation_tokens_total / Δtime_sec</code><div class="fml-note">Mean tiles use request-weighted counter deltas. Percentiles are shown separately in the P50/P90/P99 section.</div></div></details>
 </div>
 
 <!-- CHARTS -->
@@ -11527,11 +11589,43 @@ Bandwidth constants:
 <div class="card">
   <h2>⏳ Latency Breakdown & Token Composition</h2>
   {img(charts.get("latency",""), "Latency")}
+  <details class="fml" style="margin-top:12px"><summary>&#128208; Formula &amp; Metrics Used</summary><div class="fml-body"><div class="fml-src">&#128202; SGLang Prometheus counters and token composition counters</div><code>Mean TTFT ms = Δsglang_time_to_first_token_seconds_sum / Δsglang_time_to_first_token_seconds_count × 1000
+Mean ITL/TPOT ms = Δsglang_inter_token_latency_seconds_sum / Δsglang_inter_token_latency_seconds_count × 1000
+Mean E2E ms = Δsglang_e2e_request_latency_seconds_sum / Δsglang_e2e_request_latency_seconds_count × 1000
+Prompt tokens/request = Δsglang_prompt_tokens_total / Δsglang_num_requests_total
+Output tokens/request = Δsglang_generation_tokens_total / Δsglang_num_requests_total
+Cache diagnostics = sglang_cache_hit_rate and sglang_realtime_tokens_total{{mode=...}}</code></div></details>
 </div>
 
 <div class="card">
   <h2>💿 Storage I/O & OS Page Activity</h2>
+  <div style="font-size:11px;color:#334155;line-height:1.6;margin-bottom:10px">
+    {m.storage_io_formula_note}
+  </div>
   {img(charts.get("storage",""), "Storage")}
+  <details class="fml" style="margin-top:12px">
+    <summary>&#128208; Formula &amp; Metrics Used — Storage I/O &amp; OS Page Activity</summary>
+    <div class="fml-body">
+      <div class="fml-src">&#128202; nvme_driver_timeseries.csv / node-exporter block-device stats + vmstat_timeseries.csv</div>
+      <code>Storage chart label : {m.storage_io_label}
+Interpretation       : {m.storage_io_formula_note}
+
+Read IOPS            : rd_iops  = rate(read_ios_total)
+Write IOPS           : wr_iops  = rate(write_ios_total)
+Discard / TRIM IOPS  : disc_ios = rate(discard_ios_total)
+Read bandwidth       : rd_bw_mbs = rate(read_bytes_total) / 1024^2
+Write bandwidth      : wr_bw_mbs = rate(write_bytes_total) / 1024^2
+Device busy          : util_pct = rate(io_ms_total) / 1000 * 100
+
+Page faults/sec      : rate(vmstat_pgfault)
+Major faults/sec     : rate(vmstat_pgmajfault)
+Swap-in pages/sec    : rate(vmstat_pswpin)
+Swap-out pages/sec   : rate(vmstat_pswpout)</code>
+      <div class="fml-note">
+        These are host block-device and OS page-activity counters. They should be interpreted as L3 storage activity only when setup_details.json explicitly maps the collected block device to the L3 backend, for example via <code>L3 Device</code>, <code>L3 Storage Type</code>, <code>HiCache storage backend</code>, or <code>HiCache storage path</code>. Otherwise small write IOPS may be normal OS/background disk activity and not KV cache traffic.
+      </div>
+    </div>
+  </details>
 </div>
 
 <!-- SESSION / STREAM ANALYSIS -->
@@ -13525,7 +13619,7 @@ def build_comparison_html(runs, all_bottlenecks, timestamp):
         "HBM Bandwidth":("Decode / TPOT","HBM re-read for every token step (weights + KV). High score = decode is memory-bandwidth-limited. Fix: quantisation (AWQ/GPTQ), speculative decoding."),
         "KV Cache":("Both","KV cache miss rate. High cache hit = low score (good). Misses force full attention recomputation. Fix: warm cache, grow hicache pool, enable prefix caching."),
         "DRAM":("Software","Host DRAM pressure from hicache L2, model loader, OS buffers. Low concern unless >80% or swap observed."),
-        "NVMe I/O":("Storage","NVMe I/O during inference. Should be near-zero. Non-zero reads = model not fully loaded in memory or L3 KV offload active."),
+        "Storage I/O":("Storage","Storage I/O during inference. Should be near-zero. Non-zero reads = model not fully loaded in memory or L3 KV offload active."),
         "Power / Thermal":("Hardware","Proximity to TDP limit (400W per A100). Near-TDP triggers frequency throttling. High power + low throughput = inefficient workload."),
         "CPU / Page Faults":("Software","OS page fault activity from SGLang runtime. Steady ~4000/s is normal. Spikes >10000/s indicate memory pressure."),
         "GPU Utilisation":("System","Fraction of run window where GPUs were active. Low mean = server mostly idle. Fix: increase concurrency, continuous batching."),
@@ -14165,7 +14259,7 @@ new Chart(document.getElementById("c14"),{type:"scatter",
              "HBM Bandwidth  = min(100,  hbm_util_pct × 0.5  +  tpot_ms/100 × 50 )\n\n"
              "KV Cache       = max(0,  100 − cache_hit_pct ) × 0.8\n\n"
              "DRAM           = min(100,  dram_util_pct × 0.3 )\n\n"
-             "NVMe I/O       = min(100,  max(wr_iops_max, rd_iops_max) / 10 )\n\n"
+             "Storage I/O       = min(100,  max(wr_iops_max, rd_iops_max) / 10 )\n\n"
              "Power/Thermal  = min(100,  gpu_power_peak_w / 400 × 50 )\n\n"
              "CPU/PageFaults = min(100,  page_faults_per_s / 10000 × 30 )\n\n"
              "GPU Utilisation= min(100, (100 − gpu_util_mean) × 0.5 )\n\n"
@@ -15709,7 +15803,7 @@ Overlapping run outlines that diverge on specific axes = the optimisation change
 HBM Bandwidth  = min(100, hbm_util_pct × 0.5 + (tpot_ms/100) × 50)
 KV Cache       = max(0, 100 - cache_hit_pct) × 0.8
 DRAM           = min(100, dram_util_pct × 0.3)
-NVMe I/O       = min(100, max(wr_iops_max, rd_iops_max) / 10)
+Storage I/O       = min(100, max(wr_iops_max, rd_iops_max) / 10)
 Power/Thermal  = min(100, (gpu_power_peak_w / 400) × 50)
 CPU/PageFaults = min(100, (page_faults_per_s / 10000) × 30)
 GPU Utilisation= min(100, (100 - gpu_util_mean) × 0.5)

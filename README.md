@@ -737,3 +737,38 @@ effective_cache_hit_pct =
 ```
 
 L3 activity is inferred from SGLang hierarchical-cache counters when blktrace is unavailable: `sglang_backuped_tokens_total`, `sglang_load_back_tokens_total`, `sglang_prefetched_tokens_total`, and `sglang_evicted_tokens_total`.
+
+
+## v1.55 Storage I/O / OS Page Activity semantics
+
+The **Storage I/O & OS Page Activity** section now treats block-device counters as host OS block I/O by default. A small amount of write IOPS from `nvme_driver_timeseries.csv`, node-exporter, or `/sys/block/*/stat` is not automatically interpreted as L3 cache traffic. The report only labels it as L3 storage I/O when `setup_details.json` explicitly maps the collected block device to the L3 backend, for example with `L3 Device`, `L3 Storage Type`, `HiCache storage backend`, or `HiCache storage path`.
+
+The section now includes a formula subsection documenting the exact parameters used:
+
+```text
+Read IOPS            = rate(read_ios_total)
+Write IOPS           = rate(write_ios_total)
+Discard / TRIM IOPS  = rate(discard_ios_total)
+Read bandwidth       = rate(read_bytes_total) / 1024^2
+Write bandwidth      = rate(write_bytes_total) / 1024^2
+Device busy          = rate(io_ms_total) / 1000 * 100
+Page faults/sec      = rate(vmstat_pgfault)
+Major faults/sec     = rate(vmstat_pgmajfault)
+Swap-in pages/sec    = rate(vmstat_pswpin)
+Swap-out pages/sec   = rate(vmstat_pswpout)
+```
+
+This avoids misleading reports such as “NVMe I/O write activity” when no NVMe-backed L3 tier was configured.
+
+## v1.56 metric methodology updates
+
+- Prometheus-only reports use Prometheus/SGLang metrics as the source of truth; benchmark summaries are validation references only.
+- The primary cache-hit KPI is the active-window average of `sglang_cache_hit_rate` (`value > 0`). Counter-based token ratios are shown as diagnostics because they can diverge from benchmark cache-hit semantics.
+- Mean TTFT, ITL/TPOT, and E2E latency are derived from `_sum/_count` counter deltas:
+  - `Δsglang_time_to_first_token_seconds_sum / Δsglang_time_to_first_token_seconds_count`
+  - `Δsglang_inter_token_latency_seconds_sum / Δsglang_inter_token_latency_seconds_count`
+  - `Δsglang_e2e_request_latency_seconds_sum / Δsglang_e2e_request_latency_seconds_count`
+- Percentile charts use `histogram_quantile()` over SGLang histogram buckets and are displayed separately from mean KPI tiles.
+- L3 activity is inferred from SGLang hierarchy movement counters (`sglang_backuped_tokens_total`, `sglang_load_back_tokens_total`, `sglang_prefetched_tokens_total`, `sglang_evicted_tokens_total`) or direct blktrace data if present.
+- Host block I/O and OS page activity sections document node-exporter/iostat/vmstat metric sources and are not labeled as L3 unless the setup explicitly maps the block device to L3 storage.
+- Major report sections now include a Formula & Metrics Used subsection so that each displayed value has an auditable source.

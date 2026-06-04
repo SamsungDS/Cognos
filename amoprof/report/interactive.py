@@ -232,8 +232,7 @@ def _chart_sglang_throughput(sglang: list[dict], bench: dict | None = None, sgla
     Prometheus-only reports must not render benchmark fallback lines.  If the
     explicit `sglang_gen_throughput` gauge is absent/all-zero, derive a flat throughput
     line from SGLang cumulative token counters that were already summarized in
-    sglang_summary.json.  Cache hit uses the Prometheus-derived primary KPI from `sglang_cached_tokens_total`, `sglang_realtime_tokens_total{mode="prefill_cache"}`, and `sglang_realtime_tokens_total{mode="prefill_compute"}`
-    (cached_tokens/prompt_tokens or token-delta) when the gauge is absent/all-zero.
+    sglang_summary.json. Cache hit uses the benchmark-comparable active average of `sglang_cache_hit_rate`; token-counter ratios remain diagnostics in the formula sections.
     """
     sglang_summary = sglang_summary or {}
     if sglang:
@@ -665,7 +664,7 @@ def _chart_swap_storm(vmstat: list[dict]) -> dict | None:
     }
 
 
-def _chart_nvme_iops(nvme: list[dict]) -> dict | None:
+def _chart_nvme_iops(nvme: list[dict], label: str = "Host Block I/O") -> dict | None:
     if not nvme:
         return None
     ts = _col(nvme, "time_sec")
@@ -692,11 +691,11 @@ def _chart_nvme_iops(nvme: list[dict]) -> dict | None:
             "hovertemplate": "<b>%{y:.0f}</b> trim IOPS<extra></extra>",
         })
     return {"data": traces,
-            "layout": _layout("NVMe I/O Rate (Read / Write / Trim)",
+            "layout": _layout(f"{label} Rate (Read / Write / Trim)",
                               "IOPS", "Trim IOPS" if any(disc) else "", ts=ts)}
 
 
-def _chart_nvme_bw(nvme: list[dict]) -> dict | None:
+def _chart_nvme_bw(nvme: list[dict], label: str = "Host Block I/O") -> dict | None:
     if not nvme:
         return None
     ts = _col(nvme, "time_sec")
@@ -715,7 +714,7 @@ def _chart_nvme_bw(nvme: list[dict]) -> dict | None:
              "fill": "tozeroy", "fillcolor": "rgba(244,63,94,0.12)",
              "hovertemplate": "<b>%{y:.1f}</b> MB/s write<extra></extra>"},
         ],
-        "layout": _layout("NVMe Bandwidth (Read / Write)", "MB / sec", ts=ts)
+        "layout": _layout(f"{label} Bandwidth (Read / Write)", "MB / sec", ts=ts)
     }
 
 
@@ -1953,7 +1952,7 @@ def _kpi_tile(label: str, value: str, unit: str = "",
 
 
 def _section(title: str, chart_id: str, fig: dict | None,
-             note: str = "") -> str:
+             note: str = "", formula: str = "") -> str:
     """Render an interactive chart section.
 
     Empty sections (fig is None) are wrapped in a collapsed <details> with
@@ -1978,6 +1977,7 @@ def _section(title: str, chart_id: str, fig: dict | None,
     </summary>
     <div class="no-data">No data available for this chart.<br>
       <small>{note or 'Check that the corresponding collector ran during capture.'}</small>
+      {f'<details class="fml"><summary>📐 Formula & Metrics Used</summary><pre>{formula}</pre></details>' if formula else ''}
     </div>
   </details>
 </section>"""
@@ -1987,6 +1987,7 @@ def _section(title: str, chart_id: str, fig: dict | None,
   <h2>{title}</h2>
   <div id="{chart_id}" class="plot"></div>
   {f'<div class="caption">{note}</div>' if note else ''}
+  {f'<details class="fml" style="margin-top:10px"><summary>📐 Formula & Metrics Used</summary><pre>{formula}</pre></details>' if formula else ''}
   <script>
     (function() {{
       var fig = {fig_json};
@@ -2474,6 +2475,31 @@ def build_report(raw_dir: Path, out_html: Path,
                 "Bench cache hit", f"{bench['cache_hit_rate']*100:.1f}",
                 "%", "From bench summary (post-run aggregate)"))
 
+    formula_token_cache = """Throughput = active_mean(sglang_gen_throughput)
+Fallback throughput = Δsglang_generation_tokens_total / Δtime_sec
+Cache hit primary = avg(sglang_cache_hit_rate where value > 0) × 100
+Cache diagnostics = Δsglang_realtime_tokens_total{mode="prefill_cache"} / (Δprefill_cache + Δprefill_compute) × 100; effective counter reuse = (Δsglang_cached_tokens_total + Δprefill_cache) / (Δsglang_cached_tokens_total + Δprefill_cache + Δprefill_compute) × 100"""
+    formula_kv_tiers = """L1/HBM tokens = sglang_kv_used_tokens or sglang_token_usage-derived fields
+L2/host cache occupancy = sglang_hicache_host_used_tokens / sglang_hicache_host_total_tokens × 100
+L3 movement = Δsglang_backuped_tokens_total, Δsglang_load_back_tokens_total, Δsglang_prefetched_tokens_total, Δsglang_evicted_tokens_total
+Bytes estimate = token_delta × KV bytes per token from setup/model profile"""
+    formula_latency_pct = """P50/P90/P99 = histogram_quantile(q, rate(metric_bucket[window]))
+TTFT metric = sglang_time_to_first_token_seconds_bucket
+ITL metric = sglang_inter_token_latency_seconds_bucket
+E2E metric = sglang_e2e_request_latency_seconds_bucket
+Prompt/output token percentile metrics use prompt/generation token histogram buckets when exported."""
+    formula_l3_bw = """L3 read tokens = Δsglang_load_back_tokens_total + Δsglang_prefetched_tokens_total
+L3 write tokens = Δsglang_backuped_tokens_total
+Estimated read MB/s = read_tokens × KV_bytes_per_token / Δtime_sec / 2^20
+Estimated write MB/s = write_tokens × KV_bytes_per_token / Δtime_sec / 2^20
+These are SGLang/Mooncake tier movement estimates, not block-device measurements."""
+    formula_host_io = """Host block I/O is derived from node-exporter/iostat-style counters, not SGLang:
+Read IOPS = rate(node_disk_reads_completed_total) or rate(read_ios_total)
+Write IOPS = rate(node_disk_writes_completed_total) or rate(write_ios_total)
+Read MB/s = rate(node_disk_read_bytes_total) / 2^20
+Write MB/s = rate(node_disk_written_bytes_total) / 2^20
+VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node_vmstat_pswpin), rate(node_vmstat_pswpout)"""
+
     sections_html = []
     sections_html.append(_setup_section(setup))
     sections_html.append(_stack_overview_section())
@@ -2537,18 +2563,22 @@ def build_report(raw_dir: Path, out_html: Path,
             if chart_spec is None:
                 continue
             sections_html.append(_section(
-                title, f"ch_pct_{metric_key}", chart_spec, body))
+                title, f"ch_pct_{metric_key}", chart_spec, body, formula_latency_pct))
 
     sections_html.append(_layer_header("layer-a4", "A4 · Inference Runtime + AI Model", "SGLang runtime behavior, model/cache configuration, token throughput, cache-hit, tier residency and KV eviction/load-back.", "#317bb8"))
     sections_html.append(_section("Token Throughput & Cache Hit Rate",
                                    "ch_thru",
                                    _chart_sglang_throughput(sglang_ts, None, sglang_sum),
-                                   "SGLang Prometheus scrape — hover any point for values"))
+                                   "SGLang Prometheus scrape — hover any point for values",
+                                   formula_token_cache))
     sections_html.append(_section("KV Cache Tier Occupancy",
                                    "ch_kv_tiers", _chart_kv_tiers(sglang_ts),
-                                   "L1=Device(HBM), L2=Host(DRAM), L3=Storage — stacked"))
+                                   "L1=Device(HBM), L2=Host(DRAM), L3=Storage — stacked",
+                                   formula_kv_tiers))
     sections_html.append(_section("KV Cache Eviction / Load-back / Backup Rates",
-                                   "ch_evict", _chart_eviction(sglang_ts)))
+                                   "ch_evict", _chart_eviction(sglang_ts),
+                                   "SGLang hierarchical-cache movement counters",
+                                   formula_kv_tiers))
 
     # ── L3 cache bandwidth (Prometheus-derived) ───────────────────────────
     # When the operator runs in Prom-only mode (no blktrace), the only L3
@@ -2601,12 +2631,14 @@ def build_report(raw_dir: Path, out_html: Path,
                                    _dram_fig,
                                    "From AMDuProf PCM normalized timeseries or raw Data Fabric counters (1.2s interval)"))
 
-    sections_html.append(_layer_header("layer-l3", "A3/A2/A1 · L3 Storage / OS Block / NVMe", "Storage-tier behavior: NVMe driver, OS block layer, NAND, request-size/IAT distributions, stream bandwidth, and hot/cold regions.", "#a45714"))
-    sections_html.append(_section("NVMe IOPS (Read / Write / Trim)",
-                                   "ch_nvme_iops", _chart_nvme_iops(nvme_ts)))
-    sections_html.append(_section("NVMe Bandwidth",
-                                   "ch_nvme_bw", _chart_nvme_bw(nvme_ts)))
-    sections_html.append(_section("NVMe Latency & Device Utilization",
+    sections_html.append(_layer_header("layer-l3", "A3/A2/A1 · L3 Storage / OS Block", "Storage-tier behavior: OS block layer, device counters, request-size/IAT distributions, stream bandwidth, and hot/cold regions.", "#a45714"))
+    sections_html.append(_section("Host Block IOPS (Read / Write / Trim)",
+                                   "ch_nvme_iops", _chart_nvme_iops(nvme_ts, "Host Block I/O"),
+                                   "Host block-device counters; not interpreted as L3 unless setup_details explicitly maps the device to L3 storage."))
+    sections_html.append(_section("Host Block Bandwidth",
+                                   "ch_nvme_bw", _chart_nvme_bw(nvme_ts, "Host Block I/O"),
+                                   "Host block-device read/write bandwidth from node/sysfs counters."))
+    sections_html.append(_section("Host Block Latency & Device Utilization",
                                    "ch_nvme_lat", _chart_nvme_latency(nvme_ts)))
     # ── Queue depth section (only when blktrace QD data is present) ────────
     # Two charts: stacked R/W in-flight over time, then the time-weighted

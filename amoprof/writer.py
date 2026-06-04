@@ -173,6 +173,31 @@ def _max(samples: list[dict], col: str) -> float:
     return max(vals)
 
 
+def _cache_hit_gauge_stats(samples: list[dict], col: str | None) -> dict:
+    """Return script-compatible cache-hit gauge stats in percent."""
+    out = {"overall_pct": 0.0, "active_pct": 0.0, "peak_pct": 0.0,
+           "total_samples": 0, "active_samples": 0}
+    if not col:
+        return out
+    vals = []
+    for smp in samples:
+        if col in smp and smp[col] is not None:
+            try:
+                v = float(smp[col])
+                vals.append(v * 100.0 if v <= 1.0 else v)
+            except Exception:
+                pass
+    if not vals:
+        return out
+    active = [v for v in vals if v > 0]
+    out["overall_pct"] = sum(vals) / len(vals)
+    out["peak_pct"] = max(vals)
+    out["total_samples"] = len(vals)
+    out["active_samples"] = len(active)
+    out["active_pct"] = (sum(active) / len(active)) if active else 0.0
+    return out
+
+
 def _derive_sglang_summary(samples: list[dict],
                             cols: list[str],
                             prometheus_source: str,
@@ -255,8 +280,37 @@ def _derive_sglang_summary(samples: list[dict],
     if e2e_ms == 0:
         e2e_ms = _hist_p50_ms("e2e_request_latency") or _hist_p50_ms("request_latency")
 
-    cache_mean = _mean(samples, cache) if cache else 0.0
-    cache_pct = cache_mean * 100 if 0 <= cache_mean <= 1 else cache_mean
+    # Cache-hit methodology: primary KPI is benchmark-comparable active
+    # average of sglang_cache_hit_rate.  Counter/token ratios are retained as
+    # diagnostics because they answer different questions and can diverge from
+    # bench_serving cache_hit_rate on long-prompt workloads.
+    gstats = _cache_hit_gauge_stats(samples, cache)
+    def _delta_col(c):
+        return _delta(samples, c) if c else 0.0
+    d_rt_cache = _delta_col(pfc_cache)
+    d_rt_compute = _delta_col(pfc_tok)
+    cache_token_weighted = (d_rt_cache / (d_rt_cache + d_rt_compute) * 100.0) if (d_rt_cache + d_rt_compute) > 0 else 0.0
+    cached_tok = _find_col(cols, "cached_tokens_total")
+    prompt_tok = _find_col(cols, "prompt_tokens_total")
+    d_cached = _delta_col(cached_tok)
+    d_prompt = _delta_col(prompt_tok)
+    cache_cached_prompt = (d_cached / d_prompt * 100.0) if d_prompt > 0 else 0.0
+    cache_effective = ((d_cached + d_rt_cache) / (d_cached + d_rt_cache + d_rt_compute) * 100.0) if (d_cached + d_rt_cache + d_rt_compute) > 0 else 0.0
+    if gstats["active_samples"] > 0:
+        cache_pct = gstats["active_pct"]
+        cache_method = "sglang_cache_hit_rate_active_average_prometheus"
+    elif cache_effective > 0:
+        cache_pct = cache_effective
+        cache_method = "combined_cached_plus_prefill_cache_prometheus_fallback"
+    elif cache_cached_prompt > 0:
+        cache_pct = cache_cached_prompt
+        cache_method = "cached_tokens_over_prompt_tokens_prometheus_fallback"
+    elif cache_token_weighted > 0:
+        cache_pct = cache_token_weighted
+        cache_method = "realtime_tokens_delta_prometheus_fallback"
+    else:
+        cache_pct = gstats["overall_pct"]
+        cache_method = "sglang_cache_hit_rate_timeline_average_prometheus_fallback" if gstats["total_samples"] else "none"
 
     hi_used_last = _last(samples, hi_used) if hi_used else 0
     hi_total_last = _last(samples, hi_total) if hi_total else 0
@@ -267,8 +321,20 @@ def _derive_sglang_summary(samples: list[dict],
         "server_ttft_ms":               round(ttft_ms, 2),
         "server_itl_ms":                round(tpot_ms, 2),
         "server_e2e_ms":                round(e2e_ms,  2),
+        "server_ttft_ms_method":         "delta_sglang_time_to_first_token_seconds_sum_over_count",
+        "server_itl_ms_method":          "delta_sglang_inter_token_latency_seconds_sum_over_count",
+        "server_e2e_ms_method":          "delta_sglang_e2e_request_latency_seconds_sum_over_count",
         "ai_op_decode_tok_s":           round(_mean(samples, gen_tp), 3) if gen_tp else 0,
         "cache_hit_rate_realtime_pct":  round(cache_pct, 2),
+        "cache_hit_calc_method":         cache_method,
+        "cache_hit_token_weighted_pct":  round(cache_token_weighted, 2),
+        "cache_hit_cached_prompt_pct":   round(cache_cached_prompt, 2),
+        "cache_hit_effective_prompt_pct": round(cache_effective, 2),
+        "cache_hit_gauge_overall_pct":   round(gstats["overall_pct"], 2),
+        "cache_hit_gauge_active_pct":    round(gstats["active_pct"], 2),
+        "cache_hit_gauge_peak_pct":      round(gstats["peak_pct"], 2),
+        "cache_hit_gauge_total_samples": gstats["total_samples"],
+        "cache_hit_gauge_active_samples": gstats["active_samples"],
         "hicache_host_fill_pct":        round(hi_fill, 2),
         "hicache_host_used_tokens":     hi_used_last,
         "hicache_host_total_tokens":    hi_total_last,

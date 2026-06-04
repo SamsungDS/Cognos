@@ -909,8 +909,8 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                                                "token_weighted_cache_hit_pct"], 0.0))
 
     # Prometheus-only mode: use the Prometheus-derived primary cache-hit KPI.
-    # It should come from cached_tokens/prompt_tokens or token-delta accounting;
-    # gauge active average is only a fallback and is surfaced separately.
+    # In v1.56 this is benchmark-comparable active average of sglang_cache_hit_rate
+    # when available; token/counter ratios are diagnostics.
     cache_hit_note_prefix = str(_pick(sglang, ["cache_hit_calc_method"], "prometheus"))
     throughput = _safe_float(_pick(sglang, ["gen_tp_peak","ai_op_decode_tok_s",
                                              "gen_tp_active_mean","gen_tp_mean",
@@ -2528,6 +2528,19 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
 </div>
 
 <div class="kpi-grid">{kpi_html}</div>
+
+<div class="card">
+  <h2>📐 Executive KPI Formula &amp; Metric Sources <span class="tag">PROMETHEUS</span></h2>
+  <table><tbody>
+    <tr><td class="td-key">Cache hit</td><td><code>avg(sglang_cache_hit_rate where value &gt; 0) × 100</code><br><span class="sub">Diagnostics also shown: token-weighted <code>Δsglang_realtime_tokens_total{{mode="prefill_cache"}} / (Δprefill_cache + Δprefill_compute)</code> and effective counter reuse.</span></td></tr>
+    <tr><td class="td-key">Mean TTFT</td><td><code>Δsglang_time_to_first_token_seconds_sum / Δsglang_time_to_first_token_seconds_count × 1000</code></td></tr>
+    <tr><td class="td-key">Mean TPOT / ITL</td><td><code>Δsglang_inter_token_latency_seconds_sum / Δsglang_inter_token_latency_seconds_count × 1000</code></td></tr>
+    <tr><td class="td-key">Mean E2E</td><td><code>Δsglang_e2e_request_latency_seconds_sum / Δsglang_e2e_request_latency_seconds_count × 1000</code></td></tr>
+    <tr><td class="td-key">Throughput</td><td><code>active_mean(sglang_gen_throughput)</code> or <code>Δsglang_generation_tokens_total / Δtime_sec</code></td></tr>
+    <tr><td class="td-key">L3 activity</td><td><code>Δsglang_backuped_tokens_total</code>, <code>Δsglang_load_back_tokens_total</code>, <code>Δsglang_prefetched_tokens_total</code>, <code>Δsglang_evicted_tokens_total</code>; bytes are estimated as <code>token_delta × KV_bytes_per_token</code>.</td></tr>
+    <tr><td class="td-key">GPU / host</td><td>GPU metrics come from <code>DCGM_FI_DEV_*</code>; host block I/O and vmstat come from node-exporter/iostat style counters and are not L3 unless explicitly mapped.</td></tr>
+  </tbody></table>
+</div>
 
 <div class="card">
   <h2>🔍 Top findings <span class="tag">PRIORITISED</span></h2>
