@@ -72,7 +72,19 @@ def parse_time_arg(s: str, now: float | None = None) -> float:
     if m:
         n, unit = int(m.group(1)), m.group(2)
         return now - n * {"h": 3600, "m": 60, "d": 86400, "s": 1}[unit]
-    # ISO datetime — treat naive datetimes as UTC
+    # ISO datetime — treat naive datetimes as UTC.  Accept fractional
+    # seconds and trailing Z because Prometheus query_range examples often
+    # use RFC3339 timestamps such as 2026-05-21T21:24:28.081653Z.
+    iso = s.strip()
+    if iso.endswith("Z"):
+        iso = iso[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(iso)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    except ValueError:
+        pass
     for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
         try:
             return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc).timestamp()

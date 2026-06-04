@@ -195,7 +195,7 @@ class ScenarioAnalyzer:
     # ── S1: Read vs Write Ratio ───────────────────────────────────────────────
     def s1_rw_ratio(self) -> ScenarioResult:
         """
-        KV$ restore (SSD reads) vs KV$ eviction (SSD writes).
+        KV$ restore (L3 reads) vs KV$ eviction (SSD writes).
 
         Below overflow_concurrency: both are 0.  Above: eviction writes cold
         blocks to SSD; decode fetches them back as reads.  In steady-state the
@@ -517,7 +517,7 @@ class ScenarioAnalyzer:
         if peak_hit < 5 and len(self.rows) > 1:
             observations.append("Very low cache hit rate — single-turn workload or diverse problem set (no prefix reuse).")
         if peak_l3 > 30:
-            warnings.append(f"L3 SSD holds {peak_l3:.0f}% of tokens — cold-tier fetch dominates. "
+            warnings.append(f"L3 Storage holds {peak_l3:.0f}% of tokens — cold-tier fetch dominates. "
                              "Increase HBM pool or reduce concurrency.")
         if mean_miss > 50:
             warnings.append(f"Mean miss rate {mean_miss:.1f}% — most prefill tokens are computed rather than cached. "

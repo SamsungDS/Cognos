@@ -58,7 +58,7 @@ Every chart in AMOprof is tagged with a **layer badge** (`[A2 · L3]`) that plac
  │ A2 GPU Driver    │ A2 CPU Driver    │ A2 io_uring / NVMe Driver  │
  │ dcgmi · CUDA     │ perf sched · IRQ │ SQ/CQ · IOPS vs QD        │
  ├──────────────────┼──────────────────┼────────────────────────────┤
- │ A1 L1 HBM HW     │ A1 L2 DRAM HW    │ A1 L3 SSD HW (NAND)       │
+ │ A1 L1 HBM HW     │ A1 L2 DRAM HW    │ A1 L3 Storage HW (NAND)       │
  │ ~3.35 TB/s       │ ~300 GB/s DDR5   │ Seq BW · P99 · WAF        │
  └──────────────────┴──────────────────┴────────────────────────────┘
    L1 = HBM (GPU)     L2 = Host DRAM     L3 = NVMe SSD
@@ -571,7 +571,7 @@ Example `setup_details.json`:
   "KV dtype": "fp8_e4m3",
   "Context length": "131072",
   "Page size": "1",
-  "HiCache": "enabled; L2 DRAM + L3 NVMe",
+  "HiCache": "enabled; L2 DRAM + L3",
   "Attention backend": "triton",
   "Schedule policy": "lpm"
 }
@@ -710,3 +710,30 @@ Alt+3  Static
 ```
 
 The Executive tab is generated from the run `raw/` directory and uses the same `setup_details.json`, `sglang_summary.json`, GPU/NVMe/DRAM summaries, and compact blktrace analysis files used elsewhere in the report. It does not require loading the large raw blktrace event CSV.
+
+
+## Benchmark summary alignment
+
+For Prometheus-only analysis, pass the SGLang `bench_serving` summary with `--bench-summary ./bench_summary.json` or `.txt`. When present, AMOprof uses benchmark `cache_hit_rate` as the main cache-hit KPI, fills the P50/P90/P99 summary from benchmark latency/token percentiles, and uses benchmark output/request throughput when `sglang_gen_throughput` is missing or zero. Prometheus `sglang_cache_hit_rate` gauge active/timeline/peak values are still displayed separately in the Cache Hit Methodology section.
+
+SGLang 0.5.x exposes metrics with underscore names such as `sglang_cache_hit_rate` and `sglang_realtime_tokens_total`; the report code matches underscore names and legacy colon-style labels where present.
+
+### v1.53 L3 activity semantics
+
+For Prometheus-only reports, L3 activity is now derived from SGLang hierarchical-cache counters when blktrace is absent. Any non-zero delta in `backuped_tokens_total`, `load_back_tokens_total`, `prefetched_tokens_total`, or `evicted_tokens_total` is treated as evidence of L3/cache-tier activity. Directional read/write byte estimates are only computed where the counter direction is clear: `backuped_tokens_total` contributes to estimated L3 writes, while `load_back_tokens_total` and `prefetched_tokens_total` contribute to estimated L3 reads. `evicted_tokens_total` is reported as cache-tier pressure/activity but is not converted to disk bytes by itself. If neither blktrace nor these SGLang counters are present, L3 activity is reported as unavailable/none instead of inferred.
+
+### Formula and metric-name convention
+
+Reports now display formulas using the SGLang 0.5.10 Prometheus metric names exported with underscores, for example `sglang_gen_throughput`, `sglang_cache_hit_rate`, `sglang_realtime_tokens_total`, `sglang_cached_tokens_total`, `sglang_backuped_tokens_total`, `sglang_evicted_tokens_total`, and `sglang_load_back_tokens_total`. Older colon-style aliases may still be normalized internally when reading legacy CSVs, but user-facing formulas in Executive, Interactive, and End Report tabs use the underscore metric names consistently.
+
+Primary Prometheus-only cache-hit KPI:
+
+```text
+effective_cache_hit_pct =
+  (Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{mode="prefill_cache"})
+  /
+  (Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{mode="prefill_cache"} + Δsglang_realtime_tokens_total{mode="prefill_compute"})
+  × 100
+```
+
+L3 activity is inferred from SGLang hierarchical-cache counters when blktrace is unavailable: `sglang_backuped_tokens_total`, `sglang_load_back_tokens_total`, `sglang_prefetched_tokens_total`, and `sglang_evicted_tokens_total`.

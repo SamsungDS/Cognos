@@ -63,6 +63,31 @@ def _read_json(path: Path) -> Dict[str, Any]:
     return {}
 
 
+
+def _read_bench_summary(raw_dir: Path) -> Dict[str, Any]:
+    """Read normalized bench_serving summary if present in raw/."""
+    candidates = [
+        "bench_summary.json", "bench_summary.txt",
+        "performance_summary.json", "performance_summary.txt",
+        "sglang_bench_summary.json", "sglang_bench.json",
+        "bench_serving_output.json",
+    ]
+    p = _first_existing(raw_dir, candidates)
+    if not p:
+        return {}
+    try:
+        from amoprof.bench_summary import parse_bench_summary
+        d = parse_bench_summary(p)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        try:
+            txt = p.read_text(encoding="utf-8", errors="replace")
+            obj = json.loads(txt)
+            return obj if isinstance(obj, dict) else {}
+        except Exception:
+            return {}
+
+
 def _first_existing(raw_dir: Path, names: Iterable[str]) -> Optional[Path]:
     # The blktrace analyzer (v1.38.15+) writes its analysis CSVs to the
     # raw_dir/blktrace_analysis/ subdir. Check raw_dir first (for collect-time
@@ -147,7 +172,7 @@ def _ts_col(ts: Dict[str, Any], *partials: str) -> Dict[str, Any]:
 
     The CSV column names are raw Prometheus metric keys that often carry
     label suffixes, e.g. ``gen_throughput[engine_type=unified]`` or
-    ``sglang:gen_throughput``.  An exact ``ts.get("gen_throughput")`` misses
+    ``sglang_gen_throughput``.  An exact ``ts.get("gen_throughput")`` misses
     these, so we match on substring (the same way interactive._find_col does).
     Returns the column's stats dict ({mean,max,min,count,nonzero_*}) or {}.
     """
@@ -347,7 +372,7 @@ def _per_layer_takeaways_html(*,
     else:
         l2_verdict, l2_color = "Clean", "#16a34a"
 
-    # L3 SSD — bandwidth + utilization
+    # L3 Storage — bandwidth + utilization
     if nvme_rd_bw > 5000 or nvme_wr_bw > 3000:
         l3_verdict, l3_color = "Heavy traffic", "#d97706"
     elif read_gb == 0 and write_gb == 0:
@@ -490,7 +515,7 @@ def _per_layer_takeaways_html(*,
             ("DRAM bandwidth wasn't captured (AMDuProf PCM not enabled) but the "
              "absence of swap pressure makes this tier a non-bottleneck. "
              if dram_bw == 0 else "") +
-            "Expand HiCache L2 allocation to offload more KV from L3 SSD."
+            "Expand HiCache L2 allocation to offload more KV from L3 Storage."
             if l2_verdict == "Clean" else
             f"Active swap signals memory pressure on the host. Reduce in-memory "
             f"KV cache, or add system memory. This is a structural constraint, "
@@ -515,11 +540,11 @@ def _per_layer_takeaways_html(*,
                 if rw_ratio > 5 else ""
             )
             + (
-                f"NVMe device busy is {nvme_util:.0f}% — far from peak; the "
+                f"L3 device busy is {nvme_util:.0f}% — far from peak; the "
                 f"constraint isn't throughput but the round-trip latency that "
                 f"adds to TPOT on each load-back."
                 if nvme_util < 50 else
-                f"NVMe device busy is {nvme_util:.0f}% — approaching saturation. "
+                f"L3 device busy is {nvme_util:.0f}% — approaching saturation. "
                 f"Consider expanding L2 DRAM tier to reduce L3 fetch frequency."
             )
         )
@@ -543,7 +568,7 @@ def _per_layer_takeaways_html(*,
                 f"blocks are being re-fetched repeatedly — a thrashing signal "
                 f"that HBM + L2 DRAM combined are too small for this working "
                 f"set. Headline fix: grow HiCache L2 (DRAM) so load-back hits "
-                f"DRAM instead of L3 SSD."
+                f"DRAM instead of L3 Storage."
                 if x_verdict == "Active spilling" else
                 f"KV flow is balanced — load-back roughly matches backup, "
                 f"indicating steady cache reuse without thrashing."
@@ -591,7 +616,7 @@ def _per_layer_takeaways_html(*,
              f"Swap {swap_pages:.0f} pages/s",
              l2_verdict, l2_color, l2_takeaway,
              chart_id="ch_swap", chart_fig=_fig("ch_swap")),
-        _row("L3", "#a45714", "SSD / Block / NVMe",
+        _row("L3", "#a45714", "Storage / Block / Device",
              f"R {nvme_rd_bw:.0f} MB/s · W {nvme_wr_bw:.0f} MB/s · "
              f"util {nvme_util:.0f}%",
              l3_verdict, l3_color, l3_takeaway,
@@ -707,7 +732,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     and blktrace distribution CSVs to produce:
       • KPI grid            — all key latency/throughput/memory/storage numbers
       • Top findings        — data-driven, prioritised, with concrete actions
-      • Memory tier analysis — L1 HBM / L2 DRAM / L3 NVMe device characteristics
+      • Memory tier analysis — L1 HBM / L2 DRAM / L3 device characteristics
       • KV$ SSD executive   — requirement foundation with 5 bullet-point specs
       • Per-chart takeaways — actionable interpretation of every NVMe/memory chart
       • Bottleneck mapping  — every AI stack layer with score, root cause, action
@@ -768,6 +793,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     _ba_dropped_events   = _safe_float(_ba_sum.get("blktrace_dropped_events", 0))
 
     sglang_ts = _read_csv_summary(_first_existing(raw_dir, ["sglang_timeseries.csv"]))
+    bench = {}  # Prometheus-only report: benchmark files are not used as data sources
     gpu_ts    = _read_csv_summary(_first_existing(raw_dir, ["gpu_timeseries.csv"]))
     nvme_ts   = _read_csv_summary(_first_existing(raw_dir, ["nvme_driver_timeseries.csv",
                                                                "iostat_timeseries.csv"]))
@@ -856,9 +882,9 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # — not what mixed AI workloads actually do. The "target" tile is meant as
     # context ("are we anywhere near what the hardware can do"), not a SLO.
     nvme_rd_bw_target_mbs   = _safe_float(_pick(setup,
-        ["NVMe read BW target MB/s","nvme_rd_bw_target_mbs"], 7000.0))
+        ["L3 read BW target MB/s","nvme_rd_bw_target_mbs"], 7000.0))
     nvme_wr_bw_target_mbs   = _safe_float(_pick(setup,
-        ["NVMe write BW target MB/s","nvme_wr_bw_target_mbs"], 5000.0))
+        ["L3 write BW target MB/s","nvme_wr_bw_target_mbs"], 5000.0))
     # SSD R/W endurance target: TB/day at rated TBW spread over 5y warranty.
     # rated TBW comes from smart_summary.json if SsdHardwareMonitor wrote it.
     rated_tbw_tb            = _safe_float(smart.get("rated_tbw_tb", 7.3))  # Dell CM7 default
@@ -881,6 +907,11 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                                             "cache_hit_rate_realtime_pct","cache_hit"], 0.0))
     cache_hit_tw = _safe_float(_pick(sglang, ["cache_hit_token_weighted_pct",
                                                "token_weighted_cache_hit_pct"], 0.0))
+
+    # Prometheus-only mode: use the Prometheus-derived primary cache-hit KPI.
+    # It should come from cached_tokens/prompt_tokens or token-delta accounting;
+    # gauge active average is only a fallback and is surfaced separately.
+    cache_hit_note_prefix = str(_pick(sglang, ["cache_hit_calc_method"], "prometheus"))
     throughput = _safe_float(_pick(sglang, ["gen_tp_peak","ai_op_decode_tok_s",
                                              "gen_tp_active_mean","gen_tp_mean",
                                              "throughput_tok_s","peak_throughput_tok_s"], 0.0))
@@ -905,10 +936,10 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     if throughput == 0:
         _decode_toks = _safe_float(_pick(sglang, ["rt_decode_tokens",
                                                     "decode_tokens_total"], 0.0))
-        _elapsed_s   = _safe_float(_pick(blk, ["duration_s", "run_duration_s"], 0.0))
+        _elapsed_s   = _safe_float(_pick(sglang, ["collection_elapsed_s", "power_elapsed_s"], 0.0)) or _safe_float(_pick(blk, ["duration_s", "run_duration_s"], 0.0))
         if _decode_toks > 0 and _elapsed_s > 0:
             throughput = round(_decode_toks / _elapsed_s, 2)
-            tp_active  = throughput
+            tp_active = throughput
 
     # GPU / HBM
     gpu_util   = _safe_float(_pick(gpu, ["gpu_util_mean","gpu_util_pct_mean","util_mean"], 0.0))
@@ -1365,6 +1396,12 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     loadback_tokens = _first_nonzero(
         "load_back_tokens_total", "sglang_load_back_tokens_total",
         "kvb_loadback_tokens_total")
+    prefetched_tokens = _first_nonzero(
+        "prefetched_tokens_total", "sglang_prefetched_tokens_total",
+        "kvb_prefetched_tokens_total")
+    evicted_tokens = _first_nonzero(
+        "evicted_tokens_total", "sglang_evicted_tokens_total",
+        "kvb_evicted_tokens_total")
 
     # ── Second source: derive from the timeseries CSV when the summary
     # JSON's scalar is zero. The summary JSON's _delta2 can return 0 if it
@@ -1399,9 +1436,22 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         backuped_tokens = _csv_delta("backuped_tokens_total")
     if loadback_tokens == 0:
         loadback_tokens = _csv_delta("load_back_tokens_total")
-    # Convert to GB: tokens × KB/token / (1024 KB/MB × 1024 MB/GB) = GB
+    if prefetched_tokens == 0:
+        prefetched_tokens = _csv_delta("prefetched_tokens_total")
+    if evicted_tokens == 0:
+        evicted_tokens = _csv_delta("evicted_tokens_total")
+
+    # Convert to GB: tokens × KB/token / (1024 KB/MB × 1024 MB/GB) = GB.
+    # SGLang L3 semantics:
+    #   backuped_tokens   -> data moved down into the L3 tier (write/offload)
+    #   load_back_tokens  -> data loaded back from L3 (read/onboard)
+    #   prefetched_tokens -> data proactively brought back from L3 (read/onboard)
+    #   evicted_tokens    -> eviction pressure involving the hierarchical cache;
+    #                        evidence of L3/cache-tier activity but not counted
+    #                        as read/write bytes unless paired with backup/loadback.
     l3_est_write_gb = backuped_tokens * kv_bytes_tok_kb / (1024 * 1024)
-    l3_est_read_gb  = loadback_tokens * kv_bytes_tok_kb / (1024 * 1024)
+    l3_est_read_gb  = (loadback_tokens + prefetched_tokens) * kv_bytes_tok_kb / (1024 * 1024)
+    l3_sglang_activity_tokens = backuped_tokens + loadback_tokens + prefetched_tokens + evicted_tokens
 
     # Source provenance. Three possible values:
     #   "blktrace"      — run-dir present and blktrace produced data
@@ -1413,8 +1463,13 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # NEVER silently overwrite blktrace 0 with an estimate; that hides
         # the actual instrumentation failure.
         l3_traffic_source = "blktrace"
-    elif l3_est_read_gb > 0 or l3_est_write_gb > 0:
-        # Prom-only mode AND SGLang has L3 token activity → derive byte numbers.
+    elif l3_sglang_activity_tokens > 0:
+        # Prom-only mode AND SGLang has hierarchical-cache movement counters.
+        # Treat any of backuped / load_back / prefetched / evicted as evidence
+        # of L3-tier activity, because in SGLang HiCache these counters are the
+        # app-level view of movement across the hierarchical cache.  Read/write
+        # byte estimates are still only computed from counters with clear byte
+        # direction: backuped => write/offload; load_back+prefetched => read/onboard.
         read_gb  = l3_est_read_gb
         write_gb = l3_est_write_gb
         rw_ratio = read_gb / max(write_gb, 0.001)
@@ -1429,7 +1484,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # never let an SGLang estimate masquerade as a blktrace measurement.
     _l3_window_s = duration_s if duration_s > 0 else _safe_float(
         sglang.get("collection_elapsed_s", 0))
-    if _prom_only_mode and _l3_window_s > 0:
+    if _prom_only_mode and _l3_window_s > 0 and l3_traffic_source == "sglang_tokens":
         if nvme_rd_bw == 0.0 and l3_est_read_gb > 0:
             nvme_rd_bw = l3_est_read_gb * 1024 / _l3_window_s   # GB→MB/s
         if nvme_wr_bw == 0.0 and l3_est_write_gb > 0:
@@ -1455,7 +1510,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                   else "DRAM bandwidth counters not collected. Install AMDuProf and re-run "
                        "with --enable-amduprof-pcm. Falls back to /proc/meminfo for "
                        "capacity but not for bandwidth.")) +
-        pill("NVMe / blktrace", has_nvme and has_blktrace,
+        pill("L3 / blktrace", has_nvme and has_blktrace,
              tip=("blktrace captured per-IO completion events for the L3 device." if (has_nvme and has_blktrace)
                   else "blktrace data missing or incomplete. Re-run with --enable-blktrace "
                        "and ensure the user has CAP_SYS_ADMIN. Without it, per-IO latency, "
@@ -1530,9 +1585,13 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     if l3_traffic_source == "sglang_tokens" and (read_gb > 0 or write_gb > 0):
         _bk_t = int(backuped_tokens)
         _lb_t = int(loadback_tokens)
+        _pf_t = int(prefetched_tokens)
+        _ev_t = int(evicted_tokens)
         # Tokens/sec gives an "activity rate" — useful for sizing.
         _bk_rate = _bk_t / _l3_window_s if _l3_window_s > 0 else 0
         _lb_rate = _lb_t / _l3_window_s if _l3_window_s > 0 else 0
+        _pf_rate = _pf_t / _l3_window_s if _l3_window_s > 0 else 0
+        _ev_rate = _ev_t / _l3_window_s if _l3_window_s > 0 else 0
         findings_items.append(finding(
             "L3 ACTIVITY · PROMETHEUS-DERIVED",
             (f'blktrace is not available for this run, but SGLang counters '
@@ -1541,8 +1600,12 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
              f'(≈ {write_gb:.1f} GB at {kv_bytes_tok_kb:.0f} KB/tok) '
              f'at <strong>{_bk_rate:,.0f} tok/s</strong>. '
              f'<strong>Loaded back from L3:</strong> {_lb_t:,} tokens '
-             f'(≈ {read_gb:.1f} GB) at <strong>{_lb_rate:,.0f} tok/s</strong>. '
-             f'Estimated mean BW: read {nvme_rd_bw:.1f} MB/s · write {nvme_wr_bw:.1f} MB/s. '
+             f'at <strong>{_lb_rate:,.0f} tok/s</strong>. '
+             f'<strong>Prefetched from L3:</strong> {_pf_t:,} tokens '
+             f'at <strong>{_pf_rate:,.0f} tok/s</strong>. '
+             f'<strong>Evicted from cache hierarchy:</strong> {_ev_t:,} tokens '
+             f'at <strong>{_ev_rate:,.0f} tok/s</strong>. '
+             f'Estimated directional BW: read {nvme_rd_bw:.1f} MB/s · write {nvme_wr_bw:.1f} MB/s. '
              f'<br><br>'
              f'<strong>What this CANNOT tell you (need blktrace for):</strong> '
              f'per-IO latency, request size distribution, queue depth, '
@@ -1551,22 +1614,24 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
              f'<strong>Action:</strong> if these characteristics matter for '
              f'your sizing exercise, re-collect with <code>--enable-blktrace</code> '
              f'next run.'),
-            plain=(f"Even without blktrace, we can tell from SGLang that the L3 cache "
-                   f"saw about {write_gb:.1f} GB written and {read_gb:.1f} GB read back "
-                   f"during the run — roughly {_bk_rate:,.0f} tokens/sec of writes and "
-                   f"{_lb_rate:,.0f} tokens/sec of reads. The byte numbers are "
-                   f"estimates (token × bytes-per-token), not direct measurements. "
-                   f"For per-IO latency and queue depth, you'd need to enable blktrace "
-                   f"on the next collection.")))
+            plain=(f"Even without blktrace, SGLang counters show L3/cache-tier activity: "
+                   f"{_bk_t:,} backuped, {_lb_t:,} load-back, {_pf_t:,} prefetched, "
+                   f"and {_ev_t:,} evicted tokens. Estimated directional traffic is "
+                   f"{write_gb:.1f} GB written and {read_gb:.1f} GB read. These byte "
+                   f"numbers are estimates (token × bytes-per-token), not direct disk "
+                   f"measurements. For per-IO latency and queue depth, enable blktrace.")))
     elif l3_traffic_source == "none":
         # NO L3 data from any source. Don't leave the user wondering — be
         # explicit about what was checked and what was found. The user
         # genuinely benefits from knowing whether (a) L3 was idle, or
         # (b) instrumentation was missing.
-        _has_sg_counters = "backuped_tokens_total" in sglang or \
-                          "load_back_tokens_total" in sglang
-        _evicted = _safe_float(sglang.get("evicted_tokens_total", 0))
-        if _has_sg_counters and backuped_tokens == 0 and loadback_tokens == 0:
+        _has_sg_counters = any(k in sglang for k in (
+            "backuped_tokens_total", "sglang_backuped_tokens_total",
+            "load_back_tokens_total", "sglang_load_back_tokens_total",
+            "prefetched_tokens_total", "sglang_prefetched_tokens_total",
+            "evicted_tokens_total", "sglang_evicted_tokens_total"))
+        _evicted = evicted_tokens
+        if _has_sg_counters and l3_sglang_activity_tokens == 0:
             # Counters present, both zero → L3 truly was idle this window.
             findings_items.append(finding(
                 "L3 ACTIVITY · NONE OBSERVED",
@@ -1578,7 +1643,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                     f'or were dropped entirely). '
                     if _evicted > 0 else '')
                  + f'<strong>Implications:</strong> the working set fit within HBM + L2 '
-                 f'DRAM, so L3 NVMe was not exercised. KV$ SSD sizing based on this run '
+                 f'DRAM, so L3 was not exercised. KV$ SSD sizing based on this run '
                  f'will be unrepresentative — re-run with a larger context or more '
                  f'concurrent sessions to drive L3 traffic.'),
                 plain=(f"No L3 cache activity was detected during this {_l3_window_s:.0f}s "
@@ -1653,8 +1718,8 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # only action is to expand L2.
         _nvme_status = _nvme_status_phrase(nvme_util, nvme_rd_lat)
         findings_items.append(finding(
-            "KV CACHE · L3 NVMe",
-            f'HiCache L3 is active: <strong>{read_gb:,.1f} GB SSD reads</strong> vs '
+            "KV CACHE · L3",
+            f'HiCache L3 is active: <strong>{read_gb:,.1f} GB L3 reads</strong> vs '
             f'{write_gb:.1f} GB writes ({rw_ratio:.0f}:1 ratio) — a load-back dominated phase. '
             + (f'Estimated <strong>{mb_per_out_token:.0f} MB per output token</strong> '
                f'of SSD read traffic — a key KV$ SSD sizing input. '
@@ -1662,12 +1727,12 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             f'Device utilisation {nvme_util:.1f}% mean — the SSD is '
             f'<strong>{_nvme_status}</strong>. '
             + ('<strong>Action:</strong> expand DRAM L2 tier to absorb more '
-               'KV blocks before they reach L3 NVMe — and provision additional '
+               'KV blocks before they reach L3 — and provision additional '
                'NVMe bandwidth (faster device or RAID-0 pair) since the current '
                'SSD is at saturation.'
                if nvme_util >= 90 else
                '<strong>Action:</strong> expand DRAM L2 tier to absorb more KV blocks '
-               'before they reach L3 NVMe.'),
+               'before they reach L3.'),
             plain=(
                 f"The SSD cache is being read heavily ({read_gb:,.0f} GB). "
                 + ("The SSD is at its limit — to keep up as load grows, give the "
@@ -1676,11 +1741,11 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                    "The SSD has spare capacity. Recommended: give the system "
                    "more RAM cache so fewer reads reach the SSD."))))
     elif write_gb > 10 and has_blktrace and rw_ratio < 0.1:
-        # Write-dominant: HiCache is offloading KV blocks to L3 NVMe but
+        # Write-dominant: HiCache is offloading KV blocks to L3 but
         # rarely loading them back. Often means L1+L2 fit the working set,
         # or eviction policy is too aggressive.
         findings_items.append(finding(
-            "KV CACHE · L3 NVMe",
+            "KV CACHE · L3",
             f'HiCache L3 is write-dominant: <strong>{write_gb:.1f} GB writes</strong> vs '            f'{read_gb*1024:.1f} MB reads — a backup-heavy phase with no significant load-back. '            f'Device utilisation {nvme_util:.1f}% mean. '            f'<strong>Action:</strong> consider tuning HiCache eviction (raise L2 size or '            f'lower spill threshold) if the working set fits in DRAM; otherwise the '            f'writes are pre-staging future load-backs and are healthy.',
             plain=(f"The SSD cache is being written to a lot ({write_gb:.0f} GB) but barely "
                    f"read back. Either the data being saved is rarely needed again, or RAM "
@@ -1816,7 +1881,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         if dram_util_pct < 30:
             findings_items.append(finding(
                 "L2 DRAM",
-                f'AMD PMU reports {dram_total_bw:.1f} GB/s mean DRAM BW '                f'({dram_util_pct:.1f}% of {dram_peak_cap:.0f} GB/s peak) — '                f'<strong>not the bottleneck</strong>. Ample DRAM headroom exists '                f'to expand the L2 KV tier and absorb more L3 NVMe traffic.',
+                f'AMD PMU reports {dram_total_bw:.1f} GB/s mean DRAM BW '                f'({dram_util_pct:.1f}% of {dram_peak_cap:.0f} GB/s peak) — '                f'<strong>not the bottleneck</strong>. Ample DRAM headroom exists '                f'to expand the L2 KV tier and absorb more L3 traffic.',
                 plain=(f"System RAM bandwidth is at {dram_util_pct:.0f}% of its capability — "
                        f"plenty of room to spare. Recommended: enlarge the in-RAM portion of "
                        f"the cache to reduce SSD traffic.")))
@@ -1843,7 +1908,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
 
     # Build the human-readable cache-tier label used in the hero block above
     # and the setup table below. Examples:
-    #   "Enabled · L2 DRAM (256 GB) + L3 NVMe SSD (3.5 TB)"
+    #   "Enabled · L2 DRAM (256 GB) + L3 Storage (3.5 TB)"
     #   "Enabled · L2 DRAM + L3 AI Memory Node"
     #   "Disabled" when cache_enabled is falsy
     _enabled_truthy = str(cache_enabled).strip().lower() in (
@@ -1923,7 +1988,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         ("L2 · Host DRAM",    f"{dram_total_bw:.1f} GB/s ({dram_total_bw/max(dram_peak_cap,1)*100:.0f}% of peak)" if dram_total_bw else "No PMU data",
          "ok" if dram_total_bw < dram_peak_cap * 0.5 else "warn",
          "Headroom ✓" if dram_total_bw < dram_peak_cap * 0.5 else "Elevated"),
-        ("L3 · NVMe SSD",     f"{nvme_rd_bw:.0f} MB/s reads, {nvme_util:.1f}% util, {read_gb:,.0f} GB total",
+        ("L3 · Storage Tier",     f"{nvme_rd_bw:.0f} MB/s reads, {nvme_util:.1f}% util, {read_gb:,.0f} GB total",
          "warn" if mb_per_out_token > 10 else "ok",
          "Load-back heavy" if mb_per_out_token > 10 else "OK"),
         ("OS / vmstat",       "0 swap pages/s" if swap_pages == 0 else f"{swap_pages:.0f} swap/s",
@@ -1973,7 +2038,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     <tr><td><b>1</b></td>
       <td><b>FP8 KV quantisation</b> — <code>--kv-cache-dtype fp8_e5m2</code><br>
           <span class="sub">Halves KV bytes/token ({kv_bytes_tok_kb:.0f}→{kv_bytes_tok_kb/2:.0f} KB/tok), doubles in-HBM capacity,
-          cuts TPOT and L3 NVMe load. &lt;0.5% accuracy impact.</span></td>
+          cuts TPOT and L3 load. &lt;0.5% accuracy impact.</span></td>
       <td>{sev(90)}</td><td>{sev(10)}</td><td>L1+L3</td></tr>
     <tr><td><b>2</b></td>
       <td><b>Chunked prefill</b> — <code>--chunked-prefill-size 4096</code><br>
@@ -1982,7 +2047,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     <tr><td><b>3</b></td>
       <td><b>Expand DRAM L2 HiCache allocation</b><br>
           <span class="sub">DRAM at {dram_total_bw/max(dram_peak_cap,1)*100:.0f}% util has headroom. More L2 absorbs KV before L3,
-          cutting SSD reads and wear at near-zero latency cost.</span></td>
+          cutting L3 reads and wear at near-zero latency cost.</span></td>
       <td>{sev(60)}</td><td>{sev(15)}</td><td>L2→L3</td></tr>
     <tr><td><b>4</b></td>
       <td><b>Add shared system-prompt prefix</b><br>
@@ -1994,13 +2059,13 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
           <span class="sub">Run <code>fio --bs=32k --rw=randread --iodepth=16 --size=32g</code>.
           Require ≥{max(nvme_rd_bw*1.1, 600):.0f} MB/s sustained for ≥30 min.
           Also verify TRIM acknowledgement latency ≤1 ms.</span></td>
-      <td>{sev(45)}</td><td>{sev(5)}</td><td>L3 SSD</td></tr>"""
+      <td>{sev(45)}</td><td>{sev(5)}</td><td>L3 Storage</td></tr>"""
 
     # ── KPI grid ──────────────────────────────────────────────────────────────
     kpi_html = (
         kpi_card("Cache hit",
                  _fmt_num(cache_hit, "%", 1),
-                 f"gauge-active | {_fmt_num(cache_hit_tw, '%', 1)} token-weighted",
+                 f"{cache_hit_note_prefix} | {_fmt_num(cache_hit_tw, '%', 1)} token-weighted",
                  accent=True) +
         kpi_card("TTFT",
                  _fmt_num(ttft_ms / 1000 if ttft_ms >= 1000 else ttft_ms,
@@ -2021,7 +2086,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         kpi_card("GPU power",
                  _fmt_num(gpu_power, " W", 0),
                  "peak per GPU") +
-        kpi_card("NVMe read BW",
+        kpi_card("L3 read BW",
                  _fmt_num(nvme_rd_bw, " MB/s", 0),
                  (f"mean | {_fmt_num(nvme_rd_iops, ' read IOPS', 0)}"
                   if l3_traffic_source == "blktrace"
@@ -2035,8 +2100,8 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                              "delivers ~7 GB/s sequential read at QD≥16. AI workloads "
                              "rarely hit this — typical sustained reads are 1-3 GB/s "
                              "because requests are 4-16 KB random. Override via setup "
-                             "key 'NVMe read BW target MB/s' for a non-Gen4 device.")) +
-        kpi_card("NVMe write BW",
+                             "key 'L3 read BW target MB/s' for a non-Gen4 device.")) +
+        kpi_card("L3 write BW",
                  _fmt_num(nvme_wr_bw, " MB/s", 1),
                  (f"{_fmt_num(nvme_wr_iops, ' IOPS', 0)} | "
                   f"{('1:' + str(int(round(1/rw_ratio))) if 0 < rw_ratio < 0.5 else f'{rw_ratio:.1f}:1')} R/W ratio"
@@ -2052,7 +2117,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                              "KV-block writes are small (~7 KB) so achievable BW is much "
                              "lower than the rated peak — what matters is staying under "
                              "the rated TBW endurance, not approaching this BW target. "
-                             "Override via setup key 'NVMe write BW target MB/s'.")) +
+                             "Override via setup key 'L3 write BW target MB/s'.")) +
         kpi_card("SSD R / W total",
                  (f"{read_gb*1024:.1f} MB" if 0 < read_gb < 1 else _fmt_num(read_gb, ' GB', 1))
                  + " / "
@@ -2122,7 +2187,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                              f"5-15% of peak because the GPU drives most memory traffic "
                              f"through HBM, not host DRAM. Low utilisation here is normal "
                              f"and indicates room to expand the L2 KV tier.")) +
-        kpi_card("NVMe device busy",
+        kpi_card("L3 device busy",
                  _fmt_num(nvme_util, "%", 1),
                  f"iostat %util (time servicing I/O) · "
                  + (f"{nvme_util:.0f}% mean | saturated"
@@ -2296,7 +2361,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             "Bandwidth per Stream (Top 20)",
             "Per-(pid, comm) read BW — top 20 processes by total bytes",
             f"All streams are <strong>kernel worker threads (<code>kworker/uXXX</code>)</strong> — "
-            f"HiCache uses Linux kernel async I/O workers for L3 NVMe access. "
+            f"HiCache uses Linux kernel async I/O workers for L3 access. "
             f"<strong>Note:</strong> the values shown are cumulative MB over the run, "
             f"not per-second rates — the apparent large sum is total bytes across all workers, "
             f"consistent with the device-level BW measurements.",
@@ -2334,7 +2399,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         gpu_power=gpu_power,
         # DRAM / OS
         dram_bw=dram_total_bw, swap_pages=swap_pages,
-        # L3 SSD
+        # L3 Storage
         nvme_rd_bw=nvme_rd_bw, nvme_wr_bw=nvme_wr_bw,
         read_gb=read_gb, write_gb=write_gb,
         nvme_util=nvme_util,
@@ -2476,23 +2541,23 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
   <p>HBM is the fastest tier (~2 TB/s, {hbm_total:.0f} GB/GPU). It holds model weights
   and hot KV cache. With <strong>{hbm_pct:.0f}% fill</strong> ({hbm_gb:.1f}/{hbm_total:.0f} GB),
   only ~{hbm_free_gb:.1f} GB/GPU remains for KV — enough for ~{spill_thresh_k:.0f}K tokens at {kv_bytes_tok_kb:.0f} KB/tok.
-  Any context exceeding this triggers overflow to L2 DRAM or L3 NVMe.
+  Any context exceeding this triggers overflow to L2 DRAM or L3.
   The {gpu_util:.0f}% GPU util and {tpot_ms:.0f} ms/tok TPOT reflect the memory-bandwidth-bound
   decode pattern where every generated token requires reading all active KV plus model weights from HBM.
   DCGM-active {dcgm_active:.0f}% means the HBM bus is busy {dcgm_active:.0f}% of cycles at observed throughput.</p>
   <p><strong>Device characteristic implication:</strong> FP8 KV halves per-token cost
-  ({kv_bytes_tok_kb:.0f}→{kv_bytes_tok_kb/2:.0f} KB/tok), doubles in-HBM capacity, and cuts TPOT and L3 NVMe load simultaneously.</p>
+  ({kv_bytes_tok_kb:.0f}→{kv_bytes_tok_kb/2:.0f} KB/tok), doubles in-HBM capacity, and cuts TPOT and L3 load simultaneously.</p>
 
   <h3>L2 · Host DRAM (Staging tier)</h3>
   <p>DRAM is the intermediate KV staging tier (HiCache L2).
   {f"AMD PMU Data Fabric counters report <strong>{dram_total_bw:.1f} GB/s mean / {dram_peak_bw:.1f} GB/s peak</strong> total BW against a {dram_peak_cap:.0f} GB/s theoretical peak — only <strong>{dram_total_bw/max(dram_peak_cap,1)*100:.1f}% utilised mean</strong>." if dram_total_bw > 0 else "DRAM PMU data not available for this run — enable --enable-amduprof-pcm for L2 staging visibility."}
   The traffic pattern shows bursty reads (KV reload into HBM) and moderate writes (KV eviction from HBM into DRAM).</p>
   <p><strong>Device characteristic implication:</strong> DRAM is <strong>not the bottleneck</strong>.
-  Expanding the DRAM L2 HiCache allocation would absorb more L3 NVMe traffic at near-zero
-  additional latency cost (L2 DRAM is ~100× faster than L3 NVMe for KV blocks).</p>
+  Expanding the DRAM L2 HiCache allocation would absorb more L3 traffic at near-zero
+  additional latency cost (L2 DRAM is ~100× faster than L3 for KV blocks).</p>
 
-  <h3>L3 · NVMe SSD (KV$ Flash Storage)</h3>
-  <p>NVMe is the outermost KV tier (HiCache L3). Activity observed:
+  <h3>L3 · Storage Tier (KV$ Flash Storage)</h3>
+  <p>L3 storage is the outermost KV tier (HiCache L3). Activity observed:
   <strong>{read_gb:,.2f} GB reads vs {write_gb:.1f} GB writes</strong>
   ({('1:' + str(int(round(1/rw_ratio))) if 0 < rw_ratio < 0.5 else f'{rw_ratio:.1f}:1')} R/W ratio) — 
   {('a write-dominated KV-offload pattern (HiCache backups outpacing load-backs).' if rw_ratio < 0.5 else 'a sustained load-back pattern.')}
@@ -2507,7 +2572,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
 <div class="section-label">KV$ SSD I/O characterisation</div>
 <div class="card">
   <h2>💾 KV$ SSD I/O — Executive Summary <span class="tag">REQUIREMENT FOUNDATION</span></h2>
-  <p>This run profiles HiCache L3 (NVMe SSD) as the outer KV cache tier. The I/O signature is
+  <p>This run profiles HiCache L3 storage as the outer KV cache tier. The I/O signature is
   <strong>read-dominated, small-to-medium block, bursty, concentrated in a narrow LBA region</strong>.
   Key requirement drivers:</p>
   <ul>{kvssd_req_html}</ul>

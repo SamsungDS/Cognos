@@ -142,7 +142,7 @@ _r("ttft", "Time to First Token",
              "p50_ttft", "p90_ttft", "p99_ttft", "mean_ttft_ms",
              "first_token_ms", "nv_trt_llm_request_metrics_first_token_ms",
              "tgi_request_prefill_duration_seconds",
-             "vllm:time_to_first_token_seconds"],
+             "sglang_time_to_first_token_seconds"],
    regex_patterns=[r"time_to_first_token", r"first_token.*lat", r"\bttft\b",
                    r"prefill.*lat", r"prefill.*time", r"first.*tok"],
    category="inference", subcategory="latency", section="§A8",
@@ -152,7 +152,7 @@ _r("ttft", "Time to First Token",
                "Reported by all major inference servers.",
    formula=(
        "SGLang  : rate(time_to_first_token_seconds_sum) / rate(_count) × 1000\n"
-       "vLLM    : vllm:time_to_first_token_seconds histogram\n"
+       "vLLM    : sglang_time_to_first_token_seconds histogram\n"
        "TGI     : tgi_request_prefill_duration_seconds\n"
        "TRT-LLM : nv_trt_llm_request_metrics_first_token_ms\n"
        "MLPerf  : first_token_latency_ms  (99th pct target)\n"
@@ -172,7 +172,7 @@ _r("tpot", "Time per Output Token (TPOT / ITL)",
    aliases=["inter_token_latency", "ITL", "itl", "tpot_ms", "token_latency",
              "time_per_output_token", "inter-token-latency", "server_itl_ms",
              "mean_tpot_ms", "median_tpot_ms", "p99_tpot_ms", "mean_itl_ms",
-             "vllm:time_per_output_token_seconds",
+             "sglang_inter_token_latency_seconds",
              "nv_trt_llm_request_metrics_generate_queue_duration_ms"],
    regex_patterns=[r"inter_token_latency", r"\btpot\b", r"\bitl\b",
                    r"time_per_output_token", r"per.*token.*lat",
@@ -183,7 +183,7 @@ _r("tpot", "Time per Output Token (TPOT / ITL)",
                "Hardware floor = model_bytes_per_GPU / HBM_peak_bw × 1000.",
    formula=(
        "SGLang : rate(inter_token_latency_seconds_sum) / rate(_count) × 1000\n"
-       "vLLM   : vllm:time_per_output_token_seconds histogram\n"
+       "vLLM   : sglang_inter_token_latency_seconds histogram\n"
        "Min    : (n_params × 2B_FP16 / n_gpus) / HBM_peak_GBs × 1000"
    ),
    interpretation=(
@@ -198,7 +198,7 @@ _r("e2e_latency", "End-to-End Request Latency",
    aliases=["e2e_latency", "end_to_end_latency", "request_latency", "total_latency",
              "latency", "response_time", "e2e_ms", "server_e2e_ms",
              "mean_e2e_latency_ms", "p99_e2e_latency_ms",
-             "vllm:e2e_request_latency_seconds",
+             "sglang_e2e_request_latency_seconds",
              "nv_trt_llm_request_metrics_e2e_latency_ms",
              "tgi_request_duration_seconds"],
    regex_patterns=[r"e2e.*lat", r"end.*to.*end", r"request.*latency",
@@ -209,7 +209,7 @@ _r("e2e_latency", "End-to-End Request Latency",
                "E2E = queue_ms + TTFT_ms + TPOT_ms × output_tokens.",
    formula=(
        "SGLang  : rate(e2e_request_latency_seconds_sum) / rate(_count) × 1000\n"
-       "vLLM    : vllm:e2e_request_latency_seconds histogram\n"
+       "vLLM    : sglang_e2e_request_latency_seconds histogram\n"
        "TRT-LLM : nv_trt_llm_request_metrics_e2e_latency_ms\n"
        "TGI     : tgi_request_duration_seconds"
    ),
@@ -249,7 +249,7 @@ _r("throughput", "Request Throughput",
    category="inference", subcategory="throughput",
    unit="req/s", higher_is_better=True,
    description="Inference requests completed per second.",
-   formula="Δ(num_requests_total) / Δ(time_sec)\nvllm-bench CSV: request_throughput",
+   formula="Δsglang_num_requests_total / Δ(time_sec)\nvllm-bench CSV: request_throughput",
    sources=["sglang", "vllm", "tgi", "tensorrt-llm", "mlperf", "llmperf", "vllm-bench"],
    related=["gen_throughput", "tpot", "ttft"],
    profiler_field="gen_tp_peak")
@@ -267,7 +267,7 @@ _r("gen_throughput", "Generation Token Throughput",
    description="Output tokens generated per second across all concurrent requests. "
                "Upper bound ≈ HBM_peak_bw / model_bytes_per_GPU.",
    formula=(
-       "SGLang    : sglang:gen_throughput  (rolling 1s)\n"
+       "SGLang    : sglang_gen_throughput  (rolling 1s)\n"
        "vLLM-bench: output_throughput column\n"
        "LLMPerf   : mean_output_throughput_token_per_s"
    ),
@@ -296,7 +296,7 @@ _r("prefill_throughput", "Prefill / Input Token Throughput",
 _r("num_running_reqs", "Active Concurrent Sessions",
    aliases=["num_running_reqs", "running_requests", "active_requests",
              "concurrent_requests", "running_batch_size",
-             "vllm:num_requests_running", "vllm:scheduler_running",
+             "sglang_num_running_reqs", "vllm:scheduler_running",
              "tgi_batch_current_size",
              "nv_trt_llm_inflight_batcher_requests_active"],
    regex_patterns=[r"num_running_reqs", r"running.*req", r"active.*req",
@@ -305,8 +305,8 @@ _r("num_running_reqs", "Active Concurrent Sessions",
    unit="sessions", higher_is_better=None,
    description="Requests currently in prefill or decode phase.",
    formula=(
-       "SGLang  : sglang:num_running_reqs\n"
-       "vLLM    : vllm:num_requests_running\n"
+       "SGLang  : sglang_num_running_reqs\n"
+       "vLLM    : sglang_num_running_reqs\n"
        "TGI     : tgi_batch_current_size\n"
        "TRT-LLM : nv_trt_llm_inflight_batcher_requests_active"
    ),
@@ -316,7 +316,7 @@ _r("num_running_reqs", "Active Concurrent Sessions",
 
 _r("num_queue_reqs", "Queued Requests",
    aliases=["num_queue_reqs", "queued_requests", "pending_requests",
-             "vllm:num_requests_waiting", "vllm:scheduler_waiting",
+             "sglang_num_queue_reqs", "vllm:scheduler_waiting",
              "nv_trt_llm_inflight_batcher_requests_paused"],
    regex_patterns=[r"num_queue_reqs", r"queued.*req", r"waiting.*req",
                    r"requests_waiting", r"pending.*req"],
@@ -324,8 +324,8 @@ _r("num_queue_reqs", "Queued Requests",
    unit="sessions", higher_is_better=False, normal_range=(0, 50),
    description="Requests waiting for GPU capacity.",
    formula=(
-       "SGLang  : sglang:num_queue_reqs\n"
-       "vLLM    : vllm:num_requests_waiting\n"
+       "SGLang  : sglang_num_queue_reqs\n"
+       "vLLM    : sglang_num_queue_reqs\n"
        "TRT-LLM : nv_trt_llm_inflight_batcher_requests_paused"
    ),
    sources=["sglang", "vllm", "tensorrt-llm"],
@@ -334,13 +334,13 @@ _r("num_queue_reqs", "Queued Requests",
 
 _r("num_preemptions", "KV Preemption / Swap Count",
    aliases=["num_preemptions", "preemptions_total", "swap_count",
-             "vllm:num_preemptions_total", "vllm:num_requests_swapped"],
+             "sglang_num_preemptions_total (if exported)", "vllm:num_requests_swapped"],
    regex_patterns=[r"preempt", r"num_requests_swapped"],
    category="inference", subcategory="concurrency",
    unit="count", higher_is_better=False,
    description="vLLM: requests preempted/swapped to CPU due to KV memory pressure. "
                "High value → KV pool too small.",
-   formula="vllm:num_preemptions_total  (cumulative)",
+   formula="sglang_num_preemptions_total (if exported)  (cumulative)",
    sources=["vllm"],
    related=["kv_pool_fill", "num_running_reqs"],
    profiler_field="")
@@ -361,7 +361,7 @@ _r("cache_hit_rate", "KV Cache Hit Rate",
    description="Fraction of prefill tokens served from KV cache (no recomputation). "
                "High hit rate → less TTFT, fewer GPU FLOPs.",
    formula=(
-       "SGLang : sglang:cache_hit_rate  (0–1)\n"
+       "SGLang : sglang_cache_hit_rate  (0–1)\n"
        "vLLM   : vllm:prefix_cache_hit_rate\n"
        "Manual : prefill_cache_tokens / (cache_tokens + compute_tokens)"
    ),
@@ -372,7 +372,7 @@ _r("cache_hit_rate", "KV Cache Hit Rate",
 _r("kv_pool_fill", "KV Pool Utilisation",
    aliases=["token_usage", "kv_usage", "kv_pool_fill", "full_token_usage",
              "kv_cache_utilization", "gpu_cache_usage_perc",
-             "vllm:gpu_cache_usage_perc", "vllm:cpu_cache_usage_perc",
+             "sglang_kv_used_tokens / configured KV token capacity", "vllm:cpu_cache_usage_perc",
              "nv_trt_llm_kv_cache_block_manager_used_num_blocks"],
    regex_patterns=[r"gpu_cache_usage", r"kv.*util", r"token_usage",
                    r"full_token_usage", r"kv.*pool.*fill", r"kv.*block.*used"],
@@ -380,8 +380,8 @@ _r("kv_pool_fill", "KV Pool Utilisation",
    unit="%", higher_is_better=None, normal_range=(10, 85),
    description="Fraction of L1 HBM KV token pool occupied. >85% → offload/eviction begins.",
    formula=(
-       "SGLang  : sglang:full_token_usage  (0–1)\n"
-       "vLLM    : vllm:gpu_cache_usage_perc  (0–1)\n"
+       "SGLang  : sglang_full_token_usage  (0–1)\n"
+       "vLLM    : sglang_kv_used_tokens / configured KV token capacity  (0–1)\n"
        "TRT-LLM : used_num_blocks / max_num_blocks"
    ),
    sources=["sglang", "vllm", "tensorrt-llm"],
@@ -413,7 +413,7 @@ _r("hicache_fill", "HiCache L2 DRAM Fill (SGLang)",
    category="inference", subcategory="kv_cache", section="§B",
    unit="%", higher_is_better=None,
    description="SGLang: fraction of L2 hicache DRAM KV pool in use.",
-   formula="sglang:hicache_host_used_tokens / hicache_host_total_tokens × 100",
+   formula="sglang_hicache_host_used_tokens / hicache_host_total_tokens × 100",
    sources=["sglang"],
    related=["kv_pool_fill", "kvb_offload_rate"],
    profiler_field="hicache_fill_pct")
@@ -433,7 +433,7 @@ _r("kvb_offload_rate", "KV Block Offload Rate L1→L2",
    description="Rate KV tokens offload from L1 HBM to L2 DRAM hicache. "
                "Non-zero → KV pool pressure.",
    formula=(
-       "rate(sglang:backuped_tokens_total[W])\n"
+       "rate(sglang_backuped_tokens_total[W])\n"
        "offload_BW_Bps = rate × kv_bytes_per_token"
    ),
    sources=["sglang"],
@@ -448,7 +448,7 @@ _r("kvb_onboard_rate", "KV Block Onboard Rate L2→L1",
    category="inference", subcategory="kv_movement", section="§B25",
    unit="tok/s", higher_is_better=None,
    description="Rate KV tokens onboard from L2 DRAM back to L1 HBM.",
-   formula="rate(sglang:prefetched_tokens_total[W])",
+   formula="rate(sglang_prefetched_tokens_total[W])",
    sources=["sglang"],
    related=["kvb_offload_rate", "cache_hit_rate"],
    profiler_field="kvb_onboard_tok_rate")
@@ -459,7 +459,7 @@ _r("kv_evict_rate", "KV Token Eviction Rate",
    category="inference", subcategory="kv_movement", section="§B21",
    unit="tok/s", higher_is_better=False,
    description="Rate KV tokens are permanently evicted from all cache tiers.",
-   formula="rate(sglang:evicted_tokens_total[W])",
+   formula="rate(sglang_evicted_tokens_total[W])",
    sources=["sglang"],
    related=["kvb_offload_rate", "kv_pool_fill"],
    profiler_field="kvb_evicted_tokens_total")
@@ -472,13 +472,13 @@ _r("kv_evict_rate", "KV Token Eviction Rate",
 _r("prompt_tokens", "Prompt Input Token Count",
    aliases=["prompt_tokens", "input_tokens", "prompt_length", "request_prompt_tokens",
              "average_prompt_len", "p90_prompt_len", "num_prompt_tokens",
-             "vllm:request_prompt_tokens", "tgi_request_input_length"],
+             "sglang_prompt_tokens_total deltas or histogram when exported", "tgi_request_input_length"],
    regex_patterns=[r"prompt_token", r"input_token", r"prompt_len",
                    r"input_len", r"prompt.*tokens"],
    category="inference", subcategory="tokens",
    unit="tokens", higher_is_better=None,
    description="Input prompt token count per request.",
-   formula="vllm:request_prompt_tokens histogram\nCSV: average_prompt_len / p90_prompt_len",
+   formula="sglang_prompt_tokens_total deltas or histogram when exported histogram\nCSV: average_prompt_len / p90_prompt_len",
    sources=["sglang", "vllm", "tgi", "vllm-bench", "llmperf"],
    related=["ttft", "cache_hit_rate"],
    profiler_field="sess_input_tok_mean")
@@ -486,25 +486,25 @@ _r("prompt_tokens", "Prompt Input Token Count",
 _r("generation_tokens", "Generation Output Token Count",
    aliases=["generation_tokens", "output_tokens", "output_length",
              "request_generation_tokens", "average_output_len",
-             "vllm:request_generation_tokens", "tgi_request_generated_tokens"],
+             "sglang_generation_tokens_total deltas or histogram when exported", "tgi_request_generated_tokens"],
    regex_patterns=[r"generation_token", r"output_token", r"output_len",
                    r"generated_token", r"completion_token"],
    category="inference", subcategory="tokens",
    unit="tokens", higher_is_better=None,
    description="Output token count per request.",
-   formula="vllm:request_generation_tokens\nCSV: average_output_len",
+   formula="sglang_generation_tokens_total deltas or histogram when exported\nCSV: average_output_len",
    sources=["sglang", "vllm", "tgi", "vllm-bench", "llmperf"],
    related=["tpot", "e2e_latency"],
    profiler_field="sess_output_tok_mean")
 
 _r("spec_decode_acceptance", "Speculative Decoding Acceptance Rate",
    aliases=["spec_decode_draft_acceptance_rate", "draft_acceptance",
-             "vllm:spec_decode_draft_acceptance_rate", "spec_decode_efficiency"],
+             "SGLang speculative decode acceptance metric, when exported", "spec_decode_efficiency"],
    regex_patterns=[r"spec_decode.*accept", r"draft.*accept", r"speculative.*accept"],
    category="inference", subcategory="spec_decoding",
    unit="%", higher_is_better=True, normal_range=(50, 95),
    description="Fraction of draft tokens accepted by verifier. Higher → more speedup.",
-   formula="vllm:spec_decode_draft_acceptance_rate  (0–1)",
+   formula="SGLang speculative decode acceptance metric, when exported  (0–1)",
    sources=["vllm", "sglang"],
    related=["gen_throughput", "tpot"],
    profiler_field="")
@@ -1051,7 +1051,7 @@ _r("ssd_rd_per_output_tok", "SSD Read Bytes per Output Token",
    description="SSD bytes read per generated output token. "
                "= kv_bytes_per_token when decode is fully SSD-bound.",
    formula=(
-       "rate(node_disk_read_bytes_total) / rate(sglang:generation_tokens_total)"
+       "rate(node_disk_read_bytes_total) / rate(sglang_generation_tokens_total)"
    ),
    sources=["derived"],
    related=["kv_bytes_per_token", "ssd_rd_bw"],
@@ -1369,22 +1369,22 @@ if __name__ == "__main__":
     print("\n── resolve() examples ──────────────────────────────────────────")
     tests = [
         # SGLang Prometheus
-        ("sglang:time_to_first_token_seconds_sum",   "ttft"),
-        ("sglang:gen_throughput",                    "gen_throughput"),
-        ("sglang:cache_hit_rate",                    "cache_hit_rate"),
-        ("sglang:num_running_reqs",                  "num_running_reqs"),
-        ("sglang:full_token_usage",                  "kv_pool_fill"),
-        ("sglang:backuped_tokens_total",             "kvb_offload_rate"),
-        ("sglang:prefetched_tokens_total",           "kvb_onboard_rate"),
-        ("sglang:evicted_tokens_total",              "kv_evict_rate"),
+        ("sglang_time_to_first_token_seconds_sum",   "ttft"),
+        ("sglang_gen_throughput",                    "gen_throughput"),
+        ("sglang_cache_hit_rate",                    "cache_hit_rate"),
+        ("sglang_num_running_reqs",                  "num_running_reqs"),
+        ("sglang_full_token_usage",                  "kv_pool_fill"),
+        ("sglang_backuped_tokens_total",             "kvb_offload_rate"),
+        ("sglang_prefetched_tokens_total",           "kvb_onboard_rate"),
+        ("sglang_evicted_tokens_total",              "kv_evict_rate"),
         # vLLM Prometheus
-        ("vllm:num_requests_running",                "num_running_reqs"),
-        ("vllm:gpu_cache_usage_perc",                "kv_pool_fill"),
-        ("vllm:time_to_first_token_seconds",         "ttft"),
-        ("vllm:num_requests_waiting",                "num_queue_reqs"),
+        ("sglang_num_running_reqs",                "num_running_reqs"),
+        ("sglang_kv_used_tokens / configured KV token capacity",                "kv_pool_fill"),
+        ("sglang_time_to_first_token_seconds",         "ttft"),
+        ("sglang_num_queue_reqs",                "num_queue_reqs"),
         ("vllm:prefix_cache_hit_rate",               "cache_hit_rate"),
-        ("vllm:num_preemptions_total",               "num_preemptions"),
-        ("vllm:spec_decode_draft_acceptance_rate",   "spec_decode_acceptance"),
+        ("sglang_num_preemptions_total (if exported)",               "num_preemptions"),
+        ("SGLang speculative decode acceptance metric, when exported",   "spec_decode_acceptance"),
         # TGI
         ("tgi_request_duration_seconds",             "e2e_latency"),
         ("tgi_request_prefill_duration_seconds",     "ttft"),

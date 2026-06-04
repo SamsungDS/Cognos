@@ -68,7 +68,7 @@ def _col(rows: list[dict], key: str) -> list[float]:
 
 def _find_col(rows: list[dict], partial: str) -> str | None:
     """First column name containing `partial`. Useful for label-suffixed
-    Prometheus metric column names like `sglang:cache_hit_rate`."""
+    Prometheus metric column names like `sglang_cache_hit_rate`; older colon-style aliases are normalized internally when present."""
     if not rows:
         return None
     for c in rows[0].keys():
@@ -226,37 +226,80 @@ def _layout(title: str, ylabel: str = "", ylabel2: str = "",
     return layout
 
 
-def _chart_sglang_throughput(sglang: list[dict]) -> dict | None:
-    """Chart: token throughput + cache hit rate."""
-    if not sglang:
+def _chart_sglang_throughput(sglang: list[dict], bench: dict | None = None, sglang_summary: dict | None = None) -> dict | None:
+    """Chart: token throughput + cache hit rate from SGLang/Prometheus.
+
+    Prometheus-only reports must not render benchmark fallback lines.  If the
+    explicit `sglang_gen_throughput` gauge is absent/all-zero, derive a flat throughput
+    line from SGLang cumulative token counters that were already summarized in
+    sglang_summary.json.  Cache hit uses the Prometheus-derived primary KPI from `sglang_cached_tokens_total`, `sglang_realtime_tokens_total{mode="prefill_cache"}`, and `sglang_realtime_tokens_total{mode="prefill_compute"}`
+    (cached_tokens/prompt_tokens or token-delta) when the gauge is absent/all-zero.
+    """
+    sglang_summary = sglang_summary or {}
+    if sglang:
+        ts = _col(sglang, "time_sec")
+    else:
+        dur = float(sglang_summary.get("collection_elapsed_s") or 60.0)
+        ts = [0.0, max(dur, 1.0)]
+    if not ts:
         return None
-    gen_col = _find_col(sglang, "gen_throughput")
-    cache_col = _find_col(sglang, "cache_hit_rate")
-    if not gen_col:
-        return None
-    ts = _col(sglang, "time_sec")
     xs = _ts_to_dates(ts)
+    gen_col = _find_col(sglang, "gen_throughput") if sglang else None
+    cache_col = _find_col(sglang, "cache_hit_rate") if sglang else None
+
     traces = []
-    traces.append({
-        "x": xs, "y": _col(sglang, gen_col),
-        "type": "scatter", "mode": "lines", "name": "Throughput (tok/s)",
-        "line": {"color": "#22d3ee", "width": 2.2},
-        "fill": "tozeroy", "fillcolor": "rgba(34,211,238,0.15)",
-        "hovertemplate": "<b>%{y:.1f}</b> tok/s<extra></extra>",
-    })
+    y_tp = _col(sglang, gen_col) if gen_col else []
+    if not any(v > 0 for v in y_tp):
+        prom_tps = 0.0
+        for key in ("ai_op_decode_tok_s", "gen_tp_active_mean", "gen_tp_mean", "decode_tok_s", "gen_tp_peak"):
+            try:
+                prom_tps = float(sglang_summary.get(key, 0) or 0)
+                if prom_tps > 0:
+                    break
+            except Exception:
+                prom_tps = 0.0
+        y_tp = [prom_tps for _ in ts] if prom_tps > 0 else []
+        tp_name = "Prometheus-derived output throughput (tok/s)"
+    else:
+        tp_name = "Throughput (tok/s)"
+    if y_tp:
+        traces.append({
+            "x": xs, "y": y_tp,
+            "type": "scatter", "mode": "lines", "name": tp_name,
+            "line": {"color": "#22d3ee", "width": 2.2},
+            "fill": "tozeroy", "fillcolor": "rgba(34,211,238,0.15)",
+            "hovertemplate": "<b>%{y:.2f}</b> tok/s<extra></extra>",
+        })
+
+    cache_vals = []
     if cache_col:
         cache_vals = [v * 100 if v <= 1 else v for v in _col(sglang, cache_col)]
+        if not any(v > 0 for v in cache_vals):
+            cache_vals = []
+    if not cache_vals:
+        prom_hit = 0.0
+        for key in ("cache_hit_rate_realtime_pct", "cache_hit_effective_prompt_pct", "cache_hit_cached_prompt_pct", "cache_hit_token_weighted_pct"):
+            try:
+                prom_hit = float(sglang_summary.get(key, 0) or 0)
+                if prom_hit > 0:
+                    break
+            except Exception:
+                prom_hit = 0.0
+        if prom_hit > 0:
+            cache_vals = [prom_hit for _ in ts]
+    if cache_vals:
         traces.append({
             "x": xs, "y": cache_vals,
-            "type": "scatter", "mode": "lines", "name": "Cache hit %",
+            "type": "scatter", "mode": "lines", "name": "Prometheus cache hit %",
             "line": {"color": "#a78bfa", "width": 2, "dash": "dot"},
             "yaxis": "y2",
             "hovertemplate": "<b>%{y:.1f}%</b> hit<extra></extra>",
         })
+    if not traces:
+        return None
     return {"data": traces,
             "layout": _layout("SGLang Token Throughput & Cache Hit Rate",
                               "Throughput (tok/s)", "Cache hit %", ts=ts)}
-
 
 def _derive_nvme_columns(rows: list[dict]) -> list[dict]:
     """Derive per-sample rate columns that are missing from the raw CSV.
@@ -470,14 +513,16 @@ def _chart_gpu(gpu: list[dict],
 
         # Sanity check: is the mem series all-zero?
         mem_all_zero = (not avg_mem) or (max(avg_mem) == 0.0)
-        if mem_all_zero and gpu_summary:
+        if mem_all_zero:
             # Try to recover the mean from the summary file. The chart
             # then renders as a flat line at that value, with an
             # annotation explaining the recovery.
-            summary_mb = float(gpu_summary.get("hbm_used_mb_mean", 0) or 0)
-            if summary_mb == 0:
-                summary_gb = float(gpu_summary.get("hbm_used_gb_mean", 0) or 0)
-                summary_mb = summary_gb * 1024.0
+            summary_mb = 0.0
+            if gpu_summary:
+                summary_mb = float(gpu_summary.get("hbm_used_mb_mean", 0) or 0)
+                if summary_mb == 0:
+                    summary_gb = float(gpu_summary.get("hbm_used_gb_mean", 0) or 0)
+                    summary_mb = summary_gb * 1024.0
             if summary_mb > 0:
                 avg_mem = [summary_mb] * n
                 mem_annotation = (
@@ -487,6 +532,8 @@ def _chart_gpu(gpu: list[dict],
                     f"Re-collect with the DCGM exporter exposing the "
                     f"FB_USED metric per GPU to see the time-series.")
             else:
+                # No CSV data, no summary fallback — at least make it visible
+                # that this is broken rather than silently rendering zeros.
                 mem_annotation = (
                     "⚠ HBM memory data not captured for this run "
                     "(DCGM_FI_DEV_FB_USED unavailable). Verify the DCGM "
@@ -806,7 +853,7 @@ def _chart_kv_tiers(sglang: list[dict]) -> dict | None:
     if storage_col:
         traces.append({"x": xs, "y": _col(sglang, storage_col),
                        "type": "scatter", "mode": "lines", "stackgroup": "kv",
-                       "name": "L3 Storage (SSD)",
+                       "name": "L3 Storage",
                        "line": {"color": "#f97316", "width": 0},
                        "fillcolor": "rgba(249,115,22,0.6)",
                        "hovertemplate": "<b>L3</b>: %{y:.0f} tok<extra></extra>"})
@@ -828,7 +875,7 @@ def _chart_kv_tiers(sglang: list[dict]) -> dict | None:
             resident = [max(b - p - l, 0.0) for b, p, l in zip(bk, pf, lb)]
             if any(resident):
                 traces.append({"x": xs, "y": resident, "type": "scatter",
-                               "mode": "lines", "name": "Approx L3 SSD resident tokens",
+                               "mode": "lines", "name": "Approx L3 Storage resident tokens",
                                "fill": "tozeroy", "fillcolor": "rgba(249,115,22,0.18)",
                                "line": {"color": "#f97316", "width": 2},
                                "hovertemplate": "<b>%{y:.0f}</b> approx resident tok<extra></extra>"})
@@ -837,6 +884,21 @@ def _chart_kv_tiers(sglang: list[dict]) -> dict | None:
                                "mode": "lines", "name": "Cumulative evicted tokens",
                                "line": {"color": "#ef4444", "width": 1.6, "dash": "dot"},
                                "hovertemplate": "<b>%{y:.0f}</b> evicted tok<extra></extra>"})
+            if any(lb):
+                traces.append({"x": xs, "y": lb, "type": "scatter",
+                               "mode": "lines", "name": "Cumulative L3 load-back tokens",
+                               "line": {"color": "#22c55e", "width": 1.8},
+                               "hovertemplate": "<b>%{y:.0f}</b> load-back tok<extra></extra>"})
+            if any(bk):
+                traces.append({"x": xs, "y": bk, "type": "scatter",
+                               "mode": "lines", "name": "Cumulative L3 backup tokens",
+                               "line": {"color": "#3b82f6", "width": 1.6, "dash": "dash"},
+                               "hovertemplate": "<b>%{y:.0f}</b> backup tok<extra></extra>"})
+            if any(pf):
+                traces.append({"x": xs, "y": pf, "type": "scatter",
+                               "mode": "lines", "name": "Cumulative L3 prefetched tokens",
+                               "line": {"color": "#f97316", "width": 1.6, "dash": "dot"},
+                               "hovertemplate": "<b>%{y:.0f}</b> prefetched tok<extra></extra>"})
     if not traces:
         return None
     return {"data": traces,
@@ -1948,6 +2010,8 @@ def _setup_section(setup: dict) -> str:
     rows = []
     for k, v in setup.items():
         key_l = str(k).lower()
+        if key_l == "instance":
+            continue
         klass = "setup-row-defaulted" if key_l in ("default profile", "defaulted fields") else ""
         rows.append(
             f'<tr class="{klass}"><td class="setup-key">{_html.escape(str(k))}</td>'
@@ -1975,7 +2039,7 @@ def _stack_overview_section() -> str:
   <div class="stack-cake">
     <div class="stack-row full a5"><b>A5 · Application Layer</b><span>benchmarks, prompt/output mix, TTFT, TPOT, P99 request latency</span></div>
     <div class="stack-row pair"><div class="a4"><b>A4 · Inference Runtime</b><span>SGLang scheduling, batching, KV$ eviction/load-back</span></div><div class="model"><b>AI Models</b><span>model config, dtype, context length, KV$/token</span></div></div>
-    <div class="stack-row trio"><div class="l1"><b>A3/A2/A1 · L1 HBM</b><span>CUDA kernels, GPU driver, HBM capacity/BW</span></div><div class="l2"><b>A3/A2/A1 · L2 DRAM</b><span>OS memory manager, page faults, swap, DRAM BW</span></div><div class="l3"><b>A3/A2/A1 · L3 SSD</b><span>OS block layer, NVMe driver, NAND, blktrace/biosnoop</span></div></div>
+    <div class="stack-row trio"><div class="l1"><b>A3/A2/A1 · L1 HBM</b><span>CUDA kernels, GPU driver, HBM capacity/BW</span></div><div class="l2"><b>A3/A2/A1 · L2 DRAM</b><span>OS memory manager, page faults, swap, DRAM BW</span></div><div class="l3"><b>A3/A2/A1 · L3 Storage</b><span>OS block layer, NVMe driver, NAND, blktrace/biosnoop</span></div></div>
   </div>
   <div class="caption">Report sections below are ordered to match this layered view.</div>
 </section>"""
@@ -2229,6 +2293,14 @@ def build_report(raw_dir: Path, out_html: Path,
         setup["Default profile"] = "SGLang DeepSeek-R1-70B HiCache reference launch; defaulted fields are assumed, not observed"
         setup["Defaulted fields"] = ", ".join(defaulted)
 
+    # Prefer a user-facing application/benchmark label from setup_details.json;
+    # do not show Prometheus instance as a setup row.
+    app_bench = (setup.get("Application / Benchmark") or setup.get("Application") or
+                 setup.get("Benchmark") or setup.get("benchmark") or setup.get("application") or
+                 setup.get("Instance") or sglang_sum.get("instance") or "unknown")
+    setup["Application / Benchmark"] = app_bench
+    setup.pop("Instance", None)
+
     # ── Bench summary (per-request benchmark output) ────────────────────────
     # Auto-discover bench_summary.{json,txt} in raw/; the parser handles
     # both the SGLang bench_serving plaintext and a JSON alias form.
@@ -2240,6 +2312,10 @@ def build_report(raw_dir: Path, out_html: Path,
             bench = parse_bench_summary(bench_path)
     except Exception:
         bench = {}
+    # Prometheus-only report mode: benchmark summaries are validation inputs for
+    # humans, not data sources for tiles/charts.  Keep this empty so the report
+    # does not create separate benchmark sections or benchmark fallback lines.
+    bench = {}
 
     # Percentile timeseries from Prometheus (P50/P90/P99 over time).
     # Written by amoprof.prometheus_source.fetch_from_prometheus when
@@ -2284,7 +2360,18 @@ def build_report(raw_dir: Path, out_html: Path,
                 return f"{(sum(active) / len(active)):.1f}", f"Active mean from {len(active)}/{len(vals)} gen_throughput samples"
             if vals:
                 return "0.0", "SGLang gen_throughput samples were present but all zero"
-        return "N/A", "No SGLang gen_throughput samples in this Prometheus window"
+        for key in ("gen_tp_peak", "rt_decode_tokens"):
+            try:
+                if key == "rt_decode_tokens":
+                    dur = float(sglang_sum.get("collection_elapsed_s") or 0)
+                    v = float(sglang_sum.get(key, 0) or 0) / max(dur, 1.0)
+                else:
+                    v = float(sglang_sum.get(key, 0) or 0)
+                if v > 0:
+                    return f"{v:.1f}", f"Prometheus-derived from sglang_summary.json:{key}"
+            except Exception:
+                pass
+        return "N/A", "No SGLang throughput gauge/counter samples in this Prometheus window"
 
     # KPI tiles
     kpis = []
@@ -2303,8 +2390,8 @@ def build_report(raw_dir: Path, out_html: Path,
                       "ms", "End-to-end request latency"),
             _kpi_tile("Throughput", _active_sglang_throughput()[0],
                       "tok/s" if _active_sglang_throughput()[0] != "N/A" else "", _active_sglang_throughput()[1]),
-            _kpi_tile("Cache hit", f"{sglang_sum.get('cache_hit_rate_realtime_pct', 0):.1f}",
-                      "%", "Realtime KV cache hit rate"),
+            _kpi_tile("Cache hit", f"{float(sglang_sum.get('cache_hit_rate_realtime_pct', 0) or 0):.1f}",
+                      "%", f"Prometheus-derived: {sglang_sum.get('cache_hit_calc_method', 'unknown')}"),
         ]
     if gpu_sum:
         kpis += [
@@ -2455,11 +2542,11 @@ def build_report(raw_dir: Path, out_html: Path,
     sections_html.append(_layer_header("layer-a4", "A4 · Inference Runtime + AI Model", "SGLang runtime behavior, model/cache configuration, token throughput, cache-hit, tier residency and KV eviction/load-back.", "#317bb8"))
     sections_html.append(_section("Token Throughput & Cache Hit Rate",
                                    "ch_thru",
-                                   _chart_sglang_throughput(sglang_ts),
+                                   _chart_sglang_throughput(sglang_ts, None, sglang_sum),
                                    "SGLang Prometheus scrape — hover any point for values"))
     sections_html.append(_section("KV Cache Tier Occupancy",
                                    "ch_kv_tiers", _chart_kv_tiers(sglang_ts),
-                                   "L1=Device(HBM), L2=Host(DRAM), L3=Storage(SSD) — stacked"))
+                                   "L1=Device(HBM), L2=Host(DRAM), L3=Storage — stacked"))
     sections_html.append(_section("KV Cache Eviction / Load-back / Backup Rates",
                                    "ch_evict", _chart_eviction(sglang_ts)))
 
@@ -2514,7 +2601,7 @@ def build_report(raw_dir: Path, out_html: Path,
                                    _dram_fig,
                                    "From AMDuProf PCM normalized timeseries or raw Data Fabric counters (1.2s interval)"))
 
-    sections_html.append(_layer_header("layer-l3", "A3/A2/A1 · L3 SSD / OS Block / NVMe", "Storage-tier behavior: NVMe driver, OS block layer, NAND, request-size/IAT distributions, stream bandwidth, and hot/cold regions.", "#a45714"))
+    sections_html.append(_layer_header("layer-l3", "A3/A2/A1 · L3 Storage / OS Block / NVMe", "Storage-tier behavior: NVMe driver, OS block layer, NAND, request-size/IAT distributions, stream bandwidth, and hot/cold regions.", "#a45714"))
     sections_html.append(_section("NVMe IOPS (Read / Write / Trim)",
                                    "ch_nvme_iops", _chart_nvme_iops(nvme_ts)))
     sections_html.append(_section("NVMe Bandwidth",

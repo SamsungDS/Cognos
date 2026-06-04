@@ -1160,7 +1160,7 @@ def _collect(args: argparse.Namespace) -> int:
         "smart": NvmeSmartMonitor(args.ssd_device, poll_s=max(int(args.interval_s), 1)),
         # Captures NVMe device capacity (/sys/block/<dev>/size) and HiCache
         # filesystem usage (df on hicache_path) into smart_summary.json so the
-        # L3 HiCache capacity tile and L3 NVMe SSD layer row populate.
+        # L3 HiCache capacity tile and L3 Storage layer row populate.
         "ssd_hw": SsdHardwareMonitor(args.ssd_device,
                                      hicache_path=args.hicache_path),
         "biolatency": BiolatencyCollector(args.ssd_device, duration_s=max(int(_effective_duration), 1)),
@@ -1327,7 +1327,7 @@ def _collect(args: argparse.Namespace) -> int:
 
         # Merge ssd_hw (device capacity + df-based HiCache filesystem usage)
         # into the smart_summary.json that the report reads, so the L3 HiCache
-        # capacity tile and L3 NVMe SSD layer text populate with df-derived
+        # capacity tile and L3 Storage layer text populate with df-derived
         # values without the report needing to read two separate files.
         if name == "ssd_hw":
             _smart_path = raw_dir / "smart_summary.json"
@@ -1434,6 +1434,11 @@ def _collect(args: argparse.Namespace) -> int:
     _interactive_path: "Path | None" = None
 
     if _do_static:
+        # Static report needs the benchmark summary before amoprof.py runs;
+        # otherwise the End Report cache-hit KPI and session charts fall back
+        # to Prometheus gauges/counters (for example 75% instead of the
+        # bench_serving aggregate 30.63%).
+        _copy_bench_summary(args, raw_dir)
         _copy_setup_details(args, raw_dir)
         report_path = out_dir / "amoprof_report.html"
         rc = _run_amoprof(raw_dir, report_path,
@@ -2419,7 +2424,7 @@ def _analyze(args) -> int:
     if rebuilt:
         log.info("Rebuilt canonical CSVs from JSONLs: %s", ", ".join(rebuilt))
 
-    # ── 3c. Refresh L3 NVMe device capacity + HiCache df stats ─────────────
+    # ── 3c. Refresh L3 Storage device capacity + HiCache df stats ─────────────
     # Re-snapshot df + /sys/block size from the analysis host. No-op if the
     # mount/device aren't reachable (cross-host analyze).
     if _refresh_smart_capacity(run_dir):
@@ -2449,6 +2454,11 @@ def _analyze(args) -> int:
 
     # ── 5. Static amoprof HTML report ───────────────────────────────────────
     if _do_static:
+        # Static report needs the benchmark summary before amoprof.py runs;
+        # otherwise the End Report cache-hit KPI and session charts fall back
+        # to Prometheus gauges/counters (for example 75% instead of the
+        # bench_serving aggregate 30.63%).
+        _copy_bench_summary(args, raw_dir)
         _copy_setup_details(args, raw_dir)
         report_path = report_dir / "amoprof_report.html"
         rc = _run_amoprof(raw_dir, report_path,
@@ -2700,6 +2710,8 @@ def _aggregate(args) -> int:
     report_dir = merged_run
 
     if _do_static:
+        # Ensure both static and interactive see the same benchmark summary.
+        _copy_bench_summary(args, merged_raw)
         report_path = report_dir / "amoprof_report.html"
         rc = _run_amoprof(merged_raw, report_path,
                           verbose=args.verbose,
@@ -2719,6 +2731,7 @@ def _aggregate(args) -> int:
 
     if _do_interactive:
         try:
+            _copy_bench_summary(args, merged_raw)
             from .report.interactive import build_report as _build_int
             int_path = report_dir / "amoprof_interactive.html"
             _build_int(merged_raw, int_path, run_label=run_label)
@@ -2887,7 +2900,7 @@ def _aggregate(args) -> int:
     if rebuilt:
         log.info("Rebuilt canonical CSVs from JSONLs: %s", ", ".join(rebuilt))
 
-    # ── 3c. Refresh L3 NVMe device capacity + HiCache df stats ─────────────
+    # ── 3c. Refresh L3 Storage device capacity + HiCache df stats ─────────────
     # Re-snapshot df + /sys/block size from the analysis host. No-op if the
     # mount/device aren't reachable (cross-host analyze).
     if _refresh_smart_capacity(run_dir):
@@ -2917,6 +2930,11 @@ def _aggregate(args) -> int:
 
     # ── 5. Static amoprof HTML report ───────────────────────────────────────
     if _do_static:
+        # Static report needs the benchmark summary before amoprof.py runs;
+        # otherwise the End Report cache-hit KPI and session charts fall back
+        # to Prometheus gauges/counters (for example 75% instead of the
+        # bench_serving aggregate 30.63%).
+        _copy_bench_summary(args, raw_dir)
         _copy_setup_details(args, raw_dir)
         report_path = report_dir / "amoprof_report.html"
         rc = _run_amoprof(raw_dir, report_path,

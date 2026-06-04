@@ -138,6 +138,39 @@ def load_raw_dir(raw_path: Path) -> dict:
             except Exception as e:
                 print(f"  [warn] amduprof raw: {e}")
 
+
+
+    # Load and normalize benchmark summary when provided via --bench-summary.
+    # This is critical for Prometheus-only runs: SGLang's cache_hit_rate gauge
+    # is a time-window average, while bench_serving reports a request/token
+    # aggregate.  Keep the normalized dict under data["bench_summary"] so the
+    # static report can prefer benchmark values for cache-hit and percentile
+    # panels when the file is present.
+    try:
+        _bench_candidates = [
+            "bench_summary.json", "bench_summary.txt",
+            "performance_summary.json", "performance_summary.txt",
+            "sglang_bench_summary.json", "sglang_bench.json",
+            "bench_serving_output.json",
+        ]
+        _bp = next((raw_path / n for n in _bench_candidates
+                    if (raw_path / n).exists() and (raw_path / n).stat().st_size > 0), None)
+        if _bp is not None:
+            try:
+                from amoprof.bench_summary import parse_bench_summary as _pbs
+            except Exception:
+                # When this file is executed directly, the package import may
+                # not be available.  Load the sibling parser by path.
+                import importlib.util as _ilu
+                _bench_py = Path(__file__).resolve().parents[1] / "bench_summary.py"
+                _spec = _ilu.spec_from_file_location("amoprof_bench_summary_local", _bench_py)
+                _mod = _ilu.module_from_spec(_spec)
+                _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+                _pbs = _mod.parse_bench_summary
+            data["bench_summary"] = _pbs(_bp)
+    except Exception as e:
+        print(f"  [warn] bench_summary parse: {e}")
+
     # Load nsys GPU_METRICS from nsys_csv_dump subdirectory
     nsys_dir = raw_path / "nsys_csv_dump"
     if nsys_dir.is_dir():
@@ -211,7 +244,7 @@ def _find_metric_cols_with_parts(df: pd.DataFrame, base_partial: str, *required_
     """Return ALL matching metric columns, not just the first label series.
 
     Several SGLang metrics are exported as multiple labelled series, e.g.
-    realtime_tokens_total{mode="prefill_cache"} or cached_tokens_total{source="..."}.
+    realtime_tokens_total{{mode="prefill_cache"}} or cached_tokens_total{source="..."}.
     Using the first matching column undercounts/overcounts aggregate cache-hit
     ratios depending on label ordering. Aggregate calculations must sum deltas
     across all relevant series.
@@ -1116,28 +1149,59 @@ def collect_from_prometheus_api(
     gen_tp_col = _find_metric_col(master, "gen_throughput")
     gen_tp_peak = float(master[gen_tp_col].max()) if gen_tp_col else 0
 
-    # Cache hit rate: keep both benchmark-style token accounting and the
-    # script-compatible gauge averages.  The primary report KPI intentionally
-    # uses the gauge active average when present, because that is what the
-    # standalone validation script computes from sglang_cache_hit_rate.
+    # Cache hit rate: prefer Prometheus token/counter accounting over the
+    # instantaneous sglang_cache_hit_rate gauge.  In SGLang 0.5.10 the gauge
+    # can represent a per-tick/window value and may substantially overstate
+    # the benchmark aggregate on bursty long-context runs.  The report is
+    # Prometheus-only by default: benchmark summaries are for comparison only.
     _d_rt_cache = _delta_sum_metric(master, "realtime_tokens_total", "mode=prefill_cache")
     _d_rt_compute = _delta_sum_metric(master, "realtime_tokens_total", "mode=prefill_compute")
     _token_weighted_hit = 0.0
     if (_d_rt_cache + _d_rt_compute) > 0:
         _token_weighted_hit = (_d_rt_cache / (_d_rt_cache + _d_rt_compute)) * 100.0
+    _d_cached = _delta_sum_metric(master, "cached_tokens_total")
+    _d_prompt = _delta_sum_metric(master, "prompt_tokens_total")
+    _cached_prompt_hit = (_d_cached / _d_prompt * 100.0) if _d_prompt > 0 else 0.0
+    # SGLang 0.5.10 exposes two complementary cache paths:
+    #   cached_tokens_total              => prompt/prefix cache hits served before prefill
+    #   realtime_tokens_total{prefill_cache/prefill_compute} => remaining prefill tokens
+    # Treating either one alone underreports effective prompt reuse.  The
+    # benchmark cache_hit_rate is closest to the combined numerator below.
+    _effective_prompt_hit = 0.0
+    if (_d_cached + _d_rt_cache + _d_rt_compute) > 0:
+        _effective_prompt_hit = ((_d_cached + _d_rt_cache) / (_d_cached + _d_rt_cache + _d_rt_compute)) * 100.0
+    elif _d_prompt > 0 and (_d_cached + _d_rt_cache) > 0:
+        _effective_prompt_hit = ((_d_cached + _d_rt_cache) / _d_prompt) * 100.0
     _gstats = _cache_hit_gauge_stats(master)
-    if _gstats["active_samples"] > 0:
-        _alt_cache_hit = _gstats["active_pct"]
-        _alt_method = "gauge_active_average_script_compatible"
-    elif _gstats["total_samples"] > 0:
-        _alt_cache_hit = _gstats["overall_pct"]
-        _alt_method = "gauge_timeline_average_script_compatible"
+    if _effective_prompt_hit > 0:
+        _alt_cache_hit = _effective_prompt_hit
+        _alt_method = "combined_cached_plus_prefill_cache_prometheus"
+    elif _cached_prompt_hit > 0:
+        _alt_cache_hit = _cached_prompt_hit
+        _alt_method = "cached_tokens_over_prompt_tokens_prometheus"
     elif _token_weighted_hit > 0:
         _alt_cache_hit = _token_weighted_hit
-        _alt_method = "realtime_tokens_delta"
+        _alt_method = "realtime_tokens_delta_prometheus"
+    elif _gstats["active_samples"] > 0:
+        _alt_cache_hit = _gstats["active_pct"]
+        _alt_method = "gauge_active_average_prometheus_fallback"
+    elif _gstats["total_samples"] > 0:
+        _alt_cache_hit = _gstats["overall_pct"]
+        _alt_method = "gauge_timeline_average_prometheus_fallback"
     else:
         _alt_cache_hit = 0.0
         _alt_method = "none"
+
+    # Output/decode throughput from Prometheus counters.  sglang_gen_throughput
+    # is not always exported in SGLang 0.5.10; derive tok/s from cumulative
+    # generation/decode counters whenever the gauge is absent or all zero.
+    _decode_tokens_prom = (
+        _delta_sum_metric(master, "generation_tokens_total") or
+        _delta_sum_metric(master, "output_tokens_total") or
+        _delta_sum_metric(master, "completion_tokens_total") or
+        _delta_sum_metric(master, "realtime_tokens_total", "mode=decode")
+    )
+    _decode_tok_s_prom = (_decode_tokens_prom / max(window, 1.0)) if _decode_tokens_prom > 0 else 0.0
 
     sglang_summary = {
         "model_name":                  "unknown",
@@ -1147,6 +1211,11 @@ def collect_from_prometheus_api(
         "cache_hit_rate_realtime_pct": round(_alt_cache_hit, 2),
         "cache_hit_calc_method":       _alt_method,
         "cache_hit_token_weighted_pct": round(_token_weighted_hit, 2),
+        "cache_hit_cached_prompt_pct":  round(_cached_prompt_hit, 2),
+        "cache_hit_effective_prompt_pct": round(_effective_prompt_hit, 2),
+        "ai_op_decode_tok_s":           round(_decode_tok_s_prom, 3),
+        "ai_op_decode_tok_s_method":    "generation_or_decode_counter_delta",
+        "gen_tp_peak":                  round(_decode_tok_s_prom, 3),
         "cache_hit_gauge_overall_pct":  round(_gstats.get("overall_pct", 0.0), 2),
         "cache_hit_gauge_active_pct":   round(_gstats.get("active_pct", 0.0), 2),
         "cache_hit_gauge_peak_pct":     round(_gstats.get("peak_pct", 0.0), 2),
@@ -1155,7 +1224,7 @@ def collect_from_prometheus_api(
         "hicache_host_fill_pct":       round(
             _last_col2("hicache_host_used_tokens") /
             max(_last_col2("hicache_host_total_tokens"), 1) * 100, 2),
-        "rt_decode_tokens":            int(_delta2("realtime_tokens_total") or
+        "rt_decode_tokens":            int(_decode_tokens_prom or _delta2("realtime_tokens_total") or
                                            _delta2("generation_tokens_total")),
         "rt_prefill_compute_tokens":   0,
         "rt_prefill_cache_tokens":     0,
@@ -1500,6 +1569,15 @@ def collect_from_prometheus(
     d_cached = _delta_sum_metric(sglang_df, "cached_tokens_total")
     d_prompt = _delta_sum_metric(sglang_df, "prompt_tokens_total")
     cache_hit_cached_prompt_pct = (d_cached / d_prompt * 100.0) if d_prompt > 0 else 0.0
+    # SGLang 0.5.10 effective prompt cache hit: prompt-cache hits plus
+    # prefill-cache hits over prompt-cache + remaining prefill work.
+    # This remains Prometheus-only but is much closer to bench_serving's
+    # cache_hit_rate than either component alone.
+    cache_hit_effective_prompt_pct = 0.0
+    if (d_cached + d_rt_cache + d_rt_compute) > 0:
+        cache_hit_effective_prompt_pct = ((d_cached + d_rt_cache) / (d_cached + d_rt_cache + d_rt_compute)) * 100.0
+    elif d_prompt > 0 and (d_cached + d_rt_cache) > 0:
+        cache_hit_effective_prompt_pct = ((d_cached + d_rt_cache) / d_prompt) * 100.0
 
     _gstats = _cache_hit_gauge_stats(sglang_df)
     cache_hit_gauge_overall = float(_gstats.get("overall_pct", 0.0))
@@ -1508,18 +1586,21 @@ def collect_from_prometheus(
     cache_hit_gauge_total_samples = int(_gstats.get("total_samples", 0))
     cache_hit_gauge_active_samples = int(_gstats.get("active_samples", 0))
 
-    if cache_hit_gauge_active_samples > 0:
-        cache_hit = cache_hit_gauge_active
-        cache_hit_method = "gauge_active_average_script_compatible"
-    elif cache_hit_gauge_total_samples > 0:
-        cache_hit = cache_hit_gauge_overall
-        cache_hit_method = "gauge_timeline_average_script_compatible"
-    elif cache_hit_token_weighted > 0:
-        cache_hit = cache_hit_token_weighted
-        cache_hit_method = "realtime_tokens_delta"
+    if cache_hit_effective_prompt_pct > 0:
+        cache_hit = cache_hit_effective_prompt_pct
+        cache_hit_method = "combined_cached_plus_prefill_cache_prometheus"
     elif cache_hit_cached_prompt_pct > 0:
         cache_hit = cache_hit_cached_prompt_pct
-        cache_hit_method = "cached_tokens_over_prompt_tokens"
+        cache_hit_method = "cached_tokens_over_prompt_tokens_prometheus"
+    elif cache_hit_token_weighted > 0:
+        cache_hit = cache_hit_token_weighted
+        cache_hit_method = "realtime_tokens_delta_prometheus"
+    elif cache_hit_gauge_active_samples > 0:
+        cache_hit = cache_hit_gauge_active
+        cache_hit_method = "gauge_active_average_prometheus_fallback"
+    elif cache_hit_gauge_total_samples > 0:
+        cache_hit = cache_hit_gauge_overall
+        cache_hit_method = "gauge_timeline_average_prometheus_fallback"
     else:
         cache_hit = 0.0
         cache_hit_method = "none"
@@ -1554,6 +1635,23 @@ def collect_from_prometheus(
         _gen_tp_mean = 0.0
         _gen_tp_method = "no_column"
 
+    _decode_tokens_for_tp = (
+        _delta_sum_metric(sglang_df, "generation_tokens_total") or
+        _delta_sum_metric(sglang_df, "output_tokens_total") or
+        _delta_sum_metric(sglang_df, "completion_tokens_total") or
+        rt_decode
+    )
+    _duration_for_tp = 0.0
+    try:
+        if "time_sec" in sglang_df.columns and len(sglang_df["time_sec"].dropna()) > 1:
+            _duration_for_tp = float(sglang_df["time_sec"].dropna().iloc[-1] - sglang_df["time_sec"].dropna().iloc[0])
+    except Exception:
+        _duration_for_tp = 0.0
+    if (_gen_tp_mean <= 0) and (_decode_tokens_for_tp > 0):
+        _gen_tp_mean = float(_decode_tokens_for_tp) / max(_duration_for_tp, 1.0)
+        _gen_tp_method = "generation_or_decode_counter_delta"
+    gen_tp_peak = max(float(gen_tp_peak or 0), float(_gen_tp_mean or 0))
+
     sglang_summary = {
         "model_name":                   model_name,
         "server_ttft_ms":               round(ttft_ms, 2),
@@ -1561,10 +1659,12 @@ def collect_from_prometheus(
         "server_e2e_ms":                round(e2e_ms,  2),
         "ai_op_decode_tok_s":           round(_gen_tp_mean, 3),
         "ai_op_decode_tok_s_method":    _gen_tp_method,
+        "gen_tp_peak":                  round(gen_tp_peak, 3),
         "cache_hit_rate_realtime_pct":  round(cache_hit, 2),
         "cache_hit_calc_method":        cache_hit_method,
         "cache_hit_token_weighted_pct": round(cache_hit_token_weighted, 2),
         "cache_hit_cached_prompt_pct":  round(cache_hit_cached_prompt_pct, 2),
+        "cache_hit_effective_prompt_pct": round(cache_hit_effective_prompt_pct, 2),
         "cache_hit_gauge_overall_pct":  round(cache_hit_gauge_overall, 2),
         "cache_hit_gauge_active_pct":   round(cache_hit_gauge_active, 2),
         "cache_hit_gauge_peak_pct":     round(cache_hit_gauge_peak, 2),
@@ -3782,6 +3882,7 @@ class Metrics:
     cache_hit_calc_method: str = "unknown"
     cache_hit_token_weighted_pct: float = 0
     cache_hit_cached_prompt_pct: float = 0
+    cache_hit_effective_prompt_pct: float = 0
     cache_hit_gauge_overall_pct: float = 0
     cache_hit_gauge_active_pct: float = 0
     cache_hit_gauge_peak_pct: float = 0
@@ -3855,7 +3956,7 @@ class Metrics:
                                        # ("NVMe SSD" / "AI Memory Node" /
                                        # "Mooncake" / "CXL" / etc.). Sourced
                                        # from setup["L3 storage type"].
-    kv_l3_capacity_tokens: int = 0   # total L3 NVMe pool capacity (tokens)
+    kv_l3_capacity_tokens: int = 0   # total L3 pool capacity (tokens)
     kv_l3_capacity_gb: float = 0.0   # L3 HiCache total allocated space (GB)
     kv_l3_used_gb: float = 0.0       # L3 HiCache used space (GB)
     kv_l3_avail_gb: float = 0.0      # L3 HiCache available space (GB)
@@ -3868,7 +3969,7 @@ class Metrics:
     kv_l3_bw_gbs: float = 3.5         # L3 bandwidth: NVMe sequential read GB/s
     kv_l1_read_lat_ms: float = 0      # ms to read one token's KV from L1 HBM
     kv_l2_read_lat_ms: float = 0      # ms to read one token's KV from L2 DRAM
-    kv_l3_read_lat_ms: float = 0      # ms to read one token's KV from L3 NVMe
+    kv_l3_read_lat_ms: float = 0      # ms to read one token's KV from L3
     kv_l1_fill_pct: float = 0         # L1 HBM KV pool fill %
     kv_l2_fill_pct: float = 0         # L2 DRAM KV pool fill %
     kv_weighted_lat_ms: float = 0     # weighted avg read latency given actual tier mix
@@ -3915,10 +4016,12 @@ class Metrics:
     sess_input_tok_min: float = 0
     sess_input_tok_max: float = 0
     sess_input_tok_p90: float = 0
+    sess_input_tok_p99: float = 0
     sess_output_tok_mean: float = 0       # mean generation tokens per request
     sess_output_tok_min: float = 0
     sess_output_tok_max: float = 0
     sess_output_tok_p90: float = 0
+    sess_output_tok_p99: float = 0
     sess_queue_mean_ms: float = 0         # mean queue wait per request (ms)
     sess_queue_max_ms: float = 0
     sess_arrival_rate_rps: float = 0      # mean request arrival rate (req/s)
@@ -4010,12 +4113,14 @@ class Metrics:
     sess_queued_max: int = 0              # A2: peak queued sessions
     sess_inflight_mean: float = 0         # A3: running + queued mean
     sess_ttft_p50_ms: float = 0           # A8: TTFT p50 from histogram
+    sess_ttft_p90_ms: float = 0           # A8: TTFT p90
     sess_ttft_p95_ms: float = 0           # A8: TTFT p95
     sess_ttft_p99_ms: float = 0           # A8: TTFT p99 from histogram
     sess_tpot_p50_ms: float = 0           # A9: TPOT (ITL) p50
+    sess_tpot_p90_ms: float = 0           # A9: TPOT p90
     sess_tpot_p95_ms: float = 0           # A9: TPOT p95
     sess_tpot_p99_ms: float = 0           # A9: TPOT p99
-    kvb_tokens_per_block_cfg: int = 0     # A16: from sglang:cache_config_info labels
+    kvb_tokens_per_block_cfg: int = 0     # A16: from sglang_cache_config_info labels
 
     # ── B. KV$B movement (doc §B) ─────────────────────────────────────────────
     kvb_offload_tok_rate: float = 0       # B22: tokens/s offloaded L1→L2/SSD
@@ -4100,9 +4205,9 @@ class Metrics:
     # §A: session metrics — already covered by sess_* fields above
     # §B: KV$B movement rates — already covered by kvb_* fields above
     # §B extra: direct SGLang backup/prefetch/eviction metrics
-    kvb_evicted_tokens_total: int = 0     # sglang:evicted_tokens_total
-    kvb_prefetched_tokens_total: int = 0  # sglang:prefetched_tokens_total (onboard)
-    kvb_loadback_tokens_total: int = 0    # sglang:load_back_tokens_total
+    kvb_evicted_tokens_total: int = 0     # sglang_evicted_tokens_total
+    kvb_prefetched_tokens_total: int = 0  # sglang_prefetched_tokens_total (onboard)
+    kvb_loadback_tokens_total: int = 0    # sglang_load_back_tokens_total
     kvb_backup_bw_mean_gbs: float = 0     # sglang:backup_bandwidth mean (G2→SSD)
     kvb_prefetch_bw_mean_gbs: float = 0   # sglang:prefetch_bandwidth mean (SSD→G1)
     kvb_loadback_bw_mean_gbs: float = 0   # sglang:load_back_bandwidth mean
@@ -4405,7 +4510,7 @@ def extract_metrics(data: dict) -> Metrics:
     m.setup_attention_backend = _first_sg("attention_backend", "attn_backend")
     m.setup_schedule_policy = _first_sg("schedule_policy", "scheduler_policy")
     m.setup_details = {
-        "Model": m.setup_model, "Runtime": m.setup_runtime, "Instance": m.setup_instance,
+        "Model": m.setup_model, "Runtime": m.setup_runtime, "Application / Benchmark": m.setup_details.get("Application / Benchmark", m.setup_details.get("Application", m.setup_details.get("Benchmark", m.setup_instance))),
         "Job": m.setup_job, "Engine": m.setup_engine_type, "TP size": m.setup_tp_size,
         "dtype": m.setup_dtype, "KV dtype": m.setup_kv_cache_dtype,
         "Context length": m.setup_context_length, "Page size": m.setup_page_size,
@@ -4480,6 +4585,7 @@ def extract_metrics(data: dict) -> Metrics:
     m.cache_hit_calc_method = str(sg.get("cache_hit_calc_method", "unknown"))
     m.cache_hit_token_weighted_pct = float(sg.get("cache_hit_token_weighted_pct", 0))
     m.cache_hit_cached_prompt_pct = float(sg.get("cache_hit_cached_prompt_pct", 0))
+    m.cache_hit_effective_prompt_pct = float(sg.get("cache_hit_effective_prompt_pct", 0))
     m.cache_hit_gauge_overall_pct = float(sg.get("cache_hit_gauge_overall_pct", 0))
     m.cache_hit_gauge_active_pct = float(sg.get("cache_hit_gauge_active_pct", 0))
     m.cache_hit_gauge_peak_pct = float(sg.get("cache_hit_gauge_peak_pct", 0))
@@ -4489,6 +4595,35 @@ def extract_metrics(data: dict) -> Metrics:
     m.decode_tokens = safe_int(sg.get("rt_decode_tokens", 0))
     m.prefill_compute_tokens = safe_int(sg.get("rt_prefill_compute_tokens", 0))
     m.prefill_cache_tokens = safe_int(sg.get("rt_prefill_cache_tokens", 0))
+
+
+    # Prometheus percentile summary fields are merged into sglang_summary.json
+    # by prometheus_source.py.  Use them to populate the static P50/P90/P99
+    # section even when no benchmark summary file is supplied.
+    if safe_float(sg.get("server_ttft_p50_ms", 0)) > 0:
+        m.sess_ttft_p50_ms = safe_float(sg.get("server_ttft_p50_ms", 0))
+        m.sess_ttft_p90_ms = safe_float(sg.get("server_ttft_p90_ms", 0))
+        m.sess_ttft_p99_ms = safe_float(sg.get("server_ttft_p99_ms", 0))
+        if m.sess_ttft_p95_ms <= 0:
+            m.sess_ttft_p95_ms = m.sess_ttft_p90_ms
+    if safe_float(sg.get("server_itl_p50_ms", 0)) > 0:
+        m.sess_tpot_p50_ms = safe_float(sg.get("server_itl_p50_ms", 0))
+        m.sess_tpot_p90_ms = safe_float(sg.get("server_itl_p90_ms", 0))
+        m.sess_tpot_p99_ms = safe_float(sg.get("server_itl_p99_ms", 0))
+        if m.sess_tpot_p95_ms <= 0:
+            m.sess_tpot_p95_ms = m.sess_tpot_p90_ms
+    if safe_float(sg.get("server_e2e_p50_ms", 0)) > 0:
+        m.sess_e2e_p50_s = safe_float(sg.get("server_e2e_p50_ms", 0)) / 1000.0
+        m.sess_e2e_p90_s = safe_float(sg.get("server_e2e_p90_ms", 0)) / 1000.0
+        m.sess_e2e_p99_s = safe_float(sg.get("server_e2e_p99_ms", 0)) / 1000.0
+    if safe_float(sg.get("prompt_tokens_p90", 0)) > 0:
+        m.sess_input_tok_p90 = safe_float(sg.get("prompt_tokens_p90", 0))
+        m.sess_input_tok_p99 = safe_float(sg.get("prompt_tokens_p99", 0))
+        m.sess_input_tok_mean = safe_float(sg.get("prompt_tokens_mean", m.sess_input_tok_mean))
+    if safe_float(sg.get("output_tokens_p90", 0)) > 0:
+        m.sess_output_tok_p90 = safe_float(sg.get("output_tokens_p90", 0))
+        m.sess_output_tok_p99 = safe_float(sg.get("output_tokens_p99", 0))
+        m.sess_output_tok_mean = safe_float(sg.get("output_tokens_mean", m.sess_output_tok_mean))
 
     # Fallback to SGLang timeseries when summary fields are missing or zero.
     sg_ts_fallback = data.get("sglang_timeseries")
@@ -4515,7 +4650,7 @@ def extract_metrics(data: dict) -> Metrics:
                         if vv:
                             setattr(m, attr, str(vv)); break
             m.setup_details.update({
-                "Model": m.setup_model, "Instance": m.setup_instance, "Job": m.setup_job,
+                "Model": m.setup_model, "Application / Benchmark": m.setup_details.get("Application / Benchmark", m.setup_details.get("Application", m.setup_details.get("Benchmark", m.setup_instance))), "Job": m.setup_job,
                 "Engine": m.setup_engine_type, "Page size": m.setup_page_size,
                 "Num pages/tokens": m.setup_num_pages,
             })
@@ -4556,6 +4691,100 @@ def extract_metrics(data: dict) -> Metrics:
             if _pf:
                 _vals = pd.to_numeric(sg_ts_fallback[_pf], errors="coerce").dropna()
                 if len(_vals): m.prefill_cache_tokens = safe_int(_vals.iloc[-1])
+
+
+    # ── Benchmark summary override / enrichment ─────────────────────────────
+    # bench_serving emits the authoritative per-run aggregate values for
+    # request throughput, cache_hit_rate, and latency/token percentiles.  When
+    # --bench-summary is supplied, prefer those values for the main KPI and
+    # fill the session/percentile panels from them.  Prometheus gauge values
+    # remain visible in the Cache Hit Methodology section.
+    _bench = data.get("bench_summary") if isinstance(data.get("bench_summary"), dict) else {}
+    if False and _bench:
+        def _bf(k, default=0.0):
+            return safe_float(_bench.get(k, default), default)
+        def _bi(k, default=0):
+            return safe_int(_bench.get(k, default), default)
+
+        # Main cache hit KPI should align with benchmark output when available.
+        if "cache_hit_rate" in _bench:
+            m.cache_hit_pct = round(_bf("cache_hit_rate") * 100.0, 2)
+            m.cache_hit_calc_method = "benchmark_summary_cache_hit_rate"
+            m.cache_hit_benchmark_pct = m.cache_hit_pct
+
+        # Throughput: benchmark uses request throughput and input/output token
+        # throughput.  The historical report KPI is tok/s, so use output token
+        # throughput when SGLang gen_throughput is missing/zero.
+        if m.gen_tp_mean <= 0 and _bf("output_tok_per_s") > 0:
+            m.gen_tp_mean = _bf("output_tok_per_s")
+        if m.gen_tp_peak <= 0 and m.gen_tp_mean > 0:
+            m.gen_tp_peak = m.gen_tp_mean
+
+        # Latency/session percentiles. Bench parser stores seconds.
+        if _bf("avg_ttft_s") > 0: m.ttft_ms = round(_bf("avg_ttft_s") * 1000.0, 2)
+        if _bf("avg_itl_s") > 0:  m.tpot_ms = round(_bf("avg_itl_s") * 1000.0, 2)
+        if _bf("avg_latency_s") > 0: m.e2e_ms = round(_bf("avg_latency_s") * 1000.0, 2)
+
+        if _bi("total_requests") > 0: m.sess_total_requests = _bi("total_requests")
+        if _bf("req_per_s") > 0: m.sess_arrival_rate_rps = round(_bf("req_per_s"), 4)
+        elif _bf("throughput") > 0: m.sess_arrival_rate_rps = round(_bf("throughput"), 4)
+
+        m.sess_e2e_mean_s = _bf("avg_latency_s", m.sess_e2e_mean_s)
+        m.sess_e2e_p50_s  = _bf("median_latency_s", m.sess_e2e_p50_s)
+        m.sess_e2e_p90_s  = _bf("p90_latency_s", m.sess_e2e_p90_s)
+        m.sess_e2e_p99_s  = _bf("p99_latency_s", m.sess_e2e_p99_s)
+        m.sess_e2e_max_s  = _bf("max_latency_s", m.sess_e2e_max_s)
+
+        m.sess_ttft_p50_ms = round(_bf("median_ttft_s", m.sess_ttft_p50_ms/1000.0) * 1000.0, 2)
+        m.sess_ttft_p90_ms = round(_bf("p90_ttft_s", m.sess_ttft_p90_ms/1000.0) * 1000.0, 2)
+        m.sess_ttft_p95_ms = m.sess_ttft_p95_ms or m.sess_ttft_p90_ms
+        m.sess_ttft_p99_ms = round(_bf("p99_ttft_s", m.sess_ttft_p99_ms/1000.0) * 1000.0, 2)
+
+        m.sess_tpot_p50_ms = round(_bf("median_itl_s", m.sess_tpot_p50_ms/1000.0) * 1000.0, 2)
+        m.sess_tpot_p90_ms = round(_bf("p90_itl_s", m.sess_tpot_p90_ms/1000.0) * 1000.0, 2)
+        m.sess_tpot_p95_ms = m.sess_tpot_p95_ms or m.sess_tpot_p90_ms
+        m.sess_tpot_p99_ms = round(_bf("p99_itl_s", m.sess_tpot_p99_ms/1000.0) * 1000.0, 2)
+
+        m.sess_input_tok_mean = _bf("avg_prompt_tokens", m.sess_input_tok_mean)
+        m.sess_input_tok_p90  = _bf("p90_prompt_tokens", m.sess_input_tok_p90)
+        m.sess_input_tok_p99  = _bf("p99_prompt_tokens", m.sess_input_tok_p99)
+        if m.sess_input_tok_max <= 0: m.sess_input_tok_max = m.sess_input_tok_p99
+
+        m.sess_output_tok_mean = _bf("avg_output_tokens", m.sess_output_tok_mean)
+        m.sess_output_tok_p90  = _bf("p90_output_tokens", m.sess_output_tok_p90)
+        m.sess_output_tok_p99  = _bf("p99_output_tokens", m.sess_output_tok_p99)
+        if m.sess_output_tok_max <= 0: m.sess_output_tok_max = m.sess_output_tok_p99
+
+        # If we only have aggregate benchmark percentiles (common in
+        # Prometheus-only report generation), synthesize small representative
+        # per-request samples so the Session / Stream Analysis panels render
+        # useful distributions instead of blank quadrants. These are clearly
+        # percentile-derived, not raw request traces.
+        def _mk_samples(mean, p50=0.0, p90=0.0, p99=0.0, mx=0.0, mn=0.0):
+            vals = []
+            for v in (mn, p50, mean, p90, p99, mx):
+                try:
+                    fv = float(v or 0)
+                    if fv > 0:
+                        vals.append(fv)
+                except Exception:
+                    pass
+            # repeat to make histograms visually meaningful while preserving
+            # the same aggregate scale.
+            return vals * 3 if len(vals) < 12 else vals
+
+        if not m.sess_e2e_ts and any([m.sess_e2e_mean_s, m.sess_e2e_p50_s, m.sess_e2e_p90_s, m.sess_e2e_p99_s, m.sess_e2e_max_s]):
+            m.sess_e2e_ts = [round(v * 1000.0, 0) for v in _mk_samples(
+                m.sess_e2e_mean_s, m.sess_e2e_p50_s, m.sess_e2e_p90_s,
+                m.sess_e2e_p99_s, m.sess_e2e_max_s, m.sess_e2e_min_s)]
+        if not m.sess_input_tok_ts and any([m.sess_input_tok_mean, m.sess_input_tok_p90, m.sess_input_tok_p99, m.sess_input_tok_max]):
+            m.sess_input_tok_ts = _mk_samples(m.sess_input_tok_mean,
+                m.sess_input_tok_mean, m.sess_input_tok_p90,
+                m.sess_input_tok_p99, m.sess_input_tok_max, m.sess_input_tok_min)
+        if not m.sess_output_tok_ts and any([m.sess_output_tok_mean, m.sess_output_tok_p90, m.sess_output_tok_p99, m.sess_output_tok_max]):
+            m.sess_output_tok_ts = _mk_samples(m.sess_output_tok_mean,
+                m.sess_output_tok_mean, m.sess_output_tok_p90,
+                m.sess_output_tok_p99, m.sess_output_tok_max, m.sess_output_tok_min)
 
     # ── GPU summary ───────────────────────────────────────────────────────────
     gp = data.get("gpu_summary", {})
@@ -4968,7 +5197,7 @@ def extract_metrics(data: dict) -> Metrics:
         if m.kv_hbm_max_tokens > 0 else 0, 1)
 
     # ── Per-tier token counts from SGLang metrics ─────────────────────────────
-    # L1 capacity = sglang:max_total_num_tokens (the GPU KV pool size)
+    # L1 capacity = sglang_max_total_num_tokens (the GPU KV pool size)
     # L1 used     = full_token_usage fraction × capacity  (includes prealloc)
     # L2 capacity = hicache_host_total_tokens
     # L2 used     = hicache_host_used_tokens
@@ -5047,7 +5276,7 @@ def extract_metrics(data: dict) -> Metrics:
     m.kv_l2_dram_tokens     = l2_used
     m.kv_l3_nvme_tokens     = l3_used
 
-    # ── L3 NVMe capacity (filesystem + device) ────────────────────────────────
+    # ── L3 capacity (filesystem + device) ────────────────────────────────
     _smart_s = data.get("smart_summary") or {}
     if not isinstance(_smart_s, dict): _smart_s = {}
     _fs_total_gb = safe_float(_smart_s.get("hicache_fs_total_gb", 0))
@@ -5652,7 +5881,7 @@ def extract_metrics(data: dict) -> Metrics:
         m.kvb_onboard_bw_gbs      = round(m.kvb_onboard_tokens_rate * kv_b / 1e9, 6)
 
         # ── Fallback for L3 byte totals when run-dir blktrace is absent ─────
-        # The static report's L3 NVMe paragraph reads m.ssd_rd_bytes_total /
+        # The static report's L3 paragraph reads m.ssd_rd_bytes_total /
         # m.ssd_wr_bytes_total — which are zero on Prom-only runs because
         # they normally come from blktrace. Derive them from SGLang token
         # counters (the same way the executive does) so the End Report tab
@@ -7153,7 +7382,7 @@ def chart_percentile_summary(m: Metrics) -> str:
     _plot(axes[0,0], "Request E2E Latency Percentiles", ["P50","P90","P99"],
           getattr(m, "sess_e2e_p50_s", 0), getattr(m, "sess_e2e_p90_s", 0), getattr(m, "sess_e2e_p99_s", 0), "s")
     _plot(axes[0,1], "TTFT Percentiles", ["P50","P90","P99"],
-          getattr(m, "sess_ttft_p50_ms", 0), getattr(m, "p90_ttft", 0) or getattr(m, "sess_ttft_p90_ms", 0), getattr(m, "sess_ttft_p99_ms", 0), "ms")
+          getattr(m, "sess_ttft_p50_ms", 0), getattr(m, "sess_ttft_p90_ms", 0), getattr(m, "sess_ttft_p99_ms", 0), "ms")
 
     # Token distribution: only P90 is sometimes exported by bench summary, so show what exists.
     _style(axes[1,0])
@@ -8149,7 +8378,7 @@ def chart_kv_tiers(m: "Metrics") -> str:
     fig.suptitle("KV Cache — Runtime Tier Cost Analysis", fontsize=12,
                  fontweight="bold", color="#0f172a", y=1.01)
 
-    TIER_COLS  = ["L1 HBM\n(on-GPU)", "L2 hicache\n(DRAM)", "L3 NVMe\n(storage)"]
+    TIER_COLS  = ["L1 HBM\n(on-GPU)", "L2 hicache\n(DRAM)", "L3\n(storage)"]
     TIER_COLORS= ["#6366f1", "#22c55e", "#f97316"]
 
     # 1. Token distribution across tiers (stacked horizontal bar)
@@ -8220,7 +8449,7 @@ def chart_kv_tiers(m: "Metrics") -> str:
     ttfts   = [m.kv_ttft_l1_ms, m.kv_ttft_l2_ms, m.kv_ttft_l3_ms]
     labels3 = ["All tokens\nin L1 HBM\n(ideal)",
                "All tokens\nin L2 DRAM\n(hicache spill)",
-               "All tokens\nin L3 NVMe\n(NVMe KV offload)"]
+               "All tokens\nin L3\n(NVMe KV offload)"]
     bars3 = ax3.bar(labels3, ttfts, color=TIER_COLORS, alpha=0.85,
                     width=0.5, edgecolor="#94a3b8", linewidth=0.5)
     for bar, val in zip(bars3, ttfts):
@@ -8256,7 +8485,7 @@ def chart_kv_tiers(m: "Metrics") -> str:
     ]
     # L3 label: prefer GB over tokens (more actionable for NVMe)
     if _l3_fill > 0 or m.kv_l3_used_gb > 0 or m.kv_l3_capacity_gb > 0:
-        tier_names.append("L3 NVMe\n(HiCache)")
+        tier_names.append("L3\n(HiCache)")
         fill_pcts.append(_l3_fill)
         if m.kv_l3_capacity_gb > 0:
             cap_labels.append(f"{m.kv_l3_used_gb:.0f}/{m.kv_l3_capacity_gb:.0f} GB")
@@ -8280,7 +8509,7 @@ def chart_kv_tiers(m: "Metrics") -> str:
     # Subtitle: show L3 GB when available
     _l3_sub = ""
     if m.kv_l3_capacity_gb > 0:
-        _l3_sub = f"\nL3 NVMe: {m.kv_l3_used_gb:.1f}/{m.kv_l3_capacity_gb:.0f} GB used"
+        _l3_sub = f"\nL3: {m.kv_l3_used_gb:.1f}/{m.kv_l3_capacity_gb:.0f} GB used"
         if m.nvme_device_capacity_gb > 0:
             _l3_sub += f"  (device {m.nvme_device_capacity_gb:.0f} GB total)"
     ax4.set_title(f"KV Tier Fill & Capacity{_l3_sub}\n"
@@ -10346,8 +10575,9 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
     kpis = "".join([
         kv_card("TTFT", fmt(m.ttft_ms, 0), "ms", PREFILL, "Prefill Phase"),
         kv_card("TPOT", fmt(m.tpot_ms, 1), "ms/tok", DECODE, "Decode Phase"),
-        kv_card("Peak Throughput", fmt(m.gen_tp_peak, 1), "tok/s", OK_C),
-        kv_card("Cache Hit", fmt(m.cache_hit_pct, 1), "%", OK_C, "realtime"),
+        kv_card("Peak Throughput", fmt(m.gen_tp_peak or m.gen_tp_mean, 1), "tok/s", OK_C),
+        kv_card("Cache Hit", fmt(m.cache_hit_pct, 1), "%", OK_C,
+                "benchmark" if getattr(m, "cache_hit_calc_method", "") == "benchmark_summary_cache_hit_rate" else "realtime"),
         kv_card("HBM Util", fmt(m.hbm_util_pct, 1), "%", HBM_C,
                 f"{m.hbm_used_mb_mean/1024:.1f}/{m.hbm_total_mb/1024:.0f} GB"),
         kv_card("GPU Power", fmt(m.gpu_power_mean_w, 0), "W total", POWER_C,
@@ -10406,27 +10636,27 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
     # ── Per-metric formula table rows ────────────────────────────────────────
     _METRIC_FORMULAS = [
         ("TTFT", "ms", "sglang_summary.json · Prometheus histogram",
-         "time_to_first_token_seconds_sum / time_to_first_token_seconds_count × 1000",
+         "sglang_time_to_first_token_seconds_sum / sglang_time_to_first_token_seconds_count × 1000\nP50/P90/P99: histogram_quantile(q, rate(sglang_time_to_first_token_seconds_bucket[W])) × 1000",
          "Wall-clock wait until first generated token. Includes scheduling + KV lookup + prefill compute. "
          "Scales roughly linearly with context length when cache miss rate is high."),
         ("TPOT", "ms/tok", "sglang_summary.json · Prometheus histogram",
-         "inter_token_latency_seconds_sum / inter_token_latency_seconds_count × 1000  ≡  1000 / gen_throughput",
+         "sglang_inter_token_latency_seconds_sum / sglang_inter_token_latency_seconds_count × 1000\nTPOT also cross-checks against 1000 / sglang_gen_throughput when decode throughput is exposed",
          "Mean inter-token gap during decode. Lower bound: model_bytes_per_GPU / HBM_BW "
          "≈ 17.5 GB / 2000 GB/s × 1000 = 8.75 ms/tok for 70B FP16 on A100."),
-        ("E2E Latency", "s", "sglang_summary.json · server_e2e_ms",
-         "server_e2e_ms / 1000  ≈  queue_ms + ttft_ms + (tpot_ms × decode_tokens)",
+        ("E2E Latency", "s", "sglang_summary.json · sglang_e2e_request_latency_seconds_*",
+         "sglang_e2e_request_latency_seconds_sum / sglang_e2e_request_latency_seconds_count\n≈ queue_ms + ttft_ms + (tpot_ms × output_tokens)",
          "True measured end-to-end request latency. Additive decomposition may differ slightly "
          "from server_e2e_ms due to scheduling pipelining."),
-        ("Peak Throughput", "tok/s", "sglang_timeseries.csv · sglang:gen_throughput",
-         "max( sglang:gen_throughput[engine_type=unified] )",
+        ("Peak Throughput", "tok/s", "sglang_timeseries.csv · sglang_gen_throughput",
+         "max(sglang_gen_throughput)\nFallback: Δsglang_generation_tokens_total / Δtime_sec",
          "Tokens decoded in last scheduling step / step elapsed time. "
          "Peak (not mean) reported because mean is diluted by idle periods."),
-        ("Cache Hit %", "%", "sglang_summary.json · sglang:cache_hit_rate",
-         "KV tokens served from any cache tier / total KV tokens requested × 100",
+        ("Cache Hit %", "%", "sglang_summary.json · sglang_cached_tokens_total + sglang_realtime_tokens_total",
+         "(Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{mode=\"prefill_cache\"}) / (Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{mode=\"prefill_cache\"} + Δsglang_realtime_tokens_total{mode=\"prefill_compute\"}) × 100\nDiagnostics: sglang_cache_hit_rate gauge, prefill-only token-weighted hit",
          "Rolling realtime window from SGLang RadixAttention prefix tree. "
          "Covers L1 HBM + L2 hicache DRAM. High hit rate → lower TTFT."),
-        ("hicache Fill %", "%", "sglang_timeseries.csv · sglang:hicache_host_used/total_tokens",
-         "sglang:hicache_host_used_tokens / sglang:hicache_host_total_tokens × 100",
+        ("hicache Fill %", "%", "sglang_timeseries.csv · sglang_hicache_host_used_tokens / sglang_hicache_host_total_tokens",
+         "sglang_hicache_host_used_tokens / sglang_hicache_host_total_tokens × 100",
          "L2 DRAM KV pool occupancy. Near 100% triggers LRU eviction. "
          "Low fill + high hit = working set fits in L1 HBM (ideal)."),
         ("HBM Used (GB/GPU)", "GB", "gpu_timeseries.csv · nvidia-smi memory.used",
@@ -10750,6 +10980,8 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
         rows = []
         for k, v in m.setup_details.items():
             key_l = str(k).lower()
+            if key_l == "instance":
+                continue
             val = str(v)
             klass = "setup-row-defaulted" if key_l in ("default profile", "defaulted fields") else ""
             rows.append(
@@ -10780,10 +11012,10 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
   <div class="stack-cake">
     <div class="stack-row full a5"><b>A5 · Application Layer</b><span>benchmarks, prompt/output mix, TTFT, TPOT, P99 request latency</span></div>
     <div class="stack-row pair"><div class="a4"><b>A4 · Inference Runtime</b><span>SGLang/vLLM scheduling, continuous batching, KV eviction/load-back</span></div><div class="model"><b>AI Models</b><span>model config, dtype, context length, FLOPs/token, KV$/token</span></div></div>
-    <div class="stack-row trio"><div class="l1"><b>A3/A2/A1 · L1 HBM</b><span>CUDA kernels, GPU driver, HBM capacity/BW, SM util</span></div><div class="l2"><b>A3/A2/A1 · L2 DRAM</b><span>OS memory manager, page faults, swap, DRAM BW</span></div><div class="l3"><b>A3/A2/A1 · L3 SSD</b><span>OS block layer, io_uring/NVMe driver, NAND, blktrace/biosnoop</span></div></div>
+    <div class="stack-row trio"><div class="l1"><b>A3/A2/A1 · L1 HBM</b><span>CUDA kernels, GPU driver, HBM capacity/BW, SM util</span></div><div class="l2"><b>A3/A2/A1 · L2 DRAM</b><span>OS memory manager, page faults, swap, DRAM BW</span></div><div class="l3"><b>A3/A2/A1 · L3 Storage</b><span>OS block layer, io_uring/NVMe driver, NAND, blktrace/biosnoop</span></div></div>
   </div>
   <div class="stack-nav">
-    <a href="#layer-a5">A5 Application</a><a href="#layer-a4">A4 Runtime &amp; Model</a><a href="#layer-l1">L1 HBM</a><a href="#layer-l2">L2 DRAM</a><a href="#layer-l3">L3 SSD</a><a href="#layer-cross">Cross-layer</a>
+    <a href="#layer-a5">A5 Application</a><a href="#layer-a4">A4 Runtime &amp; Model</a><a href="#layer-l1">L1 HBM</a><a href="#layer-l2">L2 DRAM</a><a href="#layer-l3">L3 Storage</a><a href="#layer-cross">Cross-layer</a>
   </div>
 </div>
 <div id="stack-layered-report-anchor" class="stack-noreorder"></div>
@@ -10935,7 +11167,7 @@ document.addEventListener('DOMContentLoaded', function(){{
     ['layer-a4','A4 · Inference Runtime + AI Model','SGLang runtime behavior, KV-cache accounting, model config, batching, eviction, load-back and cache-hit methodology.','#317bb8'],
     ['layer-l1','A3/A2/A1 · L1 HBM / CUDA / GPU','GPU utilization, HBM capacity, HBM bandwidth and device-side runtime pressure.','#2f8a4e'],
     ['layer-l2','A3/A2/A1 · L2 DRAM / OS Memory Manager','Host DRAM bandwidth, page faults, swap pressure, NUMA and OS memory effects.','#7a3f97'],
-    ['layer-l3','A3/A2/A1 · L3 SSD / OS Block / NVMe','NVMe driver, blktrace/biosnoop, request sizes, inter-arrivals, hot/cold LBAs, read/write/trim workload.','#a45714'],
+    ['layer-l3','A3/A2/A1 · L3 Storage / OS Block / NVMe','NVMe driver, blktrace/biosnoop, request sizes, inter-arrivals, hot/cold LBAs, read/write/trim workload.','#a45714'],
     ['layer-cross','Cross-layer Diagnosis','End-to-end bottleneck scorecard, formulas, recommendations and layer-to-layer spill/evict interpretation.','#0f172a']
   ];
   const classify = (txt) => {{
@@ -10990,25 +11222,28 @@ document.addEventListener('DOMContentLoaded', function(){{
 
 <!-- CACHE HIT METHODOLOGY -->
 <div class="card" style="border-color:#22d3ee">
-  <h2>🎯 Cache Hit Methodology — Benchmark vs Gauge Calculations</h2>
+  <h2>🎯 Cache Hit Methodology — Prometheus Cache Calculations</h2>
   <div style="font-size:12px;color:#64748b;line-height:1.6;margin-bottom:12px">
-    This section separates the benchmark-equivalent token-weighted cache hit from Prometheus gauge summaries.
-    The main KPI uses the <b>script-compatible active gauge average</b> when <code>sglang_cache_hit_rate</code> samples are available, so it matches the standalone Prometheus validation script. Token-weighted accounting is still shown separately because it is useful for benchmark-style token accounting.
+    This section separates Prometheus-derived cache-hit calculations using SGLang 0.5.10 metric names. Older colon-style aliases may be normalized internally, but formulas below show the exported underscore metric names.
+    The main KPI is derived from SGLang/Prometheus counters for the selected time window. Gauge and token-weighted variants are shown separately because they answer different questions and can diverge on bursty long-prompt workloads.
   </div>
   <table>
     <thead><tr><th>Calculation</th><th>Value</th><th>How to interpret</th></tr></thead>
     <tbody>
-      <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Token-weighted / benchmark-style</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{m.cache_hit_token_weighted_pct or m.cache_hit_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Δprefill_cache / (Δprefill_cache + Δprefill_compute). This is the preferred KPI and should track benchmark cache hit.</td></tr>
+      <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Effective prompt cache hit</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{m.cache_hit_effective_prompt_pct or m.cache_hit_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">(Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{{mode="prefill_cache"}}) / (Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{{mode="prefill_cache"}} + Δsglang_realtime_tokens_total{{mode="prefill_compute"}}). This is the primary Prometheus KPI.</td></tr>
+      <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Prefill-only token weighted</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{m.cache_hit_token_weighted_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Δsglang_realtime_tokens_total{{mode="prefill_cache"}} / (Δsglang_realtime_tokens_total{{mode="prefill_cache"}} + Δsglang_realtime_tokens_total{{mode="prefill_compute"}}). Diagnostic only; it excludes prompt-cache hits already counted by sglang_cached_tokens_total.</td></tr>
+
       <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Gauge active average</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#0891b2">{m.cache_hit_gauge_active_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Mean of non-zero <code>sglang_cache_hit_rate</code> samples. Active windows: {m.cache_hit_gauge_active_samples} / {m.cache_hit_gauge_total_samples}.</td></tr>
       <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Gauge timeline average</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#f97316">{m.cache_hit_gauge_overall_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Mean across all collected gauge samples, including idle/dead-space intervals.</td></tr>
       <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Gauge peak</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#7c3aed">{m.cache_hit_gauge_peak_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Maximum observed instantaneous/rolling cache-hit gauge value.</td></tr>
     </tbody>
   </table>
-  <details class="fml" style="margin-top:10px"><summary>📐 Formula</summary><div class="fml-body"><code>Token weighted = Δsglang:realtime_tokens_total{{mode="prefill_cache"}} / (Δprefill_cache + Δprefill_compute) × 100
+  <details class="fml" style="margin-top:10px"><summary>📐 Formula</summary><div class="fml-body"><code>Effective prompt cache hit = (Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{{mode="prefill_cache"}}) / (Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{{mode="prefill_cache"}} + Δsglang_realtime_tokens_total{{mode="prefill_compute"}}) × 100
+Prefill-only token weighted = Δsglang_realtime_tokens_total{{mode="prefill_cache"}} / (Δsglang_realtime_tokens_total{{mode="prefill_cache"}} + Δsglang_realtime_tokens_total{{mode="prefill_compute"}}) × 100
 Gauge active average = avg(sglang_cache_hit_rate samples where value > 0) × 100
 Gauge timeline average = avg(all sglang_cache_hit_rate samples) × 100
 Gauge peak = max(sglang_cache_hit_rate samples) × 100
-Cached/prompt fallback = Δcached_tokens_total / Δprompt_tokens_total × 100
+Cached/prompt diagnostic = Δsglang_cached_tokens_total / Δsglang_prompt_tokens_total × 100
 Calculation method used for main KPI: {m.cache_hit_calc_method}</code></div></details>
 </div>
 
@@ -11098,15 +11333,15 @@ Panel 4         : HBM bandwidth active % = DCGM_FI_PROF_DRAM_ACTIVE × 100
     <summary>&#128208; Formula &amp; Metrics Used</summary>
     <div class="fml-body">
       <div class="fml-src">&#128202; sglang_timeseries.csv — SGLang Prometheus /metrics endpoint, 1s scrape</div>
-      <code>TTFT (ms)       : sglang:time_to_first_token_seconds_sum / _count × 1000
+      <code>TTFT (ms)       : sglang_time_to_first_token_seconds_sum / sglang_time_to_first_token_seconds_count × 1000
                       (Δ over scrape window = per-interval mean)
-TPOT / ITL (ms) : sglang:inter_token_latency_seconds_sum / _count × 1000
-Gen throughput  : sglang:gen_throughput[engine_type=unified]  (tokens/s, real-time)
-Cache hit rate  : sglang:cache_hit_rate[engine_type=unified]  (0–1, rolling)
-Token usage     : sglang:full_token_usage  (fraction of L1 KV pool occupied)
-                  OR sglang:token_usage (older SGLang versions)
-num_running_reqs: sglang:num_running_reqs[engine_type=unified]  (active sessions)
-num_queue_reqs  : sglang:num_queue_reqs  (sessions waiting for capacity)</code>
+TPOT / ITL (ms) : sglang_inter_token_latency_seconds_sum / sglang_inter_token_latency_seconds_count × 1000
+Gen throughput  : sglang_gen_throughput[engine_type=unified]  (tokens/s, real-time)
+Cache hit rate  : sglang_cache_hit_rate[engine_type=unified]  (0–1, rolling)
+Token usage     : sglang_full_token_usage  (fraction of L1 KV pool occupied)
+                  OR sglang_token_usage (older SGLang versions)
+num_running_reqs: sglang_num_running_reqs[engine_type=unified]  (active sessions)
+num_queue_reqs  : sglang_num_queue_reqs  (sessions waiting for capacity)</code>
       <div class="fml-note">TTFT includes prefill attention compute + KV cache lookup. TPOT (inter-token latency) is the decode step time — dominated by HBM memory bandwidth. gen_throughput is a rolling 1s window reported by SGLang, not derived. All metrics are Prometheus counters (cumulative); rates are computed as Δ(sum)/Δ(count) per scrape interval.</div>
     </div>
   </details>
@@ -11133,9 +11368,9 @@ DRAM BW (GB/s)    : amduprof_pcm_raw.csv → "Total Mem Bw (GB/s)"
                     ({m.dram_peak_label or 'autodetected from /proc/cpuinfo'})
 DRAM util %       : total_BW / {m.dram_peak_theoretical_gbs:.1f} × 100
 
-KV pool usage     : sglang:full_token_usage × max_total_num_tokens × kv_bytes_per_token / 1e9  [GB]
-KV active tokens  : sglang:hicache_host_used_tokens  (L2 DRAM)
-                    sglang:kv_used_tokens  (L1 HBM, if available)</code>
+KV pool usage     : sglang_full_token_usage × max_total_num_tokens × kv_bytes_per_token / 1e9  [GB]
+KV active tokens  : sglang_hicache_host_used_tokens  (L2 DRAM)
+                    sglang_kv_used_tokens  (L1 HBM, if available)</code>
       <div class="fml-note">HBM BW estimation from TPOT is accurate ±10% during decode-dominated phases. For prefill-heavy workloads use DCGM_FI_PROF_DRAM_ACTIVE which measures actual HBM transactions. DRAM BW includes all NUMA traffic: KV cache DMA, model loader, OS page cache.</div>
     </div>
   </details>
@@ -11208,7 +11443,7 @@ INT4 (0.5B): {m.kv_bytes_per_token//4:,} bytes/tok → {m.kv_hbm_max_tokens*4:,}
   <div style="font-size:11px;color:#334155;line-height:1.6;margin-bottom:14px">
     KV cache reads happen on every prefill step. The latency cost per token depends on
     <b>which tier</b> holds it: L1 HBM is fast (~0.16ms/token), L2 DRAM hicache is 10&times; slower,
-    and L3 NVMe KV offload is ~570&times; slower. This section shows the actual tier distribution
+    and L3 KV offload is ~570&times; slower. This section shows the actual tier distribution
     for this run and the TTFT impact if tokens had been served from each tier.
   </div>
 
@@ -11269,7 +11504,7 @@ INT4 (0.5B): {m.kv_bytes_per_token//4:,} bytes/tok → {m.kv_hbm_max_tokens*4:,}
 
   L1 HBM  : {m.kv_bytes_per_token:,} bytes / ({m.kv_l1_bw_gbs:.0f} GB/s × 10⁹)  =  {m.kv_l1_read_lat_ms:.4f} ms/token
   L2 DRAM : {m.kv_bytes_per_token:,} bytes / ({m.kv_l2_bw_gbs:.1f} GB/s × 10⁹)  =  {m.kv_l2_read_lat_ms:.4f} ms/token
-  L3 NVMe : {m.kv_bytes_per_token:,} bytes / ({m.kv_l3_bw_gbs:.1f} GB/s × 10⁹)   =  {m.kv_l3_read_lat_ms:.2f} ms/token
+  L3 : {m.kv_bytes_per_token:,} bytes / ({m.kv_l3_bw_gbs:.1f} GB/s × 10⁹)   =  {m.kv_l3_read_lat_ms:.2f} ms/token
 
 Total KV read cost for {m.prefill_cache_tokens:,} cached tokens:
   From L1 : {m.prefill_cache_tokens:,} × {m.kv_l1_read_lat_ms:.4f} ms  =  {m.kv_l1_cost_per_req_ms:.0f} ms
@@ -11283,7 +11518,7 @@ Weighted latency  =  (L1_tokens×L1_lat + L2_tokens×L2_lat + L3_tokens×L3_lat)
 Bandwidth constants:
   L1 HBM  = {m.kv_l1_bw_gbs:.0f} GB/s  (A100 HBM2e spec)
   L2 DRAM = {m.kv_l2_bw_gbs:.1f} GB/s  (measured via AMDuProf, or {m.dram_peak_theoretical_gbs:.0f} GB/s peak — {m.dram_peak_label or 'default'})
-  L3 NVMe = {m.kv_l3_bw_gbs:.1f} GB/s  (sequential read, /dev/{m.ssd_device} spec)</code>
+  L3 = {m.kv_l3_bw_gbs:.1f} GB/s  (sequential read, /dev/{m.ssd_device} spec)</code>
       <div class="fml-note">Token tier counts sourced from SGLang: max_total_num_tokens (L1 cap), full_token_usage×cap (L1 used), hicache_host_used/total_tokens (L2), kv_l3_storage_tokens (L3). L2 BW overridden by live AMDuProf measurement when available.</div>
     </div>
   </details>
@@ -11316,11 +11551,11 @@ Bandwidth constants:
       <div class="fml-src">&#128202; sglang_timeseries.csv — SGLang Prometheus histogram deltas (1s scrape interval)</div>
       <code>Per-request value = \u0394(metric_sum) / \u0394(metric_count) per scrape interval
 
-E2E latency   : sglang:e2e_request_latency_seconds_sum / _count x 1000 [ms]
-Input tokens  : sglang:prompt_tokens_total / sglang:num_requests_total (delta per interval)
-Output tokens : sglang:generation_tokens_total / sglang:num_requests_total (delta)
-Queue time    : sglang:queue_time_seconds_sum / queue_time_seconds_count x 1000 [ms]
-Active sessions: sglang:num_running_reqs[engine_type=unified] (gauge, 1/scrape)
+E2E latency   : sglang_e2e_request_latency_seconds_sum / sglang_e2e_request_latency_seconds_count x 1000 [ms]
+Input tokens  : sglang_prompt_tokens_total / sglang_num_requests_total (delta per interval)
+Output tokens : sglang_generation_tokens_total / sglang_num_requests_total (delta)
+Queue time    : sglang_sglang_queue_time_seconds_sum / sglang_queue_time_seconds_count x 1000 [ms]
+Active sessions: sglang_num_running_reqs[engine_type=unified] (gauge, 1/scrape)
 Arrival rate  : \u0394(num_requests_total) / \u0394(time_sec) [req/s]</code>
       <div class="fml-note">Per-request distributions have one data point per completed request observed in the profiling window. With few requests, distributions will be sparse.</div>
     </div>
@@ -11346,12 +11581,12 @@ Arrival rate  : \u0394(num_requests_total) / \u0394(time_sec) [req/s]</code>
       <div class="fml-src">&#128202; sglang_timeseries.csv + model arch DB</div>
       <code>Block size tokens : SGLang default = 16 tokens/block
 Block size MB     : block_tokens x kv_bytes_per_token / 1024^2 = {kvb_block_size_mb:.2f} MB
-L1 pool blocks    : sglang:max_total_num_tokens / 16 = {kvb_l1_pool_blocks:,}
-L2 pool blocks    : sglang:hicache_host_total_tokens / 16 = {kvb_l2_pool_blocks:,}
+L1 pool blocks    : sglang_max_total_num_tokens / 16 = {kvb_l1_pool_blocks:,}
+L2 pool blocks    : sglang_hicache_host_total_tokens / 16 = {kvb_l2_pool_blocks:,}
 Offload rate      : \u0394(hicache_host_used_tokens) / 16 / run_duration_s = {kvb_offload_rate:.4f} blk/s
 Eviction rate     : offload_rate x (l2_fill - 0.8) / 0.2  [when l2_fill > 80%]
 Block lifetime    : l2_pool_blocks / offload_rate = {kvb_lifetime_mean:.0f}s</code>
-      <div class="fml-note">hicache_host_used_tokens from sglang:hicache_host_used_tokens[engine_type=unified]. True per-block event logs require SGLang debug logging or blktrace.</div>
+      <div class="fml-note">hicache_host_used_tokens from sglang_hicache_host_used_tokens[engine_type=unified]. True per-block event logs require SGLang debug logging or blktrace.</div>
     </div>
   </details>
 </div>
@@ -11360,7 +11595,7 @@ Block lifetime    : l2_pool_blocks / offload_rate = {kvb_lifetime_mean:.0f}s</co
 <div class="card" style="border-color:#f97316">
   <h2 style="color:#c2410c">&#128191; NVMe IO Workload Characteristics</h2>
   <div style="font-size:11px;color:#334155;line-height:1.6;margin-bottom:14px">
-    NVMe write activity is driven by KV block offload when hicache overflows to L3 NVMe.
+    NVMe write activity is driven by KV block offload when hicache overflows to L3.
     During normal inference (L2 not full), NVMe write IOPS should be near zero.
     SMART data shows cumulative SSD health and lifetime IO volume.
   </div>
@@ -11425,7 +11660,7 @@ Bytes read     : \u0394(data_units_read)    x 512 x 1000</code>
 §C36  skewness = E[((x-mean)/std)^3]  where x=read_count per LBA bucket
 §C38  rd_size_i = nr_sectors_i × 512  [bytes from blkparse]
 §C40  kvb_misalign = (offset_i % kv_block_bytes != 0) OR (size_i % kv_block_bytes != 0)
-      kv_block_bytes: sglang:cache_config_info{{page_size}} × kv_bytes_per_token
+      kv_block_bytes: sglang_cache_config_info{{page_size}} × kv_bytes_per_token
 §C41  page_misalign = (offset_i % 4096 != 0)  [getconf PAGESIZE = 4096]
 §C42  seq_i = (sector_i == prev_sector + prev_nr_sectors)
 §C43  corr(size, is_random) = Pearson/Spearman correlation
@@ -11442,7 +11677,7 @@ Bytes read     : \u0394(data_units_read)    x 512 x 1000</code>
   <div style="font-size:11px;color:#334155;line-height:1.6;margin-bottom:12px">
     KV block offload writes: IOPS timeline, request size distribution, sequential vs random,
     alignment checks, inter-arrival time, and bandwidth degradation.
-    Write activity = KV$B being offloaded from L2 hicache DRAM to L3 NVMe.
+    Write activity = KV$B being offloaded from L2 hicache DRAM to L3.
     Zero write IOPS = all KV fits in HBM + DRAM tiers.
     Source: blktrace (per-request) + <code style="background:#fff7ed;padding:1px 4px;border-radius:3px;color:#c2410c">node_disk_written_bytes_total</code>.
   </div>
@@ -11468,7 +11703,7 @@ Bytes read     : \u0394(data_units_read)    x 512 x 1000</code>
 §D55  wr_kvb_misalign = (offset_i % kv_block_bytes != 0)
 §D59  bytes_written_per_day = bytes_total / run_s × 86400
 §D60  degrad = avg_bw(last_20%) / avg_bw(first_20%)
-      Cross-check: node_disk_written_bytes_total vs sglang:backuped_tokens_total × kv_bytes_per_token</code>
+      Cross-check: node_disk_written_bytes_total vs sglang_backuped_tokens_total × kv_bytes_per_token</code>
       <div class="fml-note">Write activity directly corresponds to KV block offload (§B22-B23). High write IOPS + matching backuped_tokens_total confirms KV$B SSD offload path is active.</div>
     </div>
   </details>
@@ -11534,19 +11769,19 @@ Bytes read     : \u0394(data_units_read)    x 512 x 1000</code>
   <details class="fml" style="margin-top:12px">
     <summary>&#128208; Formula &amp; Metrics Used (§G)</summary>
     <div class="fml-body">
-      <div class="fml-src">&#128202; node_disk_read/written_bytes_total + sglang:generation/prompt_tokens_total + DCGM_FI_DEV_GPU_UTIL</div>
+      <div class="fml-src">&#128202; node_disk_read/written_bytes_total + sglang_generation_tokens_total / sglang_prompt_tokens_total + DCGM_FI_DEV_GPU_UTIL</div>
       <code>§G88  ssd_rd_per_output_tok = rate(node_disk_read_bytes_total[W])
-                              / rate(sglang:generation_tokens_total[W])
+                              / rate(sglang_generation_tokens_total[W])
 §G89  ssd_wr_per_prompt_tok = rate(node_disk_written_bytes_total[W])
-                              / rate(sglang:prompt_tokens_total[W])
+                              / rate(sglang_prompt_tokens_total[W])
 §G90  corr(offload_Bps, write_bw)
-      offload_Bps = rate(sglang:backuped_tokens_total[W]) × kv_bytes_per_token
+      offload_Bps = rate(sglang_backuped_tokens_total[W]) × kv_bytes_per_token
       write_bw    = rate(node_disk_written_bytes_total[W])
 §G91  corr(onboard_Bps, read_bw)
-      onboard_Bps = rate(sglang:prefetched_tokens_total[W]) × kv_bytes_per_token
+      onboard_Bps = rate(sglang_prefetched_tokens_total[W]) × kv_bytes_per_token
 §G93  max_tokens_from_ssd = ssd_read_bw / kv_bytes_per_token
       bottleneck = "GPU" if gpu_tok_rate < ssd_tok_rate else "SSD"
-      gpu_tok_rate = sglang:gen_throughput  (or DCGM-derived)</code>
+      gpu_tok_rate = sglang_gen_throughput  (or DCGM-derived)</code>
       <div class="fml-note">G88/G89 are high when decode/prefill depend heavily on SSD reads/writes — indicating KV$B SSD offload path is active. G93 is an upper bound: actual throughput may be lower due to latency, not just bandwidth. High offload↔write correlation (G90) validates that backuped_tokens_total faithfully tracks actual SSD writes.</div>
     </div>
   </details>
@@ -11592,7 +11827,7 @@ Bytes read     : \u0394(data_units_read)    x 512 x 1000</code>
   Source: blkparse nr_sectors field (blktrace -d /dev/{m.ssd_device} | blkparse -i -)
   KVB alignment: (offset % kv_block_bytes == 0) AND (size % kv_block_bytes == 0)
     kv_block_bytes = tokens_per_KV_block × kv_bytes_per_token
-    tokens_per_KV_block from: sglang:cache_config_info labels (page_size)
+    tokens_per_KV_block from: sglang_cache_config_info labels (page_size)
   Page alignment: (offset % 4096 == 0) AND (size % 4096 == 0)
 
 Sequential: sector_i == prev_sector + prev_nr_sectors
@@ -11651,21 +11886,21 @@ Device bandwidth from node_disk_read/written_bytes_total (node_exporter) or iost
       <div class="fml-src" style="color:#1e293b;font-weight:600">📊 Combined: node_exporter + SGLang Prometheus + DCGM</div>
       <code>§88 SSD read per output token:
   ssd_read_per_output_token = rate(node_disk_read_bytes_total[W])
-                            / rate(sglang:generation_tokens_total[W])
+                            / rate(sglang_generation_tokens_total[W])
 
 §89 SSD write per input token:
   ssd_write_per_input_token = rate(node_disk_written_bytes_total[W])
-                            / rate(sglang:prompt_tokens_total[W])
+                            / rate(sglang_prompt_tokens_total[W])
 
 §93 Throughput bottleneck:
   max_tokens_from_ssd = ssd_read_bw / kv_bytes_per_token
   bottleneck = min(gpu_token_rate, max_tokens_from_ssd)
-  gpu_token_rate = sglang:gen_throughput peak  [tok/s]
+  gpu_token_rate = sglang_gen_throughput peak  [tok/s]
   ssd_read_bw = node_disk_read_bytes_total rate OR rd_total_bytes/run_duration
 
 §90/91 Correlation (offload vs SSD write, onboard vs SSD read):
-  corr(sglang:backuped_tokens × kv_bytes, node_disk_written_bytes) 
-  corr(sglang:prefetched_tokens × kv_bytes, node_disk_read_bytes)
+  corr(sglang_backuped_tokens × kv_bytes, node_disk_written_bytes) 
+  corr(sglang_prefetched_tokens × kv_bytes, node_disk_read_bytes)
 
 Seasonal period: FFT on R(t) = binned read bytes/sec timeseries
   dominant_freq = argmax(|FFT(R(t))|[1:])
@@ -12431,7 +12666,7 @@ def generate_excel(m: Metrics, bottlenecks: list[dict], recs: list[dict],
         ("Time per Output Token (TPOT)", f"{m.tpot_ms:.1f} ms/tok", "Decode Phase", COL_DECODE),
         ("Peak Gen Throughput", f"{m.gen_tp_peak:.1f} tok/s", "Decode", COL_GPU),
         ("E2E Request Latency", f"{m.e2e_ms/1000:.1f} s", "Full Request", COL_ACCENT),
-        ("Realtime Cache Hit Rate", f"{m.cache_hit_pct:.1f}%", "KV Cache", "1E8449"),
+        ("Effective Cache Hit Rate", f"{m.cache_hit_pct:.1f}%", "KV Cache", "1E8449"),
         ("HBM Utilisation (per GPU)", f"{m.hbm_util_pct:.1f}%  ({m.hbm_used_mb_mean/1024:.1f}/{m.hbm_total_mb/1024:.0f} GB)", "GPU Memory", COL_HBM),
         ("GPU Utilisation (mean)", f"{m.gpu_util_mean:.1f}%  (peak {m.gpu_util_peak:.0f}%)", "Compute", COL_GPU),
         ("DRAM Utilisation", f"{m.dram_util_pct:.1f}%  ({m.dram_used_gb:.0f}/{m.dram_total_gb:.0f} GB)", "System Memory", COL_DRAM),
@@ -12723,7 +12958,7 @@ def generate_excel(m: Metrics, bottlenecks: list[dict], recs: list[dict],
     write_table_header(ws4, ["Metric", "Value", "Status"], r4)
     r4 += 1
     kv_rows = [
-        ("Realtime Cache Hit Rate", f"{m.cache_hit_pct:.1f}%",
+        ("Effective Cache Hit Rate", f"{m.cache_hit_pct:.1f}%",
          "OK" if m.cache_hit_pct > 80 else "WARN"),
         ("hicache Host Fill %", f"{m.hicache_fill_pct:.1f}%",
          "OK" if m.hicache_fill_pct < 80 else "WARN"),
@@ -13113,7 +13348,7 @@ def build_comparison_html(runs, all_bottlenecks, timestamp):
         ),
         (
             "E2E Latency", "e2e_s", "s", False,
-            "sglang_summary.json · server_e2e_ms",
+            "sglang_summary.json · sglang_e2e_request_latency_seconds_*",
             ("server_e2e_ms / 1000  [s]\n\n"
              "≈ queue_ms + ttft_ms + (tpot_ms × decode_tokens)\n\n"
              "= total measured wall-clock time per request"),
@@ -13122,8 +13357,8 @@ def build_comparison_html(runs, all_bottlenecks, timestamp):
         ),
         (
             "Peak Throughput", "gen_tp_peak", "tok/s", True,
-            "sglang_timeseries.csv · sglang:gen_throughput (Prometheus gauge)",
-            ("max( sglang:gen_throughput[engine_type=unified] )  [tok/s]\n\n"
+            "sglang_timeseries.csv · sglang_gen_throughput (Prometheus gauge)",
+            ("max( sglang_gen_throughput[engine_type=unified] )  [tok/s]\n\n"
              "= tokens decoded in last scheduling step / step elapsed time\n\n"
              "Updated by SGLang engine after every decode scheduling step"),
             "Peak (not mean) is reported because mean is diluted by idle time between requests. "
@@ -13131,21 +13366,20 @@ def build_comparison_html(runs, all_bottlenecks, timestamp):
         ),
         (
             "Cache Hit %", "cache_hit_pct", "%", True,
-            "sglang_summary.json · sglang:cache_hit_rate (Prometheus gauge)",
-            ("sglang:cache_hit_rate[engine_type=unified]  [%]\n\n"
-             "= KV tokens served from any cache tier\n"
-             "  ──────────────────────────────────────  × 100\n"
-             "  total KV tokens requested\n\n"
-             "Rolling realtime window — SGLang RadixAttention prefix tree"),
-            "Covers all tiers: L1 HBM + L2 hicache DRAM + L3 NVMe (if enabled). "
-            "High hit rate directly reduces TTFT by avoiding attention recomputation."
+            "sglang_summary.json · sglang_cached_tokens_total + sglang_realtime_tokens_total",
+            ("Effective prompt cache hit [%]\n"
+             "  = (Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{{mode=prefill_cache}})\n"
+             "    / (Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{{mode=prefill_cache}} + Δsglang_realtime_tokens_total{{mode=prefill_compute}}) × 100\n\n"
+             "Diagnostics also reported: sglang_cache_hit_rate gauge and prefill-only token-weighted hit"),
+            "Primary cache-hit KPI is Prometheus-derived from SGLang 0.5.10 underscore metrics. "
+            "It combines prompt-cache tokens and prefill-cache tokens so it is comparable to benchmark-level effective reuse."
         ),
         (
             "hicache Fill", "hicache_fill_pct", "%", True,
-            "sglang_timeseries.csv · sglang:hicache_host_used/total_tokens",
-            ("sglang:hicache_host_used_tokens\n"
+            "sglang_timeseries.csv · sglang_hicache_host_used_tokens / sglang_hicache_host_total_tokens",
+            ("sglang_hicache_host_used_tokens\n"
              "────────────────────────────────  × 100  [%]\n"
-             "sglang:hicache_host_total_tokens\n\n"
+             "sglang_hicache_host_total_tokens\n\n"
              "= L2 DRAM KV pool occupancy"),
             "Approaching 100% triggers LRU eviction from the host KV pool. "
             "Low fill + high cache hit = working set fits in L1 HBM (ideal). "
@@ -13194,11 +13428,11 @@ def build_comparison_html(runs, all_bottlenecks, timestamp):
              "──────────────────────────────────────── × 100  [%]\n"
              "              MemTotal\n\n"
              "DRAM occupied by:\n"
-             "  hicache L2 KV pool : sglang:hicache_host_total_tokens × 2 bytes/token\n"
+             "  hicache L2 KV pool : sglang_hicache_host_total_tokens × 2 bytes/token\n"
              "  model loader buf   : transient during load, stable at runtime\n"
              "  OS page cache      : /proc/meminfo Cached"),
             "DRAM > 80% means the hicache L2 pool is consuming most of system memory. "
-            "If DRAM is full and hicache fill is high, enable L3 NVMe KV offload."
+            "If DRAM is full and hicache fill is high, enable L3 KV offload."
         ),
         (
             "GPU Power", "gpu_power_mean_w", "W", False,
@@ -13640,7 +13874,7 @@ new Chart(document.getElementById("c6"),{type:"bar",
 // Chart 7: KV cache health
 new Chart(document.getElementById("c7"),{type:"bar",
   data:{labels:LB,datasets:[
-    {label:"Realtime Cache Hit %",data:D.kpis.map(k=>k.cache_hit_pct),backgroundColor:"#22d3ee99",borderColor:"#22d3ee",borderWidth:1,borderRadius:4},
+    {label:"Effective Cache Hit %",data:D.kpis.map(k=>k.cache_hit_pct),backgroundColor:"#22d3ee99",borderColor:"#22d3ee",borderWidth:1,borderRadius:4},
     {label:"Prefill From Cache %",data:D.kpis.map(k=>k.prefill_hit_pct),backgroundColor:"#0891b299",borderColor:"#0891b2",borderWidth:1,borderRadius:4},
     {label:"hicache Fill %",data:D.kpis.map(k=>k.hicache_fill_pct),backgroundColor:"#4f46e599",borderColor:"#4f46e5",borderWidth:1,borderRadius:4},
   ]},
@@ -13781,8 +14015,8 @@ new Chart(document.getElementById("c14"),{type:"scatter",
             "TPOT ≈ model_weight_bytes_per_GPU / effective_HBM_bandwidth."
         ),
         "c2": (
-            "sglang_timeseries.csv (sglang:gen_throughput) + derived from run summary",
-            ("Peak Throughput = max( sglang:gen_throughput[engine_type=unified] )  [tok/s]\n"
+            "sglang_timeseries.csv (sglang_gen_throughput) + derived from run summary",
+            ("Peak Throughput = max( sglang_gen_throughput[engine_type=unified] )  [tok/s]\n"
              "               = tokens decoded in last scheduling step / step duration\n\n"
              "GPU Active %   = (TTFT_ms/1000 + TPOT_ms × decode_tokens / 1000)\n"
              "                 / run_duration_s  × 100  [%]\n"
@@ -13849,31 +14083,31 @@ new Chart(document.getElementById("c14"),{type:"scatter",
         ),
         "c7": (
             "sglang_summary.json + sglang_timeseries.csv · SGLang Prometheus metrics",
-            ("Realtime Cache Hit %\n"
-             "  = sglang:cache_hit_rate[engine_type=unified]  (Prometheus gauge, rolling window)\n"
-             "  = KV tokens served from any cache tier / total KV tokens requested  [%]\n\n"
+            ("Effective Cache Hit %\n"
+             "  = sglang_cache_hit_rate[engine_type=unified]  (Prometheus gauge, rolling window)\n"
+             "  = effective prompt-cache reuse from SGLang counter deltas  [%]\n\n"
              "Prefill From Cache %\n"
              "  = rt_prefill_cache_tokens\n"
              "    / ( rt_prefill_cache_tokens + rt_prefill_compute_tokens ) × 100  [%]\n"
              "  where:\n"
-             "    rt_prefill_cache_tokens   = Σ sglang:realtime_tokens_total[mode=prefill_cache]\n"
-             "    rt_prefill_compute_tokens = Σ sglang:realtime_tokens_total[mode=prefill_compute]\n\n"
+             "    rt_prefill_cache_tokens   = Σ sglang_realtime_tokens_total[mode=prefill_cache]\n"
+             "    rt_prefill_compute_tokens = Σ sglang_realtime_tokens_total[mode=prefill_compute]\n\n"
              "hicache Fill %\n"
-             "  = sglang:hicache_host_used_tokens / sglang:hicache_host_total_tokens × 100  [%]\n"
+             "  = sglang_hicache_host_used_tokens / sglang_hicache_host_total_tokens × 100  [%]\n"
              "  = L2 DRAM KV pool occupancy"),
-            "Cache Hit Rate is a realtime estimate from SGLang's RadixAttention prefix tree. "
+            "Primary cache hit is derived from SGLang counter deltas; sglang_cache_hit_rate is shown as a diagnostic gauge. "
             "Prefill From Cache % is derived from cumulative token-mode counters in sglang_summary.json."
         ),
         "c8": (
             "sglang_summary.json · fields: rt_prefill_cache_tokens, rt_prefill_compute_tokens, rt_decode_tokens",
             ("Prefill Cached   = rt_prefill_cache_tokens  [tokens]\n"
-             "               = Σ sglang:realtime_tokens_total[mode=prefill_cache]\n"
+             "               = Σ sglang_realtime_tokens_total[mode=prefill_cache]\n"
              "               ⟶ tokens whose KV state was reused from cache (zero GPU attention cost)\n\n"
              "Prefill Compute  = rt_prefill_compute_tokens  [tokens]\n"
-             "               = Σ sglang:realtime_tokens_total[mode=prefill_compute]\n"
+             "               = Σ sglang_realtime_tokens_total[mode=prefill_compute]\n"
              "               ⟶ tokens requiring full self-attention computation (drives TTFT)\n\n"
              "Decode Output    = rt_decode_tokens  [tokens]\n"
-             "               = Σ sglang:realtime_tokens_total[mode=decode]\n"
+             "               = Σ sglang_realtime_tokens_total[mode=decode]\n"
              "               ⟶ autoregressively generated output tokens (each costs TPOT)\n\n"
              "Total context  = Prefill Cached + Prefill Compute\n"
              "Total tokens   = Prefill Cached + Prefill Compute + Decode Output"),
@@ -13916,7 +14150,7 @@ new Chart(document.getElementById("c14"),{type:"scatter",
              "                     = power_summary.gpu_power_all_w_mean\n"
              "                     = mean( Σᵢ nvidia-smi power.draw[GPU i] )  [W]\n\n"
              "Y = gen_tp_peak      = peak generation throughput  [tok/s]\n"
-             "                     = max( sglang:gen_throughput timeseries )\n\n"
+             "                     = max( sglang_gen_throughput timeseries )\n\n"
              "Energy per token     = gpu_power_mean_w / gen_tp_peak  [W/(tok/s) = J/tok]\n"
              "Target range         : 15-30 J/tok for production 70B inference on A100\n\n"
              "Plotted point per run: ( gpu_power_mean_w,  gen_tp_peak )"),
@@ -14170,32 +14404,32 @@ new Chart(document.getElementById("c14"),{type:"scatter",
 <h2 style="color:#22d3ee">KV Cache Analysis - Cache Tier Efficiency</h2>
 <div class="desc">The KV (Key-Value) cache stores attention states for previously computed tokens.
 SGLang uses a multi-tier cache: <b>L1 HBM</b> (on-GPU, fastest), <b>L2 hicache</b> (host DRAM, ~10x slower than HBM),
-and optionally <b>L3 NVMe</b> (storage-backed, for overflow). Cache hits avoid recomputing attention,
+and optionally <b>L3</b> (storage-backed, for overflow). Cache hits avoid recomputing attention,
 directly reducing TTFT. The realtime cache hit rate measures how often tokens are served from any cache tier.
 The prefill-from-cache % shows what fraction of the prompt was served without GPU computation.</div>
 <div class="grid2">
 <div>
 <div class="desc"><b style="color:#22d3ee">Cache Hit Rates</b> - three cache metrics per run.
-Realtime Cache Hit % = fraction of all token requests served from cache.
+Effective Cache Hit % = fraction of all token requests served from cache.
 Prefill From Cache % = fraction of prefill tokens that avoided GPU attention computation.
 hicache Fill % = how full the L2 DRAM KV pool is (approaching 100% triggers eviction).</div>
-<details class="fml"><summary>&#128208; Formula &amp; Derivation</summary><div class="fml-body"><span class="src">&#128202; sglang_summary.json + sglang_timeseries.csv (SGLang Prometheus metrics)</span><code>Realtime Cache Hit %  = sglang:cache_hit_rate[engine_type=unified]
+<details class="fml"><summary>&#128208; Formula &amp; Derivation</summary><div class="fml-body"><span class="src">&#128202; sglang_summary.json + sglang_timeseries.csv (SGLang Prometheus metrics)</span><code>Effective Cache Hit %  = sglang_cache_hit_rate[engine_type=unified]
                            (Prometheus gauge, rolling realtime window)
                          = KV tokens served from any cache tier / total KV tokens requested
 
 Prefill From Cache %  = rt_prefill_cache_tokens
                         / (rt_prefill_cache_tokens + rt_prefill_compute_tokens) × 100
 where:
-  rt_prefill_cache_tokens  = Σ sglang:realtime_tokens_total[mode=prefill_cache]  (cumulative)
-  rt_prefill_compute_tokens= Σ sglang:realtime_tokens_total[mode=prefill_compute] (cumulative)
+  rt_prefill_cache_tokens  = Σ sglang_realtime_tokens_total[mode=prefill_cache]  (cumulative)
+  rt_prefill_compute_tokens= Σ sglang_realtime_tokens_total[mode=prefill_compute] (cumulative)
 
 hicache Fill %        = hicache_host_used_tokens / hicache_host_total_tokens × 100
-                      = sglang:hicache_host_used_tokens / sglang:hicache_host_total_tokens</code><span class="note">Cache Hit Rate is a realtime estimate from SGLang's RadixAttention tree. Prefill From Cache % is derived from cumulative token counters in sglang_summary.json.</span></div></details>
+                      = sglang_hicache_host_used_tokens / sglang_hicache_host_total_tokens</code><span class="note">Primary cache hit is derived from SGLang counter deltas; sglang_cache_hit_rate is shown only as a diagnostic gauge.</span></div></details>
 <canvas id="c7"></canvas>
 <div class="insight"><b>Interpreting:</b> Cache Hit &gt;95% = excellent prefix reuse.
 Low hicache fill + high hit rate = working set fits in L1 HBM (best case).
 High hicache fill = working set spills to DRAM (slower but functional).
-If hicache fill approaches 100%, enable L3 NVMe KV offload or increase pool size.</div>
+If hicache fill approaches 100%, enable L3 KV offload or increase pool size.</div>
 </div>
 <div>
 <div class="desc"><b style="color:#22d3ee">Token Composition</b> - how tokens in each run break down.
@@ -14204,15 +14438,15 @@ Orange = compute prefill (new attention, contributes to TTFT).
 Teal = decoded output (each token costs TPOT).
 Maximising blue and minimising orange reduces TTFT.</div>
 <details class="fml"><summary>&#128208; Formula &amp; Derivation</summary><div class="fml-body"><span class="src">&#128202; sglang_summary.json  (fields: rt_prefill_cache_tokens, rt_prefill_compute_tokens, rt_decode_tokens)</span><code>Prefill Cached   = rt_prefill_cache_tokens
-                    = Σ sglang:realtime_tokens_total[mode=prefill_cache]   [tokens]
+                    = Σ sglang_realtime_tokens_total[mode=prefill_cache]   [tokens]
                     → tokens whose KV state was reused from cache (zero GPU attention cost)
 
 Prefill Compute  = rt_prefill_compute_tokens
-                 = Σ sglang:realtime_tokens_total[mode=prefill_compute]  [tokens]
+                 = Σ sglang_realtime_tokens_total[mode=prefill_compute]  [tokens]
                  → tokens requiring full self-attention computation  (drives TTFT)
 
 Decode Output    = rt_decode_tokens
-                 = Σ sglang:realtime_tokens_total[mode=decode]           [tokens]
+                 = Σ sglang_realtime_tokens_total[mode=decode]           [tokens]
                  → autoregressively generated output tokens  (each costs TPOT)
 
 Total context    = Prefill Cached + Prefill Compute
@@ -14590,7 +14824,7 @@ is typical — reads exceed writes when the cache is warm.
 <b>Utilisation context:</b> DRAM BW is very low for this workload ({dram_cmp[0]["bw_util_pct"]:.1f}%
 of 204.8 GB/s peak) because most KV cache activity is served from HBM (L1 tier).
 DRAM BW would spike if: (1) hicache fill exceeds HBM capacity forcing L2 spill,
-(2) concurrent requests with large diverse contexts, or (3) L3 NVMe KV offload is enabled and
+(2) concurrent requests with large diverse contexts, or (3) L3 KV offload is enabled and
 evicting from DRAM to storage.
 </div>
 </div>
@@ -14862,7 +15096,7 @@ Tier bandwidths:
   L2 DRAM :  {m.dram_peak_theoretical_gbs:.0f} GB/s  ({m.dram_peak_label or 'autodetected CPU'} default)
              → overridden by live AMDuProf measurement when available:
                amduprof_pcm_raw.csv → "Total Mem Bw (GB/s)" mean
-  L3 NVMe :  3.5 GB/s  (NVMe sequential read — /dev/{m.ssd_device} spec)
+  L3 :  3.5 GB/s  (NVMe sequential read — /dev/{m.ssd_device} spec)
 
 L2 BW override (when AMDuProf data present):
   Metrics: amduprof_pcm_summary.json → dram_total_gb_s_mean
@@ -14896,8 +15130,8 @@ contributes to total TTFT vs attention compute.</div>
 Step 1 — isolate attention compute (hardware-fixed component):
   compute_ttft_ms  =  max(observed_TTFT − cached_tokens × L1_lat_per_token,  0)
   Source: server_ttft_ms from sglang_summary.json (SGLang Prometheus histogram)
-          sglang:time_to_first_token_seconds_sum
-          / sglang:time_to_first_token_seconds_count × 1000
+          sglang_time_to_first_token_seconds_sum
+          / sglang_time_to_first_token_seconds_count × 1000
 
 Step 2 — estimate TTFT per tier:
   TTFT_L1  =  compute_ttft_ms  +  rt_prefill_cache_tokens × L1_lat_per_token
@@ -14905,7 +15139,7 @@ Step 2 — estimate TTFT per tier:
   TTFT_L3  =  compute_ttft_ms  +  rt_prefill_cache_tokens × L3_lat_per_token
 
   rt_prefill_cache_tokens: sglang_summary.json → rt_prefill_cache_tokens
-  (= Σ sglang:realtime_tokens_total[mode=prefill_cache] — cumulative counter)
+  (= Σ sglang_realtime_tokens_total[mode=prefill_cache] — cumulative counter)
 
 Observed TTFT for comparison:
   sglang_summary.json → server_ttft_ms</code>
@@ -14935,9 +15169,9 @@ between model weights, active KV cache, free KV headroom, and CUDA runtime.</div
 Segment: KV Cache Used (GB)
   = kv_pool_gb × pool_fill_pct / 100
   pool_fill_pct source (priority order):
-    1. sglang_timeseries.csv → sglang:full_token_usage[engine_type=unified]  (mean)
+    1. sglang_timeseries.csv → sglang_full_token_usage[engine_type=unified]  (mean)
        (fraction of L1 KV pool occupied, includes pre-allocated slots)
-    2. sglang_timeseries.csv → sglang:token_usage[engine_type=unified]  (mean)
+    2. sglang_timeseries.csv → sglang_token_usage[engine_type=unified]  (mean)
     3. sglang_summary.json  → token_usage_peak / kv_pool_capacity_tokens
 
 Segment: KV Cache Free (GB)
@@ -14973,7 +15207,7 @@ dtype        : sglang_summary.json → kv_cache_dtype  (default "fp16")
 KB/token     : computed (see Chart 1 formula)
 Max Ctx (K)  : computed (see Chart 2 formula)
 INT8 Max (K) : Max Ctx × (dtype_bytes / 1.0)  — hypothetical INT8 scenario
-Pool Fill %  : sglang_timeseries.csv → sglang:full_token_usage  (mean × 100)
+Pool Fill %  : sglang_timeseries.csv → sglang_full_token_usage  (mean × 100)
                or sglang_summary.json → token_usage_peak
 Weight GB    : params_B × 2 bytes / n_gpus / 10⁹
                n_gpus: gpu_summary.json → gpu_count</code>
@@ -15065,7 +15299,7 @@ new Chart(document.getElementById("c_kv_lat_cmp"), {{
        backgroundColor:"#6366f199",borderColor:"#6366f1",borderWidth:1,borderRadius:4}},
       {{label:"L2 DRAM (ms/tok)", data:KV_CMP.map(r=>r.l2_lat_ms),
        backgroundColor:"#22c55e99",borderColor:"#22c55e",borderWidth:1,borderRadius:4}},
-      {{label:"L3 NVMe (ms/tok)", data:KV_CMP.map(r=>r.l3_lat_ms),
+      {{label:"L3 (ms/tok)", data:KV_CMP.map(r=>r.l3_lat_ms),
        backgroundColor:"#f9731699",borderColor:"#f97316",borderWidth:1,borderRadius:4}},
     ]
   }},
@@ -15077,7 +15311,7 @@ new Chart(document.getElementById("c_kv_lat_cmp"), {{
         const tiers=[
           `L1 HBM: ${{r.l1_lat_ms}} ms/tok | BW: ${{r.l1_bw_gbs}} GB/s`,
           `L2 DRAM: ${{r.l2_lat_ms}} ms/tok | ${{(r.l2_lat_ms/r.l1_lat_ms).toFixed(0)}}x slower than L1 | BW: ${{r.l2_bw_gbs}} GB/s`,
-          `L3 NVMe: ${{r.l3_lat_ms}} ms/tok | ${{(r.l3_lat_ms/r.l1_lat_ms).toFixed(0)}}x slower than L1 | BW: ${{r.l3_bw_gbs}} GB/s`,
+          `L3: ${{r.l3_lat_ms}} ms/tok | ${{(r.l3_lat_ms/r.l1_lat_ms).toFixed(0)}}x slower than L1 | BW: ${{r.l3_bw_gbs}} GB/s`,
         ];
         return` `+tiers[i.datasetIndex];
       }}}}
@@ -15182,7 +15416,7 @@ Metrics derived from SGLang Prometheus histogram deltas:
 <div class="grid2">
 <div>
 <div class="desc"><b style="color:#4f46e5">E2E Latency — Mean / P90 / Max per Run</b><br>
-Source: <code style="font-size:10px">sglang:e2e_request_latency_seconds_sum / count × 1000 [ms]</code></div>
+Source: <code style="font-size:10px">sglang_e2e_request_latency_seconds_sum / count × 1000 [ms]</code></div>
 <canvas id="c_sess_e2e"></canvas>
 <div class="insight" style="border-color:#6366f1">
 <b>What to look for:</b> A run with lower mean E2E but similar or higher P90 = prefill improved
@@ -15192,7 +15426,7 @@ improvement. E2E = queue_ms + TTFT_ms + (TPOT_ms × output_tokens).
 </div>
 <div>
 <div class="desc"><b style="color:#4f46e5">Token Counts — Input &amp; Output per Run</b><br>
-Source: <code style="font-size:10px">sglang:prompt_tokens_total / num_requests_total</code> (delta per interval)</div>
+Source: <code style="font-size:10px">sglang_prompt_tokens_total / num_requests_total</code> (delta per interval)</div>
 <canvas id="c_sess_tok"></canvas>
 <div class="insight" style="border-color:#6366f1">
 <b>What to look for:</b> Runs with larger mean input tokens will have higher TTFT
@@ -15204,7 +15438,7 @@ Source: <code style="font-size:10px">sglang:prompt_tokens_total / num_requests_t
 <div style="margin-top:14px">
 <div class="desc"><b style="color:#4f46e5">Request Count &amp; Concurrency</b> — total requests processed
 and peak concurrent active sessions per run.<br>
-Source: <code style="font-size:10px">sglang:num_requests_total</code> (delta), <code style="font-size:10px">sglang:num_running_reqs</code> (peak)</div>
+Source: <code style="font-size:10px">sglang_num_requests_total</code> (delta), <code style="font-size:10px">sglang_num_running_reqs</code> (peak)</div>
 <canvas id="c_sess_conc" style="max-height:200px"></canvas>
 </div>
 </div>
@@ -15214,7 +15448,7 @@ Source: <code style="font-size:10px">sglang:num_requests_total</code> (delta), <
 <div class="desc">
 KV block offload rate (L1 HBM &#8594; L2 DRAM), eviction rate (L2 evictions), pool fill %,
 and estimated block lifetime across runs. Higher offload rate = more KV cache pressure.
-Source: <code style="background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#1e3a5f;font-size:10px">sglang:hicache_host_used_tokens</code> delta / block_size / duration.
+Source: <code style="background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#1e3a5f;font-size:10px">sglang_hicache_host_used_tokens</code> delta / block_size / duration.
 </div>
 <div class="grid2">
 <div>
@@ -15242,7 +15476,7 @@ fill % + shorter lifetime = higher KV cache pressure.
 <h2 style="color:#c2410c">&#128191; NVMe IO Workload — Comparison</h2>
 <div class="desc">
 NVMe write IOPS, latency, IO utilisation, and total bytes written across runs.
-Write activity indicates KV block offload to L3 NVMe (when L2 hicache overflows).
+Write activity indicates KV block offload to L3 (when L2 hicache overflows).
 Zero IOPS = all KV cache fits in HBM + DRAM tiers.
 Sources: <code style="background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#1e3a5f;font-size:10px">node_disk_writes_completed_total</code>,
 <code style="background:#f1f5f9;padding:2px 6px;border-radius:3px;color:#1e3a5f;font-size:10px">node_disk_write_time_seconds_total</code>,
