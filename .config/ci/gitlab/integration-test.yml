@@ -4,15 +4,17 @@ integration test:
     name: $IMAGE_TAG
     pull_policy: always
   before_script:
-    #configure selenium config file
-    - apt-get update && apt-get install moreutils jq -y
-    - jq --arg name "$VM_NAME.msl.lab" '.dashboard_url = "http://\($name):5000/"' $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
-    - jq --arg name "$VM_NAME.msl.lab" '.configure_url = "http://\($name):5000/configure"' $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
-    - jq --arg name "$VM_NAME.msl.lab" '.metrics_url = "http://\($name):5000/metrics"'  $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
-    - jq --arg name "$VM_NAME.msl.lab" '.scmc_url = "http://\($name):5000"' $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
-    - jq --arg name "$VM_NAME.msl.lab" '.host_name = $name' $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
-    - jq --arg username "$USERNAME" '.username = $username' $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json
-    - jq --arg password "$PASSWORD" '.password = $password' $INTEGRATION_TEST_DIR/config/config.json | sponge $INTEGRATION_TEST_DIR/config/config.json 
+    # Configure selenium config file in a single jq pass (jq + moreutils are baked into the docker image)
+    - |
+      jq --arg name "$VM_NAME.msl.lab" --arg user "$USERNAME" --arg pass "$PASSWORD" '
+        .dashboard_url = "http://\($name):5000/" |
+        .configure_url = "http://\($name):5000/configure" |
+        .metrics_url   = "http://\($name):5000/metrics" |
+        .scmc_url      = "http://\($name):5000" |
+        .host_name     = $name |
+        .username      = $user |
+        .password      = $pass
+      ' "$INTEGRATION_TEST_DIR/config/config.json" | sponge "$INTEGRATION_TEST_DIR/config/config.json"
     # display the configuration file
     - cat $INTEGRATION_TEST_DIR/config/config.json
   script:

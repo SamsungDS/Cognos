@@ -39,6 +39,10 @@ class TestMetrics(unittest.TestCase):
 
     def test_Memory_Bandwidth_Display(self):
         self.test_select_application_server()
+        self.utils.find_element_and_assert(
+            "//*[@id='app-server-card-id']", By.XPATH,
+            "TestCase-HPOS-T26: Wait for metrics page to load after host selection",
+            self.utils.assert_element_displayed)
 
         self.utils.find_element_and_assert(
             "//*[@id='memory-bandwidth-card-id']", By.XPATH,
@@ -53,6 +57,10 @@ class TestMetrics(unittest.TestCase):
 
     def test_CPU_vs_Memory_Usage_Graph_Display(self):
         self.test_select_application_server()
+        self.utils.find_element_and_assert(
+            "//*[@id='app-server-card-id']", By.XPATH,
+            "TestCase-HPOS-T32: Wait for metrics page to load after host selection",
+            self.utils.assert_element_displayed)
 
         self.utils.find_element_and_assert(
             "//*[@id='saphaana-card-id']", By.XPATH,
@@ -67,6 +75,10 @@ class TestMetrics(unittest.TestCase):
 
     def test_Memory_Capacity_Piechart_Display(self):
         self.test_select_application_server()
+        self.utils.find_element_and_assert(
+            "//*[@id='app-server-card-id']", By.XPATH,
+            "TestCase-HPOS-T30: Wait for metrics page to load after host selection",
+            self.utils.assert_element_displayed)
 
         self.utils.find_element_and_assert(
             "//*[@id='mem-capacity-data-card-id']",
@@ -82,6 +94,10 @@ class TestMetrics(unittest.TestCase):
 
     def test_DRAM_vs_CXL_Memory_Usage_Graph_Display(self):
         self.test_select_application_server()
+        self.utils.find_element_and_assert(
+            "//*[@id='app-server-card-id']", By.XPATH,
+            "TestCase-HPOS-T28: Wait for metrics page to load after host selection",
+            self.utils.assert_element_displayed)
 
         self.utils.find_element_and_assert(
             "//*[@id='dram-cxl-mem-data-card-id']", By.XPATH,

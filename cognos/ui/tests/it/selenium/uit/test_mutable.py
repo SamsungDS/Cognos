@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 import unittest
 from uit.test_utils import TestUtils
-import time
 
 
 class TestMutable(unittest.TestCase):
@@ -32,26 +33,17 @@ class TestMutable(unittest.TestCase):
             self.utils.assert_element_displayed)
 
     def check_device_in_host_table(self, device, action_type='attach'):
-        max_wait_time = 180
-        check_interval = 30
-        start_time = time.time()
         x = f"//*[@id='app-server-card-id']//td[contains(text(), '{device}')]"
-        while time.time() - start_time < max_wait_time:
-            try:
-                self.utils.find_element_and_assert(
-                    x,
-                    By.XPATH,
-                    f"Check presence of device '{device}' in host table",
-                    self.utils.assert_element_displayed
-                )
-                if action_type == 'attach':
-                    return True
-            except AssertionError:
-                if action_type == 'detach':
-                    return True
-            time.sleep(check_interval)
-
-        return False
+        try:
+            if action_type == 'attach':
+                WebDriverWait(self.utils.driver, 180, poll_frequency=2).until(
+                    EC.visibility_of_element_located((By.XPATH, x)))
+            else:
+                WebDriverWait(self.utils.driver, 180, poll_frequency=2).until(
+                    EC.invisibility_of_element_located((By.XPATH, x)))
+            return True
+        except Exception:
+            return False
 
     def check_devices_status_in_host_table(self, devices):
         """Return dict of device:T/F based on presence in host table"""
@@ -78,8 +70,8 @@ class TestMutable(unittest.TestCase):
         """
         if action_type == 'attach':
             self.utils.click_element_and_assert(
-                "//*[@id='app-server-card-id']//tr[last()]/td/button",
-                By.XPATH,
+                "[data-testid='attach-id']",
+                By.CSS_SELECTOR,
                 f"Attach device '{device}'-->click on add button",
                 self.utils.assert_element_displayed)
             self.utils.click_element_and_assert(
@@ -93,18 +85,19 @@ class TestMutable(unittest.TestCase):
                 f"Attach device '{device}'-->select_memory_mode",
                 self.utils.assert_element_displayed)
             self.utils.click_element_and_assert(
-                "//*[@id='attach-modal-id']/div/div[3]/button[3]",
-                By.XPATH,
+                "[data-testid='attach-memory-cancel-button']",
+                By.CSS_SELECTOR,
                 f"Attach device '{device}'-->click_attach_button",
                 self.utils.assert_element_displayed)
         elif action_type == 'detach':
             self.utils.click_element_and_assert(
-                "//*[@id='app-server-card-id']//tr[last()-1]/td/button",
-                By.XPATH, f"Detach device '{device}'-->click on remove button",
+                "[data-testid='detach-button']",
+                By.CSS_SELECTOR,
+                f"Detach device '{device}'-->click on remove button",
                 self.utils.assert_element_displayed)
             self.utils.click_element_and_assert(
-                "//*[@id='detach-mem-modal-id']/div/div[3]/button[2]",
-                By.XPATH,
+                "[data-testid='cancel-detach-button']",
+                By.CSS_SELECTOR,
                 f"Detach device '{device}'-->click on detach button",
                 self.utils.assert_element_displayed)
 

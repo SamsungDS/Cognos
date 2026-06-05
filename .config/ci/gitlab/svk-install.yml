@@ -1,69 +1,14 @@
 svk-install:
   stage: deploy
-  before_script:
-    # Enable noninteractive installs or restart
-    - export DEBIAN_FRONTEND=noninteractive
-    # Install nodejs21
-    - curl -fsSL https://deb.nodesource.com/setup_21.x | bash -
-    - apt-get update 
-    # Install SVK App dependencies and jq, moreutils for configuration file substitution
-    - apt-get install jq python3-pip python3.10-venv moreutils nodejs -y
-    # Install yq manually from official GitHub releases
-    - wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-    - chmod +x /usr/local/bin/yq
-    # Retrieve the IP of the host
-    - export VM_IP=$(hostname -I | awk '{print $1}')
-
-    #### Install Docker Engine with documentation reference: https://docs.docker.com/engine/install/ubuntu/ ####
-    # Install dependencies, gpg keys and configure docker apt repository
-    - apt-get install -y ca-certificates curl
-    - |
-      install -m 0755 -d /etc/apt/keyrings/
-      curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-      chmod a+r /etc/apt/keyrings/docker.gpg
-      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-    # Install docker
-    - apt-get update
-    - DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin
-    # Start the docker service
-    - systemctl enable --now docker || true
-
-    #### Influx installation implemented with documentation reference: https://docs.influxdata.com/influxdb/v2/install/?t=Linux ####
-    # Step 1: Download the InfluxData archive key
-    - curl --silent --location -O https://repos.influxdata.com/influxdata-archive.key
-    # Step 2: Convert the key to GPG format and add to trusted sources
-    - cat influxdata-archive.key | gpg --dearmor | tee /etc/apt/trusted.gpg.d/influxdata-archive.gpg > /dev/null
-    # Step 3: Add InfluxData repository to the apt sources list
-    - echo 'deb [signed-by=/etc/apt/trusted.gpg.d/influxdata-archive.gpg] https://repos.influxdata.com/debian stable main' | tee /etc/apt/sources.list.d/influxdata.list
-    - apt-get update 
-    - apt-get install -y influxdb2
-    - systemctl start influxdb.service
-    # Influx DB command for unattended configuration
-    - influx setup --username $INFLUX_ORG --password $INFLUX_PASS --org $INFLUX_ORG --bucket $INFLUX_BUCKET --retention 0 --force
-    # Assign influx token to a variable, to be utilized during SVK App influx configuration
-    - export INFLUX_TOKEN=$(influx auth list --user $INFLUX_ORG --json | jq -r '.[0].token')
-
-    # Install Telegraf
-    # - apt install telegraf
-
-    # Add Caddy Repository
-    - curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-    - curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
-    - apt-get update
-
-    #### Configure SVK Nexus repository ####
-    - wget --quiet --output-document /usr/share/keyrings/ssg-nexus.pgp http://ssg-nexus.msl.lab:8081/repository/svk_common/public.pgp
-    - |
-        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ssg-nexus.pgp] http://ssg-nexus.msl.lab:8081/repository/svk_apt_ubuntu22 \
-        $(. /etc/os-release && echo $UBUNTU_CODENAME) main" > /etc/apt/sources.list.d/ssg-nexus.list
-
   script:
+    - export VM_IP=$(hostname -I | awk '{print $1}')
+    - export INFLUX_TOKEN=$(grep "token =" ~/.influxdbv2/configs | awk -F '"' '{print $2}' | head -1)
     #### Install SVK ####
     # JSON replacements made with jq and sponge(provided by moreutils)
     # since jq can modify json structures but cannot replace the file in place
     - apt-get update
     # Temporary resolution
-    - apt-get install svk-cxl-mock -y
+    - apt-get install cognos-cxl-mock -y
     - apt-get install ./$ARTIFACTS_DIR/ubuntu22/cognos-*.deb -y
 
     #### Configure '/etc/svk/mgmt_fw_config.json' (JSON) ####
@@ -194,46 +139,45 @@ svk-install:
     # Step 2: Set CAL_PORT to pass information to the backend
     - sed -i "s|^CAL_PORT.*|CAL_PORT=${BACKEND_PORT}|" "$SVK_DIR/svk-app/cognos.config"
     # Step 3: Set SUB_PORT to publish metrics to the subscriber
-    #- sed -i "s|^SUB_PORT=.*|SUB_PORT=${SUB_PORT}|" "$SVK_DIR/svk-app/cognos.config"
     # Step 4: Set CAL_IP to indicate the host running the backend
     - sed -i "s|^CAL_IP=.*|CAL_IP=${VM_IP}|" "$SVK_DIR/svk-app/cognos.config"
     # Step 5: Set SUB_HOST to indicate the host running the subscriber
-    #- sed -i "s|^SUB_HOST=.*|SUB_HOST=${VM_IP}|" "$SVK_DIR/svk-app/cognos.config"
 
+    # Start cognos-rbac asynchronously up front so its lengthy ExecStartPre chain
+    # (MongoDB container -> sleep 20 -> docker image build, ~87s total) runs in the
+    # background while the FW/app services start below. The unit Requires=docker.service,
+    # which is already up from before_script, and all RBAC config (rbac.yaml,
+    # docker-config.env) is written above, so an early --no-block start is safe.
+    # The RBAC readiness poll further down is the synchronization point.
+    - systemctl start --no-block cognos-rbac
     # Start the Management FW services
-    - systemctl start svk-controller.service
-    - systemctl start svk-restserver.service
-    - systemctl start svk-node.service
+    - systemctl start cognos-controller.service
+    - systemctl start cognos-restserver.service
+    - systemctl start cognos-node.service
     # Temporary resolution
-    - sleep 10
-    - systemctl start svk-svc-mgr
+    - systemctl start cognos-svc-mgr
     # Start the SCMC UI services
     - systemctl start cognos-subscriber
     - systemctl start cognos-app
-    - systemctl start cognos-rbac
-    # - telegraf --config /usr/local/svk/svk-app/cognos/telegraf/telegraf.conf > /var/log/telegraf.log 2>&1 &
     - cd /usr/local/svk/svk-app/cognos/telegraf/
     - nohup /usr/local/svk/svk-app/env/bin/python3 poll.py > /dev/null 2>&1 &
-    #### Create Admin User ####
-    - systemctl status cognos-rbac.service --no-pager
-    - sleep 30
-    
     #### Create Admin User Automatically ####
     - echo "Waiting for cognos-rbac service to be ready..."
-    - systemctl status cognos-rbac.service --no-pager
     - export API_BASE_URL="http://${VM_IP}:${RBAC_BACKEND_PORT}/api"
     - echo "Checking RBAC API availability at ${API_BASE_URL}..."
     - echo "Note RBAC service typically takes 87+ seconds to start..."
-    - export MAX_RETRIES=40
+    - export MAX_RETRIES=48
     - export RETRY_COUNT=0
-    - export WAIT_TIME=10
+    - export WAIT_TIME=5
     - |
       while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
         HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${API_BASE_URL}/login" -H "Content-Type: application/json" -d '{"username":"test","password":"test"}' 2>/dev/null || echo "000")
-        # Check if we got a valid 3-digit HTTP code (200-599)
-        if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 600 ] 2>/dev/null; then
+        # Ready = the auth route processed the request: any 2xx/4xx counts. Reject 5xx
+        # (server still booting) and the 000 sentinel (connection refused) so a cold-start
+        # error is never mistaken for ready. Log the satisfying code for future tuning.
+        if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 500 ] 2>/dev/null; then
           ELAPSED_TIME=$((RETRY_COUNT * WAIT_TIME))
-          echo "✓ RBAC API is responding (HTTP $HTTP_CODE) after ${ELAPSED_TIME} seconds"
+          echo "✓ RBAC API is ready (HTTP $HTTP_CODE) after ${ELAPSED_TIME} seconds"
           break
         fi
         RETRY_COUNT=$((RETRY_COUNT + 1))
@@ -344,4 +288,3 @@ svk-install:
     - restore vmware snapshot
   tags:
     - svk-dev
-

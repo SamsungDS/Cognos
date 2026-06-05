@@ -13,6 +13,8 @@ install_build_deps() {
         findutils
         git
         gnupg
+        jq
+        moreutils
         pip
         python3
         python3-venv

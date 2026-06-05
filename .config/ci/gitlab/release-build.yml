@@ -1,18 +1,23 @@
 release-build:
-  extends: npm-build
+  stage: build
+  image:
+    name: $IMAGE_TAG
+    pull_policy: always
   script:
     - ./scripts/build.sh -r
   artifacts:
     name: release build - $DOCKERFILE_NAME
     paths:
       - $ARTIFACTS_DIR/
-    expire_in: 300 seconds
+    expire_in: 1 hour
     expose_as: Release Build Artifacts
   variables:
     CI: false
+    IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
   parallel:
     matrix:
       - DOCKERFILE_NAME: ubuntu22
       - DOCKERFILE_NAME: ubuntu24
       - DOCKERFILE_NAME: ol10
-      - DOCKERFILE_NAME: ol9
+  rules:
+    - !reference [.default_rules, merge_and_push]

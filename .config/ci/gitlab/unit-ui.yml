@@ -1,12 +1,13 @@
 ui unit test:
+  extends: .ui_npm_cache
   stage: test
   image:
     name: $IMAGE_TAG
     pull_policy: always
   before_script:
-    # Install NPM modules
+    # Install NPM modules (hydrates from cache when package-lock.json is unchanged)
     - cd $TEST_DIR
-    - npm ci
+    - npm ci --prefer-offline --no-audit --no-fund
   script:
     # Execute unit tests and generate coverage report
     - npm run test:coverage
@@ -28,15 +29,22 @@ ui unit test:
       - DOCKERFILE_NAME: ubuntu22
       - DOCKERFILE_NAME: ubuntu24
       - DOCKERFILE_NAME: ol10
-      - DOCKERFILE_NAME: ol9
   rules:
     - !reference [.default_rules, merge_and_push]
-  needs:
-    - npm-build
+  needs: []
 
 rbac unit test:
   extends: ui unit test
+  cache:
+    - key:
+        files:
+          - cognos/rbac/core/bin/rbac-client-repo/package-lock.json
+        prefix: rbac
+      paths:
+        - cognos/rbac/core/bin/rbac-client-repo/node_modules
+        - .npm
+      policy: pull-push
   variables:
     TEST_DIR: "$rbac_dir"
     ui_reports_dir: "$rbac_client_reports_dir"
-    
+  needs: []

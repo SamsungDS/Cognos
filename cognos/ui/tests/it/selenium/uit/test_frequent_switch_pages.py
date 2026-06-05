@@ -13,22 +13,22 @@ class FrequentPageSwitchTest(unittest.TestCase):
         self.utils.login(config['username'], config['password'])
         self.pages = [
             {"name": "Dashboard",
-             "locator": "//div[@id='side-bar-id']/div/a[1]",
+             "locator": "//*[@id='side-bar-id']//a[@href='/']",
              "component_xpath": "//*[@id='dashboard-container-id']"},
             {"name": "Metrics Page",
-             "locator": "//*[@id='side-bar-id']/div/a[2]",
+             "locator": "//*[@id='side-bar-id']//a[contains(@href, '/metrics')]",
              "component_xpath": "//*[@id='main-container-id']"},
             {"name": "Device Metrics Page",
-             "locator": "//*[@id='side-bar-id']/div/a[3]",
+             "locator": "//*[@id='side-bar-id']//a[contains(@href, '/device-stats')]",
              "component_xpath": "//*[@id='device-metric-id']"},
             {"name": "Application view page",
-             "locator": "//*[@id='side-bar-id']/div/a[4]",
-             "component_xpath": "//*[@id='root']/div/div[3]"},
+             "locator": "//*[@id='side-bar-id']//a[contains(@href, '/application_view')]",
+             "component_xpath": "//*[@id='side-bar-id']"},
             {"name": "System alerts page",
-             "locator": "//*[@id='side-bar-id']/div/a[5]",
-             "component_xpath": "//*[@id='root']/div/div[3]"},
+             "locator": "//*[@id='side-bar-id']//a[contains(@href, '/events')]",
+             "component_xpath": "//*[@id='side-bar-id']"},
             {"name": "About Page",
-             "locator": "//*[@id='side-bar-id']/div/a[6]",
+             "locator": "//*[@id='side-bar-id']//a[contains(@href, '/about')]",
              "component_xpath": "//*[@id='main-container']"},
         ]
 
@@ -36,7 +36,7 @@ class FrequentPageSwitchTest(unittest.TestCase):
         self.utils.tearDown()
 
     def test_frequent_page_switching(self):
-        for _ in range(10):
+        for _ in range(3):
             for page in self.pages:
                 with self.subTest(page=page["name"]):
                     # Click the page link

@@ -17,8 +17,11 @@ sonar-scanner:
         -Dsonar.javascript.lcov.reportPaths=$ui_reports_dir/lcov.info,$rbac_client_reports_dir/lcov.info
   allow_failure: false
   needs:
-    - backend unit test
-    - ui unit test
-    - rbac unit test
+    - job: "backend unit test: [ubuntu22]"
+      artifacts: true
+    - job: "ui unit test: [ubuntu22]"
+      artifacts: true
+    - job: "rbac unit test: [ubuntu22]"
+      artifacts: true
   rules:
     - !reference [.default_rules, merge_and_push]

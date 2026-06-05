@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 import unittest
 from uit.test_utils import TestUtils
 
@@ -15,7 +17,7 @@ class PageValidationTest(unittest.TestCase):
         self.pages = [
             {
                 "name": "Dashboard",
-                "locator": "//div[@id='side-bar-id']/div/a[1]",
+                "locator": "//*[@id='side-bar-id']//a[@href='/']",
                 "widgets": [
                     {"name": "memory-box-overview",
                      "xpath": "//*[@id='memory-box-overview-id']"},
@@ -34,7 +36,7 @@ class PageValidationTest(unittest.TestCase):
             },
             {
                 "name": "Configure Page",
-                "locator": "//*[@id='side-bar-id']/div/a[2]",
+                "locator": "//*[@id='side-bar-id']//a[contains(@href, '/application_view')]",
                 "widgets": [
                     {"name": "Host Table",
                      "xpath": "//*[@id='app-server-card-id']"},
@@ -44,7 +46,7 @@ class PageValidationTest(unittest.TestCase):
             },
             {
                 "name": "Metrics Page",
-                "locator": "//*[@id='side-bar-id']/div/a[2]",
+                "locator": "//*[@id='side-bar-id']//a[contains(@href, '/metrics')]",
                 "widgets": [
                     {"name": "Host Selectot",
                      "xpath": "//*[@id='app-server-card-id']"},
@@ -60,11 +62,10 @@ class PageValidationTest(unittest.TestCase):
             },
             {
                 "name": "About Page",
-                "locator": "//*[@id='side-bar-id']/div/a[6]",
+                "locator": "//*[@id='side-bar-id']//a[contains(@href, '/about')]",
                 "widgets": [
                     {"name": "About widget1",
-                     "xpath": ("//*[@id='main-container']/div/div[1]/"
-                               "div[1]")},
+                     "xpath": "//*[@id='main-heading-info']"},
                     {"name": "About widget2",
                      "xpath": "//*[@id='mem-box-imgae']"},
                     {"name": "About widget3",
@@ -95,8 +96,9 @@ class PageValidationTest(unittest.TestCase):
                 for widget in page["widgets"]:
                     with self.subTest(widget=widget["name"]):
                         try:
-                            element = self.utils.driver.find_element(
-                                    By.XPATH, widget["xpath"])
+                            element = WebDriverWait(self.utils.driver, 60).until(
+                                EC.presence_of_element_located(
+                                    (By.XPATH, widget["xpath"])))
                             is_displayed = self.utils.assert_element_displayed(
                                 element
                             )

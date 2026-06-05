@@ -51,6 +51,6 @@ class TestConfigure(unittest.TestCase):
             By.XPATH, "TestCase-HPOS-T44: test_memory_box_dropdown",
             self.utils.assert_element_displayed)
         self.utils.click_element_and_assert(
-            "//*[@id='react-select-3-option-0']", By.XPATH,
+            "//*[@id='dropdown-container-id']//*[@role='option'][1]", By.XPATH,
             "TestCase-HPOS-T44: test_memory_box_dropdown",
             self.utils.assert_element_displayed)
