@@ -2,11 +2,17 @@
   "GPU Count": 4,
   "GPU Memory per Device GB": 80,
   "Host DRAM GB": 1024,
-  "Host DRAM used GB": 512,
+  "Host DRAM used GB": "auto",
   "L3 storage type": "mooncake",
   "L3 storage capacity GB": 4096,
   "L3 storage used GB": 0,
   "L3 storage path": "/path/to/l3/storage",
   "L3 Device": "",
-  "L3 Mount Path": ""
+  "L3 Mount Path": "",
+  "HiCache size per GPU GB": 50,
+  "HiCache total GB": "auto = HiCache size per GPU GB \u00d7 GPU Count",
+  "L2 DRAM cache capacity GB": "auto",
+  "Formula Notes": {
+    "DRAM capacity": "Prefer HiCache size per GPU GB \u00d7 GPU Count for effective L2 DRAM cache capacity; fallback to Host DRAM GB."
+  }
 }

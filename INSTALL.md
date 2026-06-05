@@ -1,3 +1,5 @@
+AMOprof v1.90.0
+
 # AMOprof — Installation Guide
 
 ## Recommended: Virtual Environment (avoids all system Python conflicts)

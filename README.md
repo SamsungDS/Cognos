@@ -1,4 +1,8 @@
-# AMOprof v1.35 — AI Memory & I/O Profiler
+AMOprof v1.95.0
+
+# AMOprof
+
+Version: v1.88.0 v1.35 — AI Memory & I/O Profiler
 
 AMOprof profiles every layer of an AI inference stack — from user-visible request latency down to NAND flash IOPS — on a shared timeline. It collects metrics from SGLang, GPU (DCGM / nvidia-smi), NVMe (iostat / blktrace / biosnoop), host DRAM (AMDuProf PMU), vmstat, and power monitors, then produces three correlated HTML reports that map each metric onto the **AI Stack Cake** diagram (A5 Application → A4 Runtime → A3 OS/Kernel → A2 Drivers → A1 Hardware).
 
@@ -787,3 +791,56 @@ When `--enable-amduprof-pcm` is used, AMOprof runs AMDuProfPcm with `-r` to rese
 ### v1.69 system collector sudo behavior
 
 AMOprof now runs root-required system collectors through non-interactive sudo when it is not already running as root. This applies to NVMe SMART/admin commands, BCC/eBPF tools, blktrace, biosnoop, biolatency, AMDuProfPcm, perf PID attach, bpftrace, and IPMI power polling. The command prefix is `sudo -n`, so AMOprof will not hang waiting for a password prompt. If passwordless sudo is not configured, the affected collector is skipped or marked unavailable with its error reason. Use `--no-sudo` to force direct execution.
+
+
+## v1.70 reporting fixes
+
+- Executive cache tier hides backend/vendor names in the top hero line and uses generic local Storage / AI memory node terminology.
+- DRAM BW tile includes host DRAM capacity context: used/total when available, or total capacity when used capacity is unavailable.
+- DRAM static chart output is rendered in a compact image path to avoid combined-report iframe/srcdoc rendering failures.
+- Bottleneck scores are clamped to 0-100 and KV/cache-hit mapping includes active cache hit vs input/prefill-token weighted diagnostic details.
+
+### v1.72 HBM active-capacity calculation
+
+HBM capacity in Executive / Interactive report tiles is now computed from the active inference parallelism in `setup_details.json`:
+
+```text
+active_hbm_total_gb = TP size × DP size × GPU Memory per Device GB
+active_hbm_used_gb  = per_gpu_hbm_used_gb × TP size × DP size
+```
+
+If `TP size` is missing, AMOprof falls back to `GPU Count` / parsed GPU description.
+
+
+
+### v1.88.0 notes
+
+- Fixes the End Report P50/P90/P99 Summary token-percentile panel so Prompt / Output Token Percentiles are populated from SGLang token histogram aliases when available.
+- Supports both `sglang_prompt_tokens_histogram_bucket` / `sglang_generation_tokens_histogram_bucket` and `sglang_prompt_tokens_bucket` / `sglang_generation_tokens_bucket`.
+- Falls back to Prometheus-derived per-request token counter deltas when token histogram buckets are not exported, instead of leaving the panel blank.
+- Keeps local Storage / AI memory node gating from v1.78: eviction remains cache pressure and is not mislabeled as storage activity.
+
+### v1.78.0 notes
+
+- Fixed End Report zero-data collapsing for the **Trim / Discard Events & Temporal Patterns** section.
+- The section now collapses by default when explicit TRIM indicators show no activity, even if read/write temporal reference values or placeholder chart content are present.
+- This keeps §E behavior consistent with the other no-data / zero-data sections.
+
+### v1.74.0 notes
+
+- Fixed L2 DRAM cache used/capacity reporting so SGLang HiCache host-used token counters are converted with TP-sharded KV bytes when the full-model conversion would exceed the configured HiCache allocation. The report no longer shows impossible values such as 186 GB used out of 100 GB configured.
+
+
+### v1.88.0
+- Fixed Session / Stream Analysis rendering from Prometheus aggregate counters when raw per-request traces are absent.
+
+
+### v1.88.0 selected-window KPI consistency
+
+- TTFT/TPOT/E2E KPIs in Executive, Interactive, and End Report now use selected-window SGLang counter deltas first, selected-window percentile timeseries second, and `sglang_summary.json` only as last fallback.
+- This prevents L2-only and L3-active reports from showing identical latency KPIs when their run-local charts/counters differ.
+- GPU utilization remains active-window based and is not averaged over inactive/idle-only samples where active samples exist.
+
+
+### v1.95.0
+- DRAM/L2 used capacity in Executive and Interactive reports now uses the selected-window active mean of SGLang HiCache host-used token gauges instead of a stale last sample or setup fallback. This makes L2-only and L3-active reports differ when their L2 residency differs, and labels the source in the tile note.

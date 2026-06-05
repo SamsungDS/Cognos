@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name            = "amoprof"
-version         = "1.69.0"
+version         = "1.95.0"
 description     = "AI Workload-Aware Storage Profiler — maps AI operations to SSD I/O dimensions"
 readme          = "README.md"
 requires-python = ">=3.10"

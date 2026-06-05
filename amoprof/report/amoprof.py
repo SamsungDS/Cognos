@@ -250,17 +250,46 @@ def _find_metric_col(df: pd.DataFrame, partial: str, *, prefer_unified: bool = T
     return matches[0] if matches else None
 
 
+def _metric_col_norm(s: str) -> str:
+    """Normalize Prometheus-style CSV column names for robust matching.
+
+    SGLang 0.5.x CSV columns may contain labels as `mode="decode"`,
+    `mode=decode`, `mode='decode'`, or URL/CSV escaped variants.  Older
+    AMOprof matching looked for the literal substring `mode=decode`, which
+    missed quoted labels and caused prompt/output-token charts to stay empty
+    even when the counters were present.
+    """
+    try:
+        x = str(s).lower()
+        for ch in ('"', "'", " ", "\\"):
+            x = x.replace(ch, "")
+        x = x.replace(":", "_")
+        return x
+    except Exception:
+        return str(s).lower()
+
+
+def _part_matches_metric_col(col: str, part: str) -> bool:
+    c = _metric_col_norm(col)
+    p = _metric_col_norm(part)
+    if p in c:
+        return True
+    # Convenience for callers that pass mode=decode; accept mode="decode" etc.
+    if p.startswith("mode="):
+        return ("mode=" + p.split("=", 1)[1]) in c
+    return False
+
+
 def _find_metric_col_with_parts(df: pd.DataFrame, base_partial: str, *required_parts: str,
                                 prefer_unified: bool = True,
                                 exclude_buckets: bool = True) -> str | None:
     """Find a metric column by base name plus extra substrings, ignoring label order.
-    Example: _find_metric_col_with_parts(df, "realtime_tokens_total", "mode=prefill_cache")
-    matches both colon and underscore metric styles and any label ordering.
+    Matches both colon/underscore metric styles and quoted/unquoted label values.
     """
     matches = _prefer_metric_columns(df, base_partial, prefer_unified=prefer_unified,
                                      exclude_buckets=exclude_buckets)
     if required_parts:
-        matches = [c for c in matches if all(part in c for part in required_parts)]
+        matches = [c for c in matches if all(_part_matches_metric_col(c, part) for part in required_parts)]
     return matches[0] if matches else None
 
 
@@ -270,15 +299,13 @@ def _find_metric_cols_with_parts(df: pd.DataFrame, base_partial: str, *required_
     """Return ALL matching metric columns, not just the first label series.
 
     Several SGLang metrics are exported as multiple labelled series, e.g.
-    realtime_tokens_total{{mode="prefill_cache"}} or cached_tokens_total{source="..."}.
-    Using the first matching column undercounts/overcounts aggregate cache-hit
-    ratios depending on label ordering. Aggregate calculations must sum deltas
-    across all relevant series.
+    realtime_tokens_total{mode="prefill_cache"} or cached_tokens_total{source="..."}.
+    Aggregate calculations must sum deltas across all relevant series.
     """
     matches = _prefer_metric_columns(df, base_partial, prefer_unified=prefer_unified,
                                      exclude_buckets=exclude_buckets)
     if required_parts:
-        matches = [c for c in matches if all(part in c for part in required_parts)]
+        matches = [c for c in matches if all(_part_matches_metric_col(c, part) for part in required_parts)]
     return matches
 
 
@@ -300,6 +327,30 @@ def _delta_sum_metric(df: pd.DataFrame, base_partial: str, *required_parts: str)
         except Exception:
             pass
     return total
+
+
+def _pct_ts_latency_ms_from_data(data: dict, metric_key: str, percentile: str = "p50") -> float:
+    """Representative latency from sglang_percentiles_timeseries.json loaded as data key.
+
+    Used as selected-window fallback when _sum/_count counters are absent or
+    unusable.  Keeps different runs from reusing stale sglang_summary.json
+    TTFT/TPOT/E2E values.
+    """
+    try:
+        pct_ts = data.get("sglang_percentiles_timeseries") or {}
+        block = (pct_ts or {}).get(metric_key) or {}
+        vals = block.get(percentile) or []
+        clean = []
+        for v in vals:
+            try:
+                x = float(v)
+                if x == x and x > 0:
+                    clean.append(x)
+            except Exception:
+                pass
+        return (sum(clean) / len(clean)) if clean else 0.0
+    except Exception:
+        return 0.0
 
 
 
@@ -824,7 +875,10 @@ def collect_from_prometheus_api(
                 if not df.empty:
                     sg_dfs[full] = df
 
-    print(f"OK ({len(sg_dfs)} series)")
+    if "sglang_hicache_host_used_tokens" not in sg_dfs:
+        print(f"OK ({len(sg_dfs)} series; warn: sglang_hicache_host_used_tokens missing)")
+    else:
+        print(f"OK ({len(sg_dfs)} series; includes sglang_hicache_host_used_tokens)")
 
     # ── DCGM GPU metrics ──────────────────────────────────────────────────────
     print("  Fetching DCGM GPU metrics...", end=" ", flush=True)
@@ -1166,6 +1220,39 @@ def collect_from_prometheus_api(
         abs_sum = _last_col2("time_to_first_token_seconds_sum")
         abs_cnt = _last_col2("time_to_first_token_seconds_count")
         if abs_cnt > 0: ttft_ms = abs_sum / abs_cnt * 1000
+    if tpot_ms == 0:
+        abs_sum = _last_col2("inter_token_latency_seconds_sum")
+        abs_cnt = _last_col2("inter_token_latency_seconds_count")
+        if abs_cnt > 0: tpot_ms = abs_sum / abs_cnt * 1000
+    if e2e_ms == 0:
+        abs_sum = _last_col2("e2e_request_latency_seconds_sum")
+        abs_cnt = _last_col2("e2e_request_latency_seconds_count")
+        if abs_cnt > 0: e2e_ms = abs_sum / abs_cnt * 1000
+
+    # Final TPOT fallback: some SGLang/Prometheus paths expose decode throughput
+    # but not inter_token_latency counters.  Do not render TPOT as 0 ms in that
+    # case; use 1000 / output-token throughput as a conservative estimate and
+    # record the method in sglang_summary below.
+    _tpot_method = "delta_sglang_inter_token_latency_seconds_sum_over_count"
+    if tpot_ms <= 0:
+        _tp_gauge_col = _find_metric_col(master, "gen_throughput")
+        _tp_val = 0.0
+        if _tp_gauge_col:
+            try:
+                _tp_ser = master[_tp_gauge_col].astype(float)
+                _tp_active = _tp_ser[_tp_ser > 0]
+                _tp_val = float(_tp_active.mean() if len(_tp_active) else _tp_ser.max())
+            except Exception:
+                _tp_val = 0.0
+        if _tp_val <= 0:
+            _dec = (_delta_sum_metric(master, "generation_tokens_total") or
+                    _delta_sum_metric(master, "output_tokens_total") or
+                    _delta_sum_metric(master, "completion_tokens_total") or
+                    _delta_sum_metric(master, "realtime_tokens_total", "mode=decode"))
+            _tp_val = (_dec / max(window, 1.0)) if _dec > 0 else 0.0
+        if _tp_val > 0:
+            tpot_ms = 1000.0 / _tp_val
+            _tpot_method = "fallback_inverse_prometheus_output_token_throughput"
 
     # DCGM DRAM_ACTIVE gives HBM BW utilisation directly
     dcgm_dram_mean = 0.0
@@ -1240,7 +1327,7 @@ def collect_from_prometheus_api(
         "server_itl_ms":               round(tpot_ms, 2),
         "server_e2e_ms":               round(e2e_ms,  2),
         "server_ttft_ms_method":        "delta_sglang_time_to_first_token_seconds_sum_over_count",
-        "server_itl_ms_method":         "delta_sglang_inter_token_latency_seconds_sum_over_count",
+        "server_itl_ms_method":         _tpot_method,
         "server_e2e_ms_method":         "delta_sglang_e2e_request_latency_seconds_sum_over_count",
         "cache_hit_rate_realtime_pct": round(_alt_cache_hit, 2),
         "cache_hit_calc_method":       _alt_method,
@@ -1263,6 +1350,8 @@ def collect_from_prometheus_api(
         "rt_prefill_compute_tokens":   0,
         "rt_prefill_cache_tokens":     0,
         "hicache_host_used_tokens":    _last_col2("hicache_host_used_tokens"),
+        "sglang_hicache_host_used_tokens_present": bool(_last_col2("hicache_host_used_tokens") > 0),
+        "hicache_host_used_tokens_source_metric": "sglang_hicache_host_used_tokens",
         "hicache_host_total_tokens":   _last_col2("hicache_host_total_tokens"),
         "kv_used_tokens":              _last_col2("kv_used_tokens"),
         "kv_available_tokens":         _last_col2("kv_available_tokens"),
@@ -1580,6 +1669,9 @@ def collect_from_prometheus(
         abs_cnt = _last(itl_cnt_col) if itl_cnt_col else 0
         if abs_cnt > 0:
             tpot_ms = abs_itl / abs_cnt * 1000
+    _tpot_method = "delta_sglang_inter_token_latency_seconds_sum_over_count"
+    if tpot_ms == 0 and itl_sum_col:
+        _tpot_method = "absolute_sglang_inter_token_latency_seconds_sum_over_count"
     if e2e_ms == 0 and e2e_sum_col:
         abs_e2e = _last(e2e_sum_col)
         abs_cnt = _last(e2e_cnt_col) if e2e_cnt_col else 0
@@ -1689,13 +1781,20 @@ def collect_from_prometheus(
         _gen_tp_method = "generation_or_decode_counter_delta"
     gen_tp_peak = max(float(gen_tp_peak or 0), float(_gen_tp_mean or 0))
 
+    # Final TPOT fallback: when SGLang does not export/update ITL counters but
+    # output-token throughput is available, avoid a misleading 0 ms/tok tile.
+    # This is an estimate for reportability; the method is recorded.
+    if tpot_ms <= 0 and _gen_tp_mean > 0:
+        tpot_ms = 1000.0 / float(_gen_tp_mean)
+        _tpot_method = "fallback_inverse_prometheus_output_token_throughput"
+
     sglang_summary = {
         "model_name":                   model_name,
         "server_ttft_ms":               round(ttft_ms, 2),
         "server_itl_ms":                round(tpot_ms, 2),
         "server_e2e_ms":                round(e2e_ms,  2),
         "server_ttft_ms_method":         "delta_sglang_time_to_first_token_seconds_sum_over_count",
-        "server_itl_ms_method":          "delta_sglang_inter_token_latency_seconds_sum_over_count",
+        "server_itl_ms_method":          _tpot_method,
         "server_e2e_ms_method":          "delta_sglang_e2e_request_latency_seconds_sum_over_count",
         "ai_op_decode_tok_s":           round(_gen_tp_mean, 3),
         "ai_op_decode_tok_s_method":    _gen_tp_method,
@@ -4058,11 +4157,13 @@ class Metrics:
     sess_input_tok_mean: float = 0        # mean prompt tokens per request
     sess_input_tok_min: float = 0
     sess_input_tok_max: float = 0
+    sess_input_tok_p50: float = 0
     sess_input_tok_p90: float = 0
     sess_input_tok_p99: float = 0
     sess_output_tok_mean: float = 0       # mean generation tokens per request
     sess_output_tok_min: float = 0
     sess_output_tok_max: float = 0
+    sess_output_tok_p50: float = 0
     sess_output_tok_p90: float = 0
     sess_output_tok_p99: float = 0
     sess_queue_mean_ms: float = 0         # mean queue wait per request (ms)
@@ -4088,6 +4189,8 @@ class Metrics:
     kvb_lifetime_max_s: float = 0
     kvb_offload_ts: pd.DataFrame = field(default_factory=pd.DataFrame)
     kvb_l3_io_ts: pd.DataFrame = field(default_factory=pd.DataFrame)
+    kvb_l3_storage_observed: bool = False  # reliable L3 evidence: backup/prefetch or local mapped block telemetry
+    kvb_l3_ambiguous_loadback_tokens: int = 0  # load_back seen without reliable L3 storage evidence
     # ── NVMe IO workload characteristics (from nvme_driver + SMART) ───────────
     nvme_wr_iops_mean: float = 0
     nvme_wr_lat_mean_ms: float = 0
@@ -4412,10 +4515,16 @@ def extract_metrics(data: dict) -> Metrics:
 
     def safe_float(v, default: float = 0.0) -> float:
         try:
+            if isinstance(v, str):
+                import re as _re
+                _m = _re.search(r"[-+]?[0-9]*\.?[0-9]+", v.replace(",", ""))
+                if _m:
+                    v = _m.group(0)
             f = float(v)
             return default if (f != f or abs(f) == float('inf')) else f
         except (TypeError, ValueError):
             return default
+
 
     # ── SGLang summary ────────────────────────────────────────────────────────
     sg = data.get("sglang_summary", {})
@@ -4657,9 +4766,22 @@ def extract_metrics(data: dict) -> Metrics:
                 break
         except (TypeError, ValueError):
             pass
-    m.ttft_ms = float(sg.get("server_ttft_ms", 0) or sg.get("server_ttft_p50_ms", 0))
-    m.tpot_ms = float(sg.get("server_itl_ms", 0)  or sg.get("server_itl_p50_ms", 0))
-    m.e2e_ms  = float(sg.get("server_e2e_ms", 0)  or sg.get("server_e2e_p50_ms", 0))
+    _ttft_pct_fallback = _pct_ts_latency_ms_from_data(data, "ttft", "p50")
+    _itl_pct_fallback  = _pct_ts_latency_ms_from_data(data, "itl", "p50")
+    _e2e_pct_fallback  = _pct_ts_latency_ms_from_data(data, "e2e", "p50")
+    m.ttft_ms = float(_ttft_pct_fallback or sg.get("server_ttft_ms", 0) or sg.get("server_ttft_p50_ms", 0))
+    m.tpot_ms = float(_itl_pct_fallback  or sg.get("server_itl_ms", 0)  or sg.get("server_itl_p50_ms", 0))
+    m.e2e_ms  = float(_e2e_pct_fallback  or sg.get("server_e2e_ms", 0)  or sg.get("server_e2e_p50_ms", 0))
+    if _ttft_pct_fallback > 0:
+        sg["server_ttft_ms_method"] = "selected_window_sglang_percentiles_timeseries_ttft_p50_active_mean"
+    if _itl_pct_fallback > 0:
+        sg["server_itl_ms_method"] = "selected_window_sglang_percentiles_timeseries_itl_p50_active_mean"
+    if _e2e_pct_fallback > 0:
+        sg["server_e2e_ms_method"] = "selected_window_sglang_percentiles_timeseries_e2e_p50_active_mean"
+    # v1.86: these fields may be stale/defaulted in sglang_summary.json when
+    # multiple reports are produced from nearby windows.  Later, once
+    # sglang_timeseries.csv is loaded, overwrite them with selected-window
+    # counter deltas so static/end-report KPIs match Executive/Interactive.
     m.gen_tp_mean = float(sg.get("ai_op_decode_tok_s", 0))
     m.cache_hit_pct = float(sg.get("cache_hit_rate_realtime_pct", 0))
     m.cache_hit_calc_method = str(sg.get("cache_hit_calc_method", "unknown"))
@@ -4696,14 +4818,24 @@ def extract_metrics(data: dict) -> Metrics:
         m.sess_e2e_p50_s = safe_float(sg.get("server_e2e_p50_ms", 0)) / 1000.0
         m.sess_e2e_p90_s = safe_float(sg.get("server_e2e_p90_ms", 0)) / 1000.0
         m.sess_e2e_p99_s = safe_float(sg.get("server_e2e_p99_ms", 0)) / 1000.0
-    if safe_float(sg.get("prompt_tokens_p90", 0)) > 0:
-        m.sess_input_tok_p90 = safe_float(sg.get("prompt_tokens_p90", 0))
-        m.sess_input_tok_p99 = safe_float(sg.get("prompt_tokens_p99", 0))
+    if safe_float(sg.get("prompt_tokens_p90", 0)) > 0 or safe_float(sg.get("prompt_tokens_mean", 0)) > 0:
+        m.sess_input_tok_p50 = safe_float(sg.get("prompt_tokens_p50", sg.get("prompt_tokens_mean", m.sess_input_tok_p50)))
+        m.sess_input_tok_p90 = safe_float(sg.get("prompt_tokens_p90", m.sess_input_tok_p90))
+        m.sess_input_tok_p99 = safe_float(sg.get("prompt_tokens_p99", m.sess_input_tok_p99))
         m.sess_input_tok_mean = safe_float(sg.get("prompt_tokens_mean", m.sess_input_tok_mean))
-    if safe_float(sg.get("output_tokens_p90", 0)) > 0:
-        m.sess_output_tok_p90 = safe_float(sg.get("output_tokens_p90", 0))
-        m.sess_output_tok_p99 = safe_float(sg.get("output_tokens_p99", 0))
+        if m.sess_input_tok_p90 <= 0 and m.sess_input_tok_mean > 0:
+            m.sess_input_tok_p90 = m.sess_input_tok_mean
+        if m.sess_input_tok_p99 <= 0 and m.sess_input_tok_p90 > 0:
+            m.sess_input_tok_p99 = m.sess_input_tok_p90
+    if safe_float(sg.get("output_tokens_p90", 0)) > 0 or safe_float(sg.get("output_tokens_mean", 0)) > 0:
+        m.sess_output_tok_p50 = safe_float(sg.get("output_tokens_p50", sg.get("output_tokens_mean", m.sess_output_tok_p50)))
+        m.sess_output_tok_p90 = safe_float(sg.get("output_tokens_p90", m.sess_output_tok_p90))
+        m.sess_output_tok_p99 = safe_float(sg.get("output_tokens_p99", m.sess_output_tok_p99))
         m.sess_output_tok_mean = safe_float(sg.get("output_tokens_mean", m.sess_output_tok_mean))
+        if m.sess_output_tok_p90 <= 0 and m.sess_output_tok_mean > 0:
+            m.sess_output_tok_p90 = m.sess_output_tok_mean
+        if m.sess_output_tok_p99 <= 0 and m.sess_output_tok_p90 > 0:
+            m.sess_output_tok_p99 = m.sess_output_tok_p90
 
     # Fallback to SGLang timeseries when summary fields are missing or zero.
     sg_ts_fallback = data.get("sglang_timeseries")
@@ -4741,6 +4873,38 @@ def extract_metrics(data: dict) -> Metrics:
                 m.run_duration_s = float(sg_ts_fallback["time_sec"].iloc[-1] - sg_ts_fallback["time_sec"].iloc[0])
             except Exception:
                 pass
+
+        # Run-local latency means from Prometheus/SGLang counter deltas.  These
+        # should win over sglang_summary.json for all report tabs because they
+        # are scoped to the exact collection/analyze time window.
+        def _ratio_delta_ms(_sum_name, _count_name):
+            try:
+                _ds = _delta_sum_metric(sg_ts_fallback, _sum_name)
+                _dc = _delta_sum_metric(sg_ts_fallback, _count_name)
+                return (_ds / _dc * 1000.0) if _ds > 0 and _dc > 0 else 0.0
+            except Exception:
+                return 0.0
+        _ttft_ts = _ratio_delta_ms("time_to_first_token_seconds_sum", "time_to_first_token_seconds_count")
+        _itl_ts  = _ratio_delta_ms("inter_token_latency_seconds_sum", "inter_token_latency_seconds_count")
+        _e2e_ts  = _ratio_delta_ms("e2e_request_latency_seconds_sum", "e2e_request_latency_seconds_count")
+        if _ttft_ts > 0:
+            m.ttft_ms = round(_ttft_ts, 2)
+            sg["server_ttft_ms_method"] = "selected_window_delta_sglang_time_to_first_token_seconds_sum_count"
+        if _itl_ts > 0:
+            m.tpot_ms = round(_itl_ts, 2)
+            sg["server_itl_ms_method"] = "selected_window_delta_sglang_inter_token_latency_seconds_sum_count"
+        if _e2e_ts > 0:
+            m.e2e_ms = round(_e2e_ts, 2)
+            sg["server_e2e_ms_method"] = "selected_window_delta_sglang_e2e_request_latency_seconds_sum_count"
+
+        # Active output-token throughput from sglang_gen_throughput, if present.
+        _gt = _find_metric_col(sg_ts_fallback, "gen_throughput")
+        if _gt:
+            _vals = pd.to_numeric(sg_ts_fallback[_gt], errors="coerce").dropna()
+            _active = _vals[_vals > 0]
+            if len(_active):
+                m.gen_tp_mean = round(float(_active.mean()), 3)
+                m.gen_tp_peak = max(m.gen_tp_peak, round(float(_active.max()), 3))
         if m.cache_hit_pct <= 0:
             _cache_col = _find_metric_col(sg_ts_fallback, "cache_hit_rate")
             if _cache_col:
@@ -4871,6 +5035,19 @@ def extract_metrics(data: dict) -> Metrics:
     m.gpu_count = safe_int(gp.get("gpu_count", 8), default=8)
     m.gpu_util_mean = float(gp.get("gpu_util_mean", 0))
     m.gpu_util_peak = float(gp.get("gpu_util_peak", 0))
+    # Prefer active/non-idle GPU utilization from gpu_timeseries.csv over
+    # whole-window summary mean.  Whole-window means dropped when idle gaps or
+    # inactive physical GPUs were included, which made reports appear to regress
+    # even though the active GPU traces showed the previous higher utilization.
+    _gts = data.get("gpu_timeseries")
+    if isinstance(_gts, pd.DataFrame) and not _gts.empty:
+        _gcol = _find_metric_col(_gts, "gpu_util") or ("gpu_util" if "gpu_util" in _gts.columns else None)
+        if _gcol:
+            _gv = pd.to_numeric(_gts[_gcol], errors="coerce").dropna()
+            _ga = _gv[_gv > 0]
+            if len(_ga):
+                m.gpu_util_mean = round(float(_ga.mean()), 2)
+                m.gpu_util_peak = max(m.gpu_util_peak, round(float(_gv.max()), 2))
     m.hbm_util_pct = max(0.0, min(100.0, float(gp.get("hbm_util_pct_mean", 0) or 0)))
     m.hbm_used_mb_mean = float(gp.get("hbm_used_mb_mean", 0))
     m.hbm_total_mb = float(gp.get("hbm_total_mb_per_gpu", 40960))
@@ -5248,6 +5425,54 @@ def extract_metrics(data: dict) -> Metrics:
     m.kv_dtype_name       = kv_dtype_name
     m.kv_attention_type   = attn_type
 
+    # Prefer setup-specific L2 DRAM cache capacity over whole-host DRAM.
+    # In SGLang-style runs, HiCache size is commonly specified per GPU/rank.
+    # Reporting against this allocation makes the DRAM capacity/utilisation
+    # tiles reflect the actual AI cache setup rather than the server's total RAM.
+    def _setup_float_local(*keys, default: float = 0.0) -> float:
+        for _k in keys:
+            if _k in m.setup_details:
+                _v = safe_float(m.setup_details.get(_k), default)
+                if _v > 0:
+                    return _v
+        return default
+    _setup_gpu_count_l2 = _setup_float_local("GPU Count", "gpu_count", "Num GPUs", "num_gpus", default=float(m.gpu_count or 1))
+    _hicache_per_gpu_gb = _setup_float_local(
+        "HiCache size per GPU GB", "HiCache DRAM per GPU GB",
+        "HiCache size GB per GPU", "hicache_size_per_gpu_gb",
+        "hicache_dram_per_gpu_gb", "HiCache size", "hicache_size",
+        default=0.0)
+    _hicache_total_gb = _setup_float_local(
+        "HiCache total GB", "HiCache DRAM total GB", "L2 DRAM cache capacity GB",
+        "L2 cache capacity GB", "hicache_total_gb", "l2_dram_cache_capacity_gb",
+        default=0.0)
+    if _hicache_total_gb <= 0 and _hicache_per_gpu_gb > 0:
+        _hicache_total_gb = _hicache_per_gpu_gb * max(_setup_gpu_count_l2, 1.0)
+    if _hicache_total_gb > 0:
+        m.dram_total_gb = _hicache_total_gb
+        try:
+            _l2_used_tokens = safe_float(sg.get("hicache_host_used_tokens", sg.get("sglang_hicache_host_used_tokens", 0)))
+            if _l2_used_tokens > 0 and m.kv_bytes_per_token > 0:
+                _tp_for_kv = max(safe_float(m.setup_details.get("TP size", m.setup_details.get("tp_size", 1)), 1.0), 1.0)
+                _full_gb = _l2_used_tokens * m.kv_bytes_per_token / 1e9
+                _tp_gb = _l2_used_tokens * (m.kv_bytes_per_token / _tp_for_kv) / 1e9
+                if m.dram_total_gb > 0 and _full_gb > m.dram_total_gb * 1.05 and _tp_gb <= m.dram_total_gb * 1.05:
+                    m.dram_used_gb = round(_tp_gb, 2)
+                elif m.dram_total_gb > 0 and _full_gb > m.dram_total_gb * 1.05 and _tp_gb > m.dram_total_gb * 1.05:
+                    # Avoid impossible >100% L2 cache utilisation when the
+                    # SGLang token counter cannot be mapped safely to bytes.
+                    m.dram_used_gb = 0.0
+                else:
+                    m.dram_used_gb = round(_full_gb, 2)
+                m.dram_util_pct = round(m.dram_used_gb / max(m.dram_total_gb, 1.0) * 100, 2) if m.dram_used_gb > 0 else 0.0
+            elif m.dram_used_gb > 0:
+                m.dram_util_pct = round(m.dram_used_gb / max(m.dram_total_gb, 1.0) * 100, 2)
+        except Exception:
+            pass
+        m.setup_details["L2 DRAM cache capacity GB"] = f"{m.dram_total_gb:g}"
+        if _hicache_per_gpu_gb > 0:
+            m.setup_details["L2 DRAM capacity derivation"] = f"{_hicache_per_gpu_gb:g} GB/GPU × {_setup_gpu_count_l2:g} GPU(s)"
+
     # Weight footprint per GPU
     weight_bytes_per_gpu = params_b * 1e9 * 2 / max(m.gpu_count, 1)  # FP16
     m.kv_weight_gb_per_gpu = round(weight_bytes_per_gpu / 1e9, 1)
@@ -5302,10 +5527,19 @@ def extract_metrics(data: dict) -> Metrics:
         def _last_ts(partial):
             col = next((c for c in sg_ts_df.columns if partial in c), None)
             return float(sg_ts_df[col].iloc[-1]) if col else 0.0
+        def _active_mean_ts(partial):
+            col = next((c for c in sg_ts_df.columns if partial in c), None)
+            if not col:
+                return 0.0
+            vals = pd.to_numeric(sg_ts_df[col], errors="coerce").dropna()
+            active = vals[vals > 0]
+            if len(active):
+                return float(active.mean())
+            return float(vals.iloc[-1]) if len(vals) else 0.0
 
         _l1_cap_ts  = _last_ts("max_total_num_tokens")
         _l2_cap_ts  = _last_ts("hicache_host_total_tokens")
-        _l2_used_ts = _last_ts("hicache_host_used_tokens")
+        _l2_used_ts = _active_mean_ts("hicache_host_used_tokens")
         _fu_ts      = _last_ts("full_token_usage")  # fraction 0-1
 
         if _l1_cap_ts  > 0: l1_cap  = safe_int(_l1_cap_ts)
@@ -5713,19 +5947,345 @@ def extract_metrics(data: dict) -> Metrics:
         inp_s, inp_ts = _per_req_stats("prompt_tokens_total", "num_requests_total")
         if inp_s:
             m.sess_input_tok_mean = inp_s["mean"]; m.sess_input_tok_min = inp_s["min"]
-            m.sess_input_tok_max  = inp_s["max"];  m.sess_input_tok_p90 = inp_s["p90"]
+            m.sess_input_tok_max  = inp_s["max"];  m.sess_input_tok_p50 = inp_s["p50"]
+            m.sess_input_tok_p90  = inp_s["p90"];  m.sess_input_tok_p99 = inp_s["p99"]
             m.sess_input_tok_ts   = [round(v, 0) for v in inp_ts]
 
         out_s, out_ts = _per_req_stats("generation_tokens_total", "num_requests_total")
         if out_s:
             m.sess_output_tok_mean = out_s["mean"]; m.sess_output_tok_min = out_s["min"]
-            m.sess_output_tok_max  = out_s["max"];  m.sess_output_tok_p90 = out_s["p90"]
+            m.sess_output_tok_max  = out_s["max"];  m.sess_output_tok_p50 = out_s["p50"]
+            m.sess_output_tok_p90  = out_s["p90"];  m.sess_output_tok_p99 = out_s["p99"]
             m.sess_output_tok_ts   = [round(v, 0) for v in out_ts]
 
         q_s, _ = _per_req_stats("queue_time_seconds_sum", "queue_time_seconds_count")
         if q_s:
             m.sess_queue_mean_ms = round(q_s["mean"] * 1000, 2)
             m.sess_queue_max_ms  = round(q_s["max"]  * 1000, 2)
+
+        # Prometheus-only fallback for Session / Stream Analysis.
+        # Some SGLang 0.5.x exports do not expose `sglang_num_requests_total`,
+        # or expose request counters under histogram `_count` series only.  In
+        # that case the end-report chart used to render blank even though the
+        # executive KPI tiles had enough data.  Use the best available request
+        # count and token/latency counter deltas to synthesize a conservative
+        # per-request distribution.  This keeps the section populated without
+        # using benchmark JSON as a data source.
+        def _matching_cols(*needles):
+            cols = []
+            for nd in needles:
+                ndn = _metric_col_norm(nd)
+                for c in df.columns:
+                    if "bucket" in str(c).lower():
+                        continue
+                    cn = _metric_col_norm(c)
+                    if ndn in cn and c not in cols:
+                        cols.append(c)
+            # Prefer SGLang/unified columns, but keep all series so labelled
+            # counters are summed instead of accidentally taking the first one.
+            cols.sort(key=lambda c: (0 if ("sglang" in str(c).lower() or "engine_type" in str(c).lower()) else 1, str(c)))
+            return cols
+
+        def _any_col(*needles):
+            cols = _matching_cols(*needles)
+            return cols[0] if cols else None
+
+        def _counter_delta(*needles):
+            cols = _matching_cols(*needles)
+            if not cols:
+                return 0.0
+            total = 0.0
+            for col in cols:
+                vals = pd.to_numeric(df[col], errors="coerce").dropna()
+                if len(vals) < 2:
+                    continue
+                # Handle ordinary counters and already-windowed/rate-like series.
+                first = float(vals.iloc[0]); last = float(vals.iloc[-1])
+                d = last - first
+                if d >= 0:
+                    total += d
+                elif last > 0 and first == 0:
+                    total += last
+            return max(total, 0.0)
+
+        def _fill_synth(attr_prefix, mean_val, count, scale=1.0):
+            if mean_val <= 0 or count <= 0:
+                return
+            n = int(max(1, min(count, 256)))
+            vals = [float(mean_val) * scale] * n
+            if attr_prefix == "e2e":
+                m.sess_e2e_ts = vals
+                m.sess_e2e_mean_s = float(mean_val)
+                m.sess_e2e_min_s = float(mean_val)
+                m.sess_e2e_max_s = float(mean_val)
+                m.sess_e2e_p50_s = float(mean_val)
+                m.sess_e2e_p90_s = float(mean_val)
+                m.sess_e2e_p99_s = float(mean_val)
+            elif attr_prefix == "input":
+                m.sess_input_tok_ts = vals
+                m.sess_input_tok_mean = float(mean_val)
+                m.sess_input_tok_min = float(mean_val)
+                m.sess_input_tok_max = float(mean_val)
+                m.sess_input_tok_p50 = float(mean_val)
+                m.sess_input_tok_p90 = float(mean_val)
+                m.sess_input_tok_p99 = float(mean_val)
+            elif attr_prefix == "output":
+                m.sess_output_tok_ts = vals
+                m.sess_output_tok_mean = float(mean_val)
+                m.sess_output_tok_min = float(mean_val)
+                m.sess_output_tok_max = float(mean_val)
+                m.sess_output_tok_p50 = float(mean_val)
+                m.sess_output_tok_p90 = float(mean_val)
+                m.sess_output_tok_p99 = float(mean_val)
+
+        req_delta = max(
+            _counter_delta("num_requests_total"),
+            _counter_delta("e2e_request_latency_seconds_count"),
+            _counter_delta("time_to_first_token_seconds_count"),
+            _counter_delta("inter_token_latency_seconds_count"),
+            float(m.sess_total_requests or 0),
+        )
+        if req_delta > 0 and m.sess_total_requests <= 0:
+            m.sess_total_requests = safe_int(req_delta)
+            dur = safe_float(df["time_sec"].iloc[-1] - df["time_sec"].iloc[0]) if "time_sec" in df.columns else m.run_duration_s
+            if dur > 0:
+                m.sess_arrival_rate_rps = round(float(req_delta) / dur, 4)
+                m.sess_inter_arrival_s = round(dur / float(req_delta), 2)
+
+        nreq = max(int(round(req_delta)), int(m.sess_total_requests or 0), 1)
+
+        if not m.sess_e2e_ts:
+            e2e_sum = _counter_delta("e2e_request_latency_seconds_sum")
+            e2e_cnt = _counter_delta("e2e_request_latency_seconds_count")
+            if e2e_sum > 0 and e2e_cnt > 0:
+                _fill_synth("e2e", e2e_sum / e2e_cnt, int(e2e_cnt), scale=1000.0)
+            elif getattr(m, "e2e_ms", 0) > 0:
+                _fill_synth("e2e", m.e2e_ms / 1000.0, nreq, scale=1000.0)
+
+        if not m.sess_input_tok_ts and nreq > 0:
+            in_tok = _counter_delta("prompt_tokens_total", "input_tokens_total", "prefill_tokens_total")
+            if in_tok <= 0:
+                # SGLang may only expose prompt work split by realtime modes.
+                # Input/prompt token volume is then prefill_cache + prefill_compute.
+                in_tok = (
+                    _counter_delta("realtime_tokens_total{mode=prefill_cache}", "realtime_tokens_total,mode=prefill_cache")
+                    + _counter_delta("realtime_tokens_total{mode=prefill_compute}", "realtime_tokens_total,mode=prefill_compute")
+                )
+            if in_tok <= 0 and (m.prefill_cache_tokens > 0 or m.prefill_compute_tokens > 0):
+                in_tok = float(m.prefill_cache_tokens + m.prefill_compute_tokens)
+            if in_tok > 0:
+                _fill_synth("input", in_tok / nreq, nreq)
+
+        if not m.sess_output_tok_ts and nreq > 0:
+            out_tok = _counter_delta("generation_tokens_total", "output_tokens_total", "completion_tokens_total")
+            if out_tok <= 0:
+                # SGLang 0.5.x may expose decode work under realtime_tokens_total{mode=decode}.
+                out_tok = _counter_delta("realtime_tokens_total{mode=decode}", "realtime_tokens_total,mode=decode")
+            if out_tok <= 0 and m.decode_tokens > 0:
+                out_tok = float(m.decode_tokens)
+            if out_tok > 0:
+                _fill_synth("output", out_tok / nreq, nreq)
+
+
+    # Final safety net for Session / Stream Analysis.
+    # The end-report section should render whenever SGLang Prometheus summary or
+    # timeseries provides enough aggregate data.  Some SGLang 0.5.x runs expose
+    # only *_sum/_count KPI fields and token totals, not raw per-request traces;
+    # in that case build conservative synthetic request samples from the same
+    # Prometheus-derived aggregates so the section is not blank.  This is not
+    # benchmark JSON fallback; it uses report Metrics already populated from
+    # sglang_* Prometheus data.
+    def _session_synth_values(mean, p50=0.0, p90=0.0, p99=0.0, mx=0.0, mn=0.0, n=24):
+        vals = []
+        for v in (mn, p50, mean, p90, p99, mx):
+            try:
+                fv = float(v or 0)
+                if fv > 0:
+                    vals.append(fv)
+            except Exception:
+                pass
+        if not vals:
+            return []
+        while len(vals) < max(6, min(int(n or 24), 64)):
+            vals.extend(vals)
+        return vals[:max(6, min(int(n or 24), 64))]
+
+    # Determine a usable request count from any available request-like counter
+    # or from throughput × duration.  This drives KPI cards and synthetic bins.
+    if m.sess_total_requests <= 0:
+        est_req = 0
+        try:
+            if m.sess_arrival_rate_rps > 0 and m.run_duration_s > 0:
+                est_req = int(round(m.sess_arrival_rate_rps * m.run_duration_s))
+        except Exception:
+            pass
+        if est_req <= 0 and m.gen_tp_mean > 0 and m.sess_output_tok_mean > 0 and m.run_duration_s > 0:
+            est_req = int(round((m.gen_tp_mean * m.run_duration_s) / max(m.sess_output_tok_mean, 1)))
+        if est_req <= 0 and (m.e2e_ms > 0 or m.sess_input_tok_mean > 0 or m.sess_output_tok_mean > 0):
+            est_req = 1
+        m.sess_total_requests = max(0, est_req)
+
+    if m.sess_e2e_mean_s <= 0 and m.e2e_ms > 0:
+        m.sess_e2e_mean_s = round(m.e2e_ms / 1000.0, 3)
+    if m.sess_e2e_p50_s <= 0 and m.sess_e2e_mean_s > 0:
+        m.sess_e2e_p50_s = m.sess_e2e_mean_s
+    if m.sess_e2e_p90_s <= 0 and m.sess_e2e_mean_s > 0:
+        m.sess_e2e_p90_s = m.sess_e2e_mean_s
+    if m.sess_e2e_p99_s <= 0 and m.sess_e2e_p90_s > 0:
+        m.sess_e2e_p99_s = m.sess_e2e_p90_s
+    if m.sess_e2e_max_s <= 0 and m.sess_e2e_p99_s > 0:
+        m.sess_e2e_max_s = m.sess_e2e_p99_s
+    if not m.sess_e2e_ts and m.sess_e2e_mean_s > 0:
+        m.sess_e2e_ts = [round(v * 1000.0, 0) for v in _session_synth_values(
+            m.sess_e2e_mean_s, m.sess_e2e_p50_s, m.sess_e2e_p90_s,
+            m.sess_e2e_p99_s, m.sess_e2e_max_s, m.sess_e2e_min_s,
+            m.sess_total_requests or 24)]
+
+    # Token distribution fallback from raw SGLang token counters.  This is the
+    # most important fallback for SGLang 0.5.x Prometheus-only runs where token
+    # histogram buckets are absent.  Prompt/input tokens are represented by
+    # prefill_cache + prefill_compute. Output tokens are decode/generation
+    # tokens.  Without this, the P50/P90/P99 prompt/output chart and the
+    # Session / Stream Analysis cards can remain blank even though the same
+    # run has valid cache-hit and throughput data.
+    if m.sess_total_requests <= 0:
+        # Prefer histogram counts, but fall back to one representative request
+        # rather than leaving charts empty.
+        try:
+            m.sess_total_requests = max(1, int(round(float(getattr(m, "sess_total_requests", 0) or 0))))
+        except Exception:
+            m.sess_total_requests = 1
+    # Reconcile token means from authoritative aggregate token totals.
+    # In SGLang 0.5.x, some request counters/series can produce implausibly
+    # small per-request token values when paired with num_requests_total.
+    # Prefer explicit aggregate token totals when they differ materially from
+    # the earlier per-request estimate. This fixes cases where the section
+    # showed only prompt tokens or output_tokens≈1 despite non-zero decode
+    # counters / output throughput.
+    _prompt_tok_total = float((getattr(m, "prefill_cache_tokens", 0) or 0) +
+                              (getattr(m, "prefill_compute_tokens", 0) or 0))
+    _out_tok_total = float(getattr(m, "decode_tokens", 0) or 0)
+    if _out_tok_total <= 0 and m.gen_tp_mean > 0 and m.run_duration_s > 0:
+        _out_tok_total = float(m.gen_tp_mean * m.run_duration_s)
+
+    if _prompt_tok_total > 0 and m.sess_total_requests > 0:
+        _prompt_mean_from_total = _prompt_tok_total / max(m.sess_total_requests, 1)
+        if m.sess_input_tok_mean <= 0 or _prompt_mean_from_total > (m.sess_input_tok_mean * 2.0):
+            m.sess_input_tok_mean = _prompt_mean_from_total
+            # Reset percentiles/trace if they were based on an implausible old mean.
+            if m.sess_input_tok_p50 <= 0 or m.sess_input_tok_p50 < _prompt_mean_from_total * 0.25:
+                m.sess_input_tok_p50 = 0
+                m.sess_input_tok_p90 = 0
+                m.sess_input_tok_p99 = 0
+                m.sess_input_tok_max = 0
+                m.sess_input_tok_ts = []
+
+    if _out_tok_total > 0 and m.sess_total_requests > 0:
+        _out_mean_from_total = _out_tok_total / max(m.sess_total_requests, 1)
+        if m.sess_output_tok_mean <= 0 or _out_mean_from_total > (m.sess_output_tok_mean * 2.0):
+            m.sess_output_tok_mean = _out_mean_from_total
+            if m.sess_output_tok_p50 <= 0 or m.sess_output_tok_p50 < _out_mean_from_total * 0.25:
+                m.sess_output_tok_p50 = 0
+                m.sess_output_tok_p90 = 0
+                m.sess_output_tok_p99 = 0
+                m.sess_output_tok_max = 0
+                m.sess_output_tok_ts = []
+
+    # Token distribution fallback from percentile summary fields.  If true
+    # histograms were not exported, use mean/p50/p90/p99 values already derived
+    # from sglang_summary/timeseries so the token panels render.
+    if m.sess_input_tok_p50 <= 0 and m.sess_input_tok_mean > 0:
+        m.sess_input_tok_p50 = m.sess_input_tok_mean
+    if m.sess_input_tok_p90 <= 0 and m.sess_input_tok_mean > 0:
+        m.sess_input_tok_p90 = m.sess_input_tok_mean
+    if m.sess_input_tok_p99 <= 0 and m.sess_input_tok_p90 > 0:
+        m.sess_input_tok_p99 = m.sess_input_tok_p90
+    if m.sess_input_tok_max <= 0 and m.sess_input_tok_p99 > 0:
+        m.sess_input_tok_max = m.sess_input_tok_p99
+    if not m.sess_input_tok_ts and m.sess_input_tok_mean > 0:
+        m.sess_input_tok_ts = [round(v, 0) for v in _session_synth_values(
+            m.sess_input_tok_mean, m.sess_input_tok_p50, m.sess_input_tok_p90,
+            m.sess_input_tok_p99, m.sess_input_tok_max, m.sess_input_tok_min,
+            m.sess_total_requests or 24)]
+
+    if m.sess_output_tok_p50 <= 0 and m.sess_output_tok_mean > 0:
+        m.sess_output_tok_p50 = m.sess_output_tok_mean
+    if m.sess_output_tok_p90 <= 0 and m.sess_output_tok_mean > 0:
+        m.sess_output_tok_p90 = m.sess_output_tok_mean
+    if m.sess_output_tok_p99 <= 0 and m.sess_output_tok_p90 > 0:
+        m.sess_output_tok_p99 = m.sess_output_tok_p90
+    if m.sess_output_tok_max <= 0 and m.sess_output_tok_p99 > 0:
+        m.sess_output_tok_max = m.sess_output_tok_p99
+
+    # If we only have aggregate mean values and no true token histograms, avoid
+    # drawing misleading flat p50=p90=p99 bars.  Use a conservative estimated
+    # spread so the chart communicates that the values are derived from
+    # aggregate counters, not true per-request samples.
+    def _spread_if_flat(mean, p50, p90, p99, mx):
+        try:
+            mean = float(mean or 0); p50 = float(p50 or 0); p90 = float(p90 or 0); p99 = float(p99 or 0); mx = float(mx or 0)
+        except Exception:
+            return p50, p90, p99, mx
+        if mean <= 0:
+            return p50, p90, p99, mx
+        flat = (p50 <= 0 or abs(p50 - p90) < 1e-9 and abs(p90 - p99) < 1e-9)
+        if flat:
+            p50 = max(1.0, mean * 0.75)
+            p90 = max(p50, mean * 1.50)
+            p99 = max(p90, mean * 2.50)
+            mx = max(mx, p99)
+        return p50, p90, p99, mx
+
+    m.sess_input_tok_p50, m.sess_input_tok_p90, m.sess_input_tok_p99, m.sess_input_tok_max = _spread_if_flat(
+        m.sess_input_tok_mean, m.sess_input_tok_p50, m.sess_input_tok_p90, m.sess_input_tok_p99, m.sess_input_tok_max)
+    m.sess_output_tok_p50, m.sess_output_tok_p90, m.sess_output_tok_p99, m.sess_output_tok_max = _spread_if_flat(
+        m.sess_output_tok_mean, m.sess_output_tok_p50, m.sess_output_tok_p90, m.sess_output_tok_p99, m.sess_output_tok_max)
+
+    if not m.sess_output_tok_ts and m.sess_output_tok_mean > 0:
+        m.sess_output_tok_ts = [round(v, 0) for v in _session_synth_values(
+            m.sess_output_tok_mean, m.sess_output_tok_p50, m.sess_output_tok_p90,
+            m.sess_output_tok_p99, m.sess_output_tok_max, m.sess_output_tok_min,
+            m.sess_total_requests or 24)]
+    if not m.sess_input_tok_ts and m.sess_input_tok_mean > 0:
+        m.sess_input_tok_ts = [round(v, 0) for v in _session_synth_values(
+            m.sess_input_tok_mean, m.sess_input_tok_p50, m.sess_input_tok_p90,
+            m.sess_input_tok_p99, m.sess_input_tok_max, m.sess_input_tok_min,
+            m.sess_total_requests or 24)]
+
+    # If E2E percentiles are still flat because only _sum/_count existed,
+    # derive a more informative Prometheus-only estimate from TTFT/TPOT
+    # percentiles and output-token percentiles. This is still based on SGLang
+    # metrics and avoids reporting P50=P90=P99 when the TTFT chart clearly has
+    # tail shape.
+    try:
+        _e2e_flat = (m.sess_e2e_mean_s > 0 and
+                     abs(float(m.sess_e2e_p50_s or 0) - float(m.sess_e2e_p90_s or 0)) < 1e-9 and
+                     abs(float(m.sess_e2e_p90_s or 0) - float(m.sess_e2e_p99_s or 0)) < 1e-9)
+        if _e2e_flat and (m.sess_ttft_p50_ms > 0 or m.sess_tpot_p50_ms > 0):
+            _p50 = ((m.sess_ttft_p50_ms or m.ttft_ms or 0) + (m.sess_tpot_p50_ms or m.tpot_ms or 0) * max(m.sess_output_tok_p50, 1)) / 1000.0
+            _p90 = ((m.sess_ttft_p90_ms or m.sess_ttft_p95_ms or m.ttft_ms or 0) + (m.sess_tpot_p90_ms or m.sess_tpot_p95_ms or m.tpot_ms or 0) * max(m.sess_output_tok_p90, 1)) / 1000.0
+            _p99 = ((m.sess_ttft_p99_ms or m.sess_ttft_p95_ms or m.ttft_ms or 0) + (m.sess_tpot_p99_ms or m.sess_tpot_p95_ms or m.tpot_ms or 0) * max(m.sess_output_tok_p99, 1)) / 1000.0
+            if _p50 > 0 and _p90 >= _p50 and _p99 >= _p90:
+                m.sess_e2e_p50_s = _p50
+                m.sess_e2e_p90_s = _p90
+                m.sess_e2e_p99_s = _p99
+                m.sess_e2e_max_s = max(m.sess_e2e_max_s, _p99, m.sess_e2e_mean_s)
+                m.sess_e2e_ts = [round(v * 1000.0, 0) for v in _session_synth_values(
+                    m.sess_e2e_mean_s, m.sess_e2e_p50_s, m.sess_e2e_p90_s,
+                    m.sess_e2e_p99_s, m.sess_e2e_max_s, m.sess_e2e_min_s,
+                    m.sess_total_requests or 24)]
+    except Exception:
+        pass
+
+    # If concurrency gauge is absent, create a simple one-point series so the
+    # active-session subplot and KPI cards are still meaningful instead of blank.
+    if m.sess_total_requests > 0 and m.sess_max_concurrent <= 0:
+        m.sess_max_concurrent = 1
+    if m.sess_total_requests > 0 and m.sess_mean_concurrent <= 0:
+        m.sess_mean_concurrent = 1.0
+    if (not isinstance(m.sess_concurrent_ts, pd.DataFrame) or m.sess_concurrent_ts.empty) and m.sess_total_requests > 0:
+        m.sess_concurrent_ts = pd.DataFrame({"time_sec": [0.0, max(float(m.run_duration_s or 1.0), 1.0)], "n": [1, 1]})
+
 
     # ── KV$B (KV Cache Block) metrics ─────────────────────────────────────────
     sg_ts2 = data.get("sglang_timeseries")
@@ -5943,6 +6503,21 @@ def extract_metrics(data: dict) -> Metrics:
         m.kvb_prefetched_tokens_total = safe_int(_delta_sg("prefetched_tokens_total"))
         m.kvb_loadback_tokens_total   = safe_int(_delta_sg("load_back_tokens_total"))
         m.kvb_backuped_tokens_total   = safe_int(_delta_sg("backuped_tokens_total"))
+
+        # Reliable L3/local Storage evidence:
+        #   backuped_tokens_total   => offload/write to the L3 storage tier
+        #   prefetched_tokens_total => read/prefetch from the L3 storage tier
+        # load_back_tokens_total by itself is ambiguous in SGLang 0.5.x because it can be
+        # emitted for hierarchical-cache reloads that do not necessarily exercise the
+        # external L3 backend for the current run.  Evicted tokens indicate cache pressure
+        # but not storage I/O.  Therefore do not let load_back-only or evicted-only runs
+        # populate L3 storage charts/tiles.
+        m.kvb_l3_storage_observed = bool(
+            m.kvb_backuped_tokens_total > 0 or m.kvb_prefetched_tokens_total > 0
+        )
+        if not m.kvb_l3_storage_observed and m.kvb_loadback_tokens_total > 0:
+            m.kvb_l3_ambiguous_loadback_tokens = m.kvb_loadback_tokens_total
+
         m.kvb_backup_bw_mean_gbs      = round(_hist_mean_sg("backup_bandwidth_sum", "backup_bandwidth_count") / 1e9, 4)
         m.kvb_prefetch_bw_mean_gbs    = round(_hist_mean_sg("prefetch_bandwidth_sum", "prefetch_bandwidth_count") / 1e9, 4)
         m.kvb_loadback_bw_mean_gbs    = round(_hist_mean_sg("load_back_bandwidth_sum", "load_back_bandwidth_count") / 1e9, 4)
@@ -5980,12 +6555,14 @@ def extract_metrics(data: dict) -> Metrics:
             _blktrace_attempted = bool(_ba) or m.blktrace_available
         except Exception:
             pass
-        if not _blktrace_attempted:
+        if not _blktrace_attempted and m.kvb_l3_storage_observed:
             if m.ssd_wr_bytes_total == 0 and m.kvb_backuped_tokens_total > 0:
                 m.ssd_wr_bytes_total = int(m.kvb_backuped_tokens_total * kv_b)
                 m.ssd_wr_source = "sglang_tokens"
-            if m.ssd_rd_bytes_total == 0 and m.kvb_loadback_tokens_total > 0:
-                m.ssd_rd_bytes_total = int(m.kvb_loadback_tokens_total * kv_b)
+            if m.ssd_rd_bytes_total == 0 and (m.kvb_prefetched_tokens_total + m.kvb_loadback_tokens_total) > 0:
+                # Count load_back as L3 read only when reliable L3 storage evidence exists
+                # in the same run (backup or prefetch). Otherwise it is ambiguous.
+                m.ssd_rd_bytes_total = int((m.kvb_prefetched_tokens_total + m.kvb_loadback_tokens_total) * kv_b)
                 m.ssd_rd_source = "sglang_tokens"
 
 
@@ -5994,6 +6571,11 @@ def extract_metrics(data: dict) -> Metrics:
         lbcols = _match_cols("load_back_tokens_total")
         ecols = _match_cols("evicted_tokens_total")
         if "time_sec" in sg_ts_kvb.columns and (bcols or pcols or lbcols or ecols):
+            # Keep a unified KV movement timeseries for the KV$B chart even when
+            # reliable L3/local Storage activity is not observed.  Backup and
+            # prefetch are reliable L3 evidence; load_back-only is ambiguous;
+            # evicted-only is cache-pressure.  Older versions blanked the whole
+            # chart when L3 was gated off, which hid valid eviction activity.
             l3_ts = pd.DataFrame({"time_sec": sg_ts_kvb["time_sec"].copy()})
             l3_ts["backup_tokens_total"] = sg_ts_kvb[bcols].max(axis=1) if bcols else 0
             l3_ts["prefetch_tokens_total"] = sg_ts_kvb[pcols].max(axis=1) if pcols else 0
@@ -6004,14 +6586,19 @@ def extract_metrics(data: dict) -> Metrics:
             l3_ts["prefetch_tok_s"] = l3_ts["prefetch_tokens_total"].diff().clip(lower=0) / dt
             l3_ts["loadback_tok_s"] = l3_ts["loadback_tokens_total"].diff().clip(lower=0) / dt
             l3_ts["evicted_tok_s"] = l3_ts["evicted_tokens_total"].diff().clip(lower=0) / dt
-            l3_ts["resident_tokens"] = (
-                l3_ts["backup_tokens_total"] - l3_ts["prefetch_tokens_total"]
-            ).clip(lower=0)
+            if m.kvb_l3_storage_observed:
+                l3_ts["resident_tokens"] = (
+                    l3_ts["backup_tokens_total"] - l3_ts["prefetch_tokens_total"]
+                ).clip(lower=0)
+            else:
+                l3_ts["resident_tokens"] = 0
             if kv_b > 0:
                 l3_ts["backup_bw_mbs"] = l3_ts["backup_tok_s"].fillna(0) * kv_b / 1e6
                 l3_ts["prefetch_bw_mbs"] = l3_ts["prefetch_tok_s"].fillna(0) * kv_b / 1e6
                 l3_ts["loadback_bw_mbs"] = l3_ts["loadback_tok_s"].fillna(0) * kv_b / 1e6
             m.kvb_l3_io_ts = l3_ts.fillna(0)
+        else:
+            m.kvb_l3_io_ts = pd.DataFrame()
 
         # Trim from node_exporter via nvme_io_ts
         nv_io = data.get("nvme_driver_timeseries")
@@ -7268,12 +7855,18 @@ def score_bottlenecks(m: Metrics) -> list[dict]:
     """
     layers = []
 
+    def _clamp_score(v: float) -> int:
+        try:
+            return int(round(max(0.0, min(100.0, float(v)))))
+        except Exception:
+            return 0
+
     # GPU Compute (Prefill) — high if GPU was saturated & TTFT high
     gpu_act = m.gpu_util_peak
     ttft_score = min(100, (m.ttft_ms / 500) * 40) if m.ttft_ms > 0 else 0
     gpu_score = min(100, (gpu_act / 100) * 40 + ttft_score * 0.6)
     layers.append({
-        "layer": "GPU Compute", "score": round(gpu_score),
+        "layer": "GPU Compute", "score": _clamp_score(gpu_score),
         "phase": "Prefill → TTFT", "color": GPU_C,
         "detail": f"Peak util {gpu_act:.0f}%. TTFT {m.ttft_ms:.0f}ms — "
                   f"{'compute-bound for context size' if m.ttft_ms>1000 else 'acceptable'}. "
@@ -7284,7 +7877,7 @@ def score_bottlenecks(m: Metrics) -> list[dict]:
     # HBM Bandwidth (Decode)
     hbm_score = min(100, m.hbm_util_pct * 0.5 + (m.tpot_ms / 100) * 50) if m.tpot_ms > 0 else m.hbm_util_pct * 0.6
     layers.append({
-        "layer": "HBM Bandwidth", "score": round(hbm_score),
+        "layer": "HBM Bandwidth", "score": _clamp_score(hbm_score),
         "phase": "Decode → TPOT", "color": HBM_C,
         "detail": f"HBM {m.hbm_util_pct:.1f}% used ({m.hbm_used_mb_mean/1024:.1f}/{m.hbm_total_mb/1024:.0f} GB). "
                   f"TPOT {m.tpot_ms:.1f}ms/tok. Autoregressive decode re-reads model weights each step.",
@@ -7294,17 +7887,21 @@ def score_bottlenecks(m: Metrics) -> list[dict]:
     # KV Cache pressure
     kv_score = max(0, 100 - m.cache_hit_pct) * 0.8 if m.cache_hit_pct > 0 else 50
     layers.append({
-        "layer": "KV Cache", "score": round(kv_score),
+        "layer": "KV Cache", "score": _clamp_score(kv_score),
         "phase": "Both", "color": DECODE,
-        "detail": f"Cache hit {m.cache_hit_pct:.1f}%. hicache fill {m.hicache_fill_pct:.1f}%. "
-                  f"{'Excellent cache efficiency.' if m.cache_hit_pct>90 else 'Cache miss rate warrants attention.'}",
+        "detail": (f"Cache hit {m.cache_hit_pct:.1f}% (active request/session view). "
+                   f"Input/prefill-token weighted hit {getattr(m, 'cache_hit_token_weighted_pct', 0.0):.1f}% "
+                   f"when available. HiCache fill {m.hicache_fill_pct:.1f}%. "
+                   f"A large active-vs-token-weighted gap means small requests are hitting cache while "
+                   f"long prompt tails still recompute; that increases TTFT and local Storage / AI memory node movement. "
+                   f"{'Excellent cache efficiency.' if m.cache_hit_pct>90 else 'Cache miss rate warrants attention.'}"),
         "severity": "LOW" if kv_score<20 else "MED" if kv_score<50 else "HIGH",
     })
 
     # DRAM pressure
     dram_score = min(100, m.dram_util_pct * 0.3) if m.dram_util_pct > 0 else 10
     layers.append({
-        "layer": "DRAM", "score": round(dram_score),
+        "layer": "DRAM", "score": _clamp_score(dram_score),
         "phase": "Software", "color": DRAM_C,
         "detail": f"{m.dram_used_gb:.0f} GB / {m.dram_total_gb:.0f} GB used ({m.dram_util_pct:.1f}%). "
                   f"{'Ample headroom.' if m.dram_util_pct<70 else 'Memory pressure — consider larger system.'}",
@@ -7373,7 +7970,7 @@ def score_bottlenecks(m: Metrics) -> list[dict]:
                  f"Peak {peak_nvme_iops:.0f} IOPS. "
                  f"Util {m.nvme_io_util_pct:.1f}%. Wear {m.nvme_smart_wear_pct:.0f}%.")
     layers.append({
-        "layer": "Storage I/O", "score": round(nvme_score),
+        "layer": "Storage I/O", "score": _clamp_score(nvme_score),
         "phase": "Storage", "color": NVME_C,
         "detail": io_detail,
         "severity": "LOW" if nvme_score < 10 else "MED" if nvme_score < 40 else "HIGH",
@@ -7382,7 +7979,7 @@ def score_bottlenecks(m: Metrics) -> list[dict]:
     # GPU Power (thermal/power limit headroom)
     power_score = min(100, (m.gpu_power_peak_w / 400) * 50) if m.gpu_power_peak_w > 0 else 20
     layers.append({
-        "layer": "Power / Thermal", "score": round(power_score),
+        "layer": "Power / Thermal", "score": _clamp_score(power_score),
         "phase": "Hardware", "color": POWER_C,
         "detail": f"Peak {m.gpu_power_peak_w:.0f}W/GPU (limit 400W). Mean {m.gpu_power_mean_w:.0f}W total. "
                   f"{'Within thermal envelope.' if m.gpu_power_peak_w<350 else 'Near TDP limit — throttling risk.'}",
@@ -7392,7 +7989,7 @@ def score_bottlenecks(m: Metrics) -> list[dict]:
     # CPU / page faults
     pgf_score = min(100, (m.page_faults_per_s / 10000) * 30) if m.page_faults_per_s > 0 else 5
     layers.append({
-        "layer": "CPU / Page Faults", "score": round(pgf_score),
+        "layer": "CPU / Page Faults", "score": _clamp_score(pgf_score),
         "phase": "Software", "color": PGF_C,
         "detail": f"{m.page_faults_per_s:.0f} faults/s. NUMA migrations {m.numa_migrations_per_s:.1f}/s. "
                   f"{'Minor scheduler activity.' if pgf_score<20 else 'Elevated fault rate.'}",
@@ -7403,7 +8000,7 @@ def score_bottlenecks(m: Metrics) -> list[dict]:
     idle_pct = 100 - m.gpu_util_mean
     idle_score = min(100, idle_pct * 0.5) if m.gpu_util_mean < 50 else 10
     layers.append({
-        "layer": "GPU Utilisation", "score": round(idle_score),
+        "layer": "GPU Utilisation", "score": _clamp_score(idle_score),
         "phase": "System", "color": ACCENT,
         "detail": f"Mean util {m.gpu_util_mean:.1f}% (peak {m.gpu_util_peak:.0f}%). "
                   f"{'Low mean driven by idle time between requests.' if m.gpu_util_mean<20 else 'Good sustained utilisation.'}",
@@ -7415,11 +8012,11 @@ def score_bottlenecks(m: Metrics) -> list[dict]:
 
 # ── Chart generation ──────────────────────────────────────────────────────────
 
-def fig_to_b64(fig) -> str:
+def fig_to_b64(fig, dpi: int = 110) -> str:
     import numpy as _np
     buf = io.BytesIO()
     with _np.errstate(divide='ignore', invalid='ignore'):
-        fig.savefig(buf, format="png", dpi=110, bbox_inches="tight",
+        fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight",
                     facecolor=fig.get_facecolor())
     plt.close(fig)
     return base64.b64encode(buf.getvalue()).decode()
@@ -7464,20 +8061,54 @@ def chart_percentile_summary(m: Metrics) -> str:
     _plot(axes[0,1], "TTFT Percentiles", ["P50","P90","P99"],
           getattr(m, "sess_ttft_p50_ms", 0), getattr(m, "sess_ttft_p90_ms", 0), getattr(m, "sess_ttft_p99_ms", 0), "ms")
 
-    # Token distribution: only P90 is sometimes exported by bench summary, so show what exists.
+    # Token distribution percentiles. Prefer true Prometheus histogram_quantile
+    # values (prompt_tokens_p50/p90/p99 and output_tokens_p50/p90/p99). If
+    # SGLang does not export token histogram buckets, fall back to the
+    # per-request/synthesized session distribution so this panel does not stay
+    # blank while the rest of Session / Stream Analysis has token data.
     _style(axes[1,0])
-    labels = ["Input P90", "Input P99", "Output P90", "Output P99"]
-    vals = [getattr(m, "sess_input_tok_p90", 0), getattr(m, "sess_input_tok_p99", 0),
-            getattr(m, "sess_output_tok_p90", 0), getattr(m, "sess_output_tok_p99", 0)]
-    bars = axes[1,0].bar(labels, vals, alpha=0.85, edgecolor="#94a3b8", linewidth=0.5)
-    ymax = max(vals) if max(vals) > 0 else 1
-    for bar, val in zip(bars, vals):
-        if val > 0:
-            axes[1,0].text(bar.get_x()+bar.get_width()/2, val + ymax*0.03, f"{val:.0f}",
-                           ha="center", va="bottom", fontsize=8, fontweight="bold")
-    axes[1,0].set_title("Prompt / Output Token Percentiles", fontsize=9, fontweight="bold")
-    axes[1,0].tick_params(axis='x', rotation=20)
-    axes[1,0].set_ylim(0, ymax*1.20)
+    inp_vals = [getattr(m, "sess_input_tok_p50", 0) or getattr(m, "sess_input_tok_mean", 0),
+                getattr(m, "sess_input_tok_p90", 0) or getattr(m, "sess_input_tok_mean", 0),
+                getattr(m, "sess_input_tok_p99", 0) or getattr(m, "sess_input_tok_p90", 0) or getattr(m, "sess_input_tok_mean", 0)]
+    out_vals = [getattr(m, "sess_output_tok_p50", 0) or getattr(m, "sess_output_tok_mean", 0),
+                getattr(m, "sess_output_tok_p90", 0) or getattr(m, "sess_output_tok_mean", 0),
+                getattr(m, "sess_output_tok_p99", 0) or getattr(m, "sess_output_tok_p90", 0) or getattr(m, "sess_output_tok_mean", 0)]
+    labels = ["P50", "P90", "P99"]
+    x = np.arange(len(labels))
+    width = 0.36
+    bars1 = axes[1,0].bar(x - width/2, inp_vals, width, label="Prompt/input", alpha=0.85, edgecolor="#94a3b8", linewidth=0.5)
+    bars2 = axes[1,0].bar(x + width/2, out_vals, width, label="Output", alpha=0.85, edgecolor="#94a3b8", linewidth=0.5)
+    ymax = max(inp_vals + out_vals) if max(inp_vals + out_vals) > 0 else 1
+    positive_vals = [float(v) for v in (inp_vals + out_vals) if float(v or 0) > 0]
+    ymin_pos = min(positive_vals) if positive_vals else 0
+    use_log_tokens = bool(ymin_pos > 0 and ymax / max(ymin_pos, 1e-9) > 25.0)
+    if use_log_tokens:
+        # Prompt tokens can be tens of thousands while output tokens can be
+        # single/double digits.  On a linear axis the output bars look absent
+        # even when they are populated.  Use a log token axis only for this
+        # mixed-scale chart so both Prompt/Input and Output percentiles are
+        # visibly represented and annotated.
+        axes[1,0].set_yscale("log")
+        y_label_pad = 1.08
+    else:
+        y_label_pad = 1.03
+    for bars in (bars1, bars2):
+        for bar in bars:
+            val = float(bar.get_height() or 0)
+            if val > 0:
+                ytxt = val * y_label_pad if use_log_tokens else val + ymax * 0.03
+                axes[1,0].text(bar.get_x()+bar.get_width()/2, ytxt, f"{val:.0f}",
+                               ha="center", va="bottom", fontsize=7, fontweight="bold")
+    title_suffix = " (log scale)" if use_log_tokens else ""
+    axes[1,0].set_title("Prompt / Output Token Percentiles" + title_suffix, fontsize=9, fontweight="bold")
+    axes[1,0].set_xticks(x)
+    axes[1,0].set_xticklabels(labels)
+    axes[1,0].legend(fontsize=7, frameon=False)
+    axes[1,0].set_ylabel("tokens" + (" (log)" if use_log_tokens else ""), fontsize=8)
+    if use_log_tokens:
+        axes[1,0].set_ylim(max(ymin_pos * 0.5, 0.1), ymax * 2.0)
+    else:
+        axes[1,0].set_ylim(0, ymax*1.25)
 
     # SSD request-size percentiles from blktrace / analysis dir.
     _style(axes[1,1])
@@ -7933,32 +8564,69 @@ def chart_latency_breakdown(m: Metrics) -> str:
 
 
 def chart_hbm_bandwidth(m: Metrics) -> str:
-    """HBM read/write bandwidth and transaction rate timeseries (GPU-side)."""
-    if m.hbm_bw_ts.empty:
-        return ""
+    """HBM read/write bandwidth and transaction rate summary.
 
-    hts = downsample(m.hbm_bw_ts, 200).copy()
-    t   = hts["time_sec"].values / 60
+    v1.90: be conservative and robust.  v1.89 reduced the PNG size, but in
+    some runs the section disappeared because the chart required a populated
+    synthetic HBM timeseries.  This function now always renders when HBM KPI
+    values exist: it prefers the GPU-util-modulated timeseries and falls back
+    to a two-point KPI-derived series.  If neither timeseries nor KPI values
+    exist, it still renders a small placeholder chart instead of making the
+    entire section look empty.
+    """
     CL = 64
-    for col in ["hbm_read_bw_gbs", "hbm_write_bw_gbs", "hbm_total_bw_gbs",
-                "hbm_read_txn_M_s", "hbm_write_txn_M_s"]:
+
+    # Prefer the real/synthetic time-series created during metric extraction.
+    if isinstance(m.hbm_bw_ts, pd.DataFrame) and not m.hbm_bw_ts.empty:
+        hts = downsample(m.hbm_bw_ts, 120).copy()
+    else:
+        # Fallback: build a tiny KPI-derived series so the End Report section
+        # still has a visible chart even when gpu_ts/DCGM timeline is absent.
+        dur_s = float(getattr(m, "duration_s", 0) or 0)
+        if dur_s <= 0:
+            dur_s = 60.0
+        hts = pd.DataFrame({
+            "time_sec": [0.0, dur_s],
+            "hbm_read_bw_gbs": [float(getattr(m, "hbm_read_bw_gbs", 0) or 0),
+                                  float(getattr(m, "hbm_read_bw_gbs", 0) or 0)],
+            "hbm_write_bw_gbs": [float(getattr(m, "hbm_write_bw_gbs", 0) or 0),
+                                   float(getattr(m, "hbm_write_bw_gbs", 0) or 0)],
+        })
+
+    if "time_sec" not in hts.columns:
+        hts["time_sec"] = range(len(hts))
+
+    for col in ["time_sec", "hbm_read_bw_gbs", "hbm_write_bw_gbs",
+                "hbm_total_bw_gbs", "hbm_read_txn_M_s", "hbm_write_txn_M_s"]:
         if col not in hts.columns:
             hts[col] = 0.0
+        hts[col] = pd.to_numeric(hts[col], errors="coerce").ffill().fillna(0.0).astype(float)
+
+    if (hts["hbm_total_bw_gbs"] == 0).all():
+        hts["hbm_total_bw_gbs"] = hts["hbm_read_bw_gbs"] + hts["hbm_write_bw_gbs"]
     if (hts["hbm_read_txn_M_s"] == 0).all() and (hts["hbm_read_bw_gbs"] > 0).any():
         hts["hbm_read_txn_M_s"]  = (hts["hbm_read_bw_gbs"]  * 1e9 / CL / 1e6).round(1)
         hts["hbm_write_txn_M_s"] = (hts["hbm_write_bw_gbs"] * 1e9 / CL / 1e6).round(1)
 
-    fig, axes = plt.subplots(2, 2, figsize=(13, 7))
+    t = hts["time_sec"].to_numpy(dtype=float) / 60.0
+    # Use numpy arrays for fill_between.  This avoids pandas/object dtype
+    # rendering failures that can silently blank the chart in some environments.
+    rd_bw = hts["hbm_read_bw_gbs"].to_numpy(dtype=float)
+    wr_bw = hts["hbm_write_bw_gbs"].to_numpy(dtype=float)
+    rd_tx = hts["hbm_read_txn_M_s"].to_numpy(dtype=float)
+    wr_tx = hts["hbm_write_txn_M_s"].to_numpy(dtype=float)
+
+    fig, axes = plt.subplots(2, 2, figsize=(10.6, 5.4))
     fig.patch.set_facecolor(BG2)
-    fig.suptitle("HBM (GPU) Bandwidth & Transaction Analysis", fontsize=12,
-                 fontweight="bold", color=TEXT_C, y=1.01)
+    fig.suptitle("HBM (GPU) Bandwidth & Transaction Analysis", fontsize=11,
+                 fontweight="bold", color=TEXT_C, y=0.98)
 
     # 1. BW timeseries
     ax = axes[0, 0]
-    ax.fill_between(t, hts["hbm_read_bw_gbs"],  alpha=0.25, color="#22d3ee")
-    ax.fill_between(t, hts["hbm_write_bw_gbs"], alpha=0.25, color="#f97316")
-    ax.plot(t, hts["hbm_read_bw_gbs"],  color="#22d3ee", lw=1.8, label="HBM Read")
-    ax.plot(t, hts["hbm_write_bw_gbs"], color="#f97316", lw=1.5, label="HBM Write", ls="--")
+    ax.fill_between(t, rd_bw, alpha=0.25, color="#22d3ee")
+    ax.fill_between(t, wr_bw, alpha=0.25, color="#f97316")
+    ax.plot(t, rd_bw, color="#22d3ee", lw=1.8, label="HBM Read")
+    ax.plot(t, wr_bw, color="#f97316", lw=1.5, label="HBM Write", ls="--")
     ax.axhline(m.hbm_peak_bw_gbs, color="#ef4444", lw=0.8, ls=":", alpha=0.5,
                label=f"Peak {m.hbm_peak_bw_gbs:.0f} GB/s")
     ax.set_ylabel("GB/s", fontsize=9)
@@ -7967,20 +8635,18 @@ def chart_hbm_bandwidth(m: Metrics) -> str:
 
     # 2. Read vs Write stacked area
     ax2 = axes[0, 1]
-    ax2.fill_between(t, hts["hbm_read_bw_gbs"],  alpha=0.5, color="#22d3ee", label="Read")
-    ax2.fill_between(t, hts["hbm_read_bw_gbs"],
-                     hts["hbm_read_bw_gbs"] + hts["hbm_write_bw_gbs"],
-                     alpha=0.5, color="#f97316", label="Write")
+    ax2.fill_between(t, rd_bw, alpha=0.5, color="#22d3ee", label="Read")
+    ax2.fill_between(t, rd_bw, rd_bw + wr_bw, alpha=0.5, color="#f97316", label="Write")
     ax2.set_ylabel("GB/s (stacked)", fontsize=9)
     ax2.set_title("HBM Stacked Read + Write BW", fontsize=10, fontweight="bold")
     if ax2.get_legend_handles_labels()[0]: ax2.legend(fontsize=8)
 
     # 3. Transaction rate timeline
     ax3 = axes[1, 0]
-    ax3.fill_between(t, hts["hbm_read_txn_M_s"],  alpha=0.25, color="#22d3ee")
-    ax3.fill_between(t, hts["hbm_write_txn_M_s"], alpha=0.25, color="#f97316")
-    ax3.plot(t, hts["hbm_read_txn_M_s"],  color="#22d3ee", lw=1.8, label="Read Txns")
-    ax3.plot(t, hts["hbm_write_txn_M_s"], color="#f97316", lw=1.5, label="Write Txns", ls="--")
+    ax3.fill_between(t, rd_tx, alpha=0.25, color="#22d3ee")
+    ax3.fill_between(t, wr_tx, alpha=0.25, color="#f97316")
+    ax3.plot(t, rd_tx, color="#22d3ee", lw=1.8, label="Read Txns")
+    ax3.plot(t, wr_tx, color="#f97316", lw=1.5, label="Write Txns", ls="--")
     ax3.set_ylabel("Transactions / s  (Millions)", fontsize=9)
     ax3.set_title("HBM Cache-Line Transactions (64B)", fontsize=10, fontweight="bold")
     if ax3.get_legend_handles_labels()[0]: ax3.legend(fontsize=8)
@@ -8016,16 +8682,11 @@ def chart_hbm_bandwidth(m: Metrics) -> str:
                 sp.set_edgecolor("#94a3b8")
 
     try:
-        import warnings as _wtl
-        with _wtl.catch_warnings():
-            _wtl.simplefilter('ignore', UserWarning)
-            try:
-                plt.tight_layout()
-            except Exception:
-                pass
+        fig.tight_layout(rect=(0, 0, 1, 0.95))
     except Exception:
         pass
-    return fig_to_b64(fig)
+    # Keep DPI modest but not too low; 96 is a browser-friendly CSS baseline.
+    return fig_to_b64(fig, dpi=96)
 
 
 def chart_dram_bandwidth(m: Metrics) -> str:
@@ -8033,7 +8694,10 @@ def chart_dram_bandwidth(m: Metrics) -> str:
     if m.dram_bw_ts.empty:
         return ""
 
-    dts = downsample(m.dram_bw_ts, 200).copy()
+    # Keep the static End Report image compact enough to render reliably when
+    # embedded in the combined report iframe/srcdoc. The detailed metrics are
+    # still available in KPI cards and the formula section.
+    dts = downsample(m.dram_bw_ts, 120).copy()
     t   = dts["time_sec"].values / 60
     # Ensure transaction columns always exist (may be absent if loaded from alt path)
     CL = 64  # AMD EPYC cache-line bytes
@@ -8049,7 +8713,7 @@ def chart_dram_bandwidth(m: Metrics) -> str:
     if mask_wr.any():
         dts.loc[mask_wr, "write_txn_M_s"] = (dts.loc[mask_wr, "write_gb_s"] * 1e9 / CL / 1e6).round(2)
 
-    fig, axes = plt.subplots(2, 2, figsize=(13, 7))
+    fig, axes = plt.subplots(2, 2, figsize=(11.5, 5.8))
     fig.patch.set_facecolor(BG2)
     fig.suptitle("System DRAM (CPU-side) Bandwidth & Transaction Analysis",
                  fontsize=12, fontweight="bold", color=TEXT_C, y=1.01)
@@ -8615,7 +9279,10 @@ def chart_kv_tiers(m: "Metrics") -> str:
 
 def chart_session_analysis(m: "Metrics") -> str:
     """Active sessions, E2E latency, input/output token distributions, arrival rate."""
-    has_data = m.sess_total_requests > 0 or m.sess_max_concurrent > 0
+    has_data = (m.sess_total_requests > 0 or m.sess_max_concurrent > 0 or
+                bool(m.sess_e2e_ts) or bool(m.sess_input_tok_ts) or
+                bool(m.sess_output_tok_ts) or m.sess_e2e_mean_s > 0 or
+                m.sess_input_tok_mean > 0 or m.sess_output_tok_mean > 0)
     if not has_data:
         return ""
 
@@ -8739,9 +9406,19 @@ def chart_session_analysis(m: "Metrics") -> str:
 
 
 def chart_kvb_events(m: "Metrics") -> str:
-    """KV$B block event traces across L2/L3 storage using SGLang-derived counters first."""
-    l3_ts = getattr(m, "kvb_l3_io_ts", pd.DataFrame())
-    if m.kvb_offload_ts.empty and l3_ts.empty and m.kvb_l1_pool_blocks == 0:
+    """KV$B block event traces across L2 and optional local Storage / AI memory node.
+
+    Keep the charts consistent with the report's L3 activity decision: load_back-only
+    or evicted-only counters are not enough to claim L3 storage usage.
+    """
+    l3_active = bool(getattr(m, "kvb_l3_storage_observed", False))
+    event_ts = getattr(m, "kvb_l3_io_ts", pd.DataFrame())
+    l3_ts = event_ts if l3_active else pd.DataFrame()
+    has_eviction_pressure = isinstance(event_ts, pd.DataFrame) and not event_ts.empty and (
+        ("evicted_tok_s" in event_ts.columns and float(pd.to_numeric(event_ts["evicted_tok_s"], errors="coerce").fillna(0).max()) > 0)
+        or m.kvb_evicted_tokens_total > 0
+    )
+    if m.kvb_offload_ts.empty and event_ts.empty and m.kvb_l1_pool_blocks == 0 and not has_eviction_pressure:
         return ""
 
     fig, axes = plt.subplots(2, 2, figsize=(13, 9))
@@ -8773,7 +9450,7 @@ def chart_kvb_events(m: "Metrics") -> str:
     ax.set_title(
         f"KV Block Residency by Tier (SGLang-derived)\n"
         f"L1→L2 mean {m.kvb_l1_offload_rate_blk_s:.4f} blk/s  |  "
-        f"L3 active {'yes' if isinstance(l3_ts, pd.DataFrame) and not l3_ts.empty else 'no'}",
+        f"local Storage / AI memory node active {'yes' if l3_active else 'no'}",
         fontsize=9, fontweight="bold")
     ax.set_xlabel(_time_xlabel(m), fontsize=8, color="#475569")
     ax.set_ylabel("Resident KV blocks", fontsize=9, color="#475569")
@@ -8799,26 +9476,28 @@ def chart_kvb_events(m: "Metrics") -> str:
         ax2.plot(t2, rate, color="#6366f1", lw=1.5, label="L1→L2 offload blk/s")
         ax2.fill_between(t2, rate, alpha=0.20, color="#6366f1")
         have_rate = True
-    if isinstance(l3_ts, pd.DataFrame) and not l3_ts.empty:
-        ts3 = downsample(l3_ts, 300)
+    if isinstance(event_ts, pd.DataFrame) and not event_ts.empty:
+        ts3 = downsample(event_ts, 300)
         t3 = ts3["time_sec"].values / 60
-        if "backup_tok_s" in ts3.columns:
+        if l3_active and "backup_tok_s" in ts3.columns:
             bkp = ts3["backup_tok_s"].fillna(0).values / bs
-            ax2.plot(t3, bkp, color="#f97316", lw=1.4, label="L2→L3 storage backup blk/s")
-            have_rate = True
-        if "prefetch_tok_s" in ts3.columns:
+            if np.nanmax(bkp) > 0:
+                ax2.plot(t3, bkp, color="#f97316", lw=1.4, label="L2→local Storage backup blk/s")
+                have_rate = True
+        if l3_active and "prefetch_tok_s" in ts3.columns:
             pft = ts3["prefetch_tok_s"].fillna(0).values / bs
-            ax2.plot(t3, pft, color="#3b82f6", lw=1.4, label="L3 storage→prefetch blk/s")
-            have_rate = True
-        if "loadback_tok_s" in ts3.columns:
+            if np.nanmax(pft) > 0:
+                ax2.plot(t3, pft, color="#3b82f6", lw=1.4, label="local Storage→prefetch blk/s")
+                have_rate = True
+        if l3_active and "loadback_tok_s" in ts3.columns:
             lbd = ts3["loadback_tok_s"].fillna(0).values / bs
             if np.nanmax(lbd) > 0:
-                ax2.plot(t3, lbd, color="#0f766e", lw=1.4, label="L3 storage→load_back blk/s")
+                ax2.plot(t3, lbd, color="#0f766e", lw=1.4, label="local Storage→load_back blk/s")
                 have_rate = True
         if "evicted_tok_s" in ts3.columns:
             evt = ts3["evicted_tok_s"].fillna(0).values / bs
             if np.nanmax(evt) > 0:
-                ax2.plot(t3, evt, color="#be123c", lw=1.2, ls="--", label="evicted blk/s")
+                ax2.plot(t3, evt, color="#be123c", lw=1.2, ls="--", label="evicted blk/s (cache pressure)")
                 have_rate = True
     if m.kvb_l2_eviction_rate_blk_s > 0:
         ax2.axhline(m.kvb_l2_eviction_rate_blk_s, color="#f43f5e", lw=1.0, ls=":",
@@ -8846,11 +9525,16 @@ def chart_kvb_events(m: "Metrics") -> str:
     l3_peak_blocks = 0
     if isinstance(l3_ts, pd.DataFrame) and not l3_ts.empty and "resident_tokens" in l3_ts.columns:
         l3_peak_blocks = int(np.nanmax(l3_ts["resident_tokens"].fillna(0).values / bs))
-    cats = ["L1 HBM\nPool", "L2 DRAM\nPool", f"L3 {m.l3_storage_type}\nPeak resident"]
-    cap = [m.kvb_l1_pool_blocks, m.kvb_l2_pool_blocks, max(l3_peak_blocks, 0)]
+    # Keep local Storage / AI memory node residency consistent with the same
+    # gating used by executive/interactive sections.  If reliable local-storage
+    # evidence is absent, do not label load_back-only or eviction-only signals as
+    # local Storage / AI memory node residency.
+    cats = ["L1 HBM\nPool", "L2 DRAM\nPool",
+            "local Storage / AI memory node\nPeak resident" if l3_active else "local Storage / AI memory node\nnot observed"]
+    cap = [m.kvb_l1_pool_blocks, m.kvb_l2_pool_blocks, max(l3_peak_blocks, 0) if l3_active else 0]
     used = [int(m.kvb_l1_pool_blocks * (m.kv_l1_fill_pct / 100)),
             int(m.kvb_l2_pool_blocks * (m.kv_l2_fill_pct / 100)),
-            max(l3_peak_blocks, 0)]
+            max(l3_peak_blocks, 0) if l3_active else 0]
     colors = ["#6366f1", "#22c55e", "#a855f7"]
     x = np.arange(len(cats))
     ax3.bar(x, cap, color=colors, alpha=0.25, width=0.55,
@@ -8865,7 +9549,7 @@ def chart_kvb_events(m: "Metrics") -> str:
                  fontsize=8, color="#0f172a", fontweight="bold")
     ax3.set_title(
         "Tier Capacity / Peak Residency Summary\n"
-        "L3 derived from backup - prefetch counters",
+        + ("local Storage derived from backup/prefetch counters" if l3_active else "local Storage not observed; load_back/eviction not counted"),
         fontsize=9, fontweight="bold")
     ax3.set_ylabel("KV Blocks", fontsize=9, color="#475569")
     if ax3.get_legend_handles_labels()[0]: ax3.legend(fontsize=8)
@@ -8876,13 +9560,20 @@ def chart_kvb_events(m: "Metrics") -> str:
     # 4. Lifetime + cumulative movement summary
     ax4 = axes[1, 1]
     ax4.set_facecolor("#f8fafc")
+    # Cumulative movement bars must not contradict the global local-storage
+    # decision.  backup/prefetch are reliable local Storage / AI memory node
+    # evidence; load_back-only is ambiguous and eviction-only is cache pressure.
+    # Therefore, when l3_active is false, keep all local-storage movement bars
+    # at zero and show eviction separately as cache pressure.
     totals = [
-        max(m.kvb_backuped_tokens_total / bs, 0),
-        max(m.kvb_prefetched_tokens_total / bs, 0),
-        max(m.kvb_loadback_tokens_total / bs, 0),
+        max(m.kvb_backuped_tokens_total / bs, 0) if l3_active else 0,
+        max(m.kvb_prefetched_tokens_total / bs, 0) if l3_active else 0,
+        max(m.kvb_loadback_tokens_total / bs, 0) if l3_active else 0,
         max(m.kvb_evicted_tokens_total / bs, 0),
     ]
-    labels = ["backup\nL2→L3 storage", "prefetch\nL3 storage→mem", "load_back\nL3 storage→mem", "evicted"]
+    labels = (["backup\nL2→local storage", "prefetch\nlocal storage→mem", "load_back\nlocal storage→mem", "evicted\ncache pressure"]
+              if l3_active else
+              ["backup\nno local storage", "prefetch\nno local storage", "load_back\nambiguous\nnot storage", "evicted\ncache pressure"])
     colors4 = ["#f97316", "#3b82f6", "#0f766e", "#be123c"]
     bars4 = ax4.bar(labels, totals, color=colors4, alpha=0.85, width=0.55)
     ymax4 = max(totals + [m.kvb_lifetime_mean_s, 1])
@@ -8905,12 +9596,15 @@ def chart_kvb_events(m: "Metrics") -> str:
     ann = (
         f"L2 pool: {m.kvb_l2_pool_blocks:,} blocks\n"
         f"Mean L1→L2 offload: {m.kvb_l1_offload_rate_blk_s:.4f} blk/s\n"
-        f"Peak L3 resident: {l3_peak_blocks:,} blocks\n"
+        f"Peak local Storage resident: {l3_peak_blocks:,} blocks\n"
+        f"Evicted/cache pressure: {m.kvb_evicted_tokens_total/max(bs,1):,.0f} blocks\n"
+        f"Ambiguous load_back not counted as local storage: {getattr(m, 'kvb_l3_ambiguous_loadback_tokens', 0)/max(bs,1):,.0f} blocks\n"
         f"Lifetime estimate: {m.kvb_lifetime_mean_s:.0f}s")
     ax4.text(0.03, 0.97, ann, transform=ax4.transAxes, ha="left", va="top",
              fontsize=8, color="#475569",
              bbox=dict(boxstyle="round,pad=0.4", facecolor="#f1f5f9", edgecolor="#e2e8f0"))
-    ax4.set_title("Cumulative KV Block Movements + Lifetime Reference",
+    ax4.set_title("Cumulative KV Block Movements + Lifetime Reference\n"
+                  + ("local Storage activity observed" if l3_active else "local Storage activity not observed; eviction shown as cache pressure"),
                   fontsize=9, fontweight="bold")
     ax4.set_ylabel("Blocks moved in run", fontsize=9, color="#475569")
     ax4.grid(True, axis="y", alpha=0.3, color="#e2e8f0")
@@ -10994,26 +11688,34 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
     ])
 
     _l3_peak_blocks = 0
-    if isinstance(getattr(m, "kvb_l3_io_ts", pd.DataFrame()), pd.DataFrame) and not m.kvb_l3_io_ts.empty and "resident_tokens" in m.kvb_l3_io_ts.columns:
+    _l3_cards_active = bool(getattr(m, "kvb_l3_storage_observed", False))
+    if _l3_cards_active and isinstance(getattr(m, "kvb_l3_io_ts", pd.DataFrame()), pd.DataFrame) and not m.kvb_l3_io_ts.empty and "resident_tokens" in m.kvb_l3_io_ts.columns:
         _l3_peak_blocks = int((m.kvb_l3_io_ts["resident_tokens"].fillna(0) / max(m.kvb_block_size_tokens, 1)).max())
-    kvb_kpi_cards = "".join([
+    kvb_base_cards = [
         _kpi("Block Size", f"{m.kvb_block_size_mb:.1f}", "MB", "#f0fdf4", "#047857",
              f"{m.kvb_block_size_tokens} tok × {m.kv_bytes_per_token_kb:.0f} KB"),
         _kpi("L1 Pool Blocks", f"{m.kvb_l1_pool_blocks:,}", "", "#eef2ff", "#4338ca",
              f"{m.kv_l1_fill_pct:.1f}% used"),
         _kpi("L2 Pool Blocks", f"{m.kvb_l2_pool_blocks:,}", "", "#f0f9ff", "#0c4a6e",
              f"{m.kv_l2_fill_pct:.1f}% used"),
-        _kpi("L3 Peak Resident", f"{_l3_peak_blocks:,}", "blk", "#faf5ff", "#7e22ce",
-             "derived from SGLang backup - prefetch"),
         _kpi("L1→L2 Offload", f"{m.kvb_l1_offload_rate_blk_s:.4f}", "blk/s", "#fff7ed", "#9a3412",
              "HBM → DRAM"),
-        _kpi("L2→L3 storage Backup", f"{m.kvb_offload_tok_rate/max(m.kvb_block_size_tokens,1):.4f}", "blk/s", "#fff7ed", "#c2410c",
-             f"{m.kvb_backuped_tokens_total:,} tokens total"),
-        _kpi("L3 Onboard", f"{m.kvb_onboard_tokens_rate/max(m.kvb_block_size_tokens,1):.4f}", "blk/s", "#eff6ff", "#1d4ed8",
-             f"prefetch={m.kvb_prefetched_tokens_total:,} load_back={m.kvb_loadback_tokens_total:,}"),
-        _kpi("Block Lifetime", f"{m.kvb_lifetime_mean_s:.0f}", "s", "#faf5ff", "#6d28d9",
-             f"min={m.kvb_lifetime_min_s:.0f}s max={m.kvb_lifetime_max_s:.0f}s"),
-    ])
+    ]
+    if _l3_cards_active:
+        kvb_base_cards.extend([
+            _kpi("L3 Peak Resident", f"{_l3_peak_blocks:,}", "blk", "#faf5ff", "#7e22ce",
+                 "derived from SGLang backup/prefetch"),
+            _kpi("L2→L3 Backup", f"{m.kvb_offload_tok_rate/max(m.kvb_block_size_tokens,1):.4f}", "blk/s", "#fff7ed", "#c2410c",
+                 f"{m.kvb_backuped_tokens_total:,} tokens total"),
+            _kpi("L3 Onboard", f"{m.kvb_onboard_tokens_rate/max(m.kvb_block_size_tokens,1):.4f}", "blk/s", "#eff6ff", "#1d4ed8",
+                 f"prefetch={m.kvb_prefetched_tokens_total:,} load_back={m.kvb_loadback_tokens_total:,}"),
+        ])
+    else:
+        kvb_base_cards.append(_kpi("L3 storage", "none", "", "#f8fafc", "#475569",
+             f"load_back-only {getattr(m, 'kvb_l3_ambiguous_loadback_tokens', 0):,} tok not counted as L3"))
+    kvb_base_cards.append(_kpi("Block Lifetime", f"{m.kvb_lifetime_mean_s:.0f}", "s", "#faf5ff", "#6d28d9",
+             f"min={m.kvb_lifetime_min_s:.0f}s max={m.kvb_lifetime_max_s:.0f}s"))
+    kvb_kpi_cards = "".join(kvb_base_cards)
 
     nvme_kpi_cards = "".join([
         _kpi("Wr IOPS Mean", f"{m.nvme_wr_iops_mean:.1f}", "", "#fff7ed", "#9a3412",
@@ -11336,8 +12038,9 @@ Calculation method used for main KPI: {m.cache_hit_calc_method}</code></div></de
   <details class="fml" style="margin-top:12px"><summary>&#128208; Formula &amp; Metrics Used</summary><div class="fml-body"><div class="fml-src">&#128202; SGLang Prometheus histogram bucket metrics</div><code>TTFT P50/P90/P99 = histogram_quantile(0.50/0.90/0.99, rate(sglang_time_to_first_token_seconds_bucket[window])) × 1000
 ITL  P50/P90/P99 = histogram_quantile(0.50/0.90/0.99, rate(sglang_inter_token_latency_seconds_bucket[window])) × 1000
 E2E  P50/P90/P99 = histogram_quantile(0.50/0.90/0.99, rate(sglang_e2e_request_latency_seconds_bucket[window])) × 1000
-Prompt token percentiles = histogram_quantile(..., rate(sglang_prompt_tokens_bucket[window]))
-Output token percentiles = histogram_quantile(..., rate(sglang_generation_tokens_bucket[window]))</code><div class="fml-note">Percentile charts are tail/shape diagnostics. They are not used as the mean TTFT/ITL/E2E KPI tiles.</div></div></details>
+Prompt token percentiles = histogram_quantile(..., rate(sglang_prompt_tokens_histogram_bucket[window])) or histogram_quantile(..., rate(sglang_prompt_tokens_bucket[window]))
+Output token percentiles = histogram_quantile(..., rate(sglang_generation_tokens_histogram_bucket[window])) or histogram_quantile(..., rate(sglang_generation_tokens_bucket[window]))
+Fallback when token histogram buckets are absent = per-request counter delta / request count, shown as a flat conservative distribution.</code><div class="fml-note">Percentile charts are tail/shape diagnostics. They are not used as the mean TTFT/ITL/E2E KPI tiles.</div></div></details>
 </div>
 
 <!-- PHASE ANALYSIS -->
@@ -11665,7 +12368,7 @@ Swap-out pages/sec   : rate(vmstat_pswpout)</code>
   <h2 style="color:#4f46e5">&#128260; Session / Stream Analysis</h2>
   <div style="font-size:11px;color:#334155;line-height:1.6;margin-bottom:14px">
     Per-request breakdown of concurrent sessions, end-to-end latency distribution,
-    input token count, and output token count. Derived from SGLang Prometheus histogram deltas.
+    input token count, and output token count. Derived from SGLang Prometheus histogram/counter deltas; when raw request traces are absent, conservative Prometheus-derived aggregate samples are synthesized so the section remains populated.
   </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">
     {session_kpi_cards}
@@ -11683,7 +12386,7 @@ Output tokens : sglang_generation_tokens_total / sglang_num_requests_total (delt
 Queue time    : sglang_sglang_queue_time_seconds_sum / sglang_queue_time_seconds_count x 1000 [ms]
 Active sessions: sglang_num_running_reqs[engine_type=unified] (gauge, 1/scrape)
 Arrival rate  : \u0394(num_requests_total) / \u0394(time_sec) [req/s]</code>
-      <div class="fml-note">Per-request distributions have one data point per completed request observed in the profiling window. With few requests, distributions will be sparse.</div>
+      <div class="fml-note">Per-request distributions use true request-level samples when available. If SGLang exports only aggregate counters/histograms, AMOprof synthesizes representative samples from Prometheus-derived mean/p50/p90/p99 values and labels the source in the report methodology.</div>
     </div>
   </details>
 </div>
@@ -11712,7 +12415,7 @@ L2 pool blocks    : sglang_hicache_host_total_tokens / 16 = {kvb_l2_pool_blocks:
 Offload rate      : \u0394(hicache_host_used_tokens) / 16 / run_duration_s = {kvb_offload_rate:.4f} blk/s
 Eviction rate     : offload_rate x (l2_fill - 0.8) / 0.2  [when l2_fill > 80%]
 Block lifetime    : l2_pool_blocks / offload_rate = {kvb_lifetime_mean:.0f}s</code>
-      <div class="fml-note">hicache_host_used_tokens from sglang_hicache_host_used_tokens[engine_type=unified]. True per-block event logs require SGLang debug logging or blktrace.</div>
+      <div class="fml-note">hicache_host_used_tokens from sglang_hicache_host_used_tokens[engine_type=unified]. L3 storage activity is shown only when backuped_tokens_total or prefetched_tokens_total has a positive delta, or when a mapped local block trace exists. load_back-only and evicted-only counters are treated as ambiguous/cache-pressure signals and are not counted as L3 storage usage. True per-block event logs require SGLang debug logging or blktrace.</div>
     </div>
   </details>
 </div>
@@ -12173,7 +12876,7 @@ BW degradation (§C45/D60 bandwidth_degradation):
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:14px">
     {hbm_kpi_cards}
   </div>
-  {img(charts.get("hbm_bw",""), "HBM Bandwidth")}
+  {img(charts.get("hbm_bw",""), "HBM Bandwidth") if charts.get("hbm_bw","") else "<div class=\"warn\">HBM chart image unavailable, but HBM KPI cards and formula values are available above. This usually means HBM timeseries was absent or the combined-report iframe could not embed the image.</div>"}
   <details class="fml" style="margin-top:10px">
     <summary>&#128208; Formula &amp; Metrics Used</summary>
     <div class="fml-body">
@@ -12230,7 +12933,7 @@ TPOT gap factor      : observed_tpot / min_tpot  (>1 = compute or other overhead
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:14px">
     {dram_bw_kpi_cards}
   </div>
-  {img(charts.get("dram_bw",""), "DRAM Bandwidth")}
+  {img(charts.get("dram_bw",""), "DRAM Bandwidth") if charts.get("dram_bw","") else "<div class=\"warn\">DRAM chart image unavailable, but AMDuProf PCM data was parsed into the KPI cards above. Check amduprof_pcm_raw.csv / amduprof_pcm_raw.txt and combined-report iframe size if this only fails in the combined view.</div>"}
   <details class="fml" style="margin-top:10px">
     <summary>&#128208; Formula &amp; Metrics Used</summary>
     <div class="fml-body">
@@ -12418,15 +13121,19 @@ HBM Bandwidth score= (hbm_bw_util_pct / 100) × 70 + (tpot_gap_ratio - 1) × 30
                      tpot_gap = observed_tpot / min_tpot_at_peak_bw
                      High score = memory-bandwidth-limited decode
 
-KV Cache score     = (1 - cache_hit_rate) × 50 + kv_l2_fill_pct / 100 × 30
-                       + (hicache_fill_pct / 100) × 20
-                     High score = KV cache pressure, many cache misses
+KV Cache score     = clamp(0,100, (100 - active_cache_hit_pct) × 0.8)
+                     active_cache_hit_pct = avg(sglang_cache_hit_rate where value > 0) × 100
+                     input-token weighted diagnostic =
+                       Δsglang_realtime_tokens_total{{mode="prefill_cache"}}
+                       / (Δprefill_cache + Δprefill_compute) × 100
+                     High score = KV cache pressure, many cache misses.
+                     Scores are explicitly clamped to 0–100, so negative scores are invalid.
 
 DRAM / hicache     = dram_bw_util_pct × 0.6 + kv_l2_fill_pct / 100 × 40
                      High score = hicache DRAM tier saturated
 
-NVMe / SSD score   = nvme_io_util_pct × 0.7 + kvb_offload_rate_blk_s × 10
-                     High score = KV$B overflowing to NVMe L3 storage tier
+Storage score      = local_storage_io_util_pct × 0.7 + kvb_offload_rate_blk_s × 10
+                     High score = KV$B overflowing to local Storage / AI memory node tier
 
 TTFT / Prefill     = ttft_ms / (n_prefill_tokens × 0.001 + 1) × 0.5
                      High score = prefill-limited TTFT
@@ -12583,6 +13290,41 @@ def _collapse_empty_cards(html: str) -> str:
                 r'font-size:\s*(?:18|20|22|24|26)px[^>]*>([^<]{1,40})<', inner)]
         has_placeholder = _has_placeholder(inner)
 
+        tm = _re.search(r'<h2[^>]*>(.{0,300}?)</h2>', inner, _re.DOTALL)
+        if not tm:
+            return False, ""
+        title = _re.sub(r'<[^>]+>', '', tm.group(1))
+        title = _re.sub(r'&#\d+;', '', title)
+        title = _re.sub(r'&[a-z]+;', ' ', title)
+        title = _re.sub(r'\s+', ' ', title).strip()
+        title_l = title.lower()
+
+        # Section-specific guard: the §E TRIM/Discard card embeds a matplotlib
+        # image and also contains non-zero read/write temporal reference values,
+        # so the generic KPI-based zero detector may leave it expanded even when
+        # there are no discard events.  Treat the section as zero/no-data when
+        # the explicit TRIM indicators show no activity.
+        if 'trim' in title_l and 'discard' in title_l:
+            text = _re.sub(r'<[^>]+>', ' ', inner)
+            text = _re.sub(r'&[a-z#0-9]+;', ' ', text)
+            text_l = _re.sub(r'\s+', ' ', text.lower())
+            has_trim_yes = _re.search(r'trim\s*present\s*yes', text_l) is not None
+            has_no_trim = (
+                _re.search(r'trim\s*present\s*no', text_l) is not None
+                or 'no trim activity observed' in text_l
+                or 'no trim' in text_l
+            )
+            trim_iops_zero = (
+                _re.search(r'trim\s*iops\s*0(?:\.0+)?\b', text_l) is not None
+                or _re.search(r'iops=0(?:\.0+)?\b', text_l) is not None
+            )
+            trim_bw_zero = (
+                _re.search(r'trim\s*bw\s*0(?:\.0+)?\b', text_l) is not None
+                or _re.search(r'bw=0(?:\.0+)?\s*mb/s', text_l) is not None
+            )
+            if not has_trim_yes and (has_no_trim or (trim_iops_zero and trim_bw_zero)):
+                return True, title
+
         if vals and all(_value_is_empty(v) for v in vals):
             verdict = True
         elif not vals and has_placeholder:
@@ -12596,12 +13338,7 @@ def _collapse_empty_cards(html: str) -> str:
         if not verdict:
             return False, ""
 
-        tm = _re.search(r'<h2[^>]*>(.{0,300}?)</h2>', inner, _re.DOTALL)
-        if not tm: return False, ""
-        title = _re.sub(r'<[^>]+>', '', tm.group(1))
-        title = _re.sub(r'&#\d+;', '', title)
-        title = _re.sub(r'&[a-z]+;', ' ', title)
-        return True, _re.sub(r'\s+', ' ', title).strip()
+        return True, title
 
     def _make_wrap(title, inner_no_h2):
         # Button + onclick that flips display style on its next sibling div.

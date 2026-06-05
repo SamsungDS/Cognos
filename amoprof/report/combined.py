@@ -239,6 +239,121 @@ def _ts_active_mean(ts: Dict[str, Any], *partials: str) -> float:
                              col.get("nonzero_sum", 0) /
                              max(col.get("nonzero_count", 1), 1)))
     return 0.0
+
+
+
+
+def _ts_gauge_stats(ts: Dict[str, Any], *partials: str) -> Dict[str, float]:
+    """Return selected-window gauge stats for a matched timeseries column.
+
+    AMOprof has seen SGLang HiCache residency exported either as a real
+    changing gauge or as a flat/snapshot-like value.  The caller can use
+    the variation fields to decide whether a "used" tile is truly
+    window-dynamic or merely a residency snapshot.
+    """
+    col = _ts_col(ts, *partials)
+    if not isinstance(col, dict) or not col:
+        return {"mean": 0.0, "min": 0.0, "max": 0.0, "variation_pct": 0.0, "nonzero_count": 0.0}
+    cnt = float(col.get("nonzero_count", 0) or 0)
+    if cnt > 0:
+        mean = float(col.get("nonzero_mean", col.get("nonzero_sum", 0) / max(cnt, 1)) or 0)
+        mn = float(col.get("nonzero_min", col.get("min", mean)) or mean)
+        mx = float(col.get("nonzero_max", col.get("max", mean)) or mean)
+    else:
+        mean = float(col.get("mean", 0) or 0)
+        mn = float(col.get("min", mean) or mean)
+        mx = float(col.get("max", mean) or mean)
+    variation = ((mx - mn) / mean * 100.0) if mean > 0 and mx >= mn else 0.0
+    return {"mean": mean, "min": mn, "max": mx, "variation_pct": variation, "nonzero_count": cnt}
+
+def _ts_column_name(ts: Dict[str, Any], *partials: str) -> str:
+    """Return the actual timeseries CSV column name matching any partial."""
+    if not isinstance(ts, dict):
+        return ""
+    skip = {"rows", "columns", "first", "last", "error"}
+    cols = list(ts.get("columns") or [])
+    # exact / substring over declared columns first so first/last lookup works.
+    for partial in partials:
+        if partial in ts and isinstance(ts.get(partial), dict):
+            return partial
+        for c in cols:
+            if partial in str(c):
+                return str(c)
+        for k, val in ts.items():
+            if k in skip or not isinstance(val, dict):
+                continue
+            if partial in str(k):
+                return str(k)
+    return ""
+
+
+def _ts_delta(ts: Dict[str, Any], *partials: str) -> float:
+    """Counter delta from first/last rows for a matched timeseries column."""
+    col = _ts_column_name(ts, *partials)
+    if not col:
+        return 0.0
+    try:
+        first = ts.get("first") or {}
+        last = ts.get("last") or {}
+        a = _safe_float(first.get(col), None)  # type: ignore[arg-type]
+        b = _safe_float(last.get(col), None)   # type: ignore[arg-type]
+        if a is None or b is None:
+            return 0.0
+        d = float(b) - float(a)
+        return d if d > 0 else 0.0
+    except Exception:
+        return 0.0
+
+
+def _ts_ratio_delta_ms(ts: Dict[str, Any], sum_partial: str, count_partial: str) -> float:
+    """Mean latency in ms from Prometheus histogram/summary counter deltas."""
+    ds = _ts_delta(ts, sum_partial)
+    dc = _ts_delta(ts, count_partial)
+    if ds > 0 and dc > 0:
+        return ds / dc * 1000.0
+    return 0.0
+
+
+
+
+def _pct_ts_latency_ms(pct_ts: Dict[str, Any], metric_key: str, percentile: str = "p50") -> float:
+    """Return representative latency from sglang_percentiles_timeseries.json.
+
+    This is a selected-window fallback when cumulative _sum/_count latency
+    counters are absent.  It avoids reusing stale sglang_summary.json values
+    across different runs/windows.  Values in the percentile JSON are already
+    in ms for TTFT/ITL/E2E in AMOprof's generated file.
+    """
+    try:
+        block = (pct_ts or {}).get(metric_key) or {}
+        vals = block.get(percentile) or []
+        clean = []
+        for v in vals:
+            try:
+                x = float(v)
+                if x == x and x > 0:
+                    clean.append(x)
+            except Exception:
+                pass
+        if clean:
+            # Active-window average of percentile samples.  This is more stable
+            # than taking only the last bucket and still tracks run differences.
+            return sum(clean) / len(clean)
+    except Exception:
+        pass
+    return 0.0
+
+
+def _ts_last_value(ts: Dict[str, Any], *partials: str) -> float:
+    """Latest numeric gauge/counter sample for a matched timeseries column."""
+    col = _ts_column_name(ts, *partials)
+    if not col:
+        return 0.0
+    try:
+        return _safe_float((ts.get("last") or {}).get(col), 0.0)
+    except Exception:
+        return 0.0
+
     cls = "ok" if ok else "warn"
     icon = "✓" if ok else "!"
     return f'<span class="pill {cls}">{icon} {_html.escape(label)}</span>' + (f'<span class="muted"> {_html.escape(detail)}</span>' if detail else "")
@@ -763,8 +878,57 @@ def _extract_interactive_figures(interactive_html: str,
     return found
 
 
+
+
+def _extract_static_kpi_overrides(static_html: str) -> Dict[str, float]:
+    """Extract KPI values from the already-generated End Report HTML.
+
+    The End Report is generated by amoprof.py from the same raw run and, in
+    practice, is the most complete consumer of the parsed Metrics object.  The
+    Executive tab is generated separately from raw files, so it can accidentally
+    fall back to stale sglang_summary.json values when a Prometheus counter name
+    variant is not matched.  These overrides keep Executive TTFT/TPOT aligned
+    with the End Report rather than silently reusing stale/default summary KPIs.
+    """
+    out: Dict[str, float] = {}
+    if not static_html:
+        return out
+    try:
+        txt = _html.unescape(static_html)
+        # Strip tags so the regex works both on a standalone report and on an
+        # iframe srcdoc embedded in the combined report.
+        txt = re.sub(r"<script\b.*?</script>", " ", txt, flags=re.I | re.S)
+        txt = re.sub(r"<style\b.*?</style>", " ", txt, flags=re.I | re.S)
+        txt = re.sub(r"<[^>]+>", " ", txt)
+        txt = re.sub(r"\s+", " ", txt)
+
+        # Canonical End Report section labels:
+        #   ▶ Prefill Phase HIGH 15227 ms TTFT
+        #   ▶ Decode Phase HIGH 1715.1 ms/tok TPOT
+        m = re.search(r"Prefill\s+Phase\b[^0-9]{0,80}([0-9][0-9,]*(?:\.[0-9]+)?)\s*ms\s*TTFT", txt, re.I)
+        if m:
+            out["ttft_ms"] = _safe_float(m.group(1).replace(",", ""), 0.0)
+        m = re.search(r"Decode\s+Phase\b[^0-9]{0,80}([0-9][0-9,]*(?:\.[0-9]+)?)\s*ms\s*/?\s*tok\s*TPOT", txt, re.I)
+        if m:
+            out["tpot_ms"] = _safe_float(m.group(1).replace(",", ""), 0.0)
+
+        # Fallback patterns used by some older static report builds.
+        if out.get("ttft_ms", 0.0) <= 0:
+            m = re.search(r"Observed\s+TTFT[^0-9]{0,80}([0-9][0-9,]*(?:\.[0-9]+)?)\s*ms", txt, re.I)
+            if m:
+                out["ttft_ms"] = _safe_float(m.group(1).replace(",", ""), 0.0)
+        if out.get("tpot_ms", 0.0) <= 0:
+            m = re.search(r"(?:Observed\s+)?(?:TPOT|ITL)[^0-9]{0,80}([0-9][0-9,]*(?:\.[0-9]+)?)\s*ms", txt, re.I)
+            if m:
+                out["tpot_ms"] = _safe_float(m.group(1).replace(",", ""), 0.0)
+    except Exception:
+        return out
+    return {k: v for k, v in out.items() if _safe_float(v, 0.0) > 0}
+
+
 def build_executive_summary_html(raw_dir: Path, run_label: str = "",
-                                  interactive_figures: "dict | None" = None) -> str:
+                                  interactive_figures: "dict | None" = None,
+                                  static_kpi_overrides: "dict | None" = None) -> str:
     """Generate a self-contained executive summary HTML page from a run's raw/ directory.
 
     Reads sglang_summary.json, gpu_summary.json, summary.json, setup_details.json,
@@ -832,6 +996,13 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     _ba_dropped_events   = _safe_float(_ba_sum.get("blktrace_dropped_events", 0))
 
     sglang_ts = _read_csv_summary(_first_existing(raw_dir, ["sglang_timeseries.csv"]))
+    pct_ts: Dict[str, Any] = {}
+    try:
+        _pct_path = raw_dir / "sglang_percentiles_timeseries.json"
+        if _pct_path.exists() and _pct_path.stat().st_size > 0:
+            pct_ts = json.loads(_pct_path.read_text())
+    except Exception:
+        pct_ts = {}
     bench = {}  # Prometheus-only report: benchmark files are not used as data sources
     gpu_ts    = _read_csv_summary(_first_existing(raw_dir, ["gpu_timeseries.csv"]))
     nvme_ts   = _read_csv_summary(_first_existing(raw_dir, ["nvme_driver_timeseries.csv",
@@ -869,18 +1040,25 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     l3_fs_avail_gb = _safe_float(smart.get("hicache_fs_avail_gb", 0))
     l3_fs_used_pct = _safe_float(smart.get("hicache_fs_used_pct", 0))
     nvme_dev_cap_gb = _safe_float(smart.get("nvme_device_capacity_gb", 0))
+    l3_capacity_source = "df/SMART runtime snapshot" if l3_fs_total_gb > 0 else ""
     # Allow setup_details.json to supply L3 storage capacity when SMART/df
     # data is not available (common for non-NVMe backends such as Mooncake).
+    # Values from setup_details are configured capacity, not measured runtime
+    # cache occupancy; label them accordingly in the Executive tile.
     if l3_fs_total_gb <= 0:
         l3_fs_total_gb = _safe_float(_pick(setup, [
             "L3 storage capacity GB", "L3 Capacity GB", "L3 total capacity GB",
             "l3_storage_capacity_gb", "l3_capacity_gb", "L3 storage total GB"
         ], 0))
+        if l3_fs_total_gb > 0:
+            l3_capacity_source = "configured capacity from setup_details.json"
     if l3_fs_used_gb <= 0:
         l3_fs_used_gb = _safe_float(_pick(setup, [
             "L3 storage used GB", "L3 used capacity GB", "l3_storage_used_gb",
             "l3_used_gb", "L3 storage current used GB"
         ], 0))
+        if l3_fs_used_gb > 0 and not smart.get("hicache_fs_used_gb"):
+            l3_capacity_source = l3_capacity_source or "configured capacity from setup_details.json"
     if l3_fs_avail_gb <= 0 and l3_fs_total_gb > 0:
         l3_fs_avail_gb = max(l3_fs_total_gb - l3_fs_used_gb, 0.0)
     if l3_fs_used_pct == 0 and l3_fs_total_gb > 0 and l3_fs_used_gb > 0:
@@ -954,6 +1132,52 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             "dram_used_gb_mean"
         ], 0))
     host_dram_used_pct = (host_dram_used_gb / host_dram_total_gb * 100.0) if host_dram_total_gb > 0 and host_dram_used_gb > 0 else 0.0
+
+    def _setup_float_fuzzy(*keys, default: float = 0.0) -> float:
+        """Read a numeric setup value even when written as '50 GB' or '50G'."""
+        import re as _re
+        for _k in keys:
+            if _k in setup:
+                _v = setup.get(_k)
+                if isinstance(_v, (int, float)):
+                    return _safe_float(_v, default)
+                _m = _re.search(r"[-+]?[0-9]*\.?[0-9]+", str(_v or ""))
+                if _m:
+                    return _safe_float(_m.group(0), default)
+        return default
+
+    # L2 DRAM cache capacity should reflect the configured inference cache
+    # allocation, not the whole host DRAM DIMM capacity. In SGLang-style setups
+    # hicache size is commonly specified per GPU/rank. Surface both values where
+    # useful, but use the effective L2 cache capacity for L2/DRAM capacity tiles.
+    setup_gpu_count_for_l2 = _setup_float_fuzzy("GPU Count", "gpu_count", "Num GPUs", "num_gpus", default=0.0)
+    if setup_gpu_count_for_l2 <= 0:
+        setup_gpu_count_for_l2 = _safe_float(gpu.get("gpu_count", 0)) or _safe_float(tp_size, 0) or 1.0
+    hicache_per_gpu_gb = _setup_float_fuzzy(
+        "HiCache size per GPU GB", "HiCache DRAM per GPU GB",
+        "HiCache size GB per GPU", "hicache_size_per_gpu_gb",
+        "hicache_dram_per_gpu_gb", "HiCache size", "hicache_size",
+        default=0.0)
+    hicache_total_gb = _setup_float_fuzzy(
+        "HiCache total GB", "HiCache DRAM total GB", "L2 DRAM cache capacity GB",
+        "L2 cache capacity GB", "hicache_total_gb", "l2_dram_cache_capacity_gb",
+        default=0.0)
+    if hicache_total_gb <= 0 and hicache_per_gpu_gb > 0:
+        hicache_total_gb = hicache_per_gpu_gb * max(setup_gpu_count_for_l2, 1.0)
+    l2_dram_capacity_gb = hicache_total_gb if hicache_total_gb > 0 else host_dram_total_gb
+    l2_dram_capacity_source = (
+        f"HiCache allocation: {hicache_per_gpu_gb:g} GB/GPU × {setup_gpu_count_for_l2:g} GPU(s)"
+        if hicache_total_gb > 0 and hicache_per_gpu_gb > 0 else
+        ("HiCache total allocation from setup_details.json" if hicache_total_gb > 0 else "Host DRAM capacity")
+    )
+    # Used L2 DRAM can be estimated from SGLang hicache host tokens when
+    # present. This is more setup-relevant than OS-wide MemAvailable.
+    l2_dram_used_gb = 0.0
+    l2_dram_used_source = ""
+    _l2_used_tokens_variation_pct = 0.0
+    _l2_used_tokens_min = 0.0
+    _l2_used_tokens_max = 0.0
+
     # Mem fraction static governs how much HBM is reserved for KV; the L3 size
     # is the L3 storage-cache capacity. l3_fs_total_gb already loaded above.
 
@@ -977,14 +1201,72 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     dram_bw_target_gbs      = 0.0  # filled in after CPU autodetect block
 
     # Latency / throughput
-    ttft_ms   = _safe_float(_pick(sglang, ["server_ttft_ms","ttft_ms","avg_ttft_ms",
+    # Prefer run-local Prometheus counter deltas from sglang_timeseries.csv.
+    # Older summaries can carry stale/default mean values (for example both an
+    # L2-only and an L3-active run showing the same TTFT/TPOT) while the
+    # timeseries/percentile charts clearly differ.  Counter deltas are scoped to
+    # the selected start/end window, so they are the authoritative Executive KPI
+    # source whenever present.
+    ttft_from_ts_ms = _ts_ratio_delta_ms(
+        sglang_ts,
+        "sglang_time_to_first_token_seconds_sum",
+        "sglang_time_to_first_token_seconds_count",
+    ) or _ts_ratio_delta_ms(sglang_ts, "time_to_first_token_seconds_sum", "time_to_first_token_seconds_count")
+    tpot_from_ts_ms = _ts_ratio_delta_ms(
+        sglang_ts,
+        "sglang_inter_token_latency_seconds_sum",
+        "sglang_inter_token_latency_seconds_count",
+    ) or _ts_ratio_delta_ms(sglang_ts, "inter_token_latency_seconds_sum", "inter_token_latency_seconds_count")
+    e2e_from_ts_ms = _ts_ratio_delta_ms(
+        sglang_ts,
+        "sglang_e2e_request_latency_seconds_sum",
+        "sglang_e2e_request_latency_seconds_count",
+    ) or _ts_ratio_delta_ms(sglang_ts, "e2e_request_latency_seconds_sum", "e2e_request_latency_seconds_count")
+
+    # KPI fallback order:
+    #   1) selected-window Δsum/Δcount counters
+    #   2) selected-window percentile-timeseries p50 active mean
+    #   3) sglang_summary.json only as last fallback
+    # This avoids different runs reusing the same stale summary TTFT/TPOT.
+    ttft_from_pct_ms = _pct_ts_latency_ms(pct_ts, "ttft", "p50")
+    tpot_from_pct_ms = _pct_ts_latency_ms(pct_ts, "itl", "p50")
+    e2e_from_pct_ms  = _pct_ts_latency_ms(pct_ts, "e2e", "p50")
+
+    ttft_ms   = ttft_from_ts_ms or ttft_from_pct_ms or _safe_float(_pick(sglang, ["server_ttft_ms","ttft_ms","avg_ttft_ms",
                                             "mean_ttft_ms","time_to_first_token_ms",
                                             "server_ttft_p50_ms"], 0.0))
-    tpot_ms   = _safe_float(_pick(sglang, ["server_itl_ms","tpot_ms","avg_tpot_ms",
+    tpot_ms   = tpot_from_ts_ms or tpot_from_pct_ms or _safe_float(_pick(sglang, ["server_itl_ms","tpot_ms","avg_tpot_ms",
                                             "mean_tpot_ms","itl_ms",
                                             "server_itl_p50_ms"], 0.0))
-    e2e_ms    = _safe_float(_pick(sglang, ["server_e2e_ms","e2e_ms","avg_latency_ms",
+    e2e_ms    = e2e_from_ts_ms or e2e_from_pct_ms or _safe_float(_pick(sglang, ["server_e2e_ms","e2e_ms","avg_latency_ms",
                                             "latency_ms","server_e2e_p50_ms"], 0.0))
+    if ttft_from_ts_ms > 0:
+        sglang["server_ttft_ms_method"] = "delta_sglang_time_to_first_token_seconds_sum_count"
+    if tpot_from_ts_ms > 0:
+        sglang["server_itl_ms_method"] = "delta_sglang_inter_token_latency_seconds_sum_count"
+    if e2e_from_ts_ms > 0:
+        sglang["server_e2e_ms_method"] = "delta_sglang_e2e_request_latency_seconds_sum_count"
+    if ttft_from_ts_ms <= 0 and ttft_from_pct_ms > 0:
+        sglang["server_ttft_ms_method"] = "selected_window_sglang_percentiles_timeseries_ttft_p50_active_mean"
+    if tpot_from_ts_ms <= 0 and tpot_from_pct_ms > 0:
+        sglang["server_itl_ms_method"] = "selected_window_sglang_percentiles_timeseries_itl_p50_active_mean"
+    if e2e_from_ts_ms <= 0 and e2e_from_pct_ms > 0:
+        sglang["server_e2e_ms_method"] = "selected_window_sglang_percentiles_timeseries_e2e_p50_active_mean"
+
+    # Final cross-tab consistency guard: when Combined Report already has the
+    # freshly generated End Report, prefer its parsed TTFT/TPOT values for the
+    # Executive KPI tiles.  This avoids Executive-only stale fallback values
+    # while preserving formula/source notes below.
+    _static_kpis = static_kpi_overrides or {}
+    _static_ttft = _safe_float(_static_kpis.get("ttft_ms", 0.0), 0.0)
+    _static_tpot = _safe_float(_static_kpis.get("tpot_ms", 0.0), 0.0)
+    if _static_ttft > 0 and abs(_static_ttft - _safe_float(ttft_ms, 0.0)) > max(1.0, 0.02 * _static_ttft):
+        ttft_ms = _static_ttft
+        sglang["server_ttft_ms_method"] = "end_report_metrics_object_prefill_phase_ttft"
+    if _static_tpot > 0 and abs(_static_tpot - _safe_float(tpot_ms, 0.0)) > max(1.0, 0.02 * _static_tpot):
+        tpot_ms = _static_tpot
+        sglang["server_itl_ms_method"] = "end_report_metrics_object_decode_phase_tpot"
+
     cache_hit = _safe_float(_pick(sglang, ["cache_hit_pct","cache_hit_rate_pct",
                                             "cache_hit_active_avg_pct",
                                             "cache_hit_rate_realtime_pct","cache_hit"], 0.0))
@@ -1024,32 +1306,65 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             throughput = round(_decode_toks / _elapsed_s, 2)
             tp_active = throughput
 
+    # Final TPOT/ITL fallback for Executive tab: if ITL counters were absent or
+    # zero but output-token throughput is available, avoid showing an impossible
+    # 0 ms/token.  Mark the method in the note/formula sections via summary.
+    if tpot_ms <= 0 and throughput > 0:
+        tpot_ms = round(1000.0 / throughput, 2)
+        sglang.setdefault("server_itl_ms_method", "fallback_inverse_prometheus_output_token_throughput")
+
     # GPU / HBM
     gpu_util   = _safe_float(_pick(gpu, ["gpu_util_mean","gpu_util_pct_mean","util_mean"], 0.0))
     gpu_peak   = _safe_float(_pick(gpu, ["gpu_util_peak","gpu_util_pct_peak","util_peak"], 0.0))
+    # Prefer active-window GPU utilization for KPI tiles.  Overall means can be
+    # artificially low when the Prometheus window includes idle gaps or GPUs not
+    # active in the TP/DP group.  Non-zero samples from gpu_timeseries.csv are
+    # scoped to the selected run and match the interactive/static chart intent.
+    _gpu_active_util = _ts_active_mean(gpu_ts, "gpu_util", "DCGM_FI_DEV_GPU_UTIL")
+    if _gpu_active_util > 0:
+        gpu_util = _gpu_active_util
+        gpu["gpu_util_mean_method"] = "active_nonzero_mean_from_gpu_timeseries"
+    _gpu_peak_from_ts = _safe_float(_ts_col(gpu_ts, "gpu_util", "DCGM_FI_DEV_GPU_UTIL").get("max", 0.0))
+    if _gpu_peak_from_ts > 0:
+        gpu_peak = max(gpu_peak, _gpu_peak_from_ts)
     hbm_gb     = _safe_float(_pick(gpu, ["hbm_used_gb_mean","hbm_gb","mem_used_gb_mean",
                                           "hbm_used_mb_mean"], 0.0))
     if hbm_gb > 1000:
         hbm_gb /= 1024.0   # MB → GB
     hbm_pct    = _safe_float(_pick(gpu, ["hbm_util_pct_mean","hbm_pct","mem_util_pct_mean"], 0.0))
-    hbm_total  = _safe_float(_pick(gpu, ["hbm_total_gb","hbm_total_mb_per_gpu"], 40.0))
+    # Per-device HBM capacity should come from setup_details when provided,
+    # because DCGM may report a physical-board/default value that does not
+    # match the intended setup.  The aggregate HBM capacity should be based on
+    # the active inference parallelism (TP × DP), not necessarily all GPUs in
+    # the host.  Example: TP=4 with 80 GB/GPU => 320 GB active HBM.
+    hbm_total_setup = _safe_float(_pick(setup, [
+        "GPU Memory per Device GB", "GPU memory per device GB",
+        "HBM per GPU GB", "hbm_per_gpu_gb", "gpu_memory_per_device_gb"
+    ], 0.0))
+    hbm_total  = hbm_total_setup if hbm_total_setup > 0 else _safe_float(_pick(gpu, ["hbm_total_gb","hbm_total_mb_per_gpu"], 40.0))
     if hbm_total > 1000:
         hbm_total /= 1024.0
-    # Aggregate HBM across all GPUs. DCGM summaries usually carry per-GPU
-    # means, so the Executive tile should state cluster-level used/total
-    # capacity and include the per-GPU average in the note.
-    gpu_count = _safe_float(_pick(setup, ["GPU Count", "gpu_count", "num_gpus", "Number of GPUs"], 0))
-    if gpu_count <= 0:
+
+    physical_gpu_count = _safe_float(_pick(setup, ["GPU Count", "gpu_count", "num_gpus", "Number of GPUs"], 0))
+    if physical_gpu_count <= 0:
         try:
             import re as _re
             _m_gpu = _re.search(r"(\d+)\s*[xX]", str(gpu_desc))
-            gpu_count = float(_m_gpu.group(1)) if _m_gpu else 0.0
+            physical_gpu_count = float(_m_gpu.group(1)) if _m_gpu else 0.0
         except Exception:
-            gpu_count = 0.0
-    if gpu_count <= 0:
-        gpu_count = _safe_float(_pick(gpu, ["gpu_count", "num_gpus", "gpu_num"], 1)) or 1.0
-    hbm_used_total_gb = hbm_gb * gpu_count if hbm_gb > 0 else 0.0
-    hbm_total_all_gpus_gb = hbm_total * gpu_count if hbm_total > 0 else 0.0
+            physical_gpu_count = 0.0
+    if physical_gpu_count <= 0:
+        physical_gpu_count = _safe_float(_pick(gpu, ["gpu_count", "num_gpus", "gpu_num"], 1)) or 1.0
+
+    tp_count = _safe_float(_pick(setup, ["TP size", "tp_size", "tensor_parallel_size", "TP", "tp"], 0.0))
+    dp_count = _safe_float(_pick(setup, ["DP size", "dp_size", "data_parallel_size", "DP", "dp"], 1.0)) or 1.0
+    active_gpu_count = tp_count * dp_count if tp_count > 0 else physical_gpu_count
+    if active_gpu_count <= 0:
+        active_gpu_count = physical_gpu_count or 1.0
+
+    hbm_used_total_gb = hbm_gb * active_gpu_count if hbm_gb > 0 else 0.0
+    hbm_total_all_gpus_gb = hbm_total * active_gpu_count if hbm_total > 0 else 0.0
+    gpu_count = active_gpu_count
     if hbm_total_all_gpus_gb > 0 and hbm_used_total_gb > 0:
         hbm_pct = hbm_used_total_gb / hbm_total_all_gpus_gb * 100.0
     dcgm_active = _safe_float(_pick(gpu, ["dcgm_hbm_bw_active_pct","dcgm_active_pct"], 0.0))
@@ -1352,6 +1667,13 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         p = min(max(int(pct), 0), 100)
         return (f'<div class="bar-wrap"><div class="bar {color}"'                f' style="width:{p}%"></div></div>')
 
+    def clamp_score(v: float) -> float:
+        """Clamp executive bottleneck scores to the documented 0–100 range."""
+        try:
+            return max(0.0, min(100.0, float(v)))
+        except Exception:
+            return 0.0
+
     def finding(tag: str, text: str, plain: str | None = None) -> str:
         """Render an executive-summary finding.
 
@@ -1492,6 +1814,79 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     if kv_bytes_tok_kb <= 0:
         kv_bytes_tok_kb = 327.0
 
+    try:
+        # DRAM/L2 "used" should be a selected-window residency, not a stale
+        # last sample or setup-derived constant.  Using the active/non-zero mean
+        # makes L2-only and L3-active runs differ when their cache residency
+        # differs, while still avoiding idle zero windows.
+        # Use the explicit SGLang L2 residency metric for DRAM-used.
+        # Important: this is a gauge, not a byte counter.  It is only useful
+        # for comparing runs when it varies within the selected window.  If it
+        # is missing or flat, do not publish a misleading identical "used"
+        # value across L2/L3 reports; show the configured allocation instead.
+        _l2_stats = _ts_gauge_stats(
+            sglang_ts,
+            "sglang_hicache_host_used_tokens", "hicache_host_used_tokens"
+        )
+        _l2_used_tokens = float(_l2_stats.get("mean", 0.0) or 0.0)
+        _l2_used_tokens_variation_pct = float(_l2_stats.get("variation_pct", 0.0) or 0.0)
+        _l2_used_tokens_min = float(_l2_stats.get("min", 0.0) or 0.0)
+        _l2_used_tokens_max = float(_l2_stats.get("max", 0.0) or 0.0)
+        _l2_used_tokens_nonzero = float(_l2_stats.get("nonzero_count", 0.0) or 0.0)
+        _l2_used_tokens_source = "selected-window active mean of sglang_hicache_host_used_tokens"
+        _l2_used_tokens_dynamic = (_l2_used_tokens > 0 and _l2_used_tokens_variation_pct > 1.0)
+        if _l2_used_tokens <= 0:
+            _l2_used_tokens_source = "sglang_hicache_host_used_tokens missing from selected-window timeseries"
+        elif not _l2_used_tokens_dynamic:
+            _l2_used_tokens_source = "sglang_hicache_host_used_tokens present but flat/static in selected window"
+        if _l2_used_tokens > 0:
+            # SGLang HiCache host-used token counters are exported at the
+            # worker/rank level in several TP deployments.  A full-model
+            # KV-bytes/token conversion can therefore overstate L2 DRAM usage
+            # by approximately TP size and produce impossible values such as
+            # 186 GB used out of a configured 100 GB allocation.  Prefer the
+            # full-model estimate only when it fits the configured allocation;
+            # otherwise use the TP-sharded per-rank estimate.
+            _tp_for_kv = max(_safe_float(tp_size, 1.0), 1.0)
+            _full_gb = _l2_used_tokens * kv_bytes_tok_kb / (1024 * 1024)
+            _tp_gb = _l2_used_tokens * (kv_bytes_tok_kb / _tp_for_kv) / (1024 * 1024)
+            if l2_dram_capacity_gb > 0 and _full_gb > l2_dram_capacity_gb * 1.05 and _tp_gb <= l2_dram_capacity_gb * 1.05:
+                l2_dram_used_gb = _tp_gb
+                l2_dram_used_source = f"{_l2_used_tokens_source} × TP-sharded KV bytes/token (÷TP={_tp_for_kv:g})"
+            elif l2_dram_capacity_gb > 0 and _full_gb > l2_dram_capacity_gb * 1.05 and _tp_gb > l2_dram_capacity_gb * 1.05:
+                # Do not publish an impossible utilisation. Keep capacity
+                # visible and mark used as unavailable; the raw token estimate
+                # is still documented in the formula section.
+                l2_dram_used_gb = 0.0
+                l2_dram_used_source = "SGLang hicache host used token estimate exceeded configured L2 allocation"
+            else:
+                l2_dram_used_gb = _full_gb
+                l2_dram_used_source = f"{_l2_used_tokens_source} × KV bytes/token"
+    except Exception:
+        pass
+    if l2_dram_used_gb <= 0 and host_dram_used_gb > 0 and l2_dram_capacity_gb <= 0:
+        # Only use host DRAM as a fallback when there is no configured L2
+        # HiCache allocation. For HiCache reports, host DRAM is not the L2
+        # cache residency and would make different L2/L3 runs look identical.
+        l2_dram_used_gb = host_dram_used_gb
+        l2_dram_used_source = "OS host DRAM used from dram_summary/setup"
+    l2_dram_used_pct = (l2_dram_used_gb / l2_dram_capacity_gb * 100.0) if l2_dram_capacity_gb > 0 and l2_dram_used_gb > 0 else 0.0
+    # DRAM/L2 used is a point-in-time/selected-window residency gauge, while
+    # DRAM BW is flow over time. They can legitimately differ between runs even
+    # when the residency gauge is flat. Make this explicit so the Executive tile
+    # does not imply that two different workloads had identical DRAM behavior.
+    if l2_dram_used_gb > 0 and _l2_used_tokens_variation_pct > 1.0:
+        l2_dram_tile_note = (f"{_fmt_num(l2_dram_used_pct, '% full', 0)} · selected-window mean residency "
+                             f"(gauge varied {_l2_used_tokens_variation_pct:.1f}%) · {l2_dram_capacity_source}")
+    elif l2_dram_used_gb > 0:
+        l2_dram_tile_note = (f"{_fmt_num(l2_dram_used_pct, '% full', 0)} · residency snapshot/flat gauge, "
+                             f"not bandwidth · {l2_dram_capacity_source}")
+    else:
+        if '_l2_used_tokens_source' in locals() and _l2_used_tokens_source:
+            l2_dram_tile_note = f"runtime residency unavailable · {_l2_used_tokens_source} · {l2_dram_capacity_source}"
+        else:
+            l2_dram_tile_note = f"L2 DRAM cache allocation · {l2_dram_capacity_source}"
+
     # ── L3 storage traffic from SGLang token counters (Prometheus-only fallback) ──
     # GATING: This fallback is intentional ONLY for Prom-only runs where
     # no local run-dir instrumentation was available. When a run-dir IS
@@ -1576,16 +1971,18 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         evicted_tokens = _csv_delta("evicted_tokens_total")
 
     # Convert to GB: tokens × KB/token / (1024 KB/MB × 1024 MB/GB) = GB.
-    # SGLang L3 semantics:
+    # Reliable SGLang L3/local Storage evidence:
     #   backuped_tokens   -> data moved down into the L3 storage tier (write/offload)
-    #   load_back_tokens  -> data loaded back from L3 (read/onboard)
-    #   prefetched_tokens -> data proactively brought back from L3 (read/onboard)
-    #   evicted_tokens    -> eviction pressure involving the hierarchical cache;
-    #                        evidence of L3/cache-tier activity but not counted
-    #                        as read/write bytes unless paired with backup/loadback.
+    #   prefetched_tokens -> data proactively brought back from the L3 storage tier
+    # load_back_tokens by itself is ambiguous in SGLang 0.5.x; it can appear for
+    # cache reload paths even when the external/local Storage tier was not used in
+    # the current run. evicted_tokens means cache pressure, not storage I/O.
+    # Therefore require backup or prefetch evidence before deriving L3 storage bytes.
+    l3_reliable_sglang_tokens = backuped_tokens + prefetched_tokens
+    l3_ambiguous_tokens = loadback_tokens + evicted_tokens
     l3_est_write_gb = backuped_tokens * kv_bytes_tok_kb / (1024 * 1024)
-    l3_est_read_gb  = (loadback_tokens + prefetched_tokens) * kv_bytes_tok_kb / (1024 * 1024)
-    l3_sglang_activity_tokens = backuped_tokens + loadback_tokens + prefetched_tokens + evicted_tokens
+    l3_est_read_gb  = (loadback_tokens + prefetched_tokens) * kv_bytes_tok_kb / (1024 * 1024) if l3_reliable_sglang_tokens > 0 else 0.0
+    l3_sglang_activity_tokens = l3_reliable_sglang_tokens
 
     # Source provenance. Three possible values:
     #   "blktrace"      — run-dir present and blktrace produced data
@@ -1598,12 +1995,9 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # the actual instrumentation failure.
         l3_traffic_source = "blktrace"
     elif l3_sglang_activity_tokens > 0:
-        # Prom-only mode AND SGLang has hierarchical-cache movement counters.
-        # Treat any of backuped / load_back / prefetched / evicted as evidence
-        # of L3-tier activity, because in SGLang HiCache these counters are the
-        # app-level view of movement across the hierarchical cache.  Read/write
-        # byte estimates are still only computed from counters with clear byte
-        # direction: backuped => write/offload; load_back+prefetched => read/onboard.
+        # Prom-only mode AND SGLang has reliable hierarchical-cache L3 evidence.
+        # Use SGLang estimates only when backup/prefetch prove that L3 storage was
+        # actually exercised. Do not infer L3 from load_back-only or evicted-only.
         read_gb  = l3_est_read_gb
         write_gb = l3_est_write_gb
         rw_ratio = read_gb / max(write_gb, 0.001)
@@ -1766,24 +2160,29 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             "evicted_tokens_total", "sglang_evicted_tokens_total"))
         _evicted = evicted_tokens
         if _has_sg_counters and l3_sglang_activity_tokens == 0:
-            # Counters present, both zero → L3 truly was idle this window.
+            # Counters present, but no reliable L3 storage evidence. load_back-only
+            # and evicted-only are not counted as L3 usage.
             findings_items.append(finding(
                 "L3 ACTIVITY · NONE OBSERVED",
-                (f'L3 storage cache tier shows no activity in this window. SGLang '
-                 f'<code>backuped_tokens_total</code> and <code>load_back_tokens_total</code> '
+                (f'L3 storage cache tier shows no reliable activity in this window. SGLang '
+                 f'<code>backuped_tokens_total</code> and <code>prefetched_tokens_total</code> '
                  f'both registered 0 during the {_l3_window_s:.0f} s collection window. '
+                 + (f'<code>load_back_tokens_total</code> = {int(loadback_tokens):,} was observed, '
+                    f'but load_back-only is ambiguous and is not counted as L3 storage without '
+                    f'backup/prefetch or mapped block telemetry. '
+                    if loadback_tokens > 0 else '')
                  + (f'<code>evicted_tokens_total</code> = {int(_evicted):,} indicates KV '
-                    f'evictions happened but did not spill to L3 (likely went to L2 DRAM '
-                    f'or were dropped entirely). '
+                    f'evictions/cache pressure, but not L3 storage I/O by itself. '
                     if _evicted > 0 else '')
                  + f'<strong>Implications:</strong> the working set fit within HBM + L2 '
                  f'DRAM, so L3 storage was not exercised. KV$ L3 storage sizing based on this run '
                  f'will be unrepresentative — re-run with a larger context or more '
                  f'concurrent sessions to drive L3 storage traffic.'),
-                plain=(f"No L3 storage cache activity was detected during this {_l3_window_s:.0f}s "
-                       f"window — the workload's KV blocks all fit in HBM + DRAM, so "
-                       f"nothing spilled to the L3 storage. If you're sizing the L3 storage tier, "
-                       f"you'll want a longer or larger run.")))
+                plain=(f"No reliable L3 storage activity was detected during this {_l3_window_s:.0f}s "
+                       f"window. backuped_tokens_total and prefetched_tokens_total stayed at zero; "
+                       f"load_back-only/evicted-only counters are not treated as L3 storage usage. "
+                       f"If you're sizing the L3 storage tier, use a run that produces backup or "
+                       f"prefetch activity, or collect mapped block telemetry.")))
         else:
             # Counters missing entirely → instrumentation problem.
             findings_items.append(finding(
@@ -2056,11 +2455,14 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             if gb > 0:
                 return f"{gb:.0f} GB"
             return ""
-        l2_cap = _cap_fmt(host_dram_total_gb)
+        l2_cap = _cap_fmt(l2_dram_capacity_gb)
         l3_cap = _cap_fmt(l3_fs_total_gb)
         l2_str = f"L2 DRAM ({l2_cap})" if l2_cap else "L2 DRAM"
-        l3_str = (f"L3 {l3_storage_type} ({l3_cap})" if l3_cap
-                  else f"L3 {l3_storage_type}")
+        # Keep the executive hero generic: do not expose the backend/vendor
+        # name (for example Mooncake) in the top-line cache-tier summary. The
+        # detailed setup table still carries the exact backend/type.
+        l3_str = (f"local Storage / AI memory node ({l3_cap})" if l3_cap
+                  else "local Storage / AI memory node")
         _cache_tier_label = f"Enabled · {l2_str} + {l3_str}"
     else:
         _cache_tier_label = (str(cache_enabled) if cache_enabled else "Disabled")
@@ -2136,12 +2538,21 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
 
     # ── Bottleneck table ──────────────────────────────────────────────────────
     # Scores are data-driven heuristics
-    score_compute = min(100, (ttft_ms / 1000 / max(duration_min / 60, 0.1)) * 60) if ttft_ms > 0 else 0
-    score_hbm     = min(100, hbm_pct * 1.0) if hbm_pct > 0 else 0
-    score_nvme    = min(100, nvme_rd_bw / 10.0) if nvme_rd_bw > 0 else 0
-    score_cache   = min(100, cache_hit_gap * 2 + (40 - cache_hit_tw) * 0.5) if cache_hit > 0 else 0
-    score_dram    = min(100, dram_total_bw / max(dram_peak_cap, 1) * 200) if dram_total_bw > 0 else 0
-    score_os      = 5.0 if swap_pages == 0 else min(100, swap_pages / 100)
+    score_compute = clamp_score((ttft_ms / 1000 / max(duration_min / 60, 0.1)) * 60) if ttft_ms > 0 else 0
+    score_hbm     = clamp_score(hbm_pct * 1.0) if hbm_pct > 0 else 0
+    score_nvme    = clamp_score(nvme_rd_bw / 10.0) if nvme_rd_bw > 0 else 0
+    # Cache score is a bottleneck/pressure score, not a goodness score.
+    # Earlier formula used (40 - token_weighted_hit) directly, which becomes
+    # negative for healthy token-weighted cache hit and could produce negative
+    # Executive scores (for example 96% gauge / 88% token-weighted → -7).
+    # Clamp both components so strong cache reuse gives a LOW/0 score instead
+    # of an impossible negative score.
+    cache_gap_pressure = max(0.0, cache_hit_gap) * 2.0
+    token_miss_pressure = max(0.0, 40.0 - cache_hit_tw) * 0.5 if cache_hit_tw > 0 else 0.0
+    gauge_miss_pressure = max(0.0, 80.0 - cache_hit) * 0.25 if cache_hit > 0 else 0.0
+    score_cache   = clamp_score(cache_gap_pressure + token_miss_pressure + gauge_miss_pressure) if cache_hit > 0 else 0
+    score_dram    = clamp_score(dram_total_bw / max(dram_peak_cap, 1) * 200) if dram_total_bw > 0 else 0
+    score_os      = 5.0 if swap_pages == 0 else clamp_score(swap_pages / 100)
 
     bn_rows = [
         ("Prefill compute (HBM bw)", score_compute, "red",
@@ -2164,7 +2575,12 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
          "No action needed"),
     ]
     bn_html = "".join(
-        f'<tr><td><b>{_html.escape(name)}</b></td>'        f'<td><b>{score:.0f} / 100</b></td>'        f'<td>{sev(score)}</td>'        f'<td>{_html.escape(evidence)}</td>'        f'<td>{_html.escape(action)}</td>'        f'<td style="width:130px">{bar(score, color)}</td></tr>'
+        f'<tr><td><b>{_html.escape(name)}</b></td>'
+        f'<td><b>{clamp_score(score):.0f} / 100</b></td>'
+        f'<td>{sev(clamp_score(score))}</td>'
+        f'<td>{_html.escape(evidence)}</td>'
+        f'<td>{_html.escape(action)}</td>'
+        f'<td style="width:130px">{bar(clamp_score(score), color)}</td></tr>'
         for name, score, color, evidence, action in bn_rows
     )
 
@@ -2205,10 +2621,14 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         kpi_card("TTFT",
                  _fmt_num(ttft_ms / 1000 if ttft_ms >= 1000 else ttft_ms,
                           " s" if ttft_ms >= 1000 else " ms", 1),
-                 "long-context prefill dominated" if ttft_ms > 5000 else "time to first token") +
+                 ("End Report selected-window Metrics object" if str(sglang.get("server_ttft_ms_method", "")).startswith("end_report_") else
+                  ("Δsum/Δcount from SGLang timeseries" if ttft_from_ts_ms > 0 else
+                   ("selected-window percentile timeseries" if ttft_from_pct_ms > 0 else
+                    ("long-context prefill dominated" if ttft_ms > 5000 else "time to first token"))))) +
         kpi_card("TPOT / ITL",
                  _fmt_num(tpot_ms, " ms", 0),
-                 "HBM bandwidth bound" if gpu_util > 85 else "decode token latency") +
+                 ("Δsum/Δcount from SGLang timeseries" if tpot_from_ts_ms > 0 else
+                  ("HBM bandwidth bound" if gpu_util > 85 else "decode token latency"))) +
         kpi_card("Throughput",
                  _fmt_num(tp_active if tp_active > 0 else throughput, " tok/s", 1),
                  f"active mean | {_fmt_num(throughput, ' tok/s peak', 1)}") +
@@ -2219,7 +2639,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                  (f"{_fmt_num(hbm_used_total_gb, ' GB', 1)} / "
                   f"{_fmt_num(hbm_total_all_gpus_gb, ' GB', 0)}"
                   if hbm_total_all_gpus_gb > 0 else f"{_fmt_num(hbm_gb, ' GB/GPU', 1)}"),
-                 (f"{_fmt_num(hbm_pct, '% full', 0)} · {int(gpu_count)} GPU(s) · "
+                 (f"{_fmt_num(hbm_pct, '% full', 0)} · TP/DP active GPUs={int(gpu_count)} · "
                   f"{_fmt_num(hbm_gb, ' GB/GPU avg', 1)}"
                   if hbm_total_all_gpus_gb > 0 else "per-GPU average from DCGM")) +
         kpi_card("GPU power",
@@ -2308,30 +2728,40 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # L3 HiCache capacity (df-based filesystem usage). Distinct from
         # "NVMe device util %" which is iostat device-busy time, not capacity.
         ((kpi_card(
-            "L3 storage cache used",
+            ("L3 storage cache used" if l3_capacity_source == "df/SMART runtime snapshot" else "L3 storage configured capacity"),
             f"{l3_fs_used_gb:.0f} / {l3_fs_total_gb:.0f} GB",
-            (f"{l3_fs_used_pct:.0f}% full · {l3_fs_avail_gb:.0f} GB free"
-              + (f" · device {nvme_dev_cap_gb:.0f} GB" if nvme_dev_cap_gb > 0 else "")),
-            accent=(l3_fs_used_pct >= 85),
+            ((f"{l3_fs_used_pct:.0f}% full · {l3_fs_avail_gb:.0f} GB free"
+              + (f" · device {nvme_dev_cap_gb:.0f} GB" if nvme_dev_cap_gb > 0 else ""))
+             if l3_capacity_source == "df/SMART runtime snapshot" else
+             f"from setup_details.json · not a measured runtime delta"),
+            accent=(l3_fs_used_pct >= 85 and l3_capacity_source == "df/SMART runtime snapshot"),
          ) if (l3_fs_total_gb > 0 or l3_fs_used_gb > 0) else "")) +
         ((kpi_card("DRAM used",
-                 f"{_fmt_num(host_dram_used_gb, ' GB', 1)} / {_fmt_num(host_dram_total_gb, ' GB', 0)}",
-                 f"{_fmt_num(host_dram_used_pct, '% full', 0)} · host DRAM"
-             ) if host_dram_total_gb > 0 and host_dram_used_gb > 0 else
-             (kpi_card("DRAM total", _fmt_num(host_dram_total_gb, ' GB', 0),
-                       "used capacity unavailable") if host_dram_total_gb > 0 else ""))) +
+                 f"{_fmt_num(l2_dram_used_gb, ' GB', 1)} / {_fmt_num(l2_dram_capacity_gb, ' GB', 0)}",
+                 l2_dram_tile_note
+             ) if l2_dram_capacity_gb > 0 and l2_dram_used_gb > 0 else
+             (kpi_card("DRAM residency", f"— / {_fmt_num(l2_dram_capacity_gb, ' GB', 0)}",
+                       l2_dram_tile_note) if l2_dram_capacity_gb > 0 else ""))) +
         kpi_card("DRAM BW",
                  f"{_fmt_num(dram_rd_bw if dram_rd_bw else dram_total_bw, ' GB/s', 1)}",
-                 f"{'read / ' + _fmt_num(dram_wr_bw, ' write GB/s', 1) if dram_wr_bw else 'total'} | {_fmt_num(dram_peak_bw, ' peak', 1)}",
+                 ((f"{'read / ' + _fmt_num(dram_wr_bw, ' write GB/s', 1) if dram_wr_bw else 'total'} | "
+                   f"{_fmt_num(dram_peak_bw, ' peak', 1)}") +
+                  ((f" · L2 DRAM { _fmt_num(l2_dram_used_gb, ' GB', 1)} / "
+                    f"{_fmt_num(l2_dram_capacity_gb, ' GB', 0)} residency")
+                   if l2_dram_capacity_gb > 0 and l2_dram_used_gb > 0 else
+                   (f" · L2 DRAM total {_fmt_num(l2_dram_capacity_gb, ' GB', 0)}"
+                    if l2_dram_capacity_gb > 0 else ""))),
                  target=(f"Target: {dram_bw_target_gbs:.0f} GB/s peak"
                           if dram_bw_target_gbs > 0 else ""),
                  target_pct=((dram_total_bw / dram_bw_target_gbs * 100)
                               if dram_bw_target_gbs > 0 and dram_total_bw > 0 else None),
                  target_tip=(f"Peak DRAM BW = {dram_bw_target_gbs:.0f} GB/s "
-                             f"({_dram_peak_label}). Inference workloads typically use "
-                             f"5-15% of peak because the GPU drives most memory traffic "
-                             f"through HBM, not host DRAM. Low utilisation here is normal "
-                             f"and indicates room to expand the L2 KV tier.")) +
+                             f"({_dram_peak_label}). Capacity context: "
+                             f"{_fmt_num(l2_dram_used_gb, ' GB', 1)} used / "
+                             f"{_fmt_num(l2_dram_capacity_gb, ' GB', 0)} total L2 allocation. "
+                             f"Inference workloads typically use 5-15% of peak because "
+                             f"the GPU drives most memory traffic through HBM, not host DRAM. "
+                             f"Low utilisation here is normal and indicates room to expand the L2 KV tier.")) +
         (kpi_card("L3 storage busy",
                  _fmt_num(nvme_util, "%", 1),
                  f"iostat/blktrace %util mapped to L3 storage · "
@@ -2697,12 +3127,13 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
   <h2>📐 Executive KPI Formula &amp; Metric Sources <span class="tag">PROMETHEUS</span></h2>
   <table><tbody>
     <tr><td class="td-key">Cache hit</td><td><code>avg(sglang_cache_hit_rate where value &gt; 0) × 100</code><br><span class="sub">Diagnostics also shown: token-weighted <code>Δsglang_realtime_tokens_total{{mode="prefill_cache"}} / (Δprefill_cache + Δprefill_compute)</code> and effective counter reuse.</span></td></tr>
-    <tr><td class="td-key">Mean TTFT</td><td><code>Δsglang_time_to_first_token_seconds_sum / Δsglang_time_to_first_token_seconds_count × 1000</code></td></tr>
-    <tr><td class="td-key">Mean TPOT / ITL</td><td><code>Δsglang_inter_token_latency_seconds_sum / Δsglang_inter_token_latency_seconds_count × 1000</code></td></tr>
+    <tr><td class="td-key">Mean TTFT</td><td><code>Δsglang_time_to_first_token_seconds_sum / Δsglang_time_to_first_token_seconds_count × 1000</code><br><span class="sub">Executive tile prefers the selected-window counter delta from <code>sglang_timeseries.csv</code>; summary JSON is fallback only.</span></td></tr>
+    <tr><td class="td-key">Mean TPOT / ITL</td><td><code>Δsglang_inter_token_latency_seconds_sum / Δsglang_inter_token_latency_seconds_count × 1000</code><br><span class="sub">Executive tile prefers the selected-window counter delta from <code>sglang_timeseries.csv</code>; inverse throughput is only a final fallback.</span></td></tr>
     <tr><td class="td-key">Mean E2E</td><td><code>Δsglang_e2e_request_latency_seconds_sum / Δsglang_e2e_request_latency_seconds_count × 1000</code></td></tr>
     <tr><td class="td-key">Throughput</td><td><code>active_mean(sglang_gen_throughput)</code> or <code>Δsglang_generation_tokens_total / Δtime_sec</code></td></tr>
-    <tr><td class="td-key">L3 storage activity</td><td><code>Δsglang_backuped_tokens_total</code>, <code>Δsglang_load_back_tokens_total</code>, <code>Δsglang_prefetched_tokens_total</code>, <code>Δsglang_evicted_tokens_total</code>; bytes are estimated as <code>token_delta × KV_bytes_per_token</code>.</td></tr>
-    <tr><td class="td-key">GPU / host</td><td>GPU metrics come from <code>DCGM_FI_DEV_*</code>; host block I/O and vmstat come from node-exporter/iostat style counters and are not L3 unless explicitly mapped.</td></tr>
+    <tr><td class="td-key">local Storage / AI memory node activity</td><td><code>Δsglang_backuped_tokens_total</code>, <code>Δsglang_load_back_tokens_total</code>, <code>Δsglang_prefetched_tokens_total</code>, <code>Δsglang_evicted_tokens_total</code>; bytes are estimated as <code>token_delta × KV_bytes_per_token</code>.</td></tr>
+    <tr><td class="td-key">DRAM residency</td><td><code>sglang_hicache_host_used_tokens × KV_bytes_per_token</code>, using the selected-window active mean only when the <code>sglang_hicache_host_used_tokens</code> gauge has meaningful variation. If the gauge is present but flat/static, AMOprof still reports its converted value as a clearly labeled residency snapshot from <code>sglang_hicache_host_used_tokens</code>; if the metric is missing, only configured L2 DRAM allocation is shown. Capacity is <code>HiCache size per GPU GB × GPU Count</code> when setup_details provides per-GPU HiCache size.</td></tr>
+    <tr><td class="td-key">GPU / host</td><td>GPU metrics come from <code>DCGM_FI_DEV_*</code>; host block I/O and vmstat come from node-exporter/iostat style counters and are not local Storage / AI memory node unless explicitly mapped.</td></tr>
   </tbody></table>
 </div>
 
@@ -2716,7 +3147,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
   <h2>🧠 Memory Hierarchy — What the data reveals about each tier</h2>
   <h3>L1 · HBM (GPU High-Bandwidth Memory)</h3>
   <p>HBM is the fastest tier (~2 TB/s, {hbm_total:.0f} GB/GPU). It holds model weights
-  and hot KV cache. With <strong>{hbm_pct:.0f}% fill</strong> ({hbm_used_total_gb:.1f}/{hbm_total_all_gpus_gb:.0f} GB across {int(gpu_count)} GPU(s); {hbm_gb:.1f}/{hbm_total:.0f} GB per GPU avg),
+  and hot KV cache. With <strong>{hbm_pct:.0f}% fill</strong> ({hbm_used_total_gb:.1f}/{hbm_total_all_gpus_gb:.0f} GB across {int(gpu_count)} TP/DP active GPU(s); {hbm_gb:.1f}/{hbm_total:.0f} GB per GPU avg),
   only ~{hbm_free_gb:.1f} GB/GPU remains for KV — enough for ~{spill_thresh_k:.0f}K tokens at {kv_bytes_tok_kb:.0f} KB/tok.
   Any context exceeding this triggers overflow to L2 DRAM or L3.
   The {gpu_util:.0f}% GPU util and {tpot_ms:.0f} ms/tok TPOT reflect the memory-bandwidth-bound
@@ -2985,9 +3416,13 @@ def build_combined_report(
             log.warning("combined: figure extraction failed (%s) — "
                         "executive will render text-only takeaways", _e)
             interactive_figures = {}
+        static_kpi_overrides = _extract_static_kpi_overrides(static_html)
+        if static_kpi_overrides:
+            log.info("combined: extracted End Report KPI overrides for Executive: %s", static_kpi_overrides)
         executive_html = build_executive_summary_html(
             raw_dir, run_label=run_label,
-            interactive_figures=interactive_figures)
+            interactive_figures=interactive_figures,
+            static_kpi_overrides=static_kpi_overrides)
         executive_html = _amoprof_storage_label_cleanup(executive_html)
         log.info("combined: generated executive summary (%d KB)", len(executive_html) // 1024)
     except Exception as e:

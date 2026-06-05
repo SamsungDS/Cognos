@@ -103,6 +103,56 @@ def _find_col(rows: list[dict], partial: str) -> str | None:
     return None
 
 
+
+
+def _ratio_delta_ms_from_rows(rows: list[dict], sum_partial: str, count_partial: str) -> float:
+    """Selected-window mean latency from cumulative Prometheus counters."""
+    if not rows:
+        return 0.0
+    sum_col = _find_col(rows, sum_partial)
+    cnt_col = _find_col(rows, count_partial)
+    if not sum_col or not cnt_col:
+        return 0.0
+    try:
+        a_sum = _to_float(rows[0].get(sum_col)); b_sum = _to_float(rows[-1].get(sum_col))
+        a_cnt = _to_float(rows[0].get(cnt_col)); b_cnt = _to_float(rows[-1].get(cnt_col))
+        ds = b_sum - a_sum; dc = b_cnt - a_cnt
+        return (ds / dc * 1000.0) if ds > 0 and dc > 0 else 0.0
+    except Exception:
+        return 0.0
+
+
+
+def _pct_ts_latency_ms(pct_ts: dict, metric_key: str, percentile: str = "p50") -> float:
+    """Representative selected-window latency from percentile timeseries."""
+    try:
+        block = (pct_ts or {}).get(metric_key) or {}
+        vals = block.get(percentile) or []
+        clean = []
+        for v in vals:
+            try:
+                x = float(v)
+                if x == x and x > 0:
+                    clean.append(x)
+            except Exception:
+                pass
+        return (sum(clean) / len(clean)) if clean else 0.0
+    except Exception:
+        return 0.0
+
+def _active_gpu_util_from_rows(rows: list[dict]) -> tuple[float, float, str]:
+    """Return active/nonzero mean GPU util, peak, and method note."""
+    if not rows:
+        return 0.0, 0.0, ""
+    col = _find_col(rows, "gpu_util") or _find_col(rows, "DCGM_FI_DEV_GPU_UTIL")
+    if not col:
+        return 0.0, 0.0, ""
+    vals = [_to_float(r.get(col)) for r in rows]
+    active = [v for v in vals if v > 0]
+    if active:
+        return sum(active) / len(active), max(vals), "active mean from gpu_timeseries"
+    return 0.0, max(vals) if vals else 0.0, ""
+
 def _time_axis_config(ts_seconds: list[float] | None = None,
                        max_ts: float | None = None,
                        t0_epoch: float | None = None) -> dict:
@@ -883,37 +933,31 @@ def _chart_kv_tiers(sglang: list[dict]) -> dict | None:
                        "fillcolor": "rgba(249,115,22,0.6)",
                        "hovertemplate": "<b>L3</b>: %{y:.0f} tok<extra></extra>"})
 
-    # Many SGLang builds do not export tier-labeled cached_tokens_total.  In
-    # that case do not leave the chart empty; derive an approximate SSD/L3
-    # residency and movement timeline from backup/prefetch/load-back counters,
-    # the same data used by the Eviction/Load-back chart below.
+    # Many SGLang builds do not export tier-labeled cached_tokens_total.
+    # Fallback to movement counters only when reliable L3 storage evidence exists.
+    # backuped_tokens_total or prefetched_tokens_total prove L3 storage use;
+    # load_back-only and evicted-only are ambiguous/cache-pressure signals and
+    # must not create L3 storage charts.
     if not traces:
         bk_col = _find_col(sglang, "backuped_tokens_total")
         pf_col = _find_col(sglang, "prefetched_tokens_total")
         lb_col = _find_col(sglang, "load_back_tokens_total")
         ev_col = _find_col(sglang, "evicted_tokens_total")
-        if bk_col or pf_col or lb_col or ev_col:
-            bk = _col(sglang, bk_col) if bk_col else [0.0] * len(ts)
-            pf = _col(sglang, pf_col) if pf_col else [0.0] * len(ts)
-            lb = _col(sglang, lb_col) if lb_col else [0.0] * len(ts)
-            ev = _col(sglang, ev_col) if ev_col else [0.0] * len(ts)
-            resident = [max(b - p - l, 0.0) for b, p, l in zip(bk, pf, lb)]
+        bk = _col(sglang, bk_col) if bk_col else [0.0] * len(ts)
+        pf = _col(sglang, pf_col) if pf_col else [0.0] * len(ts)
+        lb = _col(sglang, lb_col) if lb_col else [0.0] * len(ts)
+        ev = _col(sglang, ev_col) if ev_col else [0.0] * len(ts)
+        bk_delta = max((bk[-1] - bk[0]) if len(bk) > 1 else 0.0, 0.0)
+        pf_delta = max((pf[-1] - pf[0]) if len(pf) > 1 else 0.0, 0.0)
+        l3_reliable = (bk_delta > 0 or pf_delta > 0)
+        if l3_reliable:
+            resident = [max(b - p, 0.0) for b, p in zip(bk, pf)]
             if any(resident):
                 traces.append({"x": xs, "y": resident, "type": "scatter",
                                "mode": "lines", "name": "Approx L3 storage resident tokens",
                                "fill": "tozeroy", "fillcolor": "rgba(249,115,22,0.18)",
                                "line": {"color": "#f97316", "width": 2},
                                "hovertemplate": "<b>%{y:.0f}</b> approx resident tok<extra></extra>"})
-            if any(ev):
-                traces.append({"x": xs, "y": ev, "type": "scatter",
-                               "mode": "lines", "name": "Cumulative evicted tokens",
-                               "line": {"color": "#ef4444", "width": 1.6, "dash": "dot"},
-                               "hovertemplate": "<b>%{y:.0f}</b> evicted tok<extra></extra>"})
-            if any(lb):
-                traces.append({"x": xs, "y": lb, "type": "scatter",
-                               "mode": "lines", "name": "Cumulative L3 storage load-back tokens",
-                               "line": {"color": "#22c55e", "width": 1.8},
-                               "hovertemplate": "<b>%{y:.0f}</b> load-back tok<extra></extra>"})
             if any(bk):
                 traces.append({"x": xs, "y": bk, "type": "scatter",
                                "mode": "lines", "name": "Cumulative L3 backup tokens",
@@ -924,6 +968,16 @@ def _chart_kv_tiers(sglang: list[dict]) -> dict | None:
                                "mode": "lines", "name": "Cumulative L3 prefetched tokens",
                                "line": {"color": "#f97316", "width": 1.6, "dash": "dot"},
                                "hovertemplate": "<b>%{y:.0f}</b> prefetched tok<extra></extra>"})
+            if any(lb):
+                traces.append({"x": xs, "y": lb, "type": "scatter",
+                               "mode": "lines", "name": "Cumulative L3 load-back tokens",
+                               "line": {"color": "#22c55e", "width": 1.8},
+                               "hovertemplate": "<b>%{y:.0f}</b> load-back tok<extra></extra>"})
+            if any(ev):
+                traces.append({"x": xs, "y": ev, "type": "scatter",
+                               "mode": "lines", "name": "Cumulative evicted tokens",
+                               "line": {"color": "#ef4444", "width": 1.6, "dash": "dot"},
+                               "hovertemplate": "<b>%{y:.0f}</b> evicted tok<extra></extra>"})
     if not traces:
         return None
     return {"data": traces,
@@ -1043,7 +1097,13 @@ def _chart_l3_prom_bandwidth(sglang: list[dict],
         return None
     lb_col = _find_col(sglang, "load_back_tokens_total")
     bk_col = _find_col(sglang, "backuped_tokens_total")
-    if not (lb_col or bk_col):
+    pf_col = _find_col(sglang, "prefetched_tokens_total")
+    # Do not render L3 bandwidth from load_back-only. Require backup or prefetch.
+    _bk_v = _col(sglang, bk_col) if bk_col else []
+    _pf_v = _col(sglang, pf_col) if pf_col else []
+    _bk_delta = max((_bk_v[-1] - _bk_v[0]) if len(_bk_v) > 1 else 0.0, 0.0)
+    _pf_delta = max((_pf_v[-1] - _pf_v[0]) if len(_pf_v) > 1 else 0.0, 0.0)
+    if _bk_delta <= 0 and _pf_delta <= 0:
         return None
 
     def _rate_mbs(col: str) -> list[float]:
@@ -1059,8 +1119,10 @@ def _chart_l3_prom_bandwidth(sglang: list[dict],
 
     xs = _ts_to_dates(ts)
     traces = []
-    if lb_col:
-        rd_mbs = _rate_mbs(lb_col)
+    if lb_col or pf_col:
+        lb_mbs = _rate_mbs(lb_col) if lb_col else [0.0] * len(ts)
+        pf_mbs = _rate_mbs(pf_col) if pf_col else [0.0] * len(ts)
+        rd_mbs = [a + b for a, b in zip(lb_mbs, pf_mbs)]
         traces.append({
             "x": xs, "y": rd_mbs,
             "type": "scatter", "mode": "lines", "name": "L3 storage read MB/s (est)",
@@ -1100,7 +1162,12 @@ def _chart_l3_prom_cumulative(sglang: list[dict],
         return None
     lb_col = _find_col(sglang, "load_back_tokens_total")
     bk_col = _find_col(sglang, "backuped_tokens_total")
-    if not (lb_col or bk_col):
+    pf_col = _find_col(sglang, "prefetched_tokens_total")
+    _bk_v = _col(sglang, bk_col) if bk_col else []
+    _pf_v = _col(sglang, pf_col) if pf_col else []
+    _bk_delta = max((_bk_v[-1] - _bk_v[0]) if len(_bk_v) > 1 else 0.0, 0.0)
+    _pf_delta = max((_pf_v[-1] - _pf_v[0]) if len(_pf_v) > 1 else 0.0, 0.0)
+    if _bk_delta <= 0 and _pf_delta <= 0:
         return None
 
     def _cum_gb(col: str) -> list[float]:
@@ -1111,9 +1178,12 @@ def _chart_l3_prom_cumulative(sglang: list[dict],
 
     xs = _ts_to_dates(ts)
     traces = []
-    if lb_col:
+    if lb_col or pf_col:
+        lb_gb = _cum_gb(lb_col) if lb_col else [0.0] * len(ts)
+        pf_gb = _cum_gb(pf_col) if pf_col else [0.0] * len(ts)
+        rd_gb = [a + b for a, b in zip(lb_gb, pf_gb)]
         traces.append({
-            "x": xs, "y": _cum_gb(lb_col),
+            "x": xs, "y": rd_gb,
             "type": "scatter", "mode": "lines", "name": "L3 storage reads (cumulative GB)",
             "line": {"color": "#22c55e", "width": 2.2},
             "hovertemplate": "<b>%{y:.2f}</b> GB cumulative read<extra></extra>",
@@ -2375,6 +2445,17 @@ def build_report(raw_dir: Path, out_html: Path,
         return float(default)
 
     def _setup_gpu_count() -> float:
+        """Active inference GPU count for HBM capacity.
+
+        Prefer TP × DP from setup_details because report HBM capacity should
+        reflect the GPUs participating in the model placement, not necessarily
+        every physical GPU present in the host. Fallback to GPU Count / parsed
+        GPU description when TP is absent.
+        """
+        tp = _setup_float("TP size", "tp_size", "tensor_parallel_size", "TP", "tp", default=0.0)
+        dp = _setup_float("DP size", "dp_size", "data_parallel_size", "DP", "dp", default=1.0) or 1.0
+        if tp > 0:
+            return max(tp * dp, 1.0)
         c = _setup_float("GPU Count", "gpu_count", "num_gpus", "Number of GPUs", default=0.0)
         if c > 0:
             return c
@@ -2427,46 +2508,144 @@ def build_report(raw_dir: Path, out_html: Path,
     # KPI tiles
     kpis = []
     if sglang_sum:
+        _ttft_delta = _ratio_delta_ms_from_rows(sglang_ts, "time_to_first_token_seconds_sum", "time_to_first_token_seconds_count")
+        _itl_delta  = _ratio_delta_ms_from_rows(sglang_ts, "inter_token_latency_seconds_sum", "inter_token_latency_seconds_count")
+        _e2e_delta  = _ratio_delta_ms_from_rows(sglang_ts, "e2e_request_latency_seconds_sum", "e2e_request_latency_seconds_count")
+        _ttft_pct = _pct_ts_latency_ms(pct_ts, "ttft", "p50")
+        _itl_pct  = _pct_ts_latency_ms(pct_ts, "itl", "p50")
+        _e2e_pct  = _pct_ts_latency_ms(pct_ts, "e2e", "p50")
+        _ttft_ms_kpi = _ttft_delta or _ttft_pct or (sglang_sum.get('server_ttft_ms') or sglang_sum.get('server_ttft_p50_ms') or 0)
+        _itl_ms_kpi  = _itl_delta  or _itl_pct  or (sglang_sum.get('server_itl_ms') or sglang_sum.get('server_itl_p50_ms') or 0)
+        _e2e_ms_kpi  = _e2e_delta  or _e2e_pct  or (sglang_sum.get('server_e2e_ms') or sglang_sum.get('server_e2e_p50_ms') or 0)
+        _lat_note = "Selected-window Δsum/Δcount" if (_ttft_delta or _itl_delta or _e2e_delta) else ("Selected-window percentile p50" if (_ttft_pct or _itl_pct or _e2e_pct) else "From summary")
         kpis += [
             _kpi_tile("Model", _setup_value("Model", "Model path")[-40:],
                       note="From setup/server configuration"),
             _kpi_tile("TTFT",
-                      f"{(sglang_sum.get('server_ttft_ms') or sglang_sum.get('server_ttft_p50_ms') or 0):.0f}",
-                      "ms", "Time to first token (mean)"),
+                      f"{float(_ttft_ms_kpi or 0):.0f}",
+                      "ms", _lat_note),
             _kpi_tile("TPOT",
-                      f"{(sglang_sum.get('server_itl_ms') or sglang_sum.get('server_itl_p50_ms') or 0):.1f}",
-                      "ms", "Inter-token latency (mean)"),
+                      f"{float(_itl_ms_kpi or 0):.1f}",
+                      "ms", _lat_note),
             _kpi_tile("E2E",
-                      f"{(sglang_sum.get('server_e2e_ms') or sglang_sum.get('server_e2e_p50_ms') or 0):.0f}",
-                      "ms", "End-to-end request latency"),
+                      f"{float(_e2e_ms_kpi or 0):.0f}",
+                      "ms", _lat_note),
             _kpi_tile("Throughput", _active_sglang_throughput()[0],
                       "tok/s" if _active_sglang_throughput()[0] != "N/A" else "", _active_sglang_throughput()[1]),
             _kpi_tile("Cache hit", f"{float(sglang_sum.get('cache_hit_rate_realtime_pct', 0) or 0):.1f}",
                       "%", f"Prometheus-derived: {sglang_sum.get('cache_hit_calc_method', 'unknown')}"),
         ]
     if gpu_sum:
+        _gpu_active_mean, _gpu_active_peak, _gpu_note = _active_gpu_util_from_rows(gpu_ts)
+        _gpu_mean_show = _gpu_active_mean if _gpu_active_mean > 0 else float(gpu_sum.get('gpu_util_mean', 0) or 0)
+        _gpu_peak_show = max(_gpu_active_peak, float(gpu_sum.get('gpu_util_peak', 0) or 0))
         kpis += [
-            _kpi_tile("GPU util", f"{gpu_sum.get('gpu_util_mean', 0):.1f}", "%",
-                      f"Peak {gpu_sum.get('gpu_util_peak', 0):.0f}%"),
+            _kpi_tile("GPU util", f"{_gpu_mean_show:.1f}", "%",
+                      (f"Peak {_gpu_peak_show:.0f}% · {_gpu_note}" if _gpu_note else f"Peak {_gpu_peak_show:.0f}%")),
             (lambda _gpu_n, _per_gb, _per_total: _kpi_tile(
                 "HBM used (all GPUs)",
                 f"{_per_gb*_gpu_n:.1f} / {_per_total*_gpu_n:.0f}",
                 "GB",
                 f"{((_per_gb*_gpu_n)/max(_per_total*_gpu_n,1)*100):.0f}% full · {int(_gpu_n)} GPU(s) · {_per_gb:.1f} GB/GPU avg"
             ))(_setup_gpu_count(), float(gpu_sum.get('hbm_used_mb_mean', 0) or 0)/1024.0,
-               float(gpu_sum.get('hbm_total_gb', _setup_float('GPU Memory per Device GB', default=40.0)) or 40.0)),
+               float(_setup_float('GPU Memory per Device GB', 'GPU memory per device GB', 'HBM per GPU GB', default=float(gpu_sum.get('hbm_total_gb', 40.0) or 40.0)))),
             _kpi_tile("GPU power", f"{gpu_sum.get('power_w_peak', 0):.0f}", "W",
                       "Peak per-GPU draw"),
         ]
     # Capacity tiles from setup_details/raw summaries. These are capacity
     # views, separate from bandwidth/IOPS.
-    dram_total_gb = _setup_float("Host DRAM GB", "DRAM capacity GB", "DRAM total GB", default=0.0)
+    # DRAM/L2 capacity should reflect the configured L2 cache allocation when
+    # setup_details provides HiCache size per GPU. This is more accurate for
+    # cache-sizing reports than showing the whole host DRAM DIMM capacity.
+    gpu_count_for_l2 = _setup_gpu_count() or 1.0
+    hicache_per_gpu_gb = _setup_float(
+        "HiCache size per GPU GB", "HiCache DRAM per GPU GB",
+        "HiCache size GB per GPU", "hicache_size_per_gpu_gb",
+        "hicache_dram_per_gpu_gb", "HiCache size", "hicache_size",
+        default=0.0)
+    hicache_total_gb = _setup_float(
+        "HiCache total GB", "HiCache DRAM total GB", "L2 DRAM cache capacity GB",
+        "L2 cache capacity GB", "hicache_total_gb", "l2_dram_cache_capacity_gb",
+        default=0.0)
+    if hicache_total_gb <= 0 and hicache_per_gpu_gb > 0:
+        hicache_total_gb = hicache_per_gpu_gb * max(gpu_count_for_l2, 1.0)
+    dram_total_gb = hicache_total_gb or _setup_float("Host DRAM GB", "DRAM capacity GB", "DRAM total GB", default=0.0)
     dram_used_gb = _setup_float("Host DRAM used GB", "DRAM used GB", default=0.0)
+    _l2_used_source = "setup/static"
+    _l2_used_variation_pct = 0.0
+    # Prefer the run-local SGLang L2/HiCache token gauge.  In combined reports
+    # the Executive and End Report paths already use this signal, but the
+    # Interactive tab was previously looking only in sglang_summary.json.  Many
+    # Prometheus-only runs have the gauge in sglang_timeseries.csv only, which
+    # made this tile show "— / 100 GB" even while the other tabs showed
+    # ~46.6 / 100 GB.
+    try:
+        def _active_mean_ts_value(*partials: str) -> tuple[float, str, float]:
+            for part in partials:
+                col = _find_col(sglang_ts, part) if sglang_ts else None
+                if not col:
+                    continue
+                vals = [_to_float(r.get(col), float("nan")) for r in sglang_ts]
+                vals = [v for v in vals if v == v]
+                active = [v for v in vals if v > 0]
+                if active:
+                    mean = float(sum(active) / len(active))
+                    mn = min(active); mx = max(active)
+                    variation = ((mx - mn) / mean * 100.0) if mean > 0 and mx >= mn else 0.0
+                    return mean, "selected-window active mean", variation
+                if vals:
+                    return float(vals[-1]), "selected-window last sample", 0.0
+            return 0.0, "missing", 0.0
+
+        _l2_used_tokens, _l2_used_source, _l2_used_variation_pct = _active_mean_ts_value(
+            "sglang_hicache_host_used_tokens", "hicache_host_used_tokens")
+        _l2_used_dynamic = (_l2_used_tokens > 0 and _l2_used_variation_pct > 1.0)
+        if _l2_used_tokens <= 0:
+            _l2_used_source = "sglang_hicache_host_used_tokens missing from selected-window timeseries"
+        elif not _l2_used_dynamic:
+            _l2_used_source = "sglang_hicache_host_used_tokens present but flat/static in selected window"
+        _kv_kb = _setup_float("KV bytes per token KB", "KV_bytes_per_token_KB", "kv_bytes_per_token_kb", default=0.0)
+        if _kv_kb <= 0:
+            # Fall back to the same model-profile estimator used by the L3
+            # bandwidth charts.  It returns bytes/token, so convert to KiB/token.
+            _model_for_kv = (_setup_value("Model", "Model path", default="")
+                             or sglang_sum.get("model_name", ""))
+            _kv_dtype_for_kv = (_setup_value("KV dtype", "kv_cache_dtype", default="")
+                                or sglang_sum.get("kv_cache_dtype", "fp16") or "fp16")
+            _kv_kb = _kv_bytes_per_token_for_model(str(_model_for_kv), str(_kv_dtype_for_kv)) / 1024.0
+        if _l2_used_tokens > 0 and _kv_kb > 0:
+            _tp_for_kv = max(_setup_float("TP size", "tp_size", default=1.0), 1.0)
+            _full_gb = _l2_used_tokens * _kv_kb / (1024 * 1024)
+            _tp_gb = _l2_used_tokens * (_kv_kb / _tp_for_kv) / (1024 * 1024)
+            if dram_total_gb > 0 and _full_gb > dram_total_gb * 1.05 and _tp_gb <= dram_total_gb * 1.05:
+                dram_used_gb = _tp_gb
+            elif dram_total_gb > 0 and _full_gb > dram_total_gb * 1.05:
+                # Keep the tile truthful: avoid impossible >100% values.
+                # If a setup value was supplied, keep it; otherwise mark unknown.
+                dram_used_gb = dram_used_gb if dram_used_gb > 0 else 0.0
+            else:
+                dram_used_gb = _full_gb
+    except Exception:
+        pass
     if dram_total_gb > 0:
-        kpis.append(_kpi_tile("DRAM used",
-                              (f"{dram_used_gb:.1f} / {dram_total_gb:.0f}" if dram_used_gb > 0 else f"— / {dram_total_gb:.0f}"),
-                              "GB",
-                              (f"{dram_used_gb/max(dram_total_gb,1)*100:.0f}% full" if dram_used_gb > 0 else "used capacity unavailable")))
+        _dram_pct = dram_used_gb / max(dram_total_gb, 1) * 100.0 if dram_used_gb > 0 else 0.0
+        if dram_used_gb > 0 and hicache_total_gb > 0:
+            if _l2_used_variation_pct > 1.0:
+                _dram_note = f"{_dram_pct:.0f}% full · selected-window mean residency (sglang_hicache_host_used_tokens varied {_l2_used_variation_pct:.1f}%)"
+            else:
+                _dram_note = f"{_dram_pct:.0f}% full · flat residency snapshot from sglang_hicache_host_used_tokens; not a DRAM bandwidth/activity metric"
+            _dram_value = f"{dram_used_gb:.1f} / {dram_total_gb:.0f}"
+            _dram_label = "DRAM used"
+        elif dram_used_gb > 0:
+            _dram_note = f"{_dram_pct:.0f}% full · host DRAM"
+            _dram_value = f"{dram_used_gb:.1f} / {dram_total_gb:.0f}"
+            _dram_label = "DRAM used"
+        else:
+            _dram_note = (f"runtime residency unavailable · {_l2_used_source}" if hicache_total_gb > 0
+                          else "host DRAM total · used capacity unavailable")
+            _dram_value = f"— / {dram_total_gb:.0f}"
+            _dram_label = "DRAM residency"
+        kpis.append(_kpi_tile(_dram_label, _dram_value, "GB", _dram_note))
 
     l3_total_gb = _setup_float("L3 storage capacity GB", "L3 Capacity GB", "L3 total capacity GB", "l3_storage_capacity_gb", default=0.0)
     l3_used_gb = _setup_float("L3 storage used GB", "L3 used capacity GB", "l3_storage_used_gb", default=0.0)

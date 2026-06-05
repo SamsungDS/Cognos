@@ -59,13 +59,23 @@ log = logging.getLogger("amoprof.percentiles")
 # Map: bench-summary canonical key → (metric base name, scale factor, "label")
 # The "label" is used in chart titles and is just human-friendly.
 HISTOGRAM_METRICS = [
-    # canonical key,             bucket metric base,                             scale  unit  label
+    # canonical key, bucket metric base alias(es), scale, unit, label.
+    # SGLang versions differ on token histogram names.  Latency histograms are
+    # usually `sglang_*_seconds_bucket`; token histograms have been observed as
+    # both `sglang_prompt_tokens_histogram_bucket` and
+    # `sglang_prompt_tokens_bucket`.  Try all aliases before giving up.
     ("ttft",  "sglang_time_to_first_token_seconds", 1000.0, "ms", "TTFT"),
     ("itl",   "sglang_inter_token_latency_seconds", 1000.0, "ms", "ITL"),
     ("e2e",   "sglang_e2e_request_latency_seconds", 1000.0, "ms", "E2E"),
-    ("prompt_tokens", "sglang_prompt_tokens_histogram",     1.0, "tok", "Prompt tokens"),
-    ("output_tokens", "sglang_generation_tokens_histogram", 1.0, "tok", "Output tokens"),
+    ("prompt_tokens", ("sglang_prompt_tokens_histogram", "sglang_prompt_tokens"), 1.0, "tok", "Prompt tokens"),
+    ("output_tokens", ("sglang_generation_tokens_histogram", "sglang_generation_tokens", "sglang_output_tokens", "sglang_completion_tokens"), 1.0, "tok", "Output tokens"),
 ]
+
+
+def _metric_bases(metric_base: str | tuple | list) -> list[str]:
+    if isinstance(metric_base, (tuple, list)):
+        return [str(x) for x in metric_base if x]
+    return [str(metric_base)]
 
 PERCENTILES = [
     ("p50", 0.50),
@@ -166,10 +176,15 @@ def fetch_percentile_summary(prom_url: str, start: float, end: float,
     """
     label_selector = _build_label_selector(instance, job, extra_labels)
     out: dict[str, float] = {}
-    for canon, base, scale, unit, _label in HISTOGRAM_METRICS:
+    for canon, base_aliases, scale, unit, _label in HISTOGRAM_METRICS:
+        bases = _metric_bases(base_aliases)
         for p_label, q in PERCENTILES:
-            v = _quantile_query_instant_over_range(
-                prom_url, base, q, start, end, label_selector)
+            v = None
+            for base in bases:
+                v = _quantile_query_instant_over_range(
+                    prom_url, base, q, start, end, label_selector)
+                if v is not None:
+                    break
             if v is None:
                 continue
             # Key naming matches existing convention:
@@ -186,26 +201,28 @@ def fetch_percentile_summary(prom_url: str, start: float, end: float,
         # Also fetch the mean for comparison
         # (sum of _sum increase) / (sum of _count increase) over window
         window_s = max(int(end - start), 1)
-        mean_query = (
-            f"sum(increase({base}_sum{label_selector}[{window_s}s])) "
-            f"/ "
-            f"sum(increase({base}_count{label_selector}[{window_s}s]))"
-        )
-        data = _http_get_json(
-            f"{prom_url.rstrip('/')}/api/v1/query",
-            {"query": mean_query, "time": end})
-        if data and data.get("status") == "success":
-            results = data.get("data", {}).get("result", [])
-            if results:
-                try:
-                    val = float(results[0]["value"][1])
-                    if val == val:  # filter NaN
-                        if canon in ("ttft", "itl", "e2e"):
-                            out[f"server_{canon}_mean_ms"] = round(val * scale, 2)
-                        else:
-                            out[f"{canon}_mean"] = round(val * scale, 2)
-                except (ValueError, KeyError, IndexError, TypeError):
-                    pass
+        for base in bases:
+            mean_query = (
+                f"sum(increase({base}_sum{label_selector}[{window_s}s])) "
+                f"/ "
+                f"sum(increase({base}_count{label_selector}[{window_s}s]))"
+            )
+            data = _http_get_json(
+                f"{prom_url.rstrip('/')}/api/v1/query",
+                {"query": mean_query, "time": end})
+            if data and data.get("status") == "success":
+                results = data.get("data", {}).get("result", [])
+                if results:
+                    try:
+                        val = float(results[0]["value"][1])
+                        if val == val:  # filter NaN
+                            if canon in ("ttft", "itl", "e2e"):
+                                out[f"server_{canon}_mean_ms"] = round(val * scale, 2)
+                            else:
+                                out[f"{canon}_mean"] = round(val * scale, 2)
+                            break
+                    except (ValueError, KeyError, IndexError, TypeError):
+                        pass
     return out
 
 
@@ -235,18 +252,26 @@ def fetch_percentile_timeseries(prom_url: str, start: float, end: float,
     label_selector = _build_label_selector(instance, job, extra_labels)
     out: dict[str, dict] = {}
 
-    for canon, base, scale, unit, label in HISTOGRAM_METRICS:
+    for canon, base_aliases, scale, unit, label in HISTOGRAM_METRICS:
+        bases = _metric_bases(base_aliases)
         block: dict[str, Any] = {
-            "label": label, "unit": unit, "metric_base": base,
+            "label": label, "unit": unit, "metric_base": bases[0],
             "time_sec": [], "p50": [], "p90": [], "p99": [],
         }
-        # Pull each percentile timeseries
+        # Pull each percentile timeseries. For each percentile, try all known
+        # metric-name aliases before treating it as unavailable.
         any_data = False
         ts_set: list[float] | None = None
+        used_base = None
         for p_label, q in PERCENTILES:
-            data = _quantile_query_range(
-                prom_url, base, q, start, end, step_s,
-                rate_window_s, label_selector)
+            data = None
+            for base in bases:
+                data = _quantile_query_range(
+                    prom_url, base, q, start, end, step_s,
+                    rate_window_s, label_selector)
+                if data and data.get("status") == "success" and data.get("data", {}).get("result", []):
+                    used_base = base
+                    break
             if not data or data.get("status") != "success":
                 continue
             results = data.get("data", {}).get("result", [])
@@ -269,5 +294,7 @@ def fetch_percentile_timeseries(prom_url: str, start: float, end: float,
             block[p_label] = val_list
             any_data = True
         if any_data:
+            if used_base:
+                block["metric_base"] = used_base
             out[canon] = block
     return out

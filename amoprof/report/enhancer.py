@@ -670,9 +670,7 @@ CHART_EXPLANATIONS: dict[str, tuple[str, str]] = {
         "For KV$: Sustained 50+ GB/s during decode = DRAM is the "
         "active L2 KV staging tier. Near 460 GB/s peak = DRAM is "
         "the bottleneck for KV staging.\n\n"
-        "How to collect: `sudo AMDuProfPcm -m memory -a --msr -d 300 "
-        "-o raw/amduprof_pcm_raw.csv` and ensure the .txt mirror is "
-        "also written (or update interactive.py to read .csv)."
+        "How to collect: `sudo AMDuProfPcm -r -m memory -a --msr -d 300 -o raw/amduprof_pcm_raw.csv`. AMOprof mirrors/normalizes the raw output for both static and interactive reports."
     ),
 
     # ── Cross-layer / Appendix ────────────────────────────────────────────
