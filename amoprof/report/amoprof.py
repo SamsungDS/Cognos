@@ -17,6 +17,7 @@ import html
 import io
 import json
 import os
+import re
 import sys
 import zipfile
 from dataclasses import dataclass, field
@@ -32,6 +33,31 @@ import matplotlib.gridspec as gridspec
 from matplotlib.ticker import FuncFormatter
 import numpy as np
 import pandas as pd
+
+
+def _amoprof_storage_label_cleanup(html_text: str) -> str:
+    if not html_text:
+        return html_text
+    for a, b in {
+        "KV$ SSD IO": "KV$ L3 IO",
+        "KV$ SSD I/O": "KV$ L3 I/O",
+        "KV$ SSD": "KV$ L3",
+        "NVMe read throughput": "L3 (Storage/AI Memory Node) read throughput",
+        "NVMe read BW": "L3 (Storage/AI Memory Node) read throughput",
+    }.items():
+        html_text = html_text.replace(a, b)
+    protected = {
+        "KV$ L3 IO": "__AMOPROF_KV_L3_IO__",
+        "KV$ L3 I/O": "__AMOPROF_KV_L3_IOSLASH__",
+        "L3 (Storage/AI Memory Node)": "__AMOPROF_L3_STORAGE_AI_NODE__",
+    }
+    for a, b in protected.items():
+        html_text = html_text.replace(a, b)
+    html_text = re.sub(r"\bL3 storage\b", "local Storage / AI memory node", html_text, flags=re.IGNORECASE)
+    html_text = re.sub(r"\bL3\b", "local Storage / AI memory node", html_text)
+    for a, b in protected.items():
+        html_text = html_text.replace(b, a)
+    return html_text
 
 # ── Metrics dictionary (optional — graceful fallback if missing) ──────────
 try:
@@ -16570,6 +16596,7 @@ def main():
             charts["swap_storm"]   = chart_swap_storm(m)
             html_path = out_dir / f"{prefix}.html"
             html = build_html(m, bns, recs, charts, label)
+            html = _amoprof_storage_label_cleanup(html)
             html_path.write_text(html, encoding="utf-8")
             generated.append(html_path)
             print(f"      ✓ {html_path.name}  ({html_path.stat().st_size//1024} KB)")

@@ -16,6 +16,7 @@ import csv
 import html as _html
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -26,6 +27,44 @@ except Exception:
 
 
 # ─── Utilities ──────────────────────────────────────────────────────────────
+
+
+def _amoprof_storage_label_cleanup(html_text: str) -> str:
+    """Normalize user-facing storage labels.
+
+    Keep internal setup keys and metric names untouched until the report HTML is
+    fully rendered, then clean visible wording so all report tabs use the same
+    temporary tier name requested by the user.
+    """
+    if not html_text:
+        return html_text
+    # Specific wording first.
+    repl = {
+        "KV$ SSD IO": "KV$ L3 IO",
+        "KV$ SSD I/O": "KV$ L3 I/O",
+        "KV$ SSD": "KV$ L3",
+        "NVMe read throughput": "L3 (Storage/AI Memory Node) read throughput",
+        "NVMe Read Throughput": "L3 (Storage/AI Memory Node) Read Throughput",
+        "NVMe read BW": "L3 (Storage/AI Memory Node) read throughput",
+        "NVMe Read BW": "L3 (Storage/AI Memory Node) Read Throughput",
+    }
+    for a, b in repl.items():
+        html_text = html_text.replace(a, b)
+    protected = {
+        "KV$ L3 IO": "__AMOPROF_KV_L3_IO__",
+        "KV$ L3 I/O": "__AMOPROF_KV_L3_IOSLASH__",
+        "L3 (Storage/AI Memory Node)": "__AMOPROF_L3_STORAGE_AI_NODE__",
+    }
+    for a, b in protected.items():
+        html_text = html_text.replace(a, b)
+    # User-facing tier terminology. Keep the two explicitly requested labels
+    # above as L3, but rename all other L3 mentions for now.
+    html_text = re.sub(r"\bL3 storage\b", "local Storage / AI memory node", html_text, flags=re.IGNORECASE)
+    html_text = re.sub(r"\bL3\b", "local Storage / AI memory node", html_text)
+    for a, b in protected.items():
+        html_text = html_text.replace(b, a)
+    return html_text
+
 
 def _safe_float(v: Any, default: float = 0.0) -> float:
     try:
@@ -2111,7 +2150,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         ("HBM capacity", score_hbm, "red" if score_hbm > 80 else "amber",
          f"{hbm_pct:.0f}% full, KV spilling to L2/L3 storage",
          "FP8 KV: 327→163 KB/tok, doubles in-HBM capacity"),
-        ("NVMe read throughput", score_nvme, "amber",
+        ("L3 (Storage/AI Memory Node) read throughput", score_nvme, "amber",
          f"{nvme_rd_bw:.0f} MB/s, {mb_per_out_token:.0f} MB/output-token",
          "Expand DRAM L2 tier; validate L3 storage at QD16 16–64 KB read"),
         ("Cache hit rate", score_cache, "amber",
@@ -2949,12 +2988,16 @@ def build_combined_report(
         executive_html = build_executive_summary_html(
             raw_dir, run_label=run_label,
             interactive_figures=interactive_figures)
+        executive_html = _amoprof_storage_label_cleanup(executive_html)
         log.info("combined: generated executive summary (%d KB)", len(executive_html) // 1024)
     except Exception as e:
         log.warning("combined: executive summary generation failed: %s", e)
         executive_html = "<html><body><h1>Executive Summary unavailable</h1><p>See Interactive and Static tabs.</p></body></html>"
 
+    static_html = _amoprof_storage_label_cleanup(static_html)
+    interactive_html = _amoprof_storage_label_cleanup(interactive_html)
     combined = merge_reports(static_html, interactive_html, executive_html=executive_html, run_label=run_label)
+    combined = _amoprof_storage_label_cleanup(combined)
     out_html.write_text(combined, encoding='utf-8')
     log.info("combined: wrote %s (%d KB)", out_html, len(combined) // 1024)
     return out_html

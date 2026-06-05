@@ -456,7 +456,7 @@ def check_amduprof_pcm(binary: str, use_sudo: bool = True) -> CheckResult:
     # is rejected ("Failed to process args.") in this version's memory mode;
     # `-d <seconds>` is the canonical duration flag and works reliably.
     # The user's known-good command is:
-    #   AMDuProfPcm -m memory -a -d 1 -o <path> --msr
+    #   AMDuProfPcm -r -m memory -a -d 1 -o <path> --msr
     # AMDuProf adjusts the sampling interval to its minimum (~1200ms) so a
     # 3-second duration is enough to get at least 2 samples + the header.
     with tempfile.NamedTemporaryFile(suffix="_pcm.csv", delete=False) as f:
@@ -464,7 +464,7 @@ def check_amduprof_pcm(binary: str, use_sudo: bool = True) -> CheckResult:
     # Remove the empty file AMDuProf would otherwise complain about
     try: Path(out_csv).unlink()
     except OSError: pass
-    cmd = [binary, "-m", "memory", "-a", "--msr", "-d", "3", "-o", out_csv]
+    cmd = [binary, "-r", "-m", "memory", "-a", "--msr", "-d", "3", "-o", out_csv]
     if use_sudo and os.geteuid() != 0:
         cmd = ["sudo", "-n"] + cmd
     try:

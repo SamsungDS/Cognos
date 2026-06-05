@@ -8,8 +8,8 @@ Adds:
   - SwapStormMonitor        time-series of /proc/vmstat swap pages (pswpin/pswpout)
 
 These supply the data needed by:
-  §C  KV$ SSD Read Workload Characteristics    (blktrace per-request)
-  §D  KV$ SSD Write Workload Characteristics   (blktrace per-request)
+  §C  KV$ L3 Read Workload Characteristics    (blktrace per-request)
+  §D  KV$ L3 Write Workload Characteristics   (blktrace per-request)
   §E  TRIM / Discard Events                    (DiscardStatsMonitor + blktrace rwbs=D)
   §H  NVMe IO Deep Profiling                   (blktrace + biosnoop)
   §I  Per-Stream Bandwidth                     (biosnoop PID attribution)

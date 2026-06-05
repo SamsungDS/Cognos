@@ -58,7 +58,7 @@ Every chart in AMOprof is tagged with a **layer badge** (`[A2 · L3]`) that plac
  │ A2 GPU Driver    │ A2 CPU Driver    │ A2 io_uring / NVMe Driver  │
  │ dcgmi · CUDA     │ perf sched · IRQ │ SQ/CQ · IOPS vs QD        │
  ├──────────────────┼──────────────────┼────────────────────────────┤
- │ A1 L1 HBM HW     │ A1 L2 DRAM HW    │ A1 L3 storage HW (NAND)       │
+ │ A1 L1 HBM HW     │ A1 L2 DRAM HW    │ A1 local Storage / AI memory node HW (NAND)       │
  │ ~3.35 TB/s       │ ~300 GB/s DDR5   │ Seq BW · P99 · WAF        │
  └──────────────────┴──────────────────┴────────────────────────────┘
    L1 = HBM (GPU)     L2 = Host DRAM     L3 = NVMe SSD
@@ -718,9 +718,9 @@ For Prometheus-only analysis, pass the SGLang `bench_serving` summary with `--be
 
 SGLang 0.5.x exposes metrics with underscore names such as `sglang_cache_hit_rate` and `sglang_realtime_tokens_total`; the report code matches underscore names and legacy colon-style labels where present.
 
-### v1.53 L3 storage activity semantics
+### v1.53 local Storage / AI memory node activity semantics
 
-For Prometheus-only reports, L3 storage activity is now derived from SGLang hierarchical-cache counters when blktrace is absent. Any non-zero delta in `backuped_tokens_total`, `load_back_tokens_total`, `prefetched_tokens_total`, or `evicted_tokens_total` is treated as evidence of L3/cache-tier activity. Directional read/write byte estimates are only computed where the counter direction is clear: `backuped_tokens_total` contributes to estimated L3 storage writes, while `load_back_tokens_total` and `prefetched_tokens_total` contribute to estimated L3 storage reads. `evicted_tokens_total` is reported as cache-tier pressure/activity but is not converted to disk bytes by itself. If neither blktrace nor these SGLang counters are present, L3 storage activity is reported as unavailable/none instead of inferred.
+For Prometheus-only reports, local Storage / AI memory node activity is now derived from SGLang hierarchical-cache counters when blktrace is absent. Any non-zero delta in `backuped_tokens_total`, `load_back_tokens_total`, `prefetched_tokens_total`, or `evicted_tokens_total` is treated as evidence of L3/cache-tier activity. Directional read/write byte estimates are only computed where the counter direction is clear: `backuped_tokens_total` contributes to estimated local Storage / AI memory node writes, while `load_back_tokens_total` and `prefetched_tokens_total` contribute to estimated local Storage / AI memory node reads. `evicted_tokens_total` is reported as cache-tier pressure/activity but is not converted to disk bytes by itself. If neither blktrace nor these SGLang counters are present, local Storage / AI memory node activity is reported as unavailable/none instead of inferred.
 
 ### Formula and metric-name convention
 
@@ -736,17 +736,17 @@ effective_cache_hit_pct =
   × 100
 ```
 
-L3 storage activity is inferred from SGLang hierarchical-cache counters when blktrace is unavailable: `sglang_backuped_tokens_total`, `sglang_load_back_tokens_total`, `sglang_prefetched_tokens_total`, and `sglang_evicted_tokens_total`.
+local Storage / AI memory node activity is inferred from SGLang hierarchical-cache counters when blktrace is unavailable: `sglang_backuped_tokens_total`, `sglang_load_back_tokens_total`, `sglang_prefetched_tokens_total`, and `sglang_evicted_tokens_total`.
 
 
 ## v1.67 Version metadata bump
 
 - Bumped package metadata to `1.67.0` so `amoprof --version`, the generated combined-report tab bar, and pip/package metadata are consistent.
-- Includes all prior fixes through the L3 storage busy consistency update.
+- Includes all prior fixes through the local Storage / AI memory node busy consistency update.
 
 ## v1.55 Storage I/O / OS Page Activity semantics
 
-The **Storage I/O & OS Page Activity** section now treats block-device counters as host OS block I/O by default. A small amount of write IOPS from `nvme_driver_timeseries.csv`, node-exporter, or `/sys/block/*/stat` is not automatically interpreted as L3 storage cache traffic. The report only labels it as L3 storage I/O when `setup_details.json` explicitly maps the collected block device to the L3 storage backend, for example with `L3 Device`, `L3 storage Type`, `HiCache storage backend`, or `HiCache storage path`.
+The **Storage I/O & OS Page Activity** section now treats block-device counters as host OS block I/O by default. A small amount of write IOPS from `nvme_driver_timeseries.csv`, node-exporter, or `/sys/block/*/stat` is not automatically interpreted as local Storage / AI memory node cache traffic. The report only labels it as local Storage / AI memory node I/O when `setup_details.json` explicitly maps the collected block device to the local Storage / AI memory node backend, for example with `L3 Device`, `local Storage / AI memory node Type`, `HiCache storage backend`, or `HiCache storage path`.
 
 The section now includes a formula subsection documenting the exact parameters used:
 
@@ -763,7 +763,7 @@ Swap-in pages/sec    = rate(vmstat_pswpin)
 Swap-out pages/sec   = rate(vmstat_pswpout)
 ```
 
-This avoids misleading reports such as “NVMe I/O write activity” when no NVMe-backed L3 storage tier was configured.
+This avoids misleading reports such as “NVMe I/O write activity” when no NVMe-backed local Storage / AI memory node tier was configured.
 
 ## v1.56 metric methodology updates
 
@@ -774,6 +774,16 @@ This avoids misleading reports such as “NVMe I/O write activity” when no NVM
   - `Δsglang_inter_token_latency_seconds_sum / Δsglang_inter_token_latency_seconds_count`
   - `Δsglang_e2e_request_latency_seconds_sum / Δsglang_e2e_request_latency_seconds_count`
 - Percentile charts use `histogram_quantile()` over SGLang histogram buckets and are displayed separately from mean KPI tiles.
-- L3 storage activity is inferred from SGLang hierarchy movement counters (`sglang_backuped_tokens_total`, `sglang_load_back_tokens_total`, `sglang_prefetched_tokens_total`, `sglang_evicted_tokens_total`) or direct blktrace data if present.
-- Host block I/O and OS page activity sections document node-exporter/iostat/vmstat metric sources and are not labeled as L3 unless the setup explicitly maps the block device to L3 storage.
+- local Storage / AI memory node activity is inferred from SGLang hierarchy movement counters (`sglang_backuped_tokens_total`, `sglang_load_back_tokens_total`, `sglang_prefetched_tokens_total`, `sglang_evicted_tokens_total`) or direct blktrace data if present.
+- Host block I/O and OS page activity sections document node-exporter/iostat/vmstat metric sources and are not labeled as L3 unless the setup explicitly maps the block device to local Storage / AI memory node.
 - Major report sections now include a Formula & Metrics Used subsection so that each displayed value has an auditable source.
+
+
+## AMDuProfPcm reset/sudo behavior
+
+When `--enable-amduprof-pcm` is used, AMOprof runs AMDuProfPcm with `-r` to reset/clean existing PCM state before capture. If AMOprof itself is not running as root, the collector runs `sudo -n AMDuProfPcm ...` so MSR access succeeds non-interactively or fails clearly without a password prompt.
+
+
+### v1.69 system collector sudo behavior
+
+AMOprof now runs root-required system collectors through non-interactive sudo when it is not already running as root. This applies to NVMe SMART/admin commands, BCC/eBPF tools, blktrace, biosnoop, biolatency, AMDuProfPcm, perf PID attach, bpftrace, and IPMI power polling. The command prefix is `sudo -n`, so AMOprof will not hang waiting for a password prompt. If passwordless sudo is not configured, the affected collector is skipped or marked unavailable with its error reason. Use `--no-sudo` to force direct execution.

@@ -20,11 +20,37 @@ from __future__ import annotations
 import csv
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any
 
 # Plotly.js version pinned to a known-stable release with broad browser support.
 PLOTLY_CDN = "https://cdn.plot.ly/plotly-2.35.2.min.js"
+
+
+def _amoprof_storage_label_cleanup(html_text: str) -> str:
+    if not html_text:
+        return html_text
+    for a, b in {
+        "KV$ SSD IO": "KV$ L3 IO",
+        "KV$ SSD I/O": "KV$ L3 I/O",
+        "KV$ SSD": "KV$ L3",
+        "NVMe read throughput": "L3 (Storage/AI Memory Node) read throughput",
+        "NVMe read BW": "L3 (Storage/AI Memory Node) read throughput",
+    }.items():
+        html_text = html_text.replace(a, b)
+    protected = {
+        "KV$ L3 IO": "__AMOPROF_KV_L3_IO__",
+        "KV$ L3 I/O": "__AMOPROF_KV_L3_IOSLASH__",
+        "L3 (Storage/AI Memory Node)": "__AMOPROF_L3_STORAGE_AI_NODE__",
+    }
+    for a, b in protected.items():
+        html_text = html_text.replace(a, b)
+    html_text = re.sub(r"\bL3 storage\b", "local Storage / AI memory node", html_text, flags=re.IGNORECASE)
+    html_text = re.sub(r"\bL3\b", "local Storage / AI memory node", html_text)
+    for a, b in protected.items():
+        html_text = html_text.replace(b, a)
+    return html_text
 
 # ─── Run-wide wall-clock anchor ──────────────────────────────────────────────
 # Set once by build_report() from summary.json "t0_epoch" (Unix timestamp of
@@ -3000,5 +3026,6 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
   </footer>
 </body>
 </html>"""
+    html = _amoprof_storage_label_cleanup(html)
     out_html.write_text(html, encoding="utf-8")
     return out_html

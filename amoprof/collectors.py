@@ -12,6 +12,27 @@ from dataclasses import dataclass
 log = logging.getLogger("amoprof.collectors")
 
 
+# ── sudo helpers ─────────────────────────────────────────────────────────────
+# Some system-level collectors need elevated privileges on production nodes
+# (nvme SMART/admin commands, eBPF/BCC tools, perf PID attach, bpftrace,
+# AMDuProf MSR/PMU reads, and IPMI on many systems).  Use non-interactive sudo
+# so AMOprof never hangs waiting for a password prompt.  Root runs commands
+# directly.
+def _sudo_cmd(cmd, use_sudo: bool = True, preserve_env: bool = False):
+    if use_sudo and os.geteuid() != 0:
+        return ["sudo", "-n"] + (["-E"] if preserve_env else []) + list(cmd)
+    return list(cmd)
+
+def _sudo_check_output(cmd, use_sudo: bool = True, preserve_env: bool = False, **kwargs):
+    return subprocess.check_output(_sudo_cmd(cmd, use_sudo, preserve_env), **kwargs)
+
+def _sudo_run(cmd, use_sudo: bool = True, preserve_env: bool = False, **kwargs):
+    return subprocess.run(_sudo_cmd(cmd, use_sudo, preserve_env), **kwargs)
+
+def _sudo_popen(cmd, use_sudo: bool = True, preserve_env: bool = False, **kwargs):
+    return subprocess.Popen(_sudo_cmd(cmd, use_sudo, preserve_env), **kwargs)
+
+
 # ── IostatMonitor ─────────────────────────────────────────────────────────────
 
 class IostatMonitor:
@@ -99,15 +120,15 @@ class IostatMonitor:
 # ── NvmeSmartMonitor ──────────────────────────────────────────────────────────
 
 class NvmeSmartMonitor:
-    def __init__(self, device: str, poll_s: int = 15):
-        self.device = device; self.poll_s = poll_s
+    def __init__(self, device: str, poll_s: int = 15, use_sudo: bool = True):
+        self.device = device; self.poll_s = poll_s; self.use_sudo = use_sudo
         self._start = {}; self._samples = []
         self._thread= None; self._stop = threading.Event()
 
     def _smart(self) -> dict:
         try:
-            return json.loads(subprocess.check_output(
-                ["nvme","smart-log",self.device,"-o","json"],
+            return json.loads(_sudo_check_output(
+                ["nvme","smart-log",self.device,"-o","json"], self.use_sudo,
                 stderr=subprocess.DEVNULL, timeout=10))
         except: return {}
 
@@ -147,15 +168,15 @@ class NvmeSmartMonitor:
 # ── BiolatencyCollector ────────────────────────────────────────────────────────
 
 class BiolatencyCollector:
-    def __init__(self, device: str, duration_s: int = 60):
-        self.device=os.path.basename(device); self.duration_s=duration_s
+    def __init__(self, device: str, duration_s: int = 60, use_sudo: bool = True):
+        self.device=os.path.basename(device); self.duration_s=duration_s; self.use_sudo=use_sudo
         self._proc=None; self._out=""; self._done=threading.Event()
 
     def start(self):
         self._done.clear(); self._out=""
         try:
-            self._proc = subprocess.Popen(
-                ["biolatency-bpfcc","-d",self.device,str(self.duration_s)],
+            self._proc = _sudo_popen(
+                ["biolatency-bpfcc","-d",self.device,str(self.duration_s)], self.use_sudo,
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
             threading.Thread(target=self._read, daemon=True).start()
         except FileNotFoundError:
@@ -223,8 +244,9 @@ class PowerMonitor:
 
     _RAPL_BASE = "/sys/class/powercap"
 
-    def __init__(self, interval_s: float = 1.0):
+    def __init__(self, interval_s: float = 1.0, use_sudo: bool = True):
         self.interval    = interval_s
+        self.use_sudo   = use_sudo
         self.samples: list[dict] = []
         self._t_start    = 0.0
         self._t_end      = 0.0
@@ -252,8 +274,8 @@ class PowerMonitor:
 
     def _has_ipmi(self) -> bool:
         try:
-            subprocess.check_output(
-                ["ipmitool", "dcmi", "power", "reading"],
+            _sudo_check_output(
+                ["ipmitool", "dcmi", "power", "reading"], self.use_sudo,
                 stderr=subprocess.DEVNULL, timeout=5)
             return True
         except Exception:
@@ -357,8 +379,8 @@ class PowerMonitor:
         """Poll IPMI system power every ~5 seconds (slow command)."""
         while not self._stop.wait(5.0):
             try:
-                out = subprocess.check_output(
-                    ["ipmitool", "dcmi", "power", "reading"],
+                out = _sudo_check_output(
+                    ["ipmitool", "dcmi", "power", "reading"], self.use_sudo,
                     stderr=subprocess.DEVNULL, timeout=8, text=True)
                 for line in out.splitlines():
                     # "Instantaneous power reading:                   450 Watts"
@@ -1157,8 +1179,9 @@ class SsdHardwareMonitor:
     """
 
     def __init__(self, device: str, hicache_path: str = "/mnt/sglang_dv3",
-                 rated_tbw: float = 7300.0):
+                 rated_tbw: float = 7300.0, use_sudo: bool = True):
         self.device       = device
+        self.use_sudo    = use_sudo
         self.hicache_path = hicache_path
         self.rated_tbw    = rated_tbw   # rated TBW for DWPD calc (Dell CM7 = ~7.3 PBW)
         self._start: dict = {}
@@ -1186,8 +1209,8 @@ class SsdHardwareMonitor:
             pass
         # Fallback: nvme id-ctrl tnvmcap (total NVM capacity in bytes)
         try:
-            out = subprocess.check_output(
-                ["nvme", "id-ctrl", self.device, "-o", "json"],
+            out = _sudo_check_output(
+                ["nvme", "id-ctrl", self.device, "-o", "json"], self.use_sudo,
                 stderr=subprocess.DEVNULL, timeout=10)
             j = json.loads(out)
             tn = j.get("tnvmcap", 0)
@@ -1199,8 +1222,8 @@ class SsdHardwareMonitor:
 
     def _smart(self) -> dict:
         try:
-            return json.loads(subprocess.check_output(
-                ["nvme", "smart-log", self.device, "-o", "json"],
+            return json.loads(_sudo_check_output(
+                ["nvme", "smart-log", self.device, "-o", "json"], self.use_sudo,
                 stderr=subprocess.DEVNULL, timeout=10))
         except Exception:
             return {}
@@ -1208,8 +1231,8 @@ class SsdHardwareMonitor:
     def _latency_stats(self) -> dict:
         """nvme latency-stats — P999 read latency histogram."""
         try:
-            raw = subprocess.check_output(
-                ["nvme", "latency-stats", self.device],
+            raw = _sudo_check_output(
+                ["nvme", "latency-stats", self.device], self.use_sudo,
                 stderr=subprocess.DEVNULL, text=True, timeout=10)
             # Parse read latency buckets to estimate P999
             buckets = []
@@ -1785,8 +1808,8 @@ class NcuAttentionCollector:
             # no executable — attaches to running PID
         ]
         try:
-            self._proc = subprocess.Popen(
-                cmd, stdout=subprocess.DEVNULL,
+            self._proc = _sudo_popen(
+                cmd, self.use_sudo, stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE, text=True)
         except Exception as e:
             self._result = {"ncu_attention_available": False,
@@ -2098,8 +2121,9 @@ class PerfStatCollector:
 
     _EVENTS = "mem_load_retired.l3_miss,mem_inst_retired.all_loads"
 
-    def __init__(self, server_pid: int):
+    def __init__(self, server_pid: int, use_sudo: bool = True):
         self.server_pid = server_pid
+        self.use_sudo  = use_sudo
         self._proc      = None
         self._t0: float = 0.0
         self._result: dict = {}
@@ -2389,12 +2413,14 @@ class AMDuProfPcmMemoryCollector:
     """Capture DRAM read/write bandwidth and transactions with AMD uProf PCM."""
     def __init__(self, duration_s: float = 10.0, interval_s: float = 1.0,
                  binary: str = "/opt/AMDuProf_5.2-606/bin/AMDuProfPcm",
-                 output_csv: str | None = None, extra_args: list[str] | None = None):
+                 output_csv: str | None = None, extra_args: list[str] | None = None,
+                 use_sudo: bool = True):
         self.duration_s = max(float(duration_s), 1.0)
         self.interval_s = max(float(interval_s), 0.1)
         self.binary = binary
         self.output_csv = output_csv
         self.extra_args = extra_args or []
+        self.use_sudo = use_sudo
         self.samples: list[dict] = []
         self._proc = None
         self._thread = None
@@ -2427,14 +2453,23 @@ class AMDuProfPcmMemoryCollector:
             pass
         self._csv_path = str(out_csv)
         duration_secs = max(int(self.duration_s), 2)
-        cmd = [self.binary, "-m", "memory", "-a", "--msr",
+        # Reset/clean AMDuProfPcm internal state before capture.  This avoids
+        # stale counters/state from a previous run contaminating the DRAM-BW
+        # timeseries.  Do not duplicate -r if the user already supplied it via
+        # --amduprof-extra-arg.
+        reset_args = [] if any(str(a) == "-r" for a in self.extra_args) else ["-r"]
+        cmd = [self.binary] + reset_args + ["-m", "memory", "-a", "--msr",
                "-d", str(duration_secs), "-o", str(out_csv)] + self.extra_args
-        self._command = " ".join(str(x) for x in cmd)
+        # AMDuProfPcm normally needs MSR access.  If amoprof is not running as
+        # root, run through sudo -n so collection either succeeds non-
+        # interactively or fails clearly instead of hanging for a password.
+        run_cmd = _sudo_cmd(cmd, self.use_sudo)
+        self._command = " ".join(str(x) for x in run_cmd)
         try:
-            self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            self._proc = subprocess.Popen(run_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             self._thread = threading.Thread(target=self._wait_and_parse, daemon=True); self._thread.start()
         except Exception as e:
-            self._result = {"amduprof_pcm_available": False, "amduprof_pcm_reason": str(e), "amduprof_pcm_command": " ".join(cmd)}
+            self._result = {"amduprof_pcm_available": False, "amduprof_pcm_reason": str(e), "amduprof_pcm_command": " ".join(str(x) for x in run_cmd)}
 
     @staticmethod
     def _f(v):
@@ -2935,8 +2970,9 @@ END
 """
 
     def __init__(self, server_pid: int, duration_s: int = 30,
-                 work_dir: "Path | None" = None):
+                 work_dir: "Path | None" = None, use_sudo: bool = True):
         self.server_pid = server_pid
+        self.use_sudo  = use_sudo
         self.duration   = duration_s
         self.work_dir   = work_dir
         self._proc      = None
@@ -2969,8 +3005,8 @@ END
         cmd = ["timeout", str(self.duration + 5),
                "bpftrace", str(prog_file)]
         try:
-            self._proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE,
+            self._proc = _sudo_popen(
+                cmd, self.use_sudo, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, text=True)
             self._t0 = time.time()
         except Exception as e:
@@ -3253,8 +3289,9 @@ class VtuneCollector:
     """
 
     def __init__(self, server_pid: int, duration_s: int = 30,
-                 work_dir: "Path | None" = None):
+                 work_dir: "Path | None" = None, use_sudo: bool = True):
         self.server_pid = server_pid
+        self.use_sudo  = use_sudo
         self.duration   = duration_s
         self.work_dir   = work_dir
         self._proc      = None

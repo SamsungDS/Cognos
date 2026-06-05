@@ -44,7 +44,7 @@ log = logging.getLogger("amoprof.enhancer")
 #   • Open with a crisp "What you are looking at" sentence.
 #   • Then "What the sub-panels show" — describe each panel specifically.
 #   • Then "How to read the numbers" — what good/bad looks like.
-#   • Then "What this means for KV cache" — the L1/L2/L3 storage implication.
+#   • Then "What this means for KV cache" — the L1/L2/local Storage / AI memory node implication.
 #   • End with "What to do if this looks bad" — one actionable fix.
 #
 # Typical run context for which these explanations were written:
@@ -70,11 +70,11 @@ CHART_EXPLANATIONS: dict[str, tuple[str, str]] = {
         "P50→P99 ratio (less than 2×). A wide P90→P99 spread means "
         "occasional cold-cache prefills or queue contention spikes. "
         "A high TTFT (>500 ms) with moderate ITL indicates the bottleneck "
-        "is in the KV cache load path (L2/L3 storage miss), not in compute. "
+        "is in the KV cache load path (L2/local Storage / AI memory node miss), not in compute. "
         "A high ITL (>100 ms) means the GPU is memory-bandwidth-bound "
         "during decode — HBM is likely saturated.\n\n"
-        "For KV$: P99 TTFT is the most sensitive indicator of L3 storage "
-        "cache misses. An L1 hit gives near-zero TTFT; an L3 storage hit adds "
+        "For KV$: P99 TTFT is the most sensitive indicator of local Storage / AI memory node "
+        "cache misses. An L1 hit gives near-zero TTFT; an local Storage / AI memory node hit adds "
         "50–200 ms just for loading KV blocks from NVMe. If P99 >> P50 "
         "on TTFT, check the KV eviction/load-back charts — the working "
         "set is larger than your HBM pool.\n\n"
@@ -165,7 +165,7 @@ CHART_EXPLANATIONS: dict[str, tuple[str, str]] = {
         "(5) Token counters — cumulative prefill_cache/compute/decode.\n"
         "(6) Queue depth — num_running_reqs and num_queue_reqs.\n\n"
         "How to read: TTFT spike + no queue depth = cold-cache prefill "
-        "(KV was evicted and must be reloaded from L2/L3 storage). "
+        "(KV was evicted and must be reloaded from L2/local Storage / AI memory node). "
         "Queue_depth > 0 continuously = engine capacity is insufficient. "
         "Cache hit rate drop concurrent with HBM near 100 % = "
         "eviction pressure causing cache churn.\n\n"
@@ -219,14 +219,14 @@ CHART_EXPLANATIONS: dict[str, tuple[str, str]] = {
         "  INT8 KV doubles capacity to ~137K before spilling.\n\n"
         "For KV$: The Spill Threshold card directly tells you the context "
         "length at which you START generating NVMe traffic. Any prompt "
-        "longer than this will hit L2/L3 storage.\n\n"
+        "longer than this will hit L2/local Storage / AI memory node.\n\n"
         "What to do: Contexts regularly exceeding spill threshold → "
         "enable FP8 KV (`--kv-cache-dtype fp8_e5m2` in SGLang ≥0.4). "
         "Accuracy impact is typically <0.5 % on standard benchmarks."
     ),
 
     "per cache tier": (
-        "Per-tier (L1=HBM / L2=DRAM / L3 storage=SSD) token distribution and "
+        "Per-tier (L1=HBM / L2=DRAM / local Storage / AI memory node=SSD) token distribution and "
         "access cost — translates tier occupancy into latency impact.",
         "What you are looking at: Two panels:\n"
         "(1) Token distribution: stacked bar or time series showing what "
@@ -236,14 +236,14 @@ CHART_EXPLANATIONS: dict[str, tuple[str, str]] = {
         "a weighted-average KV access cost.\n\n"
         "How to read: 100 % L1 = ideal (working set fits in HBM). "
         "50 % L1 / 50 % L2 = active DRAM staging, manageable. "
-        "Any L3 storage fraction = NVMe on the critical decode path, "
+        "Any local Storage / AI memory node fraction = NVMe on the critical decode path, "
         "adds 100–500 µs per decode step per session.\n\n"
         "For KV$: The cost chart is the direct translation from "
         "'where are my tokens' to 'what does it cost per generated "
-        "token'. L3 storage hit at 100 µs × 1000 decode steps × 100 "
-        "concurrent sessions = 10 s of aggregate L3 storage latency per "
+        "token'. local Storage / AI memory node hit at 100 µs × 1000 decode steps × 100 "
+        "concurrent sessions = 10 s of aggregate local Storage / AI memory node latency per "
         "generated sequence.\n\n"
-        "What to do: If L3 storage > 20 % of tokens during decode, either "
+        "What to do: If local Storage / AI memory node > 20 % of tokens during decode, either "
         "reduce session count, add DRAM (expand L2 tier), or upgrade "
         "to faster NVMe."
     ),
@@ -262,17 +262,17 @@ CHART_EXPLANATIONS: dict[str, tuple[str, str]] = {
         "resources and pushing shorter sessions' KV out of HBM, "
         "degrading everyone's cache hit rate.\n\n"
         "For KV$: Sessions whose context exceeds HBM capacity generate "
-        "continuous L2/L3 storage traffic on every decode step. A 200K-token "
+        "continuous L2/local Storage / AI memory node traffic on every decode step. A 200K-token "
         "session with a 68K-token L1 capacity has a permanent 132K-token "
-        "'hot tail' in L2/L3 storage that gets paged in/out continuously.\n\n"
+        "'hot tail' in L2/local Storage / AI memory node that gets paged in/out continuously.\n\n"
         "What to do: Route outlier long-context sessions to a dedicated "
         "server, or enable sliding window attention to cap the active "
         "KV footprint."
     ),
 
     "kv cache block": (
-        "KV cache block lifecycle event rates — eviction, backup (L1→L2/L3 storage "
-        "write), and load-back (L3 storage/L2→L1 read) — the clearest signal of "
+        "KV cache block lifecycle event rates — eviction, backup (L1→L2/local Storage / AI memory node "
+        "write), and load-back (local Storage / AI memory node/L2→L1 read) — the clearest signal of "
         "KV cache thrashing.",
         "What you are looking at: Time series of four SGLang hicache "
         "counters (rates = Δ/s):\n"
@@ -343,7 +343,7 @@ CHART_EXPLANATIONS: dict[str, tuple[str, str]] = {
         "placeholder panel regardless of whether data is present. "
         "An empty interactive swap chart is good news: the server was "
         "not swapping during this run.\n\n"
-        "For KV$: Swap I/O and hicache L3 storage I/O can both appear in "
+        "For KV$: Swap I/O and hicache local Storage / AI memory node I/O can both appear in "
         "iostat reads/writes. This chart distinguishes them: hicache "
         "backup appears in iostat but NOT in pswpout. If iostat shows "
         "writes but this chart shows zero swap, it is KV backup, not "
@@ -439,7 +439,7 @@ CHART_EXPLANATIONS: dict[str, tuple[str, str]] = {
         "at 32–64 KB = one KV block (page_size × KV bytes/token). "
         "A peak at 4 KB = fragmented hicache (individual memory pages "
         "accessed instead of whole blocks).\n\n"
-        "For KV$: An L3 storage hit at 37 KB costs: 37 KB / 3 GB/s seq = "
+        "For KV$: An local Storage / AI memory node hit at 37 KB costs: 37 KB / 3 GB/s seq = "
         "12 µs on an uncongested NVMe. At 15K IOPS (random): "
         "37 KB / 600 MB/s = 62 µs. At TPOT=2.3 s, NVMe is not "
         "the primary bottleneck, but every parallel session's KV "
@@ -496,25 +496,25 @@ CHART_EXPLANATIONS: dict[str, tuple[str, str]] = {
         "What you are looking at: Two key panels:\n"
         "§G88-89: SSD Dependency per Token — MB of L3 I/O per "
         "generated output token. Directly measures how much the decode "
-        "path depends on L3 storage.\n"
+        "path depends on local Storage / AI memory node.\n"
         "§G93: Throughput Bottleneck Estimate — which subsystem (HBM, "
-        "DRAM, L3 storage, or compute) is the binding constraint at the "
+        "DRAM, local Storage / AI memory node, or compute) is the binding constraint at the "
         "observed throughput.\n\n"
         "Reference framework (worked example, NOT this run's numbers): "
         "if a workload reads 3,808 GB from L3 over 29,660 decode tokens, "
         "that's ~128 MB per output token — every generated token costs "
-        "128 MB of L3 storage reads. At 581 MB/s L3 storage BW and 67.5 tok/s "
+        "128 MB of local Storage / AI memory node reads. At 581 MB/s local Storage / AI memory node BW and 67.5 tok/s "
         "throughput, the KV demand is 128 MB × 67.5 = 8.6 GB/s while "
-        "supply is 581 MB/s. The L3 storage bandwidth is 15× under-provisioned "
-        "for the KV demand. Whether L3 storage is actually the binding "
+        "supply is 581 MB/s. The local Storage / AI memory node bandwidth is 15× under-provisioned "
+        "for the KV demand. Whether local Storage / AI memory node is actually the binding "
         "constraint depends on GPU util — if the GPU is already saturated, "
-        "L3 storage is a secondary constraint.\n\n"
-        "For KV$: >1 MB/tok = L3 storage is active on the critical path. "
-        ">10 MB/tok = L3 storage is a significant bottleneck. "
+        "local Storage / AI memory node is a secondary constraint.\n\n"
+        "For KV$: >1 MB/tok = local Storage / AI memory node is active on the critical path. "
+        ">10 MB/tok = local Storage / AI memory node is a significant bottleneck. "
         ">100 MB/tok = KV tier architecture needs "
-        "rethinking (more DRAM, faster L3 storage backend, or KV quantisation).\n\n"
+        "rethinking (more DRAM, faster local Storage / AI memory node backend, or KV quantisation).\n\n"
         "What to do: Increase DRAM tier (move more KV from L3 to L2), "
-        "or upgrade the L3 storage backend (PCIe 5.0 NVMe at 7 GB/s vs 3.5 GB/s on Gen 4; "
+        "or upgrade the local Storage / AI memory node backend (PCIe 5.0 NVMe at 7 GB/s vs 3.5 GB/s on Gen 4; "
         "or move to an AI Memory Node / Mooncake-style remote cache)."
     ),
 
@@ -549,7 +549,7 @@ CHART_EXPLANATIONS: dict[str, tuple[str, str]] = {
         "This section covers the same composite metrics as the "
         "'Cross-Layer KPIs' section. Key number: SSD Dependency per "
         "Token (MB/tok). Under 0.1 = NVMe not a bottleneck. "
-        "0.1–10 = moderate L3 storage activity. Over 10 = L3 on decode "
+        "0.1–10 = moderate local Storage / AI memory node activity. Over 10 = L3 on decode "
         "critical path. Over 100 (as in this run at ~128 MB/tok) = "
         "KV tier architecture needs fundamental rethinking.\n\n"
         "For KV$: The 128 MB/tok in this run reflects very long "
@@ -557,7 +557,7 @@ CHART_EXPLANATIONS: dict[str, tuple[str, str]] = {
         "must be loaded from NVMe on each decode step. "
         "The solution is a larger DRAM tier (keep most KV in L2) "
         "or GPUDirect Storage to eliminate the CPU/DRAM hop on "
-        "L3 storage→L1 transfers."
+        "local Storage / AI memory node→L1 transfers."
     ),
 
     "ssd io workload characteristics": (
@@ -739,7 +739,7 @@ CHART_EXPLANATIONS: dict[str, tuple[str, str]] = {
         "eliminates 91 NUMA migrations/s.\n\n"
         "For KV$: KV quantisation (item 3) has cascading benefits: "
         "smaller per-token footprint → more tokens in HBM → fewer "
-        "L2/L3 storage evictions → lower NVMe load → reduced TPOT."
+        "L2/local Storage / AI memory node evictions → lower NVMe load → reduced TPOT."
     ),
 }
 

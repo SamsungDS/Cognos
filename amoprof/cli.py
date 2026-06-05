@@ -354,7 +354,7 @@ def _preflight_diagnostic(args: argparse.Namespace) -> None:
             ["§C SSD Read Workload (size/IAT/alignment/LBA hot-cold)",
              "§D SSD Write Workload (size/IAT/alignment)",
              "§H NVMe Deep Profiling (req size/access alignment/seq-vs-random)",
-             "KV$ SSD IO Workload Characteristics (8 sub-panels)"],
+             "KV$ L3 IO Workload Characteristics (8 sub-panels)"],
             "apt install blktrace  (or yum install blktrace)",
         ))
     elif not _sh.which(getattr(args, "blktrace_bin", "blktrace")):
@@ -1157,19 +1157,23 @@ def _collect(args: argparse.Namespace) -> int:
 
     collectors: dict[str, Any] = {
         "iostat": IostatMonitor(args.ssd_device, args.interval_s),
-        "smart": NvmeSmartMonitor(args.ssd_device, poll_s=max(int(args.interval_s), 1)),
+        "smart": NvmeSmartMonitor(args.ssd_device, poll_s=max(int(args.interval_s), 1),
+                                   use_sudo=not getattr(args, "no_sudo", False)),
         # Captures NVMe device capacity (/sys/block/<dev>/size) and HiCache
         # filesystem usage (df on hicache_path) into smart_summary.json so the
-        # L3 HiCache capacity tile and L3 Storage layer row populate.
+        # L3 HiCache capacity tile and local Storage / AI memory node layer row populate.
         "ssd_hw": SsdHardwareMonitor(args.ssd_device,
-                                     hicache_path=args.hicache_path),
-        "biolatency": BiolatencyCollector(args.ssd_device, duration_s=max(int(_effective_duration), 1)),
+                                     hicache_path=args.hicache_path,
+                                     use_sudo=not getattr(args, "no_sudo", False)),
+        "biolatency": BiolatencyCollector(args.ssd_device,
+                                             duration_s=max(int(_effective_duration), 1),
+                                             use_sudo=not getattr(args, "no_sudo", False)),
         "vmstat": VmstatMonitor(args.interval_s),
         "nvlink_pcie": NvlinkPcieMonitor(max(args.interval_s, 1.0)),
         "nvme_driver": NvmeDriverMonitor(args.ssd_device, args.interval_s),
         "gpu": GpuMonitor(args.interval_s),
         "dram": DramMonitor(args.interval_s),
-        "power": PowerMonitor(args.interval_s),
+        "power": PowerMonitor(args.interval_s, use_sudo=not getattr(args, "no_sudo", False)),
         "pcm": PcmMemoryCollector(args.interval_s),
         # New: TRIM/discard time-series from /proc/diskstats — always cheap, always on
         "discard": DiscardStatsMonitor(args.ssd_device, args.interval_s, work_dir=raw_dir),
@@ -1202,6 +1206,7 @@ def _collect(args: argparse.Namespace) -> int:
             binary=args.amduprof_pcm_bin,
             output_csv=str(raw_dir / "amduprof_pcm_raw.csv"),
             extra_args=args.amduprof_extra_arg or [],
+            use_sudo=not getattr(args, "no_sudo", False),
         )
     if args.enable_nsys:
         if _sglang_is_remote:
@@ -1238,8 +1243,9 @@ def _collect(args: argparse.Namespace) -> int:
                 "(perf, bpf) which require local process attachment. "
                 "Run AMOprof on the SGLang node for these metrics.", sglang_host)
         else:
-            collectors["perf"] = PerfStatCollector(pid)
-            collectors["bpf"] = BpftraceCollector(pid, duration_s=max(int(args.duration_s), 1), work_dir=raw_dir)
+            collectors["perf"] = PerfStatCollector(pid, use_sudo=not getattr(args, "no_sudo", False))
+            collectors["bpf"] = BpftraceCollector(pid, duration_s=max(int(args.duration_s), 1), work_dir=raw_dir,
+                                                 use_sudo=not getattr(args, "no_sudo", False))
 
     log.info("Starting metrics-only capture")
     log.info("Output directory: %s", out_dir)
@@ -1327,7 +1333,7 @@ def _collect(args: argparse.Namespace) -> int:
 
         # Merge ssd_hw (device capacity + df-based HiCache filesystem usage)
         # into the smart_summary.json that the report reads, so the L3 HiCache
-        # capacity tile and L3 Storage layer text populate with df-derived
+        # capacity tile and local Storage / AI memory node layer text populate with df-derived
         # values without the report needing to read two separate files.
         if name == "ssd_hw":
             _smart_path = raw_dir / "smart_summary.json"
@@ -1598,7 +1604,7 @@ def _build_parser() -> argparse.ArgumentParser:
     c.add_argument("--debug-sglang", action="store_true",
                    help="Log SGLang scrape/parser diagnostics and write raw/sglang_debug.log")
     c.add_argument("--enable-amduprof-pcm", action="store_true",
-                   help="Collect AMD uProf PCM memory read/write metrics for the interval")
+                   help="Collect AMD uProf PCM memory read/write metrics for the interval; AMDuProfPcm is run with -r and sudo -n when amoprof is not root")
     c.add_argument("--amduprof-pcm-bin", default=os.environ.get("AMOPROF_AMDUPROF_PCM_BIN", "/opt/AMDuProf_5.2-606/bin/AMDuProfPcm"),
                    help="Path to AMDuProfPcm binary")
     c.add_argument("--amduprof-duration-s", type=float, default=None,
@@ -1622,8 +1628,10 @@ def _build_parser() -> argparse.ArgumentParser:
     c.add_argument("--biosnoop-bin", default=os.environ.get("AMOPROF_BIOSNOOP_BIN", "biosnoop-bpfcc"),
                    help="Path to biosnoop binary (biosnoop-bpfcc on Ubuntu, biosnoop on RHEL)")
     c.add_argument("--no-sudo", action="store_true",
-                   help="Don't prepend 'sudo -n' to blktrace/biosnoop commands. "
-                        "Use this if AMOprof itself runs as root or sudoers is preconfigured.")
+                   help="Don't prepend 'sudo -n' to root-required system collectors. "
+                        "Applies to blktrace, biosnoop, biolatency, nvme SMART/admin, "
+                        "AMDuProfPcm, perf, bpftrace, and IPMI. Use this if AMOprof itself "
+                        "runs as root or you intentionally want direct execution.")
     c.add_argument("--enable-all", action="store_true",
                    help="Convenience: turn on every optional collector at once — "
                         "blktrace, biosnoop, amduprof_pcm. Equivalent to "
@@ -2424,7 +2432,7 @@ def _analyze(args) -> int:
     if rebuilt:
         log.info("Rebuilt canonical CSVs from JSONLs: %s", ", ".join(rebuilt))
 
-    # ── 3c. Refresh L3 Storage device capacity + HiCache df stats ─────────────
+    # ── 3c. Refresh local Storage / AI memory node device capacity + HiCache df stats ─────────────
     # Re-snapshot df + /sys/block size from the analysis host. No-op if the
     # mount/device aren't reachable (cross-host analyze).
     if _refresh_smart_capacity(run_dir):
@@ -2900,7 +2908,7 @@ def _aggregate(args) -> int:
     if rebuilt:
         log.info("Rebuilt canonical CSVs from JSONLs: %s", ", ".join(rebuilt))
 
-    # ── 3c. Refresh L3 Storage device capacity + HiCache df stats ─────────────
+    # ── 3c. Refresh local Storage / AI memory node device capacity + HiCache df stats ─────────────
     # Re-snapshot df + /sys/block size from the analysis host. No-op if the
     # mount/device aren't reachable (cross-host analyze).
     if _refresh_smart_capacity(run_dir):
