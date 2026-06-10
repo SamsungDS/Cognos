@@ -36,8 +36,29 @@ import pandas as pd
 
 
 def _amoprof_storage_label_cleanup(html_text: str) -> str:
+    """Normalize visible storage labels without corrupting embedded artifacts.
+
+    Earlier versions applied the L3/SSD text replacement to the whole HTML
+    document.  That is unsafe because self-contained reports embed PNG charts as
+    base64 data URIs.  A random base64 substring such as ``L3`` or ``SSD`` can be
+    replaced, producing an invalid ``data:image/png;base64,...`` URI; the user
+    then sees an entire chart disappear even though metrics were present.
+
+    Protect data-URI payloads before doing any text cleanup, then restore them
+    byte-for-byte.
+    """
     if not html_text:
         return html_text
+
+    data_uri_re = re.compile(r'data:image/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=\s]+')
+    protected_payloads: list[str] = []
+
+    def _stash_data_uri(match: re.Match) -> str:
+        protected_payloads.append(match.group(0))
+        return f"__AMOPROF_DATA_URI_{len(protected_payloads) - 1}__"
+
+    html_text = data_uri_re.sub(_stash_data_uri, html_text)
+
     for a, b in {
         "KV$ SSD IO": "KV$ L3 IO",
         "KV$ SSD I/O": "KV$ L3 I/O",
@@ -49,6 +70,7 @@ def _amoprof_storage_label_cleanup(html_text: str) -> str:
     protected = {
         "KV$ L3 IO": "__AMOPROF_KV_L3_IO__",
         "KV$ L3 I/O": "__AMOPROF_KV_L3_IOSLASH__",
+        "KV$ L3": "__AMOPROF_KV_L3__",
         "L3 (Storage/AI Memory Node)": "__AMOPROF_L3_STORAGE_AI_NODE__",
     }
     for a, b in protected.items():
@@ -57,6 +79,9 @@ def _amoprof_storage_label_cleanup(html_text: str) -> str:
     html_text = re.sub(r"\bL3\b", "local Storage / AI memory node", html_text)
     for a, b in protected.items():
         html_text = html_text.replace(b, a)
+
+    for i, payload in enumerate(protected_payloads):
+        html_text = html_text.replace(f"__AMOPROF_DATA_URI_{i}__", payload)
     return html_text
 
 # ── Metrics dictionary (optional — graceful fallback if missing) ──────────
@@ -8016,7 +8041,7 @@ def fig_to_b64(fig, dpi: int = 110) -> str:
     import numpy as _np
     buf = io.BytesIO()
     with _np.errstate(divide='ignore', invalid='ignore'):
-        fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight",
+        fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight", pad_inches=0.28,
                     facecolor=fig.get_facecolor())
     plt.close(fig)
     return base64.b64encode(buf.getvalue()).decode()
@@ -8376,23 +8401,90 @@ def chart_memory(m: Metrics) -> str:
 
 
 def chart_storage(m: Metrics) -> str:
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+    fig, axes = plt.subplots(1, 2, figsize=(12.5, 4.6))
     fig.patch.set_facecolor(BG2)
 
-    # Host/L3 block IOPS timeline
+    def _has_positive_io(df: pd.DataFrame) -> bool:
+        if df is None or df.empty:
+            return False
+        for c in ("rd_iops", "wr_iops", "rd_bw_mbs", "wr_bw_mbs",
+                  "rd_ios", "wr_ios", "read_count", "write_count"):
+            if c in df.columns:
+                try:
+                    if pd.to_numeric(df[c], errors="coerce").fillna(0).abs().sum() > 0:
+                        return True
+                except Exception:
+                    pass
+        return False
+
+    # Storage / OS section must use the same authoritative device stream as the
+    # Interactive tab.  nvme_ts can be empty/stale when the SSD/L3 signal was
+    # synthesized from iostat/blktrace into nvme_io_ts, so prefer nvme_io_ts
+    # whenever it has real read/write activity.  This prevents regressions where
+    # Executive/Interactive show SSD reads+writes while the End Report storage
+    # chart appears blank.
+    src_df = m.nvme_io_ts if _has_positive_io(getattr(m, "nvme_io_ts", pd.DataFrame())) \
+             else getattr(m, "nvme_ts", pd.DataFrame())
+
+    # Host/L3 block IOPS and BW timeline
     ax = axes[0]
-    ndf = m.nvme_ts
-    if not ndf.empty and "wr_iops" in ndf.columns:
-        ndf2 = downsample(ndf)
-        wr = ndf2["wr_iops"].fillna(0).values
-        rd = ndf2["rd_iops"].fillna(0).values if "rd_iops" in ndf2.columns else np.zeros_like(wr)
+    if src_df is not None and not src_df.empty:
+        ndf2 = downsample(src_df.copy(), 450)
+        ndf2["time_sec"] = pd.to_numeric(ndf2.get("time_sec", pd.Series(range(len(ndf2)))), errors="coerce").fillna(0)
         t = ndf2["time_sec"].values / 60
-        ax.bar(t, wr, width=1.5, color=NVME_C, alpha=0.8, label="Write IOPS")
-        ax.bar(t, rd, width=1.5, bottom=wr, color=PGF_C, alpha=0.7, label="Read IOPS")
-        if ax.get_legend_handles_labels()[0]: ax.legend(fontsize=8)
-    ax.set_title(f"{m.storage_io_label} (max {m.nvme_wr_iops_max:.0f} wr IOPS)", fontsize=9)
+        if len(t) > 1:
+            _dt_min = np.diff(np.sort(np.unique(t)))
+            bar_w = float(np.nanmedian(_dt_min[_dt_min > 0])) * 0.85 if len(_dt_min[_dt_min > 0]) else 0.35
+            bar_w = max(0.02, min(bar_w, 0.75))
+        else:
+            bar_w = 0.35
+
+        wr_iops = pd.to_numeric(ndf2.get("wr_iops", pd.Series([0] * len(ndf2))), errors="coerce").fillna(0).clip(lower=0)
+        rd_iops = pd.to_numeric(ndf2.get("rd_iops", pd.Series([0] * len(ndf2))), errors="coerce").fillna(0).clip(lower=0)
+
+        # If the stream has BW but no IOPS, derive approximate IOPS from the
+        # observed/read-write request size.  This keeps the section populated
+        # for iostat/blktrace-derived SSD L3 runs.
+        if rd_iops.sum() <= 0 and "rd_bw_mbs" in ndf2.columns:
+            rd_sz_mb = max(float(getattr(m, "ssd_rd_size_mean_kb", 0.0) or 0.0) / 1024.0, 0.004)
+            rd_iops = pd.to_numeric(ndf2["rd_bw_mbs"], errors="coerce").fillna(0).clip(lower=0) / rd_sz_mb
+        if wr_iops.sum() <= 0 and "wr_bw_mbs" in ndf2.columns:
+            wr_sz_mb = max(float(getattr(m, "ssd_wr_size_mean_kb", 0.0) or 0.0) / 1024.0, 0.004)
+            wr_iops = pd.to_numeric(ndf2["wr_bw_mbs"], errors="coerce").fillna(0).clip(lower=0) / wr_sz_mb
+
+        rd_bw = pd.to_numeric(ndf2.get("rd_bw_mbs", pd.Series([0] * len(ndf2))), errors="coerce").fillna(0).clip(lower=0)
+        wr_bw = pd.to_numeric(ndf2.get("wr_bw_mbs", pd.Series([0] * len(ndf2))), errors="coerce").fillna(0).clip(lower=0)
+
+        if rd_iops.sum() > 0 or wr_iops.sum() > 0:
+            ax.bar(t, rd_iops.values, width=bar_w, color=PGF_C, alpha=0.72, label="Read IOPS")
+            ax.bar(t, wr_iops.values, width=bar_w, bottom=rd_iops.values, color=NVME_C, alpha=0.82, label="Write IOPS")
+            ax.set_ylabel("IOPS", fontsize=8)
+        elif rd_bw.sum() > 0 or wr_bw.sum() > 0:
+            ax.fill_between(t, rd_bw.values, alpha=0.25, color=PGF_C, label="Read MB/s")
+            ax.plot(t, rd_bw.values, color=PGF_C, lw=1.2)
+            ax.fill_between(t, wr_bw.values, alpha=0.25, color=NVME_C, label="Write MB/s")
+            ax.plot(t, wr_bw.values, color=NVME_C, lw=1.2)
+            ax.set_ylabel("MB/s", fontsize=8)
+        else:
+            ax.text(0.5, 0.5,
+                    "No non-zero block I/O samples found\nfor selected window",
+                    ha="center", va="center", transform=ax.transAxes,
+                    fontsize=9, color=MUTED, style="italic")
+            ax.set_ylabel("IOPS", fontsize=8)
+        if ax.get_legend_handles_labels()[0]:
+            ax.legend(fontsize=7, loc="upper right")
+    else:
+        ax.text(0.5, 0.5,
+                "No storage timeseries available",
+                ha="center", va="center", transform=ax.transAxes,
+                fontsize=9, color=MUTED, style="italic")
+        ax.set_ylabel("IOPS", fontsize=8)
+
+    _src_note = "nvme_io_ts" if src_df is getattr(m, "nvme_io_ts", None) else "nvme_ts"
+    ax.set_title(f"{m.storage_io_label} — R/W activity\n"
+                 f"max rd={m.nvme_rd_iops_max:.0f} IOPS, wr={m.nvme_wr_iops_max:.0f} IOPS · source={_src_note}",
+                 fontsize=9)
     ax.set_xlabel(_time_xlabel(m), fontsize=8)
-    ax.set_ylabel("IOPS", fontsize=8)
 
     # vmstat page faults
     ax = axes[1]
@@ -8400,11 +8492,14 @@ def chart_storage(m: Metrics) -> str:
     if not vdf.empty and "pgfault" in vdf.columns:
         vdf2 = vdf.copy()
         vdf2["pgf_rate"] = vdf2["pgfault"].diff() / vdf2["time_sec"].diff()
-        vdf2 = downsample(vdf2)
+        vdf2 = downsample(vdf2, 450)
         t = vdf2["time_sec"].values / 60
         pgf = vdf2["pgf_rate"].fillna(0).clip(0).values
         ax.fill_between(t, pgf, alpha=0.3, color=PGF_C)
         ax.plot(t, pgf, color=PGF_C, lw=1.2)
+    else:
+        ax.text(0.5, 0.5, "No vmstat page-fault timeseries", ha="center", va="center",
+                transform=ax.transAxes, fontsize=9, color=MUTED, style="italic")
     ax.set_title(f"Page Faults/s (mean {m.page_faults_per_s:.0f})", fontsize=9)
     ax.set_xlabel(_time_xlabel(m), fontsize=8)
     ax.set_ylabel("Faults/s", fontsize=8)
@@ -8416,13 +8511,13 @@ def chart_storage(m: Metrics) -> str:
         for sp in ax.spines.values():
             sp.set_edgecolor(BORDER)
 
-    fig.suptitle("Storage & OS Memory Activity", fontsize=11, fontweight="bold", y=1.02, color=TEXT_C)
+    fig.suptitle("Storage I/O & OS Page Activity", fontsize=11, fontweight="bold", y=1.01, color=TEXT_C)
     try:
         import warnings as _wtl
         with _wtl.catch_warnings():
             _wtl.simplefilter('ignore', UserWarning)
             try:
-                plt.tight_layout()
+                fig.tight_layout(rect=[0, 0, 1, 0.94])
             except Exception:
                 pass
     except Exception:
@@ -10535,7 +10630,7 @@ def chart_ssd_read_workload(m: "Metrics") -> str:
         with _wtl.catch_warnings():
             _wtl.simplefilter('ignore', UserWarning)
             try:
-                plt.tight_layout(pad=0.5)
+                plt.tight_layout(pad=0.9)
             except Exception:
                 pass
     except Exception:
@@ -10668,7 +10763,7 @@ def chart_ssd_write_workload(m: "Metrics") -> str:
         with _wtl.catch_warnings():
             _wtl.simplefilter('ignore', UserWarning)
             try:
-                plt.tight_layout(pad=0.5)
+                plt.tight_layout(pad=0.9)
             except Exception:
                 pass
     except Exception:
@@ -10843,7 +10938,7 @@ def chart_trim_seasonal(m: "Metrics") -> str:
         with _wtl.catch_warnings():
             _wtl.simplefilter('ignore', UserWarning)
             try:
-                plt.tight_layout(pad=0.5)
+                plt.tight_layout(pad=0.9)
             except Exception:
                 pass
     except Exception:
@@ -10964,7 +11059,7 @@ def chart_cross_layer_kpi(m: "Metrics") -> str:
         with _wtl.catch_warnings():
             _wtl.simplefilter('ignore', UserWarning)
             try:
-                plt.tight_layout(pad=0.5)
+                plt.tight_layout(pad=0.9)
             except Exception:
                 pass
     except Exception:
@@ -10978,10 +11073,18 @@ def chart_blktrace_streams(m: "Metrics") -> str:
     if not ba:
         return ""
 
-    fig, axes = plt.subplots(2, 3, figsize=(15, 9))
+    # Use a larger, auto-padding canvas.  This section frequently has long
+    # stream labels, log-scale tick labels, and legends; a small fixed canvas
+    # can clip the bottom/side panels when embedded in the combined report.
+    _bps0 = ba.get("bw_per_stream", pd.DataFrame())
+    _iat0 = ba.get("iat_dist", pd.DataFrame())
+    _tmp0 = ba.get("temporal_pattern", pd.DataFrame())
+    _n_points = max(len(_bps0), len(_iat0), len(_tmp0), 1)
+    _extra_h = min(3.5, max(0.0, np.log10(_n_points) - 2.0))
+    fig, axes = plt.subplots(2, 3, figsize=(17, 11 + _extra_h), constrained_layout=True)
     fig.patch.set_facecolor("#ffffff")
-    fig.suptitle("KV$ SSD — Per-Stream & Temporal Analysis",
-                 fontsize=12, fontweight="bold", color="#0f172a", y=1.01)
+    fig.suptitle("KV$ L3 — Per-Stream Bandwidth & Temporal Pattern",
+                 fontsize=12, fontweight="bold", color="#0f172a", y=0.995)
 
     # Helper: find op column in a DF (handles "op", "operation", "type")
     def _op_filter(df, op_val):
@@ -11092,6 +11195,92 @@ def chart_blktrace_streams(m: "Metrics") -> str:
     ax3.grid(True, axis="x", alpha=0.3, color="#e2e8f0"); ax3.tick_params(labelsize=8)
     for sp in ax3.spines.values(): sp.set_edgecolor("#94a3b8")
 
+    # ── 4. Inter-arrival distribution ───────────────────────────────────────
+    ax4 = axes[1, 0]; ax4.set_facecolor("#f8fafc")
+    iat = ba.get("iat_dist", pd.DataFrame())
+    try:
+        if not iat.empty:
+            op_col_i = next((c for c in iat.columns if c.lower() in ("op", "operation", "type", "io_type")), None)
+            count_col_i = next((c for c in iat.columns if "count" in c.lower() or c.lower() in ("n", "events")), None)
+            # Prefer midpoint/bucket columns for the x-axis.  The analyzer has used
+            # multiple names over time, so keep the matching intentionally broad.
+            x_col_i = next((c for c in iat.columns if any(k in c.lower() for k in ("iat", "inter", "bucket", "bin", "mid", "us")) and c != count_col_i), None)
+            if count_col_i and x_col_i:
+                plot_i = iat.copy()
+                plot_i[count_col_i] = pd.to_numeric(plot_i[count_col_i], errors="coerce").fillna(0)
+                # Convert textual buckets to stable positions when necessary.
+                x_raw = plot_i[x_col_i]
+                x_num = pd.to_numeric(x_raw, errors="coerce")
+                if x_num.notna().sum() >= max(3, len(plot_i) // 2):
+                    plot_i["_x"] = x_num
+                    plot_i = plot_i.sort_values("_x")
+                    for op_name, clr in [("read", "#3b82f6"), ("write", "#f97316"), ("trim", "#a855f7")]:
+                        sub = plot_i[plot_i[op_col_i].astype(str).str.lower().eq(op_name)] if op_col_i else plot_i
+                        if not sub.empty:
+                            ax4.plot(sub["_x"], sub[count_col_i], marker="o", ms=3, lw=1.5, color=clr, label=op_name.title())
+                    if float(plot_i["_x"].max()) > 0:
+                        ax4.set_xscale("log")
+                    ax4.set_xlabel("Inter-arrival time / bucket (µs, log when numeric)", fontsize=8)
+                else:
+                    plot_i = plot_i.nlargest(min(24, len(plot_i)), count_col_i)
+                    labels = [str(v)[:16] for v in plot_i[x_col_i].values]
+                    ax4.bar(range(len(plot_i)), plot_i[count_col_i], color="#64748b", alpha=0.85)
+                    ax4.set_xticks(range(len(plot_i)))
+                    ax4.set_xticklabels(labels, rotation=45, ha="right", fontsize=6)
+                    ax4.set_xlabel("IAT bucket", fontsize=8)
+                if ax4.get_legend_handles_labels()[0]:
+                    ax4.legend(fontsize=7, loc="best")
+    except Exception as _e:
+        ax4.text(0.5, 0.5, f"IAT chart unavailable\n{_e}", ha="center", va="center", fontsize=8, color="#64748b", transform=ax4.transAxes)
+    ax4.set_title("Inter-Arrival Distribution\n(iat_dist)", fontsize=9, fontweight="bold")
+    ax4.set_ylabel("Events", fontsize=8)
+    ax4.grid(True, axis="y", alpha=0.3, color="#e2e8f0"); ax4.tick_params(labelsize=8)
+    for sp in ax4.spines.values(): sp.set_edgecolor("#94a3b8")
+
+    # ── 5. Temporal R/W/T pattern ────────────────────────────────────────────
+    ax5 = axes[1, 1]; ax5.set_facecolor("#f8fafc")
+    tmp = ba.get("temporal_pattern", pd.DataFrame())
+    try:
+        if not tmp.empty:
+            t_col = next((c for c in tmp.columns if any(k in c.lower() for k in ("window", "time", "start", "ts", "sec"))), None)
+            op_col_t = next((c for c in tmp.columns if c.lower() in ("op", "operation", "type", "io_type")), None)
+            bytes_col_t = next((c for c in tmp.columns if "bytes" in c.lower()), None)
+            # Wide format: read_bytes / write_bytes / trim_bytes per window.
+            wide_cols = [c for c in tmp.columns if any(k in c.lower() for k in ("read", "write", "trim")) and "bytes" in c.lower()]
+            if t_col and wide_cols:
+                plot_t = tmp.copy()
+                plot_t[t_col] = pd.to_numeric(plot_t[t_col], errors="coerce")
+                plot_t = plot_t.dropna(subset=[t_col]).sort_values(t_col)
+                if len(plot_t) > 600:
+                    plot_t = plot_t.iloc[::max(1, len(plot_t)//600)]
+                for c in wide_cols[:4]:
+                    vals = pd.to_numeric(plot_t[c], errors="coerce").fillna(0) / (1024*1024)
+                    label = c.replace("_bytes", "").replace("bytes", "").replace("_", " ").strip().title()
+                    clr = "#3b82f6" if "read" in c.lower() else "#f97316" if "write" in c.lower() else "#a855f7"
+                    ax5.plot(plot_t[t_col], vals, lw=1.5, color=clr, label=label)
+            elif t_col and op_col_t and bytes_col_t:
+                plot_t = tmp.copy()
+                plot_t[t_col] = pd.to_numeric(plot_t[t_col], errors="coerce")
+                plot_t[bytes_col_t] = pd.to_numeric(plot_t[bytes_col_t], errors="coerce").fillna(0)
+                g = plot_t.dropna(subset=[t_col]).groupby([t_col, plot_t[op_col_t].astype(str).str.lower()])[bytes_col_t].sum().reset_index(name="bytes")
+                if len(g) > 1200:
+                    # Keep plot readable in HTML while preserving the shape.
+                    keep = max(1, len(g)//1200)
+                    g = g.iloc[::keep]
+                for op_name, clr in [("read", "#3b82f6"), ("write", "#f97316"), ("trim", "#a855f7")]:
+                    sub = g[g[op_col_t].astype(str).str.lower().eq(op_name)]
+                    if not sub.empty:
+                        ax5.plot(sub[t_col], sub["bytes"]/(1024*1024), lw=1.6, color=clr, label=op_name.title())
+                ax5.set_xlabel("Time window (s)", fontsize=8)
+            if ax5.get_legend_handles_labels()[0]:
+                ax5.legend(fontsize=7, loc="best", ncol=1)
+    except Exception as _e:
+        ax5.text(0.5, 0.5, f"Temporal chart unavailable\n{_e}", ha="center", va="center", fontsize=8, color="#64748b", transform=ax5.transAxes)
+    ax5.set_title("Temporal R/W/T Pattern\n(temporal_pattern)", fontsize=9, fontweight="bold")
+    ax5.set_ylabel("MiB per window", fontsize=8)
+    ax5.grid(True, axis="y", alpha=0.3, color="#e2e8f0"); ax5.tick_params(labelsize=8)
+    for sp in ax5.spines.values(): sp.set_edgecolor("#94a3b8")
+
     # 6. Summary KPI bars
     ax6 = axes[1, 2]; ax6.set_facecolor("#f8fafc")
     kpi_names = ["Rd BW\n(MiB/s)", "Wr BW\n(MiB/s)", "Rd Skew\n(×10)", "Wr Skew\n(×10)",
@@ -11115,7 +11304,7 @@ def chart_blktrace_streams(m: "Metrics") -> str:
         with _wtl.catch_warnings():
             _wtl.simplefilter('ignore', UserWarning)
             try:
-                plt.tight_layout(pad=0.5)
+                plt.tight_layout(pad=0.9)
             except Exception:
                 pass
     except Exception:
@@ -11212,7 +11401,7 @@ def chart_blktrace_hotcold(m: "Metrics") -> str:
         with _wtl.catch_warnings():
             _wtl.simplefilter('ignore', UserWarning)
             try:
-                plt.tight_layout(pad=0.5)
+                plt.tight_layout(pad=0.9)
             except Exception:
                 pass
     except Exception:
@@ -11320,7 +11509,7 @@ def phase_badge(phase: str) -> str:
 def img(b64: str, alt: str = "") -> str:
     if not b64:
         return f'<div style="height:100px;display:flex;align-items:center;justify-content:center;color:#64748b;font-size:12px">No data for {alt}</div>'
-    return f'<img src="data:image/png;base64,{b64}" alt="{alt}" style="width:100%;border-radius:8px;"/>'
+    return f'<img src="data:image/png;base64,{b64}" alt="{alt}" style="width:100%;max-width:100%;height:auto;display:block;object-fit:contain;border-radius:8px;"/>'
 
 def kv_card(label, value, unit="", color=TEXT_C, sub="") -> str:
     return f"""
@@ -12741,9 +12930,9 @@ Seasonal period: FFT on R(t) = binned read bytes/sec timeseries
 
 <!-- §stream and §hotcold: pre-computed blktrace analysis -->
 {f"""
-<!-- KV$ SSD: Per-Stream & Temporal Analysis -->
+<!-- KV$ L3: Per-Stream & Temporal Analysis -->
 <div class="card" style="border-color:#3b82f6">
-  <h2 style="color:#1d4ed8">&#128202; KV$ SSD — Per-Stream Bandwidth &amp; Temporal Pattern</h2>
+  <h2 style="color:#1d4ed8">&#128202; KV$ L3 — Per-Stream Bandwidth &amp; Temporal Pattern</h2>
   <div style="font-size:11px;color:#334155;line-height:1.6;margin-bottom:12px">
     Per-stream bandwidth distribution (each inference session = one stream), inter-arrival
     time histogram, and R/W temporal pattern per time window. Derived from

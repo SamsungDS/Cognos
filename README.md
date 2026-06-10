@@ -844,3 +844,15 @@ If `TP size` is missing, AMOprof falls back to `GPU Count` / parsed GPU descript
 
 ### v1.95.0
 - DRAM/L2 used capacity in Executive and Interactive reports now uses the selected-window active mean of SGLang HiCache host-used token gauges instead of a stale last sample or setup fallback. This makes L2-only and L3-active reports differ when their L2 residency differs, and labels the source in the tile note.
+
+
+
+### v1.98.0
+- Fixed End Report **Storage I/O & OS Page Activity** chart to use the same authoritative SSD/L3 stream as Interactive (`nvme_io_ts`) when it contains non-zero read/write activity.
+- Prevents regressions where Interactive/Executive show local SSD L3 reads+writes while the End Report storage chart appears empty because `nvme_ts` was empty/stale.
+- Added fallback derivation from bandwidth to approximate IOPS when only `rd_bw_mbs` / `wr_bw_mbs` are available.
+- Chart title now shows source (`nvme_io_ts` vs `nvme_ts`) and both read/write max IOPS.
+
+### v1.96.0
+- Fixed End Report KV$ L3 per-stream bandwidth and temporal-pattern chart clipping by using an auto-sized canvas, safer image padding, and explicit IAT/temporal subplots.
+- Chart images now use responsive `height:auto`/`object-fit:contain` styling to avoid truncated combined-report rendering.

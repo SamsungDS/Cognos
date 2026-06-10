@@ -30,14 +30,26 @@ except Exception:
 
 
 def _amoprof_storage_label_cleanup(html_text: str) -> str:
-    """Normalize user-facing storage labels.
+    """Normalize user-facing storage labels without corrupting embedded data.
 
-    Keep internal setup keys and metric names untouched until the report HTML is
-    fully rendered, then clean visible wording so all report tabs use the same
-    temporary tier name requested by the user.
+    Combined reports contain large base64 PNGs inside ``iframe srcdoc``.  A
+    whole-document regex replacement for labels such as ``L3`` can accidentally
+    match the base64 payload and break exactly one chart image.  Protect all
+    data-image URIs before rewriting visible text, then restore the original
+    payloads byte-for-byte.
     """
     if not html_text:
         return html_text
+
+    data_uri_re = re.compile(r'data:image/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=\s]+')
+    protected_payloads: list[str] = []
+
+    def _stash_data_uri(match: re.Match) -> str:
+        protected_payloads.append(match.group(0))
+        return f"__AMOPROF_DATA_URI_{len(protected_payloads) - 1}__"
+
+    html_text = data_uri_re.sub(_stash_data_uri, html_text)
+
     # Specific wording first.
     repl = {
         "KV$ SSD IO": "KV$ L3 IO",
@@ -53,16 +65,20 @@ def _amoprof_storage_label_cleanup(html_text: str) -> str:
     protected = {
         "KV$ L3 IO": "__AMOPROF_KV_L3_IO__",
         "KV$ L3 I/O": "__AMOPROF_KV_L3_IOSLASH__",
+        "KV$ L3": "__AMOPROF_KV_L3__",
         "L3 (Storage/AI Memory Node)": "__AMOPROF_L3_STORAGE_AI_NODE__",
     }
     for a, b in protected.items():
         html_text = html_text.replace(a, b)
-    # User-facing tier terminology. Keep the two explicitly requested labels
-    # above as L3, but rename all other L3 mentions for now.
+    # User-facing tier terminology. Keep the explicitly requested labels above
+    # as L3, but rename all other L3 mentions for now.
     html_text = re.sub(r"\bL3 storage\b", "local Storage / AI memory node", html_text, flags=re.IGNORECASE)
     html_text = re.sub(r"\bL3\b", "local Storage / AI memory node", html_text)
     for a, b in protected.items():
         html_text = html_text.replace(b, a)
+
+    for i, payload in enumerate(protected_payloads):
+        html_text = html_text.replace(f"__AMOPROF_DATA_URI_{i}__", payload)
     return html_text
 
 
