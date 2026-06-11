@@ -33,6 +33,7 @@ static std::string rasGetNodeName() {
                fmt::format("get_node_name failed with error {error_code}\n",
                            fmt::arg("error_code", static_cast<int>(status)))
                    .c_str());
+    result = "";
   }
 
   return result;
@@ -42,7 +43,8 @@ static const std::string ras_err_threshold_warning_template =
     "{{\"domain\": \"availability\", \"feature_name\": \"ras\", \"tag\": "
     "\"{ras_event_tag}\", \"category\": \"health\", \"severity\": \"warning\", "
     "\"source\": \"{device_id}\", \"msg\" : \"{message}\",\"source_type\": "
-    "\"device\", \"timestamp\": {timestamp}, \"observations\": {{ "
+    "\"device\", \"timestamp\": {timestamp}, \"timestamp_formatted\": "
+    "\"{timestamp_formatted}\",\"observations\": {{ "
     "\"device_id\": \"{device_id}\", \"error_cnt\": {error_count} }} }}";
 
 static std::string get_new_event_tag(const std::string &device_id) {
@@ -60,15 +62,25 @@ static std::string get_new_event_tag(const std::string &device_id) {
 static int send_ras_threshold_warning_event(const std::string &device_id,
                                             const int error_count,
                                             const std::string &message) {
+  auto now = std::chrono::system_clock::now();
+
   auto time_stamp = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        std::chrono::system_clock::now().time_since_epoch())
+                        now.time_since_epoch())
                         .count();
+
+  // Set timestamp_formatted in YYYY-MM-DD HH:MM:SS AM/PM
+  std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+  std::tm now_tm;
+  localtime_r(&now_c, &now_tm);
+  std::ostringstream timestamp_formatted;
+  timestamp_formatted << std::put_time(&now_tm, "%Y-%m-%d %I:%M:%S %p");
 
   std::string event_json = fmt::format(
       cognos::ras::publisher::ras_err_threshold_warning_template,
       fmt::arg("device_id", device_id), fmt::arg("timestamp", time_stamp),
       fmt::arg("error_count", error_count), fmt::arg("message", message),
-      fmt::arg("ras_event_tag", get_new_event_tag(device_id)));
+      fmt::arg("ras_event_tag", get_new_event_tag(device_id)),
+      fmt::arg("timestamp_formatted", timestamp_formatted.str()));
 
   int rc = publish_event_data_to_core((char *)"alerts",
                                       (uint8_t *)event_json.c_str(),
