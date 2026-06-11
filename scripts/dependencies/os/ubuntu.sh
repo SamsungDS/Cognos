@@ -15,6 +15,7 @@ install_build_deps() {
         gnupg
         openssh-client
         python3-pip
+        sshpass
         unzip
         wget
     )

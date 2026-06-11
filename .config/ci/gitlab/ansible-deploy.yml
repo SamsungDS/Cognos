@@ -19,12 +19,18 @@ ansible-deploy:
     - echo "Detected OS target:$OS_TARGET"
     - bash scripts/release.sh --os "$OS_TARGET" --mock
     - sed -i -e "s/hostname[0-9]\/host_ip[0-9]/$VM_NAME.msl.lab/g" -e "s/<user name>/root/" hosts
+    - 'echo "$ANSIBLE_VAULT_PASSWORD" > "$CI_PROJECT_DIR/.vault_pass"'
+    - 'echo "vault_ansible_password: $ANSIBLE_VAULT_PASSWORD" > group_vars/all/passwords.yml'
+    - 'ansible-vault encrypt group_vars/all/passwords.yml --vault-password-file "$CI_PROJECT_DIR/.vault_pass"'
   script:
     - ansible-playbook -i hosts playbooks/deploy_cognos.yml
         --private-key ~/.ssh/svk-ci-deploy
         -e scmc_cxl_mock_enable=true
         -e application_server_type=CMMH
         -e cognos_install_gui_enabled=true
+        --vault-password-file "$CI_PROJECT_DIR/.vault_pass"
+  after_script:
+    - rm -rf group_vars/all/passwords.yml
   variables:
     ANSIBLE_HOST_KEY_CHECKING: "False"
     ANSIBLE_FORCE_COLOR: "true"
