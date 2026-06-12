@@ -44,6 +44,7 @@ static void generate_start_migration_event(cme_context* cme_ctx)
         event_data["status"] = status_string;
         event_data["name"] = "numa_migration_start";
         event_obj.event_json["timestamp"] = getCurrentTimestamp();
+        event_obj.event_json["timestamp_formatted"] = getFormattedTimestamp();
         event_obj.event_json["source"] = app_ctx_id;
         event_obj.event_json["msg"] = "numa migration operation started";
         event_obj.event_json["observations"] = event_data;
@@ -79,6 +80,7 @@ static void generate_health_event(cme_context* cme_ctx, std::string severity)
         event_obj.event_json["observations"] = event_data;
         event_obj.event_json["msg"] = "Data Migration " + (severity.compare("Normal") == 0 ? std::string("Completed") : std::string("Started"));
         event_obj.event_json["timestamp"] = getCurrentTimestamp();
+        event_obj.event_json["timestamp_formatted"] = getFormattedTimestamp();
         event_obj.event_json["source"] = to_string(cme_ctx->app_attr.app_pid);
         event_obj.event_json["tag"] = cme_ctx->event_tag;
         event_obj.event_json["category"] = "health";
@@ -123,6 +125,7 @@ static void post_fn_move_all(cme_context* cme_ctx)
         event_obj.event_json["observations"] = event_data;
         event_obj.event_json["msg"] = "numa migration operation completed";
         event_obj.event_json["timestamp"] = getCurrentTimestamp();
+        event_obj.event_json["timestamp_formatted"] = getFormattedTimestamp();
         event_obj.event_json["source"] = app_ctx_id;
         event_obj.event_json["tag"] = cme_ctx->event_tag;
         int ret = publish_cme_event(event_obj);

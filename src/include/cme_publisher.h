@@ -23,6 +23,7 @@ struct cme_event
                 event_json["source_type"] = "application";
                 event_json["source"] = "application";
                 event_json["timestamp"] = "";
+                event_json["timestamp_formatted"] = "";
                 event_json["observations"] = "";
         }
 };

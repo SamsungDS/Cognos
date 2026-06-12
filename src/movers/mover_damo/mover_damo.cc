@@ -43,6 +43,7 @@ static void generate_start_data_movement_event(cme_context* cme_ctx, int damo_st
         event_data["status"] = status_string;
         event_data["name"] = "tm_data_movement_started";
         event_obj.event_json["timestamp"] = getCurrentTimestamp();
+        event_obj.event_json["timestamp_formatted"] = getFormattedTimestamp();
         event_obj.event_json["source"] = app_ctx_id;
         event_obj.event_json["msg"] = "tiered memory data movement operation started";
         event_obj.event_json["observations"] = event_data;

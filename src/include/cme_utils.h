@@ -96,6 +96,7 @@ const std::string DUMMY_PROCESS = "DUMMY_PROCESS";
 bool is_valid_numa_node(int);
 
 std::string getCurrentTimestamp(void);
+std::string getFormattedTimestamp(void);
 
 /**
  * @brief function executes numastat and returns the output string

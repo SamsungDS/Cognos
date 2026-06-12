@@ -154,6 +154,20 @@ std::string getCurrentTimestamp()
         return epoch_nano_seconds_str;
 }
 
+std::string getFormattedTimestamp() {
+        // Convert nanoseconds to seconds
+        auto now = std::chrono::system_clock::now();
+
+        std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+        std::tm now_tm;
+        localtime_r(&now_c, &now_tm);
+
+        // Set timestamp_formatted in YYYY-MM-DD HH:MM:SS AM/PM
+        std::ostringstream timestamp_formatted;
+        timestamp_formatted << std::put_time(&now_tm, "%Y-%m-%d %I:%M:%S %p");
+        return timestamp_formatted.str();
+}
+
 long long process_numastat_light(int numa_node)
 {
         std::string result;
