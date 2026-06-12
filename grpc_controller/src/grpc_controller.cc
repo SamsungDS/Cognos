@@ -45,10 +45,23 @@ std::unique_ptr<Client> CreateClient(const std::string &node_name,
   return std::make_unique<Client>(node_name, node_port);
 }
 
-static long long get_epoch_string() {
+static long long get_epoch_in_ns() {
   return std::chrono::duration_cast<std::chrono::nanoseconds>(
              std::chrono::system_clock::now().time_since_epoch())
       .count();
+}
+
+std::string get_formatted_timestamp(long long epoch_ns) {
+  // Convert nanoseconds to seconds
+  std::time_t now_c = static_cast<std::time_t>(epoch_ns / 1000000000LL);
+
+  std::tm now_tm;
+  localtime_r(&now_c, &now_tm);
+
+  // Set timestamp_formatted in YYYY-MM-DD HH:MM:SS AM/PM
+  std::ostringstream timestamp_formatted;
+  timestamp_formatted << std::put_time(&now_tm, "%Y-%m-%d %I:%M:%S %p");
+  return timestamp_formatted.str();
 }
 
 void systemd_notify(int ready, const char *status) {
@@ -72,6 +85,7 @@ int GenerateControllerEvent(const ControllerEventData &event_data) {
 
   int status = -1;
   std::string log_msg;
+  long long epoch_ns = get_epoch_in_ns();
 
   observations_map["host_name"] = event_data.host_name;
   observations_map["app_name"] = event_data.app_name;
@@ -85,7 +99,8 @@ int GenerateControllerEvent(const ControllerEventData &event_data) {
   event_payload["source_type"] = event_data.source_type;
   event_payload["source"] = event_data.source;
   event_payload["tag"] = event_data.event_tag;
-  event_payload["timestamp"] = get_epoch_string();
+  event_payload["timestamp"] = epoch_ns;
+  event_payload["timestamp_formatted"] = get_formatted_timestamp(epoch_ns);
   event_payload["observations"] = observations_map;
 
   event_header["node_name"] = event_data.host_name;

@@ -30,11 +30,11 @@ void PopulateBasicEventDetails(const std::string& cluster_name,
                    .count();
   payload->set_timestamp(nanos);
 
-  // Set timestamp_formatted in YYYY-MM-DD HH:MM AM/PM
+  // Set timestamp_formatted in YYYY-MM-DD:SS HH:MM AM/PM
   std::time_t now_c = std::chrono::system_clock::to_time_t(now);
   std::tm now_tm = *std::localtime(&now_c);
   std::ostringstream oss;
-  oss << std::put_time(&now_tm, "%Y-%m-%d %I:%M %p");
+  oss << std::put_time(&now_tm, "%Y-%m-%d %I:%M:%S %p");
   payload->set_timestamp_formatted(oss.str());
   return;
 }
