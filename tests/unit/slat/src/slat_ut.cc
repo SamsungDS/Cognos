@@ -762,6 +762,8 @@ TEST_F(ConfigTest, PublishSuccess) {
   config.device_current_sla = 95;
   svc.test_publish_data(config);
   unlink("slat_conf.json");
+  std::string msg = "timestamp_formatted";
+  EXPECT_EQ(true, is_str_in_log(msg));
 }
 
 class SLATrackerSvc_BenchMarkThread : public SLATrackerSvc {
