@@ -116,6 +116,18 @@ static long long get_epoch() {
       .count();
 }
 
+std::string get_formatted_timestamp(long long epoch_ns) {
+  // Convert nanoseconds to seconds
+  std::time_t now_c = static_cast<std::time_t>(epoch_ns / 1000000000LL);
+
+  std::tm now_tm;
+  localtime_r(&now_c, &now_tm);
+
+  std::ostringstream timestamp_formatted;
+  timestamp_formatted << std::put_time(&now_tm, "%Y-%m-%d %I:%M:%S %p");
+  return timestamp_formatted.str();
+}
+
 int create_event_in_json_format(const slat_benchmark_config &config,
                                 const std::string &app_name,
                                 const std::string &app_pid,
@@ -142,6 +154,7 @@ int create_event_in_json_format(const slat_benchmark_config &config,
   json_map["tag"] = "SLA_" + app_current_sla.host_name + "_" + device_name +
                     std::to_string(epoch);
   json_map["timestamp"] = epoch;
+  json_map["timestamp_formatted"] = get_formatted_timestamp(epoch);
   json_map["observations"] = observations_map;
   json_data = json_map;
   return 0;
