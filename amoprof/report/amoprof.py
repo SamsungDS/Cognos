@@ -34,6 +34,15 @@ from matplotlib.ticker import FuncFormatter
 import numpy as np
 import pandas as pd
 
+try:
+    from amoprof.report.l3_backend import resolve_l3_backend, reconcile_l3_io
+except Exception:  # direct-script fallback
+    try:
+        from l3_backend import resolve_l3_backend, reconcile_l3_io  # type: ignore
+    except Exception:
+        resolve_l3_backend = None  # type: ignore
+        reconcile_l3_io = None  # type: ignore
+
 
 def _amoprof_storage_label_cleanup(html_text: str) -> str:
     """Normalize visible storage labels without corrupting embedded artifacts.
@@ -1294,43 +1303,61 @@ def collect_from_prometheus_api(
     # Prometheus-only by default: benchmark summaries are for comparison only.
     _d_rt_cache = _delta_sum_metric(master, "realtime_tokens_total", "mode=prefill_cache")
     _d_rt_compute = _delta_sum_metric(master, "realtime_tokens_total", "mode=prefill_compute")
-    _token_weighted_hit = 0.0
+    _prefill_token_weighted_hit = 0.0
     if (_d_rt_cache + _d_rt_compute) > 0:
-        _token_weighted_hit = (_d_rt_cache / (_d_rt_cache + _d_rt_compute)) * 100.0
+        _prefill_token_weighted_hit = (_d_rt_cache / (_d_rt_cache + _d_rt_compute)) * 100.0
+
+    # Production cache-hit methodology for selected start/end window:
+    #   1. Token weighted: Δcached_tokens_total / Δprompt_tokens_total
+    #   2. Time weighted : avg_over_time(sglang_cache_hit_rate)
+    #   3. Request weighted: Δrequest_cache_hit_total / Δrequest_total
+    # The raw sglang_cache_hit_rate gauge is retained only as the time-weighted
+    # diagnostic because it is overwritten frequently by the server.
     _d_cached = _delta_sum_metric(master, "cached_tokens_total")
     _d_prompt = _delta_sum_metric(master, "prompt_tokens_total")
     _cached_prompt_hit = (_d_cached / _d_prompt * 100.0) if _d_prompt > 0 else 0.0
-    # SGLang 0.5.10 exposes two complementary cache paths:
-    #   cached_tokens_total              => prompt/prefix cache hits served before prefill
-    #   realtime_tokens_total{prefill_cache/prefill_compute} => remaining prefill tokens
-    # Treating either one alone underreports effective prompt reuse.  The
-    # benchmark cache_hit_rate is closest to the combined numerator below.
+    _cached_prompt_hit = max(0.0, min(100.0, _cached_prompt_hit)) if _cached_prompt_hit > 0 else 0.0
+
+    _d_req_hit = (_delta_sum_metric(master, "request_cache_hit_total") or
+                  _delta_sum_metric(master, "cache_hit_request_total") or
+                  _delta_sum_metric(master, "request_cache_hits_total") or
+                  _delta_sum_metric(master, "cache_hit_requests_total"))
+    _d_req_total = (_delta_sum_metric(master, "request_total") or
+                    _delta_sum_metric(master, "requests_total"))
+    _request_weighted_hit = (_d_req_hit / _d_req_total * 100.0) if _d_req_total > 0 else 0.0
+    _request_weighted_hit = max(0.0, min(100.0, _request_weighted_hit)) if _request_weighted_hit > 0 else 0.0
+
+    _gstats = _cache_hit_gauge_stats(master)
+    _time_weighted_hit = _gstats.get("overall_pct", 0.0)
+
+    # SGLang 0.5.10 exposes two complementary cache paths. This effective value
+    # is useful context but is not the primary KPI because it combines different
+    # token streams.
     _effective_prompt_hit = 0.0
     if (_d_cached + _d_rt_cache + _d_rt_compute) > 0:
         _effective_prompt_hit = ((_d_cached + _d_rt_cache) / (_d_cached + _d_rt_cache + _d_rt_compute)) * 100.0
     elif _d_prompt > 0 and (_d_cached + _d_rt_cache) > 0:
         _effective_prompt_hit = ((_d_cached + _d_rt_cache) / _d_prompt) * 100.0
-    _gstats = _cache_hit_gauge_stats(master)
-    # Benchmark-comparable primary KPI: use active-only average of the
-    # SGLang cache-hit gauge when available.  bench_serving's cache_hit_rate
-    # is request/window oriented; low-level token ratios are useful diagnostics
-    # but can significantly under-report when prompt-cache and prefill-cache
-    # paths are split across metrics.
-    if _gstats["active_samples"] > 0:
-        _alt_cache_hit = _gstats["active_pct"]
-        _alt_method = "sglang_cache_hit_rate_active_average_prometheus"
+    _effective_prompt_hit = max(0.0, min(100.0, _effective_prompt_hit)) if _effective_prompt_hit > 0 else 0.0
+
+    # Primary KPI: counter-derived selected-window token-weighted hit rate.
+    # Fallback to request-weighted, then time-weighted gauge average, then the
+    # older effective/prefill diagnostics only if the production counters are absent.
+    if _cached_prompt_hit > 0:
+        _alt_cache_hit = _cached_prompt_hit
+        _alt_method = "selected_window_token_weighted_cached_tokens_over_prompt_tokens"
+    elif _request_weighted_hit > 0:
+        _alt_cache_hit = _request_weighted_hit
+        _alt_method = "selected_window_request_weighted_request_cache_hit_over_request_total"
+    elif _gstats["total_samples"] > 0:
+        _alt_cache_hit = _time_weighted_hit
+        _alt_method = "selected_window_time_weighted_avg_over_time_sglang_cache_hit_rate"
     elif _effective_prompt_hit > 0:
         _alt_cache_hit = _effective_prompt_hit
         _alt_method = "combined_cached_plus_prefill_cache_prometheus_fallback"
-    elif _cached_prompt_hit > 0:
-        _alt_cache_hit = _cached_prompt_hit
-        _alt_method = "cached_tokens_over_prompt_tokens_prometheus_fallback"
-    elif _token_weighted_hit > 0:
-        _alt_cache_hit = _token_weighted_hit
-        _alt_method = "realtime_tokens_delta_prometheus_fallback"
-    elif _gstats["total_samples"] > 0:
-        _alt_cache_hit = _gstats["overall_pct"]
-        _alt_method = "sglang_cache_hit_rate_timeline_average_prometheus_fallback"
+    elif _prefill_token_weighted_hit > 0:
+        _alt_cache_hit = _prefill_token_weighted_hit
+        _alt_method = "prefill_realtime_tokens_delta_prometheus_fallback"
     else:
         _alt_cache_hit = 0.0
         _alt_method = "none"
@@ -1356,9 +1383,16 @@ def collect_from_prometheus_api(
         "server_e2e_ms_method":         "delta_sglang_e2e_request_latency_seconds_sum_over_count",
         "cache_hit_rate_realtime_pct": round(_alt_cache_hit, 2),
         "cache_hit_calc_method":       _alt_method,
-        "cache_hit_token_weighted_pct": round(_token_weighted_hit, 2),
+        "cache_hit_token_weighted_pct": round(_cached_prompt_hit, 2),
+        "cache_hit_prefill_token_weighted_pct": round(_prefill_token_weighted_hit, 2),
+        "cache_hit_time_weighted_pct": round(_time_weighted_hit, 2),
+        "cache_hit_request_weighted_pct": round(_request_weighted_hit, 2),
         "cache_hit_cached_prompt_pct":  round(_cached_prompt_hit, 2),
         "cache_hit_effective_prompt_pct": round(_effective_prompt_hit, 2),
+        "cache_hit_token_weighted_numerator_tokens": round(_d_cached, 3),
+        "cache_hit_token_weighted_denominator_tokens": round(_d_prompt, 3),
+        "cache_hit_request_weighted_numerator_requests": round(_d_req_hit, 3),
+        "cache_hit_request_weighted_denominator_requests": round(_d_req_total, 3),
         "ai_op_decode_tok_s":           round(_decode_tok_s_prom, 3),
         "ai_op_decode_tok_s_method":    "generation_or_decode_counter_delta",
         "gen_tp_peak":                  round(_decode_tok_s_prom, 3),
@@ -1713,48 +1747,60 @@ def collect_from_prometheus(
     # standalone validation script posted with the issue.
     d_rt_cache = _delta_sum_metric(sglang_df, "realtime_tokens_total", "mode=prefill_cache")
     d_rt_compute = _delta_sum_metric(sglang_df, "realtime_tokens_total", "mode=prefill_compute")
-    cache_hit_token_weighted = 0.0
+    cache_hit_prefill_token_weighted = 0.0
     if (d_rt_cache + d_rt_compute) > 0:
-        cache_hit_token_weighted = (d_rt_cache / (d_rt_cache + d_rt_compute)) * 100.0
+        cache_hit_prefill_token_weighted = (d_rt_cache / (d_rt_cache + d_rt_compute)) * 100.0
 
+    # Production cache-hit methodology for the selected start/end window.
     d_cached = _delta_sum_metric(sglang_df, "cached_tokens_total")
     d_prompt = _delta_sum_metric(sglang_df, "prompt_tokens_total")
-    cache_hit_cached_prompt_pct = (d_cached / d_prompt * 100.0) if d_prompt > 0 else 0.0
-    # SGLang 0.5.10 effective prompt cache hit: prompt-cache hits plus
-    # prefill-cache hits over prompt-cache + remaining prefill work.
-    # This remains Prometheus-only but is much closer to bench_serving's
-    # cache_hit_rate than either component alone.
-    cache_hit_effective_prompt_pct = 0.0
-    if (d_cached + d_rt_cache + d_rt_compute) > 0:
-        cache_hit_effective_prompt_pct = ((d_cached + d_rt_cache) / (d_cached + d_rt_cache + d_rt_compute)) * 100.0
-    elif d_prompt > 0 and (d_cached + d_rt_cache) > 0:
-        cache_hit_effective_prompt_pct = ((d_cached + d_rt_cache) / d_prompt) * 100.0
+    cache_hit_token_weighted = (d_cached / d_prompt * 100.0) if d_prompt > 0 else 0.0
+    cache_hit_token_weighted = max(0.0, min(100.0, cache_hit_token_weighted)) if cache_hit_token_weighted > 0 else 0.0
+
+    d_req_hit = (_delta_sum_metric(sglang_df, "request_cache_hit_total") or
+                 _delta_sum_metric(sglang_df, "cache_hit_request_total") or
+                 _delta_sum_metric(sglang_df, "request_cache_hits_total") or
+                 _delta_sum_metric(sglang_df, "cache_hit_requests_total"))
+    d_req_total = (_delta_sum_metric(sglang_df, "request_total") or
+                   _delta_sum_metric(sglang_df, "requests_total"))
+    cache_hit_request_weighted = (d_req_hit / d_req_total * 100.0) if d_req_total > 0 else 0.0
+    cache_hit_request_weighted = max(0.0, min(100.0, cache_hit_request_weighted)) if cache_hit_request_weighted > 0 else 0.0
 
     _gstats = _cache_hit_gauge_stats(sglang_df)
-    cache_hit_gauge_overall = float(_gstats.get("overall_pct", 0.0))
+    cache_hit_time_weighted = float(_gstats.get("overall_pct", 0.0))
+    cache_hit_gauge_overall = cache_hit_time_weighted
     cache_hit_gauge_active = float(_gstats.get("active_pct", 0.0))
     cache_hit_gauge_peak = float(_gstats.get("peak_pct", 0.0))
     cache_hit_gauge_total_samples = int(_gstats.get("total_samples", 0))
     cache_hit_gauge_active_samples = int(_gstats.get("active_samples", 0))
 
-    # Primary cache-hit KPI should be benchmark-comparable, not merely
-    # token-weighted.  Use the active average of sglang_cache_hit_rate first;
-    # keep token/counter ratios as diagnostics in the methodology section.
-    if cache_hit_gauge_active_samples > 0:
-        cache_hit = cache_hit_gauge_active
-        cache_hit_method = "sglang_cache_hit_rate_active_average_prometheus"
+    # Effective prompt cache hit remains a diagnostic because it combines
+    # prompt-cache and realtime prefill-cache streams.
+    cache_hit_cached_prompt_pct = cache_hit_token_weighted
+    cache_hit_effective_prompt_pct = 0.0
+    if (d_cached + d_rt_cache + d_rt_compute) > 0:
+        cache_hit_effective_prompt_pct = ((d_cached + d_rt_cache) / (d_cached + d_rt_cache + d_rt_compute)) * 100.0
+    elif d_prompt > 0 and (d_cached + d_rt_cache) > 0:
+        cache_hit_effective_prompt_pct = ((d_cached + d_rt_cache) / d_prompt) * 100.0
+    cache_hit_effective_prompt_pct = max(0.0, min(100.0, cache_hit_effective_prompt_pct)) if cache_hit_effective_prompt_pct > 0 else 0.0
+
+    # Primary cache-hit KPI: selected-window counter-derived token-weighted hit
+    # when available, then request-weighted, then time-weighted gauge average.
+    if cache_hit_token_weighted > 0:
+        cache_hit = cache_hit_token_weighted
+        cache_hit_method = "selected_window_token_weighted_cached_tokens_over_prompt_tokens"
+    elif cache_hit_request_weighted > 0:
+        cache_hit = cache_hit_request_weighted
+        cache_hit_method = "selected_window_request_weighted_request_cache_hit_over_request_total"
+    elif cache_hit_gauge_total_samples > 0:
+        cache_hit = cache_hit_time_weighted
+        cache_hit_method = "selected_window_time_weighted_avg_over_time_sglang_cache_hit_rate"
     elif cache_hit_effective_prompt_pct > 0:
         cache_hit = cache_hit_effective_prompt_pct
         cache_hit_method = "combined_cached_plus_prefill_cache_prometheus_fallback"
-    elif cache_hit_cached_prompt_pct > 0:
-        cache_hit = cache_hit_cached_prompt_pct
-        cache_hit_method = "cached_tokens_over_prompt_tokens_prometheus_fallback"
-    elif cache_hit_token_weighted > 0:
-        cache_hit = cache_hit_token_weighted
-        cache_hit_method = "realtime_tokens_delta_prometheus_fallback"
-    elif cache_hit_gauge_total_samples > 0:
-        cache_hit = cache_hit_gauge_overall
-        cache_hit_method = "sglang_cache_hit_rate_timeline_average_prometheus_fallback"
+    elif cache_hit_prefill_token_weighted > 0:
+        cache_hit = cache_hit_prefill_token_weighted
+        cache_hit_method = "prefill_realtime_tokens_delta_prometheus_fallback"
     else:
         cache_hit = 0.0
         cache_hit_method = "none"
@@ -1827,8 +1873,15 @@ def collect_from_prometheus(
         "cache_hit_rate_realtime_pct":  round(cache_hit, 2),
         "cache_hit_calc_method":        cache_hit_method,
         "cache_hit_token_weighted_pct": round(cache_hit_token_weighted, 2),
+        "cache_hit_prefill_token_weighted_pct": round(cache_hit_prefill_token_weighted, 2),
+        "cache_hit_time_weighted_pct": round(cache_hit_time_weighted, 2),
+        "cache_hit_request_weighted_pct": round(cache_hit_request_weighted, 2),
         "cache_hit_cached_prompt_pct":  round(cache_hit_cached_prompt_pct, 2),
         "cache_hit_effective_prompt_pct": round(cache_hit_effective_prompt_pct, 2),
+        "cache_hit_token_weighted_numerator_tokens": round(d_cached, 3),
+        "cache_hit_token_weighted_denominator_tokens": round(d_prompt, 3),
+        "cache_hit_request_weighted_numerator_requests": round(d_req_hit, 3),
+        "cache_hit_request_weighted_denominator_requests": round(d_req_total, 3),
         "cache_hit_gauge_overall_pct":  round(cache_hit_gauge_overall, 2),
         "cache_hit_gauge_active_pct":   round(cache_hit_gauge_active, 2),
         "cache_hit_gauge_peak_pct":     round(cache_hit_gauge_peak, 2),
@@ -4042,9 +4095,13 @@ class Metrics:
     e2e_ms: float = 0
     gen_tp_mean: float = 0
     gen_tp_peak: float = 0
+    gen_tp_p50: float = 0
     cache_hit_pct: float = 0
     cache_hit_calc_method: str = "unknown"
     cache_hit_token_weighted_pct: float = 0
+    cache_hit_prefill_token_weighted_pct: float = 0
+    cache_hit_time_weighted_pct: float = 0
+    cache_hit_request_weighted_pct: float = 0
     cache_hit_cached_prompt_pct: float = 0
     cache_hit_effective_prompt_pct: float = 0
     cache_hit_gauge_overall_pct: float = 0
@@ -4120,6 +4177,12 @@ class Metrics:
                                        # ("NVMe SSD" / "AI Memory Node" /
                                        # "Mooncake" / "CXL" / etc.). Sourced
                                        # from setup["L3 storage type"].
+    l3_backend_class: str = "unknown"  # local_ssd / remote_mooncake / remote_storage / host_dram_only / unknown
+    l3_backend_display: str = "Unknown L3 backend"
+    l3_backend_evidence: str = ""
+    l3_has_local_block_mapping: bool = False
+    l3_logical_write_label: str = "generic logical HiCache backup"
+    l3_logical_read_label: str = "generic logical HiCache read"
     kv_l3_capacity_tokens: int = 0   # total L3 pool capacity (tokens)
     kv_l3_capacity_gb: float = 0.0   # L3 HiCache total allocated space (GB)
     kv_l3_used_gb: float = 0.0       # L3 HiCache used space (GB)
@@ -4163,6 +4226,13 @@ class Metrics:
     storage_io_label: str = "Host block I/O"  # display label for OS block metrics
     storage_io_is_l3: bool = False  # True only when setup explicitly maps block metrics to L3
     storage_io_formula_note: str = "Host OS block-device metrics; not necessarily L3 storage."
+    storage_io_overlay_note: str = ""  # when SGLang logical L3 I/O supplements missing block I/O
+    l3_reconciliation_status: str = "Unknown"
+    l3_reconciliation_note: str = ""
+    l3_sglang_write_gb: float = 0.0
+    l3_sglang_read_gb: float = 0.0
+    l3_block_write_gb: float = 0.0
+    l3_block_read_gb: float = 0.0
     dram_bw_util_pct: float = 0      # % of AMD EPYC DRAM peak BW
     dram_read_txn_M_s: float = 0     # millions of 64B transactions/s
     dram_write_txn_M_s: float = 0
@@ -4325,7 +4395,7 @@ class Metrics:
     ssd_rd_rand_pct: float = 0            # C42: random read %
     ssd_rd_size_rand_corr: float = 0      # C43: corr(size, is_random)
     ssd_rd_bytes_total: int = 0           # C44: total bytes read this run
-    ssd_rd_source: str = "blktrace"       # "blktrace" | "sglang_tokens" — provenance label
+    ssd_rd_source: str = "blktrace"       # "blktrace" | "sglang_tokens_logical_local_ssd" — provenance label
     ssd_rd_bytes_per_day_gb: float = 0    # C44: projected GB/day
     ssd_rd_bw_degradation: float = 0      # C45: late/baseline BW ratio
     ssd_rd_ts: pd.DataFrame = field(default_factory=pd.DataFrame)
@@ -4741,6 +4811,27 @@ def extract_metrics(data: dict) -> Metrics:
     m.setup_page_size = m.setup_details.get("Page size", m.setup_page_size)
     m.setup_attention_backend = m.setup_details.get("Attention backend", m.setup_attention_backend)
 
+    # Shared backend resolver: SGLang HiCache movement counters are logical.
+    # Resolve destination before deciding whether backuped/prefetched
+    # means local SSD, Mooncake/remote, host-only, or unknown.
+    try:
+        _launch_for_l3 = (m.setup_details.get("Launch command") or
+                          m.setup_details.get("launch_command") or
+                          m.setup_details.get("SGLang launch command") or
+                          m.setup_details.get("sglang_launch_command") or "")
+        _l3_res = resolve_l3_backend(m.setup_details, _launch_for_l3) if resolve_l3_backend else None
+    except Exception:
+        _l3_res = None
+    if _l3_res is not None:
+        m.l3_backend_class = _l3_res.backend_class
+        m.l3_backend_display = _l3_res.display_name
+        m.l3_backend_evidence = _l3_res.evidence
+        m.l3_has_local_block_mapping = bool(_l3_res.has_local_block_mapping)
+        m.l3_logical_write_label = _l3_res.logical_write_label
+        m.l3_logical_read_label = _l3_res.logical_read_label
+        if not m.l3_storage_type or str(m.l3_storage_type).lower() in {"unknown", "storage"}:
+            m.l3_storage_type = _l3_res.display_name
+
     # Decide how to label host block-device metrics. The nvme_driver_timeseries.csv
     # can be produced by node-exporter /sys/block statistics even when the run did
     # not configure L3 storage. In that case a small amount of host write I/O
@@ -4761,21 +4852,28 @@ def extract_metrics(data: dict) -> Metrics:
     # host block metrics to L3 storage only when the setup explicitly maps a
     # concrete block device or mount/path to L3 storage. Otherwise this section
     # remains Host block I/O, and SGLang L3 storage activity is shown separately
-    # from sglang_backuped/load_back/prefetched/evicted token counters.
+    # from sglang_backuped/prefetched token counters; load_back/evicted are diagnostics.
     _explicit_l3_block_mapping = _explicit_setup_value(
         "L3 Device", "L3 device", "L3 block device", "l3_device",
         "L3 Mount Path", "L3 mount path", "L3 mount",
         "HiCache storage path", "hicache_storage_path",
         "L3 filesystem path", "L3 storage path")
     _l3_type_only = _explicit_setup_value("L3 storage Type", "L3 storage type", "l3_storage_type", "L3 type")
-    m.storage_io_is_l3 = bool(_explicit_l3_block_mapping)
+    # Physical block I/O can be promoted to L3 SSD I/O only when the backend
+    # resolves as local SSD AND setup gives a concrete local device/path/mount.
+    # SGLang logical counters are still valid for remote/Mooncake, but local
+    # node_disk/nvme counters are not expected to match those remote bytes.
+    m.storage_io_is_l3 = bool(m.l3_backend_class == "local_ssd" and (_explicit_l3_block_mapping or m.l3_has_local_block_mapping))
     if m.storage_io_is_l3:
-        _l3_type = _l3_type_only or m.l3_storage_type or "storage"
-        m.storage_io_label = f"L3 storage block I/O ({_l3_type})"
-        m.storage_io_formula_note = "Block-device metrics are interpreted as L3 storage only because setup_details explicitly maps a concrete block device/mount/path to the L3 storage backend."
+        _l3_type = _l3_type_only or m.l3_storage_type or m.l3_backend_display or "storage"
+        m.storage_io_label = f"L3 local SSD block I/O ({_l3_type})"
+        m.storage_io_formula_note = "Block-device metrics are interpreted as physical L3 SSD I/O because the shared backend resolver classified the backing tier as local_ssd and setup_details maps a concrete local device/mount/path."
     else:
         m.storage_io_label = "Host block I/O"
-        m.storage_io_formula_note = "Host OS block-device metrics only; not interpreted as L3 storage activity. L3 storage type alone is metadata; SGLang L3 storage activity is derived from sglang_backuped_tokens_total, sglang_load_back_tokens_total, sglang_prefetched_tokens_total, and sglang_evicted_tokens_total."
+        m.storage_io_formula_note = (
+            f"Host OS block-device metrics only; backend resolver = {m.l3_backend_class} ({m.l3_backend_display}). "
+            "SGLang backuped/prefetched counters are logical backing-tier movement; load_back is diagnostic-only. They are compared with local SSD physical I/O only for resolved local_ssd backends with a concrete block mapping."
+        )
 
     # fall back to finding model name in timeseries column headers
     m.run_duration_s = float(sg.get("server_e2e_ms", 0) / 1000 or
@@ -4808,9 +4906,13 @@ def extract_metrics(data: dict) -> Metrics:
     # sglang_timeseries.csv is loaded, overwrite them with selected-window
     # counter deltas so static/end-report KPIs match Executive/Interactive.
     m.gen_tp_mean = float(sg.get("ai_op_decode_tok_s", 0))
+    m.gen_tp_p50 = safe_float(sg.get("gen_tp_p50", sg.get("gen_tp_active_p50", sg.get("throughput_p50_tok_s", 0))))
     m.cache_hit_pct = float(sg.get("cache_hit_rate_realtime_pct", 0))
     m.cache_hit_calc_method = str(sg.get("cache_hit_calc_method", "unknown"))
     m.cache_hit_token_weighted_pct = float(sg.get("cache_hit_token_weighted_pct", 0))
+    m.cache_hit_prefill_token_weighted_pct = float(sg.get("cache_hit_prefill_token_weighted_pct", 0))
+    m.cache_hit_time_weighted_pct = float(sg.get("cache_hit_time_weighted_pct", sg.get("cache_hit_gauge_overall_pct", 0)))
+    m.cache_hit_request_weighted_pct = float(sg.get("cache_hit_request_weighted_pct", 0))
     m.cache_hit_cached_prompt_pct = float(sg.get("cache_hit_cached_prompt_pct", 0))
     m.cache_hit_effective_prompt_pct = float(sg.get("cache_hit_effective_prompt_pct", 0))
     m.cache_hit_gauge_overall_pct = float(sg.get("cache_hit_gauge_overall_pct", 0))
@@ -4929,6 +5031,7 @@ def extract_metrics(data: dict) -> Metrics:
             _active = _vals[_vals > 0]
             if len(_active):
                 m.gen_tp_mean = round(float(_active.mean()), 3)
+                m.gen_tp_p50 = round(float(_active.quantile(0.50)), 3)
                 m.gen_tp_peak = max(m.gen_tp_peak, round(float(_active.max()), 3))
         if m.cache_hit_pct <= 0:
             _cache_col = _find_metric_col(sg_ts_fallback, "cache_hit_rate")
@@ -5283,6 +5386,8 @@ def extract_metrics(data: dict) -> Metrics:
                 m.gen_tp_mean = _v
                 break
     # If we have an active mean but no peak (or vice-versa), use one for the other
+    if m.gen_tp_p50 == 0 and m.gen_tp_mean > 0:
+        m.gen_tp_p50 = m.gen_tp_mean
     if m.gen_tp_peak == 0 and m.gen_tp_mean > 0:
         m.gen_tp_peak = m.gen_tp_mean
     if not m.sglang_ts.empty:
@@ -6537,8 +6642,13 @@ def extract_metrics(data: dict) -> Metrics:
         # external L3 backend for the current run.  Evicted tokens indicate cache pressure
         # but not storage I/O.  Therefore do not let load_back-only or evicted-only runs
         # populate L3 storage charts/tiles.
+        # backuped/prefetched prove movement to/from the configured HiCache
+        # backing tier.  Whether that tier is local SSD, Mooncake, or unknown is
+        # resolved by the shared backend resolver.  This prevents AMOprof from
+        # blindly calling every backuped_tokens_total delta an SSD write.
         m.kvb_l3_storage_observed = bool(
-            m.kvb_backuped_tokens_total > 0 or m.kvb_prefetched_tokens_total > 0
+            (m.kvb_backuped_tokens_total > 0 or m.kvb_prefetched_tokens_total > 0)
+            and m.l3_backend_class not in ("host_dram_only",)
         )
         if not m.kvb_l3_storage_observed and m.kvb_loadback_tokens_total > 0:
             m.kvb_l3_ambiguous_loadback_tokens = m.kvb_loadback_tokens_total
@@ -6560,36 +6670,51 @@ def extract_metrics(data: dict) -> Metrics:
             m.kvb_offload_bw_gbs = round(m.kvb_l1_offload_rate_blk_s * m.kvb_block_size_mb / 1024, 6)
         m.kvb_onboard_bw_gbs      = round(m.kvb_onboard_tokens_rate * kv_b / 1e9, 6)
 
-        # ── Fallback for L3 byte totals when run-dir blktrace is absent ─────
-        # The static report's L3 paragraph reads m.ssd_rd_bytes_total /
-        # m.ssd_wr_bytes_total — which are zero on Prom-only runs because
-        # they normally come from blktrace. Derive them from SGLang token
-        # counters (the same way the executive does) so the End Report tab
-        # also renders non-zero L3 storage traffic in those cases.
-        #
-        # GATING: Only fall back when the user is in true Prom-only mode —
-        # detected by the absence of blktrace_analysis/summary.json. If a
-        # run-dir IS present with blktrace data, we use blktrace's values
-        # even when they're zero, because a zero from blktrace means a
-        # measurement gap (drop / wrong device / permissions) that the
-        # coverage-warning section will flag. Silently overwriting that with
-        # an SGLang estimate would hide the real instrumentation problem.
-        _blktrace_attempted = False
+        # ── Logical L3 byte fallback / reconciliation from SGLang counters ───
+        # SGLang's backuped/prefetched counters describe reliable logical KV
+        # movement to/from the configured backing tier. load_back_tokens_total
+        # is intentionally NOT counted as local-SSD read bytes because in
+        # SGLang 0.5.x it can represent hierarchy restore/reconstruction from
+        # L2 DRAM or page cache and can exceed the physical cache footprint by
+        # orders of magnitude. Keep it as a diagnostic upper bound only.
+        _sg_est_wr_bytes = int(m.kvb_backuped_tokens_total * kv_b) if m.kvb_backuped_tokens_total > 0 else 0
+        _sg_est_rd_bytes = int(m.kvb_prefetched_tokens_total * kv_b) if m.kvb_l3_storage_observed and m.kvb_prefetched_tokens_total > 0 else 0
+        m.kvb_loadback_upper_bound_gb = (m.kvb_loadback_tokens_total * kv_b) / (1024**3) if m.kvb_loadback_tokens_total > 0 else 0.0
+        m.l3_sglang_write_gb = _sg_est_wr_bytes / (1024**3) if _sg_est_wr_bytes > 0 else 0.0
+        m.l3_sglang_read_gb = _sg_est_rd_bytes / (1024**3) if _sg_est_rd_bytes > 0 else 0.0
+        m.l3_block_write_gb = float(m.ssd_wr_bytes_total or 0) / (1024**3)
+        m.l3_block_read_gb = float(m.ssd_rd_bytes_total or 0) / (1024**3)
         try:
-            _ba = data.get("blktrace_analysis") if isinstance(data, dict) else None
-            _blktrace_attempted = bool(_ba) or m.blktrace_available
+            if reconcile_l3_io is not None:
+                _recon = reconcile_l3_io(
+                    _l3_res if '_l3_res' in locals() and _l3_res is not None else resolve_l3_backend({}, ''),
+                    sglang_write_gb=m.l3_sglang_write_gb, sglang_read_gb=m.l3_sglang_read_gb,
+                    block_write_gb=m.l3_block_write_gb, block_read_gb=m.l3_block_read_gb,
+                    blktrace_available=bool(m.blktrace_available or m.ssd_rd_bytes_total > 0 or m.ssd_wr_bytes_total > 0))
+                m.l3_reconciliation_status = _recon.display_status
+                m.l3_reconciliation_note = _recon.note
         except Exception:
             pass
-        if not _blktrace_attempted and m.kvb_l3_storage_observed:
-            if m.ssd_wr_bytes_total == 0 and m.kvb_backuped_tokens_total > 0:
-                m.ssd_wr_bytes_total = int(m.kvb_backuped_tokens_total * kv_b)
-                m.ssd_wr_source = "sglang_tokens"
-            if m.ssd_rd_bytes_total == 0 and (m.kvb_prefetched_tokens_total + m.kvb_loadback_tokens_total) > 0:
-                # Count load_back as L3 read only when reliable L3 storage evidence exists
-                # in the same run (backup or prefetch). Otherwise it is ambiguous.
-                m.ssd_rd_bytes_total = int((m.kvb_prefetched_tokens_total + m.kvb_loadback_tokens_total) * kv_b)
-                m.ssd_rd_source = "sglang_tokens"
-
+        _logical_l3_est_used = []
+        if m.kvb_l3_storage_observed and m.l3_backend_class == "local_ssd":
+            if m.ssd_wr_bytes_total == 0 and _sg_est_wr_bytes > 0:
+                m.ssd_wr_bytes_total = _sg_est_wr_bytes
+                m.ssd_wr_source = "sglang_tokens_logical_local_ssd"
+                _logical_l3_est_used.append("write/offload")
+            if m.ssd_rd_bytes_total == 0 and _sg_est_rd_bytes > 0:
+                m.ssd_rd_bytes_total = _sg_est_rd_bytes
+                m.ssd_rd_source = "sglang_tokens_logical_local_ssd"
+                _logical_l3_est_used.append("read/onboard")
+            if _logical_l3_est_used:
+                m.storage_io_overlay_note = (
+                    "Resolved backend local_ssd; SGLang logical L3 " + ", ".join(_logical_l3_est_used) +
+                    " estimate shown because physical block-device counters were zero/missing for that direction"
+                )
+        elif m.kvb_l3_storage_observed:
+            m.storage_io_overlay_note = (
+                f"SGLang logical backing-tier movement observed, but backend resolved as {m.l3_backend_class} "
+                f"({m.l3_backend_display}); not merged into local SSD block I/O"
+            )
 
         bcols = _match_cols("backuped_tokens_total")
         pcols = _match_cols("prefetched_tokens_total")
@@ -6624,6 +6749,67 @@ def extract_metrics(data: dict) -> Metrics:
             m.kvb_l3_io_ts = l3_ts.fillna(0)
         else:
             m.kvb_l3_io_ts = pd.DataFrame()
+
+        # Keep End Report Storage I/O consistent with KV$B logical L3 movement.
+        # If SGLang shows backup/prefetch/load_back but physical block samples
+        # are zero/missing for a direction, create or augment nvme_io_ts with a
+        # clearly marked logical estimate. This keeps the Storage I/O chart from
+        # contradicting the KV$B chart while preserving provenance.
+        try:
+            _kvb_ts = getattr(m, "kvb_l3_io_ts", pd.DataFrame())
+            if isinstance(_kvb_ts, pd.DataFrame) and not _kvb_ts.empty and m.kv_bytes_per_token > 0 and m.kvb_l3_storage_observed and m.l3_backend_class == "local_ssd":
+                _base = m.nvme_io_ts.copy() if isinstance(m.nvme_io_ts, pd.DataFrame) and not m.nvme_io_ts.empty else pd.DataFrame()
+                if _base.empty:
+                    _base = pd.DataFrame({"time_sec": _kvb_ts["time_sec"].values})
+                if "time_sec" not in _base.columns:
+                    _base["time_sec"] = np.arange(len(_base), dtype=float)
+                _tgt_t = pd.to_numeric(_base["time_sec"], errors="coerce").fillna(0).values
+                _src_t = pd.to_numeric(_kvb_ts["time_sec"], errors="coerce").fillna(0).values
+                def _interp(col):
+                    if col not in _kvb_ts.columns or len(_src_t) == 0:
+                        return np.zeros(len(_base))
+                    vals = pd.to_numeric(_kvb_ts[col], errors="coerce").fillna(0).values
+                    if len(vals) == 1:
+                        return np.full(len(_base), float(vals[0]))
+                    return np.interp(_tgt_t, _src_t, vals, left=0, right=float(vals[-1]))
+                _logical_wr_mbs = _interp("backup_bw_mbs")
+                _logical_rd_mbs = _interp("prefetch_bw_mbs") + _interp("loadback_bw_mbs")
+                def _series_sum(col):
+                    return float(pd.to_numeric(_base.get(col, pd.Series([0]*len(_base))), errors="coerce").fillna(0).clip(lower=0).sum())
+                _augmented = []
+                if _series_sum("wr_bw_mbs") <= 0 and np.nanmax(_logical_wr_mbs) > 0:
+                    _base["wr_bw_mbs"] = _logical_wr_mbs
+                    _wr_sz_mb = max(float(getattr(m, "ssd_wr_size_mean_kb", 0.0) or 0.0) / 1024.0, 0.004)
+                    _base["wr_iops"] = _logical_wr_mbs / _wr_sz_mb
+                    _augmented.append("write")
+                if _series_sum("rd_bw_mbs") <= 0 and np.nanmax(_logical_rd_mbs) > 0:
+                    _base["rd_bw_mbs"] = _logical_rd_mbs
+                    _rd_sz_mb = max(float(getattr(m, "ssd_rd_size_mean_kb", 0.0) or 0.0) / 1024.0, 0.004)
+                    _base["rd_iops"] = _logical_rd_mbs / _rd_sz_mb
+                    _augmented.append("read")
+                if _augmented:
+                    for _c in ("rd_iops","wr_iops","rd_bw_mbs","wr_bw_mbs","wr_lat_ms","rd_lat_ms","io_util_pct","inflight","disc_ios","disc_sectors"):
+                        if _c not in _base.columns:
+                            _base[_c] = 0.0
+                    m.nvme_io_ts = _base.fillna(0)
+                    if "write" in _augmented:
+                        _wr_active = pd.to_numeric(m.nvme_io_ts["wr_bw_mbs"], errors="coerce").fillna(0)
+                        m.nvme_wr_bw_mbs_mean = max(m.nvme_wr_bw_mbs_mean, float(_wr_active[_wr_active > 0].mean()) if (_wr_active > 0).any() else 0.0)
+                        m.nvme_wr_bw_mbs_max = max(m.nvme_wr_bw_mbs_max, float(_wr_active.max()))
+                        _wr_iops_s = pd.to_numeric(m.nvme_io_ts["wr_iops"], errors="coerce").fillna(0)
+                        m.nvme_wr_iops_mean = max(m.nvme_wr_iops_mean, float(_wr_iops_s[_wr_iops_s > 0].mean()) if (_wr_iops_s > 0).any() else 0.0)
+                        m.nvme_wr_iops_max = max(m.nvme_wr_iops_max, float(_wr_iops_s.max()))
+                    if "read" in _augmented:
+                        _rd_active = pd.to_numeric(m.nvme_io_ts["rd_bw_mbs"], errors="coerce").fillna(0)
+                        m.nvme_rd_bw_mbs_mean = max(m.nvme_rd_bw_mbs_mean, float(_rd_active[_rd_active > 0].mean()) if (_rd_active > 0).any() else 0.0)
+                        m.nvme_rd_bw_mbs_max = max(m.nvme_rd_bw_mbs_max, float(_rd_active.max()))
+                        _rd_iops_s = pd.to_numeric(m.nvme_io_ts["rd_iops"], errors="coerce").fillna(0)
+                        m.nvme_rd_iops_mean = max(m.nvme_rd_iops_mean, float(_rd_iops_s[_rd_iops_s > 0].mean()) if (_rd_iops_s > 0).any() else 0.0)
+                        m.nvme_rd_iops_max = max(m.nvme_rd_iops_max, float(_rd_iops_s.max()))
+                    _note = "Resolved local_ssd backend: SGLang logical L3 " + "/".join(_augmented) + " estimate shown because physical SSD counters were zero/missing for that direction"
+                    m.storage_io_overlay_note = (_note if not m.storage_io_overlay_note else m.storage_io_overlay_note + "; " + _note)
+        except Exception:
+            pass
 
         # Trim from node_exporter via nvme_io_ts
         nv_io = data.get("nvme_driver_timeseries")
@@ -8481,9 +8667,35 @@ def chart_storage(m: Metrics) -> str:
         ax.set_ylabel("IOPS", fontsize=8)
 
     _src_note = "nvme_io_ts" if src_df is getattr(m, "nvme_io_ts", None) else "nvme_ts"
-    ax.set_title(f"{m.storage_io_label} — R/W activity\n"
-                 f"max rd={m.nvme_rd_iops_max:.0f} IOPS, wr={m.nvme_wr_iops_max:.0f} IOPS · source={_src_note}",
+    _overlay_note = getattr(m, "storage_io_overlay_note", "")
+    _title_src = f"max rd={m.nvme_rd_iops_max:.0f} IOPS, wr={m.nvme_wr_iops_max:.0f} IOPS · source={_src_note}"
+    if _overlay_note:
+        _title_src += " + SGLang logical L3 estimate"
+
+    # Do not let generic host block I/O visually contradict KV$B logical L3
+    # movement.  If setup_details does not resolve a concrete local SSD L3
+    # mapping, the read/write bars are plain host/OS block activity, not KV
+    # cache tier traffic.  The title and in-chart note make that explicit.
+    _is_l3_block = bool(getattr(m, "storage_io_is_l3", False))
+    _logical_l3_seen = bool(getattr(m, "kvb_l3_storage_observed", False))
+    if (not _is_l3_block) and _logical_l3_seen:
+        _chart_label = "Host/OS block I/O — NOT KV$B L3 traffic"
+        _title_src += f" · SGLang L3 logical R/W={m.l3_sglang_read_gb:.1f}/{m.l3_sglang_write_gb:.1f} GB shown in KV$B chart"
+    else:
+        _chart_label = m.storage_io_label
+
+    ax.set_title(f"{_chart_label} — R/W activity\n" + _title_src,
                  fontsize=9)
+    if _overlay_note or ((not _is_l3_block) and _logical_l3_seen):
+        _note_lines = []
+        if (not _is_l3_block) and _logical_l3_seen:
+            _note_lines.append("This chart is host block telemetry only; do not compare its read/write direction with KV$B L3 movement unless setup_details maps this device to L3 SSD.")
+            _note_lines.append(f"Authoritative logical L3: read={m.l3_sglang_read_gb:.3f} GB, write={m.l3_sglang_write_gb:.3f} GB from SGLang counters.")
+        if _overlay_note:
+            _note_lines.append(str(_overlay_note))
+        ax.text(0.01, 0.01, "\n".join(_note_lines), transform=ax.transAxes,
+                fontsize=6.3, color=MUTED, ha="left", va="bottom",
+                bbox=dict(boxstyle="round,pad=0.25", facecolor=BG2, edgecolor=BORDER, alpha=0.90))
     ax.set_xlabel(_time_xlabel(m), fontsize=8)
 
     # vmstat page faults
@@ -8511,7 +8723,10 @@ def chart_storage(m: Metrics) -> str:
         for sp in ax.spines.values():
             sp.set_edgecolor(BORDER)
 
-    fig.suptitle("Storage I/O & OS Page Activity", fontsize=11, fontweight="bold", y=1.01, color=TEXT_C)
+    _storage_title = "Storage I/O & OS Page Activity"
+    if bool(getattr(m, "kvb_l3_storage_observed", False)) and not bool(getattr(m, "storage_io_is_l3", False)):
+        _storage_title = "Host/OS Storage I/O & OS Page Activity — not mapped to KV$B L3"
+    fig.suptitle(_storage_title, fontsize=11, fontweight="bold", y=1.01, color=TEXT_C)
     try:
         import warnings as _wtl
         with _wtl.catch_warnings():
@@ -11536,8 +11751,12 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
 
     # KPIs
     kpis = "".join([
-        kv_card("TTFT", fmt(m.ttft_ms, 0), "ms", PREFILL, "Prefill Phase"),
-        kv_card("TPOT", fmt(m.tpot_ms, 1), "ms/tok", DECODE, "Decode Phase"),
+        kv_card("TTFT mean", fmt(m.ttft_ms, 0), "ms", PREFILL, "Prefill Phase"),
+        kv_card("TTFT p50", fmt(m.sess_ttft_p50_ms or m.ttft_ms, 0), "ms", PREFILL, "Median"),
+        kv_card("TPOT mean", fmt(m.tpot_ms, 1), "ms/tok", DECODE, "Decode Phase"),
+        kv_card("TPOT p50", fmt(m.sess_tpot_p50_ms or m.tpot_ms, 1), "ms/tok", DECODE, "Median"),
+        kv_card("Throughput mean", fmt(m.gen_tp_mean or m.gen_tp_peak, 1), "tok/s", OK_C, "active mean"),
+        kv_card("Throughput p50", fmt(m.gen_tp_p50 or m.gen_tp_mean or m.gen_tp_peak, 1), "tok/s", OK_C, "active median"),
         kv_card("Peak Throughput", fmt(m.gen_tp_peak or m.gen_tp_mean, 1), "tok/s", OK_C),
         kv_card("Cache Hit", fmt(m.cache_hit_pct, 1), "%", OK_C,
                 "benchmark" if getattr(m, "cache_hit_calc_method", "") == "benchmark_summary_cache_hit_rate" else "realtime"),
@@ -12203,7 +12422,10 @@ document.addEventListener('DOMContentLoaded', function(){{
     <tbody>
       <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Primary cache hit</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{m.cache_hit_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Benchmark-comparable active average of <code>sglang_cache_hit_rate</code> samples where value &gt; 0. Active windows: {m.cache_hit_gauge_active_samples} / {m.cache_hit_gauge_total_samples}.</td></tr>
       <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Effective prompt counter diagnostic</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{m.cache_hit_effective_prompt_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">(Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{{mode="prefill_cache"}}) / (Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{{mode="prefill_cache"}} + Δsglang_realtime_tokens_total{{mode="prefill_compute"}}).</td></tr>
-      <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Prefill-only token weighted</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{m.cache_hit_token_weighted_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Δsglang_realtime_tokens_total{{mode="prefill_cache"}} / (Δsglang_realtime_tokens_total{{mode="prefill_cache"}} + Δsglang_realtime_tokens_total{{mode="prefill_compute"}}). Diagnostic only; it excludes prompt-cache hits already counted by sglang_cached_tokens_total.</td></tr>
+      <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Token weighted</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{m.cache_hit_token_weighted_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">sum(rate(sglang_cached_tokens_total[window])) / sum(rate(sglang_prompt_tokens_total[window])) × 100, implemented as selected-window counter delta over the report start/end timestamps.</td></tr>
+      <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Time weighted</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{getattr(m, 'cache_hit_time_weighted_pct', 0.0):.2f}%</td><td style="padding:8px 12px;color:#64748b">avg_over_time(sglang_cache_hit_rate[window]) × 100 over the selected report window. Diagnostic only because the gauge can be overwritten frequently.</td></tr>
+      <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Request weighted</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{getattr(m, 'cache_hit_request_weighted_pct', 0.0):.2f}%</td><td style="padding:8px 12px;color:#64748b">sum(rate(sglang_request_cache_hit_total[window])) / sum(rate(sglang_request_total[window])) × 100 where those counters are exported.</td></tr>
+      <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Prefill-only token weighted</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{getattr(m, 'cache_hit_prefill_token_weighted_pct', 0.0):.2f}%</td><td style="padding:8px 12px;color:#64748b">Δsglang_realtime_tokens_total{{mode="prefill_cache"}} / (Δsglang_realtime_tokens_total{{mode="prefill_cache"}} + Δsglang_realtime_tokens_total{{mode="prefill_compute"}}). Diagnostic only; it excludes prompt-cache hits already counted by sglang_cached_tokens_total.</td></tr>
 
       <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Gauge active average</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#0891b2">{m.cache_hit_gauge_active_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Mean of non-zero <code>sglang_cache_hit_rate</code> samples. Active windows: {m.cache_hit_gauge_active_samples} / {m.cache_hit_gauge_total_samples}.</td></tr>
       <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Gauge timeline average</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#f97316">{m.cache_hit_gauge_overall_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Mean across all collected gauge samples, including idle/dead-space intervals.</td></tr>
@@ -12278,7 +12500,9 @@ Fallback when token histogram buckets are absent = per-request counter delta / r
     </div>
   </div>
   <details class="fml" style="margin-top:12px"><summary>&#128208; Formula &amp; Metrics Used</summary><div class="fml-body"><div class="fml-src">&#128202; sglang_summary.json derived from SGLang Prometheus counters</div><code>Mean TTFT ms = Δsglang_time_to_first_token_seconds_sum / Δsglang_time_to_first_token_seconds_count × 1000
+P50 TTFT ms = histogram_quantile(0.50, rate(sglang_time_to_first_token_seconds_bucket[window])) × 1000
 Mean TPOT/ITL ms = Δsglang_inter_token_latency_seconds_sum / Δsglang_inter_token_latency_seconds_count × 1000
+P50 TPOT/ITL ms = histogram_quantile(0.50, rate(sglang_inter_token_latency_seconds_bucket[window])) × 1000
 Mean E2E ms = Δsglang_e2e_request_latency_seconds_sum / Δsglang_e2e_request_latency_seconds_count × 1000
 Prefill cached tokens = Δsglang_realtime_tokens_total{{mode="prefill_cache"}}
 Prefill compute tokens = Δsglang_realtime_tokens_total{{mode="prefill_compute"}}
@@ -12524,7 +12748,8 @@ Cache diagnostics = sglang_cache_hit_rate and sglang_realtime_tokens_total{{mode
 <div class="card">
   <h2>💿 Storage I/O & OS Page Activity</h2>
   <div style="font-size:11px;color:#334155;line-height:1.6;margin-bottom:10px">
-    {m.storage_io_formula_note}
+    {m.storage_io_formula_note}<br><strong>L3 reconciliation:</strong> {m.l3_reconciliation_status} — {m.l3_reconciliation_note}<br>
+    <strong>Consistency guard:</strong> The chart below is used as KV$B/L3 physical evidence only when <code>storage_io_is_l3=true</code>. Otherwise it is host/OS block activity and must not override the SGLang logical L3 movement chart.
   </div>
   {img(charts.get("storage",""), "Storage")}
   <details class="fml" style="margin-top:12px">
@@ -12533,6 +12758,9 @@ Cache diagnostics = sglang_cache_hit_rate and sglang_realtime_tokens_total{{mode
       <div class="fml-src">&#128202; node-exporter / nvme_driver_timeseries.csv block-device stats + vmstat_timeseries.csv</div>
       <code>Storage chart label : {m.storage_io_label}
 Interpretation       : {m.storage_io_formula_note}
+L3 reconciliation    : {m.l3_reconciliation_status} — {m.l3_reconciliation_note}
+SGLang logical L3    : write={m.l3_sglang_write_gb:.3f} GB, read={m.l3_sglang_read_gb:.3f} GB
+Physical block L3    : write={m.l3_block_write_gb:.3f} GB, read={m.l3_block_read_gb:.3f} GB
 
 Read IOPS            : rd_iops  = rate(read_ios_total)
 Write IOPS           : wr_iops  = rate(write_ios_total)
@@ -12796,7 +13024,7 @@ Bytes read     : \u0394(data_units_read)    x 512 x 1000</code>
       offload_Bps = rate(sglang_backuped_tokens_total[W]) × kv_bytes_per_token
       write_bw    = rate(node_disk_written_bytes_total[W])
 §G91  corr(onboard_Bps, read_bw)
-      onboard_Bps = rate(sglang_prefetched_tokens_total[W]) × kv_bytes_per_token
+      onboard_Bps = rate(sglang_prefetched_tokens_total[W]) × kv_bytes_per_token  # load_back is diagnostic-only
 §G93  max_tokens_from_ssd = ssd_read_bw / kv_bytes_per_token
       bottleneck = "GPU" if gpu_tok_rate < ssd_tok_rate else "SSD"
       gpu_tok_rate = sglang_gen_throughput  (or DCGM-derived)</code>
@@ -12918,7 +13146,7 @@ Device bandwidth from node_disk_read/written_bytes_total (node_exporter) or iost
 
 §90/91 Correlation (offload vs SSD write, onboard vs SSD read):
   corr(sglang_backuped_tokens × kv_bytes, node_disk_written_bytes) 
-  corr(sglang_prefetched_tokens × kv_bytes, node_disk_read_bytes)
+  corr(sglang_prefetched_tokens × kv_bytes, node_disk_read_bytes)  # do not use load_back_tokens as SSD bytes
 
 Seasonal period: FFT on R(t) = binned read bytes/sec timeseries
   dominant_freq = argmax(|FFT(R(t))|[1:])
@@ -13714,8 +13942,12 @@ def generate_excel(m: Metrics, bottlenecks: list[dict], recs: list[dict],
     # KPI section
     r = write_section_header(ws, "  KEY PERFORMANCE INDICATORS", r)
     kpis = [
-        ("Time to First Token (TTFT)", f"{m.ttft_ms:.0f} ms", "Prefill Phase", COL_PREFIL),
-        ("Time per Output Token (TPOT)", f"{m.tpot_ms:.1f} ms/tok", "Decode Phase", COL_DECODE),
+        ("Time to First Token (TTFT mean)", f"{m.ttft_ms:.0f} ms", "Prefill Phase", COL_PREFIL),
+        ("Time to First Token (TTFT p50)", f"{(m.sess_ttft_p50_ms or m.ttft_ms):.0f} ms", "Prefill Phase", COL_PREFIL),
+        ("Time per Output Token (TPOT mean)", f"{m.tpot_ms:.1f} ms/tok", "Decode Phase", COL_DECODE),
+        ("Time per Output Token (TPOT p50)", f"{(m.sess_tpot_p50_ms or m.tpot_ms):.1f} ms/tok", "Decode Phase", COL_DECODE),
+        ("Generation Throughput (mean)", f"{(m.gen_tp_mean or m.gen_tp_peak):.1f} tok/s", "Decode", COL_GPU),
+        ("Generation Throughput (p50)", f"{(m.gen_tp_p50 or m.gen_tp_mean or m.gen_tp_peak):.1f} tok/s", "Decode", COL_GPU),
         ("Peak Gen Throughput", f"{m.gen_tp_peak:.1f} tok/s", "Decode", COL_GPU),
         ("E2E Request Latency", f"{m.e2e_ms/1000:.1f} s", "Full Request", COL_ACCENT),
         ("Effective Cache Hit Rate", f"{m.cache_hit_pct:.1f}%", "KV Cache", "1E8449"),

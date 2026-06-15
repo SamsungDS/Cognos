@@ -42,6 +42,40 @@ from .nsys_collector import NsysGpuTraceCollector
 log = logging.getLogger("amoprof")
 
 
+def _detect_cpu_vendor() -> str:
+    """Return 'amd', 'intel', or 'unknown' from /proc/cpuinfo."""
+    try:
+        txt = Path("/proc/cpuinfo").read_text(errors="ignore").lower()
+        if "authenticamd" in txt or "amd" in txt:
+            return "amd"
+        if "genuineintel" in txt or "intel" in txt:
+            return "intel"
+    except Exception:
+        pass
+    return "unknown"
+
+
+def _resolve_dram_tool(args: argparse.Namespace) -> str:
+    """Resolve --enable-dram backend: auto -> AMDuProf on AMD, Intel PCM on Intel."""
+    tool = (getattr(args, "dram_tool", "auto") or "auto").lower().replace("_", "-")
+    if tool in {"none", "off", "disabled"}:
+        return "none"
+    if tool in {"amduprof", "amd", "amduprof-pcm"}:
+        return "amduprof"
+    if tool in {"intel", "intel-pcm", "pcm", "pcm-memory"}:
+        return "intel-pcm"
+    if tool in {"perf", "perf-imc", "imc", "imc-pmu"}:
+        return "perf-imc"
+    vendor = _detect_cpu_vendor()
+    if vendor == "amd":
+        return "amduprof"
+    if vendor == "intel":
+        return "intel-pcm"
+    # Unknown x86/virtualized systems: try Intel PCM/perf first because it has
+    # a built-in IMC fallback and fails harmlessly when unsupported.
+    return "intel-pcm"
+
+
 def _copy_bench_summary(args, raw_dir: Path) -> None:
     """Copy --bench-summary source file into raw/bench_summary.<ext> so the
     interactive report's auto-discovery picks it up. Idempotent — safe to
@@ -373,18 +407,24 @@ def _preflight_diagnostic(args: argparse.Namespace) -> None:
         log.warning("--enable-biosnoop passed but biosnoop binary not found "
                     "in PATH. Install: apt install bpfcc-tools")
 
-    # AMDuProf PCM — DRAM bandwidth (CPU PMU counters)
-    if not getattr(args, "enable_amduprof_pcm", False):
+    # CPU DRAM bandwidth (AMD uProf PCM or Intel PCM/perf IMC)
+    if not getattr(args, "enable_dram", False) and not getattr(args, "enable_amduprof_pcm", False):
         missing.append((
-            "AMDuProf PCM",
-            "--enable-amduprof-pcm",
-            ["§F DRAM Bandwidth (read/write GB/s from AMD EPYC PMU)"],
-            "Install AMDuProf and pass --amduprof-pcm-bin /path/AMDuProfPcm",
+            "CPU DRAM PMU",
+            "--enable-dram",
+            ["§F DRAM Bandwidth (read/write GB/s from CPU memory-controller PMU)"],
+            "AMD: install AMDuProf. Intel: install Intel PCM (pcm-memory) or use --dram-tool perf-imc",
         ))
-    elif not Path(getattr(args, "amduprof_pcm_bin", "")).exists():
-        log.warning("--enable-amduprof-pcm passed but binary not found at %s. "
-                    "Pass --amduprof-pcm-bin /opt/AMDuProf_X/bin/AMDuProfPcm",
-                    args.amduprof_pcm_bin)
+    else:
+        _tool = _resolve_dram_tool(args)
+        if _tool == "amduprof" and not Path(getattr(args, "amduprof_pcm_bin", "")).exists():
+            log.warning("--enable-dram resolved to AMDuProf but binary not found at %s. "
+                        "Pass --amduprof-pcm-bin /opt/AMDuProf_X/bin/AMDuProfPcm",
+                        args.amduprof_pcm_bin)
+        if _tool == "intel-pcm" and not _sh.which(getattr(args, "intel_pcm_memory_bin", "pcm-memory"))                 and not Path(getattr(args, "intel_pcm_memory_bin", "")).exists():
+            log.warning("--enable-dram resolved to Intel PCM but pcm-memory not found (%s). "
+                        "Install Intel PCM or pass --dram-tool perf-imc.",
+                        getattr(args, "intel_pcm_memory_bin", "pcm-memory"))
 
     if not missing:
         log.info("Pre-flight: all optional collectors enabled ✓")
@@ -414,7 +454,10 @@ def _audit_raw_dir(raw_dir: Path) -> dict[str, list[str]]:
                          "biosnoop (per-PID I/O attribution)",
                          "§I per-stream bandwidth"),
         "amduprof_pcm": (["amduprof_pcm_raw.csv", "amduprof_pcm_raw.txt"],
-                         "AMDuProf PCM (DRAM bandwidth)",
+                         "AMD uProf PCM (DRAM bandwidth)",
+                         "§F DRAM Bandwidth chart"),
+        "pcm":          (["pcm_timeseries.csv"],
+                         "Intel PCM / perf IMC (DRAM bandwidth)",
                          "§F DRAM Bandwidth chart"),
         "sglang":       (["sglang_timeseries.csv"],
                          "SGLang inference scrape",
@@ -654,7 +697,7 @@ def _blkparse_to_csv(bin_dir: Path, out_csv: Path,
     line_re = re.compile(
         r"^\s*(?P<major>\d+),(?P<minor>\d+)\s+(?P<cpu>\d+)\s+\d+\s+"
         r"(?P<ts>[\d.]+)\s+(?P<pid>\d+)\s+"
-        r"(?P<action>[A-Z])\s+(?P<rwbs>[A-Z\.]+)\s+"
+        r"(?P<action>[A-Z])\s+(?P<rwbs>[A-Z\.]*)\s*"
         r"(?P<sector>\d+)\s+\+\s+(?P<nsec>\d+)"
         r"(?:\s+\[(?P<comm>[^\]]+)\])?"
     )
@@ -670,6 +713,7 @@ def _blkparse_to_csv(bin_dir: Path, out_csv: Path,
                         "comm", "dev", "cpu"])
             if proc.stdout is None:
                 return None
+            pending_op: dict[tuple[str, str, str], str] = {}
             for raw in proc.stdout:
                 lines_read += 1
                 m = line_re.match(raw)
@@ -685,7 +729,13 @@ def _blkparse_to_csv(bin_dir: Path, out_csv: Path,
                 rwbs = d["rwbs"]
                 op = "D" if "D" in rwbs else "W" if "W" in rwbs else "R" if "R" in rwbs else "?"
                 nsec = int(d["nsec"])
-                w.writerow([d["ts"], d["pid"], d["action"], rwbs, op,
+                req_key = (d.get("pid") or "0", d.get("sector") or "0", str(nsec))
+                action = d.get("action") or ""
+                if action != "C" and op in ("R", "W", "D"):
+                    pending_op[req_key] = op
+                elif action == "C" and op not in ("R", "W", "D"):
+                    op = pending_op.pop(req_key, "?")
+                w.writerow([d["ts"], d["pid"], action, rwbs, op,
                             d["sector"], nsec, nsec * 512,
                             d.get("comm") or "",
                             f"{d['major']},{d['minor']}", d["cpu"]])
@@ -1071,10 +1121,22 @@ def _collect(args: argparse.Namespace) -> int:
 
     # Honor --enable-all: turn on every optional collector at once.
     if getattr(args, "enable_all", False):
-        for flag in ("enable_blktrace", "enable_biosnoop", "enable_amduprof_pcm"):
+        for flag in ("enable_blktrace", "enable_biosnoop", "enable_dram"):
             if not getattr(args, flag, False):
                 setattr(args, flag, True)
                 log.info("--enable-all → %s = True", flag)
+
+    # Backward compatibility: legacy --enable-amduprof-pcm also enables the
+    # generic DRAM collector and selects AMD uProf explicitly.
+    if getattr(args, "enable_amduprof_pcm", False):
+        args.enable_dram = True
+        if getattr(args, "dram_tool", "auto") == "auto":
+            args.dram_tool = "amduprof"
+
+    if getattr(args, "enable_dram", False):
+        _dram_tool = _resolve_dram_tool(args)
+        log.info("--enable-dram resolved backend: %s (CPU vendor: %s)",
+                 _dram_tool, _detect_cpu_vendor())
 
     # ── Pre-flight diagnostic ───────────────────────────────────────────────
     # Tell the user exactly which optional sources will be missing BEFORE
@@ -1174,7 +1236,9 @@ def _collect(args: argparse.Namespace) -> int:
         "gpu": GpuMonitor(args.interval_s),
         "dram": DramMonitor(args.interval_s),
         "power": PowerMonitor(args.interval_s, use_sudo=not getattr(args, "no_sudo", False)),
-        "pcm": PcmMemoryCollector(args.interval_s),
+        # DRAM bandwidth PMU collection is opt-in via --enable-dram.
+        # On AMD this uses AMDuProfPcm; on Intel this uses Intel PCM pcm-memory
+        # or perf uncore_imc fallback.
         # New: TRIM/discard time-series from /proc/diskstats — always cheap, always on
         "discard": DiscardStatsMonitor(args.ssd_device, args.interval_s, work_dir=raw_dir),
         # New: per-sample swap rates for swap-storm chart — always cheap, always on
@@ -1189,6 +1253,8 @@ def _collect(args: argparse.Namespace) -> int:
             blktrace_bin=getattr(args, "blktrace_bin", "blktrace"),
             blkparse_bin=getattr(args, "blkparse_bin", "blkparse"),
             use_sudo=not getattr(args, "no_sudo", False),
+            buffer_kb=getattr(args, "blktrace_buffer_kb", 16384),
+            num_buffers=getattr(args, "blktrace_num_buffers", 4),
         )
     # New: biosnoop per-IO events with PID attribution (opt-in, requires BCC)
     if getattr(args, "enable_biosnoop", False):
@@ -1199,15 +1265,26 @@ def _collect(args: argparse.Namespace) -> int:
             binary=getattr(args, "biosnoop_bin", "biosnoop-bpfcc"),
             use_sudo=not getattr(args, "no_sudo", False),
         )
-    if args.enable_amduprof_pcm:
-        collectors["amduprof_pcm"] = AMDuProfPcmMemoryCollector(
-            duration_s=args.amduprof_duration_s or _effective_duration,
-            interval_s=args.interval_s,
-            binary=args.amduprof_pcm_bin,
-            output_csv=str(raw_dir / "amduprof_pcm_raw.csv"),
-            extra_args=args.amduprof_extra_arg or [],
-            use_sudo=not getattr(args, "no_sudo", False),
-        )
+    if getattr(args, "enable_dram", False):
+        _dram_tool = _resolve_dram_tool(args)
+        if _dram_tool == "amduprof":
+            collectors["amduprof_pcm"] = AMDuProfPcmMemoryCollector(
+                duration_s=args.amduprof_duration_s or _effective_duration,
+                interval_s=args.interval_s,
+                binary=args.amduprof_pcm_bin,
+                output_csv=str(raw_dir / "amduprof_pcm_raw.csv"),
+                extra_args=args.amduprof_extra_arg or [],
+                use_sudo=not getattr(args, "no_sudo", False),
+            )
+        elif _dram_tool in {"intel-pcm", "perf-imc"}:
+            collectors["pcm"] = PcmMemoryCollector(
+                args.interval_s,
+                binary=(None if _dram_tool == "perf-imc" else getattr(args, "intel_pcm_memory_bin", None)),
+                force_perf_imc=(_dram_tool == "perf-imc"),
+                use_sudo=not getattr(args, "no_sudo", False),
+            )
+        elif _dram_tool != "none":
+            log.warning("Unsupported --dram-tool %r; DRAM PMU collector disabled", _dram_tool)
     if args.enable_nsys:
         if _sglang_is_remote:
             log.warning(
@@ -1603,8 +1680,15 @@ def _build_parser() -> argparse.ArgumentParser:
                         "attach to a remote process and are skipped when host is non-local.")
     c.add_argument("--debug-sglang", action="store_true",
                    help="Log SGLang scrape/parser diagnostics and write raw/sglang_debug.log")
+    c.add_argument("--enable-dram", action="store_true",
+                   help="Collect CPU-side DRAM bandwidth. Auto-selects AMD uProf PCM on AMD CPUs and Intel PCM pcm-memory on Intel CPUs; use --dram-tool to override.")
+    c.add_argument("--dram-tool", choices=["auto", "amduprof", "intel-pcm", "perf-imc", "none"],
+                   default=os.environ.get("AMOPROF_DRAM_TOOL", "auto"),
+                   help="DRAM bandwidth backend for --enable-dram. auto=AMD uProf on AMD, Intel PCM on Intel. perf-imc forces Linux perf uncore_imc fallback.")
+    c.add_argument("--intel-pcm-memory-bin", default=os.environ.get("AMOPROF_INTEL_PCM_MEMORY_BIN", "pcm-memory"),
+                   help="Path/name of Intel PCM pcm-memory binary for --enable-dram --dram-tool intel-pcm")
     c.add_argument("--enable-amduprof-pcm", action="store_true",
-                   help="Collect AMD uProf PCM memory read/write metrics for the interval; AMDuProfPcm is run with -r and sudo -n when amoprof is not root")
+                   help="Legacy alias for --enable-dram --dram-tool amduprof. Collect AMD uProf PCM memory read/write metrics for the interval.")
     c.add_argument("--amduprof-pcm-bin", default=os.environ.get("AMOPROF_AMDUPROF_PCM_BIN", "/opt/AMDuProf_5.2-606/bin/AMDuProfPcm"),
                    help="Path to AMDuProfPcm binary")
     c.add_argument("--amduprof-duration-s", type=float, default=None,
@@ -1621,6 +1705,10 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Path to blktrace binary")
     c.add_argument("--blkparse-bin", default=os.environ.get("AMOPROF_BLKPARSE_BIN", "blkparse"),
                    help="Path to blkparse binary")
+    c.add_argument("--blktrace-buffer-kb", type=int, default=int(os.environ.get("AMOPROF_BLKTRACE_BUFFER_KB", "16384")),
+                   help="blktrace -b sub-buffer size in KiB. Default 16384 to reduce dropped events under high I/O.")
+    c.add_argument("--blktrace-num-buffers", type=int, default=int(os.environ.get("AMOPROF_BLKTRACE_NUM_BUFFERS", "4")),
+                   help="blktrace -n number of sub-buffers. Default 4.")
     c.add_argument("--enable-biosnoop", action="store_true",
                    help="Capture per-IO events with PID/comm attribution via BCC biosnoop. "
                         "Required for §I per-stream bandwidth analysis (PID → stream mapping). "
@@ -1634,8 +1722,8 @@ def _build_parser() -> argparse.ArgumentParser:
                         "runs as root or you intentionally want direct execution.")
     c.add_argument("--enable-all", action="store_true",
                    help="Convenience: turn on every optional collector at once — "
-                        "blktrace, biosnoop, amduprof_pcm. Equivalent to "
-                        "--enable-blktrace --enable-biosnoop --enable-amduprof-pcm. "
+                        "blktrace, biosnoop, dram. Equivalent to "
+                        "--enable-blktrace --enable-biosnoop --enable-dram. "
                         "Does NOT enable --enable-nsys (which requires explicit PID "
                         "attach). Tools that aren't installed are skipped with a "
                         "warning at collection start.")

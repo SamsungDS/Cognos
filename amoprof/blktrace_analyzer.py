@@ -71,19 +71,13 @@ def _read_events(csv_path: Path) -> list[dict]:
                            (int(row.get("nsectors", 0)) * 512))
                 if size <= 0:
                     continue
-                # Derive op from the 'op' column, then from 'rwbs', then from
-                # 'action' if the first two are absent (some blkparse formats
-                # omit RWBS on C events — fall back to the preceding D/Q op via
-                # the file's own op column which was set at queue time).
-                op_raw = (row.get("op") or row.get("rwbs") or "?")
-                op = op_raw[:1].upper() if op_raw else "?"
+                # Derive direction from normalized op/rwbs.  Do not infer
+                # read from a completion with missing direction: that silently
+                # turns write-heavy HiCache offload into a read-heavy SSD chart.
+                # Unknown completions are skipped below.
+                op = _normalise_block_op(row)
                 if op not in ("R", "W", "D"):
-                    # Unknown op on a completion event with non-zero size.
-                    # Writes/discards always carry W/D in RWBS on Linux ≥4.18;
-                    # so an unclassified non-zero completion is almost certainly
-                    # a read (e.g. kernel omits RWBS on some C events).
-                    action_val = row.get("action", "C")
-                    op = "R" if action_val.upper() == "C" else "?"
+                    continue
                 rows.append({
                     "ts":     ts,
                     "pid":    int(row.get("pid", 0) or 0),
@@ -172,6 +166,39 @@ SIZE_BINS = [
 OP_NAME = {"R": "read", "W": "write", "D": "trim"}
 
 
+def _normalise_block_op(row: dict) -> str:
+    """Return R/W/D for one blkparse CSV row, or '?' if unknown.
+
+    AMOprof's blkparse CSV contains both a normalized ``op`` column and the
+    original blkparse ``rwbs`` flags.  Completion rows are the only rows that
+    represent device bytes.  Prefer the normalized op, but derive from rwbs as
+    a fallback.  Importantly, do **not** use the blkparse action letter ``D``
+    (dispatch) as a discard/trim signal; discard must come from rwbs/op.
+    """
+    op_raw = (row.get("op") or "").strip().upper()
+    if op_raw[:1] in ("R", "W", "D"):
+        return op_raw[:1]
+    rwbs = (row.get("rwbs") or row.get("type") or "").strip().upper()
+    if "D" in rwbs:
+        return "D"
+    if "W" in rwbs:
+        return "W"
+    if "R" in rwbs:
+        return "R"
+    return "?"
+
+
+def _is_completion_row(row: dict) -> bool:
+    """True when a blkparse CSV row represents completed device I/O.
+
+    Bytes must be counted only once per I/O. blkparse emits multiple lifecycle
+    actions (Q/G/I/D/C). Counting all of them inflates and distorts SSD/L3
+    distributions, especially in the streaming analyzer used for large traces.
+    """
+    action = (row.get("action") or "C").strip().upper()
+    return action == "C"
+
+
 def _merge_collector_diagnostics_into_summary(summary: dict, bt_sum_path: Path) -> None:
     """Pull collector-side /sys/block deltas + dropped-event info into the
     analyzer summary, and emit a coverage_warning string when blktrace's
@@ -200,25 +227,40 @@ def _merge_collector_diagnostics_into_summary(summary: dict, bt_sum_path: Path) 
         return
 
     kernel_wr_gb   = float(bts.get("sys_block_wr_gb_delta") or 0)
+    kernel_rd_gb   = float(bts.get("sys_block_rd_gb_delta") or 0)
     captured_wr_gb = summary.get("write_bytes_total", 0) / 1e9
-    if kernel_wr_gb > 0 and captured_wr_gb > 0:
-        ratio = captured_wr_gb / kernel_wr_gb
+    captured_rd_gb = summary.get("read_bytes_total", 0) / 1e9
+    if kernel_wr_gb > 0:
+        ratio = captured_wr_gb / kernel_wr_gb if kernel_wr_gb > 0 else 0.0
         summary["kernel_wr_gb_delta"]       = round(kernel_wr_gb, 2)
         summary["captured_vs_kernel_ratio"] = round(ratio, 3)
         summary["blktrace_device"]          = bts.get("blktrace_device", "")
         if ratio < 0.5:
             summary["coverage_warning"] = (
-                f"⚠ blktrace captured only {captured_wr_gb:.1f} GB of writes "
+                f"⚠ blktrace captured only {captured_wr_gb:.3f} GB of writes "
                 f"but the kernel's /sys/block/<dev>/stat write counter "
-                f"advanced by {kernel_wr_gb:.1f} GB during the trace window "
-                f"({ratio*100:.0f}% capture). "
+                f"advanced by {kernel_wr_gb:.3f} GB during the trace window "
+                f"({ratio*100:.1f}% capture). "
                 f"Likely causes: (1) blktrace ring buffer overran (check "
                 f"blktrace_summary.json :: blktrace_dropped_events and "
                 f"blktrace_per_cpu_dropped — raise blktrace -b to 16384+); "
                 f"(2) wrong device traced (collected {bts.get('blktrace_device','?')} "
                 f"but writes hit a different namespace); "
-                f"(3) cache striped across multiple NVMes (trace each)."
+                f"(3) cache striped across multiple NVMes (trace each); "
+                f"(4) writes are buffered/delayed outside the selected SGLang window."
             )
+    if kernel_rd_gb > 0:
+        rratio = captured_rd_gb / kernel_rd_gb if kernel_rd_gb > 0 else 0.0
+        summary["kernel_rd_gb_delta"] = round(kernel_rd_gb, 2)
+        summary["captured_vs_kernel_read_ratio"] = round(rratio, 3)
+        if rratio < 0.5:
+            prev = summary.get("coverage_warning", "")
+            msg = (
+                f"⚠ blktrace captured only {captured_rd_gb:.3f} GB of reads while "
+                f"kernel read counter advanced by {kernel_rd_gb:.3f} GB ({rratio*100:.1f}% capture). "
+                f"Check traced device, dropped events, and multi-device/RAID/cache mapping."
+            )
+            summary["coverage_warning"] = (prev + " " + msg).strip()
 
     # Propagate the collector's own dropped-events warning if present
     if bts.get("blktrace_coverage_warning"):
@@ -467,6 +509,54 @@ def _compute_queue_depth_timeseries(bin_dir: Path, output_dir: Path,
 
 
 
+
+def _scale_sampled_analysis_outputs(output_dir: Path, ratio: int) -> None:
+    """Scale aggregate CSVs produced from a 1-in-N completion sample.
+
+    The sampled binary path is used only when raw blkparse CSVs are too large
+    or absent.  Summary totals were already scaled in older builds, but the
+    LBA/hot-region/temporal visual CSVs remained sampled, which made reports
+    internally inconsistent.  This keeps every aggregate visualization on the
+    same estimated full-population basis while leaving per-event sample files
+    (request_size_distribution.csv) untouched.
+    """
+    if ratio <= 1:
+        return
+    import csv as _csv
+
+    def _scale_csv(name: str, numeric_cols: set[str]) -> None:
+        path = output_dir / name
+        if not path.exists():
+            return
+        try:
+            with path.open(newline="", encoding="utf-8") as f:
+                rows = list(_csv.DictReader(f))
+                fields = rows[0].keys() if rows else []
+            if not rows:
+                return
+            for row in rows:
+                for col in numeric_cols:
+                    if col in row and str(row[col]).strip() not in ("", "nan", "None"):
+                        try:
+                            val = float(row[col]) * ratio
+                            row[col] = str(int(round(val))) if abs(val - round(val)) < 1e-9 else f"{val:.6g}"
+                        except Exception:
+                            pass
+            with path.open("w", newline="", encoding="utf-8") as f:
+                w = _csv.DictWriter(f, fieldnames=list(fields))
+                w.writeheader(); w.writerows(rows)
+        except Exception as e:
+            log.warning("could not scale sampled blktrace aggregate %s by %s: %s", name, ratio, e)
+
+    _scale_csv("hot_regions_overall.csv", {"bytes", "count"})
+    _scale_csv("lba_distribution_full.csv", {"bytes", "count"})
+    _scale_csv("hot_regions_by_time_window.csv", {"bytes"})
+    _scale_csv("temporal_read_write_trim_pattern.csv", {"read", "write", "trim", "read_count", "write_count", "trim_count"})
+    _scale_csv("bandwidth_per_stream.csv", {"count", "bytes", "bandwidth_mib_s"})
+    _scale_csv("bandwidth_per_stream_summary.csv", {"bandwidth_mib_s_mean", "bandwidth_mib_s_max"})
+    _scale_csv("interarrival_distribution.csv", {"count"})
+    _scale_csv("burst_temporal_windows.csv", {"events", "threshold"})
+
 def analyze_from_binaries(bin_dir: Path, output_dir: Path,
                            blkparse_bin: str = "blkparse",
                            max_events: int = 10_000_000) -> dict:
@@ -561,22 +651,13 @@ def analyze_from_binaries(bin_dir: Path, output_dir: Path,
             w = csv.writer(fp)
             w.writerow(["ts", "pid", "action", "rwbs", "op",
                          "sector", "nsectors", "size_bytes", "comm", "dev", "cpu"])
+            pending_op: dict[tuple[str, str, str], str] = {}
             for raw in proc.stdout:
                 m = _LINE_RE.match(raw)
                 if not m:
                     continue
-                if m.group("action") != "C":
-                    continue          # completions only
-                seq += 1
-                if (seq % keep_ratio) != 0:
-                    continue          # skip non-sampled events
                 d = m.groupdict()
                 rwbs = d.get("rwbs") or ""
-                # Classify op from RWBS.
-                # For completion events (action='C'): writes always have 'W' in
-                # RWBS (e.g. 'WS', 'WM'); discards always have 'D'; reads have
-                # 'R' or 'RA', or RWBS may be empty/missing on some kernels.
-                # A non-zero-length completion with no W/D flag → READ.
                 nsec = int(d["nsec"])
                 if "D" in rwbs:
                     op = "D"
@@ -584,13 +665,22 @@ def analyze_from_binaries(bin_dir: Path, output_dir: Path,
                     op = "W"
                 elif "R" in rwbs:
                     op = "R"
-                elif nsec > 0:
-                    # No explicit type flag but non-zero I/O → assume READ
-                    # (writes/discards always carry their flag in Linux ≥4.18)
-                    op = "R"
                 else:
                     op = "?"
-                w.writerow([d["ts"], d["pid"], d["action"], rwbs, op,
+                req_key = (d.get("pid") or "0", d.get("sector") or "0", str(nsec))
+                action = d.get("action") or ""
+                if action != "C":
+                    if op in ("R", "W", "D"):
+                        pending_op[req_key] = op
+                    continue          # completions only
+                if op not in ("R", "W", "D"):
+                    op = pending_op.pop(req_key, "?")
+                if op not in ("R", "W", "D"):
+                    continue
+                seq += 1
+                if (seq % keep_ratio) != 0:
+                    continue          # skip non-sampled events
+                w.writerow([d["ts"], d["pid"], action, rwbs, op,
                              d["sector"], nsec, nsec * 512,
                              d.get("comm") or "",
                              f"{d['major']},{d['minor']}",
@@ -627,6 +717,8 @@ def analyze_from_binaries(bin_dir: Path, output_dir: Path,
 
     # ── Run the standard analyzer on the sampled CSV ───────────────────────
     result = analyze(tmp_csv, output_dir)
+    if keep_ratio > 1:
+        _scale_sampled_analysis_outputs(output_dir, keep_ratio)
 
     # ── Run the queue-depth pass (separate from analyze() because it needs
     # both 'Q' and 'C' events, not just completions). Best-effort: if blkparse
@@ -1081,11 +1173,18 @@ def analyze(events_csv: Path, output_dir: Path) -> dict:  # type: ignore[overrid
             r = csv.DictReader(f)
             for row in r:
                 try:
+                    # Count only completed I/O.  blkparse emits Q/G/I/D/C
+                    # lifecycle events for the same request; only C contributes
+                    # one physical device I/O.  This keeps the interactive SSD
+                    # I/O distribution aligned with the blktrace summary and
+                    # with SGLang logical L3 read/write direction.
+                    if not _is_completion_row(row):
+                        continue
                     ts_abs = float(row.get("ts") or row.get("time_sec") or row.get("timestamp") or 0)
                     size = int(row.get("size_bytes") or (int(row.get("nsectors", 0) or 0) * 512))
                     if size <= 0:
                         continue
-                    op = (row.get("op") or row.get("rwbs") or row.get("type") or "?")[:1].upper()
+                    op = _normalise_block_op(row)
                     if op not in ("R", "W", "D"):
                         continue
                     pid = int(float(row.get("pid", 0) or 0))
@@ -1169,9 +1268,11 @@ def analyze(events_csv: Path, output_dir: Path) -> dict:  # type: ignore[overrid
         r = csv.DictReader(f)
         for row in r:
             try:
+                if not _is_completion_row(row):
+                    continue
                 ts = float(row.get("ts") or row.get("time_sec") or row.get("timestamp") or 0) - t0
                 size = int(row.get("size_bytes") or (int(row.get("nsectors", 0) or 0) * 512))
-                op = (row.get("op") or row.get("rwbs") or row.get("type") or "?")[:1].upper()
+                op = _normalise_block_op(row)
                 if size <= 0 or op not in ("R", "W", "D"):
                     continue
             except Exception:
@@ -1196,6 +1297,7 @@ def analyze(events_csv: Path, output_dir: Path) -> dict:  # type: ignore[overrid
         "write_bw_mb_s_mean": round(bytes_by_op["W"] / 1e6 / duration, 2),
         "trim_present": counts["D"] > 0,
         "streaming_analyzer": True,
+        "completion_events_only": True,
         "request_size_sampled_events": sample_written,
     }
     # Cross-check captured bytes vs kernel /sys/block delta + merge stats.

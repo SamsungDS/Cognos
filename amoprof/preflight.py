@@ -524,6 +524,60 @@ def check_amduprof_pcm(binary: str, use_sudo: bool = True) -> CheckResult:
         detail=f"3-sec capture produced parseable DRAM-BW CSV ({size} bytes)")
 
 
+
+def check_intel_pcm(binary: str = "pcm-memory", use_sudo: bool = True,
+                    force_perf_imc: bool = False) -> CheckResult:
+    """Intel DRAM bandwidth smoke test.
+
+    Prefer Intel PCM pcm-memory when requested; perf uncore_imc is a fallback
+    path. This mirrors --enable-dram --dram-tool intel-pcm/perf-imc.
+    """
+    if not force_perf_imc:
+        # pcm-memory often needs root for MSR/PCI config access; --help is enough
+        # to verify the binary path without requiring counters to be readable.
+        path = shutil.which(binary) or (binary if Path(binary).exists() else "")
+        if not path:
+            return CheckResult(
+                "Intel PCM pcm-memory (--enable-dram)", "warn",
+                detail=f"{binary!r} not found; AMOprof will try perf uncore_imc fallback if available",
+                fix="Install Intel PCM from https://github.com/intel/pcm or pass --dram-tool perf-imc",
+                impact=["§F DRAM Bandwidth chart on Intel"],
+            )
+        rc, out, err = _run([path, "--help"], timeout=4.0, use_sudo=False)
+        if rc in (0, 1):
+            return CheckResult(
+                "Intel PCM pcm-memory (--enable-dram)", "pass",
+                detail=f"found {path}; runtime collection will use pcm-memory CSV output",
+            )
+        return CheckResult(
+            "Intel PCM pcm-memory (--enable-dram)", "warn",
+            detail=f"{path} exists but --help returned rc={rc}: {(err or out).strip()[:120]}",
+            fix="Try running pcm-memory manually as root; or use --dram-tool perf-imc",
+            impact=["§F DRAM Bandwidth chart on Intel"],
+        )
+
+    # perf fallback check.
+    if not shutil.which("perf"):
+        return CheckResult(
+            "perf uncore_imc (--enable-dram --dram-tool perf-imc)", "warn",
+            detail="perf not in PATH",
+            fix="Install linux-tools/perf for this kernel, or install Intel PCM",
+            impact=["§F DRAM Bandwidth chart on Intel"],
+        )
+    rc, out, err = _run(["perf", "list", "uncore_imc"], timeout=5.0, use_sudo=False)
+    txt = (out + err).lower()
+    if "cas_count" not in txt:
+        return CheckResult(
+            "perf uncore_imc (--enable-dram --dram-tool perf-imc)", "warn",
+            detail="perf is present but uncore_imc CAS counters were not listed",
+            fix="Use Intel PCM pcm-memory, run on bare metal, or load/enable uncore PMU support",
+            impact=["§F DRAM Bandwidth chart on Intel"],
+        )
+    return CheckResult(
+        "perf uncore_imc (--enable-dram --dram-tool perf-imc)", "pass",
+        detail="perf lists uncore_imc CAS read/write counters",
+    )
+
 # ─── Orchestrator ───────────────────────────────────────────────────────────
 def run_sanity_checks(args, sglang_host: str, sglang_port: int) -> list[CheckResult]:
     """Run every applicable check. Returns a list of CheckResult.
@@ -561,11 +615,36 @@ def run_sanity_checks(args, sglang_host: str, sglang_port: int) -> list[CheckRes
         ))
 
     if getattr(args, "enable_amduprof_pcm", False):
-        results.append(check_amduprof_pcm(
-            binary=getattr(args, "amduprof_pcm_bin",
-                            "/opt/AMDuProf_5.2-606/bin/AMDuProfPcm"),
-            use_sudo=use_sudo,
-        ))
+        setattr(args, "enable_dram", True)
+        if getattr(args, "dram_tool", "auto") == "auto":
+            setattr(args, "dram_tool", "amduprof")
+
+    if getattr(args, "enable_dram", False):
+        tool = (getattr(args, "dram_tool", "auto") or "auto").lower().replace("_", "-")
+        if tool == "auto":
+            try:
+                cpuinfo = Path("/proc/cpuinfo").read_text(errors="ignore").lower()
+            except Exception:
+                cpuinfo = ""
+            tool = "amduprof" if "authenticamd" in cpuinfo else "intel-pcm" if "genuineintel" in cpuinfo else "intel-pcm"
+        if tool in {"amduprof", "amd", "amduprof-pcm"}:
+            results.append(check_amduprof_pcm(
+                binary=getattr(args, "amduprof_pcm_bin",
+                                "/opt/AMDuProf_5.2-606/bin/AMDuProfPcm"),
+                use_sudo=use_sudo,
+            ))
+        elif tool in {"intel-pcm", "intel", "pcm", "pcm-memory"}:
+            results.append(check_intel_pcm(
+                binary=getattr(args, "intel_pcm_memory_bin", "pcm-memory"),
+                use_sudo=use_sudo,
+                force_perf_imc=False,
+            ))
+        elif tool in {"perf-imc", "perf", "imc", "imc-pmu"}:
+            results.append(check_intel_pcm(
+                binary=getattr(args, "intel_pcm_memory_bin", "pcm-memory"),
+                use_sudo=use_sudo,
+                force_perf_imc=True,
+            ))
 
     return results
 

@@ -2244,8 +2244,12 @@ class PcmMemoryCollector:
     pcm_source                  str    — "pcm-memory" | "imc_pmu" | "unavailable"
     """
 
-    def __init__(self, interval_s: float = 1.0):
+    def __init__(self, interval_s: float = 1.0, binary: str | None = None,
+                 force_perf_imc: bool = False, use_sudo: bool = True):
         self.interval  = interval_s
+        self.binary    = binary
+        self.force_perf_imc = force_perf_imc
+        self.use_sudo  = use_sudo
         self._samples: list[dict] = []
         self._proc      = None
         self._thread    = None
@@ -2255,8 +2259,17 @@ class PcmMemoryCollector:
     # ── PCM binary path ───────────────────────────────────────────────────────
 
     def _pcm_path(self) -> "str | None":
-        for p in ["pcm-memory", "/usr/local/bin/pcm-memory",
-                  "/opt/intel/pcm/bin/pcm-memory"]:
+        candidates = []
+        if self.binary:
+            candidates.append(self.binary)
+        candidates += ["pcm-memory", "pcm-memory.x", "/usr/local/bin/pcm-memory",
+                       "/usr/local/sbin/pcm-memory", "/opt/intel/pcm/bin/pcm-memory",
+                       "/opt/intel/pcm/pcm-memory"]
+        seen = set()
+        for p in candidates:
+            if not p or p in seen:
+                continue
+            seen.add(p)
             try:
                 subprocess.run([p, "--help"], capture_output=True, timeout=3)
                 return p
@@ -2279,9 +2292,9 @@ class PcmMemoryCollector:
     def start(self):
         self._stop.clear()
         self._samples.clear()
-        pcm = self._pcm_path()
+        pcm = None if self.force_perf_imc else self._pcm_path()
         if pcm:
-            self._source = "pcm-memory"
+            self._source = "intel-pcm/pcm-memory"
             self._start_pcm(pcm)
         elif self._imc_perf_available():
             self._source = "imc_pmu"
@@ -2295,8 +2308,8 @@ class PcmMemoryCollector:
         """Launch pcm-memory -csv and parse its CSV output."""
         cmd = [pcm_bin, str(self.interval), "-csv"]
         try:
-            self._proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE,
+            self._proc = _sudo_popen(
+                cmd, use_sudo=self.use_sudo, stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL, text=True)
             self._thread = threading.Thread(
                 target=self._read_pcm, daemon=True)
@@ -2316,9 +2329,12 @@ class PcmMemoryCollector:
             if not line:
                 continue
             if header is None:
-                header = [h.strip().lower() for h in line.split(";")]
+                delim = ";" if ";" in line else ","
+                self._pcm_delim = delim
+                header = [h.strip().lower() for h in line.split(delim)]
                 continue
-            parts = line.split(";")
+            delim = getattr(self, "_pcm_delim", ";")
+            parts = line.split(delim)
             if len(parts) != len(header):
                 continue
             row = dict(zip(header, parts))
@@ -2327,7 +2343,14 @@ class PcmMemoryCollector:
                                  if "read" in k and v.strip())
                 write_gb_s = sum(float(v) for k, v in row.items()
                                  if "write" in k and v.strip())
-                self._samples.append({"read": read_gb_s, "write": write_gb_s})
+                total_gb_s = read_gb_s + write_gb_s
+                self._samples.append({
+                    "read": read_gb_s, "write": write_gb_s,
+                    "dram_read_gb_s": read_gb_s,
+                    "dram_write_gb_s": write_gb_s,
+                    "dram_total_gb_s": total_gb_s,
+                    "dram_source": self._source,
+                })
             except Exception:
                 pass
 
@@ -2344,8 +2367,8 @@ class PcmMemoryCollector:
             "sleep", "86400",
         ]
         try:
-            proc = subprocess.Popen(
-                cmd, stdout=subprocess.DEVNULL,
+            proc = _sudo_popen(
+                cmd, use_sudo=self.use_sudo, stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE, text=True)
             t_last = time.time()
             for line in proc.stderr:
@@ -2362,12 +2385,18 @@ class PcmMemoryCollector:
                     dt    = self.interval
                     bw    = count * 64 / 1e9 / max(dt, 0.001)
                     if "read" in event:
-                        self._samples.append({"read": bw, "write": 0})
+                        self._samples.append({"read": bw, "write": 0,
+                                              "dram_read_gb_s": bw, "dram_write_gb_s": 0,
+                                              "dram_total_gb_s": bw, "dram_source": self._source})
                     elif "write" in event:
                         if self._samples:
                             self._samples[-1]["write"] = bw
+                            self._samples[-1]["dram_write_gb_s"] = bw
+                            self._samples[-1]["dram_total_gb_s"] = self._samples[-1].get("dram_read_gb_s", 0) + bw
                         else:
-                            self._samples.append({"read": 0, "write": bw})
+                            self._samples.append({"read": 0, "write": bw,
+                                                  "dram_read_gb_s": 0, "dram_write_gb_s": bw,
+                                                  "dram_total_gb_s": bw, "dram_source": self._source})
                 except Exception:
                     pass
         except Exception:
@@ -2397,11 +2426,17 @@ class PcmMemoryCollector:
         return {
             "pcm_available":            True,
             "pcm_source":               self._source,
+            "dram_collector":           self._source,
             "pcm_dram_read_gb_s":       mn(reads),
             "pcm_dram_write_gb_s":      mn(writes),
             "pcm_dram_total_gb_s":      mn(totals),
+            "dram_read_gb_s_mean":      mn(reads),
+            "dram_write_gb_s_mean":     mn(writes),
+            "dram_total_gb_s_mean":     mn(totals),
             "pcm_dram_read_gb_s_peak":  pk(reads),
             "pcm_dram_write_gb_s_peak": pk(writes),
+            "dram_read_gb_s_peak":      pk(reads),
+            "dram_write_gb_s_peak":     pk(writes),
             "pcm_samples":              len(self._samples),
         }
 

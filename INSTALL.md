@@ -166,3 +166,98 @@ AMOprof looks for the agent in this order:
 
 Same pattern for `mini-extra` / `mini_extra` in the `mini-swe-agent/` submodule.
 
+
+
+## AMD / Intel DRAM bandwidth dependencies
+
+For `amoprof collect --enable-dram`, use the included OS-aware installer:
+
+```bash
+sudo ./scripts/install_dram_deps.sh --dram-tool auto
+```
+
+It detects `/etc/os-release`, the package manager (`apt`, `dnf`, `yum`, `zypper`, or `pacman`), and the CPU vendor from `/proc/cpuinfo`.
+
+Typical paths:
+
+```bash
+# AMD host
+sudo ./scripts/install_dram_deps.sh --dram-tool amduprof \
+  --amduprof-installer ./AMDuProf_Linux_x64.deb
+
+# Intel host
+sudo ./scripts/install_dram_deps.sh --dram-tool intel-pcm
+
+# Intel host with no distro PCM package
+sudo ./scripts/install_dram_deps.sh --dram-tool intel-pcm --build-intel-pcm
+
+# Install/check both backends
+sudo ./scripts/install_dram_deps.sh --dram-tool all
+```
+
+The generic package installer can also call it:
+
+```bash
+sudo ./install.sh --with-dram-deps --dram-tool auto
+```
+
+Notes:
+- Intel PCM is installed from the native `pcm` package where the distro provides it.
+- AMD uProf is not silently downloaded because AMD distributes it separately; pass `--amduprof-installer` or `--amduprof-url` to install it.
+- `perf-imc` fallback installs/checks `perf`, `msr-tools`, and kernel counter prerequisites.
+
+### v1.39.11 L3 read-byte semantics
+
+AMOprof no longer counts `sglang_load_back_tokens_total` as local SSD/L3 read bytes. The Executive and report L3 read estimate uses `sglang_prefetched_tokens_total × KV_bytes_per_token`; write uses `sglang_backuped_tokens_total × KV_bytes_per_token`. `load_back_tokens_total` is displayed as a hierarchy-restore diagnostic/upper bound only because it can include L2 DRAM/page-cache/HBM reload paths and can greatly exceed physical SSD footprint or blktrace bytes.
+
+blktrace collection now defaults to larger buffers (`-b 16384 -n 4`) and exposes `--blktrace-buffer-kb` / `--blktrace-num-buffers` for high-I/O runs.
+
+
+### SGLang L3 logical read/write formulas
+
+AMOprof treats SGLang HiCache counters as logical KV movement. The production formulas are:
+
+```text
+L3 logical write/offload bytes =
+  Δsglang_backuped_tokens_total × KV_bytes_per_token
+
+L3 logical read/onboard bytes =
+  Δsglang_prefetched_tokens_total × KV_bytes_per_token
+```
+
+Diagnostic-only counters:
+
+```text
+Load-back diagnostic upper bound =
+  Δsglang_load_back_tokens_total × KV_bytes_per_token
+
+Eviction pressure diagnostic =
+  Δsglang_evicted_tokens_total × KV_bytes_per_token
+```
+
+`sglang_load_back_tokens_total` is intentionally not counted as local-SSD read bytes because it can represent hierarchy restore/reload pressure and may include L2 DRAM, page cache, HBM reload, or repeated logical reconstruction. Physical SSD bytes come only from blktrace/iostat on the resolved L3 block device.
+
+
+### v1.39.11 chart legend and host block activity fallback
+
+Interactive and Executive Plotly charts now normalize legends before render so labels remain readable in iframe/card layouts. Legends are placed below the x-axis with reserved bottom margin, fixed entry widths, and extra height for charts with many traces.
+
+The Host/OS block I/O latency/utilization chart no longer renders an empty canvas when read/write activity exists but latency/busy counters are missing. If `rd_lat_ms`, `wr_lat_ms`, and `io_util_pct` are unavailable or all zero while `rd_bw_mbs`, `wr_bw_mbs`, `rd_iops`, or `wr_iops` have activity, AMOprof renders an activity fallback chart showing available BW/IOPS and explicitly labels latency/utilization as unavailable. Read/write activity alone does not imply latency/utilization counters were collected; those require `rd_ms/wr_ms/io_ms`, iostat `await/%util`, or blktrace latency derivation.
+
+
+### v1.39.11 — P50 summary tiles
+
+Summary tiles in Executive, Interactive, and End Report now show p50/median next to existing mean latency and throughput KPIs:
+
+```text
+TTFT mean = Δsglang_time_to_first_token_seconds_sum / Δsglang_time_to_first_token_seconds_count × 1000
+TTFT p50  = histogram_quantile(0.50, rate(sglang_time_to_first_token_seconds_bucket[window])) × 1000
+
+TPOT/ITL mean = Δsglang_inter_token_latency_seconds_sum / Δsglang_inter_token_latency_seconds_count × 1000
+TPOT/ITL p50  = histogram_quantile(0.50, rate(sglang_inter_token_latency_seconds_bucket[window])) × 1000
+
+Throughput mean = active_mean(sglang_gen_throughput)
+Throughput p50  = median(nonzero_samples(sglang_gen_throughput))
+```
+
+Mean remains useful for overall run cost/capacity planning. P50 gives the typical request/token path for executive and engineering readers.

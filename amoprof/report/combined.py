@@ -25,6 +25,11 @@ try:
 except Exception:
     _AMOPROF_VERSION = "unknown"
 
+try:
+    from amoprof.report.l3_backend import resolve_l3_backend, reconcile_l3_io
+except Exception:  # direct-script fallback
+    from l3_backend import resolve_l3_backend, reconcile_l3_io  # type: ignore
+
 
 # ─── Utilities ──────────────────────────────────────────────────────────────
 
@@ -257,6 +262,33 @@ def _ts_active_mean(ts: Dict[str, Any], *partials: str) -> float:
     return 0.0
 
 
+def _ts_active_p50(ts: Dict[str, Any], *partials: str) -> float:
+    """P50/median of nonzero samples for a matched timeseries column."""
+    try:
+        col = _ts_col(ts, *partials)
+        for k in ("nonzero_p50", "p50", "median"):
+            if col.get(k, 0):
+                return float(col.get(k, 0) or 0)
+        name = _ts_column_name(ts, *partials)
+        rows = (ts or {}).get("rows") or []
+        vals = []
+        if name and rows:
+            for r in rows:
+                try:
+                    v = float(r.get(name, 0) or 0)
+                    if v == v and v > 0:
+                        vals.append(v)
+                except Exception:
+                    pass
+        if vals:
+            vals.sort()
+            n = len(vals); mid = n // 2
+            return float(vals[mid] if n % 2 else (vals[mid - 1] + vals[mid]) / 2.0)
+    except Exception:
+        pass
+    return 0.0
+
+
 
 
 def _ts_gauge_stats(ts: Dict[str, Any], *partials: str) -> Dict[str, float]:
@@ -320,6 +352,25 @@ def _ts_delta(ts: Dict[str, Any], *partials: str) -> float:
     except Exception:
         return 0.0
 
+
+
+def _pct_from_ratio(num: float, den: float) -> float:
+    try:
+        if den and den > 0:
+            v = float(num) / float(den) * 100.0
+            return max(0.0, min(100.0, v))
+    except Exception:
+        pass
+    return 0.0
+
+def _normalise_pct(v: float) -> float:
+    try:
+        x = float(v)
+        if x <= 0:
+            return 0.0
+        return x * 100.0 if x <= 1.0 else min(x, 100.0)
+    except Exception:
+        return 0.0
 
 def _ts_ratio_delta_ms(ts: Dict[str, Any], sum_partial: str, count_partial: str) -> float:
     """Mean latency in ms from Prometheus histogram/summary counter deltas."""
@@ -594,6 +645,14 @@ def _per_layer_takeaways_html(*,
                 f'    }}'
                 f'    try {{'
                 f'      var fig = {chart_fig};'
+                f'      fig.layout = fig.layout || {{}};'
+                f'      fig.layout.autosize = true;'
+                f'      var n = (fig.data || []).filter(function(t){{return !t || t.showlegend !== false;}}).length;'
+                f'      var rows = n > 14 ? 4 : (n > 8 ? 3 : (n > 4 ? 2 : 1));'
+                f'      fig.layout.margin = Object.assign({{l:64,r:56,t:60,b:100 + rows*42}}, fig.layout.margin || {{}});'
+                f'      fig.layout.margin.b = Math.max(fig.layout.margin.b || 0, 100 + rows*42);'
+                f'      fig.layout.height = Math.max(fig.layout.height || 280, 300 + rows*36);'
+                f'      fig.layout.legend = Object.assign({{orientation:"h", yanchor:"top", y:-0.22, xanchor:"left", x:0, font:{{size:10,color:"#0f172a"}}, bgcolor:"rgba(248,250,252,0.96)", bordercolor:"#cbd5e1", borderwidth:1, itemsizing:"constant", itemwidth:30, entrywidth:(n>10?120:145), entrywidthmode:"pixels", tracegroupgap:6}}, fig.layout.legend || {{}});'
                 f'      Plotly.newPlot("{slot_id}", fig.data, fig.layout,'
                 f'        {{responsive:true, displayModeBar:false}});'
                 f'    }} catch(e) {{'
@@ -682,7 +741,7 @@ def _per_layer_takeaways_html(*,
         + (
             "No vmstat pressure, no swap-in/out activity. The L2 host-DRAM tier "
             "has substantial headroom. " +
-            ("DRAM bandwidth wasn't captured (AMDuProf PCM not enabled) but the "
+            ("DRAM bandwidth wasn't captured (--enable-dram not enabled) but the "
              "absence of swap pressure makes this tier a non-bottleneck. "
              if dram_bw == 0 else "") +
             "Expand HiCache L2 allocation to offload more KV from L3 storage."
@@ -695,7 +754,7 @@ def _per_layer_takeaways_html(*,
 
     l3_data_note = (
         f"(derived from SGLang × {kv_bytes_tok_kb:.0f} KB/tok)"
-        if l3_source == "sglang_tokens"
+        if l3_source == "sglang_logical_local_ssd"
         else "(blktrace / iostat)"
     )
     if read_gb > 0 or write_gb > 0:
@@ -802,7 +861,7 @@ def _per_layer_takeaways_html(*,
         'Per-layer summary derived from this run\'s available metrics. '
         'Full interactive charts available in the Interactive tab.'
         + (' L3 byte numbers estimated from SGLang token counters '
-           '(blktrace not captured).' if l3_source == "sglang_tokens" else '')
+           '(blktrace not captured).' if l3_source == "sglang_logical_local_ssd" else '')
         + '</p>'
     )
 
@@ -1121,11 +1180,11 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         "L3 Mount Path", "L3 mount path", "l3_mount_path",
         "L3 storage mount path", "l3_storage_mount_path"
     ], "")).strip()
-    _l3_type_l = str(l3_storage_type).strip().lower()
-    l3_storage_is_local_block = bool(l3_device or l3_mount_path or (
-        ("nvme" in _l3_type_l or "ssd" in _l3_type_l or "block" in _l3_type_l or "disk" in _l3_type_l)
-        and "mooncake" not in _l3_type_l
-    ))
+    _l3_backend = resolve_l3_backend(setup, _pick(setup, ["Launch command","launch_command","Command"], ""))
+    l3_backend_class = _l3_backend.backend_class
+    l3_backend_display = _l3_backend.display_name
+    l3_storage_is_local_block = bool(_l3_backend.backend_class == "local_ssd")
+    l3_storage_has_block_mapping = bool(_l3_backend.has_local_block_mapping or l3_device or l3_mount_path)
     ctx_len   = _pick(setup, ["Context length","context_length","max_model_len","ctx_len","max_seq_len","context"], "?")
     page_sz   = _pick(setup, ["Page size","page_size","sglang_page_size","page","kv_page_size"], "1")
     mem_frac  = _pick(setup, ["Mem fraction static","mem_fraction_static","mem_fraction","memory_fraction"], "?")
@@ -1248,6 +1307,19 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     tpot_from_pct_ms = _pct_ts_latency_ms(pct_ts, "itl", "p50")
     e2e_from_pct_ms  = _pct_ts_latency_ms(pct_ts, "e2e", "p50")
 
+    # Separate p50 summary values. Mean remains useful for overall capacity
+    # planning; p50 gives the typical request/token path.
+    ttft_p50_ms = ttft_from_pct_ms or _safe_float(_pick(sglang, [
+        "server_ttft_p50_ms", "ttft_p50_ms", "median_ttft_ms", "p50_ttft_ms"
+    ], 0.0))
+    tpot_p50_ms = tpot_from_pct_ms or _safe_float(_pick(sglang, [
+        "server_itl_p50_ms", "server_tpot_p50_ms", "itl_p50_ms", "tpot_p50_ms",
+        "median_itl_ms", "median_tpot_ms", "p50_itl_ms", "p50_tpot_ms"
+    ], 0.0))
+    e2e_p50_ms = e2e_from_pct_ms or _safe_float(_pick(sglang, [
+        "server_e2e_p50_ms", "e2e_p50_ms", "median_latency_ms", "p50_e2e_ms"
+    ], 0.0))
+
     ttft_ms   = ttft_from_ts_ms or ttft_from_pct_ms or _safe_float(_pick(sglang, ["server_ttft_ms","ttft_ms","avg_ttft_ms",
                                             "mean_ttft_ms","time_to_first_token_ms",
                                             "server_ttft_p50_ms"], 0.0))
@@ -1283,16 +1355,36 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         tpot_ms = _static_tpot
         sglang["server_itl_ms_method"] = "end_report_metrics_object_decode_phase_tpot"
 
-    cache_hit = _safe_float(_pick(sglang, ["cache_hit_pct","cache_hit_rate_pct",
-                                            "cache_hit_active_avg_pct",
-                                            "cache_hit_rate_realtime_pct","cache_hit"], 0.0))
-    cache_hit_tw = _safe_float(_pick(sglang, ["cache_hit_token_weighted_pct",
-                                               "token_weighted_cache_hit_pct"], 0.0))
+    # Cache hit is now a selected-window counter-derived metric.  The raw
+    # sglang_cache_hit_rate gauge is useful only as a time-weighted diagnostic
+    # because SGLang updates/overwrites it frequently.
+    _tok_num = _safe_float(_pick(sglang, ["cache_hit_token_weighted_numerator_tokens"], 0.0), 0.0) or _ts_delta(sglang_ts, "cached_tokens_total")
+    _tok_den = _safe_float(_pick(sglang, ["cache_hit_token_weighted_denominator_tokens"], 0.0), 0.0) or _ts_delta(sglang_ts, "prompt_tokens_total")
+    cache_hit_token_weighted = _safe_float(_pick(sglang, ["cache_hit_token_weighted_pct", "cache_hit_cached_prompt_pct"], 0.0), 0.0) or _pct_from_ratio(_tok_num, _tok_den)
 
-    # Prometheus-only mode: use the Prometheus-derived primary cache-hit KPI.
-    # In v1.56 this is benchmark-comparable active average of sglang_cache_hit_rate
-    # when available; token/counter ratios are diagnostics.
-    cache_hit_note_prefix = str(_pick(sglang, ["cache_hit_calc_method"], "prometheus"))
+    _req_num = _safe_float(_pick(sglang, ["cache_hit_request_weighted_numerator_requests"], 0.0), 0.0) or (_ts_delta(sglang_ts, "request_cache_hit_total") or _ts_delta(sglang_ts, "cache_hit_request_total") or _ts_delta(sglang_ts, "request_cache_hits_total") or _ts_delta(sglang_ts, "cache_hit_requests_total"))
+    _req_den = _safe_float(_pick(sglang, ["cache_hit_request_weighted_denominator_requests"], 0.0), 0.0) or (_ts_delta(sglang_ts, "request_total") or _ts_delta(sglang_ts, "requests_total"))
+    cache_hit_request_weighted = _safe_float(_pick(sglang, ["cache_hit_request_weighted_pct"], 0.0), 0.0) or _pct_from_ratio(_req_num, _req_den)
+
+    _gauge_col = _ts_col(sglang_ts, "cache_hit_rate")
+    _gauge_mean = _normalise_pct(_safe_float(_gauge_col.get("mean", 0.0), 0.0)) if _gauge_col else 0.0
+    cache_hit_time_weighted = _safe_float(_pick(sglang, ["cache_hit_time_weighted_pct", "cache_hit_gauge_overall_pct"], 0.0), 0.0) or _gauge_mean
+    cache_hit_prefill_token_weighted = _safe_float(_pick(sglang, ["cache_hit_prefill_token_weighted_pct"], 0.0), 0.0)
+    cache_hit_gauge_active = _safe_float(_pick(sglang, ["cache_hit_gauge_active_pct", "cache_hit_active_avg_pct", "cache_hit_rate_realtime_pct"], 0.0), 0.0)
+
+    if cache_hit_token_weighted > 0:
+        cache_hit = cache_hit_token_weighted
+        cache_hit_note_prefix = "selected_window_token_weighted_cached_tokens_over_prompt_tokens"
+    elif cache_hit_request_weighted > 0:
+        cache_hit = cache_hit_request_weighted
+        cache_hit_note_prefix = "selected_window_request_weighted_request_cache_hit_over_request_total"
+    elif cache_hit_time_weighted > 0:
+        cache_hit = cache_hit_time_weighted
+        cache_hit_note_prefix = "selected_window_time_weighted_avg_over_time_sglang_cache_hit_rate"
+    else:
+        cache_hit = _safe_float(_pick(sglang, ["cache_hit_pct","cache_hit_rate_pct", "cache_hit_rate_realtime_pct","cache_hit"], 0.0))
+        cache_hit_note_prefix = str(_pick(sglang, ["cache_hit_calc_method"], "fallback"))
+    cache_hit_tw = cache_hit_token_weighted
     throughput = _safe_float(_pick(sglang, ["gen_tp_peak","ai_op_decode_tok_s",
                                              "gen_tp_active_mean","gen_tp_mean",
                                              "throughput_tok_s","peak_throughput_tok_s"], 0.0))
@@ -1321,6 +1413,12 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         if _decode_toks > 0 and _elapsed_s > 0:
             throughput = round(_decode_toks / _elapsed_s, 2)
             tp_active = throughput
+
+    tp_p50 = (_ts_active_p50(sglang_ts, "sglang_gen_throughput", "gen_throughput")
+              or _safe_float(_pick(sglang, ["gen_tp_p50", "gen_tp_active_p50",
+                                            "generation_throughput_p50", "throughput_p50_tok_s"], 0.0)))
+    if tp_p50 <= 0 and tp_active > 0:
+        tp_p50 = tp_active
 
     # Final TPOT/ITL fallback for Executive tab: if ITL counters were absent or
     # zero but output-token throughput is available, avoid showing an impossible
@@ -1746,6 +1844,14 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 f'    }}'
                 f'    try {{'
                 f'      var fig = {chart_fig};'
+                f'      fig.layout = fig.layout || {{}};'
+                f'      fig.layout.autosize = true;'
+                f'      var n = (fig.data || []).filter(function(t){{return !t || t.showlegend !== false;}}).length;'
+                f'      var rows = n > 14 ? 4 : (n > 8 ? 3 : (n > 4 ? 2 : 1));'
+                f'      fig.layout.margin = Object.assign({{l:64,r:56,t:60,b:100 + rows*42}}, fig.layout.margin || {{}});'
+                f'      fig.layout.margin.b = Math.max(fig.layout.margin.b || 0, 100 + rows*42);'
+                f'      fig.layout.height = Math.max(fig.layout.height || 280, 300 + rows*36);'
+                f'      fig.layout.legend = Object.assign({{orientation:"h", yanchor:"top", y:-0.22, xanchor:"left", x:0, font:{{size:10,color:"#0f172a"}}, bgcolor:"rgba(248,250,252,0.96)", bordercolor:"#cbd5e1", borderwidth:1, itemsizing:"constant", itemwidth:30, entrywidth:(n>10?120:145), entrywidthmode:"pixels", tracegroupgap:6}}, fig.layout.legend || {{}});'
                 f'      Plotly.newPlot("{slot_id}", fig.data, fig.layout,'
                 f'        {{responsive:true, displayModeBar:false}});'
                 f'    }} catch(e) {{'
@@ -1989,50 +2095,126 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # Convert to GB: tokens × KB/token / (1024 KB/MB × 1024 MB/GB) = GB.
     # Reliable SGLang L3/local Storage evidence:
     #   backuped_tokens   -> data moved down into the L3 storage tier (write/offload)
-    #   prefetched_tokens -> data proactively brought back from the L3 storage tier
-    # load_back_tokens by itself is ambiguous in SGLang 0.5.x; it can appear for
-    # cache reload paths even when the external/local Storage tier was not used in
-    # the current run. evicted_tokens means cache pressure, not storage I/O.
-    # Therefore require backup or prefetch evidence before deriving L3 storage bytes.
-    l3_reliable_sglang_tokens = backuped_tokens + prefetched_tokens
+    #   prefetched_tokens -> explicit prefetch/onboard from the L3/backing tier
+    # load_back_tokens by itself is ambiguous in SGLang 0.5.x; it can represent
+    # restoration from the HiCache hierarchy (often L2 DRAM/page cache) and may be
+    # counted repeatedly per token. It is NOT safe to multiply load_back_tokens by
+    # KV_bytes_per_token and call that local-SSD read traffic. evicted_tokens means
+    # cache pressure, not storage I/O. Therefore the selected-window L3 read
+    # estimate uses prefetched_tokens only; load_back is shown as a diagnostic.
+    l3_reliable_sglang_logical_local_ssd = backuped_tokens + prefetched_tokens
     l3_ambiguous_tokens = loadback_tokens + evicted_tokens
     l3_est_write_gb = backuped_tokens * kv_bytes_tok_kb / (1024 * 1024)
-    l3_est_read_gb  = (loadback_tokens + prefetched_tokens) * kv_bytes_tok_kb / (1024 * 1024) if l3_reliable_sglang_tokens > 0 else 0.0
-    l3_sglang_activity_tokens = l3_reliable_sglang_tokens
+    l3_est_read_gb  = prefetched_tokens * kv_bytes_tok_kb / (1024 * 1024) if l3_reliable_sglang_logical_local_ssd > 0 else 0.0
+    l3_ambiguous_loadback_gb = loadback_tokens * kv_bytes_tok_kb / (1024 * 1024) if loadback_tokens > 0 else 0.0
+    l3_sglang_activity_tokens = l3_reliable_sglang_logical_local_ssd
 
-    # Source provenance. Three possible values:
-    #   "blktrace"      — run-dir present and blktrace produced data
-    #   "sglang_tokens" — Prom-only mode and SGLang counters supplied numbers
-    #   "none"          — neither produced anything actionable
-    if _blktrace_was_attempted:
-        # Trust blktrace's number — even zero. Zero with a run-dir means a
-        # real measurement gap that the coverage-warning finding will explain.
-        # NEVER silently overwrite blktrace 0 with an estimate; that hides
-        # the actual instrumentation failure.
-        l3_traffic_source = "blktrace"
-    elif l3_sglang_activity_tokens > 0:
-        # Prom-only mode AND SGLang has reliable hierarchical-cache L3 evidence.
-        # Use SGLang estimates only when backup/prefetch prove that L3 storage was
-        # actually exercised. Do not infer L3 from load_back-only or evicted-only.
-        read_gb  = l3_est_read_gb
-        write_gb = l3_est_write_gb
-        rw_ratio = read_gb / max(write_gb, 0.001)
-        l3_traffic_source = "sglang_tokens"
-    else:
-        # Prom-only mode AND SGLang has no L3 token activity → genuinely no data.
-        l3_traffic_source = "none"
+    _block_read_gb = float(read_gb or 0.0)
+    _block_write_gb = float(write_gb or 0.0)
 
-    # Derive L3 storage bandwidth from token-counter deltas — same gating: only when
-    # we're in Prom-only mode. If blktrace was attempted, its BW (zero or not)
-    # is the authoritative number for the BW tiles. The endpoint we honor is:
-    # never let an SGLang estimate masquerade as a blktrace measurement.
+    # Source provenance. Physical block telemetry and SGLang logical KV
+    # movement answer different questions. When L3 is SSD-backed and SGLang
+    # backuped/prefetched counters prove L3 movement, do not let a zero block
+    # direction hide that logical activity. Keep provenance explicit so the
+    # report does not confuse an estimate with raw device bytes.
     _l3_window_s = duration_s if duration_s > 0 else _safe_float(
         sglang.get("collection_elapsed_s", 0))
-    if _prom_only_mode and _l3_window_s > 0 and l3_traffic_source == "sglang_tokens":
+    l3_logical_estimate_note = ""
+    if _blktrace_was_attempted:
+        # v1.39.11: when a physical blktrace capture exists, it remains the
+        # authoritative source for SSD/LBA bytes. SGLang counters are still
+        # valuable, but they are logical HiCache/backing-tier movement and are
+        # shown as a separate diagnostic. Never overwrite physical block bytes
+        # with token-derived estimates, even when the backend maps to local SSD;
+        # otherwise Executive can contradict hot/cold LBA charts.
+        if l3_sglang_activity_tokens > 0:
+            if l3_backend_class == "local_ssd":
+                l3_traffic_source = "blktrace_mapped_with_sglang_logical_diagnostic"
+                l3_logical_estimate_note = (
+                    f"SGLang counters indicate logical local-SSD/backing-tier movement "
+                    f"for backend {l3_backend_display}: prefetch/read={l3_est_read_gb:.1f} GB, "
+                    f"write={l3_est_write_gb:.1f} GB; ambiguous load_back upper-bound="
+                    f"{l3_ambiguous_loadback_gb:.1f} GB. Physical blktrace bytes remain "
+                    f"authoritative for SSD/LBA charts: read={_block_read_gb:.3f} GB, "
+                    f"write={_block_write_gb:.3f} GB. A mismatch points to page-cache hits, "
+                    f"counter semantics, delayed writeback, or a window/capture issue."
+                )
+            elif l3_backend_class in ("remote_mooncake", "remote_storage"):
+                l3_traffic_source = "blktrace_unmapped_sglang_logical_remote_l3"
+                l3_logical_estimate_note = (
+                    f"SGLang counters indicate logical L3/backing-tier movement "
+                    f"for backend {l3_backend_display}: prefetch/read={l3_est_read_gb:.1f} GB, "
+                    f"write={l3_est_write_gb:.1f} GB; ambiguous load_back upper-bound="
+                    f"{l3_ambiguous_loadback_gb:.1f} GB. This is NOT promoted to local SSD "
+                    f"physical I/O because no resolved local SSD block mapping is available; "
+                    f"physical traced-device R/W remains read={_block_read_gb:.3f} GB, "
+                    f"write={_block_write_gb:.3f} GB."
+                )
+            else:
+                l3_traffic_source = "blktrace_unmapped_sglang_logical_unknown_backend"
+                l3_logical_estimate_note = (
+                    f"SGLang counters indicate logical L3/backing-tier movement "
+                    f"but backend mapping is unknown: prefetch/read={l3_est_read_gb:.1f} GB, "
+                    f"write={l3_est_write_gb:.1f} GB; ambiguous load_back upper-bound="
+                    f"{l3_ambiguous_loadback_gb:.1f} GB. Physical traced-device R/W remains "
+                    f"read={_block_read_gb:.3f} GB, write={_block_write_gb:.3f} GB."
+                )
+        else:
+            l3_traffic_source = "blktrace"
+    elif l3_sglang_activity_tokens > 0:
+        if l3_backend_class == "local_ssd":
+            read_gb  = l3_est_read_gb
+            write_gb = l3_est_write_gb
+            rw_ratio = read_gb / max(write_gb, 0.001)
+            l3_traffic_source = "sglang_logical_local_ssd"
+        elif l3_backend_class in ("remote_mooncake", "remote_storage"):
+            read_gb  = l3_est_read_gb
+            write_gb = l3_est_write_gb
+            rw_ratio = read_gb / max(write_gb, 0.001)
+            l3_traffic_source = "sglang_logical_remote_l3"
+        else:
+            l3_traffic_source = "sglang_logical_hicache_unknown_backend"
+            l3_logical_estimate_note = "SGLang logical backup/prefetch seen but L3 backend is unknown; not labeled as SSD or Mooncake"
+    else:
+        l3_traffic_source = "none"
+
+    l3_unmapped_logical_seen = l3_traffic_source in (
+        "blktrace_unmapped_sglang_logical_remote_l3",
+        "blktrace_unmapped_sglang_logical_unknown_backend",
+    )
+    l3_logical_diagnostic_seen = l3_traffic_source in (
+        "blktrace_mapped_with_sglang_logical_diagnostic",
+        "blktrace_unmapped_sglang_logical_remote_l3",
+        "blktrace_unmapped_sglang_logical_unknown_backend",
+    )
+
+    # Unified reconciliation used by all executive wording.  Physical block bytes
+    # are kept as physical measurements; SGLang bytes are logical KV movement.
+    # They are considered directly comparable only for resolved local_ssd with
+    # an explicit block mapping.
+    try:
+        _l3_recon = reconcile_l3_io(
+            _l3_backend if '_l3_backend' in locals() and _l3_backend is not None else resolve_l3_backend({}, ''),
+            sglang_write_gb=l3_est_write_gb, sglang_read_gb=l3_est_read_gb,
+            block_write_gb=_block_write_gb if '_block_write_gb' in locals() else write_gb,
+            block_read_gb=_block_read_gb if '_block_read_gb' in locals() else read_gb,
+            blktrace_available=bool(_blktrace_was_attempted))
+        l3_reconciliation_status = _l3_recon.display_status
+        l3_reconciliation_note = _l3_recon.note
+    except Exception:
+        l3_reconciliation_status = 'Unknown'
+        l3_reconciliation_note = l3_logical_estimate_note or 'L3 reconciliation unavailable.'
+
+    # Derive L3 storage bandwidth from token-counter deltas when SGLang is the
+    # selected source or when it is supplementing a missing block direction.
+    if _l3_window_s > 0 and l3_traffic_source in ("sglang_logical_local_ssd", "sglang_logical_remote_l3", "sglang_logical_hicache_unknown_backend"):
         if nvme_rd_bw == 0.0 and l3_est_read_gb > 0:
             nvme_rd_bw = l3_est_read_gb * 1024 / _l3_window_s   # GB→MB/s
         if nvme_wr_bw == 0.0 and l3_est_write_gb > 0:
             nvme_wr_bw = l3_est_write_gb * 1024 / _l3_window_s
+
+    l3_logical_rd_bw_mbs = (l3_est_read_gb * 1024 / _l3_window_s) if (_l3_window_s > 0 and l3_est_read_gb > 0) else 0.0
+    l3_logical_wr_bw_mbs = (l3_est_write_gb * 1024 / _l3_window_s) if (_l3_window_s > 0 and l3_est_write_gb > 0) else 0.0
 
     # Spill threshold = free HBM / KV bytes per token
     spill_thresh_k = hbm_free_gb * 1024 * 1024 / max(kv_bytes_tok_kb, 1) / 1000
@@ -2049,8 +2231,8 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
              tip=("DCGM daemon was reachable and reported GPU telemetry." if has_gpu
                   else "DCGM unavailable. Start nv-hostengine or use NVIDIA driver-only "
                        "metrics. Without it, HBM BW Active % and per-GPU power are missing.")) +
-        pill("DRAM / AMD PMU", has_dram,
-             tip=("AMDuProf PCM produced parseable DRAM bandwidth counters." if has_dram
+        pill("DRAM / CPU PMU", has_dram,
+             tip=("--enable-dram produced parseable DRAM bandwidth counters." if has_dram
                   else "DRAM bandwidth counters not collected. Install AMDuProf and re-run "
                        "with --enable-amduprof-pcm. Falls back to /proc/meminfo for "
                        "capacity but not for bandwidth.")) +
@@ -2126,7 +2308,29 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # granularity instead of byte granularity. Crucially we ALSO state what
     # this number can NOT tell the user (per-IO latency, block size, queue
     # depth) so they don't over-interpret it.
-    if l3_traffic_source == "sglang_tokens" and (read_gb > 0 or write_gb > 0):
+    if l3_logical_diagnostic_seen and (l3_est_read_gb > 0 or l3_est_write_gb > 0):
+        _bk_t = int(backuped_tokens)
+        _lb_t = int(loadback_tokens)
+        _pf_t = int(prefetched_tokens)
+        _ev_t = int(evicted_tokens)
+        _bk_rate = _bk_t / _l3_window_s if _l3_window_s > 0 else 0
+        _lb_rate = _lb_t / _l3_window_s if _l3_window_s > 0 else 0
+        _pf_rate = _pf_t / _l3_window_s if _l3_window_s > 0 else 0
+        _ev_rate = _ev_t / _l3_window_s if _l3_window_s > 0 else 0
+        findings_items.append(finding(
+            "LOGICAL KV BACKING-TIER MOVEMENT · NOT PHYSICAL SSD",
+            (f'SGLang counters show logical backing-tier movement, but this run also has physical blktrace data that does not match the large logical read total. '
+             f'Because no concrete local SSD L3 mapping was resolved, AMOprof does <strong>not</strong> use the logical numbers as SSD/LBA traffic. '
+             f'<strong>Logical prefetch/read:</strong> {l3_est_read_gb:.1f} GB; <strong>logical write:</strong> {l3_est_write_gb:.1f} GB. '
+             f'<strong>Ambiguous load_back upper-bound:</strong> {l3_ambiguous_loadback_gb:.1f} GB (not counted as SSD read). '
+             f'<strong>Physical traced-device read:</strong> {_block_read_gb:.3f} GB; <strong>physical write:</strong> {_block_write_gb:.3f} GB. '
+             f'This prevents the Executive tile from contradicting LBA hot/cold and SSD distribution charts. If the L3 device is mapped but the gap is large, treat it as a cache/page-cache/counter-semantics or capture-window mismatch to investigate. '
+             f'<br><br>Counters: backuped={_bk_t:,} ({_bk_rate:,.0f}/s), load_back={_lb_t:,} ({_lb_rate:,.0f}/s), prefetched={_pf_t:,} ({_pf_rate:,.0f}/s), evicted={_ev_t:,} ({_ev_rate:,.0f}/s).'),
+            plain=(f"SGLang shows logical backing-tier movement ({l3_est_read_gb:.1f} GB prefetch/read / {l3_est_write_gb:.1f} GB write; load_back upper-bound {l3_ambiguous_loadback_gb:.1f} GB not counted), "
+                   f"but physical traced-device traffic is {_block_read_gb:.3f} GB read / {_block_write_gb:.3f} GB write. "
+                   "These are shown separately because no local SSD L3 block mapping was resolved.")))
+
+    if l3_traffic_source in ("sglang_logical_local_ssd", "sglang_logical_remote_l3", "sglang_logical_hicache_unknown_backend") and (read_gb > 0 or write_gb > 0):
         _bk_t = int(backuped_tokens)
         _lb_t = int(loadback_tokens)
         _pf_t = int(prefetched_tokens)
@@ -2138,20 +2342,21 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         _ev_rate = _ev_t / _l3_window_s if _l3_window_s > 0 else 0
         findings_items.append(finding(
             "L3 ACTIVITY · PROMETHEUS-DERIVED",
-            (f'blktrace is not available for this run, but SGLang counters '
-             f'reveal L3 storage cache activity at token granularity. '
+            (f'SGLang counters reveal L3/backing-tier cache activity at token granularity. '
+             f'Physical local block telemetry is shown separately and may be unavailable or not directly comparable. '
              f'<strong>Backuped to L3:</strong> {_bk_t:,} tokens '
              f'(≈ {write_gb:.1f} GB at {kv_bytes_tok_kb:.0f} KB/tok) '
              f'at <strong>{_bk_rate:,.0f} tok/s</strong>. '
-             f'<strong>Loaded back from L3:</strong> {_lb_t:,} tokens '
-             f'at <strong>{_lb_rate:,.0f} tok/s</strong>. '
-             f'<strong>Prefetched from L3:</strong> {_pf_t:,} tokens '
+             f'<strong>Load-back tokens:</strong> {_lb_t:,} tokens '
+             f'at <strong>{_lb_rate:,.0f} tok/s</strong> (hierarchy restore diagnostic; not counted as SSD read). '
+             f'<strong>Prefetched/onboarded from L3:</strong> {_pf_t:,} tokens '
              f'at <strong>{_pf_rate:,.0f} tok/s</strong>. '
              f'<strong>Evicted from cache hierarchy:</strong> {_ev_t:,} tokens '
              f'at <strong>{_ev_rate:,.0f} tok/s</strong>. '
              f'Estimated directional BW: read {nvme_rd_bw:.1f} MB/s · write {nvme_wr_bw:.1f} MB/s. '
-             f'<br><br>'
-             f'<strong>What this CANNOT tell you (need blktrace for):</strong> '
+             + (f'<br><strong>Reconciliation note:</strong> {_html.escape(l3_logical_estimate_note)}. ' if l3_logical_estimate_note else '')
+             + f'<br><br>'
+             + f'<strong>What this CANNOT tell you (need correct block telemetry for):</strong> '
              f'per-IO latency, request size distribution, queue depth, '
              f'block-layer merging behavior, hot-LBA regions, or sustained '
              f'BW peaks within the window. '
@@ -2159,9 +2364,9 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
              f'your sizing exercise, re-collect with <code>--enable-blktrace</code> '
              f'next run.'),
             plain=(f"Even without blktrace, SGLang counters show L3/cache-tier activity: "
-                   f"{_bk_t:,} backuped, {_lb_t:,} load-back, {_pf_t:,} prefetched, "
+                   f"{_bk_t:,} backuped, {_lb_t:,} load-back (diagnostic only), {_pf_t:,} prefetched, "
                    f"and {_ev_t:,} evicted tokens. Estimated directional traffic is "
-                   f"{write_gb:.1f} GB written and {read_gb:.1f} GB read. These byte "
+                   f"{write_gb:.1f} GB written and {read_gb:.1f} GB prefetch-read. These byte "
                    f"numbers are estimates (token × bytes-per-token), not direct disk "
                    f"measurements. For per-IO latency and queue depth, enable blktrace.")))
     elif l3_traffic_source == "none":
@@ -2430,7 +2635,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         if dram_util_pct < 30:
             findings_items.append(finding(
                 "L2 DRAM",
-                f'AMD PMU reports {dram_total_bw:.1f} GB/s mean DRAM BW '                f'({dram_util_pct:.1f}% of {dram_peak_cap:.0f} GB/s peak) — '                f'<strong>not the bottleneck</strong>. Ample DRAM headroom exists '                f'to expand the L2 KV tier and absorb more L3 storage traffic.',
+                f'CPU PMU reports {dram_total_bw:.1f} GB/s mean DRAM BW '                f'({dram_util_pct:.1f}% of {dram_peak_cap:.0f} GB/s peak) — '                f'<strong>not the bottleneck</strong>. Ample DRAM headroom exists '                f'to expand the L2 KV tier and absorb more L3 storage traffic.',
                 plain=(f"System RAM bandwidth is at {dram_util_pct:.0f}% of its capability — "
                        f"plenty of room to spare. Recommended: enlarge the in-RAM portion of "
                        f"the cache to reduce L3 storage traffic.")))
@@ -2634,20 +2839,30 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                  _fmt_num(cache_hit, "%", 1),
                  f"{cache_hit_note_prefix} | {_fmt_num(cache_hit_tw, '%', 1)} token-weighted",
                  accent=True) +
-        kpi_card("TTFT",
+        kpi_card("TTFT mean",
                  _fmt_num(ttft_ms / 1000 if ttft_ms >= 1000 else ttft_ms,
                           " s" if ttft_ms >= 1000 else " ms", 1),
                  ("End Report selected-window Metrics object" if str(sglang.get("server_ttft_ms_method", "")).startswith("end_report_") else
                   ("Δsum/Δcount from SGLang timeseries" if ttft_from_ts_ms > 0 else
                    ("selected-window percentile timeseries" if ttft_from_pct_ms > 0 else
                     ("long-context prefill dominated" if ttft_ms > 5000 else "time to first token"))))) +
-        kpi_card("TPOT / ITL",
+        kpi_card("TTFT p50",
+                 _fmt_num((ttft_p50_ms or ttft_ms) / 1000 if (ttft_p50_ms or ttft_ms) >= 1000 else (ttft_p50_ms or ttft_ms),
+                          " s" if (ttft_p50_ms or ttft_ms) >= 1000 else " ms", 1),
+                 "median · histogram_quantile/percentile timeseries") +
+        kpi_card("TPOT / ITL mean",
                  _fmt_num(tpot_ms, " ms", 0),
                  ("Δsum/Δcount from SGLang timeseries" if tpot_from_ts_ms > 0 else
                   ("HBM bandwidth bound" if gpu_util > 85 else "decode token latency"))) +
-        kpi_card("Throughput",
+        kpi_card("TPOT / ITL p50",
+                 _fmt_num(tpot_p50_ms or tpot_ms, " ms", 0),
+                 "median · histogram_quantile/percentile timeseries") +
+        kpi_card("Throughput mean",
                  _fmt_num(tp_active if tp_active > 0 else throughput, " tok/s", 1),
                  f"active mean | {_fmt_num(throughput, ' tok/s peak', 1)}") +
+        kpi_card("Throughput p50",
+                 _fmt_num(tp_p50 or (tp_active if tp_active > 0 else throughput), " tok/s", 1),
+                 "median of active sglang_gen_throughput samples") +
         kpi_card("GPU util",
                  _fmt_num(gpu_util, "%", 1),
                  f"mean | {_fmt_num(gpu_peak, '% peak', 0)}") +
@@ -2665,8 +2880,14 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                  _fmt_num(nvme_rd_bw, " MB/s", 0),
                  (f"mean | {_fmt_num(nvme_rd_iops, ' read IOPS', 0)}"
                   if l3_traffic_source == "blktrace"
-                  else "mean · estimated from SGLang load-back tokens"
-                       if l3_traffic_source == "sglang_tokens"
+                  else "block + SGLang logical estimate"
+                       if l3_traffic_source == "blktrace_plus_sglang_logical_local_ssd"
+                       else "mean · estimated from SGLang prefetched tokens"
+                       if l3_traffic_source == "sglang_logical_local_ssd"
+                       else "physical local block telemetry; logical backing-tier shown separately"
+                       if l3_logical_diagnostic_seen
+                       else "SGLang logical remote/backing-tier estimate"
+                       if l3_traffic_source in ("sglang_logical_remote_l3", "sglang_logical_hicache_unknown_backend")
                        else "no L3 data"),
                  target=f"Target: ~{nvme_rd_bw_target_mbs/1000:.1f} GB/s seq read peak",
                  target_pct=(nvme_rd_bw / nvme_rd_bw_target_mbs * 100
@@ -2681,9 +2902,17 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                  (f"{_fmt_num(nvme_wr_iops, ' IOPS', 0)} | "
                   f"{('1:' + str(int(round(1/rw_ratio))) if 0 < rw_ratio < 0.5 else f'{rw_ratio:.1f}:1')} R/W ratio"
                   if l3_traffic_source == "blktrace"
-                  else (f"estimated from SGLang backuped tokens · "
+                  else (f"SGLang logical L3 write estimate · "
                         f"{('1:' + str(int(round(1/rw_ratio))) if 0 < rw_ratio < 0.5 else f'{rw_ratio:.1f}:1')} R/W ratio")
-                       if l3_traffic_source == "sglang_tokens"
+                       if l3_traffic_source == "blktrace_plus_sglang_logical_local_ssd"
+                       else (f"estimated from SGLang backuped tokens · "
+                        f"{('1:' + str(int(round(1/rw_ratio))) if 0 < rw_ratio < 0.5 else f'{rw_ratio:.1f}:1')} R/W ratio")
+                       if l3_traffic_source == "sglang_logical_local_ssd"
+                       else "physical local block telemetry; logical backing-tier shown separately"
+                       if l3_logical_diagnostic_seen
+                       else (f"SGLang logical remote/backing-tier estimate · "
+                        f"{('1:' + str(int(round(1/rw_ratio))) if 0 < rw_ratio < 0.5 else f'{rw_ratio:.1f}:1')} R/W ratio")
+                       if l3_traffic_source in ("sglang_logical_remote_l3", "sglang_logical_hicache_unknown_backend")
                        else "no L3 data"),
                  target=f"Target: ~{nvme_wr_bw_target_mbs/1000:.1f} GB/s seq write peak",
                  target_pct=(nvme_wr_bw / nvme_wr_bw_target_mbs * 100
@@ -2693,7 +2922,15 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                              "lower than the rated peak — what matters is staying under "
                              "the rated TBW endurance, not approaching this BW target. "
                              "Override via setup key 'L3 storage write BW target MB/s'.")) +
-        kpi_card("L3 storage R / W total",
+        ((kpi_card("Logical KV backing-tier movement",
+                 (f"{l3_est_read_gb*1024:.1f} MB" if 0 < l3_est_read_gb < 1 else _fmt_num(l3_est_read_gb, ' GB', 1))
+                 + " / "
+                 + (f"{l3_est_write_gb*1024:.1f} MB" if 0 < l3_est_write_gb < 1 else _fmt_num(l3_est_write_gb, ' GB', 1)),
+                 f"SGLang logical only · read=prefetched only; load_back upper-bound {_fmt_num(l3_ambiguous_loadback_gb, ' GB', 1)} not counted · R/W BW {_fmt_num(l3_logical_rd_bw_mbs, ' MB/s', 0)} / {_fmt_num(l3_logical_wr_bw_mbs, ' MB/s', 1)}",
+                 target="not used for SSD hot/cold LBA charts",
+                 target_tip="This is logical SGLang HiCache/backing-tier movement from token counters. Reads use prefetched_tokens_total only. load_back_tokens_total is an ambiguous hierarchy-restore counter and is shown as a diagnostic, not as local SSD bytes. LBA and SSD distribution charts are physical blktrace data."
+             ) if l3_logical_diagnostic_seen and (l3_est_read_gb > 0 or l3_est_write_gb > 0) else "")) +
+        kpi_card(("Physical host block R / W total" if l3_unmapped_logical_seen else "Physical L3 SSD R / W total" if l3_traffic_source == "blktrace_mapped_with_sglang_logical_diagnostic" else "L3 storage R / W total"),
                  (f"{read_gb*1024:.1f} MB" if 0 < read_gb < 1 else _fmt_num(read_gb, ' GB', 1))
                  + " / "
                  + (f"{write_gb*1024:.1f} MB" if 0 < write_gb < 1 else _fmt_num(write_gb, ' GB', 1)),
@@ -2702,8 +2939,14 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                  # never sees an "estimated" label when nothing was actually
                  # estimated (e.g. Prom-only run with zero L3 storage activity).
                  ("blktrace / iostat" if l3_traffic_source == "blktrace"
-                  else f"estimated · SGLang counters × {kv_bytes_tok_kb:.0f} KB/tok"
-                       if l3_traffic_source == "sglang_tokens"
+                  else "blktrace + SGLang logical L3 estimate"
+                       if l3_traffic_source == "blktrace_plus_sglang_logical_local_ssd"
+                       else f"estimated · SGLang counters × {kv_bytes_tok_kb:.0f} KB/tok"
+                       if l3_traffic_source == "sglang_logical_local_ssd"
+                       else "physical blktrace/iostat; logical backing-tier shown separately"
+                       if l3_unmapped_logical_seen
+                       else f"logical · SGLang counters × {kv_bytes_tok_kb:.0f} KB/tok; physical block separate"
+                       if l3_traffic_source in ("sglang_logical_remote_l3", "sglang_logical_hicache_unknown_backend")
                        else "no L3 data — see findings below"),
                  target=(f"Endurance budget: {ssd_lifetime_writes_tb_per_run*1024:.0f} GB/run"
                           if ssd_lifetime_writes_tb_per_run > 0 else ""),
@@ -2746,7 +2989,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         ((kpi_card(
             ("L3 storage cache used" if l3_capacity_source == "df/SMART runtime snapshot" else "L3 storage configured capacity"),
             f"{l3_fs_used_gb:.0f} / {l3_fs_total_gb:.0f} GB",
-            ((f"{l3_fs_used_pct:.0f}% full · {l3_fs_avail_gb:.0f} GB free"
+            ((f"{l3_fs_used_pct:.0f}% full · {l3_fs_avail_gb:.0f} GB free · df snapshot, not window I/O"
               + (f" · device {nvme_dev_cap_gb:.0f} GB" if nvme_dev_cap_gb > 0 else ""))
              if l3_capacity_source == "df/SMART runtime snapshot" else
              f"from setup_details.json · not a measured runtime delta"),
@@ -2786,33 +3029,32 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                     f"{nvme_util:.0f}% mean | elevated"
                     if nvme_util >= 50 else
                     f"{nvme_util:.0f}% mean | well under capacity"))
-         if l3_block_io_available else "")
+         if (l3_block_io_available and l3_traffic_source in ("blktrace", "blktrace_plus_sglang_logical_local_ssd")) else "")
     )
 
     # ── KV L3 storage requirement bullets ────────────────────────────────────────────
     req_16_64_pct_str = f"{req_size_16_64_pct:.0f}" if req_size_16_64_pct > 0 else "~89"
-    if l3_block_io_available:
+    if l3_block_io_available and l3_traffic_source in ("blktrace", "blktrace_mapped_with_sglang_logical_diagnostic", "blktrace_unmapped_sglang_logical_remote_l3", "blktrace_unmapped_sglang_logical_unknown_backend") :
         kvssd_req_html = f"""
-      <li><strong>Sequential/streaming read BW &ge; {max(nvme_rd_bw * 1.1, 600):.0f} MB/s</strong>
-          — observed {nvme_rd_bw:.0f} MB/s mean is the primary L3 storage throughput demand.</li>
-      <li><strong>Random read latency &le; {max(nvme_rd_lat * 2, 0.5):.1f} ms at QD~16</strong>
-          — observed {nvme_rd_lat:.2f} ms mean read latency;
-          write latency {nvme_wr_lat:.1f} ms mean is acceptable.</li>
+      <li><strong>Directional physical bandwidth</strong>
+          — observed {nvme_rd_bw:.0f} MB/s read and {nvme_wr_bw:.0f} MB/s write from local block telemetry.
+          Size the SSD path based on the dominant direction and check the L3 consistency card before treating this as complete L3 traffic.</li>
+      <li><strong>Physical latency under queueing</strong>
+          — observed {nvme_rd_lat:.2f} ms mean read latency and {nvme_wr_lat:.1f} ms mean write latency from local sources where available.</li>
       <li><strong>16–64 KB block size optimisation</strong>
           — {req_16_64_pct_str}% of read IOs fall in the 16–64 KB bucket;
           L3 storage internal page size and read-ahead should align.</li>
-      <li><strong>Low write amplification (WAF &le; 2)</strong>
-          — write volume is negligible ({write_gb:.1f} GB in {duration_min:.0f} min);
-          {f"{discard_total:,.0f} TRIM commands" if discard_total > 0 else "TRIM activity"} indicates healthy GC signalling.</li>
+      <li><strong>Write amplification / endurance check</strong>
+          — physical/logical write volume is reported as {write_gb:.1f} GB in {duration_min:.0f} min;
+          {f"{discard_total:,.0f} TRIM commands" if discard_total > 0 else "TRIM activity"} is shown separately and should not be confused with read/write bytes.</li>
       <li><strong>Hot-spot tolerance: narrow LBA working set</strong>
           — access concentrated in a small LBA band; L3 storage internal caching must cover this zone.</li>"""
-    elif l3_traffic_source == "sglang_tokens":
+    elif l3_traffic_source in ("sglang_logical_local_ssd", "sglang_logical_remote_l3", "sglang_logical_hicache_unknown_backend"):
         kvssd_req_html = f"""
       <li><strong>SGLang L3 storage movement observed</strong>
           — estimated {read_gb:.1f} GB read/onboard and {write_gb:.1f} GB write/offload from hierarchical-cache token counters.</li>
       <li><strong>Movement counters used</strong>
-          — <code>sglang_load_back_tokens_total</code>, <code>sglang_prefetched_tokens_total</code>,
-          <code>sglang_backuped_tokens_total</code>, and <code>sglang_evicted_tokens_total</code>.</li>
+          — write/offload uses <code>sglang_backuped_tokens_total</code>; read/onboard uses <code>sglang_prefetched_tokens_total</code>. <code>sglang_load_back_tokens_total</code> and <code>sglang_evicted_tokens_total</code> are shown as hierarchy/cache-pressure diagnostics and are not counted as local-SSD read/write bytes.</li>
       <li><strong>Block-device metrics not shown</strong>
           — no L3-local blktrace/iostat mapping is available, so device busy %, queue depth, per-I/O latency, and request-size histograms are not inferred.</li>
       <li><strong>Capacity context</strong>
@@ -2939,33 +3181,23 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         chart_card(
             "Request Size Distribution",
             "Histogram of I/O sizes from blktrace",
-            f"<strong>{req_16_64_pct_str}% of read IOs fall in the 16–64 KB bucket</strong>, "
-            f"with the remainder split between &le;4 KB and 4–16 KB (metadata and KV block edges). "
-            f"Zero IOs are &gt;64 KB, confirming HiCache issues KV reads in aligned page-sized chunks.",
-            f"The KV$ L3 storage must have excellent random read performance at "
-            f"<strong>16–64 KB transfer sizes</strong>. "
-            f"Spec sheets quoting 4 KB random IOPS are less relevant than 32 KB sequential bandwidth."
+            f"<strong>{req_16_64_pct_str}% of captured read IOs fall in the 16–64 KB bucket</strong> when read completions are present. "
+            f"Write and trim request-size buckets are shown independently in the same physical blktrace dataset.",
+            f"Use this as a physical SSD transfer-size profile only. SGLang logical L3 bytes are reconciled separately and should not be overwritten by this chart."
         ) +
         chart_card(
             "Inter-Arrival Time Distribution",
             "Time between consecutive requests per op (blktrace)",
-            f"The majority of reads arrive within 1–100 µs of each other, "
-            f"indicating a <strong>tightly packed, sustained IO stream</strong> rather than periodic bursts. "
-            f"Only a small tail (&lt;3%) has IAT &gt;100 µs (brief inter-session gaps).",
-            f"The L3 storage queue depth is consistently occupied. "
-            f"Ensure the L3 storage maintains low latency under sustained QD4–QD16 conditions, "
-            f"not just at QD1 benchmarks."
+            f"The inter-arrival histogram is computed from physical completion events by direction. "
+            f"Use the read/write/trim series shown in the chart rather than assuming the workload is read-heavy.",
+            f"The L3 storage latency requirement should be evaluated under the observed physical queueing pattern, then cross-checked with SGLang logical L3 movement."
         ) +
         chart_card(
             "R/W/T Bytes per 10-sec Window",
             "Time-bucketed byte volume for reads, writes, and trims",
-            f"Read byte volume is consistent at approximately "
-            f"<strong>{nvme_rd_bw * 10 / 1024:.0f} GB per 10-second window</strong> throughout the run, "
-            f"confirming stable streaming-rate load-back. Write and TRIM byte volumes are "
-            f"negligible by comparison.",
-            f"Sustained write endurance (DWPD) is not a concern. "
-            f"The L3 storage read endurance (TBW) is the relevant metric for production deployment — "
-            f"verify the device TBW rating covers {read_gb * 24:.0f} GB/day at production scale."
+            f"The chart shows physical read/write/trim bytes per 10-second window from blktrace/blkparse completion events. "
+            f"Observed mean rates are {nvme_rd_bw:.0f} MB/s read and {nvme_wr_bw:.0f} MB/s write.",
+            f"Use the dominant observed direction for SSD bandwidth and endurance sizing, and compare it with the L3 consistency card to detect partial capture or wrong-device tracing."
         ) +
         chart_card(
             "Bandwidth per Stream (Top 20)",
@@ -3139,16 +3371,41 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
 
 <div class="kpi-grid">{kpi_html}</div>
 
+<div class="card" style="border-left:4px solid #38bdf8">
+  <h2>🎯 Cache hit-rate methodology <span class="tag">SELECTED WINDOW</span></h2>
+  <table><tbody>
+    <tr><td class="td-key">Token weighted</td><td><strong>{cache_hit_token_weighted:.2f}%</strong><br><code>Δsglang_cached_tokens_total / Δsglang_prompt_tokens_total × 100</code><br><span class="sub">Recommended primary rate for prompt/prefix-token reuse.</span></td></tr>
+    <tr><td class="td-key">Time weighted</td><td><strong>{cache_hit_time_weighted:.2f}%</strong><br><code>avg_over_time(sglang_cache_hit_rate[report_window]) × 100</code><br><span class="sub">Gauge diagnostic; useful trend signal but not the primary KPI.</span></td></tr>
+    <tr><td class="td-key">Request weighted</td><td><strong>{cache_hit_request_weighted:.2f}%</strong><br><code>Δsglang_request_cache_hit_total / Δsglang_request_total × 100</code><br><span class="sub">Request-level view when counters are exported.</span></td></tr>
+    <tr><td class="td-key">Prefill-only diagnostic</td><td><strong>{cache_hit_prefill_token_weighted:.2f}%</strong><br><code>Δrealtime_tokens_total{{mode="prefill_cache"}} / (Δprefill_cache + Δprefill_compute) × 100</code><br><span class="sub">Does not include prompt-cache hits already represented by <code>cached_tokens_total</code>.</span></td></tr>
+  </tbody></table>
+  <p class="sub" style="margin-top:10px">High eviction/offload/backup volume does not necessarily imply a low hit rate. Eviction measures capacity pressure and tier movement; hit rate measures how many incoming prompt/request tokens were served from cache during this selected window.</p>
+</div>
+
+
+<div class="card" style="border-left:4px solid #22c55e">
+  <h2>✅ L3 capacity vs I/O reconciliation <span class="tag">CONSISTENCY</span></h2>
+  <p><strong>L3 storage cache used</strong> is a <strong>df/runtime capacity snapshot</strong> of the cache footprint/residency. It is not a selected-window I/O counter and can include pre-existing or retained cache blocks, warm-up data, filesystem metadata, and preallocated/sparse extents.</p>
+  <p><strong>L3 R/W total</strong> is the selected-window movement delta. For SGLang-backed logical L3, write/offload is computed from <code>Δbackuped_tokens × KV_bytes_per_token</code> and read/onboard is computed from <code>Δprefetched_tokens × KV_bytes_per_token</code>. <code>load_back_tokens_total</code> is an ambiguous hierarchy-restore diagnostic and is not counted as local-SSD read bytes. Physical block I/O is shown separately unless a concrete local SSD L3 block mapping is resolved.</p>
+  <p><strong>Rule:</strong> df used does not need to equal selected-window total I/O. Capacity/footprint and movement/delta are different dimensions.</p>
+</div>
+
 <div class="card">
   <h2>📐 Executive KPI Formula &amp; Metric Sources <span class="tag">PROMETHEUS</span></h2>
   <table><tbody>
-    <tr><td class="td-key">Cache hit</td><td><code>avg(sglang_cache_hit_rate where value &gt; 0) × 100</code><br><span class="sub">Diagnostics also shown: token-weighted <code>Δsglang_realtime_tokens_total{{mode="prefill_cache"}} / (Δprefill_cache + Δprefill_compute)</code> and effective counter reuse.</span></td></tr>
+    <tr><td class="td-key">Cache hit — primary</td><td><code>Δsglang_cached_tokens_total / Δsglang_prompt_tokens_total × 100</code><br><span class="sub">Selected-window token-weighted hit rate. This is preferred over the raw gauge because <code>sglang_cache_hit_rate</code> is overwritten frequently.</span></td></tr>
+    <tr><td class="td-key">Cache hit — time weighted</td><td><code>avg_over_time(sglang_cache_hit_rate[report_window]) × 100</code><br><span class="sub">Implemented from all samples inside the report start/end timestamps. Diagnostic gauge view.</span></td></tr>
+    <tr><td class="td-key">Cache hit — request weighted</td><td><code>Δsglang_request_cache_hit_total / Δsglang_request_total × 100</code><br><span class="sub">Shown when SGLang exports request-level counters; otherwise reported as unavailable/0.</span></td></tr>
     <tr><td class="td-key">Mean TTFT</td><td><code>Δsglang_time_to_first_token_seconds_sum / Δsglang_time_to_first_token_seconds_count × 1000</code><br><span class="sub">Executive tile prefers the selected-window counter delta from <code>sglang_timeseries.csv</code>; summary JSON is fallback only.</span></td></tr>
+    <tr><td class="td-key">P50 TTFT</td><td><code>histogram_quantile(0.50, rate(sglang_time_to_first_token_seconds_bucket[window])) × 1000</code><br><span class="sub">Rendered as a separate p50 tile next to the mean tile.</span></td></tr>
     <tr><td class="td-key">Mean TPOT / ITL</td><td><code>Δsglang_inter_token_latency_seconds_sum / Δsglang_inter_token_latency_seconds_count × 1000</code><br><span class="sub">Executive tile prefers the selected-window counter delta from <code>sglang_timeseries.csv</code>; inverse throughput is only a final fallback.</span></td></tr>
+    <tr><td class="td-key">P50 TPOT / ITL</td><td><code>histogram_quantile(0.50, rate(sglang_inter_token_latency_seconds_bucket[window])) × 1000</code><br><span class="sub">Rendered as a separate p50 tile next to the mean tile.</span></td></tr>
     <tr><td class="td-key">Mean E2E</td><td><code>Δsglang_e2e_request_latency_seconds_sum / Δsglang_e2e_request_latency_seconds_count × 1000</code></td></tr>
-    <tr><td class="td-key">Throughput</td><td><code>active_mean(sglang_gen_throughput)</code> or <code>Δsglang_generation_tokens_total / Δtime_sec</code></td></tr>
-    <tr><td class="td-key">local Storage / AI memory node activity</td><td><code>Δsglang_backuped_tokens_total</code>, <code>Δsglang_load_back_tokens_total</code>, <code>Δsglang_prefetched_tokens_total</code>, <code>Δsglang_evicted_tokens_total</code>; bytes are estimated as <code>token_delta × KV_bytes_per_token</code>.</td></tr>
+    <tr><td class="td-key">Throughput mean</td><td><code>active_mean(sglang_gen_throughput)</code> or <code>Δsglang_generation_tokens_total / Δtime_sec</code></td></tr>
+    <tr><td class="td-key">Throughput p50</td><td><code>median(nonzero_samples(sglang_gen_throughput))</code><br><span class="sub">Typical active decode throughput; shown alongside mean and peak.</span></td></tr>
+    <tr><td class="td-key">local Storage / AI memory node activity</td><td><code>Δsglang_backuped_tokens_total</code> → logical write/offload bytes; <code>Δsglang_prefetched_tokens_total</code> → logical read/onboard bytes. <code>Δsglang_load_back_tokens_total</code> is shown only as a hierarchy-restore diagnostic because it can include L2/page-cache/HBM reload paths and repeated logical reconstruction; it is not counted as local-SSD read bytes. <code>Δsglang_evicted_tokens_total</code> indicates cache pressure, not storage I/O. Backend resolver: <code>{_html.escape(l3_backend_class)}</code> ({_html.escape(l3_backend_display)}).<br><span class="sub">L3 reconciliation: <strong>{_html.escape(str(l3_reconciliation_status))}</strong> — {_html.escape(str(l3_reconciliation_note))}</span></td></tr>
     <tr><td class="td-key">DRAM residency</td><td><code>sglang_hicache_host_used_tokens × KV_bytes_per_token</code>, using the selected-window active mean only when the <code>sglang_hicache_host_used_tokens</code> gauge has meaningful variation. If the gauge is present but flat/static, AMOprof still reports its converted value as a clearly labeled residency snapshot from <code>sglang_hicache_host_used_tokens</code>; if the metric is missing, only configured L2 DRAM allocation is shown. Capacity is <code>HiCache size per GPU GB × GPU Count</code> when setup_details provides per-GPU HiCache size.</td></tr>
+    <tr><td class="td-key">L3 capacity vs I/O</td><td><code>df_used_bytes</code> is a point-in-time filesystem/cache-footprint snapshot. <code>Δbackuped_tokens_total × KV_bytes_per_token</code> is selected-window logical write/offload and <code>Δprefetched_tokens_total × KV_bytes_per_token</code> is selected-window logical read/onboard. <code>load_back_tokens_total</code> is intentionally excluded from SSD-byte totals because it can greatly exceed device footprint and physical I/O. These are different dimensions and are not required to match.</td></tr>
     <tr><td class="td-key">GPU / host</td><td>GPU metrics come from <code>DCGM_FI_DEV_*</code>; host block I/O and vmstat come from node-exporter/iostat style counters and are not local Storage / AI memory node unless explicitly mapped.</td></tr>
   </tbody></table>
 </div>
@@ -3174,7 +3431,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
 
   <h3>L2 · Host DRAM (Staging tier)</h3>
   <p>DRAM is the intermediate KV staging tier (HiCache L2).
-  {f"AMD PMU Data Fabric counters report <strong>{dram_total_bw:.1f} GB/s mean / {dram_peak_bw:.1f} GB/s peak</strong> total BW against a {dram_peak_cap:.0f} GB/s theoretical peak — only <strong>{dram_total_bw/max(dram_peak_cap,1)*100:.1f}% utilised mean</strong>." if dram_total_bw > 0 else "DRAM PMU data not available for this run — enable --enable-amduprof-pcm for L2 staging visibility."}
+  {f"AMD PMU Data Fabric counters report <strong>{dram_total_bw:.1f} GB/s mean / {dram_peak_bw:.1f} GB/s peak</strong> total BW against a {dram_peak_cap:.0f} GB/s theoretical peak — only <strong>{dram_total_bw/max(dram_peak_cap,1)*100:.1f}% utilised mean</strong>." if dram_total_bw > 0 else "DRAM PMU data not available for this run — enable --enable-dram for L2 staging visibility."}
   The traffic pattern shows bursty reads (KV reload into HBM) and moderate writes (KV eviction from HBM into DRAM).</p>
   <p><strong>Device characteristic implication:</strong> DRAM is <strong>not the bottleneck</strong>.
   Expanding the DRAM L2 HiCache allocation would absorb more L3 storage traffic at near-zero
@@ -3186,16 +3443,15 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
   ({('1:' + str(int(round(1/rw_ratio))) if 0 < rw_ratio < 0.5 else f'{rw_ratio:.1f}:1')} R/W ratio) — 
   {('a write-dominated KV-offload pattern (HiCache backups outpacing load-backs).' if rw_ratio < 0.5 else 'a sustained load-back pattern.')}
   {l3_util_phrase}</p>
-  <p><strong>Device characteristic implication:</strong> KV$ L3 storage requirement is primarily
-  <strong>random-read throughput at 16–64 KB block size</strong>, with <strong>low read latency</strong>
-  (&lt;{max(nvme_rd_lat*2, 0.5):.1f} ms). Write endurance is secondary — only {write_gb:.1f} GB written in {duration_min:.0f} min.</p>
+  <p><strong>Device characteristic implication:</strong> KV$ L3 storage requirement is directional: use the observed/reconciled dominant path
+  ({'write/offload' if write_gb > read_gb else 'read/load-back'}) for SSD bandwidth and endurance sizing.
+  Physical LBA/request-size charts come from blktrace completion events; SGLang counters remain the logical KV movement source.</p>
 </div>
 
 <div class="section-label">KV$ L3 storage I/O characterisation</div>
 <div class="card">
   <h2>💾 KV$ L3 storage I/O — Executive Summary <span class="tag">REQUIREMENT FOUNDATION</span></h2>
-  <p>This run profiles HiCache L3 storage as the outer KV cache tier. The I/O signature is
-  <strong>read-dominated, small-to-medium block, bursty, concentrated in a narrow LBA region</strong>.
+  <p>This run profiles HiCache L3 storage as the outer KV cache tier. The I/O signature is reconciled from SGLang logical L3 movement and local block telemetry; directionality is shown as <strong>logical vs physical</strong> so missing/partial blktrace data does not invert write-heavy offload into read-heavy SSD behavior.
   Key requirement drivers:</p>
   <ul>{kvssd_req_html}</ul>
   <p class="sub" style="margin-top:10px">{l3_util_subnote}</p>

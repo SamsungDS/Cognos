@@ -847,7 +847,14 @@ If `TP size` is missing, AMOprof falls back to `GPU Count` / parsed GPU descript
 
 
 
-### v1.98.0
+### v1.39.11
+- Added a shared L3 backend resolver used by report logic before interpreting SGLang HiCache movement counters. `sglang_backuped_tokens_total` is now labeled as local-SSD L3 write only when the resolved backend is `local_ssd`; Mooncake/remote backends are labeled as remote logical L3 movement, and unknown backends remain generic logical HiCache backup.
+- Tightened Executive and End Report L3 I/O reconciliation: physical SSD bytes from blktrace/iostat remain separate from SGLang logical L3 estimates, with explicit provenance and backend class.
+- End Report Storage I/O overlays SGLang logical estimates only for resolved local SSD backends; remote/Mooncake movement is no longer forced onto local block-device charts.
+- Improved blktrace analyzer coverage diagnostics so zero captured writes/reads with positive `/sys/block` deltas now raises a coverage warning instead of silently looking like no I/O.
+- Added read-side coverage ratio diagnostics alongside existing write-side capture validation to catch wrong-device, dropped-event, RAID/multi-device, and delayed-write anomalies.
+
+### v1.99.0
 - Fixed End Report **Storage I/O & OS Page Activity** chart to use the same authoritative SSD/L3 stream as Interactive (`nvme_io_ts`) when it contains non-zero read/write activity.
 - Prevents regressions where Interactive/Executive show local SSD L3 reads+writes while the End Report storage chart appears empty because `nvme_ts` was empty/stale.
 - Added fallback derivation from bandwidth to approximate IOPS when only `rd_bw_mbs` / `wr_bw_mbs` are available.
@@ -856,3 +863,146 @@ If `TP size` is missing, AMOprof falls back to `GPU Count` / parsed GPU descript
 ### v1.96.0
 - Fixed End Report KV$ L3 per-stream bandwidth and temporal-pattern chart clipping by using an auto-sized canvas, safer image padding, and explicit IAT/temporal subplots.
 - Chart images now use responsive `height:auto`/`object-fit:contain` styling to avoid truncated combined-report rendering.
+
+### v1.39.11 — KV$B vs Host Block I/O Consistency Guard
+- Keeps SGLang KV$B block movement as the authoritative logical L3/backing-tier direction.
+- Labels host block I/O charts as host/OS telemetry unless setup_details resolves a concrete local SSD L3 device/path.
+- Prevents physical host read/write bars from visually contradicting logical L3 backup/load-back counters.
+- Adds explicit chart notes in End Report and Interactive tabs explaining when block telemetry is, and is not, L3 SSD evidence.
+
+
+### v1.39.11 — Cross-vendor DRAM bandwidth collection
+
+- Added `--enable-dram` to the `collect` command.
+- `--enable-dram --dram-tool auto` detects CPU vendor from `/proc/cpuinfo`:
+  - AMD systems use AMD uProf PCM (`AMDuProfPcm`).
+  - Intel systems use Intel Performance Counter Monitor (`pcm-memory`) with a Linux `perf uncore_imc` fallback.
+- Added explicit overrides: `--dram-tool amduprof`, `--dram-tool intel-pcm`, `--dram-tool perf-imc`, and `--dram-tool none`.
+- Added `--intel-pcm-memory-bin` for custom Intel PCM installations.
+- Kept legacy `--enable-amduprof-pcm` as an alias for `--enable-dram --dram-tool amduprof`.
+- Updated report labels from AMD-only wording to generic CPU PMU/DRAM wording.
+
+Example:
+
+```bash
+amoprof collect --enable-dram --dram-tool auto --duration-s 300 ...
+```
+
+For Intel machines, install Intel PCM and make sure `pcm-memory` is in PATH, or pass:
+
+```bash
+amoprof collect --enable-dram --dram-tool intel-pcm --intel-pcm-memory-bin /path/to/pcm-memory ...
+```
+
+
+
+### Cache-hit-rate methodology
+
+AMOprof no longer treats `sglang_cache_hit_rate` as the primary cache-hit KPI.
+That metric is an instantaneous gauge and can be overwritten frequently by SGLang,
+so production reports now show all selected-window cache-hit derivations:
+
+```text
+Token weighted   = Δsglang_cached_tokens_total / Δsglang_prompt_tokens_total × 100
+Time weighted    = avg_over_time(sglang_cache_hit_rate[report_window]) × 100
+Request weighted = Δsglang_request_cache_hit_total / Δsglang_request_total × 100
+```
+
+The primary Executive KPI prefers token-weighted, then request-weighted, then
+time-weighted when the required counters are available. Evictions/offloads/backups
+are reported separately as tier-capacity/movement pressure and do not by themselves
+mean cache-hit rate must be low.
+
+### DRAM PMU dependency installer — AMD + Intel
+
+AMOprof now includes a distro-aware dependency installer for `collect --enable-dram`:
+
+```bash
+# Auto-detect CPU vendor and install the matching DRAM backend dependencies
+sudo ./scripts/install_dram_deps.sh --dram-tool auto
+
+# Install/check both AMD and Intel DRAM backends where possible
+sudo ./scripts/install_dram_deps.sh --dram-tool all
+
+# Intel systems: install Intel PCM pcm-memory from native packages
+sudo ./scripts/install_dram_deps.sh --dram-tool intel-pcm
+
+# Intel systems: if the distro package is unavailable, build Intel PCM from source
+sudo ./scripts/install_dram_deps.sh --dram-tool intel-pcm --build-intel-pcm
+
+# AMD systems: install prerequisites and install AMD uProf from a local installer
+sudo ./scripts/install_dram_deps.sh --dram-tool amduprof \
+  --amduprof-installer ./AMDuProf_Linux_x64.deb
+```
+
+The main installer can invoke the same dependency path:
+
+```bash
+sudo ./install.sh --with-dram-deps --dram-tool auto
+```
+
+Backend behavior:
+
+| CPU / option | Tool used by `amoprof collect --enable-dram --dram-tool auto` | Installer behavior |
+|---|---|---|
+| AMD | `AMDuProfPcm` | Installs kernel/MSR prerequisites; installs AMD uProf only when a local installer or URL is provided |
+| Intel | Intel PCM `pcm-memory` | Installs distro package `pcm` where available; optional `--build-intel-pcm` source build fallback |
+| Unknown / virtualized | `perf-imc` fallback | Installs `perf`, `msr-tools`, `numactl`, and kernel counter prerequisites |
+
+The installer checks for existing binaries first and does not reinstall tools that are already present.
+
+### v1.39.11 L3 read-byte semantics
+
+AMOprof no longer counts `sglang_load_back_tokens_total` as local SSD/L3 read bytes. The Executive and report L3 read estimate uses `sglang_prefetched_tokens_total × KV_bytes_per_token`; write uses `sglang_backuped_tokens_total × KV_bytes_per_token`. `load_back_tokens_total` is displayed as a hierarchy-restore diagnostic/upper bound only because it can include L2 DRAM/page-cache/HBM reload paths and can greatly exceed physical SSD footprint or blktrace bytes.
+
+blktrace collection now defaults to larger buffers (`-b 16384 -n 4`) and exposes `--blktrace-buffer-kb` / `--blktrace-num-buffers` for high-I/O runs.
+
+
+### SGLang L3 logical read/write formulas
+
+AMOprof treats SGLang HiCache counters as logical KV movement. The production formulas are:
+
+```text
+L3 logical write/offload bytes =
+  Δsglang_backuped_tokens_total × KV_bytes_per_token
+
+L3 logical read/onboard bytes =
+  Δsglang_prefetched_tokens_total × KV_bytes_per_token
+```
+
+Diagnostic-only counters:
+
+```text
+Load-back diagnostic upper bound =
+  Δsglang_load_back_tokens_total × KV_bytes_per_token
+
+Eviction pressure diagnostic =
+  Δsglang_evicted_tokens_total × KV_bytes_per_token
+```
+
+`sglang_load_back_tokens_total` is intentionally not counted as local-SSD read bytes because it can represent hierarchy restore/reload pressure and may include L2 DRAM, page cache, HBM reload, or repeated logical reconstruction. Physical SSD bytes come only from blktrace/iostat on the resolved L3 block device.
+
+
+### v1.39.11 chart legend and host block activity fallback
+
+Interactive and Executive Plotly charts now normalize legends before render so labels remain readable in iframe/card layouts. Legends are placed below the x-axis with reserved bottom margin, fixed entry widths, and extra height for charts with many traces.
+
+The Host/OS block I/O latency/utilization chart no longer renders an empty canvas when read/write activity exists but latency/busy counters are missing. If `rd_lat_ms`, `wr_lat_ms`, and `io_util_pct` are unavailable or all zero while `rd_bw_mbs`, `wr_bw_mbs`, `rd_iops`, or `wr_iops` have activity, AMOprof renders an activity fallback chart showing available BW/IOPS and explicitly labels latency/utilization as unavailable. Read/write activity alone does not imply latency/utilization counters were collected; those require `rd_ms/wr_ms/io_ms`, iostat `await/%util`, or blktrace latency derivation.
+
+
+### v1.39.11 — P50 summary tiles
+
+Summary tiles in Executive, Interactive, and End Report now show p50/median next to existing mean latency and throughput KPIs:
+
+```text
+TTFT mean = Δsglang_time_to_first_token_seconds_sum / Δsglang_time_to_first_token_seconds_count × 1000
+TTFT p50  = histogram_quantile(0.50, rate(sglang_time_to_first_token_seconds_bucket[window])) × 1000
+
+TPOT/ITL mean = Δsglang_inter_token_latency_seconds_sum / Δsglang_inter_token_latency_seconds_count × 1000
+TPOT/ITL p50  = histogram_quantile(0.50, rate(sglang_inter_token_latency_seconds_bucket[window])) × 1000
+
+Throughput mean = active_mean(sglang_gen_throughput)
+Throughput p50  = median(nonzero_samples(sglang_gen_throughput))
+```
+
+Mean remains useful for overall run cost/capacity planning. P50 gives the typical request/token path for executive and engineering readers.

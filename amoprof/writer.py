@@ -280,37 +280,46 @@ def _derive_sglang_summary(samples: list[dict],
     if e2e_ms == 0:
         e2e_ms = _hist_p50_ms("e2e_request_latency") or _hist_p50_ms("request_latency")
 
-    # Cache-hit methodology: primary KPI is benchmark-comparable active
-    # average of sglang_cache_hit_rate.  Counter/token ratios are retained as
-    # diagnostics because they answer different questions and can diverge from
-    # bench_serving cache_hit_rate on long-prompt workloads.
+    # Production cache-hit methodology for the selected report window.
+    # Primary: token-weighted counter ratio. The raw gauge is retained only
+    # as a time-weighted diagnostic because SGLang overwrites it frequently.
     gstats = _cache_hit_gauge_stats(samples, cache)
     def _delta_col(c):
         return _delta(samples, c) if c else 0.0
+    def _pct(num, den):
+        return max(0.0, min(100.0, (num / den * 100.0))) if den and den > 0 else 0.0
     d_rt_cache = _delta_col(pfc_cache)
     d_rt_compute = _delta_col(pfc_tok)
-    cache_token_weighted = (d_rt_cache / (d_rt_cache + d_rt_compute) * 100.0) if (d_rt_cache + d_rt_compute) > 0 else 0.0
+    cache_prefill_token_weighted = _pct(d_rt_cache, d_rt_cache + d_rt_compute)
     cached_tok = _find_col(cols, "cached_tokens_total")
     prompt_tok = _find_col(cols, "prompt_tokens_total")
     d_cached = _delta_col(cached_tok)
     d_prompt = _delta_col(prompt_tok)
-    cache_cached_prompt = (d_cached / d_prompt * 100.0) if d_prompt > 0 else 0.0
-    cache_effective = ((d_cached + d_rt_cache) / (d_cached + d_rt_cache + d_rt_compute) * 100.0) if (d_cached + d_rt_cache + d_rt_compute) > 0 else 0.0
-    if gstats["active_samples"] > 0:
-        cache_pct = gstats["active_pct"]
-        cache_method = "sglang_cache_hit_rate_active_average_prometheus"
+    cache_token_weighted = _pct(d_cached, d_prompt)
+    cache_cached_prompt = cache_token_weighted
+    req_hit_col = (_find_col(cols, "request_cache_hit_total") or _find_col(cols, "cache_hit_request_total") or
+                   _find_col(cols, "request_cache_hits_total") or _find_col(cols, "cache_hit_requests_total"))
+    req_total_col = _find_col(cols, "request_total") or _find_col(cols, "requests_total")
+    d_req_hit = _delta_col(req_hit_col)
+    d_req_total = _delta_col(req_total_col)
+    cache_request_weighted = _pct(d_req_hit, d_req_total)
+    cache_time_weighted = gstats["overall_pct"]
+    cache_effective = _pct(d_cached + d_rt_cache, d_cached + d_rt_cache + d_rt_compute)
+    if cache_token_weighted > 0:
+        cache_pct = cache_token_weighted
+        cache_method = "selected_window_token_weighted_cached_tokens_over_prompt_tokens"
+    elif cache_request_weighted > 0:
+        cache_pct = cache_request_weighted
+        cache_method = "selected_window_request_weighted_request_cache_hit_over_request_total"
+    elif gstats["total_samples"]:
+        cache_pct = cache_time_weighted
+        cache_method = "selected_window_time_weighted_avg_over_time_sglang_cache_hit_rate"
     elif cache_effective > 0:
         cache_pct = cache_effective
         cache_method = "combined_cached_plus_prefill_cache_prometheus_fallback"
-    elif cache_cached_prompt > 0:
-        cache_pct = cache_cached_prompt
-        cache_method = "cached_tokens_over_prompt_tokens_prometheus_fallback"
-    elif cache_token_weighted > 0:
-        cache_pct = cache_token_weighted
-        cache_method = "realtime_tokens_delta_prometheus_fallback"
     else:
-        cache_pct = gstats["overall_pct"]
-        cache_method = "sglang_cache_hit_rate_timeline_average_prometheus_fallback" if gstats["total_samples"] else "none"
+        cache_pct = cache_prefill_token_weighted
+        cache_method = "prefill_realtime_tokens_delta_prometheus_fallback" if cache_prefill_token_weighted > 0 else "none"
 
     hi_used_last = _last(samples, hi_used) if hi_used else 0
     hi_total_last = _last(samples, hi_total) if hi_total else 0
@@ -328,8 +337,15 @@ def _derive_sglang_summary(samples: list[dict],
         "cache_hit_rate_realtime_pct":  round(cache_pct, 2),
         "cache_hit_calc_method":         cache_method,
         "cache_hit_token_weighted_pct":  round(cache_token_weighted, 2),
+        "cache_hit_prefill_token_weighted_pct": round(cache_prefill_token_weighted, 2),
+        "cache_hit_time_weighted_pct": round(cache_time_weighted, 2),
+        "cache_hit_request_weighted_pct": round(cache_request_weighted, 2),
         "cache_hit_cached_prompt_pct":   round(cache_cached_prompt, 2),
         "cache_hit_effective_prompt_pct": round(cache_effective, 2),
+        "cache_hit_token_weighted_numerator_tokens": round(d_cached, 3),
+        "cache_hit_token_weighted_denominator_tokens": round(d_prompt, 3),
+        "cache_hit_request_weighted_numerator_requests": round(d_req_hit, 3),
+        "cache_hit_request_weighted_denominator_requests": round(d_req_total, 3),
         "cache_hit_gauge_overall_pct":   round(gstats["overall_pct"], 2),
         "cache_hit_gauge_active_pct":    round(gstats["active_pct"], 2),
         "cache_hit_gauge_peak_pct":      round(gstats["peak_pct"], 2),

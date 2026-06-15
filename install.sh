@@ -28,6 +28,10 @@ SKIP_APT=0
 SKIP_VENV=0
 VENV_DIR="${AMOPROF_VENV:-$HOME/amoprof_venv}"
 TORCH_INDEX="https://download.pytorch.org/whl/cu121"  # override for other CUDA
+INSTALL_DRAM_DEPS=0
+DRAM_DEPS_TOOL="${AMOPROF_DRAM_TOOL:-auto}"
+BUILD_INTEL_PCM=0
+AMDUPROF_INSTALLER=""
 
 usage() {
 cat <<EOF
@@ -44,6 +48,10 @@ Options:
   --torch-index URL   PyTorch wheel index  (default: cu121)
   --skip-apt          Skip apt system package installation (requires root/sudo)
   --skip-venv         Install into current Python environment (not recommended)
+  --with-dram-deps    Install/check AMD/Intel DRAM PMU dependencies
+  --dram-tool TOOL    Backend for --with-dram-deps: auto|all|amduprof|intel-pcm|perf-imc|none
+  --build-intel-pcm   Build Intel PCM from source if native package is unavailable
+  --amduprof-installer PATH  Install AMD uProf from local .deb/.rpm/.tar.*
   --help              Show this message
 EOF
 exit 0
@@ -57,6 +65,10 @@ while [[ $# -gt 0 ]]; do
         --torch-index)  TORCH_INDEX="$2"; shift 2 ;;
         --skip-apt)     SKIP_APT=1; shift ;;
         --skip-venv)    SKIP_VENV=1; shift ;;
+        --with-dram-deps) INSTALL_DRAM_DEPS=1; shift ;;
+        --dram-tool)    DRAM_DEPS_TOOL="$2"; shift 2 ;;
+        --build-intel-pcm) BUILD_INTEL_PCM=1; shift ;;
+        --amduprof-installer) AMDUPROF_INSTALLER="$2"; shift 2 ;;
         --help|-h)      usage ;;
         *) error "Unknown option: $1"; usage ;;
     esac
@@ -135,6 +147,22 @@ else
         sudo apt-get install -y --no-install-recommends "${APT_CORE[@]}"
         ok "System packages installed"
     fi
+fi
+
+# ── Optional: AMD/Intel DRAM PMU dependencies ────────────────────────────────
+if [[ "$INSTALL_DRAM_DEPS" -eq 1 ]]; then
+    section "DRAM PMU dependencies (--enable-dram)"
+    DRAM_SCRIPT="$PACKAGE_DIR/scripts/install_dram_deps.sh"
+    if [[ ! -x "$DRAM_SCRIPT" ]]; then
+        error "DRAM dependency installer not found/executable: $DRAM_SCRIPT"
+        exit 1
+    fi
+    DRAM_ARGS=(--dram-tool "$DRAM_DEPS_TOOL")
+    [[ "$BUILD_INTEL_PCM" -eq 1 ]] && DRAM_ARGS+=(--build-intel-pcm)
+    [[ -n "$AMDUPROF_INSTALLER" ]] && DRAM_ARGS+=(--amduprof-installer "$AMDUPROF_INSTALLER")
+    "$DRAM_SCRIPT" "${DRAM_ARGS[@]}"
+else
+    warn "Skipping DRAM PMU dependency installer. Use --with-dram-deps to install/check AMD uProf / Intel PCM deps."
 fi
 
 # ── Virtualenv ───────────────────────────────────────────────────────────────

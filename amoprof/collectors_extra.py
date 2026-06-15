@@ -64,7 +64,9 @@ class BlktraceCollector:
                  blkparse_bin: str = "blkparse",
                  use_sudo: bool = True,
                  parse_after: bool = True,
-                 max_csv_events: int = 5_000_000):
+                 max_csv_events: int = 5_000_000,
+                 buffer_kb: int = 16384,
+                 num_buffers: int = 4):
         self.device = device
         self.duration_s = max(int(duration_s), 1)
         self.work_dir = Path(work_dir)
@@ -74,6 +76,8 @@ class BlktraceCollector:
         self.use_sudo = use_sudo
         self.parse_after = parse_after
         self.max_csv_events = max_csv_events
+        self.buffer_kb = max(int(buffer_kb or 0), 0)
+        self.num_buffers = max(int(num_buffers or 0), 0)
 
         self._trace_dir = self.work_dir / "blktrace_data"
         self._trace_dir.mkdir(parents=True, exist_ok=True)
@@ -165,6 +169,12 @@ class BlktraceCollector:
                "-D", str(self._trace_dir),
                "-o", "trace",
                "-w", str(self.duration_s)]
+        # High-I/O inference workloads can overflow default blktrace buffers.
+        # Use larger buffers by default; user can override via CLI.
+        if self.buffer_kb > 0:
+            cmd.extend(["-b", str(self.buffer_kb)])
+        if self.num_buffers > 0:
+            cmd.extend(["-n", str(self.num_buffers)])
         if self.use_sudo and os.geteuid() != 0:
             cmd = ["sudo", "-n"] + cmd
         try:
@@ -220,6 +230,7 @@ class BlktraceCollector:
                 lines_read = 0
                 _fmt = "A"
                 _fmt_locked = False
+                pending_op: dict[tuple[str, str, str], str] = {}
                 for raw in proc.stdout:
                     lines_read += 1
                     m = None
@@ -256,9 +267,15 @@ class BlktraceCollector:
                     else:
                         op = "?"
                     nsec = int(d["nsec"])
+                    req_key = (d.get("pid") or "0", d.get("sector") or "0", str(nsec))
+                    action = d.get("action") or ""
+                    if action != "C" and op in ("R", "W", "D"):
+                        pending_op[req_key] = op
+                    elif action == "C" and op not in ("R", "W", "D"):
+                        op = pending_op.pop(req_key, "?")
                     try:
                         w.writerow([
-                            d["ts"], d["pid"], d["action"], rwbs, op,
+                            d["ts"], d["pid"], action, rwbs, op,
                             d["sector"], nsec, nsec * 512,
                             d.get("comm") or "",
                             f"{d['major']},{d['minor']}",
@@ -519,6 +536,8 @@ class BlktraceCollector:
             "blktrace_csv":      str(self._csv_path) if events_csv > 0 else "",
             "blktrace_events":   self._events,
             "blktrace_device":   self.device,
+            "blktrace_buffer_kb": self.buffer_kb,
+            "blktrace_num_buffers": self.num_buffers,
             "blktrace_duration_s": round(time.time() - self._t0, 2),
             "blktrace_reason":   self._reason,
             # NEW — diagnostic fields for the "blktrace says X GB but df says Y GB" puzzle
