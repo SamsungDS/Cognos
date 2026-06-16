@@ -566,6 +566,124 @@ def write_vmstat_timeseries(raw_dir: Path, t0: float) -> Path | None:
     return None
 
 
+
+def write_queue_depth_sources_timeseries(raw_dir: Path, t0: float) -> Path | None:
+    """
+    Merge every sampled queue-depth source into one canonical CSV.
+
+    Sources:
+      • queue_depth_sysfs_timeseries.jsonl / queue_depth_sources_timeseries.csv
+        from BlockQueueDepthCollector
+      • iostat_timeseries.jsonl avgqu/aqu-sz
+      • nvme_driver_timeseries.jsonl /sys/block inflight
+      • blktrace_analysis/queue_depth_timeseries.csv when exact Q→C analysis exists
+
+    Output columns are intentionally superset-style. Reports should prefer exact
+    blktrace Q→C, then iostat aqu-sz, then sysfs weighted_qd/inflight.
+    """
+    dst = raw_dir / "queue_depth_sources_timeseries.csv"
+    rows: list[dict] = []
+
+    def _float(v, default=0.0):
+        try:
+            if v is None or v == "":
+                return default
+            return float(v)
+        except Exception:
+            return default
+
+    def _t(row):
+        ts = _float(row.get("time_sec"), None)
+        if ts is not None:
+            return round(ts, 6)
+        ts_abs = _float(row.get("ts", row.get("_ts", 0)), 0)
+        return round(ts_abs - t0, 6) if ts_abs > 1e9 else round(ts_abs, 6)
+
+    # Exact Q→C blktrace analysis, if already generated.
+    qd_exact = raw_dir / "blktrace_analysis" / "queue_depth_timeseries.csv"
+    if qd_exact.exists() and qd_exact.stat().st_size > 0:
+        try:
+            with qd_exact.open(encoding="utf-8") as fh:
+                rr = _csv.DictReader(fh)
+                for r in rr:
+                    qd = _float(r.get("qd_total", r.get("queue_depth", 0)))
+                    rows.append({
+                        "time_sec": _float(r.get("t_sec", r.get("time_sec", 0))),
+                        "source": "blktrace_q_to_c_exact",
+                        "qd": qd,
+                        "qd_best_effort": qd,
+                        "qd_read": _float(r.get("qd_read", 0)),
+                        "qd_write": _float(r.get("qd_write", 0)),
+                    })
+        except Exception:
+            pass
+
+    # Always-on sysfs collector derived CSV.
+    sysfs_csv = raw_dir / "queue_depth_sources_timeseries.csv"
+    if sysfs_csv.exists() and sysfs_csv.stat().st_size > 0 and sysfs_csv != dst:
+        pass
+    # Avoid self-read loop: if the BlockQueueDepthCollector wrote dst, read jsonl instead.
+    sysfs_jsonl = raw_dir / "queue_depth_sysfs_timeseries.jsonl"
+    for r in (_read_jsonl(sysfs_jsonl) if sysfs_jsonl.exists() else []):
+        rows.append({
+            "time_sec": _t(r),
+            "source": "sysfs_weighted_qd_inflight",
+            "qd": max(_float(r.get("weighted_qd")), _float(r.get("qd_best_effort")), _float(r.get("stat_inflight"))),
+            "qd_best_effort": max(_float(r.get("weighted_qd")), _float(r.get("qd_best_effort")), _float(r.get("stat_inflight"))),
+            "weighted_qd": _float(r.get("weighted_qd")),
+            "inflight": _float(r.get("stat_inflight", r.get("sysfs_inflight", 0))),
+            "inflight_reads": _float(r.get("sysfs_inflight_reads", 0)),
+            "inflight_writes": _float(r.get("sysfs_inflight_writes", 0)),
+            "io_util_pct": _float(r.get("io_util_pct", 0)),
+            "rd_iops": _float(r.get("rd_iops", 0)),
+            "wr_iops": _float(r.get("wr_iops", 0)),
+            "rd_bw_mbs": _float(r.get("rd_bw_mbs", 0)),
+            "wr_bw_mbs": _float(r.get("wr_bw_mbs", 0)),
+        })
+
+    # iostat avg queue size. This is a kernel-averaged queue length over the interval.
+    for r in (_read_jsonl(raw_dir / "iostat_timeseries.jsonl") if (raw_dir / "iostat_timeseries.jsonl").exists() else []):
+        qd = _float(r.get("avgqu", r.get("aqu-sz", r.get("aqu_sz", 0))))
+        rows.append({
+            "time_sec": _t(r),
+            "source": "iostat_aqu_sz",
+            "qd": qd,
+            "qd_best_effort": qd,
+            "io_util_pct": _float(r.get("util", r.get("%util", 0))),
+            "rd_iops": _float(r.get("riops", r.get("r/s", 0))),
+            "wr_iops": _float(r.get("wiops", r.get("w/s", 0))),
+            "rd_bw_mbs": _float(r.get("rMBs", 0)),
+            "wr_bw_mbs": _float(r.get("wMBs", 0)),
+        })
+
+    # NvmeDriverMonitor instantaneous /sys/block in-flight samples.
+    for r in (_read_jsonl(raw_dir / "nvme_driver_timeseries.jsonl") if (raw_dir / "nvme_driver_timeseries.jsonl").exists() else []):
+        qd = _float(r.get("inflight", 0))
+        rows.append({
+            "time_sec": _t(r),
+            "source": "sysfs_stat_inflight",
+            "qd": qd,
+            "qd_best_effort": qd,
+            "inflight": qd,
+            "weighted_io_ms": _float(r.get("weighted_io_ms", 0)),
+            "io_util_pct": _float(r.get("util", r.get("io_util_pct", 0))),
+        })
+
+    if not rows:
+        return None
+
+    rows.sort(key=lambda r: (_float(r.get("time_sec", 0)), str(r.get("source", ""))))
+    fields = ["time_sec", "source", "qd", "qd_best_effort", "weighted_qd", "inflight",
+              "inflight_reads", "inflight_writes", "qd_read", "qd_write", "io_util_pct",
+              "rd_iops", "wr_iops", "rd_bw_mbs", "wr_bw_mbs", "weighted_io_ms"]
+    extra = sorted({k for r in rows for k in r.keys()} - set(fields))
+    with dst.open("w", encoding="utf-8", newline="") as fh:
+        w = _csv.DictWriter(fh, fieldnames=fields + extra)
+        w.writeheader()
+        for r in rows:
+            w.writerow(r)
+    return dst
+
 def write_nvme_driver_timeseries(raw_dir: Path, t0: float) -> Path | None:
     """
     Build `nvme_driver_timeseries.csv` from iostat output preferentially,
@@ -708,6 +826,8 @@ def write_amoprof_files(raw_dir: Path,
     if p: out["vmstat_timeseries.csv"] = p
     p = write_nvme_driver_timeseries(raw_dir, t0)
     if p: out["nvme_driver_timeseries.csv"] = p
+    p = write_queue_depth_sources_timeseries(raw_dir, t0)
+    if p: out["queue_depth_sources_timeseries.csv"] = p
 
     # Mirror amduprof_pcm_raw.csv as .txt — amoprof's loader loads .csv files
     # as DataFrames first, then only loads text if no DataFrame exists with the

@@ -27,6 +27,7 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import re
 import time
 from pathlib import Path
 from typing import Callable
@@ -67,6 +68,52 @@ def _run(cmd: list[str], timeout: float = TOOL_SMOKE_TIMEOUT_S,
         return -2, "", "binary not found"
     except Exception as e:
         return -3, "", repr(e)
+
+
+def _block_device_base(device: str | None) -> str:
+    """Return /dev/nvme7n1 -> nvme7n1; empty when no device."""
+    if not device:
+        return ""
+    return os.path.basename(str(device).strip())
+
+
+def _biosnoop_disk_matches(line: str, device: str | None) -> bool:
+    """Return True when a biosnoop data line refers to the target disk/partition."""
+    base = _block_device_base(device)
+    if not base:
+        return False
+    parts = line.split()
+    # BCC biosnoop with -t: TIME(s) COMM PID DISK T SECTOR BYTES LAT(ms)
+    # Without -t:           COMM PID DISK T SECTOR BYTES LAT(ms)
+    # Be permissive and look for any token equal to disk or partition name.
+    for tok in parts:
+        tok = tok.strip()
+        if tok == base:
+            return True
+        if base.startswith("nvme") and tok.startswith(base + "p"):
+            return True
+        if re.match(r"^[a-z]+[a-z]$", base) and tok.startswith(base) and tok[len(base):].isdigit():
+            return True
+    return False
+
+
+def _trigger_readonly_block_io(device: str, use_sudo: bool = True) -> tuple[int, str, str]:
+    """Trigger a tiny read-only direct read to make biosnoop emit an event.
+
+    This reads 256 KiB from the target block device into /dev/null. It does not
+    write to the device.
+    """
+    cmd = ["dd", f"if={device}", "of=/dev/null", "bs=4096", "count=64",
+           "iflag=direct", "status=none"]
+    if use_sudo and os.geteuid() != 0:
+        cmd = ["sudo", "-n"] + cmd
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        return r.returncode, r.stdout or "", r.stderr or ""
+    except subprocess.TimeoutExpired:
+        return -1, "", "timeout while triggering read-only direct I/O"
+    except Exception as e:
+        return -2, "", repr(e)
 
 
 # ─── Required-baseline checks ───────────────────────────────────────────────
@@ -291,21 +338,16 @@ def check_blktrace(device: str, blktrace_bin: str = "blktrace",
 
 
 def check_biosnoop(biosnoop_bin: str = "biosnoop-bpfcc",
-                    use_sudo: bool = True) -> CheckResult:
-    """biosnoop smoke: confirm BCC can load + probe attach + emit header.
+                    use_sudo: bool = True,
+                    device: str | None = None,
+                    verify_event: bool = False) -> CheckResult:
+    """biosnoop smoke check.
 
-    The header that biosnoop-bpfcc produces is:
-        TIME(s)     COMM           PID    DISK    T SECTOR     BYTES  LAT(ms)
-
-    Two subtleties:
-      1. BCC compiles the BPF program on first run (kernel-headers or BTF),
-         which can take 3-7 seconds on first invocation. We give up to 8s.
-      2. biosnoop's stdout, when connected to a pipe, is fully buffered by
-         glibc. Wrap with `stdbuf -oL` to force line buffering so we see
-         the header immediately rather than after a 4KB flush.
-
-    We use non-blocking reads in a polling loop instead of communicate(),
-    so we can declare success the moment the header arrives.
+    Header emission proves that the BCC tool started and attached enough to
+    print its column header. It does NOT prove that I/O events are emitted for
+    the target SSD. When verify_event=True, AMOprof performs a tiny read-only
+    direct read from --ssd-device while biosnoop is running and requires a
+    matching event for that disk or partition.
     """
     import select as _sel
     import fcntl as _fcntl
@@ -317,29 +359,17 @@ def check_biosnoop(biosnoop_bin: str = "biosnoop-bpfcc",
             fix="apt install bpfcc-tools  (Ubuntu) or yum install bcc-tools  (RHEL)",
             impact=["§I per-stream bandwidth (PID → stream attribution)"],
         )
-    # BTF dramatically shortens BCC's first-run compile (CO-RE re-uses kernel BTF)
-    btf_present = Path("/sys/kernel/btf/vmlinux").exists()
 
-    # Force line buffering. There are TWO buffering layers to defeat:
-    #   1. glibc's stdio buffering — controlled by stdbuf
-    #   2. Python's io.TextIOWrapper buffering — controlled by PYTHONUNBUFFERED
-    # biosnoop-bpfcc is a Python BCC tool (#!/usr/bin/python3), so stdbuf
-    # alone is NOT sufficient: Python doesn't use glibc's stdio buffering
-    # for its sys.stdout. Set PYTHONUNBUFFERED=1 so Python flushes after
-    # every print(), and also wrap with stdbuf for the rare case where
-    # biosnoop's transitive C extensions emit anything.
+    btf_present = Path("/sys/kernel/btf/vmlinux").exists()
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
 
-    cmd: list[str]
+    # Mirror the real collector: biosnoop's -t means print TIME(s), not duration.
     if shutil.which("stdbuf"):
-        cmd = ["stdbuf", "-oL", biosnoop_bin]
+        cmd = ["stdbuf", "-oL", biosnoop_bin, "-t"]
     else:
-        cmd = [biosnoop_bin]
+        cmd = [biosnoop_bin, "-t"]
     if use_sudo and os.geteuid() != 0:
-        # sudo by default strips PYTHONUNBUFFERED from the environment.
-        # `-E` preserves env, but distros that lock sudo down may not allow it.
-        # Pass it explicitly to be safe.
         cmd = ["sudo", "-n", "-E", "PYTHONUNBUFFERED=1"] + cmd
 
     try:
@@ -353,67 +383,125 @@ def check_biosnoop(biosnoop_bin: str = "biosnoop-bpfcc",
             fix="apt install bpfcc-tools", impact=["§I per-stream"],
         )
 
-    # Put stdout into non-blocking mode so read() returns whatever's there
     fd = proc.stdout.fileno()
     flags = _fcntl.fcntl(fd, _fcntl.F_GETFL)
     _fcntl.fcntl(fd, _fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
-    # Poll for up to 8 sec, looking for the header. BCC load + probe attach
-    # typically takes 1-4 sec; BTF-CO-RE under 1 sec; non-BTF first run can
-    # hit 6-7 sec compiling kernel headers.
-    accumulated = ""
-    deadline = time.monotonic() + 8.0
-    header_seen = False
     poll = _sel.poll()
     poll.register(fd, _sel.POLLIN)
+
+    accumulated = ""
+    header_seen = False
+    event_seen = False
+    trigger_done = False
+    trigger_rc = None
+    trigger_err = ""
+    t_start = time.monotonic()
+
+    # Phase 1: wait for header.
+    deadline = time.monotonic() + 8.0
     while time.monotonic() < deadline:
         if proc.poll() is not None:
-            # Process exited before we saw a header — fatal
             break
-        events = poll.poll(200)  # 200ms tick
-        if not events:
-            continue
-        try:
-            chunk = os.read(fd, 4096).decode("utf-8", errors="replace")
-        except BlockingIOError:
-            continue
-        if not chunk:
-            continue
-        accumulated += chunk
-        # biosnoop-bpfcc header: "TIME(s) COMM PID DISK T SECTOR BYTES LAT(ms)"
-        if "PID" in accumulated and ("COMM" in accumulated or "DISK" in accumulated):
-            header_seen = True
-            break
+        events = poll.poll(200)
+        if events:
+            try:
+                chunk = os.read(fd, 4096).decode("utf-8", errors="replace")
+            except BlockingIOError:
+                chunk = ""
+            if chunk:
+                accumulated += chunk
+                if "PID" in accumulated and ("COMM" in accumulated or "DISK" in accumulated):
+                    header_seen = True
+                    break
 
-    # Tear down gracefully — SIGINT lets biosnoop flush BPF maps cleanly
+    # Phase 2: if requested, actively prove event emission on target disk.
+    if header_seen and verify_event and device:
+        trigger_rc, _out, trigger_err = _trigger_readonly_block_io(device, use_sudo=use_sudo)
+        trigger_done = True
+        event_deadline = time.monotonic() + 5.0
+        while time.monotonic() < event_deadline:
+            if proc.poll() is not None:
+                break
+            events = poll.poll(200)
+            if not events:
+                continue
+            try:
+                chunk = os.read(fd, 8192).decode("utf-8", errors="replace")
+            except BlockingIOError:
+                continue
+            if not chunk:
+                continue
+            accumulated += chunk
+            for line in chunk.splitlines():
+                if _biosnoop_disk_matches(line, device):
+                    event_seen = True
+                    break
+            if event_seen:
+                break
+
+    # Graceful teardown — SIGINT lets BCC flush.
     try:
         proc.send_signal(2)
         proc.wait(timeout=2.0)
     except subprocess.TimeoutExpired:
         proc.kill()
-        try: proc.wait(timeout=1.0)
-        except subprocess.TimeoutExpired: pass
+        try:
+            proc.wait(timeout=1.0)
+        except subprocess.TimeoutExpired:
+            pass
 
-    if header_seen:
-        return CheckResult(
-            "biosnoop (--enable-biosnoop)", "pass",
-            detail=f"emitted header within {8.0 - max(0, deadline - time.monotonic()):.1f}s "
-                   f"(BTF={'yes' if btf_present else 'no'})")
-
-    # Didn't get a header — collect what we can for diagnostics
     try:
         stderr = proc.stderr.read() if proc.stderr else ""
     except Exception:
         stderr = ""
+
+    elapsed = time.monotonic() - t_start
+
+    if header_seen and (not verify_event):
+        return CheckResult(
+            "biosnoop (--enable-biosnoop)", "pass",
+            detail=(f"attach/header OK within {elapsed:.1f}s; event capture not verified "
+                    f"(run with --strict-sanity to verify target-device events; "
+                    f"BTF={'yes' if btf_present else 'no'})"),
+        )
+
+    if header_seen and verify_event and event_seen:
+        return CheckResult(
+            "biosnoop (--enable-biosnoop)", "pass",
+            detail=(f"attach/header OK and captured target-device event for "
+                    f"{_block_device_base(device)} after read-only smoke I/O "
+                    f"(BTF={'yes' if btf_present else 'no'})"),
+        )
+
+    if header_seen and verify_event and not event_seen:
+        diagnostic = (accumulated + "\n" + stderr).strip()
+        sample = " | ".join(diagnostic.splitlines()[-5:])[:220] if diagnostic else "(no output)"
+        trig = ""
+        if trigger_done:
+            trig = f"; smoke-read rc={trigger_rc}, err={trigger_err[:120]!r}"
+        return CheckResult(
+            "biosnoop (--enable-biosnoop)", "fail",
+            detail=(f"header/attach OK, but no biosnoop event was observed for "
+                    f"{_block_device_base(device)} during read-only smoke I/O{trig}. "
+                    f"Last output: {sample}"),
+            fix=("This usually means biosnoop/BCC attaches but is not receiving block events "
+                 "for this kernel/device path, or DISK naming differs. Check the real run's "
+                 "raw/biosnoop_events_all.csv, raw/biosnoop_stderr.txt, and compare DISK names "
+                 "against blktrace. You can keep blktrace as the authoritative physical I/O source."),
+            impact=["§I per-stream bandwidth", "biosnoop per-PID attribution"],
+        )
+
+    # No header.
     diagnostic = (accumulated + "\n" + stderr).strip()
     last_lines = diagnostic.splitlines()[-3:] if diagnostic else ["(no output)"]
     btf_hint = "" if btf_present else (
         " (no BTF — first BCC run may need linux-headers-$(uname -r); "
-        "try preloading by running 'sudo biosnoop-bpfcc' once)")
+        "try preloading by running 'sudo biosnoop-bpfcc -t' once)")
     return CheckResult(
         "biosnoop (--enable-biosnoop)", "fail",
         detail=f"no header in 8s. Last output: {' | '.join(last_lines)[:160]}",
-        fix=("Test manually: sudo " + biosnoop_bin + ". "
+        fix=("Test manually: sudo " + biosnoop_bin + " -t. "
              "If passwordless sudo isn't configured for this user, the smoke "
              "test sees an immediate exit. Pass --no-sudo to skip the sudo prefix"
              " if AMOprof itself runs as root."
@@ -612,6 +700,8 @@ def run_sanity_checks(args, sglang_host: str, sglang_port: int) -> list[CheckRes
         results.append(check_biosnoop(
             biosnoop_bin=getattr(args, "biosnoop_bin", "biosnoop-bpfcc"),
             use_sudo=use_sudo,
+            device=getattr(args, "ssd_device", None),
+            verify_event=bool(getattr(args, "strict_sanity", False)),
         ))
 
     if getattr(args, "enable_amduprof_pcm", False):

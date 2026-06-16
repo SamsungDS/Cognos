@@ -112,7 +112,11 @@ class IostatMonitor:
             "r_await_ms_p99":     p("rawt", 99),
             "r_await_ms_p999":    p("rawt", 99.9),
             "w_await_ms_mean":    m("wawt"),  "w_await_ms_p99":    p("wawt",99),
-            "avgqu_sz_mean":      m("avgqu"), "util_pct_mean":     m("util"),
+            "avgqu_sz_mean":      m("avgqu"), "avgqu_sz_p50":      p("avgqu", 50),
+            "avgqu_sz_p95":       p("avgqu", 95), "avgqu_sz_p99":      p("avgqu", 99),
+            "avgqu_sz_peak":      pk("avgqu"), "util_pct_mean":       m("util"),
+            "util_pct_peak":      pk("util"),
+            "queue_depth_source": "iostat_aqu_sz_or_avgqu_sz",
             "iostat_samples":     len(self.samples),
         }
 
@@ -1037,6 +1041,7 @@ class NvmeDriverMonitor:
       field 7  = write ms total
       field 8  = I/Os currently in flight (queue depth)
       field 9  = ms spent doing I/Os (utilisation)
+      field 10 = weighted ms spent doing I/Os (time_in_queue; avg QD source)
 
     Also reads queue parameters:
       /sys/block/<dev>/queue/nr_requests  — queue depth limit
@@ -1062,8 +1067,9 @@ class NvmeDriverMonitor:
                 "rd_ms":      int(raw[3]),
                 "wr_ios":     int(raw[4]),
                 "wr_ms":      int(raw[7]),
-                "inflight":   int(raw[8]),
-                "io_ms":      int(raw[9]),
+                "inflight":       int(raw[8]),
+                "io_ms":          int(raw[9]),
+                "weighted_io_ms": int(raw[10]) if len(raw) > 10 else 0,
             }
         except Exception:
             return {}
@@ -1143,6 +1149,17 @@ class NvmeDriverMonitor:
         inflight_vals = [s["inflight"] for s in self._samples if "inflight" in s]
         inflight_mean = round(statistics.mean(inflight_vals), 2) if inflight_vals else 0.0
         inflight_peak = max(inflight_vals) if inflight_vals else 0
+        inflight_sorted = sorted(inflight_vals)
+        def _pct(vals, pct):
+            if not vals:
+                return 0.0
+            idx = min(max(int(len(vals) * pct / 100.0), 0), len(vals)-1)
+            return round(vals[idx], 2)
+
+        # /sys/block/<dev>/stat column 10 is a time-weighted queue depth source:
+        # avg_qd = Δweighted_io_ms / Δwall_ms.
+        weighted_delta_ms = max(float(last.get("weighted_io_ms", 0)) - float(first.get("weighted_io_ms", 0)), 0.0)
+        weighted_qd_mean = round(weighted_delta_ms / max(dt * 1000.0, 1e-6), 3)
 
         return {
             "nvme_driver_available":  True,
@@ -1152,8 +1169,13 @@ class NvmeDriverMonitor:
             "nvme_rd_lat_ms_mean":    rd_lat_ms,
             "nvme_wr_lat_ms_mean":    wr_lat_ms,
             "nvme_inflight_mean":     inflight_mean,
+            "nvme_inflight_p50":      _pct(inflight_sorted, 50),
+            "nvme_inflight_p95":      _pct(inflight_sorted, 95),
+            "nvme_inflight_p99":      _pct(inflight_sorted, 99),
             "nvme_inflight_peak":     inflight_peak,
+            "nvme_weighted_qd_mean":  weighted_qd_mean,
             "nvme_util_pct_sysfs":    util_pct,
+            "queue_depth_sources":    "sysfs_stat_inflight,sysfs_stat_weighted_io_ms,sysfs_inflight,sysfs_queue",
             # Queue parameters (A2 layer config)
             "nvme_nr_requests":       qp.get("nr_requests", 0),
             "nvme_scheduler":         qp.get("scheduler", "unknown"),
@@ -1163,6 +1185,245 @@ class NvmeDriverMonitor:
             "nvme_inflight_writes":   qp.get("inflight_writes", 0),
         }
 
+
+
+# ── Unified block queue-depth collector ──────────────────────────────────────
+
+class BlockQueueDepthCollector:
+    """
+    Capture queue-depth related metrics from every cheap local kernel source.
+
+    Sources sampled every interval:
+      • /sys/block/<dev>/stat field 8  -> instantaneous in-flight I/O
+      • /sys/block/<dev>/stat field 9  -> device busy ticks
+      • /sys/block/<dev>/stat field 10 -> weighted time in queue
+      • /sys/block/<dev>/inflight      -> read/write in-flight split
+      • /sys/block/<dev>/queue/*       -> queue limits/config
+      • /proc/diskstats                -> same kernel counters via proc fallback
+
+    Exact event-level queue depth still comes from blktrace Q→C analysis when
+    --enable-blktrace is used. This collector provides always-on sampled
+    queue pressure so the report has data even when blktrace Q/C parsing is
+    missing or intentionally disabled.
+    """
+
+    def __init__(self, device: str, interval_s: float = 1.0, work_dir: "Path | str" = "."):
+        self.device = device
+        self.dev = os.path.basename(device)
+        # If the user passes a partition, queue stats live under the parent disk.
+        self.base_dev = re.sub(r"p\d+$", "", self.dev)
+        self.interval = max(float(interval_s or 1.0), 0.1)
+        self.work_dir = Path(work_dir)
+        self.work_dir.mkdir(parents=True, exist_ok=True)
+        self._samples: list[dict] = []
+        self._derived: list[dict] = []
+        self._thread = None
+        self._stop = threading.Event()
+        self._csv_path = self.work_dir / "queue_depth_sources_timeseries.csv"
+
+    def _read_queue_params(self) -> dict:
+        out = {}
+        qdir = Path(f"/sys/block/{self.base_dev}/queue")
+        for name in (
+            "nr_requests", "scheduler", "nomerges", "rq_affinity",
+            "rotational", "max_sectors_kb", "max_hw_sectors_kb",
+            "logical_block_size", "physical_block_size", "minimum_io_size",
+            "optimal_io_size", "io_poll", "io_poll_delay",
+        ):
+            p = qdir / name
+            try:
+                v = p.read_text().strip()
+                out[f"queue_{name}"] = int(v) if re.fullmatch(r"-?\d+", v or "") else v
+            except Exception:
+                pass
+        return out
+
+    def _read_inflight(self) -> dict:
+        out = {}
+        for dev in (self.dev, self.base_dev):
+            p = Path(f"/sys/block/{dev}/inflight")
+            if p.exists():
+                try:
+                    vals = p.read_text().split()
+                    if len(vals) >= 2:
+                        out["sysfs_inflight_reads"] = int(vals[0])
+                        out["sysfs_inflight_writes"] = int(vals[1])
+                        out["sysfs_inflight_total_split"] = int(vals[0]) + int(vals[1])
+                        out["sysfs_inflight_source_dev"] = dev
+                        return out
+                except Exception:
+                    pass
+        return out
+
+    def _read_stat_file(self) -> dict:
+        for dev in (self.dev, self.base_dev):
+            p = Path(f"/sys/block/{dev}/stat")
+            if p.exists():
+                try:
+                    raw = p.read_text().split()
+                    if len(raw) >= 11:
+                        return {
+                            "stat_source": f"/sys/block/{dev}/stat",
+                            "rd_ios": int(raw[0]),
+                            "rd_merges": int(raw[1]),
+                            "rd_sectors": int(raw[2]),
+                            "rd_ms": int(raw[3]),
+                            "wr_ios": int(raw[4]),
+                            "wr_merges": int(raw[5]),
+                            "wr_sectors": int(raw[6]),
+                            "wr_ms": int(raw[7]),
+                            "stat_inflight": int(raw[8]),
+                            "io_ticks_ms": int(raw[9]),
+                            "weighted_io_ms": int(raw[10]),
+                            "discard_ios": int(raw[11]) if len(raw) > 11 else 0,
+                            "discard_sectors": int(raw[13]) if len(raw) > 13 else 0,
+                            "discard_ms": int(raw[14]) if len(raw) > 14 else 0,
+                        }
+                except Exception:
+                    pass
+        return {}
+
+    def _read_proc_diskstats(self) -> dict:
+        try:
+            with open("/proc/diskstats") as fh:
+                for line in fh:
+                    parts = line.split()
+                    if len(parts) >= 14 and parts[2] in {self.dev, self.base_dev}:
+                        return {
+                            "proc_diskstats_dev": parts[2],
+                            "proc_rd_ios": int(parts[3]),
+                            "proc_rd_sectors": int(parts[5]),
+                            "proc_rd_ms": int(parts[6]),
+                            "proc_wr_ios": int(parts[7]),
+                            "proc_wr_sectors": int(parts[9]),
+                            "proc_wr_ms": int(parts[10]),
+                            "proc_inflight": int(parts[11]) if len(parts) > 11 else 0,
+                            "proc_io_ticks_ms": int(parts[12]) if len(parts) > 12 else 0,
+                            "proc_weighted_io_ms": int(parts[13]) if len(parts) > 13 else 0,
+                        }
+        except Exception:
+            pass
+        return {}
+
+    def _read(self) -> dict:
+        row = {"ts": time.time(), "device": self.device, "dev": self.dev, "base_dev": self.base_dev}
+        row.update(self._read_stat_file())
+        row.update(self._read_inflight())
+        row.update(self._read_proc_diskstats())
+        row.update(self._read_queue_params())
+        return row
+
+    def start(self):
+        self._stop.clear()
+        self._samples.clear()
+        self._derived.clear()
+        self._samples.append(self._read())
+        self._thread = threading.Thread(target=self._poll, daemon=True)
+        self._thread.start()
+
+    def _poll(self):
+        while not self._stop.wait(self.interval):
+            self._samples.append(self._read())
+
+    def _derive_rows(self) -> list[dict]:
+        rows: list[dict] = []
+        for i in range(1, len(self._samples)):
+            a, b = self._samples[i-1], self._samples[i]
+            dt = max(float(b.get("ts", 0)) - float(a.get("ts", 0)), 1e-6)
+            wall_ms = dt * 1000.0
+            d_io_ms = max(float(b.get("io_ticks_ms", b.get("proc_io_ticks_ms", 0))) -
+                          float(a.get("io_ticks_ms", a.get("proc_io_ticks_ms", 0))), 0.0)
+            d_weighted_ms = max(float(b.get("weighted_io_ms", b.get("proc_weighted_io_ms", 0))) -
+                                float(a.get("weighted_io_ms", a.get("proc_weighted_io_ms", 0))), 0.0)
+            d_rd_ios = max(float(b.get("rd_ios", b.get("proc_rd_ios", 0))) -
+                           float(a.get("rd_ios", a.get("proc_rd_ios", 0))), 0.0)
+            d_wr_ios = max(float(b.get("wr_ios", b.get("proc_wr_ios", 0))) -
+                           float(a.get("wr_ios", a.get("proc_wr_ios", 0))), 0.0)
+            d_rd_sec = max(float(b.get("rd_sectors", b.get("proc_rd_sectors", 0))) -
+                           float(a.get("rd_sectors", a.get("proc_rd_sectors", 0))), 0.0)
+            d_wr_sec = max(float(b.get("wr_sectors", b.get("proc_wr_sectors", 0))) -
+                           float(a.get("wr_sectors", a.get("proc_wr_sectors", 0))), 0.0)
+            d_rd_ms = max(float(b.get("rd_ms", b.get("proc_rd_ms", 0))) -
+                          float(a.get("rd_ms", a.get("proc_rd_ms", 0))), 0.0)
+            d_wr_ms = max(float(b.get("wr_ms", b.get("proc_wr_ms", 0))) -
+                          float(a.get("wr_ms", a.get("proc_wr_ms", 0))), 0.0)
+            row = {
+                "ts": b.get("ts", 0),
+                "device": self.device,
+                "dev": self.dev,
+                "base_dev": self.base_dev,
+                "source": "sysfs_stat_weighted_io_ms+sysfs_inflight+proc_diskstats",
+                "sysfs_inflight": float(b.get("stat_inflight", b.get("proc_inflight", 0)) or 0),
+                "sysfs_inflight_reads": float(b.get("sysfs_inflight_reads", 0) or 0),
+                "sysfs_inflight_writes": float(b.get("sysfs_inflight_writes", 0) or 0),
+                "weighted_qd": round(d_weighted_ms / max(wall_ms, 1e-6), 4),
+                "io_util_pct": round(min(d_io_ms / max(wall_ms, 1e-6) * 100.0, 100.0), 3),
+                "rd_iops": round(d_rd_ios / dt, 3),
+                "wr_iops": round(d_wr_ios / dt, 3),
+                "rd_bw_mbs": round(d_rd_sec * 512.0 / 1024.0 / 1024.0 / dt, 6),
+                "wr_bw_mbs": round(d_wr_sec * 512.0 / 1024.0 / 1024.0 / dt, 6),
+                "rd_lat_ms": round(d_rd_ms / max(d_rd_ios, 1.0), 4) if d_rd_ios > 0 else 0.0,
+                "wr_lat_ms": round(d_wr_ms / max(d_wr_ios, 1.0), 4) if d_wr_ios > 0 else 0.0,
+                "queue_nr_requests": b.get("queue_nr_requests", 0),
+                "queue_scheduler": b.get("queue_scheduler", ""),
+                "queue_nomerges": b.get("queue_nomerges", ""),
+                "queue_max_sectors_kb": b.get("queue_max_sectors_kb", 0),
+            }
+            # Best-effort sampled QD: weighted_qd is time-weighted and preferred;
+            # instantaneous inflight catches very short bursts between intervals.
+            row["qd_best_effort"] = max(float(row["weighted_qd"]), float(row["sysfs_inflight"]))
+            rows.append(row)
+        return rows
+
+    def stop(self) -> dict:
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=5)
+        self._samples.append(self._read())
+        self._derived = self._derive_rows()
+
+        # Write a canonical, multi-source queue-depth timeseries immediately so
+        # analyze/report can consume it without needing to know collector internals.
+        if self._derived:
+            import csv as _csv
+            fields = sorted({k for row in self._derived for k in row.keys()})
+            with open(self._csv_path, "w", encoding="utf-8", newline="") as fp:
+                w = _csv.DictWriter(fp, fieldnames=fields)
+                w.writeheader()
+                for row in self._derived:
+                    w.writerow(row)
+
+        qd_vals = [float(r.get("qd_best_effort", 0)) for r in self._derived]
+        weighted_vals = [float(r.get("weighted_qd", 0)) for r in self._derived]
+        inflight_vals = [float(r.get("sysfs_inflight", 0)) for r in self._derived]
+        util_vals = [float(r.get("io_util_pct", 0)) for r in self._derived]
+        def _mean(vals):
+            return round(statistics.mean(vals), 4) if vals else 0.0
+        def _pct(vals, pct):
+            if not vals: return 0.0
+            xs = sorted(vals)
+            idx = min(max(int(len(xs) * pct / 100.0), 0), len(xs)-1)
+            return round(xs[idx], 4)
+        def _peak(vals):
+            return round(max(vals), 4) if vals else 0.0
+
+        return {
+            "queue_depth_available": bool(self._derived),
+            "queue_depth_csv": str(self._csv_path) if self._derived else "",
+            "queue_depth_samples": len(self._derived),
+            "queue_depth_sources": "sysfs_stat_inflight,sysfs_stat_weighted_io_ms,sysfs_inflight,proc_diskstats,sysfs_queue_params",
+            "queue_depth_mean": _mean(qd_vals),
+            "queue_depth_p50": _pct(qd_vals, 50),
+            "queue_depth_p95": _pct(qd_vals, 95),
+            "queue_depth_p99": _pct(qd_vals, 99),
+            "queue_depth_peak": _peak(qd_vals),
+            "weighted_qd_mean": _mean(weighted_vals),
+            "weighted_qd_peak": _peak(weighted_vals),
+            "inflight_mean": _mean(inflight_vals),
+            "inflight_peak": _peak(inflight_vals),
+            "io_util_pct_mean": _mean(util_vals),
+            "io_util_pct_peak": _peak(util_vals),
+        }
 
 # ── A1 L3:SSD Hardware — extended SMART + TBW + DWPD + KV$ cold store ─────────
 
@@ -1810,7 +2071,8 @@ class NcuAttentionCollector:
         try:
             self._proc = _sudo_popen(
                 cmd, self.use_sudo, stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE, text=True)
+                stderr=subprocess.PIPE, text=True,
+                cwd=str(td))
         except Exception as e:
             self._result = {"ncu_attention_available": False,
                             "ncu_attention_reason": str(e)}
@@ -1979,7 +2241,7 @@ class NsysTraceCollector:
         try:
             self._proc = subprocess.Popen(
                 cmd, stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE, text=True)
+                stderr=subprocess.PIPE, text=True, cwd=str(td))
         except Exception as e:
             self._result = {"nsys_available": False, "nsys_reason": str(e)}
 
@@ -2151,7 +2413,7 @@ class PerfStatCollector:
             # perf stat writes metrics to stderr when interrupted
             self._proc = subprocess.Popen(
                 cmd, stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE, text=True)
+                stderr=subprocess.PIPE, text=True, cwd=str(td))
             self._t0 = time.time()
         except Exception as e:
             self._result = {"perf_available": False, "perf_reason": str(e)}
@@ -2245,16 +2507,22 @@ class PcmMemoryCollector:
     """
 
     def __init__(self, interval_s: float = 1.0, binary: str | None = None,
-                 force_perf_imc: bool = False, use_sudo: bool = True):
+                 force_perf_imc: bool = False, use_sudo: bool = True,
+                 work_dir: "Path | str | None" = None):
         self.interval  = interval_s
         self.binary    = binary
         self.force_perf_imc = force_perf_imc
         self.use_sudo  = use_sudo
+        self.work_dir  = Path(work_dir) if work_dir is not None else None
+        if self.work_dir is not None:
+            self.work_dir.mkdir(parents=True, exist_ok=True)
         self._samples: list[dict] = []
         self._proc      = None
         self._thread    = None
         self._stop      = threading.Event()
         self._source    = "unavailable"
+        self._raw_path: "Path | None" = (self.work_dir / "pcm_memory_raw.csv" if self.work_dir is not None else None)
+        self._raw_fh = None
 
     # ── PCM binary path ───────────────────────────────────────────────────────
 
@@ -2310,7 +2578,8 @@ class PcmMemoryCollector:
         try:
             self._proc = _sudo_popen(
                 cmd, use_sudo=self.use_sudo, stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL, text=True)
+                stderr=subprocess.DEVNULL, text=True,
+                cwd=str(self.work_dir) if self.work_dir is not None else None)
             self._thread = threading.Thread(
                 target=self._read_pcm, daemon=True)
             self._thread.start()
@@ -2321,38 +2590,57 @@ class PcmMemoryCollector:
         """Parse pcm-memory CSV: columns include Read*, Write* per socket."""
         if not self._proc:
             return
-        header = None
-        for line in self._proc.stdout:
-            if self._stop.is_set():
-                break
-            line = line.strip()
-            if not line:
-                continue
-            if header is None:
-                delim = ";" if ";" in line else ","
-                self._pcm_delim = delim
-                header = [h.strip().lower() for h in line.split(delim)]
-                continue
-            delim = getattr(self, "_pcm_delim", ";")
-            parts = line.split(delim)
-            if len(parts) != len(header):
-                continue
-            row = dict(zip(header, parts))
+        if self._raw_path is not None:
             try:
-                read_gb_s  = sum(float(v) for k, v in row.items()
-                                 if "read" in k and v.strip())
-                write_gb_s = sum(float(v) for k, v in row.items()
-                                 if "write" in k and v.strip())
-                total_gb_s = read_gb_s + write_gb_s
-                self._samples.append({
-                    "read": read_gb_s, "write": write_gb_s,
-                    "dram_read_gb_s": read_gb_s,
-                    "dram_write_gb_s": write_gb_s,
-                    "dram_total_gb_s": total_gb_s,
-                    "dram_source": self._source,
-                })
+                self._raw_fh = open(self._raw_path, "w", encoding="utf-8", buffering=1)
             except Exception:
-                pass
+                self._raw_fh = None
+        header = None
+        try:
+            iterator = self._proc.stdout or []
+            for line in iterator:
+                if self._raw_fh:
+                    try:
+                        self._raw_fh.write(line)
+                    except Exception:
+                        pass
+                if self._stop.is_set():
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                if header is None:
+                    delim = ";" if ";" in line else ","
+                    self._pcm_delim = delim
+                    header = [h.strip().lower() for h in line.split(delim)]
+                    continue
+                delim = getattr(self, "_pcm_delim", ";")
+                parts = line.split(delim)
+                if len(parts) != len(header):
+                    continue
+                row = dict(zip(header, parts))
+                try:
+                    read_gb_s  = sum(float(v) for k, v in row.items()
+                                     if "read" in k and v.strip())
+                    write_gb_s = sum(float(v) for k, v in row.items()
+                                     if "write" in k and v.strip())
+                    total_gb_s = read_gb_s + write_gb_s
+                    self._samples.append({
+                        "read": read_gb_s, "write": write_gb_s,
+                        "dram_read_gb_s": read_gb_s,
+                        "dram_write_gb_s": write_gb_s,
+                        "dram_total_gb_s": total_gb_s,
+                        "dram_source": self._source,
+                    })
+                except Exception:
+                    pass
+        finally:
+            if self._raw_fh:
+                try:
+                    self._raw_fh.close()
+                except Exception:
+                    pass
+                self._raw_fh = None
 
     def _poll_imc_pmu(self):
         """
@@ -2369,7 +2657,8 @@ class PcmMemoryCollector:
         try:
             proc = _sudo_popen(
                 cmd, use_sudo=self.use_sudo, stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE, text=True)
+                stderr=subprocess.PIPE, text=True,
+                cwd=str(self.work_dir) if self.work_dir is not None else None)
             t_last = time.time()
             for line in proc.stderr:
                 if self._stop.is_set():
@@ -2414,7 +2703,8 @@ class PcmMemoryCollector:
         if self._source == "unavailable" or not self._samples:
             return {"pcm_available":  False,
                     "pcm_source":     self._source,
-                    "pcm_samples":    0}
+                    "pcm_samples":    0,
+                    "pcm_raw_path":   str(self._raw_path) if self._raw_path is not None else ""}
 
         reads  = [s["read"]  for s in self._samples]
         writes = [s["write"] for s in self._samples]
@@ -2438,6 +2728,7 @@ class PcmMemoryCollector:
             "dram_read_gb_s_peak":      pk(reads),
             "dram_write_gb_s_peak":     pk(writes),
             "pcm_samples":              len(self._samples),
+            "pcm_raw_path":             str(self._raw_path) if self._raw_path is not None else "",
         }
 
 
@@ -2501,7 +2792,8 @@ class AMDuProfPcmMemoryCollector:
         run_cmd = _sudo_cmd(cmd, self.use_sudo)
         self._command = " ".join(str(x) for x in run_cmd)
         try:
-            self._proc = subprocess.Popen(run_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            self._proc = subprocess.Popen(run_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                          cwd=str(out_csv.parent))
             self._thread = threading.Thread(target=self._wait_and_parse, daemon=True); self._thread.start()
         except Exception as e:
             self._result = {"amduprof_pcm_available": False, "amduprof_pcm_reason": str(e), "amduprof_pcm_command": " ".join(str(x) for x in run_cmd)}
@@ -2737,7 +3029,15 @@ class NcuHbmReadWriteCollector:
             if self.live_log_path:
                 Path(self.live_log_path).parent.mkdir(parents=True, exist_ok=True)
                 Path(self.live_log_path).write_text("# AMOprof NCU launched command\n" + self.command_line + "\n\n", encoding="utf-8")
-            self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            _cwd = None
+            try:
+                if self.output_csv:
+                    _cwd = str(Path(self.output_csv).parent)
+                elif self.live_log_path:
+                    _cwd = str(Path(self.live_log_path).parent)
+            except Exception:
+                _cwd = None
+            self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, cwd=_cwd)
             self._thread = threading.Thread(target=self._wait_and_parse, daemon=True)
             self._thread.start()
         except Exception as e:
@@ -3042,7 +3342,8 @@ END
         try:
             self._proc = _sudo_popen(
                 cmd, self.use_sudo, stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE, text=True)
+                stderr=subprocess.PIPE, text=True,
+                cwd=str(td))
             self._t0 = time.time()
         except Exception as e:
             self._result = {"bpf_available": False, "bpf_reason": str(e)}
@@ -3372,7 +3673,7 @@ class VtuneCollector:
         try:
             self._proc = subprocess.Popen(
                 cmd, stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE, text=True)
+                stderr=subprocess.PIPE, text=True, cwd=str(td))
         except Exception as e:
             self._result = {"vtune_available": False,
                             "vtune_reason": str(e)}

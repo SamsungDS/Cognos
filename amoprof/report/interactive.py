@@ -2463,6 +2463,23 @@ def build_report(raw_dir: Path, out_html: Path,
     # Empty list when the run pre-dates QD analysis; sections degrade gracefully.
     qd_ts_data   = _ba_csv("queue_depth_timeseries.csv")
     qd_dist_data = _ba_csv("queue_depth_distribution.csv")
+    # Fallback: when exact blktrace Q→C queue-depth files are missing, use
+    # nvme_driver_timeseries inflight/aqu-sz so the AI-stack layer pressure
+    # section does not render empty. This is coarser than event-level QD but
+    # valid for sampled device pressure.
+    qd_fallback_note = ""
+    if not qd_ts_data and nvme_ts:
+        _fallback = []
+        for _r in nvme_ts:
+            _t = _to_float(_r.get("time_sec")) or 0
+            _qd = (_to_float(_r.get("inflight")) or _to_float(_r.get("queue_depth")) or
+                   _to_float(_r.get("aqu_sz")) or _to_float(_r.get("avgqu")) or 0)
+            if _qd > 0:
+                _fallback.append({"t_sec": _t, "qd_total": _qd, "qd_read": 0, "qd_write": 0,
+                                  "source": "iostat/sysfs inflight fallback"})
+        if _fallback:
+            qd_ts_data = _fallback
+            qd_fallback_note = "Fallback from nvme_driver_timeseries inflight / iostat aqu-sz because exact blktrace Q→C queue-depth files are missing."
     # Capacity/used context for the SSD I/O Distribution chart
     _ssd_cap_gb  = _to_float(smart_sum.get("nvme_device_capacity_gb")) or 0.0
     _ssd_used_gb = _to_float(smart_sum.get("hicache_fs_used_gb")) or \
@@ -3165,12 +3182,16 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
     # Two charts: stacked R/W in-flight over time, then the time-weighted
     # histogram showing what fraction of the run was spent at each QD value.
     if qd_ts_data:
+        _qd_title = "NVMe Queue Depth Over Time" if not qd_fallback_note else "NVMe Queue Depth Over Time — iostat/sysfs fallback"
+        _qd_note = (("Exact queue depth derived from blktrace Q (queued) → C (completed) events. "
+                     "Stacked area shows read vs write in-flight count; purple line is total. ")
+                    if not qd_fallback_note else
+                    (qd_fallback_note + " The purple line is sampled total in-flight/aqu-sz; read/write split is unavailable in fallback mode. "))
         sections_html.append(_section(
-            "NVMe Queue Depth Over Time",
+            _qd_title,
             "ch_qd_ts",
             _chart_qd_timeseries(qd_ts_data),
-            ("Exact queue depth derived from blktrace Q (queued) → C (completed) events. "
-             "Stacked area shows read vs write in-flight count; purple line is total. "
+            (_qd_note +
              "<b>QD = 1</b> means the device serves requests one at a time (latency-bound). "
              "<b>QD ≥ 32 sustained</b> means the device queue is the bottleneck.")))
     if qd_dist_data:

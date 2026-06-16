@@ -4316,7 +4316,10 @@ class Metrics:
     ssd_qd_pct_at_128: float = 0          # % at QD ≥ 128
     ssd_qd_pct_at_256: float = 0          # % at QD ≥ 256
     ssd_qd_pct_at_1024: float = 0         # % at QD ≥ 1024 (max NVMe SQ depth)
-    ssd_qd_available: bool = False        # True iff blktrace QD pass ran successfully
+    ssd_qd_available: bool = False        # True iff QD data is available
+    ssd_qd_source: str = ""               # blktrace_q_to_c or iostat/sysfs fallback
+    ssd_qd_ts: pd.DataFrame = field(default_factory=pd.DataFrame)       # End Report chart source
+    ssd_qd_dist: pd.DataFrame = field(default_factory=pd.DataFrame)     # time-weighted QD histogram/distribution
     nvme_io_ts: pd.DataFrame = field(default_factory=pd.DataFrame)
     # ── Deep IO profiling (requires blktrace/biosnoop — null when unavailable) ─
     blkio_available: bool = False         # True if blkio_trace data present
@@ -4547,6 +4550,79 @@ def extract_metrics(data: dict) -> Metrics:
     _warnings.filterwarnings('ignore', category=RuntimeWarning, message='.*invalid.*')
     _warnings.filterwarnings('ignore', message='.*ConstantInput.*')
     m = Metrics()
+
+    def _apply_queue_depth_dataframe(_df, _source: str, *, _prefer: bool = False) -> bool:
+        """Populate queue-depth chart/stat fields from any supported QD table.
+
+        Supported shapes:
+          • blktrace_analysis/queue_depth_timeseries.csv: t_sec, qd_total, qd_read, qd_write
+          • raw/queue_depth_sources_timeseries.csv: time_sec, qd_best_effort, weighted_qd, sysfs_inflight, ...
+          • nvme_driver/iostat fallback: time_sec, inflight/queue_depth/aqu_sz/avgqu
+        """
+        try:
+            if not isinstance(_df, pd.DataFrame) or _df.empty:
+                return False
+            if (not _prefer) and getattr(m, "ssd_qd_available", False) and not getattr(m, "ssd_qd_ts", pd.DataFrame()).empty:
+                return False
+
+            cols = {str(c).lower().replace('-', '_'): c for c in _df.columns}
+            def _col(*names):
+                for n in names:
+                    key = str(n).lower().replace('-', '_')
+                    if key in cols:
+                        return cols[key]
+                return None
+
+            tcol = _col("time_sec", "t_sec", "timestamp", "elapsed_sec", "ts")
+            qcol = _col("qd_total", "qd_best_effort", "queue_depth", "inflight", "aqu_sz", "avgqu_sz", "avgqu", "weighted_qd", "sysfs_inflight")
+            if qcol is None:
+                return False
+
+            q = pd.to_numeric(_df[qcol], errors="coerce").fillna(0).clip(lower=0)
+            if len(q) == 0 or float(q.max()) <= 0:
+                return False
+            if tcol is not None:
+                t = pd.to_numeric(_df[tcol], errors="coerce").fillna(0)
+            else:
+                t = pd.Series(range(len(q)), dtype=float)
+
+            out = pd.DataFrame({"time_sec": t.astype(float), "queue_depth": q.astype(float)})
+            rcol = _col("qd_read", "read_inflight", "sysfs_inflight_read")
+            wcol = _col("qd_write", "write_inflight", "sysfs_inflight_write")
+            if rcol is not None:
+                out["read_qd"] = pd.to_numeric(_df[rcol], errors="coerce").fillna(0).clip(lower=0)
+            if wcol is not None:
+                out["write_qd"] = pd.to_numeric(_df[wcol], errors="coerce").fillna(0).clip(lower=0)
+            out = out.sort_values("time_sec").reset_index(drop=True)
+            m.ssd_qd_ts = out
+            m.ssd_qd_source = _source or getattr(m, "ssd_qd_source", "") or "queue_depth_timeseries"
+            m.ssd_qd_available = True
+
+            # Use exact summary JSON when already populated; otherwise compute
+            # sample percentiles from the chart source.
+            if _prefer or not getattr(m, "ssd_qd_mean", 0):
+                q_active = out["queue_depth"]
+                m.ssd_qd_mean = round(float(q_active.mean()), 2)
+                m.ssd_qd_p50 = round(float(q_active.quantile(0.50)), 1)
+                m.ssd_qd_p95 = round(float(q_active.quantile(0.95)), 1)
+                m.ssd_qd_p99 = round(float(q_active.quantile(0.99)), 1)
+                m.ssd_qd_max = int(float(q_active.max()))
+                n = max(len(q_active), 1)
+                m.ssd_qd_pct_at_32 = round(float((q_active >= 32).sum()) / n * 100.0, 2)
+                m.ssd_qd_pct_at_64 = round(float((q_active >= 64).sum()) / n * 100.0, 2)
+                m.ssd_qd_pct_at_128 = round(float((q_active >= 128).sum()) / n * 100.0, 2)
+                m.ssd_qd_pct_at_256 = round(float((q_active >= 256).sum()) / n * 100.0, 2)
+                m.ssd_qd_pct_at_1024 = round(float((q_active >= 1024).sum()) / n * 100.0, 2)
+            return True
+        except Exception:
+            return False
+
+    # Load queue-depth collector output early so the static End Report can draw
+    # a chart even when exact blktrace Q→C files are not available.
+    _apply_queue_depth_dataframe(data.get("queue_depth_sources_timeseries"),
+                                 "queue_depth_sources_multi_source_fallback")
+    _apply_queue_depth_dataframe(data.get("queue_depth_sysfs_timeseries"),
+                                 "queue_depth_sysfs_fallback")
 
     # Autodetect DRAM peak BW from CPU model. The dataclass default (204.8) is
     # correct only for 2S AMD EPYC Rome/Milan; on Intel Sapphire Rapids /
@@ -6564,6 +6640,30 @@ def extract_metrics(data: dict) -> Metrics:
                         "io_util_pct", "inflight", "rd_bw_mbs", "wr_bw_mbs",
                         "disc_ios", "disc_sectors"]
         m.nvme_io_ts = nv[[c for c in cols_to_keep if c in nv.columns]].copy()
+        _apply_queue_depth_dataframe(m.nvme_io_ts, "iostat_aqu_sz_or_sysfs_inflight_fallback")
+
+        # Coarse queue-depth fallback from iostat aqu-sz or sysfs inflight. The
+        # exact blktrace Q→C pass can override this later when available.
+        if not m.ssd_qd_available and "inflight" in m.nvme_io_ts.columns:
+            try:
+                _qd_series = pd.to_numeric(m.nvme_io_ts["inflight"], errors="coerce").fillna(0)
+                if (_qd_series > 0).any():
+                    _qd_active = _qd_series[_qd_series >= 0]
+                    m.ssd_qd_mean = round(float(_qd_active.mean()), 2)
+                    m.ssd_qd_p50 = round(float(_qd_active.quantile(0.50)), 1)
+                    m.ssd_qd_p95 = round(float(_qd_active.quantile(0.95)), 1)
+                    m.ssd_qd_p99 = round(float(_qd_active.quantile(0.99)), 1)
+                    m.ssd_qd_max = int(float(_qd_active.max()))
+                    _n = max(len(_qd_active), 1)
+                    m.ssd_qd_pct_at_32 = round(float((_qd_active >= 32).sum()) / _n * 100.0, 2)
+                    m.ssd_qd_pct_at_64 = round(float((_qd_active >= 64).sum()) / _n * 100.0, 2)
+                    m.ssd_qd_pct_at_128 = round(float((_qd_active >= 128).sum()) / _n * 100.0, 2)
+                    m.ssd_qd_pct_at_256 = round(float((_qd_active >= 256).sum()) / _n * 100.0, 2)
+                    m.ssd_qd_pct_at_1024 = round(float((_qd_active >= 1024).sum()) / _n * 100.0, 2)
+                    m.ssd_qd_source = "iostat_aqu_sz_or_sysfs_inflight_fallback"
+                    m.ssd_qd_available = True
+            except Exception:
+                pass
 
     if isinstance(smart_df2, pd.DataFrame) and not smart_df2.empty:
         first2, last2 = smart_df2.iloc[0], smart_df2.iloc[-1]
@@ -6854,7 +6954,37 @@ def extract_metrics(data: dict) -> Metrics:
             m.ssd_qd_pct_at_128  = float(qd.get("pct_at_qd_ge_128",  0) or 0)
             m.ssd_qd_pct_at_256  = float(qd.get("pct_at_qd_ge_256",  0) or 0)
             m.ssd_qd_pct_at_1024 = float(qd.get("pct_at_qd_ge_1024", 0) or 0)
+            m.ssd_qd_source = str(qd.get("qd_source", "blktrace_q_to_c") or "blktrace_q_to_c")
             m.ssd_qd_available = True
+            _apply_queue_depth_dataframe(ba.get("qd_timeseries"), m.ssd_qd_source, _prefer=True)
+            if isinstance(ba.get("qd_distribution"), pd.DataFrame) and not ba.get("qd_distribution").empty:
+                m.ssd_qd_dist = ba.get("qd_distribution").copy()
+
+        # Fallback: if exact blktrace Q→C analysis did not produce queue-depth
+        # files, use the already-collected iostat aqu-sz or /sys/block inflight
+        # series. This is coarser than event-level QD, but it is still a valid
+        # AI-stack pressure signal and avoids an empty SSD Queue Depth section.
+        if not m.ssd_qd_available and isinstance(getattr(m, "nvme_io_ts", None), pd.DataFrame) and not m.nvme_io_ts.empty:
+            try:
+                _qd_series = pd.to_numeric(m.nvme_io_ts.get("inflight", pd.Series(dtype=float)), errors="coerce").fillna(0)
+                if (_qd_series > 0).any():
+                    _qd_active = _qd_series[_qd_series >= 0]
+                    m.ssd_qd_mean = round(float(_qd_active.mean()), 2)
+                    m.ssd_qd_p50 = round(float(_qd_active.quantile(0.50)), 1)
+                    m.ssd_qd_p95 = round(float(_qd_active.quantile(0.95)), 1)
+                    m.ssd_qd_p99 = round(float(_qd_active.quantile(0.99)), 1)
+                    m.ssd_qd_max = int(float(_qd_active.max()))
+                    _n = max(len(_qd_active), 1)
+                    m.ssd_qd_pct_at_32 = round(float((_qd_active >= 32).sum()) / _n * 100.0, 2)
+                    m.ssd_qd_pct_at_64 = round(float((_qd_active >= 64).sum()) / _n * 100.0, 2)
+                    m.ssd_qd_pct_at_128 = round(float((_qd_active >= 128).sum()) / _n * 100.0, 2)
+                    m.ssd_qd_pct_at_256 = round(float((_qd_active >= 256).sum()) / _n * 100.0, 2)
+                    m.ssd_qd_pct_at_1024 = round(float((_qd_active >= 1024).sum()) / _n * 100.0, 2)
+                    m.ssd_qd_source = "iostat_aqu_sz_or_sysfs_inflight_fallback"
+                    m.ssd_qd_available = True
+                    _apply_queue_depth_dataframe(m.nvme_io_ts, m.ssd_qd_source)
+            except Exception:
+                pass
 
         summary = ba.get("summary", {})
 
@@ -9933,6 +10063,156 @@ def chart_kvb_events(m: "Metrics") -> str:
         pass
     return fig_to_b64(fig)
 
+
+def chart_ssd_queue_depth(m: "Metrics") -> str:
+    """Static End Report queue-depth charts.
+
+    The interactive report already has Plotly queue-depth charts. This function
+    creates a PNG for the static End Report from the same sources: exact
+    blktrace Q→C timeseries/distribution when available, otherwise the unified
+    queue_depth_sources/iostat/sysfs fallback timeseries.
+    """
+    qd_ts = getattr(m, "ssd_qd_ts", pd.DataFrame())
+    qd_dist = getattr(m, "ssd_qd_dist", pd.DataFrame())
+    if (not getattr(m, "ssd_qd_available", False)) and (not isinstance(qd_ts, pd.DataFrame) or qd_ts.empty):
+        return ""
+    if not isinstance(qd_ts, pd.DataFrame):
+        qd_ts = pd.DataFrame()
+
+    # Last-resort chart source from nvme_io_ts, if stats exist but qd_ts was not populated.
+    if qd_ts.empty and isinstance(getattr(m, "nvme_io_ts", None), pd.DataFrame) and not m.nvme_io_ts.empty:
+        base = m.nvme_io_ts.copy()
+        qcol = next((c for c in ("inflight", "queue_depth", "aqu_sz", "avgqu") if c in base.columns), None)
+        if qcol:
+            qd_ts = pd.DataFrame({
+                "time_sec": pd.to_numeric(base.get("time_sec", pd.Series(range(len(base)))), errors="coerce").fillna(0),
+                "queue_depth": pd.to_numeric(base[qcol], errors="coerce").fillna(0).clip(lower=0),
+            })
+
+    if qd_ts.empty and not getattr(m, "ssd_qd_mean", 0):
+        return ""
+
+    fig, axes = plt.subplots(2, 2, figsize=(13, 8.5))
+    fig.patch.set_facecolor("#ffffff")
+    fig.suptitle("SSD Queue Depth — AI Stack Layer Pressure", fontsize=12,
+                 fontweight="bold", color="#0f172a", y=1.02)
+
+    def _style(ax):
+        ax.set_facecolor("#f8fafc")
+        ax.grid(True, alpha=0.3, color="#e2e8f0")
+        ax.tick_params(labelsize=8)
+        for sp in ax.spines.values():
+            sp.set_edgecolor("#94a3b8")
+
+    source = getattr(m, "ssd_qd_source", "") or "queue_depth_timeseries"
+    source_note = "exact blktrace Q→C" if str(source).startswith("blktrace") else "multi-source fallback"
+
+    # 1. Queue depth over time.
+    ax = axes[0, 0]
+    _style(ax)
+    if not qd_ts.empty:
+        ts = downsample(qd_ts, 600)
+        t = pd.to_numeric(ts.get("time_sec", pd.Series(range(len(ts)))), errors="coerce").fillna(0) / 60.0
+        q = pd.to_numeric(ts.get("queue_depth", ts.get("qd_total", pd.Series([0]*len(ts)))), errors="coerce").fillna(0)
+        ax.plot(t, q, color="#7c3aed", lw=1.5, label="QD total")
+        if "read_qd" in ts.columns:
+            ax.plot(t, pd.to_numeric(ts["read_qd"], errors="coerce").fillna(0), color="#3b82f6", lw=0.9, alpha=0.75, label="Read QD")
+        if "write_qd" in ts.columns:
+            ax.plot(t, pd.to_numeric(ts["write_qd"], errors="coerce").fillna(0), color="#f97316", lw=0.9, alpha=0.75, label="Write QD")
+        for y, lab in [(32, "QD 32"), (128, "QD 128")]:
+            if max(float(q.max()), float(getattr(m, "ssd_qd_max", 0) or 0)) >= y * 0.5:
+                ax.axhline(y, color="#64748b", ls="--", lw=0.8, alpha=0.5)
+                ax.text(0.01, y, lab, fontsize=7, color="#64748b", va="bottom")
+        if ax.get_legend_handles_labels()[0]:
+            ax.legend(fontsize=7, loc="upper right")
+    ax.set_title(f"Queue depth over time ({source_note})", fontsize=9, fontweight="bold")
+    ax.set_xlabel(_time_xlabel(m), fontsize=8, color="#475569")
+    ax.set_ylabel("Outstanding I/Os", fontsize=8, color="#475569")
+
+    # 2. Time-weighted / sampled QD distribution.
+    ax2 = axes[0, 1]
+    _style(ax2)
+    plotted_dist = False
+    if isinstance(qd_dist, pd.DataFrame) and not qd_dist.empty:
+        qcol = next((c for c in ("qd_value", "queue_depth", "qd_total") if c in qd_dist.columns), None)
+        pcol = next((c for c in ("pct_of_run", "percent", "pct") if c in qd_dist.columns), None)
+        tcol = next((c for c in ("time_sec", "duration_sec") if c in qd_dist.columns), None)
+        if qcol and (pcol or tcol):
+            d = qd_dist.copy()
+            x = pd.to_numeric(d[qcol], errors="coerce").fillna(0)
+            if pcol:
+                y = pd.to_numeric(d[pcol], errors="coerce").fillna(0)
+            else:
+                dur = pd.to_numeric(d[tcol], errors="coerce").fillna(0)
+                y = dur / max(float(dur.sum()), 1e-9) * 100.0
+            if len(x) > 80:
+                # Bin high-cardinality distributions for readability.
+                tmp = pd.DataFrame({"q": x, "pct": y})
+                tmp["bin"] = pd.cut(tmp["q"], bins=40, duplicates="drop")
+                gb = tmp.groupby("bin", observed=False)["pct"].sum().reset_index()
+                x = gb["bin"].apply(lambda b: float(b.mid) if hasattr(b, "mid") else 0)
+                y = gb["pct"]
+            ax2.bar(x, y, width=max(0.8, (float(max(x)) - float(min(x))) / max(len(x), 1) * 0.8) if len(x) > 1 else 0.8,
+                    color="#8b5cf6", alpha=0.75, edgecolor="#6d28d9", linewidth=0.4)
+            plotted_dist = True
+    if not plotted_dist and not qd_ts.empty:
+        vals = pd.to_numeric(qd_ts.get("queue_depth", pd.Series(dtype=float)), errors="coerce").dropna()
+        vals = vals[vals >= 0]
+        if len(vals) > 0:
+            ax2.hist(vals, bins=min(40, max(5, int(len(vals) ** 0.5))), color="#8b5cf6", alpha=0.75,
+                     edgecolor="#6d28d9", linewidth=0.4)
+    ax2.axvline(float(getattr(m, "ssd_qd_p50", 0) or 0), color="#0f172a", lw=1, ls="--", label=f"p50 {getattr(m, 'ssd_qd_p50', 0):.0f}")
+    ax2.axvline(float(getattr(m, "ssd_qd_p95", 0) or 0), color="#f97316", lw=1, ls=":", label=f"p95 {getattr(m, 'ssd_qd_p95', 0):.0f}")
+    if ax2.get_legend_handles_labels()[0]:
+        ax2.legend(fontsize=7)
+    ax2.set_title("Queue-depth distribution", fontsize=9, fontweight="bold")
+    ax2.set_xlabel("Queue depth", fontsize=8, color="#475569")
+    ax2.set_ylabel("% of run" if plotted_dist else "Samples", fontsize=8, color="#475569")
+
+    # 3. Saturation thresholds.
+    ax3 = axes[1, 0]
+    _style(ax3)
+    labels = ["≥32", "≥64", "≥128", "≥256", "≥1024"]
+    vals = [float(getattr(m, "ssd_qd_pct_at_32", 0) or 0),
+            float(getattr(m, "ssd_qd_pct_at_64", 0) or 0),
+            float(getattr(m, "ssd_qd_pct_at_128", 0) or 0),
+            float(getattr(m, "ssd_qd_pct_at_256", 0) or 0),
+            float(getattr(m, "ssd_qd_pct_at_1024", 0) or 0)]
+    bars = ax3.bar(labels, vals, color="#a78bfa", alpha=0.85, edgecolor="#7c3aed", linewidth=0.5)
+    for bar, val in zip(bars, vals):
+        if val > 0:
+            ax3.text(bar.get_x()+bar.get_width()/2, val + max(vals+[1])*0.03, f"{val:.1f}%",
+                     ha="center", va="bottom", fontsize=8, color="#0f172a", fontweight="bold")
+    ax3.set_ylim(0, max(100, max(vals+[1]) * 1.25))
+    ax3.set_title("Time spent above QD thresholds", fontsize=9, fontweight="bold")
+    ax3.set_ylabel("Percent of run", fontsize=8, color="#475569")
+
+    # 4. Summary KPI bars.
+    ax4 = axes[1, 1]
+    _style(ax4)
+    labs = ["Mean", "P50", "P95", "P99", "Peak"]
+    vals2 = [float(getattr(m, "ssd_qd_mean", 0) or 0),
+             float(getattr(m, "ssd_qd_p50", 0) or 0),
+             float(getattr(m, "ssd_qd_p95", 0) or 0),
+             float(getattr(m, "ssd_qd_p99", 0) or 0),
+             float(getattr(m, "ssd_qd_max", 0) or 0)]
+    bars2 = ax4.bar(labs, vals2, color="#7c3aed", alpha=0.82, edgecolor="#4c1d95", linewidth=0.5)
+    ymax = max(vals2+[1])
+    for bar, val in zip(bars2, vals2):
+        ax4.text(bar.get_x()+bar.get_width()/2, val + ymax*0.03, f"{val:.1f}" if val < 10 else f"{val:.0f}",
+                 ha="center", va="bottom", fontsize=8, color="#0f172a", fontweight="bold")
+    ax4.set_title("Queue-depth summary", fontsize=9, fontweight="bold")
+    ax4.set_ylabel("Outstanding I/Os", fontsize=8, color="#475569")
+    ax4.text(0.98, 0.96, f"Source: {source}\n{source_note}", transform=ax4.transAxes,
+             ha="right", va="top", fontsize=7.5, color="#475569",
+             bbox=dict(boxstyle="round,pad=0.35", facecolor="#f1f5f9", edgecolor="#e2e8f0"))
+
+    try:
+        plt.tight_layout()
+    except Exception:
+        pass
+    return fig_to_b64(fig)
+
 def chart_nvme_io(m: "Metrics") -> str:
     """NVMe IO workload: IOPS/BW timeline, latency, util%, SMART wear.
     Falls back to SGLang HiCache L3 storage counters when host NVMe traces are unavailable."""
@@ -11991,6 +12271,12 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
         hbm_caveat_banner = ""
 
     # ── SSD Queue Depth section locals ──────────────────────────────────────
+    _qd_is_exact = str(getattr(m, "ssd_qd_source", "")).startswith("blktrace")
+    qd_formula_source = ("&#128202; blktrace 'Q' (queued) + 'C' (completed) actions · queue_depth_summary.json · queue_depth_distribution.csv"
+                         if _qd_is_exact else
+                         "&#128202; fallback queue depth from queue_depth_sources_timeseries.csv (iostat aqu-sz + sysfs weighted queue time + sysfs/proc inflight); exact blktrace Q→C unavailable")
+    qd_method_note = ("Exact event-level, time-weighted Q→C queue depth." if _qd_is_exact else
+                      "Coarse multi-source fallback sampled at collector interval; useful for AI-stack layer pressure, but not event-level Q→C ground truth.")
     if m.ssd_qd_available:
         # Interpret QD into a one-line plain-English verdict
         if m.ssd_qd_mean < 1.5:
@@ -12015,7 +12301,7 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
         qd_status_banner = (
             f'<div style="background:#f8fafc;border-left:4px solid {_qd_banner_color};'
             f'border-radius:6px;padding:10px 12px;margin-bottom:12px;'
-            f'font-size:11.5px;color:#0f172a;line-height:1.5">{_qd_verdict}</div>'
+            f'font-size:11.5px;color:#0f172a;line-height:1.5">{_qd_verdict}<br><span style="color:#64748b">Source: {qd_method_note}</span></div>'
         )
         qd_kpi_cards = "".join([
             bw_card("QD Mean", f"{m.ssd_qd_mean:.1f}", "", "#8b5cf6",
@@ -12042,15 +12328,15 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
         elif m.ssd_qd_pct_at_32 > 30:
             _sat_clause = f" Device spent {m.ssd_qd_pct_at_32:.0f}% of run at QD≥32."
         qd_summary_line = (f"Mean QD = {m.ssd_qd_mean:.1f}, p95 = {m.ssd_qd_p95:.0f}, "
-                            f"peak = {m.ssd_qd_max}.{_sat_clause}")
+                            f"peak = {m.ssd_qd_max}. Source: {getattr(m, 'ssd_qd_source', '') or 'unknown'}.{_sat_clause}")
     else:
         qd_status_banner = (
             '<div style="background:#f8fafc;border-left:4px solid #94a3b8;'
             'border-radius:6px;padding:10px 12px;margin-bottom:12px;'
             'font-size:11.5px;color:#475569;line-height:1.5">'
-            'Queue-depth analysis requires blktrace data with both Q (queued) and C '
-            '(completed) events. This run produced only C events or no blktrace at all. '
-            'Re-collect with <code>--enable-blktrace</code> to enable this section.'
+            'Queue-depth analysis needs either blktrace Q→C events or a non-zero '
+            'iostat/sysfs inflight/aqu-sz series. This run had neither usable source. '
+            'Re-collect with <code>--enable-blktrace</code> and ensure iostat is installed to enable this section.'
             '</div>'
         )
         qd_kpi_cards = ('<div style="color:#64748b;font-size:11px;grid-column:1/-1">'
@@ -12366,7 +12652,7 @@ document.addEventListener('DOMContentLoaded', function(){{
     if(txt.includes('kv cache footprint') || txt.includes('kv tier') || txt.includes('kv$b') || txt.includes('model')) return 'layer-a4';
     if(txt.includes('gpu utilisation') || txt.includes('gpu utilization') || txt.includes('hbm bandwidth')) return 'layer-l1';
     if(txt.includes('dram bandwidth') || txt.includes('swap storm')) return 'layer-l2';
-    if(txt.includes('nvme') || txt.includes('deep io') || txt.includes('ssd read') || txt.includes('ssd write') || txt.includes('trim') || txt.includes('per-stream') || txt.includes('hot/cold')) return 'layer-l3';
+    if(txt.includes('nvme') || txt.includes('deep io') || txt.includes('ssd read') || txt.includes('ssd write') || txt.includes('queue depth') || txt.includes('trim') || txt.includes('per-stream') || txt.includes('hot/cold')) return 'layer-l3';
     if(txt.includes('cross-layer') || txt.includes('bottleneck') || txt.includes('formulas') || txt.includes('recommendations')) return 'layer-cross';
     return 'layer-cross';
   }};
@@ -13390,9 +13676,9 @@ NUMA migrations/s  : rate(node_vmstat_numa_pages_migrated)</code>
 <div class="card" style="border-color:#8b5cf6">
   <h2 style="color:#8b5cf6">📊 SSD Queue Depth — AI Stack Layer Pressure</h2>
   <div style="font-size:11px;color:#64748b;line-height:1.6;margin-bottom:10px">
-    True NVMe queue depth derived from blktrace Q→C events (exact, not Little's-law
-    approximation). Each Q-event increments a running counter, each C-event decrements.
-    The distribution is <b>time-weighted</b>: "this device spent X% of the run at QD ≥ Y".
+    NVMe queue depth / in-flight pressure. Preferred source is blktrace Q→C events
+    (exact, time-weighted). If that is unavailable, AMOprof falls back to iostat
+    <code>aqu-sz</code> or sysfs <code>inflight</code> sampled at collector interval.
     Use this to size your SSD bottleneck:
     <b style="color:#0f172a">low QD with high latency = device is fast but request rate is throttled (latency-bound)</b>;
     <b style="color:#0f172a">high QD with high latency = device saturated (throughput-bound, scale up storage)</b>.
@@ -13401,10 +13687,11 @@ NUMA migrations/s  : rate(node_vmstat_numa_pages_migrated)</code>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:14px">
     {qd_kpi_cards}
   </div>
+  {img(charts.get("ssd_qd", ""), "SSD Queue Depth — AI Stack Layer Pressure") if charts.get("ssd_qd", "") else '<div class="warn">Queue-depth chart image unavailable, but QD KPI cards above were populated. Check queue_depth_timeseries.csv / queue_depth_sources_timeseries.csv and report chart generation logs.</div>'}
   <details class="fml" style="margin-top:10px">
     <summary>&#128208; Formula &amp; Metrics Used</summary>
     <div class="fml-body">
-      <div class="fml-src">&#128202; blktrace 'Q' (queued) + 'C' (completed) actions · queue_depth_summary.json · queue_depth_distribution.csv</div>
+      <div class="fml-src">{qd_formula_source}</div>
       <code>§QD1 QD(t)          = count(Q events) - count(C events), as of time t
 §QD2 QD_mean        = sum(qd × time_at_qd) / total_trace_time   [time-weighted]
 §QD3 QD_p50/p95/p99 = percentiles of the time-weighted distribution
@@ -17740,6 +18027,7 @@ def main():
             charts["session"]      = chart_session_analysis(m)
             charts["kvb_events"]   = chart_kvb_events(m)
             charts["nvme_io"]      = chart_nvme_io(m)
+            charts["ssd_qd"]       = chart_ssd_queue_depth(m)
             charts["blkio_deep"]   = chart_blkio_deep(m)
             charts["ssd_read"]     = chart_ssd_read_workload(m)
             charts["ssd_write"]    = chart_ssd_write_workload(m)

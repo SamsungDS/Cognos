@@ -1082,7 +1082,36 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     gpu_ts    = _read_csv_summary(_first_existing(raw_dir, ["gpu_timeseries.csv"]))
     nvme_ts   = _read_csv_summary(_first_existing(raw_dir, ["nvme_driver_timeseries.csv",
                                                                "iostat_timeseries.csv"]))
+    qds_ts    = _read_csv_summary(_first_existing(raw_dir, ["queue_depth_sources_timeseries.csv",
+                                                               "queue_depth_sysfs_timeseries.csv"]))
     vmstat_ts = _read_csv_summary(_first_existing(raw_dir, ["vmstat_timeseries.csv"]))
+    # Queue-depth fallback for Executive findings: exact queue depth comes from
+    # blktrace_analysis/queue_depth_summary.json. If absent, prefer the unified
+    # multi-source queue-depth file; it merges iostat aqu-sz, sysfs weighted
+    # queue time, /sys/block inflight, and /proc/diskstats.
+    if not _qd_sum:
+        _qd_stat = qds_ts.get("qd_best_effort") or qds_ts.get("qd") or qds_ts.get("weighted_qd") or qds_ts.get("inflight")
+        if isinstance(_qd_stat, dict) and _safe_float(_qd_stat.get("max", 0)) > 0:
+            _qd_sum = {
+                "qd_mean": _safe_float(_qd_stat.get("mean", 0)),
+                "qd_p50": _safe_float(_qd_stat.get("p50", _qd_stat.get("mean", 0))),
+                "qd_p95": _safe_float(_qd_stat.get("p95", _qd_stat.get("max", 0))),
+                "qd_p99": _safe_float(_qd_stat.get("p99", _qd_stat.get("max", 0))),
+                "qd_max": _safe_float(_qd_stat.get("max", 0)),
+                "pct_at_qd_ge_32": 0,
+                "qd_source": "queue_depth_sources_multi_source_fallback",
+            }
+    if not _qd_sum:
+        _inflight_stat = nvme_ts.get("inflight") or nvme_ts.get("queue_depth") or nvme_ts.get("aqu_sz") or nvme_ts.get("avgqu")
+        if isinstance(_inflight_stat, dict) and _safe_float(_inflight_stat.get("max", 0)) > 0:
+            _qd_sum = {
+                "qd_mean": _safe_float(_inflight_stat.get("mean", 0)),
+                "qd_p50": _safe_float(_inflight_stat.get("mean", 0)),
+                "qd_p95": _safe_float(_inflight_stat.get("max", 0)),
+                "qd_max": _safe_float(_inflight_stat.get("max", 0)),
+                "pct_at_qd_ge_32": 0,
+                "qd_source": "iostat_aqu_sz_or_sysfs_inflight_fallback",
+            }
     # amduprof_pcm_raw.csv is a structured text report with a header + data sections;
     # it cannot be parsed by _read_csv_summary.  amduprof_pcm_timeseries.csv (if
     # present) is supposed to be the derived per-row CSV but is known to often
@@ -2121,7 +2150,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         sglang.get("collection_elapsed_s", 0))
     l3_logical_estimate_note = ""
     if _blktrace_was_attempted:
-        # v1.39.11: when a physical blktrace capture exists, it remains the
+        # v1.39.20: when a physical blktrace capture exists, it remains the
         # authoritative source for SSD/LBA bytes. SGLang counters are still
         # valuable, but they are logical HiCache/backing-tier movement and are
         # shown as a separate diagnostic. Never overwrite physical block bytes
@@ -2509,6 +2538,8 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # ── L3 storage Queue Depth — workload throughput vs latency profile ─────────
     # Only emit a finding if blktrace QD analysis ran successfully (v40+).
     if _qd_sum and _qd_sum.get("qd_mean") is not None:
+        _qd_source = str(_qd_sum.get("qd_source", "blktrace_q_to_c") or "blktrace_q_to_c")
+        _qd_src_note = ("exact blktrace Q→C" if _qd_source.startswith("blktrace") else "iostat/sysfs fallback")
         qd_mean = _safe_float(_qd_sum.get("qd_mean", 0))
         qd_p95  = _safe_float(_qd_sum.get("qd_p95", 0))
         qd_peak = _safe_float(_qd_sum.get("qd_max", 0))
@@ -2517,7 +2548,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         if qd_mean >= 32 and sat_32 > 50:
             findings_items.append(finding(
                 "L3 storage QUEUE · SATURATED",
-                f'Mean queue depth <strong>{qd_mean:.1f}</strong> with '
+                f'Mean queue depth <strong>{qd_mean:.1f}</strong> ({_qd_src_note}) with '
                 f'<strong>{sat_32:.0f}%</strong> of trace time at QD≥32 (peak QD = '
                 f'{qd_peak:.0f}, p95 = {qd_p95:.0f}). The NVMe device queue is '
                 f'effectively saturated. <strong>Action:</strong> raise kernel '
@@ -2530,7 +2561,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         elif qd_mean < 1.5:
             findings_items.append(finding(
                 "L3 storage QUEUE · LATENCY-BOUND",
-                f'Mean queue depth <strong>{qd_mean:.2f}</strong> (peak {qd_peak:.0f}) — '
+                f'Mean queue depth <strong>{qd_mean:.2f}</strong> ({_qd_src_note}, peak {qd_peak:.0f}) — '
                 f'the workload is dispatching one L3 storage request at a time and waiting for it '
                 f'to complete before issuing the next. Storage is NOT the bottleneck. '
                 f'<strong>Action:</strong> investigate upstream batching / scheduler '
@@ -2542,7 +2573,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         else:
             findings_items.append(finding(
                 "L3 storage QUEUE · HEALTHY",
-                f'Mean queue depth <strong>{qd_mean:.1f}</strong> (p95 {qd_p95:.0f}, peak '
+                f'Mean queue depth <strong>{qd_mean:.1f}</strong> ({_qd_src_note}, p95 {qd_p95:.0f}, peak '
                 f'{qd_peak:.0f}). Healthy parallel I/O without saturation.',
                 plain=(f"The L3 storage is handling {qd_mean:.1f} requests in parallel on average — "
                        f"a healthy mix of concurrency and headroom.")))

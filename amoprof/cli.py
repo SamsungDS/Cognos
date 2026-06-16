@@ -17,6 +17,7 @@ from . import __version__
 from .collectors import (
     AMDuProfPcmMemoryCollector,
     BiolatencyCollector,
+    BlockQueueDepthCollector,
     BpftraceCollector,
     DramMonitor,
     GpuMonitor,
@@ -468,6 +469,9 @@ def _audit_raw_dir(raw_dir: Path) -> dict[str, list[str]]:
         "nvme_driver":  (["nvme_driver_timeseries.csv"],
                          "NVMe driver / iostat",
                          "aggregate NVMe IOPS/BW/latency"),
+        "queue_depth":  (["queue_depth_sources_timeseries.csv", "queue_depth_sysfs_timeseries.csv"],
+                         "Queue depth / device pressure",
+                         "SSD Queue Depth — AI Stack Layer Pressure"),
         "vmstat":       (["vmstat_timeseries.csv"],
                          "/proc/vmstat (swap activity)",
                          "swap storm analysis"),
@@ -651,7 +655,8 @@ def _run_amoprof(raw_dir: Path, output_html: Path,
                                      "streaming analysis from %d binary file(s) in %s",
                                      len(list(_bin_dir.glob("trace.blktrace.*"))),
                                      _bin_dir)
-                            n_files = _bt_analyze_bins(_bin_dir, ba_dir)
+                            n_files = _bt_analyze_bins(_bin_dir, ba_dir,
+                                                       max_events=getattr(args, "blktrace_max_events", None))
                         else:
                             n_files = _bt_analyze(blkparse_csv, ba_dir)
                         if n_files:
@@ -939,6 +944,115 @@ def _validate_collection_outputs(out_dir: Path, collectors: dict[str, Any], summ
     return manifest
 
 
+def _resolve_collect_path_args(args: argparse.Namespace) -> None:
+    """Resolve path-like collect args before collection starts.
+
+    This is important because several profiler subprocesses are run with an
+    explicit cwd inside the run directory.  Any user-supplied relative paths
+    must therefore be converted relative to the caller's original cwd before
+    we pass them around.
+    """
+    for attr in (
+        "output_dir", "bench_summary", "setup_details", "stop_file",
+        "amduprof_pcm_bin", "intel_pcm_memory_bin", "blktrace_bin",
+        "blkparse_bin", "biosnoop_bin", "nsys_bin", "nsys_stats_bin",
+    ):
+        val = getattr(args, attr, None)
+        if not val or not isinstance(val, str):
+            continue
+        # Do not resolve command names such as 'blktrace' or 'pcm-memory'; only
+        # path-like values.  The executable lookup should still use PATH.
+        if attr.endswith("_bin") or attr in {"amduprof_pcm_bin", "intel_pcm_memory_bin", "blktrace_bin", "blkparse_bin", "biosnoop_bin", "nsys_bin", "nsys_stats_bin"}:
+            if ("/" not in val) and ("\\" not in val):
+                continue
+        try:
+            setattr(args, attr, str(Path(val).expanduser().resolve()))
+        except Exception:
+            pass
+
+
+def _enforce_collect_output_scope(out_dir: Path, raw_dir: Path, raw_paths: dict[str, str], summary: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Write a manifest proving collect artifacts live under the run dir.
+
+    This catches regressions where a collector returns/writes a path under cwd,
+    /tmp, or a tool default directory instead of the requested --output-dir.
+    The manifest is advisory; collection does not fail because optional vendor
+    profilers sometimes report external binary paths as metadata.
+    """
+    out_dir = out_dir.resolve()
+    raw_dir = raw_dir.resolve()
+    files = []
+    for p in sorted(out_dir.rglob('*')):
+        if p.is_file():
+            try:
+                files.append({
+                    "path": str(p),
+                    "relative_path": str(p.relative_to(out_dir)),
+                    "size_bytes": p.stat().st_size,
+                })
+            except Exception:
+                pass
+
+    def _path_status(value: Any) -> dict[str, Any] | None:
+        if not isinstance(value, str) or not value:
+            return None
+        # Only treat strings that look like file paths as candidate artifacts.
+        if not (value.startswith("/") or value.startswith("~") or value.startswith(".")):
+            return None
+        try:
+            p = Path(value).expanduser().resolve()
+        except Exception:
+            return None
+        exists = p.exists()
+        try:
+            inside_run = exists and (p == out_dir or out_dir in p.parents)
+        except Exception:
+            inside_run = False
+        try:
+            inside_raw = exists and (p == raw_dir or raw_dir in p.parents)
+        except Exception:
+            inside_raw = False
+        return {
+            "path": str(p),
+            "exists": exists,
+            "inside_run_dir": inside_run,
+            "inside_raw_dir": inside_raw,
+            "size_bytes": p.stat().st_size if exists and p.is_file() else None,
+        }
+
+    external = []
+    for key, value in (raw_paths or {}).items():
+        st = _path_status(value)
+        if st and st.get("exists") and not st.get("inside_run_dir"):
+            external.append({"source": f"raw_paths.{key}", **st})
+    for collector, summ in (summary or {}).items():
+        if not isinstance(summ, dict):
+            continue
+        for key, value in summ.items():
+            if not key.endswith(("_path", "_file", "_dir", "_csv", "_json", "_log")):
+                continue
+            st = _path_status(value)
+            if st and st.get("exists") and not st.get("inside_run_dir"):
+                external.append({"source": f"summary.{collector}.{key}", **st})
+
+    manifest = {
+        "output_dir_requested": str(out_dir.parent),
+        "run_dir": str(out_dir),
+        "raw_dir": str(raw_dir),
+        "all_artifacts_count": len(files),
+        "artifacts": files,
+        "external_artifacts": external,
+        "external_artifact_count": len(external),
+        "status": "ok" if not external else "warning_external_artifacts_detected",
+    }
+    _write_json(out_dir / "collection_output_manifest.json", manifest)
+    if external:
+        log.warning("Some collector-reported artifact paths are outside --output-dir; see %s", out_dir / "collection_output_manifest.json")
+        for e in external[:10]:
+            log.warning("  external artifact from %s: %s", e.get("source"), e.get("path"))
+    else:
+        log.info("Output-dir scope check passed: all collector artifacts are under %s", out_dir)
+    return manifest
 
 
 # ── Stop-condition wait loop ───────────────────────────────────────────────────
@@ -1114,10 +1228,16 @@ def _wait_for_stop(args: argparse.Namespace, collectors: "dict[str, Any]") -> No
 
 def _collect(args: argparse.Namespace) -> int:
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_dir = Path(args.output_dir).expanduser().resolve() / f"metrics_run_{run_id}"
+    _resolve_collect_path_args(args)
+    output_base = Path(args.output_dir).expanduser().resolve()
+    out_dir = output_base / f"metrics_run_{run_id}"
     raw_dir = out_dir / "raw"
     out_dir.mkdir(parents=True, exist_ok=True)
     raw_dir.mkdir(parents=True, exist_ok=True)
+    # Expose canonical output locations to child tools and user wrappers.
+    os.environ["AMOPROF_OUTPUT_DIR"] = str(output_base)
+    os.environ["AMOPROF_RUN_DIR"] = str(out_dir)
+    os.environ["AMOPROF_RAW_DIR"] = str(raw_dir)
 
     # Honor --enable-all: turn on every optional collector at once.
     if getattr(args, "enable_all", False):
@@ -1233,6 +1353,7 @@ def _collect(args: argparse.Namespace) -> int:
         "vmstat": VmstatMonitor(args.interval_s),
         "nvlink_pcie": NvlinkPcieMonitor(max(args.interval_s, 1.0)),
         "nvme_driver": NvmeDriverMonitor(args.ssd_device, args.interval_s),
+        "queue_depth_sysfs": BlockQueueDepthCollector(args.ssd_device, args.interval_s, work_dir=raw_dir),
         "gpu": GpuMonitor(args.interval_s),
         "dram": DramMonitor(args.interval_s),
         "power": PowerMonitor(args.interval_s, use_sudo=not getattr(args, "no_sudo", False)),
@@ -1255,6 +1376,7 @@ def _collect(args: argparse.Namespace) -> int:
             use_sudo=not getattr(args, "no_sudo", False),
             buffer_kb=getattr(args, "blktrace_buffer_kb", 16384),
             num_buffers=getattr(args, "blktrace_num_buffers", 4),
+            max_csv_events=getattr(args, "blktrace_max_events", None),
         )
     # New: biosnoop per-IO events with PID attribution (opt-in, requires BCC)
     if getattr(args, "enable_biosnoop", False):
@@ -1282,6 +1404,7 @@ def _collect(args: argparse.Namespace) -> int:
                 binary=(None if _dram_tool == "perf-imc" else getattr(args, "intel_pcm_memory_bin", None)),
                 force_perf_imc=(_dram_tool == "perf-imc"),
                 use_sudo=not getattr(args, "no_sudo", False),
+                work_dir=raw_dir,
             )
         elif _dram_tool != "none":
             log.warning("Unsupported --dram-tool %r; DRAM PMU collector disabled", _dram_tool)
@@ -1321,7 +1444,7 @@ def _collect(args: argparse.Namespace) -> int:
                 "Run AMOprof on the SGLang node for these metrics.", sglang_host)
         else:
             collectors["perf"] = PerfStatCollector(pid, use_sudo=not getattr(args, "no_sudo", False))
-            collectors["bpf"] = BpftraceCollector(pid, duration_s=max(int(args.duration_s), 1), work_dir=raw_dir,
+            collectors["bpf"] = BpftraceCollector(pid, duration_s=max(int(_effective_duration), 1), work_dir=raw_dir,
                                                  use_sudo=not getattr(args, "no_sudo", False))
 
     log.info("Starting metrics-only capture")
@@ -1476,6 +1599,22 @@ def _collect(args: argparse.Namespace) -> int:
     validation = _validate_collection_outputs(out_dir, collectors, summary, raw_paths)
     log.info("Collection validation: %d collectors, %d missing files, %d empty time-series", len(validation.get("collectors", {})), len(validation.get("missing_files", [])), len(validation.get("empty_timeseries", [])))
 
+    # Explicitly enabled per-request collectors must not fail silently.  In
+    # particular, blktrace can fail immediately if AMOprof was not run as root
+    # and sudo -n cannot acquire privileges.  Surface this as a top-level
+    # warning/error and, with --strict-sanity, return non-zero after writing
+    # diagnostics.
+    _post_collect_failures: list[str] = []
+    if getattr(args, "enable_blktrace", False):
+        _bt = summary.get("blktrace", {}) or {}
+        if not _bt.get("blktrace_available", False) or int(_bt.get("blktrace_events", 0) or 0) <= 0:
+            _reason = _bt.get("blktrace_reason") or _bt.get("blktrace_stderr_tail") or "no blktrace events/binaries collected"
+            _post_collect_failures.append(f"blktrace: {_reason}")
+            log.error("Enabled blktrace collector produced no usable data: %s", _reason)
+            log.error("Blktrace diagnostics: %s", raw_dir / "blktrace_summary.json")
+            log.error("Common fixes: run the whole command with sudo, ensure debugfs is mounted, "
+                      "ensure no other blktrace is active for the device, and verify sudo -n works.")
+
     # ── Write amoprof-compatible files alongside the per-collector CSVs ────────
     # amoprof reads canonical filenames (sglang_timeseries.csv, gpu_timeseries.csv,
     # vmstat_timeseries.csv, power_timeseries.csv, nvme_driver_timeseries.csv,
@@ -1571,6 +1710,8 @@ def _collect(args: argparse.Namespace) -> int:
     elif _combined:
         log.warning("combined report skipped — static or interactive generation failed")
 
+    _enforce_collect_output_scope(out_dir, raw_dir, raw_paths, summary)
+
     log.info("Wrote summary CSV:  %s", out_dir / "summary.csv")
     log.info("Wrote summary JSON: %s", out_dir / "summary.json")
     if all_series:
@@ -1605,6 +1746,19 @@ def _collect(args: argparse.Namespace) -> int:
         f"{'='*68}\n",
         flush=True,
     )
+
+    if _post_collect_failures and getattr(args, "strict_sanity", False):
+        print(
+            f"\n{'='*68}\n"
+            f"  COLLECTION FAILED STRICT POST-CHECK\n"
+            f"  One or more explicitly enabled collectors produced no usable data.\n"
+            f"  - " + "\n  - ".join(_post_collect_failures[:5]) + "\n"
+            f"  Run dir    : {out_dir}\n"
+            f"  Check raw/*_summary.json and collection_validation.json for details.\n"
+            f"{'='*68}\n",
+            flush=True,
+        )
+        return 6
 
     return 130 if interrupted else 0
 
@@ -1709,6 +1863,9 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="blktrace -b sub-buffer size in KiB. Default 16384 to reduce dropped events under high I/O.")
     c.add_argument("--blktrace-num-buffers", type=int, default=int(os.environ.get("AMOPROF_BLKTRACE_NUM_BUFFERS", "4")),
                    help="blktrace -n number of sub-buffers. Default 4.")
+    c.add_argument("--blktrace-max-events", type=int, default=None,
+                   help="Optional cap on blkparse/blktrace events used during CSV generation/analyze. "
+                        "Default: no cap; use all available blktrace events. Set only to bound memory/runtime on very large traces.")
     c.add_argument("--enable-biosnoop", action="store_true",
                    help="Capture per-IO events with PID/comm attribution via BCC biosnoop. "
                         "Required for §I per-stream bandwidth analysis (PID → stream mapping). "
@@ -2607,11 +2764,6 @@ def _analyze(args) -> int:
         log.warning("combined report skipped — static or interactive generation failed")
 
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
-
 
 
 def main(argv: list[str] | None = None) -> int:

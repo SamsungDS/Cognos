@@ -18,6 +18,7 @@ These supply the data needed by:
 from __future__ import annotations
 
 import csv as _csv
+import json
 import logging
 import os
 import re
@@ -64,7 +65,7 @@ class BlktraceCollector:
                  blkparse_bin: str = "blkparse",
                  use_sudo: bool = True,
                  parse_after: bool = True,
-                 max_csv_events: int = 5_000_000,
+                 max_csv_events: int | None = None,
                  buffer_kb: int = 16384,
                  num_buffers: int = 4):
         self.device = device
@@ -75,7 +76,7 @@ class BlktraceCollector:
         self.blkparse_bin = blkparse_bin
         self.use_sudo = use_sudo
         self.parse_after = parse_after
-        self.max_csv_events = max_csv_events
+        self.max_csv_events = (int(max_csv_events) if max_csv_events not in (None, "", 0, "0") else None)
         self.buffer_kb = max(int(buffer_kb or 0), 0)
         self.num_buffers = max(int(num_buffers or 0), 0)
 
@@ -89,6 +90,9 @@ class BlktraceCollector:
         self._reason = ""
         self._events = 0
         self._t0 = 0.0
+        self._launch_cmd: list[str] = []
+        self._launch_rc: int | None = None
+        self._launch_stderr: str = ""
 
     # ── blkparse output format detection ─────────────────────────────────────
     # FORMAT A — standard (default, all modern versions):
@@ -177,14 +181,101 @@ class BlktraceCollector:
             cmd.extend(["-n", str(self.num_buffers)])
         if self.use_sudo and os.geteuid() != 0:
             cmd = ["sudo", "-n"] + cmd
+        self._launch_cmd = list(cmd)
+        try:
+            (self.work_dir / "blktrace_command.txt").write_text(
+                " ".join(cmd) + "\n", encoding="utf-8")
+        except Exception:
+            pass
         try:
             self._proc = subprocess.Popen(
                 cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         except FileNotFoundError as e:
             self._reason = f"failed to launch blktrace: {e}"
-            log.warning("BlktraceCollector: %s", self._reason)
+            log.error("BlktraceCollector: %s", self._reason)
             return
+        except Exception as e:
+            self._reason = f"failed to launch blktrace: {e}"
+            log.error("BlktraceCollector: %s", self._reason)
+            return
+
         self._t0 = time.time()
+
+        # blktrace can fail immediately (common causes: sudo -n requires a
+        # password, debugfs/tracefs not mounted, CAP_SYS_ADMIN missing, or
+        # another blktrace already active on the same device).  Previously this
+        # was only discovered at stop() as "no trace files" and users saw no
+        # obvious AMOprof error.  Surface it right at launch.
+        time.sleep(0.5)
+        if self._proc.poll() is not None:
+            self._launch_rc = self._proc.returncode
+            try:
+                self._launch_stderr = self._proc.stderr.read() if self._proc.stderr else ""
+            except Exception:
+                self._launch_stderr = ""
+            tail = (self._launch_stderr or "").strip().splitlines()
+            tail_s = tail[-1] if tail else "no stderr"
+            self._reason = (
+                f"blktrace exited immediately rc={self._launch_rc}: {tail_s[:240]}. "
+                f"Command: {' '.join(self._launch_cmd)}"
+            )
+            try:
+                (self.work_dir / "blktrace_launch_stderr.txt").write_text(
+                    self._launch_stderr or "", encoding="utf-8")
+            except Exception:
+                pass
+            log.error("BlktraceCollector: %s", self._reason)
+            # Keep _proc so stop() can include diagnostics, but do not pretend
+            # collection is active.
+            return
+        else:
+            # Early file visibility is diagnostic only. On some systems blktrace
+            # is alive and attached before trace.blktrace.* files are visible or
+            # non-empty; the authoritative validation happens in stop(), after
+            # blktrace flushes output. Do not emit a WARNING here because it can
+            # look like a failure even when collection is healthy.
+            try:
+                bins = sorted(self._trace_dir.glob("trace.blktrace.*"))
+
+                debugfs_mounted = False
+                tracefs_mounted = False
+                try:
+                    mounts = Path("/proc/mounts").read_text(encoding="utf-8", errors="ignore")
+                    debugfs_mounted = (" /sys/kernel/debug " in mounts and "debugfs" in mounts)
+                    tracefs_mounted = (" /sys/kernel/tracing " in mounts and "tracefs" in mounts)
+                except Exception:
+                    pass
+
+                status = {
+                    "blktrace_pid": getattr(self._proc, "pid", None),
+                    "blktrace_running": bool(self._proc and self._proc.poll() is None),
+                    "device": self.device,
+                    "trace_dir": str(self._trace_dir),
+                    "trace_prefix": str(self._trace_prefix),
+                    "trace_file_count_after_start": len(bins),
+                    "trace_files_seen_after_start": [str(x) for x in bins],
+                    "debugfs_mounted": debugfs_mounted,
+                    "tracefs_mounted": tracefs_mounted,
+                    "note": (
+                        "No trace.blktrace.* files immediately after launch is not an error. "
+                        "AMOprof validates trace files at stop() after blktrace flushes output."
+                        if not bins else
+                        "Trace files were visible immediately after launch."
+                    ),
+                }
+                try:
+                    (self.work_dir / "blktrace_start_status.json").write_text(
+                        json.dumps(status, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
+
+                if not bins:
+                    log.info(
+                        "BlktraceCollector: process is running; no trace.blktrace.* files "
+                        "visible yet under %s. Diagnostic only; final validation occurs at stop().",
+                        self._trace_dir)
+            except Exception:
+                pass
 
     def _run_blkparse_to_csv(self) -> int:
         """Run blkparse against the binary trace files and write CSV.
@@ -282,8 +373,8 @@ class BlktraceCollector:
                             cpu_val,
                         ])
                         events += 1
-                        if events >= self.max_csv_events:
-                            log.warning("BlktraceCollector: capping CSV at %d events; "
+                        if self.max_csv_events is not None and events >= self.max_csv_events:
+                            log.warning("BlktraceCollector: capping CSV at %d events because --blktrace-max-events was set; "
                                         "raw binaries at %s preserve full trace",
                                         self.max_csv_events, self._trace_dir)
                             # Drain remaining stdout so blkparse can exit cleanly.
@@ -418,10 +509,18 @@ class BlktraceCollector:
         bin_bytes = sum(p.stat().st_size for p in bins) if bins else 0
 
         if bin_count == 0:
+            reason = self._reason or "no trace.blktrace.* binaries produced"
+            if not reason and self._launch_rc is not None:
+                reason = f"blktrace exited immediately rc={self._launch_rc}"
             return {"blktrace_available": False,
-                    "blktrace_reason": self._reason or "no blktrace binaries produced",
+                    "blktrace_reason": reason,
                     "blktrace_events": 0,
-                    "blktrace_stderr_tail": (stderr_text or "")[-2000:]}
+                    "blktrace_device": self.device,
+                    "blktrace_binary_dir": str(self._trace_dir),
+                    "blktrace_command": " ".join(self._launch_cmd) if self._launch_cmd else "",
+                    "blktrace_launch_rc": self._launch_rc,
+                    "blktrace_launch_stderr_tail": (self._launch_stderr or "")[-2000:],
+                    "blktrace_stderr_tail": (stderr_text or self._launch_stderr or "")[-2000:]}
 
         events_csv = -1
         if self.parse_after:
@@ -539,7 +638,12 @@ class BlktraceCollector:
             "blktrace_buffer_kb": self.buffer_kb,
             "blktrace_num_buffers": self.num_buffers,
             "blktrace_duration_s": round(time.time() - self._t0, 2),
+            "blktrace_csv_event_cap": self.max_csv_events,
+            "blktrace_csv_capped": bool(self.max_csv_events is not None and self._events >= self.max_csv_events),
             "blktrace_reason":   self._reason,
+            "blktrace_command": " ".join(self._launch_cmd) if self._launch_cmd else "",
+            "blktrace_launch_rc": self._launch_rc,
+            "blktrace_launch_stderr_tail": (self._launch_stderr or "")[-2000:],
             # NEW — diagnostic fields for the "blktrace says X GB but df says Y GB" puzzle
             "blktrace_events_reported_by_blktrace": reported_events,
             "blktrace_dropped_events": dropped_events,
@@ -555,17 +659,16 @@ class BlktraceCollector:
 # ─────────────────────────────────────────────────────────────────────────────
 class BiosnoopCollector:
     """
-    Run `biosnoop-bpfcc` (BCC) to capture per-I/O events with PID + command attribution.
+    Run BCC biosnoop to capture per-I/O events with PID + command attribution.
 
-    Output: <work_dir>/biosnoop_events.csv with columns matching biosnoop output:
-        ts, comm, pid, disk, op, lba, size_bytes, latency_ms
-
-    biosnoop -t output (with -t = timestamps):
-        TIME(s)   COMM             PID    DISK    T  SECTOR     BYTES   LAT(ms)
-        0.000     sglang           12345  nvme2n1 R  14336      4096    0.42
-
-    Note: biosnoop is per-device-class (block) not per-device, so a `--disk` filter
-    is applied via post-filter if a device is supplied.
+    Important behavior:
+      • biosnoop's -t means "print timestamps"; it is NOT a duration option.
+        AMOprof controls duration by starting biosnoop at collect start and
+        stopping it at collect stop.
+      • stdout is captured both as a raw log and parsed CSV.
+      • stderr/command/summary are persisted so empty CSVs are diagnosable.
+      • all-device biosnoop output is retained in biosnoop_events_all.csv, while
+        biosnoop_events.csv contains the target-device/partition-filtered view.
     """
 
     def __init__(self, duration_s: int = 60,
@@ -582,125 +685,358 @@ class BiosnoopCollector:
 
         self._proc = None
         self._reader = None
+        self._stderr_reader = None
         self._csv_path = self.work_dir / "biosnoop_events.csv"
+        self._csv_all_path = self.work_dir / "biosnoop_events_all.csv"
+        self._raw_path = self.work_dir / "biosnoop_raw.log"
+        self._stderr_path = self.work_dir / "biosnoop_stderr.txt"
+        self._cmd_path = self.work_dir / "biosnoop_command.txt"
+        self._summary_path = self.work_dir / "biosnoop_summary.json"
+
         self._csv_fp = None
+        self._csv_all_fp = None
+        self._raw_fp = None
+        self._stderr_fp = None
         self._csv_w = None
+        self._csv_all_w = None
         self._events = 0
+        self._events_all = 0
+        self._lines_seen = 0
+        self._lines_unparsed = 0
+        self._headers_seen = 0
         self._reason = ""
         self._t0 = 0.0
+        self._found = None
+        self._cmd = []
+        self._header_cols = None
 
     def _which(self, name: str) -> bool:
         try:
             subprocess.check_output(["which", name], stderr=subprocess.DEVNULL)
             return True
         except Exception:
-            # Try alternate name
             return False
+
+    @staticmethod
+    def _norm_col(x: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", str(x).lower())
+
+    def _device_matches(self, disk: str) -> bool:
+        """Accept whole-device and partition names.
+
+        Examples:
+          device nvme7n1 matches nvme7n1 and nvme7n1p1
+          device sda     matches sda and sda1
+        """
+        if not self.device_name:
+            return True
+        d = str(disk or "")
+        base = self.device_name
+        if d == base:
+            return True
+        if base.startswith("nvme") and d.startswith(base + "p"):
+            return True
+        if re.match(r"^[a-z]+[a-z]$", base) and d.startswith(base) and d[len(base):].isdigit():
+            return True
+        return False
+
+    def _open_outputs(self):
+        header = ["ts", "comm", "pid", "disk", "op", "sector", "size_bytes", "latency_ms"]
+        self._csv_fp = open(self._csv_path, "w", encoding="utf-8", newline="")
+        self._csv_all_fp = open(self._csv_all_path, "w", encoding="utf-8", newline="")
+        self._raw_fp = open(self._raw_path, "w", encoding="utf-8")
+        self._stderr_fp = open(self._stderr_path, "w", encoding="utf-8")
+        self._csv_w = _csv.writer(self._csv_fp)
+        self._csv_all_w = _csv.writer(self._csv_all_fp)
+        self._csv_w.writerow(header)
+        self._csv_all_w.writerow(header)
+
+    def _write_summary(self, extra: dict | None = None):
+        data = {
+            "biosnoop_available": bool(self._events > 0),
+            "biosnoop_events": int(self._events),
+            "biosnoop_events_all_devices": int(self._events_all),
+            "biosnoop_lines_seen": int(self._lines_seen),
+            "biosnoop_lines_unparsed": int(self._lines_unparsed),
+            "biosnoop_headers_seen": int(self._headers_seen),
+            "biosnoop_csv": str(self._csv_path),
+            "biosnoop_all_devices_csv": str(self._csv_all_path),
+            "biosnoop_raw_log": str(self._raw_path),
+            "biosnoop_stderr": str(self._stderr_path),
+            "biosnoop_command": str(self._cmd_path),
+            "biosnoop_duration_s": round(time.time() - self._t0, 2) if self._t0 else 0,
+            "biosnoop_filter_disk": self.device_name or "(all)",
+            "biosnoop_reason": self._reason,
+            "biosnoop_binary": self._found,
+            "biosnoop_cmd": self._cmd,
+            "note": (
+                "biosnoop_events.csv is filtered to the requested SSD/device and matching partitions; "
+                "biosnoop_events_all.csv keeps the unfiltered all-device stream."
+            ),
+        }
+        if extra:
+            data.update(extra)
+        try:
+            self._summary_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+        return data
 
     def start(self):
         self._events = 0
+        self._events_all = 0
+        self._lines_seen = 0
+        self._lines_unparsed = 0
+        self._headers_seen = 0
         self._reason = ""
 
-        # Find a usable biosnoop binary; try a couple of common names.
         candidates = [self.binary, "biosnoop", "biosnoop-bpfcc",
                       "/usr/sbin/biosnoop-bpfcc", "/usr/share/bcc/tools/biosnoop"]
         found = None
         for c in candidates:
             if Path(c).exists() and os.access(c, os.X_OK):
-                found = c; break
+                found = c
+                break
             if self._which(c):
-                found = c; break
+                found = c
+                break
+        self._found = found
         if not found:
             self._reason = "biosnoop not installed (apt: bpfcc-tools)"
             log.warning("BiosnoopCollector: %s", self._reason)
+            self._write_summary({"biosnoop_available": False})
             return
 
-        cmd = [found, "-t", str(self.duration_s)]
+        # BCC biosnoop: -t prints TIME(s). It does NOT accept a duration
+        # positional argument. AMOprof terminates biosnoop in stop().
+        cmd = [found, "-t"]
         if self.use_sudo and os.geteuid() != 0:
-            # `-E` preserves env so PYTHONUNBUFFERED below propagates
-            cmd = ["sudo", "-n", "-E", "PYTHONUNBUFFERED=1"] + cmd
-        # biosnoop-bpfcc is a Python BCC tool. When its stdout is a pipe
-        # (not a tty), Python's sys.stdout is fully buffered and the
-        # header + first records can sit in the buffer for many seconds.
-        # PYTHONUNBUFFERED=1 forces per-print() flushes so we receive
-        # events as they happen.
+            cmd = ["sudo", "-n", "-E"] + cmd
+        self._cmd = cmd
+        try:
+            self._cmd_path.write_text(" ".join(cmd) + "\n", encoding="utf-8")
+        except Exception:
+            pass
+
+        self._open_outputs()
+
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
         try:
             self._proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                text=True, env=env)
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=env,
+                bufsize=1,
+            )
         except FileNotFoundError as e:
             self._reason = f"failed to launch biosnoop: {e}"
             log.warning("BiosnoopCollector: %s", self._reason)
+            self._write_summary({"biosnoop_available": False})
+            return
+        except Exception as e:
+            self._reason = f"failed to launch biosnoop: {e}"
+            log.warning("BiosnoopCollector: %s", self._reason)
+            self._write_summary({"biosnoop_available": False})
             return
 
-        self._csv_fp = open(self._csv_path, "w", encoding="utf-8", newline="")
-        self._csv_w = _csv.writer(self._csv_fp)
-        self._csv_w.writerow([
-            "ts", "comm", "pid", "disk", "op", "sector", "size_bytes", "latency_ms",
-        ])
         self._t0 = time.time()
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
+        self._stderr_reader = threading.Thread(target=self._stderr_loop, daemon=True)
+        self._stderr_reader.start()
+        self._write_summary({"biosnoop_started": True, "biosnoop_pid": getattr(self._proc, "pid", None)})
 
-    # biosnoop columns (whitespace-delimited): TIME(s) COMM PID DISK T SECTOR BYTES LAT(ms)
-    _BIOSNOOP_HDR = re.compile(r"^\s*TIME\(s\)")
+    def _stderr_loop(self):
+        if self._proc is None or self._proc.stderr is None:
+            return
+        for raw in self._proc.stderr:
+            try:
+                if self._stderr_fp:
+                    self._stderr_fp.write(raw)
+                    self._stderr_fp.flush()
+            except Exception:
+                pass
+
+    def _parse_with_header(self, cols: list[str]):
+        hdr = self._header_cols or []
+        idx = {self._norm_col(h): i for i, h in enumerate(hdr)}
+        def pick(names, default=None):
+            for n in names:
+                j = idx.get(self._norm_col(n))
+                if j is not None and j < len(cols):
+                    return cols[j]
+            return default
+        return [
+            pick(["TIME(s)", "TIME", "TS"], cols[0] if cols else ""),
+            pick(["COMM", "CMD", "PROCESS"], ""),
+            pick(["PID"], ""),
+            pick(["DISK", "DEV", "DEVICE"], ""),
+            pick(["T", "TYPE", "OP", "RWBS"], ""),
+            pick(["SECTOR", "LBA"], ""),
+            pick(["BYTES", "SIZE"], ""),
+            pick(["LAT(ms)", "LAT", "LATENCY", "LATENCY(ms)"], ""),
+        ]
+
+    def _parse_line(self, line: str):
+        cols = line.split()
+        if not cols:
+            return None
+
+        # Header variants commonly contain PID/DISK/SECTOR/BYTES/LAT.
+        joined_norm = " ".join(cols).lower()
+        if ("pid" in joined_norm and "disk" in joined_norm and
+            ("sector" in joined_norm or "bytes" in joined_norm)):
+            self._header_cols = cols
+            self._headers_seen += 1
+            return "header"
+
+        if len(cols) < 7:
+            self._lines_unparsed += 1
+            return None
+
+        # Header-driven path first.
+        if self._header_cols:
+            row = self._parse_with_header(cols)
+            if row[2] and row[3] and row[6]:
+                return row
+
+        # Fallback for BCC biosnoop -t:
+        # TIME(s) COMM PID DISK T SECTOR BYTES LAT(ms)
+        if len(cols) >= 8:
+            return [cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6], cols[7]]
+
+        # Fallback for no timestamp:
+        # COMM PID DISK T SECTOR BYTES LAT(ms)
+        if len(cols) >= 7:
+            return ["", cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6]]
+
+        self._lines_unparsed += 1
+        return None
 
     def _read_loop(self):
         if self._proc is None or self._proc.stdout is None:
             return
         for raw in self._proc.stdout:
             line = raw.rstrip("\n")
-            if not line or self._BIOSNOOP_HDR.match(line):
+            if self._raw_fp:
+                try:
+                    self._raw_fp.write(raw)
+                    self._raw_fp.flush()
+                except Exception:
+                    pass
+            if not line:
                 continue
-            cols = line.split()
-            # Expected 8 cols; ignore short lines.
-            if len(cols) < 8:
-                continue
-            try:
-                ts   = cols[0]
-                comm = cols[1]
-                pid  = cols[2]
-                disk = cols[3]
-                op   = cols[4]
-                sect = cols[5]
-                size = cols[6]
-                lat  = cols[7]
-            except IndexError:
-                continue
-            # Filter by device if requested
-            if self.device_name and self.device_name != disk:
+            self._lines_seen += 1
+            parsed = self._parse_line(line)
+            if parsed is None or parsed == "header":
                 continue
             try:
-                self._csv_w.writerow([ts, comm, pid, disk, op, sect, size, lat])
-                self._events += 1
+                ts, comm, pid, disk, op, sect, size, lat = parsed
+                self._csv_all_w.writerow([ts, comm, pid, disk, op, sect, size, lat])
+                self._events_all += 1
+                if self._device_matches(disk):
+                    self._csv_w.writerow([ts, comm, pid, disk, op, sect, size, lat])
+                    self._events += 1
+                if self._events_all % 1000 == 0:
+                    try:
+                        self._csv_all_fp.flush()
+                        self._csv_fp.flush()
+                    except Exception:
+                        pass
             except Exception:
-                pass
+                self._lines_unparsed += 1
 
     def stop(self) -> dict:
         if self._proc is not None and self._proc.poll() is None:
-            try: self._proc.terminate()
-            except Exception: pass
-        if self._reader is not None:
-            self._reader.join(timeout=5)
-        if self._proc is not None and self._proc.poll() is None:
-            try: self._proc.kill()
-            except Exception: pass
-        if self._csv_fp is not None:
-            try: self._csv_fp.close()
-            except Exception: pass
+            # SIGINT is friendlier to BCC Python tools than SIGTERM and gives
+            # them a chance to unwind probes and flush stdout/stderr.
+            try:
+                self._proc.send_signal(signal.SIGINT)
+            except Exception:
+                try:
+                    self._proc.terminate()
+                except Exception:
+                    pass
 
-        if not self._csv_path.exists() or self._events == 0:
-            return {"biosnoop_available": False,
-                    "biosnoop_reason": self._reason or "no events captured",
-                    "biosnoop_events": 0}
+        if self._reader is not None:
+            self._reader.join(timeout=10)
+        if self._stderr_reader is not None:
+            self._stderr_reader.join(timeout=5)
+
+        if self._proc is not None and self._proc.poll() is None:
+            try:
+                self._proc.terminate()
+                self._proc.wait(timeout=3)
+            except Exception:
+                pass
+        if self._proc is not None and self._proc.poll() is None:
+            try:
+                self._proc.kill()
+            except Exception:
+                pass
+
+        for fp in (self._csv_fp, self._csv_all_fp, self._raw_fp, self._stderr_fp):
+            if fp is not None:
+                try:
+                    fp.flush()
+                    fp.close()
+                except Exception:
+                    pass
+
+        rc = None
+        if self._proc is not None:
+            try:
+                rc = self._proc.poll()
+            except Exception:
+                rc = None
+
+        if self._events == 0:
+            if self._events_all > 0:
+                self._reason = (
+                    f"biosnoop captured {self._events_all} events on other disks/devices, "
+                    f"but none matched requested device filter {self.device_name!r}; "
+                    f"inspect {self._csv_all_path.name} and check DISK names/partitions."
+                )
+            else:
+                stderr_tail = ""
+                try:
+                    stderr_tail = self._stderr_path.read_text(encoding="utf-8", errors="ignore")[-1200:]
+                except Exception:
+                    pass
+                self._reason = self._reason or (
+                    "no biosnoop events captured; possible causes: no block I/O during window, "
+                    "BCC/kernel probe attach failure, unsupported biosnoop binary, or permissions/CAP_BPF/CAP_SYS_ADMIN. "
+                    f"stderr_tail={stderr_tail!r}"
+                )
+
+        summary = self._write_summary({
+            "biosnoop_available": bool(self._events > 0),
+            "biosnoop_returncode": rc,
+        })
+
+        if self._events == 0:
+            log.warning("BiosnoopCollector: %s", self._reason)
+            return {
+                "biosnoop_available": False,
+                "biosnoop_reason": self._reason,
+                "biosnoop_events": 0,
+                "biosnoop_events_all_devices": self._events_all,
+                "biosnoop_summary": str(self._summary_path),
+                "biosnoop_stderr": str(self._stderr_path),
+                "biosnoop_raw_log": str(self._raw_path),
+            }
 
         return {
-            "biosnoop_available":   True,
-            "biosnoop_events":      self._events,
-            "biosnoop_csv":         str(self._csv_path),
-            "biosnoop_duration_s":  round(time.time() - self._t0, 2),
+            "biosnoop_available": True,
+            "biosnoop_events": self._events,
+            "biosnoop_events_all_devices": self._events_all,
+            "biosnoop_csv": str(self._csv_path),
+            "biosnoop_all_devices_csv": str(self._csv_all_path),
+            "biosnoop_summary": str(self._summary_path),
+            "biosnoop_duration_s": round(time.time() - self._t0, 2),
             "biosnoop_filter_disk": self.device_name or "(all)",
         }
 

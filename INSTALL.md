@@ -206,7 +206,7 @@ Notes:
 - AMD uProf is not silently downloaded because AMD distributes it separately; pass `--amduprof-installer` or `--amduprof-url` to install it.
 - `perf-imc` fallback installs/checks `perf`, `msr-tools`, and kernel counter prerequisites.
 
-### v1.39.11 L3 read-byte semantics
+### v1.39.20 L3 read-byte semantics
 
 AMOprof no longer counts `sglang_load_back_tokens_total` as local SSD/L3 read bytes. The Executive and report L3 read estimate uses `sglang_prefetched_tokens_total × KV_bytes_per_token`; write uses `sglang_backuped_tokens_total × KV_bytes_per_token`. `load_back_tokens_total` is displayed as a hierarchy-restore diagnostic/upper bound only because it can include L2 DRAM/page-cache/HBM reload paths and can greatly exceed physical SSD footprint or blktrace bytes.
 
@@ -238,14 +238,14 @@ Eviction pressure diagnostic =
 `sglang_load_back_tokens_total` is intentionally not counted as local-SSD read bytes because it can represent hierarchy restore/reload pressure and may include L2 DRAM, page cache, HBM reload, or repeated logical reconstruction. Physical SSD bytes come only from blktrace/iostat on the resolved L3 block device.
 
 
-### v1.39.11 chart legend and host block activity fallback
+### v1.39.20 chart legend and host block activity fallback
 
 Interactive and Executive Plotly charts now normalize legends before render so labels remain readable in iframe/card layouts. Legends are placed below the x-axis with reserved bottom margin, fixed entry widths, and extra height for charts with many traces.
 
 The Host/OS block I/O latency/utilization chart no longer renders an empty canvas when read/write activity exists but latency/busy counters are missing. If `rd_lat_ms`, `wr_lat_ms`, and `io_util_pct` are unavailable or all zero while `rd_bw_mbs`, `wr_bw_mbs`, `rd_iops`, or `wr_iops` have activity, AMOprof renders an activity fallback chart showing available BW/IOPS and explicitly labels latency/utilization as unavailable. Read/write activity alone does not imply latency/utilization counters were collected; those require `rd_ms/wr_ms/io_ms`, iostat `await/%util`, or blktrace latency derivation.
 
 
-### v1.39.11 — P50 summary tiles
+### v1.39.20 — P50 summary tiles
 
 Summary tiles in Executive, Interactive, and End Report now show p50/median next to existing mean latency and throughput KPIs:
 
@@ -261,3 +261,154 @@ Throughput p50  = median(nonzero_samples(sglang_gen_throughput))
 ```
 
 Mean remains useful for overall run cost/capacity planning. P50 gives the typical request/token path for executive and engineering readers.
+
+
+### v1.39.20 — collect `--output-dir` hardening
+
+`amoprof collect --output-dir <DIR>` now resolves all collect-time paths at startup and writes a `collection_output_manifest.json` into the created `metrics_run_*` directory. The manifest lists generated artifacts and warns if any collector-reported artifact path is outside the requested output tree.
+
+Collector hardening in this release:
+
+- Exposes `AMOPROF_OUTPUT_DIR`, `AMOPROF_RUN_DIR`, and `AMOPROF_RAW_DIR` to child tools.
+- Passes canonical `raw/` working directories to Intel PCM / perf IMC, AMD uProf PCM, BPF trace, and related external profiler launches.
+- Mirrors Intel PCM raw CSV output into `raw/pcm_memory_raw.csv` when available.
+- Fixes PID/BPF collection duration when `--duration-s` is omitted but a stop condition or `--max-duration-s` is used.
+- Adds an output-scope validation step after report generation.
+
+
+### v1.39.20 — Queue-depth population fixes
+
+The SSD Queue Depth / AI Stack Layer Pressure section now has a three-tier data path:
+
+1. Preferred: exact blktrace Q→C event walk from raw `trace.blktrace.*` binaries.
+2. Fallback: `blkparse_events.generated.csv` when it contains both `Q` and `C` events.
+3. Coarse fallback: `nvme_driver_timeseries.csv` `inflight` / iostat `aqu-sz` / sysfs inflight.
+
+This prevents the queue-depth section from rendering empty when read/write activity exists but the exact blktrace Q→C summary file was not produced. Exact blktrace queue depth remains the source of truth when available; fallback values are clearly labeled as sampled/coarse pressure indicators.
+
+
+### Queue-depth collection sources
+
+`amoprof collect` now captures queue-depth / device-pressure information from all cheap local sources by default, and uses exact event-level queue depth when blktrace is enabled:
+
+| Source | File / metric | Purpose |
+|---|---|---|
+| blktrace Q→C | `raw/blktrace_analysis/queue_depth_timeseries.csv`, `queue_depth_summary.json` | Exact event-level queue depth when `--enable-blktrace` is used |
+| iostat | `raw/iostat_timeseries.csv`, `aqu-sz` / `avgqu-sz` | Kernel averaged queue size fallback |
+| sysfs stat | `/sys/block/<dev>/stat` field 8 | Instantaneous in-flight I/O |
+| sysfs weighted queue time | `/sys/block/<dev>/stat` field 10 | Time-weighted average queue depth over each sample interval |
+| sysfs inflight split | `/sys/block/<dev>/inflight` | Read/write in-flight split |
+| proc diskstats | `/proc/diskstats` | Fallback copy of kernel block stats |
+| sysfs queue config | `/sys/block/<dev>/queue/*` | Queue limits/config such as `nr_requests`, scheduler, merge settings |
+
+The unified collector writes `raw/queue_depth_sources_timeseries.csv` and `raw/queue_depth_sysfs_summary.json`. Reports prefer exact blktrace Q→C, then the unified multi-source queue-depth file, then legacy `nvme_driver_timeseries.csv` / `iostat_timeseries.csv` fallback.
+
+
+### blktrace collection diagnostics
+
+When `--enable-blktrace` is passed, AMOprof now writes launch diagnostics under the run raw directory:
+
+```text
+raw/blktrace_command.txt
+raw/blktrace_launch_stderr.txt
+raw/blktrace_summary.json
+```
+
+If `--strict-sanity` is enabled and blktrace produces no binary files or no parseable events, collection returns non-zero after writing diagnostics. Common causes are:
+- the whole command was not run with `sudo` and `sudo -n` cannot acquire privileges;
+- debugfs/tracefs is not mounted;
+- another blktrace is already active on the same device;
+- CAP_SYS_ADMIN is unavailable in the container/session;
+- blktrace/blkparse binaries are missing or incompatible.
+
+Recommended local SSD command form:
+
+```bash
+sudo amoprof collect \
+  --output-dir ./amoprof_results \
+  --ssd-device /dev/nvme7n1 \
+  --enable-blktrace \
+  --blktrace-buffer-kb 32768 \
+  --blktrace-num-buffers 8 \
+  --strict-sanity
+```
+
+
+### Blktrace event cap behavior
+
+By default, AMOprof now uses **all available blktrace events** captured during the collection/analyze window. There is no implicit 5M or 10M event cap.
+
+Use an event cap only when you explicitly want to bound memory/runtime on very large traces:
+
+```bash
+amoprof collect --enable-blktrace --blktrace-max-events 5000000 ...
+```
+
+When the cap is omitted, both collect-time `blkparse_events.generated.csv` and binary re-analysis from `raw/blktrace_data/trace.blktrace.*` consume all parseable events. When the cap is provided, AMOprof applies uniform 1-in-N sampling and records `event_cap` / `event_cap_applied` in the blktrace analysis summary.
+
+
+### Blktrace start diagnostics
+
+AMOprof no longer warns if `blktrace` is running but no `trace.blktrace.*` files are visible immediately after launch. That early state is diagnostic only; some systems do not expose or flush trace files until later in the run or at stop time.
+
+For each run, AMOprof writes:
+
+```text
+raw/blktrace_start_status.json
+raw/blktrace_command.txt
+raw/blktrace_launch_stderr.txt
+raw/blktrace_summary.json
+```
+
+Only the stop-time summary determines failure. With `--strict-sanity`, missing usable blktrace data at stop still returns a non-zero status.
+
+
+### Biosnoop collection behavior
+
+AMOprof controls biosnoop duration itself. BCC `biosnoop` uses `-t` for timestamps; it is **not** a duration argument. AMOprof now runs biosnoop as:
+
+```bash
+biosnoop-bpfcc -t
+```
+
+and stops it at collection stop time with SIGINT.
+
+For diagnostics, AMOprof writes:
+
+```text
+raw/biosnoop_command.txt
+raw/biosnoop_stderr.txt
+raw/biosnoop_raw.log
+raw/biosnoop_summary.json
+raw/biosnoop_events_all.csv
+raw/biosnoop_events.csv
+```
+
+`biosnoop_events_all.csv` contains all devices seen by biosnoop. `biosnoop_events.csv` is filtered to the requested `--ssd-device` and matching partitions such as `nvme7n1p1`. If the filtered CSV is empty but the all-device CSV has rows, check the `DISK` values in `biosnoop_events_all.csv` and verify whether the workload is hitting the expected device.
+
+
+### Biosnoop preflight: header vs event verification
+
+The biosnoop preflight now distinguishes two levels:
+
+```text
+attach/header OK
+```
+
+means the BCC tool started and emitted its header. This proves attach/startup, but not data capture.
+
+When `--strict-sanity` is used, AMOprof now performs a tiny read-only direct read from `--ssd-device` while biosnoop is running and requires at least one matching biosnoop event for that disk or partition. This catches the case where biosnoop prints a header but emits no real block I/O events.
+
+
+### End Report queue-depth charts
+
+The static End Report now renders a PNG chart for **SSD Queue Depth — AI Stack Layer Pressure** whenever queue-depth data exists. Chart source priority is:
+
+```text
+blktrace_analysis/queue_depth_timeseries.csv + queue_depth_distribution.csv
+→ raw/queue_depth_sources_timeseries.csv
+→ raw/queue_depth_sysfs_timeseries.csv
+→ nvme/iostat inflight or aqu-sz fallback
+```
+
+The chart includes queue depth over time, distribution, saturation threshold percentages, and mean/p50/p95/p99/peak summary bars.

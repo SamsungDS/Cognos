@@ -311,30 +311,165 @@ def _classify_access(prev_end_sector: int | None,
     return "random"
 
 
+
+def _write_queue_depth_outputs(output_dir: Path,
+                               qd_samples: list[tuple[float, int, int, int]],
+                               time_at_qd: dict[int, float],
+                               qd_max: int,
+                               bucket_s: float,
+                               source: str,
+                               q_events: int = 0,
+                               c_events: int = 0) -> dict:
+    """Write queue-depth CSVs/summary from already computed QD samples."""
+    if not qd_samples or not time_at_qd:
+        return {}
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    ts_csv = output_dir / "queue_depth_timeseries.csv"
+    with ts_csv.open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["t_sec", "qd_total", "qd_read", "qd_write", "source"])
+        for t_rel, qd, qr, qw in qd_samples:
+            w.writerow([f"{t_rel:.3f}", qd, qr, qw, source])
+
+    total_time = sum(time_at_qd.values())
+    hist_csv = output_dir / "queue_depth_distribution.csv"
+    with hist_csv.open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["qd_value", "time_sec", "pct_of_run", "source"])
+        for qd in sorted(time_at_qd):
+            t = time_at_qd[qd]
+            w.writerow([qd, f"{t:.3f}", f"{(t/total_time*100):.2f}" if total_time > 0 else "0", source])
+
+    def _time_weighted_percentile(p: float) -> float:
+        cum = 0.0
+        target = p * total_time
+        for qd in sorted(time_at_qd):
+            cum += time_at_qd[qd]
+            if cum >= target:
+                return float(qd)
+        return float(max(time_at_qd) if time_at_qd else 0)
+
+    qd_mean = (sum(qd * t for qd, t in time_at_qd.items()) / total_time
+               if total_time > 0 else 0)
+    sat_pcts = {}
+    for cap_candidate in (32, 64, 128, 256, 1024):
+        t_at_or_above = sum(t for qd, t in time_at_qd.items() if qd >= cap_candidate)
+        sat_pcts[f"pct_at_qd_ge_{cap_candidate}"] = round(
+            t_at_or_above / total_time * 100, 2) if total_time > 0 else 0
+
+    summary = {
+        "qd_mean": round(qd_mean, 2),
+        "qd_p50": round(_time_weighted_percentile(0.50), 1),
+        "qd_p95": round(_time_weighted_percentile(0.95), 1),
+        "qd_p99": round(_time_weighted_percentile(0.99), 1),
+        "qd_max": qd_max,
+        "qd_samples_count": len(qd_samples),
+        "qd_bucket_s": bucket_s,
+        "qd_total_time_s": round(total_time, 3),
+        "qd_source": source,
+        "q_events_seen": int(q_events),
+        "c_events_seen": int(c_events),
+        **sat_pcts,
+    }
+    (output_dir / "queue_depth_summary.json").write_text(json.dumps(summary, indent=2))
+    log.info("queue depth[%s]: mean=%.1f, p95=%.0f, max=%d (%d samples over %.1fs)",
+             source, qd_mean, _time_weighted_percentile(0.95), qd_max,
+             len(qd_samples), total_time)
+    return {"queue_depth_timeseries.csv": ts_csv,
+            "queue_depth_distribution.csv": hist_csv,
+            "queue_depth_summary.json": output_dir / "queue_depth_summary.json"}
+
+
+def _compute_queue_depth_from_csv(events_csv: Path, output_dir: Path,
+                                  bucket_s: float = 1.0,
+                                  source: str = "blkparse_events_csv_q_to_c") -> dict:
+    """Fallback QD pass from blkparse_events.generated.csv.
+
+    Requires rows containing both action=Q and action=C. If the CSV was capped to
+    completions only, this returns {} so the report can fall back to iostat/sysfs.
+    """
+    if not events_csv.exists():
+        return {}
+    qd_total = qd_read = qd_write = 0
+    qd_samples: list[tuple[float, int, int, int]] = []
+    time_at_qd: dict[int, float] = {}
+    last_event_t = None
+    qd_max = 0
+    t0 = None
+    q_events = c_events = 0
+    pending_op: dict[tuple[str, str, str], str] = {}
+
+    try:
+        with open(events_csv, newline="", encoding="utf-8", errors="replace") as f:
+            r = csv.DictReader(f)
+            for row in r:
+                action = (row.get("action") or "").strip().upper()
+                if action not in ("Q", "C"):
+                    continue
+                try:
+                    t_abs = float(row.get("ts") or row.get("time_sec") or row.get("timestamp") or 0)
+                except Exception:
+                    continue
+                if t0 is None:
+                    t0 = t_abs
+                t_rel = t_abs - t0
+                op = _normalise_block_op(row)
+                nsec = str(row.get("nsectors") or row.get("nsec") or "0")
+                req_key = (str(row.get("pid") or "0"), str(row.get("sector") or "0"), nsec)
+                if action == "Q":
+                    q_events += 1
+                else:
+                    c_events += 1
+
+                if last_event_t is not None:
+                    dt = t_rel - last_event_t
+                    if dt > 0:
+                        time_at_qd[qd_total] = time_at_qd.get(qd_total, 0.0) + dt
+                last_event_t = t_rel
+
+                if action == "Q":
+                    if op in ("R", "W", "D"):
+                        pending_op[req_key] = op
+                    qd_total += 1
+                    if op == "R": qd_read += 1
+                    elif op == "W": qd_write += 1
+                    qd_max = max(qd_max, qd_total)
+                else:
+                    if op not in ("R", "W", "D"):
+                        op = pending_op.pop(req_key, "?")
+                    qd_total = max(qd_total - 1, 0)
+                    if op == "R": qd_read = max(qd_read - 1, 0)
+                    elif op == "W": qd_write = max(qd_write - 1, 0)
+
+                if qd_samples and (t_rel - qd_samples[-1][0]) < bucket_s:
+                    last = qd_samples[-1]
+                    qd_samples[-1] = (last[0], max(last[1], qd_total),
+                                       max(last[2], qd_read), max(last[3], qd_write))
+                else:
+                    qd_samples.append((t_rel, qd_total, qd_read, qd_write))
+    except Exception as e:
+        log.warning("queue depth CSV fallback failed: %s", e)
+        return {}
+
+    if q_events <= 0:
+        log.warning("queue depth CSV fallback skipped: %s has %d C events but no Q events", events_csv, c_events)
+        return {}
+    return _write_queue_depth_outputs(output_dir, qd_samples, time_at_qd, qd_max,
+                                      bucket_s, source, q_events, c_events)
+
+
 def _compute_queue_depth_timeseries(bin_dir: Path, output_dir: Path,
                                      blkparse_bin: str = "blkparse",
                                      bucket_s: float = 1.0) -> dict:
     """Compute true SSD queue-depth time series + distribution from blktrace.
 
-    A request enters the block-layer queue at action 'Q' and leaves at 'C'
-    (completion). The number of outstanding (queued + in-flight) requests at
-    any instant = count('Q' so far) - count('C' so far). Walking the events
-    in chronological order with a running counter gives the *exact* queue
-    depth a function of time — no approximation, no Little's law.
-
-    This differs from iostat's `aqu-sz` (which is time-averaged via
-    integral(inflight) / interval) and from /sys/block/<dev>/inflight (which
-    is an instantaneous snapshot the sampler happens to catch). blktrace is
-    the ground truth.
-
-    Produces:
-      queue_depth_timeseries.csv  — t_sec, qd, qd_read, qd_write
-      queue_depth_distribution.csv — bucket, count, pct (histogram of QD)
-      queue_depth_summary.json     — mean/p50/p95/p99/max + cap-saturation %
-
-    Bucketing: events grouped into `bucket_s` (default 1s) windows for the
-    time series; the QD reported per bucket is the time-weighted mean across
-    that window. The histogram uses all individual QD transitions.
+    Uses the raw blktrace binaries and walks Q (queued) → C (completed) events.
+    This path intentionally uses blkparse's default text output plus robust
+    parsers for modern and legacy formats. Older builds used a custom `-f`
+    formatter that fails on some blkparse versions, which made the SSD Queue
+    Depth section appear empty even though blktrace data was collected.
     """
     import subprocess as _sp
     import re as _re
@@ -345,65 +480,67 @@ def _compute_queue_depth_timeseries(bin_dir: Path, output_dir: Path,
     if not bins:
         return {}
 
-    cmd = [blkparse_bin, "-i", str(bin_dir / "trace"), "-f",
-            "%T.%t %a %d %S %N %C\n"]
-    # Format breakdown: %T=ts_sec %t=ts_nsec %a=action %d=RWBS %S=sector
-    #                   %N=nbytes %C=command
-    # We need: ts, action, op (from RWBS). The sector/nbytes/comm are unused
-    # here but cheap to capture in case we want them later.
+    prefix = bin_dir / "trace"
+    cmd = [blkparse_bin, "-i", str(prefix)]
 
-    _LINE = _re.compile(
-        r"^\s*(?P<sec>\d+)\.(?P<nsec>\d+)\s+"
-        r"(?P<action>[A-Z])\s+"
-        r"(?P<rwbs>[A-Z]*)\s+"
-        r"(?P<sector>\d+)\s+"
-        r"(?P<nbytes>\d+)\s+"
-        r"(?P<cmd>\S*)"
+    _LINE_RE = _re.compile(
+        r"^\s*(?P<major>\d+),(?P<minor>\d+)\s+(?P<cpu>\d+)\s+\d+\s+"
+        r"(?P<ts>[\d.]+)\s+(?P<pid>\d+)\s+"
+        r"(?P<action>[A-Z])\s+(?P<rwbs>[A-Z]*)\s*"
+        r"(?P<sector>\d+)\s+\+\s+(?P<nsec>\d+)"
+        r"(?:\s+\[(?P<comm>[^\]]+)\])?"
+    )
+    _LINE_RE_OLD = _re.compile(
+        r"^\s*(?P<ts>[\d.]+)\s+(?P<pid>\d+)\s+"
+        r"(?P<action>[A-Z])\s+(?P<rwbs>[A-Z]*)\s+"
+        r"(?P<major>\d+),(?P<minor>\d+)\s+"
+        r"(?P<sector>\d+)\s+\+\s+(?P<nsec>\d+)"
+        r"(?:\s+\[(?P<comm>[^\]]+)\])?"
     )
 
-    # Track outstanding I/Os
-    qd_total   = 0
-    qd_read    = 0
-    qd_write   = 0
-    qd_samples: list[tuple[float, int, int, int]] = []  # (t_sec, total, rd, wr)
-
-    # For the histogram: count *time* (seconds) spent at each QD value, not
-    # count of events — that way "the device was at QD=8 for 12% of the run"
-    # is meaningful. We do this by tracking the duration between consecutive
-    # transitions and adding to time_at_qd[qd].
+    qd_total = qd_read = qd_write = 0
+    qd_samples: list[tuple[float, int, int, int]] = []
     time_at_qd: dict[int, float] = {}
-    last_event_t: float | None = None
-
-    # Cap detection: SSD hardware queue caps are typically 32/64/128/256/1024
-    # depending on the device class. We don't know the cap a priori, but if QD
-    # ever reaches >= 0.9× a power-of-two boundary for sustained periods, it's
-    # likely saturated at that boundary.
+    last_event_t = None
     qd_max = 0
-    t0: float | None = None
+    t0 = None
+    q_events = c_events = 0
+    pending_op: dict[tuple[str, str, str], str] = {}
+    unmatched_sample: list[str] = []
 
     try:
-        with _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.DEVNULL, text=True) as proc:
+        with _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.PIPE, text=True) as proc:
+            if proc.stdout is None:
+                return {}
             for raw in proc.stdout:
-                m = _LINE.match(raw)
+                m = _LINE_RE.match(raw) or _LINE_RE_OLD.match(raw)
                 if not m:
+                    if len(unmatched_sample) < 3 and raw.strip():
+                        st = raw.strip()
+                        if not (st.startswith("CPU") or st.startswith("Input") or st.startswith("Total") or st.startswith("Events")):
+                            unmatched_sample.append(st[:160])
                     continue
-                action = m.group("action")
+                d = m.groupdict()
+                action = d.get("action") or ""
                 if action not in ("Q", "C"):
                     continue
-                t = int(m.group("sec")) + int(m.group("nsec")) / 1e9
+                try:
+                    t_abs = float(d.get("ts") or 0.0)
+                except Exception:
+                    continue
                 if t0 is None:
-                    t0 = t
-                t_rel = t - t0
-                rwbs = m.group("rwbs") or ""
-                # Determine op from RWBS flags (writes always carry 'W'; trims 'D')
-                if "D" in rwbs:
-                    op = "D"
-                elif "W" in rwbs:
-                    op = "W"
-                else:
-                    op = "R"
+                    t0 = t_abs
+                t_rel = t_abs - t0
+                rwbs = d.get("rwbs") or ""
+                if "D" in rwbs: op = "D"
+                elif "W" in rwbs: op = "W"
+                elif "R" in rwbs: op = "R"
+                else: op = "?"
+                nsec = str(d.get("nsec") or "0")
+                req_key = (d.get("pid") or "0", d.get("sector") or "0", nsec)
+                if action == "Q": q_events += 1
+                else: c_events += 1
 
-                # Accumulate time-at-current-QD before transitioning
                 if last_event_t is not None:
                     dt = t_rel - last_event_t
                     if dt > 0:
@@ -411,29 +548,27 @@ def _compute_queue_depth_timeseries(bin_dir: Path, output_dir: Path,
                 last_event_t = t_rel
 
                 if action == "Q":
+                    if op in ("R", "W", "D"):
+                        pending_op[req_key] = op
                     qd_total += 1
-                    if op == "R":   qd_read  += 1
+                    if op == "R": qd_read += 1
                     elif op == "W": qd_write += 1
-                    if qd_total > qd_max:
-                        qd_max = qd_total
-                else:  # action == "C"
+                    qd_max = max(qd_max, qd_total)
+                else:
+                    if op not in ("R", "W", "D"):
+                        op = pending_op.pop(req_key, "?")
                     qd_total = max(qd_total - 1, 0)
-                    if op == "R":   qd_read  = max(qd_read  - 1, 0)
+                    if op == "R": qd_read = max(qd_read - 1, 0)
                     elif op == "W": qd_write = max(qd_write - 1, 0)
 
-                # Bucketed time-series sample (one row per bucket boundary)
                 if qd_samples and (t_rel - qd_samples[-1][0]) < bucket_s:
-                    # Update the running bucket — record the *max* QD seen in
-                    # this bucket. Mean would smooth over short bursts.
                     last = qd_samples[-1]
-                    qd_samples[-1] = (last[0],
-                                       max(last[1], qd_total),
-                                       max(last[2], qd_read),
-                                       max(last[3], qd_write))
+                    qd_samples[-1] = (last[0], max(last[1], qd_total),
+                                       max(last[2], qd_read), max(last[3], qd_write))
                 else:
                     qd_samples.append((t_rel, qd_total, qd_read, qd_write))
             try:
-                proc.wait(timeout=max(60, len(bins) * 2))
+                proc.wait(timeout=max(60, min(sum(p.stat().st_size for p in bins) // (1024 * 1024), 600)))
             except _sp.TimeoutExpired:
                 proc.kill(); proc.wait(timeout=5)
     except FileNotFoundError:
@@ -443,71 +578,11 @@ def _compute_queue_depth_timeseries(bin_dir: Path, output_dir: Path,
         log.warning("queue depth pass failed: %s", e)
         return {}
 
-    if not qd_samples or not time_at_qd:
+    if q_events <= 0:
+        log.warning("queue depth pass found %d C events but no Q events; sample unmatched=%s", c_events, unmatched_sample)
         return {}
-
-    # ── Write time-series CSV ─────────────────────────────────────────────
-    ts_csv = output_dir / "queue_depth_timeseries.csv"
-    with ts_csv.open("w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["t_sec", "qd_total", "qd_read", "qd_write"])
-        for t_rel, qd, qr, qw in qd_samples:
-            w.writerow([f"{t_rel:.3f}", qd, qr, qw])
-
-    # ── Histogram (time-weighted) ─────────────────────────────────────────
-    total_time = sum(time_at_qd.values())
-    hist_csv = output_dir / "queue_depth_distribution.csv"
-    with hist_csv.open("w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["qd_value", "time_sec", "pct_of_run"])
-        for qd in sorted(time_at_qd):
-            t = time_at_qd[qd]
-            w.writerow([qd, f"{t:.3f}", f"{(t/total_time*100):.2f}" if total_time > 0 else "0"])
-
-    # ── Summary: mean/p50/p95/p99 from the time-weighted distribution ─────
-    def _time_weighted_percentile(p: float) -> float:
-        cum = 0.0
-        target = p * total_time
-        for qd in sorted(time_at_qd):
-            cum += time_at_qd[qd]
-            if cum >= target:
-                return float(qd)
-        return float(max(time_at_qd) if time_at_qd else 0)
-
-    # Time-weighted mean = sum(qd * time_at_qd) / total_time
-    qd_mean = (sum(qd * t for qd, t in time_at_qd.items()) / total_time
-                if total_time > 0 else 0)
-
-    # Cap-saturation detection: what fraction of time spent at QD ≥ likely cap
-    # candidates? Useful to surface "your SSD saturated at QD=32 for 78% of
-    # the run, indicating it's the bottleneck for this workload".
-    sat_pcts = {}
-    for cap_candidate in (32, 64, 128, 256, 1024):
-        t_at_or_above = sum(t for qd, t in time_at_qd.items() if qd >= cap_candidate)
-        sat_pcts[f"pct_at_qd_ge_{cap_candidate}"] = round(
-            t_at_or_above / total_time * 100, 2) if total_time > 0 else 0
-
-    summary = {
-        "qd_mean":   round(qd_mean, 2),
-        "qd_p50":    round(_time_weighted_percentile(0.50), 1),
-        "qd_p95":    round(_time_weighted_percentile(0.95), 1),
-        "qd_p99":    round(_time_weighted_percentile(0.99), 1),
-        "qd_max":    qd_max,
-        "qd_samples_count": len(qd_samples),
-        "qd_bucket_s":      bucket_s,
-        "qd_total_time_s":  round(total_time, 3),
-        **sat_pcts,
-    }
-    (output_dir / "queue_depth_summary.json").write_text(json.dumps(summary, indent=2))
-
-    log.info("queue depth: mean=%.1f, p95=%.0f, max=%d (%d samples over %.1fs)",
-             qd_mean, _time_weighted_percentile(0.95), qd_max,
-             len(qd_samples), total_time)
-    return {"queue_depth_timeseries.csv":  ts_csv,
-            "queue_depth_distribution.csv": hist_csv,
-            "queue_depth_summary.json":     output_dir / "queue_depth_summary.json"}
-
-
+    return _write_queue_depth_outputs(output_dir, qd_samples, time_at_qd, qd_max,
+                                      bucket_s, "blktrace_q_to_c", q_events, c_events)
 
 
 def _scale_sampled_analysis_outputs(output_dir: Path, ratio: int) -> None:
@@ -559,7 +634,7 @@ def _scale_sampled_analysis_outputs(output_dir: Path, ratio: int) -> None:
 
 def analyze_from_binaries(bin_dir: Path, output_dir: Path,
                            blkparse_bin: str = "blkparse",
-                           max_events: int = 10_000_000) -> dict:
+                           max_events: int | None = None) -> dict:
     """Run blktrace analysis by streaming directly from binary trace files.
 
     This is the preferred path when blkparse_events.generated.csv is missing
@@ -574,10 +649,11 @@ def analyze_from_binaries(bin_dir: Path, output_dir: Path,
         bin_dir:      Directory containing trace.blktrace.* binary files.
         output_dir:   Where to write analysis CSVs (same as analyze()).
         blkparse_bin: Path to the blkparse binary.
-        max_events:   Cap on events written to the temporary CSV.  The cap is
-                      applied uniformly: 1-in-N events are kept so the full
-                      time range is always represented.  Default 10M events
-                      keeps RAM under ~1.5 GB.
+        max_events:   Optional cap on completion events written to the temporary CSV.
+                      When omitted/None, all completion events from the blktrace
+                      binaries are used. When provided, the cap is applied
+                      uniformly as 1-in-N sampling so the full time range is
+                      represented.
 
     Returns the same dict as analyze().
     """
@@ -608,39 +684,41 @@ def analyze_from_binaries(bin_dir: Path, output_dir: Path,
     prefix = bin_dir / "trace"
     cmd = [blkparse_bin, "-i", str(prefix)]
 
-    # ── First pass: count total events for sampling ratio ──────────────────
-    # We only count quickly; blkparse must be run twice (count, then write).
-    # For very large traces this doubles the parse time but keeps RAM bounded.
-    log.info("analyze_from_binaries: counting events (pass 1/2)...")
+    # ── Optional first pass only when user requested an event cap ──────────
+    # Default behavior is to use all available blktrace completion events.
+    # If --blktrace-max-events is provided, count first so we can apply
+    # uniform 1-in-N sampling across the full time range.
     total_c_events = 0
-    try:
-        with _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.DEVNULL, text=True) as proc:
-            for raw in proc.stdout:
-                m = _LINE_RE.match(raw)
-                if m and m.group("action") == "C":
-                    total_c_events += 1
-            # Drain + wait
-            try:
-                proc.wait(timeout=max(60, len(bins) * 2))
-            except _sp.TimeoutExpired:
-                proc.kill(); proc.wait(timeout=5)
-    except Exception as e:
-        log.warning("analyze_from_binaries: count pass failed: %s", e)
-        total_c_events = 0
-
     keep_ratio = 1
-    if total_c_events > max_events:
-        keep_ratio = (total_c_events + max_events - 1) // max_events
-        log.info("analyze_from_binaries: %d completion events; keeping 1-in-%d "
-                 "(~%d events) for analysis",
-                 total_c_events, keep_ratio,
-                 total_c_events // keep_ratio)
+    if max_events not in (None, "", 0, "0"):
+        max_events = int(max_events)
+        log.info("analyze_from_binaries: counting events for optional cap=%d (pass 1/2)...", max_events)
+        try:
+            with _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.DEVNULL, text=True) as proc:
+                for raw in proc.stdout:
+                    m = _LINE_RE.match(raw)
+                    if m and m.group("action") == "C":
+                        total_c_events += 1
+                try:
+                    proc.wait(timeout=max(60, len(bins) * 2))
+                except _sp.TimeoutExpired:
+                    proc.kill(); proc.wait(timeout=5)
+        except Exception as e:
+            log.warning("analyze_from_binaries: count pass failed: %s", e)
+            total_c_events = 0
+        if total_c_events > max_events:
+            keep_ratio = (total_c_events + max_events - 1) // max_events
+            log.info("analyze_from_binaries: %d completion events; optional cap keeps 1-in-%d (~%d events)",
+                     total_c_events, keep_ratio, total_c_events // keep_ratio)
+        else:
+            log.info("analyze_from_binaries: %d completion events <= cap — keeping all", total_c_events)
     else:
-        log.info("analyze_from_binaries: %d completion events — keeping all",
-                 total_c_events)
+        max_events = None
+        log.info("analyze_from_binaries: no event cap set — using all available blktrace completion events")
 
-    # ── Second pass: write sampled CSV ────────────────────────────────────
-    log.info("analyze_from_binaries: writing sampled CSV (pass 2/2)...")
+    # ── Write full or optionally sampled CSV ──────────────────────────────
+    log.info("analyze_from_binaries: writing %s CSV...",
+             "sampled" if keep_ratio > 1 else "full")
     output_dir.mkdir(parents=True, exist_ok=True)
     tmp_csv = output_dir / "_blkparse_sampled.csv"
     written_events = 0
@@ -726,6 +804,9 @@ def analyze_from_binaries(bin_dir: Path, output_dir: Path,
     try:
         qd_outputs = _compute_queue_depth_timeseries(bin_dir, output_dir,
                                                       blkparse_bin=blkparse_bin)
+        if not qd_outputs:
+            qd_outputs = _compute_queue_depth_from_csv(tmp_csv, output_dir,
+                                                       source="sampled_csv_q_to_c")
         result.update(qd_outputs)
     except Exception as e:
         log.warning("queue depth analysis skipped: %s", e)
@@ -737,8 +818,10 @@ def analyze_from_binaries(bin_dir: Path, output_dir: Path,
             s = _json.loads((output_dir / "summary.json").read_text())
             s["sampling_ratio"]        = keep_ratio
             s["sampled_events"]        = written_events
-            s["total_c_events_raw"]    = total_c_events
+            s["total_c_events_raw"]    = total_c_events if total_c_events else written_events
             s["source"]                = "blktrace_binaries"
+            s["event_cap"]             = max_events
+            s["event_cap_applied"]     = bool(keep_ratio > 1)
             # Scale totals back to full population when sampled
             if keep_ratio > 1:
                 for key in ("read_events", "write_events", "trim_events", "total_events"):
@@ -1412,6 +1495,15 @@ def analyze(events_csv: Path, output_dir: Path) -> dict:  # type: ignore[overrid
             mean_s=st["seq_sum"]/st["seq_n"] if st["seq_n"] else 0
             w.writerow([OP_NAME.get(op,op), round(corr,4), int(n), round(mean_r,1), round(mean_s,1)])
     written["request_size_random_seq_correlation.csv"] = output_dir / "request_size_random_seq_correlation.csv"
+
+    # Queue-depth fallback for CSVs that contain Q and C events. If this CSV is
+    # completion-only, the helper returns {} and the report falls back to
+    # iostat/sysfs inflight instead of rendering an empty section.
+    try:
+        qd_outputs = _compute_queue_depth_from_csv(events_csv, output_dir)
+        written.update({k: Path(v) for k, v in qd_outputs.items()})
+    except Exception as e:
+        log.warning("queue depth CSV fallback skipped: %s", e)
 
     log.info("blktrace_analyzer(streaming): wrote %d files to %s; events=%d sample=%d", len(written), output_dir, total_events, sample_written)
     return {name: str(path) for name, path in written.items()}
