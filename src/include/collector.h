@@ -32,13 +32,14 @@ class Collector : public Service {
   // parameterized constructor
   Collector(std::string bind_addr, std::string svc_name,
             void *(*svc_func)(void *arg));
-  // Virtual destructor
-  virtual ~Collector() = default;
+  // Virtual destructor - closes socket and destroys context
+  virtual ~Collector();
 
   MetricsCollector sys_metrics;
   int ServiceStart(void);
   void ServiceStop(void);
   void *c_pub;
+  std::atomic<bool> stop_flag{false};
 
  private:
   void *c_context;

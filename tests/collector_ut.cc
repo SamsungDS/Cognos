@@ -1,5 +1,6 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <zmq.h>
 
 #include <chrono>
 #include <fstream>
@@ -17,11 +18,7 @@ void create_file(const std::string& file_name, const std::string& content) {
 }
 
 class CollectorTest : public ::testing::Test {
- protected:
-  Collector c;
-
   void SetUp() override {
-    c = Collector();
     string zmq_config = R"({
   "svk_cxl_host_node":
       {
@@ -89,6 +86,9 @@ TEST_F(CollectorTest, CheckConstructorAndRun3) {
   auto r = Collector(addr.c_str(), "Collector", _run);
   EXPECT_TRUE((is_same_v<decltype(r), Collector>));
 
+  // Close the socket cleanly before nulling, so the port and context are
+  // released properly. The destructor's null-check will then be a no-op.
+  zmq_close(r.c_pub);
   r.c_pub = nullptr;
   int val = 0;
   c_flag.store(val);
@@ -113,6 +113,16 @@ TEST_F(CollectorTest, CheckConstructorAndRun4) {
   EXPECT_NE(val, 0);
 }
 
+TEST_F(CollectorTest, CheckConstructorWithZMQBindFailure) {
+  // Bind once to occupy the port
+  string addr = get_zmq_bindaddr(SVK_CXL_HOST_IP_CONFIG_TEST);
+  auto r = Collector(addr.c_str(), "Collector", _run);
+  EXPECT_NE(r.c_pub, nullptr);  // successful bind: socket is valid
+
+  // Second bind to the same address must throw
+  EXPECT_THROW(Collector(addr.c_str(), "Collector", _run), std::runtime_error);
+}
+
 /*TEST_F(CollectorTest, CheckSvcRegistration) {
   EXPECT_EQ(register_svk_service(nullptr), -1);
   namespace pt = boost::property_tree;
@@ -125,6 +135,8 @@ TEST_F(CollectorTest, CheckConstructorAndRun4) {
 }*/
 
 TEST_F(CollectorTest, CheckSvc) {
+  string addr = get_zmq_bindaddr(SVK_CXL_HOST_IP_CONFIG_TEST);
+  auto c = Collector(addr.c_str(), "Collector", _run);
   try {
     c.ServiceStart();
   } catch (const std::exception& e) {

@@ -1,5 +1,6 @@
 #include "collector.h"
 
+#include <unistd.h>
 #include <zmq.h>
 
 using namespace std;
@@ -38,7 +39,7 @@ string get_zmq_bindaddr(string conf_filename) {
 * @return void
 */
 void *_run(void *arg) {
-  int rc;
+  int rc = 0;
   string emsg = "Error in " + string(__FUNCTION__) + " : " +
                 "##HOST_METRIC zmq_send failed, errno = " + to_string(errno) +
                 "; error = " + strerror(errno);
@@ -49,16 +50,17 @@ void *_run(void *arg) {
   }
 
   cout << "##HOST_METRIC collector run function" << endl;
+  Collector *c = static_cast<Collector *>(arg);
 
   string zmq_message;
-  while (true) {
+  while (!c->stop_flag.load()) {
     try {
-      Collector *c = static_cast<Collector *>(arg);
       rc = c->sys_metrics.get_system_metrics();
       if (rc == -1) {
         string msg = "Error in " + string(__FUNCTION__) + " : " +
                      "getting system metrics failed, rc = " + to_string(rc);
         cerr << msg << endl;
+        if (c->stop_flag.load()) break;
         throw runtime_error(msg);
       }
       zmq_message =
@@ -70,8 +72,8 @@ void *_run(void *arg) {
         cerr << emsg << endl;
         throw runtime_error(emsg.c_str());
       }
-      sleep(
-          COLLECTION_FREQUENCY_S);  // Run every COLLECTION_FREQUENCY_S seconds
+      // Run every COLLECTION_FREQUENCY_S (5) seconds
+      sleep(COLLECTION_FREQUENCY_S);
       if (TEST_BUILD) {
         throw runtime_error("test");
       }
@@ -81,6 +83,7 @@ void *_run(void *arg) {
       cerr << c_flag << "::" << e.what() << endl;
     }
   }
+  cout << "Collector thread exited" << endl;
   return (void *)(0);
 }
 
@@ -94,6 +97,22 @@ int Collector::ServiceStart(void) {
 void Collector::ServiceStop(void) {
   if (TEST_BUILD) {
     throw invalid_argument("test_ServiceStop");
+  }
+  cout << "Initiated to stop the collector thread" << endl;
+  stop_flag.store(true);  // signal the loop to exit
+
+  // Sleep twice the thread sleep interval for the data to push cleanly and exit
+  sleep(2 * COLLECTION_FREQUENCY_S);
+
+  // Forcefully close the socket to unblock any in-progress zmq_send and causes
+  // it to return -1, which makes _run notice the stop_flag and break.
+  if (c_pub) {
+    zmq_close(c_pub);
+    c_pub = nullptr;
+  }
+  if (c_context) {
+    zmq_ctx_destroy(c_context);
+    c_context = nullptr;
   }
   Service::ServiceStop();
 }
@@ -113,11 +132,42 @@ Collector::Collector(string bind_addr, string svc_name,
   int rc;
   c_context = zmq_ctx_new();
   c_pub = zmq_socket(c_context, ZMQ_PUB);
-  rc = zmq_bind(c_pub, bind_addr.c_str());
-  if (rc != 0) {
-    string msg = string("##HOST_METRIC zmq bind failed") + string(", rc: ") +
-                 to_string(rc);
-    throw runtime_error("Error in " + string(__FUNCTION__) + " : " + msg);
+
+  // Release the port immediately on socket close so frequent restarts don't
+  // hit EADDRINUSE during the OS TIME_WAIT period.
+  int linger = 0;
+  zmq_setsockopt(c_pub, ZMQ_LINGER, &linger, sizeof(linger));
+
+  // Retry bind to overcome the TIME_WAIT (60s) time for the socket binded with
+  // the port to be released by OS when the process goes down abruptly and
+  // restarted. Retry for 10 times with 10s intervals
+  constexpr int max_retries = 10;
+  constexpr int retry_delay = 10;
+  for (int attempt = 1; attempt <= max_retries; attempt++) {
+    rc = zmq_bind(c_pub, bind_addr.c_str());
+    if (rc == 0) {
+      cout << "ZMQ bind successful to the address " << bind_addr << endl;
+      break;
+    }
+    if (errno != EADDRINUSE || attempt == max_retries) {
+      string msg = string("##HOST_METRIC zmq bind failed") + string(", rc: ") +
+                   to_string(rc) + string(", errno: ") + strerror(errno);
+      zmq_close(c_pub);
+      zmq_ctx_destroy(c_context);
+      throw runtime_error("Error in " + string(__FUNCTION__) + " : " + msg);
+    }
+    sleep(retry_delay);
+  }
+}
+
+Collector::~Collector() {
+  if (c_pub) {
+    zmq_close(c_pub);
+    c_pub = nullptr;
+  }
+  if (c_context) {
+    zmq_ctx_destroy(c_context);
+    c_context = nullptr;
   }
 }
 
