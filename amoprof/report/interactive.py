@@ -33,6 +33,16 @@ except Exception:
         resolve_l3_backend = None  # type: ignore
         reconcile_l3_io = None  # type: ignore
 
+try:
+    from amoprof.report.common_kpis import compute_common_kpis, apply_common_kpis_to_html, write_common_kpis_json
+except Exception:
+    try:
+        from common_kpis import compute_common_kpis, apply_common_kpis_to_html, write_common_kpis_json  # type: ignore
+    except Exception:
+        compute_common_kpis = None  # type: ignore
+        apply_common_kpis_to_html = None  # type: ignore
+        write_common_kpis_json = None  # type: ignore
+
 # Plotly.js version pinned to a known-stable release with broad browser support.
 PLOTLY_CDN = "https://cdn.plot.ly/plotly-2.35.2.min.js"
 
@@ -41,22 +51,21 @@ def _amoprof_storage_label_cleanup(html_text: str) -> str:
     if not html_text:
         return html_text
     for a, b in {
-        "KV$ SSD IO": "KV$ L3 IO",
-        "KV$ SSD I/O": "KV$ L3 I/O",
-        "KV$ SSD": "KV$ L3",
-        "NVMe read throughput": "L3 (Storage/AI Memory Node) read throughput",
-        "NVMe read BW": "L3 (Storage/AI Memory Node) read throughput",
+        "KV$ SSD IO": "KV$ L3 (local storage) logical movement",
+        "KV$ SSD I/O": "KV$ L3 (local storage) I/O",
+        "KV$ SSD": "KV$ L3 (local storage)",
+        "NVMe read throughput": "L3 (local storage) read throughput",
+        "NVMe read BW": "L3 (local storage) read throughput",
     }.items():
         html_text = html_text.replace(a, b)
     protected = {
-        "KV$ L3 IO": "__AMOPROF_KV_L3_IO__",
-        "KV$ L3 I/O": "__AMOPROF_KV_L3_IOSLASH__",
-        "L3 (Storage/AI Memory Node)": "__AMOPROF_L3_STORAGE_AI_NODE__",
+        "KV$ L3 (local storage) logical movement": "__AMOPROF_KV_L3_IO__",
+        "KV$ L3 (local storage) I/O": "__AMOPROF_KV_L3_IOSLASH__",
+        "L3 (local storage)": "__AMOPROF_L3_STORAGE_AI_NODE__",
     }
     for a, b in protected.items():
         html_text = html_text.replace(a, b)
-    html_text = re.sub(r"\bL3 storage\b", "local Storage / AI memory node", html_text, flags=re.IGNORECASE)
-    html_text = re.sub(r"\bL3\b", "local Storage / AI memory node", html_text)
+    html_text = re.sub(r"\bL3 (AI Memory Node / remote storage)\b", "L3 (local storage)", html_text, flags=re.IGNORECASE)
     for a, b in protected.items():
         html_text = html_text.replace(b, a)
     return html_text
@@ -335,11 +344,8 @@ def _layout(title: str, ylabel: str = "", ylabel2: str = "",
 def _fit_plotly_legend(fig: dict | None) -> dict | None:
     """Normalize Plotly legend sizing so labels remain readable.
 
-    Plotly's horizontal legends do not auto-reserve enough vertical space in
-    embedded iframes/cards.  This helper is applied immediately before render:
-    it reserves bottom margin based on trace count, keeps legends below the
-    x-axis, and gives each legend entry a predictable width so labels do not
-    collapse into each other when the chart is resized.
+    v1.39.61 makes the right-side legend the default for multi-trace charts
+    and reserves enough right margin for long trace labels.
     """
     if not fig:
         return fig
@@ -347,41 +353,34 @@ def _fit_plotly_legend(fig: dict | None) -> dict | None:
     n = len([t for t in data if t is not None and t.get("showlegend", True) is not False])
     layout = fig.setdefault("layout", {})
     margin = dict(layout.get("margin") or {})
-    # Reserve enough space for 1-4 wrapped legend rows.  This prevents the
-    # legend from overlapping ticks or being clipped at the bottom of the card.
-    if n <= 1:
-        bottom = 96
-    elif n <= 4:
-        bottom = 130
-    elif n <= 8:
-        bottom = 170
-    elif n <= 14:
-        bottom = 220
-    else:
-        bottom = 270
-    margin["b"] = max(int(margin.get("b") or 0), bottom)
-    margin["l"] = max(int(margin.get("l") or 0), 64)
-    margin["r"] = max(int(margin.get("r") or 0), 56)
-    layout["margin"] = margin
-
+    margin["l"] = max(int(margin.get("l") or 0), 70)
     legend = dict(layout.get("legend") or {})
+
+    if n >= 2:
+        legend.update({"orientation": "v", "yanchor": "top", "y": 1.0,
+                       "xanchor": "left", "x": 1.03})
+        margin["r"] = max(int(margin.get("r") or 0), 320 if n <= 4 else 360)
+        margin["b"] = max(int(margin.get("b") or 0), 110)
+        layout["height"] = max(int(layout.get("height") or 460), 540 if n <= 4 else 580)
+    else:
+        legend.update({"orientation": "h", "yanchor": "top", "y": -0.14,
+                       "xanchor": "left", "x": 0})
+        margin["b"] = max(int(margin.get("b") or 0), 120)
+        margin["r"] = max(int(margin.get("r") or 0), 90)
+
     legend.update({
-        "orientation": "h",
-        "yanchor": "top", "y": -0.22,
-        "xanchor": "left", "x": 0,
-        "font": {"size": 10, "color": "#0f172a"},
-        "bgcolor": "rgba(248,250,252,0.96)",
+        "font": {"size": 11 if n <= 4 else 10, "color": "#0f172a"},
+        "bgcolor": "rgba(248,250,252,0.98)",
         "bordercolor": "#cbd5e1", "borderwidth": 1,
         "itemsizing": "constant",
-        "itemwidth": 30,
-        "entrywidth": 145 if n <= 10 else 120,
-        "entrywidthmode": "pixels",
         "tracegroupgap": 6,
+        "itemwidth": 30,
     })
+    legend.pop("entrywidth", None)
+    legend.pop("entrywidthmode", None)
+    layout["margin"] = margin
     layout["legend"] = legend
     layout["autosize"] = True
-    if n > 8:
-        layout["height"] = max(int(layout.get("height") or 460), 520)
     return fig
 
 
@@ -909,12 +908,12 @@ def _chart_nvme_latency(nvme: list[dict], label: str = "Host Block I/O") -> dict
                  "line": {"color": "#94a3b8", "width": 1.4, "dash": "dot"},
                  "hovertemplate": "<b>%{y:.1f}</b>%% util<extra></extra>"},
             ],
-            "layout": _layout(f"{label} Latency & Device Utilization",
+            "layout": _layout(f"{label} Latency & Device Busy-Time",
                               "Latency (ms)", "Util %", ts=ts)
         }
 
     # Fallback: read/write activity exists, but the source file did not include
-    # latency/busy counters (rd_ms/wr_ms/io_ms, iostat await/%util, or blktrace
+    # latency/busy counters (rd_ms/wr_ms/io_ms, iostat await/busy-time, or blktrace
     # latency).  Do not render an empty chart; show the available activity and
     # make the missing latency provenance explicit in the title/legend.
     has_activity = any(v and v > 0 for v in (rd_bw + wr_bw + rd_iops + wr_iops))
@@ -989,44 +988,55 @@ def _chart_qd_timeseries(qd_ts: list[dict]) -> dict | None:
 
 
 def _chart_qd_distribution(qd_dist: list[dict]) -> dict | None:
-    """Time-weighted histogram: what % of trace time was spent at each QD value.
-
-    qd_dist rows are: qd_value, time_sec, pct_of_run.
-    Bar chart with x = QD bucket, y = % of run time. Log-x scale would compress
-    the readable area; we keep linear and let the user scroll if their QD
-    distribution is unusually wide.
-    """
+    """Binned time-weighted QD histogram with meaningful risk legend."""
     if not qd_dist:
         return None
-    qds  = [int(_to_float(r.get("qd_value")) or 0) for r in qd_dist]
-    pcts = [_to_float(r.get("pct_of_run")) or 0 for r in qd_dist]
-    # Color saturation buckets red, healthy ones green
-    colors = []
-    for q in qds:
-        if q >= 128:   colors.append("#ef4444")
-        elif q >= 32:  colors.append("#f59e0b")
-        elif q >= 2:   colors.append("#22c55e")
-        else:          colors.append("#0ea5e9")
-    layout = dict(_layout("Queue Depth Distribution (time-weighted)",
-                          "% of trace time", height=380))
-    # X axis is QD value, not time — explicitly set to linear (inherits date by default)
-    layout["xaxis"] = {
-        "type": "linear",
-        "title": {"text": "Queue depth (outstanding I/Os)", "standoff": 12},
-        "gridcolor": "#cbd5e1", "zerolinecolor": "#94a3b8",
-        "linecolor": "#475569", "tickcolor": "#475569",
-        "tickfont": {"size": 12, "color": "#0f172a"},
-        "automargin": True,
-    }
+    def _risk(q: int) -> tuple[str, str]:
+        if q <= 1: return ("Idle", "#0ea5e9")
+        if q <= 31: return ("Healthy", "#22c55e")
+        if q <= 127: return ("Deep queue", "#f59e0b")
+        return ("Saturation risk", "#ef4444")
+    bucket_pct: dict[str, float] = {}
+    bucket_meta: dict[str, tuple[str, str]] = {}
+    for r in qd_dist:
+        q = int(_to_float(r.get("qd_value")) or 0)
+        pct = _to_float(r.get("pct_of_run")) or 0.0
+        legend_name, color = _risk(q)
+        if q <= 1:
+            xlab = str(q)
+        elif q < 32:
+            lo = max(2, (q // 4) * 4); hi = lo + 3; xlab = f"{lo}–{hi}"
+        elif q < 128:
+            lo = (q // 16) * 16; hi = lo + 15; xlab = f"{lo}–{hi}"
+        else:
+            lo = 1
+            while lo * 2 <= q: lo *= 2
+            hi = lo * 2 - 1; xlab = f"{lo}–{hi}"
+        key = f"{xlab}|{legend_name}"
+        bucket_pct[key] = bucket_pct.get(key, 0.0) + pct
+        bucket_meta[key] = (legend_name, color)
+    def _lo(key: str) -> int:
+        m = re.match(r"(\d+)", key)
+        return int(m.group(1)) if m else 0
+    traces = []
+    for legend_name, color in [("Idle","#0ea5e9"),("Healthy","#22c55e"),("Deep queue","#f59e0b"),("Saturation risk","#ef4444")]:
+        xs, ys = [], []
+        for key in sorted(bucket_pct, key=_lo):
+            name, _ = bucket_meta[key]
+            if name == legend_name:
+                xs.append(key.split("|",1)[0]); ys.append(bucket_pct[key])
+        if xs:
+            traces.append({"x": xs, "y": ys, "type": "bar", "name": legend_name,
+                           "marker": {"color": color},
+                           "hovertemplate": "<b>QD bucket %{x}</b><br>%{y:.2f}% of trace time<extra></extra>"})
+    layout = dict(_layout("Queue Depth Distribution (time-weighted, binned)", "% of trace time", height=430))
+    layout["xaxis"] = {"type": "category", "title": {"text": "Queue depth bucket (outstanding I/Os)", "standoff": 12},
+                       "gridcolor": "#cbd5e1", "zerolinecolor": "#94a3b8", "linecolor": "#475569", "tickcolor": "#475569",
+                       "tickfont": {"size": 11, "color": "#0f172a"}, "automargin": True}
+    layout["barmode"] = "stack"
     layout["hovermode"] = "closest"
-    return {
-        "data": [
-            {"x": qds, "y": pcts, "type": "bar",
-             "marker": {"color": colors},
-             "hovertemplate": "<b>QD=%{x}</b><br>%{y:.2f}% of trace<extra></extra>"}
-        ],
-        "layout": layout,
-    }
+    return _fit_plotly_legend({"data": traces, "layout": layout})
+
 
 
 def _chart_kv_tiers(sglang: list[dict]) -> dict | None:
@@ -1055,16 +1065,16 @@ def _chart_kv_tiers(sglang: list[dict]) -> dict | None:
     if storage_col:
         traces.append({"x": xs, "y": _col(sglang, storage_col),
                        "type": "scatter", "mode": "lines", "stackgroup": "kv",
-                       "name": "L3 storage",
+                       "name": "L3 (local storage)",
                        "line": {"color": "#f97316", "width": 0},
                        "fillcolor": "rgba(249,115,22,0.6)",
                        "hovertemplate": "<b>L3</b>: %{y:.0f} tok<extra></extra>"})
 
     # Many SGLang builds do not export tier-labeled cached_tokens_total.
-    # Fallback to movement counters only when reliable L3 storage evidence exists.
-    # backuped_tokens_total or prefetched_tokens_total prove L3 storage use;
-    # load_back-only and evicted-only are ambiguous/cache-pressure signals and
-    # must not create L3 storage charts.
+    # Fallback to movement counters only when reliable L3 (local storage) evidence exists.
+    # backuped_tokens_total or prefetched_tokens_total prove L3 (local storage) use;
+    # load_back-only (L2→L1 restore) and evicted-only are ambiguous/cache-pressure signals and
+    # must not create L3 (local storage) charts.
     if not traces:
         bk_col = _find_col(sglang, "backuped_tokens_total")
         pf_col = _find_col(sglang, "prefetched_tokens_total")
@@ -1081,7 +1091,7 @@ def _chart_kv_tiers(sglang: list[dict]) -> dict | None:
             resident = [max(b - p, 0.0) for b, p in zip(bk, pf)]
             if any(resident):
                 traces.append({"x": xs, "y": resident, "type": "scatter",
-                               "mode": "lines", "name": "Approx L3 storage resident tokens",
+                               "mode": "lines", "name": "Approx L3 (local storage) resident tokens",
                                "fill": "tozeroy", "fillcolor": "rgba(249,115,22,0.18)",
                                "line": {"color": "#f97316", "width": 2},
                                "hovertemplate": "<b>%{y:.0f}</b> approx resident tok<extra></extra>"})
@@ -1097,9 +1107,9 @@ def _chart_kv_tiers(sglang: list[dict]) -> dict | None:
                                "hovertemplate": "<b>%{y:.0f}</b> prefetched tok<extra></extra>"})
             if any(lb):
                 traces.append({"x": xs, "y": lb, "type": "scatter",
-                               "mode": "lines", "name": "Cumulative load-back tokens (diagnostic, not SSD bytes)",
+                               "mode": "lines", "name": "Cumulative L2→L1 load-back restore tokens (diagnostic, not SSD/L3 bytes)",
                                "line": {"color": "#22c55e", "width": 1.8},
-                               "hovertemplate": "<b>%{y:.0f}</b> load-back tok (diagnostic)<extra></extra>"})
+                               "hovertemplate": "<b>%{y:.0f}</b> L2→L1 load-back restore tokens<extra></extra>"})
             if any(ev):
                 traces.append({"x": xs, "y": ev, "type": "scatter",
                                "mode": "lines", "name": "Cumulative evicted tokens",
@@ -1108,7 +1118,7 @@ def _chart_kv_tiers(sglang: list[dict]) -> dict | None:
     if not traces:
         return None
     return {"data": traces,
-            "layout": _layout("KV Cache Tier / L3 storage movement Occupancy",
+            "layout": _layout("KV Cache Tier / L3 (local storage) movement Occupancy",
                               "Tokens", height=480, ts=ts)}
 
 
@@ -1139,7 +1149,7 @@ def _chart_eviction(sglang: list[dict]) -> dict | None:
                        "hovertemplate": "<b>%{y:.0f}</b> tok/s evicted<extra></extra>"})
     if lb_col:
         traces.append({"x": xs, "y": _rate(lb_col),
-                       "type": "scatter", "mode": "lines", "name": "Load-back tok/s",
+                       "type": "scatter", "mode": "lines", "name": "L2→L1 load-back restore tok/s",
                        "line": {"color": "#22c55e", "width": 2},
                        "hovertemplate": "<b>%{y:.0f}</b> tok/s loaded<extra></extra>"})
     if bk_col:
@@ -1148,7 +1158,7 @@ def _chart_eviction(sglang: list[dict]) -> dict | None:
                        "line": {"color": "#3b82f6", "width": 1.6, "dash": "dot"},
                        "hovertemplate": "<b>%{y:.0f}</b> tok/s backup<extra></extra>"})
     return {"data": traces,
-            "layout": _layout("KV Cache Eviction / Load-back / Backup Rates",
+            "layout": _layout("KV Cache Eviction / L2→L1 Load-back / Backup Rates",
                               "Tokens / sec", ts=ts)}
 
 
@@ -1156,7 +1166,7 @@ def _kv_bytes_per_token_for_model(model_name: str, kv_dtype: str) -> float:
     """Estimate KV cache bytes per token from model architecture.
 
     Mirrored from amoprof.KV_ARCH_DB / combined._kv_bytes_per_token_kb so
-    the interactive tab can derive byte-level L3 storage BW from token-level SGLang
+    the interactive tab can derive byte-level L3 (local storage) BW from token-level SGLang
     counters without depending on the static-report module.
     """
     arch_db = {
@@ -1258,7 +1268,10 @@ def _chart_l3_consistency(sglang_read_gb: float, sglang_write_gb: float,
              "type": "bar", "name": "Local block physical", "hovertemplate": "%{x}: %{y:.3f} GB<extra></extra>"},
         ],
         "layout": {**_layout("L3 consistency: SGLang logical vs local-source physical bytes", "GB", height=380),
-                   "barmode": "group"},
+                   "barmode": "group",
+                   "xaxis": {"type": "category", "title": {"text": "Direction"},
+                             "gridcolor": "#cbd5e1", "linecolor": "#475569",
+                             "tickfont": {"size": 12, "color": "#0f172a"}, "automargin": True}},
     }
 
 
@@ -1273,12 +1286,12 @@ def _l3_consistency_card(status: str, note: str, backend_display: str, backend_e
   <h2>L3 Consistency Check — SGLang vs local sources</h2>
   <div class="caption"><b>Status:</b> {status}<br>
   <b>Resolved backend:</b> {backend_display} &nbsp;·&nbsp; <b>Evidence:</b> {backend_evidence or 'not available'}<br>
-  <b>Rule:</b> SGLang counters are logical KV movement. blktrace/blkparse/iostat are physical local-block bytes. Visualizations compare them side-by-side; they are not merged unless backend is resolved as local SSD and the physical capture is complete.<br>
+  <b>Rule:</b> SGLang counters are logical KV movement. blktrace/blkparse/iostat are physical local-block bytes. Visualizations compare them side-by-side; they are not merged unless backend is resolved as L3 local SSD and the physical capture is complete.<br>
   <b>Note:</b> {note}</div>
   <div id="{chart_id}" class="plot"></div>
   <table style="width:100%;border-collapse:collapse;margin-top:10px;font-size:13px">
     <tr><th style="text-align:left;padding:6px;border-bottom:1px solid #334155">Direction</th><th style="text-align:right;padding:6px;border-bottom:1px solid #334155">SGLang logical GB</th><th style="text-align:right;padding:6px;border-bottom:1px solid #334155">Local physical GB</th></tr>
-    <tr><td style="padding:6px">Read: prefetched only (load_back diagnostic)</td><td style="text-align:right;padding:6px">{sglang_read_gb:.3f}</td><td style="text-align:right;padding:6px">{block_read_gb:.3f}</td></tr>
+    <tr><td style="padding:6px">Read: prefetched only (L2→L1 load_back restore diagnostic)</td><td style="text-align:right;padding:6px">{sglang_read_gb:.3f}</td><td style="text-align:right;padding:6px">{block_read_gb:.3f}</td></tr>
     <tr><td style="padding:6px">Write: backuped</td><td style="text-align:right;padding:6px">{sglang_write_gb:.3f}</td><td style="text-align:right;padding:6px">{block_write_gb:.3f}</td></tr>
   </table>
   <script>
@@ -1293,11 +1306,11 @@ def _l3_consistency_card(status: str, note: str, backend_display: str, backend_e
 
 def _chart_l3_prom_bandwidth(sglang: list[dict],
                               kv_bytes_per_token: float) -> dict | None:
-    """Interactive estimated L3 storage bandwidth in MB/s (Prometheus-derived).
+    """Interactive estimated L3 (local storage) bandwidth in MB/s (Prometheus-derived).
 
     Multiplies per-second backuped/prefetched token rates by kv_bytes_per_token
     to estimate logical L3 write/read movement. load_back_tokens_total is plotted
-    only as a diagnostic upper bound and is not counted as local SSD bytes.
+    only as a diagnostic upper bound and is not counted as L3 local SSD bytes.
     This is the Prometheus-only logical KV movement view; blktrace/iostat remain
     the source of truth for physical SSD bytes when a concrete L3 device is mapped.
 
@@ -1347,15 +1360,15 @@ def _chart_l3_prom_bandwidth(sglang: list[dict],
     if lb_col:
         traces.append({
             "x": xs, "y": _rate_mbs(lb_col),
-            "type": "scatter", "mode": "lines", "name": "Load-back MB/s upper bound (diagnostic)",
+            "type": "scatter", "mode": "lines", "name": "L2→L1 load-back restore MB/s (diagnostic)",
             "line": {"color": "#94a3b8", "width": 1.5, "dash": "dot"},
-            "hovertemplate": "<b>%{y:.1f}</b> MB/s load-back upper bound; not SSD bytes<extra></extra>",
+            "hovertemplate": "<b>%{y:.1f}</b> MB/s L2→L1 restore; not SSD/L3 bytes<extra></extra>",
         })
     if bk_col:
         wr_mbs = _rate_mbs(bk_col)
         traces.append({
             "x": xs, "y": wr_mbs,
-            "type": "scatter", "mode": "lines", "name": "L3 storage write MB/s (est)",
+            "type": "scatter", "mode": "lines", "name": "L3 (local storage) write MB/s (est)",
             "line": {"color": "#3b82f6", "width": 2.2},
             "fill": "tozeroy", "fillcolor": "rgba(59,130,246,0.15)",
             "hovertemplate": "<b>%{y:.1f}</b> MB/s estimated write<extra></extra>",
@@ -1363,7 +1376,7 @@ def _chart_l3_prom_bandwidth(sglang: list[dict],
     return {
         "data": traces,
         "layout": _layout(
-            f"L3 storage cache Bandwidth — Prometheus-derived  "
+            f"L3 (local storage) cache Bandwidth — Prometheus-derived  "
             f"(× {kv_bytes_per_token/1024:.0f} KB/tok)",
             "MB/s (estimated)", ts=ts),
     }
@@ -1373,7 +1386,7 @@ def _chart_l3_prom_cumulative(sglang: list[dict],
                                kv_bytes_per_token: float) -> dict | None:
     """Cumulative L3 read/write bytes over time (Prometheus-derived).
 
-    Useful for sizing the endurance footprint of an L3 storage backend over a
+    Useful for sizing the endurance footprint of an L3 (local storage) backend over a
     representative window. Plots cumulative tokens × bytes/tok / 1e9 = GB.
     """
     if not sglang or kv_bytes_per_token <= 0:
@@ -1409,21 +1422,21 @@ def _chart_l3_prom_cumulative(sglang: list[dict],
     if lb_col:
         traces.append({
             "x": xs, "y": _cum_gb(lb_col),
-            "type": "scatter", "mode": "lines", "name": "Load-back upper bound (diagnostic, not SSD bytes)",
+            "type": "scatter", "mode": "lines", "name": "L2→L1 load-back restore (diagnostic, not SSD/L3 bytes)",
             "line": {"color": "#94a3b8", "width": 1.5, "dash": "dot"},
-            "hovertemplate": "<b>%{y:.2f}</b> GB load-back upper bound; not SSD bytes<extra></extra>",
+            "hovertemplate": "<b>%{y:.2f}</b> GB L2→L1 restore; not SSD/L3 bytes<extra></extra>",
         })
     if bk_col:
         traces.append({
             "x": xs, "y": _cum_gb(bk_col),
-            "type": "scatter", "mode": "lines", "name": "L3 storage writes (cumulative GB)",
+            "type": "scatter", "mode": "lines", "name": "L3 (local storage) writes (cumulative GB)",
             "line": {"color": "#3b82f6", "width": 2.2},
             "hovertemplate": "<b>%{y:.2f}</b> GB cumulative write<extra></extra>",
         })
     return {
         "data": traces,
         "layout": _layout(
-            "L3 storage cache Traffic — Cumulative Bytes (Prometheus-derived)",
+            "L3 (local storage) cache Traffic — Cumulative Bytes (Prometheus-derived)",
             "Cumulative GB (estimated)", ts=ts),
     }
 
@@ -2035,15 +2048,45 @@ def _chart_percentile_timeseries(pct_ts: dict, metric_key: str) -> dict | None:
         return None
     unit_label = block.get("unit", "")
     metric_label = block.get("label", metric_key.upper())
+    rate_window_s = block.get("rate_window_s")
+    rate_window_txt = f", rate window={int(rate_window_s)}s" if rate_window_s else ""
     return {
         "data": traces,
         "layout": _layout(
-            f"{metric_label} — P50 / P90 / P99 over time (Prometheus histogram_quantile)",
+            f"{metric_label} — P50 / P90 / P99 over time (Prometheus histogram_quantile{rate_window_txt})",
             f"{unit_label} (log scale)",
             height=480, ts=ts),
         # Override Y to log; tail latencies span 1-2 decades
         "_yaxis_override": {"type": "log", "tickformat": ",.0f"},
     }
+
+
+
+def _fig_has_numeric_y(fig: dict | None) -> bool:
+    """True when at least one trace has a finite positive y value."""
+    if not fig:
+        return False
+    for tr in (fig.get("data") or []):
+        for y in (tr.get("y") or []):
+            try:
+                v = float(y)
+                if math.isfinite(v) and v > 0:
+                    return True
+            except Exception:
+                continue
+    return False
+
+
+def _first_positive_from_summary(summary: dict | None, keys: list[str]) -> float:
+    summary = summary or {}
+    for k in keys:
+        try:
+            v = float(summary.get(k, 0) or 0)
+            if math.isfinite(v) and v > 0:
+                return v
+        except Exception:
+            pass
+    return 0.0
 
 
 def _apply_yaxis_override(spec: dict | None) -> dict | None:
@@ -2111,6 +2154,98 @@ def _chart_bench_latency_percentiles(bench: dict) -> dict | None:
                                        "font": {"size": 13}},
                              "tickfont": {"size": 12, "color": "#0f172a"}}}
     }
+
+
+
+def _chart_token_length_fallback(sglang: list[dict], metric_key: str,
+                                 sglang_summary: dict | None = None,
+                                 pct_ts: dict | None = None) -> dict | None:
+    """Fallback token-length-over-time chart.
+
+    Used when token histogram buckets are missing or exported as all-null
+    traces. It prefers per-interval counter deltas and falls back to a flat
+    session/summary percentile line so the chart is visibly populated.
+    """
+    sglang_summary = sglang_summary or {}
+    pct_ts = pct_ts or {}
+    ts = _col(sglang, "time_sec") if sglang else []
+    if not ts:
+        block = pct_ts.get(metric_key) or pct_ts.get("input_tokens") or pct_ts.get("generation_tokens") or {}
+        ts = block.get("time_sec") or [0.0, 60.0]
+    if not ts:
+        return None
+
+    if metric_key in ("prompt_tokens", "input_tokens"):
+        tok_col = _find_col(sglang, "prompt_tokens_total")
+        title = "Prompt/Input token length distribution over time"
+        color = "#3b82f6"
+        mean_keys = ["sess_input_tok_mean","input_tok_mean","input_tokens_mean","prompt_tokens_mean","avg_prompt_tokens","avg_input_tokens","mean_prompt_tokens"]
+        p50_keys = ["sess_input_tok_p50","input_tok_p50","prompt_tokens_p50","p50_prompt_tokens","median_prompt_tokens"]
+        p90_keys = ["sess_input_tok_p90","input_tok_p90","prompt_tokens_p90","p90_prompt_tokens"]
+        p99_keys = ["sess_input_tok_p99","input_tok_p99","prompt_tokens_p99","p99_prompt_tokens"]
+    else:
+        tok_col = _find_col(sglang, "generation_tokens_total") or _find_col(sglang, "output_tokens_total")
+        title = "Output token length distribution over time"
+        color = "#22c55e"
+        mean_keys = ["sess_output_tok_mean","output_tok_mean","output_tokens_mean","generation_tokens_mean","avg_output_tokens","mean_output_tokens"]
+        p50_keys = ["sess_output_tok_p50","output_tok_p50","output_tokens_p50","p50_output_tokens","median_output_tokens"]
+        p90_keys = ["sess_output_tok_p90","output_tok_p90","output_tokens_p90","p90_output_tokens"]
+        p99_keys = ["sess_output_tok_p99","output_tok_p99","output_tokens_p99","p99_output_tokens"]
+
+    req_col = (_find_col(sglang, "num_requests_total") or _find_col(sglang, "request_total") or
+               _find_col(sglang, "requests_total") or _find_col(sglang, "e2e_request_latency_seconds_count") or
+               _find_col(sglang, "time_to_first_token_seconds_count"))
+
+    xs = _ts_to_dates(ts)
+    traces = []
+    if tok_col and req_col and sglang:
+        toks = _col(sglang, tok_col)
+        reqs = _col(sglang, req_col)
+        ys = []
+        last_t = last_r = None
+        for t, r in zip(toks, reqs):
+            if last_t is None:
+                ys.append(None)
+            else:
+                dtok = max(float(t) - float(last_t), 0.0)
+                dreq = max(float(r) - float(last_r), 0.0)
+                ys.append(dtok / dreq if dreq > 0 else None)
+            last_t, last_r = t, r
+        if any((v or 0) > 0 for v in ys):
+            traces.append({"x": xs, "y": ys, "type": "scatter", "mode": "lines+markers",
+                           "name": "Mean tokens/request (counter delta)",
+                           "line": {"color": color, "width": 2.2},
+                           "hovertemplate": "<b>%{y:,.0f}</b> tokens/request<extra></extra>"})
+
+    if not traces:
+        p50 = _first_positive_from_summary(sglang_summary, p50_keys)
+        p90 = _first_positive_from_summary(sglang_summary, p90_keys)
+        p99 = _first_positive_from_summary(sglang_summary, p99_keys)
+        mean = _first_positive_from_summary(sglang_summary, mean_keys)
+        if p50 <= 0 and mean > 0: p50 = mean
+        if p90 <= 0 and p50 > 0: p90 = max(p50, mean)
+        if p99 <= 0 and p90 > 0: p99 = p90
+        for name, val, col, dash in [
+            ("P99 summary fallback", p99, "#ef4444", "solid"),
+            ("P90 summary fallback", p90, "#f59e0b", "solid"),
+            ("P50 summary fallback", p50, "#22d3ee", "dot"),
+        ]:
+            if val > 0:
+                traces.append({"x": xs, "y": [val for _ in xs], "type": "scatter", "mode": "lines",
+                               "name": name, "line": {"color": col, "width": 1.8, "dash": dash},
+                               "hovertemplate": f"<b>{name}</b>: %{{y:,.0f}} tokens<extra></extra>"})
+
+    if not traces:
+        return None
+    fig = {"data": traces,
+           "layout": _layout(title + " (fallback when histogram buckets are empty)",
+                             "tokens/request", height=480, ts=ts)}
+    fig["layout"]["annotations"] = [{
+        "text": "Fallback view: token histogram buckets were missing/all-null; using counter deltas or session summary values.",
+        "xref": "paper", "yref": "paper", "x": 0, "y": 1.08, "showarrow": False,
+        "font": {"size": 11, "color": "#64748b"}, "align": "left"}]
+    return _fit_plotly_legend(fig)
+
 
 
 def _chart_bench_token_lengths(bench: dict) -> dict | None:
@@ -2280,7 +2415,7 @@ def _section(title: str, chart_id: str, fig: dict | None,
     a single-line muted summary. The user can expand to see the explanation
     of why no data is available, but the section doesn't take up vertical
     real estate by default. This addresses long pages with many "requires
-    blktrace / requires AMDuProf / no L3 storage activity" sections that scroll
+    blktrace / requires AMDuProf / no L3 (local storage) activity" sections that scroll
     interesting content off-screen.
 
     Sections WITH data render expanded as before — no extra clicks needed.
@@ -2328,8 +2463,60 @@ def _layer_header(layer_id: str, title: str, note: str, color: str) -> str:
 </section>"""
 
 
+
+def _amoprof_parse_launch_arg(launch: str, *names: str) -> str:
+    if not launch:
+        return ""
+    for name in names:
+        pat = r'(?<!\S)' + re.escape(name) + r'(?:=|\s+)(?:"([^"]+)"|\'([^\']+)\'|([^\s]+))'
+        m = re.search(pat, str(launch))
+        if m:
+            return next((g for g in m.groups() if g), "").strip()
+    return ""
+
+
+def _amoprof_missing(v) -> bool:
+    return v is None or str(v).strip() in ("", "?", "unknown", "None", "null", "N/A")
+
+
+def _amoprof_augment_setup_from_launch(setup: dict) -> dict:
+    if not isinstance(setup, dict):
+        setup = {}
+    out = dict(setup)
+    launch = str(out.get("Launch command") or out.get("launch_command") or out.get("Command") or out.get("Reference launch command") or "")
+    if launch and _amoprof_missing(out.get("Launch command")):
+        out["Launch command"] = launch
+    mapping = [
+        ("Model", ("--model", "--model-path")),
+        ("TP size", ("--tensor-parallel-size", "--tp-size", "--tp")),
+        ("DP size", ("--data-parallel-size", "--dp-size", "--dp")),
+        ("mem-fraction-static", ("--mem-fraction-static",)),
+        ("Page size", ("--page-size",)),
+        ("KV cache dtype", ("--kv-cache-dtype",)),
+        ("Chunked prefill size", ("--chunked-prefill-size",)),
+        ("HiCache size", ("--hicache-size",)),
+        ("HiCache IO backend", ("--hicache-io-backend",)),
+        ("HiCache mem layout", ("--hicache-mem-layout",)),
+        ("HiCache storage backend", ("--hicache-storage-backend",)),
+        ("HiCache write policy", ("--hicache-write-policy",)),
+        ("HiCache storage prefetch policy", ("--hicache-storage-prefetch-policy",)),
+        ("Attention backend", ("--attention-backend",)),
+        ("CUDA graph max batch size", ("--cuda-graph-max-bs",)),
+        ("Host", ("--host",)),
+        ("Port", ("--port",)),
+    ]
+    lower_keys = {str(k).lower(): k for k in out.keys()}
+    for label, flags in mapping:
+        val = _amoprof_parse_launch_arg(launch, *flags)
+        existing_key = lower_keys.get(label.lower())
+        if val and (existing_key is None or _amoprof_missing(out.get(existing_key))):
+            out[label] = val
+    return out
+
+
 def _setup_section(setup: dict) -> str:
     import html as _html
+    setup = _amoprof_augment_setup_from_launch(setup or {})
     rows = []
     for k, v in setup.items():
         key_l = str(k).lower()
@@ -2341,8 +2528,8 @@ def _setup_section(setup: dict) -> str:
             f'<td class="setup-value">{_html.escape(str(v))}</td></tr>'
         )
     return f"""
-<section class="card setup-panel">
-  <h2>⚙️ Setup / Server Configuration</h2>
+<details class="card setup-panel setup-panel-collapsible">
+  <summary>⚙️ Setup / Server Configuration <span class="setup-summary-hint">collapsed by default</span></summary>
   <div class="setup-grid">
     <div><table class="setup-table"><tbody>{''.join(rows)}</tbody></table></div>
     <div class="setup-info-box">
@@ -2352,7 +2539,7 @@ def _setup_section(setup: dict) -> str:
       <p><b>Defaults:</b> remaining missing SGLang launch parameters use the built-in DeepSeek-R1-70B HiCache reference profile and are listed under <code>Defaulted fields</code>.</p>
     </div>
   </div>
-</section>"""
+</details>"""
 
 
 def _stack_overview_section() -> str:
@@ -2361,8 +2548,8 @@ def _stack_overview_section() -> str:
   <h2>🍰 AI Workload Stack — Layered Memory-Tier View</h2>
   <div class="stack-cake">
     <div class="stack-row full a5"><b>A5 · Application Layer</b><span>benchmarks, prompt/output mix, TTFT, TPOT, P99 request latency</span></div>
-    <div class="stack-row pair"><div class="a4"><b>A4 · Inference Runtime</b><span>SGLang scheduling, batching, KV$ eviction/load-back</span></div><div class="model"><b>AI Models</b><span>model config, dtype, context length, KV$/token</span></div></div>
-    <div class="stack-row trio"><div class="l1"><b>A3/A2/A1 · L1 HBM</b><span>CUDA kernels, GPU driver, HBM capacity/BW</span></div><div class="l2"><b>A3/A2/A1 · L2 DRAM</b><span>OS memory manager, page faults, swap, DRAM BW</span></div><div class="l3"><b>A3/A2/A1 · L3 storage</b><span>OS block layer, NVMe driver, NAND, blktrace/biosnoop</span></div></div>
+    <div class="stack-row pair"><div class="a4"><b>A4 · Inference Runtime</b><span>SGLang scheduling, batching, KV$ eviction/L2→L1 load-back</span></div><div class="model"><b>AI Models</b><span>model config, dtype, context length, KV$/token</span></div></div>
+    <div class="stack-row trio"><div class="l1"><b>A3/A2/A1 · L1 HBM</b><span>CUDA kernels, GPU driver, HBM capacity/BW</span></div><div class="l2"><b>A3/A2/A1 · L2 DRAM</b><span>OS memory manager, page faults, swap, DRAM BW</span></div><div class="l3"><b>A3/A2/A1 · L3 (local storage)</b><span>OS block layer, NVMe driver, NAND, blktrace/biosnoop</span></div></div>
   </div>
   <div class="caption">Report sections below are ordered to match this layered view.</div>
 </section>"""
@@ -2771,8 +2958,8 @@ def build_report(raw_dir: Path, out_html: Path,
                       note="From setup/server configuration"),
             _kpi_tile("TTFT mean", f"{float(_ttft_ms_kpi or 0):.0f}", "ms", _lat_note),
             _kpi_tile("TTFT p50", f"{float(_ttft_p50_ms or _ttft_ms_kpi or 0):.0f}", "ms", "Median · histogram_quantile/percentile timeseries"),
-            _kpi_tile("TPOT mean", f"{float(_itl_ms_kpi or 0):.1f}", "ms", _lat_note),
-            _kpi_tile("TPOT p50", f"{float(_itl_p50_ms or _itl_ms_kpi or 0):.1f}", "ms", "Median · histogram_quantile/percentile timeseries"),
+            _kpi_tile("TPOT / ITL mean", f"{float(_itl_ms_kpi or 0):.1f}", "ms", _lat_note),
+            _kpi_tile("TPOT / ITL p50", f"{float(_itl_p50_ms or _itl_ms_kpi or 0):.1f}", "ms", "Median · histogram_quantile/percentile timeseries"),
             _kpi_tile("E2E mean", f"{float(_e2e_ms_kpi or 0):.0f}", "ms", _lat_note),
             _kpi_tile("E2E p50", f"{float(_e2e_p50_ms or _e2e_ms_kpi or 0):.0f}", "ms", "Median · histogram_quantile/percentile timeseries"),
             _kpi_tile("Throughput mean", _tp_mean_val, "tok/s" if _tp_mean_val != "N/A" else "", _tp_mean_note),
@@ -2892,20 +3079,20 @@ def build_report(raw_dir: Path, out_html: Path,
             _dram_label = "DRAM residency"
         kpis.append(_kpi_tile(_dram_label, _dram_value, "GB", _dram_note))
 
-    l3_total_gb = _setup_float("L3 storage capacity GB", "L3 Capacity GB", "L3 total capacity GB", "l3_storage_capacity_gb", default=0.0)
-    l3_used_gb = _setup_float("L3 storage used GB", "L3 used capacity GB", "l3_storage_used_gb", default=0.0)
+    l3_total_gb = _setup_float("L3 (local storage) capacity GB", "L3 Capacity GB", "L3 total capacity GB", "l3_storage_capacity_gb", default=0.0)
+    l3_used_gb = _setup_float("L3 (local storage) used GB", "L3 used capacity GB", "l3_storage_used_gb", default=0.0)
     if smart_sum:
         l3_total_gb = float(smart_sum.get('hicache_fs_total_gb', l3_total_gb) or l3_total_gb)
         l3_used_gb = float(smart_sum.get('hicache_fs_used_gb', l3_used_gb) or l3_used_gb)
     if l3_total_gb > 0:
-        kpis.append(_kpi_tile("L3 storage used",
+        kpis.append(_kpi_tile("L3 (local storage) used",
                               (f"{l3_used_gb:.1f} / {l3_total_gb:.0f}" if l3_used_gb > 0 else f"— / {l3_total_gb:.0f}"),
                               "GB",
                               (f"{l3_used_gb/max(l3_total_gb,1)*100:.0f}% full" if l3_used_gb > 0 else "used capacity unavailable")))
 
     if smart_sum and str(_setup_value("L3 storage type", "L3 Storage Type", default="")).lower() in {"nvme", "nvme ssd", "ssd"}:
         kpis += [
-            _kpi_tile("L3 storage device", str(smart_sum.get('model', '—'))[:24], "",
+            _kpi_tile("L3 (local storage) device", str(smart_sum.get('model', '—'))[:24], "",
                       f"Temp {smart_sum.get('temperature_c', 0)}°C  "
                       f"WAF {smart_sum.get('waf', 0):.2f}"),
         ]
@@ -2916,6 +3103,25 @@ def build_report(raw_dir: Path, out_html: Path,
                       f"W={bt_summary.get('write_events',0):,}  "
                       f"T={bt_summary.get('trim_events',0):,}"),
         ]
+
+    def _canonical_kpi_sort_key(tile_html: str) -> int:
+        txt = re.sub(r"<[^>]+>", " ", tile_html).lower()
+        order = [
+            ("cache hit", 10), ("ttft mean", 20), ("ttft p50", 21),
+            ("tpot / itl mean", 30), ("tpot mean", 30), ("itl mean", 30),
+            ("tpot / itl p50", 31), ("tpot p50", 31), ("itl p50", 31),
+            ("e2e mean", 40), ("e2e p50", 41),
+            ("throughput mean", 50), ("throughput p50", 51),
+            ("gpu util", 60), ("hbm used", 70), ("hbm util", 70),
+            ("gpu power", 80), ("dram used", 90), ("dram residency", 90), ("dram bw", 91),
+            ("l3 (local storage) used", 100), ("l3 (local storage) read", 101),
+            ("l3 (local storage) write", 102), ("logical kv movement", 103),
+            ("physical l3", 104), ("model", 900), ("server", 910), ("bench", 920),
+        ]
+        for key, idx in order:
+            if key in txt:
+                return idx
+        return 800
 
     # Prometheus-derived per-request percentiles (server-side ground truth)
     # — present when analyze ran with --prometheus AND the SGLang scrape
@@ -2975,6 +3181,8 @@ def build_report(raw_dir: Path, out_html: Path,
                 "Bench cache hit", f"{bench['cache_hit_rate']*100:.1f}",
                 "%", "From bench summary (post-run aggregate)"))
 
+    kpis = sorted(kpis, key=_canonical_kpi_sort_key)
+
     formula_token_cache = """Throughput mean = active_mean(sglang_gen_throughput)
 Throughput p50 = median(nonzero_samples(sglang_gen_throughput))
 Fallback throughput = Δsglang_generation_tokens_total / Δtime_sec
@@ -2984,21 +3192,21 @@ Cache hit request weighted = Δsglang_request_cache_hit_total / Δsglang_request
 Cache hit prefill-only diagnostic = Δsglang_realtime_tokens_total{mode="prefill_cache"} / (Δprefill_cache + Δprefill_compute) × 100"""
     formula_kv_tiers = """L1/HBM tokens = sglang_kv_used_tokens or sglang_token_usage-derived fields
 L2/host cache occupancy = sglang_hicache_host_used_tokens / sglang_hicache_host_total_tokens × 100
-L3 storage movement = Δsglang_backuped_tokens_total (write/offload) and Δsglang_prefetched_tokens_total (read/onboard)
+L3 (local storage) movement = Δsglang_backuped_tokens_total (write/offload) and Δsglang_prefetched_tokens_total (read/onboard)
 Diagnostic-only counters = Δsglang_load_back_tokens_total (hierarchy restore upper bound) and Δsglang_evicted_tokens_total (cache pressure)
-Bytes estimate = token_delta × KV bytes per token from setup/model profile; load_back is not counted as SSD bytes"""
+Bytes estimate = token_delta × KV bytes per token from setup/model profile; load_back is L2→L1 restore and is not counted as SSD/L3 bytes"""
     formula_latency_pct = """P50/P90/P99 = histogram_quantile(q, rate(metric_bucket[window]))
 TTFT metric = sglang_time_to_first_token_seconds_bucket
 ITL metric = sglang_inter_token_latency_seconds_bucket
 E2E metric = sglang_e2e_request_latency_seconds_bucket
 Prompt/output token percentile metrics use prompt/generation token histogram buckets when exported."""
-    formula_l3_bw = """L3 storage read/onboard tokens = Δsglang_prefetched_tokens_total
-L3 storage write/offload tokens = Δsglang_backuped_tokens_total
-Load-back diagnostic upper bound = Δsglang_load_back_tokens_total × KV_bytes_per_token (not counted as SSD bytes)
+    formula_l3_bw = """L3 (local storage) read/onboard tokens = Δsglang_prefetched_tokens_total
+L3 (local storage) write/offload tokens = Δsglang_backuped_tokens_total
+L2→L1 load-back restore diagnostic = Δsglang_load_back_tokens_total × KV_bytes_per_token (L2→L1 restore diagnostic; not SSD/L3 bytes)
 Estimated read MB/s = prefetched_tokens × KV_bytes_per_token / Δtime_sec / 2^20
 Estimated write MB/s = backuped_tokens × KV_bytes_per_token / Δtime_sec / 2^20
 These are SGLang/Mooncake tier movement estimates, not block-device measurements."""
-    formula_host_io = """Host block I/O is derived from node-exporter/iostat-style counters, not SGLang. It is not treated as L3 SSD I/O unless setup_details resolves a concrete local SSD device or mount path. df/cache-used is capacity footprint, not window I/O:
+    formula_host_io = """Host block I/O is derived from node-exporter/iostat-style counters, not SGLang. It is not treated as L3 SSD I/O unless setup_details resolves a concrete L3 local SSD device or mount path. df/cache-used is capacity footprint, not window I/O:
 Read IOPS = rate(node_disk_reads_completed_total) or rate(read_ios_total)
 Write IOPS = rate(node_disk_writes_completed_total) or rate(write_ios_total)
 Read MB/s = rate(node_disk_read_bytes_total) / 2^20
@@ -3041,7 +3249,8 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
         chart_specs = [
             ("ttft",   "Server TTFT — P50 / P90 / P99 Time Series",
              "True per-request percentiles via histogram_quantile() over "
-             "sglang_time_to_first_token_seconds_bucket. Watch for P99 "
+             "sglang_time_to_first_token_seconds_bucket using the configured "
+             "Prometheus rate window from --prom-rate-window. Watch for P99 "
              "spikes that indicate occasional cold-cache prefills or "
              "queue contention."),
             ("itl",    "Server ITL (Inter-Token Latency) — P50 / P90 / P99",
@@ -3064,13 +3273,22 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
         ]
         for metric_key, title, body in chart_specs:
             chart_spec = _chart_percentile_timeseries(pct_ts, metric_key)
+            if metric_key == "prompt_tokens":
+                alt = _chart_percentile_timeseries(pct_ts, "input_tokens")
+                if not _fig_has_numeric_y(chart_spec):
+                    chart_spec = alt if _fig_has_numeric_y(alt) else _chart_token_length_fallback(
+                        sglang_ts, "prompt_tokens", sglang_sum, pct_ts)
+            if metric_key == "output_tokens":
+                alt = _chart_percentile_timeseries(pct_ts, "generation_tokens")
+                if not _fig_has_numeric_y(chart_spec):
+                    chart_spec = alt if _fig_has_numeric_y(alt) else _chart_token_length_fallback(
+                        sglang_ts, "output_tokens", sglang_sum, pct_ts)
             chart_spec = _apply_yaxis_override(chart_spec)
             if chart_spec is None:
                 continue
-            sections_html.append(_section(
-                title, f"ch_pct_{metric_key}", chart_spec, body, formula_latency_pct))
+            sections_html.append(_section(title, f"ch_pct_{metric_key}", chart_spec, body, formula_latency_pct))
 
-    sections_html.append(_layer_header("layer-a4", "A4 · Inference Runtime + AI Model", "SGLang runtime behavior, model/cache configuration, token throughput, cache-hit, tier residency and KV eviction/load-back.", "#317bb8"))
+    sections_html.append(_layer_header("layer-a4", "A4 · Inference Runtime + AI Model", "SGLang runtime behavior, model/cache configuration, token throughput, cache-hit, tier residency and KV eviction/L2→L1 load-back.", "#317bb8"))
     sections_html.append(_section("Token Throughput & Cache Hit Rate",
                                    "ch_thru",
                                    _chart_sglang_throughput(sglang_ts, None, sglang_sum),
@@ -3078,19 +3296,19 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
                                    formula_token_cache))
     sections_html.append(_section("KV Cache Tier Occupancy",
                                    "ch_kv_tiers", _chart_kv_tiers(sglang_ts),
-                                   "L1=Device(HBM), L2=Host(DRAM), L3 storage — stacked",
+                                   "L1=Device(HBM), L2=Host(DRAM), L3 (local storage) — stacked",
                                    formula_kv_tiers))
-    sections_html.append(_section("KV Cache Eviction / Load-back / Backup Rates",
+    sections_html.append(_section("KV Cache Eviction / L2→L1 Load-back / Backup Rates",
                                    "ch_evict", _chart_eviction(sglang_ts),
                                    "SGLang hierarchical-cache movement counters",
                                    formula_kv_tiers))
 
-    # ── L3 storage cache bandwidth (Prometheus-derived) ───────────────────────────
+    # ── L3 (local storage) cache bandwidth (Prometheus-derived) ───────────────────────────
     # When the operator runs in Prom-only mode (no blktrace), the only L3
     # bandwidth signal available is the per-second delta of SGLang's
     # cumulative token counters multiplied by KV-bytes-per-token. These two
     # charts surface that signal in the interactive tab so users can see when
-    # L3 storage was active, identify burst patterns, and read endurance footprint
+    # L3 (local storage) was active, identify burst patterns, and read endurance footprint
     # off the cumulative trace. Both gracefully no-op if the counters are
     # zero or absent.
     _kv_b_pt = _kv_bytes_per_token_for_model(
@@ -3112,11 +3330,11 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
         _l3_block_write_gb = _l3_block_write_gb or _block_gb_from_summary(_ba_summary, "write")
     _l3_res = resolve_l3_backend(setup, str(setup.get("Launch command") or setup.get("launch_command") or "")) if resolve_l3_backend else None
     _host_block_is_l3 = bool(_l3_res and getattr(_l3_res, "backend_class", "") == "local_ssd" and getattr(_l3_res, "has_local_block_mapping", False))
-    _host_block_label = "L3 local SSD physical block I/O" if _host_block_is_l3 else "Host/OS block I/O — not KV$B L3"
+    _host_block_label = "L3 (local storage) physical block I/O" if _host_block_is_l3 else "Host/OS block I/O — not KV block L3"
     _host_block_note = (
-        "Physical block-device counters are mapped to the resolved L3 local SSD device/path."
+        "Physical block-device counters are mapped to the resolved L3 (local storage) device/path."
         if _host_block_is_l3 else
-        "Host block-device counters are not interpreted as KV$B/L3 traffic because setup_details does not resolve this device as the local SSD L3 backend. Read/write activity can appear here without latency/utilization if the capture lacks rd_ms/wr_ms/io_ms or iostat await/%util fields; in that case the latency section shows an activity fallback. Use the SGLang KV$B movement chart and L3 consistency card for logical L3 direction."
+        "Host block-device counters are not interpreted as KV block/L3 traffic because setup_details does not resolve this device as the L3 local SSD L3 backend. Read/write activity can appear here without latency/utilization if the capture lacks rd_ms/wr_ms/io_ms or iostat await/busy-time fields; in that case the latency section shows an activity fallback. Use the SGLang KV block movement chart and L3 consistency card for logical L3 direction."
     )
     if reconcile_l3_io and _l3_res:
         _l3_recon = reconcile_l3_io(_l3_res,
@@ -3129,14 +3347,14 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
             _l3_sg_read_gb, _l3_sg_write_gb, _l3_block_read_gb, _l3_block_write_gb))
 
     sections_html.append(_section(
-        "L3 storage cache Bandwidth — Prometheus-derived (MB/s)",
+        "L3 (local storage) cache Bandwidth — Prometheus-derived (MB/s)",
         "ch_l3_bw",
         _chart_l3_prom_bandwidth(sglang_ts, _kv_b_pt),
         f"Estimated from SGLang backuped/prefetched token counters × "
         f"{_kv_b_pt/1024:.0f} KB/tok (model arch). Useful work, not raw "
-        f"device bytes. load_back is shown as diagnostic-only and is not counted as SSD read bytes."))
+        f"device bytes. load_back is shown as L2→L1 restore diagnostic-only and is not counted as SSD/L3 read bytes bytes."))
     sections_html.append(_section(
-        "L3 storage cache Traffic — Cumulative GB (Prometheus-derived)",
+        "L3 (local storage) cache Traffic — Cumulative GB (Prometheus-derived)",
         "ch_l3_cum",
         _chart_l3_prom_cumulative(sglang_ts, _kv_b_pt),
         "Endurance footprint over the collection window. Use for SSD TBW "
@@ -3168,14 +3386,14 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
                                    _dram_fig,
                                    "From --enable-dram: AMD uProf PCM on AMD or Intel PCM/perf IMC on Intel"))
 
-    sections_html.append(_layer_header("layer-l3", "A3/A2/A1 · L3 storage / host block layer", "SGLang KV$B movement is logical L3/backing-tier traffic. Host block charts are physical device telemetry and are treated as L3 only when setup_details resolves a concrete local SSD device/path.", "#a45714"))
+    sections_html.append(_layer_header("layer-l3", "A3/A2/A1 · L3 (local storage) / host block layer", "SGLang KV block movement is logical L3/backing-tier traffic. Host block charts are physical device telemetry and are treated as L3 only when setup_details resolves a concrete L3 local SSD device/path.", "#a45714"))
     sections_html.append(_section(f"{_host_block_label} IOPS (Read / Write / Trim)",
                                    "ch_nvme_iops", _chart_nvme_iops(nvme_ts, _host_block_label),
                                    _host_block_note))
     sections_html.append(_section(f"{_host_block_label} Bandwidth",
                                    "ch_nvme_bw", _chart_nvme_bw(nvme_ts, _host_block_label),
                                    _host_block_note))
-    sections_html.append(_section(f"{_host_block_label} Latency & Device Utilization",
+    sections_html.append(_section(f"{_host_block_label} Latency & Device Busy-Time",
                                    "ch_nvme_lat", _chart_nvme_latency(nvme_ts, _host_block_label),
                                    _host_block_note))
     # ── Queue depth section (only when blktrace QD data is present) ────────
@@ -3298,7 +3516,7 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
         ) + _ssd_chart_caption
     _ssd_chart_caption = (
         "<strong>Consistency rule:</strong> this chart is physical local-block telemetry from blktrace/blkparse "
-        "completion events only. SGLang backuped/prefetched counters are logical L3 KV movement; load_back is diagnostic-only; "
+        "completion events only. SGLang backuped/prefetched counters are logical L3 KV movement; load_back is L2→L1 restore diagnostic-only; "
         "Executive and End Report reconcile them separately, so this LBA distribution must not be used to "
         "override SGLang logical directionality when blktrace is partial/missing.<br><br>"
     ) + _ssd_chart_caption
@@ -3317,6 +3535,42 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
     sections_html.append(_layer_header("layer-cross", "Cross-layer Diagnosis", "Use these charts together to connect A5 request symptoms back to A4 runtime behavior and A1–A3 memory/storage tiers.", "#0f172a"))
 
     # ─── Render full HTML ────────────────────────────────────────────────────
+    # Cross-layer correlation and setup-aware launch guidance.
+    _corr_sections = []
+    try:
+        _corr_sections.append("""
+<section class="card">
+  <h2>🔗 Cross-layer correlation — why utilization can be low while latency is high</h2>
+  <p>
+    Based on the SGLang launch command and setup details, this section explains why GPU/HBM/DRAM/L3
+    utilization may be below 100% while TTFT/TPOT are high. Low utilization can mean the pipeline is
+    waiting on prefill, scheduling, cache movement, request concurrency, or tier transitions rather than
+    saturating a hardware counter.
+  </p>
+  <table style="width:100%;border-collapse:collapse;font-size:13px">
+    <tr><td style="font-weight:700;width:190px;padding:7px;border-bottom:1px solid #e2e8f0">Latency</td><td style="padding:7px;border-bottom:1px solid #e2e8f0">Use the KPI tiles above for canonical TTFT, TPOT/ITL, E2E, and throughput. These are the user-visible symptoms.</td></tr>
+    <tr><td style="font-weight:700;padding:7px;border-bottom:1px solid #e2e8f0">Token movement</td><td style="padding:7px;border-bottom:1px solid #e2e8f0">Eviction/backup pressure explains L3 writes and cache churn; prefetch plus L2→L1 load_back restore pressure matters when it aligns with latency spikes. load_back remains a diagnostic upper bound, not physical SSD bytes.</td></tr>
+    <tr><td style="font-weight:700;padding:7px;border-bottom:1px solid #e2e8f0">Compute and GPU</td><td style="padding:7px;border-bottom:1px solid #e2e8f0">GPU utilization can be low when prefill, scheduling, cache movement, or low concurrency leaves gaps between kernels. This is pipeline starvation, not necessarily low workload intensity.</td></tr>
+    <tr><td style="font-weight:700;padding:7px;border-bottom:1px solid #e2e8f0">HBM</td><td style="padding:7px;border-bottom:1px solid #e2e8f0">HBM used is residency/capacity, not a target that must reach 100%. Headroom may be reserved for activations, CUDA graphs, and safety margin.</td></tr>
+    <tr><td style="font-weight:700;padding:7px;border-bottom:1px solid #e2e8f0">DRAM/L3</td><td style="padding:7px;border-bottom:1px solid #e2e8f0">Low DRAM BW indicates L2 headroom. L3 advisory QD/busy-time is busy-time/pressure and must be correlated with latency, bandwidth, and exact Q→C evidence before calling L3 saturation.</td></tr>
+  </table>
+</section>
+<section class="card">
+  <h2>🚀 Setup-aware SGLang launch tuning</h2>
+  <p>Recommendations are based on the setup_details launch command and observed report metrics.</p>
+  <ul style="margin-left:18px;color:#334155">
+    <li><b>HBM KV pool:</b> if HBM headroom exists, A/B test higher <code>--mem-fraction-static</code> values such as 0.85, then 0.88/0.90 only if SGLang logs show safe available GPU memory.</li>
+    <li><b>FP8 KV:</b> keep or enable <code>--kv-cache-dtype fp8_e5m2</code> to reduce KV bytes/token and L3 spill pressure.</li>
+    <li><b>Chunked prefill:</b> keep or enable <code>--chunked-prefill-size 4096</code>; A/B 2048/4096/8192 for TTFT vs throughput.</li>
+    <li><b>L2 DRAM:</b> when DRAM BW is low, test increasing <code>--hicache-size</code> before assuming SSD hardware is the bottleneck.</li>
+    <li><b>L3 local storage:</b> use an explicit <code>--file-storage-path</code> on the NVMe mount and direct/page_first_direct for cleaner L3 correlation.</li>
+  </ul>
+</section>
+""")
+    except Exception:
+        _corr_sections = []
+
+
     head_title = f"AMOprof Report — {run_label}" if run_label else "AMOprof Report"
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -3450,6 +3704,12 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
       box-shadow: 0 4px 14px rgba(79,70,229,0.12) !important;
     }}
     .setup-panel h2 {{ color: #1e1b4b !important; }}
+    .setup-panel-collapsible summary {{ cursor:pointer; list-style:none; font-size:18px; font-weight:800; color:#1e1b4b !important; display:flex; align-items:center; justify-content:space-between; gap:12px; }}
+    .setup-panel-collapsible summary::-webkit-details-marker {{ display:none; }}
+    .setup-panel-collapsible summary:before {{ content:'▶'; font-size:12px; color:#4f46e5; margin-right:4px; }}
+    .setup-panel-collapsible[open] summary:before {{ content:'▼'; }}
+    .setup-panel-collapsible:not([open]) .setup-grid {{ display:none; }}
+    .setup-summary-hint {{ font-size:11px; color:#64748b; font-weight:600; }}
     .setup-grid {{ display:grid; grid-template-columns: 1.35fr .85fr; gap:16px; align-items:start; }}
     .setup-table {{ width:100%; border-collapse:separate; border-spacing:0; overflow:hidden; border-radius:10px; border:1px solid #c7d2fe; background:#ffffff; }}
     .setup-table tr:nth-child(even) td {{ background:#f8fafc; }}
@@ -3494,6 +3754,7 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
     {''.join(kpis)}
   </div>
 
+  {''.join(_corr_sections)}
   {''.join(sections_html)}
 
   <footer>
@@ -3501,6 +3762,14 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
   </footer>
 </body>
 </html>"""
+    try:
+        if compute_common_kpis is not None and apply_common_kpis_to_html is not None:
+            _common_kpis = compute_common_kpis(raw_dir)
+            if write_common_kpis_json is not None:
+                write_common_kpis_json(raw_dir, _common_kpis)
+            html = apply_common_kpis_to_html(html, raw_dir, _common_kpis)
+    except Exception:
+        pass
     html = _amoprof_storage_label_cleanup(html)
     out_html.write_text(html, encoding="utf-8")
     return out_html

@@ -9,5 +9,5 @@ Derives: which memory tier is exercised, which framework to use, which I/O
          pattern is generated, and collects SSD metrics into CSV.
 """
 
-__version__ = '1.39.20'
+__version__ = '1.39.90'
 __author__  = "AMOprof"

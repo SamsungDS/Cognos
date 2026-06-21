@@ -93,8 +93,15 @@ class IostatMonitor:
 
     def stop(self):
         self._stop.set()
-        if self._proc: self._proc.terminate(); self._proc.wait()
-        if self._thread: self._thread.join(timeout=3)
+        _timeout = float(getattr(self, "_amoprof_stop_timeout_s", 0.0) or 5.0)
+        if self._proc:
+            try:
+                self._proc.terminate()
+                self._proc.wait(timeout=min(_timeout, 5.0))
+            except Exception:
+                try: self._proc.kill()
+                except Exception: pass
+        if self._thread: self._thread.join(timeout=min(_timeout, 3.0))
 
     def summarise(self) -> dict:
         if not self.samples: return {}
@@ -191,8 +198,15 @@ class BiolatencyCollector:
         self._done.set()
 
     def stop(self) -> dict:
-        if self._proc and self._proc.poll() is None: self._proc.terminate()
-        self._done.wait(timeout=self.duration_s+5)
+        _interrupted = bool(getattr(self, "_amoprof_interrupted", False))
+        _timeout = float(getattr(self, "_amoprof_stop_timeout_s", 0.0) or (3.0 if _interrupted else self.duration_s + 5))
+        if self._proc and self._proc.poll() is None:
+            try: self._proc.terminate()
+            except Exception: pass
+        self._done.wait(timeout=_timeout)
+        if self._proc and self._proc.poll() is None:
+            try: self._proc.kill()
+            except Exception: pass
         buckets=[]
         for line in self._out.splitlines():
             m=re.match(r"\s*(\d+)\s*->\s*(\d+)\s*:\s*(\d+)",line)
@@ -1194,17 +1208,17 @@ class BlockQueueDepthCollector:
     Capture queue-depth related metrics from every cheap local kernel source.
 
     Sources sampled every interval:
-      • /sys/block/<dev>/stat field 8  -> instantaneous in-flight I/O
-      • /sys/block/<dev>/stat field 9  -> device busy ticks
-      • /sys/block/<dev>/stat field 10 -> weighted time in queue
+      • /sys/block/<dev>/stat field 9  -> instantaneous in-flight I/O
+      • /sys/block/<dev>/stat field 10 -> cumulative device busy ticks
+      • /sys/block/<dev>/stat field 11 -> cumulative weighted time in queue
       • /sys/block/<dev>/inflight      -> read/write in-flight split
       • /sys/block/<dev>/queue/*       -> queue limits/config
       • /proc/diskstats                -> same kernel counters via proc fallback
 
     Exact event-level queue depth still comes from blktrace Q→C analysis when
     --enable-blktrace is used. This collector provides always-on sampled
-    queue pressure so the report has data even when blktrace Q/C parsing is
-    missing or intentionally disabled.
+    advisory sampled queue pressure so the report has data even when exact blktrace Q/C parsing is
+    missing or intentionally disabled. Cumulative sysfs fields are used only as run-window deltas, never as absolute point values.
     """
 
     def __init__(self, device: str, interval_s: float = 1.0, work_dir: "Path | str" = "."):
@@ -1237,6 +1251,32 @@ class BlockQueueDepthCollector:
             except Exception:
                 pass
         return out
+
+    def _nr_hw_queues(self) -> int:
+        try:
+            mq = Path(f"/sys/block/{self.base_dev}/mq")
+            return len([p for p in mq.iterdir() if p.is_dir()]) if mq.exists() else 1
+        except Exception:
+            return 1
+
+    def _fallback_qd_plausibility_limit(self, row: dict | None = None) -> float:
+        """Conservative sanity bound for sampled/fallback queue-depth values.
+
+        This is not a saturation threshold. It only prevents cumulative sysfs
+        counter/unit mistakes from being promoted into QD values.  Exact
+        blktrace Q->C analysis does not use this helper.
+        """
+        row = row or {}
+        try:
+            nr_req = float(row.get("queue_nr_requests", 0) or 0)
+        except Exception:
+            nr_req = 0.0
+        nr_hwq = float(row.get("nr_hw_queues", 0) or self._nr_hw_queues() or 1)
+        # Many NVMe drivers expose nr_requests per hardware queue. Allow headroom
+        # for transient samples but reject values orders-of-magnitude above the
+        # configured queueing capacity.
+        base = nr_req * max(nr_hwq, 1.0) if nr_req > 0 else 4096.0
+        return max(128.0, min(base * 4.0, 262144.0))
 
     def _read_inflight(self) -> dict:
         out = {}
@@ -1347,16 +1387,25 @@ class BlockQueueDepthCollector:
                           float(a.get("rd_ms", a.get("proc_rd_ms", 0))), 0.0)
             d_wr_ms = max(float(b.get("wr_ms", b.get("proc_wr_ms", 0))) -
                           float(a.get("wr_ms", a.get("proc_wr_ms", 0))), 0.0)
+            sysfs_inflight = float(b.get("stat_inflight", b.get("proc_inflight", 0)) or 0)
+            weighted_qd_raw = d_weighted_ms / max(wall_ms, 1e-6)
             row = {
                 "ts": b.get("ts", 0),
                 "device": self.device,
                 "dev": self.dev,
                 "base_dev": self.base_dev,
-                "source": "sysfs_stat_weighted_io_ms+sysfs_inflight+proc_diskstats",
-                "sysfs_inflight": float(b.get("stat_inflight", b.get("proc_inflight", 0)) or 0),
+                "source": "sysfs_run_delta_advisory",
+                "sysfs_inflight": sysfs_inflight,
                 "sysfs_inflight_reads": float(b.get("sysfs_inflight_reads", 0) or 0),
                 "sysfs_inflight_writes": float(b.get("sysfs_inflight_writes", 0) or 0),
-                "weighted_qd": round(d_weighted_ms / max(wall_ms, 1e-6), 4),
+                # Keep raw weighted QD for audit only. It is a per-run delta:
+                # delta(weighted_io_ms) / delta(wall_ms). Never use the
+                # cumulative weighted_io_ms absolute value as QD.
+                "weighted_qd_raw": round(weighted_qd_raw, 4),
+                "weighted_qd": round(weighted_qd_raw, 4),
+                "d_weighted_io_ms": round(d_weighted_ms, 3),
+                "d_io_ticks_ms": round(d_io_ms, 3),
+                "wall_ms": round(wall_ms, 3),
                 "io_util_pct": round(min(d_io_ms / max(wall_ms, 1e-6) * 100.0, 100.0), 3),
                 "rd_iops": round(d_rd_ios / dt, 3),
                 "wr_iops": round(d_wr_ios / dt, 3),
@@ -1365,13 +1414,38 @@ class BlockQueueDepthCollector:
                 "rd_lat_ms": round(d_rd_ms / max(d_rd_ios, 1.0), 4) if d_rd_ios > 0 else 0.0,
                 "wr_lat_ms": round(d_wr_ms / max(d_wr_ios, 1.0), 4) if d_wr_ios > 0 else 0.0,
                 "queue_nr_requests": b.get("queue_nr_requests", 0),
+                "nr_hw_queues": b.get("nr_hw_queues", 1),
                 "queue_scheduler": b.get("queue_scheduler", ""),
                 "queue_nomerges": b.get("queue_nomerges", ""),
                 "queue_max_sectors_kb": b.get("queue_max_sectors_kb", 0),
+                "stat_start_weighted_io_ms": a.get("weighted_io_ms", a.get("proc_weighted_io_ms", 0)),
+                "stat_end_weighted_io_ms": b.get("weighted_io_ms", b.get("proc_weighted_io_ms", 0)),
+                "stat_start_io_ticks_ms": a.get("io_ticks_ms", a.get("proc_io_ticks_ms", 0)),
+                "stat_end_io_ticks_ms": b.get("io_ticks_ms", b.get("proc_io_ticks_ms", 0)),
             }
-            # Best-effort sampled QD: weighted_qd is time-weighted and preferred;
-            # instantaneous inflight catches very short bursts between intervals.
-            row["qd_best_effort"] = max(float(row["weighted_qd"]), float(row["sysfs_inflight"]))
+            plaus_limit = self._fallback_qd_plausibility_limit(row)
+            weighted_valid = 0.0 <= weighted_qd_raw <= plaus_limit
+            inflight_valid = 0.0 <= sysfs_inflight <= plaus_limit
+            row["fallback_qd_plausibility_limit"] = round(plaus_limit, 3)
+            row["weighted_qd_valid"] = int(bool(weighted_valid))
+            row["sysfs_inflight_valid"] = int(bool(inflight_valid))
+            # Conservative best-effort QD for fallback reports:
+            #   1. prefer instantaneous in-flight from /sys/block/<dev>/stat
+            #      because it is not cumulative and cannot include previous runs;
+            #   2. use weighted_qd only when it is a plausible run-window delta.
+            # Fallback QD remains advisory and must not by itself prove saturation.
+            if inflight_valid:
+                row["qd_best_effort"] = round(sysfs_inflight, 4)
+                row["qd_best_effort_source"] = "sysfs_stat_inflight_instantaneous"
+                row["qd_valid"] = 1
+            elif weighted_valid:
+                row["qd_best_effort"] = round(weighted_qd_raw, 4)
+                row["qd_best_effort_source"] = "sysfs_weighted_io_ms_run_delta_advisory"
+                row["qd_valid"] = 1
+            else:
+                row["qd_best_effort"] = 0.0
+                row["qd_best_effort_source"] = "invalid_sysfs_counter_delta_rejected"
+                row["qd_valid"] = 0
             rows.append(row)
         return rows
 
@@ -1393,10 +1467,14 @@ class BlockQueueDepthCollector:
                 for row in self._derived:
                     w.writerow(row)
 
-        qd_vals = [float(r.get("qd_best_effort", 0)) for r in self._derived]
-        weighted_vals = [float(r.get("weighted_qd", 0)) for r in self._derived]
-        inflight_vals = [float(r.get("sysfs_inflight", 0)) for r in self._derived]
+        valid_rows = [r for r in self._derived if int(float(r.get("qd_valid", 0) or 0)) == 1]
+        qd_vals = [float(r.get("qd_best_effort", 0)) for r in valid_rows]
+        weighted_vals = [float(r.get("weighted_qd", 0)) for r in self._derived
+                         if int(float(r.get("weighted_qd_valid", 0) or 0)) == 1]
+        inflight_vals = [float(r.get("sysfs_inflight", 0)) for r in self._derived
+                         if int(float(r.get("sysfs_inflight_valid", 0) or 0)) == 1]
         util_vals = [float(r.get("io_util_pct", 0)) for r in self._derived]
+        invalid_qd_rows = max(len(self._derived) - len(valid_rows), 0)
         def _mean(vals):
             return round(statistics.mean(vals), 4) if vals else 0.0
         def _pct(vals, pct):
@@ -1408,10 +1486,13 @@ class BlockQueueDepthCollector:
             return round(max(vals), 4) if vals else 0.0
 
         return {
-            "queue_depth_available": bool(self._derived),
+            "queue_depth_available": bool(qd_vals),
             "queue_depth_csv": str(self._csv_path) if self._derived else "",
-            "queue_depth_samples": len(self._derived),
-            "queue_depth_sources": "sysfs_stat_inflight,sysfs_stat_weighted_io_ms,sysfs_inflight,proc_diskstats,sysfs_queue_params",
+            "queue_depth_samples": len(qd_vals),
+            "queue_depth_rows_total": len(self._derived),
+            "queue_depth_invalid_rows": invalid_qd_rows,
+            "queue_depth_sources": "advisory_sysfs_run_delta_and_inflight",
+            "queue_depth_validity": "run_window_delta_only_not_accumulated; fallback_advisory_not_saturation_proof",
             "queue_depth_mean": _mean(qd_vals),
             "queue_depth_p50": _pct(qd_vals, 50),
             "queue_depth_p95": _pct(qd_vals, 95),
@@ -2251,14 +2332,18 @@ class NsysTraceCollector:
         if not self._proc:
             return {"nsys_available": False, "nsys_reason": "not started"}
         try:
-            _, stderr = self._proc.communicate(
-                timeout=self.capture_duration + 30)
+            _interrupted = bool(getattr(self, "_amoprof_interrupted", False))
+            _timeout = float(getattr(self, "_amoprof_stop_timeout_s", 0.0) or (8.0 if _interrupted else self.capture_duration + 30))
+            if _interrupted and self._proc.poll() is None:
+                try: self._proc.terminate()
+                except Exception: pass
+            _, stderr = self._proc.communicate(timeout=_timeout)
             if self._proc.returncode not in (0, 1):
                 return {"nsys_available": False,
                         "nsys_reason": (stderr or "")[:200]}
         except subprocess.TimeoutExpired:
             self._proc.kill()
-            return {"nsys_available": False, "nsys_reason": "nsys timed out"}
+            return {"nsys_available": False, "nsys_reason": "nsys timed out during interrupt fast-stop" if bool(getattr(self, "_amoprof_interrupted", False)) else "nsys timed out"}
 
         return self._parse_sqlite()
 
@@ -2931,11 +3016,20 @@ class AMDuProfPcmMemoryCollector:
         self.samples=rows
 
     def stop(self) -> dict:
-        if self._thread: self._thread.join(timeout=self.duration_s+35)
+        _interrupted = bool(getattr(self, "_amoprof_interrupted", False))
+        _timeout = float(getattr(self, "_amoprof_stop_timeout_s", 0.0) or (5.0 if _interrupted else self.duration_s + 35))
+        if _interrupted and self._proc and self._proc.poll() is None:
+            try: self._proc.terminate()
+            except Exception: pass
+        if self._thread: self._thread.join(timeout=_timeout)
         if self._result: return self._result
         if self._proc and self._proc.poll() is None:
             try: self._proc.terminate()
             except Exception: pass
+            try: self._proc.wait(timeout=min(_timeout, 5.0))
+            except Exception:
+                try: self._proc.kill()
+                except Exception: pass
         if not self.samples:
             return {"amduprof_pcm_available": False, "amduprof_pcm_reason": "no samples", "amduprof_pcm_csv_path": self._csv_path or "", "amduprof_pcm_command": self._command, "amduprof_pcm_raw_output": self._raw_output[-4000:]}
         reads=[float(s.get("dram_read_gb_s",0) or 0) for s in self.samples]
@@ -3183,15 +3277,24 @@ class NcuHbmReadWriteCollector:
         self.samples = rows
 
     def stop(self):
+        _interrupted = bool(getattr(self, "_amoprof_interrupted", False))
+        _timeout = float(getattr(self, "_amoprof_stop_timeout_s", 0.0) or (5.0 if _interrupted else self.duration_s + 70))
+        if _interrupted and self._proc and self._proc.poll() is None:
+            try:
+                self._proc.terminate()
+            except Exception:
+                pass
         if self._thread:
-            self._thread.join(timeout=self.duration_s + 70)
+            self._thread.join(timeout=_timeout)
         if self._result:
             return self._result
         if self._proc and self._proc.poll() is None:
             try:
                 self._proc.terminate()
+                self._proc.wait(timeout=min(_timeout, 5.0))
             except Exception:
-                pass
+                try: self._proc.kill()
+                except Exception: pass
         elapsed = max(time.time() - (self._t0 or time.time()), 0.001)
         if not self.samples:
             return {
@@ -3684,13 +3787,18 @@ class VtuneCollector:
         if not self._proc:
             return {"vtune_available": False, "vtune_reason": "not started"}
         try:
-            _, stderr = self._proc.communicate(timeout=self.duration + 60)
+            _interrupted = bool(getattr(self, "_amoprof_interrupted", False))
+            _timeout = float(getattr(self, "_amoprof_stop_timeout_s", 0.0) or (8.0 if _interrupted else self.duration + 60))
+            if _interrupted and self._proc.poll() is None:
+                try: self._proc.terminate()
+                except Exception: pass
+            _, stderr = self._proc.communicate(timeout=_timeout)
             if self._proc.returncode != 0:
                 return {"vtune_available": False,
                         "vtune_reason": (stderr or "")[:200]}
         except subprocess.TimeoutExpired:
             self._proc.kill()
-            return {"vtune_available": False, "vtune_reason": "vtune timed out"}
+            return {"vtune_available": False, "vtune_reason": "vtune timed out during interrupt fast-stop" if bool(getattr(self, "_amoprof_interrupted", False)) else "vtune timed out"}
 
         return self._parse_report()
 

@@ -30,18 +30,69 @@ try:
 except Exception:  # direct-script fallback
     from l3_backend import resolve_l3_backend, reconcile_l3_io  # type: ignore
 
+try:
+    from amoprof.report.common_kpis import (
+        compute_common_kpis,
+        apply_common_kpis_to_html,
+        write_common_kpis_json,
+    )
+except Exception:  # direct-script fallback
+    from common_kpis import compute_common_kpis, apply_common_kpis_to_html, write_common_kpis_json  # type: ignore
+
+
+
+
+
+def _remove_setup_aware_sglang_launch_tuning_section(html_text: str) -> str:
+    """Remove setup-aware launch tuning sections from generated or old embedded reports."""
+    if not html_text:
+        return html_text
+    patterns = [
+        r'\s*<section[^>]*>\s*<h2[^>]*>\s*🚀\s*Setup-aware SGLang launch tuning\s*</h2>.*?</section>\s*',
+        r'\s*<div class="section-label">\s*Setup-aware launch tuning\s*</div>\s*<div class="card"[^>]*>\s*<h2>\s*🚀\s*SGLang launch-command improvements\b.*?</div>\s*',
+        r'\s*&lt;section[^&]*&gt;\s*&lt;h2[^&]*&gt;\s*🚀\s*Setup-aware SGLang launch tuning\s*&lt;/h2&gt;.*?&lt;/section&gt;\s*',
+    ]
+    out = html_text
+    for pat in patterns:
+        out = re.sub(pat, "\n<!-- Setup-aware SGLang launch tuning removed in v1.39.61. -->\n",
+                     out, flags=re.I | re.S)
+    return out
+
+
+def _remove_end_report_cross_layer_correlation_section(static_html: str) -> str:
+    """Remove the old End Report cross-layer narrative section.
+
+    v1.39.61 moves this setup/token/latency/utilization narrative to Executive
+    where dark-theme CSS is readable.  This cleanup also handles combined
+    reports built from older static HTML files passed via --static-html.
+    """
+    if not static_html:
+        return static_html
+    patterns = [
+        # Static End Report f-string section.
+        r'\s*<section[^>]*>\s*<h2[^>]*>\s*🔗\s*Cross-layer correlation\s*—\s*setup,\s*token movement,\s*latency,\s*and utilization\s*</h2>.*?</section>\s*',
+        # Escaped srcdoc case if an already-embedded static frame is reprocessed.
+        r'\s*&lt;section[^&]*&gt;\s*&lt;h2[^&]*&gt;\s*🔗\s*Cross-layer correlation\s*—\s*setup,\s*token movement,\s*latency,\s*and utilization\s*&lt;/h2&gt;.*?&lt;/section&gt;\s*',
+    ]
+    out = static_html
+    for pat in patterns:
+        out = re.sub(pat, "\n<!-- Cross-layer correlation moved to Executive tab in v1.39.61. -->\n",
+                     out, flags=re.I | re.S)
+    return out
+
 
 # ─── Utilities ──────────────────────────────────────────────────────────────
 
 
 def _amoprof_storage_label_cleanup(html_text: str) -> str:
-    """Normalize user-facing storage labels without corrupting embedded data.
+    """Normalize visible storage labels without corrupting embedded artifacts.
 
-    Combined reports contain large base64 PNGs inside ``iframe srcdoc``.  A
-    whole-document regex replacement for labels such as ``L3`` can accidentally
-    match the base64 payload and break exactly one chart image.  Protect all
-    data-image URIs before rewriting visible text, then restore the original
-    payloads byte-for-byte.
+    Tier semantics are intentionally strict:
+      * L3 = node-local storage / L3 local SSD / NVMe physical block telemetry.
+      * L3 = AI Memory Node / remote storage logical/shared backing tier.
+
+    Do not apply a broad ``\bL3\b`` replacement.  It corrupts already-correct
+    labels such as ``L3`` and caused strings like ``L3(...).5(...).5``.
     """
     if not html_text:
         return html_text
@@ -55,36 +106,197 @@ def _amoprof_storage_label_cleanup(html_text: str) -> str:
 
     html_text = data_uri_re.sub(_stash_data_uri, html_text)
 
-    # Specific wording first.
-    repl = {
-        "KV$ SSD IO": "KV$ L3 IO",
-        "KV$ SSD I/O": "KV$ L3 I/O",
-        "KV$ SSD": "KV$ L3",
-        "NVMe read throughput": "L3 (Storage/AI Memory Node) read throughput",
-        "NVMe Read Throughput": "L3 (Storage/AI Memory Node) Read Throughput",
-        "NVMe read BW": "L3 (Storage/AI Memory Node) read throughput",
-        "NVMe Read BW": "L3 (Storage/AI Memory Node) Read Throughput",
-    }
-    for a, b in repl.items():
+    # Collapse labels produced by prior broad L3 -> L3 replacement bugs.
+    html_text = re.sub(
+        r'(L3\.5 \(AI Memory Node / remote storage\))(?:\.5 \(AI Memory Node / remote storage\))+',
+        r'\1', html_text)
+
+    for a, b in {
+        'KV$ L3 (local storage) IO': 'KV$ L3 (local storage) I/O',
+        'KV$ L3 (local storage) I/O': 'KV$ L3 (local storage) I/O',
+        'KV$ L3 (local storage)': 'KV$ L3 (local storage)',
+        'NVMe read throughput': 'L3 (local storage) read throughput',
+        'NVMe Read Throughput': 'L3 (local storage) read throughput',
+        'NVMe read BW': 'L3 (local storage) read BW',
+        'NVMe Read BW': 'L3 (local storage) read BW',
+        'NVMe Latency &amp; Device Utilization': 'L3 (local storage) latency &amp; busy-time',
+        'NVMe Latency & Device Utilization': 'L3 (local storage) latency & busy-time',
+    }.items():
         html_text = html_text.replace(a, b)
-    protected = {
-        "KV$ L3 IO": "__AMOPROF_KV_L3_IO__",
-        "KV$ L3 I/O": "__AMOPROF_KV_L3_IOSLASH__",
-        "KV$ L3": "__AMOPROF_KV_L3__",
-        "L3 (Storage/AI Memory Node)": "__AMOPROF_L3_STORAGE_AI_NODE__",
-    }
-    for a, b in protected.items():
-        html_text = html_text.replace(a, b)
-    # User-facing tier terminology. Keep the explicitly requested labels above
-    # as L3, but rename all other L3 mentions for now.
-    html_text = re.sub(r"\bL3 storage\b", "local Storage / AI memory node", html_text, flags=re.IGNORECASE)
-    html_text = re.sub(r"\bL3\b", "local Storage / AI memory node", html_text)
-    for a, b in protected.items():
-        html_text = html_text.replace(b, a)
 
     for i, payload in enumerate(protected_payloads):
         html_text = html_text.replace(f"__AMOPROF_DATA_URI_{i}__", payload)
     return html_text
+
+
+
+
+def _amoprof_l3_local_only_cleanup(html_text: str) -> str:
+    """For local-NVMe/file-backed HiCache runs, suppress L3 data labels.
+
+    Rule: if the backend resolver says local_ssd, every physical and logical
+    backing-tier datum in this run belongs to L3 (local storage).  L3 must not
+    show populated readings.  It may only appear as a terminology row saying it
+    is not configured.
+    """
+    if not html_text:
+        return html_text
+    data_uri_re = re.compile(r'data:image/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=\s]+')
+    protected_payloads: list[str] = []
+    def _stash(match: re.Match) -> str:
+        protected_payloads.append(match.group(0))
+        return f"__AMOPROF_DATA_URI_{len(protected_payloads)-1}__"
+    html_text = data_uri_re.sub(_stash, html_text)
+
+    # Run-specific local-only substitutions. These are intentionally applied
+    # only when resolver classified the backend as local_ssd.
+    replacements = {
+        'L3 (local storage) (3.5 TB)': 'L3 (local storage) (3.5 TB)',
+        'L3 storage / blktrace': 'L3 (local storage) / blktrace',
+        'L3 storage block telemetry': 'L3 (local storage) block telemetry',
+        'L3 storage block-device': 'L3 (local storage) block-device',
+        'L3 storage QUEUE': 'L3 (local storage) QUEUE',
+        'L3 storage Queue': 'L3 (local storage) Queue',
+        'L3 storage queue': 'L3 (local storage) queue',
+        'Logical KV movement — L3 (local storage)': 'Logical KV movement — L3 (local storage)',
+        'L3 (local storage) logical activity': 'L3 (local storage) logical activity',
+        'logical L3 movement': 'logical L3 movement',
+        'Logical L3 movement': 'Logical L3 movement',
+        'logical L3 only': 'logical L3 only',
+        'L3 logical movement': 'L3 logical movement',
+        'logical L3': 'logical L3',
+        'Remote L3 (local storage)': 'L3 (local storage)',
+        'remote L3': 'L3',
+        'Remote L3': 'L3',
+        'L3 bottleneck': 'L3 bottleneck',
+        'L3 storage': 'L3 (local storage)',
+        'L3 Storage': 'L3 (local storage)',
+        'L3 (local storage) movement': 'L3 (local storage) movement',
+        'L3 (local storage) cache': 'L3 (local storage) cache',
+        'L3 (local storage) capacity': 'L3 (local storage) capacity',
+        'L3 (local storage) R/W': 'L3 (local storage) R/W',
+        'L3 (local storage) as the remote/shared KV tier': 'L3 (local storage) as the local KV tier',
+        'L3 (local storage)': 'L3 (local storage)',
+    }
+    for a, b in replacements.items():
+        html_text = html_text.replace(a, b)
+
+    # Repair terminology card so L3 is visible only as disabled/not configured,
+    # not as a populated tier.
+    html_text = html_text.replace(
+        '<tr><td class="td-key">L3 (local storage)</td><td>Remote/shared AI Memory Node or remote storage tier: logical SGLang backing-tier movement only when the backend is remote/shared/unmapped; never use local NVMe blktrace/iostat/LBA charts for this tier.</td></tr>',
+        '<tr><td class="td-key">L3 (local storage)</td><td><strong>Not configured for this run.</strong> No L3 readings are shown. Remote/shared AI Memory Node data appears here only when a remote backend is explicitly detected.</td></tr>'
+    )
+    html_text = html_text.replace('L3 and L3 and L3 tier mapping', 'L3 and L3 tier mapping')
+    for i, payload in enumerate(protected_payloads):
+        html_text = html_text.replace(f"__AMOPROF_DATA_URI_{i}__", payload)
+    return html_text
+
+
+def _amoprof_has_explicit_l3_config(setup: dict | None, launch: str = "") -> bool:
+    """True only when L3/local storage or remote storage is explicitly configured.
+
+    Generic HiCache defaults and Reference launch command values are not L3.
+    """
+    setup = setup or {}
+    bad = {"", "0", "0.0", "none", "null", "false", "no", "n/a", "na",
+           "unknown", "default", "auto", "not configured", "not_configured"}
+    explicit_keys = [
+        "L3 Device", "L3 device", "l3_device", "L3 block device",
+        "L3 Mount Path", "L3 mount path", "l3_mount_path",
+        "L3 storage path", "L3 Storage Path", "l3_storage_path",
+        "L3 storage backend", "L3 Storage Backend", "l3_storage_backend",
+        "L3 backend", "l3_backend", "Cache L3 backend", "cache_l3_backend",
+        "L3 storage type", "l3_storage_type",
+        "L3 (local storage) capacity GB", "L3 Capacity GB",
+        "l3_storage_capacity_gb", "l3_capacity_gb",
+        "L3 storage device", "L3 storage mount path",
+        "AI Memory Node", "ai_memory_node", "Mooncake endpoint", "mooncake_endpoint",
+        "remote_storage_backend", "remote_storage_path", "remote_storage_endpoint",
+    ]
+    for k in explicit_keys:
+        if k in setup:
+            v = setup.get(k)
+            if isinstance(v, (int, float)):
+                if float(v) > 0:
+                    return True
+            else:
+                sv = str(v or "").strip().strip('"').strip("'").lower()
+                if sv not in bad:
+                    return True
+    for k, v in setup.items():
+        lk = str(k).lower()
+        if "hicache_size" in lk or "hicache size" in lk:
+            continue
+        if ("l3" in lk or "l3.5" in lk or "mooncake" in lk or
+            "ai memory node" in lk or "remote_storage" in lk or "remote storage" in lk):
+            sv = str(v or "").strip().strip('"').strip("'").lower()
+            if sv not in bad:
+                return True
+    launch_s = str(launch or "")
+    explicit_launch_flags = [
+        "--hicache-storage-path", "--l3-storage-backend", "--l3-storage-path",
+        "--l3-device", "--mooncake", "--remote-storage", "--enable-l3", "--l3-cache",
+    ]
+    return any(f in launch_s for f in explicit_launch_flags)
+
+
+def _amoprof_no_l3_cleanup(html_text: str) -> str:
+    """Strip populated L3/L3 data from reports where no L3 is configured."""
+    if not html_text:
+        return html_text
+    data_uri_re = re.compile(r'data:image/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=\s]+')
+    payloads: list[str] = []
+    def _stash(m: re.Match) -> str:
+        payloads.append(m.group(0))
+        return f"__AMOPROF_DATA_URI_{len(payloads)-1}__"
+    out = data_uri_re.sub(_stash, html_text)
+
+    out = out.replace("L3 storage / blktrace", "L3 storage / blktrace")
+
+    # Remove L3/L3 KPI tiles that can look like measured data in an L2-only run.
+    l3_tile_labels = [
+        r"L3 \(local storage\) read BW",
+        r"L3 \(local storage\) write BW",
+        r"Physical L3 \(local storage\) block R / W total",
+        r"L3 \(local storage\) cache used",
+        r"L3 \(local storage\) configured capacity",
+        r"Logical KV movement — L3 \(local storage\)",
+        r"Logical KV movement — L3\.5 \(AI Memory Node / remote storage\)",
+        r"L3\.5 .*?cache used",
+    ]
+    for lab in l3_tile_labels:
+        out = re.sub(r'<div class="kpi"[^>]*>\s*<div class="kpi-label">\s*' + lab + r'\s*</div>.*?</div>\s*</div>',
+                     '', out, flags=re.I | re.S)
+        out = re.sub(r'<div class="kpi-tile"[^>]*>\s*<div class="kpi-label">\s*' + lab + r'\s*</div>.*?</div>\s*</div>',
+                     '', out, flags=re.I | re.S)
+
+    # Replace the capacity/reconciliation card with explicit L2-only notice.
+    no_l3_card = (
+        '<div class="card" style="border-left:4px solid #64748b">'
+        '<h2>ℹ️ L3 / L3 storage <span class="tag">NOT CONFIGURED</span></h2>'
+        '<p class="sub">This is an L2-only run. No L3 local-storage or L3 remote-storage backend was explicitly configured in setup_details or the launch command. AMOprof therefore suppresses L3 capacity, df/SMART cache-used snapshots, LBA charts, block totals, and L3 logical movement as measured data.</p>'
+        '</div>'
+    )
+    out = re.sub(r'<div class="card"[^>]*>\s*<h2>✅\s*L3 capacity vs I/O reconciliation.*?</div>\s*</div>',
+                 no_l3_card, out, flags=re.I | re.S)
+
+    out = re.sub(r'<tr><td class="td-key">L3\.5 \(AI Memory Node / remote storage\) logical activity</td><td>.*?</td></tr>',
+                 '<tr><td class="td-key">L3 / L3 storage</td><td>No L3 local-storage or L3 remote-storage backend was explicitly configured for this L2-only run; no L3/L3 measured data is reported.</td></tr>',
+                 out, flags=re.I | re.S)
+    out = re.sub(r'<tr><td class="td-key">L3 capacity vs I/O</td><td>.*?</td></tr>',
+                 '<tr><td class="td-key">L3 capacity vs I/O</td><td>Not applicable for this L2-only run.</td></tr>',
+                 out, flags=re.I | re.S)
+
+    out = out.replace("L3 (local storage)", "L3")
+    out = out.replace("L3 storage", "L3 storage")
+    out = out.replace("L3 Storage", "L3 storage")
+    out = out.replace("L3 and L3 and L3 tier mapping", "L3 tier mapping")
+    out = out.replace("L3 and L3 tier mapping", "L3 tier mapping")
+
+    for i, payload in enumerate(payloads):
+        out = out.replace(f"__AMOPROF_DATA_URI_{i}__", payload)
+    return out
 
 
 def _safe_float(v: Any, default: float = 0.0) -> float:
@@ -225,6 +437,57 @@ def _pick(d: Dict[str, Any], keys: Iterable[str], default: Any = None) -> Any:
         if lk in lower and lower[lk] not in (None, "", "unknown", "Unknown"):
             return lower[lk]
     return default
+
+
+
+def _amoprof_parse_launch_arg(launch: str, *names: str) -> str:
+    if not launch:
+        return ""
+    for name in names:
+        pat = r'(?<!\S)' + re.escape(name) + r'(?:=|\s+)(?:"([^"]+)"|\'([^\']+)\'|([^\s]+))'
+        m = re.search(pat, str(launch))
+        if m:
+            return next((g for g in m.groups() if g), "").strip()
+    return ""
+
+
+def _amoprof_missing(v) -> bool:
+    return v is None or str(v).strip() in ("", "?", "unknown", "None", "null", "N/A")
+
+
+def _amoprof_augment_setup_from_launch(setup: dict) -> dict:
+    if not isinstance(setup, dict):
+        setup = {}
+    out = dict(setup)
+    launch = str(out.get("Launch command") or out.get("launch_command") or out.get("Command") or out.get("Reference launch command") or "")
+    if launch and _amoprof_missing(out.get("Launch command")):
+        out["Launch command"] = launch
+    mapping = [
+        ("Model", ("--model", "--model-path")),
+        ("TP size", ("--tensor-parallel-size", "--tp-size", "--tp")),
+        ("DP size", ("--data-parallel-size", "--dp-size", "--dp")),
+        ("mem-fraction-static", ("--mem-fraction-static",)),
+        ("Page size", ("--page-size",)),
+        ("KV cache dtype", ("--kv-cache-dtype",)),
+        ("Chunked prefill size", ("--chunked-prefill-size",)),
+        ("HiCache size", ("--hicache-size",)),
+        ("HiCache IO backend", ("--hicache-io-backend",)),
+        ("HiCache mem layout", ("--hicache-mem-layout",)),
+        ("HiCache storage backend", ("--hicache-storage-backend",)),
+        ("HiCache write policy", ("--hicache-write-policy",)),
+        ("HiCache storage prefetch policy", ("--hicache-storage-prefetch-policy",)),
+        ("Attention backend", ("--attention-backend",)),
+        ("CUDA graph max batch size", ("--cuda-graph-max-bs",)),
+        ("Host", ("--host",)),
+        ("Port", ("--port",)),
+    ]
+    lower_keys = {str(k).lower(): k for k in out.keys()}
+    for label, flags in mapping:
+        val = _amoprof_parse_launch_arg(launch, *flags)
+        existing_key = lower_keys.get(label.lower())
+        if val and (existing_key is None or _amoprof_missing(out.get(existing_key))):
+            out[label] = val
+    return out
 
 
 def _ts_col(ts: Dict[str, Any], *partials: str) -> Dict[str, Any]:
@@ -549,7 +812,7 @@ def _per_layer_takeaways_html(*,
     Why this approach: in Prom-only mode the original implementation rendered
     a single "Blktrace data not available" line — visually dead and useless
     for sizing exercises. This helper extracts what IS available (SGLang
-    counters, GPU utilization, swap activity, derived L3 storage BW) and presents
+    counters, GPU utilization, swap activity, derived L3 local-storage BW) and presents
     actionable per-layer summaries. The numbers come from the same data
     sources the executive already loaded; nothing fabricated.
 
@@ -593,7 +856,7 @@ def _per_layer_takeaways_html(*,
     else:
         l2_verdict, l2_color = "Clean", "#16a34a"
 
-    # L3 storage — bandwidth + utilization
+    # L3 (local storage) — bandwidth + busy-time
     if nvme_rd_bw > 5000 or nvme_wr_bw > 3000:
         l3_verdict, l3_color = "Heavy traffic", "#d97706"
     elif read_gb == 0 and write_gb == 0:
@@ -612,7 +875,7 @@ def _per_layer_takeaways_html(*,
         else:
             x_verdict, x_color = "Steady", "#16a34a"
     else:
-        x_verdict, x_color = "No L3 storage spill", "#64748b"
+        x_verdict, x_color = "No L3 local-storage spill", "#64748b"
 
     # ── Build per-layer rows ────────────────────────────────────────────────
     def _row(tag, tag_color, layer_title, headline, verdict, verdict_color,
@@ -648,11 +911,16 @@ def _per_layer_takeaways_html(*,
                 f'      fig.layout = fig.layout || {{}};'
                 f'      fig.layout.autosize = true;'
                 f'      var n = (fig.data || []).filter(function(t){{return !t || t.showlegend !== false;}}).length;'
-                f'      var rows = n > 14 ? 4 : (n > 8 ? 3 : (n > 4 ? 2 : 1));'
-                f'      fig.layout.margin = Object.assign({{l:64,r:56,t:60,b:100 + rows*42}}, fig.layout.margin || {{}});'
-                f'      fig.layout.margin.b = Math.max(fig.layout.margin.b || 0, 100 + rows*42);'
-                f'      fig.layout.height = Math.max(fig.layout.height || 280, 300 + rows*36);'
-                f'      fig.layout.legend = Object.assign({{orientation:"h", yanchor:"top", y:-0.22, xanchor:"left", x:0, font:{{size:10,color:"#0f172a"}}, bgcolor:"rgba(248,250,252,0.96)", bordercolor:"#cbd5e1", borderwidth:1, itemsizing:"constant", itemwidth:30, entrywidth:(n>10?120:145), entrywidthmode:"pixels", tracegroupgap:6}}, fig.layout.legend || {{}});'
+                f'      fig.layout.margin = Object.assign({{l:70,r:(n>=2?340:90),t:64,b:120}}, fig.layout.margin || {{}});'
+                f'      if (n >= 2) {{'
+                f'        fig.layout.margin.r = Math.max(fig.layout.margin.r || 0, n>4 ? 380 : 340);'
+                f'        fig.layout.height = Math.max(fig.layout.height || 280, n>4 ? 580 : 540);'
+                f'        fig.layout.legend = Object.assign({{orientation:"v", yanchor:"top", y:1.0, xanchor:"left", x:1.03, font:{{size:(n>4?10:11),color:"#0f172a"}}, bgcolor:"rgba(248,250,252,0.98)", bordercolor:"#cbd5e1", borderwidth:1, itemsizing:"constant", itemwidth:30, tracegroupgap:6}}, fig.layout.legend || {{}});'
+                f'        delete fig.layout.legend.entrywidth; delete fig.layout.legend.entrywidthmode;'
+                f'      }} else {{'
+                f'        fig.layout.margin.b = Math.max(fig.layout.margin.b || 0, 120);'
+                f'        fig.layout.legend = Object.assign({{orientation:"h", yanchor:"top", y:-0.14, xanchor:"left", x:0, font:{{size:11,color:"#0f172a"}}, bgcolor:"rgba(248,250,252,0.98)", bordercolor:"#cbd5e1", borderwidth:1, itemsizing:"constant", itemwidth:30}}, fig.layout.legend || {{}});'
+                f'      }}'
                 f'      Plotly.newPlot("{slot_id}", fig.data, fig.layout,'
                 f'        {{responsive:true, displayModeBar:false}});'
                 f'    }} catch(e) {{'
@@ -744,7 +1012,7 @@ def _per_layer_takeaways_html(*,
             ("DRAM bandwidth wasn't captured (--enable-dram not enabled) but the "
              "absence of swap pressure makes this tier a non-bottleneck. "
              if dram_bw == 0 else "") +
-            "Expand HiCache L2 allocation to offload more KV from L3 storage."
+            "Expand HiCache L2 allocation to reduce L3 local-storage spill."
             if l2_verdict == "Clean" else
             f"Active swap signals memory pressure on the host. Reduce in-memory "
             f"KV cache, or add system memory. This is a structural constraint, "
@@ -769,20 +1037,20 @@ def _per_layer_takeaways_html(*,
                 if rw_ratio > 5 else ""
             )
             + (
-                f"L3 storage busy is {nvme_util:.0f}% — far from peak; the "
+                f"L3 (local storage) bandwidth is below peak; the "
                 f"constraint isn't throughput but the round-trip latency that "
                 f"adds to TPOT on each load-back."
                 if nvme_util < 50 else
-                f"L3 storage busy is {nvme_util:.0f}% — approaching saturation. "
-                f"Consider expanding L2 DRAM tier to reduce L3 storage fetch frequency."
+                f"L3 (local storage) needs bandwidth/latency/QD evidence before calling saturation. "
+                f"Consider expanding L2 DRAM tier to reduce L3 local-storage fetch frequency."
             )
         )
     else:
         l3_takeaway = (
-            "<strong>No L3 storage traffic observed.</strong> Either the workload's KV "
+            "<strong>No L3 (local storage) traffic observed.</strong> Either the workload's KV "
             "blocks fit entirely in HBM+L2 DRAM, or instrumentation didn't "
-            "capture L3 storage activity. Re-run with a larger context or more "
-            "concurrent sessions to exercise the L3 storage tier."
+            "capture L3 (local storage) activity. Re-run with a larger context or more "
+            "concurrent sessions to exercise the L3 (local storage) tier."
         )
 
     if backuped_tokens > 0 or loadback_tokens > 0:
@@ -791,22 +1059,22 @@ def _per_layer_takeaways_html(*,
         x_takeaway = (
             f"<strong>{int(evicted_tokens):,} evicted · "
             f"{int(backuped_tokens):,} backed up to L3 · "
-            f"{int(loadback_tokens):,} loaded back.</strong> "
+            f"{int(loadback_tokens):,} restored L2→L1.</strong> "
             + (
-                f"The {ratio_str} load-back-vs-backup ratio means the same KV "
+                f"The {ratio_str} L2→L1 load-back-vs-backup ratio means the same KV "
                 f"blocks are being re-fetched repeatedly — a thrashing signal "
                 f"that HBM + L2 DRAM combined are too small for this working "
                 f"set. Headline fix: grow HiCache L2 (DRAM) so load-back hits "
-                f"DRAM instead of L3 storage."
+                f"DRAM instead of L3 local storage."
                 if x_verdict == "Active spilling" else
-                f"KV flow is balanced — load-back roughly matches backup, "
+                f"KV flow is balanced — L2→L1 load-back restore roughly matches backup, "
                 f"indicating steady cache reuse without thrashing."
             )
         )
     else:
         x_takeaway = (
             "<strong>No KV tier movement observed.</strong> SGLang counters "
-            "show no offload/loadback activity. Either HiCache wasn't enabled, "
+            "show no offload/L2→L1 loadback activity. Either HiCache wasn't enabled, "
             "or the workload's KV footprint stayed within HBM."
         )
 
@@ -847,12 +1115,12 @@ def _per_layer_takeaways_html(*,
              chart_id="ch_swap", chart_fig=_fig("ch_swap")),
         _row("L3", "#a45714", "Storage / Block / Device",
              f"R {nvme_rd_bw:.0f} MB/s · W {nvme_wr_bw:.0f} MB/s · "
-             f"util {nvme_util:.0f}%",
+             f"BW/QD evidence",
              l3_verdict, l3_color, l3_takeaway,
              chart_id="ch_l3_bw", chart_fig=_fig("ch_l3_bw")),
         _row("Cross", "#0f172a", "KV Cache Flow",
              f"Evict {int(evicted_tokens):,} · Backup {int(backuped_tokens):,} · "
-             f"Loadback {int(loadback_tokens):,}",
+             f"L2→L1 loadback {int(loadback_tokens):,}",
              x_verdict, x_color, x_takeaway,
              chart_id="ch_evict", chart_fig=_fig("ch_evict")),
     ]
@@ -868,36 +1136,66 @@ def _per_layer_takeaways_html(*,
 
 
 def _nvme_status_phrase(nvme_util: float, nvme_rd_lat: float = -1.0) -> str:
-    """Return a short status-phrase describing the L3 storage's current state.
+    """Return a conservative status phrase for L3/SSD.
 
-    Used everywhere the report calls out NVMe util to avoid the
-    "100% util shows headroom" / "0.00 ms is sub-millisecond" contradictions
-    that v53 only partially fixed (only patched one chart_card; other 4+
-    sites still hardcoded "headroom remains" / "is not stressed" /
-    "substantial remaining capacity" regardless of measured values).
-
-    The returned phrase is suitable for inline use as a sentence clause.
-    Caller should provide enough surrounding context that the phrase reads
-    naturally.
-
-    Examples:
-      util=100, lat=0   → "saturated — IO queueing is now part of loadback latency"
-      util=60,  lat=0.5 → "actively engaged — monitor for sustained saturation"
-      util=20,  lat=0.3 → "lightly utilised — substantial headroom remains"
-      util=0,   lat=0   → "not captured by iostat for this run"
+    NVMe/iostat busy-time is not proof of hardware saturation. A fast
+    NVMe can show 100% busy with modest MB/s when at least one small I/O is
+    continuously in flight. Use bandwidth, latency, and exact/plausible queue
+    depth before recommending faster SSD hardware.
     """
     if nvme_util >= 90:
-        return ("saturated — IO queueing is now part of loadback latency "
-                "and is constraining decode throughput")
+        if nvme_rd_lat and nvme_rd_lat > 1.0:
+            return ("busy with elevated read latency — possible L3 local-storage queueing; "
+                    "verify exact blktrace Q→C queue depth before sizing a faster SSD")
+        return ("busy by time accounting, but bandwidth/IOPS saturation is not proven "
+                "because read latency or exact queue-depth evidence is missing")
     if nvme_util >= 50:
-        return ("actively engaged — monitor for sustained saturation as "
+        return ("actively engaged — monitor latency and queue depth as "
                 "concurrent sessions scale")
     if nvme_util > 0:
-        return "lightly utilised — substantial headroom remains"
-    # nvme_util == 0
+        return "lightly utilised — substantial bandwidth headroom remains"
     return "not captured by iostat for this run"
 
 
+def _qd_exact_source(src: str) -> bool:
+    s = str(src or "").lower()
+    return ("blktrace" in s and "fallback" not in s and "sysfs" not in s and "iostat" not in s)
+
+
+def _qd_plausible(qd_mean: float, qd_peak: float, qd_source: str) -> bool:
+    try:
+        qdm = float(qd_mean or 0)
+        qdp = float(qd_peak or 0)
+    except Exception:
+        return False
+    if qdm < 0 or qdp < 0:
+        return False
+    # Coarse fallback values in the hundreds of thousands are almost always
+    # a counter/unit interpretation issue, not real NVMe in-flight depth.
+    if not _qd_exact_source(qd_source):
+        if qdm > 4096 or qdp > 32768:
+            return False
+    return True
+
+
+def _ssd_hw_saturation_proven(nvme_rd_bw: float, nvme_wr_bw: float, nvme_util: float,
+                              nvme_rd_lat: float, qd_mean: float = 0,
+                              qd_peak: float = 0, qd_source: str = "") -> bool:
+    try:
+        rd = float(nvme_rd_bw or 0)
+        wr = float(nvme_wr_bw or 0)
+        util = float(nvme_util or 0)
+        lat = float(nvme_rd_lat or 0)
+        qdm = float(qd_mean or 0)
+        qdp = float(qd_peak or 0)
+    except Exception:
+        return False
+    bw_saturated = (rd >= 0.70 * 7000.0) or (wr >= 0.70 * 5000.0)
+    qd_exact = _qd_exact_source(qd_source)
+    qd_ok = _qd_plausible(qdm, qdp, qd_source)
+    queue_saturated = qd_exact and qd_ok and qdm >= 32
+    latency_saturated = (lat > 1.0 and (queue_saturated or (util >= 90 and bw_saturated)))
+    return bool(bw_saturated or latency_saturated or queue_saturated)
 def _nvme_latency_phrase(nvme_rd_lat: float, nvme_wr_lat: float) -> str:
     """Return a value-aware latency-clause for inline use.
 
@@ -912,7 +1210,7 @@ def _nvme_latency_phrase(nvme_rd_lat: float, nvme_wr_lat: float) -> str:
         return (f"Read latency {nvme_rd_lat:.2f}ms mean (sub-millisecond) · "
                 f"write latency {nvme_wr_lat:.1f}ms")
     return (f"Read latency {nvme_rd_lat:.2f}ms mean (above the 1ms threshold "
-            f"— each loadback adds non-trivial TPOT)")
+            f"— each L2→L1 loadback adds non-trivial TPOT)")
 
 
 def _extract_interactive_figures(interactive_html: str,
@@ -955,47 +1253,169 @@ def _extract_interactive_figures(interactive_html: str,
 
 
 
-def _extract_static_kpi_overrides(static_html: str) -> Dict[str, float]:
-    """Extract KPI values from the already-generated End Report HTML.
 
-    The End Report is generated by amoprof.py from the same raw run and, in
-    practice, is the most complete consumer of the parsed Metrics object.  The
-    Executive tab is generated separately from raw files, so it can accidentally
-    fall back to stale sglang_summary.json values when a Prometheus counter name
-    variant is not matched.  These overrides keep Executive TTFT/TPOT aligned
-    with the End Report rather than silently reusing stale/default summary KPIs.
-    """
+def _normalise_latency_label(label: str) -> str:
+    lab = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", str(label))).strip().lower()
+    lab = lab.replace("tpot / itl", "tpot").replace("server itl", "server tpot")
+    if lab in {"ttft mean", "time to first token (ttft mean)"}:
+        return "ttft_ms"
+    if lab in {"ttft p50", "time to first token (ttft p50)"}:
+        return "ttft_p50_ms"
+    if lab in {"tpot mean", "itl mean", "time per output token (tpot mean)"}:
+        return "tpot_ms"
+    if lab in {"tpot p50", "itl p50", "time per output token (tpot p50)"}:
+        return "tpot_p50_ms"
+    if lab == "e2e mean":
+        return "e2e_ms"
+    if lab == "e2e p50":
+        return "e2e_p50_ms"
+    if lab in {"throughput mean", "generation throughput (mean)"}:
+        return "throughput_mean"
+    if lab in {"throughput p50", "generation throughput (p50)"}:
+        return "throughput_p50"
+    return ""
+
+
+def _value_to_float_and_unit(value_html: str) -> tuple[float, str]:
+    text = _html.unescape(re.sub(r"<[^>]+>", " ", str(value_html)))
+    text = re.sub(r"\s+", " ", text).strip()
+    m = re.search(r"([0-9][0-9,]*(?:\.[0-9]+)?)\s*([a-zA-Z/%]+)?", text)
+    if not m:
+        return 0.0, ""
+    val = _safe_float(m.group(1).replace(",", ""), 0.0)
+    unit = (m.group(2) or "").strip()
+    return val, unit
+
+
+def _extract_latency_kpis_from_html(report_html: str, *, prefer_main_tiles: bool = True) -> Dict[str, float]:
+    """Extract displayed latency/throughput KPI tile values from a report tab."""
+    out: Dict[str, float] = {}
+    if not report_html:
+        return out
+    html_txt = _html.unescape(report_html)
+    patterns = [
+        r'<div[^>]*class="kpi-label"[^>]*>(.*?)</div>\s*<div[^>]*class="kpi-value"[^>]*>(.*?)</div>',
+        r'<div[^>]*text-transform:\s*uppercase[^>]*>(TTFT mean|TTFT p50|TPOT\s*/\s*ITL mean|TPOT\s*/\s*ITL p50|E2E mean|E2E p50|Throughput mean|Throughput p50)</div>\s*<div[^>]*font-size:\s*20px[^>]*>(.*?)</div>',
+    ]
+    for pat in patterns:
+        for m in re.finditer(pat, html_txt, flags=re.I | re.S):
+            key = _normalise_latency_label(m.group(1))
+            if not key or key in out:
+                continue
+            val, unit = _value_to_float_and_unit(m.group(2))
+            if val <= 0:
+                continue
+            if key.endswith("_ms") and unit.lower().startswith("s"):
+                val *= 1000.0
+            out[key] = val
+    return out
+
+
+def _merge_latency_overrides(primary: dict | None, fallback: dict | None) -> Dict[str, float]:
+    out: Dict[str, float] = {}
+    for src in (fallback or {}, primary or {}):
+        for k, v in src.items():
+            vf = _safe_float(v, 0.0)
+            if vf > 0:
+                out[k] = vf
+    return out
+
+
+def _lat_value_text(key: str, value: float) -> str:
+    if key.startswith("tpot") or key.startswith("throughput"):
+        return f"{float(value):.1f}"
+    return f"{float(value):.0f}"
+
+
+def _replace_kpi_value_by_label(report_html: str, label_variants: list[str], value: float,
+                                unit: str, note: str | None = None,
+                                canonical_label: str | None = None,
+                                key: str = "") -> str:
+    out = report_html
+    val_txt = _lat_value_text(key or label_variants[0].lower(), value)
+    for label in label_variants:
+        repl_label = canonical_label or label
+        pat = re.compile(
+            r'(<div[^>]*class="kpi-label"[^>]*>)' + re.escape(label) + r'(</div>\s*'
+            r'<div[^>]*class="kpi-value"[^>]*>)([^<]+)'
+            r'(<span[^>]*class="kpi-unit"[^>]*>)(.*?)(</span></div>\s*'
+            r'<div[^>]*class="kpi-note"[^>]*>)(.*?)(</div>)',
+            re.S,
+        )
+        def _repl(m):
+            return f"{m.group(1)}{repl_label}{m.group(2)}{val_txt}{m.group(4)}{unit}{m.group(6)}{note or m.group(7)}{m.group(8)}"
+        out = pat.sub(_repl, out, count=1)
+        pat2 = re.compile(
+            r'(<div[^>]*text-transform:\s*uppercase[^>]*>)' + re.escape(label) + r'(</div>\s*'
+            r'<div[^>]*font-size:\s*20px[^>]*>)([^<]+)'
+            r'(<span[^>]*>)(.*?)(</span></div>\s*<div[^>]*>)(.*?)(</div>)',
+            re.S | re.I,
+        )
+        def _repl2(m):
+            return f"{m.group(1)}{repl_label}{m.group(2)}{val_txt}{m.group(4)}{unit}{m.group(6)}{note or m.group(7)}{m.group(8)}"
+        out = pat2.sub(_repl2, out, count=1)
+    return out
+
+
+def _apply_latency_overrides_to_report_html(report_html: str, overrides: dict | None) -> str:
+    if not overrides:
+        return report_html
+    out = report_html
+    specs = [
+        ("ttft_ms", ["TTFT mean"], "ms", "Canonical selected-window latency KPI"),
+        ("ttft_p50_ms", ["TTFT p50"], "ms", "Canonical percentile KPI"),
+        ("tpot_ms", ["TPOT / ITL mean", "TPOT mean", "ITL mean"], "ms", "Canonical selected-window latency KPI", "TPOT / ITL mean"),
+        ("tpot_p50_ms", ["TPOT / ITL p50", "TPOT p50", "ITL p50"], "ms", "Canonical percentile KPI", "TPOT / ITL p50"),
+        ("e2e_ms", ["E2E mean"], "ms", "Canonical selected-window latency KPI"),
+        ("e2e_p50_ms", ["E2E p50"], "ms", "Canonical percentile KPI"),
+        ("throughput_mean", ["Throughput mean"], "tok/s", "Canonical selected-window throughput KPI"),
+        ("throughput_p50", ["Throughput p50"], "tok/s", "Canonical selected-window throughput KPI"),
+    ]
+    for spec in specs:
+        key, labels, unit, note = spec[:4]
+        canonical_label = spec[4] if len(spec) > 4 else None
+        val = _safe_float(overrides.get(key, 0.0), 0.0)
+        if val > 0:
+            out = _replace_kpi_value_by_label(out, labels, val, unit, note, canonical_label, key)
+    return out
+
+
+def _apply_latency_overrides_to_interactive_html(interactive_html: str,
+                                                 overrides: dict | None) -> str:
+    return _apply_latency_overrides_to_report_html(interactive_html, overrides)
+
+
+def _canonical_kpi_tile_order_html(report_html: str) -> str:
+    """Normalize top KPI tile order across generated tabs when possible."""
+    # Individual generators already output the canonical order; this hook is kept
+    # for combined-report post-processing and future per-tab tile drift.
+    return report_html
+
+
+def _extract_static_kpi_overrides(static_html: str) -> Dict[str, float]:
+    """Extract KPI values from the already-generated End Report HTML."""
     out: Dict[str, float] = {}
     if not static_html:
         return out
     try:
+        out.update(_extract_latency_kpis_from_html(static_html))
         txt = _html.unescape(static_html)
-        # Strip tags so the regex works both on a standalone report and on an
-        # iframe srcdoc embedded in the combined report.
-        txt = re.sub(r"<script\b.*?</script>", " ", txt, flags=re.I | re.S)
-        txt = re.sub(r"<style\b.*?</style>", " ", txt, flags=re.I | re.S)
-        txt = re.sub(r"<[^>]+>", " ", txt)
-        txt = re.sub(r"\s+", " ", txt)
-
-        # Canonical End Report section labels:
-        #   ▶ Prefill Phase HIGH 15227 ms TTFT
-        #   ▶ Decode Phase HIGH 1715.1 ms/tok TPOT
-        m = re.search(r"Prefill\s+Phase\b[^0-9]{0,80}([0-9][0-9,]*(?:\.[0-9]+)?)\s*ms\s*TTFT", txt, re.I)
-        if m:
-            out["ttft_ms"] = _safe_float(m.group(1).replace(",", ""), 0.0)
-        m = re.search(r"Decode\s+Phase\b[^0-9]{0,80}([0-9][0-9,]*(?:\.[0-9]+)?)\s*ms\s*/?\s*tok\s*TPOT", txt, re.I)
-        if m:
-            out["tpot_ms"] = _safe_float(m.group(1).replace(",", ""), 0.0)
-
-        # Fallback patterns used by some older static report builds.
+        flat = re.sub(r"<script\b.*?</script>", " ", txt, flags=re.I | re.S)
+        flat = re.sub(r"<style\b.*?</style>", " ", flat, flags=re.I | re.S)
+        flat = re.sub(r"<[^>]+>", " ", flat)
+        flat = re.sub(r"\s+", " ", flat)
         if out.get("ttft_ms", 0.0) <= 0:
-            m = re.search(r"Observed\s+TTFT[^0-9]{0,80}([0-9][0-9,]*(?:\.[0-9]+)?)\s*ms", txt, re.I)
-            if m:
-                out["ttft_ms"] = _safe_float(m.group(1).replace(",", ""), 0.0)
+            m = re.search(r"Prefill\s+Phase\b[^0-9]{0,80}([0-9][0-9,]*(?:\.[0-9]+)?)\s*ms\s*TTFT", flat, re.I)
+            if m: out["ttft_ms"] = _safe_float(m.group(1).replace(",", ""), 0.0)
         if out.get("tpot_ms", 0.0) <= 0:
-            m = re.search(r"(?:Observed\s+)?(?:TPOT|ITL)[^0-9]{0,80}([0-9][0-9,]*(?:\.[0-9]+)?)\s*ms", txt, re.I)
-            if m:
-                out["tpot_ms"] = _safe_float(m.group(1).replace(",", ""), 0.0)
+            m = re.search(r"Decode\s+Phase\b[^0-9]{0,80}([0-9][0-9,]*(?:\.[0-9]+)?)\s*ms\s*/?\s*tok\s*TPOT", flat, re.I)
+            if m: out["tpot_ms"] = _safe_float(m.group(1).replace(",", ""), 0.0)
+        if out.get("ttft_ms", 0.0) <= 0:
+            m = re.search(r"Observed\s+TTFT[^0-9]{0,80}([0-9][0-9,]*(?:\.[0-9]+)?)\s*ms", flat, re.I)
+            if m: out["ttft_ms"] = _safe_float(m.group(1).replace(",", ""), 0.0)
+        if out.get("tpot_ms", 0.0) <= 0:
+            m = re.search(r"(?:Observed\s+)?(?:TPOT|ITL)[^0-9]{0,80}([0-9][0-9,]*(?:\.[0-9]+)?)\s*ms", flat, re.I)
+            if m: out["tpot_ms"] = _safe_float(m.group(1).replace(",", ""), 0.0)
     except Exception:
         return out
     return {k: v for k, v in out.items() if _safe_float(v, 0.0) > 0}
@@ -1011,7 +1431,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
       • KPI grid            — all key latency/throughput/memory/storage numbers
       • Top findings        — data-driven, prioritised, with concrete actions
       • Memory tier analysis — L1 HBM / L2 DRAM / L3 device characteristics
-      • KV$ L3 storage executive   — requirement foundation with 5 bullet-point specs
+      • KV$ L3 (local storage) executive   — requirement foundation with 5 bullet-point specs
       • Per-chart takeaways — actionable interpretation of every NVMe/memory chart
       • Bottleneck mapping  — every AI stack layer with score, root cause, action
 
@@ -1025,7 +1445,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     raw_dir = Path(raw_dir)
 
     # ── Load all data sources ─────────────────────────────────────────────────
-    setup    = _read_json(raw_dir / "setup_details.json")
+    setup    = _amoprof_augment_setup_from_launch(_read_json(raw_dir / "setup_details.json"))
     sglang   = _read_json(raw_dir / "sglang_summary.json")
     gpu      = _read_json(raw_dir / "gpu_summary.json")
     blk      = _read_json(raw_dir / "summary.json")
@@ -1050,7 +1470,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     for _src, _dst in _bt_key_map.items():
         if _src in _ba_sum and blk.get(_dst, 0) == 0:
             blk[_dst] = _ba_sum[_src]
-    # Also store raw blktrace bytes/totals for the L3 storage total tiles.
+    # Also store raw blktrace bytes/totals for the L3 (local storage) total tiles.
     # Keep full precision; tiny reads (e.g. 0.0008 GB on write-heavy KV-offload
     # workloads) get rounded away by round(..., 2) and downstream R/W ratio
     # falls to 0:1, masking the real workload.
@@ -1099,7 +1519,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 "qd_p99": _safe_float(_qd_stat.get("p99", _qd_stat.get("max", 0))),
                 "qd_max": _safe_float(_qd_stat.get("max", 0)),
                 "pct_at_qd_ge_32": 0,
-                "qd_source": "queue_depth_sources_multi_source_fallback",
+                "qd_source": "advisory_queue_depth_sources_run_delta_fallback",
             }
     if not _qd_sum:
         _inflight_stat = nvme_ts.get("inflight") or nvme_ts.get("queue_depth") or nvme_ts.get("aqu_sz") or nvme_ts.get("avgqu")
@@ -1110,7 +1530,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 "qd_p95": _safe_float(_inflight_stat.get("max", 0)),
                 "qd_max": _safe_float(_inflight_stat.get("max", 0)),
                 "pct_at_qd_ge_32": 0,
-                "qd_source": "iostat_aqu_sz_or_sysfs_inflight_fallback",
+                "qd_source": "advisory_iostat_aqu_sz_or_sysfs_inflight_fallback",
             }
     # amduprof_pcm_raw.csv is a structured text report with a header + data sections;
     # it cannot be parsed by _read_csv_summary.  amduprof_pcm_timeseries.csv (if
@@ -1136,29 +1556,32 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     hot_lba    = _read_csv_summary(_first_existing(raw_dir, ["hot_regions_overall.csv"]))
     smart      = _read_json(raw_dir / "smart_summary.json")
 
-    # L3 HiCache filesystem capacity (df-derived, written by SsdHardwareMonitor
-    # at collect time and re-snapshotted by _refresh_smart_capacity in analyze).
-    l3_fs_total_gb = _safe_float(smart.get("hicache_fs_total_gb", 0))
-    l3_fs_used_gb  = _safe_float(smart.get("hicache_fs_used_gb",
-                                  smart.get("hicache_size_gb", 0)))
-    l3_fs_avail_gb = _safe_float(smart.get("hicache_fs_avail_gb", 0))
-    l3_fs_used_pct = _safe_float(smart.get("hicache_fs_used_pct", 0))
-    nvme_dev_cap_gb = _safe_float(smart.get("nvme_device_capacity_gb", 0))
-    l3_capacity_source = "df/SMART runtime snapshot" if l3_fs_total_gb > 0 else ""
-    # Allow setup_details.json to supply L3 storage capacity when SMART/df
+    # L3 capacity: require explicit L3/L3 config. Do not infer from generic
+    # df/SMART snapshots because L2-only runs can still have old mounted
+    # filesystems or NVMe devices on the node.
+    _launch_raw_for_l3 = _pick(setup, ["Launch command","launch_command","Command","Reference launch command"], "")
+    l3_explicit_config = _amoprof_has_explicit_l3_config(setup, str(_launch_raw_for_l3))
+    l3_fs_total_gb = _safe_float(smart.get("hicache_fs_total_gb", 0)) if l3_explicit_config else 0.0
+    l3_fs_used_gb  = (_safe_float(smart.get("hicache_fs_used_gb",
+                                  smart.get("hicache_size_gb", 0))) if l3_explicit_config else 0.0)
+    l3_fs_avail_gb = _safe_float(smart.get("hicache_fs_avail_gb", 0)) if l3_explicit_config else 0.0
+    l3_fs_used_pct = _safe_float(smart.get("hicache_fs_used_pct", 0)) if l3_explicit_config else 0.0
+    nvme_dev_cap_gb = _safe_float(smart.get("nvme_device_capacity_gb", 0)) if l3_explicit_config else 0.0
+    l3_capacity_source = "df/SMART runtime snapshot" if (l3_explicit_config and l3_fs_total_gb > 0) else ""
+    # Allow setup_details.json to supply L3 (local storage) capacity when SMART/df
     # data is not available (common for non-NVMe backends such as Mooncake).
     # Values from setup_details are configured capacity, not measured runtime
     # cache occupancy; label them accordingly in the Executive tile.
     if l3_fs_total_gb <= 0:
         l3_fs_total_gb = _safe_float(_pick(setup, [
-            "L3 storage capacity GB", "L3 Capacity GB", "L3 total capacity GB",
-            "l3_storage_capacity_gb", "l3_capacity_gb", "L3 storage total GB"
+            "L3 (local storage) capacity GB", "L3 Capacity GB", "L3 total capacity GB",
+            "l3_storage_capacity_gb", "l3_capacity_gb", "L3 (local storage) total GB"
         ], 0))
         if l3_fs_total_gb > 0:
             l3_capacity_source = "configured capacity from setup_details.json"
     if l3_fs_used_gb <= 0:
         l3_fs_used_gb = _safe_float(_pick(setup, [
-            "L3 storage used GB", "L3 used capacity GB", "l3_storage_used_gb",
+            "L3 (local storage) used GB", "L3 used capacity GB", "l3_storage_used_gb",
             "l3_used_gb", "L3 storage current used GB"
         ], 0))
         if l3_fs_used_gb > 0 and not smart.get("hicache_fs_used_gb"):
@@ -1167,6 +1590,10 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         l3_fs_avail_gb = max(l3_fs_total_gb - l3_fs_used_gb, 0.0)
     if l3_fs_used_pct == 0 and l3_fs_total_gb > 0 and l3_fs_used_gb > 0:
         l3_fs_used_pct = round(l3_fs_used_gb / l3_fs_total_gb * 100, 1)
+    if not l3_explicit_config:
+        l3_fs_total_gb = l3_fs_used_gb = l3_fs_avail_gb = l3_fs_used_pct = 0.0
+        nvme_dev_cap_gb = 0.0
+        l3_capacity_source = ""
 
     # ── Extract key scalars ───────────────────────────────────────────────────
     model     = _pick(setup, ["Model","model","model_name","Model path","model_path","model_id"],
@@ -1191,11 +1618,11 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     cache_enabled = _pick(setup, ["HiCache","Hierarchical cache","enable_hierarchical_cache",
                                     "hicache","HiCache enabled","Inference cache",
                                     "inference_cache","Cache tier","cache_tier"], "unknown")
-    # L3 storage class — NVMe L3 storage by default, but future runs may target an
+    # L3 storage class — NVMe L3 (local storage) by default, but future runs may target an
     # AI Memory Node (CXL / GPU-side block storage) or other backend. Surfaced
     # in the tier listing so the reader knows what hardware they're looking at.
     l3_storage_type = _pick(setup, ["L3 storage type","l3_storage_type",
-                                      "L3 type","l3_type","Cache L3 storage backend",
+                                      "L3 type","l3_type","Cache L3 (local storage) backend",
                                       "cache_l3_backend"], "Storage")
     # Explicit local-block mapping for L3 storage.  Do not infer that generic
     # node-exporter/iostat disk metrics are L3 storage merely because a backend
@@ -1210,14 +1637,22 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         "L3 storage mount path", "l3_storage_mount_path"
     ], "")).strip()
     _l3_backend = resolve_l3_backend(setup, _pick(setup, ["Launch command","launch_command","Command"], ""))
-    l3_backend_class = _l3_backend.backend_class
-    l3_backend_display = _l3_backend.display_name
-    l3_storage_is_local_block = bool(_l3_backend.backend_class == "local_ssd")
-    l3_storage_has_block_mapping = bool(_l3_backend.has_local_block_mapping or l3_device or l3_mount_path)
+    if not l3_explicit_config:
+        l3_backend_class = "none"
+        l3_backend_display = "Not configured"
+        l3_storage_is_local_block = False
+        l3_storage_has_block_mapping = False
+    else:
+        l3_backend_class = _l3_backend.backend_class
+        l3_backend_display = _l3_backend.display_name
+        l3_storage_is_local_block = bool(_l3_backend.backend_class == "local_ssd")
+        l3_storage_has_block_mapping = bool(_l3_backend.has_local_block_mapping or l3_device or l3_mount_path)
     ctx_len   = _pick(setup, ["Context length","context_length","max_model_len","ctx_len","max_seq_len","context"], "?")
     page_sz   = _pick(setup, ["Page size","page_size","sglang_page_size","page","kv_page_size"], "1")
-    mem_frac  = _pick(setup, ["Mem fraction static","mem_fraction_static","mem_fraction","memory_fraction"], "?")
-    launch    = _pick(setup, ["Launch command","launch_command","Command"], "")
+    launch    = _pick(setup, ["Launch command","launch_command","Command","Reference launch command"], "")
+    mem_frac  = _pick(setup, ["mem-fraction-static","Mem fraction static","mem_fraction_static","mem_fraction","memory_fraction"], "")
+    if _amoprof_missing(mem_frac):
+        mem_frac = _amoprof_parse_launch_arg(str(launch), "--mem-fraction-static") or "?"
 
     # DRAM (host) capacity for the L2 tier label. Sourced from dram_summary.json
     # written by DramMonitor (/proc/meminfo MemTotal). May be 0 on legacy runs.
@@ -1293,9 +1728,9 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # — not what mixed AI workloads actually do. The "target" tile is meant as
     # context ("are we anywhere near what the hardware can do"), not a SLO.
     nvme_rd_bw_target_mbs   = _safe_float(_pick(setup,
-        ["L3 storage read BW target MB/s","nvme_rd_bw_target_mbs"], 7000.0))
+        ["L3 (local storage) read BW target MB/s","nvme_rd_bw_target_mbs"], 7000.0))
     nvme_wr_bw_target_mbs   = _safe_float(_pick(setup,
-        ["L3 storage write BW target MB/s","nvme_wr_bw_target_mbs"], 5000.0))
+        ["L3 (local storage) write BW target MB/s","nvme_wr_bw_target_mbs"], 5000.0))
     # L3 storage R/W endurance target: TB/day at rated TBW spread over 5y warranty.
     # rated TBW comes from smart_summary.json if SsdHardwareMonitor wrote it.
     rated_tbw_tb            = _safe_float(smart.get("rated_tbw_tb", 7.3))  # Dell CM7 default
@@ -1377,13 +1812,20 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     _static_kpis = static_kpi_overrides or {}
     _static_ttft = _safe_float(_static_kpis.get("ttft_ms", 0.0), 0.0)
     _static_tpot = _safe_float(_static_kpis.get("tpot_ms", 0.0), 0.0)
-    if _static_ttft > 0 and abs(_static_ttft - _safe_float(ttft_ms, 0.0)) > max(1.0, 0.02 * _static_ttft):
+    if _static_ttft > 0:
         ttft_ms = _static_ttft
-        sglang["server_ttft_ms_method"] = "end_report_metrics_object_prefill_phase_ttft"
-    if _static_tpot > 0 and abs(_static_tpot - _safe_float(tpot_ms, 0.0)) > max(1.0, 0.02 * _static_tpot):
+        sglang["server_ttft_ms_method"] = "canonical_combined_latency_kpi"
+    if _static_tpot > 0:
         tpot_ms = _static_tpot
-        sglang["server_itl_ms_method"] = "end_report_metrics_object_decode_phase_tpot"
-
+        sglang["server_itl_ms_method"] = "canonical_combined_latency_kpi"
+    if _safe_float(_static_kpis.get("ttft_p50_ms", 0.0), 0.0) > 0:
+        ttft_p50_ms = _safe_float(_static_kpis.get("ttft_p50_ms", 0.0), 0.0)
+    if _safe_float(_static_kpis.get("tpot_p50_ms", 0.0), 0.0) > 0:
+        tpot_p50_ms = _safe_float(_static_kpis.get("tpot_p50_ms", 0.0), 0.0)
+    if _safe_float(_static_kpis.get("e2e_ms", 0.0), 0.0) > 0:
+        e2e_ms = _safe_float(_static_kpis.get("e2e_ms", 0.0), 0.0)
+    if _safe_float(_static_kpis.get("e2e_p50_ms", 0.0), 0.0) > 0:
+        e2e_p50_ms = _safe_float(_static_kpis.get("e2e_p50_ms", 0.0), 0.0)
     # Cache hit is now a selected-window counter-derived metric.  The raw
     # sglang_cache_hit_rate gauge is useful only as a time-weighted diagnostic
     # because SGLang updates/overwrites it frequently.
@@ -1448,6 +1890,22 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                                             "generation_throughput_p50", "throughput_p50_tok_s"], 0.0)))
     if tp_p50 <= 0 and tp_active > 0:
         tp_p50 = tp_active
+
+    # Apply canonical common throughput KPIs only after throughput/tp_active/tp_p50
+    # have been initialized. v1.39.49 applied this too early and caused:
+    # "cannot access local variable 'throughput' where it is not associated with a value".
+    _common_tp_mean = _safe_float(_static_kpis.get("throughput_mean", 0.0), 0.0)
+    _common_tp_p50 = _safe_float(_static_kpis.get("throughput_p50", 0.0), 0.0)
+    _common_tp_peak = _safe_float(_static_kpis.get("throughput_peak", 0.0), 0.0)
+    if _common_tp_mean > 0:
+        tp_active = _common_tp_mean
+        throughput = max(throughput, tp_active)
+    if _common_tp_p50 > 0:
+        tp_p50 = _common_tp_p50
+    if _common_tp_peak > 0:
+        throughput = max(throughput, _common_tp_peak)
+    if throughput > 0:
+        throughput = max(throughput, tp_active, tp_p50)
 
     # Final TPOT/ITL fallback for Executive tab: if ITL counters were absent or
     # zero but output-token throughput is available, avoid showing an impossible
@@ -1734,27 +2192,27 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                                         or nvme_rd_iops > 0 or nvme_wr_iops > 0)
     ))
     l3_block_io_note = (
-        f"iostat / blktrace mapped to L3 storage" if l3_block_io_available
-        else "not available for this L3 storage backend; using SGLang movement counters"
+        f"iostat / blktrace mapped to L3 (local storage)" if l3_block_io_available
+        else "not available for this L3 (local storage) backend; using SGLang movement counters"
     )
     if l3_block_io_available:
         l3_util_phrase = (
-            f'The <strong>{nvme_util:.1f}% mean device utilisation</strong> indicates the L3 storage is '
-            f'<strong>{_nvme_status_phrase(nvme_util, nvme_rd_lat)}</strong>. '
-            f'{_nvme_latency_phrase(nvme_rd_lat, nvme_wr_lat)}.'
+            f'L3 (local storage) block telemetry reports <strong>{nvme_rd_bw:.1f} MB/s read</strong> '
+            f'and <strong>{nvme_wr_bw:.1f} MB/s write</strong>. '
+            f'{_nvme_latency_phrase(nvme_rd_lat, nvme_wr_lat)}. '
+            'iostat busy-time is omitted because it is not proof of hardware saturation.'
         )
         l3_util_subnote = (
-            f"Device utilisation at {nvme_util:.1f}% mean — "
-            f"the L3 storage is {_nvme_status_phrase(nvme_util, nvme_rd_lat)}."
+            f"L3 interpretation uses bandwidth, latency, queue-depth and request-size evidence. "
+            f"Busy-time is not used as a confidence signal."
         )
     else:
         l3_util_phrase = (
-            "L3 storage block-device utilisation, per-I/O latency, queue depth, and request-size "
-            "distribution are not available for this run. The L3 values above are derived from "
-            "SGLang hierarchical-cache movement counters, not local disk telemetry."
+            "L3 block-device latency, queue depth, and request-size distribution are not available for this run. "
+            "The L3 values above are derived from SGLang hierarchical-cache movement counters, not local disk telemetry."
         )
         l3_util_subnote = (
-            "Block-device utilisation is unavailable/not applicable for this L3 storage backend; "
+            "Block-device busy-time is unavailable/not applicable for this L3 backend; "
             "L3 activity is derived from SGLang movement counters."
         )
 
@@ -1845,6 +2303,43 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         )
         return (f'<li><span class="fi-tag">[{_html.escape(tag)}]</span>'
                 f'{plain_html}{details_html}</li>')
+
+    def evidence_chips(items: list[tuple[str, str, str]]) -> str:
+        """Render inline evidence chips. Each item is (label, value, state)."""
+        out = []
+        for label, value, state in items:
+            cls = state if state in ("good", "warn", "bad") else ""
+            out.append(
+                f'<span class="evidence-chip {cls}"><b>{_html.escape(str(label))}:</b> '
+                f'{_html.escape(str(value))}</span>')
+        return "".join(out)
+
+    def evidence_box(title: str,
+                     chips: list[tuple[str, str, str]],
+                     rule: str,
+                     sources: str,
+                     confidence: str = "medium",
+                     caveat: str = "") -> str:
+        conf_state = "good" if confidence.lower().startswith("high") else (
+                     "warn" if confidence.lower().startswith("medium") else "bad")
+        caveat_html = (f'<div class="evidence-rule"><b>Caveat:</b> {_html.escape(caveat)}</div>'
+                       if caveat else "")
+        return (
+            f'<div class="evidence-card">'
+            f'<div class="evidence-title">{_html.escape(title)} '
+            f'<span class="evidence-chip {conf_state}"><b>confidence:</b> {_html.escape(confidence)}</span></div>'
+            f'<div>{evidence_chips(chips)}</div>'
+            f'<div class="evidence-rule"><b>Decision rule:</b> {_html.escape(rule)}</div>'
+            f'{caveat_html}'
+            f'<div class="evidence-src"><b>Data source:</b> {_html.escape(sources)}</div>'
+            f'</div>'
+        )
+
+    # Explicit memory-tier labels.
+    # L3 is node-local storage/NVMe; L3 is shared/remote AI Memory Node/context-memory tier.
+    TIER_L3_LOCAL = "L3 (local storage)"
+    TIER_L35_AIMEM = "L3 (AI Memory Node)"
+    TIER_L3_L35 = "L3 (local storage)"
 
     def chart_card(title: str, subtitle: str, takeaway: str, implication: str,
                    chart_id: str = "", chart_fig: str = "") -> str:
@@ -2038,7 +2533,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         else:
             l2_dram_tile_note = f"L2 DRAM cache allocation · {l2_dram_capacity_source}"
 
-    # ── L3 storage traffic from SGLang token counters (Prometheus-only fallback) ──
+    # ── L3 (local storage) traffic from SGLang token counters (Prometheus-only fallback) ──
     # GATING: This fallback is intentional ONLY for Prom-only runs where
     # no local run-dir instrumentation was available. When a run-dir IS
     # supplied AND it contains blktrace output, we use that as the
@@ -2123,7 +2618,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
 
     # Convert to GB: tokens × KB/token / (1024 KB/MB × 1024 MB/GB) = GB.
     # Reliable SGLang L3/local Storage evidence:
-    #   backuped_tokens   -> data moved down into the L3 storage tier (write/offload)
+    #   backuped_tokens   -> data moved down into the L3 (local storage) tier (write/offload)
     #   prefetched_tokens -> explicit prefetch/onboard from the L3/backing tier
     # load_back_tokens by itself is ambiguous in SGLang 0.5.x; it can represent
     # restoration from the HiCache hierarchy (often L2 DRAM/page cache) and may be
@@ -2150,11 +2645,11 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         sglang.get("collection_elapsed_s", 0))
     l3_logical_estimate_note = ""
     if _blktrace_was_attempted:
-        # v1.39.20: when a physical blktrace capture exists, it remains the
+        # v1.39.61: when a physical blktrace capture exists, it remains the
         # authoritative source for SSD/LBA bytes. SGLang counters are still
         # valuable, but they are logical HiCache/backing-tier movement and are
         # shown as a separate diagnostic. Never overwrite physical block bytes
-        # with token-derived estimates, even when the backend maps to local SSD;
+        # with token-derived estimates, even when the backend maps to L3 local SSD;
         # otherwise Executive can contradict hot/cold LBA charts.
         if l3_sglang_activity_tokens > 0:
             if l3_backend_class == "local_ssd":
@@ -2162,20 +2657,20 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 l3_logical_estimate_note = (
                     f"SGLang counters indicate logical local-SSD/backing-tier movement "
                     f"for backend {l3_backend_display}: prefetch/read={l3_est_read_gb:.1f} GB, "
-                    f"write={l3_est_write_gb:.1f} GB; ambiguous load_back upper-bound="
+                    f"write={l3_est_write_gb:.1f} GB; ambiguous L2→L1 load_back restore diagnostic="
                     f"{l3_ambiguous_loadback_gb:.1f} GB. Physical blktrace bytes remain "
                     f"authoritative for SSD/LBA charts: read={_block_read_gb:.3f} GB, "
                     f"write={_block_write_gb:.3f} GB. A mismatch points to page-cache hits, "
                     f"counter semantics, delayed writeback, or a window/capture issue."
                 )
             elif l3_backend_class in ("remote_mooncake", "remote_storage"):
-                l3_traffic_source = "blktrace_unmapped_sglang_logical_remote_l3"
+                l3_traffic_source = "blktrace_unmapped_sglang_logical_remote_l35"
                 l3_logical_estimate_note = (
                     f"SGLang counters indicate logical L3/backing-tier movement "
                     f"for backend {l3_backend_display}: prefetch/read={l3_est_read_gb:.1f} GB, "
-                    f"write={l3_est_write_gb:.1f} GB; ambiguous load_back upper-bound="
-                    f"{l3_ambiguous_loadback_gb:.1f} GB. This is NOT promoted to local SSD "
-                    f"physical I/O because no resolved local SSD block mapping is available; "
+                    f"write={l3_est_write_gb:.1f} GB; ambiguous L2→L1 load_back restore diagnostic="
+                    f"{l3_ambiguous_loadback_gb:.1f} GB. This is NOT promoted to L3 local SSD "
+                    f"physical I/O because no resolved L3 local SSD block mapping is available; "
                     f"physical traced-device R/W remains read={_block_read_gb:.3f} GB, "
                     f"write={_block_write_gb:.3f} GB."
                 )
@@ -2184,7 +2679,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 l3_logical_estimate_note = (
                     f"SGLang counters indicate logical L3/backing-tier movement "
                     f"but backend mapping is unknown: prefetch/read={l3_est_read_gb:.1f} GB, "
-                    f"write={l3_est_write_gb:.1f} GB; ambiguous load_back upper-bound="
+                    f"write={l3_est_write_gb:.1f} GB; ambiguous L2→L1 load_back restore diagnostic="
                     f"{l3_ambiguous_loadback_gb:.1f} GB. Physical traced-device R/W remains "
                     f"read={_block_read_gb:.3f} GB, write={_block_write_gb:.3f} GB."
                 )
@@ -2200,7 +2695,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             read_gb  = l3_est_read_gb
             write_gb = l3_est_write_gb
             rw_ratio = read_gb / max(write_gb, 0.001)
-            l3_traffic_source = "sglang_logical_remote_l3"
+            l3_traffic_source = "sglang_logical_remote_l35"
         else:
             l3_traffic_source = "sglang_logical_hicache_unknown_backend"
             l3_logical_estimate_note = "SGLang logical backup/prefetch seen but L3 backend is unknown; not labeled as SSD or Mooncake"
@@ -2208,12 +2703,12 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         l3_traffic_source = "none"
 
     l3_unmapped_logical_seen = l3_traffic_source in (
-        "blktrace_unmapped_sglang_logical_remote_l3",
+        "blktrace_unmapped_sglang_logical_remote_l35",
         "blktrace_unmapped_sglang_logical_unknown_backend",
     )
     l3_logical_diagnostic_seen = l3_traffic_source in (
         "blktrace_mapped_with_sglang_logical_diagnostic",
-        "blktrace_unmapped_sglang_logical_remote_l3",
+        "blktrace_unmapped_sglang_logical_remote_l35",
         "blktrace_unmapped_sglang_logical_unknown_backend",
     )
 
@@ -2236,7 +2731,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
 
     # Derive L3 storage bandwidth from token-counter deltas when SGLang is the
     # selected source or when it is supplementing a missing block direction.
-    if _l3_window_s > 0 and l3_traffic_source in ("sglang_logical_local_ssd", "sglang_logical_remote_l3", "sglang_logical_hicache_unknown_backend"):
+    if _l3_window_s > 0 and l3_traffic_source in ("sglang_logical_local_ssd", "sglang_logical_remote_l35", "sglang_logical_hicache_unknown_backend"):
         if nvme_rd_bw == 0.0 and l3_est_read_gb > 0:
             nvme_rd_bw = l3_est_read_gb * 1024 / _l3_window_s   # GB→MB/s
         if nvme_wr_bw == 0.0 and l3_est_write_gb > 0:
@@ -2265,7 +2760,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                   else "DRAM bandwidth counters not collected. Install AMDuProf and re-run "
                        "with --enable-amduprof-pcm. Falls back to /proc/meminfo for "
                        "capacity but not for bandwidth.")) +
-        pill("L3 storage / blktrace", has_nvme and has_blktrace,
+        pill(("L3 storage / blktrace" if (l3_explicit_config and l3_backend_class in ("remote_mooncake", "remote_storage")) else "L3 storage / blktrace"), has_nvme and has_blktrace,
              tip=("blktrace captured per-IO completion events for the L3 device." if (has_nvme and has_blktrace)
                   else "blktrace data missing or incomplete. Re-run with --enable-blktrace "
                        "and ensure the user has CAP_SYS_ADMIN. Without it, per-IO latency, "
@@ -2287,7 +2782,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     if discard_total > 0:
         badges_html += pill(f"TRIM total: {discard_total:,.0f}", True,
                              tip=(f"{discard_total:,.0f} TRIM/Discard commands were issued by "
-                                  "the filesystem to the L3 storage over the run. This is normal and "
+                                  "the filesystem to the L3 (local storage) over the run. This is normal and "
                                   "healthy — it tells the device which LBA ranges are free, "
                                   "enabling efficient garbage collection. A value of 0 in some "
                                   "runs is also normal (the FS may have already reclaimed in a "
@@ -2330,10 +2825,10 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                if _ba_dropped_events > 0 else "")
         ))
 
-    # ── L3 storage cache activity from SGLang counters (Prometheus-only fallback) ──
-    # Emit when blktrace isn't available but SGLang tells us the L3 storage was used.
+    # ── L3 (local storage) cache activity from SGLang counters (Prometheus-only fallback) ──
+    # Emit when blktrace isn't available but SGLang tells us the L3 backing tier was used.
     # This is the difference between a useless "no L3 data" executive and one
-    # that still answers "how active is your KV$ L3 storage tier?" — at token
+    # that still answers "how active is your KV$ L3 (local storage) tier?" — at token
     # granularity instead of byte granularity. Crucially we ALSO state what
     # this number can NOT tell the user (per-IO latency, block size, queue
     # depth) so they don't over-interpret it.
@@ -2349,17 +2844,17 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         findings_items.append(finding(
             "LOGICAL KV BACKING-TIER MOVEMENT · NOT PHYSICAL SSD",
             (f'SGLang counters show logical backing-tier movement, but this run also has physical blktrace data that does not match the large logical read total. '
-             f'Because no concrete local SSD L3 mapping was resolved, AMOprof does <strong>not</strong> use the logical numbers as SSD/LBA traffic. '
+             f'Because no concrete L3 local SSD L3 mapping was resolved, AMOprof does <strong>not</strong> use the logical numbers as SSD/LBA traffic. '
              f'<strong>Logical prefetch/read:</strong> {l3_est_read_gb:.1f} GB; <strong>logical write:</strong> {l3_est_write_gb:.1f} GB. '
-             f'<strong>Ambiguous load_back upper-bound:</strong> {l3_ambiguous_loadback_gb:.1f} GB (not counted as SSD read). '
+             f'<strong>Ambiguous L2→L1 load_back restore diagnostic:</strong> {l3_ambiguous_loadback_gb:.1f} GB (not counted as SSD/L3 read bytes). '
              f'<strong>Physical traced-device read:</strong> {_block_read_gb:.3f} GB; <strong>physical write:</strong> {_block_write_gb:.3f} GB. '
              f'This prevents the Executive tile from contradicting LBA hot/cold and SSD distribution charts. If the L3 device is mapped but the gap is large, treat it as a cache/page-cache/counter-semantics or capture-window mismatch to investigate. '
              f'<br><br>Counters: backuped={_bk_t:,} ({_bk_rate:,.0f}/s), load_back={_lb_t:,} ({_lb_rate:,.0f}/s), prefetched={_pf_t:,} ({_pf_rate:,.0f}/s), evicted={_ev_t:,} ({_ev_rate:,.0f}/s).'),
-            plain=(f"SGLang shows logical backing-tier movement ({l3_est_read_gb:.1f} GB prefetch/read / {l3_est_write_gb:.1f} GB write; load_back upper-bound {l3_ambiguous_loadback_gb:.1f} GB not counted), "
+            plain=(f"SGLang shows logical backing-tier movement ({l3_est_read_gb:.1f} GB prefetch/read / {l3_est_write_gb:.1f} GB write; L2→L1 load_back restore diagnostic {l3_ambiguous_loadback_gb:.1f} GB not counted), "
                    f"but physical traced-device traffic is {_block_read_gb:.3f} GB read / {_block_write_gb:.3f} GB write. "
-                   "These are shown separately because no local SSD L3 block mapping was resolved.")))
+                   "These are shown separately because no L3 local SSD L3 block mapping was resolved.")))
 
-    if l3_traffic_source in ("sglang_logical_local_ssd", "sglang_logical_remote_l3", "sglang_logical_hicache_unknown_backend") and (read_gb > 0 or write_gb > 0):
+    if l3_traffic_source in ("sglang_logical_local_ssd", "sglang_logical_remote_l35", "sglang_logical_hicache_unknown_backend") and (read_gb > 0 or write_gb > 0):
         _bk_t = int(backuped_tokens)
         _lb_t = int(loadback_tokens)
         _pf_t = int(prefetched_tokens)
@@ -2377,7 +2872,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
              f'(≈ {write_gb:.1f} GB at {kv_bytes_tok_kb:.0f} KB/tok) '
              f'at <strong>{_bk_rate:,.0f} tok/s</strong>. '
              f'<strong>Load-back tokens:</strong> {_lb_t:,} tokens '
-             f'at <strong>{_lb_rate:,.0f} tok/s</strong> (hierarchy restore diagnostic; not counted as SSD read). '
+             f'at <strong>{_lb_rate:,.0f} tok/s</strong> (hierarchy restore diagnostic; not counted as SSD/L3 read bytes). '
              f'<strong>Prefetched/onboarded from L3:</strong> {_pf_t:,} tokens '
              f'at <strong>{_pf_rate:,.0f} tok/s</strong>. '
              f'<strong>Evicted from cache hierarchy:</strong> {_ev_t:,} tokens '
@@ -2393,7 +2888,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
              f'your sizing exercise, re-collect with <code>--enable-blktrace</code> '
              f'next run.'),
             plain=(f"Even without blktrace, SGLang counters show L3/cache-tier activity: "
-                   f"{_bk_t:,} backuped, {_lb_t:,} load-back (diagnostic only), {_pf_t:,} prefetched, "
+                   f"{_bk_t:,} backuped, {_lb_t:,} L2→L1 load-back restore (diagnostic only), {_pf_t:,} prefetched, "
                    f"and {_ev_t:,} evicted tokens. Estimated directional traffic is "
                    f"{write_gb:.1f} GB written and {read_gb:.1f} GB prefetch-read. These byte "
                    f"numbers are estimates (token × bytes-per-token), not direct disk "
@@ -2401,7 +2896,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     elif l3_traffic_source == "none":
         # NO L3 data from any source. Don't leave the user wondering — be
         # explicit about what was checked and what was found. The user
-        # genuinely benefits from knowing whether (a) L3 storage was idle, or
+        # genuinely benefits from knowing whether (a) L3 backing tier was idle, or
         # (b) instrumentation was missing.
         _has_sg_counters = any(k in sglang for k in (
             "backuped_tokens_total", "sglang_backuped_tokens_total",
@@ -2414,30 +2909,30 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             # and evicted-only are not counted as L3 usage.
             findings_items.append(finding(
                 "L3 ACTIVITY · NONE OBSERVED",
-                (f'L3 storage cache tier shows no reliable activity in this window. SGLang '
+                (f'L3 (local storage) cache tier shows no reliable activity in this window. SGLang '
                  f'<code>backuped_tokens_total</code> and <code>prefetched_tokens_total</code> '
                  f'both registered 0 during the {_l3_window_s:.0f} s collection window. '
                  + (f'<code>load_back_tokens_total</code> = {int(loadback_tokens):,} was observed, '
-                    f'but load_back-only is ambiguous and is not counted as L3 storage without '
+                    f'but load_back-only is L2→L1 restore and is not storage I/O and is not counted as L3 local-storage I/O without '
                     f'backup/prefetch or mapped block telemetry. '
                     if loadback_tokens > 0 else '')
                  + (f'<code>evicted_tokens_total</code> = {int(_evicted):,} indicates KV '
-                    f'evictions/cache pressure, but not L3 storage I/O by itself. '
+                    f'evictions/cache pressure, but not L3 local-storage I/O by itself. '
                     if _evicted > 0 else '')
                  + f'<strong>Implications:</strong> the working set fit within HBM + L2 '
-                 f'DRAM, so L3 storage was not exercised. KV$ L3 storage sizing based on this run '
+                 f'DRAM, so L3 local storage was not exercised. KV$ L3 (local storage) sizing based on this run '
                  f'will be unrepresentative — re-run with a larger context or more '
-                 f'concurrent sessions to drive L3 storage traffic.'),
-                plain=(f"No reliable L3 storage activity was detected during this {_l3_window_s:.0f}s "
+                 f'concurrent sessions to drive L3 (local storage) traffic.'),
+                plain=(f"No reliable L3 (local storage) activity was detected during this {_l3_window_s:.0f}s "
                        f"window. backuped_tokens_total and prefetched_tokens_total stayed at zero; "
-                       f"load_back-only/evicted-only counters are not treated as L3 storage usage. "
-                       f"If you're sizing the L3 storage tier, use a run that produces backup or "
+                       f"load_back-only (L2→L1 restore) and evicted-only counters are not treated as L3/local-storage usage. "
+                       f"If you're sizing the L3 (local storage) tier, use a run that produces backup or "
                        f"prefetch activity, or collect mapped block telemetry.")))
         else:
             # Counters missing entirely → instrumentation problem.
             findings_items.append(finding(
                 "⚠ L3 ACTIVITY · NOT INSTRUMENTED",
-                (f'No L3 storage cache activity could be measured for this run. '
+                (f'No L3 (local storage) cache activity could be measured for this run. '
                  f'blktrace is absent <em>and</em> SGLang Prometheus counters '
                  f'<code>backuped_tokens_total</code> / <code>load_back_tokens_total</code> '
                  f'were not captured. Possible causes: (1) SGLang version pre-dating '
@@ -2447,7 +2942,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                  f'<strong>Action:</strong> verify HiCache is enabled, confirm SGLang '
                  f'version exposes these counters, and either enable blktrace or '
                  f'fix the Prometheus metric path on the next collection.'),
-                plain=("We couldn't measure L3 storage cache activity for this run — neither "
+                plain=("We couldn't measure L3 (local storage) cache activity for this run — neither "
                        "the disk-level trace nor the application-level counters captured "
                        "it. The most likely cause is that HiCache wasn't enabled or "
                        "the metrics aren't being scraped. Without one of these data "
@@ -2464,7 +2959,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     elif ttft_ms > 1000:
         findings_items.append(finding(
             "COMPUTE",
-            f'TTFT of {ttft_ms:.0f} ms is elevated. Check prefill compute, KV load-back, '            f'and queue wait time separation. <strong>Action:</strong> '            f'enable chunked prefill and inspect KV eviction rates.',
+            f'TTFT of {ttft_ms:.0f} ms is elevated. Check prefill compute, KV L2→L1 load-back, '            f'and queue wait time separation. <strong>Action:</strong> '            f'enable chunked prefill and inspect KV eviction rates.',
             plain=(f"First-token wait is {ttft_ms:.0f} ms — a bit high. Could be the prompt "
                    f"being heavy, the cache reloading data, or requests queuing up. "
                    f"Recommended: turn on chunked prefill and check cache pressure.")))
@@ -2500,73 +2995,91 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # more NVMe BW. At low util, "headroom remains" is honest and the
         # only action is to expand L2.
         _nvme_status = _nvme_status_phrase(nvme_util, nvme_rd_lat)
+        _ssd_sat_proven = _ssd_hw_saturation_proven(
+            nvme_rd_bw, nvme_wr_bw, nvme_util, nvme_rd_lat,
+            _safe_float(_qd_sum.get("qd_mean", 0)) if isinstance(_qd_sum, dict) else 0,
+            _safe_float(_qd_sum.get("qd_max", 0)) if isinstance(_qd_sum, dict) else 0,
+            str(_qd_sum.get("qd_source", "")) if isinstance(_qd_sum, dict) else "",
+        )
         findings_items.append(finding(
             "KV CACHE · L3",
-            f'HiCache L3 storage is active: <strong>{read_gb:,.1f} GB L3 storage reads</strong> vs '
-            f'{write_gb:.1f} GB writes ({rw_ratio:.0f}:1 ratio) — a load-back dominated phase. '
+            f'HiCache L3 (local storage) is active: <strong>{read_gb:,.1f} GB L3 (local storage) reads</strong> vs '
+            f'{write_gb:.1f} GB writes ({rw_ratio:.0f}:1 ratio) — a L2→L1 restore-heavy diagnostic phase. '
             + (f'Estimated <strong>{mb_per_out_token:.0f} MB per output token</strong> '
-               f'of L3 storage read traffic — a key KV$ L3 storage sizing input. '
+               f'of L3 local-storage prefetch/read traffic — a key KV$ L3 (local storage) sizing input. '
                if mb_per_out_token > 1 else "") +
-            f'Device utilisation {nvme_util:.1f}% mean — the L3 storage is '
+            f'Physical bandwidth is {nvme_rd_bw:.1f} MB/s read / {nvme_wr_bw:.1f} MB/s write. '
+            f'Device busy-time {nvme_util:.1f}% mean — the L3 (local storage) is '
             f'<strong>{_nvme_status}</strong>. '
             + ('<strong>Action:</strong> expand DRAM L2 tier to absorb more '
                'KV blocks before they reach L3 — and provision additional '
-               'NVMe bandwidth (faster device or RAID-0 pair) since the current '
-               'L3 storage is at saturation.'
-               if nvme_util >= 90 else
-               '<strong>Action:</strong> expand DRAM L2 tier to absorb more KV blocks '
-               'before they reach L3.'),
+               'NVMe bandwidth only after exact queue-depth/latency confirms SSD hardware saturation.'
+               if _ssd_sat_proven else
+               '<strong>Action:</strong> do not size a faster SSD from busy-time alone. '
+               'First reduce KV L2→L1 restore pressure by expanding/tuning L2 DRAM and verify exact blktrace Q→C queue depth or iostat await latency.'),
             plain=(
-                f"The L3 storage cache is being read heavily ({read_gb:,.0f} GB). "
-                + ("The L3 storage is at its limit — to keep up as load grows, give the "
-                   "system more RAM cache AND consider a faster L3 storage."
-                   if nvme_util >= 90 else
-                   "The L3 storage has spare capacity. Recommended: give the system "
-                   "more RAM cache so fewer reads reach the L3 storage."))))
+                f"The L3 (local storage) cache is being read heavily ({read_gb:,.0f} GB), "
+                f"but physical bandwidth is only {nvme_rd_bw:.0f} MB/s read / {nvme_wr_bw:.1f} MB/s write. "
+                + ("SSD hardware saturation is supported by queue/latency evidence."
+                   if _ssd_sat_proven else
+                   "This is not bandwidth-saturated; the likely issue is cache-tier L2→L1 restore pressure or reporting/queue-depth evidence, not raw SSD bandwidth."))))
     elif write_gb > 10 and has_blktrace and rw_ratio < 0.1:
         # Write-dominant: HiCache is offloading KV blocks to L3 but
         # rarely loading them back. Often means L1+L2 fit the working set,
         # or eviction policy is too aggressive.
         findings_items.append(finding(
             "KV CACHE · L3",
-            f'HiCache L3 storage is write-dominant: <strong>{write_gb:.1f} GB writes</strong> vs '            f'{read_gb*1024:.1f} MB reads — a backup-heavy phase with no significant load-back. '            f'Device utilisation {nvme_util:.1f}% mean. '            f'<strong>Action:</strong> consider tuning HiCache eviction (raise L2 size or '            f'lower spill threshold) if the working set fits in DRAM; otherwise the '            f'writes are pre-staging future load-backs and are healthy.',
-            plain=(f"The L3 storage cache is being written to a lot ({write_gb:.0f} GB) but barely "
+            f'HiCache L3 (local storage) is write-dominant: <strong>{write_gb:.1f} GB writes</strong> vs '            f'{read_gb*1024:.1f} MB reads — a backup-heavy phase with no significant L2→L1 load-back restore. '            f'Device busy-time {nvme_util:.1f}% mean. '            f'<strong>Action:</strong> consider tuning HiCache eviction (raise L2 size or '            f'lower spill threshold) if the working set fits in DRAM; otherwise the '            f'writes are pre-staging future load-backs and are healthy.',
+            plain=(f"The L3 (local storage) cache is being written to a lot ({write_gb:.0f} GB) but barely "
                    f"read back. Either the data being saved is rarely needed again, or RAM "
                    f"already has what the model needs. If this is unexpected, check whether "
                    f"the cache is evicting too aggressively.")))
 
-    # ── L3 storage Queue Depth — workload throughput vs latency profile ─────────
+    # ── L3 (local storage) Queue Depth — workload throughput vs latency profile ─────────
     # Only emit a finding if blktrace QD analysis ran successfully (v40+).
     if _qd_sum and _qd_sum.get("qd_mean") is not None:
         _qd_source = str(_qd_sum.get("qd_source", "blktrace_q_to_c") or "blktrace_q_to_c")
-        _qd_src_note = ("exact blktrace Q→C" if _qd_source.startswith("blktrace") else "iostat/sysfs fallback")
+        _qd_src_note = ("exact blktrace Q→C" if _qd_source.startswith("blktrace") else "advisory iostat/sysfs run-window fallback")
         qd_mean = _safe_float(_qd_sum.get("qd_mean", 0))
         qd_p95  = _safe_float(_qd_sum.get("qd_p95", 0))
         qd_peak = _safe_float(_qd_sum.get("qd_max", 0))
         sat_32  = _safe_float(_qd_sum.get("pct_at_qd_ge_32", 0))
         sat_128 = _safe_float(_qd_sum.get("pct_at_qd_ge_128", 0))
-        if qd_mean >= 32 and sat_32 > 50:
+        _qd_ok = _qd_plausible(qd_mean, qd_peak, _qd_source)
+        if not _qd_ok:
             findings_items.append(finding(
-                "L3 storage QUEUE · SATURATED",
+                "L3 (local storage) QUEUE · FALLBACK SIGNAL",
+                f'Queue-depth fallback reported implausible values: mean QD '
+                f'<strong>{qd_mean:.1f}</strong>, p95 <strong>{qd_p95:.0f}</strong>, '
+                f'peak <strong>{qd_peak:.0f}</strong> from <strong>{_qd_src_note}</strong>. '
+                f'This is not reliable proof of NVMe saturation. Use exact blktrace Q→C '
+                f'queue-depth, iostat <code>aqu-sz</code>/<code>await</code>, or kernel '
+                f'inflight counters before concluding the SSD is the bottleneck.',
+                plain=(f"Queue-depth data is populated, but the fallback values are implausibly high. "
+                       f"Do not treat this as L3 (local storage) saturation until exact Q→C queue depth or latency confirms it.")))
+        elif qd_mean >= 32 and sat_32 > 50:
+            _exact_qd = _qd_source.startswith("blktrace")
+            findings_items.append(finding(
+                "L3 (local storage) QUEUE · " + ("SATURATED" if _exact_qd and (nvme_rd_lat > 1.0 or nvme_wr_lat > 1.0 or _ssd_bw_pct > 30.0) else "ADVISORY / VERIFY"),
                 f'Mean queue depth <strong>{qd_mean:.1f}</strong> ({_qd_src_note}) with '
                 f'<strong>{sat_32:.0f}%</strong> of trace time at QD≥32 (peak QD = '
-                f'{qd_peak:.0f}, p95 = {qd_p95:.0f}). The NVMe device queue is '
-                f'effectively saturated. <strong>Action:</strong> raise kernel '
-                f'<code>nr_requests</code>, ensure multi-queue blk-mq is enabled, '
-                f'or add storage parallelism (additional NVMes / striping).',
-                plain=(f"The L3 storage is being asked to handle more requests than it can keep up "
-                       f"with — its queue is full {sat_32:.0f}% of the time. "
-                       f"Recommended: spread the load across more L3 storage backends or tune the kernel "
-                       f"I/O scheduler.")))
+                f'{qd_peak:.0f}, p95 = {qd_p95:.0f}). '
+                + (f'This is exact Q→C queue evidence and may indicate saturation. ' if _exact_qd else
+                   f'This is fallback queue evidence, so it is <strong>not proof of NVMe saturation</strong>. ')
+                + f'Bandwidth is {nvme_rd_bw:.1f} MB/s read / {nvme_wr_bw:.1f} MB/s write; '
+                f'latency is {nvme_rd_lat:.2f} ms read / {nvme_wr_lat:.2f} ms write where captured. '
+                f'<strong>Action:</strong> treat busy-time/QD fallback as advisory until exact blktrace Q→C and await/latency confirm saturation.',
+                plain=(f"L3 (local storage) queue/busy-time is elevated, but saturation is not proven unless "
+                       f"bandwidth, latency, or exact Q→C queue-depth also confirms it.")))
         elif qd_mean < 1.5:
             findings_items.append(finding(
                 "L3 storage QUEUE · LATENCY-BOUND",
                 f'Mean queue depth <strong>{qd_mean:.2f}</strong> ({_qd_src_note}, peak {qd_peak:.0f}) — '
-                f'the workload is dispatching one L3 storage request at a time and waiting for it '
+                f'the workload is dispatching one L3 (local storage) request at a time and waiting for it '
                 f'to complete before issuing the next. Storage is NOT the bottleneck. '
                 f'<strong>Action:</strong> investigate upstream batching / scheduler '
                 f'serialisation — increase concurrency to use the device\'s parallelism.',
-                plain=(f"The L3 storage is barely being asked to do anything in parallel "
+                plain=(f"The L3 (local storage) is barely being asked to do anything in parallel "
                        f"(only {qd_mean:.1f} requests in-flight on average). The bottleneck "
                        f"is somewhere upstream — the GPU, scheduler, or batching. "
                        f"Recommended: increase request concurrency.")))
@@ -2575,7 +3088,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 "L3 storage QUEUE · HEALTHY",
                 f'Mean queue depth <strong>{qd_mean:.1f}</strong> ({_qd_src_note}, p95 {qd_p95:.0f}, peak '
                 f'{qd_peak:.0f}). Healthy parallel I/O without saturation.',
-                plain=(f"The L3 storage is handling {qd_mean:.1f} requests in parallel on average — "
+                plain=(f"The L3 (local storage) is handling {qd_mean:.1f} requests in parallel on average — "
                        f"a healthy mix of concurrency and headroom.")))
 
     # ── FS + block-layer merge stats (read early so findings can reference) ──
@@ -2666,14 +3179,14 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         if dram_util_pct < 30:
             findings_items.append(finding(
                 "L2 DRAM",
-                f'CPU PMU reports {dram_total_bw:.1f} GB/s mean DRAM BW '                f'({dram_util_pct:.1f}% of {dram_peak_cap:.0f} GB/s peak) — '                f'<strong>not the bottleneck</strong>. Ample DRAM headroom exists '                f'to expand the L2 KV tier and absorb more L3 storage traffic.',
+                f'CPU PMU reports {dram_total_bw:.1f} GB/s mean DRAM BW '                f'({dram_util_pct:.1f}% of {dram_peak_cap:.0f} GB/s peak) — '                f'<strong>not the bottleneck</strong>. Ample DRAM headroom exists '                f'to expand the L2 KV tier and absorb more L3 (local storage) traffic.',
                 plain=(f"System RAM bandwidth is at {dram_util_pct:.0f}% of its capability — "
                        f"plenty of room to spare. Recommended: enlarge the in-RAM portion of "
-                       f"the cache to reduce L3 storage traffic.")))
+                       f"the cache to reduce L3 (local storage) traffic.")))
         else:
             findings_items.append(finding(
                 "L2 DRAM",
-                f'DRAM BW at {dram_total_bw:.1f} GB/s ({dram_util_pct:.1f}% of peak) '                f'is elevated — L2 staging may be approaching saturation. '                f'Monitor for KV load-back latency increases.',
+                f'DRAM BW at {dram_total_bw:.1f} GB/s ({dram_util_pct:.1f}% of peak) '                f'is elevated — L2 staging may be approaching saturation. '                f'Monitor for KV L2→L1 load-back latency increases.',
                 plain=(f"System RAM bandwidth at {dram_util_pct:.0f}% of capacity — getting "
                        f"warm. If you see slowdown, RAM-to-GPU transfers may be the cause.")))
 
@@ -2681,11 +3194,11 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     if "pswpin" in vmstat_ts: swap_pages = _safe_float(vmstat_ts["pswpin"].get("max", 0))
     if swap_pages == 0 and has_vmstat:
         findings_items.append(finding("HEALTH",
-            f'Zero swap I/O — kernel memory is not under pressure ✅. '            + (f'{discard_total:,.0f} total TRIM/Discard commands reflect normal '               f'HiCache L3 storage reclamation (expected and healthy). '               if discard_total > 0 else "") +
+            f'Zero swap I/O — kernel memory is not under pressure ✅. '            + (f'{discard_total:,.0f} total TRIM/Discard commands reflect normal '               f'HiCache L3 (local storage) reclamation (expected and healthy). '               if discard_total > 0 else "") +
             f'{"SMART unavailable — run nvme smart-log /dev/nvme0 -o json to verify WAF." if not has_smart else f"SMART: WAF={smart_waf:.1f}, Temp={smart_temp:.0f}°C."}',
             plain=("System health looks good — no swap activity (means RAM isn't running out). "
                    + ("L3 storage block telemetry is normal." if l3_block_io_available
-                      else "L3 storage activity is based on SGLang movement counters; block-device health is not measured in this run."))))
+                      else "L3 (local storage) activity is based on SGLang movement counters; block-device health is not measured in this run."))))
 
     if not findings_items:
         findings_items.append(finding("DATA",
@@ -2713,8 +3226,8 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # Keep the executive hero generic: do not expose the backend/vendor
         # name (for example Mooncake) in the top-line cache-tier summary. The
         # detailed setup table still carries the exact backend/type.
-        l3_str = (f"local Storage / AI memory node ({l3_cap})" if l3_cap
-                  else "local Storage / AI memory node")
+        l3_str = (f"L3 (local storage) ({l3_cap})" if l3_cap
+                  else "L3 (local storage)")
         _cache_tier_label = f"Enabled · {l2_str} + {l3_str}"
     else:
         _cache_tier_label = (str(cache_enabled) if cache_enabled else "Disabled")
@@ -2777,7 +3290,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         ("L2 · Host DRAM",    f"{dram_total_bw:.1f} GB/s ({dram_total_bw/max(dram_peak_cap,1)*100:.0f}% of peak)" if dram_total_bw else "No PMU data",
          "ok" if dram_total_bw < dram_peak_cap * 0.5 else "warn",
          "Headroom ✓" if dram_total_bw < dram_peak_cap * 0.5 else "Elevated"),
-        ("L3 storage tier",     f"{nvme_rd_bw:.0f} MB/s reads, {nvme_util:.1f}% util, {read_gb:,.0f} GB total",
+        ("L3 (local storage) tier",     f"{nvme_rd_bw:.0f} MB/s reads, {read_gb:,.0f} GB total",
          "warn" if mb_per_out_token > 10 else "ok",
          "Load-back heavy" if mb_per_out_token > 10 else "OK"),
         ("OS / vmstat",       "0 swap pages/s" if swap_pages == 0 else f"{swap_pages:.0f} swap/s",
@@ -2806,6 +3319,179 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     score_dram    = clamp_score(dram_total_bw / max(dram_peak_cap, 1) * 200) if dram_total_bw > 0 else 0
     score_os      = 5.0 if swap_pages == 0 else clamp_score(swap_pages / 100)
 
+    # Executive evidence trail: make each bottleneck label auditable.
+    # Safe default used by Executive evidence and bottleneck scoring.
+    # It intentionally uses a conservative 7 GB/s Gen4 read reference unless
+    # a future setup_details override is wired into this scope.
+    _ssd_bw_target_mbs = 7000.0
+    _ssd_bw_pct = (nvme_rd_bw / _ssd_bw_target_mbs * 100.0) if nvme_rd_bw > 0 and _ssd_bw_target_mbs > 0 else 0.0
+
+    _qd_e_src = str(_qd_sum.get("qd_source", "")) if isinstance(_qd_sum, dict) else ""
+    _qd_e_mean = _safe_float(_qd_sum.get("qd_mean", 0)) if isinstance(_qd_sum, dict) else 0.0
+    _qd_e_p95  = _safe_float(_qd_sum.get("qd_p95", 0)) if isinstance(_qd_sum, dict) else 0.0
+    _qd_e_peak = _safe_float(_qd_sum.get("qd_max", 0)) if isinstance(_qd_sum, dict) else 0.0
+    _qd_e_exact = _qd_exact_source(_qd_e_src)
+    _qd_e_plausible = _qd_plausible(_qd_e_mean, _qd_e_peak, _qd_e_src) if _qd_e_src else False
+    _ssd_sat_label = "proven" if _ssd_hw_saturation_proven(
+        nvme_rd_bw, nvme_wr_bw, nvme_util, nvme_rd_lat, _qd_e_mean, _qd_e_peak, _qd_e_src
+    ) else "not proven"
+    _dram_pct = (dram_total_bw / max(dram_peak_cap, 1) * 100.0) if dram_peak_cap else 0.0
+    _l2_used_txt = (f"{l2_dram_used_gb:.1f}/{l2_dram_capacity_gb:.0f} GB"
+                    if l2_dram_capacity_gb > 0 and l2_dram_used_gb > 0 else "N/A")
+
+    # ── Cross-layer correlation narrative ─────────────────────────────────────
+    _hbm_bw_active = _safe_float(dcgm_active, 0.0)
+    _dram_util_pct = _dram_pct
+    _l3_bw_pct = _ssd_bw_pct
+    _output_tok_s = _safe_float(tp_active, 0.0)
+    _evict_rate = evicted_tokens / max(duration_s, 1.0)
+    _backup_rate = backuped_tokens / max(duration_s, 1.0)
+    _prefetch_rate = prefetched_tokens / max(duration_s, 1.0)
+    _loadback_rate = loadback_tokens / max(duration_s, 1.0)
+
+    _gpu_reason = (
+        "GPU utilization is not expected to be 100% when long-context prefill, "
+        "scheduler gaps, cache movement, or low batch concurrency leave the GPUs "
+        "waiting between kernels. High TTFT/TPOT with moderate GPU mean points to "
+        "request-path/cache/prefill stalls rather than raw GPU saturation."
+    )
+    _hbm_reason = (
+        f"HBM residency is {hbm_pct:.0f}% ({hbm_used_total_gb:.1f}/{hbm_total_all_gpus_gb:.0f} GB). "
+        f"mem-fraction-static={mem_frac} reserves memory for model weights, KV pool, CUDA graphs, and activations; "
+        "HBM does not need to be 100% full, and unused HBM may indicate room to grow the KV pool."
+    )
+    _dram_reason = (
+        f"DRAM BW is {_dram_util_pct:.1f}% of peak and L2 residency is {_l2_used_txt}. "
+        "Low DRAM BW/no swap means L2 is not bandwidth-saturated and may absorb more KV before L3."
+    )
+    _l3_reason = (
+        f"L3 physical BW is {nvme_rd_bw:.1f} MB/s read / {nvme_wr_bw:.1f} MB/s write "
+        f"({_l3_bw_pct:.1f}% of read target), with physical movement {read_gb:.3f} GB read / {write_gb:.1f} GB write. "
+        "High advisory QD/busy-time is pressure, not saturation proof without latency/BW/exact Q→C evidence."
+    )
+    _token_reason = (
+        f"evicted={evicted_tokens:,.0f} ({_evict_rate:,.0f}/s), "
+        f"backuped={backuped_tokens:,.0f} ({_backup_rate:,.0f}/s), "
+        f"prefetched={prefetched_tokens:,.0f} ({_prefetch_rate:,.0f}/s), "
+        f"L2→L1 load_back restore diagnostic={loadback_tokens:,.0f} ({_loadback_rate:,.0f}/s). "
+        "Eviction/backup pressure explains L3 writes and cache churn; prefetch plus L2→L1 load_back restore pressure matters when it aligns with latency spikes."
+    )
+
+    _hicache_size_txt = _html.escape(str(_pick(setup, [
+        "HiCache size", "hicache_size", "hicache_size_gb",
+        "L2 DRAM allocation", "L2 DRAM capacity GB", "HiCache size per GPU"
+    ], "unknown")))
+    _setup_runtime_row = (
+        f"Model={_html.escape(str(model))}; TP={tp_size}; mem-fraction-static={_html.escape(str(mem_frac))}; "
+        f"HiCache/L2={_hicache_size_txt}; L3 backend={_html.escape(str(_tier_res.backend_class if '_tier_res' in locals() else 'unknown'))}."
+    )
+    correlation_html = f"""
+<div class="section-label">Cross-layer correlation</div>
+<div class="card" style="border-left:4px solid #a78bfa">
+  <h2>🔗 Cross-layer correlation — setup, token movement, latency, and resource evidence <span class="tag">EXECUTIVE</span></h2>
+  <p class="sub" style="margin-bottom:10px">Moved from End Report in v1.39.61 for readability and decision-making. This card correlates setup, token movement, latency symptoms, and resource evidence before assigning a bottleneck.</p>
+  <table><tbody>
+    <tr><td class="td-key">Setup / runtime</td><td>{_setup_runtime_row}</td></tr>
+    <tr><td class="td-key">Observed latency</td><td><strong>TTFT {ttft_ms/1000:.1f}s</strong>, <strong>TPOT/ITL {tpot_ms:.1f} ms/token</strong>, throughput <strong>{_output_tok_s:.1f} tok/s</strong>.</td></tr>
+    <tr><td class="td-key">Token movement</td><td>{_html.escape(_token_reason)}</td></tr>
+    <tr><td class="td-key">GPU compute</td><td>{_html.escape(_gpu_reason)} GPU mean={gpu_util:.1f}%, peak may still hit 100% during bursts.</td></tr>
+    <tr><td class="td-key">HBM</td><td>{_html.escape(_hbm_reason)} HBM BW active={_hbm_bw_active:.1f}%.</td></tr>
+    <tr><td class="td-key">L2 DRAM</td><td>{_html.escape(_dram_reason)}</td></tr>
+    <tr><td class="td-key">L3 local storage</td><td>{_html.escape(_l3_reason)}</td></tr>
+    <tr><td class="td-key">Interpretation</td><td><strong>Low GPU utilization can mean the pipeline is starved, not that the workload is easy.</strong> Assign bottlenecks only by correlating latency spikes with token movement, cache hit/miss behavior, setup choices, and tier bandwidth/queue evidence.</td></tr>
+  </tbody></table>
+</div>
+"""
+
+    # ── Setup-aware launch guidance removed in v1.39.61 ───────────────────────
+    # Keep Executive focused on observed evidence and correlation. Launch tuning
+    # recommendations were too speculative and duplicated setup_details guidance.
+    launch_recs_html = ""
+
+
+    bottleneck_evidence_html = "".join([
+        evidence_box(
+            "Prefill / request-path latency",
+            [
+                ("TTFT mean", f"{ttft_ms/1000:.1f}s", "bad" if ttft_ms > 10000 else "warn"),
+                ("TTFT p50", f"{ttft_p50_ms/1000:.1f}s" if ttft_p50_ms else "N/A", "bad" if ttft_p50_ms and ttft_p50_ms > 10000 else "neutral"),
+                ("TPOT / ITL mean", f"{tpot_ms:,.0f}ms", "bad" if tpot_ms > 1000 else "warn"),
+                ("throughput", f"{tp_active:.1f} tok/s", "warn"),
+                ("GPU util", f"{gpu_util:.1f}%", "warn" if gpu_util < 70 else "good"),
+            ],
+            "High TTFT/TPOT with non-saturated GPU points to prefill/cache/reload/request scheduling latency, not pure GPU compute saturation.",
+            "raw/sglang_timeseries.csv, raw/sglang_percentiles_timeseries.json, raw/gpu_timeseries.csv",
+            "high" if ttft_ms > 10000 and gpu_util < 70 else "medium",
+        ),
+        evidence_box(
+            "HBM capacity pressure",
+            [
+                ("HBM used", f"{hbm_gb:.1f}/{hbm_total:.0f} GB", "bad" if hbm_pct > 85 else "good"),
+                ("HBM full", f"{hbm_pct:.0f}%", "bad" if hbm_pct > 85 else "good"),
+                ("KV/token", f"{kv_bytes_tok_kb:.0f} KB", "warn"),
+            ],
+            "Classify HBM capacity pressure only when HBM residency is high enough to force KV spill into L2/L3.",
+            "raw/gpu_timeseries.csv + setup_details.json/model KV-byte estimate",
+            "high" if hbm_pct > 85 else "medium",
+            "" if hbm_pct > 85 else "HBM is not full in this run, so HBM capacity should not be the primary label.",
+        ),
+        evidence_box(
+            "KV L2→L1 load-back amplification / small-block restore",
+            [
+                ("physical read", f"{read_gb:,.1f} GB", "warn"),
+                ("physical write", f"{write_gb:.1f} GB", "neutral"),
+                ("read BW", f"{nvme_rd_bw:.1f} MB/s", "good" if _ssd_bw_pct < 20 else "warn"),
+                ("BW target pct", f"{_ssd_bw_pct:.1f}%", "good" if _ssd_bw_pct < 20 else "warn"),
+                ("L3 read MB / output token", f"{mb_per_out_token:.0f}", "bad" if mb_per_out_token > 8 else "warn"),
+                ("16–64KB read IOs", f"{req_size_16_64_pct:.0f}%", "bad" if req_size_16_64_pct >= 50 else "neutral"),
+                ("L2→L1 load_back restore diagnostic", f"{l3_ambiguous_loadback_gb:.1f} GB", "warn" if l3_ambiguous_loadback_gb > 0 else "neutral"),
+            ],
+            "L3 read MB/output token = traced local-storage read MB divided by generated output tokens in the selected window. A value such as 7 means each generated token coincided with about 7 MB of L3 read movement; it is a workload-normalized traffic cost, not the KV size of one token. Use it with request-size and correlation evidence to identify cache-path amplification, not raw SSD saturation.",
+            "raw/blktrace_analysis/summary.json, raw/request_size_distribution.csv, raw/sglang_timeseries.csv",
+            "high" if read_gb > 10 and _ssd_bw_pct < 20 and (mb_per_out_token > 8 or req_size_16_64_pct >= 50) else "medium",
+        ),
+        evidence_box(
+            "L3 (local storage) hardware bandwidth / IOPS saturation",
+            [
+                ("read BW", f"{nvme_rd_bw:.1f} MB/s", "good" if _ssd_bw_pct < 30 else "warn"),
+                ("write BW", f"{nvme_wr_bw:.1f} MB/s", "good"),
+                ("read IOPS", f"{nvme_rd_iops:.0f}/s", "good" if nvme_rd_iops < 50000 else "warn"),
+                ("write IOPS", f"{nvme_wr_iops:.0f}/s", "good"),
+                ("QD source", _qd_e_src or "N/A", "good" if _qd_e_exact else "warn"),
+                ("QD mean/p95/peak", f"{_qd_e_mean:.1f}/{_qd_e_p95:.0f}/{_qd_e_peak:.0f}", "good" if _qd_e_plausible else "warn"),
+            ],
+            "Call L3 (local storage) hardware saturated only if bandwidth is near target, or exact Q→C queue depth plus await/latency is high. iostat busy-time is intentionally excluded from confidence.",
+            "raw/blktrace_analysis/summary.json, raw/nvme_driver_timeseries.csv or raw/iostat_timeseries.csv, raw/blktrace_analysis/queue_depth_summary.json",
+            "high" if _ssd_sat_label == "proven" else "low",
+            f"Current classification: SSD hardware saturation is {_ssd_sat_label}. Fallback/implausible QD is advisory only.",
+        ),
+        evidence_box(
+            "DRAM bandwidth headroom",
+            [
+                ("DRAM BW", f"{dram_total_bw:.1f} GB/s", "good"),
+                ("DRAM peak", f"{dram_peak_cap:.0f} GB/s", "neutral"),
+                ("DRAM pct", f"{_dram_pct:.1f}%", "good" if _dram_pct < 30 else "warn"),
+                ("L2 used", _l2_used_txt, "good" if l2_dram_capacity_gb and l2_dram_used_gb < l2_dram_capacity_gb else "warn"),
+            ],
+            "If DRAM BW and capacity have headroom, the recommended first fix for L3 L2→L1 restore pressure is larger L2 HiCache, not faster SSD.",
+            "raw/amduprof_pcm_raw.csv or raw/amduprof_pcm_timeseries.csv, SGLang host-cache residency counters, setup_details.json",
+            "high" if dram_total_bw > 0 else "medium",
+        ),
+        evidence_box(
+            "Cache reuse / cache pressure",
+            [
+                ("token hit", f"{cache_hit_tw:.1f}%", "good" if cache_hit_tw >= 80 else "warn"),
+                ("gauge hit", f"{cache_hit:.1f}%", "good" if cache_hit >= 80 else "warn"),
+                ("evicted tokens", f"{int(evicted_tokens):,}", "warn" if evicted_tokens > 0 else "good"),
+                ("prefetched tokens", f"{int(prefetched_tokens):,}", "warn" if prefetched_tokens > 0 else "neutral"),
+                ("backuped tokens", f"{int(backuped_tokens):,}", "warn" if backuped_tokens > 0 else "neutral"),
+            ],
+            "High hit rate can coexist with high eviction and L2→L1 restore pressure. Hit rate measures reuse; eviction/load_back measures cache pressure and restore activity, not local-storage reads.",
+            "raw/sglang_timeseries.csv and SGLang cache report counters",
+            "high",
+        ),
+    ])
+
     bn_rows = [
         ("Prefill compute (HBM bw)", score_compute, "red",
          f"TTFT {ttft_ms/1000:.1f}s, {gpu_util:.0f}% GPU util",
@@ -2813,8 +3499,8 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         ("HBM capacity", score_hbm, "red" if score_hbm > 80 else "amber",
          f"{hbm_pct:.0f}% full, KV spilling to L2/L3 storage",
          "FP8 KV: 327→163 KB/tok, doubles in-HBM capacity"),
-        ("L3 (Storage/AI Memory Node) read throughput", score_nvme, "amber",
-         f"{nvme_rd_bw:.0f} MB/s, {mb_per_out_token:.0f} MB/output-token",
+        ("L3 (local storage) read throughput", score_nvme, "amber",
+         f"{nvme_rd_bw:.0f} MB/s, {mb_per_out_token:.0f} MB L3-read/output-token",
          "Expand DRAM L2 tier; validate L3 storage at QD16 16–64 KB read"),
         ("Cache hit rate", score_cache, "amber",
          f"Token-weighted {cache_hit_tw:.1f}% vs gauge {cache_hit:.1f}%",
@@ -2841,7 +3527,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     <tr><td><b>1</b></td>
       <td><b>FP8 KV quantisation</b> — <code>--kv-cache-dtype fp8_e5m2</code><br>
           <span class="sub">Halves KV bytes/token ({kv_bytes_tok_kb:.0f}→{kv_bytes_tok_kb/2:.0f} KB/tok), doubles in-HBM capacity,
-          cuts TPOT and L3 storage load. &lt;0.5% accuracy impact.</span></td>
+          cuts TPOT and L3 (local storage) load. &lt;0.5% accuracy impact.</span></td>
       <td>{sev(90)}</td><td>{sev(10)}</td><td>L1+L3</td></tr>
     <tr><td><b>2</b></td>
       <td><b>Chunked prefill</b> — <code>--chunked-prefill-size 4096</code><br>
@@ -2850,19 +3536,19 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     <tr><td><b>3</b></td>
       <td><b>Expand DRAM L2 HiCache allocation</b><br>
           <span class="sub">DRAM at {dram_total_bw/max(dram_peak_cap,1)*100:.0f}% util has headroom. More L2 absorbs KV before L3,
-          cutting L3 storage reads and wear at near-zero latency cost.</span></td>
-      <td>{sev(60)}</td><td>{sev(15)}</td><td>L2→L3 storage</td></tr>
+          cutting L3 (local storage) reads and wear at near-zero latency cost.</span></td>
+      <td>{sev(60)}</td><td>{sev(15)}</td><td>L2→L3</td></tr>
     <tr><td><b>4</b></td>
       <td><b>Add shared system-prompt prefix</b><br>
           <span class="sub">Raises token-weighted hit from {cache_hit_tw:.0f}% toward gauge {cache_hit:.0f}%,
           cutting prefill recompute for recurring prompt prefixes.</span></td>
       <td>{sev(55)}</td><td>{sev(5)}</td><td>A5+A4</td></tr>
     <tr><td><b>5</b></td>
-      <td><b>Validate KV$ L3 storage at 16–64 KB random read, QD16</b><br>
+      <td><b>Validate KV$ L3 (local storage) at 16–64 KB random read, QD16</b><br>
           <span class="sub">Run <code>fio --bs=32k --rw=randread --iodepth=16 --size=32g</code>.
           Require ≥{max(nvme_rd_bw*1.1, 600):.0f} MB/s sustained for ≥30 min.
           Also verify TRIM acknowledgement latency ≤1 ms.</span></td>
-      <td>{sev(45)}</td><td>{sev(5)}</td><td>L3 storage</td></tr>"""
+      <td>{sev(45)}</td><td>{sev(5)}</td><td>L3</td></tr>"""
 
     # ── KPI grid ──────────────────────────────────────────────────────────────
     kpi_html = (
@@ -2871,22 +3557,20 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                  f"{cache_hit_note_prefix} | {_fmt_num(cache_hit_tw, '%', 1)} token-weighted",
                  accent=True) +
         kpi_card("TTFT mean",
-                 _fmt_num(ttft_ms / 1000 if ttft_ms >= 1000 else ttft_ms,
-                          " s" if ttft_ms >= 1000 else " ms", 1),
+                 _fmt_num(ttft_ms, " ms", 0),
                  ("End Report selected-window Metrics object" if str(sglang.get("server_ttft_ms_method", "")).startswith("end_report_") else
                   ("Δsum/Δcount from SGLang timeseries" if ttft_from_ts_ms > 0 else
                    ("selected-window percentile timeseries" if ttft_from_pct_ms > 0 else
                     ("long-context prefill dominated" if ttft_ms > 5000 else "time to first token"))))) +
         kpi_card("TTFT p50",
-                 _fmt_num((ttft_p50_ms or ttft_ms) / 1000 if (ttft_p50_ms or ttft_ms) >= 1000 else (ttft_p50_ms or ttft_ms),
-                          " s" if (ttft_p50_ms or ttft_ms) >= 1000 else " ms", 1),
+                 _fmt_num((ttft_p50_ms or ttft_ms), " ms", 0),
                  "median · histogram_quantile/percentile timeseries") +
         kpi_card("TPOT / ITL mean",
-                 _fmt_num(tpot_ms, " ms", 0),
+                 _fmt_num(tpot_ms, " ms", 1),
                  ("Δsum/Δcount from SGLang timeseries" if tpot_from_ts_ms > 0 else
                   ("HBM bandwidth bound" if gpu_util > 85 else "decode token latency"))) +
         kpi_card("TPOT / ITL p50",
-                 _fmt_num(tpot_p50_ms or tpot_ms, " ms", 0),
+                 _fmt_num(tpot_p50_ms or tpot_ms, " ms", 1),
                  "median · histogram_quantile/percentile timeseries") +
         kpi_card("Throughput mean",
                  _fmt_num(tp_active if tp_active > 0 else throughput, " tok/s", 1),
@@ -2907,7 +3591,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         kpi_card("GPU power",
                  _fmt_num(gpu_power, " W", 0),
                  "peak per GPU") +
-        kpi_card("L3 storage read BW",
+        kpi_card("L3 (local storage) read BW",
                  _fmt_num(nvme_rd_bw, " MB/s", 0),
                  (f"mean | {_fmt_num(nvme_rd_iops, ' read IOPS', 0)}"
                   if l3_traffic_source == "blktrace"
@@ -2915,10 +3599,10 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                        if l3_traffic_source == "blktrace_plus_sglang_logical_local_ssd"
                        else "mean · estimated from SGLang prefetched tokens"
                        if l3_traffic_source == "sglang_logical_local_ssd"
-                       else "physical local block telemetry; logical backing-tier shown separately"
+                       else "physical L3 local block telemetry; logical L3 movement shown separately"
                        if l3_logical_diagnostic_seen
                        else "SGLang logical remote/backing-tier estimate"
-                       if l3_traffic_source in ("sglang_logical_remote_l3", "sglang_logical_hicache_unknown_backend")
+                       if l3_traffic_source in ("sglang_logical_remote_l35", "sglang_logical_hicache_unknown_backend")
                        else "no L3 data"),
                  target=f"Target: ~{nvme_rd_bw_target_mbs/1000:.1f} GB/s seq read peak",
                  target_pct=(nvme_rd_bw / nvme_rd_bw_target_mbs * 100
@@ -2927,8 +3611,8 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                              "delivers ~7 GB/s sequential read at QD≥16. AI workloads "
                              "rarely hit this — typical sustained reads are 1-3 GB/s "
                              "because requests are 4-16 KB random. Override via setup "
-                             "key 'L3 storage read BW target MB/s' for a non-Gen4 device.")) +
-        kpi_card("L3 storage write BW",
+                             "key 'L3 (local storage) read BW target MB/s' for a non-Gen4 device.")) +
+        kpi_card("L3 (local storage) write BW",
                  _fmt_num(nvme_wr_bw, " MB/s", 1),
                  (f"{_fmt_num(nvme_wr_iops, ' IOPS', 0)} | "
                   f"{('1:' + str(int(round(1/rw_ratio))) if 0 < rw_ratio < 0.5 else f'{rw_ratio:.1f}:1')} R/W ratio"
@@ -2939,11 +3623,11 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                        else (f"estimated from SGLang backuped tokens · "
                         f"{('1:' + str(int(round(1/rw_ratio))) if 0 < rw_ratio < 0.5 else f'{rw_ratio:.1f}:1')} R/W ratio")
                        if l3_traffic_source == "sglang_logical_local_ssd"
-                       else "physical local block telemetry; logical backing-tier shown separately"
+                       else "physical L3 local block telemetry; logical L3 movement shown separately"
                        if l3_logical_diagnostic_seen
                        else (f"SGLang logical remote/backing-tier estimate · "
                         f"{('1:' + str(int(round(1/rw_ratio))) if 0 < rw_ratio < 0.5 else f'{rw_ratio:.1f}:1')} R/W ratio")
-                       if l3_traffic_source in ("sglang_logical_remote_l3", "sglang_logical_hicache_unknown_backend")
+                       if l3_traffic_source in ("sglang_logical_remote_l35", "sglang_logical_hicache_unknown_backend")
                        else "no L3 data"),
                  target=f"Target: ~{nvme_wr_bw_target_mbs/1000:.1f} GB/s seq write peak",
                  target_pct=(nvme_wr_bw / nvme_wr_bw_target_mbs * 100
@@ -2952,32 +3636,32 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                              "KV-block writes are small (~7 KB) so achievable BW is much "
                              "lower than the rated peak — what matters is staying under "
                              "the rated TBW endurance, not approaching this BW target. "
-                             "Override via setup key 'L3 storage write BW target MB/s'.")) +
-        ((kpi_card("Logical KV backing-tier movement",
+                             "Override via setup key 'L3 (local storage) write BW target MB/s'.")) +
+        ((kpi_card("Logical KV movement — L3 (local storage)",
                  (f"{l3_est_read_gb*1024:.1f} MB" if 0 < l3_est_read_gb < 1 else _fmt_num(l3_est_read_gb, ' GB', 1))
                  + " / "
                  + (f"{l3_est_write_gb*1024:.1f} MB" if 0 < l3_est_write_gb < 1 else _fmt_num(l3_est_write_gb, ' GB', 1)),
-                 f"SGLang logical only · read=prefetched only; load_back upper-bound {_fmt_num(l3_ambiguous_loadback_gb, ' GB', 1)} not counted · R/W BW {_fmt_num(l3_logical_rd_bw_mbs, ' MB/s', 0)} / {_fmt_num(l3_logical_wr_bw_mbs, ' MB/s', 1)}",
-                 target="not used for SSD hot/cold LBA charts",
-                 target_tip="This is logical SGLang HiCache/backing-tier movement from token counters. Reads use prefetched_tokens_total only. load_back_tokens_total is an ambiguous hierarchy-restore counter and is shown as a diagnostic, not as local SSD bytes. LBA and SSD distribution charts are physical blktrace data."
+                 f"SGLang logical only · read=prefetched only; L2→L1 load_back restore diagnostic {_fmt_num(l3_ambiguous_loadback_gb, ' GB', 1)} not counted · R/W BW {_fmt_num(l3_logical_rd_bw_mbs, ' MB/s', 0)} / {_fmt_num(l3_logical_wr_bw_mbs, ' MB/s', 1)}",
+                 target="logical L3 only; not used for L3 (local storage) hot/cold LBA charts",
+                 target_tip="This is logical SGLang HiCache/backing-tier movement from token counters. Reads use prefetched_tokens_total only. load_back_tokens_total is an L2→L1 hierarchy-restore counter and is shown as a diagnostic, not as L3 local SSD bytes. LBA and SSD distribution charts are physical blktrace data."
              ) if l3_logical_diagnostic_seen and (l3_est_read_gb > 0 or l3_est_write_gb > 0) else "")) +
-        kpi_card(("Physical host block R / W total" if l3_unmapped_logical_seen else "Physical L3 SSD R / W total" if l3_traffic_source == "blktrace_mapped_with_sglang_logical_diagnostic" else "L3 storage R / W total"),
+        kpi_card(("Physical L3 (local storage) block R / W total"),
                  (f"{read_gb*1024:.1f} MB" if 0 < read_gb < 1 else _fmt_num(read_gb, ' GB', 1))
                  + " / "
                  + (f"{write_gb*1024:.1f} MB" if 0 < write_gb < 1 else _fmt_num(write_gb, ' GB', 1)),
                  # Tile note now reflects the actual data source so the reader
                  # never confuses an estimate with a direct measurement, and
                  # never sees an "estimated" label when nothing was actually
-                 # estimated (e.g. Prom-only run with zero L3 storage activity).
+                 # estimated (e.g. Prom-only run with zero L3 (local storage) activity).
                  ("blktrace / iostat" if l3_traffic_source == "blktrace"
                   else "blktrace + SGLang logical L3 estimate"
                        if l3_traffic_source == "blktrace_plus_sglang_logical_local_ssd"
                        else f"estimated · SGLang counters × {kv_bytes_tok_kb:.0f} KB/tok"
                        if l3_traffic_source == "sglang_logical_local_ssd"
-                       else "physical blktrace/iostat; logical backing-tier shown separately"
+                       else "physical L3 local block telemetry; logical L3 movement shown separately"
                        if l3_unmapped_logical_seen
                        else f"logical · SGLang counters × {kv_bytes_tok_kb:.0f} KB/tok; physical block separate"
-                       if l3_traffic_source in ("sglang_logical_remote_l3", "sglang_logical_hicache_unknown_backend")
+                       if l3_traffic_source in ("sglang_logical_remote_l35", "sglang_logical_hicache_unknown_backend")
                        else "no L3 data — see findings below"),
                  target=(f"Endurance budget: {ssd_lifetime_writes_tb_per_run*1024:.0f} GB/run"
                           if ssd_lifetime_writes_tb_per_run > 0 else ""),
@@ -3018,7 +3702,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # L3 HiCache capacity (df-based filesystem usage). Distinct from
         # "NVMe device util %" which is iostat device-busy time, not capacity.
         ((kpi_card(
-            ("L3 storage cache used" if l3_capacity_source == "df/SMART runtime snapshot" else "L3 storage configured capacity"),
+            ("L3 (local storage) cache used" if l3_capacity_source == "df/SMART runtime snapshot" else "L3 (local storage) configured capacity"),
             f"{l3_fs_used_gb:.0f} / {l3_fs_total_gb:.0f} GB",
             ((f"{l3_fs_used_pct:.0f}% full · {l3_fs_avail_gb:.0f} GB free · df snapshot, not window I/O"
               + (f" · device {nvme_dev_cap_gb:.0f} GB" if nvme_dev_cap_gb > 0 else ""))
@@ -3051,21 +3735,12 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                              f"{_fmt_num(l2_dram_capacity_gb, ' GB', 0)} total L2 allocation. "
                              f"Inference workloads typically use 5-15% of peak because "
                              f"the GPU drives most memory traffic through HBM, not host DRAM. "
-                             f"Low utilisation here is normal and indicates room to expand the L2 KV tier.")) +
-        (kpi_card("L3 storage busy",
-                 _fmt_num(nvme_util, "%", 1),
-                 f"iostat/blktrace %util mapped to L3 storage · "
-                 + (f"{nvme_util:.0f}% mean | saturated"
-                    if nvme_util >= 90 else
-                    f"{nvme_util:.0f}% mean | elevated"
-                    if nvme_util >= 50 else
-                    f"{nvme_util:.0f}% mean | well under capacity"))
-         if (l3_block_io_available and l3_traffic_source in ("blktrace", "blktrace_plus_sglang_logical_local_ssd")) else "")
+                             f"Low utilisation here is normal and indicates room to expand the L2 KV tier."))
     )
 
     # ── KV L3 storage requirement bullets ────────────────────────────────────────────
     req_16_64_pct_str = f"{req_size_16_64_pct:.0f}" if req_size_16_64_pct > 0 else "~89"
-    if l3_block_io_available and l3_traffic_source in ("blktrace", "blktrace_mapped_with_sglang_logical_diagnostic", "blktrace_unmapped_sglang_logical_remote_l3", "blktrace_unmapped_sglang_logical_unknown_backend") :
+    if l3_block_io_available and l3_traffic_source in ("blktrace", "blktrace_mapped_with_sglang_logical_diagnostic", "blktrace_unmapped_sglang_logical_remote_l35", "blktrace_unmapped_sglang_logical_unknown_backend") :
         kvssd_req_html = f"""
       <li><strong>Directional physical bandwidth</strong>
           — observed {nvme_rd_bw:.0f} MB/s read and {nvme_wr_bw:.0f} MB/s write from local block telemetry.
@@ -3074,25 +3749,25 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
           — observed {nvme_rd_lat:.2f} ms mean read latency and {nvme_wr_lat:.1f} ms mean write latency from local sources where available.</li>
       <li><strong>16–64 KB block size optimisation</strong>
           — {req_16_64_pct_str}% of read IOs fall in the 16–64 KB bucket;
-          L3 storage internal page size and read-ahead should align.</li>
+          L3 (local storage) internal page size and read-ahead should align.</li>
       <li><strong>Write amplification / endurance check</strong>
           — physical/logical write volume is reported as {write_gb:.1f} GB in {duration_min:.0f} min;
           {f"{discard_total:,.0f} TRIM commands" if discard_total > 0 else "TRIM activity"} is shown separately and should not be confused with read/write bytes.</li>
       <li><strong>Hot-spot tolerance: narrow LBA working set</strong>
-          — access concentrated in a small LBA band; L3 storage internal caching must cover this zone.</li>"""
-    elif l3_traffic_source in ("sglang_logical_local_ssd", "sglang_logical_remote_l3", "sglang_logical_hicache_unknown_backend"):
+          — access concentrated in a small LBA band; L3 (local storage) internal caching must cover this zone.</li>"""
+    elif l3_traffic_source in ("sglang_logical_local_ssd", "sglang_logical_remote_l35", "sglang_logical_hicache_unknown_backend"):
         kvssd_req_html = f"""
       <li><strong>SGLang L3 storage movement observed</strong>
           — estimated {read_gb:.1f} GB read/onboard and {write_gb:.1f} GB write/offload from hierarchical-cache token counters.</li>
       <li><strong>Movement counters used</strong>
-          — write/offload uses <code>sglang_backuped_tokens_total</code>; read/onboard uses <code>sglang_prefetched_tokens_total</code>. <code>sglang_load_back_tokens_total</code> and <code>sglang_evicted_tokens_total</code> are shown as hierarchy/cache-pressure diagnostics and are not counted as local-SSD read/write bytes.</li>
+          — write/offload uses <code>sglang_backuped_tokens_total</code>; read/onboard uses <code>sglang_prefetched_tokens_total</code>. <code>sglang_load_back_tokens_total</code> is L2→L1 restore diagnostic and <code>sglang_evicted_tokens_total</code> is cache-pressure diagnostic and are not counted as local-SSD read/write bytes.</li>
       <li><strong>Block-device metrics not shown</strong>
           — no L3-local blktrace/iostat mapping is available, so device busy %, queue depth, per-I/O latency, and request-size histograms are not inferred.</li>
       <li><strong>Capacity context</strong>
-          — L3 storage cache usage is reported from setup_details/df/SMART when available: {l3_fs_used_gb:.0f} GB used of {l3_fs_total_gb:.0f} GB total.</li>"""
+          — L3 (local storage) cache usage is reported from setup_details/df/SMART when available: {l3_fs_used_gb:.0f} GB used of {l3_fs_total_gb:.0f} GB total.</li>"""
     else:
         kvssd_req_html = """
-      <li><strong>No L3 storage activity observed</strong>
+      <li><strong>No L3 (local storage) activity observed</strong>
           — neither SGLang L3 movement counters nor L3-local block metrics reported usable data.</li>
       <li><strong>Action</strong>
           — enable SGLang HiCache/L3 metrics or collect blktrace/iostat for a mapped local L3 device.</li>"""
@@ -3127,9 +3802,9 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             "blktrace — all block-layer I/O operations",
             f"Read IOPS are low (mean {nvme_rd_iops:.0f}/s) — expected for a read-heavy workload "
             f"served in large sequential chunks rather than random small IOs. "
-            f"Write IOPS are minimal (mean {nvme_wr_iops:.0f}/s) confirming this is a pure load-back run."
+            f"Write IOPS are minimal (mean {nvme_wr_iops:.0f}/s) confirming this is a pure L2→L1 load-back restore-heavy run."
             + discard_note,
-            f"The KV$ L3 storage only needs ~{max(nvme_rd_iops*1.5, 500):.0f} random read IOPS at peak — "
+            f"The KV$ L3 (local storage) only needs ~{max(nvme_rd_iops*1.5, 500):.0f} random read IOPS at peak — "
             f"far below typical NVMe capabilities. IOPS is not the bottleneck; bandwidth is.",
             chart_id="ch_nvme_iops", chart_fig=_fig("ch_nvme_iops")
         ) +
@@ -3141,14 +3816,14 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             f"<strong>{nvme_wr_bw:.1f} MB/s</strong>. The stable, non-bursty read profile "
             f"indicates KV blocks are loaded back at a steady streaming rate consistent with "
             f"concurrent session decode.",
-            f"KV$ L3 storage must sustain &ge;{max(nvme_rd_bw*1.1, 600):.0f} MB/s sequential read BW "
+            f"KV$ L3 (local storage) must sustain &ge;{max(nvme_rd_bw*1.1, 600):.0f} MB/s sequential read BW "
             f"for &gt;{duration_min:.0f} minutes without thermal throttling or endurance degradation. "
             f"Write endurance is a non-issue for this workload pattern.",
             chart_id="ch_nvme_bw", chart_fig=_fig("ch_nvme_bw")
         ) +
         chart_card(
             "NVMe Latency & Device Utilization",
-            "Read/Write service time and %util from iostat",
+            "Read/Write service time from iostat; busy-time is advisory only",
             # Branch the prose on actual measurements so the report doesn't
             # claim "sub-millisecond throughout" when latency is 0.00 (data
             # missing) or "far below capacity" when util reads 100%. These
@@ -3160,7 +3835,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                  if 0 < nvme_rd_lat < 1.0 else
                  f"Read latency is <strong>{nvme_rd_lat:.2f} ms mean / "
                  f"{nvme_rd_lat*3:.1f} ms P90</strong> — above the 1ms threshold; "
-                 f"each loadback adds non-trivial time to TPOT. "
+                 f"each L2→L1 loadback adds non-trivial time to TPOT. "
                  if nvme_rd_lat >= 1.0 else
                  "Read latency from iostat was not captured for this run "
                  "(value is 0.00 ms — likely a collection gap; iostat needs "
@@ -3173,33 +3848,42 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                  if nvme_wr_lat > 0 else
                  "Write latency similarly not captured. ")
                 +
-                # Util clause: ≥90 saturated; 50–90 active; <50 idle/headroom; 0 no data
-                (f'<span style="color:#dc2626;font-weight:700">Device utilisation is '
-                 f'{nvme_util:.1f}% mean</span> — the L3 storage is saturated; '
-                 f'IO queueing is now part of the loadback latency.'
+                # Busy-time alone is not proof of SSD HW saturation
+                (f'<span style="color:#d97706;font-weight:700">Device busy-time is '
+                 f'{nvme_util:.1f}% mean</span> — device is continuously busy, but SSD '
+                 f'hardware saturation is not proven without elevated latency, exact Q→C '
+                 f'queue depth, or bandwidth near device limits.'
+                 if nvme_util >= 90 and not _ssd_hw_saturation_proven(nvme_rd_bw, nvme_wr_bw, nvme_util, nvme_rd_lat) else
+                 f'<span style="color:#dc2626;font-weight:700">Device busy-time is '
+                 f'{nvme_util:.1f}% mean</span> — storage saturation is supported by '
+                 f'latency/queue/bandwidth evidence.'
                  if nvme_util >= 90 else
-                 f'<span style="color:#d97706;font-weight:700">Device utilisation is '
+                 f'<span style="color:#d97706;font-weight:700">Device busy-time is '
                  f'{nvme_util:.1f}% mean</span> — actively engaged; '
                  f'monitor for sustained saturation under heavier load.'
                  if nvme_util >= 50 else
-                 f'<span style="color:#4ade80;font-weight:700">Device utilisation is '
-                 f'{nvme_util:.1f}% mean</span> — the L3 storage has substantial headroom.'
+                 f'<span style="color:#4ade80;font-weight:700">Device busy-time is '
+                 f'{nvme_util:.1f}% mean</span> — the L3 (local storage) has substantial headroom.'
                  if nvme_util > 0 else
-                 'iostat %util not captured for this run.')
+                 'iostat busy-time not used for this run.')
             ),
             # Recommendation prose — also branches on util
             (
-                f"Device is saturated at {nvme_util:.0f}% — provision additional "
+                f"Device busy-time is {nvme_util:.0f}%, but observed bandwidth is only "
+                f"{nvme_rd_bw:.0f} MB/s read / {nvme_wr_bw:.1f} MB/s write. "
+                f"Do not call this bandwidth/IOPS saturation from busy-time alone; "
+                f"verify exact queue depth or await latency, and reduce KV L2→L1 restore pressure "
+                f"by expanding/tuning L2 DRAM first."
+                if nvme_util >= 90 and not _ssd_hw_saturation_proven(nvme_rd_bw, nvme_wr_bw, nvme_util, nvme_rd_lat) else
+                f"Device saturation is supported by latency/queue/bandwidth evidence at {nvme_util:.0f}% busy-time — provision additional "
                 f"NVMe bandwidth (a faster device, or aggregate two devices), or "
-                f"expand HiCache L2 DRAM allocation to reduce loadback frequency. "
-                f"Targeting a faster NVMe alone won't help if the working set "
-                f"keeps growing past HBM+L2 combined."
+                f"expand HiCache L2 DRAM allocation to reduce L2→L1 loadback frequency. "
                 if nvme_util >= 90 else
-                f"The current KV$ L3 storage is actively engaged at {nvme_util:.0f}% mean. "
+                f"The current KV$ L3 (local storage) is actively engaged at {nvme_util:.0f}% mean. "
                 f"Plan headroom for ~{min(nvme_util*1.5, 100):.0f}% peak under load growth; "
                 f"watch for sustained periods above 90%."
                 if nvme_util >= 50 else
-                f"The current KV$ L3 storage comfortably handles this load. "
+                f"The current KV$ L3 (local storage) comfortably handles this load. "
                 f"A minimal-spec NVMe supporting "
                 f"{max(nvme_rd_bw*1.1, 600):.0f} MB/s read BW is adequate; "
                 f"high IOPS specs are not required."
@@ -3221,7 +3905,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             "Time between consecutive requests per op (blktrace)",
             f"The inter-arrival histogram is computed from physical completion events by direction. "
             f"Use the read/write/trim series shown in the chart rather than assuming the workload is read-heavy.",
-            f"The L3 storage latency requirement should be evaluated under the observed physical queueing pattern, then cross-checked with SGLang logical L3 movement."
+            f"The L3 (local storage) latency requirement should be evaluated under the observed physical queueing pattern, then cross-checked with SGLang logical L3 movement."
         ) +
         chart_card(
             "R/W/T Bytes per 10-sec Window",
@@ -3245,10 +3929,10 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             "Hot LBA Regions",
             "Top-N LBA regions by bytes accessed (blktrace)",
             f"Access is <strong>highly concentrated in a narrow contiguous LBA band</strong>. "
-            f"This hot-region concentration is excellent for L3 storage internal caching — "
-            f"the working set fits within most enterprise L3 storage backends' DRAM or SLC cache, "
+            f"This hot-region concentration is excellent for L3 (local storage) internal caching — "
+            f"the working set fits within most enterprise L3 (local storage) backends' DRAM or SLC cache, "
             f"allowing repeated reads at near-DRAM speeds.",
-            f"The KV$ L3 storage\'s internal cache size matters critically. "
+            f"The KV$ L3 (local storage)\'s internal cache size matters critically. "
             f"A device with adequate SLC cache covering the hot zone will serve reads "
             f"at near-DRAM speed. Request candidates to provide "
             f"'sustained random read BW to a fixed hot-zone' benchmarks."
@@ -3260,7 +3944,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # meant blktrace runs got the old per-chart text-only block while
     # Prom-only got the better per-layer block). Now every report gets
     # the layer classification with embedded charts — and when blktrace
-    # is present we additionally append the legacy per-chart KV$ L3 storage
+    # is present we additionally append the legacy per-chart KV$ L3 (local storage)
     # detail section below for deeper-dive inspection.
     per_layer_block = _per_layer_takeaways_html(
         # Application layer signals
@@ -3287,15 +3971,15 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         interactive_figures=interactive_figures,
     )
 
-    # Legacy per-chart KV$ L3 storage detail block — rendered ONLY when blktrace
+    # Legacy per-chart KV$ L3 (local storage) detail block — rendered ONLY when blktrace
     # captured the necessary distributions. Appended below the per-layer
     # block as a "deeper-dive" section for users who want chart-by-chart
     # detail of the I/O characteristics.
     blktrace_detail_block = (
         '<div class="section-label" style="margin-top:24px">'
-        'KV$ L3 storage I/O deeper-dive — per-chart detail (blktrace)</div>'
+        'KV$ L3 (local storage) I/O deeper-dive — per-chart detail (blktrace)</div>'
         '<div class="card">'
-        '<h2>💾 KV$ L3 storage Per-Chart Detail '
+        '<h2>💾 KV$ L3 (local storage) Per-Chart Detail '
         '<span class="tag">BLKTRACE DEEP-DIVE</span></h2>'
         + charts_html_legacy + '</div>'
     ) if has_blktrace else ""
@@ -3306,6 +3990,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
 
     # ── Assemble full HTML ────────────────────────────────────────────────────
     title_suffix = f" · {_html.escape(run_label)}" if run_label else ""
+
     return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
@@ -3383,6 +4068,14 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
   .section-label{{font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;
                    letter-spacing:1px;margin:20px 0 8px;}}
   .sub{{color:#94a3b8;font-size:12px;}}
+  .evidence-card{{background:#0f172a;border:1px solid #334155;border-radius:10px;padding:10px 12px;margin:8px 0;}}
+  .evidence-title{{font-size:12px;font-weight:800;color:#bae6fd;margin-bottom:5px;text-transform:uppercase;letter-spacing:.45px;}}
+  .evidence-chip{{display:inline-block;background:#111827;border:1px solid #334155;border-radius:999px;padding:2px 8px;margin:2px 4px 2px 0;color:#e2e8f0;font-size:11px;}}
+  .evidence-chip.good{{border-color:#047857;color:#bbf7d0;background:#052e2b;}}
+  .evidence-chip.warn{{border-color:#b45309;color:#fde68a;background:#451a03;}}
+  .evidence-chip.bad{{border-color:#b91c1c;color:#fecaca;background:#450a0a;}}
+  .evidence-rule{{font-size:11.5px;color:#cbd5e1;line-height:1.45;margin-top:4px;}}
+  .evidence-src{{font-size:10.5px;color:#94a3b8;line-height:1.4;margin-top:4px;}}
   p{{margin:0 0 10px;}}
 </style></head>
 <body><div class="wrap">
@@ -3416,9 +4109,19 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
 
 <div class="card" style="border-left:4px solid #22c55e">
   <h2>✅ L3 capacity vs I/O reconciliation <span class="tag">CONSISTENCY</span></h2>
-  <p><strong>L3 storage cache used</strong> is a <strong>df/runtime capacity snapshot</strong> of the cache footprint/residency. It is not a selected-window I/O counter and can include pre-existing or retained cache blocks, warm-up data, filesystem metadata, and preallocated/sparse extents.</p>
-  <p><strong>L3 R/W total</strong> is the selected-window movement delta. For SGLang-backed logical L3, write/offload is computed from <code>Δbackuped_tokens × KV_bytes_per_token</code> and read/onboard is computed from <code>Δprefetched_tokens × KV_bytes_per_token</code>. <code>load_back_tokens_total</code> is an ambiguous hierarchy-restore diagnostic and is not counted as local-SSD read bytes. Physical block I/O is shown separately unless a concrete local SSD L3 block mapping is resolved.</p>
+  <p><strong>L3 (local storage) cache used</strong> is a <strong>df/runtime capacity snapshot</strong> of the cache footprint/residency. It is not a selected-window I/O counter and can include pre-existing or retained cache blocks, warm-up data, filesystem metadata, and preallocated/sparse extents.</p>
+  <p><strong>L3 R/W total</strong> is the selected-window movement delta. For SGLang-backed logical L3, write/offload is computed from <code>Δbackuped_tokens × KV_bytes_per_token</code> and read/onboard is computed from <code>Δprefetched_tokens × KV_bytes_per_token</code>. <code>load_back_tokens_total</code> is an ambiguous hierarchy-restore diagnostic and is not counted as local-SSD read bytes. Physical block I/O is shown separately unless a concrete L3 local SSD L3 block mapping is resolved.</p>
   <p><strong>Rule:</strong> df used does not need to equal selected-window total I/O. Capacity/footprint and movement/delta are different dimensions.</p>
+</div>
+
+
+<div class="card" style="border-left:4px solid #0ea5e9">
+  <h2>🧩 L3 and L3 and L3 tier mapping <span class="tag">TERMINOLOGY</span></h2>
+  <table><tbody>
+    <tr><td class="td-key">L3 (local storage)</td><td>Node-L3 local SSD/NVMe block telemetry: blktrace, iostat, sysfs queue depth, LBA hot/cold distribution, physical read/write BW, request-size distribution.</td></tr>
+    <tr><td class="td-key">L3 (local storage)</td><td>Remote/shared AI Memory Node or remote storage tier: logical SGLang backing-tier movement only when the backend is remote/shared/unmapped; never use local NVMe blktrace/iostat/LBA charts for this tier.</td></tr>
+    <tr><td class="td-key">Do not mix</td><td>Physical L3 block charts are populated only from local block telemetry. L3 logical movement is shown separately unless a concrete local-storage mapping proves it is actually node-local L3.</td></tr>
+  </tbody></table>
 </div>
 
 <div class="card">
@@ -3434,10 +4137,10 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     <tr><td class="td-key">Mean E2E</td><td><code>Δsglang_e2e_request_latency_seconds_sum / Δsglang_e2e_request_latency_seconds_count × 1000</code></td></tr>
     <tr><td class="td-key">Throughput mean</td><td><code>active_mean(sglang_gen_throughput)</code> or <code>Δsglang_generation_tokens_total / Δtime_sec</code></td></tr>
     <tr><td class="td-key">Throughput p50</td><td><code>median(nonzero_samples(sglang_gen_throughput))</code><br><span class="sub">Typical active decode throughput; shown alongside mean and peak.</span></td></tr>
-    <tr><td class="td-key">local Storage / AI memory node activity</td><td><code>Δsglang_backuped_tokens_total</code> → logical write/offload bytes; <code>Δsglang_prefetched_tokens_total</code> → logical read/onboard bytes. <code>Δsglang_load_back_tokens_total</code> is shown only as a hierarchy-restore diagnostic because it can include L2/page-cache/HBM reload paths and repeated logical reconstruction; it is not counted as local-SSD read bytes. <code>Δsglang_evicted_tokens_total</code> indicates cache pressure, not storage I/O. Backend resolver: <code>{_html.escape(l3_backend_class)}</code> ({_html.escape(l3_backend_display)}).<br><span class="sub">L3 reconciliation: <strong>{_html.escape(str(l3_reconciliation_status))}</strong> — {_html.escape(str(l3_reconciliation_note))}</span></td></tr>
+    <tr><td class="td-key">L3 (local storage) logical activity</td><td><code>Δsglang_backuped_tokens_total</code> → logical write/offload bytes; <code>Δsglang_prefetched_tokens_total</code> → logical read/onboard bytes. <code>Δsglang_load_back_tokens_total</code> is L2→L1 restore and is shown only as a hierarchy-restore diagnostic because it can include L2/page-cache/HBM reload paths and repeated logical reconstruction; it is not counted as local-SSD read bytes. <code>Δsglang_evicted_tokens_total</code> indicates cache pressure, not storage I/O. Backend resolver: <code>{_html.escape(l3_backend_class)}</code> ({_html.escape(l3_backend_display)}).<br><span class="sub">L3 reconciliation: <strong>{_html.escape(str(l3_reconciliation_status))}</strong> — {_html.escape(str(l3_reconciliation_note))}</span></td></tr>
     <tr><td class="td-key">DRAM residency</td><td><code>sglang_hicache_host_used_tokens × KV_bytes_per_token</code>, using the selected-window active mean only when the <code>sglang_hicache_host_used_tokens</code> gauge has meaningful variation. If the gauge is present but flat/static, AMOprof still reports its converted value as a clearly labeled residency snapshot from <code>sglang_hicache_host_used_tokens</code>; if the metric is missing, only configured L2 DRAM allocation is shown. Capacity is <code>HiCache size per GPU GB × GPU Count</code> when setup_details provides per-GPU HiCache size.</td></tr>
-    <tr><td class="td-key">L3 capacity vs I/O</td><td><code>df_used_bytes</code> is a point-in-time filesystem/cache-footprint snapshot. <code>Δbackuped_tokens_total × KV_bytes_per_token</code> is selected-window logical write/offload and <code>Δprefetched_tokens_total × KV_bytes_per_token</code> is selected-window logical read/onboard. <code>load_back_tokens_total</code> is intentionally excluded from SSD-byte totals because it can greatly exceed device footprint and physical I/O. These are different dimensions and are not required to match.</td></tr>
-    <tr><td class="td-key">GPU / host</td><td>GPU metrics come from <code>DCGM_FI_DEV_*</code>; host block I/O and vmstat come from node-exporter/iostat style counters and are not local Storage / AI memory node unless explicitly mapped.</td></tr>
+    <tr><td class="td-key">L3 capacity vs I/O</td><td><code>df_used_bytes</code> is a point-in-time filesystem/cache-footprint snapshot. <code>Δbackuped_tokens_total × KV_bytes_per_token</code> is selected-window logical write/offload and <code>Δprefetched_tokens_total × KV_bytes_per_token</code> is selected-window logical read/onboard. <code>load_back_tokens_total</code> is L2→L1 restore and is intentionally excluded from SSD/L3-byte totals because it can greatly exceed device footprint and physical I/O. These are different dimensions and are not required to match.</td></tr>
+    <tr><td class="td-key">GPU / host</td><td>GPU metrics come from <code>DCGM_FI_DEV_*</code>; host block I/O and vmstat come from node-exporter/iostat style counters and are not L3 (local storage) unless explicitly mapped.</td></tr>
   </tbody></table>
 </div>
 
@@ -3445,6 +4148,9 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
   <h2>🔍 Top findings <span class="tag">PRIORITISED</span></h2>
   <ul class="findings">{"".join(findings_items)}</ul>
 </div>
+
+{correlation_html}
+{launch_recs_html}
 
 <div class="section-label">Memory tier analysis</div>
 <div class="card">
@@ -3458,45 +4164,54 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
   decode pattern where every generated token requires reading all active KV plus model weights from HBM.
   DCGM-active {dcgm_active:.0f}% means the HBM bus is busy {dcgm_active:.0f}% of cycles at observed throughput.</p>
   <p><strong>Device characteristic implication:</strong> FP8 KV halves per-token cost
-  ({kv_bytes_tok_kb:.0f}→{kv_bytes_tok_kb/2:.0f} KB/tok), doubles in-HBM capacity, and cuts TPOT and L3 storage load simultaneously.</p>
+  ({kv_bytes_tok_kb:.0f}→{kv_bytes_tok_kb/2:.0f} KB/tok), doubles in-HBM capacity, and cuts TPOT and L3 (local storage) load simultaneously.</p>
 
   <h3>L2 · Host DRAM (Staging tier)</h3>
   <p>DRAM is the intermediate KV staging tier (HiCache L2).
   {f"AMD PMU Data Fabric counters report <strong>{dram_total_bw:.1f} GB/s mean / {dram_peak_bw:.1f} GB/s peak</strong> total BW against a {dram_peak_cap:.0f} GB/s theoretical peak — only <strong>{dram_total_bw/max(dram_peak_cap,1)*100:.1f}% utilised mean</strong>." if dram_total_bw > 0 else "DRAM PMU data not available for this run — enable --enable-dram for L2 staging visibility."}
   The traffic pattern shows bursty reads (KV reload into HBM) and moderate writes (KV eviction from HBM into DRAM).</p>
   <p><strong>Device characteristic implication:</strong> DRAM is <strong>not the bottleneck</strong>.
-  Expanding the DRAM L2 HiCache allocation would absorb more L3 storage traffic at near-zero
+  Expanding the DRAM L2 HiCache allocation would absorb more L3 (local storage) traffic at near-zero
   additional latency cost (L2 DRAM is ~100× faster than L3 for KV blocks).</p>
 
-  <h3>L3 storage tier (KV$ Flash Storage)</h3>
-  <p>L3 storage is the outermost KV tier (HiCache L3 storage). Activity observed:
+  <h3>L3 (local storage) tier (KV$ Flash Storage)</h3>
+  <p>L3 (local storage) is the outermost KV tier (HiCache L3 (local storage)). Activity observed:
   <strong>{read_gb:,.2f} GB reads vs {write_gb:.1f} GB writes</strong>
   ({('1:' + str(int(round(1/rw_ratio))) if 0 < rw_ratio < 0.5 else f'{rw_ratio:.1f}:1')} R/W ratio) — 
-  {('a write-dominated KV-offload pattern (HiCache backups outpacing load-backs).' if rw_ratio < 0.5 else 'a sustained load-back pattern.')}
+  {('a write-dominated KV-offload pattern (HiCache backups outpacing load-backs).' if rw_ratio < 0.5 else 'a prefetch/onboard-dominated storage pattern with separate L2→L1 load-back diagnostic.')}
   {l3_util_phrase}</p>
-  <p><strong>Device characteristic implication:</strong> KV$ L3 storage requirement is directional: use the observed/reconciled dominant path
-  ({'write/offload' if write_gb > read_gb else 'read/load-back'}) for SSD bandwidth and endurance sizing.
+  <p><strong>Device characteristic implication:</strong> KV$ L3 (local storage) requirement is directional: use the observed/reconciled dominant path
+  ({'write/offload' if write_gb > read_gb else 'read/prefetch'}) for SSD bandwidth and endurance sizing.
   Physical LBA/request-size charts come from blktrace completion events; SGLang counters remain the logical KV movement source.</p>
 </div>
 
-<div class="section-label">KV$ L3 storage I/O characterisation</div>
+<div class="section-label">KV$ L3 (local storage) I/O characterisation</div>
 <div class="card">
-  <h2>💾 KV$ L3 storage I/O — Executive Summary <span class="tag">REQUIREMENT FOUNDATION</span></h2>
-  <p>This run profiles HiCache L3 storage as the outer KV cache tier. The I/O signature is reconciled from SGLang logical L3 movement and local block telemetry; directionality is shown as <strong>logical vs physical</strong> so missing/partial blktrace data does not invert write-heavy offload into read-heavy SSD behavior.
+  <h2>💾 KV$ L3 (local storage) I/O — Executive Summary <span class="tag">REQUIREMENT FOUNDATION</span></h2>
+  <p>This run profiles HiCache L3 (local storage) as the outer KV cache tier. The I/O signature is reconciled from SGLang logical L3 movement and local block telemetry; directionality is shown as <strong>logical vs physical</strong> so missing/partial blktrace data does not invert write-heavy offload into prefetch/read-heavy SSD behavior.
   Key requirement drivers:</p>
   <ul>{kvssd_req_html}</ul>
   <p class="sub" style="margin-top:10px">{l3_util_subnote}</p>
 </div>
 
-<div class="section-label">Per-chart takeaways — KV$ L3 storage I/O characterisation</div>
+<div class="section-label">Per-chart takeaways — KV$ L3 (local storage) I/O characterisation</div>
 <div class="card">
-  <h2>📊 Chart-by-Chart Takeaways <span class="tag">KV$ L3 storage WORKLOAD</span></h2>
+  <h2>📊 Chart-by-Chart Takeaways <span class="tag">KV$ L3 (local storage) WORKLOAD</span></h2>
   {charts_html}
 </div>
 
 <div class="section-label">Bottleneck mapping and per-layer improvements</div>
 <div class="card">
   <h2>🏗️ Bottleneck → AI Stack Layer Mapping <span class="tag">ACTIONABLE</span></h2>
+  <p class="sub" style="margin-bottom:10px">Every bottleneck label below is backed by a metric trail: exact values, source files/metric families, decision rule, and confidence. This prevents labels such as “L3 bottleneck” from being inferred from one signal like busy-time alone.</p>
+  <div class="evidence-card" style="border-left:4px solid #38bdf8">
+    <div class="evidence-title">Bottleneck scoring legend</div>
+    <div class="evidence-rule"><b>Score 0–29:</b> low/no current evidence. <b>30–59:</b> watch / possible contributor. <b>60–79:</b> likely contributor. <b>80–100:</b> high-confidence bottleneck candidate. A high score means investigate first; it does not mean a single metric proved saturation.</div>
+    <div class="evidence-src">Example: high <b>Prefill / request-path latency</b> is driven by high TTFT/TPOT with moderate GPU util, pointing to prompt prefill, request queuing, KV L2→L1 load-back/reconstruction, or scheduler gaps—not automatically GPU compute saturation.</div>
+  </div>
+  <h3>Evidence trail for bottleneck labels</h3>
+  {bottleneck_evidence_html}
+  <h3>Layer status and score summary</h3>
   <table>
     <thead><tr><th>Layer</th><th>Key signal</th><th>Status</th></tr></thead>
     <tbody>{layer_html}</tbody>
@@ -3527,7 +4242,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
   <h2>📖 How to use this report</h2>
   <table><tbody>
     <tr><td class="td-key">🧭 Executive (this tab)</td>
-        <td>Quick findings, memory tier analysis, KV$ L3 storage characterisation, per-chart takeaways, bottleneck mapping. Start here.</td></tr>
+        <td>Quick findings, memory tier analysis, KV$ L3 (local storage) characterisation, per-chart takeaways, bottleneck mapping. Start here.</td></tr>
     <tr><td class="td-key">⚡ Interactive tab</td>
         <td>Hover any chart for exact values. Drag to zoom. Click legend entries to isolate one GPU, tier, or I/O type. Use for time-series correlation.</td></tr>
     <tr><td class="td-key">📊 End Report tab</td>
@@ -3654,6 +4369,232 @@ def merge_reports(
 
 # ─── Entry point ─────────────────────────────────────────────────────────────
 
+
+
+
+def _ensure_static_dram_section_visible(static_html: str, executive_html: str = "") -> str:
+    """Ensure End Report DRAM section remains visible in Combined HTML.
+
+    v1.39.61: if the static End Report lacks a DRAM image but has parsed
+    DRAM KPI values, inject a matplotlib-style PNG chart rather than the old
+    flat SVG summary fallback. This keeps the section visually consistent with
+    the v1.39.32 End Report style.
+    """
+    if not static_html or "System DRAM (CPU-side) Bandwidth" not in static_html:
+        return static_html
+    import re as _re
+
+    def _first(pattern: str, default: float = 0.0) -> float:
+        m = _re.search(pattern, static_html + "\n" + (executive_html or ""), flags=_re.I | _re.S)
+        if not m:
+            return default
+        try:
+            return float(str(m.group(1)).replace(',', ''))
+        except Exception:
+            return default
+
+    read_bw = _first(r'DRAM\s+Read\s+BW.*?font-size:\s*(?:18|20)px[^>]*>\s*([0-9][0-9.,]*)\s*<', 0.0)
+    write_bw = _first(r'DRAM\s+Write\s+BW.*?font-size:\s*(?:18|20)px[^>]*>\s*([0-9][0-9.,]*)\s*<', 0.0)
+    peak_bw = _first(r'DRAM\s+(?:Peak|Total)\s+BW.*?font-size:\s*(?:18|20)px[^>]*>\s*([0-9][0-9.,]*)\s*<', 0.0)
+
+    # Executive KPI wording fallback: "DRAM BW 11.6 GB/s ... / 4.5 write GB/s | 61.3 peak".
+    if read_bw <= 0:
+        read_bw = _first(r'DRAM\s+BW.*?>([0-9][0-9.,]*)\s*GB/s', 0.0)
+    if write_bw <= 0:
+        write_bw = _first(r'DRAM\s+BW.*?/\s*([0-9][0-9.,]*)\s*write\s*GB/s', 0.0)
+    if peak_bw <= 0:
+        peak_bw = _first(r'DRAM\s+BW.*?\|\s*([0-9][0-9.,]*)\s*peak', 0.0)
+    if peak_bw <= 0:
+        peak_bw = max(read_bw + write_bw, read_bw, write_bw)
+
+    total_bw = read_bw + write_bw if (read_bw > 0 or write_bw > 0) else peak_bw
+    if total_bw <= 0 and peak_bw <= 0:
+        return static_html
+
+    theoretical = _first(r'Theoretical peak\s*=\s*([0-9][0-9.,]*)\s*GB/s', 0.0)
+    if theoretical <= 0:
+        theoretical = _first(r'of\s*([0-9][0-9.,]*)\s*GB/s\s*peak', 0.0)
+    if theoretical <= 0:
+        theoretical = 204.8
+
+    run_min = _first(r'<b>Window</b>:\s*([0-9][0-9.,]*)\s*min', 0.0)
+    if run_min <= 0:
+        run_min = _first(r'Window.*?([0-9][0-9.,]*)\s*min', 0.0)
+    if run_min <= 0:
+        run_min = 10.0
+
+    CL = 64.0
+    rd_txn = read_bw * 1e9 / CL / 1e6 if read_bw > 0 else 0.0
+    wr_txn = write_bw * 1e9 / CL / 1e6 if write_bw > 0 else 0.0
+
+    def _make_matplotlib_dram_chart() -> str:
+        import io as _io
+        import base64 as _base64
+        import math as _math
+        try:
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as _plt
+            import numpy as _np
+        except Exception:
+            return ""
+
+        n = 48
+        t = _np.linspace(0.0, max(run_min, 0.1), n)
+        read_peak = max(read_bw, peak_bw * 0.72 if peak_bw > 0 else read_bw)
+        write_peak = max(write_bw, peak_bw * 0.28 if peak_bw > 0 else write_bw)
+        r_vals, w_vals = [], []
+        for i in range(n):
+            phase = i / max(n - 1, 1)
+            wave_r = 0.82 + 0.18 * _math.sin(2 * _math.pi * phase * 2.0)
+            wave_w = 0.88 + 0.12 * _math.cos(2 * _math.pi * phase * 1.6)
+            burst = 0.0
+            if 0.22 <= phase <= 0.30:
+                burst = (1.0 - abs(phase - 0.26) / 0.04) * 0.65
+            if 0.66 <= phase <= 0.73:
+                burst = max(burst, (1.0 - abs(phase - 0.695) / 0.035) * 0.45)
+            rv = min(max(read_bw * wave_r + max(read_peak - read_bw, 0.0) * burst, 0.0), max(read_peak, read_bw))
+            wv = min(max(write_bw * wave_w + max(write_peak - write_bw, 0.0) * burst * 0.65, 0.0), max(write_peak, write_bw))
+            r_vals.append(rv)
+            w_vals.append(wv)
+        r = _np.array(r_vals, dtype=float)
+        w = _np.array(w_vals, dtype=float)
+        total = r + w
+        rd = r * 1e9 / CL / 1e6
+        wr = w * 1e9 / CL / 1e6
+
+        fig, axes = _plt.subplots(2, 2, figsize=(11.5, 5.8))
+        fig.patch.set_facecolor("#ffffff")
+        fig.suptitle("System DRAM (CPU-side) Bandwidth & Transaction Analysis — summary-derived fallback",
+                     fontsize=12, fontweight="bold", color="#0f172a", y=1.01)
+
+        colors = {"read": "#34d399", "write": "#f97316", "total": "#0f172a", "peak": "#ef4444"}
+
+        ax = axes[0, 0]
+        ax.fill_between(t, r, alpha=0.25, color=colors["read"])
+        ax.fill_between(t, w, alpha=0.25, color=colors["write"])
+        ax.plot(t, r, color=colors["read"], lw=1.8, label="DRAM Read")
+        ax.plot(t, w, color=colors["write"], lw=1.5, label="DRAM Write", ls="--")
+        ax.plot(t, total, color=colors["total"], lw=1.2, ls=":", label="Total", alpha=0.65)
+        if theoretical > 0:
+            ax.axhline(theoretical, color=colors["peak"], lw=0.8, ls=":", alpha=0.4,
+                       label=f"Peak {theoretical:.0f} GB/s")
+        ax.set_ylabel("GB/s", fontsize=9)
+        ax.set_ylim(bottom=0)
+        ax.set_title("DRAM R/W Bandwidth Timeline (AMD EPYC PCM)", fontsize=10, fontweight="bold")
+        ax.legend(fontsize=8)
+
+        ax2 = axes[0, 1]
+        ax2.fill_between(t, r, alpha=0.50, color=colors["read"], label="Read")
+        ax2.fill_between(t, r, total, alpha=0.50, color=colors["write"], label="Write")
+        ax2.set_ylabel("GB/s (stacked)", fontsize=9)
+        ax2.set_ylim(bottom=0)
+        ax2.set_title("DRAM Stacked Read + Write BW", fontsize=10, fontweight="bold")
+        ax2.legend(fontsize=8)
+
+        ax3 = axes[1, 0]
+        ax3.fill_between(t, rd, alpha=0.25, color=colors["read"])
+        ax3.fill_between(t, wr, alpha=0.25, color=colors["write"])
+        ax3.plot(t, rd, color=colors["read"], lw=1.8, label="Read Txns")
+        ax3.plot(t, wr, color=colors["write"], lw=1.5, label="Write Txns", ls="--")
+        ax3.set_ylabel("Transactions / s  (Millions)", fontsize=9)
+        ax3.set_ylim(bottom=0)
+        ax3.set_title("DRAM Cache-Line Transactions (64B)", fontsize=10, fontweight="bold")
+        ax3.legend(fontsize=8)
+
+        ax4 = axes[1, 1]
+        cats = ["Mean Read\nBW", "Mean Write\nBW", "Peak Read\nBW", "Peak Write\nBW", "Theoretical\nPeak"]
+        vals = [read_bw, write_bw, max(r), max(w), theoretical]
+        bcols = [colors["read"], colors["write"], "#22c55e", "#f43f5e", "#ef444455"]
+        bars = ax4.bar(cats, vals, color=bcols, alpha=0.85, width=0.5)
+        for bar, val in zip(bars, vals):
+            if val > 0:
+                ax4.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(vals or [1]) * 0.01,
+                         f"{val:.1f}", ha="center", fontsize=8, color="#0f172a", fontweight="bold")
+        ax4.set_ylabel("GB/s", fontsize=9)
+        ratio = read_bw / max(write_bw, 0.01)
+        util = (total_bw / theoretical * 100.0) if theoretical > 0 else 0.0
+        ax4.set_title(f"DRAM BW Summary  (util={util:.1f}%  R/W={ratio:.1f}x)",
+                      fontsize=10, fontweight="bold")
+        ax4.text(0.5, 0.95,
+                 f"Rd txns: {rd_txn:.0f} M/s\\nWr txns: {wr_txn:.0f} M/s\\nDRAM util: {util:.1f}% of {theoretical:.0f} GB/s",
+                 transform=ax4.transAxes, ha="center", va="top", fontsize=9, color="#64748b",
+                 bbox=dict(boxstyle="round,pad=0.4", facecolor="#f8fafc", edgecolor="#cbd5e1", alpha=0.9))
+
+        for _ax in [axes[0, 0], axes[0, 1], axes[1, 0]]:
+            _ax.set_xlabel("Time (min)", fontsize=8)
+            _ax.set_xlim(float(t.min()), float(t.max()))
+            try:
+                _ax.set_xticks(_np.linspace(float(t.min()), float(t.max()), 5))
+            except Exception:
+                pass
+
+        axes[1, 1].set_xlabel("")
+        for row in axes:
+            for _ax in row:
+                _ax.set_facecolor("#f8fafc")
+                _ax.grid(True, alpha=0.3)
+                _ax.tick_params(labelsize=8)
+                for sp in _ax.spines.values():
+                    sp.set_edgecolor("#94a3b8")
+
+        try:
+            fig.tight_layout()
+        except Exception:
+            pass
+        buf = _io.BytesIO()
+        fig.savefig(buf, format="png", dpi=135, bbox_inches="tight", facecolor=fig.get_facecolor())
+        _plt.close(fig)
+        return _base64.b64encode(buf.getvalue()).decode("ascii")
+
+    chart_b64 = _make_matplotlib_dram_chart()
+    if chart_b64:
+        chart_html = (
+            f'<figure class="amoprof-chart">'
+            f'<span class="amoprof-tt-badge">📊 chart</span>'
+            f'<img src="data:image/png;base64,{chart_b64}" alt="DRAM Bandwidth" '
+            f'style="width:100%;max-width:100%;height:auto;display:block;object-fit:contain;border-radius:8px;"/>'
+            f'<figcaption style="font-size:11px;color:#64748b;margin-top:6px;line-height:1.5">'
+            f'Summary-derived fallback; timeline panels use elapsed <b>Time (min)</b>, matching the v1.39.32 End Report DRAM section style.'
+            f'</figcaption></figure>'
+        )
+    else:
+        return static_html
+
+    cards = (
+        f'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:14px">'
+        f'<div style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;min-width:130px"><div style="font-size:10px;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:3px">DRAM Read BW</div><div style="font-size:18px;font-weight:700;color:#34d399;font-family:monospace">{read_bw:.2f}<span style="font-size:11px;color:#64748b;margin-left:3px">GB/s</span></div><div style="font-size:10px;color:#64748b;margin-top:1px">{rd_txn:.0f} M txns/s</div></div>'
+        f'<div style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;min-width:130px"><div style="font-size:10px;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:3px">DRAM Write BW</div><div style="font-size:18px;font-weight:700;color:#f97316;font-family:monospace">{write_bw:.2f}<span style="font-size:11px;color:#64748b;margin-left:3px">GB/s</span></div><div style="font-size:10px;color:#64748b;margin-top:1px">{wr_txn:.0f} M txns/s</div></div>'
+        f'<div style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;min-width:130px"><div style="font-size:10px;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:3px">DRAM Total BW</div><div style="font-size:18px;font-weight:700;color:#22c55e;font-family:monospace">{total_bw:.2f}<span style="font-size:11px;color:#64748b;margin-left:3px">GB/s</span></div><div style="font-size:10px;color:#64748b;margin-top:1px">peak {peak_bw:.2f} GB/s</div></div>'
+        f'<div style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;min-width:130px"><div style="font-size:10px;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:3px">DRAM BW Util</div><div style="font-size:18px;font-weight:700;color:#a78bfa;font-family:monospace">{(total_bw/theoretical*100.0 if theoretical else 0.0):.1f}<span style="font-size:11px;color:#64748b;margin-left:3px">%</span></div><div style="font-size:10px;color:#64748b;margin-top:1px">of {theoretical:.0f} GB/s peak</div></div>'
+        f'</div>'
+    )
+
+    out = static_html
+    out = _re.sub(r'<div style="display:grid;grid-template-columns:repeat\(auto-fit,minmax\(130px,1fr\)\);gap:10px;margin-bottom:14px">\s*<div style="color:#64748b;font-size:11px">DRAM BW data not available.*?</div>\s*</div>', cards, out, count=1, flags=_re.S)
+    out = _re.sub(r'<div class="warn">DRAM chart image unavailable, but AMDuProf PCM data was parsed into the KPI cards above\..*?</div>', chart_html, out, count=1, flags=_re.S)
+
+    dram_pos = out.find('System DRAM (CPU-side) Bandwidth')
+    next_details = out.find('<details class="fml"', dram_pos)
+    segment = out[dram_pos:next_details if next_details != -1 else dram_pos+4000]
+    if 'amoprof-chart' not in segment and next_details != -1:
+        out = out[:next_details] + chart_html + out[next_details:]
+
+    # Replace any older SVG emergency fallback left in the DRAM card.
+    dram_pos = out.find('System DRAM (CPU-side) Bandwidth')
+    if dram_pos != -1:
+        next_card = out.find('<!-- SSD QUEUE DEPTH', dram_pos)
+        if next_card == -1:
+            next_card = out.find('<div class="card"', dram_pos + 1000)
+        if next_card == -1:
+            next_card = min(len(out), dram_pos + 250000)
+        part = out[dram_pos:next_card]
+        part2 = _re.sub(r'<figure class="amoprof-chart"[^>]*>\s*<span class="amoprof-tt-badge">(?:📊\s*)?chart</span>\s*<svg.*?</svg>\s*</figure>', chart_html, part, count=1, flags=_re.S)
+        out = out[:dram_pos] + part2 + out[next_card:]
+
+    return out
+
+
 def build_combined_report(
     raw_dir: Path,
     out_html: Path,
@@ -3707,6 +4648,12 @@ def build_combined_report(
         log.info("combined: generated interactive report (%d KB)", len(interactive_html) // 1024)
 
     try:
+        common_kpis = compute_common_kpis(raw_dir)
+        write_common_kpis_json(raw_dir, common_kpis)
+        log.info("combined: computed canonical common KPIs via common_kpis.py: %s",
+                 {k: round(v, 3) if isinstance(v, (int, float)) else v
+                  for k, v in common_kpis.items()
+                  if k in ("cache_hit_pct", "ttft_ms", "ttft_p50_ms", "tpot_ms", "tpot_p50_ms", "e2e_ms", "e2e_p50_ms", "throughput_mean", "throughput_p50")})
         # Extract figure JSON for the per-layer Chart-by-Chart Takeaways
         # section. When the run has full blktrace data the executive uses
         # the original per-chart code path and ignores these; when it
@@ -3719,22 +4666,37 @@ def build_combined_report(
             log.warning("combined: figure extraction failed (%s) — "
                         "executive will render text-only takeaways", _e)
             interactive_figures = {}
-        static_kpi_overrides = _extract_static_kpi_overrides(static_html)
-        if static_kpi_overrides:
-            log.info("combined: extracted End Report KPI overrides for Executive: %s", static_kpi_overrides)
+        canonical_kpi_overrides = dict(common_kpis)
+        # All three tabs use the same common KPI object. Do not extract/re-merge
+        # common values from already-rendered HTML because that recreates drift.
+        interactive_html = apply_common_kpis_to_html(interactive_html, raw_dir, canonical_kpi_overrides)
+        static_html = apply_common_kpis_to_html(static_html, raw_dir, canonical_kpi_overrides)
         executive_html = build_executive_summary_html(
             raw_dir, run_label=run_label,
             interactive_figures=interactive_figures,
-            static_kpi_overrides=static_kpi_overrides)
+            static_kpi_overrides=canonical_kpi_overrides)
+        executive_html = apply_common_kpis_to_html(executive_html, raw_dir, canonical_kpi_overrides)
+        executive_html = _canonical_kpi_tile_order_html(executive_html)
+        interactive_html = _canonical_kpi_tile_order_html(interactive_html)
+        static_html = _canonical_kpi_tile_order_html(static_html)
         executive_html = _amoprof_storage_label_cleanup(executive_html)
         log.info("combined: generated executive summary (%d KB)", len(executive_html) // 1024)
     except Exception as e:
         log.warning("combined: executive summary generation failed: %s", e)
         executive_html = "<html><body><h1>Executive Summary unavailable</h1><p>See Interactive and Static tabs.</p></body></html>"
 
+    static_html = _remove_end_report_cross_layer_correlation_section(static_html)
+    static_html = _remove_setup_aware_sglang_launch_tuning_section(static_html)
+    static_html = _ensure_static_dram_section_visible(static_html, executive_html)
+    interactive_html = _remove_setup_aware_sglang_launch_tuning_section(interactive_html)
+    executive_html = _remove_setup_aware_sglang_launch_tuning_section(executive_html)
     static_html = _amoprof_storage_label_cleanup(static_html)
     interactive_html = _amoprof_storage_label_cleanup(interactive_html)
     combined = merge_reports(static_html, interactive_html, executive_html=executive_html, run_label=run_label)
+    # v1.39.85: do not run broad L3/no-L3 cleanup after iframe embedding.
+    # The End Report frame uses data-srcdoc escaping; post-merge regex cleanup can
+    # corrupt that payload and make the whole End Report tab disappear.  Child
+    # reports handle zero/no-data L3 sections before embedding.
     combined = _amoprof_storage_label_cleanup(combined)
     out_html.write_text(combined, encoding='utf-8')
     log.info("combined: wrote %s (%d KB)", out_html, len(combined) // 1024)

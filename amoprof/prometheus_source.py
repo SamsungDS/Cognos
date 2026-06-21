@@ -104,6 +104,45 @@ def parse_labels_arg(label_args: list[str] | None) -> dict[str, str]:
     return out
 
 
+def parse_duration_arg_s(value: str | int | float | None) -> int | None:
+    """Parse a Prometheus rate/window duration into seconds.
+
+    Accepts:
+      - None / empty / 0 -> None, meaning caller default
+      - integer/float seconds, e.g. 300 or "300"
+      - Prometheus-style single durations: "60s", "5m", "1h", "2d"
+
+    This intentionally supports one unit at a time to avoid surprising
+    interpretations. Use 90m instead of 1h30m.
+    """
+    if value in (None, "", 0, "0"):
+        return None
+    if isinstance(value, (int, float)):
+        out = int(value)
+        if out <= 0:
+            raise ValueError(f"duration must be > 0 seconds, got {value!r}")
+        return out
+    text = str(value).strip().lower()
+    if not text:
+        return None
+    if re.match(r"^\d+(\.\d+)?$", text):
+        out = int(float(text))
+        if out <= 0:
+            raise ValueError(f"duration must be > 0 seconds, got {value!r}")
+        return out
+    m = re.match(r"^(\d+(?:\.\d+)?)(ms|s|m|h|d)$", text)
+    if not m:
+        raise ValueError(
+            f"invalid duration {value!r}; use seconds or one unit like 300s, 5m, 1h")
+    n = float(m.group(1))
+    unit = m.group(2)
+    mult = {"ms": 0.001, "s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
+    out = int(round(n * mult))
+    if out <= 0:
+        raise ValueError(f"duration must be > 0 seconds, got {value!r}")
+    return out
+
+
 # ─── Bundled-amoprof loader ─────────────────────────────────────────────────
 # The bundled report at amoprof/report/amoprof.py defines the actual
 # Prometheus query helpers. Loading it as a sibling module would shadow our
@@ -175,6 +214,7 @@ def fetch_from_prometheus(
     start: str = "",
     end: str = "",
     step_s: int = 15,
+    percentile_rate_window: str | int | float | None = None,
     instance: str = "",
     job: str = "",
     extra_labels: dict[str, str] | None = None,
@@ -189,6 +229,9 @@ def fetch_from_prometheus(
       start, end   : Time range strings (see parse_time_arg).
                      Empty → default to last 1 hour.
       step_s       : query_range resolution (seconds).
+      percentile_rate_window:
+                     Optional histogram_quantile rate() window for percentile
+                     timeseries, e.g. "5m" or 300. Default: max(60s, 4*step_s).
       instance     : Filter to {instance="..."} on every PromQL query.
       job          : Filter to {job="..."} on every PromQL query.
       extra_labels : Additional {key:value} label filters (ANDed).
@@ -223,8 +266,11 @@ def fetch_from_prometheus(
         )
 
     window_s = t_end - t_start
-    log.info("Prometheus fetch: %s  window=%.0fs  step=%ds  instance=%r  job=%r",
-             prom_url, window_s, step_s, instance or "(any)", job or "(any)")
+    resolved_rate_window_s = parse_duration_arg_s(percentile_rate_window)
+    if resolved_rate_window_s is None:
+        resolved_rate_window_s = max(60, int(step_s) * 4)
+    log.info("Prometheus fetch: %s  window=%.0fs  step=%ds  percentile_rate_window=%ds  instance=%r  job=%r",
+             prom_url, window_s, step_s, resolved_rate_window_s, instance or "(any)", job or "(any)")
 
     labels = dict(extra_labels or {})
     if nvme_device:
@@ -273,6 +319,12 @@ def fetch_from_prometheus(
             else:
                 sg = {}
             sg.update(pct_summary)
+            sg["percentile_rate_window_s"] = resolved_rate_window_s
+            sg["percentile_rate_window_source"] = (
+                f"--prom-rate-window {percentile_rate_window}"
+                if percentile_rate_window not in (None, "", 0, "0")
+                else "default max(60s, 4 * --prom-step)"
+            )
             sg["cache_hit_calc_method"] = sg.get(
                 "cache_hit_calc_method", "histogram_quantile_window")
             sg_path.write_text(json.dumps(sg, indent=2, default=str))
@@ -281,6 +333,7 @@ def fetch_from_prometheus(
 
         pct_ts = fetch_percentile_timeseries(
             prom_url, t_start, t_end, step_s=step_s,
+            rate_window_s=resolved_rate_window_s,
             instance=instance, job=job, extra_labels=labels)
         if pct_ts:
             pts_path = output_dir / "sglang_percentiles_timeseries.json"
@@ -302,6 +355,12 @@ def fetch_from_prometheus(
         "start":       t_start,
         "end":         t_end,
         "step_s":      step_s,
+        "percentile_rate_window_s": resolved_rate_window_s,
+        "percentile_rate_window_source": (
+            f"--prom-rate-window {percentile_rate_window}"
+            if percentile_rate_window not in (None, "", 0, "0")
+            else "default max(60s, 4 * --prom-step)"
+        ),
         "instance":    instance,
         "job":         job,
         "labels":      labels,

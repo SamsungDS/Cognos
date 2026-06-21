@@ -410,7 +410,7 @@ def build_comparison_html(
             ("HBM used (GB)",    "hbm_used_gb",      " GB",  True,  ".1f", 1.0),
             ("HBM fill %",       "hbm_pct",          "%",    True,  ".1f", 1.0),
             ("GPU power (W)",    "gpu_power_w",      " W",   True,  ".0f", 1.0),
-            ("L3 (Storage/AI Memory Node) read throughput (MB/s)","nvme_rd_bw_mbs", " MB/s",False, ".0f", 1.0),
+            ("L3 (local storage) read throughput (MB/s)","nvme_rd_bw_mbs", " MB/s",False, ".0f", 1.0),
             ("NVMe read IOPS",   "nvme_rd_iops",     " IOPS",False, ".0f", 1.0),
             ("NVMe read lat (ms)","nvme_rd_lat_ms",  " ms",  True,  ".2f", 1.0),
             ("NVMe device util%","nvme_util_pct",    "%",    True,  ".1f", 1.0),

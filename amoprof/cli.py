@@ -101,6 +101,185 @@ def _copy_bench_summary(args, raw_dir: Path) -> None:
         log.warning("bench summary copy failed: %s", e)
 
 
+
+def _fetch_sglang_server_info(args: argparse.Namespace) -> dict[str, Any]:
+    """Fetch live SGLang server_info.
+
+    server_info is the preferred setup/config source. We support multiple
+    endpoint spellings because SGLang deployments/versions vary.
+    """
+    import urllib.request
+
+    explicit = getattr(args, "server_info_url", "") or os.environ.get("AMOPROF_SGLANG_SERVER_INFO_URL", "")
+    urls: list[str] = []
+    if explicit:
+        urls.append(explicit)
+
+    host = getattr(args, "sglang_host", "") or os.environ.get("AMOPROF_SGLANG_HOST", "127.0.0.1")
+    port = getattr(args, "sglang_port", None)
+    try:
+        port_i = int(port or 0)
+    except Exception:
+        port_i = 0
+    if port_i > 0:
+        base = f"http://{host}:{port_i}"
+        # Prefer the non-deprecated endpoint first. `/get_server_info` is kept
+        # only as a last-resort compatibility fallback for older SGLang builds.
+        urls.extend([
+            f"{base}/server_info",
+            f"{base}/v1/server_info",
+            f"{base}/info",
+            f"{base}/get_server_info",
+        ])
+
+    seen: set[str] = set()
+    last_err = ""
+    for url in urls:
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        try:
+            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                data.setdefault("_amoprof_source", "sglang_server_info")
+                data.setdefault("_amoprof_source_url", url)
+                return data
+        except Exception as e:
+            last_err = f"{url}: {e}"
+    if urls:
+        log.warning("Could not fetch SGLang server_info (%s)", last_err)
+    return {}
+
+
+def _deep_find(obj: Any, wanted: tuple[str, ...]) -> Any:
+    """Recursive case/format-insensitive lookup for server_info fields."""
+    if isinstance(obj, dict):
+        norm = {re.sub(r"[^a-z0-9]", "", str(k).lower()): v for k, v in obj.items()}
+        for key in wanted:
+            nk = re.sub(r"[^a-z0-9]", "", key.lower())
+            if nk in norm:
+                return norm[nk]
+        for v in obj.values():
+            out = _deep_find(v, wanted)
+            if out not in (None, "", [], {}):
+                return out
+    elif isinstance(obj, list):
+        for v in obj:
+            out = _deep_find(v, wanted)
+            if out not in (None, "", [], {}):
+                return out
+    return None
+
+
+def _server_info_to_setup_details(server_info: dict[str, Any],
+                                  args: argparse.Namespace | None = None) -> dict[str, Any]:
+    """Convert SGLang server_info into AMOprof setup_details.json shape."""
+    args = args or argparse.Namespace()
+    si = dict(server_info or {})
+
+    def pick(*keys: str, default=None):
+        v = _deep_find(si, tuple(keys))
+        return default if v in (None, "", [], {}) else v
+
+    launch = pick("launch_args", "server_args", "args", "command", "cmdline", "launch_command", default="")
+    launch_text = json.dumps(launch, sort_keys=True) if isinstance(launch, (dict, list)) else str(launch or "")
+
+    model = pick("model_path", "model", "served_model_name", "model_name", default=getattr(args, "model", "unknown"))
+    tp = pick("tp_size", "tensor_parallel_size", "tp", "tensor_parallel", default=None)
+    dp = pick("dp_size", "data_parallel_size", "dp", "data_parallel", default=None)
+    kv_dtype = pick("kv_cache_dtype", "kv_dtype", "dtype", default=None)
+    page_size = pick("page_size", "hicache_page_size", "kv_cache_page_size",
+                     default=(getattr(args, "sglang_page_size", 0) or None))
+    hicache_size = pick("hicache_size", "hi_cache_size", "hicache_size_gb", default=None)
+    hicache_ratio = pick("hicache_ratio", "hi_cache_ratio", default=None)
+    storage_backend = pick("hicache_storage_backend", "storage_backend", "hicache_backend", default=None)
+    io_backend = pick("hicache_io_backend", "io_backend", default=None)
+    mem_layout = pick("hicache_mem_layout", "mem_layout", default=None)
+    file_path = pick("file_storage_path", "hicache_storage_path", "storage_path",
+                     default=getattr(args, "hicache_path", ""))
+    mem_frac = pick("mem_fraction_static", "mem_fraction", default=None)
+    chunked = pick("chunked_prefill_size", "chunked_prefill", default=None)
+
+    setup: dict[str, Any] = {
+        "Setup source": "SGLang server_info",
+        "SGLang server_info source URL": si.get("_amoprof_source_url", ""),
+        "Model": model,
+        "Model path": model,
+        "TP size": tp,
+        "DP size": dp,
+        "KV dtype": kv_dtype,
+        "Page size": page_size,
+        "HiCache size": hicache_size,
+        "HiCache ratio": hicache_ratio,
+        "HiCache storage backend": storage_backend,
+        "HiCache IO backend": io_backend,
+        "HiCache mem layout": mem_layout,
+        "HiCache path": file_path or getattr(args, "hicache_path", ""),
+        "File storage path": file_path or getattr(args, "hicache_path", ""),
+        "mem-fraction-static": mem_frac,
+        "chunked-prefill-size": chunked,
+        "SGLang launch command": launch_text,
+        "SGLang server_info raw": si,
+    }
+    if getattr(args, "ssd_device", ""):
+        setup["L3 (local storage) device"] = getattr(args, "ssd_device", "")
+        setup["SSD device"] = getattr(args, "ssd_device", "")
+    if getattr(args, "sglang_host", ""):
+        setup["SGLang host"] = getattr(args, "sglang_host", "")
+    if getattr(args, "sglang_port", None):
+        setup["SGLang port"] = getattr(args, "sglang_port", None)
+
+    return {k: v for k, v in setup.items() if v not in (None, "", [], {}) or k == "SGLang server_info raw"}
+
+
+def _write_setup_details_from_server_info(args: argparse.Namespace, raw_dir: Path,
+                                          allow_overwrite: bool = True) -> bool:
+    """Write raw/server_info.json and server-info-derived raw/setup_details.json.
+
+    Uses an existing raw/server_info.json cache when present to avoid repeatedly
+    invoking SGLang HTTP endpoints during the same run/analyze flow.
+    """
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    info: dict[str, Any] = {}
+    cache_path = raw_dir / "server_info.json"
+
+    # Reuse cache first unless the user explicitly asks to refresh.
+    force_refresh = bool(getattr(args, "refresh_server_info", False))
+    if cache_path.exists() and cache_path.stat().st_size > 0 and not force_refresh:
+        try:
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            if isinstance(cached, dict):
+                info = cached
+                log.info("Using cached SGLang server_info: %s", cache_path)
+        except Exception as e:
+            log.warning("Could not read cached server_info.json, will refetch: %s", e)
+
+    if not info:
+        info = _fetch_sglang_server_info(args)
+        if not info:
+            return False
+        try:
+            cache_path.write_text(json.dumps(info, indent=2, default=str), encoding="utf-8")
+            log.info("Wrote SGLang server_info: %s", cache_path)
+        except Exception as e:
+            log.warning("failed to write server_info.json: %s", e)
+
+    setup = _server_info_to_setup_details(info, args)
+    dst = raw_dir / "setup_details.json"
+    if dst.exists() and not allow_overwrite and not bool(getattr(args, "setup_details_override", False)):
+        return False
+    try:
+        dst.write_text(json.dumps(setup, indent=2, default=str), encoding="utf-8")
+        log.info("Generated setup_details.json from SGLang server_info: %s", dst)
+        return True
+    except Exception as e:
+        log.warning("failed to write server_info-derived setup_details.json: %s", e)
+        return False
+
+
 def _copy_setup_details(args, raw_dir: Path) -> None:
     """Copy --setup-details JSON into raw/setup_details.json so both the
     static and interactive reports can render the Setup / Server Configuration
@@ -129,9 +308,13 @@ def _copy_setup_details(args, raw_dir: Path) -> None:
         log.warning("--setup-details is not valid JSON: %s (%s)", src, e)
         return
     dst = raw_dir / "setup_details.json"
+    if dst.exists() and not bool(getattr(args, "setup_details_override", False)):
+        log.info("setup_details.json already exists, likely from SGLang server_info; "
+                 "manual --setup-details kept as fallback. Use --setup-details-override to replace it.")
+        return
     try:
         shutil.copyfile(src, dst)
-        log.info("Copied setup details: %s → %s", src, dst)
+        log.info("Copied manual setup details: %s → %s", src, dst)
     except Exception as e:
         log.warning("setup details copy failed: %s", e)
 
@@ -1234,6 +1417,10 @@ def _collect(args: argparse.Namespace) -> int:
     raw_dir = out_dir / "raw"
     out_dir.mkdir(parents=True, exist_ok=True)
     raw_dir.mkdir(parents=True, exist_ok=True)
+
+    # Prefer live SGLang server_info as setup/config source as soon as raw/ exists.
+    # This makes collect-only runs self-contained even if reports are generated later.
+    _write_setup_details_from_server_info(args, raw_dir, allow_overwrite=True)
     # Expose canonical output locations to child tools and user wrappers.
     os.environ["AMOPROF_OUTPUT_DIR"] = str(output_base)
     os.environ["AMOPROF_RUN_DIR"] = str(out_dir)
@@ -1343,7 +1530,7 @@ def _collect(args: argparse.Namespace) -> int:
                                    use_sudo=not getattr(args, "no_sudo", False)),
         # Captures NVMe device capacity (/sys/block/<dev>/size) and HiCache
         # filesystem usage (df on hicache_path) into smart_summary.json so the
-        # L3 HiCache capacity tile and local Storage / AI memory node layer row populate.
+        # L3 HiCache capacity tile and L3 (AI Memory Node / remote storage) layer row populate.
         "ssd_hw": SsdHardwareMonitor(args.ssd_device,
                                      hicache_path=args.hicache_path,
                                      use_sudo=not getattr(args, "no_sudo", False)),
@@ -1512,7 +1699,18 @@ def _collect(args: argparse.Namespace) -> int:
     raw_paths: dict[str, str] = {}
     all_series: list[dict[str, Any]] = []
 
+    interrupt_stop_timeout_s = float(getattr(args, "interrupt_stop_timeout_s", 8.0) or 8.0)
+    if interrupted:
+        log.warning("Interrupt fast-stop mode: each collector gets up to %.1fs; "
+                    "expensive post-processing such as blkparse may be skipped and raw artifacts kept.",
+                    interrupt_stop_timeout_s)
+
     for name, collector in collectors.items():
+        try:
+            setattr(collector, "_amoprof_interrupted", bool(interrupted))
+            setattr(collector, "_amoprof_stop_timeout_s", interrupt_stop_timeout_s if interrupted else 0.0)
+        except Exception:
+            pass
         try:
             result = collector.stop()
         except Exception as e:
@@ -1533,7 +1731,7 @@ def _collect(args: argparse.Namespace) -> int:
 
         # Merge ssd_hw (device capacity + df-based HiCache filesystem usage)
         # into the smart_summary.json that the report reads, so the L3 HiCache
-        # capacity tile and local Storage / AI memory node layer text populate with df-derived
+        # capacity tile and L3 (AI Memory Node / remote storage) layer text populate with df-derived
         # values without the report needing to read two separate files.
         if name == "ssd_hw":
             _smart_path = raw_dir / "smart_summary.json"
@@ -1607,7 +1805,11 @@ def _collect(args: argparse.Namespace) -> int:
     _post_collect_failures: list[str] = []
     if getattr(args, "enable_blktrace", False):
         _bt = summary.get("blktrace", {}) or {}
-        if not _bt.get("blktrace_available", False) or int(_bt.get("blktrace_events", 0) or 0) <= 0:
+        _bt_raw_only = bool(_bt.get("blktrace_interrupted_raw_only", False))
+        if _bt_raw_only:
+            log.warning("Enabled blktrace stopped in interrupt raw-only mode: %s",
+                        _bt.get("blktrace_reason", "raw trace binaries kept; parse later with analyze"))
+        elif not _bt.get("blktrace_available", False) or int(_bt.get("blktrace_events", 0) or 0) <= 0:
             _reason = _bt.get("blktrace_reason") or _bt.get("blktrace_stderr_tail") or "no blktrace events/binaries collected"
             _post_collect_failures.append(f"blktrace: {_reason}")
             log.error("Enabled blktrace collector produced no usable data: %s", _reason)
@@ -1654,6 +1856,8 @@ def _collect(args: argparse.Namespace) -> int:
     _theme          = getattr(args, "report_theme", "dark")
     _static_path:      "Path | None" = None
     _interactive_path: "Path | None" = None
+
+    _write_setup_details_from_server_info(args, raw_dir, allow_overwrite=True)
 
     if _do_static:
         # Static report needs the benchmark summary before amoprof.py runs;
@@ -1884,6 +2088,11 @@ def _build_parser() -> argparse.ArgumentParser:
                         "Does NOT enable --enable-nsys (which requires explicit PID "
                         "attach). Tools that aren't installed are skipped with a "
                         "warning at collection start.")
+    c.add_argument("--interrupt-stop-timeout-s", type=float,
+                   default=float(os.environ.get("AMOPROF_INTERRUPT_STOP_TIMEOUT_S", "8")),
+                   help="Max seconds to spend on each collector's interrupt shutdown path. "
+                        "On Ctrl-C, AMOprof skips expensive post-processing such as blkparse "
+                        "and terminates long-duration tools quickly. Default: 8.")
     c.add_argument("--skip-sanity-check", action="store_true",
                    help="Skip the pre-flight sanity check that actually invokes "
                         "each enabled collector for ~1-2 sec to verify it can "
@@ -1946,10 +2155,16 @@ def _build_parser() -> argparse.ArgumentParser:
                         "input/output token throughput) to the interactive "
                         "report. File is copied to raw/bench_summary.* on save.")
     c.add_argument("--setup-details", default="",
-                   help="Path to a setup_details.json file to embed in both "
-                        "static and interactive reports. The JSON must be a "
-                        "top-level object. It is copied to raw/setup_details.json "
-                        "so the run directory remains self-contained.")
+                   help="Optional fallback setup_details.json. AMOprof now prefers "
+                        "live SGLang server_info and generates raw/setup_details.json "
+                        "from it automatically when --sglang-host/--sglang-port are set.")
+    c.add_argument("--setup-details-override", action="store_true",
+                   help="Allow manual --setup-details to replace server_info-derived setup_details.json.")
+    c.add_argument("--server-info-url", default=os.environ.get("AMOPROF_SGLANG_SERVER_INFO_URL", ""),
+                   help="Explicit SGLang server_info URL. If omitted, AMOprof tries "
+                        "http://<sglang-host>:<sglang-port>/server_info and fallback endpoints.")
+    c.add_argument("--refresh-server-info", action="store_true",
+                   help="Refetch SGLang server_info even if raw/server_info.json already exists.")
     c.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
 
     a = sub.add_parser("analyze", help="Generate operation-aligned CSVs and reports "
@@ -1978,6 +2193,12 @@ def _build_parser() -> argparse.ArgumentParser:
     a.add_argument("--prom-step", type=int, default=15, metavar="SECONDS",
                    help="Prometheus query_range step (default: 15s). Use 5 for "
                         "high-resolution short windows, 60 for multi-hour windows.")
+    a.add_argument("--prom-rate-window", "--percentile-window", dest="prom_rate_window",
+                   default=os.environ.get("AMOPROF_PROM_RATE_WINDOW", ""),
+                   metavar="DURATION",
+                   help="Explicit Prometheus rate() window for percentile timeseries "
+                        "charts such as TTFT/ITL/E2E P50/P90/P99. Accepts seconds "
+                        "or one unit: 300, 300s, 5m, 1h. Default: max(60s, 4 * --prom-step).")
     a.add_argument("--prom-instance", default="",
                    help="Filter all PromQL queries to one Prometheus 'instance' "
                         "label. Use this to isolate one node when multiple "
@@ -1995,6 +2216,18 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="NVMe device name hint for node_disk_* metrics "
                         "(e.g. nvme0n1). Lets Prometheus collector pin the "
                         "right device.")
+    a.add_argument("--sglang-host", default=os.environ.get("AMOPROF_SGLANG_HOST", "127.0.0.1"),
+                   help="SGLang host for fetching server_info during analyze. Used with --sglang-port.")
+    a.add_argument("--sglang-port", type=int, default=int(os.environ.get("AMOPROF_SGLANG_PORT", "0") or 0),
+                   help="SGLang port for fetching server_info during analyze. 0 disables unless --server-info-url is set.")
+    a.add_argument("--server-info-url", default=os.environ.get("AMOPROF_SGLANG_SERVER_INFO_URL", ""),
+                   help="Explicit SGLang server_info URL for analyze/report setup metadata.")
+    a.add_argument("--refresh-server-info", action="store_true",
+                   help="Refetch SGLang server_info even if raw/server_info.json already exists.")
+    a.add_argument("--setup-details", default="",
+                   help="Optional fallback setup_details.json for offline analyze; server_info is preferred.")
+    a.add_argument("--setup-details-override", action="store_true",
+                   help="Allow manual --setup-details to replace server_info-derived setup_details.json.")
     a.add_argument("--prefer", default="local", choices=["local", "prometheus"],
                    help="Merge conflict policy when --prometheus AND --run-dir "
                         "are both given. 'local' (default) keeps locally-collected "
@@ -2043,12 +2276,6 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Path to a benchmark summary file (JSON or plaintext). "
                         "Same as the collect-side flag — adds per-request "
                         "percentile charts to the interactive report.")
-    a.add_argument("--setup-details", default="",
-                   help="Path to a setup_details.json file to embed in both "
-                        "static and interactive reports. The JSON must be a "
-                        "top-level object. It is copied to raw/setup_details.json "
-                        "before report generation. This overrides/augments "
-                        "auto-detected SGLang/Prometheus server-info labels.")
     a.add_argument("--amoprof-extra-arg", action="append", default=[],
                    help="Extra argument passed through to amoprof. Repeatable. "
                         "Example: --amoprof-extra-arg --excel")
@@ -2128,6 +2355,11 @@ def _build_parser() -> argparse.ArgumentParser:
              "enriched by fetching any missing metrics (same as analyze "
              "merge-mode). Optional — aggregation works without Prometheus.")
     ag.add_argument("--prom-step", type=int, default=30, metavar="SECS")
+    ag.add_argument("--prom-rate-window", "--percentile-window", dest="prom_rate_window",
+                    default=os.environ.get("AMOPROF_PROM_RATE_WINDOW", ""),
+                    metavar="DURATION",
+                    help="Explicit Prometheus rate() window for percentile timeseries charts. "
+                         "Accepts 300, 300s, 5m, 1h. Default: max(60s, 4 * --prom-step).")
     ag.add_argument("--prom-instance", default="", metavar="HOST:PORT")
     ag.add_argument("--prom-job", default="", metavar="JOB")
     ag.add_argument("--prom-labels", default="", metavar="K=V,...")
@@ -2633,6 +2865,7 @@ def _analyze(args) -> int:
         prom_kwargs = dict(
             start=args.start, end=args.end,
             step_s=int(args.prom_step),
+            percentile_rate_window=getattr(args, "prom_rate_window", ""),
             instance=args.prom_instance, job=args.prom_job,
             extra_labels=parse_labels_arg(args.prom_labels),
             nvme_device=args.nvme_device,
@@ -2677,7 +2910,7 @@ def _analyze(args) -> int:
     if rebuilt:
         log.info("Rebuilt canonical CSVs from JSONLs: %s", ", ".join(rebuilt))
 
-    # ── 3c. Refresh local Storage / AI memory node device capacity + HiCache df stats ─────────────
+    # ── 3c. Refresh L3 (local storage) device capacity + HiCache df stats ─────────────
     # Re-snapshot df + /sys/block size from the analysis host. No-op if the
     # mount/device aren't reachable (cross-host analyze).
     if _refresh_smart_capacity(run_dir):
@@ -2704,6 +2937,8 @@ def _analyze(args) -> int:
     _static_path:      "Path | None" = None
     _interactive_path: "Path | None" = None
     _theme = getattr(args, "report_theme", "dark")
+
+    _write_setup_details_from_server_info(args, raw_dir, allow_overwrite=True)
 
     # ── 5. Static amoprof HTML report ───────────────────────────────────────
     if _do_static:
@@ -2924,6 +3159,7 @@ def _aggregate(args) -> int:
         prom_kwargs = dict(
             start=args.start, end=args.end,
             step_s=int(args.prom_step),
+            percentile_rate_window=getattr(args, "prom_rate_window", ""),
             instance=args.prom_instance, job=args.prom_job,
             extra_labels=parse_labels_arg(args.prom_labels),
             nvme_device=args.nvme_device,
@@ -3104,6 +3340,7 @@ def _aggregate(args) -> int:
         prom_kwargs = dict(
             start=args.start, end=args.end,
             step_s=int(args.prom_step),
+            percentile_rate_window=getattr(args, "prom_rate_window", ""),
             instance=args.prom_instance, job=args.prom_job,
             extra_labels=parse_labels_arg(args.prom_labels),
             nvme_device=args.nvme_device,
@@ -3148,7 +3385,7 @@ def _aggregate(args) -> int:
     if rebuilt:
         log.info("Rebuilt canonical CSVs from JSONLs: %s", ", ".join(rebuilt))
 
-    # ── 3c. Refresh local Storage / AI memory node device capacity + HiCache df stats ─────────────
+    # ── 3c. Refresh L3 (local storage) device capacity + HiCache df stats ─────────────
     # Re-snapshot df + /sys/block size from the analysis host. No-op if the
     # mount/device aren't reachable (cross-host analyze).
     if _refresh_smart_capacity(run_dir):

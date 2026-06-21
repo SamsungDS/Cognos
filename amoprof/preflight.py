@@ -27,6 +27,8 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import json
+import re
 import re
 import time
 from pathlib import Path
@@ -97,6 +99,28 @@ def _biosnoop_disk_matches(line: str, device: str | None) -> bool:
     return False
 
 
+def _biosnoop_supports_t_option(binary: str) -> bool:
+    """Detect whether this biosnoop binary accepts -t."""
+    try:
+        r = subprocess.run([binary, "-h"], capture_output=True, text=True, timeout=5)
+        help_txt = (r.stdout or "") + "\n" + (r.stderr or "")
+    except Exception:
+        try:
+            r = subprocess.run([binary, "--help"], capture_output=True, text=True, timeout=5)
+            help_txt = (r.stdout or "") + "\n" + (r.stderr or "")
+        except Exception:
+            return False
+    return bool(re.search(r"(^|[\s,\[])-t([\s,\],]|$)", help_txt))
+
+
+def _build_biosnoop_smoke_cmd(binary: str) -> tuple[list[str], bool]:
+    cmd = [binary]
+    supports_t = _biosnoop_supports_t_option(binary)
+    if supports_t:
+        cmd.append("-t")
+    return cmd, supports_t
+
+
 def _trigger_readonly_block_io(device: str, use_sudo: bool = True) -> tuple[int, str, str]:
     """Trigger a tiny read-only direct read to make biosnoop emit an event.
 
@@ -114,6 +138,47 @@ def _trigger_readonly_block_io(device: str, use_sudo: bool = True) -> tuple[int,
         return -1, "", "timeout while triggering read-only direct I/O"
     except Exception as e:
         return -2, "", repr(e)
+
+
+
+def _blktrace_is_ebusy(stderr_text: str) -> bool:
+    """Detect kernel EBUSY from blktrace setup.
+
+    Typical stderr:
+      BLKTRACESETUP(2) /dev/nvme6n1 failed: 16/Device or resource busy
+    """
+    t = (stderr_text or "").lower()
+    return ("blktracesetup" in t and ("16/device" in t or "resource busy" in t or "device or resource busy" in t))
+
+
+def _blktrace_kill_trace(device: str, blktrace_bin: str = "blktrace",
+                         use_sudo: bool = True) -> tuple[int, str, str, list[str]]:
+    """Ask blktrace to stop any existing trace attached to this device.
+
+    This is the standard recovery for BLKTRACESETUP EBUSY, usually caused by a
+    stale or still-running blktrace from an interrupted earlier run.
+    """
+    cmd = [blktrace_bin, "-d", device, "-k"]
+    if use_sudo and os.geteuid() != 0:
+        cmd = ["sudo", "-n"] + cmd
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        return r.returncode, r.stdout or "", r.stderr or "", cmd
+    except subprocess.TimeoutExpired:
+        return -1, "", "timeout while running blktrace -k", cmd
+    except Exception as e:
+        return -2, "", repr(e), cmd
+
+
+def _blktrace_smoke_capture(device: str, td: str, blktrace_bin: str,
+                            use_sudo: bool) -> tuple[int, str, str, list[str]]:
+    cmd = [blktrace_bin, "-d", device, "-w", str(BLKTRACE_SMOKE_DURATION_S),
+           "-o", "smoke", "-D", td]
+    rc, out, err = _run(cmd, timeout=BLKTRACE_SMOKE_DURATION_S + 3.0, use_sudo=use_sudo)
+    if use_sudo and os.geteuid() != 0:
+        cmd = ["sudo", "-n"] + cmd
+    return rc, out, err, cmd
+
 
 
 # ─── Required-baseline checks ───────────────────────────────────────────────
@@ -307,14 +372,36 @@ def check_blktrace(device: str, blktrace_bin: str = "blktrace",
             fix="mount -t debugfs none /sys/kernel/debug",
             impact=["§C/§D/§H charts"],
         )
-    # Real smoke test: 1-second capture
+    # Real smoke test: 1-second capture. If the kernel reports EBUSY, a stale
+    # or still-active blktrace is attached to this device. Recover once with
+    # `blktrace -d <dev> -k`, then retry. This avoids false permission-style
+    # failures when the user is root and debugfs is fine.
     with tempfile.TemporaryDirectory(prefix="amoprof_preflight_") as td:
         prefix = Path(td) / "smoke"
-        rc, _, err = _run(
-            [blktrace_bin, "-d", device, "-w", str(BLKTRACE_SMOKE_DURATION_S),
-             "-o", "smoke", "-D", td],
-            timeout=BLKTRACE_SMOKE_DURATION_S + 3.0, use_sudo=use_sudo)
+        rc, _, err, smoke_cmd = _blktrace_smoke_capture(device, td, blktrace_bin, use_sudo)
+        ebusy_recovered = False
+        kill_detail = ""
+        if rc != 0 and _blktrace_is_ebusy(err):
+            k_rc, k_out, k_err, k_cmd = _blktrace_kill_trace(device, blktrace_bin, use_sudo)
+            kill_detail = (
+                f"EBUSY detected; ran cleanup: {' '.join(k_cmd)} "
+                f"(rc={k_rc}, stderr={(k_err or '').strip()[:160]})"
+            )
+            if k_rc == 0:
+                time.sleep(0.2)
+                rc, _, err, smoke_cmd = _blktrace_smoke_capture(device, td, blktrace_bin, use_sudo)
+                ebusy_recovered = (rc == 0)
         if rc != 0:
+            if _blktrace_is_ebusy(err):
+                return CheckResult(
+                    "blktrace (--enable-blktrace)", "fail",
+                    detail=(f"1-sec capture failed with EBUSY even after cleanup attempt "
+                            f"(rc={rc}): {err.strip()[:180]}. {kill_detail}"),
+                    fix=("Another blktrace is still active on this device. Stop the previous "
+                         "AMOprof/blktrace process or run: blktrace -d "
+                         f"{device} -k ; then retry. If intentional, disable --enable-blktrace."),
+                    impact=["§C/§D/§H request-level NVMe charts"],
+                )
             return CheckResult(
                 "blktrace (--enable-blktrace)", "fail",
                 detail=f"1-sec capture failed (rc={rc}): {err.strip()[:140]}",
@@ -332,9 +419,59 @@ def check_blktrace(device: str, blktrace_bin: str = "blktrace",
                 impact=["§C/§D/§H charts"],
             )
         total_size = sum(t.stat().st_size for t in traces)
+        extra = " after clearing stale/active prior trace" if 'ebusy_recovered' in locals() and ebusy_recovered else ""
         return CheckResult(
             "blktrace (--enable-blktrace)", "pass",
-            detail=f"{len(traces)} trace file(s) captured, {total_size} bytes")
+            detail=f"{len(traces)} trace file(s) captured, {total_size} bytes{extra}")
+
+
+
+def _biosnoop_preflight_diag_dir() -> Path:
+    """Directory for strict-sanity biosnoop preflight diagnostics.
+
+    Preflight can abort before a metrics_run/raw directory exists, so these
+    files intentionally live in a deterministic absolute path under CWD unless
+    AMOPROF_PREFLIGHT_DIAG_DIR overrides it.
+    """
+    base = os.environ.get("AMOPROF_PREFLIGHT_DIAG_DIR")
+    if base:
+        d = Path(base).expanduser().resolve()
+    else:
+        d = (Path.cwd() / ".amoprof_preflight").resolve()
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _write_biosnoop_preflight_diag(cmd: list[str],
+                                   stdout_text: str = "",
+                                   stderr_text: str = "",
+                                   summary: dict | None = None) -> dict:
+    d = _biosnoop_preflight_diag_dir()
+    paths = {
+        "command": d / "biosnoop_preflight_command.txt",
+        "stdout": d / "biosnoop_preflight_stdout.txt",
+        "stderr": d / "biosnoop_preflight_stderr.txt",
+        "summary": d / "biosnoop_preflight_summary.json",
+    }
+    try:
+        paths["command"].write_text(" ".join(cmd) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+    try:
+        paths["stdout"].write_text(stdout_text or "", encoding="utf-8")
+    except Exception:
+        pass
+    try:
+        paths["stderr"].write_text(stderr_text or "", encoding="utf-8")
+    except Exception:
+        pass
+    summary_obj = dict(summary or {})
+    summary_obj.update({k + "_path": str(v.resolve()) for k, v in paths.items()})
+    try:
+        paths["summary"].write_text(json.dumps(summary_obj, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+    return {k + "_path": str(v.resolve()) for k, v in paths.items()}
 
 
 def check_biosnoop(biosnoop_bin: str = "biosnoop-bpfcc",
@@ -364,11 +501,14 @@ def check_biosnoop(biosnoop_bin: str = "biosnoop-bpfcc",
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
 
-    # Mirror the real collector: biosnoop's -t means print TIME(s), not duration.
+    # Mirror the real collector. Biosnoop variants differ: some support -t,
+    # while Ubuntu/bpfcc-tools builds often print TIME(s) by default and reject
+    # -t. Auto-detect the valid form.
+    base_cmd, supports_t = _build_biosnoop_smoke_cmd(biosnoop_bin)
     if shutil.which("stdbuf"):
-        cmd = ["stdbuf", "-oL", biosnoop_bin, "-t"]
+        cmd = ["stdbuf", "-oL"] + base_cmd
     else:
-        cmd = [biosnoop_bin, "-t"]
+        cmd = base_cmd
     if use_sudo and os.geteuid() != 0:
         cmd = ["sudo", "-n", "-E", "PYTHONUNBUFFERED=1"] + cmd
 
@@ -396,6 +536,7 @@ def check_biosnoop(biosnoop_bin: str = "biosnoop-bpfcc",
     trigger_done = False
     trigger_rc = None
     trigger_err = ""
+    diag_paths = {}
     t_start = time.monotonic()
 
     # Phase 1: wait for header.
@@ -457,13 +598,34 @@ def check_biosnoop(biosnoop_bin: str = "biosnoop-bpfcc",
         stderr = ""
 
     elapsed = time.monotonic() - t_start
+    try:
+        diag_paths = _write_biosnoop_preflight_diag(
+            cmd,
+            stdout_text=accumulated,
+            stderr_text=stderr,
+            summary={
+                "device": device,
+                "disk_base": _block_device_base(device),
+                "header_seen": bool(header_seen),
+                "event_seen": bool(event_seen),
+                "verify_event": bool(verify_event),
+                "trigger_done": bool(trigger_done),
+                "trigger_returncode": trigger_rc,
+                "trigger_stderr": trigger_err,
+                "biosnoop_t_supported": bool(supports_t),
+                "elapsed_s": round(elapsed, 3),
+            },
+        )
+    except Exception:
+        diag_paths = {}
+
 
     if header_seen and (not verify_event):
         return CheckResult(
             "biosnoop (--enable-biosnoop)", "pass",
             detail=(f"attach/header OK within {elapsed:.1f}s; event capture not verified "
                     f"(run with --strict-sanity to verify target-device events; "
-                    f"BTF={'yes' if btf_present else 'no'})"),
+                    f"biosnoop -t supported={'yes' if supports_t else 'no'}; BTF={'yes' if btf_present else 'no'})"),
         )
 
     if header_seen and verify_event and event_seen:
@@ -471,7 +633,7 @@ def check_biosnoop(biosnoop_bin: str = "biosnoop-bpfcc",
             "biosnoop (--enable-biosnoop)", "pass",
             detail=(f"attach/header OK and captured target-device event for "
                     f"{_block_device_base(device)} after read-only smoke I/O "
-                    f"(BTF={'yes' if btf_present else 'no'})"),
+                    f"(biosnoop -t supported={'yes' if supports_t else 'no'}; BTF={'yes' if btf_present else 'no'})"),
         )
 
     if header_seen and verify_event and not event_seen:
@@ -480,15 +642,24 @@ def check_biosnoop(biosnoop_bin: str = "biosnoop-bpfcc",
         trig = ""
         if trigger_done:
             trig = f"; smoke-read rc={trigger_rc}, err={trigger_err[:120]!r}"
+        _stderr_path = diag_paths.get("stderr_path", "(preflight stderr path unavailable)")
+        _stdout_path = diag_paths.get("stdout_path", "(preflight stdout path unavailable)")
+        _summary_path = diag_paths.get("summary_path", "(preflight summary path unavailable)")
+        _cmd_path = diag_paths.get("command_path", "(preflight command path unavailable)")
         return CheckResult(
-            "biosnoop (--enable-biosnoop)", "fail",
-            detail=(f"header/attach OK, but no biosnoop event was observed for "
+            "biosnoop (--enable-biosnoop)", "warn",
+            detail=(f"attach/header OK, but no biosnoop event was observed for "
                     f"{_block_device_base(device)} during read-only smoke I/O{trig}. "
-                    f"Last output: {sample}"),
-            fix=("This usually means biosnoop/BCC attaches but is not receiving block events "
-                 "for this kernel/device path, or DISK naming differs. Check the real run's "
-                 "raw/biosnoop_events_all.csv, raw/biosnoop_stderr.txt, and compare DISK names "
-                 "against blktrace. You can keep blktrace as the authoritative physical I/O source."),
+                    f"This does not mean biosnoop is broken; it means target-device "
+                    f"attribution was not proven during the tiny smoke probe. "
+                    f"Last output: {sample}. "
+                    f"Diagnostics: stderr={_stderr_path}; stdout={_stdout_path}; "
+                    f"summary={_summary_path}; command={_cmd_path}"),
+            fix=("Proceeding is allowed even with --strict-sanity because biosnoop attached "
+                 "and printed its header. Inspect the absolute preflight paths printed above. "
+                 "During the real run, check raw/biosnoop_events_all.csv and raw/biosnoop_events.csv, "
+                 "then compare DISK names against blktrace. Keep blktrace as the authoritative physical "
+                 "L3 local-storage I/O source; biosnoop is best-effort per-PID attribution."),
             impact=["§I per-stream bandwidth", "biosnoop per-PID attribution"],
         )
 
@@ -498,10 +669,16 @@ def check_biosnoop(biosnoop_bin: str = "biosnoop-bpfcc",
     btf_hint = "" if btf_present else (
         " (no BTF — first BCC run may need linux-headers-$(uname -r); "
         "try preloading by running 'sudo biosnoop-bpfcc -t' once)")
+    _stderr_path = diag_paths.get("stderr_path", "(preflight stderr path unavailable)")
+    _stdout_path = diag_paths.get("stdout_path", "(preflight stdout path unavailable)")
+    _summary_path = diag_paths.get("summary_path", "(preflight summary path unavailable)")
+    _cmd_path = diag_paths.get("command_path", "(preflight command path unavailable)")
     return CheckResult(
         "biosnoop (--enable-biosnoop)", "fail",
-        detail=f"no header in 8s. Last output: {' | '.join(last_lines)[:160]}",
-        fix=("Test manually: sudo " + biosnoop_bin + " -t. "
+        detail=(f"no header in 8s. Last output: {' | '.join(last_lines)[:160]}. "
+                f"Diagnostics: stderr={_stderr_path}; stdout={_stdout_path}; "
+                f"summary={_summary_path}; command={_cmd_path}"),
+        fix=("Test manually: sudo " + biosnoop_bin + "  (or add -t only if its help lists -t). "
              "If passwordless sudo isn't configured for this user, the smoke "
              "test sees an immediate exit. Pass --no-sudo to skip the sudo prefix"
              " if AMOprof itself runs as root."

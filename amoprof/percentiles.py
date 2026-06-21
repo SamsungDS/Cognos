@@ -113,6 +113,33 @@ def _build_label_selector(instance: str = "", job: str = "",
     return "{" + ",".join(parts) + "}" if parts else ""
 
 
+
+def _list_prom_metrics(prom_url: str) -> set[str]:
+    data = _http_get_json(f"{prom_url.rstrip('/')}/api/v1/label/__name__/values", {}, timeout=10.0)
+    if data and data.get("status") == "success":
+        try:
+            return set(str(x) for x in data.get("data", []))
+        except Exception:
+            return set()
+    return set()
+
+
+def _resolve_metric_base(base: str, available: set[str]) -> str:
+    if not available:
+        return base
+    if base + "_bucket" in available:
+        return base
+    if base.startswith("sglang_"):
+        colon = "sglang:" + base[len("sglang_"):]
+        if colon + "_bucket" in available:
+            return colon
+    if base.startswith("sglang:"):
+        under = "sglang_" + base[len("sglang:"):]
+        if under + "_bucket" in available:
+            return under
+    return base
+
+
 def _quantile_query_range(prom_url: str, metric_base: str, q: float,
                           start: float, end: float, step_s: int,
                           rate_window_s: int,
@@ -175,12 +202,14 @@ def fetch_percentile_summary(prom_url: str, start: float, end: float,
     Empty dict if Prometheus is unreachable or no histogram data exists.
     """
     label_selector = _build_label_selector(instance, job, extra_labels)
+    available_metrics = _list_prom_metrics(prom_url)
     out: dict[str, float] = {}
     for canon, base_aliases, scale, unit, _label in HISTOGRAM_METRICS:
         bases = _metric_bases(base_aliases)
         for p_label, q in PERCENTILES:
             v = None
             for base in bases:
+                base = _resolve_metric_base(base, available_metrics)
                 v = _quantile_query_instant_over_range(
                     prom_url, base, q, start, end, label_selector)
                 if v is not None:
@@ -202,6 +231,7 @@ def fetch_percentile_summary(prom_url: str, start: float, end: float,
         # (sum of _sum increase) / (sum of _count increase) over window
         window_s = max(int(end - start), 1)
         for base in bases:
+            base = _resolve_metric_base(base, available_metrics)
             mean_query = (
                 f"sum(increase({base}_sum{label_selector}[{window_s}s])) "
                 f"/ "
@@ -257,6 +287,13 @@ def fetch_percentile_timeseries(prom_url: str, start: float, end: float,
         block: dict[str, Any] = {
             "label": label, "unit": unit, "metric_base": bases[0],
             "time_sec": [], "p50": [], "p90": [], "p99": [],
+            "rate_window_s": int(rate_window_s),
+            "rate_window": f"{int(rate_window_s)}s",
+            "step_s": int(step_s),
+            "method": (
+                "histogram_quantile(q, sum by (le) "
+                f"(rate(<metric>_bucket[{int(rate_window_s)}s])))"
+            ),
         }
         # Pull each percentile timeseries. For each percentile, try all known
         # metric-name aliases before treating it as unavailable.

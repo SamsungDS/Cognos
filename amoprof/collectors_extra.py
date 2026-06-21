@@ -123,6 +123,27 @@ class BlktraceCollector:
         except Exception:
             return Path(name).exists() and os.access(name, os.X_OK)
 
+    @staticmethod
+    def _stderr_is_ebusy(stderr_text: str) -> bool:
+        t = (stderr_text or "").lower()
+        return ("blktracesetup" in t and ("16/device" in t or "resource busy" in t or "device or resource busy" in t))
+
+    def _kill_existing_trace(self) -> tuple[int, str]:
+        cmd = [self.blktrace_bin, "-d", self.device, "-k"]
+        if self.use_sudo and os.geteuid() != 0:
+            cmd = ["sudo", "-n"] + cmd
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            msg = (r.stderr or r.stdout or "").strip()
+            return r.returncode, f"{' '.join(cmd)} rc={r.returncode} {msg[:200]}"
+        except subprocess.TimeoutExpired:
+            return -1, f"{' '.join(cmd)} timeout"
+        except Exception as e:
+            return -2, f"{' '.join(cmd)} {e!r}"
+
+    def _launch_blktrace_process(self, cmd: list[str]) -> subprocess.Popen:
+        return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+
     def start(self):
         self._events = 0
         self._reason = ""
@@ -188,8 +209,7 @@ class BlktraceCollector:
         except Exception:
             pass
         try:
-            self._proc = subprocess.Popen(
-                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            self._proc = self._launch_blktrace_process(cmd)
         except FileNotFoundError as e:
             self._reason = f"failed to launch blktrace: {e}"
             log.error("BlktraceCollector: %s", self._reason)
@@ -201,11 +221,8 @@ class BlktraceCollector:
 
         self._t0 = time.time()
 
-        # blktrace can fail immediately (common causes: sudo -n requires a
-        # password, debugfs/tracefs not mounted, CAP_SYS_ADMIN missing, or
-        # another blktrace already active on the same device).  Previously this
-        # was only discovered at stop() as "no trace files" and users saw no
-        # obvious AMOprof error.  Surface it right at launch.
+        # blktrace can fail immediately. If it fails with EBUSY, recover once by
+        # clearing the existing trace on exactly this device and relaunching.
         time.sleep(0.5)
         if self._proc.poll() is not None:
             self._launch_rc = self._proc.returncode
@@ -213,20 +230,56 @@ class BlktraceCollector:
                 self._launch_stderr = self._proc.stderr.read() if self._proc.stderr else ""
             except Exception:
                 self._launch_stderr = ""
+
+            if self._stderr_is_ebusy(self._launch_stderr):
+                k_rc, k_msg = self._kill_existing_trace()
+                try:
+                    (self.work_dir / "blktrace_ebusy_recovery.txt").write_text(
+                        k_msg + "\n", encoding="utf-8")
+                except Exception:
+                    pass
+                if k_rc == 0:
+                    log.warning("BlktraceCollector: EBUSY on %s; cleared existing trace and retrying", self.device)
+                    try:
+                        self._proc = self._launch_blktrace_process(cmd)
+                        time.sleep(0.5)
+                        if self._proc.poll() is None:
+                            self._launch_rc = None
+                            self._launch_stderr = ""
+                        else:
+                            self._launch_rc = self._proc.returncode
+                            self._launch_stderr = self._proc.stderr.read() if self._proc.stderr else ""
+                    except Exception as e:
+                        self._launch_rc = -3
+                        self._launch_stderr = repr(e)
+                else:
+                    self._launch_stderr = (self._launch_stderr or "") + "\n" + k_msg
+
+        if self._proc.poll() is not None:
+            self._launch_rc = self._proc.returncode
+            try:
+                self._launch_stderr = self._proc.stderr.read() if self._proc.stderr else self._launch_stderr
+            except Exception:
+                pass
             tail = (self._launch_stderr or "").strip().splitlines()
             tail_s = tail[-1] if tail else "no stderr"
-            self._reason = (
-                f"blktrace exited immediately rc={self._launch_rc}: {tail_s[:240]}. "
-                f"Command: {' '.join(self._launch_cmd)}"
-            )
+            if self._stderr_is_ebusy(self._launch_stderr):
+                self._reason = (
+                    f"blktrace exited immediately with EBUSY after cleanup attempt rc={self._launch_rc}: "
+                    f"{tail_s[:240]}. Stop the previous blktrace/AMOprof run or run "
+                    f"`blktrace -d {self.device} -k`; Command: {' '.join(self._launch_cmd)}"
+                )
+            else:
+                self._reason = (
+                    f"blktrace exited immediately rc={self._launch_rc}: {tail_s[:240]}. "
+                    f"Command: {' '.join(self._launch_cmd)}"
+                )
             try:
                 (self.work_dir / "blktrace_launch_stderr.txt").write_text(
                     self._launch_stderr or "", encoding="utf-8")
             except Exception:
                 pass
             log.error("BlktraceCollector: %s", self._reason)
-            # Keep _proc so stop() can include diagnostics, but do not pretend
-            # collection is active.
             return
         else:
             # Early file visibility is diagnostic only. On some systems blktrace
@@ -454,7 +507,10 @@ class BlktraceCollector:
 
     def stop(self) -> dict:
         # `blktrace -w` self-terminates after the duration, but if AMOprof stops
-        # collection early we send SIGINT for a clean shutdown.
+        # collection early we send SIGINT for a clean shutdown. On Ctrl-C,
+        # keep this bounded so the user does not wait on a 4-hour blktrace -w.
+        interrupted = bool(getattr(self, "_amoprof_interrupted", False))
+        stop_timeout = float(getattr(self, "_amoprof_stop_timeout_s", 0.0) or (3.0 if interrupted else 10.0))
         stderr_text = ""
         if self._proc is not None:
             if self._proc.poll() is None:
@@ -464,7 +520,7 @@ class BlktraceCollector:
                     try: self._proc.terminate()
                     except Exception: pass
                 try:
-                    self._proc.wait(timeout=10)
+                    self._proc.wait(timeout=stop_timeout)
                 except Exception:
                     try: self._proc.kill()
                     except Exception: pass
@@ -523,9 +579,21 @@ class BlktraceCollector:
                     "blktrace_stderr_tail": (stderr_text or self._launch_stderr or "")[-2000:]}
 
         events_csv = -1
-        if self.parse_after:
+        interrupted_raw_only = False
+        if self.parse_after and not interrupted:
             events_csv = self._run_blkparse_to_csv()
             self._events = max(events_csv, 0)
+        elif interrupted:
+            interrupted_raw_only = True
+            self._reason = (
+                (self._reason + "; ") if self._reason else ""
+            ) + "interrupted: skipped blkparse for fast shutdown; raw trace binaries kept for later analysis"
+            try:
+                (self.work_dir / "blktrace_interrupt_fast_stop.txt").write_text(
+                    self._reason + "\n", encoding="utf-8")
+            except Exception:
+                pass
+            self._events = 0
 
         # ── Coverage sanity: did we plausibly catch all of the device's I/O? ─
         # Cross-check captured byte total against /sys/block/<dev>/stat's
@@ -634,6 +702,8 @@ class BlktraceCollector:
             "blktrace_binary_bytes": bin_bytes,
             "blktrace_csv":      str(self._csv_path) if events_csv > 0 else "",
             "blktrace_events":   self._events,
+            "blktrace_interrupted_raw_only": interrupted_raw_only,
+            "blktrace_fast_stop": interrupted,
             "blktrace_device":   self.device,
             "blktrace_buffer_kb": self.buffer_kb,
             "blktrace_num_buffers": self.num_buffers,
@@ -716,6 +786,30 @@ class BiosnoopCollector:
             return True
         except Exception:
             return False
+
+    def _biosnoop_supports_t(self, binary: str) -> bool:
+        """Return True only when this biosnoop build supports -t.
+
+        Some bpfcc-tools builds already print TIME(s) by default and expose only
+        [-h] [-Q]. Passing -t to those builds makes biosnoop exit with
+        "unrecognized arguments: -t". AMOprof must auto-detect.
+        """
+        try:
+            r = subprocess.run([binary, "-h"], capture_output=True, text=True, timeout=5)
+            help_txt = (r.stdout or "") + "\n" + (r.stderr or "")
+        except Exception:
+            try:
+                r = subprocess.run([binary, "--help"], capture_output=True, text=True, timeout=5)
+                help_txt = (r.stdout or "") + "\n" + (r.stderr or "")
+            except Exception:
+                return False
+        return bool(re.search(r"(^|[\s,\[])-t([\s,\],]|$)", help_txt))
+
+    def _build_biosnoop_cmd(self, binary: str) -> list[str]:
+        cmd = [binary]
+        if self._biosnoop_supports_t(binary):
+            cmd.append("-t")
+        return cmd
 
     @staticmethod
     def _norm_col(x: str) -> str:
@@ -807,9 +901,9 @@ class BiosnoopCollector:
             self._write_summary({"biosnoop_available": False})
             return
 
-        # BCC biosnoop: -t prints TIME(s). It does NOT accept a duration
-        # positional argument. AMOprof terminates biosnoop in stop().
-        cmd = [found, "-t"]
+        # Biosnoop variants differ: some accept -t, while others print TIME(s)
+        # by default and reject -t. Auto-detect and never pass a duration arg.
+        cmd = self._build_biosnoop_cmd(found)
         if self.use_sudo and os.geteuid() != 0:
             cmd = ["sudo", "-n", "-E"] + cmd
         self._cmd = cmd

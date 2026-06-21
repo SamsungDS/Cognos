@@ -707,7 +707,7 @@ _r("ssd_rd_bw", "SSD Read Bandwidth",
                    r"rmb.*s\b", r"read_bytes_total"],
    category="ssd_io", subcategory="bandwidth", section="§C32",
    unit="MB/s", higher_is_better=True,
-   description="L3 (Storage/AI Memory Node) read throughput. KV$B onboard reads are random 128KB → BW << sequential peak.",
+   description="L3 (local storage) read throughput. KV$B onboard reads are random 128KB → BW << sequential peak.",
    formula=(
        "node_exporter: rate(node_disk_read_bytes_total{device=nvme*}[W]) / 1e6\n"
        "iostat       : rkB/s or rMB/s\n"

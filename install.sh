@@ -1,182 +1,317 @@
 #!/usr/bin/env bash
 # =============================================================================
-# AMOprof — Dependency Installation Script
-# Tested on: Ubuntu 22.04 / DGX A100 (CUDA 12.x, Python 3.10+)
+# AMOprof installer
 #
-# Usage:
-#   chmod +x install.sh
-#   ./install.sh              # metrics-only mode (default, no torch/sglang)
-#   ./install.sh --sglang     # + SGLang inference server deps
-#   ./install.sh --full       # + SGLang + SWE-bench agent deps
-#   ./install.sh --help
+# Default mode installs AMOprof for metrics collection/reporting only.
+# Optional modes add SGLang/SWE-bench dependencies.
+# System dependencies are installed best-effort using the detected package manager,
+# CPU architecture, CPU vendor, and available GPU tooling.
 # =============================================================================
 set -euo pipefail
 
-# ── Colours ──────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
-
 info()    { echo -e "${CYAN}[INFO]${NC}  $*"; }
 ok()      { echo -e "${GREEN}[OK]${NC}    $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 section() { echo -e "\n${BOLD}── $* ──${NC}"; }
 
-# ── Argument parsing ──────────────────────────────────────────────────────────
-MODE="metrics"   # metrics | sglang | full
-SKIP_APT=0
+MODE="metrics"                 # metrics | sglang | full
+SKIP_SYS_PKGS=0
 SKIP_VENV=0
 VENV_DIR="${AMOPROF_VENV:-$HOME/amoprof_venv}"
-TORCH_INDEX="https://download.pytorch.org/whl/cu121"  # override for other CUDA
+TORCH_INDEX="${AMOPROF_TORCH_INDEX:-https://download.pytorch.org/whl/cu121}"
 INSTALL_DRAM_DEPS=0
 DRAM_DEPS_TOOL="${AMOPROF_DRAM_TOOL:-auto}"
 BUILD_INTEL_PCM=0
 AMDUPROF_INSTALLER=""
+AMDUPROF_URL=""
+ASSUME_YES=1
+DRY_RUN=0
 
 usage() {
-cat <<EOF
-Usage: $0 [OPTIONS]
+cat <<'USAGE'
+Usage: ./install.sh [OPTIONS]
 
-Modes (mutually exclusive):
-  (default)     Install AMOprof + Python deps for metrics collection only.
-                No torch, no sglang. Suitable for a separate monitoring node.
-  --sglang      Also install SGLang and PyTorch (GPU required).
-  --full        --sglang + SWE-bench + sweagent deps.
+Modes:
+  default              Install AMOprof + metrics/reporting dependencies only.
+  --sglang             Also install PyTorch/SGLang dependencies.
+  --full               Install SGLang + SWE-bench/SWE-agent dependencies.
 
 Options:
-  --venv DIR          Path for virtualenv  (default: ~/amoprof_venv)
-  --torch-index URL   PyTorch wheel index  (default: cu121)
-  --skip-apt          Skip apt system package installation (requires root/sudo)
-  --skip-venv         Install into current Python environment (not recommended)
-  --with-dram-deps    Install/check AMD/Intel DRAM PMU dependencies
-  --dram-tool TOOL    Backend for --with-dram-deps: auto|all|amduprof|intel-pcm|perf-imc|none
-  --build-intel-pcm   Build Intel PCM from source if native package is unavailable
-  --amduprof-installer PATH  Install AMD uProf from local .deb/.rpm/.tar.*
-  --help              Show this message
-EOF
+  --venv DIR           Virtualenv path. Default: ~/amoprof_venv
+  --torch-index URL    PyTorch wheel index. Default: cu121 index.
+  --skip-apt           Backward-compatible alias for --skip-system-packages.
+  --skip-system-packages
+                       Do not install OS packages.
+  --skip-venv          Install into current Python environment.
+  --with-dram-deps     Run scripts/install_dram_deps.sh after common deps.
+  --dram-tool TOOL     auto | all | amduprof | intel-pcm | perf-imc | none
+  --build-intel-pcm    Let the DRAM helper build Intel PCM if package is missing.
+  --amduprof-installer PATH
+                       Local AMD uProf installer for AMD systems.
+  --amduprof-url URL   AMD uProf installer URL for the DRAM helper.
+  --no                 Do not pass automatic yes flags to package manager.
+  --dry-run            Print package-install commands without executing them.
+  --help               Show this help.
+
+Examples:
+  ./install.sh
+  sudo ./install.sh --with-dram-deps --dram-tool auto
+  ./install.sh --sglang --torch-index https://download.pytorch.org/whl/cu124
+USAGE
 exit 0
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --sglang)       MODE="sglang"; shift ;;
-        --full)         MODE="full";   shift ;;
-        --venv)         VENV_DIR="$2"; shift 2 ;;
-        --torch-index)  TORCH_INDEX="$2"; shift 2 ;;
-        --skip-apt)     SKIP_APT=1; shift ;;
-        --skip-venv)    SKIP_VENV=1; shift ;;
+        --sglang) MODE="sglang"; shift ;;
+        --full) MODE="full"; shift ;;
+        --venv) VENV_DIR="$2"; shift 2 ;;
+        --torch-index) TORCH_INDEX="$2"; shift 2 ;;
+        --skip-apt|--skip-system-packages) SKIP_SYS_PKGS=1; shift ;;
+        --skip-venv) SKIP_VENV=1; shift ;;
         --with-dram-deps) INSTALL_DRAM_DEPS=1; shift ;;
-        --dram-tool)    DRAM_DEPS_TOOL="$2"; shift 2 ;;
+        --dram-tool) DRAM_DEPS_TOOL="$2"; shift 2 ;;
         --build-intel-pcm) BUILD_INTEL_PCM=1; shift ;;
         --amduprof-installer) AMDUPROF_INSTALLER="$2"; shift 2 ;;
-        --help|-h)      usage ;;
+        --amduprof-url) AMDUPROF_URL="$2"; shift 2 ;;
+        --no) ASSUME_YES=0; shift ;;
+        --dry-run) DRY_RUN=1; shift ;;
+        --help|-h) usage ;;
         *) error "Unknown option: $1"; usage ;;
     esac
 done
 
-# ── Preflight ────────────────────────────────────────────────────────────────
-section "Preflight checks"
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_DIR="$SCRIPT_DIR"
 
+SUDO=""
+if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    SUDO="sudo"
+fi
+
+run() {
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+        echo "+ $*"
+    else
+        "$@"
+    fi
+}
+
+detect_arch() {
+    local a
+    a="$(uname -m 2>/dev/null || echo unknown)"
+    case "$a" in
+        x86_64|amd64) echo "x86_64" ;;
+        aarch64|arm64) echo "aarch64" ;;
+        ppc64le) echo "ppc64le" ;;
+        *) echo "$a" ;;
+    esac
+}
+
+detect_cpu_vendor() {
+    local cpu
+    cpu="$(tr '[:upper:]' '[:lower:]' < /proc/cpuinfo 2>/dev/null || true)"
+    if grep -qi "authenticamd" <<<"$cpu"; then echo "amd"; return; fi
+    if grep -qi "genuineintel" <<<"$cpu"; then echo "intel"; return; fi
+    echo "unknown"
+}
+
+load_os_release() {
+    OS_ID="unknown"; OS_LIKE=""; OS_VERSION_ID=""
+    if [[ -r /etc/os-release ]]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release
+        OS_ID="${ID:-unknown}"
+        OS_LIKE="${ID_LIKE:-}"
+        OS_VERSION_ID="${VERSION_ID:-}"
+    fi
+}
+
+detect_pm() {
+    if command -v apt-get >/dev/null 2>&1; then echo apt; return; fi
+    if command -v dnf >/dev/null 2>&1; then echo dnf; return; fi
+    if command -v yum >/dev/null 2>&1; then echo yum; return; fi
+    if command -v zypper >/dev/null 2>&1; then echo zypper; return; fi
+    if command -v pacman >/dev/null 2>&1; then echo pacman; return; fi
+    echo unknown
+}
+
+pm_update_once=0
+pm_install_group() {
+    local packages=("$@")
+    [[ "${#packages[@]}" -eq 0 ]] && return 0
+
+    case "$PM" in
+        apt)
+            if [[ "$pm_update_once" -eq 0 ]]; then
+                run $SUDO apt-get update -qq || true
+                pm_update_once=1
+            fi
+            if [[ "$ASSUME_YES" -eq 1 ]]; then
+                run $SUDO apt-get install -y --no-install-recommends "${packages[@]}"
+            else
+                run $SUDO apt-get install --no-install-recommends "${packages[@]}"
+            fi
+            ;;
+        dnf)
+            if [[ "$ASSUME_YES" -eq 1 ]]; then run $SUDO dnf install -y "${packages[@]}"; else run $SUDO dnf install "${packages[@]}"; fi
+            ;;
+        yum)
+            if [[ "$ASSUME_YES" -eq 1 ]]; then run $SUDO yum install -y "${packages[@]}"; else run $SUDO yum install "${packages[@]}"; fi
+            ;;
+        zypper)
+            if [[ "$ASSUME_YES" -eq 1 ]]; then run $SUDO zypper --non-interactive install "${packages[@]}"; else run $SUDO zypper install "${packages[@]}"; fi
+            ;;
+        pacman)
+            if [[ "$ASSUME_YES" -eq 1 ]]; then run $SUDO pacman -Sy --needed --noconfirm "${packages[@]}"; else run $SUDO pacman -Sy --needed "${packages[@]}"; fi
+            ;;
+        *)
+            warn "No supported package manager detected; install manually: ${packages[*]}"
+            return 1
+            ;;
+    esac
+}
+
+pm_install_best_effort() {
+    local p
+    for p in "$@"; do
+        info "Installing/checking OS package: $p"
+        if ! pm_install_group "$p"; then
+            warn "Could not install '$p' via $PM; continuing"
+        fi
+    done
+}
+
+install_system_packages() {
+    section "System packages"
+
+    if [[ "$SKIP_SYS_PKGS" -eq 1 ]]; then
+        warn "Skipping OS package installation."
+        return 0
+    fi
+
+    local pkgs=()
+    local perf_pkgs=()
+    local bpf_pkgs=()
+    local build_pkgs=()
+
+    case "$PM" in
+        apt)
+            pkgs=(python3-dev python3-venv python3-pip jq curl wget ca-certificates nvme-cli sysstat blktrace pciutils procps kmod numactl)
+            build_pkgs=(build-essential pkg-config git)
+            bpf_pkgs=(bpfcc-tools bpftrace)
+            perf_pkgs=(linux-tools-"$(uname -r)" linux-tools-generic linux-perf)
+            ;;
+        dnf|yum)
+            pkgs=(python3-devel python3-pip jq curl wget ca-certificates nvme-cli sysstat blktrace pciutils procps-ng kmod numactl)
+            build_pkgs=(gcc gcc-c++ make pkgconf-pkg-config git)
+            bpf_pkgs=(bcc-tools bpftrace)
+            perf_pkgs=(perf kernel-tools)
+            ;;
+        zypper)
+            pkgs=(python3-devel python3-pip jq curl wget ca-certificates nvme-cli sysstat blktrace pciutils procps kmod numactl)
+            build_pkgs=(gcc gcc-c++ make pkg-config git)
+            bpf_pkgs=(bcc-tools bpftrace)
+            perf_pkgs=(perf)
+            ;;
+        pacman)
+            pkgs=(python python-pip jq curl wget ca-certificates nvme-cli sysstat blktrace pciutils procps-ng kmod numactl)
+            build_pkgs=(base-devel pkgconf git)
+            bpf_pkgs=(bpftrace bcc)
+            perf_pkgs=(linux-tools)
+            ;;
+        *)
+            warn "Unsupported package manager. Install Python dev/venv, nvme-cli, sysstat, blktrace, bpf tools, perf, jq/curl/wget manually."
+            return 0
+            ;;
+    esac
+
+    pm_install_best_effort "${pkgs[@]}"
+    pm_install_best_effort "${build_pkgs[@]}"
+
+    # BPF packages are not consistently available on every architecture/release.
+    # Install best-effort, but never fail the AMOprof Python install because BPF
+    # tooling is optional and can be added later.
+    if [[ "$ARCH" == "x86_64" || "$ARCH" == "aarch64" ]]; then
+        pm_install_best_effort "${bpf_pkgs[@]}"
+    else
+        warn "Skipping automatic BPF packages on architecture '$ARCH'; install biosnoop/bpftrace manually if needed."
+    fi
+
+    # perf package names vary; install one by one best-effort.
+    pm_install_best_effort "${perf_pkgs[@]}"
+
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        ok "nvidia-smi found: $(command -v nvidia-smi)"
+    else
+        warn "nvidia-smi not found. GPU/HBM collection requires NVIDIA drivers/tools on the target node."
+    fi
+}
+
+section "Preflight"
 if [[ ! -f "$PACKAGE_DIR/pyproject.toml" ]]; then
-    error "pyproject.toml not found in $PACKAGE_DIR. Run this script from the package root."
+    error "pyproject.toml not found in $PACKAGE_DIR. Run install.sh from the package root."
     exit 1
 fi
 
-PY=$(command -v python3 || true)
+load_os_release
+PM="$(detect_pm)"
+ARCH="$(detect_arch)"
+CPU_VENDOR="$(detect_cpu_vendor)"
+
+PY="$(command -v python3 || true)"
 if [[ -z "$PY" ]]; then
     error "python3 not found. Install Python 3.10+ first."
     exit 1
 fi
-
-PY_VER=$("$PY" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-PY_MAJOR=${PY_VER%%.*}
-PY_MINOR=${PY_VER##*.}
+PY_VER="$($PY -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")"
+PY_MAJOR="${PY_VER%%.*}"; PY_MINOR="${PY_VER##*.}"
 if [[ "$PY_MAJOR" -lt 3 || ( "$PY_MAJOR" -eq 3 && "$PY_MINOR" -lt 10 ) ]]; then
     error "Python 3.10+ required, found $PY_VER"
     exit 1
 fi
+
 ok "Python $PY_VER"
+echo "Architecture   : $ARCH"
+echo "CPU vendor     : $CPU_VENDOR"
+echo "OS             : $OS_ID $OS_VERSION_ID (like: $OS_LIKE)"
+echo "Package manager: $PM"
+echo "Install mode   : $MODE"
 
-if [[ "$MODE" != "metrics" ]]; then
-    if ! command -v nvidia-smi &>/dev/null; then
-        warn "nvidia-smi not found — GPU mode selected but no GPU detected. Continuing anyway."
-    else
-        GPU_INFO=$(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null | head -1 || true)
-        ok "GPU: $GPU_INFO"
-    fi
-fi
+install_system_packages
 
-# ── System packages (apt) ────────────────────────────────────────────────────
-section "System packages"
-
-APT_CORE=(
-    # Python build deps
-    python3-dev python3-venv python3-pip
-
-    # NVMe / block device tools
-    nvme-cli          # nvme smart-log, nvme latency-stats → NvmeSmartMonitor, NvmeDriverMonitor
-
-    # I/O profiling
-    sysstat           # iostat → IostatMonitor
-    linux-tools-common linux-tools-generic  # perf stat → PerfStatCollector
-
-    # BPF / tracing — needed for biolatency (always) and biosnoop (opt-in --enable-biosnoop)
-    bpfcc-tools       # biolatency-bpfcc, biosnoop-bpfcc → BiolatencyCollector, BiosnoopCollector
-    bpftrace          # bpftrace → BpftraceCollector
-
-    # Per-request block I/O tracing (opt-in --enable-blktrace; required for §C/§D/§E/§H/§I charts)
-    blktrace          # blktrace, blkparse → BlktraceCollector
-
-    # Misc
-    jq curl wget build-essential
-)
-
-if [[ "$SKIP_APT" -eq 1 ]]; then
-    warn "Skipping apt install (--skip-apt). Ensure the following are installed:"
-    printf '  %s\n' "${APT_CORE[@]}"
-else
-    if ! command -v apt-get &>/dev/null; then
-        warn "apt-get not found — skipping system package install (non-Debian system)."
-    else
-        info "Updating apt cache..."
-        sudo apt-get update -qq
-        info "Installing system packages..."
-        sudo apt-get install -y --no-install-recommends "${APT_CORE[@]}"
-        ok "System packages installed"
-    fi
-fi
-
-# ── Optional: AMD/Intel DRAM PMU dependencies ────────────────────────────────
 if [[ "$INSTALL_DRAM_DEPS" -eq 1 ]]; then
-    section "DRAM PMU dependencies (--enable-dram)"
+    section "DRAM PMU dependencies"
     DRAM_SCRIPT="$PACKAGE_DIR/scripts/install_dram_deps.sh"
     if [[ ! -x "$DRAM_SCRIPT" ]]; then
-        error "DRAM dependency installer not found/executable: $DRAM_SCRIPT"
+        error "DRAM dependency installer not found or not executable: $DRAM_SCRIPT"
         exit 1
     fi
     DRAM_ARGS=(--dram-tool "$DRAM_DEPS_TOOL")
     [[ "$BUILD_INTEL_PCM" -eq 1 ]] && DRAM_ARGS+=(--build-intel-pcm)
     [[ -n "$AMDUPROF_INSTALLER" ]] && DRAM_ARGS+=(--amduprof-installer "$AMDUPROF_INSTALLER")
+    [[ -n "$AMDUPROF_URL" ]] && DRAM_ARGS+=(--amduprof-url "$AMDUPROF_URL")
+    [[ "$ASSUME_YES" -eq 0 ]] && DRAM_ARGS+=(--no)
+    [[ "$DRY_RUN" -eq 1 ]] && DRAM_ARGS+=(--dry-run)
+    [[ "${EUID:-$(id -u)}" -eq 0 ]] && DRAM_ARGS+=(--no-sudo)
     "$DRAM_SCRIPT" "${DRAM_ARGS[@]}"
 else
-    warn "Skipping DRAM PMU dependency installer. Use --with-dram-deps to install/check AMD uProf / Intel PCM deps."
+    warn "Skipping DRAM PMU dependency helper. Use --with-dram-deps for AMD uProf / Intel PCM / perf IMC dependencies."
 fi
 
-# ── Virtualenv ───────────────────────────────────────────────────────────────
 section "Python virtual environment"
-
 if [[ "$SKIP_VENV" -eq 1 ]]; then
-    warn "--skip-venv: installing into current Python environment."
+    warn "Installing into the current Python environment."
     PIP="pip3"
 else
     if [[ ! -d "$VENV_DIR" ]]; then
-        info "Creating venv at $VENV_DIR ..."
+        info "Creating venv at $VENV_DIR"
         "$PY" -m venv "$VENV_DIR"
     else
-        info "Reusing existing venv at $VENV_DIR"
+        info "Reusing venv at $VENV_DIR"
     fi
     # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate"
@@ -186,15 +321,11 @@ fi
 
 $PIP install --quiet --upgrade pip setuptools wheel
 
-# ── Core Python deps ─────────────────────────────────────────────────────────
 section "Core Python dependencies"
-
-# Direct runtime deps (always required)
 CORE_DEPS=(
-    "psutil>=5.9"    # PID detection, net_connections
-    "PyYAML>=6.0"    # YAML config parsing
-    "rich>=13.0"     # CLI output formatting
-    # amoprof analyzer deps (always installed — amoprof is bundled with the package)
+    "psutil>=5.9"
+    "PyYAML>=6.0"
+    "rich>=13.0"
     "pandas>=1.5"
     "numpy>=1.24"
     "matplotlib>=3.7"
@@ -203,223 +334,97 @@ CORE_DEPS=(
     "requests>=2.28"
     "Pillow>=9.4"
 )
-
-info "Installing core deps: ${CORE_DEPS[*]}"
 $PIP install --quiet "${CORE_DEPS[@]}"
-ok "Core deps installed"
+ok "Core Python dependencies installed"
 
-# ── AMOprof package ───────────────────────────────────────────────────────────
 section "Installing AMOprof"
-
 case "$MODE" in
     metrics)
-        info "Installing amoprof (metrics-only, no torch/sglang)..."
         $PIP install --quiet -e "$PACKAGE_DIR"
         ;;
     sglang)
-        info "Installing amoprof[sglang] ..."
-        $PIP install --quiet \
-            --extra-index-url "$TORCH_INDEX" \
-            -e "$PACKAGE_DIR[sglang]"
+        $PIP install --quiet --extra-index-url "$TORCH_INDEX" -e "$PACKAGE_DIR[sglang]"
         ;;
     full)
-        info "Installing amoprof[sglang,swebench] ..."
-        $PIP install --quiet \
-            --extra-index-url "$TORCH_INDEX" \
-            -e "$PACKAGE_DIR[sglang,swebench]"
-
-        # sweagent is not on PyPI in all versions — install from GitHub if needed
+        $PIP install --quiet --extra-index-url "$TORCH_INDEX" -e "$PACKAGE_DIR[sglang,swebench]"
         if ! python3 -c "import sweagent" 2>/dev/null; then
-            info "Installing sweagent from GitHub..."
+            info "Installing sweagent from GitHub"
             $PIP install --quiet "git+https://github.com/SWE-agent/SWE-agent.git"
-        else
-            ok "sweagent already available"
         fi
         ;;
 esac
 ok "AMOprof installed"
 
-# ── Optional: DCGM (DGX-specific) ────────────────────────────────────────────
-section "DCGM / dcgmi (optional, DGX only)"
+section "Optional tool checks"
+if command -v dcgmi >/dev/null 2>&1; then ok "dcgmi found: $(command -v dcgmi)"; else warn "dcgmi not found; GPU collection will use nvidia-smi when available."; fi
+if command -v nsys >/dev/null 2>&1; then ok "nsys found: $(command -v nsys)"; else warn "nsys not found; Nsight Systems collector unavailable."; fi
+if command -v blktrace >/dev/null 2>&1 && command -v blkparse >/dev/null 2>&1; then ok "blktrace + blkparse available"; else warn "blktrace/blkparse missing; request-level L3 storage charts will be empty."; fi
+if command -v biosnoop-bpfcc >/dev/null 2>&1 || command -v biosnoop >/dev/null 2>&1; then ok "biosnoop available"; else warn "biosnoop missing; per-stream storage attribution will be empty."; fi
+if command -v nvme >/dev/null 2>&1; then ok "nvme-cli available"; else warn "nvme-cli missing; SMART/endurance fields unavailable."; fi
+if command -v AMDuProfPcm >/dev/null 2>&1 || compgen -G '/opt/AMDuProf*/bin/AMDuProfPcm' >/dev/null; then ok "AMDuProfPcm available"; else warn "AMDuProfPcm not found; use scripts/install_dram_deps.sh on AMD systems."; fi
+if command -v pcm-memory >/dev/null 2>&1 || [[ -x /usr/local/bin/pcm-memory ]]; then ok "Intel pcm-memory available"; else warn "Intel pcm-memory not found; use scripts/install_dram_deps.sh on Intel systems."; fi
 
-if command -v dcgmi &>/dev/null; then
-    ok "dcgmi found: $(dcgmi version 2>/dev/null | head -1 || echo 'version unknown')"
-    ok "GpuMonitor will use dcgmi dmon for CUDA kernel-level counters."
-else
-    warn "dcgmi not found — GpuMonitor will fall back to nvidia-smi dmon."
-    warn "To install DCGM on DGX:"
-    echo "    wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb"
-    echo "    sudo dpkg -i cuda-keyring_1.1-1_all.deb"
-    echo "    sudo apt-get update && sudo apt-get install -y datacenter-gpu-manager"
-    echo "    sudo systemctl enable --now nvidia-dcgm"
-fi
-
-# ── Optional: Nsight Systems ──────────────────────────────────────────────────
-section "Nsight Systems / nsys (optional)"
-
-if command -v nsys &>/dev/null; then
-    ok "nsys found: $(nsys --version 2>/dev/null | head -1 || echo 'version unknown')"
-else
-    warn "nsys not found — NsysGpuTraceCollector will be unavailable."
-    warn "Install from: https://developer.nvidia.com/nsight-systems"
-fi
-
-# ── Optional: AMD uProf (optional) ───────────────────────────────────────────
-section "AMD uProf PCM (optional)"
-
-AMDUPROF_DEFAULT="/opt/AMDuProf_5.2-606/bin/AMDuProfPcm"
-if [[ -x "$AMDUPROF_DEFAULT" ]]; then
-    ok "AMDuProfPcm found at $AMDUPROF_DEFAULT"
-elif command -v AMDuProfPcm &>/dev/null; then
-    ok "AMDuProfPcm found in PATH"
-else
-    warn "AMDuProfPcm not found — AMDuProfPcmMemoryCollector will be unavailable."
-    warn "Download from: https://www.amd.com/en/developer/uprof.html"
-fi
-
-# ── Optional: Intel PCM ───────────────────────────────────────────────────────
-section "Intel PCM (optional)"
-
-if command -v pcm-memory &>/dev/null || [[ -x "/usr/local/bin/pcm-memory" ]]; then
-    ok "pcm-memory found"
-else
-    warn "pcm-memory not found — PcmMemoryCollector will be unavailable."
-    warn "Install: sudo apt-get install -y intel-pcm  (or build from https://github.com/intel/pcm)"
-fi
-
-# ── blktrace + blkparse (per-request NVMe events) ─────────────────────────────
-section "blktrace (per-request NVMe events, §C/§D/§E/§H charts)"
-
-if command -v blktrace &>/dev/null && command -v blkparse &>/dev/null; then
-    BLKT_VER=$(blktrace -v 2>&1 | head -1 || echo unknown)
-    ok "blktrace + blkparse found: $BLKT_VER"
-    ok "Enable with: amoprof collect --enable-blktrace ..."
-else
-    warn "blktrace/blkparse not found. The §C/§D/§E/§H request-level NVMe charts"
-    warn "will be empty without it. Install: sudo apt-get install -y blktrace"
-fi
-
-# ── BCC biosnoop (per-IO PID attribution) ─────────────────────────────────────
-section "biosnoop (per-IO PID attribution, §I per-stream chart)"
-
-BIOSNOOP_FOUND=""
-for candidate in biosnoop-bpfcc biosnoop /usr/sbin/biosnoop-bpfcc /usr/share/bcc/tools/biosnoop; do
-    if command -v "$candidate" &>/dev/null || [[ -x "$candidate" ]]; then
-        BIOSNOOP_FOUND="$candidate"; break
-    fi
-done
-if [[ -n "$BIOSNOOP_FOUND" ]]; then
-    ok "biosnoop found at: $BIOSNOOP_FOUND"
-    ok "Enable with: amoprof collect --enable-biosnoop ..."
-else
-    warn "biosnoop not found. The §I per-stream bandwidth chart will be empty."
-    warn "Install: sudo apt-get install -y bpfcc-tools"
-fi
-
-# ── sudo / capability check for tracing tools ────────────────────────────────
-section "Privilege check for tracing tools"
-
-if [[ "$EUID" -eq 0 ]]; then
-    ok "Running as root — blktrace/biosnoop will work directly."
+section "Privilege check"
+if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    ok "Running as root."
 elif sudo -n true 2>/dev/null; then
-    ok "Passwordless sudo available — blktrace/biosnoop will work via sudo -n."
+    ok "Passwordless sudo available."
 else
-    warn "blktrace and biosnoop require root or passwordless sudo."
-    warn "Either:"
-    warn "  (a) Run AMOprof itself with 'sudo': sudo amoprof collect ..."
-    warn "  (b) Configure sudoers for the current user (recommended for automated runs):"
-    warn "      sudo visudo  → add line:"
-    warn "      $USER ALL=(root) NOPASSWD: /usr/sbin/blktrace, /usr/bin/blkparse, /usr/sbin/biosnoop-bpfcc"
-    warn "  (c) Add CAP_SYS_ADMIN + CAP_BPF capabilities (advanced)."
+    warn "blktrace, biosnoop, perf, and DRAM PMU tools usually require root or passwordless sudo."
 fi
 
-# ── Verify installation ───────────────────────────────────────────────────────
 section "Verification"
-
-if python3 -c "import amoprof; print('amoprof', amoprof.__version__)" 2>/dev/null; then
+if python3 -c "import amoprof; print('amoprof', amoprof.__version__)"; then
     ok "amoprof import OK"
 else
-    error "amoprof import failed — check errors above."
+    error "amoprof import failed"
     exit 1
 fi
 
-if python3 -c "from amoprof.cli import main" 2>/dev/null; then
-    ok "amoprof.cli import OK"
+if python3 -c "from amoprof.cli import main"; then
+    ok "amoprof CLI import OK"
 else
-    error "amoprof.cli import failed."
+    error "amoprof.cli import failed"
     exit 1
 fi
 
-ENTRY=$(command -v amoprof 2>/dev/null || true)
+ENTRY="$(command -v amoprof 2>/dev/null || true)"
 if [[ -n "$ENTRY" ]]; then
-    ok "amoprof CLI entrypoint: $ENTRY"
+    ok "amoprof CLI: $ENTRY"
 else
-    warn "amoprof entrypoint not in PATH. Either activate the venv or add it:"
-    [[ "$SKIP_VENV" -eq 0 ]] && echo "    source $VENV_DIR/bin/activate"
+    warn "amoprof entry point is not on PATH. Activate the virtualenv before use."
 fi
 
-# ── Summary ───────────────────────────────────────────────────────────────────
 section "Installation complete"
+if [[ "$SKIP_VENV" -eq 1 ]]; then
+    VENV_SUMMARY="current Python environment"
+else
+    VENV_SUMMARY="$VENV_DIR"
+fi
 
-cat <<EOF
+cat <<EOF_SUMMARY
+Mode        : $MODE
+Virtualenv  : $VENV_SUMMARY
+Package dir : $PACKAGE_DIR
+Architecture: $ARCH
+CPU vendor  : $CPU_VENDOR
+OS/PM       : $OS_ID $OS_VERSION_ID / $PM
 
-  Mode       : $MODE
-  Venv       : ${SKIP_VENV:-0 == 0 && echo "$VENV_DIR" || echo "(none — system Python)"}
-  Package    : $PACKAGE_DIR
+Next steps:
+  source $VENV_DIR/bin/activate
+  amoprof --version
 
-  Collectors always-on (no flag required):
-    IostatMonitor         iostat (sysstat)
-    NvmeSmartMonitor      nvme-cli
-    BiolatencyCollector   biolatency-bpfcc (bpfcc-tools)
-    VmstatMonitor         /proc/vmstat
-    SwapStormMonitor      /proc/vmstat per-sample swap timeseries        [NEW]
-    DiscardStatsMonitor   /proc/diskstats TRIM/discard timeseries        [NEW]
-    NvmeDriverMonitor     nvme-cli latency-stats
-    GpuMonitor            nvidia-smi / dcgmi dmon
-    DramMonitor           /proc/meminfo
-    PowerMonitor          nvidia-smi
-    NvlinkPcieMonitor     nvidia-smi + dcgmi dmon
-    PcmMemoryCollector    pcm-memory (Intel PCM, optional binary)
+Example collect:
+  sudo amoprof collect \\
+    --sglang-host 127.0.0.1 --sglang-port 30000 \\
+    --ssd-device /dev/nvme2n1 --hicache-path /mnt/sglang_hicache \\
+    --duration-s 900 --interval-s 1 \\
+    --enable-dram --dram-tool auto \\
+    --enable-blktrace --enable-biosnoop \\
+    --setup-details setup_details_sample.json \\
+    --label my-run
 
-  Collectors requiring explicit flags (need sudo/root):
-    BlktraceCollector     --enable-blktrace      blktrace + blkparse     [NEW]
-                          Populates §C/§D/§E/§H request-level NVMe charts
-                          (read/write/trim size, IAT, LBA hot/cold)
-
-    BiosnoopCollector     --enable-biosnoop      biosnoop-bpfcc          [NEW]
-                          Populates §I per-stream bandwidth chart
-                          (per-IO PID + comm attribution)
-
-    AMDuProfPcmMemoryCollector  --enable-amduprof-pcm  AMDuProfPcm
-                          Populates §F DRAM (CPU-side) bandwidth chart
-
-  Collectors that require running on the SGLang node (PID attach):
-    PerfStatCollector     perf stat (linux-tools-generic)
-    BpftraceCollector     bpftrace
-    NsysGpuTraceCollector --enable-nsys (Nsight Systems)
-
-  Collectors requiring --sglang-port / --sglang-host:
-    SGLangMetricsSampler  Prometheus /metrics scrape
-
-  Example run (full report, local DGX node):
-    sudo amoprof collect \\
-      --sglang-port 30000 \\
-      --ssd-device /dev/nvme2n1 \\
-      --duration-s 300 \\
-      --enable-blktrace \\
-      --enable-biosnoop \\
-      --enable-amduprof-pcm \\
-      --enable-nsys \\
-      --label my-run --analyze -v
-
-  Example run (remote SGLang, AMOprof runs locally on storage node):
-    sudo amoprof collect \\
-      --sglang-host 10.0.1.5 --sglang-port 30000 \\
-      --ssd-device /dev/nvme2n1 \\
-      --duration-s 300 \\
-      --enable-blktrace --enable-biosnoop \\
-      --label my-run --analyze
-
-  Activate venv before each session:
-    source $VENV_DIR/bin/activate
-EOF
+Example analyze:
+  amoprof analyze --run-dir ./amoprof_results/metrics_run_YYYYMMDD_HHMMSS \\
+    --combined-report --interactive-report --prom-rate-window 5m
+EOF_SUMMARY

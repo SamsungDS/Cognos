@@ -67,11 +67,14 @@ Examples:
        --amduprof-installer ./AMDuProf_Linux_x64.deb
 
 Notes:
+  * --dram-tool auto is architecture/vendor aware.
+  * AMD x86_64 hosts select AMD uProf prerequisites by default.
+  * Intel x86_64 hosts select Intel PCM by default.
+  * Non-x86 or unknown platforms use perf IMC/core PMU dependencies where available.
   * Intel PCM package name on Debian/Ubuntu is usually "pcm"; it provides
     pcm-memory.
-  * AMD uProf/AMDuProfPcm is not reliably distributed via distro repos.
-    This script installs prerequisites and can install AMD uProf only when
-    a local installer or URL is provided.
+  * AMD uProf/AMDuProfPcm is not silently downloaded unless a local installer
+    or explicit URL is provided.
 EOF
 exit 0
 }
@@ -118,6 +121,17 @@ detect_cpu_vendor() {
     if grep -qi "authenticamd" <<<"$cpu"; then echo "amd"; return; fi
     if grep -qi "genuineintel" <<<"$cpu"; then echo "intel"; return; fi
     echo "unknown"
+}
+
+detect_arch() {
+    local a
+    a="$(uname -m 2>/dev/null || echo unknown)"
+    case "$a" in
+        x86_64|amd64) echo "x86_64" ;;
+        aarch64|arm64) echo "aarch64" ;;
+        ppc64le) echo "ppc64le" ;;
+        *) echo "$a" ;;
+    esac
 }
 
 load_os_release() {
@@ -264,6 +278,12 @@ install_core_kernel_perf_deps() {
 install_intel_pcm_pkg() {
     section "Intel PCM / pcm-memory"
 
+    if [[ "${ARCH:-$(detect_arch)}" != "x86_64" ]]; then
+        warn "Intel PCM is only installed automatically on x86_64. Current architecture: ${ARCH:-$(detect_arch)}"
+        warn "Using perf-imc/core PMU fallback where supported."
+        return 0
+    fi
+
     if command -v pcm-memory >/dev/null 2>&1; then
         ok "pcm-memory already available: $(command -v pcm-memory)"
         return 0
@@ -365,6 +385,12 @@ build_intel_pcm_from_source() {
 
 install_amduprof() {
     section "AMD uProf / AMDuProfPcm"
+
+    if [[ "${ARCH:-$(detect_arch)}" != "x86_64" ]]; then
+        warn "AMD uProf / AMDuProfPcm automatic setup is supported only on x86_64. Current architecture: ${ARCH:-$(detect_arch)}"
+        warn "Using perf-imc/core PMU fallback where supported."
+        return 0
+    fi
 
     if command -v AMDuProfPcm >/dev/null 2>&1; then
         ok "AMDuProfPcm already available: $(command -v AMDuProfPcm)"
@@ -477,6 +503,7 @@ verify_backend() {
     vendor="$(detect_cpu_vendor)"
 
     echo "CPU vendor     : $vendor"
+    echo "Architecture   : ${ARCH:-$(detect_arch)}"
     echo "OS             : ${OS_ID:-unknown} ${OS_VERSION_ID:-} (like: ${OS_LIKE:-})"
     echo "Package manager: $PM"
     echo "Requested tool : $DRAM_TOOL"
@@ -527,17 +554,19 @@ main() {
     load_os_release
     PM="$(detect_pm)"
     CPU_VENDOR="$(detect_cpu_vendor)"
+    ARCH="$(detect_arch)"
 
     section "Detected platform"
     echo "CPU vendor     : $CPU_VENDOR"
+    echo "Architecture   : $ARCH"
     echo "OS             : $OS_ID $OS_VERSION_ID (like: $OS_LIKE)"
     echo "Package manager: $PM"
 
     case "$DRAM_TOOL" in
         auto)
-            if [[ "$CPU_VENDOR" == "amd" ]]; then
+            if [[ "$ARCH" == "x86_64" && "$CPU_VENDOR" == "amd" ]]; then
                 SELECTED=("amduprof")
-            elif [[ "$CPU_VENDOR" == "intel" ]]; then
+            elif [[ "$ARCH" == "x86_64" && "$CPU_VENDOR" == "intel" ]]; then
                 SELECTED=("intel-pcm")
             else
                 SELECTED=("perf-imc")
@@ -559,6 +588,8 @@ main() {
         warn "--dram-tool none selected; nothing to install"
         exit 0
     fi
+
+    echo "Selected backend(s): ${SELECTED[*]}"
 
     install_core_kernel_perf_deps
 
