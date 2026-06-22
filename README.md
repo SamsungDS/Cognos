@@ -60,10 +60,15 @@ amoprof_1_39_90/
 ├── run_amoprof_swebench_pro_sweeps.sh# Example benchmark wrapper
 ├── scripts/
 │   └── install_dram_deps.sh          # Architecture/vendor-aware DRAM PMU dependency installer
+├── systemd/
+│   ├── amoprof.service               # systemd unit for `amoprof service`
+│   └── amoprof.env.example           # Example EnvironmentFile for the unit
 ├── tests/
 │   └── test_executive_symbol_regression.py
 └── amoprof/
     ├── cli.py                        # CLI parser and command dispatch
+    ├── service.py                    # Long-lived collection service with a Prometheus /metrics endpoint
+    ├── blktrace_service.py           # Incremental blkparse poller feeding service blktrace metrics
     ├── collectors.py                 # Core GPU, DRAM, power, vmstat, iostat, SMART collectors
     ├── collectors_extra.py           # blktrace, biosnoop, discard, swap-storm collectors
     ├── prometheus_source.py          # Prometheus/SGLang/DCGM/node-exporter source handling
@@ -119,6 +124,7 @@ AMOprof exposes one console entry point, `amoprof`, with these subcommands:
 | `amoprof aggregate` | Merge multiple run directories into one synthetic run and optionally enrich from Prometheus. | `merged_run_*` directory and optional reports. |
 | `amoprof compare` | Compare multiple runs side by side. | Single comparison HTML with delta tables/charts. |
 | `amoprof bench-lc` | Render a long-context benchmark JSON into an HTML benchmark summary. | Benchmark summary HTML. |
+| `amoprof service` | Run a long-lived collection service that scrapes collectors in repeating cycles and exposes them on a Prometheus `/metrics` endpoint. | Live `/metrics` and `/healthz` HTTP endpoints plus per-cycle `raw/` output. |
 | `amoprof --version` | Print installed package version. | Version string. |
 
 Backward-compatible shortcut: if no subcommand is provided, AMOprof treats the invocation as `collect`. For example, `amoprof --duration-s 60 ...` is equivalent to `amoprof collect --duration-s 60 ...`.
@@ -286,6 +292,102 @@ amoprof bench-lc \
   --title "Long-Context Benchmark" \
   --run-label qwen3_235b_awq
 ```
+
+### 12. Run AMOprof as a long-lived collection service
+
+Instead of a single bounded `collect` run, run AMOprof as a service that scrapes
+the enabled collectors in repeating cycles and exposes the latest cycle on a
+Prometheus `/metrics` endpoint. A Prometheus server can then scrape AMOprof
+directly, and `/healthz` can be used for liveness checks.
+
+```bash
+sudo amoprof service \
+  --metrics-port 9101 \
+  --metrics-host 0.0.0.0 \
+  --collectors gpu,dram,vmstat,iostat,smart \
+  --scrape-duration-s 30 \
+  --interval-s 1 \
+  --ssd-device /dev/nvme0n1 \
+  --hicache-path /mnt/sglang_hicache \
+  --output-dir ./amoprof_results
+```
+
+Each cycle runs for `--scrape-duration-s` seconds, then refreshes the metrics
+served at `http://<host>:<metrics-port>/metrics`. Use `--collectors all` for all
+always-on collectors, or pass a comma-separated subset. Add `--enable-blktrace`
+(with `--blkparse-interval-s` to control how often the live trace is parsed),
+`--enable-biosnoop`, `--enable-amduprof-pcm`, `--enable-nsys`, or `--enable-all`
+for the optional privileged collectors. Pass `--sglang-port` to also scrape a
+running SGLang server, or `--pid` to attach the perf/bpf collectors. Use
+`--no-sudo` only when AMOprof itself already runs as root. The service runs until
+it receives `SIGINT`/`SIGTERM`, and each cycle's raw output is written under
+`--output-dir`. Defaults can also be supplied via the `AMOPROF_METRICS_PORT`,
+`AMOPROF_SCRAPE_DURATION_S`, `AMOPROF_BLKPARSE_INTERVAL_S`, and related
+environment variables.
+
+Quick check while the service is running:
+
+```bash
+curl -s http://127.0.0.1:9101/healthz      # -> ok
+curl -s http://127.0.0.1:9101/metrics      # Prometheus exposition text
+```
+
+#### Run the service under systemd
+
+A unit file and an example environment file are provided under `systemd/`. The
+unit is fully configured through the environment file, so it does not need to be
+edited for normal use.
+
+```bash
+# 1. Install AMOprof to a system-wide venv so root can reach the console script.
+sudo ./install.sh --venv /opt/amoprof_venv
+
+# 2. Install the environment file and edit it for your host.
+sudo install -d /etc/amoprof
+sudo install -m 0644 systemd/amoprof.env.example /etc/amoprof/amoprof.env
+sudo $EDITOR /etc/amoprof/amoprof.env
+
+# 3. Install and start the service.
+sudo install -m 0644 systemd/amoprof.service /etc/systemd/system/amoprof.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now amoprof.service
+
+# 4. Inspect it.
+systemctl status amoprof.service
+journalctl -u amoprof.service -f
+curl -s http://127.0.0.1:9101/healthz
+```
+
+Every `AMOPROF_*` variable in `/etc/amoprof/amoprof.env` maps to the matching
+`amoprof service` flag. Flags without a dedicated variable (for example
+`--collectors`, `--enable-blktrace`, `--no-sudo`, `--sglang-port`) are passed
+through `AMOPROF_EXTRA_ARGS`. If you install the venv somewhere other than
+`/opt/amoprof_venv`, update the `ExecStart` path in `systemd/amoprof.service`.
+
+#### Run the service with a subset of collectors (e.g. DRAM only)
+
+`--collectors` has no dedicated environment variable, so select the collector
+subset through `AMOPROF_EXTRA_ARGS`. To run the service with only the DRAM
+collector, edit `/etc/amoprof/amoprof.env` so that line reads:
+
+```ini
+# /etc/amoprof/amoprof.env
+AMOPROF_EXTRA_ARGS="--metrics-host 0.0.0.0 --collectors dram"
+```
+
+`AMOPROF_EXTRA_ARGS` is a single string, so keep any other non-env flags you
+need on the same line. Pass a comma-separated list for more than one collector,
+for example `--collectors dram,gpu,vmstat`. `dram` is an always-on collector, so
+no `--enable-*` flag is required. Apply the change with:
+
+```bash
+sudo $EDITOR /etc/amoprof/amoprof.env
+sudo systemctl restart amoprof.service
+journalctl -u amoprof.service -n 20      # confirm "Collectors : dram"
+```
+
+Only the metrics for the selected collector(s) then appear at
+`http://<host>:<metrics-port>/metrics` (for DRAM, the `amoprof_dram_*` series).
 
 ---
 
