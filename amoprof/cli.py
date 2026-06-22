@@ -2469,6 +2469,92 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="Short label shown in the report subtitle.")
     blc.add_argument("--verbose", "-v", action="store_true")
 
+    # ── service subcommand ────────────────────────────────────────────────────
+    svc = sub.add_parser(
+        "service",
+        help="Run a long-lived collection service with a Prometheus /metrics endpoint",
+    )
+    svc.add_argument(
+        "--metrics-port", type=int,
+        default=int(__import__("os").environ.get("AMOPROF_METRICS_PORT", "9101")),
+        help="TCP port for the Prometheus /metrics HTTP endpoint. "
+             "Default: 9101. Env: AMOPROF_METRICS_PORT.",
+    )
+    svc.add_argument(
+        "--metrics-host", default="0.0.0.0",
+        help="Bind address for the Prometheus HTTP server. Default: 0.0.0.0 (all interfaces).",
+    )
+    svc.add_argument(
+        "--scrape-duration-s", type=float,
+        default=float(__import__("os").environ.get("AMOPROF_SCRAPE_DURATION_S", "30")),
+        help="How long each collection cycle runs before metrics are refreshed. "
+             "Default: 30 s. Env: AMOPROF_SCRAPE_DURATION_S.",
+    )
+    svc.add_argument(
+        "--collectors", default="",
+        metavar="NAME[,NAME...]",
+        help="Comma-separated list of collectors to enable, or 'all' for all "
+             "always-on collectors. Available: "
+             + ", ".join(__import__("amoprof.service", fromlist=["AVAILABLE_COLLECTORS"]).AVAILABLE_COLLECTORS)
+             + ". Default: all always-on collectors.",
+    )
+    # Shared flags reused from collect
+    svc.add_argument("--output-dir",
+                     default=__import__("os").environ.get("AMOPROF_OUTPUT_DIR", "./amoprof_results"),
+                     help="Base directory for per-cycle raw output. Default: ./amoprof_results")
+    svc.add_argument("--interval-s", type=float, default=1.0,
+                     help="Polling interval for time-series collectors. Default: 1.0")
+    svc.add_argument("--ssd-device",
+                     default=__import__("os").environ.get("AMOPROF_SSD_DEVICE", "/dev/nvme0n1"),
+                     help="Block device for SSD/NVMe collectors")
+    svc.add_argument("--hicache-path",
+                     default=__import__("os").environ.get("AMOPROF_HICACHE_PATH", "/mnt/sglang_dv3"),
+                     help="Mount path for HiCache df stats")
+    svc.add_argument("--pid", type=int, default=None,
+                     help="Attach perf/bpf collectors to this PID")
+    svc.add_argument("--sglang-port", type=int, default=None,
+                     help="Poll SGLang /metrics from this port")
+    svc.add_argument("--sglang-host",
+                     default=__import__("os").environ.get("AMOPROF_SGLANG_HOST", "127.0.0.1"),
+                     help="SGLang server host. Env: AMOPROF_SGLANG_HOST.")
+    svc.add_argument("--enable-blktrace", action="store_true",
+                     help="Enable blktrace collector (requires root + blktrace pkg)")
+    svc.add_argument(
+        "--blkparse-interval-s", type=float,
+        default=float(__import__("os").environ.get("AMOPROF_BLKPARSE_INTERVAL_S", "10")),
+        help="How often (seconds) to run blkparse against the live blktrace "
+             "binary files and refresh blktrace interval metrics. "
+             "Only meaningful when --enable-blktrace or --enable-all is set. "
+             "Each run parses only the new events since the last interval. "
+             "Default: 10 s. Env: AMOPROF_BLKPARSE_INTERVAL_S.",
+    )
+    svc.add_argument("--enable-biosnoop", action="store_true",
+                     help="Enable biosnoop collector (requires root + bpfcc)")
+    svc.add_argument("--enable-amduprof-pcm", action="store_true",
+                     help="Enable AMD uProf PCM memory collector")
+    svc.add_argument("--enable-all", action="store_true",
+                     help="Enable blktrace, biosnoop, and amduprof_pcm")
+    svc.add_argument("--enable-nsys", action="store_true",
+                     help="Enable Nsight Systems collector (requires --pid)")
+    svc.add_argument("--no-sudo", action="store_true",
+                     help="Do not prepend sudo to privileged collectors")
+    svc.add_argument("--amduprof-pcm-bin",
+                     default=__import__("os").environ.get(
+                         "AMOPROF_AMDUPROF_PCM_BIN",
+                         "/opt/AMDuProf_5.2-606/bin/AMDuProfPcm"),
+                     help="Path to AMDuProfPcm binary")
+    svc.add_argument("--amduprof-duration-s", type=float, default=None)
+    svc.add_argument("--amduprof-extra-arg", action="append", default=[])
+    svc.add_argument("--blktrace-bin",
+                     default=__import__("os").environ.get("AMOPROF_BLKTRACE_BIN", "blktrace"))
+    svc.add_argument("--blkparse-bin",
+                     default=__import__("os").environ.get("AMOPROF_BLKPARSE_BIN", "blkparse"))
+    svc.add_argument("--biosnoop-bin",
+                     default=__import__("os").environ.get("AMOPROF_BIOSNOOP_BIN", "biosnoop-bpfcc"))
+    svc.add_argument("--debug-sglang", action="store_true")
+    svc.add_argument("--verbose", "-v", action="store_true",
+                     help="Enable debug logging")
+
     return p
 
 
@@ -3008,7 +3094,7 @@ def main(argv: list[str] | None = None) -> int:
     # Backward-compatible direct form: `amoprof --duration-s 30 ...`
     if not raw_argv or raw_argv[0] not in {
             "collect", "analyze", "retime", "aggregate", "compare", "bench-lc",
-            "--version", "-h", "--help"}:
+            "service", "--version", "-h", "--help"}:
         raw_argv = ["collect"] + raw_argv
     args = parser.parse_args(raw_argv)
     _setup_logging(getattr(args, "verbose", False))
@@ -3029,6 +3115,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "bench-lc":
         from .bench_lc_results import main_bench_lc
         return main_bench_lc(args)
+    if args.command == "service":
+        from .service import run_service
+        return run_service(args)
     return _collect(args)
 
 
