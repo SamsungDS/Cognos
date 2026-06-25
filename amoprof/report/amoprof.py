@@ -446,18 +446,31 @@ def _pct_ts_latency_ms_from_data(data: dict, metric_key: str, percentile: str = 
 
 
 def _cache_hit_gauge_stats(df: pd.DataFrame) -> dict:
-    """Script-compatible stats for sglang_cache_hit_rate over the full window.
+    """Stats for the sglang_cache_hit_rate gauge over the selected window.
 
-    This intentionally matches the standalone script semantics:
-      - collect every sglang_cache_hit_rate sample in the selected start/end window
-      - overall average includes zero/idle samples
-      - active average filters value > 0
-      - peak is max(sample)
-    Values are returned as percentages. Multiple labelled series are flattened.
+    Returns several complementary aggregations (all as percentages) because
+    they answer different questions and can differ substantially:
+
+      - overall_pct      : raw arithmetic mean of every sample, INCLUDING idle
+                           0% samples. Lowest; drags down on bursty runs.
+      - active_pct       : mean of only value>0 samples (idle gaps excluded).
+                           This is the figure that matches a Grafana panel whose
+                           visible window has no idle zeros.
+      - time_weighted_pct: trapezoidal time-weighted average over time_sec —
+                           the true `avg_over_time(sglang:cache_hit_rate[..])`
+                           semantics (weights each level by its duration rather
+                           than assuming even sample spacing). Reproducible
+                           against Grafana's avg_over_time query.
+      - peak_pct         : max sample.
+
+    Multiple labelled series are flattened for the scalar means; the
+    time-weighted value uses the single richest cache_hit_rate column aligned
+    with time_sec.
     """
     stats = {
         "overall_pct": 0.0,
         "active_pct": 0.0,
+        "time_weighted_pct": 0.0,
         "peak_pct": 0.0,
         "total_samples": 0,
         "active_samples": 0,
@@ -469,6 +482,7 @@ def _cache_hit_gauge_stats(df: pd.DataFrame) -> dict:
     cols = [c for c in cols if "bucket" not in c and "_sum" not in c and "_count" not in c]
     if not cols:
         return stats
+    import numpy as _np
     vals = []
     for c in cols:
         try:
@@ -479,7 +493,6 @@ def _cache_hit_gauge_stats(df: pd.DataFrame) -> dict:
             pass
     if not vals:
         return stats
-    import numpy as _np
     arr = _np.asarray(vals, dtype=float)
     # SGLang exports 0..1. Some derived files may already be 0..100; normalize.
     pct = _np.where(arr <= 1.0, arr * 100.0, arr)
@@ -490,6 +503,33 @@ def _cache_hit_gauge_stats(df: pd.DataFrame) -> dict:
     stats["active_samples"] = int(len(active))
     stats["active_pct"] = float(_np.mean(active)) if len(active) else 0.0
     stats["columns"] = cols
+
+    # True time-weighted average (avg_over_time semantics) for the column with
+    # the most non-null samples, integrated over time_sec via the trapezoid rule.
+    if "time_sec" in df.columns:
+        best_col, best_n = None, -1
+        for c in cols:
+            ser = pd.to_numeric(df[c], errors="coerce")
+            n = int(ser.notna().sum())
+            if n > best_n:
+                best_col, best_n = c, n
+        if best_col is not None and best_n >= 2:
+            sub = pd.DataFrame({
+                "t": pd.to_numeric(df["time_sec"], errors="coerce"),
+                "v": pd.to_numeric(df[best_col], errors="coerce"),
+            }).dropna().sort_values("t")
+            if len(sub) >= 2:
+                t = sub["t"].to_numpy(dtype=float)
+                v = sub["v"].to_numpy(dtype=float)
+                v = _np.where(v <= 1.0, v * 100.0, v)  # normalize 0..1 → 0..100
+                span = float(t[-1] - t[0])
+                if span > 0:
+                    stats["time_weighted_pct"] = float(_np.trapz(v, t) / span)
+                else:
+                    stats["time_weighted_pct"] = float(_np.mean(v))
+    if stats["time_weighted_pct"] == 0.0 and stats["overall_pct"] > 0.0:
+        # No usable time axis — fall back to the arithmetic mean.
+        stats["time_weighted_pct"] = stats["overall_pct"]
     return stats
 
 
@@ -757,6 +797,80 @@ def _prom_detect_labels(base_url: str, metric: str) -> dict:
     return {}
 
 
+def _prom_find_active_spans(base_url: str, liveness_metric: str,
+                            t_start: float, t_end: float,
+                            selector: str = "",
+                            search_radius_s: float = 26 * 3600) -> list:
+    """Find time spans that actually have samples for *liveness_metric*.
+
+    Used when the requested [t_start, t_end] window contains the metric NAME
+    (so detection succeeds) but zero SAMPLES — most often a timezone-offset
+    mistake where an epoch was computed from a local-time clock reading.
+
+    Probes ±search_radius_s around the requested window at a coarse step,
+    clusters contiguous active samples into spans, and returns a list of dicts:
+        {span_start, span_end, span_dur_s, offset_s, offset_h, tz_like}
+    ranked best-first. offset_s is span_start - t_start; tz_like is True when
+    that offset is within 5 min of a whole/half/quarter-hour boundary (the
+    signature of a wrong timezone). Returns [] if no active samples are nearby.
+
+    This NEVER mutates the caller's window — it only reports candidates.
+    """
+    expr = liveness_metric
+    if selector and "{" not in liveness_metric:
+        expr = liveness_metric + selector
+    lo = max(0.0, t_start - search_radius_s)
+    hi = t_end + search_radius_s
+    # Coarse probe — 2 min step keeps this to a few hundred points across ±26h.
+    df = _prom_query_range(base_url, expr, lo, hi, 120)
+    if not isinstance(df, pd.DataFrame) or df.empty or "value" not in df.columns:
+        return []
+    try:
+        vals = pd.to_numeric(df["value"], errors="coerce").fillna(0.0)
+        ts_abs = pd.to_numeric(df["time_sec"], errors="coerce") + lo  # df time is relative to lo
+    except Exception:
+        return []
+    active = ts_abs[vals > 0]
+    if active.empty:
+        active = ts_abs[vals.notna()]  # server was up/scraped even if gauge sat at 0
+    active = active.dropna().sort_values()
+    if active.empty:
+        return []
+
+    # Cluster contiguous samples into spans (gap > 10 min separates runs).
+    times = list(active)
+    spans = []
+    span_start = span_prev = times[0]
+    for tcur in times[1:]:
+        if tcur - span_prev > 600:
+            spans.append((span_start, span_prev))
+            span_start = tcur
+        span_prev = tcur
+    spans.append((span_start, span_prev))
+
+    def _tz_grid_miss_s(off_s: float) -> float:
+        """Seconds from the nearest whole/half/quarter-hour boundary."""
+        hours = off_s / 3600.0
+        frac = abs(hours - round(hours))  # 0..0.5
+        return min(frac, abs(frac - 0.5), abs(frac - 0.25), abs(frac - 0.75)) * 3600.0
+
+    out = []
+    for a, b in spans:
+        off = float(a) - t_start
+        miss = _tz_grid_miss_s(off)
+        out.append({
+            "span_start": float(a),
+            "span_end": float(b),
+            "span_dur_s": float(b - a),
+            "offset_s": off,
+            "offset_h": off / 3600.0,
+            "tz_like": bool(abs(off) <= 14.5 * 3600 and miss <= 300),
+        })
+    # Rank: timezone-like spans first, then by proximity to the requested window.
+    out.sort(key=lambda s: (0 if s["tz_like"] else 1, abs(s["offset_s"])))
+    return out
+
+
 def collect_from_prometheus_api(
     prom_base_url: str,
     start_time: float = 0,
@@ -999,6 +1113,69 @@ def collect_from_prometheus_api(
         print(f"OK ({len(sg_dfs)} series; warn: sglang_hicache_host_used_tokens missing)")
     else:
         print(f"OK ({len(sg_dfs)} series; includes sglang_hicache_host_used_tokens)")
+
+    # ── Empty-window guard (common timezone-offset mistake) ──────────────────
+    # If SGLang metric NAMES exist on the server (detection succeeded) but the
+    # requested window returned ZERO series, the window is almost always wrong —
+    # most often because --start/--end were derived from a local-time clock
+    # reading (e.g. Grafana shows KST) instead of UTC epochs. Probe ±26h for the
+    # nearest active window and PRINT a copy-paste suggestion. We never alter the
+    # caller's window — a genuinely idle window stays empty by design.
+    _sglang_names_exist = any(m.startswith(("sglang_", "sglang:")) for m in available)
+    if server_type == "sglang" and _sglang_names_exist and not sg_dfs:
+        liveness = _prom_resolve_metric_name("sglang_num_running_reqs", available)
+        if liveness not in available:
+            liveness = _prom_resolve_metric_name("sglang_gen_throughput", available)
+        try:
+            spans = _prom_find_active_spans(
+                base, liveness, t_start, t_end, selector=selector)
+        except Exception:
+            spans = []
+        orig_dur = max(int(t_end - t_start), 60)
+        sep = "─" * 72
+        print(f"\n{sep}")
+        print("  ⚠  WARNING: SGLang metric names exist on this server, but the requested")
+        print(f"     window [{int(t_start)} → {int(t_end)}] (UTC) returned ZERO samples.")
+        print("     --start/--end must be UTC epochs. A common cause is reading a local")
+        print("     time off Grafana (which displays your browser timezone) and using it")
+        print("     directly. Tip: pass ISO time with an offset to skip the math, e.g.")
+        print('        --start "2026-06-12T17:57:28+09:00"')
+        if spans:
+            print(f"\n     Found {len(spans)} active SGLang span(s) nearby — pick the run you meant")
+            print(f"     and re-run (window duration {orig_dur}s preserved from your request):")
+            for i, s in enumerate(spans[:6]):
+                a = int(s["span_start"]); b = int(s["span_end"])
+                # Suggest a window of the original duration anchored at the span start,
+                # but never shorter than the span itself.
+                sug_end = max(a + orig_dur, b)
+                tag = " [timezone-like offset]" if s["tz_like"] else ""
+                print(f"        • {s['offset_h']:+6.2f}h{tag}: --start {a} --end {sug_end}"
+                      f"   (data {a}→{b}, {int(s['span_dur_s']/60)}min)")
+            try:
+                if output_dir:
+                    (Path(output_dir) / "window_suggestion.json").write_text(
+                        json.dumps({
+                            "requested_start": int(t_start),
+                            "requested_end": int(t_end),
+                            "requested_duration_s": orig_dur,
+                            "reason": "sglang metric names present but zero samples in requested window",
+                            "candidate_spans": [{
+                                "span_start": int(s["span_start"]),
+                                "span_end": int(s["span_end"]),
+                                "offset_s": int(s["offset_s"]),
+                                "offset_hours": round(s["offset_h"], 4),
+                                "timezone_like": s["tz_like"],
+                                "suggested_start": int(s["span_start"]),
+                                "suggested_end": int(max(s["span_start"] + orig_dur, s["span_end"])),
+                            } for s in spans[:12]],
+                        }, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+        else:
+            print("\n     No active SGLang data found within ±26h either — the server may")
+            print("     have no data for this run, or its retention window has expired.")
+        print(f"{sep}\n")
+
     try:
         if output_dir:
             (Path(output_dir) / "prometheus_metric_format.json").write_text(json.dumps({
@@ -1449,7 +1626,9 @@ def collect_from_prometheus_api(
     _request_weighted_hit = max(0.0, min(100.0, _request_weighted_hit)) if _request_weighted_hit > 0 else 0.0
 
     _gstats = _cache_hit_gauge_stats(master)
-    _time_weighted_hit = _gstats.get("overall_pct", 0.0)
+    # True avg_over_time semantics (matches Grafana), not the raw all-sample mean.
+    _time_weighted_hit = _gstats.get("time_weighted_pct", 0.0)
+    _active_hit = _gstats.get("active_pct", 0.0)
 
     # SGLang 0.5.10 exposes two complementary cache paths. This effective value
     # is useful context but is not the primary KPI because it combines different
@@ -1470,9 +1649,12 @@ def collect_from_prometheus_api(
     elif _request_weighted_hit > 0:
         _alt_cache_hit = _request_weighted_hit
         _alt_method = "selected_window_request_weighted_request_cache_hit_over_request_total"
-    elif _gstats["total_samples"] > 0:
+    elif _time_weighted_hit > 0:
         _alt_cache_hit = _time_weighted_hit
         _alt_method = "selected_window_time_weighted_avg_over_time_sglang_cache_hit_rate"
+    elif _active_hit > 0:
+        _alt_cache_hit = _active_hit
+        _alt_method = "selected_window_active_mean_sglang_cache_hit_rate_idle_excluded"
     elif _effective_prompt_hit > 0:
         _alt_cache_hit = _effective_prompt_hit
         _alt_method = "combined_cached_plus_prefill_cache_prometheus_fallback"
@@ -1888,9 +2070,10 @@ def collect_from_prometheus(
     cache_hit_request_weighted = max(0.0, min(100.0, cache_hit_request_weighted)) if cache_hit_request_weighted > 0 else 0.0
 
     _gstats = _cache_hit_gauge_stats(sglang_df)
-    cache_hit_time_weighted = float(_gstats.get("overall_pct", 0.0))
-    cache_hit_gauge_overall = cache_hit_time_weighted
-    cache_hit_gauge_active = float(_gstats.get("active_pct", 0.0))
+    # time-weighted = true avg_over_time(sglang:cache_hit_rate) — matches Grafana.
+    cache_hit_time_weighted = float(_gstats.get("time_weighted_pct", 0.0))
+    cache_hit_gauge_overall = float(_gstats.get("overall_pct", 0.0))   # raw mean incl idle zeros
+    cache_hit_gauge_active = float(_gstats.get("active_pct", 0.0))     # mean excluding idle zeros
     cache_hit_gauge_peak = float(_gstats.get("peak_pct", 0.0))
     cache_hit_gauge_total_samples = int(_gstats.get("total_samples", 0))
     cache_hit_gauge_active_samples = int(_gstats.get("active_samples", 0))
@@ -1906,16 +2089,25 @@ def collect_from_prometheus(
     cache_hit_effective_prompt_pct = max(0.0, min(100.0, cache_hit_effective_prompt_pct)) if cache_hit_effective_prompt_pct > 0 else 0.0
 
     # Primary cache-hit KPI: selected-window counter-derived token-weighted hit
-    # when available, then request-weighted, then time-weighted gauge average.
+    # when available, then request-weighted, then the gauge.
+    #
+    # Gauge fallback prefers the TIME-WEIGHTED average (avg_over_time semantics,
+    # reproducible against Grafana) and, when that is unavailable, the ACTIVE
+    # mean (idle 0% samples excluded). The raw all-sample mean is NOT used as the
+    # headline because idle gaps drag it far below the value operators see in
+    # Grafana; it remains available as cache_hit_gauge_overall_pct for reference.
     if cache_hit_token_weighted > 0:
         cache_hit = cache_hit_token_weighted
         cache_hit_method = "selected_window_token_weighted_cached_tokens_over_prompt_tokens"
     elif cache_hit_request_weighted > 0:
         cache_hit = cache_hit_request_weighted
         cache_hit_method = "selected_window_request_weighted_request_cache_hit_over_request_total"
-    elif cache_hit_gauge_total_samples > 0:
+    elif cache_hit_time_weighted > 0:
         cache_hit = cache_hit_time_weighted
         cache_hit_method = "selected_window_time_weighted_avg_over_time_sglang_cache_hit_rate"
+    elif cache_hit_gauge_active > 0:
+        cache_hit = cache_hit_gauge_active
+        cache_hit_method = "selected_window_active_mean_sglang_cache_hit_rate_idle_excluded"
     elif cache_hit_effective_prompt_pct > 0:
         cache_hit = cache_hit_effective_prompt_pct
         cache_hit_method = "combined_cached_plus_prefill_cache_prometheus_fallback"
