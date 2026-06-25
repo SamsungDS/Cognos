@@ -1159,6 +1159,16 @@ def collect_from_prometheus_api(
     dcgm_temp = dcgm_dfs.get("DCGM_FI_DEV_GPU_TEMP", pd.DataFrame())
     dcgm_mem_total = dcgm_dfs.get("DCGM_FI_DEV_FB_FREE", pd.DataFrame())
     dcgm_dram_act = dcgm_dfs.get("DCGM_FI_PROF_DRAM_ACTIVE", pd.DataFrame())
+    # Driver/interconnect (A2) + compute-occupancy DCGM series. These are fetched
+    # above but were previously dropped; surface them as per-sample gpu_df columns
+    # so chart_pcie_nvlink() / chart_gpu_compute() can render them. All optional:
+    # absent on local --run-dir runs (no DCGM) → columns stay 0 → sections collapse.
+    dcgm_pcie_rx  = dcgm_dfs.get("DCGM_FI_PROF_PCIE_RX_BYTES", pd.DataFrame())
+    dcgm_pcie_tx  = dcgm_dfs.get("DCGM_FI_PROF_PCIE_TX_BYTES", pd.DataFrame())
+    dcgm_nvlink   = dcgm_dfs.get("DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL", pd.DataFrame())
+    dcgm_gr_act   = dcgm_dfs.get("DCGM_FI_PROF_GR_ENGINE_ACTIVE", pd.DataFrame())
+    dcgm_tensor   = dcgm_dfs.get("DCGM_FI_PROF_PIPE_TENSOR_ACTIVE", pd.DataFrame())
+    dcgm_memcopy  = dcgm_dfs.get("DCGM_FI_DEV_MEM_COPY_UTIL", pd.DataFrame())
 
     if not dcgm_util.empty:
         # Helper: filter a DCGM dataframe to the rows matching (t_s, gpu_id).
@@ -1197,6 +1207,22 @@ def collect_from_prometheus_api(
             g_row["temp_c"] = float(sub["value"].mean()) if not sub.empty else 0
             sub = _per_gpu(dcgm_dram_act, t_s, gpu_id)
             g_row["hbm_bw_pct"] = float(sub["value"].mean()) * 100 if not sub.empty else 0
+            # PCIe throughput: DCGM_FI_PROF_PCIE_{RX,TX}_BYTES are bytes/s → GB/s.
+            sub = _per_gpu(dcgm_pcie_rx, t_s, gpu_id)
+            g_row["pcie_rx_gb_s"] = float(sub["value"].mean()) / 1e9 if not sub.empty else 0
+            sub = _per_gpu(dcgm_pcie_tx, t_s, gpu_id)
+            g_row["pcie_tx_gb_s"] = float(sub["value"].mean()) / 1e9 if not sub.empty else 0
+            # NVLink: DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL is KiB/s → GB/s.
+            sub = _per_gpu(dcgm_nvlink, t_s, gpu_id)
+            g_row["nvlink_gb_s"] = float(sub["value"].mean()) * 1024 / 1e9 if not sub.empty else 0
+            # Compute occupancy fractions (0..1) → percent.
+            sub = _per_gpu(dcgm_gr_act, t_s, gpu_id)
+            g_row["compute_active_pct"] = float(sub["value"].mean()) * 100 if not sub.empty else 0
+            sub = _per_gpu(dcgm_tensor, t_s, gpu_id)
+            g_row["tensor_active_pct"] = float(sub["value"].mean()) * 100 if not sub.empty else 0
+            # Memory-copy engine utilization (already a percent 0..100).
+            sub = _per_gpu(dcgm_memcopy, t_s, gpu_id)
+            g_row["mem_copy_util_pct"] = float(sub["value"].mean()) if not sub.empty else 0
             gpu_rows.append(g_row)
 
     gpu_df = pd.DataFrame(gpu_rows) if gpu_rows else pd.DataFrame()
@@ -10042,6 +10068,106 @@ def chart_dram_bandwidth(m: Metrics) -> str:
     return fig_to_b64(fig)
 
 
+def chart_pcie_nvlink(m: "Metrics") -> str:
+    """Driver/interconnect (A2) + compute-occupancy timeline from DCGM.
+
+    Renders PCIe RX/TX bandwidth, NVLink bandwidth, and GPU compute/tensor/
+    mem-copy occupancy when those per-sample columns are present in gpu_ts.
+    These come from DCGM_FI_PROF_PCIE_*_BYTES, DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL,
+    DCGM_FI_PROF_GR_ENGINE_ACTIVE / PIPE_TENSOR_ACTIVE, DCGM_FI_DEV_MEM_COPY_UTIL,
+    populated on the Prometheus path. Returns "" when no such data exists (e.g.
+    local --run-dir runs without DCGM) so the section is omitted/collapsed.
+    """
+    gdf = m.gpu_ts
+    if not isinstance(gdf, pd.DataFrame) or gdf.empty or "time_sec" not in gdf.columns:
+        return ""
+
+    cols = ["pcie_rx_gb_s", "pcie_tx_gb_s", "nvlink_gb_s",
+            "compute_active_pct", "tensor_active_pct", "mem_copy_util_pct"]
+    present = [c for c in cols if c in gdf.columns]
+    if not present:
+        return ""
+
+    gdf = gdf.copy()
+    gdf["time_sec"] = pd.to_numeric(gdf["time_sec"], errors="coerce")
+    gdf = gdf.dropna(subset=["time_sec"])
+    for c in present:
+        gdf[c] = pd.to_numeric(gdf[c], errors="coerce")
+    # Sum bandwidth across GPUs (aggregate fabric throughput); average occupancy %.
+    agg = {}
+    for c in ("pcie_rx_gb_s", "pcie_tx_gb_s", "nvlink_gb_s"):
+        if c in present:
+            agg[c] = "sum"
+    for c in ("compute_active_pct", "tensor_active_pct", "mem_copy_util_pct"):
+        if c in present:
+            agg[c] = "mean"
+    g = gdf.groupby("time_sec", as_index=False).agg(agg).sort_values("time_sec")
+    if g.empty:
+        return ""
+
+    # If every present series is all-zero/NaN there is nothing meaningful to show.
+    if not any(float(pd.to_numeric(g[c], errors="coerce").fillna(0).abs().sum()) > 0
+               for c in present):
+        return ""
+
+    g = downsample(g, 240)
+    t = g["time_sec"].values / 60
+
+    fig, axes = plt.subplots(1, 2, figsize=(11.5, 3.6))
+    fig.patch.set_facecolor(BG2)
+    fig.suptitle("GPU Interconnect (PCIe / NVLink) & Compute Occupancy — DCGM",
+                 fontsize=12, fontweight="bold", color=TEXT_C, y=1.04)
+
+    # Panel 1: interconnect bandwidth
+    ax = axes[0]
+    plotted = False
+    if "pcie_rx_gb_s" in g.columns:
+        ax.plot(t, g["pcie_rx_gb_s"], color="#22d3ee", lw=1.6, label="PCIe RX"); plotted = True
+    if "pcie_tx_gb_s" in g.columns:
+        ax.plot(t, g["pcie_tx_gb_s"], color="#3b82f6", lw=1.6, ls="--", label="PCIe TX"); plotted = True
+    if "nvlink_gb_s" in g.columns:
+        ax.plot(t, g["nvlink_gb_s"], color="#a78bfa", lw=1.6, label="NVLink total"); plotted = True
+    ax.set_ylabel("GB/s (all GPUs)", fontsize=9)
+    ax.set_ylim(bottom=0)
+    ax.set_title("PCIe / NVLink Bandwidth", fontsize=10, fontweight="bold")
+    if plotted and ax.get_legend_handles_labels()[0]:
+        ax.legend(fontsize=8)
+
+    # Panel 2: compute occupancy
+    ax2 = axes[1]
+    if "compute_active_pct" in g.columns:
+        ax2.plot(t, g["compute_active_pct"], color="#22c55e", lw=1.6, label="Compute active")
+    if "tensor_active_pct" in g.columns:
+        ax2.plot(t, g["tensor_active_pct"], color="#f97316", lw=1.6, label="Tensor active")
+    if "mem_copy_util_pct" in g.columns:
+        ax2.plot(t, g["mem_copy_util_pct"], color="#ec4899", lw=1.4, ls="--", label="Mem-copy util")
+    ax2.set_ylabel("% (mean per GPU)", fontsize=9)
+    ax2.set_ylim(0, 100)
+    ax2.set_title("Compute / Tensor / Copy Occupancy", fontsize=10, fontweight="bold")
+    if ax2.get_legend_handles_labels()[0]:
+        ax2.legend(fontsize=8)
+
+    for ax in axes:
+        ax.set_facecolor(BG3)
+        ax.set_xlabel(_time_xlabel(m), fontsize=8)
+        ax.grid(True, alpha=0.3)
+        ax.tick_params(labelsize=8)
+        for sp in ax.spines.values():
+            sp.set_edgecolor("#94a3b8")
+
+    try:
+        import warnings as _wtl
+        with _wtl.catch_warnings():
+            _wtl.simplefilter('ignore', UserWarning)
+            try:
+                plt.tight_layout()
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return fig_to_b64(fig)
+
+
 def chart_swap_storm(m: "Metrics") -> str:
     """Swap Storm Analysis — 6-panel chart showing swap activity, storm episodes,
     swap-fault correlation, and NVMe write amplification.
@@ -13765,6 +13891,41 @@ NUMA migrations/s  : rate(node_vmstat_numa_pages_migrated)</code>
     <b style="color:#0f172a">Source:</b> AMDuProfPcm -m memory, DF METRICS, 1.2s sample interval.
   </div>
 </div>
+
+<!-- PCIe / NVLINK INTERCONNECT + COMPUTE OCCUPANCY (DCGM, A2 layer) -->
+{(
+  '<div class="card" style="border-color:#818cf8">'
+  '<h2 style="color:#818cf8">🔌 GPU Interconnect (PCIe / NVLink) &amp; Compute Occupancy</h2>'
+  '<div style="font-size:11px;color:#64748b;line-height:1.6;margin-bottom:10px">'
+  'A2 driver/interconnect layer from <b style="color:#0f172a">DCGM</b>: PCIe RX/TX and NVLink '
+  'bandwidth (summed across GPUs) plus GPU compute / tensor-pipe / memory-copy occupancy '
+  '(mean across GPUs). PCIe/NVLink bandwidth shows host&#8596;GPU and GPU&#8596;GPU KV and weight '
+  'movement; high interconnect traffic with low compute occupancy points to a data-movement bound.'
+  '</div>'
+  + img(charts.get("pcie_nvlink",""), "PCIe / NVLink Interconnect")
+  + '<details class="fml" style="margin-top:10px"><summary>&#128208; Formula &amp; Metrics Used</summary>'
+    '<div class="fml-body"><div class="fml-src">&#128202; DCGM (Prometheus)</div>'
+    '<code>PCIe RX/TX GB/s = sum_gpu(DCGM_FI_PROF_PCIE_RX_BYTES / TX_BYTES) / 1e9\n'
+    'NVLink GB/s     = sum_gpu(DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL × 1024) / 1e9\n'
+    'Compute active %= mean_gpu(DCGM_FI_PROF_GR_ENGINE_ACTIVE) × 100\n'
+    'Tensor active % = mean_gpu(DCGM_FI_PROF_PIPE_TENSOR_ACTIVE) × 100\n'
+    'Mem-copy util % = mean_gpu(DCGM_FI_DEV_MEM_COPY_UTIL)</code>'
+    '<div class="fml-note">Requires DCGM profiling metrics in Prometheus. Local --run-dir runs '
+    'without DCGM omit this section.</div></div></details>'
+  '</div>'
+) if charts.get("pcie_nvlink","") else (
+  '<details class="card" style="border-color:#94a3b8">'
+  '<summary style="cursor:pointer;font-weight:800;color:#334155;padding:4px 0">'
+  '🔌 GPU Interconnect (PCIe / NVLink) &amp; Compute Occupancy '
+  '<span style="font-size:11px;color:#64748b;font-weight:600">— collapsed: no DCGM interconnect/occupancy data in this run</span></summary>'
+  '<div style="font-size:12px;color:#475569;line-height:1.6;margin-top:10px;background:#f8fafc;'
+  'border-left:3px solid #94a3b8;padding:10px 12px;border-radius:0 6px 6px 0">'
+  'PCIe/NVLink bandwidth and GPU compute occupancy come from DCGM profiling metrics '
+  '(DCGM_FI_PROF_PCIE_*_BYTES, DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL, '
+  'DCGM_FI_PROF_GR_ENGINE_ACTIVE / PIPE_TENSOR_ACTIVE, DCGM_FI_DEV_MEM_COPY_UTIL). '
+  'None were present for this run — analyze a Prometheus source with DCGM profiling enabled '
+  'to populate this section.</div></details>'
+)}
 
 <!-- SSD QUEUE DEPTH (blktrace Q→C walk) -->
 <div class="card" style="border-color:#8b5cf6">
@@ -18254,6 +18415,7 @@ def main():
             charts["kvssd_cross"]  = chart_kvssd_cross_layer(m)
             charts["hbm_bw"]       = chart_hbm_bandwidth(m)
             charts["dram_bw"]      = chart_dram_bandwidth(m)
+            charts["pcie_nvlink"]  = chart_pcie_nvlink(m)
             charts["swap_storm"]   = chart_swap_storm(m)
             html_path = out_dir / f"{prefix}.html"
             html = build_html(m, bns, recs, charts, label)
