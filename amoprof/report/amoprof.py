@@ -55,15 +55,23 @@ except Exception:  # direct-script fallback
         write_common_kpis_json = None  # type: ignore
 
 
-def _amoprof_storage_label_cleanup(html_text: str) -> str:
+def _amoprof_storage_label_cleanup(html_text: str, l3_backend_class: str = "") -> str:
     """Normalize visible storage labels without corrupting embedded artifacts.
 
     Tier semantics are intentionally strict:
-      * L3 = node-local storage / L3 local SSD / NVMe physical block telemetry.
-      * L3 = AI Memory Node / remote storage logical/shared backing tier.
+      * L3 (local storage)         = node-local SSD / NVMe physical block tier.
+      * L3 (AI Memory Node / ...)  = remote/shared backing tier, OR an
+                                     unresolved backing tier when no local SSD
+                                     was used.
 
-    Do not apply a broad ``\bL3\b`` replacement.  It corrupts already-correct
-    labels such as ``L3`` and caused strings like ``L3(...).5(...).5``.
+    The KV$ backing-tier label is chosen from the resolved backend class:
+    only ``local_ssd`` keeps the "L3 (local storage)" wording; every other
+    class (remote, host_dram_only, unknown) uses the "L3 (AI Memory Node /
+    remote storage)" wording so a run with no local SSD is never mislabeled as
+    L3 SSD.
+
+    Do not apply a broad ``\bL3\b`` replacement — it corrupts already-correct
+    labels and caused strings like ``L3(...).5(...).5``.
     """
     if not html_text:
         return html_text
@@ -82,17 +90,24 @@ def _amoprof_storage_label_cleanup(html_text: str) -> str:
         r'(L3\.5 \(AI Memory Node / remote storage\))(?:\.5 \(AI Memory Node / remote storage\))+',
         r'\1', html_text)
 
-    for a, b in {
-        'KV$ L3 (local storage) IO': 'KV$ L3 (local storage) I/O',
-        'KV$ L3 (local storage) I/O': 'KV$ L3 (local storage) I/O',
-        'KV$ L3 (local storage)': 'KV$ L3 (local storage)',
-        'NVMe read throughput': 'L3 (local storage) read throughput',
-        'NVMe Read Throughput': 'L3 (local storage) read throughput',
-        'NVMe read BW': 'L3 (local storage) read BW',
-        'NVMe Read BW': 'L3 (local storage) read BW',
-        'NVMe Latency &amp; Device Busy-Time (%util)': 'L3 (local storage) latency &amp; busy-time',
-        'L3 (local storage) Latency & Busy-Time': 'L3 (local storage) latency & busy-time',
-    }.items():
+    # Backing-tier wording is local only when the resolver classified the run as
+    # local_ssd. Otherwise the KV$ backing tier is the AI Memory Node / remote
+    # (or unresolved) tier — never physical local SSD.
+    _is_local = (str(l3_backend_class or "").lower() == "local_ssd")
+    _tier = "L3 (local storage)" if _is_local else "L3 (AI Memory Node / remote storage)"
+
+    label_map = {
+        'KV$ L3 (local storage) IO': f'KV$ {_tier} I/O',
+        'KV$ L3 (local storage) I/O': f'KV$ {_tier} I/O',
+        'KV$ L3 (local storage)': f'KV$ {_tier}',
+        'NVMe read throughput': f'{_tier} read throughput',
+        'NVMe Read Throughput': f'{_tier} read throughput',
+        'NVMe read BW': f'{_tier} read BW',
+        'NVMe Read BW': f'{_tier} read BW',
+        'NVMe Latency &amp; Device Busy-Time (%util)': f'{_tier} latency &amp; busy-time',
+        'L3 (local storage) Latency & Busy-Time': f'{_tier} latency & busy-time',
+    }
+    for a, b in label_map.items():
         html_text = html_text.replace(a, b)
 
     for i, payload in enumerate(protected_payloads):
@@ -869,6 +884,89 @@ def _prom_find_active_spans(base_url: str, liveness_metric: str,
     # Rank: timezone-like spans first, then by proximity to the requested window.
     out.sort(key=lambda s: (0 if s["tz_like"] else 1, abs(s["offset_s"])))
     return out
+
+
+def _prom_extract_server_info(base_url: str, t_start: float, t_end: float) -> dict:
+    """Derive real server/setup info from SGLang Prometheus metric labels.
+
+    SGLang metrics carry the live server configuration as labels — e.g.
+    sglang:num_running_reqs{model_name="openai/gpt-oss-120b",
+    instance="host:30000", tp_rank, pp_rank, moe_ep_rank, engine_type} and
+    sglang:cache_config_info{page_size, num_pages}. On a Prometheus-only run
+    (no --setup-details) this is the only ground truth for the setup table, so
+    extract it rather than falling back to a fabricated default profile.
+
+    Returns a dict of observed setup fields (only keys we could actually read).
+    """
+    info: dict = {}
+    try:
+        import requests as _req
+    except Exception:
+        return info
+
+    def _instant(expr: str, at: float) -> list:
+        try:
+            r = _req.get(f"{base_url}/api/v1/query",
+                         params={"query": expr, "time": at}, timeout=10)
+            r.raise_for_status()
+            j = r.json()
+            if j.get("status") == "success":
+                return j["data"]["result"]
+        except Exception:
+            pass
+        return []
+
+    at = t_end  # sample at window end; labels are stable across the run
+    # Any sglang series carries the identity labels. num_running_reqs is ubiquitous.
+    rows = (_instant("sglang:num_running_reqs", at)
+            or _instant("sglang_num_running_reqs", at)
+            or _instant("sglang:gen_throughput", at)
+            or _instant("sglang_gen_throughput", at))
+    if rows:
+        lbl = rows[0].get("metric", {})
+        if lbl.get("model_name"):
+            info["Model"] = lbl["model_name"]
+            info["Model path"] = lbl["model_name"]
+        if lbl.get("instance"):
+            info["Instance"] = lbl["instance"]
+            host = lbl["instance"].split(":")[0]
+            if host:
+                info["Host"] = host
+            if ":" in lbl["instance"]:
+                info["Port"] = lbl["instance"].split(":")[-1]
+        if lbl.get("engine_type"):
+            info["Engine type"] = lbl["engine_type"]
+        # Parallelism sizes = max(rank)+1 across all label sets.
+        def _size_from_rank(rank_key: str) -> int:
+            best = -1
+            for r in rows:
+                v = r.get("metric", {}).get(rank_key)
+                if v is not None and str(v).isdigit():
+                    best = max(best, int(v))
+            return best + 1 if best >= 0 else 0
+        tp = _size_from_rank("tp_rank")
+        pp = _size_from_rank("pp_rank")
+        ep = _size_from_rank("moe_ep_rank")
+        if tp > 0:
+            info["TP size"] = str(tp)
+        if pp > 0:
+            info["PP size"] = str(pp)
+        if ep > 0:
+            info["EP size"] = str(ep)
+
+    # KV page configuration.
+    cfg = _instant("sglang:cache_config_info", at) or _instant("sglang_cache_config_info", at)
+    if cfg:
+        lbl = cfg[0].get("metric", {})
+        if lbl.get("page_size"):
+            info["Page size"] = lbl["page_size"]
+        if lbl.get("num_pages"):
+            info["KV num pages"] = lbl["num_pages"]
+
+    if info:
+        info["Runtime"] = info.get("Runtime", "SGLang")
+        info["Setup source"] = "derived from Prometheus metric labels"
+    return info
 
 
 def collect_from_prometheus_api(
@@ -1676,8 +1774,22 @@ def collect_from_prometheus_api(
     )
     _decode_tok_s_prom = (_decode_tokens_prom / max(window, 1.0)) if _decode_tokens_prom > 0 else 0.0
 
+    # Derive real server/setup info from Prometheus metric labels so the report's
+    # setup table reflects this server (model, instance, TP/PP/EP, page size)
+    # instead of falling back to a fabricated default profile.
+    try:
+        _server_info = _prom_extract_server_info(base, t_start, t_end)
+    except Exception:
+        _server_info = {}
+    _detected_model = _server_info.get("Model", "unknown")
+    if _detected_model and _detected_model != "unknown":
+        print(f"  Server info from Prometheus labels: model={_detected_model}"
+              + (f", instance={_server_info['Instance']}" if _server_info.get("Instance") else "")
+              + (f", TP={_server_info['TP size']}" if _server_info.get("TP size") else ""))
+
     sglang_summary = {
-        "model_name":                  "unknown",
+        "model_name":                  _detected_model,
+        "prometheus_server_info":      _server_info,
         "server_ttft_ms":              round(ttft_ms, 2),
         "server_itl_ms":               round(tpot_ms, 2),
         "server_e2e_ms":               round(e2e_ms,  2),
@@ -5074,7 +5186,23 @@ def extract_metrics(data: dict) -> Metrics:
 
     def _apply_setup_defaults(details: dict) -> list:
         defaulted = []
+        # When a real model was observed (e.g. from Prometheus labels) and it is
+        # NOT the DeepSeek reference model, suppress the model-specific fields of
+        # the fabricated profile. Filling DeepSeek's launch command / parsers /
+        # TP size for a gpt-oss run produces a misleading setup table and (via
+        # the launch command) can even mis-drive the L3 backend resolver.
+        _default_id = "deepseek-ai/DeepSeek-R1-Distill-Llama-70B"
+        _obs_model = details.get("Model") or details.get("Model path")
+        _model_observed = bool(_obs_model and not _is_missing_setup_value(_obs_model)
+                               and str(_obs_model) != _default_id)
+        _model_specific = {
+            "Model", "Model path", "TP size", "DP size", "Attention backend",
+            "Reasoning parser", "Tool call parser", "Reference launch command",
+            "HiCache size", "Mem fraction static",
+        }
         for k, v in _sglang_default_setup.items():
+            if _model_observed and k in _model_specific:
+                continue  # don't fabricate model-specific config over an observed run
             if _is_missing_setup_value(details.get(k)):
                 details[k] = v
                 defaulted.append(k)
@@ -5162,6 +5290,21 @@ def extract_metrics(data: dict) -> Metrics:
         "Num pages/tokens": m.setup_num_pages, "HiCache": m.setup_hicache,
         "Attention backend": m.setup_attention_backend, "Schedule policy": m.setup_schedule_policy,
     }
+    # Merge server info derived from Prometheus metric labels (model, instance,
+    # TP/PP/EP sizes, page size, num pages). These are OBSERVED values and take
+    # precedence over the fabricated default profile applied later — they only
+    # overwrite missing/unknown fields so an explicit setup_details.json still wins.
+    _prom_server_info = sg.get("prometheus_server_info") if isinstance(sg, dict) else None
+    if isinstance(_prom_server_info, dict) and _prom_server_info:
+        for _k, _v in _prom_server_info.items():
+            if _is_missing_setup_value(m.setup_details.get(_k)):
+                m.setup_details[_k] = str(_v)
+        if _is_missing_setup_value(m.setup_model) or m.setup_model == "unknown":
+            m.setup_model = _prom_server_info.get("Model", m.setup_model)
+        if _is_missing_setup_value(m.setup_instance):
+            m.setup_instance = _prom_server_info.get("Instance", m.setup_instance)
+        if _is_missing_setup_value(m.setup_tp_size):
+            m.setup_tp_size = _prom_server_info.get("TP size", m.setup_tp_size)
     # Optional manual setup override: place setup_details.json or setup.json in the
     # raw directory. Keys are displayed verbatim; common keys also update the
     # canonical fields above.
@@ -18618,7 +18761,7 @@ def main():
                     html = apply_common_kpis_to_html(html, Path(_rd), _common_kpis_for_html)
             except Exception:
                 pass
-            html = _amoprof_storage_label_cleanup(html)
+            html = _amoprof_storage_label_cleanup(html, getattr(m, "l3_backend_class", ""))
             html_path.write_text(html, encoding="utf-8")
             generated.append(html_path)
             print(f"      ✓ {html_path.name}  ({html_path.stat().st_size//1024} KB)")

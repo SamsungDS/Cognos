@@ -74,8 +74,13 @@ def resolve_l3_backend(setup: Mapping[str, Any] | None, launch_command: str | No
     setup = setup or {}
     launch = _norm(launch_command or _get(setup, "Launch command", "launch_command", "SGLang launch command", "sglang_launch_command"))
 
-    storage_type = _get(setup, "L3 storage type", "l3_storage_type", "L3 type", "l3_type", "Cache L3 (local storage) backend", "cache_l3_backend")
-    backend = _get(setup, "HiCache storage backend", "hicache_storage_backend", "L3 backend", "l3_backend", "storage_backend", "hicache_backend")
+    # Use _get_explicit (not _get) so a DEFAULTED storage backend/type from the
+    # fabricated reference profile does not get treated as real evidence. On a
+    # Prometheus-only run with no setup_details, "HiCache storage backend=file"
+    # is an assumption, not an observation, and must not force a local_ssd
+    # classification (which would mislabel L3.5/AI-Memory-Node runs as L3 SSD).
+    storage_type = _get_explicit(setup, "L3 storage type", "l3_storage_type", "L3 type", "l3_type", "Cache L3 (local storage) backend", "cache_l3_backend")
+    backend = _get_explicit(setup, "HiCache storage backend", "hicache_storage_backend", "L3 backend", "l3_backend", "storage_backend", "hicache_backend")
     device = _get_explicit(setup, "L3 Device", "L3 device", "L3 block device", "l3_device", "L3 (local storage) device", "l3_storage_device", "NVMe device", "ssd_device")
     mount = _get_explicit(setup, "L3 Mount Path", "L3 mount path", "L3 mount", "l3_mount_path", "L3 (local storage) mount path", "l3_storage_mount_path")
     path = _get_explicit(setup, "HiCache storage path", "hicache_storage_path", "L3 filesystem path", "L3 storage path", "l3_storage_path", "storage_path")

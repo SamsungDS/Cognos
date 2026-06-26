@@ -47,27 +47,23 @@ except Exception:
 PLOTLY_CDN = "https://cdn.plot.ly/plotly-2.35.2.min.js"
 
 
-def _amoprof_storage_label_cleanup(html_text: str) -> str:
+def _amoprof_storage_label_cleanup(html_text: str, l3_backend_class: str = "") -> str:
     if not html_text:
         return html_text
+    # KV$ backing-tier wording follows the resolved backend: only local_ssd keeps
+    # "L3 (local storage)"; every other class (remote / host_dram_only / unknown)
+    # uses "L3 (AI Memory Node / remote storage)" so a no-local-SSD run is never
+    # mislabeled as L3 SSD.
+    _is_local = (str(l3_backend_class or "").lower() == "local_ssd")
+    _tier = "L3 (local storage)" if _is_local else "L3 (AI Memory Node / remote storage)"
     for a, b in {
-        "KV$ SSD IO": "KV$ L3 (local storage) logical movement",
-        "KV$ SSD I/O": "KV$ L3 (local storage) I/O",
-        "KV$ SSD": "KV$ L3 (local storage)",
-        "NVMe read throughput": "L3 (local storage) read throughput",
-        "NVMe read BW": "L3 (local storage) read throughput",
+        "KV$ SSD IO": f"KV$ {_tier} logical movement",
+        "KV$ SSD I/O": f"KV$ {_tier} I/O",
+        "KV$ SSD": f"KV$ {_tier}",
+        "NVMe read throughput": f"{_tier} read throughput",
+        "NVMe read BW": f"{_tier} read throughput",
     }.items():
         html_text = html_text.replace(a, b)
-    protected = {
-        "KV$ L3 (local storage) logical movement": "__AMOPROF_KV_L3_IO__",
-        "KV$ L3 (local storage) I/O": "__AMOPROF_KV_L3_IOSLASH__",
-        "L3 (local storage)": "__AMOPROF_L3_STORAGE_AI_NODE__",
-    }
-    for a, b in protected.items():
-        html_text = html_text.replace(a, b)
-    html_text = re.sub(r"\bL3 (AI Memory Node / remote storage)\b", "L3 (local storage)", html_text, flags=re.IGNORECASE)
-    for a, b in protected.items():
-        html_text = html_text.replace(b, a)
     return html_text
 
 # ─── Run-wide wall-clock anchor ──────────────────────────────────────────────
@@ -2717,6 +2713,16 @@ def build_report(raw_dir: Path, out_html: Path,
         "HiCache": sglang_sum.get("hicache_size", sglang_sum.get("hicache_mem_layout", "unknown")),
     }
 
+    # Merge observed server info derived from Prometheus metric labels (model,
+    # instance, TP/PP/EP, page size). These overwrite only missing/unknown
+    # fields so the setup table reflects the real server, not a default profile.
+    _prom_server_info = sglang_sum.get("prometheus_server_info")
+    if isinstance(_prom_server_info, dict):
+        for _k, _v in _prom_server_info.items():
+            cur = setup.get(_k)
+            if cur is None or str(cur).strip().lower() in ("", "unknown", "none", "n/a", "0"):
+                setup[_k] = str(_v)
+
     def _is_missing_setup_value(v):
         if v is None:
             return True
@@ -2793,8 +2799,23 @@ def build_report(raw_dir: Path, out_html: Path,
         "Tool call parser": "deepseekv3",
         "Reference launch command": "python -m sglang.launch_server --model-path deepseek-ai/DeepSeek-R1-Distill-Llama-70B --tp-size 8 --dp-size 1 --port 30000 --host 0.0.0.0 --attention-backend triton --mem-fraction-static 0.8 --enable-hierarchical-cache --hicache-size 50 --trust-remote-code --enable-metrics --enable-cache-report --reasoning-parser deepseek-r1 --tool-call-parser deepseekv3 --hicache-storage-backend file --hicache-write-policy write_through",
     }
+    # Suppress model-specific fields of the fabricated profile when a real model
+    # was observed (e.g. from Prometheus labels) and it is not the DeepSeek
+    # reference model — otherwise the setup table shows DeepSeek's launch
+    # command / TP size / parsers for an unrelated run.
+    _default_id = "deepseek-ai/DeepSeek-R1-Distill-Llama-70B"
+    _obs_model = setup.get("Model") or setup.get("Model path")
+    _model_observed = bool(_obs_model and not _is_missing_setup_value(_obs_model)
+                           and str(_obs_model) != _default_id)
+    _model_specific = {
+        "Model", "Model path", "TP size", "DP size", "Attention backend",
+        "Reasoning parser", "Tool call parser", "Reference launch command",
+        "HiCache size", "Mem fraction static",
+    }
     defaulted = []
     for k, v in sglang_default_setup.items():
+        if _model_observed and k in _model_specific:
+            continue
         if _is_missing_setup_value(setup.get(k)):
             setup[k] = v
             defaulted.append(k)
@@ -3770,6 +3791,7 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
             html = apply_common_kpis_to_html(html, raw_dir, _common_kpis)
     except Exception:
         pass
-    html = _amoprof_storage_label_cleanup(html)
+    html = _amoprof_storage_label_cleanup(
+        html, getattr(_l3_res, "backend_class", "") if _l3_res is not None else "")
     out_html.write_text(html, encoding="utf-8")
     return out_html

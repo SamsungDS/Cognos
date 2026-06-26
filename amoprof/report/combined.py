@@ -84,15 +84,20 @@ def _remove_end_report_cross_layer_correlation_section(static_html: str) -> str:
 # ─── Utilities ──────────────────────────────────────────────────────────────
 
 
-def _amoprof_storage_label_cleanup(html_text: str) -> str:
+def _amoprof_storage_label_cleanup(html_text: str, l3_backend_class: str = "") -> str:
     """Normalize visible storage labels without corrupting embedded artifacts.
 
     Tier semantics are intentionally strict:
-      * L3 = node-local storage / L3 local SSD / NVMe physical block telemetry.
-      * L3 = AI Memory Node / remote storage logical/shared backing tier.
+      * L3 (local storage)        = node-local SSD / NVMe physical block tier.
+      * L3 (AI Memory Node / ...) = remote/shared OR unresolved backing tier.
 
-    Do not apply a broad ``\bL3\b`` replacement.  It corrupts already-correct
-    labels such as ``L3`` and caused strings like ``L3(...).5(...).5``.
+    The KV$ backing-tier wording follows the resolved backend class: only
+    ``local_ssd`` keeps "L3 (local storage)"; every other class uses
+    "L3 (AI Memory Node / remote storage)" so a no-local-SSD run is never
+    mislabeled as L3 SSD.
+
+    Do not apply a broad ``\bL3\b`` replacement — it corrupts already-correct
+    labels and caused strings like ``L3(...).5(...).5``.
     """
     if not html_text:
         return html_text
@@ -111,16 +116,19 @@ def _amoprof_storage_label_cleanup(html_text: str) -> str:
         r'(L3\.5 \(AI Memory Node / remote storage\))(?:\.5 \(AI Memory Node / remote storage\))+',
         r'\1', html_text)
 
+    _is_local = (str(l3_backend_class or "").lower() == "local_ssd")
+    _tier = "L3 (local storage)" if _is_local else "L3 (AI Memory Node / remote storage)"
+
     for a, b in {
-        'KV$ L3 (local storage) IO': 'KV$ L3 (local storage) I/O',
-        'KV$ L3 (local storage) I/O': 'KV$ L3 (local storage) I/O',
-        'KV$ L3 (local storage)': 'KV$ L3 (local storage)',
-        'NVMe read throughput': 'L3 (local storage) read throughput',
-        'NVMe Read Throughput': 'L3 (local storage) read throughput',
-        'NVMe read BW': 'L3 (local storage) read BW',
-        'NVMe Read BW': 'L3 (local storage) read BW',
-        'NVMe Latency &amp; Device Utilization': 'L3 (local storage) latency &amp; busy-time',
-        'NVMe Latency & Device Utilization': 'L3 (local storage) latency & busy-time',
+        'KV$ L3 (local storage) IO': f'KV$ {_tier} I/O',
+        'KV$ L3 (local storage) I/O': f'KV$ {_tier} I/O',
+        'KV$ L3 (local storage)': f'KV$ {_tier}',
+        'NVMe read throughput': f'{_tier} read throughput',
+        'NVMe Read Throughput': f'{_tier} read throughput',
+        'NVMe read BW': f'{_tier} read BW',
+        'NVMe Read BW': f'{_tier} read BW',
+        'NVMe Latency &amp; Device Utilization': f'{_tier} latency &amp; busy-time',
+        'NVMe Latency & Device Utilization': f'{_tier} latency & busy-time',
     }.items():
         html_text = html_text.replace(a, b)
 
@@ -4610,6 +4618,21 @@ def build_combined_report(
     out_html = Path(out_html)
     out_html.parent.mkdir(parents=True, exist_ok=True)
 
+    # Resolve the L3 backend class so storage-label cleanup labels the KV$
+    # backing tier correctly (local SSD vs AI Memory Node / remote). With no
+    # local-SSD evidence this resolves to a non-local class and the labels stay
+    # "L3 (AI Memory Node / remote storage)" instead of being forced to L3 SSD.
+    l3_backend_class = ""
+    try:
+        _sg = _read_json(_first_existing(raw_dir, ["sglang_summary.json"]) or (raw_dir / "sglang_summary.json"))
+        _setup_for_l3 = dict(_sg.get("prometheus_server_info") or {})
+        _launch_for_l3 = str(_setup_for_l3.get("Launch command") or _setup_for_l3.get("launch_command") or "")
+        if resolve_l3_backend is not None:
+            _res = resolve_l3_backend(_setup_for_l3, _launch_for_l3)
+            l3_backend_class = getattr(_res, "backend_class", "") or ""
+    except Exception:
+        l3_backend_class = ""
+
     if static_html_path and Path(static_html_path).exists():
         static_html = Path(static_html_path).read_text(encoding='utf-8', errors='replace')
         log.info("combined: loaded static report from %s (%d KB)", static_html_path, len(static_html) // 1024)
@@ -4679,7 +4702,7 @@ def build_combined_report(
         executive_html = _canonical_kpi_tile_order_html(executive_html)
         interactive_html = _canonical_kpi_tile_order_html(interactive_html)
         static_html = _canonical_kpi_tile_order_html(static_html)
-        executive_html = _amoprof_storage_label_cleanup(executive_html)
+        executive_html = _amoprof_storage_label_cleanup(executive_html, l3_backend_class)
         log.info("combined: generated executive summary (%d KB)", len(executive_html) // 1024)
     except Exception as e:
         log.warning("combined: executive summary generation failed: %s", e)
@@ -4690,14 +4713,14 @@ def build_combined_report(
     static_html = _ensure_static_dram_section_visible(static_html, executive_html)
     interactive_html = _remove_setup_aware_sglang_launch_tuning_section(interactive_html)
     executive_html = _remove_setup_aware_sglang_launch_tuning_section(executive_html)
-    static_html = _amoprof_storage_label_cleanup(static_html)
-    interactive_html = _amoprof_storage_label_cleanup(interactive_html)
+    static_html = _amoprof_storage_label_cleanup(static_html, l3_backend_class)
+    interactive_html = _amoprof_storage_label_cleanup(interactive_html, l3_backend_class)
     combined = merge_reports(static_html, interactive_html, executive_html=executive_html, run_label=run_label)
     # v1.39.85: do not run broad L3/no-L3 cleanup after iframe embedding.
     # The End Report frame uses data-srcdoc escaping; post-merge regex cleanup can
     # corrupt that payload and make the whole End Report tab disappear.  Child
     # reports handle zero/no-data L3 sections before embedding.
-    combined = _amoprof_storage_label_cleanup(combined)
+    combined = _amoprof_storage_label_cleanup(combined, l3_backend_class)
     out_html.write_text(combined, encoding='utf-8')
     log.info("combined: wrote %s (%d KB)", out_html, len(combined) // 1024)
     return out_html
