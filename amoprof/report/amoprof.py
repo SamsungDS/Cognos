@@ -539,7 +539,13 @@ def _cache_hit_gauge_stats(df: pd.DataFrame) -> dict:
                 v = _np.where(v <= 1.0, v * 100.0, v)  # normalize 0..1 → 0..100
                 span = float(t[-1] - t[0])
                 if span > 0:
-                    stats["time_weighted_pct"] = float(_np.trapz(v, t) / span)
+                    # np.trapz was renamed to np.trapezoid in NumPy 2.0 and is
+                    # removed in some 2.x builds — pick whichever exists.
+                    _trap = getattr(_np, "trapezoid", None) or getattr(_np, "trapz", None)
+                    if _trap is not None:
+                        stats["time_weighted_pct"] = float(_trap(v, t) / span)
+                    else:
+                        stats["time_weighted_pct"] = float(_np.mean(v))
                 else:
                     stats["time_weighted_pct"] = float(_np.mean(v))
     if stats["time_weighted_pct"] == 0.0 and stats["overall_pct"] > 0.0:
@@ -1241,14 +1247,19 @@ def collect_from_prometheus_api(
         if spans:
             print(f"\n     Found {len(spans)} active SGLang span(s) nearby — pick the run you meant")
             print(f"     and re-run (window duration {orig_dur}s preserved from your request):")
+            print("     Any --start/--end fully inside a span's data range below will work;")
+            print("     the suggested window covers the whole span.")
+            import datetime as _dt
             for i, s in enumerate(spans[:6]):
                 a = int(s["span_start"]); b = int(s["span_end"])
-                # Suggest a window of the original duration anchored at the span start,
-                # but never shorter than the span itself.
+                # Suggest a window covering the whole span (never shorter than the
+                # original requested duration). Any sub-window inside [a, b] works.
                 sug_end = max(a + orig_dur, b)
                 tag = " [timezone-like offset]" if s["tz_like"] else ""
-                print(f"        • {s['offset_h']:+6.2f}h{tag}: --start {a} --end {sug_end}"
-                      f"   (data {a}→{b}, {int(s['span_dur_s']/60)}min)")
+                _a_utc = _dt.datetime.fromtimestamp(a, _dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+                _b_utc = _dt.datetime.fromtimestamp(b, _dt.timezone.utc).strftime("%H:%M:%SZ")
+                print(f"        • {s['offset_h']:+6.2f}h{tag}: --start {a} --end {sug_end}")
+                print(f"            data range: {a}→{b}  ({_a_utc} → {_b_utc}, {int(s['span_dur_s']/60)}min)")
             try:
                 if output_dir:
                     (Path(output_dir) / "window_suggestion.json").write_text(
