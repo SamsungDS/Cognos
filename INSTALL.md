@@ -17,13 +17,16 @@ This guide covers installation for metrics collection, SGLang analysis, and opti
 ## Install AMOprof
 
 ```bash
-unzip amoprof_1_39_90.zip
-cd amoprof_1_39_90
+mkdir -p amoprof_1_39_94
+unzip amoprof_1_39_94.zip -d amoprof_1_39_94
+cd amoprof_1_39_94
 chmod +x install.sh scripts/install_dram_deps.sh
 ./install.sh
 source ~/amoprof_venv/bin/activate
 amoprof --version
 ```
+> **Install path note:** run `pip install -e .` only from the package root — the directory containing `pyproject.toml`, `setup.py`, `README.md`, and the inner `amoprof/` Python package. Do **not** run it from inside the inner `amoprof/` directory. If pip says neither `setup.py` nor `pyproject.toml` was found, run `cd ..` until `ls` shows one of those files.
+
 
 The default install is metrics-only. It does not install PyTorch or SGLang server dependencies.
 
@@ -273,3 +276,20 @@ Check `nvme-cli` and permissions:
 ```bash
 sudo nvme smart-log /dev/nvme2n1
 ```
+
+
+## L3 vs L3.5 setup input
+
+To make report labels deterministic, add one of the following to `setup_details.json`:
+
+```json
+{ "KV cache tier": "L3", "L3 storage type": "NVMe SSD" }
+```
+
+for local SSD/NVMe, or:
+
+```json
+{ "KV cache tier": "L3.5", "L3 storage type": "AI Memory Node / remote storage" }
+```
+
+for AI Memory Node, Mooncake, or any remote/shared/disaggregated backing tier. If the field is omitted, AMOprof derives the label from backend/device/path evidence.

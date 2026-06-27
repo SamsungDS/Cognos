@@ -34,8 +34,8 @@ Core analysis areas include:
 |---|---|---|
 | L1 | GPU HBM and hot KV cache | DCGM / nvidia-smi / SGLang |
 | L2 | Host DRAM / HiCache memory tier | SGLang host-cache counters, setup details, DRAM PMU |
-| L3 local storage | Node-local SSD/NVMe or local file-backed HiCache storage | blktrace, iostat, sysfs, SMART, filesystem capacity |
-| Remote/shared backing tier | Remote/shared AI memory node, object store, or unmapped backing tier | Logical SGLang movement only unless explicit physical mapping exists |
+| L3 | Node-local SSD/NVMe or local file-backed HiCache storage | blktrace, iostat, sysfs, SMART, filesystem capacity, plus SGLang movement counters |
+| L3.5 | AI Memory Node, Mooncake, remote/shared/disaggregated memory, object store, or unresolved logical backing tier with no local SSD mapping | Logical SGLang movement counters; physical charts only when an explicit device mapping exists |
 
 Important counter rules:
 
@@ -45,12 +45,42 @@ Important counter rules:
 - Physical SSD/LBA charts are populated only from local block telemetry.
 - If no L3 is configured and no L3 activity exists, L3-relevant sections stay present but collapsed with a “not configured / no activity” note.
 
+
+### L3 vs L3.5 naming
+
+AMOprof uses the following convention across Executive, Interactive, and End Report tabs:
+
+- **L3** means local SSD/NVMe/file-backed cache storage.
+- **L3.5** means AI Memory Node, Mooncake, remote/shared/disaggregated memory, or a logical backing tier where no local SSD mapping is present.
+
+You can set this explicitly in `setup_details.json`:
+
+```json
+{
+  "KV cache tier": "L3.5",
+  "L3 storage type": "AI Memory Node / remote storage"
+}
+```
+
+For local SSD/NVMe:
+
+```json
+{
+  "KV cache tier": "L3",
+  "L3 storage type": "NVMe SSD",
+  "L3 Device": "/dev/nvme0n1",
+  "L3 storage path": "/mnt/nvme/hicache"
+}
+```
+
+If `KV cache tier` is omitted, AMOprof derives the label from setup and launch evidence: NVMe/SSD/local file path resolves to **L3**; AI Memory Node, Mooncake, remote/object/RDMA/disaggregated evidence resolves to **L3.5**. If only SGLang logical backing-tier movement is present and no local SSD mapping is available, AMOprof labels the tier **L3.5** and keeps physical SSD/LBA charts separate.
+
 ---
 
 ## Package structure
 
 ```text
-amoprof_1_39_90/
+amoprof_1_39_94/
 ├── README.md                         # Overview, features, CLI reference, examples
 ├── INSTALL.md                        # Installation and dependency guide
 ├── install.sh                        # Main installer for Python + common system dependencies
@@ -92,13 +122,16 @@ amoprof_1_39_90/
 ## Quick installation
 
 ```bash
-unzip amoprof_1_39_90.zip
-cd amoprof_1_39_90
+mkdir -p amoprof_1_39_94
+unzip amoprof_1_39_94.zip -d amoprof_1_39_94
+cd amoprof_1_39_94
 chmod +x install.sh scripts/install_dram_deps.sh
 ./install.sh
 source ~/amoprof_venv/bin/activate
 amoprof --version
 ```
+> **Install path note:** run `pip install -e .` only from the package root — the directory containing `pyproject.toml`, `setup.py`, `README.md`, and the inner `amoprof/` Python package. Do **not** run it from inside the inner `amoprof/` directory. If pip says neither `setup.py` nor `pyproject.toml` was found, run `cd ..` until `ls` shows one of those files.
+
 
 For full tracing and DRAM PMU support on the target server:
 

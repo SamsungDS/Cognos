@@ -56,22 +56,17 @@ except Exception:  # direct-script fallback
 
 
 def _amoprof_storage_label_cleanup(html_text: str, l3_backend_class: str = "") -> str:
-    """Normalize visible storage labels without corrupting embedded artifacts.
+    """Normalize visible L3/L3.5 labels consistently.
 
-    Tier semantics are intentionally strict:
-      * L3 (local storage)         = node-local SSD / NVMe physical block tier.
-      * L3 (AI Memory Node / ...)  = remote/shared backing tier, OR an
-                                     unresolved backing tier when no local SSD
-                                     was used.
+    Report convention:
+      * L3   = local SSD/NVMe/file-backed cache tier.
+      * L3.5 = AI Memory Node / remote/shared/disaggregated backing tier, or
+               unresolved logical SGLang backing-tier movement when no local
+               SSD/block mapping exists.
 
-    The KV$ backing-tier label is chosen from the resolved backend class:
-    only ``local_ssd`` keeps the "L3 (local storage)" wording; every other
-    class (remote, host_dram_only, unknown) uses the "L3 (AI Memory Node /
-    remote storage)" wording so a run with no local SSD is never mislabeled as
-    L3 SSD.
-
-    Do not apply a broad ``\bL3\b`` replacement — it corrupts already-correct
-    labels and caused strings like ``L3(...).5(...).5``.
+    The resolver passes backend_class='local_ssd' only for local SSD.  All other
+    classes use L3.5 wording so a remote AI Memory Node run is never shown as
+    local SSD L3.  Base64 image payloads are protected before text replacement.
     """
     if not html_text:
         return html_text
@@ -85,34 +80,74 @@ def _amoprof_storage_label_cleanup(html_text: str, l3_backend_class: str = "") -
 
     html_text = data_uri_re.sub(_stash_data_uri, html_text)
 
-    # Collapse labels produced by prior broad L3 -> L3 replacement bugs.
+    is_local = (str(l3_backend_class or "").lower() == "local_ssd")
+    tier = "L3" if is_local else "L3.5"
+    tier_long = "L3 (SSD/local storage)" if is_local else "L3.5 (AI Memory Node / remote storage)"
+
+    # Collapse prior accidental repeated L3.5 decorations.
     html_text = re.sub(
         r'(L3\.5 \(AI Memory Node / remote storage\))(?:\.5 \(AI Memory Node / remote storage\))+',
         r'\1', html_text)
 
-    # Backing-tier wording is local only when the resolver classified the run as
-    # local_ssd. Otherwise the KV$ backing tier is the AI Memory Node / remote
-    # (or unresolved) tier — never physical local SSD.
-    _is_local = (str(l3_backend_class or "").lower() == "local_ssd")
-    _tier = "L3 (local storage)" if _is_local else "L3 (AI Memory Node / remote storage)"
-
-    label_map = {
-        'KV$ L3 (local storage) IO': f'KV$ {_tier} I/O',
-        'KV$ L3 (local storage) I/O': f'KV$ {_tier} I/O',
-        'KV$ L3 (local storage)': f'KV$ {_tier}',
-        'NVMe read throughput': f'{_tier} read throughput',
-        'NVMe Read Throughput': f'{_tier} read throughput',
-        'NVMe read BW': f'{_tier} read BW',
-        'NVMe Read BW': f'{_tier} read BW',
-        'NVMe Latency &amp; Device Busy-Time (%util)': f'{_tier} latency &amp; busy-time',
-        'L3 (local storage) Latency & Busy-Time': f'{_tier} latency & busy-time',
-    }
-    for a, b in label_map.items():
+    if is_local:
+        replacements = {
+            "L3.5 (AI Memory Node / remote storage)": tier_long,
+            "L3 (AI Memory Node / remote storage)": tier_long,
+            "L3 (AI Memory Node)": tier_long,
+            "L3 (local storage)": tier,
+            "L3 local storage": tier,
+            "L3 local-storage": tier,
+            "L3 local SSD": "L3 SSD",
+            "L3 storage": "L3 storage",
+            "L3 Storage": "L3 storage",
+            "KV$ SSD IO": "KV$ L3 I/O",
+            "KV$ SSD I/O": "KV$ L3 I/O",
+            "KV$ SSD": "KV$ L3",
+            "NVMe read throughput": "L3 read throughput",
+            "NVMe Read Throughput": "L3 read throughput",
+            "NVMe read BW": "L3 read BW",
+            "NVMe Read BW": "L3 read BW",
+        }
+    else:
+        replacements = {
+            "L3.5 (AI Memory Node / remote storage)": tier_long,
+            "L3 (AI Memory Node / remote storage)": tier_long,
+            "L3 (AI Memory Node)": tier_long,
+            "L3 (local storage)": tier_long,
+            "L3 local storage": tier_long,
+            "L3 local-storage": tier_long,
+            "L3 local SSD": tier_long,
+            "L3 storage / blktrace": "L3.5 / backing-tier telemetry",
+            "L3 storage block telemetry": "L3.5 backing-tier telemetry",
+            "L3 storage block-device": "L3.5 backing-tier device",
+            "L3 storage QUEUE": "L3.5 QUEUE",
+            "L3 storage Queue": "L3.5 Queue",
+            "L3 storage queue": "L3.5 queue",
+            "L3 storage": "L3.5 storage",
+            "L3 Storage": "L3.5 storage",
+            "KV$ L3 IO": "KV$ L3.5 I/O",
+            "KV$ L3 I/O": "KV$ L3.5 I/O",
+            "KV$ L3 ": "KV$ L3.5 ",
+            "KV$ L3\n": "KV$ L3.5\n",
+            "Logical KV movement — L3": "Logical KV movement — L3.5",
+            "Physical L3 block": "Physical L3.5 block",
+            "Physical L3.5 block R / W total": "Physical L3.5 block R / W total",
+            "NVMe read throughput": "L3.5 read throughput",
+            "NVMe Read Throughput": "L3.5 read throughput",
+            "NVMe read BW": "L3.5 read BW",
+            "NVMe Read BW": "L3.5 read BW",
+        }
+    for a, b in replacements.items():
         html_text = html_text.replace(a, b)
+
+    # Clean up any doubled L3.5 token from overlapping replacements.
+    html_text = html_text.replace("L3.5.5", "L3.5")
+    html_text = html_text.replace("L3.5.5", "L3.5")
 
     for i, payload in enumerate(protected_payloads):
         html_text = html_text.replace(f"__AMOPROF_DATA_URI_{i}__", payload)
     return html_text
+
 
 # ── Metrics dictionary (optional — graceful fallback if missing) ──────────
 try:
@@ -5731,6 +5766,22 @@ def extract_metrics(data: dict) -> Metrics:
     m.hbm_util_pct = max(0.0, min(100.0, float(gp.get("hbm_util_pct_mean", 0) or 0)))
     m.hbm_used_mb_mean = float(gp.get("hbm_used_mb_mean", 0))
     m.hbm_total_mb = float(gp.get("hbm_total_mb_per_gpu", 40960))
+    # Some DCGM/gpu_summary paths miss FB_TOTAL and leave the A100-40GB
+    # fallback while FB_USED clearly belongs to a larger accelerator.  Avoid
+    # impossible HBM reports such as 83 GB used / 40 GB total by promoting the
+    # capacity to the next common device size.  Values remain conservative and
+    # are labeled as inferred in the report formulas.
+    try:
+        if m.hbm_used_mb_mean > 0 and m.hbm_total_mb > 0 and m.hbm_used_mb_mean > m.hbm_total_mb * 1.05:
+            for _cap in (49152, 81920, 98304, 122880, 143360, 192000):
+                if m.hbm_used_mb_mean <= _cap * 1.05:
+                    m.hbm_total_mb = float(_cap)
+                    break
+            if m.hbm_used_mb_mean > m.hbm_total_mb:
+                m.hbm_total_mb = float(max(m.hbm_total_mb, math.ceil(m.hbm_used_mb_mean / 1024.0) * 1024))
+            m.hbm_util_pct = min(100.0, round(m.hbm_used_mb_mean / max(m.hbm_total_mb, 1.0) * 100.0, 1))
+    except Exception:
+        pass
     m.gpu_power_mean_w = float(gp.get("power_all_gpus_w_mean", 0))
     m.gpu_power_peak_w = float(gp.get("power_w_peak", 0))
     m.per_gpu_util_mean = gp.get("gpu_util_per_gpu", [])
@@ -7315,6 +7366,16 @@ def extract_metrics(data: dict) -> Metrics:
         )
         if not m.kvb_l3_storage_observed and m.kvb_loadback_tokens_total > 0:
             m.kvb_l3_ambiguous_loadback_tokens = m.kvb_loadback_tokens_total
+        # If SGLang backup/prefetch movement exists but no local SSD/NVMe mapping
+        # was resolved, label the backing tier as L3.5 by convention.  This keeps
+        # AI Memory Node / remote-storage runs out of the local-SSD L3 bucket while
+        # still surfacing the logical cache-tier movement consistently.
+        if (m.kvb_l3_storage_observed and str(m.l3_backend_class).lower() in {"", "none", "unknown"}
+                and not bool(getattr(m, "l3_has_local_block_mapping", False))):
+            m.l3_backend_class = "remote_storage"
+            m.l3_backend_display = "L3.5 (AI Memory Node / remote storage)"
+            m.l3_backend_evidence = "derived from SGLang logical backup/prefetch movement without local SSD mapping"
+            m.l3_storage_type = m.l3_backend_display
 
         m.kvb_backup_bw_mean_gbs      = round(_hist_mean_sg("backup_bandwidth_sum", "backup_bandwidth_count") / 1e9, 4)
         m.kvb_prefetch_bw_mean_gbs    = round(_hist_mean_sg("prefetch_bandwidth_sum", "prefetch_bandwidth_count") / 1e9, 4)
@@ -7400,9 +7461,13 @@ def extract_metrics(data: dict) -> Metrics:
             l3_ts["loadback_tok_s"] = l3_ts["loadback_tokens_total"].diff().clip(lower=0) / dt
             l3_ts["evicted_tok_s"] = l3_ts["evicted_tokens_total"].diff().clip(lower=0) / dt
             if m.kvb_l3_storage_observed:
-                l3_ts["resident_tokens"] = (
-                    l3_ts["backup_tokens_total"] - l3_ts["prefetch_tokens_total"]
-                ).clip(lower=0)
+                # Estimate L3 resident/touched tokens from cumulative backup/offload.
+                # Do not subtract prefetched or load_back: prefetch is an onboard/read
+                # signal and load_back is L2→L1 restore diagnostic, not proof that a
+                # KV block was deleted from the L3 tier.  Subtracting either can make
+                # the L3 residency chart collapse to zero even while the KV tier
+                # capacity report shows high L3 occupancy.
+                l3_ts["resident_tokens"] = l3_ts["backup_tokens_total"].clip(lower=0)
             else:
                 l3_ts["resident_tokens"] = 0
             if kv_b > 0:
@@ -7420,7 +7485,7 @@ def extract_metrics(data: dict) -> Metrics:
         # contradicting the KV block chart while preserving provenance.
         try:
             _kvb_ts = getattr(m, "kvb_l3_io_ts", pd.DataFrame())
-            if isinstance(_kvb_ts, pd.DataFrame) and not _kvb_ts.empty and m.kv_bytes_per_token > 0 and m.kvb_l3_storage_observed and m.l3_backend_class == "local_ssd":
+            if isinstance(_kvb_ts, pd.DataFrame) and not _kvb_ts.empty and m.kv_bytes_per_token > 0 and m.kvb_l3_storage_observed:
                 _base = m.nvme_io_ts.copy() if isinstance(m.nvme_io_ts, pd.DataFrame) and not m.nvme_io_ts.empty else pd.DataFrame()
                 if _base.empty:
                     _base = pd.DataFrame({"time_sec": _kvb_ts["time_sec"].values})
@@ -7436,7 +7501,9 @@ def extract_metrics(data: dict) -> Metrics:
                         return np.full(len(_base), float(vals[0]))
                     return np.interp(_tgt_t, _src_t, vals, left=0, right=float(vals[-1]))
                 _logical_wr_mbs = _interp("backup_bw_mbs")
-                _logical_rd_mbs = _interp("prefetch_bw_mbs") + _interp("loadback_bw_mbs")
+                # Logical L3 read/onboard is prefetched_tokens only.  load_back is
+                # L2→L1 restore diagnostic and must not be counted as L3/SSD read bytes.
+                _logical_rd_mbs = _interp("prefetch_bw_mbs")
                 def _series_sum(col):
                     return float(pd.to_numeric(_base.get(col, pd.Series([0]*len(_base))), errors="coerce").fillna(0).clip(lower=0).sum())
                 _augmented = []
@@ -7469,7 +7536,7 @@ def extract_metrics(data: dict) -> Metrics:
                         _rd_iops_s = pd.to_numeric(m.nvme_io_ts["rd_iops"], errors="coerce").fillna(0)
                         m.nvme_rd_iops_mean = max(m.nvme_rd_iops_mean, float(_rd_iops_s[_rd_iops_s > 0].mean()) if (_rd_iops_s > 0).any() else 0.0)
                         m.nvme_rd_iops_max = max(m.nvme_rd_iops_max, float(_rd_iops_s.max()))
-                    _note = "Resolved local_ssd backend: SGLang logical L3 " + "/".join(_augmented) + " estimate shown because physical SSD counters were zero/missing for that direction"
+                    _note = "SGLang logical L3/backing-tier " + "/".join(_augmented) + " estimate shown because physical block counters were zero/missing for that direction"
                     m.storage_io_overlay_note = (_note if not m.storage_io_overlay_note else m.storage_io_overlay_note + "; " + _note)
         except Exception:
             pass
@@ -8631,8 +8698,8 @@ def extract_metrics(data: dict) -> Metrics:
     # *useful work* in tokens, not raw bytes the device saw — but they're
     # accurate enough for the relative bottleneck analysis §G is meant to do.
     _kv_b_pt = m.kv_bytes_per_token if m.kv_bytes_per_token > 0 else 327680
-    if rd_bw_bs == 0 and m.kvb_loadback_tokens_total > 0 and m.run_duration_s > 0:
-        rd_bw_bs = m.kvb_loadback_tokens_total * _kv_b_pt / m.run_duration_s
+    if rd_bw_bs == 0 and m.kvb_prefetched_tokens_total > 0 and m.run_duration_s > 0:
+        rd_bw_bs = m.kvb_prefetched_tokens_total * _kv_b_pt / m.run_duration_s
     if gen_tok_s > 0 and rd_bw_bs > 0:
         m.ssd_rd_bytes_per_output_tok = round(rd_bw_bs / gen_tok_s, 1)
 
@@ -8758,6 +8825,55 @@ def extract_metrics(data: dict) -> Metrics:
                         setattr(m, pf, field_type(v))
                     except (ValueError, TypeError):
                         pass
+
+    # v1.39.92: unify logical L3 movement across all static report sections.
+    # Prometheus-only / remote-L3 runs may have no physical block telemetry, but
+    # SGLang still exports authoritative logical backup/prefetch movement.  Use
+    # those counters consistently for L3 logical read/write, per-token KPIs,
+    # bandwidth fallback charts, and KV$B event charts.  Never count load_back as
+    # L3 read: it remains L2→L1 restore diagnostic only.
+    try:
+        _kv_b_l3 = max(float(getattr(m, "kv_bytes_per_token", 0) or 0), 0.0)
+        _run_s_l3 = max(float(getattr(m, "run_duration_s", 0) or 0), 1.0)
+        _sg_wr_bytes = float(getattr(m, "kvb_backuped_tokens_total", 0) or 0) * _kv_b_l3
+        _sg_rd_bytes = float(getattr(m, "kvb_prefetched_tokens_total", 0) or 0) * _kv_b_l3
+        if _kv_b_l3 > 0 and (_sg_wr_bytes > 0 or _sg_rd_bytes > 0):
+            m.kvb_l3_storage_observed = True
+            m.l3_sglang_write_gb = max(float(getattr(m, "l3_sglang_write_gb", 0) or 0), _sg_wr_bytes / (1024**3))
+            m.l3_sglang_read_gb  = max(float(getattr(m, "l3_sglang_read_gb",  0) or 0), _sg_rd_bytes / (1024**3))
+            _sg_wr_mbs = _sg_wr_bytes / _run_s_l3 / 1e6 if _sg_wr_bytes > 0 else 0.0
+            _sg_rd_mbs = _sg_rd_bytes / _run_s_l3 / 1e6 if _sg_rd_bytes > 0 else 0.0
+            if _sg_wr_mbs > 0:
+                m.ssd_wr_bw_mbs_mean = max(float(getattr(m, "ssd_wr_bw_mbs_mean", 0) or 0), _sg_wr_mbs)
+                m.nvme_wr_bw_mbs_mean = max(float(getattr(m, "nvme_wr_bw_mbs_mean", 0) or 0), _sg_wr_mbs)
+            if _sg_rd_mbs > 0:
+                m.ssd_rd_bw_mbs_mean = max(float(getattr(m, "ssd_rd_bw_mbs_mean", 0) or 0), _sg_rd_mbs)
+                m.nvme_rd_bw_mbs_mean = max(float(getattr(m, "nvme_rd_bw_mbs_mean", 0) or 0), _sg_rd_mbs)
+            # Per-token dependency KPIs used by both §G charts.
+            _gen_tok = max(float(getattr(m, "decode_tokens", 0) or 0), 1.0)
+            _prompt_tok = max(float(getattr(m, "prefill_compute_tokens", 0) or 0) + float(getattr(m, "prefill_cache_tokens", 0) or 0), 1.0)
+            if _sg_rd_bytes > 0:
+                m.ssd_rd_bytes_per_output_tok = max(float(getattr(m, "ssd_rd_bytes_per_output_tok", 0) or 0), round(_sg_rd_bytes / _gen_tok, 1))
+                m.ssd_read_per_output_token_kb = max(float(getattr(m, "ssd_read_per_output_token_kb", 0) or 0), round((_sg_rd_bytes / 1024.0) / _gen_tok, 4))
+            if _sg_wr_bytes > 0:
+                m.ssd_wr_bytes_per_input_tok = max(float(getattr(m, "ssd_wr_bytes_per_input_tok", 0) or 0), round(_sg_wr_bytes / _prompt_tok, 1))
+                m.ssd_write_per_input_token_kb = max(float(getattr(m, "ssd_write_per_input_token_kb", 0) or 0), round((_sg_wr_bytes / 1024.0) / _prompt_tok, 4))
+            if _sg_rd_mbs > 0:
+                _l3_tok_s = (_sg_rd_mbs * 1e6) / max(_kv_b_l3, 1.0)
+                m.throughput_bottleneck_ssd_tok_s = max(float(getattr(m, "throughput_bottleneck_ssd_tok_s", 0) or 0), round(_l3_tok_s, 1))
+                m.ssd_effective_bw_gbs = max(float(getattr(m, "ssd_effective_bw_gbs", 0) or 0), round(_sg_rd_mbs / 1024.0, 3))
+            # Capacity/residency fallback for KV$B charts: keep consistent with
+            # KV$ Per Cache Tier when no explicit resident_tokens gauge exists.
+            if int(getattr(m, "kv_l3_nvme_tokens", 0) or 0) <= 0:
+                m.kv_l3_nvme_tokens = int(max(float(getattr(m, "kvb_backuped_tokens_total", 0) or 0), 0.0))
+            if int(getattr(m, "kv_l3_capacity_tokens", 0) or 0) <= 0 and float(getattr(m, "kv_l3_capacity_gb", 0) or 0) > 0:
+                m.kv_l3_capacity_tokens = int(float(getattr(m, "kv_l3_capacity_gb", 0) or 0) * 1e9 / max(_kv_b_l3, 1.0))
+            if float(getattr(m, "kv_l3_used_gb", 0) or 0) <= 0 and int(getattr(m, "kv_l3_nvme_tokens", 0) or 0) > 0:
+                m.kv_l3_used_gb = float(getattr(m, "kv_l3_nvme_tokens", 0) or 0) * _kv_b_l3 / 1e9
+            if float(getattr(m, "kv_l3_used_pct", 0) or 0) <= 0 and float(getattr(m, "kv_l3_used_gb", 0) or 0) > 0 and float(getattr(m, "kv_l3_capacity_gb", 0) or 0) > 0:
+                m.kv_l3_used_pct = round(float(getattr(m, "kv_l3_used_gb", 0) or 0) / max(float(getattr(m, "kv_l3_capacity_gb", 0) or 0), 1e-9) * 100, 1)
+    except Exception:
+        pass
 
     # v1.39.86: final effective-L3 resolution.
     # Setup-only detection is not enough: valid L3 runs may expose generic
@@ -11097,8 +11213,14 @@ def chart_kvb_events(m: "Metrics") -> str:
         ts3 = downsample(l3_ts, 300)
         t3 = ts3["time_sec"].values / 60
         l3_blocks = ts3["resident_tokens"].fillna(0).values / bs
+        _l3_reported_blocks = max(float(getattr(m, "kv_l3_nvme_tokens", 0) or 0) / bs, 0.0)
+        if _l3_reported_blocks > 0:
+            l3_blocks = np.maximum(l3_blocks, _l3_reported_blocks)
         ax.fill_between(t3, l3_blocks, alpha=0.20, color="#a855f7", label="L3 resident blocks (est.)")
         ax.plot(t3, l3_blocks, color="#a855f7", lw=1.5)
+    elif l3_active and float(getattr(m, "kv_l3_nvme_tokens", 0) or 0) > 0:
+        _l3_reported_blocks = float(getattr(m, "kv_l3_nvme_tokens", 0) or 0) / bs
+        ax.axhline(_l3_reported_blocks, color="#a855f7", lw=1.6, label="L3 resident blocks (tier summary)")
     ax.set_title(
         f"KV Block Residency by Tier (SGLang-derived)\n"
         f"L1→L2 mean {m.kvb_l1_offload_rate_blk_s:.4f} blk/s  |  "
@@ -11177,6 +11299,9 @@ def chart_kvb_events(m: "Metrics") -> str:
     l3_peak_blocks = 0
     if isinstance(l3_ts, pd.DataFrame) and not l3_ts.empty and "resident_tokens" in l3_ts.columns:
         l3_peak_blocks = int(np.nanmax(l3_ts["resident_tokens"].fillna(0).values / bs))
+    _l3_blocks_from_tier_summary = int(float(getattr(m, "kv_l3_nvme_tokens", 0) or 0) / bs) if bs > 0 else 0
+    _l3_blocks_from_capacity = int((float(getattr(m, "kv_l3_capacity_tokens", 0) or 0) * float(getattr(m, "kv_l3_used_pct", 0) or 0) / 100.0) / bs) if bs > 0 else 0
+    l3_peak_blocks = max(l3_peak_blocks, _l3_blocks_from_tier_summary, _l3_blocks_from_capacity)
     # Keep L3 (local storage) residency consistent with the same
     # gating used by executive/interactive sections.  If reliable local-storage
     # evidence is absent, do not label load_back-only or eviction-only signals as
@@ -11823,6 +11948,8 @@ def chart_kvssd_cross_layer(m: "Metrics") -> str:
     ax = axes[0]; _style(ax)
     gpu_t = float(getattr(m, "throughput_bottleneck_gpu_tok_s", 0) or getattr(m, "gen_tp_peak", 0) or getattr(m, "gen_tp_mean", 0) or 0)
     l3_t = float(getattr(m, "throughput_bottleneck_ssd_tok_s", 0) or 0)
+    if l3_t <= 0 and float(getattr(m, "ssd_rd_bw_mbs_mean", 0) or 0) > 0 and float(getattr(m, "kv_bytes_per_token", 0) or 0) > 0:
+        l3_t = float(getattr(m, "ssd_rd_bw_mbs_mean", 0) or 0) * 1e6 / max(float(getattr(m, "kv_bytes_per_token", 0) or 0), 1.0)
     cats = ["Observed GPU\nthroughput", "L3 bandwidth\nupper bound"]
     vals = [gpu_t, l3_t]
     bars = ax.bar(cats, vals, color=["#6366f1", "#f97316"], alpha=0.85, width=0.45,
@@ -11840,6 +11967,10 @@ def chart_kvssd_cross_layer(m: "Metrics") -> str:
     cats2 = ["L3 read\nper output token", "L3 write\nper input token"]
     vals2 = [float(getattr(m, "ssd_read_per_output_token_kb", 0) or 0),
              float(getattr(m, "ssd_write_per_input_token_kb", 0) or 0)]
+    if vals2[0] <= 0 and float(getattr(m, "ssd_rd_bytes_per_output_tok", 0) or 0) > 0:
+        vals2[0] = float(getattr(m, "ssd_rd_bytes_per_output_tok", 0) or 0) / 1024.0
+    if vals2[1] <= 0 and float(getattr(m, "ssd_wr_bytes_per_input_tok", 0) or 0) > 0:
+        vals2[1] = float(getattr(m, "ssd_wr_bytes_per_input_tok", 0) or 0) / 1024.0
     bars2 = ax2.bar(cats2, vals2, color=["#3b82f6", "#f97316"], alpha=0.85, width=0.42,
                     edgecolor="#94a3b8", lw=0.5)
     ymax2 = max(vals2 + [0.001])
@@ -12290,7 +12421,9 @@ def chart_cross_layer_kpi(m: "Metrics") -> str:
     # 4. KV movement vs physical IO rates
     ax4 = axes[1, 1]; ax4.set_facecolor("#f8fafc")
     cats4 = ["KV offload\ntok/s", "KV prefetch\ntok/s", "L3 write\nMB/s", "L3 read\nMB/s"]
-    vals4 = [m.kvb_offload_tok_rate, m.kvb_onboard_tok_rate, m.nvme_wr_bw_mbs_mean, m.ssd_rd_bw_mbs_mean]
+    vals4 = [m.kvb_offload_tok_rate, m.kvb_onboard_tok_rate,
+             max(float(getattr(m, "nvme_wr_bw_mbs_mean", 0) or 0), float(getattr(m, "ssd_wr_bw_mbs_mean", 0) or 0)),
+             max(float(getattr(m, "nvme_rd_bw_mbs_mean", 0) or 0), float(getattr(m, "ssd_rd_bw_mbs_mean", 0) or 0))]
     ax4b = ax4.twinx()
     ax4.bar([0,1], vals4[:2], color=["#f97316", "#22c55e"], alpha=0.85, width=0.35, label="tokens/s")
     ax4b.bar([2,3], vals4[2:], color=["#ef4444", "#3b82f6"], alpha=0.85, width=0.35, label="MB/s")

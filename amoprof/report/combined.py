@@ -81,374 +81,14 @@ def _remove_end_report_cross_layer_correlation_section(static_html: str) -> str:
     return out
 
 
-# ─── Utilities ──────────────────────────────────────────────────────────────
-
-
-def _amoprof_storage_label_cleanup(html_text: str, l3_backend_class: str = "") -> str:
-    """Normalize visible storage labels without corrupting embedded artifacts.
-
-    Tier semantics are intentionally strict:
-      * L3 (local storage)        = node-local SSD / NVMe physical block tier.
-      * L3 (AI Memory Node / ...) = remote/shared OR unresolved backing tier.
-
-    The KV$ backing-tier wording follows the resolved backend class: only
-    ``local_ssd`` keeps "L3 (local storage)"; every other class uses
-    "L3 (AI Memory Node / remote storage)" so a no-local-SSD run is never
-    mislabeled as L3 SSD.
-
-    Do not apply a broad ``\bL3\b`` replacement — it corrupts already-correct
-    labels and caused strings like ``L3(...).5(...).5``.
-    """
-    if not html_text:
-        return html_text
-
-    data_uri_re = re.compile(r'data:image/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=\s]+')
-    protected_payloads: list[str] = []
-
-    def _stash_data_uri(match: re.Match) -> str:
-        protected_payloads.append(match.group(0))
-        return f"__AMOPROF_DATA_URI_{len(protected_payloads) - 1}__"
-
-    html_text = data_uri_re.sub(_stash_data_uri, html_text)
-
-    # Collapse labels produced by prior broad L3 -> L3 replacement bugs.
-    html_text = re.sub(
-        r'(L3\.5 \(AI Memory Node / remote storage\))(?:\.5 \(AI Memory Node / remote storage\))+',
-        r'\1', html_text)
-
-    _is_local = (str(l3_backend_class or "").lower() == "local_ssd")
-    _tier = "L3 (local storage)" if _is_local else "L3 (AI Memory Node / remote storage)"
-
-    for a, b in {
-        'KV$ L3 (local storage) IO': f'KV$ {_tier} I/O',
-        'KV$ L3 (local storage) I/O': f'KV$ {_tier} I/O',
-        'KV$ L3 (local storage)': f'KV$ {_tier}',
-        'NVMe read throughput': f'{_tier} read throughput',
-        'NVMe Read Throughput': f'{_tier} read throughput',
-        'NVMe read BW': f'{_tier} read BW',
-        'NVMe Read BW': f'{_tier} read BW',
-        'NVMe Latency &amp; Device Utilization': f'{_tier} latency &amp; busy-time',
-        'NVMe Latency & Device Utilization': f'{_tier} latency & busy-time',
-    }.items():
-        html_text = html_text.replace(a, b)
-
-    for i, payload in enumerate(protected_payloads):
-        html_text = html_text.replace(f"__AMOPROF_DATA_URI_{i}__", payload)
-    return html_text
-
-
-
-
-def _amoprof_l3_local_only_cleanup(html_text: str) -> str:
-    """For local-NVMe/file-backed HiCache runs, suppress L3 data labels.
-
-    Rule: if the backend resolver says local_ssd, every physical and logical
-    backing-tier datum in this run belongs to L3 (local storage).  L3 must not
-    show populated readings.  It may only appear as a terminology row saying it
-    is not configured.
-    """
-    if not html_text:
-        return html_text
-    data_uri_re = re.compile(r'data:image/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=\s]+')
-    protected_payloads: list[str] = []
-    def _stash(match: re.Match) -> str:
-        protected_payloads.append(match.group(0))
-        return f"__AMOPROF_DATA_URI_{len(protected_payloads)-1}__"
-    html_text = data_uri_re.sub(_stash, html_text)
-
-    # Run-specific local-only substitutions. These are intentionally applied
-    # only when resolver classified the backend as local_ssd.
-    replacements = {
-        'L3 (local storage) (3.5 TB)': 'L3 (local storage) (3.5 TB)',
-        'L3 storage / blktrace': 'L3 (local storage) / blktrace',
-        'L3 storage block telemetry': 'L3 (local storage) block telemetry',
-        'L3 storage block-device': 'L3 (local storage) block-device',
-        'L3 storage QUEUE': 'L3 (local storage) QUEUE',
-        'L3 storage Queue': 'L3 (local storage) Queue',
-        'L3 storage queue': 'L3 (local storage) queue',
-        'Logical KV movement — L3 (local storage)': 'Logical KV movement — L3 (local storage)',
-        'L3 (local storage) logical activity': 'L3 (local storage) logical activity',
-        'logical L3 movement': 'logical L3 movement',
-        'Logical L3 movement': 'Logical L3 movement',
-        'logical L3 only': 'logical L3 only',
-        'L3 logical movement': 'L3 logical movement',
-        'logical L3': 'logical L3',
-        'Remote L3 (local storage)': 'L3 (local storage)',
-        'remote L3': 'L3',
-        'Remote L3': 'L3',
-        'L3 bottleneck': 'L3 bottleneck',
-        'L3 storage': 'L3 (local storage)',
-        'L3 Storage': 'L3 (local storage)',
-        'L3 (local storage) movement': 'L3 (local storage) movement',
-        'L3 (local storage) cache': 'L3 (local storage) cache',
-        'L3 (local storage) capacity': 'L3 (local storage) capacity',
-        'L3 (local storage) R/W': 'L3 (local storage) R/W',
-        'L3 (local storage) as the remote/shared KV tier': 'L3 (local storage) as the local KV tier',
-        'L3 (local storage)': 'L3 (local storage)',
-    }
-    for a, b in replacements.items():
-        html_text = html_text.replace(a, b)
-
-    # Repair terminology card so L3 is visible only as disabled/not configured,
-    # not as a populated tier.
-    html_text = html_text.replace(
-        '<tr><td class="td-key">L3 (local storage)</td><td>Remote/shared AI Memory Node or remote storage tier: logical SGLang backing-tier movement only when the backend is remote/shared/unmapped; never use local NVMe blktrace/iostat/LBA charts for this tier.</td></tr>',
-        '<tr><td class="td-key">L3 (local storage)</td><td><strong>Not configured for this run.</strong> No L3 readings are shown. Remote/shared AI Memory Node data appears here only when a remote backend is explicitly detected.</td></tr>'
-    )
-    html_text = html_text.replace('L3 and L3 and L3 tier mapping', 'L3 and L3 tier mapping')
-    for i, payload in enumerate(protected_payloads):
-        html_text = html_text.replace(f"__AMOPROF_DATA_URI_{i}__", payload)
-    return html_text
-
-
-def _amoprof_has_explicit_l3_config(setup: dict | None, launch: str = "") -> bool:
-    """True only when L3/local storage or remote storage is explicitly configured.
-
-    Generic HiCache defaults and Reference launch command values are not L3.
-    """
-    setup = setup or {}
-    bad = {"", "0", "0.0", "none", "null", "false", "no", "n/a", "na",
-           "unknown", "default", "auto", "not configured", "not_configured"}
-    explicit_keys = [
-        "L3 Device", "L3 device", "l3_device", "L3 block device",
-        "L3 Mount Path", "L3 mount path", "l3_mount_path",
-        "L3 storage path", "L3 Storage Path", "l3_storage_path",
-        "L3 storage backend", "L3 Storage Backend", "l3_storage_backend",
-        "L3 backend", "l3_backend", "Cache L3 backend", "cache_l3_backend",
-        "L3 storage type", "l3_storage_type",
-        "L3 (local storage) capacity GB", "L3 Capacity GB",
-        "l3_storage_capacity_gb", "l3_capacity_gb",
-        "L3 storage device", "L3 storage mount path",
-        "AI Memory Node", "ai_memory_node", "Mooncake endpoint", "mooncake_endpoint",
-        "remote_storage_backend", "remote_storage_path", "remote_storage_endpoint",
-    ]
-    for k in explicit_keys:
-        if k in setup:
-            v = setup.get(k)
-            if isinstance(v, (int, float)):
-                if float(v) > 0:
-                    return True
-            else:
-                sv = str(v or "").strip().strip('"').strip("'").lower()
-                if sv not in bad:
-                    return True
-    for k, v in setup.items():
-        lk = str(k).lower()
-        if "hicache_size" in lk or "hicache size" in lk:
-            continue
-        if ("l3" in lk or "l3.5" in lk or "mooncake" in lk or
-            "ai memory node" in lk or "remote_storage" in lk or "remote storage" in lk):
-            sv = str(v or "").strip().strip('"').strip("'").lower()
-            if sv not in bad:
-                return True
-    launch_s = str(launch or "")
-    explicit_launch_flags = [
-        "--hicache-storage-path", "--l3-storage-backend", "--l3-storage-path",
-        "--l3-device", "--mooncake", "--remote-storage", "--enable-l3", "--l3-cache",
-    ]
-    return any(f in launch_s for f in explicit_launch_flags)
-
-
-def _amoprof_no_l3_cleanup(html_text: str) -> str:
-    """Strip populated L3/L3 data from reports where no L3 is configured."""
-    if not html_text:
-        return html_text
-    data_uri_re = re.compile(r'data:image/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=\s]+')
-    payloads: list[str] = []
-    def _stash(m: re.Match) -> str:
-        payloads.append(m.group(0))
-        return f"__AMOPROF_DATA_URI_{len(payloads)-1}__"
-    out = data_uri_re.sub(_stash, html_text)
-
-    out = out.replace("L3 storage / blktrace", "L3 storage / blktrace")
-
-    # Remove L3/L3 KPI tiles that can look like measured data in an L2-only run.
-    l3_tile_labels = [
-        r"L3 \(local storage\) read BW",
-        r"L3 \(local storage\) write BW",
-        r"Physical L3 \(local storage\) block R / W total",
-        r"L3 \(local storage\) cache used",
-        r"L3 \(local storage\) configured capacity",
-        r"Logical KV movement — L3 \(local storage\)",
-        r"Logical KV movement — L3\.5 \(AI Memory Node / remote storage\)",
-        r"L3\.5 .*?cache used",
-    ]
-    for lab in l3_tile_labels:
-        out = re.sub(r'<div class="kpi"[^>]*>\s*<div class="kpi-label">\s*' + lab + r'\s*</div>.*?</div>\s*</div>',
-                     '', out, flags=re.I | re.S)
-        out = re.sub(r'<div class="kpi-tile"[^>]*>\s*<div class="kpi-label">\s*' + lab + r'\s*</div>.*?</div>\s*</div>',
-                     '', out, flags=re.I | re.S)
-
-    # Replace the capacity/reconciliation card with explicit L2-only notice.
-    no_l3_card = (
-        '<div class="card" style="border-left:4px solid #64748b">'
-        '<h2>ℹ️ L3 / L3 storage <span class="tag">NOT CONFIGURED</span></h2>'
-        '<p class="sub">This is an L2-only run. No L3 local-storage or L3 remote-storage backend was explicitly configured in setup_details or the launch command. AMOprof therefore suppresses L3 capacity, df/SMART cache-used snapshots, LBA charts, block totals, and L3 logical movement as measured data.</p>'
-        '</div>'
-    )
-    out = re.sub(r'<div class="card"[^>]*>\s*<h2>✅\s*L3 capacity vs I/O reconciliation.*?</div>\s*</div>',
-                 no_l3_card, out, flags=re.I | re.S)
-
-    out = re.sub(r'<tr><td class="td-key">L3\.5 \(AI Memory Node / remote storage\) logical activity</td><td>.*?</td></tr>',
-                 '<tr><td class="td-key">L3 / L3 storage</td><td>No L3 local-storage or L3 remote-storage backend was explicitly configured for this L2-only run; no L3/L3 measured data is reported.</td></tr>',
-                 out, flags=re.I | re.S)
-    out = re.sub(r'<tr><td class="td-key">L3 capacity vs I/O</td><td>.*?</td></tr>',
-                 '<tr><td class="td-key">L3 capacity vs I/O</td><td>Not applicable for this L2-only run.</td></tr>',
-                 out, flags=re.I | re.S)
-
-    out = out.replace("L3 (local storage)", "L3")
-    out = out.replace("L3 storage", "L3 storage")
-    out = out.replace("L3 Storage", "L3 storage")
-    out = out.replace("L3 and L3 and L3 tier mapping", "L3 tier mapping")
-    out = out.replace("L3 and L3 tier mapping", "L3 tier mapping")
-
-    for i, payload in enumerate(payloads):
-        out = out.replace(f"__AMOPROF_DATA_URI_{i}__", payload)
-    return out
-
-
-def _safe_float(v: Any, default: float = 0.0) -> float:
-    try:
-        if v is None or v == "":
-            return default
-        x = float(v)
-        if math.isnan(x) or math.isinf(x):
-            return default
-        return x
-    except Exception:
-        return default
-
-
-def _fmt_num(v: Any, unit: str = "", digits: int = 1, na: str = "N/A") -> str:
-    x = _safe_float(v, None)  # type: ignore[arg-type]
-    if x is None:
-        return na
-    if abs(x) >= 1000 and unit not in ("%", "x"):
-        s = f"{x:,.{digits}f}"
-    else:
-        s = f"{x:.{digits}f}"
-    if digits == 0:
-        s = s.split(".")[0]
-    return f"{s}{unit}"
-
-
-def _read_json(path: Path) -> Dict[str, Any]:
-    try:
-        if path.exists() and path.stat().st_size > 0:
-            with path.open("r", encoding="utf-8", errors="replace") as f:
-                obj = json.load(f)
-            return obj if isinstance(obj, dict) else {}
-    except Exception:
-        return {}
-    return {}
-
-
-
-def _read_bench_summary(raw_dir: Path) -> Dict[str, Any]:
-    """Read normalized bench_serving summary if present in raw/."""
-    candidates = [
-        "bench_summary.json", "bench_summary.txt",
-        "performance_summary.json", "performance_summary.txt",
-        "sglang_bench_summary.json", "sglang_bench.json",
-        "bench_serving_output.json",
-    ]
-    p = _first_existing(raw_dir, candidates)
-    if not p:
-        return {}
-    try:
-        from amoprof.bench_summary import parse_bench_summary
-        d = parse_bench_summary(p)
-        return d if isinstance(d, dict) else {}
-    except Exception:
-        try:
-            txt = p.read_text(encoding="utf-8", errors="replace")
-            obj = json.loads(txt)
-            return obj if isinstance(obj, dict) else {}
-        except Exception:
-            return {}
-
-
-def _first_existing(raw_dir: Path, names: Iterable[str]) -> Optional[Path]:
-    # The blktrace analyzer (v1.38.15+) writes its analysis CSVs to the
-    # raw_dir/blktrace_analysis/ subdir. Check raw_dir first (for collect-time
-    # files and older runs), then the subdir (for the analysis outputs).
-    search_dirs = [raw_dir, raw_dir / "blktrace_analysis"]
-    for n in names:
-        for d in search_dirs:
-            p = d / n
-            if p.exists() and p.stat().st_size > 0:
-                return p
-    return None
-
-
-def _read_csv_summary(path: Optional[Path], max_rows: int = 20000) -> Dict[str, Any]:
-    """Return simple aggregate stats for numeric columns without pandas."""
-    if not path or not path.exists() or path.stat().st_size == 0:
-        return {"rows": 0, "columns": []}
-    stats: Dict[str, Dict[str, float]] = {}
-    rows = 0
-    cols: List[str] = []
-    first: Dict[str, str] = {}
-    last: Dict[str, str] = {}
-    try:
-        with path.open("r", encoding="utf-8", errors="replace", newline="") as f:
-            r = csv.DictReader(f)
-            cols = list(r.fieldnames or [])
-            for row in r:
-                rows += 1
-                if rows == 1:
-                    first = dict(row)
-                last = dict(row)
-                for k, v in row.items():
-                    x = _safe_float(v, None)  # type: ignore[arg-type]
-                    if x is None:
-                        continue
-                    d = stats.setdefault(k, {"count": 0.0, "sum": 0.0,
-                                                    "max": -1e300, "min": 1e300,
-                                                    "nonzero_sum": 0.0, "nonzero_count": 0.0})
-                    d["count"] += 1.0
-                    d["sum"] += x
-                    d["max"] = max(d["max"], x)
-                    d["min"] = min(d["min"], x)
-                    if x != 0.0:
-                        d["nonzero_sum"]   += x
-                        d["nonzero_count"] += 1.0
-                if rows >= max_rows:
-                    break
-    except Exception:
-        return {"rows": rows, "columns": cols, "error": "parse_failed"}
-    out: Dict[str, Any] = {"rows": rows, "columns": cols, "first": first, "last": last}
-    for k, d in stats.items():
-        if d["count"] > 0:
-            # include nonzero_mean for active-sample throughput computation
-            out[k] = {
-                "mean": d["sum"] / d["count"],
-                "max": d["max"],
-                "min": d["min"],
-                "count": d["count"],
-                "nonzero_sum":   d.get("nonzero_sum",   0.0),
-                "nonzero_count": d.get("nonzero_count", 0.0),
-                "nonzero_mean":  (d["nonzero_sum"] / d["nonzero_count"]
-                                  if d.get("nonzero_count", 0) > 0 else 0.0),
-            }
-    return out
-
-
-def _pick(d: Dict[str, Any], keys: Iterable[str], default: Any = None) -> Any:
-    for k in keys:
-        if k in d and d[k] not in (None, "", "unknown", "Unknown"):
-            return d[k]
-    # also try case-insensitive exact match for setup_details.json
-    lower = {str(k).lower(): v for k, v in d.items()}
-    for k in keys:
-        lk = str(k).lower()
-        if lk in lower and lower[lk] not in (None, "", "unknown", "Unknown"):
-            return lower[lk]
-    return default
-
 
 
 def _amoprof_parse_launch_arg(launch: str, *names: str) -> str:
+    """Parse one SGLang launch flag from a saved setup/reference command.
+
+    Kept local to combined.py so Executive generation works even when the
+    static-report module is not imported.
+    """
     if not launch:
         return ""
     for name in names:
@@ -459,11 +99,18 @@ def _amoprof_parse_launch_arg(launch: str, *names: str) -> str:
     return ""
 
 
-def _amoprof_missing(v) -> bool:
+def _amoprof_missing(v: object) -> bool:
     return v is None or str(v).strip() in ("", "?", "unknown", "None", "null", "N/A")
 
 
 def _amoprof_augment_setup_from_launch(setup: dict) -> dict:
+    """Augment setup_details with values parsed from Launch command.
+
+    The Executive tab calls this before deriving L3/L3.5 labels and capacity
+    context.  v1.39.93 moved label resolution into combined.py but left this
+    helper only in amoprof.py/interactive.py, causing Executive generation to
+    fail with NameError.
+    """
     if not isinstance(setup, dict):
         setup = {}
     out = dict(setup)
@@ -498,203 +145,327 @@ def _amoprof_augment_setup_from_launch(setup: dict) -> dict:
     return out
 
 
-def _ts_col(ts: Dict[str, Any], *partials: str) -> Dict[str, Any]:
-    """Find a timeseries column-stats dict by substring match.
 
-    The CSV column names are raw Prometheus metric keys that often carry
-    label suffixes, e.g. ``gen_throughput[engine_type=unified]`` or
-    ``sglang_gen_throughput``.  An exact ``ts.get("gen_throughput")`` misses
-    these, so we match on substring (the same way interactive._find_col does).
-    Returns the column's stats dict ({mean,max,min,count,nonzero_*}) or {}.
-    """
-    # ts has special keys 'rows','columns','first','last' plus one dict per column
-    skip = {"rows", "columns", "first", "last", "error"}
-    for partial in partials:
-        # exact first
-        v = ts.get(partial)
-        if isinstance(v, dict):
-            return v
-        # then substring over actual column stat dicts
-        for k, val in ts.items():
-            if k in skip or not isinstance(val, dict):
-                continue
-            if partial in k:
-                return val
+def _safe_float(v: object, default: float = 0.0) -> float:
+    try:
+        if v is None or v == "":
+            return default
+        x = float(v)
+        if math.isnan(x) or math.isinf(x):
+            return default
+        return x
+    except Exception:
+        return default
+
+
+def _read_json(path: Path | None) -> dict:
+    if not path:
+        return {}
+    try:
+        path = Path(path)
+        if path.exists() and path.stat().st_size > 0:
+            obj = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+            return obj if isinstance(obj, dict) else {}
+    except Exception:
+        pass
     return {}
 
 
-def _ts_active_mean(ts: Dict[str, Any], *partials: str) -> float:
-    """Active-window mean (mean of nonzero samples) for a timeseries column."""
-    col = _ts_col(ts, *partials)
-    if col.get("nonzero_count", 0) > 0:
-        return float(col.get("nonzero_mean",
-                             col.get("nonzero_sum", 0) /
-                             max(col.get("nonzero_count", 1), 1)))
-    return 0.0
-
-
-def _ts_active_p50(ts: Dict[str, Any], *partials: str) -> float:
-    """P50/median of nonzero samples for a matched timeseries column."""
+def _first_existing(root: Path, names: list[str] | tuple[str, ...]) -> Path | None:
     try:
-        col = _ts_col(ts, *partials)
-        for k in ("nonzero_p50", "p50", "median"):
-            if col.get(k, 0):
-                return float(col.get(k, 0) or 0)
-        name = _ts_column_name(ts, *partials)
-        rows = (ts or {}).get("rows") or []
-        vals = []
-        if name and rows:
-            for r in rows:
-                try:
-                    v = float(r.get(name, 0) or 0)
-                    if v == v and v > 0:
-                        vals.append(v)
-                except Exception:
-                    pass
-        if vals:
-            vals.sort()
-            n = len(vals); mid = n // 2
-            return float(vals[mid] if n % 2 else (vals[mid - 1] + vals[mid]) / 2.0)
+        root = Path(root)
+        for name in names:
+            p = root / name
+            if p.exists() and p.stat().st_size > 0:
+                return p
     except Exception:
-        pass
-    return 0.0
+        return None
+    return None
 
 
+def _read_csv_summary(path: Path | None) -> dict:
+    """Return basic min/mean/max/sum/n for each numeric CSV column."""
+    if not path:
+        return {}
+    try:
+        path = Path(path)
+        if not path.exists() or path.stat().st_size <= 0:
+            return {}
+        data: dict[str, list[float]] = {}
+        with path.open(encoding="utf-8", errors="replace", newline="") as f:
+            r = csv.DictReader(f)
+            cols = r.fieldnames or []
+            data = {c: [] for c in cols}
+            for row in r:
+                for c in cols:
+                    try:
+                        val = float(row.get(c, ""))
+                    except Exception:
+                        continue
+                    if math.isnan(val) or math.isinf(val):
+                        continue
+                    data[c].append(val)
+        out: dict[str, dict[str, float]] = {}
+        for c, vals in data.items():
+            if vals:
+                nz = [v for v in vals if abs(v) > 1e-12]
+                out[c] = {"min": min(vals), "mean": sum(vals)/len(vals), "max": max(vals), "sum": sum(vals), "n": len(vals),
+                          "first": vals[0], "last": vals[-1], "delta": vals[-1] - vals[0],
+                          "nonzero_count": len(nz), "nonzero_sum": sum(nz),
+                          "nonzero_mean": (sum(nz)/len(nz) if nz else 0.0)}
+        return out
+    except Exception:
+        return {}
 
 
-def _ts_gauge_stats(ts: Dict[str, Any], *partials: str) -> Dict[str, float]:
-    """Return selected-window gauge stats for a matched timeseries column.
+def _pick(d: dict, keys, default=None):
+    """Pick the first non-empty value from a dict using a string or list of keys."""
+    if not isinstance(d, dict):
+        return default
+    if isinstance(keys, str):
+        keys = [keys]
+    lower = {str(k).lower(): k for k in d.keys()}
+    for key in keys:
+        if key in d and not _amoprof_missing(d.get(key)):
+            return d.get(key)
+        lk = lower.get(str(key).lower())
+        if lk is not None and not _amoprof_missing(d.get(lk)):
+            return d.get(lk)
+    return default
 
-    AMOprof has seen SGLang HiCache residency exported either as a real
-    changing gauge or as a flat/snapshot-like value.  The caller can use
-    the variation fields to decide whether a "used" tile is truly
-    window-dynamic or merely a residency snapshot.
-    """
-    col = _ts_col(ts, *partials)
-    if not isinstance(col, dict) or not col:
-        return {"mean": 0.0, "min": 0.0, "max": 0.0, "variation_pct": 0.0, "nonzero_count": 0.0}
-    cnt = float(col.get("nonzero_count", 0) or 0)
-    if cnt > 0:
-        mean = float(col.get("nonzero_mean", col.get("nonzero_sum", 0) / max(cnt, 1)) or 0)
-        mn = float(col.get("nonzero_min", col.get("min", mean)) or mean)
-        mx = float(col.get("nonzero_max", col.get("max", mean)) or mean)
+# ─── Utilities ──────────────────────────────────────────────────────────────
+
+
+def _fmt_num(value: float, suffix: str = "", nd: int = 1) -> str:
+    v = _safe_float(value, 0.0)
+    if abs(v) >= 1000:
+        body = f"{v:,.{nd}f}"
     else:
-        mean = float(col.get("mean", 0) or 0)
-        mn = float(col.get("min", mean) or mean)
-        mx = float(col.get("max", mean) or mean)
-    variation = ((mx - mn) / mean * 100.0) if mean > 0 and mx >= mn else 0.0
-    return {"mean": mean, "min": mn, "max": mx, "variation_pct": variation, "nonzero_count": cnt}
-
-def _ts_column_name(ts: Dict[str, Any], *partials: str) -> str:
-    """Return the actual timeseries CSV column name matching any partial."""
-    if not isinstance(ts, dict):
-        return ""
-    skip = {"rows", "columns", "first", "last", "error"}
-    cols = list(ts.get("columns") or [])
-    # exact / substring over declared columns first so first/last lookup works.
-    for partial in partials:
-        if partial in ts and isinstance(ts.get(partial), dict):
-            return partial
-        for c in cols:
-            if partial in str(c):
-                return str(c)
-        for k, val in ts.items():
-            if k in skip or not isinstance(val, dict):
-                continue
-            if partial in str(k):
-                return str(k)
-    return ""
+        body = f"{v:.{nd}f}"
+    if nd == 0:
+        body = f"{v:,.0f}"
+    return body + suffix
 
 
-def _ts_delta(ts: Dict[str, Any], *partials: str) -> float:
-    """Counter delta from first/last rows for a matched timeseries column."""
-    col = _ts_column_name(ts, *partials)
-    if not col:
+def _ts_col(summary: dict, *names: str) -> dict:
+    if not isinstance(summary, dict):
+        return {}
+    # exact lookup first
+    for name in names:
+        if name in summary and isinstance(summary.get(name), dict):
+            return summary.get(name) or {}
+    # substring/suffix lookup for Prometheus label-expanded column names
+    lowered = [(str(k).lower(), k) for k in summary.keys()]
+    for name in names:
+        nl = str(name).lower()
+        for kl, k in lowered:
+            if kl == nl or kl.endswith(nl) or nl in kl:
+                v = summary.get(k)
+                if isinstance(v, dict):
+                    return v
+    return {}
+
+
+def _ts_delta(summary: dict, *names: str) -> float:
+    c = _ts_col(summary, *names)
+    if not c:
         return 0.0
+    if "delta" in c:
+        return max(0.0, _safe_float(c.get("delta"), 0.0))
+    first = _safe_float(c.get("first"), 0.0)
+    last = _safe_float(c.get("last"), 0.0)
+    return max(0.0, last - first)
+
+
+def _ts_ratio_delta_ms(summary: dict, sum_col: str, count_col: str) -> float:
+    ds = _ts_delta(summary, sum_col)
+    dc = _ts_delta(summary, count_col)
+    if ds > 0 and dc > 0:
+        return (ds / dc) * 1000.0
+    return 0.0
+
+
+def _pct_ts_latency_ms(pct_ts, metric: str, pct: str = "p50") -> float:
+    # Supports either a list of records or a dict keyed by metric/percentile.
+    vals = []
     try:
-        first = ts.get("first") or {}
-        last = ts.get("last") or {}
-        a = _safe_float(first.get(col), None)  # type: ignore[arg-type]
-        b = _safe_float(last.get(col), None)   # type: ignore[arg-type]
-        if a is None or b is None:
-            return 0.0
-        d = float(b) - float(a)
-        return d if d > 0 else 0.0
+        if isinstance(pct_ts, list):
+            for row in pct_ts:
+                if not isinstance(row, dict):
+                    continue
+                blob = " ".join(str(row.get(k, "")).lower() for k in row.keys())
+                if metric.lower() in blob and pct.lower() in blob:
+                    for key in ("value_ms", "latency_ms", "value", "y"):
+                        v = _safe_float(row.get(key), 0.0)
+                        if v > 0:
+                            vals.append(v)
+                            break
+        elif isinstance(pct_ts, dict):
+            for k, v in pct_ts.items():
+                kl = str(k).lower()
+                if metric.lower() in kl and pct.lower() in kl:
+                    if isinstance(v, dict):
+                        vv = _safe_float(v.get("mean", v.get("value", 0.0)), 0.0)
+                    else:
+                        vv = _safe_float(v, 0.0)
+                    if vv > 0:
+                        vals.append(vv)
     except Exception:
         return 0.0
-
+    return sum(vals)/len(vals) if vals else 0.0
 
 
 def _pct_from_ratio(num: float, den: float) -> float:
-    try:
-        if den and den > 0:
-            v = float(num) / float(den) * 100.0
-            return max(0.0, min(100.0, v))
-    except Exception:
-        pass
-    return 0.0
+    num = _safe_float(num, 0.0); den = _safe_float(den, 0.0)
+    if den <= 0:
+        return 0.0
+    return max(0.0, min(100.0, (num / den) * 100.0))
+
 
 def _normalise_pct(v: float) -> float:
-    try:
-        x = float(v)
-        if x <= 0:
-            return 0.0
-        return x * 100.0 if x <= 1.0 else min(x, 100.0)
-    except Exception:
+    v = _safe_float(v, 0.0)
+    if 0.0 < v <= 1.0:
+        v *= 100.0
+    return max(0.0, min(100.0, v))
+
+
+def _ts_active_mean(summary: dict, *names: str) -> float:
+    c = _ts_col(summary, *names)
+    if not c:
         return 0.0
-
-def _ts_ratio_delta_ms(ts: Dict[str, Any], sum_partial: str, count_partial: str) -> float:
-    """Mean latency in ms from Prometheus histogram/summary counter deltas."""
-    ds = _ts_delta(ts, sum_partial)
-    dc = _ts_delta(ts, count_partial)
-    if ds > 0 and dc > 0:
-        return ds / dc * 1000.0
-    return 0.0
+    return _safe_float(c.get("nonzero_mean", c.get("mean", 0.0)), 0.0)
 
 
+def _ts_active_p50(summary: dict, *names: str) -> float:
+    # Approximate p50 with mean when the compact CSV summary has no sample list.
+    return _ts_active_mean(summary, *names)
 
 
-def _pct_ts_latency_ms(pct_ts: Dict[str, Any], metric_key: str, percentile: str = "p50") -> float:
-    """Return representative latency from sglang_percentiles_timeseries.json.
+def _ts_gauge_stats(summary: dict, *names: str) -> dict:
+    c = _ts_col(summary, *names)
+    return dict(c) if isinstance(c, dict) else {}
 
-    This is a selected-window fallback when cumulative _sum/_count latency
-    counters are absent.  It avoids reusing stale sglang_summary.json values
-    across different runs/windows.  Values in the percentile JSON are already
-    in ms for TTFT/ITL/E2E in AMOprof's generated file.
+
+def _amoprof_has_explicit_l3_config(setup: dict, launch: str = "") -> bool:
+    """Return True when setup/launch explicitly describes an L3/L3.5 tier.
+
+    Used only for capacity/context gating.  Runtime movement can still make the
+    effective tier active later, but explicit setup fields should allow df/capacity
+    context to be shown.
     """
-    try:
-        block = (pct_ts or {}).get(metric_key) or {}
-        vals = block.get(percentile) or []
-        clean = []
-        for v in vals:
-            try:
-                x = float(v)
-                if x == x and x > 0:
-                    clean.append(x)
-            except Exception:
-                pass
-        if clean:
-            # Active-window average of percentile samples.  This is more stable
-            # than taking only the last bucket and still tracks run differences.
-            return sum(clean) / len(clean)
-    except Exception:
-        pass
-    return 0.0
+    if not isinstance(setup, dict):
+        setup = {}
+    keys = [
+        "KV cache tier", "L3 storage type", "L3 Device", "L3 device",
+        "L3 storage path", "L3 path", "L3 capacity", "L3 capacity GB",
+        "AI Memory Node", "AI Memory Node endpoint", "Mooncake endpoint",
+        "Remote storage endpoint", "L3.5 endpoint",
+    ]
+    for k in keys:
+        if k in setup and not _amoprof_missing(setup.get(k)):
+            return True
+    text = " ".join(str(setup.get(k, "")) for k in setup) + " " + str(launch or "")
+    low = text.lower()
+    explicit_terms = [
+        "--hicache-storage-backend", "--hicache-storage-prefetch-policy",
+        "mooncake", "ai memory node", "l3.5", "rdma", "remote",
+        "nvme", "/dev/nvme", "ssd", "l3 storage",
+    ]
+    return any(t in low for t in explicit_terms)
 
 
-def _ts_last_value(ts: Dict[str, Any], *partials: str) -> float:
-    """Latest numeric gauge/counter sample for a matched timeseries column."""
-    col = _ts_column_name(ts, *partials)
-    if not col:
-        return 0.0
-    try:
-        return _safe_float((ts.get("last") or {}).get(col), 0.0)
-    except Exception:
-        return 0.0
+def _amoprof_storage_label_cleanup(html_text: str, l3_backend_class: str = "") -> str:
+    """Normalize visible L3/L3.5 labels consistently.
 
-    cls = "ok" if ok else "warn"
-    icon = "✓" if ok else "!"
-    return f'<span class="pill {cls}">{icon} {_html.escape(label)}</span>' + (f'<span class="muted"> {_html.escape(detail)}</span>' if detail else "")
+    Report convention:
+      * L3   = local SSD/NVMe/file-backed cache tier.
+      * L3.5 = AI Memory Node / remote/shared/disaggregated backing tier, or
+               unresolved logical SGLang backing-tier movement when no local
+               SSD/block mapping exists.
+
+    The resolver passes backend_class='local_ssd' only for local SSD.  All other
+    classes use L3.5 wording so a remote AI Memory Node run is never shown as
+    local SSD L3.  Base64 image payloads are protected before text replacement.
+    """
+    if not html_text:
+        return html_text
+
+    data_uri_re = re.compile(r'data:image/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=\s]+')
+    protected_payloads: list[str] = []
+
+    def _stash_data_uri(match: re.Match) -> str:
+        protected_payloads.append(match.group(0))
+        return f"__AMOPROF_DATA_URI_{len(protected_payloads) - 1}__"
+
+    html_text = data_uri_re.sub(_stash_data_uri, html_text)
+
+    is_local = (str(l3_backend_class or "").lower() == "local_ssd")
+    tier = "L3" if is_local else "L3.5"
+    tier_long = "L3 (SSD/local storage)" if is_local else "L3.5 (AI Memory Node / remote storage)"
+
+    # Collapse prior accidental repeated L3.5 decorations.
+    html_text = re.sub(
+        r'(L3\.5 \(AI Memory Node / remote storage\))(?:\.5 \(AI Memory Node / remote storage\))+',
+        r'\1', html_text)
+
+    if is_local:
+        replacements = {
+            "L3.5 (AI Memory Node / remote storage)": tier_long,
+            "L3 (AI Memory Node / remote storage)": tier_long,
+            "L3 (AI Memory Node)": tier_long,
+            "L3 (local storage)": tier,
+            "L3 local storage": tier,
+            "L3 local-storage": tier,
+            "L3 local SSD": "L3 SSD",
+            "L3 storage": "L3 storage",
+            "L3 Storage": "L3 storage",
+            "KV$ SSD IO": "KV$ L3 I/O",
+            "KV$ SSD I/O": "KV$ L3 I/O",
+            "KV$ SSD": "KV$ L3",
+            "NVMe read throughput": "L3 read throughput",
+            "NVMe Read Throughput": "L3 read throughput",
+            "NVMe read BW": "L3 read BW",
+            "NVMe Read BW": "L3 read BW",
+        }
+    else:
+        replacements = {
+            "L3.5 (AI Memory Node / remote storage)": tier_long,
+            "L3 (AI Memory Node / remote storage)": tier_long,
+            "L3 (AI Memory Node)": tier_long,
+            "L3 (local storage)": tier_long,
+            "L3 local storage": tier_long,
+            "L3 local-storage": tier_long,
+            "L3 local SSD": tier_long,
+            "L3 storage / blktrace": "L3.5 / backing-tier telemetry",
+            "L3 storage block telemetry": "L3.5 backing-tier telemetry",
+            "L3 storage block-device": "L3.5 backing-tier device",
+            "L3 storage QUEUE": "L3.5 QUEUE",
+            "L3 storage Queue": "L3.5 Queue",
+            "L3 storage queue": "L3.5 queue",
+            "L3 storage": "L3.5 storage",
+            "L3 Storage": "L3.5 storage",
+            "KV$ L3 IO": "KV$ L3.5 I/O",
+            "KV$ L3 I/O": "KV$ L3.5 I/O",
+            "KV$ L3 ": "KV$ L3.5 ",
+            "KV$ L3\n": "KV$ L3.5\n",
+            "Logical KV movement — L3": "Logical KV movement — L3.5",
+            "Physical L3 block": "Physical L3.5 block",
+            "Physical L3.5 block R / W total": "Physical L3.5 block R / W total",
+            "NVMe read throughput": "L3.5 read throughput",
+            "NVMe Read Throughput": "L3.5 read throughput",
+            "NVMe read BW": "L3.5 read BW",
+            "NVMe Read BW": "L3.5 read BW",
+        }
+    for a, b in replacements.items():
+        html_text = html_text.replace(a, b)
+
+    # Clean up any doubled L3.5 token from overlapping replacements.
+    html_text = html_text.replace("L3.5.5", "L3.5")
+    html_text = html_text.replace("L3.5.5", "L3.5")
+
+    for i, payload in enumerate(protected_payloads):
+        html_text = html_text.replace(f"__AMOPROF_DATA_URI_{i}__", payload)
+    return html_text
 
 
 # ─── Executive summary generation ──────────────────────────────────────────
@@ -2640,6 +2411,14 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     l3_est_read_gb  = prefetched_tokens * kv_bytes_tok_kb / (1024 * 1024) if l3_reliable_sglang_logical_local_ssd > 0 else 0.0
     l3_ambiguous_loadback_gb = loadback_tokens * kv_bytes_tok_kb / (1024 * 1024) if loadback_tokens > 0 else 0.0
     l3_sglang_activity_tokens = l3_reliable_sglang_logical_local_ssd
+    # Derive L3.5 when SGLang proves backing-tier movement but setup does not
+    # resolve a local SSD/NVMe/file-backed mapping.  Explicit setup still wins;
+    # this only reclassifies unknown/none logical backing-tier traffic.
+    if (l3_sglang_activity_tokens > 0 and str(l3_backend_class).lower() in {"", "none", "unknown"}
+            and not bool(l3_storage_has_block_mapping or l3_storage_is_local_block)):
+        l3_backend_class = "remote_storage"
+        l3_backend_display = "L3.5 (AI Memory Node / remote storage)"
+        l3_storage_type = "AI Memory Node / remote storage"
 
     _block_read_gb = float(read_gb or 0.0)
     _block_write_gb = float(write_gb or 0.0)
@@ -3356,6 +3135,14 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     _backup_rate = backuped_tokens / max(duration_s, 1.0)
     _prefetch_rate = prefetched_tokens / max(duration_s, 1.0)
     _loadback_rate = loadback_tokens / max(duration_s, 1.0)
+    # v1.39.92: DRAM/KV movement fallback for Prometheus-only runs.
+    # This is not a PMU channel bandwidth measurement; it is an estimated KV
+    # movement rate from SGLang counters so the Executive bottleneck evidence
+    # does not show missing DRAM context when AMDuProf/PCM was not collected.
+    _kv_move_restore_gbs = (loadback_tokens * kv_bytes_tok_kb / (1024 * 1024) / max(duration_s, 1.0)) if loadback_tokens > 0 else 0.0
+    _kv_move_backup_gbs = (backuped_tokens * kv_bytes_tok_kb / (1024 * 1024) / max(duration_s, 1.0)) if backuped_tokens > 0 else 0.0
+    _kv_move_prefetch_gbs = (prefetched_tokens * kv_bytes_tok_kb / (1024 * 1024) / max(duration_s, 1.0)) if prefetched_tokens > 0 else 0.0
+    _kv_move_total_gbs = _kv_move_restore_gbs + _kv_move_backup_gbs + _kv_move_prefetch_gbs
 
     _gpu_reason = (
         "GPU utilization is not expected to be 100% when long-context prefill, "
@@ -3368,10 +3155,18 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         f"mem-fraction-static={mem_frac} reserves memory for model weights, KV pool, CUDA graphs, and activations; "
         "HBM does not need to be 100% full, and unused HBM may indicate room to grow the KV pool."
     )
-    _dram_reason = (
-        f"DRAM BW is {_dram_util_pct:.1f}% of peak and L2 residency is {_l2_used_txt}. "
-        "Low DRAM BW/no swap means L2 is not bandwidth-saturated and may absorb more KV before L3."
-    )
+    if dram_total_bw > 0:
+        _dram_reason = (
+            f"DRAM BW is {_dram_util_pct:.1f}% of peak and L2 residency is {_l2_used_txt}. "
+            "Low DRAM BW/no swap means L2 is not bandwidth-saturated and may absorb more KV before L3."
+        )
+    else:
+        _dram_reason = (
+            "CPU PMU DRAM bandwidth was not collected, so physical DRAM-channel saturation cannot be proven. "
+            f"SGLang KV movement fallback estimates ~{_kv_move_total_gbs:.2f} GB/s total logical host-tier movement "
+            f"(restore/load_back {_kv_move_restore_gbs:.2f}, backup/offload {_kv_move_backup_gbs:.2f}, prefetch/onboard {_kv_move_prefetch_gbs:.2f} GB/s). "
+            f"L2 residency is {_l2_used_txt}. Use this fallback for correlation/shape, not for memory-controller saturation."
+        )
     _l3_reason = (
         f"L3 physical BW is {nvme_rd_bw:.1f} MB/s read / {nvme_wr_bw:.1f} MB/s write "
         f"({_l3_bw_pct:.1f}% of read target), with physical movement {read_gb:.3f} GB read / {write_gb:.1f} GB write. "
@@ -3476,13 +3271,16 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         evidence_box(
             "DRAM bandwidth headroom",
             [
-                ("DRAM BW", f"{dram_total_bw:.1f} GB/s", "good"),
+                ("PMU DRAM BW", f"{dram_total_bw:.1f} GB/s" if dram_total_bw > 0 else "not collected", "good" if dram_total_bw > 0 else "warn"),
                 ("DRAM peak", f"{dram_peak_cap:.0f} GB/s", "neutral"),
-                ("DRAM pct", f"{_dram_pct:.1f}%", "good" if _dram_pct < 30 else "warn"),
+                ("DRAM pct", f"{_dram_pct:.1f}%" if dram_total_bw > 0 else "N/A", "good" if dram_total_bw > 0 and _dram_pct < 30 else "warn"),
+                ("KV restore est", f"{_kv_move_restore_gbs:.2f} GB/s", "warn" if _kv_move_restore_gbs > 0 else "neutral"),
+                ("KV backup est", f"{_kv_move_backup_gbs:.2f} GB/s", "warn" if _kv_move_backup_gbs > 0 else "neutral"),
+                ("KV prefetch est", f"{_kv_move_prefetch_gbs:.2f} GB/s", "warn" if _kv_move_prefetch_gbs > 0 else "neutral"),
                 ("L2 used", _l2_used_txt, "good" if l2_dram_capacity_gb and l2_dram_used_gb < l2_dram_capacity_gb else "warn"),
             ],
-            "If DRAM BW and capacity have headroom, the recommended first fix for L3 L2→L1 restore pressure is larger L2 HiCache, not faster SSD.",
-            "raw/amduprof_pcm_raw.csv or raw/amduprof_pcm_timeseries.csv, SGLang host-cache residency counters, setup_details.json",
+            "If physical DRAM BW and capacity have headroom, the recommended first fix for L3/L2→L1 restore pressure is larger L2 HiCache, not faster SSD. When PMU is missing, the KV movement estimates provide correlation context but do not prove channel saturation.",
+            "raw/amduprof_pcm_raw.csv or raw/amduprof_pcm_timeseries.csv when available; fallback from raw/sglang_timeseries.csv backuped/load_back/prefetched counters and setup/model KV bytes per token.",
             "high" if dram_total_bw > 0 else "medium",
         ),
         evidence_box(
@@ -3514,8 +3312,8 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
          f"Token-weighted {cache_hit_tw:.1f}% vs gauge {cache_hit:.1f}%",
          "Shared system-prompt prefix; LPM scheduling"),
         ("DRAM bandwidth", score_dram, "blue",
-         f"{dram_total_bw:.1f} GB/s of {dram_peak_cap:.0f} GB/s" if dram_total_bw else "N/A",
-         "Not the bottleneck — expand L2 allocation"),
+         (f"{dram_total_bw:.1f} GB/s of {dram_peak_cap:.0f} GB/s" if dram_total_bw else f"PMU missing; KV movement est {_kv_move_total_gbs:.2f} GB/s"),
+         "Not proven saturated — expand/validate L2 allocation"),
         ("OS / memory pressure", score_os, "green",
          "Zero swap" if swap_pages == 0 else f"{swap_pages:.0f} swap/s",
          "No action needed"),

@@ -16,7 +16,7 @@ _MISSING = {"", "unknown", "none", "n/a", "na", "null", "default", "disabled", "
 @dataclass(frozen=True)
 class L3BackendResolution:
     backend_class: str          # local_ssd | remote_mooncake | remote_storage | host_dram_only | unknown
-    display_name: str           # Local SSD, Mooncake, Remote storage, ...
+    display_name: str           # Canonical visible tier label, e.g. L3 or L3.5
     logical_write_label: str    # what backuped_tokens_total means
     logical_read_label: str     # what prefetched means; load_back is diagnostic-only
     has_local_block_mapping: bool
@@ -81,6 +81,16 @@ def resolve_l3_backend(setup: Mapping[str, Any] | None, launch_command: str | No
     # classification (which would mislabel L3.5/AI-Memory-Node runs as L3 SSD).
     storage_type = _get_explicit(setup, "L3 storage type", "l3_storage_type", "L3 type", "l3_type", "Cache L3 (local storage) backend", "cache_l3_backend")
     backend = _get_explicit(setup, "HiCache storage backend", "hicache_storage_backend", "L3 backend", "l3_backend", "storage_backend", "hicache_backend")
+    # Optional explicit tier naming override.  This is the preferred way to
+    # disambiguate NVIDIA-style L3 vs L3.5 naming in reports:
+    #   - L3   = local SSD/NVMe/file-backed storage tier
+    #   - L3.5 = AI Memory Node / remote/shared/disaggregated backing tier
+    explicit_tier = _get_explicit(
+        setup,
+        "KV cache tier", "kv_cache_tier", "KV backing tier", "kv_backing_tier",
+        "L3 cache tier", "l3_cache_tier", "L3/L3.5 tier", "l3_l35_tier",
+        "AMOprof cache tier", "amoprof_cache_tier", "Memory tier", "memory_tier"
+    )
     device = _get_explicit(setup, "L3 Device", "L3 device", "L3 block device", "l3_device", "L3 (local storage) device", "l3_storage_device", "NVMe device", "ssd_device")
     mount = _get_explicit(setup, "L3 Mount Path", "L3 mount path", "L3 mount", "l3_mount_path", "L3 (local storage) mount path", "l3_storage_mount_path")
     path = _get_explicit(setup, "HiCache storage path", "hicache_storage_path", "L3 filesystem path", "L3 storage path", "l3_storage_path", "storage_path")
@@ -98,14 +108,30 @@ def resolve_l3_backend(setup: Mapping[str, Any] | None, launch_command: str | No
     device_l = device.lower().strip()
     has_mapping = bool(device or mount or path)
 
+    tier_l = explicit_tier.lower().strip()
+    tier_blob = " ".join([tier_l, storage_l, backend_l]).lower()
+    if tier_l in {"l3.5", "l35", "l3_5", "l3-5"} or any(x in tier_blob for x in ("ai memory", "ai-memory", "aimemory", "remote", "shared", "disaggregated", "mooncake", "moon cake")):
+        return L3BackendResolution(
+            "remote_storage", "L3.5 (AI Memory Node / remote storage)",
+            "logical L3.5 write/offload from sglang_backuped_tokens_total",
+            "logical L3.5 read/onboard from sglang_prefetched_tokens_total; sglang_load_back_tokens_total is diagnostic-only",
+            False, evidence="explicit L3.5 / AI Memory Node tier in setup_details")
+    if tier_l == "l3" or any(x in tier_blob for x in ("local ssd", "local_ssd", "nvme", "ssd", "local storage", "local-storage")):
+        return L3BackendResolution(
+            "local_ssd", "L3 (SSD/local storage)",
+            "logical L3 write/offload from sglang_backuped_tokens_total",
+            "logical L3 read/onboard from sglang_prefetched_tokens_total; sglang_load_back_tokens_total is diagnostic-only",
+            has_mapping, local_device=device, local_mount_path=mount, local_storage_path=path,
+            evidence="explicit L3 local SSD tier in setup_details")
+
     if any(x in blob for x in ("mooncake", "moon cake")):
         return L3BackendResolution(
-            "remote_mooncake", "L3 (AI Memory Node / remote storage)",
-            "logical L3 write from sglang_backuped_tokens_total",
-            "logical L3 read/onboard from sglang_prefetched_tokens_total; sglang_load_back_tokens_total is diagnostic-only",
+            "remote_mooncake", "L3.5 (AI Memory Node / remote storage)",
+            "logical L3.5 write/offload from sglang_backuped_tokens_total",
+            "logical L3.5 read/onboard from sglang_prefetched_tokens_total; sglang_load_back_tokens_total is diagnostic-only",
             False, evidence="mooncake in setup/launch")
 
-    remote_strong = any(x in " ".join([backend_l, launch_l, path_l, mount_l])
+    remote_strong = any(x in " ".join([storage_l, backend_l, launch_l, path_l, mount_l])
                         for x in ("s3://", "object://", "rdma", "nfs", "lustre", "weka", "ceph", "disaggregated", "ai-memory-node", "ai_memory_node"))                     or backend_l in {"remote", "remote_storage", "object", "s3", "nfs", "ceph", "weka", "lustre"}
 
     local_strong = bool(
@@ -121,24 +147,24 @@ def resolve_l3_backend(setup: Mapping[str, Any] | None, launch_command: str | No
     # inside a label does not.  Otherwise any concrete local evidence means L3.
     if remote_strong and not local_strong:
         return L3BackendResolution(
-            "remote_storage", "L3 (AI Memory Node / remote storage)",
-            "logical L3 write from sglang_backuped_tokens_total",
-            "logical L3 read/onboard from sglang_prefetched_tokens_total; sglang_load_back_tokens_total is diagnostic-only",
+            "remote_storage", "L3.5 (AI Memory Node / remote storage)",
+            "logical L3.5 write/offload from sglang_backuped_tokens_total",
+            "logical L3.5 read/onboard from sglang_prefetched_tokens_total; sglang_load_back_tokens_total is diagnostic-only",
             False, evidence="explicit remote/object/disaggregated backend in setup/launch")
 
     if local_strong:
         return L3BackendResolution(
-            "local_ssd", "L3 (local storage)",
-            "logical L3 local-storage write from sglang_backuped_tokens_total",
-            "logical L3 local-storage read/onboard from sglang_prefetched_tokens_total; sglang_load_back_tokens_total is diagnostic-only",
+            "local_ssd", "L3 (SSD/local storage)",
+            "logical L3 write/offload from sglang_backuped_tokens_total",
+            "logical L3 read/onboard from sglang_prefetched_tokens_total; sglang_load_back_tokens_total is diagnostic-only",
             has_mapping, local_device=device, local_mount_path=mount, local_storage_path=path,
             evidence="explicit L3 local SSD/file/path/device evidence in setup/launch")
 
     if remote_strong:
         return L3BackendResolution(
-            "remote_storage", "L3 (AI Memory Node / remote storage)",
-            "logical L3 write from sglang_backuped_tokens_total",
-            "logical L3 read/onboard from sglang_prefetched_tokens_total; sglang_load_back_tokens_total is diagnostic-only",
+            "remote_storage", "L3.5 (AI Memory Node / remote storage)",
+            "logical L3.5 write/offload from sglang_backuped_tokens_total",
+            "logical L3.5 read/onboard from sglang_prefetched_tokens_total; sglang_load_back_tokens_total is diagnostic-only",
             False, evidence="explicit remote/object/disaggregated backend in setup/launch")
 
     hicache = _get(setup, "HiCache", "Hierarchical cache", "enable_hierarchical_cache", "hicache", "HiCache enabled")
@@ -151,8 +177,8 @@ def resolve_l3_backend(setup: Mapping[str, Any] | None, launch_command: str | No
 
     return L3BackendResolution(
         "unknown", "Unresolved backing tier",
-        "generic logical HiCache backup from sglang_backuped_tokens_total",
-        "generic logical HiCache read/onboard from sglang_prefetched_tokens_total; sglang_load_back_tokens_total is diagnostic-only",
+        "generic logical L3.5/HiCache backup from sglang_backuped_tokens_total",
+        "generic logical L3.5/HiCache read/onboard from sglang_prefetched_tokens_total; sglang_load_back_tokens_total is diagnostic-only",
         False, evidence="no explicit backend evidence")
 
 @dataclass(frozen=True)

@@ -48,23 +48,98 @@ PLOTLY_CDN = "https://cdn.plot.ly/plotly-2.35.2.min.js"
 
 
 def _amoprof_storage_label_cleanup(html_text: str, l3_backend_class: str = "") -> str:
+    """Normalize visible L3/L3.5 labels consistently.
+
+    Report convention:
+      * L3   = local SSD/NVMe/file-backed cache tier.
+      * L3.5 = AI Memory Node / remote/shared/disaggregated backing tier, or
+               unresolved logical SGLang backing-tier movement when no local
+               SSD/block mapping exists.
+
+    The resolver passes backend_class='local_ssd' only for local SSD.  All other
+    classes use L3.5 wording so a remote AI Memory Node run is never shown as
+    local SSD L3.  Base64 image payloads are protected before text replacement.
+    """
     if not html_text:
         return html_text
-    # KV$ backing-tier wording follows the resolved backend: only local_ssd keeps
-    # "L3 (local storage)"; every other class (remote / host_dram_only / unknown)
-    # uses "L3 (AI Memory Node / remote storage)" so a no-local-SSD run is never
-    # mislabeled as L3 SSD.
-    _is_local = (str(l3_backend_class or "").lower() == "local_ssd")
-    _tier = "L3 (local storage)" if _is_local else "L3 (AI Memory Node / remote storage)"
-    for a, b in {
-        "KV$ SSD IO": f"KV$ {_tier} logical movement",
-        "KV$ SSD I/O": f"KV$ {_tier} I/O",
-        "KV$ SSD": f"KV$ {_tier}",
-        "NVMe read throughput": f"{_tier} read throughput",
-        "NVMe read BW": f"{_tier} read throughput",
-    }.items():
+
+    data_uri_re = re.compile(r'data:image/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=\s]+')
+    protected_payloads: list[str] = []
+
+    def _stash_data_uri(match: re.Match) -> str:
+        protected_payloads.append(match.group(0))
+        return f"__AMOPROF_DATA_URI_{len(protected_payloads) - 1}__"
+
+    html_text = data_uri_re.sub(_stash_data_uri, html_text)
+
+    is_local = (str(l3_backend_class or "").lower() == "local_ssd")
+    tier = "L3" if is_local else "L3.5"
+    tier_long = "L3 (SSD/local storage)" if is_local else "L3.5 (AI Memory Node / remote storage)"
+
+    # Collapse prior accidental repeated L3.5 decorations.
+    html_text = re.sub(
+        r'(L3\.5 \(AI Memory Node / remote storage\))(?:\.5 \(AI Memory Node / remote storage\))+',
+        r'\1', html_text)
+
+    if is_local:
+        replacements = {
+            "L3.5 (AI Memory Node / remote storage)": tier_long,
+            "L3 (AI Memory Node / remote storage)": tier_long,
+            "L3 (AI Memory Node)": tier_long,
+            "L3 (local storage)": tier,
+            "L3 local storage": tier,
+            "L3 local-storage": tier,
+            "L3 local SSD": "L3 SSD",
+            "L3 storage": "L3 storage",
+            "L3 Storage": "L3 storage",
+            "KV$ SSD IO": "KV$ L3 I/O",
+            "KV$ SSD I/O": "KV$ L3 I/O",
+            "KV$ SSD": "KV$ L3",
+            "NVMe read throughput": "L3 read throughput",
+            "NVMe Read Throughput": "L3 read throughput",
+            "NVMe read BW": "L3 read BW",
+            "NVMe Read BW": "L3 read BW",
+        }
+    else:
+        replacements = {
+            "L3.5 (AI Memory Node / remote storage)": tier_long,
+            "L3 (AI Memory Node / remote storage)": tier_long,
+            "L3 (AI Memory Node)": tier_long,
+            "L3 (local storage)": tier_long,
+            "L3 local storage": tier_long,
+            "L3 local-storage": tier_long,
+            "L3 local SSD": tier_long,
+            "L3 storage / blktrace": "L3.5 / backing-tier telemetry",
+            "L3 storage block telemetry": "L3.5 backing-tier telemetry",
+            "L3 storage block-device": "L3.5 backing-tier device",
+            "L3 storage QUEUE": "L3.5 QUEUE",
+            "L3 storage Queue": "L3.5 Queue",
+            "L3 storage queue": "L3.5 queue",
+            "L3 storage": "L3.5 storage",
+            "L3 Storage": "L3.5 storage",
+            "KV$ L3 IO": "KV$ L3.5 I/O",
+            "KV$ L3 I/O": "KV$ L3.5 I/O",
+            "KV$ L3 ": "KV$ L3.5 ",
+            "KV$ L3\n": "KV$ L3.5\n",
+            "Logical KV movement — L3": "Logical KV movement — L3.5",
+            "Physical L3 block": "Physical L3.5 block",
+            "Physical L3.5 block R / W total": "Physical L3.5 block R / W total",
+            "NVMe read throughput": "L3.5 read throughput",
+            "NVMe Read Throughput": "L3.5 read throughput",
+            "NVMe read BW": "L3.5 read BW",
+            "NVMe Read BW": "L3.5 read BW",
+        }
+    for a, b in replacements.items():
         html_text = html_text.replace(a, b)
+
+    # Clean up any doubled L3.5 token from overlapping replacements.
+    html_text = html_text.replace("L3.5.5", "L3.5")
+    html_text = html_text.replace("L3.5.5", "L3.5")
+
+    for i, payload in enumerate(protected_payloads):
+        html_text = html_text.replace(f"__AMOPROF_DATA_URI_{i}__", payload)
     return html_text
+
 
 # ─── Run-wide wall-clock anchor ──────────────────────────────────────────────
 # Set once by build_report() from summary.json "t0_epoch" (Unix timestamp of
@@ -1654,6 +1729,69 @@ def _chart_dram_bw_from_timeseries(rows: list[dict]) -> dict | None:
         ],
         "layout": _layout("System DRAM Bandwidth (AMDuProf PCM)",
                           "GB / sec", ts=ts)
+    }
+
+
+def _chart_dram_bw_from_kv_activity(sglang: list[dict], kv_bytes_per_token: float) -> dict | None:
+    """Fallback DRAM/KV movement chart from SGLang token counters.
+
+    This is not a CPU PMU bandwidth counter.  It estimates host-memory traffic
+    caused by KV movement when AMDuProf/Intel PCM was not collected:
+      • write/offload  = backuped_tokens_total × KV bytes/token
+      • read/restore   = load_back_tokens_total × KV bytes/token
+      • L3 prefetch    = prefetched_tokens_total × KV bytes/token (shown as a
+        separate read-side component when present)
+    """
+    if not sglang or kv_bytes_per_token <= 0:
+        return None
+    ts = _col(sglang, "time_sec")
+    if len(ts) < 2:
+        return None
+    bk_col = _find_col(sglang, "backuped_tokens_total")
+    lb_col = _find_col(sglang, "load_back_tokens_total")
+    pf_col = _find_col(sglang, "prefetched_tokens_total")
+    if not (bk_col or lb_col or pf_col):
+        return None
+
+    def _rate_gbs(col: str | None) -> list[float]:
+        if not col:
+            return [0.0] * len(ts)
+        v = _col(sglang, col)
+        out = [0.0]
+        for i in range(1, len(v)):
+            dt = ts[i] - ts[i-1]
+            tok_s = max((v[i] - v[i-1]) / dt, 0.0) if dt > 0 else 0.0
+            out.append(tok_s * kv_bytes_per_token / 1e9)
+        return out
+
+    rd = _rate_gbs(lb_col)
+    wr = _rate_gbs(bk_col)
+    pf = _rate_gbs(pf_col)
+    total = [r + w + p for r, w, p in zip(rd, wr, pf)]
+    if max(total or [0.0]) <= 0:
+        return None
+    xs = _ts_to_dates(ts)
+    return {
+        "data": [
+            {"x": xs, "y": total, "type": "scatter", "mode": "lines",
+             "name": "Estimated total KV movement (GB/s)",
+             "line": {"color": "#a78bfa", "width": 2.2},
+             "hovertemplate": "<b>%{y:.3f}</b> GB/s estimated KV movement<extra></extra>"},
+            {"x": xs, "y": rd, "type": "scatter", "mode": "lines",
+             "name": "L2→L1 load_back restore read (GB/s est)",
+             "line": {"color": "#22c55e", "width": 1.8},
+             "hovertemplate": "<b>%{y:.3f}</b> GB/s estimated restore read<extra></extra>"},
+            {"x": xs, "y": wr, "type": "scatter", "mode": "lines",
+             "name": "KV backup/offload write (GB/s est)",
+             "line": {"color": "#f43f5e", "width": 1.8},
+             "hovertemplate": "<b>%{y:.3f}</b> GB/s estimated backup write<extra></extra>"},
+            {"x": xs, "y": pf, "type": "scatter", "mode": "lines",
+             "name": "L3 prefetch/onboard write-to-L2 component (GB/s est)",
+             "line": {"color": "#3b82f6", "width": 1.4, "dash": "dot"},
+             "hovertemplate": "<b>%{y:.3f}</b> GB/s estimated prefetch component<extra></extra>"},
+        ],
+        "layout": _layout("System DRAM Bandwidth — SGLang KV movement fallback",
+                          "GB / sec", ts=ts),
     }
 
 
@@ -3401,11 +3539,15 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
                   if (raw_dir / "amduprof_pcm_raw.txt").exists()
                      and (raw_dir / "amduprof_pcm_raw.txt").stat().st_size > 0
                   else raw_dir / "amduprof_pcm_raw.csv")
-    _dram_fig = _chart_dram_bw_from_timeseries(_dram_ts_rows) or _chart_dram_bw(_dram_path)
+    _dram_fig = (_chart_dram_bw_from_timeseries(_dram_ts_rows) or
+                 _chart_dram_bw(_dram_path) or
+                 _chart_dram_bw_from_kv_activity(sglang_ts, _kv_b_pt))
+    _dram_note = ("From --enable-dram: AMD uProf PCM on AMD or Intel PCM/perf IMC on Intel. "
+                  "If PMU data is missing, AMOprof falls back to an estimated KV-movement bandwidth from SGLang backup/load_back/prefetch counters; that fallback is useful for shape/correlation, not physical DRAM-channel saturation.")
     sections_html.append(_section("System DRAM Bandwidth (CPU PMU)",
                                    "ch_dram",
                                    _dram_fig,
-                                   "From --enable-dram: AMD uProf PCM on AMD or Intel PCM/perf IMC on Intel"))
+                                   _dram_note))
 
     sections_html.append(_layer_header("layer-l3", "A3/A2/A1 · L3 (local storage) / host block layer", "SGLang KV block movement is logical L3/backing-tier traffic. Host block charts are physical device telemetry and are treated as L3 only when setup_details resolves a concrete L3 local SSD device/path.", "#a45714"))
     sections_html.append(_section(f"{_host_block_label} IOPS (Read / Write / Trim)",
