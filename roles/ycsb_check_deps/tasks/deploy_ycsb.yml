@@ -1,0 +1,40 @@
+---
+- name: Identify ycsb-geode package
+  ansible.builtin.find:
+    path: "{{ artifacts_dir }}"
+    patterns:
+      - "ycsb-geode-binding-{{ gf_ycsb_ver }}*.tar"
+      - "ycsb-geode-binding-{{ gf_ycsb_ver }}*.tar.gz"
+  delegate_to: localhost
+  run_once: true
+  register: ycsb_check_deps_tar
+
+- name: Assert ycsb-geode package found
+  ansible.builtin.assert:
+    that: ycsb_check_deps_tar.files | length > 0
+    fail_msg: "No ycsb-geode package found. Please download ycsb-geode to {{ artifacts_dir }}"
+
+- name: Copy ycsb-geode package to root directory
+  ansible.builtin.copy:
+    src: "{{ ycsb_check_deps_tar.files[0].path }}"
+    dest: "{{ gf_installed_base_dir }}"
+    mode: "0755"
+  become: true
+
+- name: Get ycsb-geode package basename
+  ansible.builtin.set_fact:
+    ycsb_check_deps_pkg: "{{ ycsb_check_deps_tar.files[0].path | basename }}"
+
+- name: Check if unzipped ycsb-geode package exists
+  ansible.builtin.stat:
+    path: "{{ gf_installed_base_dir }}/{{ ycsb_check_deps_pkg }}"
+  register: ycsb_check_deps_unzip
+
+- name: Unarchive ycsb-geode package
+  ansible.builtin.unarchive:
+    src: "{{ ycsb_check_deps_unzip.stat.path }}"
+    dest: "{{ gf_installed_base_dir }}"
+    remote_src: true
+  become: true
+  when:
+    - ycsb_check_deps_unzip.stat.exists

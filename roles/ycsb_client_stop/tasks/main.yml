@@ -1,0 +1,53 @@
+# Author: June Liu
+# Contact: june.liu@samsung.com
+---
+
+# - name: Generate stop ycsb_clients scripts for ycsb_clients
+#   ansible.builtin.template:
+#     src: stop_ycsb_clients.sh.j2
+#     dest: "{{ gf_installed_base_dir }}/ycsb_benchmarks/stop_ycsb_clients.sh"
+#     mode: "0755"
+
+# - name: Conduct stop_ycsb_client.sh scripts on ycsb_clients
+#   ansible.builtin.command: "{{ gf_installed_base_dir }}/ycsb_benchmarks/stop_ycsb_clients.sh"
+#   register: ycsb_client_stop_stat
+#   changed_when: ycsb_client_stop_stat.rc != 0
+
+- name: Delete GCLogLocator directory
+  ansible.builtin.file:
+    path: /root/ycsb_benchmarks/GCLogLocator/
+    state: absent
+  become: true
+
+- name: Recreate an empty GCLogLocator directory
+  ansible.builtin.file:
+    path: /root/ycsb_benchmarks/GCLogLocator/
+    state: directory
+    mode: "0755"
+  become: true
+
+- name: Synchronize the data to disk and discard the cache
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      sync
+      echo 3 > /proc/sys/vm/drop_caches
+  args:
+    executable: /bin/bash
+  become: true
+  changed_when: true
+
+- name: Search and kill all ycsb processes
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      ps aux |
+      grep -i ycsb |
+      grep -v grep |
+      awk '{print $2}' |
+      xargs -r kill -9
+  args:
+    executable: /bin/bash
+  become: true
+  changed_when: false
+  failed_when: false

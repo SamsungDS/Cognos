@@ -1,0 +1,38 @@
+# Author: June Liu
+# Contact: june.liu@samsung.com
+---
+
+- name: Initialize occupied_ports list
+  ansible.builtin.set_fact:
+    gf_check_ports_occupied: []
+  run_once: true
+
+- name: Check if server ports are in use using sock_state
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      ss -tuln | awk '/LISTEN/ && $5 ~ /:{{ (ports | int + item) }}$/ {print $5}'
+    executable: /bin/bash
+  register: gf_check_ports_stat
+  changed_when: false
+  failed_when: false
+  loop: "{{ range(0, instance_num | int) | list }} "
+  loop_control:
+    label: "{{ ports | int + item }}"
+
+- name: Append occupied ports to occupied_ports fact
+  ansible.builtin.set_fact:
+    gf_check_ports_occupied: "{{ gf_check_ports_occupied + [ports | int + item.item] }}"
+  when: item.stdout != ''
+  loop: "{{ gf_check_ports_stat.results }}"
+  loop_control:
+    label: "{{ ports | int + item.item }}"
+
+- name: Fail the playbook if any port is already in use
+  ansible.builtin.fail:
+    msg: |
+      The following ports are already in use. The task has been terminated.
+      {% for p in gf_check_ports_occupied %}
+        - {{ p }}
+      {% endfor %}
+  when: gf_check_ports_occupied | length > 0

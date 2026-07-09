@@ -1,0 +1,17 @@
+{%- for pkg_id, phys_ids in socket_numas.items() %}
+  {%- set pkg_id_int = pkg_id | int %}
+  {%- set dram_iter = phys_ids | intersect(dram_nodes) %}
+  {%- set cxl_iter = phys_ids | intersect(cxl_nodes) %}
+  {%- for dram_node in dram_iter %}
+    {%- for cxl_node in cxl_iter %}
+      - socket: {{ pkg_id_int }}
+        dram: {{ dram_node }}
+        cxl: {{ cxl_node }}
+        output_file: /root/ycsb_benchmarks/damo-default-config-node{{ dram_node }}-{{ cxl_node }}.yaml
+        gen_config_command: |
+          /root/hmsdk/tools/gen_config.py -d {{ dram_node }} {{ cxl_node }} -p {{ cxl_node }} {{ dram_node }} -o /root/ycsb_benchmarks/damo-default-config-node{{ dram_node }}-{{ cxl_node }}.yaml
+    {%- endfor %}
+  {%- endfor %}
+  {%- if not loop.last %}\n
+  {%- endif %}
+{%- endfor %}

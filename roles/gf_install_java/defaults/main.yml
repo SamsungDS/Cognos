@@ -1,0 +1,3 @@
+---
+gf_install_java_version_set: '{{ gf_java_ver }}'
+gf_install_java_jdk_package: "{{ gf_jdk_package[ansible_distribution_file_variety | lower] }}"

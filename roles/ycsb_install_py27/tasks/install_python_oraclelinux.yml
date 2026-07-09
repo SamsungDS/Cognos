@@ -1,0 +1,74 @@
+---
+
+- name: Install Development Tools and dependencies
+  ansible.builtin.dnf:
+    name: "{{ item }}"
+    state: present
+    disable_gpg_check: true
+  become: true
+  loop: "{{ ycsb_install_py27_dependencies['oraclelinux'] }}"
+
+- name: Download Python source code
+  ansible.builtin.get_url:
+    url: "{{ ycsb_install_py27_source_url }}"
+    dest: "{{ ycsb_install_py27_build_dir }}/Python-{{ ycsb_install_py27_version }}.tgz"
+    mode: '0644'
+    validate_certs: true
+  become: true
+
+- name: Extract Python source code
+  ansible.builtin.unarchive:
+    src: "{{ ycsb_install_py27_build_dir }}/Python-{{ ycsb_install_py27_version }}.tgz"
+    dest: "{{ ycsb_install_py27_build_dir }}"
+    remote_src: true
+  become: true
+
+- name: Configure Python installation
+  ansible.builtin.command:
+    cmd: "./configure --prefix={{ ycsb_install_py27_install_dir }} --enable-optimizations"
+    chdir: "{{ ycsb_install_py27_build_dir }}/Python-{{ ycsb_install_py27_version }}"
+  become: true
+  changed_when: false
+
+- name: Compile Python
+  ansible.builtin.command:
+    cmd: "make -j {{ ansible_processor_vcpus }}"
+    chdir: "{{ ycsb_install_py27_build_dir }}/Python-{{ ycsb_install_py27_version }}"
+  become: true
+  changed_when: false
+
+- name: Install Python (altinstall)
+  ansible.builtin.command:
+    cmd: "make altinstall"
+    chdir: "{{ ycsb_install_py27_build_dir }}/Python-{{ ycsb_install_py27_version }}"
+  become: true
+  changed_when: false
+
+- name: Verify Python 2.7 installation
+  ansible.builtin.command: /usr/local/bin/python2.7 --version
+  register: ycsb_install_py27_version_output
+  changed_when: false
+
+- name: Clean up build directory
+  ansible.builtin.file:
+    path: "{{ ycsb_install_py27_build_dir }}/Python-{{ ycsb_install_py27_version }}"
+    state: absent
+  become: true
+  when:
+    - ycsb_install_py27_build_dir | default(false)
+
+- name: Remove existing /usr/bin/python
+  ansible.builtin.file:
+    path: /usr/bin/python
+    state: absent
+  become: true
+
+- name: Set system Python version as {{ gf_python_ver }}
+  ansible.builtin.file:
+    src: "/usr/local/bin/python{{ gf_python_ver }}"
+    path: /usr/bin/python
+    state: link
+    owner: root
+    group: root
+    mode: '0755'
+  become: true

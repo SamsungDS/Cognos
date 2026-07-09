@@ -1,0 +1,3 @@
+---
+dependencies:
+  - role: gf_install_numactl

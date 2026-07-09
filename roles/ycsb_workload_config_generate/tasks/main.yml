@@ -1,0 +1,32 @@
+# Author: Hua He
+# Contact: h.he@samsung.com
+---
+
+- name: Set YSCB workload config file name
+  ansible.builtin.set_fact:
+    ycsb_workload_config_generate_name: >-
+      {{ workload_config_file_parameter['typeofRun'] + '-' +
+       workload_config_file_parameter['concurrency']['clients'] | string + 'x' +
+       workload_config_file_parameter['concurrency']['threads'] | string + '-' +
+       workload_config_file_parameter['record_cnt'] | string + 'Rec-' +
+       workload_config_file_parameter['operation_cnt'] | string + 'Ops-hostpot' +
+       workload_config_file_parameter['hotspotdata'] | string + '-' +
+       workload_config_file_parameter['hotspotops'] | string + '-' + workload_config_file_parameter['ycsbConfig'] }}
+
+- name: Debug ycsb_workload_config_generate_name
+  ansible.builtin.debug:
+    msg: "{{ ycsb_workload_config_generate_name }}"
+
+- name: Generate YSCB workload config file
+  ansible.builtin.template:
+    src: workload_config_file.j2
+    dest: "{{ gf_installed_base_dir }}/ycsb_benchmarks/workload-config/{{ ycsb_workload_config_generate_name }}"
+    mode: "0644"
+  become: true
+
+- name: Generate global_config_file for ycsb workload run
+  ansible.builtin.template:
+    src: global_config_1.1KB.j2
+    dest: "{{ gf_installed_base_dir }}/ycsb_benchmarks/workload-config/global_config_1.1KB_{{ workload_config_file_parameter['ycsbConfig'] }}"
+    mode: "0644"
+  become: true

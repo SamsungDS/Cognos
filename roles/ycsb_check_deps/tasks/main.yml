@@ -1,0 +1,42 @@
+# Author: June Liu
+# Contact: june.liu@samsung.com
+---
+
+#############################
+## No need for Step1) Setup Passwordless authentication from client machine to all database servers
+## STEP 2) Install and Set the correct java version in both Client and Database servers:
+#############################
+
+- name: Install Java
+  ansible.builtin.include_role:
+    name: gf_install_java
+
+##############################
+### STEP 4) Create below set of directories in both client and database Server:
+##############################
+
+- name: Create directories with specific permissions
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: '0755'
+  loop: "{{ gf_required_dirs }}"
+  become: true
+
+###########################
+## STEP 5) Install Python 2.7:
+###########################
+
+- name: Install Python 2.7
+  ansible.builtin.include_role:
+    name: ycsb_install_py27
+
+################################
+## STEP 6) Copy YCSB Client and Database software to "/root" in Client and Database Servers (GemFire in this case):
+################################
+
+- name: Deploy gemfire and ycsb packages
+  ansible.builtin.include_tasks:
+    file: deploy_ycsb.yml

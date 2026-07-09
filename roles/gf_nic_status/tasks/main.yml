@@ -1,0 +1,137 @@
+---
+- name: Validate that gf_nic_interfaces is defined and not empty
+  ansible.builtin.assert:
+    that:
+      - gf_nic_interfaces is defined
+      - gf_nic_interfaces | length > 0
+    fail_msg: "'gf_nic_interfaces' must be a non-empty list."
+
+# --------------------------------------------------------------
+# 1  Get current IPv4 address(es) for each interface
+# --------------------------------------------------------------
+- name: "Get IPv4 address information for each NIC"
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      ip -4 -o addr show dev {{ item.interface }} | awk '{print $4}'
+    executable: /bin/bash
+  register: gf_nic_status_ip_raw
+  changed_when: false
+  loop: "{{ gf_nic_interfaces }}"
+  loop_control:
+    label: "{{ item.interface }}"
+  # If the interface does not exist at all, the command returns
+  # a non‑zero RC.  We ignore that here and treat it as “no IP”.
+  ignore_errors: true
+
+# --------------------------------------------------------------
+# 2  Get CPU socket (NUMA node) for each interface
+# --------------------------------------------------------------
+- name: "Get NUMA node (CPU socket) for each network interfaces"
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      lstopo-no-graphics |
+      egrep -E "Package|{{ item.interface | regex_escape }}" |
+      awk '
+        /Package L#/   { pkg = $NF; sub(/^L#/, "", pkg) }
+        /Net/ && /{{ item.interface | regex_escape }}/ { print pkg }
+      '
+    executable: /bin/bash
+  register: gf_nic_status_socket_raw
+  changed_when: false
+  failed_when: false        # some drivers may not expose numa_node → treat as unknown
+  loop: "{{ gf_nic_interfaces }}"
+  loop_control:
+    label: "{{ item.interface }}"
+
+- name: "Get NIC speed via ethtool for each NIC"
+  ansible.builtin.command:
+    ethtool {{ item.interface }}
+  register: gf_nic_status_ethtool_raw
+  changed_when: false
+  failed_when: false
+  loop: "{{ gf_nic_interfaces }}"
+  loop_control:
+    label: "{{ item.interface }}"
+
+# --------------------------------------------------------------
+# 3 Assemble interface facts (IP + socket + NIC Speed)
+# --------------------------------------------------------------
+- name: Assemble interface facts (IP + CPU socket + NIC Speed)
+  ansible.builtin.set_fact:
+    gf_nic_status_info: >-
+      {{
+        gf_nic_status_info | default([]) + [
+          {
+            'interface'   : ip_item.item.interface,
+            'desired_ip'  : ip_item.item.ip,
+            'current_ip'  : (ip_item.stdout_lines | default([]) | first | default('')) | split('/') | first | default(''),
+            'cpu_socket'  : (socket_item.stdout | trim) | default('unknown'),
+            'speed'       : (speed_item.stdout  | regex_findall('Speed:\\s*([0-9]+)')
+                              | first
+                              | default('unknown')
+                            )
+          }
+        ]
+      }}
+  with_together:
+    - "{{ gf_nic_status_ip_raw.results }}"      # IP
+    - "{{ gf_nic_status_socket_raw.results }}"  # socket
+    - "{{ gf_nic_status_ethtool_raw.results }}" # ethtool
+  loop_control:
+    label: "{{ item.0.item.interface }}"  # item.0 == IP-result, item.1 == socket-result
+  vars:
+    ip_item: "{{ item.0 }}"
+    socket_item: "{{ item.1 }}"
+    speed_item: "{{ item.2 }}"
+
+- name: Build a dict of socket -> NIC count
+  ansible.builtin.set_fact:
+    gf_nic_status_socket_cnts: >-
+      {{
+        gf_nic_status_socket_cnts | default({}) |
+        combine({ (item.cpu_socket|string): (gf_nic_status_socket_cnts[item.cpu_socket|string] | default(0)) + 1 })
+      }}
+  loop: "{{ gf_nic_status_info }}"
+  loop_control:
+    label: "socket {{ item.cpu_socket }}"
+
+- name: Show distribution of NICs per socket
+  ansible.builtin.debug:
+    msg: |
+      NIC distribution per CPU socket:
+      {% for sock, cnt in gf_nic_status_socket_cnts.items() %}
+        Socket {{ sock }} : {{ cnt }} NIC(s)
+      {% endfor %}
+
+# --------------------------------------------------------------
+# 4  Configure interfaces that have *no* IP yet
+# --------------------------------------------------------------
+- name: Assign missing IP address and bring the interface up
+  ansible.builtin.shell: >
+    ip addr add {{ item.desired_ip }}/24 dev {{ item.interface }} &&
+    ip link set {{ item.interface }} up
+  become: true
+  when: item.current_ip == ''
+  loop: "{{ gf_nic_status_info }}"
+  loop_control:
+    label: "{{ item.interface }} → {{ item.desired_ip }}"
+  changed_when: true
+  ignore_errors: false
+
+# --------------------------------------------------------------
+# 5  Show the final state of every interface (including CPU socket)
+# --------------------------------------------------------------
+- name: Report interface IP and CPU socket information
+  ansible.builtin.debug:
+    msg: |
+      Interface {{ item.interface }}:
+        Desired IP : {{ item.desired_ip }}
+        Current IP : {{ item.current_ip | default('none') }}
+        CPU socket : {{ item.cpu_socket }}
+        Action     : {{ 'configured' if item.current_ip == '' else 'already present' }}
+        Speed      : {{ item.speed }}
+  loop: "{{ gf_nic_status_info }}"
+  loop_control:
+    label: "{{ item.interface }}"

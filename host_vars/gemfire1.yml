@@ -1,0 +1,16 @@
+---
+gf_nvme_disks:
+  - dev: "/dev/nvme3n1"
+    mount_point: "/mnt/gemfire1"
+  - dev: "/dev/nvme4n1"
+    mount_point: "/mnt/gemfire2"
+
+gf_nic_interfaces:
+  - interface: "ens514f0np0"
+    ip: "201.0.0.13"
+  - interface: "ens514f1np1"
+    ip: "202.0.0.13"
+  - interface: "ens1282f0np0"
+    ip: "203.0.0.13"
+  - interface: "ens1282f1np1"
+    ip: "204.0.0.13"

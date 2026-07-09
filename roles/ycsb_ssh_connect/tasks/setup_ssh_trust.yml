@@ -1,0 +1,26 @@
+# Author: June Liu
+# Contact: june.liu@samsung.com
+---
+
+- name: Check if private key exists
+  ansible.builtin.stat:
+    path: "{{ ycsb_ssh_connect_key_path }}"
+  register: ycsb_ssh_connect_key_stat
+
+- name: Generate SSH key pair if not exists
+  ansible.builtin.command: >
+    ssh-keygen -t ed25519 -b 4096
+    -f {{ ycsb_ssh_connect_key_path }}
+    -N ""
+    -C "{{ ansible_user }}@{{ ansible_hostname }}"
+  when: not ycsb_ssh_connect_key_stat.stat.exists
+  changed_when: false
+
+- name: Read public key
+  ansible.builtin.command: cat {{ ycsb_ssh_connect_key_path }}.pub
+  register: ycsb_ssh_connect_key_content
+  changed_when: false
+
+- name: Store key in host fact
+  ansible.builtin.set_fact:
+    ycsb_ssh_connect_public_key: "{{ ycsb_ssh_connect_key_content.stdout }}"

@@ -1,0 +1,10 @@
+# Author: June Liu
+# Contact: june.liu@samsung.com
+---
+
+- name: Generate global_config_file for ycsb_clients
+  ansible.builtin.template:
+    src: global_config_1.1KB.j2
+    dest: "{{ gf_installed_base_dir }}/ycsb_benchmarks/workload-config/global_config_1.1KB_{{ config_type_key }}"
+    mode: "0644"
+  become: true

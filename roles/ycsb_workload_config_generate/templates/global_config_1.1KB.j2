@@ -1,0 +1,17 @@
+# The name of the workload class to use
+workload=site.ycsb.workloads.CoreWorkload
+
+#Additional Properties
+fieldcount=30
+fieldlength=33
+minfieldlength=33
+{% for config_item in config_type_workload %}
+{{ config_item }}
+{% endfor %}
+fieldnameprefix=ycsbtest
+insertorder=ordered
+measurementtype=hdrhistogram
+timeseries.granularity=1000
+reportlatencyforeacherror=true
+#core_workload_insertion_retry_limit=5
+#core_workload_insertion_retry_interval=120

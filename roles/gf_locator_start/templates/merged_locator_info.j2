@@ -1,0 +1,7 @@
+{% for conf_path in lookup('fileglob', "/tmp/collected_configs/ycsb_benchmarks/*.info", wantlist=True) %}
+{% set raw_content = lookup('file', conf_path) %}
+{% set lines = raw_content.splitlines() %}
+{% for line in lines %}
+{{ line }}
+{% endfor %}
+{% endfor %}

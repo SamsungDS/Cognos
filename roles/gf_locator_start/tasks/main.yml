@@ -1,0 +1,145 @@
+# Author: June Liu
+# Contact: june.liu@samsung.com
+---
+- name: Check if port is in use using ss
+  ansible.builtin.shell: |
+    # ss -tln sport = :{{ locator_port }}
+    ss -tuln | grep "LISTEN" | grep ":{{ locator_port }}"
+  register: gf_locator_start_port_check
+  changed_when: false
+  ignore_errors: true
+  failed_when: false
+
+- name: Debug port check result
+  ansible.builtin.debug:
+    msg: "Port {{ locator_port }} on {{ ansible_host }} is {{ 'in use' if gf_locator_start_port_check.rc == 0 else 'free' }}"
+
+- name: Ensure app directory exists
+  ansible.builtin.file:
+    path: "{{ gf_installed_base_dir }}/ycsb_benchmarks/"
+    state: directory
+    mode: '0755'
+  become: true
+  when: gf_locator_start_port_check.rc != 0
+
+- name: Copy generated shell script to remote host
+  ansible.builtin.template:
+    src: "start_locator.sh.j2"
+    dest: "{{ gf_installed_base_dir }}/ycsb_benchmarks/start_{{ inventory_hostname }}.sh"
+    mode: '0755'
+  become: true
+  register: gf_locator_start_tmpl_result
+  when: gf_locator_start_port_check.rc != 0
+
+- name: Generated check_gf_status script to remote host
+  ansible.builtin.template:
+    src: "check_gf_status.sh.j2"
+    dest: "{{ gf_installed_base_dir }}/ycsb_benchmarks/check_gf_status_{{ inventory_hostname }}.sh"
+    mode: '0755'
+  become: true
+  when: gf_locator_start_port_check.rc != 0
+
+- name: Generated gf_locator_info file to remote host
+  ansible.builtin.template:
+    src: "gf_locator_info.j2"
+    dest: "{{ gf_installed_base_dir }}/ycsb_benchmarks/gf_locator_info_{{ inventory_hostname }}.info"
+    mode: '0755'
+  become: true
+  when: gf_locator_start_port_check.rc != 0
+
+- name: Start script if port is free
+  ansible.builtin.shell:
+    cmd: |
+      source /etc/profile.d/gemfire_env.sh && echo $GEMFIRE_HOME
+      "{{ gf_installed_base_dir }}/ycsb_benchmarks/start_{{ inventory_hostname }}.sh"
+  args:
+    executable: /bin/bash
+  become: true
+  when: gf_locator_start_port_check.rc != 0
+  register: gf_locator_start_result
+  changed_when: true
+
+- name: Ensure the temporary directory for fetch check_gf_status.sh existed
+  ansible.builtin.file:
+    path: /tmp/collected_configs/ycsb_benchmarks/
+    state: directory
+    mode: "0644"
+  become: true
+  delegate_to: localhost
+  when: >
+    (gf_locator_start_result is defined and
+     gf_locator_start_result.rc is defined and
+     not gf_locator_start_result.rc)
+
+- name: Ensure the temporary directory is empty
+  ansible.builtin.shell: |
+    rm -rf /tmp/collected_configs/ycsb_benchmarks/* /tmp/collected_configs/ycsb_benchmarks/.[!.]* 2>/dev/null || true
+  delegate_to: localhost
+  changed_when: false
+  become: true
+  when: >
+    (gf_locator_start_result is defined and
+     gf_locator_start_result.rc is defined and
+     not gf_locator_start_result.rc)
+
+- name: Fetch check_gf_status.sh from each locator hosts
+  ansible.builtin.fetch:
+    src: "{{ gf_installed_base_dir }}/ycsb_benchmarks/check_gf_status_{{ inventory_hostname }}.sh"
+    dest: /tmp/collected_configs/ycsb_benchmarks/check_gf_status_{{ inventory_hostname }}.sh
+    flat: true
+    mode: "0644"
+  become: true
+  when: >
+    (gf_locator_start_result is defined and
+     gf_locator_start_result.rc is defined and
+     not gf_locator_start_result.rc)
+
+- name: Fetch gf_locator_info from each locator hosts
+  ansible.builtin.fetch:
+    src: "{{ gf_installed_base_dir }}/ycsb_benchmarks/gf_locator_info_{{ inventory_hostname }}.info"
+    dest: /tmp/collected_configs/ycsb_benchmarks/gf_locator_info_{{ inventory_hostname }}.info
+    flat: true
+    mode: "0644"
+  become: true
+  when: >
+    (gf_locator_start_result is defined and
+     gf_locator_start_result.rc is defined and
+     not gf_locator_start_result.rc)
+
+- name: Ensure directory of gf_check_stat_path exists
+  ansible.builtin.file:
+    path: "{{ gf_check_stat_path }}"
+    state: directory
+    mode: "0644"
+  delegate_to: localhost
+  become: true
+  when: >
+    (gf_locator_start_result is defined and
+     gf_locator_start_result.rc is defined and
+     not gf_locator_start_result.rc)
+
+- name: Generate merged gf_check_status.sh with sleep
+  ansible.builtin.template:
+    src: merged_check_stat.sh.j2
+    dest: "{{ gf_check_stat_path }}/{{ gf_check_stat_name }}"
+    mode: "0644"
+  delegate_to: localhost
+  run_once: true
+  become: true
+  when: >
+    (gf_locator_start_result is defined and
+     gf_locator_start_result.rc is defined and
+     not gf_locator_start_result.rc)
+
+- name: Generate the merged gemfire locators info
+  ansible.builtin.template:
+    src: merged_locator_info.j2
+    dest: "{{ gf_check_stat_path }}/{{ gf_locator_info_file }}"
+    mode: "0644"
+  delegate_to: localhost
+  run_once: true
+  become: true
+  when: >
+    (gf_locator_start_result is defined and
+     gf_locator_start_result.rc is defined and
+     not gf_locator_start_result.rc)

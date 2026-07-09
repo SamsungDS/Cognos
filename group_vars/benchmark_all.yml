@@ -1,0 +1,290 @@
+---
+artifacts_dir: "{{ inventory_dir }}/artifacts"
+supported_distributions:
+  - Ubuntu
+  - OracleLinux
+
+os_version_require:
+  Ubuntu:
+    min_ver: '22.04'
+    max_ver: '22.04'
+  OracleLinux:
+    min_ver: '9.6'
+    max_ver: '10.1'
+min_supported_major_versions: "{{ os_version_require[ansible_distribution]['min_ver'] }}"
+max_supported_major_versions: "{{ os_version_require[ansible_distribution]['max_ver'] }}"
+
+gf_java_ver: '21'
+gf_jdk_package:
+  debian: "openjdk-{{ gf_java_ver }}-jdk"
+  oraclelinux: "java-{{ gf_java_ver }}-openjdk"
+gf_java_home:
+  debian: "/usr/lib/jvm/java-{{ gf_java_ver }}-openjdk-amd64"
+  oraclelinux: "/usr/lib/jvm/java-{{ gf_java_ver }}-openjdk"
+gf_java: "{{ gf_java_home[ansible_distribution_file_variety | lower] }}/bin/java"
+
+gemfire_ver: '10.1.3'
+gemfire_home: "{{ gf_installed_base_dir }}/vmware-gemfire-{{ gemfire_ver }}"
+gf_path_add: "{{ gf_java_home[ansible_distribution_file_variety | lower] }}/bin:{{ gemfire_home }}/bin"
+
+gf_nvme_disks_format_enable: false
+
+gf_ycsb_ver: "0.18.0"
+gf_python_ver: '2.7'
+
+gf_installed_base_dir: "/root"
+gf_required_dirs:
+  - "{{ gf_installed_base_dir }}/ycsb_benchmarks/"
+  - "{{ gf_installed_base_dir }}/ycsb_benchmarks/results"
+  - "{{ gf_installed_base_dir }}/ycsb_benchmarks/workloads"
+  - "{{ gf_installed_base_dir }}/ycsb_benchmarks/workload-config"
+  - "{{ gf_installed_base_dir }}/ycsb_benchmarks/GCLogLocator"
+  - "{{ gf_installed_base_dir }}/ycsb_benchmarks/GCLogServer"
+
+gf_metric_collect_tar: "gf_metrics_collect_scripts.tar.gz"
+gf_hmsdk_tar: "hmsdk.tar.gz"
+gf_hmsdk_dir: "{{ gf_installed_base_dir }}/hmsdk"
+
+gf_check_deps_cgroup_point: "/sys/fs/cgroup"
+
+#############################################
+# Gemfire locator parameters
+#############################################
+gf_locator_num_per_host: 4
+
+zgc_enable: false
+zgc_value: "{{ '-XX:+UseZGC' if zgc_enable else '' }}"
+
+gf_locator_xms: '10G'
+gf_locator_xmx: '10G'
+gf_locator_xmn: '2G'
+gf_locator_xss: '512K'
+
+persistency_enable: true  # true or false
+persistency_value: "{{ '--disk-store=DEFAULT' if persistency_enable else '' }}"
+
+timeout_sec: 600000
+timeout_type: 'custom'
+
+timeouts:
+  default: ''
+  custom: "-Dgemfire.member-timeout={{ timeout_sec }} -Dgemfire.async-queue-timeout={{ timeout_sec }}"
+timeout_value: "{{ timeouts[timeout_type] | default(timeouts['default']) }}"
+
+gf_check_stat_path: "/tmp/gf_check_stat/"
+gf_check_stat_name: "gf_check_status.sh"   # Do not need modify
+gf_locator_info_file: "gf_locators.info"   # Do not need modify
+
+#############################################
+# Gemfire server parameters
+#############################################
+gfs_async_enable: false   # disk-synchronous=false(async, default)， disk-synchronous=true(sync)
+
+gfs_async_max_qs: 1024
+
+gfs_timeout_type: 'custom'
+gfs_timeouts:
+  default: ''
+  custom: "-Dgemfire.cache-xml-file={{ gf_installed_base_dir }}/ycsb_benchmarks/cache.xml -Dgemfire.async-distribution-timeout=60000 \
+   -Dgemfire.async-max-queue-size={{ gfs_async_max_qs }} -Dgemfire.async-queue-timeout={{ timeout_sec }} -Dgemfire.member-timeout={{ timeout_sec }} \
+   -Dgemfire.threadmonitor.showLocks=true -Dgemfire.thread-monitor-interval-ms={{ timeout_sec }} \
+   -Dgemfire.thread-monitor-time-limit-ms={{ timeout_sec }} -Dgemfire.maximum-time-between-pings={{ timeout_sec }}"
+gfs_timeout_value: "{{ gfs_timeouts[gfs_timeout_type] | default(gfs_timeouts['default']) }}"
+
+gf_server_total_num: 12  #  gf_server_num = num_of(gf_nic_interfaces) = num_of(gf_nic_ip_prefix)
+gf_server_host_num: 3 # host num to run gemfire server, each host's gemfire server number is {gf_server_total_num/gf_server_host_num}
+gfs_num_each_host: 4
+# set each host's gemfire server configuration in host_vars/gemfire{i}.yml
+# Example: configure data store target for gemfire server [gemfire1]
+# {{ inventory_dir }}/host_vars/gemfire1.yml
+#     gf_nvme_disks:
+#       - dev: "/dev/nvme3n1"
+#         mount_point: "/mnt/gemfire1"
+#       - dev: "/dev/nvme4n1"
+#         mount_point: "/mnt/gemfire2"
+
+gfs_ratio: "1:1"
+cxl_num: 1
+
+locator_port: "10334"
+server_port_base: 40404
+logsdir: "/mnt"
+
+gfs_data_size_gb: 10  # Use to calculate gfs_server_xms, gfs_sver_xmx
+# gfs_server_xms: '50G'
+# gfs_server_xmx: '50G'
+gfs_server_xmn: '2G'
+gfs_server_xss: '512K'
+
+### GemFire Region (set redundancy to 0 if without redundancy)
+region_count: 1
+persistency: true
+redundancy: 0
+asynch: true
+enable_statistics: false
+
+gf_region_info_file: "gf_regions.info"
+
+#############################################
+# YCSB Clients parameters
+#############################################
+
+dataload_parameter:
+  dataset_GB: 10
+  concurrency:
+    clients: 10
+    threads: 10
+  operation_cnt: 1000000   # not used, auto calculate according datasize, region count and client number in run_yscb_dataload.yml
+  record_cnt: 1000000  # not used, auto calculate in run_yscb_dataload.yml
+
+config_type_key: 'random'
+# set config_type_key to one of list['default','hotspot','random','hotspot_constant','hotspot_uniform','zipfian_uniform']
+
+config_type_list:
+  default:
+    - requestdistribution=zipfian
+    - fieldlengthdistribution=zipfian
+    - scanlengthdistribution=zipfian
+  hotspot:
+    - requestdistribution=hotspot
+    - fieldlengthdistribution=uniform
+    - scanlengthdistribution=uniform
+  random:
+    - requestdistribution=uniform
+    - fieldlengthdistribution=uniform
+    - scanlengthdistribution=uniform
+  hotspot_constant:
+    - requestdistribution=hotspot
+    - fieldlengthdistribution=constant
+  hotspot_uniform:
+    - requestdistribution=hotspot
+    - fieldlengthdistribution=constant
+  zipfian_uniform:
+    - requestdistribution=zipfian
+    - fieldlengthdistribution=constant
+config_type: "{{ config_type_list[config_type_key] | default(config_type_list['default']) }}"
+
+snapshot_value: "{{ '-SNAPSHOT' if gf_ycsb_ver == '0.18.0' else '' }}"
+ycsb_geode_binding: "ycsb-geode-binding-{{ gf_ycsb_ver }}{{ snapshot_value }}"
+
+#############################################
+# YCSB Workload parameters
+#############################################
+
+### Global config file global_config_1.1KB_default
+config_type_key_workload: "hotspot"
+config_type_workload: "{{ config_type_list[config_type_key_workload] | default(config_type_list['default']) }}"
+
+### svk_enable: svk / nosvk
+svk_enable: "nosvk"
+
+workload_parameter:
+  iteration_count: 5
+  results_directory: "test"
+
+## Workload Config File Input Parameters:
+## Dataset,ClientxThread,RecordCount,OperationCount,Readproportion,InsertProportion,UpdateProportion,LocatorAddress,ycsbConfig,TypeofRun,hotspotdata,hotspotops,clientcountMachine1,clientcountMachine2
+## Workload Config File Input Example:
+## 800G,10x5,80000000,5000000,0.66,0,0.34,127.0.0.1,global_config_1.1KB,dramcxl,0.1,1,35,15
+workload_config_file_parameter:
+  dataset: "10G"    ###
+  concurrency:
+    clients: 20
+    threads: 10
+  record_cnt: 1000000
+  operation_cnt: 1000000
+  readproportion: 0.66
+  insertProportion: 0
+  updateProportion: 0.34
+  locatorAddress: "127.0.0.1"   ####
+  ycsbConfig: "{{ config_type_key_workload }}"
+  typeofRun: "dramcxl"   # dramcxl / dram
+  hotspotdata: 0.1
+  hotspotops: 1
+  # workload_ratio: "1:1"
+  # clientcountMachine1: 5
+  # clientcountMachine2: 5
+
+metrics_enable: true
+collect_multi_node: true
+
+### Collect Metrics from GemFire Server throughout the execution of all iterations
+ycsb_metrics_all_iterations:
+  nometrics:
+    dstat: "on"
+    sensor: "off"
+    device_temperature: "off"
+    dmesg: "off"
+    numastat: "off"
+    vmstat: "off"
+    top: "off"
+  metrics:
+    dstat: "on"
+    sensor: "on"
+    device_temperature: "on"
+    dmesg: "on"
+    numastat: "on"
+    vmstat: "on"
+    top: "on"
+ycsb_enable_metrics_all_iterations_value: "{{ ycsb_metrics_all_iterations['metrics'] if metrics_enable == true else ycsb_metrics_all_iterations['nometrics'] }}"
+
+### Collect Metrics from GemFire Server PRE-WORKLOAD execution (before very 1st iteration)
+ycsb_metrics_pre_iteration:
+  nometrics:
+    numastat: "on"
+    trigger_PCM: "off"
+    disk_usage: "off"
+    power_consumption: "off"
+    numactl: "on"
+  metrics:
+    numastat: "on"
+    trigger_PCM: "on"
+    disk_usage: "on"
+    power_consumption: "on"
+    numactl: "on"
+ycsb_enable_metrics_pre_iteration_value: "{{ ycsb_metrics_pre_iteration['metrics'] if metrics_enable == true else ycsb_metrics_pre_iteration['nometrics'] }}"
+
+### Collect Metrics from GemFire Server DURING-WORKLOAD execution for the current iteration
+ycsb_metrics_during_iteration:
+  nometrics:
+    cpu_metrics_mpstat: "off"
+    power_consumption: "off"
+  metrics:
+    cpu_metrics_mpstat: "on"
+    power_consumption: "on"
+ycsb_enable_metrics_during_iteration_value: "{{
+  ycsb_metrics_during_iteration['metrics']
+  if metrics_enable == true else ycsb_metrics_during_iteration['nometrics']
+}}"
+
+### Collect Metrics POST-WORKLOAD execution (after the current iteration has completed)
+ycsb_metrics_post_iteration:
+  nometrics:
+    damo: "on"
+    numastat: "on"   ## Collect NUMASTAT Metrics POST-WORKLOAD execution (after 10 iterations has completed)
+    cpu_metrics_mpstat: "off"
+    power_consumption: "off"
+    numactl: "on"
+    disk_usage: "off"
+  metrics:
+    damo: "on"
+    numastat: "on"
+    cpu_metrics_mpstat: "on"
+    power_consumption: "on"
+    numactl: "on"
+    disk_usage: "on"
+ycsb_enable_metrics_post_iteration_value: "{{ ycsb_metrics_post_iteration['metrics'] if metrics_enable == true else ycsb_metrics_post_iteration['nometrics'] }}"
+
+
+###### Parse workload result and itegrate it to Benchmark Analysis Dashboard###
+
+ycsb_logs_parser_enable: true
+ycsb_logs_parser_skiptimeout: false
+ycsb_logs_upload_to_dashboard_enable: false  ## By default, disable this option unless you have a Grafana dashboard to display the workload execution results.
+
+dashboard_db_info:
+  host: <grafana_mysql_ip> # db host ip
+  user: <grafana_mysql_username>  # db user name
+  port: <grafana_mysql_port>  # db port 33070 3306
+  password: <grafana_mysql_password>  # db password
+  db: 'benchmark_temp'  # db name

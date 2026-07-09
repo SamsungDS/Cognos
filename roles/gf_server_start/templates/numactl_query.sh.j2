@@ -1,0 +1,29 @@
+#!/bin/sh
+
+usage="USAGE $0 TypeofWorkload"
+
+if [ $# -ne 1 ]; then
+        echo $usage
+        exit 1
+fi
+
+# gem1=`ps -ef | grep gemfire | grep server-port | grep 40404 | awk '{print $2}'`
+# gem2=`ps -ef | grep gemfire | grep server-port | grep 40405 | awk '{print $2}'`
+# gem3=`ps -ef | grep gemfire | grep server-port | grep 40406 | awk '{print $2}'`
+# gem4=`ps -ef | grep gemfire | grep server-port | grep 40407 | awk '{print $2}'`
+
+# numastat -s -p $gem1 > /root/ycsb_benchmarks/results/numastat_gemfire1_$1
+# numastat -s -p $gem2 > /root/ycsb_benchmarks/results/numastat_gemfire2_$1
+# numastat -s -p $gem3 > /root/ycsb_benchmarks/results/numastat_gemfire3_$1
+# numastat -s -p $gem4 > /root/ycsb_benchmarks/results/numastat_gemfire4_$1
+
+exit
+
+{% for i in range(gfs_num_each_host) %}
+
+gem{{ (i+1) }}=`ps -ef | grep gemfire | grep server-port | grep {{ (server_port_base+i) }} | awk '{print $2}'`
+numastat -s -p $gem{{ (i+1) }} > /root/ycsb_benchmarks/results/numastat_gemfire{{ (i+1) }}_$1
+
+{% endfor %}
+
+exit

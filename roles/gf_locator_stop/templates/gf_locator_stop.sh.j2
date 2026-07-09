@@ -1,0 +1,10 @@
+#!/bin/sh
+
+#rm -rf /mnt/gemfire*/server*
+rm -rf /root/ycsb_benchmarks/GCLogLocator/*
+sudo sync; echo 3 > /proc/sys/vm/drop_caches
+ps aux | grep -ie dstat | grep output | grep python | grep -v grep | awk '{print $2}' | xargs kill
+ps aux | grep -ie gemfire-bootstrap | grep -v grep | awk '{print $2}' | xargs kill
+#ps aux | grep -ie gemfire| grep -v grep | awk '{print $2}' | xargs kill -9
+#ps aux | grep -ie damo | grep -v grep | awk '{print $2}' | xargs kill -9
+#damo stop

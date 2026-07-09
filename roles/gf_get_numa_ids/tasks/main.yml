@@ -1,0 +1,153 @@
+# Author: June Liu
+# Contact: june.liu@samsung.com
+---
+
+- name: Get device numa and size details
+  ansible.builtin.command: "numactl -H"
+  register: gf_get_numa_ids_info
+  changed_when: gf_get_numa_ids_info.rc != 0
+
+- name: Extract node id of device numa which have cpus as dram node
+  ansible.builtin.set_fact:
+    gf_get_numa_ids_dram: "{{
+      gf_get_numa_ids_info.stdout.splitlines()
+      | map('regex_search', 'node (\\d+) cpus: (\\d+)', '\\1')
+      | reject('equalto', None)
+      | flatten
+      }}"
+
+- name: Extract node id of device numa which not have cpus as cxl node
+  ansible.builtin.set_fact:
+    gf_get_numa_ids_cxl:
+      "{{ gf_get_numa_ids_info.stdout.splitlines() | map('regex_search', 'node (\\d+) cpus:$', '\\1') | reject('equalto', None) | flatten }}"
+
+- name: Transform gf_get_numa_ids_dram and gf_get_numa_ids_cxl into integer list
+  ansible.builtin.set_fact:
+    gf_get_numa_ids_dram: "{{ gf_get_numa_ids_dram | map('int') | list }}"
+    gf_get_numa_ids_cxl: "{{ gf_get_numa_ids_cxl | map('int') | list }}"
+
+- name: Install hwloc
+  ansible.builtin.package:
+    name: hwloc
+    state: present
+    update_cache: true
+  become: true
+
+- name: Execute lstopo command
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      lstopo-no-graphics --no-io | egrep 'Package|NUMANode'
+    executable: /bin/bash
+  register: gf_get_numa_ids_topo_result
+  changed_when: false
+
+- name: Filter only the lines we need (Package or NUMANode)
+  ansible.builtin.set_fact:
+    gf_get_numa_ids_lstopo_lines: >-
+      {{ gf_get_numa_ids_topo_result.stdout_lines |
+          select('search', 'Package|NUMANode') |
+          map('trim') |
+          list }}
+
+- name: Join the filtered lines into one string
+  ansible.builtin.set_fact:
+    gf_get_numa_ids_lstopo: "{{ gf_get_numa_ids_lstopo_lines | join('\n') }}"
+
+- name: Split the text into per-Package blocks
+  ansible.builtin.set_fact:
+    gf_get_numa_ids_pkg_blk: "{{ gf_get_numa_ids_lstopo.split('Package ') |
+          map('trim') | select('!=', '') |
+          reject('match', '^Machine') |
+          list }}"
+
+- name: Initialise the mapping dictionary
+  ansible.builtin.set_fact:
+    gf_get_numa_ids_map: {}
+
+- name: Build Package → [Physical-ID] mapping
+  ansible.builtin.set_fact:
+    gf_get_numa_ids_map: "{{ gf_get_numa_ids_map | combine({(pkg_id): phys_ids}) }}"
+  vars:
+    pkg_id: "{{ (item | regex_findall('L#(\\d+)\\n')) | first }}"
+    phys_ids: "{{ (item | regex_findall('P#(\\d+)')) | map('int') | list }}"
+  loop: "{{ gf_get_numa_ids_pkg_blk }}"
+  loop_control:
+    label: "pkg_id={{ pkg_id }} phys_ids={{ phys_ids }}"
+
+- name: Initialize socket -> cpu map
+  ansible.builtin.set_fact:
+    gf_get_numa_ids_cpu_map: "{{ {} }}"
+
+- name: Get numa node cpus
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      numactl -H | grep cpus
+    executable: /bin/bash
+  register: gf_get_numa_ids_cpu_raw
+  changed_when: gf_get_numa_ids_cpu_raw.rc != 0
+
+- name: Initialize socket -> cpu map
+  ansible.builtin.set_fact:
+    gf_get_numa_ids_cpu_map: "{{ {} }}"
+
+- name: Get CPU list on each numa node
+  ansible.builtin.set_fact:
+    gf_get_numa_ids_cpu_map: "{{ gf_get_numa_ids_cpu_map | combine({ item.0 : item.1  }) }}"
+  loop: "{{ gf_get_numa_ids_cpu_raw.stdout_lines | map('regex_replace', 'node (\\d+) cpus: (\\d+)', '\\1:\\2') | map('split', ':') | list }}"
+  when: item.1 != ''
+
+- name: Initialize gf_get_numa_ids_merged
+  ansible.builtin.set_fact:
+    gf_get_numa_ids_merged: {}
+
+- name: Merge matching CPU lists into gfs entry
+  ansible.builtin.set_fact:
+    gf_get_numa_ids_merged: "{{ gf_get_numa_ids_merged | combine({(item.key): {'value':
+      gf_get_numa_ids_map[item.key],
+      'cpu_ids':
+        (gf_get_numa_ids_cpu_map |
+        dict2items |
+        selectattr('key', 'in', (gf_get_numa_ids_map[item.key] | map('string') | list)) |
+        map(attribute='value') | list)}}) }}"
+  loop: "{{ gf_get_numa_ids_map | dict2items }}"
+  loop_control:
+    label: "gfs_key={{ item.key }}"
+
+- name: Initialize gf_get_numa_ids_sockets with gf_get_numa_ids_map
+  ansible.builtin.set_fact:
+    gf_get_numa_ids_sockets: >-
+      {{
+        (gf_get_numa_ids_sockets | default({}))
+        | combine(
+            {
+              (item.key): {
+                'dram': (item.value.value | select('search', '^(' + gf_get_numa_ids_dram | join('|') + ')$') | list),
+                'cxl' : (item.value.value | select('search', '^(' + gf_get_numa_ids_cxl | join('|') + ')$') | list),
+                'cpu_ids': (item.value.cpu_ids )
+              }
+            }
+          )
+      }}
+  loop: "{{ gf_get_numa_ids_merged | dict2items }}"
+
+- name: Initialize gf_get_numa_ids_sockets with nic_ips
+  ansible.builtin.set_fact:
+    gf_get_numa_ids_sockets: "{{ gf_get_numa_ids_sockets | combine({item.key: item.value | combine({'nic_ips': []})}) }}"
+  loop: "{{ gf_get_numa_ids_sockets | dict2items }}"
+
+- name: Add current_ip to gf_get_numa_ids_sockets per cpu_socket
+  ansible.builtin.set_fact:
+    gf_get_numa_ids_sockets: >-
+      {{
+        gf_get_numa_ids_sockets
+        | combine(
+          {
+            item.cpu_socket: gf_get_numa_ids_sockets[item.cpu_socket]
+            | combine( {'nic_ips': (gf_get_numa_ids_sockets[item.cpu_socket].nic_ips + [item.current_ip] )})
+          })
+      }}
+  loop: "{{ gf_nic_status_info }}"
+  loop_control:
+    label: "{{ item.cpu_socket }}"

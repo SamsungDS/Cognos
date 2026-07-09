@@ -1,0 +1,72 @@
+---
+# roles to ensure that gf_nvme disks are formatted as ext4
+# and mounted to the desired mount points – without using the block module.
+
+- name: Validate that a device list is provided
+  ansible.builtin.assert:
+    that: gf_nvme_disks | length > 0
+    fail_msg: "The variable 'gf_nvme_disks' must contain at least one entry."
+
+- name: Gather current mount information with df -h
+  ansible.builtin.command: df -h
+  register: gf_check_deps_mounted
+  changed_when: false
+
+- name: Display mounted filesystems (exclude tmpfs and devtmpfs)
+  ansible.builtin.set_fact:
+    gf_check_deps_mounted_dev: >
+      "{{ gf_check_deps_mounted.stdout_lines[1:] | map('split') | map('list') | list | selectattr('0', 'match', '^/dev|^/') | map('join', ' ') | list }}"
+  changed_when: false
+
+- name: Umount the target devices if it is already mounted
+  ansible.builtin.command: umount {{ item.dev }}
+  loop: "{{ gf_nvme_disks }}"
+  loop_control:
+    label: "{{ item.dev }}"
+  become: true
+  when: item.dev in gf_check_deps_mounted_dev
+  changed_when: true
+
+# -----------------------------------------------------------------
+# 1 Format disks that are not currently mounted
+# -----------------------------------------------------------------
+- name: Format each NVMe disk to ext4 (if not already mounted)
+  community.general.filesystem:
+    fstype: ext4
+    dev: "{{ item.dev }}"
+  loop: "{{ gf_nvme_disks }}"
+  loop_control:
+    label: "{{ item.dev }}"
+  when: gf_nvme_disks_format_enable and item.dev not in gf_check_deps_mounted_dev
+
+## The `filesystem` module is idempotent – it will skip already‑formatted
+## devices, but we guard with the `when` clause to avoid touching a
+## mounted filesystem.
+
+# -----------------------------------------------------------------
+# 2 Ensure mount‑point directories exist
+# -----------------------------------------------------------------
+- name: Create mount-point directory for each disk
+  ansible.builtin.file:
+    path: "{{ item.mount_point }}"
+    state: directory
+    mode: '0755'
+  loop: "{{ gf_nvme_disks }}"
+  loop_control:
+    label: "{{ item.mount_point }}"
+
+# -----------------------------------------------------------------
+# 3 Mount the disks
+# -----------------------------------------------------------------
+- name: Mount each NVMe disk to its target directory
+  ansible.posix.mount:
+    src: "{{ item.dev }}"
+    path: "{{ item.mount_point }}"
+    fstype: ext4
+    state: mounted
+    boot: false
+    opts: defaults
+  become: true
+  loop: "{{ gf_nvme_disks }}"
+  loop_control:
+    label: "{{ item.dev }} -> {{ item.mount_point }}"
