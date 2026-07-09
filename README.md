@@ -431,6 +431,6 @@ The playbook is for **internal use only** and is designed to create users. The p
                # Add the host key to known_hosts
                ssh-keyscan -H hostname >> ~/.ssh/known_hosts
 
-**Q3**: Failed at step **"cognos_rbac_start : Wait up to 120 seconds for rbac api port to become available"**
+**Q3**: Failed at step **"cognos_rbac_start : Wait up to 600 seconds for rbac api port to become available"**
 
 * This is the final step in the Ansible Cognos deployment. If this step fails, the user can wait longer for the RBAC API port to become available on the management server.

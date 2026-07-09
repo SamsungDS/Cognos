@@ -101,11 +101,11 @@
     enabled: true
   become: true
 
-- name: Wait up to 120 seconds for rbac api port to become available
+- name: Wait up to 600 seconds for rbac api port to become available
   ansible.builtin.wait_for:
     host: "{{ ip }}"
     port: "{{ rbac_api_port }}"
     delay: 5
-    timeout: 120
+    timeout: 600
   vars:
     ip: "{{ ansible_default_ipv4.address }}"
