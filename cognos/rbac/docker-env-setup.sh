@@ -201,8 +201,8 @@ echo "======================================"
 cd /app/core/bin/rbac-client-repo || exit 1
 
 echo "Installing frontend dependencies..."
-rm -rf node_modules package-lock.json
-npm install || { echo "ERROR: npm install failed"; exit 1; }
+rm -rf node_modules
+npm ci || { echo "ERROR: npm ci failed"; exit 1; }
 
 echo "Building frontend..."
 npm run build || { echo "ERROR: npm build failed"; exit 1; }
