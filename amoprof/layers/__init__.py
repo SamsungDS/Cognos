@@ -40,10 +40,26 @@ def run_layered_analyze(raw_dir):
     """
     from pathlib import Path
     from ..report.amoprof import (
-        load_raw_dir, extract_metrics, score_bottlenecks,
+        load_raw_dir_with_extras, extract_metrics, score_bottlenecks,
+        _amoprof_resolve_raw_dir_path,
     )
     raw_dir = Path(raw_dir)
-    data = load_raw_dir(raw_dir)
+    # Resolve wrapper-vs-raw dir once so downstream sibling lookups
+    # (blktrace_analysis/, biosnoop_events.csv, etc.) hit the right level.
+    resolved = _amoprof_resolve_raw_dir_path(raw_dir)
+    # Auto-discover the blktrace_analysis/ subdir the static path receives
+    # via `--blktrace-analysis-dir` from cli._run_amoprof. Without this, the
+    # SSD Queue Depth chart + blktrace stream/hotcold charts render empty
+    # even when analysis CSVs are already present next to raw/.
+    bt_analysis_dir = resolved / "blktrace_analysis"
+    bt_analysis_arg = (str(bt_analysis_dir)
+                      if bt_analysis_dir.is_dir()
+                      and (bt_analysis_dir / "queue_depth_summary.json").exists()
+                      else "")
+    data = load_raw_dir_with_extras(
+        raw_path=resolved,
+        blktrace_analysis_dir=bt_analysis_arg,
+    )
     metrics = extract_metrics(data)
     # score_bottlenecks feeds chart_bottleneck_radar; compute once.
     bottlenecks = score_bottlenecks(metrics)
