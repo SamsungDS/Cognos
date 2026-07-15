@@ -34,111 +34,36 @@ except Exception:
         reconcile_l3_io = None  # type: ignore
 
 try:
-    from amoprof.report.common_kpis import compute_common_kpis, apply_common_kpis_to_html, write_common_kpis_json
+    from amoprof.report.common_kpis import (
+        compute_common_kpis, apply_common_kpis_to_html, write_common_kpis_json,
+        compute_cache_hit_kpis,
+        _read_json,
+        _amoprof_resolve_raw_dir,
+        _amoprof_parse_launch_arg, _amoprof_missing, _amoprof_augment_setup_from_launch,
+        _amoprof_storage_label_cleanup,
+        _pct_ts_latency_ms,
+    )
 except Exception:
     try:
-        from common_kpis import compute_common_kpis, apply_common_kpis_to_html, write_common_kpis_json  # type: ignore
+        from common_kpis import (  # type: ignore
+            compute_common_kpis, apply_common_kpis_to_html, write_common_kpis_json,
+            compute_cache_hit_kpis,
+            _read_json,
+            _amoprof_resolve_raw_dir,
+            _amoprof_parse_launch_arg, _amoprof_missing, _amoprof_augment_setup_from_launch,
+            _amoprof_storage_label_cleanup,
+            _pct_ts_latency_ms,
+        )
     except Exception:
         compute_common_kpis = None  # type: ignore
         apply_common_kpis_to_html = None  # type: ignore
         write_common_kpis_json = None  # type: ignore
+        compute_cache_hit_kpis = None  # type: ignore
+        raise  # setup helpers are hard requirements; re-raise so this
+               # module cannot silently ship without them.
 
 # Plotly.js version pinned to a known-stable release with broad browser support.
 PLOTLY_CDN = "https://cdn.plot.ly/plotly-2.35.2.min.js"
-
-
-def _amoprof_storage_label_cleanup(html_text: str, l3_backend_class: str = "") -> str:
-    """Normalize visible L3/L3.5 labels consistently.
-
-    Report convention:
-      * L3   = local SSD/NVMe/file-backed cache tier.
-      * L3.5 = AI Memory Node / remote/shared/disaggregated backing tier, or
-               unresolved logical SGLang backing-tier movement when no local
-               SSD/block mapping exists.
-
-    The resolver passes backend_class='local_ssd' only for local SSD.  All other
-    classes use L3.5 wording so a remote AI Memory Node run is never shown as
-    local SSD L3.  Base64 image payloads are protected before text replacement.
-    """
-    if not html_text:
-        return html_text
-
-    data_uri_re = re.compile(r'data:image/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=\s]+')
-    protected_payloads: list[str] = []
-
-    def _stash_data_uri(match: re.Match) -> str:
-        protected_payloads.append(match.group(0))
-        return f"__AMOPROF_DATA_URI_{len(protected_payloads) - 1}__"
-
-    html_text = data_uri_re.sub(_stash_data_uri, html_text)
-
-    is_local = (str(l3_backend_class or "").lower() == "local_ssd")
-    tier = "L3" if is_local else "L3.5"
-    tier_long = "L3 (SSD/local storage)" if is_local else "L3.5 (AI Memory Node / remote storage)"
-
-    # Collapse prior accidental repeated L3.5 decorations.
-    html_text = re.sub(
-        r'(L3\.5 \(AI Memory Node / remote storage\))(?:\.5 \(AI Memory Node / remote storage\))+',
-        r'\1', html_text)
-
-    if is_local:
-        replacements = {
-            "L3.5 (AI Memory Node / remote storage)": tier_long,
-            "L3 (AI Memory Node / remote storage)": tier_long,
-            "L3 (AI Memory Node)": tier_long,
-            "L3 (local storage)": tier,
-            "L3 local storage": tier,
-            "L3 local-storage": tier,
-            "L3 local SSD": "L3 SSD",
-            "L3 storage": "L3 storage",
-            "L3 Storage": "L3 storage",
-            "KV$ SSD IO": "KV$ L3 I/O",
-            "KV$ SSD I/O": "KV$ L3 I/O",
-            "KV$ SSD": "KV$ L3",
-            "NVMe read throughput": "L3 read throughput",
-            "NVMe Read Throughput": "L3 read throughput",
-            "NVMe read BW": "L3 read BW",
-            "NVMe Read BW": "L3 read BW",
-        }
-    else:
-        replacements = {
-            "L3.5 (AI Memory Node / remote storage)": tier_long,
-            "L3 (AI Memory Node / remote storage)": tier_long,
-            "L3 (AI Memory Node)": tier_long,
-            "L3 (local storage)": tier_long,
-            "L3 local storage": tier_long,
-            "L3 local-storage": tier_long,
-            "L3 local SSD": tier_long,
-            "L3 storage / blktrace": "L3.5 / backing-tier telemetry",
-            "L3 storage block telemetry": "L3.5 backing-tier telemetry",
-            "L3 storage block-device": "L3.5 backing-tier device",
-            "L3 storage QUEUE": "L3.5 QUEUE",
-            "L3 storage Queue": "L3.5 Queue",
-            "L3 storage queue": "L3.5 queue",
-            "L3 storage": "L3.5 storage",
-            "L3 Storage": "L3.5 storage",
-            "KV$ L3 IO": "KV$ L3.5 I/O",
-            "KV$ L3 I/O": "KV$ L3.5 I/O",
-            "KV$ L3 ": "KV$ L3.5 ",
-            "KV$ L3\n": "KV$ L3.5\n",
-            "Logical KV movement — L3": "Logical KV movement — L3.5",
-            "Physical L3 block": "Physical L3.5 block",
-            "Physical L3.5 block R / W total": "Physical L3.5 block R / W total",
-            "NVMe read throughput": "L3.5 read throughput",
-            "NVMe Read Throughput": "L3.5 read throughput",
-            "NVMe read BW": "L3.5 read BW",
-            "NVMe Read BW": "L3.5 read BW",
-        }
-    for a, b in replacements.items():
-        html_text = html_text.replace(a, b)
-
-    # Clean up any doubled L3.5 token from overlapping replacements.
-    html_text = html_text.replace("L3.5.5", "L3.5")
-    html_text = html_text.replace("L3.5.5", "L3.5")
-
-    for i, payload in enumerate(protected_payloads):
-        html_text = html_text.replace(f"__AMOPROF_DATA_URI_{i}__", payload)
-    return html_text
 
 
 # ─── Run-wide wall-clock anchor ──────────────────────────────────────────────
@@ -159,13 +84,59 @@ def _read_csv(path: Path) -> list[dict]:
         return list(csv.DictReader(f))
 
 
-def _read_json(path: Path) -> dict:
-    if not path.exists():
+
+def _read_intel_pcm_memory_raw_summary(raw_dir: Path) -> dict:
+    """Return Intel PCM DRAM summary from raw/pcm_memory_raw.csv if present."""
+    p = Path(raw_dir) / "pcm_memory_raw.csv"
+    if not p.exists() or p.stat().st_size <= 0:
         return {}
     try:
-        return json.loads(path.read_text())
+        rows = list(csv.reader(p.open(errors="replace")))
     except Exception:
         return {}
+    if len(rows) < 3:
+        return {}
+    group, names = rows[0], rows[1]
+    idx_read = idx_write = idx_mem = None
+    for i, (g, n) in enumerate(zip(group, names)):
+        gl = str(g or "").strip().lower(); nl = str(n or "").strip().lower()
+        if gl == "system" and nl == "read": idx_read = i
+        elif gl == "system" and nl == "write": idx_write = i
+        elif gl == "system" and nl == "memory": idx_mem = i
+    if idx_read is None or idx_write is None:
+        reads = [i for i,n in enumerate(names) if str(n).strip().lower() == "mem read (mb/s)"]
+        writes = [i for i,n in enumerate(names) if str(n).strip().lower() == "mem write (mb/s)"]
+        if reads and writes:
+            idx_read, idx_write = reads[-1], writes[-1]
+    def num(x):
+        try: return float(str(x).strip().replace(",", ""))
+        except Exception: return None
+    rd=[]; wr=[]; total=[]
+    for r in rows[2:]:
+        if idx_read is None or idx_write is None or len(r) <= max(idx_read, idx_write):
+            continue
+        a=num(r[idx_read]); b=num(r[idx_write])
+        if a is None or b is None:
+            continue
+        ag=a/1024.0; bg=b/1024.0
+        if idx_mem is not None and len(r)>idx_mem and num(r[idx_mem]) is not None:
+            tg=num(r[idx_mem])/1024.0
+        else:
+            tg=ag+bg
+        if tg>0:
+            rd.append(ag); wr.append(bg); total.append(tg)
+    if not total:
+        return {}
+    def mean(xs): return sum(xs)/len(xs) if xs else 0.0
+    return {
+        "pcm_available": True, "pcm_source": "intel-pcm/pcm-memory/raw-reparse",
+        "dram_collector": "intel-pcm/pcm-memory/raw-reparse",
+        "pcm_raw_path": str(p), "pcm_samples": len(total), "pcm_nonzero_samples": len(total),
+        "dram_read_gb_s_mean": mean(rd), "dram_write_gb_s_mean": mean(wr), "dram_total_gb_s_mean": mean(total),
+        "pcm_dram_read_gb_s": mean(rd), "pcm_dram_write_gb_s": mean(wr), "pcm_dram_total_gb_s": mean(total),
+        "dram_read_gb_s_peak": max(rd), "dram_write_gb_s_peak": max(wr), "dram_total_gb_s_peak": max(total),
+        "pcm_dram_read_gb_s_peak": max(rd), "pcm_dram_write_gb_s_peak": max(wr), "pcm_dram_total_gb_s_peak": max(total),
+    }
 
 
 def _to_float(v: Any, default: float = 0.0) -> float:
@@ -174,7 +145,13 @@ def _to_float(v: Any, default: float = 0.0) -> float:
     try:
         return float(v)
     except (ValueError, TypeError):
-        return default
+        try:
+            import re as _re
+            txt = str(v).replace(",", "")
+            m = _re.search(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?", txt)
+            return float(m.group(0)) if m else default
+        except Exception:
+            return default
 
 
 def _col(rows: list[dict], key: str) -> list[float]:
@@ -210,24 +187,6 @@ def _ratio_delta_ms_from_rows(rows: list[dict], sum_partial: str, count_partial:
     except Exception:
         return 0.0
 
-
-
-def _pct_ts_latency_ms(pct_ts: dict, metric_key: str, percentile: str = "p50") -> float:
-    """Representative selected-window latency from percentile timeseries."""
-    try:
-        block = (pct_ts or {}).get(metric_key) or {}
-        vals = block.get(percentile) or []
-        clean = []
-        for v in vals:
-            try:
-                x = float(v)
-                if x == x and x > 0:
-                    clean.append(x)
-            except Exception:
-                pass
-        return (sum(clean) / len(clean)) if clean else 0.0
-    except Exception:
-        return 0.0
 
 
 def _active_p50_from_rows(rows: list[dict], partial: str) -> float:
@@ -502,26 +461,33 @@ def _chart_sglang_throughput(sglang: list[dict], bench: dict | None = None, sgla
         })
 
     cache_vals = []
+    cache_name = "Cache hit %"
     if cache_col:
+        # Keep an all-zero cache-hit gauge visible.  Dropping the trace when
+        # every sample is 0 made users think the cache-hit chart regressed or
+        # disappeared even though SGLang reported a valid cold-cache series.
         cache_vals = [v * 100 if v <= 1 else v for v in _col(sglang, cache_col)]
-        if not any(v > 0 for v in cache_vals):
-            cache_vals = []
+        cache_name = "Cache hit % (SGLang gauge)"
     if not cache_vals:
-        prom_hit = 0.0
-        for key in ("cache_hit_token_weighted_pct", "cache_hit_request_weighted_pct", "cache_hit_time_weighted_pct", "cache_hit_rate_realtime_pct", "cache_hit_effective_prompt_pct", "cache_hit_cached_prompt_pct"):
-            try:
-                prom_hit = float(sglang_summary.get(key, 0) or 0)
-                if prom_hit > 0:
-                    break
-            except Exception:
-                prom_hit = 0.0
-        if prom_hit > 0:
+        prom_hit = None
+        for key in ("cache_hit_token_weighted_pct", "cache_hit_request_weighted_pct", "cache_hit_time_weighted_pct", "cache_hit_rate_realtime_pct", "cache_hit_effective_prompt_pct", "cache_hit_cached_prompt_pct", "cache_hit_pct"):
+            if key in sglang_summary:
+                try:
+                    prom_hit = float(sglang_summary.get(key, 0) or 0)
+                    # Prefer a positive fallback, but preserve an explicit 0 if
+                    # it is the only vetted cache-hit value available.
+                    if prom_hit > 0:
+                        break
+                except Exception:
+                    prom_hit = None
+        if prom_hit is not None:
             cache_vals = [prom_hit for _ in ts]
+            cache_name = "Cache hit % (summary fallback)"
     if cache_vals:
         traces.append({
             "x": xs, "y": cache_vals,
-            "type": "scatter", "mode": "lines", "name": "Cache hit % (time-weighted gauge / fallback)",
-            "line": {"color": "#a78bfa", "width": 2, "dash": "dot"},
+            "type": "scatter", "mode": "lines", "name": cache_name,
+            "line": {"color": "#a78bfa", "width": 2.6, "dash": "dot"},
             "yaxis": "y2",
             "hovertemplate": "<b>%{y:.1f}%</b> hit<extra></extra>",
         })
@@ -664,7 +630,8 @@ def _derive_nvme_columns(rows: list[dict]) -> list[dict]:
 
 
 def _chart_gpu(gpu: list[dict],
-               gpu_summary: dict | None = None) -> dict | None:
+               gpu_summary: dict | None = None,
+               raw_dir: Path | None = None) -> dict | None:
     """Chart: per-GPU utilization + memory used.
 
     Robust against the gpu_timeseries.csv ↔ gpu_summary.json divergence
@@ -686,6 +653,52 @@ def _chart_gpu(gpu: list[dict],
        still render the util/power traces — never silently produce a
        broken chart.
     """
+    # v1.39.109: make Interactive and End Report consume exactly the same
+    # canonical GPU/HBM payload builder.  The previous Interactive-only chart
+    # parsed gpu_timeseries.csv independently and could disagree with the End
+    # Report on source selection, timestamp normalization, HBM column aliases,
+    # active-GPU filtering, and y-axis visible set.  Prefer the shared builder;
+    # keep the legacy implementation below only as a defensive fallback.
+    if gpu:
+        try:
+            import pandas as _pd
+            from amoprof.report.amoprof import Metrics as _Metrics, canonical_gpu_plotly_figure as _canonical_gpu_plotly_figure
+            _m = _Metrics()
+            _m.gpu_ts = _pd.DataFrame(gpu)
+            if raw_dir is not None:
+                setattr(_m, "_amoprof_raw_dir", str(Path(raw_dir)))
+                # Source policy can live beside raw/ in flat output-dir mode.
+                for _pol in (Path(raw_dir) / "amoprof_source_policy.json", Path(raw_dir).parent / "amoprof_source_policy.json"):
+                    try:
+                        if _pol.exists() and _pol.stat().st_size > 0:
+                            with open(_pol) as _fh:
+                                setattr(_m, "_amoprof_source_policy", json.load(_fh))
+                            break
+                    except Exception:
+                        pass
+            try:
+                _ts = [_to_float(r.get("time_sec")) for r in gpu if r.get("time_sec") is not None]
+                _ts = [x for x in _ts if x == x and x >= 0]
+                if _ts:
+                    _m.run_duration_s = max(_ts)
+            except Exception:
+                pass
+            try:
+                if gpu_summary:
+                    _cap = _to_float(gpu_summary.get("hbm_total_mb") or gpu_summary.get("hbm_capacity_mb") or gpu_summary.get("fb_total_mb"))
+                    if _cap and _cap > 0:
+                        _m.hbm_total_mb = _cap
+            except Exception:
+                pass
+            _fig = _canonical_gpu_plotly_figure(
+                _m, points_per_gpu=900,
+                title="GPU Utilization & HBM Memory — canonical payload shared with End Report"
+            )
+            if _fig:
+                return _fig
+        except Exception:
+            pass
+
     if not gpu:
         return None
     # Candidate mem-column names in priority order. First match wins.
@@ -721,25 +734,63 @@ def _chart_gpu(gpu: list[dict],
     colors = ["#22d3ee", "#a78bfa", "#f97316", "#22c55e",
               "#ef4444", "#3b82f6", "#eab308", "#ec4899"]
     traces = []
+    # Keep the same active-device display semantics as the static End Report.
+    # A GPU can have HBM/model memory resident while doing no work; using HBM
+    # alone as the activity signal left all-zero GPU util traces in the chart.
+    # Prefer compute-active util>0 devices; if util is unavailable for all GPUs,
+    # fall back to memory-active rows so HBM-only collections still render.
+    def _has_util_activity(d: dict) -> bool:
+        try:
+            return any(_to_float(v) > 0 for v in d.get("util", []))
+        except Exception:
+            return False
+
+    def _has_mem_activity(d: dict) -> bool:
+        try:
+            return any(_to_float(v) > 0 for v in d.get("mem", []))
+        except Exception:
+            return False
+
+    util_active_ids = {idx for idx, d in by_gpu.items() if _has_util_activity(d)}
+    mem_active_ids = {idx for idx, d in by_gpu.items() if _has_mem_activity(d)}
+    active_ids = util_active_ids or mem_active_ids
+    plot_items = [(idx, d) for idx, d in by_gpu.items() if (not active_ids or idx in active_ids)]
+    plot_items = sorted(plot_items, key=lambda x: int(x[0]) if x[0].isdigit() else 99)
+
     # Collect all timestamps for axis-format selection
     all_ts: list[float] = []
-    for d in by_gpu.values():
+    for _, d in plot_items:
         all_ts.extend(d["t"])
-    for i, (idx, d) in enumerate(sorted(by_gpu.items(),
-                                         key=lambda x: int(x[0]) if x[0].isdigit() else 99)):
+    for i, (idx, d) in enumerate(plot_items):
         traces.append({
             "x": _ts_to_dates(d["t"]), "y": d["util"],
-            "type": "scatter", "mode": "lines", "name": f"GPU{idx} util",
-            "line": {"color": colors[i % len(colors)], "width": 1.5},
+            "type": "scatter", "mode": "lines+markers", "name": f"GPU{idx} util",
+            "line": {"color": colors[i % len(colors)], "width": 1.8},
+            "marker": {"size": 4},
             "hovertemplate": f"<b>GPU{idx}</b>: %{{y:.1f}}%<extra></extra>",
         })
-    # Aggregate mem on secondary axis
+    if plot_items:
+        try:
+            # Overlay the mean of the same visible GPUs so the End Report and
+            # Interactive view remain readable even when several util traces
+            # sit at 98-100% and overlap.
+            n = len(plot_items[0][1]["t"])
+            mean_util = [sum(d["util"][i] for _, d in plot_items) / max(len(plot_items), 1) for i in range(n)]
+            traces.append({
+                "x": _ts_to_dates(plot_items[0][1]["t"]), "y": mean_util,
+                "type": "scatter", "mode": "lines", "name": "Active GPU mean",
+                "line": {"color": "#0f172a", "width": 2.8, "dash": "dash"},
+                "hovertemplate": "<b>%{y:.1f}%</b> active mean<extra></extra>",
+            })
+        except Exception:
+            pass
+    # Aggregate mem on secondary axis over the same visible/active GPU set.
     mem_annotation = None
-    if by_gpu:
-        n = len(next(iter(by_gpu.values()))["t"])
-        avg_mem = [sum(by_gpu[k]["mem"][i] for k in by_gpu) / len(by_gpu)
+    if plot_items:
+        n = len(plot_items[0][1]["t"])
+        avg_mem = [sum(d["mem"][i] for _, d in plot_items) / len(plot_items)
                    for i in range(n)]
-        avg_ts = next(iter(by_gpu.values()))["t"]
+        avg_ts = plot_items[0][1]["t"]
 
         # Sanity check: is the mem series all-zero?
         mem_all_zero = (not avg_mem) or (max(avg_mem) == 0.0)
@@ -772,7 +823,7 @@ def _chart_gpu(gpu: list[dict],
         traces.append({
             "x": _ts_to_dates(avg_ts), "y": avg_mem,
             "type": "scatter", "mode": "lines",
-            "name": "Mean mem used (MB)",
+            "name": "Mean mem used (MB, visible GPUs)",
             "line": {"color": "#7c3aed", "width": 2.5, "dash": "dashdot"},
             "yaxis": "y2",
             "hovertemplate": "<b>%{y:.0f}</b> MB used (mean)<extra></extra>",
@@ -1732,6 +1783,69 @@ def _chart_dram_bw_from_timeseries(rows: list[dict]) -> dict | None:
     }
 
 
+def _chart_dram_bw_from_summary(summary: dict, duration_s: float | None = None) -> dict | None:
+    """Build a DRAM BW chart from collector JSON summaries.
+
+    Intel PCM often writes raw/pcm_summary.json with valid PMU BW even when
+    the Executive/Interactive CSV loaders do not see a usable timeseries.  The
+    static End Report already uses these summaries; the interactive report must
+    do the same so tabs do not disagree.
+    """
+    if not isinstance(summary, dict) or not summary:
+        return None
+
+    def pick(keys):
+        for k in keys:
+            if k in summary:
+                v = _to_float(summary.get(k), 0.0)
+                if v > 0:
+                    return v
+        # case-insensitive fallback
+        lower = {str(k).lower(): k for k in summary.keys()}
+        for k in keys:
+            lk = lower.get(str(k).lower())
+            if lk is not None:
+                v = _to_float(summary.get(lk), 0.0)
+                if v > 0:
+                    return v
+        return 0.0
+
+    read = pick([
+        "dram_read_gb_s_mean", "pcm_dram_read_gb_s", "pcm_dram_read_gb_s_mean",
+        "dram_read_bw_gbs", "dram_read_bw_gbps", "dram_read_bw_gbps_mean",
+        "read_gb_s_mean", "read_bw_gbps", "amduprof_dram_read_bw_gbps_mean",
+    ])
+    write = pick([
+        "dram_write_gb_s_mean", "pcm_dram_write_gb_s", "pcm_dram_write_gb_s_mean",
+        "dram_write_bw_gbs", "dram_write_bw_gbps", "dram_write_bw_gbps_mean",
+        "write_gb_s_mean", "write_bw_gbps", "amduprof_dram_write_bw_gbps_mean",
+    ])
+    total = pick([
+        "dram_total_gb_s_mean", "pcm_dram_total_gb_s", "pcm_dram_total_gb_s_mean",
+        "dram_total_bw_gbs", "dram_total_bw_gbps", "dram_total_bw_gbps_mean",
+        "total_gb_s_mean", "total_bw_gbps", "amduprof_dram_total_bw_gbps_mean",
+    ])
+    if total <= 0 and (read > 0 or write > 0):
+        total = read + write
+    if read <= 0 and total > 0 and write > 0:
+        read = max(total - write, 0.0)
+    if write <= 0 and total > 0 and read > 0:
+        write = max(total - read, 0.0)
+    if total <= 0 and read <= 0 and write <= 0:
+        return None
+    dur = float(duration_s or 0.0)
+    if dur <= 0:
+        dur = pick(["pcm_duration_s", "amduprof_pcm_duration_s", "dram_duration_s", "duration_s"]) or 60.0
+    rows = [
+        {"time_sec": 0.0, "dram_read_gb_s": read, "dram_write_gb_s": write, "dram_total_gb_s": total},
+        {"time_sec": max(dur, 1.0), "dram_read_gb_s": read, "dram_write_gb_s": write, "dram_total_gb_s": total},
+    ]
+    fig = _chart_dram_bw_from_timeseries(rows)
+    if fig:
+        fig["layout"]["title"]["text"] = "System DRAM Bandwidth (CPU PMU summary fallback)"
+    return fig
+
+
 def _chart_dram_bw_from_kv_activity(sglang: list[dict], kv_bytes_per_token: float) -> dict | None:
     """Fallback DRAM/KV movement chart from SGLang token counters.
 
@@ -2598,56 +2712,6 @@ def _layer_header(layer_id: str, title: str, note: str, color: str) -> str:
 
 
 
-def _amoprof_parse_launch_arg(launch: str, *names: str) -> str:
-    if not launch:
-        return ""
-    for name in names:
-        pat = r'(?<!\S)' + re.escape(name) + r'(?:=|\s+)(?:"([^"]+)"|\'([^\']+)\'|([^\s]+))'
-        m = re.search(pat, str(launch))
-        if m:
-            return next((g for g in m.groups() if g), "").strip()
-    return ""
-
-
-def _amoprof_missing(v) -> bool:
-    return v is None or str(v).strip() in ("", "?", "unknown", "None", "null", "N/A")
-
-
-def _amoprof_augment_setup_from_launch(setup: dict) -> dict:
-    if not isinstance(setup, dict):
-        setup = {}
-    out = dict(setup)
-    launch = str(out.get("Launch command") or out.get("launch_command") or out.get("Command") or out.get("Reference launch command") or "")
-    if launch and _amoprof_missing(out.get("Launch command")):
-        out["Launch command"] = launch
-    mapping = [
-        ("Model", ("--model", "--model-path")),
-        ("TP size", ("--tensor-parallel-size", "--tp-size", "--tp")),
-        ("DP size", ("--data-parallel-size", "--dp-size", "--dp")),
-        ("mem-fraction-static", ("--mem-fraction-static",)),
-        ("Page size", ("--page-size",)),
-        ("KV cache dtype", ("--kv-cache-dtype",)),
-        ("Chunked prefill size", ("--chunked-prefill-size",)),
-        ("HiCache size", ("--hicache-size",)),
-        ("HiCache IO backend", ("--hicache-io-backend",)),
-        ("HiCache mem layout", ("--hicache-mem-layout",)),
-        ("HiCache storage backend", ("--hicache-storage-backend",)),
-        ("HiCache write policy", ("--hicache-write-policy",)),
-        ("HiCache storage prefetch policy", ("--hicache-storage-prefetch-policy",)),
-        ("Attention backend", ("--attention-backend",)),
-        ("CUDA graph max batch size", ("--cuda-graph-max-bs",)),
-        ("Host", ("--host",)),
-        ("Port", ("--port",)),
-    ]
-    lower_keys = {str(k).lower(): k for k in out.keys()}
-    for label, flags in mapping:
-        val = _amoprof_parse_launch_arg(launch, *flags)
-        existing_key = lower_keys.get(label.lower())
-        if val and (existing_key is None or _amoprof_missing(out.get(existing_key))):
-            out[label] = val
-    return out
-
-
 def _setup_section(setup: dict) -> str:
     import html as _html
     setup = _amoprof_augment_setup_from_launch(setup or {})
@@ -2690,6 +2754,8 @@ def _stack_overview_section() -> str:
 
 
 # ─── Main entry ──────────────────────────────────────────────────────────────
+
+
 def build_report(raw_dir: Path, out_html: Path,
                  run_label: str = "") -> Path:
     """Build the interactive HTML report from a raw/ directory.
@@ -2697,7 +2763,7 @@ def build_report(raw_dir: Path, out_html: Path,
     Returns the path to the written HTML file.
     """
     global _T0_EPOCH
-    raw_dir = Path(raw_dir)
+    raw_dir = _amoprof_resolve_raw_dir(Path(raw_dir))
     out_html = Path(out_html)
 
     # Load all data
@@ -3123,8 +3189,8 @@ def build_report(raw_dir: Path, out_html: Path,
             _kpi_tile("E2E p50", f"{float(_e2e_p50_ms or _e2e_ms_kpi or 0):.0f}", "ms", "Median · histogram_quantile/percentile timeseries"),
             _kpi_tile("Throughput mean", _tp_mean_val, "tok/s" if _tp_mean_val != "N/A" else "", _tp_mean_note),
             _kpi_tile("Throughput p50", f"{float(_tp_p50 or 0):.1f}" if _tp_p50 else "N/A", "tok/s" if _tp_p50 else "", "Median of active sglang_gen_throughput samples"),
-            _kpi_tile("Cache hit", f"{float(sglang_sum.get('cache_hit_token_weighted_pct', sglang_sum.get('cache_hit_rate_realtime_pct', 0)) or 0):.1f}",
-                      "%", f"token={float(sglang_sum.get('cache_hit_token_weighted_pct', 0) or 0):.1f}% · time={float(sglang_sum.get('cache_hit_time_weighted_pct', sglang_sum.get('cache_hit_gauge_overall_pct', 0)) or 0):.1f}% · request={float(sglang_sum.get('cache_hit_request_weighted_pct', 0) or 0):.1f}%"),
+            _kpi_tile("Cache hit", f"{float(sglang_sum.get('cache_hit_pct', sglang_sum.get('cache_hit_rate_realtime_pct', 0)) or 0):.1f}",
+                      "%", f"primary={sglang_sum.get('cache_hit_calc_method', 'canonical')} · prefill={float(sglang_sum.get('cache_hit_prefill_token_weighted_pct', 0) or 0):.1f}% · cached/prompt={float(sglang_sum.get('cache_hit_token_weighted_pct', 0) or 0):.1f}%"),
         ]
     if gpu_sum:
         _gpu_active_mean, _gpu_active_peak, _gpu_note = _active_gpu_util_from_rows(gpu_ts)
@@ -3345,10 +3411,12 @@ def build_report(raw_dir: Path, out_html: Path,
     formula_token_cache = """Throughput mean = active_mean(sglang_gen_throughput)
 Throughput p50 = median(nonzero_samples(sglang_gen_throughput))
 Fallback throughput = Δsglang_generation_tokens_total / Δtime_sec
-Cache hit token weighted = Δsglang_cached_tokens_total / Δsglang_prompt_tokens_total × 100
-Cache hit time weighted = avg_over_time(sglang_cache_hit_rate[report_window]) × 100
-Cache hit request weighted = Δsglang_request_cache_hit_total / Δsglang_request_total × 100
-Cache hit prefill-only diagnostic = Δsglang_realtime_tokens_total{mode="prefill_cache"} / (Δprefill_cache + Δprefill_compute) × 100"""
+Primary cache hit = cache-served prompt/prefill tokens / (cache-served + compute-served prompt/prefill tokens) × 100
+Request JSON exact = Σmeta_info.cached_tokens / Σ(meta_info.cached_tokens + meta_info.prompt_tokens) × 100
+OpenAI usage exact = Σusage.prompt_tokens_details.cached_tokens / Σusage.prompt_tokens × 100
+Prometheus fallback = Δsglang_realtime_tokens_total{mode="prefill_cache"} / (Δprefill_cache + Δprefill_compute) × 100
+Cached/prompt diagnostic = Δsglang_cached_tokens_total / Δsglang_prompt_tokens_total × 100
+Gauge diagnostics = avg/active/peak sglang_cache_hit_rate samples"""
     formula_kv_tiers = """L1/HBM tokens = sglang_kv_used_tokens or sglang_token_usage-derived fields
 L2/host cache occupancy = sglang_hicache_host_used_tokens / sglang_hicache_host_total_tokens × 100
 L3 (local storage) movement = Δsglang_backuped_tokens_total (write/offload) and Δsglang_prefetched_tokens_total (read/onboard)
@@ -3521,7 +3589,7 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
 
     sections_html.append(_layer_header("layer-l1", "A3/A2/A1 · L1 HBM / CUDA / GPU", "GPU kernel/runtime layer, HBM occupancy, HBM bandwidth pressure, GPU power and utilization.", "#2f8a4e"))
     sections_html.append(_section("GPU Utilization & HBM (per GPU)",
-                                   "ch_gpu", _chart_gpu(gpu_ts, gpu_summary=gpu_sum),
+                                   "ch_gpu", _chart_gpu(gpu_ts, gpu_summary=gpu_sum, raw_dir=raw_dir),
                                    "Per-GPU lines — click legend entries to isolate one GPU"))
     sections_html.append(_section("Total GPU Power Draw",
                                    "ch_power", _chart_power(power_ts, gpu_ts)))
@@ -3534,12 +3602,22 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
     # otherwise parse the raw multi-section AMDuProf CSV/TXT exactly like the
     # static report. This keeps the interactive tab consistent with the static tab.
     _dram_ts_rows = (_read_csv(raw_dir / "amduprof_pcm_timeseries.csv") or
-                     _read_csv(raw_dir / "pcm_timeseries.csv"))
+                     _read_csv(raw_dir / "pcm_timeseries.csv") or
+                     _read_csv(raw_dir / "pcm_memory_timeseries.csv"))
     _dram_path = (raw_dir / "amduprof_pcm_raw.txt"
                   if (raw_dir / "amduprof_pcm_raw.txt").exists()
                      and (raw_dir / "amduprof_pcm_raw.txt").stat().st_size > 0
                   else raw_dir / "amduprof_pcm_raw.csv")
+    _dram_summary_fig = None
+    for _dram_summary_name in ("pcm_summary.json", "pcm_memory_summary.json",
+                               "amduprof_pcm_summary.json", "dram_summary.json"):
+        _dram_summary_fig = _chart_dram_bw_from_summary(_read_json(raw_dir / _dram_summary_name), None)
+        if _dram_summary_fig:
+            break
+    if not _dram_summary_fig:
+        _dram_summary_fig = _chart_dram_bw_from_summary(_read_intel_pcm_memory_raw_summary(raw_dir), None)
     _dram_fig = (_chart_dram_bw_from_timeseries(_dram_ts_rows) or
+                 _dram_summary_fig or
                  _chart_dram_bw(_dram_path) or
                  _chart_dram_bw_from_kv_activity(sglang_ts, _kv_b_pt))
     _dram_note = ("From --enable-dram: AMD uProf PCM on AMD or Intel PCM/perf IMC on Intel. "

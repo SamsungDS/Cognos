@@ -140,10 +140,14 @@ def _merge_timeseries(
             ts = _safe_float(row.get(time_col, ""))
             abs_ts = ts + t0_off if t0_off > 0 else ts
 
-            # Filter to window (using absolute or relative ts consistently)
-            if t_start > 0 and abs_ts < t_start and ts < t_start:
+            # Filter to window.  If a per-source t0_epoch is known, compare
+            # using the reconstructed absolute epoch.  The old mixed condition
+            # (abs_ts > end AND relative_ts > end) accidentally kept rows from
+            # later service cycles because their relative time_sec was small.
+            compare_ts = abs_ts if t0_off > 0 or abs_ts > 1_000_000_000 else ts
+            if t_start > 0 and compare_ts < t_start:
                 continue
-            if t_end > 0 and abs_ts > t_end and ts > t_end:
+            if t_end > 0 and compare_ts > t_end:
                 continue
 
             # Key on absolute ts so different-origin rows don't collide
@@ -342,9 +346,11 @@ def aggregate_run_dirs(
         "nvme_driver_timeseries_extra.csv",
         "vmstat_timeseries.csv",
         "power_timeseries.csv",
+        "dram_timeseries.csv",
         "amduprof_pcm_timeseries.csv",
         "pcm_timeseries.csv",
         "iostat_timeseries.csv",
+        "all_timeseries.csv",
         "blktrace_events.csv",
     ]
     for fname in TIMESERIES_FILES:

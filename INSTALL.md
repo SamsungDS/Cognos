@@ -17,9 +17,9 @@ This guide covers installation for metrics collection, SGLang analysis, and opti
 ## Install AMOprof
 
 ```bash
-mkdir -p amoprof_1_39_94
-unzip amoprof_1_39_94.zip -d amoprof_1_39_94
-cd amoprof_1_39_94
+mkdir -p amoprof_1_0_0
+unzip amoprof_1_0_0.zip -d amoprof_1_0_0
+cd amoprof_1_0_0
 chmod +x install.sh scripts/install_dram_deps.sh
 ./install.sh
 source ~/amoprof_venv/bin/activate
@@ -37,7 +37,7 @@ The default install is metrics-only. It does not install PyTorch or SGLang serve
 ```bash
 ./install.sh                  # AMOprof + core metrics/reporting dependencies
 ./install.sh --sglang         # add PyTorch/SGLang client/server dependencies
-./install.sh --full           # add SGLang + SWE-bench/SWE-agent dependencies
+./install.sh --full           # add SGLang dependencies
 ./install.sh --skip-apt       # skip system package installation
 ./install.sh --skip-venv      # install into the current Python environment
 ./install.sh --venv DIR       # use a custom virtualenv location

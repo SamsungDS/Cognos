@@ -1,8 +1,63 @@
+"""NsysGpuTraceCollector — extracted from nsys_collector.py into its own module.
+
+Part of the amoprof.collectors package.  Registers itself via
+@register_collector at import time (populates CollectorRegistry).
+"""
 from __future__ import annotations
-import csv, subprocess, threading, time
+
+import csv
+import json
+import logging
+import os
+import re
+import signal  # noqa: F401  (used by some collectors' subprocess handling)
+import statistics
+import subprocess
+import threading
+import time
+import urllib.request  # noqa: F401  (needed by http-based collectors)
+from dataclasses import dataclass  # noqa: F401
+from datetime import datetime, timezone  # noqa: F401
 from pathlib import Path
 
-class NsysGpuTraceCollector:
+from ..base import (
+    AIStackLayer,
+    BaseCollector,
+    CollectorSpec,
+    register_collector,
+)
+
+log = logging.getLogger("amoprof.collectors.nsys")
+
+
+@register_collector
+class NsysGpuTraceCollector(BaseCollector):
+    SPEC = CollectorSpec(
+        name='nsys',
+        layer=AIStackLayer.A4_GPU_HBM,
+        is_ssd_scoped=False,
+        is_pid_scoped=True,
+        optional=True,
+        enable_flag='enable_nsys',
+        description='Nsight Systems GPU trace of the target PID',
+    )
+    @classmethod
+    def for_pid(cls, pid: int, args, ctx: dict):
+        nsys_pid = getattr(args, 'nsys_pid', None) or pid
+        return cls(
+            pid=nsys_pid,
+            duration_s=(getattr(args, 'nsys_duration_s', None)
+                        or getattr(args, 'duration_s', None)
+                        or ctx.get('duration_s', 60)),
+            binary=getattr(args, 'nsys_bin', 'nsys'),
+            stats_binary=getattr(args, 'nsys_stats_bin', 'nsys'),
+            output_base=(str(ctx.get('raw_dir', '.')) + '/' + getattr(args, 'nsys_output_base', 'dram_record')),
+            report=getattr(args, 'nsys_report', 'cuda_gpu_trace'),
+            gpu_metrics_devices=getattr(args, 'nsys_gpu_metrics_devices', 'all'),
+            extra_args=getattr(args, 'nsys_extra_arg', None) or [],
+            work_dir=str(ctx.get('raw_dir', '.')),
+        )
+
     def __init__(self, pid: int | None = None, duration_s: float = 60.0,
                  binary: str = 'nsys', stats_binary: str = 'nsys',
                  output_base: str | None = None, report: str = 'cuda_gpu_trace',

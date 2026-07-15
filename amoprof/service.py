@@ -13,16 +13,236 @@ Usage:
 
 from __future__ import annotations
 
+import csv
+import json
 import logging
 import os
+import platform
 import re
 import threading
 import time
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 
 log = logging.getLogger("amoprof.service")
+
+
+# ---------------------------------------------------------------------------
+# Service-mode local persistence helpers
+# ---------------------------------------------------------------------------
+
+def _detect_cpu_vendor() -> str:
+    """Return a coarse CPU vendor string for DRAM PMU backend selection."""
+    text = ""
+    try:
+        text = Path("/proc/cpuinfo").read_text(errors="ignore").lower()
+    except Exception:
+        text = platform.processor().lower()
+    if "authenticamd" in text or "amd" in text:
+        return "amd"
+    if "genuineintel" in text or "intel" in text:
+        return "intel"
+    return "unknown"
+
+
+def _resolve_dram_tool(args: Any) -> str:
+    """Resolve --enable-dram backend: auto -> AMDuProf on AMD, Intel PCM on Intel."""
+    tool = str(getattr(args, "dram_tool", "auto") or "auto").strip().lower()
+    if tool in {"none", "off", "disabled"}:
+        return "none"
+    if tool in {"amduprof", "amd", "amduprof-pcm"}:
+        return "amduprof"
+    if tool in {"intel", "intel-pcm", "pcm", "pcm-memory"}:
+        return "intel-pcm"
+    if tool in {"perf", "perf-imc", "imc"}:
+        return "perf-imc"
+    vendor = _detect_cpu_vendor()
+    if vendor == "amd":
+        return "amduprof"
+    if vendor == "intel":
+        return "intel-pcm"
+    return "intel-pcm"
+
+
+def _json_default(obj: Any) -> str:
+    if isinstance(obj, Path):
+        return str(obj)
+    return str(obj)
+
+
+def _iso_utc(ts: float) -> str:
+    try:
+        return datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat()
+    except Exception:
+        return ""
+
+
+def _collector_series_rows(obj: Any, t0_epoch: float) -> list[dict[str, Any]]:
+    """Extract and normalize per-sample rows from a collector object.
+
+    Each persisted row carries both absolute epoch time and relative time_sec.
+    This is what lets offline service-mode data be filtered by an arbitrary
+    wall-clock window without depending on Prometheus retention.
+    """
+    raw: list[Any] = []
+    if hasattr(obj, "samples") and isinstance(getattr(obj, "samples"), list):
+        raw = getattr(obj, "samples") or []
+    elif hasattr(obj, "_samples") and isinstance(getattr(obj, "_samples"), list):
+        raw = getattr(obj, "_samples") or []
+
+    rows: list[dict[str, Any]] = []
+    for idx, item in enumerate(raw):
+        if isinstance(item, dict):
+            d = dict(item)
+        elif isinstance(item, tuple) and len(item) == 3 and isinstance(item[2], dict):
+            tag, ts, payload = item
+            d = {"tag": tag, "ts": ts, **payload}
+        else:
+            continue
+
+        ts_val = d.get("timestamp_epoch", d.get("ts", d.get("_ts")))
+        try:
+            ts_f = float(ts_val)
+        except Exception:
+            try:
+                rel = float(d.get("time_sec", idx))
+            except Exception:
+                rel = float(idx)
+            ts_f = float(t0_epoch) + rel
+
+        if ts_f > 1_000_000_000:
+            d["timestamp_epoch"] = round(ts_f, 6)
+            d["ts"] = round(ts_f, 6)
+            d["time_sec"] = round(ts_f - float(t0_epoch), 6)
+        else:
+            rel = ts_f
+            d["time_sec"] = round(rel, 6)
+            d["timestamp_epoch"] = round(float(t0_epoch) + rel, 6)
+            d["ts"] = d["timestamp_epoch"]
+        d["timestamp_utc"] = _iso_utc(float(d["timestamp_epoch"]))
+        d["iteration"] = idx
+        rows.append(d)
+    return rows
+
+
+def _write_rows_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        return
+    keys: list[str] = []
+    seen: set[str] = set()
+    preferred = ["time_sec", "timestamp_epoch", "timestamp_utc", "ts", "iteration", "collector"]
+    for k in preferred:
+        for row in rows:
+            if k in row and k not in seen:
+                keys.append(k); seen.add(k)
+    for row in rows:
+        for k in row:
+            if k not in seen:
+                keys.append(k); seen.add(k)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=keys, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(rows)
+
+
+def _write_rows_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, default=_json_default, sort_keys=True) + "\n")
+
+
+def _persist_service_cycle(
+    *,
+    cycle_dir: Path,
+    raw_dir: Path,
+    cycle: int,
+    enabled: set[str],
+    collectors: dict[str, Any],
+    summaries: dict[str, dict[str, Any]],
+    raw_paths: dict[str, str],
+    start_epoch: float,
+    end_epoch: float,
+    interval_s: float,
+    scrape_s: float,
+    args: Any,
+) -> None:
+    """Write a service cycle as a normal local AMOprof run directory."""
+    all_rows: list[dict[str, Any]] = []
+    for name, summary in summaries.items():
+        summary_path = raw_dir / f"{name}_summary.json"
+        summary_path.write_text(json.dumps(summary, indent=2, default=_json_default), encoding="utf-8")
+        raw_paths[f"{name}_summary_json"] = str(summary_path)
+
+        obj = collectors.get(name)
+        if obj is None:
+            continue
+        rows = _collector_series_rows(obj, start_epoch)
+        for row in rows:
+            row["collector"] = name
+        if rows:
+            _write_rows_jsonl(raw_dir / f"{name}_timeseries.jsonl", rows)
+            _write_rows_csv(raw_dir / f"{name}_timeseries.csv", rows)
+            raw_paths[f"{name}_timeseries_jsonl"] = str(raw_dir / f"{name}_timeseries.jsonl")
+            raw_paths[f"{name}_timeseries_csv"] = str(raw_dir / f"{name}_timeseries.csv")
+            all_rows.extend(rows)
+
+    if all_rows:
+        all_rows = sorted(all_rows, key=lambda r: (float(r.get("time_sec", 0.0)), str(r.get("collector", ""))))
+        _write_rows_jsonl(raw_dir / "all_timeseries.jsonl", all_rows)
+        _write_rows_csv(raw_dir / "all_timeseries.csv", all_rows)
+        raw_paths["all_timeseries_jsonl"] = str(raw_dir / "all_timeseries.jsonl")
+        raw_paths["all_timeseries_csv"] = str(raw_dir / "all_timeseries.csv")
+
+    # Create AMOprof-compatible canonical files/mirrors when possible.  This
+    # keeps service_cycle_* directories analyzable with the same code path as
+    # one-shot collect directories.
+    try:
+        from .writer import write_amoprof_files
+        sglang_obj = collectors.get("sglang")
+        sglang_samples = getattr(sglang_obj, "raw_samples", []) if sglang_obj is not None else []
+        sglang_source = getattr(sglang_obj, "prometheus_url", "") if sglang_obj is not None else ""
+        sglang_elapsed = float(getattr(sglang_obj, "elapsed_s", 0.0) or 0.0) if sglang_obj is not None else 0.0
+        written = write_amoprof_files(raw_dir, start_epoch,
+                                       sglang_samples=sglang_samples,
+                                       sglang_source=sglang_source,
+                                       sglang_elapsed_s=sglang_elapsed,
+                                       sglang_model=str(getattr(args, "model", "unknown")))
+        for fname, path in written.items():
+            raw_paths[f"amoprof_{Path(fname).stem}"] = str(path)
+    except Exception as exc:
+        log.debug("service: canonical writer skipped: %s", exc)
+
+    meta = {
+        "run_id": cycle_dir.name,
+        "label": cycle_dir.name,
+        "service_mode": True,
+        "service_cycle": cycle,
+        "timestamp": _iso_utc(end_epoch),
+        "t0_epoch": start_epoch,
+        "start_time": start_epoch,
+        "t_end_epoch": end_epoch,
+        "end_time": end_epoch,
+        "start_time_utc": _iso_utc(start_epoch),
+        "end_time_utc": _iso_utc(end_epoch),
+        "duration_s": round(end_epoch - start_epoch, 3),
+        "requested_duration_s": scrape_s,
+        "interval_s": interval_s,
+        "collectors": sorted(enabled),
+        "ssd_device": getattr(args, "ssd_device", ""),
+        "ssd_devices": list(getattr(args, "ssd_devices", []) or
+                            ([getattr(args, "ssd_device", "")] if getattr(args, "ssd_device", "") else [])),
+        "hicache_path": getattr(args, "hicache_path", ""),
+        "sglang_port": getattr(args, "sglang_port", "") or "",
+    }
+    payload = {"meta": meta, "summary": summaries, "raw_paths": raw_paths}
+    (cycle_dir / "summary.json").write_text(json.dumps(payload, indent=2, default=_json_default), encoding="utf-8")
+    # Duplicate a compact meta file into raw/ because older aggregate/analyze
+    # paths sometimes look in raw/summary.json first.
+    (raw_dir / "summary.json").write_text(json.dumps(meta, indent=2, default=_json_default), encoding="utf-8")
 
 ALWAYS_COLLECTORS: list[str] = [
     "iostat", "smart", "ssd_hw", "vmstat", "nvlink_pcie",
@@ -204,84 +424,109 @@ def _build_collectors(
         SsdHardwareMonitor,
         VmstatMonitor,
     )
-    from .collectors_extra import (
+    from .collectors import (
         BiosnoopCollector,
         BlktraceCollector,
         DiscardStatsMonitor,
         SwapStormMonitor,
     )
 
-    ssd_device   = getattr(args, "ssd_device",   "/dev/nvme0n1")
+    from .cli import _resolve_ssd_devices, _ssd_device_slug
+
+    ssd_raw       = getattr(args, "ssd_device", "/dev/nvme0n1")
+    ssd_devices   = _resolve_ssd_devices(ssd_raw) or ["/dev/nvme0n1"]
+    args.ssd_devices = ssd_devices
+    args.ssd_device  = ssd_devices[0]
+    ssd_device    = ssd_devices[0]
     hicache_path = getattr(args, "hicache_path", "/mnt/sglang_dv3")
     pid          = getattr(args, "pid",          None)
     sglang_port  = getattr(args, "sglang_port",  None)
     sglang_host  = getattr(args, "sglang_host",  "127.0.0.1")
+    dram_tool    = _resolve_dram_tool(args)
 
-    factories: dict[str, Any] = {
-        "iostat":       lambda: IostatMonitor(ssd_device, interval_s),
-        "smart":        lambda: NvmeSmartMonitor(ssd_device,
-                                                 poll_s=max(int(interval_s), 1),
-                                                 use_sudo=use_sudo),
-        "ssd_hw":       lambda: SsdHardwareMonitor(ssd_device,
-                                                   hicache_path=hicache_path,
-                                                   use_sudo=use_sudo),
-        "biolatency":   lambda: BiolatencyCollector(ssd_device,
-                                                    duration_s=max(int(duration_s), 1),
-                                                    use_sudo=use_sudo),
-        "vmstat":       lambda: VmstatMonitor(interval_s),
-        "nvlink_pcie":  lambda: NvlinkPcieMonitor(max(interval_s, 1.0)),
-        "nvme_driver":  lambda: NvmeDriverMonitor(ssd_device, interval_s),
-        "gpu":          lambda: GpuMonitor(interval_s),
-        "dram":         lambda: DramMonitor(interval_s),
-        "power":        lambda: PowerMonitor(interval_s, use_sudo=use_sudo),
-        "pcm":          lambda: PcmMemoryCollector(interval_s),
-        "discard":      lambda: DiscardStatsMonitor(ssd_device, interval_s,
-                                                    work_dir=raw_dir),
-        "swap_storm":   lambda: SwapStormMonitor(interval_s, work_dir=raw_dir),
-        "blktrace":     lambda: BlktraceCollector(
-            ssd_device,
-            duration_s=max(int(duration_s), 1),
-            work_dir=raw_dir,
-            blktrace_bin=getattr(args, "blktrace_bin", "blktrace"),
-            blkparse_bin=getattr(args, "blkparse_bin", "blkparse"),
-            use_sudo=use_sudo,
-        ),
-        "biosnoop":     lambda: BiosnoopCollector(
-            duration_s=max(int(duration_s), 1),
-            work_dir=raw_dir,
-            device=ssd_device,
-            binary=getattr(args, "biosnoop_bin", "biosnoop-bpfcc"),
-            use_sudo=use_sudo,
-        ),
-        "amduprof_pcm": lambda: AMDuProfPcmMemoryCollector(
-            duration_s=getattr(args, "amduprof_duration_s", None) or duration_s,
-            interval_s=interval_s,
-            binary=getattr(args, "amduprof_pcm_bin",
-                           "/opt/AMDuProf_5.2-606/bin/AMDuProfPcm"),
-            output_csv=str(raw_dir / "amduprof_pcm_raw.csv"),
-            extra_args=getattr(args, "amduprof_extra_arg", []) or [],
-            use_sudo=use_sudo,
-        ),
+    factories: dict[str, Any] = {}
+    _host_ctx = {
+        "raw_dir": raw_dir,
+        "duration_s": duration_s,
+        "use_sudo": use_sudo,
+        "interval_s": interval_s,
+        "dram_tool": dram_tool,
     }
+    from .base import CollectorRegistry
+    # host-wide collectors — the `enabled` filter decides which get built.
+    # (sglang is host-wide too but its factory needs late binding on
+    # sglang_port; handled below to match the original conditional.)
+    for _spec in CollectorRegistry.host_wide():
+        # `sglang` handled in the sglang_port block below to keep the same
+        # sglang_port-is-not-None check.
+        if _spec.name == "sglang":
+            continue
+        _cls = CollectorRegistry.get(_spec.layer, _spec.name)
+        if _cls is None or not hasattr(_cls, "for_host"):
+            continue
+        factories[_spec.name] = (
+            lambda _c=_cls, _a=args, _x=_host_ctx: _c.for_host(_a, _x)
+        )
+    # Per-SSD factories driven by CollectorRegistry.  Every SSD-scoped
+    # collector class declares a `for_device(device, args, ctx)` classmethod;
+    # service just iterates the registry, no per-class boilerplate here.
+    from .base import CollectorRegistry
+    _ssd_ctx_base = {
+        "raw_dir": raw_dir,
+        "duration_s": duration_s,
+        "use_sudo": use_sudo,
+        "interval_s": interval_s,
+    }
+    for _idx, _dev in enumerate(ssd_devices):
+        _slug = _ssd_device_slug(_dev)
+        _ksfx = "" if _idx == 0 else ("__" + _slug)
+        _fsfx = "" if _idx == 0 else _slug
+        _ctx = dict(_ssd_ctx_base)
+        _ctx["filename_suffix"] = _fsfx
+        for _spec in CollectorRegistry.ssd_scoped():
+            _cls = CollectorRegistry.get(_spec.layer, _spec.name)
+            if _cls is None or not hasattr(_cls, "for_device"):
+                continue
+            # Bind dev/args/ctx in the default arg trick so each lambda
+            # captures its own values, not the loop variables.
+            factories[_spec.name + _ksfx] = (
+                lambda _c=_cls, _d=_dev, _a=args, _x=_ctx: _c.for_device(_d, _a, _x)
+            )
 
     if sglang_port is not None:
-        from .bench_swebench import SGLangMetricsSampler
-        factories["sglang"] = lambda: SGLangMetricsSampler(
-            sglang_port, interval_s,
-            host=sglang_host,
-            debug=bool(getattr(args, "debug_sglang", False)),
-            debug_path=str(raw_dir / "sglang_debug.log"),
+        from .collectors import SGLangMetricsSampler
+        factories["sglang"] = (
+            lambda _c=SGLangMetricsSampler, _a=args, _x=_host_ctx: _c.for_host(_a, _x)
         )
 
     if pid is not None:
-        factories["perf"] = lambda: PerfStatCollector(pid, use_sudo=use_sudo)
-        factories["bpf"]  = lambda: BpftraceCollector(
-            pid, duration_s=max(int(duration_s), 1),
-            work_dir=raw_dir, use_sudo=use_sudo,
-        )
+        # perf and bpf are PID-scoped; look them up by SPEC and hand the
+        # pid through for_pid().
+        for _spec in CollectorRegistry.pid_scoped():
+            _cls = CollectorRegistry.get(_spec.layer, _spec.name)
+            if _cls is None or not hasattr(_cls, "for_pid"):
+                continue
+            # nsys triggers on --enable-nsys, not implicit --pid; that
+            # remains a top-level `factories['nsys']` when the user asks.
+            if _spec.name == "nsys":
+                continue
+            factories[_spec.name] = (
+                lambda _c=_cls, _p=pid, _a=args, _x=_host_ctx: _c.for_pid(_p, _a, _x)
+            )
+
+    # Expand SSD-scoped collector types (iostat/smart/ssd_hw/biolatency/
+    # nvme_driver/discard/blktrace/biosnoop) to per-device keys for devices 2+.
+    _ssd_scoped = {"iostat", "smart", "ssd_hw", "biolatency", "nvme_driver",
+                   "discard", "blktrace", "biosnoop"}
+    _expanded_enabled = set(enabled)
+    if len(ssd_devices) > 1:
+        for _base in list(enabled):
+            if _base in _ssd_scoped:
+                for _dev in ssd_devices[1:]:
+                    _expanded_enabled.add(_base + "__" + _ssd_device_slug(_dev))
 
     built: dict[str, Any] = {}
-    for name in sorted(enabled):
+    for name in sorted(_expanded_enabled):
         if name not in factories:
             log.warning("service: unknown collector %r - skipped", name)
             continue
@@ -335,8 +580,30 @@ def run_service(args: Any) -> int:
 
     if getattr(args, "enable_blktrace",     False): enabled.add("blktrace")
     if getattr(args, "enable_biosnoop",     False): enabled.add("biosnoop")
-    if getattr(args, "enable_amduprof_pcm", False): enabled.add("amduprof_pcm")
-    if getattr(args, "enable_all",          False): enabled |= {"blktrace", "biosnoop", "amduprof_pcm"}
+
+    # Generic service-mode DRAM PMU switch.  This mirrors collect-mode
+    # --enable-dram so offline service cycles can contain timestamped CPU DRAM
+    # bandwidth rows even when no Prometheus server is available.
+    if getattr(args, "enable_amduprof_pcm", False):
+        setattr(args, "enable_dram", True)
+        if not getattr(args, "dram_tool", "auto") or getattr(args, "dram_tool", "auto") == "auto":
+            setattr(args, "dram_tool", "amduprof")
+    if getattr(args, "enable_dram", False):
+        _dram_tool = _resolve_dram_tool(args)
+        if _dram_tool == "amduprof":
+            enabled.add("amduprof_pcm")
+        elif _dram_tool in {"intel-pcm", "perf-imc"}:
+            enabled.add("pcm")
+        elif _dram_tool != "none":
+            log.warning("service: unsupported --dram-tool %r; DRAM PMU collector disabled", _dram_tool)
+
+    if getattr(args, "enable_all",          False):
+        enabled |= {"blktrace", "biosnoop"}
+        _dram_tool_all = _resolve_dram_tool(args)
+        if _dram_tool_all == "amduprof":
+            enabled.add("amduprof_pcm")
+        elif _dram_tool_all in {"intel-pcm", "perf-imc"}:
+            enabled.add("pcm")
     if getattr(args, "sglang_port",         None) is not None: enabled.add("sglang")
     if getattr(args, "pid",                 None) is not None: enabled |= {"perf", "bpf"}
     if getattr(args, "enable_nsys",         False): enabled.add("nsys")
@@ -380,11 +647,13 @@ def run_service(args: Any) -> int:
     cycle = 0
     while not stop_event.is_set():
         cycle += 1
-        cycle_ts = time.strftime("%Y%m%d_%H%M%S")
-        raw_dir = output_base / f"service_cycle_{cycle_ts}" / "raw"
+        cycle_start_epoch = time.time()
+        cycle_ts = time.strftime("%Y%m%d_%H%M%S", time.localtime(cycle_start_epoch))
+        cycle_dir = output_base / f"service_cycle_{cycle_ts}"
+        raw_dir = cycle_dir / "raw"
         raw_dir.mkdir(parents=True, exist_ok=True)
 
-        log.info("service: cycle %d starting (%s)", cycle, cycle_ts)
+        log.info("service: cycle %d starting (%s; epoch=%.3f)", cycle, cycle_ts, cycle_start_epoch)
 
         collectors = _build_collectors(
             args=args,
@@ -404,35 +673,47 @@ def run_service(args: Any) -> int:
                 log.warning("service cycle %d: start %r failed: %s", cycle, name, exc)
 
         # If blktrace is running, start the incremental blkparse poller.
-        # It runs in the background for the duration of this cycle, periodically
-        # parsing new binary data and pushing interval metrics to the store.
-        blktrace_poller: BlktraceServicePoller | None = None
-        blktrace_collector = collectors.get("blktrace")
-        if blktrace_collector is not None and "blktrace" in started:
-            _trace_prefix = getattr(blktrace_collector, "_trace_prefix", None)
-            _csv_path     = getattr(blktrace_collector, "_csv_path", None)
-            _blkparse_bin = getattr(blktrace_collector, "blkparse_bin", "blkparse")
-            if _trace_prefix is not None and _csv_path is not None:
-                blktrace_poller = BlktraceServicePoller(
-                    trace_prefix=_trace_prefix,
-                    csv_path=_csv_path,
-                    store=store,
-                    blkparse_bin=_blkparse_bin,
-                    interval_s=blkparse_interval_s,
-                    use_sudo=use_sudo,
-                )
-                blktrace_poller.start()
-                log.info("service: blktrace poller started (interval=%.0fs)",
-                         blkparse_interval_s)
+        # One poller per blktrace collector so multi-SSD runs each parse
+        # their own binary trace stream.
+        blktrace_pollers: list[BlktraceServicePoller] = []
+        for _bt_name, _bt_coll in collectors.items():
+            if not (_bt_name == "blktrace" or _bt_name.startswith("blktrace__")):
+                continue
+            if _bt_name not in started or _bt_coll is None:
+                continue
+            _trace_prefix = getattr(_bt_coll, "_trace_prefix", None)
+            _csv_path     = getattr(_bt_coll, "_csv_path", None)
+            _blkparse_bin = getattr(_bt_coll, "blkparse_bin", "blkparse")
+            if _trace_prefix is None or _csv_path is None:
+                continue
+            _poller = BlktraceServicePoller(
+                trace_prefix=_trace_prefix,
+                csv_path=_csv_path,
+                store=store,
+                blkparse_bin=_blkparse_bin,
+                interval_s=blkparse_interval_s,
+                use_sudo=use_sudo,
+            )
+            _poller.start()
+            blktrace_pollers.append(_poller)
+            log.info("service: blktrace poller started for %s (interval=%.0fs)",
+                     _bt_name, blkparse_interval_s)
 
         stop_event.wait(timeout=scrape_s)
 
-        # Stop the blktrace poller first so it does a final parse before
-        # the blktrace binary collector is stopped and files are closed.
-        if blktrace_poller is not None:
-            blktrace_poller.stop()
-            log.info("service: blktrace poller stopped")
+        # Stop the blktrace pollers first so each does a final parse before
+        # the blktrace binary collectors are stopped and files are closed.
+        for _poller in blktrace_pollers:
+            try:
+                _poller.stop()
+            except Exception as _e:
+                log.warning("service: blktrace poller stop failed: %s", _e)
+        if blktrace_pollers:
+            log.info("service: %d blktrace poller(s) stopped", len(blktrace_pollers))
 
+        cycle_end_epoch = time.time()
+        cycle_summaries: dict[str, dict[str, Any]] = {}
+        raw_paths: dict[str, str] = {}
         for name, c in collectors.items():
             if name not in started:
                 continue
@@ -442,10 +723,25 @@ def run_service(args: Any) -> int:
                 result = {f"{name}_available": False, f"{name}_error": str(exc)}
             if result is None:
                 result = {f"{name}_available": False}
+            result = dict(result)
+            result.setdefault("collection_start_time_seconds", round(cycle_start_epoch, 6))
+            result.setdefault("collection_end_time_seconds", round(cycle_end_epoch, 6))
+            result.setdefault("collection_duration_s", round(cycle_end_epoch - cycle_start_epoch, 6))
+            cycle_summaries[name] = result
             store.update(name, result)
 
-        log.info("service: cycle %d complete, store covers %d collector(s)",
-                 cycle, len(store.snapshot()[0]))
+        try:
+            _persist_service_cycle(
+                cycle_dir=cycle_dir, raw_dir=raw_dir, cycle=cycle, enabled=enabled,
+                collectors=collectors, summaries=cycle_summaries, raw_paths=raw_paths,
+                start_epoch=cycle_start_epoch, end_epoch=cycle_end_epoch,
+                interval_s=interval_s, scrape_s=scrape_s, args=args,
+            )
+        except Exception as exc:
+            log.warning("service: failed to persist timestamped local cycle %d: %s", cycle, exc)
+
+        log.info("service: cycle %d complete, store covers %d collector(s); local raw=%s",
+                 cycle, len(store.snapshot()[0]), raw_dir)
 
         if stop_event.is_set():
             break

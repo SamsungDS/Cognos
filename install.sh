@@ -3,7 +3,7 @@
 # AMOprof installer
 #
 # Default mode installs AMOprof for metrics collection/reporting only.
-# Optional modes add SGLang/SWE-bench dependencies.
+# Optional modes add SGLang dependencies.
 # System dependencies are installed best-effort using the detected package manager,
 # CPU architecture, CPU vendor, and available GPU tooling.
 # =============================================================================
@@ -37,7 +37,7 @@ Usage: ./install.sh [OPTIONS]
 Modes:
   default              Install AMOprof + metrics/reporting dependencies only.
   --sglang             Also install PyTorch/SGLang dependencies.
-  --full               Install SGLang + SWE-bench/SWE-agent dependencies.
+  --full               Install SGLang dependencies.
 
 Options:
   --venv DIR           Virtualenv path. Default: ~/amoprof_venv
@@ -346,7 +346,7 @@ case "$MODE" in
         $PIP install --quiet --extra-index-url "$TORCH_INDEX" -e "$PACKAGE_DIR[sglang]"
         ;;
     full)
-        $PIP install --quiet --extra-index-url "$TORCH_INDEX" -e "$PACKAGE_DIR[sglang,swebench]"
+        $PIP install --quiet --extra-index-url "$TORCH_INDEX" -e "$PACKAGE_DIR[sglang]"
         if ! python3 -c "import sweagent" 2>/dev/null; then
             info "Installing sweagent from GitHub"
             $PIP install --quiet "git+https://github.com/SWE-agent/SWE-agent.git"

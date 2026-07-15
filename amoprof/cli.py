@@ -31,14 +31,14 @@ from .collectors import (
     SsdHardwareMonitor,
     VmstatMonitor,
 )
-from .collectors_extra import (
+from .collectors import (
     BiosnoopCollector,
     BlktraceCollector,
     DiscardStatsMonitor,
     SwapStormMonitor,
 )
-from .bench_swebench import SGLangMetricsSampler
-from .nsys_collector import NsysGpuTraceCollector
+from .collectors import SGLangMetricsSampler
+from .collectors import NsysGpuTraceCollector
 
 log = logging.getLogger("amoprof")
 
@@ -225,8 +225,14 @@ def _server_info_to_setup_details(server_info: dict[str, Any],
         "SGLang server_info raw": si,
     }
     if getattr(args, "ssd_device", ""):
-        setup["L3 (local storage) device"] = getattr(args, "ssd_device", "")
-        setup["SSD device"] = getattr(args, "ssd_device", "")
+        _ssd_raw = getattr(args, "ssd_device", "")
+        _ssd_list = _resolve_ssd_devices(_ssd_raw)
+        _primary = _ssd_list[0] if _ssd_list else _ssd_raw
+        setup["L3 (local storage) device"] = _primary
+        setup["SSD device"] = _primary
+        if len(_ssd_list) > 1:
+            setup["SSD devices"] = _ssd_list
+            setup["L3 (local storage) devices"] = _ssd_list
     if getattr(args, "sglang_host", ""):
         setup["SGLang host"] = getattr(args, "sglang_host", "")
     if getattr(args, "sglang_port", None):
@@ -358,6 +364,43 @@ def _wait_for_sglang_metrics(port: int, host: str = "127.0.0.1",
     log.warning("Timed out waiting for SGLang metrics on %s:%s: %s", host, port, last_err)
     return False
 
+def _resolve_ssd_devices(raw: str | list | None) -> list[str]:
+    """Normalize --ssd-device into a de-duplicated list of device paths.
+
+    Accepts:
+      - "" / None                 -> []
+      - "/dev/nvme0n1"            -> ["/dev/nvme0n1"]
+      - "/dev/nvme0n1,/dev/nvme1n1" -> ["/dev/nvme0n1","/dev/nvme1n1"]
+      - list/tuple thereof (also with commas per entry)
+    """
+    if not raw:
+        return []
+    if isinstance(raw, (list, tuple)):
+        parts = []
+        for item in raw:
+            parts.extend(_resolve_ssd_devices(item))
+        return parts
+    out: list[str] = []
+    seen: set[str] = set()
+    for tok in str(raw).replace(";", ",").split(","):
+        tok = tok.strip()
+        if not tok or tok in seen:
+            continue
+        seen.add(tok)
+        out.append(tok)
+    return out
+
+
+def _ssd_device_slug(device: str) -> str:
+    """Slug for per-device collector-name/filename suffixes.
+
+    /dev/nvme0n1 -> nvme0n1, /dev/sdb -> sdb.
+    """
+    import os as _os, re as _re
+    base = _os.path.basename(str(device or "")) or "dev"
+    return _re.sub(r"[^A-Za-z0-9]+", "_", base).strip("_") or "dev"
+
+
 def _sanitize(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
@@ -397,10 +440,25 @@ def _normalize_ts(rows: list[dict[str, Any]], t0: float) -> list[dict[str, Any]]
         d = dict(row)
         ts = d.get("ts", d.get("_ts"))
         if isinstance(ts, (int, float)):
-            d["ts"] = round(float(ts), 6)
-            d["time_sec"] = round(float(ts) - t0, 6)
+            ts_f = float(ts)
+            d["ts"] = round(ts_f, 6)
+            d["timestamp_epoch"] = round(float(d.get("timestamp_epoch", ts_f) or ts_f), 6)
+            d["time_sec"] = round(ts_f - t0, 6)
         else:
-            d["time_sec"] = float(idx)
+            # Preserve collector-provided elapsed seconds if available; otherwise
+            # fall back to row index.  This matters for Intel PCM/perf IMC and
+            # AMDuProf service-mode timestamps during offline window analysis.
+            try:
+                d["time_sec"] = float(d.get("time_sec", idx))
+            except Exception:
+                d["time_sec"] = float(idx)
+            d["ts"] = round(t0 + float(d["time_sec"]), 6)
+            d["timestamp_epoch"] = round(float(d.get("timestamp_epoch", d["ts"]) or d["ts"]), 6)
+        if not d.get("timestamp_utc"):
+            try:
+                d["timestamp_utc"] = datetime.fromtimestamp(float(d["timestamp_epoch"]), tz=timezone.utc).isoformat().replace("+00:00", "Z")
+            except Exception:
+                pass
         d["iteration"] = idx
         out.append(d)
     return out
@@ -637,7 +695,7 @@ def _audit_raw_dir(raw_dir: Path) -> dict[str, list[str]]:
         "biosnoop":     (["biosnoop.csv", "biosnoop_events.csv"],
                          "biosnoop (per-PID I/O attribution)",
                          "§I per-stream bandwidth"),
-        "amduprof_pcm": (["amduprof_pcm_raw.csv", "amduprof_pcm_raw.txt"],
+        "amduprof_pcm": (["amduprof_pcm_timeseries.csv", "amduprof_pcm_raw.csv", "amduprof_pcm_raw.txt"],
                          "AMD uProf PCM (DRAM bandwidth)",
                          "§F DRAM Bandwidth chart"),
         "pcm":          (["pcm_timeseries.csv"],
@@ -1093,6 +1151,112 @@ def _run_analysis(run_dir: Path, verbose: bool = False) -> dict[str, Any]:
     return metadata
 
 
+# Canonical raw directory markers used by analyze and report generation.  A
+# valid AMOprof raw directory can be passed directly, can be the raw/ child of a
+# run/output directory, or can be nested under metrics_run_*/raw for older
+# packages.  Keeping this resolver here lets scripts pass the same --output-dir
+# they used during collection back to `amoprof analyze --run-dir ...`.
+_AMOPROF_RAW_MARKERS = (
+    "all_timeseries.csv", "all_timeseries.jsonl",
+    "sglang_timeseries.csv", "sglang_summary.json",
+    "gpu_timeseries.csv", "gpu_summary.json",
+    "pcm_timeseries.csv", "pcm_summary.json", "pcm_memory_raw.csv",
+    "amduprof_pcm_timeseries.csv", "amduprof_pcm_summary.json", "amduprof_pcm_raw.csv",
+    "dram_summary.json", "setup_details.json", "server_info.json",
+    "collection_manifest.json", "collection_output_manifest.json",
+)
+
+
+def _raw_dir_has_amoprof_data(path: Path) -> bool:
+    """Return True when *path* looks like an AMOprof raw directory."""
+    p = Path(path)
+    try:
+        if not p.is_dir():
+            return False
+        for name in _AMOPROF_RAW_MARKERS:
+            f = p / name
+            if f.exists() and (f.is_dir() or f.stat().st_size >= 0):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _raw_dir_mtime(path: Path) -> float:
+    """Best-effort freshness score for choosing among nested raw dirs."""
+    p = Path(path)
+    candidates = [
+        p / "all_timeseries.csv", p / "sglang_timeseries.csv", p / "gpu_timeseries.csv",
+        p / "pcm_summary.json", p / "amduprof_pcm_summary.json",
+        p.parent / "summary.json", p / "collection_manifest.json",
+    ]
+    mtimes: list[float] = []
+    for f in candidates:
+        try:
+            if f.exists():
+                mtimes.append(f.stat().st_mtime)
+        except Exception:
+            pass
+    if mtimes:
+        return max(mtimes)
+    try:
+        return p.stat().st_mtime
+    except Exception:
+        return 0.0
+
+
+def _resolve_run_and_raw_dir(path: Path, *, create: bool = False) -> tuple[Path, Path, str]:
+    """Resolve a user supplied run/output/raw directory.
+
+    Supported layouts:
+      * NEW flat collection:     <output-dir>/raw
+      * Direct raw path:         <...>/raw
+      * Legacy nested run:       <output-dir>/metrics_run_<ts>/raw
+      * Legacy deeper wrapper:   <output-dir>/<label>/metrics_run_<ts>/raw
+
+    Returns (run_dir, raw_dir, resolution_kind).  For direct raw paths, run_dir
+    is the parent of raw_dir so existing report writers still place reports next
+    to raw/ unless --output-dir is supplied.
+    """
+    p = Path(path).expanduser().resolve()
+
+    # User passed the raw directory itself.
+    if _raw_dir_has_amoprof_data(p):
+        run_dir = p.parent if p.name == "raw" else p
+        return run_dir, p, "raw-dir"
+
+    # User passed a flat/new-style output/run directory.
+    child = p / "raw"
+    if _raw_dir_has_amoprof_data(child):
+        return p, child, "output-dir/raw"
+
+    # User passed a higher-level output directory from an older collection.  Pick
+    # the most recent nested raw directory with AMOprof markers, preferring
+    # metrics_run_* layouts but tolerating one extra wrapper level.
+    nested: list[Path] = []
+    try:
+        nested.extend([x for x in p.glob("metrics_run_*/raw") if _raw_dir_has_amoprof_data(x)])
+        nested.extend([x for x in p.glob("*/metrics_run_*/raw") if _raw_dir_has_amoprof_data(x)])
+        if not nested:
+            nested.extend([x for x in p.rglob("raw") if _raw_dir_has_amoprof_data(x)])
+    except Exception:
+        nested = []
+    if nested:
+        # De-duplicate while preserving paths.
+        uniq = {str(x): x for x in nested}
+        best = sorted(uniq.values(), key=lambda x: (_raw_dir_mtime(x), str(x)), reverse=True)[0]
+        return best.parent, best, "nested-latest-raw"
+
+    if create:
+        child.mkdir(parents=True, exist_ok=True)
+        p.mkdir(parents=True, exist_ok=True)
+        return p, child, "created-output-dir/raw"
+
+    # Keep legacy behavior as a last resort; caller may be about to populate raw/
+    # from Prometheus.
+    return p, child, "empty-output-dir/raw"
+
+
 def _validate_collection_outputs(out_dir: Path, collectors: dict[str, Any], summary: dict[str, dict[str, Any]], raw_paths: dict[str, str]) -> dict[str, Any]:
     raw_dir = out_dir / "raw"
     rows = []
@@ -1413,7 +1577,19 @@ def _collect(args: argparse.Namespace) -> int:
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     _resolve_collect_path_args(args)
     output_base = Path(args.output_dir).expanduser().resolve()
-    out_dir = output_base / f"metrics_run_{run_id}"
+
+    # v1.39.107: honor --output-dir directly.  Collection now writes:
+    #   <output-dir>/summary.json
+    #   <output-dir>/summary.csv
+    #   <output-dir>/raw/...
+    # so the same path can be fed to analyze:
+    #   amoprof analyze --run-dir <output-dir>
+    # A compatibility flag keeps the older metrics_run_<ts>/raw nesting when
+    # needed for external scripts that depend on it.
+    if getattr(args, "nested_output", False):
+        out_dir = output_base / f"metrics_run_{run_id}"
+    else:
+        out_dir = output_base
     raw_dir = out_dir / "raw"
     out_dir.mkdir(parents=True, exist_ok=True)
     raw_dir.mkdir(parents=True, exist_ok=True)
@@ -1524,115 +1700,68 @@ def _collect(args: argparse.Namespace) -> int:
         _effective_duration = 300.0
         log.info("No --duration-s or stop condition given — defaulting to 300 s")
 
-    collectors: dict[str, Any] = {
-        "iostat": IostatMonitor(args.ssd_device, args.interval_s),
-        "smart": NvmeSmartMonitor(args.ssd_device, poll_s=max(int(args.interval_s), 1),
-                                   use_sudo=not getattr(args, "no_sudo", False)),
-        # Captures NVMe device capacity (/sys/block/<dev>/size) and HiCache
-        # filesystem usage (df on hicache_path) into smart_summary.json so the
-        # L3 HiCache capacity tile and L3 (AI Memory Node / remote storage) layer row populate.
-        "ssd_hw": SsdHardwareMonitor(args.ssd_device,
-                                     hicache_path=args.hicache_path,
-                                     use_sudo=not getattr(args, "no_sudo", False)),
-        "biolatency": BiolatencyCollector(args.ssd_device,
-                                             duration_s=max(int(_effective_duration), 1),
-                                             use_sudo=not getattr(args, "no_sudo", False)),
-        "vmstat": VmstatMonitor(args.interval_s),
-        "nvlink_pcie": NvlinkPcieMonitor(max(args.interval_s, 1.0)),
-        "nvme_driver": NvmeDriverMonitor(args.ssd_device, args.interval_s),
-        "queue_depth_sysfs": BlockQueueDepthCollector(args.ssd_device, args.interval_s, work_dir=raw_dir),
-        "gpu": GpuMonitor(args.interval_s),
-        "dram": DramMonitor(args.interval_s),
-        "power": PowerMonitor(args.interval_s, use_sudo=not getattr(args, "no_sudo", False)),
-        # DRAM bandwidth PMU collection is opt-in via --enable-dram.
-        # On AMD this uses AMDuProfPcm; on Intel this uses Intel PCM pcm-memory
-        # or perf uncore_imc fallback.
-        # New: TRIM/discard time-series from /proc/diskstats — always cheap, always on
-        "discard": DiscardStatsMonitor(args.ssd_device, args.interval_s, work_dir=raw_dir),
-        # New: per-sample swap rates for swap-storm chart — always cheap, always on
-        "swap_storm": SwapStormMonitor(args.interval_s, work_dir=raw_dir),
+    # Resolve SSD device list (--ssd-device may be a comma-separated list).
+    # First device is the primary and keeps unsuffixed collector keys and
+    # canonical filenames so downstream analyze/report code paths still work.
+    _ssd_devices = _resolve_ssd_devices(getattr(args, "ssd_device", ""))
+    if not _ssd_devices:
+        _ssd_devices = ["/dev/nvme0n1"]
+    args.ssd_devices = _ssd_devices
+    args.ssd_device = _ssd_devices[0]
+    log.info("SSD devices monitored: %s", ", ".join(_ssd_devices))
+
+    _no_sudo = not getattr(args, "no_sudo", False)
+    collectors: dict[str, Any] = {}
+
+    # ── LayerRegistry-driven wiring ─────────────────────────────────────
+    #
+    # Each concrete LayerModule owns the collectors registered against
+    # its AIStackLayer and handles the cross-cutting concerns that used
+    # to live here inline:
+    #   • enable_flag gating (spec.optional, args.<enable_flag>)
+    #   • pcm vs amduprof_pcm selection based on ctx["dram_tool"]
+    #   • nsys pid preference (--nsys-pid overrides sglang pid)
+    #   • per-SSD-device iteration with filename_suffix
+    #   • pid-scoped skip when the SGLang server is remote
+    # cli.py owns only the shared ctx and the wall-clock t0 boundary,
+    # which is why we call build() (no start) here and start() below.
+    from .layers import LayerRegistry
+
+    _layer_ctx: dict[str, Any] = {
+        "raw_dir":          raw_dir,
+        "duration_s":       _effective_duration,
+        "use_sudo":         _no_sudo,
+        "interval_s":       args.interval_s,
+        "dram_tool":        _resolve_dram_tool(args),
+        "ssd_devices":      _ssd_devices,
+        "pid":              pid,
+        "nsys_pid":         getattr(args, "nsys_pid", None),
+        "sglang_is_remote": _sglang_is_remote,
     }
-    # New: blktrace per-request events (opt-in, requires root/sudo + blktrace pkg)
-    if getattr(args, "enable_blktrace", False):
-        collectors["blktrace"] = BlktraceCollector(
-            args.ssd_device,
-            duration_s=max(int(_effective_duration), 1),
-            work_dir=raw_dir,
-            blktrace_bin=getattr(args, "blktrace_bin", "blktrace"),
-            blkparse_bin=getattr(args, "blkparse_bin", "blkparse"),
-            use_sudo=not getattr(args, "no_sudo", False),
-            buffer_kb=getattr(args, "blktrace_buffer_kb", 16384),
-            num_buffers=getattr(args, "blktrace_num_buffers", 4),
-            max_csv_events=getattr(args, "blktrace_max_events", None),
+
+    _layers: list[Any] = [cls() for cls in LayerRegistry.ordered()]
+    for _layer in _layers:
+        try:
+            _built = _layer.build(args, _layer_ctx)
+        except Exception as _e:
+            log.warning("layer %s build failed: %s", _layer.NAME, _e)
+            continue
+        for _name, _coll in _built.items():
+            if _name in collectors:
+                log.warning("layer %s: duplicate collector key %s — overwriting",
+                            _layer.NAME, _name)
+            collectors[_name] = _coll
+
+    if _sglang_is_remote and pid is not None:
+        log.warning(
+            "SGLang server is remote (%s) — PID-scoped collectors "
+            "(perf/bpf/nsys) will be skipped.",
+            sglang_host,
         )
-    # New: biosnoop per-IO events with PID attribution (opt-in, requires BCC)
-    if getattr(args, "enable_biosnoop", False):
-        collectors["biosnoop"] = BiosnoopCollector(
-            duration_s=max(int(_effective_duration), 1),
-            work_dir=raw_dir,
-            device=args.ssd_device,
-            binary=getattr(args, "biosnoop_bin", "biosnoop-bpfcc"),
-            use_sudo=not getattr(args, "no_sudo", False),
-        )
-    if getattr(args, "enable_dram", False):
-        _dram_tool = _resolve_dram_tool(args)
-        if _dram_tool == "amduprof":
-            collectors["amduprof_pcm"] = AMDuProfPcmMemoryCollector(
-                duration_s=args.amduprof_duration_s or _effective_duration,
-                interval_s=args.interval_s,
-                binary=args.amduprof_pcm_bin,
-                output_csv=str(raw_dir / "amduprof_pcm_raw.csv"),
-                extra_args=args.amduprof_extra_arg or [],
-                use_sudo=not getattr(args, "no_sudo", False),
-            )
-        elif _dram_tool in {"intel-pcm", "perf-imc"}:
-            collectors["pcm"] = PcmMemoryCollector(
-                args.interval_s,
-                binary=(None if _dram_tool == "perf-imc" else getattr(args, "intel_pcm_memory_bin", None)),
-                force_perf_imc=(_dram_tool == "perf-imc"),
-                use_sudo=not getattr(args, "no_sudo", False),
-                work_dir=raw_dir,
-            )
-        elif _dram_tool != "none":
-            log.warning("Unsupported --dram-tool %r; DRAM PMU collector disabled", _dram_tool)
-    if args.enable_nsys:
-        if _sglang_is_remote:
-            log.warning(
-                "SGLang server is remote (%s) — skipping nsys (requires local PID attachment). "
-                "Run AMOprof on the SGLang node for nsys profiling.", sglang_host)
-        else:
-            nsys_pid = args.nsys_pid or pid
-            collectors["nsys"] = NsysGpuTraceCollector(
-                pid=nsys_pid,
-                duration_s=args.nsys_duration_s or args.duration_s,
-                binary=args.nsys_bin,
-                stats_binary=args.nsys_stats_bin,
-                output_base=str(raw_dir / args.nsys_output_base),
-                report=args.nsys_report,
-                gpu_metrics_devices=args.nsys_gpu_metrics_devices,
-                extra_args=args.nsys_extra_arg or [],
-                work_dir=str(raw_dir),
-            )
-    if args.sglang_port is not None:
-        collectors["sglang"] = SGLangMetricsSampler(
-            args.sglang_port,
-            args.interval_s,
-            host=sglang_host,
-            debug=bool(getattr(args, "debug_sglang", False)),
-            debug_path=str(raw_dir / "sglang_debug.log"),
-        )
-        if getattr(args, "debug_sglang", False):
-            log.info("SGLang debug enabled; diagnostics will be written to %s", raw_dir / "sglang_debug.log")
-    if pid is not None:
-        if _sglang_is_remote:
-            log.warning(
-                "SGLang server is remote (%s) — skipping PID-based collectors "
-                "(perf, bpf) which require local process attachment. "
-                "Run AMOprof on the SGLang node for these metrics.", sglang_host)
-        else:
-            collectors["perf"] = PerfStatCollector(pid, use_sudo=not getattr(args, "no_sudo", False))
-            collectors["bpf"] = BpftraceCollector(pid, duration_s=max(int(_effective_duration), 1), work_dir=raw_dir,
-                                                 use_sudo=not getattr(args, "no_sudo", False))
+
+    if getattr(args, "debug_sglang", False) and "sglang" in collectors:
+        log.info("SGLang debug enabled; diagnostics will be written to %s",
+                 raw_dir / "sglang_debug.log")
 
     log.info("Starting metrics-only capture")
     log.info("Output directory: %s", out_dir)
@@ -1733,6 +1862,7 @@ def _collect(args: argparse.Namespace) -> int:
         # into the smart_summary.json that the report reads, so the L3 HiCache
         # capacity tile and L3 (AI Memory Node / remote storage) layer text populate with df-derived
         # values without the report needing to read two separate files.
+        # Only the primary device ("ssd_hw", no suffix) drives the L3 tile.
         if name == "ssd_hw":
             _smart_path = raw_dir / "smart_summary.json"
             try:
@@ -1746,6 +1876,20 @@ def _collect(args: argparse.Namespace) -> int:
                                        encoding="utf-8")
             except Exception as _e:
                 log.warning("ssd_hw → smart_summary merge failed: %s", _e)
+        elif name.startswith("ssd_hw__"):
+            # Additional SSDs: write a per-device sidecar so the report can
+            # look up capacity/df stats per SSD without polluting the primary.
+            _dev_slug = name[len("ssd_hw__"):]
+            _sidecar = raw_dir / ("smart_summary__" + _dev_slug + ".json")
+            try:
+                _sidecar.write_text(json.dumps(
+                    {k: v for k, v in result.items()
+                     if k.startswith("hicache_fs_")
+                     or k in ("nvme_device_capacity_gb",
+                              "hicache_size_gb", "hicache_file_count")},
+                    indent=2), encoding="utf-8")
+            except Exception as _e:
+                log.warning("ssd_hw sidecar (%s) write failed: %s", _dev_slug, _e)
 
         _write_json(raw_dir / f"{name}_summary.json", result)
         raw_paths[f"{name}_summary_json"] = str(raw_dir / f"{name}_summary.json")
@@ -1784,6 +1928,7 @@ def _collect(args: argparse.Namespace) -> int:
         "pid": pid or "",
         "sglang_port": args.sglang_port or "",
         "ssd_device": args.ssd_device,
+        "ssd_devices": list(getattr(args, "ssd_devices", []) or [args.ssd_device]),
         "hicache_path": getattr(args, "hicache_path", "/mnt/sglang_dv3"),
         "interrupted": interrupted,
     }
@@ -1816,6 +1961,22 @@ def _collect(args: argparse.Namespace) -> int:
             log.error("Blktrace diagnostics: %s", raw_dir / "blktrace_summary.json")
             log.error("Common fixes: run the whole command with sudo, ensure debugfs is mounted, "
                       "ensure no other blktrace is active for the device, and verify sudo -n works.")
+
+    if getattr(args, "enable_dram", False) or getattr(args, "enable_amduprof_pcm", False):
+        _dram_name = "amduprof_pcm" if "amduprof_pcm" in collectors else ("pcm" if "pcm" in collectors else "")
+        _dr = summary.get(_dram_name, {}) if _dram_name else {}
+        _available_key = f"{_dram_name}_available" if _dram_name else ""
+        _samples_key = f"{_dram_name}_samples" if _dram_name == "pcm" else "amduprof_pcm_samples"
+        _samples = int(_dr.get(_samples_key, 0) or 0) if isinstance(_dr, dict) else 0
+        _total_bw = float((_dr.get("dram_total_gb_s_mean", 0) or _dr.get("pcm_dram_total_gb_s", 0) or 0) if isinstance(_dr, dict) else 0)
+        if (not _dram_name) or (isinstance(_dr, dict) and (not _dr.get(_available_key, False) or _samples <= 0 or _total_bw <= 0)):
+            _reason = (_dr.get("amduprof_pcm_reason") or _dr.get("pcm_source") or _dr.get("pcm_reason") or
+                       "enabled DRAM PMU collector produced no non-zero samples") if isinstance(_dr, dict) else "DRAM collector was not instantiated"
+            _post_collect_failures.append(f"dram_pmu: {_reason}")
+            log.error("Enabled DRAM PMU collector produced no usable bandwidth data: %s", _reason)
+            log.error("DRAM diagnostics: %s and %s", raw_dir / f"{_dram_name}_summary.json", raw_dir / f"{_dram_name}_timeseries.csv")
+            log.error("Common fixes: run with sudo/root or working sudo -n, pass the exact --amduprof-pcm-bin/--intel-pcm-memory-bin, "
+                      "and verify the AMDuProf/PCM output CSV contains non-zero Total Mem BW/RdBw/WrBw columns.")
 
     # ── Write amoprof-compatible files alongside the per-collector CSVs ────────
     # amoprof reads canonical filenames (sglang_timeseries.csv, gpu_timeseries.csv,
@@ -1977,7 +2138,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     c = sub.add_parser("collect", help="Collect metrics from a running workload")
     c.add_argument("--output-dir", default=os.environ.get("AMOPROF_OUTPUT_DIR", "./amoprof_results"),
-                   help="Directory for summary CSV/JSON and raw time series output")
+                   help="Directory for collection outputs. Default layout is flat: <output-dir>/raw plus summary/report files directly in <output-dir>, so the same path can be passed to analyze --run-dir.")
+    c.add_argument("--nested-output", action="store_true",
+                   help="Compatibility mode: write legacy <output-dir>/metrics_run_<timestamp>/raw instead of the default flat <output-dir>/raw layout.")
     c.add_argument("--label", default="", help="Optional run label stored in outputs")
     c.add_argument("--duration-s", type=float, default=None,
                    help="How long to collect metrics, in seconds. "
@@ -2019,7 +2182,11 @@ def _build_parser() -> argparse.ArgumentParser:
     c.add_argument("--interval-s", type=float, default=1.0,
                    help="Polling interval for time-series collectors. Default: 1.0")
     c.add_argument("--ssd-device", default=os.environ.get("AMOPROF_SSD_DEVICE", "/dev/nvme0n1"),
-                   help="Block device for SSD/NVMe collectors")
+                   help="Block device(s) for SSD/NVMe collectors. Accepts a single "
+                        "device (e.g. /dev/nvme0n1) or a comma-separated list "
+                        "(e.g. /dev/nvme0n1,/dev/nvme1n1) to monitor multiple SSDs "
+                        "in the same run. The first device is treated as the "
+                        "primary L3 device and drives HiCache capacity metadata.")
     c.add_argument("--hicache-path",
                    default=os.environ.get("AMOPROF_HICACHE_PATH", "/mnt/sglang_dv3"),
                    help="Mount path where HiCache stores L3 KV blocks. df is "
@@ -2230,9 +2397,12 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Allow manual --setup-details to replace server_info-derived setup_details.json.")
     a.add_argument("--prefer", default="local", choices=["local", "prometheus"],
                    help="Merge conflict policy when --prometheus AND --run-dir "
-                        "are both given. 'local' (default) keeps locally-collected "
-                        "files; 'prometheus' overwrites with server data. Files "
-                        "missing from one source are always pulled from the other.")
+                        "are both given. 'local' (default) keeps local canonical "
+                        "files and fills missing metrics from Prometheus. "
+                        "'prometheus' makes Prometheus the primary source for "
+                        "all Prometheus-owned metric families; local raw data is "
+                        "used only for metric families Prometheus does not return "
+                        "or cannot provide, such as blktrace/SMART/PMU.")
     a.add_argument("--list-targets", action="store_true",
                    help="Print the {job, instance} pairs visible to the "
                         "Prometheus server at --prometheus and exit. Useful for "
@@ -2261,6 +2431,10 @@ def _build_parser() -> argparse.ArgumentParser:
                         "(⚡ Interactive | 📊 Static). Implies --amoprof-report "
                         "and --interactive-report — both are generated and then "
                         "merged. Use this as the default one-file-to-share output.")
+    a.add_argument("--layered-report", action="store_true",
+                   help="Generate amoprof_layered.html — one <section> per "
+                        "AI-stack layer, driven by amoprof.layers.LayerModule."
+                        "analyze(). Additive to the other --*-report flags.")
     a.add_argument("--report-theme", default="dark",
                    choices=["dark", "light", "off"],
                    help="Theme + tooltips + explanations applied to the amoprof "
@@ -2379,6 +2553,9 @@ def _build_parser() -> argparse.ArgumentParser:
     ag.add_argument("--combined-report", action="store_true",
                     help="Generate amoprof_combined.html after aggregation "
                          "(implies --amoprof-report + --interactive-report).")
+    ag.add_argument("--layered-report", action="store_true",
+                    help="Generate amoprof_layered.html — one section per "
+                         "AI-stack layer, driven by amoprof.layers.")
     ag.add_argument("--report-theme", default="dark",
                     choices=["dark", "light", "off"])
     ag.add_argument("--setup-details", default="", metavar="FILE",
@@ -2506,7 +2683,9 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="Polling interval for time-series collectors. Default: 1.0")
     svc.add_argument("--ssd-device",
                      default=__import__("os").environ.get("AMOPROF_SSD_DEVICE", "/dev/nvme0n1"),
-                     help="Block device for SSD/NVMe collectors")
+                     help="Block device(s) for SSD/NVMe collectors. Accepts a single "
+                          "device or a comma-separated list (e.g. "
+                          "/dev/nvme0n1,/dev/nvme1n1). The first device is primary.")
     svc.add_argument("--hicache-path",
                      default=__import__("os").environ.get("AMOPROF_HICACHE_PATH", "/mnt/sglang_dv3"),
                      help="Mount path for HiCache df stats")
@@ -2530,8 +2709,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     svc.add_argument("--enable-biosnoop", action="store_true",
                      help="Enable biosnoop collector (requires root + bpfcc)")
+    svc.add_argument("--enable-dram", action="store_true",
+                     help="Enable timestamped CPU-side DRAM bandwidth collection in service mode. Auto-selects AMD uProf PCM on AMD CPUs and Intel PCM/perf IMC on Intel CPUs; use --dram-tool to override.")
+    svc.add_argument("--dram-tool", choices=["auto", "amduprof", "intel-pcm", "perf-imc", "none"],
+                     default=__import__("os").environ.get("AMOPROF_DRAM_TOOL", "auto"),
+                     help="DRAM bandwidth backend for service --enable-dram. Env: AMOPROF_DRAM_TOOL.")
+    svc.add_argument("--intel-pcm-memory-bin",
+                     default=__import__("os").environ.get("AMOPROF_INTEL_PCM_MEMORY_BIN", "pcm-memory"),
+                     help="Path/name of Intel PCM pcm-memory binary for service --enable-dram --dram-tool intel-pcm")
     svc.add_argument("--enable-amduprof-pcm", action="store_true",
-                     help="Enable AMD uProf PCM memory collector")
+                     help="Legacy alias for --enable-dram --dram-tool amduprof")
     svc.add_argument("--enable-all", action="store_true",
                      help="Enable blktrace, biosnoop, and amduprof_pcm")
     svc.add_argument("--enable-nsys", action="store_true",
@@ -2918,24 +3105,65 @@ def _analyze(args) -> int:
     # When only --output-dir is given (Prometheus-only mode):
     #   a new prom_run_* dir is created inside --output-dir for everything.
     if run_dir_arg:
-        run_dir = Path(run_dir_arg).expanduser().resolve()
+        supplied_run_dir = Path(run_dir_arg).expanduser().resolve()
+        run_dir, raw_dir, _layout = _resolve_run_and_raw_dir(supplied_run_dir, create=False)
+        if not raw_dir.exists():
+            # Keep merge-mode compatibility: a nonexistent raw/ may be populated
+            # below from Prometheus.  Do not silently point at an empty nested dir
+            # when real nested raw data exists; the resolver above already checked.
+            raw_dir.mkdir(parents=True, exist_ok=True)
         run_dir.mkdir(parents=True, exist_ok=True)
+        log.info("Analyze input resolved: %s → run_dir=%s raw_dir=%s (%s)",
+                 supplied_run_dir, run_dir, raw_dir, _layout)
         if args.output_dir:
             report_dir = Path(args.output_dir).expanduser().resolve()
             report_dir.mkdir(parents=True, exist_ok=True)
             log.info("Reports will be written to --output-dir: %s", report_dir)
         else:
-            report_dir = run_dir   # original behaviour
+            # Preserve the user's top-level output-dir as the report location when
+            # they passed an old wrapper directory that resolves to metrics_run_*/raw.
+            # For direct raw paths, keep reports next to that raw/ parent.
+            report_dir = supplied_run_dir if _layout == "nested-latest-raw" else run_dir
+            report_dir.mkdir(parents=True, exist_ok=True)
     else:
         # Prom-only mode: create a fresh prom_run_* dir
         base = Path(args.output_dir or ".").expanduser().resolve()
         run_dir = base / f"prom_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         run_dir.mkdir(parents=True, exist_ok=True)
         report_dir = run_dir
+        raw_dir = run_dir / "raw"
+        raw_dir.mkdir(parents=True, exist_ok=True)
         log.info("Prometheus-only mode → created run dir: %s", run_dir)
 
-    raw_dir = run_dir / "raw"
-    raw_dir.mkdir(parents=True, exist_ok=True)
+    # ── 2b. Local-only time-window filtering ────────────────────────────────
+    # Historically --start/--end only selected a Prometheus query_range window.
+    # Service-mode local data now carries absolute sample timestamps, so the
+    # same flags can select a wall-clock window without needing Prometheus.
+    if run_dir_arg and not prom_url and (getattr(args, "start", "") or getattr(args, "end", "")):
+        try:
+            from .prometheus_source import parse_time_arg
+            now = time.time()
+            t_start = parse_time_arg(args.start, now=now) if args.start else 0.0
+            t_end = parse_time_arg(args.end, now=now) if args.end else now
+            if t_start > 0 or t_end > 0:
+                from .aggregator import aggregate_run_dirs
+                label = f"{run_dir.name}_window_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                # Put the filtered synthetic run next to --output-dir when set,
+                # otherwise next to the original run. Reports are generated from
+                # the filtered copy, leaving the original service data intact.
+                filter_base = Path(args.output_dir).expanduser().resolve() if args.output_dir else run_dir.parent
+                filter_base.mkdir(parents=True, exist_ok=True)
+                filtered_run = aggregate_run_dirs([run_dir], filter_base,
+                                                   t_start=t_start, t_end=t_end,
+                                                   run_label=label)
+                log.info("Local time-window filter: %s → %s (start=%s end=%s)",
+                         run_dir, filtered_run, t_start or "run-start", t_end or "run-end")
+                run_dir = filtered_run
+                raw_dir = run_dir / "raw"
+                if not args.output_dir:
+                    report_dir = run_dir
+        except Exception as e:
+            log.warning("local --start/--end filtering skipped: %s", e)
 
     # ── 3. Prometheus fetch (if requested) ──────────────────────────────────
     if prom_url:
@@ -3083,6 +3311,20 @@ def _analyze(args) -> int:
             log.warning("combined report failed: %s", e)
     elif _combined:
         log.warning("combined report skipped — static or interactive generation failed")
+
+    # ── 8. Layered per-layer report ─────────────────────────────────────────
+    # Additive: runs alongside the existing reports. Stage 4 output, driven
+    # by amoprof.layers.LayerModule.analyze() → amoprof.report.layered.
+    if getattr(args, "layered_report", False):
+        try:
+            from .report.layered import build_layered_report
+            layered_path = report_dir / "amoprof_layered.html"
+            build_layered_report(raw_dir=raw_dir,
+                                 out_html=layered_path,
+                                 run_label=run_dir.name,
+                                 theme=_theme)
+        except Exception as e:
+            log.warning("layered report failed: %s", e)
 
     return 0
 
@@ -3396,24 +3638,35 @@ def _aggregate(args) -> int:
     # When only --output-dir is given (Prometheus-only mode):
     #   a new prom_run_* dir is created inside --output-dir for everything.
     if run_dir_arg:
-        run_dir = Path(run_dir_arg).expanduser().resolve()
+        supplied_run_dir = Path(run_dir_arg).expanduser().resolve()
+        run_dir, raw_dir, _layout = _resolve_run_and_raw_dir(supplied_run_dir, create=False)
+        if not raw_dir.exists():
+            # Keep merge-mode compatibility: a nonexistent raw/ may be populated
+            # below from Prometheus.  Do not silently point at an empty nested dir
+            # when real nested raw data exists; the resolver above already checked.
+            raw_dir.mkdir(parents=True, exist_ok=True)
         run_dir.mkdir(parents=True, exist_ok=True)
+        log.info("Analyze input resolved: %s → run_dir=%s raw_dir=%s (%s)",
+                 supplied_run_dir, run_dir, raw_dir, _layout)
         if args.output_dir:
             report_dir = Path(args.output_dir).expanduser().resolve()
             report_dir.mkdir(parents=True, exist_ok=True)
             log.info("Reports will be written to --output-dir: %s", report_dir)
         else:
-            report_dir = run_dir   # original behaviour
+            # Preserve the user's top-level output-dir as the report location when
+            # they passed an old wrapper directory that resolves to metrics_run_*/raw.
+            # For direct raw paths, keep reports next to that raw/ parent.
+            report_dir = supplied_run_dir if _layout == "nested-latest-raw" else run_dir
+            report_dir.mkdir(parents=True, exist_ok=True)
     else:
         # Prom-only mode: create a fresh prom_run_* dir
         base = Path(args.output_dir or ".").expanduser().resolve()
         run_dir = base / f"prom_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         run_dir.mkdir(parents=True, exist_ok=True)
         report_dir = run_dir
+        raw_dir = run_dir / "raw"
+        raw_dir.mkdir(parents=True, exist_ok=True)
         log.info("Prometheus-only mode → created run dir: %s", run_dir)
-
-    raw_dir = run_dir / "raw"
-    raw_dir.mkdir(parents=True, exist_ok=True)
 
     # ── 3. Prometheus fetch (if requested) ──────────────────────────────────
     if prom_url:
@@ -3559,6 +3812,20 @@ def _aggregate(args) -> int:
             log.warning("combined report failed: %s", e)
     elif _combined:
         log.warning("combined report skipped — static or interactive generation failed")
+
+    # ── 8. Layered per-layer report ─────────────────────────────────────────
+    # Additive: runs alongside the existing reports. Stage 4 output, driven
+    # by amoprof.layers.LayerModule.analyze() → amoprof.report.layered.
+    if getattr(args, "layered_report", False):
+        try:
+            from .report.layered import build_layered_report
+            layered_path = report_dir / "amoprof_layered.html"
+            build_layered_report(raw_dir=raw_dir,
+                                 out_html=layered_path,
+                                 run_label=run_dir.name,
+                                 theme=_theme)
+        except Exception as e:
+            log.warning("layered report failed: %s", e)
 
     return 0
 

@@ -21,7 +21,13 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
     try:
         if v is None or v == "":
             return default
-        x = float(v)
+        try:
+            x = float(v)
+        except Exception:
+            m = re.search(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?", str(v).replace(",", ""))
+            if not m:
+                return default
+            x = float(m.group(0))
         if math.isnan(x) or math.isinf(x):
             return default
         return x
@@ -43,10 +49,289 @@ def _read_csv_rows(path: Path) -> list[dict[str, str]]:
     if not path.exists() or path.stat().st_size <= 0:
         return []
     try:
-        with path.open("r", encoding="utf-8", errors="replace", newline="") as f:
-            return list(csv.DictReader(f))
+        text = path.read_text(encoding="utf-8", errors="replace")
+        # Some regression fixtures and a few collector logs can contain literal
+        # backslash-n sequences after shell/json escaping. Treat them as lines
+        # when there are no real line breaks beyond the final terminator.
+        if "\\n" in text and text.count("\n") <= 1:
+            text = text.replace("\\n", "\n")
+        return list(csv.DictReader(text.splitlines()))
     except Exception:
         return []
+
+
+
+def _amoprof_resolve_raw_dir(raw_dir: Path) -> Path:
+    """Resolve analyzer input to the actual raw metrics directory.
+
+    `collect --output-dir X` writes user-friendly summary/copy files in X and
+    the full collector payload in X/raw.  Executive/Interactive/Static must use
+    X/raw when present, even if X also contains copied sglang/gpu summaries.
+    The older resolver returned X whenever X had *any* key file; that made
+    Executive miss Intel PCM files under X/raw and report DRAM PMU missing while
+    End Report had DRAM sections populated.
+    """
+    p = Path(raw_dir)
+    child = p / "raw"
+    raw_marker_files = (
+        "all_timeseries.csv", "setup_details.json", "server_info.json",
+        "pcm_summary.json", "pcm_timeseries.csv", "pcm_memory_raw.csv",
+        "amduprof_pcm_summary.json", "amduprof_pcm_timeseries.csv",
+        "amduprof_pcm_raw.csv", "dram_summary.json", "dram_timeseries.csv",
+        "sglang_summary.json", "sglang_timeseries.csv",
+        "gpu_summary.json", "gpu_timeseries.csv",
+    )
+    try:
+        # If the caller already handed us a raw/ directory, do not descend.
+        if p.name == "raw":
+            return p
+        if child.is_dir() and any((child / k).exists() for k in raw_marker_files):
+            return child
+        # Legacy wrappers sometimes add metrics_run_*/raw under the supplied dir.
+        candidates = []
+        for pat in ("metrics_run_*/raw", "*/metrics_run_*/raw", "*/raw"):
+            for cand in p.glob(pat):
+                if cand.is_dir() and any((cand / k).exists() for k in raw_marker_files):
+                    try:
+                        mt = max((cand / k).stat().st_mtime for k in raw_marker_files if (cand / k).exists())
+                    except Exception:
+                        mt = cand.stat().st_mtime
+                    candidates.append((mt, cand))
+        if candidates:
+            candidates.sort(key=lambda x: x[0], reverse=True)
+            return candidates[0][1]
+    except Exception:
+        pass
+    return p
+
+
+# ─── Launch-command / setup-details parsing ────────────────────────────────
+# Canonical versions. Previously duplicated verbatim in amoprof.py,
+# interactive.py, and combined.py — those modules now import from here.
+def _amoprof_parse_launch_arg(launch: str, *names: str) -> str:
+    """Extract the value of a single `--flag=value` or `--flag value` argument
+    from a saved SGLang launch command string.
+    """
+    if not launch:
+        return ""
+    for name in names:
+        pat = r'(?<!\S)' + re.escape(name) + r'(?:=|\s+)(?:"([^"]+)"|\'([^\']+)\'|([^\s]+))'
+        m = re.search(pat, str(launch))
+        if m:
+            return next((g for g in m.groups() if g), "").strip()
+    return ""
+
+
+def _amoprof_missing(v) -> bool:
+    """True when a setup-details value is effectively absent."""
+    return v is None or str(v).strip() in ("", "?", "unknown", "None", "null", "N/A")
+
+
+def _amoprof_augment_setup_from_launch(setup: dict) -> dict:
+    """Fill missing setup-details keys by parsing the launch command."""
+    if not isinstance(setup, dict):
+        setup = {}
+    out = dict(setup)
+    launch = str(out.get("Launch command") or out.get("launch_command")
+                 or out.get("Command") or out.get("Reference launch command") or "")
+    if launch and _amoprof_missing(out.get("Launch command")):
+        out["Launch command"] = launch
+    mapping = [
+        ("Model", ("--model", "--model-path")),
+        ("TP size", ("--tensor-parallel-size", "--tp-size", "--tp")),
+        ("DP size", ("--data-parallel-size", "--dp-size", "--dp")),
+        ("mem-fraction-static", ("--mem-fraction-static",)),
+        ("Page size", ("--page-size",)),
+        ("KV cache dtype", ("--kv-cache-dtype",)),
+        ("Chunked prefill size", ("--chunked-prefill-size",)),
+        ("HiCache size", ("--hicache-size",)),
+        ("HiCache IO backend", ("--hicache-io-backend",)),
+        ("HiCache mem layout", ("--hicache-mem-layout",)),
+        ("HiCache storage backend", ("--hicache-storage-backend",)),
+        ("HiCache write policy", ("--hicache-write-policy",)),
+        ("HiCache storage prefetch policy", ("--hicache-storage-prefetch-policy",)),
+        ("Attention backend", ("--attention-backend",)),
+        ("CUDA graph max batch size", ("--cuda-graph-max-bs",)),
+        ("Host", ("--host",)),
+        ("Port", ("--port",)),
+    ]
+    lower_keys = {str(k).lower(): k for k in out.keys()}
+    for label, flags in mapping:
+        val = _amoprof_parse_launch_arg(launch, *flags)
+        existing_key = lower_keys.get(label.lower())
+        if val and (existing_key is None or _amoprof_missing(out.get(existing_key))):
+            out[label] = val
+    return out
+
+
+# ─── L3 / L3.5 label normalisation ──────────────────────────────────────────
+# Canonical version. Previously duplicated verbatim in amoprof.py,
+# interactive.py, and combined.py. Callers pass l3_backend_class:
+#   "local_ssd"  → local L3 wording
+#   anything else → remote/AI-Memory-Node L3.5 wording
+def _amoprof_storage_label_cleanup(html_text: str, l3_backend_class: str = "") -> str:
+    """Normalize visible L3/L3.5 labels consistently.
+
+    Report convention:
+      * L3   = local SSD/NVMe/file-backed cache tier.
+      * L3.5 = AI Memory Node / remote/shared/disaggregated backing tier, or
+               unresolved logical SGLang backing-tier movement when no local
+               SSD/block mapping exists.
+
+    The resolver passes backend_class='local_ssd' only for local SSD.  All other
+    classes use L3.5 wording so a remote AI Memory Node run is never shown as
+    local SSD L3.  Base64 image payloads are protected before text replacement.
+    """
+    if not html_text:
+        return html_text
+
+    data_uri_re = re.compile(r'data:image/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=\s]+')
+    protected_payloads: list[str] = []
+
+    def _stash_data_uri(match: re.Match) -> str:
+        protected_payloads.append(match.group(0))
+        return f"__AMOPROF_DATA_URI_{len(protected_payloads) - 1}__"
+
+    html_text = data_uri_re.sub(_stash_data_uri, html_text)
+
+    is_local = (str(l3_backend_class or "").lower() == "local_ssd")
+    tier = "L3" if is_local else "L3.5"
+    tier_long = "L3 (SSD/local storage)" if is_local else "L3.5 (AI Memory Node / remote storage)"
+
+    # Collapse prior accidental repeated L3.5 decorations.
+    html_text = re.sub(
+        r'(L3\.5 \(AI Memory Node / remote storage\))(?:\.5 \(AI Memory Node / remote storage\))+',
+        r'\1', html_text)
+
+    if is_local:
+        replacements = {
+            "L3.5 (AI Memory Node / remote storage)": tier_long,
+            "L3 (AI Memory Node / remote storage)": tier_long,
+            "L3 (AI Memory Node)": tier_long,
+            "L3 (local storage)": tier,
+            "L3 local storage": tier,
+            "L3 local-storage": tier,
+            "L3 local SSD": "L3 SSD",
+            "L3 storage": "L3 storage",
+            "L3 Storage": "L3 storage",
+            "KV$ SSD IO": "KV$ L3 I/O",
+            "KV$ SSD I/O": "KV$ L3 I/O",
+            "KV$ SSD": "KV$ L3",
+            "NVMe read throughput": "L3 read throughput",
+            "NVMe Read Throughput": "L3 read throughput",
+            "NVMe read BW": "L3 read BW",
+            "NVMe Read BW": "L3 read BW",
+        }
+    else:
+        replacements = {
+            "L3.5 (AI Memory Node / remote storage)": tier_long,
+            "L3 (AI Memory Node / remote storage)": tier_long,
+            "L3 (AI Memory Node)": tier_long,
+            "L3 (local storage)": tier_long,
+            "L3 local storage": tier_long,
+            "L3 local-storage": tier_long,
+            "L3 local SSD": tier_long,
+            "L3 storage / blktrace": "L3.5 / backing-tier telemetry",
+            "L3 storage block telemetry": "L3.5 backing-tier telemetry",
+            "L3 storage block-device": "L3.5 backing-tier device",
+            "L3 storage QUEUE": "L3.5 QUEUE",
+            "L3 storage Queue": "L3.5 Queue",
+            "L3 storage queue": "L3.5 queue",
+            "L3 storage": "L3.5 storage",
+            "L3 Storage": "L3.5 storage",
+            "KV$ L3 IO": "KV$ L3.5 I/O",
+            "KV$ L3 I/O": "KV$ L3.5 I/O",
+            "KV$ L3 ": "KV$ L3.5 ",
+            "KV$ L3\n": "KV$ L3.5\n",
+            "Logical KV movement — L3": "Logical KV movement — L3.5",
+            "Physical L3 block": "Physical L3.5 block",
+            "Physical L3.5 block R / W total": "Physical L3.5 block R / W total",
+            "NVMe read throughput": "L3.5 read throughput",
+            "NVMe Read Throughput": "L3.5 read throughput",
+            "NVMe read BW": "L3.5 read BW",
+            "NVMe Read BW": "L3.5 read BW",
+        }
+    for a, b in replacements.items():
+        html_text = html_text.replace(a, b)
+
+    # Clean up any doubled L3.5 token from overlapping replacements.
+    html_text = html_text.replace("L3.5.5", "L3.5")
+    html_text = html_text.replace("L3.5.5", "L3.5")
+
+    for i, payload in enumerate(protected_payloads):
+        html_text = html_text.replace(f"__AMOPROF_DATA_URI_{i}__", payload)
+    return html_text
+
+
+def _pct_ts_latency_ms(pct_ts, metric_key: str, percentile: str = "p50") -> float:
+    """Representative selected-window latency from a percentile timeseries.
+
+    Previously duplicated across amoprof.py (`_pct_ts_latency_ms_from_data`),
+    interactive.py, and combined.py with three subtly different semantics:
+      * amoprof/interactive were strict dict-keyed lookups.
+      * combined used fuzzy substring matching (`metric.lower() in blob`)
+        which could match unrelated keys like `sglang_ttft_ms_sum`.
+    This canonical version uses the strict semantics (safer, matches End
+    Report and Interactive numbers exactly) and adds a defensive
+    list-of-records fallback for the rare shape combined.py accepted.
+
+    Parameters
+    ──────────
+    pct_ts       Either the full loaded `sglang_percentiles_timeseries.json`
+                 (dict keyed by metric → percentile → list of floats),
+                 or a list of {metric, percentile, value_ms} records.
+    metric_key   "ttft" / "itl" / "e2e" (exact match on dict path).
+    percentile   "p50" / "p90" / "p99" (exact key on the metric block).
+
+    Returns
+    ──────
+    Mean of positive finite values, or 0.0 when the metric/percentile is
+    absent or the list is empty. Never raises.
+    """
+    try:
+        if isinstance(pct_ts, dict):
+            block = (pct_ts or {}).get(metric_key) or {}
+            vals = block.get(percentile) or []
+            clean: list[float] = []
+            for v in vals:
+                try:
+                    x = float(v)
+                    if x == x and x > 0:  # not NaN, positive
+                        clean.append(x)
+                except Exception:
+                    pass
+            return (sum(clean) / len(clean)) if clean else 0.0
+
+        if isinstance(pct_ts, list):
+            # Legacy list-of-records shape (kept for compatibility).
+            vals: list[float] = []
+            metric_l = metric_key.lower()
+            pct_l = percentile.lower()
+            for row in pct_ts:
+                if not isinstance(row, dict):
+                    continue
+                blob = " ".join(str(row.get(k, "")).lower()
+                                for k in row.keys())
+                if metric_l in blob and pct_l in blob:
+                    for key in ("value_ms", "latency_ms", "value", "y"):
+                        v = _safe_float(row.get(key), 0.0)
+                        if v > 0:
+                            vals.append(v)
+                            break
+            return sum(vals) / len(vals) if vals else 0.0
+    except Exception:
+        return 0.0
+    return 0.0
+
+
+def _pct_ts_latency_ms_from_data(data: dict, metric_key: str,
+                                 percentile: str = "p50") -> float:
+    """Convenience wrapper: unwrap `data["sglang_percentiles_timeseries"]`
+    then delegate to `_pct_ts_latency_ms`. Kept for amoprof.py's callers
+    which pass the full loaded raw dir dict.
+    """
+    pct_ts = (data or {}).get("sglang_percentiles_timeseries") or {}
+    return _pct_ts_latency_ms(pct_ts, metric_key, percentile)
 
 
 def _norm_name(s: str) -> str:
@@ -192,9 +477,345 @@ def _duration_s(raw_dir: Path, rows: list[dict[str, Any]], summary: dict) -> flo
     return 0.0
 
 
+
+def _rows_from_any(rows: Any) -> list[dict[str, Any]]:
+    """Return row dictionaries from either CSV rows or a pandas DataFrame."""
+    if rows is None:
+        return []
+    try:
+        # pandas.DataFrame path without importing pandas into this small helper.
+        if hasattr(rows, "to_dict"):
+            out = rows.to_dict("records")
+            return out if isinstance(out, list) else []
+    except Exception:
+        pass
+    if isinstance(rows, list):
+        return rows
+    return []
+
+
+def _key_has_parts(key: str, metric: str, parts: tuple[str, ...]) -> bool:
+    stem = _metric_stem_norm(key)
+    wanted = _norm_name(metric)
+    if not (stem == wanted or stem.endswith(wanted)):
+        return False
+    nk = _norm_name(key)
+    return all(_norm_name(p) in nk for p in parts if p)
+
+
+def _find_labelled_col(rows: list[dict[str, Any]], metric: str, *label_parts: str) -> str:
+    if not rows:
+        return ""
+    keys: list[str] = []
+    for r in rows:
+        for k in r.keys():
+            if k not in keys:
+                keys.append(k)
+    # Label-specific match first.
+    for k in keys:
+        if _key_has_parts(k, metric, tuple(label_parts)):
+            return k
+    # If no labels requested, use the generic helper.
+    if not label_parts:
+        return _find_col(rows, metric)
+    return ""
+
+
+def _delta_col(rows: list[dict[str, Any]], col: str) -> float:
+    if not col or not rows:
+        return 0.0
+    first = None
+    last = None
+    for r in rows:
+        x = _safe_float(r.get(col), None)  # type: ignore[arg-type]
+        if x is None:
+            continue
+        if first is None:
+            first = x
+        last = x
+    if first is None or last is None:
+        return 0.0
+    d = float(last) - float(first)
+    return d if d > 0 else 0.0
+
+
+def _delta_labelled(rows: list[dict[str, Any]], metric: str, *label_parts: str) -> float:
+    col = _find_labelled_col(rows, metric, *label_parts)
+    return _delta_col(rows, col)
+
+
+def _walk_json_dicts(obj: Any):
+    """Yield dictionaries in a decoded JSON object, depth-first."""
+    if isinstance(obj, dict):
+        yield obj
+        for v in obj.values():
+            yield from _walk_json_dicts(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from _walk_json_dicts(v)
+
+
+def _discover_request_cache_from_json(raw_dir: Path) -> dict[str, float | str]:
+    """Aggregate request/response JSON cache-hit fields when available.
+
+    SGLang request responses may carry `meta_info.cached_tokens` and
+    `meta_info.prompt_tokens`, where prompt_tokens is the uncached prompt work
+    requiring prefill.  OpenAI-compatible responses may carry
+    `usage.prompt_tokens_details.cached_tokens` and `usage.prompt_tokens`, where
+    prompt_tokens is total prompt tokens.  We prefer request JSON because it is
+    the closest semantic match to the benchmark's per-run cache hit rate.
+    """
+    out = {
+        "meta_cached_tokens": 0.0,
+        "meta_uncached_prompt_tokens": 0.0,
+        "meta_records": 0.0,
+        "usage_cached_tokens": 0.0,
+        "usage_total_prompt_tokens": 0.0,
+        "usage_records": 0.0,
+        "source": "",
+    }
+    if not raw_dir or not raw_dir.exists():
+        return out
+    skip_names = {
+        "sglang_summary.json", "gpu_summary.json", "summary.json", "common_kpis.json",
+        "pcm_summary.json", "pcm_memory_summary.json", "dram_summary.json",
+        "smart_summary.json", "setup_details.json", "server_info.json",
+        "sglang_percentiles_timeseries.json", "amoprof_source_policy.json",
+    }
+    patterns = ["*response*.json", "*request*.json", "*result*.json", "*bench*.json", "*.jsonl"]
+    candidates: list[Path] = []
+    try:
+        for pat in patterns:
+            for fp in raw_dir.glob(pat):
+                if fp.is_file() and fp.name not in skip_names and fp not in candidates:
+                    candidates.append(fp)
+        # Also allow one level under common benchmark/output dirs.
+        for sub in ("responses", "requests", "benchmark", "bench", "output", "outputs"):
+            d = raw_dir / sub
+            if d.is_dir():
+                for fp in d.glob("*.json*"):
+                    if fp.is_file() and fp not in candidates:
+                        candidates.append(fp)
+    except Exception:
+        candidates = []
+    for fp in candidates[:256]:
+        try:
+            if fp.stat().st_size <= 0 or fp.stat().st_size > 100 * 1024 * 1024:
+                continue
+            objs = []
+            if fp.suffix.lower() == ".jsonl":
+                for line in fp.read_text(encoding="utf-8", errors="replace").splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        objs.append(json.loads(line))
+                    except Exception:
+                        continue
+            else:
+                objs = [json.loads(fp.read_text(encoding="utf-8", errors="replace"))]
+            for obj in objs:
+                for d in _walk_json_dicts(obj):
+                    mi = d.get("meta_info") if isinstance(d.get("meta_info"), dict) else None
+                    if mi is not None and ("cached_tokens" in mi) and ("prompt_tokens" in mi):
+                        c = _safe_float(mi.get("cached_tokens"), 0.0)
+                        u = _safe_float(mi.get("prompt_tokens"), 0.0)
+                        if c >= 0 and u >= 0 and (c + u) > 0:
+                            out["meta_cached_tokens"] += c
+                            out["meta_uncached_prompt_tokens"] += u
+                            out["meta_records"] += 1
+                            out["source"] = str(fp)
+                    usage = d.get("usage") if isinstance(d.get("usage"), dict) else None
+                    if usage is not None:
+                        ptd = usage.get("prompt_tokens_details") if isinstance(usage.get("prompt_tokens_details"), dict) else {}
+                        c = _safe_float(ptd.get("cached_tokens"), 0.0)
+                        total = _safe_float(usage.get("prompt_tokens"), 0.0)
+                        if c > 0 and total > 0:
+                            out["usage_cached_tokens"] += c
+                            out["usage_total_prompt_tokens"] += total
+                            out["usage_records"] += 1
+                            out["source"] = str(fp)
+        except Exception:
+            continue
+    return out
+
+
+def _discover_benchmark_cache_hit(raw_dir: Path) -> float:
+    """Return benchmark aggregate cache_hit_rate percent if a summary exists."""
+    if not raw_dir or not raw_dir.exists():
+        return 0.0
+    names = [
+        "bench_summary.json", "benchmark_summary.json", "sglang_bench_summary.json",
+        "sglang_bench.json", "bench_serving_output.json", "lc_bm_results.json",
+    ]
+    for name in names:
+        p = raw_dir / name
+        if not p.exists() or p.stat().st_size <= 0:
+            continue
+        try:
+            obj = json.loads(p.read_text(encoding="utf-8", errors="replace"))
+            vals = []
+            for d in _walk_json_dicts(obj):
+                if "cache_hit_rate" in d:
+                    vals.append(_safe_float(d.get("cache_hit_rate"), 0.0))
+            vals = [v for v in vals if v > 0]
+            if vals:
+                # JSON benchmark uses fraction 0..1 in SGLang; tolerate percent.
+                v = vals[-1]
+                return (v * 100.0) if v <= 1.5 else v
+        except Exception:
+            continue
+    return 0.0
+
+
+def compute_cache_hit_kpis(raw_dir: Path | None = None,
+                           rows: Any | None = None,
+                           summary: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Canonical cache-hit calculation used by all report tabs.
+
+    Primary KPI semantics:
+      cache-served prompt/prefill tokens /
+      (cache-served prompt/prefill tokens + compute-served prompt/prefill tokens)
+
+    Source priority:
+      1. Request/response JSON meta_info.cached_tokens / (cached + prompt_tokens)
+         where meta_info.prompt_tokens is uncached prefill work.
+      2. OpenAI-compatible usage.prompt_tokens_details.cached_tokens /
+         usage.prompt_tokens where prompt_tokens is total prompt tokens.
+      3. Benchmark aggregate cache_hit_rate if supplied.
+      4. Prometheus realtime prefill modes:
+         Δrealtime_tokens_total{mode=prefill_cache} /
+         (Δprefill_cache + Δprefill_compute).
+      5. Diagnostics/fallbacks only: request counters, cached/prompt counter,
+         and sglang_cache_hit_rate gauge.
+    """
+    rd = _amoprof_resolve_raw_dir(Path(raw_dir)) if raw_dir is not None else None
+    summary = summary or (_read_json(rd / "sglang_summary.json") if rd is not None else {})
+    rr = _rows_from_any(rows)
+    if not rr and rd is not None:
+        rr = _read_csv_rows(rd / "sglang_timeseries.csv")
+
+    # Request/response JSON exact semantics.
+    req = _discover_request_cache_from_json(rd) if rd is not None else {}
+    meta_cached = _safe_float(req.get("meta_cached_tokens") if req else 0.0, 0.0)
+    meta_uncached = _safe_float(req.get("meta_uncached_prompt_tokens") if req else 0.0, 0.0)
+    meta_pct = (meta_cached / (meta_cached + meta_uncached) * 100.0) if (meta_cached + meta_uncached) > 0 else 0.0
+
+    usage_cached = _safe_float(req.get("usage_cached_tokens") if req else 0.0, 0.0)
+    usage_total = _safe_float(req.get("usage_total_prompt_tokens") if req else 0.0, 0.0)
+    usage_pct = (usage_cached / usage_total * 100.0) if usage_total > 0 else 0.0
+
+    bench_pct = _discover_benchmark_cache_hit(rd) if rd is not None else 0.0
+
+    # Prometheus realtime prefill modes: benchmark-equivalent when request JSON
+    # is unavailable.
+    d_rt_cache = (_delta_labelled(rr, "sglang_realtime_tokens_total", "mode=prefill_cache") or
+                  _delta_labelled(rr, "realtime_tokens_total", "mode=prefill_cache") or
+                  _delta_labelled(rr, "sglang:realtime_tokens_total", "mode=prefill_cache"))
+    d_rt_compute = (_delta_labelled(rr, "sglang_realtime_tokens_total", "mode=prefill_compute") or
+                    _delta_labelled(rr, "realtime_tokens_total", "mode=prefill_compute") or
+                    _delta_labelled(rr, "sglang:realtime_tokens_total", "mode=prefill_compute"))
+    prefill_pct = (d_rt_cache / (d_rt_cache + d_rt_compute) * 100.0) if (d_rt_cache + d_rt_compute) > 0 else 0.0
+
+    # Diagnostics.  Do not use cached/prompt as primary because prompt_tokens_total
+    # may mean total prompt tokens, while cached_tokens_total and realtime prefill
+    # counters can represent different token streams across SGLang versions.
+    d_cached = _delta(rr, "sglang_cached_tokens_total") or _delta(rr, "cached_tokens_total")
+    d_prompt = _delta(rr, "sglang_prompt_tokens_total") or _delta(rr, "prompt_tokens_total")
+    cached_prompt_pct = (d_cached / d_prompt * 100.0) if d_prompt > 0 else 0.0
+
+    effective_prompt_pct = 0.0
+    if (d_cached + d_rt_cache + d_rt_compute) > 0:
+        effective_prompt_pct = ((d_cached + d_rt_cache) / (d_cached + d_rt_cache + d_rt_compute)) * 100.0
+
+    d_req_hit = (_delta(rr, "sglang_request_cache_hit_total") or _delta(rr, "request_cache_hit_total") or
+                 _delta(rr, "cache_hit_request_total") or _delta(rr, "request_cache_hits_total") or
+                 _delta(rr, "cache_hit_requests_total"))
+    d_req_total = (_delta(rr, "sglang_request_total") or _delta(rr, "request_total") or _delta(rr, "requests_total"))
+    request_pct = (d_req_hit / d_req_total * 100.0) if d_req_total > 0 else 0.0
+
+    ch_vals_all: list[float] = []
+    ch_vals_active: list[float] = []
+    ch_col = _find_col(rr, "sglang_cache_hit_rate") or _find_col(rr, "cache_hit_rate")
+    if ch_col:
+        for r in rr:
+            v = _safe_float(r.get(ch_col), 0.0)
+            # normalize fractions to percent later by looking at max.
+            ch_vals_all.append(v)
+            if v > 0:
+                ch_vals_active.append(v)
+    scale = 100.0 if ch_vals_all and max(ch_vals_all) <= 1.5 else 1.0
+    gauge_timeline_pct = _mean(ch_vals_all) * scale if ch_vals_all else 0.0
+    gauge_active_pct = _mean(ch_vals_active) * scale if ch_vals_active else 0.0
+    gauge_peak_pct = max(ch_vals_all) * scale if ch_vals_all else 0.0
+
+    candidates = [
+        (meta_pct, "request_response_meta_info_cached_over_cached_plus_uncached_prompt_tokens"),
+        (usage_pct, "openai_usage_cached_tokens_over_total_prompt_tokens"),
+        (bench_pct, "benchmark_summary_cache_hit_rate"),
+        (prefill_pct, "prefill_token_work_avoidance_prefill_cache_over_prefill_cache_plus_compute"),
+    ]
+    primary = 0.0
+    method = "unavailable"
+    for val, meth in candidates:
+        val = max(0.0, min(100.0, _safe_float(val, 0.0)))
+        if val > 0:
+            primary = val
+            method = meth
+            break
+    if primary <= 0:
+        # Fallbacks are intentionally labelled diagnostics; they are better than
+        # rendering 0, but not semantically benchmark-comparable.
+        for val, meth in [
+            (request_pct, "diagnostic_request_weighted_request_cache_hit_over_request_total"),
+            (cached_prompt_pct, "diagnostic_cached_tokens_over_prompt_tokens_total"),
+            (gauge_timeline_pct, "diagnostic_time_weighted_avg_over_time_sglang_cache_hit_rate"),
+            (gauge_active_pct, "diagnostic_active_mean_sglang_cache_hit_rate_idle_excluded"),
+            (effective_prompt_pct, "diagnostic_combined_cached_plus_prefill_cache_over_cached_plus_prefill_cache_plus_compute"),
+        ]:
+            val = max(0.0, min(100.0, _safe_float(val, 0.0)))
+            if val > 0:
+                primary = val
+                method = meth
+                break
+
+    return {
+        "cache_hit_pct": round(primary, 6),
+        "cache_hit_rate_realtime_pct": round(primary, 6),
+        "cache_hit_primary_pct": round(primary, 6),
+        "cache_hit_calc_method": method,
+        "cache_hit_method": method,
+        "cache_hit_primary_formula": "cache_served_prefill_prompt_tokens / (cache_served_prefill_prompt_tokens + compute_served_prefill_prompt_tokens)",
+        "cache_hit_request_json_pct": round(meta_pct, 6),
+        "cache_hit_request_json_cached_tokens": round(meta_cached, 3),
+        "cache_hit_request_json_uncached_prompt_tokens": round(meta_uncached, 3),
+        "cache_hit_openai_usage_pct": round(usage_pct, 6),
+        "cache_hit_openai_usage_cached_tokens": round(usage_cached, 3),
+        "cache_hit_openai_usage_total_prompt_tokens": round(usage_total, 3),
+        "cache_hit_benchmark_pct": round(bench_pct, 6),
+        "cache_hit_prefill_token_weighted_pct": round(max(0.0, min(100.0, prefill_pct)), 6),
+        "cache_hit_prefill_cache_tokens": round(d_rt_cache, 3),
+        "cache_hit_prefill_compute_tokens": round(d_rt_compute, 3),
+        "cache_hit_token_weighted_pct": round(max(0.0, min(100.0, cached_prompt_pct)), 6),
+        "cache_hit_cached_prompt_pct": round(max(0.0, min(100.0, cached_prompt_pct)), 6),
+        "cache_hit_effective_prompt_pct": round(max(0.0, min(100.0, effective_prompt_pct)), 6),
+        "cache_hit_request_weighted_pct": round(max(0.0, min(100.0, request_pct)), 6),
+        "cache_hit_time_weighted_pct": round(max(0.0, min(100.0, gauge_timeline_pct)), 6),
+        "cache_hit_gauge_overall_pct": round(max(0.0, min(100.0, gauge_timeline_pct)), 6),
+        "cache_hit_gauge_active_pct": round(max(0.0, min(100.0, gauge_active_pct)), 6),
+        "cache_hit_gauge_peak_pct": round(max(0.0, min(100.0, gauge_peak_pct)), 6),
+        "cache_hit_gauge_total_samples": len(ch_vals_all),
+        "cache_hit_gauge_active_samples": len(ch_vals_active),
+        "cache_hit_token_weighted_numerator_tokens": round(d_cached, 3),
+        "cache_hit_token_weighted_denominator_tokens": round(d_prompt, 3),
+        "cache_hit_request_weighted_numerator_requests": round(d_req_hit, 3),
+        "cache_hit_request_weighted_denominator_requests": round(d_req_total, 3),
+        "cache_hit_json_source": str(req.get("source", "")) if req else "",
+    }
+
 def compute_common_kpis(raw_dir: Path) -> dict[str, Any]:
     """Compute canonical common KPI values once for all report tabs."""
-    raw_dir = Path(raw_dir)
+    raw_dir = _amoprof_resolve_raw_dir(Path(raw_dir))
     rows = _read_csv_rows(raw_dir / "sglang_timeseries.csv")
     pct_ts = _read_json(raw_dir / "sglang_percentiles_timeseries.json")
     summary = _read_json(raw_dir / "sglang_summary.json")
@@ -272,46 +893,10 @@ def compute_common_kpis(raw_dir: Path) -> dict[str, Any]:
     out["throughput_peak"] = max(out["throughput_peak"], out["throughput_mean"], out["throughput_p50"])
 
 
-    # Cache hit primary: use AMOprof's vetted cache-hit summary first.
-    #
-    # Important regression guard:
-    #   v1.39.45 briefly recomputed this directly from raw CSV counters. Some
-    #   runs contain multiple similarly named prompt-token counters/histogram
-    #   helper columns, and the generic column matcher can pick a denominator
-    #   that is not the established report KPI denominator. That produced a
-    #   false drop such as 61.3% -> 9.6% on identical raw data. The static
-    #   cache-methodology table already computes and stores the vetted value in
-    #   sglang_summary.json, so common_kpis must trust it first. Counter math is
-    #   only a fallback for older raw dirs with no summary cache KPI.
-    summary_cache = _summary_first(
-        summary,
-        "cache_hit_token_weighted_pct",
-        "cache_hit_pct",
-        "cache_hit_gauge_active_pct",
-        "cache_hit_effective_prompt_pct",
-        "server_cache_hit_pct",
-    )
-    if summary_cache > 0:
-        out["cache_hit_pct"] = summary_cache
-        out["cache_hit_method"] = str(
-            summary.get("cache_hit_calc_method")
-            or "summary_vetted_cache_hit_token_weighted"
-        )
-    else:
-        cached = _delta(rows, "sglang_cached_tokens_total") or _delta(rows, "cached_tokens_total")
-        prompt = _delta(rows, "sglang_prompt_tokens_total") or _delta(rows, "prompt_tokens_total")
-        if cached > 0 and prompt > 0:
-            ratio = cached / prompt * 100.0
-            # Guard against nonsensical denominators from loose column matching.
-            out["cache_hit_pct"] = ratio if 0.0 <= ratio <= 100.0 else 0.0
-            out["cache_hit_method"] = "fallback_selected_window_counter_ratio_cached_tokens_over_prompt_tokens"
-        else:
-            out["cache_hit_pct"] = 0.0
-            out["cache_hit_method"] = "unavailable"
-
-    # Optional diagnostics kept in the same object for notes/cards.
-    ch_vals = _active_values(rows, "sglang_cache_hit_rate") or _active_values(rows, "cache_hit_rate")
-    out["cache_hit_time_weighted_pct"] = _mean(ch_vals) * 100.0 if ch_vals and max(ch_vals) <= 1.5 else _mean(ch_vals)
+    # Cache hit: single canonical function used by Executive, Interactive, and End Report.
+    # The reader-facing primary KPI is cache-served prefill/prompt tokens divided
+    # by total cache-served + compute-served prefill/prompt tokens.
+    out.update(compute_cache_hit_kpis(raw_dir=raw_dir, rows=rows, summary=summary))
 
     # Round only at render time; keep numeric values here.
     return out
@@ -340,7 +925,7 @@ def _unit_for_key(key: str) -> str:
 
 def _note_for_key(key: str, kpis: dict[str, Any]) -> str:
     if key == "cache_hit_pct":
-        return str(kpis.get("cache_hit_method") or "Canonical selected-window cache-hit KPI")
+        return str(kpis.get("cache_hit_method") or "Primary cache-hit KPI: cache-served prefill/prompt tokens over cache+compute prefill/prompt tokens")
     if key.endswith("_p50_ms"):
         return "Canonical common KPI: histogram percentile when available; shared by Executive, Interactive, and End Report"
     if key.endswith("_ms"):
@@ -469,7 +1054,7 @@ def apply_common_kpis_to_html(report_html: str, raw_dir: Path | None = None,
 
 
 def write_common_kpis_json(raw_dir: Path, kpis: dict[str, Any] | None = None) -> Path:
-    raw_dir = Path(raw_dir)
+    raw_dir = _amoprof_resolve_raw_dir(Path(raw_dir))
     kpis = kpis or compute_common_kpis(raw_dir)
     out = raw_dir / "common_kpis.json"
     try:

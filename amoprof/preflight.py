@@ -854,7 +854,14 @@ def run_sanity_checks(args, sglang_host: str, sglang_port: int) -> list[CheckRes
     results: list[CheckResult] = []
 
     # ── Required baselines ─────────────────────────────────────────────────
-    results.append(check_ssd_device(args.ssd_device))
+    try:
+        from .cli import _resolve_ssd_devices
+        _ssd_list = _resolve_ssd_devices(getattr(args, "ssd_device", "")) or\
+                    [getattr(args, "ssd_device", "/dev/nvme0n1")]
+    except Exception:
+        _ssd_list = [getattr(args, "ssd_device", "/dev/nvme0n1")]
+    for _dev in _ssd_list:
+        results.append(check_ssd_device(_dev))
     results.append(check_iostat())
     results.append(check_vmstat())
     results.append(check_nvidia_gpu())
@@ -866,12 +873,13 @@ def run_sanity_checks(args, sglang_host: str, sglang_port: int) -> list[CheckRes
 
     # ── Optional collectors ────────────────────────────────────────────────
     if getattr(args, "enable_blktrace", False):
-        results.append(check_blktrace(
-            args.ssd_device,
-            blktrace_bin=getattr(args, "blktrace_bin", "blktrace"),
-            blkparse_bin=getattr(args, "blkparse_bin", "blkparse"),
-            use_sudo=use_sudo,
-        ))
+        for _dev in _ssd_list:
+            results.append(check_blktrace(
+                _dev,
+                blktrace_bin=getattr(args, "blktrace_bin", "blktrace"),
+                blkparse_bin=getattr(args, "blkparse_bin", "blkparse"),
+                use_sudo=use_sudo,
+            ))
 
     if getattr(args, "enable_biosnoop", False):
         results.append(check_biosnoop(

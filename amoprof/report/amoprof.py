@@ -35,6 +35,39 @@ from matplotlib.ticker import FuncFormatter, MaxNLocator
 import numpy as np
 import pandas as pd
 
+
+
+def _amoprof_numeric_series(values, default: float = float("nan")) -> pd.Series:
+    """Coerce AMOprof report time-series values to float robustly.
+
+    Some local/Prometheus collector paths write numeric-looking values with
+    units or formatting (for example ``"100 %"``, ``"130,714 MB"`` or
+    ``"647 W"``).  ``pandas.to_numeric`` turns those into NaN, which made
+    static End Report GPU/HBM traces disappear while the Interactive report
+    still showed activity from the same raw rows.
+    """
+    try:
+        ser = pd.Series(values)
+        if ser.empty:
+            return pd.Series(dtype=float)
+        if ser.dtype == object:
+            ser = ser.astype(str).str.replace(",", "", regex=False).str.extract(
+                r"([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)", expand=False
+            )
+        out = pd.to_numeric(ser, errors="coerce")
+        if default == default:
+            out = out.fillna(default)
+        return out.astype(float)
+    except Exception:
+        try:
+            return pd.to_numeric(values, errors="coerce").astype(float)
+        except Exception:
+            return pd.Series(dtype=float)
+
+
+def _amoprof_numeric_array(values, default: float = float("nan")) -> np.ndarray:
+    return _amoprof_numeric_series(values, default=default).to_numpy(dtype=float)
+
 try:
     from amoprof.report.l3_backend import resolve_l3_backend, reconcile_l3_io
 except Exception:  # direct-script fallback
@@ -45,14 +78,15 @@ except Exception:  # direct-script fallback
         reconcile_l3_io = None  # type: ignore
 
 try:
-    from amoprof.report.common_kpis import compute_common_kpis, apply_common_kpis_to_html, write_common_kpis_json
+    from amoprof.report.common_kpis import compute_common_kpis, apply_common_kpis_to_html, write_common_kpis_json, compute_cache_hit_kpis
 except Exception:  # direct-script fallback
     try:
-        from common_kpis import compute_common_kpis, apply_common_kpis_to_html, write_common_kpis_json  # type: ignore
+        from common_kpis import compute_common_kpis, apply_common_kpis_to_html, write_common_kpis_json, compute_cache_hit_kpis  # type: ignore
     except Exception:
         compute_common_kpis = None  # type: ignore
         apply_common_kpis_to_html = None  # type: ignore
         write_common_kpis_json = None  # type: ignore
+        compute_cache_hit_kpis = None  # type: ignore
 
 
 def _amoprof_storage_label_cleanup(html_text: str, l3_backend_class: str = "") -> str:
@@ -264,8 +298,292 @@ plt.rcParams.update({
 
 # ── Data loading ──────────────────────────────────────────────────────────────
 
+
+def _amoprof_parse_intel_pcm_raw_file(raw_file: Path) -> pd.DataFrame:
+    """Parse Intel pcm-memory raw CSV into normalized DRAM PMU GB/s rows.
+
+    This repairs older raw directories where pcm_memory_raw.csv contains real
+    System Read/Write/Memory values but pcm_timeseries.csv was produced as all
+    zeros because the two-row PCM header was flattened incorrectly.
+    """
+    try:
+        from amoprof.collectors import PcmMemoryCollector
+    except Exception:
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+            from collectors import PcmMemoryCollector  # type: ignore
+        except Exception:
+            return pd.DataFrame()
+    try:
+        rows = PcmMemoryCollector.parse_pcm_memory_raw_csv(raw_file)
+        return pd.DataFrame(rows) if rows else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+
+def _amoprof_dram_pmu_df_nonzero(df: pd.DataFrame) -> bool:
+    try:
+        if df is None or df.empty:
+            return False
+        for c in ("dram_total_gb_s", "pcm_dram_total_gb_s", "total_gb_s",
+                  "dram_read_gb_s", "dram_write_gb_s",
+                  "pcm_dram_read_gb_s", "pcm_dram_write_gb_s"):
+            if c in df.columns:
+                vals = _amoprof_numeric_series(df[c], default=float("nan")).dropna()
+                if len(vals) and (vals.abs() > 1e-12).any():
+                    return True
+    except Exception:
+        pass
+    return False
+
+
+def _amoprof_dram_pmu_summary_from_df(df: pd.DataFrame, *, raw_path: str = "", source: str = "intel-pcm/pcm-memory") -> dict:
+    if df is None or df.empty:
+        return {}
+    def vals(*cols):
+        for c in cols:
+            if c in df.columns:
+                v = _amoprof_numeric_series(df[c], default=float("nan")).dropna()
+                if len(v):
+                    return v
+        return pd.Series(dtype=float)
+    read = vals("dram_read_gb_s", "pcm_dram_read_gb_s", "read")
+    write = vals("dram_write_gb_s", "pcm_dram_write_gb_s", "write")
+    total = vals("dram_total_gb_s", "pcm_dram_total_gb_s", "total_gb_s")
+    if total.empty and (not read.empty or not write.empty):
+        total = read.add(write, fill_value=0)
+    if total.empty:
+        return {}
+    nz = total[total.abs() > 1e-12]
+    if nz.empty:
+        return {}
+    def mean(v): return round(float(v.mean()), 6) if len(v) else 0.0
+    def peak(v): return round(float(v.max()), 6) if len(v) else 0.0
+    dur = 0.0
+    try:
+        if "time_sec" in df.columns:
+            t = _amoprof_numeric_series(df["time_sec"], default=float("nan")).dropna()
+            if len(t) >= 2:
+                dur = float(t.max() - t.min())
+    except Exception:
+        pass
+    return {
+        "pcm_available": True,
+        "dram_collector": source,
+        "pcm_source": source,
+        "pcm_raw_path": raw_path,
+        "pcm_samples": int(len(df)),
+        "pcm_nonzero_samples": int(len(nz)),
+        "pcm_duration_s": round(dur, 3),
+        "dram_read_gb_s_mean": mean(read),
+        "dram_write_gb_s_mean": mean(write),
+        "dram_total_gb_s_mean": mean(total),
+        "pcm_dram_read_gb_s": mean(read),
+        "pcm_dram_write_gb_s": mean(write),
+        "pcm_dram_total_gb_s": mean(total),
+        "dram_read_gb_s_peak": peak(read),
+        "dram_write_gb_s_peak": peak(write),
+        "dram_total_gb_s_peak": peak(total),
+        "pcm_dram_read_gb_s_peak": peak(read),
+        "pcm_dram_write_gb_s_peak": peak(write),
+        "pcm_dram_total_gb_s_peak": peak(total),
+    }
+
+
+
+def _amoprof_resolve_raw_dir_path(raw_path: Path) -> Path:
+    """Resolve analyzer input to the full raw/ collector payload.
+
+    A flat collect output directory contains copied summaries at the top level
+    and the complete metric payload in child raw/.  Prefer child raw/ whenever
+    it exists, unless the input is already named raw.
+    """
+    p = Path(raw_path)
+    child = p / "raw"
+    raw_marker_files = (
+        "all_timeseries.csv", "setup_details.json", "server_info.json",
+        "pcm_summary.json", "pcm_timeseries.csv", "pcm_memory_raw.csv",
+        "amduprof_pcm_summary.json", "amduprof_pcm_timeseries.csv",
+        "amduprof_pcm_raw.csv", "dram_summary.json", "dram_timeseries.csv",
+        "sglang_summary.json", "sglang_timeseries.csv",
+        "gpu_summary.json", "gpu_timeseries.csv",
+    )
+    try:
+        if p.name == "raw":
+            return p
+        if child.is_dir() and any((child / k).exists() for k in raw_marker_files):
+            return child
+        candidates = []
+        for pat in ("metrics_run_*/raw", "*/metrics_run_*/raw", "*/raw"):
+            for cand in p.glob(pat):
+                if cand.is_dir() and any((cand / k).exists() for k in raw_marker_files):
+                    try:
+                        mt = max((cand / k).stat().st_mtime for k in raw_marker_files if (cand / k).exists())
+                    except Exception:
+                        mt = cand.stat().st_mtime
+                    candidates.append((mt, cand))
+        if candidates:
+            candidates.sort(key=lambda x: x[0], reverse=True)
+            return candidates[0][1]
+    except Exception:
+        pass
+    return p
+
+
+# ─── Multi-SSD sidecar grouping ─────────────────────────────────────────
+#
+# The collector layer now writes per-device sidecar files when
+# `--ssd-device` names more than one block device.  The primary device
+# keeps canonical filenames (iostat_timeseries.csv, discard_timeseries.csv,
+# queue_depth_sources_timeseries.csv, blkparse_events.generated.csv,
+# biosnoop_events.csv, smart_summary.json), and extra devices get the
+# device slug appended (e.g. discard_timeseries_nvme1n1.csv).
+#
+# `_group_multi_ssd_sidecars` collects those into a per-device dict so
+# chart code can iterate over `data["l3_ssds"]` and render one line per
+# SSD instead of only the primary.
+
+def _extract_device_slug(stem: str) -> tuple[str, str] | None:
+    """Return (base_stem, device_slug) for a suffixed sidecar stem.
+
+    Recognized layouts:
+      "iostat__nvme1n1_timeseries"           -> ("iostat_timeseries", "nvme1n1")
+      "discard__nvme1n1_timeseries"          -> ("discard_timeseries", "nvme1n1")
+      "queue_depth_sysfs__nvme1n1_timeseries"
+                                             -> ("queue_depth_sysfs_timeseries", "nvme1n1")
+      "smart_summary__nvme1n1"               -> ("smart_summary", "nvme1n1")
+      "biosnoop_events_nvme1n1"              -> ("biosnoop_events", "nvme1n1")
+      "blkparse_events.generated_nvme1n1"    -> ("blkparse_events.generated", "nvme1n1")
+      "queue_depth_sources_timeseries_nvme1n1"
+                                             -> ("queue_depth_sources_timeseries", "nvme1n1")
+      "discard_timeseries_nvme1n1"           -> ("discard_timeseries", "nvme1n1")
+    Returns None when the stem is not a recognized sidecar.
+    """
+    # "collector__<slug>_..." layout (collector-key suffix).
+    if "__" in stem:
+        base_prefix, rest = stem.split("__", 1)
+        # rest = "<slug>" or "<slug>_<tail>". <slug> is [A-Za-z0-9_]+ but
+        # we split on the first underscore that begins a known tail.
+        for tail in ("_timeseries", "_summary"):
+            if tail in rest:
+                slug, _, _t = rest.partition(tail)
+                if slug:
+                    return (base_prefix + tail, slug)
+        # No tail — treat the whole rest as the slug.
+        return (base_prefix, rest)
+    # "collector_..._<slug>" layout (filename suffix).
+    for base in (
+        "discard_timeseries",
+        "queue_depth_sources_timeseries",
+        "biosnoop_events_all",
+        "biosnoop_events",
+        "blkparse_events.generated",
+    ):
+        if stem.startswith(base + "_"):
+            slug = stem[len(base) + 1:]
+            if slug:
+                return (base, slug)
+    return None
+
+
+_MULTI_SSD_STREAM_MAP: dict[str, str] = {
+    "iostat_timeseries":                  "iostat_ts",
+    "discard_timeseries":                 "discard_ts",
+    "queue_depth_sysfs_timeseries":       "queue_depth_ts",
+    "queue_depth_sources_timeseries":     "queue_depth_sources_ts",
+    "nvme_driver_timeseries":             "nvme_driver_ts",
+    "smart_timeseries":                   "smart_ts",
+    "ssd_hw_timeseries":                  "ssd_hw_ts",
+    "biolatency_timeseries":              "biolatency_ts",
+    "blkparse_events.generated":          "blkparse",
+    "biosnoop_events":                    "biosnoop",
+    "biosnoop_events_all":                "biosnoop_all",
+    "smart_summary":                      "smart_summary",
+    "iostat_summary":                     "iostat_summary",
+    "ssd_hw_summary":                     "ssd_hw_summary",
+    "discard_summary":                    "discard_summary",
+    "queue_depth_sysfs_summary":          "queue_depth_summary",
+    "nvme_driver_summary":                "nvme_driver_summary",
+    "biolatency_summary":                 "biolatency_summary",
+    "blktrace_summary":                   "blktrace_summary",
+    "biosnoop_summary":                   "biosnoop_summary",
+}
+
+_MULTI_SSD_PRIMARY_STEMS: set[str] = set(_MULTI_SSD_STREAM_MAP.keys())
+
+
+def _group_multi_ssd_sidecars(data: dict, raw_path: Path | None = None) -> None:
+    """Populate `data["l3_ssds"]` in place.
+
+    Groups every recognised per-device sidecar (see _MULTI_SSD_STREAM_MAP)
+    under the device slug it belongs to.  The primary device is discovered
+    from `data["summary"] :: meta.ssd_devices` when present, or from any
+    slug that appears in sidecar names.  If only one device is present
+    (single-SSD run), l3_ssds is left empty so chart code can fall back to
+    the canonical single-device attributes.
+    """
+    l3: dict[str, dict] = {}
+
+    # 1. Discover extra devices from suffixed sidecar stems.
+    for stem in list(data.keys()):
+        parsed = _extract_device_slug(stem)
+        if not parsed:
+            continue
+        base_stem, slug = parsed
+        if base_stem not in _MULTI_SSD_STREAM_MAP:
+            continue
+        stream_key = _MULTI_SSD_STREAM_MAP[base_stem]
+        entry = l3.setdefault(slug, {"is_primary": False, "device_slug": slug})
+        entry[stream_key] = data[stem]
+
+    # 2. If no extras were found, we're done — single-device run.
+    if not l3:
+        data.setdefault("l3_ssds", {})
+        return
+
+    # 3. Bring the primary device in as its own entry so charts can iterate
+    #    l3_ssds uniformly.  Primary slug comes from meta.ssd_devices when
+    #    available; otherwise fall back to reading an ssd_device name from
+    #    setup_details or defaulting to "primary".
+    primary_slug = None
+    _meta = data.get("summary")
+    if isinstance(_meta, dict):
+        _m = _meta.get("meta") if isinstance(_meta.get("meta"), dict) else _meta
+        devices = (_m.get("ssd_devices") if isinstance(_m, dict) else None) or []
+        if isinstance(devices, list) and devices:
+            import os as _os, re as _re
+            primary_slug = _re.sub(r"[^A-Za-z0-9]+", "_",
+                                    _os.path.basename(str(devices[0]))).strip("_")
+    # Fall back to on-disk summary.json (raw/summary.json or ../summary.json).
+    if not primary_slug and raw_path is not None:
+        import json as _json, os as _os, re as _re
+        for _cand in (raw_path / "summary.json", raw_path.parent / "summary.json"):
+            try:
+                if _cand.exists() and _cand.stat().st_size > 0:
+                    _blob = _json.loads(_cand.read_text(encoding="utf-8"))
+                    _m = _blob.get("meta") if isinstance(_blob.get("meta"), dict) else _blob
+                    _devices = _m.get("ssd_devices") if isinstance(_m, dict) else None
+                    if isinstance(_devices, list) and _devices:
+                        primary_slug = _re.sub(r"[^A-Za-z0-9]+", "_",
+                                                _os.path.basename(str(_devices[0]))).strip("_")
+                        break
+            except Exception:
+                pass
+    if not primary_slug:
+        primary_slug = "primary"
+
+    primary_entry = {"is_primary": True, "device_slug": primary_slug}
+    for base_stem, stream_key in _MULTI_SSD_STREAM_MAP.items():
+        if base_stem in data:
+            primary_entry[stream_key] = data[base_stem]
+    l3[primary_slug] = primary_entry
+
+    data["l3_ssds"] = l3
+
+
 def load_raw_dir(raw_path: Path) -> dict:
     """Load all summary JSONs and timeseries CSVs from a raw directory."""
+    raw_path = _amoprof_resolve_raw_dir_path(Path(raw_path))
     data = {}
     for f in raw_path.iterdir():
         if f.suffix == ".json":
@@ -348,6 +666,32 @@ def load_raw_dir(raw_path: Path) -> dict:
                     data[f"nsys_{fpath.stem}"] = pd.read_csv(fpath, low_memory=False)
                 except Exception as e:
                     print(f"  [warn] nsys/{fname}: {e}")
+
+    # Intel PCM self-heal: older collector builds can write pcm_timeseries.csv
+    # and pcm_summary.json as all-zero even though pcm_memory_raw.csv contains
+    # valid two-row-header System Read/Write/Memory data.  Re-parse the raw PCM
+    # CSV and prefer it whenever the normalized timeseries is missing/all-zero.
+    try:
+        _pcm_raw = raw_path / "pcm_memory_raw.csv"
+        if _pcm_raw.exists() and _pcm_raw.stat().st_size > 0:
+            _pcm_df = _amoprof_parse_intel_pcm_raw_file(_pcm_raw)
+            if _amoprof_dram_pmu_df_nonzero(_pcm_df):
+                _existing = data.get("pcm_timeseries")
+                if not _amoprof_dram_pmu_df_nonzero(_existing if isinstance(_existing, pd.DataFrame) else pd.DataFrame()):
+                    data["pcm_timeseries"] = _pcm_df
+                    data["pcm_memory_timeseries"] = _pcm_df
+                _summary = _amoprof_dram_pmu_summary_from_df(_pcm_df, raw_path=str(_pcm_raw))
+                if _summary:
+                    _old = data.get("pcm_summary") if isinstance(data.get("pcm_summary"), dict) else {}
+                    data["pcm_summary"] = {**_old, **_summary, "pcm_reparsed_from_raw": True}
+    except Exception as e:
+        print(f"  [warn] intel pcm raw reparse: {e}")
+
+    # Group per-device sidecars for multi-SSD collections (additive).
+    try:
+        _group_multi_ssd_sidecars(data, raw_path=raw_path)
+    except Exception as _e:
+        print(f"  [warn] multi-SSD sidecar grouping: {_e}")
 
     return data
 
@@ -1833,6 +2177,37 @@ def collect_from_prometheus_api(
               + (f", instance={_server_info['Instance']}" if _server_info.get("Instance") else "")
               + (f", TP={_server_info['TP size']}" if _server_info.get("TP size") else ""))
 
+    # Canonical cache-hit calculation used by all report surfaces.
+    # Primary semantics: cache-served prompt/prefill tokens over total cache+compute
+    # prompt/prefill tokens, with request JSON/OpenAI usage/benchmark/realtime-prefill
+    # source priority.
+    _ch = {}
+    try:
+        if compute_cache_hit_kpis is not None:
+            _ch = compute_cache_hit_kpis(rows=master)
+            _alt_cache_hit = float(_ch.get("cache_hit_pct", _alt_cache_hit) or 0)
+            _alt_method = str(_ch.get("cache_hit_calc_method", _alt_method) or _alt_method)
+            _cached_prompt_hit = float(_ch.get("cache_hit_token_weighted_pct", _cached_prompt_hit) or 0)
+            _prefill_token_weighted_hit = float(_ch.get("cache_hit_prefill_token_weighted_pct", _prefill_token_weighted_hit) or 0)
+            _time_weighted_hit = float(_ch.get("cache_hit_time_weighted_pct", _time_weighted_hit) or 0)
+            _request_weighted_hit = float(_ch.get("cache_hit_request_weighted_pct", _request_weighted_hit) or 0)
+            _effective_prompt_hit = float(_ch.get("cache_hit_effective_prompt_pct", _effective_prompt_hit) or 0)
+            _gstats.update({
+                "overall_pct": float(_ch.get("cache_hit_gauge_overall_pct", _gstats.get("overall_pct", 0)) or 0),
+                "active_pct": float(_ch.get("cache_hit_gauge_active_pct", _gstats.get("active_pct", 0)) or 0),
+                "peak_pct": float(_ch.get("cache_hit_gauge_peak_pct", _gstats.get("peak_pct", 0)) or 0),
+                "total_samples": int(_ch.get("cache_hit_gauge_total_samples", _gstats.get("total_samples", 0)) or 0),
+                "active_samples": int(_ch.get("cache_hit_gauge_active_samples", _gstats.get("active_samples", 0)) or 0),
+            })
+            _d_cached = float(_ch.get("cache_hit_token_weighted_numerator_tokens", _d_cached) or 0)
+            _d_prompt = float(_ch.get("cache_hit_token_weighted_denominator_tokens", _d_prompt) or 0)
+            _d_req_hit = float(_ch.get("cache_hit_request_weighted_numerator_requests", _d_req_hit) or 0)
+            _d_req_total = float(_ch.get("cache_hit_request_weighted_denominator_requests", _d_req_total) or 0)
+            _d_rt_cache = float(_ch.get("cache_hit_prefill_cache_tokens", _d_rt_cache) or 0)
+            _d_rt_compute = float(_ch.get("cache_hit_prefill_compute_tokens", _d_rt_compute) or 0)
+    except Exception:
+        pass
+
     sglang_summary = {
         "model_name":                  _detected_model,
         "prometheus_server_info":      _server_info,
@@ -1843,7 +2218,13 @@ def collect_from_prometheus_api(
         "server_itl_ms_method":         _tpot_method,
         "server_e2e_ms_method":         "delta_sglang_e2e_request_latency_seconds_sum_over_count",
         "cache_hit_rate_realtime_pct": round(_alt_cache_hit, 2),
+        "cache_hit_pct":               round(_alt_cache_hit, 2),
+        "cache_hit_primary_pct":       round(_alt_cache_hit, 2),
         "cache_hit_calc_method":       _alt_method,
+        "cache_hit_primary_formula":   _ch.get("cache_hit_primary_formula", "cache_served_prefill_prompt_tokens / (cache_served_prefill_prompt_tokens + compute_served_prefill_prompt_tokens)"),
+        "cache_hit_request_json_pct":  round(float(_ch.get("cache_hit_request_json_pct", 0) or 0), 2),
+        "cache_hit_openai_usage_pct":  round(float(_ch.get("cache_hit_openai_usage_pct", 0) or 0), 2),
+        "cache_hit_benchmark_pct":     round(float(_ch.get("cache_hit_benchmark_pct", 0) or 0), 2),
         "cache_hit_token_weighted_pct": round(_cached_prompt_hit, 2),
         "cache_hit_prefill_token_weighted_pct": round(_prefill_token_weighted_hit, 2),
         "cache_hit_time_weighted_pct": round(_time_weighted_hit, 2),
@@ -2330,6 +2711,33 @@ def collect_from_prometheus(
         tpot_ms = 1000.0 / float(_gen_tp_mean)
         _tpot_method = "fallback_inverse_prometheus_output_token_throughput"
 
+    # Canonical cache-hit calculation used by all report surfaces.
+    _ch = {}
+    try:
+        if compute_cache_hit_kpis is not None:
+            _ch = compute_cache_hit_kpis(rows=sglang_df)
+            cache_hit = float(_ch.get("cache_hit_pct", cache_hit) or 0)
+            cache_hit_method = str(_ch.get("cache_hit_calc_method", cache_hit_method) or cache_hit_method)
+            cache_hit_token_weighted = float(_ch.get("cache_hit_token_weighted_pct", cache_hit_token_weighted) or 0)
+            cache_hit_prefill_token_weighted = float(_ch.get("cache_hit_prefill_token_weighted_pct", cache_hit_prefill_token_weighted) or 0)
+            cache_hit_time_weighted = float(_ch.get("cache_hit_time_weighted_pct", cache_hit_time_weighted) or 0)
+            cache_hit_request_weighted = float(_ch.get("cache_hit_request_weighted_pct", cache_hit_request_weighted) or 0)
+            cache_hit_cached_prompt_pct = float(_ch.get("cache_hit_cached_prompt_pct", cache_hit_cached_prompt_pct) or 0)
+            cache_hit_effective_prompt_pct = float(_ch.get("cache_hit_effective_prompt_pct", cache_hit_effective_prompt_pct) or 0)
+            cache_hit_gauge_overall = float(_ch.get("cache_hit_gauge_overall_pct", cache_hit_gauge_overall) or 0)
+            cache_hit_gauge_active = float(_ch.get("cache_hit_gauge_active_pct", cache_hit_gauge_active) or 0)
+            cache_hit_gauge_peak = float(_ch.get("cache_hit_gauge_peak_pct", cache_hit_gauge_peak) or 0)
+            cache_hit_gauge_total_samples = int(_ch.get("cache_hit_gauge_total_samples", cache_hit_gauge_total_samples) or 0)
+            cache_hit_gauge_active_samples = int(_ch.get("cache_hit_gauge_active_samples", cache_hit_gauge_active_samples) or 0)
+            d_cached = float(_ch.get("cache_hit_token_weighted_numerator_tokens", d_cached) or 0)
+            d_prompt = float(_ch.get("cache_hit_token_weighted_denominator_tokens", d_prompt) or 0)
+            d_req_hit = float(_ch.get("cache_hit_request_weighted_numerator_requests", d_req_hit) or 0)
+            d_req_total = float(_ch.get("cache_hit_request_weighted_denominator_requests", d_req_total) or 0)
+            d_rt_cache = float(_ch.get("cache_hit_prefill_cache_tokens", d_rt_cache) or 0)
+            d_rt_compute = float(_ch.get("cache_hit_prefill_compute_tokens", d_rt_compute) or 0)
+    except Exception:
+        pass
+
     sglang_summary = {
         "model_name":                   model_name,
         "server_ttft_ms":               round(ttft_ms, 2),
@@ -2342,7 +2750,13 @@ def collect_from_prometheus(
         "ai_op_decode_tok_s_method":    _gen_tp_method,
         "gen_tp_peak":                  round(gen_tp_peak, 3),
         "cache_hit_rate_realtime_pct":  round(cache_hit, 2),
+        "cache_hit_pct":                round(cache_hit, 2),
+        "cache_hit_primary_pct":        round(cache_hit, 2),
         "cache_hit_calc_method":        cache_hit_method,
+        "cache_hit_primary_formula":    _ch.get("cache_hit_primary_formula", "cache_served_prefill_prompt_tokens / (cache_served_prefill_prompt_tokens + compute_served_prefill_prompt_tokens)"),
+        "cache_hit_request_json_pct":   round(float(_ch.get("cache_hit_request_json_pct", 0) or 0), 2),
+        "cache_hit_openai_usage_pct":   round(float(_ch.get("cache_hit_openai_usage_pct", 0) or 0), 2),
+        "cache_hit_benchmark_pct":      round(float(_ch.get("cache_hit_benchmark_pct", 0) or 0), 2),
         "cache_hit_token_weighted_pct": round(cache_hit_token_weighted, 2),
         "cache_hit_prefill_token_weighted_pct": round(cache_hit_prefill_token_weighted, 2),
         "cache_hit_time_weighted_pct": round(cache_hit_time_weighted, 2),
@@ -4548,6 +4962,10 @@ def resolve_input(raw_arg: str) -> dict:
 
 @dataclass
 class Metrics:
+    # Multi-SSD: per-device data streams (empty when single-SSD run).
+    # Keyed by device slug (e.g. "nvme0n1") with per-device DataFrames/dicts.
+    l3_ssds: dict = field(default_factory=dict)
+
     # SGLang
     model: str = "unknown"
     # Setup / server configuration (best-effort from SGLang/Prometheus + manual overrides)
@@ -4577,6 +4995,10 @@ class Metrics:
     gen_tp_p50: float = 0
     cache_hit_pct: float = 0
     cache_hit_calc_method: str = "unknown"
+    cache_hit_primary_formula: str = "cache_served_prefill_prompt_tokens / (cache_served_prefill_prompt_tokens + compute_served_prefill_prompt_tokens)"
+    cache_hit_request_json_pct: float = 0
+    cache_hit_openai_usage_pct: float = 0
+    cache_hit_benchmark_pct: float = 0
     cache_hit_token_weighted_pct: float = 0
     cache_hit_prefill_token_weighted_pct: float = 0
     cache_hit_time_weighted_pct: float = 0
@@ -5030,6 +5452,24 @@ def extract_metrics(data: dict) -> Metrics:
     _warnings.filterwarnings('ignore', category=RuntimeWarning, message='.*invalid.*')
     _warnings.filterwarnings('ignore', message='.*ConstantInput.*')
     m = Metrics()
+    # Multi-SSD grouping: `data["l3_ssds"]` is populated by
+    # `_group_multi_ssd_sidecars` when the run captured >1 SSD.  Chart code
+    # iterates `m.l3_ssds` to render per-device overlays; when empty, the
+    # existing single-device chart path is used unchanged.
+    try:
+        _l3_ssds = data.get("l3_ssds") if isinstance(data, dict) else None
+        if isinstance(_l3_ssds, dict):
+            m.l3_ssds = _l3_ssds
+    except Exception:
+        pass
+    # Source precedence manifest written by analyze merge mode.  Report helpers
+    # use this to honor --prefer prometheus and avoid re-selecting richer nested
+    # local CSVs after Prometheus-owned canonical files were chosen.
+    try:
+        if isinstance(data.get("amoprof_source_policy"), dict):
+            setattr(m, "_amoprof_source_policy", data.get("amoprof_source_policy"))
+    except Exception:
+        pass
 
     def _apply_queue_depth_dataframe(_df, _source: str, *, _prefer: bool = False) -> bool:
         """Populate queue-depth chart/stat fields from any supported QD table.
@@ -5496,6 +5936,10 @@ def extract_metrics(data: dict) -> Metrics:
     m.gen_tp_p50 = safe_float(sg.get("gen_tp_p50", sg.get("gen_tp_active_p50", sg.get("throughput_p50_tok_s", 0))))
     m.cache_hit_pct = float(sg.get("cache_hit_rate_realtime_pct", 0))
     m.cache_hit_calc_method = str(sg.get("cache_hit_calc_method", "unknown"))
+    m.cache_hit_primary_formula = str(sg.get("cache_hit_primary_formula", getattr(m, "cache_hit_primary_formula", "")))
+    m.cache_hit_request_json_pct = float(sg.get("cache_hit_request_json_pct", 0))
+    m.cache_hit_openai_usage_pct = float(sg.get("cache_hit_openai_usage_pct", 0))
+    m.cache_hit_benchmark_pct = float(sg.get("cache_hit_benchmark_pct", 0))
     m.cache_hit_token_weighted_pct = float(sg.get("cache_hit_token_weighted_pct", 0))
     m.cache_hit_prefill_token_weighted_pct = float(sg.get("cache_hit_prefill_token_weighted_pct", 0))
     m.cache_hit_time_weighted_pct = float(sg.get("cache_hit_time_weighted_pct", sg.get("cache_hit_gauge_overall_pct", 0)))
@@ -5796,6 +6240,12 @@ def extract_metrics(data: dict) -> Metrics:
     # this, the End Report section shows ZERO DATA even though the Executive
     # DRAM BW tile is populated.
     _populate_dram_bw_from_summary(m, dr)
+    # Collector-specific PMU summaries are the canonical output when
+    # AMDuProf/Intel PCM parsed successfully but the per-sample CSV was not
+    # emitted or was filtered away.  Use them as a real measured fallback,
+    # before synthesizing any chart shape.
+    _populate_dram_bw_from_summary(m, data.get("amduprof_pcm_summary", {}))
+    _populate_dram_bw_from_summary(m, data.get("pcm_summary", {}))
 
     # ── NVMe summary ──────────────────────────────────────────────────────────
     nv = data.get("nvme_driver_summary", {})
@@ -6588,8 +7038,96 @@ def extract_metrics(data: dict) -> Metrics:
             })
         m.hbm_bw_ts = pd.DataFrame(hbm_ts_rows)
 
-    # ── System DRAM bandwidth — AMDuProf PCM raw file ─────────────────────────
-    # The amduprof_pcm_timeseries.csv has a parser bug (all zeros); read raw directly
+    # ── System DRAM bandwidth — timestamped local service/collect time-series ─
+    # Prefer pre-parsed timestamped rows when present.  These rows may already
+    # have been filtered to a user-selected offline time window by the aggregate
+    # or analyze --start/--end local path.  The raw AMDuProf text file is still
+    # kept as a fallback, but it is whole-capture only and cannot represent a
+    # selected sub-window.
+    def _apply_dram_bw_timeseries(_df, _source_name: str = "") -> bool:
+        if not isinstance(_df, pd.DataFrame) or _df.empty:
+            return False
+
+        def _pick_col(cols):
+            for c in cols:
+                if c in _df.columns:
+                    return c
+            lower = {str(c).lower(): c for c in _df.columns}
+            for c in cols:
+                cl = c.lower()
+                for lc, orig in lower.items():
+                    if cl == lc or cl in lc:
+                        return orig
+            return None
+
+        read_col = _pick_col([
+            "dram_read_gb_s", "read_gb_s", "read", "read_bw_gbs",
+            "pcm_dram_read_gb_s", "dram_read_bw_gbs", "Total Mem RdBw (GB/s)",
+            "Total Mem RdBw",
+        ])
+        write_col = _pick_col([
+            "dram_write_gb_s", "write_gb_s", "write", "write_bw_gbs",
+            "pcm_dram_write_gb_s", "dram_write_bw_gbs", "Total Mem WrBw (GB/s)",
+            "Total Mem WrBw",
+        ])
+        total_col = _pick_col([
+            "dram_total_gb_s", "total_gb_s", "total_bw_gbs",
+            "pcm_dram_total_gb_s", "dram_total_bw_gbs", "Total Mem Bw (GB/s)",
+            "Total Mem Bw",
+        ])
+        if not (read_col or write_col or total_col):
+            return False
+
+        work = pd.DataFrame()
+        work["time_sec"] = (pd.to_numeric(_df["time_sec"], errors="coerce")
+                             if "time_sec" in _df.columns else range(len(_df)))
+        work["read_gb_s"] = (pd.to_numeric(_df[read_col], errors="coerce")
+                              if read_col else 0.0)
+        work["write_gb_s"] = (pd.to_numeric(_df[write_col], errors="coerce")
+                               if write_col else 0.0)
+        if total_col:
+            work["total_gb_s"] = pd.to_numeric(_df[total_col], errors="coerce")
+        else:
+            work["total_gb_s"] = work["read_gb_s"].fillna(0) + work["write_gb_s"].fillna(0)
+
+        work = work.fillna(0.0)
+        work = work[work["total_gb_s"].abs() > 0]
+        if work.empty:
+            return False
+
+        CL = 64
+        work["read_txn_M_s"] = (work["read_gb_s"] * 1e9 / CL / 1e6).round(2)
+        work["write_txn_M_s"] = (work["write_gb_s"] * 1e9 / CL / 1e6).round(2)
+        if "timestamp_epoch" in _df.columns:
+            try:
+                aligned = _df.loc[work.index, "timestamp_epoch"]
+                work["timestamp_epoch"] = pd.to_numeric(aligned, errors="coerce")
+            except Exception:
+                pass
+        m.dram_bw_ts = work.reset_index(drop=True)
+        m.dram_read_bw_gbs       = round(float(work["read_gb_s"].mean()), 2)
+        m.dram_write_bw_gbs      = round(float(work["write_gb_s"].mean()), 2)
+        m.dram_total_bw_gbs      = round(float(work["total_gb_s"].mean()), 2)
+        m.dram_read_bw_peak_gbs  = round(float(work["read_gb_s"].max()), 2)
+        m.dram_write_bw_peak_gbs = round(float(work["write_gb_s"].max()), 2)
+        m.dram_read_txn_M_s      = round(float(work["read_txn_M_s"].mean()), 1)
+        m.dram_write_txn_M_s     = round(float(work["write_txn_M_s"].mean()), 1)
+        if m.dram_peak_theoretical_gbs > 0:
+            m.dram_bw_util_pct = round(
+                m.dram_total_bw_gbs / m.dram_peak_theoretical_gbs * 100, 2)
+        try:
+            m.warnings.append(f"DRAM BW derived from timestamped local timeseries: {_source_name}")
+        except Exception:
+            pass
+        return True
+
+    _dram_ts_applied = False
+    for _dram_key in ("amduprof_pcm_timeseries", "pcm_timeseries", "pcm_memory_timeseries"):
+        if _apply_dram_bw_timeseries(data.get(_dram_key), _dram_key):
+            _dram_ts_applied = True
+            break
+
+    # ── System DRAM bandwidth — AMDuProf PCM raw file fallback ────────────────
     amd_raw = data.get("amduprof_pcm_raw")
     if isinstance(amd_raw, pd.DataFrame):
         amd_raw = None  # not parsed as text; skip
@@ -6615,7 +7153,7 @@ def extract_metrics(data: dict) -> Metrics:
             amd_raw = data[key]
             break
 
-    if amd_raw:
+    if amd_raw and not _dram_ts_applied:
         try:
             lines = amd_raw.split("\n")
             dram_rows = []
@@ -6681,7 +7219,7 @@ def extract_metrics(data: dict) -> Metrics:
 
     # Also try to use pre-parsed timeseries if non-zero
     amd_ts = data.get("amduprof_pcm_timeseries")
-    if isinstance(amd_ts, pd.DataFrame) and not amd_ts.empty:
+    if (not _dram_ts_applied) and isinstance(amd_ts, pd.DataFrame) and not amd_ts.empty:
         real = amd_ts[amd_ts.get("dram_total_gb_s", amd_ts.get("dram_read_gb_s",
                pd.Series([0]))).fillna(0) > 0]
         if len(real) > 5 and m.dram_read_bw_gbs == 0:
@@ -8283,6 +8821,8 @@ def extract_metrics(data: dict) -> Metrics:
 
     # ── §F: DRAM BW from Intel PCM ────────────────────────────────────────────
     pcm_df = data.get("pcm_memory_timeseries")
+    if not isinstance(pcm_df, pd.DataFrame) or pcm_df.empty:
+        pcm_df = data.get("pcm_timeseries")
     if isinstance(pcm_df, pd.DataFrame) and not pcm_df.empty:
         m.pcm_available = True
         if "read_bw_gbs" in pcm_df.columns:
@@ -8899,7 +9439,10 @@ def extract_metrics(data: dict) -> Metrics:
         "hicache path" in _setup_txt or
         "file storage path" in _setup_txt
     )
-    _l3_effective = bool(getattr(m, "l3_configured", False) or _l3_activity_phys or (_hicache_file_backend and _l3_activity_logical))
+    # Multi-SSD counts as explicit L3 configuration: the operator named
+    # >=1 SSD via --ssd-device, that IS the L3 layer for this run.
+    _l3_multi_ssd = bool(getattr(m, "l3_ssds", {}) and len(getattr(m, "l3_ssds", {})) >= 2)
+    _l3_effective = bool(getattr(m, "l3_configured", False) or _l3_activity_phys or (_hicache_file_backend and _l3_activity_logical) or _l3_multi_ssd)
     m.l3_configured = _l3_effective
     if not _l3_effective:
         # Avoid stale df/SMART/cache capacity making L2-only runs look L3-backed.
@@ -9263,293 +9806,531 @@ def _make_lba_axis_readable(ax, cap_gb: float = 0.0, nbins: int = 5) -> None:
     except Exception:
         pass
 
-def chart_gpu_timeline(m: Metrics) -> str:
-    """Static GPU/HBM timeline rendered from the same logical source as Interactive.
+def _amoprof_get_source_policy(m: Metrics) -> dict:
+    """Return raw/amoprof_source_policy.json when present.
 
-    v1.39.63: keep this End Report section visually complete without changing
-    upstream metrics:
-      - plot all per-GPU utilization traces across the full report window;
-      - use the same robust HBM memory-column discovery as Interactive;
-      - draw visible per-GPU HBM traces plus a mean-HBM overlay when per-sample
-        FB_USED is present;
-      - use a bounded/zoomed HBM Y-axis so the memory timeline is not flattened
-        into a zero-based rectangle;
-      - fall back to summary means only when the real per-sample series is truly
-        unavailable;
-      - force GPU/HBM panels onto the full Interactive/report timebase when
-        static GPU rows arrive on a shorter relative segment.
+    In --prefer prometheus merge mode, this manifest is the guardrail that
+    prevents report builders from choosing a denser nested local CSV over the
+    canonical Prometheus-owned file for the requested time window.
     """
-    gdf = m.gpu_ts
-    if not isinstance(gdf, pd.DataFrame) or gdf.empty:
-        return ""
-
-    gdf = gdf.copy()
-    if "time_sec" not in gdf.columns:
-        return ""
-
-    # Normalize timestamp/window and numeric columns before grouping.  Avoid
-    # throwing away points just because one column is missing.
-    gdf["time_sec"] = pd.to_numeric(gdf["time_sec"], errors="coerce")
-    gdf = gdf.dropna(subset=["time_sec"])
-    if gdf.empty:
-        return ""
-
-    # Bound to the selected report window when available, but keep the chart
-    # axis driven by the longest available GPU or power time-series.  This keeps
-    # the static chart aligned with the Interactive tab instead of rendering an
-    # apparently truncated first few minutes.
-    max_t_candidates = []
-    if float(getattr(m, "run_duration_s", 0) or 0) > 0:
-        max_t_candidates.append(float(m.run_duration_s))
     try:
-        max_t_candidates.append(float(pd.to_numeric(gdf["time_sec"], errors="coerce").max()))
+        pol = getattr(m, "_amoprof_source_policy", None)
+        if isinstance(pol, dict):
+            return pol
     except Exception:
         pass
-    if isinstance(getattr(m, "power_ts", None), pd.DataFrame) and not m.power_ts.empty and "time_sec" in m.power_ts.columns:
+    try:
+        raw_dir = getattr(m, "_amoprof_raw_dir", "") or ""
+        if raw_dir:
+            base = Path(str(raw_dir))
+            candidates = [base / "amoprof_source_policy.json", base / "raw" / "amoprof_source_policy.json"]
+            for path in candidates:
+                if path.exists() and path.stat().st_size > 0:
+                    return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def _amoprof_source_prefers_prometheus(m: Metrics, canonical_name: str = "") -> bool:
+    pol = _amoprof_get_source_policy(m)
+    if not isinstance(pol, dict):
+        return False
+    if str(pol.get("prefer", "")).lower() != "prometheus":
+        return False
+    if not canonical_name:
+        return True
+    try:
+        entry = (pol.get("canonical_files") or {}).get(canonical_name) or {}
+        # When Prometheus owns this file, only the canonical raw copy should be
+        # considered.  When the policy says local_fallback_missing_in_prometheus,
+        # nested local search may still be needed because Prometheus had no data.
+        return str(entry.get("selected_source", "")).lower() == "prometheus"
+    except Exception:
+        return True
+
+
+def _amoprof_gpu_candidate_frames(m: Metrics) -> list[tuple[str, pd.DataFrame]]:
+    """Return candidate GPU timelines while respecting source precedence.
+
+    Local-only mode may search nested raw/ directories and choose the richest
+    GPU timeline.  In --prefer prometheus merge mode, however, the canonical
+    raw/gpu_timeseries.csv selected by the merge policy is authoritative; nested
+    local files must not override it just because they have more rows.
+    """
+    out: list[tuple[str, pd.DataFrame]] = []
+    seen: set[str] = set()
+    prefer_prom_gpu = _amoprof_source_prefers_prometheus(m, "gpu_timeseries.csv")
+
+    def _add_df(label: str, df) -> None:
         try:
-            max_t_candidates.append(float(pd.to_numeric(m.power_ts["time_sec"], errors="coerce").max()))
+            if isinstance(df, pd.DataFrame) and not df.empty:
+                out.append((label, df.copy()))
         except Exception:
             pass
-    max_t = max([x for x in max_t_candidates if x == x and x > 0] or [0.0])
-    if max_t > 0 and float(getattr(m, "run_duration_s", 0) or 0) > 0:
-        gdf = gdf[gdf["time_sec"] <= float(m.run_duration_s) * 1.05]
-    if gdf.empty:
-        return ""
 
-    # Pick the same HBM column family as Interactive _chart_gpu().
+    def _add_path(path: Path) -> bool:
+        try:
+            if not path.exists() or not path.is_file() or path.stat().st_size <= 0:
+                return False
+            key = str(path.resolve())
+            if key in seen:
+                return False
+            seen.add(key)
+            df = pd.read_csv(path, low_memory=False)
+            if isinstance(df, pd.DataFrame) and not df.empty:
+                out.append((str(path), df))
+                return True
+        except Exception:
+            return False
+        return False
+
+    raw_dir = getattr(m, "_amoprof_raw_dir", "") or ""
+    canonical_added = False
+    if raw_dir:
+        try:
+            base = Path(str(raw_dir))
+            # Depending on whether the report was invoked with run_dir or raw_dir,
+            # the canonical file can be either base/gpu_timeseries.csv or
+            # base/raw/gpu_timeseries.csv.  These are the only files eligible to
+            # override local candidates when --prefer prometheus selected GPU data.
+            for cand in (base / "gpu_timeseries.csv", base / "raw" / "gpu_timeseries.csv"):
+                canonical_added = _add_path(cand) or canonical_added
+        except Exception:
+            pass
+
+    if prefer_prom_gpu and canonical_added:
+        return out
+
+    # Non-Prometheus mode, or Prometheus did not return GPU data and local is a
+    # legitimate fallback: include Metrics.gpu_ts and bounded nested raw search.
+    _add_df("metrics.mgpu_ts", getattr(m, "gpu_ts", None))
+
+    if raw_dir:
+        try:
+            base = Path(str(raw_dir))
+            if base.exists() and base.is_dir():
+                for cand in list(base.rglob("gpu_timeseries.csv"))[:32]:
+                    _add_path(cand)
+        except Exception:
+            pass
+    return out
+
+
+def _amoprof_normalize_gpu_candidate(df: pd.DataFrame, m: Metrics) -> pd.DataFrame:
+    """Normalize a candidate GPU timeline to elapsed time_sec + numeric columns.
+
+    Handles all observed local/Prometheus/service shapes:
+    - elapsed time_sec in seconds
+    - absolute epoch stored in time_sec/ts/timestamp/timestamp_epoch
+    - timestamp_utc strings
+    - unit-suffixed values such as "100 %", "130,714 MB", and "647 W"
+    """
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame()
+    gdf = df.copy()
+
+    # Normalize GPU id.
+    if "gpu_idx" not in gdf.columns:
+        for alt in ("gpu", "gpu_id", "device", "index", "GPU"):
+            if alt in gdf.columns:
+                gdf["gpu_idx"] = gdf[alt]
+                break
+        else:
+            gdf["gpu_idx"] = 0
+    gdf["gpu_idx"] = gdf["gpu_idx"].astype(str).str.extract(r"(\d+)", expand=False).fillna(gdf["gpu_idx"].astype(str))
+
+    def _num_col(c: str):
+        return _amoprof_numeric_series(gdf[c]) if c in gdf.columns else None
+
+    # Wall-clock epoch, if available.
+    epoch = None
+    for c in ("timestamp_epoch", "epoch", "unix_epoch", "start_epoch"):
+        if c in gdf.columns:
+            vals = _amoprof_numeric_series(gdf[c])
+            if vals.notna().any() and float(vals.dropna().max()) > 1_000_000_000:
+                epoch = vals
+                break
+    if epoch is None:
+        for c in ("timestamp_utc", "timestamp", "datetime", "time_utc"):
+            if c in gdf.columns:
+                try:
+                    dt = pd.to_datetime(gdf[c], errors="coerce", utc=True)
+                    vals = dt.view("int64") / 1e9
+                    vals = pd.Series(vals, index=gdf.index).where(dt.notna())
+                    if vals.notna().any() and float(vals.dropna().max()) > 1_000_000_000:
+                        epoch = vals
+                        break
+                except Exception:
+                    pass
+    # Some collectors use ts/time as epoch; others use it as elapsed seconds.
+    if epoch is None:
+        for c in ("ts", "time", "time_s"):
+            if c in gdf.columns:
+                vals = _amoprof_numeric_series(gdf[c])
+                try:
+                    if vals.notna().any() and float(vals.dropna().median()) > 1_000_000_000:
+                        epoch = vals
+                        break
+                except Exception:
+                    pass
+
+    # Elapsed time.
+    t = None
+    if "time_sec" in gdf.columns:
+        t0 = _amoprof_numeric_series(gdf["time_sec"])
+        try:
+            # If time_sec is actually an epoch, treat it as epoch instead.
+            if t0.notna().any() and float(t0.dropna().median()) > 1_000_000_000:
+                if epoch is None:
+                    epoch = t0
+            else:
+                t = t0
+        except Exception:
+            t = t0
+    if t is None:
+        for c in ("elapsed_sec", "time_s", "seconds", "time"):
+            if c in gdf.columns:
+                vals = _amoprof_numeric_series(gdf[c])
+                try:
+                    if vals.notna().any() and float(vals.dropna().median()) <= 1_000_000_000:
+                        t = vals
+                        break
+                except Exception:
+                    pass
+
+    # Prefer epoch-derived alignment when the selected report window has a real
+    # start time.  That keeps End Report charts on the same --start/--end window
+    # as Prometheus/Interactive charts.
+    t0_epoch = float(getattr(m, "t0_epoch", 0) or 0)
+    rd = float(getattr(m, "run_duration_s", 0) or 0)
+    if epoch is not None and epoch.notna().any():
+        base = t0_epoch if t0_epoch > 1_000_000_000 else float(epoch.dropna().min())
+        t_from_epoch = epoch - base
+        # If time_sec is missing/sparse/all-zero, epoch is the authoritative axis.
+        try:
+            t_unique = int(pd.to_numeric(t, errors="coerce").dropna().round(3).nunique()) if t is not None else 0
+        except Exception:
+            t_unique = 0
+        if t is None or t_unique <= 1:
+            t = t_from_epoch
+        gdf["timestamp_epoch"] = epoch
+
+    if t is None:
+        return pd.DataFrame()
+    gdf["time_sec"] = pd.to_numeric(t, errors="coerce")
+    gdf = gdf.dropna(subset=["time_sec"])
+    if gdf.empty:
+        return pd.DataFrame()
+
+    # If elapsed time is offset far from zero but no real epoch filter succeeded,
+    # rebase to the first sample so local CSVs still plot over the run window.
+    try:
+        tmin = float(gdf["time_sec"].min())
+        tmax = float(gdf["time_sec"].max())
+        if tmin > 5 and (rd <= 0 or tmin > rd * 1.2):
+            gdf["time_sec"] = gdf["time_sec"] - tmin
+    except Exception:
+        pass
+
+    # Window filter.  Only apply it when we have a real wall-clock epoch and
+    # report start time.  Elapsed-only local/service GPU CSVs are already scoped
+    # to the collection; using an unrelated/summary-derived run_duration_s here
+    # caused End Report to keep only the first few GPU samples while the
+    # Interactive report plotted the full gpu_timeseries.csv.  This was the
+    # remaining GPU/HBM mismatch after v1.39.108.
+    try:
+        epoch_aligned_window = bool(epoch is not None and t0_epoch > 1_000_000_000)
+        if rd > 0 and epoch_aligned_window:
+            before_unique = int(gdf["time_sec"].round(3).nunique())
+            mask = (gdf["time_sec"] >= -1.0) & (gdf["time_sec"] <= rd * 1.05 + 2.0)
+            kept = gdf[mask]
+            kept_unique = int(kept["time_sec"].round(3).nunique()) if not kept.empty else 0
+            # Do not accept a windowing operation that discards almost all
+            # timestamps; that indicates a bad/mismatched duration rather than
+            # a valid selected-window crop.
+            if before_unique <= 2 or (kept_unique >= 2 and kept_unique >= max(2, int(before_unique * 0.50))):
+                gdf = kept.copy()
+    except Exception:
+        pass
+
+    if gdf.empty:
+        return pd.DataFrame()
+
+    # Normalize values once.
+    if "gpu_util" not in gdf.columns:
+        for c in gdf.columns:
+            if "gpu_util" in str(c).lower() or "utilization.gpu" in str(c).lower():
+                gdf["gpu_util"] = gdf[c]
+                break
+    gdf["gpu_util"] = _amoprof_numeric_series(gdf["gpu_util"], default=0.0) if "gpu_util" in gdf.columns else 0.0
+
+    if "power" not in gdf.columns:
+        for c in gdf.columns:
+            lc = str(c).lower()
+            if "power" in lc and "gpu" in lc:
+                gdf["power"] = gdf[c]
+                break
+    gdf["power"] = _amoprof_numeric_series(gdf["power"], default=0.0) if "power" in gdf.columns else 0.0
+
     mem_candidates = [
-        ("mem_used", 1.0),       # canonical MB
-        ("mem_used_mb", 1.0),
-        ("hbm_used_mb", 1.0),
-        ("mem_used_gb", 1024.0),
-        ("hbm_used_gb", 1024.0),
+        ("mem_used", 1.0), ("mem_used_mb", 1.0), ("hbm_used_mb", 1.0),
+        ("fb_used_mb", 1.0), ("mem_used_gb", 1024.0), ("hbm_used_gb", 1024.0),
     ]
     mem_key, mem_scale = None, 1.0
     for cand, scale in mem_candidates:
         if cand in gdf.columns:
-            vals = pd.to_numeric(gdf[cand], errors="coerce")
+            vals = _amoprof_numeric_series(gdf[cand], default=0.0)
             if vals.notna().any() and float(vals.fillna(0.0).abs().sum()) > 0:
                 mem_key, mem_scale = cand, scale
                 break
-
-    for col in ("gpu_util", "power", "temp_c"):
-        if col in gdf.columns:
-            gdf[col] = pd.to_numeric(gdf[col], errors="coerce")
     if mem_key:
-        gdf["_hbm_used_mb"] = pd.to_numeric(gdf[mem_key], errors="coerce") * mem_scale
+        gdf["_hbm_used_mb"] = _amoprof_numeric_series(gdf[mem_key], default=0.0) * mem_scale
+        gdf["_amoprof_mem_key"] = mem_key
     else:
-        gdf["_hbm_used_mb"] = np.nan
+        gdf["_hbm_used_mb"] = 0.0
+        gdf["_amoprof_mem_key"] = ""
+    return gdf.sort_values(["time_sec", "gpu_idx"]).reset_index(drop=True)
 
-    if "gpu_idx" not in gdf.columns:
-        gdf["gpu_idx"] = 0
-    gdf["gpu_idx"] = gdf["gpu_idx"].astype(str)
 
-    def _gpu_sort_key(item):
-        idx = str(item[0])
-        return int(idx) if idx.isdigit() else 99
+def _canonical_gpu_chart_payload(m: Metrics, points_per_gpu: int = 750) -> dict:
+    """Build the single canonical GPU/HBM chart payload for End Report views.
 
-    def _finite_vals(vals):
-        arr = np.asarray(vals, dtype=float)
-        return arr[np.isfinite(arr)]
+    This now explicitly chooses the richest available gpu_timeseries source.
+    That is necessary because the Interactive tab reads raw/gpu_timeseries.csv
+    directly, while static report generation may receive a sparse Metrics.gpu_ts
+    if the input directory contains nested raw/ files or a one-sample summary.
+    """
+    best_label = ""
+    best = pd.DataFrame()
+    best_score = (-1, -1.0, -1, -1.0)
+    for label, cand in _amoprof_gpu_candidate_frames(m):
+        norm = _amoprof_normalize_gpu_candidate(cand, m)
+        if norm.empty:
+            continue
+        try:
+            unique_t = int(norm["time_sec"].round(3).nunique())
+            duration = float(norm["time_sec"].max() - norm["time_sec"].min()) if unique_t > 1 else 0.0
+            rows = int(len(norm))
+            util_sum = float(pd.to_numeric(norm.get("gpu_util", 0), errors="coerce").fillna(0).abs().sum())
+            score = (unique_t, duration, rows, util_sum)
+            if score > best_score:
+                best_score = score
+                best = norm
+                best_label = label
+        except Exception:
+            continue
+    if best.empty:
+        return {"ok": False, "reason": "gpu_timeseries unavailable or sparse after normalization"}
 
-    # Downsample after numeric normalization, preserving per-GPU shapes.  Keep a
-    # relatively high point count because this static chart is intended to be a
-    # faithful non-interactive rendering of the Interactive GPU/HBM traces.
+    gdf = best.copy()
+    util_active_ids, mem_active_ids = set(), set()
+    for idx, sub in gdf.groupby("gpu_idx"):
+        sid = str(idx)
+        try:
+            if float(pd.to_numeric(sub["gpu_util"], errors="coerce").fillna(0.0).max()) > 0:
+                util_active_ids.add(sid)
+        except Exception:
+            pass
+        try:
+            if float(pd.to_numeric(sub["_hbm_used_mb"], errors="coerce").fillna(0.0).max()) > 0:
+                mem_active_ids.add(sid)
+        except Exception:
+            pass
+    # Activity is util-driven. HBM-only rows are used only when util is absent
+    # for every GPU, because model memory can be resident on an idle GPU.
+    visible_ids = util_active_ids or mem_active_ids or set(gdf["gpu_idx"].astype(str).unique())
+    if visible_ids:
+        gdf = gdf[gdf["gpu_idx"].astype(str).isin(visible_ids)].copy()
+    if gdf.empty:
+        return {"ok": False, "reason": "no visible GPU rows"}
+
     try:
-        if len(gdf) > 4800:
+        if len(gdf) > points_per_gpu * max(1, len(visible_ids)):
             parts = []
             for _, sub in gdf.groupby("gpu_idx"):
-                parts.append(downsample(sub.sort_values("time_sec"), 600))
-            gdf_plot = pd.concat(parts, ignore_index=True) if parts else downsample(gdf, 1200)
-        else:
-            gdf_plot = gdf.sort_values(["gpu_idx", "time_sec"])
+                parts.append(downsample(sub.sort_values("time_sec"), points_per_gpu))
+            if parts:
+                gdf = pd.concat(parts, ignore_index=True)
     except Exception:
-        gdf_plot = gdf.sort_values(["gpu_idx", "time_sec"])
+        pass
+    gdf = gdf.sort_values(["gpu_idx", "time_sec"]).reset_index(drop=True)
 
+    def _sort_key(sid):
+        sid = str(sid)
+        return int(sid) if sid.isdigit() else 999
+
+    try:
+        x_max_s = float(pd.to_numeric(gdf["time_sec"], errors="coerce").max())
+    except Exception:
+        x_max_s = 0.0
+    rd = float(getattr(m, "run_duration_s", 0) or 0)
+    if rd > 0:
+        # The chart should span the selected report window, not a one-sample
+        # inferred x-range. This keeps static charts aligned with the requested
+        # timeline even if the first/last GPU samples are slightly inside it.
+        x_max_s = max(x_max_s, rd)
+    if not (x_max_s == x_max_s and x_max_s > 0):
+        x_max_s = 1.0
+
+    try:
+        cap_gb = float(getattr(m, "hbm_total_mb", 0) or 0) / 1024.0
+    except Exception:
+        cap_gb = 0.0
+
+    mem_key = ""
+    try:
+        mem_key = str(gdf.get("_amoprof_mem_key", pd.Series([""])).replace("", np.nan).dropna().iloc[0])
+    except Exception:
+        pass
+
+    return {
+        "ok": True,
+        "gdf": gdf,
+        "visible_ids": set(str(x) for x in visible_ids),
+        "util_active_ids": set(str(x) for x in util_active_ids),
+        "mem_active_ids": set(str(x) for x in mem_active_ids),
+        "mem_key": mem_key,
+        "source": best_label,
+        "unique_times": int(best_score[0]),
+        "x_max_s": x_max_s,
+        "cap_gb": cap_gb,
+        "sort_key": _sort_key,
+    }
+
+
+def chart_gpu_timeline(m: Metrics) -> str:
+    """Static PNG from the exact same canonical GPU payload as End Plotly."""
+    payload = _canonical_gpu_chart_payload(m, points_per_gpu=750)
+    if not payload.get("ok"):
+        return ""
+    gdf = payload["gdf"]
+    sort_key = payload["sort_key"]
+    visible_ids = payload["visible_ids"]
+    util_active_ids = payload["util_active_ids"]
+    mem_key = payload["mem_key"]
+    cap_gb = float(payload.get("cap_gb") or 0.0)
+    x_right_min = max(float(payload.get("x_max_s") or 0.0) / 60.0, 0.1)
+    source_label = str(payload.get("source") or "gpu_timeseries.csv")
+
+    colors = ["#22d3ee", "#a78bfa", "#f97316", "#22c55e", "#ef4444", "#3b82f6", "#eab308", "#ec4899"]
     fig, axes = plt.subplots(3, 1, figsize=(13.8, 8.8), sharex=True)
     fig.patch.set_facecolor(BG2)
-    fig.suptitle("GPU Utilization, Power & HBM Timeline — static rendering of Interactive GPU/HBM traces",
+    fig.suptitle("GPU Utilization, Power & HBM Timeline — selected-window gpu_timeseries",
                  fontsize=12, fontweight="bold", color="#0f172a", y=1.01)
 
-    colors = ["#22d3ee", "#a78bfa", "#f97316", "#22c55e",
-              "#ef4444", "#3b82f6", "#eab308", "#ec4899"]
-    x_right_min = max(float(max_t) / 60.0, 0.1)
-
-    # v1.39.63: the End Report must use the same full-window timebase as the
-    # Interactive tab.  Some GPU collector paths deliver a short relative
-    # segment in m.gpu_ts while power/interactive data spans the whole selected
-    # window.  When that mismatch is detected, stretch the static GPU/HBM
-    # timeline onto the report-wide X range instead of leaving most of the chart
-    # blank.  This affects only this static section and does not alter metrics.
-    try:
-        _gt = pd.to_numeric(gdf_plot["time_sec"], errors="coerce")
-        _gmin = float(_gt.min())
-        _gmax = float(_gt.max())
-        _gspan = max(_gmax - _gmin, 0.0)
-    except Exception:
-        _gmin, _gmax, _gspan = 0.0, 0.0, 0.0
-    _target_s = max(float(max_t or 0.0), float(getattr(m, "run_duration_s", 0) or 0.0))
-    # v1.39.88: restore v1.39.74 full-window display scaling for the static
-    # End Report GPU/HBM panels.  Some GPU collectors emit a shorter relative
-    # segment than the report-selected window; if plotted raw while the axis
-    # spans the full run, GPU utilisation and HBM used appear squeezed into the
-    # left side.  Stretch only the static display time coordinate onto the full
-    # report window in that mismatch case.  Metric values and Interactive traces
-    # are unchanged.
-    _stretch_gpu_timebase = bool(_target_s > 0 and _gspan > 0 and _gspan < (_target_s * 0.75))
-
-    def _plot_min_from_gpu_time(vals):
-        arr = pd.to_numeric(vals, errors="coerce").values.astype(float)
-        if _stretch_gpu_timebase:
-            return ((arr - _gmin) / max(_gspan, 1e-9)) * (_target_s / 60.0)
-        return arr / 60.0
-
-    # 1) Per-GPU utilization, same idea as Interactive's GPU0/GPU1/... traces.
     ax = axes[0]
     ax.set_facecolor(BG3)
     util_vals_all = []
-    for i, (idx, sub) in enumerate(sorted(gdf_plot.groupby("gpu_idx"), key=_gpu_sort_key)):
-        if "gpu_util" not in sub.columns:
+    for i, (idx, sub) in enumerate(sorted(gdf.groupby("gpu_idx"), key=lambda x: sort_key(x[0]))):
+        sub = sub.sort_values("time_sec")
+        t = _amoprof_numeric_array(sub["time_sec"], default=0.0) / 60.0
+        y = _amoprof_numeric_array(sub["gpu_util"], default=0.0)
+        good = np.isfinite(t) & np.isfinite(y)
+        if util_active_ids and float(np.nanmax(np.where(np.isfinite(y), y, 0.0))) <= 0:
             continue
-        y = pd.to_numeric(sub["gpu_util"], errors="coerce").values.astype(float)
-        t = _plot_min_from_gpu_time(sub["time_sec"])
-        good = np.isfinite(t)
-        if not np.any(good):
-            continue
-        ax.plot(t[good], y[good], lw=1.35, alpha=0.94, color=colors[i % len(colors)],
-                label=f"GPU{idx} util")
-        util_vals_all.extend(_finite_vals(y))
-    if not util_vals_all and float(getattr(m, "gpu_util_mean", 0) or 0) > 0:
-        t_ref = np.linspace(0, x_right_min, 40)
-        y_ref = np.full_like(t_ref, float(m.gpu_util_mean), dtype=float)
-        ax.plot(t_ref, y_ref, color=GPU_C, lw=2.0, ls="--",
-                label=f"summary mean {m.gpu_util_mean:.1f}%")
-        util_vals_all.extend(y_ref.tolist())
-        ax.text(0.5, 0.86, "Per-sample GPU util unavailable; showing summary mean",
-                transform=ax.transAxes, ha="center", fontsize=8, color="#92400e",
-                bbox=dict(boxstyle="round,pad=0.3", facecolor="#fef3c7", edgecolor="#f59e0b"))
-    ax.set_ylabel("GPU util %", fontsize=9)
-    # Use a standard 0–100 scale for real GPU traces; only tighten for low-util
-    # fallback runs so the chart does not look blank.
-    util_peak = max([float(v) for v in util_vals_all if float(v) == float(v)] or [0.0])
-    if util_peak > 70:
-        ax.set_ylim(0, 105)
-    elif util_peak > 0:
-        ax.set_ylim(0, max(20, min(105, np.ceil((util_peak + 5) / 10.0) * 10.0)))
+        if np.any(good):
+            ax.plot(t[good], y[good], lw=2.4, alpha=0.98, color=colors[i % len(colors)],
+                    marker="o", markersize=2.8, markevery=max(1, int(np.sum(good) / 18)),
+                    zorder=5, label=f"GPU{idx} util")
+            util_vals_all.extend(y[good].tolist())
+    try:
+        mean_util = gdf.groupby("time_sec", as_index=False)["gpu_util"].mean().sort_values("time_sec")
+        mean_util = downsample(mean_util, 900)
+        x = _amoprof_numeric_array(mean_util["time_sec"], default=0.0) / 60.0
+        y = _amoprof_numeric_array(mean_util["gpu_util"], default=0.0)
+        good = np.isfinite(x) & np.isfinite(y)
+        if np.any(good):
+            ax.plot(x[good], y[good], color="#0f172a", lw=3.0, ls="--", alpha=0.75,
+                    zorder=6, label="Active GPU mean")
+            util_vals_all.extend(y[good].tolist())
+    except Exception:
+        pass
+    ax.axhline(100, color="#64748b", lw=0.8, ls=":", alpha=0.35, zorder=1)
+    if util_vals_all:
+        vals = np.asarray(util_vals_all, dtype=float)
+        vals = vals[np.isfinite(vals)]
+        vals_nz = vals[vals > 0]
+        peak = float(np.nanmax(vals)) if len(vals) else 0.0
+        floor = float(np.nanmin(vals_nz)) if len(vals_nz) else 0.0
+        if peak >= 70 and len(vals_nz):
+            y0 = max(0.0, floor - 5.0)
+            y1 = min(110.0, max(102.0, peak + 3.0))
+            if y1 - y0 < 10:
+                y0 = max(0.0, y1 - 10.0)
+            ax.set_ylim(y0, y1)
+        else:
+            ax.set_ylim(0, max(20, min(105, math.ceil((peak + 5.0) / 10.0) * 10.0)))
     else:
         ax.set_ylim(0, 105)
-    ax.axhline(100, color="#94a3b8", lw=0.7, ls="--", alpha=0.5)
-    ax.set_title("Per-GPU utilization traces (same source as Interactive)", fontsize=10, fontweight="bold")
+        ax.text(0.5, 0.5, "GPU utilization samples are unavailable after normalization",
+                transform=ax.transAxes, ha="center", va="center", fontsize=9, color="#92400e",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="#fef3c7", edgecolor="#f59e0b"))
+    ax.set_ylabel("GPU util %", fontsize=9)
+    ax.set_title("Per-GPU utilization traces — same selected-window payload as End Plotly", fontsize=10, fontweight="bold")
+    ax.text(0.01, 0.05,
+            f"Showing {len(visible_ids)} visible GPU(s); source={Path(source_label).name}; unique timestamps={payload.get('unique_times', 0)}",
+            transform=ax.transAxes, ha="left", va="bottom", fontsize=7.5, color="#475569",
+            bbox=dict(boxstyle="round,pad=0.25", facecolor="#f8fafc", edgecolor="#cbd5e1", alpha=0.92))
     if ax.get_legend_handles_labels()[0]:
-        ax.legend(fontsize=7, ncol=min(4, max(1, len(ax.get_legend_handles_labels()[0]))), loc="upper right")
+        ax.legend(fontsize=7, ncol=min(5, max(1, len(ax.get_legend_handles_labels()[0]))), loc="upper right")
     ax.grid(True, alpha=0.3, color="#e2e8f0")
 
-    # 2) Power. Prefer power_timeseries, fallback to gpu_ts per-GPU power.
     axp = axes[1]
     axp.set_facecolor(BG3)
-    pw_agg = None
-    if isinstance(getattr(m, "power_ts", None), pd.DataFrame) and not m.power_ts.empty and "gpu_power" in m.power_ts.columns:
-        try:
-            pw = m.power_ts.copy()
-            pw["time_sec"] = pd.to_numeric(pw["time_sec"], errors="coerce")
-            pw["gpu_power"] = pd.to_numeric(pw["gpu_power"], errors="coerce")
-            pw = pw.dropna(subset=["time_sec"])
-            if "source" in pw.columns:
-                pw_gpu = pw[pw["source"].astype(str).str.lower().eq("nvidia-smi")]
-                if not pw_gpu.empty:
-                    pw = pw_gpu
-            _trial = pw.groupby("time_sec", as_index=False)["gpu_power"].sum()
-            if not _trial.empty and float(_trial["gpu_power"].fillna(0.0).abs().sum()) > 0:
-                pw_agg = downsample(_trial.sort_values("time_sec"), 700)
-        except Exception:
-            pw_agg = None
-    if pw_agg is None and "power" in gdf.columns:
-        try:
-            _trial = gdf.groupby("time_sec", as_index=False)["power"].sum().rename(columns={"power": "gpu_power"})
-            if not _trial.empty and float(_trial["gpu_power"].fillna(0.0).abs().sum()) > 0:
-                pw_agg = downsample(_trial.sort_values("time_sec"), 700)
-        except Exception:
-            pw_agg = None
-    if pw_agg is not None and not pw_agg.empty:
-        x = pd.to_numeric(pw_agg["time_sec"], errors="coerce").values.astype(float) / 60.0
-        y = pd.to_numeric(pw_agg["gpu_power"], errors="coerce").fillna(0.0).values.astype(float)
-        good = np.isfinite(x)
-        axp.fill_between(x[good], y[good], alpha=0.22, color=POWER_C)
-        axp.plot(x[good], y[good], color=POWER_C, lw=1.5, label="Total GPU power")
-        if len(y) and float(np.nanmax(y)) > 0:
-            active = y[y > 0]
-            axp.axhline(float(np.nanmean(active)) if len(active) else float(np.nanmean(y)),
-                        color="#64748b", lw=0.9, ls="--", alpha=0.7, label="active mean")
-    elif float(getattr(m, "gpu_power_mean_w", 0) or 0) > 0:
-        t_ref = np.linspace(0, x_right_min, 40)
-        y_ref = np.full_like(t_ref, float(m.gpu_power_mean_w), dtype=float)
-        axp.plot(t_ref, y_ref, color=POWER_C, lw=2.0, ls="--", label="summary mean")
-        axp.text(0.5, 0.80, "Power timeseries unavailable; showing summary mean",
-                 transform=axp.transAxes, ha="center", fontsize=8, color="#92400e",
-                 bbox=dict(boxstyle="round,pad=0.3", facecolor="#fef3c7", edgecolor="#f59e0b"))
+    try:
+        pw = gdf.groupby("time_sec", as_index=False)["power"].sum().rename(columns={"power": "gpu_power"})
+        pw = pw.sort_values("time_sec")
+        if float(pd.to_numeric(pw["gpu_power"], errors="coerce").fillna(0.0).abs().sum()) > 0:
+            pw = downsample(pw, 900)
+            x = _amoprof_numeric_array(pw["time_sec"], default=0.0) / 60.0
+            y = _amoprof_numeric_array(pw["gpu_power"], default=0.0)
+            good = np.isfinite(x) & np.isfinite(y)
+            if np.any(good):
+                axp.fill_between(x[good], y[good], alpha=0.22, color=POWER_C)
+                axp.plot(x[good], y[good], color=POWER_C, lw=1.7, label="Total GPU power")
+                active = y[good][y[good] > 0]
+                if len(active):
+                    axp.axhline(float(np.nanmean(active)), color="#64748b", lw=0.9, ls="--", alpha=0.7, label="active mean")
+        elif float(getattr(m, "gpu_power_mean_w", 0) or 0) > 0:
+            t_ref = np.linspace(0, x_right_min, 40)
+            y_ref = np.full_like(t_ref, float(m.gpu_power_mean_w), dtype=float)
+            axp.plot(t_ref, y_ref, color=POWER_C, lw=2.0, ls="--", label="summary mean")
+    except Exception:
+        pass
     axp.set_ylabel("GPU power W\n(total)", fontsize=9)
     axp.set_title("Total GPU power", fontsize=10, fontweight="bold")
     if axp.get_legend_handles_labels()[0]:
         axp.legend(fontsize=8, loc="upper right")
     axp.grid(True, alpha=0.3, color="#e2e8f0")
 
-    # 3) HBM memory used.  Plot visible per-GPU traces plus the mean line.
-    # Unlike the previous zero-based filled area, this panel uses a bounded
-    # HBM-specific Y-axis so the timeline is visible even when memory occupancy
-    # changes by only a few hundred MB around ~34 GB/GPU.
     axm = axes[2]
     axm.set_facecolor(BG3)
-    hbm_drawn = False
     hbm_vals_all = []
     if mem_key:
-        for i, (idx, sub) in enumerate(sorted(gdf_plot.groupby("gpu_idx"), key=_gpu_sort_key)):
-            t = _plot_min_from_gpu_time(sub["time_sec"])
-            y = (pd.to_numeric(sub["_hbm_used_mb"], errors="coerce").values.astype(float) / 1024.0)
+        for i, (idx, sub) in enumerate(sorted(gdf.groupby("gpu_idx"), key=lambda x: sort_key(x[0]))):
+            sub = sub.sort_values("time_sec")
+            t = _amoprof_numeric_array(sub["time_sec"], default=0.0) / 60.0
+            y = _amoprof_numeric_array(sub["_hbm_used_mb"], default=0.0) / 1024.0
             good = np.isfinite(t) & np.isfinite(y) & (y > 0)
             if np.any(good):
-                axm.plot(t[good], y[good], lw=1.05, alpha=0.68, color=colors[i % len(colors)],
-                         label=f"GPU{idx} HBM used")
+                axm.plot(t[good], y[good], lw=1.7, alpha=0.86, color=colors[i % len(colors)],
+                         marker="o", markersize=2.2, markevery=max(1, int(np.sum(good) / 18)),
+                         zorder=3, label=f"GPU{idx} HBM used")
                 hbm_vals_all.extend(y[good].tolist())
-                hbm_drawn = True
     try:
-        if mem_key:
-            mean_mem = gdf.groupby("time_sec", as_index=False)["_hbm_used_mb"].mean().sort_values("time_sec")
-            mean_mem = downsample(mean_mem, 700)
-            x = _plot_min_from_gpu_time(mean_mem["time_sec"])
-            y = (pd.to_numeric(mean_mem["_hbm_used_mb"], errors="coerce").values.astype(float) / 1024.0)
-            good = np.isfinite(x) & np.isfinite(y) & (y > 0)
-            if np.any(good):
-                axm.plot(x[good], y[good], color=HBM_C, lw=2.6, label="Mean HBM used / GPU")
-                # Fill only the local data band, not all the way to zero; this
-                # avoids flattening the visible HBM timeline.
-                floor = max(0.0, float(np.nanmin(y[good])) - 0.25)
-                axm.fill_between(x[good], floor, y[good], alpha=0.12, color=HBM_C)
-                hbm_vals_all.extend(y[good].tolist())
-                hbm_drawn = True
+        mean_mem = gdf.groupby("time_sec", as_index=False)["_hbm_used_mb"].mean().sort_values("time_sec")
+        mean_mem = downsample(mean_mem, 900)
+        x = _amoprof_numeric_array(mean_mem["time_sec"], default=0.0) / 60.0
+        y = _amoprof_numeric_array(mean_mem["_hbm_used_mb"], default=0.0) / 1024.0
+        good = np.isfinite(x) & np.isfinite(y) & (y > 0)
+        if np.any(good):
+            axm.plot(x[good], y[good], color=HBM_C, lw=3.2, zorder=5, label="Mean HBM used / visible GPU")
+            floor = max(0.0, float(np.nanmin(y[good])) - 0.25)
+            axm.fill_between(x[good], floor, y[good], alpha=0.12, color=HBM_C)
+            hbm_vals_all.extend(y[good].tolist())
     except Exception:
         pass
-    if not hbm_drawn:
-        summary_mb = float(getattr(m, "hbm_used_mb_mean", 0) or 0)
-        if summary_mb <= 0:
-            summary_gb = float(getattr(m, "hbm_used_gb_mean", 0) or 0)
-            summary_mb = summary_gb * 1024.0
-        if summary_mb > 0:
-            t_ref = np.linspace(0, x_right_min, 40)
-            y_ref = np.full_like(t_ref, summary_mb / 1024.0, dtype=float)
-            axm.plot(t_ref, y_ref, color=HBM_C, lw=2.2, ls="--",
-                     label=f"Summary mean {summary_mb/1024.0:.1f} GB/GPU")
-            floor = max(0.0, float(y_ref[0]) - 0.25)
-            axm.fill_between(t_ref, floor, y_ref, alpha=0.12, color=HBM_C)
-            hbm_vals_all.extend(y_ref.tolist())
-            axm.text(0.5, 0.82,
-                     "Per-sample HBM data unavailable; showing gpu_summary mean as reference",
-                     transform=axm.transAxes, ha="center", fontsize=8, color="#92400e",
-                     bbox=dict(boxstyle="round,pad=0.3", facecolor="#fef3c7", edgecolor="#f59e0b"))
-        else:
-            axm.text(0.5, 0.5, "HBM memory data not captured\n(DCGM_FI_DEV_FB_USED unavailable)",
-                     ha="center", va="center", transform=axm.transAxes, fontsize=9,
-                     color="#94a3b8", style="italic")
-    cap_gb = float(getattr(m, "hbm_total_mb", 0) or 0) / 1024.0 if float(getattr(m, "hbm_total_mb", 0) or 0) > 0 else 0.0
     if hbm_vals_all:
         vals = np.asarray(hbm_vals_all, dtype=float)
         vals = vals[np.isfinite(vals) & (vals > 0)]
@@ -9557,34 +10338,26 @@ def chart_gpu_timeline(m: Metrics) -> str:
             lo, hi = float(np.nanmin(vals)), float(np.nanmax(vals))
             span = max(hi - lo, 0.4)
             pad = max(span * 0.25, 0.20)
-            ylo = max(0.0, lo - pad)
-            yhi = hi + pad
-            # Keep HBM occupancy zoomed to the observed data.  A far-away
-            # capacity line (for example 40 GB when data sits at ~33.8 GB)
-            # makes the timeline look like a flat mean.  Draw the cap line only
-            # when it is close enough to be useful; otherwise annotate it.
-            draw_cap_line = bool(cap_gb > 0 and cap_gb <= hi + max(1.5, span * 3.0))
-            if draw_cap_line:
+            ylo, yhi = max(0.0, lo - pad), hi + pad
+            draw_cap = bool(cap_gb > 0 and cap_gb <= hi + max(1.5, span * 3.0))
+            if draw_cap:
                 yhi = max(yhi, cap_gb + pad)
             if yhi - ylo < 1.0:
                 mid = (lo + hi) / 2.0
-                ylo = max(0.0, mid - 0.5)
-                yhi = mid + 0.5
+                ylo, yhi = max(0.0, mid - 0.5), mid + 0.5
             axm.set_ylim(ylo, yhi)
-            if draw_cap_line:
-                axm.axhline(cap_gb, color="#ef4444", lw=0.85, ls=":",
-                            alpha=0.50, label=f"per-GPU cap {cap_gb:.0f} GB")
+            if draw_cap:
+                axm.axhline(cap_gb, color="#ef4444", lw=0.85, ls=":", alpha=0.40, zorder=1, label=f"per-GPU cap {cap_gb:.0f} GB")
             elif cap_gb > 0:
-                axm.text(0.985, 0.90, f"cap {cap_gb:.0f} GB/GPU",
-                         transform=axm.transAxes, ha="right", va="top",
-                         fontsize=7.5, color="#ef4444",
+                axm.text(0.985, 0.90, f"cap {cap_gb:.0f} GB/GPU", transform=axm.transAxes,
+                         ha="right", va="top", fontsize=7.5, color="#ef4444",
                          bbox=dict(boxstyle="round,pad=0.22", facecolor="#fff", edgecolor="#fecaca", alpha=0.75))
-    elif cap_gb > 0:
-        axm.axhline(cap_gb, color="#ef4444", lw=0.85, ls=":",
-                    alpha=0.50, label=f"per-GPU cap {cap_gb:.0f} GB")
+    else:
+        axm.text(0.5, 0.5, "HBM memory data not captured", ha="center", va="center",
+                 transform=axm.transAxes, fontsize=9, color="#94a3b8", style="italic")
     axm.set_ylabel("HBM used GB\n(per GPU)", fontsize=9)
     axm.set_xlabel(_time_xlabel(m), fontsize=9)
-    axm.set_title("HBM used timeline — per-GPU traces plus mean (same source as Interactive)", fontsize=10, fontweight="bold")
+    axm.set_title("HBM used timeline — same selected-window payload as End Plotly", fontsize=10, fontweight="bold")
     if axm.get_legend_handles_labels()[0]:
         axm.legend(fontsize=6.5, ncol=min(5, max(1, len(axm.get_legend_handles_labels()[0]))), loc="upper right")
     axm.grid(True, alpha=0.3, color="#e2e8f0")
@@ -9594,7 +10367,6 @@ def chart_gpu_timeline(m: Metrics) -> str:
         _ax.tick_params(labelsize=8)
         for sp in _ax.spines.values():
             sp.set_edgecolor(BORDER)
-
     try:
         import warnings as _wtl
         with _wtl.catch_warnings():
@@ -9607,6 +10379,147 @@ def chart_gpu_timeline(m: Metrics) -> str:
         pass
     return fig_to_b64(fig)
 
+def _amoprof_js_json(obj) -> str:
+    """JSON for inline Plotly snippets inside the static End Report."""
+    try:
+        return json.dumps(obj, allow_nan=False, separators=(",", ":"))
+    except Exception:
+        def _clean(x):
+            if isinstance(x, float):
+                return x if math.isfinite(x) else None
+            if isinstance(x, dict):
+                return {str(k): _clean(v) for k, v in x.items()}
+            if isinstance(x, (list, tuple)):
+                return [_clean(v) for v in x]
+            return x
+        return json.dumps(_clean(obj), allow_nan=False, separators=(",", ":"))
+
+
+
+def canonical_gpu_plotly_figure(m: Metrics, points_per_gpu: int = 900,
+                               *, title: str = "GPU Utilization & HBM Memory — canonical payload") -> dict | None:
+    """Return the single canonical Plotly figure for GPU util + HBM.
+
+    This is intentionally shared by the Interactive report and the End Report.
+    Earlier builds had two independent GPU chart builders: Interactive read
+    ``gpu_timeseries.csv`` directly while End Report used
+    ``_canonical_gpu_chart_payload``. In flat-output and Prometheus-preferred
+    runs those paths could choose different files/columns or active-GPU sets,
+    making GPU utilization/HBM timelines disagree. Keep every GPU/HBM Plotly
+    chart on this one function so data-source, active-GPU filtering,
+    timestamp handling, and HBM column normalization are identical.
+    """
+    payload = _canonical_gpu_chart_payload(m, points_per_gpu=points_per_gpu)
+    if not payload.get("ok"):
+        return None
+    gdf = payload["gdf"]
+    sort_key = payload["sort_key"]
+    source_label = str(payload.get("source") or "gpu_timeseries.csv")
+    x_right_min = max(float(payload.get("x_max_s") or 0.0) / 60.0, 0.1)
+    colors = ["#22d3ee", "#a78bfa", "#f97316", "#22c55e", "#ef4444", "#3b82f6", "#eab308", "#ec4899"]
+    traces = []
+    for i, (idx, sub) in enumerate(sorted(gdf.groupby("gpu_idx"), key=lambda x: sort_key(x[0]))):
+        sub = sub.sort_values("time_sec")
+        traces.append({
+            "x": (_amoprof_numeric_series(sub["time_sec"], default=0.0) / 60.0).round(4).tolist(),
+            "y": _amoprof_numeric_series(sub["gpu_util"], default=0.0).round(3).tolist(),
+            "type": "scatter", "mode": "lines+markers", "name": f"GPU{idx} util",
+            "line": {"color": colors[i % len(colors)], "width": 2.4}, "marker": {"size": 5},
+            "hovertemplate": f"<b>GPU{idx}</b>: %{{y:.1f}}% util<extra></extra>",
+        })
+    try:
+        mean_util = gdf.groupby("time_sec", as_index=False)["gpu_util"].mean().sort_values("time_sec")
+        mean_util = downsample(mean_util, points_per_gpu)
+        traces.append({
+            "x": (_amoprof_numeric_series(mean_util["time_sec"], default=0.0) / 60.0).round(4).tolist(),
+            "y": _amoprof_numeric_series(mean_util["gpu_util"], default=0.0).round(3).tolist(),
+            "type": "scatter", "mode": "lines", "name": "Active GPU mean",
+            "line": {"color": "#0f172a", "width": 3.4, "dash": "dash"},
+            "hovertemplate": "<b>%{y:.1f}%</b> active mean<extra></extra>",
+        })
+    except Exception:
+        pass
+    try:
+        mean_mem = gdf.groupby("time_sec", as_index=False)["_hbm_used_mb"].mean().sort_values("time_sec")
+        mean_mem = downsample(mean_mem, points_per_gpu)
+        traces.append({
+            "x": (_amoprof_numeric_series(mean_mem["time_sec"], default=0.0) / 60.0).round(4).tolist(),
+            "y": _amoprof_numeric_series(mean_mem["_hbm_used_mb"], default=0.0).round(1).tolist(),
+            "type": "scatter", "mode": "lines", "name": "Mean HBM used (MB, visible GPUs)",
+            "line": {"color": "#7c3aed", "width": 2.8, "dash": "dashdot"},
+            "yaxis": "y2", "hovertemplate": "<b>%{y:.0f}</b> MB/GPU<extra></extra>",
+        })
+    except Exception:
+        pass
+    util_vals = pd.to_numeric(gdf["gpu_util"], errors="coerce").dropna()
+    util_peak = float(util_vals.max()) if len(util_vals) else 0.0
+    util_nonzero = util_vals[util_vals > 0]
+    util_floor = float(util_nonzero.min()) if len(util_nonzero) else 0.0
+    if util_peak >= 70 and len(util_nonzero):
+        y0 = max(0.0, util_floor - 5.0)
+        y1 = min(110.0, max(102.0, util_peak + 3.0))
+        if y1 - y0 < 10:
+            y0 = max(0.0, y1 - 10.0)
+        yrange = [round(y0, 2), round(y1, 2)]
+    else:
+        yrange = [0, max(20, min(105, math.ceil((util_peak + 5.0) / 10.0) * 10.0))]
+    layout = {
+        "title": {"text": title, "x": 0.02, "xanchor": "left"},
+        "height": 520, "margin": {"l": 70, "r": 110, "t": 58, "b": 74},
+        "plot_bgcolor": "#f8fafc", "paper_bgcolor": "#ffffff", "font": {"color": "#0f172a", "size": 12},
+        "xaxis": {"title": _time_xlabel(m), "range": [0, round(x_right_min, 4)], "gridcolor": "#e2e8f0", "zerolinecolor": "#cbd5e1"},
+        "yaxis": {"title": "GPU utilization %", "range": yrange, "gridcolor": "#cbd5e1", "zerolinecolor": "#94a3b8"},
+        "yaxis2": {"title": "HBM used MB/GPU", "overlaying": "y", "side": "right", "gridcolor": "transparent"},
+        "hovermode": "x unified",
+        "legend": {"orientation": "h", "yanchor": "bottom", "y": -0.24, "xanchor": "left", "x": 0},
+        "shapes": [{"type": "line", "xref": "paper", "x0": 0, "x1": 1, "yref": "y", "y0": 100, "y1": 100,
+                    "line": {"color": "#64748b", "width": 1, "dash": "dot"}}],
+        "annotations": [{
+            "text": f"Showing {len(set(gdf['gpu_idx'].astype(str)))} visible GPU(s); source={Path(source_label).name}; unique timestamps={payload.get('unique_times', 0)}; canonical GPU/HBM payload shared by Interactive and End Report.",
+            "xref": "paper", "yref": "paper", "x": 0.01, "y": 1.08,
+            "xanchor": "left", "showarrow": False, "font": {"size": 10, "color": "#475569"},
+        }]
+    }
+    return {"data": traces, "layout": layout}
+
+
+def chart_gpu_timeline_plotly(m: Metrics) -> str:
+    """End Report interactive GPU/HBM chart from the canonical payload."""
+    fig = canonical_gpu_plotly_figure(
+        m, points_per_gpu=900,
+        title="GPU Utilization & HBM Memory — canonical payload shared with Interactive"
+    )
+    if not fig:
+        return ""
+    try:
+        n = sum(len(t.get("x", []) or []) for t in fig.get("data", []))
+        xmax = 0.0
+        for t in fig.get("data", []):
+            xs = t.get("x", []) or []
+            if xs:
+                xmax = max(xmax, float(max(xs)))
+        div_id = f"amoprof_gpu_plotly_{n}_{int(round(xmax * 1000))}"
+    except Exception:
+        div_id = "amoprof_gpu_plotly"
+    fig_json = _amoprof_js_json(fig)
+    return f"""
+<div class="plotly-card" style="border:1px solid #cbd5e1;border-radius:10px;padding:10px;background:#ffffff;margin:8px 0 12px">
+  <div id="{div_id}" style="width:100%;min-height:540px"></div>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <script>(function(){{
+    var fig = {fig_json};
+    var slot = document.getElementById("{div_id}");
+    function render(){{
+      if (!slot) return;
+      if (typeof Plotly === "undefined") {{
+        slot.innerHTML = '<div style="padding:28px;color:#92400e;background:#fef3c7;border:1px solid #f59e0b;border-radius:8px">Plotly did not load; use the static PNG fallback below.</div>';
+        return;
+      }}
+      Plotly.newPlot(slot, fig.data, fig.layout, {{responsive:true, displayModeBar:false}});
+    }}
+    if (typeof Plotly === "undefined") setTimeout(render, 150); else render();
+  }})();</script>
+</div>"""
 
 def _canonical_l2_dram_residency_gb(m: Metrics) -> tuple[float, float, str]:
     """Return the canonical L2/HiCache DRAM residency used for End Report plots.
@@ -9664,8 +10577,30 @@ def chart_inference_metrics(m: Metrics) -> str:
     tp_col = _find_metric_col(sdf, "gen_throughput")
     run_col = _find_metric_col(sdf, "num_running_reqs")
     tok_col = _find_metric_col(sdf, "full_token_usage") or _find_metric_col(sdf, "token_usage")
+    cache_col = _find_metric_col(sdf, "cache_hit_rate")
 
-    available = [c for c in [tp_col, run_col, tok_col] if c]
+    # Keep cache hit visible in the End Report, matching Interactive.  If the
+    # gauge column is missing but the selected-window cache KPI was computed
+    # from counters/summary, render a flat reference line rather than making the
+    # cache-hit chart silently disappear.  A genuine cold-cache 0.0% still
+    # renders as a visible zero line.
+    if not cache_col:
+        _cache_pct = 0.0
+        for _attr in ("cache_hit_token_weighted_pct", "cache_hit_request_weighted_pct",
+                      "cache_hit_time_weighted_pct", "cache_hit_pct",
+                      "cache_hit_effective_prompt_pct", "cache_hit_cached_prompt_pct"):
+            try:
+                _v = float(getattr(m, _attr, 0) or 0)
+                if _v > 0 or _attr == "cache_hit_pct":
+                    _cache_pct = _v
+                    if _v > 0:
+                        break
+            except Exception:
+                pass
+        sdf["_amoprof_cache_hit_pct"] = _cache_pct
+        cache_col = "_amoprof_cache_hit_pct"
+
+    available = [c for c in [tp_col, run_col, tok_col, cache_col] if c]
     if not available:
         return ""
 
@@ -9680,14 +10615,23 @@ def chart_inference_metrics(m: Metrics) -> str:
         tp_col: (DECODE, "Gen Throughput (tok/s)"),
         run_col: (GPU_C, "Running Requests"),
         tok_col: (DRAM_C, "Token Pool Usage %"),
+        cache_col: ("#a78bfa", "Cache Hit Rate %"),
     }
 
     for ax, col in zip(axes, available):
         color, label = cfg.get(col, (ACCENT, col))
-        vals = sdf[col].fillna(0).values
-        t = sdf["time_sec"].values / 60
-        ax.fill_between(t, vals, alpha=0.25, color=color)
-        ax.plot(t, vals, color=color, lw=1.5)
+        vals = _amoprof_numeric_array(sdf[col], default=0.0)
+        if col == cache_col:
+            vals = np.asarray([v * 100.0 if 0.0 <= v <= 1.5 else v for v in vals], dtype=float)
+        t = _amoprof_numeric_array(sdf["time_sec"], default=0.0) / 60
+        # Do not fill an all-zero cache-hit line to the x-axis; that makes it
+        # look absent.  Draw it with markers and a small y-range instead.
+        if col == cache_col:
+            ax.plot(t, vals, color=color, lw=2.0, marker="o", markersize=2.8)
+            ax.set_ylim(-2, max(10, min(105, float(np.nanmax(vals)) + 8 if len(vals) else 10)))
+        else:
+            ax.fill_between(t, vals, alpha=0.25, color=color)
+            ax.plot(t, vals, color=color, lw=1.5)
         ax.set_ylabel(label, fontsize=9)
         ax.set_facecolor(BG3)
         ax.grid(True, alpha=0.3)
@@ -10551,7 +11495,7 @@ def chart_pcie_nvlink(m: "Metrics") -> str:
         return ""
 
     gdf = gdf.copy()
-    gdf["time_sec"] = pd.to_numeric(gdf["time_sec"], errors="coerce")
+    gdf["time_sec"] = _amoprof_numeric_series(gdf["time_sec"])
     gdf = gdf.dropna(subset=["time_sec"])
     for c in present:
         gdf[c] = pd.to_numeric(gdf[c], errors="coerce")
@@ -11398,6 +12342,102 @@ def chart_kvb_events(m: "Metrics") -> str:
                 pass
     except Exception:
         pass
+    return fig_to_b64(fig)
+
+
+def chart_ssd_per_device_overlay(m: "Metrics") -> str:
+    """Per-device overlay chart for multi-SSD runs (§L3.multi).
+
+    Renders a 2x2 PNG grid with one colored line per device across four L3
+    signals:
+        • Read bandwidth  (MB/s)   from iostat_ts.rMBs or discard_ts.rd_mb_s
+        • Write bandwidth (MB/s)   from iostat_ts.wMBs or discard_ts.wr_mb_s
+        • Read IOPS                from iostat_ts.riops or discard_ts.rd_iops
+        • Queue depth              from queue_depth_sources_ts.qd_best_effort
+                                     (or sysfs_inflight)
+    Legend: device slug (nvme0n1, nvme1n1, ...).
+
+    Returns "" when the run has 0 or 1 SSDs so the existing single-device
+    charts render as before.
+    """
+    l3 = getattr(m, "l3_ssds", {}) or {}
+    # Nothing to overlay when the run only tracked a single SSD; do not gate
+    # on l3_configured — the presence of >=2 devices IS the configuration.
+    if len(l3) < 2:
+        return ""
+
+    # Column names to try, in preference order, per signal.
+    _READ_BW_COLS  = ("rMBs", "read_bw_mb_s", "rd_mb_s")
+    _WRITE_BW_COLS = ("wMBs", "write_bw_mb_s", "wr_mb_s")
+    _READ_IOPS_COLS  = ("riops", "read_iops", "rd_iops")
+    _QD_COLS       = ("qd_best_effort", "sysfs_inflight", "queue_depth", "weighted_qd")
+
+    def _extract(df, cols):
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            return None, None
+        tcol = next((c for c in ("time_sec", "ts") if c in df.columns), None)
+        vcol = next((c for c in cols if c in df.columns), None)
+        if tcol is None or vcol is None:
+            return None, None
+        t = pd.to_numeric(df[tcol], errors="coerce").fillna(0)
+        # If ts is epoch, rebase to run-relative seconds.
+        if tcol == "ts" and len(t) and float(t.iloc[0]) > 1_000_000_000:
+            t = t - float(t.iloc[0])
+        v = pd.to_numeric(df[vcol], errors="coerce").fillna(0).clip(lower=0)
+        return t / 60.0, v
+
+    # Distinct-but-consistent color per device slug.
+    palette = ["#2563eb", "#f97316", "#16a34a", "#dc2626", "#9333ea",
+               "#0891b2", "#ca8a04", "#db2777", "#65a30d", "#0284c7"]
+    slugs = sorted(l3.keys(), key=lambda s: (not l3[s].get("is_primary"), s))
+    colors = {s: palette[i % len(palette)] for i, s in enumerate(slugs)}
+
+    fig, axes = plt.subplots(2, 2, figsize=(13, 8.5))
+    fig.patch.set_facecolor("#ffffff")
+    fig.suptitle(f"L3 SSD Per-Device Overlay ({len(slugs)} devices)",
+                 fontsize=12, fontweight="bold", color="#0f172a", y=1.02)
+
+    def _style(ax, title, ylabel):
+        ax.set_facecolor("#f8fafc")
+        ax.grid(True, alpha=0.3, color="#e2e8f0")
+        ax.tick_params(labelsize=8)
+        ax.set_title(title, fontsize=9, fontweight="bold", color="#0f172a")
+        ax.set_xlabel(_time_xlabel(m), fontsize=8, color="#475569")
+        ax.set_ylabel(ylabel, fontsize=8, color="#475569")
+        for sp in ax.spines.values():
+            sp.set_edgecolor("#94a3b8")
+
+    panels = [
+        (axes[0, 0], "Read bandwidth",  "MB/s",  ("iostat_ts", "discard_ts"), _READ_BW_COLS),
+        (axes[0, 1], "Write bandwidth", "MB/s",  ("iostat_ts", "discard_ts"), _WRITE_BW_COLS),
+        (axes[1, 0], "Read IOPS",       "IOPS",  ("iostat_ts", "discard_ts"), _READ_IOPS_COLS),
+        (axes[1, 1], "Queue depth",     "in-flight I/Os",
+                                                ("queue_depth_sources_ts",), _QD_COLS),
+    ]
+    any_data = False
+    for ax, title, ylabel, stream_keys, val_cols in panels:
+        _style(ax, title, ylabel)
+        for slug in slugs:
+            entry = l3.get(slug) or {}
+            df = None
+            for sk in stream_keys:
+                df = entry.get(sk)
+                if isinstance(df, pd.DataFrame) and not df.empty:
+                    break
+            t, v = _extract(df, val_cols)
+            if t is None or v is None or len(v) == 0:
+                continue
+            any_data = True
+            label = slug + (" (primary)" if entry.get("is_primary") else "")
+            ax.plot(t, v, color=colors[slug], lw=1.4, label=label, alpha=0.9)
+        if ax.get_legend_handles_labels()[0]:
+            ax.legend(fontsize=7, loc="upper right")
+
+    if not any_data:
+        plt.close(fig)
+        return ""
+
+    plt.tight_layout()
     return fig_to_b64(fig)
 
 
@@ -13492,27 +14532,28 @@ document.addEventListener('DOMContentLoaded', function(){{
 <div class="card" style="border-color:#22d3ee">
   <h2>🎯 Cache Hit Methodology — Prometheus Cache Calculations</h2>
   <div style="font-size:12px;color:#64748b;line-height:1.6;margin-bottom:12px">
-    This section separates Prometheus-derived cache-hit calculations using SGLang 0.5.10 metric names. Older colon-style aliases may be normalized internally, but formulas below show the exported underscore metric names.
-    The main KPI is the benchmark-comparable active average of <code>sglang_cache_hit_rate</code> over non-idle samples. Counter-based token ratios are shown separately because they answer different questions and can diverge on bursty long-prompt workloads.
+    This section separates the reader-facing cache-hit KPI from diagnostics. The primary KPI is cache-served prompt/prefill tokens divided by total cache-served + compute-served prompt/prefill tokens. AMOprof uses the same shared cache-hit function in Executive, Interactive, and End Report; gauges and cached/prompt counters are shown only as diagnostics because their denominator semantics can diverge across SGLang versions/export paths.
   </div>
   <table>
     <thead><tr><th>Calculation</th><th>Value</th><th>How to interpret</th></tr></thead>
     <tbody>
-      <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Primary cache hit</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{m.cache_hit_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Benchmark-comparable active average of <code>sglang_cache_hit_rate</code> samples where value &gt; 0. Active windows: {m.cache_hit_gauge_active_samples} / {m.cache_hit_gauge_total_samples}.</td></tr>
+      <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Primary cache hit</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{m.cache_hit_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Benchmark-comparable prompt/prefill work-avoidance KPI: cache-served tokens / (cache-served + compute-served tokens). Method: <code>{m.cache_hit_calc_method}</code>.</td></tr>
       <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Effective prompt counter diagnostic</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{m.cache_hit_effective_prompt_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">(Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{{mode="prefill_cache"}}) / (Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{{mode="prefill_cache"}} + Δsglang_realtime_tokens_total{{mode="prefill_compute"}}).</td></tr>
-      <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Token weighted</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{m.cache_hit_token_weighted_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">sum(rate(sglang_cached_tokens_total[window])) / sum(rate(sglang_prompt_tokens_total[window])) × 100, implemented as selected-window counter delta over the report start/end timestamps.</td></tr>
+      <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Cached/prompt diagnostic</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{m.cache_hit_token_weighted_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Δsglang_cached_tokens_total / Δsglang_prompt_tokens_total × 100. Diagnostic only; <code>prompt_tokens_total</code> may represent total prompt tokens rather than uncached prefill work.</td></tr>
       <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Time weighted</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{getattr(m, 'cache_hit_time_weighted_pct', 0.0):.2f}%</td><td style="padding:8px 12px;color:#64748b">avg_over_time(sglang_cache_hit_rate[window]) × 100 over the selected report window. Diagnostic only because the gauge can be overwritten frequently.</td></tr>
       <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Request weighted</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{getattr(m, 'cache_hit_request_weighted_pct', 0.0):.2f}%</td><td style="padding:8px 12px;color:#64748b">sum(rate(sglang_request_cache_hit_total[window])) / sum(rate(sglang_request_total[window])) × 100 where those counters are exported.</td></tr>
-      <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Prefill-only token weighted</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{getattr(m, 'cache_hit_prefill_token_weighted_pct', 0.0):.2f}%</td><td style="padding:8px 12px;color:#64748b">Δsglang_realtime_tokens_total{{mode="prefill_cache"}} / (Δsglang_realtime_tokens_total{{mode="prefill_cache"}} + Δsglang_realtime_tokens_total{{mode="prefill_compute"}}). Diagnostic only; it excludes prompt-cache hits already counted by sglang_cached_tokens_total.</td></tr>
+      <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Prefill-token cache hit</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{getattr(m, 'cache_hit_prefill_token_weighted_pct', 0.0):.2f}%</td><td style="padding:8px 12px;color:#64748b">Δsglang_realtime_tokens_total{{mode="prefill_cache"}} / (Δsglang_realtime_tokens_total{{mode="prefill_cache"}} + Δsglang_realtime_tokens_total{{mode="prefill_compute"}}). Prometheus equivalent when request/response JSON is unavailable.</td></tr>
 
       <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Gauge active average</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#0891b2">{m.cache_hit_gauge_active_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Mean of non-zero <code>sglang_cache_hit_rate</code> samples. Active windows: {m.cache_hit_gauge_active_samples} / {m.cache_hit_gauge_total_samples}.</td></tr>
       <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Gauge timeline average</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#f97316">{m.cache_hit_gauge_overall_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Mean across all collected gauge samples, including idle/dead-space intervals.</td></tr>
       <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Gauge peak</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#7c3aed">{m.cache_hit_gauge_peak_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Maximum observed instantaneous/rolling cache-hit gauge value.</td></tr>
     </tbody>
   </table>
-  <details class="fml" style="margin-top:10px"><summary>📐 Formula</summary><div class="fml-body"><code>Primary cache hit = avg(sglang_cache_hit_rate samples where value > 0) × 100
+  <details class="fml" style="margin-top:10px"><summary>📐 Formula</summary><div class="fml-body"><code>Primary cache hit = cache-served prompt/prefill tokens / (cache-served prompt/prefill tokens + compute-served prompt/prefill tokens) × 100
+Request JSON exact = Σmeta_info.cached_tokens / Σ(meta_info.cached_tokens + meta_info.prompt_tokens) × 100
+OpenAI usage exact = Σusage.prompt_tokens_details.cached_tokens / Σusage.prompt_tokens × 100
+Prometheus fallback = Δsglang_realtime_tokens_total{{mode="prefill_cache"}} / (Δsglang_realtime_tokens_total{{mode="prefill_cache"}} + Δsglang_realtime_tokens_total{{mode="prefill_compute"}}) × 100
 Effective prompt counter diagnostic = (Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{{mode="prefill_cache"}}) / (Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{{mode="prefill_cache"}} + Δsglang_realtime_tokens_total{{mode="prefill_compute"}}) × 100
-Prefill-only token weighted = Δsglang_realtime_tokens_total{{mode="prefill_cache"}} / (Δsglang_realtime_tokens_total{{mode="prefill_cache"}} + Δsglang_realtime_tokens_total{{mode="prefill_compute"}}) × 100
 Gauge active average = avg(sglang_cache_hit_rate samples where value > 0) × 100
 Gauge timeline average = avg(all sglang_cache_hit_rate samples) × 100
 Gauge peak = max(sglang_cache_hit_rate samples) × 100
@@ -13593,7 +14634,8 @@ Decode throughput = active_mean(sglang_gen_throughput) or Δsglang_generation_to
 <!-- CHARTS -->
 <div class="card">
   <h2>&#9201; GPU Utilisation, Power &amp; HBM Timeline</h2>
-  {img(charts.get("gpu_timeline",""), "GPU Timeline")}
+  {charts.get("gpu_timeline_plotly", "") or img(charts.get("gpu_timeline",""), "GPU Timeline")}
+  {('<details style="margin-top:8px"><summary style="cursor:pointer;color:#64748b;font-size:12px">Static PNG fallback / print view</summary>' + img(charts.get("gpu_timeline",""), "GPU Timeline static fallback") + '</details>') if charts.get("gpu_timeline_plotly", "") and charts.get("gpu_timeline", "") else ''}
   <details class="fml" style="margin-top:10px">
     <summary>&#128208; Formula &amp; Metrics Used</summary>
     <div class="fml-body">
@@ -13610,7 +14652,10 @@ GPU power (W)   : DCGM_FI_DEV_POWER_USAGE  (Prometheus) OR
 
 Timeseries step : 1s (nvidia-smi) or 15s (Prometheus query_range)
 Static panels   : GPU util %, total GPU power W, HBM used GB/GPU
-                  HBM uses per-GPU traces + mean when FB_USED is present</code>
+                  End Report and Interactive use the same gpu_timeseries.csv rows
+                  and the same active-GPU display rule; completely idle/all-zero
+                  devices are hidden from the visual mean when active GPUs exist.
+                  HBM uses visible per-GPU traces + mean when FB_USED is present</code>
       <div class="fml-note">GPU util reflects SM occupancy, not memory bandwidth. A100 can show 100% util at low HBM BW during compute-bound attention. Power includes idle base draw (~50W/GPU); inference active draw typically 250–400W/GPU on A100.</div>
     </div>
   </details>
@@ -14423,6 +15468,7 @@ NUMA migrations/s  : rate(node_vmstat_numa_pages_migrated)</code>
     {qd_kpi_cards}
   </div>
   {img(charts.get("ssd_qd", ""), "SSD Queue Depth — AI Stack Layer Pressure") if charts.get("ssd_qd", "") else '<div class="warn">Queue-depth chart image unavailable, but QD KPI cards above were populated. Check queue_depth_timeseries.csv / queue_depth_sources_timeseries.csv and report chart generation logs.</div>'}
+  {("<div style=\"margin-top:14px\"><h3 style=\"font-size:14px;color:#0f172a;margin:0 0 6px\">Per-SSD comparison</h3><div style=\"font-size:11px;color:#64748b;margin-bottom:8px\">One colored line per configured SSD device (primary + extras from <code>--ssd-device dev1,dev2,...</code>). Data comes from the per-device sidecar CSVs (iostat, discard, queue-depth) grouped under <code>data['l3_ssds']</code>.</div>" + img(charts["ssd_per_device"], "L3 SSD Per-Device Overlay") + "</div>") if charts.get("ssd_per_device", "") else ""}
   <details class="fml" style="margin-top:10px">
     <summary>&#128208; Formula &amp; Metrics Used</summary>
     <div class="fml-body">
@@ -17187,7 +18233,7 @@ DRAM BW Util %  = DRAM_total_BW / {m.dram_peak_theoretical_gbs:.1f} × 100
   {m.dram_peak_theoretical_gbs:.1f} GB/s = {m.dram_peak_label or 'autodetected peak'}
 
 Read/Write Ratio = DRAM_read_BW / DRAM_write_BW</code>
-<div class="fml-note" style="color:#334155">Note: amduprof_pcm_timeseries.csv has a parser bug (all zeros). The profiler reads directly from amduprof_pcm_raw.csv DF METRICS section. Requires the raw CSV file to be present in the raw/ directory.</div>
+<div class="fml-note" style="color:#334155">Note: AMOprof first uses timestamped amduprof_pcm_timeseries.csv / pcm_timeseries.csv when available, then falls back to parsed AMDuProf/PCM summaries or raw AMDuProf CSV text. The chart source is shown above.</div>
 </div></details>
 </div>
 <script>const DRAM_CMP={dram_cmp_json};</script>
@@ -18834,6 +19880,18 @@ def main():
                     # Also seed the Metrics object so static charts/text agree before HTML post-processing.
                     for _attr, _key in [
                         ("cache_hit_pct", "cache_hit_pct"),
+                        ("cache_hit_request_json_pct", "cache_hit_request_json_pct"),
+                        ("cache_hit_openai_usage_pct", "cache_hit_openai_usage_pct"),
+                        ("cache_hit_benchmark_pct", "cache_hit_benchmark_pct"),
+                        ("cache_hit_token_weighted_pct", "cache_hit_token_weighted_pct"),
+                        ("cache_hit_prefill_token_weighted_pct", "cache_hit_prefill_token_weighted_pct"),
+                        ("cache_hit_time_weighted_pct", "cache_hit_time_weighted_pct"),
+                        ("cache_hit_request_weighted_pct", "cache_hit_request_weighted_pct"),
+                        ("cache_hit_cached_prompt_pct", "cache_hit_cached_prompt_pct"),
+                        ("cache_hit_effective_prompt_pct", "cache_hit_effective_prompt_pct"),
+                        ("cache_hit_gauge_overall_pct", "cache_hit_gauge_overall_pct"),
+                        ("cache_hit_gauge_active_pct", "cache_hit_gauge_active_pct"),
+                        ("cache_hit_gauge_peak_pct", "cache_hit_gauge_peak_pct"),
                         ("ttft_ms", "ttft_ms"),
                         ("tpot_ms", "tpot_ms"),
                         ("e2e_ms", "e2e_ms"),
@@ -18847,6 +19905,10 @@ def main():
                         _v = float(_common_kpis_for_m.get(_key, 0) or 0)
                         if _v > 0:
                             setattr(m, _attr, _v)
+                    if str(_common_kpis_for_m.get("cache_hit_method", "")):
+                        m.cache_hit_calc_method = str(_common_kpis_for_m.get("cache_hit_method"))
+                    if str(_common_kpis_for_m.get("cache_hit_primary_formula", "")):
+                        m.cache_hit_primary_formula = str(_common_kpis_for_m.get("cache_hit_primary_formula"))
                     if getattr(m, "gen_tp_peak", 0) > 0:
                         m.gen_tp_peak = max(float(m.gen_tp_peak), float(getattr(m, "gen_tp_mean", 0) or 0), float(getattr(m, "gen_tp_p50", 0) or 0))
         except Exception:
@@ -18871,6 +19933,7 @@ def main():
             print(f"\n[HTML {i+1}/{n_runs}] {label}")
             charts = {}
             charts["gpu_timeline"] = chart_gpu_timeline(m)
+            charts["gpu_timeline_plotly"] = chart_gpu_timeline_plotly(m)
             charts["inference"]    = chart_inference_metrics(m)
             charts["memory"]       = chart_memory(m)
             charts["latency"]      = chart_latency_breakdown(m)
@@ -18883,6 +19946,7 @@ def main():
             charts["kvb_events"]   = chart_kvb_events(m)
             charts["nvme_io"]      = chart_nvme_io(m)
             charts["ssd_qd"]       = chart_ssd_queue_depth(m)
+            charts["ssd_per_device"] = chart_ssd_per_device_overlay(m)
             # v1.39.68: NVMe IO Deep Profiling card removed; do not render its problematic LBA hot/cold map.
             charts["ssd_read"]     = chart_ssd_read_workload(m)
             charts["ssd_write"]    = chart_ssd_write_workload(m)

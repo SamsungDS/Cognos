@@ -760,22 +760,38 @@ def _read_json(path: Path) -> dict:
         return {}
 
 
+def _read_csv_rows(path: Path) -> list[dict]:
+    """Read a small/medium CSV as dict rows for post-processing tooltips.
+
+    The report generator itself owns heavy dataframe processing.  The enhancer
+    only needs enough information to keep hover summaries aligned with the
+    charts that users see in the Interactive tab.
+    """
+    if not path.exists() or path.stat().st_size == 0:
+        return []
+    try:
+        with open(path, encoding="utf-8", newline="") as f:
+            return list(csv.DictReader(f))
+    except Exception as e:
+        log.debug("csv read error %s: %s", path, e)
+        return []
+
+
 def _read_csv_summary(path: Path) -> dict:
     """Return basic min/mean/max for each numeric column."""
-    if not path.exists() or path.stat().st_size == 0:
+    rows = _read_csv_rows(path)
+    if not rows:
         return {}
     out: dict[str, dict[str, float]] = {}
     try:
-        with open(path, encoding="utf-8", newline="") as f:
-            r = csv.DictReader(f)
-            cols = r.fieldnames or []
-            data: dict[str, list[float]] = {c: [] for c in cols}
-            for row in r:
-                for c in cols:
-                    try:
-                        data[c].append(float(row[c]))
-                    except (ValueError, TypeError):
-                        pass
+        cols = list(rows[0].keys())
+        data: dict[str, list[float]] = {c: [] for c in cols}
+        for row in rows:
+            for c in cols:
+                try:
+                    data[c].append(float(row[c]))
+                except (ValueError, TypeError):
+                    pass
         for c, vals in data.items():
             if vals:
                 out[c] = {"min": min(vals), "mean": sum(vals)/len(vals),
@@ -783,6 +799,94 @@ def _read_csv_summary(path: Path) -> dict:
     except Exception as e:
         log.debug("csv summary error %s: %s", path, e)
     return out
+
+
+def _gpu_tooltip_stats_from_timeseries(raw_dir: Path, summary: dict) -> dict:
+    """Return GPU stats using the same source/active-sample semantics as Interactive.
+
+    v1.39.96: the End Report hover tooltip used gpu_summary.json directly,
+    which can include idle collection intervals and completely inactive physical
+    GPUs.  The Interactive KPI uses active/non-zero samples from
+    gpu_timeseries.csv.  Use the same source and semantics here so hovering the
+    End Report chart does not contradict the Interactive tab.
+    """
+    rows = _read_csv_rows(raw_dir / "gpu_timeseries.csv") if raw_dir else []
+    vals: list[float] = []
+    active_vals: list[float] = []
+    hbm_vals_mb: list[float] = []
+    power_vals: list[float] = []
+    active_gpu_ids: set[str] = set()
+
+    mem_keys = (("mem_used", 1.0), ("mem_used_mb", 1.0),
+                ("hbm_used_mb", 1.0), ("mem_used_gb", 1024.0),
+                ("hbm_used_gb", 1024.0))
+
+    for r in rows:
+        gid = str(r.get("gpu_idx", r.get("gpu", ""))).strip() or "0"
+        util = None
+        for key in ("gpu_util", "DCGM_FI_DEV_GPU_UTIL", "utilization.gpu"):
+            try:
+                if r.get(key) not in (None, ""):
+                    util = float(r.get(key))
+                    break
+            except (TypeError, ValueError):
+                pass
+        if util is not None:
+            vals.append(util)
+            if util > 0:
+                active_vals.append(util)
+                active_gpu_ids.add(gid)
+
+        for key, scale in mem_keys:
+            try:
+                v = r.get(key)
+                if v not in (None, ""):
+                    fv = float(v) * scale
+                    if fv > 0:
+                        hbm_vals_mb.append(fv)
+                        active_gpu_ids.add(gid)
+                    break
+            except (TypeError, ValueError):
+                continue
+
+        for key in ("power", "gpu_power", "DCGM_FI_DEV_POWER_USAGE"):
+            try:
+                v = r.get(key)
+                if v not in (None, ""):
+                    fv = float(v)
+                    if fv > 0:
+                        power_vals.append(fv)
+                        active_gpu_ids.add(gid)
+                    break
+            except (TypeError, ValueError):
+                continue
+
+    mean_source = "summary"
+    if active_vals:
+        util_mean = sum(active_vals) / len(active_vals)
+        util_peak = max(vals) if vals else max(active_vals)
+        mean_source = "active samples from gpu_timeseries.csv"
+    else:
+        util_mean = float(summary.get("gpu_util_mean", 0) or 0)
+        util_peak = float(summary.get("gpu_util_peak", 0) or 0)
+
+    hbm_mean_mb = (sum(hbm_vals_mb) / len(hbm_vals_mb)) if hbm_vals_mb else float(summary.get("hbm_used_mb_mean", 0) or 0)
+    hbm_total_mb = float(summary.get("hbm_total_mb_per_gpu", 0) or 0)
+    power_peak = max(power_vals) if power_vals else float(summary.get("power_w_peak", 0) or 0)
+
+    gpu_count = len(active_gpu_ids) if active_gpu_ids else int(float(summary.get("gpu_count", 0) or 0))
+    raw_gpu_count = int(float(summary.get("gpu_count", gpu_count) or gpu_count or 0))
+    return {
+        "gpu_count": gpu_count,
+        "raw_gpu_count": raw_gpu_count,
+        "gpu_util_mean": util_mean,
+        "gpu_util_peak": util_peak,
+        "hbm_used_mb_mean": hbm_mean_mb,
+        "hbm_total_mb_per_gpu": hbm_total_mb,
+        "hbm_util_pct_mean": (hbm_mean_mb / hbm_total_mb * 100.0) if hbm_total_mb > 0 else float(summary.get("hbm_util_pct_mean", 0) or 0),
+        "power_w_peak": power_peak,
+        "source": mean_source,
+    }
 
 
 def _build_tooltip_data(raw_dir: Path) -> dict[str, str]:
@@ -820,14 +924,21 @@ def _build_tooltip_data(raw_dir: Path) -> dict[str, str]:
 
     gpu = _read_json(raw_dir / "gpu_summary.json")
     if gpu:
+        gpu_tt = _gpu_tooltip_stats_from_timeseries(raw_dir, gpu)
+        _gpu_label = (
+            f"<b>{gpu_tt.get('gpu_count', 0)} active GPUs</b>"
+            if gpu_tt.get('raw_gpu_count', 0) and gpu_tt.get('gpu_count', 0) != gpu_tt.get('raw_gpu_count', 0)
+            else f"<b>{gpu_tt.get('gpu_count', 0)} GPUs</b>"
+        )
         tt["gpu utilisation"] = (
-            f"<b>{gpu.get('gpu_count', 0)} GPUs</b><br>"
-            f"<b>Util</b> mean {gpu.get('gpu_util_mean', 0):.1f}%, "
-            f"peak {gpu.get('gpu_util_peak', 0):.1f}%<br>"
-            f"<b>HBM</b> {gpu.get('hbm_used_mb_mean', 0)/1024:.1f} GB / "
-            f"{gpu.get('hbm_total_mb_per_gpu', 0)/1024:.0f} GB "
-            f"({gpu.get('hbm_util_pct_mean', 0):.0f}%)<br>"
-            f"<b>Power</b> peak {gpu.get('power_w_peak', 0):.0f} W/GPU"
+            f"{_gpu_label}<br>"
+            f"<b>Util</b> mean {gpu_tt.get('gpu_util_mean', 0):.1f}%, "
+            f"peak {gpu_tt.get('gpu_util_peak', 0):.1f}%<br>"
+            f"<b>HBM</b> {gpu_tt.get('hbm_used_mb_mean', 0)/1024:.1f} GB / "
+            f"{gpu_tt.get('hbm_total_mb_per_gpu', 0)/1024:.0f} GB "
+            f"({gpu_tt.get('hbm_util_pct_mean', 0):.0f}%)<br>"
+            f"<b>Power</b> peak {gpu_tt.get('power_w_peak', 0):.0f} W/GPU<br>"
+            f"<span style='color:#94a3b8'>Source: {gpu_tt.get('source', 'summary')}</span>"
         )
         tt["hbm (gpu) bandwidth"] = (
             f"<b>HBM util</b> {gpu.get('hbm_util_pct_mean', 0):.0f}% · "

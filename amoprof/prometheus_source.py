@@ -15,12 +15,14 @@ Three modes are supported:
   2. Local-only — re-analyze a previous collect run (existing behaviour).
      amoprof analyze --run-dir results/metrics_run_20260514
 
-  3. Merge — combine both. Files present in local raw/ are kept;
-     anything missing is filled in from Prometheus. Useful when local
-     collection captured NVMe / blktrace / AMDuProf but not SGLang
-     (e.g. because the SGLang server was on a remote node and the
-     central Prometheus server is the only path to it).
-     amoprof analyze --run-dir results/foo --prometheus http://host:9090
+  3. Merge — combine both. Conflict handling is controlled by
+     --prefer. With --prefer prometheus, every canonical metric file that
+     Prometheus can produce is refreshed from the requested Prometheus
+     window, and the local run directory is used only for metric families
+     Prometheus did not return (for example blktrace/SMART/vendor PMU data).
+     With --prefer local, existing local files are kept and Prometheus fills
+     only missing canonical files.
+     amoprof analyze --run-dir results/foo --prometheus http://host:9090 --prefer prometheus
 
 The actual Prometheus fetch happens via the bundled amoprof report's
 collect_from_prometheus_api(), which we import dynamically because
@@ -191,21 +193,15 @@ CANONICAL_FILES = (
     "power_timeseries.csv",
 )
 
-# When a user supplies --prometheus with an explicit --start/--end/--prom-instance,
-# these files should normally reflect the Prometheus window, not stale local
-# collection files from a previous run.  Keep local-only low-level data such as
-# blktrace/biosnoop, but refresh Prometheus-owned timeseries even if
-# --prefer remains the historical default of 'local'.
-PROM_WINDOW_FILES = {
-    "sglang_timeseries.csv",
-    "sglang_summary.json",
-    "sglang_percentiles_timeseries.json",
-    "gpu_timeseries.csv",
-    "gpu_summary.json",
-    "nvme_driver_timeseries.csv",
-    "vmstat_timeseries.csv",
-    "power_timeseries.csv",
-}
+# Metric families that Prometheus can own.  In merge mode with
+# --prefer prometheus these files must come from the requested Prometheus
+# window whenever Prometheus returns data.  The local run directory is used
+# only as a fallback for files Prometheus does not produce.  Non-Prometheus
+# local-only artifacts (blktrace raw events, SMART, AMDuProf PCM, biosnoop,
+# setup_details, benchmark summaries, etc.) are intentionally left in place.
+PROMETHEUS_OWNED_FILES = set(CANONICAL_FILES)
+
+SOURCE_POLICY_FILE = "amoprof_source_policy.json"
 
 
 def fetch_from_prometheus(
@@ -381,38 +377,59 @@ def merge_prometheus_into_local(
 ) -> dict[str, Any]:
     """Combine a local raw/ dir with a Prometheus fetch.
 
-    Files present locally are kept (when prefer='local'), gaps filled
-    from Prometheus. If prefer='prometheus', the Prometheus values win
-    for any file present in both.
+    Source precedence is intentionally strict:
 
-    Args:
-      prom_url      : Prometheus server URL.
-      local_raw_dir : Existing raw/ directory with locally-collected CSVs.
-      prefer        : 'local' (default) or 'prometheus' — conflict policy.
-      **fetch_kwargs: forwarded to fetch_from_prometheus().
+      * prefer == "prometheus": every Prometheus-owned canonical file is copied
+        from the requested Prometheus window when Prometheus returns a non-empty
+        file.  Local raw/ is used only for files Prometheus did not return and
+        for local-only metric families outside CANONICAL_FILES (blktrace, SMART,
+        AMDuProf PCM, benchmark summaries, setup_details, etc.).
 
-    Returns a manifest describing what was kept, fetched, and skipped.
+      * prefer == "local": existing local canonical files are preserved and
+        Prometheus fills only missing canonical files.
+
+    A raw/amoprof_source_policy.json manifest is written so report builders can
+    avoid later "richest local file" searches that would accidentally override
+    the explicit --prefer prometheus policy.
     """
     local_raw_dir = Path(local_raw_dir)
     local_raw_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Snapshot which canonical files already exist locally.
+    prefer = (prefer or "local").strip().lower()
+    if prefer not in {"local", "prometheus"}:
+        raise ValueError(f"prefer must be 'local' or 'prometheus', got {prefer!r}")
+
     locally_present = {
         name for name in CANONICAL_FILES
         if (local_raw_dir / name).exists()
         and (local_raw_dir / name).stat().st_size > 0
     }
 
-    # 2. Fetch Prometheus into a temp sibling dir, then selectively copy.
     prom_stage = local_raw_dir / ".prom_stage"
     if prom_stage.exists():
         shutil.rmtree(prom_stage)
     prom_stage.mkdir(parents=True, exist_ok=True)
 
+    policy: dict[str, Any] = {
+        "version": 1,
+        "prefer": prefer,
+        "prom_url": prom_url,
+        "created_epoch": time.time(),
+        "rule": (
+            "prometheus_primary_local_only_for_missing_prometheus_metrics"
+            if prefer == "prometheus"
+            else "local_primary_prometheus_only_for_missing_local_metrics"
+        ),
+        "canonical_files": {},
+        "local_only_files_preserved": [],
+    }
+
     try:
-        fetch_result = fetch_from_prometheus(prom_url=prom_url,
-                                              output_dir=prom_stage,
-                                              **fetch_kwargs)
+        fetch_result = fetch_from_prometheus(
+            prom_url=prom_url,
+            output_dir=prom_stage,
+            **fetch_kwargs,
+        )
 
         copied: list[str] = []
         kept_local: list[str] = []
@@ -421,27 +438,82 @@ def merge_prometheus_into_local(
         for name in CANONICAL_FILES:
             src = prom_stage / name
             dst = local_raw_dir / name
-            if not src.exists() or src.stat().st_size == 0:
-                # Prometheus had no data for this file.
-                if name in locally_present:
+            prom_has_data = src.exists() and src.stat().st_size > 0
+            local_has_data = name in locally_present
+
+            if prefer == "prometheus":
+                if prom_has_data:
+                    shutil.copyfile(src, dst)
+                    copied.append(name)
+                    policy["canonical_files"][name] = {
+                        "selected_source": "prometheus",
+                        "reason": "--prefer prometheus and Prometheus returned data",
+                        "local_was_present": local_has_data,
+                    }
+                elif local_has_data:
                     kept_local.append(name)
+                    policy["canonical_files"][name] = {
+                        "selected_source": "local_fallback_missing_in_prometheus",
+                        "reason": "--prefer prometheus but Prometheus did not return this metric family",
+                        "local_was_present": True,
+                    }
                 else:
                     skipped_empty_prom.append(name)
+                    policy["canonical_files"][name] = {
+                        "selected_source": "missing",
+                        "reason": "neither Prometheus nor local run directory provided this metric family",
+                        "local_was_present": False,
+                    }
                 continue
-            # Prometheus-owned files should be refreshed from the requested
-            # Prometheus window even when --prefer is left at its default
-            # ('local'). Otherwise the report can silently use stale local
-            # sglang_summary/sglang_timeseries files and miss
-            # sglang_cache_hit_rate samples, exactly the cache-hit mismatch
-            # this path is intended to debug.
-            force_prom = name in PROM_WINDOW_FILES
-            if name in locally_present and prefer == "local" and not force_prom:
+
+            # prefer == "local"
+            if local_has_data:
                 kept_local.append(name)
-                continue
-            # Either no local copy, prefer=='prometheus', or this file belongs
-            # to the explicit Prometheus time window — overwrite.
-            shutil.copyfile(src, dst)
-            copied.append(name)
+                policy["canonical_files"][name] = {
+                    "selected_source": "local",
+                    "reason": "--prefer local and local file exists",
+                    "prometheus_had_data": prom_has_data,
+                }
+            elif prom_has_data:
+                shutil.copyfile(src, dst)
+                copied.append(name)
+                policy["canonical_files"][name] = {
+                    "selected_source": "prometheus_fallback_missing_local",
+                    "reason": "--prefer local but local file was missing",
+                    "prometheus_had_data": True,
+                }
+            else:
+                skipped_empty_prom.append(name)
+                policy["canonical_files"][name] = {
+                    "selected_source": "missing",
+                    "reason": "neither local nor Prometheus provided this metric family",
+                    "prometheus_had_data": False,
+                }
+
+        # Record non-canonical local files that remain available as local-only
+        # fallbacks.  Do not list private temp dirs or the source policy itself.
+        try:
+            for f in sorted(local_raw_dir.iterdir()):
+                if not f.is_file():
+                    continue
+                if f.name in CANONICAL_FILES or f.name == SOURCE_POLICY_FILE or f.name.startswith("."):
+                    continue
+                if f.stat().st_size > 0:
+                    policy["local_only_files_preserved"].append(f.name)
+        except Exception:
+            pass
+
+        policy["fetch"] = {
+            "start": fetch_result.get("start"),
+            "end": fetch_result.get("end"),
+            "step_s": fetch_result.get("step_s"),
+            "instance": fetch_result.get("instance"),
+            "job": fetch_result.get("job"),
+            "labels": fetch_result.get("labels"),
+            "percentile_rate_window_s": fetch_result.get("percentile_rate_window_s"),
+        }
+        policy_path = local_raw_dir / SOURCE_POLICY_FILE
+        policy_path.write_text(json.dumps(policy, indent=2, default=str), encoding="utf-8")
 
         return {
             "prefer":            prefer,
@@ -449,7 +521,9 @@ def merge_prometheus_into_local(
             "copied_from_prom":  copied,
             "kept_local":        kept_local,
             "skipped_empty_prom": skipped_empty_prom,
-            "fetch":              fetch_result,
+            "policy_file":       str(policy_path),
+            "policy":            policy,
+            "fetch":             fetch_result,
         }
     finally:
         if prom_stage.exists():
