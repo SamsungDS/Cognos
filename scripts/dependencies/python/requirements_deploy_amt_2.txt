@@ -1,0 +1,4 @@
+# Python packages for deployment only for amt_2
+pyyaml
+damo==3.1.0
+psutil

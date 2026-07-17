@@ -1,0 +1,14 @@
+{
+    "target_pid": 1234,
+    "monitor_interval_s": 10,
+    "max_csv_files": 10,
+    "fast_numa_node": 0,
+    "slow_numa_node": 2,
+    "action": "p",
+    "_action_comment": "action can be: p (promote hot to fast), d (demote cold to slow), a (both)",
+    "fsr_size_mb": 32,
+    "move_interval_s": 20,
+    "hot_threshold": 2,
+    "warm_threshold": 1,
+    "damo_path": "/usr/local/svk/venv/me/amt2/bin/damo"
+}

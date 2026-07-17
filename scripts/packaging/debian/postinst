@@ -1,9 +1,18 @@
-#!/bin/sh
-set -e
-ldconfig
-ME_FEATURE_PATH="/usr/local/svk/feature_modules/me"
-ME_VENV_DIR="/usr/local/svk/venv/me"
-/usr/bin/python3 -m venv "${ME_VENV_DIR}"
-"${ME_VENV_DIR}"/bin/python3 -m pip install --upgrade pip
-"${ME_VENV_DIR}"/bin/pip3 install -r ${ME_FEATURE_PATH}/scripts/dependencies/python/requirements_deploy.txt
-exit 0
+  #!/bin/sh
+  set -e
+  ldconfig
+  ME_FEATURE_PATH="/usr/local/svk/feature_modules/me"
+
+  # venv for amt 1.0 ; damo 2.7.0
+  ME_VENV_DIR="/usr/local/svk/venv/me"
+  /usr/bin/python3 -m venv "${ME_VENV_DIR}"
+  "${ME_VENV_DIR}"/bin/python3 -m pip install --upgrade pip
+  "${ME_VENV_DIR}"/bin/pip3 install -r "${ME_FEATURE_PATH}"/scripts/dependencies/python/requirements_deploy.txt
+
+  # venv for amt 2.0 ; damo 3.1.0
+  ME_VENV_DIR_AMT_2="/usr/local/svk/venv/me/amt2"
+  /usr/bin/python3 -m venv "${ME_VENV_DIR_AMT_2}"
+  "${ME_VENV_DIR_AMT_2}"/bin/python3 -m pip install --upgrade pip
+  "${ME_VENV_DIR_AMT_2}"/bin/pip3 install -r "${ME_FEATURE_PATH}"/scripts/dependencies/python/requirements_deploy_amt_2.txt
+
+  exit 0
