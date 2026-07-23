@@ -2375,6 +2375,14 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Filter to a specific Prometheus job label. "
                         "Example: --prom-job sglang  (or dcgm, node, ipmi_exporter). "
                         "ANDs with --prom-instance.")
+    a.add_argument("--server-type", choices=["auto", "sglang", "vllm"],
+                   default="auto",
+                   help="Inference server backend to collect metrics for. "
+                        "'auto' (default) detects sglang vs vllm from the "
+                        "Prometheus metric names and auto-selects the matching "
+                        "scrape job. 'sglang' or 'vllm' force the backend. "
+                        "vLLM metrics are translated into the same canonical "
+                        "schema, so all reports render identically.")
     a.add_argument("--prom-labels", nargs="*", default=[],
                    metavar="KEY=VALUE",
                    help="Extra PromQL label filters, space-separated. "
@@ -2741,6 +2749,23 @@ def _build_parser() -> argparse.ArgumentParser:
     svc.add_argument("--debug-sglang", action="store_true")
     svc.add_argument("--verbose", "-v", action="store_true",
                      help="Enable debug logging")
+    # Setup / server_info flags — mirror the collect subcommand so service
+    # cycles produce reports identical to a one-shot analyze pass.  Each cycle
+    # persists the resolved setup_details.json into its raw/ dir so the L3-
+    # backend resolver can label the report L3 vs L3.5 correctly and the
+    # setup panel renders end-to-end.
+    svc.add_argument("--setup-details", default="",
+                     help="Path to a setup_details.json to copy into each cycle's raw/")
+    svc.add_argument("--setup-details-override", action="store_true",
+                     help="Overwrite an existing raw/setup_details.json (e.g. one derived from "
+                          "SGLang server_info) with the --setup-details file.")
+    svc.add_argument("--bench-summary", default="",
+                     help="Path to a bench_summary.json/.txt to copy into each cycle's raw/")
+    svc.add_argument("--server-info-url", default="",
+                     help="Explicit SGLang /server_info URL. When unset the service uses "
+                          "--sglang-host/--sglang-port. Env: AMOPROF_SGLANG_SERVER_INFO_URL.")
+    svc.add_argument("--refresh-server-info", action="store_true",
+                     help="Ignore any cached raw/server_info.json and refetch every cycle.")
 
     return p
 
@@ -3184,7 +3209,10 @@ def _analyze(args) -> int:
             extra_labels=parse_labels_arg(args.prom_labels),
             nvme_device=args.nvme_device,
             label=run_dir.name,
+            server_type=getattr(args, "server_type", "auto"),
         )
+        log.info("analyze: inference server-type = %s",
+                 prom_kwargs["server_type"])
 
         if run_dir_arg:
             # MERGE mode — keep local files, fill gaps from Prometheus.
@@ -3687,7 +3715,10 @@ def _aggregate(args) -> int:
             extra_labels=parse_labels_arg(args.prom_labels),
             nvme_device=args.nvme_device,
             label=run_dir.name,
+            server_type=getattr(args, "server_type", "auto"),
         )
+        log.info("analyze: inference server-type = %s",
+                 prom_kwargs["server_type"])
 
         if run_dir_arg:
             # MERGE mode — keep local files, fill gaps from Prometheus.

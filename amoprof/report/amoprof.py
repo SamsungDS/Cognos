@@ -89,6 +89,58 @@ except Exception:  # direct-script fallback
         compute_cache_hit_kpis = None  # type: ignore
 
 
+def _amoprof_gpu_util_decomposition(gpu_util_samples: "list | tuple | None",
+                                     threshold_pct: float = 0.0) -> dict:
+    """Decompose GPU util samples into the 4-value view we surface everywhere.
+
+    Mirrors the cache-hit KPI shape (overall/active/threshold/idle) so the
+    reports don't hide a "GPU was idle half the run" story behind a single
+    average. Callers pass a flat iterable of util percentages (already merged
+    across GPUs, in whatever unit the DCGM/nvidia-smi column uses — DCGM
+    reports 0-100).
+
+    Returns:
+      gpu_util_overall_mean        mean across every collected sample
+      gpu_util_active_mean         mean across samples with util > threshold
+      gpu_util_active_threshold_pct threshold used to gate "active"
+      gpu_util_idle_fraction_pct   fraction of samples <= threshold, × 100
+      gpu_util_total_samples       count of samples inspected
+      gpu_util_active_samples      count of samples above threshold
+      gpu_util_peak                max observed util
+    """
+    zero = {
+        "gpu_util_overall_mean": 0.0,
+        "gpu_util_active_mean": 0.0,
+        "gpu_util_active_threshold_pct": float(threshold_pct),
+        "gpu_util_idle_fraction_pct": 0.0,
+        "gpu_util_total_samples": 0,
+        "gpu_util_active_samples": 0,
+        "gpu_util_peak": 0.0,
+    }
+    if not gpu_util_samples:
+        return zero
+    try:
+        vals = [float(v) for v in gpu_util_samples
+                if v is not None and str(v).strip() != ""]
+    except Exception:
+        return zero
+    vals = [v for v in vals if v == v]  # strip NaN
+    if not vals:
+        return zero
+    active = [v for v in vals if v > threshold_pct]
+    total_n = len(vals)
+    active_n = len(active)
+    return {
+        "gpu_util_overall_mean": round(sum(vals) / total_n, 2),
+        "gpu_util_active_mean": round(sum(active) / active_n, 2) if active_n else 0.0,
+        "gpu_util_active_threshold_pct": float(threshold_pct),
+        "gpu_util_idle_fraction_pct": round((total_n - active_n) / total_n * 100.0, 2),
+        "gpu_util_total_samples": int(total_n),
+        "gpu_util_active_samples": int(active_n),
+        "gpu_util_peak": round(max(vals), 2),
+    }
+
+
 def _amoprof_storage_label_cleanup(html_text: str, l3_backend_class: str = "") -> str:
     """Normalize visible L3/L3.5 labels consistently.
 
@@ -1099,8 +1151,98 @@ _JOB_METRIC_PREFIXES: dict[str, list[str]] = {
     "node_exporter": ["node_disk_", "node_memory_", "node_vmstat_"],
     "ipmi_exporter": ["ipmi_power_", "ipmi_temperature_", "ipmi_dcmi_"],
     "ipmi":          ["ipmi_power_", "ipmi_temperature_", "ipmi_dcmi_"],
+    # AMOprof's own /metrics endpoint (see amoprof/service.py::_to_prometheus_text)
+    # exposes per-cycle aggregates as amoprof_<collector>_<key>.  We include
+    # both the bare and _service-suffixed job names so a Prometheus scrape
+    # config keyed by either resolves.  The analyze-side translation in
+    # collect_from_prometheus_api reads these back into the DCGM / node /
+    # IPMI / sglang result dicts so reports render with the same code paths.
+    "amoprof":         ["amoprof_"],
+    "amoprof_service": ["amoprof_"],
     "prometheus":    ["prometheus_", "go_", "process_"],
     "scrape":        ["up", "scrape_"],
+}
+
+
+# Map from amoprof service scalar suffix → canonical Prometheus metric name.
+# Only per-cycle aggregate scalars are exposed by amoprof/service.py; the
+# analyze-side translation reads them as gauge samples that Prometheus
+# accumulates over successive scrapes, then feeds them into the same DataFrames
+# the DCGM / node_exporter / IPMI fetch would populate.  Because the amoprof
+# service reports aggregates (mean/peak/etc) rather than raw counter increments,
+# these values are treated as gauges — not counters — and are not re-rated.
+#
+# Design notes:
+#   * Only wall-clock timeseries values that the report's charts actually
+#     consume are mapped; per-cycle _peak / _total scalars stay under the
+#     amoprof_ prefix as an escape hatch for future dashboards.
+#   * The service-side field key (e.g. "gpu_util_mean") gets namespaced under
+#     its collector (e.g. "amoprof_gpu_gpu_util_mean") on export.  So the
+#     mapping key here is the exact Prometheus metric name.
+_AMOPROF_SERVICE_METRIC_ALIASES: dict[str, list[str]] = {
+    # DCGM GPU signals — one sample per scrape.  Filled into dcgm_dfs as
+    # DCGM_FI_DEV_GPU_UTIL / DCGM_FI_DEV_FB_USED / DCGM_FI_DEV_POWER_USAGE.
+    "DCGM_FI_DEV_GPU_UTIL": [
+        "amoprof_gpu_gpu_util_overall_mean",
+        "amoprof_gpu_gpu_util_active_mean",
+        "amoprof_gpu_gpu_util_mean",
+    ],
+    "DCGM_FI_DEV_FB_USED": [
+        "amoprof_gpu_hbm_used_mb_mean",
+    ],
+    "DCGM_FI_DEV_POWER_USAGE": [
+        "amoprof_gpu_power_all_gpus_w_mean",
+        "amoprof_power_gpu_power_all_w_mean",
+    ],
+    "DCGM_FI_DEV_GPU_TEMP": [
+        "amoprof_power_gpu_temp_peak_c",
+    ],
+    # node_exporter equivalents — NVMe driver-level bandwidth and IOPS.
+    # amoprof_nvme_driver_* metrics are per-cycle aggregates, so we
+    # synthesise the delta a downstream rate() would need by multiplying
+    # against collection_duration_s at read time (see the analyze-side
+    # translation).  For gauge semantics chosen by the user, the "rate"
+    # column is simply the aggregate value itself — it already represents
+    # a rate (bytes/s, iops/s).
+    "node_disk_read_bytes_total_rate": [
+        "amoprof_nvme_driver_nvme_rd_bw_mbs_mean",
+        "amoprof_iostat_rd_bw_mbs_mean",
+    ],
+    "node_disk_written_bytes_total_rate": [
+        "amoprof_nvme_driver_nvme_wr_bw_mbs_mean",
+        "amoprof_iostat_wr_bw_mbs_mean",
+    ],
+    "node_disk_reads_completed_total_rate": [
+        "amoprof_nvme_driver_nvme_rd_iops_sysfs",
+        "amoprof_iostat_rd_iops_mean",
+    ],
+    "node_disk_writes_completed_total_rate": [
+        "amoprof_nvme_driver_nvme_wr_iops_sysfs",
+        "amoprof_iostat_wr_iops_mean",
+    ],
+    "node_disk_io_now": [
+        "amoprof_nvme_driver_nvme_inflight_mean",
+    ],
+    "node_vmstat_pgfault_rate": [
+        "amoprof_vmstat_page_faults_per_s",
+    ],
+    "node_vmstat_pgmajfault_rate": [
+        "amoprof_vmstat_major_faults_per_s",
+    ],
+    "node_vmstat_pswpin_rate": [
+        "amoprof_vmstat_swap_in_per_s",
+    ],
+    "node_vmstat_pswpout_rate": [
+        "amoprof_vmstat_swap_out_per_s",
+    ],
+    "node_memory_MemAvailable_bytes": [
+        "amoprof_dram_dram_available_gb",
+    ],
+    # IPMI system power
+    "ipmi_power_watts": [
+        "amoprof_power_system_power_w_mean",
+        "amoprof_power_total_system_power_w_mean",
+    ],
 }
 
 
@@ -1364,6 +1506,7 @@ def collect_from_prometheus_api(
     instance:   str   = "",
     job:        str   = "",
     extra_labels: dict = None,
+    server_type: str  = "auto",
 ) -> dict:
     """
     Pull a complete set of profiling data from a Prometheus server using
@@ -1513,17 +1656,24 @@ def collect_from_prometheus_api(
     print(f"  Detected SGLang metric naming: {sglang_metric_style} "
           f"(underscore={sglang_underscore_count}, colon={sglang_colon_count})")
 
-    # ── Auto-detect inference server type ────────────────────────────────────
-    server_type = "unknown"
-    if any(m.startswith("sglang") for m in available):
-        server_type = "sglang"
-    elif any(m.startswith("vllm") for m in available):
-        server_type = "vllm"
-    elif any(m.startswith("tgi") for m in available):
-        server_type = "tgi"
-    elif any(m.startswith("nv_trt_llm") or m.startswith("nv_inference") for m in available):
-        server_type = "tensorrt-llm"
-    print(f"  Detected server type: {server_type}")
+    # ── Resolve inference server type ────────────────────────────────────────
+    # An explicit server_type (from --server-type) wins; "auto"/"" auto-detects
+    # from the available metric names so existing behaviour is preserved.
+    requested_server_type = (server_type or "auto").lower()
+    if requested_server_type in ("", "auto"):
+        server_type = "unknown"
+        if any(m.startswith("sglang") for m in available):
+            server_type = "sglang"
+        elif any(m.startswith("vllm") for m in available):
+            server_type = "vllm"
+        elif any(m.startswith("tgi") for m in available):
+            server_type = "tgi"
+        elif any(m.startswith("nv_trt_llm") or m.startswith("nv_inference") for m in available):
+            server_type = "tensorrt-llm"
+        print(f"  Detected server type: {server_type}")
+    else:
+        server_type = requested_server_type
+        print(f"  Using requested server type: {server_type}")
 
     # Final selector for inference server queries — use target-discovered exact
     # {job,instance} if available, otherwise fall back to exact_selector or hostname regex
@@ -1543,59 +1693,96 @@ def collect_from_prometheus_api(
         if unmapped[:5]:
             print(f"  Unmapped (sample): {unmapped[:5]}")
 
-    # ── SGLang metrics ────────────────────────────────────────────────────────
-    print("  Fetching SGLang metrics...", end=" ", flush=True)
+    # ── Inference-server metrics ───────────────────────────────────────────────
+    # For vLLM we fetch vllm:* metrics but store each series under its canonical
+    # sglang_* name (via server_metrics.VLLM_TO_CANONICAL), so the master merge,
+    # summary derivation, and CSV writers below stay keyed on canonical names —
+    # the whole report layer is unchanged across backends.
     sg_dfs = {}
+    if server_type == "vllm":
+        try:
+            from amoprof.server_metrics import (
+                VLLM_TO_CANONICAL, VLLM_HISTOGRAM_BASES,
+            )
+        except Exception:
+            import importlib.util as _ilu2
+            _sm_path = Path(__file__).resolve().parent.parent / "server_metrics.py"
+            _spec2 = _ilu2.spec_from_file_location("amoprof_server_metrics", _sm_path)
+            _sm = _ilu2.module_from_spec(_spec2)
+            _spec2.loader.exec_module(_sm)
+            VLLM_TO_CANONICAL = _sm.VLLM_TO_CANONICAL
+            VLLM_HISTOGRAM_BASES = _sm.VLLM_HISTOGRAM_BASES
 
-    # Core inference metrics
-    for name in [
-        "sglang_gen_throughput", "sglang_cache_hit_rate",
-        "sglang_num_running_reqs", "sglang_token_usage", "sglang_full_token_usage",
-        "sglang_hicache_host_used_tokens", "sglang_hicache_host_total_tokens",
-        "sglang_max_total_num_tokens", "sglang_kv_used_tokens",
-        "sglang_kv_available_tokens", "sglang_kv_evictable_tokens",
-        "sglang_num_requests_total", "sglang_num_queue_reqs",
-        "sglang_prompt_tokens_total", "sglang_generation_tokens_total",
-        "sglang_realtime_tokens_total",
-        # KV block event metrics — the valuable new ones
-        "sglang_evicted_tokens_total", "sglang_backuped_tokens_total",
-        "sglang_load_back_tokens_total", "sglang_prefetched_tokens_total",
-        "sglang_cached_tokens_total", "sglang_new_token_ratio",
-        "sglang_utilization", "sglang_num_used_tokens",
-        "sglang_decode_sum_seq_lens", "sglang_page_size", "sglang_num_pages",
-    ]:
-        if _has(name):
-            df = _qr(name)
-            if not df.empty:
-                sg_dfs[name] = df
-
-    # Cumulative sum/count histogram pairs → sglang_timeseries format
-    # Iterate over histogram metric base names to fetch _sum and _count
-    for base_name, _ in [
-        ("sglang_time_to_first_token_seconds", "ttft"),
-        ("sglang_inter_token_latency_seconds",  "itl"),
-        ("sglang_e2e_request_latency_seconds",  "e2e"),
-        ("sglang_queue_time_seconds",            "queue"),
-        ("sglang_generation_tokens_histogram",   "gen_tok_hist"),
-        ("sglang_prompt_tokens_histogram",       "prompt_tok_hist"),
-        ("sglang_eviction_duration_seconds",     "evict_dur"),
-        ("sglang_backup_bandwidth",              "backup_bw"),
-        ("sglang_load_back_bandwidth",           "loadback_bw"),
-        ("sglang_prefetch_bandwidth",            "prefetch_bw"),
-        ("sglang_backup_pgs",                    "backup_pgs"),
-        ("sglang_load_back_duration_seconds",    "loadback_dur"),
-    ]:
-        for suffix in ["_sum", "_count"]:
-            full = f"{base_name}{suffix}"
-            if _has(full):
-                df = _qr(full)
-                if not df.empty:
-                    sg_dfs[full] = df
-
-    if "sglang_hicache_host_used_tokens" not in sg_dfs:
-        print(f"OK ({len(sg_dfs)} series; warn: sglang_hicache_host_used_tokens missing)")
+        print("  Fetching vLLM metrics...", end=" ", flush=True)
+        hist_bases = set(VLLM_HISTOGRAM_BASES)
+        for vllm_name, canon in VLLM_TO_CANONICAL.items():
+            if vllm_name in hist_bases:
+                # Histogram → fetch _sum/_count counter pair, store under canonical
+                for suffix in ("_sum", "_count"):
+                    full = f"{vllm_name}{suffix}"
+                    if _has(full):
+                        df = _qr(full)
+                        if not df.empty:
+                            sg_dfs[f"{canon}{suffix}"] = df
+            else:
+                # Gauge / counter → fetch directly, store under canonical name.
+                if _has(vllm_name):
+                    df = _qr(vllm_name)
+                    if not df.empty:
+                        sg_dfs[canon] = df
+        print(f"OK ({len(sg_dfs)} series; vLLM→canonical)")
     else:
-        print(f"OK ({len(sg_dfs)} series; includes sglang_hicache_host_used_tokens)")
+        print("  Fetching SGLang metrics...", end=" ", flush=True)
+
+        # Core inference metrics
+        for name in [
+            "sglang_gen_throughput", "sglang_cache_hit_rate",
+            "sglang_num_running_reqs", "sglang_token_usage", "sglang_full_token_usage",
+            "sglang_hicache_host_used_tokens", "sglang_hicache_host_total_tokens",
+            "sglang_max_total_num_tokens", "sglang_kv_used_tokens",
+            "sglang_kv_available_tokens", "sglang_kv_evictable_tokens",
+            "sglang_num_requests_total", "sglang_num_queue_reqs",
+            "sglang_prompt_tokens_total", "sglang_generation_tokens_total",
+            "sglang_realtime_tokens_total",
+            # KV block event metrics — the valuable new ones
+            "sglang_evicted_tokens_total", "sglang_backuped_tokens_total",
+            "sglang_load_back_tokens_total", "sglang_prefetched_tokens_total",
+            "sglang_cached_tokens_total", "sglang_new_token_ratio",
+            "sglang_utilization", "sglang_num_used_tokens",
+            "sglang_decode_sum_seq_lens", "sglang_page_size", "sglang_num_pages",
+        ]:
+            if _has(name):
+                df = _qr(name)
+                if not df.empty:
+                    sg_dfs[name] = df
+
+        # Cumulative sum/count histogram pairs → sglang_timeseries format
+        # Iterate over histogram metric base names to fetch _sum and _count
+        for base_name, _ in [
+            ("sglang_time_to_first_token_seconds", "ttft"),
+            ("sglang_inter_token_latency_seconds",  "itl"),
+            ("sglang_e2e_request_latency_seconds",  "e2e"),
+            ("sglang_queue_time_seconds",            "queue"),
+            ("sglang_generation_tokens_histogram",   "gen_tok_hist"),
+            ("sglang_prompt_tokens_histogram",       "prompt_tok_hist"),
+            ("sglang_eviction_duration_seconds",     "evict_dur"),
+            ("sglang_backup_bandwidth",              "backup_bw"),
+            ("sglang_load_back_bandwidth",           "loadback_bw"),
+            ("sglang_prefetch_bandwidth",            "prefetch_bw"),
+            ("sglang_backup_pgs",                    "backup_pgs"),
+            ("sglang_load_back_duration_seconds",    "loadback_dur"),
+        ]:
+            for suffix in ["_sum", "_count"]:
+                full = f"{base_name}{suffix}"
+                if _has(full):
+                    df = _qr(full)
+                    if not df.empty:
+                        sg_dfs[full] = df
+
+        if "sglang_hicache_host_used_tokens" not in sg_dfs:
+            print(f"OK ({len(sg_dfs)} series; warn: sglang_hicache_host_used_tokens missing)")
+        else:
+            print(f"OK ({len(sg_dfs)} series; includes sglang_hicache_host_used_tokens)")
 
     # ── Empty-window guard (common timezone-offset mistake) ──────────────────
     # If SGLang metric NAMES exist on the server (detection succeeded) but the
@@ -1733,6 +1920,89 @@ def collect_from_prometheus_api(
             if not df.empty:
                 ipmi_dfs[name] = df
     print(f"OK ({len(ipmi_dfs)} series)")
+
+    # ── AMOprof service /metrics fallback ───────────────────────────────────
+    # When Prometheus scrapes AMOprof's own service endpoint (see
+    # amoprof/service.py::PrometheusServer), metrics land under the
+    # amoprof_<collector>_<key> namespace.  If DCGM / node_exporter / IPMI /
+    # sglang scrapes are missing (a common case on operator machines where
+    # only the AMOprof service is scraped), fall back to those aliases so
+    # every downstream chart still sees a canonical series.  Values are
+    # treated as gauges — they are already per-cycle aggregates.
+    #
+    # Precedence: canonical exporter wins.  We only pull an alias for a
+    # canonical metric when the canonical fetch returned zero series.
+    _amoprof_service_metrics = [m for m in available if m.startswith("amoprof_")]
+    if _amoprof_service_metrics:
+        _amoprof_sel = _sel_for("amoprof", "amoprof_") or _sel_for("amoprof_service", "amoprof_")
+        _amoprof_pulled = {"dcgm": 0, "node": 0, "ipmi": 0}
+        print(f"  Fetching AMOprof service metrics ({len(_amoprof_service_metrics)} exposed)...",
+              end=" ", flush=True)
+
+        def _amoprof_alias_df(canonical_name: str) -> "pd.DataFrame":
+            """Try each alias for `canonical_name` and return the first non-empty df."""
+            for alias in _AMOPROF_SERVICE_METRIC_ALIASES.get(canonical_name, []):
+                if alias not in available:
+                    continue
+                _df = _qr(alias, force_selector=_amoprof_sel)
+                if not _df.empty:
+                    return _df
+            return pd.DataFrame()
+
+        # DCGM fallbacks
+        for _canon in ("DCGM_FI_DEV_GPU_UTIL", "DCGM_FI_DEV_FB_USED",
+                        "DCGM_FI_DEV_POWER_USAGE", "DCGM_FI_DEV_GPU_TEMP"):
+            if _canon in dcgm_dfs:
+                continue
+            _df = _amoprof_alias_df(_canon)
+            if not _df.empty:
+                dcgm_dfs[_canon] = _df
+                _amoprof_pulled["dcgm"] += 1
+
+        # Node-exporter fallbacks.  amoprof service exposes per-cycle rate
+        # aggregates (bytes/s, iops/s); Prometheus records them as gauge
+        # samples over time.  We inject them under the *_rate synthetic
+        # column names first, then translate to the canonical *_total names
+        # (with time_sec × rate) so the downstream code path that expects
+        # cumulative counters still works.
+        for _canon in ("node_disk_read_bytes_total_rate",
+                        "node_disk_written_bytes_total_rate",
+                        "node_disk_reads_completed_total_rate",
+                        "node_disk_writes_completed_total_rate",
+                        "node_disk_io_now",
+                        "node_vmstat_pgfault_rate", "node_vmstat_pgmajfault_rate",
+                        "node_vmstat_pswpin_rate", "node_vmstat_pswpout_rate",
+                        "node_memory_MemAvailable_bytes"):
+            _target = _canon.replace("_rate", "_total") if _canon.endswith("_rate") else _canon
+            # If canonical was already fetched, skip the fallback so we
+            # don't overwrite real counters with per-cycle aggregates.
+            if _target in node_dfs and not node_dfs[_target].empty:
+                continue
+            _df = _amoprof_alias_df(_canon)
+            if _df.empty:
+                continue
+            # For *_rate aliases, convert gauge samples into a synthetic
+            # cumulative counter by cumulative-summing `value × dt` across
+            # samples.  This lets the rate() / diff-based downstream logic
+            # in extract_metrics recover a per-window bandwidth.
+            if _canon.endswith("_rate"):
+                _df = _df.sort_values("time_sec").reset_index(drop=True)
+                _dt = _df["time_sec"].diff().fillna(0.0)
+                _df["value"] = (_df["value"].astype(float) * _dt).cumsum()
+            node_dfs[_target] = _df
+            _amoprof_pulled["node"] += 1
+
+        # IPMI fallback (system power).
+        for _canon in ("ipmi_power_watts",):
+            if _canon in ipmi_dfs:
+                continue
+            _df = _amoprof_alias_df(_canon)
+            if not _df.empty:
+                ipmi_dfs[_canon] = _df
+                _amoprof_pulled["ipmi"] += 1
+
+        print(f"filled dcgm={_amoprof_pulled['dcgm']} "
+              f"node={_amoprof_pulled['node']} ipmi={_amoprof_pulled['ipmi']}")
 
     # ── Fallback: if system exporters got 0 series, the instance label format   ──
     # may differ (e.g. IP:port instead of hostname:port). Retry without selector.
@@ -2261,6 +2531,10 @@ def collect_from_prometheus_api(
         "load_back_tokens_total":      _delta2("load_back_tokens_total"),
         "dcgm_hbm_bw_util_pct":        round(dcgm_dram_mean, 2),
         "prometheus_source":           prom_base_url,
+        # Record the resolved backend so downstream (percentile fetch, report
+        # setup panel) can read whether this run came from an SGLang or vLLM
+        # scrape without re-detecting from the metric names.
+        "server_type":                 server_type,
         "collection_elapsed_s":        window,
         "collection_window_start":     t_start,
         "collection_window_end":       t_end,
@@ -2272,10 +2546,20 @@ def collect_from_prometheus_api(
             gpu_count = int(dcgm_util["gpu"].nunique()) if "gpu" in dcgm_util.columns else 8
         except Exception:
             gpu_count = 8
+        # Decompose gpu_util into overall/active/threshold/idle so reports can
+        # show the same 4-value structure they use for cache hit rate. `mean`
+        # stays as overall_mean for backward compatibility.
+        _gpu_util_dec = _amoprof_gpu_util_decomposition(gpu_df["gpu_util"].tolist())
         gpu_summary = {
             "gpu_count":             gpu_count,
-            "gpu_util_mean":         round(float(gpu_df["gpu_util"].mean()), 2),
-            "gpu_util_peak":         round(float(gpu_df["gpu_util"].max()),  2),
+            "gpu_util_mean":         _gpu_util_dec["gpu_util_overall_mean"],
+            "gpu_util_peak":         _gpu_util_dec["gpu_util_peak"],
+            "gpu_util_overall_mean":         _gpu_util_dec["gpu_util_overall_mean"],
+            "gpu_util_active_mean":          _gpu_util_dec["gpu_util_active_mean"],
+            "gpu_util_active_threshold_pct": _gpu_util_dec["gpu_util_active_threshold_pct"],
+            "gpu_util_idle_fraction_pct":    _gpu_util_dec["gpu_util_idle_fraction_pct"],
+            "gpu_util_total_samples":        _gpu_util_dec["gpu_util_total_samples"],
+            "gpu_util_active_samples":       _gpu_util_dec["gpu_util_active_samples"],
             "hbm_used_mb_mean":      round(float(gpu_df["mem_used"].mean()), 0) if "mem_used" in gpu_df.columns else 0,
             "hbm_total_mb_per_gpu":  40960.0,  # A100 40GB
             "hbm_util_pct_mean":     round(float(gpu_df["mem_used"].mean()) / 40960 * 100, 2) if "mem_used" in gpu_df.columns else 0,
@@ -2784,10 +3068,20 @@ def collect_from_prometheus(
     # GPU summary from collected gpu_rows
     gpu_summary = {}
     if not gpu_df.empty:
+        # 4-value GPU util decomposition — see amoprof_gpu_util_decomposition
+        # docstring. `gpu_util_mean` remains for backward compatibility with any
+        # downstream consumer still keyed off the pre-decomposition field name.
+        _gpu_util_dec = _amoprof_gpu_util_decomposition(gpu_df["gpu_util"].tolist())
         gpu_summary = {
             "gpu_count":            int(gpu_df["gpu_idx"].nunique()),
-            "gpu_util_mean":        round(float(gpu_df["gpu_util"].mean()), 2),
-            "gpu_util_peak":        round(float(gpu_df["gpu_util"].max()),  2),
+            "gpu_util_mean":        _gpu_util_dec["gpu_util_overall_mean"],
+            "gpu_util_peak":        _gpu_util_dec["gpu_util_peak"],
+            "gpu_util_overall_mean":         _gpu_util_dec["gpu_util_overall_mean"],
+            "gpu_util_active_mean":          _gpu_util_dec["gpu_util_active_mean"],
+            "gpu_util_active_threshold_pct": _gpu_util_dec["gpu_util_active_threshold_pct"],
+            "gpu_util_idle_fraction_pct":    _gpu_util_dec["gpu_util_idle_fraction_pct"],
+            "gpu_util_total_samples":        _gpu_util_dec["gpu_util_total_samples"],
+            "gpu_util_active_samples":       _gpu_util_dec["gpu_util_active_samples"],
             "hbm_used_mb_mean":     round(float(gpu_df["mem_used"].mean()),  0),
             "hbm_total_mb_per_gpu": round(float(gpu_df["mem_total"].max()),  0),
             "hbm_util_pct_mean":    round(float(gpu_df["mem_used"].mean() /
@@ -4695,6 +4989,16 @@ def _load_blktrace_analysis_dir(analysis_dir: Path) -> dict:
                 result["qd_summary"] = json.load(f)
         except Exception:
             pass
+    # Q→C latency histogram + summary (v1.1+) — feeds chart_block_latency.
+    # Emitted by the same pass that produces queue_depth_summary.json.
+    result["lat_histogram"]      = _load("blktrace_latency_histogram.csv")
+    lat_sum_path = ad / "blktrace_latency_summary.json"
+    if lat_sum_path.exists():
+        try:
+            with open(lat_sum_path) as f:
+                result["lat_summary"] = json.load(f)
+        except Exception:
+            pass
 
     # Derived PNG images — store as paths for embedding
     for img_name in ("read_burst_shape.png","write_burst_shape.png",
@@ -5017,8 +5321,19 @@ class Metrics:
     num_requests: int = 0
     # GPU
     gpu_count: int = 8
-    gpu_util_mean: float = 0
+    gpu_util_mean: float = 0  # kept for backward compat; == gpu_util_overall_mean
     gpu_util_peak: float = 0
+    # 4-value GPU util decomposition (matches cache-hit KPI shape):
+    #   overall_mean          — mean across every sample (idle+active)
+    #   active_mean           — mean across samples with util > threshold
+    #   active_threshold_pct  — threshold used to gate "active" (0.0 = nonzero)
+    #   idle_fraction_pct     — fraction of samples ≤ threshold, × 100
+    gpu_util_overall_mean: float = 0
+    gpu_util_active_mean: float = 0
+    gpu_util_active_threshold_pct: float = 0
+    gpu_util_idle_fraction_pct: float = 0
+    gpu_util_total_samples: int = 0
+    gpu_util_active_samples: int = 0
     hbm_util_pct: float = 0
     hbm_used_mb_mean: float = 0
     hbm_total_mb: float = 40960
@@ -5198,6 +5513,8 @@ class Metrics:
     nvme_bytes_read_total: int = 0        # bytes read during run (from SMART delta)
     nvme_smart_wear_pct: float = 0        # % drive life used (SMART percent_used)
     nvme_smart_avail_spare: float = 0     # % spare capacity remaining
+    nvme_temp_peak_c: float = 0           # SMART temp_peak_c (°C) — feeds SSD spec card
+    nvme_temp_end_c: float = 0            # SMART temp_end_c (°C)
     nvme_host_write_cmds: int = 0         # total host write commands (SMART)
     nvme_host_read_cmds: int = 0          # total host read commands (SMART)
     nvme_wr_bw_mbs_mean: float = 0        # write bandwidth MB/s mean
@@ -5222,6 +5539,18 @@ class Metrics:
     ssd_qd_source: str = ""               # blktrace_q_to_c or iostat/sysfs fallback
     ssd_qd_ts: pd.DataFrame = field(default_factory=pd.DataFrame)       # End Report chart source
     ssd_qd_dist: pd.DataFrame = field(default_factory=pd.DataFrame)     # time-weighted QD histogram/distribution
+    # ── Block-layer latency (v1.1+) — feeds chart_block_latency ──
+    blk_lat_available:      bool = False    # True iff block-latency data was extracted
+    blk_lat_source:         str  = ""       # "blktrace_q_to_c" or "biolatency"
+    blk_read_lat_p50_us:    float = 0.0
+    blk_read_lat_p95_us:    float = 0.0
+    blk_read_lat_p99_us:    float = 0.0
+    blk_read_lat_samples:   int  = 0
+    blk_write_lat_p50_us:   float = 0.0
+    blk_write_lat_p95_us:   float = 0.0
+    blk_write_lat_p99_us:   float = 0.0
+    blk_write_lat_samples:  int  = 0
+    blk_lat_histogram: pd.DataFrame = field(default_factory=pd.DataFrame)  # bucket_upper_us, read_count, write_count
     nvme_io_ts: pd.DataFrame = field(default_factory=pd.DataFrame)
     # ── Deep IO profiling (requires blktrace/biosnoop — null when unavailable) ─
     blkio_available: bool = False         # True if blkio_trace data present
@@ -6192,8 +6521,17 @@ def extract_metrics(data: dict) -> Metrics:
     # ── GPU summary ───────────────────────────────────────────────────────────
     gp = data.get("gpu_summary", {})
     m.gpu_count = safe_int(gp.get("gpu_count", 8), default=8)
-    m.gpu_util_mean = float(gp.get("gpu_util_mean", 0))
-    m.gpu_util_peak = float(gp.get("gpu_util_peak", 0))
+    # Seed the 4-value decomposition from the pre-computed gpu_summary so
+    # runs that only carry a summary (Prometheus fetches, archived runs) still
+    # get sensible values. gpu_util_mean is kept as an alias of overall_mean.
+    m.gpu_util_overall_mean         = float(gp.get("gpu_util_overall_mean", gp.get("gpu_util_mean", 0)) or 0)
+    m.gpu_util_active_mean          = float(gp.get("gpu_util_active_mean", 0) or 0)
+    m.gpu_util_active_threshold_pct = float(gp.get("gpu_util_active_threshold_pct", 0.0) or 0.0)
+    m.gpu_util_idle_fraction_pct    = float(gp.get("gpu_util_idle_fraction_pct", 0) or 0)
+    m.gpu_util_total_samples        = int(gp.get("gpu_util_total_samples", 0) or 0)
+    m.gpu_util_active_samples       = int(gp.get("gpu_util_active_samples", 0) or 0)
+    m.gpu_util_mean                 = float(gp.get("gpu_util_mean", 0))
+    m.gpu_util_peak                 = float(gp.get("gpu_util_peak", 0))
     # Prefer active/non-idle GPU utilization from gpu_timeseries.csv over
     # whole-window summary mean.  Whole-window means dropped when idle gaps or
     # inactive physical GPUs were included, which made reports appear to regress
@@ -6207,6 +6545,22 @@ def extract_metrics(data: dict) -> Metrics:
             if len(_ga):
                 m.gpu_util_mean = round(float(_ga.mean()), 2)
                 m.gpu_util_peak = max(m.gpu_util_peak, round(float(_gv.max()), 2))
+            # Recompute the 4-value decomposition from the real timeseries so
+            # every consumer (End Report tile, Executive layer status,
+            # Interactive tile) reads consistent overall/active/idle values.
+            if len(_gv):
+                _dec = _amoprof_gpu_util_decomposition(_gv.tolist(),
+                                                      threshold_pct=m.gpu_util_active_threshold_pct)
+                m.gpu_util_overall_mean         = _dec["gpu_util_overall_mean"]
+                m.gpu_util_active_mean          = _dec["gpu_util_active_mean"]
+                m.gpu_util_active_threshold_pct = _dec["gpu_util_active_threshold_pct"]
+                m.gpu_util_idle_fraction_pct    = _dec["gpu_util_idle_fraction_pct"]
+                m.gpu_util_total_samples        = _dec["gpu_util_total_samples"]
+                m.gpu_util_active_samples       = _dec["gpu_util_active_samples"]
+                m.gpu_util_peak                 = max(m.gpu_util_peak, _dec["gpu_util_peak"])
+                # Keep the legacy field aligned with overall_mean so downstream
+                # code that still reads gpu_util_mean stays consistent.
+                m.gpu_util_mean = _dec["gpu_util_overall_mean"] or m.gpu_util_mean
     m.hbm_util_pct = max(0.0, min(100.0, float(gp.get("hbm_util_pct_mean", 0) or 0)))
     m.hbm_used_mb_mean = float(gp.get("hbm_used_mb_mean", 0))
     m.hbm_total_mb = float(gp.get("hbm_total_mb_per_gpu", 40960))
@@ -6862,6 +7216,9 @@ def extract_metrics(data: dict) -> Metrics:
     _fs_pct      = safe_float(_smart_s.get("hicache_fs_used_pct", 0))
     _du_used_gb  = safe_float(_smart_s.get("hicache_size_gb",     0))
     _dev_cap_gb  = safe_float(_smart_s.get("nvme_device_capacity_gb", 0))
+    # SMART temperature (feeds SSD spec card — Sheet 2 row 12 "Thermals").
+    m.nvme_temp_peak_c = safe_float(_smart_s.get("temp_peak_c", 0))
+    m.nvme_temp_end_c  = safe_float(_smart_s.get("temp_end_c", 0))
     # SGLang nvm_pool_capacity_tokens (if exported by SGLang HiCache)
     _sg_ts_cap = data.get("sglang_timeseries")
     if _l3_explicit_config and isinstance(_sg_ts_cap, pd.DataFrame) and not _sg_ts_cap.empty:
@@ -8090,6 +8447,25 @@ def extract_metrics(data: dict) -> Metrics:
                  dt_trim).mean(skipna=True) if "disc_ios" in nv_io.columns else 0
             ), 3)
 
+    # ── Block-latency fallback: biolatency-bpfcc read-latency histogram ──
+    # Populated only if the blktrace Q→C latency block below did not fire.
+    # biolatency reports read latency only; write latency stays 0 in this path.
+    _bio = data.get("biolatency_summary") if isinstance(data.get("biolatency_summary"), dict) else {}
+    if _bio and bool(_bio.get("biolatency_available", False)) and not m.blk_lat_available:
+        try:
+            _rd_p50 = float(_bio.get("read_lat_p50_us", 0) or 0)
+            _rd_p99 = float(_bio.get("read_lat_p99_us", 0) or 0)
+            _rd_n   = int(_bio.get("read_lat_samples", 0) or 0)
+            if _rd_p99 > 0 or _rd_p50 > 0 or _rd_n > 0:
+                m.blk_read_lat_p50_us  = _rd_p50
+                m.blk_read_lat_p95_us  = 0.0  # biolatency does not export p95
+                m.blk_read_lat_p99_us  = _rd_p99
+                m.blk_read_lat_samples = _rd_n
+                m.blk_lat_available    = True
+                m.blk_lat_source       = "biolatency"
+        except Exception:
+            pass
+
     # ── §C/D/E: blktrace analytics ────────────────────────────────────────────
     # Priority 1: pre-computed analysis directory (richest data)
     ba = data.get("blktrace_analysis")
@@ -8127,6 +8503,30 @@ def extract_metrics(data: dict) -> Metrics:
             _apply_queue_depth_dataframe(ba.get("qd_timeseries"), m.ssd_qd_source, _prefer=True)
             if isinstance(ba.get("qd_distribution"), pd.DataFrame) and not ba.get("qd_distribution").empty:
                 m.ssd_qd_dist = ba.get("qd_distribution").copy()
+
+        # ── Q→C block-latency stats (v1.1+) ────────────────────────────────
+        # Emitted alongside queue_depth_summary.json by the same analyzer
+        # pass. blktrace Q→C is the richer signal (read+write, p50/p95/p99);
+        # when present it overrides the biolatency fallback populated above.
+        lat = ba.get("lat_summary")
+        if isinstance(lat, dict) and lat:
+            _rd = lat.get("read") or {}
+            _wr = lat.get("write") or {}
+            _rd_n = int(_rd.get("samples", 0) or 0)
+            _wr_n = int(_wr.get("samples", 0) or 0)
+            if _rd_n > 0 or _wr_n > 0:
+                m.blk_read_lat_p50_us   = float(_rd.get("p50_us", 0) or 0)
+                m.blk_read_lat_p95_us   = float(_rd.get("p95_us", 0) or 0)
+                m.blk_read_lat_p99_us   = float(_rd.get("p99_us", 0) or 0)
+                m.blk_read_lat_samples  = _rd_n
+                m.blk_write_lat_p50_us  = float(_wr.get("p50_us", 0) or 0)
+                m.blk_write_lat_p95_us  = float(_wr.get("p95_us", 0) or 0)
+                m.blk_write_lat_p99_us  = float(_wr.get("p99_us", 0) or 0)
+                m.blk_write_lat_samples = _wr_n
+                m.blk_lat_available     = True
+                m.blk_lat_source = str(lat.get("lat_source", "blktrace_q_to_c") or "blktrace_q_to_c")
+            if isinstance(ba.get("lat_histogram"), pd.DataFrame) and not ba.get("lat_histogram").empty:
+                m.blk_lat_histogram = ba.get("lat_histogram").copy()
 
         # Fallback: if exact blktrace Q→C analysis did not produce queue-depth
         # files, use the already-collected iostat aqu-sz or /sys/block inflight
@@ -12441,6 +12841,861 @@ def chart_ssd_per_device_overlay(m: "Metrics") -> str:
     return fig_to_b64(fig)
 
 
+def chart_capacity_timeline(m: "Metrics") -> str:
+    """L1/L2/L3 capacity fill over the collection window.
+
+    Sheet 1 row 11 "Capacity Timeline", Sheet 2 row 1 "Capacity".
+
+    Sources (all from m.sglang_ts + Metrics fields populated in extract_metrics):
+      L1 HBM   — `sglang_token_usage` (0..1) × 100 → % pool fill; capacity
+                 from `kv_hbm_max_tokens` for absolute-token secondary axis.
+      L2 DRAM  — `sglang_hicache_host_used_tokens` / `_total_tokens` → % fill.
+      L3 SSD   — `m.kv_l3_used_gb` / `m.kv_l3_capacity_gb`. Only start/end
+                 snapshots exist for df-derived signals; we draw a step line
+                 with the peak marked so sizing decisions are still visible.
+
+    Returns "" when no source has usable data. 4-panel layout:
+      (0,0) L1 HBM fill %
+      (0,1) L2 DRAM fill %
+      (1,0) L3 SSD fill % (step / snapshot)
+      (1,1) SSD capacity requirement text (peak × safety factor)
+    """
+    sglang_ts = getattr(m, "sglang_ts", None)
+    if not isinstance(sglang_ts, pd.DataFrame):
+        sglang_ts = pd.DataFrame()
+
+    # Column resolution — sglang timeseries names are Prometheus-flattened.
+    def _first_col(df: pd.DataFrame, *needles: str) -> "str | None":
+        if df.empty:
+            return None
+        low = {c.lower(): c for c in df.columns}
+        for needle in needles:
+            n = needle.lower()
+            # exact
+            if n in low:
+                return low[n]
+            # substring
+            for c_low, orig in low.items():
+                if n in c_low:
+                    return orig
+        return None
+
+    t_col = _first_col(sglang_ts, "time_sec", "timestamp", "ts")
+
+    l1_col     = _first_col(sglang_ts, "sglang_token_usage", "token_usage")
+    l2_used    = _first_col(sglang_ts, "sglang_hicache_host_used_tokens", "hicache_host_used_tokens")
+    l2_total   = _first_col(sglang_ts, "sglang_hicache_host_total_tokens", "hicache_host_total_tokens")
+
+    def _series(df, col):
+        if col is None or df.empty:
+            return pd.Series(dtype=float)
+        return pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+    l1_fill_ts = _series(sglang_ts, l1_col)
+    l2_used_ts = _series(sglang_ts, l2_used)
+    l2_tot_ts  = _series(sglang_ts, l2_total)
+    if t_col is not None and not sglang_ts.empty:
+        t_ts = pd.to_numeric(sglang_ts[t_col], errors="coerce").fillna(0)
+    else:
+        t_ts = pd.Series(range(len(l1_fill_ts)), dtype=float)
+
+    l3_used_gb = float(getattr(m, "kv_l3_used_gb", 0) or 0)
+    l3_cap_gb  = float(getattr(m, "kv_l3_capacity_gb", 0) or 0)
+    l3_pct     = float(getattr(m, "kv_l3_used_pct", 0) or 0)
+
+    have_any = (
+        (not l1_fill_ts.empty and float(l1_fill_ts.max()) > 0)
+        or (not l2_used_ts.empty and float(l2_used_ts.max()) > 0)
+        or l3_used_gb > 0 or l3_cap_gb > 0
+    )
+    if not have_any:
+        return ""
+
+    fig, axes = plt.subplots(2, 2, figsize=(13, 8.2))
+    fig.patch.set_facecolor("#ffffff")
+    fig.suptitle("Cache-tier Capacity Timeline — L1 HBM / L2 DRAM / L3 SSD",
+                 fontsize=12, fontweight="bold", color="#0f172a", y=1.01)
+
+    def _style(ax):
+        ax.set_facecolor("#f8fafc")
+        ax.grid(True, alpha=0.3, color="#e2e8f0")
+        ax.tick_params(labelsize=8)
+        for sp in ax.spines.values():
+            sp.set_edgecolor("#94a3b8")
+
+    # (0,0) L1 HBM fill % — sglang_token_usage is already 0..1
+    ax = axes[0, 0]
+    _style(ax)
+    if not l1_fill_ts.empty and float(l1_fill_ts.max()) > 0:
+        y = l1_fill_ts * 100.0
+        ax.fill_between(t_ts / 60.0, y, alpha=0.30, color="#a78bfa")
+        ax.plot(t_ts / 60.0, y, color="#7c3aed", lw=1.5)
+        peak = float(y.max()); mean = float(y.mean())
+        ax.axhline(peak, color="#7c3aed", ls=":", lw=1, alpha=0.6)
+        ax.text(0.02, 0.95, f"peak {peak:.1f}%   mean {mean:.1f}%",
+                transform=ax.transAxes, fontsize=8, va="top",
+                bbox=dict(facecolor="#ffffff", edgecolor="#cbd5e1", alpha=0.85, pad=3))
+        ax.set_ylim(0, max(100, peak * 1.05))
+    else:
+        ax.text(0.5, 0.5, "sglang_token_usage not available",
+                transform=ax.transAxes, ha="center", va="center",
+                color="#94a3b8", fontsize=10)
+    ax.set_ylabel("L1 HBM fill (%)", fontsize=9)
+    ax.set_xlabel("Time (min)", fontsize=9)
+    ax.set_title("L1 HBM — KV pool fill %", fontsize=10, fontweight="bold")
+
+    # (0,1) L2 DRAM fill % — used/total from HiCache host
+    ax = axes[0, 1]
+    _style(ax)
+    if not l2_used_ts.empty and not l2_tot_ts.empty and float(l2_tot_ts.max()) > 0:
+        # element-wise: guard div by zero
+        denom = l2_tot_ts.replace(0, pd.NA)
+        y = (l2_used_ts / denom * 100.0).fillna(0)
+        if float(y.max()) > 0:
+            ax.fill_between(t_ts / 60.0, y, alpha=0.30, color="#34d399")
+            ax.plot(t_ts / 60.0, y, color="#059669", lw=1.5)
+            peak = float(y.max()); mean = float(y.mean())
+            ax.axhline(peak, color="#059669", ls=":", lw=1, alpha=0.6)
+            ax.text(0.02, 0.95, f"peak {peak:.1f}%   mean {mean:.1f}%",
+                    transform=ax.transAxes, fontsize=8, va="top",
+                    bbox=dict(facecolor="#ffffff", edgecolor="#cbd5e1", alpha=0.85, pad=3))
+            ax.set_ylim(0, max(100, peak * 1.05))
+        else:
+            ax.text(0.5, 0.5, "L2 fill flat at 0",
+                    transform=ax.transAxes, ha="center", va="center",
+                    color="#94a3b8", fontsize=10)
+    else:
+        ax.text(0.5, 0.5, "sglang_hicache_host_used_tokens not available",
+                transform=ax.transAxes, ha="center", va="center",
+                color="#94a3b8", fontsize=10)
+    ax.set_ylabel("L2 DRAM fill (%)", fontsize=9)
+    ax.set_xlabel("Time (min)", fontsize=9)
+    ax.set_title("L2 DRAM — HiCache host fill %", fontsize=10, fontweight="bold")
+
+    # (1,0) L3 SSD fill — snapshot(s). df-based used_gb is typically one
+    # value at report time; render as a horizontal bar with cap reference.
+    ax = axes[1, 0]
+    _style(ax)
+    if l3_cap_gb > 0:
+        used = min(l3_used_gb, l3_cap_gb)
+        pct = (used / l3_cap_gb * 100.0) if l3_cap_gb > 0 else 0.0
+        ax.barh([0], [l3_cap_gb], color="#e2e8f0", edgecolor="#94a3b8", height=0.4, label="Total capacity")
+        ax.barh([0], [used],      color="#f97316", edgecolor="#7c2d12", height=0.4, label="Used")
+        ax.text(l3_cap_gb / 2, 0, f"{pct:.1f}% used  ({used:.1f} / {l3_cap_gb:.1f} GB)",
+                ha="center", va="center", fontsize=10, fontweight="bold", color="#0f172a")
+        ax.set_yticks([])
+        ax.set_xlim(0, l3_cap_gb * 1.05)
+        ax.set_xlabel("Capacity (GB)", fontsize=9)
+        ax.legend(loc="upper right", fontsize=8, frameon=True)
+    elif l3_used_gb > 0:
+        ax.text(0.5, 0.5, f"used {l3_used_gb:.1f} GB  (capacity unknown)",
+                transform=ax.transAxes, ha="center", va="center",
+                fontsize=11, color="#0f172a")
+        ax.set_xticks([]); ax.set_yticks([])
+    else:
+        ax.text(0.5, 0.5, "L3 HiCache capacity not available",
+                transform=ax.transAxes, ha="center", va="center",
+                color="#94a3b8", fontsize=10)
+        ax.set_xticks([]); ax.set_yticks([])
+    ax.set_title("L3 SSD — HiCache fill snapshot", fontsize=10, fontweight="bold")
+
+    # (1,1) SSD capacity requirement (peak fill × safety factor 1.5)
+    ax = axes[1, 1]
+    _style(ax)
+    ax.axis("off")
+    SAFETY = 1.5
+    l1_peak_pct = float(l1_fill_ts.max() * 100.0) if not l1_fill_ts.empty and float(l1_fill_ts.max()) > 0 else 0.0
+    l2_peak_pct = 0.0
+    if not l2_used_ts.empty and not l2_tot_ts.empty and float(l2_tot_ts.max()) > 0:
+        denom = l2_tot_ts.replace(0, pd.NA)
+        l2_peak_pct = float(((l2_used_ts / denom) * 100.0).fillna(0).max())
+    l3_used_peak_gb = l3_used_gb
+    l3_req_gb = l3_used_peak_gb * SAFETY if l3_used_peak_gb > 0 else 0.0
+    lines = [
+        "SSD Capacity Requirement (derived)",
+        "",
+        f"L1 HBM peak fill : {l1_peak_pct:>6.1f}%",
+        f"L2 DRAM peak fill: {l2_peak_pct:>6.1f}%",
+        "",
+        f"L3 used (peak)   : {l3_used_peak_gb:>6.1f} GB",
+        f"L3 capacity      : {l3_cap_gb:>6.1f} GB"
+        + (f"  ({l3_pct:.1f}% now)" if l3_pct > 0 else ""),
+        f"L3 requirement   : {l3_req_gb:>6.1f} GB   ({SAFETY:g}× safety factor)",
+    ]
+    ax.text(0.02, 0.98, "\n".join(lines),
+            transform=ax.transAxes, ha="left", va="top",
+            family="monospace", fontsize=10, color="#0f172a")
+
+    try:
+        plt.tight_layout(pad=0.6)
+    except Exception:
+        pass
+    return fig_to_b64(fig)
+
+
+def chart_endurance_projection(m: "Metrics") -> str:
+    """SSD endurance projection — Sheet 1 row 10, Sheet 2 row 9 (Endurance).
+
+    Extrapolates the observed write rate to a per-day write volume, projects
+    days-to-limit against a rated TB-Written (TBW) budget, and derives the
+    required DWPD spec.
+
+    Data sources (all on Metrics):
+      • m.nvme_bytes_written_total     (SMART delta over the run)
+      • m.run_duration_s               (window length)
+      • m.nvme_device_capacity_gb      (drive raw capacity)
+      • m.nvme_smart_wear_pct          (SMART percent_used, 0..100)
+
+    Assumed DWPD budget: 1.0 (typical consumer NVMe) with a target of
+    5-year lifetime → TBW_budget = 1.0 × capacity_gb × 365 × 5 / 1024 TB.
+
+    Returns "" when no write bytes were captured (chart is meaningless).
+    """
+    dur_s     = float(getattr(m, "run_duration_s", 0) or 0)
+    bytes_wr  = float(getattr(m, "nvme_bytes_written_total", 0) or 0)
+    cap_gb    = float(getattr(m, "nvme_device_capacity_gb", 0) or 0)
+    wear_pct  = float(getattr(m, "nvme_smart_wear_pct", 0) or 0)
+
+    if dur_s <= 0 or bytes_wr <= 0 or cap_gb <= 0:
+        return ""
+
+    # Observed write pace
+    gb_per_hr  = (bytes_wr / 1e9) / (dur_s / 3600.0)
+    gb_per_day = gb_per_hr * 24
+    tb_per_day = gb_per_day / 1024.0
+
+    # Rated budget: 5-year × 1.0 DWPD default.
+    DEFAULT_DWPD  = 1.0
+    LIFETIME_YRS  = 5.0
+    tbw_budget_tb = DEFAULT_DWPD * (cap_gb / 1024.0) * 365.0 * LIFETIME_YRS
+    # Days to burn one drive's TBW at the observed pace.
+    days_to_limit = (tbw_budget_tb / tb_per_day) if tb_per_day > 0 else float("inf")
+    years_to_limit = days_to_limit / 365.0
+
+    # Required DWPD for LIFETIME_YRS at observed pace.
+    required_dwpd = (tb_per_day * 365.0 * LIFETIME_YRS) / (cap_gb / 1024.0) / (365.0 * LIFETIME_YRS) if cap_gb > 0 else 0
+    # Simpler equivalent (kept explicit for clarity):
+    required_dwpd = tb_per_day * 1024.0 / cap_gb
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5.6))
+    fig.patch.set_facecolor("#ffffff")
+    fig.suptitle("SSD Endurance Projection — write pace vs rated TBW budget",
+                 fontsize=12, fontweight="bold", color="#0f172a", y=1.02)
+
+    def _style(ax):
+        ax.set_facecolor("#f8fafc")
+        ax.grid(True, alpha=0.3, color="#e2e8f0")
+        ax.tick_params(labelsize=8)
+        for sp in ax.spines.values():
+            sp.set_edgecolor("#94a3b8")
+
+    # ── Panel 1: cumulative TB written over time (extrapolated) ─────────
+    ax = axes[0]
+    _style(ax)
+    # X in days; extrapolate a full year so the budget line is visible.
+    projection_days = min(max(days_to_limit * 1.2, 365), 365 * 20)
+    days = np.linspace(0, projection_days, 200)
+    cum_tb = (tb_per_day * days)
+    ax.plot(days, cum_tb, color="#4f46e5", lw=2.0, label=f"Observed pace ({tb_per_day:.2f} TB/day)")
+    ax.axhline(tbw_budget_tb, color="#ef4444", ls="--", lw=1.5,
+               label=f"Rated TBW budget ({tbw_budget_tb:.0f} TB, {DEFAULT_DWPD:g} DWPD × {LIFETIME_YRS:g} yr)")
+    if days_to_limit != float("inf") and days_to_limit <= projection_days:
+        ax.axvline(days_to_limit, color="#ef4444", ls=":", lw=1)
+        ax.text(days_to_limit, tbw_budget_tb * 0.5,
+                f"limit reached in ~{years_to_limit:.1f} yr",
+                fontsize=9, color="#7f1d1d",
+                rotation=90, va="center", ha="right")
+    ax.set_xlabel("Days from now", fontsize=9)
+    ax.set_ylabel("Cumulative TB written", fontsize=9)
+    ax.set_title("Cumulative writes vs rated TBW", fontsize=10, fontweight="bold")
+    ax.legend(loc="upper left", fontsize=8, frameon=True)
+
+    # ── Panel 2: DWPD requirement + endurance summary text ─────────────
+    ax = axes[1]
+    _style(ax)
+    ax.axis("off")
+    verdict = (
+        "✅ within rated envelope" if required_dwpd <= DEFAULT_DWPD
+        else f"⚠️  requires ≥{required_dwpd:.2f} DWPD SSD"
+    )
+    lines = [
+        "SSD Endurance Requirement (derived)",
+        "",
+        f"Run duration      : {dur_s / 60:>8.1f} min",
+        f"Bytes written     : {bytes_wr / 1e9:>8.2f} GB",
+        f"Write pace        : {tb_per_day:>8.2f} TB/day  ({gb_per_hr:.1f} GB/hr)",
+        "",
+        f"Drive capacity    : {cap_gb:>8.0f} GB",
+        f"Assumed rated DWPD: {DEFAULT_DWPD:>8.1f}",
+        f"Rated TBW budget  : {tbw_budget_tb:>8.0f} TB  ({LIFETIME_YRS:g}-yr lifetime)",
+        "",
+        f"Required DWPD     : {required_dwpd:>8.2f}",
+        f"Verdict           : {verdict}",
+        "",
+        f"SMART wear now    : {wear_pct:>8.1f}%  of rated endurance",
+        f"Days to TBW limit : "
+        + (f"{days_to_limit:>8.0f} d ({years_to_limit:.1f} yr)"
+           if days_to_limit != float("inf") else "     ∞ (no writes)"),
+    ]
+    ax.text(0.02, 0.98, "\n".join(lines),
+            transform=ax.transAxes, ha="left", va="top",
+            family="monospace", fontsize=10, color="#0f172a")
+
+    try:
+        plt.tight_layout(pad=0.6)
+    except Exception:
+        pass
+    return fig_to_b64(fig)
+
+
+def _io_size_summary_by_bucket(m: "Metrics"):
+    """Return (buckets, counts_by_op, bytes_by_op) aggregated from
+    `m.blktrace_analysis["req_size_dist"]`. Empty tuple when unavailable.
+
+    Result shape:
+        buckets = ["≤4KB", "4-16KB", "16-64KB", "64-256KB", ">256KB"]
+        counts_by_op[op][bucket] = int
+        bytes_by_op[op][bucket] = int (raw bytes)
+    """
+    ba = getattr(m, "blktrace_analysis", None)
+    if not isinstance(ba, dict):
+        return (), {}, {}
+    df = ba.get("req_size_dist")
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return (), {}, {}
+    if "op" not in df.columns or "size_bucket" not in df.columns or "size_bytes" not in df.columns:
+        return (), {}, {}
+
+    canonical = ["≤4KB", "4-16KB", "16-64KB", "64-256KB", ">256KB"]
+    buckets_seen = sorted(df["size_bucket"].astype(str).unique().tolist(),
+                          key=lambda b: (canonical.index(b) if b in canonical else 99, b))
+    # Ensure canonical order when possible.
+    buckets = [b for b in canonical if b in buckets_seen]
+    for b in buckets_seen:
+        if b not in buckets:
+            buckets.append(b)
+
+    counts: dict = {}
+    bytes_: dict = {}
+    for op, sub in df.groupby("op"):
+        op_s = str(op)
+        counts[op_s] = {}
+        bytes_[op_s] = {}
+        for b in buckets:
+            m_b = (sub["size_bucket"].astype(str) == b)
+            counts[op_s][b] = int(m_b.sum())
+            try:
+                bytes_[op_s][b] = int(pd.to_numeric(sub.loc[m_b, "size_bytes"],
+                                                    errors="coerce").fillna(0).sum())
+            except Exception:
+                bytes_[op_s][b] = 0
+
+    return buckets, counts, bytes_
+
+
+def chart_io_size_count(m: "Metrics") -> str:
+    """IO size distribution — Sheet 1 row 5 "IO Size Count".
+
+    Count-weighted histogram of block requests, split by op (read/write).
+    Shows *how many* requests hit each size bucket. Complements
+    `chart_io_size_bytes` which shows byte-weighted contribution.
+
+    Source: blktrace analyzer's `request_size_distribution.csv` (sampled
+    200k events by default). Returns "" when unavailable.
+    """
+    buckets, counts, _ = _io_size_summary_by_bucket(m)
+    if not buckets or not counts:
+        return ""
+
+    fig, ax = plt.subplots(figsize=(11, 5.2))
+    fig.patch.set_facecolor("#ffffff")
+
+    x = list(range(len(buckets)))
+    width = 0.4
+    read_counts  = [counts.get("read",  {}).get(b, 0) for b in buckets]
+    write_counts = [counts.get("write", {}).get(b, 0) for b in buckets]
+    total_r = sum(read_counts) or 1
+    total_w = sum(write_counts) or 1
+    read_pct  = [c / total_r * 100.0 for c in read_counts]
+    write_pct = [c / total_w * 100.0 for c in write_counts]
+
+    ax.bar([xi - width / 2 for xi in x], read_pct, width=width,
+           color="#3b82f6", alpha=0.9, edgecolor="#1e40af", linewidth=0.5,
+           label=f"Read (n={total_r:,})")
+    ax.bar([xi + width / 2 for xi in x], write_pct, width=width,
+           color="#f97316", alpha=0.9, edgecolor="#c2410c", linewidth=0.5,
+           label=f"Write (n={total_w:,})")
+    for xi, rp, wp, rc, wc in zip(x, read_pct, write_pct, read_counts, write_counts):
+        if rp > 0.5:
+            ax.text(xi - width / 2, rp, f"{rp:.0f}%",
+                    ha="center", va="bottom", fontsize=8)
+        if wp > 0.5:
+            ax.text(xi + width / 2, wp, f"{wp:.0f}%",
+                    ha="center", va="bottom", fontsize=8)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(buckets)
+    ax.set_ylabel("Share of requests (%)", fontsize=9)
+    ax.set_xlabel("Request size bucket", fontsize=9)
+    ax.set_title("IO Size — count-weighted distribution "
+                 "(share of request count per bucket)",
+                 fontsize=11, fontweight="bold", color="#0f172a")
+    ax.grid(True, axis="y", alpha=0.3, color="#e2e8f0")
+    ax.set_facecolor("#f8fafc")
+    for sp in ax.spines.values():
+        sp.set_edgecolor("#94a3b8")
+    ax.legend(loc="upper right", fontsize=9, frameon=True)
+    try:
+        plt.tight_layout(pad=0.6)
+    except Exception:
+        pass
+    return fig_to_b64(fig)
+
+
+def chart_io_size_bytes(m: "Metrics") -> str:
+    """IO size distribution — Sheet 1 row 6 "IO Size Bytes".
+
+    Byte-weighted contribution per size bucket. Answers: which request
+    size *dominates the bandwidth* on this workload? A workload can have
+    many small requests but a few large ones consuming most of the BW.
+
+    Source: same request_size_distribution.csv as chart_io_size_count.
+    Returns "" when unavailable.
+    """
+    buckets, _, bytes_ = _io_size_summary_by_bucket(m)
+    if not buckets or not bytes_:
+        return ""
+
+    fig, ax = plt.subplots(figsize=(11, 5.2))
+    fig.patch.set_facecolor("#ffffff")
+
+    x = list(range(len(buckets)))
+    width = 0.4
+    read_bytes  = [bytes_.get("read",  {}).get(b, 0) for b in buckets]
+    write_bytes = [bytes_.get("write", {}).get(b, 0) for b in buckets]
+    total_r = sum(read_bytes) or 1
+    total_w = sum(write_bytes) or 1
+    read_pct  = [b_ / total_r * 100.0 for b_ in read_bytes]
+    write_pct = [b_ / total_w * 100.0 for b_ in write_bytes]
+
+    ax.bar([xi - width / 2 for xi in x], read_pct, width=width,
+           color="#3b82f6", alpha=0.9, edgecolor="#1e40af", linewidth=0.5,
+           label=f"Read ({total_r / 1e9:.2f} GB)")
+    ax.bar([xi + width / 2 for xi in x], write_pct, width=width,
+           color="#f97316", alpha=0.9, edgecolor="#c2410c", linewidth=0.5,
+           label=f"Write ({total_w / 1e9:.2f} GB)")
+    for xi, rp, wp in zip(x, read_pct, write_pct):
+        if rp > 0.5:
+            ax.text(xi - width / 2, rp, f"{rp:.0f}%",
+                    ha="center", va="bottom", fontsize=8)
+        if wp > 0.5:
+            ax.text(xi + width / 2, wp, f"{wp:.0f}%",
+                    ha="center", va="bottom", fontsize=8)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(buckets)
+    ax.set_ylabel("Share of total bytes (%)", fontsize=9)
+    ax.set_xlabel("Request size bucket", fontsize=9)
+    ax.set_title("IO Size — byte-weighted distribution "
+                 "(share of total data transferred per bucket)",
+                 fontsize=11, fontweight="bold", color="#0f172a")
+    ax.grid(True, axis="y", alpha=0.3, color="#e2e8f0")
+    ax.set_facecolor("#f8fafc")
+    for sp in ax.spines.values():
+        sp.set_edgecolor("#94a3b8")
+    ax.legend(loc="upper right", fontsize=9, frameon=True)
+    try:
+        plt.tight_layout(pad=0.6)
+    except Exception:
+        pass
+    return fig_to_b64(fig)
+
+
+def chart_ssd_requirement_summary(m: "Metrics") -> str:
+    """Sheet 2 — the 12-row SSD Requirement Summary table.
+
+    Returns a self-contained HTML fragment (not a PNG). The layered
+    renderer's chart-card treats `kind="html"` payloads as raw HTML and
+    embeds them directly.
+
+    Each row maps one Sheet-2 parameter to (observed, headroom, required),
+    following the xlsx spec:
+      Capacity            = peak L3 used × 1.5
+      Seq Read/Write BW   = peak observed × 1.3
+      Random R/W IOPS     = peak observed × 1.5
+      Read/Write Latency  = observed p99  × 2.0
+      Queue Depth         = observed peak (no multiplier; SSD must support)
+      Endurance           = required DWPD to sustain observed pace for 5 yr
+      Controller Parallel = max concurrent streams (proxy from bw_per_stream)
+      PCIe Gen            = classified by peak observed BW threshold
+      Thermals            = SMART temp_peak_c; <70°C target
+
+    Every row degrades gracefully — missing signals show "—" and the row
+    still explains what it would need.
+    """
+    # ── Pull observed values ─────────────────────────────────────────────
+    l3_used_peak_gb = float(getattr(m, "kv_l3_used_gb", 0) or 0)
+
+    rd_bw_peak = float(getattr(m, "nvme_rd_bw_mbs_max", 0) or 0)
+    wr_bw_peak = float(getattr(m, "nvme_wr_bw_mbs_max", 0) or 0)
+    rd_iops_peak = float(getattr(m, "nvme_rd_iops_max", 0) or 0)
+    wr_iops_peak = float(getattr(m, "nvme_wr_iops_max", 0) or 0)
+
+    rd_p99 = float(getattr(m, "blk_read_lat_p99_us",  0) or 0)
+    wr_p99 = float(getattr(m, "blk_write_lat_p99_us", 0) or 0)
+
+    qd_peak = int(getattr(m, "ssd_qd_max", 0) or 0)
+    qd_p99  = float(getattr(m, "ssd_qd_p99", 0) or 0)
+
+    # Endurance — mirror the calc from chart_endurance_projection.
+    dur_s     = float(getattr(m, "run_duration_s", 0) or 0)
+    bytes_wr  = float(getattr(m, "nvme_bytes_written_total", 0) or 0)
+    cap_gb    = float(getattr(m, "nvme_device_capacity_gb", 0) or 0)
+    tb_per_day = ((bytes_wr / 1e9) / (dur_s / 3600.0) * 24 / 1024.0
+                  if dur_s > 0 and bytes_wr > 0 else 0.0)
+    required_dwpd = (tb_per_day * 1024.0 / cap_gb) if cap_gb > 0 else 0.0
+
+    # Controller Parallelism — peak concurrent stream count.
+    n_streams = 0
+    ba = getattr(m, "blktrace_analysis", None)
+    if isinstance(ba, dict):
+        _stream_sum = ba.get("bw_per_stream_summary")
+        if isinstance(_stream_sum, pd.DataFrame) and not _stream_sum.empty and "n_streams" in _stream_sum.columns:
+            try:
+                n_streams = int(pd.to_numeric(_stream_sum["n_streams"], errors="coerce").fillna(0).max())
+            except Exception:
+                n_streams = 0
+
+    # PCIe Gen classification — Gen4 saturates around 7 GB/s; Gen5 around 14.
+    # We look at the largest of (peak read BW, peak write BW).
+    peak_bw_mbs = max(rd_bw_peak, wr_bw_peak)
+    peak_bw_gbs = peak_bw_mbs / 1024.0
+    if peak_bw_gbs >= 12.0:
+        pcie_gen = "Gen5 x4"
+        pcie_reason = f"peak {peak_bw_gbs:.1f} GB/s exceeds Gen4 ceiling (~7 GB/s)"
+    elif peak_bw_gbs >= 3.5:
+        pcie_gen = "Gen4 x4"
+        pcie_reason = f"peak {peak_bw_gbs:.1f} GB/s fits Gen4 envelope"
+    elif peak_bw_gbs > 0:
+        pcie_gen = "Gen3 x4"
+        pcie_reason = f"peak {peak_bw_gbs:.1f} GB/s fits Gen3 envelope"
+    else:
+        pcie_gen = "—"
+        pcie_reason = "no BW observed"
+
+    # Thermals
+    temp_peak = float(getattr(m, "nvme_temp_peak_c", 0) or 0)
+
+    # ── Row builder ──────────────────────────────────────────────────────
+    def _row(param: str, observed: str, headroom: str, required: str,
+             note: str, warn: bool = False) -> str:
+        bg = "#fef2f2" if warn else "#ffffff"
+        req_style = "color:#b91c1c;font-weight:600" if warn else "color:#0f172a;font-weight:600"
+        return (
+            f'<tr style="background:{bg}">'
+            f'<td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-weight:500">{param}</td>'
+            f'<td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:right;font-family:monospace">{observed}</td>'
+            f'<td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center;color:#64748b">{headroom}</td>'
+            f'<td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:right;{req_style};font-family:monospace">{required}</td>'
+            f'<td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;color:#475569;font-size:12px">{note}</td>'
+            '</tr>'
+        )
+
+    def _fmt(v, unit="", n=0, missing="—"):
+        if not v:
+            return missing
+        try:
+            return (f"{float(v):.{n}f}" + (f" {unit}" if unit else "")).strip()
+        except Exception:
+            return missing
+
+    rows = []
+
+    # 1. Capacity
+    rows.append(_row(
+        "Capacity",
+        _fmt(l3_used_peak_gb, "GB", 1) if l3_used_peak_gb else "—",
+        "× 1.5",
+        _fmt(l3_used_peak_gb * 1.5, "GB", 1) if l3_used_peak_gb else "—",
+        "Peak L3 used × safety factor",
+    ))
+
+    # 2/3. Sequential BW
+    rows.append(_row(
+        "Sequential Read BW",
+        _fmt(rd_bw_peak, "MB/s", 0) if rd_bw_peak else "—",
+        "× 1.3",
+        _fmt(rd_bw_peak * 1.3, "MB/s", 0) if rd_bw_peak else "—",
+        "Peak observed × headroom for bursts",
+    ))
+    rows.append(_row(
+        "Sequential Write BW",
+        _fmt(wr_bw_peak, "MB/s", 0) if wr_bw_peak else "—",
+        "× 1.3",
+        _fmt(wr_bw_peak * 1.3, "MB/s", 0) if wr_bw_peak else "—",
+        "Peak observed × headroom for bursts",
+    ))
+
+    # 4/5. Random IOPS
+    rows.append(_row(
+        "Random Read IOPS",
+        _fmt(rd_iops_peak, "", 0) if rd_iops_peak else "—",
+        "× 1.5",
+        _fmt(rd_iops_peak * 1.5, "", 0) if rd_iops_peak else "—",
+        "Peak observed × headroom",
+    ))
+    rows.append(_row(
+        "Random Write IOPS",
+        _fmt(wr_iops_peak, "", 0) if wr_iops_peak else "—",
+        "× 1.5",
+        _fmt(wr_iops_peak * 1.5, "", 0) if wr_iops_peak else "—",
+        "Peak observed × headroom",
+    ))
+
+    # 6/7. Latency
+    rows.append(_row(
+        "Read Latency (p99)",
+        _fmt(rd_p99, "µs", 0) if rd_p99 else "—",
+        "× 2×",
+        _fmt(rd_p99 * 2.0, "µs", 0) if rd_p99 else "—",
+        "Q→C dwell p99 × headroom for load spikes",
+    ))
+    rows.append(_row(
+        "Write Latency (p99)",
+        _fmt(wr_p99, "µs", 0) if wr_p99 else "—",
+        "× 2×",
+        _fmt(wr_p99 * 2.0, "µs", 0) if wr_p99 else "—",
+        "Q→C dwell p99 × headroom for load spikes",
+    ))
+
+    # 8. Queue Depth
+    rows.append(_row(
+        "Queue Depth",
+        f"peak {qd_peak:,} · p99 {qd_p99:.0f}" if qd_peak else "—",
+        "",
+        f"≥ {qd_peak:,}" if qd_peak else "—",
+        "SSD must sustain observed peak concurrency",
+    ))
+
+    # 9. Endurance
+    warn_endurance = required_dwpd > 1.0
+    rows.append(_row(
+        "Endurance",
+        f"{tb_per_day:.2f} TB/day" if tb_per_day else "—",
+        f"5-yr life",
+        f"{required_dwpd:.2f} DWPD" if required_dwpd else "—",
+        f"See endurance projection chart for TBW",
+        warn=warn_endurance,
+    ))
+
+    # 10. Controller Parallelism
+    rows.append(_row(
+        "Controller Parallelism",
+        f"{n_streams:,} peak concurrent streams" if n_streams else "—",
+        "",
+        f"≥ {n_streams:,} concurrent" if n_streams else "—",
+        "From blktrace bw_per_stream summary",
+    ))
+
+    # 11. PCIe Gen
+    rows.append(_row(
+        "PCIe Generation",
+        f"peak {peak_bw_gbs:.1f} GB/s" if peak_bw_gbs > 0 else "—",
+        "",
+        pcie_gen,
+        pcie_reason,
+    ))
+
+    # 12. Thermals
+    warn_temp = temp_peak >= 70
+    rows.append(_row(
+        "Thermals",
+        _fmt(temp_peak, "°C", 0) if temp_peak else "—",
+        "<70°C",
+        "OK" if (temp_peak and temp_peak < 70) else ("throttling risk" if warn_temp else "—"),
+        "Sustained bursts should not cross thermal throttle threshold",
+        warn=warn_temp,
+    ))
+
+    html = (
+        '<div style="background:#ffffff;border:1px solid #cbd5e1;border-radius:10px;padding:16px;margin:8px 0 12px">'
+        '<div style="font-size:14px;font-weight:600;color:#0f172a;margin-bottom:8px">'
+        'SSD Requirement Summary (derived from this run — Sheet 2)'
+        '</div>'
+        '<div style="font-size:11px;color:#64748b;margin-bottom:10px">'
+        'Rows map to the 12 parameters in the L3 SSD requirements spec. '
+        'Headroom multipliers follow the spec (Capacity ×1.5, BW ×1.3, IOPS ×1.5, Latency ×2). '
+        'Rows in red indicate observed values that exceed a standard SSD envelope.'
+        '</div>'
+        '<table style="width:100%;border-collapse:collapse;font-size:12px">'
+        '<thead>'
+        '<tr style="background:#f1f5f9;color:#334155">'
+        '<th style="text-align:left;padding:8px 10px;font-weight:600">SSD parameter</th>'
+        '<th style="text-align:right;padding:8px 10px;font-weight:600">Observed</th>'
+        '<th style="text-align:center;padding:8px 10px;font-weight:600">Headroom</th>'
+        '<th style="text-align:right;padding:8px 10px;font-weight:600">Required</th>'
+        '<th style="text-align:left;padding:8px 10px;font-weight:600">Basis</th>'
+        '</tr>'
+        '</thead>'
+        '<tbody>' + "".join(rows) + '</tbody>'
+        '</table>'
+        '</div>'
+    )
+    return html
+
+
+def chart_block_latency(m: "Metrics") -> str:
+    """Block-layer read/write latency (p50/p95/p99) chart.
+
+    Data source (in preference order — set by extract_metrics):
+      1. blktrace Q→C dwell time (rich: read+write, p50/p95/p99, histogram)
+      2. biolatency-bpfcc read-latency histogram (read only, p50/p99)
+
+    Returns "" when no source populated `m.blk_lat_available`. This keeps
+    the layered/section renderers from emitting an empty chart card and
+    also lets the static End Report skip the section entirely.
+
+    4-panel layout:
+      (0,0) read latency histogram (log-scale x-axis)
+      (0,1) write latency histogram (or "biolatency read-only" note when
+            biolatency is the source)
+      (1,0) p50 / p95 / p99 bar comparison, read vs write
+      (1,1) SSD requirement note: observed p99 → target p99 with 2× headroom
+    """
+    if not bool(getattr(m, "blk_lat_available", False)):
+        return ""
+
+    src   = str(getattr(m, "blk_lat_source", "") or "unknown")
+    rd_n  = int(getattr(m, "blk_read_lat_samples",  0) or 0)
+    wr_n  = int(getattr(m, "blk_write_lat_samples", 0) or 0)
+    rd50  = float(getattr(m, "blk_read_lat_p50_us", 0) or 0)
+    rd95  = float(getattr(m, "blk_read_lat_p95_us", 0) or 0)
+    rd99  = float(getattr(m, "blk_read_lat_p99_us", 0) or 0)
+    wr50  = float(getattr(m, "blk_write_lat_p50_us",  0) or 0)
+    wr95  = float(getattr(m, "blk_write_lat_p95_us",  0) or 0)
+    wr99  = float(getattr(m, "blk_write_lat_p99_us",  0) or 0)
+    hist  = getattr(m, "blk_lat_histogram", pd.DataFrame())
+
+    fig, axes = plt.subplots(2, 2, figsize=(13, 8.2))
+    fig.patch.set_facecolor("#ffffff")
+    fig.suptitle(
+        f"Block-layer Q→C Latency — Read/Write Distribution & Percentiles"
+        f"   (source: {src}, n_read={rd_n:,}, n_write={wr_n:,})",
+        fontsize=12, fontweight="bold", color="#0f172a", y=1.01,
+    )
+
+    def _style(ax):
+        ax.set_facecolor("#f8fafc")
+        ax.grid(True, alpha=0.3, color="#e2e8f0")
+        ax.tick_params(labelsize=8)
+        for sp in ax.spines.values():
+            sp.set_edgecolor("#94a3b8")
+
+    # ── Histogram panels ──────────────────────────────────────────────────
+    if isinstance(hist, pd.DataFrame) and not hist.empty and "bucket_upper_us" in hist.columns:
+        edges = pd.to_numeric(hist["bucket_upper_us"], errors="coerce").fillna(0).to_numpy()
+        rd_ct = pd.to_numeric(hist.get("read_count",  pd.Series([0]*len(hist))), errors="coerce").fillna(0).to_numpy()
+        wr_ct = pd.to_numeric(hist.get("write_count", pd.Series([0]*len(hist))), errors="coerce").fillna(0).to_numpy()
+
+        def _plot_hist(ax, counts, title, color, p50, p95, p99):
+            _style(ax)
+            if counts.sum() <= 0:
+                ax.text(0.5, 0.5, "no samples",
+                        transform=ax.transAxes, ha="center", va="center",
+                        color="#94a3b8", fontsize=11)
+                ax.set_title(title, fontsize=10, fontweight="bold")
+                return
+            ax.bar(range(len(edges)), counts, color=color, alpha=0.85, edgecolor="#334155", linewidth=0.4)
+            ax.set_xticks(range(0, len(edges), max(1, len(edges) // 8)))
+            ax.set_xticklabels([f"{int(edges[i])}" for i in range(0, len(edges), max(1, len(edges) // 8))],
+                               rotation=30, ha="right")
+            ax.set_xlabel("Latency bucket upper bound (µs, log-scale)", fontsize=8)
+            ax.set_ylabel("Sample count", fontsize=8)
+            # Percentile guide lines
+            for p_val, lbl, ls in ((p50, "p50", "--"), (p95, "p95", ":"), (p99, "p99", "-.")):
+                if p_val > 0:
+                    # Find the bucket index that contains p_val for a rough xtick position.
+                    idx = 0
+                    for i, e in enumerate(edges):
+                        if p_val <= e:
+                            idx = i
+                            break
+                    ax.axvline(idx, color="#0f172a", ls=ls, lw=1.0, alpha=0.7)
+                    ax.text(idx, ax.get_ylim()[1] * 0.92,
+                            f"{lbl} {p_val:.0f}µs", fontsize=8, ha="left", va="top",
+                            color="#0f172a", rotation=0,
+                            bbox=dict(facecolor="#ffffff", alpha=0.75, edgecolor="none", pad=1.5))
+            ax.set_title(title, fontsize=10, fontweight="bold")
+
+        _plot_hist(axes[0, 0], rd_ct, f"Read latency distribution (n={rd_n:,})",
+                   "#3b82f6", rd50, rd95, rd99)
+        _plot_hist(axes[0, 1], wr_ct, f"Write latency distribution (n={wr_n:,})",
+                   "#f97316", wr50, wr95, wr99)
+    else:
+        # No histogram — biolatency source or no histogram file. Show placeholder.
+        for ax, title in ((axes[0, 0], f"Read latency (n={rd_n:,})"),
+                          (axes[0, 1], f"Write latency (n={wr_n:,})")):
+            _style(ax)
+            ax.text(0.5, 0.5, "histogram not available for this source",
+                    transform=ax.transAxes, ha="center", va="center",
+                    color="#94a3b8", fontsize=11)
+            ax.set_title(title, fontsize=10, fontweight="bold")
+
+    # ── p50/p95/p99 bar comparison ─────────────────────────────────────────
+    ax = axes[1, 0]
+    _style(ax)
+    labels = ["p50", "p95", "p99"]
+    rd_vals = [rd50, rd95, rd99]
+    wr_vals = [wr50, wr95, wr99]
+    x = list(range(len(labels)))
+    width = 0.4
+    ax.bar([xi - width / 2 for xi in x], rd_vals, width=width,
+           color="#3b82f6", alpha=0.9, edgecolor="#1e40af", linewidth=0.5, label="Read")
+    ax.bar([xi + width / 2 for xi in x], wr_vals, width=width,
+           color="#f97316", alpha=0.9, edgecolor="#c2410c", linewidth=0.5, label="Write")
+    for xi, rv, wv in zip(x, rd_vals, wr_vals):
+        if rv > 0:
+            ax.text(xi - width / 2, rv, f"{rv:.0f}", ha="center", va="bottom", fontsize=8)
+        if wv > 0:
+            ax.text(xi + width / 2, wv, f"{wv:.0f}", ha="center", va="bottom", fontsize=8)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels)
+    ax.set_ylabel("Latency (µs)", fontsize=9)
+    ax.set_title("Read vs Write Percentile Comparison", fontsize=10, fontweight="bold")
+    ax.legend(loc="upper left", fontsize=8, frameon=True)
+
+    # ── SSD requirement summary text ───────────────────────────────────────
+    ax = axes[1, 1]
+    _style(ax)
+    ax.axis("off")
+    # 2× headroom vs observed p99 is the standard rule-of-thumb (Sheet 2:
+    # "Target p99 read/write" derived from "Tail latency"). Doubles the
+    # observed p99 as the requirement so the SSD has headroom for load
+    # spikes not captured in this trace window.
+    HEADROOM = 2.0
+    rd_req = rd99 * HEADROOM if rd99 > 0 else 0
+    wr_req = wr99 * HEADROOM if wr99 > 0 else 0
+    lines = [
+        "SSD Latency Requirement (derived)",
+        "",
+        f"Read p99 observed   : {rd99:>8.1f} µs   ({rd_n:,} samples)",
+        f"Read p99 requirement: {rd_req:>8.1f} µs   ({HEADROOM:g}× headroom)",
+        f"Write p99 observed  : {wr99:>8.1f} µs   ({wr_n:,} samples)",
+        f"Write p99 requirement:{wr_req:>8.1f} µs   ({HEADROOM:g}× headroom)",
+        "",
+        f"Source: {src}",
+    ]
+    ax.text(0.02, 0.98, "\n".join(lines),
+            transform=ax.transAxes, ha="left", va="top",
+            family="monospace", fontsize=10, color="#0f172a")
+
+    try:
+        plt.tight_layout(pad=0.6)
+    except Exception:
+        pass
+    return fig_to_b64(fig)
+
+
 def chart_ssd_queue_depth(m: "Metrics") -> str:
     if not bool(getattr(m, "l3_configured", False)):
         return ""
@@ -13479,6 +14734,190 @@ def chart_cross_layer_kpi(m: "Metrics") -> str:
 
     return fig_to_b64(fig, dpi=120)
 
+
+def chart_access_pattern(m: "Metrics") -> str:
+    """Access pattern & sequentiality — Sheet 1 row 8 "Access Pattern".
+
+    Consumes the blktrace-analyzer outputs already loaded into
+    `m.blktrace_analysis`:
+      • request_size_random_seq_correlation.csv (per-op random/seq split +
+        mean size for each subgroup + corr(size, is_random))
+      • access_skew_summary.csv (Gini coefficient + top-K byte share
+        indicating LBA-region concentration)
+      • bandwidth_per_stream_summary.csv (n_streams, mean/max BW per op)
+
+    All three CSVs are produced by the streaming analyzer. When absent,
+    the chart returns "" (renderers drop it). 4-panel layout:
+      (0,0) Random vs Sequential mix per op — stacked % bars
+      (0,1) Mean IO size random vs sequential per op — grouped bars
+      (1,0) LBA concentration (Gini + top-1%/5% byte share)
+      (1,1) Per-stream BW summary
+    """
+    ba = getattr(m, "blktrace_analysis", None)
+    if not isinstance(ba, dict) or not ba:
+        return ""
+
+    # Pull frames; missing ones are OK — each panel guards independently.
+    rs_corr    = ba.get("size_rand_corr")
+    skew       = ba.get("access_skew")
+    stream_sum = ba.get("bw_per_stream_summary")
+
+    have_any = any(
+        isinstance(df, pd.DataFrame) and not df.empty
+        for df in (rs_corr, skew, stream_sum)
+    )
+    if not have_any:
+        return ""
+
+    fig, axes = plt.subplots(2, 2, figsize=(13, 8.2))
+    fig.patch.set_facecolor("#ffffff")
+    fig.suptitle("Access Pattern & Sequentiality — Random vs Sequential",
+                 fontsize=12, fontweight="bold", color="#0f172a", y=1.01)
+
+    def _style(ax):
+        ax.set_facecolor("#f8fafc")
+        ax.grid(True, alpha=0.3, color="#e2e8f0")
+        ax.tick_params(labelsize=8)
+        for sp in ax.spines.values():
+            sp.set_edgecolor("#94a3b8")
+
+    def _placeholder(ax, title):
+        _style(ax)
+        ax.text(0.5, 0.5, "no data",
+                transform=ax.transAxes, ha="center", va="center",
+                color="#94a3b8", fontsize=11)
+        ax.set_title(title, fontsize=10, fontweight="bold")
+
+    # (0,0) Random vs Sequential — reconstruct from rs_corr (n_events × mean_size)
+    ax = axes[0, 0]
+    if isinstance(rs_corr, pd.DataFrame) and not rs_corr.empty:
+        _style(ax)
+        ops = rs_corr["op"].astype(str).tolist()
+        # We don't have per-op count of random vs sequential events directly,
+        # but the correlation and mean sizes give a byte-weighted proxy.
+        # Use total events split by size — approximation: assume events are
+        # evenly split by count and weight by size to get byte fractions.
+        n_events = pd.to_numeric(rs_corr.get("n_events",  pd.Series([0]*len(rs_corr))), errors="coerce").fillna(0)
+        mean_rnd = pd.to_numeric(rs_corr.get("mean_size_random",     pd.Series([0]*len(rs_corr))), errors="coerce").fillna(0)
+        mean_seq = pd.to_numeric(rs_corr.get("mean_size_sequential", pd.Series([0]*len(rs_corr))), errors="coerce").fillna(0)
+        # Simplified fraction: byte contribution = mean_size × assumed_count.
+        # When we don't have per-op random/sequential *counts*, fall back to
+        # showing mean-size ratio only.
+        r_bytes_frac = []
+        for mr, ms in zip(mean_rnd, mean_seq):
+            tot = float(mr) + float(ms)
+            r_bytes_frac.append((float(mr) / tot * 100.0) if tot > 0 else 0.0)
+        s_bytes_frac = [100.0 - v for v in r_bytes_frac]
+        x = list(range(len(ops)))
+        ax.bar(x, r_bytes_frac, color="#ef4444", label="Random", alpha=0.9, edgecolor="#7f1d1d", linewidth=0.5)
+        ax.bar(x, s_bytes_frac, bottom=r_bytes_frac, color="#22c55e",
+               label="Sequential", alpha=0.9, edgecolor="#14532d", linewidth=0.5)
+        for xi, r_v, s_v, n_v in zip(x, r_bytes_frac, s_bytes_frac, n_events):
+            if r_v > 6:
+                ax.text(xi, r_v / 2, f"{r_v:.0f}%", ha="center", va="center",
+                        fontsize=9, color="#ffffff", fontweight="bold")
+            if s_v > 6:
+                ax.text(xi, r_v + s_v / 2, f"{s_v:.0f}%", ha="center", va="center",
+                        fontsize=9, color="#ffffff", fontweight="bold")
+        ax.set_xticks(x)
+        ax.set_xticklabels([f"{o}\n(n={int(n):,})" for o, n in zip(ops, n_events)])
+        ax.set_ylim(0, 100)
+        ax.set_ylabel("Byte share (%)", fontsize=9)
+        ax.set_title("Random vs Sequential — byte-weighted share",
+                     fontsize=10, fontweight="bold")
+        ax.legend(loc="upper right", fontsize=8, frameon=True)
+    else:
+        _placeholder(ax, "Random vs Sequential")
+
+    # (0,1) Mean IO size random vs sequential per op
+    ax = axes[0, 1]
+    if isinstance(rs_corr, pd.DataFrame) and not rs_corr.empty:
+        _style(ax)
+        ops = rs_corr["op"].astype(str).tolist()
+        mean_rnd = (pd.to_numeric(rs_corr.get("mean_size_random",     pd.Series([0]*len(rs_corr))), errors="coerce").fillna(0) / 1024).tolist()
+        mean_seq = (pd.to_numeric(rs_corr.get("mean_size_sequential", pd.Series([0]*len(rs_corr))), errors="coerce").fillna(0) / 1024).tolist()
+        x = list(range(len(ops)))
+        width = 0.4
+        ax.bar([xi - width / 2 for xi in x], mean_rnd, width=width,
+               color="#ef4444", alpha=0.9, edgecolor="#7f1d1d", linewidth=0.5, label="Random")
+        ax.bar([xi + width / 2 for xi in x], mean_seq, width=width,
+               color="#22c55e", alpha=0.9, edgecolor="#14532d", linewidth=0.5, label="Sequential")
+        for xi, rv, sv in zip(x, mean_rnd, mean_seq):
+            if rv > 0:
+                ax.text(xi - width / 2, rv, f"{rv:.0f}KB", ha="center", va="bottom", fontsize=8)
+            if sv > 0:
+                ax.text(xi + width / 2, sv, f"{sv:.0f}KB", ha="center", va="bottom", fontsize=8)
+        ax.set_xticks(x)
+        ax.set_xticklabels(ops)
+        ax.set_ylabel("Mean request size (KB)", fontsize=9)
+        ax.set_title("Mean IO size — random vs sequential",
+                     fontsize=10, fontweight="bold")
+        ax.legend(loc="upper right", fontsize=8, frameon=True)
+    else:
+        _placeholder(ax, "Mean IO size")
+
+    # (1,0) LBA concentration — Gini + top-1%/5% byte share
+    ax = axes[1, 0]
+    if isinstance(skew, pd.DataFrame) and not skew.empty:
+        _style(ax)
+        ops = skew["op"].astype(str).tolist()
+        gini = pd.to_numeric(skew.get("gini_coefficient", pd.Series([0]*len(skew))), errors="coerce").fillna(0).tolist()
+        t1   = pd.to_numeric(skew.get("top1pct_byte_share", pd.Series([0]*len(skew))), errors="coerce").fillna(0).tolist()
+        t5   = pd.to_numeric(skew.get("top5pct_byte_share", pd.Series([0]*len(skew))), errors="coerce").fillna(0).tolist()
+        uniq = pd.to_numeric(skew.get("unique_regions",   pd.Series([0]*len(skew))), errors="coerce").fillna(0).tolist()
+        x = list(range(len(ops)))
+        width = 0.28
+        ax.bar([xi - width for xi in x], gini, width=width,
+               color="#4f46e5", alpha=0.9, edgecolor="#312e81", linewidth=0.5, label="Gini")
+        ax.bar([xi         for xi in x], t1,   width=width,
+               color="#f97316", alpha=0.9, edgecolor="#7c2d12", linewidth=0.5, label="Top-1% bytes (%)")
+        ax.bar([xi + width for xi in x], t5,   width=width,
+               color="#fbbf24", alpha=0.9, edgecolor="#78350f", linewidth=0.5, label="Top-5% bytes (%)")
+        for xi, g, a, b in zip(x, gini, t1, t5):
+            ax.text(xi - width, g, f"{g:.2f}",  ha="center", va="bottom", fontsize=8)
+            ax.text(xi,         a, f"{a:.1f}",  ha="center", va="bottom", fontsize=8)
+            ax.text(xi + width, b, f"{b:.1f}",  ha="center", va="bottom", fontsize=8)
+        ax.set_xticks(x)
+        ax.set_xticklabels([f"{o}\nregions={int(u):,}" for o, u in zip(ops, uniq)])
+        ax.set_title("LBA access concentration (Gini + top-K byte share)",
+                     fontsize=10, fontweight="bold")
+        ax.legend(loc="upper right", fontsize=8, frameon=True)
+    else:
+        _placeholder(ax, "LBA concentration")
+
+    # (1,1) Per-stream BW summary
+    ax = axes[1, 1]
+    if isinstance(stream_sum, pd.DataFrame) and not stream_sum.empty:
+        _style(ax)
+        ops = stream_sum["op"].astype(str).tolist()
+        n_streams = pd.to_numeric(stream_sum.get("n_streams", pd.Series([0]*len(stream_sum))), errors="coerce").fillna(0).tolist()
+        bw_mean   = pd.to_numeric(stream_sum.get("bandwidth_mib_s_mean", pd.Series([0]*len(stream_sum))), errors="coerce").fillna(0).tolist()
+        bw_max    = pd.to_numeric(stream_sum.get("bandwidth_mib_s_max",  pd.Series([0]*len(stream_sum))), errors="coerce").fillna(0).tolist()
+        x = list(range(len(ops)))
+        width = 0.4
+        ax.bar([xi - width / 2 for xi in x], bw_mean, width=width,
+               color="#3b82f6", alpha=0.9, edgecolor="#1e40af", linewidth=0.5, label="Mean BW / stream")
+        ax.bar([xi + width / 2 for xi in x], bw_max, width=width,
+               color="#a78bfa", alpha=0.9, edgecolor="#5b21b6", linewidth=0.5, label="Peak BW / stream")
+        for xi, mv, xv in zip(x, bw_mean, bw_max):
+            ax.text(xi - width / 2, mv, f"{mv:.0f}", ha="center", va="bottom", fontsize=8)
+            ax.text(xi + width / 2, xv, f"{xv:.0f}", ha="center", va="bottom", fontsize=8)
+        ax.set_xticks(x)
+        ax.set_xticklabels([f"{o}\nn={int(n):,}" for o, n in zip(ops, n_streams)])
+        ax.set_ylabel("MiB/s", fontsize=9)
+        ax.set_title("Per-stream bandwidth (mean & peak)",
+                     fontsize=10, fontweight="bold")
+        ax.legend(loc="upper left", fontsize=8, frameon=True)
+    else:
+        _placeholder(ax, "Per-stream BW")
+
+    try:
+        plt.tight_layout(pad=0.6)
+    except Exception:
+        pass
+    return fig_to_b64(fig)
+
+
 def chart_blktrace_streams(m: "Metrics") -> str:
     if not bool(getattr(m, "l3_configured", False)):
         return ""
@@ -13841,6 +15280,18 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
         kv_card("Peak Throughput", fmt(m.gen_tp_peak or m.gen_tp_mean, 1), "tok/s", OK_C),
         kv_card("HBM Util", fmt(m.hbm_util_pct, 1), "%", HBM_C,
                 f"{m.hbm_used_mb_mean/1024:.1f}/{m.hbm_total_mb/1024:.0f} GB"),
+        # GPU util tile mirrors the cache-hit KPI shape: primary value = active
+        # mean, sub-note carries overall/threshold/idle so a low active mean
+        # driven by long idle gaps is legible at a glance.
+        kv_card(
+            "GPU Util",
+            fmt(m.gpu_util_active_mean or m.gpu_util_overall_mean, 1),
+            "%",
+            HBM_C,
+            (f"overall {m.gpu_util_overall_mean:.1f}% · "
+             f"active {m.gpu_util_active_mean:.1f}% (>{m.gpu_util_active_threshold_pct:g}%) · "
+             f"idle {m.gpu_util_idle_fraction_pct:.1f}% · peak {m.gpu_util_peak:.0f}%")
+        ),
         kv_card("GPU Power", fmt(m.gpu_power_mean_w, 0), "W total", POWER_C,
                 f"peak {m.gpu_power_peak_w:.0f}W/GPU"),
     ])
@@ -14307,14 +15758,17 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
 
     layered_overview_html = f'''
 <div class="card stack-noreorder" id="stack-layer-overview" style="border-left:4px solid #0f766e">
-  <h2>🍰 AI Workload Stack — Layered Memory-Tier View</h2>
+  <h2>🍰 AI Workload Stack — Layered View</h2>
   <div class="stack-cake">
-    <div class="stack-row full a5"><b>A5 · Application Layer</b><span>benchmarks, prompt/output mix, TTFT, TPOT, P99 request latency</span></div>
-    <div class="stack-row pair"><div class="a4"><b>A4 · Inference Runtime</b><span>SGLang/vLLM scheduling, continuous batching, KV eviction/L2→L1 load-back</span></div><div class="model"><b>AI Models</b><span>model config, dtype, context length, FLOPs/token, KV$/token</span></div></div>
-    <div class="stack-row trio"><div class="l1"><b>A3/A2/A1 · L1 HBM</b><span>CUDA kernels, GPU driver, HBM capacity/BW, SM util</span></div><div class="l2"><b>A3/A2/A1 · L2 DRAM</b><span>OS memory manager, page faults, swap, DRAM BW</span></div><div class="l3"><b>A3/A2/A1 · L3 (local storage)</b><span>OS block layer, io_uring/NVMe driver, NAND, blktrace/biosnoop</span></div></div>
+    <div class="stack-row full a5"><b>A5 · Application (benchmark harness)</b><span>benchmarks, prompt/output mix, TTFT, TPOT, P99 request latency</span></div>
+    <div class="stack-row full a4"><b>A4 · Inference Runtime (server + GPU/HBM)</b><span>SGLang/vLLM scheduling, batching, KV$ eviction/L2→L1 load-back, GPU util, HBM occupancy/BW, NVLink/PCIe</span></div>
+    <div class="stack-row full l2"><b>A3 · OS / Memory manager + Block layer</b><span>DRAM BW, page faults, swap, TLB/NUMA, biolatency, blktrace, TRIM/discard, page cache</span></div>
+    <div class="stack-row full l3"><b>A2 · I/O drivers (NVMe)</b><span>iostat, biosnoop, NVMe driver, /sys/block queue depth</span></div>
+    <div class="stack-row full a1hw"><b>A1 · Hardware (HBM · DRAM · SSD)</b><span>SSD requirement summary, capacity fill, block-latency percentiles, endurance projection, per-device workload</span></div>
+    <div class="stack-row full cross"><b>Cross-layer</b><span>cross-layer KPIs, KVSSD correlation, KV↔LBA↔DRAM, bottleneck radar</span></div>
   </div>
   <div class="stack-nav">
-    <a href="#layer-a5">A5 Application</a><a href="#layer-a4">A4 Runtime &amp; Model</a><a href="#layer-l1">L1 HBM</a><a href="#layer-l2">L2 DRAM</a><a href="#layer-l3">L3 (local storage)</a><a href="#layer-cross">Cross-layer</a>
+    <a href="#layer-a5">A5 Application</a><a href="#layer-a4">A4 Runtime + GPU/HBM</a><a href="#layer-a3">A3 OS / Memory + Block</a><a href="#layer-a2">A2 I/O drivers</a><a href="#layer-a1">A1 Hardware</a><a href="#layer-cross">Cross-layer</a>
   </div>
 </div>
 <div id="stack-layered-report-anchor" class="stack-noreorder"></div>
@@ -14398,6 +15852,7 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
   .stack-row span {{ font-size:11px; opacity:.92; line-height:1.5; }}
   .a5 {{ background:#24577f; }} .a4 {{ background:#317bb8; }} .model {{ background:#b89a05; }}
   .l1 {{ background:#2f8a4e; }} .l2 {{ background:#7a3f97; }} .l3 {{ background:#a45714; }}
+  .a1hw {{ background:#0f766e; }} .cross {{ background:#0f172a; }}
   .stack-nav {{ display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }}
   .stack-nav a {{ font-size:11px; text-decoration:none; color:#0f172a; background:#e2e8f0; border:1px solid #cbd5e1; border-radius:999px; padding:5px 10px; }}
   .stack-layer-header {{ margin:20px 0 10px 0; padding:12px 16px; border-radius:10px; color:#fff; box-shadow:0 1px 3px rgba(0,0,0,.08); }}
@@ -14456,27 +15911,43 @@ document.addEventListener('DOMContentLoaded', function(){{
   }});
 }});
 
-// Re-arrange report cards into the AI workload stack layered-cake order.
-// The underlying metrics/charts remain unchanged; this is only presentation order.
+// Re-arrange report cards into the AI workload stack layered order.
+// Layer definitions and classification mirror amoprof.layers (A5, A4, A3, A2, A1, Cross)
+// so the End Report content maps 1:1 to the Layered report's section boundaries.
+// The underlying metrics/charts are unchanged; this is only presentation order.
 document.addEventListener('DOMContentLoaded', function(){{
   const anchor = document.getElementById('stack-layered-report-anchor');
   if(!anchor) return;
   const layerDefs = [
-    ['layer-a5','A5 · Application Layer','Benchmark workload, request mix, token throughput, TTFT/TPOT and P50/P90/P99 latency.','#24577f'],
-    ['layer-a4','A4 · Inference Runtime + AI Model','SGLang runtime behavior, KV-cache accounting, model config, batching, eviction, load-back and cache-hit methodology.','#317bb8'],
-    ['layer-l1','A3/A2/A1 · L1 HBM / CUDA / GPU','GPU utilization, HBM capacity, HBM bandwidth and device-side runtime pressure.','#2f8a4e'],
-    ['layer-l2','A3/A2/A1 · L2 DRAM / OS Memory Manager','Host DRAM bandwidth, page faults, swap pressure, NUMA and OS memory effects.','#7a3f97'],
-    ['layer-l3','A3/A2/A1 · L3 (local storage) / OS Block / NVMe','NVMe driver, blktrace/biosnoop, request sizes, sequential/random mix, hot/cold LBAs, read/write/trim workload.','#a45714'],
-    ['layer-cross','Cross-layer Diagnosis','Cross-layer formulas, correlations, recommendations and layer-to-layer spill/evict interpretation.','#0f172a']
+    ['layer-a5','A5 · Application (benchmark harness)','Benchmark workload, prompt/output mix, TTFT, TPOT, P50/P90/P99 request latency.','#24577f'],
+    ['layer-a4','A4 · Inference Runtime (server + GPU/HBM)','SGLang/vLLM scheduling, continuous batching, KV$ eviction/L2→L1 load-back, cache-hit methodology, GPU util, HBM occupancy/bandwidth, NVLink/PCIe traffic.','#317bb8'],
+    ['layer-a3','A3 · OS / Memory manager + Block layer','Host DRAM bandwidth, page faults, swap pressure, NUMA/TLB, blktrace request-size/access-pattern/hot-cold, biolatency, TRIM/discard, page cache.','#7a3f97'],
+    ['layer-a2','A2 · I/O drivers (NVMe)','iostat, biosnoop per-PID attribution, NVMe driver counters, /sys/block queue depth — driver-level device pressure.','#a45714'],
+    ['layer-a1','A1 · Hardware (HBM · DRAM · SSD)','SSD requirement summary, cache-tier capacity fill, block-latency percentiles, endurance projection, per-device SSD workload, TRIM seasonal patterns.','#0f766e'],
+    ['layer-cross','Cross-layer','Cross-layer KPIs, KVSSD correlation, KV↔LBA↔DRAM overlays, bottleneck radar, layer-to-layer spill/evict interpretation, formulas, recommendations.','#0f172a']
   ];
   const classify = (txt) => {{
     txt = (txt || '').toLowerCase();
-    if(txt.includes('cache hit methodology') || txt.includes('p50') || txt.includes('phase analysis') || txt.includes('session') || txt.includes('percentile')) return 'layer-a5';
-    if(txt.includes('kv cache footprint') || txt.includes('kv tier') || txt.includes('kv$b') || txt.includes('model')) return 'layer-a4';
-    if(txt.includes('gpu utilisation') || txt.includes('gpu utilization') || txt.includes('hbm bandwidth')) return 'layer-l1';
-    if(txt.includes('dram bandwidth') || txt.includes('swap storm')) return 'layer-l2';
-    if(txt.includes('nvme') || txt.includes('deep io') || txt.includes('ssd read') || txt.includes('ssd write') || txt.includes('queue depth') || txt.includes('trim') || txt.includes('per-stream') || txt.includes('hot/cold')) return 'layer-l3';
-    if(txt.includes('cross-layer') || txt.includes('bottleneck') || txt.includes('formulas') || txt.includes('recommendations')) return 'layer-cross';
+    // A5 — Application harness: benchmark-facing latency percentiles & phase analysis.
+    if(txt.includes('cache hit methodology') || txt.includes('p50 / p90 / p99') || txt.includes('percentile summary') || txt.includes('phase analysis')) return 'layer-a5';
+    // A4 — Inference runtime (SGLang) + GPU/HBM (the runtime's device signals).
+    // Layered puts GPU/HBM/NVLink/PCIe under A4 (see layers/a4_gpu_hbm.py).
+    if(txt.includes('gpu util') || txt.includes('hbm ') || txt.includes('hbm bandwidth') || txt.includes('pcie') || txt.includes('nvlink')) return 'layer-a4';
+    if(txt.includes('sglang inference') || txt.includes('kv cache footprint') || txt.includes('kv tier') || txt.includes('kv$ per cache tier') || txt.includes('kv$b') || txt.includes('kv cache block') || txt.includes('session') || txt.includes('stream analysis') || txt.includes('latency breakdown') || txt.includes('token composition')) return 'layer-a4';
+    // A3 — OS / Memory manager + Block layer. Includes DRAM BW, swap, blktrace-derived
+    // block-layer characteristics (request size, IAT, access pattern, hot/cold),
+    // per-stream bandwidth attribution, memory profile.
+    if(txt.includes('dram bandwidth') || txt.includes('system dram') || txt.includes('swap storm') || txt.includes('memory profile') || txt.includes('storage i/o & os page')) return 'layer-a3';
+    if(txt.includes('read workload') || txt.includes('write workload') || txt.includes('trim') || txt.includes('discard') || txt.includes('temporal pattern') || txt.includes('hot/cold') || txt.includes('lba hot') || txt.includes('per-stream') || txt.includes('access pattern') || txt.includes('io size') || txt.includes('blkio')) return 'layer-a3';
+    // A2 — I/O drivers (NVMe): driver counters, queue depth (device pressure).
+    // "kvssd i/o" is a driver-level NVMe view produced by chart_kvssd_io and
+    // must match A2 before the Cross rule for "kvssd" catches it.
+    if(txt.includes('nvme io workload') || txt.includes('ssd queue depth') || txt.includes('queue depth')) return 'layer-a2';
+    if(txt.includes('kvssd i/o') || txt.includes('kvssd io — driver') || txt.includes('kvssd driver')) return 'layer-a2';
+    // A1 — Hardware: SSD requirement summary, endurance, capacity, per-device overlay.
+    if(txt.includes('ssd requirement') || txt.includes('capacity timeline') || txt.includes('block-latency') || txt.includes('block latency') || txt.includes('endurance') || txt.includes('per-device overlay')) return 'layer-a1';
+    // Cross-layer: cross-layer KPIs, bottleneck radar/mapping, KV↔LBA↔DRAM, formulas & recs.
+    if(txt.includes('cross-layer') || txt.includes('bottleneck') || txt.includes('formula') || txt.includes('recommend') || txt.includes('kvssd') || txt.includes('kv$ l3') || txt.includes('kv ↔ lba') || txt.includes('kv-lba') || txt.includes('lba ↔ dram') || txt.includes('correlation') || txt.includes('radar')) return 'layer-cross';
     return 'layer-cross';
   }};
   const cards = Array.from(document.querySelectorAll('.card')).filter(c => !c.classList.contains('stack-noreorder'));
@@ -14634,8 +16105,16 @@ Decode throughput = active_mean(sglang_gen_throughput) or Δsglang_generation_to
 <!-- CHARTS -->
 <div class="card">
   <h2>&#9201; GPU Utilisation, Power &amp; HBM Timeline</h2>
-  {charts.get("gpu_timeline_plotly", "") or img(charts.get("gpu_timeline",""), "GPU Timeline")}
-  {('<details style="margin-top:8px"><summary style="cursor:pointer;color:#64748b;font-size:12px">Static PNG fallback / print view</summary>' + img(charts.get("gpu_timeline",""), "GPU Timeline static fallback") + '</details>') if charts.get("gpu_timeline_plotly", "") and charts.get("gpu_timeline", "") else ''}
+  <div style="font-size:12px;color:#334155;margin:0 0 10px;line-height:1.6">
+    <strong>GPU util:</strong> overall {m.gpu_util_overall_mean:.1f}% ·
+    active {m.gpu_util_active_mean:.1f}% (&gt;{m.gpu_util_active_threshold_pct:g}%) ·
+    idle {m.gpu_util_idle_fraction_pct:.1f}% ·
+    peak {m.gpu_util_peak:.0f}%
+    <span style="color:#64748b">
+      &nbsp;·&nbsp; {m.gpu_util_active_samples:,}/{m.gpu_util_total_samples:,} nonzero samples
+    </span>
+  </div>
+  {img(charts.get("gpu_timeline",""), "GPU Timeline")}
   <details class="fml" style="margin-top:10px">
     <summary>&#128208; Formula &amp; Metrics Used</summary>
     <div class="fml-body">
@@ -15193,7 +16672,151 @@ Seasonal period: FFT on R(t) = binned read bytes/sec timeseries
   </details>
 </div>
 
-<!-- KV token/LBA/DRAM correlation section removed in v1.39.74 per user request. -->
+<!-- Layered parity: A1 hardware, A2 driver, and A3 block-layer charts that
+     were previously produced only by the layered report. Each card is wrapped
+     in `if charts.get(...)` so missing signals (no blktrace, no SMART, etc.)
+     degrade gracefully and the reorderer JS routes them into the same layer
+     bucket the layered report uses (see amoprof/layers/*.py). -->
+
+{f'''
+<!-- A1 · Hardware — SSD Requirement Summary (Sheet-2 derivation table) -->
+<div class="card" style="border-color:#14b8a6">
+  <h2 style="color:#0f766e">📋 SSD Requirement Summary — Sheet-2 Derivation</h2>
+  <div style="font-size:11px;color:#334155;line-height:1.6;margin-bottom:8px">
+    12-row requirement table derived from observed peaks × Sheet-2 headroom
+    multipliers (capacity ×1.5, seq BW ×1.3, random IOPS ×1.5, latency p99 ×2).
+    Mirrors <code>layers/a1_l3_ssd.py</code>.
+  </div>
+  {charts.get("ssd_req_summary","")}
+</div>
+''' if charts.get("ssd_req_summary", "") else ''}
+
+{f'''
+<!-- A1 · Hardware — L1/L2/L3 Capacity Timeline -->
+<div class="card" style="border-color:#14b8a6">
+  <h2 style="color:#0f766e">📊 Capacity Timeline — L1/L2/L3 Fill</h2>
+  <div style="font-size:11px;color:#334155;line-height:1.6;margin-bottom:8px">
+    Sheet-1 row 11 / Sheet-2 row 1. Fill fraction over the run for HBM (L1),
+    host DRAM/HiCache (L2), and local storage (L3). Renders even from static
+    snapshots when timeseries samples are sparse.
+  </div>
+  {img(charts.get("capacity_timeline",""), "Capacity Timeline")}
+</div>
+''' if charts.get("capacity_timeline", "") else ''}
+
+{f'''
+<!-- A1 · Hardware — Block-Latency Percentiles -->
+<div class="card" style="border-color:#14b8a6">
+  <h2 style="color:#0f766e">⏱️ Block Latency Percentiles — p50 / p95 / p99</h2>
+  <div style="font-size:11px;color:#334155;line-height:1.6;margin-bottom:8px">
+    Sheet-1 row 3 (Tail Latency), Sheet-2 rows 6/7 (Read/Write Latency).
+    Populated by blktrace Q→C or biolatency; degrades gracefully when neither
+    ran successfully. Mirrors <code>layers/a1_l3_ssd.py</code>.
+  </div>
+  {img(charts.get("block_latency",""), "Block Latency Percentiles")}
+</div>
+''' if charts.get("block_latency", "") else ''}
+
+{f'''
+<!-- A1 · Hardware — Endurance Projection -->
+<div class="card" style="border-color:#14b8a6">
+  <h2 style="color:#0f766e">🔋 Endurance Projection — TB/day vs DWPD Budget</h2>
+  <div style="font-size:11px;color:#334155;line-height:1.6;margin-bottom:8px">
+    Extrapolates observed write pace to the rated TBW budget and required
+    DWPD over a 5-year warranty window. Sheet-1 row 10 / Sheet-2 row 9.
+  </div>
+  {img(charts.get("endurance",""), "Endurance Projection")}
+</div>
+''' if charts.get("endurance", "") else ''}
+
+{f'''
+<!-- A2 · I/O drivers — KVSSD I/O (driver-level NVMe view) -->
+<div class="card" style="border-color:#f97316">
+  <h2 style="color:#c2410c">🚚 KVSSD I/O — Driver-Level NVMe Bandwidth</h2>
+  <div style="font-size:11px;color:#334155;line-height:1.6;margin-bottom:8px">
+    Aggregate KV movement traffic as observed at the NVMe driver layer
+    (iostat + biosnoop-derived). Mirrors <code>layers/a2_nvme_driver.py</code>.
+  </div>
+  {img(charts.get("kvssd_io",""), "KVSSD IO — Driver-Level Bandwidth")}
+</div>
+''' if charts.get("kvssd_io", "") else ''}
+
+{f'''
+<!-- A3 · OS/Memory + Block layer — Block IO Deep Profile -->
+<div class="card" style="border-color:#7a3f97">
+  <h2 style="color:#6b21a8">🔎 Blkio Deep Profile — Block-layer breakdown</h2>
+  <div style="font-size:11px;color:#334155;line-height:1.6;margin-bottom:8px">
+    Deep-dive block-layer counters: op mix, request-size buckets, alignment,
+    sequential-vs-random breakdown. Mirrors <code>layers/a3_dram.py</code>.
+  </div>
+  {img(charts.get("blkio_deep",""), "Blkio Deep Profile")}
+</div>
+''' if charts.get("blkio_deep", "") else ''}
+
+{f'''
+<!-- A3 · OS/Memory + Block layer — IO Size Distribution (count-weighted) -->
+<div class="card" style="border-color:#7a3f97">
+  <h2 style="color:#6b21a8">📏 IO Size Distribution — Count-Weighted (Sheet-1 r5)</h2>
+  <div style="font-size:11px;color:#334155;line-height:1.6;margin-bottom:8px">
+    Fraction of block-layer requests at each IO size, weighted by count. Small
+    reads dominate for cached KV lookups; large writes indicate bulk offload.
+  </div>
+  {img(charts.get("io_size_count",""), "IO Size Distribution — Count-Weighted")}
+</div>
+''' if charts.get("io_size_count", "") else ''}
+
+{f'''
+<!-- A3 · OS/Memory + Block layer — IO Size Distribution (byte-weighted) -->
+<div class="card" style="border-color:#7a3f97">
+  <h2 style="color:#6b21a8">📏 IO Size Distribution — Byte-Weighted (Sheet-1 r6)</h2>
+  <div style="font-size:11px;color:#334155;line-height:1.6;margin-bottom:8px">
+    Same distribution weighted by bytes moved. Reveals where actual bandwidth
+    is going: a few very large IOs may dominate byte volume even when count
+    histogram looks small.
+  </div>
+  {img(charts.get("io_size_bytes",""), "IO Size Distribution — Byte-Weighted")}
+</div>
+''' if charts.get("io_size_bytes", "") else ''}
+
+{f'''
+<!-- A3 · OS/Memory + Block layer — Access Pattern (random vs seq + Gini) -->
+<div class="card" style="border-color:#7a3f97">
+  <h2 style="color:#6b21a8">🎲 Access Pattern — Random vs Sequential + Gini + Per-Stream BW</h2>
+  <div style="font-size:11px;color:#334155;line-height:1.6;margin-bottom:8px">
+    Random/sequential ratio, LBA-locality Gini coefficient, and per-stream
+    bandwidth breakdown. Higher Gini → hot-region skew; balanced R/W with
+    high randomness → cache thrashing.
+  </div>
+  {img(charts.get("access_pattern",""), "Access Pattern")}
+</div>
+''' if charts.get("access_pattern", "") else ''}
+
+<!-- Cross-layer parity with amoprof/layers/cross.py: render KV↔LBA↔DRAM and
+     Bottleneck Radar so End Report Cross section matches the Layered report. -->
+{f'''
+<div class="card" style="border-color:#6366f1">
+  <h2 style="color:#4f46e5">🔗 KV ↔ LBA ↔ DRAM Correlation</h2>
+  <div style="font-size:11px;color:#334155;line-height:1.6;margin-bottom:8px">
+    Overlays SGLang token movement, blktrace LBA activity, and DRAM bandwidth on a
+    single timeline so KV$ eviction/onboard events can be traced across all three
+    layers. Mirrors <code>layers/cross.py</code> so End Report and Layered stay aligned.
+  </div>
+  {img(charts.get("kv_lba_dram",""), "KV LBA DRAM Correlation")}
+</div>
+''' if charts.get("kv_lba_dram", "") else ''}
+
+{f'''
+<div class="card" style="border-color:#a78bfa">
+  <h2 style="color:#7c3aed">🎯 Bottleneck Radar</h2>
+  <div style="font-size:11px;color:#334155;line-height:1.6;margin-bottom:8px">
+    Per-layer bottleneck scores rendered as a radar/spider chart. Same source data
+    as the Bottleneck table above; visualised to make cross-layer stress easy to
+    compare at a glance. Mirrors <code>layers/cross.py</code>.
+  </div>
+  {img(charts.get("radar",""), "Bottleneck Radar")}
+</div>
+''' if charts.get("radar", "") else ''}
+
 <!-- §stream and §hotcold: pre-computed blktrace analysis -->
 {f"""
 <!-- KV$ L3 (local storage): Per-Stream & Temporal Analysis -->
@@ -15876,11 +17499,21 @@ def _collapse_empty_cards(html: str) -> str:
             if has_chart or has_nonzero_bw or has_nonzero_txn:
                 return False, ''
 
-        # Section-specific guard: the §E TRIM/Discard card embeds a matplotlib
-        # image and also contains non-zero read/write temporal reference values,
-        # so the generic KPI-based zero detector may leave it expanded even when
-        # there are no discard events.  Treat the section as zero/no-data when
-        # the explicit TRIM indicators show no activity.
+        # Section-specific guard: the §E TRIM/Discard card embeds a 6-panel
+        # matplotlib image that shows *more than just trim* — R/W bytes over
+        # time, seasonal FFT periods, R↔W cross-correlation, and R/W/T ratios.
+        # These panels remain meaningful for L3-active runs even when discards
+        # never fire (many workloads batch TRIM via HiCache eviction or disable
+        # it entirely).  Layered renders this chart unconditionally when
+        # `l3_configured` is True, so the End Report must not collapse it as
+        # "ZERO DATA" just because the trim-specific KPIs are zero — that
+        # would hide the R/W/seasonal panels the user came to see.
+        #
+        # Keep the section expanded whenever ANY of these hold:
+        #   • the chart PNG is embedded (evidence panels are drawn),
+        #   • R/W ratio > 0 (implies non-zero R or W traffic in the window), or
+        #   • a dominant seasonal period was detected for read or write.
+        # Collapse only when trim is off AND all supporting panels are empty.
         if 'trim' in title_l and 'discard' in title_l:
             text = _re.sub(r'<[^>]+>', ' ', inner)
             text = _re.sub(r'&[a-z#0-9]+;', ' ', text)
@@ -15899,8 +17532,22 @@ def _collapse_empty_cards(html: str) -> str:
                 _re.search(r'trim\s*bw\s*0(?:\.0+)?\b', text_l) is not None
                 or _re.search(r'bw=0(?:\.0+)?\s*mb/s', text_l) is not None
             )
+            # Supporting-panel evidence: chart image, non-zero R/W ratio, or
+            # non-zero seasonal period. Any of these means the layered report
+            # would render this section with useful content.
+            has_chart = ('<img ' in inner or 'data:image/png' in inner
+                         or 'amoprof-chart' in inner)
+            has_rw_ratio = _re.search(r'r/w\s*ratio[^0-9]{0,40}([1-9]\d*(?:\.\d+)?|0\.\d*[1-9]\d*)', text_l) is not None
+            has_rd_period = _re.search(r'rd\s*period[^0-9]{0,40}([1-9]\d*(?:\.\d+)?)\s*s', text_l) is not None
+            has_wr_period = _re.search(r'wr\s*period[^0-9]{0,40}([1-9]\d*(?:\.\d+)?)\s*s', text_l) is not None
+            supporting_data = has_chart or has_rw_ratio or has_rd_period or has_wr_period
             if not has_trim_yes and (has_no_trim or (trim_iops_zero and trim_bw_zero)):
-                return True, title
+                # Only collapse if no supporting R/W/seasonal panels have data.
+                if not supporting_data:
+                    return True, title
+                # Otherwise fall through and let the generic detector decide;
+                # the chart+R/W+seasonal panels will keep it expanded.
+                return False, ''
 
         if vals and all(_value_is_empty(v) for v in vals):
             verdict = True
@@ -19844,8 +21491,40 @@ def main():
                 )
         else:
             print(f"\n[Load {i+1}/{n_runs}] {label}  ←  {rp}")
+            # Auto-discover raw/blktrace_analysis/ so the End Report picks up
+            # QD/streams/hot-cold data even when the caller (or user running
+            # amoprof.py directly) forgot --blktrace-analysis-dir. Layered does
+            # this in amoprof/layers/__init__.py::run_layered_analyze; mirroring
+            # it here means both reports load their data through the exact same
+            # load_raw_dir_with_extras call with the exact same arguments, so a
+            # section like SSD Queue Depth can never render populated in one
+            # report and empty in the other.
+            _cli_bt_analysis_dir = getattr(args, 'blktrace_analysis_dir', '') or ''
+            _auto_bt_analysis_dir = ""
+            try:
+                _rp_path = Path(rp)
+                _resolved_raw = _amoprof_resolve_raw_dir_path(_rp_path) if _rp_path.is_dir() else None
+                if _resolved_raw is not None:
+                    _cand = _resolved_raw / "blktrace_analysis"
+                    # Match layered's gate: require the directory to exist AND
+                    # at least one analyzer-emitted file. queue_depth_summary.json
+                    # is the layered gate; temporal_read_write_trim_pattern.csv
+                    # is the CLI's gate — accept either so a partial analysis
+                    # (only one pass completed) is still picked up by both reports.
+                    if _cand.is_dir() and (
+                        (_cand / "queue_depth_summary.json").exists()
+                        or (_cand / "temporal_read_write_trim_pattern.csv").exists()
+                        or (_cand / "summary.json").exists()
+                    ):
+                        _auto_bt_analysis_dir = str(_cand)
+            except Exception:
+                _auto_bt_analysis_dir = ""
+            _effective_bt_analysis_dir = _cli_bt_analysis_dir or _auto_bt_analysis_dir
+            if _auto_bt_analysis_dir and not _cli_bt_analysis_dir:
+                print(f"  [blktrace-analysis] Auto-discovered: {_auto_bt_analysis_dir}", flush=True)
+
             has_extras = any([args.blktrace,
-                              getattr(args, 'blktrace_analysis_dir', ''),
+                              _effective_bt_analysis_dir,
                               args.nvme_smart, args.iostat,
                               args.pcm, args.kv_event_log])
             if has_extras:
@@ -19854,7 +21533,7 @@ def main():
                 data = load_raw_dir_with_extras(
                     raw_path              = raw_dir,
                     blktrace_file         = args.blktrace,
-                    blktrace_analysis_dir = getattr(args, 'blktrace_analysis_dir', ''),
+                    blktrace_analysis_dir = _effective_bt_analysis_dir,
                     nvme_smart_file       = args.nvme_smart,
                     iostat_file           = args.iostat,
                     pcm_file              = args.pcm,
@@ -19933,7 +21612,11 @@ def main():
             print(f"\n[HTML {i+1}/{n_runs}] {label}")
             charts = {}
             charts["gpu_timeline"] = chart_gpu_timeline(m)
-            charts["gpu_timeline_plotly"] = chart_gpu_timeline_plotly(m)
+            # gpu_timeline_plotly removed from the End Report body per v1.1.6:
+            # the section now renders the static PNG directly with a KPI
+            # decomposition note above it. The Plotly variant remains
+            # available in the layered report and (canonically) in the
+            # Interactive tab, so no chart data is lost.
             charts["inference"]    = chart_inference_metrics(m)
             charts["memory"]       = chart_memory(m)
             charts["latency"]      = chart_latency_breakdown(m)
@@ -19956,6 +21639,23 @@ def main():
             charts["bt_hotcold"]   = chart_blktrace_hotcold(m)
             # v1.39.69: KV$ L3 IO Workload Characteristics section removed from End Report.
             charts["kvssd_cross"]  = chart_kvssd_cross_layer(m)
+            # Cross-layer chart — mirrors layered/cross.py (kv_lba_dram_correlation)
+            # so End Report and Layered render the same Cross-layer chart set.
+            charts["kv_lba_dram"]  = chart_kv_lba_dram_correlation(m)
+            # Layered parity — every chart function invoked by amoprof/layers/*.py
+            # must also appear in the End Report so all three tabs render the same
+            # set. Additions below cover A1 (hardware), A2 (kvssd_io), and A3
+            # (block-layer / IO-size / access-pattern) charts that were only
+            # produced by the layered report before v1.1.4.
+            charts["ssd_req_summary"]   = chart_ssd_requirement_summary(m)
+            charts["capacity_timeline"] = chart_capacity_timeline(m)
+            charts["block_latency"]     = chart_block_latency(m)
+            charts["endurance"]         = chart_endurance_projection(m)
+            charts["kvssd_io"]          = chart_kvssd_io(m)
+            charts["blkio_deep"]        = chart_blkio_deep(m)
+            charts["io_size_count"]     = chart_io_size_count(m)
+            charts["io_size_bytes"]     = chart_io_size_bytes(m)
+            charts["access_pattern"]    = chart_access_pattern(m)
             charts["hbm_bw"]       = chart_hbm_bandwidth(m)
             charts["dram_bw"]      = chart_dram_bandwidth(m)
             charts["pcie_nvlink"]  = chart_pcie_nvlink(m)

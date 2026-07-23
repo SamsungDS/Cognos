@@ -51,10 +51,18 @@ def run_layered_analyze(raw_dir):
     # via `--blktrace-analysis-dir` from cli._run_amoprof. Without this, the
     # SSD Queue Depth chart + blktrace stream/hotcold charts render empty
     # even when analysis CSVs are already present next to raw/.
+    # The gate accepts any one of the three sentinel files so a partial
+    # analysis (only one pass completed) is still picked up by both the
+    # End Report and this layered path. Keep this in sync with the End
+    # Report's own auto-discovery in report/amoprof.py::main().
     bt_analysis_dir = resolved / "blktrace_analysis"
     bt_analysis_arg = (str(bt_analysis_dir)
                       if bt_analysis_dir.is_dir()
-                      and (bt_analysis_dir / "queue_depth_summary.json").exists()
+                      and (
+                          (bt_analysis_dir / "queue_depth_summary.json").exists()
+                          or (bt_analysis_dir / "temporal_read_write_trim_pattern.csv").exists()
+                          or (bt_analysis_dir / "summary.json").exists()
+                      )
                       else "")
     data = load_raw_dir_with_extras(
         raw_path=resolved,

@@ -70,10 +70,97 @@ def _get_explicit(setup: Mapping[str, Any], *keys: str) -> str:
     return ""
 
 
+def _get_server_info_raw(setup: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Return the embedded `SGLang server_info raw` dict, if present."""
+    for k in ("SGLang server_info raw", "sglang_server_info_raw",
+              "SGLang server_info", "sglang_server_info", "server_info"):
+        v = setup.get(k)
+        if isinstance(v, dict) and v:
+            return v
+    return {}
+
+
+def _hicache_backend_from_server_info(setup: Mapping[str, Any]) -> str:
+    """Read hicache_storage_backend directly from live SGLang evidence.
+
+    Preferred sources (in priority order, all skipping fabricated defaults):
+
+      1. Embedded ``SGLang server_info raw`` dict — populated by
+         cli._server_info_to_setup_details from a live /server_info fetch, so
+         it is never a fabricated reference-profile default.
+      2. Flat ``setup["HiCache storage backend"]`` field, but ONLY when the
+         field is not listed in setup["Defaulted fields"]. Runs without a live
+         server_info fetch can still hit this path when setup_details.json is
+         hand-written.
+      3. `""` (empty) — resolver falls back to launch-command / path / device
+         heuristics.
+
+    Mirrors NVIDIA's G3 (local file backend) vs G3.5 (remote / disaggregated
+    AI Memory Node) split for report labeling.
+    """
+    # (1) Live server_info raw dict wins.
+    si_raw = _get_server_info_raw(setup)
+    for k in ("hicache_storage_backend", "storage_backend", "hicache_backend"):
+        v = si_raw.get(k)
+        if _is_set(v):
+            return _norm(v).lower()
+    # (2) Flat field, but only if not defaulted.
+    defaulted = _defaulted_fields(setup)
+    for k in ("HiCache storage backend", "hicache_storage_backend"):
+        if k.lower() in defaulted:
+            continue
+        v = setup.get(k)
+        if _is_set(v):
+            return _norm(v).lower()
+    return ""
+
+
 def resolve_l3_backend(setup: Mapping[str, Any] | None, launch_command: str | None = None) -> L3BackendResolution:
     setup = setup or {}
     launch = _norm(launch_command or _get(setup, "Launch command", "launch_command", "SGLang launch command", "sglang_launch_command"))
 
+    # 1. Primary decision: SGLang server_info's `hicache_storage_backend`.
+    # Mirrors NVIDIA's G3 (local file backend) vs G3.5 (remote / disaggregated)
+    # split.  This bypasses _get_explicit's defaulted-field guard because the
+    # SGLang server_info raw dict is a live observation, not a fabricated
+    # reference-profile default.
+    si_backend = _hicache_backend_from_server_info(setup)
+    if si_backend:
+        # `file` is HiCache's local-file backend → L3 (SSD/local storage).
+        # Any other named backend is a remote/disaggregated tier → L3.5.
+        # Empty / "none" already filtered by _is_set inside the helper.
+        if si_backend in ("file", "filesystem", "fs", "local", "local_ssd", "disk"):
+            device = _get_explicit(setup, "L3 Device", "L3 device", "L3 block device",
+                                    "l3_device", "L3 (local storage) device", "l3_storage_device",
+                                    "NVMe device", "ssd_device")
+            mount = _get_explicit(setup, "L3 Mount Path", "L3 mount path", "L3 mount",
+                                   "l3_mount_path", "L3 (local storage) mount path",
+                                   "l3_storage_mount_path")
+            path = _get_explicit(setup, "HiCache storage path", "hicache_storage_path",
+                                  "L3 filesystem path", "L3 storage path", "l3_storage_path",
+                                  "storage_path", "HiCache path", "hicache_path",
+                                  "File storage path", "file_storage_path")
+            return L3BackendResolution(
+                "local_ssd", "L3 (SSD/local storage)",
+                "logical L3 write/offload from sglang_backuped_tokens_total",
+                "logical L3 read/onboard from sglang_prefetched_tokens_total; sglang_load_back_tokens_total is diagnostic-only",
+                bool(device or mount or path),
+                local_device=device, local_mount_path=mount, local_storage_path=path,
+                evidence=f"SGLang server_info hicache_storage_backend={si_backend}")
+        # Every other named backend (mooncake, hf3fs, memory_pool, cxl, s3, ...)
+        # is a remote/disaggregated tier → L3.5.
+        return L3BackendResolution(
+            "remote_mooncake" if si_backend in ("mooncake", "moon cake") else "remote_storage",
+            "L3.5 (AI Memory Node / remote storage)",
+            "logical L3.5 write/offload from sglang_backuped_tokens_total",
+            "logical L3.5 read/onboard from sglang_prefetched_tokens_total; sglang_load_back_tokens_total is diagnostic-only",
+            False,
+            evidence=f"SGLang server_info hicache_storage_backend={si_backend}")
+
+    # 2. Fallback: prior logic based on explicit setup_details fields, launch
+    # command flags, or heuristics.  Reached only when no live server_info
+    # backend value was observed.
+    #
     # Use _get_explicit (not _get) so a DEFAULTED storage backend/type from the
     # fabricated reference profile does not get treated as real evidence. On a
     # Prometheus-only run with no setup_details, "HiCache storage backend=file"

@@ -216,6 +216,7 @@ def fetch_from_prometheus(
     extra_labels: dict[str, str] | None = None,
     label: str = "prom",
     nvme_device: str = "",
+    server_type: str = "auto",
 ) -> dict[str, Any]:
     """Pull timeseries from a Prometheus server and write canonical CSVs.
 
@@ -285,7 +286,22 @@ def fetch_from_prometheus(
         instance=instance,
         job=job,
         extra_labels=labels,
+        server_type=server_type,
     )
+
+    # The collector may auto-detect the backend when server_type="auto"; reuse
+    # its decision (persisted in sglang_summary.json) for the percentile fetch
+    # so both halves agree on which metric names to query.
+    resolved_server_type = server_type
+    if (server_type or "auto").lower() == "auto":
+        try:
+            _sg0 = output_dir / "sglang_summary.json"
+            if _sg0.exists():
+                resolved_server_type = (
+                    json.loads(_sg0.read_text()).get("server_type")
+                    or server_type)
+        except Exception:
+            resolved_server_type = server_type
 
     after = {f.name for f in output_dir.iterdir() if f.is_file()}
     new_files = sorted(after - before)
@@ -303,7 +319,8 @@ def fetch_from_prometheus(
         )
         pct_summary = fetch_percentile_summary(
             prom_url, t_start, t_end,
-            instance=instance, job=job, extra_labels=labels)
+            instance=instance, job=job, extra_labels=labels,
+            server_type=resolved_server_type)
         if pct_summary:
             # Merge percentile fields into sglang_summary.json if present
             sg_path = output_dir / "sglang_summary.json"
@@ -330,7 +347,8 @@ def fetch_from_prometheus(
         pct_ts = fetch_percentile_timeseries(
             prom_url, t_start, t_end, step_s=step_s,
             rate_window_s=resolved_rate_window_s,
-            instance=instance, job=job, extra_labels=labels)
+            instance=instance, job=job, extra_labels=labels,
+            server_type=resolved_server_type)
         if pct_ts:
             pts_path = output_dir / "sglang_percentiles_timeseries.json"
             # Filter out None values for cleaner JSON

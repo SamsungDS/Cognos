@@ -16,7 +16,10 @@ Owns collectors:
 
 Owns charts:
   DRAM / memory-manager:  memory, dram_bandwidth, swap_storm
-  Block layer:            blkio_deep, blktrace_streams, blktrace_hotcold
+  Block layer:            blkio_deep, blktrace_streams, blktrace_hotcold,
+                          access_pattern (random/seq mix + Gini + per-stream BW),
+                          io_size_count (Sheet 1 row 5, count-weighted),
+                          io_size_bytes (Sheet 1 row 6, byte-weighted)
 
 pcm and amduprof_pcm share `enable_flag="enable_dram"`; exactly one is
 active per run. The choice is driven by `ctx["dram_tool"]` (resolved by
@@ -61,6 +64,12 @@ class A3DramLayer(LayerModule):
         self._render_chart(a, "swap_storm",       R.chart_swap_storm,       metrics)
         # Block-layer signals (page cache, biolatency, blktrace).
         self._render_chart(a, "blkio_deep",       R.chart_blkio_deep,       metrics)
+        # IO size distribution — Sheet 1 rows 5 & 6. Two dedicated charts
+        # (count-weighted, byte-weighted) supersede the size panels tucked
+        # inside chart_ssd_read_workload / write_workload / blkio_deep.
+        self._render_chart(a, "io_size_count",    R.chart_io_size_count,    metrics)
+        self._render_chart(a, "io_size_bytes",    R.chart_io_size_bytes,    metrics)
+        self._render_chart(a, "access_pattern",   R.chart_access_pattern,   metrics)
         self._render_chart(a, "blktrace_streams", R.chart_blktrace_streams, metrics)
         self._render_chart(a, "blktrace_hotcold", R.chart_blktrace_hotcold, metrics)
         return a

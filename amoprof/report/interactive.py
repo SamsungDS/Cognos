@@ -210,7 +210,12 @@ def _active_p50_from_rows(rows: list[dict], partial: str) -> float:
     return 0.0
 
 def _active_gpu_util_from_rows(rows: list[dict]) -> tuple[float, float, str]:
-    """Return active/nonzero mean GPU util, peak, and method note."""
+    """Return active/nonzero mean GPU util, peak, and method note.
+
+    Kept for backward-compat callers. New callers should use
+    `_gpu_util_decomposition_from_rows` which returns the full 4-value view
+    (overall/active/threshold/idle) matching the cache-hit KPI shape.
+    """
     if not rows:
         return 0.0, 0.0, ""
     col = _find_col(rows, "gpu_util") or _find_col(rows, "DCGM_FI_DEV_GPU_UTIL")
@@ -221,6 +226,49 @@ def _active_gpu_util_from_rows(rows: list[dict]) -> tuple[float, float, str]:
     if active:
         return sum(active) / len(active), max(vals), "active mean from gpu_timeseries"
     return 0.0, max(vals) if vals else 0.0, ""
+
+
+def _gpu_util_decomposition_from_rows(rows: list[dict],
+                                       threshold_pct: float = 0.0) -> dict:
+    """Return the 4-value GPU util decomposition from a list of sample dicts.
+
+    Shape matches `amoprof.report.amoprof._amoprof_gpu_util_decomposition` so
+    Interactive, End Report, and Executive share one interpretation:
+
+      overall_mean          — mean across every sample (idle + active)
+      active_mean           — mean across samples with util > threshold_pct
+      active_threshold_pct  — threshold used to define "active" (0.0 = nonzero)
+      idle_fraction_pct     — fraction of samples ≤ threshold, × 100
+      peak                  — max observed util
+    """
+    zero = {
+        "overall_mean": 0.0, "active_mean": 0.0,
+        "active_threshold_pct": float(threshold_pct),
+        "idle_fraction_pct": 0.0, "peak": 0.0,
+        "total_samples": 0, "active_samples": 0, "note": "",
+    }
+    if not rows:
+        return zero
+    col = _find_col(rows, "gpu_util") or _find_col(rows, "DCGM_FI_DEV_GPU_UTIL")
+    if not col:
+        return zero
+    vals = [_to_float(r.get(col)) for r in rows]
+    vals = [v for v in vals if v == v]  # strip NaN
+    if not vals:
+        return zero
+    active = [v for v in vals if v > threshold_pct]
+    return {
+        "overall_mean": sum(vals) / len(vals),
+        "active_mean": (sum(active) / len(active)) if active else 0.0,
+        "active_threshold_pct": float(threshold_pct),
+        "idle_fraction_pct": (len(vals) - len(active)) / len(vals) * 100.0,
+        "peak": max(vals),
+        "total_samples": len(vals),
+        "active_samples": len(active),
+        "note": (f"active mean from {len(active)}/{len(vals)} nonzero "
+                 f"gpu_timeseries samples" if active else
+                 (f"all {len(vals)} samples idle/zero" if vals else "")),
+    }
 
 def _time_axis_config(ts_seconds: list[float] | None = None,
                        max_ts: float | None = None,
@@ -3192,13 +3240,28 @@ def build_report(raw_dir: Path, out_html: Path,
             _kpi_tile("Cache hit", f"{float(sglang_sum.get('cache_hit_pct', sglang_sum.get('cache_hit_rate_realtime_pct', 0)) or 0):.1f}",
                       "%", f"primary={sglang_sum.get('cache_hit_calc_method', 'canonical')} · prefill={float(sglang_sum.get('cache_hit_prefill_token_weighted_pct', 0) or 0):.1f}% · cached/prompt={float(sglang_sum.get('cache_hit_token_weighted_pct', 0) or 0):.1f}%"),
         ]
+    # 4-value GPU util decomposition (matches cache-hit KPI shape).  Prefer
+    # live timeseries; fall back to gpu_summary fields written by
+    # amoprof/report/amoprof.py::extract_metrics so archived runs still show a
+    # complete tile.  Computed once and reused by both the KPI tile and the
+    # A4 GPU-Utilization chart caption so the numbers stay in lock-step.
+    _gpu_dec = _gpu_util_decomposition_from_rows(gpu_ts)
+    _gpu_overall = _gpu_dec["overall_mean"] or float((gpu_sum or {}).get(
+        'gpu_util_overall_mean', (gpu_sum or {}).get('gpu_util_mean', 0)) or 0)
+    _gpu_active = _gpu_dec["active_mean"] or float((gpu_sum or {}).get('gpu_util_active_mean', 0) or 0)
+    _gpu_thresh = _gpu_dec["active_threshold_pct"] if _gpu_dec["total_samples"] else float(
+        (gpu_sum or {}).get('gpu_util_active_threshold_pct', 0.0) or 0.0)
+    _gpu_idle = _gpu_dec["idle_fraction_pct"] or float((gpu_sum or {}).get('gpu_util_idle_fraction_pct', 0) or 0)
+    _gpu_peak_show = max(_gpu_dec["peak"], float((gpu_sum or {}).get('gpu_util_peak', 0) or 0))
+    _gpu_show_value = _gpu_active or _gpu_overall
+    _gpu_note = _gpu_dec.get("note") or ""
+    _gpu_sub = (f"overall {_gpu_overall:.1f}% · "
+                f"active {_gpu_active:.1f}% (>{_gpu_thresh:g}%) · "
+                f"idle {_gpu_idle:.1f}% · peak {_gpu_peak_show:.0f}%"
+                + (f" · {_gpu_note}" if _gpu_note else ""))
     if gpu_sum:
-        _gpu_active_mean, _gpu_active_peak, _gpu_note = _active_gpu_util_from_rows(gpu_ts)
-        _gpu_mean_show = _gpu_active_mean if _gpu_active_mean > 0 else float(gpu_sum.get('gpu_util_mean', 0) or 0)
-        _gpu_peak_show = max(_gpu_active_peak, float(gpu_sum.get('gpu_util_peak', 0) or 0))
         kpis += [
-            _kpi_tile("GPU util", f"{_gpu_mean_show:.1f}", "%",
-                      (f"Peak {_gpu_peak_show:.0f}% · {_gpu_note}" if _gpu_note else f"Peak {_gpu_peak_show:.0f}%")),
+            _kpi_tile("GPU util", f"{_gpu_show_value:.1f}", "%", _gpu_sub),
             (lambda _gpu_n, _per_gb, _per_total: _kpi_tile(
                 "HBM used (all GPUs)",
                 f"{_per_gb*_gpu_n:.1f} / {_per_total*_gpu_n:.0f}",
@@ -3588,9 +3651,12 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
         "sizing when extrapolating to a longer production timeframe."))
 
     sections_html.append(_layer_header("layer-l1", "A3/A2/A1 · L1 HBM / CUDA / GPU", "GPU kernel/runtime layer, HBM occupancy, HBM bandwidth pressure, GPU power and utilization.", "#2f8a4e"))
+    # Chart caption carries the same 4-value decomposition the KPI tile shows so
+    # a reader who lands here from the KPI tile sees the exact same numbers
+    # (overall / active / idle / peak) next to the per-GPU trace.
     sections_html.append(_section("GPU Utilization & HBM (per GPU)",
                                    "ch_gpu", _chart_gpu(gpu_ts, gpu_summary=gpu_sum, raw_dir=raw_dir),
-                                   "Per-GPU lines — click legend entries to isolate one GPU"))
+                                   f"{_gpu_sub}<br>Per-GPU lines — click legend entries to isolate one GPU"))
     sections_html.append(_section("Total GPU Power Draw",
                                    "ch_power", _chart_power(power_ts, gpu_ts)))
 

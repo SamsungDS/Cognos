@@ -272,6 +272,49 @@ def _ts_gauge_stats(summary: dict, *names: str) -> dict:
     return dict(c) if isinstance(c, dict) else {}
 
 
+def _gpu_util_decomposition(summary: dict, gpu_sum: dict | None = None,
+                             threshold_pct: float = 0.0) -> dict:
+    """Compute the 4-value GPU util view (overall/active/threshold/idle).
+
+    Shape matches `amoprof.report.amoprof._amoprof_gpu_util_decomposition` so
+    Executive, End Report, and Interactive all read the same interpretation.
+    Prefers per-column stats from the CSV summary (`_read_csv_summary`); falls
+    back to `gpu_summary.json` fields written by extract_metrics.
+    """
+    zero = {
+        "overall_mean": 0.0, "active_mean": 0.0,
+        "active_threshold_pct": float(threshold_pct),
+        "idle_fraction_pct": 0.0, "peak": 0.0,
+        "total_samples": 0, "active_samples": 0,
+    }
+    c = _ts_col(summary, "gpu_util", "DCGM_FI_DEV_GPU_UTIL")
+    total = int(_safe_float(c.get("n", 0), 0))
+    active = int(_safe_float(c.get("nonzero_count", 0), 0))
+    overall = _safe_float(c.get("mean", 0.0), 0.0)
+    active_mean = _safe_float(c.get("nonzero_mean", 0.0), 0.0)
+    peak = _safe_float(c.get("max", 0.0), 0.0)
+    if total == 0:
+        # Fall back to gpu_summary.json (written by extract_metrics).
+        g = gpu_sum or {}
+        total = int(_safe_float(g.get("gpu_util_total_samples", 0), 0))
+        active = int(_safe_float(g.get("gpu_util_active_samples", 0), 0))
+        overall = _safe_float(g.get("gpu_util_overall_mean", g.get("gpu_util_mean", 0.0)), 0.0)
+        active_mean = _safe_float(g.get("gpu_util_active_mean", 0.0), 0.0)
+        peak = _safe_float(g.get("gpu_util_peak", 0.0), 0.0)
+        if total == 0:
+            return zero
+    idle_frac = ((total - active) / total * 100.0) if total > 0 else 0.0
+    return {
+        "overall_mean": round(overall, 2),
+        "active_mean": round(active_mean, 2),
+        "active_threshold_pct": float(threshold_pct),
+        "idle_fraction_pct": round(idle_frac, 2),
+        "peak": round(peak, 2),
+        "total_samples": total,
+        "active_samples": active,
+    }
+
+
 def _amoprof_has_explicit_l3_config(setup: dict, launch: str = "") -> bool:
     """Return True when setup/launch explicitly describes an L3/L3.5 tier.
 
@@ -655,7 +698,7 @@ def _per_layer_takeaways_html(*,
     """Render the Chart-by-Chart Takeaways block when full blktrace charts
     aren't available (Prom-only mode).
 
-    Produces one row per AI-stack layer (A5/A4/L1/L2/L3 storage/Cross) with:
+    Produces one row per AI-stack layer (A5/A4/A3/A2/A1/Cross) with:
       • Layer badge in the layer's color
       • A 1-line headline derived from this run's numbers
       • A verdict pill (OK / Near-full / Active spilling / Clean)
@@ -689,32 +732,42 @@ def _per_layer_takeaways_html(*,
     else:
         a4_verdict, a4_color = "OK", "#16a34a"
 
-    # L1 GPU — HBM fill vs utilization
+    # A4 GPU sub-verdict — HBM fill vs utilization. Layered puts GPU/HBM under
+    # A4 (see layers/a4_gpu_hbm.py); we surface the same evidence as an A4-side
+    # verdict merged with the runtime cache-hit check above.
     hbm_pct = (hbm_used_gb / hbm_total_gb * 100) if hbm_total_gb > 0 else 0
     if hbm_pct > 85 and gpu_util < 70:
-        l1_verdict, l1_color = "Memory-bound", "#d97706"
+        gpu_verdict, gpu_color = "Memory-bound", "#d97706"
     elif hbm_pct > 95:
-        l1_verdict, l1_color = "Near-full", "#dc2626"
+        gpu_verdict, gpu_color = "Near-full", "#dc2626"
     elif gpu_util > 90:
-        l1_verdict, l1_color = "Compute-bound", "#d97706"
+        gpu_verdict, gpu_color = "Compute-bound", "#d97706"
     else:
-        l1_verdict, l1_color = "Balanced", "#16a34a"
+        gpu_verdict, gpu_color = "Balanced", "#16a34a"
 
-    # L2 DRAM — swap pressure
+    # A3 OS / Memory + Block layer — DRAM/swap pressure + block-layer traffic
     if swap_pages > 100:
-        l2_verdict, l2_color = "Swapping", "#dc2626"
+        a3_verdict, a3_color = "Swapping", "#dc2626"
     elif swap_pages > 10:
-        l2_verdict, l2_color = "Light pressure", "#d97706"
+        a3_verdict, a3_color = "Light pressure", "#d97706"
     else:
-        l2_verdict, l2_color = "Clean", "#16a34a"
+        a3_verdict, a3_color = "Clean", "#16a34a"
 
-    # L3 (local storage) — bandwidth + busy-time
+    # A2 I/O drivers (NVMe) — bandwidth + busy-time from driver-level counters
     if nvme_rd_bw > 5000 or nvme_wr_bw > 3000:
-        l3_verdict, l3_color = "Heavy traffic", "#d97706"
+        a2_verdict, a2_color = "Heavy traffic", "#d97706"
     elif read_gb == 0 and write_gb == 0:
-        l3_verdict, l3_color = "Idle", "#64748b"
+        a2_verdict, a2_color = "Idle", "#64748b"
     else:
-        l3_verdict, l3_color = "OK", "#16a34a"
+        a2_verdict, a2_color = "OK", "#16a34a"
+
+    # A1 Hardware — SSD/HBM/DRAM physical characteristics.
+    # We don't get per-run endurance/capacity signals here; the verdict reflects
+    # whether block-layer traffic actually made it to hardware.
+    if read_gb == 0 and write_gb == 0:
+        a1_verdict, a1_color = "Idle", "#64748b"
+    else:
+        a1_verdict, a1_color = "Active", "#16a34a"
 
     # Cross-layer — KV flow thrashing detection
     # Load-back >> backup means same blocks pulled repeatedly = thrashing
@@ -835,9 +888,11 @@ def _per_layer_takeaways_html(*,
         )
     )
 
-    l1_takeaway = (
+    # A4 combined takeaway: runtime (cache-hit) + GPU/HBM. Layered puts these in
+    # the same layer, so the Executive row combines both signals.
+    gpu_takeaway = (
         f"<strong>HBM {hbm_used_gb:.1f}GB / {hbm_total_gb:.0f}GB ({hbm_pct:.0f}% full) "
-        f"at {gpu_util:.1f}% GPU util.</strong> "
+        f"at {gpu_util:.1f}% GPU util · {gpu_power:.0f}W.</strong> "
         + (
             f"High HBM fill with sub-70% GPU utilization signals "
             f"<em>memory-bound</em> decoding — cycles spent waiting on HBM "
@@ -845,27 +900,29 @@ def _per_layer_takeaways_html(*,
             f"quantisation</strong> halves the KV footprint (327 → 163 KB/tok) "
             f"and effectively doubles in-HBM capacity; <strong>chunked prefill</strong> "
             f"reduces per-step HBM pressure during prefill."
-            if l1_verdict == "Memory-bound" else
+            if gpu_verdict == "Memory-bound" else
             f"HBM has headroom and utilization is reasonable — capacity is not "
             f"the binding constraint for this workload."
             if hbm_pct < 70 else
-            f"HBM is near capacity — KV blocks will be evicted to L2 DRAM as the "
-            f"working set grows. Monitor the eviction rate; if it spikes, expand "
-            f"HiCache L2 allocation."
+            f"HBM is near capacity — KV blocks will be evicted to the L2 host-DRAM "
+            f"tier as the working set grows. Monitor the eviction rate; if it "
+            f"spikes, expand HiCache L2 allocation."
         )
     )
+    # Combine A4 runtime cache-hit and A4 GPU/HBM into a single narrative line.
+    a4_takeaway = a4_takeaway + " <br><br>" + gpu_takeaway
 
-    l2_takeaway = (
+    a3_takeaway = (
         f"<strong>Swap activity: {swap_pages:.0f} pages/s · DRAM BW: "
         f"{('not captured' if dram_bw == 0 else f'{dram_bw:.1f} GB/s')}.</strong> "
         + (
-            "No vmstat pressure, no swap-in/out activity. The L2 host-DRAM tier "
+            "No vmstat pressure, no swap-in/out activity. The A3 OS/memory tier "
             "has substantial headroom. " +
             ("DRAM bandwidth wasn't captured (--enable-dram not enabled) but the "
              "absence of swap pressure makes this tier a non-bottleneck. "
              if dram_bw == 0 else "") +
-            "Expand HiCache L2 allocation to reduce L3 local-storage spill."
-            if l2_verdict == "Clean" else
+            "Expand HiCache L2 allocation to reduce spill into the storage tier."
+            if a3_verdict == "Clean" else
             f"Active swap signals memory pressure on the host. Reduce in-memory "
             f"KV cache, or add system memory. This is a structural constraint, "
             f"not a tunable parameter."
@@ -879,30 +936,44 @@ def _per_layer_takeaways_html(*,
     )
     if read_gb > 0 or write_gb > 0:
         rw_ratio = read_gb / max(write_gb, 0.001)
-        l3_takeaway = (
+        a2_takeaway = (
             f"<strong>{nvme_rd_bw:.0f} MB/s read · {nvme_wr_bw:.0f} MB/s write · "
             f"{read_gb:.0f}GB / {write_gb:.0f}GB total {l3_data_note}.</strong> "
             + (
                 f"The {rw_ratio:.0f}:1 read:write ratio is characteristic of a "
                 f"working-set-larger-than-HBM workload — KV blocks are being "
-                f"fetched back from L3 far more than offloaded. "
+                f"fetched back from storage far more than offloaded. "
                 if rw_ratio > 5 else ""
             )
             + (
-                f"L3 (local storage) bandwidth is below peak; the "
+                f"Driver-level bandwidth is below peak; the "
                 f"constraint isn't throughput but the round-trip latency that "
                 f"adds to TPOT on each load-back."
                 if nvme_util < 50 else
-                f"L3 (local storage) needs bandwidth/latency/QD evidence before calling saturation. "
-                f"Consider expanding L2 DRAM tier to reduce L3 local-storage fetch frequency."
+                f"Driver counters show sustained pressure — verify with exact "
+                f"blktrace Q→C queue depth before calling saturation. "
+                f"Consider expanding the A3 DRAM tier to reduce storage fetches."
             )
         )
+        a1_takeaway = (
+            f"<strong>Hardware moved {read_gb+write_gb:.0f} GB "
+            f"({read_gb:.0f} GB read + {write_gb:.0f} GB write) during this run.</strong> "
+            "See §Endurance projection and §Block-latency percentiles below for "
+            "per-device rated-TBW headroom and p50/p95/p99 latency evidence — the "
+            "A1 layer signals whether the SSD hardware itself is the constraint, "
+            "independent of driver-level bandwidth."
+        )
     else:
-        l3_takeaway = (
-            "<strong>No L3 (local storage) traffic observed.</strong> Either the workload's KV "
-            "blocks fit entirely in HBM+L2 DRAM, or instrumentation didn't "
-            "capture L3 (local storage) activity. Re-run with a larger context or more "
-            "concurrent sessions to exercise the L3 (local storage) tier."
+        a2_takeaway = (
+            "<strong>No driver-level I/O observed.</strong> Either the workload's KV "
+            "blocks fit entirely in HBM + host DRAM, or instrumentation didn't "
+            "capture activity through the NVMe driver. Re-run with a larger context "
+            "or more concurrent sessions to exercise the storage tier."
+        )
+        a1_takeaway = (
+            "<strong>Hardware quiescent for this run.</strong> Endurance projection "
+            "and block-latency percentiles are informational only when there is no "
+            "driver-level traffic to interpret."
         )
 
     if backuped_tokens > 0 or loadback_tokens > 0:
@@ -946,32 +1017,33 @@ def _per_layer_takeaways_html(*,
             '<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>'
         )
 
+    # Layered baseline order: A5 → A4 → A3 → A2 → A1 → Cross.
+    # See amoprof/layers/__init__.py::ORDERED_LAYERS for the source of truth.
     rows = [
-        _row("A5", "#3b82f6", "Application Layer",
+        _row("A5", "#24577f", "Application (benchmark harness)",
              f"TTFT {ttft_ms/1000:.1f}s · TPOT {itl_ms:.0f}ms · "
              f"{throughput:.0f} tok/s",
              a5_verdict, a5_color, a5_takeaway,
              chart_id="ch_pct_ttft", chart_fig=_fig("ch_pct_ttft")),
-        _row("A4", "#317bb8", "Inference Runtime",
-             f"Cache hit {cache_hit:.1f}% / token-weighted {cache_hit_tw:.1f}%",
+        _row("A4", "#317bb8", "Inference Runtime (server + GPU/HBM)",
+             (f"Cache hit {cache_hit:.1f}% / token-weighted {cache_hit_tw:.1f}% · "
+              f"HBM {hbm_used_gb:.0f}GB ({hbm_pct:.0f}%) · GPU {gpu_util:.0f}%"),
              a4_verdict, a4_color, a4_takeaway,
              chart_id="ch_thru", chart_fig=_fig("ch_thru")),
-        _row("L1", "#2f8a4e", "HBM / CUDA / GPU",
-             f"HBM {hbm_used_gb:.0f}GB ({hbm_pct:.0f}%) · GPU "
-             f"{gpu_util:.0f}% util · {gpu_power:.0f}W",
-             l1_verdict, l1_color, l1_takeaway,
-             chart_id="ch_gpu", chart_fig=_fig("ch_gpu")),
-        _row("L2", "#7a3f97", "DRAM / OS Memory",
+        _row("A3", "#7a3f97", "OS / Memory manager + Block layer",
              (f"DRAM BW {dram_bw:.1f} GB/s · Swap {swap_pages:.0f} pages/s"
               if dram_bw > 0 else f"Swap {swap_pages:.0f} pages/s"),
-             l2_verdict, l2_color, l2_takeaway,
+             a3_verdict, a3_color, a3_takeaway,
              chart_id="ch_swap", chart_fig=_fig("ch_swap")),
-        _row("L3", "#a45714", "Storage / Block / Device",
+        _row("A2", "#a45714", "I/O drivers (NVMe)",
              f"R {nvme_rd_bw:.0f} MB/s · W {nvme_wr_bw:.0f} MB/s · "
-             f"BW/QD evidence",
-             l3_verdict, l3_color, l3_takeaway,
+             f"driver-level BW/QD evidence",
+             a2_verdict, a2_color, a2_takeaway,
              chart_id="ch_l3_bw", chart_fig=_fig("ch_l3_bw")),
-        _row("Cross", "#0f172a", "KV Cache Flow",
+        _row("A1", "#0f766e", "Hardware (HBM · DRAM · SSD)",
+             f"Read {read_gb:.0f} GB · Write {write_gb:.0f} GB during run",
+             a1_verdict, a1_color, a1_takeaway),
+        _row("Cross", "#0f172a", "Cross-layer",
              f"Evict {int(evicted_tokens):,} · Backup {int(backuped_tokens):,} · "
              f"L2→L1 loadback {int(loadback_tokens):,}",
              x_verdict, x_color, x_takeaway,
@@ -2131,6 +2203,16 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     _gpu_peak_from_ts = _safe_float(_ts_col(gpu_ts, "gpu_util", "DCGM_FI_DEV_GPU_UTIL").get("max", 0.0))
     if _gpu_peak_from_ts > 0:
         gpu_peak = max(gpu_peak, _gpu_peak_from_ts)
+    # 4-value decomposition (matches cache-hit KPI shape) — reused by the KPI
+    # tile and by the A4 layer status row so all Executive surfaces read the
+    # same overall/active/threshold/idle values.
+    _gpu_dec = _gpu_util_decomposition(gpu_ts, gpu)
+    _gpu_overall_mean = _gpu_dec["overall_mean"]
+    _gpu_active_mean_dec = _gpu_dec["active_mean"]
+    _gpu_active_threshold = _gpu_dec["active_threshold_pct"]
+    _gpu_idle_fraction = _gpu_dec["idle_fraction_pct"]
+    if _gpu_dec["peak"] > gpu_peak:
+        gpu_peak = _gpu_dec["peak"]
     hbm_gb     = _safe_float(_pick(gpu, ["hbm_used_gb_mean","hbm_gb","mem_used_gb_mean",
                                           "hbm_used_mb_mean"], 0.0))
     if hbm_gb > 1000:
@@ -3516,21 +3598,36 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     )
 
     # ── Layer status table ────────────────────────────────────────────────────
+    # Rows follow the layered baseline (see amoprof/layers/__init__.py):
+    # A5 → A4 (runtime + GPU/HBM) → A3 (OS memory + block) → A2 (drivers) → A1 (hardware) → Cross.
     layer_rows = [
-        ("A5 · Application",  f"TTFT {ttft_ms/1000:.1f}s, TPOT {tpot_ms:.0f}ms, {tp_active:.1f} tok/s active",
+        ("A5 · Application (benchmark harness)",
+         f"TTFT {ttft_ms/1000:.1f}s, TPOT {tpot_ms:.0f}ms, {tp_active:.1f} tok/s active",
          "warn" if ttft_ms > 5000 else "ok", "HIGH latency" if ttft_ms > 5000 else "OK"),
-        ("A4 · SGLang runtime", f"Cache {cache_hit:.1f}% gauge / {cache_hit_tw:.1f}% weighted",
-         "warn" if cache_hit_gap > 10 else "ok", "Cache gap" if cache_hit_gap > 10 else "OK"),
-        ("L1 · HBM (GPU)",    f"{hbm_pct:.0f}% full, {gpu_util:.0f}% GPU util",
-         "warn" if hbm_pct > 80 else "ok", "Near-full" if hbm_pct > 80 else "OK"),
-        ("L2 · Host DRAM",    f"{dram_total_bw:.1f} GB/s ({dram_total_bw/max(dram_peak_cap,1)*100:.0f}% of peak)" if dram_total_bw else "No PMU data",
-         "ok" if dram_total_bw < dram_peak_cap * 0.5 else "warn",
-         "Headroom ✓" if dram_total_bw < dram_peak_cap * 0.5 else "Elevated"),
-        ("L3 (local storage) tier",     f"{nvme_rd_bw:.0f} MB/s reads, {read_gb:,.0f} GB total",
+        ("A4 · Inference Runtime (server + GPU/HBM)",
+         (f"Cache {cache_hit:.1f}% gauge / {cache_hit_tw:.1f}% weighted · "
+          f"HBM {hbm_pct:.0f}% full · "
+          f"GPU overall {_gpu_overall_mean:.0f}% / active {_gpu_active_mean_dec:.0f}% "
+          f"(>{_gpu_active_threshold:g}%) · idle {_gpu_idle_fraction:.0f}%"),
+         "warn" if (cache_hit_gap > 10 or hbm_pct > 80) else "ok",
+         "Watch" if (cache_hit_gap > 10 or hbm_pct > 80) else "OK"),
+        ("A3 · OS / Memory manager + Block layer",
+         (f"DRAM {dram_total_bw:.1f} GB/s ({dram_total_bw/max(dram_peak_cap,1)*100:.0f}% of peak) · "
+          f"swap {swap_pages:.0f}/s") if dram_total_bw else
+         (f"No DRAM PMU · swap {swap_pages:.0f}/s"),
+         "warn" if (swap_pages > 10 or (dram_total_bw and dram_total_bw > dram_peak_cap * 0.5)) else "ok",
+         "Pressure" if (swap_pages > 10 or (dram_total_bw and dram_total_bw > dram_peak_cap * 0.5)) else "Clean ✓"),
+        ("A2 · I/O drivers (NVMe)",
+         f"{nvme_rd_bw:.0f} MB/s reads, {read_gb:,.0f} GB total",
          "warn" if mb_per_out_token > 10 else "ok",
          "Load-back heavy" if mb_per_out_token > 10 else "OK"),
-        ("OS / vmstat",       "0 swap pages/s" if swap_pages == 0 else f"{swap_pages:.0f} swap/s",
-         "ok" if swap_pages == 0 else "warn", "Clean ✓" if swap_pages == 0 else "SWAP DETECTED"),
+        ("A1 · Hardware (HBM · DRAM · SSD)",
+         f"{read_gb+write_gb:.0f} GB moved · endurance/latency in §A1 charts",
+         "ok" if (read_gb + write_gb) < 1e9 else "warn",
+         "Active" if (read_gb + write_gb) > 0 else "Idle"),
+        ("Cross-layer",
+         (f"KV movement: evict/backup/loadback — see §Bottleneck radar"),
+         "ok", "See §Cross charts"),
     ]
     layer_html = "".join(
         f'<tr><td><b>{_html.escape(a)}</b></td><td>{_html.escape(b)}</td>'        f'<td><span class="state {c}">{_html.escape(d)}</span></td></tr>'
@@ -3637,28 +3734,13 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         f"Model={_html.escape(str(model))}; TP={tp_size}; mem-fraction-static={_html.escape(str(mem_frac))}; "
         f"HiCache/L2={_hicache_size_txt}; L3 backend={_html.escape(str(_tier_res.backend_class if '_tier_res' in locals() else 'unknown'))}."
     )
-    correlation_html = f"""
-<div class="section-label">Cross-layer correlation</div>
-<div class="card" style="border-left:4px solid #a78bfa">
-  <h2>🔗 Cross-layer correlation — setup, token movement, latency, and resource evidence <span class="tag">EXECUTIVE</span></h2>
-  <p class="sub" style="margin-bottom:10px">Moved from End Report in v1.39.61 for readability and decision-making. This card correlates setup, token movement, latency symptoms, and resource evidence before assigning a bottleneck.</p>
-  <table><tbody>
-    <tr><td class="td-key">Setup / runtime</td><td>{_setup_runtime_row}</td></tr>
-    <tr><td class="td-key">Observed latency</td><td><strong>TTFT {ttft_ms/1000:.1f}s</strong>, <strong>TPOT/ITL {tpot_ms:.1f} ms/token</strong>, throughput <strong>{_output_tok_s:.1f} tok/s</strong>.</td></tr>
-    <tr><td class="td-key">Token movement</td><td>{_html.escape(_token_reason)}</td></tr>
-    <tr><td class="td-key">GPU compute</td><td>{_html.escape(_gpu_reason)} GPU mean={gpu_util:.1f}%, peak may still hit 100% during bursts.</td></tr>
-    <tr><td class="td-key">HBM</td><td>{_html.escape(_hbm_reason)} HBM BW active={_hbm_bw_active:.1f}%.</td></tr>
-    <tr><td class="td-key">L2 DRAM</td><td>{_html.escape(_dram_reason)}</td></tr>
-    <tr><td class="td-key">L3 local storage</td><td>{_html.escape(_l3_reason)}</td></tr>
-    <tr><td class="td-key">Interpretation</td><td><strong>Low GPU utilization can mean the pipeline is starved, not that the workload is easy.</strong> Assign bottlenecks only by correlating latency spikes with token movement, cache hit/miss behavior, setup choices, and tier bandwidth/queue evidence.</td></tr>
-  </tbody></table>
-</div>
-"""
-
-    # ── Setup-aware launch guidance removed in v1.39.61 ───────────────────────
-    # Keep Executive focused on observed evidence and correlation. Launch tuning
-    # recommendations were too speculative and duplicated setup_details guidance.
-    launch_recs_html = ""
+    # v1.1.5 lean Executive: the cross-layer correlation prose card and the
+    # setup-aware launch guidance card have been dropped from the Executive tab
+    # to reduce clutter. Their content is either derivable from the Top Findings
+    # + Bottleneck evidence trail (correlation) or duplicates End Report guidance
+    # (launch tuning). The intermediate _setup_runtime_row / _token_reason /
+    # _gpu_reason / _hbm_reason / _dram_reason / _l3_reason locals remain used
+    # elsewhere in this function for scoring.
 
 
     bottleneck_evidence_html = "".join([
@@ -3834,8 +3916,12 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                  _fmt_num(tp_p50 or (tp_active if tp_active > 0 else throughput), " tok/s", 1),
                  "median of active sglang_gen_throughput samples") +
         kpi_card("GPU util",
-                 _fmt_num(gpu_util, "%", 1),
-                 f"mean | {_fmt_num(gpu_peak, '% peak', 0)}") +
+                 _fmt_num(_gpu_active_mean_dec or _gpu_overall_mean or gpu_util, "%", 1),
+                 (f"overall {_fmt_num(_gpu_overall_mean, '%', 1)} · "
+                  f"active {_fmt_num(_gpu_active_mean_dec, '%', 1)} "
+                  f"(>{_gpu_active_threshold:g}%) · "
+                  f"idle {_fmt_num(_gpu_idle_fraction, '%', 1)} · "
+                  f"{_fmt_num(gpu_peak, '% peak', 0)}")) +
         kpi_card("HBM used (all GPUs)",
                  (f"{_fmt_num(hbm_used_total_gb, ' GB', 1)} / "
                   f"{_fmt_num(hbm_total_all_gpus_gb, ' GB', 0)}"
@@ -4243,21 +4329,12 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # blktrace detail block when relevant.
     charts_html = per_layer_block + blktrace_detail_block
 
-    exec_visual_html = _amoprof_build_l3_ssd_exec_visual_analysis_html(
-        raw_dir=raw_dir, duration_s=duration_s, cache_hit=cache_hit,
-        hbm_pct=hbm_pct, dram_total_bw=dram_total_bw, dram_peak_cap=dram_peak_cap,
-        read_gb=read_gb, write_gb=write_gb, nvme_rd_bw=nvme_rd_bw,
-        nvme_wr_bw=nvme_wr_bw, nvme_rd_lat=nvme_rd_lat,
-        nvme_wr_lat=nvme_wr_lat, qd_sum=_qd_sum,
-        backuped_tokens=backuped_tokens, prefetched_tokens=prefetched_tokens,
-        loadback_tokens=loadback_tokens,
-        evicted_tokens=_safe_float(sglang.get("evicted_tokens_total", 0)),
-        kv_bytes_tok_kb=kv_bytes_tok_kb, l3_fs_total_gb=l3_fs_total_gb,
-        l3_fs_used_gb=l3_fs_used_gb, has_blktrace=has_blktrace,
-        l3_traffic_source=l3_traffic_source,
-        l3_logical_rd_bw_mbs=l3_logical_rd_bw_mbs,
-        l3_logical_wr_bw_mbs=l3_logical_wr_bw_mbs,
-    )
+    # v1.1.5 lean Executive: the "Executive combo visual analysis" chart-soup
+    # block (`_amoprof_build_l3_ssd_exec_visual_analysis_html`) is no longer
+    # inserted into the Executive tab. The full chart set is available in the
+    # Layered and End Report tabs via the same chart functions, so building the
+    # duplicate visualisations here purely to embed them in Executive wasted
+    # ~1 MB of HTML and made the tab overwhelming.
 
     # ── Assemble full HTML ────────────────────────────────────────────────────
     title_suffix = f" · {_html.escape(run_label)}" if run_label else ""
@@ -4387,133 +4464,41 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
   <div class="badges">{badges_html}</div>
 </div>
 
+<!-- Lean Executive layout (v1.1.5) — 7 sections aligned with the End Report
+     and Layered report structure. Verbose reference material (cache-hit
+     methodology, L3 reconciliation prose, KPI formula tables, memory-hierarchy
+     narrative, KV$ L3 executive card, cross-layer prose, "how to use this
+     report") is not duplicated here — the End Report tab renders it in full.
+     Bottleneck labels retain their full evidence trail (metric, source,
+     decision rule, confidence) per the "Full evidence table per finding"
+     requirement. -->
+
 <div class="kpi-grid">{kpi_html}</div>
 
-{exec_visual_html}
-
-<div class="card" style="border-left:4px solid #38bdf8">
-  <h2>🎯 Cache hit-rate methodology <span class="tag">SELECTED WINDOW</span></h2>
-  <table><tbody>
-    <tr><td class="td-key">Primary cache hit</td><td><strong>{cache_hit:.2f}%</strong><br><code>cache-served prompt/prefill tokens / (cache-served + compute-served prompt/prefill tokens) × 100</code><br><span class="sub">Reader-facing, benchmark-comparable KPI. Method: <code>{_html.escape(cache_hit_note_prefix)}</code>.</span></td></tr>
-    <tr><td class="td-key">Prefill-token cache hit</td><td><strong>{cache_hit_prefill_token_weighted:.2f}%</strong><br><code>Δrealtime_tokens_total{{mode="prefill_cache"}} / (Δprefill_cache + Δprefill_compute) × 100</code><br><span class="sub">Prometheus equivalent when request/response JSON is unavailable.</span></td></tr>
-    <tr><td class="td-key">Cached/prompt diagnostic</td><td><strong>{cache_hit_token_weighted:.2f}%</strong><br><code>Δsglang_cached_tokens_total / Δsglang_prompt_tokens_total × 100</code><br><span class="sub">Diagnostic only; prompt denominator semantics can differ by SGLang version/export path.</span></td></tr>
-    <tr><td class="td-key">Time weighted gauge</td><td><strong>{cache_hit_time_weighted:.2f}%</strong><br><code>avg_over_time(sglang_cache_hit_rate[report_window]) × 100</code><br><span class="sub">Diagnostic only because the gauge can be overwritten/reset.</span></td></tr>
-    <tr><td class="td-key">Request weighted</td><td><strong>{cache_hit_request_weighted:.2f}%</strong><br><code>Δsglang_request_cache_hit_total / Δsglang_request_total × 100</code><br><span class="sub">Diagnostic request-level view when counters are exported.</span></td></tr>
-  </tbody></table>
-  <p class="sub" style="margin-top:10px">High eviction/offload/backup volume does not necessarily imply a low hit rate. Eviction measures capacity pressure and tier movement; hit rate measures how many incoming prompt/request tokens were served from cache during this selected window.</p>
-</div>
-
-
-<div class="card" style="border-left:4px solid #22c55e">
-  <h2>✅ L3 capacity vs I/O reconciliation <span class="tag">CONSISTENCY</span></h2>
-  <p><strong>L3 (local storage) cache used</strong> is a <strong>df/runtime capacity snapshot</strong> of the cache footprint/residency. It is not a selected-window I/O counter and can include pre-existing or retained cache blocks, warm-up data, filesystem metadata, and preallocated/sparse extents.</p>
-  <p><strong>L3 R/W total</strong> is the selected-window movement delta. For SGLang-backed logical L3, write/offload is computed from <code>Δbackuped_tokens × KV_bytes_per_token</code> and read/onboard is computed from <code>Δprefetched_tokens × KV_bytes_per_token</code>. <code>load_back_tokens_total</code> is an ambiguous hierarchy-restore diagnostic and is not counted as local-SSD read bytes. Physical block I/O is shown separately unless a concrete L3 local SSD L3 block mapping is resolved.</p>
-  <p><strong>Rule:</strong> df used does not need to equal selected-window total I/O. Capacity/footprint and movement/delta are different dimensions.</p>
-</div>
-
-
-<div class="card" style="border-left:4px solid #0ea5e9">
-  <h2>🧩 L3 and L3 and L3 tier mapping <span class="tag">TERMINOLOGY</span></h2>
-  <table><tbody>
-    <tr><td class="td-key">L3 (local storage)</td><td>Node-L3 local SSD/NVMe block telemetry: blktrace, iostat, sysfs queue depth, LBA hot/cold distribution, physical read/write BW, request-size distribution.</td></tr>
-    <tr><td class="td-key">L3 (local storage)</td><td>Remote/shared AI Memory Node or remote storage tier: logical SGLang backing-tier movement only when the backend is remote/shared/unmapped; never use local NVMe blktrace/iostat/LBA charts for this tier.</td></tr>
-    <tr><td class="td-key">Do not mix</td><td>Physical L3 block charts are populated only from local block telemetry. L3 logical movement is shown separately unless a concrete local-storage mapping proves it is actually node-local L3.</td></tr>
-  </tbody></table>
-</div>
-
-<div class="card">
-  <h2>📐 Executive KPI Formula &amp; Metric Sources <span class="tag">PROMETHEUS</span></h2>
-  <table><tbody>
-    <tr><td class="td-key">Cache hit — primary</td><td><code>Σcached_tokens / Σ(cached_tokens + uncached_prompt_tokens) × 100</code> for request <code>meta_info</code>; otherwise <code>Δprefill_cache / (Δprefill_cache + Δprefill_compute) × 100</code> from Prometheus realtime prefill modes.<br><span class="sub">Reader-facing, benchmark-comparable work-avoidance KPI. Cached/prompt counters and gauges are diagnostics.</span></td></tr>
-    <tr><td class="td-key">Cache hit — time weighted</td><td><code>avg_over_time(sglang_cache_hit_rate[report_window]) × 100</code><br><span class="sub">Implemented from all samples inside the report start/end timestamps. Diagnostic gauge view.</span></td></tr>
-    <tr><td class="td-key">Cache hit — request weighted</td><td><code>Δsglang_request_cache_hit_total / Δsglang_request_total × 100</code><br><span class="sub">Shown when SGLang exports request-level counters; otherwise reported as unavailable/0.</span></td></tr>
-    <tr><td class="td-key">Mean TTFT</td><td><code>Δsglang_time_to_first_token_seconds_sum / Δsglang_time_to_first_token_seconds_count × 1000</code><br><span class="sub">Executive tile prefers the selected-window counter delta from <code>sglang_timeseries.csv</code>; summary JSON is fallback only.</span></td></tr>
-    <tr><td class="td-key">P50 TTFT</td><td><code>histogram_quantile(0.50, rate(sglang_time_to_first_token_seconds_bucket[window])) × 1000</code><br><span class="sub">Rendered as a separate p50 tile next to the mean tile.</span></td></tr>
-    <tr><td class="td-key">Mean TPOT / ITL</td><td><code>Δsglang_inter_token_latency_seconds_sum / Δsglang_inter_token_latency_seconds_count × 1000</code><br><span class="sub">Executive tile prefers the selected-window counter delta from <code>sglang_timeseries.csv</code>; inverse throughput is only a final fallback.</span></td></tr>
-    <tr><td class="td-key">P50 TPOT / ITL</td><td><code>histogram_quantile(0.50, rate(sglang_inter_token_latency_seconds_bucket[window])) × 1000</code><br><span class="sub">Rendered as a separate p50 tile next to the mean tile.</span></td></tr>
-    <tr><td class="td-key">Mean E2E</td><td><code>Δsglang_e2e_request_latency_seconds_sum / Δsglang_e2e_request_latency_seconds_count × 1000</code></td></tr>
-    <tr><td class="td-key">Throughput mean</td><td><code>active_mean(sglang_gen_throughput)</code> or <code>Δsglang_generation_tokens_total / Δtime_sec</code></td></tr>
-    <tr><td class="td-key">Throughput p50</td><td><code>median(nonzero_samples(sglang_gen_throughput))</code><br><span class="sub">Typical active decode throughput; shown alongside mean and peak.</span></td></tr>
-    <tr><td class="td-key">L3 (local storage) logical activity</td><td><code>Δsglang_backuped_tokens_total</code> → logical write/offload bytes; <code>Δsglang_prefetched_tokens_total</code> → logical read/onboard bytes. <code>Δsglang_load_back_tokens_total</code> is L2→L1 restore and is shown only as a hierarchy-restore diagnostic because it can include L2/page-cache/HBM reload paths and repeated logical reconstruction; it is not counted as local-SSD read bytes. <code>Δsglang_evicted_tokens_total</code> indicates cache pressure, not storage I/O. Backend resolver: <code>{_html.escape(l3_backend_class)}</code> ({_html.escape(l3_backend_display)}).<br><span class="sub">L3 reconciliation: <strong>{_html.escape(str(l3_reconciliation_status))}</strong> — {_html.escape(str(l3_reconciliation_note))}</span></td></tr>
-    <tr><td class="td-key">DRAM residency</td><td><code>sglang_hicache_host_used_tokens × KV_bytes_per_token</code>, using the selected-window active mean only when the <code>sglang_hicache_host_used_tokens</code> gauge has meaningful variation. If the gauge is present but flat/static, AMOprof still reports its converted value as a clearly labeled residency snapshot from <code>sglang_hicache_host_used_tokens</code>; if the metric is missing, only configured L2 DRAM allocation is shown. Capacity is <code>HiCache size per GPU GB × GPU Count</code> when setup_details provides per-GPU HiCache size.</td></tr>
-    <tr><td class="td-key">L3 capacity vs I/O</td><td><code>df_used_bytes</code> is a point-in-time filesystem/cache-footprint snapshot. <code>Δbackuped_tokens_total × KV_bytes_per_token</code> is selected-window logical write/offload and <code>Δprefetched_tokens_total × KV_bytes_per_token</code> is selected-window logical read/onboard. <code>load_back_tokens_total</code> is L2→L1 restore and is intentionally excluded from SSD/L3-byte totals because it can greatly exceed device footprint and physical I/O. These are different dimensions and are not required to match.</td></tr>
-    <tr><td class="td-key">GPU / host</td><td>GPU metrics come from <code>DCGM_FI_DEV_*</code>; host block I/O and vmstat come from node-exporter/iostat style counters and are not L3 (local storage) unless explicitly mapped.</td></tr>
-  </tbody></table>
-</div>
-
+<!-- ┌──────────── 1. Top findings — prioritised summary ──────────── -->
+<div class="section-label">Highlights · what to look at first</div>
 <div class="card">
   <h2>🔍 Top findings <span class="tag">PRIORITISED</span></h2>
   <ul class="findings">{"".join(findings_items)}</ul>
 </div>
 
-{correlation_html}
-{launch_recs_html}
-
-<div class="section-label">Memory tier analysis</div>
-<div class="card">
-  <h2>🧠 Memory Hierarchy — What the data reveals about each tier</h2>
-  <h3>L1 · HBM (GPU High-Bandwidth Memory)</h3>
-  <p>HBM is the fastest tier (~2 TB/s, {hbm_total:.0f} GB/GPU). It holds model weights
-  and hot KV cache. With <strong>{hbm_pct:.0f}% fill</strong> ({hbm_used_total_gb:.1f}/{hbm_total_all_gpus_gb:.0f} GB across {int(gpu_count)} TP/DP active GPU(s); {hbm_gb:.1f}/{hbm_total:.0f} GB per GPU avg),
-  only ~{hbm_free_gb:.1f} GB/GPU remains for KV — enough for ~{spill_thresh_k:.0f}K tokens at {kv_bytes_tok_kb:.0f} KB/tok.
-  Any context exceeding this triggers overflow to L2 DRAM or L3.
-  The {gpu_util:.0f}% GPU util and {tpot_ms:.0f} ms/tok TPOT reflect the memory-bandwidth-bound
-  decode pattern where every generated token requires reading all active KV plus model weights from HBM.
-  DCGM-active {dcgm_active:.0f}% means the HBM bus is busy {dcgm_active:.0f}% of cycles at observed throughput.</p>
-  <p><strong>Device characteristic implication:</strong> FP8 KV halves per-token cost
-  ({kv_bytes_tok_kb:.0f}→{kv_bytes_tok_kb/2:.0f} KB/tok), doubles in-HBM capacity, and cuts TPOT and L3 (local storage) load simultaneously.</p>
-
-  <h3>L2 · Host DRAM (Staging tier)</h3>
-  <p>DRAM is the intermediate KV staging tier (HiCache L2).
-  {f"AMD PMU Data Fabric counters report <strong>{dram_total_bw:.1f} GB/s mean / {dram_peak_bw:.1f} GB/s peak</strong> total BW against a {dram_peak_cap:.0f} GB/s theoretical peak — only <strong>{dram_total_bw/max(dram_peak_cap,1)*100:.1f}% utilised mean</strong>." if dram_total_bw > 0 else "DRAM PMU data not available for this run — enable --enable-dram for L2 staging visibility."}
-  The traffic pattern shows bursty reads (KV reload into HBM) and moderate writes (KV eviction from HBM into DRAM).</p>
-  <p><strong>Device characteristic implication:</strong> DRAM is <strong>not the bottleneck</strong>.
-  Expanding the DRAM L2 HiCache allocation would absorb more L3 (local storage) traffic at near-zero
-  additional latency cost (L2 DRAM is ~100× faster than L3 for KV blocks).</p>
-
-  <h3>L3 (local storage) tier (KV$ Flash Storage)</h3>
-  <p>L3 (local storage) is the outermost KV tier (HiCache L3 (local storage)). Activity observed:
-  <strong>{read_gb:,.2f} GB reads vs {write_gb:.1f} GB writes</strong>
-  ({('1:' + str(int(round(1/rw_ratio))) if 0 < rw_ratio < 0.5 else f'{rw_ratio:.1f}:1')} R/W ratio) — 
-  {('a write-dominated KV-offload pattern (HiCache backups outpacing load-backs).' if rw_ratio < 0.5 else 'a prefetch/onboard-dominated storage pattern with separate L2→L1 load-back diagnostic.')}
-  {l3_util_phrase}</p>
-  <p><strong>Device characteristic implication:</strong> KV$ L3 (local storage) requirement is directional: use the observed/reconciled dominant path
-  ({'write/offload' if write_gb > read_gb else 'read/prefetch'}) for SSD bandwidth and endurance sizing.
-  Physical LBA/request-size charts come from blktrace completion events; SGLang counters remain the logical KV movement source.</p>
-</div>
-
-<div class="section-label">KV$ L3 (local storage) I/O characterisation</div>
-<div class="card">
-  <h2>💾 KV$ L3 (local storage) I/O — Executive Summary <span class="tag">REQUIREMENT FOUNDATION</span></h2>
-  <p>This run profiles HiCache L3 (local storage) as the outer KV cache tier. The I/O signature is reconciled from SGLang logical L3 movement and local block telemetry; directionality is shown as <strong>logical vs physical</strong> so missing/partial blktrace data does not invert write-heavy offload into prefetch/read-heavy SSD behavior.
-  Key requirement drivers:</p>
-  <ul>{kvssd_req_html}</ul>
-  <p class="sub" style="margin-top:10px">{l3_util_subnote}</p>
-</div>
-
-<div class="section-label">Per-chart takeaways — KV$ L3 (local storage) I/O characterisation</div>
-<div class="card">
-  <h2>📊 Chart-by-Chart Takeaways <span class="tag">KV$ L3 (local storage) WORKLOAD</span></h2>
-  {charts_html}
-</div>
-
-<div class="section-label">Bottleneck mapping and per-layer improvements</div>
+<!-- ┌──────────── 2. Bottleneck mapping + evidence trail ──────────── -->
+<div class="section-label">Bottleneck mapping · A5 → A4 → A3 → A2 → A1 → Cross</div>
 <div class="card">
   <h2>🏗️ Bottleneck → AI Stack Layer Mapping <span class="tag">ACTIONABLE</span></h2>
-  <p class="sub" style="margin-bottom:10px">Every bottleneck label below is backed by a metric trail: exact values, source files/metric families, decision rule, and confidence. This prevents labels such as “L3 bottleneck” from being inferred from one signal like busy-time alone.</p>
+  <p class="sub" style="margin-bottom:10px">Every bottleneck label carries its metric trail: exact values, source files/metric families, decision rule, and confidence. This prevents labels such as “L3 bottleneck” from being inferred from any single signal.</p>
   <div class="evidence-card" style="border-left:4px solid #38bdf8">
     <div class="evidence-title">Bottleneck scoring legend</div>
-    <div class="evidence-rule"><b>Score 0–29:</b> low/no current evidence. <b>30–59:</b> watch / possible contributor. <b>60–79:</b> likely contributor. <b>80–100:</b> high-confidence bottleneck candidate. A high score means investigate first; it does not mean a single metric proved saturation.</div>
-    <div class="evidence-src">Example: high <b>Prefill / request-path latency</b> is driven by high TTFT/TPOT with moderate GPU util, pointing to prompt prefill, request queuing, KV L2→L1 load-back/reconstruction, or scheduler gaps—not automatically GPU compute saturation.</div>
+    <div class="evidence-rule"><b>0–29:</b> low/no current evidence. <b>30–59:</b> watch. <b>60–79:</b> likely contributor. <b>80–100:</b> high-confidence bottleneck candidate. A high score means <em>investigate first</em>, not <em>saturation proven</em>.</div>
   </div>
-  <h3>Evidence trail for bottleneck labels</h3>
+  <h3>Evidence trail per bottleneck label</h3>
   {bottleneck_evidence_html}
-  <h3>Layer status and score summary</h3>
+  <h3>Layer status summary</h3>
   <table>
     <thead><tr><th>Layer</th><th>Key signal</th><th>Status</th></tr></thead>
     <tbody>{layer_html}</tbody>
   </table>
-  <br>
+  <h3>Bottleneck scorecard</h3>
   <table>
     <thead><tr><th>Subsystem</th><th>Score</th><th>Severity</th><th style="width:180px">Evidence</th>
                 <th>Recommended action</th><th style="width:120px">Saturation</th></tr></thead>
@@ -4521,6 +4506,15 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
   </table>
 </div>
 
+<!-- ┌──────────── 3. Per-layer takeaways (A5 → Cross) ──────────── -->
+<div class="section-label">Per-layer takeaways · matches amoprof/layers/</div>
+<div class="card">
+  <h2>📊 Per-Layer Takeaways <span class="tag">A5 → CROSS</span></h2>
+  <p class="sub" style="margin-bottom:12px">One row per AI-stack layer. Order and layer definitions match <code>amoprof/layers/</code> so this Executive view stays in lock-step with the Layered report.</p>
+  {charts_html}
+</div>
+
+<!-- ┌──────────── 4. Priority actions — ranked ──────────── -->
 <div class="card">
   <h2>🚀 Priority Actions <span class="tag">RANKED</span></h2>
   <table>
@@ -4529,22 +4523,30 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
   </table>
 </div>
 
+<!-- ┌──────────── 5. Setup snapshot (collapsed) ──────────── -->
 <div class="section-label">Configuration snapshot</div>
-<div class="card">
-  <h2>⚙️ Server Configuration</h2>
-  <table><tbody>{setup_html}</tbody></table>
-</div>
+<details class="card" style="padding:0;background:#1e293b;border:1px solid #334155;border-radius:14px;">
+  <summary style="cursor:pointer;list-style:none;padding:14px 20px;color:#f1f5f9;font-weight:700;font-size:14px;">
+    ⚙️ Server Configuration — click to expand
+  </summary>
+  <div style="padding:0 20px 18px">
+    <table><tbody>{setup_html}</tbody></table>
+  </div>
+</details>
 
-<div class="card">
-  <h2>📖 How to use this report</h2>
-  <table><tbody>
-    <tr><td class="td-key">🧭 Executive (this tab)</td>
-        <td>Quick findings, memory tier analysis, KV$ L3 (local storage) characterisation, per-chart takeaways, bottleneck mapping. Start here.</td></tr>
-    <tr><td class="td-key">⚡ Interactive tab</td>
-        <td>Hover any chart for exact values. Drag to zoom. Click legend entries to isolate one GPU, tier, or I/O type. Use for time-series correlation.</td></tr>
-    <tr><td class="td-key">📊 End Report tab</td>
-        <td>Full deep-dive report with all 25+ sections, Metric Derivations formulas, bottleneck scorecard, and per-chart explanations.</td></tr>
-  </tbody></table>
+<!-- ┌──────────── 6. Deep-dive references (pointer only) ──────────── -->
+<div class="section-label">Deep-dive references</div>
+<div class="card" style="border-left:4px solid #64748b">
+  <h2>🔗 Reference material lives in the End Report tab</h2>
+  <p class="sub" style="margin-bottom:8px">To keep this tab focused on findings and actions, verbose reference material has been consolidated in the End Report tab. Open the End Report for:</p>
+  <ul style="margin:0;padding-left:22px;color:#e2e8f0;line-height:1.85;font-size:13px">
+    <li>🎯 <strong>Cache-hit methodology</strong> — primary/prefill-token/cached-prompt/time-weighted/request-weighted formulas.</li>
+    <li>📐 <strong>Executive KPI formulas &amp; metric sources</strong> — full Prometheus/counter derivations.</li>
+    <li>✅ <strong>L3 capacity vs I/O reconciliation</strong> — df-snapshot vs Δcounter semantics.</li>
+    <li>🧠 <strong>Memory hierarchy narrative</strong> — A4 HBM · A3 DRAM · A1 SSD device implications.</li>
+    <li>💾 <strong>KV$ L3 I/O requirement foundation</strong> — reconciled logical vs physical directionality.</li>
+    <li>📊 <strong>All 30+ layered charts</strong> — same chart functions as the Layered tab.</li>
+  </ul>
 </div>
 
 </div></body></html>"""
@@ -5021,10 +5023,30 @@ def build_combined_report(
     # backing tier correctly (local SSD vs AI Memory Node / remote). With no
     # local-SSD evidence this resolves to a non-local class and the labels stay
     # "L3 (AI Memory Node / remote storage)" instead of being forced to L3 SSD.
+    # Prefer setup_details.json — it carries the SGLang server_info-derived
+    # `HiCache storage backend` written by cli._server_info_to_setup_details.
+    # Fall back to sglang_summary.json.prometheus_server_info (which is empty
+    # for offline / non-Prometheus runs), then to server_info.json raw.  The
+    # resolver decides L3 (SSD/local file backend) vs L3.5 (mooncake, hf3fs,
+    # or any other remote/disaggregated backend) directly from the observed
+    # hicache_storage_backend value.
     l3_backend_class = ""
     try:
-        _sg = _read_json(_first_existing(raw_dir, ["sglang_summary.json"]) or (raw_dir / "sglang_summary.json"))
-        _setup_for_l3 = dict(_sg.get("prometheus_server_info") or {})
+        _setup_for_l3: dict = {}
+        _setup_path = _first_existing(raw_dir, ["setup_details.json", "setup.json"])
+        if _setup_path is not None:
+            _setup_for_l3 = _read_json(_setup_path) or {}
+        if not _setup_for_l3:
+            _sg = _read_json(_first_existing(raw_dir, ["sglang_summary.json"]) or (raw_dir / "sglang_summary.json"))
+            _setup_for_l3 = dict(_sg.get("prometheus_server_info") or {})
+        # Last-chance fallback: server_info.json raw cache saved by cli._write_setup_details_from_server_info.
+        if not _setup_for_l3 or not (_setup_for_l3.get("HiCache storage backend") or _setup_for_l3.get("hicache_storage_backend")):
+            _si_path = _first_existing(raw_dir, ["server_info.json"])
+            if _si_path is not None:
+                _si = _read_json(_si_path) or {}
+                if _si:
+                    _setup_for_l3 = dict(_setup_for_l3)
+                    _setup_for_l3.setdefault("SGLang server_info raw", _si)
         _launch_for_l3 = str(_setup_for_l3.get("Launch command") or _setup_for_l3.get("launch_command") or "")
         if resolve_l3_backend is not None:
             _res = resolve_l3_backend(_setup_for_l3, _launch_for_l3)

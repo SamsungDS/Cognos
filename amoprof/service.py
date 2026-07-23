@@ -169,8 +169,17 @@ def _persist_service_cycle(
     interval_s: float,
     scrape_s: float,
     args: Any,
-) -> None:
-    """Write a service cycle as a normal local AMOprof run directory."""
+    store: "MetricsStore | None" = None,
+) -> dict[str, dict[str, Any]]:
+    """Write a service cycle as a normal local AMOprof run directory.
+
+    Returns a dict of any additional synthetic-collector summaries produced
+    during persistence (for example the blktrace analyzer's per-op aggregate
+    outputs).  When ``store`` is provided, those summaries are also pushed
+    into it so the Prometheus /metrics endpoint exposes them under the
+    ``amoprof_<pseudo_collector>_<key>`` namespace alongside real collector
+    outputs.
+    """
     all_rows: list[dict[str, Any]] = []
     for name, summary in summaries.items():
         summary_path = raw_dir / f"{name}_summary.json"
@@ -216,6 +225,188 @@ def _persist_service_cycle(
     except Exception as exc:
         log.debug("service: canonical writer skipped: %s", exc)
 
+    # Drop setup_details.json + server_info.json into the cycle's raw/ so the
+    # L3-backend resolver (report/l3_backend.py::resolve_l3_backend) can read
+    # the live hicache_storage_backend value and label the cycle report as
+    # L3 (SSD/local) vs L3.5 (Mooncake / AI Memory Node / remote).  Without
+    # this, service cycles fall through to the "unknown" branch and every
+    # report shows L3.5 regardless of the actual backend.  Also copy any
+    # user-supplied --setup-details / --bench-summary so multi-cycle service
+    # runs produce reports identical to a single --analyze pass.
+    try:
+        from .cli import (_write_setup_details_from_server_info,
+                           _copy_setup_details, _copy_bench_summary)
+        # Prefer live SGLang server_info when the caller passed --sglang-port
+        # or --server-info-url; falls back silently otherwise.
+        _write_setup_details_from_server_info(args, raw_dir, allow_overwrite=True)
+        # If the operator also passed --setup-details or --bench-summary, honor
+        # them so cycle reports reflect the same setup as one-shot runs.
+        _copy_setup_details(args, raw_dir)
+        _copy_bench_summary(args, raw_dir)
+    except Exception as exc:
+        log.debug("service: setup_details/server_info hook skipped: %s", exc)
+
+    # Pre-aggregate blktrace events so the analyze step (or a live consumer of
+    # this cycle dir) has queue-depth, streams, hot-cold, and Q→C latency
+    # already computed.  Mirrors cli._run_amoprof's blktrace-on-analyze pass.
+    # Skipped when no blktrace was collected — the check is cheap and idempotent.
+    try:
+        _blkparse_csv = raw_dir / "blkparse_events.generated.csv"
+        _bin_dir      = raw_dir / "blktrace_data"
+        _has_csv = _blkparse_csv.exists() and _blkparse_csv.stat().st_size > 0
+        _has_bins = _bin_dir.exists() and any(_bin_dir.glob("trace.blktrace.*"))
+        if _has_csv or _has_bins:
+            from .blktrace_analyzer import (
+                analyze as _bt_analyze,
+                analyze_from_binaries as _bt_analyze_bins,
+            )
+            _ba_dir = raw_dir / "blktrace_analysis"
+            _sentinel = _ba_dir / "temporal_read_write_trim_pattern.csv"
+            _need_analyze = (
+                not _sentinel.exists()
+                or (_has_csv and _sentinel.stat().st_mtime < _blkparse_csv.stat().st_mtime)
+            )
+            if _need_analyze:
+                _ba_dir.mkdir(parents=True, exist_ok=True)
+                # Check whether CSV actually has data rows (headers only means
+                # a prior parse failed).  Fall through to binaries when that
+                # happens and binaries are available.
+                _csv_has_rows = False
+                if _has_csv:
+                    try:
+                        with _blkparse_csv.open("r", encoding="utf-8") as _fh:
+                            _fh.readline()  # header
+                            _csv_has_rows = bool(_fh.readline().strip())
+                    except Exception:
+                        _csv_has_rows = False
+                if _csv_has_rows:
+                    _bt_analyze(_blkparse_csv, _ba_dir)
+                elif _has_bins:
+                    _bt_analyze_bins(_bin_dir, _ba_dir,
+                                      max_events=getattr(args, "blktrace_max_events", None))
+                if _sentinel.exists():
+                    log.info("service: blktrace_analyzer produced %s", _ba_dir)
+    except Exception as exc:
+        log.debug("service: blktrace analysis hook skipped: %s", exc)
+
+    # ── Extra scalar aggregates from downstream analyzer outputs ─────────────
+    # Every collector's own summary is already in `summaries` (and therefore
+    # already in the MetricsStore).  The blktrace analyzer runs *after* the
+    # cycle collectors stop and writes its own aggregate JSON/CSV under
+    # blktrace_analysis/; those numeric aggregates would otherwise never reach
+    # the Prometheus /metrics endpoint.  Gather them under stable pseudo-
+    # collector names so the Prometheus exposition emits
+    # ``amoprof_blktrace_analysis_<key>`` and
+    # ``amoprof_blktrace_qd_<key>`` families for every enabled cycle.
+    extra_summaries: dict[str, dict[str, Any]] = {}
+
+    def _numeric_only(d: dict[str, Any]) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for k, v in d.items():
+            if isinstance(v, bool):
+                out[str(k)] = 1 if v else 0
+                continue
+            if isinstance(v, (int, float)) and not (isinstance(v, float) and v != v):
+                out[str(k)] = v
+        return out
+
+    def _load_json(p: Path) -> dict[str, Any]:
+        try:
+            if p.exists() and p.stat().st_size > 0:
+                return json.loads(p.read_text(encoding="utf-8")) or {}
+        except Exception:
+            pass
+        return {}
+
+    def _load_csv_summary(p: Path, key_col: str, ns: str,
+                           value_cols: "list[str] | None" = None) -> dict[str, Any]:
+        """Fold a small analyzer CSV into flat scalar keys.
+
+        The analyzer emits per-op rollups like bandwidth_per_stream_summary.csv
+        (rows keyed by op R/W/D, columns bw_mbs_mean, count, ...).  These are
+        genuinely scalar signals — one number per (op, column) — so we flatten
+        them into MetricsStore-friendly gauge keys instead of publishing raw
+        tabular data.
+
+        The ``ns`` prefix keeps these per-op keys out of the summary.json's
+        already-flat namespace (e.g. summary.json exports ``read_iops_mean``
+        as a whole-window scalar; the CSV would collide unless we prefix it as
+        ``stream_read_iops_mean`` etc.).  ``value_cols=None`` folds in every
+        numeric column found in the CSV.
+        """
+        out: dict[str, Any] = {}
+        try:
+            if not (p.exists() and p.stat().st_size > 0):
+                return out
+            with p.open("r", encoding="utf-8", newline="") as fh:
+                reader = csv.DictReader(fh)
+                for row in reader:
+                    op = _safe_name(str(row.get(key_col) or "").strip() or "any").lower()
+                    if not op:
+                        continue
+                    for col, v in row.items():
+                        if col == key_col:
+                            continue
+                        if value_cols is not None and col not in value_cols:
+                            continue
+                        try:
+                            fv = float(v)
+                        except (TypeError, ValueError):
+                            continue
+                        if fv != fv:
+                            continue
+                        out[f"{ns}_{op}_{_safe_name(col)}"] = fv
+        except Exception:
+            pass
+        return out
+
+    _ba_dir = raw_dir / "blktrace_analysis"
+    if _ba_dir.is_dir():
+        # Whole-window per-op bytes / event counts / IOPS from the analyzer.
+        _ba_summary = _numeric_only(_load_json(_ba_dir / "summary.json"))
+        # Extend with per-op stream/skew/degradation aggregates that live as
+        # short CSVs; each row is one op (read/write/trim), so we flatten to
+        # <op>_<column> keys.
+        # Per-op CSV rollups.  Column names differ across analyzer versions,
+        # so fold every numeric column and let namespace-prefixed keys avoid
+        # colliding with summary.json's whole-window scalars.
+        _ba_summary.update(_load_csv_summary(
+            _ba_dir / "bandwidth_per_stream_summary.csv", "op", ns="stream",
+        ))
+        _ba_summary.update(_load_csv_summary(
+            _ba_dir / "access_skew_summary.csv", "op", ns="skew",
+        ))
+        _ba_summary.update(_load_csv_summary(
+            _ba_dir / "bandwidth_degradation.csv", "op", ns="deg",
+        ))
+        _ba_summary.update(_load_csv_summary(
+            _ba_dir / "request_size_random_seq_correlation.csv", "op", ns="rand",
+        ))
+        if _ba_summary:
+            extra_summaries["blktrace_analysis"] = _ba_summary
+
+        # Queue-depth aggregate (mean/p50/p95/p99/max, time-at-QD-≥ N%).
+        _qd_summary = _numeric_only(_load_json(_ba_dir / "queue_depth_summary.json"))
+        if _qd_summary:
+            extra_summaries["blktrace_qd"] = _qd_summary
+
+        # Optional Q→C latency histogram summary (blktrace_latency_summary.json
+        # is emitted by newer analyzer versions; older runs miss this file).
+        _lat_summary = _numeric_only(_load_json(_ba_dir / "blktrace_latency_summary.json"))
+        if _lat_summary:
+            extra_summaries["blktrace_latency"] = _lat_summary
+
+    # Push everything into the MetricsStore so the Prometheus endpoint exposes
+    # the new metric families the next time it is scraped.  Merge the extras
+    # into the returned summaries dict too so any future consumer sees a
+    # single unified per-cycle view.
+    if store is not None:
+        for _pseudo, _agg in extra_summaries.items():
+            if _agg:
+                store.update(_pseudo, _agg)
+    for _pseudo, _agg in extra_summaries.items():
+        summaries.setdefault(_pseudo, _agg)
+
     meta = {
         "run_id": cycle_dir.name,
         "label": cycle_dir.name,
@@ -243,6 +434,7 @@ def _persist_service_cycle(
     # Duplicate a compact meta file into raw/ because older aggregate/analyze
     # paths sometimes look in raw/summary.json first.
     (raw_dir / "summary.json").write_text(json.dumps(meta, indent=2, default=_json_default), encoding="utf-8")
+    return extra_summaries
 
 ALWAYS_COLLECTORS: list[str] = [
     "iostat", "smart", "ssd_hw", "vmstat", "nvlink_pcie",
@@ -736,6 +928,7 @@ def run_service(args: Any) -> int:
                 collectors=collectors, summaries=cycle_summaries, raw_paths=raw_paths,
                 start_epoch=cycle_start_epoch, end_epoch=cycle_end_epoch,
                 interval_s=interval_s, scrape_s=scrape_s, args=args,
+                store=store,
             )
         except Exception as exc:
             log.warning("service: failed to persist timestamped local cycle %d: %s", cycle, exc)
