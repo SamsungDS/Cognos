@@ -865,6 +865,196 @@ def compute_cache_hit_kpis(raw_dir: Path | None = None,
         "cache_hit_json_source": str(req.get("source", "")) if req else "",
     }
 
+
+# ─── L3.5 (AI Memory Node / remote KV store) capacity utilization ────────────
+# Ordered most-direct-first; the first pair that yields a percentage wins.
+_L35_FILL_SOURCES = (
+    ("mooncake_used_bytes", "mooncake_capacity_bytes",
+     "mooncake_used_over_capacity_bytes"),
+    ("mooncake_segment_used_bytes", "mooncake_segment_capacity_bytes",
+     "mooncake_segment_allocated_over_total_bytes"),
+    ("mooncake_file_used_bytes", "mooncake_file_capacity_bytes",
+     "mooncake_file_allocated_over_total_bytes"),
+)
+
+
+def _ratio_to_pct_scale(vals: list[float]) -> float:
+    """Return 100.0 when a series looks like a 0..1 ratio, else 1.0.
+
+    A metric named `*_fill_ratio` conventionally exports 0..1, but some
+    exporters publish 0..100 under the same name. Same normalisation the
+    cache-hit gauge already applies.
+    """
+    finite = [v for v in vals if v == v]
+    if not finite:
+        return 1.0
+    return 100.0 if max(finite) <= 1.5 else 1.0
+
+
+def _l35_paired_fill(rows: list[dict[str, Any]], used_metric: str,
+                     cap_metric: str) -> tuple[list[float], float, float]:
+    """Per-sample used/capacity % for one L3.5 tier pair.
+
+    Returns (per_sample_pcts, peak_used_gb, capacity_gb). Capacity is taken as
+    the window maximum rather than the first sample because a Mooncake store's
+    capacity grows as clients mount segments — it is not a constant.
+    """
+    used_col = _find_col(rows, used_metric)
+    cap_col = _find_col(rows, cap_metric)
+    if not used_col:
+        return [], 0.0, 0.0
+    pcts: list[float] = []
+    used_vals: list[float] = []
+    cap_vals: list[float] = []
+    for r in rows:
+        u = _safe_float(r.get(used_col), 0.0)
+        c = _safe_float(r.get(cap_col), 0.0) if cap_col else 0.0
+        if u > 0:
+            used_vals.append(u)
+        if c > 0:
+            cap_vals.append(c)
+            pcts.append(min(100.0, u / c * 100.0))
+    return (pcts,
+            (max(used_vals) / 1e9 if used_vals else 0.0),
+            (max(cap_vals) / 1e9 if cap_vals else 0.0))
+
+
+def compute_l35_kpis(raw_dir: Path | None = None,
+                     rows: Any | None = None) -> dict[str, Any]:
+    """Canonical L3.5 (AI Memory Node / remote KV store) capacity utilization.
+
+    L1 and L2 fill come from SGLang's own token counters and L3 from a df
+    snapshot of the HiCache mount. L3.5 has no token counter — the store
+    reports bytes — so utilization is bytes-resident ÷ bytes-capacity.
+
+    Source priority
+    ───────────────
+      1. `mooncake_fill_ratio`         the store's own ratio. Preferred because
+                                       it is computed inside the store and so
+                                       cannot be skewed by `used` and
+                                       `capacity` landing on different scrape
+                                       instants or carrying different labels.
+      2. `mooncake_used_bytes`       ÷ `mooncake_capacity_bytes`  (aggregate)
+      3. `mooncake_segment_used_bytes` ÷ `..._capacity_bytes` (DRAM segment pool)
+      4. `mooncake_file_used_bytes`    ÷ `..._capacity_bytes` (file / flash tier)
+
+    Segment and file percentages are reported whenever available, not only when
+    they win the priority order: one blended aggregate hides whether the store
+    is full in RAM or on flash, and a saturated segment pool is precisely what
+    forces spill to the file tier.
+
+    `kv_l35_available` is False when no capacity is exported anywhere. Callers
+    must render "—" in that case rather than 0% — reporting zero for a missing
+    denominator is the trap that makes `kv_l3_used_pct` read a healthy-looking
+    0% when its denominator was never found.
+
+    Two caveats are recorded rather than silently corrected:
+      * `used` counts physical bytes, so a replicated KV object is counted once
+        per replica. `kv_l35_replica_count` is reported so a reader can divide
+        to recover the logical footprint.
+      * The store is a general object store. In an SGLang deployment it is
+        effectively all KV, but that is a property of the deployment, not a
+        guarantee the metric makes.
+    """
+    rd = _amoprof_resolve_raw_dir(Path(raw_dir)) if raw_dir is not None else None
+    rr = _rows_from_any(rows)
+    if not rr and rd is not None:
+        rr = _read_csv_rows(rd / "sglang_timeseries.csv")
+
+    out: dict[str, Any] = {
+        "kv_l35_available": False,
+        "kv_l35_fill_pct": 0.0,
+        "kv_l35_fill_pct_peak": 0.0,
+        "kv_l35_fill_pct_timeline": 0.0,
+        "kv_l35_segment_fill_pct": 0.0,
+        "kv_l35_file_fill_pct": 0.0,
+        "kv_l35_used_gb": 0.0,
+        "kv_l35_capacity_gb": 0.0,
+        "kv_l35_replica_count": 0.0,
+        "kv_l35_fill_source": "",
+        "kv_l35_fill_formula": "bytes_resident / bytes_capacity",
+        "kv_l35_samples": 0,
+    }
+    if not rr:
+        return out
+
+    # Resolve all three byte pairs once: the per-tier breakdown is reported
+    # regardless of which source wins the priority order, and the GB figures
+    # must be populated even when the store's own fill_ratio supplies the
+    # percentage.
+    pairs = {label: _l35_paired_fill(rr, used_metric, cap_metric)
+             for used_metric, cap_metric, label in _L35_FILL_SOURCES}
+    seg_pcts, seg_used_gb, seg_cap_gb = pairs[
+        "mooncake_segment_allocated_over_total_bytes"]
+    file_pcts, file_used_gb, file_cap_gb = pairs[
+        "mooncake_file_allocated_over_total_bytes"]
+    out["kv_l35_segment_fill_pct"] = _mean([v for v in seg_pcts if v > 0])
+    out["kv_l35_file_fill_pct"] = _mean([v for v in file_pcts if v > 0])
+    out["kv_l35_segment_used_gb"] = round(seg_used_gb, 3)
+    out["kv_l35_segment_capacity_gb"] = round(seg_cap_gb, 3)
+    out["kv_l35_file_used_gb"] = round(file_used_gb, 3)
+    out["kv_l35_file_capacity_gb"] = round(file_cap_gb, 3)
+
+    replica_vals = _active_values(rr, "mooncake_replica_count")
+    out["kv_l35_replica_count"] = _mean(replica_vals)
+
+    # GB figures, from the first pair that reports occupancy. Independent of
+    # the percentage source so a fill_ratio-only exporter still shows bytes.
+    for _, _, label in _L35_FILL_SOURCES:
+        _p, _used_gb, _cap_gb = pairs[label]
+        if _used_gb > 0 or _cap_gb > 0:
+            out["kv_l35_used_gb"] = round(_used_gb, 3)
+            out["kv_l35_capacity_gb"] = round(_cap_gb, 3)
+            break
+
+    # 1. The store's own ratio.
+    ratio_col = _find_col(rr, "mooncake_fill_ratio")
+    pcts: list[float] = []
+    source = ""
+    if ratio_col:
+        raw_vals = _column_values(rr, ratio_col)
+        scale = _ratio_to_pct_scale(raw_vals)
+        pcts = [min(100.0, v * scale) for v in raw_vals if v >= 0]
+        if any(v > 0 for v in pcts):
+            source = ("mooncake_fill_ratio_reported_by_store"
+                      + ("_scaled_from_0_1_ratio" if scale != 1.0 else ""))
+        else:
+            pcts = []
+
+    # 2-4. used ÷ capacity, in tier order.
+    if not source:
+        for _, _, label in _L35_FILL_SOURCES:
+            tier_pcts, _used_gb, _cap_gb = pairs[label]
+            if not any(v > 0 for v in tier_pcts):
+                continue
+            pcts = tier_pcts
+            source = label
+            out["kv_l35_used_gb"] = round(_used_gb, 3)
+            out["kv_l35_capacity_gb"] = round(_cap_gb, 3)
+            break
+
+    if not source:
+        # Used bytes may be present with no capacity anywhere. Report the
+        # occupancy so the tier is visibly active, but leave the percentage
+        # unavailable — there is no denominator to divide by.
+        if out["kv_l35_used_gb"] > 0:
+            out["kv_l35_fill_source"] = "used_bytes_only_no_capacity_exported"
+        return out
+
+    # Idle samples belong in the timeline figure but not in the headline: an
+    # all-samples mean over a run that starts with an empty store reports a
+    # near-zero fill for a tier that spent the workload half full. Same reason
+    # the cache-hit tile separates its active mean from its time-weighted one.
+    active = [v for v in pcts if v > 0]
+    out["kv_l35_available"] = True
+    out["kv_l35_fill_pct"] = _mean(active)
+    out["kv_l35_fill_pct_peak"] = max(pcts) if pcts else 0.0
+    out["kv_l35_fill_pct_timeline"] = _mean(pcts)
+    out["kv_l35_fill_source"] = source
+    out["kv_l35_samples"] = len(active)
+    return out
+
+
 def compute_common_kpis(raw_dir: Path) -> dict[str, Any]:
     """Compute canonical common KPI values once for all report tabs."""
     raw_dir = _amoprof_resolve_raw_dir(Path(raw_dir))
@@ -949,6 +1139,10 @@ def compute_common_kpis(raw_dir: Path) -> dict[str, Any]:
     # The reader-facing primary KPI is cache-served prefill/prompt tokens divided
     # by total cache-served + compute-served prefill/prompt tokens.
     out.update(compute_cache_hit_kpis(raw_dir=raw_dir, rows=rows, summary=summary))
+
+    # L3.5 capacity utilization. L1/L2 fill are token-derived and L3 is a df
+    # snapshot; this tier reports bytes, so it needs its own resolver.
+    out.update(compute_l35_kpis(raw_dir=raw_dir, rows=rows))
 
     # Round only at render time; keep numeric values here.
     return out

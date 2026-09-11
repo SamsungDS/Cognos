@@ -37,6 +37,7 @@ try:
         apply_common_kpis_to_html,
         write_common_kpis_json,
         compute_cache_hit_kpis,
+        compute_l35_kpis,
         _read_json,
         _safe_float,
         _amoprof_resolve_raw_dir,
@@ -49,7 +50,7 @@ try:
 except Exception:  # direct-script fallback
     from common_kpis import (  # type: ignore
         compute_common_kpis, apply_common_kpis_to_html, write_common_kpis_json,
-        compute_cache_hit_kpis,
+        compute_cache_hit_kpis, compute_l35_kpis,
         _read_json, _safe_float, _amoprof_resolve_raw_dir,
         _amoprof_parse_launch_arg, _amoprof_missing, _amoprof_augment_setup_from_launch,
         _amoprof_storage_label_cleanup,
@@ -3104,6 +3105,80 @@ def _kv_token_delta(raw_dir, candidates) -> "float | None":
             d = series[-1]
         return max(0.0, d)
     return None
+def _amoprof_tier_fill_from_occupancy(occ: "list") -> "dict":
+    """Per-tier KV utilization, derived from the tier-occupancy series.
+
+    `occ` is the list the KV-tier-occupancy chart plots: one entry per tier with
+    a per-sample value series `v`, a ceiling `cap` in the same unit, and the
+    provenance `label` the chart shows.  Reading the tiles off the same list is
+    deliberate — a utilization tile that disagreed with the chart printed
+    directly above it would be worse than no tile at all, and each tier's
+    ceiling has already been resolved there (including the local-vs-remote L3
+    gating and the df-snapshot-over-derived preference).
+
+    Returns {tier: {pct, peak, used, cap, label, available, reason}}.
+
+    `available` is False when that tier exports no ceiling. Utilization is then
+    left at 0.0 and the caller must render "—": a percentage of an unknown
+    capacity is not a number, and reporting 0% for a missing denominator is the
+    failure mode that makes an idle-looking tier indistinguishable from an
+    unmeasured one.
+
+    The mean excludes empty samples for the same reason `compute_l35_kpis`
+    does: a run that starts with a cold tier would otherwise report a
+    near-zero fill for a tier that spent the workload half full.
+    """
+    out: dict = {}
+    for entry in (occ or []):
+        try:
+            tier = str(entry.get("tier") or "")
+            if not tier:
+                continue
+            vals = [float(v) for v in (entry.get("v") or [])
+                    if v is not None and v == v]
+            cap = float(entry.get("cap") or 0.0)
+            used_peak = max(vals) if vals else 0.0
+            pcts = ([min(100.0, v / cap * 100.0) for v in vals] if cap > 0 else [])
+            active = [v for v in pcts if v > 0]
+            out[tier] = {
+                "pct": (sum(active) / len(active)) if active else 0.0,
+                "peak": max(pcts) if pcts else 0.0,
+                "used": used_peak,
+                "cap": cap,
+                "label": str(entry.get("label") or ""),
+                "available": bool(cap > 0 and pcts),
+                "reason": "",
+            }
+        except Exception:
+            continue
+    return out
+
+
+def _amoprof_empty_tier(reason: str) -> "dict":
+    """Placeholder for a tier that reported nothing, carrying the reason why.
+
+    A tier with no data still gets a tile.  "L3 is not configured", "L3 is
+    configured but idle" and "the L3 collector did not run" are three different
+    findings, and omitting the tile collapses them into one indistinguishable
+    absence — the reader cannot tell whether the tier is missing from the run or
+    missing from the report.
+    """
+    return {"pct": 0.0, "peak": 0.0, "used": 0.0, "cap": 0.0,
+            "label": "", "available": False, "reason": str(reason or "")}
+
+
+def _amoprof_fmt_tokens(v: float) -> str:
+    """Compact token count for a tile: 1.2M / 340K / 512."""
+    try:
+        v = float(v)
+    except Exception:
+        return "—"
+    if v >= 1e6:
+        return f"{v / 1e6:.1f}M"
+    if v >= 1e3:
+        return f"{v / 1e3:.0f}K"
+    return f"{v:.0f}"
+
 
 def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                                   interactive_figures: "dict | None" = None,
@@ -3184,6 +3259,38 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     except Exception:
         pct_ts = {}
     bench = {}  # Prometheus-only report: benchmark files are not used as data sources
+    # L3.5 capacity utilization, from the shared resolver so this tile, the
+    # Metrics object and common_kpis.json cannot disagree. Resolved here rather
+    # than inline at the tile because the tile sits inside a large f-string
+    # concatenation and `_sg_raw` below is assigned inside a try/ that may not
+    # have run.
+    try:
+        _l35_kpis = compute_l35_kpis(raw_dir=raw_dir) if compute_l35_kpis is not None else {}
+    except Exception:
+        _l35_kpis = {}
+    # `_l35kpi_` prefix, not `_l35_`: the chart block further down reuses
+    # `_l35_cap_gb` / `_l35_used` for the segment-only series it plots, and this
+    # is all one long function, so a shared name silently overwrote the tile's
+    # capacity with the segment ceiling.
+    _l35kpi_ok        = bool(_l35_kpis.get("kv_l35_available", False))
+    _l35kpi_fill_pct  = _safe_float(_l35_kpis.get("kv_l35_fill_pct"), 0.0)
+    _l35kpi_fill_peak = _safe_float(_l35_kpis.get("kv_l35_fill_pct_peak"), 0.0)
+    _l35kpi_seg_pct   = _safe_float(_l35_kpis.get("kv_l35_segment_fill_pct"), 0.0)
+    _l35kpi_file_pct  = _safe_float(_l35_kpis.get("kv_l35_file_fill_pct"), 0.0)
+    _l35kpi_used_gb   = _safe_float(_l35_kpis.get("kv_l35_used_gb"), 0.0)
+    _l35kpi_cap_gb    = _safe_float(_l35_kpis.get("kv_l35_capacity_gb"), 0.0)
+    _l35kpi_replicas  = _safe_float(_l35_kpis.get("kv_l35_replica_count"), 0.0)
+    _l35kpi_src       = str(_l35_kpis.get("kv_l35_fill_source", "") or "")
+    # Per-tier KV utilization for the L1/L2/L3 tiles. Populated from `_occ`
+    # further down, inside the same try/ that builds the tier-occupancy chart;
+    # initialised here so the KPI grid cannot NameError if that block raises.
+    # Seeded with a reason for every tier so the tiles still render — and still
+    # say why they are empty — when that block raises before populating them.
+    _tier_fill: dict = {
+        _t: _amoprof_empty_tier(
+            "tier-occupancy resolution did not complete for this run")
+        for _t in ("L1", "L2", "L3")
+    }
     gpu_ts    = _read_csv_summary(_first_existing(raw_dir, ["gpu_timeseries.csv"]))
     nvme_ts   = _read_csv_summary(_first_existing(raw_dir, ["nvme_driver_timeseries.csv",
                                                                "iostat_timeseries.csv"]))
@@ -5797,6 +5904,13 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             "mooncake_put_requests_total", "mooncake_get_requests_total",
             "mooncake_put_errors_total", "mooncake_get_errors_total",
             "mooncake_segment_used_bytes", "mooncake_segment_capacity_bytes",
+            # File/flash tier of the store, reported separately from the DRAM
+            # segment pool: one aggregate figure hides whether the store is
+            # full in RAM or on flash, and a saturated segment pool is what
+            # forces spill to the file tier.
+            "mooncake_file_used_bytes", "mooncake_file_capacity_bytes",
+            # Used bytes are physical, so replicas are counted individually.
+            "mooncake_replica_count",
             "mooncake_get_duration_seconds_sum", "mooncake_get_duration_seconds_count",
             "mooncake_put_duration_seconds_sum", "mooncake_put_duration_seconds_count",
             "inter_token_latency_seconds_sum", "inter_token_latency_seconds_count",
@@ -5978,6 +6092,10 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             or _sg_raw.get("mooncake_segment_used_bytes")
             or _sg_raw.get("mooncake_used_bytes") or [])]
         _mc_fill = _sg_raw.get("mooncake_fill_ratio") or []
+        if _mc_fill:
+            _mc_fill_finite = [v for v in _mc_fill if v == v]
+            if _mc_fill_finite and max(_mc_fill_finite) <= 1.5:
+                _mc_fill = [v * 100.0 if v == v else v for v in _mc_fill]
         # Master-exporter signals: occupancy and request rates.
         _mc_cap = [v / 1e9 for v in (
             _cap_raw.get("l35_store_mem_cap_b")
@@ -7551,6 +7669,37 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                          "cap": _l3_tok_cap, "color": "#22c55e"})
         # Keep tiers in physical order regardless of which were found.
         _occ.sort(key=lambda z: {"L1": 0, "L2": 1, "L3": 2, "L3.5": 3}.get(z["tier"], 9))
+
+        # Utilization tiles read off this same list, so each tile agrees with
+        # the chart it sits above and inherits the ceiling resolution done here.
+        _tier_fill = _amoprof_tier_fill_from_occupancy(_occ)
+        # Every tier gets a tile, including tiers that contributed no series to
+        # `_occ` at all.  L3 is the common case: the gate above admits it only
+        # on a df snapshot of a local HiCache mount or on non-zero backup
+        # movement to a LOCAL backend, so a Mooncake run (L3.5) or a run where
+        # the ssd_hw collector never sampled the mount produced no L3 entry and
+        # the tile vanished — while L1/L2/L3.5 rendered normally. Absent and
+        # idle are different findings, so name the cause instead of omitting it.
+        if "L1" not in _tier_fill:
+            _tier_fill["L1"] = _amoprof_empty_tier(
+                "no SGLang KV pool gauge exported "
+                "(kv_used_tokens / num_used_tokens / token_usage)")
+        if "L2" not in _tier_fill:
+            _tier_fill["L2"] = _amoprof_empty_tier(
+                "HiCache host tier not enabled — no hicache_host_used_tokens")
+        if "L3" not in _tier_fill:
+            if _l3_remote:
+                _l3_why = (f"backing tier is remote"
+                           f"{' (' + _l3_backend + ')' if _l3_backend else ''} — "
+                           f"that KV movement is L3.5; no local L3 is configured")
+            elif not _l3_local_configured:
+                _l3_why = "no local L3 storage configured in this run"
+            elif _l3_fs_used <= 0:
+                _l3_why = ("local L3 configured, but no df snapshot from the "
+                           "ssd_hw collector and no backup movement in the window")
+            else:
+                _l3_why = "no L3 residency could be resolved for this window"
+            _tier_fill["L3"] = _amoprof_empty_tier(_l3_why)
 
         # Span the analysed window, not just where samples happen to exist.
         # Prefer an explicit window from the run metadata; otherwise use the
@@ -10078,10 +10227,89 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
              f"from setup_details.json · not a measured runtime delta"),
             accent=(l3_fs_used_pct >= 85 and l3_capacity_source == "df/SMART runtime snapshot"),
          ) if (has_l3 and (l3_fs_total_gb > 0 or l3_fs_used_gb > 0)) else "")) +
-        # v1.20.30: display l2_dram_used_gb directly.  The upstream
-        # TP-vs-full decision at line ~4522 has already handled the
-        # "impossible full-model" case; no cosmetic surgery here.
-        ((kpi_card("L2 KV residency (est.)",
+        # ── KV utilization, one tile per memory tier ──────────────────────────
+        # L1/L2/L3 come from the same per-tier occupancy series the tier chart
+        # plots (`_occ`), so a tile can never contradict the chart above it.
+        # Each shows: fill % of that tier's own ceiling, peak, used/capacity in
+        # tokens, and the provenance label — which matters because the tiers are
+        # not equally direct. L1 and L2 are SGLang's own counters; L3 is either a
+        # df snapshot or DERIVED from backup−prefetch movement.
+        #
+        # All three always render. There are three distinct empty states and the
+        # tile distinguishes them, because collapsing them loses the finding:
+        #   has ceiling + samples -> "42.5 %"
+        #   occupancy, no ceiling -> "—" + resident tokens + "no capacity"
+        #   no data at all        -> "—" + why the tier reported nothing
+        # The reason goes in `target=`, not the note: tile_note() replaces prose
+        # with the registry formula and keeps only fragments containing a digit,
+        # so a digitless explanation would be stripped and the tile would show a
+        # bare "—".
+        "".join(
+            kpi_card(
+                f"{_t} KV utilization",
+                (f"{_tier_fill[_t]['pct']:.1f} %"
+                 if _tier_fill[_t]["available"] else "—"),
+                ((f"peak {_tier_fill[_t]['peak']:.1f}% · "
+                  f"{_amoprof_fmt_tokens(_tier_fill[_t]['used'])} / "
+                  f"{_amoprof_fmt_tokens(_tier_fill[_t]['cap'])} tok · "
+                  f"{_tier_fill[_t]['label']}")
+                 if _tier_fill[_t]["available"] else
+                 (f"{_amoprof_fmt_tokens(_tier_fill[_t]['used'])} tok resident · "
+                  f"{_tier_fill[_t]['label']}"
+                  if _tier_fill[_t]["used"] > 0 else "not measured in this run")),
+                accent=(_tier_fill[_t]["peak"] >= 85),
+                target=("" if _tier_fill[_t]["available"] else
+                        (_tier_fill[_t]["reason"] or
+                         "no capacity exported for this tier — "
+                         "utilization % cannot be computed")),
+                target_tip=("" if _tier_fill[_t]["available"] else
+                            ("This tier reported occupancy but no ceiling, so there "
+                             "is no denominator to divide by. The tile shows resident "
+                             "tokens instead of a percentage rather than implying 0%."
+                             if _tier_fill[_t]["used"] > 0 else
+                             "The tile is kept so an unconfigured tier is not confused "
+                             "with a tier whose collector failed to sample.")),
+            )
+            for _t in ("L1", "L2", "L3")
+        ) +
+        # L3.5 comes from compute_l35_kpis instead of `_occ`: that resolver
+        # works in bytes and tries the store's own fill_ratio, then the
+        # aggregate, segment and file byte pairs in turn, so it reports a
+        # utilization on exporters where `_occ` (aggregate bytes only) finds
+        # nothing. It is also the value written to common_kpis.json and Metrics.
+        # Rendered unconditionally, with the same three empty states as L1/L2/L3.
+        (kpi_card(
+            "L3.5 KV utilization",
+            (f"{_l35kpi_fill_pct:.1f} %" if _l35kpi_ok else "—"),
+            ((f"peak {_l35kpi_fill_peak:.1f}% · "
+              + (f"{_l35kpi_used_gb:.1f} / {_l35kpi_cap_gb:.0f} GB · "
+                 if _l35kpi_cap_gb > 0 else "")
+              + (f"segment {_l35kpi_seg_pct:.1f}% · " if _l35kpi_seg_pct > 0 else "")
+              + (f"file {_l35kpi_file_pct:.1f}% · " if _l35kpi_file_pct > 0 else "")
+              + _l35kpi_src)
+             if _l35kpi_ok else
+             (f"{_l35kpi_used_gb:.1f} GB resident"
+              if _l35kpi_used_gb > 0 else "not measured in this run")),
+            accent=(_l35kpi_fill_peak >= 85),
+            target=((f"×{_l35kpi_replicas:.0f} replicas — logical KV ≈ "
+                     f"{_l35kpi_fill_pct / _l35kpi_replicas:.1f}%")
+                    if (_l35kpi_ok and _l35kpi_replicas > 1) else
+                    ("" if _l35kpi_ok else
+                     ("no capacity metric exported by the store — "
+                      "utilization % cannot be computed"
+                      if _l35kpi_used_gb > 0 else
+                      "no L3.5 store exporter scraped "
+                      "(mooncake_* / master_* metrics absent)"))),
+            target_tip=("Used bytes are physical, so a replicated KV object is "
+                        "counted once per replica. Divide by mooncake_replica_count "
+                        "for the logical footprint. The store is a general object "
+                        "store; in an SGLang deployment it is effectively all KV, "
+                        "but that is a property of the deployment."
+                        if _l35kpi_ok else
+                        "The tile is kept so a deployment with no AI Memory Node is "
+                        "not confused with one whose exporter was not scraped."),
+         )) +
+        ((kpi_card("L2 DRAM used",
                  f"{_fmt_num(l2_dram_used_gb, ' GB', 1)} / {_fmt_num(l2_dram_capacity_gb, ' GB', 0)}",
                  l2_dram_tile_note
              ) if l2_dram_capacity_gb > 0 and l2_dram_used_gb > 0 else

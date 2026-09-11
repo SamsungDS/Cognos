@@ -136,15 +136,16 @@ except Exception:  # direct-script fallback
         reconcile_l3_io = None  # type: ignore
 
 try:
-    from amoprof.report.common_kpis import compute_common_kpis, apply_common_kpis_to_html, write_common_kpis_json, compute_cache_hit_kpis
+    from amoprof.report.common_kpis import compute_common_kpis, apply_common_kpis_to_html, write_common_kpis_json, compute_cache_hit_kpis, compute_l35_kpis
 except Exception:  # direct-script fallback
     try:
-        from common_kpis import compute_common_kpis, apply_common_kpis_to_html, write_common_kpis_json, compute_cache_hit_kpis  # type: ignore
+        from common_kpis import compute_common_kpis, apply_common_kpis_to_html, write_common_kpis_json, compute_cache_hit_kpis, compute_l35_kpis  # type: ignore
     except Exception:
         compute_common_kpis = None  # type: ignore
         apply_common_kpis_to_html = None  # type: ignore
         write_common_kpis_json = None  # type: ignore
         compute_cache_hit_kpis = None  # type: ignore
+        compute_l35_kpis = None  # type: ignore
 
 
 def _amoprof_gpu_util_decomposition(gpu_util_samples: "list | tuple | None",
@@ -6500,6 +6501,21 @@ class Metrics:
     kv_l3_used_gb: float = 0.0       # L3 HiCache used space (GB)
     kv_l3_avail_gb: float = 0.0      # L3 HiCache available space (GB)
     kv_l3_used_pct: float = 0.0      # L3 HiCache fill % (used/total)
+    # L3.5 (AI Memory Node / remote KV store) capacity utilization. Unlike L1/L2
+    # (token counters) and L3 (df snapshot), this tier reports bytes, so fill is
+    # bytes_resident / bytes_capacity. Resolved by common_kpis.compute_l35_kpis;
+    # kv_l35_available is False when no capacity is exported, in which case the
+    # percentages must render as "—" and not 0%.
+    kv_l35_available: bool = False     # True only when a capacity denominator exists
+    kv_l35_fill_pct: float = 0.0       # active-sample mean fill % (idle excluded)
+    kv_l35_fill_pct_peak: float = 0.0  # peak fill % over the window
+    kv_l35_fill_pct_timeline: float = 0.0  # all-sample mean (diagnostic)
+    kv_l35_segment_fill_pct: float = 0.0   # DRAM segment pool only
+    kv_l35_file_fill_pct: float = 0.0      # file / flash tier only
+    kv_l35_used_gb: float = 0.0        # peak bytes resident in the store (GB)
+    kv_l35_capacity_gb: float = 0.0    # store capacity (GB); grows as clients mount
+    kv_l35_replica_count: float = 0.0  # used bytes count replicas; divide to get logical
+    kv_l35_fill_source: str = ""       # which denominator produced kv_l35_fill_pct
     nvme_device_capacity_gb: float = 0.0  # NVMe device total raw capacity (GB)
     kv_l1_capacity_tokens: int = 0    # L1 HBM pool capacity (tokens)
     kv_l2_capacity_tokens: int = 0    # L2 DRAM pool capacity (tokens)
@@ -8449,6 +8465,28 @@ def extract_metrics(data: dict) -> Metrics:
 
     m.kv_l1_fill_pct        = round(l1_used / l1_cap * 100, 1) if l1_cap > 0 else 0
     m.kv_l2_fill_pct        = round(l2_used / l2_cap * 100, 1) if l2_cap > 0 else 0
+
+    # ── L3.5 fill (AI Memory Node / remote KV store) ──────────────────────────
+    # Computed here rather than only in main() so every entry point that builds
+    # a Metrics object gets it — run_layered_analyze() calls extract_metrics
+    # directly and never reaches main()'s common_kpis seeding block.
+    # compute_l35_kpis accepts a DataFrame via its _rows_from_any path, so the
+    # resolver has exactly one implementation shared with common_kpis.json.
+    if compute_l35_kpis is not None and isinstance(sg_ts_df, pd.DataFrame) and not sg_ts_df.empty:
+        try:
+            _l35 = compute_l35_kpis(rows=sg_ts_df)
+            m.kv_l35_available        = bool(_l35.get("kv_l35_available", False))
+            m.kv_l35_fill_pct         = round(float(_l35.get("kv_l35_fill_pct", 0) or 0), 1)
+            m.kv_l35_fill_pct_peak    = round(float(_l35.get("kv_l35_fill_pct_peak", 0) or 0), 1)
+            m.kv_l35_fill_pct_timeline= round(float(_l35.get("kv_l35_fill_pct_timeline", 0) or 0), 1)
+            m.kv_l35_segment_fill_pct = round(float(_l35.get("kv_l35_segment_fill_pct", 0) or 0), 1)
+            m.kv_l35_file_fill_pct    = round(float(_l35.get("kv_l35_file_fill_pct", 0) or 0), 1)
+            m.kv_l35_used_gb          = float(_l35.get("kv_l35_used_gb", 0) or 0)
+            m.kv_l35_capacity_gb      = float(_l35.get("kv_l35_capacity_gb", 0) or 0)
+            m.kv_l35_replica_count    = float(_l35.get("kv_l35_replica_count", 0) or 0)
+            m.kv_l35_fill_source      = str(_l35.get("kv_l35_fill_source", "") or "")
+        except Exception:
+            pass
 
     # ── Per-tier read latency per token ───────────────────────────────────────
     # KV read time = kv_bytes_per_token / tier_bandwidth
@@ -17211,6 +17249,17 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
         _kpi("L1→L2 Offload", f"{m.kvb_l1_offload_rate_blk_s:.4f}", "blk/s", "#fff7ed", "#9a3412",
              "HBM → DRAM"),
     ]
+    # L3.5 sits alongside L1/L2 rather than in the L3 block below: it is a
+    # capacity tier with its own reported ceiling, not blktrace-observed block
+    # I/O. Shown only when a capacity denominator exists — see
+    # common_kpis.compute_l35_kpis for why 0% would be misleading otherwise.
+    if getattr(m, "kv_l35_available", False):
+        kvb_base_cards.append(
+            _kpi("L3.5 KV utilization", f"{m.kv_l35_fill_pct:.1f}", "%", "#ecfeff", "#0e7490",
+                 (f"peak {m.kv_l35_fill_pct_peak:.1f}% · "
+                  + (f"{m.kv_l35_used_gb:.1f} / {m.kv_l35_capacity_gb:.0f} GB · "
+                     if m.kv_l35_capacity_gb > 0 else "")
+                  + f"{m.kv_l35_fill_source}")))
     if _l3_cards_active:
         kvb_base_cards.extend([
             _kpi("L3 Peak Resident", f"{_l3_peak_blocks:,}", "blk", "#faf5ff", "#7e22ce",

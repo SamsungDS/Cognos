@@ -321,8 +321,33 @@ _RAW: Dict[str, str] = {
         "Δsglang_prompt_tokens_total ÷ Δt per sampling interval  [tok/s] · the End Report tile is Δtokens ÷ Δt over the WHOLE window, which includes idle time and reads lower",
     "output throughput tok/s per interval":
         "Δsglang_generation_tokens_total ÷ Δt per sampling interval  [tok/s] · the End Report tile averages over the whole window instead",
+    # ---- Per-tier KV utilization tiles (Executive) ----
+    # One tile per tier, all as "% of that tier's own ceiling". The four are NOT
+    # equally direct and the formulas say so: L1/L2 are SGLang's own counters,
+    # L3 is a df snapshot or a movement-derived estimate, L3.5 is store bytes.
+    "l1 kv utilization":
+        "sglang_kv_used_tokens (else sglang_token_usage × pool size) ÷ "
+        "sglang_max_total_num_tokens × 100  [%] — mean over active samples",
+    "l2 kv utilization":
+        "sglang_hicache_host_used_tokens ÷ sglang_hicache_host_total_tokens "
+        "× 100  [%] — mean over active samples",
+    "l3 kv utilization":
+        "hicache_fs_used_gb ÷ hicache_fs_total_gb × 100  [%] (df snapshot, "
+        "measured) — else DERIVED (Δbackuped − Δprefetched tokens) ÷ "
+        "(l3_fs_total_gb ÷ KV bytes/token) × 100; the tile note states which",
     "l3 5 store used": "master_allocated_bytes ÷ 1e9  [GB]",
     "l3 5 fill ratio": "master_allocated_bytes ÷ master_total_capacity_bytes × 100  [%]",
+    # The tile resolves the denominator in priority order, so the formula names
+    # every candidate: the store's own ratio first, then aggregate, segment
+    # (DRAM pool) and file (flash) byte pairs. kv_l35_fill_source in
+    # common_kpis.json records which one actually produced the number — without
+    # it the percentage cannot be interpreted, since the four denominators mean
+    # different things. Mean excludes idle samples; an all-sample mean over a
+    # run that starts with an empty store reads near zero for a half-full tier.
+    "l3 5 kv utilization":
+        "mooncake_fill_ratio, else mooncake_used_bytes ÷ mooncake_capacity_bytes, "
+        "else segment_, else file_ pair × 100  [%] — mean over active samples · "
+        "see kv_l35_fill_source in common_kpis.json for the denominator used",
     "l3 5 put ops/s": "Δmaster_put_end_requests_total ÷ Δt  [ops/s]",
     "l3 5 read bw (mb/s)": "Δ(mem_cache_hit_bytes_total + file_cache_hit_bytes_total) ÷ Δt ÷ 1e6  [MB/s]",
     "l3 5 errors/s": "Δ(master_put_end_failures_total + master_get_replica_list_failures_total) ÷ Δt  [ops/s]",
