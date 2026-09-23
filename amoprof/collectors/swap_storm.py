@@ -6,6 +6,10 @@ Part of the amoprof.collectors package.  Registers itself via
 from __future__ import annotations
 
 import csv
+# Some call sites in this module reference `_csv`; alias it so a
+# NameError cannot surface at runtime inside a try/except and be
+# reported as a parse failure rather than a missing import.
+_csv = csv
 import json
 import logging
 import os

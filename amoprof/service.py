@@ -62,8 +62,40 @@ def _resolve_dram_tool(args: Any) -> str:
     if vendor == "amd":
         return "amduprof"
     if vendor == "intel":
-        return "intel-pcm"
+        # Prefer PCM only when a usable pcm-memory exists AND the CPU is one
+        # the build recognises.  PCM refuses to run on a microarchitecture it
+        # was not compiled for — every pcm-* binary present, every one exiting
+        # with "unsupported processor" — and auto-selecting it there yields a
+        # collector that runs and silently produces nothing.  perf-imc reads
+        # the same uncore counters through the kernel and has no such table.
+        import shutil as _sh
+        if _sh.which("pcm-memory") or _sh.which("pcm-memory.x"):
+            if not _pcm_rejects_this_cpu():
+                return "intel-pcm"
+            log.warning("service: Intel PCM does not support this CPU model; "
+                        "falling back to --dram-tool perf-imc")
+        elif _sh.which("perf"):
+            log.info("service: pcm-memory not found; using perf-imc for DRAM bandwidth")
+        return "perf-imc" if _sh.which("perf") else "intel-pcm"
     return "intel-pcm"
+
+
+def _pcm_rejects_this_cpu() -> bool:
+    """True when the installed PCM build refuses this microarchitecture.
+
+    Cheap probe against any pcm-* utility: they share the CPU-support table,
+    so one refusal means they all refuse.
+    """
+    import shutil as _sh
+    import subprocess as _sp
+    probe = _sh.which("pcm-raw") or _sh.which("pcm-core") or _sh.which("pcm-numa")
+    if not probe:
+        return False
+    try:
+        out = _sp.run([probe], capture_output=True, text=True, timeout=20)
+        return "unsupported processor" in (out.stdout or "").lower()
+    except Exception:
+        return False
 
 
 def _json_default(obj: Any) -> str:
@@ -235,14 +267,86 @@ def _persist_service_cycle(
     # runs produce reports identical to a single --analyze pass.
     try:
         from .cli import (_write_setup_details_from_server_info,
-                           _copy_setup_details, _copy_bench_summary)
+                           _copy_setup_details, _copy_bench_summary,
+                           _write_gpu_config, _write_model_config)
         # Prefer live SGLang server_info when the caller passed --sglang-port
         # or --server-info-url; falls back silently otherwise.
-        _write_setup_details_from_server_info(args, raw_dir, allow_overwrite=True)
+        # Re-fetch server_info only every --server-info-interval-s.  The
+        # configuration changes on restart, not continuously, so polling it
+        # every cycle adds request load to the inference server for no new
+        # information.  The previously fetched file is REUSED between polls
+        # rather than skipped, so the published metric stays continuous and a
+        # gap in it means the server was unreachable, not that we chose not to
+        # look.
+        _si_once = bool(getattr(args, "server_info_once", False))
+        _si_iv = float(getattr(args, "server_info_interval_s", 300.0) or 0.0)
+        if _si_once:
+            # argparse rejects both flags together, but AMOPROF_SERVER_INFO_ONCE
+            # can still combine with an explicit --server-info-interval-s.  Say
+            # which one is in effect rather than letting the interval look
+            # honoured when it is not.
+            if _si_iv and _si_iv != 300.0:
+                log.warning("service: --server-info-once is set (or "
+                            "AMOPROF_SERVER_INFO_ONCE=1), so "
+                            "--server-info-interval-s %.0f is ignored; "
+                            "server_info is fetched once at start", _si_iv)
+            # Fetch once, then reuse forever.  An interval no run will reach.
+            _si_iv = float("inf")
+        _si_now = time.time()
+        _si_last = getattr(run_service, "_last_server_info_ts", 0.0)
+        # The cache must outlive a single cycle.  raw_dir is
+        # <output>/service_cycle_<ts>/raw, so raw_dir.parent is a NEW directory
+        # every cycle — the cache written there was never found again and the
+        # fallback re-fetched on every cycle regardless of the interval.
+        # Anchor it to the run root, which is stable for the service's life.
+        _si_cache = raw_dir.parent.parent / ".amoprof_server_info_cache.json"
+        if (_si_iv <= 0 and not _si_once) or (_si_now - _si_last) >= _si_iv:
+            _write_setup_details_from_server_info(args, raw_dir, allow_overwrite=True)
+            run_service._last_server_info_ts = _si_now
+            try:
+                _fresh = raw_dir / "server_info.json"
+                if _fresh.exists() and _fresh.stat().st_size > 0:
+                    import shutil as _sh_si
+                    _sh_si.copyfile(_fresh, _si_cache)
+            except Exception:
+                pass
+        else:
+            # Within the interval: reuse the last good fetch.
+            try:
+                if _si_cache.exists() and _si_cache.stat().st_size > 0:
+                    import shutil as _sh_si
+                    _sh_si.copyfile(_si_cache, raw_dir / "server_info.json")
+                else:
+                    # No cache yet — this is the first cycle.  Fetch, and
+                    # populate the cache so later cycles can reuse it;
+                    # omitting that made --server-info-once fetch every cycle,
+                    # since the reuse branch had nothing to reuse.
+                    _write_setup_details_from_server_info(
+                        args, raw_dir, allow_overwrite=True)
+                    # Only stamp the time if we had never fetched; stamping on
+                    # every fallback restarted the interval each cycle.
+                    if not _si_last:
+                        run_service._last_server_info_ts = _si_now
+                    _fresh2 = raw_dir / "server_info.json"
+                    if _fresh2.exists() and _fresh2.stat().st_size > 0:
+                        import shutil as _sh_si2
+                        _sh_si2.copyfile(_fresh2, _si_cache)
+            except Exception:
+                pass
         # If the operator also passed --setup-details or --bench-summary, honor
         # them so cycle reports reflect the same setup as one-shot runs.
         _copy_setup_details(args, raw_dir)
         _copy_bench_summary(args, raw_dir)
+        # Static GPU inventory from nvidia-smi.  Written *after* server_info
+        # so the TP/DP values are available and gpu_config.json can record
+        # how many devices the inference server actually occupies — that
+        # count, not the physical device count, is the HBM-capacity
+        # denominator the reports need.
+        _write_gpu_config(raw_dir, args)
+        # Served model architecture (from --model-path).  Written per
+        # cycle so an offline analyze of this run can compute KV
+        # bytes/token exactly rather than inferring it from the name.
+        _write_model_config(raw_dir, args)
     except Exception as exc:
         log.debug("service: setup_details/server_info hook skipped: %s", exc)
 
@@ -396,6 +500,68 @@ def _persist_service_cycle(
         if _lat_summary:
             extra_summaries["blktrace_latency"] = _lat_summary
 
+        # GPU device inventory (gpu_config.json) is written by
+        # cli._write_gpu_config() rather than by a collector, so its numbers —
+        # per-GPU HBM capacity, device count, TP/DP, and the capacity actually
+        # occupied by the inference server — would never reach /metrics.
+        # Publish them as amoprof_gpu_config_<key>.
+        _gpu_cfg_raw = _load_json(raw_dir / "gpu_config.json")
+        _gpu_cfg_summary = _numeric_only(_gpu_cfg_raw)
+        if _gpu_cfg_raw.get("gpus"):
+            # Per-device HBM capacity, so a mixed-GPU host is visible.
+            for _g in _gpu_cfg_raw.get("gpus") or []:
+                try:
+                    _idx = int(_g.get("index"))
+                except Exception:
+                    continue
+                _mt = _g.get("memory_total_gb")
+                if isinstance(_mt, (int, float)):
+                    _gpu_cfg_summary[f"gpu{_idx}_memory_total_gb"] = float(_mt)
+        if _gpu_cfg_summary:
+            extra_summaries["gpu_config"] = _gpu_cfg_summary
+
+        # Model architecture as amoprof_model_config_* gauges, so a Prometheus
+        # scrape carries enough to compute KV bytes/token exactly without the
+        # raw files being retained.
+        _mdl_raw = _load_json(raw_dir / "model_config.json")
+        _mdl_summary = _numeric_only(_mdl_raw)
+        if _mdl_summary:
+            extra_summaries["model_config"] = _mdl_summary
+
+        # Inference-server configuration, captured EVERY cycle rather than
+        # once at analyze time.  A server restarted mid-window with a
+        # different model, TP size or cache configuration otherwise has its
+        # whole window attributed to whichever config happened to be live when
+        # the report ran — silently mixing two different systems into one set
+        # of numbers.
+        #
+        # Numeric fields go out as gauges.  A stable hash of the full config
+        # goes out alongside them: a change in that single series is what lets
+        # analyze detect a reconfiguration without having to diff every field.
+        _srv_raw = _load_json(raw_dir / "server_info.json")
+        if _srv_raw:
+            _srv_summary = _numeric_only(_srv_raw)
+            try:
+                import hashlib as _hl
+                import json as _js
+                _ident = {k: _srv_raw.get(k) for k in sorted(_srv_raw)
+                          if k in ("model_path", "served_model_name", "tp_size",
+                                   "dp_size", "page_size", "enable_hierarchical_cache",
+                                   "hicache_ratio", "hicache_size",
+                                   "hicache_storage_backend", "max_total_num_tokens",
+                                   "kv_cache_dtype", "attention_backend")}
+                if _ident:
+                    _blob = _js.dumps(_ident, sort_keys=True, default=str)
+                    # Truncated to stay exactly representable as a float64
+                    # gauge; Prometheus would silently round a longer integer.
+                    _srv_summary["config_hash"] = float(
+                        int(_hl.sha256(_blob.encode()).hexdigest()[:12], 16))
+                    _srv_summary["config_fields"] = float(len(_ident))
+            except Exception:
+                pass
+            if _srv_summary:
+                extra_summaries["server_config"] = _srv_summary
+
     # Push everything into the MetricsStore so the Prometheus endpoint exposes
     # the new metric families the next time it is scraped.  Merge the extras
     # into the returned summaries dict too so any future consumer sees a
@@ -436,17 +602,65 @@ def _persist_service_cycle(
     (raw_dir / "summary.json").write_text(json.dumps(meta, indent=2, default=_json_default), encoding="utf-8")
     return extra_summaries
 
-ALWAYS_COLLECTORS: list[str] = [
+def _registry_collector_names() -> "tuple[list[str], list[str]]":
+    """(always, optional) collector names, derived from CollectorRegistry.
+
+    These lists used to be hardcoded and duplicated the registry, so a newly
+    registered collector was silently rejected by the ``--collectors`` filter
+    even though it was importable and instantiable — ``--collectors network``
+    was dropped with the service reporting only the collectors it recognised.
+    Deriving them means registering a collector is the only step required.
+
+    ``CollectorSpec.optional`` decides the bucket: opt-in collectors (those
+    gated behind an ``--enable-*`` flag) are optional, the rest are on by
+    default.
+    """
+    always: list[str] = []
+    optional: list[str] = []
+    try:
+        from .base import CollectorRegistry
+        from . import collectors as _collectors  # noqa: F401  (triggers registration)
+        for spec in CollectorRegistry.all():
+            name = getattr(spec, "name", "")
+            if not name:
+                continue
+            bucket = optional if getattr(spec, "optional", False) else always
+            if name not in bucket:
+                bucket.append(name)
+    except Exception:  # pragma: no cover - registry unavailable
+        pass
+    # Names the service supports that are not registry-backed collectors
+    # (handled by dedicated code paths in this module).
+    for extra in ("perf", "bpf", "nsys"):
+        if extra not in optional and extra not in always:
+            optional.append(extra)
+    return sorted(always), sorted(optional)
+
+
+# Default-on set when --collectors is omitted.  Kept explicit rather than
+# derived: `CollectorSpec.optional` marks flag-gated collectors, but some
+# non-optional ones (biolatency, queue_depth_sysfs) need BPF/sudo and were
+# historically not started by default.  Deriving the default set would have
+# silently switched them on, so only the *accepted* set is derived.
+DEFAULT_COLLECTORS: list[str] = [
     "iostat", "smart", "ssd_hw", "vmstat", "nvlink_pcie",
-    "nvme_driver", "gpu", "dram", "power", "pcm", "discard", "swap_storm",
+    "nvme_driver", "gpu", "dram", "network", "power", "pcm",
+    "discard", "swap_storm", "cpu",
 ]
 
+_REG_ALWAYS, _REG_OPTIONAL = _registry_collector_names()
+
+ALWAYS_COLLECTORS: list[str] = DEFAULT_COLLECTORS
+
+# Everything --collectors will accept: every registered collector plus the
+# service-handled extras.  Registering a collector is all that is needed for
+# it to become selectable.
 OPTIONAL_COLLECTORS: list[str] = [
-    "biolatency", "blktrace", "biosnoop", "amduprof_pcm",
-    "sglang", "perf", "bpf", "nsys",
+    n for n in (_REG_ALWAYS + _REG_OPTIONAL) if n not in DEFAULT_COLLECTORS
 ]
 
-AVAILABLE_COLLECTORS: list[str] = ALWAYS_COLLECTORS + OPTIONAL_COLLECTORS
+AVAILABLE_COLLECTORS: list[str] = sorted(set(DEFAULT_COLLECTORS)
+                                         | set(_REG_ALWAYS) | set(_REG_OPTIONAL))
 
 
 # ---------------------------------------------------------------------------
@@ -685,11 +899,27 @@ def _build_collectors(
                 lambda _c=_cls, _d=_dev, _a=args, _x=_ctx: _c.for_device(_d, _a, _x)
             )
 
-    if sglang_port is not None:
+    # `sglang` is an ordinary optional collector and must respect --collectors
+    # like every other one.  It was gated only on --sglang-port, so it ran
+    # whenever a port was configured even if the operator had excluded it —
+    # and when Prometheus already scrapes the inference server directly, this
+    # collector is a second scrape of the same endpoint for the same data.
+    # Only an EXPLICIT --collectors list can exclude it.  `enabled` falls back
+    # to DEFAULT_COLLECTORS, which does not contain "sglang", so keying off
+    # `enabled` alone would have disabled the collector for everyone who never
+    # named it — a silent regression rather than the opt-out that was asked
+    # for.
+    _explicit = str(getattr(args, "collectors", "") or "").strip()
+    _sglang_wanted = (("sglang" in enabled) if
+                      (_explicit and _explicit.lower() != "all") else True)
+    if sglang_port is not None and _sglang_wanted:
         from .collectors import SGLangMetricsSampler
         factories["sglang"] = (
             lambda _c=SGLangMetricsSampler, _a=args, _x=_host_ctx: _c.for_host(_a, _x)
         )
+    elif sglang_port is not None:
+        log.info("service: sglang collector not in --collectors; skipping the "
+                 "local /metrics scrape (Prometheus may already be scraping it)")
 
     if pid is not None:
         # perf and bpf are PID-scoped; look them up by SPEC and hand the
@@ -766,8 +996,11 @@ def run_service(args: Any) -> int:
         enabled = {c.strip() for c in collectors_arg.split(",") if c.strip()}
         unknown = enabled - set(AVAILABLE_COLLECTORS)
         if unknown:
-            log.warning("service: unrecognised collector(s) %s - ignored",
-                        sorted(unknown))
+            # Loud: a silently-dropped name looks identical to a collector
+            # that started and produced nothing.
+            log.error("service: unrecognised collector(s) %s — IGNORED. "
+                      "Known collectors: %s",
+                      ", ".join(sorted(unknown)), ", ".join(AVAILABLE_COLLECTORS))
             enabled -= unknown
 
     if getattr(args, "enable_blktrace",     False): enabled.add("blktrace")
@@ -788,6 +1021,58 @@ def run_service(args: Any) -> int:
             enabled.add("pcm")
         elif _dram_tool != "none":
             log.warning("service: unsupported --dram-tool %r; DRAM PMU collector disabled", _dram_tool)
+        # DRAM *bandwidth* needs an external PMU tool.  Enabling the flag
+        # without the binary present yields an enabled-but-silent collector,
+        # which downstream looks identical to "the flag was never set" — so
+        # check for the binary here and say which one is missing.
+        import shutil as _sh
+        # Check the CONFIGURED binary path first (--amduprof-pcm-bin /
+        # --intel-pcm-memory-bin, env AMOPROF_AMDUPROF_PCM_BIN), then PATH.
+        # These tools are normally installed outside PATH — AMDuProf lives
+        # under /opt/AMDuProf_*/bin — so a PATH-only check false-warns on a
+        # correctly configured host.
+        _explicit = {"amduprof": getattr(args, "amduprof_pcm_bin", ""),
+                     "intel-pcm": getattr(args, "intel_pcm_memory_bin", ""),
+                     }.get(_dram_tool, "")
+        _need = {"amduprof": ("AMDuProfPcm", "AMDuProfCLI"),
+                 "intel-pcm": ("pcm-memory", "pcm-memory.x", "pcm"),
+                 "perf-imc": ("perf",)}.get(_dram_tool, ())
+        _found = ""
+        if _explicit:
+            _ep = Path(str(_explicit)).expanduser()
+            if _ep.exists() and os.access(_ep, os.X_OK):
+                _found = str(_ep)
+            elif _ep.exists():
+                log.warning("service: %s exists but is not executable — "
+                            "DRAM bandwidth will not be collected", _ep)
+        if not _found:
+            for _b in _need:
+                _w = _sh.which(_b)
+                if _w:
+                    _found = _w
+                    break
+        if _found:
+            log.info("service: DRAM PMU collector = %s (%s)", _dram_tool, _found)
+        else:
+            log.warning(
+                "service: --enable-dram resolved to %r but no usable binary was "
+                "found. Checked configured path %r and PATH for %s. DRAM "
+                "bandwidth will NOT be collected, so the report will show no L2 "
+                "bandwidth charts. Point --amduprof-pcm-bin (env "
+                "AMOPROF_AMDUPROF_PCM_BIN) at the binary, or use --dram-tool "
+                "perf-imc (needs perf_event_paranoid <= 0).",
+                _dram_tool, _explicit or "(unset)", "/".join(_need))
+        # A vendor mismatch is silent otherwise: AMDuProf cannot read Intel
+        # memory-controller counters and vice versa, so the collector runs and
+        # returns nothing.
+        _vendor = _detect_cpu_vendor()
+        if _vendor == "intel" and _dram_tool == "amduprof":
+            log.warning("service: --dram-tool amduprof on an INTEL CPU — AMDuProf "
+                        "cannot read Intel memory-controller counters. Use "
+                        "--dram-tool intel-pcm or perf-imc.")
+        elif _vendor == "amd" and _dram_tool == "intel-pcm":
+            log.warning("service: --dram-tool intel-pcm on an AMD CPU — use "
+                        "--dram-tool amduprof.")
 
     if getattr(args, "enable_all",          False):
         enabled |= {"blktrace", "biosnoop"}

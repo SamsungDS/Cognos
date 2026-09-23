@@ -94,6 +94,62 @@ class RunMetrics:
     has_dram:     bool = False
     has_gpu:      bool = False
     raw_dir:      str  = ""   # for display in the comparison table
+    # ── KV movement inside the AI memory node ────────────────────────────
+    # These carry the tiering story: a tier that evicts far more than it
+    # serves is thrashing, and one that never promotes is a sink rather than
+    # a cache.  None means the counter was absent; 0.0 means it was present
+    # and never incremented — a different finding, rendered differently.
+    evicted_gb:       "float | None" = None
+    promoted_gb:      "float | None" = None
+    mem_hit_gb:       "float | None" = None
+    file_hit_gb:      "float | None" = None
+    prefetched_tok:   "float | None" = None
+    cached_tok:       "float | None" = None
+    l35_dram_gb:      float = 0.0
+    l35_file_gb:      float = 0.0
+    window_s:         float = 0.0
+
+    # ── derived ──────────────────────────────────────────────────────────
+    @property
+    def total_hit_gb(self) -> float:
+        return (self.mem_hit_gb or 0.0) + (self.file_hit_gb or 0.0)
+
+    @property
+    def evict_read_ratio(self) -> "float | None":
+        """Evicted bytes per byte served. >1.0 means the tier is thrashing."""
+        t = self.total_hit_gb
+        if self.evicted_gb is None or t <= 0:
+            return None
+        return self.evicted_gb / t
+
+    @property
+    def file_read_share_pct(self) -> "float | None":
+        t = self.total_hit_gb
+        if self.file_hit_gb is None or t <= 0:
+            return None
+        return self.file_hit_gb / t * 100.0
+
+    @property
+    def recomputed_tok(self) -> "float | None":
+        """Prefill tokens the GPU had to regenerate because they were not cached."""
+        if self.cached_tok is None or self.cache_hit_pct <= 0:
+            return None
+        total = self.cached_tok / (self.cache_hit_pct / 100.0)
+        return max(0.0, total - self.cached_tok)
+
+    @property
+    def recompute_rate_tok_s(self) -> "float | None":
+        r = self.recomputed_tok
+        if r is None or self.window_s <= 0:
+            return None
+        return r / self.window_s
+
+    @property
+    def evict_rate_gbs(self) -> "float | None":
+        if self.evicted_gb is None or self.window_s <= 0:
+            return None
+        return self.evicted_gb / self.window_s
+
 
 
 def _sf(v: Any, default: float = 0.0) -> float:
@@ -141,6 +197,74 @@ def _read_csv_col(path: Path, col: str) -> List[float]:
 
 
 # ─── Metric extraction ───────────────────────────────────────────────────────
+
+
+def _scale(v: "float | None", d: float) -> "float | None":
+    return None if v is None else v / d
+
+
+def _kv_delta(raw: "Path", stems: "list[str]") -> "float | None":
+    """Counter delta across a run, from the L3.5 timeseries CSV.
+
+    Returns None when no column matches any stem — the counter was absent —
+    and 0.0 when a column matched but never moved.  Those are different
+    findings: absent means unmeasured, zero means measured and idle.
+
+    Lifetime counters are differenced end-minus-start rather than rated, since
+    rate functions extrapolate at range edges.
+    """
+    import csv as _c
+    for name in ("l35_store_capacity.csv", "l35_storage_timeseries.csv",
+                 "sglang_timeseries.csv"):
+        f = raw / name
+        if not f.exists():
+            continue
+        try:
+            with f.open(encoding="utf-8", errors="replace", newline="") as fh:
+                rows = list(_c.DictReader(fh))
+        except Exception:
+            continue
+        if not rows:
+            continue
+        for stem in stems:
+            cols = [c for c in rows[0] if c and stem in c]
+            if not cols:
+                continue
+            # One series per tp_rank is common; sum the columns, then take the
+            # delta.  Taking a single column under-reports by the TP factor.
+            vals = []
+            for r in rows:
+                tot, seen = 0.0, False
+                for c in cols:
+                    try:
+                        v = float(r.get(c) or "nan")
+                    except (TypeError, ValueError):
+                        continue
+                    if v == v:
+                        tot += v; seen = True
+                if seen:
+                    vals.append(tot)
+            if len(vals) >= 2:
+                d = vals[-1] - vals[0]
+                return d if d >= 0 else 0.0
+    return None
+
+
+def _window_seconds(raw: "Path") -> float:
+    import csv as _c
+    for name in ("sglang_timeseries.csv", "l35_storage_timeseries.csv"):
+        f = raw / name
+        if not f.exists():
+            continue
+        try:
+            with f.open(encoding="utf-8", errors="replace", newline="") as fh:
+                ts = [float(r["time_sec"]) for r in _c.DictReader(fh)
+                      if r.get("time_sec")]
+        except Exception:
+            continue
+        if len(ts) >= 2:
+            return max(ts) - min(ts)
+    return 0.0
 
 def extract_metrics(spec: RunSpec) -> RunMetrics:
     """Extract all comparable scalar metrics from a run's raw/ directory."""
@@ -262,6 +386,28 @@ def extract_metrics(spec: RunSpec) -> RunMetrics:
              "NVMe=%.0f MB/s GPU=%.1f%%",
              m.label, m.ttft_ms / 1000, m.tpot_ms,
              m.nvme_rd_bw_mbs, m.gpu_util_pct)
+
+    # ── KV movement inside the AI memory node ────────────────────────────
+    _raw = Path(spec.raw_dir)
+    m.window_s      = _window_seconds(_raw)
+    # Column names as the L3.5 synthesis writes them, with the raw exporter
+    # names as fallbacks for run directories produced before that mapping.
+    m.evicted_gb    = _scale(_kv_delta(_raw, ["l35_evicted_b",
+                                              "evicted_size_bytes",
+                                              "mooncake_evicted_bytes"]), 1e9)
+    m.promoted_gb   = _scale(_kv_delta(_raw, ["l35_promoted_b",
+                                              "promotion_completed_bytes",
+                                              "mooncake_promoted_bytes"]), 1e9)
+    m.mem_hit_gb    = _scale(_kv_delta(_raw, ["l35_mem_hit_b",
+                                              "mem_cache_hit_bytes",
+                                              "mooncake_read_bytes_mem"]), 1e9)
+    m.file_hit_gb   = _scale(_kv_delta(_raw, ["l35_file_hit_b",
+                                              "file_cache_hit_bytes",
+                                              "mooncake_read_bytes_file"]), 1e9)
+    m.prefetched_tok = _kv_delta(_raw, ["prefetched_tokens_total"])
+    m.cached_tok     = _kv_delta(_raw, ["realtime_tokens_total[mode=prefill_cache]",
+                                        "prefill_cache"])
+
     return m
 
 
@@ -284,6 +430,107 @@ def _delta_cell(base: float, cur: float, lower_is_better: bool = False,
     return (f"<td class='{cls}'>{cur:{fmt}}{unit} "
             f"<span class='delta'>({sign}{delta:.1f}%)</span></td>")
 
+
+
+def _esc(x: object) -> str:
+    import html as _h
+    return _h.escape(str(x))
+
+# ---------------------------------------------------------------------------
+# Tiering chain
+# ---------------------------------------------------------------------------
+
+_NOISE = 1.15          # ratios closer to 1 than this are not shown
+
+def build_chain_html(base: "RunMetrics", cmp_: "RunMetrics") -> str:
+    """Ordered causal chain from tier sizing to end-user latency.
+
+    Rows follow the stack, not the size of the change, because the point is
+    that a configuration decision propagates through the store and the engine
+    before it reaches latency.  Each row names the layer that measured it —
+    the finding needs several subsystems on one timeline, and the table should
+    show that rather than assert it.
+
+    A row is omitted when the two runs agree within _NOISE, so the chain shows
+    only links that actually moved.
+    """
+    def _r(a, b):
+        if a in (None, 0) or b is None:
+            return None
+        return b / a
+
+    rows = [
+        ("Tier capacity", "L3.5 DRAM (GB)", base.l35_dram_gb, cmp_.l35_dram_gb,
+         "configuration", False),
+        ("Fit", "evict : read ratio", base.evict_read_ratio,
+         cmp_.evict_read_ratio, "memory node", False),
+        ("Eviction", "evicted (GB)", base.evicted_gb, cmp_.evicted_gb,
+         "memory node", False),
+        ("Promotion", "promoted (GB)", base.promoted_gb, cmp_.promoted_gb,
+         "memory node", True),
+        ("Prefetch", "tokens prefetched", base.prefetched_tok,
+         cmp_.prefetched_tok, "inference engine", False),
+        ("Recompute", "tokens recomputed", base.recomputed_tok,
+         cmp_.recomputed_tok, "inference engine", False),
+        ("Latency", "TPOT (ms)", base.tpot_ms, cmp_.tpot_ms, "inference engine",
+         False),
+    ]
+
+    out = []
+    for link, metric, a, b, layer, always in rows:
+        if a is None and b is None:
+            continue
+        ratio = _r(a, b)
+        # A promotion row of 0 -> 0 is itself the finding, so it is kept even
+        # though the ratio is undefined.
+        if not always and ratio is not None and (1/_NOISE) < ratio < _NOISE:
+            continue
+        rs = "—" if ratio is None else (f"{ratio:.2f}x" if ratio >= 1
+                                        else f"{1/ratio:.2f}x lower")
+        fa = "absent" if a is None else f"{a:,.1f}"
+        fb = "absent" if b is None else f"{b:,.1f}"
+        cls = "chain-hot" if (ratio and (ratio >= 2 or ratio <= .5)) else "chain-row"
+        out.append(
+            f'<tr class="{cls}"><td><b>{link}</b></td><td>{metric}</td>'
+            f'<td class="num">{fa}</td><td class="num">{fb}</td>'
+            f'<td class="num">{rs}</td><td class="layer">{layer}</td></tr>')
+
+    if not out:
+        return ('<p class="note">No link in the tiering chain differed by more '
+                f'than {int((_NOISE-1)*100)}% between these runs.</p>')
+
+    return (
+        '<h2>Tiering chain — from configuration to latency</h2>'
+        '<p class="note">Rows follow the stack. Each is measured by a different '
+        'layer; links within '
+        f'{int((_NOISE-1)*100)}% are omitted.</p>'
+        '<table class="chain"><thead><tr>'
+        f'<th>Link</th><th>Measurement</th><th>{_esc(base.label)}</th>'
+        f'<th>{_esc(cmp_.label)}</th><th>Ratio</th><th>Measured by</th>'
+        '</tr></thead><tbody>' + "".join(out) + '</tbody></table>')
+
+
+def build_variance_banner(runs: "list[RunMetrics]") -> str:
+    """Refuse to imply causation from one run per configuration.
+
+    On the reference data two identically configured runs differed by 38.5
+    percentage points on cache hit and 48% on TPOT.  A two-run comparison
+    produced a confident conclusion that a third run reversed, so the tool
+    must not present single-run deltas as attributable.
+    """
+    from collections import Counter
+    n = Counter(r.label for r in runs)
+    singles = [l for l, c in n.items() if c < 3]
+    if not singles:
+        return ('<div class="banner ok"><b>Repeated runs:</b> every '
+                'configuration has 3 or more runs; deltas below compare '
+                'distributions.</div>')
+    return ('<div class="banner warn"><b>Indicative only — not attributable.</b> '
+            + ", ".join(_esc(x) for x in singles) +
+            " has fewer than 3 runs, so a difference here cannot be separated "
+            "from ordinary run-to-run variation. Differences smaller than the "
+            "spread between same-label runs are not evidence of a "
+            "configuration effect.</div>")
 
 def build_comparison_html(
     metrics: List[RunMetrics],
@@ -541,6 +788,14 @@ def build_comparison_html(
         for i, m in enumerate(metrics)
     )
 
+    # Chain and variance guard, rendered before the existing tables because
+    # the chain is the finding and the guard qualifies everything below it.
+    _variance_html = build_variance_banner(metrics)
+    _chain_html = ""
+    if len(metrics) >= 2:
+        _inner = build_chain_html(baseline, metrics[1])
+        _chain_html = f'<div class="card">{_inner}</div>'
+
     return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
@@ -555,6 +810,18 @@ def build_comparison_html(
   .subtitle{{color:#94a3b8;font-size:13px;margin-bottom:18px;}}
   .card{{background:#1e293b;border:1px solid #334155;border-radius:12px;
           padding:16px 18px;margin:12px 0;}}
+  .banner{{border-radius:10px;padding:12px 16px;margin:12px 0;font-size:12.5px;}}
+  .banner.warn{{background:#422006;border:1px solid #a16207;color:#fde68a;}}
+  .banner.ok{{background:#052e16;border:1px solid #15803d;color:#bbf7d0;}}
+  table.chain{{width:100%;border-collapse:collapse;font-size:12.5px;}}
+  table.chain th{{background:#0f172a;color:#cbd5e1;text-align:left;
+       padding:7px 10px;border-bottom:1px solid #334155;}}
+  table.chain td{{padding:7px 10px;border-bottom:1px solid #243247;}}
+  table.chain td.num{{text-align:right;font-variant-numeric:tabular-nums;}}
+  table.chain td.layer{{color:#94a3b8;font-style:italic;}}
+  tr.chain-hot td{{background:#2a1215;}}
+  tr.chain-hot td.num:nth-child(5){{color:#f87171;font-weight:700;}}
+  p.note{{color:#94a3b8;font-size:12px;margin:4px 0 10px;}}
   .card h2{{font-size:14px;margin:0 0 12px;color:#f1f5f9;display:flex;
              align-items:center;gap:8px;}}
   .tag{{font-size:10px;font-weight:700;padding:2px 7px;border-radius:8px;
@@ -601,6 +868,10 @@ def build_comparison_html(
 <div class="subtitle">{n} runs compared · baseline: <b>{_html.escape(baseline.label)}</b>
  · delta % relative to baseline · <span style="color:#4ade80">green = improvement</span>,
  <span style="color:#f87171">red = regression</span></div>
+
+{_variance_html}
+
+{_chain_html}
 
 <div class="card">
   <h2>🏃 Runs compared</h2>

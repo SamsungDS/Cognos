@@ -14,9 +14,10 @@ import signal  # noqa: F401  (used by some collectors' subprocess handling)
 import statistics
 import subprocess
 import threading
+import os
 import time
 import urllib.request  # noqa: F401  (needed by http-based collectors)
-from dataclasses import dataclass  # noqa: F401
+from dataclasses import dataclass, field  # noqa: F401
 from datetime import datetime, timezone  # noqa: F401
 from pathlib import Path
 
@@ -29,6 +30,33 @@ from ..base import (
 from ._sudo import _sudo_cmd, _sudo_check_output, _sudo_popen, _sudo_run  # noqa: F401
 
 log = logging.getLogger("amoprof.collectors.dram")
+
+
+def _fs_usage(path: str) -> dict:
+    """Filesystem used/total for a mount, via statvfs.
+
+    Store capacity was only ever read from the KV store's own exporter, so a
+    deployment whose store does not report a file tier — or whose exporter is
+    unreachable — had no storage-residency figure at all, despite amoprof
+    running on the very node that holds the device.  statvfs needs no external
+    binary and no privileges.
+    """
+    out: dict = {}
+    if not path:
+        return out
+    try:
+        st = os.statvfs(path)
+        total = st.f_blocks * st.f_frsize
+        avail = st.f_bavail * st.f_frsize
+        if total > 0:
+            out["fs_total_bytes"] = float(total)
+            out["fs_used_bytes"] = float(total - avail)
+            out["fs_used_pct"] = round((total - avail) / total * 100.0, 3)
+    except Exception:
+        return {}
+    return out
+
+
 
 
 @register_collector

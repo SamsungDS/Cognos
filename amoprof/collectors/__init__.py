@@ -19,6 +19,7 @@ from .dram import DramMonitor  # noqa: F401
 from .gpu import GpuMonitor  # noqa: F401
 from .iostat import IostatMonitor  # noqa: F401
 from .nsys import NsysGpuTraceCollector  # noqa: F401
+from .network import NetworkMonitor  # noqa: F401
 from .nvlink_pcie import NvlinkPcieMonitor  # noqa: F401
 from .nvme_driver import NvmeDriverMonitor  # noqa: F401
 from .nvme_smart import NvmeSmartMonitor  # noqa: F401
@@ -29,6 +30,7 @@ from .queue_depth import BlockQueueDepthCollector  # noqa: F401
 from .sglang import SGLangMetricsSampler  # noqa: F401
 from .ssd_hardware import SsdHardwareMonitor  # noqa: F401
 from .swap_storm import SwapStormMonitor  # noqa: F401
+from .cpu import CpuMonitor  # noqa: F401
 from .vmstat import VmstatMonitor  # noqa: F401
 
 __all__ = [
@@ -52,5 +54,6 @@ __all__ = [
     "SGLangMetricsSampler",
     "SsdHardwareMonitor",
     "SwapStormMonitor",
+    "CpuMonitor",
     "VmstatMonitor",
 ]

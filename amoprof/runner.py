@@ -189,7 +189,7 @@ class WorkloadRunner:
 
     def _run_sglang(self, ctx: int, bs: int) -> RunResult:
         p = self.plan
-        script = self._script("sglang_run.py", f"""
+        script = self._script("sglang_run.py", fr"""
             import subprocess, sys, time, json, re
             srv = subprocess.Popen([
                 sys.executable, "-m", "sglang.launch_server",
@@ -273,7 +273,7 @@ class WorkloadRunner:
         w_gb   = p.weight_gb
         cpu_pct= min(100, int(p.dram_cap_gb / w_gb * 100)) if w_gb else 0
         dsk_pct= max(0, 100 - cpu_pct)
-        script = self._script("flexgen_run.py", f"""
+        script = self._script("flexgen_run.py", fr"""
             import subprocess, sys, json, re, time
             result = subprocess.run([
                 sys.executable, "-m", "flexgen.apps.chatbot",

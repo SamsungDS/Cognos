@@ -298,10 +298,28 @@ def _time_axis_config(ts_seconds: list[float] | None = None,
         "type": "date",
     }
 
+    # Scale the tick format with the window duration.  A fixed "%H:%M:%S"
+    # makes multi-day windows cycle every 24h (00:00 → 12:00 → 00:00) which
+    # is unreadable — the operator can't tell "which day" a spike sits on.
+    # Rules mirror what `_time_xlabel` uses on the static side, so a report
+    # generated in Prometheus/live-collect mode has consistent time axes
+    # across the End Report (matplotlib) and Interactive (Plotly) tabs.
     if t0 > 0:
-        cfg["tickformat"] = "%H:%M:%S"
         cfg["title"] = {"text": "Wall-clock time (UTC)", "font": {"size": 13}}
         cfg["hoverformat"] = "%Y-%m-%d %H:%M:%S UTC"
+        if max_ts >= 2 * 86400:
+            # ≥ 2 days: date-first labels, no seconds
+            cfg["tickformat"] = "%b %d %H:%M"
+        elif max_ts >= 86400:
+            # ~1 day: keep the date so 00:00 doesn't repeat
+            cfg["tickformat"] = "%b %d %H:%M"
+        elif max_ts >= 3600:
+            cfg["tickformat"] = "%H:%M"
+        else:
+            cfg["tickformat"] = "%H:%M:%S"
+    elif max_ts >= 2 * 86400:
+        cfg["tickformat"] = "%j d %H:%M"
+        cfg["title"] = {"text": "Elapsed time (days · HH:MM)", "font": {"size": 13}}
     elif max_ts >= 3600:
         cfg["tickformat"] = "%H:%M:%S"
         cfg["title"] = {"text": "Elapsed time (HH:MM:SS)", "font": {"size": 13}}
@@ -437,14 +455,27 @@ def _fit_plotly_legend(fig: dict | None) -> dict | None:
     if n >= 2:
         legend.update({"orientation": "v", "yanchor": "top", "y": 1.0,
                        "xanchor": "left", "x": 1.03})
-        margin["r"] = max(int(margin.get("r") or 0), 320 if n <= 4 else 360)
+        # Vertical legend to the right: the plot must not run under it, and
+        # long trace names need real width rather than an assumed 320px.
+        _wid = max(len(str(_t.get("name") or "")) for _t in (fig.get("data") or [{}]))
+        margin["r"] = max(int(margin.get("r") or 0),
+                          min(460, 150 + _wid * 7))
         margin["b"] = max(int(margin.get("b") or 0), 110)
         layout["height"] = max(int(layout.get("height") or 460), 540 if n <= 4 else 580)
     else:
-        legend.update({"orientation": "h", "yanchor": "top", "y": -0.14,
+        # One or two traces: horizontal legend below the plot.  The bottom
+        # margin must cover the legend's offset from the axis PLUS the rows it
+        # occupies plus the tick labels — a fixed 120px held one row and
+        # overlapped as soon as the legend wrapped.  Derive it instead.
+        _h = int(layout.get("height") or 460)
+        _off = 0.14
+        legend.update({"orientation": "h", "yanchor": "top", "y": -_off,
                        "xanchor": "left", "x": 0})
-        margin["b"] = max(int(margin.get("b") or 0), 120)
+        _rows = 1 if n <= 3 else (2 if n <= 6 else 3)
+        _need = int(_off * _h) + _rows * 22 + 34      # offset + rows + ticks
+        margin["b"] = max(int(margin.get("b") or 0), _need)
         margin["r"] = max(int(margin.get("r") or 0), 90)
+        layout["height"] = max(_h, 420 + _rows * 22)
 
     legend.update({
         "font": {"size": 11 if n <= 4 else 10, "color": "#0f172a"},
@@ -945,13 +976,12 @@ def _chart_swap_storm(vmstat: list[dict]) -> dict | None:
     xs = _ts_to_dates(ts)
     # Convert cumulative counters to per-second rates
     def _rate(col: str) -> list[float]:
+        # Shared kernel; unclamped because vmstat counters are read as signed
+        # here (a decrease is reported rather than floored).
         v = _col(vmstat, col)
-        if len(v) < 2: return []
-        rates = [0.0]
-        for i in range(1, len(v)):
-            dt = ts[i] - ts[i-1]
-            rates.append((v[i] - v[i-1]) / dt if dt > 0 else 0)
-        return rates
+        if len(v) < 2:
+            return []
+        return _k_aligned_rate(v, ts, clamp_negative=False)
     swpin  = _rate("pswpin")
     swpout = _rate("pswpout")
     pgmaj  = _rate("pgmajfault")
@@ -1303,13 +1333,10 @@ def _chart_eviction(sglang: list[dict]) -> dict | None:
     if not (ev_col or lb_col or bk_col):
         return None
     def _rate(col: str) -> list[float]:
-        if not col: return [0.0] * len(ts)
-        v = _col(sglang, col)
-        out = [0.0]
-        for i in range(1, len(v)):
-            dt = ts[i] - ts[i-1]
-            out.append(max((v[i] - v[i-1]) / dt, 0) if dt > 0 else 0)
-        return out
+        # Shared kernel; clamped because these are cumulative token counters.
+        if not col:
+            return [0.0] * len(ts)
+        return _k_aligned_rate(_col(sglang, col), ts, clamp_negative=True)
     traces = []
     if ev_col:
         traces.append({"x": xs, "y": _rate(ev_col),
@@ -1332,54 +1359,18 @@ def _chart_eviction(sglang: list[dict]) -> dict | None:
                               "Tokens / sec", ts=ts)}
 
 
-def _kv_bytes_per_token_for_model(model_name: str, kv_dtype: str) -> float:
-    """Estimate KV cache bytes per token from model architecture.
+def _kv_bytes_per_token_for_model(model_name: str, kv_dtype: str,
+                                  config: "dict | None" = None) -> float:
+    """KV cache bytes per token — delegates to metric_kernels.
 
-    Mirrored from amoprof.KV_ARCH_DB / combined._kv_bytes_per_token_kb so
-    the interactive tab can derive byte-level L3 (local storage) BW from token-level SGLang
-    counters without depending on the static-report module.
+    Previously a third private copy of the architecture table (Executive and
+    the End Report held the other two).  They drifted: on a gemma-4-31B run
+    the paths produced 320 KB and 88 KB for the same model, the latter because
+    the size-hint matcher used bare substring matching and "31b" contains
+    "1b".  The kernel resolves from the engine's own model config when
+    available and matches size hints on a token boundary.
     """
-    arch_db = {
-        "gpt-oss-120b": (36, 8, 64, "GQA"),
-        "gpt-oss-20b":  (24, 8, 64, "GQA"),
-        "deepseek-r1-distill-llama-70b": (80, 8, 128, "GQA"),
-        "deepseek-r1-distill-qwen-32b":  (64, 8, 128, "GQA"),
-        "deepseek-r1-distill-qwen-14b":  (48, 8, 128, "GQA"),
-        "deepseek-v3":      (61, 128, 512, "MLA"),
-        "qwen3-235b":       (94, 4, 512, "MLA"),
-        "llama-3.1-405b":  (126, 8, 128, "GQA"),
-        "llama-3.1-70b":    (80, 8, 128, "GQA"),
-        "llama-3-70b":      (80, 8, 128, "GQA"),
-    }
-    ml = (model_name or "").lower()
-    arch = None
-    for key, val in arch_db.items():
-        if key in ml:
-            arch = val; break
-    if arch is None:
-        for hint, val in [("671b",(61,128,512,"MLA")),
-                          ("405b",(126,8,128,"GQA")),
-                          ("235b",(94,4,512,"MLA")),
-                          ("120b",(36,8,64,"GQA")),
-                          ("72b",(80,8,128,"GQA")),
-                          ("70b",(80,8,128,"GQA")),
-                          ("32b",(64,8,128,"GQA")),
-                          ("20b",(24,8,64,"GQA")),
-                          ("14b",(48,8,128,"GQA")),
-                          ("13b",(40,8,128,"GQA")),
-                          ("8b",(32,8,128,"GQA")),
-                          ("7b",(28,4,128,"GQA")),
-                          ("3b",(32,8,128,"GQA"))]:
-            if hint in ml:
-                arch = val; break
-    if arch is None:
-        arch = (80, 8, 128, "GQA")
-    n_layers, n_kv_heads, head_dim, attn = arch
-    dtype_bytes = 1 if (kv_dtype or "").lower().startswith(("fp8","int8","int4")) else 2
-    if attn == "MLA":
-        return n_layers * head_dim * dtype_bytes * 2  # bytes, not KB
-    return n_layers * n_kv_heads * head_dim * 2 * dtype_bytes
-
+    return float(_k_resolve_kv(model_name, kv_dtype, config).get("bytes") or 0)
 
 
 def _delta_from_ts(rows: list[dict], partial: str) -> float:
@@ -1923,6 +1914,9 @@ def _chart_dram_bw_from_kv_activity(sglang: list[dict], kv_bytes_per_token: floa
         for i in range(1, len(v)):
             dt = ts[i] - ts[i-1]
             tok_s = max((v[i] - v[i-1]) / dt, 0.0) if dt > 0 else 0.0
+            # Same identity as metric_kernels.kv_movement_bandwidth: bytes
+            # per second in GB (1e9), matching how DRAM peak is quoted.  The
+            # Executive used GiB here and the two reports disagreed by 7.4%.
             out.append(tok_s * kv_bytes_per_token / 1e9)
         return out
 
@@ -2693,13 +2687,56 @@ def _chart_bench_latency_ranges(bench: dict) -> dict | None:
 
 
 
+try:
+    from amoprof.report.metric_kernels import (
+        counter_delta as _k_counter_delta, window_rate as _k_window_rate,
+        window_seconds as _k_window_seconds, ratio_delta as _k_ratio_delta,
+        rate_series_with_time as _k_rate_with_time,
+        resolve_gpu_hbm as _resolve_gpu_hbm,
+        resolve_kv_bytes_per_token as _k_resolve_kv,
+        resolve_l2_residency as _k_resolve_l2,
+        aligned_rate_series as _k_aligned_rate)
+except Exception:  # pragma: no cover - standalone/bundled execution
+    from metric_kernels import (  # type: ignore
+        counter_delta as _k_counter_delta, window_rate as _k_window_rate,
+        window_seconds as _k_window_seconds, ratio_delta as _k_ratio_delta,
+        rate_series_with_time as _k_rate_with_time,
+        resolve_gpu_hbm as _resolve_gpu_hbm,
+        resolve_kv_bytes_per_token as _k_resolve_kv,
+        resolve_l2_residency as _k_resolve_l2,
+        aligned_rate_series as _k_aligned_rate)
+
+try:
+    from amoprof.report.metric_formulas import (formula_details as _fx_details,
+                                                FORMULA_CSS as _FX_CSS)
+except Exception:  # pragma: no cover
+    try:
+        from metric_formulas import (formula_details as _fx_details,  # type: ignore
+                                     FORMULA_CSS as _FX_CSS)
+    except Exception:
+        def _fx_details(body, label="formula", open_=False):  # type: ignore
+            return body or ""
+        _FX_CSS = ""  # type: ignore
+
+# Single source of truth for KPI-tile formulas (see report/metric_formulas.py).
+try:
+    from amoprof.report.metric_formulas import tile_note as _tile_note
+except Exception:  # pragma: no cover - standalone/bundled execution
+    try:
+        from metric_formulas import tile_note as _tile_note  # type: ignore
+    except Exception:
+        def _tile_note(label, existing_note="", variant=""):  # type: ignore
+            return existing_note
+
+
 def _kpi_tile(label: str, value: str, unit: str = "",
               note: str = "", color: str = "#0f172a") -> str:
+    note = _tile_note(label, note)
     return f"""
 <div class="kpi-tile" title="{note}">
   <div class="kpi-label">{label}</div>
   <div class="kpi-value" style="color:{color}">{value}<span class="kpi-unit">{unit}</span></div>
-  {f'<div class="kpi-note">{note}</div>' if note else ''}
+  {f'<div class="kpi-note">{_fx_details(note)}</div>' if note else ''}
 </div>"""
 
 
@@ -3262,13 +3299,22 @@ def build_report(raw_dir: Path, out_html: Path,
     if gpu_sum:
         kpis += [
             _kpi_tile("GPU util", f"{_gpu_show_value:.1f}", "%", _gpu_sub),
-            (lambda _gpu_n, _per_gb, _per_total: _kpi_tile(
+            # Shared resolver (report/metric_kernels.resolve_gpu_hbm) so this
+            # tile cannot diverge from the Executive one.  Previously this read
+            # only hbm_used_mb_mean and fell back to a hardcoded 40 GB per-GPU
+            # capacity, which understated a 179 GB B200 by 4.5x.
+            (lambda _h: _kpi_tile(
                 "HBM used (all GPUs)",
-                f"{_per_gb*_gpu_n:.1f} / {_per_total*_gpu_n:.0f}",
+                (f"{_h['used_gb']:.1f} / {_h['total_gb']:.0f}"
+                 if _h['total_gb'] > 0 else f"{_h['used_gb']:.1f} / —"),
                 "GB",
-                f"{((_per_gb*_gpu_n)/max(_per_total*_gpu_n,1)*100):.0f}% full · {int(_gpu_n)} GPU(s) · {_per_gb:.1f} GB/GPU avg"
-            ))(_setup_gpu_count(), float(gpu_sum.get('hbm_used_mb_mean', 0) or 0)/1024.0,
-               float(_setup_float('GPU Memory per Device GB', 'GPU memory per device GB', 'HBM per GPU GB', default=float(gpu_sum.get('hbm_total_gb', 40.0) or 40.0)))),
+                ((f"{_h['util_pct']:.0f}% full · " if _h['total_gb'] > 0 else "")
+                 + f"{int(_h['gpu_count'])} GPU(s) [{_h['gpu_count_source']}] · "
+                 + f"{_h['per_gpu_used_gb']:.1f} GB/GPU avg · "
+                 + f"capacity via {_h['total_source']} · "
+                 + "weights + reserved KV pool + activations "
+                 + "(not live KV blocks — see KV Pool Active %)")
+            ))(_resolve_gpu_hbm(gpu_sum, setup, _read_json(raw_dir / "gpu_config.json"))),
             _kpi_tile("GPU power", f"{gpu_sum.get('power_w_peak', 0):.0f}", "W",
                       "Peak per-GPU draw"),
         ]
@@ -3347,6 +3393,32 @@ def build_report(raw_dir: Path, out_html: Path,
                 dram_used_gb = _full_gb
     except Exception:
         pass
+    def _first_val(*names):
+        for _n in names:
+            _v = (sglang or {}).get(_n) if isinstance(sglang, dict) else None
+            if _v not in (None, "", 0, "0"):
+                return _v
+        return 0
+
+    # Reconcile against the shared resolver so this tile cannot disagree with
+    # the Executive one.  They derived L2 independently and diverged on real
+    # runs (4.0 vs 5.6 GB used; 512 vs 128 GB capacity).
+    try:
+        _l2r = _k_resolve_l2(
+            hicache_used_tokens=_safe_float(locals().get("_l2_used_tokens", 0), 0.0),
+            hicache_total_tokens=_safe_float(
+                _first_val("sglang_hicache_host_total_tokens",
+                           "hicache_host_total_tokens"), 0.0),
+            kv_bytes_per_token_kb=_safe_float(locals().get("_kv_kb", 0), 0.0),
+            hicache_total_gb=_safe_float(hicache_total_gb, 0.0),
+            host_dram_total_gb=_safe_float(dram_total_gb, 0.0))
+        if _l2r.get("capacity_gb", 0) > 0:
+            dram_total_gb = _l2r["capacity_gb"]
+        if _l2r.get("used_gb", 0) > 0:
+            dram_used_gb = _l2r["used_gb"]
+    except Exception:
+        pass
+
     if dram_total_gb > 0:
         _dram_pct = dram_used_gb / max(dram_total_gb, 1) * 100.0 if dram_used_gb > 0 else 0.0
         if dram_used_gb > 0 and hicache_total_gb > 0:
@@ -3355,30 +3427,46 @@ def build_report(raw_dir: Path, out_html: Path,
             else:
                 _dram_note = f"{_dram_pct:.0f}% full · flat residency snapshot from sglang_hicache_host_used_tokens; not a DRAM bandwidth/activity metric"
             _dram_value = f"{dram_used_gb:.1f} / {dram_total_gb:.0f}"
-            _dram_label = "DRAM used"
+            _dram_label = "GPU node DRAM used"
         elif dram_used_gb > 0:
             _dram_note = f"{_dram_pct:.0f}% full · host DRAM"
             _dram_value = f"{dram_used_gb:.1f} / {dram_total_gb:.0f}"
-            _dram_label = "DRAM used"
+            _dram_label = "GPU node DRAM used"
         else:
             _dram_note = (f"runtime residency unavailable · {_l2_used_source}" if hicache_total_gb > 0
                           else "host DRAM total · used capacity unavailable")
             _dram_value = f"— / {dram_total_gb:.0f}"
-            _dram_label = "DRAM residency"
+            _dram_label = "GPU node DRAM residency"
         kpis.append(_kpi_tile(_dram_label, _dram_value, "GB", _dram_note))
+
+    # L3 tile gating: only render L3 / L3.5 tiles when a real backend is
+    # configured.  Runs with `hicache_storage_backend=None`, HiCache disabled,
+    # or no L3 evidence in setup fall through to `has_l3=False` and the L3
+    # capacity + device tiles are suppressed.  Prevents the misleading
+    # "L3 25 GB / 3575 GB" tile from appearing on L1+L2-only runs where the
+    # numbers come from the host root filesystem, not a configured L3.
+    _has_l3_iactive = False
+    try:
+        if resolve_l3_backend is not None:
+            _l3_res_iactive = resolve_l3_backend(
+                setup, str(setup.get("Launch command") or setup.get("launch_command") or ""))
+            _has_l3_iactive = bool(getattr(_l3_res_iactive, "backend_class", "") in
+                                    ("local_ssd", "remote_mooncake", "remote_storage"))
+    except Exception:
+        _has_l3_iactive = False
 
     l3_total_gb = _setup_float("L3 (local storage) capacity GB", "L3 Capacity GB", "L3 total capacity GB", "l3_storage_capacity_gb", default=0.0)
     l3_used_gb = _setup_float("L3 (local storage) used GB", "L3 used capacity GB", "l3_storage_used_gb", default=0.0)
     if smart_sum:
         l3_total_gb = float(smart_sum.get('hicache_fs_total_gb', l3_total_gb) or l3_total_gb)
         l3_used_gb = float(smart_sum.get('hicache_fs_used_gb', l3_used_gb) or l3_used_gb)
-    if l3_total_gb > 0:
+    if _has_l3_iactive and l3_total_gb > 0:
         kpis.append(_kpi_tile("L3 (local storage) used",
                               (f"{l3_used_gb:.1f} / {l3_total_gb:.0f}" if l3_used_gb > 0 else f"— / {l3_total_gb:.0f}"),
                               "GB",
                               (f"{l3_used_gb/max(l3_total_gb,1)*100:.0f}% full" if l3_used_gb > 0 else "used capacity unavailable")))
 
-    if smart_sum and str(_setup_value("L3 storage type", "L3 Storage Type", default="")).lower() in {"nvme", "nvme ssd", "ssd"}:
+    if _has_l3_iactive and smart_sum and str(_setup_value("L3 storage type", "L3 Storage Type", default="")).lower() in {"nvme", "nvme ssd", "ssd"}:
         kpis += [
             _kpi_tile("L3 (local storage) device", str(smart_sum.get('model', '—'))[:24], "",
                       f"Temp {smart_sum.get('temperature_c', 0)}°C  "
@@ -3626,29 +3714,34 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
         if _host_block_is_l3 else
         "Host block-device counters are not interpreted as KV block/L3 traffic because setup_details does not resolve this device as the L3 local SSD L3 backend. Read/write activity can appear here without latency/utilization if the capture lacks rd_ms/wr_ms/io_ms or iostat await/busy-time fields; in that case the latency section shows an activity fallback. Use the SGLang KV block movement chart and L3 consistency card for logical L3 direction."
     )
-    if reconcile_l3_io and _l3_res:
-        _l3_recon = reconcile_l3_io(_l3_res,
-            sglang_write_gb=_l3_sg_write_gb, sglang_read_gb=_l3_sg_read_gb,
-            block_write_gb=_l3_block_write_gb, block_read_gb=_l3_block_read_gb,
-            blktrace_available=bool(_l3_block_read_gb > 0 or _l3_block_write_gb > 0 or lba_dist or temporal))
-        sections_html.append(_l3_consistency_card(
-            _l3_recon.display_status, _l3_recon.note,
-            _l3_res.display_name, _l3_res.evidence,
-            _l3_sg_read_gb, _l3_sg_write_gb, _l3_block_read_gb, _l3_block_write_gb))
+    # L3 consistency card + L3 bandwidth / cumulative traffic charts are only
+    # rendered when an L3 backend is actually configured.  Runs without an
+    # L3 tier (host_dram_only, hicache_storage_backend=None, or no HiCache
+    # storage at all) skip these sections.
+    if _has_l3_iactive:
+        if reconcile_l3_io and _l3_res:
+            _l3_recon = reconcile_l3_io(_l3_res,
+                sglang_write_gb=_l3_sg_write_gb, sglang_read_gb=_l3_sg_read_gb,
+                block_write_gb=_l3_block_write_gb, block_read_gb=_l3_block_read_gb,
+                blktrace_available=bool(_l3_block_read_gb > 0 or _l3_block_write_gb > 0 or lba_dist or temporal))
+            sections_html.append(_l3_consistency_card(
+                _l3_recon.display_status, _l3_recon.note,
+                _l3_res.display_name, _l3_res.evidence,
+                _l3_sg_read_gb, _l3_sg_write_gb, _l3_block_read_gb, _l3_block_write_gb))
 
-    sections_html.append(_section(
-        "L3 (local storage) cache Bandwidth — Prometheus-derived (MB/s)",
-        "ch_l3_bw",
-        _chart_l3_prom_bandwidth(sglang_ts, _kv_b_pt),
-        f"Estimated from SGLang backuped/prefetched token counters × "
-        f"{_kv_b_pt/1024:.0f} KB/tok (model arch). Useful work, not raw "
-        f"device bytes. load_back is shown as L2→L1 restore diagnostic-only and is not counted as SSD/L3 read bytes bytes."))
-    sections_html.append(_section(
-        "L3 (local storage) cache Traffic — Cumulative GB (Prometheus-derived)",
-        "ch_l3_cum",
-        _chart_l3_prom_cumulative(sglang_ts, _kv_b_pt),
-        "Endurance footprint over the collection window. Use for SSD TBW "
-        "sizing when extrapolating to a longer production timeframe."))
+        sections_html.append(_section(
+            "L3 (local storage) cache Bandwidth — Prometheus-derived (MB/s)",
+            "ch_l3_bw",
+            _chart_l3_prom_bandwidth(sglang_ts, _kv_b_pt),
+            f"Estimated from SGLang backuped/prefetched token counters × "
+            f"{_kv_b_pt/1024:.0f} KB/tok (model arch). Useful work, not raw "
+            f"device bytes. load_back is shown as L2→L1 restore diagnostic-only and is not counted as SSD/L3 read bytes bytes."))
+        sections_html.append(_section(
+            "L3 (local storage) cache Traffic — Cumulative GB (Prometheus-derived)",
+            "ch_l3_cum",
+            _chart_l3_prom_cumulative(sglang_ts, _kv_b_pt),
+            "Endurance footprint over the collection window. Use for SSD TBW "
+            "sizing when extrapolating to a longer production timeframe."))
 
     sections_html.append(_layer_header("layer-l1", "A3/A2/A1 · L1 HBM / CUDA / GPU", "GPU kernel/runtime layer, HBM occupancy, HBM bandwidth pressure, GPU power and utilization.", "#2f8a4e"))
     # Chart caption carries the same 4-value decomposition the KPI tile shows so
@@ -3693,7 +3786,17 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
                                    _dram_fig,
                                    _dram_note))
 
-    sections_html.append(_layer_header("layer-l3", "A3/A2/A1 · L3 (local storage) / host block layer", "SGLang KV block movement is logical L3/backing-tier traffic. Host block charts are physical device telemetry and are treated as L3 only when setup_details resolves a concrete L3 local SSD device/path.", "#a45714"))
+    # Layer header title depends on whether an L3 backend is configured.
+    # No L3 configured → show only "host block layer" and drop the L3
+    # framing so the section doesn't misleadingly claim these host-block
+    # charts are L3 telemetry.
+    if _has_l3_iactive:
+        _layer_l3_title = "A3/A2/A1 · L3 (local storage) / host block layer"
+        _layer_l3_note = "SGLang KV block movement is logical L3/backing-tier traffic. Host block charts are physical device telemetry and are treated as L3 only when setup_details resolves a concrete L3 local SSD device/path."
+    else:
+        _layer_l3_title = "A3/A2/A1 · Host block layer"
+        _layer_l3_note = "No L3 backend configured for this run (HiCache disabled or hicache_storage_backend=None). Host block-device counters below are shown for OS/driver visibility only and are NOT interpreted as KV-block L3 traffic."
+    sections_html.append(_layer_header("layer-l3", _layer_l3_title, _layer_l3_note, "#a45714"))
     sections_html.append(_section(f"{_host_block_label} IOPS (Read / Write / Trim)",
                                    "ch_nvme_iops", _chart_nvme_iops(nvme_ts, _host_block_label),
                                    _host_block_note))
@@ -3916,16 +4019,30 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
       padding: 12px 14px;
       box-shadow: 0 1px 3px rgba(15,23,42,0.06);
       transition: transform 0.12s, box-shadow 0.12s;
+      /* Grid items default to min-width:auto, so a long unbreakable token
+         (e.g. Δsglang_time_to_first_token_seconds_sum, or a CSV filename)
+         in the formula note would widen the track and spill past the tile
+         border.  min-width:0 lets the tile shrink to its grid track and
+         overflow-wrap breaks the token instead. */
+      min-width: 0;
+      overflow: hidden;
     }}
     .kpi-tile:hover {{
       transform: translateY(-1px);
       box-shadow: 0 3px 10px rgba(15,23,42,0.12);
     }}
     .kpi-label {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px;
-                  color: #64748b; margin-bottom: 4px; font-weight: 600; }}
-    .kpi-value {{ font-size: 22px; font-weight: 700; color: #0f172a; }}
+                  color: #64748b; margin-bottom: 4px; font-weight: 600;
+                  overflow-wrap: anywhere; word-break: break-word; }}
+    .kpi-value {{ font-size: 22px; font-weight: 700; color: #0f172a;
+                  overflow-wrap: anywhere; }}
     .kpi-unit  {{ font-size: 13px; font-weight: 500; color: #475569; margin-left: 4px; }}
-    .kpi-note  {{ font-size: 11px; color: #64748b; margin-top: 3px; }}
+    /* Formula notes are long and contain unbreakable identifiers; break them
+       anywhere rather than letting them escape the tile. */
+    .kpi-note  {{ font-size: 10px; color: #64748b; margin-top: 4px;
+                  line-height: 1.45; overflow-wrap: anywhere;
+                  word-break: break-word; hyphens: auto; }}
+    {_FX_CSS}
     section.card {{
       max-width: 1400px; margin: 0 auto 18px auto;
       background: #ffffff;

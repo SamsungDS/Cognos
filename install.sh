@@ -19,6 +19,9 @@ section() { echo -e "\n${BOLD}── $* ──${NC}"; }
 
 MODE="metrics"                 # metrics | sglang | full
 SKIP_SYS_PKGS=0
+WITH_PCM=0                       # build Intel PCM from source (opt-in)
+PCM_REF="${AMOPROF_PCM_REF:-}"   # tag/branch; empty = default branch
+PCM_PREFIX="${AMOPROF_PCM_PREFIX:-/opt/intel-pcm}"
 SKIP_VENV=0
 VENV_DIR="${AMOPROF_VENV:-$HOME/amoprof_venv}"
 TORCH_INDEX="${AMOPROF_TORCH_INDEX:-https://download.pytorch.org/whl/cu121}"
@@ -60,6 +63,16 @@ Examples:
   ./install.sh
   sudo ./install.sh --with-dram-deps --dram-tool auto
   ./install.sh --sglang --torch-index https://download.pytorch.org/whl/cu124
+  --with-pcm           Build Intel PCM from source and use it for DRAM bandwidth.
+                       Needed on CPUs newer than the installed PCM package
+                       knows: PCM refuses a microarchitecture its build was not
+                       compiled for, so every pcm-* binary is present and every
+                       one exits with "unsupported processor". Skipped on AMD,
+                       and when the installed PCM already supports this CPU.
+  --pcm-ref REF        PCM git tag to build (default: repo default branch).
+                       Xeon 6 / Granite Rapids needs 202409 or later.
+  --pcm-prefix DIR     Install location (default: /opt/intel-pcm).
+
 USAGE
 exit 0
 }
@@ -71,6 +84,9 @@ while [[ $# -gt 0 ]]; do
         --venv) VENV_DIR="$2"; shift 2 ;;
         --torch-index) TORCH_INDEX="$2"; shift 2 ;;
         --skip-apt|--skip-system-packages) SKIP_SYS_PKGS=1; shift ;;
+        --with-pcm)        WITH_PCM=1; shift ;;
+        --pcm-ref)         PCM_REF="$2"; shift 2 ;;
+        --pcm-prefix)      PCM_PREFIX="$2"; shift 2 ;;
         --skip-venv) SKIP_VENV=1; shift ;;
         --with-dram-deps) INSTALL_DRAM_DEPS=1; shift ;;
         --dram-tool) DRAM_DEPS_TOOL="$2"; shift 2 ;;
@@ -393,6 +409,121 @@ if [[ -n "$ENTRY" ]]; then
     ok "amoprof CLI: $ENTRY"
 else
     warn "amoprof entry point is not on PATH. Activate the virtualenv before use."
+fi
+
+section "Intel PCM (DRAM bandwidth)"
+# PCM only supports microarchitectures its build was compiled for.  On a newer
+# Xeon every pcm-* binary installs and every one exits with "unsupported
+# processor" — so the fix is a newer BUILD, not a newer package.  Opt-in,
+# because building from source pulls a toolchain and takes a few minutes.
+pcm_cpu_vendor() { awk -F: '/^vendor_id/{gsub(/ /,"",$2);print $2;exit}' /proc/cpuinfo 2>/dev/null; }
+pcm_build_rejects_cpu() {
+    # Any pcm-* utility shares the CPU-support table, so one refusal is
+    # enough to know they all refuse.
+    local probe
+    for probe in pcm-raw pcm-core pcm-numa pcm; do
+        if command -v "$probe" >/dev/null 2>&1; then
+            "$probe" 2>&1 | grep -qi "unsupported processor" && return 0
+            return 1
+        fi
+    done
+    return 1   # nothing installed: not a rejection, just absent
+}
+
+if [[ "$WITH_PCM" -eq 1 ]]; then
+    if [[ "$(pcm_cpu_vendor)" == "AuthenticAMD" ]]; then
+        warn "AMD cpu detected — Intel PCM cannot read AMD memory controllers. Skipping."
+        warn "Use --dram-tool amduprof with AMDuProf instead."
+    elif command -v pcm-memory >/dev/null 2>&1 && ! pcm_build_rejects_cpu; then
+        ok "pcm-memory already installed and supports this CPU: $(command -v pcm-memory)"
+    else
+        if pcm_build_rejects_cpu; then
+            warn "Installed PCM does not support this CPU — building a current one."
+        fi
+        PCM_SRC="${PCM_PREFIX}/src"
+        if [[ "$SKIP_SYS_PKGS" -eq 0 ]]; then
+            case "$(detect_pm)" in
+                apt) run $SUDO apt-get install -y --no-install-recommends \
+                        git cmake g++ make ca-certificates ;;
+                dnf|yum) run $SUDO "$(detect_pm)" install -y git cmake gcc-c++ make ;;
+                zypper)  run $SUDO zypper --non-interactive install git cmake gcc-c++ make ;;
+                pacman)  run $SUDO pacman -S --noconfirm git cmake gcc make ;;
+                *)   warn "Unknown package manager; ensure git, cmake, g++ and make are present." ;;
+            esac
+        fi
+        run $SUDO mkdir -p "$PCM_PREFIX"
+        run $SUDO chown -R "$(id -u):$(id -g)" "$PCM_PREFIX" 2>/dev/null || true
+
+        PCM_OK=1
+        if [[ -d "$PCM_SRC/.git" ]]; then
+            info "Updating existing PCM checkout in $PCM_SRC"
+            (cd "$PCM_SRC" && git fetch --tags --quiet && git submodule update --init --recursive --quiet) || PCM_OK=0
+        else
+            # --recursive matters: PCM vendors simdjson as a submodule and the
+            # build fails without it.
+            info "Cloning intel/pcm into $PCM_SRC"
+            git clone --recursive --quiet https://github.com/intel/pcm.git "$PCM_SRC" || PCM_OK=0
+        fi
+        if [[ "$PCM_OK" -eq 1 && -n "$PCM_REF" ]]; then
+            (cd "$PCM_SRC" && git checkout --quiet "$PCM_REF" \
+                && git submodule update --init --recursive --quiet) \
+                || { warn "Could not check out PCM ref '$PCM_REF'; using default branch."; }
+        fi
+
+        if [[ "$PCM_OK" -eq 1 ]]; then
+            info "Building PCM (this takes a few minutes)"
+            if (cd "$PCM_SRC" && cmake -E make_directory build \
+                    && cd build && cmake .. >/dev/null \
+                    && cmake --build . --parallel "$(nproc 2>/dev/null || echo 4)" >/dev/null); then
+                PCM_BIN="$PCM_SRC/build/bin/pcm-memory"
+                if [[ -x "$PCM_BIN" ]]; then
+                    ok "Built pcm-memory: $PCM_BIN"
+                    if "$PCM_BIN" -h 2>&1 | grep -qi "unsupported processor"; then
+                        error "The freshly built PCM still refuses this CPU."
+                        warn  "Try a newer --pcm-ref, or use --dram-tool perf-imc."
+                    else
+                        ok "pcm-memory supports this CPU."
+                        echo "AMOPROF_INTEL_PCM_MEMORY_BIN=$PCM_BIN" >> "$SCRIPT_DIR/.amoprof-pcm.env"
+                        ok "Recorded path in $SCRIPT_DIR/.amoprof-pcm.env"
+                        info "Add to your amoprof env file:"
+                        info "  AMOPROF_EXTRA_ARGS=\"... --enable-dram --dram-tool intel-pcm --intel-pcm-memory-bin $PCM_BIN\""
+                    fi
+                else
+                    error "Build finished but pcm-memory is missing from build/bin."
+                fi
+            else
+                error "PCM build failed. Build it manually, or use --dram-tool perf-imc."
+            fi
+        else
+            error "Could not fetch PCM sources (network or git unavailable)."
+            warn  "Download a release from https://github.com/intel/pcm/releases and build it,"
+            warn  "or use --dram-tool perf-imc which needs no external tool."
+        fi
+    fi
+else
+    if pcm_build_rejects_cpu; then
+        warn "Installed Intel PCM does not support this CPU (every pcm-* tool refuses it)."
+        warn "Re-run with --with-pcm to build a current one, or use --dram-tool perf-imc."
+    fi
+fi
+
+section "Collector readiness"
+# Presence of a binary is not readiness: Intel PCM installs fine and returns
+# nothing without MSR access; iostat is on PATH but reports zeros for the
+# wrong device.  Both look identical from Prometheus hours later — the gauges
+# appear carrying only collection metadata and the charts are empty.  So run
+# each collector here and report what actually came back.
+if [[ -f "$SCRIPT_DIR/check_collectors.py" ]]; then
+    if python3 "$SCRIPT_DIR/check_collectors.py" --seconds 2 \
+            ${AMOPROF_SSD_DEVICE:+--ssd-device "$AMOPROF_SSD_DEVICE"}; then
+        ok "All checked collectors produced data."
+    else
+        warn "Some collectors will produce no data on this host (see above)."
+        warn "amoprof will still install and run; the affected charts will be empty."
+        warn "Re-run any time with: python3 $SCRIPT_DIR/check_collectors.py"
+    fi
+else
+    warn "check_collectors.py not found; skipping collector readiness checks."
 fi
 
 section "Installation complete"

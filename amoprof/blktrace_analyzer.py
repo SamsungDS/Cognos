@@ -774,6 +774,41 @@ def _scale_sampled_analysis_outputs(output_dir: Path, ratio: int) -> None:
     _scale_csv("interarrival_distribution.csv", {"count"})
     _scale_csv("burst_temporal_windows.csv", {"events", "threshold"})
 
+def _streaming_lba_keys(lo: dict, hi: dict, hist: dict) -> dict:
+    """Decile histogram of bytes across the observed LBA span, per op.
+
+    The streaming analyzer has its own summary dict, separate from the
+    in-memory one, so a decile export added only to the latter never reached a
+    deployed service.  Ten buckets keeps cardinality fixed while still
+    answering "is access concentrated or spread", which is what drives garbage
+    collection and therefore write amplification.
+    """
+    out: dict = {}
+    try:
+        for op, tag in (("R", "read"), ("W", "write")):
+            if op not in lo or op not in hi:
+                continue
+            span = (hi[op] - lo[op]) or 1
+            dec = [0] * 10
+            for (o, bucket), nbytes in hist.items():
+                if o != op:
+                    continue
+                sector = bucket * (LBA_BUCKET // 512)
+                i = int((sector - lo[op]) * 10 // span)
+                dec[min(9, max(0, i))] += nbytes
+            tot = sum(dec)
+            if tot <= 0:
+                continue
+            for i, b in enumerate(dec):
+                out[f"lba_{tag}_decile{i}_pct"] = round(b / tot * 100.0, 3)
+            out[f"lba_{tag}_deciles_touched"] = sum(1 for b in dec if b > 0)
+            out[f"lba_{tag}_span_gb"] = round(span * 512 / 1e9, 3)
+            out[f"lba_{tag}_start_gb"] = round(lo[op] * 512 / 1e9, 3)
+    except Exception:
+        return {}
+    return out
+
+
 def analyze_from_binaries(bin_dir: Path, output_dir: Path,
                            blkparse_bin: str = "blkparse",
                            max_events: int | None = None) -> dict:
@@ -1013,7 +1048,37 @@ def analyze(events_csv: Path, output_dir: Path) -> dict:
     rd_evts = [e for e in events if e["op"] == "R"]
     wr_evts = [e for e in events if e["op"] == "W"]
     tr_evts = [e for e in events if e["op"] == "D"]
+    # LBA distribution as bounded gauges.  The full hot-region table goes to
+    # hot_regions_overall.csv, which a Prometheus-fetched run never sees — so
+    # a remote node had locality scalars and no distribution at all.  Ten
+    # deciles across the observed LBA span answer "is access concentrated or
+    # spread" with fixed cardinality, which the top-50 table could not.
+    _lba_keys = {}
+    try:
+        for _op, _tag in (("R", "read"), ("W", "write")):
+            _ev = [e for e in events if e.get("op") == _op]
+            if not _ev:
+                continue
+            _sect = [e["sector"] for e in _ev]
+            _lo, _hi = min(_sect), max(_sect)
+            _span = (_hi - _lo) or 1
+            _dec = [0] * 10
+            for _e in _ev:
+                _i = int((_e["sector"] - _lo) * 10 // _span)
+                _dec[min(9, max(0, _i))] += _e["size"]
+            _tot = sum(_dec) or 1
+            for _i, _b in enumerate(_dec):
+                _lba_keys[f"lba_{_tag}_decile{_i}_pct"] = round(_b / _tot * 100.0, 3)
+            _lba_keys[f"lba_{_tag}_span_gb"] = round(_span * 512 / 1e9, 3)
+            _lba_keys[f"lba_{_tag}_start_gb"] = round(_lo * 512 / 1e9, 3)
+            # Deciles carrying any traffic: 1 means every write hit one tenth
+            # of the span, 10 means it was spread evenly.
+            _lba_keys[f"lba_{_tag}_deciles_touched"] = sum(1 for _b in _dec if _b > 0)
+    except Exception:
+        _lba_keys = {}
+
     summary = {
+        **_lba_keys,
         "duration_sec":       round(duration, 3),
         "total_events":       len(events),
         "read_events":        len(rd_evts),
@@ -1084,8 +1149,17 @@ def analyze(events_csv: Path, output_dir: Path) -> dict:
     written["bandwidth_per_stream_summary.csv"] = output_dir / "bandwidth_per_stream_summary.csv"
 
     # ─── 3. hot_regions_overall.csv ──────────────────────────────────────────
+    # The LBA distribution is written to CSV for the local reports, but a run
+    # analysed over Prometheus never sees that file — which is why the L3.5
+    # node has locality SCALARS (gini, topNpct) and no distribution.  Export
+    # the shape as gauges too: a coarse decile histogram is enough to answer
+    # "is access concentrated or spread", and unlike the top-50 CSV it has
+    # bounded cardinality, so it is safe to publish every cycle.
     region_bytes: dict[tuple, int] = defaultdict(int)
     region_count: dict[tuple, int] = defaultdict(int)
+    _lba_lo: dict = {}
+    _lba_hi: dict = {}
+    _lba_hist: dict = defaultdict(int)
     for e in events:
         bucket = (e["sector"] * 512) // LBA_BUCKET
         region_bytes[(e["op"], bucket)] += e["size"]
@@ -1351,6 +1425,9 @@ def analyze(events_csv: Path, output_dir: Path) -> dict:  # type: ignore[overrid
     stream_stats: dict[tuple, dict] = {}
     region_bytes: dict[tuple, int] = defaultdict(int)
     region_count: dict[tuple, int] = defaultdict(int)
+    _lba_lo: dict = {}
+    _lba_hi: dict = {}
+    _lba_hist: dict = defaultdict(int)
     win_data: dict[int, dict] = {}
     hot_win_bytes: dict[tuple, int] = defaultdict(int)
     last_ts_by_op: dict[str, float] = {}
@@ -1434,6 +1511,13 @@ def analyze(events_csv: Path, output_dir: Path) -> dict:  # type: ignore[overrid
                 bucket = (sector * 512) // LBA_BUCKET
                 region_bytes[(op, bucket)] += size
                 region_count[(op, bucket)] += 1
+                # LBA span and per-bucket bytes, for the decile export below.
+                # This is the STREAMING path — the deployed one — and it has
+                # its own summary dict, so the decile code added to the
+                # non-streaming analyzer never ran here.
+                _lba_lo[op] = sector if op not in _lba_lo else min(_lba_lo[op], sector)
+                _lba_hi[op] = sector if op not in _lba_hi else max(_lba_hi[op], sector)
+                _lba_hist[(op, bucket)] += size
 
                 win = int(ts // WINDOW_S)
                 rec = _ensure_win(win)
@@ -1522,6 +1606,8 @@ def analyze(events_csv: Path, output_dir: Path) -> dict:  # type: ignore[overrid
         "write_bw_mb_s_mean": round(bytes_by_op["W"] / 1e6 / duration, 2),
         "trim_present": counts["D"] > 0,
         "streaming_analyzer": True,
+        **{_k: _v for _k, _v in _streaming_lba_keys(
+            _lba_lo, _lba_hi, _lba_hist).items()},
         "completion_events_only": True,
         "request_size_sampled_events": sample_written,
     }

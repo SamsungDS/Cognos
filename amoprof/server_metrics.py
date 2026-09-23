@@ -116,3 +116,138 @@ def canonical_for(server_type: str, metric: str) -> str:
 def vllm_job_candidates() -> list[str]:
     """Prometheus job names to prefer when discovering a vLLM target."""
     return ["vllm"]
+
+
+# ─── Mooncake (L3.5 disaggregated KV store) ──────────────────────────────────
+#
+# Mooncake is a disaggregated KV cache backend (Moonshot's mooncake-store /
+# mooncake-transfer-engine).  When present, its Prometheus exporter fills the
+# L3.5 role in AMOprof's memory hierarchy: read/write traffic tracked here is
+# real backing-tier byte movement between the inference runtime and the
+# disaggregated store.
+#
+# The report layer already reads canonical logical-L3.5 signals off
+# sglang_prefetched_tokens_total (read/onboard) and sglang_backuped_tokens_total
+# (write/offload).  We reuse those canonical columns rather than introducing
+# a parallel schema, so all existing L3.5 charts / reconciliation code lights
+# up without new chart functions.  Mooncake exposes bytes rather than tokens,
+# so the translation is "prefer mooncake bytes when present; only use SGLang
+# token counters when mooncake is absent".
+#
+# Mooncake-native mooncake_store_capacity_bytes / mooncake_store_used_bytes are
+# stored under new canonical fields so the L3.5 capacity KPI tile can prefer
+# the mooncake-reported value over configured/inferred defaults.
+MOONCAKE_TO_CANONICAL = {
+    # Transfer engine — byte counters.  Mooncake tracks read/write direction
+    # separately; write = KV block offloaded from runtime to store, read =
+    # loaded back from store to runtime.
+    # The master exporter has no transfer-engine byte counters, but it does
+    # publish cumulative byte totals that yield the same quantities:
+    #
+    #   READ  — bytes SERVED to clients on a cache hit, split by where the hit
+    #           landed.  Summing the two gives total read bytes out of the
+    #           store, and its delta over an interval is read bandwidth.
+    #   WRITE — master_value_size_bytes_sum is the cumulative size of values
+    #           PUT into the store (a histogram _sum), so its delta over an
+    #           interval is write bandwidth.  _count is the number of puts.
+    #
+    # These are not the transfer engine's own counters, so they measure
+    # logical bytes in/out of the store rather than wire bytes; RDMA framing
+    # and any replication overhead are not included.
+    "file_cache_hit_bytes_total":             "mooncake_read_bytes_file_total",
+    "mem_cache_hit_bytes_total":              "mooncake_read_bytes_mem_total",
+    "master_value_size_bytes_sum":            "mooncake_write_bytes_total",
+    "master_promotion_completed_bytes_total": "mooncake_promoted_bytes_total",
+    "master_evicted_size_bytes":              "mooncake_evicted_bytes",
+    "segment_allocated_bytes":                "mooncake_segment_used_bytes",
+    "segment_total_capacity_bytes":           "mooncake_segment_capacity_bytes",
+    "mooncake_transfer_read_bytes_total":     "mooncake_read_bytes_total",
+    "mooncake_transfer_written_bytes_total":  "mooncake_write_bytes_total",
+    # Some exporter versions collapse read+write into a single counter with a
+    # `direction` label.  We fetch both aliases; whichever exists wins.
+    "mooncake_bytes_read_total":              "mooncake_read_bytes_total",
+    "mooncake_bytes_written_total":           "mooncake_write_bytes_total",
+    "mooncake_read_bytes_total":              "mooncake_read_bytes_total",
+    "mooncake_written_bytes_total":           "mooncake_write_bytes_total",
+    # Store capacity — fill L3.5 tier size KPI.
+    "mooncake_store_capacity_bytes":          "mooncake_capacity_bytes",
+    "mooncake_store_used_bytes":              "mooncake_used_bytes",
+    "mooncake_store_fill_ratio":              "mooncake_fill_ratio",
+    "mooncake_capacity_bytes":                "mooncake_capacity_bytes",
+    "mooncake_used_bytes":                    "mooncake_used_bytes",
+    # Topology / replica count.  Not charted; surfaced in setup panel + as a
+    # gauge Prometheus can graph independently.
+    "mooncake_replica_count":                 "mooncake_replica_count",
+    "mooncake_node_count":                    "mooncake_node_count",
+    "mooncake_store_nodes":                   "mooncake_node_count",
+    # Request-level counters (optional; some exporters emit these).
+    "mooncake_get_requests_total":            "mooncake_get_requests_total",
+    "mooncake_put_requests_total":            "mooncake_put_requests_total",
+    "mooncake_get_errors_total":              "mooncake_get_errors_total",
+    "mooncake_put_errors_total":              "mooncake_put_errors_total",
+}
+
+
+# Mooncake histogram bases — Q→C style latency of the transfer engine.
+# Feed L3.5 latency percentiles (P50/P90/P99) via the same histogram_quantile
+# machinery percentiles.py already runs against SGLang / vLLM.
+# The Mooncake *master* exporter publishes unprefixed names (no `mooncake_`
+# namespace).  These are metadata-service metrics: capacity, occupancy, key
+# counts and request rates.  Note there are no byte-throughput counters here —
+# data movement happens client<->store over RDMA and is not visible to the
+# master — so L3.5 bandwidth cannot be measured from this exporter and is not
+# fabricated from it.
+MOONCAKE_MASTER_TO_CANONICAL: dict[str, str] = {
+    "master_allocated_bytes":            "mooncake_used_bytes",
+    "master_total_capacity_bytes":       "mooncake_capacity_bytes",
+    "segment_allocated_bytes":           "mooncake_segment_used_bytes",
+    "segment_total_capacity_bytes":      "mooncake_segment_capacity_bytes",
+    "master_allocated_file_size_bytes":  "mooncake_file_used_bytes",
+    "master_total_file_capacity_bytes":  "mooncake_file_capacity_bytes",
+    # Memory vs storage kept apart.  Mooncake accounts them separately —
+    # mem_cache_hit_bytes_total beside file_cache_hit_bytes_total proves the
+    # store knows which tier served a hit — so conflating their capacities
+    # into one "L3.5 used" figure reports a percentage of the wrong total.
+    "master_allocated_bytes":            "mooncake_mem_used_bytes",
+    "master_allocated_file_size_bytes":  "mooncake_file_used_bytes",
+    "master_key_count":                  "mooncake_key_count",
+    "master_soft_pin_key_count":         "mooncake_soft_pin_key_count",
+    "master_active_clients":             "mooncake_active_clients",
+    "master_put_end_requests_total":     "mooncake_put_requests_total",
+    "master_put_start_requests_total":   "mooncake_put_start_requests_total",
+    "master_put_end_failures_total":     "mooncake_put_errors_total",
+    # A replica-list request is a metadata lookup on the master ("where is
+    # this key?"), not a data read — it can fire with no bytes moved.  It was
+    # aliased to get_requests and presented as L3.5 read activity.  Kept under
+    # its own name so it is not mistaken for data movement.
+    "master_get_replica_list_requests_total": "mooncake_replica_lookups_total",
+    "master_get_replica_list_failures_total": "mooncake_get_errors_total",
+    "master_exist_key_requests_total":   "mooncake_exist_requests_total",
+}
+
+MOONCAKE_MASTER_HISTOGRAM_BASES = ("master_value_size_bytes",)
+
+MOONCAKE_HISTOGRAM_BASES = (
+    "mooncake_transfer_duration_seconds",
+    "mooncake_get_duration_seconds",
+    "mooncake_put_duration_seconds",
+)
+
+
+# Percentile-histogram spec for percentiles.py (canonical, base, scale, unit,
+# label).  Emits keys `l3_5_transfer_p50_ms` etc. so they can coexist with the
+# SGLang/vLLM request-level percentile keys already written to
+# sglang_percentiles_timeseries.json.
+MOONCAKE_HISTOGRAM_METRICS = [
+    ("l3_5_transfer", "mooncake_transfer_duration_seconds", 1000.0, "ms",
+     "L3.5 transfer duration"),
+    ("l3_5_get",      "mooncake_get_duration_seconds",      1000.0, "ms",
+     "L3.5 get duration"),
+    ("l3_5_put",      "mooncake_put_duration_seconds",      1000.0, "ms",
+     "L3.5 put duration"),
+]
+
+
+def mooncake_job_candidates() -> list[str]:
+    """Prometheus job names to prefer when discovering a Mooncake target."""
+    return ["mooncake", "mooncake_store", "mooncake_master"]

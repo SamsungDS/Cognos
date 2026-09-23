@@ -72,6 +72,39 @@ HISTOGRAM_METRICS = [
 ]
 
 
+# vLLM histogram bases, emitting the SAME canonical output keys (ttft/itl/e2e/
+# prompt_tokens/output_tokens) so sglang_percentiles_timeseries.json schema is
+# identical regardless of backend.
+VLLM_HISTOGRAM_METRICS = [
+    ("ttft",  "vllm:time_to_first_token_seconds",   1000.0, "ms", "TTFT"),
+    ("itl",   "vllm:time_per_output_token_seconds", 1000.0, "ms", "ITL"),
+    ("e2e",   "vllm:e2e_request_latency_seconds",   1000.0, "ms", "E2E"),
+    ("prompt_tokens", "vllm:request_prompt_tokens",     1.0, "tok", "Prompt tokens"),
+    ("output_tokens", "vllm:request_generation_tokens", 1.0, "tok", "Output tokens"),
+]
+
+
+def _histogram_metrics_for(server_type: str = "auto"):
+    """Return the (canonical_key, base_alias(es), scale, unit, label) list for a
+    backend.  Defaults to the SGLang list, preserving existing behaviour.
+
+    Mooncake L3.5 histograms are appended when the module is available.  They
+    coexist with either backend's request-level percentiles because a Mooncake
+    deployment fronts either an SGLang or vLLM runtime — the L3.5 latency
+    percentiles are additional (not a replacement).  When the target
+    Prometheus has no mooncake_* buckets, the fetches return empty and the
+    L3.5 blocks are omitted from sglang_percentiles_timeseries.json.
+    """
+    base = list(VLLM_HISTOGRAM_METRICS if (server_type or "").lower() == "vllm"
+                else HISTOGRAM_METRICS)
+    try:
+        from amoprof.server_metrics import MOONCAKE_HISTOGRAM_METRICS
+        base.extend(MOONCAKE_HISTOGRAM_METRICS)
+    except Exception:
+        pass
+    return base
+
+
 def _metric_bases(metric_base: str | tuple | list) -> list[str]:
     if isinstance(metric_base, (tuple, list)):
         return [str(x) for x in metric_base if x]
@@ -137,6 +170,15 @@ def _resolve_metric_base(base: str, available: set[str]) -> str:
         under = "sglang_" + base[len("sglang:"):]
         if under + "_bucket" in available:
             return under
+    # vLLM exporters emit `vllm:` metrics; some setups relabel to `vllm_`.
+    if base.startswith("vllm:"):
+        under = "vllm_" + base[len("vllm:"):]
+        if under + "_bucket" in available:
+            return under
+    if base.startswith("vllm_"):
+        colon = "vllm:" + base[len("vllm_"):]
+        if colon + "_bucket" in available:
+            return colon
     return base
 
 
@@ -195,6 +237,7 @@ def _quantile_query_instant_over_range(
 def fetch_percentile_summary(prom_url: str, start: float, end: float,
                               instance: str = "", job: str = "",
                               extra_labels: dict[str, str] | None = None,
+                              server_type: str = "auto",
                               ) -> dict[str, float]:
     """Compute P50/P90/P99 for the FULL window. Returns flat dict like:
         {"server_ttft_p50_ms": 26100.0, "server_ttft_p90_ms": 37800.0, ...}
@@ -204,7 +247,7 @@ def fetch_percentile_summary(prom_url: str, start: float, end: float,
     label_selector = _build_label_selector(instance, job, extra_labels)
     available_metrics = _list_prom_metrics(prom_url)
     out: dict[str, float] = {}
-    for canon, base_aliases, scale, unit, _label in HISTOGRAM_METRICS:
+    for canon, base_aliases, scale, unit, _label in _histogram_metrics_for(server_type):
         bases = _metric_bases(base_aliases)
         for p_label, q in PERCENTILES:
             v = None
@@ -261,6 +304,7 @@ def fetch_percentile_timeseries(prom_url: str, start: float, end: float,
                                  rate_window_s: int | None = None,
                                  instance: str = "", job: str = "",
                                  extra_labels: dict[str, str] | None = None,
+                                 server_type: str = "auto",
                                  ) -> dict[str, dict]:
     """Pull per-tick P50/P90/P99 timeseries from Prometheus.
 
@@ -282,7 +326,7 @@ def fetch_percentile_timeseries(prom_url: str, start: float, end: float,
     label_selector = _build_label_selector(instance, job, extra_labels)
     out: dict[str, dict] = {}
 
-    for canon, base_aliases, scale, unit, label in HISTOGRAM_METRICS:
+    for canon, base_aliases, scale, unit, label in _histogram_metrics_for(server_type):
         bases = _metric_bases(base_aliases)
         block: dict[str, Any] = {
             "label": label, "unit": unit, "metric_base": bases[0],

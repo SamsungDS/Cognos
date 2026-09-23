@@ -29,6 +29,12 @@ from ..base import (
 
 log = logging.getLogger("amoprof.collectors.sglang")
 
+# Fallback only, for code that constructs the sampler directly rather than
+# through for_host().  The metrics path no longer touches /get_server_info at
+# all: it has its own fetcher and its own thread, so the two intervals cannot
+# interfere.
+_SERVER_INFO_MIN_S = float(os.environ.get("AMOPROF_SGLANG_SERVER_INFO_MIN_S", "300"))
+
 
 def _fetch_metrics_once(port: int, debug: bool = False,
                         debug_path: str | None = None,
@@ -134,22 +140,6 @@ def _fetch_metrics_once(port: int, debug: bool = False,
             if key in result:
                 _dbg(f"parsed {key}={result[key]}")
 
-    # Supplement with /get_server_info
-    try:
-        with urllib.request.urlopen(
-                f"http://{host}:{port}/get_server_info", timeout=2) as r:
-            info = json.loads(r.read())
-            for src_key, dst_key in [
-                ("cache_hit_rate", "sglang:cache_hit_rate"),
-                ("kv_cache_usage", "sglang:token_usage"),
-            ]:
-                if src_key in info:
-                    result[dst_key] = float(info[src_key])
-            if debug:
-                _dbg("get_server_info_success=1")
-    except Exception as e:
-        if debug:
-            _dbg(f"get_server_info_success=0 error={e!r}")
 
     if debug and debug_path:
         try:
@@ -238,9 +228,22 @@ class SGLangMetricsSampler(BaseCollector):
 
         cli/service call this when `args.sglang_port is not None`.
         """
+        # --server-info-interval-s governs EVERY call to /get_server_info,
+        # not just the config capture.  Two independent throttles on one
+        # endpoint meant setting the flag to 600s still left this collector
+        # polling it on its own schedule, which is exactly the confusion the
+        # flag exists to remove.  --server-info-once means "fetch once", so
+        # here it is an interval no run will reach.
+        _si_iv = float(getattr(args, "server_info_interval_s", 300.0) or 0.0)
+        if bool(getattr(args, "server_info_once", False)):
+            _si_iv = float("inf")
+        globals()["_SERVER_INFO_MIN_S"] = _si_iv
+
         return cls(
             port=int(getattr(args, "sglang_port", 0) or 0),
-            interval_s=float(ctx.get("interval_s", 1.0)),
+            interval_s=(float(getattr(args, "sglang_metrics_interval_s", 0) or 0)
+                        or float(ctx.get("interval_s", 1.0))),
+            server_info_interval_s=_si_iv,
             host=str(getattr(args, "sglang_host", "127.0.0.1") or "127.0.0.1"),
             debug=bool(getattr(args, "debug_sglang", False)),
             debug_path=str(ctx.get("raw_dir", ".")) + "/sglang_debug.log",
@@ -248,10 +251,19 @@ class SGLangMetricsSampler(BaseCollector):
 
     def __init__(self, port: int, interval_s: float = 1.0,
                  host: str = "127.0.0.1",
-                 debug: bool = False, debug_path: str | None = None):
+                 debug: bool = False, debug_path: str | None = None,
+                 server_info_interval_s: float = 300.0):
         self.port     = port
         self.host     = host
         self.interval = interval_s
+        # /get_server_info is NOT polled here.  SGLang exports both gauges we
+        # wanted from it — sglang:cache_hit_rate and sglang:token_usage — on
+        # /metrics, which this collector already scrapes and parses
+        # generically.  Calling a heavy JSON endpoint that serialises the whole
+        # server configuration to extract two floats we were fetching anyway
+        # was pure overhead.  Retained only so the constructor signature stays
+        # compatible with callers that pass it.
+        self.si_interval = float(server_info_interval_s)
         self.debug    = bool(debug)
         self.debug_path = debug_path
         self._samples: list[dict] = []

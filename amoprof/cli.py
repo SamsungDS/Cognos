@@ -114,6 +114,8 @@ def _fetch_sglang_server_info(args: argparse.Namespace) -> dict[str, Any]:
     urls: list[str] = []
     if explicit:
         urls.append(explicit)
+    host_explicit = bool(getattr(args, "sglang_host", "")
+                         and str(getattr(args, "sglang_host", "")) != "127.0.0.1")
 
     host = getattr(args, "sglang_host", "") or os.environ.get("AMOPROF_SGLANG_HOST", "127.0.0.1")
     port = getattr(args, "sglang_port", None)
@@ -121,8 +123,33 @@ def _fetch_sglang_server_info(args: argparse.Namespace) -> dict[str, Any]:
         port_i = int(port or 0)
     except Exception:
         port_i = 0
-    if port_i > 0:
-        base = f"http://{host}:{port_i}"
+
+    # Candidate ports.  Previously only an explicit --sglang-port produced any
+    # candidate at all, so `amoprof service` started without that flag built an
+    # empty URL list, returned {} and — because the warning below was guarded
+    # on `if urls` — said nothing.  The result was an empty Server Info panel
+    # with no clue why.  Try the SGLang defaults as well, and any port we can
+    # recover from a metrics/Prometheus URL the caller already supplied.
+    ports: list[int] = [port_i] if port_i > 0 else []
+    for _attr in ("sglang_metrics_url", "metrics_url", "prom_url", "prometheus_url"):
+        _u = str(getattr(args, _attr, "") or "")
+        if not _u:
+            continue
+        try:
+            from urllib.parse import urlparse as _urlparse
+            _p = _urlparse(_u)
+            if _p.hostname and not host_explicit:
+                host = _p.hostname
+            if _p.port and _p.port not in ports:
+                ports.append(int(_p.port))
+        except Exception:
+            pass
+    for _default in (30000, 8000):
+        if _default not in ports:
+            ports.append(_default)
+
+    for p_i in ports:
+        base = f"http://{host}:{p_i}"
         # Prefer the non-deprecated endpoint first. `/get_server_info` is kept
         # only as a last-resort compatibility fallback for older SGLang builds.
         urls.extend([
@@ -149,8 +176,14 @@ def _fetch_sglang_server_info(args: argparse.Namespace) -> dict[str, Any]:
                 return data
         except Exception as e:
             last_err = f"{url}: {e}"
-    if urls:
-        log.warning("Could not fetch SGLang server_info (%s)", last_err)
+    # Always warn.  A silent {} here is what produced empty Server Info
+    # panels with no diagnostic; name the endpoints tried and the flag that
+    # fixes it.
+    log.warning(
+        "Could not fetch SGLang server_info — Server Info / GPU config in the "
+        "report will be incomplete. Tried %d endpoint(s); last error: %s. "
+        "Pass --sglang-port (or --server-info-url) pointing at the running "
+        "SGLang server.", len(seen), last_err or "no endpoint reachable")
     return {}
 
 
@@ -238,6 +271,68 @@ def _server_info_to_setup_details(server_info: dict[str, Any],
     if getattr(args, "sglang_port", None):
         setup["SGLang port"] = getattr(args, "sglang_port", None)
 
+    # Pass through every remaining scalar server_info field.
+    #
+    # The mapping above is a curated list of ~18 fields, but SGLang's
+    # /server_info returns the full ServerArgs (100+ entries).  Anything not
+    # named above was silently dropped from setup_details.json, which is why
+    # raw/server_info.json showed values the report's Server Info section did
+    # not.  Curated names still win: a field already represented above is not
+    # duplicated under its raw key.
+    _mapped_sources = {
+        "launch_args", "server_args", "args", "command", "cmdline", "launch_command",
+        "model_path", "model", "served_model_name", "model_name",
+        "tp_size", "tensor_parallel_size", "tp", "tensor_parallel",
+        "dp_size", "data_parallel_size", "dp", "data_parallel",
+        "kv_cache_dtype", "kv_dtype", "dtype",
+        "page_size", "hicache_page_size", "kv_cache_page_size",
+        "hicache_size", "hi_cache_size", "hicache_size_gb",
+        "hicache_ratio", "hi_cache_ratio",
+        "hicache_storage_backend", "storage_backend", "hicache_backend",
+        "hicache_io_backend", "io_backend",
+        "hicache_mem_layout", "mem_layout",
+        "file_storage_path", "hicache_storage_path", "storage_path",
+        "mem_fraction_static", "mem_fraction",
+        "chunked_prefill_size", "chunked_prefill",
+    }
+
+    def _label(key: str) -> str:
+        """server_info key -> human label, preserving known acronyms."""
+        words = str(key).replace("-", "_").split("_")
+        acronyms = {"tp", "dp", "pp", "ep", "kv", "gpu", "cpu", "cuda", "api",
+                    "url", "id", "ip", "io", "moe", "lora", "hicache", "nccl",
+                    "rope", "fp8", "bf16", "fp16", "int8", "json", "http"}
+        out = []
+        for i, w in enumerate(words):
+            if not w:
+                continue
+            if w.lower() in acronyms:
+                out.append(w.upper() if len(w) <= 3 else w.capitalize())
+            elif i == 0:
+                out.append(w.capitalize())
+            else:
+                out.append(w.lower())
+        return " ".join(out) or str(key)
+
+    _existing = {str(k).strip().lower().replace(" ", "_") for k in setup}
+    for _k, _v in si.items():
+        _ks = str(_k)
+        if _ks.startswith("_amoprof") or _ks in _mapped_sources:
+            continue
+        if isinstance(_v, bool):
+            _v = "true" if _v else "false"
+        elif isinstance(_v, (list, tuple)):
+            # Short scalar lists are useful inline; anything larger stays in raw.
+            if len(_v) > 12 or any(isinstance(x, (dict, list)) for x in _v):
+                continue
+            _v = ", ".join(str(x) for x in _v)
+        elif isinstance(_v, dict) or _v is None:
+            continue
+        _lbl = _label(_ks)
+        if _lbl.strip().lower().replace(" ", "_") in _existing:
+            continue
+        setup.setdefault(_lbl, _v)
+
     return {k: v for k, v in setup.items() if v not in (None, "", [], {}) or k == "SGLang server_info raw"}
 
 
@@ -284,6 +379,493 @@ def _write_setup_details_from_server_info(args: argparse.Namespace, raw_dir: Pat
     except Exception as e:
         log.warning("failed to write server_info-derived setup_details.json: %s", e)
         return False
+
+
+_MODEL_CONFIG_KEYS = (
+    "num_hidden_layers", "num_key_value_heads", "num_attention_heads",
+    "head_dim", "hidden_size", "torch_dtype", "model_type",
+    "max_position_embeddings", "vocab_size", "sliding_window",
+    "num_experts", "num_local_experts", "num_experts_per_tok",
+    "intermediate_size", "rope_theta", "architectures",
+)
+
+
+def _hf_cache_roots() -> "list[Path]":
+    """Candidate HuggingFace hub cache directories, most specific first."""
+    roots = []
+    for env in ("HUGGINGFACE_HUB_CACHE", "HF_HUB_CACHE"):
+        v = os.environ.get(env)
+        if v:
+            roots.append(Path(v).expanduser())
+    hf_home = os.environ.get("HF_HOME")
+    if hf_home:
+        roots.append(Path(hf_home).expanduser() / "hub")
+    roots.append(Path.home() / ".cache" / "huggingface" / "hub")
+    roots.append(Path("/root/.cache/huggingface/hub"))
+    out, seen = [], set()
+    for r in roots:
+        if str(r) not in seen:
+            seen.add(str(r))
+            out.append(r)
+    return out
+
+
+def _hf_snapshot_dirs(repo_dir: Path) -> "list[Path]":
+    """Snapshot directories of a `models--org--name` cache entry, best first.
+
+    Prefers the commit named by `refs/main`, then falls back to the most
+    recently modified snapshot.  Snapshot directories are named by commit
+    hash, so hardcoding one in a script breaks the next time the model is
+    re-pulled — resolving through refs/main avoids that.
+    """
+    snaps = repo_dir / "snapshots"
+    if not snaps.is_dir():
+        return []
+    ordered: list[Path] = []
+    ref = repo_dir / "refs" / "main"
+    try:
+        if ref.exists():
+            head = (snaps / ref.read_text(encoding="utf-8").strip())
+            if head.is_dir():
+                ordered.append(head)
+    except Exception:
+        pass
+    try:
+        for d in sorted(snaps.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+            if d.is_dir() and d not in ordered:
+                ordered.append(d)
+    except Exception:
+        pass
+    return ordered
+
+
+def _model_config_candidates(p: Path, raw: str) -> "list[Path]":
+    """Resolve a --model-path into concrete config.json candidates.
+
+    Accepts, in order of directness:
+      * a config.json file
+      * a model directory containing config.json
+      * a HuggingFace cache entry (`models--org--name`) — resolves refs/main
+      * a snapshot directory
+      * a bare repo id (`google/gemma-4-31B-it`) — searched for in the HF cache
+    """
+    out: list[Path] = []
+    if p.suffix == ".json":
+        out.append(p)
+    if p.is_dir():
+        out.append(p / "config.json")
+        # A models--org--name entry, or a path that contains snapshots/.
+        for snap in _hf_snapshot_dirs(p):
+            out.append(snap / "config.json")
+    # Bare repo id: look it up in the hub cache rather than making the caller
+    # paste a commit-hash path that changes on every model update.
+    if not p.exists() and "/" in raw and not raw.startswith(("/", ".", "~")):
+        folder = "models--" + raw.strip().replace("/", "--")
+        for root in _hf_cache_roots():
+            repo_dir = root / folder
+            if repo_dir.is_dir():
+                for snap in _hf_snapshot_dirs(repo_dir):
+                    out.append(snap / "config.json")
+    seen, uniq = set(), []
+    for c in out:
+        if str(c) not in seen:
+            seen.add(str(c))
+            uniq.append(c)
+    return uniq
+
+
+def _read_model_config(model_path: "str | Path | None") -> dict:
+    """Read a local HF model directory's config.json.
+
+    This is the authoritative source for KV-cache sizing: the report otherwise
+    infers architecture from the model *name*, which is a guess and was wrong
+    by 3.6x on a model whose name matched no table entry.  Reading the config
+    the server is actually serving removes the guess.
+
+    Handles the multimodal case where attention parameters live under a nested
+    `text_config` (Gemma-style) rather than at the top level, and normalises
+    `head_dim` from hidden_size / num_attention_heads when absent.
+
+    Returns {} for a missing or unreadable path — callers fall back to
+    name-based inference and warn.
+    """
+    if not model_path:
+        return {}
+    p = Path(str(model_path)).expanduser()
+    candidates = _model_config_candidates(p, str(model_path))
+    for cand in candidates:
+        try:
+            if not cand.exists() or cand.stat().st_size <= 0:
+                continue
+            raw = json.loads(cand.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                continue
+        except Exception as e:
+            log.warning("Could not read model config %s: %s", cand, e)
+            return {}
+
+        # Multimodal configs nest the language-model parameters.  KV cache is a
+        # property of the text decoder, so prefer that block when present.
+        blocks = [raw]
+        for nested in ("text_config", "language_model", "llm_config", "decoder"):
+            if isinstance(raw.get(nested), dict):
+                blocks.insert(0, raw[nested])
+
+        out: dict[str, Any] = {}
+        for blk in blocks:
+            for k in _MODEL_CONFIG_KEYS:
+                if k in blk and k not in out and blk[k] not in (None, ""):
+                    out[k] = blk[k]
+        if not out:
+            continue
+        if "head_dim" not in out:
+            try:
+                hs = int(out.get("hidden_size") or 0)
+                nh = int(out.get("num_attention_heads") or 0)
+                if hs > 0 and nh > 0:
+                    out["head_dim"] = hs // nh
+                    out["_amoprof_head_dim_derived"] = "hidden_size / num_attention_heads"
+            except Exception:
+                pass
+        out["_amoprof_source"] = str(cand)
+        log.info("Model config: %s (layers=%s kv_heads=%s head_dim=%s dtype=%s)",
+                 cand, out.get("num_hidden_layers"), out.get("num_key_value_heads"),
+                 out.get("head_dim"), out.get("torch_dtype"))
+        return out
+    log.warning("Model config not found at %s — KV bytes/token will be estimated "
+                "from the model name, which is approximate. Pass --model-path "
+                "pointing at the served model directory for an exact value.",
+                model_path)
+    return {}
+
+
+def _write_model_config(raw_dir: Path, args: "argparse.Namespace | None" = None) -> dict:
+    """Persist the served model's config to raw/model_config.json."""
+    cfg = _read_model_config(getattr(args, "model_path", "") if args else "")
+    if not cfg:
+        return {}
+    # An explicitly supplied --model-path is a statement of intent and must
+    # beat an implicit live /get_server_info fetch.  Analysing a historical
+    # window against a server since restarted with a different model reported
+    # the LIVE model, because live server info was treated as authoritative —
+    # correct when analysing now, wrong for a past window.  Record the
+    # identity here so the report can prefer it.
+    _mp = str(getattr(args, "model_path", "") or "")
+    if _mp and not cfg.get("_amoprof_model_name"):
+        _name = str(cfg.get("_name_or_path") or "").strip()
+        if not _name:
+            # Derive from a HuggingFace cache path:
+            #   .../models--google--gemma-4-31b-it/snapshots/<sha>/config.json
+            for _part in Path(_mp).parts:
+                if _part.startswith("models--"):
+                    _name = _part[len("models--"):].replace("--", "/")
+                    break
+        if not _name:
+            _name = Path(_mp).parent.name or Path(_mp).stem
+        if _name:
+            cfg["_amoprof_model_name"] = _name
+            cfg["_amoprof_model_name_source"] = "--model-path (explicit)"
+    try:
+        raw_dir = Path(raw_dir)
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        (raw_dir / "model_config.json").write_text(
+            json.dumps(cfg, indent=2, default=str), encoding="utf-8")
+    except Exception as e:
+        log.warning("failed to write model_config.json: %s", e)
+    return cfg
+
+
+def _write_gpu_config(raw_dir: Path, args: "argparse.Namespace | None" = None) -> dict[str, Any]:
+    """Capture static GPU configuration from nvidia-smi into raw/gpu_config.json.
+
+    The GPU *time-series* collector polls utilization/memory, but nothing
+    recorded the static device inventory, so the reports had to infer GPU
+    model, device count and HBM capacity from setup_details.json (i.e. from
+    SGLang server_info).  When server_info was unavailable the GPU panel and
+    the HBM-capacity denominator were simply wrong.
+
+    Written once per run/cycle.  Failure is non-fatal: a host without
+    nvidia-smi just gets no file and the previous inference path still
+    applies.
+    """
+    import subprocess as _sp
+    raw_dir = Path(raw_dir)
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    cfg: dict[str, Any] = {}
+    try:
+        q = ("index,name,uuid,memory.total,compute_mode,"
+             "pcie.link.gen.max,pcie.link.width.max,clocks.max.sm")
+        out = _sp.check_output(
+            ["nvidia-smi", f"--query-gpu={q}", "--format=csv,noheader,nounits"],
+            stderr=_sp.DEVNULL, timeout=15).decode("utf-8", "replace")
+        gpus: list[dict[str, Any]] = []
+        for line in out.splitlines():
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) < 4 or not parts[0]:
+                continue
+            try:
+                mem_mib = float(parts[3])
+            except Exception:
+                mem_mib = 0.0
+            gpus.append({
+                "index": int(parts[0]),
+                "name": parts[1],
+                "uuid": parts[2] if len(parts) > 2 else "",
+                "memory_total_mib": mem_mib,
+                "memory_total_gb": round(mem_mib / 1024.0, 3),
+                "compute_mode": parts[4] if len(parts) > 4 else "",
+                "pcie_gen_max": parts[5] if len(parts) > 5 else "",
+                "pcie_width_max": parts[6] if len(parts) > 6 else "",
+                "sm_clock_max_mhz": parts[7] if len(parts) > 7 else "",
+            })
+        if not gpus:
+            return {}
+        per_gpu_gb = max((g["memory_total_gb"] for g in gpus), default=0.0)
+        cfg = {
+            "gpus": gpus,
+            "gpu_count": len(gpus),
+            "gpu_name": gpus[0]["name"],
+            "hbm_per_gpu_gb": per_gpu_gb,
+            "hbm_total_gb": round(per_gpu_gb * len(gpus), 3),
+            "_amoprof_source": "nvidia-smi --query-gpu",
+        }
+        # Record the collecting host here. setup_details.json is regenerated
+        # from server_info during analyze and loses any Host key, and analyze
+        # may run on a different machine than the collection did — so the OS
+        # hostname at report time is not a reliable node identity.
+        try:
+            import socket as _socket
+            cfg["hostname"] = _socket.gethostname().split(".")[0]
+        except Exception:
+            pass
+        try:
+            drv = _sp.check_output(
+                ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
+                stderr=_sp.DEVNULL, timeout=10).decode("utf-8", "replace").splitlines()
+            if drv:
+                cfg["driver_version"] = drv[0].strip()
+        except Exception:
+            pass
+    except FileNotFoundError:
+        log.info("nvidia-smi not found — skipping gpu_config.json")
+        return {}
+    except Exception as e:
+        log.warning("Could not capture GPU config from nvidia-smi: %s", e)
+        return {}
+
+    # Tensor/data parallelism decides how many of these devices the inference
+    # server is actually using, which is the correct denominator for HBM
+    # capacity.  Prefer server_info; fall back to CLI args.
+    try:
+        si_path = raw_dir / "server_info.json"
+        si = json.loads(si_path.read_text(encoding="utf-8")) if si_path.exists() else {}
+    except Exception:
+        si = {}
+    tp = _deep_find(si, ("tp_size", "tensor_parallel_size", "tp")) if si else None
+    dp = _deep_find(si, ("dp_size", "data_parallel_size", "dp")) if si else None
+
+    def _as_int(v, default=0):
+        try:
+            return int(float(v))
+        except Exception:
+            return default
+    tp_i = _as_int(tp, 0) or _as_int(getattr(args, "tp_size", 0), 0)
+    # Cross-check against any Prometheus-derived TP in setup_details.  That
+    # value is max(tp_rank)+1 over the *visible* label sets, so an instance
+    # filter (--prom-instance) or a rank-0-only exporter makes it read 1 for a
+    # multi-way TP server.  server_info (live /server_info) wins; the mismatch
+    # is worth surfacing because TP is the HBM-capacity denominator.
+    try:
+        _sd_path = raw_dir / "setup_details.json"
+        _sd = json.loads(_sd_path.read_text(encoding="utf-8")) if _sd_path.exists() else {}
+    except Exception:
+        _sd = {}
+    _tp_setup = _as_int(_sd.get("TP size") or _sd.get("tp_size"), 0)
+    if _tp_setup > 0 and tp_i > 0 and _tp_setup != tp_i:
+        log.warning(
+            "GPU config: TP disagreement — live server_info reports TP=%d, "
+            "setup_details reports TP=%d. Using %d. A TP of 1 from Prometheus "
+            "usually means tp_rank labels were filtered to a single instance, "
+            "not that the server is single-GPU. HBM capacity uses TP=%d.",
+            tp_i, _tp_setup, tp_i, tp_i)
+    dp_i = _as_int(dp, 0) or 1
+    gpus_in_use = tp_i * dp_i if tp_i > 0 else 0
+    if gpus_in_use <= 0 or gpus_in_use > len(cfg["gpus"]):
+        gpus_in_use = len(cfg["gpus"])
+    cfg["tp_size"] = tp_i or None
+    cfg["dp_size"] = dp_i
+    cfg["gpus_in_use"] = gpus_in_use
+    cfg["hbm_capacity_gb"] = round(cfg["hbm_per_gpu_gb"] * gpus_in_use, 3)
+
+    try:
+        (raw_dir / "gpu_config.json").write_text(
+            json.dumps(cfg, indent=2, default=str), encoding="utf-8")
+        log.info("Wrote GPU config: %s (%d× %s, %.1f GB/GPU, %d in use by TP=%s DP=%s)",
+                 raw_dir / "gpu_config.json", cfg["gpu_count"], cfg["gpu_name"],
+                 cfg["hbm_per_gpu_gb"], gpus_in_use, cfg["tp_size"], cfg["dp_size"])
+    except Exception as e:
+        log.warning("failed to write gpu_config.json: %s", e)
+    return cfg
+
+
+_REPORT_TYPE_SUFFIX = {
+    "static": "end",          # amoprof.py's static report == the "End Report" tab
+    "end": "end",
+    "interactive": "interactive",
+    "combined": "combined",
+    "executive": "executive",
+    "comparison": "comparison",
+}
+
+
+def _slug(value: Any, fallback: str = "unknown", max_len: int = 40) -> str:
+    """Filename-safe token: lowercase, [a-z0-9-] only, collapsed and trimmed."""
+    s = str(value or "").strip().lower()
+    # Model paths are the common case — keep the model name, drop the org.
+    if "/" in s:
+        s = s.rsplit("/", 1)[-1]
+    s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")
+    s = re.sub(r"-{2,}", "-", s)
+    return (s[:max_len].strip("-") or fallback)
+
+
+def report_filename(raw_dir: Path, report_type: str,
+                    when: "datetime | None" = None,
+                    version: str = "",
+                    window_start: "float | None" = None,
+                    window_end: "float | None" = None) -> str:
+    """Canonical report name.
+
+    ``amoprof_<version>_<date>_<time>_<gpunode>_<model>_<report_type>.html``
+
+    e.g. ``amoprof_v1.1.0_20260806_1430_msl-ssg-dgx1_gpt-oss-120b_combined.html``
+
+    Sorts chronologically within a node/model, and every component an
+    executive needs to identify a run is in the name — so a stashed report
+    is self-describing without opening it. Missing components degrade to
+    ``unknown`` rather than shifting the field order, which keeps the name
+    parseable by split('_').
+
+    Sources, in order: gpu_config.json (nvidia-smi + hostname), then
+    server_info.json, then setup_details.json, then the OS hostname.
+    """
+    from datetime import datetime as _dt, timezone as _tz
+    when = when or _dt.now()
+
+    # Prefer the *observed window* over the report-generation time.  A report
+    # is evidence about a period, and naming it after when it happened to be
+    # rendered makes two reports of the same window look like different runs
+    # (and a re-render of an old window sort as if it were recent).  Falls
+    # back to `when` only if no window was supplied — the local-collect path,
+    # where generation time is the window.
+    #
+    # Window stamps are UTC and marked with a trailing Z, because the local
+    # timezone of the analysing host is not a property of the data.  Anything
+    # else silently re-labels the same window differently on two machines.
+    if window_start and window_end and window_end > window_start:
+        _ws = _dt.fromtimestamp(float(window_start), tz=_tz.utc)
+        _we = _dt.fromtimestamp(float(window_end), tz=_tz.utc)
+        _stamp = f"{_ws.strftime('%Y%m%dT%H%MZ')}-{_we.strftime('%Y%m%dT%H%MZ')}"
+    else:
+        _stamp = ""
+    try:
+        from . import __version__ as _v
+    except Exception:
+        _v = "0"
+    version = version or f"v{_v}"
+
+    def _load(name: str) -> dict:
+        # analyze may pass the run dir, its raw/ subdir, or a nested
+        # metrics_run_*/raw; the metadata can sit at any of those levels, so
+        # probe adjacent locations rather than silently degrading the node
+        # and model fields to "unknown".
+        base = Path(raw_dir)
+        for cand in (base, base / "raw", base.parent, base.parent / "raw"):
+            try:
+                p = cand / name
+                if p.exists() and p.stat().st_size > 0:
+                    obj = json.loads(p.read_text(encoding="utf-8"))
+                    if isinstance(obj, dict) and obj:
+                        return obj
+            except Exception:
+                continue
+        return {}
+
+    gcfg, sinfo, setup = _load("gpu_config.json"), _load("server_info.json"), _load("setup_details.json")
+
+    node = (setup.get("Host") or setup.get("host") or setup.get("Hostname")
+            or gcfg.get("hostname") or "")
+    if not node:
+        try:
+            import socket as _socket
+            node = _socket.gethostname()
+        except Exception:
+            node = ""
+    # A bare hostname is more useful than an FQDN in a filename.
+    node = str(node).split(".")[0]
+
+    # An explicit --model-path outranks both.  setup_details.json and
+    # server_info.json describe the server as discovered at analyze time,
+    # which for a historical window may be a different deployment entirely —
+    # a gemma window analysed against a host now serving qwen was named for
+    # qwen even though --model-path said otherwise.
+    mcfg = _load("model_config.json")
+    model = (mcfg.get("_amoprof_model_name")
+             or setup.get("Model") or setup.get("model") or setup.get("Model path")
+             or sinfo.get("model_path") or sinfo.get("model") or "")
+
+    rtype = _REPORT_TYPE_SUFFIX.get(str(report_type).lower(), _slug(report_type, "report", 20))
+    # Version keeps its dots — v1.1.0 is the recognisable form, and dots are
+    # filename-safe. Everything else is dash-separated.
+    ver = re.sub(r"[^A-Za-z0-9.]+", "", str(version))[:12] or "v0"
+    _when_part = _stamp or f"{when.strftime('%Y%m%d')}_{when.strftime('%H%M')}"
+    return (f"amoprof_{ver}"
+            f"_{_when_part}"
+            f"_{_slug(node, 'unknown-node', 30)}"
+            f"_{_slug(model, 'unknown-model', 40)}"
+            f"_{rtype}.html")
+
+
+def _apply_explicit_model_to_setup(raw_dir: Path, args=None) -> None:
+    """Let an explicit --model-path override the model fields in setup_details.
+
+    server_info is discovered from the RUNNING server.  When the analysed
+    window predates a restart, that server is a different deployment, and its
+    model name has no bearing on the data being analysed — a gemma window was
+    reported as Qwen/Qwen3.8-27B because the live fetch won.
+
+    An explicitly supplied --model-path is a statement about the data, so it
+    wins over anything discovered at runtime.  Only the model fields are
+    touched: TP size, page size and cache settings are left as discovered,
+    because --model-path says nothing about them.
+    """
+    try:
+        def _rj(path):
+            try:
+                if path.exists() and path.stat().st_size > 0:
+                    return json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+            return {}
+
+        cfg = _rj(raw_dir / "model_config.json") or {}
+        name = str(cfg.get("_amoprof_model_name") or "").strip()
+        if not name:
+            return
+        sd_path = raw_dir / "setup_details.json"
+        sd = _rj(sd_path) or {}
+        was = str(sd.get("Model") or "").strip()
+        if was and name.lower() not in was.lower() and was.lower() not in name.lower():
+            log.warning(
+                "setup_details reports model=%s (from server_info or "
+                "--setup-details), but --model-path specifies %s. Using %s \u2014 "
+                "if this window predates a server restart, the discovered value "
+                "describes a different deployment.", was, name, name)
+        sd["Model"] = name
+        sd["Model path"] = name
+        sd_path.write_text(json.dumps(sd, indent=2, default=str), encoding="utf-8")
+    except Exception as e:
+        log.warning("could not apply --model-path to setup_details: %s", e)
 
 
 def _copy_setup_details(args, raw_dir: Path) -> None:
@@ -794,7 +1376,54 @@ def _run_amoprof(raw_dir: Path, output_html: Path,
     cmd = [_sys.executable, str(amoprof_py),
            "--raw", str(raw_dir),
            "--output", str(output_html)]
-    if sglang_page_size and sglang_page_size > 0:
+
+    # KV block size (page_size).  The server is authoritative: it is the value
+    # SGLang is actually paging with, and every KV-block figure in the report
+    # scales by it.  A stale or mistaken --sglang-page-size silently multiplied
+    # block counts by the ratio between the two (a `1` against a server running
+    # 64 made every block figure 64x wrong), so prefer what the server reported
+    # and only fall back to the flag when the server did not say.
+    _page = 0
+    _page_src = ""
+    for _name in ("setup_details.json", "server_info.json"):
+        try:
+            _pf = Path(raw_dir) / _name
+            if not (_pf.exists() and _pf.stat().st_size > 0):
+                continue
+            _pd = json.loads(_pf.read_text(encoding="utf-8"))
+            if not isinstance(_pd, dict):
+                continue
+            for _k in ("Page size", "page_size", "hicache_page_size",
+                       "kv_cache_page_size", "KV page size"):
+                _v = _pd.get(_k)
+                if _v in (None, "", 0, "0"):
+                    continue
+                try:
+                    _iv = int(float(str(_v).split()[0].replace(",", "")))
+                except (TypeError, ValueError):
+                    continue
+                if _iv > 0:
+                    _page, _page_src = _iv, f"{_name}:{_k}"
+                    break
+            if _page:
+                break
+        except Exception:
+            continue
+
+    if _page > 0:
+        if sglang_page_size and int(sglang_page_size) != _page:
+            log.warning(
+                "KV page size: server reports %d (%s) but --sglang-page-size=%d "
+                "was given. Using the server value; every KV-block figure scales "
+                "by this, so the flag would have skewed them %.3gx.",
+                _page, _page_src, int(sglang_page_size),
+                int(sglang_page_size) / _page)
+        else:
+            log.info("KV page size: %d (from %s)", _page, _page_src)
+        cmd.extend(["--kv-block-size", str(_page)])
+    elif sglang_page_size and sglang_page_size > 0:
+        log.info("KV page size: %d (from --sglang-page-size; server did not report one)",
+                 int(sglang_page_size))
         cmd.extend(["--kv-block-size", str(int(sglang_page_size))])
     if extra_args:
         cmd.extend(extra_args)
@@ -1597,6 +2226,9 @@ def _collect(args: argparse.Namespace) -> int:
     # Prefer live SGLang server_info as setup/config source as soon as raw/ exists.
     # This makes collect-only runs self-contained even if reports are generated later.
     _write_setup_details_from_server_info(args, raw_dir, allow_overwrite=True)
+    _write_gpu_config(raw_dir, args)
+    _write_model_config(raw_dir, args)
+    _apply_explicit_model_to_setup(raw_dir, args)
     # Expose canonical output locations to child tools and user wrappers.
     os.environ["AMOPROF_OUTPUT_DIR"] = str(output_base)
     os.environ["AMOPROF_RUN_DIR"] = str(out_dir)
@@ -2012,6 +2644,12 @@ def _collect(args: argparse.Namespace) -> int:
 
     # ── Resolve effective report flags (same logic as _analyze) ─────────────
     _combined       = getattr(args, "combined_report",    False)
+    from datetime import datetime as _dt_now
+    # Single timestamp per invocation so the static / interactive /
+    # combined reports of one run share an identical name stem.
+    _report_ts = _dt_now.now()
+    # (start, end) epoch of the analysed window, when one is known.
+    _report_win = (None, None)
     _do_static      = getattr(args, "amoprof_report",     False) or _combined
     _do_interactive = getattr(args, "interactive_report", False) or _combined
     _theme          = getattr(args, "report_theme", "dark")
@@ -2019,6 +2657,9 @@ def _collect(args: argparse.Namespace) -> int:
     _interactive_path: "Path | None" = None
 
     _write_setup_details_from_server_info(args, raw_dir, allow_overwrite=True)
+    _write_gpu_config(raw_dir, args)
+    _write_model_config(raw_dir, args)
+    _apply_explicit_model_to_setup(raw_dir, args)
 
     if _do_static:
         # Static report needs the benchmark summary before amoprof.py runs;
@@ -2049,7 +2690,8 @@ def _collect(args: argparse.Namespace) -> int:
             _copy_bench_summary(args, raw_dir)
             _copy_setup_details(args, raw_dir)
             from .report.interactive import build_report as _build_interactive
-            int_path = out_dir / "amoprof_interactive.html"
+            int_path = out_dir / report_filename(raw_dir, "interactive", when=_report_ts,
+                                    window_start=_report_win[0], window_end=_report_win[1])
             label = getattr(args, "label", "") or out_dir.name
             _build_interactive(raw_dir, int_path, run_label=str(label))
             log.info("Wrote interactive report: %s", int_path)
@@ -2060,7 +2702,8 @@ def _collect(args: argparse.Namespace) -> int:
     if _combined and _static_path and _interactive_path:
         try:
             from .report.combined import build_combined_report
-            combined_path = out_dir / "amoprof_combined.html"
+            combined_path = out_dir / report_filename(raw_dir, "combined", when=_report_ts,
+                                    window_start=_report_win[0], window_end=_report_win[1])
             build_combined_report(
                 raw_dir=raw_dir,
                 out_html=combined_path,
@@ -2068,6 +2711,7 @@ def _collect(args: argparse.Namespace) -> int:
                 interactive_html_path=_interactive_path,
                 run_label=out_dir.name,
                 theme=_theme,
+                net_iface=getattr(args, "net_iface", "") or "",
             )
             log.info("Wrote combined report: %s", combined_path)
         except Exception as e:
@@ -2090,7 +2734,10 @@ def _collect(args: argparse.Namespace) -> int:
     if _do_interactive and _interactive_path:
         _reports.append(f"  Interactive: {_interactive_path}")
     if _combined and _static_path and _interactive_path:
-        _reports.append(f"  Combined:    {out_dir / 'amoprof_combined.html'}")
+        _combined_name = report_filename(raw_dir, "combined", when=_report_ts,
+                                         window_start=_report_win[0],
+                                         window_end=_report_win[1])
+        _reports.append(f"  Combined:    {out_dir / _combined_name}")
     _reports_str = "\n".join(_reports) + "\n" if _reports else ""
 
     print(
@@ -2128,12 +2775,63 @@ def _collect(args: argparse.Namespace) -> int:
     return 130 if interrupted else 0
 
 
+def _version_banner() -> str:
+    """Version plus a *verified* build fingerprint.
+
+    A version string alone cannot distinguish a correct install from a stale
+    tree that an editable install still points at — both print the same
+    number. So this also probes for the modules and report features that
+    actually exist on disk, which is what tells you whether the deployed code
+    is the code you think it is.
+    """
+    from pathlib import Path as _P
+    here = _P(__file__).resolve().parent
+    lines = [f"amoprof {__version__}", f"  package: {here}"]
+
+    # Presence of optional modules added over time.
+    modules = [
+        ("network collector",   here / "collectors" / "network.py"),
+        ("metric formulas",     here / "report" / "metric_formulas.py"),
+        ("metric kernels",      here / "report" / "metric_kernels.py"),
+    ]
+    lines.append("  modules:")
+    for label, path in modules:
+        lines.append(f"    [{'x' if path.exists() else ' '}] {label}")
+
+    # Presence of report features, probed by marker rather than by version,
+    # so a partially-updated tree is visible.
+    features = [
+        ("percentile p50/p90/p99 charts", "report/combined.py",
+         "_amoprof_histogram_percentiles"),
+        ("network correlation card",      "report/combined.py",
+         "Network fabric vs token activity"),
+        ("HBM bandwidth card (DCGM)",     "report/combined.py",
+         "DCGM_FI_PROF_DRAM_ACTIVE"),
+        ("E2E latency card",              "report/combined.py",
+         "vs E2E latency (ms)"),
+        ("report naming convention",      "cli.py", "def report_filename"),
+        ("gpu_config capture",            "cli.py", "def _write_gpu_config"),
+    ]
+    lines.append("  report features:")
+    for label, rel, marker in features:
+        try:
+            ok = marker in (here / rel).read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            ok = False
+        lines.append(f"    [{'x' if ok else ' '}] {label}")
+    lines.append("  Any unchecked box means the deployed tree predates that "
+                 "feature — reinstall rather than re-running analyze.")
+    return "\n".join(lines)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="amoprof",
         description="AMOprof metrics-only collector. Supports `amoprof collect ...` and direct flags like `amoprof --duration-s ...`.",
     )
-    p.add_argument("--version", action="version", version=f"amoprof {__version__}")
+    p.add_argument("--version", action="version", version=_version_banner(),
+                   help="Print version plus a build fingerprint listing which "
+                        "optional modules and report features are present.")
     sub = p.add_subparsers(dest="command")
 
     c = sub.add_parser("collect", help="Collect metrics from a running workload")
@@ -2181,6 +2879,15 @@ def _build_parser() -> argparse.ArgumentParser:
                         "checks. Default: 5 s.")
     c.add_argument("--interval-s", type=float, default=1.0,
                    help="Polling interval for time-series collectors. Default: 1.0")
+    c.add_argument("--net-iface", type=str,
+                   default=os.environ.get("AMOPROF_NET_IFACE", ""),
+                   help="Comma-separated network interfaces to measure "
+                        "(e.g. ib0,ib1 or ens5f0). Default: every interface, "
+                        "summed. On a host with management NICs, unused ports "
+                        "and IB aliases, that sum is not the fabric carrying "
+                        "KV traffic — name the interface on the GPU-node "
+                        "<-> memory-node path to get a figure that means "
+                        "something. Matching is exact.")
     c.add_argument("--ssd-device", default=os.environ.get("AMOPROF_SSD_DEVICE", "/dev/nvme0n1"),
                    help="Block device(s) for SSD/NVMe collectors. Accepts a single "
                         "device (e.g. /dev/nvme0n1) or a comma-separated list "
@@ -2195,6 +2902,8 @@ def _build_parser() -> argparse.ArgumentParser:
                         "/mnt/sglang_dv3.  Env: AMOPROF_HICACHE_PATH.")
     c.add_argument("--pid", type=int, default=None,
                    help="Attach perf/bpf collectors to this already-running process")
+    c.add_argument("--model-path", type=str, default=os.environ.get("AMOPROF_MODEL_PATH", ""),
+                   help="Path to the served model directory (or its config.json). Read for num_hidden_layers / num_key_value_heads / head_dim so KV bytes per token is computed exactly instead of estimated from the model name. Written to raw/model_config.json and, in service mode, published as amoprof_model_config_* metrics.")
     c.add_argument("--sglang-port", type=int, default=None,
                    help="Poll SGLang Prometheus metrics from this port and auto-detect PID if possible")
     c.add_argument("--sglang-host", default=os.environ.get("AMOPROF_SGLANG_HOST", "127.0.0.1"),
@@ -2353,7 +3062,10 @@ def _build_parser() -> argparse.ArgumentParser:
     a.add_argument("--start", default="",
                    help="Prometheus query window start. Accepts: Unix timestamp, "
                         "ISO datetime (2026-04-25T10:00:00, treated as UTC), or "
-                        "relative offset (-1h, -30m, -2d). Default: -1h.")
+                        "relative offset (168h, -168h, 6h, 30m, 2d — leading "
+                        "dash optional). Default: 1h. "
+                        "Non-empty values that can't be parsed error out "
+                        "instead of silently falling back to 1h.")
     a.add_argument("--end", default="",
                    help="Prometheus query window end. Same formats as --start. "
                         "Default: 'now'.")
@@ -2393,6 +3105,37 @@ def _build_parser() -> argparse.ArgumentParser:
                         "right device.")
     a.add_argument("--sglang-host", default=os.environ.get("AMOPROF_SGLANG_HOST", "127.0.0.1"),
                    help="SGLang host for fetching server_info during analyze. Used with --sglang-port.")
+    a.add_argument("--l35-instance", type=str, default=os.environ.get("AMOPROF_L35_INSTANCE", ""),
+                   help="Instance (host:port) of the L3.5 store exporter — Mooncake / "
+                        "AI Memory Node / 3FS — when it runs on a different host than "
+                        "the GPU node. Prometheus target discovery is scoped to the GPU "
+                        "hostname, so a remote store is otherwise never found and "
+                        "--prom-instance filters its metrics out.")
+    a.add_argument("--l35-job", type=str, default=os.environ.get("AMOPROF_L35_JOB", ""),
+                   help="Prometheus job name of the L3.5 store exporter, if it is not "
+                        "one of mooncake / mooncake_store / mooncake_master.")
+    a.add_argument("--net-iface", type=str,
+                   default=os.environ.get("AMOPROF_NET_IFACE", ""),
+                   help="Comma-separated interfaces to include when reading "
+                        "network_timeseries.csv (e.g. ib0,ib1). Default: the "
+                        "pre-aggregated _total row, which sums every NIC. Use "
+                        "this to narrow an ALREADY-COLLECTED run to the fabric "
+                        "carrying KV traffic; --net-iface on `service` does the "
+                        "same at collection time. Matching is exact.")
+    a.add_argument("--l35-storage-instance", type=str,
+                   default=os.environ.get("AMOPROF_L35_STORAGE_INSTANCE", ""),
+                   help="Instance (host:port) of an amoprof service or node_exporter "
+                        "running ON the L3.5 memory node, exposing that node's block "
+                        "device metrics. The L3.5 store exporter is a metadata service "
+                        "and publishes no device I/O, so tracing the SSD inside the "
+                        "memory node requires a collector on that host. Without this "
+                        "flag --prom-instance filters those metrics out.")
+    a.add_argument("--l35-storage-job", type=str,
+                   default=os.environ.get("AMOPROF_L35_STORAGE_JOB", ""),
+                   help="Prometheus job of the L3.5 node's storage exporter "
+                        "(e.g. amoprof, node). Optional.")
+    a.add_argument("--model-path", type=str, default=os.environ.get("AMOPROF_MODEL_PATH", ""),
+                   help="Path to the served model directory (or its config.json). Read for num_hidden_layers / num_key_value_heads / head_dim so KV bytes per token is computed exactly instead of estimated from the model name. Written to raw/model_config.json and, in service mode, published as amoprof_model_config_* metrics.")
     a.add_argument("--sglang-port", type=int, default=int(os.environ.get("AMOPROF_SGLANG_PORT", "0") or 0),
                    help="SGLang port for fetching server_info during analyze. 0 disables unless --server-info-url is set.")
     a.add_argument("--server-info-url", default=os.environ.get("AMOPROF_SGLANG_SERVER_INFO_URL", ""),
@@ -2689,6 +3432,26 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="Base directory for per-cycle raw output. Default: ./amoprof_results")
     svc.add_argument("--interval-s", type=float, default=1.0,
                      help="Polling interval for time-series collectors. Default: 1.0")
+    svc.add_argument("--sglang-metrics-interval-s", type=float,
+                     default=float(os.environ.get(
+                         "AMOPROF_SGLANG_METRICS_INTERVAL_S", "0") or 0),
+                     help="Polling interval for the SGLang /metrics scrape, in "
+                          "seconds. 0 (default) follows --interval-s. Separate "
+                          "from the other collectors because this one queries the "
+                          "inference server rather than the host: a 1s poll that "
+                          "is free against /proc/stat is request load against a "
+                          "serving engine. Raising it coarsens the per-interval "
+                          "rates the correlation charts are built from, so it "
+                          "trades chart resolution for load on the server.")
+    svc.add_argument("--net-iface", type=str,
+                   default=os.environ.get("AMOPROF_NET_IFACE", ""),
+                   help="Comma-separated network interfaces to measure "
+                        "(e.g. ib0,ib1 or ens5f0). Default: every interface, "
+                        "summed. On a host with management NICs, unused ports "
+                        "and IB aliases, that sum is not the fabric carrying "
+                        "KV traffic — name the interface on the GPU-node "
+                        "<-> memory-node path to get a figure that means "
+                        "something. Matching is exact.")
     svc.add_argument("--ssd-device",
                      default=__import__("os").environ.get("AMOPROF_SSD_DEVICE", "/dev/nvme0n1"),
                      help="Block device(s) for SSD/NVMe collectors. Accepts a single "
@@ -2699,6 +3462,8 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="Mount path for HiCache df stats")
     svc.add_argument("--pid", type=int, default=None,
                      help="Attach perf/bpf collectors to this PID")
+    svc.add_argument("--model-path", type=str, default=os.environ.get("AMOPROF_MODEL_PATH", ""),
+                   help="Path to the served model directory (or its config.json). Read for num_hidden_layers / num_key_value_heads / head_dim so KV bytes per token is computed exactly instead of estimated from the model name. Written to raw/model_config.json and, in service mode, published as amoprof_model_config_* metrics.")
     svc.add_argument("--sglang-port", type=int, default=None,
                      help="Poll SGLang /metrics from this port")
     svc.add_argument("--sglang-host",
@@ -2717,6 +3482,31 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     svc.add_argument("--enable-biosnoop", action="store_true",
                      help="Enable biosnoop collector (requires root + bpfcc)")
+    # Mutually exclusive: --server-info-once IS an interval of infinity.
+    # Accepting both and silently letting one win is worse than rejecting
+    # the combination — the operator gets no signal that their explicit
+    # interval was ignored.
+    _si_grp = svc.add_mutually_exclusive_group()
+    _si_grp.add_argument("--server-info-once", action="store_true",
+                     default=(os.environ.get("AMOPROF_SERVER_INFO_ONCE", "").strip().lower()
+                              in ("1", "true", "yes", "on")),
+                     help="Fetch SGLang /get_server_info once at service start and "
+                          "never again. Appropriate when amoprof is restarted "
+                          "alongside the inference server, so its configuration "
+                          "cannot change while the service runs. NOTE: this "
+                          "disables mid-window reconfiguration detection — if the "
+                          "inference server restarts with a different model or TP "
+                          "size while amoprof keeps running, the reported setup "
+                          "will be stale and no warning is raised.")
+    _si_grp.add_argument("--server-info-interval-s", type=float,
+                     default=float(os.environ.get("AMOPROF_SERVER_INFO_INTERVAL_S", "300")),
+                     help="How often to re-fetch SGLang /get_server_info, in seconds "
+                          "(default 300, 0 = every collection cycle). Server "
+                          "configuration changes only on restart, so polling it every "
+                          "cycle adds request load for no new information — but "
+                          "polling too rarely means a mid-window restart is detected "
+                          "late. The cached value is still published every cycle, so "
+                          "the metric stays continuous either way.")
     svc.add_argument("--enable-dram", action="store_true",
                      help="Enable timestamped CPU-side DRAM bandwidth collection in service mode. Auto-selects AMD uProf PCM on AMD CPUs and Intel PCM/perf IMC on Intel CPUs; use --dram-tool to override.")
     svc.add_argument("--dram-tool", choices=["auto", "amduprof", "intel-pcm", "perf-imc", "none"],
@@ -3079,6 +3869,13 @@ def _analyze(args) -> int:
       2. Local-only:  --run-dir DIR     (existing behaviour)
       3. Merge:       both flags        (fill local gaps from Prometheus)
     """
+    from datetime import datetime as _dt_now
+    # One timestamp per invocation, so all reports of a run share a name stem.
+    _report_ts = _dt_now.now()
+    # (start, end) epoch of the analysed window, when one is known.  Seeded by
+    # whichever windowing path runs below; reports are named after the window
+    # rather than the render time when it is set.
+    _report_win = (None, None)
     prom_url   = getattr(args, "prometheus", None)
     run_dir_arg = getattr(args, "run_dir", None)
 
@@ -3183,6 +3980,9 @@ def _analyze(args) -> int:
                                                    run_label=label)
                 log.info("Local time-window filter: %s → %s (start=%s end=%s)",
                          run_dir, filtered_run, t_start or "run-start", t_end or "run-end")
+                # Name reports after the selected window, not the render time.
+                if t_start > 0 and t_end > t_start:
+                    _report_win = (t_start, t_end)
                 run_dir = filtered_run
                 raw_dir = run_dir / "raw"
                 if not args.output_dir:
@@ -3201,6 +4001,29 @@ def _analyze(args) -> int:
             log.error("failed to import prometheus_source: %s", e)
             return 2
 
+        # Name reports after the analysed window on this path too.  The
+        # Prometheus branch hands the raw --start/--end strings to the fetcher
+        # and never parsed them itself, so `_report_win` stayed empty here and
+        # the filename fell back to the render timestamp — the local --run-dir
+        # branch seeded it, this one did not.
+        try:
+            from .prometheus_source import parse_time_arg as _pta
+            import time as _t
+            _now_w = _t.time()
+            _ws = _pta(args.start, now=_now_w) if getattr(args, "start", None) else 0.0
+            _we = _pta(args.end, now=_now_w) if getattr(args, "end", None) else _now_w
+            if _ws > 0 and _we > _ws:
+                _report_win = (_ws, _we)
+                import datetime as _d2
+                _lz2 = _d2.datetime.now().astimezone().tzinfo
+                log.info("Query window: %s \u2192 %s UTC  (= %s \u2192 %s %s)",
+                         _d2.datetime.fromtimestamp(_ws, _d2.timezone.utc).strftime("%Y-%m-%d %H:%M"),
+                         _d2.datetime.fromtimestamp(_we, _d2.timezone.utc).strftime("%H:%M"),
+                         _d2.datetime.fromtimestamp(_ws, _lz2).strftime("%Y-%m-%d %H:%M"),
+                         _d2.datetime.fromtimestamp(_we, _lz2).strftime("%H:%M"),
+                         _d2.datetime.now().astimezone().strftime("%Z"))
+        except Exception as _wexc:
+            log.debug("could not derive report window from --start/--end: %s", _wexc)
         prom_kwargs = dict(
             start=args.start, end=args.end,
             step_s=int(args.prom_step),
@@ -3210,6 +4033,14 @@ def _analyze(args) -> int:
             nvme_device=args.nvme_device,
             label=run_dir.name,
             server_type=getattr(args, "server_type", "auto"),
+            # L3.5 store exporter, when it runs on a host other than the
+            # GPU node.  Without these the Mooncake selector falls back to
+            # hostname-scoped target discovery and a remote store is never
+            # found — its metrics exist in Prometheus but are filtered out.
+            l35_instance=getattr(args, "l35_instance", "") or "",
+            l35_job=getattr(args, "l35_job", "") or "",
+            l35_storage_instance=getattr(args, "l35_storage_instance", "") or "",
+            l35_storage_job=getattr(args, "l35_storage_job", "") or "",
         )
         log.info("analyze: inference server-type = %s",
                  prom_kwargs["server_type"])
@@ -3235,6 +4066,14 @@ def _analyze(args) -> int:
                 return 3
         else:
             # PROM-ONLY mode
+            # Write the local model config BEFORE the fetch.  The fetch warns
+            # when model architecture is unavailable, and that check reads
+            # raw/model_config.json — writing it afterwards meant --model-path
+            # was honoured for the report but the warning still fired, which
+            # reads as "the flag did nothing".
+            if getattr(args, "model_path", ""):
+                _write_model_config(raw_dir, args)
+                _apply_explicit_model_to_setup(raw_dir, args)
             try:
                 result = fetch_from_prometheus(
                     prom_url=prom_url, output_dir=raw_dir, **prom_kwargs)
@@ -3273,6 +4112,9 @@ def _analyze(args) -> int:
     # ── Resolve effective report flags ──────────────────────────────────────
     # --combined-report implies both --amoprof-report and --interactive-report
     _combined = getattr(args, "combined_report", False)
+    from datetime import datetime as _dt_now
+    # Single timestamp per invocation so the static / interactive /
+    # combined reports of one run share an identical name stem.
     _do_static      = getattr(args, "amoprof_report",    False) or _combined
     _do_interactive = getattr(args, "interactive_report", False) or _combined
 
@@ -3281,6 +4123,9 @@ def _analyze(args) -> int:
     _theme = getattr(args, "report_theme", "dark")
 
     _write_setup_details_from_server_info(args, raw_dir, allow_overwrite=True)
+    _write_gpu_config(raw_dir, args)
+    _write_model_config(raw_dir, args)
+    _apply_explicit_model_to_setup(raw_dir, args)
 
     # ── 5. Static amoprof HTML report ───────────────────────────────────────
     if _do_static:
@@ -3290,7 +4135,8 @@ def _analyze(args) -> int:
         # bench_serving aggregate 30.63%).
         _copy_bench_summary(args, raw_dir)
         _copy_setup_details(args, raw_dir)
-        report_path = report_dir / "amoprof_report.html"
+        report_path = report_dir / report_filename(raw_dir, "static", when=_report_ts,
+                                    window_start=_report_win[0], window_end=_report_win[1])
         rc = _run_amoprof(raw_dir, report_path,
                           verbose=args.verbose,
                           extra_args=args.amoprof_extra_arg or [],
@@ -3314,7 +4160,8 @@ def _analyze(args) -> int:
             _copy_bench_summary(args, raw_dir)
             _copy_setup_details(args, raw_dir)
             from .report.interactive import build_report as _build_interactive
-            int_path = report_dir / "amoprof_interactive.html"
+            int_path = report_dir / report_filename(raw_dir, "interactive", when=_report_ts,
+                                    window_start=_report_win[0], window_end=_report_win[1])
             _build_interactive(raw_dir, int_path, run_label=run_dir.name)
             log.info("Wrote interactive report: %s", int_path)
             _interactive_path = int_path
@@ -3325,7 +4172,8 @@ def _analyze(args) -> int:
     if _combined and _static_path and _interactive_path:
         try:
             from .report.combined import build_combined_report
-            combined_path = report_dir / "amoprof_combined.html"
+            combined_path = report_dir / report_filename(raw_dir, "combined", when=_report_ts,
+                                    window_start=_report_win[0], window_end=_report_win[1])
             build_combined_report(
                 raw_dir=raw_dir,
                 out_html=combined_path,
@@ -3333,6 +4181,7 @@ def _analyze(args) -> int:
                 interactive_html_path=_interactive_path,
                 run_label=run_dir.name,
                 theme=_theme,
+                net_iface=getattr(args, "net_iface", "") or "",
             )
             log.info("Wrote combined report: %s", combined_path)
         except Exception as e:
@@ -3484,6 +4333,19 @@ def _aggregate(args) -> int:
         t0_str = _dt.fromtimestamp(t_start, tz=_tz.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         t1_str = _dt.fromtimestamp(t_end,   tz=_tz.utc).strftime("%H:%M:%S UTC")
         log.info("Time window: %s → %s (%.1f min)", t0_str, t1_str, dur_min)
+        # Show the local-clock equivalent too.  Prometheus stores UTC, but the
+        # operator typed a local wall-clock time; printing only UTC makes a
+        # correct conversion look like an off-by-hours error.
+        try:
+            _lz = _dt.now().astimezone().tzinfo
+            log.info("             = %s → %s local (%s)",
+                     _dt.fromtimestamp(t_start, tz=_lz).strftime("%Y-%m-%d %H:%M:%S"),
+                     _dt.fromtimestamp(t_end, tz=_lz).strftime("%H:%M:%S"),
+                     _dt.now().astimezone().strftime("%Z %z"))
+        except Exception:
+            pass
+        # Name reports after the window they describe, not after render time.
+        _report_win = (t_start, t_end)
 
     # ── 3. Aggregate raw directories ───────────────────────────────────────
     output_dir = Path(args.output_dir).expanduser().resolve()
@@ -3545,6 +4407,10 @@ def _aggregate(args) -> int:
 
     # ── 6. Reports (same logic as _analyze) ───────────────────────────────
     _combined       = getattr(args, "combined_report",    False)
+    from datetime import datetime as _dt_now
+    # Single timestamp per invocation so the static / interactive /
+    # combined reports of one run share an identical name stem.
+    _report_ts = _dt_now.now()
     _do_static      = getattr(args, "amoprof_report",     False) or _combined
     _do_interactive = getattr(args, "interactive_report", False) or _combined
     _theme          = getattr(args, "report_theme", "dark")
@@ -3555,7 +4421,8 @@ def _aggregate(args) -> int:
     if _do_static:
         # Ensure both static and interactive see the same benchmark summary.
         _copy_bench_summary(args, merged_raw)
-        report_path = report_dir / "amoprof_report.html"
+        report_path = report_dir / report_filename(raw_dir, "static", when=_report_ts,
+                                    window_start=_report_win[0], window_end=_report_win[1])
         rc = _run_amoprof(merged_raw, report_path,
                           verbose=args.verbose,
                           extra_args=args.amoprof_extra_arg or [],
@@ -3576,7 +4443,8 @@ def _aggregate(args) -> int:
         try:
             _copy_bench_summary(args, merged_raw)
             from .report.interactive import build_report as _build_int
-            int_path = report_dir / "amoprof_interactive.html"
+            int_path = report_dir / report_filename(raw_dir, "interactive", when=_report_ts,
+                                    window_start=_report_win[0], window_end=_report_win[1])
             _build_int(merged_raw, int_path, run_label=run_label)
             log.info("Wrote interactive report: %s", int_path)
             _interactive_path = int_path
@@ -3586,7 +4454,8 @@ def _aggregate(args) -> int:
     if _combined and _static_path and _interactive_path:
         try:
             from .report.combined import build_combined_report
-            combined_path = report_dir / "amoprof_combined.html"
+            combined_path = report_dir / report_filename(raw_dir, "combined", when=_report_ts,
+                                    window_start=_report_win[0], window_end=_report_win[1])
             build_combined_report(
                 raw_dir=merged_raw,
                 out_html=combined_path,
@@ -3594,6 +4463,7 @@ def _aggregate(args) -> int:
                 interactive_html_path=_interactive_path,
                 run_label=run_label,
                 theme=_theme,
+                net_iface=getattr(args, "net_iface", "") or "",
             )
             log.info("Wrote combined report: %s", combined_path)
         except Exception as e:
@@ -3607,7 +4477,10 @@ def _aggregate(args) -> int:
     if _do_interactive and _interactive_path:
         print(f"  Interactive: {_interactive_path}")
     if _combined:
-        print(f"  Combined:    {report_dir / 'amoprof_combined.html'}")
+        _combined_name = report_filename(raw_dir, "combined", when=_report_ts,
+                                         window_start=_report_win[0],
+                                         window_end=_report_win[1])
+        print(f"  Combined:    {report_dir / _combined_name}")
     return 0
     """analyze subcommand dispatcher — supports three modes:
 
@@ -3779,6 +4652,12 @@ def _aggregate(args) -> int:
     # ── Resolve effective report flags ──────────────────────────────────────
     # --combined-report implies both --amoprof-report and --interactive-report
     _combined = getattr(args, "combined_report", False)
+    from datetime import datetime as _dt_now
+    # Single timestamp per invocation so the static / interactive /
+    # combined reports of one run share an identical name stem.
+    _report_ts = _dt_now.now()
+    # (start, end) epoch of the analysed window, when one is known.
+    _report_win = (None, None)
     _do_static      = getattr(args, "amoprof_report",    False) or _combined
     _do_interactive = getattr(args, "interactive_report", False) or _combined
 
@@ -3794,7 +4673,8 @@ def _aggregate(args) -> int:
         # bench_serving aggregate 30.63%).
         _copy_bench_summary(args, raw_dir)
         _copy_setup_details(args, raw_dir)
-        report_path = report_dir / "amoprof_report.html"
+        report_path = report_dir / report_filename(raw_dir, "static", when=_report_ts,
+                                    window_start=_report_win[0], window_end=_report_win[1])
         rc = _run_amoprof(raw_dir, report_path,
                           verbose=args.verbose,
                           extra_args=args.amoprof_extra_arg or [],
@@ -3818,7 +4698,8 @@ def _aggregate(args) -> int:
             _copy_bench_summary(args, raw_dir)
             _copy_setup_details(args, raw_dir)
             from .report.interactive import build_report as _build_interactive
-            int_path = report_dir / "amoprof_interactive.html"
+            int_path = report_dir / report_filename(raw_dir, "interactive", when=_report_ts,
+                                    window_start=_report_win[0], window_end=_report_win[1])
             _build_interactive(raw_dir, int_path, run_label=run_dir.name)
             log.info("Wrote interactive report: %s", int_path)
             _interactive_path = int_path
@@ -3829,7 +4710,8 @@ def _aggregate(args) -> int:
     if _combined and _static_path and _interactive_path:
         try:
             from .report.combined import build_combined_report
-            combined_path = report_dir / "amoprof_combined.html"
+            combined_path = report_dir / report_filename(raw_dir, "combined", when=_report_ts,
+                                    window_start=_report_win[0], window_end=_report_win[1])
             build_combined_report(
                 raw_dir=raw_dir,
                 out_html=combined_path,
@@ -3837,6 +4719,7 @@ def _aggregate(args) -> int:
                 interactive_html_path=_interactive_path,
                 run_label=run_dir.name,
                 theme=_theme,
+                net_iface=getattr(args, "net_iface", "") or "",
             )
             log.info("Wrote combined report: %s", combined_path)
         except Exception as e:

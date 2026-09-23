@@ -244,15 +244,21 @@ def _amoprof_storage_label_cleanup(html_text: str, l3_backend_class: str = "") -
             "KV$ L3 ": "KV$ L3.5 ",
             "KV$ L3\n": "KV$ L3.5\n",
             "Logical KV movement — L3": "Logical KV movement — L3.5",
-            "Physical L3 block": "Physical L3.5 block",
+            "Physical L3 block": "L3.5 storage block",
             "Physical L3.5 block R / W total": "Physical L3.5 block R / W total",
             "NVMe read throughput": "L3.5 read throughput",
             "NVMe Read Throughput": "L3.5 read throughput",
-            "NVMe read BW": "L3.5 read BW",
-            "NVMe Read BW": "L3.5 read BW",
+            "NVMe read BW": "L3.5 storage read BW",
+            "NVMe Read BW": "L3.5 storage read BW",
         }
+    # Labels wrapped in the sentinel below name a specific tier and must not be
+    # rewritten by the blanket replacements — the cross-tier occupancy legend
+    # lists L1/L2/L3/L3.5 side by side, and rewriting its "L3 local storage"
+    # entry made two legend rows both read "L3.5".
     for a, b in replacements.items():
         html_text = html_text.replace(a, b)
+
+
 
     # Clean up any doubled L3.5 token from overlapping replacements.
     html_text = html_text.replace("L3.5.5", "L3.5")
@@ -260,6 +266,16 @@ def _amoprof_storage_label_cleanup(html_text: str, l3_backend_class: str = "") -
 
     for i, payload in enumerate(protected_payloads):
         html_text = html_text.replace(f"__AMOPROF_DATA_URI_{i}__", payload)
+    # Findings prose uses bare phrases — "L3 reads", "L3 tier", "L3 traffic"
+    # — that the parenthesised map above never matched, so the Top findings
+    # said L3 while the KPI tiles said L3.5 for the same tier.  Rewrite them
+    # when the tier is remote.  "\bL3 " with a following space cannot match
+    # "L3.5", so already-correct text is left alone.
+    if not is_local:
+        html_text = re.sub(
+            r"\bL3 (reads?|writes?|tier|traffic|backing|onboard|read/onboard|storage)\b",
+            lambda _m: f"{tier} {_m.group(1)}", html_text)
+
     return html_text
 
 
@@ -378,31 +394,28 @@ def _find_col(rows: list[dict[str, Any]], *partials: str) -> str:
     return ""
 
 
+try:
+    from amoprof.report.metric_kernels import (
+        counter_delta as _k_counter_delta, window_rate as _k_window_rate,
+        window_seconds as _k_window_seconds, ratio_delta as _k_ratio_delta,
+        rate_series_with_time as _k_rate_with_time)
+except Exception:  # pragma: no cover - standalone/bundled execution
+    from metric_kernels import (  # type: ignore
+        counter_delta as _k_counter_delta, window_rate as _k_window_rate,
+        window_seconds as _k_window_seconds, ratio_delta as _k_ratio_delta,
+        rate_series_with_time as _k_rate_with_time)
+
+
 def _delta(rows: list[dict[str, Any]], *partials: str) -> float:
-    col = _find_col(rows, *partials)
-    if not col or not rows:
-        return 0.0
-    first = None
-    last = None
-    for r in rows:
-        x = _safe_float(r.get(col), None)  # type: ignore[arg-type]
-        if x is None:
-            continue
-        if first is None:
-            first = x
-        last = x
-    if first is None or last is None:
-        return 0.0
-    d = float(last) - float(first)
-    return d if d > 0 else 0.0
+    """Window delta of the first column matching *partials*."""
+    return _delta_col(rows, _find_col(rows, *partials))
 
 
 def _ratio_delta_ms(rows: list[dict[str, Any]], sum_name: str, count_name: str) -> float:
-    ds = _delta(rows, sum_name)
-    dc = _delta(rows, count_name)
-    if ds > 0 and dc > 0:
-        return ds / dc * 1000.0
-    return 0.0
+    """Histogram mean in ms: Δsum ÷ Δcount × 1000, via metric_kernels."""
+    return _k_ratio_delta(_column_values(rows, _find_col(rows, sum_name)),
+                          _column_values(rows, _find_col(rows, count_name)),
+                          scale=1000.0)
 
 
 def _active_values(rows: list[dict[str, Any]], *partials: str) -> list[float]:
@@ -521,27 +534,45 @@ def _find_labelled_col(rows: list[dict[str, Any]], metric: str, *label_parts: st
     return ""
 
 
-def _delta_col(rows: list[dict[str, Any]], col: str) -> float:
+def _column_values(rows: list[dict[str, Any]], col: str) -> list[float]:
+    """Finite numeric values of one column, in row order."""
+    out: list[float] = []
     if not col or not rows:
-        return 0.0
-    first = None
-    last = None
+        return out
     for r in rows:
         x = _safe_float(r.get(col), None)  # type: ignore[arg-type]
-        if x is None:
-            continue
-        if first is None:
-            first = x
-        last = x
-    if first is None or last is None:
-        return 0.0
-    d = float(last) - float(first)
-    return d if d > 0 else 0.0
+        if x is not None:
+            out.append(float(x))
+    return out
+
+
+def _delta_col(rows: list[dict[str, Any]], col: str) -> float:
+    """Window delta of a cumulative counter column.
+
+    Delegates to metric_kernels.counter_delta — the single implementation of
+    `last - first, clamped at zero`. This module and `_delta` below previously
+    carried byte-identical copies of that loop.
+    """
+    return _k_counter_delta(_column_values(rows, col))
 
 
 def _delta_labelled(rows: list[dict[str, Any]], metric: str, *label_parts: str) -> float:
-    col = _find_labelled_col(rows, metric, *label_parts)
-    return _delta_col(rows, col)
+    """Window delta for a labelled counter, SUMMED across matching series.
+
+    Prometheus splits one metric into several series when the label set
+    differs — per worker, per model_name, per data-parallel rank.  PromQL's
+    ``sum(increase(...))`` aggregates all of them; taking a single column
+    reports only one, which is how the report read 29% against Grafana's 37%
+    on identical data.  Match PromQL: sum every matching column.
+    """
+    if not rows:
+        return 0.0
+    cols = [c for c in rows[0].keys()
+            if metric in c and all(p in c for p in label_parts)]
+    if not cols:
+        col = _find_labelled_col(rows, metric, *label_parts)
+        return _delta_col(rows, col)
+    return sum(_delta_col(rows, c) for c in cols)
 
 
 def _walk_json_dicts(obj: Any):
@@ -715,7 +746,23 @@ def compute_cache_hit_kpis(raw_dir: Path | None = None,
     d_rt_compute = (_delta_labelled(rr, "sglang_realtime_tokens_total", "mode=prefill_compute") or
                     _delta_labelled(rr, "realtime_tokens_total", "mode=prefill_compute") or
                     _delta_labelled(rr, "sglang:realtime_tokens_total", "mode=prefill_compute"))
-    prefill_pct = (d_rt_cache / (d_rt_cache + d_rt_compute) * 100.0) if (d_rt_cache + d_rt_compute) > 0 else 0.0
+    # One implementation, in the kernel, so every surface reports the same
+    # ratio from the same inputs.
+    try:
+        from amoprof.report.metric_kernels import prefill_cache_hit_ratio as _k_pf
+    except Exception:
+        try:
+            from metric_kernels import prefill_cache_hit_ratio as _k_pf  # type: ignore
+        except Exception:
+            _k_pf = None
+    if _k_pf is not None:
+        _pf_r = _k_pf(d_rt_cache, d_rt_compute)
+        prefill_pct = _pf_r["pct"]
+        prefill_detail = _pf_r["note"]
+    else:
+        prefill_pct = (d_rt_cache / (d_rt_cache + d_rt_compute) * 100.0) \
+            if (d_rt_cache + d_rt_compute) > 0 else 0.0
+        prefill_detail = ""
 
     # Diagnostics.  Do not use cached/prompt as primary because prompt_tokens_total
     # may mean total prompt tokens, while cached_tokens_total and realtime prefill
@@ -749,11 +796,16 @@ def compute_cache_hit_kpis(raw_dir: Path | None = None,
     gauge_active_pct = _mean(ch_vals_active) * scale if ch_vals_active else 0.0
     gauge_peak_pct = max(ch_vals_all) * scale if ch_vals_all else 0.0
 
+    # Prefill token-weighted FIRST.  It was last, so three weaker sources won
+    # ahead of it — including gauge means that include idle samples, which
+    # reported 0.5% for a cache serving a third of prefill tokens.  This one
+    # is token-weighted, window-scoped, and matches the equivalent PromQL
+    # increase() expression, so the reports and Grafana agree.
     candidates = [
+        (prefill_pct, "prefill_token_work_avoidance_prefill_cache_over_prefill_cache_plus_compute"),
         (meta_pct, "request_response_meta_info_cached_over_cached_plus_uncached_prompt_tokens"),
         (usage_pct, "openai_usage_cached_tokens_over_total_prompt_tokens"),
         (bench_pct, "benchmark_summary_cache_hit_rate"),
-        (prefill_pct, "prefill_token_work_avoidance_prefill_cache_over_prefill_cache_plus_compute"),
     ]
     primary = 0.0
     method = "unavailable"
@@ -924,15 +976,43 @@ def _unit_for_key(key: str) -> str:
 
 
 def _note_for_key(key: str, kpis: dict[str, Any]) -> str:
-    if key == "cache_hit_pct":
-        return str(kpis.get("cache_hit_method") or "Primary cache-hit KPI: cache-served prefill/prompt tokens over cache+compute prefill/prompt tokens")
-    if key.endswith("_p50_ms"):
-        return "Canonical common KPI: histogram percentile when available; shared by Executive, Interactive, and End Report"
-    if key.endswith("_ms"):
-        return "Canonical common KPI: selected-window Δsum/Δcount; shared by Executive, Interactive, and End Report"
-    if key.startswith("throughput"):
-        return "Canonical common KPI: active throughput samples/counter fallback; shared by Executive, Interactive, and End Report"
-    return "Canonical common KPI shared by Executive, Interactive, and End Report"
+    """Note text for a canonical KPI tile, taken from the shared registry.
+
+    This function runs during combined-report assembly and rewrites the note
+    on tiles the Executive / Interactive / End Report builders already
+    rendered.  It therefore has to return the *same* formula those builders
+    used, or the combined report would disagree with the standalone tabs —
+    so the strings come from report/metric_formulas.py rather than being
+    spelled out a second time here.
+    """
+    _KEY_TO_LABEL = {
+        "cache_hit_pct":   "Cache hit",
+        "ttft_ms":         "TTFT mean",
+        "ttft_p50_ms":     "TTFT p50",
+        "tpot_ms":         "TPOT / ITL mean",
+        "tpot_p50_ms":     "TPOT / ITL p50",
+        "e2e_ms":          "E2E mean",
+        "e2e_p50_ms":      "E2E p50",
+        "throughput_mean": "Throughput mean",
+        "throughput_p50":  "Throughput p50",
+        "throughput_peak": "Peak throughput",
+    }
+    try:
+        from amoprof.report.metric_formulas import formula_for
+    except Exception:  # pragma: no cover - standalone/bundled execution
+        try:
+            from metric_formulas import formula_for  # type: ignore
+        except Exception:
+            formula_for = lambda *_a, **_k: ""  # type: ignore
+    formula = formula_for(_KEY_TO_LABEL.get(key, ""))
+    if formula:
+        # The cache-hit tile additionally reports which of the several
+        # provenance variants actually produced the number; keep that,
+        # since it is a measured fact about the run, not prose.
+        if key == "cache_hit_pct" and kpis.get("cache_hit_method"):
+            return f"{formula}  ·  {kpis.get('cache_hit_method')}"
+        return formula
+    return ""
 
 
 def _replace_kpi_value_by_label(report_html: str, label_variants: list[str], key: str,
@@ -948,15 +1028,36 @@ def _replace_kpi_value_by_label(report_html: str, label_variants: list[str], key
         repl_label = canonical_label or label
 
         # Standard KPI card/tile with semantic classes: Executive + Interactive.
+        # Note capture group swallows a full <details>...</details> if present,
+        # so the trailing </div> anchors to the ACTUAL kpi-note close rather
+        # than the fx-body </div> nested inside <details>.  Without this, the
+        # replacement consumed only part of the tile and left </details></div>
+        # stranded, which prematurely closed the enclosing .kpi-grid and caused
+        # every subsequent tile to render as a block outside the grid.
         pat = re.compile(
             r'(<div[^>]*class=["\'][^"\']*\bkpi-label\b[^"\']*["\'][^>]*>)' + re.escape(label) + r'(</div>\s*'
             r'<div[^>]*class=["\'][^"\']*\bkpi-value\b[^"\']*["\'][^>]*>)(.*?)(</div>\s*'
-            r'<div[^>]*class=["\'][^"\']*\bkpi-note\b[^"\']*["\'][^>]*>)(.*?)(</div>)',
+            r'<div[^>]*class=["\'][^"\']*\bkpi-note\b[^"\']*["\'][^>]*>)'
+            r'((?:<details\b[^>]*>.*?</details>|.*?))(</div>)',
             re.S | re.I,
         )
 
         def repl(m):
-            return f"{m.group(1)}{repl_label}{m.group(2)}{val_txt} {unit}{m.group(4)}{_html.escape(note)}{m.group(6)}"
+            # If the original note was wrapped in the collapsible fx disclosure
+            # (label='formula', body inside <div class='fx-body'>), rebuild the
+            # replacement inside the same shape so the tile stays visually
+            # consistent with sibling tiles (only the 'formula' pill visible,
+            # full text on click).  A plain-text original stays plain.
+            _orig_note = m.group(5) or ""
+            _esc = _html.escape(note)
+            if _orig_note.lstrip().startswith("<details") and "fx-body" in _orig_note:
+                _new_note = (
+                    '<details class="fx"><summary>formula</summary>'
+                    f'<div class="fx-body">{_esc}</div></details>'
+                )
+            else:
+                _new_note = _esc
+            return f"{m.group(1)}{repl_label}{m.group(2)}{val_txt} {unit}{m.group(4)}{_new_note}{m.group(6)}"
 
         out = pat.sub(repl, out)
 
@@ -1040,9 +1141,13 @@ def apply_common_kpis_to_html(report_html: str, raw_dir: Path | None = None,
         ("tpot_p50_ms", ["TPOT / ITL p50", "TPOT p50", "ITL p50"], "TPOT / ITL p50"),
         ("e2e_ms", ["E2E mean"], "E2E mean"),
         ("e2e_p50_ms", ["E2E p50"], "E2E p50"),
-        ("throughput_mean", ["Throughput mean"], "Throughput mean"),
-        ("throughput_p50", ["Throughput p50"], "Throughput p50"),
-        ("throughput_peak", ["Throughput peak", "Peak throughput", "Peak"], "Throughput peak"),
+        # Historical labels ("Throughput mean/p50/peak") were replaced with
+        # explicitly-classified "Output throughput" tiles.  Keep both label
+        # sets in the spec so pre-1.1.7 reports are still patched in place.
+        ("throughput_mean", ["Output throughput mean", "Throughput mean"], "Output throughput mean"),
+        ("throughput_p50", ["Output throughput p50", "Throughput p50"], "Output throughput p50"),
+        ("throughput_peak", ["Peak Output throughput", "Output throughput peak",
+                              "Throughput peak", "Peak throughput", "Peak"], "Peak Output throughput"),
     ]
     out = report_html
     for key, labels, canonical in specs:

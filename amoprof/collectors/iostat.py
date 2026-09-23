@@ -113,7 +113,26 @@ class IostatMonitor(BaseCollector):
         if self._thread: self._thread.join(timeout=min(_timeout, 3.0))
 
     def summarise(self) -> dict:
-        if not self.samples: return {}
+        if not self.samples:
+            # A device with no I/O during the window is a MEASUREMENT of zero,
+            # not an absence.  Returning {} published only the availability
+            # flag, so Prometheus carried no bandwidth or IOPS series at all,
+            # the synthesis skipped those columns, and every storage chart
+            # disappeared — indistinguishable from a broken collector.  Emit
+            # explicit zeros so the columns exist and the reader can tell
+            # "idle" from "never collected".
+            _z = {
+                "read_iops_mean": 0.0, "read_iops_peak": 0.0,
+                "write_iops_mean": 0.0, "write_iops_peak": 0.0,
+                "read_bw_mb_mean": 0.0, "read_bw_mb_peak": 0.0,
+                "write_bw_mb_mean": 0.0, "write_bw_mb_peak": 0.0,
+                "util_pct_mean": 0.0, "util_pct_peak": 0.0,
+                "avgqu_sz_mean": 0.0, "avgqu_sz_peak": 0.0,
+                "r_await_ms_mean": 0.0, "w_await_ms_mean": 0.0,
+            }
+            _z["iostat_available"] = True
+            _z["iostat_idle_window"] = True
+            return _z
         def m(k):  return round(statistics.mean(s[k] for s in self.samples), 3)
         def pk(k): return round(max(s[k] for s in self.samples), 3)
         def p(k, pct):

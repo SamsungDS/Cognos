@@ -262,6 +262,34 @@ def resolve_l3_backend(setup: Mapping[str, Any] | None, launch_command: str | No
             "not an L3 read; no backing L3 backend resolved",
             False, evidence="hicache enabled without resolved storage backend")
 
+    # Hierarchical cache enabled but hicache_storage_backend was EXPLICITLY set
+    # to None/null/etc.  This is a valid L1+L2-only HiCache config and must
+    # not be treated as "unknown storage" — otherwise the L3 fields the
+    # report inherits from a live df snapshot (hicache mount capacity/used)
+    # leak into the report as spurious "L3 used 25GB / 3575GB".  The tell is:
+    # HiCache is truthy AND every storage-backend / path / device evidence
+    # source is in the missing/none set.
+    _hicache_truthy = (hicache and hicache.lower() in {"true", "1", "yes", "on", "enabled"})
+    if _hicache_truthy:
+        si_raw = _get_server_info_raw(setup)
+        _explicit_none_backend = False
+        for k in ("hicache_storage_backend", "storage_backend", "hicache_backend",
+                   "HiCache storage backend", "L3 storage backend", "l3_backend"):
+            if k in setup or k in si_raw:
+                _v = setup.get(k) if k in setup else si_raw.get(k)
+                # Include None-typed values here.  `_is_set` already treats
+                # None-typed values as unset, so any presence-with-None counts.
+                if _v is None or (isinstance(_v, str) and _v.strip().lower() in _MISSING):
+                    _explicit_none_backend = True
+                    break
+        if _explicit_none_backend and not (backend or storage_type or device or mount or path):
+            return L3BackendResolution(
+                "host_dram_only", "Host DRAM only (HiCache L1+L2)",
+                "not an L3 write; hicache_storage_backend=None (L1+L2 only)",
+                "not an L3 read; hicache_storage_backend=None (L1+L2 only)",
+                False,
+                evidence="hicache enabled with hicache_storage_backend explicitly None/unset — no L3 backend")
+
     return L3BackendResolution(
         "unknown", "Unresolved backing tier",
         "generic logical L3.5/HiCache backup from sglang_backuped_tokens_total",

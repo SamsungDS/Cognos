@@ -6,6 +6,10 @@ Part of the amoprof.collectors package.  Registers itself via
 from __future__ import annotations
 
 import csv
+# Some call sites in this module reference `_csv`; alias it so a
+# NameError cannot surface at runtime inside a try/except and be
+# reported as a parse failure rather than a missing import.
+_csv = csv
 import json
 import logging
 import os
@@ -202,6 +206,7 @@ class AMDuProfPcmMemoryCollector(BaseCollector):
                 "time_sec": round(idx*self.interval_s, 6),
             }
             read=write=total=rtxn=wtxn=0.0
+            cxl_read=cxl_write=cxl_total=0.0
             saw_total=False
             for k,v in row.items():
                 if not k: continue
@@ -220,6 +225,30 @@ class AMDuProfPcmMemoryCollector(BaseCollector):
                     "total memory wrbw" in lk or "total memory write" in lk or
                     "total mem write" in lk or "mem wrbw" in lk or "mem wr bw" in lk
                 )
+                # CXL-attached memory is reported separately by AMDuProfPcm.
+                # On a memory node with CXL behind the KV store it is a
+                # distinct tier: far slower than local DRAM, far faster than
+                # NVMe, and folding it into the DRAM totals would hide both
+                # its share of traffic and its latency contribution.
+                is_cxl_read_bw = (
+                    ("cxl" in lk) and
+                    ("rdbw" in lk or "rd bw" in lk or "read" in lk)
+                )
+                is_cxl_write_bw = (
+                    ("cxl" in lk) and
+                    ("wrbw" in lk or "wr bw" in lk or "write" in lk)
+                )
+                is_cxl_total_bw = (
+                    ("cxl" in lk) and ("bw" in lk or "bandwidth" in lk)
+                    and not is_cxl_read_bw and not is_cxl_write_bw
+                )
+                if is_cxl_read_bw:
+                    cxl_read += fv * self._gb_s_scale(key); continue
+                if is_cxl_write_bw:
+                    cxl_write += fv * self._gb_s_scale(key); continue
+                if is_cxl_total_bw:
+                    cxl_total += fv * self._gb_s_scale(key); continue
+
                 is_total_mem_bw = (
                     ("total mem bw" in lk or "total memory bw" in lk or "total mem bandwidth" in lk)
                     and not is_total_mem_read_bw and not is_total_mem_write_bw
@@ -244,6 +273,13 @@ class AMDuProfPcmMemoryCollector(BaseCollector):
 
             total_bw = total if saw_total else (read + write)
             sample.update({
+                # CXL kept in its own fields, never folded into dram_*: they
+                # are different memory with different latency, and summing
+                # them would make a DRAM-bandwidth figure that no longer
+                # describes DRAM.
+                "cxl_read_gb_s": round(cxl_read, 6),
+                "cxl_write_gb_s": round(cxl_write, 6),
+                "cxl_total_gb_s": round(cxl_total or (cxl_read + cxl_write), 6),
                 "dram_read_gb_s": round(read,6),
                 "dram_write_gb_s": round(write,6),
                 "dram_total_gb_s": round(total_bw,6),
@@ -290,6 +326,16 @@ class AMDuProfPcmMemoryCollector(BaseCollector):
             "amduprof_pcm_csv_path": self._csv_path or "",
             "amduprof_pcm_command": self._command,
             "amduprof_pcm_samples": len(self.samples),
+            "cxl_read_gb_s_mean": mn([float(s.get("cxl_read_gb_s", 0) or 0)
+                                      for s in self.samples]),
+            "cxl_write_gb_s_mean": mn([float(s.get("cxl_write_gb_s", 0) or 0)
+                                       for s in self.samples]),
+            "cxl_total_gb_s_mean": mn([float(s.get("cxl_total_gb_s", 0) or 0)
+                                       for s in self.samples]),
+            "cxl_total_gb_s_peak": pk([float(s.get("cxl_total_gb_s", 0) or 0)
+                                       for s in self.samples]),
+            "cxl_available": any(float(s.get("cxl_total_gb_s", 0) or 0) > 0
+                                 for s in self.samples),
             "dram_read_gb_s_mean": mn(reads),
             "dram_write_gb_s_mean": mn(writes),
             "dram_total_gb_s_mean": mn(totals),

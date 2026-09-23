@@ -37,6 +37,64 @@ import pandas as pd
 
 
 
+
+# Single source of truth for KPI-tile formulas (see report/metric_formulas.py).
+try:
+    from amoprof.report.metric_kernels import (
+        counter_delta as _k_counter_delta, window_rate as _k_window_rate,
+        window_seconds as _k_window_seconds, ratio_delta as _k_ratio_delta,
+        rate_series_with_time as _k_rate_with_time,
+        resolve_kv_bytes_per_token as _k_resolve_kv)
+except Exception:  # pragma: no cover - standalone/bundled execution
+    from metric_kernels import (  # type: ignore
+        counter_delta as _k_counter_delta, window_rate as _k_window_rate,
+        window_seconds as _k_window_seconds, ratio_delta as _k_ratio_delta,
+        rate_series_with_time as _k_rate_with_time,
+        resolve_kv_bytes_per_token as _k_resolve_kv)
+
+# amoprof.py is also run directly as a script (python .../report/amoprof.py),
+# in which case `amoprof` resolves to this module rather than to the package
+# and the package-absolute import fails.  Every import of the registry must
+# therefore go through this guard — never inline at the call site.
+try:
+    from amoprof.report.metric_formulas import (
+        tile_note as _tile_note,
+        formula_for as _formula_for,
+        axis_formula as _axis_formula,
+        metric_formula_rows as _metric_formula_rows,
+    )
+except Exception:  # pragma: no cover - standalone/bundled execution
+    try:
+        from metric_formulas import (  # type: ignore
+            tile_note as _tile_note,
+            formula_for as _formula_for,
+            axis_formula as _axis_formula,
+            metric_formula_rows as _metric_formula_rows,
+        )
+    except Exception:
+        def _tile_note(label, existing_note="", variant=""):  # type: ignore
+            return existing_note
+        def _formula_for(label, variant=""):  # type: ignore
+            return ""
+        def _axis_formula(label):  # type: ignore
+            return ""
+        def _metric_formula_rows():  # type: ignore
+            return []
+
+try:
+    from amoprof.report.metric_formulas import (formula_details as _fx_details,
+                                                FORMULA_CSS as _FX_CSS,
+                                                FORMULA_CSS_LIGHT as _FX_CSS_LIGHT)
+except Exception:  # pragma: no cover - amoprof.py also runs as a script
+    try:
+        from metric_formulas import (formula_details as _fx_details,  # type: ignore
+                                     FORMULA_CSS as _FX_CSS,
+                                     FORMULA_CSS_LIGHT as _FX_CSS_LIGHT)
+    except Exception:
+        def _fx_details(body, label="formula", open_=False):  # type: ignore
+            return body or ""
+        _FX_CSS = _FX_CSS_LIGHT = ""  # type: ignore
+
 def _amoprof_numeric_series(values, default: float = float("nan")) -> pd.Series:
     """Coerce AMOprof report time-series values to float robustly.
 
@@ -216,15 +274,17 @@ def _amoprof_storage_label_cleanup(html_text: str, l3_backend_class: str = "") -
             "KV$ L3 ": "KV$ L3.5 ",
             "KV$ L3\n": "KV$ L3.5\n",
             "Logical KV movement — L3": "Logical KV movement — L3.5",
-            "Physical L3 block": "Physical L3.5 block",
+            "Physical L3 block": "L3.5 storage block",
             "Physical L3.5 block R / W total": "Physical L3.5 block R / W total",
             "NVMe read throughput": "L3.5 read throughput",
             "NVMe Read Throughput": "L3.5 read throughput",
-            "NVMe read BW": "L3.5 read BW",
-            "NVMe Read BW": "L3.5 read BW",
+            "NVMe read BW": "L3.5 storage read BW",
+            "NVMe Read BW": "L3.5 storage read BW",
         }
     for a, b in replacements.items():
         html_text = html_text.replace(a, b)
+
+
 
     # Clean up any doubled L3.5 token from overlapping replacements.
     html_text = html_text.replace("L3.5.5", "L3.5")
@@ -854,9 +914,14 @@ def _delta_sum_metric(df: pd.DataFrame, base_partial: str, *required_parts: str)
             vals = pd.to_numeric(df[col], errors="coerce").dropna()
             if len(vals) >= 2:
                 d = float(vals.iloc[-1] - vals.iloc[0])
-            elif len(vals) == 1:
-                d = float(vals.iloc[0])
             else:
+                # A single sample of a MONOTONIC COUNTER carries no window
+                # information: the value is the server's lifetime total, not
+                # what happened during this window.  Returning it produced a
+                # "window mean" that was actually a since-boot average — an
+                # E2E mean of 108 s against a p50 of 1.5 s, which reads as a
+                # catastrophic tail rather than the artefact it is.  A window
+                # with fewer than two samples has no measurable delta.
                 d = 0.0
             # Counters can reset; do not let a reset make the aggregate negative.
             if d > 0:
@@ -1146,6 +1211,14 @@ _JOB_METRIC_PREFIXES: dict[str, list[str]] = {
     "triton":        ["nv_inference_"],
     "tensorrt":      ["nv_trt_llm_"],
     "dcgm":          ["DCGM_FI_"],
+    # Mooncake KV store / transfer engine — disaggregated L3.5 backing tier.
+    # The Prometheus exporter typically registers as job=mooncake, but real
+    # deployments split it into mooncake_master (metadata) and mooncake_store
+    # (data plane) targets; register all three so target discovery matches
+    # whatever the operator's Prometheus config exposes.
+    "mooncake":        ["mooncake_"],
+    "mooncake_master": ["mooncake_"],
+    "mooncake_store":  ["mooncake_"],
     "node":          ["node_disk_", "node_memory_", "node_vmstat_",
                       "node_cpu_", "node_filesystem_", "node_network_"],
     "node_exporter": ["node_disk_", "node_memory_", "node_vmstat_"],
@@ -1259,17 +1332,55 @@ def _prom_api_base(url: str) -> str:
     return base
 
 
+_PROM_QUERY_RANGE_ERR_LOGGED = {"first_hint_shown": False,
+                                 "sample_errors_shown": 0}
+
+
 def _prom_query_range(base_url: str, metric: str, start: float, end: float,
                       step: int = 15, timeout: float = 30.0) -> pd.DataFrame:
-    """Query Prometheus /api/v1/query_range. Returns DataFrame with columns [time, value, labels...]."""
+    """Query Prometheus /api/v1/query_range. Returns DataFrame with columns [time, value, labels...].
+
+    Failures used to be swallowed silently, which surfaced downstream as
+    empty charts with no explanation.  We now log the first HTTP-level or
+    JSON-level failure and up to 3 subsequent samples so operators can see
+    the real reason (e.g. HTTP 422 "exceeded maximum resolution of 11,000
+    points per timeseries" when window/step is too large).
+    """
     try:
         import requests as _req
         url = f"{base_url}/api/v1/query_range"
         params = {"query": metric, "start": start, "end": end, "step": step}
         r = _req.get(url, params=params, timeout=timeout)
-        r.raise_for_status()
+        if not r.ok:
+            _reason = r.text.strip().splitlines()[0] if r.text else r.reason
+            _reason = _reason[:220]
+            _samples = _PROM_QUERY_RANGE_ERR_LOGGED
+            if not _samples["first_hint_shown"]:
+                print(f"  [warn] Prometheus query_range returned HTTP {r.status_code}: {_reason}", flush=True)
+                if r.status_code == 422 and "sample" in _reason.lower():
+                    _pts = int((end - start) / max(step, 1))
+                    print(f"  [warn]   window={int(end - start)}s / step={step}s = {_pts} points/series", flush=True)
+                    print(f"  [warn]   Prometheus caps at --query.max-samples (default 11,000). "
+                          f"Increase --prom-step or narrow the window.", flush=True)
+                elif r.status_code >= 500:
+                    print(f"  [warn]   Prometheus server-side error — retry, or try a smaller window.", flush=True)
+                _samples["first_hint_shown"] = True
+                _samples["sample_errors_shown"] = 1
+            elif _samples["sample_errors_shown"] < 3:
+                # Only show the metric name on subsequent errors to keep noise
+                # low but still make sure operators see multiple hits.
+                print(f"  [warn] query_range {metric[:60]} → HTTP {r.status_code}", flush=True)
+                _samples["sample_errors_shown"] += 1
+            return pd.DataFrame()
         data = r.json()
         if data.get("status") != "success":
+            # Prometheus returned 200 but flagged the query as errored.
+            _samples = _PROM_QUERY_RANGE_ERR_LOGGED
+            _err = str(data.get("error") or data.get("errorType") or "unknown")[:200]
+            if not _samples["first_hint_shown"]:
+                print(f"  [warn] Prometheus query_range status=error: {_err}", flush=True)
+                _samples["first_hint_shown"] = True
+                _samples["sample_errors_shown"] = 1
             return pd.DataFrame()
         rows = []
         for result in data["data"]["result"]:
@@ -1284,6 +1395,10 @@ def _prom_query_range(base_url: str, metric: str, start: float, end: float,
                 rows.append(row)
         return pd.DataFrame(rows) if rows else pd.DataFrame()
     except Exception as e:
+        _samples = _PROM_QUERY_RANGE_ERR_LOGGED
+        if not _samples["first_hint_shown"]:
+            print(f"  [warn] Prometheus query_range exception: {type(e).__name__}: {str(e)[:200]}", flush=True)
+            _samples["first_hint_shown"] = True
         return pd.DataFrame()
 
 
@@ -1300,6 +1415,28 @@ def _prom_query_instant(base_url: str, metric: str,
             return []
         return [{"labels": res["metric"], "value": float(res["value"][1])}
                 for res in data["data"]["result"]]
+    except Exception:
+        return []
+
+
+def _prom_metrics_for_selector(base_url: str, selector: str) -> list[str]:
+    """Metric names actually present under a label selector.
+
+    The L3.5 discovery previously assumed a `mooncake_` prefix, but the real
+    Mooncake master exporter publishes unprefixed names (`master_*`,
+    `segment_*`).  Nothing matched, and the fetch reported 0 series while the
+    exporter was being scraped correctly.  Ask Prometheus which series exist
+    for the selector instead of guessing at the namespace.
+    """
+    if not selector:
+        return []
+    try:
+        import requests as _req
+        r = _req.get(f"{base_url}/api/v1/series",
+                     params={"match[]": selector}, timeout=15)
+        r.raise_for_status()
+        names = {d.get("__name__") for d in r.json().get("data", []) if d.get("__name__")}
+        return sorted(n for n in names if n)
     except Exception:
         return []
 
@@ -1476,6 +1613,14 @@ def _prom_extract_server_info(base_url: str, t_start: float, t_end: float) -> di
         ep = _size_from_rank("moe_ep_rank")
         if tp > 0:
             info["TP size"] = str(tp)
+            # max(tp_rank)+1 only counts the ranks visible in *these* label
+            # sets.  With --prom-instance pinning one instance (or an exporter
+            # that only publishes rank 0) the visible set is a single rank and
+            # this reports TP=1 for an 8-way tensor-parallel server.  Record
+            # it as a lower bound so downstream code can prefer the live
+            # /server_info value, which is authoritative.
+            info["TP size source"] = "max(tp_rank)+1 over visible label sets (lower bound)"
+            info["TP size is_lower_bound"] = "1" if tp <= 1 else "0"
         if pp > 0:
             info["PP size"] = str(pp)
         if ep > 0:
@@ -1507,6 +1652,10 @@ def collect_from_prometheus_api(
     job:        str   = "",
     extra_labels: dict = None,
     server_type: str  = "auto",
+    l35_instance: str = "",
+    l35_job:      str = "",
+    l35_storage_instance: str = "",
+    l35_storage_job:      str = "",
 ) -> dict:
     """
     Pull a complete set of profiling data from a Prometheus server using
@@ -1675,9 +1824,64 @@ def collect_from_prometheus_api(
         server_type = requested_server_type
         print(f"  Using requested server type: {server_type}")
 
+    def _prom_label_values_in_window(base, label, sel, ts, te):
+        """Distinct values of `label` among series matching `sel` in the window.
+
+        Uses /api/v1/series with start/end so the answer reflects the WINDOW,
+        not the present. Querying without the bounds returns whatever the host
+        is serving now, which is the mistake this whole path exists to avoid.
+        """
+        try:
+            r = _req.get(f"{base}/api/v1/series",
+                         params={"match[]": sel, "start": int(ts), "end": int(te)},
+                         timeout=20)
+            d = r.json()
+            if d.get("status") != "success":
+                return []
+            return sorted({str(x.get(label, "")) for x in d.get("data", [])
+                           if x.get(label)})
+        except Exception:
+            return []
+
     # Final selector for inference server queries — use target-discovered exact
     # {job,instance} if available, otherwise fall back to exact_selector or hostname regex
     selector = _sel_for(server_type) or exact_selector
+
+    # Constrain to ONE model when we know which one.  A host that has served
+    # several models keeps every model's series under the same {job,instance},
+    # so a selector without model_name pulls them all and averages two
+    # different deployments into one report.  Naming the report correctly is
+    # cosmetic; fetching the wrong series is not.
+    _want_model = ""
+    try:
+        _mc = _load_json(Path(output_dir) / "model_config.json") or {}
+        _want_model = str(_mc.get("_amoprof_model_name") or "").strip()
+    except Exception:
+        _want_model = ""
+    if selector and _want_model:
+        try:
+            _models = _prom_label_values_in_window(
+                base_url, "model_name", selector, t_start, t_end)
+        except Exception:
+            _models = []
+        # Match loosely: the label may be "google/gemma-4-31B-it" while
+        # --model-path yields "google/gemma-4-31b-it".
+        _hit = next((m for m in _models
+                     if m and (m.lower() == _want_model.lower()
+                               or m.lower().endswith(_want_model.lower().split("/")[-1])
+                               or _want_model.lower().endswith(m.lower().split("/")[-1]))),
+                    "")
+        if _hit:
+            if len(_models) > 1:
+                print(f"  [warn] {len(_models)} models present under this selector "
+                      f"in the window ({', '.join(sorted(_models))}). Constraining "
+                      f"to model_name=\"{_hit}\" so the report describes one "
+                      f"deployment.")
+            selector = selector.rstrip("}") + f', model_name="{_hit}"}}'
+        elif _models:
+            print(f"  [warn] requested model {_want_model!r} has no series in this "
+                  f"window; present: {', '.join(sorted(_models))}. Fetching "
+                  f"unconstrained — the report may mix deployments.")
     if selector:
         print(f"  Inference selector: {selector}")
 
@@ -1752,7 +1956,20 @@ def collect_from_prometheus_api(
             "sglang_decode_sum_seq_lens", "sglang_page_size", "sglang_num_pages",
         ]:
             if _has(name):
-                df = _qr(name)
+                # KV movement counters carry one series per tp_rank (and per
+                # pp/dp rank on larger topologies).  Fetching them unaggregated
+                # leaves the caller to pick one series, which under-reports by
+                # the parallelism factor — a prefetch total read 8x low on a
+                # TP=8 deployment.  Sum these; leave gauges alone, since
+                # summing an occupancy gauge across ranks is meaningless.
+                _SUM_ACROSS_RANKS = {
+                    "sglang_evicted_tokens_total",
+                    "sglang_backuped_tokens_total",
+                    "sglang_load_back_tokens_total",
+                    "sglang_prefetched_tokens_total",
+                    "sglang_cached_tokens_total",
+                }
+                df = _qr(name, agg="sum" if name in _SUM_ACROSS_RANKS else "")
                 if not df.empty:
                     sg_dfs[name] = df
 
@@ -1761,6 +1978,9 @@ def collect_from_prometheus_api(
         for base_name, _ in [
             ("sglang_time_to_first_token_seconds", "ttft"),
             ("sglang_inter_token_latency_seconds",  "itl"),
+            # TPOT where the build exports it; absent on SGLang versions that
+            # only publish inter-token latency, in which case _has() skips it.
+            ("sglang_time_per_output_token_seconds", "tpot"),
             ("sglang_e2e_request_latency_seconds",  "e2e"),
             ("sglang_queue_time_seconds",            "queue"),
             ("sglang_generation_tokens_histogram",   "gen_tok_hist"),
@@ -1772,7 +1992,11 @@ def collect_from_prometheus_api(
             ("sglang_backup_pgs",                    "backup_pgs"),
             ("sglang_load_back_duration_seconds",    "loadback_dur"),
         ]:
-            for suffix in ["_sum", "_count"]:
+            # `_bucket` is required for per-interval p50/p90/p99 estimation
+            # (Executive → Latency & token-size distribution).  Fetching only
+            # _sum/_count gave the mean but made percentiles impossible on the
+            # Prometheus path, while local --run-dir runs had them.
+            for suffix in ["_sum", "_count", "_bucket"]:
                 full = f"{base_name}{suffix}"
                 if _has(full):
                     df = _qr(full)
@@ -1783,6 +2007,184 @@ def collect_from_prometheus_api(
             print(f"OK ({len(sg_dfs)} series; warn: sglang_hicache_host_used_tokens missing)")
         else:
             print(f"OK ({len(sg_dfs)} series; includes sglang_hicache_host_used_tokens)")
+
+    # ── Mooncake (L3.5 disaggregated KV store) ────────────────────────────────
+    # If a mooncake exporter is scraped by this Prometheus, fold its metrics
+    # into the same sg_dfs pool under canonical names.  This is additive — a
+    # run with both SGLang HiCache and a Mooncake L3.5 tier gets both signals
+    # in the master timeseries.  The alias/histogram tables live in
+    # amoprof.server_metrics so the translation stays a single source of truth.
+    # `available` is the server-wide metric-name list, so a store on another
+    # host still shows up here; only the *selector* was the problem.  An
+    # explicit --l35-instance also forces the attempt, so a restricted
+    # /label/__name__/values endpoint cannot silently skip L3.5.
+    _has_mooncake = (any(m.startswith("mooncake_") for m in available)
+                     or bool(l35_instance) or bool(l35_job))
+    if _has_mooncake:
+        try:
+            from amoprof.server_metrics import (
+                MOONCAKE_TO_CANONICAL, MOONCAKE_HISTOGRAM_BASES,
+            )
+        except Exception:
+            import importlib.util as _ilu3
+            _sm_path = Path(__file__).resolve().parent.parent / "server_metrics.py"
+            _spec3 = _ilu3.spec_from_file_location("amoprof_server_metrics", _sm_path)
+            _sm3 = _ilu3.module_from_spec(_spec3)
+            _spec3.loader.exec_module(_sm3)
+            MOONCAKE_TO_CANONICAL = _sm3.MOONCAKE_TO_CANONICAL
+            MOONCAKE_HISTOGRAM_BASES = _sm3.MOONCAKE_HISTOGRAM_BASES
+
+        print("  Fetching Mooncake L3.5 metrics...", end=" ", flush=True)
+        # An explicit L3.5 instance/job wins over discovery.  Target discovery
+        # is scoped to the GPU node's hostname, so a store running on a
+        # different host is never discovered and the GPU-node `instance`
+        # filter then excludes its series entirely — the metrics are present
+        # in Prometheus but invisible to this fetch.
+        if l35_instance or l35_job:
+            _parts = []
+            if l35_job:
+                _parts.append(f'job="{l35_job}"')
+            if l35_instance:
+                _parts.append(f'instance="{l35_instance}"')
+            _mooncake_sel = "{" + ", ".join(_parts) + "}"
+            print(f"  L3.5 selector (explicit): {_mooncake_sel}")
+        else:
+            _mooncake_sel = (_sel_for("mooncake", "mooncake_")
+                             or _sel_for("mooncake_store", "mooncake_")
+                             or _sel_for("mooncake_master", "mooncake_"))
+            if not _mooncake_sel:
+                print("  [warn] L3.5 exporter not discovered on this host. If the "
+                      "store runs on a different node, pass --l35-instance "
+                      "host:port (and --l35-job if the job is not mooncake*), "
+                      "otherwise its metrics are filtered out by --prom-instance.")
+        _hist_bases = set(MOONCAKE_HISTOGRAM_BASES)
+        _mooncake_added = 0
+        for mc_name, canon in MOONCAKE_TO_CANONICAL.items():
+            if mc_name in _hist_bases:
+                for suffix in ("_sum", "_count"):
+                    full = f"{mc_name}{suffix}"
+                    if _has(full):
+                        df = _qr(full, force_selector=_mooncake_sel)
+                        if not df.empty:
+                            # Keep separate from the sglang_*_sum/_count keys
+                            # so the report's histogram-driven percentile
+                            # math treats these as an independent tier.  They
+                            # ride in the same master timeseries under the
+                            # mooncake_* canonical namespace.
+                            sg_dfs[f"{canon}{suffix}"] = df
+                            _mooncake_added += 1
+            else:
+                if _has(mc_name):
+                    df = _qr(mc_name, force_selector=_mooncake_sel)
+                    if not df.empty:
+                        # Multiple mooncake_* aliases can resolve to the same
+                        # canonical name (e.g. mooncake_bytes_read_total and
+                        # mooncake_read_bytes_total both → mooncake_read_bytes_total).
+                        # First non-empty wins; later duplicates are ignored so
+                        # the pivot doesn't create duplicate columns.
+                        sg_dfs.setdefault(canon, df)
+                        _mooncake_added += 1
+        # The alias table is a curated list of names seen in Mooncake releases,
+        # but exporters vary (mooncake_store_*, vendor forks).  Gating only on
+        # those names means an exporter that IS being scraped yields 0 series
+        # with no indication why.  List what the server actually exposes under
+        # this namespace, map what we recognise by *shape*, and name the rest.
+        # Discover by SELECTOR, not by name prefix: the real Mooncake master
+        # exporter publishes `master_*` / `segment_*` with no `mooncake_`
+        # namespace, so a prefix scan finds nothing while the exporter is being
+        # scraped correctly.
+        _mc_present = sorted(m for m in available if m.startswith("mooncake"))
+        _mc_by_sel = _prom_metrics_for_selector(base, _mooncake_sel) if _mooncake_sel else []
+        if _mc_by_sel:
+            print(f"\n    L3.5 exporter publishes {len(_mc_by_sel)} metric(s) "
+                  f"under {_mooncake_sel}", end="")
+            try:
+                from amoprof.server_metrics import (
+                    MOONCAKE_MASTER_TO_CANONICAL as _MMC,
+                    MOONCAKE_MASTER_HISTOGRAM_BASES as _MMH,
+                )
+            except Exception:
+                _MMC, _MMH = {}, ()
+            for _m in _mc_by_sel:
+                _canon = _MMC.get(_m)
+                if not _canon:
+                    continue
+                try:
+                    _df = _qr(_m, force_selector=_mooncake_sel)
+                except Exception:
+                    continue
+                if _df is not None and not _df.empty:
+                    sg_dfs[_canon] = _df
+                    _mooncake_added += 1
+            for _hb in _MMH:
+                for _sfx in ("_sum", "_count"):
+                    if _hb + _sfx not in _mc_by_sel:
+                        continue
+                    try:
+                        _df = _qr(_hb + _sfx, force_selector=_mooncake_sel)
+                    except Exception:
+                        continue
+                    if _df is not None and not _df.empty:
+                        sg_dfs[f"mooncake_value_size_bytes{_sfx}"] = _df
+                        _mooncake_added += 1
+            _mc_present = _mc_present or _mc_by_sel
+        _unmapped = [m for m in _mc_present
+                     if m not in MOONCAKE_TO_CANONICAL
+                     and not any(m.startswith(_b) for _b in _hist_bases)]
+
+        def _shape_map(name: str) -> str:
+            n = name.lower()
+            if "bucket" in n or n.endswith("_created"):
+                return ""
+            # "store" is part of the component name (mooncake_store_*) as well
+            # as a write verb, so strip the known component prefixes before
+            # classifying direction — otherwise mooncake_store_read_bytes_total
+            # reads as both a read and a write and is discarded.
+            core = n
+            for _pfx in ("mooncake_store_", "mooncake_master_", "mooncake_client_",
+                         "mooncake_transfer_", "mooncake_"):
+                if core.startswith(_pfx):
+                    core = core[len(_pfx):]
+                    break
+            has_rd = any(t in core for t in ("read", "get", "fetch", "load"))
+            has_wr = any(t in core for t in ("writ", "put", "backup", "store"))
+            if "byte" in n and n.endswith("_total"):
+                if has_rd and not has_wr:
+                    return "mooncake_read_bytes_total"
+                if has_wr and not has_rd:
+                    return "mooncake_write_bytes_total"
+            if "capacity" in n and "byte" in n:
+                return "mooncake_capacity_bytes"
+            if "used" in n and "byte" in n:
+                return "mooncake_used_bytes"
+            if any(t in n for t in ("fill_ratio", "utilization", "usage_ratio")):
+                return "mooncake_fill_ratio"
+            return ""
+
+        for _m in _unmapped:
+            _canon = _shape_map(_m)
+            if not _canon or _canon in sg_dfs:
+                continue
+            try:
+                _df = _qr(_m, force_selector=_mooncake_sel)
+            except Exception:
+                continue
+            if _df is not None and not _df.empty:
+                sg_dfs[_canon] = _df
+                _mooncake_added += 1
+                print(f"\n    L3.5 mapped by shape: {_m} -> {_canon}", end="")
+
+        print(f"OK ({_mooncake_added} series; mooncake→canonical L3.5)")
+        if _mc_present and not _mooncake_added:
+            print(f"    [warn] {len(_mc_present)} mooncake_* metric(s) exist on the "
+                  f"server but none matched: {', '.join(_mc_present[:10])}"
+                  + (" ..." if len(_mc_present) > 10 else ""))
+            print("    Either the selector excludes them (check job/instance labels "
+                  "on these series) or the names are not in the alias table.")
+        elif not _mc_present:
+            print("    [warn] no metric named mooncake* exists on this Prometheus. "
+                  "The exporter may use a different prefix — check "
+                  "/api/v1/label/__name__/values for the store's own naming.")
 
     # ── Empty-window guard (common timezone-offset mistake) ──────────────────
     # If SGLang metric NAMES exist on the server (detection succeeded) but the
@@ -2003,6 +2405,156 @@ def collect_from_prometheus_api(
 
         print(f"filled dcgm={_amoprof_pulled['dcgm']} "
               f"node={_amoprof_pulled['node']} ipmi={_amoprof_pulled['ipmi']}")
+
+        # ── Synthesize raw collector summaries from amoprof_* metrics ─────
+        # When the amoprof service ran with --enable-dram (or blktrace, etc.),
+        # its /metrics endpoint exposes per-cycle aggregates that would
+        # normally land in raw/<name>_summary.json.  In Prometheus-only
+        # analyze, those files are never written — the report layer looks for
+        # them on disk and sees nothing.  Reconstitute them from the live
+        # amoprof_* metric values so the DRAM/blktrace/QD/vmstat/iostat
+        # sections light up with real numbers.
+        #
+        # Precedence: real collector files on disk (from a hybrid --run-dir
+        # merge or a manual copy) always win; we skip synthesis for any file
+        # already present.
+        _amoprof_prefix_map = {
+            # Prometheus prefix (amoprof_<collector>_) → target JSON filename.
+            # Keys strip the prefix and become the JSON fields the loader
+            # already knows how to consume (see amoprof/collectors/*.py).
+            "amoprof_amduprof_pcm_":       ("amduprof_pcm_summary.json",  ""),
+            "amoprof_pcm_":                ("pcm_summary.json",           ""),
+            "amoprof_dram_":               ("dram_summary.json",          ""),
+            "amoprof_vmstat_":             ("vmstat_summary.json",        ""),
+            "amoprof_server_config_":     ("server_config_summary.json", ""),
+            "amoprof_cpu_":               ("cpu_summary.json",          ""),
+            "amoprof_iostat_":             ("iostat_summary.json",        ""),
+            "amoprof_nvme_driver_":        ("nvme_driver_summary.json",   ""),
+            "amoprof_smart_":              ("smart_summary.json",         ""),
+            "amoprof_power_":              ("power_summary.json",         ""),
+            "amoprof_gpu_":                ("gpu_summary.json",           ""),
+            "amoprof_network_":            ("network_summary.json",       ""),
+            "amoprof_gpu_config_":         ("gpu_config.json",            ""),
+            "amoprof_model_config_":       ("model_config.json",          ""),
+            "amoprof_ssd_hw_":             ("ssd_hw_summary.json",        ""),
+            "amoprof_nvlink_pcie_":        ("nvlink_pcie_summary.json",   ""),
+            "amoprof_discard_":            ("discard_summary.json",       ""),
+            "amoprof_swap_storm_":         ("swap_storm_summary.json",    ""),
+            "amoprof_queue_depth_sysfs_":  ("queue_depth_sysfs_summary.json", ""),
+            "amoprof_biolatency_":         ("biolatency_summary.json",    ""),
+            "amoprof_biosnoop_":           ("biosnoop_summary.json",      ""),
+            "amoprof_bpf_":                ("bpf_summary.json",           ""),
+            "amoprof_perf_":               ("perf_summary.json",          ""),
+            # blktrace: two families, both live in raw/blktrace_analysis/
+            "amoprof_blktrace_analysis_":  ("blktrace_analysis/summary.json", ""),
+            "amoprof_blktrace_qd_":        ("blktrace_analysis/queue_depth_summary.json", ""),
+            "amoprof_blktrace_latency_":   ("blktrace_analysis/blktrace_latency_summary.json", ""),
+            # blktrace collector's own summary (event counts before analyzer).
+            "amoprof_blktrace_":           ("blktrace_summary.json",      ""),
+        }
+        _synth_pulled: dict[str, int] = {}
+        if output_dir is not None:
+            _out_dir_path = Path(output_dir)
+            # Order matters: longer/more-specific prefixes must be checked
+            # first so amoprof_blktrace_analysis_x doesn't accidentally land
+            # in amoprof_blktrace_'s bucket.
+            _prefixes_sorted = sorted(_amoprof_prefix_map, key=len, reverse=True)
+
+            def _classify(name: str) -> "str | None":
+                for pfx in _prefixes_sorted:
+                    if name.startswith(pfx):
+                        return pfx
+                return None
+
+            _by_target: dict[str, dict[str, float]] = {}
+            _bucket_prefix: dict[str, str] = {}
+            for _m in _amoprof_service_metrics:
+                _pfx = _classify(_m)
+                if _pfx is None:
+                    continue
+                _target = _amoprof_prefix_map[_pfx][0]
+                # Skip if the real collector already wrote the target file.
+                _tgt_path = _out_dir_path / _target
+                if _tgt_path.exists() and _tgt_path.stat().st_size > 0:
+                    continue
+                _by_target.setdefault(_target, {})
+                _bucket_prefix[_target] = _pfx
+
+            # Instant query — service metrics are already per-cycle aggregates,
+            # so the latest sample IS the current mean/peak/etc.  Avoid
+            # rewriting existing collector files.
+            for _target, _bucket in _by_target.items():
+                _pfx = _bucket_prefix[_target]
+                _hits = 0
+                _range_probed = 0
+                for _m in _amoprof_service_metrics:
+                    if not _m.startswith(_pfx):
+                        continue
+                    # First try an instant query — service metrics are
+                    # per-cycle aggregates, so the latest sample IS the
+                    # value we want.  If nothing lands (metric scraped
+                    # during the run window but not right now, or the
+                    # exporter briefly missed a scrape at analyze time),
+                    # fall back to a range query bounded by the run
+                    # window and take the last non-NaN sample.  Without
+                    # this, a summary file goes unwritten even though the
+                    # metric has plenty of samples inside the window.
+                    _samples = _prom_query_instant(base,
+                                                    _m + (_amoprof_sel or ""))
+                    _v_pick: "float | None" = None
+                    for _s in _samples:
+                        try:
+                            _vf = float(_s.get("value"))
+                        except (TypeError, ValueError):
+                            continue
+                        if _vf != _vf:
+                            continue
+                        _v_pick = _vf
+                        break
+                    if _v_pick is None:
+                        try:
+                            _df_r = _qr(_m, force_selector=(_amoprof_sel or ""))
+                        except Exception:
+                            _df_r = None
+                        if _df_r is not None and not _df_r.empty:
+                            _vals = [float(x) for x in _df_r["value"].tolist()
+                                     if x == x]
+                            if _vals:
+                                _v_pick = _vals[-1]
+                                _range_probed += 1
+                    if _v_pick is None:
+                        continue
+                    _bucket[_m[len(_pfx):]] = _v_pick
+                    _hits += 1
+                if _bucket:
+                    _tgt_path = _out_dir_path / _target
+                    _tgt_path.parent.mkdir(parents=True, exist_ok=True)
+                    _bucket_out = dict(_bucket)
+                    _bucket_out.setdefault("_source", "amoprof_service_prom_fallback")
+                    try:
+                        _tgt_path.write_text(
+                            json.dumps(_bucket_out, indent=2, default=str),
+                            encoding="utf-8")
+                        _synth_pulled[_target] = _hits
+                    except Exception as _wex:
+                        print(f"  [synth-skip] {_target}: write failed "
+                              f"({type(_wex).__name__}: {_wex})")
+                elif _target not in _synth_pulled:
+                    # No samples at all for this prefix.  Name what was
+                    # tried so a missing summary file is legible in the log.
+                    _tried = sum(1 for _m in _amoprof_service_metrics
+                                 if _m.startswith(_pfx))
+                    if _tried > 0:
+                        print(f"  [synth-skip] {_target}: {_tried} metric(s) "
+                              f"with prefix {_pfx!r} exist but returned no "
+                              f"samples under selector "
+                              f"{(_amoprof_sel or '<none>')!r}")
+
+        if _synth_pulled:
+            _brief = ", ".join(f"{k.rsplit('/',1)[-1]}({n})"
+                                for k, n in sorted(_synth_pulled.items()))
+            print(f"  Synthesized {len(_synth_pulled)} raw summary file(s) from "
+                  f"amoprof_* metrics: {_brief}")
 
     # ── Fallback: if system exporters got 0 series, the instance label format   ──
     # may differ (e.g. IP:port instead of hostname:port). Retry without selector.
@@ -2442,10 +2994,32 @@ def collect_from_prometheus_api(
     except Exception:
         _server_info = {}
     _detected_model = _server_info.get("Model", "unknown")
+    # An explicit --model-path wins over anything discovered at runtime.  A
+    # live /get_server_info reflects the server as it is NOW, which is the
+    # wrong answer for a historical window if the model has changed since.
+    try:
+        _mcfg = _load_json(Path(output_dir) / "model_config.json") or {}
+        _explicit = str(_mcfg.get("_amoprof_model_name") or "").strip()
+    except Exception:
+        _explicit = ""
+    if _explicit:
+        if (_detected_model and _detected_model != "unknown"
+                and _explicit.lower() not in _detected_model.lower()
+                and _detected_model.lower() not in _explicit.lower()):
+            print(f"  [warn] runtime reports model={_detected_model}, but "
+                  f"--model-path specifies {_explicit}. Using {_explicit}. "
+                  f"If this window predates a server restart, the runtime "
+                  f"value describes a different deployment.")
+        _detected_model = _explicit
+        _server_info["Model"] = _explicit
     if _detected_model and _detected_model != "unknown":
         print(f"  Server info from Prometheus labels: model={_detected_model}"
               + (f", instance={_server_info['Instance']}" if _server_info.get("Instance") else "")
-              + (f", TP={_server_info['TP size']}" if _server_info.get("TP size") else ""))
+              + (f", TP={_server_info['TP size']}"
+                 + (" (lower bound from tp_rank labels — live /server_info is "
+                    "authoritative)" if _server_info.get("TP size is_lower_bound") == "1"
+                    else "")
+                 if _server_info.get("TP size") else ""))
 
     # Canonical cache-hit calculation used by all report surfaces.
     # Primary semantics: cache-served prompt/prefill tokens over total cache+compute
@@ -2609,11 +3183,529 @@ def collect_from_prometheus_api(
             vmstat_df2.to_csv(output_dir / "vmstat_timeseries.csv", index=False)
         if not power_df.empty:
             power_df.to_csv(output_dir / "power_timeseries.csv", index=False)
+
+        # ── network_timeseries.csv from the amoprof service exporter ────────
+        # The network collector runs on the node and publishes per-cycle means
+        # as amoprof_network_* gauges.  On the Prometheus path there is no
+        # local raw/ to copy from, so rebuild the timeseries by range-querying
+        # those gauges.  Columns match the local collector's CSV contract so
+        # the Executive network card reads either source unchanged.
+        try:
+            _net_map = {
+                "rx_mbs":         "amoprof_network_net_rx_mbs_mean",
+                "tx_mbs":         "amoprof_network_net_tx_mbs_mean",
+                "total_mbs":      "amoprof_network_net_total_mbs_mean",
+                "total_pps":      "amoprof_network_net_total_pps_mean",
+                "rx_drop_ps":     "amoprof_network_net_rx_drop_ps_mean",
+                "tcp_retrans_ps": "amoprof_network_net_tcp_retrans_ps_mean",
+                "link_util_pct":  "amoprof_network_net_link_util_pct_peak",
+            }
+            _net_cols = {}
+            for _key, _metric in _net_map.items():
+                if not _has(_metric):
+                    continue
+                _df = _qr(_metric, agg="avg", force_selector=(_amoprof_sel or ""))
+                if _df is not None and not _df.empty:
+                    _net_cols[_key] = _df.groupby("time_sec")["value"].mean()
+            if _net_cols:
+                _net_ts = pd.DataFrame(_net_cols).reset_index().sort_values("time_sec")
+                if "total_mbs" not in _net_ts.columns:
+                    _net_ts["total_mbs"] = (_net_ts.get("rx_mbs", 0)
+                                            + _net_ts.get("tx_mbs", 0))
+                _net_ts["iface"] = "_total"
+                for _c in ("rx_mbs", "tx_mbs", "total_mbs", "total_pps",
+                           "rx_drop_ps", "tx_drop_ps", "tcp_retrans_ps",
+                           "link_util_pct"):
+                    if _c not in _net_ts.columns:
+                        _net_ts[_c] = 0.0
+                _net_ts = _net_ts[["time_sec", "iface", "rx_mbs", "tx_mbs",
+                                   "total_mbs", "total_pps", "rx_drop_ps",
+                                   "tx_drop_ps", "tcp_retrans_ps", "link_util_pct"]]
+                _net_ts.to_csv(output_dir / "network_timeseries.csv", index=False)
+                print(f"  Synthesized network_timeseries.csv "
+                      f"({len(_net_ts)} samples, {len(_net_cols)} series)")
+            elif any(_has(_m) for _m in _net_map.values()):
+                print("  [warn] amoprof_network_* present but returned no samples")
+        except Exception as _net_exc:
+            print(f"  [warn] network_timeseries synthesis failed: {_net_exc}")
+
+        # ── dram / nvme timeseries from the amoprof service exporter ───────
+        # L2 and L3 charts need *timeseries*, not just summaries.  The
+        # Prometheus path builds NVMe rows from node_exporter disk metrics
+        # only, and builds no DRAM timeseries at all — so a run with HiCache
+        # and an L3 backend configured still rendered L1-only charts whenever
+        # node_exporter was absent.  The amoprof service already exports these
+        # as gauges; rebuild the CSVs from them.
+        def _synth_ts(fname: str, colmap: dict, label: str,
+                      selector: str = "", raw_expr: bool = False):
+            """Rebuild a timeseries CSV from Prometheus gauges.
+
+            `selector` overrides the default amoprof-on-this-host scoping, so a
+            collector running on another node (an L3.5 memory node) can be
+            queried.  `raw_expr` means colmap values are complete PromQL
+            expressions rather than bare metric names — node_exporter exposes
+            counters that need rate() before they mean anything.
+            """
+            try:
+                cols = {}
+                for _key, _metric in colmap.items():
+                    # Accept either a bare metric name/expr, or a list of
+                    # alternative names to try in order.  This lets one
+                    # colmap accommodate vendor-specific naming (Intel PCM
+                    # vs AMDuProf PCM) and legacy vs current metric names
+                    # (e.g. amoprof_dram_used_gb vs the actual double-
+                    # prefixed amoprof_dram_dram_used_gb_mean).
+                    _candidates = (list(_metric)
+                                   if isinstance(_metric, (list, tuple))
+                                   else [_metric])
+                    for _cand in _candidates:
+                        if not raw_expr and not _has(_cand):
+                            continue
+                        _df = _qr(_cand, agg="avg",
+                                  force_selector=(selector or _amoprof_sel or ""))
+                        if _df is not None and not _df.empty:
+                            cols[_key] = _df.groupby("time_sec")["value"].mean()
+                            break
+                if not cols:
+                    _seen = [m for m in colmap.values() if _has(m)]
+                    if _seen:
+                        print(f"  [warn] {fname}: {len(_seen)} metric(s) exist but "
+                              f"returned no samples in this window")
+                        # The collector records WHY it produced nothing
+                        # (missing binary, no MSR access, all-zero samples).
+                        # Without surfacing it, "no samples" looks like a
+                        # windowing problem when it is a host problem.
+                        for _c, _lbl in (("pcm", "Intel PCM / perf-IMC"),
+                                         ("amduprof_pcm", "AMDuProf"),
+                                         ("iostat", "iostat"),
+                                         ("nvme_driver", "nvme_driver")):
+                            if not any(_c in _m for _m in colmap.values()):
+                                continue
+                            _av = f"amoprof_{_c}_{_c.split('_')[0]}_available"
+                            _av2 = f"amoprof_{_c}_{_c}_available"
+                            for _k in (_av, _av2, f"amoprof_{_c}_available"):
+                                if not _has(_k):
+                                    continue
+                                try:
+                                    _d = _qr(_k, agg="max",
+                                             force_selector=(_amoprof_sel or ""))
+                                    _v = (float(_d["value"].max())
+                                          if _d is not None and not _d.empty else -1.0)
+                                except Exception:
+                                    _v = -1.0
+                                if _v == 0.0:
+                                    print(f"         {_lbl} collector reports "
+                                          f"NOT AVAILABLE on the collecting host "
+                                          f"\u2014 it ran but produced no data. "
+                                          f"Check the binary is installed and "
+                                          f"reachable, and that the service has "
+                                          f"the privileges it needs (MSR access "
+                                          f"for PMU tools).")
+                                elif _v > 0:
+                                    print(f"         {_lbl} collector reports "
+                                          f"available, but no samples landed in "
+                                          f"this window \u2014 the window may be "
+                                          f"shorter than the collector's cycle.")
+                                break
+                    return False
+                _ts = pd.DataFrame(cols).reset_index().sort_values("time_sec")
+                _ts.to_csv(output_dir / fname, index=False)
+                print(f"  Synthesized {fname} ({len(_ts)} samples, {len(cols)} series)")
+                return True
+            except Exception as _e:
+                print(f"  [warn] {fname} synthesis failed: {_e}")
+                return False
+
+        # DRAM *bandwidth* comes only from a PMU collector (AMD uProf / Intel
+        # PCM / perf-IMC).  The `dram` collector reports capacity
+        # (dram_used_gb, dram_util_pct) from /proc/meminfo and cannot supply
+        # bandwidth, so there is nothing to synthesise for the L2 bandwidth
+        # charts when no PMU collector ran — say so rather than fabricate.
+        # DRAM bandwidth can come from EITHER PMU collector, and they publish
+        # under different namespaces: AMDuProf registers as `amduprof_pcm`,
+        # Intel PCM / perf-IMC registers as `pcm`.  Checking only the AMD names
+        # meant an Intel host with a working collector still reported
+        # "L2 (DRAM BW): NO" while amoprof_pcm_* was being scraped.
+        # Write to the filename matching the collector that PRODUCED the data.
+        # The data-source list is keyed on filename, so putting Intel PCM data
+        # in amduprof_pcm_timeseries.csv made the report claim "AMD uProf PCM"
+        # was present and "Intel PCM" missing — both describing the same rows.
+        if not (output_dir / "amduprof_pcm_timeseries.csv").exists() \
+                and not (output_dir / "pcm_timeseries.csv").exists():
+            for _pfx, _fname, _who in (
+                    ("amoprof_pcm_", "pcm_timeseries.csv", "Intel PCM / perf-IMC"),
+                    ("amoprof_amduprof_pcm_", "amduprof_pcm_timeseries.csv", "AMDuProf")):
+                _done = False
+                for _keys in (("dram_read_gb_s", "dram_write_gb_s", "dram_total_gb_s"),
+                              ("pcm_dram_read_gb_s", "pcm_dram_write_gb_s",
+                               "pcm_dram_total_gb_s")):
+                    if _synth_ts(_fname, {
+                            "dram_read_gb_s":  _pfx + _keys[0] + "_mean",
+                            "dram_write_gb_s": _pfx + _keys[1] + "_mean",
+                            "dram_total_gb_s": _pfx + _keys[2] + "_mean",
+                    }, f"DRAM ({_who})"):
+                        _done = True
+                        break
+                if _done:
+                    break
+
+        # ---- L3.5 node's own block devices ------------------------------
+        # The L3.5 store exporter is a metadata service: it reports capacity,
+        # keys and request rates, never device I/O.  Tracing the SSD *inside*
+        # the memory node therefore needs a collector running on that host,
+        # and an explicit selector — the GPU-node --prom-instance filter would
+        # otherwise exclude it, the same way it excluded the store metrics.
+        if l35_storage_instance or l35_storage_job:
+            _l35s_parts = []
+            if l35_storage_job:
+                _l35s_parts.append(f'job="{l35_storage_job}"')
+            if l35_storage_instance:
+                _l35s_parts.append(f'instance="{l35_storage_instance}"')
+            _l35s_sel = "{" + ", ".join(_l35s_parts) + "}"
+            print(f"  L3.5 storage selector: {_l35s_sel}")
+
+            # Store capacity comes from the MOONCAKE MASTER (:9003), a
+            # different exporter and therefore a different selector from the
+            # amoprof service (:9101).  This block was lost to a later edit of
+            # the same region once already, so it lives here, beside the
+            # selector print, where its absence is visible in the run log.
+            if _mooncake_sel:
+                _cap_ok = _synth_ts("l35_store_capacity.csv", {
+                    # ── KV movement inside the memory node ────────────────
+                    # These carry the tiering chain: a tier that evicts far
+                    # more than it serves is thrashing, and one that never
+                    # promotes is a sink rather than a cache.  They live on
+                    # the STORE exporter, not the amoprof service, which is
+                    # why they are fetched under the store selector.
+                    # ── eviction split, get outcome, promotion pipeline ──
+                    # All confirmed present on the 2026-09 deployment's
+                    # exporter.  The _mem eviction counter separates DRAM
+                    # blocks that were dropped from those demoted to file;
+                    # the get counters give the fraction of lookups that
+                    # found their key; and the promotion counters explain
+                    # WHY nothing moves back up, not just that nothing does.
+                    "l35_evicted_mem_b":    ["master_evicted_size_bytes_mem"],
+                    "l35_get_total_n":      ["total_get_nums_"],
+                    "l35_get_valid_n":      ["valid_get_nums_"],
+                    "l35_mem_hit_n":        ["mem_cache_hit_nums_"],
+                    "l35_file_hit_n":       ["file_cache_hit_nums_"],
+                    "l35_promo_recorded":   ["master_promotion_candidate_recorded_total"],
+                    "l35_promo_admitted":   ["master_promotion_admitted_total"],
+                    "l35_promo_completed":  ["master_promotion_completed_total"],
+                    "l35_promo_rej_freq":   ["master_promotion_rejected_frequency_total"],
+                    "l35_promo_rej_wm":     ["master_promotion_rejected_watermark_total"],
+                    "l35_promo_rej_cap":    ["master_promotion_rejected_cap_total"],
+                    "l35_promo_rej_adm":    ["master_promotion_candidate_admission_rejected_total"],
+                    "l35_promo_dropped":    ["master_promotion_candidate_dropped_limit_total"],
+                    "l35_promo_expired":    ["master_promotion_expired_total"],
+                    "l35_promo_failed":     ["master_promotion_failed_total"],
+                    "l35_evicted_b":        ["mooncake_evicted_bytes",
+                                              "master_evicted_size_bytes"],
+                    "l35_promoted_b":       ["mooncake_promoted_bytes",
+                                              "master_promotion_completed_bytes_total"],
+                    "l35_mem_hit_b":        ["mooncake_read_bytes_mem",
+                                              "mem_cache_hit_bytes_total"],
+                    "l35_file_hit_b":       ["mooncake_read_bytes_file",
+                                              "file_cache_hit_bytes_total"],
+                    "l35_store_mem_used_b":  ["mooncake_mem_used_bytes",
+                                               "master_allocated_bytes"],
+                    "l35_store_mem_cap_b":   ["mooncake_capacity_bytes",
+                                               "master_total_capacity_bytes"],
+                    "l35_store_file_used_b": ["mooncake_file_used_bytes",
+                                               "master_allocated_file_size_bytes"],
+                    "l35_store_file_cap_b":  ["mooncake_file_capacity_bytes",
+                                               "master_total_file_capacity_bytes"],
+                }, "L3.5 store capacity (mooncake master)",
+                    selector=_mooncake_sel)
+                print(f"  L3.5 store capacity: "
+                      f"{'ok' if _cap_ok else 'no series at that selector'}")
+            # Two shapes, since the node may run amoprof or plain
+            # node_exporter.  amoprof gives per-device aggregates directly;
+            # node_exporter gives raw counters that need rate().
+            # Everything the amoprof service exposes ON THE L3.5 NODE, not just
+            # its disks.  A memory node's SSD, DRAM and CPU are all part of how
+            # it answers a request, so correlating token activity against only
+            # its block devices misses the case where the node is CPU-bound or
+            # its DRAM cache is thrashing.  All of it lands in one file with
+            # l35_-prefixed columns so nothing can be confused with the GPU
+            # node's identically-named metrics.
+            _l35s_ok = _synth_ts("l35_storage_timeseries.csv", {
+                # sysfs FIRST, iostat second.  iostat reports an instantaneous
+                # rate and publishes nothing at all when the device is quiet at
+                # sample time, so a bursty store leaves no storage series.  The
+                # nvme_driver and queue_depth collectors read sysfs counters,
+                # which accumulate across the whole cycle and are present
+                # whether or not the device happened to be busy.
+                "l35_rd_iops":     ["amoprof_blktrace_analysis_read_iops_mean",
+                                     "amoprof_iostat_read_iops_mean",
+                                     "amoprof_nvme_driver_nvme_rd_iops_sysfs"],
+                "l35_wr_iops":     ["amoprof_blktrace_analysis_write_iops_mean",
+                                     "amoprof_iostat_write_iops_mean",
+                                     "amoprof_nvme_driver_nvme_wr_iops_sysfs"],
+                # blktrace FIRST for bandwidth and IOPS.  It integrates every
+                # event over the collection cycle, so it reports real traffic
+                # even when the device is idle at the instant iostat samples —
+                # which is why the bandwidth chart was empty while the drive
+                # was demonstrably busy.  The nvme_driver sysfs rates proved
+                # unreliable on this hardware (all zero), so they rank last.
+                "l35_rd_bw_mbs":   ["amoprof_blktrace_analysis_read_bw_mb_s_mean",
+                                     "amoprof_iostat_read_bw_mb_mean"],
+                "l35_wr_bw_mbs":   ["amoprof_blktrace_analysis_write_bw_mb_s_mean",
+                                     "amoprof_iostat_write_bw_mb_mean"],
+                "l35_io_util_pct": ["amoprof_nvme_driver_nvme_util_pct_sysfs",
+                                     "amoprof_queue_depth_sysfs_io_util_pct_mean",
+                                     "amoprof_iostat_util_pct_mean"],
+                "l35_avgqu_sz":    ["amoprof_nvme_driver_nvme_weighted_qd_mean",
+                                     "amoprof_nvme_driver_nvme_inflight_mean",
+                                     "amoprof_queue_depth_sysfs_inflight_mean",
+                                     "amoprof_iostat_avgqu_sz_mean"],
+                "l35_qd_peak":     ["amoprof_nvme_driver_nvme_inflight_peak",
+                                     "amoprof_queue_depth_sysfs_inflight_peak"],
+                # SMART endurance counters — the NAND side of write
+                # amplification.  Published on the memory node but never
+                # requested, so the report could show how much was written
+                # without ever showing what it cost the drive.
+                "l35_host_written_gb": ["amoprof_smart_host_written_gb"],
+                "l35_nand_written_gb": ["amoprof_smart_nand_written_gb"],
+                "l35_waf":             ["amoprof_smart_waf"],
+                "l35_rd_lat_ms":   ["amoprof_nvme_driver_nvme_rd_lat_ms_mean"],
+                "l35_wr_lat_ms":   ["amoprof_nvme_driver_nvme_wr_lat_ms_mean"],
+                # blktrace on the memory node.  These were never requested, so
+                # counters that were visibly rising in Prometheus never reached
+                # l35_storage_timeseries.csv — the storage charts looked empty
+                # while the data existed.  blktrace also survives an idle
+                # sampling window better than iostat: it counts events over the
+                # whole cycle rather than reporting a rate that reads zero
+                # whenever the device happens to be quiet at sample time.
+                "l35_bt_read_events":  ["amoprof_blktrace_analysis_read_events"],
+                "l35_bt_write_events": ["amoprof_blktrace_analysis_write_events"],
+                "l35_bt_read_bytes":   ["amoprof_blktrace_analysis_read_bytes_total"],
+                "l35_bt_write_bytes":  ["amoprof_blktrace_analysis_write_bytes_total"],
+                "l35_bt_qd_mean":      ["amoprof_blktrace_qd_qd_mean",
+                                         "amoprof_blktrace_analysis_qd_mean"],
+                "l35_bt_qd_peak":      ["amoprof_blktrace_qd_qd_peak",
+                                         "amoprof_blktrace_analysis_qd_peak"],
+                # LBA locality, scalars and the deciles added in v1.27.0
+                # Span and start, so a decile index can be expressed as a real
+                # GB offset rather than an abstract tenth.
+                "l35_lba_w_span_gb":   ["amoprof_blktrace_analysis_lba_write_span_gb"],
+                "l35_lba_w_start_gb":  ["amoprof_blktrace_analysis_lba_write_start_gb"],
+                "l35_lba_r_span_gb":   ["amoprof_blktrace_analysis_lba_read_span_gb"],
+                "l35_lba_r_start_gb":  ["amoprof_blktrace_analysis_lba_read_start_gb"],
+                "l35_lba_w_top1pct":   ["amoprof_blktrace_analysis_skew_write_top1pct_byte_share"],
+                "l35_lba_w_top5pct":   ["amoprof_blktrace_analysis_skew_write_top5pct_byte_share"],
+                "l35_lba_w_gini":      ["amoprof_blktrace_analysis_skew_write_gini_coefficient"],
+                "l35_lba_w_touched":   ["amoprof_blktrace_analysis_lba_write_deciles_touched"],
+                "l35_lba_r_top1pct":   ["amoprof_blktrace_analysis_skew_read_top1pct_byte_share"],
+                "l35_lba_r_gini":      ["amoprof_blktrace_analysis_skew_read_gini_coefficient"],
+                **{f"l35_lba_w_d{_i}": [f"amoprof_blktrace_analysis_lba_write_decile{_i}_pct"]
+                   for _i in range(10)},
+                **{f"l35_lba_r_d{_i}": [f"amoprof_blktrace_analysis_lba_read_decile{_i}_pct"]
+                   for _i in range(10)},
+                # DRAM on the memory node
+                # AMD hosts emit amoprof_amduprof_pcm_dram_*, Intel hosts
+                # emit amoprof_pcm_dram_*.  Try the AMD name first (more
+                # common on memory-node hardware) then fall back to Intel.
+                "l35_dram_rd_gbs": [
+                    "amoprof_amduprof_pcm_dram_read_gb_s_mean",
+                    "amoprof_pcm_dram_read_gb_s_mean",
+                ],
+                "l35_dram_wr_gbs": [
+                    "amoprof_amduprof_pcm_dram_write_gb_s_mean",
+                    "amoprof_pcm_dram_write_gb_s_mean",
+                ],
+                # The DRAM collector emits keys like dram_used_gb_mean, so
+                # the Prometheus name gets the collector prefix doubled:
+                # amoprof_dram_dram_used_gb_mean.  Older builds emitted a
+                # single-prefix amoprof_dram_used_gb; try both.
+                "l35_dram_used_gb": [
+                    "amoprof_dram_dram_used_gb_mean",
+                    "amoprof_dram_used_gb",
+                ],
+                # CXL-attached memory on the memory node, kept apart from DRAM.
+                # Store-reported capacity, split by tier.
+                "l35_store_mem_used_b": ["mooncake_mem_used_bytes",
+                                          "master_allocated_bytes"],
+                "l35_store_mem_cap_b": ["mooncake_capacity_bytes",
+                                         "master_total_capacity_bytes"],
+                "l35_store_file_used_b": ["mooncake_file_used_bytes",
+                                           "master_allocated_file_size_bytes"],
+                "l35_store_file_cap_b": ["mooncake_file_capacity_bytes",
+                                          "master_total_file_capacity_bytes"],
+                "l35_cxl_rd_gbs": [
+                    "amoprof_amduprof_pcm_cxl_read_gb_s_mean",
+                    "amoprof_pcm_cxl_read_gb_s_mean",
+                ],
+                "l35_cxl_wr_gbs": [
+                    "amoprof_amduprof_pcm_cxl_write_gb_s_mean",
+                    "amoprof_pcm_cxl_write_gb_s_mean",
+                ],
+                # The memory node's own NIC: its rx should mirror the GPU
+                # node's tx, so having both is a cross-check on each.
+                "l35_net_rx_mbs": [
+                    "amoprof_network_net_rx_mbs_mean",
+                    "amoprof_network_rx_mbs_mean",
+                ],
+                "l35_net_tx_mbs": [
+                    "amoprof_network_net_tx_mbs_mean",
+                    "amoprof_network_tx_mbs_mean",
+                ],
+                "l35_dram_used_peak_gb": [
+                    "amoprof_dram_dram_used_gb_peak",
+                    "amoprof_dram_used_gb_peak",
+                ],
+                # Node total DRAM capacity (constant across the window).
+                # Needed so the "L3.5 DRAM used (raw)" tile can render
+                # "used / total · % full" the same way the L2 tile does.
+                "l35_dram_total_gb": [
+                    "amoprof_dram_dram_total_gb_mean",
+                    "amoprof_dram_dram_total_gb",
+                    "amoprof_dram_total_gb",
+                ],
+                # CPU on the memory node
+                "l35_cpu_util_pct":   "amoprof_cpu_cpu_util_pct_mean",
+                "l35_cpu_iowait_pct": "amoprof_cpu_cpu_iowait_pct_mean",
+                "l35_cpu_busiest_pct": "amoprof_cpu_cpu_busiest_core_pct_peak",
+                # Network on the memory node.  Same collector shape as
+                # the GPU-host network CSV (`_total` iface); charted as
+                # its own panel so an RDMA-limited run is not mistaken
+                # for a DRAM/CPU limit on the memory node itself.
+                "l35_net_rx_mbps":       "amoprof_network_net_rx_mbs_mean",
+                "l35_net_tx_mbps":       "amoprof_network_net_tx_mbs_mean",
+                "l35_net_total_mbps":    "amoprof_network_net_total_mbs_mean",
+                "l35_net_link_util_pct": "amoprof_network_net_link_util_pct_peak",
+                "l35_net_retrans_ps":    "amoprof_network_net_tcp_retrans_ps_mean",
+                "l35_net_drop_ps":       "amoprof_network_net_rx_drop_ps_mean",
+            }, "L3.5 node (amoprof: ssd + dram + cpu)", selector=_l35s_sel)
+            if not _l35s_ok:
+                _l35s_ok = _synth_ts("l35_storage_timeseries.csv", {
+                    "l35_rd_iops":   "rate(node_disk_reads_completed_total[2m])",
+                    "l35_wr_iops":   "rate(node_disk_writes_completed_total[2m])",
+                    "l35_rd_bw_mbs": "rate(node_disk_read_bytes_total[2m])/1e6",
+                    "l35_wr_bw_mbs": "rate(node_disk_written_bytes_total[2m])/1e6",
+                    "l35_io_util_pct": "rate(node_disk_io_time_seconds_total[2m])*100",
+                    "l35_cpu_util_pct":
+                        "(1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[2m])))*100",
+                    "l35_dram_used_gb":
+                        "(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes)/1e9",
+                }, "L3.5 node (node_exporter)", selector=_l35s_sel, raw_expr=True)
+            if not _l35s_ok:
+                print("    [warn] no block-device metrics found at that selector. "
+                      "Run `amoprof service --collectors iostat,nvme_driver "
+                      "--ssd-device <dev>` on the L3.5 node, or node_exporter "
+                      "with --collector.diskstats, and scrape it into this "
+                      "Prometheus.")
+
+        # Did the inference server change configuration mid-window?  The
+        # config hash is one series; a change in it means the report is
+        # averaging two different systems, which no amount of careful
+        # arithmetic downstream can undo.
+        try:
+            _cfg_df = _qr("amoprof_server_config_config_hash", agg="max",
+                          force_selector=(_amoprof_sel or ""))
+            if _cfg_df is not None and not _cfg_df.empty:
+                _vals = [float(v) for v in _cfg_df["value"].dropna().unique()]
+                if len(_vals) > 1:
+                    print(f"  [warn] inference-server configuration CHANGED during "
+                          f"this window ({len(_vals)} distinct configs seen). "
+                          f"Metrics before and after the change describe different "
+                          f"systems; the setup shown in this report is only one of "
+                          f"them. Narrow --start/--end to a single configuration "
+                          f"before drawing conclusions.")
+                    _srv_chg = _cfg_df[["time_sec", "value"]].dropna()
+                    _prev = None
+                    for _, _row in _srv_chg.iterrows():
+                        if _prev is not None and _row["value"] != _prev:
+                            print(f"         change at t={_row['time_sec']:.0f}s "
+                                  f"into the window")
+                        _prev = _row["value"]
+        except Exception:
+            pass
+
+        if not (output_dir / "cpu_timeseries.csv").exists():
+            _synth_ts("cpu_timeseries.csv", {
+                "cpu_util_pct":   "amoprof_cpu_cpu_util_pct_mean",
+                "cpu_user_pct":   "amoprof_cpu_cpu_user_pct_mean",
+                "cpu_system_pct": "amoprof_cpu_cpu_system_pct_mean",
+                "cpu_iowait_pct": "amoprof_cpu_cpu_iowait_pct_mean",
+                "cpu_steal_pct":  "amoprof_cpu_cpu_steal_pct_mean",
+                "cpu_busiest_core_pct": "amoprof_cpu_cpu_busiest_core_pct_peak",
+            }, "CPU")
+
+        # Storage can come from the nvme_driver collector OR from iostat, which
+        # publishes different key names (read_bw_mb / read_iops / util_pct).
+        # Only checking nvme_driver_* reported "L3 (NVMe): NO" on a host running
+        # iostat successfully.
+        if nvme_df.empty and not (output_dir / "nvme_driver_timeseries.csv").exists():
+            if not _synth_ts("nvme_driver_timeseries.csv", {
+                    "rd_iops":     "amoprof_nvme_driver_nvme_rd_iops_sysfs",
+                    "wr_iops":     "amoprof_nvme_driver_nvme_wr_iops_sysfs",
+                    "rd_lat_ms":   "amoprof_nvme_driver_nvme_rd_lat_ms_mean",
+                    "wr_lat_ms":   "amoprof_nvme_driver_nvme_wr_lat_ms_mean",
+                    "io_util_pct": "amoprof_nvme_driver_nvme_util_pct_sysfs",
+                    "inflight":    "amoprof_nvme_driver_nvme_inflight_mean",
+            }, "NVMe"):
+                _synth_ts("nvme_driver_timeseries.csv", {
+                    "rd_iops":     "amoprof_iostat_read_iops_mean",
+                    "wr_iops":     "amoprof_iostat_write_iops_mean",
+                    "rd_bw_mbs":   "amoprof_iostat_read_bw_mb_mean",
+                    "wr_bw_mbs":   "amoprof_iostat_write_bw_mb_mean",
+                    "io_util_pct": "amoprof_iostat_util_pct_mean",
+                }, "NVMe (iostat)")
+
+        # Say plainly which tiers will have charts, so a tier that is
+        # configured but untelemetered is visible here rather than only as an
+        # absent card in the report.
+        _tier_state = []
+        for _tier, _f, _how in (
+                ("L2 (DRAM BW)", "amduprof_pcm_timeseries.csv",
+                 "needs a PMU collector: --enable-dram (AMDuProfPcm / Intel PCM / "
+                 "--dram-tool perf-imc). The `dram` collector reports capacity only."),
+                ("L3 (NVMe)", "nvme_driver_timeseries.csv",
+                 "needs the nvme_driver or iostat collector in --collectors, or "
+                 "node_exporter disk metrics in Prometheus.")):
+            # Distinguish "collector not running" from "running but publishing
+            # nothing" — they need different fixes and look identical here.
+            if _tier.startswith("L3"):
+                _io_any = sorted(m for m in available
+                                 if m.startswith(("amoprof_iostat_",
+                                                  "amoprof_nvme_driver_")))
+                if _io_any:
+                    print(f"  [info] {len(_io_any)} storage metric(s) ARE exposed by "
+                          f"the service: {', '.join(_io_any[:6])}"
+                          + (" ..." if len(_io_any) > 6 else ""))
+                    print("         The collector is running but did not publish the "
+                          "bandwidth/IOPS fields this window — usually --ssd-device "
+                          "points at a device iostat reports no activity for, or "
+                          "the iostat binary is missing on the collecting host.")
+            _ok = (output_dir / _f).exists() and (output_dir / _f).stat().st_size > 0
+            _tier_state.append(f"{_tier}: {'yes' if _ok else 'NO'}")
+            if not _ok:
+                print(f"  [warn] {_tier} has no timeseries — Executive will show no "
+                      f"{_tier.split()[0]} charts even if the tier is configured. "
+                      f"{_how}")
+        print("  Tier chart data — " + " | ".join(_tier_state))
         with open(output_dir / "sglang_summary.json", "w") as fh:
             json.dump(sglang_summary, fh, indent=2)
         if gpu_summary:
             with open(output_dir / "gpu_summary.json", "w") as fh:
                 json.dump(gpu_summary, fh, indent=2)
+        # Warn when KV sizing will have to be estimated.  That constant scales
+        # every derived bandwidth figure in the report, so falling back to
+        # name-based inference silently is a correctness risk.
+        try:
+            _mc = output_dir / "model_config.json"
+            _have_mc = _mc.exists() and _mc.stat().st_size > 0
+        except Exception:
+            _have_mc = False
+        if not _have_mc:
+            print("  [warn] model architecture unavailable — KV bytes/token will be "
+                  "ESTIMATED from the model name (approximate).")
+            print("         amoprof_model_config_* was not found in this Prometheus "
+                  "window. If the service was restarted with --model-path only "
+                  "recently, windows BEFORE that restart cannot contain it.")
+            print("         Fix for this run: pass --model-path to analyze "
+                  "(reads the local config directly, no Prometheus needed).")
         print(f"  Raw CSVs saved → {output_dir}")
 
     print(f"  SGLang series: {len(sg_dfs)}  DCGM: {len(dcgm_dfs)}  "
@@ -3882,6 +4974,7 @@ new Chart(document.getElementById("{dim_chart_id}"), {{type:"bar",
 </script>
 
 <style>
+{_FX_CSS}{_FX_CSS_LIGHT}
 *{{box-sizing:border-box;margin:0;padding:0}}
 body{{background:#f8fafc;color:#0f172a;font-family:"Inter",system-ui,sans-serif;padding:20px}}
 .adp-header{{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px 24px;
@@ -5371,6 +6464,8 @@ class Metrics:
     # Power
     system_power_w: float = 0
     # KV cache footprint analysis
+    kv_bytes_source: str = ""         # how kv_bytes_per_token was resolved
+    kv_bytes_exact: bool = False      # True when from an exact model config
     kv_bytes_per_token: int = 0       # bytes per token in KV cache
     kv_bytes_per_token_kb: float = 0  # same in KB
     kv_n_layers: int = 0              # model transformer layers
@@ -6125,7 +7220,16 @@ def extract_metrics(data: dict) -> Metrics:
     # canonical fields above.
     _manual_setup = data.get("setup_details") or data.get("setup") or {}
     if isinstance(_manual_setup, dict):
-        m.setup_details.update({str(k): str(v) for k, v in _manual_setup.items()})
+        # str(v) stringifies dict-typed values (like "SGLang server_info raw",
+        # which is a nested dict of live server info).  The L3 backend resolver
+        # peeks inside that nested dict to find hicache_storage_backend, so we
+        # must keep dict values as dicts.  For everything else, str(v) keeps
+        # the display panel from choking on non-string types.
+        for _k, _v in _manual_setup.items():
+            if isinstance(_v, dict):
+                m.setup_details[str(_k)] = _v
+            else:
+                m.setup_details[str(_k)] = str(_v)
         m.setup_model = m.setup_details.get("Model", m.setup_details.get("model", m.setup_model))
         m.setup_runtime = m.setup_details.get("Runtime", m.setup_details.get("runtime", m.setup_runtime))
         m.setup_instance = m.setup_details.get("Instance", m.setup_details.get("instance", m.setup_instance))
@@ -6248,15 +7352,28 @@ def extract_metrics(data: dict) -> Metrics:
     _ttft_pct_fallback = _pct_ts_latency_ms_from_data(data, "ttft", "p50")
     _itl_pct_fallback  = _pct_ts_latency_ms_from_data(data, "itl", "p50")
     _e2e_pct_fallback  = _pct_ts_latency_ms_from_data(data, "e2e", "p50")
-    m.ttft_ms = float(_ttft_pct_fallback or sg.get("server_ttft_ms", 0) or sg.get("server_ttft_p50_ms", 0))
-    m.tpot_ms = float(_itl_pct_fallback  or sg.get("server_itl_ms", 0)  or sg.get("server_itl_p50_ms", 0))
-    m.e2e_ms  = float(_e2e_pct_fallback  or sg.get("server_e2e_ms", 0)  or sg.get("server_e2e_p50_ms", 0))
-    if _ttft_pct_fallback > 0:
-        sg["server_ttft_ms_method"] = "selected_window_sglang_percentiles_timeseries_ttft_p50_active_mean"
-    if _itl_pct_fallback > 0:
-        sg["server_itl_ms_method"] = "selected_window_sglang_percentiles_timeseries_itl_p50_active_mean"
-    if _e2e_pct_fallback > 0:
-        sg["server_e2e_ms_method"] = "selected_window_sglang_percentiles_timeseries_e2e_p50_active_mean"
+    # Whole-window p50 is authoritative, matching the Executive report and the
+    # formula the tiles display.  The per-interval series averaged over active
+    # intervals — _pct_ts_latency_ms_from_data — answers a different question:
+    # it weights a quiet interval with three requests the same as a busy one
+    # with three hundred, so under a duty cycle it can differ severalfold from
+    # the median request.  It was tried FIRST here and won whenever present,
+    # which is why the End report disagreed with the Executive for the same
+    # metric.  It is retained only as a last resort, and the method tag says so.
+    def _win_p50(_pri, _alt, _iv):
+        _v = float(sg.get(_pri, 0) or 0) or float(sg.get(_alt, 0) or 0)
+        return (_v, "whole_window_histogram_quantile_p50") if _v > 0 else \
+               (float(_iv or 0), "per_interval_p50_active_mean_FALLBACK")
+
+    m.ttft_ms, _ttft_meth = _win_p50("server_ttft_p50_ms", "server_ttft_ms", _ttft_pct_fallback)
+    m.tpot_ms, _itl_meth  = _win_p50("server_itl_p50_ms",  "server_itl_ms",  _itl_pct_fallback)
+    m.e2e_ms,  _e2e_meth  = _win_p50("server_e2e_p50_ms",  "server_e2e_ms",  _e2e_pct_fallback)
+    if m.ttft_ms > 0:
+        sg["server_ttft_ms_method"] = _ttft_meth
+    if m.tpot_ms > 0:
+        sg["server_itl_ms_method"] = _itl_meth
+    if m.e2e_ms > 0:
+        sg["server_e2e_ms_method"] = _e2e_meth
     # v1.86: these fields may be stale/defaulted in sglang_summary.json when
     # multiple reports are produced from nearby windows.  Later, once
     # sglang_timeseries.csv is loaded, overwrite them with selected-window
@@ -6423,6 +7540,31 @@ def extract_metrics(data: dict) -> Metrics:
             if _pf:
                 _vals = pd.to_numeric(sg_ts_fallback[_pf], errors="coerce").dropna()
                 if len(_vals): m.prefill_cache_tokens = safe_int(_vals.iloc[-1])
+
+        # `.iloc[-1]` above is the *cumulative* counter — a server-lifetime
+        # total, not this window's work.  Dividing it by the collection
+        # window produced absurd throughput (a 6-day-old server profiled for
+        # 120 s reported ~3.9 M tok/s).  Capture the window delta separately;
+        # counter resets are guarded by clamping at zero.
+        for _attr, _mode in (("prefill_compute_tokens_delta", "mode=prefill_compute"),
+                             ("prefill_cache_tokens_delta", "mode=prefill_cache")):
+            try:
+                _c = _find_metric_col_with_parts(sg_ts_fallback, "realtime_tokens_total", _mode)
+                if _c:
+                    _v = pd.to_numeric(sg_ts_fallback[_c], errors="coerce").dropna()
+                    if len(_v) >= 2:
+                        # Shared kernel: Δ across the window, clamped for resets.
+                        setattr(m, _attr, safe_int(_k_counter_delta(list(_v))))
+            except Exception:
+                pass
+        try:
+            _tc = "time_sec" if "time_sec" in sg_ts_fallback.columns else None
+            if _tc:
+                _tv = pd.to_numeric(sg_ts_fallback[_tc], errors="coerce").dropna()
+                if len(_tv) >= 2:
+                    m.prompt_tokens_window_s = _k_window_seconds(list(_tv))
+        except Exception:
+            pass
 
 
     # ── Benchmark summary override / enrichment ─────────────────────────────
@@ -6806,7 +7948,11 @@ def extract_metrics(data: dict) -> Metrics:
         # Extract model name from column headers
         for col in m.sglang_ts.columns:
             if "time_to_first_token" in col and "model_name=" in col:
-                import re
+                # `re` is imported at module level; a local `import re` here
+                # makes the name function-local for the WHOLE of
+                # extract_metrics, so every earlier use raises UnboundLocalError
+                # — including the KV size-hint lookup, which only runs for
+                # models absent from the architecture table.
                 mn = re.search(r"model_name=([^\]]+)", col)
                 if mn and m.model == "unknown":
                     m.model = mn.group(1)
@@ -6926,7 +8072,11 @@ def extract_metrics(data: dict) -> Metrics:
                       "3b":(32,8,128,"GQA",3),"2b":(26,4,256,"GQA",2),
                       "1b":(22,8,128,"GQA",1)}
         for hint, val in size_hints.items():
-            if hint in model_lower:
+            # Token-boundary match, not a bare substring: "31b" contains "1b",
+            # which silently resolved a 31B model to the 1B entry and reported
+            # 88 KB/token where the Executive reported 320.  The lookbehind
+            # requires the character before the size to not be a digit.
+            if re.search(r"(?<!\d)" + re.escape(hint), model_lower):
                 arch = val
                 break
 
@@ -6948,15 +8098,59 @@ def extract_metrics(data: dict) -> Metrics:
                      "auto": ("FP16", 2)}
         kv_dtype_name, kv_dtype_bytes = dtype_map.get(kv_dtype_raw, ("FP16", 2))
 
-    # Compute KV bytes per token
-    if attn_type == "MLA":
-        # MLA stores a single compressed latent vector (not separate K+V tensors)
-        # latent_dim = head_dim field in our DB (512 for DeepSeek-V2/V3/Qwen3-235B)
-        latent_dim = head_dim
-        kv_bytes = int(2 * n_layers * latent_dim * kv_dtype_bytes)
-    else:
-        # Standard MHA / GQA: K tensor + V tensor per layer per KV head
-        kv_bytes = int(2 * n_layers * n_kv_heads * head_dim * kv_dtype_bytes)
+    # Compute KV bytes per token.
+    #
+    # Prefer the shared kernel (report/metric_kernels.resolve_kv_bytes_per_token)
+    # so this cannot disagree with the Executive and Interactive surfaces — the
+    # three previously held separate architecture tables and, on a
+    # gemma-4-31B run, reported 320 KB and 88 KB for the same model.  The
+    # kernel also consults raw/model_config.json (written from --model-path),
+    # which is exact where the name-based tables are a guess.
+    # Which physical sources this run actually captured.  Section banners key
+    # off these rather than off values, because a projected figure is non-zero
+    # exactly when the measurement is missing.
+    try:
+        _dk = set(data.keys()) if isinstance(data, dict) else set()
+    except Exception:
+        _dk = set()
+    m._amoprof_has_storage_source = any(
+        k in _dk for k in ("nvme_driver_timeseries", "iostat_timeseries",
+                           "blkparse_events", "blkparse_events_generated",
+                           "biosnoop_timeseries", "nvme_smart_summary",
+                           "iostat_summary", "nvme_driver_summary"))
+    m._amoprof_has_dram_pmu = any(
+        k in _dk for k in ("amduprof_pcm_timeseries", "pcm_timeseries",
+                           "amduprof_pcm_summary", "pcm_memory_raw",
+                           "dram_timeseries"))
+
+    kv_bytes = 0
+    try:
+        # load_raw_dir() keys every JSON by stem, so model_config.json (written
+        # from --model-path) is already available here as data["model_config"].
+        _mc_raw = data.get("model_config") if isinstance(data, dict) else None
+        _mc = ({k: v for k, v in _mc_raw.items() if not str(k).startswith("_")}
+               if isinstance(_mc_raw, dict) else {})
+        _kres = _k_resolve_kv(str(getattr(m, "model", "") or ""), str(kv_dtype_raw or ""), _mc)
+        if _kres.get("bytes"):
+            kv_bytes = int(_kres["bytes"])
+            # Adopt the kernel's architecture so the reported layer/head counts
+            # describe the number actually used.
+            n_layers = int(_kres.get("n_layers") or n_layers)
+            n_kv_heads = int(_kres.get("n_kv_heads") or n_kv_heads)
+            head_dim = int(_kres.get("head_dim") or head_dim)
+            attn_type = str(_kres.get("attention") or attn_type)
+            kv_dtype_bytes = int(_kres.get("dtype_bytes") or kv_dtype_bytes)
+            m.kv_bytes_source = str(_kres.get("source") or "")
+            m.kv_bytes_exact = bool(_kres.get("exact"))
+    except Exception:
+        kv_bytes = 0
+    if not kv_bytes:
+        # Kernel unavailable or unable to resolve — retain the local formula.
+        if attn_type == "MLA":
+            latent_dim = head_dim
+            kv_bytes = int(2 * n_layers * latent_dim * kv_dtype_bytes)
+        else:
+            kv_bytes = int(2 * n_layers * n_kv_heads * head_dim * kv_dtype_bytes)
 
     m.kv_bytes_per_token  = kv_bytes
     m.kv_bytes_per_token_kb = round(kv_bytes / 1024, 1)
@@ -7461,6 +8655,24 @@ def extract_metrics(data: dict) -> Metrics:
                 work["timestamp_epoch"] = pd.to_numeric(aligned, errors="coerce")
             except Exception:
                 pass
+        # Bound the samples before any mean or max.  A handful of byte-scale
+        # rows determines the arithmetic mean entirely, which is how the same
+        # file produced 0.86 GB/s in the Executive and 251,246,841 GB/s here.
+        try:
+            from amoprof.report.metric_kernels import DRAM_SANE_MAX_GBS as _DMAX
+        except Exception:
+            _DMAX = 100_000.0
+        _n0 = len(work)
+        for _c in ("read_gb_s", "write_gb_s", "total_gb_s"):
+            if _c in work.columns:
+                work = work[work[_c].isna() | (work[_c].abs() <= _DMAX)]
+        if len(work) < _n0:
+            m.dram_bw_samples_dropped = _n0 - len(work)
+            print(f"  [warn] DRAM: dropped {_n0 - len(work)} sample(s) above "
+                  f"{_DMAX:,.0f} GB/s before averaging")
+        if work.empty:
+            work = m.dram_bw_ts if getattr(m, "dram_bw_ts", None) is not None else work
+
         m.dram_bw_ts = work.reset_index(drop=True)
         m.dram_read_bw_gbs       = round(float(work["read_gb_s"].mean()), 2)
         m.dram_write_bw_gbs      = round(float(work["write_gb_s"].mean()), 2)
@@ -7577,8 +8789,20 @@ def extract_metrics(data: dict) -> Metrics:
     # Also try to use pre-parsed timeseries if non-zero
     amd_ts = data.get("amduprof_pcm_timeseries")
     if (not _dram_ts_applied) and isinstance(amd_ts, pd.DataFrame) and not amd_ts.empty:
-        real = amd_ts[amd_ts.get("dram_total_gb_s", amd_ts.get("dram_read_gb_s",
-               pd.Series([0]))).fillna(0) > 0]
+        # Bound the samples at BOTH ends.  Filtering only `> 0` admits the
+        # byte-scale spikes that determine the mean entirely — this path gave
+        # 251,246,841 GB/s from a file whose real values are ~0.42.
+        try:
+            from amoprof.report.metric_kernels import DRAM_SANE_MAX_GBS as _DMAX
+        except Exception:
+            _DMAX = 100_000.0
+        _sel = amd_ts.get("dram_total_gb_s", amd_ts.get("dram_read_gb_s",
+                          pd.Series([0]))).fillna(0)
+        real = amd_ts[(_sel > 0) & (_sel <= _DMAX)]
+        _n_drop = int(((_sel > _DMAX)).sum())
+        if _n_drop:
+            m.dram_bw_samples_dropped = _n_drop
+            print(f"  [warn] DRAM: dropped {_n_drop} impossible sample(s)")
         if len(real) > 5 and m.dram_read_bw_gbs == 0:
             dram_bw2 = real[["time_sec",
                 "dram_read_gb_s","dram_write_gb_s","dram_total_gb_s",
@@ -8009,9 +9233,28 @@ def extract_metrics(data: dict) -> Metrics:
             c = next((x for x in sg_ts2.columns if partial in x), None)
             return c
 
+        def _last_finite(col_name: str, default: float) -> float:
+            """Return the last finite value in `col_name`, or `default`.
+
+            iloc[-1] on a Prometheus-derived column often returns NaN when the
+            last scrape had no data for that series.  A raw float(NaN) then
+            crashes downstream int() casts (`int(NaN / bs)` → ValueError).
+            Coerce to numeric, drop NaN, and fall back to the Metrics default
+            when nothing is left.
+            """
+            if not col_name:
+                return float(default or 0.0)
+            _vals = pd.to_numeric(sg_ts2[col_name], errors="coerce").dropna()
+            if len(_vals) == 0:
+                return float(default or 0.0)
+            _v = float(_vals.iloc[-1])
+            return _v if math.isfinite(_v) else float(default or 0.0)
+
         hi_col = _scol("hicache_host_used_tokens")
-        l1_cap_tok = float(sg_ts2[_scol("max_total_num_tokens")].iloc[-1]) if _scol("max_total_num_tokens") else m.kv_l1_capacity_tokens
-        l2_cap_tok = float(sg_ts2[_scol("hicache_host_total_tokens")].iloc[-1]) if _scol("hicache_host_total_tokens") else m.kv_l2_capacity_tokens
+        l1_cap_tok = _last_finite(_scol("max_total_num_tokens"),
+                                    m.kv_l1_capacity_tokens)
+        l2_cap_tok = _last_finite(_scol("hicache_host_total_tokens"),
+                                    m.kv_l2_capacity_tokens)
 
         bs = m.kvb_block_size_tokens
         m.kvb_l1_pool_blocks = int(l1_cap_tok / bs) if bs > 0 else 0
@@ -8020,8 +9263,18 @@ def extract_metrics(data: dict) -> Metrics:
         m.kvb_tokens_per_mb  = round(1024 * 1024 / m.kv_bytes_per_token, 1) if m.kv_bytes_per_token > 0 else 0
 
         if hi_col is not None:
-            l2_t0  = float(sg_ts2[hi_col].iloc[0])
-            l2_now = float(sg_ts2[hi_col].iloc[-1])
+            # Same NaN guard as above — first/last sample may be missing.
+            _hi_num = pd.to_numeric(sg_ts2[hi_col], errors="coerce").dropna()
+            if len(_hi_num) == 0:
+                l2_t0 = 0.0
+                l2_now = 0.0
+            else:
+                l2_t0  = float(_hi_num.iloc[0])
+                l2_now = float(_hi_num.iloc[-1])
+                if not math.isfinite(l2_t0):
+                    l2_t0 = 0.0
+                if not math.isfinite(l2_now):
+                    l2_now = 0.0
             run_dur = m.run_duration_s if m.run_duration_s > 0 else 1
             l2_delta_blk = max(l2_now - l2_t0, 0) / bs if bs > 0 else 0
             m.kvb_l1_offload_rate_blk_s = round(l2_delta_blk / run_dur, 4)
@@ -8103,13 +9356,52 @@ def extract_metrics(data: dict) -> Metrics:
             if util_col in nv_df2.columns and util_col != "io_util_pct":
                 nv["io_util_pct"] = nv_df2[util_col].values
 
-        wr_a = nv["wr_iops"][nv["wr_iops"] > 0].dropna()
-        rd_a = nv["rd_iops"][nv["rd_iops"] > 0].dropna()
-        wl_a = nv["wr_lat_ms"].dropna()
+        # Not every storage source supplies every column: the iostat-derived
+        # timeseries has IOPS and bandwidth but no per-op latency, and
+        # node_exporter varies by version.  Read defensively so a partial
+        # source degrades to "unavailable" instead of aborting the whole
+        # report with a KeyError.
+        def _nvcol(name: str):
+            if name in nv:
+                return nv[name]
+            import pandas as _pd
+            return _pd.Series([], dtype="float64")
+
+        # DRAM bandwidth: drop physically impossible samples before any
+        # aggregation.  The Executive was fixed for this and the End Report was
+        # not, so the same file produced 0.86 GB/s on one tab and
+        # 452,244,313 GB/s on another.  One implementation, in the kernel.
+        try:
+            from amoprof.report.metric_kernels import sanitize_bandwidth_samples as _k_sane
+        except Exception:
+            try:
+                from metric_kernels import sanitize_bandwidth_samples as _k_sane  # type: ignore
+            except Exception:
+                _k_sane = None
+        if _k_sane is not None and not getattr(m, "dram_ts", None) is None:
+            try:
+                _dt = m.dram_ts
+                for _c in ("dram_read_gb_s", "dram_write_gb_s", "dram_total_gb_s"):
+                    if _c not in getattr(_dt, "columns", []):
+                        continue
+                    _r = _k_sane(list(_dt[_c].dropna().values))
+                    if _r["dropped"]:
+                        _dt = _dt[(_dt[_c] >= 0) & (_dt[_c] <= 100_000.0)]
+                        m.dram_bw_note = _r["note"]
+                m.dram_ts = _dt
+            except Exception:
+                pass
+
+        wr_a = _nvcol("wr_iops")[_nvcol("wr_iops") > 0].dropna() \
+            if "wr_iops" in nv else _nvcol("wr_iops")
+        rd_a = _nvcol("rd_iops")[_nvcol("rd_iops") > 0].dropna() \
+            if "rd_iops" in nv else _nvcol("rd_iops")
+        wl_a = _nvcol("wr_lat_ms").dropna()
         m.nvme_wr_iops_mean    = round(float(wr_a.mean()), 2)      if len(wr_a) else 0
         m.nvme_wr_lat_mean_ms  = round(float(wl_a.mean()), 3)      if len(wl_a) else 0
         m.nvme_wr_lat_max_ms   = round(float(wl_a.max()), 3)       if len(wl_a) else 0
-        m.nvme_io_util_pct     = round(float(nv["io_util_pct"].mean(skipna=True)), 4)
+        m.nvme_io_util_pct     = (round(float(nv["io_util_pct"].mean(skipna=True)), 4)
+                                  if "io_util_pct" in nv else 0.0)
         m.nvme_inflight_mean   = round(float(nv.get("inflight", pd.Series([0])).mean()), 2)
         m.nvme_inflight_max    = safe_int(nv.get("inflight", pd.Series([0])).max())
 
@@ -8255,9 +9547,15 @@ def extract_metrics(data: dict) -> Metrics:
         # backing tier.  Whether that tier is L3 local SSD, Mooncake, or unknown is
         # resolved by the shared backend resolver.  This prevents AMOprof from
         # blindly calling every backuped_tokens_total delta an SSD write.
+        # Reliable L3-storage observation gate.  When the resolved backend is
+        # explicitly host_dram_only (HiCache L1+L2, no storage backend), the
+        # backup/prefetch counters count L1↔L2 offloads — NOT L3 traffic —
+        # so we must return False here to keep the report's L3 charts and
+        # capacity tiles clear.
+        _lc = str(m.l3_backend_class or "").lower()
         m.kvb_l3_storage_observed = bool(
             (m.kvb_backuped_tokens_total > 0 or m.kvb_prefetched_tokens_total > 0)
-            and m.l3_backend_class not in ("host_dram_only",)
+            and _lc not in ("host_dram_only",)
         )
         if not m.kvb_l3_storage_observed and m.kvb_loadback_tokens_total > 0:
             m.kvb_l3_ambiguous_loadback_tokens = m.kvb_loadback_tokens_total
@@ -9221,6 +10519,27 @@ def extract_metrics(data: dict) -> Metrics:
 
     # ── §F: DRAM BW from Intel PCM ────────────────────────────────────────────
     pcm_df = data.get("pcm_memory_timeseries")
+    # Drop physically impossible bandwidth rows BEFORE any mean/max is taken.
+    # A handful of byte-scale samples otherwise determines the mean entirely:
+    # the same file gave 0.86 GB/s in the Executive (which filtered) and
+    # 251,246,841 GB/s here (which did not).  One rule, from the kernel.
+    if pcm_df is not None and not getattr(pcm_df, "empty", True):
+        try:
+            from amoprof.report.metric_kernels import DRAM_SANE_MAX_GBS as _DMAX
+        except Exception:
+            _DMAX = 100_000.0
+        try:
+            _before = len(pcm_df)
+            for _c in ("read_bw_gbs", "write_bw_gbs", "total_bw_gbs"):
+                if _c in pcm_df.columns:
+                    pcm_df = pcm_df[(pcm_df[_c].isna()) |
+                                    ((pcm_df[_c] >= 0) & (pcm_df[_c] <= _DMAX))]
+            _drop = _before - len(pcm_df)
+            if _drop:
+                m.dram_bw_samples_dropped = _drop
+                print(f"  [warn] DRAM: dropped {_drop} sample(s) above {_DMAX:,.0f} GB/s")
+        except Exception:
+            pass
     if not isinstance(pcm_df, pd.DataFrame) or pcm_df.empty:
         pcm_df = data.get("pcm_timeseries")
     if isinstance(pcm_df, pd.DataFrame) and not pcm_df.empty:
@@ -9777,7 +11096,15 @@ def extract_metrics(data: dict) -> Metrics:
         _run_s_l3 = max(float(getattr(m, "run_duration_s", 0) or 0), 1.0)
         _sg_wr_bytes = float(getattr(m, "kvb_backuped_tokens_total", 0) or 0) * _kv_b_l3
         _sg_rd_bytes = float(getattr(m, "kvb_prefetched_tokens_total", 0) or 0) * _kv_b_l3
-        if _kv_b_l3 > 0 and (_sg_wr_bytes > 0 or _sg_rd_bytes > 0):
+        # Respect the backend-resolver decision: when hicache_storage_backend
+        # is explicitly None (host_dram_only), the backup/prefetch counters
+        # represent L1→L2 offloads, not L3 storage traffic.  Do NOT flip
+        # kvb_l3_storage_observed True here for those runs — that would
+        # re-introduce the spurious L3 25GB/3575GB tile that this whole gate
+        # is designed to prevent.
+        _l3_class_here = str(getattr(m, "l3_backend_class", "") or "").lower()
+        _l3_gate_ok = _l3_class_here not in ("host_dram_only",)
+        if _kv_b_l3 > 0 and (_sg_wr_bytes > 0 or _sg_rd_bytes > 0) and _l3_gate_ok:
             m.kvb_l3_storage_observed = True
             m.l3_sglang_write_gb = max(float(getattr(m, "l3_sglang_write_gb", 0) or 0), _sg_wr_bytes / (1024**3))
             m.l3_sglang_read_gb  = max(float(getattr(m, "l3_sglang_read_gb",  0) or 0), _sg_rd_bytes / (1024**3))
@@ -9842,11 +11169,22 @@ def extract_metrics(data: dict) -> Metrics:
     # Multi-SSD counts as explicit L3 configuration: the operator named
     # >=1 SSD via --ssd-device, that IS the L3 layer for this run.
     _l3_multi_ssd = bool(getattr(m, "l3_ssds", {}) and len(getattr(m, "l3_ssds", {})) >= 2)
-    _l3_effective = bool(getattr(m, "l3_configured", False) or _l3_activity_phys or (_hicache_file_backend and _l3_activity_logical) or _l3_multi_ssd)
+    # Hard override: when the L3 backend resolver reports host_dram_only
+    # (HiCache L1+L2, hicache_storage_backend explicitly None) any SGLang
+    # backup/prefetch token movement is L1→L2 offload, NOT L3 storage
+    # traffic.  Physical block-device activity on the machine is unrelated
+    # to this workload's cache tier.  Skip every fallback that would
+    # otherwise force _l3_effective=True.
+    _l3_class = str(getattr(m, "l3_backend_class", "") or "").lower()
+    if _l3_class == "host_dram_only":
+        _l3_effective = False
+    else:
+        _l3_effective = bool(getattr(m, "l3_configured", False) or _l3_activity_phys or (_hicache_file_backend and _l3_activity_logical) or _l3_multi_ssd)
     m.l3_configured = _l3_effective
     if not _l3_effective:
         # Avoid stale df/SMART/cache capacity making L2-only runs look L3-backed.
-        for _a in ("kv_l3_capacity_gb", "kv_l3_used_gb", "kv_l3_avail_gb", "kv_l3_capacity_tokens", "kv_l3_nvme_tokens"):
+        for _a in ("kv_l3_capacity_gb", "kv_l3_used_gb", "kv_l3_avail_gb",
+                   "kv_l3_used_pct", "kv_l3_capacity_tokens", "kv_l3_nvme_tokens"):
             try:
                 setattr(m, _a, 0)
             except Exception:
@@ -10022,6 +11360,45 @@ def score_bottlenecks(m: Metrics) -> list[dict]:
 
 def fig_to_b64(fig, dpi: int = 110) -> str:
     import numpy as _np
+    # Auto-apply wall-clock tick labels to every axis whose x-axis label
+    # was set via `_time_xlabel(m)`.  Requires that the caller has stamped
+    # `fig._amoprof_wallclock` (set by _time_xlabel).  Chart data stays
+    # unchanged — this only rewrites tick text so operators can correlate
+    # spikes to real wall-clock times instead of decoding "5040 min".
+    _wc = getattr(fig, "_amoprof_wallclock", None)
+    if isinstance(_wc, dict) and _wc.get("t0_epoch", 0) > 1_000_000_000:
+        from datetime import datetime, timezone
+        _t0 = float(_wc["t0_epoch"])
+        _dur = float(_wc.get("dur_s", 1.0)) or 1.0
+        _unit = str(_wc.get("unit", "min"))
+        _mult = 60.0 if _unit == "min" else 1.0
+        if _dur >= 2 * 86400:
+            _tick_fmt = "%b %d\n%H:%M"
+        elif _dur >= 3600:
+            _tick_fmt = "%H:%M"
+        else:
+            _tick_fmt = "%H:%M:%S"
+
+        def _to_wallclock(x_val, _pos=None, _fmt=_tick_fmt, _t0=_t0, _mult=_mult):
+            try:
+                ts = _t0 + float(x_val) * _mult
+                return datetime.fromtimestamp(
+                    ts, tz=timezone.utc).strftime(_fmt)
+            except Exception:
+                return f"{x_val:.0f}"
+
+        for _ax in fig.axes:
+            try:
+                _xl = _ax.get_xlabel() or ""
+                # Only touch axes that self-identify as time axes.  This
+                # avoids reformatting bar/category axes (e.g. "R/W Ratio")
+                # or LBA-space axes that reuse the x position.
+                if _xl.startswith("Wall-clock time") or _xl.startswith("Time ("):
+                    _ax.xaxis.set_major_formatter(FuncFormatter(_to_wallclock))
+                    _ax.tick_params(axis="x", labelsize=8)
+            except Exception:
+                pass
+
     buf = io.BytesIO()
     with _np.errstate(divide='ignore', invalid='ignore'):
         fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight", pad_inches=0.28,
@@ -10146,19 +11523,37 @@ def _time_xlabel(m: "Metrics", unit: str = "min") -> str:
     """Build an X-axis label that includes the real wall-clock time range
     when m.t0_epoch is set (Prometheus or live-collect path).
 
+    Also STAMPS the current matplotlib figure with the t0/duration/unit so
+    `fig_to_b64` can post-hoc replace numeric tick labels with wall-clock
+    times.  This makes every chart that calls `ax.set_xlabel(_time_xlabel(m))`
+    automatically pick up wall-clock ticks — no per-chart code change needed.
+
     Examples:
-      unit="min"  → "Time (min)  |  18:59 – 20:31 UTC"
-      unit="sec"  → "Time (sec)  |  18:59:00 – 20:31:18 UTC"
+      no t0                                 → "Time (min)"
+      t0 set, single-day window             → "Wall-clock time (UTC)  |  18:59 – 20:31 UTC"
+      t0 set, multi-day window (≥ 2d)       → "Wall-clock time (UTC)  |  Jul 24 18:59 – Jul 31 20:31 UTC"
     """
-    base = f"Time ({unit})"
     if not m.t0_epoch or m.t0_epoch < 1_000_000_000:
-        return base
-    from datetime import datetime, timezone, timedelta
-    _fmt = "%H:%M UTC" if unit == "min" else "%H:%M:%S UTC"
+        return f"Time ({unit})"
+    from datetime import datetime, timezone
+    dur = max(float(getattr(m, "run_duration_s", 0) or 0), 1.0)
+    # ≥ 2 days → include date so labels are unambiguous across day boundaries.
+    _fmt = ("%b %d %H:%M UTC" if dur >= 2 * 86400
+             else ("%H:%M UTC" if unit == "min" else "%H:%M:%S UTC"))
     t_start = datetime.fromtimestamp(m.t0_epoch, tz=timezone.utc)
-    t_end   = datetime.fromtimestamp(m.t0_epoch + max(m.run_duration_s, 1),
-                                      tz=timezone.utc)
-    return f"{base}  |  {t_start.strftime(_fmt)} – {t_end.strftime(_fmt)}"
+    t_end = datetime.fromtimestamp(m.t0_epoch + dur, tz=timezone.utc)
+    # Stamp current figure so fig_to_b64 can render wall-clock ticks.
+    try:
+        _cur_fig = plt.gcf()
+        _cur_fig._amoprof_wallclock = {
+            "t0_epoch": float(m.t0_epoch),
+            "dur_s": dur,
+            "unit": unit,
+        }
+    except Exception:
+        pass
+    return (f"Wall-clock time (UTC)  |  "
+            f"{t_start.strftime(_fmt)} – {t_end.strftime(_fmt)}")
 
 
 
@@ -10178,11 +11573,43 @@ def _compact_gb_tick(v, pos=None) -> str:
 
 
 def _make_time_axis_readable(ax, m=None, nbins: int = 5) -> None:
-    """Keep static End Report time axes readable inside embedded PNGs."""
+    """Keep static End Report time axes readable inside embedded PNGs.
+
+    When m.t0_epoch is set (Prometheus / live-collect), re-label the
+    minute-offset x-axis with wall-clock time strings so operators can
+    correlate spikes to real events instead of decoding "5040 min".
+    The underlying x data stays as elapsed minutes — we only change the
+    tick text via a FuncFormatter, so no chart function needs to change.
+    """
+    from datetime import datetime, timezone
     try:
         ax.xaxis.set_major_locator(MaxNLocator(nbins=nbins, prune=None))
         if m is not None and getattr(m, "run_duration_s", 0):
             ax.set_xlim(0, max(float(m.run_duration_s) / 60.0, 0.01))
+    except Exception:
+        pass
+    try:
+        t0 = float(getattr(m, "t0_epoch", 0) or 0) if m is not None else 0.0
+        dur = float(getattr(m, "run_duration_s", 0) or 0) if m is not None else 0.0
+        if t0 > 1_000_000_000 and dur > 0:
+            # ≥ 2-day window: include date in every tick label so day
+            # boundaries are unambiguous.
+            if dur >= 2 * 86400:
+                _fmt = "%b %d\n%H:%M"     # two-line: "Aug 01\n14:30"
+            elif dur >= 3600:
+                _fmt = "%H:%M"
+            else:
+                _fmt = "%H:%M:%S"
+
+            def _to_wallclock(minute_offset, _pos=None):
+                try:
+                    ts = t0 + float(minute_offset) * 60.0
+                    return datetime.fromtimestamp(
+                        ts, tz=timezone.utc).strftime(_fmt)
+                except Exception:
+                    return f"{minute_offset:.0f}"
+
+            ax.xaxis.set_major_formatter(FuncFormatter(_to_wallclock))
     except Exception:
         pass
     try:
@@ -10772,9 +12199,20 @@ def chart_gpu_timeline(m: Metrics) -> str:
         with _wtl.catch_warnings():
             _wtl.simplefilter('ignore', UserWarning)
             try:
-                plt.tight_layout()
+                # Big top/bottom margin so the panel-footer strip below each
+                # subplot (rendered by _panel_footer with negative y offset)
+                # is not clipped by the figure edge or the neighboring row.
+                # hspace=0.85 leaves a clear strip between rows for the
+                # top-row footers; bottom=0.10 does the same for the
+                # bottom-row footers.
+                plt.subplots_adjust(top=0.94, bottom=0.10,
+                                    left=0.07, right=0.97,
+                                    hspace=0.85, wspace=0.22)
             except Exception:
-                pass
+                try:
+                    plt.tight_layout()
+                except Exception:
+                    pass
     except Exception:
         pass
     return fig_to_b64(fig)
@@ -10865,13 +12303,22 @@ def canonical_gpu_plotly_figure(m: Metrics, points_per_gpu: int = 900,
         yrange = [0, max(20, min(105, math.ceil((util_peak + 5.0) / 10.0) * 10.0))]
     layout = {
         "title": {"text": title, "x": 0.02, "xanchor": "left"},
-        "height": 520, "margin": {"l": 70, "r": 110, "t": 58, "b": 74},
+        # Bottom margin must reserve room for the horizontal legend below the
+        # plot.  At y=-0.24 on a 520px figure the legend needs ~125px, so a
+        # 74px margin pushed it back over the axis and the traces.  Height is
+        # raised alongside so the plot area itself does not shrink.
+        "height": 600, "margin": {"l": 70, "r": 110, "t": 58, "b": 150},
         "plot_bgcolor": "#f8fafc", "paper_bgcolor": "#ffffff", "font": {"color": "#0f172a", "size": 12},
         "xaxis": {"title": _time_xlabel(m), "range": [0, round(x_right_min, 4)], "gridcolor": "#e2e8f0", "zerolinecolor": "#cbd5e1"},
         "yaxis": {"title": "GPU utilization %", "range": yrange, "gridcolor": "#cbd5e1", "zerolinecolor": "#94a3b8"},
         "yaxis2": {"title": "HBM used MB/GPU", "overlaying": "y", "side": "right", "gridcolor": "transparent"},
         "hovermode": "x unified",
-        "legend": {"orientation": "h", "yanchor": "bottom", "y": -0.24, "xanchor": "left", "x": 0},
+        # Anchor the legend to the TOP of its own box just below the plot, so
+        # it grows downward into the reserved margin instead of upward across
+        # the chart when it wraps to multiple rows.
+        "legend": {"orientation": "h", "yanchor": "top", "y": -0.16,
+                   "xanchor": "left", "x": 0, "font": {"size": 11},
+                   "bgcolor": "rgba(255,255,255,0.85)", "borderwidth": 0},
         "shapes": [{"type": "line", "xref": "paper", "x0": 0, "x1": 1, "yref": "y", "y0": 100, "y1": 100,
                     "line": {"color": "#64748b", "width": 1, "dash": "dot"}}],
         "annotations": [{
@@ -12533,11 +13980,30 @@ def chart_kvb_events(m: "Metrics") -> str:
     if m.kvb_offload_ts.empty and event_ts.empty and m.kvb_l1_pool_blocks == 0 and not has_eviction_pressure:
         return ""
 
-    fig, axes = plt.subplots(2, 2, figsize=(13, 9))
+    # Slightly taller figure than the historical 13×9 so the per-panel
+    # bottom-title strip we introduce below has room to sit under the x-axis
+    # without colliding with the row below.  Bar labels grow upward from the
+    # bar tops, so top-of-plot titles used to overlap them when residency
+    # numbers spiked; moving titles under each panel fixes that permanently.
+    fig, axes = plt.subplots(2, 2, figsize=(13, 10))
     fig.patch.set_facecolor("#ffffff")
     fig.suptitle("KV Cache Block (KV$B) Event Analysis", fontsize=12,
-                 fontweight="bold", color="#0f172a", y=1.01)
+                 fontweight="bold", color="#0f172a", y=1.005)
     bs = max(m.kvb_block_size_tokens, 1)
+
+    def _panel_footer(_ax, _title: str) -> None:
+        """Render a subplot title as a footer *below* the x-axis label.
+
+        Uses annotate() with the axis's xlabel as the anchor so matplotlib
+        reserves layout space for the footer even under tight_layout /
+        constrained_layout. Placing the title below the plot keeps it clear
+        of bar-value annotations that grow upward from the bar tops.
+        """
+        _ax.annotate(_title, xy=(0.5, 0), xycoords="axes fraction",
+                     xytext=(0, -46), textcoords="offset points",
+                     ha="center", va="top", fontsize=9,
+                     fontweight="bold", color="#0f172a",
+                     linespacing=1.30, annotation_clip=False)
 
     # 1. Tier residency timeline: L2 + estimated L3 resident blocks
     ax = axes[0, 0]
@@ -12565,11 +14031,10 @@ def chart_kvb_events(m: "Metrics") -> str:
     elif l3_active and float(getattr(m, "kv_l3_nvme_tokens", 0) or 0) > 0:
         _l3_reported_blocks = float(getattr(m, "kv_l3_nvme_tokens", 0) or 0) / bs
         ax.axhline(_l3_reported_blocks, color="#a855f7", lw=1.6, label="L3 resident blocks (tier summary)")
-    ax.set_title(
+    _panel_footer(ax,
         f"KV Block Residency by Tier (SGLang-derived)\n"
         f"L1→L2 mean {m.kvb_l1_offload_rate_blk_s:.4f} blk/s  |  "
-        f"L3 (local storage) active {'yes' if l3_active else 'no'}",
-        fontsize=9, fontweight="bold")
+        f"L3 (local storage) active {'yes' if l3_active else 'no'}")
     ax.set_xlabel(_time_xlabel(m), fontsize=8, color="#475569")
     ax.set_ylabel("Resident KV blocks", fontsize=9, color="#475569")
     ax.autoscale(axis="y", tight=False)
@@ -12623,9 +14088,7 @@ def chart_kvb_events(m: "Metrics") -> str:
     if not have_rate:
         ax2.text(0.5, 0.5, "No block movement counters available", ha="center", va="center",
                  transform=ax2.transAxes, fontsize=10, color="#94a3b8")
-    ax2.set_title(
-        "KV Block Movement Rates Across Tiers",
-        fontsize=9, fontweight="bold")
+    _panel_footer(ax2, "KV Block Movement Rates Across Tiers")
     ax2.set_xlabel(_time_xlabel(m), fontsize=8, color="#475569")
     ax2.set_ylabel("Blocks / s", fontsize=9, color="#475569")
     _y2lo, _y2hi = ax2.get_ylim()
@@ -12668,12 +14131,18 @@ def chart_kvb_events(m: "Metrics") -> str:
         label = f"{u:,} blks" if i == 2 else f"{c:,}\n({(u/max(c,1))*100:.1f}% full)"
         ax3.text(i, max(c, u) + ymax * 0.02, label, ha="center", va="bottom",
                  fontsize=8, color="#0f172a", fontweight="bold")
-    ax3.set_title(
+    # Extra top headroom so the two-line bar labels ("21,899\n(4.0% full)")
+    # sit inside the plot area instead of colliding with the panel border or
+    # the top-row panels' footer band.
+    _y3lo, _y3hi = ax3.get_ylim()
+    if _y3hi > 0:
+        ax3.set_ylim(_y3lo, _y3hi * 1.25)
+    _panel_footer(ax3,
         "Tier Capacity / Peak Residency Summary\n"
-        + ("local Storage derived from backup/prefetch counters" if l3_active else "local Storage not observed; L2→L1 load_back/eviction not counted"),
-        fontsize=9, fontweight="bold")
+        + ("local Storage derived from backup/prefetch counters" if l3_active
+           else "local Storage not observed; L2→L1 load_back/eviction not counted"))
     ax3.set_ylabel("KV Blocks", fontsize=9, color="#475569")
-    if ax3.get_legend_handles_labels()[0]: ax3.legend(fontsize=8)
+    if ax3.get_legend_handles_labels()[0]: ax3.legend(fontsize=8, loc="upper right")
     ax3.grid(True, axis="y", alpha=0.3, color="#e2e8f0")
     ax3.tick_params(labelsize=8)
     for sp in ax3.spines.values(): sp.set_edgecolor("#94a3b8")
@@ -12721,12 +14190,27 @@ def chart_kvb_events(m: "Metrics") -> str:
         f"Evicted/cache pressure: {m.kvb_evicted_tokens_total/max(bs,1):,.0f} blocks\n"
         f"L2→L1 load_back restore not counted as local storage: {getattr(m, 'kvb_l3_ambiguous_loadback_tokens', 0)/max(bs,1):,.0f} blocks\n"
         f"Lifetime estimate: {m.kvb_lifetime_mean_s:.0f}s")
-    ax4.text(0.03, 0.97, ann, transform=ax4.transAxes, ha="left", va="top",
+    # Extra top headroom so the value labels above each bar and the summary
+    # annotation box don't clip the panel border.  ×1.6 (was 1.35) leaves a
+    # dedicated strip at the top for the multi-line annotation and the
+    # "Mean lifetime" / "Mean session E2E" reference lines' legend.
+    _y4lo, _y4hi = ax4.get_ylim()
+    if _y4hi > 0:
+        ax4.set_ylim(_y4lo, _y4hi * 1.6)
+    # Place the annotation box just below the top of the plot but to the
+    # LEFT of the top-right legend (which carries "Mean lifetime" / "Mean
+    # session E2E").  Anchoring by axes fraction (0.02, 0.98) with a small
+    # box-padding keeps it clear of the bars because the bar tops on this
+    # panel typically sit well below y=~0.6 of the axis span even after we
+    # scaled the y-limit by 1.6×.
+    ax4.text(0.02, 0.63, ann, transform=ax4.transAxes, ha="left", va="top",
              fontsize=8, color="#475569",
-             bbox=dict(boxstyle="round,pad=0.4", facecolor="#f1f5f9", edgecolor="#e2e8f0"))
-    ax4.set_title("Cumulative KV Block Movements + L2→L1 Restore Reference\n"
-                  + ("local Storage activity observed" if l3_active else "local Storage activity not observed; eviction shown as cache pressure"),
-                  fontsize=9, fontweight="bold")
+             bbox=dict(boxstyle="round,pad=0.4",
+                        facecolor="#f1f5f9", edgecolor="#e2e8f0", alpha=0.95))
+    _panel_footer(ax4,
+        "Cumulative KV Block Movements + L2→L1 Restore Reference\n"
+        + ("local Storage activity observed" if l3_active
+           else "local Storage activity not observed; eviction shown as cache pressure"))
     ax4.set_ylabel("Blocks moved in run", fontsize=9, color="#475569")
     ax4.grid(True, axis="y", alpha=0.3, color="#e2e8f0")
     ax4.tick_params(labelsize=8)
@@ -12948,9 +14432,18 @@ def chart_capacity_timeline(m: "Metrics") -> str:
     ax = axes[0, 1]
     _style(ax)
     if not l2_used_ts.empty and not l2_tot_ts.empty and float(l2_tot_ts.max()) > 0:
-        # element-wise: guard div by zero
-        denom = l2_tot_ts.replace(0, pd.NA)
-        y = (l2_used_ts / denom * 100.0).fillna(0)
+        # Element-wise ratio with a divide-by-zero guard.  IMPORTANT:
+        # l2_tot_ts.replace(0, pd.NA) upgrades the Series to object dtype
+        # (pd.NA is not a numpy float), which then poisons the ratio and
+        # crashes matplotlib's fill_between at np.isfinite(object_array).
+        # Use numpy.where over the raw values to keep the result float64
+        # end-to-end.
+        _tot_arr  = np.asarray(l2_tot_ts.values,  dtype=np.float64)
+        _used_arr = np.asarray(l2_used_ts.values, dtype=np.float64)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            _ratio = np.where(_tot_arr > 0, _used_arr / _tot_arr * 100.0, 0.0)
+        _ratio = np.nan_to_num(_ratio, nan=0.0, posinf=0.0, neginf=0.0)
+        y = pd.Series(_ratio, index=l2_used_ts.index, dtype=np.float64)
         if float(y.max()) > 0:
             ax.fill_between(t_ts / 60.0, y, alpha=0.30, color="#34d399")
             ax.plot(t_ts / 60.0, y, color="#059669", lw=1.5)
@@ -13007,8 +14500,13 @@ def chart_capacity_timeline(m: "Metrics") -> str:
     l1_peak_pct = float(l1_fill_ts.max() * 100.0) if not l1_fill_ts.empty and float(l1_fill_ts.max()) > 0 else 0.0
     l2_peak_pct = 0.0
     if not l2_used_ts.empty and not l2_tot_ts.empty and float(l2_tot_ts.max()) > 0:
-        denom = l2_tot_ts.replace(0, pd.NA)
-        l2_peak_pct = float(((l2_used_ts / denom) * 100.0).fillna(0).max())
+        # Same np.where trick as the fill-plot above — avoid pd.NA promoting
+        # the ratio Series to object dtype (crashes downstream matplotlib).
+        _tot_arr  = np.asarray(l2_tot_ts.values,  dtype=np.float64)
+        _used_arr = np.asarray(l2_used_ts.values, dtype=np.float64)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            _ratio = np.where(_tot_arr > 0, _used_arr / _tot_arr * 100.0, 0.0)
+        l2_peak_pct = float(np.nan_to_num(_ratio, nan=0.0, posinf=0.0, neginf=0.0).max())
     l3_used_peak_gb = l3_used_gb
     l3_req_gb = l3_used_peak_gb * SAFETY if l3_used_peak_gb > 0 else 0.0
     lines = [
@@ -15247,7 +16745,7 @@ def kv_card(label, value, unit="", color=TEXT_C, sub="") -> str:
     <div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;min-width:120px">
       <div style="font-size:10px;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:3px">{label}</div>
       <div style="font-size:20px;font-weight:700;color:{color};font-family:monospace">{value}<span style="font-size:12px;color:#64748b;margin-left:3px">{unit}</span></div>
-      {f'<div style="font-size:10px;color:#64748b;margin-top:2px">{sub}</div>' if sub else ''}
+      {f'<div style="font-size:10px;color:#64748b;margin-top:2px">{_fx_details(sub)}</div>' if sub else ''}
     </div>"""
 
 
@@ -15268,6 +16766,31 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
     # KPIs
     # Canonical KPI order shared with Executive and Interactive:
     # cache -> latency -> throughput -> GPU/HBM -> DRAM/L3/details.
+    #
+    # Throughput is split into two classified tiles:
+    #   * Input throughput  = Δprompt tokens per second (prefill consumption)
+    #   * Output throughput = Δgeneration tokens per second (decode production)
+    # These are distinct numbers; historically we surfaced only output
+    # throughput and called it "Throughput", which was ambiguous.
+    # Prefer the window delta over the lifetime counter.  prefill_*_tokens are
+    # cumulative since server start; only *_delta describes this collection.
+    _prompt_toks_delta = float((getattr(m, "prefill_cache_tokens_delta", 0) or 0)
+                               + (getattr(m, "prefill_compute_tokens_delta", 0) or 0))
+    _prompt_win_s = float(getattr(m, "prompt_tokens_window_s", 0) or 0)
+    _run_dur_s_er = float(getattr(m, "run_duration_s", 0) or 0)
+    _input_tp_src = ""
+    if _prompt_toks_delta > 0 and _prompt_win_s > 0:
+        _input_tp_mean = _prompt_toks_delta / _prompt_win_s
+        _input_tp_src = "Δprompt tokens ÷ Δtime_sec (selected window)"
+    elif _prompt_toks_delta > 0 and _run_dur_s_er > 0:
+        _input_tp_mean = _prompt_toks_delta / _run_dur_s_er
+        _input_tp_src = "Δprompt tokens ÷ run duration"
+    else:
+        # No usable delta (single sample, or counters absent).  Reporting a
+        # lifetime counter over the window would be wrong by orders of
+        # magnitude, so report nothing instead.
+        _input_tp_mean = 0.0
+        _input_tp_src = "unavailable — needs 2+ samples of realtime_tokens_total"
     kpis = "".join([
         kv_card("Cache Hit", fmt(m.cache_hit_pct, 1), "%", OK_C,
                 "benchmark" if getattr(m, "cache_hit_calc_method", "") == "benchmark_summary_cache_hit_rate" else "realtime"),
@@ -15275,11 +16798,18 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
         kv_card("TTFT p50", fmt(m.sess_ttft_p50_ms or m.ttft_ms, 0), "ms", PREFILL, "Median"),
         kv_card("TPOT / ITL mean", fmt(m.tpot_ms, 1), "ms/tok", DECODE, "Decode Phase"),
         kv_card("TPOT / ITL p50", fmt(m.sess_tpot_p50_ms or m.tpot_ms, 1), "ms/tok", DECODE, "Median"),
-        kv_card("Throughput mean", fmt(m.gen_tp_mean or m.gen_tp_peak, 1), "tok/s", OK_C, "active mean"),
-        kv_card("Throughput p50", fmt(m.gen_tp_p50 or m.gen_tp_mean or m.gen_tp_peak, 1), "tok/s", OK_C, "active median"),
-        kv_card("Peak Throughput", fmt(m.gen_tp_peak or m.gen_tp_mean, 1), "tok/s", OK_C),
+        kv_card("Input throughput", fmt(_input_tp_mean, 1), "tok/s", PREFILL,
+                _input_tp_src),
+        kv_card("Output throughput mean", fmt(m.gen_tp_mean or m.gen_tp_peak, 1), "tok/s", DECODE,
+                "Δgeneration tokens ÷ Δwindow (active mean)"),
+        kv_card("Output throughput p50", fmt(m.gen_tp_p50 or m.gen_tp_mean or m.gen_tp_peak, 1), "tok/s", DECODE,
+                "median of active sglang_gen_throughput samples"),
+        kv_card("Peak Output throughput", fmt(m.gen_tp_peak or m.gen_tp_mean, 1), "tok/s", DECODE,
+                "peak of sglang_gen_throughput"),
         kv_card("HBM Util", fmt(m.hbm_util_pct, 1), "%", HBM_C,
-                f"{m.hbm_used_mb_mean/1024:.1f}/{m.hbm_total_mb/1024:.0f} GB"),
+                (f"{m.hbm_used_mb_mean/1024:.1f}/{m.hbm_total_mb/1024:.0f} GB · "
+                 "weights + reserved KV pool + activations "
+                 "(≠ live KV blocks; see KV Pool Active %)")),
         # GPU util tile mirrors the cache-hit KPI shape: primary value = active
         # mean, sub-note carries overall/threshold/idle so a low active mean
         # driven by long idle gaps is legible at a glance.
@@ -15467,7 +16997,15 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
     ]
 
     formula_rows = ""
-    for fi, (metric, unit, collector, formula, interp) in enumerate(_METRIC_FORMULAS + _METRIC_FORMULAS_EXTRA):
+    # The §Metrics & Formulas table is generated from the shared registry
+    # (report/metric_formulas.py) so it cannot drift from the KPI tiles.
+    # _METRIC_FORMULAS / _METRIC_FORMULAS_EXTRA above remain the source of
+    # the per-metric *collector* and *interpretation* prose; the formula
+    # column is overridden from the registry wherever the label matches.
+    _rows = [(metric, unit, collector, (_formula_for(metric) or formula), interp)
+             for (metric, unit, collector, formula, interp)
+             in (_METRIC_FORMULAS + _METRIC_FORMULAS_EXTRA)]
+    for fi, (metric, unit, collector, formula, interp) in enumerate(_rows):
         # Keep the Metrics & Formulas table readable in dark-themed reports.
         # The report enhancer may darken surrounding cards, so use explicit dark
         # row backgrounds with light text here instead of slate-on-dark inline text.
@@ -15486,13 +17024,14 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
 
     # ── HBM / DRAM bandwidth KPI cards ─────────────────────────────────────
     def bw_card(label, val, unit, color, sub=""):
+        sub = _tile_note(label, sub)
         return (f'<div style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;' +
                 f'padding:10px 14px;min-width:130px">' +
                 f'<div style="font-size:10px;color:#64748b;letter-spacing:1px;text-transform:uppercase;' +
                 f'margin-bottom:3px">{label}</div>' +
                 f'<div style="font-size:18px;font-weight:700;color:{color};font-family:monospace">' +
                 f'{val}<span style="font-size:11px;color:#64748b;margin-left:3px">{unit}</span></div>' +
-                (f'<div style="font-size:10px;color:#64748b;margin-top:1px">{sub}</div>' if sub else '') +
+                (f'<div style="font-size:10px;color:#64748b;margin-top:1px;overflow-wrap:anywhere;word-break:break-word;line-height:1.45;">{sub}</div>' if sub else '') +
                 f'</div>')
 
     hbm_kpi_cards = "".join([
@@ -15625,15 +17164,16 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
 
     # ── Session / KV block / NVMe KPI card builders ──────────────────────────────
     def _kpi(label, val, unit, color_bg, color_text, sub=""):
+        sub = _tile_note(label, sub)
         return (f'<div style="background:{color_bg};border:1px solid {color_text}44;'
-                f'border-radius:8px;padding:12px">'
+                f'border-radius:8px;padding:12px;min-width:0;overflow:hidden;box-sizing:border-box">'
                 f'<div style="font-size:10px;color:{color_text};font-weight:700;'
                 f'text-transform:uppercase;margin-bottom:3px">{label}</div>'
                 f'<div style="font-size:20px;font-weight:800;color:{color_text};'
                 f'font-family:monospace">{val}'
                 f'<span style="font-size:11px;color:#64748b;margin-left:3px">{unit}</span>'
                 f'</div>'
-                + (f'<div style="font-size:10px;color:#475569">{sub}</div>' if sub else '')
+                + (f'<div style="font-size:10px;color:#475569;overflow-wrap:anywhere;word-break:break-word;line-height:1.45;">{sub}</div>' if sub else '')
                 + '</div>')
 
     session_kpi_cards = "".join([
@@ -15658,10 +17198,16 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
     kvb_base_cards = [
         _kpi("Block Size", f"{m.kvb_block_size_mb:.1f}", "MB", "#f0fdf4", "#047857",
              f"{m.kvb_block_size_tokens} tok × {m.kv_bytes_per_token_kb:.0f} KB"),
-        _kpi("L1 Pool Blocks", f"{m.kvb_l1_pool_blocks:,}", "", "#eef2ff", "#4338ca",
-             f"{m.kv_l1_fill_pct:.1f}% used"),
-        _kpi("L2 Pool Blocks", f"{m.kvb_l2_pool_blocks:,}", "", "#f0f9ff", "#0c4a6e",
-             f"{m.kv_l2_fill_pct:.1f}% used"),
+        # KV Pool Active % — fraction of the pre-allocated pool that is
+        # currently holding KV blocks.  Physical HBM occupancy (weights +
+        # reserved pool + activations) is a separate, larger quantity shown
+        # in the "HBM Util" / "HBM used (all GPUs)" KPI tiles.  A low value
+        # here alongside a high HBM Util is normal in HiCache mode where the
+        # cache working set lives in L2 DRAM and L1 acts as decode scratch.
+        _kpi("L1 KV Pool Active", f"{m.kv_l1_fill_pct:.1f}", "%", "#eef2ff", "#4338ca",
+             f"{m.kvb_l1_pool_blocks:,} blocks reserved · live KV only (≠ HBM Util)"),
+        _kpi("L2 KV Pool Active", f"{m.kv_l2_fill_pct:.1f}", "%", "#f0f9ff", "#0c4a6e",
+             f"{m.kvb_l2_pool_blocks:,} blocks reserved · HiCache DRAM"),
         _kpi("L1→L2 Offload", f"{m.kvb_l1_offload_rate_blk_s:.4f}", "blk/s", "#fff7ed", "#9a3412",
              "HBM → DRAM"),
     ]
@@ -15781,6 +17327,7 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>AI Stack Bottleneck Report — {run_label}</title>
 <style>
+{_FX_CSS}{_FX_CSS_LIGHT}
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   body {{ background: #f8fafc; color: #0f172a; font-family: 'Inter', system-ui, sans-serif; padding: 24px; }}
   h2 {{ font-size: 13px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 14px; color: #1e293b; }}
@@ -16219,9 +17766,9 @@ KV active tokens  : sglang_hicache_host_used_tokens  (L2 DRAM)
       <div style="font-size:10px;color:#6b7280">{m.kv_n_layers}L &middot; {m.kv_n_heads} KV-heads &middot; dim {m.kv_head_dim}</div>
     </div>
     <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:12px">
-      <div style="font-size:10px;color:#0369a1;font-weight:700;text-transform:uppercase;margin-bottom:4px">KV Pool Used</div>
+      <div style="font-size:10px;color:#0369a1;font-weight:700;text-transform:uppercase;margin-bottom:4px">KV Pool Active %</div>
       <div style="font-size:22px;font-weight:800;color:#0c4a6e;font-family:monospace">{m.kv_pool_fill_pct:.1f}<span style="font-size:12px;color:#6b7280;margin-left:3px">%</span></div>
-      <div style="font-size:10px;color:#6b7280">{m.kv_active_tokens:,} active tokens</div>
+      <div style="font-size:10px;color:#6b7280">{m.kv_active_tokens:,} live tokens / pool · ≠ HBM Util (weights+pool+activations)</div>
     </div>
     <div style="background:#faf5ff;border:1px solid #e9d5ff;border-radius:8px;padding:12px">
       <div style="font-size:10px;color:#7c3aed;font-weight:700;text-transform:uppercase;margin-bottom:4px">INT8 savings</div>
@@ -16423,6 +17970,13 @@ Arrival rate  : \u0394(num_requests_total) / \u0394(time_sec) [req/s]</code>
     Offload = blocks moving L1 HBM &#8594; L2 DRAM hicache.
     Eviction = blocks removed from L2 when pool is full.
     Lifetime = estimated duration a block survives before eviction.
+    <br><br>
+    <strong>Reading the KV Pool Active % tiles:</strong>
+    "L1 KV Pool Active" is the fraction of the pre-allocated HBM KV pool that is currently holding live tokens.
+    It is <em>not</em> the same as the "HBM Util" / "HBM used (all GPUs)" KPI tile, which reports total physical HBM
+    (model weights + the reserved pool + CUDA activations).
+    A high cache-hit rate (98%) with a low L1 KV Pool Active (4%) and a high L2 KV Pool Active (100%) is expected in
+    HiCache mode: the cache working set lives in L2 DRAM, and L1 acts as short-lived decode scratch.
   </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">
     {kvb_kpi_cards}
@@ -17259,7 +18813,7 @@ swap_used_pct   = 100 × (1 - SwapFree/SwapTotal)</code>
     # no L3-active sections to disappear.
     if not bool(getattr(m, "l3_configured", False)):
         html = _collapse_l3_sections_no_activity(html)
-    return _collapse_empty_cards(html)
+    return _collapse_empty_cards(_mark_uncollected_tiers(html, m))
 
 
 
@@ -17335,12 +18889,15 @@ def _remove_duplicate_old_cross_layer_card(html: str) -> str:
 
 
 def _collapse_l3_sections_no_activity(html: str) -> str:
-    """Collapse, but do not remove, L3-only End Report cards for L2-only runs.
+    """Remove L3-only End Report cards when no L3 backend is configured.
 
-    Title-based only: never collapse mixed GPU/HBM/DRAM/cache/latency sections
-    just because their body text mentions L3.
+    Previous behaviour (v1.39.86) collapsed the cards behind a <details>
+    element for completeness.  v1.1.7 removes them outright, matching the
+    "avoid displaying L3 tiles/summaries when not configured" rule now
+    applied across all three tabs.  Title-based only: never touch mixed
+    GPU/HBM/DRAM/cache/latency sections just because their body text
+    mentions L3.
     """
-    import html as _html
     spans = _find_card_spans_for_postprocess(html)
     if not spans:
         return html
@@ -17358,26 +18915,80 @@ def _collapse_l3_sections_no_activity(html: str) -> str:
     for st, _, en in spans:
         card = html[st:en]
         title = _card_title_text(card).lower()
-        should_collapse = any(t in title for t in title_terms) and not any(t in title for t in keep_if_terms)
-        if not should_collapse:
+        should_remove = any(t in title for t in title_terms) and not any(t in title for t in keep_if_terms)
+        if not should_remove:
             continue
         out.append(html[last:st])
-        shown_title = _html.escape(_card_title_text(card) or 'L3 / storage section')
-        out.append(
-            '\n<details class="card amoprof-l3-collapsed" style="border-color:#94a3b8" data-amoprof-collapsed="l3-no-activity">\n'
-            '  <summary style="cursor:pointer;font-weight:800;color:#334155;padding:4px 0">'
-            + shown_title +
-            ' <span style="font-size:11px;color:#64748b;font-weight:600">— collapsed: L3 not configured / no L3 activity in this run</span></summary>\n'
-            '  <div style="font-size:12px;color:#475569;line-height:1.6;margin-top:10px;background:#f8fafc;border-left:3px solid #94a3b8;padding:10px 12px;border-radius:0 6px 6px 0">'
-            'This section is retained for report completeness, but it is collapsed because no explicit L3 activity was detected for this run. Expand only when validating collection coverage.'
-            '  </div>\n</details>\n'
-        )
+        # No replacement HTML — the card is dropped entirely.
         last = en
         n += 1
     if n == 0:
         return html
     out.append(html[last:])
     return ''.join(out)
+
+
+def _mark_uncollected_tiers(html: str, m) -> str:
+    """Prefix storage/DRAM sections with an explicit 'not collected' banner.
+
+    `_collapse_empty_cards` only hides a card when its tiles read empty.  A
+    section can still show *derived or projected* figures — the NVMe workload
+    card renders a non-zero IOPS projection from token movement — which is
+    indistinguishable from a measurement to the reader.  On a run with no
+    storage collector at all that is misleading, so state the provenance at
+    the top of the section rather than relying on emptiness.
+
+    Detection is by the presence of the underlying raw sources, not by the
+    values, because a projection is non-zero precisely when the measurement is
+    missing.
+    """
+    import re as _re
+
+    def _banner(tier: str, what: str, how: str) -> str:
+        return (
+            '<div style="border:1px solid #f59e0b;background:#fffbeb;color:#92400e;'
+            'border-radius:8px;padding:9px 12px;margin:0 0 12px;font-size:12px">'
+            f'<b>{tier} not collected in this run.</b> {what} '
+            f'<span style="color:#78350f">{how}</span></div>')
+
+    subs = []
+    if not getattr(m, "_amoprof_has_storage_source", False):
+        subs.append((
+            ["&#128191; NVMe IO Workload Characteristics",
+             "&#128202; KV$ L3 (local storage) Read Workload Characteristics",
+             "&#128203; KV$ L3 (local storage) Write Workload Characteristics",
+             "&#128191; KVSSD I/O", "\U0001f69a KVSSD I/O",
+             "SSD Requirement Summary",
+             "&#128202; KV$ L3 (local storage) &#8212; Per-Stream Bandwidth Analysis",
+             "&#128293; KV$ L3 (local storage) &#8212; LBA Hot/Cold Region Analysis"],
+            _banner("Local storage (NVMe) telemetry",
+                    "No NVMe driver, iostat or blktrace data was captured, so any "
+                    "figures below are <b>derived projections from token movement</b>, "
+                    "not device measurements.",
+                    "Enable with --collectors ...,nvme_driver,iostat "
+                    "(and --enable-blktrace for per-request detail).")))
+    if not getattr(m, "_amoprof_has_dram_pmu", False):
+        subs.append((
+            ["DRAM Bandwidth", "Host DRAM Bandwidth", "&#128200; DRAM"],
+            _banner("Host DRAM bandwidth (PMU)",
+                    "No AMD uProf / Intel PCM / perf-IMC counters were captured. "
+                    "L2 occupancy and L1&harr;L2 movement are still measured from "
+                    "SGLang hicache counters and shown in the Executive tab.",
+                    "Enable with --enable-dram (or --dram-tool perf-imc).")))
+
+    for needles, banner in subs:
+        for needle in needles:
+            idx = html.find(needle)
+            if idx < 0:
+                continue
+            close = html.find("</h2>", idx)
+            if close < 0:
+                continue
+            close += len("</h2>")
+            if html[close:close + 240].find("not collected in this run") >= 0:
+                continue
+            html = html[:close] + banner + html[close:]
+    return html
 
 
 def _collapse_empty_cards(html: str) -> str:
@@ -18796,6 +20407,7 @@ def build_comparison_html(runs, all_bottlenecks, timestamp):
 </script>
 
 <style>
+{_FX_CSS}{_FX_CSS_LIGHT}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#f8fafc;color:#0f172a;font-family:"Inter",system-ui,sans-serif;padding:20px}
 h2{font-size:12px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;margin-bottom:6px;color:#4f46e5}
@@ -21611,55 +23223,73 @@ def main():
         if do_html:
             print(f"\n[HTML {i+1}/{n_runs}] {label}")
             charts = {}
-            charts["gpu_timeline"] = chart_gpu_timeline(m)
+            # Wrap every chart_* call so a single failure doesn't blow up the
+            # entire static report → combined report skip.  Failures are
+            # logged once with a compact traceback pointer so operators can
+            # still see the underlying bug; the chart slot renders empty.
+            import traceback as _tb
+            def _safe_chart(_name, _fn, *_args):
+                try:
+                    return _fn(*_args)
+                except Exception as _e:
+                    _tb_lines = _tb.format_exc().splitlines()
+                    _origin = next(
+                        (l for l in reversed(_tb_lines)
+                         if "amoprof/report/amoprof.py" in l),
+                        "<unknown location>")
+                    print(f"      ⚠ chart {_name!s} failed: "
+                          f"{type(_e).__name__}: {str(_e)[:180]}", flush=True)
+                    print(f"        origin: {_origin.strip()}", flush=True)
+                    return ""
+            charts["gpu_timeline"] = _safe_chart("gpu_timeline", chart_gpu_timeline, m)
             # gpu_timeline_plotly removed from the End Report body per v1.1.6:
             # the section now renders the static PNG directly with a KPI
             # decomposition note above it. The Plotly variant remains
             # available in the layered report and (canonically) in the
             # Interactive tab, so no chart data is lost.
-            charts["inference"]    = chart_inference_metrics(m)
-            charts["memory"]       = chart_memory(m)
-            charts["latency"]      = chart_latency_breakdown(m)
-            charts["percentiles"]  = chart_percentile_summary(m)
-            charts["storage"]      = chart_storage(m)
-            charts["radar"]        = chart_bottleneck_radar(bns)
-            charts["kv_analysis"]  = chart_kv_analysis(m)
-            charts["kv_tiers"]     = chart_kv_tiers(m)
-            charts["session"]      = chart_session_analysis(m)
-            charts["kvb_events"]   = chart_kvb_events(m)
-            charts["nvme_io"]      = chart_nvme_io(m)
-            charts["ssd_qd"]       = chart_ssd_queue_depth(m)
-            charts["ssd_per_device"] = chart_ssd_per_device_overlay(m)
+            charts["inference"]    = _safe_chart("inference", chart_inference_metrics, m)
+            charts["memory"]       = _safe_chart("memory", chart_memory, m)
+            charts["latency"]      = _safe_chart("latency", chart_latency_breakdown, m)
+            charts["percentiles"]  = _safe_chart("percentiles", chart_percentile_summary, m)
+            charts["storage"]      = _safe_chart("storage", chart_storage, m)
+            charts["radar"]        = _safe_chart("radar", chart_bottleneck_radar, bns)
+            charts["kv_analysis"]  = _safe_chart("kv_analysis", chart_kv_analysis, m)
+            charts["kv_tiers"]     = _safe_chart("kv_tiers", chart_kv_tiers, m)
+            charts["session"]      = _safe_chart("session", chart_session_analysis, m)
+            charts["kvb_events"]   = _safe_chart("kvb_events", chart_kvb_events, m)
+            charts["nvme_io"]      = _safe_chart("nvme_io", chart_nvme_io, m)
+            charts["ssd_qd"]       = _safe_chart("ssd_qd", chart_ssd_queue_depth, m)
+            charts["ssd_per_device"] = _safe_chart("ssd_per_device", chart_ssd_per_device_overlay, m)
             # v1.39.68: NVMe IO Deep Profiling card removed; do not render its problematic LBA hot/cold map.
-            charts["ssd_read"]     = chart_ssd_read_workload(m)
-            charts["ssd_write"]    = chart_ssd_write_workload(m)
-            charts["trim_seasonal"]= chart_trim_seasonal(m)
-            charts["cross_layer"]  = chart_cross_layer_kpi(m)
-            charts["bt_streams"]   = chart_blktrace_streams(m)
-            charts["bt_hotcold"]   = chart_blktrace_hotcold(m)
+            charts["ssd_read"]     = _safe_chart("ssd_read", chart_ssd_read_workload, m)
+            charts["ssd_write"]    = _safe_chart("ssd_write", chart_ssd_write_workload, m)
+            charts["trim_seasonal"]= _safe_chart("trim_seasonal", chart_trim_seasonal, m)
+            charts["cross_layer"]  = _safe_chart("cross_layer", chart_cross_layer_kpi, m)
+            charts["bt_streams"]   = _safe_chart("bt_streams", chart_blktrace_streams, m)
+            charts["bt_hotcold"]   = _safe_chart("bt_hotcold", chart_blktrace_hotcold, m)
             # v1.39.69: KV$ L3 IO Workload Characteristics section removed from End Report.
-            charts["kvssd_cross"]  = chart_kvssd_cross_layer(m)
+            charts["kvssd_cross"]  = _safe_chart("kvssd_cross", chart_kvssd_cross_layer, m)
             # Cross-layer chart — mirrors layered/cross.py (kv_lba_dram_correlation)
             # so End Report and Layered render the same Cross-layer chart set.
-            charts["kv_lba_dram"]  = chart_kv_lba_dram_correlation(m)
+            charts["kv_lba_dram"]  = _safe_chart("kv_lba_dram", chart_kv_lba_dram_correlation, m)
             # Layered parity — every chart function invoked by amoprof/layers/*.py
             # must also appear in the End Report so all three tabs render the same
             # set. Additions below cover A1 (hardware), A2 (kvssd_io), and A3
             # (block-layer / IO-size / access-pattern) charts that were only
             # produced by the layered report before v1.1.4.
-            charts["ssd_req_summary"]   = chart_ssd_requirement_summary(m)
-            charts["capacity_timeline"] = chart_capacity_timeline(m)
-            charts["block_latency"]     = chart_block_latency(m)
-            charts["endurance"]         = chart_endurance_projection(m)
-            charts["kvssd_io"]          = chart_kvssd_io(m)
-            charts["blkio_deep"]        = chart_blkio_deep(m)
-            charts["io_size_count"]     = chart_io_size_count(m)
-            charts["io_size_bytes"]     = chart_io_size_bytes(m)
-            charts["access_pattern"]    = chart_access_pattern(m)
-            charts["hbm_bw"]       = chart_hbm_bandwidth(m)
-            charts["dram_bw"]      = chart_dram_bandwidth(m)
-            charts["pcie_nvlink"]  = chart_pcie_nvlink(m)
-            charts["swap_storm"]   = chart_swap_storm(m)
+            charts["ssd_req_summary"]   = _safe_chart("ssd_req_summary", chart_ssd_requirement_summary, m)
+            charts["capacity_timeline"] = _safe_chart("capacity_timeline", chart_capacity_timeline, m)
+            charts["block_latency"]     = _safe_chart("block_latency", chart_block_latency, m)
+            charts["endurance"]         = _safe_chart("endurance", chart_endurance_projection, m)
+            charts["kvssd_io"]          = _safe_chart("kvssd_io", chart_kvssd_io, m)
+            charts["blkio_deep"]        = _safe_chart("blkio_deep", chart_blkio_deep, m)
+            charts["io_size_count"]     = _safe_chart("io_size_count", chart_io_size_count, m)
+            charts["io_size_bytes"]     = _safe_chart("io_size_bytes", chart_io_size_bytes, m)
+            charts["access_pattern"]    = _safe_chart("access_pattern", chart_access_pattern, m)
+            charts["hbm_bw"]       = _safe_chart("hbm_bw", chart_hbm_bandwidth, m)
+            charts["dram_bw"]      = _safe_chart("dram_bw", chart_dram_bandwidth, m)
+            charts["pcie_nvlink"]  = _safe_chart("pcie_nvlink", chart_pcie_nvlink, m)
+            charts["swap_storm"]   = _safe_chart("swap_storm", chart_swap_storm, m)
             html_path = out_dir / f"{prefix}.html"
             html = build_html(m, bns, recs, charts, label)
             try:
