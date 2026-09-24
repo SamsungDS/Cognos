@@ -6761,21 +6761,18 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         _PCTL_SPECS = [
             ("TTFT", "time_to_first_token_seconds", 1000.0, "ms",
              "sglang_time_to_first_token_seconds_bucket"),
-            # TPOT and ITL are distinct metrics and were previously conflated
-            # under one label while sourcing only the ITL histogram.  Each is
-            # now its own chart, gated on its own metric: SGLang builds that
-            # do not export time_per_output_token_seconds simply omit the TPOT
-            # chart rather than mislabelling ITL data as TPOT.
-            # TPOT: prefer the dedicated histogram; fall back to inter-token
-            # latency, which is what SGLang builds without
-            # time_per_output_token_seconds effectively report as TPOT.  The
-            # subtitle names whichever source was used so the number is never
-            # ambiguous about its provenance.
+            # ONE decode-latency chart, not two.  TPOT and ITL were separate
+            # entries that plotted the same numbers twice: the TPOT entry falls
+            # back to inter_token_latency_seconds (SGLang builds without
+            # time_per_output_token_seconds), and _PCT_SUMMARY_KEYS mapped both
+            # titles to the same server_itl_* percentiles, so on any run with
+            # summary percentiles the two bars were identical by construction.
+            # This entry prefers the dedicated TPOT histogram and the TITLE
+            # names whichever metric was actually plotted, so ITL data is never
+            # labelled as a measured TPOT.
             ("TPOT (time per output token)",
              ["time_per_output_token_seconds", "inter_token_latency_seconds"],
              1000.0, "ms/tok", ""),
-            ("ITL (inter-token latency)", "inter_token_latency_seconds",
-             1000.0, "ms/tok", "sglang_inter_token_latency_seconds_bucket"),
             ("E2E request latency", "e2e_request_latency_seconds", 1000.0, "ms",
              "sglang_e2e_request_latency_seconds_bucket"),
             ("Input tokens / request", "prompt_tokens_histogram", 1.0, "tokens",
@@ -6803,9 +6800,9 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # one number is what the reader needs.
         _PCT_SUMMARY_KEYS = {
             "TTFT": ("server_ttft_p50_ms", "server_ttft_p90_ms", "server_ttft_p99_ms"),
+            # server_itl_* is ITL; it stands in for TPOT only when the
+            # dedicated TPOT histogram is absent (see the guard in the loop).
             "TPOT (time per output token)": (
-                "server_itl_p50_ms", "server_itl_p90_ms", "server_itl_p99_ms"),
-            "ITL (inter-token latency)": (
                 "server_itl_p50_ms", "server_itl_p90_ms", "server_itl_p99_ms"),
             "E2E request latency": (
                 "server_e2e_p50_ms", "server_e2e_p90_ms", "server_e2e_p99_ms"),
@@ -6838,7 +6835,14 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 if _pw:
                     _used = f"sglang_{_b}_bucket"
                     break
-            _from_summary = _pct_from_summary(_p_title)
+            # A dedicated TPOT histogram outranks the summary percentiles:
+            # server_itl_* is a different metric, and overwriting a measured
+            # TPOT with it is half of how the two charts came to agree.  Every
+            # other spec's summary keys are the same metric as its buckets, so
+            # the summary still wins there.
+            _tpot_measured = (len(_bases) > 1
+                              and _used == f"sglang_{_bases[0]}_bucket")
+            _from_summary = {} if _tpot_measured else _pct_from_summary(_p_title)
             if _from_summary:
                 _from_summary["observations"] = _pw.get("observations", 0) if _pw else 0
                 _pw = _from_summary
@@ -6847,17 +6851,30 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             if not _pw:
                 continue
             _p_src = _used if _from_summary else (_p_src or _used)
-            if len(_bases) > 1 and _used and _used != f"sglang_{_bases[0]}_bucket":
-                _p_src += " (fallback — dedicated TPOT histogram not exported)"
+            # Name the metric actually plotted.  Without the dedicated TPOT
+            # histogram these numbers ARE inter-token latency (mean ITL equals
+            # TPOT only under steady decode), so use the combined "TPOT / ITL"
+            # label the KPI tiles and latency timelines already use rather than
+            # claiming a measured TPOT.
+            _p_disp = _p_title
+            if len(_bases) > 1 and not _tpot_measured:
+                _p_disp = "TPOT / ITL (inter-token latency)"
+                _p_src += (" · ITL stands in for TPOT "
+                           "(dedicated TPOT histogram not exported)")
             _pctl_html += _amoprof_exec_svg_percentile_bars(
-                f"{_p_title} — p50 / p90 / p99", f"whole window · \u0394{_p_src}",
+                f"{_p_disp} — p50 / p90 / p99", f"whole window · \u0394{_p_src}",
                 _p_unit, _pw, _PCTL_COLORS)
             # Mean beside p50, with the ratio as a tail indicator: percentiles
             # say where the boundary sits, only the mean is sensitive to how
             # far beyond it the worst cases run.
+            # Pair the mean with the same metric the percentiles came from:
+            # an ITL mean beside a measured-TPOT p50 is two metrics in one
+            # ratio.  No matching key means no mean is shown, which is correct.
             _mean_key = {"TTFT": ("server_ttft_mean_ms", "ttft_mean"),
-                         "TPOT (time per output token)": ("server_itl_mean_ms", "itl_mean"),
-                         "ITL (inter-token latency)": ("server_itl_mean_ms", "itl_mean"),
+                         "TPOT (time per output token)": (
+                             ("server_tpot_mean_ms", "avg_tpot_ms", "mean_tpot_ms")
+                             if _tpot_measured
+                             else ("server_itl_mean_ms", "itl_mean")),
                          "E2E request latency": ("server_e2e_mean_ms", "e2e_mean"),
                          }.get(_p_title, ())
             _mean_v = 0.0
@@ -6868,7 +6885,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             _tail = (_k_tail_ratio(_mean_v, _pw.get('p50', 0.0))
                      if _mean_v > 0 else {})
             _pctl_rows.append(
-                f"<b>{_html.escape(_p_title)}</b> "
+                f"<b>{_html.escape(_p_disp)}</b> "
                 f"p50 {_fmt_num(_pw.get('p50', 0), ' ' + _p_unit, 1)} · "
                 f"p90 {_fmt_num(_pw.get('p90', 0), ' ' + _p_unit, 1)} · "
                 f"p99 {_fmt_num(_pw.get('p99', 0), ' ' + _p_unit, 1)}"
