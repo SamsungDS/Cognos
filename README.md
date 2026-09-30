@@ -65,9 +65,8 @@ sudo python3 -m pip install --upgrade pip
 
 sudo python3 -m pip install ansible-core==2.17.4
 
-ansible-galaxy collection install community.general
-
-ansible-galaxy collection install ansible.posix
+# Run from $project_dir to install the collections pinned in collections/requirements.yml
+ansible-galaxy collection install -r collections/requirements.yml
 
 # Before running the internal create_ansible_user.yml playbook, ensure that python3-passlib is installed.
 sudo dnf install python3-passlib 
@@ -121,7 +120,7 @@ Your inventory file should contain hosts in the following groups:
     * cognos-grpc(OEL 10 only)
     * cognos-mgmt-fw
 
-* [applicaition_server]
+* [application_server]
   * Hosts running the cognos-application side services, including the following packages:
     * cognos-core
     * cognos-cxl/cognos-cxl-mock
@@ -132,13 +131,13 @@ Your inventory file should contain hosts in the following groups:
     * cognos-ras
     * cognos-slat
   
-  **Note:**  The `cognos-cxl-mock` is installed only when `scmc_cxl_mock_enable` is set to `true`, under the condition that the application server is equipped with **CMMB**.
+  **Note:**  The `cognos-cxl-mock` package is installed in place of `cognos-cxl` when `scmc_cxl_mock_enable` is set to `true`. See [scmc_cxl_mock_enable](#scmc_cxl_mock_enable).
 
 ### IV. <a id="encrypt_pass">Encrypt ansible password with ansible-vault on ansible controller node</a>
 
 1. Enter $project_dir
 
-        cd ./svk-ansible
+        cd ./cognos-ansible
 
 2. Create a **passwords.yml** to store ansible password by ansible-vault
 
@@ -158,7 +157,7 @@ Your inventory file should contain hosts in the following groups:
 The cognos packages to be installed should be placed in the artifacts directory in advance.
 
 1. Enter $project_dir and create a directory named artifacts.
-    * cd ./svk-ansible
+    * cd ./cognos-ansible
     * mkdir artifacts
 2. Download the cognos packages into artifacts directory.
 3. Enter artifacts directory.
@@ -213,24 +212,57 @@ Perform the kernel upgrade and default to upgrading to version 6.11.0:
 
     **Note:** When running a playbook with `--ask-vault-pass`, the user must enter **the vault password** to decrypt the contents of `group_vars/all/passwords.yml`.
 
-7. Configure and start Cognos services.
+    **Note:** `deploy_cognos.yml` runs `start_cognos.yml` as its final step, so Cognos services are configured and started once this step completes. There is no need to run `start_cognos.yml` after a fresh deployment.
+
+### Manage Cognos Services After Deployment
+
+* Configure and start Cognos services, e.g. after running `stop_cognos.yml` or after changing variables in `group_vars`.
 
         ansible-playbook -i your_inventory playbooks/start_cognos.yml --ask-vault-pass
 
-8. Stop Cognos services.
+* Stop Cognos services.
 
         ansible-playbook -i your_inventory playbooks/stop_cognos.yml --ask-vault-pass
 
-9. Stop Cognos services and remove Cognos related packages.
+* Stop Cognos services and remove Cognos related packages.
 
         ansible-playbook -i your_inventory playbooks/remove_cognos.yml --ask-vault-pass
+
+### Access the SCMC GUI
+
+When Cognos is deployed with `cognos_install_gui_enabled: true` (or `deploy_frontend_cognos.yml` has been run), Caddy serves the SCMC GUI on the management server:
+
+    http://<management_server_ip>:5000
+
+* Use `https://` instead when `cognos_certificates_enabled: true`.
+* The port is set by `mgmt_ports_frontend['mgmt_endpoint']` in `group_vars/all/all.yml`.
+* When `cognos_rbac_enabled: true`, the GUI uses the RBAC service on the management server (frontend port `rbac_ports['frontend']`, default 6720; API port `rbac_ports['api']`, default 6721).
+* The initial RBAC super admin account is created from `rbac_username`, `rbac_email` and `rbac_password` in `group_vars/all/all.yml`. **Change these values before deployment**, as the defaults are shared in the repository.
+
+### Firewall and SELinux Ports
+
+The playbooks manage the host firewall and SELinux port mapping for Cognos services:
+
+* `deploy_cognos.yml` first checks that the backend, frontend (when `cognos_install_gui_enabled: true`) and application server ports are not already in use, and stops the deployment if any port is occupied.
+* `start_cognos.yml` and `start_frontend_cognos.yml` open the ports below as permanent `tcp` rules. Ports are only opened when `firewalld` (OEL) or `ufw` (Ubuntu) is active on the host; otherwise this step is skipped.
+* On OEL with SELinux in `Enforcing` mode, the GUI port (`mgmt_endpoint`, default 5000) is mapped to the `http_port_t` type so that Caddy can bind to it.
+* `stop_cognos.yml` and `stop_frontend_cognos.yml` close the same ports and remove the SELinux `http_port_t` mapping.
+
+| Host | Condition | Variable in `group_vars/all/all.yml` | Default ports |
+|------|-----------|--------------------------------------|---------------|
+| management_server | Always | `mgmt_ports_backend` | 9999, 8001, 8443 |
+| management_server | `cognos_install_gui_enabled: true` | `mgmt_ports_frontend` | 5000, 4000, 4001, 5556 |
+| management_server | `cognos_install_gui_enabled: true` and `cognos_rbac_enabled: true` | `rbac_ports` | 1027, 6721, 6720 |
+| application_server | Always | `app_ports` | 9998, 5555, 5556 |
 
 ## Explanation of key variables in `group_vars/all/all.yml`
 
 ### scmc_cxl_mock_enable
 
 * Set `scmc_cxl_mock_enable: false` to deploy Cognos in hardware mode. **Hardware mode is enabled by default.**
-* Set `scmc_cxl_mock_enable: true` to deploy Cognos in mock mode. **Mock mode is available only for CMMB.**
+* Set `scmc_cxl_mock_enable: true` to deploy Cognos in mock mode. Mock mode is supported for both `application_server_type` values, **'CMMB'** and **'CMMH'**.
+  * The `cognos-cxl-mock` package is installed on the application servers instead of `cognos-cxl`, so it must be present in the `artifacts/SVK` directory.
+  * In mock mode, the application server services are started but not enabled to start at boot.
 
 ### cognos_install_gui_enabled
 
@@ -304,7 +336,7 @@ Execute this playbook to install required packages and configure and start the n
     * cognos-controller.service
     * cognos-restserver.service
 * **Service started on application servers:**
-    * cmmd_driver.service
+    * cmmh_driver.service
     * cognos-node.service
     * cognos-svc-mgr.service
 
@@ -355,7 +387,7 @@ Run this playbook to automatically gather logs from application and management s
 
 **Collected information includes:**
 
-* All files in the /var/log/cognos directory
+* All files in the /var/log/svk directory
 * dmesg output
 * /var/log/messages* (kernel and system journal messages)
 * journalctl -u cognos-<node/controller/restserver/app/rbac>.service/caddy.service -b, if the service exists
@@ -365,6 +397,11 @@ Run this playbook to automatically gather logs from application and management s
 * ps -auxww (running processes)
 * lsof (depending on the rpms installed)
 * ss -a or netstat -pan (depending on the rpms installed)
+
+**Output location:**
+
+* The collected information from each host is archived as `cognos_logs_<inventory_hostname>_<timestamp>.tar.gz` and copied to the `logs` directory next to your inventory file (`svk_logs_backup_dir`, default `<inventory_dir>/logs`) on the Ansible controller node.
+* The Ansible run output of every playbook is also written to `~/.cognos_ansible.log` on the Ansible controller node (`log_path` in `ansible.cfg`).
 
 ### playbooks/create_ansible_user.yml
 
@@ -378,7 +415,7 @@ The playbook is for **internal use only** and is designed to create users. The p
 
 * Update the variables defined in `roles/create_ansible_user/defaults/main.yml`
   * `create_ansible_user_name`: Defaults to `ansible`, user can specify any other username.
-  * `create_ansible_user_password`: Defaults to the vaule of `{{ vault_ansible_password }}`. If not defined, uses `changeme` as the initial password. User can modify it as they want.
+  * `create_ansible_user_password`: Defaults to the value of `{{ vault_ansible_password }}`. If not defined, uses `changeme` as the initial password. User can modify it as they want.
   * `create_ansible_user_custom_parent_path`: Defaults to `'root'` because `/home` is a mounted directory on MSL Lab machines. Set this to an alternative path as needed. If set to `''` or `/home`, the user's home directory will be set to `/home/{username}`.
 
 **Usage**:
@@ -387,7 +424,7 @@ The playbook is for **internal use only** and is designed to create users. The p
 
     **Note**: The playbook requires the target host to have a `root` account or another account with superuser privileges. Specify the `ansible_user` in the inventory file as `root` or **another account with elevated permissions** before running the playbook.
 
-## Trouble shooting
+## Troubleshooting
 
 **Q1**: Error message: To use the 'ssh' connection type with passwords or pkcs11_provider, you must install the sshpass program
 

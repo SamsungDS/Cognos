@@ -2,7 +2,7 @@
 
 ## Preconditions
 
-Cognos artifacts, cognos ansible playbooks and Ansible Antomation Platform are ready.
+Cognos artifacts, cognos ansible playbooks and Ansible Automation Platform are ready.
 
 ### Local Project deployment on AAP
 
