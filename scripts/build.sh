@@ -14,6 +14,7 @@ PROJECT_ROOT=$(realpath "$SCRIPT_DIR/../")
 BUILD_DIR="$PROJECT_ROOT/build"
 ARTIFACTS_DIR="$BUILD_DIR/artifacts"
 REPORTS_DIR="$BUILD_DIR/reports"
+VENV_DIR=/usr/local/svk/venv/cxl
 
 # Default build options
 RELEASE=false
@@ -122,6 +123,17 @@ parse_options()
       ;;
   esac
   done
+}
+
+activate_venv() {
+    if [[ ! -d $VENV_DIR ]]; then
+        echo "Python virtual environment does not exist!"
+        echo "Execute dependency install script and try again: ./scripts/dependencies/install.sh"
+        exit 1
+    else
+        # shellcheck disable=SC1091
+        source "$VENV_DIR/bin/activate"
+    fi
 }
 
 get_os_version() {
@@ -256,6 +268,7 @@ fi
 parse_options "$@"
 get_os_version
 get_git_version
+activate_venv
 
 echo "Build tests: $BUILD_TESTING"
 echo "Build with code coverage: $WITH_COVERAGE"
@@ -357,7 +370,7 @@ if $WITH_COVERAGE;then
 
   echo "Generating coverage reports"
   # Using path to framework object files
-  /usr/local/bin/gcovr \
+  "${VENV_DIR}"/bin/gcovr \
     --xml "$REPORTS_DIR/gitlab_coverage.xml" \
     --sonarqube "$REPORTS_DIR/sonar_coverage.xml" \
     --txt \

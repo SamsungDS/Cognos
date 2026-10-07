@@ -4,6 +4,12 @@ set -e
 ldconfig
 
 MGMT_DIR="/usr/local/svk/mgmt-fw"
+CXL_VENV_DIR="/usr/local/svk/venv/cxl"
+
+# Remove venv created as part of install
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+rm -rf "${CXL_VENV_DIR}"
+fi
 
 # Only remove during purge
 if [ "$1" = "purge" ]; then

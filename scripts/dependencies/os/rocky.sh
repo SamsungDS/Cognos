@@ -18,14 +18,15 @@ install_packages() {
         boost-devel
         cmake
         diffutils
-	file
+        file
         gcc-c++
         git
         jansson-devel
         numactl
-	numactl-devel
-	python3.11
+        numactl-devel
+        python3.11
         pybind11-devel
+        python3-devel
         python3.11-devel
         python3-pip
         python3-pybind11
@@ -36,9 +37,9 @@ install_packages() {
         unzip
         yaml-cpp-devel
         wget
-	zeromq
-	zeromq-devel
-	pciutils-devel
+        zeromq
+        zeromq-devel
+        pciutils-devel
     )
     package_manager
 }

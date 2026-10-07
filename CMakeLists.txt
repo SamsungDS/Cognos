@@ -145,6 +145,11 @@ install(
 )
 
 install(
+    FILES "scripts/dependencies/python/requirements_deploy.txt"
+    DESTINATION "scripts/dependencies/python"
+)
+
+install(
     FILES "${pkg_config}"
     DESTINATION "${pkgconfig_install_dir}"
 )

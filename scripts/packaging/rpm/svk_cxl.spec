@@ -8,7 +8,7 @@ Release:        1%{?dist}.%svk_os_version
 Summary:        Cognos CXL Plugin
 License:        Samsung Internal
 BuildRequires:  jansson
-Requires:       cognos-core, cognos-mgmt-fw, jansson, pciutils >= 3.10.0, dstat
+Requires:       cognos-core, cognos-mgmt-fw, jansson, pciutils >= 3.10.0, dstat, python3
 Provides:	libmbox_a1_shared.so()(64bit)
 
 %package devel
@@ -34,6 +34,7 @@ Cognos CXL downstream, upstream, and other related header files for app/feature 
 %{!?installpath_tm_config: %global installpath_tm_config /etc/svk}
 %global svk_install_dir %_prefix/local/svk/feature_modules/cxl
 %global svk_build_dir %_topdir/..
+%global cxl_venv_dir /usr/local/svk/venv/cxl
 
 
 # Always installing to /usr/local/svk/cxl for now
@@ -63,6 +64,7 @@ cmake -DWITH_RELEASE=ON -DPKG_CONFIG_PREFIX=%svk_install_dir -DCMAKE_INSTALL_PRE
 %dir %svk_install_dir/
 %svk_install_dir/config
 %svk_install_dir/scripts/cxl_device_info.py
+%svk_install_dir/scripts/dependencies/python/requirements_deploy.txt
 %svk_install_dir/logic_modules
 %{installpath_mgmt}
 %{installpath_mbox}
@@ -107,7 +109,17 @@ for file in input.json cxl.conf cxl_dev_id_map.json log.conf cxl_utils.py; do
   fi
 done
 
+echo "Creating the Python virtualenv ..."
+# venv for damo and tm_gen_config.py
+/usr/bin/python3 -m venv %cxl_venv_dir
+%cxl_venv_dir/bin/python3 -m pip install --upgrade pip
+%cxl_venv_dir/bin/pip3 install -r %svk_install_dir/scripts/dependencies/python/requirements_deploy.txt
+
 %postun
+# Remove venv only on uninstall, not on upgrade
+if [ $1 -eq 0 ]; then
+  rm -rf %cxl_venv_dir
+fi
 rm -f /etc/ld.so.conf.d/svk-cxl-x86_64.conf
 rm -rf /usr/local/lib/cxl_memory_box 
 rm -rf /usr/local/svk/cxl

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#! /usr/local/svk/venv/cxl/bin/python3
 # Copyright (c) 2023-2024 SK hynix, Inc.
 # SPDX-License-Identifier: BSD 2-Clause
 
@@ -105,7 +105,7 @@ def main():
         print("error: Run as root")
         sys.exit(1)
 
-    damo = "/usr/local/bin/damo"
+    damo = "/usr/local/svk/venv/cxl/bin/damo"
     node_jsons = []
 
     common_opts = f"{monitoring_intervals} {monitoring_nr_regions_range}"

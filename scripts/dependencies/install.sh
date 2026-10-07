@@ -6,6 +6,7 @@ set -e
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
 if [[ -e /etc/os-release ]]; then
+    # shellcheck disable=SC1091
 	source /etc/os-release
 else
 	ID=unknown
@@ -17,7 +18,9 @@ export PATH=$PATH:/usr/local/bin:/usr/local/sbin
 for id in $ID $ID_LIKE; do
     if [[ -e $SCRIPT_DIR/os/$id.sh ]]; then
         echo "os: $id"
+        # shellcheck disable=SC1090
         source "$SCRIPT_DIR/os/$id.sh"
+        # shellcheck disable=SC1091
         source "$SCRIPT_DIR/os/common.sh"
         exit 0
     fi

@@ -8,8 +8,8 @@
 #include <vector>
 
 const std::string SVK_CXL_PATH = "/etc/svk/";
-const std::string PM_DAMO_PATH = "/usr/local/bin/damo";
-const std::string PM_DAMO_PYTHON3_PATH = "/usr/bin/python3";
+const std::string PM_DAMO_PATH = "/usr/local/svk/venv/cxl/bin/damo";
+const std::string PM_DAMO_PYTHON3_PATH = "/usr/local/svk/venv/cxl/bin/python3";
 const std::string PM_DAMO_CONFIG_GEN_SCRIPT = "tm_gen_config.py";
 
 using namespace std;

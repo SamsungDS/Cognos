@@ -12,21 +12,22 @@ install_packages() {
         debhelper
         diffutils
         dpkg-dev
-	    file
+        file
         g++
         git
         libboost-dev
         libfmt-dev
         libjansson-dev
-	    libnuma-dev
+        libnuma-dev
         libpci-dev
-	    libspdlog-dev
+        libspdlog-dev
         libssl-dev
         libyaml-cpp-dev
         libzmq3-dev
         net-tools
         pkgconf
-        python3.11
+        python3
+        python3-venv
         pybind11-dev
         python3-dev
         python3-pip
@@ -34,7 +35,7 @@ install_packages() {
         sudo
         tar
         unzip
-        wget 
+        wget
     )
     package_manager
 }

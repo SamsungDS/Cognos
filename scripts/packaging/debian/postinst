@@ -18,4 +18,11 @@ chmod +x /usr/local/svk/feature_modules/cxl/scripts/cxl_device_info.py
 chmod 755 /usr/local/bin/cmmh_driver
 chmod 644 /usr/lib/systemd/system/cmmh_driver.service
 
+# venv for damo and tm_gen_config.py
+CXL_FEATURE_PATH="/usr/local/svk/feature_modules/cxl"
+CXL_VENV_DIR="/usr/local/svk/venv/cxl"
+/usr/bin/python3 -m venv "${CXL_VENV_DIR}"
+"${CXL_VENV_DIR}"/bin/python3 -m pip install --upgrade pip
+"${CXL_VENV_DIR}"/bin/pip3 install -r "${CXL_FEATURE_PATH}"/scripts/dependencies/python/requirements_deploy.txt
+
 exit 0

@@ -7,6 +7,7 @@ For more details, see http://sj-confluence.ssi.samsung.com:8090/display/MPL/High
 ## Supported Build and Runtime Platforms
 - Rockylinux 9
 - Ubuntu 22
+- Ubuntu 24
 - At least 4 CPU Cores with 8GB RAM.
 
 ## Install build dependencies
@@ -53,8 +54,13 @@ dnf install cognos-mgmt-fw-devel -y
 #### Ubuntu
 
 ```bash
+
+source /etc/os-release
+UBUNTU_VER="${VERSION_ID%%.*}"
+
 wget --quiet --output-document /usr/share/keyrings/ssg-nexus.pgp  http://ssg-nexus.msl.lab:8081/repository/svk_common/public.pgp
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ssg-nexus.pgp] http://ssg-nexus.msl.lab:8081/repository/svk_apt_ubuntu22 $(. /etc/os-release && echo $UBUNTU_CODENAME) main" > /etc/apt/sources.list.d/ssg-nexus.list
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ssg-nexus.pgp] http://ssg-nexus.msl.lab:8081/repository/svk_apt_ubuntu${UBUNTU_VER} $(. /etc/os-release && echo $UBUNTU_CODENAME) main" > /etc/apt/sources.list.d/ssg-nexus.list
+
 apt-get update
 apt-get install cognos-core-dev cognos-grpc cognos-go-modules -y
 apt-get install cognos-mgmt-fw -y

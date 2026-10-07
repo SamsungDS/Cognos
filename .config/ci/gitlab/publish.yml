@@ -25,7 +25,8 @@ publish release artifacts - Gitlab:
     - release build
     - simulation build
   rules:
-    - !reference [.default_rules, push_only]
+    # Publish only when changes are merged to main
+    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"
 
 publish release artifacts - Nexus:
   extends: publish release artifacts - Gitlab
@@ -65,4 +66,5 @@ publish release artifacts - Nexus:
     matrix:
       - OS: rocky9
       - OS: ubuntu22
+      - OS: ubuntu24
       - OS: ol10
