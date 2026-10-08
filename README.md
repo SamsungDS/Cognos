@@ -18,9 +18,9 @@ A user should be provisioned on all hosts in the cluster with "NOPASSWD" sudo ac
 Ansible will use this account for all automated configuration.
 The default user is "ansible", and you can change the default user in inventory file.
 
-#### Steps for create an ansible user on each cognos node and ansible controller node
+#### Steps for creating an ansible user on each cognos node and ansible controller node
 
-* Login the system with 'root' or other account has permissions to create user.
+* Login the system with 'root' or other account that has permissions to create user.
 * Create an **ansible** user, assuming that username is ansible
 
         useradd -m -d /custom/path -s /bin/bash ansible
@@ -46,15 +46,20 @@ The default user is "ansible", and you can change the default user in inventory 
         visudo -f /etc/sudoers.d/ansible
         ansible ALL=(ALL) NOPASSWD: /bin/sh,/usr/bin/python,/usr/bin/python3,/usr/bin/dnf install python3-pip
 
-* Repeat the above steps to created an ansible user on each machine
+* Repeat the above steps to create an ansible user on each machine
 
 ### II. Ansible Controller Setup
 
-On a linux host, on the same management network as all hosts in the Cognos cluster, install the version of ansible-core version is >= 2.16.6 and <= 2.18.4,  _**preferably 2.17.4**_.
+On a linux host, on the same management network as all hosts in the Cognos cluster, install an ansible-core version within the supported range, _**preferably 2.17.4**_.
 
-And installed Python version is larger than or equal to 3.10.12.
+The required ansible-core and Python versions depend on the distribution, and are validated at runtime; if they are not met, an assertion fails and Ansible playbook execution is prevented:
 
-The above dependencies will be validated on runtime, and if not met, will fail assertion, preventing Ansible playbook execution.
+| Distribution | ansible-core | Python |
+|--------------|--------------|--------|
+| Ubuntu 22.04 | >= 2.17.4 and <= 2.17.14 | >= 3.10.12 |
+| OEL 10       | >= 2.17.4 and <= 2.17.14 | >= 3.12 |
+
+The above dependencies will be validated on runtime, and if not met, will fail an assertion, preventing Ansible playbook execution.
 
 To install python & ansible, use the following commands (example for OEL10) with **ansible** user:
 
@@ -110,8 +115,8 @@ Your inventory file should contain hosts in the following groups:
 
 * [kernel_upgrade_node]
   * Hosts for conducting the kernel upgrade, the default is upgrade kernel to version 6.11.0.
-  * kernel upgrading will be done on hosts which available capacity >= 29G and current kernel version != 6.11.0, and hosts that do not meet the conditions will be ignored.
-  * **Note:** kernel upgrade module is `only support to Ubuntu` now.
+  * kernel upgrading will be done on hosts whose root partition ('/') available space >= 29G and current kernel version != 6.11.0, and hosts that do not meet the conditions will be ignored.
+  * **Note:** kernel upgrade module is `only support to Ubuntu`.
 
 * [management_server]
   * Hosts running the cognos-management side services, including the following packages:
@@ -143,7 +148,7 @@ Your inventory file should contain hosts in the following groups:
 
         ansible-vault create group_vars/all/passwords.yml
 
-    **Note:** User need to set a vault password (enter twice) for encrypt `group_vars/all/passwords.yml`.
+    **Note:** Users need to set a vault password (enter twice) for encrypt `group_vars/all/passwords.yml`.
 
 3. Enter the following content in **group_vars/all/passwords.yml**, and save it.
 
@@ -322,7 +327,7 @@ Execute this playbook to install required packages and configure and start the n
     * cognos-core
     * cognos-grpc (OEL10 only)
     * cognos-mgmt-fw
-  * management_server
+  * application_server
     * cognos-core
     * cognos-grpc (OEL10 only)
     * cognos-mgmt-fw
@@ -390,7 +395,7 @@ Run this playbook to automatically gather logs from application and management s
 * All files in the /var/log/svk directory
 * dmesg output
 * /var/log/messages* (kernel and system journal messages)
-* journalctl -u cognos-<node/controller/restserver/app/rbac>.service/caddy.service -b, if the service exists
+* journalctl -u cognos-<node/controller/restserver/app/rbac>.service/caddy.service/cmmh_driver.service -b, if the service exists
 * journalctl --list-boots (boot history)
 * uptime (boot details)
 * uname -a (kernel information)

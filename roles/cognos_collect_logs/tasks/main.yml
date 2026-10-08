@@ -190,7 +190,7 @@
   ansible.builtin.shell:
     cmd: |
       set -o pipefail
-      journalctl -u cmmd_driver.service -b > {{ svk_logs_temp_dir }}_{{ inventory_hostname }}/journalctl_cmmd_driver.service.txt
+      journalctl -u cmmh_driver.service -b > {{ svk_logs_temp_dir }}_{{ inventory_hostname }}/journalctl_cmmh_driver.service.txt
       journalctl -u cognos-node.service -b > {{ svk_logs_temp_dir }}_{{ inventory_hostname }}/journalctl_cognos-node.service.txt
       journalctl -u cognos-svc-mgr.service -b > {{ svk_logs_temp_dir }}_{{ inventory_hostname }}/journalctl_cognos-svc-mgr.service.txt
     executable: /bin/bash

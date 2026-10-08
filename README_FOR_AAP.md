@@ -85,10 +85,10 @@ Cognos artifacts, cognos ansible playbooks and Ansible Automation Platform are r
         * Click **Add**.
         * Enter `hostname` to create a new host.
         * Click **Save**
-        * Ensure the toggle to **On** to include this host while running jobs.
-        * Click **Group** tab, click **Add** and then select one of groups name of `application_server` and `management_server`.
+        * Ensure the toggle is **On** to include this host while running jobs.
+        * Click **Group** tab, click **Add** and then select one of group names of `application_server` and `management_server`.
         * Click **Save**.
-        * Click **Back to Hosts**, and repeat the adding hosts steps to add more hosts and bound it to groups.
+        * Click **Back to Hosts**, and repeat the adding hosts steps to add more hosts and bind it to groups.
 
 4. Create an credential
 
@@ -113,25 +113,26 @@ Cognos artifacts, cognos ansible playbooks and Ansible Automation Platform are r
         * **Inventory**: Choose the inventory which is created in **step3**.
         * **Project**: Choose the project which is created in **step2**.
         * **Execution Environment**: Select `Default execution environment`.
-        * **Playbook**: Choose the Choose the playbook to be launched with this job template from the available playbooks.
+        * **Playbook**: Choose the playbook to be launched with this job template from the available playbooks.
             * **For deploy cognos**: select or enter `playbooks/deploy_cognos.yml` from the drop-down list.
             * **For cleanup cognos**: select or enter `playbooks/remove_cognos.yml` from the drop-down list.
+            * The remaining playbooks, e.g. `playbooks/start_cognos.yml`, `playbooks/stop_cognos.yml`, `playbooks/collect_logs_cognos.yml`, and `playbooks/remove_frontend_cognos.yml`, can be created as additional job templates using the same procedure.
         * **Credentials**: Select the credential name which is created in **step4**.
 
     * **Variables**: copy the content from `group_vars/all/all.yml` to this field with 'YAML' format.
 
         * The following variables can be changed according your deployment requirements.
-            * `influxdb_uninstall_flag: false`: the default is `false`. Change to `true` if you want remove influxdb and it's data when cleanup cognos deployment.
+            * `influxdb_uninstall_flag: false`: the default is `false`. Change to `true` if you want remove influxdb and its data when cleanup cognos deployment.
             * `cognos_install_gui_enabled: false`: the default is `false`. Change to `true` if you want deploy SCMC as part of deploy cognos.
             * `cognos_rbac_enabled: true`: the default is `true`. The variable only works in condition of `cognos_install_gui_enabled: true`, `true` means deploy SCMC with RBAC service enabled. If change this value to `false`, the SCMC would be deployed without RBAC.
             * `cognos_certificates_enabled: false`: the default is `false`. `false` means cognos related APIs are work in **http** mode. `true` means cognos Rest APIs are work in both **https** and **http** mode, the SCMC works in **https** mode.
-            * `cognos_cleanup_enable_log_collection: false`:  The default is `false`. `false` means to skip log collection when running the remove_cognos.yml playbook. Change to `true` means collect logs at the start of running the remove_cognos.yml playbook.
+            * `cognos_cleanup_enable_log_collection: false`:  The default is `false`. `false` means to skip log collection when running the remove_cognos.yml playbook. Change to `true` means that logs are collected at the start of running the remove_cognos.yml playbook.
 
     * Click **Save**.
 
 6. Configure job settings
 
-    Automation controller’s use of automation execution environments and Linux containers prevents playbooks from reading files outside of their project directory.
+    Automation controller's use of automation execution environments and Linux containers prevents playbooks from reading files outside of their project directory.
 
     By default, the only data exposed to the ansible-playbook process inside the container is the current project being used.
 
@@ -168,7 +169,7 @@ Cognos artifacts, cognos ansible playbooks and Ansible Automation Platform are r
             "/usr/share/pki:/usr/share/pki:O"
             ]
 
-7. Add **collections_path = ./collections** in `ansible.cfg` file, and **install collections** by run local `ansible-galaxy` command.
+7. Add **collections_path = ./collections** in `ansible.cfg` file, and **install collections** by running local `ansible-galaxy` command.
 
     * Add **collections_path = ./collections** in `ansible.cfg` file on AAP installation host.
 
@@ -178,7 +179,8 @@ Cognos artifacts, cognos ansible playbooks and Ansible Automation Platform are r
             roles_path = roles
             forks = 12
             retry_files_enabled = false
-            stdout_callback = yaml
+            stdout_callback = default
+            result_format = yaml
             log_path = ~/.cognos_ansible.log
             any_errors_fatal = true
             host_key_checking = false
