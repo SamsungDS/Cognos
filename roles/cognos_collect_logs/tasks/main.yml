@@ -4,6 +4,8 @@
   ansible.builtin.file:
     path: "{{ svk_logs_backup_dir }}"
     state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
     mode: '0755'
   delegate_to: localhost
   run_once: true
