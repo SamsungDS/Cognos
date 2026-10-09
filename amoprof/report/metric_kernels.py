@@ -47,6 +47,8 @@ __all__ = [
     "resolve_hbm_breakdown",
     "resolve_l2_residency",
     "kv_movement_bandwidth",
+    "window_counter_delta",
+    "token_reuse_density",
     "tail_ratio",
     "DRAM_SANE_MAX_GBS",
     "sanitize_bandwidth_samples",
@@ -622,8 +624,9 @@ def resolve_hbm_breakdown(hbm: "dict | None" = None,
     The KV pool is sharded across tensor-parallel ranks, so per-GPU figures
     divide by TP.
 
-    Anything left over (`used - weights - kv_pool`) is activations, CUDA
-    context, allocator fragmentation and cuBLAS workspace. It is labelled as a
+    Anything left over (`used - weights - KV resident`, where KV resident is
+    the pool when known, else KV active) is activations, CUDA context,
+    allocator fragmentation and cuBLAS workspace. It is labelled as a
     residual, not as a measured category — attributing it would be invention.
 
     Returns per-GPU GB for each component plus `exact` flags and notes.
@@ -672,10 +675,19 @@ def resolve_hbm_breakdown(hbm: "dict | None" = None,
     if per_gpu_total > 0 and kv_pool_gb > per_gpu_total:
         kv_pool_gb = 0.0
         kv_active_gb = 0.0
+    if per_gpu_total > 0 and kv_active_gb > per_gpu_total:
+        kv_active_gb = 0.0
 
-    residual_gb = max(0.0, per_gpu_used - weights_gb - kv_pool_gb)
+    # KV resident in HBM: the reserved pool when its size is known (the
+    # occupied part sits inside it), otherwise just the occupied part.
+    # Subtracting only the pool left KV-in-use inside the residual whenever
+    # max_total_num_tokens was not exported (pool = 0), so the chart drew the
+    # same KV twice: 31.0 + 35.0 + 50.6 + 97.5 = 214.1 GB on a 179 GB card.
+    # Bands now always sum to used + unallocated = device.
+    kv_resident_gb = kv_pool_gb if kv_pool_gb > 0 else kv_active_gb
+    residual_gb = max(0.0, per_gpu_used - weights_gb - kv_resident_gb)
     free_gb = max(0.0, per_gpu_total - per_gpu_used)
-    over = (weights_gb + kv_pool_gb) > per_gpu_used > 0
+    over = (weights_gb + kv_resident_gb) > per_gpu_used > 0
 
     return {
         "per_gpu_total_gb": per_gpu_total,
@@ -691,7 +703,7 @@ def resolve_hbm_breakdown(hbm: "dict | None" = None,
         "kv_bytes_per_token_kb": kv_kb,
         "tp_size": tp,
         "consistent": not over,
-        "note": ("weights + KV pool exceed measured HBM used — check KV "
+        "note": ("weights + KV exceed measured HBM used — check KV "
                  "bytes/token and TP" if over else ""),
     }
 
@@ -762,6 +774,86 @@ def resolve_l2_residency(hicache_used_tokens: float = 0.0,
 # ---------------------------------------------------------------------------
 # KV movement bandwidth (host-tier estimate when no PMU is available)
 # ---------------------------------------------------------------------------
+
+_RANK_LABELS_RE = re.compile(
+    r"\b(?:tp_rank|pp_rank|moe_ep_rank|attn_tp_rank|ep_rank)=\"?[^,\]\"]*\"?")
+
+
+def window_counter_delta(rows, candidates) -> "float | None":
+    """Window delta of a SGLang token counter from timeseries rows.
+
+    `rows` are dicts keyed by CSV column (`name[label=...]`).  The first
+    candidate substring that matches any column wins.
+
+    Within one metric, TP/PP/EP ranks each count the same tokens (each holds a
+    shard of them), so the max is taken across those rank labels and every
+    other label set (dp_rank, is_streaming, ...) is summed — the rule the
+    Prometheus fetch applies.  Summing every rank reported 8x the tokens on a
+    TP=8 run.  Different metric names are never summed: a run dir can carry
+    sglang_x and hicache_x for one quantity, so one name is chosen, preferring
+    the sglang_ one.
+
+    Returns None when no column matches (unmeasured) and 0.0 when it matched
+    but never moved (measured, idle).
+    """
+    if not rows:
+        return None
+    for k in candidates:
+        cols = [c for c in rows[0]
+                if c and k in c and "bucket" not in c and "_sum" not in c
+                and "_count" not in c]
+        if not cols:
+            continue
+        groups: dict = {}
+        for c in cols:
+            groups.setdefault(c.split("[", 1)[0].strip(), []).append(c)
+        base = next((b for b in (f"sglang_{k}", k) if b in groups), next(iter(groups)))
+        label_sets: dict = {}
+        for c in groups[base]:
+            label_sets.setdefault(_RANK_LABELS_RE.sub("", c), []).append(c)
+        series = []
+        for r in rows:
+            tot, seen = 0.0, False
+            for set_cols in label_sets.values():
+                vals = []
+                for c in set_cols:
+                    try:
+                        v = float(r.get(c) or "nan")
+                    except (TypeError, ValueError):
+                        continue
+                    if v == v:
+                        vals.append(v)
+                if vals:
+                    tot += max(vals)
+                    seen = True
+            if seen:
+                series.append(tot)
+        if len(series) < 2:
+            continue
+        d = series[-1] - series[0]
+        if d < 0:                      # counter reset inside the window
+            d = series[-1]
+        return max(0.0, d)
+    return None
+
+
+def token_reuse_density(reused_tokens: float, computed_tokens: float,
+                        output_tokens: float, kv_bytes_per_token_kb: float) -> dict:
+    """Token_Reuse_Density = reused prompt tokens per GB of KV generated.
+
+    KV generated is the KV that had to be computed in the run: computed prompt
+    tokens plus output tokens (cache-served prompt tokens reuse existing KV).
+    The ticket wrote "÷ total_KV_bytes" with a "> 100 is a good fit for prefix
+    acceleration" threshold; per byte that can never approach 100, so the
+    denominator is GB (1e9 bytes), as agreed with the user.
+    """
+    kv_gen_tokens = max(0.0, float(computed_tokens or 0)) + max(0.0, float(output_tokens or 0))
+    kv_gen_gb = kv_gen_tokens * float(kv_bytes_per_token_kb or 0) * 1024.0 / 1e9
+    density = (float(reused_tokens or 0) / kv_gen_gb) if kv_gen_gb > 0 else 0.0
+    return {"density": density, "kv_generated_tokens": kv_gen_tokens,
+            "kv_generated_gb": kv_gen_gb, "reused_tokens": float(reused_tokens or 0),
+            "good_fit": density > 100.0, "available": kv_gen_gb > 0}
+
 
 def kv_movement_bandwidth(loadback_tokens: float = 0.0,
                           backup_tokens: float = 0.0,

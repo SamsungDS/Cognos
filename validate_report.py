@@ -217,8 +217,33 @@ def validate_html(html: str, label: str) -> Result:
         r.check(empty == 0, "CHARTS no chart drawn with no data",
                 f"{empty}/{len(panels)} empty")
 
+    # HBM composition is a partition of the device: its bands must add up to
+    # the capacity in the chart header.  KV in use was once counted twice,
+    # giving 214.1 GB (119%) on a 179 GB card.
+    i = unesc.find("HBM composition per GPU")
+    if i >= 0:
+        seg = _text(unesc[i:unesc.find("</svg>", i)])
+        cap = re.search(r"used of ([\d.,]+) GB", seg)
+        bands = [float(g.replace(",", ""))
+                 for g in re.findall(r"— ([\d.,]+) GB \(\d+%\)", seg)]
+        if cap and bands:
+            dev = float(cap.group(1).replace(",", ""))
+            # Bands are printed to 0.1 GB, so allow rounding per band.
+            r.check(abs(sum(bands) - dev) <= max(0.06 * len(bands), dev * 0.01),
+                    "CHARTS HBM composition bands sum to device capacity",
+                    f"{' + '.join(f'{b:g}' for b in bands)} = {sum(bands):.1f} GB vs {dev:g} GB")
+
     # ---- CROSSTAB ----------------------------------------------------------
     tabs = _tabs(html)
+    # Latency prints one way, like the KPI tiles (6730 ms): no thousands
+    # separator, no scientific notation.  The Executive tab once showed one
+    # TTFT p50 as 6,730 / 6,730.22 / 6,730.2 / 7.4e+03 beside tiles reading 6730.
+    if "executive" in tabs:
+        ex = _html.unescape(_html.unescape(tabs["executive"]))
+        odd = sorted({m.group(0) for m in re.finditer(
+            r"\b\d{1,3}(?:,\d{3})+(?:\.\d+)? ?ms\b|\b\d\.\d+e[+-]\d+ ?ms\b", ex)})
+        r.check(not odd, "CROSSTAB Executive latencies use the tile format (no comma)",
+                f"{len(odd)} e.g. {', '.join(odd[:3])}")
     if len(tabs) > 1:
         per_tab = {k: {l: v for l, v, _ in _tiles(t)} for k, t in tabs.items()}
         names = [n for n in ("executive", "interactive") if n in per_tab]

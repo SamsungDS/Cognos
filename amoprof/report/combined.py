@@ -205,6 +205,23 @@ def _fmt_num(value: float, suffix: str = "", nd: int = 1) -> str:
     return body + suffix
 
 
+def _is_latency_unit(unit: str) -> bool:
+    return str(unit or "").strip().lower() in ("ms", "ms/tok")
+
+
+def _fmt_latency(value: float, unit: str = "ms", suffix: str = "") -> str:
+    """Latency the way the KPI tiles print it (`_lat_value_text`).
+
+    No thousands separator, whole ms; per-token latency (ms/tok) to 0.1 ms.
+    The Executive tab printed one TTFT p50 five ways — 6,730 / 6,730.22 /
+    6,730.2 / 7.4e+03 against the tiles' 6730 — so every latency on it goes
+    through here.
+    """
+    v = _safe_float(value, 0.0)
+    nd = 1 if str(unit or "").strip().lower() == "ms/tok" else 0
+    return f"{v:.{nd}f}{suffix}"
+
+
 def _ts_col(summary: dict, *names: str) -> dict:
     if not isinstance(summary, dict):
         return {}
@@ -1544,6 +1561,8 @@ try:
         DRAM_SANE_MAX_GBS as _K_DRAM_MAX,
         tail_ratio as _k_tail_ratio,
         kv_movement_bandwidth as _k_kv_movement,
+        window_counter_delta as _k_window_counter_delta,
+        token_reuse_density as _k_token_reuse_density,
         resolve_gpu_hbm as _resolve_gpu_hbm,
         resolve_hbm_breakdown as _k_resolve_hbm_breakdown)
 except Exception:  # pragma: no cover - standalone/bundled execution
@@ -1560,6 +1579,8 @@ except Exception:  # pragma: no cover - standalone/bundled execution
         DRAM_SANE_MAX_GBS as _K_DRAM_MAX,
         tail_ratio as _k_tail_ratio,
         kv_movement_bandwidth as _k_kv_movement,
+        window_counter_delta as _k_window_counter_delta,
+        token_reuse_density as _k_token_reuse_density,
         resolve_gpu_hbm as _resolve_gpu_hbm,
         resolve_hbm_breakdown as _k_resolve_hbm_breakdown)
 
@@ -1711,6 +1732,62 @@ def _amoprof_bucket_columns(path: "Path | None", base: str) -> "list[tuple[float
     return out
 
 
+def _amoprof_bucket_series(path: "Path | None", base: str
+                           ) -> "tuple[list[float], list[tuple[float, list[float]]]]":
+    """Row-aligned cumulative bucket counts, summed per `le` across label sets.
+
+    SGLang exports each histogram once per label set (is_streaming="true" and
+    "false", per rank, ...), so `_amoprof_bucket_columns` returns every `le`
+    more than once.  Treating those as consecutive buckets interleaved two
+    unrelated cumulative series: interpolating between le=X and le=X is a
+    zero-width bucket, so every per-interval quantile landed exactly on a
+    bucket edge (the round 60,000 / 100,000 / 200,000 ms TTFT peaks), and the
+    larger series dominated the monotonic fix-up, pushing quantiles high.
+    Prometheus' histogram_quantile sums by (le) first; so does this.
+
+    Rows stay aligned with the CSV (a dropped NaN row shifted one series
+    against the other).  A series' leading gap is back-filled, so a label set
+    first seen mid-window contributes no history it accumulated before it
+    appeared (as `increase()` treats a new series); interior gaps carry the
+    last value forward.  Returns (time_sec, [(le, counts), ...]) sorted by le.
+    """
+    cols = _amoprof_bucket_columns(path, base)
+    if not cols:
+        return [], []
+    want = {c for _le, c in cols}
+    raw: dict = {c: [] for c in want}
+    times: list[float] = []
+    try:
+        with Path(path).open(encoding="utf-8", errors="replace", newline="") as f:
+            for row in csv.DictReader(f):
+                times.append(_safe_float(row.get("time_sec"), float("nan")))
+                for c in want:
+                    v = row.get(c)
+                    raw[c].append(_safe_float(v, float("nan")) if v not in (None, "") else float("nan"))
+    except Exception:
+        return [], []
+
+    def _filled(vals: list) -> list:
+        first = next((v for v in vals if v == v), None)
+        if first is None:
+            return []
+        out, last = [], first
+        for v in vals:
+            if v == v:
+                last = v
+            out.append(last)
+        return out
+
+    by_le: dict = {}
+    for le, c in cols:
+        filled = _filled(raw[c])
+        if not filled:
+            continue
+        acc = by_le.get(le)
+        by_le[le] = filled if acc is None else [a + b for a, b in zip(acc, filled)]
+    return times, sorted(by_le.items(), key=lambda t: t[0])
+
+
 def _amoprof_histogram_percentiles(path: "Path | None", base: str,
                                    quantiles: "tuple[float, ...]" = (0.5, 0.9, 0.99),
                                    scale: float = 1.0
@@ -1725,13 +1802,10 @@ def _amoprof_histogram_percentiles(path: "Path | None", base: str,
 
     Returns (times, {q: values}). `scale` converts units (e.g. s -> ms).
     """
-    buckets = _amoprof_bucket_columns(path, base)
+    times, buckets = _amoprof_bucket_series(path, base)
     if len(buckets) < 2:
         return [], {q: [] for q in quantiles}
-    cols = ["time_sec"] + [c for _le, c in buckets]
-    raw = _amoprof_read_columns_raw(path, cols)
-    times = raw.get("time_sec", [])
-    series = [raw.get(c, []) for _le, c in buckets]
+    series = [counts for _le, counts in buckets]
     les = [le for le, _c in buckets]
     n = min([len(times)] + [len(v) for v in series]) if series else 0
     out_t: list[float] = []
@@ -1840,12 +1914,10 @@ def _amoprof_histogram_window_percentiles(path: "Path | None", base: str,
     Returns {"p50": v, "p90": v, "p99": v, "observations": n} — empty when no
     requests completed in the window.
     """
-    buckets = _amoprof_bucket_columns(path, base)
+    _times, buckets = _amoprof_bucket_series(path, base)
     if len(buckets) < 2:
         return {}
-    cols = ["time_sec"] + [c for _le, c in buckets]
-    raw = _amoprof_read_columns_raw(path, cols)
-    series = [raw.get(c, []) for _le, c in buckets]
+    series = [counts for _le, counts in buckets]
     les = [le for le, _c in buckets]
     n = min((len(v) for v in series), default=0)
     if n < 2:
@@ -1969,11 +2041,13 @@ def _amoprof_exec_svg_percentile_bars(title: str, subtitle: str, unit: str,
              f'<text x="{pad_l}" y="17" fill="#e2e8f0" font-size="10" font-weight="800">{_html.escape(title)}</text>']
     if subtitle:
         parts.append(f'<text x="{pad_l}" y="29" fill="#94a3b8" font-size="8.5">{_html.escape(subtitle)}</text>')
+    _lat = _is_latency_unit(unit)
     for gi in range(5):
         gy = pad_t + ph * gi / 4.0
+        _gv = vmax * (1 - gi / 4.0)
         parts.append(f'<line x1="{pad_l}" y1="{gy:.1f}" x2="{pad_l+pw}" y2="{gy:.1f}" stroke="#1e293b" stroke-width="1"/>')
         parts.append(f'<text x="{pad_l-6}" y="{gy+3:.1f}" fill="#64748b" font-size="7.5" text-anchor="end">'
-                     f'{_fmt_num(vmax * (1 - gi / 4.0), "", 1)}</text>')
+                     f'{_fmt_latency(_gv, unit) if _lat else _fmt_num(_gv, "", 1)}</text>')
     slot = pw / len(order)
     bw = min(slot * 0.5, 62.0)
     for i, key in enumerate(order):
@@ -1982,10 +2056,12 @@ def _amoprof_exec_svg_percentile_bars(title: str, subtitle: str, unit: str,
         bh = (v / vmax) * ph if vmax > 0 else 0.0
         by = pad_t + ph - bh
         col = colors.get(key, "#38bdf8")
+        _hv = _fmt_latency(v, unit) if _lat else f"{v:,.2f}"
         parts.append(f'<rect x="{cx-bw/2:.1f}" y="{by:.1f}" width="{bw:.1f}" height="{max(bh,1):.1f}" '
-                     f'fill="{col}" rx="3" opacity="0.85"><title>{_html.escape(title.split(' \u2014 ')[0])} {key}: {v:,.2f} {_html.escape(unit)}</title></rect>')
+                     f'fill="{col}" rx="3" opacity="0.85"><title>{_html.escape(title.split(' \u2014 ')[0])} {key}: {_hv} {_html.escape(unit)}</title></rect>')
         parts.append(f'<text x="{cx:.1f}" y="{by-5:.1f}" fill="#f8fafc" font-size="11" font-weight="800" '
-                     f'text-anchor="middle">{_fmt_num(v, "", 1 if v < 100 else 0)}</text>')
+                     f'text-anchor="middle">'
+                     f'{_fmt_latency(v, unit) if _lat else _fmt_num(v, "", 1 if v < 100 else 0)}</text>')
         parts.append(f'<text x="{cx:.1f}" y="{pad_t+ph+15:.1f}" fill="#cbd5e1" font-size="9.5" '
                      f'font-weight="700" text-anchor="middle">{key}</text>')
     if unit:
@@ -2160,7 +2236,8 @@ def _amoprof_exec_svg_layer_response(driver_label: str, driver_unit: str,
                          f'r="2.4" fill="{c}">'
                          f'<title>{_html.escape(sr["label"])}&#10;'
                          f'{_html.escape(driver_label)} = {b[0]:,.1f}&#10;'
-                         f'value = {b[1]:,.2f} {_html.escape(sr.get("unit") or "")}'
+                         f'value = {_fmt_latency(b[1], sr.get("unit")) if _is_latency_unit(sr.get("unit")) else f"{b[1]:,.2f}"} '
+                         f'{_html.escape(sr.get("unit") or "")}'
                          f' ({b[1]/ymax*100:.0f}% of max)</title></circle>')
         nl = " NL" if abs(sr["rho"]) - abs(sr["r"]) > 0.15 else ""
         parts.append(f'<rect x="{L+pw+12}" y="{ly}" width="9" height="3" fill="{c}" rx="1.5"/>')
@@ -2173,7 +2250,7 @@ def _amoprof_exec_svg_layer_response(driver_label: str, driver_unit: str,
         # cannot resolve.  When even the derived ceiling is a placeholder,
         # say the range is unavailable rather than printing a fake number.
         _peak_seen = max((b[1] for b in _bins_ok if b[1] == b[1]), default=0.0)
-        _max_txt = (f'max {_fmt_num(_peak_seen, " " + sr["unit"], 1)}'
+        _max_txt = (f'max {_fmt_latency(_peak_seen, sr["unit"], " " + sr["unit"]) if _is_latency_unit(sr["unit"]) else _fmt_num(_peak_seen, " " + sr["unit"], 1)}'
                     if _peak_seen > 0 else "range unavailable")
         parts.append(f'<text x="{L+pw+25}" y="{ly+13}" fill="#475569" font-size="7.5">'
                      f'{_max_txt}</text>')
@@ -2335,7 +2412,7 @@ def _amoprof_exec_svg_hbm_breakdown(b: dict, width: int = 460,
     if b.get("kv_free_gb"):
         segs.append(("KV pool reserved, free", float(b["kv_free_gb"]), "#166534"))
     if b.get("residual_gb"):
-        segs.append(("Activations / context / frag", float(b["residual_gb"]), "#64748b"))
+        segs.append(("Activations / frag", float(b["residual_gb"]), "#64748b"))
     if b.get("free_gb"):
         segs.append(("Unallocated HBM", float(b["free_gb"]), "#1e293b"))
     if not segs:
@@ -2402,13 +2479,7 @@ def _amoprof_exec_svg_bucket_scatter(sg_path,
     """
     if not sg_path:
         return ""
-    _bcols = _amoprof_bucket_columns(sg_path, base) or []
-    if len(_bcols) < 2:
-        return ""
-    _cols = [_col for _le, _col in _bcols]
-    _raw = _amoprof_read_columns_raw(sg_path, ["time_sec"] + _cols) or {}
-    _time = _raw.get("time_sec") or []
-    _cum = [(le, _raw.get(_col) or []) for le, _col in _bcols]
+    _time, _cum = _amoprof_bucket_series(sg_path, base)
     _cum = [(le, ser) for le, ser in _cum if ser]
     if len(_cum) < 2 or len(_time) < 2:
         return ""
@@ -2626,7 +2697,8 @@ def _amoprof_exec_svg_tier_occupancy(series: list, width: int = 760,
         if mode == "abs":
             _gv = (10 ** (_log_lo + _log_span * (1 - g / 4.0)) if _use_log
                    else _lin_max * (1 - g / 4.0))
-            _lab_y = (f"{_gv:,.0f}" if _gv >= 10 else
+            _lab_y = (_fmt_latency(_gv, unit_label) if _is_latency_unit(unit_label) and _gv >= 10
+                      else f"{_gv:,.0f}" if _gv >= 10 else
                       (f"{_gv:.1f}" if _gv >= 1 else f"{_gv:.2f}"))
         else:
             _lab_y = _fmt_num(vmax * (1 - g / 4.0), "", 0)
@@ -2661,7 +2733,9 @@ def _amoprof_exec_svg_tier_occupancy(series: list, width: int = 760,
                 f'<circle cx="{L+(x["t"][i]-t0)/tr*pw:.1f}" '
                 f'cy="{_yf(x["v"][i]):.1f}" r="4" fill="{c}" opacity="0">'
                 f'<title>{_html.escape(x["label"])}&#10;t = {x["t"][i]:,.0f} s&#10;'
-                + (f'{x["v"][i]:,.3g} {_html.escape(unit_label)}' if mode == "abs"
+                + ((f'{_fmt_latency(x["v"][i], unit_label)} {_html.escape(unit_label)}'
+                    if _is_latency_unit(unit_label) else
+                    f'{x["v"][i]:,.3g} {_html.escape(unit_label)}') if mode == "abs"
                    else f'{x["v"][i]:,.1f}% of {"peak" if yaxis else "capacity"}'
                    if mode == "fill"
                    else f'{x["v"][i]:,.0f} tokens'
@@ -2686,7 +2760,8 @@ def _amoprof_exec_svg_tier_occupancy(series: list, width: int = 760,
                      f'{_html.escape(x["label"])}</text>')
         parts.append(f'<text x="{L+pw+25}" y="{ly+13}" fill="#475569" font-size="7.5">'
                      + ("no finite samples" if _peak != _peak else
-                        f'peak {_peak:,.2f} {_html.escape(unit_label)}'
+                        f'peak {_fmt_latency(_peak, unit_label) if _is_latency_unit(unit_label) else f"{_peak:,.2f}"} '
+                        f'{_html.escape(unit_label)}'
                         if mode == "abs" else
                         f'peak {_peak:.1f}%' + (" of ceiling" if yaxis else " full")
                         if mode == "fill" else
@@ -2694,6 +2769,12 @@ def _amoprof_exec_svg_tier_occupancy(series: list, width: int = 760,
                         + (f' \u00b7 {_peak/x["cap"]*100:.0f}% of cap'
                            if (x.get("cap") and float(x["cap"]) > 0)
                            else " \u00b7 capacity unknown")) + '</text>')
+        # Optional caption for the dashed reference line drawn at "cap" \u2014
+        # e.g. the whole-window percentile behind a per-interval line.
+        if x.get("cap_label") and x.get("cap") and float(x["cap"]) > 0:
+            parts.append(f'<text x="{L+pw+25}" y="{ly+22}" fill="#475569" font-size="7.5">'
+                         f'{_html.escape(str(x["cap_label"]))}</text>')
+            ly += 9
         ly += 22
     # Vertical gridlines + tick labels across the whole window.
     import datetime as _dtm
@@ -3046,16 +3127,12 @@ def _amoprof_build_l3_ssd_exec_visual_analysis_html(
 
 
 def _kv_token_delta(raw_dir, candidates) -> "float | None":
-    """Window delta of a KV-movement token counter, summed across ranks.
+    """Window delta of a SGLang token counter in raw/sglang_timeseries.csv.
 
-    SGLang publishes these once per tp_rank (and per pp/dp rank on larger
-    topologies).  Reading the first matching column took a single rank and
-    under-reported by the parallelism factor — 1,000 against a true 8,000 on a
-    TP=8 deployment.  Sum every matching column per row, then difference.
-
-    Returns None when no column matches (the counter is absent) and 0.0 when
-    it matched but never moved.  Those are different findings: absent means
-    unmeasured, zero means measured and idle.
+    Thin reader over metric_kernels.window_counter_delta, which holds the
+    rank rule (max across TP/PP/EP ranks, sum across other label sets) so the
+    Executive and End Report count tokens identically.  None = counter absent,
+    0.0 = present but idle.
     """
     import csv as _c
     _p = _first_existing(raw_dir, ["sglang_timeseries.csv"])
@@ -3066,45 +3143,9 @@ def _kv_token_delta(raw_dir, candidates) -> "float | None":
             rows = list(_c.DictReader(fh))
     except Exception:
         return None
-    if not rows:
-        return None
-    for k in candidates:
-        cols = [c for c in rows[0]
-                if c and k in c and "bucket" not in c and "_sum" not in c
-                and "_count" not in c]
-        if not cols:
-            continue
-        # Sum across RANKS of one metric, never across different metrics.
-        # A run directory can carry the same quantity under two names
-        # (sglang_prefetched_tokens_total and hicache_prefetched_tokens_total);
-        # summing both reported 2,000 tokens for 1,000.  Group by metric name —
-        # the part before any "[label=...]" suffix — and take one group,
-        # preferring the canonical sglang_ name.
-        _groups: dict = {}
-        for c in cols:
-            _groups.setdefault(c.split("[", 1)[0].strip(), []).append(c)
-        _pref = [f"sglang_{k}", k]
-        _base = next((b for b in _pref if b in _groups), next(iter(_groups)))
-        cols = _groups[_base]
-        series = []
-        for r in rows:
-            tot, seen = 0.0, False
-            for c in cols:
-                try:
-                    v = float(r.get(c) or "nan")
-                except (TypeError, ValueError):
-                    continue
-                if v == v:
-                    tot += v; seen = True
-            if seen:
-                series.append(tot)
-        if len(series) < 2:
-            continue
-        d = series[-1] - series[0]
-        if d < 0:                      # counter reset inside the window
-            d = series[-1]
-        return max(0.0, d)
-    return None
+    return _k_window_counter_delta(rows, candidates)
+
+
 def _amoprof_tier_fill_from_occupancy(occ: "list") -> "dict":
     """Per-tier KV utilization, derived from the tier-occupancy series.
 
@@ -4381,7 +4422,12 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     duration_s  = _safe_float(_pick(blk, ["duration_s","run_duration_s","elapsed_s",
                                             "duration_sec","blktrace_duration_sec"],
                                      _safe_float(_ba_sum.get("duration_sec", 0))))
-    if duration_s <= 0:
+    # Sub-second is not a run window.  A synthesized blktrace summary carried
+    # duration_sec=0.001, which passed a `<= 0` test, and every token-movement
+    # rate below was divided by 1 s instead of the 4,080 s window: the KV
+    # movement tile read 178,259 GB/s for a true ~44 GB/s.
+    if duration_s < 1.0:
+        duration_s = 0.0
         # Prometheus-only and merged reports may not have a blktrace/run summary,
         # but their CSV timelines do have time_sec.  Use the selected-window
         # SGLang/GPU/DRAM span so token-movement rates do not collapse to
@@ -5209,35 +5255,72 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         _lb_rate = _lb_t / _l3_window_s if _l3_window_s > 0 else 0
         _pf_rate = _pf_t / _l3_window_s if _l3_window_s > 0 else 0
         _ev_rate = _ev_t / _l3_window_s if _l3_window_s > 0 else 0
+        # Name the tier that was actually configured: with a
+        # Mooncake backend the backing tier is the AI Memory Node, L3.5 — L3
+        # is the GPU node's local SSD.  Ratios rather than raw counts, so the
+        # finding says what the movement means for this workload.
+        _be = _l3_backend if '_l3_backend' in locals() and _l3_backend is not None else None
+        _tier_long = (_be.display_name if _be and _be.display_name else "L3 backing tier")
+        _tier = _tier_long.split()[0]
+        _is_local = bool(_be and _be.backend_class == "local_ssd")
+        _computed = _kv_token_delta(raw_dir, ["mode=prefill_compute"]) or 0.0
+        _reused = _kv_token_delta(raw_dir, ["mode=prefill_cache"]) or 0.0
+        _output = _kv_token_delta(raw_dir, ["generation_tokens_total"]) or 0.0
+        _prompt = _kv_token_delta(raw_dir, ["prompt_tokens_total"]) or (_computed + _reused)
+        _trd = _k_token_reuse_density(_reused, _computed, _output, kv_bytes_tok_kb)
+        _kv_generated = _trd["kv_generated_tokens"]    # tokens whose KV was newly created
+        _kv_gen_gb = _trd["kv_generated_gb"]
+        _reuse_density = _trd["density"]
+
+        def _pct(a, b):
+            return f"{a / b * 100:.1f}%" if b > 0 else "n/a"
+
+        def _times(a, b):
+            return f"{a / b:.1f}×" if b > 0 else "n/a"
+
         findings_items.append(finding(
-            "L3 ACTIVITY · PROMETHEUS-DERIVED",
-            (f'SGLang counters reveal L3/backing-tier cache activity at token granularity. '
-             f'Physical local block telemetry is shown separately and may be unavailable or not directly comparable. '
-             f'<strong>Backuped to L3:</strong> {_bk_t:,} tokens '
-             f'(≈ {write_gb:.1f} GB at {kv_bytes_tok_kb:.0f} KB/tok) '
-             f'at <strong>{_bk_rate:,.0f} tok/s</strong>. '
-             f'<strong>Load-back tokens:</strong> {_lb_t:,} tokens '
-             f'at <strong>{_lb_rate:,.0f} tok/s</strong> (hierarchy restore diagnostic; not counted as SSD/L3 read bytes). '
-             f'<strong>Prefetched/onboarded from L3:</strong> {_pf_t:,} tokens '
-             f'at <strong>{_pf_rate:,.0f} tok/s</strong>. '
-             f'<strong>Evicted from cache hierarchy:</strong> {_ev_t:,} tokens '
-             f'at <strong>{_ev_rate:,.0f} tok/s</strong>. '
-             f'Estimated directional BW: read {nvme_rd_bw:.1f} MB/s · write {nvme_wr_bw:.1f} MB/s. '
-             + (f'<br><strong>Reconciliation note:</strong> {_html.escape(l3_logical_estimate_note)}. ' if l3_logical_estimate_note else '')
-             + f'<br><br>'
-             + f'<strong>What this CANNOT tell you (need correct block telemetry for):</strong> '
-             f'per-IO latency, request size distribution, queue depth, '
-             f'block-layer merging behavior, hot-LBA regions, or sustained '
-             f'BW peaks within the window. '
-             f'<strong>Action:</strong> if these characteristics matter for '
-             f'your sizing exercise, re-collect with <code>--enable-blktrace</code> '
-             f'next run.'),
-            plain=(f"Even without blktrace, SGLang counters show L3/cache-tier activity: "
-                   f"{_bk_t:,} backuped, {_lb_t:,} L2→L1 load-back restore (diagnostic only), {_pf_t:,} prefetched, "
-                   f"and {_ev_t:,} evicted tokens. Estimated directional traffic is "
-                   f"{write_gb:.1f} GB written and {read_gb:.1f} GB prefetch-read. These byte "
-                   f"numbers are estimates (token × bytes-per-token), not direct disk "
-                   f"measurements. For per-IO latency and queue depth, enable blktrace.")))
+            f"{_tier} ACTIVITY · {_tier_long.split(' ', 1)[1].strip('()').upper() if ' ' in _tier_long else 'BACKING TIER'}",
+            (f'Window totals from SGLang HiCache counters (one count per token; TP ranks are not '
+             f'double-counted). KV generated in the run = {_computed:,.0f} computed prompt + '
+             f'{_output:,.0f} output tokens = <strong>{_kv_generated:,.0f} tokens</strong> '
+             f'(≈ {_kv_gen_gb:,.0f} GB at {kv_bytes_tok_kb:.0f} KB/token).'
+             f'<ul style="margin:6px 0 0 18px;padding:0">'
+             f'<li><strong>Backed up to {_tier}:</strong> {_bk_t:,} tokens = '
+             f'<strong>{_pct(_bk_t, _kv_generated)} of the KV generated</strong>. '
+             + ('Close to 100% means write-through: nearly every new KV block is copied to '
+                f'{_tier}, which costs {_tier} write bandwidth whether or not it is reused.'
+                if _kv_generated > 0 and _bk_t / _kv_generated > 0.8 else
+                f'Only part of the new KV reaches {_tier}; the rest is dropped on eviction.')
+             + '</li>'
+             f'<li><strong>{_tier} value-add — prefetched from {_tier}:</strong> {_pf_t:,} tokens = '
+             f'<strong>{_pct(_pf_t, _reused)} of the {_reused:,.0f} reused (cache-hit) prompt tokens</strong>, '
+             f'i.e. prefill that {_tier} saved from recompute. '
+             f'The {_lb_t:,} L2→L1 load-back tokens are restores from host DRAM (L2), not from {_tier}: '
+             f'they show how often KV evicted from HBM was still in L2 '
+             f'({_times(_lb_t, _reused)} the reused tokens; above 1× means the same KV was restored more than once).</li>'
+             f'<li><strong>Evicted from HBM:</strong> {_ev_t:,} tokens = '
+             f'<strong>{_times(_ev_t, _prompt + _output)} the {_prompt + _output:,.0f} tokens processed</strong>. '
+             + ('Each token\'s KV left HBM more than once on average: HBM is too small for the working set, '
+                'so reuse depends on L2 and ' + _tier + '.'
+                if (_prompt + _output) > 0 and _ev_t > (_prompt + _output) else
+                'Eviction is below the token volume, so most KV stayed resident in HBM.')
+             + '</li>'
+             f'<li><strong>Token_Reuse_Density:</strong> <strong>{_reuse_density:,.0f}</strong> reused tokens per GB '
+             f'of KV generated ({_reused:,.0f} ÷ {_kv_gen_gb:,.0f} GB). '
+             + (f'Above 100: a good fit for prefix-prefetch acceleration (Cognos).'
+                if _reuse_density > 100 else
+                f'Below 100: limited prefix reuse, so prefix acceleration has little to work with.')
+             + '</li></ul>'
+             + (f'<strong>Reconciliation note:</strong> {_html.escape(l3_logical_estimate_note)}. ' if l3_logical_estimate_note else '')
+             + (f'Per-IO latency, queue depth and hot-LBA regions of the local SSD need block telemetry: '
+                f're-collect with <code>--enable-blktrace</code> if they matter for sizing.'
+                if _is_local else '')),
+            plain=(f"{_tier_long}: {_bk_t:,} tokens backed up = {_pct(_bk_t, _kv_generated)} of the "
+                   f"{_kv_generated:,.0f} KV tokens generated; {_pf_t:,} prefetched from {_tier} = "
+                   f"{_pct(_pf_t, _reused)} of reused prompt tokens; {_lb_t:,} L2→L1 load-back are host-DRAM restores; "
+                   f"{_ev_t:,} evicted = {_times(_ev_t, _prompt + _output)} the tokens processed. "
+                   f"Token_Reuse_Density {_reuse_density:,.0f} reused tokens/GB KV "
+                   f"({'good' if _reuse_density > 100 else 'limited'} fit for prefix acceleration).")))
     elif l3_traffic_source == "none":
         # NO L3 data from any source. Don't leave the user wondering — be
         # explicit about what was checked and what was found. The user
@@ -5766,10 +5849,16 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # version and disagreed on the unit (1024**2 vs 1e9 — 7.4% apart on the
     # same inputs), which is exactly the divergence the kernel layer exists
     # to prevent.
+    # The token deltas are endpoint differences of sglang_timeseries.csv
+    # (_kv_token_delta), so divide by that series' own span rather than a
+    # window another collector reported.
+    _kv_move_window_s = _safe_float((sglang_ts.get("time_sec") or {}).get("delta", 0)) \
+        if isinstance(sglang_ts, dict) else 0.0
     _kv_move = _k_kv_movement(
         loadback_tokens=loadback_tokens, backup_tokens=backuped_tokens,
         prefetch_tokens=prefetched_tokens,
-        kv_bytes_per_token_kb=kv_bytes_tok_kb, window_s=max(duration_s, 1.0))
+        kv_bytes_per_token_kb=kv_bytes_tok_kb,
+        window_s=_kv_move_window_s if _kv_move_window_s >= 1.0 else max(duration_s, 1.0))
     _kv_move_restore_gbs = _kv_move["restore_gbs"]
     _kv_move_backup_gbs = _kv_move["backup_gbs"]
     _kv_move_prefetch_gbs = _kv_move["prefetch_gbs"]
@@ -6884,12 +6973,15 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                     break
             _tail = (_k_tail_ratio(_mean_v, _pw.get('p50', 0.0))
                      if _mean_v > 0 else {})
+            def _fv(v, _u=_p_unit):
+                return (_fmt_latency(v, _u, " " + _u) if _is_latency_unit(_u)
+                        else _fmt_num(v, " " + _u, 1))
             _pctl_rows.append(
                 f"<b>{_html.escape(_p_disp)}</b> "
-                f"p50 {_fmt_num(_pw.get('p50', 0), ' ' + _p_unit, 1)} · "
-                f"p90 {_fmt_num(_pw.get('p90', 0), ' ' + _p_unit, 1)} · "
-                f"p99 {_fmt_num(_pw.get('p99', 0), ' ' + _p_unit, 1)}"
-                + (f" \u00b7 mean {_fmt_num(_mean_v, ' ' + _p_unit, 1)} "
+                f"p50 {_fv(_pw.get('p50', 0))} · "
+                f"p90 {_fv(_pw.get('p90', 0))} · "
+                f"p99 {_fv(_pw.get('p99', 0))}"
+                + (f" \u00b7 mean {_fv(_mean_v)} "
                    f"(<b>{_tail['ratio']:.1f}x</b> p50 \u2014 {_tail['label']})"
                    if _tail.get("ratio", 0) > 0 else ""))
         for _r_title, _r_vals, _r_unit in _RATE_PCTL_SPECS:
@@ -7101,14 +7193,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 ("TPOT percentiles over the run", "inter_token_latency_seconds", "ms/tok", 1000.0),
                 ("E2E latency percentiles over the run", "e2e_request_latency_seconds", "ms", 1000.0),
                 ("Queue wait percentiles over the run", "queue_time_seconds", "ms", 1000.0)):
-            _bcols = _amoprof_bucket_columns(_sg_path, _pt_base) if _sg_path else []
-            if len(_bcols) < 3:
-                continue
-            _bser = []
-            for _le, _col in _bcols:
-                _v = _amoprof_read_columns_raw(_sg_path, [_col]).get(_col, [])
-                if _v:
-                    _bser.append((_le, _v))
+            _bt, _bser = _amoprof_bucket_series(_sg_path, _pt_base) if _sg_path else ([], [])
             if len(_bser) < 3:
                 continue
             _pq = _k_bucket_pctls(_bser)
@@ -7119,17 +7204,41 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             # interval it ENDS at.  Aligning by position instead would put
             # every value on the wrong time.
             _idx = _pq.get("_index") or []
-            _pt_t = [_sg_time[i] for i in _idx
-                     if _sg_time and 0 <= i < len(_sg_time)]
+            _pt_t = [_bt[i] for i in _idx if 0 <= i < len(_bt)]
+            # Whole-window percentiles, drawn as a dashed line behind each
+            # per-interval line.  A line of interval medians need not centre on
+            # the run's median — every bin counts once however many requests it
+            # holds — so without the reference the two charts read as
+            # contradicting each other.  Same source as the distribution card
+            # (Prometheus histogram_quantile over the range), falling back to
+            # the same buckets this chart is built from.
+            _ww_keys = {
+                "time_to_first_token_seconds": "server_ttft",
+                "inter_token_latency_seconds": "server_itl",
+                "e2e_request_latency_seconds": "server_e2e",
+            }.get(_pt_base)
+            _ww = {}
+            if _ww_keys:
+                _ww = {q: _safe_float(_pick(sglang, [f"{_ww_keys}_p{int(q*100)}_ms"], 0), 0)
+                       for q in (0.5, 0.9, 0.99)}
+                if not all(v > 0 for v in _ww.values()):
+                    _ww = {}
+            if not _ww:
+                _wwp = _amoprof_histogram_window_percentiles(
+                    _sg_path, _pt_base, (0.5, 0.9, 0.99), _pt_scale)
+                _ww = {q: _wwp.get(f"p{int(q*100)}", 0.0) for q in (0.5, 0.9, 0.99)} if _wwp else {}
             _pt_series = []
             for _q, _col in ((0.5, "#38bdf8"), (0.9, "#f59e0b"), (0.99, "#ef4444")):
                 _vals = [v * _pt_scale if v == v else float("nan")
                          for v in _pq.get(_q, [])]
                 _n_pt = min(len(_vals), len(_pt_t))
                 if _n_pt >= 2 and any(v == v and v > 0 for v in _vals[:_n_pt]):
+                    _ref = _ww.get(_q, 0.0)
                     _pt_series.append({"tier": "L1", "label": f"p{int(_q*100)}",
                                        "t": _pt_t[:_n_pt], "v": _vals[:_n_pt],
-                                       "cap": 0, "color": _col})
+                                       "cap": _ref if _ref > 0 else 0, "color": _col,
+                                       "cap_label": (f"run p{int(_q*100)} {_fmt_latency(_ref, _pt_unit)} {_pt_unit} (dashed)"
+                                                     if _ref > 0 else "")})
             # A quantile that sits in the open-ended top bucket is reported at
             # the last finite boundary.  That value is a lower bound, not a
             # measurement, and printing it as "80,000.00 ms" implies a
@@ -7144,15 +7253,15 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                              if _le == _le and _le != float("inf")})
             _on_edge = sorted({v for _sr in _pt_series for v in _sr["v"]
                                if v == v and any(abs(v - e) < 1e-6 for e in _edges)})
-            _pt_sub = ("per-interval quantiles from \u0394histogram buckets "
-                       "\u00b7 bins widened until each holds \u226510 completions, "
-                       "so points are unevenly spaced")
+            _pt_sub = ("per-interval quantiles from \u0394histogram buckets (summed across "
+                       "label sets) \u00b7 bins widened until each holds \u226510 completions, "
+                       "so points are unevenly spaced \u00b7 dashed = whole-run percentile")
             if _on_edge:
-                _w = next((f"{_edges[_i] - _edges[_i-1]:,.0f}"
+                _w = next((_fmt_latency(_edges[_i] - _edges[_i-1], _pt_unit)
                            for _i, e in enumerate(_edges)
                            if _i and abs(e - _on_edge[-1]) < 1e-6), "")
                 _pt_sub += (f" \u00b7 values on a bucket boundary "
-                            f"(e.g. {_on_edge[-1]:,.0f} {_pt_unit}) are edges of a "
+                            f"(e.g. {_fmt_latency(_on_edge[-1], _pt_unit)} {_pt_unit}) are edges of a "
                             + (f"{_w} {_pt_unit}-wide bucket" if _w else "histogram bucket")
                             + ": the underlying value lies within that bucket")
             else:
@@ -7249,7 +7358,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 ]
                 if not _hbm_bd.get("consistent"):
                     _bd_notes.append(
-                        "<b style='color:#fca5a5'>Inconsistent</b> — weights + KV pool "
+                        "<b style='color:#fca5a5'>Inconsistent</b> — weights + KV "
                         "exceed measured HBM used. Most often KV bytes/token is "
                         "overstated (sliding-window attention is not modelled) or TP "
                         "is wrong. Treat the split as indicative until it reconciles.")

@@ -464,6 +464,54 @@ def _pct_json_value(pct_ts: dict, metric_key: str, percentile: str = "p50") -> f
         return 0.0
 
 
+def _window_quantile_ms(rows: list[dict[str, Any]], base: str, q: float) -> float:
+    """Whole-window histogram_quantile(q) in ms from `{base}_bucket` columns.
+
+    Mirrors Prometheus: each label set's bucket counter is differenced over
+    the window (first to last finite sample), summed by `le`, and the quantile
+    is interpolated linearly inside the containing bucket; a quantile in the
+    +Inf bucket returns the highest finite `le`.  Returns 0.0 when the
+    histogram is absent or saw no completions.
+    """
+    if not rows:
+        return 0.0
+    by_le: dict[float, float] = {}
+    for col in rows[0]:
+        low = (col or "").lower()
+        if "_bucket" not in low or base.lower() not in low:
+            continue
+        m = re.search(r'le\s*=\s*"?\+?([^",\]}\s]+)', col)
+        if not m:
+            continue
+        raw = m.group(1)
+        le = math.inf if raw.lower().startswith("inf") else _safe_float(raw, math.nan)
+        if le != le:
+            continue
+        vals = [v for v in (_safe_float(r.get(col), math.nan) for r in rows) if v == v]
+        if len(vals) >= 2:
+            by_le[le] = by_le.get(le, 0.0) + max(0.0, vals[-1] - vals[0])
+    if len(by_le) < 2:
+        return 0.0
+    les = sorted(by_le)
+    cum, run = [], 0.0
+    for le in les:                          # cumulative counts never decrease
+        run = max(run, by_le[le])
+        cum.append(run)
+    total = cum[-1]
+    if total <= 0:
+        return 0.0
+    target = q * total
+    prev_le, prev_c = 0.0, 0.0
+    for le, c in zip(les, cum):
+        if c >= target:
+            if le == math.inf:
+                return prev_le * 1000.0
+            frac = (target - prev_c) / (c - prev_c) if c > prev_c else 1.0
+            return (prev_le + (le - prev_le) * frac) * 1000.0
+        prev_le, prev_c = le, c
+    return 0.0
+
+
 def _summary_first(summary: dict, *keys: str) -> float:
     for k in keys:
         v = _safe_float(summary.get(k), 0.0)
@@ -1084,19 +1132,31 @@ def compute_common_kpis(raw_dir: Path) -> dict[str, Any]:
         or _summary_first(summary, "server_e2e_ms", "e2e_ms", "mean_e2e_ms")
     )
 
-    # Percentile values from histogram_quantile-generated percentile file first.
+    # p50 = the median of the WHOLE window: Prometheus histogram_quantile over
+    # the range (server_*_p50_ms), else the same quantile from the window's
+    # bucket deltas.  The percentile file holds one rolling-window p50 per
+    # step, and its mean (the old first choice) is a different statistic —
+    # on the Sep 8 gemma run it gave TTFT p50 13,786 ms against a true
+    # 6,730 ms, so the End Report disagreed with the Executive tab.
+    # It is kept only as a last resort for run dirs with neither source.
     out["ttft_p50_ms"] = (
-        _pct_json_value(pct_ts, "ttft", "p50")
-        or _summary_first(summary, "server_ttft_p50_ms", "ttft_p50_ms", "sess_ttft_p50_ms")
+        _summary_first(summary, "server_ttft_p50_ms")
+        or _window_quantile_ms(rows, "time_to_first_token_seconds", 0.5)
+        or _summary_first(summary, "ttft_p50_ms", "sess_ttft_p50_ms")
+        or _pct_json_value(pct_ts, "ttft", "p50")
     )
     out["tpot_p50_ms"] = (
-        _pct_json_value(pct_ts, "itl", "p50")
+        _summary_first(summary, "server_itl_p50_ms", "server_tpot_p50_ms")
+        or _window_quantile_ms(rows, "inter_token_latency_seconds", 0.5)
+        or _summary_first(summary, "tpot_p50_ms", "sess_tpot_p50_ms")
+        or _pct_json_value(pct_ts, "itl", "p50")
         or _pct_json_value(pct_ts, "tpot", "p50")
-        or _summary_first(summary, "server_itl_p50_ms", "server_tpot_p50_ms", "tpot_p50_ms", "sess_tpot_p50_ms")
     )
     out["e2e_p50_ms"] = (
-        _pct_json_value(pct_ts, "e2e", "p50")
-        or _summary_first(summary, "server_e2e_p50_ms", "e2e_p50_ms", "sess_e2e_p50_ms")
+        _summary_first(summary, "server_e2e_p50_ms")
+        or _window_quantile_ms(rows, "e2e_request_latency_seconds", 0.5)
+        or _summary_first(summary, "e2e_p50_ms", "sess_e2e_p50_ms")
+        or _pct_json_value(pct_ts, "e2e", "p50")
     )
 
     # Throughput: keep mean / p50 / peak from one canonical source.

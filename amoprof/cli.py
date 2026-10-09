@@ -793,8 +793,12 @@ def report_filename(raw_dir: Path, report_type: str,
 
     gcfg, sinfo, setup = _load("gpu_config.json"), _load("server_info.json"), _load("setup_details.json")
 
-    node = (setup.get("Host") or setup.get("host") or setup.get("Hostname")
-            or gcfg.get("hostname") or "")
+    # "Host" in setup_details is often SGLang's --host bind address
+    # (0.0.0.0), which says nothing about the node; skip such values.
+    _bind_addrs = {"0.0.0.0", "::", "[::]", "127.0.0.1", "::1", "localhost"}
+    node = next((str(v) for v in (setup.get("Host"), setup.get("host"),
+                                  setup.get("Hostname"), gcfg.get("hostname"))
+                 if v and str(v).strip().lower() not in _bind_addrs), "")
     if not node:
         try:
             import socket as _socket
@@ -897,8 +901,34 @@ def _copy_setup_details(args, raw_dir: Path) -> None:
         return
     dst = raw_dir / "setup_details.json"
     if dst.exists() and not bool(getattr(args, "setup_details_override", False)):
-        log.info("setup_details.json already exists, likely from SGLang server_info; "
-                 "manual --setup-details kept as fallback. Use --setup-details-override to replace it.")
+        # Keep existing values, but fill any key they lack from the manual
+        # file.  Returning here without merging dropped --setup-details
+        # entirely: in prom-only analyze the existing file is often just the
+        # {Model, Model path} stub written by _apply_explicit_model_to_setup,
+        # so TP size fell back to the Prometheus tp_rank lower bound (1) and
+        # the Interactive "HBM used (all GPUs)" tile showed one GPU's HBM
+        # (33.1 GB) while Executive showed TP=8's 264.8 GB.
+        try:
+            existing = json.loads(dst.read_text(encoding="utf-8")) or {}
+        except Exception:
+            existing = {}
+        if not isinstance(existing, dict):
+            existing = {}
+
+        def _missing(v) -> bool:
+            return v is None or str(v).strip().lower() in {
+                "", "unknown", "none", "nan", "null", "n/a", "—", "-"}
+
+        filled = [k for k, v in payload.items() if _missing(existing.get(k)) and not _missing(v)]
+        if filled:
+            existing.update({k: payload[k] for k in filled})
+            try:
+                dst.write_text(json.dumps(existing, indent=2, default=str), encoding="utf-8")
+                log.info("setup_details.json already exists; filled %d missing field(s) from "
+                         "--setup-details %s. Use --setup-details-override to replace it.",
+                         len(filled), src)
+            except Exception as e:
+                log.warning("setup details merge failed: %s", e)
         return
     try:
         shutil.copyfile(src, dst)

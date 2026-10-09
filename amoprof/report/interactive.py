@@ -3254,9 +3254,12 @@ def build_report(raw_dir: Path, out_html: Path,
         _ttft_pct = _pct_ts_latency_ms(pct_ts, "ttft", "p50")
         _itl_pct  = _pct_ts_latency_ms(pct_ts, "itl", "p50")
         _e2e_pct  = _pct_ts_latency_ms(pct_ts, "e2e", "p50")
-        _ttft_p50_ms = _ttft_pct or float(sglang_sum.get('server_ttft_p50_ms', 0) or 0)
-        _itl_p50_ms  = _itl_pct  or float(sglang_sum.get('server_itl_p50_ms', 0) or sglang_sum.get('server_tpot_p50_ms', 0) or 0)
-        _e2e_p50_ms  = _e2e_pct  or float(sglang_sum.get('server_e2e_p50_ms', 0) or 0)
+        # Whole-window histogram_quantile first.  _*_pct is the mean of a
+        # rolling-window p50 series — a different statistic (TTFT
+        # p50 13,786 ms vs the run's 6,730 ms) — kept only as a fallback.
+        _ttft_p50_ms = float(sglang_sum.get('server_ttft_p50_ms', 0) or 0) or _ttft_pct
+        _itl_p50_ms  = float(sglang_sum.get('server_itl_p50_ms', 0) or sglang_sum.get('server_tpot_p50_ms', 0) or 0) or _itl_pct
+        _e2e_p50_ms  = float(sglang_sum.get('server_e2e_p50_ms', 0) or 0) or _e2e_pct
         _tp_p50 = _active_p50_from_rows(sglang_ts, "gen_throughput") or float(sglang_sum.get('gen_tp_p50', sglang_sum.get('gen_tp_active_p50', 0)) or 0)
         _ttft_ms_kpi = _ttft_delta or _ttft_pct or (sglang_sum.get('server_ttft_ms') or sglang_sum.get('server_ttft_p50_ms') or 0)
         _itl_ms_kpi  = _itl_delta  or _itl_pct  or (sglang_sum.get('server_itl_ms') or sglang_sum.get('server_itl_p50_ms') or 0)
@@ -3499,27 +3502,10 @@ def build_report(raw_dir: Path, out_html: Path,
                 return idx
         return 800
 
-    # Prometheus-derived per-request percentiles (server-side ground truth)
-    # — present when analyze ran with --prometheus AND the SGLang scrape
-    # exposes histogram bucket metrics.
-    if sglang_sum and sglang_sum.get("server_ttft_p99_ms") is not None:
-        p50 = sglang_sum.get("server_ttft_p50_ms", 0)
-        p99 = sglang_sum.get("server_ttft_p99_ms", 0)
-        kpis.append(_kpi_tile(
-            "Server TTFT (Prom)", f"{p50/1000:.1f}",
-            "s P50", f"P99 {p99/1000:.1f}s · histogram_quantile"))
-    if sglang_sum and sglang_sum.get("server_itl_p99_ms") is not None:
-        p50 = sglang_sum.get("server_itl_p50_ms", 0)
-        p99 = sglang_sum.get("server_itl_p99_ms", 0)
-        kpis.append(_kpi_tile(
-            "Server ITL (Prom)", f"{p50:.0f}",
-            "ms P50", f"P99 {p99:.0f}ms · histogram_quantile"))
-    if sglang_sum and sglang_sum.get("server_e2e_p99_ms") is not None:
-        p50 = sglang_sum.get("server_e2e_p50_ms", 0)
-        p99 = sglang_sum.get("server_e2e_p99_ms", 0)
-        kpis.append(_kpi_tile(
-            "Server E2E (Prom)", f"{p50/1000:.1f}",
-            "s P50", f"P99 {p99/1000:.1f}s · histogram_quantile"))
+    # "Server TTFT / ITL / E2E (Prom)" tiles removed: they repeated
+    # the TTFT / TPOT / E2E p50 tiles above from the same histogram_quantile
+    # source, in different units.  The p50/p90/p99 tails remain in the
+    # Server TTFT / ITL / E2E percentile charts.
 
     # Bench-summary KPIs (per-request percentile stats)
     if bench:

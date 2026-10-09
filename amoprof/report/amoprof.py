@@ -44,13 +44,17 @@ try:
         counter_delta as _k_counter_delta, window_rate as _k_window_rate,
         window_seconds as _k_window_seconds, ratio_delta as _k_ratio_delta,
         rate_series_with_time as _k_rate_with_time,
-        resolve_kv_bytes_per_token as _k_resolve_kv)
+        resolve_kv_bytes_per_token as _k_resolve_kv,
+        window_counter_delta as _k_window_counter_delta,
+        token_reuse_density as _k_token_reuse_density)
 except Exception:  # pragma: no cover - standalone/bundled execution
     from metric_kernels import (  # type: ignore
         counter_delta as _k_counter_delta, window_rate as _k_window_rate,
         window_seconds as _k_window_seconds, ratio_delta as _k_ratio_delta,
         rate_series_with_time as _k_rate_with_time,
-        resolve_kv_bytes_per_token as _k_resolve_kv)
+        resolve_kv_bytes_per_token as _k_resolve_kv,
+        window_counter_delta as _k_window_counter_delta,
+        token_reuse_density as _k_token_reuse_density)
 
 # amoprof.py is also run directly as a script (python .../report/amoprof.py),
 # in which case `amoprof` resolves to this module rather than to the package
@@ -200,40 +204,44 @@ def _amoprof_gpu_util_decomposition(gpu_util_samples: "list | tuple | None",
     }
 
 
-def _amoprof_storage_label_cleanup(html_text: str, l3_backend_class: str = "") -> str:
-    """Normalize visible L3/L3.5 labels consistently.
+# Backend resolved for the run being rendered; set where Metrics.l3_backend_class
+# is assigned so fig_to_b64 (which gets only the figure) can relabel images.
+_CHART_TIER: dict = {"backend_class": ""}
 
-    Report convention:
-      * L3   = local SSD/NVMe/file-backed cache tier.
-      * L3.5 = AI Memory Node / remote/shared/disaggregated backing tier, or
-               unresolved logical SGLang backing-tier movement when no local
-               SSD/block mapping exists.
 
-    The resolver passes backend_class='local_ssd' only for local SSD.  All other
-    classes use L3.5 wording so a remote AI Memory Node run is never shown as
-    local SSD L3.  Base64 image payloads are protected before text replacement.
+def _relabel_figure_tiers(fig) -> None:
+    """Apply the report's L3/L3.5 tier wording to every text in a figure."""
+    if not _CHART_TIER.get("backend_class"):
+        return
+    pairs = list(_l3_tier_replacements(_CHART_TIER["backend_class"]).items())
+    try:
+        from matplotlib.text import Text as _Text
+    except Exception:
+        return
+    for t in fig.findobj(_Text):
+        s = t.get_text()
+        if not s or "L3" not in s and "SSD" not in s and "NVMe" not in s:
+            continue
+        new = s
+        for a, b in pairs:
+            new = new.replace(a, b)
+        new = new.replace("L3.5.5", "L3.5")
+        if new != s:
+            t.set_text(new)
+
+
+def _l3_tier_replacements(l3_backend_class: str = "") -> dict:
+    """Tier relabelling map shared by the HTML pass and the chart images.
+
+    `_amoprof_storage_label_cleanup` rewrites L3 wording in the report text,
+    but labels drawn inside a PNG are beyond its reach, so a Mooncake run
+    read "KV$ L3.5 (AI Memory Node)" in the heading above an image titled
+    "KV$ L3 (local storage)".  `fig_to_b64` applies this same map
+    to every text artist, so headings and images always agree.
     """
-    if not html_text:
-        return html_text
-
-    data_uri_re = re.compile(r'data:image/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=\s]+')
-    protected_payloads: list[str] = []
-
-    def _stash_data_uri(match: re.Match) -> str:
-        protected_payloads.append(match.group(0))
-        return f"__AMOPROF_DATA_URI_{len(protected_payloads) - 1}__"
-
-    html_text = data_uri_re.sub(_stash_data_uri, html_text)
-
     is_local = (str(l3_backend_class or "").lower() == "local_ssd")
     tier = "L3" if is_local else "L3.5"
     tier_long = "L3 (SSD/local storage)" if is_local else "L3.5 (AI Memory Node / remote storage)"
-
-    # Collapse prior accidental repeated L3.5 decorations.
-    html_text = re.sub(
-        r'(L3\.5 \(AI Memory Node / remote storage\))(?:\.5 \(AI Memory Node / remote storage\))+',
-        r'\1', html_text)
-
     if is_local:
         replacements = {
             "L3.5 (AI Memory Node / remote storage)": tier_long,
@@ -282,6 +290,41 @@ def _amoprof_storage_label_cleanup(html_text: str, l3_backend_class: str = "") -
             "NVMe read BW": "L3.5 storage read BW",
             "NVMe Read BW": "L3.5 storage read BW",
         }
+    return replacements
+
+
+def _amoprof_storage_label_cleanup(html_text: str, l3_backend_class: str = "") -> str:
+    """Normalize visible L3/L3.5 labels consistently.
+
+    Report convention:
+      * L3   = local SSD/NVMe/file-backed cache tier.
+      * L3.5 = AI Memory Node / remote/shared/disaggregated backing tier, or
+               unresolved logical SGLang backing-tier movement when no local
+               SSD/block mapping exists.
+
+    The resolver passes backend_class='local_ssd' only for local SSD.  All other
+    classes use L3.5 wording so a remote AI Memory Node run is never shown as
+    local SSD L3.  Base64 image payloads are protected before text replacement.
+    """
+    if not html_text:
+        return html_text
+
+    data_uri_re = re.compile(r'data:image/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=\s]+')
+    protected_payloads: list[str] = []
+
+    def _stash_data_uri(match: re.Match) -> str:
+        protected_payloads.append(match.group(0))
+        return f"__AMOPROF_DATA_URI_{len(protected_payloads) - 1}__"
+
+    html_text = data_uri_re.sub(_stash_data_uri, html_text)
+
+
+    # Collapse prior accidental repeated L3.5 decorations.
+    html_text = re.sub(
+        r'(L3\.5 \(AI Memory Node / remote storage\))(?:\.5 \(AI Memory Node / remote storage\))+',
+        r'\1', html_text)
+
+    replacements = _l3_tier_replacements(l3_backend_class)
     for a, b in replacements.items():
         html_text = html_text.replace(a, b)
 
@@ -1420,6 +1463,146 @@ def _prom_query_instant(base_url: str, metric: str,
         return []
 
 
+# ── AMOprof service per-cycle aggregation ───────────────────────────────────
+# The service exports each collector's summary for its LATEST completed cycle
+# as gauges (amoprof_<collector>_<key>); a cycle is ~30-50 s, so a 1 h window
+# holds ~80 of them.  Reading the gauge "now" (an instant query) reported the
+# live service rather than the analysed window, and different runs of the same
+# window disagreed.  These rules fold every cycle inside the window into one
+# value per key.  Per-cycle quantities are measured collector start -> stop,
+# so they sum; lifetime device counters take the last value.
+_CYCLE_SUM_EXACT = frozenset({"samples", "oom_kills", "swap_pages_total"})
+_CYCLE_SUM_SUFFIXES = (
+    "_samples", "_events", "_energy_wh", "_transactions_total", "_faults_total",
+    "_written_gb", "_delta_gb", "_rows_total", "_elapsed_s", "_miss_count",
+    "_loads_count", "_binary_bytes", "_total_bytes", "_bytes_gb",
+)
+_CYCLE_LAST_EXACT = frozenset({
+    "ssd_power_cycles", "ssd_unsafe_shutdowns", "ssd_media_errors", "ssd_lifetime_tbw",
+})
+# (ratio key, numerator key, denominator key): recomputed from summed parts.
+_CYCLE_RATIOS = (
+    ("waf", "nand_written_gb", "host_written_gb"),
+    ("ssd_waf", "ssd_nand_written_gb", "ssd_host_written_gb"),
+)
+
+
+def _cycle_agg_rule(key: str, config: bool = False) -> str:
+    """How one service-summary key combines across cycles."""
+    if config:
+        return "last"
+    if key == "collection_start_time_seconds":
+        return "first"
+    if key == "collection_end_time_seconds":
+        return "last"
+    if key == "collection_duration_s":
+        return "sum"
+    if key in _CYCLE_LAST_EXACT or re.search(r"(^|_)end(_|$)", key):
+        return "last"
+    if re.search(r"(^|_)start(_|$)", key):
+        return "first"
+    if "peak" in key or key.endswith(("_max", "_available")) or key.startswith("max_"):
+        return "max"
+    if key.endswith("_min") or key.startswith("min_"):
+        return "min"
+    if key in _CYCLE_SUM_EXACT or key.endswith(_CYCLE_SUM_SUFFIXES):
+        return "sum"
+    if re.search(r"(^|_)p\d{2,3}(_|$)", key):
+        return "pctl"      # no exact merge exists; duration-weighted mean
+    return "mean"
+
+
+def _aggregate_service_cycles(rows, win_start: float, win_end: float,
+                              config: bool = False) -> "tuple[dict, dict]":
+    """Fold per-cycle amoprof service gauges into one window summary.
+
+    `rows` is an iterable of (epoch_ts, key, value) for ONE instance, where key
+    is the metric name with its amoprof_<collector>_ prefix removed.  Samples
+    sharing a timestamp come from one snapshot; `collection_start_time_seconds`
+    identifies the cycle.  A cycle belongs to the window when its midpoint does.
+
+    Returns (summary, meta).  Without cycle ids every sample in the window is
+    weighted equally (a time-weighted mean) and summed keys are omitted rather
+    than published with a scrape-count multiplier.
+    """
+    by_ts: dict = {}
+    for ts, key, val in rows:
+        try:
+            v = float(val)
+        except (TypeError, ValueError):
+            continue
+        if v == v:
+            by_ts.setdefault(float(ts), {})[key] = v
+
+    has_ids = any("collection_start_time_seconds" in s for s in by_ts.values())
+    picked: list = []                       # (sort key, weight, snapshot)
+    if has_ids:
+        cycles: dict = {}
+        for ts in sorted(by_ts):
+            snap = by_ts[ts]
+            cid = snap.get("collection_start_time_seconds")
+            if cid is not None:
+                cycles.setdefault(cid, snap)
+        for cid, snap in cycles.items():
+            dur = snap.get("collection_duration_s")
+            if not dur or dur <= 0:
+                dur = snap.get("collection_end_time_seconds", cid) - cid
+            dur = dur if dur and dur > 0 else 0.0
+            if win_start <= cid + dur / 2.0 <= win_end:
+                picked.append((cid, dur or 1.0, snap))
+    else:
+        picked = [(ts, 1.0, s) for ts, s in by_ts.items() if win_start <= ts <= win_end]
+    picked.sort(key=lambda p: p[0])
+
+    out: dict = {}
+    approx: list = []
+    keys = sorted({k for _, _, s in picked for k in s})
+    for key in keys:
+        vals = [(w, s[key]) for _, w, s in picked if key in s]
+        rule = _cycle_agg_rule(key, config)
+        if rule == "sum" and not has_ids:
+            continue
+        if rule == "first":
+            out[key] = vals[0][1]
+        elif rule == "last":
+            out[key] = vals[-1][1]
+        elif rule == "max":
+            out[key] = max(v for _, v in vals)
+        elif rule == "min":
+            out[key] = min(v for _, v in vals)
+        elif rule == "sum":
+            out[key] = sum(v for _, v in vals)
+        else:
+            wsum = sum(w for w, _ in vals)
+            out[key] = sum(w * v for w, v in vals) / wsum if wsum > 0 else vals[-1][1]
+            if rule == "pctl":
+                approx.append(key)
+
+    if not config:
+        for ratio, num, den in _CYCLE_RATIOS:
+            if ratio in out and num in out and den in out:
+                out[ratio] = round(out[num] / out[den], 3) if out[den] > 0.01 else 0.0
+        # tokens/Wh per cycle, weighted by that cycle's energy = sum(tok)/sum(Wh).
+        if "power_efficiency_tok_per_wh" in out:
+            pairs = [(s.get("total_system_energy_wh", 0.0), s["power_efficiency_tok_per_wh"])
+                     for _, _, s in picked if "power_efficiency_tok_per_wh" in s]
+            e_sum = sum(e for e, _ in pairs)
+            if e_sum > 0:
+                out["power_efficiency_tok_per_wh"] = round(sum(e * r for e, r in pairs) / e_sum, 2)
+
+    meta = {
+        "_source": "amoprof_service_prom_window",
+        "_window_start": win_start,
+        "_window_end": win_end,
+        "_cycles": len(picked) if has_ids else 0,
+        "_aggregation": ("per-cycle, duration-weighted" if has_ids else
+                         "time-weighted samples (no cycle ids; summed keys omitted)"),
+    }
+    if approx:
+        meta["_approximate_keys"] = ",".join(approx)
+    return out, meta
+
+
 def _prom_metrics_for_selector(base_url: str, selector: str) -> list[str]:
     """Metric names actually present under a label selector.
 
@@ -1958,19 +2141,29 @@ def collect_from_prometheus_api(
         ]:
             if _has(name):
                 # KV movement counters carry one series per tp_rank (and per
-                # pp/dp rank on larger topologies).  Fetching them unaggregated
-                # leaves the caller to pick one series, which under-reports by
-                # the parallelism factor — a prefetch total read 8x low on a
-                # TP=8 deployment.  Sum these; leave gauges alone, since
-                # summing an occupancy gauge across ranks is meaningless.
-                _SUM_ACROSS_RANKS = {
+                # pp/dp rank on larger topologies).  Tensor/pipeline-parallel
+                # ranks each hold a shard of the SAME tokens, so each counts
+                # them: on the Sep 8 TP=8 run prefetched_tokens_total read
+                # exactly 3,512,089 on all eight ranks.  Summing them reported
+                # 8x the tokens (backup 248.6M for 31.1M) and inflated every
+                # rate and byte figure built on them.  Data-parallel ranks
+                # serve different requests, so: max over the TP/PP/EP rank
+                # labels, then sum the rest (dp_rank, ...).  Gauges are left alone.
+                _TOKENS_ACROSS_RANKS = {
                     "sglang_evicted_tokens_total",
                     "sglang_backuped_tokens_total",
                     "sglang_load_back_tokens_total",
                     "sglang_prefetched_tokens_total",
                     "sglang_cached_tokens_total",
                 }
-                df = _qr(name, agg="sum" if name in _SUM_ACROSS_RANKS else "")
+                if name in _TOKENS_ACROSS_RANKS:
+                    _inner = _actual_metric(name) + (selector or "")
+                    df = _prom_query_range(
+                        base, "sum(max without (tp_rank, pp_rank, moe_ep_rank, "
+                              f"attn_tp_rank, ep_rank) ({_inner}))",
+                        t_start, t_end, step_s)
+                else:
+                    df = _qr(name)
                 if not df.empty:
                     sg_dfs[name] = df
 
@@ -2481,57 +2674,50 @@ def collect_from_prometheus_api(
                 _by_target.setdefault(_target, {})
                 _bucket_prefix[_target] = _pfx
 
-            # Instant query — service metrics are already per-cycle aggregates,
-            # so the latest sample IS the current mean/peak/etc.  Avoid
-            # rewriting existing collector files.
+            # Window-bounded, never "now".  Each gauge holds the latest
+            # completed cycle's summary, so read every cycle published for
+            # the window and fold them (_aggregate_service_cycles).  An
+            # instant query here returned the live service's values: two
+            # runs of one historical window got 22 vs 16 summary files.
+            # The query runs past t_end so the last cycle — published only
+            # once it completes — is seen; inclusion is by cycle midpoint.
+            # Step is fine enough that a ~30 s cycle is never skipped.
+            _cyc_pad_s = 300.0
+            _cyc_step = max(5, int((t_end + _cyc_pad_s - t_start) / 10000) + 1)
+            _cyc_inner = (_amoprof_sel or "").strip().strip("{}").strip()
+            _config_targets = {"gpu_config.json", "model_config.json",
+                               "server_config_summary.json"}
             for _target, _bucket in _by_target.items():
                 _pfx = _bucket_prefix[_target]
-                _hits = 0
-                _range_probed = 0
-                for _m in _amoprof_service_metrics:
-                    if not _m.startswith(_pfx):
-                        continue
-                    # First try an instant query — service metrics are
-                    # per-cycle aggregates, so the latest sample IS the
-                    # value we want.  If nothing lands (metric scraped
-                    # during the run window but not right now, or the
-                    # exporter briefly missed a scrape at analyze time),
-                    # fall back to a range query bounded by the run
-                    # window and take the last non-NaN sample.  Without
-                    # this, a summary file goes unwritten even though the
-                    # metric has plenty of samples inside the window.
-                    _samples = _prom_query_instant(base,
-                                                    _m + (_amoprof_sel or ""))
-                    _v_pick: "float | None" = None
-                    for _s in _samples:
-                        try:
-                            _vf = float(_s.get("value"))
-                        except (TypeError, ValueError):
-                            continue
-                        if _vf != _vf:
-                            continue
-                        _v_pick = _vf
-                        break
-                    if _v_pick is None:
-                        try:
-                            _df_r = _qr(_m, force_selector=(_amoprof_sel or ""))
-                        except Exception:
-                            _df_r = None
-                        if _df_r is not None and not _df_r.empty:
-                            _vals = [float(x) for x in _df_r["value"].tolist()
-                                     if x == x]
-                            if _vals:
-                                _v_pick = _vals[-1]
-                                _range_probed += 1
-                    if _v_pick is None:
-                        continue
-                    _bucket[_m[len(_pfx):]] = _v_pick
-                    _hits += 1
+                # Prefixes are [a-z0-9_] only, so no regex escaping needed.
+                _expr = ('{__name__=~"' + _pfx + '.*"'
+                         + (", " + _cyc_inner if _cyc_inner else "") + "}")
+                _df_c = _prom_query_range(base, _expr, t_start, t_end + _cyc_pad_s,
+                                          step=_cyc_step)
+                if _df_c is None or _df_c.empty or "__name__" not in _df_c.columns:
+                    _df_c = pd.DataFrame()
+                else:
+                    _df_c = _df_c[_df_c["__name__"].map(_classify) == _pfx]
+                if not _df_c.empty and "instance" in _df_c.columns:
+                    _insts = sorted(_df_c["instance"].dropna().unique())
+                    if len(_insts) > 1:
+                        print(f"  [warn] {_target}: amoprof series from {len(_insts)} "
+                              f"instances {_insts}; using {_insts[0]}. Pass "
+                              f"--prom-instance to pin the analysed node.")
+                        _df_c = _df_c[_df_c["instance"] == _insts[0]]
+                _rows = ([] if _df_c.empty else
+                         zip((_df_c["time_sec"] + t_start).tolist(),
+                             _df_c["__name__"].str.slice(len(_pfx)).tolist(),
+                             _df_c["value"].tolist()))
+                _agg, _agg_meta = _aggregate_service_cycles(
+                    _rows, t_start, t_end, config=_target in _config_targets)
+                _bucket.update(_agg)
+                _hits = len(_agg)
                 if _bucket:
                     _tgt_path = _out_dir_path / _target
                     _tgt_path.parent.mkdir(parents=True, exist_ok=True)
                     _bucket_out = dict(_bucket)
-                    _bucket_out.setdefault("_source", "amoprof_service_prom_fallback")
+                    _bucket_out.update(_agg_meta)
                     try:
                         _tgt_path.write_text(
                             json.dumps(_bucket_out, indent=2, default=str),
@@ -6507,6 +6693,13 @@ class Metrics:
     # kv_l35_available is False when no capacity is exported, in which case the
     # percentages must render as "—" and not 0%.
     kv_l35_available: bool = False     # True only when a capacity denominator exists
+    # Token_Reuse_Density — reused prompt tokens per GB of KV generated.
+    # Counts from metric_kernels.window_counter_delta so they match the Executive tab.
+    reuse_reused_tokens: float = 0.0
+    reuse_computed_tokens: float = 0.0
+    reuse_output_tokens: float = 0.0
+    reuse_kv_generated_gb: float = 0.0
+    token_reuse_density: float = 0.0
     kv_l35_fill_pct: float = 0.0       # active-sample mean fill % (idle excluded)
     kv_l35_fill_pct_peak: float = 0.0  # peak fill % over the window
     kv_l35_fill_pct_timeline: float = 0.0  # all-sample mean (diagnostic)
@@ -7300,6 +7493,7 @@ def extract_metrics(data: dict) -> Metrics:
         _l3_res = None
     if _l3_res is not None:
         m.l3_backend_class = _l3_res.backend_class
+        _CHART_TIER["backend_class"] = m.l3_backend_class
         m.l3_backend_display = _l3_res.display_name
         m.l3_backend_evidence = _l3_res.evidence
         m.l3_has_local_block_mapping = bool(_l3_res.has_local_block_mapping)
@@ -7352,8 +7546,13 @@ def extract_metrics(data: dict) -> Metrics:
         )
 
     # fall back to finding model name in timeseries column headers
-    m.run_duration_s = float(sg.get("server_e2e_ms", 0) / 1000 or
-                             data.get("power_summary", {}).get("power_elapsed_s", 0) or
+    # Provisional; the analysed window's own timeseries span overrides this
+    # below.  server_e2e_ms used to come first here — the MEAN REQUEST
+    # LATENCY (78.7 s) taken as the run length (4,080 s), which drew every
+    # End Report timeline over 1.3 minutes and skewed every
+    # per-second rate.  power_elapsed_s sums collector cycles, which have
+    # gaps, so it under-reads the window too (3,052 s of 4,080 s).
+    m.run_duration_s = float(data.get("power_summary", {}).get("power_elapsed_s", 0) or
                              data.get("bpf_summary", {}).get("bpf_duration_s", 0))
     # Wall-clock anchor — stored in summary.json by both live collect and analyze paths
     _meta = data.get("meta", data)
@@ -7488,9 +7687,13 @@ def extract_metrics(data: dict) -> Metrics:
             })
         except Exception:
             pass
-        if m.run_duration_s <= 0 and "time_sec" in sg_ts_fallback.columns:
+        if "time_sec" in sg_ts_fallback.columns:
+            # The window's own span is the run length; collector-reported
+            # durations are only a fallback for runs without a timeseries.
             try:
-                m.run_duration_s = float(sg_ts_fallback["time_sec"].iloc[-1] - sg_ts_fallback["time_sec"].iloc[0])
+                _span = float(sg_ts_fallback["time_sec"].iloc[-1] - sg_ts_fallback["time_sec"].iloc[0])
+                if _span > 0:
+                    m.run_duration_s = _span
             except Exception:
                 pass
 
@@ -8465,6 +8668,22 @@ def extract_metrics(data: dict) -> Metrics:
 
     m.kv_l1_fill_pct        = round(l1_used / l1_cap * 100, 1) if l1_cap > 0 else 0
     m.kv_l2_fill_pct        = round(l2_used / l2_cap * 100, 1) if l2_cap > 0 else 0
+
+    # ── Token_Reuse_Density ────────────────────────────────────────
+    # Same kernels and counters as the Executive L3.5 finding, so both tabs
+    # print the same number.  Computed here for the same reason as L3.5 below.
+    if isinstance(sg_ts_df, pd.DataFrame) and not sg_ts_df.empty:
+        try:
+            _rows = sg_ts_df.to_dict("records")
+            m.reuse_reused_tokens = _k_window_counter_delta(_rows, ["mode=prefill_cache"]) or 0.0
+            m.reuse_computed_tokens = _k_window_counter_delta(_rows, ["mode=prefill_compute"]) or 0.0
+            m.reuse_output_tokens = _k_window_counter_delta(_rows, ["generation_tokens_total"]) or 0.0
+            _trd = _k_token_reuse_density(m.reuse_reused_tokens, m.reuse_computed_tokens,
+                                          m.reuse_output_tokens, m.kv_bytes_per_token_kb)
+            m.reuse_kv_generated_gb = _trd["kv_generated_gb"]
+            m.token_reuse_density = _trd["density"]
+        except Exception:
+            pass
 
     # ── L3.5 fill (AI Memory Node / remote KV store) ──────────────────────────
     # Computed here rather than only in main() so every entry point that builds
@@ -9604,6 +9823,7 @@ def extract_metrics(data: dict) -> Metrics:
         if (m.kvb_l3_storage_observed and str(m.l3_backend_class).lower() in {"", "none", "unknown"}
                 and not bool(getattr(m, "l3_has_local_block_mapping", False))):
             m.l3_backend_class = "remote_storage"
+            _CHART_TIER["backend_class"] = m.l3_backend_class
             m.l3_backend_display = "L3.5 (AI Memory Node / remote storage)"
             m.l3_backend_evidence = "derived from SGLang logical backup/prefetch movement without local SSD mapping"
             m.l3_storage_type = m.l3_backend_display
@@ -11396,6 +11616,168 @@ def score_bottlenecks(m: Metrics) -> list[dict]:
 
 # ── Chart generation ──────────────────────────────────────────────────────────
 
+def _token_reuse_density_html(m: "Metrics") -> str:
+    """Token_Reuse_Density row for the AI Operation Phase Analysis card.
+
+    The baseline metric for prefix-prefetch acceleration: how many reused
+    prompt tokens each GB of newly generated KV supports.  > 100 means the
+    workload repeats prefixes enough to benefit from prefix acceleration.
+    """
+    if not (m.reuse_kv_generated_gb and m.reuse_kv_generated_gb > 0):
+        return ('<div style="margin-top:12px;font-size:12px;color:#64748b">'
+                '<b style="color:#0f172a">Token_Reuse_Density:</b> unavailable — needs '
+                'prefill_cache / prefill_compute token counters and KV bytes/token.</div>')
+    d = m.token_reuse_density
+    good = d > 100
+    col = "#15803d" if good else "#b45309"
+    verdict = ("Indicates good KV cache re-use" if good else
+               "limited prefix reuse — prefix acceleration has little to work with")
+    return (
+        '<div style="margin-top:12px;background:#f1f5f9;border:1px solid #e2e8f0;'
+        'border-radius:8px;padding:10px 14px;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap">'
+        '<span style="font-size:12px;font-weight:700;color:#0f172a;text-transform:uppercase;'
+        'letter-spacing:1px">Token_Reuse_Density</span>'
+        f'<span style="font-size:24px;font-weight:900;color:{col};font-family:monospace">{d:,.0f}</span>'
+        '<span style="font-size:12px;color:#64748b">reused tokens per GB of KV generated · '
+        f'<b style="color:{col}">{"&gt; 100" if good else "&le; 100"}: {verdict}</b><br>'
+        f'{m.reuse_reused_tokens:,.0f} reused prompt tokens ÷ {m.reuse_kv_generated_gb:,.0f} GB KV '
+        f'({m.reuse_computed_tokens:,.0f} computed prompt + {m.reuse_output_tokens:,.0f} output tokens '
+        f'× {m.kv_bytes_per_token_kb:,.0f} KB/token)</span></div>')
+
+
+def _is_time_axis(ax) -> bool:
+    xl = ax.get_xlabel() or ""
+    return xl.startswith("Wall-clock time") or xl.startswith("Time (")
+
+
+def _span_full_window(fig) -> None:
+    """Every timeline shows the whole analysed window, not just its data.
+
+    A collector with a few seconds of samples drew a 0.14-minute axis on a
+    105-minute run, so charts side by side covered different
+    periods.  Time axes start at 0 and end at the window length recorded by
+    `_time_xlabel`; data beyond the window still widens the axis.
+    """
+    wc = getattr(fig, "_amoprof_wallclock", None)
+    if not isinstance(wc, dict) or not wc.get("dur_s"):
+        return
+    span = float(wc["dur_s"]) / (60.0 if str(wc.get("unit", "min")) == "min" else 1.0)
+    for ax in fig.axes:
+        try:
+            if not _is_time_axis(ax):
+                continue
+            x0, x1 = ax.dataLim.x0, ax.dataLim.x1
+            lo = min(0.0, x0) if _np_isfinite(x0) else 0.0
+            hi = max(span, x1) if _np_isfinite(x1) else span
+            ax.set_xlim(lo, hi)
+        except Exception:
+            pass
+
+
+def _np_isfinite(v) -> bool:
+    try:
+        return math.isfinite(float(v))
+    except (TypeError, ValueError):
+        return False
+
+
+def _place_outside_legend(fig, host, group, leg, labels) -> None:
+    """Put `leg` beside the plot's decorations, or below it if there is no room.
+
+    Anchored past everything the axes draw — a twin axis's tick labels and
+    label included — rather than at the axes edge, which put the legend on top
+    of the right-hand y-axis.  When another subplot sits to the right, this
+    plot is narrowed by at most 40% to make room; beyond that it would crush
+    the data (bar labels collided), so the legend goes underneath instead.
+    """
+    renderer = fig.canvas.get_renderer()
+    fig.canvas.draw()
+
+    def deco_right_px():
+        return max(a.get_tightbbox(renderer, bbox_extra_artists=[]).x1 for a in group)
+
+    def anchor_beside():
+        fig.canvas.draw()
+        x = host.transAxes.inverted().transform((deco_right_px() + 6, 0))[0]
+        leg.set_bbox_to_anchor((x, 1.0), transform=host.transAxes)
+
+    pos = host.get_position()
+    ids = {id(a) for a in group}
+    neighbour = any(
+        id(o) not in ids and o.get_position().x0 >= pos.x1 - 1e-6
+        and o.get_position().y0 < pos.y1 and o.get_position().y1 > pos.y0
+        for o in fig.axes)
+    anchor_beside()
+    if not neighbour:
+        return
+    inv = fig.transFigure.inverted()
+    fig.canvas.draw()
+    leg_right = inv.transform((leg.get_window_extent(renderer).x1, 0))[0]
+    need = leg_right - pos.x1 + 0.01               # figure fraction to free up
+    if need <= pos.width * 0.40:
+        for a in group:
+            p = a.get_position()
+            a.set_position([p.x0, p.y0, p.width - need, p.height])
+        anchor_beside()
+        return
+    # Not enough room beside: legend below the plot, in columns.
+    fig.canvas.draw()
+    bottom = min(a.get_tightbbox(renderer, bbox_extra_artists=[]).y0 for a in group)
+    y = host.transAxes.inverted().transform((0, bottom - 4))[1]
+    leg.remove()
+    host.legend(leg.legend_handles if hasattr(leg, "legend_handles") else leg.legendHandles,
+                labels, loc="upper center", bbox_to_anchor=(0.5, y),
+                ncol=min(len(labels), 3), borderaxespad=0.0, frameon=False,
+                fontsize=leg.get_texts()[0].get_fontsize() if leg.get_texts() else 8)
+
+
+def _legends_outside(fig) -> None:
+    """Move legends drawn over the plot area to the right of the axes.
+
+    Most charts placed their legend inside the axes, on top of the data.
+    Axes sharing a position (twinx/twiny pairs) get one merged
+    legend so they do not stack on each other.  Legends already anchored
+    outside, and figure-level legends, are left alone.  The figure is saved
+    with bbox_inches="tight", so the legend is kept in the image.
+    """
+    groups: dict = {}
+    for ax in fig.axes:
+        leg = ax.get_legend()
+        if leg is None:
+            continue
+        try:
+            anchor = leg.get_bbox_to_anchor().bounds
+            if tuple(round(v, 3) for v in anchor) != tuple(round(v, 3) for v in ax.bbox.bounds):
+                continue                      # explicitly anchored: keep
+        except Exception:
+            continue
+        key = tuple(round(v, 4) for v in ax.get_position().bounds)
+        groups.setdefault(key, []).append((ax, leg))
+    for members in groups.values():
+        handles, labels = [], []
+        fontsize = None
+        for ax, leg in members:
+            try:
+                hs = getattr(leg, "legend_handles", None) or getattr(leg, "legendHandles", [])
+                for h, t in zip(hs, leg.get_texts()):
+                    if t.get_text() not in labels:
+                        handles.append(h)
+                        labels.append(t.get_text())
+                fontsize = fontsize or leg.get_texts()[0].get_fontsize()
+            except Exception:
+                pass
+            leg.remove()
+        if not handles:
+            continue
+        host = members[-1][0]                 # last-created axis draws on top
+        new_leg = host.legend(handles, labels, loc="upper left", bbox_to_anchor=(1.01, 1.0),
+                              borderaxespad=0.0, frameon=False, fontsize=fontsize or 8)
+        try:
+            _place_outside_legend(fig, host, [a for a, _ in members], new_leg, labels)
+        except Exception:
+            pass
+
+
 def fig_to_b64(fig, dpi: int = 110) -> str:
     import numpy as _np
     # Auto-apply wall-clock tick labels to every axis whose x-axis label
@@ -11437,6 +11819,9 @@ def fig_to_b64(fig, dpi: int = 110) -> str:
             except Exception:
                 pass
 
+    _relabel_figure_tiers(fig)
+    _span_full_window(fig)
+    _legends_outside(fig)
     buf = io.BytesIO()
     with _np.errstate(divide='ignore', invalid='ignore'):
         fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight", pad_inches=0.28,
@@ -11571,10 +11956,16 @@ def _time_xlabel(m: "Metrics", unit: str = "min") -> str:
       t0 set, single-day window             → "Wall-clock time (UTC)  |  18:59 – 20:31 UTC"
       t0 set, multi-day window (≥ 2d)       → "Wall-clock time (UTC)  |  Jul 24 18:59 – Jul 31 20:31 UTC"
     """
+    dur = max(float(getattr(m, "run_duration_s", 0) or 0), 1.0)
     if not m.t0_epoch or m.t0_epoch < 1_000_000_000:
+        # No wall clock, but the window length is still known: stamp it so
+        # fig_to_b64 spans the whole run on the time axis.
+        try:
+            plt.gcf()._amoprof_wallclock = {"t0_epoch": 0.0, "dur_s": dur, "unit": unit}
+        except Exception:
+            pass
         return f"Time ({unit})"
     from datetime import datetime, timezone
-    dur = max(float(getattr(m, "run_duration_s", 0) or 0), 1.0)
     # ≥ 2 days → include date so labels are unambiguous across day boundaries.
     _fmt = ("%b %d %H:%M UTC" if dur >= 2 * 86400
              else ("%H:%M UTC" if unit == "min" else "%H:%M:%S UTC"))
@@ -14433,9 +14824,15 @@ def chart_capacity_timeline(m: "Metrics") -> str:
     if not have_any:
         return ""
 
+    # Name the third tier after the configured backend.  Labels
+    # drawn inside the PNG are out of reach of the HTML tier relabelling
+    # pass, so this chart said "L3 SSD" even on a Mooncake (L3.5) run.
+    _local = str(getattr(m, "l3_backend_class", "") or "").lower() == "local_ssd"
+    _t3 = "L3" if _local else "L3.5"
+    _t3_name = "L3 SSD" if _local else "L3.5 AI Memory Node"
     fig, axes = plt.subplots(2, 2, figsize=(13, 8.2))
     fig.patch.set_facecolor("#ffffff")
-    fig.suptitle("Cache-tier Capacity Timeline — L1 HBM / L2 DRAM / L3 SSD",
+    fig.suptitle(f"Cache-tier Capacity Timeline — L1 HBM / L2 DRAM / {_t3_name}",
                  fontsize=12, fontweight="bold", color="#0f172a", y=1.01)
 
     def _style(ax):
@@ -14463,7 +14860,7 @@ def chart_capacity_timeline(m: "Metrics") -> str:
                 transform=ax.transAxes, ha="center", va="center",
                 color="#94a3b8", fontsize=10)
     ax.set_ylabel("L1 HBM fill (%)", fontsize=9)
-    ax.set_xlabel("Time (min)", fontsize=9)
+    ax.set_xlabel(_time_xlabel(m), fontsize=9)
     ax.set_title("L1 HBM — KV pool fill %", fontsize=10, fontweight="bold")
 
     # (0,1) L2 DRAM fill % — used/total from HiCache host
@@ -14500,7 +14897,7 @@ def chart_capacity_timeline(m: "Metrics") -> str:
                 transform=ax.transAxes, ha="center", va="center",
                 color="#94a3b8", fontsize=10)
     ax.set_ylabel("L2 DRAM fill (%)", fontsize=9)
-    ax.set_xlabel("Time (min)", fontsize=9)
+    ax.set_xlabel(_time_xlabel(m), fontsize=9)
     ax.set_title("L2 DRAM — HiCache host fill %", fontsize=10, fontweight="bold")
 
     # (1,0) L3 SSD fill — snapshot(s). df-based used_gb is typically one
@@ -14524,11 +14921,11 @@ def chart_capacity_timeline(m: "Metrics") -> str:
                 fontsize=11, color="#0f172a")
         ax.set_xticks([]); ax.set_yticks([])
     else:
-        ax.text(0.5, 0.5, "L3 HiCache capacity not available",
+        ax.text(0.5, 0.5, f"{_t3} HiCache capacity not available",
                 transform=ax.transAxes, ha="center", va="center",
                 color="#94a3b8", fontsize=10)
         ax.set_xticks([]); ax.set_yticks([])
-    ax.set_title("L3 SSD — HiCache fill snapshot", fontsize=10, fontweight="bold")
+    ax.set_title(f"{_t3_name} — HiCache fill snapshot", fontsize=10, fontweight="bold")
 
     # (1,1) SSD capacity requirement (peak fill × safety factor 1.5)
     ax = axes[1, 1]
@@ -14548,15 +14945,15 @@ def chart_capacity_timeline(m: "Metrics") -> str:
     l3_used_peak_gb = l3_used_gb
     l3_req_gb = l3_used_peak_gb * SAFETY if l3_used_peak_gb > 0 else 0.0
     lines = [
-        "SSD Capacity Requirement (derived)",
+        f"{'SSD' if _local else _t3_name} Capacity Requirement (derived)",
         "",
         f"L1 HBM peak fill : {l1_peak_pct:>6.1f}%",
         f"L2 DRAM peak fill: {l2_peak_pct:>6.1f}%",
         "",
-        f"L3 used (peak)   : {l3_used_peak_gb:>6.1f} GB",
-        f"L3 capacity      : {l3_cap_gb:>6.1f} GB"
+        f"{_t3 + ' used (peak)':<17}: {l3_used_peak_gb:>6.1f} GB",
+        f"{_t3 + ' capacity':<17}: {l3_cap_gb:>6.1f} GB"
         + (f"  ({l3_pct:.1f}% now)" if l3_pct > 0 else ""),
-        f"L3 requirement   : {l3_req_gb:>6.1f} GB   ({SAFETY:g}× safety factor)",
+        f"{_t3 + ' requirement':<17}: {l3_req_gb:>6.1f} GB   ({SAFETY:g}× safety factor)",
     ]
     ax.text(0.02, 0.98, "\n".join(lines),
             transform=ax.transAxes, ha="left", va="top",
@@ -17687,7 +18084,9 @@ Fallback when token histogram buckets are absent = per-request counter delta / r
       {''.join(f'<div style="display:flex;align-items:center;gap:5px;font-size:11px;color:#64748b"><div style="width:10px;height:10px;border-radius:2px;background:{c}"></div>{l}</div>' for l,c in [('Prefill Cached','#0891b2'),('Prefill Compute',PREFILL),('Decode Output',DECODE)])}
     </div>
   </div>
-  <details class="fml" style="margin-top:12px"><summary>&#128208; Formula &amp; Metrics Used</summary><div class="fml-body"><div class="fml-src">&#128202; sglang_summary.json derived from SGLang Prometheus counters</div><code>Mean TTFT ms = Δsglang_time_to_first_token_seconds_sum / Δsglang_time_to_first_token_seconds_count × 1000
+  {_token_reuse_density_html(m)}
+  <details class="fml" style="margin-top:12px"><summary>&#128208; Formula &amp; Metrics Used</summary><div class="fml-body"><div class="fml-src">&#128202; sglang_summary.json derived from SGLang Prometheus counters</div><code>Token_Reuse_Density = Δsglang_realtime_tokens_total{{mode="prefill_cache"}} / ((Δ…{{mode="prefill_compute"}} + Δsglang_generation_tokens_total) × KV bytes/token ÷ 1e9)  [reused tokens per GB of KV generated; &gt; 100 = good fit for prefix acceleration]
+Mean TTFT ms = Δsglang_time_to_first_token_seconds_sum / Δsglang_time_to_first_token_seconds_count × 1000
 P50 TTFT ms = histogram_quantile(0.50, rate(sglang_time_to_first_token_seconds_bucket[window])) × 1000
 Mean TPOT/ITL ms = Δsglang_inter_token_latency_seconds_sum / Δsglang_inter_token_latency_seconds_count × 1000
 P50 TPOT/ITL ms = histogram_quantile(0.50, rate(sglang_inter_token_latency_seconds_bucket[window])) × 1000
