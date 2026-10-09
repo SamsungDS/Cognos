@@ -91,3 +91,4 @@
       - /etc/svk
       - /usr/local/svk
       - /var/log/svk
+      - /var/lib/svk
