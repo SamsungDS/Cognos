@@ -49,6 +49,10 @@ __all__ = [
     "kv_movement_bandwidth",
     "window_counter_delta",
     "window_counter_series",
+    "RANK_LABELS",
+    "RANK_REPLICA_TOL",
+    "rank_combine_rule",
+    "summarise_rank_rules",
     "token_reuse_density",
     "tail_ratio",
     "DRAM_SANE_MAX_GBS",
@@ -967,23 +971,88 @@ def resolve_l2_residency(hicache_used_tokens: float = 0.0,
 # KV movement bandwidth (host-tier estimate when no PMU is available)
 # ---------------------------------------------------------------------------
 
+RANK_LABELS = ("tp_rank", "pp_rank", "moe_ep_rank", "attn_tp_rank", "ep_rank")
 _RANK_LABELS_RE = re.compile(
     r"\b(?:tp_rank|pp_rank|moe_ep_rank|attn_tp_rank|ep_rank)=\"?[^,\]\"]*\"?")
 
+# Ranks whose window deltas agree to within this share are counting the same
+# tokens.  Replicas agree exactly in practice (3,512,089 on all eight ranks of
+# the Sep 8 TP=8 run); 1% leaves room for a rank that missed the final scrape.
+RANK_REPLICA_TOL = 0.01
 
-def window_counter_series(rows, candidates):
+
+def rank_combine_rule(rank_deltas, tol: float = RANK_REPLICA_TOL) -> dict:
+    """Max or sum across the ranks of one label set, decided from the data.
+
+    A KV-movement token counter is exported once per rank.  Whether those
+    series count the SAME tokens or DIFFERENT ones depends on the topology,
+    and the rank label alone does not say which:
+
+      TP / PP / EP over TP   every rank holds a shard of every token, so each
+                             counts all of them -- summing reports N x.
+      DP / DP-attention      each rank serves its own requests -- the total is
+                             the sum.  Usually a dp_rank label separates these
+                             and they never meet here; when a build labels them
+                             with tp_rank only, they do.
+
+    So the ranks' window deltas are compared.  Within `tol` of each other they
+    are replicas and the max is taken; otherwise each rank's count is its own
+    and they are summed.  A rule hard-coded either way is wrong for one of
+    those layouts, and silently so.
+
+    Returns {rule: "max" | "sum" | "single", ranks, spread_pct, reason}.
+    """
+    d = [float(x) for x in (rank_deltas or [])
+         if x is not None and x == x and float(x) >= 0]
+    n = len(d)
+    if n <= 1:
+        return {"rule": "single", "ranks": n, "spread_pct": 0.0,
+                "reason": "one series, nothing to combine"}
+    hi, lo = max(d), min(d)
+    if hi <= 0:
+        return {"rule": "max", "ranks": n, "spread_pct": 0.0,
+                "reason": f"{n} ranks, all idle"}
+    spread = (hi - lo) / hi
+    if spread <= tol:
+        return {"rule": "max", "ranks": n, "spread_pct": spread * 100.0,
+                "reason": (f"{n} ranks agreed within {spread * 100:.2f}% — "
+                           f"replicas of the same tokens, counted once")}
+    return {"rule": "sum", "ranks": n, "spread_pct": spread * 100.0,
+            "reason": (f"{n} ranks differed by {spread * 100:.1f}% — each "
+                       f"counts its own requests, so they are summed")}
+
+
+def summarise_rank_rules(rules) -> str:
+    """One line for a report from several rank_combine_rule results."""
+    rules = [r for r in (rules or []) if r and r.get("rule") != "single"]
+    if not rules:
+        return "one series per counter, no rank combination needed"
+    kinds = {r["rule"] for r in rules}
+    if kinds == {"max"}:
+        n = max(r["ranks"] for r in rules)
+        return f"counted once across ranks ({n} ranks agreed — replicas)"
+    if kinds == {"sum"}:
+        n = max(r["ranks"] for r in rules)
+        return f"summed across ranks ({n} ranks counted different requests)"
+    return "ranks combined per counter: " + "; ".join(r["reason"] for r in rules)
+
+
+def window_counter_series(rows, candidates, meta: "dict | None" = None):
     """(times, values) of a SGLang token counter from timeseries rows.
 
     `rows` are dicts keyed by CSV column (`name[label=...]`).  The first
     candidate substring that matches any column wins.
 
-    Within one metric, TP/PP/EP ranks each count the same tokens (each holds a
-    shard of them), so the max is taken across those rank labels and every
-    other label set (dp_rank, is_streaming, ...) is summed — the rule the
-    Prometheus fetch applies.  Summing every rank reported 8x the tokens on a
-    TP=8 run.  Different metric names are never summed: a run dir can carry
-    sglang_x and hicache_x for one quantity, so one name is chosen, preferring
-    the sglang_ one.
+    Ranks (tp/pp/ep labels) within one label set are combined by
+    rank_combine_rule: the max when their window deltas agree (TP, PP and EP
+    over TP each count the same tokens; summing reported 8x on TP=8), the sum
+    when they do not (each rank counting its own requests).  Every other label
+    set (dp_rank, is_streaming, ...) is summed.  Different metric names are
+    never summed: a run dir can carry sglang_x and hicache_x for one quantity,
+    so one name is chosen, preferring the sglang_ one.
+
+    `meta`, when given, receives {"rules": [rank_combine_rule result per label
+    set], "metric": the column group used}.
 
     Histogram side-series (bucket / _sum / _count) are excluded so they are
     not summed into a token total, unless the caller asked for one by name,
@@ -1015,13 +1084,28 @@ def window_counter_series(rows, candidates):
         label_sets: dict = {}
         for c in groups[base]:
             label_sets.setdefault(_RANK_LABELS_RE.sub("", c), []).append(c)
+        # Decide, per label set, whether its ranks are replicas or shards.
+        combine = {}
+        rules = []
+        for key, set_cols in label_sets.items():
+            deltas = []
+            for c in set_cols:
+                t = counter_window_total([[v for v in (_num(r, c) for r in rows)
+                                           if v == v]])
+                deltas.append(t["total"] if t["present"] else float("nan"))
+            rule = rank_combine_rule(deltas)
+            rules.append(rule)
+            combine[key] = sum if rule["rule"] == "sum" else max
+        if meta is not None:
+            meta["rules"] = rules
+            meta["metric"] = base
         times, series = [], []
         for i, r in enumerate(rows):
             tot, seen = 0.0, False
-            for set_cols in label_sets.values():
+            for key, set_cols in label_sets.items():
                 vals = [v for v in (_num(r, c) for c in set_cols) if v == v]
                 if vals:
-                    tot += max(vals)
+                    tot += combine[key](vals)
                     seen = True
             if seen:
                 series.append(tot)
@@ -1033,13 +1117,14 @@ def window_counter_series(rows, candidates):
     return None
 
 
-def window_counter_delta(rows, candidates) -> "float | None":
+def window_counter_delta(rows, candidates,
+                         meta: "dict | None" = None) -> "float | None":
     """Window delta of a SGLang token counter, by window_counter_series' rule.
 
     Returns None when no column matches (unmeasured) and 0.0 when it matched
     but never moved (measured, idle).
     """
-    r = window_counter_series(rows, candidates)
+    r = window_counter_series(rows, candidates, meta=meta)
     if not r:
         return None
     series = r[1]

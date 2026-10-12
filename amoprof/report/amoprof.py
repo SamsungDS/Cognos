@@ -49,7 +49,10 @@ try:
         token_reuse_density as _k_token_reuse_density,
         resolve_latency_percentile as _k_resolve_pct,
         vet_device_bw_peak as _k_vet_bw, vet_queue_depth as _k_vet_qd,
-        counter_window_total as _k_counter_total)
+        counter_window_total as _k_counter_total,
+        rank_combine_rule as _k_rank_combine_rule,
+        summarise_rank_rules as _k_summarise_rank_rules,
+        RANK_LABELS as _K_RANK_LABELS)
 except Exception:  # pragma: no cover - standalone/bundled execution
     from metric_kernels import (  # type: ignore
         counter_delta as _k_counter_delta, window_rate as _k_window_rate,
@@ -60,7 +63,10 @@ except Exception:  # pragma: no cover - standalone/bundled execution
         token_reuse_density as _k_token_reuse_density,
         resolve_latency_percentile as _k_resolve_pct,
         vet_device_bw_peak as _k_vet_bw, vet_queue_depth as _k_vet_qd,
-        counter_window_total as _k_counter_total)
+        counter_window_total as _k_counter_total,
+        rank_combine_rule as _k_rank_combine_rule,
+        summarise_rank_rules as _k_summarise_rank_rules,
+        RANK_LABELS as _K_RANK_LABELS)
 
 # amoprof.py is also run directly as a script (python .../report/amoprof.py),
 # in which case `amoprof` resolves to this module rather than to the package
@@ -2065,6 +2071,50 @@ def _prom_extract_server_info(base_url: str, t_start: float, t_end: float) -> di
     return info
 
 
+def _combine_rank_series(df: "pd.DataFrame") -> "tuple[pd.DataFrame, list]":
+    """One series from a per-rank query_range result, by rank_combine_rule.
+
+    `df` is _prom_query_range output: time_sec, value and one column per
+    label.  Series that differ only in their rank labels (tp/pp/ep) are one
+    label set; each set's ranks are combined by the max or the sum, decided
+    from whether their window deltas agree, and the sets are then summed.
+    Returns (DataFrame[time_sec, value], [rule per label set]).
+
+    Doing this in Python rather than in PromQL keeps the per-rank evidence:
+    `sum(max without (tp_rank, ...))` is right for TP and wrong for a DP-
+    attention build that labels its ranks tp_rank only, and the query result
+    could not tell the two apart.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame(), []
+    labels = [c for c in df.columns
+              if c not in ("time_sec", "value", "__name__")]
+    rank_cols = [c for c in labels if c in _K_RANK_LABELS]
+    set_cols = [c for c in labels if c not in _K_RANK_LABELS]
+    d = df.copy()
+    for c in labels:
+        d[c] = d[c].astype(str)
+    d["_set"] = d[set_cols].agg("|".join, axis=1) if set_cols else ""
+    d["_rank"] = d[rank_cols].agg("|".join, axis=1) if rank_cols else ""
+    parts, rules = [], []
+    for _set, g in d.groupby("_set", sort=False):
+        wide = g.pivot_table(index="time_sec", columns="_rank",
+                             values="value", aggfunc="first").sort_index()
+        deltas = []
+        for c in wide.columns:
+            t = _k_counter_total([wide[c].dropna().tolist()])
+            deltas.append(t["total"] if t["present"] else float("nan"))
+        rule = _k_rank_combine_rule(deltas)
+        rules.append(rule)
+        parts.append(wide.sum(axis=1, min_count=1) if rule["rule"] == "sum"
+                     else wide.max(axis=1))
+    if not parts:
+        return pd.DataFrame(), rules
+    total = pd.concat(parts, axis=1).sum(axis=1, min_count=1).dropna()
+    return (pd.DataFrame({"time_sec": total.index.astype(float),
+                          "value": total.values}), rules)
+
+
 def collect_from_prometheus_api(
     prom_base_url: str,
     start_time: float = 0,
@@ -2335,6 +2385,8 @@ def collect_from_prometheus_api(
     # summary derivation, and CSV writers below stay keyed on canonical names —
     # the whole report layer is unchanged across backends.
     sg_dfs = {}
+    # Rank-combination rule applied to each KV-movement counter (SGLang only).
+    _kv_rank_rules: dict = {}
     if server_type == "vllm":
         try:
             from amoprof.server_metrics import (
@@ -2399,14 +2451,17 @@ def collect_from_prometheus_api(
         ]:
             if _has(name):
                 # KV movement counters carry one series per tp_rank (and per
-                # pp/dp rank on larger topologies).  Tensor/pipeline-parallel
+                # pp/ep/dp rank on larger topologies).  Tensor/pipeline-parallel
                 # ranks each hold a shard of the SAME tokens, so each counts
                 # them: on the Sep 8 TP=8 run prefetched_tokens_total read
                 # exactly 3,512,089 on all eight ranks.  Summing them reported
-                # 8x the tokens (backup 248.6M for 31.1M) and inflated every
-                # rate and byte figure built on them.  Data-parallel ranks
-                # serve different requests, so: max over the TP/PP/EP rank
-                # labels, then sum the rest (dp_rank, ...).  Gauges are left alone.
+                # 8x the tokens (backup 248.6M for 31.1M).  Ranks that serve
+                # different requests (DP-attention labelled tp_rank only) must
+                # be summed instead.  Fetched per rank and combined by
+                # _combine_rank_series, which decides from whether the ranks'
+                # deltas agree; one combined column is written, so every CSV
+                # reader stays correct, and the rule used is recorded in
+                # sglang_summary.json.  Gauges are left alone.
                 _TOKENS_ACROSS_RANKS = {
                     "sglang_evicted_tokens_total",
                     "sglang_backuped_tokens_total",
@@ -2418,10 +2473,11 @@ def collect_from_prometheus_api(
                 }
                 if name in _TOKENS_ACROSS_RANKS:
                     _inner = _actual_metric(name) + (selector or "")
-                    df = _prom_query_range(
-                        base, "sum(max without (tp_rank, pp_rank, moe_ep_rank, "
-                              f"attn_tp_rank, ep_rank) ({_inner}))",
-                        t_start, t_end, step_s)
+                    df, _rules = _combine_rank_series(_prom_query_range(
+                        base, _inner, t_start, t_end, step_s))
+                    if _rules:
+                        _kv_rank_rules[name] = _rules
+                        print(f"  {name}: {_k_summarise_rank_rules(_rules)}")
                 else:
                     df = _qr(name)
                 if not df.empty:
@@ -3593,6 +3649,7 @@ def collect_from_prometheus_api(
     sglang_summary = {
         "model_name":                  _detected_model,
         "prometheus_server_info":      _server_info,
+        "kv_rank_rules":               _kv_rank_rules,
         "server_ttft_ms":              round(ttft_ms, 2),
         "server_itl_ms":               round(tpot_ms, 2),
         "server_e2e_ms":               round(e2e_ms,  2),

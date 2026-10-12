@@ -1566,6 +1566,7 @@ try:
         kv_movement_bandwidth as _k_kv_movement,
         window_counter_delta as _k_window_counter_delta,
         window_counter_series as _k_window_counter_series,
+        summarise_rank_rules as _k_summarise_rank_rules,
         token_reuse_density as _k_token_reuse_density,
         resolve_gpu_hbm as _resolve_gpu_hbm,
         resolve_hbm_breakdown as _k_resolve_hbm_breakdown,
@@ -1593,6 +1594,7 @@ except Exception:  # pragma: no cover - standalone/bundled execution
         kv_movement_bandwidth as _k_kv_movement,
         window_counter_delta as _k_window_counter_delta,
         window_counter_series as _k_window_counter_series,
+        summarise_rank_rules as _k_summarise_rank_rules,
         token_reuse_density as _k_token_reuse_density,
         resolve_gpu_hbm as _resolve_gpu_hbm,
         resolve_hbm_breakdown as _k_resolve_hbm_breakdown,
@@ -4035,15 +4037,16 @@ def _src_rows_for(csv_name, specs):
     return _rows
 
 
-def _kv_counter_series(raw_dir, candidates):
-    """(times, cumulative values) for a KV-movement counter, counted once across ranks.
+def _kv_counter_series(raw_dir, candidates, meta: "dict | None" = None):
+    """(times, cumulative values) for a KV-movement counter, ranks combined by the data.
 
     One reader serves both the window total and the per-interval series, so a
     chart and a tile cannot disagree about what the counter says.
 
     Thin reader over metric_kernels.window_counter_series, which holds the
-    rank rule (max across TP/PP/EP ranks, sum across other label sets such as
-    dp_rank) so every surface counts tokens identically.
+    rank rule (max across ranks whose deltas agree, sum across ranks that
+    count different requests and across other label sets such as dp_rank) so
+    every surface counts tokens identically.  `meta` receives the rule used.
 
     Returns None when no column matches (the counter is absent).  A counter
     that matched but never moved returns a real, flat series — absent means
@@ -4058,7 +4061,7 @@ def _kv_counter_series(raw_dir, candidates):
             rows = list(_c.DictReader(fh))
     except Exception:
         return None
-    return _k_window_counter_series(rows, candidates)
+    return _k_window_counter_series(rows, candidates, meta=meta)
 
 
 def _amoprof_tier_fill_from_occupancy(occ: "list") -> "dict":
@@ -10423,8 +10426,11 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 ("load-back L2\u2192L1",   ["load_back_tokens_total"],  "#38bdf8"),
             ]
             _mv_ser, _mv_tot, _mv_absent = [], {}, []
+            _mv_rules: list = []
             for _lbl, _cands, _col in _mv_specs:
-                _cs = _kv_counter_series(raw_dir, _cands)
+                _mv_meta: dict = {}
+                _cs = _kv_counter_series(raw_dir, _cands, meta=_mv_meta)
+                _mv_rules.extend(_mv_meta.get("rules") or [])
                 if _cs is None:
                     _mv_absent.append(_lbl.split()[0])
                     continue
@@ -10445,7 +10451,15 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                             if k.startswith(("evict", "backup")))
                 _up = sum(v for k, v in _mv_tot.items()
                           if k.startswith(("prefetch", "load-back")))
-                _mv_sub = "tokens per second, summed across ranks"
+                # A fetched run already carries ONE combined column per
+                # counter; the rule was decided at fetch time from the
+                # per-rank series and recorded in the summary.  A local run
+                # carries the ranks and the reader decided just now.
+                if not any(r.get("rule") != "single" for r in _mv_rules):
+                    _mv_rules = [r for _v in (sglang.get("kv_rank_rules") or {}).values()
+                                 for r in (_v or [])]
+                _mv_sub = ("tokens per second, "
+                           + _k_summarise_rank_rules(_mv_rules))
                 if _down > 0 and _up == 0:
                     _mv_sub += (f" \u00b7 {_down/1e6:,.1f}M tokens moved down the "
                                 f"hierarchy and NONE came back up")
