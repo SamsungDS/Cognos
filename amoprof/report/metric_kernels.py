@@ -65,6 +65,7 @@ __all__ = [
     "latency_window_ms",
     "active_window_fraction",
     "bucket_edge_check",
+    "admission_stalls",
 ]
 
 
@@ -1738,3 +1739,137 @@ def bucket_edge_check(value_ms: float, bucket_les_s: Sequence[float],
                                 if ratio else f"the neighbouring buckets"))}
     return {"on_edge": False, "le_s": 0.0, "lower_s": 0.0, "span_ratio": 0.0,
             "note": ""}
+
+
+# ─── Idle with work waiting, against idle with nothing to do ────────────────
+#
+# Why this exists
+# ---------------
+# active_window_fraction says how much of a window the GPUs were busy. It
+# cannot say WHY they were not, and the two reasons point in opposite
+# directions:
+#
+#   no work      nothing queued, nothing running -- the client was quiet.
+#                Dividing by the active span is then the right correction.
+#   stall        requests were waiting to enter prefill and the GPUs sat
+#                idle anyway -- the server held work it had room for.
+#                Dividing by the active span EXCUSES exactly the problem.
+#
+# On the reference pair -- the same ~5,900-request workload on a local-SSD L3
+# tier and on an L3.5 memory node -- the L3 run took 50 min against 30, was
+# idle for 40% of its window, and only one of those minutes was at the end.
+# The rest was two episodes of GPU utilisation at 0% with queue-wait p50
+# above 330 s and the L1 KV pool under 12% full. The active-span throughput
+# put L3 ahead; the run itself finished 1.66x later.
+#
+# The caller aligns the series on one time base; this only classifies.
+
+
+def admission_stalls(times: Sequence[float], busy: Sequence[float],
+                     waiting: Sequence[float],
+                     running: "Sequence[float] | None" = None,
+                     kv_fill_pct: "Sequence[float] | None" = None,
+                     busy_threshold: "float | None" = None,
+                     rel: float = 0.10, min_samples: int = 2) -> dict:
+    """Split a window's idle time into stalls and genuinely idle time.
+
+    `busy` is an activity gauge (GPU utilisation), `waiting` the scheduler's
+    waiting-queue gauge, `running` the decode batch and `kv_fill_pct` the L1
+    KV pool's fill -- all sampled at `times`. A sample is
+
+      busy      busy > threshold
+      stall     not busy, and at least one request waiting
+      no work   not busy, nothing waiting, nothing running
+      other     not busy, nothing waiting, but requests running
+
+    The threshold is absolute when given, else `rel` x the series' p95 peak,
+    the same rule active_window_fraction uses. A stall EPISODE is a run of at
+    least `min_samples` consecutive stall samples: one sample of an idle GPU
+    beside a non-empty queue is the scheduler between two batches, not a
+    stall.
+
+    Each sample stands for the median sampling step, so the seconds returned
+    sum to the sampled span plus one step.
+
+    Returns {present, samples, step_s, threshold, busy_s, stall_s,
+    no_work_s, other_idle_s, episodes, longest, method}; each episode is
+    {t_start, t_end, dur_s, samples, waiting_peak, waiting_mean,
+    kv_fill_mean}. present=False when the series do not line up or are
+    shorter than three samples.
+    """
+    t = [float(x) for x in (times or [])]
+    b = [float(x) for x in (busy or [])]
+    w = [float(x) for x in (waiting or [])]
+    r = [float(x) for x in running] if running is not None else []
+    k = [float(x) for x in kv_fill_pct] if kv_fill_pct is not None else []
+    n = len(t)
+    _empty = {"present": False, "samples": n, "step_s": 0.0,
+              "threshold": 0.0, "busy_s": 0.0, "stall_s": 0.0,
+              "no_work_s": 0.0, "other_idle_s": 0.0, "episodes": [],
+              "longest": None}
+    if n < 3 or len(b) != n or len(w) != n:
+        return {**_empty, "method": "busy, waiting and time series do not "
+                                    "line up, or fewer than 3 samples"}
+    if r and len(r) != n:
+        r = []
+    if k and len(k) != n:
+        k = []
+    _d = sorted(t[i] - t[i - 1] for i in range(1, n) if t[i] > t[i - 1])
+    step = _d[len(_d) // 2] if _d else 0.0
+    if step <= 0:
+        return {**_empty, "method": "time series has no positive step"}
+    _fin = sorted(x for x in b if _finite(x))
+    if not _fin:
+        return {**_empty, "method": "busy series has no finite samples"}
+    peak = _fin[min(len(_fin) - 1, int(round(0.95 * (len(_fin) - 1))))]
+    thr = float(busy_threshold) if busy_threshold is not None         else max(0.0, peak * rel)
+
+    kind: list[str] = []
+    for i in range(n):
+        if _finite(b[i]) and b[i] > thr:
+            kind.append("busy")
+        elif _finite(w[i]) and w[i] >= 1.0:
+            kind.append("stall")
+        elif r and _finite(r[i]) and r[i] >= 1.0:
+            kind.append("other")
+        else:
+            kind.append("none")
+
+    episodes: list[dict] = []
+    i = 0
+    while i < n:
+        if kind[i] != "stall":
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and kind[j + 1] == "stall":
+            j += 1
+        if j - i + 1 >= min_samples:
+            _w = [w[x] for x in range(i, j + 1) if _finite(w[x])]
+            _k = [k[x] for x in range(i, j + 1) if k and _finite(k[x])]
+            episodes.append({
+                "t_start": t[i], "t_end": t[j],
+                "dur_s": (t[j] - t[i]) + step, "samples": j - i + 1,
+                "waiting_peak": max(_w) if _w else 0.0,
+                "waiting_mean": (sum(_w) / len(_w)) if _w else 0.0,
+                "kv_fill_mean": (sum(_k) / len(_k)) if _k else None})
+        else:
+            # Too short to be a stall: the scheduler between two batches.
+            for x in range(i, j + 1):
+                kind[x] = "other"
+        i = j + 1
+
+    _cnt = {c: kind.count(c) for c in ("busy", "stall", "none", "other")}
+    longest = max(episodes, key=lambda e: e["dur_s"]) if episodes else None
+    return {"present": True, "samples": n, "step_s": step, "threshold": thr,
+            "busy_s": _cnt["busy"] * step, "stall_s": _cnt["stall"] * step,
+            "no_work_s": _cnt["none"] * step,
+            "other_idle_s": _cnt["other"] * step,
+            "episodes": episodes, "longest": longest,
+            "method": (f"{n} samples at a {step:,.0f} s step; busy above "
+                       f"{thr:,.3g} ("
+                       + (f"{rel:.0%} of the busy series' p95 {peak:,.3g}"
+                          if busy_threshold is None
+                          else "absolute threshold")
+                       + f"); a stall is ≥{min_samples} consecutive "
+                         f"idle samples with ≥1 request waiting")}

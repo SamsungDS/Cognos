@@ -242,6 +242,50 @@ class RunMetrics:
     nand_written_gb:  "float | None" = None
     host_written_gb:  "float | None" = None
 
+    # ── The workload, and how long it took to serve ──────────────────────
+    # Two runs of the same request set are compared fairly by how long each
+    # took to finish it. Window means cannot say that: on the reference pair
+    # the same ~5,900 requests took 50 min on one tier and 30 on the other,
+    # and the active-span throughput still ranked the slower run first.
+    requests_n: "float | None" = None
+    requests_src: str = ""
+    queue_wait_ms: "float | None" = None
+
+    # ── Idle with work waiting, against idle with nothing to do ──────────
+    # From metric_kernels.admission_stalls over GPU utilisation, the
+    # scheduler's waiting queue, the decode batch and the L1 KV fill. With
+    # stall_present False the series to classify the idle time were not
+    # there, which is a different statement from "no stall".
+    stall_present: bool = False
+    busy_s: "float | None" = None
+    stall_s: "float | None" = None
+    no_work_s: "float | None" = None
+    other_idle_s: "float | None" = None
+    stall_episodes: list = field(default_factory=list)
+    stall_method: str = ""
+    stall_src: str = ""
+    # Mean GPU utilisation x the GPU series' span: GPU-time actually spent.
+    # Two runs that needed the same GPU-time but took different wall time
+    # lost the difference to idling, not to compute.
+    gpu_busy_equiv_s: "float | None" = None
+    # When the backing tier last delivered anything, and how long it was
+    # silent after that. A tier that stops serving reads part-way through a
+    # run leaves every later miss to recompute or to wait.
+    prefetch_last_move_s: "float | None" = None
+    prefetch_quiet_tail_s: "float | None" = None
+    # Aligned, downsampled series for the timeline chart:
+    # {"t": [...], "gpu": [...], "waiting": [...], "running": [...]}
+    timeline: dict = field(default_factory=dict)
+    # Pearson r between the aligned timelines: {"names": [...], "r": [[...]]},
+    # None in a cell whose pair is undefined (a constant series).
+    corr: dict = field(default_factory=dict)
+
+    # ── HiCache configuration that changes what a tier costs ─────────────
+    page_size: "float | None" = None
+    page_size_src: str = ""
+    storage_backend: str = ""   # what the engine reported running
+    launch_backend: str = ""    # what the recorded launch command asks for
+
     # ── derived ──────────────────────────────────────────────────────────
     @property
     def total_hit_gb(self) -> float:
@@ -388,6 +432,97 @@ class RunMetrics:
             return None
         return self.evicted_gb / self.window_s
 
+    @property
+    def completion_s(self) -> "float | None":
+        """How long the workload took: first to last busy sample.
+
+        Lead and trailing idle are the window's, not the workload's, so they
+        are excluded. Idle time BETWEEN busy samples is kept: when requests
+        were waiting through it, it is the system's time, and a run that
+        finished later finished later.
+        """
+        if self.active_span_s:
+            return self.active_span_s
+        if self.window_s > 0:
+            return self.window_s
+        return (self.duration_min * 60.0) or None
+
+    @property
+    def req_per_s(self) -> "float | None":
+        c = self.completion_s
+        if not self.requests_n or not c:
+            return None
+        return self.requests_n / c
+
+    @property
+    def recompute_measured_tok(self) -> "float | None":
+        """Prefill tokens computed: prompt - cached, both measured counters.
+
+        recomputed_tok derives the same quantity from the hit-rate gauge; this
+        one inherits no gauge error, which matters when the point is that two
+        runs did the same amount of prefill work.
+        """
+        if self.prompt_tok is None or self.cached_tok is None:
+            return None
+        return max(0.0, self.prompt_tok - self.cached_tok)
+
+    @property
+    def prefetch_rate_tok_s(self) -> "float | None":
+        if self.prefetched_tok is None or self.window_s <= 0:
+            return None
+        return self.prefetched_tok / self.window_s
+
+    @property
+    def backup_rate_tok_s(self) -> "float | None":
+        if self.backuped_tok is None or self.window_s <= 0:
+            return None
+        return self.backuped_tok / self.window_s
+
+    @property
+    def engine_read_back_pct(self) -> "float | None":
+        """Tokens the tier gave back as a share of tokens it absorbed.
+
+        The engine-side twin of read_back_pct, which needs a local block
+        device. For a memory node this host's device is not the KV path, so
+        only the engine's own counters can say whether the tier served reads.
+        """
+        if not self.backuped_tok or self.prefetched_tok is None:
+            return None
+        return self.prefetched_tok / self.backuped_tok * 100.0
+
+    @property
+    def idle_s(self) -> "float | None":
+        if not self.stall_present:
+            return None
+        return ((self.stall_s or 0.0) + (self.no_work_s or 0.0)
+                + (self.other_idle_s or 0.0))
+
+    # KPI-table accessors: the table multiplies by a scale and drops rows that
+    # are zero everywhere, so an absent figure is 0.0 there and nowhere else.
+    @property
+    def kpi_requests(self) -> float:
+        return float(self.requests_n or 0.0)
+
+    @property
+    def kpi_completion_min(self) -> float:
+        return (self.completion_s or 0.0) / 60.0
+
+    @property
+    def kpi_req_per_s(self) -> float:
+        return float(self.req_per_s or 0.0)
+
+    @property
+    def kpi_running_mean(self) -> float:
+        return float(self.sg_running_reqs_mean or 0.0)
+
+    @property
+    def kpi_prefetch_rate(self) -> float:
+        return float(self.prefetch_rate_tok_s or 0.0)
+
+    @property
+    def kpi_queue_wait_s(self) -> float:
+        return (self.queue_wait_ms or 0.0) / 1000.0
+
 
 
 # Largest value that can be a real NVMe queue depth, the same bound the
@@ -407,6 +542,9 @@ try:
         active_window_fraction as _k_active_frac,
         bucket_edge_check as _k_bucket_edge,
         tail_ratio as _k_tail_ratio,
+        align_on_time as _k_align,
+        admission_stalls as _k_admission_stalls,
+        pearson as _k_pearson,
     )
 except Exception:  # pragma: no cover - the kernel ships with the package
     def _k_resolve_lat(kind, ts_ms=0.0, pct_ms=0.0, summary_ms=0.0,
@@ -441,6 +579,18 @@ except Exception:  # pragma: no cover - the kernel ships with the package
 
     def _k_tail_ratio(mean_value, p50_value):
         return {"ratio": 0.0, "available": False, "note": ""}
+
+    def _k_align(x_t, x_v, y_t, y_v, tolerance=0.0):
+        return [], []
+
+    def _k_pearson(xs, ys):
+        return 0.0
+
+    def _k_admission_stalls(times, busy, waiting, running=None,
+                            kv_fill_pct=None, busy_threshold=None, rel=0.10,
+                            min_samples=2):
+        return {"present": False, "episodes": [], "longest": None,
+                "method": "kernel unavailable"}
 
 
 # The three CSVs a run's counters can live in, in the order they are tried —
@@ -883,6 +1033,50 @@ def extract_metrics(spec: RunSpec) -> RunMetrics:
     m.gpu_power_w    = _sf(_pick(gpu, "power_peak_w", "gpu_power_peak_w"))
     m.dcgm_active_pct = _sf(_pick(gpu, "dcgm_hbm_bw_active_pct", "dcgm_active_pct"))
     m.has_gpu        = bool(gpu)
+
+    # Fallback from the GPU timeseries.
+    #
+    # Every A4 figure above reads gpu_summary.json and nothing else, so a run
+    # with gpu_timeseries.csv and no summary -- a fetched run, or one whose
+    # summary was never written -- rendered GPU utilisation, HBM fill and
+    # DCGM activity as zeros, and the "GPU utilisation & HBM" chart said the
+    # data was not collected while the stall timeline beside it plotted it.
+    # Window means over every sample, idle ones included, like the summary.
+    _g_p = raw / "gpu_timeseries.csv"
+    if _g_p.exists() and (m.gpu_util_pct == 0 or m.hbm_pct == 0
+                          or m.dcgm_active_pct == 0):
+        _g_fn, _g_rows = _csv_rows(_g_p)
+        _g_t, _g_u = _gpu_util_by_time(raw)
+        if m.gpu_util_pct == 0 and _g_u:
+            m.gpu_util_pct = sum(_g_u) / len(_g_u)
+            m.gpu_util_peak = m.gpu_util_peak or max(_g_u)
+        # HBM: per-sample sums across GPUs, so used and total are the node's.
+        _used: "dict[float, float]" = {}
+        _tot: "dict[float, float]" = {}
+        _bw: "list[float]" = []
+        for _r in _g_rows:
+            try:
+                _t = float(str(_r.get("time_sec", "")).replace(",", ""))
+            except (TypeError, ValueError):
+                continue
+            _mu = _sf(_r.get("mem_used"), float("nan"))
+            _mt = _sf(_r.get("mem_total"), float("nan"))
+            if _mu == _mu and _mt == _mt and _mt > 0:
+                _used[_t] = _used.get(_t, 0.0) + _mu
+                _tot[_t] = _tot.get(_t, 0.0) + _mt
+            _hb = _sf(_r.get("hbm_bw_pct"), float("nan"))
+            if _hb == _hb:
+                _bw.append(_hb)
+        if _used:
+            _fills = [_used[t] / _tot[t] * 100.0 for t in _used if _tot[t] > 0]
+            if m.hbm_pct == 0 and _fills:
+                m.hbm_pct = sum(_fills) / len(_fills)
+            if m.hbm_used_gb == 0:
+                # nvidia-smi reports MiB.
+                m.hbm_used_gb = (sum(_used.values()) / len(_used)) / 1024.0
+        if m.dcgm_active_pct == 0 and _bw:
+            m.dcgm_active_pct = sum(_bw) / len(_bw)
+        m.has_gpu = m.has_gpu or bool(_g_u)
 
     # NVMe
     m.nvme_rd_bw_mbs = _sf(_pick(blk, "nvme_rd_bw_mbs_mean", "read_bw_mb_s_mean"))
@@ -1513,7 +1707,283 @@ def extract_metrics(spec: RunSpec) -> RunMetrics:
             m.l35_file_gb = _v
             m.l35_cap_source = m.l35_cap_source or "setup_details"
 
+    _extract_diagnosis(m, _raw, setup or {})
     return m
+
+
+# ─── Where the time went: stalls, time to complete, tier delivery ───────────
+#
+# The figures above are window totals and window means. They say how much
+# each run did, not why one took longer to do it. These read the timelines
+# underneath them -- GPU utilisation, the scheduler's waiting queue, the
+# decode batch, the L1 KV pool and the tier counters -- on one time base.
+
+
+def _rows_by_time(path: "Path", parts: "list[str]",
+                  exclude: "tuple[str, ...]" = (), agg: str = "max",
+                  ) -> "tuple[list[float], list[float], str]":
+    """(times, values, source) of one series, one value per CSV row.
+
+    Every column matching all of `parts` contributes, minus any whose name
+    contains an `exclude` fragment. `agg` decides how several columns become
+    one value: "sum" for a counter fanned out per rank (each rank's share is
+    part of the total), "max" for a gauge every rank reports alike (summing
+    eight copies of one waiting queue would invent seven queues).
+    """
+    if not path.exists():
+        return [], [], ""
+    fieldnames, rows = _csv_rows(path)
+    if "time_sec" not in fieldnames:
+        return [], [], ""
+    cols = [c for c in _k_resolve_cols(fieldnames, parts)
+            if not any(x in str(c).lower() for x in exclude)]
+    if not cols:
+        return [], [], ""
+    pts: "list[tuple[float, float]]" = []
+    for r in rows:
+        try:
+            t = float(str(r.get("time_sec", "")).replace(",", ""))
+        except (TypeError, ValueError):
+            continue
+        vals = []
+        for c in cols:
+            try:
+                v = float(str(r.get(c, "")).replace(",", ""))
+            except (TypeError, ValueError):
+                continue
+            if v == v:
+                vals.append(v)
+        if t == t and vals:
+            pts.append((t, max(vals) if agg == "max" else sum(vals)))
+    pts.sort()
+    return ([t for t, _ in pts], [v for _, v in pts],
+            f"{', '.join(str(c) for c in cols)} in {path.name}")
+
+
+def _gpu_util_by_time(raw: "Path") -> "tuple[list[float], list[float]]":
+    """Mean GPU utilisation per timestamp, across every GPU row at that time.
+
+    gpu_timeseries.csv carries one row per GPU per sample, so reading the
+    column top to bottom interleaves the GPUs; grouping on time_sec is what
+    turns it back into one series.
+    """
+    p = raw / "gpu_timeseries.csv"
+    if not p.exists():
+        return [], []
+    fieldnames, rows = _csv_rows(p)
+    cols = _k_resolve_cols(fieldnames, ["gpu_util"])
+    if not cols or "time_sec" not in fieldnames:
+        return [], []
+    col = "gpu_util" if "gpu_util" in cols else cols[0]
+    acc: "dict[float, list[float]]" = {}
+    for r in rows:
+        try:
+            t = float(str(r.get("time_sec", "")).replace(",", ""))
+            v = float(str(r.get(col, "")).replace(",", ""))
+        except (TypeError, ValueError):
+            continue
+        if t == t and v == v:
+            acc.setdefault(t, []).append(v)
+    ts = sorted(acc)
+    vals = [sum(acc[t]) / len(acc[t]) for t in ts]
+    # A fraction rather than a percentage on some exporters.
+    if vals and max(vals) <= 1.0:
+        vals = [v * 100.0 for v in vals]
+    return ts, vals
+
+
+def _increase_between(ts: "list[float]", vs: "list[float]",
+                      t0: float, t1: float) -> float:
+    """Counter increase over the samples in (t0, t1], reset-safe."""
+    tot = 0.0
+    for i in range(1, len(ts)):
+        if t0 < ts[i] <= t1:
+            d = vs[i] - vs[i - 1]
+            tot += d if d >= 0 else max(0.0, vs[i])
+    return tot
+
+
+_LAUNCH_BACKEND_RE = re.compile(r"--hicache-storage-backend[=\s]+([\w.-]+)")
+_LAUNCH_PAGE_RE = re.compile(r"--page-size[=\s]+(\d+)")
+
+
+def _extract_diagnosis(m: "RunMetrics", raw: "Path", setup: dict) -> None:
+    """Fill the stall, completion-time, tier-delivery and config fields."""
+    # ── How many requests the window served ───────────────────────────────
+    for _k, _base in (("e2e", "e2e_request_latency_seconds"),
+                      ("ttft", "time_to_first_token_seconds")):
+        _n = (m.latency_obs or {}).get(_k)
+        if _n:
+            m.requests_n = float(_n)
+            m.requests_src = f"Δ{_base}_count over the window"
+            break
+
+    # ── Time spent queued before prefill, window mean ─────────────────────
+    _qs, _ = _read_series(raw, ["queue_time_seconds_sum"])
+    _qc, _ = _read_series(raw, ["queue_time_seconds_count"])
+    _qw = _k_latency_ms(_qs, _qc)
+    if _qw["present"]:
+        m.queue_wait_ms = float(_qw["ms"])
+
+    # ── The timelines, on the scheduler's time base ───────────────────────
+    sg = raw / "sglang_timeseries.csv"
+    w_t, w_v, w_src = _rows_by_time(
+        sg, ["num_queue_reqs"], exclude=("grammar", "offline", "prealloc",
+                                         "transfer", "inflight"))
+    r_t, r_v, _ = _rows_by_time(sg, ["num_running_reqs"],
+                                exclude=("offline",))
+    k_t, k_v, _ = _rows_by_time(sg, ["num_used_tokens"])
+    g_t, g_v = _gpu_util_by_time(raw)
+
+    # The A5 queue rows read these by exact column name, which the fetched
+    # CSVs never use (they write `sglang:num_queue_reqs...`), so the
+    # scheduler's queue -- the one plain count of waiting work in the stack
+    # -- was missing from every fetched comparison. Fill them from the same
+    # series the stall test reads.
+    if m.sg_queue_reqs_mean is None and w_v:
+        m.sg_queue_reqs_mean = sum(w_v) / len(w_v)
+        m.sg_queue_reqs_peak = max(w_v)
+    if m.sg_running_reqs_mean is None and r_v:
+        m.sg_running_reqs_mean = sum(r_v) / len(r_v)
+        m.sg_running_reqs_peak = max(r_v)
+
+    if len(g_t) >= 2:
+        _span = g_t[-1] - g_t[0]
+        if _span > 0:
+            m.gpu_busy_equiv_s = (sum(g_v) / len(g_v)) / 100.0 * _span
+
+    p_t, p_v, _ = _rows_by_time(sg, ["prefetched_tokens_total"], agg="sum")
+    b_t, b_v, _ = _rows_by_time(sg, ["backuped_tokens_total"], agg="sum")
+
+    def _rate_at(ts, vs):
+        """Per-interval rate of a counter, keyed by the interval's end."""
+        out = {}
+        for i in range(1, len(ts)):
+            dt = ts[i] - ts[i - 1]
+            if dt > 0:
+                d = vs[i] - vs[i - 1]
+                out[ts[i]] = (d if d >= 0 else max(0.0, vs[i])) / dt
+        return out
+
+    if w_t and g_t:
+        # Pairing the scheduler's own timestamps with the nearest GPU sample
+        # returns those timestamps as the X values, so the waiting, running
+        # and KV series can be looked up at exactly the instants kept.
+        _ts, _busy = _k_align(w_t, w_t, g_t, g_v)
+        _w_at = dict(zip(w_t, w_v))
+        _r_at = dict(zip(r_t, r_v))
+        _cap = m.l1_kv_cap_tok or 0.0
+        _k_at = ({t: v / _cap * 100.0 for t, v in zip(k_t, k_v)}
+                 if _cap > 0 else {})
+        _wait = [_w_at.get(t, 0.0) for t in _ts]
+        _run = [_r_at.get(t, 0.0) for t in _ts] if _r_at else None
+        _kv = [_k_at.get(t, float("nan")) for t in _ts] if _k_at else None
+        _st = _k_admission_stalls(_ts, _busy, _wait, _run, _kv)
+        if _st.get("present"):
+            m.stall_present = True
+            m.busy_s = float(_st["busy_s"])
+            m.stall_s = float(_st["stall_s"])
+            m.no_work_s = float(_st["no_work_s"])
+            m.other_idle_s = float(_st["other_idle_s"])
+            m.stall_method = str(_st["method"])
+            m.stall_src = (f"gpu_util in gpu_timeseries.csv (mean across "
+                           f"GPUs) against {w_src}")
+            m.stall_episodes = [dict(e) for e in _st["episodes"]]
+            # Downsampled for the chart: a 1 Hz local run has thousands of
+            # points, and the chart is read for shape.
+            _pr_at, _br_at = _rate_at(p_t, p_v), _rate_at(b_t, b_v)
+            _pr = [_pr_at.get(t, float("nan")) for t in _ts] if _pr_at else None
+            _br = [_br_at.get(t, float("nan")) for t in _ts] if _br_at else None
+            _stride = max(1, len(_ts) // 400)
+            m.timeline = {"t": _ts[::_stride], "gpu": _busy[::_stride],
+                          "waiting": _wait[::_stride],
+                          "running": (_run[::_stride] if _run else [])}
+            # Which signals moved together over the run. Pairs are filtered
+            # to samples where both sides are finite before the kernel sees
+            # them, and a pair with a constant side is None rather than 0:
+            # an r of 0 reads as "independent", which a flat line is not.
+            _named = [(n, v) for n, v in (
+                ("GPU util", _busy), ("waiting reqs", _wait),
+                ("decode batch", _run), ("L1 KV fill", _kv),
+                ("prefetch rate", _pr), ("backup rate", _br)) if v]
+            _names = [n for n, _ in _named]
+            _mat: "list[list[float | None]]" = []
+            for _, xa in _named:
+                _row = []
+                for _, xb in _named:
+                    _pairs = [(a, b) for a, b in zip(xa, xb)
+                              if a == a and b == b]
+                    _xs = [a for a, _ in _pairs]
+                    _ys = [b for _, b in _pairs]
+                    if (len(_pairs) < 3 or max(_xs) == min(_xs)
+                            or max(_ys) == min(_ys)):
+                        _row.append(None)
+                    else:
+                        _row.append(round(_k_pearson(_xs, _ys), 3))
+                _mat.append(_row)
+            if len(_names) >= 2:
+                m.corr = {"names": _names, "r": _mat}
+
+    # ── When the backing tier last delivered ──────────────────────────────
+    if len(p_t) >= 2:
+        _last = None
+        for i in range(1, len(p_t)):
+            if p_v[i] > p_v[i - 1]:
+                _last = p_t[i]
+        if _last is not None:
+            m.prefetch_last_move_s = _last
+            m.prefetch_quiet_tail_s = max(0.0, p_t[-1] - _last)
+        else:
+            m.prefetch_quiet_tail_s = p_t[-1] - p_t[0]
+    # What each tier counter did DURING each stall: a tier that delivered
+    # nothing while requests waited is a different finding from one that was
+    # busy delivering.
+    for e in m.stall_episodes:
+        _t0 = e["t_end"] - e["dur_s"]
+        e["prefetch_tok"] = (_increase_between(p_t, p_v, _t0, e["t_end"])
+                             if len(p_t) >= 2 else None)
+        e["backup_tok"] = (_increase_between(b_t, b_v, _t0, e["t_end"])
+                           if len(b_t) >= 2 else None)
+
+    # ── HiCache configuration ─────────────────────────────────────────────
+    _si: dict = {}
+    try:
+        from .report.l3_backend import (_get_server_info_raw,
+                                        _hicache_backend_from_server_info)
+        _si = dict(_get_server_info_raw(setup) or {})
+        m.storage_backend = _hicache_backend_from_server_info(setup) or ""
+    except Exception:
+        pass
+    _launch = str(_pick(setup, "Launch command", "launch_command",
+                        "SGLang launch command", "sglang_launch_command",
+                        "Reference launch command") or "")
+    _lb = _LAUNCH_BACKEND_RE.search(_launch)
+    m.launch_backend = _lb.group(1).lower() if _lb else ""
+    for _src, _val in (
+            ("SGLang server_info page_size", _si.get("page_size")),
+            ("setup_details", _pick(setup, "Page size", "page_size",
+                                    "HiCache page size"))):
+        _ps = _sf(str(_val).split()[0], 0.0) if str(_val or "").strip() \
+            else 0.0
+        if _ps > 0:
+            m.page_size, m.page_size_src = _ps, _src
+            break
+    if m.page_size is None:
+        _, _pv, _psrc = _rows_by_time(sg, ["page_size"])
+        if _pv and max(_pv) > 0:
+            m.page_size, m.page_size_src = max(_pv), _psrc
+        elif sg.exists():
+            for _c in _csv_rows(sg)[0]:
+                _mm = re.search(r"page_size\s*=\s*[\"']?(\d+)", str(_c))
+                if _mm:
+                    m.page_size = float(_mm.group(1))
+                    m.page_size_src = f"page_size label on {_c} in {sg.name}"
+                    break
+    if m.page_size is None:
+        _lp = _LAUNCH_PAGE_RE.search(_launch)
+        if _lp:
+            m.page_size = float(_lp.group(1))
+            m.page_size_src = "--page-size in the launch command"
 
 
 # ─── HTML report builder ──────────────────────────────────────────────────────
@@ -2350,13 +2820,35 @@ def build_suspect_banner(runs: "list[RunMetrics]") -> str:
         _lo = min(_afs, key=lambda x: x[1])
         _hi = max(_afs, key=lambda x: x[1])
         if _hi[1] - _lo[1] > 0.15 and _hi[0] != _lo[0]:
-            msgs.append(
-                f"<b>These runs were not alive for the same share of their "
-                f"windows:</b> {_esc(_hi[0])} {_hi[1]*100:,.0f}% against "
-                f"{_esc(_lo[0])} {_lo[1]*100:,.0f}%. A window mean is a "
-                f"property of the system only when the window is a property "
-                f"of the workload, so compare the active-span rows below, "
-                f"not the window means.")
+            # The active-span correction assumes the idle time was the
+            # workload's. When most of it was a stall -- requests waiting,
+            # GPUs idle -- it was the system's, and dividing it out credits
+            # the slower run with time it spent not serving its queue. That
+            # is how a run that finished 1.66x later read as the faster one.
+            _lo_run = next((r for r in runs if r.label == _lo[0]), None)
+            _idle = _lo_run.idle_s if _lo_run is not None else None
+            _stalled = (_lo_run is not None and _lo_run.stall_present
+                        and _idle and (_lo_run.stall_s or 0) >= 0.5 * _idle)
+            if _stalled:
+                msgs.append(
+                    f"<b>These runs were not alive for the same share of "
+                    f"their windows:</b> {_esc(_hi[0])} {_hi[1]*100:,.0f}% "
+                    f"against {_esc(_lo[0])} {_lo[1]*100:,.0f}%. But "
+                    f"{_lo_run.stall_s/60.0:,.1f} of {_esc(_lo[0])}'s "
+                    f"{_idle/60.0:,.1f} idle minutes were stalls — requests "
+                    f"waiting while the GPUs sat idle — so that idle time "
+                    f"belongs to the system, not to the workload. Do not "
+                    f"correct it away: the active-span rows below excuse "
+                    f"exactly the stall. Compare time to complete and request "
+                    f"throughput in the Verdict and Workload sections.")
+            else:
+                msgs.append(
+                    f"<b>These runs were not alive for the same share of "
+                    f"their windows:</b> {_esc(_hi[0])} {_hi[1]*100:,.0f}% "
+                    f"against {_esc(_lo[0])} {_lo[1]*100:,.0f}%. A window "
+                    f"mean is a property of the system only when the window "
+                    f"is a property of the workload, so compare the "
+                    f"active-span rows below, not the window means.")
 
     # 6. A percentile that is a bucket boundary rather than a measurement.
     _edge: "list[str]" = []
@@ -2490,6 +2982,556 @@ def build_variance_banner(runs: "list[RunMetrics]") -> str:
             "spread between same-label runs are not evidence of a "
             "configuration effect.</div>")
 
+# ---------------------------------------------------------------------------
+# Verdict, workload and timeline
+# ---------------------------------------------------------------------------
+
+_WORKLOAD_TOL = 0.05   # requests and prompt tokens within 5% = same workload
+
+
+def _same_workload(a: "RunMetrics", b: "RunMetrics",
+                   tol: float = _WORKLOAD_TOL) -> "tuple[bool | None, str]":
+    """Did two runs serve the same work? (verdict, the evidence for it).
+
+    None when neither a request count nor a prompt-token counter is there on
+    both sides: the question is then unanswered, not answered "no".
+    """
+    checks = []
+    for name, va, vb in (("requests", a.requests_n, b.requests_n),
+                         ("prompt tokens", a.prompt_tok, b.prompt_tok)):
+        if va and vb:
+            checks.append((name, va, vb, abs(va - vb) / max(va, vb)))
+    if not checks:
+        return None, "no request or prompt-token counters on both runs"
+    desc = "; ".join(f"{n} {va:,.0f} vs {vb:,.0f} ({d*100:.1f}% apart)"
+                     for n, va, vb, d in checks)
+    return all(c[3] <= tol for c in checks), desc
+
+
+def _min(sec: "float | None") -> str:
+    return "?" if sec is None else f"{sec/60.0:,.1f} min"
+
+
+def _ratio_txt(a: "float | None", b: "float | None") -> str:
+    if a is None or b is None:
+        return "—"
+    if a == 0:
+        return "0 →" if b else "—"
+    if b == 0:
+        return "→ 0"
+    return f"{b / a:,.2f}x"
+
+
+def build_verdict_html(base: "RunMetrics", cmp_: "RunMetrics") -> str:
+    """Which run served the workload faster, shown as numbers.
+
+    A headline, a row of tiles for the figures that decide it, and an
+    evidence table -- baseline, comparison, ratio, and a two-word reading --
+    for everything behind them. The one statement no counter measures, the
+    likely mechanism, is a single line marked as an inference.
+    """
+    same, same_desc = _same_workload(base, cmp_)
+    ca, cb = base.completion_s, cmp_.completion_s
+    if same and ca and cb:
+        fast, slow = (base, cmp_) if ca <= cb else (cmp_, base)
+        speed = slow.completion_s / fast.completion_s
+        basis = "time to complete"
+    elif base.req_per_s and cmp_.req_per_s:
+        fast, slow = ((base, cmp_) if base.req_per_s >= cmp_.req_per_s
+                      else (cmp_, base))
+        speed = fast.req_per_s / slow.req_per_s
+        basis = "request throughput"
+    else:
+        return ""
+    B, C = _esc(base.label), _esc(cmp_.label)
+    F = _esc(fast.label)
+    _title = f'<h2>🧭 Verdict — {B} vs {C}</h2>'
+    if speed < 1.05:
+        return (_title + f'<p class="headline">No material difference: '
+                f'{basis} within {(speed - 1) * 100:.1f}%.</p>')
+    head = (f"{F} served the {'same ' if same else ''}workload "
+            f"{speed:.2f}x faster ({basis}).")
+
+    def _mn(v):
+        return None if v is None else v / 60.0
+
+    def _lg(m):
+        return (max(e["dur_s"] for e in m.stall_episodes) / 60.0
+                if m.stall_episodes else (0.0 if m.stall_present else None))
+
+    def _kvst(m):
+        _k = [e["kv_fill_mean"] for e in (m.stall_episodes or [])
+              if e.get("kv_fill_mean") is not None]
+        return (sum(_k) / len(_k)) if _k else None
+
+    def _dram(m):
+        return ((m.store_mem_hit_n / m.store_get_n * 100.0)
+                if (m.store_get_n and m.store_mem_hit_n is not None) else None)
+
+    def _within(a, b, tol):
+        return (a is not None and b is not None and max(a, b) > 0
+                and abs(a - b) / max(a, b) <= tol)
+
+    # (label, accessor, unit, fmt, lower_is_better or None, reading rule)
+    rows = [
+        ("Requests completed", lambda m: m.requests_n, "", ",.0f", None,
+         lambda a, b: "same" if _within(a, b, _WORKLOAD_TOL) else ""),
+        ("Prompt tokens", lambda m: m.prompt_tok, "", ",.0f", None,
+         lambda a, b: "same" if _within(a, b, _WORKLOAD_TOL) else ""),
+        ("Prefill tokens computed", lambda m: m.recompute_measured_tok, "",
+         ",.0f", None,
+         lambda a, b: "same" if _within(a, b, 0.10) else ""),
+        ("GPU-busy time", lambda m: _mn(m.gpu_busy_equiv_s), " min", ",.1f",
+         None, lambda a, b: "same GPU work" if _within(a, b, 0.15) else ""),
+        ("Time to complete", lambda m: _mn(m.completion_s), " min", ",.1f",
+         True, None),
+        ("Request throughput", lambda m: m.req_per_s, " req/s", ",.2f",
+         False, None),
+        ("Stalled (GPU idle, reqs waiting)", lambda m: _mn(m.stall_s),
+         " min", ",.1f", True, None),
+        ("↳ episodes", lambda m: (float(len(m.stall_episodes))
+                                  if m.stall_present else None),
+         "", ",.0f", True, None),
+        ("↳ longest", _lg, " min", ",.1f", True, None),
+        ("↳ L1 KV fill during stalls", _kvst, "%", ",.0f", None,
+         lambda a, b: "HBM had room" if (a is not None and a < 50) or
+         (b is not None and b < 50) else ""),
+        ("Idle, nothing queued", lambda m: _mn(m.no_work_s), " min", ",.1f",
+         None, None),
+        ("Mean queue wait", lambda m: (m.queue_wait_ms / 1000.0)
+         if m.queue_wait_ms else None, " s", ",.1f", True, None),
+        ("Prefetch from tier", lambda m: m.prefetch_rate_tok_s, " tok/s",
+         ",.0f", False, None),
+        ("↳ silent for the last", lambda m: _mn(m.prefetch_quiet_tail_s),
+         " min", ",.1f", True, None),
+        ("↳ returned ÷ absorbed", lambda m: m.engine_read_back_pct, "%",
+         ",.1f", False, None),
+        ("↳ store lookups from DRAM", _dram, "%", ",.1f", False, None),
+        ("Backup to tier", lambda m: m.backup_rate_tok_s, " tok/s", ",.0f",
+         None, None),
+        ("Mean decode batch", lambda m: m.sg_running_reqs_mean, " reqs",
+         ",.1f", None, None),
+        ("TPOT", lambda m: m.tpot_ms or None, " ms", ",.0f", True,
+         lambda a, b: ("cost of the larger batch"
+                       if (a and b and (cmp_.sg_running_reqs_mean or 0)
+                           and (base.sg_running_reqs_mean or 0)
+                           and ((b > a) == (cmp_.sg_running_reqs_mean
+                                            > base.sg_running_reqs_mean)))
+                       else "")),
+    ]
+
+    def _cls(a, b, lib):
+        if lib is None or a is None or b is None or a == b:
+            return ""
+        if a == 0:
+            return "bad" if lib else "good"
+        d = (b - a) / abs(a)
+        if abs(d) < 0.05:
+            return ""
+        return "good" if (d < 0) == lib else "bad"
+
+    body = ""
+    for lab, acc, unit, fmt, lib, rd in rows:
+        a, b = acc(base), acc(cmp_)
+        if a is None and b is None:
+            continue
+        _c = _cls(a, b, lib)
+        _rd = rd(a, b) if rd else ""
+        body += (f"<tr class='chain-row'><td>{_esc(lab)}</td>"
+                 f"<td class='num'>{_fmt_layer_val(a, unit, fmt)}</td>"
+                 f"<td class='num {_c}'>{_fmt_layer_val(b, unit, fmt)}</td>"
+                 f"<td class='num {_c}'>{_ratio_txt(a, b)}</td>"
+                 f"<td class='layer'>{_esc(_rd)}</td></tr>")
+
+    # Tiles: the four or five figures that decide the verdict.
+    tiles = ""
+    for lab, acc, unit, fmt, lib, _ in rows:
+        if lab not in ("Time to complete", "Request throughput",
+                       "Stalled (GPU idle, reqs waiting)", "GPU-busy time",
+                       "Prefetch from tier", "TPOT"):
+            continue
+        a, b = acc(base), acc(cmp_)
+        if a is None or b is None:
+            continue
+        tiles += (f'<div class="tile"><div class="t-lab">{_esc(lab)}</div>'
+                  f'<div class="t-val">{a:{fmt}} → '
+                  f'<span class="{_cls(a, b, lib)}">{b:{fmt}}</span>'
+                  f'<span class="t-unit">{_esc(unit)}</span></div>'
+                  f'<div class="t-ratio">{_ratio_txt(a, b)}</div></div>')
+
+    flags = []
+    for r in (base, cmp_):
+        if r.page_size == 1 and r.l3_backend_class == "local_ssd":
+            flags.append(f"{_esc(r.label)}: file tier at page_size 1 "
+                         f"(one key/file per token per rank)")
+        if (r.launch_backend and r.storage_backend
+                and r.launch_backend != r.storage_backend):
+            flags.append(f"{_esc(r.label)}: launch command is stale — says "
+                         f"{_esc(r.launch_backend)}, engine ran "
+                         f"{_esc(r.storage_backend)}")
+    if same is False:
+        flags.append(f"workloads differ — {_esc(same_desc)}")
+    flags_html = ("".join(f'<span class="chip">⚑ {f}</span>' for f in flags)
+                  if flags else "")
+
+    infer = ""
+    _pa, _pb = slow.prefetch_rate_tok_s, fast.prefetch_rate_tok_s
+    if (slow.l3_backend_class == "local_ssd" and slow.stall_present
+            and (slow.stall_s or 0) >= 60.0 and _pa is not None
+            and _pb is not None and _pa < 0.2 * max(_pb, 1e-9)):
+        infer = (f'<div class="infer"><b>Likely mechanism (inferred, not '
+                 f'measured):</b> {_esc(slow.label)}\'s local file tier was '
+                 f'too slow to prefetch'
+                 + (" at page_size 1" if slow.page_size == 1 else "")
+                 + ', so requests were held while the GPUs idled. '
+                 '<b>To confirm:</b> prefetch timeouts in the SGLang log · '
+                 'storage_prefetch_unfulfilled_tokens_total over the stalls · '
+                 're-run with --page-size 64.</div>')
+
+    header = (f"<tr><th>Measurement</th><th>{B}</th><th>{C}</th>"
+              f"<th>{C} ÷ {B}</th><th>Reading</th></tr>")
+    return (_title + f'<p class="headline">{head}</p>'
+            f'<div class="tiles">{tiles}</div>'
+            + (f'<div class="chips">{flags_html}</div>' if flags_html else "")
+            + infer
+            + f'<table class="chain"><thead>{header}</thead>'
+              f'<tbody>{body}</tbody></table>')
+
+
+def build_diagnosis_charts_html(metrics: "list[RunMetrics]",
+                                colours: "list[str]") -> str:
+    """The verdict's figures as charts, plus how the signals co-moved."""
+    if len(metrics) < 2:
+        return ""
+    base = metrics[0]
+    _lay = {"paper_bgcolor": "#1e293b", "plot_bgcolor": "#1e293b",
+            "font": {"color": "#e2e8f0", "size": 11},
+            "margin": {"l": 60, "r": 30, "t": 44, "b": 60}, "height": 360,
+            "legend": {"orientation": "h", "y": -0.22}}
+    charts: "list[tuple[str, dict, str]]" = []
+
+    def _t(text):
+        return {"text": text, "font": {"size": 13, "color": "#f1f5f9"}}
+
+    # 1. Every key figure as a ratio to the baseline, on a log axis.
+    _spec = [  # (label, accessor, lower_is_better or None)
+        ("Requests", lambda m: m.requests_n, None),
+        ("Prompt tokens", lambda m: m.prompt_tok, None),
+        ("Prefill computed", lambda m: m.recompute_measured_tok, None),
+        ("GPU-busy time", lambda m: m.gpu_busy_equiv_s, None),
+        ("Time to complete", lambda m: m.completion_s, True),
+        ("Request throughput", lambda m: m.req_per_s, False),
+        ("Stall time", lambda m: m.stall_s, True),
+        ("Queue wait", lambda m: m.queue_wait_ms, True),
+        ("Prefetch rate", lambda m: m.prefetch_rate_tok_s, False),
+        ("Backup rate", lambda m: m.backup_rate_tok_s, None),
+        ("Decode batch", lambda m: m.sg_running_reqs_mean, None),
+        ("TPOT", lambda m: m.tpot_ms or None, True),
+    ]
+    _tr = []
+    for j, m in enumerate(metrics[1:], start=1):
+        ys, xs, cols, txt = [], [], [], []
+        for lab, acc, lib in _spec:
+            a, b = acc(base), acc(m)
+            if not a or b is None:
+                continue
+            r = max(b / a, 1e-2)
+            ys.append(lab)
+            xs.append(r)
+            txt.append("→0" if b == 0 else f"{b / a:,.2f}x")
+            cols.append("#64748b" if lib is None or abs(r - 1) < 0.05 else
+                        ("#4ade80" if (r < 1) == lib else "#f87171"))
+        if ys:
+            _tr.append({"type": "bar", "orientation": "h", "y": ys, "x": xs,
+                        "name": m.label, "text": txt, "textposition": "auto",
+                        "marker": {"color": cols if len(metrics) == 2
+                                   else colours[j % len(colours)]}})
+    if _tr:
+        charts.append(("diag-ratio", {
+            "data": _tr, "layout": {**_lay, "title": _t(
+                f"Ratio to baseline ({base.label})"),
+                "height": 420, "barmode": "group",
+                "xaxis": {"type": "log", "title": "× baseline (log)",
+                          "gridcolor": "#334155"},
+                "yaxis": {"autorange": "reversed", "automargin": True},
+                "shapes": [{"type": "line", "x0": 1, "x1": 1, "yref": "paper",
+                            "y0": 0, "y1": 1,
+                            "line": {"color": "#e2e8f0", "dash": "dot"}}],
+                "showlegend": len(metrics) > 2}},
+            "Grey = workload or neutral; green / red = better / worse than "
+            "baseline. 1.0 = no change."))
+
+    # 2. Where each run's time went.
+    _runs = [m for m in metrics if m.stall_present]
+    if _runs:
+        _parts = (("GPUs busy", "busy_s", "#22c55e"),
+                  ("Stalled — reqs waiting", "stall_s", "#ef4444"),
+                  ("Idle — nothing queued", "no_work_s", "#64748b"),
+                  ("Idle — between batches", "other_idle_s", "#f59e0b"))
+        charts.append(("diag-time", {
+            "data": [{"type": "bar", "orientation": "h", "name": n,
+                      "y": [m.label for m in _runs],
+                      "x": [(getattr(m, a) or 0) / 60.0 for m in _runs],
+                      "marker": {"color": c},
+                      "text": [f"{(getattr(m, a) or 0) / 60.0:,.1f}"
+                               for m in _runs], "textposition": "inside"}
+                     for n, a, c in _parts],
+            "layout": {**_lay, "title": _t("Where the time went (min)"),
+                       "barmode": "stack", "height": 230 + 60 * len(_runs),
+                       "margin": {"l": 60, "r": 30, "t": 44, "b": 110},
+                       "legend": {"orientation": "h", "y": -0.5},
+                       "xaxis": {"title": "minutes", "gridcolor": "#334155"},
+                       "yaxis": {"automargin": True}}},
+            ""))
+
+    # 3. Backing-tier delivery.
+    if any(m.prefetch_rate_tok_s is not None for m in metrics):
+        charts.append(("diag-tier", {
+            "data": [{"type": "bar", "name": n, "x": [m.label for m in metrics],
+                      "y": [f(m) for m in metrics], "marker": {"color": c},
+                      "text": [("n/a" if f(m) is None else f"{f(m):,.0f}")
+                               for m in metrics], "textposition": "auto"}
+                     for n, f, c in (
+                         ("prefetch tok/s", lambda m: m.prefetch_rate_tok_s,
+                          "#38bdf8"),
+                         ("backup tok/s", lambda m: m.backup_rate_tok_s,
+                          "#a78bfa"))],
+            "layout": {**_lay, "title": _t("Backing-tier delivery"),
+                       "barmode": "group",
+                       "yaxis": {"type": "log", "title": "tokens / s (log)",
+                                 "gridcolor": "#334155"}}},
+            "Returned ÷ absorbed: " + " · ".join(
+                f"{m.label} {m.engine_read_back_pct:,.1f}%"
+                for m in metrics if m.engine_read_back_pct is not None)))
+
+    # 4. GPU utilisation against waiting requests, one point per sample.
+    _sc = [{"type": "scatter", "mode": "markers", "name": m.label,
+            "x": m.timeline["waiting"], "y": m.timeline["gpu"],
+            "marker": {"color": colours[i % len(colours)], "size": 6,
+                       "opacity": 0.6}}
+           for i, m in enumerate(metrics) if (m.timeline or {}).get("t")]
+    if _sc:
+        charts.append(("diag-scatter", {
+            "data": _sc, "layout": {**_lay, "title": _t(
+                "GPU utilisation vs requests waiting"),
+                "xaxis": {"title": "requests waiting", "gridcolor": "#334155"},
+                "yaxis": {"title": "GPU util %", "range": [-3, 105],
+                          "gridcolor": "#334155"}}},
+            "Bottom-right = stall: work waiting, GPUs idle."))
+
+    # 5. Correlation between the signals, per run.
+    for i, m in enumerate(metrics):
+        c = m.corr or {}
+        if not c.get("names"):
+            continue
+        z = c["r"]
+        charts.append((f"diag-corr-{i}", {
+            "data": [{"type": "heatmap", "x": c["names"], "y": c["names"],
+                      "z": z, "zmin": -1, "zmax": 1, "colorscale": "RdBu",
+                      "reversescale": True,
+                      "text": [["" if v is None else f"{v:+.2f}" for v in row]
+                               for row in z],
+                      "texttemplate": "%{text}", "hoverongaps": False}],
+            "layout": {**_lay, "title": _t(f"Correlation (Pearson r) — "
+                                           f"{m.label}"),
+                       "height": 380, "yaxis": {"autorange": "reversed",
+                                                "automargin": True},
+                       "xaxis": {"automargin": True}}},
+            "Blank = undefined (a constant series)."))
+
+    if not charts:
+        return ""
+    out = []
+    for cid, fig, note in charts:
+        dj = json.dumps(fig)
+        out.append(f'<div class="chart-wrap"><div id="{cid}"></div>'
+                   + (f'<div class="chart-note">{_esc(note)}</div>'
+                      if note else "")
+                   + f'</div><script>Plotly.newPlot("{cid}",{dj}.data,'
+                     f'{dj}.layout,{{"responsive":true,'
+                     f'"displayModeBar":false}});</script>')
+    return ('<h2>📊 Diagnosis charts</h2><div class="charts-grid">'
+            + "".join(out) + '</div>')
+
+
+def build_workload_html(metrics: "list[RunMetrics]") -> str:
+    """The workload each run served, how long it took, and where it waited."""
+    if len(metrics) < 2:
+        return ""
+    labels = [_esc(m.label) for m in metrics]
+
+    def _ep_longest(m):
+        if not m.stall_episodes:
+            return None if not m.stall_present else "none"
+        e = max(m.stall_episodes, key=lambda x: x["dur_s"])
+        return (f"{e['dur_s']/60.0:,.1f} min from t={e['t_end']-e['dur_s']:,.0f}"
+                f" s, ≤{e['waiting_peak']:,.0f} waiting"
+                + (f", KV {e['kv_fill_mean']:,.0f}% full"
+                   if e.get("kv_fill_mean") is not None else ""))
+
+    def _mn(v):
+        return None if v is None else v / 60.0
+
+    rows = [
+        ("Requests completed · measured", lambda m: m.requests_n, "", ",.0f"),
+        ("↳ counted as", lambda m: m.requests_src or None, "", ""),
+        ("Prompt tokens", lambda m: m.prompt_tok, "", ",.0f"),
+        ("↳ per request",
+         lambda m: (m.prompt_tok / m.requests_n)
+         if (m.prompt_tok and m.requests_n) else None, " tok", ",.0f"),
+        ("Prefill tokens computed (prompt − cached)",
+         lambda m: m.recompute_measured_tok, "", ",.0f"),
+        ("Time to complete · first to last busy sample",
+         lambda m: _mn(m.completion_s), " min", ",.1f"),
+        ("↳ analysis window", lambda m: _mn(m.window_s or None), " min", ",.1f"),
+        ("Request throughput · over time to complete",
+         lambda m: m.req_per_s, " req/s", ",.2f"),
+        ("GPU-busy time · mean util × span",
+         lambda m: _mn(m.gpu_busy_equiv_s), " min", ",.1f"),
+        ("GPUs busy", lambda m: _mn(m.busy_s), " min", ",.1f"),
+        ("Stalled · GPUs idle, requests waiting",
+         lambda m: _mn(m.stall_s), " min", ",.1f"),
+        ("↳ episodes", lambda m: (float(len(m.stall_episodes))
+                                  if m.stall_present else None), "", ",.0f"),
+        ("↳ longest", _ep_longest, "", ""),
+        ("Idle · nothing queued or running",
+         lambda m: _mn(m.no_work_s), " min", ",.1f"),
+        ("Idle · between batches", lambda m: _mn(m.other_idle_s), " min", ",.1f"),
+        ("↳ how idle time was classified",
+         lambda m: m.stall_method or None, "", ""),
+        ("Waiting requests · mean", lambda m: m.sg_queue_reqs_mean, "", ",.1f"),
+        ("↳ peak", lambda m: m.sg_queue_reqs_peak, "", ",.0f"),
+        ("Decode batch · mean", lambda m: m.sg_running_reqs_mean, "", ",.1f"),
+        ("↳ peak", lambda m: m.sg_running_reqs_peak, "", ",.0f"),
+        ("Queue wait before prefill · mean",
+         lambda m: (m.queue_wait_ms / 1000.0) if m.queue_wait_ms else None,
+         " s", ",.1f"),
+        ("Prefetch from the backing tier",
+         lambda m: m.prefetch_rate_tok_s, " tok/s", ",.0f"),
+        ("Backup to the backing tier",
+         lambda m: m.backup_rate_tok_s, " tok/s", ",.0f"),
+        ("↳ tokens returned ÷ tokens absorbed",
+         lambda m: m.engine_read_back_pct, "%", ",.2f"),
+        ("↳ prefetch silent for the last",
+         lambda m: _mn(m.prefetch_quiet_tail_s), " min", ",.1f"),
+        ("Store lookups answered from its DRAM tier",
+         lambda m: (m.store_mem_hit_n / m.store_get_n * 100.0)
+         if (m.store_get_n and m.store_mem_hit_n is not None) else None,
+         "%", ",.2f"),
+        ("HiCache page size", lambda m: m.page_size, " tok/page", ",.0f"),
+        ("↳ from", lambda m: m.page_size_src or None, "", ""),
+        ("Storage backend the engine ran",
+         lambda m: m.storage_backend or None, "", ""),
+        ("↳ launch command asks for",
+         lambda m: m.launch_backend or None, "", ""),
+    ]
+    # With two runs the verdict's evidence table already carries the headline
+    # figures; repeat them only when there are more runs than it shows.
+    _in_verdict = {
+        "Requests completed · measured", "Prompt tokens",
+        "Prefill tokens computed (prompt − cached)",
+        "Time to complete · first to last busy sample",
+        "Request throughput · over time to complete",
+        "GPU-busy time · mean util × span",
+        "Stalled · GPUs idle, requests waiting", "↳ episodes",
+        "Idle · nothing queued or running", "Decode batch · mean",
+        "Queue wait before prefill · mean", "Prefetch from the backing tier",
+        "Backup to the backing tier", "↳ tokens returned ÷ tokens absorbed",
+        "↳ prefetch silent for the last",
+        "Store lookups answered from its DRAM tier"}
+    body = ""
+    for row_label, acc, unit, fmt in rows:
+        if len(metrics) == 2 and row_label in _in_verdict:
+            continue
+        vals = [acc(m) for m in metrics]
+        if all(v is None for v in vals):
+            continue
+        body += (f"<tr class='chain-row'><td>{_esc(row_label)}</td>"
+                 + "".join(f"<td class='num'>{_fmt_layer_val(v, unit, fmt)}"
+                           f"</td>" for v in vals) + "</tr>")
+    if not body:
+        return ""
+    _notes = []
+    for _m in metrics[1:]:
+        _same, _desc = _same_workload(metrics[0], _m)
+        _notes.append(f"{_esc(metrics[0].label)} vs {_esc(_m.label)}: "
+                      + ("same workload — " if _same else
+                         "workloads differ — " if _same is False else "")
+                      + _esc(_desc))
+    header = ("<tr><th>Measurement</th>"
+              + "".join(f"<th>{l}</th>" for l in labels) + "</tr>")
+    return ('<h2>⏱️ Workload and time to complete — detail</h2>'
+            '<p class="note">Stall = GPUs idle while requests waited. '
+            + " · ".join(_notes) + '</p>'
+            f'<table class="chain"><thead>{header}</thead>'
+            f'<tbody>{body}</tbody></table>')
+
+
+def build_timeline_html(metrics: "list[RunMetrics]",
+                        colours: "list[str]") -> str:
+    """GPU utilisation against waiting requests over each run's window.
+
+    One panel per run, on minutes since the window start, with every stall
+    episode shaded. The window means compress this to one number each; the
+    timeline is where a 6-minute stall and a slow tier look different.
+    """
+    panels = []
+    for i, m in enumerate(metrics):
+        tl = m.timeline or {}
+        if not tl.get("t"):
+            continue
+        x = [t / 60.0 for t in tl["t"]]
+        traces = [
+            {"type": "scatter", "mode": "lines", "name": "GPU util %",
+             "x": x, "y": tl["gpu"],
+             "line": {"color": colours[i % len(colours)], "width": 1.6}},
+            {"type": "scatter", "mode": "lines", "name": "waiting requests",
+             "x": x, "y": tl["waiting"], "yaxis": "y2",
+             "line": {"color": "#f87171", "width": 1.4}},
+        ]
+        if tl.get("running"):
+            traces.append({"type": "scatter", "mode": "lines",
+                           "name": "decode batch", "x": x,
+                           "y": tl["running"], "yaxis": "y2",
+                           "line": {"color": "#94a3b8", "width": 1,
+                                    "dash": "dot"}})
+        shapes = [{"type": "rect", "xref": "x", "yref": "paper",
+                   "x0": (e["t_end"] - e["dur_s"]) / 60.0,
+                   "x1": e["t_end"] / 60.0, "y0": 0, "y1": 1,
+                   "fillcolor": "rgba(248,113,113,0.18)", "line": {"width": 0}}
+                  for e in (m.stall_episodes or [])]
+        layout = {
+            "title": {"text": f"{m.label} — "
+                              + (f"{len(m.stall_episodes)} stall episode(s), "
+                                 f"{(m.stall_s or 0)/60:,.1f} min"
+                                 if m.stall_present else "stalls not classified"),
+                      "font": {"size": 13, "color": "#f1f5f9"}},
+            "paper_bgcolor": "#1e293b", "plot_bgcolor": "#1e293b",
+            "font": {"color": "#e2e8f0", "size": 11},
+            "xaxis": {"title": "minutes since window start",
+                      "gridcolor": "#334155"},
+            "yaxis": {"title": "GPU util %", "range": [0, 105],
+                      "gridcolor": "#334155"},
+            "yaxis2": {"title": "requests", "overlaying": "y", "side": "right",
+                       "gridcolor": "rgba(0,0,0,0)", "rangemode": "tozero"},
+            "legend": {"orientation": "h", "y": -0.3},
+            "margin": {"l": 55, "r": 55, "t": 40, "b": 70}, "height": 320,
+            "shapes": shapes,
+        }
+        cid = f"timeline-{i}"
+        dj = json.dumps({"data": traces, "layout": layout})
+        panels.append(f'<div class="chart-wrap"><div id="{cid}"></div></div>'
+                      f'<script>Plotly.newPlot("{cid}",{dj}.data,{dj}.layout,'
+                      f'{{"responsive":true,"displayModeBar":false}});</script>')
+    if not panels:
+        return ""
+    return ('<h2>📉 Timeline — where the time went</h2>'
+            '<p class="note">GPU utilisation (left) against requests waiting '
+            'to enter prefill and the decode batch (right). Shaded spans are '
+            'stalls: the GPUs idle while requests waited.</p>'
+            '<div class="charts-grid">' + "".join(panels) + '</div>')
+
+
 def build_comparison_html(
     metrics: List[RunMetrics],
     title: str = "AMOprof Comparison Report",
@@ -2556,6 +3598,11 @@ def build_comparison_html(
             if i == y2_series:
                 _t["yaxis"] = "y2"
                 _t["name"] = f"{name} (right axis)"
+            # Bars on two overlaying axes are grouped per axis, so without
+            # an offsetgroup each the right-axis series is drawn in the same
+            # slot as the first left-axis one and hides it -- TPOT covered
+            # TTFT and E2E, read IOPS covered read bandwidth.
+            _t["offsetgroup"] = str(_slot)
             traces.append(_t)
 
         layout = {
@@ -2685,6 +3732,13 @@ def build_comparison_html(
             ("NVMe device util%","nvme_util_pct",    "%",    True,  ".1f", 1.0),
             ("SSD reads total (GB)","read_total_gb", " GB",  False, ".0f", 1.0),
             ("DRAM total BW (GB/s)","dram_total_bw_gbs"," GB/s",False,".1f",1.0),
+            # Time to serve the workload, which is what a same-workload
+            # comparison is about; the window means above dilute it.
+            ("Time to complete (min)","kpi_completion_min"," min",True,".1f",1.0),
+            ("Request throughput (req/s)","kpi_req_per_s"," req/s",False,".2f",1.0),
+            ("Mean queue wait (s)","kpi_queue_wait_s","s",  True,  ".1f", 1.0),
+            ("Mean decode batch (reqs)","kpi_running_mean","", False, ".1f", 1.0),
+            ("Prefetch from tier (tok/s)","kpi_prefetch_rate"," tok/s",False,",.0f",1.0),
         ]
         header = "<tr><th>Metric</th>" + "".join(
             f"<th>{l}</th>" for l in labels) + "</tr>"
@@ -2748,6 +3802,8 @@ def build_comparison_html(
             ("Highest NVMe BW",   "nvme_rd_bw_mbs",    False),
             ("Lowest NVMe lat",   "nvme_rd_lat_ms",    True),
             ("Lowest DRAM BW",    "dram_total_bw_gbs", True),  # lower = less L2 pressure
+            ("Fastest to finish", "kpi_completion_min", True),
+            ("Highest request rate", "kpi_req_per_s",  False),
         ]
         html_out = '<div class="winner-grid">'
         for cat, attr, lower_is_better in categories:
@@ -2907,6 +3963,18 @@ def build_comparison_html(
     # Stated after the caveats and before the tables: the caveats say
     # which figures to doubt, this says which explanations are already out.
     _ruled_out_html = build_ruled_out_banner(metrics)
+    # The finding first: one verdict per comparison run, then the workload
+    # and time-to-complete table and the timeline that back it.
+    _verdict_html = "".join(
+        f'<div class="card verdict">{_v}</div>'
+        for _v in (build_verdict_html(baseline, _m) for _m in metrics[1:])
+        if _v)
+    _wl_inner = build_workload_html(metrics)
+    _workload_html = f'<div class="card">{_wl_inner}</div>' if _wl_inner else ""
+    _dg_inner = build_diagnosis_charts_html(metrics, colours)
+    _diag_html = f'<div class="card">{_dg_inner}</div>' if _dg_inner else ""
+    _tl_inner = build_timeline_html(metrics, colours)
+    _timeline_html = f'<div class="card">{_tl_inner}</div>' if _tl_inner else ""
 
     return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/>
@@ -2980,6 +4048,28 @@ def build_comparison_html(
   h3.layer-h:first-of-type{{margin-top:4px;}}
   .layer-by{{font-size:10.5px;color:#64748b;text-transform:none;
        letter-spacing:0;font-weight:400;font-style:italic;}}
+.verdict .headline{{font-size:15px;color:#f8fafc;font-weight:700;margin:2px 0 10px;}}
+.verdict ul{{margin:4px 0 8px;padding-left:20px;}}
+.verdict li{{margin:5px 0;}}
+.infer{{background:#111827;border-left:3px solid #f59e0b;border-radius:6px;
+  padding:9px 13px;margin:10px 0;color:#e2e8f0;}}
+.infer h4{{margin:0 0 4px;font-size:12.5px;color:#fbbf24;}}
+.tiles{{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+  gap:10px;margin:8px 0 12px;}}
+.tile{{background:#111827;border:1px solid #334155;border-radius:10px;
+  padding:10px 12px;}}
+.t-lab{{color:#94a3b8;font-size:10.5px;text-transform:uppercase;
+  letter-spacing:.4px;font-weight:700;}}
+.t-val{{font-size:17px;font-weight:800;color:#f1f5f9;margin:4px 0 2px;
+  font-variant-numeric:tabular-nums;}}
+.t-unit{{font-size:11px;color:#94a3b8;font-weight:400;margin-left:3px;}}
+.t-ratio{{font-size:11px;color:#64748b;}}
+.chips{{margin:4px 0 10px;}}
+.chip{{display:inline-block;background:#422006;border:1px solid #a16207;
+  color:#fde68a;border-radius:12px;padding:2px 10px;margin:2px 6px 2px 0;
+  font-size:11.5px;}}
+td.good{{color:#4ade80;font-weight:700;}}
+td.bad{{color:#f87171;font-weight:700;}}
 </style></head>
 <body><div class="wrap">
 
@@ -2993,6 +4083,14 @@ def build_comparison_html(
 {_ruled_out_html}
 
 {_variance_html}
+
+{_verdict_html}
+
+{_diag_html}
+
+{_workload_html}
+
+{_timeline_html}
 
 {_chain_html}
 
