@@ -53,6 +53,18 @@ __all__ = [
     "sane_mean",
     "prefill_cache_hit_ratio",
     "percentiles_from_bucket_deltas",
+    "resolve_latency_ms",
+    "resolve_latency_percentile",
+    "NVME_MAX_BW_MBS",
+    "QD_PLAUSIBLE_MAX",
+    "vet_device_bw_peak",
+    "vet_queue_depth",
+    "normalize_series_name",
+    "resolve_series_columns",
+    "counter_window_total",
+    "latency_window_ms",
+    "active_window_fraction",
+    "bucket_edge_check",
 ]
 
 
@@ -233,6 +245,66 @@ def pearson(xs: Sequence[float], ys: Sequence[float]) -> float:
     if dx <= 0 or dy <= 0:
         return 0.0
     return num / (dx * dy)
+
+
+def lagged_pearson(xs: Sequence[float], ys: Sequence[float],
+                   max_lag: int = 6) -> "tuple[float, int]":
+    """Strongest correlation over shifts of `ys` against `xs`, and its lag.
+
+    Returns (r, lag).  A POSITIVE lag means ys had to be shifted LATER to
+    line up -- that is, ys responds to xs after `lag` sampling intervals.
+
+    Needed because a zero-lag r understates a real pipeline.  Prefetch that
+    completes asynchronously shows up in the load-back counter one or more
+    intervals later, and correlating only at lag 0 reports "no relationship"
+    for a pipeline that is working perfectly well, just not instantaneously.
+
+    Ties go to the SMALLEST |lag|, so a relationship that is equally strong
+    at 0 and 3 is reported as immediate rather than delayed.
+    """
+    x, y = _clean(xs), _clean(ys)
+    n = min(len(x), len(y))
+    if n < 4:
+        return 0.0, 0
+    x, y = x[:n], y[:n]
+    _best_r, _best_l = 0.0, 0
+    _lim = max(0, min(int(max_lag), n // 3))
+    for _l in range(-_lim, _lim + 1):
+        if _l >= 0:
+            _a, _b = x[:n - _l], y[_l:]
+        else:
+            _a, _b = x[-_l:], y[:n + _l]
+        if len(_a) < 4:
+            continue
+        _r = pearson(_a, _b)
+        if abs(_r) > abs(_best_r) + 1e-12 or (
+                abs(abs(_r) - abs(_best_r)) <= 1e-12 and abs(_l) < abs(_best_l)):
+            _best_r, _best_l = _r, _l
+    return _best_r, _best_l
+
+
+def partial_pearson(xs: Sequence[float], ys: Sequence[float],
+                    zs: Sequence[float]) -> float:
+    """Correlation of xs and ys with the influence of zs removed.
+
+    r_xy.z = (r_xy - r_xz * r_yz) / sqrt((1 - r_xz^2)(1 - r_yz^2))
+
+    The reason this matters here: nearly every rate in an inference stack
+    rises and falls with how busy the engine is.  Two counters can correlate
+    strongly while neither drives the other, because request arrival drives
+    both.  Holding the workload constant is what separates "these move
+    together" from "this one feeds that one".  Returns 0.0 when undefined.
+    """
+    _rxy = pearson(xs, ys)
+    _rxz = pearson(xs, zs)
+    _ryz = pearson(ys, zs)
+    _den = (1.0 - _rxz * _rxz) * (1.0 - _ryz * _ryz)
+    if _den <= 1e-12:
+        return 0.0
+    _r = (_rxy - _rxz * _ryz) / math.sqrt(_den)
+    # Floating-point drift can push a near-perfect result just outside the
+    # valid range; a correlation outside [-1, 1] is meaningless, not just ugly.
+    return max(-1.0, min(1.0, _r))
 
 
 # ---------------------------------------------------------------------------
@@ -456,6 +528,75 @@ def _swa_layout(config: dict, model_name: str, n_layers: int) -> dict:
             "n_swa": 0,
             "source": "sliding_window set but no layer-type info; "
                       "treating as full attention"}
+
+
+_LATENCY_KINDS = {
+    "ttft": ("time_to_first_token_seconds", "TTFT"),
+    "tpot": ("inter_token_latency_seconds", "TPOT / ITL"),
+    "e2e":  ("e2e_request_latency_seconds", "end-to-end latency"),
+}
+
+
+def resolve_latency_ms(kind: str, ts_ms: float = 0.0, pct_ms: float = 0.0,
+                       summary_ms: float = 0.0,
+                       summary_method: str = "") -> dict:
+    """One latency figure, by one resolution order, for every report surface.
+
+    The order and its reason were written down once, in the Combined report:
+
+        1) selected-window Δsum/Δcount counters
+        2) selected-window percentile-timeseries p50 active mean
+        3) sglang_summary.json only as last fallback
+        # This avoids different runs reusing the same stale summary TTFT/TPOT.
+
+    The comparison report did step 3 only -- it read server_ttft_ms straight
+    out of the summary -- so the two surfaces could report different latencies
+    for the same window, and on one reference run they did: 11,514 ms from
+    Combined against 11,525 ms from compare.
+
+    0.1% there, but the gap is not bounded at 0.1%. The fetch that writes the
+    summary falls back to last(sum)/last(count) when the window delta is zero,
+    which is the LIFETIME mean since the server started, and it labels the
+    result "delta_..._sum_over_count" either way because that method string is
+    a literal in the dict. So a summary figure can be a lifetime average
+    wearing a window label, and a surface that trusts the summary inherits it
+    while one that recomputes does not.
+
+    ``window_scoped`` is the field that matters to a caller: False means the
+    number describes the server's whole life, not the window asked for, and
+    no delta between two such figures is a comparison of two windows.
+
+    ``statistic`` is the one that matters next: steps 1 and 3 are MEANS, step
+    2 is a MEDIAN. The order mixes the two, so the figure's own identity has
+    to travel with it -- a tile headed "TTFT mean" that fell through to step 2
+    is showing a p50, and on these runs the mean and the p50 differ by two
+    orders of magnitude (79,341 ms against 598 ms on one 30-minute window).
+    A caller that prints this figure under a fixed label is wrong half the
+    time; one that prints ``statistic`` beside it never is.
+
+    Returns {ms, method, window_scoped, step, statistic}.
+    """
+    k = str(kind or "").strip().lower()
+    base = _LATENCY_KINDS.get(k, (k, k))[0]
+    if ts_ms and ts_ms > 0:
+        return {"ms": float(ts_ms), "step": 1, "window_scoped": True,
+                "statistic": "mean",
+                "method": f"Δ{base}_sum ÷ Δ{base}_count over the window"}
+    if pct_ms and pct_ms > 0:
+        return {"ms": float(pct_ms), "step": 2, "window_scoped": True,
+                "statistic": "p50",
+                "method": f"{base} p50, mean over active intervals in the window"}
+    if summary_ms and summary_ms > 0:
+        # The summary's own claimed method is carried through, but it is not
+        # evidence of window scoping: see above.
+        _lifetime = "last" in str(summary_method).lower() or not summary_method
+        return {"ms": float(summary_ms), "step": 3, "window_scoped": False,
+                "statistic": "mean",
+                "method": ("sglang_summary.json"
+                           + (f" ({summary_method})" if summary_method else "")
+                           + " — NOT verified as window-scoped")}
+    return {"ms": 0.0, "step": 0, "window_scoped": False, "statistic": "",
+            "method": f"{base} unavailable"}
 
 
 def resolve_kv_bytes_per_token(model_name: str = "", kv_dtype: str = "",
@@ -732,20 +873,67 @@ def resolve_l2_residency(hicache_used_tokens: float = 0.0,
         used_src = "sglang_hicache_host_used_tokens x KV bytes/token"
 
     cap_gb, cap_src = 0.0, "unknown"
-    if hicache_total_gb > 0:
-        cap_gb, cap_src = float(hicache_total_gb), "configured HiCache allocation"
-    elif hicache_total_tokens > 0 and kv_bytes_per_token_kb > 0:
-        cap_gb = hicache_total_tokens * kv_bytes_per_token_kb / 1024.0 / 1024.0
-        cap_src = "sglang_hicache_host_total_tokens x KV bytes/token"
+    cap_conflict = ""
+    # A MEASURED gauge outranks a configured figure.
+    #
+    # sglang_hicache_host_total_tokens is the allocation the server actually
+    # made; "2 GB/GPU x 8 GPUs" from setup_details is an input assumption,
+    # and the two can disagree by the TP factor or more. Ranking the
+    # assumption first produced a 16 GB capacity against a 251,421-token
+    # gauge worth 134.3 GB, and the used figure was then divided by TP=8
+    # elsewhere to make it fit -- so the tile read "16.6 GB / 16 GB, 103%
+    # full" while the tier-residency chart, reading the same gauge directly,
+    # read 134.3 GB. The 103% was the tell: an occupancy cannot exceed the
+    # allocation it sits in, so the denominator was wrong.
+    _gauge_gb = (hicache_total_tokens * kv_bytes_per_token_kb / 1024.0 / 1024.0
+                 if (hicache_total_tokens > 0 and kv_bytes_per_token_kb > 0)
+                 else 0.0)
+    if _gauge_gb > 0:
+        cap_gb = _gauge_gb
+        cap_src = "sglang_hicache_host_total_tokens x KV bytes/token (measured)"
+        if hicache_total_gb > 0:
+            _r = (max(_gauge_gb, hicache_total_gb)
+                  / max(min(_gauge_gb, hicache_total_gb), 1e-9))
+            if _r > 1.2:
+                cap_conflict = (
+                    f"configured allocation says {hicache_total_gb:,.1f} GB but "
+                    f"the server's own hicache_host_total_tokens gauge is worth "
+                    f"{_gauge_gb:,.1f} GB ({_r:.1f}x apart); using the gauge")
     elif hicache_ratio > 0 and kv_pool_tokens > 0 and kv_bytes_per_token_kb > 0:
+        # --hicache-ratio x device KV pool outranks a parsed --hicache-size.
+        #
+        # SGLang sizes the host cache from the ratio whenever --hicache-size
+        # is 0, which is the default, so the ratio is what actually happened
+        # on most runs. On the reference run the ratio path reproduces the
+        # server's own gauge to one token (209,517 x 1.2 = 251,420 against a
+        # measured 251,421), while a `hicache_size` field worth 2 -- read
+        # from setup and multiplied by 8 GPUs -- gave 16 GB, a factor of 8.4
+        # out. A stated ratio beats a stated size because only one of them
+        # agrees with the device.
         cap_gb = kv_pool_tokens * hicache_ratio * kv_bytes_per_token_kb / 1024.0 / 1024.0
         cap_src = (f"--hicache-ratio {hicache_ratio:g} x max_total_num_tokens "
                    f"{kv_pool_tokens:,.0f} x KV {kv_bytes_per_token_kb:.0f} KB/token")
+        if hicache_total_gb > 0:
+            _r2 = max(cap_gb, hicache_total_gb) / max(min(cap_gb, hicache_total_gb), 1e-9)
+            if _r2 > 1.2:
+                cap_conflict = (
+                    f"a configured HiCache size implies {hicache_total_gb:,.1f} GB "
+                    f"but --hicache-ratio {hicache_ratio:g} on a "
+                    f"{kv_pool_tokens:,.0f}-token KV pool implies {cap_gb:,.1f} GB "
+                    f"({_r2:.1f}x apart); using the ratio, which is how SGLang "
+                    f"sizes the host cache when --hicache-size is 0")
+    elif hicache_total_gb > 0:
+        cap_gb, cap_src = float(hicache_total_gb), "configured HiCache allocation"
     elif host_dram_total_gb > 0:
         cap_gb, cap_src = float(host_dram_total_gb), "host DRAM total (not an allocation)"
 
-    # Occupancy can never exceed the allocation it sits in.
+    # Occupancy can never exceed the allocation it sits in. Clamping hides
+    # the disagreement, so record what was clamped and by how much: a used
+    # figure above capacity means one of the two is derived from the wrong
+    # bytes/token or the wrong allocation, and that is worth seeing.
+    over_pct = 0.0
     if cap_gb > 0 and used_gb > cap_gb:
+        over_pct = (used_gb / cap_gb - 1.0) * 100.0
         used_src += f" (clamped to capacity from {used_gb:.1f} GB)"
         used_gb = cap_gb
 
@@ -755,6 +943,8 @@ def resolve_l2_residency(hicache_used_tokens: float = 0.0,
         "fill_pct": (used_gb / cap_gb * 100.0) if cap_gb > 0 else 0.0,
         "used_source": used_src,
         "capacity_source": cap_src,
+        "capacity_conflict": cap_conflict,
+        "over_capacity_pct": over_pct,
         "measured": used_gb > 0,
     }
 
@@ -1039,3 +1229,512 @@ def percentiles_from_bucket_deltas(bucket_series, quantiles=(0.5, 0.9, 0.99),
     # value should say so rather than implying a measurement.
     out["_last_finite"] = _last_finite
     return out
+
+
+# ---------------------------------------------------------------------------
+# Device-figure vetting
+#
+# Two headline numbers in a v1.69.0 local-L3 report were artifacts that every
+# other number in the same report contradicted:
+#
+#   L3 SSD storage queue depth   1,401.09 mean / 3,430 peak
+#   L3 SSD storage BW (device)   145 rd / 28,672 wr MB/s peak
+#
+# The queue depth came from blktrace's QD(t) = count(Q) - count(C).  That
+# difference is unbounded when C events are missing, and the same trace
+# reported 0.00 ms read / 0.00 ms write latency -- it captured no completion
+# dwell at all, so the completions being subtracted were not there.  The
+# giveaways were all present: p50 1,385 against a mean of 1,401 (a rising
+# counter, not a queue that drains), the device's own avgqu-sz peaking at
+# 25.97 over the same window, and the report's own Little's Law line reading
+# "3,461 IOPS x 0.265 ms = 0.92 expected depth".  A mean depth of 1,401 at
+# 3,461 IOPS implies 405 ms per I/O on an NVMe SSD.
+#
+# 28,672 MB/s is 28 GiB/s through one namespace, on a drive whose mean write
+# bandwidth over the window was 9.3 MB/s.
+#
+# Both then became procurement requirements: "Queue Depth peak 3,430 - SSD
+# must sustain observed peak concurrency" and "Sequential Write BW 28672 MB/s
+# x 1.3 = 37274 MB/s".  Vetting lives here so the tile and the requirement
+# table cannot reach different conclusions about the same figure.
+# ---------------------------------------------------------------------------
+
+# PCIe 5.0 x4 tops out near 16 GB/s of payload; nothing a single NVMe
+# namespace reports can legitimately exceed it.  Deliberately generous: the
+# purpose is to catch unit and counter-reset artifacts, not to police fast
+# hardware.
+NVME_MAX_BW_MBS = 16384.0
+
+# Shared with the report's own bound.  An NVMe submission queue holds at most
+# 65,536 entries, but a namespace sustaining thousands of outstanding requests
+# is an unmatched-event count in every case seen here.
+QD_PLAUSIBLE_MAX = 4096.0
+
+
+def vet_device_bw_peak(peak_mbs, mean_mbs=0.0, label="") -> dict:
+    """Is a device bandwidth peak physically possible?
+
+    Returns {mbs, rejected, reason, ratio_to_mean}.  `mbs` is 0.0 when the
+    figure cannot stand, so a caller that ignores `rejected` publishes nothing
+    rather than the artifact.
+    """
+    try:
+        _p = float(peak_mbs or 0.0)
+        _m = float(mean_mbs or 0.0)
+    except (TypeError, ValueError):
+        return {"mbs": 0.0, "rejected": True, "reason": "not a number",
+                "ratio_to_mean": 0.0}
+    _ratio = (_p / _m) if _m > 0 else 0.0
+    if _p <= 0:
+        return {"mbs": 0.0, "rejected": False, "reason": "",
+                "ratio_to_mean": 0.0}
+    if _p > NVME_MAX_BW_MBS:
+        return {"mbs": 0.0, "rejected": True,
+                "reason": (f"{_p:,.0f} MB/s is {_p / 1024.0:,.1f} GB/s through "
+                           f"one namespace, above the ~{NVME_MAX_BW_MBS / 1024.0:,.0f} "
+                           f"GB/s a PCIe 5.0 x4 link can carry"
+                           + (f", and {_ratio:,.0f}x this window's mean of "
+                              f"{_m:,.1f} MB/s" if _ratio > 0 else "")
+                           + " — a counter reset or a unit error, not a burst"),
+                "ratio_to_mean": _ratio}
+    return {"mbs": _p, "rejected": False, "reason": "", "ratio_to_mean": _ratio}
+
+
+def vet_queue_depth(event_mean=0.0, event_peak=0.0, event_lat_ms=0.0,
+                    event_iops=0.0, device_mean=0.0, device_peak=0.0) -> dict:
+    """Decide which queue-depth figure a report may headline.
+
+    `event_*` is the blktrace Q->C summary; `device_*` is the kernel's own
+    avgqu-sz / in-flight gauge.  Returns {mean, peak, source, rejected,
+    reasons, expected}, where `rejected` refers to the EVENT figure.
+
+    Three independent grounds for rejecting it, each of which has fired:
+
+    1. No completion dwell.  QD(t) subtracts C events from Q events; a trace
+       that produced no Q->C latency did not capture the C events, so the
+       difference only rises.
+    2. Little's Law.  depth = IOPS x latency is computed from counters that
+       do not involve the depth, so a mean depth far above it is arithmetic,
+       not load.
+    3. An instantaneous gauge far below it.  A sample cannot invent requests,
+       so the gauge is a floor on the real depth; the converse rule (a gauge
+       far ABOVE the event figure) was already applied and is kept.
+    """
+    def _f(v):
+        try:
+            return float(v or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    _em, _ep = _f(event_mean), _f(event_peak)
+    _lat, _iops = _f(event_lat_ms), _f(event_iops)
+    _dm, _dp = _f(device_mean), _f(device_peak)
+    _expected = (_iops * _lat / 1000.0) if (_iops > 0 and _lat > 0) else 0.0
+
+    _reasons = []
+    if _ep > 0 or _em > 0:
+        if _ep > QD_PLAUSIBLE_MAX or _em > QD_PLAUSIBLE_MAX:
+            _reasons.append(
+                f"{_em:,.0f} mean / {_ep:,.0f} peak is above the plausible "
+                f"bound of {QD_PLAUSIBLE_MAX:,.0f}")
+        if _iops > 0 and _lat <= 0:
+            _reasons.append(
+                "the trace reported no Q→C completion latency, so the "
+                "completions that QD(t) = count(Q) − count(C) subtracts "
+                "were not captured and the difference can only rise")
+        # Allow generous slack: a factor of 10 AND 8 absolute, so a shallow
+        # queue measured as 0.9 against an expected 0.3 is not "rejected".
+        if _expected > 0 and _em > max(_expected * 10.0, _expected + 8.0):
+            _reasons.append(
+                f"Little's Law puts the depth at {_expected:,.2f} "
+                f"({_iops:,.0f} IOPS × {_lat:.3f} ms), so a mean of "
+                f"{_em:,.2f} would need {_em / max(_iops, 1e-9) * 1000.0:,.0f} "
+                f"ms per I/O")
+        if _dp > 0 and _ep > max(_dp * 10.0, _dp + 8.0):
+            _reasons.append(
+                f"the kernel's own gauge peaked at {_dp:,.2f} over the same "
+                f"window, {_ep / max(_dp, 1e-9):,.0f}x lower")
+
+    if _reasons and (_dp > 0 or _dm > 0):
+        return {"mean": _dm, "peak": _dp, "source": "device gauge",
+                "rejected": True, "reasons": _reasons, "expected": _expected}
+    if _reasons:
+        return {"mean": 0.0, "peak": 0.0, "source": "none",
+                "rejected": True, "reasons": _reasons, "expected": _expected}
+    if _ep > 0 or _em > 0:
+        return {"mean": _em, "peak": _ep, "source": "blktrace Q→C",
+                "rejected": False, "reasons": [], "expected": _expected}
+    return {"mean": _dm, "peak": _dp,
+            "source": "device gauge" if (_dp > 0 or _dm > 0) else "none",
+            "rejected": False, "reasons": [], "expected": _expected}
+
+
+def resolve_latency_percentile(kind: str, quantile: float,
+                               histogram_ms: float = 0.0,
+                               session_ms: float = 0.0,
+                               pct_ts_ms: float = 0.0,
+                               summary_ms: float = 0.0,
+                               top_bucket_ms: float = 0.0,
+                               mean_ms: float = 0.0) -> dict:
+    """One percentile figure, by one resolution order, for every surface.
+
+    `resolve_latency_ms` did this for the MEAN after the Combined and
+    comparison reports were found disagreeing about it.  The percentile paths
+    were left alone and drifted further: a v1.69.0 report carried three
+    different TTFT p50 values at once --
+
+        62,895 ms   the interactive grid
+         1,755 ms   the TTFT p50/p90/p99 chart (histogram)
+       190,055 ms   the End report ("Median")
+
+    -- and the first of those was not a percentile at all.  Both
+    `interactive.py` and `amoprof.py` resolved it as
+    ``_ttft_p50_ms or _ttft_ms`` and ``m.sess_ttft_p50_ms or m.ttft_ms``: when
+    the percentile was missing they substituted the MEAN, then labelled it
+    "Median" and "histogram_quantile/percentile timeseries".  62,895 ms is
+    exactly the TTFT mean tile's value, and E2E p50 was likewise exactly the
+    E2E mean.  A mean is never a median, and a tile that says p50 while
+    showing a mean is worse than an empty tile: it reads as corroboration.
+
+    So `mean_ms` is accepted here only to be REFUSED, loudly, with the mean's
+    value named in the method so a reader can see what was rejected and why.
+
+    Censoring.  A Prometheus histogram's top bucket is open-ended (+Inf), so a
+    quantile landing in it is reported as that bucket's floor -- a lower
+    bound, not a measurement.  On the same report TTFT p99 read exactly
+    400,000.00 ms and TPOT p90 and p99 both read exactly 8,000.0: bucket
+    boundaries, not latencies.  Pass `top_bucket_ms` and a figure at or above
+    it comes back with censored=True so the surface can mark it.
+
+    Returns {ms, step, method, censored, refused_mean_ms}.
+    """
+    k = str(kind or "").strip().lower()
+    base = _LATENCY_KINDS.get(k, (k, k))[0]
+    q = float(quantile or 0.0)
+    qlabel = f"p{q * 100:.0f}" if q < 1 else f"p{q:.0f}"
+
+    def _out(ms, step, method):
+        _ms = float(ms)
+        _cens = bool(top_bucket_ms and _ms >= float(top_bucket_ms) - 1e-9)
+        return {"ms": _ms, "step": step, "method": method,
+                "censored": _cens,
+                "refused_mean_ms": 0.0}
+
+    if histogram_ms and histogram_ms > 0:
+        return _out(histogram_ms, 1,
+                    f"histogram_quantile({q:g}, rate({base}_bucket[W])) × 1000")
+    if session_ms and session_ms > 0:
+        return _out(session_ms, 2,
+                    f"{qlabel} of per-request {base} over the window")
+    if pct_ts_ms and pct_ts_ms > 0:
+        return _out(pct_ts_ms, 3,
+                    f"{base} {qlabel} series, mean over active intervals")
+    if summary_ms and summary_ms > 0:
+        return _out(summary_ms, 4,
+                    f"sglang_summary.json {qlabel} — NOT verified as "
+                    f"window-scoped")
+    # Nothing. The mean is NOT a substitute, and saying so is the point.
+    _m = float(mean_ms or 0.0)
+    return {"ms": 0.0, "step": 0, "censored": False, "refused_mean_ms": _m,
+            "method": (f"{base} {qlabel} unavailable"
+                       + (f" — the mean ({_m:,.0f} ms) is not substituted for "
+                          f"it here" if _m > 0 else ""))}
+
+
+# ─── Labelled series: one resolver, one window total ─────────────────────────
+#
+# Why this block exists
+# ---------------------
+# "The window total of a cumulative counter" had FOUR implementations in this
+# tree, and they agreed only on a single clean monotonic column:
+#
+#   metric_kernels.counter_delta   max(0, last - first), one series
+#   amoprof._delta_sum_metric      Σ_col max(0, last_col - first_col)
+#   combined._kvg_counter_delta    Σ_steps max(0, step), one column
+#   comparator._kv_delta           max(0, (Σ_col last) - (Σ_col first))
+#
+# The disagreements are not theoretical; each one shows up on real runs.
+#
+# * comparator sums the COLUMNS of a row and then differences the row totals.
+#   A series that joins the window late -- a scrape target whose first sample
+#   lands on row 2, which is routine after a restart or a rank coming up --
+#   is missing from row 1, so the subtrahend is a partial sum and the delta
+#   is inflated by that column's entire starting value. For a lifetime
+#   counter that is its whole history, not its window. And for a latency mean
+#   of Δsum ÷ Δcount the two inflations do NOT cancel: they are inflated by
+#   different amounts (that column's accumulated seconds against its
+#   accumulated request count), so the ratio moves toward that one column's
+#   lifetime mean.
+# * comparator clamps the AGGREGATE at zero, so one column resetting drags
+#   every healthy column down with it. amoprof clamps per column.
+# * only combined is reset-safe INSIDE the window: last - first silently
+#   discards every observation made before a restart.
+# * amoprof normalises `:` to `_` and strips spaces before matching;
+#   combined strips only quotes. So a part spelled `sglang_realtime_tokens`
+#   matched a `sglang:realtime_tokens_total` column on one surface and
+#   missed it on the other.
+#
+# The rule below is the one that reduces to each of those where it is right
+# and differs from it only where it is wrong: per column, the sum of positive
+# per-step differences; then the sum across columns. On a clean monotonic
+# single column it equals last - first exactly, so adopting it changes no
+# figure that was already correct.
+
+
+def normalize_series_name(name) -> str:
+    """A Prometheus CSV header reduced to a form label spelling cannot vary.
+
+    `mode="decode"`, `mode=decode`, `mode='decode'` and `mode= decode` all
+    normalise to `mode=decode`, and `sglang:x` to `sglang_x`, so a caller can
+    spell a part the obvious way and match whatever the exporter wrote.
+    """
+    try:
+        x = str(name).lower()
+    except Exception:
+        return ""
+    for ch in ('"', "'", " ", "\\"):
+        x = x.replace(ch, "")
+    return x.replace(":", "_")
+
+
+def resolve_series_columns(fieldnames: Iterable, parts: Iterable,
+                           exclude_buckets: bool = True) -> list:
+    """Every column whose normalised name contains ALL of `parts`.
+
+    ALL of them, not the first: a counter fanned out into one series per rank
+    or per label value is only whole when its series are summed, and taking
+    the first silently reports one rank's share as the total. With a single
+    matching column the result is that column, so a caller that was right
+    before stays right.
+
+    Histogram `_bucket` series are excluded by default so a bucket column
+    never shadows the `_sum`/`_count` pair of the same metric.
+    """
+    out: list = []
+    wanted = [normalize_series_name(p) for p in (parts or []) if str(p or "").strip()]
+    if not wanted:
+        return out
+    for col in (fieldnames or []):
+        if col is None:
+            continue
+        low = normalize_series_name(col)
+        if not low:
+            continue
+        if exclude_buckets and "_bucket" in low:
+            continue
+        if all(w in low for w in wanted):
+            out.append(col)
+    return out
+
+
+def counter_window_total(series: Iterable) -> dict:
+    """Work done across the window by a cumulative counter, reset-safe.
+
+    `series` is one sequence of samples or a sequence of them (one per
+    matching column). Each column contributes the sum of its per-step
+    increases; the columns are then summed.
+
+    A step that goes DOWN is a counter reset -- a server restart inside the
+    window -- and contributes the post-reset value, which is what the counter
+    has accumulated since it restarted. This is Prometheus' own convention in
+    ``increase()``, which is the function the reports' formula strings cite,
+    so the kernel and the formula shown beside the figure now compute the
+    same thing. Discarding the step instead (``max(0, step)``, which is what
+    combined._kvg_counter_delta did) silently drops every token moved after
+    the restart; on the reference fixture that is 25 of 195.
+
+    Nothing here extrapolates. Prometheus' ``increase()`` also scales the
+    result to the full range, which invents work at the window edges; the
+    figures in these reports are stated as measured, so the window total is
+    only what the samples show.
+
+    Returns {total, columns, usable_columns, resets, reset_recovered,
+    samples, present, method}. ``reset_recovered`` is the part of the total
+    attributed to post-reset values, kept separate so it can be audited
+    rather than folded in invisibly -- a large figure there on a series that
+    should not reset is the sign that a GAUGE was passed to a counter path.
+
+    ``present`` is the field that keeps *absent* distinct from *zero*: False
+    means no column carried two usable samples, so there was nothing to
+    difference -- which is a gap in telemetry, not an idle tier. A caller
+    that renders 0.0 for both has turned a missing counter into a
+    measurement.
+    """
+    cols: list = []
+    if series is None:
+        cols = []
+    else:
+        _s = list(series)
+        if _s and not any(isinstance(x, (list, tuple)) for x in _s):
+            cols = [_s]                      # a single flat sequence
+        else:
+            cols = [list(x) for x in _s if isinstance(x, (list, tuple))]
+    total = 0.0
+    resets = 0
+    recovered = 0.0
+    samples = 0
+    usable = 0
+    for col in cols:
+        v = _clean(col)
+        samples += len(v)
+        if len(v) < 2:
+            # A single sample of a MONOTONIC COUNTER carries no window
+            # information: its value is the lifetime total since the server
+            # started, which is unrelated to the window asked for.
+            continue
+        usable += 1
+        for i in range(1, len(v)):
+            d = v[i] - v[i - 1]
+            if d >= 0:
+                total += d
+            else:
+                resets += 1
+                if v[i] > 0:
+                    total += v[i]
+                    recovered += v[i]
+    return {"total": float(total), "columns": len(cols),
+            "usable_columns": usable, "resets": resets,
+            "reset_recovered": float(recovered), "samples": samples,
+            "present": usable > 0,
+            "method": ("Σ per-step increase over "
+                       f"{usable} series"
+                       + (f", {resets} counter reset(s) spanned "
+                          f"({recovered:,.0f} credited post-reset)"
+                          if resets else "")
+                       if usable else "no series carried two samples")}
+
+
+def latency_window_ms(sum_series: Iterable, count_series: Iterable) -> dict:
+    """Histogram mean over the window: Δsum ÷ Δcount, in milliseconds.
+
+    The same estimator as :func:`ratio_delta`, over the canonical window
+    total above and reporting whether the inputs were there at all. Returns
+    {ms, d_sum, d_count, present, method}; ``present`` is False when either
+    counter was absent or no observation completed, so the caller can say
+    "not exported" rather than publish a 0 ms latency.
+    """
+    _s = counter_window_total(sum_series)
+    _c = counter_window_total(count_series)
+    if not (_s["present"] and _c["present"]) or _c["total"] <= 0:
+        _why = ("no observations completed in the window"
+                if (_s["present"] and _c["present"])
+                else "the _sum/_count counters were not exported")
+        return {"ms": 0.0, "d_sum": _s["total"], "d_count": _c["total"],
+                "present": False, "method": _why}
+    return {"ms": _s["total"] / _c["total"] * 1000.0,
+            "d_sum": _s["total"], "d_count": _c["total"], "present": True,
+            "method": (f"Δ_sum ÷ Δ_count over the window "
+                       f"({_s['total']:,.3f} s ÷ {_c['total']:,.0f} obs)")}
+
+
+# ─── How much of the window was alive, and where the dead time sat ──────────
+#
+# Why this exists
+# ---------------
+# Two runs of the same workload were compared over windows of 1,800 s and
+# 2,925 s. Every time-average favoured the shorter one:
+#
+#     output throughput   50.1 vs 45.6 tok/s
+#     GPU utilisation     84.2% vs 49.1%
+#     HBM bandwidth        341 vs 226 GB/s
+#
+# and all three reversed once the dead time was removed, because the longer
+# window's workload had finished inside it. Its HBM bandwidth fell
+# monotonically by quartile -- 392, 221, 156, 136 GB/s -- and its last
+# samples read 0, 13, 4 GB/s, while the shorter window's were flat at 332,
+# 321, 379, 332 and dropped only on the final sample.
+#
+# A window mean is only a property of the system when the window is a
+# property of the workload. Nothing in the comparison said otherwise: the
+# duration guard fires above 2x and these windows differ by 1.63x, so a
+# 35%-dead window was compared against a 2%-dead one in silence.
+#
+# `trailing_idle_s` is the figure that catches it, and the active SPAN is the
+# denominator a rate should have used.
+
+
+def active_window_fraction(values: Sequence[float],
+                           times: "Sequence[float] | None" = None,
+                           threshold: "float | None" = None,
+                           rel: float = 0.05) -> dict:
+    """What fraction of a window an activity series was doing work.
+
+    `threshold` is absolute when given. Otherwise it is `rel` x the series'
+    own robust peak (its 95th percentile, so one spike cannot set the bar),
+    which keeps the test meaningful whether the series is a percentage, GB/s
+    or tokens per second. The threshold used is returned, because a fraction
+    without its threshold is not checkable.
+
+    Returns {fraction, active_samples, samples, threshold, peak,
+    active_span_s, lead_idle_s, trail_idle_s, present, method}. The idle
+    figures need `times`; without them they are 0.0 and only the fraction is
+    meaningful.
+
+    A series shorter than three samples gets present=False: two samples
+    cannot distinguish a quiet window from a short one.
+    """
+    v = _clean(values)
+    t = _clean(times) if times is not None else []
+    if len(v) < 3:
+        return {"fraction": 0.0, "active_samples": 0, "samples": len(v),
+                "threshold": 0.0, "peak": (max(v) if v else 0.0),
+                "active_span_s": 0.0, "lead_idle_s": 0.0,
+                "trail_idle_s": 0.0, "present": False,
+                "method": "fewer than 3 samples — no duty cycle to measure"}
+    srt = sorted(v)
+    # p95 by nearest rank, which on a short series is simply the maximum.
+    peak = srt[min(len(srt) - 1, int(round(0.95 * (len(srt) - 1))))]
+    thr = float(threshold) if threshold is not None else max(0.0, peak * rel)
+    idx = [i for i, x in enumerate(v) if x > thr]
+    frac = len(idx) / len(v)
+    span = lead = trail = 0.0
+    if t and len(t) == len(v) and idx:
+        span = max(0.0, t[idx[-1]] - t[idx[0]])
+        lead = max(0.0, t[idx[0]] - t[0])
+        trail = max(0.0, t[-1] - t[idx[-1]])
+    return {"fraction": frac, "active_samples": len(idx), "samples": len(v),
+            "threshold": thr, "peak": peak, "active_span_s": span,
+            "lead_idle_s": lead, "trail_idle_s": trail, "present": True,
+            "method": (f"{len(idx)} of {len(v)} samples above "
+                       f"{thr:,.3g} ("
+                       + (f"{rel:.0%} of the series' p95 peak {peak:,.3g}"
+                          if threshold is None else "absolute threshold")
+                       + ")")}
+
+
+def bucket_edge_check(value_ms: float, bucket_les_s: Sequence[float],
+                      rel_tol: float = 1e-6) -> dict:
+    """Is a reported latency sitting exactly on a histogram bucket boundary?
+
+    A Prometheus histogram resolves no finer than its buckets, so a quantile
+    that lands on a boundary carries no information about where inside the
+    neighbouring buckets it really is. On the reference ladder -- 0.08, 0.8,
+    8, 400 s -- a reported p50 of exactly 800.00 ms is the 0.8 s edge, and
+    the span it stands for is 10x wide.
+
+    Returns {on_edge, le_s, lower_s, span_ratio, note}. `span_ratio` is the
+    width of the bracket the figure actually stands for, as a multiple: 1.0
+    means the boundary is also the resolution.
+    """
+    v = float(value_ms or 0.0) / 1000.0
+    les = sorted({float(x) for x in (bucket_les_s or [])
+                  if _finite(x) and float(x) > 0})
+    if v <= 0 or not les:
+        return {"on_edge": False, "le_s": 0.0, "lower_s": 0.0,
+                "span_ratio": 0.0, "note": ""}
+    for i, le in enumerate(les):
+        if abs(v - le) <= max(abs(le) * rel_tol, 1e-12):
+            lower = les[i - 1] if i > 0 else 0.0
+            upper = les[i + 1] if i + 1 < len(les) else float("inf")
+            ratio = (upper / lower) if (lower > 0 and upper != float("inf")) \
+                else 0.0
+            return {"on_edge": True, "le_s": le, "lower_s": lower,
+                    "span_ratio": ratio,
+                    "note": (f"lands exactly on the le={le:g}s bucket "
+                             f"boundary, so it is bucket-limited: the "
+                             f"histogram cannot place it inside "
+                             + (f"{lower:g}–"
+                                f"{upper:g}s ({ratio:,.0f}x wide)"
+                                if ratio else f"the neighbouring buckets"))}
+    return {"on_edge": False, "le_s": 0.0, "lower_s": 0.0, "span_ratio": 0.0,
+            "note": ""}

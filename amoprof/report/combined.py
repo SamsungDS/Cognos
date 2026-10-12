@@ -1536,6 +1536,9 @@ try:
         rate_series_with_time as _k_rate_with_time, ratio_delta as _k_ratio_delta,
         align_on_time as _k_align_on_time, pearson as _k_pearson,
         resolve_kv_bytes_per_token as _k_resolve_kv,
+        resolve_latency_ms as _k_resolve_lat,
+        vet_queue_depth as _k_vet_qd,
+        vet_device_bw_peak as _k_vet_bw,
         resolve_l2_residency as _k_resolve_l2,
         prefill_cache_hit_ratio as _k_prefill_hit,
         percentiles_from_bucket_deltas as _k_bucket_pctls,
@@ -1544,7 +1547,12 @@ try:
         tail_ratio as _k_tail_ratio,
         kv_movement_bandwidth as _k_kv_movement,
         resolve_gpu_hbm as _resolve_gpu_hbm,
-        resolve_hbm_breakdown as _k_resolve_hbm_breakdown)
+        resolve_hbm_breakdown as _k_resolve_hbm_breakdown,
+        lagged_pearson as _k_lagged_pearson,
+        partial_pearson as _k_partial_pearson,
+        normalize_series_name as _k_norm_col,
+        resolve_series_columns as _k_resolve_cols,
+        counter_window_total as _k_counter_total)
 except Exception:  # pragma: no cover - standalone/bundled execution
     from metric_kernels import (  # type: ignore
         counter_delta as _k_counter_delta, window_rate as _k_window_rate,
@@ -1552,6 +1560,9 @@ except Exception:  # pragma: no cover - standalone/bundled execution
         rate_series_with_time as _k_rate_with_time, ratio_delta as _k_ratio_delta,
         align_on_time as _k_align_on_time, pearson as _k_pearson,
         resolve_kv_bytes_per_token as _k_resolve_kv,
+        resolve_latency_ms as _k_resolve_lat,
+        vet_queue_depth as _k_vet_qd,
+        vet_device_bw_peak as _k_vet_bw,
         resolve_l2_residency as _k_resolve_l2,
         prefill_cache_hit_ratio as _k_prefill_hit,
         percentiles_from_bucket_deltas as _k_bucket_pctls,
@@ -1560,7 +1571,12 @@ except Exception:  # pragma: no cover - standalone/bundled execution
         tail_ratio as _k_tail_ratio,
         kv_movement_bandwidth as _k_kv_movement,
         resolve_gpu_hbm as _resolve_gpu_hbm,
-        resolve_hbm_breakdown as _k_resolve_hbm_breakdown)
+        resolve_hbm_breakdown as _k_resolve_hbm_breakdown,
+        lagged_pearson as _k_lagged_pearson,
+        partial_pearson as _k_partial_pearson,
+        normalize_series_name as _k_norm_col,
+        resolve_series_columns as _k_resolve_cols,
+        counter_window_total as _k_counter_total)
 
 # Single source of truth for KPI-tile formulas (see report/metric_formulas.py).
 try:
@@ -1631,10 +1647,20 @@ def _amoprof_read_columns_substr(path: Path | None,
 
     `_amoprof_read_columns_raw` resolves exact/prefix/suffix names and cannot
     reach those.  `specs` maps an output key to the list of substrings that
-    must all appear in the header (case-insensitive, quotes stripped), which
-    mirrors how report/amoprof.py `_find_metric_col_with_parts` selects the
-    same series.  Histogram buckets are excluded so a `_bucket` series never
-    shadows the counter.
+    must all appear in the header, which mirrors how report/amoprof.py
+    `_find_metric_col_with_parts` selects the same series.  Histogram buckets
+    are excluded so a `_bucket` series never shadows the counter.
+
+    Matching goes through metric_kernels.resolve_series_columns rather than a
+    local lower()/quote-strip, because the local one was narrower: it left
+    `:` and spaces in place, so a part spelled `sglang_realtime_tokens_total`
+    matched a `sglang_realtime_tokens_total{...}` column here and missed a
+    `sglang:realtime_tokens_total{...}` one that report/amoprof.py -- which
+    normalises `:` to `_` -- matched. One spec, one run, two answers.
+
+    This function keeps returning the FIRST matching column per key, which is
+    what its six existing callers expect; `_amoprof_read_series_substr`
+    beside it returns all of them, for the counters that are fanned out.
     """
     out: Dict[str, List[float]] = {k: [] for k in specs}
     if not path:
@@ -1646,17 +1672,11 @@ def _amoprof_read_columns_substr(path: Path | None,
         with path.open(encoding="utf-8", errors="replace", newline="") as f:
             r = csv.DictReader(f)
             fieldnames = r.fieldnames or []
-            norm = {c: c.lower().replace('"', "").replace("'", "") for c in fieldnames}
             resolved: Dict[str, str] = {}
             for key, parts in specs.items():
-                wanted = [p.lower().replace('"', "").replace("'", "") for p in parts]
-                for actual in fieldnames:
-                    low = norm[actual]
-                    if "_bucket" in low:
-                        continue
-                    if all(w in low for w in wanted):
-                        resolved[key] = actual
-                        break
+                _cols = _k_resolve_cols(fieldnames, parts)
+                if _cols:
+                    resolved[key] = _cols[0]
             for row in r:
                 for key, actual in resolved.items():
                     try:
@@ -1670,9 +1690,61 @@ def _amoprof_read_columns_substr(path: Path | None,
         return out
 
 
+def _amoprof_read_series_substr(path: "Path | None",
+                                specs: Dict[str, List[str]],
+                                ) -> Dict[str, List[List[float]]]:
+    """Like `_amoprof_read_columns_substr`, but EVERY matching column.
+
+    A counter fanned out into one series per rank or per label value is only
+    whole when its series are summed; taking the first reports one rank's
+    share as the total.  The phase counters are read through this so the
+    Executive, the End report and the comparison all difference the same set
+    of columns -- `report/amoprof.py:_delta_sum_metric` has summed all
+    matching series since it was written, and this surface took one.
+    """
+    out: Dict[str, List[List[float]]] = {k: [] for k in specs}
+    if not path:
+        return out
+    try:
+        path = Path(path)
+        if not path.exists() or path.stat().st_size <= 0:
+            return out
+        with path.open(encoding="utf-8", errors="replace", newline="") as f:
+            r = csv.DictReader(f)
+            fieldnames = r.fieldnames or []
+            resolved: Dict[str, List[str]] = {}
+            for key, parts in specs.items():
+                _cols = _k_resolve_cols(fieldnames, parts)
+                if _cols:
+                    resolved[key] = _cols
+                    out[key] = [[] for _ in _cols]
+            for row in r:
+                for key, cols in resolved.items():
+                    for _i, actual in enumerate(cols):
+                        try:
+                            v = float(str(row.get(actual, "")).replace(",", ""))
+                            if math.isfinite(v):
+                                out[key][_i].append(v)
+                        except Exception:
+                            pass
+        return out
+    except Exception:
+        return out
+
+
 def _pearson(xs: List[float], ys: List[float]) -> float:
     """Delegates to metric_kernels.pearson (shared kernel)."""
     return _k_pearson(xs, ys)
+
+
+def _lagged_pearson(xs, ys, max_lag: int = 6):
+    """Delegates to metric_kernels.lagged_pearson (shared kernel)."""
+    return _k_lagged_pearson(xs, ys, max_lag)
+
+
+def _partial_pearson(xs, ys, zs) -> float:
+    """Delegates to metric_kernels.partial_pearson (shared kernel)."""
+    return _k_partial_pearson(xs, ys, zs)
 
 def _amoprof_bucket_columns(path: "Path | None", base: str) -> "list[tuple[float, str]]":
     """Resolve `{base}_bucket{le="..."}` columns to [(le, column_name), ...].
@@ -1869,10 +1941,33 @@ def _amoprof_histogram_window_percentiles(path: "Path | None", base: str,
         c_hi = totals[idx]
         if hi == float("inf"):
             val = lo                            # open-ended top bucket → floor
+            # Record WHICH quantiles were censored, rather than leaving the
+            # caller to infer it by comparing against the top finite bucket:
+            # a quantile can land exactly on that boundary without being
+            # censored, and then a threshold test marks a real measurement as
+            # a lower bound.  The helper is the only place that knows.
+            out.setdefault("censored", []).append(f"p{int(q * 100)}")
+            out["censored_floor"] = lo * scale
         elif c_hi > c_lo:
             val = lo + (hi - lo) * (target - c_lo) / (c_hi - c_lo)
         else:
-            val = hi
+            # UNREACHABLE for any cumulative histogram with a positive total,
+            # and verified so by exhaustive search over small integer
+            # histograms: `idx` is the first bucket whose cumulative reaches
+            # the target, so totals[idx] > totals[idx-1] by construction.
+            # Kept because the loop needs a total branch and because `lo` is
+            # the correct answer if it ever did run -- returning `hi`, which
+            # it used to, would report the worst value the bucket can hold as
+            # though it had been measured.  It is NOT the cause of any
+            # edge-snapped value in a report; see the subtitle note below.
+            val = lo
+        # A histogram cannot resolve finer than its buckets, and on SGLang's
+        # TTFT ladder the buckets near the tail span an order of magnitude
+        # each.  Record the bracket so a caller can show the resolution
+        # instead of implying two decimal places of precision: p99 printed as
+        # "400,000.00 ms" is the edge of a bucket covering 8 s to 400 s.
+        out.setdefault("bracket", {})[f"p{int(q * 100)}"] = (
+            lo * scale, (hi * scale) if hi != float("inf") else float("inf"))
         out[f"p{int(q * 100)}"] = val * scale
     return out
 
@@ -1963,11 +2058,45 @@ def _amoprof_exec_svg_percentile_bars(title: str, subtitle: str, unit: str,
     vals = [float(values[k]) for k in order]
     vmax = max(vals) or 1.0
     pad_l, pad_r, pad_t, pad_b = 56, 14, 44, 46
+    # Size the left gutter to the widest tick label it will actually hold.
+    # A fixed 56px fits "1,234.5" but not "6,091,362.0": the tick labels are
+    # right-anchored at pad_l - 6, so a wide one started at a negative x and
+    # ran under the rotated axis title, losing its leading digits.  The tick
+    # values are the same five the grid loop prints below, so compute them
+    # here rather than guessing a width from vmax.
+    _tick_txt = [(f"{_v:,.0f}" if _v >= 10 else
+                  (f"{_v:.1f}" if _v >= 1 else f"{_v:.2f}"))
+                 for _v in (vmax * (1 - _g / 4.0) for _g in range(5))]
+    _tick_w = max((len(_t) for _t in _tick_txt), default=0) * 7.5 * 0.55
+    pad_l = max(pad_l, int(_tick_w) + 24)
+    # SVG <text> does not wrap, so a long subtitle ran past the viewBox and
+    # was clipped mid-sentence -- on the promotion chart it cut off exactly
+    # the caveat that the rejection bars count attempts, not candidates.
+    # Wrap on words at the panel width and give the extra lines room.
+    _sub_lines = []
+    if subtitle:
+        _avail = width - pad_l - pad_r
+        _cpl = max(24, int(_avail / (8.5 * 0.55)))
+        _line = ""
+        for _w in str(subtitle).split(" "):
+            _cand = (_line + " " + _w).strip()
+            if len(_cand) <= _cpl or not _line:
+                _line = _cand
+            else:
+                _sub_lines.append(_line)
+                _line = _w
+        if _line:
+            _sub_lines.append(_line)
+        if len(_sub_lines) > 1:
+            _extra = (len(_sub_lines) - 1) * 11
+            pad_t += _extra
+            height += _extra
     pw, ph = width - pad_l - pad_r, height - pad_t - pad_b
     parts = [f'<rect x="0" y="0" width="{width}" height="{height}" fill="#0b1220" rx="8"/>',
              f'<text x="{pad_l}" y="17" fill="#e2e8f0" font-size="10" font-weight="800">{_html.escape(title)}</text>']
-    if subtitle:
-        parts.append(f'<text x="{pad_l}" y="29" fill="#94a3b8" font-size="8.5">{_html.escape(subtitle)}</text>')
+    for _li, _lt in enumerate(_sub_lines):
+        parts.append(f'<text x="{pad_l}" y="{29 + _li * 11}" fill="#94a3b8" '
+                     f'font-size="8.5">{_html.escape(_lt)}</text>')
     for gi in range(5):
         gy = pad_t + ph * gi / 4.0
         parts.append(f'<line x1="{pad_l}" y1="{gy:.1f}" x2="{pad_l+pw}" y2="{gy:.1f}" stroke="#1e293b" stroke-width="1"/>')
@@ -2014,6 +2143,146 @@ _LOG_AXIS_MIN_RATIO = float(_os.environ.get("AMOPROF_LOG_AXIS_MIN_RATIO", "50"))
 # Layer-response series colours — maximally separated hues so a card with six
 # or seven series stays readable.  Colouring by LAYER gave every A4 signal the
 # same colour, which made GPU util and HBM used indistinguishable.
+# Shortest span that can be a real profiling window. Anything below it is a
+# broken reading rather than a short run, and using it as a rate denominator
+# turns a byte count into an impossible bandwidth: a blktrace summary
+# reporting duration_sec = 0.001 produced "19,704,435,625 MB/s".
+_MIN_PLAUSIBLE_WINDOW_S = 5.0
+
+# Largest value that can be a real NVMe queue depth. The Linux block layer
+# caps in-flight requests at nr_requests per hardware queue (1024 on blk-mq),
+# and every measurement of this fleet's drives has landed in the tens to low
+# hundreds. A figure in the thousands is a counting artifact, not a deep
+# queue -- most often a blktrace Q→C pass over an event stream that was not
+# sorted by timestamp, which leaves Q events unmatched and lets the running
+# count climb for the whole capture. amoprof_blktrace_qd_qd_mean published
+# mean 6,876 / peak 171,982 on this fleet for exactly that reason, and
+# Prometheus keeps that history, so fixing the collector does not protect a
+# report built over an older window.
+# ---- Put each tier's two tiles next to each other ---------------------
+#
+# The grid is assembled by topic -- GPU things, then L3 bandwidth, then
+# capacity -- which scattered the pairs: L1 raw, L1 KV, GPU power, three
+# L3 bandwidth tiles, L3 raw, L3 KV, L2 KV, L2 raw.  The L2 pair came out
+# inverted and seven tiles away from L1, so the hierarchy could not be
+# read down the grid and the raw/residency pairing was invisible.
+#
+# Reordering the assembled HTML rather than the expression that builds it
+# keeps one ordering rule in one place, instead of threading hierarchy
+# order back through 250 lines of concatenation whose groupings exist for
+# other reasons.  Tiles are siblings, so splitting on the tile delimiter
+# needs no tag balancing.
+_TIER_TILE_ORDER = (
+    "L1 HBM used",
+    "L1 KV residency",
+    "L2 host DRAM used",
+    "L2 KV residency",
+    "L3 cache used",
+    "L3 (local storage) cache used",
+    "L3 KV residency",
+    "L3 (local storage) KV residency",
+    "L3.5 memory used",
+    "L3.5 memory KV residency",
+    "L3.5 storage used",
+    "L3.5 storage KV residency",
+    "L3.5 used total",
+)
+
+# NB: the parameter is _grid, not _html.  `_html` is this module's alias
+# for the html module (line 16), and naming a parameter after it shadows
+# it for the whole function body -- _html.unescape below then resolves to
+# str.unescape, which does not exist.
+def _amoprof_tile_label(_tile: str) -> str:
+    """The visible label of one rendered KPI tile, tags and entities resolved."""
+    _m = re.search(r'class="kpi-label">(.*?)</div>', _tile, re.S)
+    return (_html.unescape(re.sub(r"<[^>]+>", "", _m.group(1))).strip()
+            if _m else "")
+
+
+def _amoprof_drop_tier_tiles(_grid: str, _prefix: str) -> str:
+    """Remove tiles whose LABEL names a tier this run does not use.
+
+    The L3.5 tile groups were gated on their data being present and never on
+    the tier being configured, so a local-NVMe run against a cluster where the
+    memory node is reachable in Prometheus grew "L3.5 node CPU util" and
+    friends -- tiles for a tier that is not in the deployment.
+
+    Done by label on the assembled grid rather than at the sixteen append
+    sites, because those sites are shared: `_l35_hw_tiles` holds the backing
+    tier's hardware tiles for EITHER tier, labelled through `_TIER`, so on a
+    local run the same variable legitimately carries "L3 SSD storage BW".
+    Suppressing the group would remove those with the rest.
+
+    Matching is on the label only.  A tile that merely mentions the tier in
+    its note -- a cross-reference, or an explanation of what it is not -- is
+    about something else and stays.
+    """
+    _DELIM = '<div class="kpi"'
+    _parts = _grid.split(_DELIM)
+    if len(_parts) < 2:
+        return _grid
+    _head, _tiles = _parts[0], [_DELIM + _p for _p in _parts[1:]]
+    _keep = [_t for _t in _tiles
+             if not _amoprof_tile_label(_t).startswith(_prefix)]
+    return _head + "".join(_keep)
+
+
+def _amoprof_group_tier_tiles(_grid: str) -> str:
+    _DELIM = '<div class="kpi"'
+    _parts = _grid.split(_DELIM)
+    if len(_parts) < 2:
+        return _grid
+    _head, _tiles = _parts[0], [_DELIM + _p for _p in _parts[1:]]
+
+    _label_of = _amoprof_tile_label
+
+    # Rank by the longest prefix that matches, so "L3 cache used" cannot
+    # claim a tile labelled "L3 cache used (raw, df)" ahead of a more
+    # specific entry, and an unlisted tile keeps its position.
+    # rank -> index into _tiles.  Indices, not the tile strings: two tiles
+    # can be byte-identical, and a membership test on content would then
+    # move the wrong one.
+    _picked: dict = {}
+    for _idx, _t in enumerate(_tiles):
+        _lab = _label_of(_t)
+        _best, _blen = None, -1
+        for _r, _pfx in enumerate(_TIER_TILE_ORDER):
+            if _lab.startswith(_pfx) and len(_pfx) > _blen:
+                _best, _blen = _r, len(_pfx)
+        # A second tile matching a rank already taken is left in place
+        # rather than silently dropped: two tiles with one name is a bug
+        # to see, not to hide.
+        if _best is not None and _best not in _picked:
+            _picked[_best] = _idx
+    if len(_picked) < 2:
+        return _grid
+    _moved = set(_picked.values())
+    _group = "".join(_tiles[_picked[_r]] for _r in sorted(_picked))
+    # Re-insert where the first of them used to be, so the outcome and
+    # throughput tiles around them keep their order.
+    _out, _done = [], False
+    for _idx, _t in enumerate(_tiles):
+        if _idx in _moved:
+            if not _done:
+                _out.append(_group)
+                _done = True
+            continue
+        _out.append(_t)
+    return _head + "".join(_out)
+
+
+_QD_PLAUSIBLE_MAX = 4096.0
+
+
+def _qd_implausible(vals) -> float:
+    """Peak of `vals` when it exceeds the plausible bound, else 0.0."""
+    try:
+        _mx = max((v for v in (vals or []) if v == v), default=0.0)
+    except Exception:
+        return 0.0
+    return float(_mx) if _mx > _QD_PLAUSIBLE_MAX else 0.0
+
+
 _LAYER_SERIES_COLORS = [
     "#ef4444",  # red
     "#3b82f6",  # blue
@@ -2043,11 +2312,21 @@ _AMOPROF_LAYER_COLOR = {
 }
 
 
-def _amoprof_binned_response(x: List[float], y: List[float], nbins: int = 10):
-    """Quantile-binned median response of y against x.
+def _amoprof_binned_response(x: List[float], y: List[float], nbins: int = 10,
+                             stat: str = "median"):
+    """Quantile-binned response of y against x.
 
     Binning by quantile rather than by value keeps every bin equally
     populated, so a sparse tail cannot dominate the curve shape.
+
+    *stat* selects the within-bin summary. "median" is right for a signal
+    that is busy most of the time, and wrong for a BURSTY one: an
+    instantaneous queue-depth gauge sampled every 15 s is zero in almost
+    every sample and spikes to its real depth in a few, so every bin median
+    is 0 and the plotted line sits flat on the axis while the legend reports
+    a series peak of 16. For such a signal "max" is the honest summary --
+    the question being asked of a queue is how deep it got, not how deep it
+    typically was.
     """
     if len(x) < 12:
         return []
@@ -2060,8 +2339,25 @@ def _amoprof_binned_response(x: List[float], y: List[float], nbins: int = 10):
             continue
         xs = sorted(p[0] for p in chunk)
         ys = sorted(p[1] for p in chunk)
-        out.append((xs[len(xs) // 2], ys[len(ys) // 2]))
+        _v = (ys[-1] if stat == "max" else
+              ys[0] if stat == "min" else
+              ys[len(ys) // 2])
+        out.append((xs[len(xs) // 2], _v))
     return out if len(out) >= 3 else []
+
+
+def _amoprof_bin_stat_for(label: str) -> str:
+    """Which within-bin summary suits this series.
+
+    Queue depth and other burst-shaped counters are summarised by max; the
+    default stays the median for continuous signals such as bandwidth and
+    utilisation, where the median is the better typical value.
+    """
+    _l = str(label or "").lower()
+    if any(_k in _l for _k in ("queue depth", "queue_depth", "inflight",
+                               "aqu", "qd ", "retransmit", "drop")):
+        return "max"
+    return "median"
 
 
 
@@ -2163,7 +2459,14 @@ def _amoprof_exec_svg_layer_response(driver_label: str, driver_unit: str,
                          f' ({b[1]/ymax*100:.0f}% of max)</title></circle>')
         nl = " NL" if abs(sr["rho"]) - abs(sr["r"]) > 0.15 else ""
         parts.append(f'<rect x="{L+pw+12}" y="{ly}" width="9" height="3" fill="{c}" rx="1.5"/>')
-        parts.append(f'<text x="{L+pw+25}" y="{ly+4}" fill="#cbd5e1" font-size="8.5">'
+        # Same fixed-gutter clipping as the tier legend: condense to fit
+        # rather than lose the tail of the metric name or the r value.
+        _lb = f'{sr["label"]} r={sr["r"]:+.2f}{nl}'
+        _av = width - (L + pw + 25) - 6
+        _fit = (f' textLength="{_av:.0f}" lengthAdjust="spacingAndGlyphs"'
+                if _av > 20 and len(_lb) * 8.5 * 0.55 > _av else "")
+        parts.append(f'<text x="{L+pw+25}" y="{ly+4}" fill="#cbd5e1" '
+                     f'font-size="8.5"{_fit}>'
                      f'{_html.escape(sr["label"])} <tspan fill="#64748b">r={sr["r"]:+.2f}{nl}</tspan></text>')
         # Report the ceiling actually used for scaling, not the supplied one.
         # Printing sr["ymax"] showed "max 0.0 ms" whenever it was NaN or zero
@@ -2171,9 +2474,31 @@ def _amoprof_exec_svg_layer_response(driver_label: str, driver_unit: str,
         # maximum of zero beside a plotted line is a contradiction the reader
         # cannot resolve.  When even the derived ceiling is a placeholder,
         # say the range is unavailable rather than printing a fake number.
+        # The bins are per-bucket MEDIANS, so a signal that is zero most of
+        # the time and non-zero in bursts has every median at zero -- which
+        # printed "range unavailable" for a queue depth whose raw series had
+        # a real peak. Report the raw series peak when the caller supplies it,
+        # and only call the range unavailable when nothing is non-zero
+        # anywhere.
         _peak_seen = max((b[1] for b in _bins_ok if b[1] == b[1]), default=0.0)
-        _max_txt = (f'max {_fmt_num(_peak_seen, " " + sr["unit"], 1)}'
-                    if _peak_seen > 0 else "range unavailable")
+        _raw_peak = 0.0
+        try:
+            _raw_peak = max((v for v in (sr.get("raw") or []) if v == v), default=0.0)
+        except Exception:
+            _raw_peak = 0.0
+        # Name the statistic, so "max 16.0" cannot be read as the typical
+        # value and a flat line cannot be read as no data.
+        _stat_txt = _amoprof_bin_stat_for(sr.get("label", ""))
+        if _peak_seen > 0:
+            _max_txt = (f'peak of binned {_stat_txt} '
+                        f'{_fmt_num(_peak_seen, " " + sr["unit"], 1)}')
+            if _raw_peak > _peak_seen * 1.05:
+                _max_txt += f' · series peak {_fmt_num(_raw_peak, "", 1)}'
+        elif _raw_peak > 0:
+            _max_txt = (f'binned {_stat_txt} 0 · series peak '
+                        f'{_fmt_num(_raw_peak, " " + sr["unit"], 3)}')
+        else:
+            _max_txt = "no non-zero sample in this window"
         parts.append(f'<text x="{L+pw+25}" y="{ly+13}" fill="#475569" font-size="7.5">'
                      f'{_max_txt}</text>')
         ly += 22
@@ -2185,6 +2510,157 @@ def _amoprof_exec_svg_layer_response(driver_label: str, driver_unit: str,
     return (f'<div class="corr-chart corr-chart-wide" style="min-width:0"><svg role="img" viewBox="0 0 {width} {height}" '
             f'preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;display:block">'
             f'{"".join(parts)}</svg>{_cap}</div>')
+
+
+def _amoprof_exec_svg_qd_saturation(dist: "list[tuple[float, float]]",
+                                    source: str = "",
+                                    ref: float = 32.0,
+                                    width: int = 760,
+                                    height: int = 300) -> str:
+    """Time spent at each storage queue depth, with cumulative share.
+
+    This is the saturation question stated directly. A mean and a peak cannot
+    answer it: mean 0.35 with a peak of 16 is consistent both with a device
+    that briefly queued 16 once and with one that sat at 16 for a tenth of
+    the run, and those are opposite conclusions. The time-at-depth curve
+    separates them, and the analyser has written it to
+    queue_depth_distribution.csv all along without anything rendering it.
+
+    *dist* is [(queue_depth, seconds_at_that_depth), ...].
+    """
+    dist = [(float(d), float(s)) for d, s in (dist or [])
+            if d == d and s == s and s > 0]
+    if not dist:
+        return ""
+    dist.sort(key=lambda p: p[0])
+    total = sum(s for _d, s in dist)
+    if total <= 0:
+        return ""
+
+    L, R, T, B = 56, 150, 36, 46
+    pw, ph = width - L - R, height - T - B
+    _dmax = max(d for d, _s in dist)
+    _xr = max(_dmax, 1.0)
+    _bw = pw / max(len(dist), 1)
+
+    parts = [f'<rect x="0" y="0" width="{width}" height="{height}" fill="#0b1220" rx="8"/>',
+             f'<text x="{L}" y="17" fill="#e2e8f0" font-size="10" font-weight="800">'
+             f'Storage queue depth saturation — time spent at each depth</text>',
+             f'<text x="{L}" y="29" fill="#94a3b8" font-size="8.5">'
+             f'bars = % of the window at that depth · line = cumulative % at or '
+             f'below · {_html.escape(source or "queue-depth distribution")}</text>']
+    for g in range(5):
+        gy = T + ph * g / 4
+        parts.append(f'<line x1="{L}" y1="{gy:.1f}" x2="{L+pw}" y2="{gy:.1f}" stroke="#1e293b"/>')
+        parts.append(f'<text x="{L-6}" y="{gy+3:.1f}" fill="#64748b" font-size="7.5" '
+                     f'text-anchor="end">{100-g*25}%</text>')
+
+    _pmax = max(s / total * 100.0 for _d, s in dist) or 1.0
+    _cum, _cpts = 0.0, []
+    for _i, (_d, _s) in enumerate(dist):
+        _pct = _s / total * 100.0
+        _cum += _pct
+        _bx = L + _i * _bw
+        # Bars share a 0-100% axis with the cumulative line only when the
+        # largest bucket is big; otherwise they would be invisible, so they
+        # are scaled to the largest bucket and the scaling is stated.
+        _bh = (_pct / _pmax) * ph * 0.92
+        _col = ("#ef4444" if _d >= ref else
+                "#f59e0b" if _d >= ref / 2 else "#22c55e")
+        parts.append(
+            f'<rect x="{_bx+_bw*0.12:.1f}" y="{T+ph-_bh:.1f}" '
+            f'width="{max(_bw*0.76, 1.2):.1f}" height="{max(_bh, 1.0):.1f}" '
+            f'fill="{_col}" opacity=".85" rx="1.5">'
+            f'<title>queue depth {_d:,.0f}&#10;{_s:,.1f} s '
+            f'({_pct:.3f}% of the window)&#10;cumulative {_cum:.3f}% at or '
+            f'below this depth</title></rect>')
+        _cpts.append(f'{_bx+_bw*0.5:.1f},{T+ph-(_cum/100.0)*ph:.1f}')
+        if len(dist) <= 16 or _i % max(1, len(dist)//12) == 0:
+            parts.append(f'<text x="{_bx+_bw*0.5:.1f}" y="{T+ph+12:.1f}" '
+                         f'fill="#64748b" font-size="7.5" '
+                         f'text-anchor="middle">{_d:,.0f}</text>')
+    parts.append(f'<polyline points="{" ".join(_cpts)}" fill="none" '
+                 f'stroke="#93c5fd" stroke-width="1.8" opacity=".95"/>')
+
+    # The saturation answer in words, to the right of the plot.
+    _at_or_above = lambda _c: sum(s for d, s in dist if d >= _c) / total * 100.0
+    _nonzero = _at_or_above(1)
+    _mean = sum(d * s for d, s in dist) / total
+    _ly = T + 6
+    for _lbl, _val in (
+            ("peak depth", f"{_dmax:,.0f}"),
+            ("time-weighted mean", f"{_mean:,.2f}"),
+            ("% of window queued", f"{_nonzero:.2f}%"),
+            (f"% at QD ≥ {ref/4:,.0f}", f"{_at_or_above(ref/4):.3f}%"),
+            (f"% at QD ≥ {ref/2:,.0f}", f"{_at_or_above(ref/2):.3f}%"),
+            (f"% at QD ≥ {ref:,.0f}", f"{_at_or_above(ref):.3f}%")):
+        parts.append(f'<text x="{L+pw+12}" y="{_ly}" fill="#94a3b8" '
+                     f'font-size="7.5">{_html.escape(_lbl)}</text>')
+        parts.append(f'<text x="{width-8}" y="{_ly}" fill="#e2e8f0" '
+                     f'font-size="8.5" font-weight="700" '
+                     f'text-anchor="end">{_val}</text>')
+        _ly += 15
+    parts.append(f'<text x="{L+pw+12}" y="{_ly+4}" fill="#475569" font-size="7">'
+                 f'red bars: QD ≥ {ref:,.0f}</text>')
+    parts.append(f'<text x="{L+pw/2:.0f}" y="{height-8}" fill="#cbd5e1" '
+                 f'font-size="8.5" text-anchor="middle">queue depth '
+                 f'(requests outstanding) →</text>')
+    _cap = _amoprof_exec_chart_caption(
+        [("X", "queue depth", "#93c5fd"),
+         ("Y", "% of window at that depth", "#86efac")])
+    return (f'<div class="corr-chart corr-chart-wide" style="min-width:0">'
+            f'<svg role="img" viewBox="0 0 {width} {height}" '
+            f'preserveAspectRatio="xMidYMid meet" '
+            f'style="width:100%;height:auto;display:block">'
+            f'{"".join(parts)}</svg>{_cap}</div>')
+
+
+def _amoprof_qd_distribution(raw_dir: "Path", series: "list[float] | None" = None,
+                             times: "list[float] | None" = None):
+    """Time-at-depth pairs, from blktrace's own histogram or from a series.
+
+    blktrace writes queue_depth_distribution.csv with exact time at each
+    depth. When that file is absent the same shape is derived from a sampled
+    gauge by charging each sample its sampling interval -- coarser, and
+    labelled as such, but it answers the same question.
+    """
+    _p = _first_existing(raw_dir, ["blktrace_analysis/queue_depth_distribution.csv",
+                                   "queue_depth_distribution.csv"])
+    if _p:
+        try:
+            import csv as _c
+            with open(_p, newline="", encoding="utf-8", errors="replace") as _fh:
+                _rows = list(_c.DictReader(_fh))
+            _out = []
+            for _r in _rows:
+                try:
+                    _out.append((float(_r.get("qd_value") or _r.get("qd") or 0),
+                                 float(_r.get("time_sec") or 0)))
+                except (TypeError, ValueError):
+                    continue
+            if _out:
+                return _out, "exact blktrace Q→C time-at-depth histogram"
+        except Exception:
+            pass
+    # Derived from a sampled gauge.
+    _v = [x for x in (series or []) if x == x]
+    if not _v:
+        return [], ""
+    _dt = 1.0
+    _t = [x for x in (times or []) if x == x]
+    if len(_t) >= 2:
+        _spans = [_t[_i + 1] - _t[_i] for _i in range(len(_t) - 1)
+                  if _t[_i + 1] > _t[_i]]
+        if _spans:
+            _spans.sort()
+            _dt = _spans[len(_spans) // 2]
+    _acc: dict = {}
+    for _x in _v:
+        _k = round(_x)
+        _acc[_k] = _acc.get(_k, 0.0) + _dt
+    return (sorted(_acc.items()),
+            f"derived from a sampled in-flight gauge · {_dt:g}s per sample "
+            f"· coarser than blktrace Q→C")
 
 
 def _amoprof_exec_svg_queue_timeline(queues: list, width: int = 760,
@@ -2202,7 +2678,8 @@ def _amoprof_exec_svg_queue_timeline(queues: list, width: int = 760,
              f'<text x="{L}" y="17" fill="#e2e8f0" font-size="10" font-weight="800">'
              f'Queue occupancy across layers</text>',
              f'<text x="{L}" y="29" fill="#94a3b8" font-size="8.5">each queue as % of its own saturation '
-             f'reference \u00b7 a rising line is a layer taking work faster than it retires it</text>']
+             f'reference \u00b7 decimated by MAX per pixel, so a burst survives \u00b7 '
+             f'a rising line is a layer taking work faster than it retires it</text>']
     for g in range(5):
         gy = T + ph * g / 4
         parts.append(f'<line x1="{L}" y1="{gy:.1f}" x2="{L+pw}" y2="{gy:.1f}" stroke="#1e293b"/>')
@@ -2213,16 +2690,32 @@ def _amoprof_exec_svg_queue_timeline(queues: list, width: int = 760,
         c = _AMOPROF_LAYER_COLOR.get(q["layer"], "#94a3b8")
         n = min(len(q["t"]), len(q["v"]))
         step = max(1, n // 240)
+        # Decimate by MAX over each window, not by taking every step-th
+        # sample. Index decimation drops whatever falls between the sampled
+        # indices, and on a queue that is zero in almost every sample and
+        # spikes to its real depth in a few, the spikes are exactly what gets
+        # dropped: a series with a peak of 16 plotted as a flat line on zero,
+        # with the legend still reporting the peak.
+        _dec: list = []
+        for _s in range(0, n, step):
+            _win = [(q["t"][_j], q["v"][_j]) for _j in range(_s, min(_s + step, n))
+                    if q["v"][_j] == q["v"][_j]]
+            if not _win:
+                continue
+            _tv, _vv = max(_win, key=lambda p: p[1])
+            _dec.append((_tv, _vv))
         pts = " ".join(
-            f'{L+(q["t"][i]-t0)/tr*pw:.1f},{T+ph-min(q["v"][i]/q["ref"],1.0)*ph:.1f}'
-            for i in range(0, n, step) if q["v"][i] == q["v"][i])
+            f'{L+(_tv-t0)/tr*pw:.1f},{T+ph-min(_vv/q["ref"],1.0)*ph:.1f}'
+            for _tv, _vv in _dec)
         if not pts:
             continue
         parts.append(f'<polyline points="{pts}" fill="none" stroke="{c}" stroke-width="1.7" opacity=".9"/>')
         # Sparse transparent hover targets: a polyline alone has no per-point
-        # tooltip, so sample the series for hoverable coordinates.
-        _hstep = max(1, n // 40)
-        for _i in range(0, n, _hstep):
+        # tooltip, so sample the series for hoverable coordinates. Taken from
+        # the decimated (max) points so a hovered value matches the line.
+        _hstep = max(1, len(_dec) // 40)
+        for _k in range(0, len(_dec), _hstep):
+            _i = q["t"].index(_dec[_k][0]) if _dec[_k][0] in q["t"] else 0
             if q["v"][_i] != q["v"][_i]:
                 continue
             parts.append(
@@ -2267,7 +2760,18 @@ def _amoprof_exec_svg_queue_pctl(queues: list, width: int = 760,
     pw, ph = width - L - 20, height - T - B
     slot = pw / len(queues)
 
-    def _pc(v, qq):
+    def _pc(v, qq, q=None):
+        # An authoritative percentile set wins over one computed from the
+        # per-sample series.  Exact blktrace Q->C percentiles are measured
+        # per I/O; a sysfs avgqu_sz series sampled every 15 s is a coarse
+        # average of the same quantity, and on a bursty queue its p99 can be
+        # three orders of magnitude lower.  The chart used to compute from
+        # whichever series it happened to be handed, so a run with exact
+        # blktrace data still drew "0" bars from the sysfs series.
+        if q:
+            _given = (q.get("pctl") or {}).get(qq)
+            if _given is not None:
+                return float(_given)
         srt = sorted(x for x in v if x == x)
         if not srt:
             return 0.0
@@ -2287,16 +2791,32 @@ def _amoprof_exec_svg_queue_pctl(queues: list, width: int = 760,
         c = _AMOPROF_LAYER_COLOR.get(q["layer"], "#94a3b8")
         base = L + slot * i
         for j, (qq, op) in enumerate(((0.5, .42), (0.9, .70), (0.99, 1.0))):
-            val = min(_pc(q["v"], qq) / q["ref"], 1.0) * 100.0
+            _abs = _pc(q["v"], qq, q)
+            val = min(_abs / q["ref"], 1.0) * 100.0
             bw = slot * 0.22
             bx = base + slot * 0.10 + j * bw
             bh = val / 100.0 * ph
             parts.append(f'<rect x="{bx:.1f}" y="{T+ph-bh:.1f}" width="{bw*0.86:.1f}" '
                          f'height="{max(bh,1):.1f}" fill="{c}" opacity="{op}" rx="2">'
                          f'<title>{_html.escape(q["label"])}\np{int(qq*100)} = '
-                         f'{_pc(q["v"], qq):,.2f} ({val:.0f}% of reference)</title></rect>')
-            parts.append(f'<text x="{bx+bw*0.43:.1f}" y="{T+ph-bh-4:.1f}" fill="#f8fafc" font-size="8.5" '
-                         f'font-weight="700" text-anchor="middle">{val:.0f}</text>')
+                         f'{_abs:,.2f} ({val:.0f}% of reference)</title></rect>')
+            # A queue far below its saturation reference normalises to a few
+            # per cent, and a bar labelled "3" beside a 5px sliver reads as
+            # "no data" when the real finding is "measured, and nowhere near
+            # saturation". Short bars therefore carry the ABSOLUTE value --
+            # a p99 of 1.0 against a QD=32 reference is legible as 1 -- and
+            # the percentage stays in the bar height and the tooltip.
+            if _abs <= 0:
+                _lbl, _col = "0", "#64748b"
+            elif val < 8.0:
+                _lbl = (f"{_abs:,.2f}".rstrip("0").rstrip(".")
+                        if _abs < 100 else f"{_abs:,.0f}")
+                _col = "#cbd5e1"
+            else:
+                _lbl, _col = f"{val:.0f}", "#f8fafc"
+            parts.append(f'<text x="{bx+bw*0.43:.1f}" y="{T+ph-max(bh,2)-4:.1f}" fill="{_col}" '
+                         f'font-size="8.5" font-weight="700" '
+                         f'text-anchor="middle">{_lbl}</text>')
             parts.append(f'<text x="{bx+bw*0.43:.1f}" y="{T+ph+11:.1f}" fill="#64748b" font-size="7" '
                          f'text-anchor="middle">p{int(qq*100)}</text>')
         parts.append(f'<text x="{base+slot/2:.1f}" y="{T+ph+26:.1f}" fill="{c}" font-size="8.5" '
@@ -2304,7 +2824,10 @@ def _amoprof_exec_svg_queue_pctl(queues: list, width: int = 760,
         parts.append(f'<text x="{base+slot/2:.1f}" y="{T+ph+37:.1f}" fill="#94a3b8" font-size="7.5" '
                      f'text-anchor="middle">{_html.escape(q["label"][:24])}</text>')
         parts.append(f'<text x="{base+slot/2:.1f}" y="{T+ph+47:.1f}" fill="#475569" font-size="7.5" '
-                     f'text-anchor="middle">abs p99 {_fmt_num(_pc(q["v"], 0.99), "", 1)}</text>')
+                     f'text-anchor="middle">abs p99 '
+                     f'{_fmt_num(_pc(q["v"], 0.99, q), "", 2)}'
+                     f'{" (" + _html.escape(q["pctl_src"]) + ")" if q.get("pctl_src") else ""}'
+                     f'</text>')
     _cap = _amoprof_exec_chart_caption([("Y", q["label"], "#86efac") for q in queues[:4]])
     return (f'<div class="corr-chart corr-chart-wide" style="min-width:0"><svg role="img" viewBox="0 0 {width} {height}" '
             f'preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;display:block">'
@@ -2514,7 +3037,7 @@ def _amoprof_exec_svg_tier_occupancy(series: list, width: int = 760,
                                      mode: str = "tokens",
                                      title: str = "", subtitle: str = "",
                                      yaxis: str = "", unit_label: str = "",
-                                     force_linear: bool = False) -> str:
+                                     force_linear: bool = False, keep_zero_series: bool = False) -> str:
     """KV tokens resident in each cache tier, over the run.
 
     One chart, one unit: **tokens**.  Capacity in GB is not comparable across
@@ -2527,10 +3050,42 @@ def _amoprof_exec_svg_tier_occupancy(series: list, width: int = 760,
     headroom in each tier is visible at a glance.
     `series` items: {"tier","label","t","v","cap","color"}.
     """
-    series = [x for x in series if x.get("v") and any(q > 0 for q in x["v"])]
+    # An all-zero series is normally dropped: a dead line is clutter.  But on
+    # a chart whose question IS "did this happen at all", a flat line at zero
+    # is the answer, and dropping it makes a measured zero look identical to a
+    # counter the build never exported.  Callers asking that question opt in.
+    if keep_zero_series:
+        series = [x for x in series
+                  if x.get("v") and any(q == q for q in x["v"])]
+    else:
+        series = [x for x in series if x.get("v") and any(q > 0 for q in x["v"])]
     if not series:
         return ""
     L, R, T, B = 62, 200, 34, 44
+    # Same non-wrapping <text> problem as the bar renderer: a long subtitle
+    # ran past the viewBox and was clipped.  Wrap on words at the plot width
+    # (R is the legend gutter, so the text may use it) and make room.
+    _sub_txt = (subtitle or
+                ("100% means that tier is full and is forcing eviction to the "
+                 "next tier down" if mode == "fill" else
+                 "absolute token counts on one axis \u00b7 dashed line = "
+                 "configured capacity for that tier"))
+    _sub_lines = []
+    _cpl = max(30, int((width - L - 14) / (8.5 * 0.55)))
+    _cur = ""
+    for _w in str(_sub_txt).split(" "):
+        _cand = (_cur + " " + _w).strip()
+        if len(_cand) <= _cpl or not _cur:
+            _cur = _cand
+        else:
+            _sub_lines.append(_cur)
+            _cur = _w
+    if _cur:
+        _sub_lines.append(_cur)
+    if len(_sub_lines) > 1:
+        _sx = (len(_sub_lines) - 1) * 11
+        T += _sx
+        height += _sx
     pw, ph = width - L - R, height - T - B
     # The axis must span the WINDOW the user asked for, not merely the extent
     # of the data.  A tier that only reported for part of the run would
@@ -2613,12 +3168,9 @@ def _amoprof_exec_svg_tier_occupancy(series: list, width: int = 760,
              + ((title or ("KV tier fill \u2014 % of each tier\u2019s own capacity"
                             if mode == "fill"
                             else "KV tokens resident per cache tier")) + "</text>"),
-             f'<text x="{L}" y="29" fill="#94a3b8" font-size="8.5">'
-             + ((subtitle or
-                 ("100% means that tier is full and is forcing eviction to the "
-                  "next tier down" if mode == "fill" else
-                  "absolute token counts on one axis \u00b7 dashed line = "
-                  "configured capacity for that tier")) + "</text>")]
+             *[f'<text x="{L}" y="{29 + _i * 11}" fill="#94a3b8" '
+               f'font-size="8.5">{_html.escape(_t)}</text>'
+               for _i, _t in enumerate(_sub_lines)]]
     for g in range(5):
         gy = T + ph * g / 4.0
         parts.append(f'<line x1="{L}" y1="{gy:.1f}" x2="{L+pw}" y2="{gy:.1f}" stroke="#1e293b"/>')
@@ -2681,7 +3233,17 @@ def _amoprof_exec_svg_tier_occupancy(series: list, width: int = 760,
         # though the line itself plotted correctly.
         _finite_v = [v for v in x["v"] if v == v]
         _peak = max(_finite_v) if _finite_v else float("nan")
-        parts.append(f'<text x="{L+pw+25}" y="{ly+4}" fill="#cbd5e1" font-size="8.5">'
+        # Legend labels sit in a fixed right gutter and are not wrappable, so
+        # a long tier name ran past the viewBox and lost its tail --
+        # "(KV movement est., not PMU)" became "(KV movement est., not PM".
+        # Condense the glyphs to fit rather than truncating: the qualifier in
+        # those names is the part that says how to read the series.
+        _lbl_av = width - (L + pw + 25) - 6
+        _lbl_w = len(x["label"]) * 8.5 * 0.55
+        _lbl_fit = (f' textLength="{_lbl_av:.0f}" lengthAdjust="spacingAndGlyphs"'
+                    if _lbl_av > 20 and _lbl_w > _lbl_av else "")
+        parts.append(f'<text x="{L+pw+25}" y="{ly+4}" fill="#cbd5e1" '
+                     f'font-size="8.5"{_lbl_fit}>'
                      f'{_html.escape(x["label"])}</text>')
         parts.append(f'<text x="{L+pw+25}" y="{ly+13}" fill="#475569" font-size="7.5">'
                      + ("no finite samples" if _peak != _peak else
@@ -3044,17 +3606,357 @@ def _amoprof_build_l3_ssd_exec_visual_analysis_html(
 </div>"""
 
 
-def _kv_token_delta(raw_dir, candidates) -> "float | None":
-    """Window delta of a KV-movement token counter, summed across ranks.
+def _amoprof_src_block(rows, note: str = "") -> str:
+    """Collapsible "where this chart's numbers come from", under a chart.
+
+    Charts here draw on three layers — the inference engine, the KV store's
+    own accounting, and the host block device — across two machines. Numbers
+    that look like they should agree often do not, because they measure
+    different things on different nodes. Naming the file, column and upstream
+    metric per series puts that at the point of confusion.
+
+    rows: [(series label, raw/ file, column, upstream metric or formula)]
+    """
+    if not rows:
+        return ""
+    # Two rows per series rather than four columns.  These blocks sit inside
+    # correlation cards that can be a third of the viewport wide, and an
+    # upstream metric is often a long expression; as a fourth column it wrapped
+    # to four lines in a 120px cell.  The identifying fields are short and stay
+    # on one line; the formula gets the full width underneath.
+    _tr = "".join(
+        '<tr class="id"><td>' + _l +
+        '</td><td class="f"><code>' + _f +
+        '</code></td><td class="c"><code>' + _c + '</code></td></tr>'
+        '<tr class="fm"><td colspan="3"><code>' + _m + '</code></td></tr>'
+        for _l, _f, _c, _m in rows)
+    return (
+        '<details class="amoprof-src">'
+        '<summary><span class="amoprof-src-ic">\u0192</span>source</summary>'
+        '<div class="amoprof-src-body">'
+        '<table><thead><tr>'
+        '<th>Series</th><th>raw/ file</th><th>Column</th>'
+        '</tr></thead><tbody>' + _tr + '</tbody></table>'
+        + ('<p>' + note + '</p>' if note else "")
+        + '</div></details>')
+
+def _bind_src_blocks(html: str) -> str:
+    """Move each provenance block INSIDE the chart panel it describes.
+
+    The builders append the block after the chart's closing </div>, which
+    makes it a SIBLING of the chart.  Inside a CSS grid a sibling is its own
+    grid item, so a block attached to a single-column chart was laid out in
+    the next cell -- beside a neighbouring chart, with dead space under its
+    own.  Charts that happened to be full-width looked correct purely
+    because they spanned every column.
+
+    Nesting the block inside the panel makes the pairing structural rather
+    than a property of the chart's width, so it cannot come apart again when
+    the grid changes.  Depth-aware: chart panels contain nested <div>s (the
+    scatter caption, for one), so the closing tag is found by counting.
+    """
+    import re as _re
+    _TOK = _re.compile(r"<div\b|</div>")
+    _out, _pos = [], 0
+    for _m in _re.finditer(r'<div class="corr-chart[^"]*"[^>]*>', html):
+        if _m.start() < _pos:
+            continue
+        _d, _i = 1, _m.end()
+        while _d > 0:
+            _t = _TOK.search(html, _i)
+            if not _t:
+                break
+            _d += 1 if _t.group(0) == "<div" else -1
+            _i = _t.end()
+        if _d != 0:
+            continue                      # unbalanced: leave this one alone
+        _close = _i                       # just past the panel's </div>
+        # Pull in every disclosure that follows the panel back to back --
+        # a chart can carry both a provenance block and an explanatory note,
+        # and leaving one outside would split the pair the fix exists for.
+        _take, _k = 0, _close
+        while html.startswith('<details class="amoprof-src', _k):
+            _e = html.find("</details>", _k)
+            if _e < 0:
+                break
+            _e += len("</details>")
+            _take, _k = _take + (_e - _k), _e
+        if not _take:
+            continue
+        # Wrap the run in a row container so several chips sit side by
+        # side under the chart instead of stacking, and so an opened one can
+        # take the full panel width.
+        _out.append(html[_pos:_close - len("</div>")])
+        _out.append('<div class="amoprof-src-row">')
+        _out.append(html[_close:_close + _take])
+        _out.append("</div></div>")
+        _pos = _close + _take
+    _out.append(html[_pos:])
+    return "".join(_out)
+
+
+def _strip_src_blocks(html: str) -> str:
+    """Remove chart-provenance blocks from a chunk of report HTML.
+
+    The overview strip reuses the same chart strings the Bottleneck section
+    builds, so a provenance block attached to a chart there followed it into
+    the overview, where a dense row of small multiples became a column of
+    disclosure widgets.  The overview answers "what happened during the
+    run"; the place to interrogate a number is the section that makes a
+    claim about it.  Matched on the class, so other <details> in the same
+    markup are left alone.
+    """
+    import re as _re
+    if "amoprof-src" not in (html or ""):
+        return html or ""
+    return _re.sub(r'<details class="amoprof-src">.*?</details>', "",
+                   html, flags=_re.S)
+
+
+def _src_block_from_series(series, note: str = "") -> str:
+    """Source block for a tier chart, built from the series it plotted.
+
+    Each series dict carries an optional ``src`` of (raw/ file, column,
+    upstream).  Only series that carry one are listed: a chart may include a
+    tier whose provenance has not been wired yet, and inventing a row for it
+    would be worse than omitting it.  Returns "" when none carry provenance,
+    so the chart renders exactly as before.
+    """
+    _rows = [(_s.get("label") or _s.get("tier") or "", ) + tuple(_s["src"])
+             for _s in (series or []) if _s.get("src")]
+    if not _rows:
+        return ""
+    return _amoprof_src_block(_rows, note=note)
+
+
+# Charts whose series are not built from a tier-series list, so they cannot
+# carry per-series `src` dicts.  Keyed by the chart's own title text; the
+# post-pass below attaches a block to any chart still lacking one, and
+# validate_math asserts that NO chart is left bare -- a new chart added
+# without an entry here fails the suite rather than shipping unexplained.
+_CHART_SRC_BY_TITLE = {
+    "Input token throughput over the run": ([
+        ("Input tok/s", "sglang_timeseries.csv", "sglang_prompt_tokens_total",
+         "\u0394counter \u00f7 \u0394t per sampling interval, summed over tp_rank")],
+        "Per-interval rate. The End Report tile divides by the WHOLE window, "
+        "idle time included, and therefore reads lower."),
+    "Output token throughput over the run": ([
+        ("Output tok/s", "sglang_timeseries.csv", "sglang_generation_tokens_total",
+         "\u0394counter \u00f7 \u0394t per sampling interval, summed over tp_rank")],
+        "Per-interval rate. The End Report tile divides by the WHOLE window, "
+        "idle time included, and therefore reads lower."),
+    "Token throughput over the run": ([
+        ("Input tok/s", "sglang_timeseries.csv", "sglang_prompt_tokens_total",
+         "\u0394counter \u00f7 \u0394t per interval"),
+        ("Output tok/s", "sglang_timeseries.csv", "sglang_generation_tokens_total",
+         "\u0394counter \u00f7 \u0394t per interval")], ""),
+    "KV cache hit ratio over the run": ([
+        ("Hit ratio", "sglang_timeseries.csv",
+         "sglang:realtime_tokens_total[mode=prefill_cache]",
+         "cache \u00f7 (cache + compute) per interval \u2014 TOKEN-weighted, not request-weighted"),
+        ("(denominator)", "sglang_timeseries.csv",
+         "sglang:realtime_tokens_total[mode=prefill_compute]",
+         "prefill tokens the engine had to recompute")],
+        "Token-weighted: one long prompt missing cache costs more here than "
+        "several short ones, which is the quantity that drives GPU work."),
+    "Input tokens / second \u2014 p50 / p90 / p99": ([
+        ("p50 / p90 / p99", "sglang_timeseries.csv", "sglang_prompt_tokens_total",
+         "distribution OVER the per-interval rates, not a latency histogram")],
+        "Percentiles of the interval rate series above. A p99 far above p50 "
+        "means the load arrived in bursts."),
+    "Output tokens / second \u2014 p50 / p90 / p99": ([
+        ("p50 / p90 / p99", "sglang_timeseries.csv", "sglang_generation_tokens_total",
+         "distribution OVER the per-interval rates, not a latency histogram")],
+        "Percentiles of the interval rate series above. A p99 far above p50 "
+        "means the load arrived in bursts."),
+    "Prefill token-weighted \u2014 p50 / p90 / p99": ([
+        ("p50 / p90 / p99", "sglang_timeseries.csv",
+         "sglang:realtime_tokens_total[mode=prefill_cache|prefill_compute]",
+         "distribution over the per-interval token-weighted hit ratio")], ""),
+    "Queue occupancy across layers": ([
+        ("Queue depth", "queue_depth_sources_timeseries.csv", "qd_best_effort",
+         "best available of qd \u2192 weighted_qd \u2192 inflight, per layer")],
+        "Which source answered varies by layer and by what the deployment "
+        "exports; the column name says which was used."),
+    "Queue depth distribution \u2014 p50 / p90 / p99 per layer": ([
+        ("p50 / p90 / p99", "queue_depth_sources_timeseries.csv", "qd_best_effort",
+         "distribution over the per-interval queue depth, per layer")], ""),
+}
+
+
+def _attach_missing_src_blocks(html: str) -> str:
+    """Append a source block to any chart that does not already carry one.
+
+    Charts built from tier-series lists emit their own block from the series
+    they plotted, and the correlation scatters print their X/Y formulas
+    inline.  This covers the rest, matching on the title text inside the SVG.
+    A chart with no entry is left alone here and caught by validate_math,
+    which is the point: silence is the failure mode this whole mechanism
+    exists to prevent.
+    """
+    import re as _re
+    # The Executive overview strip deliberately carries no provenance: it is
+    # a dense row of small multiples answering "what happened during the
+    # run", and the same charts appear again in the sections that make
+    # claims about them, where the block belongs.  Skip that span rather
+    # than attaching blocks here for _strip_src_blocks to remove upstream.
+    _ov_a = html.find('<div class="section-label">Executive overview')
+    _ov_b = (html.find('class="section-label"', _ov_a + 60)
+             if _ov_a >= 0 else -1)
+    if _ov_a < 0 or _ov_b <= _ov_a:
+        _ov_a = _ov_b = -1
+    _out, _last = [], 0
+    for _m in _re.finditer(r"<svg.*?</svg>", html, _re.S):
+        if _ov_a >= 0 and _ov_a <= _m.start() < _ov_b:
+            continue
+        _svg = _m.group(0)
+        _after = html[_m.end():_m.end() + 700]
+        if "Source &amp; formula" in _after or "background:#020617" in _after:
+            continue
+        _t = _re.findall(r"<text[^>]*>([^<]{4,110})</text>", _svg)
+        if not _t:
+            continue
+        _title = _html.unescape(_t[0]).strip()
+        _entry = _CHART_SRC_BY_TITLE.get(_title)
+        if _entry is None:
+            continue
+        _rows, _note = _entry
+        _out.append(html[_last:_m.end()])
+        _out.append(_amoprof_src_block(_rows, note=_note))
+        _last = _m.end()
+    _out.append(html[_last:])
+    return "".join(_out)
+
+
+def _prefetch_tokens_resolved(raw_dir):
+    """The authoritative prefetch token volume, and which counter gave it.
+
+    ``sglang_prefetched_tokens_total`` reads 0 on builds where prefetch is
+    demonstrably running -- the ``sglang_prefetch_pgs`` histogram counts the
+    operations -- so trusting it alone reports "no prefetch" on a tier that
+    is working.  ``sglang_storage_prefetch_hit_tokens_total`` carries the
+    volume on those builds.
+
+    The generic reader cannot do this: it returns the first candidate whose
+    COLUMN EXISTS, and on such a run the column exists and is all zero, so
+    the fallback never fires.  Selection here is on a non-zero window
+    delta, not on presence.
+
+    Returns (times, values, metric_name, ops, unfulfilled_total) where
+    metric_name says which counter was used -- never silently substituted,
+    because a reader comparing two runs needs to know if the two numbers
+    came from different counters.
+    """
+    _ops = _kv_token_delta(raw_dir, ["prefetch_pgs_count"])
+    _unf_s = _kv_counter_series(raw_dir, ["storage_prefetch_unfulfilled_tokens_total"])
+    _unf = None
+    if _unf_s and _unf_s[1] and len(_unf_s[1]) >= 2:
+        _unf = max(0.0, _unf_s[1][-1] - _unf_s[1][0])
+    for _name in ("prefetched_tokens_total",
+                  "storage_prefetch_hit_tokens_total"):
+        _ser = _kv_counter_series(raw_dir, [_name])
+        if not _ser or not _ser[1] or len(_ser[1]) < 2:
+            continue
+        _t, _v = _ser
+        if max(0.0, _v[-1] - _v[0]) > 0:
+            return _t, _v, f"sglang_{_name}", _ops, _unf
+    return None, None, "", _ops, _unf
+
+
+def _raw_column_sources():
+    """{csv file: {column: [upstream metric, ...]}}, read from the fetch code.
+
+    The source block under a chart must name the metric the number actually
+    came from.  Retyping those names here would let the two drift the first
+    time a candidate list changes in the collector, and a source block that
+    names the wrong metric is worse than none.  Parse the dict literals that
+    `collect_from_prometheus_api` passes to `_synth_ts` instead, so the block
+    is generated from the code that does the fetching.
+
+    Returns an empty mapping if the parse fails; callers fall back to naming
+    the file and column alone, which is still true.
+    """
+    global _RAW_COL_SRC_CACHE
+    try:
+        if _RAW_COL_SRC_CACHE is not None:
+            return _RAW_COL_SRC_CACHE
+    except NameError:
+        pass
+    import ast as _ast
+    out = {}
+    try:
+        _p = Path(__file__).with_name("amoprof.py")
+        _tree = _ast.parse(_p.read_text(encoding="utf-8", errors="replace"))
+        for _n in _ast.walk(_tree):
+            if not isinstance(_n, _ast.Call):
+                continue
+            _f = _n.func
+            if not (isinstance(_f, _ast.Name) and _f.id == "_synth_ts"):
+                continue
+            if len(_n.args) < 2 or not isinstance(_n.args[0], _ast.Constant):
+                continue
+            if not isinstance(_n.args[1], _ast.Dict):
+                continue
+            _csv = _n.args[0].value
+            for _k, _v in zip(_n.args[1].keys, _n.args[1].values):
+                if not isinstance(_k, _ast.Constant):
+                    continue
+                if isinstance(_v, _ast.Constant):
+                    _vals = [_v.value]
+                elif isinstance(_v, (_ast.List, _ast.Tuple)):
+                    _vals = [e.value for e in _v.elts
+                             if isinstance(e, _ast.Constant)]
+                else:
+                    continue
+                _cur = out.setdefault(_csv, {}).setdefault(_k.value, [])
+                for _x in _vals:
+                    if _x not in _cur:
+                        _cur.append(_x)
+    except Exception:
+        out = {}
+    _RAW_COL_SRC_CACHE = out
+    return out
+
+
+_RAW_COL_SRC_CACHE = None
+
+
+def _src_rows_for(csv_name, specs):
+    """Source-block rows for (label, column) pairs read from one raw/ file.
+
+    The upstream cell lists the candidate chain in preference order, because
+    which one answered depends on what the deployment exports: blktrace and
+    iostat disagree on a bursty device, and knowing which of the two is behind
+    a number is the difference between trusting it and not.
+    """
+    _all = _raw_column_sources().get(csv_name, {})
+    _rows = []
+    for _lbl, _col in specs:
+        _cands = _all.get(_col) or []
+        if not _cands:
+            _up = "\u2014"
+        elif len(_cands) == 1:
+            _up = _cands[0]
+        else:
+            _up = _cands[0] + "  (else " + ", ".join(_cands[1:]) + ")"
+        _rows.append((_lbl, csv_name, _col, _up))
+    return _rows
+
+
+def _kv_counter_series(raw_dir, candidates):
+    """(times, cumulative values) for a KV-movement counter, summed across ranks.
+
+    One reader serves both the window total and the per-interval series, so a
+    chart and a tile cannot disagree about what the counter says.
 
     SGLang publishes these once per tp_rank (and per pp/dp rank on larger
     topologies).  Reading the first matching column took a single rank and
     under-reported by the parallelism factor — 1,000 against a true 8,000 on a
-    TP=8 deployment.  Sum every matching column per row, then difference.
+    TP=8 deployment.  Sum every matching column per row.
 
-    Returns None when no column matches (the counter is absent) and 0.0 when
-    it matched but never moved.  Those are different findings: absent means
-    unmeasured, zero means measured and idle.
+    Returns None when no column matches (the counter is absent).  A counter
+    that matched but never moved returns a real, flat series — absent means
+    unmeasured, flat means measured and idle, and they are different findings.
     """
     import csv as _c
     _p = _first_existing(raw_dir, ["sglang_timeseries.csv"])
@@ -3067,10 +3969,24 @@ def _kv_token_delta(raw_dir, candidates) -> "float | None":
         return None
     if not rows:
         return None
+
+    def _num(_r, _c2):
+        try:
+            _v = float(_r.get(_c2) or "nan")
+        except (TypeError, ValueError):
+            return float("nan")
+        return _v
+
+    _tcol = next((c for c in rows[0] if c and c.strip() == "time_sec"), None)
     for k in candidates:
+        # Histogram side-series are excluded so they are not summed into a
+        # counter — unless the caller ASKED for one, as it does for an
+        # operation count like prefetch_pgs_count.  Judging that by the
+        # requested key rather than blanket-excluding lets the same reader
+        # serve both without letting a bucket leak into a token total.
+        _drop = tuple(x for x in ("bucket", "_sum", "_count") if x not in k)
         cols = [c for c in rows[0]
-                if c and k in c and "bucket" not in c and "_sum" not in c
-                and "_count" not in c]
+                if c and k in c and not any(d in c for d in _drop)]
         if not cols:
             continue
         # Sum across RANKS of one metric, never across different metrics.
@@ -3085,25 +4001,38 @@ def _kv_token_delta(raw_dir, candidates) -> "float | None":
         _pref = [f"sglang_{k}", k]
         _base = next((b for b in _pref if b in _groups), next(iter(_groups)))
         cols = _groups[_base]
-        series = []
-        for r in rows:
+        times, series = [], []
+        for _i, r in enumerate(rows):
             tot, seen = 0.0, False
             for c in cols:
-                try:
-                    v = float(r.get(c) or "nan")
-                except (TypeError, ValueError):
-                    continue
+                v = _num(r, c)
                 if v == v:
                     tot += v; seen = True
             if seen:
                 series.append(tot)
+                _t = _num(r, _tcol) if _tcol else float("nan")
+                times.append(_t if _t == _t else float(_i))
         if len(series) < 2:
             continue
-        d = series[-1] - series[0]
-        if d < 0:                      # counter reset inside the window
-            d = series[-1]
-        return max(0.0, d)
+        return times, series
     return None
+
+
+def _kv_token_delta(raw_dir, candidates) -> "float | None":
+    """Window delta of a KV-movement token counter, summed across ranks.
+
+    Returns None when the counter is absent and 0.0 when it was present and
+    never moved.  Those are different findings: absent means unmeasured, zero
+    means measured and idle.
+    """
+    _r = _kv_counter_series(raw_dir, candidates)
+    if not _r:
+        return None
+    _times, series = _r
+    d = series[-1] - series[0]
+    if d < 0:                      # counter reset inside the window
+        d = series[-1]
+    return max(0.0, d)
 
 def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                                   interactive_figures: "dict | None" = None,
@@ -3313,6 +4242,18 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     bw_stream  = _read_csv_summary(_first_existing(raw_dir, ["bandwidth_per_stream.csv"]))
     hot_lba    = _read_csv_summary(_first_existing(raw_dir, ["hot_regions_overall.csv"]))
     smart      = _read_json(raw_dir / "smart_summary.json")
+    # The ssd_hardware collector's capacity fields are merged into
+    # smart_summary.json by the collect path and (since v1.65.0) by the
+    # Prometheus path. Reading its own file as a fallback means the chart does
+    # not depend on either merge having happened -- a run directory produced
+    # before that fix still renders.
+    _ssd_hw_sum = _read_json(raw_dir / "ssd_hw_summary.json")
+    if isinstance(_ssd_hw_sum, dict) and _ssd_hw_sum:
+        for _k_hw in ("hicache_fs_total_gb", "hicache_fs_used_gb",
+                      "hicache_fs_avail_gb", "hicache_fs_used_pct",
+                      "nvme_device_capacity_gb", "hicache_size_gb"):
+            if not smart.get(_k_hw) and _ssd_hw_sum.get(_k_hw):
+                smart[_k_hw] = _ssd_hw_sum[_k_hw]
 
     # L3 capacity: require explicit L3/L3 config. Do not infer from generic
     # df/SMART snapshots because L2-only runs can still have old mounted
@@ -3326,6 +4267,14 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     l3_fs_used_pct = _safe_float(smart.get("hicache_fs_used_pct", 0)) if l3_explicit_config else 0.0
     nvme_dev_cap_gb = _safe_float(smart.get("nvme_device_capacity_gb", 0)) if l3_explicit_config else 0.0
     l3_capacity_source = "df/SMART runtime snapshot" if (l3_explicit_config and l3_fs_total_gb > 0) else ""
+    # Which instant the df snapshot describes.  A point-in-time gauge without
+    # its instant is unreadable as evidence: the same window analysed twice
+    # reported 25 GB and 762 GB because the fetch evaluated the gauge at
+    # analysis time rather than at the window end.  The fetch now anchors it
+    # and records the instant; naming it here is what makes the difference
+    # visible if it ever drifts again.
+    _l3_snap_at = str((smart or {}).get("_snapshot_at")
+                      or (_ssd_hw_sum or {}).get("_snapshot_at") or "").strip()
     # Allow setup_details.json to supply L3 (local storage) capacity when SMART/df
     # data is not available (common for non-NVMe backends such as Mooncake).
     # Values from setup_details are configured capacity, not measured runtime
@@ -3461,6 +4410,69 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         "L3 storage mount path", "l3_storage_mount_path"
     ], "")).strip()
     _l3_backend = resolve_l3_backend(setup, _pick(setup, ["Launch command","launch_command","Command"], ""))
+
+    # ── Does the telemetry agree with the declared backend? ────────────────
+    #
+    # A setup_details.json copied between deployments carries the previous
+    # run's embedded `SGLang server_info raw` blob, and the launch command
+    # rendered from it is then presented as fact. On a file-backend run whose
+    # setup file still said `--hicache-storage-backend mooncake`, the report
+    # named a memory node that was not in the deployment, and every tile that
+    # keys off the tier followed it.
+    #
+    # A remote backend cannot operate without publishing store-side counters:
+    # gets, memory-tier hits, file-tier hits. Their total absence, alongside
+    # live local block I/O, contradicts the declaration.
+    #
+    # This does NOT override the backend. A genuine remote run whose store
+    # exporter was never scraped -- no --l35-instance -- looks identical from
+    # here, and silently relabelling it would trade one wrong tier for
+    # another. Both readings are named and the operator decides.
+    _backend_evidence_note = ""
+    try:
+        _declared = str(_l3_backend.backend_class or "").lower()
+        if _declared in ("remote_mooncake", "remote_storage"):
+            _store_cols = ("l35_get_total_n", "l35_get_valid_n", "l35_mem_hit_b",
+                           "l35_file_hit_b", "l35_mem_hit_n", "l35_file_hit_n",
+                           "l35_evicted_b", "l35_store_mem_used_b",
+                           "mooncake_used_bytes", "mooncake_capacity_bytes")
+            _store_seen = []
+            for _f in ("l35_store_capacity.csv", "l35_storage_timeseries.csv"):
+                _p = _first_existing(raw_dir, [_f])
+                if not _p:
+                    continue
+                _got = _amoprof_read_columns_raw(_p, list(_store_cols))
+                for _c in _store_cols:
+                    _vv = [v for v in (_got.get(_c) or []) if v == v]
+                    if _vv and max(_vv) > 0:
+                        _store_seen.append(_c)
+            _local_p = _first_existing(raw_dir, ["nvme_driver_timeseries.csv"])
+            _local_io = False
+            if _local_p:
+                _lg = _amoprof_read_columns_raw(_local_p, ["rd_bw_mbs", "wr_bw_mbs"])
+                _local_io = any(
+                    max([v for v in (_lg.get(_c) or []) if v == v] or [0]) > 0
+                    for _c in ("rd_bw_mbs", "wr_bw_mbs"))
+            if not _store_seen:
+                _backend_evidence_note = (
+                    f"The configuration declares a remote backing tier "
+                    f"({_l3_backend.display_name}), but this window contains no "
+                    f"store-side counters at all — no gets, no memory-tier "
+                    f"or file-tier hits, no store occupancy. "
+                    + ("Local block I/O on the GPU host IS present, so either "
+                       "the setup_details/server_info is stale (copied from an "
+                       "earlier deployment) and this is really a local file "
+                       "backend, or the memory node's exporter was never "
+                       "scraped (--l35-instance). "
+                       if _local_io else
+                       "No local block I/O is present either, so the backing "
+                       "tier is untelemetered whichever it is. ")
+                    + "Every tier-named label below follows the declaration, "
+                      "not the evidence.")
+                print(f"  [warn] backing tier: {_backend_evidence_note}")
+    except Exception as _bev:
+        print(f"  [warn] backing-tier evidence check skipped: {_bev}")
+
     if not l3_explicit_config:
         l3_backend_class = "none"
         l3_backend_display = "Not configured"
@@ -3471,6 +4483,17 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         l3_backend_display = _l3_backend.display_name
         l3_storage_is_local_block = bool(_l3_backend.backend_class == "local_ssd")
         l3_storage_has_block_mapping = bool(_l3_backend.has_local_block_mapping or l3_device or l3_mount_path)
+    # One name for the backing tier, resolved once and used by every series
+    # label, axis and chart title below.  Hardcoding "L3.5" in those strings
+    # meant a local NVMe run still read "backup L2→L3.5" and
+    # "L3.5 node · storage read BW" -- a tier that is not in the deployment.
+    # `_TIER` is the short form for arrows and axes, `_TIER_NODE` the longer
+    # form for chart titles that name the host.
+    _TIER = "L3" if str(l3_backend_class).lower() == "local_ssd" else "L3.5"
+    _TIER_NODE = ("L3 local SSD"
+                  if str(l3_backend_class).lower() == "local_ssd"
+                  else "L3.5 node")
+
     # `has_l3` — single truth source for "should we show any L3 / L3.5 tile,
     # summary block, or evidence row?".  Reads True only when SGLang / setup
     # actually configured an L3 backend (local_ssd, remote_mooncake, or
@@ -3479,6 +4502,19 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # answer False and every L3-scoped tile / summary is suppressed.
     has_l3 = bool(l3_explicit_config) and l3_backend_class in (
         "local_ssd", "remote_mooncake", "remote_storage")
+
+    # `has_l35` — is the AI Memory Node actually the backing tier?
+    #
+    # The L3.5 tile groups were each gated on their DATA being present
+    # (l35_cpu_util_pct having samples, the store reporting bytes, and so on)
+    # and never on the tier being configured.  Those series come back whenever
+    # the memory node is reachable in Prometheus or --l35-storage-instance was
+    # passed, which is routinely true on a local-L3 run against the same
+    # cluster -- so a local-NVMe report grew "L3.5 node CPU util" and friends,
+    # describing a tier that is not in the deployment.  Data presence says the
+    # exporter answered; only the backend class says the tier is in use.
+    has_l35 = bool(has_l3) and str(l3_backend_class).lower() in (
+        "remote_mooncake", "remote_storage")
     ctx_len   = _pick(setup, ["Context length","context_length","max_model_len","ctx_len","max_seq_len","context"], "?")
     page_sz   = _pick(setup, ["Page size","page_size","sglang_page_size","page","kv_page_size"], "1")
     launch    = _pick(setup, ["Launch command","launch_command","Command","Reference launch command"], "")
@@ -3589,18 +4625,29 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     except Exception:
         pass
 
-    def _setup_float_fuzzy(*keys, default: float = 0.0) -> float:
-        """Read a numeric setup value even when written as '50 GB' or '50G'."""
+    def _setup_float_fuzzy_src(*keys, default: float = 0.0) -> "tuple[float, str]":
+        """Read a numeric setup value, and report WHICH key supplied it.
+
+        Matching is on the exact key; "fuzzy" refers only to parsing a value
+        written as '50 GB' or '50G'.  The key matters because a figure read
+        from setup can contradict a measured gauge, and a tile that says
+        "2 GB/GPU x 8 GPU(s)" without naming the field it came from leaves
+        nobody able to find or correct the 2.
+        """
         import re as _re
         for _k in keys:
             if _k in setup:
                 _v = setup.get(_k)
                 if isinstance(_v, (int, float)):
-                    return _safe_float(_v, default)
+                    return _safe_float(_v, default), _k
                 _m = _re.search(r"[-+]?[0-9]*\.?[0-9]+", str(_v or ""))
                 if _m:
-                    return _safe_float(_m.group(0), default)
-        return default
+                    return _safe_float(_m.group(0), default), _k
+        return default, ""
+
+    def _setup_float_fuzzy(*keys, default: float = 0.0) -> float:
+        """Read a numeric setup value even when written as '50 GB' or '50G'."""
+        return _setup_float_fuzzy_src(*keys, default=default)[0]
 
     # L2 DRAM cache capacity should reflect the configured inference cache
     # allocation, not the whole host DRAM DIMM capacity. In SGLang-style setups
@@ -3618,7 +4665,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             "GPU Count", "gpu_count", "Num GPUs", "num_gpus", default=0.0)
     if setup_gpu_count_for_l2 <= 0:
         setup_gpu_count_for_l2 = _safe_float(gpu.get("gpu_count", 0)) or 1.0
-    hicache_per_gpu_gb = _setup_float_fuzzy(
+    hicache_per_gpu_gb, hicache_per_gpu_key = _setup_float_fuzzy_src(
         "HiCache size per GPU GB", "HiCache DRAM per GPU GB",
         "HiCache size GB per GPU", "hicache_size_per_gpu_gb",
         "hicache_dram_per_gpu_gb", "HiCache size", "hicache_size",
@@ -3632,7 +4679,9 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     l2_dram_capacity_via_ratio = ""
     l2_dram_capacity_gb = hicache_total_gb if hicache_total_gb > 0 else host_dram_total_gb
     l2_dram_capacity_source = (
-        f"HiCache allocation: {hicache_per_gpu_gb:g} GB/GPU × {setup_gpu_count_for_l2:g} GPU(s)"
+        (f"HiCache allocation: {hicache_per_gpu_gb:g} GB/GPU × "
+         f"{setup_gpu_count_for_l2:g} GPU(s)"
+         + (f" · from setup key '{hicache_per_gpu_key}'" if hicache_per_gpu_key else ""))
         if hicache_total_gb > 0 and hicache_per_gpu_gb > 0 else
         (l2_dram_capacity_via_ratio if l2_dram_capacity_via_ratio else
          ("HiCache total allocation from setup_details.json" if hicache_total_gb > 0
@@ -3647,23 +4696,17 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # allocation denominator, and the Interactive surface showed HiCache
     # residency over the same denominator — two different numerators under one
     # label.  Route both through the shared resolver.
-    try:
-        _l2res = _k_resolve_l2(
-            hicache_used_tokens=_safe_float(_pick(sglang, [
-                "hicache_host_used_tokens", "sglang_hicache_host_used_tokens"], 0), 0),
-            hicache_total_tokens=_safe_float(_pick(sglang, [
-                "hicache_host_total_tokens", "sglang_hicache_host_total_tokens"], 0), 0),
-            kv_bytes_per_token_kb=_safe_float(kv_bytes_tok_kb, 0),
-            hicache_total_gb=_safe_float(hicache_total_gb, 0),
-            host_dram_total_gb=0.0)
-        if _l2res.get("used_gb", 0) > 0:
-            l2_dram_used_gb = _l2res["used_gb"]
-            l2_dram_used_source = _l2res["used_source"]
-        if _l2res.get("capacity_gb", 0) > 0:
-            l2_dram_capacity_gb = _l2res["capacity_gb"]
-            l2_dram_capacity_source = _l2res["capacity_source"]
-    except Exception:
-        pass
+    # The shared L2 resolver runs further down, once kv_bytes_tok_kb exists.
+    #
+    # It used to run HERE and read kv_bytes_tok_kb, which is not defined until
+    # roughly a thousand lines later. The UnboundLocalError was swallowed by
+    # the block's own `except Exception`, so _l2res was never assigned and
+    # every L2 figure fell through to the TP-sharding heuristic -- including
+    # after v1.53.1 taught the resolver to prefer the server's own token
+    # gauge. That fix could not take effect while the call could not run.
+    # A static use-before-assignment scan now guards the whole class
+    # (validate_math group 0O).
+    _l2_cap_measured, _l2_cap_conflict = False, ""
     _l2_used_tokens_variation_pct = 0.0
     _l2_used_tokens_min = 0.0
     _l2_used_tokens_max = 0.0
@@ -3741,14 +4784,30 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         "server_e2e_p50_ms", "e2e_p50_ms", "median_latency_ms", "p50_e2e_ms"
     ], 0.0)) or e2e_from_pct_ms
 
-    ttft_ms   = ttft_from_ts_ms or ttft_from_pct_ms or _safe_float(_pick(sglang, ["server_ttft_ms","ttft_ms","avg_ttft_ms",
-                                            "mean_ttft_ms","time_to_first_token_ms",
-                                            "server_ttft_p50_ms"], 0.0))
-    tpot_ms   = tpot_from_ts_ms or tpot_from_pct_ms or _safe_float(_pick(sglang, ["server_itl_ms","tpot_ms","avg_tpot_ms",
-                                            "mean_tpot_ms","itl_ms",
-                                            "server_itl_p50_ms"], 0.0))
-    e2e_ms    = e2e_from_ts_ms or e2e_from_pct_ms or _safe_float(_pick(sglang, ["server_e2e_ms","e2e_ms","avg_latency_ms",
-                                            "latency_ms","server_e2e_p50_ms"], 0.0))
+    # The order above, applied by the shared kernel rather than by an `or`
+    # chain here. The comparison report had its own version of this -- step 3
+    # only -- and reported a different TTFT for the same window. One
+    # implementation is the only thing that stops that recurring.
+    _lat_ttft = _k_resolve_lat(
+        "ttft", ts_ms=ttft_from_ts_ms, pct_ms=ttft_from_pct_ms,
+        summary_ms=_safe_float(_pick(sglang, [
+            "server_ttft_ms", "ttft_ms", "avg_ttft_ms", "mean_ttft_ms",
+            "time_to_first_token_ms", "server_ttft_p50_ms"], 0.0)),
+        summary_method=str(_pick(sglang, ["server_ttft_ms_method"], "") or ""))
+    _lat_tpot = _k_resolve_lat(
+        "tpot", ts_ms=tpot_from_ts_ms, pct_ms=tpot_from_pct_ms,
+        summary_ms=_safe_float(_pick(sglang, [
+            "server_itl_ms", "tpot_ms", "avg_tpot_ms", "mean_tpot_ms",
+            "itl_ms", "server_itl_p50_ms"], 0.0)),
+        summary_method=str(_pick(sglang, ["server_itl_ms_method"], "") or ""))
+    _lat_e2e = _k_resolve_lat(
+        "e2e", ts_ms=e2e_from_ts_ms, pct_ms=e2e_from_pct_ms,
+        summary_ms=_safe_float(_pick(sglang, [
+            "server_e2e_ms", "e2e_ms", "avg_latency_ms", "latency_ms",
+            "server_e2e_p50_ms"], 0.0)),
+        summary_method=str(_pick(sglang, ["server_e2e_ms_method"], "") or ""))
+    ttft_ms, tpot_ms, e2e_ms = (_lat_ttft["ms"], _lat_tpot["ms"],
+                                _lat_e2e["ms"])
     if ttft_from_ts_ms > 0:
         sglang["server_ttft_ms_method"] = "delta_sglang_time_to_first_token_seconds_sum_count"
     if tpot_from_ts_ms > 0:
@@ -3896,6 +4955,16 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         if _decode_toks > 0 and _elapsed_s > 0:
             throughput = round(_decode_toks / _elapsed_s, 2)
             tp_active = throughput
+
+    # The figure the Token throughput tile headlines, and where it came from.
+    # `throughput` is the peak-ish summary value and `tp_active` the mean over
+    # active samples; prefer the active mean and say which was used, so the
+    # tile cannot be read as a peak.
+    _kpi_out_tp = _safe_float(tp_active, 0.0) or _safe_float(throughput, 0.0)
+    _kpi_out_tp_src = ("active mean of sglang_gen_throughput (idle samples "
+                       "excluded)" if _safe_float(tp_active, 0.0) > 0
+                       else "summary throughput figure — not verified as an "
+                            "active mean")
 
     tp_p50 = (_ts_active_p50(sglang_ts, "sglang_gen_throughput", "gen_throughput")
               or _safe_float(_pick(sglang, ["gen_tp_p50", "gen_tp_active_p50",
@@ -4078,6 +5147,51 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     write_gb  = _safe_float(_pick(blk, ["nvme_write_total_gb","write_gb_total","write_GB_total"], 0.0))
     if write_gb == 0.0:
         write_gb = _safe_float(_pick(blk, ["write_bytes_total"], 0.0)) / (1024**3)
+
+    # Byte totals integrated from the device bandwidth series when no summed
+    # byte counter exists.
+    #
+    # These come from blktrace size_bytes sums. A run whose blktrace never
+    # published byte counters printed "Physical L3 block R / W total
+    # 0.0 MB / 0.0 GB" directly beside tiles reading 17 MB/s and 39.1 MB/s
+    # from the same device over a 10.79 h window -- a total that is about
+    # 644 GB read and 1,481 GB written and derivable from the series already
+    # in hand. A zero stated as a measured total is worse than no tile.
+    block_total_source = "blktrace size_bytes sum" if (read_gb or write_gb) else ""
+    if read_gb == 0.0 or write_gb == 0.0:
+        try:
+            _bw_span = 0.0
+            for _c in ("time_sec",):
+                _tcol = (nvme_ts.get(_c) or {})
+                _bw_span = _safe_float(_tcol.get("delta", 0))
+                break
+            # The device file's own time column is the right span for its own
+            # series, and it is available here; duration_s is resolved later
+            # in this function, so it deliberately is not used.
+            if _bw_span < _MIN_PLAUSIBLE_WINDOW_S:
+                _bw_span = 0.0
+            if _bw_span > 0:
+                # mean rate x span; a mean over active samples only would
+                # overstate a device that was idle for part of the window.
+                for _which, _cols in (("r", ("rd_bw_mbs", "read_bw_mb_s")),
+                                      ("w", ("wr_bw_mbs", "write_bw_mb_s"))):
+                    if (_which == "r" and read_gb > 0) or (_which == "w" and write_gb > 0):
+                        continue
+                    for _col in _cols:
+                        _st = nvme_ts.get(_col) or {}
+                        _mean = _safe_float(_st.get("mean", 0))
+                        if _mean > 0:
+                            _gb = _mean * _bw_span / 1024.0
+                            if _which == "r":
+                                read_gb = _gb
+                            else:
+                                write_gb = _gb
+                            block_total_source = (
+                                f"integrated from {_col} x {_bw_span:,.0f}s "
+                                f"window (no blktrace byte counter)")
+                            break
+        except Exception:
+            pass
     rw_ratio  = read_gb / max(write_gb, 0.001)
 
     nvme_rd_bw = _safe_float(_pick(blk, ["nvme_rd_bw_mbs_mean","read_bw_mb_s_mean",
@@ -4271,23 +5385,67 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     smart_temp = _safe_float(_pick(smart, ["temperature","temp_c","Composite Temperature"], 0.0))
 
     # Run duration and window
-    duration_s  = _safe_float(_pick(blk, ["duration_s","run_duration_s","elapsed_s",
+    #
+    # This is the denominator of every rate in the report, so a wrong value
+    # here does not look like a wrong duration -- it looks like impossible
+    # bandwidth.  A blktrace capture that recorded nothing reported
+    # duration_sec = 0.001, which passed the old `if duration_s <= 0` guard,
+    # so the real span was never consulted and the logical L3 rate came out
+    # as 19,704,435,625 MB/s beside an Executive header reading
+    # "Window : 0.0 min" and a page header correctly reading 38,840 sec.
+    #
+    # Two changes: a summary duration must be PLAUSIBLE, not merely positive,
+    # and it is cross-checked against the timeseries span rather than trusted
+    # outright.  The timeseries span is the authority when the two disagree
+    # materially, because time_sec comes from the samples the charts plot.
+    _dur_summary = _safe_float(_pick(blk, ["duration_s","run_duration_s","elapsed_s",
                                             "duration_sec","blktrace_duration_sec"],
                                      _safe_float(_ba_sum.get("duration_sec", 0))))
-    if duration_s <= 0:
-        # Prometheus-only and merged reports may not have a blktrace/run summary,
-        # but their CSV timelines do have time_sec.  Use the selected-window
-        # SGLang/GPU/DRAM span so token-movement rates do not collapse to
-        # total/1s and Executive labels match the actual report window.
-        for _ts_sum in (sglang_ts, gpu_ts, dram_ts, nvme_ts, vmstat_ts):
-            try:
-                _dt = _safe_float((_ts_sum.get("time_sec") or {}).get("delta", 0))
-                if _dt > duration_s:
-                    duration_s = _dt
-            except Exception:
-                pass
-        if duration_s <= 0:
-            duration_s = _safe_float(_pick(sglang, ["collection_elapsed_s", "elapsed_s", "run_duration_s"], 0.0))
+    _dur_ts = 0.0
+    for _ts_sum in (sglang_ts, gpu_ts, dram_ts, nvme_ts, vmstat_ts):
+        try:
+            _dt = _safe_float((_ts_sum.get("time_sec") or {}).get("delta", 0))
+            if _dt > _dur_ts:
+                _dur_ts = _dt
+        except Exception:
+            pass
+    _dur_sglang = _safe_float(_pick(
+        sglang, ["collection_elapsed_s", "elapsed_s", "run_duration_s"], 0.0))
+
+    duration_source = ""
+    duration_conflict = ""
+    if _dur_summary >= _MIN_PLAUSIBLE_WINDOW_S:
+        duration_s, duration_source = _dur_summary, "run/blktrace summary"
+        # Disagreement by more than 20% means one of them is not describing
+        # this window. Prefer the sample timeline and say so, rather than
+        # silently picking either.
+        if _dur_ts >= _MIN_PLAUSIBLE_WINDOW_S and _dur_ts > 0:
+            _ratio = max(_dur_summary, _dur_ts) / min(_dur_summary, _dur_ts)
+            if _ratio > 1.2:
+                duration_conflict = (
+                    f"run summary says {_dur_summary:,.0f}s but the sample "
+                    f"timeline spans {_dur_ts:,.0f}s ({_ratio:.1f}x apart); "
+                    f"using the sample timeline")
+                duration_s, duration_source = _dur_ts, "sample timeline (time_sec)"
+    elif _dur_ts >= _MIN_PLAUSIBLE_WINDOW_S:
+        duration_s, duration_source = _dur_ts, "sample timeline (time_sec)"
+        if 0 < _dur_summary < _MIN_PLAUSIBLE_WINDOW_S:
+            duration_conflict = (
+                f"run summary reported a {_dur_summary:g}s window, which is "
+                f"too short to be a profiling run; ignored in favour of the "
+                f"{_dur_ts:,.0f}s sample timeline")
+    elif _dur_sglang >= _MIN_PLAUSIBLE_WINDOW_S:
+        duration_s, duration_source = _dur_sglang, "SGLang collection_elapsed_s"
+    else:
+        # Nothing plausible. Leave it at zero so every rate guarded by
+        # `duration_s > 0` declines to render instead of dividing by a
+        # fraction of a second.
+        duration_s, duration_source = 0.0, ""
+        duration_conflict = (
+            "no source reported a plausible window length, so run-length "
+            "rates are not computed")
+    if duration_conflict:
+        print(f"  [warn] report window: {duration_conflict}")
     # Backfill the L3 storage endurance KPI target now that duration_s is known.
     # 5-year warranty = 1825 days; budget = (run_fraction_of_day) × rated_TBW_in_GB.
     if duration_s > 0 and rated_tbw_tb > 0:
@@ -4615,6 +5773,42 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         l2_dram_capacity_source = l2_dram_capacity_via_ratio
 
     try:
+        _l2res = _k_resolve_l2(
+            hicache_used_tokens=_safe_float(_pick(sglang, [
+                "hicache_host_used_tokens", "sglang_hicache_host_used_tokens"], 0), 0),
+            hicache_total_tokens=_safe_float(_pick(sglang, [
+                "hicache_host_total_tokens", "sglang_hicache_host_total_tokens"], 0), 0),
+            kv_bytes_per_token_kb=_safe_float(kv_bytes_tok_kb, 0),
+            hicache_total_gb=_safe_float(hicache_total_gb, 0),
+            # The resolver's --hicache-ratio branch was unreachable from here:
+            # these two were never passed, so a run sized by the ratio (the
+            # SGLang default) could only fall back to a parsed size or to host
+            # DRAM. Pass them so the ratio can do its job.
+            hicache_ratio=_setup_float_fuzzy(
+                "HiCache ratio", "hicache_ratio", "hi_cache_ratio", default=0.0),
+            kv_pool_tokens=_safe_float(_pick(sglang, [
+                "max_total_num_tokens", "sglang_max_total_num_tokens"], 0), 0)
+                or _safe_float(_pick(setup, ["max_total_num_tokens"], 0), 0),
+            host_dram_total_gb=0.0)
+        if _l2res.get("used_gb", 0) > 0:
+            l2_dram_used_gb = _l2res["used_gb"]
+            l2_dram_used_source = _l2res["used_source"]
+        if _l2res.get("capacity_gb", 0) > 0:
+            l2_dram_capacity_gb = _l2res["capacity_gb"]
+            l2_dram_capacity_source = _l2res["capacity_source"]
+        # When capacity came from the server's own token gauge, the TP-sharding
+        # heuristic further down must not fire: that heuristic exists to make a
+        # full-model estimate fit a CONFIGURED allocation, and dividing a
+        # measured residency by TP to fit a measured capacity it already fits
+        # is how the tile ended up 8x below the tier-residency chart.
+        _l2_cap_measured = "measured" in str(_l2res.get("capacity_source", ""))
+        _l2_cap_conflict = str(_l2res.get("capacity_conflict", "") or "")
+        if _l2_cap_conflict:
+            print(f"  [warn] L2 capacity: {_l2_cap_conflict}")
+    except Exception:
+        _l2_cap_measured, _l2_cap_conflict = False, ""
+
+    try:
         # DRAM/L2 "used" should be a selected-window residency, not a stale
         # last sample or setup-derived constant.  Using the active/non-zero mean
         # makes L2-only and L3-active runs differ when their cache residency
@@ -4668,7 +5862,14 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             # reconciliation-warning line on the tile note, so an
             # operator still sees the disagreement without the tile
             # silently reshaping the number.
-            if l2_dram_capacity_gb > 0 and _full_gb > l2_dram_capacity_gb * 1.05 and _tp_gb <= l2_dram_capacity_gb * 1.05:
+            if _l2_cap_measured:
+                # Capacity is the server's own gauge; the full-model estimate
+                # is the matching numerator for it.
+                l2_dram_used_gb = _full_gb
+                l2_dram_used_source = (f"{_l2_used_tokens_source} × KV "
+                                       f"bytes/token (capacity from the same "
+                                       f"server gauge)")
+            elif l2_dram_capacity_gb > 0 and _full_gb > l2_dram_capacity_gb * 1.05 and _tp_gb <= l2_dram_capacity_gb * 1.05:
                 l2_dram_used_gb = _tp_gb
                 l2_dram_used_source = f"{_l2_used_tokens_source} \u00d7 TP-sharded KV bytes/token (\u00f7TP={_tp_for_kv:g})"
             elif l2_dram_capacity_gb > 0 and _full_gb > l2_dram_capacity_gb * 1.05 and _tp_gb > l2_dram_capacity_gb * 1.05:
@@ -4697,6 +5898,38 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # cache residency and would make different L2/L3 runs look identical.
         l2_dram_used_gb = host_dram_used_gb
         l2_dram_used_source = "OS host DRAM used from dram_summary/setup"
+    # ── Is the token-derived L2 residency physically possible? ───────────
+    #
+    # The note on this tile already called the figure "bounded above by raw
+    # physical DRAM" -- and then it wasn't.  A mooncake run reported "L2 KV
+    # residency (est.) 202.4 GB / 210 GB · 97% full" against 70.4 GB of
+    # physical host DRAM in use.  KV held in host DRAM cannot exceed the DRAM
+    # that is resident, so neither 202.4 GB nor the 97% beside it is a
+    # possible figure, and a warning further along the note does not stop the
+    # headline being what gets quoted.
+    #
+    # Capped HERE, before the percentage and the note are composed from these
+    # variables: capping afterwards left "97% full" and "peak 347.9 GB" in a
+    # note whose headline had already been corrected.
+    _l2_overcount_gb = 0.0
+    _l2_gap_x = 0.0
+    if (l2_dram_used_gb > 0 and host_dram_used_gb > 0
+            and l2_dram_used_gb >= 2.0 * host_dram_used_gb
+            and 'sglang_hicache_host_used_tokens' in (
+                (locals().get("_l2_used_tokens_source") or ""))):
+        _l2_overcount_gb = l2_dram_used_gb
+        _l2_gap_x = l2_dram_used_gb / host_dram_used_gb
+        l2_dram_used_gb = host_dram_used_gb
+        # The peak travels with the mean. Leaving it uncapped puts the same
+        # contradiction one line further down the note.
+        if l2_dram_used_peak_gb > 0:
+            l2_dram_used_peak_gb = (host_dram_used_peak_gb
+                                    if host_dram_used_peak_gb > 0
+                                    else host_dram_used_gb)
+        print(f"  [warn] L2 KV residency: token-derived "
+              f"{_l2_overcount_gb:,.1f} GB is {_l2_gap_x:.1f}x the physical "
+              f"host DRAM residency ({host_dram_used_gb:,.1f} GB); reporting "
+              f"the physical figure as the upper bound")
     l2_dram_used_pct = (l2_dram_used_gb / l2_dram_capacity_gb * 100.0) if l2_dram_capacity_gb > 0 and l2_dram_used_gb > 0 else 0.0
     # DRAM/L2 used is a point-in-time/selected-window residency gauge, while
     # DRAM BW is flow over time. They can legitimately differ between runs even
@@ -4719,23 +5952,19 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         else:
             l2_dram_tile_note = f"L2 DRAM cache allocation · {l2_dram_capacity_source}"
 
-    # Reconciliation warning: when the token-derived L2 residency
-    # substantially exceeds raw physical DRAM residency, the KV-bytes/token
-    # estimate is over-counting (most often sliding-window attention or
-    # a TP-sharding miscount).  Surface this on the tile so the reader
-    # is not left comparing two numbers that look like they must agree.
-    if (l2_dram_used_gb > 0 and host_dram_used_gb > 0
-            and l2_dram_used_gb >= 2.0 * host_dram_used_gb
-            and 'sglang_hicache_host_used_tokens' in (
-                (locals().get("_l2_used_tokens_source") or ""))):
-        _gap_x = l2_dram_used_gb / host_dram_used_gb
+    # Now that the note exists, say what was rejected and why.
+    if _l2_overcount_gb > 0:
         l2_dram_tile_note = (
             l2_dram_tile_note
-            + f" · ⚠ token-derived value is {_gap_x:.1f}× the raw"
-            + f" physical residency ({_fmt_num(host_dram_used_gb, ' GB', 1)})"
-            + " · KV bytes/token is over-counting (sliding-window"
-            + " attention, or a TP-sharding miscount) · compare with"
-            + " 'L2 DRAM used (raw)' below")
+            + " · <b>capped at the physical residency</b>: the token-derived"
+            + f" estimate was {_fmt_num(_l2_overcount_gb, ' GB', 1)},"
+            + f" {_l2_gap_x:.1f}× the raw physical residency"
+            + f" ({_fmt_num(host_dram_used_gb, ' GB', 1)}), and KV in host"
+            + " DRAM cannot exceed the DRAM that is resident · KV bytes/token"
+            + " is over-counting (sliding-window attention, or a TP-sharding"
+            + " miscount) · the figure shown is that bound, not a measurement"
+            + " of KV")
+
 
     # ── L3 (local storage) traffic from SGLang token counters (Prometheus-only fallback) ──
     # GATING: This fallback is intentional ONLY for Prom-only runs where
@@ -4849,8 +6078,13 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # backuped/prefetched counters prove L3 movement, do not let a zero block
     # direction hide that logical activity. Keep provenance explicit so the
     # report does not confuse an estimate with raw device bytes.
-    _l3_window_s = duration_s if duration_s > 0 else _safe_float(
-        sglang.get("collection_elapsed_s", 0))
+    # Same plausibility floor as duration_s above: a sub-second window is a
+    # broken reading, not a short run, and dividing by it turns a byte count
+    # into a bandwidth figure nine orders of magnitude too large.
+    _l3_window_s = duration_s if duration_s >= _MIN_PLAUSIBLE_WINDOW_S else 0.0
+    if _l3_window_s <= 0:
+        _cand = _safe_float(sglang.get("collection_elapsed_s", 0))
+        _l3_window_s = _cand if _cand >= _MIN_PLAUSIBLE_WINDOW_S else 0.0
     l3_logical_estimate_note = ""
     if _blktrace_was_attempted:
         # v1.39.61: when a physical blktrace capture exists, it remains the
@@ -4939,11 +6173,20 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
 
     # Derive L3 storage bandwidth from token-counter deltas when SGLang is the
     # selected source or when it is supplementing a missing block direction.
+    # Each DIRECTION is independently either the device series or a logical
+    # estimate, which is why one label cannot describe both: on a mooncake run
+    # read came from the GPU node's own nvme_driver series while write was a
+    # token-derived estimate for the backing tier, and the tile named them the
+    # same thing.  Record which is which.
+    _bw_rd_is_est = False
+    _bw_wr_is_est = False
     if _l3_window_s > 0 and l3_traffic_source in ("sglang_logical_local_ssd", "sglang_logical_remote_l35", "sglang_logical_hicache_unknown_backend"):
         if nvme_rd_bw == 0.0 and l3_est_read_gb > 0:
             nvme_rd_bw = l3_est_read_gb * 1024 / _l3_window_s   # GB→MB/s
+            _bw_rd_is_est = True
         if nvme_wr_bw == 0.0 and l3_est_write_gb > 0:
             nvme_wr_bw = l3_est_write_gb * 1024 / _l3_window_s
+            _bw_wr_is_est = True
 
     l3_logical_rd_bw_mbs = (l3_est_read_gb * 1024 / _l3_window_s) if (_l3_window_s > 0 and l3_est_read_gb > 0) else 0.0
     l3_logical_wr_bw_mbs = (l3_est_write_gb * 1024 / _l3_window_s) if (_l3_window_s > 0 and l3_est_write_gb > 0) else 0.0
@@ -5016,7 +6259,17 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         except Exception:
             pass
     if not window_str and duration_min > 0:
-        window_str = f"{duration_min:.1f} min"
+        # Hours above 90 minutes: "647.3 min" is the same number the page
+        # header renders as 10.79 h, and the two should read alike.
+        window_str = (f"{duration_min/60.0:.2f} h" if duration_min >= 90
+                      else f"{duration_min:.1f} min")
+    if not window_str:
+        # Never render "0.0 min". A window of zero is a failure to establish
+        # the window, and saying so points at the fix; printing 0.0 beside a
+        # page header that says 38,840 sec just looks like two bugs.
+        window_str = "not established — see run-window warning"
+    elif duration_conflict:
+        window_str += f" · {duration_source}"
 
     # ── Findings ──────────────────────────────────────────────────────────────
     # Top findings must quote numbers the reader can find elsewhere in the
@@ -5043,6 +6296,18 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     else:
         _ttft_dist = ""
         _ttft_dist_plain = ""
+
+    # Device bandwidth as a share of the reference ceiling.
+    #
+    # This was computed ~350 lines BELOW its first use, in the queue-depth
+    # finding at "L3 (local storage) QUEUE". Python only evaluates that term
+    # when the preceding ones are falsy, so the UnboundLocalError stayed
+    # hidden until a run arrived with exact queue evidence AND both latencies
+    # at or under 1 ms -- and then the ENTIRE executive summary failed to
+    # generate, not just that finding. Defined here, before anything reads it.
+    _ssd_bw_target_mbs = 7000.0
+    _ssd_bw_pct = (nvme_rd_bw / _ssd_bw_target_mbs * 100.0) \
+        if nvme_rd_bw > 0 and _ssd_bw_target_mbs > 0 else 0.0
 
     findings_items: List[str] = []
 
@@ -5537,7 +6802,16 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
              or str(l3_backend_class or "").lower() == "ai_memory_node")
             and l3_str in _tiers_present
         )
-        if _hicache_backend_set and not _already_named_remote_l3:
+        # ...and only when the resolved backend is actually REMOTE.
+        # _hicache_backend_set is true whenever a backend is configured at
+        # all, which on a local run means "file" -- so a local-SSD
+        # deployment had "+ L3.5 (remote KV store)" appended to its header
+        # and claimed a memory node it does not have.
+        _backend_is_remote = (
+            str(l3_backend_class or "").lower().startswith("remote")
+            or str(l3_backend_class or "").lower() == "ai_memory_node")
+        if (_hicache_backend_set and _backend_is_remote
+                and not _already_named_remote_l3):
             _tiers_present.append("L3.5 (remote KV store)")
         _cache_tier_label = ("Enabled \u00b7 " + " + ".join(_tiers_present)
                              if _tiers_present else "Enabled")
@@ -5584,6 +6858,15 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     ]
     if launch:
         setup_rows_data.append(("Launch command", launch))
+        # The launch command is rendered from whatever setup_details/server_info
+        # supplied, which may have been copied from an earlier deployment. When
+        # the telemetry contradicts it, say so on the adjacent row rather than
+        # letting the command stand as fact -- a reader who takes a stale
+        # --hicache-storage-backend at face value will go looking for a memory
+        # node that is not in the deployment.
+        if _backend_evidence_note:
+            setup_rows_data.append(
+                ("⚠ Launch command vs telemetry", _backend_evidence_note))
 
     # Append every remaining scalar setup_details entry.  The curated rows
     # above are the at-a-glance summary; without this pass anything not on
@@ -5626,8 +6909,8 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # Safe default used by Executive evidence and bottleneck scoring.
     # It intentionally uses a conservative 7 GB/s Gen4 read reference unless
     # a future setup_details override is wired into this scope.
-    _ssd_bw_target_mbs = 7000.0
-    _ssd_bw_pct = (nvme_rd_bw / _ssd_bw_target_mbs * 100.0) if nvme_rd_bw > 0 and _ssd_bw_target_mbs > 0 else 0.0
+    # _ssd_bw_target_mbs / _ssd_bw_pct are defined above the findings block,
+    # which reads them; they are not recomputed here.
 
     _qd_e_src = str(_qd_sum.get("qd_source", "")) if isinstance(_qd_sum, dict) else ""
     _qd_e_mean = _safe_float(_qd_sum.get("qd_mean", 0)) if isinstance(_qd_sum, dict) else 0.0
@@ -5762,6 +7045,25 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # emitted from its own template slot.
     distribution_charts_html = ""
     timeline_charts_html = ""
+    # Per-tier KV residency, carried out of the correlation block so the KPI
+    # grid can show a residency tile beside each tier's RAW usage tile.  The
+    # pair is the point: raw usage is what the system reports for the whole
+    # tier (DCGM for HBM, /proc/meminfo for DRAM, df for the HiCache
+    # filesystem, the store's own accounting for L3.5) and counts weights,
+    # page cache and every other resident allocation; KV residency is the
+    # part of it that is cache.  Reading one for the other is the mistake
+    # these tiles exist to prevent.
+    #
+    # Bound HERE, before the try, not where it is filled.  The fill site sits
+    # inside a block that can raise at any earlier line, and a dict that only
+    # exists on the success path is a NameError in the KPI grid -- which runs
+    # after the block, whether or not the block finished.
+    _tier_resid: dict = {}
+    # Why a configured L3 has no capacity figure, when it has none.  Filled in
+    # the correlation block beside the chart that drops the series; bound here
+    # so the KPI grid can state the same reason on the tile.  Bound BEFORE the
+    # try for the reason given above.
+    _l3_cap_missing = ""
     try:
         _sg_path = _first_existing(raw_dir, ["sglang_timeseries.csv"])
         # Token-movement counters — read alongside throughput counters so
@@ -6062,6 +7364,23 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # dropping the first sample, matching _rate_with_time's offset.
         _running_reqs = list(_sg_phase.get("running_reqs", []))[1:]
         _queue_reqs = list(_sg_phase.get("queue_reqs", []))[1:]
+        # STRICT copies, taken before the fallbacks below.  The fallback
+        # substitutes prompt_tokens_total for prefill_compute so the phase
+        # THROUGHPUT chart still renders, and for that chart it is a
+        # reasonable stand-in.  It is not recompute: prompt tokens include
+        # everything the cache served, so anything that treats the series as
+        # "tokens the GPU had to recompute" -- the cache hit ratio, the
+        # prefetch efficacy test, the benefit accounting -- would be reading
+        # a cache miss count as the whole prompt volume and silently
+        # reporting a hit rate of zero. Those consumers use these instead and
+        # simply do not render when the labelled counter is absent, which is
+        # the honest outcome.
+        _pf_compute_strict = list(_pf_compute_rate)
+        _pf_cache_strict = list(_pf_cache_rate)
+        _pf_modes_measured = bool(
+            any(v > 0 for v in _pf_compute_strict)
+            or any(v > 0 for v in _pf_cache_strict))
+
         # Fallbacks so the phase group still renders on runs that do not
         # export the labelled counter.  Source is named in each subtitle.
         _pf_src = "realtime_tokens_total{mode=prefill_compute}"
@@ -6474,17 +7793,35 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         _nvme_qd_series = _first_nonempty("inflight", "queue_depth", "aqu_sz", "avgqu_sz")
         _nvme_qd_t = list(_nvme_time)
         _nvme_qd_label = "L3 queue depth"
+        # A series whose peak is in the thousands is not a queue depth; drawing
+        # it sets the axis four orders of magnitude above every real signal and
+        # flattens the chart it was added to.
+        _qd_rejected: list[tuple[str, float]] = []
+        _bad = _qd_implausible(_nvme_qd_series)
+        if _bad:
+            _qd_rejected.append(("nvme_driver_timeseries.csv", _bad))
+            _nvme_qd_series = []
         _qd_ts_path = _first_existing(raw_dir, ["queue_depth_sources_timeseries.csv"])
         if _qd_ts_path:
             _qd_raw = _amoprof_read_columns_raw(_qd_ts_path, [
                 "time_sec", "qd_best_effort", "qd", "weighted_qd", "inflight"])
             for _qd_col in ("qd_best_effort", "qd", "weighted_qd", "inflight"):
                 _qd_vals = _qd_raw.get(_qd_col) or []
-                if _qd_vals and any(v > 0 for v in _qd_vals):
-                    _nvme_qd_series = _qd_vals
-                    _nvme_qd_t = _qd_raw.get("time_sec") or list(_nvme_time)
-                    _nvme_qd_label = f"L3 queue depth ({_qd_col})"
-                    break
+                if not (_qd_vals and any(v > 0 for v in _qd_vals)):
+                    continue
+                _bad = _qd_implausible(_qd_vals)
+                if _bad:
+                    _qd_rejected.append((_qd_col, _bad))
+                    continue
+                _nvme_qd_series = _qd_vals
+                _nvme_qd_t = _qd_raw.get("time_sec") or list(_nvme_time)
+                _nvme_qd_label = f"L3 queue depth ({_qd_col})"
+                break
+        for _rj, _rv in _qd_rejected:
+            print(f"  [warn] queue depth: ignoring '{_rj}' — peak "
+                  f"{_rv:,.0f} exceeds the plausible bound of "
+                  f"{_QD_PLAUSIBLE_MAX:,.0f}; a depth that large is an "
+                  f"unmatched Q→C counting artifact, not a queue.")
 
         _dram_path = _first_existing(raw_dir, [
             "amduprof_pcm_timeseries.csv", "pcm_timeseries.csv",
@@ -6731,8 +8068,16 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             _p_src = _used if _from_summary else (_p_src or _used)
             if len(_bases) > 1 and _used and _used != f"sglang_{_bases[0]}_bucket":
                 _p_src += " (fallback — dedicated TPOT histogram not exported)"
+            _pctl_method = (
+                "Prometheus histogram_quantile over the range"
+                if _from_summary else
+                "computed here from the bucket counter deltas — Prometheus "
+                "histogram_quantile was not available for this window, and "
+                "the two implementations do not agree to the digit on a "
+                "coarse ladder")
             _pctl_html += _amoprof_exec_svg_percentile_bars(
-                f"{_p_title} — p50 / p90 / p99", f"whole window · \u0394{_p_src}",
+                f"{_p_title} — p50 / p90 / p99",
+                f"whole window · \u0394{_p_src} · {_pctl_method}",
                 _p_unit, _pw, _PCTL_COLORS)
             # Mean beside p50, with the ratio as a tail indicator: percentiles
             # say where the boundary sits, only the mean is sensitive to how
@@ -6747,13 +8092,69 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 _mean_v = _safe_float(_pick(sglang, [_mk], 0), 0)
                 if _mean_v > 0:
                     break
+            # These keys live in sglang_summary.json and are absent on a
+            # Prometheus-only run, so the mean-beside-p50 comparison silently
+            # disappeared exactly where it was most needed: a v1.69.0 report
+            # showed "TTFT mean 62,895 ms" on a tile and "TTFT p50 1,755.1 ms"
+            # in this chart with nothing connecting them, which reads as two
+            # surfaces disagreeing rather than as a 36x tail.  Fall back to
+            # the mean this report already resolved for its own tiles -- the
+            # same figure, so the two cannot diverge.
+            if _mean_v <= 0:
+                _mean_v = _safe_float({
+                    "TTFT": ttft_ms,
+                    "TPOT (time per output token)": tpot_ms,
+                    "ITL (inter-token latency)": tpot_ms,
+                    "E2E request latency": e2e_ms,
+                }.get(_p_title, 0.0), 0.0)
             _tail = (_k_tail_ratio(_mean_v, _pw.get('p50', 0.0))
                      if _mean_v > 0 else {})
+            # A histogram's top bucket is open-ended, so a quantile landing
+            # in it is reported as that bucket's FLOOR -- a lower bound.  The
+            # chart's footnote said so in general while the figures were
+            # printed as plain values, and on a v1.69.0 report that produced
+            # "TTFT p99: 400,000.00 ms" and "TPOT p90 8,000.0 / p99 8,000.0":
+            # bucket boundaries read as latencies, two of them identical
+            # because both quantiles fell in the same open bucket.  Mark the
+            # specific figures rather than leaving the reader to notice.
+            _cens_qs = set(_pw.get("censored") or ())
+            _cens_floor = _safe_float(_pw.get("censored_floor"), 0.0)
+
+            _brk = _pw.get("bracket") or {}
+
+            def _pfmt(_q):
+                _v = _safe_float(_pw.get(_q, 0), 0.0)
+                _txt = _fmt_num(_v, " " + _p_unit, 1)
+                if _q in _cens_qs:
+                    return (f"\u2265 {_txt} (censored \u2014 this quantile "
+                            f"fell in the open-ended bucket above "
+                            f"{_fmt_num(_cens_floor, ' ' + _p_unit, 1)}, so "
+                            f"it is a lower bound, not a measurement)")
+                # A histogram resolves no finer than its buckets.  Where the
+                # bucket holding this quantile spans a wide range -- SGLang's
+                # TTFT ladder jumps 0.8 s to 8 s to 400 s near the tail -- a
+                # value printed to two decimals implies precision the data
+                # does not have.  Show the bracket when it is wide, so the
+                # figure reads as the estimate inside an interval that it is.
+                _b = _brk.get(_q)
+                if _b and _b[0] >= 0 and _b[1] not in (0, float("inf")):
+                    _lo_b, _hi_b = _b
+                    _wide = (_hi_b >= max(_lo_b * 3.0, _lo_b + 1e-9)
+                             if _lo_b > 0 else _hi_b > 0)
+                    if _wide:
+                        return (_txt + f" (bucket-limited: the observations "
+                                f"behind it sit between "
+                                f"{_fmt_num(_lo_b, ' ' + _p_unit, 1)} and "
+                                f"{_fmt_num(_hi_b, ' ' + _p_unit, 1)}, so this "
+                                f"is an interpolation inside that range, not "
+                                f"a measured value)")
+                return _txt
+
             _pctl_rows.append(
                 f"<b>{_html.escape(_p_title)}</b> "
-                f"p50 {_fmt_num(_pw.get('p50', 0), ' ' + _p_unit, 1)} · "
-                f"p90 {_fmt_num(_pw.get('p90', 0), ' ' + _p_unit, 1)} · "
-                f"p99 {_fmt_num(_pw.get('p99', 0), ' ' + _p_unit, 1)}"
+                f"p50 {_pfmt('p50')} · "
+                f"p90 {_pfmt('p90')} · "
+                f"p99 {_pfmt('p99')}"
                 + (f" \u00b7 mean {_fmt_num(_mean_v, ' ' + _p_unit, 1)} "
                    f"(<b>{_tail['ratio']:.1f}x</b> p50 \u2014 {_tail['label']})"
                    if _tail.get("ratio", 0) > 0 else ""))
@@ -7049,6 +8450,92 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 "in (previous edge, 200ms].",
                 layers="A5_APP", expanded=True)
 
+        # ---- KV block movement rates across tiers --------------------
+        # Modelled on the End report's panel of the same name, which plots
+        # blocks/s rather than tokens/s because a block is what the tier
+        # actually moves -- one I/O carries a page of KV, so blk/s is the
+        # rate the device and the store see.
+        #
+        # Two differences from that panel, both deliberate.
+        #
+        # It names the real backing tier.  The End version labels the backup
+        # and prefetch series "local Storage" whatever the backend is,
+        # because its gate (kvb_l3_storage_observed) is true for a remote
+        # store as well -- so a Mooncake deployment read as though its KV
+        # were going to a local SSD.  The label is resolved here instead.
+        #
+        # It plots only MEASURED counters.  The End version also draws an
+        # "L1->L2 offload" line and an estimated-L2-eviction reference line;
+        # the first is L2 residency delta over the whole run divided by
+        # duration (a net fill rate, not a movement rate) and the second is a
+        # heuristic that only exists above 80% fill.  Neither is a counter,
+        # so neither is charted beside counters that are.
+        _kvmove_html = ""
+        try:
+            _blk_tok = 0.0
+            try:
+                _blk_tok = float(str(page_sz).strip() or 0)
+            except Exception:
+                _blk_tok = 0.0
+            _tier_nm = {"local_ssd": "L3 local SSD",
+                        "remote_mooncake": "L3.5 memory node",
+                        "remote_storage": "L3.5 memory node"}.get(
+                            str(l3_backend_class).lower(), "")
+            _mv = []
+            if _blk_tok > 0 and _tier_nm:
+                for _lbl, _rate, _col, _src_m in (
+                        (f"L1\u2192L2 evict", _evict_rate, "#f59e0b",
+                         "sglang_evicted_tokens_total"),
+                        (f"L2\u2192{_tier_nm} backup", _backup_rate, "#ef4444",
+                         "sglang_backuped_tokens_total"),
+                        (f"{_tier_nm}\u2192L2 prefetch", _pref_rate, "#22c55e",
+                         "sglang_prefetched_tokens_total"),
+                        (f"L2\u2192L1 load-back", _load_rate, "#38bdf8",
+                         "sglang_load_back_tokens_total")):
+                    _r = [v / _blk_tok for v in (_rate or []) if v == v]
+                    if _r and any(v > 0 for v in _r):
+                        _mv.append({
+                            "tier": "L2", "label": _lbl, "t": _sg_rate_t,
+                            "v": [v / _blk_tok for v in _rate], "cap": 0,
+                            "color": _col,
+                            "src": ("sglang_timeseries.csv", _src_m,
+                                    f"\u0394counter \u00f7 \u0394t \u00f7 {_blk_tok:,.0f} tokens/block, summed over tp_rank")})
+            if _mv:
+                _dirs = " \u00b7 ".join(
+                    f"{_x['label']} peak {max(_x['v']):,.1f}" for _x in _mv)
+                _kvmove_svg = _amoprof_exec_svg_tier_occupancy(
+                    _mv, window=_occ_win, wall_start=_occ_wall, mode="abs",
+                    title="KV block movement rates across tiers",
+                    subtitle=("blocks per second, since a block is the unit the "
+                              f"tier moves \u00b7 {_blk_tok:,.0f} tokens per block "
+                              f"\u00b7 backing tier resolved as {_tier_nm}"),
+                    yaxis="blocks / s", unit_label="blk/s", width=760)
+                _kvmove_html = _kvmove_svg + _src_block_from_series(
+                    _mv,
+                    note=("All four are engine-side counters, converted to "
+                          "blocks by the configured page size. Down-tier "
+                          "movement (evict, backup) and up-tier movement "
+                          "(prefetch, load-back) on one axis: a run where the "
+                          "down lines sit far above the up lines is paying to "
+                          "move KV out and not getting it back."))
+        except Exception:
+            _kvmove_html = ""
+
+        if _kvmove_html:
+            _cards.append(_card(
+                "KV block movement rates across tiers",
+                "Where KV is moving between tiers, in blocks per second. The "
+                "same counters the token-rate chart uses, divided by the page "
+                "size, so the rate is in the unit the backing tier actually "
+                "handles.",
+                _kvmove_html,
+                "Only measured counters are plotted. The End report's version "
+                "of this panel also carries an L1\u2192L2 offload line and an "
+                "estimated L2 eviction line; both are derived rather than "
+                "counted, so they are left out here rather than drawn beside "
+                "measurements.",
+                layers="A3_DRAM", expanded=True))
+
         if _pctl_html:
             # Emitted above the Bottleneck Analysis section (directly under the
             # KPI grid) rather than appended to _cards.
@@ -7149,11 +8636,11 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         _ch_specs = []
 
         # 1. Prefill token-weighted, per interval: the primary definition.
-        if _pf_cache_rate and _pf_compute_rate:
-            _n_ch = min(len(_pf_cache_rate), len(_pf_compute_rate))
+        if _pf_cache_strict and _pf_compute_strict and _pf_modes_measured:
+            _n_ch = min(len(_pf_cache_strict), len(_pf_compute_strict))
             _ch_prefill = []
             for _i in range(_n_ch):
-                _tot = _pf_cache_rate[_i] + _pf_compute_rate[_i]
+                _tot = _pf_cache_strict[_i] + _pf_compute_strict[_i]
                 if _tot > 0:
                     _ch_prefill.append(_pf_cache_rate[_i] / _tot * 100.0)
             if _ch_prefill:
@@ -7278,10 +8765,33 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # labelled as proxies rather than presented as queue depths.
         _queues = []
 
-        def _add_queue(layer, label, t, v, ref, refnote):
+        def _add_queue(layer, label, t, v, ref, refnote, pctl=None, pctl_src=""):
             if v and t and any(x == x and x > 0 for x in v) and (ref or 0) > 0:
-                _queues.append({"layer": layer, "label": label, "t": list(t),
-                                "v": list(v), "ref": float(ref), "refnote": refnote})
+                _q = {"layer": layer, "label": label, "t": list(t),
+                      "v": list(v), "ref": float(ref), "refnote": refnote}
+                if pctl:
+                    _q["pctl"], _q["pctl_src"] = pctl, pctl_src
+                _queues.append(_q)
+
+        # Exact blktrace Q->C percentiles, when the capture produced them.
+        #
+        # Three places in this report resolved "queue depth" from three
+        # different sources and disagreed: the bottleneck narrative read this
+        # summary and said "mean 0.36, peak 1 (exact blktrace Q->C)", while
+        # the two charts and the KPI tile read a sysfs avgqu_sz series whose
+        # values are ~1e-4, so they drew a flat line, a "range unavailable"
+        # legend and "0" bars for a queue that had been measured.
+        _qd_pctl, _qd_pctl_src = None, ""
+        if isinstance(_qd_sum, dict) and _safe_float(_qd_sum.get("qd_max", 0)) > 0:
+            _qd_pctl = {
+                0.5:  _safe_float(_qd_sum.get("qd_p50", _qd_sum.get("qd_mean", 0))),
+                0.9:  _safe_float(_qd_sum.get("qd_p95", _qd_sum.get("qd_max", 0))),
+                0.99: _safe_float(_qd_sum.get("qd_p99", _qd_sum.get("qd_max", 0))),
+            }
+            _qd_pctl_src = ("exact blktrace Q→C"
+                            if "blktrace" in str(_qd_sum.get("qd_source", ""))
+                            or not str(_qd_sum.get("qd_source", "")).startswith("advisory")
+                            else "advisory sysfs/iostat")
 
         _q_reqs = _sg_phase.get("queue_reqs") or []
         if _q_reqs:
@@ -7292,8 +8802,29 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             _add_queue("A5_APP", "Running batch", _sg_time, _r_reqs,
                        max(_r_reqs) or 1.0, "concurrent decode batch size")
         if _nvme_qd_series:
+            # When the per-sample series peaks three orders of magnitude below
+            # the authoritative summary, it is not measuring the same thing at
+            # the same resolution. Keep the series for the timeline (it still
+            # shows WHEN the device was busy) but take the percentiles from the
+            # summary, and name which source they came from.
+            _qd_ser_max = max((x for x in _nvme_qd_series if x == x), default=0.0)
+            _use_pctl = _qd_pctl if (
+                _qd_pctl and max(_qd_pctl.values()) > max(_qd_ser_max * 10, 0.05)
+            ) else None
             _add_queue("A1/A2_L3", "Storage queue depth", _nvme_qd_t, _nvme_qd_series,
-                       32.0, "vs QD=32 device saturation reference")
+                       32.0, "vs QD=32 device saturation reference",
+                       pctl=_use_pctl,
+                       pctl_src=_qd_pctl_src if _use_pctl else "")
+        elif _qd_pctl:
+            # No plottable series at all, but the queue WAS measured. A
+            # single-point timeline is not a correlation input, so this exists
+            # only so the distribution chart and the layer list can show it.
+            _add_queue("A1/A2_L3", "Storage queue depth",
+                       [0.0, max(duration_s, 1.0)],
+                       [_qd_pctl[0.5] or 1e-9, _qd_pctl[0.99]],
+                       32.0, "vs QD=32 device saturation reference · "
+                             "run-window summary only, no per-sample series",
+                       pctl=_qd_pctl, pctl_src=_qd_pctl_src)
         if _dram_total:
             _add_queue("A3_DRAM", "DRAM BW pressure (proxy)", _dram_time, _dram_total,
                        _safe_float(_pick(setup, ["DRAM peak GB/s", "dram_peak_gbs"], 0), 0) or 409.6,
@@ -7306,8 +8837,27 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 _add_queue("NET", "Link utilisation (proxy)", _net_t, _net_util, 100.0,
                            "no NIC queue exposed — % of link speed")
 
+        # The storage saturation curve. Rendered whenever queue-depth data
+        # exists at all, independently of the multi-layer charts below, since
+        # "how long was the SSD queued, and how deep" is the question a
+        # storage sizing decision turns on and neither a mean nor a peak
+        # answers it.
+        _qd_sat_html = ""
+        try:
+            _sat_series = list(_nvme_qd_series or [])
+            _sat_times = list(_nvme_qd_t or [])
+            _sat_dist, _sat_src = _amoprof_qd_distribution(
+                raw_dir, _sat_series, _sat_times)
+            if _sat_dist:
+                _qd_sat_html = _amoprof_exec_svg_qd_saturation(
+                    _sat_dist, source=_sat_src, ref=32.0)
+        except Exception as _sate:
+            print(f"  [warn] queue-depth saturation chart skipped: {_sate}")
+
+        _q_html = ""
         if len(_queues) >= 2:
-            _q_html = (_amoprof_exec_svg_queue_timeline(_queues)
+            _q_html = (_qd_sat_html
+                       + _amoprof_exec_svg_queue_timeline(_queues)
                        + _amoprof_exec_svg_queue_pctl(_queues))
             # Backpressure origin: the queue that leads is nearer the cause.
             _origin = []
@@ -7357,6 +8907,22 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 "A high p99 against a low p50 is bursty backpressure rather than steady load, "
                 "and needs a different fix." + _origin_html,
                 layers=" · ".join(sorted({q["layer"] for q in _queues}))))
+        elif _qd_sat_html:
+            # Fewer than two comparable layers, so the cross-layer charts do
+            # not render -- but the storage saturation curve answers a
+            # storage question on its own and must not be withheld because
+            # the application-side queues happened to be unavailable.
+            _cards.append(_card(
+                "Storage queue depth saturation",
+                "How long the backing device actually had requests "
+                "outstanding, and how deep. " + _kv_header,
+                _qd_sat_html,
+                "A mean and a peak cannot answer this: a peak of 16 reached "
+                "once and a device sitting at 16 for a tenth of the run give "
+                "the same mean and opposite conclusions. The share of the "
+                "window at or above a given depth is what a device-sizing "
+                "decision turns on.",
+                layers="A1/A2_L3"))
 
         # ---- Network fabric vs token activity ----------------------------
         # Answers "is the fabric the bottleneck?".  Rendered only when NIC/IB
@@ -7467,14 +9033,20 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         if _l1_used_tok:
             _occ.append({"tier": "L1", "label": "L1 HBM KV pool",
                          "t": _sg_time, "v": _l1_used_tok,
-                         "cap": _l1_cap_tok, "color": "#f59e0b"})
+                         "cap": _l1_cap_tok, "color": "#f59e0b",
+                         "src": ("sglang_timeseries.csv",
+                                 "sglang_num_used_tokens",
+                                 "sglang:num_used_tokens  (else token_usage \u00d7 max_total_num_tokens)")})
 
         # L2 — host DRAM / HiCache, measured by SGLang itself.
         if _l2_used_tok:
             _occ.append({"tier": "L2", "label": "L2 host DRAM (HiCache)",
                          "t": _sg_time, "v": _l2_used_tok,
                          "cap": (max(_l2_total_tok) if _l2_total_tok else 0.0),
-                         "color": "#a78bfa"})
+                         "color": "#a78bfa",
+                         "src": ("sglang_timeseries.csv",
+                                 "sglang_hicache_host_used_tokens",
+                                 "sglang:hicache_host_used_tokens \u00f7 hicache_host_total_tokens")})
 
         # L3.5 — remote KV store.  The master exporter reports bytes, so
         # convert to tokens with the same KV bytes/token used everywhere else,
@@ -7483,9 +9055,35 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             _mc_tok = [v * 1e9 / (kv_bytes_tok_kb * 1024.0) for v in _mc_used]
             _mc_cap_tok = (max(_mc_cap) * 1e9 / (kv_bytes_tok_kb * 1024.0)
                            if _mc_cap else 0.0)
-            _occ.append({"tier": "L3.5", "label": "L3.5 remote KV store",
+            _occ.append({"tier": "L3.5", "label": "L3.5 store \u00b7 DRAM tier",
                          "t": _sg_time, "v": _mc_tok,
-                         "cap": _mc_cap_tok, "color": "#2dd4bf"})
+                         "cap": _mc_cap_tok, "color": "#2dd4bf",
+                         "src": ("l35_store_capacity.csv",
+                                 "l35_store_mem_used_b",
+                                 "master_allocated_bytes \u00d7 1e9 \u00f7 (KV bytes/token) \u2014 store reports BYTES, charted as tokens")})
+
+        # The store's FILE tier, which this chart omitted entirely.  On a
+        # deployment with 54 GB of DRAM in front of 966 GB of NVMe, plotting
+        # only the DRAM front makes L3.5 look like the SMALLEST tier in the
+        # hierarchy when it is by far the largest -- and invites exactly the
+        # wrong conclusion, that the tier needs to be grown, when the real
+        # shape is a saturated DRAM front with a half-empty SSD behind it.
+        _mc_file_used = [v / 1e9 for v in
+                         (_cap_raw.get("l35_store_file_used_b") or [])]
+        _mc_file_cap = [v / 1e9 for v in
+                        (_cap_raw.get("l35_store_file_cap_b") or [])]
+        if (_mc_file_used and any(v > 0 for v in _mc_file_used)
+                and kv_bytes_tok_kb > 0):
+            _mcf_tok = [v * 1e9 / (kv_bytes_tok_kb * 1024.0)
+                        for v in _mc_file_used]
+            _mcf_cap_tok = (max(_mc_file_cap) * 1e9 / (kv_bytes_tok_kb * 1024.0)
+                            if _mc_file_cap else 0.0)
+            _occ.append({"tier": "L3.5", "label": "L3.5 store \u00b7 file tier (SSD)",
+                         "t": _sg_time, "v": _mcf_tok,
+                         "cap": _mcf_cap_tok, "color": "#f59e0b",
+                         "src": ("l35_store_capacity.csv",
+                                 "l35_store_file_used_b",
+                                 "master_allocated_file_size_bytes \u00d7 1e9 \u00f7 (KV bytes/token) \u2014 the NVMe tier behind the store's DRAM front")})
 
         # L3 — local storage.  SGLang does not export a resident-token gauge
         # for the disk tier, so occupancy is derived from the token movement
@@ -7493,7 +9091,14 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # not re-written.  Marked DERIVED so it is not read as a measurement.
         # A filesystem-level figure (df on the HiCache path) is preferred when
         # the ssd_hw collector captured one, since that IS measured.
+        # The provenance travels with the series, because two different
+        # derivations feed it: a df snapshot of the HiCache filesystem, or
+        # Σbackup − Σprefetch from the movement counters.  The source block
+        # below used to state the counter formula unconditionally, so a tile
+        # and a chart fed by a df measurement both credited it to counters
+        # that had not been consulted.
         _l3_tok_series, _l3_tok_cap, _l3_tok_label = [], 0.0, ""
+        _l3_tok_src = ("", "", "")
         # Is the L3 tier backed by LOCAL storage?  A remote backend
         # (mooncake / ai-memory-node / 3fs / remote_storage) is L3.5, not L3.
         _l3_backend = str(_pick(setup, [
@@ -7517,6 +9122,11 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             _l3_tok_cap = (_l3_fs_total * 1024.0 * 1024.0 / kv_bytes_tok_kb
                            if _l3_fs_total > 0 else 0.0)
             _l3_tok_label = "L3-local storage (df snapshot)"
+            _l3_tok_src = (
+                "smart_summary.json / ssd_hw_summary.json",
+                "hicache_fs_used_gb, hicache_fs_total_gb",
+                "df on the HiCache path ÷ (KV bytes/token) — a MEASURED "
+                "level held flat across the window, not a trend")
         elif _l3_local_configured:
             # Only when LOCAL storage is the backing tier.  backup/prefetch
             # counters describe movement to whatever backend HiCache is using;
@@ -7545,12 +9155,45 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 _l3_tok_cap = (l3_fs_total_gb * 1024.0 * 1024.0 / kv_bytes_tok_kb
                                if (l3_fs_total_gb > 0 and kv_bytes_tok_kb > 0) else 0.0)
                 _l3_tok_label = "L3-local storage (DERIVED: backup \u2212 prefetch)"
+                _l3_tok_src = (
+                    "sglang_timeseries.csv",
+                    "sglang_backuped_tokens_total, sglang_prefetched_tokens_total",
+                    "DERIVED: \u03a3backup \u2212 \u03a3prefetch \u2014 no resident-token "
+                    "gauge exists for the disk tier")
         if _l3_tok_series and any(v > 0 for v in _l3_tok_series):
             _occ.append({"tier": "L3", "label": _l3_tok_label,
                          "t": _sg_time, "v": _l3_tok_series,
-                         "cap": _l3_tok_cap, "color": "#22c55e"})
+                         "cap": _l3_tok_cap, "color": "#22c55e",
+                         "src": _l3_tok_src})
         # Keep tiers in physical order regardless of which were found.
         _occ.sort(key=lambda z: {"L1": 0, "L2": 1, "L3": 2, "L3.5": 3}.get(z["tier"], 9))
+
+        # Carry each tier's residency series out for the KPI grid.  Taken from
+        # `_occ` itself rather than recomputed, so a tile and the tier chart
+        # above it cannot report different numbers for one tier -- the failure
+        # mode that had the queue-depth tile and chart disagreeing by 2000x.
+        #
+        # Mean AND peak, because they answer different questions: the mean is
+        # what the tier held through the run, the peak is whether it ran out.
+        # A tier that averages 30% and peaks at 100% is evicting, and a mean
+        # alone hides that completely.
+        for _z in _occ:
+            _zv = [v for v in (_z.get("v") or [])
+                   if isinstance(v, (int, float)) and v == v and v >= 0]
+            if not _zv:
+                continue
+            _zc = _safe_float(_z.get("cap"), 0.0)
+            _slot = _tier_resid.setdefault(_z["tier"], [])
+            _slot.append({
+                "label": _z.get("label", _z["tier"]),
+                "mean": sum(_zv) / len(_zv),
+                "peak": max(_zv),
+                "cap": _zc,
+                # The third element of `src` is the formula; it carries the
+                # DERIVED marker where a tier has no residency gauge, and the
+                # tile must not drop that.
+                "how": (_z.get("src") or ("", "", ""))[2],
+            })
 
         # Span the analysed window, not just where samples happen to exist.
         # Prefer an explicit window from the run metadata; otherwise use the
@@ -7563,7 +9206,9 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # happened to land — a tier that reported for half the window then
         # filled the whole chart.
         _occ_svg = (_amoprof_exec_svg_tier_occupancy(
-            _occ, window=_occ_win, wall_start=_occ_wall) if len(_occ) >= 1 else "")
+            _occ, window=_occ_win, wall_start=_occ_wall)
+            + _src_block_from_series(_occ, note=f"Tokens are the common unit. L2 and {_TIER} publish BYTES; those series are converted with the run\u2019s KV bytes/token, so a wrong bytes/token scales those two tiers and not L1.")
+            if len(_occ) >= 1 else "")
         # Companion view: each tier as a percentage of its own capacity.  Only
         # tiers with a known ceiling appear, since a percentage of an unknown
         # capacity is not a number.
@@ -7582,6 +9227,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             title="KV bytes resident per cache tier",
             subtitle="absolute GB on a log axis \u00b7 no tier capacity needed",
             yaxis="GB resident (log)", unit_label="GB")
+            + _src_block_from_series(_occ_gb, note=f"Tokens are the common unit. L2 and {_TIER} publish BYTES; those series are converted with the run\u2019s KV bytes/token, so a wrong bytes/token scales those two tiers and not L1.")
             if _occ_gb else "")
         if _occ_pct_svg:
             _exec_ov["KV bytes resident per cache tier"] = _occ_pct_svg
@@ -7603,7 +9249,12 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             title="KV tokens resident \u2014 % of each tier\u2019s capacity",
             subtitle="tokens resident \u00f7 that tier\u2019s own capacity "
                      "\u00b7 only tiers with a known ceiling",
-            yaxis="% of tier capacity") if _occ_tok_pct_series else ""
+            yaxis="% of tier capacity") + _src_block_from_series(
+                _occ_tok_pct_series,
+                note="Each series is divided by that tier\u2019s own capacity "
+                     "column, so a tier with no published ceiling is absent "
+                     "rather than shown against an invented one."
+            ) if _occ_tok_pct_series else ""
         if _occ_tok_pct_svg:
             _exec_ov["KV tokens resident \u2014 % of each tier\u2019s capacity"] = _occ_tok_pct_svg
         if _occ_pct_svg:
@@ -7643,7 +9294,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                   "this workload. Read both together with the eviction and load-back "
                   "rates: capacity that is full but not moving tokens is not the "
                   "constraint.",
-                layers="A4_GPU_HBM \u00b7 A3_DRAM \u00b7 L3.5"))
+                layers=f"A4_GPU_HBM \u00b7 A3_DRAM \u00b7 {_TIER}"))
 
         # ---- L1 (HBM) ---- always renderable when gpu_timeseries has samples
         # L1 is the always-present GPU HBM tier; the L2 and L3 gates below
@@ -7738,28 +9389,52 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         if _gpu_util_series and _gpu_time:
             _cu.append({"tier": "L1", "label": "GPU SM utilisation",
                         "t": _gpu_time, "v": _gpu_util_series,
-                        "cap": 100.0, "color": "#ef4444"})      # red
+                        "cap": 100.0, "color": "#ef4444",
+                        "src": ("gpu_timeseries.csv", "gpu_util",
+                                "DCGM / nvidia-smi utilization.gpu \u00b7 mean across GPUs")})
         if _hbm_bw_util_series and _gpu_time:
             _cu.append({"tier": "L1", "label": "HBM bandwidth utilisation",
                         "t": _gpu_time, "v": _hbm_bw_util_series,
-                        "cap": 100.0, "color": "#3b82f6"})      # blue
+                        "cap": 100.0, "color": "#3b82f6",
+                        "src": ("gpu_timeseries.csv", "hbm_bw_util_pct",
+                                "DCGM DRAM-active \u00b7 % of HBM peak")})
         if _cpu_util_series and _cpu_util_t:
             _cu.append({"tier": "CPU", "label": "CPU utilisation (all cores)",
                         "t": _cpu_util_t, "v": _cpu_util_series,
-                        "cap": 100.0, "color": "#38bdf8"})
+                        "cap": 100.0, "color": "#38bdf8",
+                        "src": ("cpu_timeseries.csv", "cpu_util_pct",
+                                "100 \u2212 idle%, averaged over all cores")})
         if _cpu_busiest_series and _cpu_util_t:
             # A single-threaded bottleneck pins one core while the aggregate
             # reads comfortable; without this the constraint is invisible.
             _cu.append({"tier": "CPU", "label": "CPU busiest core",
                         "t": _cpu_util_t, "v": _cpu_busiest_series,
-                        "cap": 100.0, "color": "#0ea5e9"})
+                        "cap": 100.0, "color": "#0ea5e9",
+                        "src": ("cpu_timeseries.csv", "cpu_busiest_pct",
+                                "max over per-core utilisation \u00b7 exposes a single-threaded pin the average hides")})
         if _cpu_iowait_series and _cpu_util_t and any(v > 0.5 for v in _cpu_iowait_series):
             # iowait is the signal that storage, not compute, is the constraint.
             _cu.append({"tier": "CPU", "label": "CPU iowait",
                         "t": _cpu_util_t, "v": _cpu_iowait_series,
-                        "cap": 100.0, "color": "#f472b6"})
+                        "cap": 100.0, "color": "#f472b6",
+                        "src": ("cpu_timeseries.csv", "cpu_iowait_pct",
+                                "/proc/stat iowait \u00b7 the signal that storage, not compute, is the constraint")})
 
+        # On an L3.5 run the memory node's device metrics land in their own
+        # l35_-prefixed file, so they can never be confused with the GPU
+        # node's identically-named columns.  On a LOCAL L3 run there is no
+        # second node: the backing device is on this host and its metrics are
+        # in nvme_driver_timeseries.csv under unprefixed names.  Reading only
+        # the l35_ file meant every device chart -- IOPS, reads vs writes,
+        # queue depth, the LBA strips -- silently vanished on a local run
+        # whose data was sitting right there in the other file.
         _l35s_path = _first_existing(raw_dir, ["l35_storage_timeseries.csv"])
+        _l35s_local_src = ""
+        if not _l35s_path:
+            _nvme_local = _first_existing(raw_dir, ["nvme_driver_timeseries.csv"])
+            if _nvme_local:
+                _l35s_path = _nvme_local
+                _l35s_local_src = "nvme_driver_timeseries.csv"
         # Columns are l35_-prefixed so they can never be confused with the GPU
         # node's identically-named metrics.
         _l35s = (_amoprof_read_columns_raw(
@@ -7786,6 +9461,29 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                          "l35_dram_used_gb", "l35_cpu_util_pct",
                          "l35_cpu_iowait_pct", "l35_cpu_busiest_pct"])
             if _l35s_path else {})
+        # A local-L3 device file carries every column unprefixed.  Map the
+        # whole set, not just the three below, so the charts that depend on
+        # IOPS, queue depth and the LBA deciles render for a local tier too.
+        if _l35s_local_src:
+            _local_cols = (["rd_iops", "wr_iops", "rd_bw_mbs", "wr_bw_mbs",
+                            "io_util_pct", "avgqu_sz", "qd_peak",
+                            "rd_lat_ms", "wr_lat_ms",
+                            "host_written_gb", "nand_written_gb", "waf",
+                            "lba_w_span_gb", "lba_w_start_gb",
+                            "lba_r_span_gb", "lba_r_start_gb",
+                            "lba_w_top1pct", "lba_w_top5pct",
+                            "lba_w_gini", "lba_r_gini",
+                            "bt_read_events", "bt_write_events",
+                            "bt_read_bytes", "bt_write_bytes"]
+                           + [f"lba_w_d{_i}" for _i in range(10)]
+                           + [f"lba_r_d{_i}" for _i in range(10)])
+            _loc = _amoprof_read_columns_raw(_l35s_path, ["time_sec"] + _local_cols)
+            for _c in _local_cols:
+                if not _l35s.get(f"l35_{_c}") and _loc.get(_c):
+                    _l35s[f"l35_{_c}"] = _loc[_c]
+            if not _l35s.get("time_sec") and _loc.get("time_sec"):
+                _l35s["time_sec"] = _loc["time_sec"]
+
         # Legacy unprefixed names, for run dirs written before the rename.
         for _old, _new in (("rd_bw_mbs", "l35_rd_bw_mbs"),
                            ("wr_bw_mbs", "l35_wr_bw_mbs"),
@@ -7826,6 +9524,15 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # L3.5 node storage, four views.  iostat gives rate and queue depth but no
         # residency, so capacity-over-time is absent until a filesystem
         # sampler exists; LBA distribution needs blktrace on that node.
+        # Name the node these device charts measure.  Hardcoding "L3.5 node"
+        # labelled a local NVMe as though it sat on a separate memory node.
+        _dev_node = ("L3 local SSD"
+                     if str(l3_backend_class).lower() == "local_ssd"
+                     else "L3.5 node")
+        _dev_where = ("this host"
+                      if str(l3_backend_class).lower() == "local_ssd"
+                      else "the memory node")
+
         def _l35_chart(_specs, _title, _sub, _yaxis, _unit):
             _ser = []
             for _lbl, _k, _col in _specs:
@@ -7834,28 +9541,42 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                     _ser.append({"tier": "L3.5", "label": _lbl,
                                  "t": _l35s.get("time_sec") or [], "v": _v,
                                  "cap": 0, "color": _col})
+            if not _ser:
+                return ""
+            # Source block built from the series that were actually PLOTTED,
+            # not from the requested spec list: a column with no data is
+            # dropped above, and naming it below would claim a series the
+            # chart does not show.
+            _plotted = {_s["label"] for _s in _ser}
             return (_amoprof_exec_svg_tier_occupancy(
                 _ser, window=_occ_win, wall_start=_occ_wall, mode="abs",
                 title=_title, subtitle=_sub, yaxis=_yaxis, unit_label=_unit)
-                if _ser else "")
+                + _amoprof_src_block(
+                    _src_rows_for("l35_storage_timeseries.csv",
+                                  [(_l, _k) for _l, _k, _c in _specs
+                                   if _l in _plotted]),
+                    note=(f"Measured on the {_TIER_NODE}&#39;s block device. "
+                          "A lookup answered from the store&#39;s memory tier, or "
+                          "from page cache over its file tier, never reaches "
+                          "the device and so does not appear here.")))
 
         _l35_ssd_svg = (
             _l35_chart([("Storage read BW", "l35_rd_bw_mbs", "#22c55e"),
                         ("Storage write BW", "l35_wr_bw_mbs", "#eab308")],
-                       "L3.5 node storage: reads vs writes",
-                       "iostat per-interval bandwidth on the memory node \u00b7 "
+                       f"{_dev_node} storage: reads vs writes",
+                       f"iostat per-interval bandwidth on {_dev_where} \u00b7 "
                        "a large write:read ratio means the tier absorbs cost "
                        "without delivering read benefit",
                        "MB/s", "MB/s")
             + _l35_chart([("Storage read IOPS", "l35_rd_iops", "#38bdf8"),
                           ("Storage write IOPS", "l35_wr_iops", "#a855f7")],
-                         "L3.5 node storage: IOPS",
+                         f"{_dev_node} storage: IOPS",
                          "operations per second \u00b7 read beside write, since "
                          "a tier can be IOPS-bound at modest bandwidth",
                          "IOPS", "IOPS")
             + _l35_chart([("Storage queue depth", "l35_avgqu_sz", "#f97316"),
                           ("Storage utilisation (%)", "l35_io_util_pct", "#ef4444")],
-                         "L3.5 node storage: queue depth and utilisation",
+                         f"{_dev_node} storage: queue depth and utilisation",
                          "avgqu-sz and %util \u00b7 on NVMe, %util saturates "
                          "well before the device does, so read queue depth as "
                          "the pressure signal",
@@ -7901,7 +9622,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 _hot_i = max(range(10), key=lambda _k: _d[_k])
                 _cold = sum(1 for _x in _d if _x <= 0.5)
                 _lba_svg += _amoprof_exec_svg_percentile_bars(
-                    f"L3.5 storage {_nm} I/O across LBA space",
+                    f"{_dev_node} storage {_nm} I/O across LBA space",
                     (f"share of {_nm} bytes per GB band across the "
                      f"{_span_gb:,.0f} GB span \u00b7 "
                      f"{10-_cold} of 10 bands active \u00b7 busiest "
@@ -7940,7 +9661,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         _l35_bw_svg = _l35_chart(
             [("Storage read BW", "l35_rd_bw_mbs", "#22c55e"),
              ("Storage write BW", "l35_wr_bw_mbs", "#eab308")],
-            "L3.5 memory node \u2014 storage read/write bandwidth over the run",
+            f"{_dev_node} \u2014 storage read/write bandwidth over the run",
             "iostat/sysfs per-interval bandwidth on the memory node",
             "MB/s", "MB/s") if "_l35_chart" in dir() else ""
 
@@ -7955,7 +9676,11 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             _cu, window=_occ_win, wall_start=_occ_wall, mode="fill",
             title="Compute utilisation over the run",
             subtitle="GPU SM, HBM bandwidth and CPU as % of their own ceiling",
-            yaxis="% utilised") if _cu else ""
+            yaxis="% utilised") + _src_block_from_series(
+            _cu,
+            note="Every series is already a percentage of its own ceiling, so "
+                 "the lines are comparable in shape but measure different "
+                 "resources on, potentially, different hosts.") if _cu else ""
 
         # Memory-hierarchy CAPACITY utilisation, in BYTES rather than KV
         # tokens.  Distinct from the KV-tier-fill chart above: this counts
@@ -7966,7 +9691,9 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         if _hbm_used_gb_series and _hbm_total_gb > 0:
             _mc_cap_pct.append({"tier": "L1", "label": "L1 HBM capacity",
                                 "t": _gpu_time, "v": _hbm_used_gb_series,
-                                "cap": _hbm_total_gb, "color": "#f59e0b"})
+                                "cap": _hbm_total_gb, "color": "#f59e0b",
+                                "src": ("gpu_timeseries.csv", "mem_used_mb",
+                                        "nvidia-smi memory.used \u00b7 ALL HBM, not only KV")})
         # L2 host DRAM: prefer /proc/meminfo per-sample series from the
         # dram collector.  Falling back to the flat scalar keeps this
         # non-breaking on runs that did not enable the collector, but a
@@ -7985,17 +9712,47 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         if _l2_dram_used_series and _l2_dram_t and _l2_dram_cap_gb > 0:
             _mc_cap_pct.append({"tier": "L2", "label": "L2 host DRAM capacity",
                                 "t": _l2_dram_t, "v": _l2_dram_used_series,
-                                "cap": _l2_dram_cap_gb, "color": "#a78bfa"})
+                                "cap": _l2_dram_cap_gb, "color": "#a78bfa",
+                                "src": ("dram_timeseries.csv", "used_gb / total_gb",
+                                        "/proc/meminfo MemTotal \u2212 MemAvailable on the GPU node")})
         elif l2_dram_used_gb > 0 and l2_dram_capacity_gb > 0 and _sg_time:
             _mc_cap_pct.append({"tier": "L2", "label": "L2 host DRAM capacity",
                                 "t": _sg_time,
                                 "v": [l2_dram_used_gb] * len(_sg_time),
-                                "cap": l2_dram_capacity_gb, "color": "#a78bfa"})
+                                "cap": l2_dram_capacity_gb, "color": "#a78bfa",
+                                "src": ("setup_details.json", "host DRAM used / total",
+                                        "FLAT scalar \u2014 no dram collector in this run, so shape is not measured")})
+        # L3-local. Three gates, and failing any one of them used to drop the
+        # tier from the chart with nothing said -- which reads as "this tier
+        # has no capacity" rather than "its capacity was never measured".
+        # The miss is recorded so the subtitle can name it.
+        _l3_cap_missing = ""
         if l3_fs_used_gb > 0 and l3_fs_total_gb > 0 and _sg_time:
             _mc_cap_pct.append({"tier": "L3", "label": "L3-local filesystem capacity",
                                 "t": _sg_time,
                                 "v": [l3_fs_used_gb] * len(_sg_time),
-                                "cap": l3_fs_total_gb, "color": "#22c55e"})
+                                "cap": l3_fs_total_gb, "color": "#22c55e",
+                                "src": ("setup_details.json", "L3 filesystem used / total",
+                                        "FLAT scalar from df on the HiCache path")})
+        elif l3_explicit_config:
+            _l3_miss = []
+            if l3_fs_total_gb <= 0:
+                _l3_miss.append("total capacity")
+            if l3_fs_used_gb <= 0:
+                _l3_miss.append("used capacity")
+            if not _sg_time:
+                _l3_miss.append("a sample timeline")
+            _l3_cap_missing = (
+                " \u00b7 <b>L3 omitted:</b> this run configures a local L3 but "
+                + " and ".join(_l3_miss)
+                + " is absent. Those come from the ssd_hardware collector's "
+                  "df snapshot of the HiCache path (hicache_fs_used_gb / "
+                  "hicache_fs_total_gb in smart_summary.json, or "
+                  "ssd_hw_summary.json), or from an "
+                  "\u2018L3 (local storage) capacity GB\u2019 key in setup "
+                  "details. A Prometheus-only analyze has no df to run, so "
+                  "include the ssd_hw collector in the service, or put the "
+                  "capacity in setup details.")
         # L3.5: the store reports its own allocated and total bytes, so this
         # is a MEASURED occupancy, not the token-derived estimate used in the
         # KV charts.  It therefore avoids the KV-bytes/token derivation
@@ -8027,7 +9784,9 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 "t": _cap_t[:len(_u)] if _cap_t else
                      (_sg_time[-len(_u):] if _sg_time else []),
                 "v": [v / 1e9 for v in _u],
-                "cap": (max(_c) / 1e9 if _c else 0.0), "color": _col})
+                "cap": (max(_c) / 1e9 if _c else 0.0), "color": _col,
+                "src": ("l35_store_capacity.csv", _uk + " / " + _ck,
+                        "store-reported bytes \u2014 MEASURED, not derived from KV bytes/token")})
 
         # Fall back to the older single-series source for run directories
         # produced before the split counters were fetched.
@@ -8070,8 +9829,10 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             subtitle="absolute GB resident on a log axis \u00b7 counts everything "
                      "in the tier, not only KV \u00b7 dashed line = known capacity "
                      "\u00b7 L1 from nvidia-smi memory.used, L2 from /proc/meminfo, "
-                     "L3.5 from mooncake segment bytes",
-            yaxis="GB used (log)", unit_label="GB") if _mc_cap_pct else ""
+                     f"{_TIER} from the store\u2019s own byte counters"
+                     + _l3_cap_missing,
+            yaxis="GB used (log)", unit_label="GB") + _src_block_from_series(
+                _mc_cap_pct, note="Absolute bytes resident per tier, straight from each tier\u2019s own accounting \u2014 no KV bytes/token conversion, so this chart is unaffected by that estimate. A series marked FLAT is a single scalar held constant across the window, not a measured shape.") if _mc_cap_pct else ""
 
         # Percentage companion.  Absolute GB cannot answer "how full is this
         # tier": a remote store holding terabytes dwarfs an HBM pool holding
@@ -8091,7 +9852,12 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             title="Memory hierarchy capacity used (% of each tier)",
             subtitle="bytes resident \u00f7 that tier's own capacity \u00b7 "
                      "only tiers with a known ceiling",
-            yaxis="% of tier capacity") if _cap_pct_series else ""
+            yaxis="% of tier capacity") + _src_block_from_series(
+                _cap_pct_series,
+                note="Each series is divided by its own capacity column; a "
+                     "tier with no published ceiling is absent rather than "
+                     "shown against an invented one."
+            ) if _cap_pct_series else ""
 
         if _cu_svg:
             _exec_ov["Compute utilisation over the run (GPU / HBM / CPU)"] = _cu_svg
@@ -8142,12 +9908,16 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             _l35_dbw_series.append({
                 "tier": "L3.5", "label": "L3.5 node \u00b7 DRAM read GB/s",
                 "t": _l35_t_axis, "v": _l35_dram_rd_series,
-                "cap": 0.0, "color": "#22c55e"})
+                "cap": 0.0, "color": "#22c55e",
+                "src": ("l35_storage_timeseries.csv", "l35_dram_rd_gbs",
+                        "PCM memory-controller counters ON THE MEMORY NODE, not the GPU host")})
         if _l35_t_axis and _first_finite_positive(_l35_dram_wr_series):
             _l35_dbw_series.append({
                 "tier": "L3.5", "label": "L3.5 node \u00b7 DRAM write GB/s",
                 "t": _l35_t_axis, "v": _l35_dram_wr_series,
-                "cap": 0.0, "color": "#eab308"})
+                "cap": 0.0, "color": "#eab308",
+                "src": ("l35_storage_timeseries.csv", "l35_dram_wr_gbs",
+                        "PCM memory-controller counters ON THE MEMORY NODE, not the GPU host")})
         if _l35_dbw_series:
             _l35_dbw_svg = _amoprof_exec_svg_tier_occupancy(
                 _l35_dbw_series, window=_occ_win, wall_start=_occ_wall,
@@ -8156,7 +9926,11 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 subtitle=("AMDuProf PCM or Intel PCM on the memory node \u00b7 "
                           "one line per direction so read-only vs write-heavy "
                           "phases are distinguishable"),
-                yaxis="GB/s", unit_label="GB/s")
+                yaxis="GB/s", unit_label="GB/s") + _src_block_from_series(
+                _l35_dbw_series,
+                note="Memory-controller counters on the L3.5 node. This is "
+                     "the node&#39;s DRAM traffic as a whole, not only the KV "
+                     "store&#39;s share of it.")
             if _l35_dbw_svg:
                 _exec_ov["L3.5 memory node \u00b7 DRAM bandwidth over the run"] = _l35_dbw_svg
 
@@ -8198,12 +9972,16 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 _l2_rw_series.append({
                     "tier": "L2", "label": "L2 host DRAM \u00b7 read GB/s",
                     "t": _l2_pcm_t, "v": _l2_pcm_rd,
-                    "cap": 0.0, "color": "#22c55e"})
+                    "cap": 0.0, "color": "#22c55e",
+                    "src": ("amduprof_pcm_timeseries.csv", "dram_read_gb_s",
+                            "PCM memory-controller counters on the GPU host \u00b7 ALL DRAM traffic, not only KV")})
             if _l2_pcm_t and _first_finite_positive(_l2_pcm_wr):
                 _l2_rw_series.append({
                     "tier": "L2", "label": "L2 host DRAM \u00b7 write GB/s",
                     "t": _l2_pcm_t, "v": _l2_pcm_wr,
-                    "cap": 0.0, "color": "#eab308"})
+                    "cap": 0.0, "color": "#eab308",
+                    "src": ("amduprof_pcm_timeseries.csv", "dram_write_gb_s",
+                            "PCM memory-controller counters on the GPU host \u00b7 ALL DRAM traffic, not only KV")})
         if _l2_rw_series:
             _l2_rw_svg = _amoprof_exec_svg_tier_occupancy(
                 _l2_rw_series, window=_occ_win, wall_start=_occ_wall,
@@ -8212,7 +9990,11 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 subtitle=("AMDuProf PCM or Intel PCM on the GPU host \u00b7 "
                           "read and write plotted separately so KV-refill "
                           "(read-heavy) vs backup phases (write-heavy) are distinct"),
-                yaxis="GB/s", unit_label="GB/s")
+                yaxis="GB/s", unit_label="GB/s") + _src_block_from_series(
+                _l2_rw_series,
+                note="Memory-controller counters, so this is the host&#39;s "
+                     "whole DRAM traffic. KV movement is a share of it, not "
+                     "the whole of it.")
             if _l2_rw_svg:
                 _exec_ov["L2 host DRAM \u00b7 read/write bandwidth over the run"] = _l2_rw_svg
 
@@ -8236,34 +10018,47 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 _dram_rw_all.append({
                     "tier": "L2", "label": "L2 host DRAM \u00b7 read GB/s",
                     "t": _l2_t_all, "v": _l2_r_all,
-                    "cap": 0.0, "color": "#16a34a"})
+                    "cap": 0.0, "color": "#16a34a",
+                    "src": ("amduprof_pcm_timeseries.csv", "dram_read_gb_s",
+                            "PCM memory-controller counters on the GPU node")})
             if _l2_t_all and _first_finite_positive(_l2_w_all):
                 _dram_rw_all.append({
                     "tier": "L2", "label": "L2 host DRAM \u00b7 write GB/s",
                     "t": _l2_t_all, "v": _l2_w_all,
-                    "cap": 0.0, "color": "#ca8a04"})
+                    "cap": 0.0, "color": "#ca8a04",
+                    "src": ("amduprof_pcm_timeseries.csv", "dram_write_gb_s",
+                            "PCM memory-controller counters on the GPU node")})
         # L3.5 (memory node): reuse the l35_storage_timeseries series read
         # into the scalar block near line ~3410.
         if _l35_t_axis and _first_finite_positive(_l35_dram_rd_series):
             _dram_rw_all.append({
                 "tier": "L3.5", "label": "L3.5 node DRAM \u00b7 read GB/s",
                 "t": _l35_t_axis, "v": _l35_dram_rd_series,
-                "cap": 0.0, "color": "#22c55e"})
+                "cap": 0.0, "color": "#22c55e",
+                "src": ("l35_storage_timeseries.csv", "l35_dram_rd_gbs",
+                        "PCM on the MEMORY NODE \u2014 a different host from the L2 series on this chart")})
         if _l35_t_axis and _first_finite_positive(_l35_dram_wr_series):
             _dram_rw_all.append({
                 "tier": "L3.5", "label": "L3.5 node DRAM \u00b7 write GB/s",
                 "t": _l35_t_axis, "v": _l35_dram_wr_series,
-                "cap": 0.0, "color": "#eab308"})
+                "cap": 0.0, "color": "#eab308",
+                "src": ("l35_storage_timeseries.csv", "l35_dram_wr_gbs",
+                        "PCM on the MEMORY NODE \u2014 a different host from the L2 series on this chart")})
 
         if _dram_rw_all:
             _dram_rw_all_svg = _amoprof_exec_svg_tier_occupancy(
                 _dram_rw_all, window=_occ_win, wall_start=_occ_wall,
                 mode="abs",
-                title="DRAM read/write transactions over the run (L2 + L3.5)",
+                title=f"DRAM read/write transactions over the run (L2 + {_TIER})",
                 subtitle=("both DRAM pools on one axis \u00b7 shape (not "
                           "magnitude) is what matters - the two pools sit on "
                           "different hosts and their absolute peaks differ"),
-                yaxis="GB/s", unit_label="GB/s")
+                yaxis="GB/s", unit_label="GB/s") + _src_block_from_series(
+                _dram_rw_all,
+                note="Two hosts on one axis: the L2 series is the GPU node&#39;s "
+                     "memory controller, the L3.5 series is the memory "
+                     "node&#39;s. They are not summable and their peaks are "
+                     "not comparable \u2014 read the SHAPES against each other.")
             if _dram_rw_all_svg:
                 _exec_ov["DRAM read/write transactions over the run "
                          "(L2 + L3.5)"] = _dram_rw_all_svg
@@ -8279,12 +10074,16 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             _dram_corr.append({
                 "tier": "TOK", "label": "SGLang \u00b7 Input tok/s",
                 "t": _sg_time_local, "v": _in_tok_rate,
-                "cap": 0.0, "color": "#38bdf8"})
+                "cap": 0.0, "color": "#38bdf8",
+                "src": ("sglang_timeseries.csv", "sglang_prompt_tokens_total",
+                        "\u0394counter \u00f7 \u0394t per interval, summed over tp_rank")})
         if _sg_time_local and _first_finite_positive(_out_tok_rate):
             _dram_corr.append({
                 "tier": "TOK", "label": "SGLang \u00b7 Output tok/s",
                 "t": _sg_time_local, "v": _out_tok_rate,
-                "cap": 0.0, "color": "#a78bfa"})
+                "cap": 0.0, "color": "#a78bfa",
+                "src": ("sglang_timeseries.csv", "sglang_generation_tokens_total",
+                        "\u0394counter \u00f7 \u0394t per interval, summed over tp_rank")})
         # Give every series a "cap" equal to its own peak so the fill-
         # mode renderer normalises each to 0-100.
         _dram_corr_norm = []
@@ -8303,13 +10102,19 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             _dram_corr_svg = _amoprof_exec_svg_tier_occupancy(
                 _dram_corr_norm, window=_occ_win, wall_start=_occ_wall,
                 mode="fill",
-                title="DRAM read/write transactions vs token throughput "
-                      "(L2 + L3.5)",
+                title=f"DRAM read/write transactions vs token throughput "
+                      f"(L2 + {_TIER})",
                 subtitle=("each series normalised to % of its own peak so "
                           "DRAM GB/s and SGLang tok/s share one axis \u00b7 "
                           "aligned peaks = DRAM traffic tracks token activity "
                           "in time, divergent peaks = the driver is elsewhere"),
-                yaxis="% of each series peak")
+                yaxis="% of each series peak") + _src_block_from_series(
+                _dram_corr_norm,
+                note="Every series is divided by ITS OWN peak, so the axis "
+                     "carries shape only \u2014 no series is larger or smaller "
+                     "than another here. Aligned peaks mean the two move "
+                     "together in time; they do not establish that one causes "
+                     "the other.")
             if _dram_corr_svg:
                 _exec_ov["DRAM read/write transactions vs token throughput "
                          "(L2 + L3.5)"] = _dram_corr_svg
@@ -8334,7 +10139,12 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 "l35_promo_recorded", "l35_promo_admitted", "l35_promo_completed",
                 "l35_promo_rej_freq", "l35_promo_rej_wm", "l35_promo_rej_cap",
                 "l35_promo_rej_adm", "l35_promo_dropped", "l35_promo_expired",
-                "l35_promo_failed"]) if _sf else {})
+                "l35_promo_failed", "l35_promo_cancelled", "l35_promo_exp_eval",
+                "l35_promo_exp_uneval", "l35_promo_cand_adm",
+                "l35_promo_in_flight",
+                # Per-tier read accounting: which tier answered each lookup.
+                "l35_mem_hit_n", "l35_file_hit_n",
+                "l35_mem_hit_b", "l35_file_hit_b"]) if _sf else {})
             _st = _sc.get("time_sec") or []
 
             def _dlt(_k):
@@ -8361,6 +10171,70 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                     title=_title, subtitle=_sub, yaxis=_yaxis, unit_label=_unit)
                     if _ser else "")
 
+            # 0. All four KV movements on one time axis.
+            # Colour carries direction, not just identity: warm for KV moving
+            # DOWN the hierarchy (evict, backup) and cool for KV coming back
+            # UP (prefetch, load-back).  Read against one shared tok/s axis a
+            # cool line that never lifts off zero beside a warm line that does
+            # is the whole finding, and needs no legend-reading to see.
+            _mv_specs = [
+                ("evict  L1\u2192L2",      ["evicted_tokens_total"],    "#f59e0b"),
+                (f"backup L2\u2192{_TIER}",    ["backuped_tokens_total"],   "#ef4444"),
+                (f"prefetch {_TIER}\u2192L2",  ["prefetched_tokens_total"], "#22c55e"),
+                ("load-back L2\u2192L1",   ["load_back_tokens_total"],  "#38bdf8"),
+            ]
+            _mv_ser, _mv_tot, _mv_absent = [], {}, []
+            for _lbl, _cands, _col in _mv_specs:
+                _cs = _kv_counter_series(raw_dir, _cands)
+                if _cs is None:
+                    _mv_absent.append(_lbl.split()[0])
+                    continue
+                _ct, _cv = _cs
+                _rt, _rv = _rate_with_time(_cv, _ct)
+                _mv_tot[_lbl] = max(0.0, _cv[-1] - _cv[0])
+                # A counter that exists and never moved draws a FLAT LINE AT
+                # ZERO rather than being dropped.  Dropping it makes "the
+                # engine never read" indistinguishable from "this build does
+                # not export the counter", which are different findings with
+                # different fixes; truly absent counters are named in the
+                # subtitle instead.
+                if _rv and any(x == x for x in _rv):
+                    _mv_ser.append({"tier": "L3.5", "label": _lbl, "t": _rt,
+                                    "v": _rv, "cap": 0, "color": _col})
+            if _mv_ser:
+                _down = sum(v for k, v in _mv_tot.items()
+                            if k.startswith(("evict", "backup")))
+                _up = sum(v for k, v in _mv_tot.items()
+                          if k.startswith(("prefetch", "load-back")))
+                _mv_sub = "tokens per second, summed across ranks"
+                if _down > 0 and _up == 0:
+                    _mv_sub += (f" \u00b7 {_down/1e6:,.1f}M tokens moved down the "
+                                f"hierarchy and NONE came back up")
+                elif _down > 0 and _up > 0:
+                    _mv_sub += (f" \u00b7 {_down/1e6:,.1f}M down vs {_up/1e6:,.1f}M "
+                                f"up ({_down/_up:,.1f}:1)" if _down >= _up else
+                                f" \u00b7 {_up/1e6:,.1f}M up vs {_down/1e6:,.1f}M "
+                                f"down ({_up/_down:,.1f}:1)")
+                if _mv_absent:
+                    _mv_sub += (" \u00b7 not exported by this engine build: "
+                                + ", ".join(_mv_absent))
+                _l35_int_svg += _amoprof_exec_svg_tier_occupancy(
+                    _mv_ser, window=_occ_win, wall_start=_occ_wall, mode="abs",
+                    title="KV movement over the run \u2014 evict, backup, "
+                          "prefetch, load-back",
+                    subtitle=_mv_sub, yaxis="tok/s", unit_label="tok/s",
+                    keep_zero_series=True)
+                _l35_int_svg += _amoprof_src_block([
+                    ("evict L1&rarr;L2", "sglang_timeseries.csv",
+                     "sglang_evicted_tokens_total", "\u0394counter \u0394t, summed over tp_rank"),
+                    (f"backup L2&rarr;{_TIER}", "sglang_timeseries.csv",
+                     "sglang_backuped_tokens_total", "\u0394counter \u0394t, summed over tp_rank"),
+                    (f"prefetch {_TIER}&rarr;L2", "sglang_timeseries.csv",
+                     "sglang_prefetched_tokens_total", "\u0394counter \u0394t, summed over tp_rank"),
+                    ("load-back L2&rarr;L1", "sglang_timeseries.csv",
+                     "sglang_load_back_tokens_total", "\u0394counter \u0394t, summed over tp_rank"),
+                ], "All four are ENGINE-side counters from the inference server (--prom-instance). They say what the engine asked for, not what any device did.")
+
             # 1. Eviction, as the store reports it.
             _ev_all, _ev_mem = _dlt("l35_evicted_b"), _dlt("l35_evicted_mem_b")
             _ev_sub = "rate of bytes evicted, as reported by the store"
@@ -8373,6 +10247,12 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 [("evicted (all)", "l35_evicted_b", 1e9, "#f97316"),
                  ("evicted (memory-tier counter)", "l35_evicted_mem_b", 1e9, "#fbbf24")],
                 "L3.5 eviction over the run", _ev_sub, "GB/s", "GB/s")
+            _l35_int_svg += _amoprof_src_block([
+                ("evicted (all)", "l35_store_capacity.csv",
+                 "l35_evicted_b", "master_evicted_size_bytes \u0394t"),
+                ("evicted (memory-tier)", "l35_store_capacity.csv",
+                 "l35_evicted_mem_b", "master_evicted_size_bytes_mem \u0394t"),
+            ], "STORE-side accounting from the KV store exporter (--l35-instance). A read answered from the store memory tier never reaches the block device, so it does not appear in device bandwidth. The memory-tier counter is plotted as reported, not subtracted from the total: whether it is a subset is not established.")
             if len(_l35_int_svg) == _before:
                 _l35_int_missing.append(("Eviction over the run",
                     "master_evicted_size_bytes, master_evicted_size_bytes_mem"))
@@ -8388,6 +10268,12 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 [("gets (total)", "l35_get_total_n", 1.0, "#38bdf8"),
                  ("gets that found the key", "l35_get_valid_n", 1.0, "#22c55e")],
                 "L3.5 get outcome over the run", _g_sub, "ops/s", "ops/s")
+            _l35_int_svg += _amoprof_src_block([
+                ("gets (total)", "l35_store_capacity.csv",
+                 "l35_get_total_n", "total_get_nums_ \u0394t"),
+                ("gets that found the key", "l35_store_capacity.csv",
+                 "l35_get_valid_n", "valid_get_nums_ \u0394t"),
+            ], "STORE-side accounting from the KV store exporter (--l35-instance). A read answered from the store memory tier never reaches the block device, so it does not appear in device bandwidth.")
             if len(_l35_int_svg) == _before:
                 _l35_int_missing.append(("Get outcome over the run",
                     "total_get_nums_, valid_get_nums_"))
@@ -8404,6 +10290,9 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 ("dropped", "l35_promo_dropped",   "#f59e0b"),
                 ("expired",              "l35_promo_expired",   "#f59e0b"),
                 ("failed",               "l35_promo_failed",    "#f59e0b"),
+                ("cancelled",            "l35_promo_cancelled", "#f59e0b"),
+                ("exp: evaluated",       "l35_promo_exp_eval",  "#f59e0b"),
+                ("exp: unevaluated",     "l35_promo_exp_uneval","#f59e0b"),
             ]
             _pv, _pc = {}, {}
             for _lbl, _k, _col in _stages:
@@ -8417,7 +10306,8 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 _rec = _pv.get("recorded") or 0
                 _done = _pv.get("completed") or 0
                 _rej = {k: v for k, v in _pv.items()
-                        if k.startswith(("rej", "dropped", "expired", "failed"))}
+                        if k.startswith(("rej", "dropped", "expired", "failed",
+                                         "cancelled", "exp:"))}
                 _top = max(_rej, key=_rej.get) if _rej and max(_rej.values()) > 0 else None
                 _p_sub = (f"window counts \u00b7 {_rec:,.0f} candidates, "
                           f"{_done:,.0f} completed")
@@ -8426,18 +10316,927 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                          "rej: wmark": "rejected at the DRAM watermark",
                          "rej: cap": "rejected by the rate cap",
                          "rej: admit": "rejected at admission",
-                         "dropped": "dropped at the queue limit"}.get(_top, _top)
+                         "dropped": "dropped at the queue limit",
+                         "cancelled": "cancelled in flight",
+                         "exp: evaluated": "expired after evaluation",
+                         "exp: unevaluated": "expired before evaluation",
+                         "expired": "expired", "failed": "failed"}.get(_top, _top)
                     _p_sub += f" \u00b7 largest loss: {_full} ({_rej[_top]:,.0f})"
                 elif _rec == 0:
                     _p_sub += " \u00b7 no candidates were recorded"
+                # These counters are NOT a partition of the candidates.  The
+                # rejection counters count EVALUATION ATTEMPTS: one candidate
+                # can be re-evaluated and rejected many times before it is
+                # admitted or expires, so a rejection total legitimately
+                # exceeds the candidate count.  An earlier version summed them
+                # against `recorded` and reported the excess as "over-counted",
+                # which named a measurement fault where there is none.  Report
+                # the pressure that excess actually represents instead.
+                if _rec > 0 and _rej:
+                    _att = sum(_rej.values())
+                    if _att > _rec:
+                        _p_sub += (f" \u00b7 {_att/_rec:,.1f} rejected evaluations "
+                                   f"per candidate \u2014 candidates are "
+                                   f"re-evaluated, so these are attempts, not a "
+                                   f"split of the {_rec:,.0f}")
+                    _p_sub += (f" \u00b7 {_done/_rec*100:.2f}% of candidates "
+                               f"completed")
+                # in-flight is a gauge, not a window count: never a bar here.
+                if _dlt("l35_promo_in_flight"):
+                    _p_sub += " \u00b7 in-flight tracked as a gauge, not charted"
                 _l35_int_svg += _amoprof_exec_svg_percentile_bars(
                     "L3.5 promotion pipeline \u2014 why KV does or does not move back up",
-                    _p_sub, "count", _pv, _pc, width=620)
+                    _p_sub, "count", _pv, _pc, width=960)
+                _l35_int_svg += _amoprof_src_block([
+                    ("every bar", "l35_store_capacity.csv",
+                     "l35_promo_*", "master_promotion_* (window \u0394)"),
+                ], "STORE-side, from the KV store exporter (--l35-instance). Bar-by-bar meanings and units are in the legend above; the rejection bars count evaluation attempts, not candidates.")
+                # What each bar means.  Collapsed by default: the chart should
+                # read without it, and the detail is here when a bar surprises
+                # you.  The units differ between bars, which is the single
+                # most confusing thing about this chart, so it leads.
+                _pl_rows = [
+                    ("recorded", "candidates", "blocks the store considered "
+                     "promoting from the file tier back into memory"),
+                    ("admitted", "candidates", "passed admission and entered "
+                     "the promotion queue"),
+                    ("completed", "promotions", "actually moved back into the "
+                     "memory tier \u2014 the only bar that means KV was promoted"),
+                    ("rej: freq", "evaluations", "refused: the block was not "
+                     "accessed often enough to be worth promoting"),
+                    ("rej: wmark", "evaluations", "refused: the memory tier was "
+                     "already above its fill watermark, so there was no room"),
+                    ("rej: cap", "evaluations", "refused: the promotion rate cap "
+                     "for this interval was already spent"),
+                    ("rej: admit", "evaluations", "refused at admission, after "
+                     "passing the earlier gates"),
+                    ("dropped", "candidates", "discarded because the candidate "
+                     "queue was full"),
+                    ("expired", "candidates", "aged out of the queue before a "
+                     "decision was reached"),
+                    ("exp: evaluated", "candidates", "aged out after being "
+                     "evaluated at least once"),
+                    ("exp: unevaluated", "candidates", "aged out having never "
+                     "been evaluated \u2014 the queue never got to them"),
+                    ("failed", "promotions", "attempted and errored"),
+                    ("cancelled", "promotions", "abandoned while in flight"),
+                ]
+                _pl_tr = "".join(
+                    f'<tr><td style="padding:3px 10px 3px 0;white-space:nowrap">'
+                    f'<code style="color:#93c5fd">{_n}</code></td>'
+                    f'<td style="padding:3px 10px 3px 0;color:#94a3b8;'
+                    f'white-space:nowrap">{_u}</td>'
+                    f'<td style="padding:3px 0">{_d}</td></tr>'
+                    for _n, _u, _d in _pl_rows
+                    if _n in _pv)
+                _l35_int_svg += (
+                    '<details class="amoprof-src amoprof-note">'
+                    '<summary><span class="amoprof-src-ic">?</span>'
+                    'what each bar means</summary>'
+                    '<div class="amoprof-src-body amoprof-note-body">'
+                    '<p style="margin:0 0 8px 0"><b>The bars do not share a '
+                    'unit, and they are not a split of the candidates.</b> '
+                    'Bars marked <i>evaluations</i> count decision attempts: '
+                    'one candidate can be re-evaluated and refused many times '
+                    'before it is admitted or expires, so those totals can '
+                    'exceed the candidate count. Only <code>completed</code> '
+                    'means KV actually moved back into memory.</p>'
+                    '<table style="border-collapse:collapse;width:100%">'
+                    + _pl_tr + '</table>'
+                    '<p style="margin:8px 0 0 0;color:#94a3b8">Counters the '
+                    'store did not export are omitted rather than shown as '
+                    'zero.</p></div></details>')
+
+            # Which tier actually served the reads.  Promotion says how much KV
+            # moved file->memory; this says where lookups were answered FROM,
+            # which is the question a tiering decision turns on.  Counts are the
+            # bars because "how many reads" is the question; bytes go in the
+            # subtitle because mean read size differs between the tiers.
+            _rd_n = {"DRAM tier": _dlt("l35_mem_hit_n"),
+                     "SSD / file tier": _dlt("l35_file_hit_n")}
+            _rd_b = {"DRAM tier": _dlt("l35_mem_hit_b"),
+                     "SSD / file tier": _dlt("l35_file_hit_b")}
+            _rd_have = {k: v for k, v in _rd_n.items() if v is not None}
+            if _rd_have:
+                _tot_n = sum(_rd_have.values())
+                # Keep the subtitle inside the chart width: shares first (the
+                # question), then bytes, then the stage linkage.  A longer form
+                # silently clipped at the right edge.
+                def _hm(_v):
+                    return (f"{_v/1e6:,.1f}M" if _v >= 1e6 else
+                            f"{_v/1e3:,.0f}k" if _v >= 1e3 else f"{_v:,.0f}")
+                _bits = []
+                if _tot_n > 0:
+                    _bits.append(" / ".join(
+                        f"{v/_tot_n*100:.2f}% {k.split()[0]}"
+                        for k, v in _rd_have.items())
+                        + f" of {_hm(_tot_n)} reads")
+                _tb = [v for v in (_rd_b.get("DRAM tier"),
+                                   _rd_b.get("SSD / file tier")) if v]
+                if _tb:
+                    _bits.append(" / ".join(f"{v/1e9:,.1f} GB" for v in _tb))
+                # Tie it back: prefetch is the engine asking, promotion is the
+                # store moving KV up, and these bars are where the answers came
+                # from.  Three different stages, easy to conflate.
+                _pf_up = _mv_tot.get(f"prefetch {_TIER}\u2192L2") or 0.0
+                _promo = _pv.get("completed") or 0.0
+                if _pf_up or _promo:
+                    _bits.append(f"prefetch {_hm(_pf_up)} tok \u00b7 "
+                                 f"{_promo:,.0f} promotions")
+                _l35_int_svg += _amoprof_exec_svg_percentile_bars(
+                    "L3.5 reads by tier \u2014 who answered the lookups",
+                    " \u00b7 ".join(_bits) if _bits else "read counts per tier",
+                    "reads", _rd_have,
+                    {"DRAM tier": "#22c55e", "SSD / file tier": "#f59e0b"},
+                    width=620)
+                _l35_int_svg += _amoprof_src_block([
+                    ("DRAM tier", "l35_store_capacity.csv", "l35_mem_hit_n",
+                     "mem_cache_hit_nums_ (window \u0394)"),
+                    ("SSD / file tier", "l35_store_capacity.csv", "l35_file_hit_n",
+                     "file_cache_hit_nums_ (window \u0394)"),
+                    ("bytes, both tiers", "l35_store_capacity.csv",
+                     "l35_mem_hit_b / l35_file_hit_b",
+                     "mem_cache_hit_bytes_total / file_cache_hit_bytes_total"),
+                ], "STORE-side logical reads (--l35-instance). These will NOT match the device bandwidth tiles: a read served from the store memory tier never touches the block device, and the file tier is page-cached, so most of these never reach NVMe.")
+                # The stage chain, in the units each stage actually counts.
+                # "How do prefetch ops map to gets" has no conversion: a get is
+                # one lookup, a prefetch token is one token, a promotion is one
+                # block.  Dividing across them invents a ratio.  What the chain
+                # DOES support is whether promotion is shifting the read mix,
+                # which is the question behind the ask.
+                _chain = [
+                    ("engine asks", "sglang_prefetched_tokens_total",
+                     _mv_tot.get(f"prefetch {_TIER}\u2192L2"), "tokens"),
+                    ("engine read ops", "sglang_prefetch_pgs_count",
+                     _kv_token_delta(raw_dir, ["prefetch_pgs_count"]), "operations"),
+                    ("store lookups", "total_get_nums_",
+                     _dlt("l35_get_total_n"), "gets"),
+                    ("answered by DRAM", "mem_cache_hit_nums_",
+                     _rd_have.get("DRAM tier"), "reads"),
+                    ("answered by SSD", "file_cache_hit_nums_",
+                     _rd_have.get("SSD / file tier"), "reads"),
+                    ("store promotes", "master_promotion_completed_total",
+                     _pv.get("completed"), "promotions"),
+                ]
+                _crows = "".join(
+                    '<tr><td style="padding:3px 12px 3px 0">' + _n +
+                    '</td><td style="padding:3px 12px 3px 0;color:#94a3b8">'
+                    '<code>' + _m + '</code></td>'
+                    '<td style="padding:3px 12px 3px 0;text-align:right">' +
+                    ("absent" if _v is None else format(_v, ",.0f")) +
+                    '</td><td style="padding:3px 0;color:#94a3b8">' + _u +
+                    '</td></tr>'
+                    for _n, _m, _v, _u in _chain)
+                _ssd_share = ((_rd_have.get("SSD / file tier") or 0.0) /
+                              _tot_n * 100.0) if _tot_n else 0.0
+                _promo_n = _pv.get("completed") or 0.0
+                _verdict = (
+                    "With " + format(_promo_n, ",.0f") + " promotions against " +
+                    _hm(_tot_n) + " lookups, promotion is not materially "
+                    "shifting the read mix: the SSD tier still answers " +
+                    format(_ssd_share, ".2f") + "% of reads."
+                    if _tot_n and _promo_n * 1000 < _tot_n else
+                    "Promotion volume is large enough relative to lookups to "
+                    "move the read mix; compare the SSD share against an "
+                    "earlier run to see whether it fell.")
+                _l35_int_svg += (
+                    '<details class="amoprof-src amoprof-note">'
+                    '<summary><span class="amoprof-src-ic">?</span>'
+                    'how prefetch, gets and promotions relate</summary>'
+                    '<div class="amoprof-src-body amoprof-note-body">'
+                    '<p style="margin:0 0 8px 0"><b>These stages do not share a '
+                    'unit, so none converts into another.</b> A get is one '
+                    'lookup, a prefetch token is one token, a promotion is one '
+                    'block. Only the two read rows sum to the lookup row.</p>'
+                    '<table style="border-collapse:collapse;width:100%">'
+                    + _crows + '</table>'
+                    '<p style="margin:8px 0 0 0">' + _verdict + '</p>'
+                    '</div></details>')
+
+
+            # 4. Read side vs write side, as OPERATIONS rather than tokens.
+            # "Are reads happening at all?" is answered by the operation
+            # count, not by a bandwidth figure that rounds to zero when the
+            # reads are few and small.  prefetch_pgs is the read-side twin of
+            # backup_pgs; it was absent from the fetch while backup_pgs was
+            # present, so the write path looked busy and the read path looked
+            # idle regardless of what the store was doing.
+            _ops, _opc = {}, {}
+            for _lbl, _k, _col in (
+                    ("backup ops (write)",   "backup_pgs_count",   "#f59e0b"),
+                    ("prefetch ops (read)",  "prefetch_pgs_count", "#22c55e"),
+                    ("load-back ops",        "load_back_duration_seconds_count", "#38bdf8")):
+                _d = _kv_token_delta(raw_dir, [_k])
+                if _d is not None:
+                    _ops[_lbl], _opc[_lbl] = _d, _col
+            if _ops:
+                _wr = _ops.get("backup ops (write)") or 0.0
+                _rd = _ops.get("prefetch ops (read)")
+                _o_sub = "operations over the window, from the histogram counts"
+                if _rd is None:
+                    _o_sub += (" \u00b7 prefetch operations not exported by this "
+                               "engine build")
+                elif _rd == 0 and _wr > 0:
+                    _o_sub += (f" \u00b7 {_wr:,.0f} writes and NO reads: the engine "
+                               f"never asked the tier for KV in this window")
+                elif _rd and _wr:
+                    _o_sub += (f" \u00b7 {_wr/_rd:,.1f} writes per read"
+                               if _wr >= _rd else
+                               f" \u00b7 {_rd/_wr:,.1f} reads per write")
+                _l35_int_svg += _amoprof_exec_svg_percentile_bars(
+                    "KV operations \u2014 read side vs write side",
+                    _o_sub, "operations", _ops, _opc, width=620)
+                # Only the bars actually drawn are named below: a counter the
+                # engine build does not export is omitted above, and listing
+                # it here would read as a measured zero.
+                _op_src = {
+                    "backup ops (write)":
+                        ("sglang_backup_pgs_count",
+                         "sglang:backup_pgs histogram _count, summed over tp_rank"),
+                    "prefetch ops (read)":
+                        ("sglang_prefetch_pgs_count",
+                         "sglang:prefetch_pgs histogram _count, summed over tp_rank"),
+                    "load-back ops":
+                        ("sglang_load_back_duration_seconds_count",
+                         "sglang:load_back_duration_seconds histogram _count, summed over tp_rank"),
+                }
+                _l35_int_svg += _amoprof_src_block(
+                    [(_l, "sglang_timeseries.csv") + _op_src[_l]
+                     for _l in _ops if _l in _op_src],
+                    note=("Counts are the histogram <code>_count</code> series, "
+                          "differenced across the window \u2014 an OPERATION count, "
+                          "not a token or byte count. One operation moves a page "
+                          "group, whose size varies, so these bars answer "
+                          "&#39;is the path being used at all&#39; and not "
+                          "&#39;how much moved&#39;."))
+
+            # ---- Does prefetch actually reach the GPU? -------------------
+            # Three stages of one pipeline: the store answers a lookup (get),
+            # the engine lands it in host memory (prefetch), the engine moves
+            # it to HBM (load-back).  Charting the three together answers
+            # whether the pipeline FLOWS.  It does not, on its own, answer
+            # whether prefetch HELPS, for two reasons handled below.
+            _pf_t = list(_sg_rate_t or [])
+            _pf_v = list(_pref_rate or [])
+            _lb_v = list(_load_rate or [])
+            _get_r, _get_t = [], []
+            try:
+                _gp = _first_existing(raw_dir, ["l35_store_capacity.csv"])
+                if _gp:
+                    _gc = _amoprof_read_columns_raw(
+                        _gp, ["time_sec", "l35_get_total_n"])
+                    _gt = _gc.get("time_sec") or []
+                    _gv = _gc.get("l35_get_total_n") or []
+                    if len(_gv) >= 2 and len(_gt) >= 2:
+                        for _i in range(1, min(len(_gv), len(_gt))):
+                            _dt = _gt[_i] - _gt[_i - 1]
+                            _dv = _gv[_i] - _gv[_i - 1]
+                            if _dt > 0 and _dv == _dv and _dv >= 0:
+                                _get_r.append(_dv / _dt)
+                                _get_t.append(_gt[_i])
+            except Exception:
+                _get_r, _get_t = [], []
+
+            _stages = []
+            if _pf_v and any(v > 0 for v in _pf_v):
+                _stages.append({"tier": "L3.5", "label": f"prefetch {_TIER}\u2192L2 (tok/s)",
+                                "t": _pf_t, "v": _pf_v, "cap": max(_pf_v),
+                                "color": "#22c55e",
+                                "src": ("sglang_timeseries.csv",
+                                        "sglang_prefetched_tokens_total",
+                                        "\u0394counter \u00f7 \u0394t, summed over tp_rank \u2014 ENGINE side")})
+            if _get_r and any(v > 0 for v in _get_r):
+                _stages.append({"tier": "L3.5", "label": "L3.5 gets (lookups/s)",
+                                "t": _get_t, "v": _get_r, "cap": max(_get_r),
+                                "color": "#38bdf8",
+                                "src": ("l35_store_capacity.csv", "l35_get_total_n",
+                                        "\u0394total_get_nums_ \u00f7 \u0394t \u2014 STORE side, a different host and scrape")})
+            if _lb_v and any(v > 0 for v in _lb_v):
+                _stages.append({"tier": "L2", "label": "load-back L2\u2192L1 (tok/s)",
+                                "t": _pf_t, "v": _lb_v, "cap": max(_lb_v),
+                                "color": "#a78bfa",
+                                "src": ("sglang_timeseries.csv",
+                                        "sglang_load_back_tokens_total",
+                                        "\u0394counter \u00f7 \u0394t \u2014 ALL L2\u2192L1 restores, prefetched or already resident")})
+
+            if len(_stages) >= 2:
+                _chain_svg = _amoprof_exec_svg_tier_occupancy(
+                    _stages, window=_occ_win, wall_start=_occ_wall, mode="fill",
+                    title="Prefetch delivery chain \u2014 get \u2192 prefetch \u2192 load-back",
+                    subtitle=("each series as % of its own peak, since the three "
+                              "have different units \u00b7 shape, not magnitude "
+                              "\u00b7 aligned peaks mean the pipeline flows; a "
+                              "stage that stays flat while the one above it moves "
+                              "is where delivery stops"),
+                    yaxis="% of that series peak", width=760)
+                _l35_int_svg += _chain_svg
+                _l35_int_svg += _src_block_from_series(
+                    _stages,
+                    note=("Three different meters. One prefetch operation can "
+                          "issue many gets, and a get returns bytes while "
+                          "prefetch counts tokens, so none of these converts "
+                          "into another \u2014 read them as shapes over time."))
+
+                # Statistics.  Reported in the note rather than on the chart,
+                # because a correlation is a claim and needs its caveats next
+                # to it.
+                _rows_st = []
+                if _pf_v and _lb_v:
+                    _r0 = _pearson(_pf_v, _lb_v)
+                    _rl, _lag = _lagged_pearson(_pf_v, _lb_v, max_lag=6)
+                    _rows_st.append(("prefetch \u2192 load-back", _r0, _rl, _lag))
+                if _pf_v and _get_r:
+                    _ga, _pa = _align_xy(_get_t, _get_r, _pf_t, _pf_v)
+                    if len(_ga) >= 4:
+                        _r0g = _pearson(_ga, _pa)
+                        _rlg, _lagg = _lagged_pearson(_ga, _pa, max_lag=6)
+                        _rows_st.append(("L3.5 gets \u2192 prefetch", _r0g, _rlg, _lagg))
+                _st_tr = "".join(
+                    "<tr><td>" + _n + "</td><td><code>" + f"{_a:+.2f}" +
+                    "</code></td><td><code>" + f"{_b:+.2f}" +
+                    "</code></td><td><code>" + (f"{_c:+d}" if _c else "0") +
+                    "</code></td></tr>"
+                    for _n, _a, _b, _c in _rows_st)
+
+                # The confound.  Both prefetch and load-back rise with how busy
+                # the engine is, so a strong raw r can be entirely explained by
+                # request arrival.  Hold the input token rate constant.
+                _pc, _pc_txt = None, ""
+                if _pf_v and _lb_v and _in_tok_rate:
+                    _n3 = min(len(_pf_v), len(_lb_v), len(_in_tok_rate))
+                    if _n3 >= 6:
+                        _pc = _partial_pearson(_pf_v[:_n3], _lb_v[:_n3],
+                                               _in_tok_rate[:_n3])
+                        _r_raw = _pearson(_pf_v[:_n3], _lb_v[:_n3])
+                        _drop = abs(_r_raw) - abs(_pc)
+                        _pc_txt = (
+                            "<p>Holding input tok/s constant, prefetch\u2194load-back "
+                            "falls from <code>" + f"{_r_raw:+.2f}" + "</code> to "
+                            "<code>" + f"{_pc:+.2f}" + "</code>. "
+                            + ("Most of the raw correlation was the two rising "
+                               "together with request load, not prefetch feeding "
+                               "load-back."
+                               if _drop > 0.25 else
+                               "The relationship survives the control, so it is "
+                               "not simply both tracking request load.")
+                            + "</p>")
+
+                # What actually answers "is prefetch helping".
+                #
+                # This MUST use the partial correlation, not the raw one.
+                # Prefetch rises with load and so does recompute, so the raw
+                # r is dominated by the common driver and reports the
+                # OPPOSITE conclusion: on a synthetic run built so that
+                # recompute = 0.25*load - 0.40*prefetch -- prefetch
+                # demonstrably relieving the GPU -- the raw r is +0.94
+                # ("not helping") while the partial r is -0.70, which is the
+                # planted truth.  validate_math pins that case.
+                _eff_txt = ""
+                if _pf_v and _pf_compute_strict and _pf_modes_measured:
+                    _ne = min(len(_pf_v), len(_pf_compute_strict))
+                    _has_load = bool(_in_tok_rate) and len(_in_tok_rate) >= _ne
+                    if _ne >= 6 and _has_load:
+                        _re_raw = _pearson(_pf_v[:_ne], _pf_compute_strict[:_ne])
+                        _re = _partial_pearson(_pf_v[:_ne],
+                                               _pf_compute_strict[:_ne],
+                                               _in_tok_rate[:_ne])
+                        _eff_txt = (
+                            "<p><b>The efficacy test.</b> Prefetch only helps if "
+                            "it displaces GPU work, so the outcome variable is "
+                            "recompute, not load-back. Against "
+                            "<code>prefill_compute</code> tok/s, holding input "
+                            "tok/s constant, the correlation is <code>"
+                            + f"{_re:+.2f}" + "</code> (raw <code>"
+                            + f"{_re_raw:+.2f}" + "</code>). "
+                            + ("Negative: at a given request load, intervals with "
+                               "more prefetch recompute less. That is prefetch "
+                               "doing its job."
+                               if _re < -0.2 else
+                               ("Positive even with load held constant: more "
+                                "prefetch goes with MORE recompute, which points "
+                                "at prefetching the wrong KV rather than at "
+                                "prefetch being idle."
+                                if _re > 0.2 else
+                                "Near zero once load is held constant: prefetch "
+                                "volume is not moving recompute either way in "
+                                "this window."))
+                            + " The raw figure is shown because it is usually the "
+                            "misleading one \u2014 both series track request load, "
+                            "so it tends to read positive whatever prefetch is "
+                            "doing.</p>")
+                    elif _ne >= 6:
+                        _eff_txt = (
+                            "<p><b>The efficacy test could not be run.</b> It "
+                            "needs the input token rate to hold request load "
+                            "constant; without that control the raw correlation "
+                            "between prefetch and recompute is dominated by load "
+                            "and points the wrong way, so it is not reported.</p>")
+
+                # Yield: confound-free because it is per unit of work.
+                _yield_txt = ""
+                _pf_tot = _kv_token_delta(raw_dir, ["prefetched_tokens_total"])
+                _lb_tot = _kv_token_delta(raw_dir, ["load_back_tokens_total"])
+                if _pf_tot and _lb_tot and _pf_tot > 0:
+                    _ratio_lb = _lb_tot / _pf_tot
+                    _yield_txt = (
+                        "<p><b>Yield.</b> " + f"{_lb_tot:,.0f}" + " tokens were "
+                        "loaded back against " + f"{_pf_tot:,.0f}" + " prefetched "
+                        "(" + f"{_ratio_lb:,.2f}" + "\u00d7). "
+                        + ("Load-back far exceeds prefetch, so most restores came "
+                           "from KV already resident in L2 \u2014 prefetch is a "
+                           "minority contributor to what reaches the GPU."
+                           if _ratio_lb > 2.0 else
+                           ("Load-back is far below prefetch: KV is being pulled "
+                            "into L2 and not consumed before it is displaced, "
+                            "which is wasted tier bandwidth."
+                            if _ratio_lb < 0.5 else
+                            "The two are of the same order, consistent with "
+                            "prefetched KV being consumed rather than displaced."))
+                        + "</p>")
+
+                _l35_int_svg += (
+                    '<details class="amoprof-src amoprof-note">'
+                    '<summary><span class="amoprof-src-ic">?</span>'
+                    'is prefetch actually helping?</summary>'
+                    '<div class="amoprof-src-body amoprof-note-body">'
+                    '<p><b>A correlation between these three does not by itself '
+                    'show that prefetch helps.</b> <code>load_back_tokens_total</code> '
+                    'counts every L2\u2192L1 restore, including KV that was already '
+                    f'resident and never came from {_TIER} \u2014 so it is a superset, '
+                    'not a mirror, of prefetch. And all three rise when the engine '
+                    'is busy, which produces correlation without causation.</p>'
+                    + ('<table><thead><tr><th>Stage pair</th><th>r (lag 0)</th>'
+                       '<th>best r</th><th>lag</th></tr></thead><tbody>'
+                       + _st_tr + '</tbody></table>'
+                       '<p>Lag is in sampling intervals; a non-zero lag is normal '
+                       'for asynchronous prefetch and is why a lag-0 r alone can '
+                       'read as "no relationship" on a pipeline that works.</p>'
+                       if _st_tr else "")
+                    + _pc_txt + _yield_txt + _eff_txt
+                    + '</div></details>')
+
+            # ---- Prefetch benefit against a no-L3/L3.5 baseline ----------
+            # An ACCOUNTING argument, not a statistical one, and stronger
+            # than the correlation above for exactly that reason.
+            #
+            # Every prefill token is either served from cache or recomputed,
+            # and that total is fixed by the requests that arrived.  A token
+            # the engine fetched from the backing tier and used is a token
+            # that, without that tier, would have been recomputed.  So the
+            # counterfactual moves tokens from "cached" to "recomputed"
+            # while the denominator stays put.
+            #
+            # What bounds it: a prefetched token is only a benefit if it was
+            # CONSUMED.  No counter reports consumption directly, though
+            # storage_prefetch_unfulfilled_tokens_total does report the
+            # opposite end -- tokens asked for and never delivered -- which
+            # is charted above.  Delivered is still not the same as used.
+            # Two ceilings bound it:
+            # a consumed token must also have crossed L2->L1 (so it is in
+            # load-back), and it must be among the prefill tokens served
+            # from cache.  Hence B = min(prefetched, load_back, cached),
+            # an upper bound whose binding term is itself the finding.
+            try:
+                # Not _kv_token_delta("prefetched_tokens_total"): that counter
+                # reads 0 on builds where prefetch is running, which would put
+                # the benefit bound at 0 and report a working tier as useless.
+                _pt_t, _pt_v, _P_src, _pf_ops, _pf_unf = \
+                    _prefetch_tokens_resolved(raw_dir)
+                _P = (max(0.0, _pt_v[-1] - _pt_v[0])
+                      if _pt_v and len(_pt_v) >= 2 else None)
+                _LB = _kv_token_delta(raw_dir, ["load_back_tokens_total"])
+                _cv = [v for v in (_sg_phase.get("prefill_cache") or []) if v == v]
+                _rv = [v for v in (_sg_phase.get("prefill_compute") or []) if v == v]
+                _C = (max(0.0, _cv[-1] - _cv[0]) if len(_cv) >= 2 else None)
+                _R = (max(0.0, _rv[-1] - _rv[0]) if len(_rv) >= 2 else None)
+            except Exception:
+                _P = _LB = _C = _R = None
+                # These three come from the same try and are read below
+                # whether or not the benefit terms resolved, so they must be
+                # defined on the failure path too.
+                _P_src, _pf_ops, _pf_unf = "", None, None
+
+            # Prefetch outcome stands on its own two counters.  It was
+            # nested inside the benefit gate below, which also requires
+            # load-back and the prefill mode counters -- so a run missing
+            # either lost the one chart that would have explained why.
+            # Worse, the gate needs a non-zero prefetch TOKEN total, and the
+            # case this chart exists to diagnose is prefetch asking for
+            # tokens and being delivered none: hit 0, unfulfilled large,
+            # _P None, chart suppressed exactly when it was needed.
+            # Prefetch outcome: asked for vs delivered.  hit and
+            # unfulfilled partition the attempt, so together they say
+            # whether prefetch is finding what it goes looking for --
+            # which the token total alone cannot, and which no counter
+            # AMOprof previously fetched could answer at all.
+            _outcome = ""
+            try:
+                _hit_s = _kv_counter_series(
+                    raw_dir, ["storage_prefetch_hit_tokens_total"])
+                _hit_tot = (max(0.0, _hit_s[1][-1] - _hit_s[1][0])
+                            if _hit_s and _hit_s[1] and len(_hit_s[1]) >= 2
+                            else None)
+                _unf_s2 = _kv_counter_series(
+                    raw_dir, ["storage_prefetch_unfulfilled_tokens_total"])
+                _unf_tot = (max(0.0, _unf_s2[1][-1] - _unf_s2[1][0])
+                            if _unf_s2 and _unf_s2[1] and len(_unf_s2[1]) >= 2
+                            else _pf_unf)
+                if _hit_tot is not None and _unf_tot is not None:
+                    _asked = _hit_tot + _unf_tot
+                    if _asked > 0:
+                        _fill = _hit_tot / _asked * 100.0
+                        _ob = {"delivered (hit)": _hit_tot,
+                               "not delivered": _pf_unf}
+                        _oc = {"delivered (hit)": "#22c55e",
+                               "not delivered": "#ef4444"}
+                        _outcome = _amoprof_exec_svg_percentile_bars(
+                            "Prefetch outcome \u2014 asked for vs delivered",
+                            (f"{_fill:,.1f}% of the tokens prefetch went "
+                             f"looking for came back \u00b7 the remainder was "
+                             f"a miss, a timeout or an abort \u00b7 these two "
+                             f"partition the attempt, so they sum to what "
+                             f"was requested"),
+                            "tokens", _ob, _oc, width=760)
+                        _outcome += _amoprof_src_block(
+                            [("delivered (hit)", "sglang_timeseries.csv",
+                              "sglang_storage_prefetch_hit_tokens_total",
+                              "\u0394 over the window, summed over tp_rank"),
+                             ("not delivered", "sglang_timeseries.csv",
+                              "sglang_storage_prefetch_unfulfilled_tokens_total",
+                              "\u0394 over the window, summed over tp_rank")],
+                            note=("Storage-side outcome of each prefetch "
+                                  "attempt. A high not-delivered share means "
+                                  "the engine is asking the tier for KV it "
+                                  "does not hold \u2014 tier bandwidth and "
+                                  "latency spent for nothing, which the "
+                                  "token total alone cannot show."))
+            except Exception:
+                _outcome = ""
+            _l35_int_svg += _outcome
+
+            if _P and _LB and _C and _R is not None and (_C + _R) > 0:
+                _B = min(_P, _LB, _C)
+                _bind = ("prefetched tokens" if _B == _P else
+                         ("load-back" if _B == _LB else "prefill served from cache"))
+                _tot_pf = _C + _R
+                _hit_obs = _C / _tot_pf * 100.0
+                _hit_base = (_C - _B) / _tot_pf * 100.0
+                # Measured quantities only.  The counterfactual bars that
+                # stood here were COMPUTED, and a bar chart puts a computed
+                # value at the same visual weight as a measured one however
+                # the caption labels it.  The counterfactual is arithmetic,
+                # so it belongs in the arithmetic, not in the picture.
+                #
+                # Only the three token-unit quantities share an axis.  L3.5
+                # gets are LOOKUPS, so they are reported in the ledger with
+                # their own unit rather than given a bar whose height would
+                # invite comparison against a token count.  Converting them
+                # to tokens via KV bytes/token is possible and deliberately
+                # not done: that conversion is unreliable at absolute scale.
+                _bars = {
+                    f"prefetched {_TIER}\u2192L2": _P,
+                    "load-back L2\u2192L1": _LB,
+                    "recomputed (missed)": _R,
+                }
+                _bcol = {
+                    f"prefetched {_TIER}\u2192L2": "#22c55e",
+                    "load-back L2\u2192L1": "#a78bfa",
+                    "recomputed (missed)": "#ef4444",
+                }
+                _l35_int_svg += _amoprof_exec_svg_percentile_bars(
+                    "KV delivery ledger \u2014 what each stage moved",
+                    ("window totals, all measured \u00b7 tokens only, so the three "
+                     f"are directly comparable \u00b7 {_TIER} gets are lookups and are "
+                     "reported below in their own unit"),
+                    "tokens", _bars, _bcol, width=760)
+                _l35_int_svg += _amoprof_src_block(
+                    [(f"prefetched {_TIER}\u2192L2", "sglang_timeseries.csv",
+                      _P_src or "sglang_prefetched_tokens_total",
+                      "\u0394 over the window, summed over tp_rank"),
+                     ("load-back L2\u2192L1", "sglang_timeseries.csv",
+                      "sglang_load_back_tokens_total",
+                      "\u0394 over the window, summed over tp_rank"),
+                     ("recomputed (missed)", "sglang_timeseries.csv",
+                      "realtime_tokens_total[mode=prefill_compute]",
+                      "\u0394 over the window")],
+                    note=("All three are engine-side counter differences over "
+                          "the selected window \u2014 measured, with nothing "
+                          "derived. Load-back counts every L2\u2192L1 restore, "
+                          "whatever its origin, so it is not a subset of "
+                          "prefetch."))
+
+                # The ledger, including the quantities that do not share the
+                # chart's unit.  Visible rather than collapsed: this is the
+                # factual record the rest of the panel argues from.
+                _get_n = _get_mem = _get_file = None
+                try:
+                    _gp2 = _first_existing(raw_dir, ["l35_store_capacity.csv"])
+                    if _gp2:
+                        _gc2 = _amoprof_read_columns_raw(
+                            _gp2, ["l35_get_total_n", "l35_mem_hit_n",
+                                   "l35_file_hit_n"])
+                        def _win_delta(_k):
+                            _v = [x for x in (_gc2.get(_k) or []) if x == x]
+                            return (max(0.0, _v[-1] - _v[0])
+                                    if len(_v) >= 2 else None)
+                        _get_n = _win_delta("l35_get_total_n")
+                        _get_mem = _win_delta("l35_mem_hit_n")
+                        _get_file = _win_delta("l35_file_hit_n")
+                except Exception:
+                    _get_n = _get_mem = _get_file = None
+
+                _led = [(f"prefetched {_TIER}\u2192L2", f"{_P:,.0f}", "tokens",
+                         "engine", _P_src or "sglang_prefetched_tokens_total"),
+                        ("load-back L2\u2192L1", f"{_LB:,.0f}", "tokens",
+                         "engine", "sglang_load_back_tokens_total"),
+                        ("prefill served from cache", f"{_C:,.0f}", "tokens",
+                         "engine", "realtime_tokens_total[mode=prefill_cache]"),
+                        ("recomputed (missed)", f"{_R:,.0f}", "tokens",
+                         "engine", "realtime_tokens_total[mode=prefill_compute]")]
+                if _get_n is not None:
+                    _led.append(("L3.5 gets \u00b7 total", f"{_get_n:,.0f}",
+                                 "lookups", "store", "total_get_nums_"))
+                if _get_mem is not None:
+                    _led.append(("L3.5 gets \u00b7 answered by DRAM tier",
+                                 f"{_get_mem:,.0f}", "lookups", "store",
+                                 "mem_cache_hit_nums_"))
+                if _get_file is not None:
+                    _led.append(("L3.5 gets \u00b7 answered by file tier",
+                                 f"{_get_file:,.0f}", "lookups", "store",
+                                 "file_cache_hit_nums_"))
+                if _pf_ops:
+                    _led.append(("prefetch operations", f"{_pf_ops:,.0f}",
+                                 "operations", "engine",
+                                 "sglang_prefetch_pgs histogram _count"))
+                    # Tokens per operation.  Available on every build that
+                    # exports the histogram, and it separates "prefetch is
+                    # rarely invoked" from "prefetch is invoked constantly
+                    # and brings back almost nothing" -- two very different
+                    # problems that the token total alone cannot tell apart.
+                    if _P and _pf_ops > 0:
+                        _led.append(("prefetch tokens per operation",
+                                     f"{_P / _pf_ops:,.1f}", "tokens/op",
+                                     "derived",
+                                     "prefetched tokens \u00f7 prefetch operations"))
+                    if _pf_ops > 0 and _occ_win and isinstance(_occ_win, (tuple, list)):
+                        _wsec = float(_occ_win[1]) - float(_occ_win[0])
+                        if _wsec > 0:
+                            _led.append(("prefetch operation rate",
+                                         f"{_pf_ops / _wsec:,.2f}", "ops/s",
+                                         "derived",
+                                         "prefetch operations \u00f7 window seconds"))
+                if _pf_unf is not None:
+                    _led.append(("prefetch tokens NOT delivered",
+                                 f"{_pf_unf:,.0f}", "tokens", "engine",
+                                 "sglang_storage_prefetch_unfulfilled_tokens_total"))
+                _led.append(("L3-local gets", "\u2014", "not exported",
+                             "\u2014",
+                             "no get counter exists for the local tier"))
+
+                # Reconciliation.  "Recomputed" is not derived -- it is the
+                # mode-labelled counter, read directly -- but saying so is
+                # weaker than showing it.  prefill_cache and prefill_compute
+                # partition the prompt tokens, so their sum must equal
+                # prompt_tokens_total, which is a SEPARATE counter the split
+                # does not feed.  If the three agree, the decomposition is
+                # confirmed by something outside itself; if they do not, the
+                # gap is stated rather than absorbed.
+
+                # When operations ran but the token counter did not move, say
+                # which counter was believed and why, rather than printing a
+                # zero that reads as an idle tier.
+                _pf_zero_note = ""
+                if _pf_ops and _P_src and "storage_prefetch_hit" in _P_src:
+                    _pf_zero_note = (
+                        '<p><b>Which prefetch counter this uses.</b> '
+                        '<code>sglang_prefetched_tokens_total</code> reads 0 on '
+                        'this run while <code>sglang_prefetch_pgs</code> counts '
+                        + f"{_pf_ops:,.0f}"
+                        + ' prefetch operations, so the token volume is taken '
+                        'from <code>sglang_storage_prefetch_hit_tokens_total</code> '
+                        'instead. Comparing this figure against a run whose '
+                        'volume came from the other counter is comparing two '
+                        'different meters.</p>')
+                elif _pf_ops and not _P_src:
+                    _pf_zero_note = (
+                        '<p><b>Prefetch ran but moved no measured tokens.</b> '
+                        + f"{_pf_ops:,.0f}"
+                        + ' prefetch operations are counted by '
+                        '<code>sglang_prefetch_pgs</code>, while every prefetch '
+                        'token counter this build exports reads 0. The benefit '
+                        'bound below is therefore 0 by measurement, not by '
+                        'finding \u2014 the tier may be working and unmeasured.</p>')
+
+                _recon = ""
+                try:
+                    _pt = _kv_token_delta(raw_dir, ["prompt_tokens_total"])
+                    if _pt and _pt > 0:
+                        _sum_cr = _C + _R
+                        _gap = _sum_cr - _pt
+                        _gap_pct = _gap / _pt * 100.0
+                        _ok = abs(_gap_pct) <= 1.0
+                        _recon = (
+                            '<p style="margin-top:8px"><b>Does the split '
+                            'reconcile?</b> cached + recomputed = '
+                            + f"{_C:,.0f} + {_R:,.0f} = {_sum_cr:,.0f}"
+                            + ' tokens, against <code>prompt_tokens_total</code> '
+                            + f"= {_pt:,.0f}"
+                            + ' \u2014 an independent counter that neither mode '
+                            'feeds. '
+                            + (f"They agree to {abs(_gap_pct):.2f}%, so the "
+                               "cached/recomputed split is confirmed against "
+                               "something outside itself."
+                               if _ok else
+                               f"They differ by {_gap:+,.0f} tokens "
+                               f"({_gap_pct:+.2f}%). The mode counters and the "
+                               "prompt counter are scraped from the same engine "
+                               "but reset and roll over independently, so a small "
+                               "gap is sampling skew; a large one means the split "
+                               "is not accounting for all prompt tokens and the "
+                               "benefit figures below should be treated as "
+                               "indicative.")
+                            + '</p>')
+                except Exception:
+                    _recon = ""
+                _led_tr = "".join(
+                    '<tr class="id"><td>' + _n + '</td><td style="text-align:right">'
+                    '<code>' + _v + '</code></td><td>' + _u + '</td><td>' + _w +
+                    '</td><td><code>' + _m + '</code></td></tr>'
+                    for _n, _v, _u, _w, _m in _led)
+                _l35_int_svg += (
+                    '<div class="amoprof-src-body amoprof-note-body" '
+                    'style="margin:2px 0 10px 0">'
+                    '<table><thead><tr><th>Stage</th>'
+                    '<th style="text-align:right">Window total</th>'
+                    '<th>Unit</th><th>Measured at</th><th>Metric</th>'
+                    '</tr></thead><tbody>' + _led_tr + '</tbody></table>'
+                    '<p>Every row is a counter difference over the selected '
+                    'window. Tokens and lookups are different units and do not '
+                    'convert into one another: one prefetch operation can issue '
+                    'many gets, and a get returns bytes rather than tokens. '
+                    '<b>Recomputed is measured, not derived</b>: it is '
+                    '<code>realtime_tokens_total{mode=prefill_compute}</code>, '
+                    'the engine&#39;s own count of prefill tokens it had to '
+                    'compute because the cache did not have them.</p>'
+                    + _pf_zero_note + _recon +
+                    '</div>')
+
+                # What the saved tokens are worth.
+                #
+                # NOT "seconds saved inside this window".  The counterfactual
+                # holds TOKENS invariant, not TIME: the same prefill work has
+                # to happen, and at the observed recompute throughput it can
+                # take longer than the window did.  A first cut divided B by
+                # the mean recompute rate and produced 4,607 s of saving in a
+                # 1,989 s run -- impossible on its face, and the giveaway that
+                # the window is not invariant under the counterfactual.
+                #
+                # The unit-free multiple is the sound statement; the time
+                # figure is reported only as a floor, and when it exceeds the
+                # window that is said plainly, because it means the run itself
+                # would have been longer rather than merely busier.
+                _gpu_txt = ""
+                try:
+                    _rc_f = [v for v in (_pf_compute_strict or []) if v == v and v > 0]
+                    _mult = ((_R + _B) / _R) if _R > 0 else None
+                    _rc_peak = max(_rc_f) if _rc_f else 0.0
+                    _secs = (_B / _rc_peak) if _rc_peak > 0 else None
+                    # _occ_win is a (start, end) pair, not a duration.
+                    _win_s = None
+                    if isinstance(_occ_win, (tuple, list)) and len(_occ_win) == 2:
+                        _win_s = float(_occ_win[1]) - float(_occ_win[0])
+                        _win_s = _win_s if _win_s > 0 else None
+                    _gpu_txt = "<p><b>What that is worth.</b> "
+                    if _mult:
+                        _gpu_txt += (f"Recompute would have been {_mult:,.2f}\u00d7 "
+                                     f"its observed volume \u2014 "
+                                     f"{_R:,.0f} tokens becoming {_R + _B:,.0f}. ")
+                    if _secs and _win_s and _secs > _win_s:
+                        _gpu_txt += (
+                            f"At the peak recompute rate this run reached "
+                            f"({_rc_peak:,.0f} prefill tok/s) that extra work needs "
+                            f"{_secs:,.0f} s, which is longer than the "
+                            f"{_win_s:,.0f} s window. The counterfactual holds "
+                            "TOKENS fixed, not time: without the tier this run "
+                            "would have taken longer, so the benefit cannot be "
+                            "stated as seconds saved inside this window.")
+                    elif _secs:
+                        _gpu_txt += (
+                            f"At the peak recompute rate this run reached "
+                            f"({_rc_peak:,.0f} prefill tok/s) that is at least "
+                            f"{_secs:,.0f} s of prefill work avoided \u2014 a floor, "
+                            "since the GPU rarely sustains its peak.")
+                    _gpu_txt += (" None of this is a latency claim: fetching from "
+                                 "the tier has its own cost, and if the round trip "
+                                 "is slower than recomputing, tokens saved can "
+                                 "still mean requests slowed.</p>")
+                except Exception:
+                    import os as _os_g
+                    if _os_g.environ.get("AMOPROF_DEBUG_CORR"):
+                        import traceback as _tb_g
+                        _tb_g.print_exc()
+                    _gpu_txt = ""
+
+                _l35_int_svg += (
+                    '<details class="amoprof-src amoprof-note">'
+                    '<summary><span class="amoprof-src-ic">?</span>'
+                    'how this benefit is derived</summary>'
+                    '<div class="amoprof-src-body amoprof-note-body">'
+                    '<p>Every prefill token is either served from cache or '
+                    'recomputed, and the total is fixed by the requests that '
+                    'arrived. A token fetched from the backing tier <i>and '
+                    'used</i> is one that would otherwise have been recomputed, '
+                    'so the counterfactual moves tokens between the two columns '
+                    'and leaves the total alone.</p>'
+                    '<table><thead><tr><th>Term</th><th>Tokens</th>'
+                    '<th>What it is</th></tr></thead><tbody>'
+                    + '<tr class="id"><td>P prefetched</td><td><code>'
+                    + f"{_P:,.0f}" + f'</code></td><td>moved {_TIER}\u2192L2</td></tr>'
+                    + '<tr class="id"><td>LB load-back</td><td><code>'
+                    + f"{_LB:,.0f}" + '</code></td><td>moved L2\u2192L1 (any origin)</td></tr>'
+                    + '<tr class="id"><td>C cached</td><td><code>'
+                    + f"{_C:,.0f}" + '</code></td><td>prefill served from cache</td></tr>'
+                    + '<tr class="id"><td>R recomputed</td><td><code>'
+                    + f"{_R:,.0f}" + '</code></td><td>prefill recomputed</td></tr>'
+                    + '<tr class="id"><td><b>B benefit</b></td><td><code>'
+                    + f"{_B:,.0f}" + '</code></td><td><b>min(P, LB, C)</b> \u2014 bound here by '
+                    + _bind + '</td></tr></tbody></table>'
+                    '<p><b>Why a bound and not a number.</b> A prefetched token '
+                    'only helps if it is consumed. No counter reports '
+                    'consumption directly \u2014 '
+                    '<code>storage_prefetch_unfulfilled_tokens_total</code> '
+                    'reports the opposite end, tokens asked for and never '
+                    'delivered, and delivered is still not used. Two ceilings '
+                    'bound it: a consumed token must have '
+                    'crossed L2\u2192L1, so it is inside load-back; and it must be '
+                    'among the prefill tokens served from cache. B takes the '
+                    'smallest. Which term binds is itself the finding \u2014 bound '
+                    'by <i>prefetched</i> means the tier is the limit, bound by '
+                    '<i>load-back</i> or <i>cached</i> means tokens were pulled '
+                    'in that the engine did not use.</p>'
+                    '<p><b>The one thing this cannot see.</b> Prefetched KV lands '
+                    'in L2 and occupies it. If L2 is full, each prefetched token '
+                    'can displace a resident one that would have been hit later, '
+                    'and that loss is invisible to this accounting \u2014 so B is an '
+                    'upper bound on the NET benefit, not just on the gross. When '
+                    'the tier is thrashing, the displacement can cancel the gain '
+                    'outright. Only an A/B against a run without the tier settles '
+                    'it, which is what <code>amoprof compare</code> is for.</p>'
+                    + _gpu_txt +
+                    '</div></details>')
         except Exception:
             import os as _os_i
             if _os_i.environ.get("AMOPROF_DEBUG_CORR"):
                 import traceback as _tb_i
                 _tb_i.print_exc()
+
+        # The prefetch outcome pair sits outside _l35_int_missing because it
+        # comes from the ENGINE, not the store: the store files can all be
+        # present and these still absent, which is what happens on a run
+        # analysed before AMOprof requested them.  Say so in place, with the
+        # command that fixes it, rather than letting a missing chart read as
+        # a missing behaviour.
+        if _l35_on:
+            _pf_pair = [(_n, _k) for _n, _k in (
+                ("delivered", "storage_prefetch_hit_tokens_total"),
+                ("not delivered", "storage_prefetch_unfulfilled_tokens_total"))
+                if not _kv_counter_series(raw_dir, [_k])]
+            if _pf_pair:
+                _l35_int_svg += (
+                    '<div class="card" style="border-left:3px solid #f59e0b;'
+                    'padding:12px 16px;margin:10px 0;font-size:12.5px">'
+                    '<b>Prefetch outcome could not be drawn.</b> '
+                    'These engine counters are not columns in '
+                    '<code>raw/sglang_timeseries.csv</code>:'
+                    '<ul style="margin:6px 0 0 18px">'
+                    + "".join(f'<li>{_n} &mdash; <code>sglang_{_k}</code></li>'
+                              for _n, _k in _pf_pair)
+                    + '</ul>'
+                    '<p style="margin:8px 0 0 0">Two different causes, and '
+                    'they need different fixes. Check which one it is by '
+                    'asking Prometheus for the metric by name &mdash; or the '
+                    'engine directly, <code>curl -s '
+                    'http://&lt;sglang&gt;:&lt;port&gt;/metrics | grep '
+                    'storage_prefetch</code>.</p>'
+                    '<p style="margin:6px 0 0 0"><b>Present in Prometheus but '
+                    'not pulled.</b> Re-fetch the family; a plain '
+                    '<code>analyze --run-dir</code> will not add them, because '
+                    'the default <code>--prefer local</code> keeps the existing '
+                    '<code>sglang_timeseries.csv</code> and fills only MISSING '
+                    'files:<br><code>amoprof analyze --run-dir &lt;dir&gt; '
+                    '--prometheus http://&lt;host&gt;:9090 --start &lt;start&gt; '
+                    '--end &lt;end&gt; --prefer prometheus</code></p>'
+                    '<p style="margin:6px 0 0 0"><b>Not exported by this engine '
+                    'build at all.</b> Then no re-fetch will help, and nothing '
+                    'is wrong with the run. The question these two counters '
+                    'answer &mdash; did prefetch ask for KV the tier did not '
+                    'have? &mdash; is answered from the store side instead by '
+                    '<b>L3.5 get outcome over the run</b> above, which compares '
+                    '<code>total_get_nums_</code> against the per-tier hit '
+                    'counters. A get-hit rate at or near 100% means the tier '
+                    'delivered everything it was asked for, so a small prefetch '
+                    'volume is the engine not asking rather than the tier not '
+                    'answering.</p></div>')
 
         # L3.5 is configured, so these charts are expected.  When any is
         # missing, say which and why rather than leaving the reader to wonder
@@ -8790,19 +11589,19 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # mistakes these for the GPU host's signals.
         _l35_t = _l35s.get("time_sec") or []
         _l35_node_entries = [
-            ("L3.5 node · storage read BW (MB/s)",  _l35s.get("l35_rd_bw_mbs"), "#22c55e"),
-            ("L3.5 node · storage write BW (MB/s)", _l35s.get("l35_wr_bw_mbs"), "#eab308"),
-            ("L3.5 node · storage util (%)",        _l35s.get("l35_io_util_pct"), "#f97316"),
-            ("L3.5 node · storage queue depth",     _l35s.get("l35_avgqu_sz"), "#a855f7"),
-            ("L3.5 node · DRAM BW (GB/s)",
+            (f"{_TIER_NODE} · storage read BW (MB/s)",  _l35s.get("l35_rd_bw_mbs"), "#22c55e"),
+            (f"{_TIER_NODE} · storage write BW (MB/s)", _l35s.get("l35_wr_bw_mbs"), "#eab308"),
+            (f"{_TIER_NODE} · storage util (%)",        _l35s.get("l35_io_util_pct"), "#f97316"),
+            (f"{_TIER_NODE} · storage queue depth",     _l35s.get("l35_avgqu_sz"), "#a855f7"),
+            (f"{_TIER_NODE} · DRAM BW (GB/s)",
              [ (_l35s.get("l35_dram_rd_gbs") or [0])[i] +
                (_l35s.get("l35_dram_wr_gbs") or [0])[i]
                for i in range(min(len(_l35s.get("l35_dram_rd_gbs") or []),
                                  len(_l35s.get("l35_dram_wr_gbs") or [])))
              ] or (_l35s.get("l35_dram_rd_gbs") or []), "#3b82f6"),
-            ("L3.5 node · DRAM used (GB)",      _l35s.get("l35_dram_used_gb"), "#14b8a6"),
-            ("L3.5 node · CPU util (%)",        _l35s.get("l35_cpu_util_pct"), "#ef4444"),
-            ("L3.5 node · CPU iowait (%)",      _l35s.get("l35_cpu_iowait_pct"), "#ec4899"),
+            (f"{_TIER_NODE} · DRAM used (GB)",      _l35s.get("l35_dram_used_gb"), "#14b8a6"),
+            (f"{_TIER_NODE} · CPU util (%)",        _l35s.get("l35_cpu_util_pct"), "#ef4444"),
+            (f"{_TIER_NODE} · CPU iowait (%)",      _l35s.get("l35_cpu_iowait_pct"), "#ec4899"),
         ]
         _l35_node_entries = [(lbl, v, _l35_t, col)
                              for lbl, v, col in _l35_node_entries
@@ -8833,12 +11632,16 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         if _hbm_bw_gbs_series and _hbm_peak_gbs > 0:
             _bw.append({"tier": "L1", "label": "L1 HBM bandwidth",
                         "t": _gpu_time, "v": _hbm_bw_gbs_series,
-                        "cap": _hbm_peak_gbs, "color": "#f59e0b"})
+                        "cap": _hbm_peak_gbs, "color": "#f59e0b",
+                        "src": ("gpu_timeseries.csv", "hbm_bw_gbs",
+                                "DCGM / nvidia-smi HBM throughput \u00b7 ceiling from the GPU spec")})
         elif _hbm_bw_util_series:
             # Already a percentage of device peak; give it a nominal 100 cap.
             _bw.append({"tier": "L1", "label": "L1 HBM bandwidth",
                         "t": _gpu_time, "v": _hbm_bw_util_series,
-                        "cap": 100.0, "color": "#f59e0b"})
+                        "cap": 100.0, "color": "#f59e0b",
+                        "src": ("gpu_timeseries.csv", "hbm_bw_util_pct",
+                                "DCGM DRAM-active \u00b7 already a % of device peak")})
         if not _dram_series_local and (_l2_in_mbps or _l2_out_mbps):
             # No PMU, but SGLang's own KV movement gives a host-tier traffic
             # estimate.  It is logical movement, not memory-controller
@@ -8853,11 +11656,17 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 _bw.append({"tier": "L2",
                             "label": "L2 host DRAM (KV movement est., not PMU)",
                             "t": _sg_rate_t, "v": _l2_est,
-                            "cap": _dram_peak_auto, "color": "#a78bfa"})
+                            "cap": _dram_peak_auto, "color": "#a78bfa",
+                            "src": ("sglang_timeseries.csv",
+                                    "evicted/backuped/prefetched/load-back tokens",
+                                    "ESTIMATE from KV token movement \u00d7 KV bytes/token \u2014 logical traffic, not memory-controller bandwidth")})
         if _dram_series_local and _dram_peak_auto > 0:
             _bw.append({"tier": "L2", "label": "L2 host DRAM bandwidth",
                         "t": _dram_time, "v": _dram_series_local,
-                        "cap": _dram_peak_auto, "color": "#a78bfa"})
+                        "cap": _dram_peak_auto, "color": "#a78bfa",
+                        "src": ("amduprof_pcm_timeseries.csv",
+                                "dram_read_gb_s + dram_write_gb_s",
+                                "AMD DF / Intel PCM memory-controller counters on the GPU node")})
         if _nvme_rd_mbps or _nvme_wr_mbps:
             _n_bw = min(len(_nvme_rd_mbps or []), len(_nvme_wr_mbps or [])) \
                 if (_nvme_rd_mbps and _nvme_wr_mbps) else 0
@@ -8872,7 +11681,10 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             if _tot and _l3_bw_cap > 0:
                 _bw.append({"tier": "L3", "label": "L3-local storage BW (vs observed peak)",
                             "t": (_nvme_rd_bw_t or _sg_rate_t), "v": _tot,
-                            "cap": _l3_bw_cap, "color": "#22c55e"})
+                            "cap": _l3_bw_cap, "color": "#22c55e",
+                            "src": ("nvme_driver_timeseries.csv",
+                                    "rd_bw_mbs + wr_bw_mbs",
+                                    "local NVMe on the GPU node \u00b7 ceiling = observed peak unless a device spec is in setup_details.json")})
         # L3.5 node's own SSD, when a collector runs on that host.  This is
         # the device *behind* the remote store: the store exporter reports
         # request rates, this reports whether the disk underneath kept up.
@@ -8886,9 +11698,23 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                        (_l35s.get("rd_bw_mbs") or _l35s.get("wr_bw_mbs")))
             if _ls_tot and max(_ls_tot) > 0:
                 _bw.append({"tier": "L3.5",
-                            "label": "L3.5 node storage BW (vs observed peak)",
+                            "label": f"{_TIER_NODE} storage BW (vs observed peak)",
                             "t": _l35s.get("time_sec") or _sg_rate_t,
-                            "v": _ls_tot, "cap": max(_ls_tot), "color": "#5eead4"})
+                            "v": _ls_tot, "cap": max(_ls_tot), "color": "#5eead4",
+                            # Same fallback as the KPI tile: these columns come
+                            # from the GPU host's own device file when no
+                            # memory-node storage file exists, so the source
+                            # line must name the file rather than assert a
+                            # memory node.
+                            "src": (_l35s_local_src or "l35_storage_timeseries.csv",
+                                    ("rd_bw_mbs + wr_bw_mbs (mapped to l35_*)"
+                                     if _l35s_local_src else
+                                     "l35_rd_bw_mbs + l35_wr_bw_mbs"),
+                                    ("local block device on the GPU host \u00b7 "
+                                     "ceiling = observed peak, no device spec published"
+                                     if _l35s_local_src else
+                                     "block device on the memory node \u00b7 "
+                                     "ceiling = observed peak, no device spec published"))})
 
         # GPU node <-> L3.5 node link.  Prefer the absolute MB/s series; the
         # link-utilisation percentage stays on the correlation cards where a
@@ -8918,7 +11744,10 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                     # the tier charts dropped in v1.7.0.
                     _bw.append({"tier": "NET", "label": _lbl,
                                 "t": _net_t, "v": _ser,
-                                "cap": 0.0, "color": _col})
+                                "cap": 0.0, "color": _col,
+                                "src": ("network_timeseries.csv",
+                                        "net_rx_mbs / net_tx_mbs",
+                                        "/proc/net/dev on the GPU node \u00b7 RDMA bypasses this counter")})
 
         for _lbl_n, _k_n, _c_n in (
                 ("L3.5 node network rx", "l35_net_rx_mbs", "#a7f3d0"),
@@ -8927,7 +11756,9 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             if _v_n and any(x == x and x > 0 for x in _v_n):
                 _bw.append({"tier": "NET", "label": _lbl_n,
                             "t": _l35s.get("time_sec") or [], "v": _v_n,
-                            "cap": 0.0, "color": _c_n})
+                            "cap": 0.0, "color": _c_n,
+                            "src": ("l35_storage_timeseries.csv", _k_n,
+                                    "amoprof network collector on the memory node")})
 
         if (_mc_rd_mbps or _mc_wr_mbps):
             _n_mc = min(len(_mc_rd_mbps or []), len(_mc_wr_mbps or [])) \
@@ -8937,7 +11768,10 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             if _mc_tot and max(_mc_tot) > 0:
                 _bw.append({"tier": "L3.5", "label": "L3.5 remote store BW (vs observed peak)",
                             "t": (_mc_rd_t or _sg_rate_t), "v": _mc_tot,
-                            "cap": max(_mc_tot), "color": "#2dd4bf"})
+                            "cap": max(_mc_tot), "color": "#2dd4bf",
+                            "src": ("l35_store_capacity.csv",
+                                    "l35_mem_hit_b + l35_file_hit_b",
+                                    "\u0394(mem_cache_hit_bytes_total + file_cache_hit_bytes_total) \u00f7 \u0394t \u00b7 store-side, NOT the device")})
         # "NET link utilisation" removed.  It divided rx+tx by a link speed read
         # from /sys/class/net/<if>/speed — unreliable on bonded interfaces,
         # absent on many IB devices, and stale when present.  Worse, on this
@@ -8985,7 +11819,14 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             title="Bandwidth per cache tier",
             subtitle="absolute GB/s on a log axis \u00b7 dashed line = known "
                      "ceiling where one is published",
-            yaxis="GB/s (log)", unit_label="GB/s") if _bw_abs else ""
+            yaxis="GB/s (log)", unit_label="GB/s") + _src_block_from_series(
+                _bw_abs,
+                note="Series arrive in mixed units and are converted to GB/s "
+                     "before plotting. They are measured at different layers "
+                     "and on two machines: an engine-side estimate, a "
+                     "memory-controller counter and a block device do not "
+                     "have to agree, and where they diverge is usually the "
+                     "finding.") if _bw_abs else ""
         # Name the tiers that are NOT on this chart and why.  A silently
         # missing tier reads as "no traffic"; these absences are all
         # "not measurable from what this run collected", which is a different
@@ -9104,12 +11945,18 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 if not _mv:
                     continue
                 _x, _y = _align_xy(_conc_t, _conc, _mt, _mv)
-                _bins = _amoprof_binned_response(_x, _y)
+                # Burst-shaped series (queue depth, retransmits) are
+                # summarised per bin by max; a median flattens them to zero.
+                _bins = _amoprof_binned_response(
+                    _x, _y, stat=_amoprof_bin_stat_for(_lbl))
                 if not _bins:
                     continue
                 _sers.append({"layer": _lay, "label": _lbl, "unit": _mu, "bins": _bins,
                               "color": _CONC_COLORS.get(_lbl, ""),
                               "r": _pearson(_x, _y), "rho": _pearson(_x, _y),
+                              # Raw aligned samples, so the legend can report a
+                              # real peak when every binned median is zero.
+                              "raw": list(_y),
                               "n": len(_x), "ymax": max(_y) or 1.0})
             if len(_sers) < 2:
                 continue
@@ -9156,7 +12003,8 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             _sers = []
             for _y_label, _y_series, _y_times, _y_color in _all_tier_entries:
                 _x, _y = _align_xy(_sg_rate_t, _dv, _y_times, _y_series)
-                _bins = _amoprof_binned_response(_x, _y)
+                _bins = _amoprof_binned_response(
+                    _x, _y, stat=_amoprof_bin_stat_for(_y_label))
                 if not _bins:
                     continue
                 _lay = _y_label.split(" ·")[0]
@@ -9166,6 +12014,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 _sers.append({"layer": _lay, "label": _y_label, "unit": _unit,
                               "bins": _bins, "r": _pearson(_x, _y),
                               "rho": _pearson(_x, _y), "n": len(_x),
+                              "raw": list(_y),
                               "ymax": max(_y) or 1.0})
             if not _sers:
                 continue
@@ -9312,8 +12161,14 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # every run — including L1-only runs with no hierarchical cache,
         # where it is the only cross-layer attribution available.
         _phase_activity_signals = [
-            ("Prefill compute rate (tok/s)", _pf_compute_rate,
-             f"Δ{_pf_src} ÷ Δt — prefill tokens actually recomputed (cache miss)",
+            (("Prefill compute rate (tok/s)" if _pf_modes_measured else
+              "Prompt token rate (tok/s) · prefill counter absent"),
+             _pf_compute_rate,
+             (f"Δ{_pf_src} ÷ Δt — prefill tokens actually recomputed (cache miss)"
+              if _pf_modes_measured else
+              f"Δ{_pf_src} ÷ Δt — ALL prompt tokens, cache hits included: "
+              f"this build does not export the mode-labelled counter, so this "
+              f"is not a recompute rate"),
              "Prefill-compute tracking GPU util is the expected prefill-bound signal. Tracking "
              "HBM used means each prefill is growing the resident KV working set. On a tiered "
              "run, tracking L3 read BW means cold prompt regions are being fetched from storage."),
@@ -9449,7 +12304,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             _svg = _svg.replace(
                 'class="corr-chart corr-chart-wide"',
                 'class="corr-chart exec-ov-chart"')
-            _ov_items.append(_svg)
+            _ov_items.append(_strip_src_blocks(_svg))
         # Storage rate belongs in the overview strip: "key time-series over
         # the run" should include whether the memory node's device was busy,
         # not only GPU and latency.
@@ -9458,16 +12313,17 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             _l35_ts_html = (
                 _l35_chart([("Storage read BW", "l35_rd_bw_mbs", "#22c55e"),
                             ("Storage write BW", "l35_wr_bw_mbs", "#eab308")],
-                           "L3.5 memory node \u2014 storage read/write "
-                           "bandwidth over the run",
+                           f"{_dev_node} \u2014 storage read/write "
+                           f"bandwidth over the run",
                            "per-interval bandwidth on the memory node",
                            "MB/s", "MB/s")
                 + _l35_chart([("Storage read IOPS", "l35_rd_iops", "#38bdf8"),
                               ("Storage write IOPS", "l35_wr_iops", "#a855f7")],
-                             "L3.5 memory node \u2014 storage IOPS over the run",
+                             f"{_dev_node} \u2014 storage IOPS over the run",
                              "operations per second \u00b7 a tier can be "
                              "IOPS-bound at modest bandwidth",
                              "IOPS", "IOPS"))
+            _l35_ts_html = _strip_src_blocks(_l35_ts_html)
         except Exception:
             _l35_ts_html = ""
 
@@ -9490,13 +12346,13 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             _l35_ts_html = (
                 _l35_chart([("Storage read BW", "l35_rd_bw_mbs", "#22c55e"),
                             ("Storage write BW", "l35_wr_bw_mbs", "#eab308")],
-                           "L3.5 memory node \u2014 storage read/write "
-                           "bandwidth over the run",
+                           f"{_dev_node} \u2014 storage read/write "
+                           f"bandwidth over the run",
                            "per-interval bandwidth on the memory node",
                            "MB/s", "MB/s")
                 + _l35_chart([("Storage read IOPS", "l35_rd_iops", "#38bdf8"),
                               ("Storage write IOPS", "l35_wr_iops", "#a855f7")],
-                             "L3.5 memory node \u2014 storage IOPS over the run",
+                             f"{_dev_node} \u2014 storage IOPS over the run",
                              "operations per second \u00b7 a tier can be "
                              "IOPS-bound at modest bandwidth",
                              "IOPS", "IOPS"))
@@ -9678,6 +12534,11 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # L3.5 node memory and storage tiles, each naming the node so they are
     # never confused with the GPU host's DRAM or local SSD.
     _l35_hw_tiles = ""
+    # Pre-initialised because the queue-depth block below reads them to decide
+    # whether the tier has any storage telemetry at all, and the try that
+    # assigns them can raise before it gets that far.
+    _lr: list = []
+    _lw: list = []
     try:
         # "L3.5 node DRAM used" removed: it duplicated "L3.5 memory used
         # (raw)", which reports the same quantity from the store's own
@@ -9686,24 +12547,353 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         _lr = [v for v in (_l35s.get("l35_rd_bw_mbs") or []) if v == v]
         _lw = [v for v in (_l35s.get("l35_wr_bw_mbs") or []) if v == v]
         if _lr or _lw:
-            _rp = max(_lr) if _lr else 0.0
-            _wp = max(_lw) if _lw else 0.0
+            # Vet each peak against what the link can carry.  A v1.69.0
+            # report published "28,672 wr MB/s peak" -- 28 GiB/s through one
+            # namespace, 3,083x that window's 9.3 MB/s mean -- and the SSD
+            # requirement table then asked for 37,274 MB/s of write
+            # bandwidth.  A single sample from a counter reset is not a
+            # burst, and a peak is exactly the statistic that cannot survive
+            # one.
+            _rp_raw = max(_lr) if _lr else 0.0
+            _wp_raw = max(_lw) if _lw else 0.0
+            # Mean of the plausible samples, not of all of them: including
+            # the outlier in its own comparison baseline understates the
+            # discrepancy (a 28,672 sample pulled a 9.3 MB/s mean to 1,442,
+            # so the note read "20x the mean" for a 3,083x error).
+            from amoprof.report.metric_kernels import (
+                NVME_MAX_BW_MBS as _BW_CEIL)
+            def _plaus_mean(_vals):
+                _ok = [v for v in _vals if 0 <= v <= _BW_CEIL]
+                return (sum(_ok) / len(_ok)) if _ok else 0.0
+            _rp_v = _k_vet_bw(_rp_raw, _plaus_mean(_lr))
+            _wp_v = _k_vet_bw(_wp_raw, _plaus_mean(_lw))
+            _bw_rejected = [t for t, _v in (("read", _rp_v), ("write", _wp_v))
+                            if _v.get("rejected")]
+            for _t_bw, _v_bw in (("read", _rp_v), ("write", _wp_v)):
+                if _v_bw.get("rejected"):
+                    print(f"  [warn] {_t_bw} BW peak rejected: "
+                          f"{_v_bw.get('reason')}")
+            _rp, _wp = _rp_v["mbs"], _wp_v["mbs"]
+            # With a peak rejected, the surviving samples still have a
+            # largest member, and that is the honest peak -- reported as a
+            # peak over the plausible samples, saying how many were dropped.
+            _bw_drop_note = ""
+            if _bw_rejected:
+                if "read" in _bw_rejected:
+                    _rp = max([v for v in _lr if v <= _BW_CEIL], default=0.0)
+                if "write" in _bw_rejected:
+                    _wp = max([v for v in _lw if v <= _BW_CEIL], default=0.0)
+                _bw_drop_note = (
+                    " \u00b7 <b>peak over the physically possible samples</b>: "
+                    + "; ".join(
+                        _v.get("reason") for _t, _v in
+                        (("read", _rp_v), ("write", _wp_v))
+                        if _v.get("rejected")))
             _ratio = (f" \u00b7 write:read {_wp/_rp:.1f}:1" if _rp > 0 else "")
+            # Name the layer.  A second tile derived from the NVMe
+            # collector is relabelled "L3.5 ... read BW" downstream, and
+            # the two are read as the same quantity when they are not:
+            # this one is the memory node block device, that one is
+            # whatever node the NVMe metrics were scraped from.  A read
+            # served from the store memory tier, or from page cache over
+            # the file tier, never reaches this device at all.
+            # Name the device this actually came from.
+            #
+            # "block device on the memory node" was hardcoded, but these
+            # columns fall back to nvme_driver_timeseries.csv -- the GPU
+            # HOST's device -- whenever no memory-node storage file exists,
+            # which is every file-backend run. The tile then asserted a
+            # memory node that is not in the deployment, and because this
+            # tile reports the PEAK while the "L3 read/write BW" tiles report
+            # the MEAN of the same series, the pair read as two separate
+            # devices doing different amounts of work.
+            _bw_note = (f"peak of the same series as the L3 read/write BW "
+                        f"tiles · local block device, {_l35s_local_src}"
+                        if _l35s_local_src else
+                        "block device on the memory node")
+            _st_rd = None
+            try:
+                _cf2 = _first_existing(raw_dir, ["l35_store_capacity.csv"])
+                if _cf2:
+                    _c2 = _amoprof_read_columns_raw(_cf2, ["l35_file_hit_b"])
+                    _v2 = [x for x in (_c2.get("l35_file_hit_b") or []) if x == x]
+                    if len(_v2) >= 2:
+                        _st_rd = max(0.0, _v2[-1] - _v2[0])
+            except Exception:
+                _st_rd = None
+            if _st_rd and _rp <= 1.0:
+                _bw_note += (f" \u00b7 the store served {_st_rd/1e9:,.1f} GB of"
+                             f" file-tier reads that never reached it"
+                             f" \u2014 page cache, not the SSD")
             _l35_hw_tiles += kpi_card(
-                "L3.5 node storage BW",
+                f"{_TIER_NODE} storage BW (device)",
                 f"{_rp:,.0f} rd / {_wp:,.0f} wr MB/s peak",
-                f"iostat on the memory node{_ratio}")
+                f"{_bw_note}{_ratio}{_bw_drop_note}")
         _lq = [v for v in (_l35s.get("l35_avgqu_sz") or []) if v == v]
-        if _lq:
-            _lu = [v for v in (_l35s.get("l35_io_util_pct") or []) if v == v]
-            _l35_hw_tiles += kpi_card(
-                "L3.5 node storage queue depth (average)",
-                f"{max(_lq):,.1f} peak depth",
-                ("avgqu-sz \u00b7 the pressure signal on NVMe"
-                 + (f" \u00b7 %util {max(_lu):.0f}% peak, which saturates "
-                    f"early and is not a capacity measure" if _lu else "")))
+        # The exact blktrace Q->C summary outranks the sysfs avgqu_sz series,
+        # which on this hardware reads ~1e-4 and rendered as "0.0 peak depth"
+        # in this tile while the bottleneck section, reading the summary,
+        # reported mean 0.36 / peak 1 in the same report.
+        _qd_exact_max = _safe_float((_qd_sum or {}).get("qd_max", 0))
+        _qd_exact_mean = _safe_float((_qd_sum or {}).get("qd_mean", 0))
+        # Same bound as the chart: a summary reporting a depth in the
+        # thousands is an unmatched-event count, and must not become the
+        # headline figure of a tile.
+        if _qd_exact_max > _QD_PLAUSIBLE_MAX or _qd_exact_mean > _QD_PLAUSIBLE_MAX:
+            print(f"  [warn] queue depth: discarding the blktrace summary "
+                  f"({_qd_exact_mean:,.0f} mean / {_qd_exact_max:,.0f} peak) "
+                  f"— above the plausible bound of "
+                  f"{_QD_PLAUSIBLE_MAX:,.0f}.")
+            _qd_exact_max = _qd_exact_mean = 0.0
     except Exception:
         _l35_hw_tiles = ""
+
+    # ---- Storage queue depth, in its own block -----------------------------
+    #
+    # This tile used to live inside the try above, which ends in
+    # `_l35_hw_tiles = ""` -- so any exception raised while building the
+    # bandwidth tile silently removed the queue-depth tile as well, and vice
+    # versa. One tile failing must not delete its neighbours.
+    #
+    # It also used to render only when a condition matched, so on a run with
+    # no blktrace summary and an all-zero avgqu_sz column it disappeared
+    # entirely -- a worse outcome than the "0.0 peak depth" it replaced,
+    # because a missing tile reads as "this tier has no queue" rather than
+    # "this was measured and the answer was zero" or "this was never
+    # collected". The tile now always renders when the tier has any storage
+    # telemetry, and says which of those three it is.
+    # Bound before the try: the requirement table and the chart subtitle both
+    # ask whether the event figure was vetoed, and a flag that exists only on
+    # the success path is a NameError on every other path.
+    _qd_vetoed = False
+    _qd_reject_reasons: list = []
+    try:
+        _qd_exact_src = str((_qd_sum or {}).get("qd_source", ""))
+        _lu = [v for v in (_l35s.get("l35_io_util_pct") or []) if v == v]
+
+        # Candidate sources, best first. The local-device fetch writes
+        # avgqu_sz / qd_peak / inflight into nvme_driver_timeseries.csv
+        # unprefixed; only when l35_storage_timeseries.csv is absent do those
+        # get mapped onto l35_* names. Reading l35_avgqu_sz alone therefore
+        # missed the local columns whenever both files existed.
+        _qd_ser = []
+        _qd_ser_name = ""
+        for _cand in ("l35_avgqu_sz", "avgqu_sz", "l35_bt_qd_mean",
+                      "inflight", "queue_depth", "aqu_sz"):
+            _vals = [v for v in (_l35s.get(_cand) or []) if v == v]
+            if not _vals:
+                _st = nvme_ts.get(_cand) or {}
+                _mx = _safe_float(_st.get("max", 0))
+                _vals = [_mx] if _mx > 0 else []
+            if _vals:
+                _qd_ser, _qd_ser_name = _vals, _cand
+                if max(_vals) > 0:
+                    break
+
+        _util_note = (f" \u00b7 %util {max(_lu):.0f}% peak, which saturates "
+                      f"early and is not a capacity measure" if _lu else "")
+
+        if _qd_exact_max > 0:
+            # "exact blktrace Q->C" requires POSITIVE evidence of that source.
+            # The old test was `not qd_source.startswith("advisory")`, so an
+            # EMPTY qd_source -- which is what a summary written without the
+            # field, or any future source, produces -- was labelled exact.
+            # A run whose blktrace queue-depth timeseries was missing still
+            # claimed exact Q->C on this tile while the chart beneath it said
+            # "iostat/sysfs fallback".
+            _qd_src_l = _qd_exact_src.lower()
+            if "blktrace" in _qd_src_l or "q_to_c" in _qd_src_l:
+                _src_txt = "exact blktrace Q\u2192C"
+            elif _qd_src_l.startswith("advisory") or _qd_src_l:
+                _src_txt = f"advisory fallback ({_qd_exact_src})"
+            else:
+                _src_txt = "source not recorded in the queue-depth summary"
+            # A low peak has two explanations that look identical in the
+            # number alone: an I/O path that issues one request and waits,
+            # or an event stream whose Q and C alternate for reasons
+            # unrelated to the device. IOPS x latency is measured
+            # independently of the depth, so the analyser's cross-check is
+            # what separates them -- and a reader asking "how is the peak 1
+            # when the SSD is busy?" needs that verdict here, not buried in
+            # a JSON file.
+            _qd_cons = str((_qd_sum or {}).get("qd_consistency", ""))
+            _qd_inv = _safe_float((_qd_sum or {}).get("qd_order_inversions", 0))
+            _qd_exp = (_qd_sum or {}).get("qd_expected_littles_law", None)
+            _qd_lat = (_qd_sum or {}).get("qd_mean_lat_ms", None)
+            _qd_iops = (_qd_sum or {}).get("qd_iops_from_q_events", None)
+            _check = ""
+            if _qd_exp is not None and _qd_iops is not None:
+                _check = (f" \u00b7 cross-check: {_safe_float(_qd_iops):,.0f} IOPS "
+                          f"\u00d7 {_safe_float(_qd_lat):.3f} ms = "
+                          f"{_safe_float(_qd_exp):.2f} expected depth")
+                # An EMPTY consistency field used to fall to the else and
+                # print "(agrees ...)", which is how a tile headlining 1,401
+                # came to claim agreement with an expected depth of 0.92.
+                # Compare the numbers here instead of trusting a field that
+                # may never have been written.
+                # Only two outcomes are reachable here, and that is the
+                # point: a figure that disagrees with Little's Law by more
+                # than the kernel's slack has already been rejected above and
+                # never reaches this tile, so there is no "disagrees" footnote
+                # to write.  A third branch for it would be dead code that
+                # reads like a safety net.
+                _qd_exp_f = _safe_float(_qd_exp, 0.0)
+                _qd_shown = _safe_float(_qd_exact_mean, 0.0)
+                if _qd_cons and not _qd_cons.startswith("consistent"):
+                    _check += f" \u2014 {_qd_cons}"
+                elif _qd_exp_f > 0 and _qd_shown > 0:
+                    # Reached only when the two already agree within the
+                    # kernel's bound, so say which figure agreed.
+                    _check += " (agrees with the figure above)"
+                elif not _qd_cons:
+                    _check += " (no consistency verdict was recorded)"
+            if _qd_inv > 0:
+                _check += (f" \u00b7 {_qd_inv:,.0f} out-of-order trace event(s) "
+                           f"were sorted before counting")
+
+            # Two independent sources, and when they disagree by a lot the
+            # disagreement IS the finding.
+            #
+            # blktrace Q->C counts every queue and completion event, so it
+            # cannot miss concurrency; sysfs inflight is an instantaneous
+            # gauge sampled every step, so it misses almost everything but
+            # cannot invent a depth it did not see. A run reporting peak 1
+            # from blktrace while a sampled gauge caught 16 means the event
+            # count is wrong, not that the sample is -- a sample of 16
+            # requires 16 requests to have genuinely coexisted.
+            _other_peak = 0.0
+            _other_mean = 0.0
+            try:
+                _o_vals = [v for v in (_nvme_qd_series or []) if v == v]
+                _other_peak = max(_o_vals, default=0.0)
+                _other_mean = (sum(_o_vals) / len(_o_vals)) if _o_vals else 0.0
+            except Exception:
+                _other_peak = _other_mean = 0.0
+            # When the two sources disagree this far, the tile's HEADLINE has
+            # to be the figure the tile tells the reader to trust. Showing
+            # "0.36 mean / 1 peak" above a note explaining that 1 is the
+            # figure to distrust puts the report in contradiction with
+            # itself -- and the headline is what gets quoted.
+            _qd_prefer_sampled = _other_peak > max(_qd_exact_max * 2.0,
+                                                   _qd_exact_max + 1.0)
+
+            # The rule above is one-directional: it catches the event stream
+            # UNDER-reporting against a sampled gauge.  Over-reporting went
+            # straight to the headline, and a v1.69.0 report carried
+            # "1,401.09 mean / 3,430 peak" on a device whose own avgqu-sz
+            # peaked at 25.97, whose Little's Law depth was 0.92, and whose
+            # trace captured no completion latency at all.  The shared kernel
+            # applies all of those grounds, so this tile and the SSD
+            # requirement table cannot reach different conclusions.
+            _qd_dev_vals = [v for v in (_qd_ser or []) if v == v]
+            _qd_dev_peak = max(_qd_dev_vals, default=0.0)
+            _qd_dev_mean = ((sum(_qd_dev_vals) / len(_qd_dev_vals))
+                            if _qd_dev_vals else 0.0)
+            # The sampled in-flight gauge counts too: either independent
+            # device-side series is a floor on the real depth.
+            if _other_peak > _qd_dev_peak:
+                _qd_dev_peak, _qd_dev_mean = _other_peak, _other_mean
+            _qd_vet = _k_vet_qd(
+                event_mean=_qd_exact_mean, event_peak=_qd_exact_max,
+                event_lat_ms=_safe_float(_qd_lat, 0.0),
+                event_iops=_safe_float(_qd_iops, 0.0),
+                device_mean=_qd_dev_mean, device_peak=_qd_dev_peak)
+            if _qd_vet.get("rejected"):
+                _qd_reject_reasons = list(_qd_vet.get("reasons") or [])
+                print(f"  [warn] queue depth: discarding the event-derived "
+                      f"figure ({_qd_exact_mean:,.2f} mean / "
+                      f"{_qd_exact_max:,.0f} peak) — "
+                      + "; ".join(_qd_reject_reasons))
+                _qd_why = (" \u00b7 <b>the blktrace Q\u2192C figure "
+                           f"({_qd_exact_mean:,.2f} mean / {_qd_exact_max:,.0f} "
+                           "peak) is not reported here:</b> "
+                           + "; ".join(_qd_reject_reasons) + ".")
+                if _qd_vet.get("peak", 0.0) > 0 or _qd_vet.get("mean", 0.0) > 0:
+                    _l35_hw_tiles += kpi_card(
+                        f"{_TIER_NODE} storage queue depth",
+                        f"{_qd_vet['mean']:,.2f} mean / "
+                        f"{_qd_vet['peak']:,.2f} peak",
+                        ("kernel avgqu-sz / in-flight gauge \u00b7 the pressure "
+                         "signal on NVMe" + _qd_why + _util_note))
+                else:
+                    _l35_hw_tiles += kpi_card(
+                        f"{_TIER_NODE} storage queue depth",
+                        "not reported",
+                        ("No queue-depth figure in this window survives its "
+                         "own cross-checks, and there is no independent device "
+                         "gauge to fall back to." + _qd_why + _util_note))
+                # No need to zero _qd_exact_* or _qd_prefer_sampled: every
+                # later read of them is inside a branch `_qd_vetoed` already
+                # skips, so clearing them was dead code that read like a
+                # safeguard.  Reversion testing found it -- removing the two
+                # assignments changed no output.
+                _qd_vetoed = True
+            if _qd_vetoed:
+                pass
+            elif _qd_prefer_sampled:
+                print(f"  [warn] queue depth: event-derived peak "
+                      f"{_qd_exact_max:g} but a sampled gauge reached "
+                      f"{_other_peak:g} \u2014 the event stream is suspect; "
+                      f"reporting the sampled gauge")
+                _l35_hw_tiles += kpi_card(
+                    f"{_TIER_NODE} storage queue depth",
+                    f"{_other_mean:,.2f} mean / {_other_peak:,.0f} peak",
+                    (f"sampled in-flight gauge"
+                     + (f" ({_nvme_qd_label.replace('L3 queue depth', '').strip(' ()')})"
+                        if "(" in _nvme_qd_label else "")
+                     + f" \u00b7 the pressure signal on NVMe \u00b7 "
+                     f"<b>not</b> the blktrace Q\u2192C summary, which reported "
+                     f"{_qd_exact_mean:,.2f} mean / {_qd_exact_max:,.0f} peak "
+                     f"({_src_txt}). An instantaneous sample cannot exceed the "
+                     f"real depth, so {_other_peak:,.0f} requests did coexist "
+                     f"and the event-derived peak is the figure to distrust"
+                     + _check + _util_note))
+            else:
+                _l35_hw_tiles += kpi_card(
+                    f"{_TIER_NODE} storage queue depth",
+                    f"{_qd_exact_mean:,.2f} mean / {_qd_exact_max:,.0f} peak",
+                    (f"{_src_txt} \u00b7 the pressure signal on NVMe"
+                     + (f" \u00b7 {_qd_ser_name} read {max(_qd_ser):.4f} peak over "
+                        f"the same window and is not used here"
+                        if _qd_ser and max(_qd_ser) >= 0 else "")
+                     + _check + _util_note))
+        elif _qd_ser and max(_qd_ser) > 0:
+            # Precision scaled to the value. One decimal turned every
+            # sub-0.05 reading into "0.0"; three still turns 0.0004 into
+            # "0.000", which reads as the zero it is not.
+            _qmax = max(_qd_ser)
+            _qtxt = (f"{_qmax:,.2f}" if _qmax >= 1 else
+                     f"{_qmax:,.3f}" if _qmax >= 0.01 else
+                     f"{_qmax:.1e}")
+            _l35_hw_tiles += kpi_card(
+                f"{_TIER_NODE} storage queue depth (average)",
+                f"{_qtxt} peak depth",
+                (f"{_qd_ser_name} \u00b7 the pressure signal on NVMe \u00b7 no "
+                 f"exact blktrace Q\u2192C summary in this run" + _util_note))
+        elif _qd_ser:
+            # The column exists and never left zero. That is a finding --
+            # the device was never queued -- and it is not the same as the
+            # counter being absent.
+            _l35_hw_tiles += kpi_card(
+                f"{_TIER_NODE} storage queue depth",
+                "0 \u2014 never queued",
+                (f"{_qd_ser_name} stayed at zero for every sample in this "
+                 f"window, so no request ever waited behind another. No exact "
+                 f"blktrace Q\u2192C summary in this run to cross-check it"
+                 + _util_note))
+        elif _lr or _lw or _lu:
+            # The tier has storage telemetry but no queue-depth column at all.
+            _l35_hw_tiles += kpi_card(
+                f"{_TIER_NODE} storage queue depth",
+                "not collected",
+                ("no queue-depth counter was published for this window "
+                 "(avgqu_sz, inflight, or blktrace Q\u2192C). Device bandwidth "
+                 "is measured, so this is a gap in telemetry, not an idle "
+                 "device" + _util_note))
+    except Exception as _qde:
+        # combined.py has no module-level logger; print, like the other
+        # diagnostics in this module, rather than raising inside a handler.
+        print(f"  [warn] queue-depth tile skipped: {_qde}")
 
     # ---- Endurance: tokens -> host bytes -> NAND bytes --------------------
     # Two amplification ratios, and they answer different questions.  The
@@ -9764,19 +12954,61 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         if _bk_tok > 0 and kv_bytes_tok_kb > 0 and _host_gb > 0:
             _logical_gb = _bk_tok * kv_bytes_tok_kb * 1024.0 / 1e9
             _amp = _host_gb / _logical_gb if _logical_gb > 0 else 0.0
-            _endur_tiles += kpi_card(
-                "L3.5 KV\u2192host amplification",
-                f"{_amp:,.2f}x",
-                (f"host {_host_gb:,.1f} GB \u00f7 logical KV "
-                 f"{_logical_gb:,.1f} GB ({_bk_tok:,.0f} tokens backed up) \u00b7 "
-                 f"this ratio moves with page size, eviction and memory "
-                 f"composition \u2014 the part you control"))
-            if _nand_gb > 0:
+            # A ratio that rounds to 0.00x is not a measurement of
+            # amplification.  Amplification is host bytes per logical byte
+            # offloaded, so it cannot be zero while both inputs are positive;
+            # a v1.69.0 report printed "0.00x" from host 3.0 GB over logical
+            # KV 15,948.4 GB, which says the two inputs cannot both describe
+            # the same traffic -- 5,316x apart -- not that the drive wrote
+            # nothing.  Publishing the quotient hides that; naming the gap
+            # states it.
+            if _amp >= 0.005:
                 _endur_tiles += kpi_card(
-                    "L3.5 KV\u2192NAND total",
-                    f"{(_nand_gb / _logical_gb if _logical_gb > 0 else 0):,.2f}x",
-                    "both stages combined \u00b7 NAND bytes actually burned per "
-                    "logical KV byte offloaded, which is what consumes endurance")
+                    "L3.5 KV\u2192host amplification",
+                    f"{_amp:,.2f}x",
+                    (f"host {_host_gb:,.1f} GB \u00f7 logical KV "
+                     f"{_logical_gb:,.1f} GB ({_bk_tok:,.0f} tokens backed up) \u00b7 "
+                     f"this ratio moves with page size, eviction and memory "
+                     f"composition \u2014 the part you control"))
+            else:
+                _endur_tiles += kpi_card(
+                    "L3.5 KV\u2192host amplification",
+                    "unreconciled",
+                    (f"host writes {_host_gb:,.1f} GB against logical KV "
+                     f"{_logical_gb:,.1f} GB ({_bk_tok:,.0f} tokens backed up "
+                     f"\u00d7 {kv_bytes_tok_kb:,.0f} KB/token) \u2014 "
+                     f"{_logical_gb / max(_host_gb, 1e-9):,.0f}\u00d7 apart. "
+                     f"Amplification is host bytes per logical byte offloaded, "
+                     f"so it cannot be below 1 unless the engine is persisting "
+                     f"far less than it reports backing up, the SMART counter "
+                     f"covers a different device, or KV bytes/token overstates "
+                     f"what is actually written. No ratio is published from "
+                     f"two figures that disagree this far."))
+            if _nand_gb > 0:
+                # Same guard as KV->host above: a ratio that rounds to 0.00x
+                # is two inputs that cannot both describe the same traffic,
+                # not a measurement of amplification.  This tile kept
+                # printing "0.00x" after its sibling was fixed, because the
+                # guard was added in one place and not the other.
+                _amp_nand = (_nand_gb / _logical_gb) if _logical_gb > 0 else 0.0
+                if _amp_nand >= 0.005:
+                    _endur_tiles += kpi_card(
+                        "L3.5 KV\u2192NAND total",
+                        f"{_amp_nand:,.2f}x",
+                        "both stages combined \u00b7 NAND bytes actually burned "
+                        "per logical KV byte offloaded, which is what consumes "
+                        "endurance")
+                else:
+                    _endur_tiles += kpi_card(
+                        "L3.5 KV\u2192NAND total",
+                        "unreconciled",
+                        (f"NAND writes {_nand_gb:,.1f} GB against logical KV "
+                         f"{_logical_gb:,.1f} GB \u2014 "
+                         f"{_logical_gb / max(_nand_gb, 1e-9):,.0f}\u00d7 apart. "
+                         f"NAND bytes per logical KV byte offloaded cannot be "
+                         f"below 1 while the tier is persisting what it "
+                         f"reports backing up, so no ratio is published from "
+                         f"these two."))
 
         # DWPD needs the drive's rated capacity and the window length.
         _cap_gb = _pk_static = 0.0
@@ -9818,13 +13050,27 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         _mem_u, _mem_c = _l35_used_gb, _l35_cap_gb
 
     for _lbl, _u, _c, _note in (
-            ("L3.5 memory used (raw)", _mem_u, _mem_c,
+            ("L3.5 memory used — raw", _mem_u, _mem_c,
              "store-reported allocated \u00f7 total memory bytes \u00b7 measured, "
              "no model assumption"),
-            ("L3.5 storage used (raw)", _sto_u, _sto_c,
+            ("L3.5 storage used — raw", _sto_u, _sto_c,
              "store-reported allocated \u00f7 total file bytes \u00b7 measured, "
              "no model assumption")):
         if _u <= 0:
+            # On a run whose backing tier IS the remote store, a missing raw
+            # figure is a gap in the store's own reporting, not an absent
+            # tier -- and the token tiles below are derived from these same
+            # bytes, so a reader who sees those and not these has no way to
+            # tell which.  Name it instead of dropping the tile.
+            if _TIER == "L3.5":
+                _l35_tiles += kpi_card(
+                    _lbl, "not collected",
+                    "The store did not report this tier's allocated bytes in "
+                    "this window (master_allocated_bytes / "
+                    "master_allocated_file_size_bytes, via "
+                    "l35_store_capacity.csv). A store with no file tier "
+                    "configured reports none by design; otherwise check that "
+                    "the master exporter was scraped for the whole window.")
             continue
         _pct = (f" \u00b7 {_u / _c * 100:.0f}% full" if _c > 0 else "")
         _l35_tiles += kpi_card(
@@ -9839,8 +13085,8 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                     f"\u00b7 DERIVED: sliding-window attention is not modelled, "
                     f"so true token capacity is likely higher")
         if _mem_u > 0 and _sto_u > 0:
-            for _lbl, _u, _c in (("L3.5 memory used (tokens)", _mem_u, _mem_c),
-                                 ("L3.5 storage used (tokens)", _sto_u, _sto_c)):
+            for _lbl, _u, _c in (("L3.5 memory KV residency", _mem_u, _mem_c),
+                                 ("L3.5 storage KV residency", _sto_u, _sto_c)):
                 _l35_tiles += kpi_card(
                     _lbl,
                     (f"{_b2t(_u):,.0f} / {_b2t(_c):,.0f} tok" if _c > 0
@@ -9848,13 +13094,361 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         elif (_mem_u + _sto_u) > 0:
             _tu, _tc = _mem_u + _sto_u, _mem_c + _sto_c
             _l35_tiles += kpi_card(
-                "L3.5 used total (tokens)",
+                "L3.5 used total — KV residency",
                 f"{_b2t(_tu):,.0f} / {_b2t(_tc):,.0f} tok" if _tc > 0
                 else f"{_b2t(_tu):,.0f} tok",
                 _derived + " \u00b7 memory and storage combined: the store did "
                            "not report them separately")
 
+    # ---- KV cache generated during the run ---------------------------------
+    #
+    # "Generated" means KV that the GPUs actually COMPUTED. A prefill token
+    # served from the prefix cache did not generate KV -- it reused KV that
+    # already existed -- so counting all prompt tokens would overstate this by
+    # whatever the hit rate is, which on these runs is ~95%: a 20x error.
+    #
+    #   generated tokens = (prompt - cached) + decode
+    #                    = recomputed prefill + every output token
+    #
+    # Both terms are measured counters. The byte figure needs KV bytes per
+    # token, which comes from the shared resolver and is exact only when a
+    # model config was supplied; when it cannot be resolved the tile reports
+    # tokens and says the byte figure is unavailable rather than publishing a
+    # default dressed as a measurement.
+    _kvg_prompt = _safe_float(_tok_den, 0.0)
+    _kvg_cached = _safe_float(_tok_num, 0.0)
+    # _tok_num matches on 'cached_tokens_total'.  An engine that exports only
+    # realtime_tokens_total{mode="prefill_cache"} -- which is the column the
+    # comparator reads, and the one this report's own cache-hit formula is
+    # defined on -- does not match that substring, so cached came back 0 while
+    # prompt resolved fine.  (prompt - 0) + decode then reports the ENTIRE
+    # prompt as newly computed KV: at a 98.8% hit rate that is 83x high, and
+    # the only sign is a "- 0 cached" buried in the note.
+    # The realtime phase counters, resolved the way the phase-throughput
+    # chart resolves them: _amoprof_read_columns_substr requires BOTH
+    # substrings in the column name, so it matches whichever form the label
+    # expansion produced -- [mode=decode], {mode="decode"}, or anything else
+    # carrying both tokens.  A hand-written list of candidate names was the
+    # first attempt here, and it was guesswork: this is the function that
+    # already found these columns on the run in question, which is why its
+    # output-token chart carried "fallback (generation_tokens_total absent)"
+    # while this tile reported the totals missing.
+    _kvg_phase: dict = {}
+    try:
+        _kvg_sg_path = _first_existing(raw_dir, ["sglang_timeseries.csv"])
+        if _kvg_sg_path:
+            # EVERY matching column, not the first: see
+            # _amoprof_read_series_substr. A counter fanned out per rank is
+            # only whole when its series are summed, and the End report has
+            # summed them all along, so taking one here was a divergence
+            # waiting on a deployment that fans these out.
+            _kvg_phase = _amoprof_read_series_substr(_kvg_sg_path, {
+                "prefill_compute": ["realtime_tokens_total",
+                                    "mode=prefill_compute"],
+                "prefill_cache":   ["realtime_tokens_total",
+                                    "mode=prefill_cache"],
+                "decode":          ["realtime_tokens_total", "mode=decode"],
+            }) or {}
+    except Exception:
+        _kvg_phase = {}
+
+    def _kvg_counter_delta(_key) -> float:
+        """Window total of a cumulative counter, by the shared kernel.
+
+        The sum of positive per-step differences per column, then summed
+        across columns -- reset-safe inside the window, and equal to
+        last - first on a clean monotonic series. The arithmetic lives in
+        metric_kernels.counter_window_total so that this tile, the End
+        report's _delta_sum_metric and the comparison's _kv_delta cannot
+        drift apart again.
+        """
+        return float(_k_counter_total(_kvg_phase.get(_key) or [])["total"])
+
+    if _kvg_cached <= 0:
+        _kvg_cached = _kvg_counter_delta("prefill_cache")
+    _kvg_decode = _ts_delta(sglang_ts, "generation_tokens_total",
+                            "sglang_generation_tokens_total")
+
+    # Some deployments export realtime_tokens_total{mode=...} and NOT the
+    # prompt_tokens_total / generation_tokens_total counters.  On one such run
+    # this tile read "not collected" while the report's own cache-hit tile was
+    # computing a percentage from Δrealtime_tokens_total{mode="prefill_cache"}
+    # and {mode="prefill_compute"} two tiles above it, and its output-token
+    # chart was reading {mode="decode"} with the footnote "fallback
+    # (generation_tokens_total absent)".  Every input existed; only this tile
+    # did not look for them.
+    #
+    #   prompt = prefill_cache + prefill_compute   (the cache-hit denominator)
+    #   decode = decode mode
+    _kvg_prompt_src = ""
+    if _kvg_prompt <= 0:
+        _pc = _kvg_counter_delta("prefill_compute")
+        if _pc > 0 and _kvg_cached > 0:
+            _kvg_prompt = _kvg_cached + _pc
+            _kvg_prompt_src = (
+                f"prompt derived as Δrealtime_tokens_total"
+                f"{{mode=prefill_cache}} + {{mode=prefill_compute}} "
+                f"({_kvg_cached:,.0f} + {_pc:,.0f}) — "
+                f"sglang_prompt_tokens_total is not exported here")
+        elif _pc > 0:
+            # Compute alone IS the recomputed prefill, which is the term this
+            # tile actually needs; no cached figure is required for it.
+            _kvg_prompt = _pc
+            _kvg_cached = 0.0
+            _kvg_prompt_src = (
+                f"recomputed prefill taken directly from "
+                f"Δrealtime_tokens_total{{mode=prefill_compute}} "
+                f"({_pc:,.0f}) — neither prompt_tokens_total nor a cached "
+                f"total is exported here")
+    _kvg_decode_src = ""
+    if _kvg_decode <= 0:
+        _v_d = _kvg_counter_delta("decode")
+        if _v_d > 0:
+            _kvg_decode = _v_d
+            _kvg_decode_src = (
+                f"decode from Δrealtime_tokens_total{{mode=decode}} "
+                f"({_v_d:,.0f}) — sglang_generation_tokens_total is not "
+                f"exported here")
+    _kvg_recomp = max(0.0, _kvg_prompt - _kvg_cached)
+    _kvg_new_tok = _kvg_recomp + _kvg_decode
+    # What the run would have had to compute with no cache at all. The ratio
+    # of the two is what the hierarchy actually bought.
+    _kvg_demand_tok = _kvg_prompt + _kvg_decode
+    _kvg_kb = _safe_float(kv_bytes_tok_kb, 0.0)
+    _kvg_tp = max(_safe_float(tp_size, 1.0), 1.0)
+    _kvg_src = str((_kv_resolution or {}).get("source") or "")
+    _kvg_exact = bool((_kv_resolution or {}).get("exact"))
+
+    _kvg_tile = ""
+    if _kvg_new_tok > 0 and _kvg_kb > 0:
+        _kvg_gb = _kvg_new_tok * _kvg_kb / (1024 * 1024)
+        _kvg_rank_gb = _kvg_gb / _kvg_tp
+        _kvg_avoided_gb = (_kvg_demand_tok - _kvg_new_tok) * _kvg_kb / (1024 * 1024)
+        _kvg_note = (
+            f"({_kvg_prompt:,.0f} prompt − {_kvg_cached:,.0f} cached) + "
+            f"{_kvg_decode:,.0f} decode = {_kvg_new_tok:,.0f} tokens of KV "
+            f"actually computed, × {_kvg_kb:,.0f} KB/token "
+            f"({_kvg_src or 'source not recorded'}"
+            f"{'' if _kvg_exact else ', ESTIMATED from the model name'}). "
+            f"Full-model across all ranks; per rank at TP={_kvg_tp:g} it is "
+            f"{_kvg_rank_gb:,.1f} GB. A prefill token served from cache "
+            f"generates no KV, so cache hits are excluded — with none, this "
+            f"run would have computed {_kvg_demand_tok * _kvg_kb / (1024*1024):,.1f} GB, "
+            f"so the hierarchy avoided {_kvg_avoided_gb:,.1f} GB.")
+        # Two checks, because a byte figure derived from an architecture is
+        # only as good as its agreement with what the hardware recorded.
+        #
+        # One: KV cannot be persisted to a backing tier unless it was
+        # computed first. Backup exceeding generated means one of the two
+        # counters is not window-scoped, or does not count what its name says.
+        _kvg_backup = _safe_float(backuped_tokens, 0.0)
+        if _kvg_backup > _kvg_new_tok * 1.02:
+            _kvg_note += (
+                f" <b>Check:</b> {_kvg_backup:,.0f} tokens were backed up to "
+                f"the backing tier, more than the {_kvg_new_tok:,.0f} generated "
+                f"here — KV cannot be persisted before it is computed, so one "
+                f"of the two counters is not scoped to this window or does not "
+                f"count tokens.")
+        # Two: reconcile the architecture against the device. The measured
+        # write total is re-derived from `blk` here rather than read from
+        # write_gb, which a later branch reassigns to the ESTIMATE — using it
+        # would compare this figure against itself and always agree.
+        _kvg_meas_wr = _safe_float(_pick(blk, ["nvme_write_total_gb",
+                                               "write_gb_total",
+                                               "write_GB_total"], 0.0))
+        if _kvg_meas_wr == 0.0:
+            _kvg_meas_wr = _safe_float(
+                _pick(blk, ["write_bytes_total"], 0.0)) / (1024 ** 3)
+        if _kvg_backup > 0 and _kvg_meas_wr > 0:
+            _kvg_impl_gb = _kvg_backup * _kvg_kb / (1024 * 1024)
+            _kvg_ratio = _kvg_impl_gb / _kvg_meas_wr
+            _kvg_ratio_rank = _kvg_ratio / _kvg_tp
+            if _kvg_ratio > 2.0 or _kvg_ratio < 0.5:
+                _kvg_note += (
+                    f" <b>Not reconciled with the device:</b> {_kvg_kb:,.0f} "
+                    f"KB/token implies {_kvg_impl_gb:,.0f} GB for the "
+                    f"{_kvg_backup:,.0f} tokens backed up, but the drive "
+                    f"recorded {_kvg_meas_wr:,.1f} GB written — "
+                    f"{_kvg_ratio:,.1f}× apart ({_kvg_ratio_rank:,.1f}× if the "
+                    f"stored KV is per-rank rather than full-model). The token "
+                    f"count above is measured and stands; the byte figure is "
+                    f"the architecture's full KV per token, which is not what "
+                    f"this engine persists — treat it as an upper bound, not "
+                    f"as bytes that crossed a bus.")
+        # A zero cached total with a real prompt total is almost never true on
+        # these runs -- the reported cache hit rate says otherwise -- so it is
+        # a resolution failure, and it inflates this tile by 1/(1-hit).  Say
+        # that on the tile instead of leaving "- 0 cached" to be noticed.
+        if _kvg_prompt > 0 and _kvg_cached <= 0:
+            # Quantify the overstatement only when there IS a hit rate to
+            # quantify it with.  The cached counter and the cache-hit figure
+            # often fail together, and 1/(1-0) = 1x reads as "no error at all"
+            # on a tile that may be two orders of magnitude high.
+            _kvg_h = _safe_float(cache_hit, 0.0)
+            # The factor is NOT 1/(1-h): that is the prefill-only ratio and
+            # ignores decode, which is counted correctly either way.  With
+            # cached ~= prompt x h, the overstatement is
+            #     (prompt + decode) / (prompt x (1 - h) + decode)
+            # which on the reference numbers is 73.4x where 1/(1-h) would say
+            # 79.8x.  Quoting the looser figure would misstate the error in
+            # the course of reporting it.
+            _kvg_est_good = (_kvg_prompt * (1.0 - min(_kvg_h, 99.99) / 100.0)
+                             + _kvg_decode)
+            _kvg_fac = (_kvg_demand_tok / _kvg_est_good
+                        if _kvg_est_good > 0 else 0.0)
+            _kvg_note += (
+                "<b>Cached prompt tokens did not resolve</b>, so every prompt "
+                "token is counted as newly computed here. "
+                + (f"Taking cached ≈ prompt × the {_kvg_h:,.1f}% hit rate this "
+                   f"report measures, the figure above is about {_kvg_fac:,.0f}× "
+                   f"too high — (prompt + decode) ÷ (prompt × (1 − hit) + "
+                   f"decode), not 1/(1 − hit), which ignores decode. "
+                   if _kvg_h > 0 and _kvg_fac > 1.0 else
+                   "The hit rate did not resolve either, so the size of the "
+                   "overstatement cannot be stated — but on these runs it is "
+                   "typically one to two orders of magnitude. ")
+                + "Treat it as an upper bound until the cached counter is "
+                  "available.")
+        for _src_extra in (_kvg_prompt_src, _kvg_decode_src):
+            if _src_extra:
+                _kvg_note += f" \u00b7 {_src_extra}."
+        _kvg_tile = kpi_card(
+            "KV cache generated this run",
+            f"{_kvg_gb:,.1f} GB",
+            _kvg_note, accent=(_kvg_cached > 0))
+    elif _kvg_new_tok > 0:
+        _kvg_tile = kpi_card(
+            "KV cache generated this run",
+            f"{_kvg_new_tok:,.0f} tok",
+            f"({_kvg_prompt:,.0f} prompt − {_kvg_cached:,.0f} cached) + "
+            f"{_kvg_decode:,.0f} decode. The byte figure needs KV bytes per "
+            f"token and the model architecture could not be resolved"
+            f"{' (' + _kvg_src + ')' if _kvg_src else ''} — pass --model-path "
+            f"pointing at the served model's config.json. No default is "
+            f"substituted here, because a KV total is the denominator of "
+            f"every bandwidth-per-token figure in this report.")
+    elif _kvg_prompt > 0 or _kvg_decode > 0:
+        # Counters present but the arithmetic came out at zero: that is a
+        # finding (everything was a cache hit and nothing was decoded), and it
+        # is not the same as the counters being absent.
+        _kvg_tile = kpi_card(
+            "KV cache generated this run",
+            "0 tok",
+            f"{_kvg_prompt:,.0f} prompt tokens, all served from cache, and "
+            f"{_kvg_decode:,.0f} decode tokens. No KV was computed in this "
+            f"window.")
+    else:
+        # Neither counter resolved.  There was no branch for this, so the tile
+        # vanished without a word -- which is how an L3.5 run came back with
+        # no "KV cache generated" tile while an L3 run had one, and nothing in
+        # the report distinguished "this run computed no KV" from "the two
+        # counters this is made of were not found".
+        #
+        # Name both lookups, because they fail independently and for
+        # different reasons: the prompt total is read from sglang_summary's
+        # cache-hit denominator first and the timeseries column second, while
+        # the cached total matches on 'cached_tokens_total' and will NOT match
+        # an engine that only exports realtime_tokens_total{mode=…}.
+        _kvg_tile = kpi_card(
+            "KV cache generated this run",
+            "not collected",
+            "Needs prompt and decode token totals for the window. Prompt "
+            "comes from cache_hit_token_weighted_denominator_tokens in "
+            "sglang_summary.json, else Δsglang_prompt_tokens_total; decode "
+            "from Δsglang_generation_tokens_total. "
+            + (f"Prompt resolved to {_kvg_prompt:,.0f}; "
+               if _kvg_prompt > 0 else "Prompt did not resolve; ")
+            + (f"decode to {_kvg_decode:,.0f}; "
+               if _kvg_decode > 0 else "decode did not resolve; ")
+            + (f"cached to {_kvg_cached:,.0f}. "
+               if _kvg_cached > 0 else "cached did not resolve. ")
+            + "Δsglang_realtime_tokens_total{mode=prefill_cache|"
+              "prefill_compute|decode} was also tried, which is what a "
+              "deployment exporting the realtime modes rather than the "
+              "cumulative counters publishes. "
+            + "Check that sglang_timeseries.csv covers the window and that "
+              "the SGLang scrape target is the inference server, not the "
+              "memory node — an instance selector pointed at the wrong host "
+              "returns an empty series rather than an error.")
+
+    # ---- KV residency, one tile per tier ----------------------------------
+    #
+    # Each tier already has a RAW usage tile fed by the system's own
+    # accounting: HBM used (DCGM), GPU node host DRAM used (/proc/meminfo),
+    # L3 cache used (df on the HiCache path), L3.5 memory/storage used (the
+    # store's allocator).  Those count everything resident -- weights,
+    # activations, page cache -- so they answer "how full is this tier", not
+    # "how much KV is in it".  These tiles answer the second question, and
+    # sit beside the first so the pair reads as a pair.
+    #
+    # L2 and L3.5 already had both halves.  L1 and L3 had only the raw half,
+    # so the grid let you compare HBM capacity pressure against DRAM KV
+    # residency and call it a hierarchy view.
+    #
+    # Every figure comes from `_tier_resid`, i.e. from the same series the
+    # tier-occupancy charts plot, including the DERIVED marker where a tier
+    # has no residency gauge of its own.
+    def _resid_tile(_tier: str, _title: str, _raw_tile_label: str) -> str:
+        _rows = _tier_resid.get(_tier) or []
+        if not _rows:
+            return ""
+        _out = ""
+        for _r in _rows:
+            _mean, _peak, _cap = _r["mean"], _r["peak"], _r["cap"]
+            if _mean <= 0 and _peak <= 0:
+                continue
+            # Tokens are the unit `_occ` carries for every tier.  Showing GB
+            # as well needs KV bytes/token, which is exact only from a model
+            # config; without one the GB figure would be an estimate dressed
+            # as a measurement, so it is omitted rather than approximated.
+            _gb = ((_mean * kv_bytes_tok_kb / (1024.0 * 1024.0))
+                   if kv_bytes_tok_kb > 0 else 0.0)
+            _val = f"{_mean:,.0f}" + (f" / {_cap:,.0f} tok" if _cap > 0
+                                      else " tok")
+            # Whether the KV geometry is exact decides how much of this tile
+            # can be trusted, and it differs by tier.  L1's tokens come from
+            # SGLang's own pool gauge and stand on their own; L3 and L3.5
+            # publish BYTES, so their token counts are a division by KV
+            # bytes/token and inherit its error -- on this model the
+            # name-based size hint gives 256 KB against 960 KB exact, which
+            # is 3.75x.  A tile that showed the quotient without saying which
+            # it used would be unreadable as evidence.
+            _exact = bool(_kv_resolution.get("exact"))
+            _kvsrc = str(_kv_resolution.get("source") or "")
+            # Decided by tier, not by sniffing the provenance string.  L1 and
+            # L2 publish TOKEN gauges for both residency and capacity
+            # (sglang_num_used_tokens / max_total_num_tokens,
+            # hicache_host_used_tokens / hicache_host_total_tokens), so
+            # nothing in those tiles passes through KV bytes/token.  L3 and
+            # L3.5 publish BYTES -- a df snapshot, the store's allocator --
+            # and their capacity is a byte figure either way, so the token
+            # count, the percentage and the GB all move with that estimate.
+            _byte_derived = _tier in ("L3", "L3.5")
+            _note = (
+                (f"{_mean / _cap * 100:.0f}% of this tier's own capacity · "
+                 if _cap > 0 else "")
+                + f"mean over the window · peak {_peak:,.0f} tok"
+                + (f" ({_peak / _cap * 100:.0f}%)" if _cap > 0 else "")
+                + (f" · ≈{_gb:,.1f} GB at {kv_bytes_tok_kb:,.0f} KB/token"
+                   if _gb > 0 else
+                   " · no GB figure: KV bytes/token needs a model config")
+                + (f" · KV bytes/token: {_kvsrc}" if _kvsrc else "")
+                + ((" · ESTIMATE: this tier reports bytes, so the token count "
+                    "above scales with that figure — pass --model-path for an "
+                    "exact geometry")
+                   if (_byte_derived and not _exact) else "")
+                + f" · KV only, not total tier usage — see “{_raw_tile_label}”"
+                + (f" · {_r['how']}" if _r.get("how") else ""))
+            _out += kpi_card(
+                (_title if len(_rows) == 1 else f"{_title} · {_r['label']}"),
+                _val, _note,
+                # Flag a tier that actually ran out, since that is when
+                # residency stops being an accounting curiosity.
+                accent=bool(_cap > 0 and _peak / _cap >= 0.95))
+        return _out
+
     kpi_html = (
+        _kvg_tile +
         kpi_card("Cache hit",
                  _fmt_num(cache_hit, "%", 1),
                  (f"{_cache_hit_formula} · "
@@ -9879,7 +13473,32 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                  _fmt_num(e2e_ms, " ms", 0),
                  f"Δsglang_e2e_request_latency_seconds_sum ÷ "
                  f"Δsglang_e2e_request_latency_seconds_count over the "
-                 f"selected window · per-request mean") +
+                 f"selected window · per-request mean"
+                 # E2E = TTFT + decode, so the two are equal only when
+                 # decode contributed nothing.  A mooncake report showed
+                 # both at exactly 79,341 ms with TPOT at 307.4 ms/tok,
+                 # which cannot hold unless responses were a single token --
+                 # and that run's decode counter did not resolve at all, so
+                 # neither reading could be checked against the other. Equal
+                 # to the millisecond is a fact about the data worth stating:
+                 # it is either a one-token workload or two series carrying
+                 # the same numbers.
+                 + ((f" · <b>identical to TTFT mean</b> "
+                     f"({_fmt_num(ttft_ms, ' ms', 0)}): E2E is TTFT plus "
+                     f"decode, so these agree only if decode added nothing. "
+                     f"With TPOT at {_fmt_num(tpot_ms, ' ms/tok', 1)} that "
+                     f"needs responses of about one token"
+                     + (" — and this run's decode token counter did not "
+                        "resolve, so that cannot be confirmed here. Check "
+                        "whether the two histograms are distinct series "
+                        "before reading either as end-to-end latency"
+                        if _kvg_decode <= 0 else
+                        f", which the decode counter "
+                        f"({_kvg_decode:,.0f} tokens) does not support — "
+                        f"check whether the two histograms are distinct "
+                        f"series"))
+                    if (e2e_ms > 0 and ttft_ms > 0
+                        and abs(e2e_ms - ttft_ms) < 1.0) else "")) +
         # TTFT (Time To First Token) — single tile.  End Report's
         # §P50/P90/P99 Summary section carries the full percentile
         # distribution, so the Executive KPI grid only needs the primary
@@ -9917,6 +13536,37 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # removed from the KPI grid — their p50/p90/p99 distributions are now
         # charted in Bottleneck Analysis, which a single mean tile cannot show.
         # Set _KPI_SHOW_MEAN_LATENCY_TILES = True to restore them.
+        # ---- Token throughput -------------------------------------------
+        #
+        # Both directions on one tile, because neither answers the question
+        # alone: input tok/s is prefill work arriving, output tok/s is decode
+        # work leaving, and a tiering change moves them in opposite
+        # directions.  The decode figure is the ACTIVE mean -- the mean over
+        # samples where the engine was decoding -- since a window that is
+        # half idle otherwise reports half the throughput the server
+        # sustained, and that is the number people quote.
+        kpi_card(
+            "Token throughput",
+            ((f"{_fmt_num(_kpi_out_tp, '', 1)} out"
+              + (f" / {_fmt_num(input_tp_mean, '', 0)} in" if input_tp_mean > 0
+                 else ""))
+             + " tok/s") if (_kpi_out_tp > 0 or input_tp_mean > 0)
+            else "not collected",
+            (((f"decode {_kpi_out_tp_src}"
+               + (f" · p50 {_fmt_num(tp_p50, ' tok/s', 1)}" if tp_p50 > 0
+                  else "")
+               + (f" · peak {_fmt_num(throughput, ' tok/s', 1)}"
+                  if throughput > _kpi_out_tp else "")
+               + (f" · prefill {input_tp_method}" if input_tp_mean > 0
+                  else " · no input-token rate in this window"))
+              + (f" · decode is {_kpi_out_tp / input_tp_mean:.3f}x the input "
+                 f"rate, i.e. {input_tp_mean / _kpi_out_tp:,.0f} prompt "
+                 f"tokens arrive per token generated"
+                 if (_kpi_out_tp > 0 and input_tp_mean > 0) else ""))
+             if (_kpi_out_tp > 0 or input_tp_mean > 0) else
+             ("Needs sglang_gen_throughput or Δgeneration_tokens_total for "
+              "decode, and Δprompt_tokens_total ÷ Δtime for prefill. Neither "
+              "resolved in this window."))) +
         kpi_card("GPU util",
                  _fmt_num(_gpu_active_mean_dec or _gpu_overall_mean or gpu_util, "%", 1),
                  (f"overall {_fmt_num(_gpu_overall_mean, '%', 1)} · "
@@ -9924,7 +13574,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                   f"(>{_gpu_active_threshold:g}%) · "
                   f"idle {_fmt_num(_gpu_idle_fraction, '%', 1)} · "
                   f"{_fmt_num(gpu_peak, '% peak', 0)}")) +
-        kpi_card("HBM used (all GPUs)",
+        kpi_card("L1 HBM used — raw (all GPUs)",
                  (f"{_fmt_num(hbm_used_total_gb, ' GB', 1)} / "
                   f"{_fmt_num(hbm_total_all_gpus_gb, ' GB', 0)}"
                   if hbm_total_all_gpus_gb > 0 else f"{_fmt_num(hbm_gb, ' GB/GPU', 1)}"),
@@ -9933,8 +13583,13 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                   f"{_fmt_num(hbm_total, ' GB/GPU total', 0)}"
                   f"{' (inferred; DCGM FB_TOTAL missing)' if hbm_total_inferred else ''} · "
                   "weights + reserved KV pool + activations "
-                  "(not live KV blocks — see KV Pool Active %)"
+                  "(not live KV blocks — see “L1 KV residency” beside this tile)"
                   if hbm_total_all_gpus_gb > 0 else "per-GPU average from DCGM")) +
+        # The KV half of the tile above.  HBM used counts weights and
+        # activations too, so it cannot answer how much of the pool is
+        # holding live KV; this does, from SGLang's own pool gauge.
+        _resid_tile("L1", "L1 KV residency",
+                    "L1 HBM used — raw (all GPUs)") +
         kpi_card("GPU power",
                  _fmt_num(gpu_power, " W", 0),
                  "peak per GPU") +
@@ -9942,7 +13597,24 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # backend configured (HiCache disabled, hicache_storage_backend=None,
         # host_dram_only, etc.) hide these tiles entirely rather than
         # rendering "no L3 data" boilerplate.
-        (kpi_card("L3 (local storage) read BW",
+        # These two read nvme_rd_bw / nvme_wr_bw -- the GPU NODE's own NVMe
+        # driver counters.  On a remote backing tier that device is not the
+        # cache tier, yet a post-render substitution in amoprof.py rewrites
+        # every "L3 (local storage)" to the tier's long name, so a mooncake
+        # report carried "L3.5 (AI Memory Node / remote storage) read BW
+        # 17 MB/s · write BW 0.0 MB/s" from the local device while the memory
+        # node's own iostat reported 995 MB/s of writes in a different tile.
+        # The rename only changed the label.  Name the device instead, in a
+        # form that substitution does not match, so the figure stays useful
+        # (it shows the local path was idle) without claiming to be the tier.
+        # Only a DEVICE-measured figure gets the device's name.  A
+        # token-derived estimate describes the backing tier's traffic and
+        # keeps the tier label, which the post-render substitution in
+        # amoprof.py renames to the tier's long form -- correctly, in that
+        # case.
+        (kpi_card(("GPU node local NVMe read BW"
+                   if (has_l35 and not _bw_rd_is_est)
+                   else "L3 (local storage) read BW"),
                  _fmt_num(nvme_rd_bw, " MB/s", 0),
                  (f"mean | {_fmt_num(nvme_rd_iops, ' read IOPS', 0)}"
                   if l3_traffic_source == "blktrace"
@@ -9964,7 +13636,9 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                              "because requests are 4-16 KB random. Override via setup "
                              "key 'L3 (local storage) read BW target MB/s' for a non-Gen4 device."))
          if has_l3 else "") +
-        (kpi_card("L3 (local storage) write BW",
+        (kpi_card(("GPU node local NVMe write BW"
+                   if (has_l35 and not _bw_wr_is_est)
+                   else "L3 (local storage) write BW"),
                  _fmt_num(nvme_wr_bw, " MB/s", 1),
                  (f"{_fmt_num(nvme_wr_iops, ' IOPS', 0)} | "
                   f"{('1:' + str(int(round(1/rw_ratio))) if 0 < rw_ratio < 0.5 else f'{rw_ratio:.1f}:1')} R/W ratio"
@@ -10070,14 +13744,46 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # L3 HiCache capacity (df-based filesystem usage). Distinct from
         # "NVMe device util %" which is iostat device-busy time, not capacity.
         ((kpi_card(
-            ("L3 (local storage) cache used" if l3_capacity_source == "df/SMART runtime snapshot" else "L3 (local storage) configured capacity"),
+            ("L3 cache used — raw (df snapshot)"
+              if l3_capacity_source == "df/SMART runtime snapshot"
+              else "L3 cache used — raw (configured capacity)"),
             f"{l3_fs_used_gb:.0f} / {l3_fs_total_gb:.0f} GB",
-            ((f"{l3_fs_used_pct:.0f}% full · {l3_fs_avail_gb:.0f} GB free · df snapshot, not window I/O"
+            ((f"{l3_fs_used_pct:.0f}% full · {l3_fs_avail_gb:.0f} GB free · df snapshot"
+              + (f" taken at {_l3_snap_at}" if _l3_snap_at else "")
+              + ", not window I/O"
               + (f" · device {nvme_dev_cap_gb:.0f} GB" if nvme_dev_cap_gb > 0 else ""))
              if l3_capacity_source == "df/SMART runtime snapshot" else
              f"from setup_details.json · not a measured runtime delta"),
             accent=(l3_fs_used_pct >= 85 and l3_capacity_source == "df/SMART runtime snapshot"),
-         ) if (has_l3 and (l3_fs_total_gb > 0 or l3_fs_used_gb > 0)) else "")) +
+         ) if (has_l3 and (l3_fs_total_gb > 0 or l3_fs_used_gb > 0)) else
+         # A configured L3 with no capacity figure still gets a tile, saying
+         # why.  Omitting it left the grid showing an L3 KV residency with no
+         # raw usage beside it and nothing to explain the gap, which reads as
+         # the report having dropped the tile rather than the run having no
+         # df snapshot to report.  `_l3_cap_missing` is the same sentence the
+         # capacity chart's subtitle carries, so the two cannot drift.
+         (kpi_card(
+             "L3 cache used — raw (df snapshot)",
+             "not collected",
+             # Module-level `re`, not the `_re` alias: that alias is only
+             # imported inside a nested function and inside a conditional
+             # try-block earlier in this function, so it is an unbound local
+             # here on any run that skips that branch.  `re` has no local
+             # binding in this scope and is always available.
+             (re.sub(r"<[^>]+>", "", _l3_cap_missing).lstrip(" ·· ")
+              or ("No filesystem capacity for the HiCache path in this run. "
+                  "hicache_fs_used_gb / hicache_fs_total_gb come from the "
+                  "ssd_hardware collector's df snapshot (smart_summary.json "
+                  "or ssd_hw_summary.json); a Prometheus-only analyze has no "
+                  "df to run, so either include that collector in the "
+                  "service or put the capacity in setup details."))
+         ) if has_l3 else ""))) +
+        # The KV half for local L3.  df counts whatever else shares the
+        # filesystem; this is the cache's own share of it.  SGLang exports no
+        # resident-token gauge for the disk tier, so on a run without a df
+        # snapshot this is Σbackup − Σprefetch and says so in the note.
+        _resid_tile("L3", "L3 KV residency",
+                    "L3 cache used — raw (df snapshot)") +
         # v1.20.30: display l2_dram_used_gb directly.  The upstream
         # TP-vs-full decision at line ~4522 has already handled the
         # "impossible full-model" case; no cosmetic surgery here.
@@ -10086,7 +13792,21 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                  l2_dram_tile_note
              ) if l2_dram_capacity_gb > 0 and l2_dram_used_gb > 0 else
              (kpi_card("L2 KV residency (est.)", f"— / {_fmt_num(l2_dram_capacity_gb, ' GB', 0)}",
-                       l2_dram_tile_note) if l2_dram_capacity_gb > 0 else ""))) +
+                       l2_dram_tile_note) if l2_dram_capacity_gb > 0 else
+              # No L2 capacity at all: HiCache may be off, or its size was
+              # never reported.  The tier is half the hierarchy, so the tile
+              # states which rather than leaving a hole in the pair.
+              kpi_card(
+                  "L2 KV residency (est.)", "not collected",
+                  "No L2 capacity for this run, so a residency cannot be "
+                  "expressed against one. It comes from the HiCache ratio x "
+                  "the KV pool size (hicache_ratio and max_total_num_tokens), "
+                  "from an explicit HiCache size in setup details, or from the "
+                  "host DRAM total as a last resort. If HiCache is disabled "
+                  "this is correct and there is no L2 tier."
+                  + (f" Measured L2 residency this run: "
+                     f"{_fmt_num(l2_dram_used_gb, ' GB', 1)}."
+                     if l2_dram_used_gb > 0 else ""))))) +
         # Raw physical DRAM usage on the host, from /proc/meminfo via the
         # DRAM collector (dram_summary.json + dram_timeseries.csv fallback).
         # Distinct from the "L2 DRAM used" tile above, which is HiCache-
@@ -10094,7 +13814,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # weights, page cache, activations and every other resident
         # allocation on the node, not just KV.  Labelled "L2 DRAM used
         # (raw)" so the two tiles sit as a comparable pair.
-        (kpi_card("GPU node host DRAM used (physical)",
+        (kpi_card("L2 host DRAM used — raw (physical)",
                   f"{_fmt_num(host_dram_used_gb, ' GB', 1)} / {_fmt_num(host_dram_total_gb, ' GB', 0)}",
                   ((f"{_fmt_num(host_dram_used_pct, '% full', 0)} \u00b7 mean residency"
                     + (f" \u00b7 peak {_fmt_num(host_dram_used_peak_gb, ' GB', 1)}"
@@ -10103,7 +13823,17 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                     + "(includes weights, page cache, activations \u2014 not just KV)")
                    if host_dram_used_gb > 0 else
                    "raw DRAM residency unavailable \u00b7 enable --dram (DramMonitor)"))
-         if host_dram_total_gb > 0 else "") +
+         if host_dram_total_gb > 0 else
+         # The GPU node always has host DRAM, so a missing tile here is always
+         # a collection gap, never a property of the run.  Say which.
+         kpi_card("L2 host DRAM used — raw (physical)", "not collected",
+                  "No host DRAM figures in this run. They come from the "
+                  "DramMonitor collector reading /proc/meminfo "
+                  "(dram_total_gb / dram_used_gb_mean in dram_summary.json, "
+                  "or amoprof_dram_dram_* in Prometheus). Run analyze with "
+                  "--dram, or include the dram collector in the service. "
+                  "L2 KV residency is unaffected: it comes from SGLang's own "
+                  "HiCache gauges, not from /proc/meminfo.")) +
         # "L3.5 DRAM used (raw)" removed: it duplicated "L3.5 memory used
         # (raw)", which reports the same quantity from the store's own
         # accounting.  Two tiles for one number left the reader choosing.
@@ -10145,6 +13875,27 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # CPU is an L1-side host signal — the GPU node's own CPU — and belongs
     # beside GPU/HBM rather than at the end.
     kpi_html += _cpu_tile_l35 + _l35_hw_tiles + _l35_tiles + _endur_tiles
+
+    # Drop tiles for a tier this deployment does not use, before grouping, so
+    # the group is built from what will actually be shown.
+    if not has_l35:
+        kpi_html = _amoprof_drop_tier_tiles(kpi_html, "L3.5")
+    else:
+        # The mirror image, and it fires on the same cluster for the same
+        # reason.  A mooncake run's report carried "L3 cache used — raw (df
+        # snapshot) 25 / 3575 GB" and "L3 KV residency 46,737 tok": df on the
+        # HiCache path still sees files left by an earlier local-L3 run, and
+        # `l3_explicit_config` is true for ANY L3 backend, so those tiles
+        # rendered describing a tier this deployment is not using.
+        #
+        # Only the capacity and residency pair is dropped.  The tiles whose
+        # labels are built from `_TIER` already say "L3.5 …" on this run and
+        # are about the tier in use; dropping everything starting with "L3 "
+        # would take the backing tier's own bandwidth and queue tiles with it.
+        for _stale in ("L3 cache used", "L3 KV residency"):
+            kpi_html = _amoprof_drop_tier_tiles(kpi_html, _stale)
+    kpi_html = _amoprof_group_tier_tiles(kpi_html)
+
 
     # ── KV L3 storage requirement bullets ────────────────────────────────────────────
     req_16_64_pct_str = f"{req_size_16_64_pct:.0f}" if req_size_16_64_pct > 0 else "~89"
@@ -10369,7 +14120,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # ── Assemble full HTML ────────────────────────────────────────────────────
     title_suffix = f" · {_html.escape(run_label)}" if run_label else ""
 
-    return f"""<!DOCTYPE html>
+    return _bind_src_blocks(_attach_missing_src_blocks(f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>AMOprof Executive Summary{title_suffix}</title>
@@ -10410,6 +14161,62 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
   .exec-ov-strip > .exec-ov-chart svg{{width:100%;height:auto;display:block;
     min-width:0;}}
   @media (max-width:900px){{.exec-ov-strip{{grid-template-columns:1fr;}}}}
+  /* Chart provenance.  Deliberately quiet: it is reference material a
+     reader consults when a number looks wrong, not part of the reading
+     flow, so closed it is a small grey word aligned to the right edge of
+     the chart and it does not compete with the chart title above it. */
+  /* Reference material, not part of the reading flow -- but it has to be
+     findable.  A bordered chip reads as something to click; grey-on-grey
+     text at 72% opacity did not. */
+  .amoprof-src-row{{display:flex;flex-wrap:wrap;justify-content:flex-end;
+       align-items:flex-start;gap:6px;margin-top:8px;}}
+  .amoprof-src-row>details[open]{{flex:1 1 100%;}}
+  details.amoprof-src{{width:max-content;max-width:100%;font-size:11.5px;}}
+  details.amoprof-src>summary{{cursor:pointer;list-style:none;display:flex;
+       align-items:center;gap:5px;padding:3px 9px;border-radius:999px;
+       color:#9fb3cd;font-weight:600;letter-spacing:.2px;
+       background:rgba(15,23,42,.85);border:1px solid #33415a;
+       transition:color .12s,border-color .12s,background .12s;}}
+  details.amoprof-src>summary::-webkit-details-marker{{display:none;}}
+  details.amoprof-src>summary:hover{{color:#bfdbfe;border-color:#4b6389;
+       background:#0f172a;}}
+  details[open].amoprof-src>summary{{color:#bfdbfe;border-color:#4b6389;}}
+  details.amoprof-src .amoprof-src-ic{{font-style:italic;font-size:13px;
+       line-height:1;color:#7dd3fc;}}
+  details[open].amoprof-src{{width:100%;background:rgba(2,6,23,.5);
+       border:1px solid #1e293b;border-radius:8px;padding:6px 10px 4px;}}
+  details[open].amoprof-src>summary{{align-self:flex-start;
+       width:max-content;}}
+  details[open].amoprof-src>summary{{margin-bottom:2px;}}
+  .amoprof-src-body{{padding:6px 0 2px;overflow-x:auto;}}
+  .amoprof-src-body table{{border-collapse:collapse;width:100%;font-size:11px;}}
+  .amoprof-src-body th{{background:none;border-bottom:1px solid #1e293b;
+       color:#64748b;text-transform:none;letter-spacing:0;font-weight:600;
+       font-size:10px;padding:0 10px 3px 0;white-space:nowrap;}}
+  .amoprof-src-body td{{border-bottom:none;padding:2px 10px 2px 0;
+       color:#94a3b8;white-space:nowrap;vertical-align:top;}}
+  .amoprof-src-body tr:nth-child(even) td{{background:none;}}
+  .amoprof-src-body tr.id td{{padding-top:5px;}}
+  .amoprof-src-body tr.id:first-child td{{padding-top:2px;}}
+  .amoprof-src-body tr.fm td{{white-space:normal;color:#cbd5e1;
+       padding:1px 0 3px 0;border-bottom:1px solid rgba(30,41,59,.7);}}
+  .amoprof-src-body tr:last-child td{{border-bottom:none;}}
+  .amoprof-src-body code{{background:none;border:none;padding:0;
+       font-size:10.5px;color:#7dd3fc;}}
+  .amoprof-src-body td.f code{{color:#94a3b8;}}
+  .amoprof-src-body tr.fm code{{color:#b6c2d4;word-break:normal;
+       overflow-wrap:anywhere;line-height:1.55;}}
+  .amoprof-src-body p{{margin:6px 0 2px;color:#8394ad;font-size:10.5px;
+       line-height:1.5;white-space:normal;}}
+  /* Explanatory notes share the chip but carry prose, so they get readable
+     body text and a normal table rather than the compact source grid. */
+  .amoprof-note-body{{color:#cbd5e1;font-size:12px;line-height:1.6;}}
+  .amoprof-note-body p{{color:#cbd5e1;font-size:12px;line-height:1.6;
+       margin:0 0 8px;}}
+  .amoprof-note-body td{{white-space:normal;color:#cbd5e1;font-size:11.5px;}}
+  .amoprof-note-body th{{font-size:10.5px;}}
+  .amoprof-note .amoprof-src-ic{{font-style:normal;font-weight:700;
+       font-size:12px;}}
   .card{{background:#1e293b;border:1px solid #334155;border-radius:14px;padding:18px 20px;margin:12px 0;}}
   .card h2{{font-size:15px;margin:0 0 14px;color:#f1f5f9;display:flex;align-items:center;gap:8px;}}
   .card h3{{font-size:12px;font-weight:700;color:#94a3b8;margin:18px 0 8px;text-transform:uppercase;
@@ -10496,8 +14303,14 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
      scrolls vertically.  A non-wrapping horizontal strip hid every chart past
      the second one behind a sideways scrollbar most readers never touched —
      the charts existed but were effectively invisible. */
-  .corr-strip{{display:grid;gap:10px;align-items:start;
-    grid-template-columns:repeat(auto-fit,minmax(var(--corr-w,430px),1fr));
+  /* One chart per row.  Charts sat two or three abreast, and a panel whose
+     provenance block was collapsed left a tall blank beside its neighbour;
+     worse, a chart is read against the run's timeline, and side-by-side
+     panels with different x-extents invite reading them as aligned when
+     they are not.  Full width also gives the wide time-series charts the
+     room their x-axis labels need. */
+  .corr-strip{{display:grid;gap:12px;align-items:start;
+    grid-template-columns:1fr;
     /* Show about one screenful of charts at a time and scroll within the
        section, rather than expanding a card to thousands of pixels: a section
        with fifteen charts otherwise pushes everything after it far off-page,
@@ -10511,7 +14324,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
   /* Full-width charts (timelines, layer response) still span every column. */
   .corr-strip > .corr-chart-wide{{grid-column:1/-1;}}
   @media (max-width:900px){{
-    .corr-strip{{grid-template-columns:1fr;max-height:70vh;}}
+    .corr-strip{{max-height:70vh;}}
     .corr-chart{{flex:1 1 auto;}}
   }}
   .summary-grid{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:10px;}}
@@ -10619,7 +14432,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
   </ul>
 </div>
 
-</div></body></html>"""
+</div></body></html>"""))
 
 
 # ─── Tab-bar chrome (outer wrapper page only) ───────────────────────────────

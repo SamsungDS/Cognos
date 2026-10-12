@@ -242,6 +242,8 @@ def fetch_from_prometheus(
     l35_job: str = "",
     l35_storage_instance: str = "",
     l35_storage_job: str = "",
+    l35_nvme_device: str = "",
+    model_config: "dict | None" = None,
 ) -> dict[str, Any]:
     """Pull timeseries from a Prometheus server and write canonical CSVs.
 
@@ -265,8 +267,16 @@ def fetch_from_prometheus(
       job          : Filter to {job="..."} on every PromQL query.
       extra_labels : Additional {key:value} label filters (ANDed).
       label        : Run label for output filenames.
-      nvme_device  : NVMe device name hint (e.g. "nvme0n1") to pin
-                     node_disk_* metrics to the right device.
+      nvme_device  : NVMe device name (e.g. "nvme0n1", or "nvme6c6n1") to
+                     scope the GPU host's node_disk_* metrics to one device.
+      l35_nvme_device:
+                     The same, for the L3.5 memory node's own block device.
+                     Without it every node_disk_* query on that node is
+                     averaged across its NVMe namespaces, which dilutes
+                     bandwidth, IOPS and queue depth by the number of idle
+                     devices.  On a multipath namespace prefer the
+                     per-controller path name (nvmeXcYnZ): the kernel accounts
+                     the queue-depth integral there, not on the head.
 
     Returns a dict describing what was written, suitable for logging.
     """
@@ -368,6 +378,11 @@ def fetch_from_prometheus(
         l35_job=l35_job,
         l35_storage_instance=l35_storage_instance,
         l35_storage_job=l35_storage_job,
+        l35_nvme_device=l35_nvme_device,
+        # The caller's already-read --model-path config, so the fetch can
+        # write raw/model_config.json itself rather than depending on which
+        # step wrote it first.
+        model_config=model_config,
     )
 
     # The collector may auto-detect the backend when server_type="auto"; reuse

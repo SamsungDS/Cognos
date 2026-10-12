@@ -714,14 +714,95 @@ amoprof aggregate \
 
 Each `--run` uses `LABEL:DIR[:START[:END]]`. The first run is the baseline.
 
+`START` and `END` must contain **no colons**, because the spec is itself
+colon-separated. These all work:
+
+| form | example |
+|---|---|
+| Unix epoch | `1790811660` |
+| compact ISO | `20260930T2341Z` |
+| relative offset | `49m`, `2h`, `1d`, `now` |
+
+A full ISO-8601 stamp such as `2026-09-30T23:41:00Z` does **not** and is
+rejected with an error. It used to be accepted and silently misread on both
+ends: `split(":", 3)` left the start as `2026-09-30T23` — which parses, as
+23:00 *local* — and the end as `41:00Z:2026-10-01T00:30:00Z`, which does not
+parse and so defaulted to "the last hour".
+
+Elsewhere (`--start` / `--end` on `analyze`, `collect` and `aggregate`) full
+ISO-8601 is fine. A trailing `Z` or an explicit offset always wins; a **naive**
+datetime is read in the local timezone of the machine running amoprof, since
+an operator asking for "17:00 to 18:45" means their own wall clock. Set
+`AMOPROF_NAIVE_TZ=utc` to read naive input as UTC instead. Prometheus is
+queried with Unix epoch seconds, which are UTC by construction.
+
 ```bash
 amoprof compare \
   --run "Baseline:./run_c1:1778871540:1778877078" \
   --run "4-way concurrency:./run_c4:1778881540:1778887078" \
   --run "FP8 KV:./run_fp8:1778891540:1778897078" \
+  --model-path /models/gemma-4-31b-it/config.json \
   --output-dir ./comparison \
   --title "SGLang KV Cache Tuning Comparison"
 ```
+
+The report is written to `amoprof_comparison_<YYYYmmdd>_<HHMMSS>.html` in
+`--output-dir`, unless `--output` names the file.
+
+`--model-path` is read for `num_hidden_layers` / `num_key_value_heads` /
+`head_dim` and written to each run's `raw/model_config.json`, so KV bytes per
+token is **computed** rather than estimated from the model name. Every figure
+derived from it — L2 and L3 residency, bytes per token, the capacity
+reconciliation — is exact only with it. A run without it gets a one-line
+notice saying the figure is an estimate.
+
+When the runs serve **different** models, give each its own:
+
+```bash
+amoprof compare \
+  --run "gemma-4-31b::1778871540:1778877078" \
+  --run-opt "gemma-4-31b=model_path=/models/gemma-4-31b-it/config.json" \
+  --run "llama-3-70b::1778881540:1778887078" \
+  --run-opt "llama-3-70b=model_path=/models/Llama-3-70B/config.json" \
+  --prometheus http://prom:9090 --output-dir ./comparison
+```
+
+That matters more than it looks: those two geometries are 960 KB and 320 KB of
+KV per token, so one global config would misstate a tier's residency by 3x for
+whichever run it did not describe.
+
+#### Queueing across the stack
+
+The comparison report has a **Queueing across the stack** section: one row
+group per layer that exposes a queue, and, for the layers that expose none,
+the proxy that stands in for one — marked as a proxy.
+
+| layer | what is compared | kind |
+|---|---|---|
+| A5 · inference scheduler | requests waiting to enter prefill; concurrent decode batch | measured queue |
+| A3 · host DRAM | bandwidth as a share of the **configured** platform peak | proxy — no memory-controller queue exists to read |
+| A2/A1 · this host's device | queue depth mean and peak | measured queue |
+| A2/A1 · the memory node's device | queue depth mean and peak | measured queue |
+| A2/A1 · blktrace Q→C | queue depth mean and peak | measured queue |
+| NET · fabric | TCP retransmits, receive drops, link utilisation | proxy — no NIC queue exists to read |
+
+Three rules the section is built to keep:
+
+- **This host's device and the memory node's are separate rows.** They are
+  different devices on different hosts; one row for both compares unlike
+  things.
+- **Mean and peak come from the columns that mean them** — the time-weighted
+  integral (diskstats field 11) for the mean, the in-flight gauge's maximum
+  (field 9) for the peak — and when they come from different columns, both
+  are named. The peak of an average is not a peak.
+- **A proxy never shares an axis with a queue.** A share-of-peak and a
+  retransmit rate are in the table and not on the chart; only counts of
+  coexisting or waiting work are plotted.
+
+The DRAM share-of-peak needs `DRAM peak GB/s` in the run's setup details. It
+is deliberately *not* computed against the run's own observed maximum — that
+would be a burstiness ratio rather than pressure, and on one measured run it
+reads 52.5% where the platform-relative figure is 25.6%.
 
 ### 11. Render a long-context benchmark summary
 
@@ -1776,6 +1857,22 @@ absent or idle. A configured tier never produces silent absence, since that
 leaves the reader unable to tell an idle tier from an unmeasured one. When L3.5
 is not configured, nothing is rendered and no note appears.
 
+**Promotion pipeline** — all 16 promotion metrics the store exports are
+fetched. Three loss paths were previously unfetched (`cancelled`,
+`candidate_expired_evaluated`, `candidate_expired_unevaluated`), which did not
+merely hide a bar: a large loss could be invisible while the chart named a
+smaller one as the largest. The subtitle now also states when the stages do
+not add up:
+
+```
+· 59,000 candidates, 2,950 completed
+· largest loss: expired before evaluation (47,200)
+· stages account for 23,600 of 59,000 — 35,400 unaccounted
+```
+
+`master_promotion_in_flight` is a gauge, not a window count, so it is fetched
+and noted but never drawn as a bar among counters.
+
 **Promotion pipeline** — window counts for each stage, recorded → admitted →
 completed, with every rejection path:
 
@@ -1819,6 +1916,97 @@ When the tier is remote, bare prose phrases — `L3 reads`, `L3 tier`,
 The earlier relabel matched only parenthesised forms such as
 `L3 (local storage)`, so Top findings said L3 while the tiles said L3.5 for the
 same tier. Local-SSD deployments keep L3.
+
+---
+
+## KV movement on one axis
+
+The Executive report opens its L3.5 section with **KV movement over the run**:
+evict, backup, prefetch and load-back as four rate series on a shared tok/s
+axis.
+
+Colour carries direction rather than just identity — warm for KV moving *down*
+the hierarchy (evict L1→L2, backup L2→L3.5) and cool for KV coming back *up*
+(prefetch L3.5→L2, load-back L2→L1). A cool line that never lifts off zero
+beside a warm line that does is the finding, with no legend-reading required.
+
+The subtitle states the balance:
+
+```
+tokens per second, summed across ranks
+· 1.2M tokens moved down the hierarchy and NONE came back up
+· 1.2M down vs 0.6M up (1.9:1)
+· not exported by this engine build: prefetch, load-back
+```
+
+**A counter that exists and never moved draws a flat line at zero** rather
+than being dropped. Dropping it makes "the engine never read" look identical
+to "this build does not export the counter" — different findings with
+different fixes. Truly absent counters are named in the subtitle instead. The
+renderer's usual behaviour is to drop dead series as clutter; this chart opts
+in with `keep_zero_series=True`.
+
+One reader, `_kv_counter_series`, serves both this chart and the window
+totals, so a chart and a tile cannot disagree about what a counter says.
+
+---
+
+## L3.5 reads by tier, and what the promotion bars mean
+
+**Reads by tier** answers which tier served each lookup — the question a
+tiering decision turns on. Counts are the bars; bytes and the stage linkage go
+in the subtitle, because mean read size differs between the tiers:
+
+```
+99.16% DRAM / 0.84% SSD of 11.7M reads · 1,240.0 GB / 9.8 GB
+· prefetch 4.1M tok · 287 promotions
+```
+
+Three different stages sit in that line and are easy to conflate: prefetch is
+the *engine asking*, promotion is the *store moving KV up*, and the bars are
+*where the answers came from*.
+
+**The promotion bars carry a collapsible legend.** They do not share a unit and
+are not a split of the candidates: `rejected_*` counters count evaluation
+ATTEMPTS, so one candidate re-evaluated and refused many times inflates them
+past the candidate count. Only `completed` means KV actually moved.
+
+A previous version summed the rejections against `recorded` and reported the
+excess as "over-counted" — naming a measurement fault where the semantics are
+simply different. It now reports the pressure that excess represents:
+
+```
+5.1 rejected evaluations per candidate — candidates are re-evaluated,
+so these are attempts, not a split of the 75,936 · 0.38% of candidates completed
+```
+
+---
+
+## Prefetch operations, not just prefetch tokens
+
+`sglang_prefetch_pgs` — the read-side twin of `sglang_backup_pgs` — is now
+fetched. It was missing while `backup_pgs` was fetched, so the End report's
+onboard-pages rate read a column that never existed and was permanently 0:
+the write path looked busy and the read path looked idle whatever the store
+was doing.
+
+The Executive report gains **KV operations — read side vs write side**, which
+answers "are reads happening at all" with operation counts rather than a
+bandwidth figure that rounds to zero when reads are few and small. The
+subtitle states the finding:
+
+```
+operations over the window, from the histogram counts
+· 19,500 writes and NO reads: the engine never asked the tier for KV
+```
+
+or `20.0 writes per read`, or `prefetch operations not exported by this engine
+build` when the counter is absent — three different conclusions the chart must
+not conflate.
+
+**Python 3.12 or newer is required.** `report/amoprof.py` and
+`report/combined.py` both use PEP 701 nested f-strings, which 3.11 cannot
+parse.
 
 ---
 
@@ -2614,7 +2802,82 @@ amoprof service --collectors iostat,nvme_driver,dram,cpu \
   --metrics-port 9101 --metrics-host 0.0.0.0
 
 # analyze
-amoprof analyze ... --l35-storage-instance ssi-store01:9101
+amoprof analyze ... --l35-storage-instance ssi-store01:9101 \
+  --l35-nvme-device nvme0c0n1
+```
+
+`--l35-nvme-device` is the L3.5 equivalent of `--nvme-device`: it scopes every
+`node_disk_*` query on the memory node to one block device. Without it those
+queries are averaged across every NVMe namespace on that host, which dilutes
+bandwidth, IOPS and queue depth by the number of idle devices.
+
+### Which exporter the L3.5 node_disk_* queries reach
+
+`--l35-storage-instance` names the exporter you know about, usually the
+amoprof service on `:9101`. node_exporter is a **different target on a
+different port**, conventionally `:9100`, so that instance label alone matches
+none of its series. amoprof tries the instance as given first, then the same
+host on any port, and prints which one answered:
+
+```
+L3.5 node_exporter selector (as given): {instance="msl-ssg-cx03.msl.lab:9101"}
+L3.5 node_exporter selector (any exporter port on msl-ssg-cx03.msl.lab):
+    {instance=~"msl-ssg-cx03[.]msl[.]lab:[0-9]+"}
+```
+
+The dot is a character class, not a backslash escape. A regex label value is a
+PromQL **string literal** before it is a regex, and `\.` is not a valid PromQL
+string escape, so `{instance=~"host\.domain:.*"}` is rejected outright with
+`400 bad_data: parse error: unknown escape sequence U+002E '.'`.
+
+Widening the port stays attributable: `node_disk_*`, `node_memory_*` and
+`node_cpu_*` are published by node_exporter alone, and the hostname still pins
+the data to one machine.
+
+The node_exporter fetch runs **whether or not** the amoprof collector on that
+node returned data, merging into whatever the collector left absent or
+all-zero and never overwriting a live series. That matters because the amoprof
+colmap's queue-depth candidates are sysfs and iostat gauges that read all-zero
+on this hardware — so "the collector answered" can mean "bandwidth is filled
+and queue depth is zero", and the node_exporter field-11 integral is exactly
+what fills the gap.
+
+### Which device name to pass
+
+On a host with NVMe native multipath (`nvme_core.multipath=Y`) one namespace
+appears in `/proc/diskstats` under two names:
+
+| name | what it is | carries |
+|---|---|---|
+| `nvme6n1` | the namespace head | field 9 (in-flight), field 10 (busy time) |
+| `nvme6c6n1` | the per-controller path | **fields 4, 8 and 11** — service times and the time-weighted queue integral |
+
+The queue-depth fields are accounted on the controller path, so a run analysed
+against the head reports utilisation and in-flight but a flat zero for queue
+depth. The same run analysed against `nvme6c6n1` reports the real depth. Both
+names are the same namespace; nothing is bypassing a software layer.
+
+Prefer the controller-path name for either flag. When the device you name
+publishes no queue-depth integral and a sibling name does, the fetch says so
+and names the sibling:
+
+```
+[info] L3 local: nvme6n1 publishes no queue-depth integral (diskstats field 11
+       reads zero over this window), but its sibling nvme6c6n1 does (aqu-sz
+       peak 3.4). … Re-run with nvme6c6n1 to measure queue depth.
+```
+
+`scripts/qd_sources.py <prom-url> <device>` probes both names and every
+queue-depth source, and says which one actually has data.
+
+If the device you name is not on that host at all, the fetch lists the ones
+that are, busiest first, rather than saying nothing:
+
+```
+[info] L3.5: nvme2c2n1 is not present at this selector. The device(s) that DO
+       carry a queue-depth integral here: nvme6c6n1 (aqu-sz peak 11.2).
+       Re-run naming one of those, and prefer a controller-path name
+       (nvmeXcYnZ) over a namespace head.
 ```
 
 Its SSD, DRAM and CPU then appear as correlation targets beside the GPU

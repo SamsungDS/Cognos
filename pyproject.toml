@@ -4,10 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name            = "amoprof"
-version         = "1.43.0"
+version         = "1.76.0"
 description     = "AI Workload-Aware Storage Profiler — maps AI operations to SSD I/O dimensions"
 readme          = "README.md"
-requires-python = ">=3.10"
+# 3.12+: report/amoprof.py and report/combined.py use PEP 701 nested
+# f-strings.  On 3.11 the package installs cleanly and then fails at import
+# with a SyntaxError pointing at an emoji inside an f-string, which reads as
+# an encoding fault rather than a version one.  Fail at install instead.
+requires-python = ">=3.12"
 license         = { text = "Apache-2.0" }
 
 dependencies = [

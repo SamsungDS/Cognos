@@ -246,10 +246,10 @@ def _amoprof_storage_label_cleanup(html_text: str, l3_backend_class: str = "") -
             "Logical KV movement — L3": "Logical KV movement — L3.5",
             "Physical L3 block": "L3.5 storage block",
             "Physical L3.5 block R / W total": "Physical L3.5 block R / W total",
-            "NVMe read throughput": "L3.5 read throughput",
-            "NVMe Read Throughput": "L3.5 read throughput",
-            "NVMe read BW": "L3.5 storage read BW",
-            "NVMe Read BW": "L3.5 storage read BW",
+            "NVMe read throughput": "L3.5 read throughput (NVMe driver)",
+            "NVMe Read Throughput": "L3.5 read throughput (NVMe driver)",
+            "NVMe read BW": "L3.5 storage read BW (NVMe driver)",
+            "NVMe Read BW": "L3.5 storage read BW (NVMe driver)",
         }
     # Labels wrapped in the sentinel below name a specific tier and must not be
     # rewritten by the blanket replacements — the cross-tier occupancy legend
