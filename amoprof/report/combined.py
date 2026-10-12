@@ -3150,6 +3150,8 @@ def _amoprof_exec_svg_tier_occupancy(series: list, width: int = 760,
     # of the data.  A tier that only reported for part of the run would
     # otherwise stretch to fill the chart, hiding the gap and misplacing every
     # other tier relative to it.
+    if not any(x.get("t") for x in series):
+        return ""
     _dt0 = min(min(x["t"]) for x in series if x["t"])
     _dt1 = max(max(x["t"]) for x in series if x["t"])
     if window and len(window) == 2 and window[1] is not None and window[0] is not None:
@@ -7123,6 +7125,12 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # so the KPI grid can state the same reason on the tile.  Bound BEFORE the
     # try for the reason given above.
     _l3_cap_missing = ""
+    # Read by the KPI grid and the queue-depth tile after the block. Unbound,
+    # a failure anywhere before its assignment raised NameError there and the
+    # Executive Summary was dropped from the combined report entirely.
+    _l35s: dict = {}
+    _l35s_path = None
+    _l35s_local_src = ""
     try:
         _sg_path = _first_existing(raw_dir, ["sglang_timeseries.csv"])
         # Token-movement counters — read alongside throughput counters so
