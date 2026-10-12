@@ -46,7 +46,10 @@ try:
         rate_series_with_time as _k_rate_with_time,
         resolve_kv_bytes_per_token as _k_resolve_kv,
         window_counter_delta as _k_window_counter_delta,
-        token_reuse_density as _k_token_reuse_density)
+        token_reuse_density as _k_token_reuse_density,
+        resolve_latency_percentile as _k_resolve_pct,
+        vet_device_bw_peak as _k_vet_bw, vet_queue_depth as _k_vet_qd,
+        counter_window_total as _k_counter_total)
 except Exception:  # pragma: no cover - standalone/bundled execution
     from metric_kernels import (  # type: ignore
         counter_delta as _k_counter_delta, window_rate as _k_window_rate,
@@ -54,7 +57,10 @@ except Exception:  # pragma: no cover - standalone/bundled execution
         rate_series_with_time as _k_rate_with_time,
         resolve_kv_bytes_per_token as _k_resolve_kv,
         window_counter_delta as _k_window_counter_delta,
-        token_reuse_density as _k_token_reuse_density)
+        token_reuse_density as _k_token_reuse_density,
+        resolve_latency_percentile as _k_resolve_pct,
+        vet_device_bw_peak as _k_vet_bw, vet_queue_depth as _k_vet_qd,
+        counter_window_total as _k_counter_total)
 
 # amoprof.py is also run directly as a script (python .../report/amoprof.py),
 # in which case `amoprof` resolves to this module rather than to the package
@@ -285,10 +291,10 @@ def _l3_tier_replacements(l3_backend_class: str = "") -> dict:
             "Logical KV movement — L3": "Logical KV movement — L3.5",
             "Physical L3 block": "L3.5 storage block",
             "Physical L3.5 block R / W total": "Physical L3.5 block R / W total",
-            "NVMe read throughput": "L3.5 read throughput",
-            "NVMe Read Throughput": "L3.5 read throughput",
-            "NVMe read BW": "L3.5 storage read BW",
-            "NVMe Read BW": "L3.5 storage read BW",
+            "NVMe read throughput": "L3.5 read throughput (NVMe driver)",
+            "NVMe Read Throughput": "L3.5 read throughput (NVMe driver)",
+            "NVMe read BW": "L3.5 storage read BW (NVMe driver)",
+            "NVMe Read BW": "L3.5 storage read BW (NVMe driver)",
         }
     return replacements
 
@@ -951,28 +957,37 @@ def _find_metric_cols_with_parts(df: pd.DataFrame, base_partial: str, *required_
 
 
 def _delta_sum_metric(df: pd.DataFrame, base_partial: str, *required_parts: str) -> float:
-    """Sum positive counter deltas across all matching labelled series."""
-    total = 0.0
+    """Window total across all matching labelled series, by the shared kernel.
+
+    Column selection stays here — _prefer_metric_columns knows this module's
+    unified/legacy metric naming — and only the arithmetic moved, to
+    metric_kernels.counter_window_total, which is now what every surface
+    differences a counter with.
+
+    Two things changed in that move, and both were already wrong here:
+
+    * a single sample contributed nothing, which is right (a monotonic
+      counter's lone value is its lifetime total, and reporting it gave an
+      E2E "window mean" of 108 s against a p50 of 1.5 s) — the kernel keeps
+      that, and additionally reports that the series was unusable, so a
+      caller can say "not exported" instead of 0;
+    * last - first discards every observation made before a counter reset
+      inside the window. The kernel sums positive per-step differences, so a
+      server restart mid-window costs only the step that spans it. On a clean
+      monotonic series the two are equal to the bit, so no figure that was
+      already right moves.
+    """
+    _series: "list[list[float]]" = []
     for col in _find_metric_cols_with_parts(df, base_partial, *required_parts):
         try:
-            vals = pd.to_numeric(df[col], errors="coerce").dropna()
-            if len(vals) >= 2:
-                d = float(vals.iloc[-1] - vals.iloc[0])
-            else:
-                # A single sample of a MONOTONIC COUNTER carries no window
-                # information: the value is the server's lifetime total, not
-                # what happened during this window.  Returning it produced a
-                # "window mean" that was actually a since-boot average — an
-                # E2E mean of 108 s against a p50 of 1.5 s, which reads as a
-                # catastrophic tail rather than the artefact it is.  A window
-                # with fewer than two samples has no measurable delta.
-                d = 0.0
-            # Counters can reset; do not let a reset make the aggregate negative.
-            if d > 0:
-                total += d
+            _series.append(
+                [float(x) for x in
+                 pd.to_numeric(df[col], errors="coerce").dropna().tolist()])
         except Exception:
             pass
-    return total
+    if not _series:
+        return 0.0
+    return float(_k_counter_total(_series)["total"])
 
 
 def _pct_ts_latency_ms_from_data(data: dict, metric_key: str, percentile: str = "p50") -> float:
@@ -1380,6 +1395,218 @@ _PROM_QUERY_RANGE_ERR_LOGGED = {"first_hint_shown": False,
                                  "sample_errors_shown": 0}
 
 
+# ── NVMe device naming: namespace head vs per-controller path ───────────────
+#
+# A multipath-enabled NVMe namespace appears in /sys/block and /proc/diskstats
+# under TWO names:
+#
+#   nvme6n1     the namespace head  (what multipath presents; what users type)
+#   nvme6c6n1   the per-controller path (the hardware queue actually serving)
+#
+# With nvme_core.multipath=Y the kernel accounts the per-direction service
+# times (diskstats fields 4 and 8) and the time-weighted queue integral
+# (field 11) on the CONTROLLER PATH, while the head carries only the
+# instantaneous in-flight gauge (field 9) and the busy-time counter
+# (field 10). That is why a run on nvme6n1 reports utilisation and in-flight
+# but a dead-flat zero for queue depth, and the same run read on nvme6c6n1
+# shows the real depth.
+#
+# Both regexes below therefore accept the controller-path form. The earlier
+# `nvme[0-9]+n[0-9]+` excluded precisely the device that carries the data.
+_NVME_DEV_RE_PROM = r"nvme[0-9]+(c[0-9]+)?n[0-9]+"
+_NVME_DEV_RE_PY = re.compile(r"^nvme(\d+)(?:c(\d+))?n(\d+)$")
+
+
+def _nvme_dev_parts(dev: str) -> "tuple[str, str, str] | None":
+    """(ctrl_index, path_index_or_empty, namespace) for an NVMe device name."""
+    m = _NVME_DEV_RE_PY.match((dev or "").strip().lstrip("/").replace("dev/", ""))
+    if not m:
+        return None
+    return m.group(1), (m.group(2) or ""), m.group(3)
+
+
+def _nvme_dev_kind(dev: str) -> str:
+    """"head", "controller-path", or "" when the name is not an NVMe namespace."""
+    p = _nvme_dev_parts(dev)
+    if not p:
+        return ""
+    return "controller-path" if p[1] else "head"
+
+
+def _nvme_dev_family_sel(dev: str) -> str:
+    """A PromQL device matcher for every sibling name of one namespace.
+
+    nvme6n1 and nvme6c6n1 are the same namespace seen through two accounting
+    paths, so a diagnostic that cannot see both cannot tell the operator
+    which of the two carries the queue-depth fields.
+    """
+    p = _nvme_dev_parts(dev)
+    if not p:
+        return ""
+    ctrl, _path, ns = p
+    return f'{{device=~"nvme{ctrl}(c[0-9]+)?n{ns}"}}'
+
+
+def _nvme_dev_sibling_hint(dev: str) -> str:
+    """The other accounting path's name, for a message naming it."""
+    p = _nvme_dev_parts(dev)
+    if not p:
+        return ""
+    ctrl, path, ns = p
+    if path:
+        return f"nvme{ctrl}n{ns}"
+    return f"nvme{ctrl}c<N>n{ns}"
+
+
+# ── Queue-depth plausibility ────────────────────────────────────────────────
+#
+# A queue depth is a count of requests coexisting in a device's queues. The
+# Linux block layer caps that at nr_requests per hardware queue (default
+# 1024 on blk-mq), and every real measurement of this fleet's drives has
+# landed in the tens to low hundreds. A figure in the thousands is not a
+# deep queue, it is a counting artifact -- most often a Q→C accounting pass
+# over an event stream that was not sorted by timestamp, which leaves Q
+# events unmatched and lets the running count climb monotonically for the
+# whole capture.
+#
+# `amoprof_blktrace_qd_qd_mean` published exactly that on this fleet before
+# the collector was fixed: mean 6,876, peak 171,982. Both are physically
+# impossible, and both sat in the candidate chain for the report's queue
+# depth. Prometheus keeps that history, so a fixed collector does not
+# protect a report built over an older window -- the guard belongs on the
+# read side.
+_QD_PLAUSIBLE_MAX = 4096.0
+
+# Column keys whose values are queue depths and must pass that bound.
+_QD_GUARDED_KEYS = frozenset({
+    "avgqu_sz", "avgqu_sz_weighted", "avgqu_sz_service", "qd_peak",
+    "inflight", "l35_avgqu_sz", "l35_qd_peak", "l35_inflight",
+})
+
+
+# PromQL function and keyword names, so a selector is never injected into one.
+_PROMQL_RESERVED = frozenset({
+    "rate", "irate", "increase", "delta", "idelta", "deriv", "predict_linear",
+    "sum", "avg", "min", "max", "count", "stddev", "stdvar", "topk", "bottomk",
+    "quantile", "group", "count_values",
+    "max_over_time", "min_over_time", "avg_over_time", "sum_over_time",
+    "count_over_time", "quantile_over_time", "stddev_over_time",
+    "last_over_time", "present_over_time", "absent_over_time",
+    "histogram_quantile", "label_replace", "label_join", "clamp", "clamp_max",
+    "clamp_min", "abs", "ceil", "floor", "round", "exp", "ln", "log2", "log10",
+    "sqrt", "sgn", "timestamp", "vector", "scalar", "absent", "changes",
+    "resets", "sort", "sort_desc", "time", "by", "without", "on", "ignoring",
+    "group_left", "group_right", "offset", "bool", "and", "or", "unless",
+    "inf", "nan",
+})
+
+
+def _prom_inject_selector(expr: str, active: str) -> str:
+    """Add a label selector to every metric reference inside a PromQL expression.
+
+    The previous rule appended the selector to the END of the whole
+    expression, which is only valid when the expression IS a bare metric
+    name. For anything wrapped in a function it produced invalid PromQL:
+
+        rate(node_disk_io_time_weighted_seconds_total[2m]){job="node"}
+
+    so every node_exporter fallback in this module -- bandwidth, utilisation,
+    DRAM, CPU -- silently returned nothing whenever a selector was active,
+    and the report showed those tiers as untelemetered on hosts that were
+    publishing the data all along.
+
+    Label names inside existing brace groups are left alone; a metric that
+    already carries labels has the new ones merged into its own group.
+    """
+    if not active:
+        return expr
+    inner = active.strip("{}").strip()
+    if not inner:
+        return expr
+    # Bare metric name, with or without its own labels: the simple cases.
+    if re.match(r"^[A-Za-z_:][A-Za-z0-9_:]*$", expr):
+        return expr + "{" + inner + "}"
+    if re.match(r"^[A-Za-z_:][A-Za-z0-9_:]*\{[^{}]*\}$", expr):
+        return expr[:-1] + ", " + inner + "}"
+
+    # An expression. Walk it, skipping brace groups so label names are never
+    # treated as metric names, and attach the selector to each metric
+    # reference found outside them.
+    out, i, n = [], 0, len(expr)
+    _ident = re.compile(r"[A-Za-z_:][A-Za-z0-9_:]*")
+    # `by (device)`, `without (...)`, `on (...)`, `ignoring (...)` and the
+    # group_left/group_right modifiers hold LABEL names inside parentheses,
+    # not metric references. The keyword itself is reserved, but the names
+    # inside its parentheses were being treated as metrics, which produced
+    # `count by (device{job="node"}) (...)` -- invalid PromQL. Any expression
+    # that groups by a label was silently broken by this.
+    _grouping = frozenset({"by", "without", "on", "ignoring",
+                           "group_left", "group_right"})
+    while i < n:
+        ch = expr[i]
+        # Brace groups hold label matchers; bracket groups hold range and
+        # offset durations. Neither contains a metric reference, and walking
+        # into them turned the "m" of "[2m]" into a metric name.
+        if ch in "{[":
+            _close = "}" if ch == "{" else "]"
+            j = expr.find(_close, i)
+            if j < 0:
+                out.append(expr[i:])
+                break
+            out.append(expr[i:j + 1])
+            i = j + 1
+            continue
+        m = _ident.match(expr, i)
+        # An identifier directly preceded by a digit, dot or word character
+        # is part of a number or a longer token, not a metric: the "e6" of
+        # "/1e6" was being selected as one.
+        if m and i > 0 and (expr[i - 1].isdigit() or expr[i - 1] in "._"):
+            out.append(m.group(0))
+            i = m.end()
+            continue
+        if not m:
+            out.append(ch)
+            i += 1
+            continue
+        name = m.group(0)
+        j = m.end()
+        # A name followed by '(' is a function; a reserved word is never a
+        # metric. Anything else is a metric reference.
+        _k = j
+        while _k < n and expr[_k] == " ":
+            _k += 1
+        if name.lower() in _grouping and _k < n and expr[_k] == "(":
+            # Copy the keyword and its whole label list verbatim, matching
+            # nested parentheses so a malformed expression cannot run away.
+            _d, _p = 0, _k
+            while _p < n:
+                if expr[_p] == "(":
+                    _d += 1
+                elif expr[_p] == ")":
+                    _d -= 1
+                    if _d == 0:
+                        break
+                _p += 1
+            out.append(expr[i:_p + 1])
+            i = _p + 1
+            continue
+        if name.lower() in _PROMQL_RESERVED or (_k < n and expr[_k] == "("):
+            out.append(name)
+            i = j
+            continue
+        if _k < n and expr[_k] == "{":
+            _e = expr.find("}", _k)
+            if _e > 0:
+                _grp = expr[_k:_e + 1]
+                _body = _grp[1:-1].strip()
+                out.append(name + "{" + (_body + ", " if _body else "") + inner + "}")
+                i = _e + 1
+                continue
+        out.append(name + "{" + inner + "}")
+        i = j
+    return "".join(out)
+
+
 def _prom_query_range(base_url: str, metric: str, start: float, end: float,
                       step: int = 15, timeout: float = 30.0) -> pd.DataFrame:
     """Query Prometheus /api/v1/query_range. Returns DataFrame with columns [time, value, labels...].
@@ -1447,12 +1674,25 @@ def _prom_query_range(base_url: str, metric: str, start: float, end: float,
 
 
 def _prom_query_instant(base_url: str, metric: str,
-                        timeout: float = 10.0) -> list[dict]:
-    """Query Prometheus /api/v1/query (instant). Returns list of {labels, value}."""
+                        timeout: float = 10.0,
+                        at: "float | None" = None) -> list[dict]:
+    """Query Prometheus /api/v1/query (instant). Returns list of {labels, value}.
+
+    `at` is the evaluation instant, in epoch seconds.  Without it Prometheus
+    evaluates at NOW, which is the wrong instant for every analysis of a past
+    window: a scalar synthesised this way describes the moment the analysis
+    ran, not the window asked for.  That is how a 30-minute window from the
+    afternoon came back with the HiCache filesystem at 25 GB on one run and
+    762 GB on another -- both were simply `df` at analysis time, and
+    re-analysing one window twice gave two different answers.
+    """
     try:
         import requests as _req
+        _params = {"query": metric}
+        if at is not None:
+            _params["time"] = f"{float(at):.3f}"
         r = _req.get(f"{base_url}/api/v1/query",
-                     params={"query": metric}, timeout=timeout)
+                     params=_params, timeout=timeout)
         r.raise_for_status()
         data = r.json()
         if data.get("status") != "success":
@@ -1840,6 +2080,8 @@ def collect_from_prometheus_api(
     l35_job:      str = "",
     l35_storage_instance: str = "",
     l35_storage_job:      str = "",
+    l35_nvme_device:      str = "",
+    model_config:         dict = None,
 ) -> dict:
     """
     Pull a complete set of profiling data from a Prometheus server using
@@ -1925,7 +2167,19 @@ def collect_from_prometheus_api(
     exact_selector = ("{" + ", ".join(f'{k}="{v}"' for k, v in label_parts.items()) + "}"
                       if label_parts else "")
 
-    hostname_re      = hostname.replace(".", "\\.") if hostname else ""
+    # A regex label value is a PromQL STRING literal, and the string parser
+    # runs before the regex engine ever sees it. PromQL's string escapes are
+    # Go's, where `\.` is not one of them, so a backslash-escaped dot is
+    # rejected outright:
+    #
+    #   instance=~"msl-ssg-cx03\.msl\.lab:.*"
+    #   -> 400 bad_data: parse error: unknown escape sequence U+002E '.'
+    #
+    # So this selector -- step 4 of _sel_for, and every fallback that reaches
+    # for it -- has never once been accepted by a Prometheus. A character
+    # class needs no escape and cannot be mangled by the string parser, so
+    # that is what goes in the query.
+    hostname_re      = hostname.replace(".", "[.]") if hostname else ""
     hostname_selector = ('{' + f'instance=~"{hostname_re}:.*"' + '}') if hostname_re else ""
 
     def _sel_for(job_name: str = "", metric_prefix: str = "") -> str:
@@ -1957,13 +2211,7 @@ def collect_from_prometheus_api(
         """Query range with automatic label filter injection and SGLang metric-name detection."""
         actual_expr = _actual_metric(metric_expr) if re.match(r"^[A-Za-z_:][A-Za-z0-9_:]*$", metric_expr) else metric_expr
         active = force_selector if force_selector else selector
-        if active and "{" not in actual_expr:
-            expr = actual_expr + active
-        elif active and "{" in actual_expr:
-            inner = active.strip("{}")
-            expr = actual_expr.rstrip("}") + ", " + inner + "}"
-        else:
-            expr = actual_expr
+        expr = _prom_inject_selector(actual_expr, active)
         if agg:
             expr = f"{agg}({expr})"
         return _prom_query_range(base, expr, t_start, t_end, step_s)
@@ -2135,6 +2383,16 @@ def collect_from_prometheus_api(
             # KV block event metrics — the valuable new ones
             "sglang_evicted_tokens_total", "sglang_backuped_tokens_total",
             "sglang_load_back_tokens_total", "sglang_prefetched_tokens_total",
+            # The prefetch OUTCOME pair.  sglang_prefetched_tokens_total reads
+            # 0 on builds where prefetch is demonstrably running (the
+            # prefetch_pgs histogram counts operations), so the token volume
+            # has to come from the storage-side counters instead.  They also
+            # split the attempt: hit is what storage returned, unfulfilled is
+            # what was asked for and not delivered -- a miss, a timeout or an
+            # abort.  That second one is the waste signal AMOprof previously
+            # had no counter for.
+            "sglang_storage_prefetch_hit_tokens_total",
+            "sglang_storage_prefetch_unfulfilled_tokens_total",
             "sglang_cached_tokens_total", "sglang_new_token_ratio",
             "sglang_utilization", "sglang_num_used_tokens",
             "sglang_decode_sum_seq_lens", "sglang_page_size", "sglang_num_pages",
@@ -2154,6 +2412,8 @@ def collect_from_prometheus_api(
                     "sglang_backuped_tokens_total",
                     "sglang_load_back_tokens_total",
                     "sglang_prefetched_tokens_total",
+                    "sglang_storage_prefetch_hit_tokens_total",
+                    "sglang_storage_prefetch_unfulfilled_tokens_total",
                     "sglang_cached_tokens_total",
                 }
                 if name in _TOKENS_ACROSS_RANKS:
@@ -2184,6 +2444,12 @@ def collect_from_prometheus_api(
             ("sglang_load_back_bandwidth",           "loadback_bw"),
             ("sglang_prefetch_bandwidth",            "prefetch_bw"),
             ("sglang_backup_pgs",                    "backup_pgs"),
+            # The read-side twin of backup_pgs.  It was missing while
+            # backup_pgs was fetched, so the End report's onboard-pages rate
+            # read a column that never existed and was permanently 0 — the
+            # write path looked busy and the read path looked idle, whatever
+            # the store was actually doing.
+            ("sglang_prefetch_pgs",                  "prefetch_pgs"),
             ("sglang_load_back_duration_seconds",    "loadback_dur"),
         ]:
             # `_bucket` is required for per-interval p50/p90/p99 estimation
@@ -2743,6 +3009,54 @@ def collect_from_prometheus_api(
             print(f"  Synthesized {len(_synth_pulled)} raw summary file(s) from "
                   f"amoprof_* metrics: {_brief}")
 
+        # ---- ssd_hw -> smart_summary.json, as the collect path does --------
+        #
+        # The ssd_hardware collector produces the only measured figures the
+        # report has for a LOCAL L3's capacity: hicache_fs_total_gb,
+        # hicache_fs_used_gb and nvme_device_capacity_gb. cli.py merges them
+        # into smart_summary.json at collect time, with a comment saying why:
+        # "the smart_summary.json that the report reads ... without the
+        # report needing to read two separate files".
+        #
+        # This path had no such merge. The prefix map routes amoprof_ssd_hw_*
+        # to ssd_hw_summary.json, the report reads smart_summary.json, and so
+        # on a Prometheus-only analyze l3_fs_total_gb came out 0 and the L3
+        # series was dropped from "Memory hierarchy capacity used" entirely --
+        # silently, and regardless of how the tier was configured.
+        #
+        # _refresh_smart_capacity cannot cover for it either: it returns early
+        # without run_dir/summary.json, which a prom_run_* directory never
+        # has, and its own docstring says it no-ops on a cross-host analyze.
+        try:
+            _ssdhw_p = output_dir / "ssd_hw_summary.json"
+            if _ssdhw_p.exists() and _ssdhw_p.stat().st_size > 0:
+                _hw = json.loads(_ssdhw_p.read_text(encoding="utf-8"))
+                _want = {k: v for k, v in (_hw or {}).items()
+                         if str(k).startswith("hicache_fs_")
+                         or k in ("nvme_device_capacity_gb", "hicache_size_gb",
+                                  "hicache_file_count")}
+                if _want:
+                    _sm_p = output_dir / "smart_summary.json"
+                    _sm = {}
+                    if _sm_p.exists() and _sm_p.stat().st_size > 0:
+                        try:
+                            _sm = json.loads(_sm_p.read_text(encoding="utf-8")) or {}
+                        except Exception:
+                            _sm = {}
+                    # The collector's own value wins only where smart has
+                    # none, so a collect-then-merge run is never overwritten.
+                    _added = [k for k in _want if k not in _sm]
+                    _sm.update({k: v for k, v in _want.items() if k not in _sm})
+                    _sm_p.write_text(json.dumps(_sm, indent=2, default=str),
+                                     encoding="utf-8")
+                    if _added:
+                        print(f"  Merged {len(_added)} ssd_hw field(s) into "
+                              f"smart_summary.json so the L3 capacity series "
+                              f"can render: {', '.join(sorted(_added))}")
+        except Exception as _hwex:
+            print(f"  [warn] ssd_hw → smart_summary merge failed: "
+                  f"{type(_hwex).__name__}: {_hwex}")
+
     # ── Fallback: if system exporters got 0 series, the instance label format   ──
     # may differ (e.g. IP:port instead of hostname:port). Retry without selector.
     if hostname_selector and len(dcgm_dfs) == 0 and len(node_dfs) == 0:
@@ -2939,8 +3253,13 @@ def collect_from_prometheus_api(
             sub2 = df[df["device"].str.startswith(dev.rstrip("1"), na=False)]
             if not sub2.empty:
                 return sub2
-        # Auto-detect: nvme device with highest cumulative value
-        nvme_sub = df[df["device"].str.match(r"nvme\d+n\d+$", na=False)]
+        # Auto-detect: nvme device with highest cumulative value.
+        # The pattern accepts the per-controller path form (nvme6c6n1) as
+        # well as the namespace head (nvme6n1): under NVMe native multipath
+        # the controller path is where the queue and service-time fields are
+        # accounted, so excluding it excluded the only name with the data.
+        nvme_sub = df[df["device"].str.match(
+            r"nvme\d+(?:c\d+)?n\d+$", na=False)]
         if nvme_sub.empty:
             nvme_sub = df[df["device"].str.contains("nvme", na=False)]
         if not nvme_sub.empty:
@@ -2957,6 +3276,17 @@ def collect_from_prometheus_api(
     wr_time  = _get_disk_series("node_disk_write_time_seconds_total")
     io_time  = _get_disk_series("node_disk_io_time_seconds_total")
     io_now   = _get_disk_series("node_disk_io_now")
+    # diskstats field 11 (time_in_queue): a TIME-WEIGHTED integral of queue
+    # length, incremented by (in-flight x ms) on every update. Differencing it
+    # over an interval gives the average queue length across the WHOLE
+    # interval, so unlike node_disk_io_now -- field 9, an instantaneous gauge
+    # that only reports what happened to be outstanding at scrape time -- it
+    # cannot miss activity between samples. This was already being fetched and
+    # then dropped on the floor: the metric appeared exactly once in this
+    # file, in the request list, and nothing ever differenced it. Runs without
+    # amoprof's own nvme_driver collector therefore had no queue depth at all
+    # except the sampled gauge.
+    io_wtime = _get_disk_series("node_disk_io_time_weighted_seconds_total")
     disc_cmds= _get_disk_series("node_disk_discards_completed_total")
     disc_secs= _get_disk_series("node_disk_discarded_sectors_total")
 
@@ -2974,6 +3304,7 @@ def collect_from_prometheus_api(
             nrow["rd_ms"]    = _val(rd_time,  t_s) * 1000
             nrow["wr_ms"]    = _val(wr_time,  t_s) * 1000
             nrow["io_ms"]    = _val(io_time,  t_s) * 1000
+            nrow["io_wt_ms"] = _val(io_wtime, t_s) * 1000
             nrow["inflight"] = _val(io_now,   t_s)
             nrow["disc_ios"] = _val(disc_cmds, t_s)
             nrow["disc_sectors"] = _val(disc_secs, t_s)
@@ -3044,19 +3375,39 @@ def collect_from_prometheus_api(
     tpot_ms = (d_itl_sum  / d_itl_cnt  * 1000) if d_itl_cnt  > 0 else 0
     e2e_ms  = (d_e2e_sum  / d_e2e_cnt  * 1000) if d_e2e_cnt  > 0 else 0
 
-    # Use absolute values if no delta (window captured a single ongoing request)
+    # Use absolute values if no delta (window captured a single ongoing
+    # request). last(sum)/last(count) is the LIFETIME mean since the server
+    # started, not this window's -- so whichever branch produced the number
+    # is recorded, and the summary's method field below is set from this
+    # rather than from a literal. It was a literal that always read
+    # "delta_..._sum_over_count", which made a lifetime average indis-
+    # tinguishable from a window mean to every consumer of the summary.
+    _lat_meth = {
+        "ttft": "delta_sglang_time_to_first_token_seconds_sum_over_count",
+        "itl":  "delta_sglang_inter_token_latency_seconds_sum_over_count",
+        "e2e":  "delta_sglang_e2e_request_latency_seconds_sum_over_count",
+    }
     if ttft_ms == 0:
         abs_sum = _last_col2("time_to_first_token_seconds_sum")
         abs_cnt = _last_col2("time_to_first_token_seconds_count")
-        if abs_cnt > 0: ttft_ms = abs_sum / abs_cnt * 1000
+        if abs_cnt > 0:
+            ttft_ms = abs_sum / abs_cnt * 1000
+            _lat_meth["ttft"] = ("last_sglang_time_to_first_token_seconds_sum"
+                                 "_over_count_LIFETIME_not_window")
     if tpot_ms == 0:
         abs_sum = _last_col2("inter_token_latency_seconds_sum")
         abs_cnt = _last_col2("inter_token_latency_seconds_count")
-        if abs_cnt > 0: tpot_ms = abs_sum / abs_cnt * 1000
+        if abs_cnt > 0:
+            tpot_ms = abs_sum / abs_cnt * 1000
+            _lat_meth["itl"] = ("last_sglang_inter_token_latency_seconds_sum"
+                                "_over_count_LIFETIME_not_window")
     if e2e_ms == 0:
         abs_sum = _last_col2("e2e_request_latency_seconds_sum")
         abs_cnt = _last_col2("e2e_request_latency_seconds_count")
-        if abs_cnt > 0: e2e_ms = abs_sum / abs_cnt * 1000
+        if abs_cnt > 0:
+            e2e_ms = abs_sum / abs_cnt * 1000
+            _lat_meth["e2e"] = ("last_sglang_e2e_request_latency_seconds_sum"
+                                "_over_count_LIFETIME_not_window")
 
     # Final TPOT fallback: some SGLang/Prometheus paths expose decode throughput
     # but not inter_token_latency counters.  Do not render TPOT as 0 ms in that
@@ -3245,9 +3596,9 @@ def collect_from_prometheus_api(
         "server_ttft_ms":              round(ttft_ms, 2),
         "server_itl_ms":               round(tpot_ms, 2),
         "server_e2e_ms":               round(e2e_ms,  2),
-        "server_ttft_ms_method":        "delta_sglang_time_to_first_token_seconds_sum_over_count",
-        "server_itl_ms_method":         _tpot_method,
-        "server_e2e_ms_method":         "delta_sglang_e2e_request_latency_seconds_sum_over_count",
+        "server_ttft_ms_method":        _lat_meth["ttft"],
+        "server_itl_ms_method":         _tpot_method or _lat_meth["itl"],
+        "server_e2e_ms_method":         _lat_meth["e2e"],
         "cache_hit_rate_realtime_pct": round(_alt_cache_hit, 2),
         "cache_hit_pct":               round(_alt_cache_hit, 2),
         "cache_hit_primary_pct":       round(_alt_cache_hit, 2),
@@ -3422,9 +3773,114 @@ def collect_from_prometheus_api(
         # only, and builds no DRAM timeseries at all — so a run with HiCache
         # and an L3 backend configured still rendered L1-only charts whenever
         # node_exporter was absent.  The amoprof service already exports these
+        def _qd_dev_diagnose(dev: str, sel: str, tier: str) -> None:
+            """Say which of a namespace's two names carries the queue fields.
+
+            Under NVMe native multipath the kernel accounts diskstats field 11
+            (time_in_queue, the source of aqu-sz) and fields 4 and 8 (per-
+            direction service time) on the per-controller path, nvme6c6n1,
+            while the namespace head, nvme6n1, carries only field 9 (in-flight)
+            and field 10 (busy time). An operator who names the head therefore
+            gets utilisation and in-flight but a dead-flat zero for queue
+            depth, with nothing in the report to say why.
+
+            This compares field 11 across every sibling name of the requested
+            namespace and, when the requested one is dead and a sibling is
+            live, names the sibling. It never substitutes the device: the
+            report measures what was asked for, and says what else was there.
+            """
+            if not dev:
+                return
+            _f11 = "node_disk_io_time_weighted_seconds_total"
+
+            def _peaks(_sel_body: str) -> dict:
+                """Per-device peak of field 11 at a device selector.
+
+                No aggregation and no subquery: the per-device series over the
+                whole window, reduced to a per-device max in pandas. avg() here
+                would be the very mistake being diagnosed.
+                """
+                try:
+                    _d = _qr(f"rate({_f11}{_sel_body}[2m])",
+                             force_selector=(sel or _amoprof_sel or ""))
+                except Exception:
+                    return {}
+                if _d is None or _d.empty or "device" not in _d.columns:
+                    return {}
+                try:
+                    _by = (_d.assign(value=pd.to_numeric(_d["value"],
+                                                         errors="coerce"))
+                             .groupby("device")["value"].max().dropna())
+                except Exception:
+                    return {}
+                return {str(k): float(v) for k, v in _by.items()}
+
+            # ---- stage 1: the same namespace under its other name ----------
+            fam = _nvme_dev_family_sel(dev)
+            _by = _peaks(fam) if fam else {}
+            if _by:
+                _mine = float(_by.get(dev, 0.0) or 0.0)
+                _live = {k: v for k, v in _by.items() if v > 0.0 and k != dev}
+                if _mine > 0.0:
+                    return
+                if _live:
+                    _best = max(_live, key=_live.get)
+                    print(f"    [info] {tier}: {dev} publishes no queue-depth "
+                          f"integral (diskstats field 11 reads zero over this "
+                          f"window), but its sibling {_best} does (aqu-sz peak "
+                          f"{_live[_best]:.1f}). {dev} is the "
+                          f"{_nvme_dev_kind(dev) or 'requested'} name of the "
+                          f"namespace and {_best} is the "
+                          f"{_nvme_dev_kind(_best) or 'other'} name: under NVMe "
+                          f"native multipath the kernel accounts the queue and "
+                          f"service-time fields on the controller path, not the "
+                          f"head. Re-run with {_best} to measure queue depth on "
+                          f"this namespace.")
+                    return
+
+            # ---- stage 2: the device is not on this host at all ------------
+            #
+            # Stage 1 only looks at ONE namespace -- nvme2(c*)n1 for a
+            # requested nvme2c2n1 -- so when the device named is simply not the
+            # device on this host, it found nothing and said nothing. An
+            # operator looking at a Grafana panel for nvme6c6n1 while amoprof
+            # was asked for nvme2c2n1 got silence, which is the one outcome
+            # that cannot be acted on. Name what IS there instead.
+            _all = _peaks(f'{{device=~"{_NVME_DEV_RE_PROM}"}}')
+            if not _all:
+                _all = _peaks("")
+            if not _all:
+                print(f"    [info] {tier}: no device publishes diskstats field "
+                      f"11 at this selector, so there is no queue-depth "
+                      f"integral to read for {dev} or for anything else here. "
+                      f"node_exporter needs --collector.diskstats, and the "
+                      f"selector must reach node_exporter rather than another "
+                      f"exporter on the same host.")
+                return
+            if dev in _all and _all[dev] > 0.0:
+                return
+            _ranked = sorted(((k, v) for k, v in _all.items() if v > 0.0),
+                             key=lambda kv: -kv[1])
+            if not _ranked:
+                print(f"    [info] {tier}: {len(_all)} device(s) publish "
+                      f"diskstats field 11 at this selector and every one of "
+                      f"them reads zero over this window, {dev} included. The "
+                      f"queue was empty, or the window misses the activity.")
+                return
+            _shown = ", ".join(f"{k} (aqu-sz peak {v:.1f})"
+                               for k, v in _ranked[:6])
+            _absent = "is not present" if dev not in _all else "reads zero"
+            print(f"    [info] {tier}: {dev} {_absent} at this selector. The "
+                  f"device(s) that DO carry a queue-depth integral here: "
+                  f"{_shown}"
+                  + (f" (+{len(_ranked) - 6} more)" if len(_ranked) > 6 else "")
+                  + f". Re-run naming one of those, and prefer a "
+                    f"controller-path name (nvmeXcYnZ) over a namespace head.")
+
         # as gauges; rebuild the CSVs from them.
         def _synth_ts(fname: str, colmap: dict, label: str,
-                      selector: str = "", raw_expr: bool = False):
+                      selector: str = "", raw_expr: bool = False,
+                      merge: bool = False):
             """Rebuild a timeseries CSV from Prometheus gauges.
 
             `selector` overrides the default amoprof-on-this-host scoping, so a
@@ -3451,10 +3907,48 @@ def collect_from_prometheus_api(
                         _df = _qr(_cand, agg="avg",
                                   force_selector=(selector or _amoprof_sel or ""))
                         if _df is not None and not _df.empty:
+                            # A queue depth in the thousands is a counting
+                            # artifact, not a depth. Reject the candidate and
+                            # fall through to the next one in the chain rather
+                            # than publishing an impossible figure -- and say
+                            # which metric was rejected, so the operator can
+                            # see it was considered.
+                            if _key in _QD_GUARDED_KEYS:
+                                try:
+                                    _mx = float(pd.to_numeric(
+                                        _df["value"], errors="coerce").max())
+                                except Exception:
+                                    _mx = 0.0
+                                if _mx > _QD_PLAUSIBLE_MAX:
+                                    print(f"  [warn] {fname}: ignoring {_cand} "
+                                          f"for '{_key}' — peak {_mx:,.0f} "
+                                          f"exceeds the plausible queue-depth "
+                                          f"bound of {_QD_PLAUSIBLE_MAX:,.0f}. "
+                                          f"A depth that large is an unmatched "
+                                          f"Q→C counting artifact, not a queue.")
+                                    continue
                             cols[_key] = _df.groupby("time_sec")["value"].mean()
                             break
                 if not cols:
-                    _seen = [m for m in colmap.values() if _has(m)]
+                    # A colmap value is EITHER a metric name or a list of
+                    # candidate names (see the loop above, which already
+                    # handles both). This diagnostic passed the value straight
+                    # to _has(), which does `name in available` against a set
+                    # -- so a candidate list raised
+                    #
+                    #   TypeError: unhashable type: 'list'
+                    #
+                    # caught by this function's outer `except`, reported as
+                    # "nvme_driver_timeseries.csv synthesis failed", and the
+                    # whole fetch returned nothing. The bug was in the code
+                    # that explains an empty result, so it only fired when
+                    # the result was already empty -- and then it replaced a
+                    # precise explanation with a type error.
+                    _flat = [_n for _v in colmap.values()
+                             for _n in (_v if isinstance(_v, (list, tuple))
+                                        else [_v])
+                             if isinstance(_n, str)]
+                    _seen = [m for m in _flat if _has(m)]
                     if _seen:
                         print(f"  [warn] {fname}: {len(_seen)} metric(s) exist but "
                               f"returned no samples in this window")
@@ -3466,7 +3960,12 @@ def collect_from_prometheus_api(
                                          ("amduprof_pcm", "AMDuProf"),
                                          ("iostat", "iostat"),
                                          ("nvme_driver", "nvme_driver")):
-                            if not any(_c in _m for _m in colmap.values()):
+                            # Same list-vs-string hazard: `_c in _m` happens to
+                            # work on a list (membership, not substring) but
+                            # answers the wrong question, so a candidate list
+                            # naming amoprof_iostat_* never matched "iostat"
+                            # and the collector's own reason was never printed.
+                            if not any(_c in _m for _m in _flat):
                                 continue
                             _av = f"amoprof_{_c}_{_c.split('_')[0]}_available"
                             _av2 = f"amoprof_{_c}_{_c}_available"
@@ -3496,7 +3995,88 @@ def collect_from_prometheus_api(
                                 break
                     return False
                 _ts = pd.DataFrame(cols).reset_index().sort_values("time_sec")
-                _ts.to_csv(output_dir / fname, index=False)
+                # merge=True adds columns to a file another fetch already
+                # wrote, instead of replacing it.  Writing a second metric
+                # family into the same file without this silently destroys
+                # the first -- the device columns vanish and take their
+                # charts with them.  Outer join on time_sec, since the two
+                # families can be sampled on different cadences.
+                _dst = output_dir / fname
+                if merge and _dst.exists():
+                    try:
+                        _old = pd.read_csv(_dst)
+                        if "time_sec" in _old.columns:
+                            # A column that exists but is entirely empty or
+                            # all-zero is not data worth protecting: the sysfs
+                            # NVMe rates read all-zero on some hardware, and
+                            # keeping those over a blktrace series that has
+                            # real values leaves the chart as blank as if
+                            # nothing had been fetched.  Drop a dead column so
+                            # the incoming one can take its place.
+                            def _is_dead(_c2):
+                                try:
+                                    _v2 = pd.to_numeric(_old[_c2],
+                                                        errors="coerce")
+                                    return bool(_v2.isna().all()
+                                                or (_v2.fillna(0) == 0).all())
+                                except Exception:
+                                    return False
+                            _dead = [_c for _c in _ts.columns
+                                     if _c != "time_sec" and _c in _old.columns
+                                     and _is_dead(_c)]
+                            if _dead:
+                                _old = _old.drop(columns=_dead)
+                                print(f"  Replacing {len(_dead)} all-zero/empty "
+                                      f"series in {fname}: {', '.join(_dead)}")
+                            # An incoming column that is itself all-zero is
+                            # not worth adding, and must never be allowed to
+                            # stand in for a live one. A mis-scoped query --
+                            # a node_disk_* metric averaged across every
+                            # device on the host, say -- returns a perfectly
+                            # well-formed series of zeros, and merging that
+                            # degrades the file rather than enriching it.
+                            def _incoming_dead(_c3):
+                                try:
+                                    _v3 = pd.to_numeric(_ts[_c3],
+                                                        errors="coerce")
+                                    return bool(_v3.isna().all()
+                                                or (_v3.fillna(0) == 0).all())
+                                except Exception:
+                                    return False
+                            _new_only = [_c for _c in _ts.columns
+                                         if _c != "time_sec"
+                                         and _c not in _old.columns
+                                         and not _incoming_dead(_c)]
+                            _skipped = [_c for _c in _ts.columns
+                                        if _c != "time_sec"
+                                        and _c not in _old.columns
+                                        and _incoming_dead(_c)]
+                            if _skipped:
+                                print(f"  Skipped {len(_skipped)} all-zero "
+                                      f"incoming series for {fname}: "
+                                      f"{', '.join(_skipped)}")
+                            if _new_only:
+                                # LEFT join on the existing time base, not an
+                                # outer join. Two fetches on different grids
+                                # outer-joined doubles the row count and
+                                # leaves every pre-existing column NaN on the
+                                # new rows, so a later diff()/dt over the
+                                # interleaved frame is computed across gaps.
+                                # The file's existing grid is the one every
+                                # other column already uses.
+                                _ts = _old.merge(
+                                    _ts[["time_sec"] + _new_only],
+                                    on="time_sec", how="left"
+                                ).sort_values("time_sec")
+                                print(f"  Merged {len(_new_only)} series "
+                                      f"into {fname}")
+                            else:
+                                _ts = _old
+                    except Exception as _me:
+                        print(f"  [warn] {fname} merge failed ({_me}); "
+                              f"keeping the existing file")
+                        return False
+                _ts.to_csv(_dst, index=False)
                 print(f"  Synthesized {fname} ({len(_ts)} samples, {len(cols)} series)")
                 return True
             except Exception as _e:
@@ -3585,6 +4165,17 @@ def collect_from_prometheus_api(
                     "l35_promo_rej_adm":    ["master_promotion_candidate_admission_rejected_total"],
                     "l35_promo_dropped":    ["master_promotion_candidate_dropped_limit_total"],
                     "l35_promo_expired":    ["master_promotion_expired_total"],
+                    # Three further LOSS paths and two pipeline states.  The
+                    # pipeline chart exists to account for where candidates
+                    # go, so an unfetched loss path does not just hide a bar —
+                    # it can make a smaller loss look like the largest one.
+                    "l35_promo_cancelled":  ["master_promotion_cancelled_total"],
+                    "l35_promo_exp_eval":   ["master_promotion_candidate_expired_evaluated_total"],
+                    "l35_promo_exp_uneval": ["master_promotion_candidate_expired_unevaluated_total"],
+                    "l35_promo_cand_adm":   ["master_promotion_candidate_admitted_total"],
+                    # Gauge, not a counter: how many promotions are in flight
+                    # at scrape time.  Never charted as a window count.
+                    "l35_promo_in_flight":  ["master_promotion_in_flight"],
                     "l35_promo_failed":     ["master_promotion_failed_total"],
                     "l35_evicted_b":        ["mooncake_evicted_bytes",
                                               "master_evicted_size_bytes"],
@@ -3764,18 +4355,125 @@ def collect_from_prometheus_api(
                 "l35_net_retrans_ps":    "amoprof_network_net_tcp_retrans_ps_mean",
                 "l35_net_drop_ps":       "amoprof_network_net_rx_drop_ps_mean",
             }, "L3.5 node (amoprof: ssd + dram + cpu)", selector=_l35s_sel)
-            if not _l35s_ok:
-                _l35s_ok = _synth_ts("l35_storage_timeseries.csv", {
-                    "l35_rd_iops":   "rate(node_disk_reads_completed_total[2m])",
-                    "l35_wr_iops":   "rate(node_disk_writes_completed_total[2m])",
-                    "l35_rd_bw_mbs": "rate(node_disk_read_bytes_total[2m])/1e6",
-                    "l35_wr_bw_mbs": "rate(node_disk_written_bytes_total[2m])/1e6",
-                    "l35_io_util_pct": "rate(node_disk_io_time_seconds_total[2m])*100",
-                    "l35_cpu_util_pct":
-                        "(1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[2m])))*100",
-                    "l35_dram_used_gb":
-                        "(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes)/1e9",
-                }, "L3.5 node (node_exporter)", selector=_l35s_sel, raw_expr=True)
+            # ---- node_exporter on the L3.5 node ---------------------------
+            #
+            # This block used to run ONLY when the amoprof-collector fetch
+            # above returned nothing (`if not _l35s_ok`). That made
+            # --l35-nvme-device inert on the common setup: the amoprof
+            # service is up on the memory node, one of the ~70 metrics in
+            # the colmap above comes back, _l35s_ok is True, and the only
+            # consumer of the device flag never executes. Worse, the amoprof
+            # colmap's queue-depth candidates are all sysfs/iostat gauges
+            # that read all-zero on this hardware -- so "the amoprof path
+            # succeeded" could mean "it filled bandwidth and left queue
+            # depth at zero", and the node_exporter path that had the real
+            # field-11 integral was skipped on that basis.
+            #
+            # It now always runs, with merge=True. The merge only fills
+            # columns that are absent or all-zero and never overwrites a
+            # live one, so the amoprof collector still wins wherever it has
+            # data, and node_exporter fills the gaps it leaves.
+            #
+            # Every node_disk_* query is scoped to ONE device. _synth_ts
+            # wraps each query in avg(), so an unfiltered node_disk_* query
+            # averages the busy device together with every idle dm-*, loop*,
+            # sd* and other nvme namespace on the memory node. A queue depth
+            # of 32 on one device, averaged over twenty idle ones, is under
+            # 2; bandwidth and utilisation are diluted by the same factor.
+            # The local path was fixed for this in v1.56.1; this path had the
+            # same defect, and here it hit bandwidth and IOPS as well.
+            if l35_nvme_device:
+                _l35_dev_sel = f'{{device="{l35_nvme_device}"}}'
+                _l35_kind = (_nvme_dev_kind(l35_nvme_device)
+                             or "not an nvmeXnY / nvmeXcYnZ name")
+                print(f"    L3.5 block device: {l35_nvme_device} "
+                      f"({_l35_kind})")
+            else:
+                _l35_dev_sel = f'{{device=~"{_NVME_DEV_RE_PROM}"}}'
+                print("    [info] no --l35-nvme-device given: L3.5 block "
+                      "metrics are averaged across every NVMe namespace "
+                      "on that node. Name the device to scope them, and "
+                      "prefer the controller-path name (nvmeXcYnZ) when "
+                      "the namespace head reports no queue depth.")
+
+            _l35_ne_map = {
+                "l35_rd_iops":
+                    f"rate(node_disk_reads_completed_total{_l35_dev_sel}[2m])",
+                "l35_wr_iops":
+                    f"rate(node_disk_writes_completed_total{_l35_dev_sel}[2m])",
+                "l35_rd_bw_mbs":
+                    f"rate(node_disk_read_bytes_total{_l35_dev_sel}[2m])/1e6",
+                "l35_wr_bw_mbs":
+                    f"rate(node_disk_written_bytes_total{_l35_dev_sel}[2m])/1e6",
+                "l35_io_util_pct":
+                    f"rate(node_disk_io_time_seconds_total{_l35_dev_sel}[2m])*100",
+                # Average queue length straight from the time-weighted
+                # counter (diskstats field 11): rate() of a
+                # seconds-per-second integral is dimensionless, and is
+                # exactly iostat's aqu-sz. Without this the node_exporter
+                # path produced bandwidth, utilisation and nothing at all
+                # for queue depth.
+                "l35_avgqu_sz":
+                    f"rate(node_disk_io_time_weighted_seconds_total"
+                    f"{_l35_dev_sel}[2m])",
+                "l35_qd_peak":
+                    f"max_over_time(node_disk_io_now{_l35_dev_sel}[2m])",
+                "l35_cpu_util_pct":
+                    "(1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[2m])))*100",
+                "l35_dram_used_gb":
+                    "(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes)/1e9",
+            }
+
+            # --l35-storage-instance names the exporter the operator knows
+            # about, which is usually the amoprof service -- :9101 in the
+            # documented setup. node_exporter on the same host is a
+            # DIFFERENT instance, conventionally :9100, so reusing that
+            # selector for node_disk_* queries filters out every series this
+            # block exists to read. The exact instance is tried first,
+            # because it is right whenever node_exporter is what was named;
+            # then the same host on any port.
+            #
+            # Host-scoping stays attributable: node_disk_*, node_memory_* and
+            # node_cpu_* are published by node_exporter alone, so widening
+            # the port cannot pull in another exporter's series, and the
+            # hostname still pins the data to one machine. The job label is
+            # dropped for the same reason -- --l35-storage-job names the
+            # amoprof job, not node_exporter's.
+            _l35_ne_sels = [(_l35s_sel, "as given")]
+            _l35_host = (l35_storage_instance or "").split(":")[0].strip()
+            # The dot becomes a CHARACTER CLASS, not a backslash escape.
+            # A regex label value is a PromQL string literal first and a
+            # regex second, and `\.` is not a valid PromQL string escape:
+            #
+            #   400 bad_data: parse error: unknown escape sequence U+002E '.'
+            #
+            # which is what this selector produced on its first real run.
+            # `[.]` means the same thing to RE2 and needs no escaping at all.
+            # Anything that is not a hostname is not interpolated at all.
+            if _l35_host and re.fullmatch(r"[A-Za-z0-9._-]+", _l35_host):
+                _host_sel = ('{instance=~"'
+                             + _l35_host.replace(".", "[.]") + ':[0-9]+"}')
+                if _host_sel != _l35s_sel:
+                    _l35_ne_sels.append(
+                        (_host_sel, f"any exporter port on {_l35_host}"))
+            elif _l35_host:
+                print(f"    [warn] --l35-storage-instance host {_l35_host!r} "
+                      f"is not a hostname; not widening the selector to it.")
+            _l35_ne_ok = False
+            _l35_ne_used = ""
+            for _sel_try, _why in _l35_ne_sels:
+                print(f"    L3.5 node_exporter selector ({_why}): {_sel_try}")
+                if _synth_ts("l35_storage_timeseries.csv", _l35_ne_map,
+                             f"L3.5 node (node_exporter, {_why})",
+                             selector=_sel_try, raw_expr=True, merge=True):
+                    _l35_ne_ok, _l35_ne_used = True, _sel_try
+                    break
+            _l35s_ok = _l35s_ok or _l35_ne_ok
+            # Which of the namespace's two accounting paths carries the
+            # queue fields is a property of the host's multipath setting,
+            # not something the operator can be expected to know. Name the
+            # sibling when the requested device's field 11 is dead.
+            _qd_dev_diagnose(l35_nvme_device, _l35_ne_used or _l35s_sel, "L3.5")
             if not _l35s_ok:
                 print("    [warn] no block-device metrics found at that selector. "
                       "Run `amoprof service --collectors iostat,nvme_driver "
@@ -3840,6 +4538,156 @@ def collect_from_prometheus_api(
                     "io_util_pct": "amoprof_iostat_util_pct_mean",
                 }, "NVMe (iostat)")
 
+
+
+        # Device rates for a LOCAL L3, with the SAME candidate preference the
+        # L3.5 path uses.  The local fetch asked sysfs FIRST and only fell
+        # back to iostat when the whole call returned nothing -- it never
+        # tried blktrace.  The L3.5 path learned the opposite order years
+        # ago and says so in its own comment: the nvme_driver sysfs rates
+        # read all-zero on some hardware, and iostat publishes nothing at
+        # all when the device is quiet at sample time, while blktrace
+        # integrates every event over the cycle.  So on a host where
+        # blktrace was working, IOPS came back empty.
+        #
+        # avgqu_sz was missing from the local list entirely -- it had
+        # `inflight`, which is a different column -- so the queue-depth
+        # chart could never render for a local tier whatever the data said.
+        _synth_ts("nvme_driver_timeseries.csv", {
+            "rd_iops":     ["amoprof_blktrace_analysis_read_iops_mean",
+                            "amoprof_iostat_read_iops_mean",
+                            "amoprof_nvme_driver_nvme_rd_iops_sysfs"],
+            "wr_iops":     ["amoprof_blktrace_analysis_write_iops_mean",
+                            "amoprof_iostat_write_iops_mean",
+                            "amoprof_nvme_driver_nvme_wr_iops_sysfs"],
+            "rd_bw_mbs":   ["amoprof_blktrace_analysis_read_bw_mb_s_mean",
+                            "amoprof_iostat_read_bw_mb_mean"],
+            "wr_bw_mbs":   ["amoprof_blktrace_analysis_write_bw_mb_s_mean",
+                            "amoprof_iostat_write_bw_mb_mean"],
+            "io_util_pct": ["amoprof_nvme_driver_nvme_util_pct_sysfs",
+                            "amoprof_queue_depth_sysfs_io_util_pct_mean",
+                            "amoprof_iostat_util_pct_mean"],
+            "avgqu_sz":    ["amoprof_nvme_driver_nvme_weighted_qd_mean",
+                            "amoprof_nvme_driver_nvme_inflight_mean",
+                            "amoprof_queue_depth_sysfs_inflight_mean",
+                            "amoprof_iostat_avgqu_sz_mean",
+                            "amoprof_blktrace_qd_qd_mean",
+                            "amoprof_blktrace_analysis_qd_mean"],
+            "qd_peak":     ["amoprof_nvme_driver_nvme_inflight_peak",
+                            "amoprof_queue_depth_sysfs_inflight_peak",
+                            "amoprof_blktrace_qd_qd_peak",
+                            "amoprof_blktrace_analysis_qd_peak"],
+            "rd_lat_ms":   ["amoprof_nvme_driver_nvme_rd_lat_ms_mean"],
+            "wr_lat_ms":   ["amoprof_nvme_driver_nvme_wr_lat_ms_mean"],
+        }, "L3 local device rates", merge=True)
+
+        # Queue depth from node_exporter, for a host running no amoprof
+        # collector. Every candidate in the chain above is an amoprof metric;
+        # on a host with only node_exporter the whole family came back empty
+        # and the report had no queue depth to show, even though diskstats
+        # field 11 was being scraped the entire time.
+        #
+        # avgqu_sz is the time-weighted average over the window -- it cannot
+        # miss a burst, but it averages it. qd_peak is the instantaneous
+        # gauge's maximum -- it can miss a burst entirely, but what it does
+        # catch is a real coexistence count. The two bound the answer from
+        # opposite sides, which is why both are kept rather than one chosen.
+        # The device filter is not optional here.
+        #
+        # _synth_ts wraps every query in avg(), so an unfiltered
+        # node_disk_* query averages across EVERY block device on the host --
+        # sda, every dm-*, every loop*, and all the other nvme namespaces.
+        # A queue depth of 16 on one device, averaged over twenty mostly idle
+        # ones, is under 1; in most samples it is 0. That turned a series with
+        # a peak of 16 into a flat zero. Scope to the device under study, and
+        # when no device was named, to the nvme namespaces only.
+        _qd_dev_sel = (f'{{device="{nvme_device}"}}' if nvme_device
+                       else f'{{device=~"{_NVME_DEV_RE_PROM}"}}')
+        if nvme_device:
+            _l3_kind = (_nvme_dev_kind(nvme_device)
+                        or "not an nvmeXnY / nvmeXcYnZ name")
+            print(f"  L3 local block device: {nvme_device} ({_l3_kind})")
+            _qd_local_map = {
+                "avgqu_sz":
+                    f"rate(node_disk_io_time_weighted_seconds_total{_qd_dev_sel}[2m])",
+                "qd_peak":
+                    f"max_over_time(node_disk_io_now{_qd_dev_sel}[2m])",
+            }
+            # Which EXPORTER, not just which device.
+            #
+            # These two queries ran with no force_selector, so _qr fell back
+            # to the module-wide `selector` -- which is the INFERENCE SERVER's
+            # job and instance (--prom-instance host:30000 is SGLang's port).
+            # node_exporter is a different target on a different port, so
+            # node_disk_* under SGLang's instance label matches nothing and
+            # this fetch contributed nothing on every run since v1.56.0. It
+            # was invisible because the main node_dfs path, which does use
+            # the discovered node_exporter selector, kept the charts fed.
+            #
+            # _node_sel is that discovered selector; hostname_selector is the
+            # same host on any port. Both are tried, in that order, and the
+            # one that answered is printed so the provenance is in the log.
+            _qd_sels = [(_node_sel, "discovered node_exporter target"),
+                        (hostname_selector, "same host, any exporter port"),
+                        ("", "default (inference-server) selector")]
+            _qd_local_used = ""
+            for _sel_try, _why in _qd_sels:
+                if not _sel_try and _qd_local_used:
+                    continue
+                if _synth_ts(
+                        "nvme_driver_timeseries.csv", _qd_local_map,
+                        f"L3 local queue depth (node_exporter diskstats, "
+                        f"{nvme_device}, {_why})",
+                        selector=_sel_try, merge=True, raw_expr=True):
+                    _qd_local_used = _sel_try or "(default)"
+                    print(f"  L3 local queue depth selector: {_why} "
+                          f"{_sel_try or selector}")
+                    break
+            if not _qd_local_used:
+                print(f"  [warn] no node_exporter diskstats for {nvme_device} "
+                      f"at any selector tried. Queue depth falls back to "
+                      f"whatever the amoprof collectors published.")
+            _qd_dev_diagnose(nvme_device,
+                             "" if _qd_local_used == "(default)"
+                             else _qd_local_used, "L3 local")
+        else:
+            print("  [info] no --nvme-device given, so node_exporter queue "
+                  "depth is not fetched: an unfiltered query averages across "
+                  "every block device on the host and reads as zero.")
+
+        # blktrace, LBA locality and SMART endurance for a LOCAL L3.
+        #
+        # These were requested only by the L3.5 fetch, under the memory
+        # node's selector.  On a local run blktrace is publishing to the
+        # same Prometheus under the GPU host's instance and nothing ever
+        # asked for it, so "Physical L3 block R / W total" read 0.0 MB and
+        # the LBA strips never drew -- on a host where blktrace was
+        # running the whole time.  Same metric names; the difference is
+        # only which instance they come from, which the caller's
+        # --prom-instance already scopes.
+        _synth_ts("nvme_driver_timeseries.csv", {
+            "bt_read_events":  "amoprof_blktrace_analysis_read_events",
+            "bt_write_events": "amoprof_blktrace_analysis_write_events",
+            "bt_read_bytes":   "amoprof_blktrace_analysis_read_bytes_total",
+            "bt_write_bytes":  "amoprof_blktrace_analysis_write_bytes_total",
+            "lba_w_span_gb":   "amoprof_blktrace_analysis_lba_write_span_gb",
+            "lba_w_start_gb":  "amoprof_blktrace_analysis_lba_write_start_gb",
+            "lba_r_span_gb":   "amoprof_blktrace_analysis_lba_read_span_gb",
+            "lba_r_start_gb":  "amoprof_blktrace_analysis_lba_read_start_gb",
+            "lba_w_top1pct":   "amoprof_blktrace_analysis_skew_write_top1pct_byte_share",
+            "lba_w_top5pct":   "amoprof_blktrace_analysis_skew_write_top5pct_byte_share",
+            "lba_w_gini":      "amoprof_blktrace_analysis_skew_write_gini_coefficient",
+            "lba_r_top1pct":   "amoprof_blktrace_analysis_skew_read_top1pct_byte_share",
+            "lba_r_gini":      "amoprof_blktrace_analysis_skew_read_gini_coefficient",
+            **{f"lba_w_d{_i}": f"amoprof_blktrace_analysis_lba_write_decile{_i}_pct"
+               for _i in range(10)},
+            **{f"lba_r_d{_i}": f"amoprof_blktrace_analysis_lba_read_decile{_i}_pct"
+               for _i in range(10)},
+            "host_written_gb": "amoprof_smart_host_written_gb",
+            "nand_written_gb": "amoprof_smart_nand_written_gb",
+            "waf":             "amoprof_smart_waf",
+        }, "L3 local blktrace / LBA / SMART", merge=True)
+
         # Say plainly which tiers will have charts, so a tier that is
         # configured but untelemetered is visible here rather than only as an
         # absent card in the report.
@@ -3880,19 +4728,60 @@ def collect_from_prometheus_api(
         # Warn when KV sizing will have to be estimated.  That constant scales
         # every derived bandwidth figure in the report, so falling back to
         # name-based inference silently is a correctness risk.
+        _mc = output_dir / "model_config.json"
         try:
-            _mc = output_dir / "model_config.json"
             _have_mc = _mc.exists() and _mc.stat().st_size > 0
         except Exception:
             _have_mc = False
+
+        # The caller's --model-path, already read, handed in so this fetch
+        # does not depend on WHO wrote the file first.
+        #
+        # The file is written before the fetch by the prom-only path, and
+        # that ordering has now been got wrong twice -- once in the code,
+        # once somewhere this log tail cannot identify -- each time producing
+        # the same report: "--model-path was passed and the warning still
+        # says the architecture is unavailable", which reads as the flag
+        # doing nothing. An ordering dependency that keeps breaking is worth
+        # removing rather than fixing again, so when the config was supplied
+        # and the file is not there, this writes it.
+        if not _have_mc and model_config:
+            try:
+                _mc.parent.mkdir(parents=True, exist_ok=True)
+                _mc.write_text(json.dumps(model_config, indent=2, default=str),
+                               encoding="utf-8")
+                _have_mc = _mc.stat().st_size > 0
+                print(f"  Model architecture: written from the supplied model "
+                      f"config (layers="
+                      f"{model_config.get('num_hidden_layers', '?')} "
+                      f"kv_heads={model_config.get('num_key_value_heads', '?')} "
+                      f"head_dim={model_config.get('head_dim', '?')}) "
+                      f"\u2192 {_mc}")
+            except Exception as _mcex:
+                print(f"  [warn] could not write {_mc}: "
+                      f"{type(_mcex).__name__}: {_mcex}")
         if not _have_mc:
             print("  [warn] model architecture unavailable — KV bytes/token will be "
                   "ESTIMATED from the model name (approximate).")
-            print("         amoprof_model_config_* was not found in this Prometheus "
-                  "window. If the service was restarted with --model-path only "
-                  "recently, windows BEFORE that restart cannot contain it.")
-            print("         Fix for this run: pass --model-path to analyze "
-                  "(reads the local config directly, no Prometheus needed).")
+            # Name the path checked. Without it the next report of this
+            # warning is as unactionable as the last: there is no way to tell
+            # "the file was never written" from "it was written somewhere
+            # else" from the message alone.
+            print(f"         Checked: {_mc}")
+            if model_config:
+                print("         A model config WAS supplied to this fetch and "
+                      "writing it to that path failed — see the warning above. "
+                      "This is not a missing flag; the flag was honoured and "
+                      "the write did not land.")
+            else:
+                print("         No model config was supplied to this fetch, and "
+                      "amoprof_model_config_* was not found in this Prometheus "
+                      "window either. If the service was restarted with "
+                      "--model-path only recently, windows BEFORE that restart "
+                      "cannot contain it.")
+                print("         Fix for this run: pass --model-path to analyze "
+                      "or compare (reads the local config directly, no "
+                      "Prometheus needed).")
         print(f"  Raw CSVs saved → {output_dir}")
 
     print(f"  SGLang series: {len(sg_dfs)}  DCGM: {len(dcgm_dfs)}  "
@@ -6663,9 +7552,15 @@ class Metrics:
     kv_attention_type: str = "GQA"    # MHA / GQA / MLA
     kv_hbm_pool_gb: float = 0         # GB available for KV after weights
     kv_hbm_max_tokens: int = 0        # max tokens fitting in L1 HBM pool
-    kv_hbm_utilisation_pct: float = 0 # actual tokens / max tokens * 100
-    kv_active_tokens: int = 0         # tokens currently in KV pool during run
-    kv_pool_fill_pct: float = 0       # SGLang token pool utilisation %
+    kv_hbm_utilisation_pct: float = 0 # live pool tokens / max tokens * 100
+    kv_active_tokens: int = 0         # tokens LIVE in the KV pool (residency)
+    # Every token the window prefilled, counted once each.  A cumulative total
+    # for the run, routinely 1000x the pool it sits in -- never a residency.
+    kv_context_tokens_total: int = 0
+    kv_pool_fill_pct: float = 0       # SGLang token pool utilisation %, window mean
+    kv_pool_fill_peak_pct: float = 0  # the same gauge's window peak
+    kv_pool_fill_source: str = ""     # which gauge and which statistic
+    kv_l1_residency_source: str = ""  # how kv_active_tokens was arrived at
     kv_weight_gb_per_gpu: float = 0   # model weight footprint per GPU
     # Per-tier token distribution and read latency costs
     kv_l1_hbm_tokens: int = 0         # tokens resident in L1 HBM (on-GPU)
@@ -8454,11 +9349,26 @@ def extract_metrics(data: dict) -> Metrics:
     m.kv_hbm_pool_gb    = round(kv_pool_gb, 1)
     m.kv_hbm_max_tokens = int(kv_pool_gb * 1e9 / kv_bytes) if kv_bytes > 0 else 0
 
-    # Actual KV tokens currently active (from SGLang pool metrics)
+    # Every token the window prefilled, cached and computed together.  This is
+    # a CUMULATIVE total for the run, not a residency: it counts each token
+    # once when its prompt was processed, whether or not that token is still
+    # in the pool a millisecond later.  On the reference run it is 46,529,863
+    # against an HBM pool that holds 38,000 tokens -- 1,224x the pool -- so
+    # every use of it has to be a lifetime use.  It was previously assigned to
+    # `kv_active_tokens` and rendered as "N live tokens / pool", which is how
+    # a report came to state a residency three orders of magnitude above the
+    # capacity it was a fraction of.
     total_ctx = m.prefill_cache_tokens + m.prefill_compute_tokens
-    m.kv_active_tokens = total_ctx if total_ctx > 0 else 0
+    m.kv_context_tokens_total = total_ctx if total_ctx > 0 else 0
+
+    # Pool fill: SGLang's own instantaneous gauge, as a window mean and peak.
+    # The last sample alone described whatever the engine happened to hold at
+    # the final scrape -- frequently a drained pool, and never the run.
     m.kv_pool_fill_pct = round(m.token_usage * 100 if hasattr(m, 'token_usage')
                                 else 0, 1)
+    m.kv_pool_fill_peak_pct = m.kv_pool_fill_pct
+    m.kv_pool_fill_source = ("sglang_summary token_usage (single value)"
+                             if m.kv_pool_fill_pct > 0 else "")
 
     # Read token_usage from sglang timeseries if available
     sg_ts = data.get("sglang_timeseries")
@@ -8466,11 +9376,16 @@ def extract_metrics(data: dict) -> Metrics:
         tu_col = (_find_metric_col(sg_ts, "full_token_usage") or
                   _find_metric_col(sg_ts, "token_usage"))
         if tu_col:
-            m.kv_pool_fill_pct = round(float(pd.to_numeric(sg_ts[tu_col], errors="coerce").dropna().iloc[-1]) * 100, 1)
-
-    m.kv_hbm_utilisation_pct = round(
-        m.kv_active_tokens / m.kv_hbm_max_tokens * 100
-        if m.kv_hbm_max_tokens > 0 else 0, 1)
+            _tu = pd.to_numeric(sg_ts[tu_col], errors="coerce").dropna()
+            if len(_tu):
+                # The gauge is a 0..1 fraction; some exporters publish 0..100.
+                _tu_scale = 1.0 if float(_tu.max()) <= 1.5 else 0.01
+                m.kv_pool_fill_pct = round(float(_tu.mean()) * _tu_scale * 100, 1)
+                m.kv_pool_fill_peak_pct = round(float(_tu.max()) * _tu_scale * 100, 1)
+                m.kv_pool_fill_source = (
+                    f"mean of {len(_tu):,} samples of {tu_col} over the window"
+                    + (" (gauge published 0-100, rescaled)"
+                       if _tu_scale != 1.0 else ""))
 
     # ── Per-tier token counts from SGLang metrics ─────────────────────────────
     # L1 capacity = sglang_max_total_num_tokens (the GPU KV pool size)
@@ -8511,14 +9426,14 @@ def extract_metrics(data: dict) -> Metrics:
         _l1_cap_ts  = _last_ts("max_total_num_tokens")
         _l2_cap_ts  = _last_ts("hicache_host_total_tokens")
         _l2_used_ts = _active_mean_ts("hicache_host_used_tokens")
-        _fu_ts      = _last_ts("full_token_usage")  # fraction 0-1
-
         if _l1_cap_ts  > 0: l1_cap  = safe_int(_l1_cap_ts)
         if _l2_cap_ts  > 0: l2_cap  = safe_int(_l2_cap_ts)
         if _l2_used_ts > 0: l2_used = safe_int(_l2_used_ts)
-        # full_token_usage fraction × l1_cap gives total HBM KV tokens (incl. prealloc)
-        if _fu_ts > 0 and l1_cap > 0 and l1_used == 0:
-            l1_used = safe_int(_fu_ts * l1_cap)
+        # The full_token_usage x l1_cap derivation that stood here used the
+        # LAST sample while the "KV Pool Active %" tile showed a different
+        # statistic of the same gauge, so the percentage and the token count
+        # beside it described different instants.  It is resolved once, below,
+        # from m.kv_pool_fill_pct -- one gauge, one statistic, one number.
 
         # Derive live L3 resident tokens from HiCache SSD counters when
         # kv_l3_storage_tokens is not exported.
@@ -8551,9 +9466,29 @@ def extract_metrics(data: dict) -> Metrics:
                 if l3_used == 0:
                     l3_used = safe_int(_backup_last)
 
-    # Fallback: derive L1 used from active context if SGLang didn't report it
-    if l1_used == 0 and m.kv_active_tokens > 0:
-        l1_used = min(m.kv_active_tokens, l1_cap)
+    # L1 residency, resolved once from the pool-fill gauge.
+    #
+    # What stood here took `kv_active_tokens` -- the run's CUMULATIVE prefill
+    # total -- and clamped it to the pool capacity with min().  Because that
+    # total exceeds the pool by three orders of magnitude on any real run, the
+    # clamp always returned the capacity itself: a run whose gauge was missing
+    # reported its KV pool exactly 100% full, presented as a measurement.  The
+    # min() did not bound an estimate, it manufactured one.
+    if l1_used == 0 and m.kv_pool_fill_pct > 0 and l1_cap > 0:
+        l1_used = safe_int(m.kv_pool_fill_pct / 100.0 * l1_cap)
+        m.kv_l1_residency_source = (
+            f"{m.kv_pool_fill_pct:.1f}% pool fill x {l1_cap:,} token capacity "
+            f"- {m.kv_pool_fill_source}")
+    elif l1_used > 0:
+        m.kv_l1_residency_source = "sglang kv_l1_device_tokens (direct gauge)"
+
+    # "Active" now means what the word says: tokens live in the pool.  The
+    # cumulative figure keeps its own name, kv_context_tokens_total, so a
+    # reader and a formula cannot pick up one while meaning the other.
+    m.kv_active_tokens = l1_used
+    m.kv_hbm_utilisation_pct = round(
+        l1_used / m.kv_hbm_max_tokens * 100
+        if m.kv_hbm_max_tokens > 0 else 0, 1)
 
     m.kv_l1_capacity_tokens = l1_cap
     m.kv_l2_capacity_tokens = l2_cap
@@ -8620,6 +9555,24 @@ def extract_metrics(data: dict) -> Metrics:
     m.l3_configured = bool(_l3_explicit_config)
     _smart_s = data.get("smart_summary") or {}
     if not isinstance(_smart_s, dict): _smart_s = {}
+    # The ssd_hardware collector publishes its capacity fields under
+    # amoprof_ssd_hw_*, which the fetch routes to ssd_hw_summary.json.  The
+    # collect path merges those into smart_summary.json and (since v1.65.0) so
+    # does the Prometheus path, but a run directory captured before that fix
+    # has them only in the sidecar -- which the loader already parses.  Read it
+    # as a fallback so kv_l3_used_gb / kv_l3_capacity_gb populate either way,
+    # rather than depending on a merge having run.
+    _ssd_hw_s = data.get("ssd_hw_summary") or {}
+    if isinstance(_ssd_hw_s, dict) and _ssd_hw_s:
+        # Copy first: `data` is the shared loader payload and other readers
+        # hold the same dict, so filling gaps in place would hand them a
+        # smart_summary that is not what the file says.
+        _smart_s = dict(_smart_s)
+        for _k_hw in ("hicache_fs_total_gb", "hicache_fs_used_gb",
+                      "hicache_fs_avail_gb", "hicache_fs_used_pct",
+                      "nvme_device_capacity_gb", "hicache_size_gb"):
+            if not _smart_s.get(_k_hw) and _ssd_hw_s.get(_k_hw):
+                _smart_s[_k_hw] = _ssd_hw_s[_k_hw]
     # Keep SMART/df data available until final effective-L3 resolution.
     # L3-active runs may expose generic HiCache backend=file + real blktrace/logical
     # activity without explicit L3 setup keys; L2-only runs are cleared below.
@@ -9457,10 +10410,28 @@ def extract_metrics(data: dict) -> Metrics:
         _e2e_flat = (m.sess_e2e_mean_s > 0 and
                      abs(float(m.sess_e2e_p50_s or 0) - float(m.sess_e2e_p90_s or 0)) < 1e-9 and
                      abs(float(m.sess_e2e_p90_s or 0) - float(m.sess_e2e_p99_s or 0)) < 1e-9)
-        if _e2e_flat and (m.sess_ttft_p50_ms > 0 or m.sess_tpot_p50_ms > 0):
-            _p50 = ((m.sess_ttft_p50_ms or m.ttft_ms or 0) + (m.sess_tpot_p50_ms or m.tpot_ms or 0) * max(m.sess_output_tok_p50, 1)) / 1000.0
-            _p90 = ((m.sess_ttft_p90_ms or m.sess_ttft_p95_ms or m.ttft_ms or 0) + (m.sess_tpot_p90_ms or m.sess_tpot_p95_ms or m.tpot_ms or 0) * max(m.sess_output_tok_p90, 1)) / 1000.0
-            _p99 = ((m.sess_ttft_p99_ms or m.sess_ttft_p95_ms or m.ttft_ms or 0) + (m.sess_tpot_p99_ms or m.sess_tpot_p95_ms or m.tpot_ms or 0) * max(m.sess_output_tok_p99, 1)) / 1000.0
+        # Each level needs its OWN percentiles.  The `or m.ttft_ms` /
+        # `or m.tpot_ms` fallbacks that stood here fed the MEAN into a
+        # synthesised percentile and then wrote the result to
+        # m.sess_e2e_p50_s, which other surfaces display as measured.  With
+        # the mean standing in at every level, p50/p90/p99 differed only
+        # through the output-token percentiles, so the `_p99 >= _p90 >= _p50`
+        # sanity check passed and manufactured a tail shape out of one real
+        # percentile.  No level is synthesised without the inputs for it.
+        _have_all_pct = all(
+            (getattr(m, _f, 0) or 0) > 0 for _f in (
+                "sess_ttft_p50_ms", "sess_tpot_p50_ms",
+                "sess_output_tok_p50", "sess_output_tok_p90",
+                "sess_output_tok_p99")) and all(
+            ((getattr(m, _a, 0) or 0) > 0 or (getattr(m, _b, 0) or 0) > 0)
+            for _a, _b in (("sess_ttft_p90_ms", "sess_ttft_p95_ms"),
+                           ("sess_ttft_p99_ms", "sess_ttft_p95_ms"),
+                           ("sess_tpot_p90_ms", "sess_tpot_p95_ms"),
+                           ("sess_tpot_p99_ms", "sess_tpot_p95_ms")))
+        if _e2e_flat and _have_all_pct:
+            _p50 = ((m.sess_ttft_p50_ms) + (m.sess_tpot_p50_ms) * max(m.sess_output_tok_p50, 1)) / 1000.0
+            _p90 = ((m.sess_ttft_p90_ms or m.sess_ttft_p95_ms) + (m.sess_tpot_p90_ms or m.sess_tpot_p95_ms) * max(m.sess_output_tok_p90, 1)) / 1000.0
+            _p99 = ((m.sess_ttft_p99_ms or m.sess_ttft_p95_ms) + (m.sess_tpot_p99_ms or m.sess_tpot_p95_ms) * max(m.sess_output_tok_p99, 1)) / 1000.0
             if _p50 > 0 and _p90 >= _p50 and _p99 >= _p90:
                 m.sess_e2e_p50_s = _p50
                 m.sess_e2e_p90_s = _p90
@@ -9581,6 +10552,62 @@ def extract_metrics(data: dict) -> Metrics:
 
         nv["io_util_pct"] = (nv["io_ms"].diff().clip(0) / (dt2 * 1000).replace(0, np.nan) * 100).clip(0, 100) \
                             if "io_ms" in nv.columns else nv.get("util_pct", pd.Series([0.0]*len(nv)))
+
+        # Average queue length, from the time-weighted counter.
+        #
+        #   avgqu_sz = d(time_in_queue_ms) / d(wall_ms)
+        #
+        # which is what iostat reports as aqu-sz/avgqu-sz. It is an AVERAGE
+        # over the interval, so it cannot show a sub-interval peak -- but it
+        # also cannot miss one, because every outstanding request contributes
+        # to the integral whether or not a scrape happened to catch it. A
+        # 1-second burst to depth 16 inside a 15-second interval shows here as
+        # ~1.07, which is why a deep-but-brief burst reads as a modest
+        # average: the integral is preserved even though the shape is not.
+        if "io_wt_ms" in nv.columns and nv["io_wt_ms"].max() > 0:
+            _wq = (nv["io_wt_ms"].diff().clip(0)
+                   / (dt2 * 1000).replace(0, np.nan)).clip(0)
+            # Only fill a column that is absent or dead, so a collector-derived
+            # avgqu_sz (which may be finer-grained) is never overwritten.
+            if ("avgqu_sz" not in nv.columns
+                    or not (nv["avgqu_sz"].fillna(0) > 0).any()):
+                nv["avgqu_sz"] = _wq.fillna(0)
+            nv["avgqu_sz_weighted"] = _wq.fillna(0)
+
+        # A THIRD source, needing nothing that is not already fetched.
+        #
+        # diskstats field 4 ("ms spent reading") is the sum, over completed
+        # reads, of each one's service time; field 8 is the same for writes.
+        # So
+        #
+        #   (d(rd_ms) + d(wr_ms)) / d(wall_ms)
+        #
+        # is the average number of requests being serviced concurrently --
+        # Little's Law stated directly, since it is throughput x latency with
+        # the multiplication already done by the kernel. rd_ms and wr_ms are
+        # written by the Prometheus loader above and by every iostat and sysfs
+        # path, so this works on hosts that expose no queue-depth field at
+        # all: not field 11, not io_now, no blktrace.
+        #
+        # It is a LOWER bound on avgqu-sz. Field 11 is weighted by the
+        # in-flight count at every update and so includes queueing wait,
+        # while fields 4 and 8 count only service time. Keeping both lets the
+        # report corroborate one derivation against the other instead of
+        # trusting a single number, the same reason the blktrace path carries
+        # a Little's Law cross-check.
+        if ("rd_ms" in nv.columns or "wr_ms" in nv.columns):
+            _svc_ms = None
+            for _c in ("rd_ms", "wr_ms"):
+                if _c not in nv.columns:
+                    continue
+                _d = nv[_c].diff().clip(0)
+                _svc_ms = _d if _svc_ms is None else (_svc_ms + _d)
+            if _svc_ms is not None and float(_svc_ms.fillna(0).max()) > 0:
+                _sq = (_svc_ms / (dt2 * 1000).replace(0, np.nan)).clip(0)
+                nv["avgqu_sz_service"] = _sq.fillna(0)
+                if ("avgqu_sz" not in nv.columns
+                        or not (nv["avgqu_sz"].fillna(0) > 0).any()):
+                    nv["avgqu_sz"] = _sq.fillna(0)
 
         # BW columns: priority order:
         #  1. Direct MB/s from iostat (r_mb_s / w_mb_s) — most accurate
@@ -9789,6 +10816,15 @@ def extract_metrics(data: dict) -> Metrics:
 
         m.kvb_evicted_tokens_total    = safe_int(_delta_sg("evicted_tokens_total"))
         m.kvb_prefetched_tokens_total = safe_int(_delta_sg("prefetched_tokens_total"))
+        # Builds exist where prefetched_tokens_total stays 0 while prefetch is
+        # demonstrably running.  Fall back to the storage-side hit counter so
+        # the L3/L3.5 evidence gate below does not declare a working tier
+        # absent and suppress every chart that depends on it.
+        if m.kvb_prefetched_tokens_total <= 0:
+            _hit_fallback = safe_int(
+                _delta_sg("storage_prefetch_hit_tokens_total"))
+            if _hit_fallback > 0:
+                m.kvb_prefetched_tokens_total = _hit_fallback
         m.kvb_loadback_tokens_total   = safe_int(_delta_sg("load_back_tokens_total"))
         m.kvb_backuped_tokens_total   = safe_int(_delta_sg("backuped_tokens_total"))
 
@@ -15280,6 +16316,44 @@ def chart_ssd_requirement_summary(m: "Metrics") -> str:
     qd_peak = int(getattr(m, "ssd_qd_max", 0) or 0)
     qd_p99  = float(getattr(m, "ssd_qd_p99", 0) or 0)
 
+    # ── Vet before specifying ────────────────────────────────────────────
+    #
+    # This table turns observed figures into hardware requirements, so an
+    # artifact here is not a cosmetic problem: a v1.69.0 report asked for
+    # "Sequential Write BW 28672 MB/s x 1.3 = 37274 MB/s" and "Queue Depth
+    # peak 3,430 - SSD must sustain observed peak concurrency" on a run whose
+    # write bandwidth averaged 9.3 MB/s and whose device queue peaked at
+    # 25.97.  Both came from the same series the tiles headline, and the tiles
+    # now vet them; the same kernel is used here so the two cannot specify
+    # different drives.
+    # Imported through the module-level guard above, not here: this module
+    # is also run as a script, where `amoprof` resolves to this file rather
+    # than to the package and a package-absolute import raises
+    # ModuleNotFoundError.  The comment on that guard says exactly this, and
+    # these two call sites broke it -- taking the whole report with them,
+    # since a chart that raises at import time aborts build_html.
+    _vet_bw, _vet_qd = _k_vet_bw, _k_vet_qd
+
+    _rd_v = _vet_bw(rd_bw_peak, float(getattr(m, "nvme_rd_bw_mbs_mean", 0) or 0))
+    _wr_v = _vet_bw(wr_bw_peak, float(getattr(m, "nvme_wr_bw_mbs_mean", 0) or 0))
+    rd_bw_peak, wr_bw_peak = _rd_v["mbs"], _wr_v["mbs"]
+    _rd_bw_why = _rd_v.get("reason", "")
+    _wr_bw_why = _wr_v.get("reason", "")
+
+    # The QD row needs the same three grounds the tile applies.  A p99
+    # latency of zero means the trace captured no completion dwell, which is
+    # exactly the state that makes count(Q) - count(C) rise without bound.
+    _qd_lat_ms = max(float(getattr(m, "blk_read_lat_p99_us", 0) or 0),
+                     float(getattr(m, "blk_write_lat_p99_us", 0) or 0)) / 1000.0
+    _qd_iops = (float(getattr(m, "nvme_rd_iops_mean", 0) or 0)
+                + float(getattr(m, "nvme_wr_iops_mean", 0) or 0))
+    _qd_v = _vet_qd(event_mean=float(getattr(m, "ssd_qd_mean", 0) or 0),
+                    event_peak=qd_peak, event_lat_ms=_qd_lat_ms,
+                    event_iops=_qd_iops)
+    _qd_why = "; ".join(_qd_v.get("reasons") or [])
+    if _qd_v.get("rejected"):
+        qd_peak, qd_p99 = 0, 0.0
+
     # Endurance — mirror the calc from chart_endurance_projection.
     dur_s     = float(getattr(m, "run_duration_s", 0) or 0)
     bytes_wr  = float(getattr(m, "nvme_bytes_written_total", 0) or 0)
@@ -15359,14 +16433,20 @@ def chart_ssd_requirement_summary(m: "Metrics") -> str:
         _fmt(rd_bw_peak, "MB/s", 0) if rd_bw_peak else "—",
         "× 1.3",
         _fmt(rd_bw_peak * 1.3, "MB/s", 0) if rd_bw_peak else "—",
-        "Peak observed × headroom for bursts",
+        ("Peak observed × headroom for bursts" if rd_bw_peak
+         else (f"No requirement stated: {_rd_bw_why}" if _rd_bw_why
+               else "Peak observed × headroom for bursts")),
+        warn=bool(_rd_bw_why),
     ))
     rows.append(_row(
         "Sequential Write BW",
         _fmt(wr_bw_peak, "MB/s", 0) if wr_bw_peak else "—",
         "× 1.3",
         _fmt(wr_bw_peak * 1.3, "MB/s", 0) if wr_bw_peak else "—",
-        "Peak observed × headroom for bursts",
+        ("Peak observed × headroom for bursts" if wr_bw_peak
+         else (f"No requirement stated: {_wr_bw_why}" if _wr_bw_why
+               else "Peak observed × headroom for bursts")),
+        warn=bool(_wr_bw_why),
     ))
 
     # 4/5. Random IOPS
@@ -15407,7 +16487,10 @@ def chart_ssd_requirement_summary(m: "Metrics") -> str:
         f"peak {qd_peak:,} · p99 {qd_p99:.0f}" if qd_peak else "—",
         "",
         f"≥ {qd_peak:,}" if qd_peak else "—",
-        "SSD must sustain observed peak concurrency",
+        ("SSD must sustain observed peak concurrency" if qd_peak
+         else (f"No requirement stated: {_qd_why}" if _qd_why
+               else "SSD must sustain observed peak concurrency")),
+        warn=bool(_qd_why),
     ))
 
     # 9. Endurance
@@ -17082,9 +18165,28 @@ def build_recommendations(m: Metrics, bottlenecks: list[dict]) -> list[dict]:
             "title": "Enable Chunked Prefill",
             "impact": "HIGH", "effort": "LOW",
             "phase": "PREFILL",
-            "detail": f"TTFT {m.ttft_ms:.0f}ms is driven by long context ({m.prefill_cache_tokens+m.prefill_compute_tokens:,} tokens). "
-                      "Set `--chunked-prefill-size 4096` in SGLang to spread prefill compute across multiple steps, "
-                      "dramatically reducing TTFT without accuracy loss."
+            # Context length is PER REQUEST.  This read
+            # prefill_cache + prefill_compute, the run's cumulative prefill
+            # total, and called it the context -- on the reference run, "long
+            # context (46,529,863 tokens)" for a model whose window is 128K.
+            # A reader cannot size --chunked-prefill-size against that, and the
+            # number argues for chunking on any run long enough to accumulate
+            # tokens, whatever its prompts actually looked like.
+            "detail": ((f"TTFT {m.ttft_ms:.0f}ms with a mean prompt of "
+                        f"{m.sess_input_tok_mean:,.0f} tokens per request"
+                        + (f" (p90 {m.sess_input_tok_p90:,.0f})"
+                           if getattr(m, "sess_input_tok_p90", 0) > 0 else "")
+                        + ". ")
+                       if getattr(m, "sess_input_tok_mean", 0) > 0 else
+                       (f"TTFT {m.ttft_ms:.0f}ms. Per-request prompt length "
+                        f"is unavailable (needs sglang_prompt_tokens_total and "
+                        f"num_requests_total), so whether long context is the "
+                        f"cause is unconfirmed here. ")) +
+                      "Chunked prefill spreads prefill compute across steps: set "
+                      "`--chunked-prefill-size 4096` in SGLang and re-measure. It "
+                      "helps when prefill compute dominates TTFT, and does "
+                      "nothing for TTFT spent waiting in the queue — check the "
+                      "queue-time split before tuning it."
         })
 
     if m.gpu_util_mean < 30 and m.run_duration_s > 300:
@@ -17189,6 +18291,13 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
 
     def fmt(v, d=1): return f"{v:.{d}f}" if (v is not None and v != 0) else "—"
 
+    # This function assigns `html = f"""<!DOCTYPE html>..."""` further down, so
+    # `html` is a LOCAL throughout build_html and the module-level import is
+    # unreachable here -- reading html.escape anywhere in this function raises
+    # UnboundLocalError, before that assignment, and AttributeError after it.
+    # Import the escaper under its own name instead of touching `html` at all.
+    from html import escape as _esc
+
     # Token context bar
     total_ctx = m.prefill_cache_tokens + m.prefill_compute_tokens + m.decode_tokens
     if total_ctx > 0:
@@ -17226,13 +18335,31 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
         # magnitude, so report nothing instead.
         _input_tp_mean = 0.0
         _input_tp_src = "unavailable — needs 2+ samples of realtime_tokens_total"
+    _rlp = _k_resolve_pct      # module-level guard; see the note above
+    _p50_ttft = _rlp("ttft", 0.5,
+                     session_ms=float(getattr(m, "sess_ttft_p50_ms", 0) or 0),
+                     mean_ms=float(getattr(m, "ttft_ms", 0) or 0))
+    _p50_tpot = _rlp("itl", 0.5,
+                     session_ms=float(getattr(m, "sess_tpot_p50_ms", 0) or 0),
+                     mean_ms=float(getattr(m, "tpot_ms", 0) or 0))
+
+    def _pct_card_val(_r, _dec):
+        return fmt(_r["ms"], _dec) if _r["ms"] > 0 else "\u2014"
+
     kpis = "".join([
         kv_card("Cache Hit", fmt(m.cache_hit_pct, 1), "%", OK_C,
                 "benchmark" if getattr(m, "cache_hit_calc_method", "") == "benchmark_summary_cache_hit_rate" else "realtime"),
         kv_card("TTFT mean", fmt(m.ttft_ms, 0), "ms", PREFILL, "Prefill Phase"),
-        kv_card("TTFT p50", fmt(m.sess_ttft_p50_ms or m.ttft_ms, 0), "ms", PREFILL, "Median"),
+        # `m.sess_ttft_p50_ms or m.ttft_ms` showed the MEAN under the label
+        # "Median" whenever the per-request percentile was missing, which put
+        # a mean on a card that says p50 and read as corroboration of the mean
+        # card beside it. The shared kernel refuses that substitution and the
+        # card shows an em dash instead, naming the figure it declined.
+        kv_card("TTFT p50", _pct_card_val(_p50_ttft, 0), "ms", PREFILL,
+                _p50_ttft["method"] if _p50_ttft["ms"] <= 0 else "Median"),
         kv_card("TPOT / ITL mean", fmt(m.tpot_ms, 1), "ms/tok", DECODE, "Decode Phase"),
-        kv_card("TPOT / ITL p50", fmt(m.sess_tpot_p50_ms or m.tpot_ms, 1), "ms/tok", DECODE, "Median"),
+        kv_card("TPOT / ITL p50", _pct_card_val(_p50_tpot, 1), "ms/tok", DECODE,
+                _p50_tpot["method"] if _p50_tpot["ms"] <= 0 else "Median"),
         kv_card("Input throughput", fmt(_input_tp_mean, 1), "tok/s", PREFILL,
                 _input_tp_src),
         kv_card("Output throughput mean", fmt(m.gen_tp_mean or m.gen_tp_peak, 1), "tok/s", DECODE,
@@ -18216,7 +19343,7 @@ KV active tokens  : sglang_hicache_host_used_tokens  (L2 DRAM)
     <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:12px">
       <div style="font-size:10px;color:#0369a1;font-weight:700;text-transform:uppercase;margin-bottom:4px">KV Pool Active %</div>
       <div style="font-size:22px;font-weight:800;color:#0c4a6e;font-family:monospace">{m.kv_pool_fill_pct:.1f}<span style="font-size:12px;color:#6b7280;margin-left:3px">%</span></div>
-      <div style="font-size:10px;color:#6b7280">{m.kv_active_tokens:,} live tokens / pool · ≠ HBM Util (weights+pool+activations)</div>
+      <div style="font-size:10px;color:#6b7280">{m.kv_active_tokens:,} live tokens of {m.kv_l1_capacity_tokens:,} &middot; peak {m.kv_pool_fill_peak_pct:.1f}% &middot; {_esc(m.kv_pool_fill_source or "source unrecorded")} &middot; &ne; HBM Util (weights+pool+activations)</div>
     </div>
     <div style="background:#faf5ff;border:1px solid #e9d5ff;border-radius:8px;padding:12px">
       <div style="font-size:10px;color:#7c3aed;font-weight:700;text-transform:uppercase;margin-bottom:4px">INT8 savings</div>
@@ -19809,9 +20936,17 @@ def generate_excel(m: Metrics, bottlenecks: list[dict], recs: list[dict],
     r = write_section_header(ws, "  KEY PERFORMANCE INDICATORS", r)
     kpis = [
         ("Time to First Token (TTFT mean)", f"{m.ttft_ms:.0f} ms", "Prefill Phase", COL_PREFIL),
-        ("Time to First Token (TTFT p50)", f"{(m.sess_ttft_p50_ms or m.ttft_ms):.0f} ms", "Prefill Phase", COL_PREFIL),
+        # Same substitution as the KPI cards: with no per-request percentile
+        # this printed the MEAN under a "(TTFT p50)" heading.
+        ("Time to First Token (TTFT p50)",
+         (f"{m.sess_ttft_p50_ms:.0f} ms" if (m.sess_ttft_p50_ms or 0) > 0
+          else "\u2014 (no per-request p50; the mean is not substituted)"),
+         "Prefill Phase", COL_PREFIL),
         ("Time per Output Token (TPOT mean)", f"{m.tpot_ms:.1f} ms/tok", "Decode Phase", COL_DECODE),
-        ("Time per Output Token (TPOT p50)", f"{(m.sess_tpot_p50_ms or m.tpot_ms):.1f} ms/tok", "Decode Phase", COL_DECODE),
+        ("Time per Output Token (TPOT p50)",
+         (f"{m.sess_tpot_p50_ms:.1f} ms/tok" if (m.sess_tpot_p50_ms or 0) > 0
+          else "\u2014 (no per-request p50; the mean is not substituted)"),
+         "Decode Phase", COL_DECODE),
         ("Generation Throughput (mean)", f"{(m.gen_tp_mean or m.gen_tp_peak):.1f} tok/s", "Decode", COL_GPU),
         ("Generation Throughput (p50)", f"{(m.gen_tp_p50 or m.gen_tp_mean or m.gen_tp_peak):.1f} tok/s", "Decode", COL_GPU),
         ("Peak Gen Throughput", f"{m.gen_tp_peak:.1f} tok/s", "Decode", COL_GPU),

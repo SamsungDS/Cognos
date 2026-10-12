@@ -43,6 +43,89 @@ from .collectors import NsysGpuTraceCollector
 log = logging.getLogger("amoprof")
 
 
+# ── compare: per-run override plumbing ──────────────────────────────────────
+# Keys accepted by `--run-opt LABEL=KEY=VALUE`.  Each maps to the global
+# compare flag of the same name, which it overrides for that run only.
+_COMPARE_RUN_OPT_KEYS: frozenset[str] = frozenset({
+    "prom_instance",
+    "prom_job",
+    "prom_labels",          # comma-separated K=V pairs
+    "prom_step",
+    "nvme_device",
+    "l35_instance",
+    "l35_job",
+    "l35_storage_instance",
+    "l35_storage_job",
+    "l35_nvme_device",
+    "model_path",           # per-run: two runs can serve different models
+    "setup_details",        # same effect as --run-setup
+})
+
+# Scoping keys that only mean anything when the run's backing tier is a
+# separate memory node.  On a run resolved as local_ssd they are dropped, so
+# a global --l35-instance aimed at the Mooncake node cannot pull that node's
+# store metrics into a local-SSD run.
+_COMPARE_L35_ONLY_KEYS: tuple[str, ...] = (
+    "l35_instance", "l35_job", "l35_storage_instance", "l35_storage_job",
+    "l35_nvme_device",
+)
+
+
+def _parse_run_keyed_args(
+    specs: list[str],
+    known_labels: list[str],
+    *,
+    flag: str,
+    fixed_key: str = "",
+) -> tuple[dict[str, dict[str, str]], str]:
+    """Parse ``LABEL=KEY=VALUE`` (or ``LABEL=VALUE`` when *fixed_key* is set).
+
+    Returns ``(by_label, error)``.  *error* is a non-empty message when a spec
+    is malformed, names an unknown label, or names an unknown key; the caller
+    reports it and exits rather than silently ignoring an override, because an
+    ignored override is indistinguishable in the output from one that was
+    applied and had no effect.
+    """
+    by_label: dict[str, dict[str, str]] = {}
+    # Exact match first, then a case/space-insensitive fallback, so a label
+    # retyped with different capitalisation is matched rather than rejected.
+    _canon = {lbl: lbl for lbl in known_labels}
+    _loose = {}
+    for lbl in known_labels:
+        _loose.setdefault(" ".join(lbl.lower().split()), lbl)
+
+    for raw in specs or []:
+        head, sep, rest = str(raw).partition("=")
+        if not sep:
+            return {}, (f"{flag} {raw!r}: expected "
+                        + (f"LABEL={fixed_key.upper()}" if fixed_key
+                           else "LABEL=KEY=VALUE"))
+        label_in = head.strip()
+        label = _canon.get(label_in) or _loose.get(
+            " ".join(label_in.lower().split()), "")
+        if not label:
+            return {}, (f"{flag} {raw!r}: no --run has label {label_in!r}. "
+                        f"Known labels: "
+                        + ", ".join(repr(l) for l in known_labels))
+        if fixed_key:
+            key, value = fixed_key, rest.strip()
+        else:
+            key, _sep2, value = rest.partition("=")
+            key = key.strip().lower().replace("-", "_")
+            value = value.strip()
+            if not _sep2:
+                return {}, (f"{flag} {raw!r}: expected LABEL=KEY=VALUE "
+                            f"(missing the value for key {key!r})")
+            if key not in _COMPARE_RUN_OPT_KEYS:
+                return {}, (f"{flag} {raw!r}: unknown key {key!r}. "
+                            f"Known keys: "
+                            + ", ".join(sorted(_COMPARE_RUN_OPT_KEYS)))
+        if not value:
+            return {}, f"{flag} {raw!r}: empty value for key {key!r}"
+        by_label.setdefault(label, {})[key] = value
+    return by_label, ""
+
+
 def _detect_cpu_vendor() -> str:
     """Return 'amd', 'intel', or 'unknown' from /proc/cpuinfo."""
     try:
@@ -387,6 +470,14 @@ _MODEL_CONFIG_KEYS = (
     "max_position_embeddings", "vocab_size", "sliding_window",
     "num_experts", "num_local_experts", "num_experts_per_tok",
     "intermediate_size", "rope_theta", "architectures",
+    # The model's own statement of its identity. _write_model_config reads
+    # cfg["_name_or_path"] first when recording the model name, but this
+    # list is what survives the read -- so that branch was dead and the name
+    # always fell through to the HuggingFace-cache path derivation, or, for
+    # a path that is not an HF cache, to the parent DIRECTORY name. A
+    # --model-path /models/gemma-4-31b-it/config.json was recorded as
+    # "gemma-4-31b-it" rather than "google/gemma-4-31b-it".
+    "_name_or_path",
 )
 
 
@@ -3130,9 +3221,17 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Extra PromQL label filters, space-separated. "
                         "Example: --prom-labels gpu=0 device=nvme9n1")
     a.add_argument("--nvme-device", default="",
-                   help="NVMe device name hint for node_disk_* metrics "
-                        "(e.g. nvme0n1). Lets Prometheus collector pin the "
-                        "right device.")
+                   help="NVMe device name for node_disk_* metrics on the GPU "
+                        "host (e.g. nvme0n1, or nvme6c6n1). Scopes every "
+                        "node_disk_* query to that one device; without it the "
+                        "queue-depth fetch is skipped, because an unfiltered "
+                        "query averages across every block device on the host "
+                        "and reads as zero. On a multipath namespace prefer "
+                        "the per-controller path name (nvmeXcYnZ) over the "
+                        "namespace head (nvmeXnY): the kernel accounts the "
+                        "queue-depth integral and per-direction service times "
+                        "on the controller path, so the head reports "
+                        "in-flight and utilisation but zero queue depth.")
     a.add_argument("--sglang-host", default=os.environ.get("AMOPROF_SGLANG_HOST", "127.0.0.1"),
                    help="SGLang host for fetching server_info during analyze. Used with --sglang-port.")
     a.add_argument("--l35-instance", type=str, default=os.environ.get("AMOPROF_L35_INSTANCE", ""),
@@ -3164,6 +3263,20 @@ def _build_parser() -> argparse.ArgumentParser:
                    default=os.environ.get("AMOPROF_L35_STORAGE_JOB", ""),
                    help="Prometheus job of the L3.5 node's storage exporter "
                         "(e.g. amoprof, node). Optional.")
+    a.add_argument("--l35-nvme-device", type=str,
+                   default=os.environ.get("AMOPROF_L35_NVME_DEVICE", ""),
+                   help="Block device ON THE L3.5 memory node to scope its "
+                        "node_disk_* metrics to (e.g. nvme6c6n1). The L3.5 "
+                        "equivalent of --nvme-device. Without it every "
+                        "node_disk_* query on that node is averaged across "
+                        "all its NVMe namespaces, which dilutes bandwidth, "
+                        "IOPS and queue depth by the number of idle devices. "
+                        "Prefer the per-controller path name (nvmeXcYnZ) over "
+                        "the namespace head (nvmeXnY): under NVMe native "
+                        "multipath the kernel accounts the queue-depth "
+                        "integral and per-direction service times on the "
+                        "controller path, so the head reports in-flight and "
+                        "utilisation but zero queue depth.")
     a.add_argument("--model-path", type=str, default=os.environ.get("AMOPROF_MODEL_PATH", ""),
                    help="Path to the served model directory (or its config.json). Read for num_hidden_layers / num_key_value_heads / head_dim so KV bytes per token is computed exactly instead of estimated from the model name. Written to raw/model_config.json and, in service mode, published as amoprof_model_config_* metrics.")
     a.add_argument("--sglang-port", type=int, default=int(os.environ.get("AMOPROF_SGLANG_PORT", "0") or 0),
@@ -3375,6 +3488,60 @@ def _build_parser() -> argparse.ArgumentParser:
                 --run "BF16:./metrics_run_20260515" \\
                 --run "FP8:./metrics_run_20260516" \\
                 --output comparison.html
+
+            Leave the DIRECTORY FIELD EMPTY to fetch that run's window from
+            Prometheus instead, so no prior `analyze` is needed:
+
+              amoprof compare --prometheus http://prom:9090 \\
+                --prom-instance gpu-host:30000 --nvme-device nvme6n1 \\
+                --run "L3.5 Mooncake::1790700000:1790706000" \\
+                --run "L3 local SSD::1790866656:1790872805" \\
+                --output-dir ./comparison
+
+            Note the DOUBLE colon: label, empty dir, start, end. Directory
+            and fetched runs can be mixed in one invocation.
+
+            START and END must contain NO COLONS, since the spec is itself
+            colon-separated. Unix timestamps, a compact ISO stamp
+            (20260930T2341Z) or a relative offset (49m, 2h, 1d) all work;
+            2026-09-30T23:41:00Z does not and is rejected with an error
+            rather than silently split across the two fields.
+
+            With a directory, start/end only set the displayed window and
+            the duration used for rates -- they do NOT re-slice the data.
+            Fetched runs are different: there the window IS the query range.
+
+            PER-RUN OVERRIDES. The --prom-*/--nvme-device/--l35-* flags are
+            global, which is only right when every run shares one backend
+            class, one host and one device. When they differ -- a local-SSD
+            L3 run against an L3.5 memory node -- override by run label:
+
+              amoprof compare --prometheus http://prom:9090 \\
+                --prom-instance gpu-host:30000 \\
+                --run "L3 local SSD::1790866656:1790872805" \\
+                --run-setup  "L3 local SSD=/root/setup_local_l3.json" \\
+                --run-opt    "L3 local SSD=nvme_device=nvme6n1" \\
+                --run "L3.5 DRAM+SSD::1790880000:1790886000" \\
+                --run-setup  "L3.5 DRAM+SSD=/root/setup_l35.json" \\
+                --run-opt    "L3.5 DRAM+SSD=l35_instance=mc-node:9100" \\
+                --model-path /models/gemma-4-31b-it/config.json \\
+                --output-dir ./comparison
+
+            Each run's setup_details.json decides its backing tier, so rows
+            are labelled L3 or L3.5 per run instead of assuming one of them.
+            A run that resolves to a local SSD never has --l35-* applied to
+            its fetch, global or not: those select another host's exporter.
+
+            A fetched run with no --run-setup has no configuration at all --
+            model, GPU, TP size and tier all render as unknown.
+
+            --model-path is read for num_hidden_layers / num_key_value_heads /
+            head_dim, so KV bytes per token is computed rather than estimated
+            from the model name. Every figure derived from it -- L2 and L3
+            residency, bytes per token, the capacity reconciliation -- is
+            exact only with it. Per-run via
+            --run-opt "LABEL=model_path=<path>" when the two runs serve
+            different models.
         """),
     )
     cmp.add_argument(
@@ -3382,17 +3549,112 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="LABEL:DIR[:START[:END]]",
         help="Run specification. Format: label:raw_dir[:prom_start[:prom_end]]. "
              "Repeat for each run to compare. First run is the baseline. "
-             "START/END are Unix timestamps or ISO-8601 strings. "
+             "START/END must be COLON-FREE, because the spec itself is "
+             "colon-separated: a Unix timestamp (1790811660), a compact ISO "
+             "stamp (20260930T2341Z), or a relative offset (49m, 2h, 1d). A "
+             "full ISO-8601 stamp such as 2026-09-30T23:41:00Z would be split "
+             "across the two fields and is rejected rather than misread. "
              "Example: 'Baseline:./run_c1:1778871540:1778877078'")
     cmp.add_argument(
         "--output-dir", default=".", metavar="DIR",
-        help="Directory where comparison.html is written. Default: current dir.")
+        help="Directory the comparison report is written to. The file is "
+             "amoprof_comparison_<YYYYmmdd>_<HHMMSS>.html unless --output "
+             "names it. Default: current dir.")
     cmp.add_argument(
         "--output", default="", metavar="FILE",
         help="Output filename. Default: amoprof_comparison_<timestamp>.html")
     cmp.add_argument(
         "--title", default="",
         help="Report title. Default: 'AMOprof Comparison — N runs'.")
+    # ── Fetch each run's window straight from Prometheus ────────────────────
+    # Without this, comparing two windows meant running `analyze` once per
+    # window purely to create directories for `compare` to read.  The
+    # timestamps in the --run spec did not help: they set the displayed
+    # duration and window label and nothing else, so passing different ones
+    # against the same directory produced identical numbers under a
+    # different stated window.
+    cmp.add_argument(
+        "--prometheus", default="", metavar="URL",
+        help="Prometheus server URL. With it, a --run spec whose DIRECTORY "
+             "FIELD IS EMPTY is fetched from Prometheus over that run's "
+             "start/end window, so no prior `analyze` is needed. "
+             "Example: --run 'Local L3::1790866656:1790872805'")
+    cmp.add_argument(
+        "--prom-step", type=int, default=15, metavar="SECONDS",
+        help="Query resolution for --prometheus fetches (default: 15).")
+    cmp.add_argument(
+        "--prom-instance", default="", metavar="HOST:PORT",
+        help="Scope all fetched queries to one Prometheus 'instance' label.")
+    cmp.add_argument(
+        "--prom-job", default="", metavar="JOB",
+        help="Scope all fetched queries to one Prometheus 'job' label.")
+    cmp.add_argument(
+        "--prom-labels", action="append", default=[], metavar="K=V",
+        help="Extra Prometheus label selectors. Repeatable.")
+    cmp.add_argument(
+        "--nvme-device", default="", metavar="DEV",
+        help="NVMe device for node_disk_* metrics on the GPU host "
+             "(e.g. nvme6n1, or nvme6c6n1). On a multipath namespace prefer "
+             "the controller-path name: the namespace head carries no "
+             "queue-depth integral.")
+    cmp.add_argument(
+        "--l35-instance", default="", metavar="HOST:PORT",
+        help="Instance of the L3.5 store exporter, when the backing tier "
+             "runs on another host. Omit for a local L3 SSD.")
+    cmp.add_argument(
+        "--l35-job", default="", metavar="JOB",
+        help="Job label of the L3.5 store exporter.")
+    cmp.add_argument(
+        "--l35-storage-instance", default="", metavar="HOST:PORT",
+        help="Instance of the collector on the L3.5 node's block device.")
+    cmp.add_argument(
+        "--l35-storage-job", default="", metavar="JOB",
+        help="Job label of the collector on the L3.5 node's block device.")
+    cmp.add_argument(
+        "--model-path", default="", metavar="PATH",
+        help="Path to the served model directory (or its config.json). Read "
+             "for num_hidden_layers / num_key_value_heads / head_dim so KV "
+             "bytes per token is computed exactly rather than estimated from "
+             "the model name, and written to each run's raw/model_config.json. "
+             "Per-run with --run-opt 'LABEL=model_path=/path/to/config.json', "
+             "which is what a comparison of two different models needs.")
+    cmp.add_argument(
+        "--l35-nvme-device", default="", metavar="DEV",
+        help="Block device on the L3.5 node to scope its node_disk_* metrics "
+             "to (e.g. nvme6c6n1). The L3.5 equivalent of --nvme-device; "
+             "unscoped, those queries are averaged across every NVMe "
+             "namespace on that node.")
+    cmp.add_argument(
+        "--fetch-dir", default="", metavar="DIR",
+        help="Where fetched run directories are written. "
+             "Default: <output-dir>/_compare_fetch/<label>/. They are kept "
+             "after the run, so a re-compare does not re-fetch.")
+    # ── Per-run overrides ───────────────────────────────────────────────────
+    # The flags above are global, which is only correct when every run shares
+    # one backend class, one host and one device.  The comparison that
+    # motivates `compare` is usually the opposite: a local-SSD L3 run against
+    # an L3.5 memory node, each with its own setup_details.json and its own
+    # exporter.  Under global-only scoping, pointing --l35-instance at the
+    # memory node pulls that node's store metrics into the local run, and the
+    # local run renders under row labels naming a tier it never had.
+    #
+    # Overrides are keyed by the run's label rather than added as more colon
+    # fields, because the spec is already colon-overloaded and paths are not.
+    cmp.add_argument(
+        "--run-setup", dest="run_setup", action="append", default=[],
+        metavar="LABEL=PATH",
+        help="setup_details.json for one run, by label. Required for a FETCHED "
+             "run (an empty directory field) if its model, GPU, TP size and "
+             "KV backing tier are to appear at all -- a Prometheus fetch "
+             "writes no setup file. Repeatable. "
+             "Example: --run-setup 'L3 local SSD=/root/setup_local_l3.json'")
+    cmp.add_argument(
+        "--run-opt", dest="run_opt", action="append", default=[],
+        metavar="LABEL=KEY=VALUE",
+        help="Per-run override of a scoping field, by label. Overrides the "
+             "matching global flag for that run only. Keys: "
+             + ", ".join(sorted(_COMPARE_RUN_OPT_KEYS)) + ". Repeatable. "
+             "Example: --run-opt 'L3 local SSD=nvme_device=nvme6n1'")
     cmp.add_argument("--verbose", "-v", action="store_true")
 
     # ── bench-lc: render lc_bm_results.json as a benchmark summary ───────────
@@ -4071,6 +4333,15 @@ def _analyze(args) -> int:
             l35_job=getattr(args, "l35_job", "") or "",
             l35_storage_instance=getattr(args, "l35_storage_instance", "") or "",
             l35_storage_job=getattr(args, "l35_storage_job", "") or "",
+            # Which block device on the memory node to scope its node_disk_*
+            # queries to.  Unscoped, those are averaged across every NVMe
+            # namespace on that host and read far below the truth.
+            l35_nvme_device=getattr(args, "l35_nvme_device", "") or "",
+            # The model config, read here and handed down, so the fetch's own
+            # "architecture unavailable" check cannot depend on whether this
+            # process wrote raw/model_config.json before or after it.
+            model_config=(_read_model_config(getattr(args, "model_path", ""))
+                          if getattr(args, "model_path", "") else None),
         )
         log.info("analyze: inference server-type = %s",
                  prom_kwargs["server_type"])
@@ -4277,32 +4548,351 @@ def _compare(args) -> int:
 
     now = datetime.now(tz=timezone.utc).timestamp()
 
-    # ── Parse --run specs ──────────────────────────────────────────────────
-    run_specs: list[RunSpec] = []
+    # ── Pass 1: parse --run specs into fields, no I/O yet ───────────────────
+    # Labels have to be known before per-run overrides can be validated
+    # against them, so parsing is separated from fetching.
+    _TS_FORMS = ("a Unix timestamp (1790811660), a compact ISO stamp with no "
+                 "colons (20260930T2341Z), or a relative offset (49m, 2h, 1d)")
+
+    _parsed: list[tuple[str, str, float, float]] = []
     for spec_str in args.runs:
         parts = spec_str.split(":", 3)
         if len(parts) < 2:
             log.error("compare: invalid --run spec %r — expected label:dir[:start[:end]]",
                       spec_str)
             return 2
-        label   = parts[0].strip()
-        raw_dir = Path(parts[1].strip()).expanduser().resolve()
-        if not raw_dir.exists():
-            log.error("compare: --run %r: directory not found: %s", label, raw_dir)
+        # The spec is colon-separated and a full ISO-8601 timestamp CONTAINS
+        # colons, so one cannot be used positionally here. Until now that
+        # failed silently and catastrophically:
+        #
+        #   "L3::2026-09-30T23:41:00Z:2026-10-01T00:30:00Z"
+        #     -> split(":", 3) = ['L3', '', '2026-09-30T23', '41:00Z:2026-...']
+        #     -> start parsed from '2026-09-30T23' as 23:00 LOCAL
+        #     -> end  unparseable, so 0.0, which the fetch reads as "last hour"
+        #
+        # Seven hours and forty-one minutes off at the start, an unrelated
+        # window at the end, and a report that looks completely normal
+        # because every query succeeded and returned real data. --run's own
+        # help advertised ISO-8601, so this was a documented spelling that
+        # silently profiled the wrong window.
+        #
+        # Everything after the third colon lands in parts[3], so a colon
+        # there means the spec has more fields than the format has, which is
+        # a reliable detector and not a guess.
+        if len(parts) >= 4 and ":" in parts[3]:
+            log.error(
+                "compare: --run %r has more colon-separated fields than "
+                "label:dir[:start[:end]] allows — %r is left over. A full "
+                "ISO-8601 timestamp contains colons and cannot be used in "
+                "this positional form: it would be split across the start "
+                "and end fields and silently profile a different window. "
+                "Use %s.",
+                spec_str, parts[3], _TS_FORMS)
             return 2
-        # Accept both run_dir/raw and run_dir directly
-        actual_raw = raw_dir / "raw" if (raw_dir / "raw").is_dir() else raw_dir
+        # A non-empty timestamp that parses to 0.0 is unparseable, and 0.0 is
+        # exactly what the fetch treats as "no window given" -- i.e. the last
+        # hour. Failing loud here is the difference between a typo and a
+        # report of the wrong window that reads as correct. analyze has had
+        # this guard since the --start 168h/-168h confusion; compare did not.
+        _ts: list[float] = []
+        for _i, _field in ((2, "start"), (3, "end")):
+            _raw = parts[_i].strip() if len(parts) > _i else ""
+            if not _raw:
+                _ts.append(0.0)
+                continue
+            _v = parse_time_arg(_raw, now=now)
+            if _v == 0.0:
+                log.error(
+                    "compare: --run %r: could not parse the %s field %r. "
+                    "Use %s.", spec_str, _field, _raw, _TS_FORMS)
+                return 2
+            _ts.append(_v)
+        if _ts[0] and _ts[1] and _ts[1] <= _ts[0]:
+            # A backwards window returns nothing and reads as a tier with no
+            # telemetry, which is the hardest kind of empty report to debug.
+            log.error(
+                "compare: --run %r: end (%.0f) is not after start (%.0f). "
+                "A backwards window returns no samples and the report would "
+                "show the run as untelemetered.", spec_str, _ts[1], _ts[0])
+            return 2
+        _parsed.append((parts[0].strip(), parts[1].strip(), _ts[0], _ts[1]))
 
-        t_start = parse_time_arg(parts[2].strip(), now=now) if len(parts) >= 3 and parts[2].strip() else 0.0
-        t_end   = parse_time_arg(parts[3].strip(), now=now) if len(parts) >= 4 and parts[3].strip() else 0.0
+    _labels = [lbl for lbl, _d, _s, _e in _parsed]
+    _dupes = sorted({l for l in _labels if _labels.count(l) > 1})
+    if _dupes:
+        # Overrides are keyed by label, so duplicate labels would make an
+        # override ambiguous -- and the comparison columns indistinguishable.
+        log.error("compare: duplicate --run label(s) %s — labels must be unique, "
+                  "they key the per-run overrides and name the columns",
+                  ", ".join(repr(d) for d in _dupes))
+        return 2
 
+    # ── Pass 2: per-run overrides ──────────────────────────────────────────
+    _ovr, _err = _parse_run_keyed_args(
+        getattr(args, "run_opt", []), _labels, flag="--run-opt")
+    if _err:
+        log.error("compare: %s", _err)
+        return 2
+    _setups, _err = _parse_run_keyed_args(
+        getattr(args, "run_setup", []), _labels, flag="--run-setup",
+        fixed_key="setup_details")
+    if _err:
+        log.error("compare: %s", _err)
+        return 2
+    for _lbl, _kv in _setups.items():
+        _ovr.setdefault(_lbl, {}).update(_kv)
+
+    # A setup override must exist before it is used to resolve a backend.
+    for _lbl, _kv in _ovr.items():
+        _sp = _kv.get("setup_details", "")
+        if _sp and not Path(_sp).expanduser().is_file():
+            log.error("compare: run %r: setup_details not found: %s", _lbl, _sp)
+            return 2
+
+    def _scope(label: str, key: str, default=""):
+        """Per-run override if present, else the global flag."""
+        _v = _ovr.get(label, {}).get(key, None)
+        if _v is not None:
+            return _v
+        return getattr(args, key, default)
+
+    def _backend_class_for(label: str, setup_path: str, raw_dir: "Path | None") -> str:
+        """Resolve this run's L3 backend class from whichever setup applies.
+
+        Used here only to decide fetch scoping.  The comparator resolves the
+        tier again from the same file for display, so the two cannot disagree.
+        Returns "" when no setup is available, which keeps the previous
+        global-scoping behaviour rather than guessing a tier.
+        """
+        _p = Path(setup_path).expanduser() if setup_path else None
+        if _p is None and raw_dir is not None:
+            for _cand in ("setup_details.json", "setup.json"):
+                if (raw_dir / _cand).is_file():
+                    _p = raw_dir / _cand
+                    break
+        if _p is None or not _p.is_file():
+            return ""
+        try:
+            import json as _json
+            from .report.l3_backend import resolve_l3_backend
+            _setup = _json.loads(_p.read_text(errors="ignore"))
+            if not isinstance(_setup, dict):
+                return ""
+            return str(resolve_l3_backend(_setup).backend_class or "")
+        except Exception as _be:
+            log.warning("compare: run %r: could not resolve backing tier from "
+                        "%s: %s", label, _p, _be)
+            return ""
+
+    run_specs: list[RunSpec] = []
+    for label, _dir_field, t_start, t_end in _parsed:
+        _setup_override = _ovr.get(label, {}).get("setup_details", "")
+
+        # This run's model config, resolved BEFORE anything else in the body.
+        #
+        # It is needed in two places -- handed to the fetch so the fetch can
+        # write raw/model_config.json itself, and written again after the raw
+        # dir is settled for a directory run that has no fetch. Reading it
+        # once at the top is also what keeps the fetch call from referring to
+        # a variable the loop only binds further down: the first iteration
+        # would have raised UnboundLocalError.
+        _mp_run = str(_scope(label, "model_path", "") or "")
+        _mc_run = _read_model_config(_mp_run) if _mp_run else {}
+
+        # An EMPTY directory field means "fetch this window from Prometheus".
+        # The window is then a real query range, not just a label: it decides
+        # what data exists at all, which is the difference between this and
+        # the timestamps the spec already accepted.
+        if not _dir_field:
+            if not getattr(args, "prometheus", ""):
+                log.error("compare: --run %r has no directory, so its window must "
+                          "be fetched \u2014 pass --prometheus URL", label)
+                return 2
+            if not (t_start and t_end):
+                log.error("compare: --run %r has no directory, so it needs BOTH "
+                          "a start and an end: 'label::<start>:<end>'", label)
+                return 2
+            _slug = re.sub(r"[^A-Za-z0-9._-]+", "_", label).strip("_") or "run"
+            _fetch_root = (Path(args.fetch_dir).expanduser().resolve()
+                           if getattr(args, "fetch_dir", "") else
+                           Path(args.output_dir).expanduser().resolve() / "_compare_fetch")
+            actual_raw = _fetch_root / _slug
+            actual_raw.mkdir(parents=True, exist_ok=True)
+
+            # A fetch writes no setup file, so without an override this run's
+            # model, GPU, TP size and backing tier are simply unknown in the
+            # comparison. Say so once per run rather than letting a column of
+            # "?" stand in for a configuration the user does have on disk.
+            if not _setup_override:
+                log.warning(
+                    "compare: run %r is fetched and has no --run-setup, so its "
+                    "model, GPU, TP size, context and backing tier will show as "
+                    "unknown, and its tier cannot be resolved -- global --l35-* "
+                    "scoping will be applied as given. Pass "
+                    "--run-setup %r=<setup_details.json>", label, label)
+
+            _bc = _backend_class_for(label, _setup_override, None)
+            _scoped = {
+                k: _scope(label, k) for k in (
+                    "prom_instance", "prom_job", "nvme_device",
+                    "l35_instance", "l35_job",
+                    "l35_storage_instance", "l35_storage_job",
+                    "l35_nvme_device")
+            }
+            # An L3.5 selector on a local-SSD run would attribute another
+            # host's store metrics to this run. Drop it and say which.
+            if _bc == "local_ssd":
+                _dropped = [k for k in _COMPARE_L35_ONLY_KEYS if _scoped.get(k)]
+                if _dropped:
+                    log.warning(
+                        "compare: run %r resolves to a local SSD L3 backend, so "
+                        "%s %s not applied to its fetch -- those select a "
+                        "separate memory node's exporter, which this run does "
+                        "not have.",
+                        label,
+                        ", ".join("--" + k.replace("_", "-") for k in _dropped),
+                        "was" if len(_dropped) == 1 else "were")
+                for k in _COMPARE_L35_ONLY_KEYS:
+                    _scoped[k] = ""
+
+            _step = _scope(label, "prom_step", 15)
+            try:
+                _step = int(_step)
+            except (TypeError, ValueError):
+                log.error("compare: run %r: prom_step must be an integer, got %r",
+                          label, _step)
+                return 2
+
+            log.info("compare: run '%s' \u2014 fetching %s \u2192 %s from %s%s",
+                     label, int(t_start), int(t_end), args.prometheus,
+                     f" (instance={_scoped['prom_instance']})"
+                     if _scoped["prom_instance"] else "")
+            try:
+                from .report.amoprof import (
+                    collect_from_prometheus_api, _parse_prom_extra_labels)
+                _extra_in = _scope(label, "prom_labels", [])
+                # A per-run override arrives as one comma-separated string;
+                # the global flag is already a list of K=V.
+                if isinstance(_extra_in, str):
+                    _extra_in = [p for p in _extra_in.split(",") if p.strip()]
+                collect_from_prometheus_api(
+                    prom_base_url = args.prometheus,
+                    start_time    = t_start,
+                    end_time      = t_end,
+                    step_s        = _step,
+                    label         = label,
+                    output_dir    = actual_raw,
+                    instance      = _scoped["prom_instance"],
+                    job           = _scoped["prom_job"],
+                    extra_labels  = {
+                        **_parse_prom_extra_labels(_extra_in),
+                        **({"nvme_device": _scoped["nvme_device"]}
+                           if _scoped["nvme_device"] else {}),
+                    },
+                    l35_instance         = _scoped["l35_instance"],
+                    l35_job              = _scoped["l35_job"],
+                    l35_storage_instance = _scoped["l35_storage_instance"],
+                    l35_storage_job      = _scoped["l35_storage_job"],
+                    l35_nvme_device      = _scoped["l35_nvme_device"],
+                    model_config         = _mc_run or None,
+                )
+            except Exception as _fe:
+                log.error("compare: fetch failed for run %r: %s", label, _fe)
+                if getattr(args, "verbose", False):
+                    import traceback; traceback.print_exc()
+                return 3
+        else:
+            raw_dir = Path(_dir_field).expanduser().resolve()
+            if not raw_dir.exists():
+                log.error("compare: --run %r: directory not found: %s", label, raw_dir)
+                return 2
+            # Accept both run_dir/raw and run_dir directly
+            actual_raw = raw_dir / "raw" if (raw_dir / "raw").is_dir() else raw_dir
+            # Timestamps on a DIRECTORY run relabel; they do not re-slice.
+            # Silently changing the stated duration while the numbers stay
+            # put is how a reader concludes a window mattered when it did
+            # not, so say it once per run rather than leaving it to the docs.
+            if t_start and t_end:
+                log.warning(
+                    "compare: run %r has a directory AND a window \u2014 the "
+                    "window sets the displayed duration and rate denominators "
+                    "only; it does not re-slice the data. Leave the directory "
+                    "field empty with --prometheus to make the window a real "
+                    "query range.", label)
+            # Scoping overrides describe how to QUERY Prometheus. On a
+            # directory run the querying already happened, so they change
+            # nothing -- which is worth saying, since an override that is
+            # silently inert looks the same as one that was honoured.
+            _inert = sorted(k for k in _ovr.get(label, {})
+                            if k not in ("setup_details", "model_path"))
+            if _inert:
+                log.warning(
+                    "compare: run %r reads a directory, so its --run-opt %s %s "
+                    "no effect -- that data was collected by the earlier "
+                    "`analyze`. Only setup_details and model_path apply to a "
+                    "directory run.",
+                    label, ", ".join(_inert),
+                    "has" if len(_inert) == 1 else "have")
+
+        # ---- the served model's config, per run -------------------------
+        #
+        # `analyze` writes raw/model_config.json from --model-path so KV bytes
+        # per token is computed from num_hidden_layers / num_key_value_heads /
+        # head_dim rather than guessed from the model name. `compare` had no
+        # way to pass it at all, so every figure derived from KV bytes per
+        # token -- L2 and L3 residency, bytes per token, the capacity
+        # reconciliation -- fell back to a name-based estimate on a fetched
+        # run, with nothing saying it had.
+        #
+        # Per-run as well as global, because two runs serving DIFFERENT models
+        # is a comparison someone will actually want, and one global model
+        # config would then be wrong for at least one of them.
+        if _mp_run:
+            _mc_file = actual_raw / "model_config.json"
+            _mc_existed = _mc_file.is_file()
+            # Written here as well as handed to the fetch: a directory run has
+            # no fetch to write it, and a fetched run's copy is harmless to
+            # rewrite with the same content.
+            _mc = _write_model_config(actual_raw,
+                                      argparse.Namespace(model_path=_mp_run))
+            if not _mc:
+                # A path that reads nothing is a typo, not a preference, and
+                # silently continuing would hand the report a name-based
+                # estimate while the operator believes it has the real config.
+                log.error(
+                    "compare: run %r: --model-path %s produced no model "
+                    "config. Point it at the model directory or its "
+                    "config.json.", label, _mp_run)
+                return 2
+            log.info(
+                "compare: run %r model config %s %s (layers=%s kv_heads=%s "
+                "head_dim=%s)",
+                label, "rewritten in" if _mc_existed else "written to",
+                _mc_file,
+                _mc.get("num_hidden_layers", "?"),
+                _mc.get("num_key_value_heads", "?"),
+                _mc.get("head_dim", "?"))
+        elif not (actual_raw / "model_config.json").is_file():
+            # Not fatal -- the report estimates from the model name and says
+            # so -- but worth one line, because the estimate is the thing
+            # people later ask why they cannot reconcile.
+            log.info(
+                "compare: run %r has no model_config.json, so KV bytes per "
+                "token will be estimated from the model name. Pass "
+                "--model-path, or --run-opt '%s=model_path=<path>'.",
+                label, label)
+
+        _sd_path = (Path(_setup_override).expanduser().resolve()
+                    if _setup_override else None)
         run_specs.append(RunSpec(
             label=label, raw_dir=actual_raw,
             t_start=t_start, t_end=t_end,
+            setup_details_path=_sd_path,
         ))
-        log.info("compare: run '%s' → %s (window: %s → %s)",
+        log.info("compare: run '%s' → %s (window: %s → %s)%s",
                  label, actual_raw,
-                 t_start or "—", t_end or "—")
+                 t_start or "—", t_end or "—",
+                 f" setup={_sd_path}" if _sd_path else "")
 
     if len(run_specs) < 2:
         log.error("compare requires at least 2 --run arguments")
@@ -4448,10 +5038,14 @@ def _aggregate(args) -> int:
     _interactive_path: "Path | None" = None
     report_dir = merged_run
 
+    # merged_raw, not raw_dir: this is the aggregate path, where the merged
+    # directory is the subject. raw_dir is not bound until a later branch,
+    # so `aggregate --combined-report` raised UnboundLocalError here before
+    # producing anything. Every neighbouring call already used merged_raw.
     if _do_static:
         # Ensure both static and interactive see the same benchmark summary.
         _copy_bench_summary(args, merged_raw)
-        report_path = report_dir / report_filename(raw_dir, "static", when=_report_ts,
+        report_path = report_dir / report_filename(merged_raw, "static", when=_report_ts,
                                     window_start=_report_win[0], window_end=_report_win[1])
         rc = _run_amoprof(merged_raw, report_path,
                           verbose=args.verbose,
@@ -4473,7 +5067,7 @@ def _aggregate(args) -> int:
         try:
             _copy_bench_summary(args, merged_raw)
             from .report.interactive import build_report as _build_int
-            int_path = report_dir / report_filename(raw_dir, "interactive", when=_report_ts,
+            int_path = report_dir / report_filename(merged_raw, "interactive", when=_report_ts,
                                     window_start=_report_win[0], window_end=_report_win[1])
             _build_int(merged_raw, int_path, run_label=run_label)
             log.info("Wrote interactive report: %s", int_path)
@@ -4484,7 +5078,7 @@ def _aggregate(args) -> int:
     if _combined and _static_path and _interactive_path:
         try:
             from .report.combined import build_combined_report
-            combined_path = report_dir / report_filename(raw_dir, "combined", when=_report_ts,
+            combined_path = report_dir / report_filename(merged_raw, "combined", when=_report_ts,
                                     window_start=_report_win[0], window_end=_report_win[1])
             build_combined_report(
                 raw_dir=merged_raw,
@@ -4507,7 +5101,7 @@ def _aggregate(args) -> int:
     if _do_interactive and _interactive_path:
         print(f"  Interactive: {_interactive_path}")
     if _combined:
-        _combined_name = report_filename(raw_dir, "combined", when=_report_ts,
+        _combined_name = report_filename(merged_raw, "combined", when=_report_ts,
                                          window_start=_report_win[0],
                                          window_end=_report_win[1])
         print(f"  Combined:    {report_dir / _combined_name}")

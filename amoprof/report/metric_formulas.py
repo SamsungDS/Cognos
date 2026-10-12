@@ -232,7 +232,12 @@ _RAW: Dict[str, str] = {
     "logical kv movement l3": "(Δbackuped + Δprefetched) tokens × "
                               "kv_bytes_per_token  [B]",
     "physical l3 block r / w total": "Σ blktrace read size_bytes / "
-                                     "Σ blktrace write size_bytes  [B]",
+                                     "Σ blktrace write size_bytes  [B] — or, "
+                                     "when blktrace published no byte "
+                                     "counters, mean(rd_bw_mbs) × window and "
+                                     "mean(wr_bw_mbs) × window from "
+                                     "nvme_driver_timeseries.csv, which the "
+                                     "tile states",
     "l3 cache used": "resident L3 KV bytes ÷ configured L3 capacity  [GB / GB]",
     "l3 used": "used ÷ total from statvfs on the L3 mount path  [GB]",
     "l3 tok ceiling": "L3 capacity_bytes ÷ kv_bytes_per_token  [tok]",
@@ -357,6 +362,16 @@ _RAW: Dict[str, str] = {
     "l3 5 write bw": "Δmooncake_write_bytes_total ÷ Δt ÷ 1e6  [MB/s] (store exporter)",
     "l3 5 get lat": "Δmooncake_get_duration_seconds_sum ÷ Δ..._count × 1000  [ms]",
     "l3 5 put lat": "Δmooncake_put_duration_seconds_sum ÷ Δ..._count × 1000  [ms]",
+    # NVMe-derived L3.5 tiles.  These read the block device, NOT the
+    # store: a lookup answered from the store memory tier, or from page
+    # cache over the file tier, never reaches the driver and so is
+    # absent here.  Cross-check against the store-side hit bytes.
+    "l3 5 storage read bw nvme driver":
+        "rd_bw_mbs · nvme_driver_timeseries.csv ← the block device on the host the NVMe collector scraped  [MB/s] · store-side reads that hit DRAM or page cache do not appear here — compare with Δ(mem_cache_hit_bytes_total + file_cache_hit_bytes_total) ÷ Δt",
+    "l3 5 read throughput nvme driver":
+        "rd_bw_mbs · nvme_driver_timeseries.csv ← the block device on the host the NVMe collector scraped  [MB/s] · device layer, not the store layer",
+    "l3 5 node storage bw device":
+        "max(l35_rd_bw_mbs) / max(l35_wr_bw_mbs) · l35_storage_timeseries.csv ← iostat on the memory node  [MB/s peak] · 0 rd with non-zero store file-tier hits means those reads were served from page cache",
     "l3 read bw": "rd_bw_mbs · nvme_driver_timeseries.csv  [MB/s]",
     "l3 write bw": "wr_bw_mbs · nvme_driver_timeseries.csv  [MB/s]",
     "l3 read iops": "rd_iops · nvme_driver_timeseries.csv  [IO/s]",

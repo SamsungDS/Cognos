@@ -40,7 +40,7 @@ Usage: ./install.sh [OPTIONS]
 Modes:
   default              Install AMOprof + metrics/reporting dependencies only.
   --sglang             Also install PyTorch/SGLang dependencies.
-  --full               Install SGLang dependencies.
+  --full               --sglang, plus SWE-agent from GitHub.
 
 Options:
   --venv DIR           Virtualenv path. Default: ~/amoprof_venv
@@ -55,14 +55,6 @@ Options:
   --amduprof-installer PATH
                        Local AMD uProf installer for AMD systems.
   --amduprof-url URL   AMD uProf installer URL for the DRAM helper.
-  --no                 Do not pass automatic yes flags to package manager.
-  --dry-run            Print package-install commands without executing them.
-  --help               Show this help.
-
-Examples:
-  ./install.sh
-  sudo ./install.sh --with-dram-deps --dram-tool auto
-  ./install.sh --sglang --torch-index https://download.pytorch.org/whl/cu124
   --with-pcm           Build Intel PCM from source and use it for DRAM bandwidth.
                        Needed on CPUs newer than the installed PCM package
                        knows: PCM refuses a microarchitecture its build was not
@@ -72,6 +64,16 @@ Examples:
   --pcm-ref REF        PCM git tag to build (default: repo default branch).
                        Xeon 6 / Granite Rapids needs 202409 or later.
   --pcm-prefix DIR     Install location (default: /opt/intel-pcm).
+  --no                 Do not pass automatic yes flags to package manager.
+  --dry-run            Print package-install commands without executing them.
+  --help               Show this help.
+
+Requires the Python version pyproject.toml declares (requires-python, 3.12+).
+
+Examples:
+  ./install.sh
+  sudo ./install.sh --with-dram-deps --dram-tool auto
+  ./install.sh --sglang --torch-index https://download.pytorch.org/whl/cu124
 
 USAGE
 exit 0
@@ -278,15 +280,23 @@ PM="$(detect_pm)"
 ARCH="$(detect_arch)"
 CPU_VENDOR="$(detect_cpu_vendor)"
 
+# The minimum is pyproject.toml's requires-python, read rather than repeated:
+# this check said 3.10 while the package required 3.12, so on 3.10/3.11 the
+# preflight passed and pip then refused the install half-way through.
+REQ_PY="$(sed -n -E 's/^requires-python *= *"[^0-9]*([0-9]+\.[0-9]+).*/\1/p' \
+          "$PACKAGE_DIR/pyproject.toml" | head -1)"
+REQ_PY="${REQ_PY:-3.12}"
+REQ_MAJOR="${REQ_PY%%.*}"; REQ_MINOR="${REQ_PY##*.}"
+
 PY="$(command -v python3 || true)"
 if [[ -z "$PY" ]]; then
-    error "python3 not found. Install Python 3.10+ first."
+    error "python3 not found. Install Python $REQ_PY+ first."
     exit 1
 fi
 PY_VER="$($PY -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")"
 PY_MAJOR="${PY_VER%%.*}"; PY_MINOR="${PY_VER##*.}"
-if [[ "$PY_MAJOR" -lt 3 || ( "$PY_MAJOR" -eq 3 && "$PY_MINOR" -lt 10 ) ]]; then
-    error "Python 3.10+ required, found $PY_VER"
+if [[ "$PY_MAJOR" -lt "$REQ_MAJOR" || ( "$PY_MAJOR" -eq "$REQ_MAJOR" && "$PY_MINOR" -lt "$REQ_MINOR" ) ]]; then
+    error "Python $REQ_PY+ required (pyproject.toml requires-python), found $PY_VER"
     exit 1
 fi
 
@@ -302,8 +312,8 @@ install_system_packages
 if [[ "$INSTALL_DRAM_DEPS" -eq 1 ]]; then
     section "DRAM PMU dependencies"
     DRAM_SCRIPT="$PACKAGE_DIR/scripts/install_dram_deps.sh"
-    if [[ ! -x "$DRAM_SCRIPT" ]]; then
-        error "DRAM dependency installer not found or not executable: $DRAM_SCRIPT"
+    if [[ ! -f "$DRAM_SCRIPT" ]]; then
+        error "DRAM dependency installer not found: $DRAM_SCRIPT"
         exit 1
     fi
     DRAM_ARGS=(--dram-tool "$DRAM_DEPS_TOOL")
@@ -313,7 +323,9 @@ if [[ "$INSTALL_DRAM_DEPS" -eq 1 ]]; then
     [[ "$ASSUME_YES" -eq 0 ]] && DRAM_ARGS+=(--no)
     [[ "$DRY_RUN" -eq 1 ]] && DRAM_ARGS+=(--dry-run)
     [[ "${EUID:-$(id -u)}" -eq 0 ]] && DRAM_ARGS+=(--no-sudo)
-    "$DRAM_SCRIPT" "${DRAM_ARGS[@]}"
+    # Through bash, so a zip or Windows copy that dropped the execute bit
+    # still runs it rather than aborting the install.
+    bash "$DRAM_SCRIPT" "${DRAM_ARGS[@]}"
 else
     warn "Skipping DRAM PMU dependency helper. Use --with-dram-deps for AMD uProf / Intel PCM / perf IMC dependencies."
 fi
@@ -325,7 +337,21 @@ if [[ "$SKIP_VENV" -eq 1 ]]; then
 else
     if [[ ! -d "$VENV_DIR" ]]; then
         info "Creating venv at $VENV_DIR"
-        "$PY" -m venv "$VENV_DIR"
+        # A Python without ensurepip (Debian/Ubuntu without pythonX.Y-venv)
+        # fails here AFTER creating the directory, and the next run then took
+        # the half-built directory for a venv to reuse.  Remove it and say
+        # what is missing instead.
+        if ! "$PY" -m venv "$VENV_DIR"; then
+            rm -rf "$VENV_DIR"
+            error "Could not create a virtualenv at $VENV_DIR: python$PY_VER has no venv/ensurepip support."
+            error "Install it (Debian/Ubuntu: apt install python${PY_VER}-venv), drop --skip-system-packages so"
+            error "this script installs it, or re-run with --skip-venv to use the current environment."
+            exit 1
+        fi
+    elif [[ ! -f "$VENV_DIR/bin/activate" ]]; then
+        error "$VENV_DIR exists but is not a usable virtualenv (no bin/activate) -- most likely left by an"
+        error "earlier failed attempt. Remove it, or pass a different --venv, and re-run."
+        exit 1
     else
         info "Reusing venv at $VENV_DIR"
     fi

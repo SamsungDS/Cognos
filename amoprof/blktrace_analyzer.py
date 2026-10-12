@@ -319,7 +319,9 @@ def _write_queue_depth_outputs(output_dir: Path,
                                bucket_s: float,
                                source: str,
                                q_events: int = 0,
-                               c_events: int = 0) -> dict:
+                               c_events: int = 0,
+                               order_inversions: int = 0,
+                               mean_lat_s: float = 0.0) -> dict:
     """Write queue-depth CSVs/summary from already computed QD samples."""
     if not qd_samples or not time_at_qd:
         return {}
@@ -371,8 +373,38 @@ def _write_queue_depth_outputs(output_dir: Path,
         "qd_source": source,
         "q_events_seen": int(q_events),
         "c_events_seen": int(c_events),
+        # Ordering hygiene. Queue depth is a function of event order, so a
+        # non-zero count here means the stream needed sorting before Q/C were
+        # counted -- and that any earlier run of this analyser, which did not
+        # sort, produced a depth derived from the wrong sequence.
+        "qd_order_inversions": int(order_inversions),
         **sat_pcts,
     }
+
+    # Little's Law cross-check: QD = throughput x latency.
+    #
+    # A measured qd_max of 1 has two very different explanations -- an I/O
+    # path that issues one request and waits, or an event sequence whose Q and
+    # C alternate for a reason that has nothing to do with the device -- and
+    # they are indistinguishable from the depth alone. IOPS and mean latency
+    # are measured independently of the depth, so their product is an
+    # independent estimate of it. Agreement corroborates a serialized path;
+    # disagreement says the depth is not measuring what it claims.
+    _iops = (q_events / total_time) if total_time > 0 else 0.0
+    summary["qd_iops_from_q_events"] = round(_iops, 1)
+    if _iops > 0 and mean_lat_s > 0:
+        _expected = _iops * mean_lat_s
+        summary["qd_mean_lat_ms"] = round(mean_lat_s * 1e3, 4)
+        summary["qd_expected_littles_law"] = round(_expected, 3)
+        _ratio = (max(_expected, qd_mean) / max(min(_expected, qd_mean), 1e-9)
+                  if qd_mean > 0 else 0.0)
+        summary["qd_littles_law_ratio"] = round(_ratio, 2)
+        summary["qd_consistency"] = (
+            "consistent" if (qd_mean > 0 and _ratio <= 2.0) else
+            "measured depth disagrees with IOPS x latency by "
+            f"{_ratio:.1f}x — treat the depth as unverified")
+    else:
+        summary["qd_consistency"] = "not cross-checkable (no latency sample)"
     (output_dir / "queue_depth_summary.json").write_text(json.dumps(summary, indent=2))
     log.info("queue depth[%s]: mean=%.1f, p95=%.0f, max=%d (%d samples over %.1fs)",
              source, qd_mean, _time_weighted_percentile(0.95), qd_max,
@@ -505,66 +537,101 @@ def _compute_queue_depth_from_csv(events_csv: Path, output_dir: Path,
     read_lat_buckets  = [0] * len(_LAT_BUCKET_EDGES_US)
     write_lat_buckets = [0] * len(_LAT_BUCKET_EDGES_US)
 
+    # Queue depth is a function of event ORDER, so the stream must be in time
+    # order before Q/C are counted.
+    #
+    # This pass walked the CSV in file order while its sibling,
+    # analyze_from_events_csv, sorts the same file by ts before doing anything
+    # with it. Any inversion therefore produced a different queue depth here
+    # than everywhere else: a Q that arrives after its own C decrements before
+    # it increments, and a stream whose Q and C alternate pins qd_max at 1 no
+    # matter how much concurrency the device actually saw. Reading the rows
+    # first and sorting them costs one pass and removes the whole class.
+    _order_inversions = 0
     try:
         with open(events_csv, newline="", encoding="utf-8", errors="replace") as f:
-            r = csv.DictReader(f)
-            for row in r:
-                action = (row.get("action") or "").strip().upper()
-                if action not in ("Q", "C"):
-                    continue
-                try:
-                    t_abs = float(row.get("ts") or row.get("time_sec") or row.get("timestamp") or 0)
-                except Exception:
-                    continue
-                if t0 is None:
-                    t0 = t_abs
-                t_rel = t_abs - t0
-                op = _normalise_block_op(row)
-                nsec = str(row.get("nsectors") or row.get("nsec") or "0")
-                req_key = (str(row.get("pid") or "0"), str(row.get("sector") or "0"), nsec)
-                if action == "Q":
-                    q_events += 1
-                else:
-                    c_events += 1
+            _rows_in = [_r for _r in csv.DictReader(f)
+                        if (_r.get("action") or "").strip().upper() in ("Q", "C")]
+    except Exception:
+        _rows_in = []
 
-                if last_event_t is not None:
-                    dt = t_rel - last_event_t
-                    if dt > 0:
-                        time_at_qd[qd_total] = time_at_qd.get(qd_total, 0.0) + dt
-                last_event_t = t_rel
+    def _row_ts(_r):
+        try:
+            return float(_r.get("ts") or _r.get("time_sec")
+                         or _r.get("timestamp") or 0)
+        except Exception:
+            return 0.0
 
-                if action == "Q":
-                    if op in ("R", "W", "D"):
-                        pending_op[req_key] = (op, t_rel)
-                    qd_total += 1
-                    if op == "R": qd_read += 1
-                    elif op == "W": qd_write += 1
-                    qd_max = max(qd_max, qd_total)
-                else:
-                    # On C, always consume pending_op so the dict stays bounded
-                    # AND we can compute latency. Fall back to the C row's own
-                    # op letter when no Q was ever seen for this key.
-                    _pending = pending_op.pop(req_key, None)
-                    if _pending is not None:
-                        _op_q, _t_q = _pending
-                        dt_us = max((t_rel - _t_q) * 1e6, 0.0)
-                        _op_for_lat = _op_q if _op_q in ("R", "W") else (op if op in ("R", "W") else "")
-                        if _op_for_lat == "R":
-                            read_lat_buckets[_lat_bucket_index(dt_us)] += 1
-                        elif _op_for_lat == "W":
-                            write_lat_buckets[_lat_bucket_index(dt_us)] += 1
-                        if op not in ("R", "W", "D"):
-                            op = _op_q
-                    qd_total = max(qd_total - 1, 0)
-                    if op == "R": qd_read = max(qd_read - 1, 0)
-                    elif op == "W": qd_write = max(qd_write - 1, 0)
+    _prev_ts = None
+    for _r in _rows_in:
+        _ts = _row_ts(_r)
+        if _prev_ts is not None and _ts < _prev_ts:
+            _order_inversions += 1
+        _prev_ts = _ts
+    if _order_inversions:
+        log.warning("queue depth: %d out-of-order event(s) in %s — sorting by "
+                    "timestamp before Q/C accounting", _order_inversions,
+                    events_csv.name)
+        _rows_in.sort(key=_row_ts)
 
-                if qd_samples and (t_rel - qd_samples[-1][0]) < bucket_s:
-                    last = qd_samples[-1]
-                    qd_samples[-1] = (last[0], max(last[1], qd_total),
-                                       max(last[2], qd_read), max(last[3], qd_write))
-                else:
-                    qd_samples.append((t_rel, qd_total, qd_read, qd_write))
+    try:
+        for row in _rows_in:
+            action = (row.get("action") or "").strip().upper()
+            if action not in ("Q", "C"):
+                continue
+            try:
+                t_abs = float(row.get("ts") or row.get("time_sec") or row.get("timestamp") or 0)
+            except Exception:
+                continue
+            if t0 is None:
+                t0 = t_abs
+            t_rel = t_abs - t0
+            op = _normalise_block_op(row)
+            nsec = str(row.get("nsectors") or row.get("nsec") or "0")
+            req_key = (str(row.get("pid") or "0"), str(row.get("sector") or "0"), nsec)
+            if action == "Q":
+                q_events += 1
+            else:
+                c_events += 1
+
+            if last_event_t is not None:
+                dt = t_rel - last_event_t
+                if dt > 0:
+                    time_at_qd[qd_total] = time_at_qd.get(qd_total, 0.0) + dt
+            last_event_t = t_rel
+
+            if action == "Q":
+                if op in ("R", "W", "D"):
+                    pending_op[req_key] = (op, t_rel)
+                qd_total += 1
+                if op == "R": qd_read += 1
+                elif op == "W": qd_write += 1
+                qd_max = max(qd_max, qd_total)
+            else:
+                # On C, always consume pending_op so the dict stays bounded
+                # AND we can compute latency. Fall back to the C row's own
+                # op letter when no Q was ever seen for this key.
+                _pending = pending_op.pop(req_key, None)
+                if _pending is not None:
+                    _op_q, _t_q = _pending
+                    dt_us = max((t_rel - _t_q) * 1e6, 0.0)
+                    _op_for_lat = _op_q if _op_q in ("R", "W") else (op if op in ("R", "W") else "")
+                    if _op_for_lat == "R":
+                        read_lat_buckets[_lat_bucket_index(dt_us)] += 1
+                    elif _op_for_lat == "W":
+                        write_lat_buckets[_lat_bucket_index(dt_us)] += 1
+                    if op not in ("R", "W", "D"):
+                        op = _op_q
+                qd_total = max(qd_total - 1, 0)
+                if op == "R": qd_read = max(qd_read - 1, 0)
+                elif op == "W": qd_write = max(qd_write - 1, 0)
+
+            if qd_samples and (t_rel - qd_samples[-1][0]) < bucket_s:
+                last = qd_samples[-1]
+                qd_samples[-1] = (last[0], max(last[1], qd_total),
+                                   max(last[2], qd_read), max(last[3], qd_write))
+            else:
+                qd_samples.append((t_rel, qd_total, qd_read, qd_write))
     except Exception as e:
         log.warning("queue depth CSV fallback failed: %s", e)
         return {}
@@ -581,8 +648,30 @@ def _compute_queue_depth_from_csv(events_csv: Path, output_dir: Path,
     except Exception as _e:
         log.warning("latency emission failed (QD outputs still written): %s", _e)
 
+    # Mean Q->C latency from the histograms this pass already filled, as the
+    # geometric midpoint of each log-scale bucket. Only needed to the nearest
+    # factor of two, since it feeds a consistency check rather than a reported
+    # latency figure.
+    _mean_lat_s = 0.0
+    try:
+        _n_lat = sum(read_lat_buckets) + sum(write_lat_buckets)
+        if _n_lat > 0:
+            _acc_us = 0.0
+            for _bi, _edge in enumerate(_LAT_BUCKET_EDGES_US):
+                _cnt = read_lat_buckets[_bi] + write_lat_buckets[_bi]
+                if not _cnt:
+                    continue
+                _lo = _LAT_BUCKET_EDGES_US[_bi - 1] if _bi else 0.0
+                _mid = ((_lo * _edge) ** 0.5) if _lo > 0 else (_edge / 2.0)
+                _acc_us += _mid * _cnt
+            _mean_lat_s = (_acc_us / _n_lat) / 1e6
+    except Exception:
+        _mean_lat_s = 0.0
+
     return _write_queue_depth_outputs(output_dir, qd_samples, time_at_qd, qd_max,
-                                      bucket_s, source, q_events, c_events)
+                                      bucket_s, source, q_events, c_events,
+                                      order_inversions=_order_inversions,
+                                      mean_lat_s=_mean_lat_s)
 
 
 def _compute_queue_depth_timeseries(bin_dir: Path, output_dir: Path,

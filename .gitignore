@@ -1,0 +1,7 @@
+# Bytecode
+__pycache__/
+*.pyc
+
+# Report scratch output
+_tmp_static.html
+*.py.bak

@@ -6,7 +6,7 @@ This guide covers installation for metrics collection, SGLang analysis, and opti
 
 ## Requirements
 
-- Linux host with Python 3.10 or newer.
+- Linux host with Python 3.12 or newer.
 - Root or passwordless sudo for blktrace, biosnoop, perf, and DRAM PMU collection.
 - SGLang `/metrics` endpoint if collecting SGLang counters.
 - NVIDIA tools (`nvidia-smi`, optionally DCGM/dcgmi) for GPU/HBM collection.

@@ -246,10 +246,10 @@ def _amoprof_storage_label_cleanup(html_text: str, l3_backend_class: str = "") -
             "Logical KV movement — L3": "Logical KV movement — L3.5",
             "Physical L3 block": "L3.5 storage block",
             "Physical L3.5 block R / W total": "Physical L3.5 block R / W total",
-            "NVMe read throughput": "L3.5 read throughput",
-            "NVMe Read Throughput": "L3.5 read throughput",
-            "NVMe read BW": "L3.5 storage read BW",
-            "NVMe Read BW": "L3.5 storage read BW",
+            "NVMe read throughput": "L3.5 read throughput (NVMe driver)",
+            "NVMe Read Throughput": "L3.5 read throughput (NVMe driver)",
+            "NVMe read BW": "L3.5 storage read BW (NVMe driver)",
+            "NVMe Read BW": "L3.5 storage read BW (NVMe driver)",
         }
     # Labels wrapped in the sentinel below name a specific tier and must not be
     # rewritten by the blanket replacements — the cross-tier occupancy legend
@@ -398,12 +398,14 @@ try:
     from amoprof.report.metric_kernels import (
         counter_delta as _k_counter_delta, window_rate as _k_window_rate,
         window_seconds as _k_window_seconds, ratio_delta as _k_ratio_delta,
-        rate_series_with_time as _k_rate_with_time)
+        rate_series_with_time as _k_rate_with_time,
+        counter_window_total as _k_counter_total)
 except Exception:  # pragma: no cover - standalone/bundled execution
     from metric_kernels import (  # type: ignore
         counter_delta as _k_counter_delta, window_rate as _k_window_rate,
         window_seconds as _k_window_seconds, ratio_delta as _k_ratio_delta,
-        rate_series_with_time as _k_rate_with_time)
+        rate_series_with_time as _k_rate_with_time,
+        counter_window_total as _k_counter_total)
 
 
 def _delta(rows: list[dict[str, Any]], *partials: str) -> float:
@@ -411,11 +413,47 @@ def _delta(rows: list[dict[str, Any]], *partials: str) -> float:
     return _delta_col(rows, _find_col(rows, *partials))
 
 
+def _find_cols(rows: list[dict[str, Any]], *partials: str) -> list[str]:
+    """EVERY column whose metric stem matches, by _find_col's rule.
+
+    Exact stem matches if there are any, else suffix matches -- the same two
+    passes as _find_col, returning all hits of the pass that answered rather
+    than the first.
+    """
+    if not rows:
+        return []
+    keys: list[str] = []
+    for r in rows:
+        for k in r.keys():
+            if k not in keys:
+                keys.append(k)
+    wanted = [_norm_name(p) for p in partials if p]
+    exact = [k for k in keys if any(_metric_stem_norm(k) == w for w in wanted)]
+    if exact:
+        return exact
+    return [k for k in keys
+            if any(w and _metric_stem_norm(k).endswith(w) for w in wanted)]
+
+
 def _ratio_delta_ms(rows: list[dict[str, Any]], sum_name: str, count_name: str) -> float:
-    """Histogram mean in ms: Δsum ÷ Δcount × 1000, via metric_kernels."""
-    return _k_ratio_delta(_column_values(rows, _find_col(rows, sum_name)),
-                          _column_values(rows, _find_col(rows, count_name)),
-                          scale=1000.0)
+    """Histogram mean in ms: ΣΔsum ÷ ΣΔcount × 1000 over EVERY labelled series.
+
+    A histogram can arrive as several series -- one per label set the server
+    or the scrape adds -- and each holds its own share of the requests. Taking
+    the first column read one share as the whole: on a reference pair of runs
+    it gave 84,703 ms for both TTFT and E2E, where the sum over all series --
+    what Prometheus' sum() and the comparison report compute -- gave 10,080
+    and 14,818 ms. The first series happened to be one whose TTFT equals its
+    E2E (requests answered in one chunk record their first token at the end),
+    so the two tiles read identically on every tab.
+    """
+    _s = [_column_values(rows, c) for c in _find_cols(rows, sum_name)]
+    _c = [_column_values(rows, c) for c in _find_cols(rows, count_name)]
+    if not _s or not _c:
+        return 0.0
+    ds = float(_k_counter_total(_s)["total"])
+    dc = float(_k_counter_total(_c)["total"])
+    return (ds / dc * 1000.0) if ds > 0 and dc > 0 else 0.0
 
 
 def _active_values(rows: list[dict[str, Any]], *partials: str) -> list[float]:

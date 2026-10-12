@@ -175,14 +175,37 @@ def _ratio_delta_ms_from_rows(rows: list[dict], sum_partial: str, count_partial:
     """Selected-window mean latency from cumulative Prometheus counters."""
     if not rows:
         return 0.0
-    sum_col = _find_col(rows, sum_partial)
-    cnt_col = _find_col(rows, count_partial)
-    if not sum_col or not cnt_col:
+    # Every labelled series, summed, through the shared reset-safe kernel.
+    # The first column alone is one series' share of the requests, and the
+    # first and last ROWS are blank whenever that series starts or ends
+    # inside the window -- both made TTFT and E2E disagree with every other
+    # surface, and on a reference run made them equal to each other.
+    try:
+        from amoprof.report.metric_kernels import counter_window_total as _cwt
+    except Exception:  # pragma: no cover - standalone/bundled execution
+        from metric_kernels import counter_window_total as _cwt  # type: ignore
+
+    def _cols(partial):
+        return [c for c in rows[0].keys()
+                if c and partial in c and "_bucket" not in c]
+
+    def _vals(col):
+        out = []
+        for r in rows:
+            v = r.get(col)
+            if v in (None, ""):
+                continue
+            x = _to_float(v, float("nan"))
+            if x == x:
+                out.append(x)
+        return out
+
+    sum_cols, cnt_cols = _cols(sum_partial), _cols(count_partial)
+    if not sum_cols or not cnt_cols:
         return 0.0
     try:
-        a_sum = _to_float(rows[0].get(sum_col)); b_sum = _to_float(rows[-1].get(sum_col))
-        a_cnt = _to_float(rows[0].get(cnt_col)); b_cnt = _to_float(rows[-1].get(cnt_col))
-        ds = b_sum - a_sum; dc = b_cnt - a_cnt
+        ds = float(_cwt([_vals(c) for c in sum_cols])["total"])
+        dc = float(_cwt([_vals(c) for c in cnt_cols])["total"])
         return (ds / dc * 1000.0) if ds > 0 and dc > 0 else 0.0
     except Exception:
         return 0.0
@@ -1371,6 +1394,14 @@ def _kv_bytes_per_token_for_model(model_name: str, kv_dtype: str,
     available and matches size hints on a token boundary.
     """
     return float(_k_resolve_kv(model_name, kv_dtype, config).get("bytes") or 0)
+
+
+def _safe_f(v) -> float:
+    """float() that answers 0.0 rather than raising, for tile inputs."""
+    try:
+        return float(v or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _delta_from_ts(rows: list[dict], partial: str) -> float:
@@ -2694,6 +2725,7 @@ try:
         rate_series_with_time as _k_rate_with_time,
         resolve_gpu_hbm as _resolve_gpu_hbm,
         resolve_kv_bytes_per_token as _k_resolve_kv,
+        resolve_latency_percentile as _k_resolve_pct,
         resolve_l2_residency as _k_resolve_l2,
         aligned_rate_series as _k_aligned_rate)
 except Exception:  # pragma: no cover - standalone/bundled execution
@@ -2703,6 +2735,7 @@ except Exception:  # pragma: no cover - standalone/bundled execution
         rate_series_with_time as _k_rate_with_time,
         resolve_gpu_hbm as _resolve_gpu_hbm,
         resolve_kv_bytes_per_token as _k_resolve_kv,
+        resolve_latency_percentile as _k_resolve_pct,
         resolve_l2_residency as _k_resolve_l2,
         aligned_rate_series as _k_aligned_rate)
 
@@ -3266,15 +3299,34 @@ def build_report(raw_dir: Path, out_html: Path,
         _e2e_ms_kpi  = _e2e_delta  or _e2e_pct  or (sglang_sum.get('server_e2e_ms') or sglang_sum.get('server_e2e_p50_ms') or 0)
         _lat_note = "Selected-window Δsum/Δcount" if (_ttft_delta or _itl_delta or _e2e_delta) else ("Selected-window percentile p50" if (_ttft_pct or _itl_pct or _e2e_pct) else "From summary")
         _tp_mean_val, _tp_mean_note = _active_sglang_throughput()
+        # `_p50_or_mean` used to be literally `_x_p50_ms or _x_ms_kpi`: with
+        # no percentile available it showed the MEAN and labelled it "Median ·
+        # histogram_quantile/percentile timeseries".  On a v1.69.0 report that
+        # put "TTFT p50 62,895 ms" beside "TTFT mean 62,895 ms" and "E2E p50
+        # 129,140" beside "E2E mean 129,140" -- the same number twice, the
+        # second one claiming to be a quantile, while the TTFT percentile
+        # chart in the same report read p50 1,755 ms.  A tile that says p50
+        # and shows a mean is worse than an empty tile, because it reads as
+        # corroboration of the mean.
+        def _p50_tile(_label, _p50, _mean, _dec):
+            _r = _k_resolve_pct(
+                ("ttft" if "TTFT" in _label else
+                 "itl" if "ITL" in _label else "e2e"),
+                0.5, histogram_ms=_safe_f(_p50), mean_ms=_safe_f(_mean))
+            if _r["ms"] > 0:
+                return _kpi_tile(_label, f"{_r['ms']:.{_dec}f}", "ms",
+                                 "Median · " + _r["method"])
+            return _kpi_tile(_label, "—", "", _r["method"])
+
         kpis += [
             _kpi_tile("Model", _setup_value("Model", "Model path")[-40:],
                       note="From setup/server configuration"),
             _kpi_tile("TTFT mean", f"{float(_ttft_ms_kpi or 0):.0f}", "ms", _lat_note),
-            _kpi_tile("TTFT p50", f"{float(_ttft_p50_ms or _ttft_ms_kpi or 0):.0f}", "ms", "Median · histogram_quantile/percentile timeseries"),
+            _p50_tile("TTFT p50", _ttft_p50_ms, _ttft_ms_kpi, 0),
             _kpi_tile("TPOT / ITL mean", f"{float(_itl_ms_kpi or 0):.1f}", "ms", _lat_note),
-            _kpi_tile("TPOT / ITL p50", f"{float(_itl_p50_ms or _itl_ms_kpi or 0):.1f}", "ms", "Median · histogram_quantile/percentile timeseries"),
+            _p50_tile("TPOT / ITL p50", _itl_p50_ms, _itl_ms_kpi, 1),
             _kpi_tile("E2E mean", f"{float(_e2e_ms_kpi or 0):.0f}", "ms", _lat_note),
-            _kpi_tile("E2E p50", f"{float(_e2e_p50_ms or _e2e_ms_kpi or 0):.0f}", "ms", "Median · histogram_quantile/percentile timeseries"),
+            _p50_tile("E2E p50", _e2e_p50_ms, _e2e_ms_kpi, 0),
             _kpi_tile("Throughput mean", _tp_mean_val, "tok/s" if _tp_mean_val != "N/A" else "", _tp_mean_note),
             _kpi_tile("Throughput p50", f"{float(_tp_p50 or 0):.1f}" if _tp_p50 else "N/A", "tok/s" if _tp_p50 else "", "Median of active sglang_gen_throughput samples"),
             _kpi_tile("Cache hit", f"{float(sglang_sum.get('cache_hit_pct', sglang_sum.get('cache_hit_rate_realtime_pct', 0)) or 0):.1f}",
@@ -3340,6 +3392,44 @@ def build_report(raw_dir: Path, out_html: Path,
         hicache_total_gb = hicache_per_gpu_gb * max(gpu_count_for_l2, 1.0)
     dram_total_gb = hicache_total_gb or _setup_float("Host DRAM GB", "DRAM capacity GB", "DRAM total GB", default=0.0)
     dram_used_gb = _setup_float("Host DRAM used GB", "DRAM used GB", default=0.0)
+    # Which quantity dram_used_gb currently holds.  It is reassigned below
+    # from the HiCache token gauge, which is an L2 KV RESIDENCY estimate and
+    # not host DRAM usage at all -- the tile labelled it "GPU node DRAM used"
+    # with the note "host DRAM" regardless, and on the reference run that put
+    # a KV estimate 0.8 GB from the genuine /proc/meminfo figure, where it
+    # read as a rounding difference instead of a different measurement.
+    _dram_used_kind = "host" if dram_used_gb > 0 else ""
+
+    # The model's own KV geometry, for every KV-byte figure in this tab.
+    #
+    # _kv_bytes_per_token_for_model delegates to the shared kernel, but both
+    # call sites here omitted the `config` argument, so the kernel had nothing
+    # authoritative to resolve from and fell back to matching a size hint in
+    # the model NAME.  On the reference run that returned 256 KB/token where
+    # the engine's config says 560: every KV-byte number in the interactive
+    # tab came out 2.1875x low while the Executive grid, which does pass the
+    # config, was right.  A shared resolver called without its input is not a
+    # shared resolver.
+    _iv_kv_cfg: dict = {}
+    try:
+        _iv_mc = Path(raw_dir) / "model_config.json"
+        if _iv_mc.exists() and _iv_mc.stat().st_size > 0:
+            _iv_obj = json.loads(_iv_mc.read_text(encoding="utf-8"))
+            if isinstance(_iv_obj, dict):
+                for _k, _v in _iv_obj.items():
+                    if not str(_k).startswith("_"):
+                        _iv_kv_cfg[str(_k).strip().lower()] = _v
+    except Exception:
+        pass
+    for _src_cfg in (setup, sglang_sum):
+        if isinstance(_src_cfg, dict):
+            for _k, _v in _src_cfg.items():
+                _kn = str(_k).strip().lower().replace(" ", "_")
+                if _kn in ("num_hidden_layers", "num_key_value_heads",
+                           "head_dim", "hidden_size", "num_attention_heads",
+                           "kv_cache_dtype", "n_layers", "num_layers",
+                           "num_kv_heads"):
+                    _iv_kv_cfg.setdefault(_kn, _v)
     _l2_used_source = "setup/static"
     _l2_used_variation_pct = 0.0
     # Prefer the run-local SGLang L2/HiCache token gauge.  In combined reports
@@ -3381,19 +3471,23 @@ def build_report(raw_dir: Path, out_html: Path,
                              or sglang_sum.get("model_name", ""))
             _kv_dtype_for_kv = (_setup_value("KV dtype", "kv_cache_dtype", default="")
                                 or sglang_sum.get("kv_cache_dtype", "fp16") or "fp16")
-            _kv_kb = _kv_bytes_per_token_for_model(str(_model_for_kv), str(_kv_dtype_for_kv)) / 1024.0
+            _kv_kb = _kv_bytes_per_token_for_model(
+                str(_model_for_kv), str(_kv_dtype_for_kv),
+                config=_iv_kv_cfg) / 1024.0
         if _l2_used_tokens > 0 and _kv_kb > 0:
             _tp_for_kv = max(_setup_float("TP size", "tp_size", default=1.0), 1.0)
             _full_gb = _l2_used_tokens * _kv_kb / (1024 * 1024)
             _tp_gb = _l2_used_tokens * (_kv_kb / _tp_for_kv) / (1024 * 1024)
             if dram_total_gb > 0 and _full_gb > dram_total_gb * 1.05 and _tp_gb <= dram_total_gb * 1.05:
                 dram_used_gb = _tp_gb
+                _dram_used_kind = "l2kv"
             elif dram_total_gb > 0 and _full_gb > dram_total_gb * 1.05:
                 # Keep the tile truthful: avoid impossible >100% values.
                 # If a setup value was supplied, keep it; otherwise mark unknown.
                 dram_used_gb = dram_used_gb if dram_used_gb > 0 else 0.0
             else:
                 dram_used_gb = _full_gb
+                _dram_used_kind = "l2kv"
     except Exception:
         pass
     def _first_val(*names):
@@ -3419,6 +3513,7 @@ def build_report(raw_dir: Path, out_html: Path,
             dram_total_gb = _l2r["capacity_gb"]
         if _l2r.get("used_gb", 0) > 0:
             dram_used_gb = _l2r["used_gb"]
+            _dram_used_kind = "l2kv"
     except Exception:
         pass
 
@@ -3430,11 +3525,27 @@ def build_report(raw_dir: Path, out_html: Path,
             else:
                 _dram_note = f"{_dram_pct:.0f}% full · flat residency snapshot from sglang_hicache_host_used_tokens; not a DRAM bandwidth/activity metric"
             _dram_value = f"{dram_used_gb:.1f} / {dram_total_gb:.0f}"
-            _dram_label = "GPU node DRAM used"
+            # Same correction: this branch is reached only when the figure
+            # came from the HiCache token gauge, so it is L2 KV residency.
+            _dram_label = "L2 KV residency (est.)"
         elif dram_used_gb > 0:
-            _dram_note = f"{_dram_pct:.0f}% full · host DRAM"
+            # Name the quantity that is actually in hand.  A token-derived
+            # figure is the same L2 KV residency the Executive grid reports,
+            # so it carries that grid's name and now its geometry too; only a
+            # figure that came from host DRAM itself is called host DRAM.
+            if _dram_used_kind == "l2kv":
+                _dram_label = "L2 KV residency (est.)"
+                _dram_note = (
+                    f"{_dram_pct:.0f}% of L2 capacity · "
+                    f"sglang_hicache_host_used_tokens × KV bytes/token · "
+                    f"an ESTIMATE of cache residency, NOT host DRAM usage — "
+                    f"for physical DRAM see 'L2 host DRAM used — raw "
+                    f"(physical)' in the Executive grid")
+            else:
+                _dram_label = "GPU node host DRAM used"
+                _dram_note = (f"{_dram_pct:.0f}% full · host DRAM from setup "
+                              f"details · whole node, not just KV")
             _dram_value = f"{dram_used_gb:.1f} / {dram_total_gb:.0f}"
-            _dram_label = "GPU node DRAM used"
         else:
             _dram_note = (f"runtime residency unavailable · {_l2_used_source}" if hicache_total_gb > 0
                           else "host DRAM total · used capacity unavailable")
@@ -3675,9 +3786,13 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
     # L3 (local storage) was active, identify burst patterns, and read endurance footprint
     # off the cumulative trace. Both gracefully no-op if the counters are
     # zero or absent.
+    # config=_iv_kv_cfg, so this agrees with the Executive grid's figure.
+    # Without it the kernel matched a size hint in the model name and every
+    # KV-byte number below was scaled by the wrong geometry.
     _kv_b_pt = _kv_bytes_per_token_for_model(
-        sglang_sum.get("model_name", ""),
-        sglang_sum.get("kv_cache_dtype", "fp16"))
+        sglang_sum.get("model_name", "") or str(setup.get("Model") or ""),
+        sglang_sum.get("kv_cache_dtype", "fp16"),
+        config=_iv_kv_cfg)
 
     # Single source of truth for L3 consistency visuals in the interactive report.
     # SGLang logical movement is kept separate from physical local-source bytes.

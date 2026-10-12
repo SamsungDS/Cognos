@@ -125,6 +125,74 @@ def resolve_l3_backend(setup: Mapping[str, Any] | None, launch_command: str | No
     # SGLang server_info raw dict is a live observation, not a fabricated
     # reference-profile default.
     si_backend = _hicache_backend_from_server_info(setup)
+
+    # ...unless setup_details DELIBERATELY says otherwise.
+    #
+    # server_info is a live observation only when it was observed live.  A
+    # setup_details.json copied from an earlier deployment carries the old
+    # embedded `SGLang server_info raw` blob with it, and that blob then beat
+    # every explicit field the user had edited -- including an explicit
+    # `KV cache tier: L3` -- so a local-SSD run rendered end to end as L3.5
+    # with no indication that anything had been overridden.
+    #
+    # An explicit tier or backend in setup_details is a statement of intent
+    # from whoever wrote the file.  When it CONTRADICTS the embedded
+    # server_info, prefer the explicit value and say so in the evidence, so
+    # the disagreement is visible rather than silently resolved either way.
+    _ex_tier = _norm(_get_explicit(
+        setup, "KV cache tier", "kv_cache_tier", "KV backing tier",
+        "kv_backing_tier", "L3 cache tier", "l3_cache_tier",
+        "AMOprof cache tier", "amoprof_cache_tier")).lower().strip()
+    _ex_backend = _norm(_get_explicit(
+        setup, "HiCache storage backend", "hicache_storage_backend",
+        "L3 backend", "l3_backend", "storage_backend",
+        "hicache_backend")).lower().strip()
+    _LOCAL = ("file", "filesystem", "fs", "local", "local_ssd", "disk", "nvme")
+    _si_is_local = si_backend in ("file", "filesystem", "fs", "local",
+                                  "local_ssd", "disk")
+    _ex_says_local = (_ex_tier in {"l3", "l3 local", "local"}
+                      or _ex_backend in _LOCAL)
+    _ex_says_remote = (_ex_tier in {"l3.5", "l35", "l3_5", "l3-5"}
+                       or _ex_backend in ("mooncake", "moon cake", "hf3fs",
+                                          "3fs", "remote", "remote_storage"))
+    if si_backend and _ex_says_local and not _si_is_local:
+        device = _get_explicit(setup, "L3 Device", "L3 device", "L3 block device",
+                                "l3_device", "L3 (local storage) device",
+                                "l3_storage_device", "NVMe device", "ssd_device")
+        mount = _get_explicit(setup, "L3 Mount Path", "L3 mount path", "L3 mount",
+                               "l3_mount_path", "L3 (local storage) mount path",
+                               "l3_storage_mount_path")
+        path = _get_explicit(setup, "HiCache storage path", "hicache_storage_path",
+                              "L3 filesystem path", "L3 storage path",
+                              "l3_storage_path", "storage_path", "HiCache path",
+                              "hicache_path", "File storage path",
+                              "file_storage_path")
+        return L3BackendResolution(
+            "local_ssd", "L3 (SSD/local storage)",
+            "logical L3 write/offload from sglang_backuped_tokens_total",
+            "logical L3 read/onboard from sglang_prefetched_tokens_total; "
+            "sglang_load_back_tokens_total is diagnostic-only",
+            bool(device or mount or path),
+            local_device=device, local_mount_path=mount, local_storage_path=path,
+            evidence=("setup_details explicitly configures a LOCAL tier "
+                      f"(tier={_ex_tier or '-'}, backend={_ex_backend or '-'}) "
+                      f"while the embedded SGLang server_info says "
+                      f"hicache_storage_backend={si_backend} \u2014 the explicit "
+                      "setting wins; if the engine really is running that "
+                      "backend, the server_info block in setup_details is stale"))
+    if si_backend and _ex_says_remote and _si_is_local:
+        return L3BackendResolution(
+            "remote_storage", "L3.5 (AI Memory Node / remote storage)",
+            "logical L3.5 write/offload from sglang_backuped_tokens_total",
+            "logical L3.5 read/onboard from sglang_prefetched_tokens_total; "
+            "sglang_load_back_tokens_total is diagnostic-only",
+            False,
+            evidence=("setup_details explicitly configures a REMOTE tier "
+                      f"(tier={_ex_tier or '-'}, backend={_ex_backend or '-'}) "
+                      f"while the embedded SGLang server_info says "
+                      f"hicache_storage_backend={si_backend} \u2014 the explicit "
+                      "setting wins; the server_info block may be stale"))
+
     if si_backend:
         # `file` is HiCache's local-file backend → L3 (SSD/local storage).
         # Any other named backend is a remote/disaggregated tier → L3.5.
