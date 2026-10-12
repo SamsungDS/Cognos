@@ -1011,7 +1011,7 @@ Only the metrics for the selected collector(s) then appear at
 
 | Area | Tools |
 |---|---|
-| Python package | Python 3.10+, pip, venv, pandas, numpy, matplotlib, scipy, requests |
+| Python package | Python 3.12+, pip, venv, pandas, numpy, matplotlib, scipy, requests |
 | GPU/HBM | nvidia-smi and optionally DCGM/dcgmi |
 | SGLang metrics | SGLang Prometheus `/metrics` endpoint |
 | L3 local storage | nvme-cli, sysstat/iostat, blktrace/blkparse, sysfs |

@@ -1,5 +1,5 @@
 # AMOprof — AI Memory & IO Profiler
-# Python >= 3.10 required
+# Python >= 3.12 required (see pyproject.toml requires-python)
 # Install: pip install -r requirements.txt
 
 matplotlib>=3.7.0
