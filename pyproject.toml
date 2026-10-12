@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name            = "amoprof"
-version         = "1.76.0"
+version         = "1.77.0"
 description     = "AI Workload-Aware Storage Profiler — maps AI operations to SSD I/O dimensions"
 readme          = "README.md"
 # 3.12+: report/amoprof.py and report/combined.py use PEP 701 nested
