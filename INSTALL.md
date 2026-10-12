@@ -16,16 +16,41 @@ This guide covers installation for metrics collection, SGLang analysis, and opti
 
 ## Install AMOprof
 
+AMOprof installs two ways. Both install the same package with the same
+Python dependencies; pick by where the code lives on the target host.
+
+**1. From a source tree, with `install.sh`** — also installs the OS packages
+(nvme-cli, sysstat, blktrace, bpf tools, perf) and, optionally, the DRAM PMU
+tools. The package is installed editable (`pip install -e`), so it runs from
+the tree:
+
 ```bash
-mkdir -p amoprof_1_0_0
-unzip amoprof_1_0_0.zip -d amoprof_1_0_0
-cd amoprof_1_0_0
-chmod +x install.sh scripts/install_dram_deps.sh
+git clone git@cxl-gitlab.ssi.samsung.com:dfs/svk/amo_prof.git   # or unzip a release
+cd amo_prof
 ./install.sh
 source ~/amoprof_venv/bin/activate
 amoprof --version
 ```
 > **Install path note:** run `pip install -e .` only from the package root — the directory containing `pyproject.toml`, `setup.py`, `README.md`, and the inner `amoprof/` Python package. Do **not** run it from inside the inner `amoprof/` directory. If pip says neither `setup.py` nor `pyproject.toml` was found, run `cd ..` until `ls` shows one of those files.
+
+**2. From a wheel** — one file to copy to the host; no source tree needed at
+run time. Build it once (CI builds it on every push, as the `wheel` job's
+artifact):
+
+```bash
+scripts/build_wheel.sh                     # -> dist/amoprof-<version>-py3-none-any.whl
+python3 -m venv ~/amoprof_venv && source ~/amoprof_venv/bin/activate
+pip install dist/amoprof-*.whl             # pulls pandas, numpy, matplotlib, ...
+amoprof --version
+```
+
+A wheel installs the Python package only. The OS-level collectors' tools
+(nvme-cli, sysstat, blktrace, bpf tools, perf, AMD uProf / Intel PCM) still
+have to be present on the host — `install.sh` or the distribution's package
+manager provides them — and `check_collectors.py`, the `systemd/` unit and the
+`scripts/` helpers ship in the source tree, not in the wheel. The systemd unit
+calls `/opt/amoprof_venv/bin/amoprof`, which either method provides when
+installed into that venv.
 
 
 The default install is metrics-only. It does not install PyTorch or SGLang server dependencies.
@@ -233,10 +258,15 @@ For unattended collection, configure passwordless sudo for the needed binaries o
 
 ```bash
 source ~/amoprof_venv/bin/activate
-amoprof --version
+amoprof --version            # version, the imported package path, and a feature fingerprint
 python -c "import amoprof; print(amoprof.__version__)"
-python -m compileall -q amoprof
-pytest -q tests/test_executive_symbol_regression.py
+```
+
+From a source tree, run the full test suite as well (`pip install pytest`
+first):
+
+```bash
+scripts/run_tests.sh
 ```
 
 ---

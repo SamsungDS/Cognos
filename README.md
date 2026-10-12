@@ -87,20 +87,26 @@ If `KV cache tier` is omitted, AMOprof derives the label from setup and launch e
 ## Package structure
 
 ```text
-amoprof_1_0_0/
+amo_prof/
 ├── README.md                         # Overview, features, CLI reference, examples
 ├── INSTALL.md                        # Installation and dependency guide
-├── install.sh                        # Main installer for Python + common system dependencies
-├── pyproject.toml                    # Python package metadata and amoprof console entry point
+├── install.sh                        # Installer from a source tree: Python + common system dependencies
+├── pyproject.toml                    # Package metadata, dependencies, amoprof console entry point (wheel build)
 ├── setup.py                          # Editable-install compatibility
+├── .gitlab-ci.yml                    # CI: build the wheel, install it, run the test suite; SAST
 ├── setup_details_sample.json         # Example setup metadata for reports
+├── check_collectors.py               # Collector readiness check (run by install.sh)
+├── validate_math.py                  # Arithmetic validation suite (kernels vs references)
+├── validate_report.py                # Validates a generated report HTML
 ├── scripts/
-│   └── install_dram_deps.sh          # Architecture/vendor-aware DRAM PMU dependency installer
+│   ├── install_dram_deps.sh          # Architecture/vendor-aware DRAM PMU dependency installer
+│   ├── build_wheel.sh                # Build dist/amoprof-<version>-py3-none-any.whl and check its contents
+│   ├── run_tests.sh                  # Run every test the way it is written (pytest + script tests + validate_math)
+│   └── check_*.py, qd_sources.py, …  # Static checks and diagnostics used by the tests
 ├── systemd/
 │   ├── amoprof.service               # systemd unit for `amoprof service`
 │   └── amoprof.env.example           # Example EnvironmentFile for the unit
-├── tests/
-│   └── test_executive_symbol_regression.py
+├── tests/                            # Unit tests: pytest modules and standalone script tests
 └── amoprof/
     ├── base.py                       # BaseCollector ABC, AIStackLayer enum, CollectorRegistry
     ├── cli.py                        # CLI parser and command dispatch
@@ -528,16 +534,41 @@ in turn iterates the specs registered against that layer.
 
 ## Quick installation
 
+AMOprof installs two ways. Both install the same package with the same
+Python dependencies; pick by where the code lives on the target host.
+
+**1. From a source tree, with `install.sh`** — also installs the OS packages
+(nvme-cli, sysstat, blktrace, bpf tools, perf) and, optionally, the DRAM PMU
+tools. The package is installed editable (`pip install -e`), so it runs from
+the tree:
+
 ```bash
-mkdir -p amoprof_1_0_0
-unzip amoprof_1_0_0.zip -d amoprof_1_0_0
-cd amoprof_1_0_0
-chmod +x install.sh scripts/install_dram_deps.sh
+git clone git@cxl-gitlab.ssi.samsung.com:dfs/svk/amo_prof.git   # or unzip a release
+cd amo_prof
 ./install.sh
 source ~/amoprof_venv/bin/activate
 amoprof --version
 ```
 > **Install path note:** run `pip install -e .` only from the package root — the directory containing `pyproject.toml`, `setup.py`, `README.md`, and the inner `amoprof/` Python package. Do **not** run it from inside the inner `amoprof/` directory. If pip says neither `setup.py` nor `pyproject.toml` was found, run `cd ..` until `ls` shows one of those files.
+
+**2. From a wheel** — one file to copy to the host; no source tree needed at
+run time. Build it once (CI builds it on every push, as the `wheel` job's
+artifact):
+
+```bash
+scripts/build_wheel.sh                     # -> dist/amoprof-<version>-py3-none-any.whl
+python3 -m venv ~/amoprof_venv && source ~/amoprof_venv/bin/activate
+pip install dist/amoprof-*.whl             # pulls pandas, numpy, matplotlib, ...
+amoprof --version
+```
+
+A wheel installs the Python package only. The OS-level collectors' tools
+(nvme-cli, sysstat, blktrace, bpf tools, perf, AMD uProf / Intel PCM) still
+have to be present on the host — `install.sh` or the distribution's package
+manager provides them — and `check_collectors.py`, the `systemd/` unit and the
+`scripts/` helpers ship in the source tree, not in the wheel. The systemd unit
+calls `/opt/amoprof_venv/bin/amoprof`, which either method provides when
+installed into that venv.
 
 
 For full tracing and DRAM PMU support on the target server:
@@ -770,6 +801,35 @@ amoprof compare \
 That matters more than it looks: those two geometries are 960 KB and 320 KB of
 KV per token, so one global config would misstate a tier's residency by 3x for
 whichever run it did not describe.
+
+#### What the comparison leads with
+
+Window means cannot tell two runs of the same workload apart when one of them
+stalled, so the report opens with a diagnosis rather than a delta table:
+
+- **Verdict**, one per comparison run: which run served the workload faster
+  and by how much — by *time to complete* (first to last busy sample) when the
+  runs served the same work (requests and prompt tokens within 5%), by request
+  throughput otherwise. KPI tiles (baseline → comparison), an evidence table
+  with the ratio and a short reading per row, flag chips for configuration
+  problems (e.g. a local file tier at page_size 1, or a launch command that
+  disagrees with the backend the engine ran), and a one-line mechanism that
+  is marked as inferred, with the checks that would confirm it.
+- **Stalls.** Idle time is split by `metric_kernels.admission_stalls` into
+  *stalled* (GPUs idle while requests waited to enter prefill — time the
+  system lost), idle with nothing queued, and idle between batches. Only the
+  second is fair to correct away; when most of a run's idle time was stalls
+  the report says so instead of recommending the active-span rows.
+- **Diagnosis charts**: every key figure as a ratio to the baseline (log
+  axis), where each run's time went, backing-tier delivery (prefetch and
+  backup rates, tokens returned ÷ absorbed), GPU utilisation against requests
+  waiting, and a Pearson correlation heatmap per run across GPU utilisation,
+  waiting requests, decode batch, L1 KV fill, prefetch rate and backup rate.
+- **Timeline** per run: GPU utilisation against waiting requests and the
+  decode batch, with stall episodes shaded.
+- **Workload and time to complete — detail**: what the verdict table does not
+  already show (requests per prompt, idle classification, queue gauges, page
+  size, storage backend vs launch command).
 
 #### Queueing across the stack
 
@@ -1463,7 +1523,9 @@ If Server Info or GPU panels are empty, see Troubleshooting below.
 
 ## Validation suites
 
-Two runnable suites ship in the package root:
+`scripts/run_tests.sh` runs everything below plus the unit tests in
+`tests/` and `amoprof/tests/`; CI runs it on every push. Two runnable suites
+ship in the package root:
 
 | Suite | Answers |
 |---|---|
@@ -1933,7 +1995,7 @@ beside a warm line that does is the finding, with no legend-reading required.
 The subtitle states the balance:
 
 ```
-tokens per second, summed across ranks
+tokens per second, counted once across ranks (8 ranks agreed — replicas)
 · 1.2M tokens moved down the hierarchy and NONE came back up
 · 1.2M down vs 0.6M up (1.9:1)
 · not exported by this engine build: prefetch, load-back
@@ -2014,11 +2076,19 @@ parse.
 
 All four go through one reader, `_kv_token_delta`, and report **tokens**.
 
-**Summed across ranks.** SGLang publishes each counter once per tp_rank. The
-previous reader took the first matching column and under-reported by the
-parallelism factor — 1,000 against a true 8,000 at TP=8. It now sums every
-matching column per row before differencing. Histogram `_bucket`, `_sum` and
-`_count` side-series are excluded.
+**Ranks combined by what the data shows.** SGLang publishes each counter
+once per rank, and whether those series count the *same* tokens depends on
+the topology: TP, PP and EP-over-TP ranks each hold a shard of every token and
+report the same count (3,512,089 on all eight ranks of a TP=8 run — summing
+reported 8x), while ranks that serve different requests (DP-attention on a
+build that labels them `tp_rank` only) must be summed. A fixed rule is wrong
+for one of the two, so `metric_kernels.rank_combine_rule` compares the ranks'
+window deltas: within 1% they are replicas and the max is taken, otherwise
+they are summed. `dp_rank` and every other label set are summed. The window
+total is the sum of positive per-step increases, so a server restart inside
+the window keeps what was counted before it. Histogram `_bucket`, `_sum` and
+`_count` side-series are excluded unless asked for by name (operation counts
+such as `prefetch_pgs_count`).
 
 **Across ranks, never across aliases.** A run directory can carry the same
 quantity under two names — `sglang_prefetched_tokens_total` and
@@ -2106,11 +2176,14 @@ l35_file_hit_b   <- mooncake_read_bytes_file | file_cache_hit_bytes_total
 ```
 
 Engine-side, `sglang_{evicted,backuped,load_back,prefetched,cached}_tokens_total`
-were already fetched but **unaggregated**. These carry one series per tp_rank,
-so taking a single series under-reports by the parallelism factor — a prefetch
-total read 8x low on a TP=8 deployment. They are now summed across ranks.
-Gauges are deliberately left unaggregated, since summing an occupancy gauge
-across ranks is meaningless.
+carry one series per rank. The fetch queries them **per rank** and combines
+them by the same rule as the readers (`_combine_rank_series`: max across ranks
+whose deltas agree, sum across ranks that count different requests, sum
+across other label sets), then writes one column per counter so every CSV
+reader stays correct. The rule used for each counter is recorded in
+`sglang_summary.json` under `kv_rank_rules` and stated on the KV movement
+chart. Gauges are deliberately left unaggregated, since summing an occupancy
+gauge across ranks is meaningless.
 
 Counter names differ by store build, so each entry has a fallback list rather
 than one hardcoded name.
@@ -3444,14 +3517,25 @@ the affected charts are just empty.
 
 ## Testing
 
-Three suites, each answering a different question. Run all three before
-packaging or deploying — they take under a minute together.
+Three suites, each answering a different question. Run them before
+packaging or deploying:
 
 ```bash
-python3 validate_math.py                 # is the arithmetic right?
-python3 validate_report.py report.html   # does the generated report hold up?
-pytest -q tests/ amoprof/tests/          # unit tests (needs `pip install pytest`)
+scripts/run_tests.sh                     # unit tests + validate_math.py (needs `pip install pytest`)
+python3 validate_report.py report.html   # does a generated report hold up?
 ```
+
+`tests/` holds two kinds of file: pytest modules, which define `test_*`
+functions, and standalone scripts, which print PASS/FAIL and exit non-zero on
+failure. `pytest tests/` alone collects nothing from the scripts and reports
+success without running them; `scripts/run_tests.sh` runs each kind its own
+way, then `validate_math.py`. Tests that fail on `main` and are tracked
+separately are listed by name in its `KNOWN_FAILURES` and deselected, so they
+stay visible without masking new failures.
+
+CI (`.gitlab-ci.yml`) builds the wheel, installs it with its dependencies,
+checks the `amoprof` console script from outside the source tree, checks that
+`install.sh` parses, and runs `scripts/run_tests.sh`.
 
 `validate_math.py` requires `numpy` and `scipy`; both are already runtime
 dependencies. Compiling every module is covered by its group 0, so a separate
@@ -3713,21 +3797,21 @@ keeping the HiCache allocation as the denominator, so the two surfaces report
 different quantities under one label. It is left failing deliberately: a green
 suite that hides a real defect is worse than a red one that names it.
 
-### 3. `pytest` — unit tests
-
-Five test modules across two directories:
+### 3. Unit tests — `scripts/run_tests.sh`
 
 ```bash
 pip install pytest            # not a runtime dependency
-pytest -q tests/ amoprof/tests/
+scripts/run_tests.sh
 ```
 
-| Path | Covers |
-|---|---|
-| `amoprof/tests/test_common_kpis.py` | shared KPI computation |
-| `amoprof/tests/test_server_metrics.py` | metric alias tables |
-| `amoprof/tests/test_vllm_collect.py`, `test_vllm_percentiles.py` | vLLM collection and percentiles |
-| `tests/test_executive_symbol_regression.py` | Executive symbol regressions |
+| Kind | Where | How it is run |
+|---|---|---|
+| pytest modules (`test_*` functions) | `tests/` (e.g. `test_rank_rule.py`, `test_histogram_label_sets.py`, `test_service_cycle_aggregation.py`) and `amoprof/tests/` | `pytest` |
+| standalone script tests (print PASS/FAIL, exit non-zero on failure) | `tests/` (e.g. `test_compare_stall_verdict.py`, `test_analyze_latency_series.py`, `test_tier_residency_tiles.py`) | `python3 <file>` |
+| arithmetic validation | `validate_math.py` | `python3 validate_math.py` |
+
+The runner prints one line per script test and lists the tests deselected as
+known failures by name.
 
 Unlike the two `validate_*.py` suites, pytest is an optional developer
 dependency and is not installed by `install.sh`.
