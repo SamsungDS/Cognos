@@ -545,6 +545,7 @@ try:
         align_on_time as _k_align,
         admission_stalls as _k_admission_stalls,
         pearson as _k_pearson,
+        window_counter_series as _k_window_counter_series,
     )
 except Exception:  # pragma: no cover - the kernel ships with the package
     def _k_resolve_lat(kind, ts_ms=0.0, pct_ms=0.0, summary_ms=0.0,
@@ -585,6 +586,9 @@ except Exception:  # pragma: no cover - the kernel ships with the package
 
     def _k_pearson(xs, ys):
         return 0.0
+
+    def _k_window_counter_series(rows, candidates, meta=None):
+        return None
 
     def _k_admission_stalls(times, busy, waiting, running=None,
                             kv_fill_pct=None, busy_threshold=None, rel=0.10,
@@ -822,6 +826,35 @@ def _kv_delta(raw: "Path", stems: "list[str]") -> "float | None":
             return 0.0
         return float(_t["total"])
     return None
+
+
+def _kv_token_series(raw: "Path", stems: "list[str]",
+                     meta: "dict | None" = None,
+                     ) -> "tuple[list[float], list[float]] | None":
+    """(times, values) of a KV-movement token counter, ranks combined.
+
+    These counters arrive once per rank. TP, PP and EP-over-TP ranks count the
+    same tokens -- summing every column, which _kv_delta does and is right for
+    a counter split across ranks, reported 8x on TP=8 -- while ranks that
+    serve different requests must be summed. metric_kernels.
+    window_counter_series decides which from the data, the same reader the
+    Executive and End reports use, so the comparison cannot count tokens
+    differently from the single-run report.
+    """
+    p = Path(raw) / "sglang_timeseries.csv"
+    if not p.exists():
+        return None
+    _, rows = _csv_rows(p)
+    return _k_window_counter_series(rows, list(stems), meta=meta)
+
+
+def _kv_token_delta(raw: "Path", stems: "list[str]") -> "float | None":
+    """Window total of a KV-movement token counter, reset-safe."""
+    r = _kv_token_series(raw, stems)
+    if not r:
+        return None
+    t = _k_counter_total([r[1]])
+    return float(t["total"]) if t["present"] else 0.0
 
 
 def _gauge_peak(raw: "Path", stems: "list[str]") -> "float | None":
@@ -1365,7 +1398,7 @@ def extract_metrics(spec: RunSpec) -> RunMetrics:
     m.file_hit_gb   = _scale(_kv_delta(_raw, ["l35_file_hit_b",
                                               "file_cache_hit_bytes",
                                               "mooncake_read_bytes_file"]), 1e9)
-    m.prefetched_tok = _kv_delta(_raw, ["prefetched_tokens_total"])
+    m.prefetched_tok = _kv_token_delta(_raw, ["prefetched_tokens_total"])
 
     # ── Token activity and the KV hops, for the A5 -> A1 walk ─────────────
     # One counter per hop. These are lifetime counters, so they are
@@ -1665,9 +1698,9 @@ def extract_metrics(spec: RunSpec) -> RunMetrics:
         m.tp_size_n = float(str(m.tp_size).strip()) if m.tp_size not in ("", "?") else None
     except (TypeError, ValueError):
         m.tp_size_n = None
-    m.evicted_tok    = _kv_delta(_raw, ["evicted_tokens_total"])
-    m.backuped_tok   = _kv_delta(_raw, ["backuped_tokens_total"])
-    m.load_back_tok  = _kv_delta(_raw, ["load_back_tokens_total"])
+    m.evicted_tok    = _kv_token_delta(_raw, ["evicted_tokens_total"])
+    m.backuped_tok   = _kv_token_delta(_raw, ["backuped_tokens_total"])
+    m.load_back_tok  = _kv_token_delta(_raw, ["load_back_tokens_total"])
     m.store_get_n     = _kv_delta(_raw, ["l35_get_total_n", "get_total_n"])
     m.store_mem_hit_n = _kv_delta(_raw, ["l35_mem_hit_n", "mem_hit_n"])
     m.store_file_hit_n = _kv_delta(_raw, ["l35_file_hit_n", "file_hit_n"])
@@ -1852,8 +1885,8 @@ def _extract_diagnosis(m: "RunMetrics", raw: "Path", setup: dict) -> None:
         if _span > 0:
             m.gpu_busy_equiv_s = (sum(g_v) / len(g_v)) / 100.0 * _span
 
-    p_t, p_v, _ = _rows_by_time(sg, ["prefetched_tokens_total"], agg="sum")
-    b_t, b_v, _ = _rows_by_time(sg, ["backuped_tokens_total"], agg="sum")
+    p_t, p_v = _kv_token_series(raw, ["prefetched_tokens_total"]) or ([], [])
+    b_t, b_v = _kv_token_series(raw, ["backuped_tokens_total"]) or ([], [])
 
     def _rate_at(ts, vs):
         """Per-interval rate of a counter, keyed by the interval's end."""

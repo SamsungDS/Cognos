@@ -157,3 +157,14 @@ def test_fetch_sums_dp_groups_and_dedups_their_tp_ranks():
     df, rules = _combine_rank_series(_prom_df(per))
     assert df["value"].iloc[-1] - df["value"].iloc[0] == 160 * (N - 1)
     assert [r["rule"] for r in rules] == ["max", "max"]
+
+
+# ── compare ───────────────────────────────────────────────────────────────
+def test_compare_counts_tp_ranks_once(tmp_path):
+    from amoprof.comparator import _kv_token_delta
+    rows = _rows({_col(tp_rank=i): 100 for i in range(8)})
+    with open(tmp_path / "sglang_timeseries.csv", "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(rows[0]))
+        w.writeheader()
+        w.writerows(rows)
+    assert _kv_token_delta(tmp_path, ["prefetched_tokens_total"]) == pytest.approx(100 * (N - 1))
