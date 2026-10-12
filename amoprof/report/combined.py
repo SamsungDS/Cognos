@@ -1782,6 +1782,73 @@ def _amoprof_bucket_columns(path: "Path | None", base: str) -> "list[tuple[float
     return out
 
 
+def _amoprof_bucket_series(path: "Path | None", base: str
+                           ) -> "tuple[list[float], list[tuple[float, list[float]]]]":
+    """Row-aligned cumulative bucket counts, one series per `le`.
+
+    Returns (times, [(le, counts), ...]) sorted by le, +Inf last, every
+    series the same length as `times`.
+
+    Two things the per-column readers got wrong, and both moved the
+    percentiles:
+
+    * Several series can share one `le` -- one per tp_rank, per scrape job,
+      per engine -- and each is a complete histogram of its own share of the
+      requests. Taken as separate adjacent buckets, a quantile landing in the
+      second of a pair interpolated between lo == hi and came back as
+      exactly the bucket edge (800, 8,000, 400,000 ms), and the total read
+      only one series' observations. Prometheus answers the question with
+      histogram_quantile(q, sum by (le) (...)); this is the same sum.
+    * _amoprof_read_columns_raw drops empty cells per column, so two columns
+      with gaps in different rows were differenced at different instants.
+      Here every row is kept and a missing cell carries the series' previous
+      value forward, which for a cumulative counter is the right reading of
+      "no new sample".
+    """
+    buckets = _amoprof_bucket_columns(path, base)
+    if len(buckets) < 2:
+        return [], []
+    import csv as _csv
+    by_le: "dict[float, list[str]]" = {}
+    for le, col in buckets:
+        by_le.setdefault(le, []).append(col)
+    les = sorted(by_le)
+    times: "list[float]" = []
+    acc: "dict[float, list[float]]" = {le: [] for le in les}
+    last: "dict[str, float]" = {}
+    try:
+        with Path(path).open(encoding="utf-8", errors="replace", newline="") as f:
+            for row in _csv.DictReader(f):
+                try:
+                    t = float(str(row.get("time_sec", "")).replace(",", ""))
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(t):
+                    continue
+                seen = False
+                for le in les:
+                    for col in by_le[le]:
+                        try:
+                            v = float(str(row.get(col, "")).replace(",", ""))
+                        except (TypeError, ValueError):
+                            continue
+                        if math.isfinite(v):
+                            last[col] = v
+                            seen = True
+                if not seen:
+                    continue
+                times.append(t)
+                for le in les:
+                    acc[le].append(sum(last.get(c, 0.0) for c in by_le[le]))
+    except Exception:
+        return [], []
+    if len(times) < 2:
+        return [], []
+    order = sorted(range(len(times)), key=times.__getitem__)
+    return ([times[i] for i in order],
+            [(le, [acc[le][i] for i in order]) for le in les])
+
+
 def _amoprof_histogram_percentiles(path: "Path | None", base: str,
                                    quantiles: "tuple[float, ...]" = (0.5, 0.9, 0.99),
                                    scale: float = 1.0
@@ -1796,15 +1863,12 @@ def _amoprof_histogram_percentiles(path: "Path | None", base: str,
 
     Returns (times, {q: values}). `scale` converts units (e.g. s -> ms).
     """
-    buckets = _amoprof_bucket_columns(path, base)
-    if len(buckets) < 2:
+    times, _bs = _amoprof_bucket_series(path, base)
+    if len(_bs) < 2:
         return [], {q: [] for q in quantiles}
-    cols = ["time_sec"] + [c for _le, c in buckets]
-    raw = _amoprof_read_columns_raw(path, cols)
-    times = raw.get("time_sec", [])
-    series = [raw.get(c, []) for _le, c in buckets]
-    les = [le for le, _c in buckets]
-    n = min([len(times)] + [len(v) for v in series]) if series else 0
+    series = [v for _le, v in _bs]
+    les = [le for le, _v in _bs]
+    n = len(times)
     out_t: list[float] = []
     out: dict[float, list[float]] = {q: [] for q in quantiles}
     for i in range(1, n):
@@ -1828,7 +1892,10 @@ def _amoprof_histogram_percentiles(path: "Path | None", base: str,
             elif c_hi > c_lo:
                 val = lo + (hi - lo) * (target - c_lo) / (c_hi - c_lo)
             else:
-                val = hi
+                # The bucket's floor, as the whole-window helper does: the
+                # upper edge is the worst value the bucket can hold, not one
+                # that was measured.
+                val = lo
             out[q].append(val * scale)
     return out_t, out
 
@@ -1911,14 +1978,12 @@ def _amoprof_histogram_window_percentiles(path: "Path | None", base: str,
     Returns {"p50": v, "p90": v, "p99": v, "observations": n} — empty when no
     requests completed in the window.
     """
-    buckets = _amoprof_bucket_columns(path, base)
-    if len(buckets) < 2:
+    _times, _bs = _amoprof_bucket_series(path, base)
+    if len(_bs) < 2:
         return {}
-    cols = ["time_sec"] + [c for _le, c in buckets]
-    raw = _amoprof_read_columns_raw(path, cols)
-    series = [raw.get(c, []) for _le, c in buckets]
-    les = [le for le, _c in buckets]
-    n = min((len(v) for v in series), default=0)
+    series = [v for _le, v in _bs]
+    les = [le for le, _v in _bs]
+    n = len(_times)
     if n < 2:
         return {}
     totals = [0.0] * len(les)
@@ -2924,13 +2989,7 @@ def _amoprof_exec_svg_bucket_scatter(sg_path,
     """
     if not sg_path:
         return ""
-    _bcols = _amoprof_bucket_columns(sg_path, base) or []
-    if len(_bcols) < 2:
-        return ""
-    _cols = [_col for _le, _col in _bcols]
-    _raw = _amoprof_read_columns_raw(sg_path, ["time_sec"] + _cols) or {}
-    _time = _raw.get("time_sec") or []
-    _cum = [(le, _raw.get(_col) or []) for le, _col in _bcols]
+    _time, _cum = _amoprof_bucket_series(sg_path, base)
     _cum = [(le, ser) for le, ser in _cum if ser]
     if len(_cum) < 2 or len(_time) < 2:
         return ""
@@ -8367,14 +8426,8 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 ("TPOT percentiles over the run", "inter_token_latency_seconds", "ms/tok", 1000.0),
                 ("E2E latency percentiles over the run", "e2e_request_latency_seconds", "ms", 1000.0),
                 ("Queue wait percentiles over the run", "queue_time_seconds", "ms", 1000.0)):
-            _bcols = _amoprof_bucket_columns(_sg_path, _pt_base) if _sg_path else []
-            if len(_bcols) < 3:
-                continue
-            _bser = []
-            for _le, _col in _bcols:
-                _v = _amoprof_read_columns_raw(_sg_path, [_col]).get(_col, [])
-                if _v:
-                    _bser.append((_le, _v))
+            _bt, _bser = (_amoprof_bucket_series(_sg_path, _pt_base)
+                          if _sg_path else ([], []))
             if len(_bser) < 3:
                 continue
             _pq = _k_bucket_pctls(_bser)
@@ -8385,8 +8438,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             # interval it ENDS at.  Aligning by position instead would put
             # every value on the wrong time.
             _idx = _pq.get("_index") or []
-            _pt_t = [_sg_time[i] for i in _idx
-                     if _sg_time and 0 <= i < len(_sg_time)]
+            _pt_t = [_bt[i] for i in _idx if 0 <= i < len(_bt)]
             _pt_series = []
             for _q, _col in ((0.5, "#38bdf8"), (0.9, "#f59e0b"), (0.99, "#ef4444")):
                 _vals = [v * _pt_scale if v == v else float("nan")

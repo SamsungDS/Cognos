@@ -175,14 +175,37 @@ def _ratio_delta_ms_from_rows(rows: list[dict], sum_partial: str, count_partial:
     """Selected-window mean latency from cumulative Prometheus counters."""
     if not rows:
         return 0.0
-    sum_col = _find_col(rows, sum_partial)
-    cnt_col = _find_col(rows, count_partial)
-    if not sum_col or not cnt_col:
+    # Every labelled series, summed, through the shared reset-safe kernel.
+    # The first column alone is one series' share of the requests, and the
+    # first and last ROWS are blank whenever that series starts or ends
+    # inside the window -- both made TTFT and E2E disagree with every other
+    # surface, and on a reference run made them equal to each other.
+    try:
+        from amoprof.report.metric_kernels import counter_window_total as _cwt
+    except Exception:  # pragma: no cover - standalone/bundled execution
+        from metric_kernels import counter_window_total as _cwt  # type: ignore
+
+    def _cols(partial):
+        return [c for c in rows[0].keys()
+                if c and partial in c and "_bucket" not in c]
+
+    def _vals(col):
+        out = []
+        for r in rows:
+            v = r.get(col)
+            if v in (None, ""):
+                continue
+            x = _to_float(v, float("nan"))
+            if x == x:
+                out.append(x)
+        return out
+
+    sum_cols, cnt_cols = _cols(sum_partial), _cols(count_partial)
+    if not sum_cols or not cnt_cols:
         return 0.0
     try:
-        a_sum = _to_float(rows[0].get(sum_col)); b_sum = _to_float(rows[-1].get(sum_col))
-        a_cnt = _to_float(rows[0].get(cnt_col)); b_cnt = _to_float(rows[-1].get(cnt_col))
-        ds = b_sum - a_sum; dc = b_cnt - a_cnt
+        ds = float(_cwt([_vals(c) for c in sum_cols])["total"])
+        dc = float(_cwt([_vals(c) for c in cnt_cols])["total"])
         return (ds / dc * 1000.0) if ds > 0 and dc > 0 else 0.0
     except Exception:
         return 0.0
