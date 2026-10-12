@@ -4150,11 +4150,10 @@ def _kv_token_delta(raw_dir, candidates) -> "float | None":
     _r = _kv_counter_series(raw_dir, candidates)
     if not _r:
         return None
-    _times, series = _r
-    d = series[-1] - series[0]
-    if d < 0:                      # counter reset inside the window
-        d = series[-1]
-    return max(0.0, d)
+    # Reset-safe: the sum of positive steps, as the kernel totals every
+    # counter, so a restart inside the window keeps what came before it.
+    _t = _k_counter_total([_r[1]])
+    return float(_t["total"]) if _t["present"] else 0.0
 
 def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                                   interactive_figures: "dict | None" = None,

@@ -1127,11 +1127,11 @@ def window_counter_delta(rows, candidates,
     r = window_counter_series(rows, candidates, meta=meta)
     if not r:
         return None
-    series = r[1]
-    d = series[-1] - series[0]
-    if d < 0:                      # counter reset inside the window
-        d = series[-1]
-    return max(0.0, d)
+    # Sum of positive per-step increases (counter_window_total), not
+    # last - first: a server restart inside the window resets the counter,
+    # and last - first then drops everything counted before the reset.
+    t = counter_window_total([r[1]])
+    return float(t["total"]) if t["present"] else 0.0
 
 
 def token_reuse_density(reused_tokens: float, computed_tokens: float,

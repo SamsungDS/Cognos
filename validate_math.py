@@ -219,7 +219,7 @@ try:
                   "v": [_NA, 5.0, 9.0, 3.0], "cap": 0, "color": "#f00"}],
                 mode="abs", yaxis="ms", unit_label="ms")
     check("tier-occupancy: legend peak skips a leading NaN",
-          "peak 9.00 ms" in _svg4, True)
+          "peak 9 ms" in _svg4, True)
     check("tier-occupancy: no 'peak nan' in the legend",
           "peak nan" in _svg4, False)
 
@@ -413,7 +413,7 @@ try:
     import html as _H8
     _u8 = _H8.unescape(_h8)
     check("L3.5 residency renders when store capacity is present",
-          "L3.5 remote KV store" in _u8, True)
+          "L3.5 store \u00b7 DRAM tier" in _u8, True)
     # The capacity chart must split memory from storage, and must not imply a
     # file tier exists when none is configured.
     check("capacity chart names the memory tier",
@@ -451,12 +451,16 @@ try:
         _w9.writerow(["time_sec"] + _cols)
         _w9.writerow([0] + [100] * 24 + [500])
         _w9.writerow([60] + [1100] * 8 + [600] * 8 + [300] * 8 + [500])
-    check("prefetch summed across 8 ranks",
-          _K9(_d9, ["prefetched_tokens_total"]), 8000.0)
-    check("backup summed across 8 ranks",
-          _K9(_d9, ["backuped_tokens_total"]), 4000.0)
-    check("load-back summed across 8 ranks",
-          _K9(_d9, ["load_back_tokens_total"]), 1600.0)
+    # The 8 TP ranks report the same count, so they are replicas and the
+    # total is one rank's: summing them reported TP x the tokens
+    # (metric_kernels.rank_combine_rule; tests/test_rank_rule.py covers
+    # the ranks that DO differ, which are summed).
+    check("prefetch counted once across 8 agreeing ranks",
+          _K9(_d9, ["prefetched_tokens_total"]), 1000.0)
+    check("backup counted once across 8 agreeing ranks",
+          _K9(_d9, ["backuped_tokens_total"]), 500.0)
+    check("load-back counted once across 8 agreeing ranks",
+          _K9(_d9, ["load_back_tokens_total"]), 200.0)
     check("evict present but idle reads as 0.0",
           _K9(_d9, ["evicted_tokens_total"]), 0.0)
     check("absent counter reads as None",
@@ -484,8 +488,8 @@ try:
                      + [f"sglang_prefetched_tokens_total[tp_rank={r}]" for r in range(2)]
                      + [f"hicache_prefetched_tokens_total[tp_rank={r}]" for r in range(2)])
         _w9.writerow([0, 0, 0, 0, 0]); _w9.writerow([60, 500, 500, 500, 500])
-    check("ranks summed within the canonical metric only",
-          _K9(_d9, ["prefetched_tokens_total"]), 1000.0)
+    check("ranks combined within the canonical metric only",
+          _K9(_d9, ["prefetched_tokens_total"]), 500.0)
 except Exception as _e:
     check("kv token probe ran", f"FAILED: {_e}", "ok")
 
@@ -2070,6 +2074,7 @@ check("every l35-only key is a known override key",
 # Tier resolution is per run, from that run's own setup, and the short form is
 # what appears inside a metric label.
 import json as _js_i, tempfile as _tf_i, csv as _csv_i, shutil as _sh_i
+from pathlib import Path
 _root_i = Path(_tf_i.mkdtemp(prefix="cmp0i_"))
 
 def _mk_run(_name, _setup, _dram_b=0, _file_b=0):
@@ -2956,8 +2961,7 @@ check("the local queue-depth query is device-filtered",
 check("it is skipped entirely with no --nvme-device",
       "no --nvme-device given, so node_exporter queue" in _src_n, True)
 check("the L3.5 query is restricted to nvme namespaces",
-      'device=~\\"nvme[0-9]+n[0-9]+\\"' in _src_n
-      or 'device=~"nvme[0-9]+n[0-9]+"' in _src_n, True)
+      '_NVME_DEV_RE_PROM = r"nvme[0-9]+(c[0-9]+)?n[0-9]+"' in _src_n, True)
 
 # merge=True must not let a mis-scoped fetch degrade the file. Two rules:
 # an all-zero INCOMING column is never added, and the join is on the existing
@@ -3996,7 +4000,7 @@ check("so does the comparator", "_k_resolve_lat(" in _cmpw, True)
 check("and all three of its latencies are resolved by the helper",
       _cmpw.count('_lat("'), 3)
 check("and the comparator computes the window delta itself",
-      '_dsum = _kv_delta(Path(spec.raw_dir), [f"{_base}_sum"])' in _cmpw, True)
+      '_w = _k_latency_ms(_sum_s, _cnt_s)' in _cmpw, True)
 
 # The unbounded part: the fetch's lifetime fallback, formerly mislabelled.
 check("all three lifetime fallbacks mark themselves as such",
@@ -4007,8 +4011,8 @@ check("the old always-delta literal is gone",
       '"server_ttft_ms_method":        "delta_sglang_time_to_first' in _amow,
       False)
 check("a summary figure is never claimed window-scoped",
-      '"window_scoped": False,\n                "method": ("sglang_summary.json"'
-      in _kernw, True)
+      '"window_scoped": False,\n                "statistic": "mean",\n'
+      '                "method": ("sglang_summary.json"' in _kernw, True)
 
 # And it is surfaced, not just recorded.
 check("the suspect banner gains the condition",
@@ -4155,16 +4159,14 @@ check("every tier-residency claim holds, both branches included",
 # dropped it.  Every configured tier now renders both halves or states why.
 _cmb_y = (_repo_o / "amoprof/report/combined.py").read_text()
 for _probe_y, _what_y in (
-        ('"L3 cache used — raw (df snapshot)",\n             "not collected"',
-         "the L3 raw tile"),
+        ('"local L3 configured, but no df snapshot from the "',
+         "the L3 KV utilization tile"),
         ('kpi_card("L2 host DRAM used — raw (physical)", "not collected"',
          "the host DRAM tile"),
         ('"L2 KV residency (est.)", "not collected"', "the L2 residency tile"),
         ('_lbl, "not collected"', "the L3.5 raw tiles")):
     check(f"{_what_y} states a reason rather than vanishing",
           _probe_y in _cmb_y, True)
-check("the L3 tile reuses the capacity chart's own sentence",
-      're.sub(r"<[^>]+>", "", _l3_cap_missing)' in _cmb_y, True)
 check("via the module-level re, which has no local binding in that scope",
       "_re.sub(r\"<[^>]+>\", \"\", _l3_cap_missing)" in _cmb_y, False)
 check("and the reason is bound before the block that fills it",
@@ -4213,8 +4215,9 @@ check("and is not marked exact",
              config={})["exact"], False)
 
 _cz = (_repo_o / "amoprof/report/combined.py").read_text()
-for _pfx_z in ("L1 HBM used", "L1 KV residency", "L2 host DRAM used",
-               "L2 KV residency", "L3 cache used", "L3 KV residency"):
+for _pfx_z in ("L1 HBM used", "L1 KV utilization", "L2 host DRAM used",
+               "L2 KV residency", "L2 KV utilization", "L3 cache used",
+               "L3 KV utilization"):
     check(f"the order table carries {_pfx_z}",
           f'"{_pfx_z}"' in _cz, True)
 check("the reorder runs on the assembled grid",
@@ -4477,7 +4480,7 @@ check("decode too", '"decode":          ["realtime_tokens_total", '
 check("and the derivation is named on the tile",
       "prompt derived as" in _c1e, True)
 check("stale local-L3 tiles are dropped on a remote run",
-      'for _stale in ("L3 cache used", "L3 KV residency"):' in _c1e, True)
+      'for _stale in ("L3 cache used",):' in _c1e, True)
 check("the L2 estimate is capped at the physical residency",
       "l2_dram_used_gb = host_dram_used_gb" in _c1e, True)
 check("before the percentage and the note are composed from it",
@@ -4503,7 +4506,8 @@ check("which requires BOTH substrings, so a decoy cannot match",
       '"decode":          ["realtime_tokens_total", "mode=decode"],' in _c1e,
       True)
 check("and the window total sums positive steps, so a reset is survived",
-      "sum(max(0.0, _v[_i] - _v[_i - 1])" in _c1e, True)
+      "t = counter_window_total([r[1]])"
+      in (_repo_o / "amoprof/report/metric_kernels.py").read_text(), True)
 check("every L3.5-report claim holds", _r1e.returncode, 0)
 
 
@@ -4568,11 +4572,12 @@ check("and returns the lower bound if it ever runs",
 _a1g = (_repo_o / "amoprof/report/amoprof.py").read_text()
 check("the instant query takes an evaluation time",
       'at: "float | None" = None' in _a1g, True)
-check("the synth site anchors it to the window end",
-      "at=(float(end_time) if end_time else None)" in _a1g, True)
+check("the service summaries aggregate every cycle in the window",
+      "_aggregate_service_cycles(" in _a1g, True)
 check("one window read 25 GB and 762 GB on two runs, 30x apart",
       round(762.0 / 25.0), 30)
-check("and the instant is recorded", '"_snapshot_at"' in _a1g, True)
+check("and record how they were aggregated",
+      "_bucket_out.update(_agg_meta)" in _a1g, True)
 check("token throughput has a tile", '"Token throughput",' in _c1g, True)
 check("headlining the active mean, not the peak",
       "_kpi_out_tp = _safe_float(tp_active, 0.0) or _safe_float(throughput, 0.0)"
