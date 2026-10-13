@@ -734,8 +734,16 @@ def write_nvme_driver_timeseries(raw_dir: Path, t0: float) -> Path | None:
                 cur["wawt"]  = round(d_wms / max(d_wr, 1), 3)
                 # device-busy fraction (io_ms / wall_ms; clamp to 100)
                 cur["util"]  = round(min(d_iom / (dt * 10), 100), 2)
-                # BW unavailable from /sys/block/<dev>/stat (no byte counters
-                # in pre-4.18 layout); leave to be filled by blktrace synthesis
+                # Bandwidth from the sector counters (fields 2 and 6 of
+                # /sys/block/<dev>/stat, 512-byte units in every layout).
+                # Samples from collectors older than this have no sector
+                # fields, and their bandwidth stays 0 -- i.e. not measured.
+                if "rd_sectors" in cur and "rd_sectors" in prev:
+                    cur["rMBs"] = round(max(float(cur["rd_sectors"]) - float(prev["rd_sectors"]), 0)
+                                        * 512 / dt / 1048576, 3)
+                if "wr_sectors" in cur and "wr_sectors" in prev:
+                    cur["wMBs"] = round(max(float(cur["wr_sectors"]) - float(prev["wr_sectors"]), 0)
+                                        * 512 / dt / 1048576, 3)
                 cur.setdefault("rMBs", 0)
                 cur.setdefault("wMBs", 0)
             else:

@@ -1344,10 +1344,12 @@ _AMOPROF_SERVICE_METRIC_ALIASES: dict[str, list[str]] = {
     # a rate (bytes/s, iops/s).
     "node_disk_read_bytes_total_rate": [
         "amoprof_nvme_driver_nvme_rd_bw_mbs_mean",
+        "amoprof_nvme_driver_nvme_rd_bw_mbs_sysfs",
         "amoprof_iostat_rd_bw_mbs_mean",
     ],
     "node_disk_written_bytes_total_rate": [
         "amoprof_nvme_driver_nvme_wr_bw_mbs_mean",
+        "amoprof_nvme_driver_nvme_wr_bw_mbs_sysfs",
         "amoprof_iostat_wr_bw_mbs_mean",
     ],
     "node_disk_reads_completed_total_rate": [
@@ -2115,6 +2117,23 @@ def _combine_rank_series(df: "pd.DataFrame") -> "tuple[pd.DataFrame, list]":
                           "value": total.values}), rules)
 
 
+def _prom_series_label_values(base: str, label: str, match: str,
+                              t_start: float, t_end: float) -> list:
+    """Distinct values of `label` on series matching `match` within the window."""
+    try:
+        import requests as _req
+        r = _req.get(f"{base}/api/v1/series",
+                     params={"match[]": match, "start": int(t_start),
+                             "end": int(t_end)}, timeout=20)
+        d = r.json()
+        if d.get("status") != "success":
+            return []
+        return sorted({str(x.get(label, "")) for x in d.get("data", [])
+                       if x.get(label)})
+    except Exception:
+        return []
+
+
 def _pick_gpu_node_instance(instances: list, engine_hosts: list) -> tuple:
     """Choose which amoprof exporter instance describes the analysed GPU node.
 
@@ -2210,6 +2229,25 @@ def collect_from_prometheus_api(
     # each metric group instead of fragile hostname-regex guessing.
     hostname = instance.split(":")[0] if instance else ""
     discovered_targets: dict = {}
+
+    # No --prom-instance: pin to the host that served SGLang in the window.
+    # Unpinned, every exporter's series came from every host that publishes
+    # it -- amoprof device gauges were avg()-ed across the GPU nodes and the
+    # memory node, and node_disk_* rows were taken from whichever host's
+    # sample came first -- so a dgx1 run reported a blend of three machines.
+    if not hostname:
+        _eng_hosts = sorted({str(_i).split(":")[0] for _i in _prom_series_label_values(
+            base, "instance", '{__name__=~"sglang[:_]num_running_reqs"}',
+            t_start, t_end)})
+        if len(_eng_hosts) == 1:
+            hostname = _eng_hosts[0]
+            print(f"  [info] no --prom-instance: pinning every exporter to "
+                  f"{hostname}, the only host serving SGLang in this window")
+        elif _eng_hosts:
+            print(f"  [warn] no --prom-instance and SGLang ran on "
+                  f"{len(_eng_hosts)} hosts in this window "
+                  f"({', '.join(_eng_hosts)}); series from all of them may be "
+                  f"mixed. Pass --prom-instance to choose one.")
 
     if hostname:
         print(f"  Discovering targets for: {hostname} ...", end=" ", flush=True)
@@ -3329,13 +3367,48 @@ def collect_from_prometheus_api(
     instance_nvme_device = nvme_device
     nvme_rows = []
 
+    # One host and one device for every node_disk_* counter.  Each metric
+    # used to auto-detect on its own -- "the nvme device with the highest
+    # cumulative value" -- so bytes, I/Os and queue time could describe
+    # different devices, and with several hosts in the frame _val() took
+    # whichever host's sample came first.  Choose once, from the I/O counts.
+    def _disk_scope() -> tuple:
+        _ref = node_dfs.get("node_disk_reads_completed_total", pd.DataFrame())
+        _ref2 = node_dfs.get("node_disk_writes_completed_total", pd.DataFrame())
+        _all = pd.concat([d for d in (_ref, _ref2) if not d.empty]) \
+            if not (_ref.empty and _ref2.empty) else pd.DataFrame()
+        if _all.empty:
+            return "", ""
+        _inst = ""
+        if "instance" in _all.columns:
+            _insts = sorted(_all["instance"].dropna().unique())
+            _on_host = [i for i in _insts if hostname and str(i).split(":")[0] == hostname]
+            _inst = (_on_host or _insts or [""])[0]
+            if len(_insts) > 1:
+                print(f"  [warn] node_disk_* from {len(_insts)} instances; using {_inst}")
+            _all = _all[_all["instance"] == _inst] if _inst else _all
+        _dev = ""
+        if not nvme_device and "device" in _all.columns:
+            _nv = _all[_all["device"].str.match(r"nvme\d+(?:c\d+)?n\d+$", na=False)]
+            if not _nv.empty:
+                _span = (_nv.groupby("device")["value"].max()
+                         - _nv.groupby("device")["value"].min())
+                _dev = str(_span.idxmax())
+                print(f"  [info] no --nvme-device: using {_dev}, the busiest NVMe "
+                      f"device in the window (pass --nvme-device to choose)")
+        return _inst, _dev
+
+    _disk_inst, _disk_dev = _disk_scope()
+
     def _get_disk_series(metric: str, device: str = "") -> pd.DataFrame:
         df = node_dfs.get(metric, pd.DataFrame())
         if df.empty:
             return pd.DataFrame()
+        if _disk_inst and "instance" in df.columns:
+            df = df[df["instance"] == _disk_inst]
         if "device" not in df.columns:
             return df
-        dev = device or nvme_device
+        dev = device or nvme_device or _disk_dev
         if dev:
             sub = df[df["device"] == dev]
             if not sub.empty:
@@ -4318,9 +4391,11 @@ def collect_from_prometheus_api(
                 # was demonstrably busy.  The nvme_driver sysfs rates proved
                 # unreliable on this hardware (all zero), so they rank last.
                 "l35_rd_bw_mbs":   ["amoprof_blktrace_analysis_read_bw_mb_s_mean",
-                                     "amoprof_iostat_read_bw_mb_mean"],
+                                     "amoprof_iostat_read_bw_mb_mean",
+                                     "amoprof_nvme_driver_nvme_rd_bw_mbs_sysfs"],
                 "l35_wr_bw_mbs":   ["amoprof_blktrace_analysis_write_bw_mb_s_mean",
-                                     "amoprof_iostat_write_bw_mb_mean"],
+                                     "amoprof_iostat_write_bw_mb_mean",
+                                     "amoprof_nvme_driver_nvme_wr_bw_mbs_sysfs"],
                 "l35_io_util_pct": ["amoprof_nvme_driver_nvme_util_pct_sysfs",
                                      "amoprof_queue_depth_sysfs_io_util_pct_mean",
                                      "amoprof_iostat_util_pct_mean"],
@@ -4651,10 +4726,14 @@ def collect_from_prometheus_api(
             "wr_iops":     ["amoprof_blktrace_analysis_write_iops_mean",
                             "amoprof_iostat_write_iops_mean",
                             "amoprof_nvme_driver_nvme_wr_iops_sysfs"],
+            # sysfs sector counters last: present whenever the nvme_driver
+            # collector ran, which is the only device collector on many runs.
             "rd_bw_mbs":   ["amoprof_blktrace_analysis_read_bw_mb_s_mean",
-                            "amoprof_iostat_read_bw_mb_mean"],
+                            "amoprof_iostat_read_bw_mb_mean",
+                            "amoprof_nvme_driver_nvme_rd_bw_mbs_sysfs"],
             "wr_bw_mbs":   ["amoprof_blktrace_analysis_write_bw_mb_s_mean",
-                            "amoprof_iostat_write_bw_mb_mean"],
+                            "amoprof_iostat_write_bw_mb_mean",
+                            "amoprof_nvme_driver_nvme_wr_bw_mbs_sysfs"],
             "io_util_pct": ["amoprof_nvme_driver_nvme_util_pct_sysfs",
                             "amoprof_queue_depth_sysfs_io_util_pct_mean",
                             "amoprof_iostat_util_pct_mean"],
@@ -4692,6 +4771,9 @@ def collect_from_prometheus_api(
         # ones, is under 1; in most samples it is 0. That turned a series with
         # a peak of 16 into a flat zero. Scope to the device under study, and
         # when no device was named, to the nvme namespaces only.
+        # The device chosen once for the node_disk_* rows, when none was
+        # named, so queue depth describes the same device as the bytes.
+        nvme_device = nvme_device or _disk_dev
         _qd_dev_sel = (f'{{device="{nvme_device}"}}' if nvme_device
                        else f'{{device=~"{_NVME_DEV_RE_PROM}"}}')
         if nvme_device:

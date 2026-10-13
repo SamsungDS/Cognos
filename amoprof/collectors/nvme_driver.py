@@ -75,11 +75,18 @@ class NvmeDriverMonitor(BaseCollector):
             raw = open(f"/sys/block/{self.dev}/stat").read().split()
             if len(raw) < 11:
                 return {}
+            # Fields 2 and 6 are sectors read / written, always in 512-byte
+            # units whatever the device's block size (Documentation/block/
+            # stat.rst).  They were skipped, so this collector published IOPS,
+            # latency and queue depth but never bytes, and a run whose only
+            # device collector was this one had no device bandwidth at all.
             return {
                 "_ts":        time.time(),
                 "rd_ios":     int(raw[0]),
+                "rd_sectors": int(raw[2]),
                 "rd_ms":      int(raw[3]),
                 "wr_ios":     int(raw[4]),
+                "wr_sectors": int(raw[6]),
                 "wr_ms":      int(raw[7]),
                 "inflight":       int(raw[8]),
                 "io_ms":          int(raw[9]),
@@ -156,6 +163,14 @@ class NvmeDriverMonitor(BaseCollector):
         rd_iops_sysfs = round(rd_ios_delta / dt, 1)
         wr_iops_sysfs = round(wr_ios_delta / dt, 1)
 
+        # Bandwidth from the sector counters, in MB/s of 2^20 bytes -- the
+        # unit the other block-layer series in amoprof use (queue_depth,
+        # writer's per-sample rates).
+        rd_sec_delta = max(last.get("rd_sectors", 0) - first.get("rd_sectors", 0), 0)
+        wr_sec_delta = max(last.get("wr_sectors", 0) - first.get("wr_sectors", 0), 0)
+        rd_bw_mbs_sysfs = round(rd_sec_delta * 512 / dt / 1048576, 3)
+        wr_bw_mbs_sysfs = round(wr_sec_delta * 512 / dt / 1048576, 3)
+
         # Device utilisation % from sysfs (ms spent / wall ms)
         util_pct = round(min(io_ms_delta / (dt * 10), 100), 1)
 
@@ -180,6 +195,10 @@ class NvmeDriverMonitor(BaseCollector):
             # A2 io_uring/NVMe Driver metrics
             "nvme_rd_iops_sysfs":     rd_iops_sysfs,
             "nvme_wr_iops_sysfs":     wr_iops_sysfs,
+            "nvme_rd_bw_mbs_sysfs":   rd_bw_mbs_sysfs,
+            "nvme_wr_bw_mbs_sysfs":   wr_bw_mbs_sysfs,
+            "nvme_rd_bytes_total":    rd_sec_delta * 512,
+            "nvme_wr_bytes_total":    wr_sec_delta * 512,
             "nvme_rd_lat_ms_mean":    rd_lat_ms,
             "nvme_wr_lat_ms_mean":    wr_lat_ms,
             "nvme_inflight_mean":     inflight_mean,
