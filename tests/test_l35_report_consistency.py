@@ -340,10 +340,12 @@ def main() -> int:
                "cannot be below 1" in _nand[1], True)
 
         print("\n5. A local device does not wear the remote tier's name")
-        _check("the read tile names the device it measured",
-               "GPU node local NVMe read BW" in tl, True)
-        _check("reporting the local series' value",
-               tl["GPU node local NVMe read BW"][0], "17 MB/s")
+        _dev_lbl = "GPU node local NVMe read / write BW (measured)"
+        _check("the device tile names the device it measured",
+               _dev_lbl in tl, True)
+        # Write had no I/O at all (wr_iops 0), so its 0 is a measurement.
+        _check("reporting the local series' values",
+               tl[_dev_lbl][0], "17 rd / 0.0 wr MB/s")
         _check("no tile claims that figure for the backing tier",
                [k for k in tl
                 if "remote storage) read BW" in k or "L3.5 read BW" in k], [])
@@ -353,17 +355,22 @@ def main() -> int:
                "995 wr MB/s peak" in
                [v for k, (v, _n) in tl.items()
                 if "node storage BW (device)" in k][0], True)
-        # Each direction is independently device-measured or token-derived,
-        # so a token-derived figure keeps the tier label it belongs to.
-        _tle = _tiles(_b(_mk(tmp / "est", wr_bw_local=0.0), run_label="est"))
-        _check("a token-derived write keeps the tier label",
-               [k for k in _tle if k.endswith("write BW")
-                and "GPU node local NVMe" not in k] != [], True)
+        # The token-derived figure is the backing tier's traffic: it has its
+        # own tile under the tier label, and never fills the device tile.
+        _logi = [k for k in tl if k.endswith("KV logical (token-derived)")]
+        _check("the token-derived traffic has its own tile",
+               len(_logi), 1)
+        # Pre-rename: the post-render substitution expands this placeholder
+        # to the tier's long name on a mooncake run.
+        _check("under the backing tier's label",
+               _logi[0].startswith("L3 (local storage)"), True)
+        _check("which is not the device tile",
+               "GPU node local NVMe" in _logi[0], False)
         _tld = _tiles(_b(_mk(tmp / "dev", wr_bw_local=12.0), run_label="dev"))
-        _check("a device-measured write takes the device label",
-               "GPU node local NVMe write BW" in _tld, True)
-        _check("with the device's own value",
-               _tld["GPU node local NVMe write BW"][0], "12.0 MB/s")
+        _check("a device-measured write shows in the device tile",
+               _tld[_dev_lbl][0], "17 rd / 12.0 wr MB/s")
+        _check("and the token-derived tile is unchanged by it",
+               _tld[_logi[0]][0], tl[_logi[0]][0])
 
         print("\n6. E2E equal to TTFT is stated, not left to be noticed")
         _e2e = tl["E2E mean"]

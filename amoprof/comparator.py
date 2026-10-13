@@ -1992,31 +1992,30 @@ def _extract_diagnosis(m: "RunMetrics", raw: "Path", setup: dict) -> None:
                         "Reference launch command") or "")
     _lb = _LAUNCH_BACKEND_RE.search(_launch)
     m.launch_backend = _lb.group(1).lower() if _lb else ""
-    for _src, _val in (
-            ("SGLang server_info page_size", _si.get("page_size")),
-            ("setup_details", _pick(setup, "Page size", "page_size",
-                                    "HiCache page size"))):
-        _ps = _sf(str(_val).split()[0], 0.0) if str(_val or "").strip() \
-            else 0.0
-        if _ps > 0:
-            m.page_size, m.page_size_src = _ps, _src
-            break
-    if m.page_size is None:
-        _, _pv, _psrc = _rows_by_time(sg, ["page_size"])
-        if _pv and max(_pv) > 0:
-            m.page_size, m.page_size_src = max(_pv), _psrc
-        elif sg.exists():
-            for _c in _csv_rows(sg)[0]:
-                _mm = re.search(r"page_size\s*=\s*[\"']?(\d+)", str(_c))
-                if _mm:
-                    m.page_size = float(_mm.group(1))
-                    m.page_size_src = f"page_size label on {_c} in {sg.name}"
-                    break
-    if m.page_size is None:
-        _lp = _LAUNCH_PAGE_RE.search(_launch)
-        if _lp:
-            m.page_size = float(_lp.group(1))
-            m.page_size_src = "--page-size in the launch command"
+    # The engine's own metric is live evidence, so it is read first and
+    # handed to the shared resolver, which ranks it below server_info and
+    # above the launch command and setup_details.  The single-run report uses
+    # the same resolver, so the two cannot print different page sizes.
+    _live_ps, _live_src = None, ""
+    _, _pv, _psrc = _rows_by_time(sg, ["page_size"])
+    if _pv and max(_pv) > 0:
+        _live_ps, _live_src = max(_pv), _psrc
+    elif sg.exists():
+        for _c in _csv_rows(sg)[0]:
+            _mm = re.search(r"page_size\s*=\s*[\"']?(\d+)", str(_c))
+            if _mm:
+                _live_ps = float(_mm.group(1))
+                _live_src = f"page_size label on {_c} in {sg.name}"
+                break
+    try:
+        from .report.common_kpis import resolve_page_size
+        _ps, _ps_src, _ps_conflict = resolve_page_size(
+            dict(setup or {}), _live_ps, _live_src)
+    except Exception:
+        _ps, _ps_src, _ps_conflict = _live_ps, _live_src, ""
+    if _ps:
+        m.page_size = _ps
+        m.page_size_src = _ps_src + (f" ⚠ {_ps_conflict}" if _ps_conflict else "")
 
 
 # ─── HTML report builder ──────────────────────────────────────────────────────

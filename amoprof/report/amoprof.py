@@ -2115,6 +2115,31 @@ def _combine_rank_series(df: "pd.DataFrame") -> "tuple[pd.DataFrame, list]":
                           "value": total.values}), rules)
 
 
+def _pick_gpu_node_instance(instances: list, engine_hosts: list) -> tuple:
+    """Choose which amoprof exporter instance describes the analysed GPU node.
+
+    Several hosts publish amoprof_* series to one Prometheus -- the GPU nodes
+    and the L3.5 memory node.  The first one alphabetically used to win, so a
+    run on msl-ssg-dgx1 took its host DRAM and block-device summaries from
+    msl-ssg-cx03.  The host serving SGLang in the window is the analysed node,
+    so the instance on that host is the one to read.
+    """
+    insts = sorted(str(i) for i in instances if i)
+    if not insts:
+        return "", "no instance"
+    hosts = {str(h).split(":")[0] for h in (engine_hosts or []) if h}
+    on_engine = [i for i in insts if i.split(":")[0] in hosts]
+    if len(on_engine) == 1:
+        return on_engine[0], "the host serving SGLang in this window"
+    if len(on_engine) > 1:
+        return on_engine[0], (f"SGLang ran on {len(hosts)} hosts "
+                              f"({', '.join(sorted(hosts))}); first of them")
+    return insts[0], ("no instance is on the SGLang host"
+                      + (f" ({', '.join(sorted(hosts))})" if hosts else
+                         " (SGLang host not found)")
+                      + "; first alphabetically — likely the wrong node")
+
+
 def collect_from_prometheus_api(
     prom_base_url: str,
     start_time: float = 0,
@@ -2343,7 +2368,7 @@ def collect_from_prometheus_api(
     if selector and _want_model:
         try:
             _models = _prom_label_values_in_window(
-                base_url, "model_name", selector, t_start, t_end)
+                base, "model_name", selector, t_start, t_end)
         except Exception:
             _models = []
         # Match loosely: the label may be "google/gemma-4-31B-it" while
@@ -3009,6 +3034,7 @@ def collect_from_prometheus_api(
             _cyc_inner = (_amoprof_sel or "").strip().strip("{}").strip()
             _config_targets = {"gpu_config.json", "model_config.json",
                                "server_config_summary.json"}
+            _engine_hosts = None   # looked up once, only if a choice is needed
             for _target, _bucket in _by_target.items():
                 _pfx = _bucket_prefix[_target]
                 # Prefixes are [a-z0-9_] only, so no regex escaping needed.
@@ -3023,10 +3049,18 @@ def collect_from_prometheus_api(
                 if not _df_c.empty and "instance" in _df_c.columns:
                     _insts = sorted(_df_c["instance"].dropna().unique())
                     if len(_insts) > 1:
+                        if _engine_hosts is None:
+                            _engine_hosts = sorted({
+                                str(_i).split(":")[0] for _i in
+                                _prom_label_values_in_window(
+                                    base, "instance",
+                                    '{__name__=~"sglang[:_]num_running_reqs"}',
+                                    t_start, t_end)})
+                        _pick, _why = _pick_gpu_node_instance(_insts, _engine_hosts)
                         print(f"  [warn] {_target}: amoprof series from {len(_insts)} "
-                              f"instances {_insts}; using {_insts[0]}. Pass "
+                              f"instances {_insts}; using {_pick} ({_why}). Pass "
                               f"--prom-instance to pin the analysed node.")
-                        _df_c = _df_c[_df_c["instance"] == _insts[0]]
+                        _df_c = _df_c[_df_c["instance"] == _pick]
                 _rows = ([] if _df_c.empty else
                          zip((_df_c["time_sec"] + t_start).tolist(),
                              _df_c["__name__"].str.slice(len(_pfx)).tolist(),
@@ -7699,7 +7733,11 @@ class Metrics:
     storage_io_label: str = "Host block I/O"  # display label for OS block metrics
     storage_io_is_l3: bool = False  # True only when setup explicitly maps block metrics to L3
     storage_io_formula_note: str = "Host OS block-device metrics; not necessarily L3 (local storage)."
-    storage_io_overlay_note: str = ""  # when SGLang logical L3 I/O supplements missing block I/O
+    storage_io_overlay_note: str = ""  # when device bytes are absent beside logical L3 movement
+    # Token-derived L3 KV traffic (prefetched / backuped tokens x KV bytes per
+    # token / window).  Never folded into the device bandwidth fields.
+    l3_logical_rd_bw_mbs: float = 0.0
+    l3_logical_wr_bw_mbs: float = 0.0
     l3_reconciliation_status: str = "Unknown"
     l3_reconciliation_note: str = ""
     l3_sglang_write_gb: float = 0.0
@@ -10684,10 +10722,13 @@ def extract_metrics(data: dict) -> Metrics:
                 byte_diff = nv[bytes_col].diff().clip(0)
                 nv[bw_col] = (byte_diff / dt2.replace(0, np.nan) / (1024 * 1024)).fillna(0).clip(0)
 
+        # No byte source: the bandwidth is unknown, not IOPS x KV block size.
+        # That product assumed every I/O moved one whole KV block (8.75 MB on
+        # a 64-token page at 560 KB/token), so 10k IOPS became 88 GB/s.
         if "rd_bw_mbs" not in nv.columns:
-            nv["rd_bw_mbs"] = nv["rd_iops"].fillna(0) * kvb_mb2
+            nv["rd_bw_mbs"] = np.nan
         if "wr_bw_mbs" not in nv.columns:
-            nv["wr_bw_mbs"] = nv["wr_iops"].fillna(0) * kvb_mb2
+            nv["wr_bw_mbs"] = np.nan
         # Override BW from iostat direct columns if present (highest priority)
         for mb_col, dst_col in [("r_mb_s","rd_bw_mbs"), ("w_mb_s","wr_bw_mbs")]:
             if mb_col in nv.columns:
@@ -10764,19 +10805,14 @@ def extract_metrics(data: dict) -> Metrics:
         # BW from direct iostat columns (more accurate than IOPS × block_size)
         wr_bw_series = nv["wr_bw_mbs"][nv["wr_bw_mbs"] > 0].dropna()
         rd_bw_series = nv["rd_bw_mbs"][nv["rd_bw_mbs"] > 0].dropna()
+        # Without a byte series the device bandwidth stays 0 = not measured.
         if len(wr_bw_series) > 0:
             m.nvme_wr_bw_mbs_mean = round(float(wr_bw_series.mean()), 2)
             m.nvme_wr_bw_mbs_max  = round(float(wr_bw_series.max()), 2)
-        else:
-            m.nvme_wr_bw_mbs_mean = round(m.nvme_wr_iops_mean * kvb_mb2, 2)
-            m.nvme_wr_bw_mbs_max  = round(float(wr_a.max()) * kvb_mb2, 2) if len(wr_a) else 0
 
         if len(rd_bw_series) > 0:
             m.nvme_rd_bw_mbs_mean = round(float(rd_bw_series.mean()), 2)
             m.nvme_rd_bw_mbs_max  = round(float(rd_bw_series.max()), 2)
-        else:
-            m.nvme_rd_bw_mbs_mean = round(float(rd_a.mean()) * kvb_mb2, 2) if len(rd_a) else 0
-            m.nvme_rd_bw_mbs_max  = round(float(rd_a.max()) * kvb_mb2, 2) if len(rd_a) else 0
 
         cols_to_keep = ["time_sec", "wr_iops", "rd_iops", "wr_lat_ms",
                         "io_util_pct", "inflight", "rd_bw_mbs", "wr_bw_mbs",
@@ -11022,66 +11058,29 @@ def extract_metrics(data: dict) -> Metrics:
         else:
             m.kvb_l3_io_ts = pd.DataFrame()
 
-        # Keep End Report Storage I/O consistent with KV block logical L3 movement.
-        # If SGLang shows backup/prefetch plus L2→L1 load_back but physical block samples
-        # are zero/missing for a direction, create or augment nvme_io_ts with a
-        # clearly marked logical estimate. This keeps the Storage I/O chart from
-        # contradicting the KV block chart while preserving provenance.
+        # The device series and its means stay what the block layer measured.
+        # This block used to write prefetched/backuped tokens x KV bytes into
+        # nvme_io_ts.rd_bw_mbs / wr_bw_mbs, invent IOPS from that by dividing
+        # by a mean I/O size (floored at 4 KB), and fold both into the
+        # nvme_*_mean device fields -- so the Storage I/O charts, the IOPS
+        # score and the requirement table all quoted engine counters as drive
+        # traffic.  The logical movement is charted from kvb_l3_io_ts, labelled
+        # as such; here the overlay note only says the device bytes are absent.
         try:
             _kvb_ts = getattr(m, "kvb_l3_io_ts", pd.DataFrame())
-            if isinstance(_kvb_ts, pd.DataFrame) and not _kvb_ts.empty and m.kv_bytes_per_token > 0 and m.kvb_l3_storage_observed:
-                _base = m.nvme_io_ts.copy() if isinstance(m.nvme_io_ts, pd.DataFrame) and not m.nvme_io_ts.empty else pd.DataFrame()
-                if _base.empty:
-                    _base = pd.DataFrame({"time_sec": _kvb_ts["time_sec"].values})
-                if "time_sec" not in _base.columns:
-                    _base["time_sec"] = np.arange(len(_base), dtype=float)
-                _tgt_t = pd.to_numeric(_base["time_sec"], errors="coerce").fillna(0).values
-                _src_t = pd.to_numeric(_kvb_ts["time_sec"], errors="coerce").fillna(0).values
-                def _interp(col):
-                    if col not in _kvb_ts.columns or len(_src_t) == 0:
-                        return np.zeros(len(_base))
-                    vals = pd.to_numeric(_kvb_ts[col], errors="coerce").fillna(0).values
-                    if len(vals) == 1:
-                        return np.full(len(_base), float(vals[0]))
-                    return np.interp(_tgt_t, _src_t, vals, left=0, right=float(vals[-1]))
-                _logical_wr_mbs = _interp("backup_bw_mbs")
-                # Logical L3 read/onboard is prefetched_tokens only.  load_back is
-                # L2→L1 restore diagnostic and must not be counted as L3/SSD read bytes.
-                _logical_rd_mbs = _interp("prefetch_bw_mbs")
-                def _series_sum(col):
-                    return float(pd.to_numeric(_base.get(col, pd.Series([0]*len(_base))), errors="coerce").fillna(0).clip(lower=0).sum())
-                _augmented = []
-                if _series_sum("wr_bw_mbs") <= 0 and np.nanmax(_logical_wr_mbs) > 0:
-                    _base["wr_bw_mbs"] = _logical_wr_mbs
-                    _wr_sz_mb = max(float(getattr(m, "ssd_wr_size_mean_kb", 0.0) or 0.0) / 1024.0, 0.004)
-                    _base["wr_iops"] = _logical_wr_mbs / _wr_sz_mb
-                    _augmented.append("write")
-                if _series_sum("rd_bw_mbs") <= 0 and np.nanmax(_logical_rd_mbs) > 0:
-                    _base["rd_bw_mbs"] = _logical_rd_mbs
-                    _rd_sz_mb = max(float(getattr(m, "ssd_rd_size_mean_kb", 0.0) or 0.0) / 1024.0, 0.004)
-                    _base["rd_iops"] = _logical_rd_mbs / _rd_sz_mb
-                    _augmented.append("read")
-                if _augmented:
-                    for _c in ("rd_iops","wr_iops","rd_bw_mbs","wr_bw_mbs","wr_lat_ms","rd_lat_ms","io_util_pct","inflight","disc_ios","disc_sectors"):
-                        if _c not in _base.columns:
-                            _base[_c] = 0.0
-                    m.nvme_io_ts = _base.fillna(0)
-                    if "write" in _augmented:
-                        _wr_active = pd.to_numeric(m.nvme_io_ts["wr_bw_mbs"], errors="coerce").fillna(0)
-                        m.nvme_wr_bw_mbs_mean = max(m.nvme_wr_bw_mbs_mean, float(_wr_active[_wr_active > 0].mean()) if (_wr_active > 0).any() else 0.0)
-                        m.nvme_wr_bw_mbs_max = max(m.nvme_wr_bw_mbs_max, float(_wr_active.max()))
-                        _wr_iops_s = pd.to_numeric(m.nvme_io_ts["wr_iops"], errors="coerce").fillna(0)
-                        m.nvme_wr_iops_mean = max(m.nvme_wr_iops_mean, float(_wr_iops_s[_wr_iops_s > 0].mean()) if (_wr_iops_s > 0).any() else 0.0)
-                        m.nvme_wr_iops_max = max(m.nvme_wr_iops_max, float(_wr_iops_s.max()))
-                    if "read" in _augmented:
-                        _rd_active = pd.to_numeric(m.nvme_io_ts["rd_bw_mbs"], errors="coerce").fillna(0)
-                        m.nvme_rd_bw_mbs_mean = max(m.nvme_rd_bw_mbs_mean, float(_rd_active[_rd_active > 0].mean()) if (_rd_active > 0).any() else 0.0)
-                        m.nvme_rd_bw_mbs_max = max(m.nvme_rd_bw_mbs_max, float(_rd_active.max()))
-                        _rd_iops_s = pd.to_numeric(m.nvme_io_ts["rd_iops"], errors="coerce").fillna(0)
-                        m.nvme_rd_iops_mean = max(m.nvme_rd_iops_mean, float(_rd_iops_s[_rd_iops_s > 0].mean()) if (_rd_iops_s > 0).any() else 0.0)
-                        m.nvme_rd_iops_max = max(m.nvme_rd_iops_max, float(_rd_iops_s.max()))
-                    _note = "SGLang logical L3/backing-tier " + "/".join(_augmented) + " estimate shown because physical block counters were zero/missing for that direction"
-                    m.storage_io_overlay_note = (_note if not m.storage_io_overlay_note else m.storage_io_overlay_note + "; " + _note)
+            if (isinstance(_kvb_ts, pd.DataFrame) and not _kvb_ts.empty
+                    and m.kvb_l3_storage_observed):
+                _absent = [d for d, c in (("write", "wr_bw_mbs"), ("read", "rd_bw_mbs"))
+                           if not (isinstance(m.nvme_io_ts, pd.DataFrame)
+                                   and c in m.nvme_io_ts.columns
+                                   and (pd.to_numeric(m.nvme_io_ts[c], errors="coerce")
+                                        .fillna(0) > 0).any())]
+                if _absent:
+                    _note = ("device " + "/".join(_absent) + " bytes were not measured; "
+                             "the KV block chart shows the token-derived logical movement, "
+                             "which is not device traffic")
+                    m.storage_io_overlay_note = (_note if not m.storage_io_overlay_note
+                                                 else m.storage_io_overlay_note + "; " + _note)
         except Exception:
             pass
 
@@ -12461,12 +12460,10 @@ def extract_metrics(data: dict) -> Metrics:
             m.l3_sglang_read_gb  = max(float(getattr(m, "l3_sglang_read_gb",  0) or 0), _sg_rd_bytes / (1024**3))
             _sg_wr_mbs = _sg_wr_bytes / _run_s_l3 / 1e6 if _sg_wr_bytes > 0 else 0.0
             _sg_rd_mbs = _sg_rd_bytes / _run_s_l3 / 1e6 if _sg_rd_bytes > 0 else 0.0
-            if _sg_wr_mbs > 0:
-                m.ssd_wr_bw_mbs_mean = max(float(getattr(m, "ssd_wr_bw_mbs_mean", 0) or 0), _sg_wr_mbs)
-                m.nvme_wr_bw_mbs_mean = max(float(getattr(m, "nvme_wr_bw_mbs_mean", 0) or 0), _sg_wr_mbs)
-            if _sg_rd_mbs > 0:
-                m.ssd_rd_bw_mbs_mean = max(float(getattr(m, "ssd_rd_bw_mbs_mean", 0) or 0), _sg_rd_mbs)
-                m.nvme_rd_bw_mbs_mean = max(float(getattr(m, "nvme_rd_bw_mbs_mean", 0) or 0), _sg_rd_mbs)
+            # Kept in their own fields.  max()-ing them into ssd_/nvme_*_mean
+            # made every device-bandwidth reader quote engine counters.
+            m.l3_logical_wr_bw_mbs = _sg_wr_mbs
+            m.l3_logical_rd_bw_mbs = _sg_rd_mbs
             # Per-token dependency KPIs used by both §G charts.
             _gen_tok = max(float(getattr(m, "decode_tokens", 0) or 0), 1.0)
             _prompt_tok = max(float(getattr(m, "prefill_compute_tokens", 0) or 0) + float(getattr(m, "prefill_cache_tokens", 0) or 0), 1.0)
@@ -19668,7 +19665,7 @@ Bytes read     : \u0394(data_units_read)    x 512 x 1000</code>
     Source: blktrace (per-request) + <code style="background:#eff6ff;padding:1px 4px;border-radius:3px;color:#1d4ed8">node_disk_read_bytes_total</code> (device-level).
   </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">
-    {_kpi("Rd BW Mean",f"{m.ssd_rd_bw_mbs_mean:.2f}","MB/s","#eff6ff","#1d4ed8",f"bytes/day≈{m.ssd_rd_bytes_per_day_gb:.2f}GB")}
+    {_kpi("Rd BW Mean",(f"{m.ssd_rd_bw_mbs_mean:.2f}" if m.ssd_rd_bw_mbs_mean > 0 else "n/m"),("MB/s" if m.ssd_rd_bw_mbs_mean > 0 else "not measured"),"#eff6ff","#1d4ed8",f"bytes/day≈{m.ssd_rd_bytes_per_day_gb:.2f}GB")}
     {_kpi("Rd Size Mean",f"{m.ssd_rd_size_mean_kb:.1f}","KB","#eff6ff","#1d4ed8",f"P99={m.ssd_rd_size_p99_kb:.1f}KB")}
     {_kpi("Sequential / Random",f"{m.ssd_rd_seq_pct:.1f}/{m.ssd_rd_rand_pct:.1f}","%","#f0fdf4","#047857","seq/random read mix")}
     {_kpi("Skewness",f"{m.ssd_rd_skewness:.2f}","","#fff7ed","#c2410c",f"Gini={m.ssd_rd_gini:.3f}")}
@@ -19708,7 +19705,7 @@ Bytes read     : \u0394(data_units_read)    x 512 x 1000</code>
     Source: blktrace (per-request) + <code style="background:#fff7ed;padding:1px 4px;border-radius:3px;color:#c2410c">node_disk_written_bytes_total</code>.
   </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">
-    {_kpi("Wr BW Mean",f"{m.ssd_wr_bw_mbs_mean:.2f}","MB/s","#fff7ed","#c2410c",f"IOPS={m.nvme_wr_iops_mean:.1f}")}
+    {_kpi("Wr BW Mean",(f"{m.ssd_wr_bw_mbs_mean:.2f}" if m.ssd_wr_bw_mbs_mean > 0 else "n/m"),("MB/s" if m.ssd_wr_bw_mbs_mean > 0 else "not measured"),"#fff7ed","#c2410c",f"IOPS={m.nvme_wr_iops_mean:.1f}")}
     {_kpi("Wr Size Mean",f"{m.ssd_wr_size_mean_kb:.1f}","KB","#fff7ed","#c2410c",f"P99={m.ssd_wr_size_p99_kb:.1f}KB")}
     {_kpi("Bytes Written",f"{m.ssd_wr_bytes_total/1e9:.3f}","GB","#faf5ff","#6d28d9",f"{m.ssd_wr_bytes_per_day_gb:.2f}GB/day")}
   </div>

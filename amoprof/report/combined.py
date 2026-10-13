@@ -46,6 +46,7 @@ try:
         _amoprof_augment_setup_from_launch,
         _amoprof_storage_label_cleanup,
         _pct_ts_latency_ms,
+        resolve_page_size,
     )
 except Exception:  # direct-script fallback
     from common_kpis import (  # type: ignore
@@ -55,6 +56,7 @@ except Exception:  # direct-script fallback
         _amoprof_parse_launch_arg, _amoprof_missing, _amoprof_augment_setup_from_launch,
         _amoprof_storage_label_cleanup,
         _pct_ts_latency_ms,
+        resolve_page_size,
     )
 
 
@@ -4669,7 +4671,11 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     has_l35 = bool(has_l3) and str(l3_backend_class).lower() in (
         "remote_mooncake", "remote_storage")
     ctx_len   = _pick(setup, ["Context length","context_length","max_model_len","ctx_len","max_seq_len","context"], "?")
-    page_sz   = _pick(setup, ["Page size","page_size","sglang_page_size","page","kv_page_size"], "1")
+    # No default: "1" was printed as the run's page size whenever setup and
+    # launch command were both silent, which is a claim, not an unknown.
+    _ps_val, _ps_src, page_sz_conflict = resolve_page_size(setup)
+    page_sz = f"{_ps_val:g}" if _ps_val else "unknown"
+    page_sz_src = _ps_src
     launch    = _pick(setup, ["Launch command","launch_command","Command","Reference launch command"], "")
     mem_frac  = _pick(setup, ["mem-fraction-static","Mem fraction static","mem_fraction_static","mem_fraction","memory_fraction"], "")
     if _amoprof_missing(mem_frac):
@@ -5347,22 +5353,34 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             pass
     rw_ratio  = read_gb / max(write_gb, 0.001)
 
+    # Device bandwidth comes from the block layer only, and each direction
+    # records where it came from: the tile and every sentence that quotes it
+    # say "not measured" rather than print a 0 that was never observed, or a
+    # token-derived figure under a device label.
+    nvme_rd_bw_src = ""
+    nvme_wr_bw_src = ""
     nvme_rd_bw = _safe_float(_pick(blk, ["nvme_rd_bw_mbs_mean","read_bw_mb_s_mean",
                                           "nvme_read_bw_mbs"], 0.0))
-    if nvme_rd_bw == 0.0:
+    if nvme_rd_bw > 0:
+        nvme_rd_bw_src = "summary.json"
+    else:
         for col in ("rd_bw_mbs","read_bw_mbs","rkB_s"):
             if col in nvme_ts and nvme_ts[col].get("mean",0) > 0:
                 nvme_rd_bw = _safe_float(nvme_ts[col]["mean"])
                 if col == "rkB_s": nvme_rd_bw /= 1024.0
+                nvme_rd_bw_src = f"{col} · nvme_driver_timeseries.csv"
                 break
 
     nvme_wr_bw = _safe_float(_pick(blk, ["nvme_wr_bw_mbs_mean","write_bw_mb_s_mean",
                                           "nvme_write_bw_mbs"], 0.0))
-    if nvme_wr_bw == 0.0:
+    if nvme_wr_bw > 0:
+        nvme_wr_bw_src = "summary.json"
+    else:
         for col in ("wr_bw_mbs","write_bw_mbs","wkB_s"):
             if col in nvme_ts and nvme_ts[col].get("mean",0) > 0:
                 nvme_wr_bw = _safe_float(nvme_ts[col]["mean"])
                 if col == "wkB_s": nvme_wr_bw /= 1024.0
+                nvme_wr_bw_src = f"{col} · nvme_driver_timeseries.csv"
                 break
 
     nvme_rd_iops = _safe_float(_pick(blk, ["nvme_rd_iops_mean","read_iops_mean"], 0.0))
@@ -6324,25 +6342,137 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         l3_reconciliation_status = 'Unknown'
         l3_reconciliation_note = l3_logical_estimate_note or 'L3 reconciliation unavailable.'
 
-    # Derive L3 storage bandwidth from token-counter deltas when SGLang is the
-    # selected source or when it is supplementing a missing block direction.
-    # Each DIRECTION is independently either the device series or a logical
-    # estimate, which is why one label cannot describe both: on a mooncake run
-    # read came from the GPU node's own nvme_driver series while write was a
-    # token-derived estimate for the backing tier, and the tile named them the
-    # same thing.  Record which is which.
-    _bw_rd_is_est = False
-    _bw_wr_is_est = False
-    if _l3_window_s > 0 and l3_traffic_source in ("sglang_logical_local_ssd", "sglang_logical_remote_l35", "sglang_logical_hicache_unknown_backend"):
-        if nvme_rd_bw == 0.0 and l3_est_read_gb > 0:
-            nvme_rd_bw = l3_est_read_gb * 1024 / _l3_window_s   # GB→MB/s
-            _bw_rd_is_est = True
-        if nvme_wr_bw == 0.0 and l3_est_write_gb > 0:
-            nvme_wr_bw = l3_est_write_gb * 1024 / _l3_window_s
-            _bw_wr_is_est = True
+    # Device bandwidth and token-derived KV traffic are reported side by side
+    # and never substituted for one another.  Filling a missing device
+    # direction with prefetched/backuped tokens x KV bytes/token put a
+    # 27,224 MB/s "read BW" from nvme_driver_timeseries.csv on a local-SSD run
+    # whose device counters carried no bytes at all -- 4x what one Gen4 drive
+    # can deliver -- and the requirement table then sized a drive from it.
+    # The token figure counts KV moved into or out of L2, including reads
+    # answered from page cache and writes the backend skipped, so it bounds
+    # device traffic from above and is not a measurement of it.
+    #
+    # A direction is MEASURED when the block layer reported bytes for it, or
+    # when it reported a byte column and no I/O at all in that direction (an
+    # idle device reads 0 truthfully).  A zero byte column beside non-zero
+    # IOPS is a collector that did not capture bytes, not an idle device.
+    def _dev_dir_measured(_src: str, _cols: tuple, _iops_col: str,
+                          _iops_mean: float) -> bool:
+        if _src:
+            return True
+        if not any(_c in nvme_ts for _c in _cols):
+            return False
+        _io = max(_safe_float((nvme_ts.get(_iops_col) or {}).get("max", 0)),
+                  _iops_mean)
+        return _io <= 0
+    nvme_rd_bw_measured = _dev_dir_measured(
+        nvme_rd_bw_src, ("rd_bw_mbs", "read_bw_mbs", "rkB_s"), "rd_iops",
+        nvme_rd_iops)
+    nvme_wr_bw_measured = _dev_dir_measured(
+        nvme_wr_bw_src, ("wr_bw_mbs", "write_bw_mbs", "wkB_s"), "wr_iops",
+        nvme_wr_iops)
 
     l3_logical_rd_bw_mbs = (l3_est_read_gb * 1024 / _l3_window_s) if (_l3_window_s > 0 and l3_est_read_gb > 0) else 0.0
     l3_logical_wr_bw_mbs = (l3_est_write_gb * 1024 / _l3_window_s) if (_l3_window_s > 0 and l3_est_write_gb > 0) else 0.0
+
+    def _dev_bw_txt(_rd_fmt: str = ".1f", _wr_fmt: str = ".1f") -> str:
+        """Device R/W bandwidth for prose, saying which direction was unmeasured."""
+        if not (nvme_rd_bw_measured or nvme_wr_bw_measured):
+            return "not measured on the device (no block-layer byte counters in this run)"
+        _rd = (f"{nvme_rd_bw:{_rd_fmt}} MB/s read" if nvme_rd_bw_measured
+               else "read not measured")
+        _wr = (f"{nvme_wr_bw:{_wr_fmt}} MB/s write" if nvme_wr_bw_measured
+               else "write not measured")
+        return f"{_rd} / {_wr}"
+
+    def _l3_device_bw_tile() -> str:
+        """Device R/W bandwidth, measured on the block layer or stated as absent.
+
+        On an L3.5 run this device is the GPU node's own NVMe, not the tier,
+        so it is named as such -- in a form the post-render tier rename does
+        not match.
+        """
+        _lbl = ("GPU node local NVMe read / write BW (measured)" if has_l35
+                else "L3 (local storage) read / write BW — device (measured)")
+        # Means, not nvme_rd_iops: that falls back to the series MAX.
+        _iops = []
+        for _keys, _col, _sfx in ((["nvme_rd_iops_mean", "read_iops_mean"], "rd_iops", " rd"),
+                                  (["nvme_wr_iops_mean", "write_iops_mean"], "wr_iops", " wr")):
+            _v = _safe_float(_pick(blk, _keys, 0.0)) or \
+                _safe_float((nvme_ts.get(_col) or {}).get("mean", 0))
+            if _v > 0:
+                _iops.append(_fmt_num(_v, _sfx, 0))
+        _iops_txt = (" / ".join(_iops) + " IOPS mean") if _iops else ""
+        if not (nvme_rd_bw_measured or nvme_wr_bw_measured):
+            return kpi_card(
+                _lbl, "not measured",
+                (f"the driver counted {_iops_txt}, so the device was busy — only its "
+                 f"bytes were not captured" if _iops_txt else
+                 "no block-layer counters for this device in the window"),
+                target=("No device byte counters in this run: re-collect with the "
+                        "nvme_driver or iostat collector, or pass --nvme-device to a "
+                        "Prometheus fetch. The token-derived tile beside this one is not "
+                        "a substitute."),
+                target_tip=("Device bandwidth is reported only from block-layer byte "
+                            "counters. It is never filled from SGLang token counters, "
+                            "which count KV moved into and out of L2 rather than bytes "
+                            "the drive transferred."))
+        _rd_v = _fmt_num(nvme_rd_bw, "", 0) if nvme_rd_bw_measured else "n/m"
+        _wr_v = _fmt_num(nvme_wr_bw, "", 1) if nvme_wr_bw_measured else "n/m"
+        _pcts = []
+        if nvme_rd_bw_measured and nvme_rd_bw_target_mbs > 0:
+            _pcts.append(nvme_rd_bw / nvme_rd_bw_target_mbs * 100)
+        if nvme_wr_bw_measured and nvme_wr_bw_target_mbs > 0:
+            _pcts.append(nvme_wr_bw / nvme_wr_bw_target_mbs * 100)
+        _srcs = "; ".join(f"{_d}: {_s}" for _d, _s in
+                          (("read", nvme_rd_bw_src), ("write", nvme_wr_bw_src)) if _s)
+        return kpi_card(
+            _lbl, f"{_rd_v} rd / {_wr_v} wr MB/s",
+            " · ".join(["mean over the window"] + ([_iops_txt] if _iops_txt else [])
+                       + ([f"{rw_ratio:.1f}:1 R/W bytes"] if l3_traffic_source == "blktrace" else [])),
+            target=(f"Target: ~{nvme_rd_bw_target_mbs/1000:.1f} GB/s read / "
+                    f"~{nvme_wr_bw_target_mbs/1000:.1f} GB/s write"
+                    + ("" if (nvme_rd_bw_measured and nvme_wr_bw_measured) else
+                       " · n/m = that direction's bytes were not measured")),
+            target_pct=(max(_pcts) if _pcts else None),
+            target_tip=(("Measured on " + _srcs + ". " if _srcs else "")
+                        + "PCIe Gen4 datacenter NVMe sustains ~7 GB/s sequential read and "
+                          "~5 GB/s sequential write; KV-block I/O is smaller and random, so "
+                          "sustained figures are usually far lower. Override via setup keys "
+                          "'L3 (local storage) read BW target MB/s' and '... write BW target MB/s'."
+                        + (" This is the GPU node's own NVMe, not the L3.5 tier: the "
+                           "memory node's device has its own tile." if has_l35 else "")))
+
+    def _l3_logical_bw_tile() -> str:
+        """KV traffic implied by the engine's token counters, labelled as derived."""
+        if not (l3_est_read_gb > 0 or l3_est_write_gb > 0) or _l3_window_s <= 0:
+            return ""
+        _gb = lambda v: (f"{v*1024:.1f} MB" if 0 < v < 1 else _fmt_num(v, " GB", 1))
+        _frags = [f"{_gb(l3_est_read_gb)} prefetched / {_gb(l3_est_write_gb)} backed up "
+                  f"over {_l3_window_s/60:,.1f} min",
+                  f"KV {kv_bytes_tok_kb:,.0f} KB/token"]
+        _seen = []
+        if nvme_rd_bw_measured and l3_logical_rd_bw_mbs > 0 and not has_l35:
+            _seen.append(f"device read {nvme_rd_bw / l3_logical_rd_bw_mbs * 100:.1f}%")
+        if nvme_wr_bw_measured and l3_logical_wr_bw_mbs > 0 and not has_l35:
+            _seen.append(f"device write {nvme_wr_bw / l3_logical_wr_bw_mbs * 100:.1f}%")
+        if _seen:
+            _frags.append(" / ".join(_seen) + " of this")
+        if l3_ambiguous_loadback_gb > 0:
+            _frags.append(f"L2→L1 load-back {_gb(l3_ambiguous_loadback_gb)} not counted")
+        return kpi_card(
+            "L3 (local storage) read / write BW — KV logical (token-derived)",
+            f"{_fmt_num(l3_logical_rd_bw_mbs, '', 0)} rd / "
+            f"{_fmt_num(l3_logical_wr_bw_mbs, '', 1)} wr MB/s",
+            " · ".join(_frags),
+            target=("Derived from engine token counters, not measured on a device — "
+                    "no device target applies"),
+            target_tip=("Read = Δsglang_prefetched_tokens_total, write = "
+                        "Δsglang_backuped_tokens_total, each × KV bytes per token ÷ "
+                        "the window. These count KV moved into and out of L2, so they "
+                        "bound device traffic from above: reads answered from page cache "
+                        "or the store's DRAM tier, and writes the backend skipped because "
+                        "the page already existed, never reach a drive."))
 
     # Spill threshold = free HBM / KV bytes per token
     spill_thresh_k = hbm_free_gb * 1024 * 1024 / max(kv_bytes_tok_kb, 1) / 1000
@@ -6703,7 +6833,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             + (f'Estimated <strong>{mb_per_out_token:.0f} MB per output token</strong> '
                f'of L3 local-storage prefetch/read traffic — a key KV$ L3 (local storage) sizing input. '
                if mb_per_out_token > 1 else "") +
-            f'Physical bandwidth is {nvme_rd_bw:.1f} MB/s read / {nvme_wr_bw:.1f} MB/s write. '
+            f'Physical bandwidth is {_dev_bw_txt()}. '
             f'Device busy-time {nvme_util:.1f}% mean — the L3 (local storage) is '
             f'<strong>{_nvme_status}</strong>. '
             + ('<strong>Action:</strong> expand DRAM L2 tier to absorb more '
@@ -6714,7 +6844,9 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                'First reduce KV L2→L1 restore pressure by expanding/tuning L2 DRAM and verify exact blktrace Q→C queue depth or iostat await latency.'),
             plain=(
                 f"The L3 (local storage) cache is being read heavily ({read_gb:,.0f} GB), "
-                f"but physical bandwidth is only {nvme_rd_bw:.0f} MB/s read / {nvme_wr_bw:.1f} MB/s write. "
+                + (f"but physical bandwidth is only {_dev_bw_txt('.0f')}. "
+                   if (nvme_rd_bw_measured or nvme_wr_bw_measured) else
+                   "but the device's own bandwidth was not measured in this run. ")
                 + ("SSD hardware saturation is supported by queue/latency evidence."
                    if _ssd_sat_proven else
                    "This is not bandwidth-saturated; the likely issue is cache-tier L2→L1 restore pressure or reporting/queue-depth evidence, not raw SSD bandwidth."))))
@@ -6761,7 +6893,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 f'{qd_peak:.0f}, p95 = {qd_p95:.0f}). '
                 + (f'This is exact Q→C queue evidence and may indicate saturation. ' if _exact_qd else
                    f'This is fallback queue evidence, so it is <strong>not proof of NVMe saturation</strong>. ')
-                + f'Bandwidth is {nvme_rd_bw:.1f} MB/s read / {nvme_wr_bw:.1f} MB/s write; '
+                + f'Bandwidth is {_dev_bw_txt()}; '
                 f'latency is {nvme_rd_lat:.2f} ms read / {nvme_wr_lat:.2f} ms write where captured. '
                 f'<strong>Action:</strong> treat busy-time/QD fallback as advisory until exact blktrace Q→C and await/latency confirm saturation.',
                 plain=(f"L3 (local storage) queue/busy-time is elevated, but saturation is not proven unless "
@@ -7040,7 +7172,11 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         ("GPU / TP",                 f"{gpu_desc} (TP={tp_size}, DP={dp_size})"),
         ("Attention backend",        attn),
         ("Context length",           f"{ctx_len} tokens"),
-        ("KV page size",             f"{page_sz} token/page"),
+        ("KV page size",             (f"{page_sz} token/page (from {page_sz_src})"
+                                      if page_sz_src else
+                                      "unknown — no server_info, launch --page-size or setup value")
+                                     + (f" ⚠ sources disagree: {page_sz_conflict}"
+                                        if page_sz_conflict else "")),
         ("mem_fraction_static",      str(mem_frac)),
         ("Inference Cache Tier",     _cache_tier_label),
         ("L3 filesystem",            _fs_label_full),
@@ -7171,9 +7307,12 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             f"L2 residency is {_l2_used_txt}. Use this fallback for correlation/shape, not for memory-controller saturation."
         )
     _l3_reason = (
-        f"L3 physical BW is {nvme_rd_bw:.1f} MB/s read / {nvme_wr_bw:.1f} MB/s write "
-        f"({_l3_bw_pct:.1f}% of read target), with physical movement {read_gb:.3f} GB read / {write_gb:.1f} GB write. "
-        "High advisory QD/busy-time is pressure, not saturation proof without latency/BW/exact Q→C evidence."
+        f"L3 physical BW is {_dev_bw_txt()}"
+        + (f" ({_l3_bw_pct:.1f}% of read target)" if nvme_rd_bw_measured else "")
+        + (f", with token-derived KV movement {read_gb:.3f} GB read / {write_gb:.1f} GB write. "
+           if str(l3_traffic_source).startswith("sglang_logical") else
+           f", with physical movement {read_gb:.3f} GB read / {write_gb:.1f} GB write. ")
+        + "High advisory QD/busy-time is pressure, not saturation proof without latency/BW/exact Q→C evidence."
     )
     _token_reason = (
         f"evicted={evicted_tokens:,.0f} ({_evict_rate:,.0f}/s), "
@@ -12642,8 +12781,12 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                "cutting L3 (local storage) reads and wear at near-zero latency cost.</span>")
     _act_l3_val = ("<b>Validate KV$ L3 (local storage) at 16–64 KB random read, QD16</b><br>"
                    f"<span class=\"sub\">Run <code>fio --bs=32k --rw=randread --iodepth=16 --size=32g</code>. "
-                   f"Require ≥{max(nvme_rd_bw*1.1, 600):.0f} MB/s sustained for ≥30 min. "
-                   "Also verify TRIM acknowledgement latency ≤1 ms.</span>")
+                   + (f"Require ≥{max(nvme_rd_bw*1.1, 600):.0f} MB/s sustained for ≥30 min. "
+                      if nvme_rd_bw_measured else
+                      "Require ≥600 MB/s sustained for ≥30 min — a floor only: device read "
+                      "bandwidth was not measured in this run, so nothing here is sized from "
+                      "observed load. ")
+                   + "Also verify TRIM acknowledgement latency ≤1 ms.</span>")
     _actions = [
         (_act_l1_fp8, sev(90), sev(10), "L1+L3" if has_l3 else "L1"),
         (_act_prefill, sev(85), sev(5), "A5+A4"),
@@ -12877,10 +13020,27 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 _bw_note += (f" \u00b7 the store served {_st_rd/1e9:,.1f} GB of"
                              f" file-tier reads that never reached it"
                              f" \u2014 page cache, not the SSD")
+            # A zero peak beside non-zero IOPS is a byte counter that was not
+            # captured, not an idle device: say so rather than print 0.
+            def _io_seen(_k):
+                return any(v > 0 for v in (_l35s.get(_k) or []) if v == v)
+            _rp_nm = _rp <= 0 and _io_seen("l35_rd_iops")
+            _wp_nm = _wp <= 0 and _io_seen("l35_wr_iops")
+            _peak_val = ("not measured" if (_rp_nm and _wp_nm) else
+                         f"{'n/m' if _rp_nm else f'{_rp:,.0f}'} rd / "
+                         f"{'n/m' if _wp_nm else f'{_wp:,.0f}'} wr MB/s peak")
+            _nm_target = ""
+            if _rp_nm or _wp_nm:
+                _ratio = ""
+                _nm_target = ("The device reported I/O but no bytes for "
+                              + ("either direction" if (_rp_nm and _wp_nm) else
+                                 "reads" if _rp_nm else "writes")
+                              + " — n/m = not measured, not zero")
             _l35_hw_tiles += kpi_card(
                 f"{_TIER_NODE} storage BW (device)",
-                f"{_rp:,.0f} rd / {_wp:,.0f} wr MB/s peak",
-                f"{_bw_note}{_ratio}{_bw_drop_note}")
+                _peak_val,
+                f"{_bw_note}{_ratio}{_bw_drop_note}",
+                target=_nm_target)
         _lq = [v for v in (_l35s.get("l35_avgqu_sz") or []) if v == v]
         # The exact blktrace Q->C summary outranks the sysfs avgqu_sz series,
         # which on this hardware reads ~1e-4 and rendered as "0.0 peak depth"
@@ -13745,81 +13905,16 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # backend configured (HiCache disabled, hicache_storage_backend=None,
         # host_dram_only, etc.) hide these tiles entirely rather than
         # rendering "no L3 data" boilerplate.
-        # These two read nvme_rd_bw / nvme_wr_bw -- the GPU NODE's own NVMe
-        # driver counters.  On a remote backing tier that device is not the
-        # cache tier, yet a post-render substitution in amoprof.py rewrites
-        # every "L3 (local storage)" to the tier's long name, so a mooncake
-        # report carried "L3.5 (AI Memory Node / remote storage) read BW
-        # 17 MB/s · write BW 0.0 MB/s" from the local device while the memory
-        # node's own iostat reported 995 MB/s of writes in a different tile.
-        # The rename only changed the label.  Name the device instead, in a
-        # form that substitution does not match, so the figure stays useful
-        # (it shows the local path was idle) without claiming to be the tier.
-        # Only a DEVICE-measured figure gets the device's name.  A
-        # token-derived estimate describes the backing tier's traffic and
-        # keeps the tier label, which the post-render substitution in
-        # amoprof.py renames to the tier's long form -- correctly, in that
-        # case.
-        (kpi_card(("GPU node local NVMe read BW"
-                   if (has_l35 and not _bw_rd_is_est)
-                   else "L3 (local storage) read BW"),
-                 _fmt_num(nvme_rd_bw, " MB/s", 0),
-                 (f"mean | {_fmt_num(nvme_rd_iops, ' read IOPS', 0)}"
-                  if l3_traffic_source == "blktrace"
-                  else "block + SGLang logical estimate"
-                       if l3_traffic_source == "blktrace_plus_sglang_logical_local_ssd"
-                       else "mean · estimated from SGLang prefetched tokens"
-                       if l3_traffic_source == "sglang_logical_local_ssd"
-                       else "physical L3 local block telemetry; logical L3 movement shown separately"
-                       if l3_logical_diagnostic_seen
-                       else "SGLang logical remote/backing-tier estimate"
-                       if l3_traffic_source in ("sglang_logical_remote_l35", "sglang_logical_hicache_unknown_backend")
-                       else "no L3 data"),
-                 target=f"Target: ~{nvme_rd_bw_target_mbs/1000:.1f} GB/s seq read peak",
-                 target_pct=(nvme_rd_bw / nvme_rd_bw_target_mbs * 100
-                              if nvme_rd_bw_target_mbs > 0 else None),
-                 target_tip=("PCIe Gen4 datacenter NVMe (e.g. Dell CM7, Samsung PM9A3) "
-                             "delivers ~7 GB/s sequential read at QD≥16. AI workloads "
-                             "rarely hit this — typical sustained reads are 1-3 GB/s "
-                             "because requests are 4-16 KB random. Override via setup "
-                             "key 'L3 (local storage) read BW target MB/s' for a non-Gen4 device."))
-         if has_l3 else "") +
-        (kpi_card(("GPU node local NVMe write BW"
-                   if (has_l35 and not _bw_wr_is_est)
-                   else "L3 (local storage) write BW"),
-                 _fmt_num(nvme_wr_bw, " MB/s", 1),
-                 (f"{_fmt_num(nvme_wr_iops, ' IOPS', 0)} | "
-                  f"{('1:' + str(int(round(1/rw_ratio))) if 0 < rw_ratio < 0.5 else f'{rw_ratio:.1f}:1')} R/W ratio"
-                  if l3_traffic_source == "blktrace"
-                  else (f"SGLang logical L3 write estimate · "
-                        f"{('1:' + str(int(round(1/rw_ratio))) if 0 < rw_ratio < 0.5 else f'{rw_ratio:.1f}:1')} R/W ratio")
-                       if l3_traffic_source == "blktrace_plus_sglang_logical_local_ssd"
-                       else (f"estimated from SGLang backuped tokens · "
-                        f"{('1:' + str(int(round(1/rw_ratio))) if 0 < rw_ratio < 0.5 else f'{rw_ratio:.1f}:1')} R/W ratio")
-                       if l3_traffic_source == "sglang_logical_local_ssd"
-                       else "physical L3 local block telemetry; logical L3 movement shown separately"
-                       if l3_logical_diagnostic_seen
-                       else (f"SGLang logical remote/backing-tier estimate · "
-                        f"{('1:' + str(int(round(1/rw_ratio))) if 0 < rw_ratio < 0.5 else f'{rw_ratio:.1f}:1')} R/W ratio")
-                       if l3_traffic_source in ("sglang_logical_remote_l35", "sglang_logical_hicache_unknown_backend")
-                       else "no L3 data"),
-                 target=f"Target: ~{nvme_wr_bw_target_mbs/1000:.1f} GB/s seq write peak",
-                 target_pct=(nvme_wr_bw / nvme_wr_bw_target_mbs * 100
-                              if nvme_wr_bw_target_mbs > 0 else None),
-                 target_tip=("PCIe Gen4 datacenter NVMe sustains ~5 GB/s sequential write. "
-                             "KV-block writes are small (~7 KB) so achievable BW is much "
-                             "lower than the rated peak — what matters is staying under "
-                             "the rated TBW endurance, not approaching this BW target. "
-                             "Override via setup key 'L3 (local storage) write BW target MB/s'."))
-         if has_l3 else "") +
-        ((kpi_card("Logical KV movement — L3 (local storage)",
-                 (f"{l3_est_read_gb*1024:.1f} MB" if 0 < l3_est_read_gb < 1 else _fmt_num(l3_est_read_gb, ' GB', 1))
-                 + " / "
-                 + (f"{l3_est_write_gb*1024:.1f} MB" if 0 < l3_est_write_gb < 1 else _fmt_num(l3_est_write_gb, ' GB', 1)),
-                 f"SGLang logical only · read=prefetched only; L2→L1 load_back restore diagnostic {_fmt_num(l3_ambiguous_loadback_gb, ' GB', 1)} not counted · R/W BW {_fmt_num(l3_logical_rd_bw_mbs, ' MB/s', 0)} / {_fmt_num(l3_logical_wr_bw_mbs, ' MB/s', 1)}",
-                 target="logical L3 only; not used for L3 (local storage) hot/cold LBA charts",
-                 target_tip="This is logical SGLang HiCache/backing-tier movement from token counters. Reads use prefetched_tokens_total only. load_back_tokens_total is an L2→L1 hierarchy-restore counter and is shown as a diagnostic, not as L3 local SSD bytes. LBA and SSD distribution charts are physical blktrace data."
-             ) if (has_l3 and l3_logical_diagnostic_seen and (l3_est_read_gb > 0 or l3_est_write_gb > 0)) else "")) +
+        # Two bandwidth tiles, one per source, never merged.  The device tile
+        # reads nvme_rd_bw / nvme_wr_bw -- the GPU NODE's own block-layer
+        # counters -- and says "not measured" when they carry no bytes.  On a
+        # remote backing tier that device is not the cache tier, so it is
+        # named as the device, in a form the post-render tier rename does not
+        # match.  The logical tile is the backing tier's KV traffic implied by
+        # the token counters; it keeps the tier label, which the rename
+        # expands to the tier's long form -- correctly, in that case.
+        (_l3_device_bw_tile() if has_l3 else "") +
+        (_l3_logical_bw_tile() if has_l3 else "") +
         # The "Physical" tile used to render even when the ONLY signal
         # was an SGLang-token estimate (l3_traffic_source == "sglang_*"
         # and no blktrace).  That value is already shown by the "Logical
@@ -14102,7 +14197,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     if l3_block_io_available and l3_traffic_source in ("blktrace", "blktrace_mapped_with_sglang_logical_diagnostic", "blktrace_unmapped_sglang_logical_remote_l35", "blktrace_unmapped_sglang_logical_unknown_backend") :
         kvssd_req_html = f"""
       <li><strong>Directional physical bandwidth</strong>
-          — observed {nvme_rd_bw:.0f} MB/s read and {nvme_wr_bw:.0f} MB/s write from local block telemetry.
+          — observed {_dev_bw_txt('.0f', '.0f')} from local block telemetry.
           Size the SSD path based on the dominant direction and check the L3 consistency card before treating this as complete L3 traffic.</li>
       <li><strong>Physical latency under queueing</strong>
           — observed {nvme_rd_lat:.2f} ms mean read latency and {nvme_wr_lat:.1f} ms mean write latency from local sources where available.</li>
@@ -14170,13 +14265,22 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         chart_card(
             "NVMe Bandwidth",
             "Read / Write MB/s time series from iostat",
-            f"Read bandwidth averages <strong>{nvme_rd_bw:.0f} MB/s</strong> for the majority "
-            f"of the {duration_min:.0f}-minute window, with write BW a flat "
-            f"<strong>{nvme_wr_bw:.1f} MB/s</strong>. The stable, non-bursty read profile "
-            f"indicates KV blocks are loaded back at a steady streaming rate consistent with "
-            f"concurrent session decode.",
-            f"KV$ L3 (local storage) must sustain &ge;{max(nvme_rd_bw*1.1, 600):.0f} MB/s sequential read BW "
-            f"for &gt;{duration_min:.0f} minutes without thermal throttling or endurance degradation. "
+            (f"Read bandwidth averages <strong>{nvme_rd_bw:.0f} MB/s</strong> for the majority "
+             f"of the {duration_min:.0f}-minute window, with write BW a flat "
+             f"<strong>{nvme_wr_bw:.1f} MB/s</strong>. The stable, non-bursty read profile "
+             f"indicates KV blocks are loaded back at a steady streaming rate consistent with "
+             f"concurrent session decode."
+             if (nvme_rd_bw_measured and nvme_wr_bw_measured) else
+             f"Device bandwidth is {_dev_bw_txt('.0f')}. The token-derived KV traffic in the "
+             f"'KV logical (token-derived)' tile is not a substitute: it counts KV moved into "
+             f"and out of L2, including reads answered from page cache."),
+            (f"KV$ L3 (local storage) must sustain &ge;{max(nvme_rd_bw*1.1, 600):.0f} MB/s sequential read BW "
+             if nvme_rd_bw_measured else
+             "No read-bandwidth requirement can be drawn from this run: the device's read "
+             "bytes were not measured. Re-collect with the nvme_driver or iostat collector "
+             "(or pass --nvme-device for a Prometheus fetch) to size the drive. "
+             "Any KV$ L3 (local storage) device must still sustain &ge;600 MB/s sequential read BW ")
+            + f"for &gt;{duration_min:.0f} minutes without thermal throttling or endurance degradation. "
             f"Write endurance is a non-issue for this workload pattern.",
             chart_id="ch_nvme_bw", chart_fig=_fig("ch_nvme_bw")
         ) +
@@ -14204,6 +14308,9 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 (f"Write latency is higher at <strong>{nvme_wr_lat:.1f} ms mean</strong> "
                  f"but affects only the {nvme_wr_bw:.1f} MB/s write stream "
                  f"(negligible impact). "
+                 if nvme_wr_lat > 0 and nvme_wr_bw_measured else
+                 f"Write latency is <strong>{nvme_wr_lat:.1f} ms mean</strong>; the write "
+                 f"stream's bandwidth was not measured, so its impact cannot be sized here. "
                  if nvme_wr_lat > 0 else
                  "Write latency similarly not captured. ")
                 +
@@ -14229,7 +14336,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             # Recommendation prose — also branches on util
             (
                 f"Device busy-time is {nvme_util:.0f}%, but observed bandwidth is only "
-                f"{nvme_rd_bw:.0f} MB/s read / {nvme_wr_bw:.1f} MB/s write. "
+                f"{_dev_bw_txt('.0f')}. "
                 f"Do not call this bandwidth/IOPS saturation from busy-time alone; "
                 f"verify exact queue depth or await latency, and reduce KV L2→L1 restore pressure "
                 f"by expanding/tuning L2 DRAM first."
@@ -14246,6 +14353,9 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 f"A minimal-spec NVMe supporting "
                 f"{max(nvme_rd_bw*1.1, 600):.0f} MB/s read BW is adequate; "
                 f"high IOPS specs are not required."
+                if nvme_util > 0 and nvme_rd_bw_measured else
+                f"The current KV$ L3 (local storage) is {nvme_util:.0f}% busy, but its read "
+                f"bandwidth was not measured, so no bandwidth spec is drawn from this run."
                 if nvme_util > 0 else
                 "Cannot make sizing recommendations without iostat data. "
                 "Re-collect with iostat enabled to characterize the device under load."
@@ -14270,7 +14380,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             "R/W/T Bytes per 10-sec Window",
             "Time-bucketed byte volume for reads, writes, and trims",
             f"The chart shows physical read/write/trim bytes per 10-second window from blktrace/blkparse completion events. "
-            f"Observed mean rates are {nvme_rd_bw:.0f} MB/s read and {nvme_wr_bw:.0f} MB/s write.",
+            f"Observed mean rates are {_dev_bw_txt('.0f', '.0f')}.",
             f"Use the dominant observed direction for SSD bandwidth and endurance sizing, and compare it with the L3 consistency card to detect partial capture or wrong-device tracing."
         ) +
         chart_card(

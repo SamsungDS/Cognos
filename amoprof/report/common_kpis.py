@@ -164,6 +164,66 @@ def _amoprof_augment_setup_from_launch(setup: dict) -> dict:
     return out
 
 
+def resolve_page_size(setup: dict, live_metric: float | None = None,
+                      live_metric_src: str = "") -> tuple[float | None, str, str]:
+    """KV page size, the source it came from, and any disagreement between sources.
+
+    Returns ``(page_size, source, conflict)``; ``page_size`` is None when no
+    source states one -- never a default.  A default of 1 was printed as the
+    run's "KV page size" on a run launched with --page-size 64, and the
+    comparison report read "1 tok/page" from a setup file captured from a
+    different launch.
+
+    Priority: what the live server reported (server_info, then the
+    cache_config_info metric label), then the launch command the server ran
+    with, then flat setup_details fields that are not marked as defaulted.
+    Every source that states a value is compared, so a stale setup file shows
+    up as a stated conflict instead of silently winning or losing.
+    """
+    setup = setup if isinstance(setup, dict) else {}
+    defaulted = {str(k).strip().lower()
+                 for k in (setup.get("Defaulted fields") or [])} \
+        if isinstance(setup.get("Defaulted fields"), (list, tuple)) else set()
+
+    def _num(v) -> float | None:
+        if _amoprof_missing(v):
+            return None
+        m = re.match(r"\s*(\d+(?:\.\d+)?)", str(v))
+        return float(m.group(1)) if m and float(m.group(1)) > 0 else None
+
+    found: list[tuple[str, float]] = []
+    si = {}
+    for k in ("SGLang server_info raw", "sglang_server_info_raw",
+              "SGLang server_info", "sglang_server_info", "server_info"):
+        if isinstance(setup.get(k), dict) and setup.get(k):
+            si = setup[k]
+            break
+    if _num(si.get("page_size")) is not None:
+        found.append(("SGLang server_info page_size", _num(si.get("page_size"))))
+    if live_metric is not None and live_metric > 0:
+        found.append((live_metric_src or "SGLang cache_config_info page_size",
+                      float(live_metric)))
+    launch = str(setup.get("Launch command") or setup.get("launch_command")
+                 or setup.get("SGLang launch command") or setup.get("sglang_launch_command")
+                 or setup.get("Command") or setup.get("Reference launch command") or "")
+    _lp = _num(_amoprof_parse_launch_arg(launch, "--page-size"))
+    if _lp is not None:
+        found.append(("--page-size in the launch command", _lp))
+    for k in ("Page size", "page_size", "sglang_page_size", "kv_page_size",
+              "HiCache page size"):
+        if k.lower() in defaulted:
+            continue
+        v = _num(setup.get(k))
+        if v is not None:
+            found.append((f"setup_details '{k}'", v))
+    if not found:
+        return None, "", ""
+    src, val = found[0]
+    others = [f"{s} says {v:g}" for s, v in found[1:] if v != val]
+    conflict = ("; ".join(others) + f" — using {src}") if others else ""
+    return val, src, conflict
+
+
 # ─── L3 / L3.5 label normalisation ──────────────────────────────────────────
 # Canonical version. Previously duplicated verbatim in amoprof.py,
 # interactive.py, and combined.py. Callers pass l3_backend_class:

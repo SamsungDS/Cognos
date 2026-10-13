@@ -372,6 +372,23 @@ _RAW: Dict[str, str] = {
         "rd_bw_mbs · nvme_driver_timeseries.csv ← the block device on the host the NVMe collector scraped  [MB/s] · device layer, not the store layer",
     "l3 5 node storage bw device":
         "max(l35_rd_bw_mbs) / max(l35_wr_bw_mbs) · l35_storage_timeseries.csv ← iostat on the memory node  [MB/s peak] · 0 rd with non-zero store file-tier hits means those reads were served from page cache",
+    # The device and token-derived bandwidth tiles are separate on purpose: a
+    # device tile once carried prefetched tokens x KV bytes under this
+    # registry's nvme_driver formula, reading 27 GB/s from a drive whose
+    # byte counters were empty.
+    "l3 read / write bw device measured":
+        "Δ block-layer bytes ÷ Δt per direction — blktrace size_bytes, else "
+        "rd_bw_mbs / wr_bw_mbs · nvme_driver_timeseries.csv, else iostat "
+        "rkB/s / wkB/s  [MB/s] · mean over the window · \"not measured\" when "
+        "the run has no byte counters for the device",
+    "gpu node local nvme read / write bw measured":
+        "Δ block-layer bytes ÷ Δt per direction on the GPU node's own NVMe — "
+        "rd_bw_mbs / wr_bw_mbs · nvme_driver_timeseries.csv  [MB/s] · not the "
+        "L3.5 tier's device",
+    "l3 read / write bw kv logical token derived":
+        "Δsglang_prefetched_tokens_total (read) / Δsglang_backuped_tokens_total "
+        "(write) × KV bytes/token ÷ window  [MB/s] · DERIVED from engine "
+        "counters, not measured on a device — an upper bound on device traffic",
     "l3 read bw": "rd_bw_mbs · nvme_driver_timeseries.csv  [MB/s]",
     "l3 write bw": "wr_bw_mbs · nvme_driver_timeseries.csv  [MB/s]",
     "l3 read iops": "rd_iops · nvme_driver_timeseries.csv  [IO/s]",

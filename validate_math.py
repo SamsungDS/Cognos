@@ -4491,7 +4491,12 @@ check("the peak is capped with it",
 check("KV->NAND has the guard its sibling got",
       "if _amp_nand >= 0.005:" in _c1e, True)
 check("BW labels follow per-direction provenance",
-      "_bw_rd_is_est" in _c1e and "_bw_wr_is_est" in _c1e, True)
+      "nvme_rd_bw_measured" in _c1e and "nvme_wr_bw_measured" in _c1e, True)
+check("and the device figure is never filled from token counters",
+      "nvme_rd_bw = l3_est_read_gb" in _c1e
+      or "nvme_wr_bw = l3_est_write_gb" in _c1e, False)
+check("the token-derived traffic has its own tile",
+      "def _l3_logical_bw_tile" in _c1e, True)
 check("and E2E equal to TTFT is stated on the tile",
       "identical to TTFT mean" in _c1e, True)
 
