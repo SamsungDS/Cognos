@@ -4278,10 +4278,17 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # blktrace_analysis/queue_depth_summary.json. If absent, prefer the unified
     # multi-source queue-depth file; it merges iostat aqu-sz, sysfs weighted
     # queue time, /sys/block inflight, and /proc/diskstats.
-    if not _qd_sum:
+    def _qd_device_fallback() -> dict:
+        """Queue depth from the device's own counters, when blktrace has none.
+
+        avgqu_sz (diskstats field 11, time-weighted over each interval) comes
+        before the in-flight gauge: it cannot miss activity between samples.
+        It was absent from this list, so a Prometheus-fetched run fell through
+        to the instantaneous gauge even with the better series in hand.
+        """
         _qd_stat = qds_ts.get("qd_best_effort") or qds_ts.get("qd") or qds_ts.get("weighted_qd") or qds_ts.get("inflight")
         if isinstance(_qd_stat, dict) and _safe_float(_qd_stat.get("max", 0)) > 0:
-            _qd_sum = {
+            return {
                 "qd_mean": _safe_float(_qd_stat.get("mean", 0)),
                 "qd_p50": _safe_float(_qd_stat.get("p50", _qd_stat.get("mean", 0))),
                 "qd_p95": _safe_float(_qd_stat.get("p95", _qd_stat.get("max", 0))),
@@ -4290,10 +4297,11 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 "pct_at_qd_ge_32": 0,
                 "qd_source": "advisory_queue_depth_sources_run_delta_fallback",
             }
-    if not _qd_sum:
-        _inflight_stat = nvme_ts.get("inflight") or nvme_ts.get("queue_depth") or nvme_ts.get("aqu_sz") or nvme_ts.get("avgqu")
+        _inflight_stat = (nvme_ts.get("avgqu_sz") or nvme_ts.get("inflight")
+                          or nvme_ts.get("queue_depth") or nvme_ts.get("aqu_sz")
+                          or nvme_ts.get("avgqu"))
         if isinstance(_inflight_stat, dict) and _safe_float(_inflight_stat.get("max", 0)) > 0:
-            _qd_sum = {
+            return {
                 "qd_mean": _safe_float(_inflight_stat.get("mean", 0)),
                 "qd_p50": _safe_float(_inflight_stat.get("mean", 0)),
                 "qd_p95": _safe_float(_inflight_stat.get("max", 0)),
@@ -4301,6 +4309,10 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 "pct_at_qd_ge_32": 0,
                 "qd_source": "advisory_iostat_aqu_sz_or_sysfs_inflight_fallback",
             }
+        return {}
+
+    if not _qd_sum:
+        _qd_sum = _qd_device_fallback()
     # DRAM BW for the Executive tab. Prefer timestamped local timeseries when
     # available because aggregate/analyze can filter those rows to an offline
     # wall-clock window. Fall back to the whole-capture AMDuProf raw text only
@@ -6371,6 +6383,42 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     nvme_wr_bw_measured = _dev_dir_measured(
         nvme_wr_bw_src, ("wr_bw_mbs", "write_bw_mbs", "wkB_s"), "wr_iops",
         nvme_wr_iops)
+
+    # blktrace coverage against the device's own byte counters.  A trace on
+    # the multipath head (nvme6n1) while I/O was accounted on the controller
+    # path (nvme6c6n1) captured 15.9 GB of the ~2.6 TB the device moved each
+    # way -- and the report still published an "exact blktrace Q->C" queue
+    # depth of 228.6 mean / 17,419 peak, called it healthy, and built the LBA
+    # strips and the endurance budget from that 0.6% sample.  The existing
+    # coverage warning only fires on collect-time runs, which compare against
+    # a kernel delta taken during the trace; a Prometheus-fetched run never
+    # carries one.  When the device's own bytes are measured, compare against
+    # them, and below half coverage stop treating blktrace as the device.
+    blktrace_coverage = None
+    blktrace_unrepresentative = False
+    if (_blktrace_was_attempted and block_total_source.startswith("blktrace")
+            and _l3_window_s > 0 and (nvme_rd_bw_measured or nvme_wr_bw_measured)):
+        _dev_gb = ((nvme_rd_bw if nvme_rd_bw_measured else 0.0)
+                   + (nvme_wr_bw if nvme_wr_bw_measured else 0.0)) * _l3_window_s / 1024.0
+        _bt_gb = ((_block_read_gb if nvme_rd_bw_measured else 0.0)
+                  + (_block_write_gb if nvme_wr_bw_measured else 0.0))
+        if _dev_gb > 1.0:
+            blktrace_coverage = _bt_gb / _dev_gb
+            blktrace_unrepresentative = blktrace_coverage < 0.5
+    if blktrace_unrepresentative:
+        if not _ba_coverage_warning:
+            _ba_coverage_warning = (
+                f"blktrace captured {blktrace_coverage*100:.1f}% of the bytes the "
+                f"device's own counters moved in this window, so its queue depth, "
+                f"LBA distribution and byte totals describe a sample, not the device. "
+                f"They are withdrawn below; queue depth falls back to the device "
+                f"counters. Trace the block device that carries the I/O — on NVMe "
+                f"native multipath, compare the head (nvmeXnY) and the controller "
+                f"path (nvmeXcYnZ) in /proc/diskstats.")
+            _ba_kernel_wr_gb = (nvme_wr_bw * _l3_window_s / 1024.0) if nvme_wr_bw_measured else 0.0
+            _ba_captured_ratio = blktrace_coverage
+        if str((_qd_sum or {}).get("qd_source", "blktrace_q_to_c")).startswith("blktrace"):
+            _qd_sum = _qd_device_fallback()
 
     l3_logical_rd_bw_mbs = (l3_est_read_gb * 1024 / _l3_window_s) if (_l3_window_s > 0 and l3_est_read_gb > 0) else 0.0
     l3_logical_wr_bw_mbs = (l3_est_write_gb * 1024 / _l3_window_s) if (_l3_window_s > 0 and l3_est_write_gb > 0) else 0.0
@@ -9970,13 +10018,44 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         try:
             _lba_bars = {}
             for _tag, _nm in (("w", "write"), ("r", "read")):
-                _d = []
-                for _i in range(10):
-                    _v = [x for x in (_l35s.get(f"l35_lba_{_tag}_d{_i}") or [])
-                          if x == x]
-                    _d.append(max(_v) if _v else 0.0)
-                if any(_x > 0 for _x in _d):
+                # Each sample is one collection cycle's split of ITS bytes
+                # across ten bands, so the run's split is the byte-weighted
+                # mean of the cycles.  Taking each band's maximum over cycles
+                # instead made every band that was ever busiest read ~100%:
+                # "10 of 10 bands active · busiest carries 100%", with the
+                # bands summing far past 100.  Cycles are weighted by their
+                # byte count where the trace published one, else equally.
+                # (Cycles can differ in observed span; weighting by bytes
+                # keeps the busiest cycles' geometry dominant.)
+                _cols = [_l35s.get(f"l35_lba_{_tag}_d{_i}") or [] for _i in range(10)]
+                _n = max((len(_c) for _c in _cols), default=0)
+                _wser = _l35s.get(f"l35_bt_{_nm}_bytes") or []
+                _d = [0.0] * 10
+                _wsum = 0.0
+                for _k in range(_n):
+                    _row = [(_c[_k] if _k < len(_c) else float("nan")) for _c in _cols]
+                    _row = [(_x if _x == _x else 0.0) for _x in _row]
+                    if sum(_row) <= 0:
+                        continue
+                    _wk = (_wser[_k] if (_k < len(_wser) and _wser[_k] == _wser[_k]
+                                         and _wser[_k] > 0) else (0.0 if _wser else 1.0))
+                    if _wk <= 0:
+                        continue
+                    _tot = sum(_row)
+                    for _i in range(10):
+                        _d[_i] += _wk * _row[_i] / _tot * 100.0
+                    _wsum += _wk
+                _d = [(_x / _wsum) if _wsum > 0 else 0.0 for _x in _d]
+                if any(_x > 0 for _x in _d) and not blktrace_unrepresentative:
                     _lba_bars[_nm] = _d
+            if blktrace_unrepresentative and any(
+                    any(v == v and v > 0 for v in (_l35s.get(f"l35_lba_{_t}_d{_i}") or []))
+                    for _t in ("w", "r") for _i in range(10)):
+                _lba_svg += (
+                    '<div class="kpi-note" style="padding:8px 0">LBA distribution withdrawn: '
+                    f'blktrace captured {blktrace_coverage*100:.1f}% of the bytes this '
+                    'device moved, so the strips would describe a small sample of the '
+                    'I/O. Trace the device that carries the I/O to restore them.</div>')
             for _nm, _d in _lba_bars.items():
                 _touched = sum(1 for _x in _d if _x > 0)
                 # Heat strip instead of a cumulative curve.  "Hottest 10%
@@ -13943,9 +14022,20 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                        else f"logical · SGLang counters × {kv_bytes_tok_kb:.0f} KB/tok; physical block separate"
                        if l3_traffic_source in ("sglang_logical_remote_l35", "sglang_logical_hicache_unknown_backend")
                        else "no L3 data — see findings below"),
-                 target=(f"Endurance budget: {ssd_lifetime_writes_tb_per_run*1024:.0f} GB/run"
+                 # With blktrace unrepresentative, the budget is compared with
+                 # what the device itself wrote, and the tile says so.
+                 target=((f"blktrace captured {blktrace_coverage*100:.1f}% of device bytes · "
+                          f"device wrote {_fmt_num(nvme_wr_bw * _l3_window_s / 1024.0, ' GB', 0)}"
+                          + (f" vs an endurance budget of "
+                             f"{ssd_lifetime_writes_tb_per_run*1024:.0f} GB/run"
+                             if ssd_lifetime_writes_tb_per_run > 0 else ""))
+                         if (blktrace_unrepresentative and nvme_wr_bw_measured) else
+                         f"Endurance budget: {ssd_lifetime_writes_tb_per_run*1024:.0f} GB/run"
                           if ssd_lifetime_writes_tb_per_run > 0 else ""),
-                 target_pct=((write_gb / (ssd_lifetime_writes_tb_per_run * 1024) * 100)
+                 target_pct=((((nvme_wr_bw * _l3_window_s / 1024.0)
+                               if (blktrace_unrepresentative and nvme_wr_bw_measured)
+                               else write_gb)
+                              / (ssd_lifetime_writes_tb_per_run * 1024) * 100)
                               if ssd_lifetime_writes_tb_per_run > 0 else None),
                  target_tip=(f"Endurance budget = rated TBW ({rated_tbw_tb:.1f} TB) spread "
                              f"over a 5-year warranty, scaled to this run's duration "
@@ -14182,12 +14272,15 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # `l3_explicit_config` is true for ANY L3 backend, so those tiles
         # rendered describing a tier this deployment is not using.
         #
-        # Only the raw capacity tile is dropped (the L3 KV utilization tile
-        # stays and says the tier is remote).  The tiles whose
+        # The L3 KV utilization tile goes with it.  It was kept on the
+        # assumption that it would say the tier is remote, but it renders the
+        # same df snapshot: a mooncake run showed "L3 KV utilization 63.9%"
+        # beside "L3.5 KV utilization 78.8%", and the 63.9% was files left on
+        # the local HiCache path by earlier local-L3 runs.  The tiles whose
         # labels are built from `_TIER` already say "L3.5 …" on this run and
         # are about the tier in use; dropping everything starting with "L3 "
         # would take the backing tier's own bandwidth and queue tiles with it.
-        for _stale in ("L3 cache used",):
+        for _stale in ("L3 cache used", "L3 KV utilization"):
             kpi_html = _amoprof_drop_tier_tiles(kpi_html, _stale)
     kpi_html = _amoprof_group_tier_tiles(kpi_html)
 

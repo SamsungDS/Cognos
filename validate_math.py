@@ -4480,7 +4480,7 @@ check("decode too", '"decode":          ["realtime_tokens_total", '
 check("and the derivation is named on the tile",
       "prompt derived as" in _c1e, True)
 check("stale local-L3 tiles are dropped on a remote run",
-      'for _stale in ("L3 cache used",):' in _c1e, True)
+      'for _stale in ("L3 cache used", "L3 KV utilization"):' in _c1e, True)
 check("the L2 estimate is capped at the physical residency",
       "l2_dram_used_gb = host_dram_used_gb" in _c1e, True)
 check("before the percentage and the note are composed from it",
