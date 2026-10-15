@@ -41,10 +41,13 @@ The default user is "ansible", and you can change the default user in inventory 
         visudo -f /etc/sudoers.d/ansible
         ansible ALL=(ALL) NOPASSWD: /bin/sh,/usr/bin/python,/usr/bin/python3
 
-    For ansible controller node
+    For ansible controller node, use the line that matches the controller's package manager
 
         visudo -f /etc/sudoers.d/ansible
+        # OEL (dnf)
         ansible ALL=(ALL) NOPASSWD: /bin/sh,/usr/bin/python,/usr/bin/python3,/usr/bin/dnf install python3-pip
+        # Ubuntu (apt)
+        ansible ALL=(ALL) NOPASSWD: /bin/sh,/usr/bin/python,/usr/bin/python3,/usr/bin/apt install python3-pip
 
 * Repeat the above steps to create an ansible user on each machine
 
@@ -61,10 +64,13 @@ The required ansible-core and Python versions depend on the distribution, and ar
 
 The above dependencies will be validated on runtime, and if not met, will fail an assertion, preventing Ansible playbook execution.
 
-To install python & ansible, use the following commands (example for OEL10) with **ansible** user:
+To install python & ansible, use the following commands with **ansible** user. Use `dnf` on OEL and `apt` on Ubuntu:
 
 ```
+# OEL
 sudo dnf install python3-pip
+# Ubuntu
+sudo apt install python3-pip
 
 sudo python3 -m pip install --upgrade pip
 
@@ -74,7 +80,10 @@ sudo python3 -m pip install ansible-core==2.17.4
 ansible-galaxy collection install -r collections/requirements.yml
 
 # Before running the internal create_ansible_user.yml playbook, ensure that python3-passlib is installed.
+# OEL
 sudo dnf install python3-passlib 
+# Ubuntu
+sudo apt install python3-passlib
 ```
 
 ### III. Prepare Inventory File
@@ -171,6 +180,8 @@ The cognos packages to be installed should be placed in the artifacts directory 
     * tar xvf cognos_runner_mvp1.3.tar.gz
     * tree -L 2 artifacts/
 
+        OEL 10 (`.rpm`):
+
             artifacts/
             └── SVK
                 ├── cognos-app-<version>-1.el10.ol10.1.x86_64.rpm
@@ -182,6 +193,19 @@ The cognos packages to be installed should be placed in the artifacts directory 
                 ├── cognos-node-<version>-1.el10.ol10.1.x86_64.rpm
                 ├── cognos-ras-<version>-1.el10.ol10.1.x86_64.rpm
                 └── cognos-slat-<version>-1.el10.ol10.1.x86_64.rpm
+
+        Ubuntu 22.04 (`.deb`, no `cognos-grpc` package is needed):
+
+            artifacts/
+            └── SVK
+                ├── cognos-app-<version>-ubuntu22.04_<arch>.deb
+                ├── cognos-core-<version>-ubuntu22.04_<arch>.deb
+                ├── cognos-cxl-<version>-ubuntu22.04_<arch>.deb
+                ├── cognos-me-<version>-ubuntu22.04_<arch>.deb
+                ├── cognos-mgmt-fw-<version>-ubuntu22.04_<arch>.deb
+                ├── cognos-node-<version>-ubuntu22.04_<arch>.deb
+                ├── cognos-ras-<version>-ubuntu22.04_<arch>.deb
+                └── cognos-slat-<version>-ubuntu22.04_<arch>.deb
 
 ## Deploy Cognos Software Stack (Quick-Start)
   
@@ -400,8 +424,8 @@ Run this playbook to automatically gather logs from application and management s
 * uptime (boot details)
 * uname -a (kernel information)
 * ps -auxww (running processes)
-* lsof (depending on the rpms installed)
-* ss -a or netstat -pan (depending on the rpms installed)
+* lsof (depending on the packages installed)
+* ss -a or netstat -pan (depending on the packages installed)
 
 **Output location:**
 
@@ -435,12 +459,15 @@ The playbook is for **internal use only** and is designed to create users. The p
 
 * Install **sshpass** on the Ansible controller node.
   
-  If using a non-root account, ensure the user has permission to run `dnf install sshpass`.
+  If using a non-root account, ensure the user has permission to run `dnf install sshpass` (OEL) or `apt install sshpass` (Ubuntu).
 
     For example (assume the non-root user is ansible):
 
             visudo -f /etc/sudoers.d/ansible
+            # OEL (dnf)
             ansible ALL=(ALL) NOPASSWD: /bin/sh,/usr/bin/python,/usr/bin/python3,/usr/bin/dnf install python3-pip,/usr/bin/dnf install sshpass
+            # Ubuntu (apt)
+            ansible ALL=(ALL) NOPASSWD: /bin/sh,/usr/bin/python,/usr/bin/python3,/usr/bin/apt install python3-pip,/usr/bin/apt install sshpass
 
 **Q2**: Failed to connect to the host via ssh.Permission denied (publickey,gssapi-keyex,gssapi-with-mic,password,keyboard-interactive)
 
