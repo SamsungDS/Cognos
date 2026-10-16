@@ -31,7 +31,9 @@ ui unit test:
       - DOCKERFILE_NAME: ol10
   rules:
     - !reference [.default_rules, merge_and_push]
-  needs: []
+  # Wait for the docker images to be pushed, otherwise a stale image is pulled
+  needs:
+    - build docker
 
 rbac unit test:
   extends: ui unit test
@@ -47,4 +49,6 @@ rbac unit test:
   variables:
     TEST_DIR: "$rbac_dir"
     ui_reports_dir: "$rbac_client_reports_dir"
-  needs: []
+  # Wait for the docker images to be pushed, otherwise a stale image is pulled
+  needs:
+    - build docker

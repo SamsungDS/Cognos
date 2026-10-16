@@ -1,5 +1,5 @@
 #! /usr/bin/env bash
-set -e 
+set -e -o pipefail
 
 # Build Dependencies
 install_build_deps() {
@@ -7,6 +7,7 @@ install_build_deps() {
 
     BUILD_DEPS=(
         build-essential
+        ca-certificates
         curl
         debhelper
         dpkg-dev
@@ -27,6 +28,8 @@ install_build_deps() {
     curl -fsSL https://deb.nodesource.com/setup_21.x | bash -
     BUILD_DEPS=(nodejs)
     package_manager
+    # Fail now rather than at package build time if NodeSource setup was skipped
+    command -v npm
 
     # Install chrome
     wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add -
