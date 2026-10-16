@@ -5,7 +5,7 @@ StartLimitBurst=5
 
 [Service]
 #User=svk
-KillMode=process
+KillMode=control-group
 WorkingDirectory = /usr/local/svk/mgmt-fw
 Type=notify
 
