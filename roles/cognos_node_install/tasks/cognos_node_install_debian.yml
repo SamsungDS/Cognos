@@ -2,9 +2,9 @@
 # tasks file for roles/cognos_node_install
 
 
-- name: Install python3.10-venv
+- name: Install python3-venv
   ansible.builtin.apt:
-    name: python3.10-venv
+    name: python3-venv
     state: present
   become: true
 

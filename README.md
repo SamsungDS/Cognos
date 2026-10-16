@@ -6,7 +6,7 @@ Ansible automation for configuration, deployment and orchestration of Cognos sof
 
 ### Cognos Cluster Considerations
 
-Presently, Cognos is supported and tested on Ubuntu 22.04 and OEL 10.
+Presently, Cognos is supported and tested on Ubuntu 22.04, Ubuntu 24.04 and OEL 10.
 
 It is not possible to deploy to other Linux distributions at this time.
 
@@ -174,6 +174,7 @@ The cognos packages to be installed should be placed in the artifacts directory 
     * cd ./cognos-ansible
     * mkdir artifacts
 2. Download the cognos packages into artifacts directory.
+    * Alternatively, fetch the packages from Nexus for the target OS, e.g. for Ubuntu 24.04: `bash scripts/release.sh --os ubuntu24`
 3. Enter artifacts directory.
     * cd ./artifacts
 4. Extract the packages, and packages in artifacts are listed as follows:
@@ -211,7 +212,7 @@ The cognos packages to be installed should be placed in the artifacts directory 
   
 ### Upgrade Kernel (only for Ubuntu)
 
-Perform the kernel upgrade and default to upgrading to version 6.11.0:
+Perform the kernel upgrade and default to upgrading to version 6.11.0 (Ubuntu 22.04 only, not required on Ubuntu 24.04):
   
     ansible-playbook -i your_inventory playbooks/deploy_kernel.yml
 
@@ -396,7 +397,7 @@ Execute this playbook to install `cognos-app` package and configure and start th
     * caddy.service
     * cognos-rbac.service
 
-**NOTE:** _It's currently tested on Ubuntu22.04 and OEL10. You may want to keep the influxdb token displayed during execution for later use._
+**NOTE:** _It's currently tested on Ubuntu22.04, Ubuntu24.04 and OEL10. You may want to keep the influxdb token displayed during execution for later use._
 
 ### playbooks/start_frontend_cognos.yml
 

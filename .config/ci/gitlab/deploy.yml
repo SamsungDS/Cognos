@@ -5,6 +5,7 @@ deployment pipeline:
     url: http://$VM_NAME.msl.lab:$UI_PORT
   trigger:
     include:
+      - local: .config/ci/gitlab/deploy-targets.yml
       - local: .config/ci/gitlab/vmware.yml
       - local: .config/ci/gitlab/ansible-deploy.yml
     strategy: depend

@@ -6,22 +6,31 @@ supported_distributions:
 os_version_require:
   Ubuntu:
     min_ver: '22.04'
-    max_ver: '22.04'
+    max_ver: '24.04'
   OracleLinux:
     min_ver: '9.6'
     max_ver: '10.1'
 min_supported_major_versions: "{{ os_version_require[ansible_distribution]['min_ver'] }}"
 max_supported_major_versions: "{{ os_version_require[ansible_distribution]['max_ver'] }}"
 
+# Supported kernel range, keyed by distribution and then OS major version.
 kernel_version_require:
   Ubuntu:
-    min_ver: '6.11.0'
-    max_ver: '6.11.0'
+    '22':
+      min_ver: '6.11.0'
+      max_ver: '6.11.0'
+    '24':
+      min_ver: '6.8.0'
+      max_ver: '6.17.0'
   OracleLinux:
-    min_ver: '5.14.0'
-    max_ver: '6.12.0'
-min_supported_kernel_version: "{{ kernel_version_require[ansible_distribution]['min_ver'] }}"
-max_supported_kernel_version: "{{ kernel_version_require[ansible_distribution]['max_ver'] }}"
+    '9':
+      min_ver: '5.14.0'
+      max_ver: '6.12.0'
+    '10':
+      min_ver: '5.14.0'
+      max_ver: '6.12.0'
+min_supported_kernel_version: "{{ kernel_version_require[ansible_distribution][ansible_distribution_major_version]['min_ver'] }}"
+max_supported_kernel_version: "{{ kernel_version_require[ansible_distribution][ansible_distribution_major_version]['max_ver'] }}"
 
 artifacts_dir: "{{ inventory_dir }}/artifacts"
 deploy_staging_dir: "{{ ansible_env.HOME }}"

@@ -1,4 +1,14 @@
 ---
+- name: Assert kernel requirement is defined for this OS version
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution in kernel_version_require
+      - ansible_distribution_major_version in kernel_version_require[ansible_distribution]
+    fail_msg: |
+      No kernel requirement defined for {{ ansible_distribution }} {{ ansible_distribution_major_version }}.
+      Add `kernel_version_require.{{ ansible_distribution }}.'{{ ansible_distribution_major_version }}'` (min_ver/max_ver) in group_vars/all/all.yml.
+    quiet: true
+
 - name: Get current kernel version
   ansible.builtin.set_fact:
     validate_kernel_version: "{{ ansible_kernel.split('-')[0] }}"
@@ -9,8 +19,11 @@
       - validate_kernel_version is version_compare(min_supported_kernel_version, '>=')
       - validate_kernel_version is version_compare(max_supported_kernel_version, '<=')
     fail_msg: |
-      Current version: {{ validate_kernel_version }}.
-      To proceed with the current kernel, you can bypass this check by editing `kernel_version_require` in group_vars/all.yml.
+      Current version: {{ validate_kernel_version }}. Supported: {{ min_supported_kernel_version }} - {{ max_supported_kernel_version }}.
+      To proceed with the current kernel, you can bypass this check by editing
+      `kernel_version_require.{{ ansible_distribution }}.'{{ ansible_distribution_major_version }}'` in group_vars/all/all.yml.
       Note: Using an unsupported kernel may impact Cognos performance.
-      On Ubuntu, you can also upgrade the kernel before running the playbook using: `ansible-playbook playbooks/deploy_kernel.yml`.
+      {% if ansible_distribution == 'Ubuntu' and ansible_distribution_major_version == '22' %}
+      On Ubuntu 22.04, you can also upgrade the kernel before running the playbook using: `ansible-playbook playbooks/deploy_kernel.yml`.
+      {% endif %}
     success_msg: "Kernel version is correct: {{ validate_kernel_version }}"

@@ -1,4 +1,4 @@
-restore vmware snapshot:
+.restore-vmware-snapshot:
   stage: .pre
   image: vmware/powerclicore:13.1
   script:
