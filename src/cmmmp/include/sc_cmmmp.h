@@ -3,14 +3,15 @@
 
 #include <mutex>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 
 #include "libmpctl.h"  // C++ ABI - do NOT wrap in extern "C"
 #include "sc_cxl_dev_adapter.h"
 #include "sc_logger.h"
 
-#ifndef CXL_CONF_FILE
-#define CXL_CONF_FILE "cxl.conf"
-#endif
+/** Configuration file holding the "cmmmp" section */
+inline constexpr std::string_view kCmmMpConfFile = "cxl.conf";
 
 /**
  * @brief CMM-MP device ID layout.
@@ -26,13 +27,13 @@
  * chosen from a range that is not used by Samsung PCI device IDs (e.g. CMM-H
  * 0x0DDB), so they cannot collide with PCI-derived IDs.
  */
-constexpr uint16_t kCmmMpVendorId = 0x1E98;
-constexpr uint16_t kCmmMpKindPool = 0xFF00;
-constexpr uint16_t kCmmMpKindMpDev = 0xFF01;
-constexpr uint16_t kCmmMpKindMpn = 0xFF02;
+inline constexpr uint16_t kCmmMpVendorId = 0x1E98;
+inline constexpr uint16_t kCmmMpKindPool = 0xFF00;
+inline constexpr uint16_t kCmmMpKindMpDev = 0xFF01;
+inline constexpr uint16_t kCmmMpKindMpn = 0xFF02;
 
 /** Index flag used when an MP device slot_id collides with another device */
-constexpr uint16_t kCmmMpIndexFallback = 0x8000;
+inline constexpr uint16_t kCmmMpIndexFallback = 0x8000;
 
 /**
  * @brief Kind of libmpctl entity represented by a device ID.
@@ -106,6 +107,12 @@ class DevCMMMP : public CXLDeviceAdapter {
    * @brief Destructor — releases the libmpctl context.
    */
   ~DevCMMMP() override;
+
+  /** The adapter owns the libmpctl context and is not copyable or movable */
+  DevCMMMP(const DevCMMMP&) = delete;
+  DevCMMMP& operator=(const DevCMMMP&) = delete;
+  DevCMMMP(DevCMMMP&&) = delete;
+  DevCMMMP& operator=(DevCMMMP&&) = delete;
 
   /**
    * @brief Returns all POOL, MPDEV and MPN devices discovered by this adapter.
@@ -189,6 +196,13 @@ class DevCMMMP : public CXLDeviceAdapter {
   static int map_rc(int mpctl_rc);
 
  protected:
+  /** Modifiable configuration, for derived classes and tests. */
+  CmmMpConfig& mutable_config() { return cfg_; }
+
+  /** Returns true if the libmpctl context has been created. */
+  bool has_ctx() const { return ctx_ != nullptr; }
+
+ private:
   /** Creates the libmpctl context if needed. Caller holds mp_lock_. */
   int ensure_ctx() const;
 
@@ -197,7 +211,7 @@ class DevCMMMP : public CXLDeviceAdapter {
 
   /** Runs pool setup if enabled and the pool is not ready. Caller holds
    * mp_lock_. */
-  void setup_pool_if_configured();
+  void setup_pool_if_configured() const;
 
   /** Builds DevInfo for the pool. Caller holds mp_lock_. */
   DevInfo build_pool_info(const mpctl_pool& pool) const;
@@ -217,10 +231,13 @@ class DevCMMMP : public CXLDeviceAdapter {
 
   /** Inserts or refreshes a device and registers it if it is new. */
   void upsert_device(DeviceManager& mgr, const sc_id& sid, const DevInfo& info,
-                     const std::string& name);
+                     std::string_view name);
 
   /** Validates that sid is an MPN of a ready pool. Caller holds mp_lock_. */
   int validate_mpn_op(const sc_id& sid, const mpctl_mpn** mpn) const;
+
+  /** Discovered devices; refreshed by the const info / stats queries */
+  mutable std::unordered_map<sc_id, sc_device, hash_sc_id> devices_;
 
   /** Serialises all libmpctl calls (the library is not thread-safe) */
   mutable std::mutex mp_lock_;

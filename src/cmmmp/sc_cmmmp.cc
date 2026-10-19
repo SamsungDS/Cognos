@@ -3,8 +3,8 @@
 #include <jansson.h>
 
 #include <algorithm>
-#include <cstdio>
-#include <cstring>
+#include <iomanip>
+#include <sstream>
 #include <string>
 #include <unordered_set>
 
@@ -14,17 +14,27 @@
 namespace {
 
 constexpr uint64_t kMiB = 1024ULL * 1024ULL;
-constexpr char kCmmMpDeviceType[] = "CMM-MP";
-constexpr char kCmmMpPoolDeviceType[] = "CMM-MP Pool";
-constexpr char kCmmMpMpnDeviceType[] = "CMM-MP MPN";
-constexpr char kBackendConnection[] = "Ethernet (pool back-end)";
+constexpr std::string_view kCmmMpDeviceType = "CMM-MP";
+constexpr std::string_view kCmmMpPoolDeviceType = "CMM-MP Pool";
+constexpr std::string_view kCmmMpMpnDeviceType = "CMM-MP MPN";
+constexpr std::string_view kFrontendConnection = "CXL.mem";
+constexpr std::string_view kBackendConnection = "Ethernet (pool back-end)";
+constexpr std::string_view kUnavailable = "Unavailable";
 // link_status bit 0 = back-end port 0, bit 1 = back-end port 1
 constexpr uint8_t kAllLinksUp = 0x3;
 
 std::string to_hex_str(uint64_t value) {
-  char buf[24];
-  snprintf(buf, sizeof(buf), "0x%llx", static_cast<unsigned long long>(value));
-  return buf;
+  std::ostringstream os;
+  os << "0x" << std::hex << value;
+  return os.str();
+}
+
+std::string fw_revision_str(const mpctl_mpdev& mpdev) {
+  std::ostringstream os;
+  os << "fpga 0x" << std::hex << std::setw(4) << std::setfill('0')
+     << mpdev.fpga_ver << " / fw " << std::dec
+     << static_cast<unsigned int>(mpdev.fw_ver);
+  return os.str();
 }
 
 const char* mpn_mode_str(int mode) {
@@ -46,6 +56,7 @@ const char* mpn_location_str(int location) {
       return "local";
     case MPCTL_MPN_REMOTE:
       return "remote";
+    case MPCTL_MPN_ALL:
     default:
       return "all";
   }
@@ -53,7 +64,8 @@ const char* mpn_location_str(int location) {
 
 uint64_t mpn_capacity_MB(const mpctl_mpn& mpn) {
   // prefer the usable size after the namespace label
-  return mpn.size ? mpn.size / kMiB : static_cast<uint64_t>(mpn.size_gb) * 1024;
+  return mpn.size != 0 ? mpn.size / kMiB
+                       : static_cast<uint64_t>(mpn.size_gb) * 1024;
 }
 
 /**
@@ -64,20 +76,18 @@ const DevJsonHints* find_cmmmp_hints() {
   if (!dt_map) {
     return nullptr;
   }
-  for (const auto& [key, hint] : *dt_map) {
-    if (hint.vendor_device_type == kCmmMpDeviceType) {
-      return &hint;
-    }
-  }
-  return nullptr;
+  auto it = std::find_if(dt_map->begin(), dt_map->end(), [](const auto& entry) {
+    return entry.second.vendor_device_type == kCmmMpDeviceType;
+  });
+  return it != dt_map->end() ? &it->second : nullptr;
 }
 
-DevStaticInfo base_static_info(uint64_t d_id, const std::string& type) {
+DevStaticInfo base_static_info(uint64_t d_id, std::string_view type) {
   DevStaticInfo sinfo;
   sinfo.device_id = d_id;
   sinfo.manufacturer = "samsung";
   sinfo.serial_number = 0;
-  sinfo.vendor_device_type = type;
+  sinfo.vendor_device_type = std::string(type);
   sinfo.cxl_device_type = "Type3";
   sinfo.device_index = 0;
   return sinfo;
@@ -106,7 +116,9 @@ MpKind cmmmp_kind(uint64_t d_id) {
   }
 }
 
-uint16_t cmmmp_index(uint64_t d_id) { return d_id & 0xFFFF; }
+uint16_t cmmmp_index(uint64_t d_id) {
+  return static_cast<uint16_t>(d_id & 0xFFFF);
+}
 
 /**
  * @brief DevCMMMP constructor.
@@ -117,7 +129,7 @@ DevCMMMP::DevCMMMP() { LOG(level_E::INFO, "DevCMMMP adapter constructed"); }
  * @brief DevCMMMP destructor.
  */
 DevCMMMP::~DevCMMMP() {
-  std::lock_guard<std::mutex> lock(mp_lock_);
+  std::scoped_lock lock(mp_lock_);
   close_ctx();
   LOG(level_E::INFO, "DevCMMMP adapter destroyed");
 }
@@ -168,9 +180,9 @@ void DevCMMMP::close_ctx() const {
   }
 }
 
-void DevCMMMP::setup_pool_if_configured() {
-  const mpctl_pool* pool = mpctl_pool_get_info(ctx_);
-  if (!pool || pool->ready) {
+void DevCMMMP::setup_pool_if_configured() const {
+  if (const mpctl_pool* pool = mpctl_pool_get_info(ctx_);
+      !pool || pool->ready != 0) {
     return;
   }
 
@@ -182,14 +194,12 @@ void DevCMMMP::setup_pool_if_configured() {
   }
 
   LOG(level_E::INFO, "DevCMMMP: memory pool not ready, running pool setup");
-  int rc = mpctl_host_init_discovery(ctx_);
-  if (rc != MPCTL_RC_SUCCESS) {
+  if (int rc = mpctl_host_init_discovery(ctx_); rc != MPCTL_RC_SUCCESS) {
     LOG(level_E::ERROR,
         "DevCMMMP: mpctl_host_init_discovery failed, rc=" + std::to_string(rc));
     return;
   }
-  rc = mpctl_pool_create(ctx_);
-  if (rc != MPCTL_RC_SUCCESS) {
+  if (int rc = mpctl_pool_create(ctx_); rc != MPCTL_RC_SUCCESS) {
     LOG(level_E::ERROR,
         "DevCMMMP: mpctl_pool_create failed, rc=" + std::to_string(rc));
     return;
@@ -208,13 +218,13 @@ DevInfo DevCMMMP::build_pool_info(const mpctl_pool& pool) const {
   sinfo.location = "pool";
   sinfo.total_capacity_MB = static_cast<uint64_t>(pool.size_gb) * 1024;
   sinfo.domain_type = "CMM-MP pool";
-  sinfo.connection_type = kBackendConnection;
+  sinfo.connection_type = std::string(kBackendConnection);
   sinfo.mode_discovered =
-      pool.host_init_disc ? "host-initiated" : "device-initiated";
+      pool.host_init_disc != 0 ? "host-initiated" : "device-initiated";
 
   auto& vs = sinfo.capabilities.vendor_specific;
   vs["disc_mode"] = std::to_string(pool.disc_mode);
-  vs["host_init_disc"] = pool.host_init_disc ? "true" : "false";
+  vs["host_init_disc"] = pool.host_init_disc != 0 ? "true" : "false";
   vs["mpdev_count"] = std::to_string(pool.mpdev_count);
   vs["unpooled_mpdev_count"] = std::to_string(pool.unpooled_mpdev_count);
   vs["mpn_count"] = std::to_string(pool.mpn_count);
@@ -223,12 +233,12 @@ DevInfo DevCMMMP::build_pool_info(const mpctl_pool& pool) const {
   uint64_t available_mb = 0;
   for (unsigned int id = 0; id < pool.mpn_count; ++id) {
     const mpctl_mpn* mpn = mpctl_mpn_get_info(ctx_, id);
-    if (mpn && !mpn->status) {
+    if (mpn && mpn->status == 0) {
       available_mb += mpn_capacity_MB(*mpn);
     }
   }
 
-  info.status = pool.ready ? "Ready" : "NotReady";
+  info.status = pool.ready != 0 ? "Ready" : "NotReady";
   info.numa_node = -1;
   info.available_capacity_MB = available_mb;
   return info;
@@ -236,20 +246,18 @@ DevInfo DevCMMMP::build_pool_info(const mpctl_pool& pool) const {
 
 DevInfo DevCMMMP::build_mpdev_info(const mpctl_mpdev& mpdev,
                                    uint64_t d_id) const {
+  const bool local = mpdev.local != 0;
   DevInfo info;
   DevStaticInfo& sinfo = info.static_info;
   sinfo = base_static_info(d_id, kCmmMpDeviceType);
   sinfo.serial_number = mpdev.chip_id;
   // libmpctl handle used for subsequent mpctl_mpdev_get_info() calls
   sinfo.device_index = mpdev.id;
-
-  char fw[48];
-  snprintf(fw, sizeof(fw), "fpga 0x%04x / fw %u", mpdev.fpga_ver,
-           static_cast<unsigned int>(mpdev.fw_ver));
-  sinfo.fw_revision = fw;
+  sinfo.fw_revision = fw_revision_str(mpdev);
   sinfo.total_capacity_MB = static_cast<uint64_t>(mpdev.size_gb) * 1024;
-  sinfo.location = mpdev.local ? "local" : "remote";
-  sinfo.connection_type = mpdev.local ? "CXL.mem" : kBackendConnection;
+  sinfo.location = local ? "local" : "remote";
+  sinfo.connection_type =
+      std::string(local ? kFrontendConnection : kBackendConnection);
   sinfo.domain_type = "CMM-MP pool";
 
   auto& vs = sinfo.capabilities.vendor_specific;
@@ -257,13 +265,12 @@ DevInfo DevCMMMP::build_mpdev_info(const mpctl_mpdev& mpdev,
   vs["mpctl_id"] = std::to_string(mpdev.id);
   vs["slot_id"] = std::to_string(mpdev.slot_id);
   vs["chip_id"] = to_hex_str(mpdev.chip_id);
-  vs["eth_port0"] = (mpdev.link_status & 0x1) ? "up" : "down";
-  vs["eth_port1"] = (mpdev.link_status & 0x2) ? "up" : "down";
+  vs["eth_port0"] = (mpdev.link_status & 0x1) != 0 ? "up" : "down";
+  vs["eth_port1"] = (mpdev.link_status & 0x2) != 0 ? "up" : "down";
   vs["fpga_temp_C"] = std::to_string(mpdev.fpga_temp);
 
   // link / QoS hints only describe the local CXL front-end
-  const DevJsonHints* hints = mpdev.local ? find_cmmmp_hints() : nullptr;
-  if (hints) {
+  if (const DevJsonHints* hints = local ? find_cmmmp_hints() : nullptr) {
     sinfo.link_speed_GT_s = hints->lane_speed_GT_s;
     sinfo.link_width = hints->lane_width;
     sinfo.protocol = hints->protocol;
@@ -272,7 +279,7 @@ DevInfo DevCMMMP::build_mpdev_info(const mpctl_mpdev& mpdev,
     sinfo.bw_interval_sec = hints->bw_interval_sec;
   }
 
-  std::string status = mpdev.status ? "Pooled" : "Unpooled";
+  std::string status = mpdev.status != 0 ? "Pooled" : "Unpooled";
   if ((mpdev.link_status & kAllLinksUp) != kAllLinksUp) {
     status += ", Degraded";
   }
@@ -287,19 +294,23 @@ DevInfo DevCMMMP::build_mpdev_info(const mpctl_mpdev& mpdev,
 }
 
 DevInfo DevCMMMP::build_mpn_info(const mpctl_mpn& mpn) const {
+  const bool online = mpn.status != 0;
   DevInfo info;
   DevStaticInfo& sinfo = info.static_info;
-  sinfo = base_static_info(cmmmp_dev_id(kCmmMpKindMpn, mpn.id),
-                           kCmmMpMpnDeviceType);
+  sinfo = base_static_info(
+      cmmmp_dev_id(kCmmMpKindMpn, static_cast<uint16_t>(mpn.id)),
+      kCmmMpMpnDeviceType);
   sinfo.device_index = mpn.id;
   sinfo.domain_id = mpn.region_id;
   sinfo.domain_type = "CXL region";
-  sinfo.connection_type = "CXL.mem";
+  sinfo.connection_type = std::string(kFrontendConnection);
   sinfo.total_capacity_MB = mpn_capacity_MB(mpn);
   sinfo.mode_discovered = mpn_mode_str(mpn.mode);
-  if (mpn.mode == MPCTL_MPN_MODE_DEVDAX && mpn.dax_devname[0] != '\0') {
-    sinfo.location =
-        std::string(mpn.dax_devname, strnlen(mpn.dax_devname, STR_MAX));
+
+  std::string_view dax_devname(mpn.dax_devname, STR_MAX);
+  dax_devname = dax_devname.substr(0, dax_devname.find('\0'));
+  if (mpn.mode == MPCTL_MPN_MODE_DEVDAX && !dax_devname.empty()) {
+    sinfo.location = std::string(dax_devname);
   } else {
     sinfo.location = "region" + std::to_string(mpn.region_id);
   }
@@ -311,13 +322,14 @@ DevInfo DevCMMMP::build_mpn_info(const mpctl_mpn& mpn) const {
   vs["slot_id"] = std::to_string(mpn.slot_id);
   vs["region_id"] = std::to_string(mpn.region_id);
 
-  info.status = mpn.status ? "Online" : "Offline";
+  info.status = online ? "Online" : "Offline";
   info.numa_node = mpn.mode == MPCTL_MPN_MODE_NUMA ? mpn.namespace_numa : -1;
 
-  if (!mpn.status) {
+  if (!online) {
     info.available_capacity_MB = sinfo.total_capacity_MB;
   } else if (mpn.mode == MPCTL_MPN_MODE_NUMA && mpn.namespace_numa >= 0) {
-    uint64_t total_mb = 0, free_mb = 0;
+    uint64_t total_mb = 0;
+    uint64_t free_mb = 0;
     if (get_numa_memory_info(mpn.namespace_numa, total_mb, free_mb)) {
       info.available_capacity_MB = std::min(free_mb, sinfo.total_capacity_MB);
     }
@@ -340,8 +352,7 @@ bool DevCMMMP::refresh_device(const sc_id& sid, DevInfo& info) const {
       if (!pool) {
         return false;
       }
-      mpctl_pool copy = *pool;
-      info = build_pool_info(copy);
+      info = build_pool_info(*pool);
       return true;
     }
     case MpKind::MPDEV: {
@@ -351,8 +362,7 @@ bool DevCMMMP::refresh_device(const sc_id& sid, DevInfo& info) const {
       if (!mpdev || mpdev->chip_id != info.static_info.serial_number) {
         return false;
       }
-      mpctl_mpdev copy = *mpdev;
-      info = build_mpdev_info(copy, d_id);
+      info = build_mpdev_info(*mpdev, d_id);
       return true;
     }
     case MpKind::MPN: {
@@ -360,8 +370,7 @@ bool DevCMMMP::refresh_device(const sc_id& sid, DevInfo& info) const {
       if (!mpn) {
         return false;
       }
-      mpctl_mpn copy = *mpn;
-      info = build_mpn_info(copy);
+      info = build_mpn_info(*mpn);
       return true;
     }
     default:
@@ -370,22 +379,20 @@ bool DevCMMMP::refresh_device(const sc_id& sid, DevInfo& info) const {
 }
 
 DevInfo DevCMMMP::refresh_cached(const sc_id& sid) const {
-  auto it = device_map_.find(sid);
-  if (it == device_map_.end()) {
+  auto it = devices_.find(sid);
+  if (it == devices_.end()) {
     return DevInfo{};
   }
 
-  // get existing device
-  sc_device& dev = const_cast<sc_device&>(it->second);
+  sc_device& dev = it->second;
   DevInfo info = dev.d_get_info();
-
   if (refresh_device(sid, info)) {
     dev.d_set_static_info(info.static_info);
   } else {
     LOG(level_E::WARN, "DevCMMMP: no libmpctl info for device " +
                            to_hex_str(sid.get_sc_id()) +
                            ", returning cached info");
-    info.status = "Unavailable";
+    info.status = std::string(kUnavailable);
   }
   dev.d_set_dynamic_info(info);
   return info;
@@ -396,9 +403,10 @@ DevInfo DevCMMMP::refresh_cached(const sc_id& sid) const {
  */
 std::vector<sc_device> DevCMMMP::list_devices() const {
   LOG(level_E::INFO, "DevCMMMP::list_devices() called");
-  std::lock_guard<std::mutex> lock(mp_lock_);
+  std::scoped_lock lock(mp_lock_);
   std::vector<sc_device> result;
-  for (const auto& [id, dev] : device_map_) {
+  result.reserve(devices_.size());
+  for (const auto& [id, dev] : devices_) {
     result.push_back(dev);
   }
   LOG(level_E::DEBUG, "DevCMMMP::list_devices returned " +
@@ -411,9 +419,9 @@ std::vector<sc_device> DevCMMMP::list_devices() const {
  */
 sc_device DevCMMMP::get_device_object(const sc_id& sid) const {
   LOG(level_E::DEBUG, "DevCMMMP::get_device_object called");
-  std::lock_guard<std::mutex> lock(mp_lock_);
-  auto it = device_map_.find(sid);
-  return it != device_map_.end() ? it->second : sc_device{};
+  std::scoped_lock lock(mp_lock_);
+  auto it = devices_.find(sid);
+  return it != devices_.end() ? it->second : sc_device{};
 }
 
 /**
@@ -421,7 +429,7 @@ sc_device DevCMMMP::get_device_object(const sc_id& sid) const {
  */
 DevInfo DevCMMMP::get_device_info(const sc_id& sid) const {
   LOG(level_E::INFO, "DevCMMMP::get_device_info called");
-  std::lock_guard<std::mutex> lock(mp_lock_);
+  std::scoped_lock lock(mp_lock_);
   return refresh_cached(sid);
 }
 
@@ -445,25 +453,27 @@ StatInfo DevCMMMP::get_device_stats(const sc_id& sid) const {
                              : 0;
 
   // theoretical one-direction bandwidth from link hints, as for CMM-H
-  stats.total_bandwidth_MBps =
-      info.static_info.link_speed_GT_s * info.static_info.link_width * 125;
+  stats.total_bandwidth_MBps = static_cast<uint64_t>(
+      info.static_info.link_speed_GT_s * info.static_info.link_width * 125);
 
   // libmpctl v0.3 exposes no performance or error counters
   stats.used_bandwidth_Bps = 0;
   stats.rw_errors = 0;
   stats.latency_us = 0;
 
-  if (cmmmp_kind(sid.get_sc_id()) == MpKind::MPDEV &&
-      info.status != "Unavailable") {
-    const auto& vs = info.static_info.capabilities.vendor_specific;
-    auto it = vs.find("fpga_temp_C");
-    if (it != vs.end()) {
-      // reported as fpga_temp_in_F, matching the CMM-H convention
-      cmmh_stat_sensor_t sensor{};
-      sensor.status = CMMH_STAT_RC_SUCCESS;
-      sensor.fpga_temp = std::stoul(it->second) * 9 / 5 + 32;
-      stats.sensor_stats = sensor;
-    }
+  if (cmmmp_kind(sid.get_sc_id()) != MpKind::MPDEV ||
+      info.status == kUnavailable) {
+    LOG(level_E::INFO, "DevCMMMP::get_device_stats completed");
+    return stats;
+  }
+
+  const auto& vs = info.static_info.capabilities.vendor_specific;
+  if (auto it = vs.find("fpga_temp_C"); it != vs.end()) {
+    // reported as fpga_temp_in_F, matching the CMM-H convention
+    cmmh_stat_sensor_t sensor{};
+    sensor.status = CMMH_STAT_RC_SUCCESS;
+    sensor.fpga_temp = std::stoul(it->second) * 9 / 5 + 32;
+    stats.sensor_stats = sensor;
   }
 
   LOG(level_E::INFO, "DevCMMMP::get_device_stats completed");
@@ -471,17 +481,17 @@ StatInfo DevCMMMP::get_device_stats(const sc_id& sid) const {
 }
 
 void DevCMMMP::upsert_device(DeviceManager& mgr, const sc_id& sid,
-                             const DevInfo& info, const std::string& name) {
-  sc_device dev(sid.get_sc_id(), name, info.static_info.total_capacity_MB, 0);
+                             const DevInfo& info, std::string_view name) {
+  sc_device dev(sid.get_sc_id(), std::string(name),
+                info.static_info.total_capacity_MB, 0);
   dev.d_set_static_info(info.static_info);
   dev.d_set_dynamic_info(info);
 
-  auto it = device_map_.find(sid);
-  if (it != device_map_.end()) {
+  if (auto it = devices_.find(sid); it != devices_.end()) {
     it->second = dev;
     return;
   }
-  device_map_.emplace(sid, dev);
+  devices_.try_emplace(sid, dev);
   mgr.register_device(sid, this);
 }
 
@@ -497,7 +507,7 @@ void DevCMMMP::upsert_device(DeviceManager& mgr, const sc_id& sid,
  */
 void DevCMMMP::discover_devices(DeviceManager& mgr) {
   LOG(level_E::INFO, "DevCMMMP::discover_devices started");
-  std::lock_guard<std::mutex> lock(mp_lock_);
+  std::scoped_lock lock(mp_lock_);
 
   if (!cfg_.enabled) {
     LOG(level_E::INFO, "DevCMMMP: disabled in cxl.conf, skipping discovery");
@@ -516,13 +526,13 @@ void DevCMMMP::discover_devices(DeviceManager& mgr) {
     LOG(level_E::ERROR, "DevCMMMP: mpctl_pool_get_info failed");
     return;
   }
-  mpctl_pool pool = *pool_info;
+  const mpctl_pool pool = *pool_info;
   upsert_device(mgr, sc_id(cmmmp_dev_id(kCmmMpKindPool, 0)),
                 build_pool_info(pool), "cmmmp-pool");
 
   // MP device ids cover pooled and unpooled devices
   std::unordered_set<uint16_t> used_slots;
-  unsigned int mpdev_total = pool.mpdev_count + pool.unpooled_mpdev_count;
+  const unsigned int mpdev_total = pool.mpdev_count + pool.unpooled_mpdev_count;
   for (unsigned int id = 0; id < mpdev_total; ++id) {
     const mpctl_mpdev* info = mpctl_mpdev_get_info(ctx_, id);
     if (!info) {
@@ -530,21 +540,20 @@ void DevCMMMP::discover_devices(DeviceManager& mgr) {
           "DevCMMMP: no info for MP device " + std::to_string(id));
       continue;
     }
-    mpctl_mpdev mpdev = *info;
-    if (!mpdev.local && !cfg_.expose_remote_mpdevs) {
+    if (info->local == 0 && !cfg_.expose_remote_mpdevs) {
       continue;
     }
 
-    uint16_t index = mpdev.slot_id;
+    uint16_t index = info->slot_id;
     if (!used_slots.insert(index).second) {
-      index = kCmmMpIndexFallback | (id & 0x7FFF);
-      LOG(level_E::WARN, "DevCMMMP: slot_id " + std::to_string(mpdev.slot_id) +
+      index = static_cast<uint16_t>(kCmmMpIndexFallback | (id & 0x7FFF));
+      LOG(level_E::WARN, "DevCMMMP: slot_id " + std::to_string(info->slot_id) +
                              " already in use, MP device " +
                              std::to_string(id) + " uses index " +
                              std::to_string(index));
     }
     sc_id sid(cmmmp_dev_id(kCmmMpKindMpDev, index));
-    upsert_device(mgr, sid, build_mpdev_info(mpdev, sid.get_sc_id()),
+    upsert_device(mgr, sid, build_mpdev_info(*info, sid.get_sc_id()),
                   "cmmmp-mpdev");
   }
 
@@ -554,25 +563,25 @@ void DevCMMMP::discover_devices(DeviceManager& mgr) {
       LOG(level_E::WARN, "DevCMMMP: no info for MPN " + std::to_string(id));
       continue;
     }
-    mpctl_mpn mpn = *info;
-    upsert_device(mgr, sc_id(cmmmp_dev_id(kCmmMpKindMpn, mpn.id)),
-                  build_mpn_info(mpn), "cmmmp-mpn");
+    upsert_device(
+        mgr,
+        sc_id(cmmmp_dev_id(kCmmMpKindMpn, static_cast<uint16_t>(info->id))),
+        build_mpn_info(*info), "cmmmp-mpn");
   }
 
   LOG(level_E::INFO, "DevCMMMP::discover_devices completed with " +
-                         std::to_string(device_map_.size()) + " devices");
+                         std::to_string(devices_.size()) + " devices");
 }
 
 int DevCMMMP::validate_mpn_op(const sc_id& sid, const mpctl_mpn** mpn) const {
   if (cmmmp_kind(sid.get_sc_id()) != MpKind::MPN) {
     return -EINVAL;
   }
-  int rc = ensure_ctx();
-  if (rc != 0) {
+  if (int rc = ensure_ctx(); rc != 0) {
     return rc;
   }
-  const mpctl_pool* pool = mpctl_pool_get_info(ctx_);
-  if (!pool || !pool->ready) {
+  if (const mpctl_pool* pool = mpctl_pool_get_info(ctx_);
+      !pool || pool->ready == 0) {
     return -EAGAIN;
   }
   const mpctl_mpn* info =
@@ -590,11 +599,10 @@ int DevCMMMP::validate_mpn_op(const sc_id& sid, const mpctl_mpn** mpn) const {
 int DevCMMMP::attach_memory(const sc_id& sid, const AttachParams& params) {
   LOG(level_E::INFO,
       "DevCMMMP::attach_memory called for " + to_hex_str(sid.get_sc_id()));
-  std::lock_guard<std::mutex> lock(mp_lock_);
+  std::scoped_lock lock(mp_lock_);
 
   const mpctl_mpn* mpn = nullptr;
-  int rc = validate_mpn_op(sid, &mpn);
-  if (rc != 0) {
+  if (int rc = validate_mpn_op(sid, &mpn); rc != 0) {
     LOG(level_E::WARN,
         "DevCMMMP::attach_memory rejected, rc=" + std::to_string(rc));
     return rc;
@@ -606,18 +614,18 @@ int DevCMMMP::attach_memory(const sc_id& sid, const AttachParams& params) {
     LOG(level_E::WARN, "DevCMMMP::attach_memory: invalid mode " + mode);
     return -EINVAL;
   }
-  if (mpn->status) {
+  if (mpn->status != 0) {
     LOG(level_E::WARN, "DevCMMMP::attach_memory: MPN " +
                            std::to_string(mpn->id) + " is already online");
     return -EBUSY;
   }
 
-  unsigned int mpn_id = mpn->id;
-  int lib_rc = mode == "numa" ? mpctl_mpn_online(ctx_, mpn_id)
-                              : mpctl_mpn_enable_dax(ctx_, mpn_id);
+  const unsigned int mpn_id = mpn->id;
+  const int lib_rc = mode == "numa" ? mpctl_mpn_online(ctx_, mpn_id)
+                                    : mpctl_mpn_enable_dax(ctx_, mpn_id);
   refresh_cached(sid);
 
-  rc = map_rc(lib_rc);
+  const int rc = map_rc(lib_rc);
   if (rc != 0) {
     LOG(level_E::ERROR, "DevCMMMP::attach_memory: MPN " +
                             std::to_string(mpn_id) + " (" + mode +
@@ -635,26 +643,25 @@ int DevCMMMP::attach_memory(const sc_id& sid, const AttachParams& params) {
 int DevCMMMP::detach_memory(const sc_id& sid) {
   LOG(level_E::INFO,
       "DevCMMMP::detach_memory called for " + to_hex_str(sid.get_sc_id()));
-  std::lock_guard<std::mutex> lock(mp_lock_);
+  std::scoped_lock lock(mp_lock_);
 
   const mpctl_mpn* mpn = nullptr;
-  int rc = validate_mpn_op(sid, &mpn);
-  if (rc != 0) {
+  if (int rc = validate_mpn_op(sid, &mpn); rc != 0) {
     LOG(level_E::WARN,
         "DevCMMMP::detach_memory rejected, rc=" + std::to_string(rc));
     return rc;
   }
-  if (!mpn->status) {
+  if (mpn->status == 0) {
     LOG(level_E::WARN, "DevCMMMP::detach_memory: MPN " +
                            std::to_string(mpn->id) + " is already offline");
     return -EBUSY;
   }
 
-  unsigned int mpn_id = mpn->id;
-  int lib_rc = mpctl_mpn_offline(ctx_, mpn_id);
+  const unsigned int mpn_id = mpn->id;
+  const int lib_rc = mpctl_mpn_offline(ctx_, mpn_id);
   refresh_cached(sid);
 
-  rc = map_rc(lib_rc);
+  const int rc = map_rc(lib_rc);
   if (rc != 0) {
     LOG(level_E::ERROR, "DevCMMMP::detach_memory: MPN " +
                             std::to_string(mpn_id) +
@@ -671,14 +678,13 @@ int DevCMMMP::detach_memory(const sc_id& sid) {
  */
 int DevCMMMP::pool_operation(PoolOp op, const PoolOpParams& params) {
   LOG(level_E::INFO, "DevCMMMP::pool_operation called");
-  std::lock_guard<std::mutex> lock(mp_lock_);
+  std::scoped_lock lock(mp_lock_);
 
-  int rc = ensure_ctx();
-  if (rc != 0) {
+  if (int rc = ensure_ctx(); rc != 0) {
     return rc;
   }
 
-  int lib_rc;
+  int lib_rc = MPCTL_RC_ERROR;
   switch (op) {
     case PoolOp::HOST_INIT_DISCOVERY:
       lib_rc = mpctl_host_init_discovery(ctx_);
@@ -693,19 +699,18 @@ int DevCMMMP::pool_operation(PoolOp op, const PoolOpParams& params) {
       return -EINVAL;
   }
 
-  rc = map_rc(lib_rc);
-  if (rc != 0) {
+  if (const int rc = map_rc(lib_rc); rc != 0) {
     LOG(level_E::ERROR,
         "DevCMMMP::pool_operation failed, rc=" + std::to_string(lib_rc));
     return rc;
   }
 
-  if (op != PoolOp::HOST_INIT_DISCOVERY) {
-    // pool membership changes are only discovered by mpctl_init
-    close_ctx();
-    rc = ensure_ctx();
+  if (op == PoolOp::HOST_INIT_DISCOVERY) {
+    return 0;
   }
-  return rc;
+  // pool membership changes are only discovered by mpctl_init
+  close_ctx();
+  return ensure_ctx();
 }
 
 /**
@@ -720,7 +725,7 @@ int DevCMMMP::load_config(const std::string& filepath) {
     return -ENOENT;
   }
 
-  json_t* section = json_object_get(root, "cmmmp");
+  const json_t* section = json_object_get(root, "cmmmp");
   if (!json_is_object(section)) {
     LOG(level_E::INFO, "DevCMMMP: no \"cmmmp\" section in " + filepath +
                            ", using default configuration");
@@ -728,31 +733,29 @@ int DevCMMMP::load_config(const std::string& filepath) {
     return 0;
   }
 
-  std::lock_guard<std::mutex> lock(mp_lock_);
-  json_t* value = json_object_get(section, "enabled");
-  if (json_is_boolean(value)) {
-    cfg_.enabled = json_is_true(value);
-  }
-  value = json_object_get(section, "auto_pool_setup");
-  if (json_is_boolean(value)) {
-    cfg_.auto_pool_setup = json_is_true(value);
-  }
-  value = json_object_get(section, "expose_remote_mpdevs");
-  if (json_is_boolean(value)) {
-    cfg_.expose_remote_mpdevs = json_is_true(value);
-  }
-  value = json_object_get(section, "default_attach_mode");
-  if (json_is_string(value)) {
-    std::string mode = json_string_value(value);
-    if (mode == "numa" || mode == "devdax") {
+  std::scoped_lock lock(mp_lock_);
+  const auto read_bool = [section](const char* key, bool& out) {
+    if (const json_t* value = json_object_get(section, key);
+        json_is_boolean(value)) {
+      out = json_is_true(value);
+    }
+  };
+  read_bool("enabled", cfg_.enabled);
+  read_bool("auto_pool_setup", cfg_.auto_pool_setup);
+  read_bool("expose_remote_mpdevs", cfg_.expose_remote_mpdevs);
+
+  if (const json_t* value = json_object_get(section, "default_attach_mode");
+      json_is_string(value)) {
+    if (std::string mode = json_string_value(value);
+        mode == "numa" || mode == "devdax") {
       cfg_.default_attach_mode = mode;
     } else {
       LOG(level_E::WARN,
           "DevCMMMP: ignoring invalid default_attach_mode " + mode);
     }
   }
-  value = json_object_get(section, "fpga_temp_warn_C");
-  if (json_is_integer(value)) {
+  if (const json_t* value = json_object_get(section, "fpga_temp_warn_C");
+      json_is_integer(value)) {
     cfg_.fpga_temp_warn_C = static_cast<int>(json_integer_value(value));
   }
   json_decref(root);
@@ -774,14 +777,14 @@ int DevCMMMP::load_config(const std::string& filepath) {
  */
 int DevCMMMP::setup_info() {
   LOG(level_E::INFO, "DevCMMMP::setup_info called");
-  load_config(CXL_CONF_FILE);
+  load_config(std::string(kCmmMpConfFile));
   return 0;
 }
 
 void register_cmmmp_adapter(DeviceManager& mgr) {
   LOG(level_E::INFO, "CMM-MP plugin registering with DeviceManager");
-  static DevCMMMP* adapter = new DevCMMMP();
-  adapter->setup_info();
-  mgr.registerAdapter("cmmmp", adapter);
+  static DevCMMMP adapter;
+  adapter.setup_info();
+  mgr.registerAdapter("cmmmp", &adapter);
   LOG(level_E::INFO, "DevCMMMP plugin registered successfully");
 }

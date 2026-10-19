@@ -13,8 +13,8 @@ namespace {
 
 class TestableDevCMMMP : public DevCMMMP {
  public:
-  CmmMpConfig& mutable_config() { return cfg_; }
-  bool has_ctx() const { return ctx_ != nullptr; }
+  using DevCMMMP::has_ctx;
+  using DevCMMMP::mutable_config;
 };
 
 const uint64_t kPoolId = cmmmp_dev_id(kCmmMpKindPool, 0);

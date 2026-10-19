@@ -110,9 +110,8 @@ class CXLDeviceAdapter {
    * @param params Attach parameters (requested mode).
    * @return 0 on success, negative POSIX error code on failure.
    */
-  virtual int attach_memory(const sc_id& sid, const AttachParams& params) {
-    (void)sid;
-    (void)params;
+  virtual int attach_memory(const sc_id& /* sid */,
+                            const AttachParams& /* params */) {
     return -ENOTSUP;
   }
 
@@ -123,10 +122,7 @@ class CXLDeviceAdapter {
    * @return 0 on success, negative POSIX error code on failure. The default
    * implementation returns -ENOTSUP.
    */
-  virtual int detach_memory(const sc_id& sid) {
-    (void)sid;
-    return -ENOTSUP;
-  }
+  virtual int detach_memory(const sc_id& /* sid */) { return -ENOTSUP; }
 
   /**
    * @brief Performs a pool-level operation (optional).
@@ -139,9 +135,8 @@ class CXLDeviceAdapter {
    * @return 0 on success, negative POSIX error code on failure. The default
    * implementation returns -ENOTSUP.
    */
-  virtual int pool_operation(PoolOp op, const PoolOpParams& params) {
-    (void)op;
-    (void)params;
+  virtual int pool_operation(PoolOp /* op */,
+                             const PoolOpParams& /* params */) {
     return -ENOTSUP;
   }
 

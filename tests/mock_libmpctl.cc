@@ -22,13 +22,13 @@ mpctl_mpdev& add_mpdev(unsigned int slot_id, bool local, bool pooled,
                        uint16_t size_gb, uint32_t chip_id) {
   State& s = state();
   mpctl_mpdev dev{};
-  dev.id = s.mpdevs.size();
+  dev.id = static_cast<unsigned int>(s.mpdevs.size());
   dev.fpga_ver = 0x0103;
   dev.fw_ver = 7;
   dev.chip_id = chip_id;
   dev.local = local;
   dev.size_gb = size_gb;
-  dev.slot_id = slot_id;
+  dev.slot_id = static_cast<uint16_t>(slot_id);
   dev.status = pooled;
   dev.link_status = 0x3;
   dev.fpga_temp = 50;
@@ -45,7 +45,7 @@ mpctl_mpdev& add_mpdev(unsigned int slot_id, bool local, bool pooled,
 mpctl_mpn& add_mpn(uint32_t size_gb, uint16_t slot_id, int location) {
   State& s = state();
   mpctl_mpn mpn{};
-  mpn.id = s.mpns.size();
+  mpn.id = static_cast<unsigned int>(s.mpns.size());
   mpn.region_id = mpn.id;
   mpn.status = 0;
   mpn.mode = MPCTL_MPN_MODE_PMEM;
