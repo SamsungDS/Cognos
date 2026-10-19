@@ -25,6 +25,8 @@ override_dh_install:
 	# Add copying of input.json for mock mode to install files
 	if [ "${MOCK}" = "true" ]; then echo "/usr/local/svk/feature_modules/cxl/config/input.json /usr/local/svk/feature_modules/cxl/config/" | tee -a debian/svk-cxl*.install;  fi
 	echo "/usr/local/svk/feature_modules/cxl/config/log.conf /usr/local/svk/feature_modules/cxl/config/" | tee -a debian/svk-cxl*.install
+	# Ship the CMM-MP plugin only where it was built (libmpctl requires glibc >= 2.38)
+	if [ -e $(INSTALL_PATH)/logic_modules/cmmh/lib64/libcmmmp.so ]; then echo "/$(INSTALL_PATH)/logic_modules/cmmh/lib64/libcmmmp.so /$(INSTALL_PATH)/logic_modules/cmmh/lib64/" | tee -a debian/DEB_PACKAGE_NAME.install; fi
 	dh_install
 
 override_dh_strip:
