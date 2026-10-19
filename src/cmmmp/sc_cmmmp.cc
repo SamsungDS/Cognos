@@ -232,8 +232,8 @@ DevInfo DevCMMMP::build_pool_info(const mpctl_pool& pool) const {
   // pool capacity that is not attached to this host
   uint64_t available_mb = 0;
   for (unsigned int id = 0; id < pool.mpn_count; ++id) {
-    const mpctl_mpn* mpn = mpctl_mpn_get_info(ctx_, id);
-    if (mpn && mpn->status == 0) {
+    if (const mpctl_mpn* mpn = mpctl_mpn_get_info(ctx_, id);
+        mpn && mpn->status == 0) {
       available_mb += mpn_capacity_MB(*mpn);
     }
   }
@@ -406,8 +406,8 @@ std::vector<sc_device> DevCMMMP::list_devices() const {
   std::scoped_lock lock(mp_lock_);
   std::vector<sc_device> result;
   result.reserve(devices_.size());
-  for (const auto& [id, dev] : devices_) {
-    result.push_back(dev);
+  for (const auto& entry : devices_) {
+    result.push_back(entry.second);
   }
   LOG(level_E::DEBUG, "DevCMMMP::list_devices returned " +
                           std::to_string(result.size()) + " devices");
@@ -673,6 +673,19 @@ int DevCMMMP::detach_memory(const sc_id& sid) {
   return rc;
 }
 
+int DevCMMMP::run_pool_op(PoolOp op, const PoolOpParams& params) const {
+  switch (op) {
+    case PoolOp::HOST_INIT_DISCOVERY:
+      return mpctl_host_init_discovery(ctx_);
+    case PoolOp::CREATE:
+      return mpctl_pool_create(ctx_);
+    case PoolOp::ADD:
+      return mpctl_pool_add(ctx_, params.id);
+    default:
+      return -EINVAL;
+  }
+}
+
 /**
  * @brief Runs a pool-level libmpctl operation.
  */
@@ -684,21 +697,10 @@ int DevCMMMP::pool_operation(PoolOp op, const PoolOpParams& params) {
     return rc;
   }
 
-  int lib_rc = MPCTL_RC_ERROR;
-  switch (op) {
-    case PoolOp::HOST_INIT_DISCOVERY:
-      lib_rc = mpctl_host_init_discovery(ctx_);
-      break;
-    case PoolOp::CREATE:
-      lib_rc = mpctl_pool_create(ctx_);
-      break;
-    case PoolOp::ADD:
-      lib_rc = mpctl_pool_add(ctx_, params.id);
-      break;
-    default:
-      return -EINVAL;
+  const int lib_rc = run_pool_op(op, params);
+  if (lib_rc < 0) {
+    return lib_rc;
   }
-
   if (const int rc = map_rc(lib_rc); rc != 0) {
     LOG(level_E::ERROR,
         "DevCMMMP::pool_operation failed, rc=" + std::to_string(lib_rc));

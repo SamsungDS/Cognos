@@ -196,8 +196,11 @@ class DevCMMMP : public CXLDeviceAdapter {
   static int map_rc(int mpctl_rc);
 
  protected:
-  /** Modifiable configuration, for derived classes and tests. */
-  CmmMpConfig& mutable_config() { return cfg_; }
+  /** Replaces the adapter configuration, for derived classes and tests. */
+  void set_config(const CmmMpConfig& cfg) {
+    std::scoped_lock lock(mp_lock_);
+    cfg_ = cfg;
+  }
 
   /** Returns true if the libmpctl context has been created. */
   bool has_ctx() const { return ctx_ != nullptr; }
@@ -232,6 +235,10 @@ class DevCMMMP : public CXLDeviceAdapter {
   /** Inserts or refreshes a device and registers it if it is new. */
   void upsert_device(DeviceManager& mgr, const sc_id& sid, const DevInfo& info,
                      std::string_view name);
+
+  /** Calls the libmpctl function for a pool operation. Returns the mpctl_rc,
+   * or -EINVAL for an unknown operation. Caller holds mp_lock_. */
+  int run_pool_op(PoolOp op, const PoolOpParams& params) const;
 
   /** Validates that sid is an MPN of a ready pool. Caller holds mp_lock_. */
   int validate_mpn_op(const sc_id& sid, const mpctl_mpn** mpn) const;

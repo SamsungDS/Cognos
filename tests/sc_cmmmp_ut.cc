@@ -14,7 +14,13 @@ namespace {
 class TestableDevCMMMP : public DevCMMMP {
  public:
   using DevCMMMP::has_ctx;
-  using DevCMMMP::mutable_config;
+
+  template <typename F>
+  void with_config(F update) {
+    CmmMpConfig cfg = config();
+    update(cfg);
+    set_config(cfg);
+  }
 };
 
 const uint64_t kPoolId = cmmmp_dev_id(kCmmMpKindPool, 0);
@@ -112,14 +118,14 @@ TEST_F(DevCMMMPTest, RediscoveryPicksUpNewMpn) {
 }
 
 TEST_F(DevCMMMPTest, RemoteMpDevsCanBeHidden) {
-  adapter.mutable_config().expose_remote_mpdevs = false;
+  adapter.with_config([](CmmMpConfig& c) { c.expose_remote_mpdevs = false; });
   adapter.discover_devices(mgr);
   EXPECT_TRUE(mgr.get_d_id_map().count(mpdev_id(1)));
   EXPECT_FALSE(mgr.get_d_id_map().count(mpdev_id(2)));
 }
 
 TEST_F(DevCMMMPTest, DisabledAdapterSkipsDiscovery) {
-  adapter.mutable_config().enabled = false;
+  adapter.with_config([](CmmMpConfig& c) { c.enabled = false; });
   adapter.discover_devices(mgr);
   EXPECT_TRUE(adapter.list_devices().empty());
   EXPECT_EQ(mock_mpctl::state().init_calls, 0);
@@ -145,7 +151,7 @@ TEST_F(DevCMMMPTest, PoolNotReadyWithoutAutoSetupIsReported) {
 
 TEST_F(DevCMMMPTest, AutoPoolSetupCreatesPoolAndReinitializes) {
   mock_mpctl::state().pool.ready = 0;
-  adapter.mutable_config().auto_pool_setup = true;
+  adapter.with_config([](CmmMpConfig& c) { c.auto_pool_setup = true; });
   adapter.discover_devices(mgr);
   EXPECT_EQ(mock_mpctl::state().host_init_calls, 1);
   EXPECT_EQ(mock_mpctl::state().pool_create_calls, 1);
@@ -157,7 +163,7 @@ TEST_F(DevCMMMPTest, AutoPoolSetupCreatesPoolAndReinitializes) {
 TEST_F(DevCMMMPTest, AutoPoolSetupFailureKeepsPoolNotReady) {
   mock_mpctl::state().pool.ready = 0;
   mock_mpctl::state().op_rc = MPCTL_RC_ERROR;
-  adapter.mutable_config().auto_pool_setup = true;
+  adapter.with_config([](CmmMpConfig& c) { c.auto_pool_setup = true; });
   adapter.discover_devices(mgr);
   EXPECT_EQ(mock_mpctl::state().pool_create_calls, 0);
   EXPECT_EQ(adapter.get_device_info(sc_id(kPoolId)).status, "NotReady");
@@ -297,7 +303,7 @@ TEST_F(DevCMMMPTest, AttachDevdaxEnablesDax) {
 }
 
 TEST_F(DevCMMMPTest, AttachUsesConfiguredDefaultMode) {
-  adapter.mutable_config().default_attach_mode = "devdax";
+  adapter.with_config([](CmmMpConfig& c) { c.default_attach_mode = "devdax"; });
   adapter.discover_devices(mgr);
   EXPECT_EQ(adapter.attach_memory(sc_id(mpn_id(0)), AttachParams{}), 0);
   EXPECT_EQ(mock_mpctl::state().enable_dax_calls, 1);
