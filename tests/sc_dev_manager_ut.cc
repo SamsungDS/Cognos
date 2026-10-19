@@ -330,3 +330,17 @@ TEST_F(DeviceManagerTest, GetDeviceStatsCorrectInfo) {
   EXPECT_EQ(stats.available_memory_MB, 1024);
   EXPECT_EQ(stats.status, "active");
 }
+
+TEST_F(DeviceManagerTest, MemoryOperationsDefaultToNotSupported) {
+  EXPECT_EQ(mgr.attach_memory(123456, AttachParams{"numa"}), -ENOTSUP);
+  EXPECT_EQ(mgr.detach_memory(123456), -ENOTSUP);
+  EXPECT_EQ(mgr.pool_operation("dummy", PoolOp::CREATE, PoolOpParams{}),
+            -ENOTSUP);
+}
+
+TEST_F(DeviceManagerTest, MemoryOperationsRejectUnknownDevice) {
+  EXPECT_EQ(mgr.attach_memory(99999, AttachParams{"numa"}), -ENODEV);
+  EXPECT_EQ(mgr.detach_memory(99999), -ENODEV);
+  EXPECT_EQ(mgr.pool_operation("missing", PoolOp::CREATE, PoolOpParams{}),
+            -ENODEV);
+}
