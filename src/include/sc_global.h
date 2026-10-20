@@ -3,7 +3,7 @@
 
 #include <memory>
 
-#include "mbox_a1.h"
+#include "sc_a1.h"
 #include "sc_device.h"
 
 class sc_mbox;

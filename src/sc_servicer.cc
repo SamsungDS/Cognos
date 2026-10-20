@@ -33,7 +33,7 @@
 #include "yaml-cpp/yaml.h"
 
 extern "C" {
-#include "mbox_a1.h"
+#include "sc_a1.h"
 }
 
 constexpr char DELIMITER[] = ",";
@@ -378,7 +378,7 @@ std::string SetupInfo(const std::string& input) {
   std::string output;
   std::string buffer;
   std::unordered_map<std::string, std::string> tokens_map = token_helper(input);
-  LOG(level_E::INFO, "Fetching setup info for CMMB...");
+  LOG(level_E::INFO, "Fetching setup info ...");
   // Call global function to fetch setup info
   size_t bytes_written = cxl_global.fetch_setup_info(buffer);
   buffer.resize(bytes_written);
@@ -711,10 +711,13 @@ std::string handle_get_device_metrics(
   return result;
 }
 
-int cmmb_a1_init() {
-  LOG(level_E::INFO, "Starting `cmmb_a1_init`...");
+int a1_init() {
+  LOG(level_E::INFO, "Starting `a1_init`...");
   struct StaticPortInfo pinfo;
   std::string ip_address;
+  init("input.json");
+  LOG(level_E::INFO, "Fetching `mbox_get_static_config`...");
+  mbox_get_static_config("input.json", &pinfo);
 
   int ip_status = get_ip_address(CXL_CONF_FILE, ip_address);
   if (ip_status != 0) {
@@ -741,9 +744,6 @@ int cmmb_a1_init() {
   }
 
   set_ip(ip_address.c_str());
-  init();
-  LOG(level_E::INFO, "Fetching `mbox_get_static_config`...");
-  mbox_get_static_config(&pinfo);
   LOG(level_E::INFO, "Creating memory box...");
   if (int mret = cxl_global.g_create_mbox(&pinfo); mret != 0) {
     LOG(level_E::ERROR, "Error creating memory box: " + std::to_string(mret));
@@ -773,9 +773,8 @@ void tm_init() {
  */
 int init_cxl_plugin() {
   LOG(level_E::INFO, "Invoked `init_cxl_plugin`.");
-  int mret = cmmb_a1_init();
-  LOG(level_E::INFO,
-      "CMMB A1 initialization returned: " + std::to_string(mret));
+  int mret = a1_init();
+  LOG(level_E::INFO, "A1 initialization returned: " + std::to_string(mret));
   tm_init();
   return mret;
 }

@@ -2,7 +2,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-#include "mbox_a1.h"
+#include "sc_a1.h"
 #include "sc_device.h"
 #include "sc_host.h"
 #include "sc_liqid.h"

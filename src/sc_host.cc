@@ -29,12 +29,14 @@ void sc_host::set_host_name(string const& host) {
   LOG(level_E::INFO, "Setting host name: " + host);
   // Validate the hostname using a regular expression
   regex validHostname("^[A-Za-z0-9- .$]+$");
-  if (regex_match(host, validHostname)) {
-    h_name = host;
-    LOG(level_E::INFO, "Host name set successfully: " + host);
+  regex replace_pattern(R"([^a-zA-Z0-9- .$])");
+  std::string result = std::regex_replace(host, replace_pattern, "");
+  if (regex_match(result, validHostname)) {
+    h_name = result;
+    LOG(level_E::INFO, "Host name set successfully: " + result);
   } else {
-    LOG(level_E::ERROR, "Invalid hostname provided: " + host);
-    throw std::invalid_argument("Invalid hostname: " + host);
+    LOG(level_E::ERROR, "Invalid hostname provided: " + result);
+    throw std::invalid_argument("Invalid hostname: " + result);
   }
 }
 

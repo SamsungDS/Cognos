@@ -28,8 +28,6 @@ json_t* load_json_config(const std::string& config_path);
 
 int process_fabric_manager(json_t* fabric_manager);
 
-void create_dev_cmmb(json_t* config);
-
 extern const std::unordered_map<std::string, std::function<void(json_t*)>>
     factory_map;
 
@@ -42,7 +40,7 @@ bool is_valid_ip(const std::string& ip_address);
 bool process_json_request(const std::string& input_str, std::string& command,
                           std::unordered_map<std::string, std::string>& params);
 
-int cmmb_a1_init();
+int a1_init();
 
 std::string handle_list_devices(
     const std::unordered_map<std::string, std::string>& params);

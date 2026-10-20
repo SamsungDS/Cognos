@@ -3,7 +3,7 @@
 
 #include <cstdint>
 
-#include "mbox_a1.h"
+#include "sc_a1.h"
 #include "sc_device.h"
 #include "sc_mld.h"
 #include "sc_sld.h"

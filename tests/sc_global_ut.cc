@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "mbox_a1.h"
+#include "sc_a1.h"
 #include "sc_global.h"
 #include "sc_logger.h"
 #include "sc_mbox.h"
@@ -51,7 +51,7 @@ class ScGlobalTest : public ::testing::Test {
 
 TEST_F(ScGlobalTest, CreateMboxTest) {
   struct StaticPortInfo pinfo;
-  mbox_get_static_config(&pinfo);
+  mbox_get_static_config("input.json", &pinfo);
   const char* host_name = "Host1LNK0";
   strncpy(pinfo.host[0].name, host_name, MAX_STRING_LEN);
 
@@ -101,7 +101,7 @@ TEST_F(ScGlobalTest, MboxFindFailure) {
 
 TEST_F(ScGlobalTest, DevAttachTest) {
   struct StaticPortInfo pinfo;
-  mbox_get_static_config(&pinfo);
+  mbox_get_static_config("input.json", &pinfo);
   strncpy(pinfo.host[0].name, "host1", MAX_STRING_LEN);
 
   int create_result = global_instance.g_create_mbox(&pinfo);
@@ -144,7 +144,7 @@ TEST_F(ScGlobalTest, NegDevAttachTest) {
 
 TEST_F(ScGlobalTest, DevDetachTest) {
   struct StaticPortInfo pinfo;
-  mbox_get_static_config(&pinfo);
+  mbox_get_static_config("input.json", &pinfo);
   strncpy(pinfo.host[0].name, "host1", MAX_STRING_LEN);
   int create_result = global_instance.g_create_mbox(&pinfo);
   ASSERT_EQ(create_result, 0);

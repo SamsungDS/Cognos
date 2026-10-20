@@ -46,8 +46,6 @@ std::string StopTuning(std::string input);
 
 int process_fabric_manager(json_t* fabric_manager);
 
-void create_dev_cmmb(json_t* config);
-
 extern const std::unordered_map<std::string, std::function<void(json_t*)>>
     factory_map;
 

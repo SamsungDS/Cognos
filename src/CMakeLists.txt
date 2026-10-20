@@ -32,16 +32,14 @@ target_include_directories(svkcxl PUBLIC
   ${CMMH_THIRD_PARTY_DIR}
   ${SVKFRAMEWORK_INCLUDE_DIRS} 
   ${SVKMGMTFW_INCLUDE_DIRS} 
-  ${FMAPI_INCLUDE_PATH}
 )
 
 target_link_directories(svkcxl PRIVATE 
-  "${FMAPI_INCLUDE_PATH}/build" 
   ${SVKMGMTFW_LIB_DIRS} 
   ${SVKFRAMEWORK_LIBRARY_DIRS}
 )
 
-target_link_libraries(svkcxl mbox_a1_shared svcmgr jansson zmq numa svklogger yaml-cpp)
+target_link_libraries(svkcxl svcmgr jansson zmq numa svklogger yaml-cpp)
 
 add_definitions("-DBOOST_ALLOW_DEPRECATED_HEADERS")
 add_definitions("-DBOOST_BIND_GLOBAL_PLACEHOLDERS")

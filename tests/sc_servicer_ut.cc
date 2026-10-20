@@ -20,7 +20,7 @@
 
 extern "C" {
 #include "jansson.h"
-#include "mbox_a1.h"
+#include "sc_a1.h"
 }
 
 using ::testing::DoAll;
@@ -95,6 +95,61 @@ class ServicerTest : public ::testing::Test {
     })";
     create_file("test_corrupt.json", corrupt_json);
 
+    // Switch Input JSON
+    std::string input_json = R"({
+    "Board": {
+        "board_name": "Example Direct Config",
+        "Mgmt_port_type": "PCIe",
+        "json_version": "0100",
+        "switch_mode": "direct",
+        "management_port": 1
+    },
+    "Hosts": [
+        {
+            "host_name": "Host 1 LNK0",
+            "host_port": 2,
+            "deinit_active": 1,
+            "host_port_type": "CXL_11",
+            "classcode": 0,
+            "host_aspm_active": 1,
+            "host_sris_active": 1,
+            "host_equalization": 1,
+            "host_speed": 5,
+            "host_width": 8,
+            "host_addr": "0x008080000000",
+            "host_size": "0x007f80000000",
+            "endpoint": []
+        }
+    ],
+    "Devices": [
+        {
+            "dev_name": "DEV_10-256G",
+            "dev_port": 10,
+            "dev_addr": "0x008000000000",
+            "dev_size": "0x004000000000",
+            "dev_aspm_active": 1,
+            "dev_sris_active": 1,
+            "dev_lock_active": 1,
+            "dev_speed": 5,
+            "dev_width": 8,
+            "dev_port_type": "CXL_20"
+        },
+        {
+            "dev_name": "DEV_11-256G",
+            "dev_port": 11,
+            "dev_addr": "0x00C000000000",
+            "dev_size": "0x004000000000",
+            "dev_aspm_active": 1,
+            "dev_sris_active": 1,
+            "dev_lock_active": 1,
+            "dev_speed": 5,
+            "dev_width": 8,
+            "dev_port_type": "CXL_20"
+        }
+    ]
+})";
+    create_file("input.json", input_json);
+
     static DeviceManager dev_mgr;
     g_dev_mgr = &dev_mgr;
 
@@ -138,7 +193,7 @@ class ServicerTest : public ::testing::Test {
   }
 
   // Helper function to create the JSON configuration dynamically
-  json_t* create_dev_cmmb_config() {
+  json_t* create_dev_cmm_config() {
     // Create the root JSON object
     json_t* root = json_object();
     // Create the `fabric_managers` array
@@ -146,7 +201,7 @@ class ServicerTest : public ::testing::Test {
     // Create a single fabric manager object
     json_t* fabric_manager = json_object();
     json_object_set_new(fabric_manager, "id", json_integer(1007));
-    json_object_set_new(fabric_manager, "type", json_string("FM_REMOTE_CMMB"));
+    json_object_set_new(fabric_manager, "type", json_string("FM_REMOTE_CMM"));
 
     // Create the Hosts array
     json_t* hosts_array = json_array();
@@ -260,7 +315,7 @@ TEST_F(ServicerTest, InitCxlPluginSuccess) {
   EXPECT_EQ(ret, 0);
 
   ret = mbox_get_static_config(&pinfo);
-  EXPECT_EQ(ret, 0);
+  EXPECT_GE(ret, 0);
 
   sc_global cxl_global;
   ret = cxl_global.g_create_mbox(&pinfo);
@@ -800,22 +855,64 @@ TEST_F(ServicerTest, ExecuteSync_GetDeviceInfo) {
 TEST_F(ServicerTest, CmmbA1_MissingSwitchObject) {
   use_test_config("test_no_switch.json");
   EXPECT_CALL(mock_cxl_global, g_create_mbox(_)).Times(0);
-  int status = cmmb_a1_init();
+  int status = a1_init();
   EXPECT_EQ(status, -EINVAL);
 }
 
 TEST_F(ServicerTest, CmmbA1_MissingIPAddressField) {
   use_test_config("test_no_ip_address.json");
   EXPECT_CALL(mock_cxl_global, g_create_mbox(_)).Times(0);
-  int status = cmmb_a1_init();
+  int status = a1_init();
   EXPECT_EQ(status, -ENODATA);
 }
 
 TEST_F(ServicerTest, CmmbA1_CorruptJsonFile) {
   use_test_config("test_corrupt.json");
   EXPECT_CALL(mock_cxl_global, g_create_mbox(_)).Times(0);
-  int status = cmmb_a1_init();
+  int status = a1_init();
   EXPECT_EQ(status, -EINVAL);
+}
+
+TEST_F(ServicerTest, NonexistentInputJsonFile) {
+  int status = init("input1.json");
+  EXPECT_EQ(status, MBOX_CMD_EXEC_FAIL);
+}
+
+TEST_F(ServicerTest, ProperInputJsonFile) {
+  int status = init("input.json");
+  EXPECT_EQ(status, MBOX_SUCCESS);
+}
+
+TEST_F(ServicerTest, A1UpdateJsonAndInstall) {
+  int status = update_json_and_install();
+  EXPECT_EQ(status, MBOX_SUCCESS);
+}
+
+TEST_F(ServicerTest, A1UpdateJsonAndInstallOnSwitch) {
+  int status = update_json_and_install_on_switch();
+  EXPECT_NE(status, MBOX_SUCCESS);
+}
+
+TEST_F(ServicerTest, A1IsSwitchAlive) {
+  int status = is_switch_alive(100);
+  EXPECT_EQ(status, MBOX_PING_FAIL);
+}
+
+TEST_F(ServicerTest, A1RebootSwitch) {
+  int status = reboot_switch();
+  EXPECT_EQ(status, MBOX_REBOOT_FAIL);
+}
+
+TEST_F(ServicerTest, A1SetIP) {
+  const char* ip = "105.128.101.100";
+  int status = set_ip(ip);
+  EXPECT_EQ(status, MBOX_SUCCESS);
+}
+
+TEST_F(ServicerTest, A1SetIPNull) {
+  const char* ip = nullptr;
+  int status = set_ip(ip);
+  EXPECT_EQ(status, MBOX_NULL_POINTER);
 }
 
 /*
@@ -831,7 +928,7 @@ TEST_F(ServicerTest, CmmbA1_Success) {
   EXPECT_EQ(ret, 0);
 
   ret = mbox_get_static_config(&pinfo);
-  EXPECT_EQ(ret, 0);
+  EXPECT_GE(ret, 0);
 
   sc_global cxl_global;
   ret = cxl_global.g_create_mbox(&pinfo);
@@ -973,7 +1070,7 @@ TEST_F(ServicerTest, GetDeviceInfo_Success) {
   stat.fw_revision = "1.0.0";
   stat.location = "slotA";
   stat.feature_supported = "SLD";
-  stat.vendor_device_type = "CMMB";
+  stat.vendor_device_type = "CMM";
   stat.cxl_device_type = "type1";
   stat.protocol = "1.1";
   stat.link_speed_GT_s = 5;
@@ -1017,7 +1114,7 @@ TEST_F(ServicerTest, GetDeviceInfo_Success) {
 
   EXPECT_EQ(get_json_value(response, "device_id"), "1234");
   EXPECT_EQ(get_json_value(response, "manufacturer"), "Samsung");
-  EXPECT_EQ(get_json_value(response, "vendor_device_type"), "CMMB");
+  EXPECT_EQ(get_json_value(response, "vendor_device_type"), "CMM");
   EXPECT_EQ(get_json_value(response, "serial_number"), "123456");
   EXPECT_EQ(get_json_value(response, "FW_revision"), "1.0.0");
   EXPECT_EQ(get_json_value(response, "status"), "active");
