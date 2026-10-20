@@ -3,6 +3,7 @@
 #include <jansson.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <iomanip>
 #include <sstream>
 #include <string>
@@ -21,7 +22,9 @@ constexpr std::string_view kFrontendConnection = "CXL.mem";
 constexpr std::string_view kBackendConnection = "Ethernet (pool back-end)";
 constexpr std::string_view kUnavailable = "Unavailable";
 // link_status bit 0 = back-end port 0, bit 1 = back-end port 1
-constexpr uint8_t kAllLinksUp = 0x3;
+constexpr std::byte kEthPort0{0x1};
+constexpr std::byte kEthPort1{0x2};
+constexpr std::byte kAllLinksUp = kEthPort0 | kEthPort1;
 
 std::string to_hex_str(uint64_t value) {
   std::ostringstream os;
@@ -265,8 +268,9 @@ DevInfo DevCMMMP::build_mpdev_info(const mpctl_mpdev& mpdev,
   vs["mpctl_id"] = std::to_string(mpdev.id);
   vs["slot_id"] = std::to_string(mpdev.slot_id);
   vs["chip_id"] = to_hex_str(mpdev.chip_id);
-  vs["eth_port0"] = (mpdev.link_status & 0x1) != 0 ? "up" : "down";
-  vs["eth_port1"] = (mpdev.link_status & 0x2) != 0 ? "up" : "down";
+  const std::byte links{mpdev.link_status};
+  vs["eth_port0"] = (links & kEthPort0) != std::byte{0} ? "up" : "down";
+  vs["eth_port1"] = (links & kEthPort1) != std::byte{0} ? "up" : "down";
   vs["fpga_temp_C"] = std::to_string(mpdev.fpga_temp);
 
   // link / QoS hints only describe the local CXL front-end
@@ -280,7 +284,7 @@ DevInfo DevCMMMP::build_mpdev_info(const mpctl_mpdev& mpdev,
   }
 
   std::string status = mpdev.status != 0 ? "Pooled" : "Unpooled";
-  if ((mpdev.link_status & kAllLinksUp) != kAllLinksUp) {
+  if ((links & kAllLinksUp) != kAllLinksUp) {
     status += ", Degraded";
   }
   if (mpdev.fpga_temp > cfg_.fpga_temp_warn_C) {
@@ -406,8 +410,8 @@ std::vector<sc_device> DevCMMMP::list_devices() const {
   std::scoped_lock lock(mp_lock_);
   std::vector<sc_device> result;
   result.reserve(devices_.size());
-  for (const auto& entry : devices_) {
-    result.push_back(entry.second);
+  for (const auto& [sid, dev] : devices_) {
+    result.push_back(dev);
   }
   LOG(level_E::DEBUG, "DevCMMMP::list_devices returned " +
                           std::to_string(result.size()) + " devices");

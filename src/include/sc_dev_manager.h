@@ -114,7 +114,7 @@ class DeviceManager {
    * @return 0 on success, -ENODEV if the device is unknown, or the negative
    * POSIX error code returned by the adapter.
    */
-  int attach_memory(uint64_t d_id, const AttachParams& params);
+  int attach_memory(uint64_t d_id, const AttachParams& params) const;
 
   /**
    * @brief Detaches the memory of a device from the local host.
@@ -123,7 +123,7 @@ class DeviceManager {
    * @return 0 on success, -ENODEV if the device is unknown, or the negative
    * POSIX error code returned by the adapter.
    */
-  int detach_memory(uint64_t d_id);
+  int detach_memory(uint64_t d_id) const;
 
   /**
    * @brief Performs a pool-level operation on a named adapter.

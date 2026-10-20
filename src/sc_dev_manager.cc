@@ -139,7 +139,8 @@ StatInfo DeviceManager::get_device_stats(uint64_t d_id) {
 /**
  * @brief Attaches the memory of a device through its adapter.
  */
-int DeviceManager::attach_memory(uint64_t d_id, const AttachParams& params) {
+int DeviceManager::attach_memory(uint64_t d_id,
+                                 const AttachParams& params) const {
   LOG(level_E::INFO, "Attaching memory for device ID: " + std::to_string(d_id));
   auto result = resolve_adapter(d_id);
   if (!result.has_value() || result->second == nullptr) {
@@ -152,7 +153,7 @@ int DeviceManager::attach_memory(uint64_t d_id, const AttachParams& params) {
 /**
  * @brief Detaches the memory of a device through its adapter.
  */
-int DeviceManager::detach_memory(uint64_t d_id) {
+int DeviceManager::detach_memory(uint64_t d_id) const {
   LOG(level_E::INFO, "Detaching memory for device ID: " + std::to_string(d_id));
   auto result = resolve_adapter(d_id);
   if (!result.has_value() || result->second == nullptr) {
