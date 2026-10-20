@@ -18508,17 +18508,17 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
                 (f"{m.hbm_used_mb_mean/1024:.1f}/{m.hbm_total_mb/1024:.0f} GB · "
                  "weights + reserved KV pool + activations "
                  "(≠ live KV blocks; see KV Pool Active %)")),
-        # GPU util tile mirrors the cache-hit KPI shape: primary value = active
-        # mean, sub-note carries overall/threshold/idle so a low active mean
-        # driven by long idle gaps is legible at a glance.
+        # Primary value = overall mean across every sample.  The busy-only
+        # mean headlined 99.4% for a GPU idle 80% of the run; it stays in the
+        # sub-note, labelled, beside the idle share that explains the gap.
         kv_card(
             "GPU Util",
-            fmt(m.gpu_util_active_mean or m.gpu_util_overall_mean, 1),
+            fmt(m.gpu_util_overall_mean or m.gpu_util_active_mean, 1),
             "%",
             HBM_C,
             (f"overall {m.gpu_util_overall_mean:.1f}% · "
-             f"active {m.gpu_util_active_mean:.1f}% (>{m.gpu_util_active_threshold_pct:g}%) · "
-             f"idle {m.gpu_util_idle_fraction_pct:.1f}% · peak {m.gpu_util_peak:.0f}%")
+             f"busy {m.gpu_util_active_mean:.1f}% when active (>{m.gpu_util_active_threshold_pct:g}%) · "
+             f"idle {m.gpu_util_idle_fraction_pct:.1f}% of samples · peak {m.gpu_util_peak:.0f}%")
         ),
         kv_card("GPU Power", fmt(m.gpu_power_mean_w, 0), "W total", POWER_C,
                 f"peak {m.gpu_power_peak_w:.0f}W/GPU"),
@@ -19365,8 +19365,8 @@ Decode throughput = active_mean(sglang_gen_throughput) or Δsglang_generation_to
   <h2>&#9201; GPU Utilisation, Power &amp; HBM Timeline</h2>
   <div style="font-size:12px;color:#334155;margin:0 0 10px;line-height:1.6">
     <strong>GPU util:</strong> overall {m.gpu_util_overall_mean:.1f}% ·
-    active {m.gpu_util_active_mean:.1f}% (&gt;{m.gpu_util_active_threshold_pct:g}%) ·
-    idle {m.gpu_util_idle_fraction_pct:.1f}% ·
+    busy {m.gpu_util_active_mean:.1f}% when active (&gt;{m.gpu_util_active_threshold_pct:g}%) ·
+    idle {m.gpu_util_idle_fraction_pct:.1f}% of samples ·
     peak {m.gpu_util_peak:.0f}%
     <span style="color:#64748b">
       &nbsp;·&nbsp; {m.gpu_util_active_samples:,}/{m.gpu_util_total_samples:,} nonzero samples

@@ -3345,11 +3345,13 @@ def build_report(raw_dir: Path, out_html: Path,
         (gpu_sum or {}).get('gpu_util_active_threshold_pct', 0.0) or 0.0)
     _gpu_idle = _gpu_dec["idle_fraction_pct"] or float((gpu_sum or {}).get('gpu_util_idle_fraction_pct', 0) or 0)
     _gpu_peak_show = max(_gpu_dec["peak"], float((gpu_sum or {}).get('gpu_util_peak', 0) or 0))
-    _gpu_show_value = _gpu_active or _gpu_overall
+    # Overall mean first: the busy-only mean overstates use whenever the GPUs
+    # idle for part of the window (99.4% shown for a GPU idle 80% of the time).
+    _gpu_show_value = _gpu_overall or _gpu_active
     _gpu_note = _gpu_dec.get("note") or ""
     _gpu_sub = (f"overall {_gpu_overall:.1f}% · "
-                f"active {_gpu_active:.1f}% (>{_gpu_thresh:g}%) · "
-                f"idle {_gpu_idle:.1f}% · peak {_gpu_peak_show:.0f}%"
+                f"busy {_gpu_active:.1f}% when active (>{_gpu_thresh:g}%) · "
+                f"idle {_gpu_idle:.1f}% of samples · peak {_gpu_peak_show:.0f}%"
                 + (f" · {_gpu_note}" if _gpu_note else ""))
     if gpu_sum:
         kpis += [

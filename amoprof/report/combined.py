@@ -13959,12 +13959,15 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
              ("Needs sglang_gen_throughput or Δgeneration_tokens_total for "
               "decode, and Δprompt_tokens_total ÷ Δtime for prefill. Neither "
               "resolved in this window."))) +
+        # Headline is the mean over every sample, as the tile's formula says.
+        # The busy-only mean (samples > threshold) read 99.4% on a run whose
+        # GPUs sat idle 80% of the time; it stays in the note, labelled.
         kpi_card("GPU util",
-                 _fmt_num(_gpu_active_mean_dec or _gpu_overall_mean or gpu_util, "%", 1),
+                 _fmt_num(_gpu_overall_mean or gpu_util or _gpu_active_mean_dec, "%", 1),
                  (f"overall {_fmt_num(_gpu_overall_mean, '%', 1)} · "
-                  f"active {_fmt_num(_gpu_active_mean_dec, '%', 1)} "
+                  f"busy {_fmt_num(_gpu_active_mean_dec, '%', 1)} when active "
                   f"(>{_gpu_active_threshold:g}%) · "
-                  f"idle {_fmt_num(_gpu_idle_fraction, '%', 1)} · "
+                  f"idle {_fmt_num(_gpu_idle_fraction, '%', 1)} of samples · "
                   f"{_fmt_num(gpu_peak, '% peak', 0)}")) +
         kpi_card("L1 HBM used — raw (all GPUs)",
                  (f"{_fmt_num(hbm_used_total_gb, ' GB', 1)} / "

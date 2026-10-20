@@ -172,6 +172,18 @@ def validate_html(html: str, label: str) -> Result:
             if b > 0:
                 r.check(a <= b * 1.02, f"TILES '{lab}' used <= capacity", f"{a} / {b}")
 
+    # The GPU util headline is the overall mean its formula describes, not the
+    # busy-only mean: that one read 99.4% for GPUs idle 80% of the window.
+    for lab, val, note in tiles:
+        if lab.strip().lower() != "gpu util":
+            continue
+        shown = _num(val)
+        m_ov = re.search(r"overall\s+([\d.]+)\s*%", note)
+        if shown is not None and m_ov:
+            r.check(abs(shown - float(m_ov.group(1))) < 0.15,
+                    "TILES 'GPU util' headline is the overall mean",
+                    f"headline {shown} vs overall {m_ov.group(1)} in its note")
+
     # Compare the HBM tile's own capacity against the per-GPU capacity and GPU
     # count stated in that same tile's note — matching "N GB/GPU" anywhere in
     # the document picks up per-GPU *usage* figures from unrelated charts.
