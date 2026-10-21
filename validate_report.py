@@ -229,6 +229,29 @@ def validate_html(html: str, label: str) -> Result:
         r.check(empty == 0, "CHARTS no chart drawn with no data",
                 f"{empty}/{len(panels)} empty")
 
+    # Per-request distribution charts: the completion-based ones count the
+    # same requests, so their n must match; TTFT counts first tokens and may
+    # differ by requests in flight at the window edges, which must be said.
+    _ns = {}
+    for m_t in re.finditer(r'font-weight="800">([^<]{3,60}?) — p50 / p90 / p99</text>', unesc):
+        m_n = re.search(r"n=([\d,]+) ([a-z][^<]{2,60})</text>", unesc[m_t.end():m_t.end() + 8000])
+        if m_n:
+            _ns[m_t.group(1).strip()] = (int(m_n.group(1).replace(",", "")), m_n.group(2))
+    _done = {k: v for k, v in _ns.items()
+             if k in ("E2E request latency", "Input tokens / request", "Output tokens / request")}
+    if len(_done) >= 2:
+        r.check(len({n for n, _ in _done.values()}) == 1,
+                "CHARTS completion-based request charts report the same n",
+                ", ".join(f"{k} n={n}" for k, (n, _) in _done.items()))
+    if "TTFT" in _ns and _done:
+        n_ttft, n_done = _ns["TTFT"][0], next(iter(_done.values()))[0]
+        r.check(n_ttft == n_done or "Why the n counts differ" in unesc,
+                "CHARTS TTFT vs completed-request n difference is explained",
+                f"TTFT n={n_ttft} vs completed n={n_done}, no explanation")
+        r.check(all(lbl != "observations" for _, lbl in _ns.values()),
+                "CHARTS distribution n says what it counts",
+                ", ".join(f"{k}: {lbl}" for k, (_, lbl) in _ns.items() if lbl == "observations"))
+
     # HBM composition is a partition of the device: its bands must add up to
     # the capacity in the chart header.  KV in use was once counted twice,
     # giving 214.1 GB (119%) on a 179 GB card.

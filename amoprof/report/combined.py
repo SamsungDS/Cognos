@@ -2122,7 +2122,8 @@ def _amoprof_exec_svg_lba_heatmap(title: str, op: str, deciles: "list",
 
 def _amoprof_exec_svg_percentile_bars(title: str, subtitle: str, unit: str,
                                       values: "dict", colors: "dict",
-                                      width: int = 460, height: int = 300) -> str:
+                                      width: int = 460, height: int = 300,
+                                      n_label: str = "observations") -> str:
     """Grouped bar chart of whole-window p50 / p90 / p99 with printed values.
 
     A line chart of per-interval percentiles shows *movement* but makes the
@@ -2207,7 +2208,8 @@ def _amoprof_exec_svg_percentile_bars(title: str, subtitle: str, unit: str,
                      f'transform="rotate(-90 12 {pad_t+ph/2:.1f})" text-anchor="middle">{_html.escape(unit)}</text>')
     if values.get("observations"):
         parts.append(f'<text x="{pad_l+pw:.1f}" y="{height-10:.1f}" fill="#64748b" font-size="8" '
-                     f'text-anchor="end">n={_fmt_num(values["observations"], "", 0)} observations</text>')
+                     f'text-anchor="end">n={_fmt_num(values["observations"], "", 0)} '
+                     f'{_html.escape(n_label)}</text>')
     _cap = _amoprof_exec_chart_caption([("Y", title.split(" \u2014 ")[0], "#86efac")])
     return (f'<div class="corr-chart"><svg role="img" viewBox="0 0 {width} {height}" '
             f'preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;display:block">'
@@ -8428,6 +8430,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                     out[_lab] = _v
             return out if len(out) == 3 else {}
 
+        _n_by_title: dict = {}
         for _p_title, _p_base, _p_scale, _p_unit, _p_src in _PCTL_SPECS:
             _bases = _p_base if isinstance(_p_base, list) else [_p_base]
             _pw, _used = {}, ""
@@ -8466,6 +8469,16 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 _p_disp = "TPOT / ITL (inter-token latency)"
                 _p_src += (" · ITL stands in for TPOT "
                            "(dedicated TPOT histogram not exported)")
+            # Say what n counts.  Each histogram is observed at a different
+            # moment: TTFT when a request gets its first token, E2E and the
+            # token-size histograms when it completes, ITL once per gap
+            # between output tokens.  All printed "observations", so TTFT
+            # n=517 beside E2E n=516 read as a counting error; the
+            # difference is requests in flight at the window edges.
+            _n_label = ("inter-token gaps" if _p_title.startswith("TPOT") else
+                        "requests · first token in window" if _p_title == "TTFT" else
+                        "requests · completed in window")
+            _n_by_title[_p_title] = _safe_float(_pw.get("observations", 0), 0)
             _pctl_method = (
                 "Prometheus histogram_quantile over the range"
                 if _from_summary else
@@ -8476,7 +8489,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             _pctl_html += _amoprof_exec_svg_percentile_bars(
                 f"{_p_disp} — p50 / p90 / p99",
                 f"whole window · \u0394{_p_src} · {_pctl_method}",
-                _p_unit, _pw, _PCTL_COLORS)
+                _p_unit, _pw, _PCTL_COLORS, n_label=_n_label)
             # Mean beside p50, with the ratio as a tail indicator: percentiles
             # say where the boundary sits, only the mean is sensitive to how
             # far beyond it the worst cases run.
@@ -8589,7 +8602,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 f"{_r_title} \u2014 p50 / p90 / p99",
                 f"active intervals only \u00b7 {len(_rv):,} of {len(_all_iv):,} "
                 f"({_duty:.1f}% duty cycle) \u00b7 not per request",
-                _r_unit, _rp, _PCTL_COLORS)
+                _r_unit, _rp, _PCTL_COLORS, n_label="active sampling intervals")
             _pctl_rows.append(
                 f"<b>{_html.escape(_r_title)}</b> p50 {_rp['p50']:,.1f} \u00b7 "
                 f"p90 {_rp['p90']:,.1f} \u00b7 p99 {_rp['p99']:,.1f} {_r_unit} "
@@ -8960,6 +8973,25 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 "measurements.",
                 layers="A3_DRAM", expanded=True))
 
+        # Why TTFT's n differs from the completion-based charts: a request
+        # running when the window opens completes inside it (E2E counts it,
+        # TTFT already saw its first token before); one running when it
+        # closes got its first token inside but has not completed.
+        _n_note = ""
+        _n_ttft = _n_by_title.get("TTFT", 0)
+        _n_done = _n_by_title.get("E2E request latency", 0)
+        if _n_ttft > 0 and _n_done > 0 and abs(_n_ttft - _n_done) >= 1:
+            _run = [v for v in (_amoprof_read_columns_raw(_sg_path, ["num_running_reqs"])
+                                .get("num_running_reqs") or []) if v == v]
+            _edges = (f" {_run[0]:,.0f} requests were running when the window opened and "
+                      f"{_run[-1]:,.0f} when it closed." if len(_run) >= 2 else "")
+            _n_note = (
+                f"<br><br><b>Why the n counts differ:</b> TTFT counts requests whose first "
+                f"token arrived in the window ({_n_ttft:,.0f}); E2E latency and the token-size "
+                f"charts count requests that completed in it ({_n_done:,.0f}). The "
+                f"{abs(_n_done - _n_ttft):,.0f}-request difference is requests in flight at the "
+                f"window edges.{_edges} TPOT / ITL counts gaps between output tokens, not "
+                f"requests.")
         if _pctl_html:
             # Emitted above the Bottleneck Analysis section (directly under the
             # KPI grid) rather than appended to _cards.
@@ -8971,7 +9003,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 "open-ended top bucket is reported as that bucket's floor (a lower bound). "
                 f"{_kv_header}",
                 _pctl_html,
-                "<br>".join(_pctl_rows)
+                "<br>".join(_pctl_rows) + _n_note
                 + "<br><br>A p99 far above p50 is tail latency: a minority of requests are "
                 "paying a cost the mean hides. Wide input/output token spreads mean the "
                 "workload itself is heterogeneous, so a latency tail may reflect request "
@@ -9149,7 +9181,8 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                        "observations": float(len(_srt))}
                 _bar_svg = _amoprof_exec_svg_percentile_bars(
                     f"{_ch_name} \u2014 p50 / p90 / p99", _ch_form, "%",
-                    _pc, {"p50": "#38bdf8", "p90": "#f59e0b", "p99": "#22c55e"})
+                    _pc, {"p50": "#38bdf8", "p90": "#f59e0b", "p99": "#22c55e"},
+                    n_label="samples")
                 _ch_html += _bar_svg
                 if _ch_name not in _OVERVIEW_HIDDEN_CH:
                     _ch_bars_svg += _bar_svg
