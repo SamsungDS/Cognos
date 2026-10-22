@@ -13,6 +13,7 @@ ExecStart = /usr/local/svk/mgmt-fw/bin/svkgrpcnode --svk_conf_file /etc/svk/mgmt
 ExecReload = /bin/kill -s HUP $MAINPID
 ExecStop = /bin/kill -s INT $MAINPID
 Restart=always
+LogFilterPatterns=~rcd_link_*
 
 [Install]
 WantedBy=multi-user.target
