@@ -425,11 +425,12 @@ try:
     # figure is zero and the tier was listed bare.
     import re as _re8
     _m8 = _re8.search(r"Inference Cache Tier</b>:\s*([^<]{0,200})", _u8)
-    # Unit-agnostic: the fixture's store is 2 TB, so the figure reads
-    # "TB DRAM" rather than "GB DRAM".  Assert the capacity is present and
-    # names its medium, not a particular unit.
+    # Unit-agnostic.  The layer names its medium before the figure
+    # ("L3.5 (memory: 2,000 GB ..." or "L3.5 (DRAM: x GB + CXL: y GB ...").
+    # Assert the capacity is present and names its medium.
     check("remote tier summary carries a capacity",
-          bool(_m8 and _re8.search(r"\d[\d.,]*\s*(?:GB|TB) DRAM", _m8.group(1))),
+          bool(_m8 and _re8.search(r"L3\.5 \((?:DRAM|CXL|memory): \d[\d.,]*\s*(?:GB|TB)",
+                                   _m8.group(1))),
           True)
 except Exception as _e:
     check("residency probe ran", f"FAILED: {_e}", "ok")

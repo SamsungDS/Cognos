@@ -7257,89 +7257,95 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         or _safe_float(_pick(setup, ["HiCache ratio", "hicache_ratio"], 0), 0) > 0)
     if _enabled_truthy or (isinstance(cache_enabled, str) and "+" in cache_enabled) \
             or _tier_evidence:
-        # L2 capacity from /proc/meminfo (DramMonitor); L3 from df-based FS size.
-        def _cap_fmt(gb: float) -> str:
-            if gb >= 1000:
-                return f"{gb/1000:.1f} TB"
-            if gb > 0:
-                return f"{gb:.0f} GB"
-            return ""
-        l2_cap = _cap_fmt(l2_dram_capacity_gb)
-        l3_cap = _cap_fmt(l3_fs_total_gb)
-        # A remote store has no local filesystem, so l3_fs_total_gb is zero
-        # and the L3.5 tier was listed without a capacity while L2 carried
-        # one.  Read the store's own accounting instead, and break it into
-        # memory and storage when both are configured, since "1.5 TB" alone
-        # hides whether it is DRAM or SSD — which is the question a reader of
-        # this line is asking.
-        if not l3_cap:
-            try:
-                _cf = _first_existing(raw_dir, ["l35_store_capacity.csv"])
-                _cc = (_amoprof_read_columns_raw(
-                    _cf, ["l35_store_mem_cap_b", "l35_store_file_cap_b"])
-                    if _cf else {})
-                def _mx(_k):
-                    _v = [x for x in (_cc.get(_k) or []) if x == x and x > 0]
-                    return max(_v) / 1e9 if _v else 0.0
-                _mem_gb, _file_gb = _mx("l35_store_mem_cap_b"), _mx("l35_store_file_cap_b")
-                if _mem_gb and _file_gb:
-                    l3_cap = (f"{_cap_fmt(_mem_gb)} DRAM + "
-                              f"{_cap_fmt(_file_gb)} SSD")
-                elif _mem_gb:
-                    l3_cap = f"{_cap_fmt(_mem_gb)} DRAM"
-                elif _file_gb:
-                    l3_cap = f"{_cap_fmt(_file_gb)} SSD"
-            except Exception:
-                l3_cap = ""
-        l2_str = f"L2 DRAM ({l2_cap})" if l2_cap else "L2 DRAM"
-        # Keep the executive hero generic: do not expose the backend/vendor
-        # name (for example Mooncake) in the top-line cache-tier summary. The
-        # detailed setup table still carries the exact backend/type.
-        l3_str = (f"L3 (local storage) ({l3_cap})" if l3_cap
-                  else "L3 (local storage)")
-        # List only the tiers this run actually has, rather than always
-        # claiming "L2 + L3": naming a tier that is not configured is worse
-        # than saying nothing, because it sends the reader looking for charts
-        # that legitimately do not exist.
-        _tiers_present = []
-        if (l2_dram_capacity_gb or 0) > 0 or _safe_float(
+        # Every KV-cache layer this run has, with the memory type behind it
+        # and the capacity it holds for KV, so a report can be tied to its
+        # configuration at a glance (e.g. L3.5 on DRAM vs DRAM + CXL):
+        #   Enabled · L1 (HBM: x GB) + L2 (DRAM: y GB) + L3 (NVMe SSD: z GB)
+        #             + L3.5 (DRAM: a GB + CXL: b GB + NVMe SSD: c GB)
+        # Capacities are the KV allocation of each layer, in decimal GB.  The
+        # hero stays vendor-neutral: the setup table names the backend.
+        def _gb(gb: float) -> str:
+            return f"{gb:,.0f} GB" if gb >= 10 else f"{gb:,.1f} GB"
+
+        def _setup_gb(*keys) -> float:
+            return _safe_float(_pick(setup, list(keys), 0), 0)
+
+        _be_cls = str(l3_backend_class or "").lower()
+        _remote = _be_cls.startswith("remote") or _be_cls == "ai_memory_node"
+        _layers: list = []
+
+        # L1: the GPU KV pool, max_total_num_tokens x KV bytes per token
+        # (full model across ranks).
+        # The server publishes both pool sizes as gauges; summary keys and the
+        # setup file are fallbacks for runs without the timeseries.
+        def _gauge_max(*names) -> float:
+            return _safe_float(_ts_col(sglang_ts, *names).get("max", 0), 0)
+        _pool_tok = (_gauge_max("max_total_num_tokens")
+                     or _safe_float(_pick(sglang, ["max_total_num_tokens",
+                                                   "sglang_max_total_num_tokens"], 0), 0)
+                     or _setup_gb("max_total_num_tokens"))
+        _bpt = _safe_float(kv_bytes_tok_kb, 0) * 1024.0
+        _layers.append(f"L1 (HBM: {_gb(_k_gb_from_bytes(_pool_tok * _bpt))})"
+                       if _pool_tok > 0 and _bpt > 0 else "L1 (HBM)")
+
+        # L2: the HiCache host allocation — hicache_host_total_tokens x KV
+        # bytes.  l2_dram_capacity_gb falls back to the whole host's DRAM when
+        # no HiCache size is configured, which is not what the cache holds.
+        _l2_tok = _gauge_max("hicache_host_total_tokens")
+        _l2_gb = (_k_gb_from_bytes(_l2_tok * _bpt) if _l2_tok > 0 and _bpt > 0
+                  else (l2_dram_capacity_gb or 0))
+        if _l2_gb > 0 or _gauge_max("hicache_host_used_tokens") > 0 or _safe_float(
                 _pick(sglang, ["hicache_host_used_tokens",
                                "sglang_hicache_host_used_tokens"], 0), 0) > 0:
-            _tiers_present.append(l2_str)
-        if (l3_fs_total_gb or 0) > 0 or str(_pick(setup, [
-                "L3 storage type", "L3 Device", "L3 Mount Path"], "")).strip():
-            _tiers_present.append(l3_str)
-        # Only append a standalone "L3.5 (remote KV store)" tier when
-        # the second L3 branch above did NOT already add it.  When
-        # l3_backend_class is remote/AI Memory Node, that branch appends
-        # "L3 (local storage)" which apply_l3_label_rewrites rewrites to
-        # "L3.5 (AI Memory Node / remote storage)" downstream, and the
-        # combined header ended up double-labelling the remote tier as
-        # both "L3.5 (AI Memory Node / remote storage) + L3.5 (remote KV
-        # store)".  Suppress the second entry in that case.
+            _layers.append(f"L2 (DRAM: {_gb(_l2_gb)})" if _l2_gb > 0 else "L2 (DRAM)")
+
+        # L3: local NVMe SSD on the GPU node.
+        if not _remote and ((l3_fs_total_gb or 0) > 0 or str(_pick(setup, [
+                "L3 storage type", "L3 Device", "L3 Mount Path"], "")).strip()):
+            _layers.append(f"L3 (NVMe SSD: {_gb(l3_fs_total_gb)})"
+                           if (l3_fs_total_gb or 0) > 0 else "L3 (NVMe SSD)")
+
+        # L3.5: the AI Memory Node.  The store's own accounting splits memory
+        # from file (SSD) capacity but not DRAM from CXL inside the memory
+        # pool, so that split comes from the setup file when given and is
+        # checked against the measured memory total; otherwise it is said to
+        # be unreported rather than all called DRAM.
         _hicache_backend_set = bool(str(_pick(setup, [
             "HiCache storage backend", "hicache_storage_backend",
             "Remote storage endpoint"], "")).strip())
-        _already_named_remote_l3 = (
-            # Include remote_mooncake here — it maps to the same rewritten
-            # "L3.5 (AI Memory Node / remote storage)" label as remote_storage.
-            (str(l3_backend_class or "").lower().startswith("remote")
-             or str(l3_backend_class or "").lower() == "ai_memory_node")
-            and l3_str in _tiers_present
-        )
-        # ...and only when the resolved backend is actually REMOTE.
-        # _hicache_backend_set is true whenever a backend is configured at
-        # all, which on a local run means "file" -- so a local-SSD
-        # deployment had "+ L3.5 (remote KV store)" appended to its header
-        # and claimed a memory node it does not have.
-        _backend_is_remote = (
-            str(l3_backend_class or "").lower().startswith("remote")
-            or str(l3_backend_class or "").lower() == "ai_memory_node")
-        if (_hicache_backend_set and _backend_is_remote
-                and not _already_named_remote_l3):
-            _tiers_present.append("L3.5 (remote KV store)")
-        _cache_tier_label = ("Enabled \u00b7 " + " + ".join(_tiers_present)
-                             if _tiers_present else "Enabled")
+        _mem_gb = _file_gb = 0.0
+        try:
+            _cf = _first_existing(raw_dir, ["l35_store_capacity.csv"])
+            _cc = (_amoprof_read_columns_raw(
+                _cf, ["l35_store_mem_cap_b", "l35_store_file_cap_b"]) if _cf else {})
+            def _mx(_k):
+                _v = [x for x in (_cc.get(_k) or []) if x == x and x > 0]
+                return _k_gb_from_bytes(max(_v)) if _v else 0.0
+            _mem_gb, _file_gb = _mx("l35_store_mem_cap_b"), _mx("l35_store_file_cap_b")
+        except Exception:
+            pass
+        if _remote and (_hicache_backend_set or _mem_gb > 0 or _file_gb > 0):
+            _dram_s = _setup_gb("L3.5 DRAM GB", "L3.5 DRAM capacity GB", "l35_dram_gb")
+            _cxl_s = _setup_gb("L3.5 CXL GB", "L3.5 CXL capacity GB", "l35_cxl_gb")
+            _ssd_s = _setup_gb("L3.5 SSD GB", "L3.5 NVMe SSD GB", "L3.5 SSD capacity GB", "l35_ssd_gb")
+            _parts = []
+            if _dram_s > 0 or _cxl_s > 0:
+                if _dram_s > 0:
+                    _parts.append(f"DRAM: {_gb(_dram_s)}")
+                if _cxl_s > 0:
+                    _parts.append(f"CXL: {_gb(_cxl_s)}")
+            elif _mem_gb > 0:
+                _parts.append(f"memory: {_gb(_mem_gb)} [DRAM/CXL split not reported]")
+            _ssd = _file_gb or _ssd_s
+            if _ssd > 0:
+                _parts.append(f"NVMe SSD: {_gb(_ssd)}")
+            _l35 = "L3.5 (" + " + ".join(_parts) + ")" if _parts else "L3.5"
+            _split = _dram_s + _cxl_s
+            if _split > 0 and _mem_gb > 0 and abs(_split - _mem_gb) > 0.05 * _mem_gb:
+                _l35 += (f" [setup DRAM + CXL {_gb(_split)} ≠ measured memory "
+                         f"{_gb(_mem_gb)}]")
+            _layers.append(_l35)
+        _cache_tier_label = "Enabled · " + " + ".join(_layers)
     else:
         _cache_tier_label = (str(cache_enabled) if cache_enabled else "Disabled")
 

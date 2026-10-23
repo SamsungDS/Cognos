@@ -266,6 +266,18 @@ def validate_html(html: str, label: str) -> Result:
                 "CHARTS distribution n says what it counts",
                 ", ".join(f"{k}: {lbl}" for k, (_, lbl) in _ns.items() if lbl == "observations"))
 
+    # The Inference Cache Tier line names every KV layer with its memory type
+    # ("L1 (HBM: x GB) + ... + L3.5 (DRAM: a GB + CXL: b GB + ...)"), so a
+    # report can be tied to its configuration from the header alone.
+    m_tier = re.search(r"Inference Cache Tier</b>:\s*([^<]+)", unesc)
+    if m_tier and m_tier.group(1).strip().startswith("Enabled"):
+        _line = m_tier.group(1)
+        _layers = re.findall(r"(?:^|[·+]\s)(L(?:3\.5|1|2|3))\b", _line)
+        _typed = re.findall(r"(?:^|[·+]\s)L(?:3\.5|1|2|3) \((?:HBM|DRAM|NVMe SSD|CXL|memory)", _line)
+        r.check(bool(_layers) and "L1" in _layers and len(_typed) == len(_layers),
+                "LAYOUT Inference Cache Tier names each layer's memory type",
+                _line.strip()[:160])
+
     # HBM composition is a partition of the device: its bands must add up to
     # the capacity in the chart header.  KV in use was once counted twice,
     # giving 214.1 GB (119%) on a 179 GB card.
