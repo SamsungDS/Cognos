@@ -274,7 +274,7 @@ def main() -> int:
     try:
         _a4 = _kvg(_mk_run(_t2 / "all"))
         _check("with all three counters it reports GB",
-               _a4[0], "2,546.5 GB")
+               _a4[0], "2,734.3 GB")   # decimal GB (2,546.5 was GiB printed as GB)
         _check("from 2,781,424 computed tokens",
                "2,781,424 tokens of KV actually computed" in _a4[1], True)
 
@@ -290,8 +290,8 @@ def main() -> int:
 
         _c4 = _kvg(_mk_run(_t2 / "nocached", cached=None))
         _check("with no cached counter the figure is 73x higher",
-               round(187_019.4 / 2_546.5, 0), 73.0)
-        _check("which is what it reports", _c4[0], "187,019.4 GB")
+               round(200_810.5 / 2_734.3, 0), 73.0)
+        _check("which is what it reports", _c4[0], "200,810.5 GB")
         _check("but it says the cached total did not resolve",
                "Cached prompt tokens did not resolve" in _c4[1], True)
         # The factor is NOT 1/(1-h): decode sits in both terms, so the real

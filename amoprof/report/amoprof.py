@@ -52,6 +52,12 @@ try:
         counter_window_total as _k_counter_total,
         rank_combine_rule as _k_rank_combine_rule,
         summarise_rank_rules as _k_summarise_rank_rules,
+        KB as _K_KB, MB as _K_MB, GB as _K_GB, TB as _K_TB,
+        GIB_TO_GB as _K_GIB_TO_GB,
+        gb_from_bytes as _k_gb_from_bytes, gb_from_kib as _k_gb_from_kib,
+        gb_from_mib as _k_gb_from_mib, gb_from_gib as _k_gb_from_gib,
+        mb_from_bytes as _k_mb_from_bytes, kb_from_bytes as _k_kb_from_bytes,
+        collector_gb as _k_collector_gb,
         RANK_LABELS as _K_RANK_LABELS)
 except Exception:  # pragma: no cover - standalone/bundled execution
     from metric_kernels import (  # type: ignore
@@ -66,6 +72,12 @@ except Exception:  # pragma: no cover - standalone/bundled execution
         counter_window_total as _k_counter_total,
         rank_combine_rule as _k_rank_combine_rule,
         summarise_rank_rules as _k_summarise_rank_rules,
+        KB as _K_KB, MB as _K_MB, GB as _K_GB, TB as _K_TB,
+        GIB_TO_GB as _K_GIB_TO_GB,
+        gb_from_bytes as _k_gb_from_bytes, gb_from_kib as _k_gb_from_kib,
+        gb_from_mib as _k_gb_from_mib, gb_from_gib as _k_gb_from_gib,
+        mb_from_bytes as _k_mb_from_bytes, kb_from_bytes as _k_kb_from_bytes,
+        collector_gb as _k_collector_gb,
         RANK_LABELS as _K_RANK_LABELS)
 
 # amoprof.py is also run directly as a script (python .../report/amoprof.py),
@@ -1385,6 +1397,31 @@ _AMOPROF_SERVICE_METRIC_ALIASES: dict[str, list[str]] = {
     ],
 }
 
+# Scale from an alias's own unit to the canonical metric's unit, for aliases
+# whose units differ (the canonical node_exporter series are bytes and
+# bytes/s).  nvme_driver's *_bw_mbs_sysfs is sectors × 512 / 1048576 (MiB/s);
+# the dram collector's "_gb" is /proc/meminfo kB / 1024 / 1024 (GiB).
+_AMOPROF_ALIAS_SCALE: dict[str, float] = {
+    "amoprof_nvme_driver_nvme_rd_bw_mbs_sysfs": 2 ** 20,
+    "amoprof_nvme_driver_nvme_wr_bw_mbs_sysfs": 2 ** 20,
+    "amoprof_nvme_driver_nvme_rd_bw_mbs_mean":  1e6,
+    "amoprof_nvme_driver_nvme_wr_bw_mbs_mean":  1e6,
+    "amoprof_iostat_rd_bw_mbs_mean":            1e6,
+    "amoprof_iostat_wr_bw_mbs_mean":            1e6,
+    "amoprof_dram_dram_available_gb":           2 ** 30,
+}
+
+# Collector bandwidth gauges named "*_mb*" that are really MiB/s: iostat's
+# rMB/s (or rkB/s / 1024) and nvme_driver's sectors × 512 / 1048576.  The
+# timeseries synthesis rescales them to decimal MB/s so they agree with the
+# blktrace candidates (bytes / 1e6) they share a fallback chain with.
+_AMOPROF_MIB_S_METRICS = frozenset({
+    "amoprof_iostat_read_bw_mb_mean", "amoprof_iostat_write_bw_mb_mean",
+    "amoprof_iostat_read_bw_mb_peak", "amoprof_iostat_write_bw_mb_peak",
+    "amoprof_nvme_driver_nvme_rd_bw_mbs_sysfs",
+    "amoprof_nvme_driver_nvme_wr_bw_mbs_sysfs",
+})
+
 
 def _prom_api_base(url: str) -> str:
     """Convert any Prometheus-related URL to the base API URL.
@@ -1829,7 +1866,11 @@ def _aggregate_service_cycles(rows, win_start: float, win_end: float,
     if not config:
         for ratio, num, den in _CYCLE_RATIOS:
             if ratio in out and num in out and den in out:
-                out[ratio] = round(out[num] / out[den], 3) if out[den] > 0.01 else 0.0
+                # NAND and host "GB" are written in different units by the
+                # collectors; compare them only after converting both to GB.
+                _num_gb = _k_collector_gb(num, out[num])
+                _den_gb = _k_collector_gb(den, out[den])
+                out[ratio] = round(_num_gb / _den_gb, 3) if _den_gb > 0.01 else 0.0
         # tokens/Wh per cycle, weighted by that cycle's energy = sum(tok)/sum(Wh).
         if "power_efficiency_tok_per_wh" in out:
             pairs = [(s.get("total_system_energy_wh", 0.0), s["power_efficiency_tok_per_wh"])
@@ -2927,6 +2968,10 @@ def collect_from_prometheus_api(
                     continue
                 _df = _qr(alias, force_selector=_amoprof_sel)
                 if not _df.empty:
+                    _scale = _AMOPROF_ALIAS_SCALE.get(alias)
+                    if _scale:
+                        _df = _df.copy()
+                        _df["value"] = pd.to_numeric(_df["value"], errors="coerce") * _scale
                     return _df
             return pd.DataFrame()
 
@@ -4092,6 +4137,9 @@ def collect_from_prometheus_api(
                                           f"Q→C counting artifact, not a queue.")
                                     continue
                             cols[_key] = _df.groupby("time_sec")["value"].mean()
+                            if not raw_expr and _cand in _AMOPROF_MIB_S_METRICS:
+                                # MiB/s published under an "mb" name → MB/s.
+                                cols[_key] = pd.to_numeric(cols[_key], errors="coerce") * 2 ** 20 / _K_MB
                             break
                 if not cols:
                     # A colmap value is EITHER a metric name or a list of
@@ -6642,6 +6690,24 @@ def parse_blktrace(path: str, device: str = "") -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def _iostat_to_decimal_mb_s(df: pd.DataFrame,
+                            mb_cols=("r_mb_s", "w_mb_s", "d_mb_s")) -> pd.DataFrame:
+    """Rewrite iostat bandwidth columns as decimal MB/s (1e6 bytes/s).
+
+    sysstat's kB/s and MB/s are 1024 and 1024**2 bytes/s.  r_mb_s / w_mb_s /
+    d_mb_s (from rMB/s etc.) are rescaled in place; r_kb_s / w_kb_s fill
+    r_mb_s / w_mb_s when no MB column exists.
+    """
+    for _c in mb_cols:
+        if _c in df.columns:
+            df[_c] = pd.to_numeric(df[_c], errors="coerce") * 2 ** 20 / _K_MB
+    if "r_kb_s" in df.columns and "r_mb_s" not in df.columns:
+        df["r_mb_s"] = pd.to_numeric(df["r_kb_s"], errors="coerce") * 1024 / _K_MB
+    if "w_kb_s" in df.columns and "w_mb_s" not in df.columns:
+        df["w_mb_s"] = pd.to_numeric(df["w_kb_s"], errors="coerce") * 1024 / _K_MB
+    return df
+
+
 def parse_iostat(path: str, device: str = "nvme") -> pd.DataFrame:
     """
     Parse iostat output. Handles:
@@ -6673,14 +6739,17 @@ def parse_iostat(path: str, device: str = "nvme") -> pd.DataFrame:
                               for c in df_raw.columns]
             renames = {"r_s": "r_s", "w_s": "w_s",
                        "rmb_s": "r_mb_s", "wmb_s": "w_mb_s",
-                       "rkb_s": "r_mb_s",  # will divide by 1024 below if needed
-                       "wkb_s": "w_mb_s",
+                       "rkb_s": "r_kb_s",  # converted to MB/s below
+                       "wkb_s": "w_kb_s",
                        "r_await": "r_await_ms", "w_await": "w_await_ms",
                        "aqu_sz": "queue_depth", "aqu-sz": "queue_depth",
                        "pct_util": "util_pct",
                        "time": "time_sec", "timestamp": "time_sec"}
+            _sysstat_mb = tuple(renames[k] for k in ("rmb_s", "wmb_s")
+                                if k in df_raw.columns)
             df_raw = df_raw.rename(columns={k: v for k, v in renames.items()
                                              if k in df_raw.columns})
+            df_raw = _iostat_to_decimal_mb_s(df_raw, mb_cols=_sysstat_mb)
             if "device" in df_raw.columns and device:
                 df_raw = df_raw[df_raw["device"].str.contains(device, na=False)]
             if "time_sec" not in df_raw.columns:
@@ -6764,11 +6833,7 @@ def parse_iostat(path: str, device: str = "nvme") -> pd.DataFrame:
         }
         df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
 
-        # Convert kB/s to MB/s if MB columns not present
-        if "r_kb_s" in df.columns and "r_mb_s" not in df.columns:
-            df["r_mb_s"] = df["r_kb_s"] / 1024
-        if "w_kb_s" in df.columns and "w_mb_s" not in df.columns:
-            df["w_mb_s"] = df["w_kb_s"] / 1024
+        df = _iostat_to_decimal_mb_s(df)
 
         # Ensure standard columns exist
         for col in ("r_s","w_s","r_mb_s","w_mb_s","r_await_ms","w_await_ms",
@@ -7017,7 +7082,7 @@ def _compute_blktrace_metrics(
         return out
 
     sub = sub.sort_values("time_sec").reset_index(drop=True)
-    sizes = sub["size_bytes"].values / 1024  # KB
+    sizes = sub["size_bytes"].values / _K_KB  # KB (decimal)
 
     # Inter-arrival times (ms)
     iats_us = np.diff(sub["time_sec"].values) * 1e6
@@ -7408,12 +7473,12 @@ def load_raw_dir_with_extras(
             if raw_csv.exists():
                 fsize = raw_csv.stat().st_size
                 max_raw_mb = int(os.environ.get("AMOPROF_MAX_RAW_BLKTRACE_CSV_MB", "256"))
-                if fsize > max_raw_mb * 1024 * 1024:
-                    print(f"    Skipping raw events CSV load ({fsize//1024//1024} MB); "
+                if fsize > max_raw_mb * _K_MB:
+                    print(f"    Skipping raw events CSV load ({fsize / _K_MB:.0f} MB); "
                           f"using compact blktrace-analysis CSVs only. "
                           f"Set AMOPROF_MAX_RAW_BLKTRACE_CSV_MB to override.")
                 else:
-                    print(f"    Loading raw events CSV ({fsize//1024//1024} MB)...")
+                    print(f"    Loading raw events CSV ({fsize / _K_MB:.0f} MB)...")
                     try:
                         read_kw = dict(low_memory=False, comment=None, on_bad_lines='skip')
                         blkt = pd.read_csv(raw_csv, **read_kw)
@@ -7441,8 +7506,8 @@ def load_raw_dir_with_extras(
     if blktrace_file:
         bf = Path(blktrace_file)
         max_raw_mb = int(os.environ.get("AMOPROF_MAX_RAW_BLKTRACE_CSV_MB", "256"))
-        if bf.exists() and bf.stat().st_size > max_raw_mb * 1024 * 1024:
-            print(f"  [blktrace] Skipping raw per-event load ({bf.stat().st_size//1024//1024} MB); "
+        if bf.exists() and bf.stat().st_size > max_raw_mb * _K_MB:
+            print(f"  [blktrace] Skipping raw per-event load ({bf.stat().st_size / _K_MB:.0f} MB); "
                   f"use --blktrace-analysis-dir / pre-aggregated CSVs instead.", flush=True)
             blkt = pd.DataFrame()
         else:
@@ -7528,10 +7593,10 @@ def load_raw_dir_with_extras(
                 for _, row in io_df.iterrows():
                     r_mb = float(row.get("r_mb_s", row.get("r_kb_s", 0)) or 0)
                     if "r_kb_s" in io_df.columns and "r_mb_s" not in io_df.columns:
-                        r_mb = r_mb / 1024
+                        r_mb = r_mb * 1024 / _K_MB  # KiB/s -> MB/s
                     w_mb = float(row.get("w_mb_s", row.get("w_kb_s", 0)) or 0)
                     if "w_kb_s" in io_df.columns and "w_mb_s" not in io_df.columns:
-                        w_mb = w_mb / 1024
+                        w_mb = w_mb * 1024 / _K_MB
                     # Use 0 for wr_ios/rd_ios (not cumulative) so extract_metrics
                     # doesn't apply .diff() to already-computed rates
                     nv_rows.append({
@@ -7697,9 +7762,9 @@ class Metrics:
     swap_in_pages_per_s_peak:    float = 0
     swap_out_pages_per_s_mean:   float = 0   # pswpout rate
     swap_out_pages_per_s_peak:   float = 0
-    swap_in_mb_per_s_mean:       float = 0   # MiB/s = pages/s × 4 / 1024
+    swap_in_mb_per_s_mean:       float = 0   # MB/s = pages/s × 4096 / 1e6
     swap_out_mb_per_s_mean:      float = 0
-    swap_total_mb:               float = 0
+    swap_total_mb:               float = 0   # MiB (meminfo / node_exporter bytes / 2**20)
     swap_free_mb_min:            float = 0   # minimum free swap observed
     swap_used_pct_max:           float = 0   # peak swap utilization
     swap_thrashing_pct:          float = 0   # % of samples with significant swap activity
@@ -7716,7 +7781,7 @@ class Metrics:
     kv_bytes_source: str = ""         # how kv_bytes_per_token was resolved
     kv_bytes_exact: bool = False      # True when from an exact model config
     kv_bytes_per_token: int = 0       # bytes per token in KV cache
-    kv_bytes_per_token_kb: float = 0  # same in KB
+    kv_bytes_per_token_kb: float = 0  # bytes / 1024 (KiB); display KB via kb_from_bytes(kv_bytes_per_token)
     kv_n_layers: int = 0              # model transformer layers
     kv_n_heads: int = 0               # KV heads (post-GQA/MLA)
     kv_head_dim: int = 0              # attention head dimension
@@ -9019,8 +9084,10 @@ def extract_metrics(data: dict) -> Metrics:
 
     # ── DRAM summary ──────────────────────────────────────────────────────────
     dr = data.get("dram_summary", {})
-    m.dram_used_gb = float(dr.get("dram_used_gb_mean", 0))
-    m.dram_total_gb = float(dr.get("dram_total_gb", 0))
+    # The dram collector writes /proc/meminfo kB / 1024 / 1024 (GiB) under
+    # "_gb" names; convert to decimal GB on read.
+    m.dram_used_gb = _k_gb_from_gib(dr.get("dram_used_gb_mean", 0))
+    m.dram_total_gb = _k_collector_gb("dram_total_gb", dr.get("dram_total_gb", 0))
     m.dram_util_pct = float(dr.get("dram_util_pct_mean", 0))
     # Also populate DRAM bandwidth KPI fields from dram_summary.json. Some
     # runs have parsed AMDuProf summary values but no raw timeseries. Without
@@ -9062,9 +9129,9 @@ def extract_metrics(data: dict) -> Metrics:
             m.swap_in_pages_per_s_peak    = safe_float(in_rate.max())
             m.swap_out_pages_per_s_mean   = safe_float(out_rate.mean())
             m.swap_out_pages_per_s_peak   = safe_float(out_rate.max())
-            # 1 page = 4 KiB on x86_64 → 4096/1024^2 = 1/256 MiB
-            m.swap_in_mb_per_s_mean       = round(m.swap_in_pages_per_s_mean / 256, 3)
-            m.swap_out_mb_per_s_mean      = round(m.swap_out_pages_per_s_mean / 256, 3)
+            # 1 page = 4096 bytes on x86_64 → MB/s = pages/s × 4096 / 1e6
+            m.swap_in_mb_per_s_mean       = round(m.swap_in_pages_per_s_mean * 4096 / _K_MB, 3)
+            m.swap_out_mb_per_s_mean      = round(m.swap_out_pages_per_s_mean * 4096 / _K_MB, 3)
 
             # Storm detection: contiguous samples above threshold
             thr = m.swap_storm_threshold_pages_per_s
@@ -9521,8 +9588,8 @@ def extract_metrics(data: dict) -> Metrics:
     m.kv_weight_gb_per_gpu = round(weight_bytes_per_gpu / 1e9, 1)
 
     # HBM pool available for KV after weights
-    hbm_total_gb = m.hbm_total_mb / 1024
-    kv_pool_gb   = max(0.0, hbm_total_gb - m.kv_weight_gb_per_gpu - 0.5)  # 0.5GB CUDA runtime
+    hbm_total_gb = _k_gb_from_mib(m.hbm_total_mb)  # nvidia-smi / DCGM MiB → GB
+    kv_pool_gb  = max(0.0, hbm_total_gb - m.kv_weight_gb_per_gpu - 0.5)  # 0.5GB CUDA runtime
     m.kv_hbm_pool_gb    = round(kv_pool_gb, 1)
     m.kv_hbm_max_tokens = int(kv_pool_gb * 1e9 / kv_bytes) if kv_bytes > 0 else 0
 
@@ -9753,12 +9820,15 @@ def extract_metrics(data: dict) -> Metrics:
     # Keep SMART/df data available until final effective-L3 resolution.
     # L3-active runs may expose generic HiCache backend=file + real blktrace/logical
     # activity without explicit L3 setup keys; L2-only runs are cleared below.
-    _fs_total_gb = safe_float(_smart_s.get("hicache_fs_total_gb", 0))
-    _fs_used_gb  = safe_float(_smart_s.get("hicache_fs_used_gb",  0))
-    _fs_avail_gb = safe_float(_smart_s.get("hicache_fs_avail_gb", 0))
+    # Collector "_gb" capacity fields are GiB (/ 1024**3); convert to GB.
+    def _smart_gb(_key):
+        return _k_collector_gb(_key, safe_float(_smart_s.get(_key, 0)))
+    _fs_total_gb = _smart_gb("hicache_fs_total_gb")
+    _fs_used_gb  = _smart_gb("hicache_fs_used_gb")
+    _fs_avail_gb = _smart_gb("hicache_fs_avail_gb")
     _fs_pct      = safe_float(_smart_s.get("hicache_fs_used_pct", 0))
-    _du_used_gb  = safe_float(_smart_s.get("hicache_size_gb",     0))
-    _dev_cap_gb  = safe_float(_smart_s.get("nvme_device_capacity_gb", 0))
+    _du_used_gb  = _smart_gb("hicache_size_gb")
+    _dev_cap_gb  = _smart_gb("nvme_device_capacity_gb")
     # SMART temperature (feeds SSD spec card — Sheet 2 row 12 "Thermals").
     m.nvme_temp_peak_c = safe_float(_smart_s.get("temp_peak_c", 0))
     m.nvme_temp_end_c  = safe_float(_smart_s.get("temp_end_c", 0))
@@ -10664,8 +10734,8 @@ def extract_metrics(data: dict) -> Metrics:
         bs = m.kvb_block_size_tokens
         m.kvb_l1_pool_blocks = int(l1_cap_tok / bs) if bs > 0 else 0
         m.kvb_l2_pool_blocks = int(l2_cap_tok / bs) if bs > 0 else 0
-        m.kvb_block_size_mb  = round(bs * m.kv_bytes_per_token / 1024 / 1024, 2) if m.kv_bytes_per_token > 0 else 0
-        m.kvb_tokens_per_mb  = round(1024 * 1024 / m.kv_bytes_per_token, 1) if m.kv_bytes_per_token > 0 else 0
+        m.kvb_block_size_mb  = round(bs * m.kv_bytes_per_token / _K_MB, 2) if m.kv_bytes_per_token > 0 else 0
+        m.kvb_tokens_per_mb  = round(_K_MB / m.kv_bytes_per_token, 1) if m.kv_bytes_per_token > 0 else 0
 
         if hi_col is not None:
             # Same NaN guard as above — first/last sample may be missing.
@@ -10802,7 +10872,7 @@ def extract_metrics(data: dict) -> Metrics:
         for bytes_col, bw_col in [("rd_bytes", "rd_bw_mbs"), ("wr_bytes", "wr_bw_mbs")]:
             if bytes_col in nv.columns and bw_col not in nv.columns:
                 byte_diff = nv[bytes_col].diff().clip(0)
-                nv[bw_col] = (byte_diff / dt2.replace(0, np.nan) / (1024 * 1024)).fillna(0).clip(0)
+                nv[bw_col] = (byte_diff / dt2.replace(0, np.nan) / _K_MB).fillna(0).clip(0)
 
         # No byte source: the bandwidth is unknown, not IOPS x KV block size.
         # That product assumed every I/O moved one whole KV block (8.75 MB on
@@ -10940,14 +11010,14 @@ def extract_metrics(data: dict) -> Metrics:
     if isinstance(blkio_df2, pd.DataFrame) and not blkio_df2.empty and len(blkio_df2) > 10:
         m.blkio_available = True
         if "size_bytes" in blkio_df2.columns:
-            sk = blkio_df2["size_bytes"] / 1024
+            sk = blkio_df2["size_bytes"] / _K_KB
             m.blkio_req_size_mean_kb = round(float(sk.mean()), 1)
             m.blkio_req_size_p50_kb  = round(float(sk.quantile(0.5)), 1)
             m.blkio_req_size_p99_kb  = round(float(sk.quantile(0.99)), 1)
         if "offset_bytes" in blkio_df2.columns:
             offs = blkio_df2["offset_bytes"].sort_values().values
             diffs2 = np.diff(offs)
-            bskvb = m.kvb_block_size_mb * 1024 * 1024 if m.kvb_block_size_mb > 0 else 5*1024*1024
+            bskvb = m.kvb_block_size_mb * _K_MB if m.kvb_block_size_mb > 0 else 5 * _K_MB
             m.blkio_seq_pct         = round(float((diffs2 < bskvb * 2).mean() * 100), 1)
             m.blkio_aligned_kvb_pct = round(float((offs % int(bskvb) == 0).mean() * 100), 1)
             m.blkio_aligned_page_pct= round(float((offs % 4096 == 0).mean() * 100), 1)
@@ -11053,7 +11123,7 @@ def extract_metrics(data: dict) -> Metrics:
             m.kvb_offload_bps = round(m.kvb_offload_tok_rate * kv_b, 0)
             m.kvb_offload_bw_gbs = round(m.kvb_offload_bps / 1e9, 6)
         else:
-            m.kvb_offload_bw_gbs = round(m.kvb_l1_offload_rate_blk_s * m.kvb_block_size_mb / 1024, 6)
+            m.kvb_offload_bw_gbs = round(m.kvb_l1_offload_rate_blk_s * m.kvb_block_size_mb / 1e3, 6)
         m.kvb_onboard_bw_gbs      = round(m.kvb_onboard_tokens_rate * kv_b / 1e9, 6)
 
         # ── Logical L3 byte fallback / reconciliation from SGLang counters ───
@@ -11065,11 +11135,11 @@ def extract_metrics(data: dict) -> Metrics:
         # orders of magnitude. Keep it as a diagnostic upper bound only.
         _sg_est_wr_bytes = int(m.kvb_backuped_tokens_total * kv_b) if m.kvb_backuped_tokens_total > 0 else 0
         _sg_est_rd_bytes = int(m.kvb_prefetched_tokens_total * kv_b) if m.kvb_l3_storage_observed and m.kvb_prefetched_tokens_total > 0 else 0
-        m.kvb_loadback_upper_bound_gb = (m.kvb_loadback_tokens_total * kv_b) / (1024**3) if m.kvb_loadback_tokens_total > 0 else 0.0
-        m.l3_sglang_write_gb = _sg_est_wr_bytes / (1024**3) if _sg_est_wr_bytes > 0 else 0.0
-        m.l3_sglang_read_gb = _sg_est_rd_bytes / (1024**3) if _sg_est_rd_bytes > 0 else 0.0
-        m.l3_block_write_gb = float(m.ssd_wr_bytes_total or 0) / (1024**3)
-        m.l3_block_read_gb = float(m.ssd_rd_bytes_total or 0) / (1024**3)
+        m.kvb_loadback_upper_bound_gb = (m.kvb_loadback_tokens_total * kv_b) / _K_GB if m.kvb_loadback_tokens_total > 0 else 0.0
+        m.l3_sglang_write_gb = _sg_est_wr_bytes / _K_GB if _sg_est_wr_bytes > 0 else 0.0
+        m.l3_sglang_read_gb = _sg_est_rd_bytes / _K_GB if _sg_est_rd_bytes > 0 else 0.0
+        m.l3_block_write_gb = float(m.ssd_wr_bytes_total or 0) / _K_GB
+        m.l3_block_read_gb = float(m.ssd_rd_bytes_total or 0) / _K_GB
         try:
             if reconcile_l3_io is not None:
                 _recon = reconcile_l3_io(
@@ -11293,7 +11363,9 @@ def extract_metrics(data: dict) -> Metrics:
         if isinstance(summary, dict) and ("read" in summary or "write" in summary):
             rd = summary.get("read",  {}) or {}
             wr = summary.get("write", {}) or {}
+            _bw_scale = 2 ** 20 / _K_MB   # rich analyzer: bandwidth_mib_s_* is MiB/s
         else:
+            _bw_scale = 1.0               # streaming analyzer: bytes / 1e6 (MB/s)
             rd = {
                 "bandwidth_mib_s_avg_over_trace": summary.get("read_bw_mb_s_mean", summary.get("read_bw_mib_s_mean", 0)),
                 "count": summary.get("read_events", 0),
@@ -11328,10 +11400,10 @@ def extract_metrics(data: dict) -> Metrics:
             }
 
         # §C scalar values from summary.json
-        m.ssd_rd_bw_mbs_mean     = round(rd.get("bandwidth_mib_s_avg_over_trace", 0), 2)
-        m.ssd_rd_size_mean_kb    = round(rd.get("request_size_bytes_avg", 0) / 1024, 2)
-        m.ssd_rd_size_p50_kb     = round(rd.get("request_size_bytes_p50", 0) / 1024, 2)
-        m.ssd_rd_size_p99_kb     = round(rd.get("request_size_bytes_p99", 0) / 1024, 2)
+        m.ssd_rd_bw_mbs_mean     = round(rd.get("bandwidth_mib_s_avg_over_trace", 0) * _bw_scale, 2)
+        m.ssd_rd_size_mean_kb    = round(rd.get("request_size_bytes_avg", 0) / _K_KB, 2)
+        m.ssd_rd_size_p50_kb     = round(rd.get("request_size_bytes_p50", 0) / _K_KB, 2)
+        m.ssd_rd_size_p99_kb     = round(rd.get("request_size_bytes_p99", 0) / _K_KB, 2)
         m.ssd_rd_iat_mean_us     = round(rd.get("inter_arrival_sec_avg", 0) * 1e6, 4)
         m.ssd_rd_iat_p50_us      = round(rd.get("inter_arrival_sec_p50", 0) * 1e6, 4)
         m.ssd_rd_iat_p99_us      = round(rd.get("inter_arrival_sec_p99", 0) * 1e6, 4)
@@ -11368,9 +11440,9 @@ def extract_metrics(data: dict) -> Metrics:
         m.ssd_rd_rand_pct = round(rand_rd / max(rand_rd+seq_rd,1) * 100, 1)
 
         # §D write scalars
-        m.ssd_wr_bw_mbs_mean     = round(wr.get("bandwidth_mib_s_avg_over_trace", 0), 2)
-        m.ssd_wr_size_mean_kb    = round(wr.get("request_size_bytes_avg", 0) / 1024, 2)
-        m.ssd_wr_size_p99_kb     = round(wr.get("request_size_bytes_p99", 0) / 1024, 2)
+        m.ssd_wr_bw_mbs_mean     = round(wr.get("bandwidth_mib_s_avg_over_trace", 0) * _bw_scale, 2)
+        m.ssd_wr_size_mean_kb    = round(wr.get("request_size_bytes_avg", 0) / _K_KB, 2)
+        m.ssd_wr_size_p99_kb     = round(wr.get("request_size_bytes_p99", 0) / _K_KB, 2)
         m.ssd_wr_iat_mean_us     = round(wr.get("inter_arrival_sec_avg", 0) * 1e6, 4)
         m.ssd_wr_iat_p99_us      = round(wr.get("inter_arrival_sec_p99", 0) * 1e6, 4)
         m.ssd_wr_bytes_total     = safe_int(wr.get("total_bytes", 0))
@@ -11392,14 +11464,16 @@ def extract_metrics(data: dict) -> Metrics:
             m.ssd_rd_stream_count            = int(rd_bps["stream"].nunique()) if not rd_bps.empty else 0
             m.ssd_wr_stream_count            = int(wr_bps["stream"].nunique()) if not wr_bps.empty else 0
             # Use median for typical BW; filter single-event streams for max
+            # bandwidth_mib_s is bytes / 1048576 / s; stored here as MB/s.
+            _mib = 2 ** 20 / _K_MB
             if not rd_bps.empty:
-                m.ssd_rd_bw_per_stream_mean_mbs = round(float(rd_bps["bandwidth_mib_s"].median()), 2)
+                m.ssd_rd_bw_per_stream_mean_mbs = round(float(rd_bps["bandwidth_mib_s"].median()) * _mib, 2)
                 multi = rd_bps[rd_bps["count"] > 10]
-                m.ssd_rd_bw_per_stream_max_mbs  = round(float(multi["bandwidth_mib_s"].max()), 2) if not multi.empty else 0
+                m.ssd_rd_bw_per_stream_max_mbs  = round(float(multi["bandwidth_mib_s"].max()) * _mib, 2) if not multi.empty else 0
             if not wr_bps.empty:
-                m.ssd_wr_bw_per_stream_mean_mbs = round(float(wr_bps["bandwidth_mib_s"].median()), 2)
+                m.ssd_wr_bw_per_stream_mean_mbs = round(float(wr_bps["bandwidth_mib_s"].median()) * _mib, 2)
                 multi_w = wr_bps[wr_bps["count"] > 10]
-                m.ssd_wr_bw_per_stream_max_mbs  = round(float(multi_w["bandwidth_mib_s"].max()), 2) if not multi_w.empty else 0
+                m.ssd_wr_bw_per_stream_max_mbs  = round(float(multi_w["bandwidth_mib_s"].max()) * _mib, 2) if not multi_w.empty else 0
 
         # Access skew
         ask = ba.get("access_skew")
@@ -11517,8 +11591,8 @@ def extract_metrics(data: dict) -> Metrics:
                 else:
                     rd_mbs2 = rd_bw; wr_mbs2 = wr_bw
                 # IOPS: prefer real per-window counts; else derive from BW/size
-                rd_sz_b2 = max(m.ssd_rd_size_mean_kb * 1024, 131072)
-                wr_sz_b2 = max(m.ssd_wr_size_mean_kb * 1024, 131072)
+                rd_sz_b2 = max(m.ssd_rd_size_mean_kb * _K_KB, 131072)
+                wr_sz_b2 = max(m.ssd_wr_size_mean_kb * _K_KB, 131072)
                 if rd_cnt.max() > 0 or wr_cnt.max() > 0:
                     rd_iops2 = (rd_cnt / dts2).fillna(0)
                     wr_iops2 = (wr_cnt / dts2).fillna(0)
@@ -11589,7 +11663,7 @@ def extract_metrics(data: dict) -> Metrics:
                 if not rd_rsd.empty:
                     # Build a minimal ssd_rd_ts compatible with the chart functions
                     sz_col = next((c for c in ("size_bytes","size","bytes") if c in rd_rsd.columns), None)
-                    sz = rd_rsd[sz_col].values if sz_col else np.full(len(rd_rsd), int(m.ssd_rd_size_mean_kb*1024) or 4096)
+                    sz = rd_rsd[sz_col].values if sz_col else np.full(len(rd_rsd), int(m.ssd_rd_size_mean_kb * _K_KB) or 4096)
                     n = len(sz)
                     # Reconstruct timestamps using mean IAT
                     mean_iat_s = m.ssd_rd_iat_mean_us / 1e6 if m.ssd_rd_iat_mean_us > 0 else 1e-5
@@ -11622,7 +11696,7 @@ def extract_metrics(data: dict) -> Metrics:
                                     iats = rd_iat[iat_col].values
                                     ts_syn = np.concatenate([[0], np.cumsum(iats)])
                                     n = len(ts_syn)
-                                    rd_sz_b = int(m.ssd_rd_size_mean_kb * 1024) or 131072
+                                    rd_sz_b = int(m.ssd_rd_size_mean_kb * _K_KB) or 131072
                                     m.ssd_rd_ts = pd.DataFrame({
                                         "time_sec":    ts_syn,
                                         "type":        ["R"] * n,
@@ -11700,8 +11774,8 @@ def extract_metrics(data: dict) -> Metrics:
                         # Keep plotting bounded even if the sample CSV is large.
                         m.blkio_ts = tmp[["time_sec","type","size_bytes","sector","offset_bytes","is_seq","is_sequential","lat_ms"]].head(200000).copy()
 
-                    rd_sz = tmp.loc[tmp["type"] == "R", "size_bytes"] / 1024.0
-                    wr_sz = tmp.loc[tmp["type"] == "W", "size_bytes"] / 1024.0
+                    rd_sz = tmp.loc[tmp["type"] == "R", "size_bytes"] / _K_KB
+                    wr_sz = tmp.loc[tmp["type"] == "W", "size_bytes"] / _K_KB
                     if not rd_sz.empty and not m.rd_req_size_hist_kb:
                         m.rd_req_size_hist_kb = rd_sz.head(200000).tolist()
                     if not wr_sz.empty and not m.wr_req_size_hist_kb:
@@ -11769,7 +11843,7 @@ def extract_metrics(data: dict) -> Metrics:
                 m.trim_ops_total = m.trim_ops_total or trim_count
                 m.trim_bytes_total = m.trim_bytes_total or int(trim_bytes)
                 if trim_count > 0:
-                    m.trim_req_size_mean_kb = m.trim_req_size_mean_kb or (trim_bytes / trim_count / 1024.0)
+                    m.trim_req_size_mean_kb = m.trim_req_size_mean_kb or (trim_bytes / trim_count / _K_KB)
 
     # Priority 2: raw blkparse events CSV
     blkt = data.get("blktrace_raw")
@@ -11796,7 +11870,7 @@ def extract_metrics(data: dict) -> Metrics:
 
         m.blktrace_available = True
         m.blkio_available = True
-        kv_blk_bytes = m.kvb_block_size_mb * 1024 * 1024 if m.kvb_block_size_mb > 0 else 0
+        kv_blk_bytes = m.kvb_block_size_mb * _K_MB if m.kvb_block_size_mb > 0 else 0
 
         # Re-compute alignment with correct kv_block_bytes now that we know it
         if kv_blk_bytes > 0 and "offset_bytes" in blkt.columns and "size_bytes" in blkt.columns:
@@ -12100,16 +12174,16 @@ def extract_metrics(data: dict) -> Metrics:
     iostat_df = data.get("iostat_timeseries")
     if isinstance(iostat_df, pd.DataFrame) and not iostat_df.empty:
         m.iostat_available = True
-        if "rkB_s" in iostat_df.columns:
-            m.rd_bw_gbs = round(float(iostat_df["rkB_s"].mean() / 1e6), 4)
+        if "rkB_s" in iostat_df.columns:   # sysstat kB = 1024 bytes
+            m.rd_bw_gbs = round(float(iostat_df["rkB_s"].mean() * 1024 / _K_GB), 4)
             m.nvme_rd_bw_mbs_mean = max(getattr(m, "nvme_rd_bw_mbs_mean", 0.0),
-                                        float(iostat_df["rkB_s"].mean() / 1024))
+                                        float(iostat_df["rkB_s"].mean() * 1024 / _K_MB))
             m.nvme_rd_bw_mbs_max = max(getattr(m, "nvme_rd_bw_mbs_max", 0.0),
-                                       float(iostat_df["rkB_s"].max() / 1024))
+                                       float(iostat_df["rkB_s"].max() * 1024 / _K_MB))
         if "wkB_s" in iostat_df.columns:
-            m.wr_bw_gbs = round(float(iostat_df["wkB_s"].mean() / 1e6), 4)
+            m.wr_bw_gbs = round(float(iostat_df["wkB_s"].mean() * 1024 / _K_GB), 4)
             m.nvme_wr_bw_mbs_mean = max(m.nvme_wr_bw_mbs_mean,
-                                        float(iostat_df["wkB_s"].mean() / 1024))
+                                        float(iostat_df["wkB_s"].mean() * 1024 / _K_MB))
         if "util_pct" in iostat_df.columns:
             m.nvme_io_util_pct = max(m.nvme_io_util_pct,
                                      float(iostat_df["util_pct"].mean()))
@@ -12118,10 +12192,10 @@ def extract_metrics(data: dict) -> Metrics:
     gen_tok = max(m.decode_tokens, 1)
     prom_tok = max(m.prefill_compute_tokens + m.prefill_cache_tokens, 1)
     run_s    = max(m.run_duration_s, 1)
-    rd_kb    = m.rd_total_bytes / 1024 if m.rd_total_bytes > 0 else (
-               m.nvme_bytes_read_total / 1024)
-    wr_kb    = m.wr_total_bytes / 1024 if m.wr_total_bytes > 0 else (
-               m.nvme_bytes_written_total / 1024)
+    rd_kb    = m.rd_total_bytes / _K_KB if m.rd_total_bytes > 0 else (
+               m.nvme_bytes_read_total / _K_KB)
+    wr_kb    = m.wr_total_bytes / _K_KB if m.wr_total_bytes > 0 else (
+               m.nvme_bytes_written_total / _K_KB)
 
     m.ssd_read_per_output_token_kb  = round(rd_kb / gen_tok,  4) if rd_kb > 0 else 0
     m.ssd_write_per_input_token_kb  = round(wr_kb / prom_tok, 4) if wr_kb > 0 else 0
@@ -12275,7 +12349,7 @@ def extract_metrics(data: dict) -> Metrics:
     # ── C/D/E: blktrace-derived metrics ──────────────────────────────────────
     _bd = [data.get("blktrace"), data.get("blkio_trace"), data.get("blkio_timeseries")]
     blkio_df3 = next((d for d in _bd if isinstance(d, pd.DataFrame) and not d.empty), pd.DataFrame())
-    kv_blk_bytes = int(m.kvb_block_size_mb * 1024 * 1024) if m.kvb_block_size_mb > 0 else 5*1024*1024
+    kv_blk_bytes = int(m.kvb_block_size_mb * _K_MB) if m.kvb_block_size_mb > 0 else int(5 * _K_MB)
     dur3 = m.run_duration_s if m.run_duration_s > 0 else 1
 
     if isinstance(blkio_df3, pd.DataFrame) and not blkio_df3.empty and len(blkio_df3) > 5:
@@ -12339,7 +12413,7 @@ def extract_metrics(data: dict) -> Metrics:
             m.trim_kvb_aligned_pct   = tr_stats.get("kvb_aligned_pct", 0)
             m.trim_bw_mbs            = tr_stats.get("bw_mbs_mean", 0)
             m.trim_iops_mean         = tr_stats.get("bw_mbs_mean", 0) * 1e6 / (
-                                           m.trim_size_mean_kb * 1024) if m.trim_size_mean_kb > 0 else 0
+                                           m.trim_size_mean_kb * _K_KB) if m.trim_size_mean_kb > 0 else 0
 
     # §E — Seasonal analysis from node_disk timeseries (node_exporter)
     nv_io2 = getattr(m, "nvme_io_ts", pd.DataFrame())
@@ -12469,7 +12543,7 @@ def extract_metrics(data: dict) -> Metrics:
                       m.nvme_bytes_read_total / max(dur3, 1) / 1e6,
                       _sglang_rd_bw_mbs)
     if ssd_eff_bw > 0 and m.kv_bytes_per_token > 0:
-        m.ssd_effective_bw_gbs       = round(ssd_eff_bw / 1024, 3)
+        m.ssd_effective_bw_gbs       = round(ssd_eff_bw / 1e3, 3)
         ssd_tok_rate                  = ssd_eff_bw * 1e6 / m.kv_bytes_per_token
         gpu_tok_rate2                 = m.gen_tp_mean if m.gen_tp_mean > 0 else m.gen_tp_peak
         if gpu_tok_rate2 > 0 and ssd_tok_rate > 0:
@@ -12538,8 +12612,8 @@ def extract_metrics(data: dict) -> Metrics:
         _l3_gate_ok = _l3_class_here not in ("host_dram_only",)
         if _kv_b_l3 > 0 and (_sg_wr_bytes > 0 or _sg_rd_bytes > 0) and _l3_gate_ok:
             m.kvb_l3_storage_observed = True
-            m.l3_sglang_write_gb = max(float(getattr(m, "l3_sglang_write_gb", 0) or 0), _sg_wr_bytes / (1024**3))
-            m.l3_sglang_read_gb  = max(float(getattr(m, "l3_sglang_read_gb",  0) or 0), _sg_rd_bytes / (1024**3))
+            m.l3_sglang_write_gb = max(float(getattr(m, "l3_sglang_write_gb", 0) or 0), _sg_wr_bytes / _K_GB)
+            m.l3_sglang_read_gb  = max(float(getattr(m, "l3_sglang_read_gb",  0) or 0), _sg_rd_bytes / _K_GB)
             _sg_wr_mbs = _sg_wr_bytes / _run_s_l3 / 1e6 if _sg_wr_bytes > 0 else 0.0
             _sg_rd_mbs = _sg_rd_bytes / _run_s_l3 / 1e6 if _sg_rd_bytes > 0 else 0.0
             # Kept in their own fields.  max()-ing them into ssd_/nvme_*_mean
@@ -12551,14 +12625,14 @@ def extract_metrics(data: dict) -> Metrics:
             _prompt_tok = max(float(getattr(m, "prefill_compute_tokens", 0) or 0) + float(getattr(m, "prefill_cache_tokens", 0) or 0), 1.0)
             if _sg_rd_bytes > 0:
                 m.ssd_rd_bytes_per_output_tok = max(float(getattr(m, "ssd_rd_bytes_per_output_tok", 0) or 0), round(_sg_rd_bytes / _gen_tok, 1))
-                m.ssd_read_per_output_token_kb = max(float(getattr(m, "ssd_read_per_output_token_kb", 0) or 0), round((_sg_rd_bytes / 1024.0) / _gen_tok, 4))
+                m.ssd_read_per_output_token_kb = max(float(getattr(m, "ssd_read_per_output_token_kb", 0) or 0), round((_sg_rd_bytes / _K_KB) / _gen_tok, 4))
             if _sg_wr_bytes > 0:
                 m.ssd_wr_bytes_per_input_tok = max(float(getattr(m, "ssd_wr_bytes_per_input_tok", 0) or 0), round(_sg_wr_bytes / _prompt_tok, 1))
-                m.ssd_write_per_input_token_kb = max(float(getattr(m, "ssd_write_per_input_token_kb", 0) or 0), round((_sg_wr_bytes / 1024.0) / _prompt_tok, 4))
+                m.ssd_write_per_input_token_kb = max(float(getattr(m, "ssd_write_per_input_token_kb", 0) or 0), round((_sg_wr_bytes / _K_KB) / _prompt_tok, 4))
             if _sg_rd_mbs > 0:
                 _l3_tok_s = (_sg_rd_mbs * 1e6) / max(_kv_b_l3, 1.0)
                 m.throughput_bottleneck_ssd_tok_s = max(float(getattr(m, "throughput_bottleneck_ssd_tok_s", 0) or 0), round(_l3_tok_s, 1))
-                m.ssd_effective_bw_gbs = max(float(getattr(m, "ssd_effective_bw_gbs", 0) or 0), round(_sg_rd_mbs / 1024.0, 3))
+                m.ssd_effective_bw_gbs = max(float(getattr(m, "ssd_effective_bw_gbs", 0) or 0), round(_sg_rd_mbs / 1e3, 3))
             # Capacity/residency fallback for KV$B charts: keep consistent with
             # KV$ Per Cache Tier when no explicit resident_tokens gauge exists.
             if int(getattr(m, "kv_l3_nvme_tokens", 0) or 0) <= 0:
@@ -12655,7 +12729,7 @@ def score_bottlenecks(m: Metrics) -> list[dict]:
     layers.append({
         "layer": "HBM Bandwidth", "score": _clamp_score(hbm_score),
         "phase": "Decode → TPOT", "color": HBM_C,
-        "detail": f"HBM {m.hbm_util_pct:.1f}% used ({m.hbm_used_mb_mean/1024:.1f}/{m.hbm_total_mb/1024:.0f} GB). "
+        "detail": f"HBM {m.hbm_util_pct:.1f}% used ({_k_gb_from_mib(m.hbm_used_mb_mean):.1f}/{_k_gb_from_mib(m.hbm_total_mb):.0f} GB). "
                   f"TPOT {m.tpot_ms:.1f}ms/tok. Autoregressive decode re-reads model weights each step.",
         "severity": "HIGH" if hbm_score>60 else "MED" if hbm_score>30 else "LOW",
     })
@@ -12814,7 +12888,7 @@ def _token_reuse_density_html(m: "Metrics") -> str:
         f'<b style="color:{col}">{"&gt; 100" if good else "&le; 100"}: {verdict}</b><br>'
         f'{m.reuse_reused_tokens:,.0f} reused prompt tokens ÷ {m.reuse_kv_generated_gb:,.0f} GB KV '
         f'({m.reuse_computed_tokens:,.0f} computed prompt + {m.reuse_output_tokens:,.0f} output tokens '
-        f'× {m.kv_bytes_per_token_kb:,.0f} KB/token)</span></div>')
+        f'× {_k_kb_from_bytes(m.kv_bytes_per_token):,.0f} KB/token)</span></div>')
 
 
 def _is_time_axis(ax) -> bool:
@@ -13602,7 +13676,7 @@ def _canonical_gpu_chart_payload(m: Metrics, points_per_gpu: int = 750) -> dict:
         x_max_s = 1.0
 
     try:
-        cap_gb = float(getattr(m, "hbm_total_mb", 0) or 0) / 1024.0
+        cap_gb = _k_gb_from_mib(getattr(m, "hbm_total_mb", 0))
     except Exception:
         cap_gb = 0.0
 
@@ -13739,7 +13813,7 @@ def chart_gpu_timeline(m: Metrics) -> str:
         for i, (idx, sub) in enumerate(sorted(gdf.groupby("gpu_idx"), key=lambda x: sort_key(x[0]))):
             sub = sub.sort_values("time_sec")
             t = _amoprof_numeric_array(sub["time_sec"], default=0.0) / 60.0
-            y = _amoprof_numeric_array(sub["_hbm_used_mb"], default=0.0) / 1024.0
+            y = _amoprof_numeric_array(sub["_hbm_used_mb"], default=0.0) * 2 ** 20 / _K_GB
             good = np.isfinite(t) & np.isfinite(y) & (y > 0)
             if np.any(good):
                 axm.plot(t[good], y[good], lw=1.7, alpha=0.86, color=colors[i % len(colors)],
@@ -13750,7 +13824,7 @@ def chart_gpu_timeline(m: Metrics) -> str:
         mean_mem = gdf.groupby("time_sec", as_index=False)["_hbm_used_mb"].mean().sort_values("time_sec")
         mean_mem = downsample(mean_mem, 900)
         x = _amoprof_numeric_array(mean_mem["time_sec"], default=0.0) / 60.0
-        y = _amoprof_numeric_array(mean_mem["_hbm_used_mb"], default=0.0) / 1024.0
+        y = _amoprof_numeric_array(mean_mem["_hbm_used_mb"], default=0.0) * 2 ** 20 / _K_GB
         good = np.isfinite(x) & np.isfinite(y) & (y > 0)
         if np.any(good):
             axm.plot(x[good], y[good], color=HBM_C, lw=3.2, zorder=5, label="Mean HBM used / visible GPU")
@@ -13883,7 +13957,7 @@ def canonical_gpu_plotly_figure(m: Metrics, points_per_gpu: int = 900,
         mean_mem = downsample(mean_mem, points_per_gpu)
         traces.append({
             "x": (_amoprof_numeric_series(mean_mem["time_sec"], default=0.0) / 60.0).round(4).tolist(),
-            "y": _amoprof_numeric_series(mean_mem["_hbm_used_mb"], default=0.0).round(1).tolist(),
+            "y": (_amoprof_numeric_series(mean_mem["_hbm_used_mb"], default=0.0) * 2 ** 20 / _K_MB).round(1).tolist(),  # MiB → MB
             "type": "scatter", "mode": "lines", "name": "Mean HBM used (MB, visible GPUs)",
             "line": {"color": "#7c3aed", "width": 2.8, "dash": "dashdot"},
             "yaxis": "y2", "hovertemplate": "<b>%{y:.0f}</b> MB/GPU<extra></extra>",
@@ -13994,9 +14068,8 @@ def _canonical_l2_dram_residency_gb(m: Metrics) -> tuple[float, float, str]:
                 tokens = float(ser.mean())
                 kv_bytes = float(getattr(m, "kv_bytes_per_token", 0) or 0)
                 if kv_bytes > 0:
-                    # Use GiB-style conversion to match Executive's KB/1024^2
-                    # path and preserve the same displayed scale.
-                    full_gb = tokens * kv_bytes / (1024.0 ** 3)
+                    # Decimal GB (1e9 bytes), the same unit as dram_total_gb.
+                    full_gb = tokens * kv_bytes / _K_GB
                     tp = 1.0
                     try:
                         tp = float((getattr(m, "setup_details", {}) or {}).get("TP size") or
@@ -14137,7 +14210,7 @@ def chart_memory(m: Metrics) -> str:
     )
     ax.text(0, 0, f"{raw_hbm_pct:.1f}%", ha="center", va="center",
             fontsize=22, fontweight="bold", color=HBM_C)
-    ax.set_title(f"HBM used per GPU\n{m.hbm_used_mb_mean/1024:.1f}/{m.hbm_total_mb/1024:.0f} GB avg", fontsize=13, fontweight="bold")
+    ax.set_title(f"HBM used per GPU\n{_k_gb_from_mib(m.hbm_used_mb_mean):.1f}/{_k_gb_from_mib(m.hbm_total_mb):.0f} GB avg", fontsize=13, fontweight="bold")
     ax.set_facecolor(BG3)
 
     # 2. DRAM over time / L2 HiCache residency (Executive-consistent)
@@ -14178,8 +14251,8 @@ def chart_memory(m: Metrics) -> str:
     if not m.gpu_ts.empty and "gpu_idx" in m.gpu_ts.columns and "mem_used" in m.gpu_ts.columns:
         gpu_peak = pd.to_numeric(m.gpu_ts["mem_used"], errors="coerce").groupby(m.gpu_ts["gpu_idx"]).max().fillna(0).values
         gpu_ids = [f"GPU {i}" for i in range(len(gpu_peak))]
-        bars = ax.bar(gpu_ids, gpu_peak / 1024, color=HBM_C, alpha=0.85, width=0.62, label="Peak HBM used")
-        ax.axhline(m.hbm_total_mb / 1024, color=WARN_C, lw=1.2, ls="--", label="HBM capacity")
+        bars = ax.bar(gpu_ids, gpu_peak * 2 ** 20 / _K_GB, color=HBM_C, alpha=0.85, width=0.62, label="Peak HBM used")
+        ax.axhline(_k_gb_from_mib(m.hbm_total_mb), color=WARN_C, lw=1.2, ls="--", label="HBM capacity")
         ax.set_title("Peak HBM used per GPU", fontsize=13, fontweight="bold")
         ax.set_ylabel("GB", fontsize=11)
         for b in bars:
@@ -14253,10 +14326,10 @@ def chart_storage(m: Metrics) -> str:
         # observed/read-write request size.  This keeps the section populated
         # for iostat/blktrace-derived SSD L3 runs.
         if rd_iops.sum() <= 0 and "rd_bw_mbs" in ndf2.columns:
-            rd_sz_mb = max(float(getattr(m, "ssd_rd_size_mean_kb", 0.0) or 0.0) / 1024.0, 0.004)
+            rd_sz_mb = max(float(getattr(m, "ssd_rd_size_mean_kb", 0.0) or 0.0) / 1e3, 0.004)
             rd_iops = pd.to_numeric(ndf2["rd_bw_mbs"], errors="coerce").fillna(0).clip(lower=0) / rd_sz_mb
         if wr_iops.sum() <= 0 and "wr_bw_mbs" in ndf2.columns:
-            wr_sz_mb = max(float(getattr(m, "ssd_wr_size_mean_kb", 0.0) or 0.0) / 1024.0, 0.004)
+            wr_sz_mb = max(float(getattr(m, "ssd_wr_size_mean_kb", 0.0) or 0.0) / 1e3, 0.004)
             wr_iops = pd.to_numeric(ndf2["wr_bw_mbs"], errors="coerce").fillna(0).clip(lower=0) / wr_sz_mb
 
         rd_bw = pd.to_numeric(ndf2.get("rd_bw_mbs", pd.Series([0] * len(ndf2))), errors="coerce").fillna(0).clip(lower=0)
@@ -15075,7 +15148,7 @@ def chart_swap_storm(m: "Metrics") -> str:
     ax1.axhline(-thr, color="#f59e0b", lw=1, ls="--", alpha=0.7,
                 label=f"storm threshold ±{thr:.0f} pg/s")
     ax1.axhline(0, color="#475569", lw=0.8)
-    ax1.set_xlabel(_time_xlabel(m), fontsize=8); ax1.set_ylabel("Pages/s (4 KiB pages)", fontsize=8)
+    ax1.set_xlabel(_time_xlabel(m), fontsize=8); ax1.set_ylabel("Pages/s (4096-byte pages)", fontsize=8)
     ax1.set_title("Swap I/O Rate Timeline", fontsize=10, fontweight="bold")
     if ax1.get_legend_handles_labels()[0]: ax1.legend(fontsize=7, loc="upper right")
     ax1.grid(True, alpha=0.3); ax1.tick_params(labelsize=7)
@@ -15114,8 +15187,8 @@ def chart_swap_storm(m: "Metrics") -> str:
         ax3.set_ylabel("Swap used (%)", fontsize=8)
         ax3.text(0.02, 0.95,
                  f"Peak: {m.swap_used_pct_max:.1f}%\n"
-                 f"Free min: {m.swap_free_mb_min:.0f} MiB\n"
-                 f"Total: {m.swap_total_mb:.0f} MiB",
+                 f"Free min: {m.swap_free_mb_min * 2 ** 20 / _K_MB:.0f} MB\n"
+                 f"Total: {m.swap_total_mb * 2 ** 20 / _K_MB:.0f} MB",
                  transform=ax3.transAxes, fontsize=7.5, va="top", fontfamily="monospace",
                  bbox=dict(boxstyle="round,pad=0.3", facecolor="#fff", edgecolor="#cbd5e1"))
     else:
@@ -15186,13 +15259,13 @@ def chart_swap_storm(m: "Metrics") -> str:
     ax6.set_xticks([]); ax6.set_yticks([])
     for sp in ax6.spines.values(): sp.set_edgecolor("#94a3b8")
     kpis = [
-        ("Mean swap-in",      f"{m.swap_in_pages_per_s_mean:>9.1f} pg/s   ({m.swap_in_mb_per_s_mean:.2f} MiB/s)"),
+        ("Mean swap-in",      f"{m.swap_in_pages_per_s_mean:>9.1f} pg/s   ({m.swap_in_mb_per_s_mean:.2f} MB/s)"),
         ("Peak swap-in",      f"{m.swap_in_pages_per_s_peak:>9.1f} pg/s"),
-        ("Mean swap-out",     f"{m.swap_out_pages_per_s_mean:>9.1f} pg/s   ({m.swap_out_mb_per_s_mean:.2f} MiB/s)"),
+        ("Mean swap-out",     f"{m.swap_out_pages_per_s_mean:>9.1f} pg/s   ({m.swap_out_mb_per_s_mean:.2f} MB/s)"),
         ("Peak swap-out",     f"{m.swap_out_pages_per_s_peak:>9.1f} pg/s"),
         ("Storm episodes",    f"{m.swap_storm_episode_count:>9d}        ({m.swap_storm_total_duration_s:.0f}s, {m.swap_thrashing_pct:.1f}% of run)"),
         ("Worst storm peak",  f"{m.swap_storm_worst_pages_per_s:>9.1f} pg/s"),
-        ("Swap utilization",  f"{m.swap_used_pct_max:>9.2f}% peak ({m.swap_free_mb_min:.0f} MiB free min)"),
+        ("Swap utilization",  f"{m.swap_used_pct_max:>9.2f}% peak ({m.swap_free_mb_min * 2 ** 20 / _K_MB:.0f} MB free min)"),
         ("Write amp ratio",   f"{m.swap_write_amp_ratio:>9.2f}× NVMe writes / pswpout"),
         ("Swap↔majflt corr",  f"{m.swap_majfault_correlation:>9.3f} (Pearson r)"),
     ]
@@ -15252,7 +15325,7 @@ def chart_kv_analysis(m: "Metrics") -> str:
     xs, ys, cs = [], [], []
     for label, factor, color in components:
         product *= factor
-        xs.append(label); ys.append(product / 1024); cs.append(color)
+        xs.append(label); ys.append(product / _K_KB); cs.append(color)
     bars = ax.bar(xs, ys, color=cs, alpha=0.85, width=0.5,
                   edgecolor="#94a3b8", linewidth=0.5)
     for bar, val in zip(bars, ys):
@@ -15261,7 +15334,7 @@ def chart_kv_analysis(m: "Metrics") -> str:
                 color="#0f172a", fontweight="bold")
     ax.set_ylabel("Cumulative KV cost (KB/token)", fontsize=9, color="#475569")
     ax.set_title(f"Per-Token KV Footprint\n"
-                 f"{m.kv_attention_type}: {m.kv_bytes_per_token_kb:.0f} KB/token",
+                 f"{m.kv_attention_type}: {_k_kb_from_bytes(m.kv_bytes_per_token):.0f} KB/token",
                  fontsize=10, fontweight="bold")
     ax.tick_params(labelsize=8); ax.grid(True, axis="y", alpha=0.3, color="#e2e8f0")
     for sp in ax.spines.values(): sp.set_edgecolor("#94a3b8")
@@ -15272,7 +15345,7 @@ def chart_kv_analysis(m: "Metrics") -> str:
     dtype_opts = [("FP16", 2), ("BF16", 2), ("FP8", 1), ("INT8", 1), ("INT4", 0.5)]
     base = m.kv_bytes_per_token if m.kv_bytes_per_token > 0 else 327680
     base_dtype = max(m.kv_dtype_bytes, 0.5)
-    dtypes_vals    = [base * d[1] / base_dtype / 1024 for d in dtype_opts]
+    dtypes_vals    = [base * d[1] / base_dtype / _K_KB for d in dtype_opts]
     dtypes_max_tok = [int(m.kv_hbm_pool_gb * 1e9 / (base * d[1] / base_dtype))
                       if base > 0 else 0 for d in dtype_opts]
     colors2 = ["#ef4444","#f97316","#22c55e","#3b82f6","#a855f7"]
@@ -15301,7 +15374,7 @@ def chart_kv_analysis(m: "Metrics") -> str:
     ax3.set_facecolor("#f8fafc")
     weight_gb = m.kv_weight_gb_per_gpu
     pool_gb   = m.kv_hbm_pool_gb
-    runtime   = max(0, m.hbm_total_mb / 1024 - weight_gb - pool_gb)
+    runtime   = max(0, _k_gb_from_mib(m.hbm_total_mb) - weight_gb - pool_gb)
     used_kv   = (pool_gb * m.kv_pool_fill_pct / 100) if m.kv_pool_fill_pct > 0 else \
                 (m.kv_active_tokens * m.kv_bytes_per_token / 1e9
                  if m.kv_active_tokens > 0 else 0)
@@ -15316,8 +15389,8 @@ def chart_kv_analysis(m: "Metrics") -> str:
             ax3.text(val + 0.2, bar.get_y() + bar.get_height()/2,
                      f"{val:.1f} GB", va="center", fontsize=8,
                      color="#0f172a", fontweight="bold")
-    ax3.axvline(m.hbm_total_mb/1024, color="#ef4444", lw=1, ls="--", alpha=0.7,
-                label=f"Total {m.hbm_total_mb/1024:.0f} GB")
+    ax3.axvline(_k_gb_from_mib(m.hbm_total_mb), color="#ef4444", lw=1, ls="--", alpha=0.7,
+                label=f"Total {_k_gb_from_mib(m.hbm_total_mb):.0f} GB")
     ax3.set_xlabel("GB per GPU", fontsize=9, color="#475569")
     ax3.set_title(f"HBM Allocation per GPU\n"
                   f"Max context: {m.kv_hbm_max_tokens:,} tokens",
@@ -15396,7 +15469,7 @@ def chart_kv_tiers(m: "Metrics") -> str:
             ax2.text(i, lat * 0.45, f"{lat/lats[0]:.0f}× slower", ha="center", va="top",
                      fontsize=8, color=TIER_COLORS[i], fontweight="bold")
     ax2.set_ylabel("Read latency per token (ms, log scale)", fontsize=9, color="#475569")
-    ax2.set_title(f"KV Read Latency per Token\n({m.kv_bytes_per_token_kb:.0f} KB/token)",
+    ax2.set_title(f"KV Read Latency per Token\n({_k_kb_from_bytes(m.kv_bytes_per_token):.0f} KB/token)",
                   fontsize=10, fontweight="bold")
     ax2.tick_params(labelsize=8)
     ax2.grid(True, axis="y", alpha=0.3, color="#e2e8f0", which="both")
@@ -15404,13 +15477,13 @@ def chart_kv_tiers(m: "Metrics") -> str:
 
     # 3. Tier fill % using size/GB, not tokens
     ax3 = axes[2]; ax3.set_facecolor("#f8fafc")
-    hbm_cap_gb = float(getattr(m, "hbm_total_mb", 0) or 0) / 1024.0
-    hbm_used_gb = float(getattr(m, "hbm_used_mb_mean", 0) or 0) / 1024.0
+    hbm_cap_gb = _k_gb_from_mib(getattr(m, "hbm_total_mb", 0))
+    hbm_used_gb = _k_gb_from_mib(getattr(m, "hbm_used_mb_mean", 0))
     hbm_pct = hbm_used_gb / hbm_cap_gb * 100.0 if hbm_cap_gb > 0 else float(getattr(m, "hbm_util_pct", 0) or 0)
     dram_cap_gb = float(getattr(m, "dram_total_gb", 0) or 0)
     dram_used_gb = float(getattr(m, "dram_used_gb", 0) or 0)
     if dram_used_gb <= 0 and not getattr(m, "dram_ts", pd.DataFrame()).empty and "used_gb" in m.dram_ts.columns:
-        dram_used_gb = float(pd.to_numeric(m.dram_ts["used_gb"], errors="coerce").dropna().mean())
+        dram_used_gb = _k_collector_gb("used_gb", pd.to_numeric(m.dram_ts["used_gb"], errors="coerce").dropna().mean())
     dram_pct = dram_used_gb / dram_cap_gb * 100.0 if dram_cap_gb > 0 else float(getattr(m, "dram_util_pct", 0) or 0)
     l3_cap_gb = float(getattr(m, "kv_l3_capacity_gb", 0) or 0)
     l3_used_gb = float(getattr(m, "kv_l3_used_gb", 0) or 0)
@@ -15869,6 +15942,10 @@ def chart_ssd_per_device_overlay(m: "Metrics") -> str:
         if tcol == "ts" and len(t) and float(t.iloc[0]) > 1_000_000_000:
             t = t - float(t.iloc[0])
         v = pd.to_numeric(df[vcol], errors="coerce").fillna(0).clip(lower=0)
+        if vcol in ("rMBs", "wMBs", "rd_mb_s", "wr_mb_s"):
+            # iostat (rkB/s / 1024) and discard (sectors × 512 / 1048576)
+            # write MiB/s under these names; plot decimal MB/s.
+            v = v * 2 ** 20 / _K_MB
         return t / 60.0, v
 
     # Distinct-but-consistent color per device slug.
@@ -16152,7 +16229,7 @@ def chart_endurance_projection(m: "Metrics") -> str:
       • m.nvme_smart_wear_pct          (SMART percent_used, 0..100)
 
     Assumed DWPD budget: 1.0 (typical consumer NVMe) with a target of
-    5-year lifetime → TBW_budget = 1.0 × capacity_gb × 365 × 5 / 1024 TB.
+    5-year lifetime → TBW_budget = 1.0 × capacity_gb × 365 × 5 / 1000 TB.
 
     Returns "" when no write bytes were captured (chart is meaningless).
     """
@@ -16167,20 +16244,20 @@ def chart_endurance_projection(m: "Metrics") -> str:
     # Observed write pace
     gb_per_hr  = (bytes_wr / 1e9) / (dur_s / 3600.0)
     gb_per_day = gb_per_hr * 24
-    tb_per_day = gb_per_day / 1024.0
+    tb_per_day = gb_per_day / 1e3
 
     # Rated budget: 5-year × 1.0 DWPD default.
     DEFAULT_DWPD  = 1.0
     LIFETIME_YRS  = 5.0
-    tbw_budget_tb = DEFAULT_DWPD * (cap_gb / 1024.0) * 365.0 * LIFETIME_YRS
+    tbw_budget_tb = DEFAULT_DWPD * (cap_gb / 1e3) * 365.0 * LIFETIME_YRS
     # Days to burn one drive's TBW at the observed pace.
     days_to_limit = (tbw_budget_tb / tb_per_day) if tb_per_day > 0 else float("inf")
     years_to_limit = days_to_limit / 365.0
 
     # Required DWPD for LIFETIME_YRS at observed pace.
-    required_dwpd = (tb_per_day * 365.0 * LIFETIME_YRS) / (cap_gb / 1024.0) / (365.0 * LIFETIME_YRS) if cap_gb > 0 else 0
+    required_dwpd = (tb_per_day * 365.0 * LIFETIME_YRS) / (cap_gb / 1e3) / (365.0 * LIFETIME_YRS) if cap_gb > 0 else 0
     # Simpler equivalent (kept explicit for clarity):
-    required_dwpd = tb_per_day * 1024.0 / cap_gb
+    required_dwpd = tb_per_day * 1e3 / cap_gb
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 5.6))
     fig.patch.set_facecolor("#ffffff")
@@ -16494,9 +16571,9 @@ def chart_ssd_requirement_summary(m: "Metrics") -> str:
     dur_s     = float(getattr(m, "run_duration_s", 0) or 0)
     bytes_wr  = float(getattr(m, "nvme_bytes_written_total", 0) or 0)
     cap_gb    = float(getattr(m, "nvme_device_capacity_gb", 0) or 0)
-    tb_per_day = ((bytes_wr / 1e9) / (dur_s / 3600.0) * 24 / 1024.0
+    tb_per_day = ((bytes_wr / 1e9) / (dur_s / 3600.0) * 24 / 1e3
                   if dur_s > 0 and bytes_wr > 0 else 0.0)
-    required_dwpd = (tb_per_day * 1024.0 / cap_gb) if cap_gb > 0 else 0.0
+    required_dwpd = (tb_per_day * 1e3 / cap_gb) if cap_gb > 0 else 0.0
 
     # Controller Parallelism — peak concurrent stream count.
     n_streams = 0
@@ -16512,7 +16589,7 @@ def chart_ssd_requirement_summary(m: "Metrics") -> str:
     # PCIe Gen classification — Gen4 saturates around 7 GB/s; Gen5 around 14.
     # We look at the largest of (peak read BW, peak write BW).
     peak_bw_mbs = max(rd_bw_peak, wr_bw_peak)
-    peak_bw_gbs = peak_bw_mbs / 1024.0
+    peak_bw_gbs = peak_bw_mbs / 1e3
     if peak_bw_gbs >= 12.0:
         pcie_gen = "Gen5 x4"
         pcie_reason = f"peak {peak_bw_gbs:.1f} GB/s exceeds Gen4 ceiling (~7 GB/s)"
@@ -17159,14 +17236,14 @@ def chart_blkio_deep(m: "Metrics") -> str:
     # 1. Request size distribution
     ax = axes[0]; _style(ax)
     if m.blkio_available and not m.blkio_ts.empty and "size_bytes" in m.blkio_ts.columns:
-        sk = pd.to_numeric(m.blkio_ts["size_bytes"], errors="coerce").dropna() / 1024
+        sk = pd.to_numeric(m.blkio_ts["size_bytes"], errors="coerce").dropna() / _K_KB
         if len(sk):
             ax.hist(sk, bins=min(40, max(10, len(sk)//50)), color="#6366f1", alpha=0.75,
                     edgecolor="#4338ca", linewidth=0.5)
-            kvb_line = m.kvb_block_size_mb * 1024
+            kvb_line = m.kvb_block_size_mb * 1e3
             if kvb_line > 0:
                 ax.axvline(kvb_line, color="#ef4444", lw=1.5, ls="--", label=f"KV block {kvb_line:.0f} KB")
-            ax.axvline(4, color="#f97316", lw=1, ls=":", label="4 KB page")
+            ax.axvline(4.096, color="#f97316", lw=1, ls=":", label="4096 B page")
             if ax.get_legend_handles_labels()[0]: ax.legend(fontsize=8)
     else:
         ax.text(0.5, 0.5, "Request-level trace not available\nNo blank biosnoop placeholder shown",
@@ -17271,14 +17348,14 @@ def chart_kvssd_io(m: "Metrics") -> str:
         for op, clr, lab in [("R", "#3b82f6", "Read"), ("W", "#f97316", "Write")]:
             sub = m.blkio_ts[m.blkio_ts.get("type", "") == op]
             if not sub.empty:
-                sk = sub["size_bytes"] / 1024
+                sk = sub["size_bytes"] / _K_KB
                 ax.hist(sk, bins=min(30, max(10, len(sk)//50)), color=clr, alpha=0.65, label=lab)
                 plotted = True
     if plotted:
-        kvb_kb = float(getattr(m, "kvb_block_size_mb", 0) or 0) * 1024
+        kvb_kb = float(getattr(m, "kvb_block_size_mb", 0) or 0) * 1e3
         if kvb_kb > 0:
             ax.axvline(kvb_kb, color="#ef4444", lw=1.2, ls="--", label=f"KV block {kvb_kb:.0f} KB")
-        ax.axvline(4, color="#a855f7", lw=1, ls=":", label="4 KB page")
+        ax.axvline(4.096, color="#a855f7", lw=1, ls=":", label="4096 B page")
         if ax.get_legend_handles_labels()[0]: ax.legend(fontsize=7)
     else:
         ax.text(0.5, 0.5, "Request-size samples unavailable\nEmpty alignment/IAT panels removed", ha="center", va="center",
@@ -17415,9 +17492,9 @@ def chart_kvssd_cross_layer(m: "Metrics") -> str:
     vals2 = [float(getattr(m, "ssd_read_per_output_token_kb", 0) or 0),
              float(getattr(m, "ssd_write_per_input_token_kb", 0) or 0)]
     if vals2[0] <= 0 and float(getattr(m, "ssd_rd_bytes_per_output_tok", 0) or 0) > 0:
-        vals2[0] = float(getattr(m, "ssd_rd_bytes_per_output_tok", 0) or 0) / 1024.0
+        vals2[0] = float(getattr(m, "ssd_rd_bytes_per_output_tok", 0) or 0) / _K_KB
     if vals2[1] <= 0 and float(getattr(m, "ssd_wr_bytes_per_input_tok", 0) or 0) > 0:
-        vals2[1] = float(getattr(m, "ssd_wr_bytes_per_input_tok", 0) or 0) / 1024.0
+        vals2[1] = float(getattr(m, "ssd_wr_bytes_per_input_tok", 0) or 0) / _K_KB
     bars2 = ax2.bar(cats2, vals2, color=["#3b82f6", "#f97316"], alpha=0.85, width=0.42,
                     edgecolor="#94a3b8", lw=0.5)
     ymax2 = max(vals2 + [0.001])
@@ -17425,7 +17502,7 @@ def chart_kvssd_cross_layer(m: "Metrics") -> str:
     for bar, val in zip(bars2, vals2):
         ax2.text(bar.get_x()+bar.get_width()/2, val + ymax2*0.05, f"{val:.3f} KB",
                  ha="center", va="bottom", fontsize=9, fontweight="bold", color="#0f172a")
-    kvb_kb = float(getattr(m, "kv_bytes_per_token", 0) or 0) / 1024
+    kvb_kb = _k_kb_from_bytes(getattr(m, "kv_bytes_per_token", 0))
     if kvb_kb > 0 and kvb_kb < ymax2 * 1.25:
         ax2.axhline(kvb_kb, color="#a855f7", lw=1, ls="--", alpha=0.7, label=f"KV/token {kvb_kb:.0f} KB")
         ax2.legend(fontsize=8, loc="upper right", frameon=True)
@@ -17480,7 +17557,7 @@ def chart_ssd_read_workload(m: "Metrics") -> str:
         if bw_col:
             vals = ts[bw_col].fillna(0).values
             if bw_col == "rd_iops":
-                vals = vals * (m.ssd_rd_size_mean_kb / 1024 if m.ssd_rd_size_mean_kb > 0 else 0.128)
+                vals = vals * (m.ssd_rd_size_mean_kb / 1e3 if m.ssd_rd_size_mean_kb > 0 else 0.128)
             if vals.max() > 0:
                 ax.fill_between(t, vals, alpha=0.22, color=C1)
                 ax.plot(t, vals, color=C1, lw=1.5, label="Read MB/s")
@@ -17499,11 +17576,11 @@ def chart_ssd_read_workload(m: "Metrics") -> str:
     # 2. Request size distribution
     ax2 = axes[1]; _style(ax2)
     if m.blkio_available and not m.ssd_rd_ts.empty and "size_bytes" in m.ssd_rd_ts.columns:
-        sk = m.ssd_rd_ts["size_bytes"] / 1024
+        sk = m.ssd_rd_ts["size_bytes"] / _K_KB
         ax2.hist(sk, bins=min(30, max(10, len(sk)//50)), color=C1, alpha=0.75, edgecolor="#1d4ed8", lw=0.5)
-        kv_kb = m.kvb_block_size_mb * 1024
+        kv_kb = m.kvb_block_size_mb * 1e3
         if kv_kb > 0: ax2.axvline(kv_kb, color="#ef4444", lw=1.5, ls="--", label=f"KV block {kv_kb:.0f} KB")
-        ax2.axvline(4, color="#f97316", lw=1, ls=":", label="4 KB page")
+        ax2.axvline(4.096, color="#f97316", lw=1, ls=":", label="4096 B page")
         if ax2.get_legend_handles_labels()[0]: ax2.legend(fontsize=8)
     else:
         ax2.text(0.5, 0.5, f"Read request-size summary\nMean≈{m.ssd_rd_size_mean_kb:.1f} KB\nP99≈{m.ssd_rd_size_p99_kb:.1f} KB",
@@ -17586,7 +17663,7 @@ def chart_ssd_write_workload(m: "Metrics") -> str:
         if bw_col:
             wr = ts[bw_col].fillna(0).values
             if bw_col == "wr_iops":
-                wr = wr * (m.ssd_wr_size_mean_kb / 1024 if m.ssd_wr_size_mean_kb > 0 else 0.128)
+                wr = wr * (m.ssd_wr_size_mean_kb / 1e3 if m.ssd_wr_size_mean_kb > 0 else 0.128)
             if wr.max() > 0:
                 ax.fill_between(t, wr, alpha=0.25, color=C)
                 ax.plot(t, wr, color=C, lw=1.5, label="Write MB/s")
@@ -17605,9 +17682,9 @@ def chart_ssd_write_workload(m: "Metrics") -> str:
     if m.blkio_available and not m.blkio_ts.empty:
         wr_df = m.blkio_ts[m.blkio_ts["type"] == "W"] if "type" in m.blkio_ts.columns else pd.DataFrame()
         if not wr_df.empty and "size_bytes" in wr_df.columns:
-            sk = wr_df["size_bytes"] / 1024
+            sk = wr_df["size_bytes"] / _K_KB
             ax2.hist(sk, bins=min(30, max(10, len(sk)//50)), color=C, alpha=0.75, edgecolor="#c2410c", lw=0.5)
-            kv_kb = m.kvb_block_size_mb * 1024
+            kv_kb = m.kvb_block_size_mb * 1e3
             if kv_kb > 0: ax2.axvline(kv_kb, color="#ef4444", lw=1.5, ls="--", label=f"KV block {kv_kb:.0f} KB")
             if ax2.get_legend_handles_labels()[0]: ax2.legend(fontsize=8)
         else:
@@ -17986,8 +18063,8 @@ def chart_access_pattern(m: "Metrics") -> str:
     if isinstance(rs_corr, pd.DataFrame) and not rs_corr.empty:
         _style(ax)
         ops = rs_corr["op"].astype(str).tolist()
-        mean_rnd = (pd.to_numeric(rs_corr.get("mean_size_random",     pd.Series([0]*len(rs_corr))), errors="coerce").fillna(0) / 1024).tolist()
-        mean_seq = (pd.to_numeric(rs_corr.get("mean_size_sequential", pd.Series([0]*len(rs_corr))), errors="coerce").fillna(0) / 1024).tolist()
+        mean_rnd = (pd.to_numeric(rs_corr.get("mean_size_random",     pd.Series([0]*len(rs_corr))), errors="coerce").fillna(0) / _K_KB).tolist()
+        mean_seq = (pd.to_numeric(rs_corr.get("mean_size_sequential", pd.Series([0]*len(rs_corr))), errors="coerce").fillna(0) / _K_KB).tolist()
         x = list(range(len(ops)))
         width = 0.4
         ax.bar([xi - width / 2 for xi in x], mean_rnd, width=width,
@@ -18043,8 +18120,8 @@ def chart_access_pattern(m: "Metrics") -> str:
         _style(ax)
         ops = stream_sum["op"].astype(str).tolist()
         n_streams = pd.to_numeric(stream_sum.get("n_streams", pd.Series([0]*len(stream_sum))), errors="coerce").fillna(0).tolist()
-        bw_mean   = pd.to_numeric(stream_sum.get("bandwidth_mib_s_mean", pd.Series([0]*len(stream_sum))), errors="coerce").fillna(0).tolist()
-        bw_max    = pd.to_numeric(stream_sum.get("bandwidth_mib_s_max",  pd.Series([0]*len(stream_sum))), errors="coerce").fillna(0).tolist()
+        bw_mean   = (pd.to_numeric(stream_sum.get("bandwidth_mib_s_mean", pd.Series([0]*len(stream_sum))), errors="coerce").fillna(0) * 2 ** 20 / _K_MB).tolist()  # MiB/s → MB/s
+        bw_max    = (pd.to_numeric(stream_sum.get("bandwidth_mib_s_max",  pd.Series([0]*len(stream_sum))), errors="coerce").fillna(0) * 2 ** 20 / _K_MB).tolist()  # MiB/s → MB/s
         x = list(range(len(ops)))
         width = 0.4
         ax.bar([xi - width / 2 for xi in x], bw_mean, width=width,
@@ -18056,7 +18133,7 @@ def chart_access_pattern(m: "Metrics") -> str:
             ax.text(xi + width / 2, xv, f"{xv:.0f}", ha="center", va="bottom", fontsize=8)
         ax.set_xticks(x)
         ax.set_xticklabels([f"{o}\nn={int(n):,}" for o, n in zip(ops, n_streams)])
-        ax.set_ylabel("MiB/s", fontsize=9)
+        ax.set_ylabel("MB/s", fontsize=9)
         ax.set_title("Per-stream bandwidth (mean & peak)",
                      fontsize=10, fontweight="bold")
         ax.legend(loc="upper left", fontsize=8, frameon=True)
@@ -18128,7 +18205,7 @@ def chart_blktrace_streams(m: "Metrics") -> str:
             sub = _op_filter(bps, op_name).copy()
             if cnt_col and cnt_col in sub.columns:
                 sub = sub[pd.to_numeric(sub[cnt_col], errors="coerce").fillna(0) >= 3]
-            vals = pd.to_numeric(sub[bw_col], errors="coerce").dropna()
+            vals = pd.to_numeric(sub[bw_col], errors="coerce").dropna() * 2 ** 20 / _K_MB  # MiB/s → MB/s
             vals = vals[vals > 0]
             if len(vals) >= 3:
                 cap = min(float(vals.quantile(0.99)), float(peak_cap)) if len(vals) else peak_cap
@@ -18136,7 +18213,7 @@ def chart_blktrace_streams(m: "Metrics") -> str:
                 ax.hist(vals, bins=min(50, max(10, len(vals)//10)), color=color, alpha=0.82,
                         edgecolor="#64748b", lw=0.5)
                 med = float(vals.median())
-                ax.axvline(med, color="#ef4444", lw=1.5, ls="--", label=f"Median {med:.0f} MiB/s")
+                ax.axvline(med, color="#ef4444", lw=1.5, ls="--", label=f"Median {med:.0f} MB/s")
                 if vals.max() / max(vals.min(), 1e-9) > 25:
                     ax.set_xscale("log")
                 ax.legend(fontsize=8)
@@ -18147,7 +18224,7 @@ def chart_blktrace_streams(m: "Metrics") -> str:
             ax.text(0.5, 0.5, "bandwidth_mib_s column unavailable", ha="center", va="center",
                     transform=ax.transAxes, fontsize=10, color="#64748b")
         ax.set_title(f"{op_name.title()} BW per Stream\nstream = trace window / process/session", fontsize=10.5, fontweight="bold")
-        ax.set_xlabel("Stream bandwidth (MiB/s)", fontsize=9)
+        ax.set_xlabel("Stream bandwidth (MB/s)", fontsize=9)
         ax.set_ylabel("Streams", fontsize=9)
 
     _plot_bw_hist(axes[0,0], "read", "#3b82f6", 7000)
@@ -18182,8 +18259,8 @@ def chart_blktrace_streams(m: "Metrics") -> str:
 
     # Summary KPI bars
     ax4 = axes[1,1]; _style(ax4)
-    kpi_names = ["Rd BW\n(GiB/s)", "Wr BW\n(GiB/s)", "Rd Skew\n(×10)", "Wr Skew\n(×10)", "Rd Gini\n(×100)", "Rd degrad\n(ratio)"]
-    kpi_vals  = [m.ssd_rd_bw_mbs_mean/1024, m.ssd_wr_bw_mbs_mean/1024,
+    kpi_names = ["Rd BW\n(GB/s)", "Wr BW\n(GB/s)", "Rd Skew\n(×10)", "Wr Skew\n(×10)", "Rd Gini\n(×100)", "Rd degrad\n(ratio)"]
+    kpi_vals  = [m.ssd_rd_bw_mbs_mean / 1e3, m.ssd_wr_bw_mbs_mean / 1e3,
                  m.ssd_rd_skewness*10, m.ssd_wr_skewness*10,
                  m.ssd_rd_gini*100, m.ssd_rd_bw_degradation]
     bars = ax4.bar(kpi_names, kpi_vals, color=["#3b82f6", "#f97316", "#ef4444", "#f97316", "#a855f7", "#22c55e"],
@@ -18235,7 +18312,7 @@ def chart_blktrace_hotcold(m: "Metrics") -> str:
         if reg_col and reg_col in df.columns:
             vals = pd.to_numeric(df[reg_col], errors="coerce").fillna(0)
             # blktrace_analyzer region = floor(offset_bytes / 16 MiB).
-            return vals.astype(float) * (16 * 1024 * 1024) / 1e9, "region × 16 MiB"
+            return vals.astype(float) * (16 * 1024 * 1024) / 1e9, "region × 16,777,216 B"
         return pd.Series([0] * len(df), index=df.index, dtype=float), "unknown bucket"
 
     for op, color, ax in [("read", "#3b82f6", axes[0]), ("write", "#f97316", axes[1])]:
@@ -18505,7 +18582,7 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
         kv_card("Peak Output throughput", fmt(m.gen_tp_peak or m.gen_tp_mean, 1), "tok/s", DECODE,
                 "peak of sglang_gen_throughput"),
         kv_card("HBM Util", fmt(m.hbm_util_pct, 1), "%", HBM_C,
-                (f"{m.hbm_used_mb_mean/1024:.1f}/{m.hbm_total_mb/1024:.0f} GB · "
+                (f"{_k_gb_from_mib(m.hbm_used_mb_mean):.1f}/{_k_gb_from_mib(m.hbm_total_mb):.0f} GB · "
                  "weights + reserved KV pool + activations "
                  "(≠ live KV blocks; see KV Pool Active %)")),
         # Primary value = overall mean across every sample.  The busy-only
@@ -18600,15 +18677,15 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
          "L2 DRAM KV pool occupancy. Near 100% triggers LRU eviction. "
          "Low fill + high hit = working set fits in L1 HBM (ideal)."),
         ("HBM Used (GB/GPU)", "GB", "gpu_timeseries.csv · nvidia-smi memory.used",
-         "mean( memory.used[i] / 1024  ∀ GPU i ) over run  [GB]",
+         "mean( memory.used[i] [MiB] × 1,048,576 / 1e9  ∀ GPU i ) over run  [GB]",
          "HBM partitioned as: model weights + active KV cache + CUDA runtime (~0.5 GB). "
-         "40 GB total per A100 GPU."),
+         "40960 MiB = 42.9 GB total per A100 40GB GPU."),
         ("HBM Util %", "%", "gpu_timeseries.csv · nvidia-smi memory.used/total",
          "mean( memory.used[i] / 40960 × 100  ∀ GPU i ) over run",
-         "memory.total = 40960 MiB (A100 40 GB). "
+         "memory.total = 40960 MiB = 42.9 GB (A100 40GB). "
          "Quantisation (AWQ 4-bit) halves weight footprint, freeing ~8.75 GB/GPU for KV cache."),
         ("DRAM Used (GB)", "GB", "dram_timeseries.csv · /proc/meminfo",
-         "(MemTotal − MemFree − Buffers − Cached) / 1024³",
+         "(MemTotal − MemFree − Buffers − Cached) [kB = 1024 B] × 1024 / 1e9",
          "Holds: hicache L2 KV pool + model loader buffers + OS page cache."),
         ("GPU Util Mean %", "%", "gpu_timeseries.csv · nvidia-smi utilization.gpu · 1 Hz",
          "mean( gpu_util[i,t]  ∀ GPU i,  ∀ t ∈ run )",
@@ -18895,7 +18972,7 @@ def build_html(m: Metrics, bottlenecks: list[dict], recs: list[dict],
         _l3_peak_blocks = int((m.kvb_l3_io_ts["resident_tokens"].fillna(0) / max(m.kvb_block_size_tokens, 1)).max())
     kvb_base_cards = [
         _kpi("Block Size", f"{m.kvb_block_size_mb:.1f}", "MB", "#f0fdf4", "#047857",
-             f"{m.kvb_block_size_tokens} tok × {m.kv_bytes_per_token_kb:.0f} KB"),
+             f"{m.kvb_block_size_tokens} tok × {_k_kb_from_bytes(m.kv_bytes_per_token):.0f} KB"),
         # KV Pool Active % — fraction of the pre-allocated pool that is
         # currently holding KV blocks.  Physical HBM occupancy (weights +
         # reserved pool + activations) is a separate, larger quantity shown
@@ -19380,7 +19457,7 @@ Decode throughput = active_mean(sglang_gen_throughput) or Δsglang_generation_to
       <code>GPU util %      : DCGM_FI_DEV_GPU_UTIL  (Prometheus) OR
                       nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits
 
-HBM used (GB)   : DCGM_FI_DEV_FB_USED / 1024  (MiB → GB)
+HBM used (GB)   : DCGM_FI_DEV_FB_USED [MiB] × 1,048,576 / 1e9  (MiB → GB)
 HBM util %      : FB_USED / FB_TOTAL × 100
                   FB_TOTAL = DCGM_FI_DEV_FB_USED + DCGM_FI_DEV_FB_FREE
 
@@ -19426,7 +19503,7 @@ num_queue_reqs  : sglang_num_queue_reqs  (sessions waiting for capacity)</code>
     <summary>&#128208; Formula &amp; Metrics Used</summary>
     <div class="fml-body">
       <div class="fml-src">&#128202; gpu_timeseries.csv (HBM) + amduprof_pcm_raw.csv (DRAM) + sglang_timeseries.csv (KV pool)</div>
-      <code>HBM used (GB)     : DCGM_FI_DEV_FB_USED / 1024  per GPU
+      <code>HBM used (GB)     : DCGM_FI_DEV_FB_USED [MiB] × 1,048,576 / 1e9  per GPU
 HBM util %        : FB_USED / {m.hbm_total_mb:.0f} ({m.setup_gpu or 'GPU'}) × 100
 HBM BW est (GB/s) : model_params_GB_per_GPU / (TPOT_ms / 1000)
                     = (n_params × 2 / n_gpus) / tpot_s   [assumes FP16 weights]
@@ -19440,7 +19517,7 @@ DRAM BW (GB/s)    : amduprof_pcm_raw.csv → "Total Mem Bw (GB/s)"
                     ({m.dram_peak_label or 'autodetected from /proc/cpuinfo'})
 DRAM util %       : total_BW / {m.dram_peak_theoretical_gbs:.1f} × 100
 DRAM used GB      : SGLang L2 HiCache residency when available
-                    = sglang_hicache_host_used_tokens × KV_bytes_per_token / 1024^3
+                    = sglang_hicache_host_used_tokens × KV_bytes_per_token / 1e9
                     bounded by configured L2/HiCache capacity ({m.dram_total_gb:.0f} GB)
                     Raw OS DRAM timeseries is not used when it exceeds the L2 allocation.
 
@@ -19463,7 +19540,7 @@ KV active tokens  : sglang_hicache_host_used_tokens  (L2 DRAM)
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px">
     <div style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;padding:12px">
       <div style="font-size:10px;color:#4f46e5;font-weight:700;text-transform:uppercase;margin-bottom:4px">KV Bytes / Token</div>
-      <div style="font-size:22px;font-weight:800;color:#4338ca;font-family:monospace">{m.kv_bytes_per_token_kb:.0f}<span style="font-size:12px;color:#6b7280;margin-left:3px">KB</span></div>
+      <div style="font-size:22px;font-weight:800;color:#4338ca;font-family:monospace">{_k_kb_from_bytes(m.kv_bytes_per_token):.0f}<span style="font-size:12px;color:#6b7280;margin-left:3px">KB</span></div>
       <div style="font-size:10px;color:#6b7280">{m.kv_attention_type} &middot; {m.kv_dtype_name}</div>
     </div>
     <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px">
@@ -19483,7 +19560,7 @@ KV active tokens  : sglang_hicache_host_used_tokens  (L2 DRAM)
     </div>
     <div style="background:#faf5ff;border:1px solid #e9d5ff;border-radius:8px;padding:12px">
       <div style="font-size:10px;color:#7c3aed;font-weight:700;text-transform:uppercase;margin-bottom:4px">INT8 savings</div>
-      <div style="font-size:22px;font-weight:800;color:#6d28d9;font-family:monospace">{m.kv_bytes_per_token_kb/2:.0f}<span style="font-size:12px;color:#6b7280;margin-left:3px">KB/tok</span></div>
+      <div style="font-size:22px;font-weight:800;color:#6d28d9;font-family:monospace">{_k_kb_from_bytes(m.kv_bytes_per_token)/2:.0f}<span style="font-size:12px;color:#6b7280;margin-left:3px">KB/tok</span></div>
       <div style="font-size:10px;color:#6b7280">2&times; tokens at INT8 &middot; {m.kv_hbm_max_tokens*2//1000:.0f}K max ctx</div>
     </div>
     <div style="background:#fff1f2;border:1px solid #fecdd3;border-radius:8px;padding:12px">
@@ -19499,10 +19576,10 @@ KV active tokens  : sglang_hicache_host_used_tokens  (L2 DRAM)
       <div class="fml-src">&#128202; Derived from model architecture DB + runtime dtype</div>
       <code>{"MLA: 2 × n_layers × latent_dim × dtype_bytes" if m.kv_attention_type == "MLA" else "GQA/MHA: 2 × n_layers × n_kv_heads × head_dim × dtype_bytes"}
 {"= 2 × " + str(m.kv_n_layers) + " × " + str(m.kv_head_dim) + " (latent) × " + str(m.kv_dtype_bytes) if m.kv_attention_type == "MLA" else "= 2 × " + str(m.kv_n_layers) + " × " + str(m.kv_n_heads) + " × " + str(m.kv_head_dim) + " × " + str(m.kv_dtype_bytes)}
-= {m.kv_bytes_per_token:,} bytes = {m.kv_bytes_per_token_kb:.0f} KB per token
+= {m.kv_bytes_per_token:,} bytes = {_k_kb_from_bytes(m.kv_bytes_per_token):.0f} KB per token
 
-HBM pool = {m.hbm_total_mb/1024:.0f} GB total - {m.kv_weight_gb_per_gpu:.1f} GB weights - 0.5 GB runtime = {m.kv_hbm_pool_gb:.1f} GB
-Max tokens = {m.kv_hbm_pool_gb:.1f} GB / {m.kv_bytes_per_token_kb:.0f} KB = {m.kv_hbm_max_tokens:,} tokens
+HBM pool = {_k_gb_from_mib(m.hbm_total_mb):.0f} GB total - {m.kv_weight_gb_per_gpu:.1f} GB weights - 0.5 GB runtime = {m.kv_hbm_pool_gb:.1f} GB
+Max tokens = {m.kv_hbm_pool_gb:.1f} GB / {_k_kb_from_bytes(m.kv_bytes_per_token):.0f} KB = {m.kv_hbm_max_tokens:,} tokens
 
 INT8 (1B): {m.kv_bytes_per_token//2:,} bytes/tok  → {m.kv_hbm_max_tokens*2:,} max tokens (2×)
 FP8  (1B): {m.kv_bytes_per_token//2:,} bytes/tok  → {m.kv_hbm_max_tokens*2:,} max tokens (2×)
@@ -19631,8 +19708,8 @@ Physical block L3    : write={m.l3_block_write_gb:.3f} GB, read={m.l3_block_read
 Read IOPS            : rd_iops  = rate(read_ios_total)
 Write IOPS           : wr_iops  = rate(write_ios_total)
 Discard / TRIM IOPS  : disc_ios = rate(discard_ios_total)
-Read bandwidth       : rd_bw_mbs = rate(read_bytes_total) / 1024^2
-Write bandwidth      : wr_bw_mbs = rate(write_bytes_total) / 1024^2
+Read bandwidth       : rd_bw_mbs = rate(read_bytes_total) / 1e6
+Write bandwidth      : wr_bw_mbs = rate(write_bytes_total) / 1e6
 
 Page faults/sec      : rate(vmstat_pgfault)
 Major faults/sec     : rate(vmstat_pgmajfault)
@@ -19698,7 +19775,7 @@ Arrival rate  : \u0394(num_requests_total) / \u0394(time_sec) [req/s]</code>
     <div class="fml-body">
       <div class="fml-src">&#128202; sglang_timeseries.csv + model arch DB</div>
       <code>Block size tokens : SGLang default = 16 tokens/block
-Block size MB     : block_tokens x kv_bytes_per_token / 1024^2 = {kvb_block_size_mb:.2f} MB
+Block size MB     : block_tokens x kv_bytes_per_token / 1e6 = {kvb_block_size_mb:.2f} MB
 L1 pool blocks    : sglang_max_total_num_tokens / 16 = {kvb_l1_pool_blocks:,}
 L2 pool blocks    : sglang_hicache_host_total_tokens / 16 = {kvb_l2_pool_blocks:,}
 Offload rate      : \u0394(hicache_host_used_tokens) / 16 / run_duration_s = {kvb_offload_rate:.4f} blk/s
@@ -19752,7 +19829,7 @@ Bytes read     : \u0394(data_units_read)    x 512 x 1000</code>
     {_kpi("Sequential / Random",f"{m.ssd_rd_seq_pct:.1f}/{m.ssd_rd_rand_pct:.1f}","%","#f0fdf4","#047857","seq/random read mix")}
     {_kpi("Skewness",f"{m.ssd_rd_skewness:.2f}","","#fff7ed","#c2410c",f"Gini={m.ssd_rd_gini:.3f}")}
     {_kpi("BW Degrad.",f"{m.ssd_rd_bw_degradation:.2f}","×","#fff1f2" if m.ssd_rd_bw_degradation < 0.9 else "#f0fdf4","#9f1239" if m.ssd_rd_bw_degradation < 0.9 else "#047857","1.0=no degradation")}
-    {_kpi("Bursts",f"{m.ssd_rd_burst_count}","","#faf5ff","#6d28d9",f"mean={m.ssd_rd_burst_mean_bytes/1024:.0f}KB")}
+    {_kpi("Bursts",f"{m.ssd_rd_burst_count}","","#faf5ff","#6d28d9",f"mean={m.ssd_rd_burst_mean_bytes / _K_KB:.0f}KB")}
   </div>
   {img(charts.get("ssd_read",""), "SSD Read Workload")}
   <details class="fml" style="margin-top:12px">
@@ -20093,17 +20170,17 @@ Seasonal period: FFT on R(t) = binned read bytes/sec timeseries
     <code style="background:#eff6ff;padding:1px 4px;border-radius:3px;color:#1d4ed8">interarrival_distribution.csv</code>.
   </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">
-    {_kpi("Rd Streams",f"{m.ssd_rd_stream_count}","","#eff6ff","#1d4ed8",f"median {m.ssd_rd_bw_per_stream_mean_mbs:.0f} MiB/s")}
-    {_kpi("Wr Streams",f"{m.ssd_wr_stream_count}","","#fff7ed","#c2410c",f"median {m.ssd_wr_bw_per_stream_mean_mbs:.0f} MiB/s")}
+    {_kpi("Rd Streams",f"{m.ssd_rd_stream_count}","","#eff6ff","#1d4ed8",f"median {m.ssd_rd_bw_per_stream_mean_mbs:.0f} MB/s")}
+    {_kpi("Wr Streams",f"{m.ssd_wr_stream_count}","","#fff7ed","#c2410c",f"median {m.ssd_wr_bw_per_stream_mean_mbs:.0f} MB/s")}
     {_kpi("Rd BW Total",
-          (f"{m.ssd_rd_bw_mbs_mean:.2f}" if m.ssd_rd_bw_mbs_mean < 1024 else f"{m.ssd_rd_bw_mbs_mean/1024:.2f}"),
-          ("MB/s" if m.ssd_rd_bw_mbs_mean < 1024 else "GiB/s"),
+          (f"{m.ssd_rd_bw_mbs_mean:.2f}" if m.ssd_rd_bw_mbs_mean < 1000 else f"{m.ssd_rd_bw_mbs_mean / 1e3:.2f}"),
+          ("MB/s" if m.ssd_rd_bw_mbs_mean < 1000 else "GB/s"),
           "#eff6ff","#1d4ed8",
           (f"{m.ssd_rd_bytes_total/1e6:.1f} MB total" if m.ssd_rd_bytes_total < 1e9
            else f"{m.ssd_rd_bytes_total/1e9:.2f} GB total"))}
     {_kpi("Wr BW Total",
-          (f"{m.ssd_wr_bw_mbs_mean:.2f}" if m.ssd_wr_bw_mbs_mean < 1024 else f"{m.ssd_wr_bw_mbs_mean/1024:.2f}"),
-          ("MB/s" if m.ssd_wr_bw_mbs_mean < 1024 else "GiB/s"),
+          (f"{m.ssd_wr_bw_mbs_mean:.2f}" if m.ssd_wr_bw_mbs_mean < 1000 else f"{m.ssd_wr_bw_mbs_mean / 1e3:.2f}"),
+          ("MB/s" if m.ssd_wr_bw_mbs_mean < 1000 else "GB/s"),
           "#fff7ed","#c2410c",
           (f"{m.ssd_wr_bytes_total/1e6:.1f} MB total" if m.ssd_wr_bytes_total < 1e9
            else f"{m.ssd_wr_bytes_total/1e9:.2f} GB total"))}
@@ -20122,7 +20199,7 @@ Seasonal period: FFT on R(t) = binned read bytes/sec timeseries
   Each stream = one inference request / KV cache session per time window
 
 Per-stream BW (§C/D bandwidth_per_stream):
-  bw_stream = stream_bytes / stream_duration_sec  [MiB/s]
+  bw_stream = stream_bytes / stream_duration_sec / 1e6  [MB/s]
   stream_duration = last_ts - first_ts  (timestamps from blkparse)
   Reported: median, max (streams with count > 10 to exclude single-op outliers)
 
@@ -20166,8 +20243,8 @@ Burst detection (§C35 burst_temporal_windows):
     <div class="fml-body">
       <div class="fml-src">&#128202; hot_regions_overall.csv + hot_regions_by_time_window.csv + access_skew_summary.csv</div>
       <code>LBA region bucketing (§C36 hot_regions_overall):
-  region_id = floor(offset_bytes / 16 MiB)  # blktrace analyzer bucket size
-  lba_offset_gb = lba_bucket_start / 1e9 = region_id × 16 MiB / 1e9
+  region_id = floor(offset_bytes / 16,777,216 B)  # blktrace analyzer bucket size
+  lba_offset_gb = lba_bucket_start / 1e9 = region_id × 16,777,216 / 1e9
   region_bytes = sum(size_bytes for all IOs to this physical SSD region)
   Top regions by bytes = "hot" regions
 
@@ -20216,8 +20293,8 @@ BW degradation (§C45/D60 bandwidth_degradation):
     <summary>&#128208; Formula &amp; Metrics Used</summary>
     <div class="fml-body">
       <div class="fml-src">&#128202; DCGM_FI_PROF_DRAM_ACTIVE (Prometheus) + derived from TPOT + model architecture (§F74-F78)</div>
-      <code>§F74 HBM used (MiB)    : DCGM_FI_DEV_FB_USED  (per GPU, DCGM)
-§F75 HBM free (MiB)    : DCGM_FI_DEV_FB_FREE
+      <code>§F74 HBM used (GB)     : DCGM_FI_DEV_FB_USED [MiB] × 1,048,576 / 1e9  (per GPU, DCGM)
+§F75 HBM free (GB)     : DCGM_FI_DEV_FB_FREE [MiB] × 1,048,576 / 1e9
 §F76 HBM BW active %   : DCGM_FI_PROF_DRAM_ACTIVE × 100
                          (fraction of cycles HBM is actively transferring)
 §F77 HBM peak BW (GB/s): 2,000 GB/s (A100 HBM2e specification)
@@ -20318,7 +20395,7 @@ NUMA migrations/s  : rate(node_vmstat_numa_pages_migrated)</code>
   + '<details class="fml" style="margin-top:10px"><summary>&#128208; Formula &amp; Metrics Used</summary>'
     '<div class="fml-body"><div class="fml-src">&#128202; DCGM (Prometheus)</div>'
     '<code>PCIe RX/TX GB/s = sum_gpu(DCGM_FI_PROF_PCIE_RX_BYTES / TX_BYTES) / 1e9\n'
-    'NVLink GB/s     = sum_gpu(DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL × 1024) / 1e9\n'
+    'NVLink GB/s     = sum_gpu(DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL [KiB/s] × 1024) / 1e9\n'
     'Compute active %= mean_gpu(DCGM_FI_PROF_GR_ENGINE_ACTIVE) × 100\n'
     'Tensor active % = mean_gpu(DCGM_FI_PROF_PIPE_TENSOR_ACTIVE) × 100\n'
     'Mem-copy util % = mean_gpu(DCGM_FI_DEV_MEM_COPY_UTIL)</code>'
@@ -20403,7 +20480,7 @@ Interpretation cheat-sheet:
     Identifies sustained host-memory swap activity that can stall inference. A
     <b>swap storm</b> is a continuous interval where combined pswpin + pswpout
     rate exceeds <b>{m.swap_storm_threshold_pages_per_s:.0f} pages/s</b>
-    (≈ {m.swap_storm_threshold_pages_per_s/256:.1f} MiB/s). When detected,
+    (≈ {m.swap_storm_threshold_pages_per_s * 4096 / _K_MB:.1f} MB/s). When detected,
     correlates with major page faults and quantifies the write-amplification
     cost on the underlying NVMe device.
   </div>
@@ -20411,12 +20488,12 @@ Interpretation cheat-sheet:
     <div class="kpi-box" style="background:#f1f5f9;padding:10px;border-radius:6px;border-left:3px solid #3b82f6">
       <div style="font-size:10px;color:#475569;text-transform:uppercase">Mean Swap-In</div>
       <div style="font-size:18px;font-weight:700;color:#0f172a">{m.swap_in_pages_per_s_mean:.1f}<span style="font-size:11px;color:#64748b"> pg/s</span></div>
-      <div style="font-size:10px;color:#64748b">{m.swap_in_mb_per_s_mean:.2f} MiB/s</div>
+      <div style="font-size:10px;color:#64748b">{m.swap_in_mb_per_s_mean:.2f} MB/s</div>
     </div>
     <div class="kpi-box" style="background:#f1f5f9;padding:10px;border-radius:6px;border-left:3px solid #ef4444">
       <div style="font-size:10px;color:#475569;text-transform:uppercase">Mean Swap-Out</div>
       <div style="font-size:18px;font-weight:700;color:#0f172a">{m.swap_out_pages_per_s_mean:.1f}<span style="font-size:11px;color:#64748b"> pg/s</span></div>
-      <div style="font-size:10px;color:#64748b">{m.swap_out_mb_per_s_mean:.2f} MiB/s</div>
+      <div style="font-size:10px;color:#64748b">{m.swap_out_mb_per_s_mean:.2f} MB/s</div>
     </div>
     <div class="kpi-box" style="background:#f1f5f9;padding:10px;border-radius:6px;border-left:3px solid #dc2626">
       <div style="font-size:10px;color:#475569;text-transform:uppercase">Storm Episodes</div>
@@ -20426,7 +20503,7 @@ Interpretation cheat-sheet:
     <div class="kpi-box" style="background:#f1f5f9;padding:10px;border-radius:6px;border-left:3px solid #f59e0b">
       <div style="font-size:10px;color:#475569;text-transform:uppercase">Worst Storm Peak</div>
       <div style="font-size:18px;font-weight:700;color:#0f172a">{m.swap_storm_worst_pages_per_s:.0f}<span style="font-size:11px;color:#64748b"> pg/s</span></div>
-      <div style="font-size:10px;color:#64748b">{m.swap_storm_worst_pages_per_s/256:.1f} MiB/s</div>
+      <div style="font-size:10px;color:#64748b">{m.swap_storm_worst_pages_per_s * 4096 / _K_MB:.1f} MB/s</div>
     </div>
     <div class="kpi-box" style="background:#f1f5f9;padding:10px;border-radius:6px;border-left:3px solid #7c3aed">
       <div style="font-size:10px;color:#475569;text-transform:uppercase">Write Amp</div>
@@ -20436,7 +20513,7 @@ Interpretation cheat-sheet:
     <div class="kpi-box" style="background:#f1f5f9;padding:10px;border-radius:6px;border-left:3px solid #64748b">
       <div style="font-size:10px;color:#475569;text-transform:uppercase">Swap Used Peak</div>
       <div style="font-size:18px;font-weight:700;color:#0f172a">{m.swap_used_pct_max:.1f}<span style="font-size:11px;color:#64748b">%</span></div>
-      <div style="font-size:10px;color:#64748b">{m.swap_free_mb_min:.0f} MiB free min</div>
+      <div style="font-size:10px;color:#64748b">{m.swap_free_mb_min * 2 ** 20 / _K_MB:.0f} MB free min</div>
     </div>
   </div>
   {img(charts.get("swap_storm",""), "Swap Storm Analysis")}
@@ -20444,7 +20521,7 @@ Interpretation cheat-sheet:
     <summary>📐 Formula &amp; Derivation</summary>
     <div class="fml-body">
       <div class="fml-src">📊 vmstat_timeseries.csv · /proc/vmstat (node_exporter Prometheus job) + nvme_driver_timeseries.csv</div>
-      <code>swap_in_rate    = Δ(node_vmstat_pswpin)  / Δt    [pages/s, 4 KiB pages]
+      <code>swap_in_rate    = Δ(node_vmstat_pswpin)  / Δt    [pages/s, 4096-byte pages]
 swap_out_rate   = Δ(node_vmstat_pswpout) / Δt    [pages/s]
 swap_total_rate = swap_in_rate + swap_out_rate
 
@@ -21088,7 +21165,7 @@ def generate_excel(m: Metrics, bottlenecks: list[dict], recs: list[dict],
         ("Peak Gen Throughput", f"{m.gen_tp_peak:.1f} tok/s", "Decode", COL_GPU),
         ("E2E Request Latency", f"{m.e2e_ms/1000:.1f} s", "Full Request", COL_ACCENT),
         ("Effective Cache Hit Rate", f"{m.cache_hit_pct:.1f}%", "KV Cache", "1E8449"),
-        ("HBM Utilisation (per GPU)", f"{m.hbm_util_pct:.1f}%  ({m.hbm_used_mb_mean/1024:.1f}/{m.hbm_total_mb/1024:.0f} GB)", "GPU Memory", COL_HBM),
+        ("HBM Utilisation (per GPU)", f"{m.hbm_util_pct:.1f}%  ({_k_gb_from_mib(m.hbm_used_mb_mean):.1f}/{_k_gb_from_mib(m.hbm_total_mb):.0f} GB)", "GPU Memory", COL_HBM),
         ("GPU Utilisation (mean)", f"{m.gpu_util_mean:.1f}%  (peak {m.gpu_util_peak:.0f}%)", "Compute", COL_GPU),
         ("DRAM Utilisation", f"{m.dram_util_pct:.1f}%  ({m.dram_used_gb:.0f}/{m.dram_total_gb:.0f} GB)", "System Memory", COL_DRAM),
         ("NVMe Write IOPS (max)", f"{m.nvme_wr_iops_max:.0f}", "Storage", COL_NVME),
@@ -21291,7 +21368,7 @@ def generate_excel(m: Metrics, bottlenecks: list[dict], recs: list[dict],
             vals = [
                 round(float(row_d["time_sec"]), 0),
                 round(float(row_d.get("gpu_util", 0)), 1),
-                round(float(row_d.get("mem_used", 0)), 0),
+                round(float(row_d.get("mem_used", 0)) * 2 ** 20 / _K_MB, 0),  # MiB → MB
                 round(float(row_d.get("power", 0)), 1),
                 round(float(row_d.get("temp_c", 0)), 1),
             ]
@@ -21342,9 +21419,9 @@ def generate_excel(m: Metrics, bottlenecks: list[dict], recs: list[dict],
             peak_vals = gdf.groupby("gpu_idx")["mem_used"].max()
             for gpu_idx, peak_mb in peak_vals.items():
                 bg = COL_ZEBRA if (r3 - per_gpu_start) % 2 == 0 else COL_WHITE
-                for ci, v in enumerate([f"GPU {gpu_idx}", round(peak_mb, 0),
-                                         round(peak_mb/1024, 2),
-                                         round(m.hbm_total_mb/1024, 1),
+                for ci, v in enumerate([f"GPU {gpu_idx}", round(peak_mb * 2 ** 20 / _K_MB, 0),
+                                         round(_k_gb_from_mib(peak_mb), 2),
+                                         round(_k_gb_from_mib(m.hbm_total_mb), 1),
                                          f"=IFERROR(C{r3}/D{r3}*100,0)"], 1):
                     c = ws3.cell(row=r3, column=ci, value=v)
                     c.font = body_font(10, bold=(ci == 2))
@@ -21416,8 +21493,8 @@ def generate_excel(m: Metrics, bottlenecks: list[dict], recs: list[dict],
         for _, row_d in ddf_ds.iterrows():
             bg = COL_ZEBRA if (r4 - dram_data_start) % 2 == 0 else COL_WHITE
             for ci, v in enumerate([round(float(row_d["time_sec"]), 0),
-                                      round(float(row_d.get("used_gb", 0)), 2),
-                                      round(float(row_d.get("available_gb", 0)), 2)], 1):
+                                      round(_k_collector_gb("used_gb", row_d.get("used_gb", 0)), 2),
+                                      round(_k_collector_gb("available_gb", row_d.get("available_gb", 0)), 2)], 1):
                 c = ws4.cell(row=r4, column=ci, value=v)
                 c.font = body_font(9)
                 c.fill = fill(bg)
@@ -21650,7 +21727,7 @@ def generate_excel(m: Metrics, bottlenecks: list[dict], recs: list[dict],
     wb.save(str(out_path))
     print(f"\n✅  Excel workbook written: {out_path.resolve()}")
     print(f"    Sheets: {', '.join(wb.sheetnames)}")
-    print(f"    Size: {out_path.stat().st_size / 1024:.0f} KB")
+    print(f"    Size: {out_path.stat().st_size / _K_KB:.0f} KB")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -21833,7 +21910,7 @@ def build_comparison_html(runs, all_bottlenecks, timestamp):
             "gpu_timeseries.csv · nvidia-smi memory.used / memory.total",
             ("mean(  memory.used[i] / memory.total[i] × 100\n"
              "        ∀ i ∈ GPU0..7,  ∀ t ∈ run )  [%]\n\n"
-             "memory.total[i] = 40960 MiB  (A100 40 GB)\n\n"
+             "memory.total[i] = 40960 MiB = 42.9 GB  (A100 40GB)\n\n"
              "HBM occupied by:\n"
              "  model weights : 70B × 2 bytes / 8 GPUs ≈ 17.5 GB\n"
              "  KV cache      : variable (fills remaining headroom)\n"
@@ -22288,7 +22365,7 @@ new Chart(document.getElementById("c6"),{type:"bar",
   ]},
   options:{responsive:true,plugins:{legend:lg(),tooltip:tt(i=>i[0].label,i=>{
     const k=D.kpis[i[0].dataIndex];
-    return i[0].datasetIndex===0?` HBM: ${k.hbm_util_pct}% (${(k.hbm_util_pct*40.96/100).toFixed(1)}GB / 40GB per GPU)`
+    return i[0].datasetIndex===0?` HBM: ${k.hbm_util_pct}% (${(k.hbm_util_pct*42.95/100).toFixed(1)}GB / 42.9GB per GPU)`
       :` DRAM: ${k.dram_util_pct}%`;
   })},scales:dsc("","%")}
 });
@@ -22497,8 +22574,8 @@ new Chart(document.getElementById("c14"),{type:"scatter",
              "    mem_total_mb[i] = nvidia-smi --query-gpu=memory.total  [MiB]  = 40960 (A100 40GB)\n\n"
              "DRAM Util % = dram_used_gb / dram_total_gb × 100  [%]\n"
              "  where:\n"
-             "    dram_used_gb  = ( MemTotal − MemFree − Buffers − Cached ) / 1024³  (/proc/meminfo)\n"
-             "    dram_total_gb = MemTotal / 1024³"),
+             "    dram_used_gb  = ( MemTotal − MemFree − Buffers − Cached ) [kB] × 1024 / 1e9  (/proc/meminfo)\n"
+             "    dram_total_gb = MemTotal [kB] × 1024 / 1e9"),
             "HBM is occupied by: model weights (~26.8 GB for 70B FP16 across 8 GPUs) + "
             "active KV cache + CUDA runtime (~0.5 GB). "
             "DRAM is occupied by: hicache L2 KV pool + model loader buffers + OS page cache."
@@ -22994,7 +23071,7 @@ A run that moves down without moving right = TTFT improved from a non-caching op
         kv_cmp.append(dict(
             label              = label,
             bytes_per_tok      = m.kv_bytes_per_token,
-            kb_per_tok         = round(m.kv_bytes_per_token_kb, 1),
+            kb_per_tok         = round(_k_kb_from_bytes(m.kv_bytes_per_token), 1),
             attn_type          = m.kv_attention_type,
             dtype              = m.kv_dtype_name,
             n_layers           = m.kv_n_layers,
@@ -23438,10 +23515,10 @@ Lower bars = larger context fits in HBM before spill.</div>
 <div class="fml-body">
 <div class="fml-src">&#128202; Derived from model architecture DB (built-in) + sglang_summary.json (kv_cache_dtype)</div>
 <code>GQA / MHA models:
-  kb_per_tok = 2 × n_layers × n_kv_heads × head_dim × dtype_bytes / 1024
+  kb_per_tok = 2 × n_layers × n_kv_heads × head_dim × dtype_bytes / 1000
 
 MLA models (Qwen3-235B, DeepSeek-V2/V3):
-  kb_per_tok = 2 × n_layers × latent_dim × dtype_bytes / 1024
+  kb_per_tok = 2 × n_layers × latent_dim × dtype_bytes / 1000
   (MLA compresses K+V into one latent vector per token)
 
 dtype_bytes sources:
@@ -23456,8 +23533,8 @@ INT8 counterfactual:
 
 Architecture values (n_layers, n_kv_heads, head_dim) sourced from
 built-in model DB matched on sglang_summary.json → model_name</code>
-<div class="fml-note">Example: DeepSeek-R1-Distill 70B (GQA): 2×80×8×128×2/1024 = 320 KB/token.
-Qwen3-235B (MLA): 2×94×512×2/1024 = 192 KB/token — 1.67× more efficient.</div>
+<div class="fml-note">Example: DeepSeek-R1-Distill 70B (GQA): 2×80×8×128×2/1000 = 327.7 KB/token.
+Qwen3-235B (MLA): 2×94×512×2/1000 = 192.5 KB/token — 1.70× more efficient.</div>
 </div></details>
 <canvas id="c_kv_tok"></canvas>
 <div class="insight" style="border-color:#6366f1">
@@ -23476,9 +23553,9 @@ Above this threshold, SGLang spills KV to hicache DRAM.</div>
 <div class="fml-src">&#128202; Derived: gpu_summary.json (hbm_total_mb_per_gpu) + model arch DB + power_summary.json (elapsed)</div>
 <code>kv_pool_gb  = hbm_total_gb − weight_gb_per_gpu − 0.5 (CUDA runtime)
 
-  hbm_total_gb      = gpu_summary.json → hbm_total_mb_per_gpu / 1024
+  hbm_total_gb      = gpu_summary.json → hbm_total_mb_per_gpu [MiB] × 1,048,576 / 1e9
                       (nvidia-smi --query-gpu=memory.total)
-                      A100 40GB: 40960 MiB → 40.0 GB
+                      A100 40GB: 40960 MiB → 42.9 GB
 
   weight_gb_per_gpu = params_B × 10⁹ × 2 bytes (FP16) / n_gpus
                       (from model architecture DB, matched on model_name)
@@ -23524,10 +23601,10 @@ L2 BW override (when AMDuProf data present):
   Metrics: amduprof_pcm_summary.json → dram_total_gb_s_mean
            or dram_timeseries.csv → total_gb_s column mean
 
-Example (DeepSeek-R1-Distill 70B, 320 KB/token):
-  L1: 320 KB / (2000 GB/s × 10⁶) = 0.00016 ms/token
-  L2: 320 KB / (200  GB/s × 10⁶) = 0.00160 ms/token  (10× L1)
-  L3: 320 KB / (3.5  GB/s × 10⁶) = 0.091   ms/token  (570× L1)</code>
+Example (DeepSeek-R1-Distill 70B, 327.7 KB/token):
+  L1: 327.7 KB / (2000 GB/s × 10⁶) = 0.00016 ms/token
+  L2: 327.7 KB / (200  GB/s × 10⁶) = 0.00164 ms/token  (10× L1)
+  L3: 327.7 KB / (3.5  GB/s × 10⁶) = 0.094   ms/token  (570× L1)</code>
 <div class="fml-note">The tier multipliers are hardware constants — independent of model or workload.
 The only way to reduce effective latency is to keep tokens in a faster tier (warm L1 cache).</div>
 </div></details>
@@ -23603,7 +23680,7 @@ Segment: CUDA Runtime (GB)
   = 0.5 GB  (constant estimate for CUDA context + cuDNN)
 
 kv_pool_gb  = hbm_total_gb − weight_gb − 0.5 runtime
-hbm_total_gb: gpu_summary.json → hbm_total_mb_per_gpu / 1024</code>
+hbm_total_gb: gpu_summary.json → hbm_total_mb_per_gpu [MiB] × 1,048,576 / 1e9</code>
 <div class="fml-note">Weights occupy a fixed fraction of HBM determined solely by model size and quantisation.
 Free KV headroom = tokens you can still add before SGLang triggers hicache eviction.
 GPU power profiling: power_timeseries.csv → nvidia-smi power.draw (used for cross-referencing active phase).</div>
@@ -24254,7 +24331,7 @@ def generate_comparison_excel(runs: list[tuple[str, "Metrics"]],
         ("GPU Util Mean %",     lambda m: m.gpu_util_mean,     1),
         ("GPU Util Peak %",     lambda m: m.gpu_util_peak,     0),
         ("HBM Util %",          lambda m: m.hbm_util_pct,      1),
-        ("HBM Used (GB/GPU)",   lambda m: m.hbm_used_mb_mean/1024, 2),
+        ("HBM Used (GB/GPU)",   lambda m: _k_gb_from_mib(m.hbm_used_mb_mean), 2),
         ("DRAM Util %",         lambda m: m.dram_util_pct,     1),
         ("DRAM Used (GB)",      lambda m: m.dram_used_gb,      0),
         ("GPU Power Mean (W)",  lambda m: m.gpu_power_mean_w,  0),
@@ -24452,7 +24529,7 @@ def generate_comparison_excel(runs: list[tuple[str, "Metrics"]],
 
 
     wb.save(str(out_path))
-    print(f"✅  Comparison Excel:  {out_path.resolve()}  ({out_path.stat().st_size//1024} KB)")
+    print(f"✅  Comparison Excel:  {out_path.resolve()}  ({out_path.stat().st_size / _K_KB:.0f} KB)")
 
 
 # ── Zip packager ──────────────────────────────────────────────────────────────
@@ -24463,7 +24540,7 @@ def package_outputs(file_list: list[Path], zip_path: Path):
         for f in file_list:
             if f.exists():
                 zf.write(f, arcname=f.name)
-    size_kb = zip_path.stat().st_size // 1024
+    size_kb = round(zip_path.stat().st_size / _K_KB)
     print(f"\n📦  Package: {zip_path.resolve()}  ({size_kb} KB)")
     print(f"    Contents: {', '.join(f.name for f in file_list if f.exists())}")
 
@@ -24648,7 +24725,7 @@ def main():
                                      output_path=str(out_path),
                                      source_name=src_name)
             sz = out_path.stat().st_size
-            print(f"OK  ({sz//1024} KB)")
+            print(f"OK  ({sz / _K_KB:.0f} KB)")
             generated.append(out_path)
 
         if args.zip and generated:
@@ -24657,7 +24734,7 @@ def main():
             with zipfile.ZipFile(zp, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
                 for f in generated:
                     zf.write(f, f.name)
-            print(f"\n📦  Package: {zp}  ({zp.stat().st_size//1024} KB)")
+            print(f"\n📦  Package: {zp}  ({zp.stat().st_size / _K_KB:.0f} KB)")
 
         print(f"\n  Done. {len(generated)} report(s) written.")
         return
@@ -25021,7 +25098,7 @@ def main():
             html = _amoprof_storage_label_cleanup(html, getattr(m, "l3_backend_class", ""))
             html_path.write_text(html, encoding="utf-8")
             generated.append(html_path)
-            print(f"      ✓ {html_path.name}  ({html_path.stat().st_size//1024} KB)")
+            print(f"      ✓ {html_path.name}  ({html_path.stat().st_size / _K_KB:.0f} KB)")
 
         if do_excel:
             xlsx_path = (Path(args.excel_output) if (args.excel_output and n_runs == 1)
@@ -25040,7 +25117,7 @@ def main():
             html = build_comparison_html(runs_data, all_bottlenecks, timestamp)
             cmp_html_path.write_text(html, encoding="utf-8")
             generated.append(cmp_html_path)
-            print(f"      ✓ {cmp_html_path.name}  ({cmp_html_path.stat().st_size//1024} KB)")
+            print(f"      ✓ {cmp_html_path.name}  ({cmp_html_path.stat().st_size / _K_KB:.0f} KB)")
 
         if do_excel:
             cmp_xlsx_path = out_dir / f"{out_base}_comparison.xlsx"
@@ -25059,7 +25136,7 @@ def main():
     print(f"  Done. {len(generated)} file(s) written:")
     for f in generated:
         if f.exists():
-            print(f"    {f.name:50s}  {f.stat().st_size//1024:>5} KB")
+            print(f"    {f.name:50s}  {f.stat().st_size / _K_KB:>5.0f} KB")
     if generated:
         zip_f = [f for f in generated if f.suffix == ".zip"]
         if zip_f:

@@ -54,6 +54,9 @@ __all__ = [
     "rank_combine_rule",
     "summarise_rank_rules",
     "token_reuse_density",
+    "KB", "MB", "GB", "TB", "GIB_TO_GB",
+    "gb_from_bytes", "gb_from_kib", "gb_from_mib", "gb_from_gib",
+    "mb_from_bytes", "kb_from_bytes", "collector_gb",
     "tail_ratio",
     "DRAM_SANE_MAX_GBS",
     "sanitize_bandwidth_samples",
@@ -355,30 +358,36 @@ def resolve_gpu_hbm(gpu_summary: "dict | None" = None,
     * GPU count — TP x DP (the devices actually serving), then
       ``gpu_config.gpus_in_use``, then physical count.
 
-    Returns per-GPU and all-GPU used/total in GB plus the resolved count and
-    the source of each, so tiles can state provenance.
+    Returns per-GPU and all-GPU used/total in decimal GB (1e9 bytes) plus the
+    resolved count and the source of each, so tiles can state provenance.
+
+    Every GPU-memory input is binary: nvidia-smi / DCGM report MiB, the
+    "*_gb" fields built from them are MiB / 1024 (GiB), and a setup's "GPU
+    memory per device" is the nominal GiB size (40 for an A100-40GB).  All of
+    them are converted here, so a 40 GiB card reads 42.95 GB on both sides of
+    the used/total ratio.
     """
-    per_gpu_used = _pick_num(gpu_summary, [
-        "hbm_used_gb_mean", "mem_used_gb_mean", "hbm_gb"])
-    used_src = "gpu_summary hbm_used_gb_mean"
+    per_gpu_used = gb_from_gib(_pick_num(gpu_summary, [
+        "hbm_used_gb_mean", "mem_used_gb_mean", "hbm_gb"]))
+    used_src = "gpu_summary hbm_used_gb_mean (GiB -> GB)"
     if per_gpu_used <= 0:
         mb = _pick_num(gpu_summary, ["hbm_used_mb_mean", "mem_used_mean_mb", "hbm_used_mb"])
         if mb > 0:
-            per_gpu_used, used_src = mb / 1024.0, "gpu_summary hbm_used_mb_mean / 1024"
+            per_gpu_used, used_src = gb_from_mib(mb), "gpu_summary hbm_used_mb_mean (MiB -> GB)"
 
-    per_gpu_total = _pick_num(gpu_config, ["hbm_per_gpu_gb"])
-    total_src = "gpu_config.json hbm_per_gpu_gb (nvidia-smi memory.total)"
+    per_gpu_total = gb_from_gib(_pick_num(gpu_config, ["hbm_per_gpu_gb"]))
+    total_src = "gpu_config.json hbm_per_gpu_gb (nvidia-smi memory.total, GiB -> GB)"
     if per_gpu_total <= 0:
-        per_gpu_total = _pick_num(setup, [
-            "gpu_memory_per_device_gb", "hbm_per_gpu_gb", "gpu_memory_gb"])
-        total_src = "setup_details GPU memory per device"
+        per_gpu_total = gb_from_gib(_pick_num(setup, [
+            "gpu_memory_per_device_gb", "hbm_per_gpu_gb", "gpu_memory_gb"]))
+        total_src = "setup_details GPU memory per device (nominal GiB -> GB)"
     if per_gpu_total <= 0:
-        per_gpu_total = _pick_num(gpu_summary, ["hbm_total_gb"])
-        total_src = "gpu_summary hbm_total_gb"
+        per_gpu_total = gb_from_gib(_pick_num(gpu_summary, ["hbm_total_gb"]))
+        total_src = "gpu_summary hbm_total_gb (GiB -> GB)"
     if per_gpu_total <= 0:
         mb = _pick_num(gpu_summary, ["hbm_total_mb", "mem_total_mean_mb"])
         if mb > 0:
-            per_gpu_total, total_src = mb / 1024.0, "gpu_summary hbm_total_mb / 1024"
+            per_gpu_total, total_src = gb_from_mib(mb), "gpu_summary hbm_total_mb (MiB -> GB)"
     if per_gpu_total <= 0:
         total_src = "unresolved"          # deliberately no hardcoded fallback
 
@@ -719,12 +728,12 @@ def resolve_kv_bytes_per_token(model_name: str = "", kv_dtype: str = "",
                    f"    x SWA-adj: ({n_global} full + {n_swa} SWA "
                    f"@ min(1, {window}/{seq_len:.0f})={swa_density:.2f}) "
                    f"/ {n_layers} = {total:,} B "
-                   f"({total/1024.0:.1f} KB/token, "
+                   f"({kb_from_bytes(total):.1f} KB/token, "
                    f"{100.0*total/naive_total:.0f}% of naive)")
     else:
         total = naive_total
         formula = (f"{naive_formula} = {total:,} bytes = "
-                   f"{total/1024.0:.1f} KB/token")
+                   f"{kb_from_bytes(total):.1f} KB/token")
 
     return {"kb": total / 1024.0, "bytes": total,
             "naive_kb": naive_total / 1024.0, "naive_bytes": naive_total,
@@ -789,13 +798,13 @@ def resolve_hbm_breakdown(hbm: "dict | None" = None,
     # KV pool reserved (per GPU).
     kv_pool_gb = 0.0
     if max_total_tokens > 0 and kv_kb > 0:
-        kv_pool_gb = float(max_total_tokens) * kv_kb / 1024.0 / 1024.0 / tp
+        kv_pool_gb = gb_from_kib(float(max_total_tokens) * kv_kb) / tp
 
     # KV actually occupied (per GPU).
     kv_active_gb = 0.0
     kv_active_src = ""
     if used_tokens > 0 and kv_kb > 0:
-        kv_active_gb = float(used_tokens) * kv_kb / 1024.0 / 1024.0 / tp
+        kv_active_gb = gb_from_kib(float(used_tokens) * kv_kb) / tp
         kv_active_src = "kv_used_tokens x KV bytes/token / TP"
     elif token_usage > 0 and kv_pool_gb > 0:
         frac = float(token_usage)
@@ -887,7 +896,7 @@ def resolve_l2_residency(hicache_used_tokens: float = 0.0,
     """
     used_gb, used_src = 0.0, "unavailable"
     if hicache_used_tokens > 0 and kv_bytes_per_token_kb > 0:
-        used_gb = hicache_used_tokens * kv_bytes_per_token_kb / 1024.0 / 1024.0
+        used_gb = gb_from_kib(hicache_used_tokens * kv_bytes_per_token_kb)
         used_src = "sglang_hicache_host_used_tokens x KV bytes/token"
 
     cap_gb, cap_src = 0.0, "unknown"
@@ -903,7 +912,7 @@ def resolve_l2_residency(hicache_used_tokens: float = 0.0,
     # full" while the tier-residency chart, reading the same gauge directly,
     # read 134.3 GB. The 103% was the tell: an occupancy cannot exceed the
     # allocation it sits in, so the denominator was wrong.
-    _gauge_gb = (hicache_total_tokens * kv_bytes_per_token_kb / 1024.0 / 1024.0
+    _gauge_gb = (gb_from_kib(hicache_total_tokens * kv_bytes_per_token_kb)
                  if (hicache_total_tokens > 0 and kv_bytes_per_token_kb > 0)
                  else 0.0)
     if _gauge_gb > 0:
@@ -928,9 +937,9 @@ def resolve_l2_residency(hicache_used_tokens: float = 0.0,
         # from setup and multiplied by 8 GPUs -- gave 16 GB, a factor of 8.4
         # out. A stated ratio beats a stated size because only one of them
         # agrees with the device.
-        cap_gb = kv_pool_tokens * hicache_ratio * kv_bytes_per_token_kb / 1024.0 / 1024.0
+        cap_gb = gb_from_kib(kv_pool_tokens * hicache_ratio * kv_bytes_per_token_kb)
         cap_src = (f"--hicache-ratio {hicache_ratio:g} x max_total_num_tokens "
-                   f"{kv_pool_tokens:,.0f} x KV {kv_bytes_per_token_kb:.0f} KB/token")
+                   f"{kv_pool_tokens:,.0f} x KV {kb_from_bytes(kv_bytes_per_token_kb * 1024):.0f} KB/token")
         if hicache_total_gb > 0:
             _r2 = max(cap_gb, hicache_total_gb) / max(min(cap_gb, hicache_total_gb), 1e-9)
             if _r2 > 1.2:
@@ -972,6 +981,77 @@ def resolve_l2_residency(hicache_used_tokens: float = 0.0,
 # ---------------------------------------------------------------------------
 
 RANK_LABELS = ("tp_rank", "pp_rank", "moe_ep_rank", "attn_tp_rank", "ep_rank")
+# ---------------------------------------------------------------------------
+# Units: the report prints decimal SI everywhere — 1 KB = 1e3, 1 MB = 1e6,
+# 1 GB = 1e9, 1 TB = 1e12 bytes, and GB/s = 1e9 bytes/s.  Sources arrive in
+# several units (nvidia-smi / DCGM memory in MiB, /proc/meminfo in KiB,
+# Prometheus *_bytes in bytes, several collectors' "*_gb" fields computed with
+# / 1024**3), and the report used to label all of them "GB": the same KV
+# volume read 8,688.1 "GB" (GiB) on a KPI and 9,367 GB in a finding.  Convert
+# through these helpers so every printed size has one meaning.
+# ---------------------------------------------------------------------------
+KB = 1e3
+MB = 1e6
+GB = 1e9
+TB = 1e12
+GIB_TO_GB = 2 ** 30 / 1e9          # 1 GiB = 1.073741824 GB
+
+
+def gb_from_bytes(b) -> float:
+    return float(b or 0) / GB
+
+
+def gb_from_kib(kib) -> float:
+    return float(kib or 0) * 1024 / GB
+
+
+def gb_from_mib(mib) -> float:
+    return float(mib or 0) * 2 ** 20 / GB
+
+
+def gb_from_gib(gib) -> float:
+    return float(gib or 0) * GIB_TO_GB
+
+
+def mb_from_bytes(b) -> float:
+    return float(b or 0) / MB
+
+
+def kb_from_bytes(b) -> float:
+    return float(b or 0) / KB
+
+
+# Collector summary fields named "*_gb" that are really GiB (computed with
+# / 1024**3, or KiB / 1024 / 1024).  The deployed amoprof service publishes
+# these with the same names, so the report converts them on read rather than
+# relying on the producer's version.
+_COLLECTOR_GIB_FIELDS = frozenset({
+    # collectors/dram.py — /proc/meminfo kB / 1024 / 1024
+    "total_gb", "used_gb", "free_gb", "available_gb", "dram_total_gb", "dram_delta_gb",
+    # collectors/gpu.py — nvidia-smi MiB / 1024
+    "hbm_total_gb_all", "hbm_used_gb_peak_all",
+    # collectors/ssd_hardware.py, nvme_smart.py, blktrace.py, nsys.py — / 1024**3
+    "ssd_nand_written_gb", "nand_written_gb", "hicache_size_gb",
+    "hicache_fs_total_gb", "hicache_fs_used_gb", "hicache_fs_avail_gb",
+    "nvme_device_capacity_gb", "wr_delta_gb", "rd_delta_gb",
+    "hbm_read_gb", "hbm_write_gb",
+})
+
+
+# Host-written SMART fields: NVMe "data units" are 1000 x 512 bytes, but the
+# collectors multiply by 512 x 1024 and then divide by 1024**3, so the value is
+# units x 2**19 / 2**30.  True GB = units x 512,000 / 1e9 = value x 2**20 / 1e6.
+_COLLECTOR_DATA_UNIT_FIELDS = frozenset({"host_written_gb", "ssd_host_written_gb"})
+
+
+def collector_gb(field: str, value) -> float:
+    """Decimal GB for a collector "*_gb" field, whatever unit it was written in."""
+    v = float(value or 0)
+    if field in _COLLECTOR_DATA_UNIT_FIELDS:
+        return v * 2 ** 20 / 1e6
+    return v * GIB_TO_GB if field in _COLLECTOR_GIB_FIELDS else v
+
+
 _RANK_LABELS_RE = re.compile(
     r"\b(?:tp_rank|pp_rank|moe_ep_rank|attn_tp_rank|ep_rank)=\"?[^,\]\"]*\"?")
 
@@ -1489,8 +1569,8 @@ def vet_device_bw_peak(peak_mbs, mean_mbs=0.0, label="") -> dict:
                 "ratio_to_mean": 0.0}
     if _p > NVME_MAX_BW_MBS:
         return {"mbs": 0.0, "rejected": True,
-                "reason": (f"{_p:,.0f} MB/s is {_p / 1024.0:,.1f} GB/s through "
-                           f"one namespace, above the ~{NVME_MAX_BW_MBS / 1024.0:,.0f} "
+                "reason": (f"{_p:,.0f} MB/s is {_p / 1e3:,.1f} GB/s through "
+                           f"one namespace, above the ~{NVME_MAX_BW_MBS / 1e3:,.0f} "
                            f"GB/s a PCIe 5.0 x4 link can carry"
                            + (f", and {_ratio:,.0f}x this window's mean of "
                               f"{_m:,.1f} MB/s" if _ratio > 0 else "")

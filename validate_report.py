@@ -172,6 +172,20 @@ def validate_html(html: str, label: str) -> Result:
             if b > 0:
                 r.check(a <= b * 1.02, f"TILES '{lab}' used <= capacity", f"{a} / {b}")
 
+    # Sizes are decimal SI throughout (1 GB = 1e9 bytes), so no tile shows a
+    # binary unit, and the KV volume generated in the run reads the same on
+    # the KPI and in the L3.5 finding (8,688.1 "GB" there was GiB; 9,367 GB here).
+    _bin = sorted({lab for lab, val, _ in tiles if re.search(r"\b[KMGT]iB\b", val)})
+    r.check(not _bin, "TILES sizes use decimal units (no GiB/MiB/KiB)", ", ".join(_bin[:5]))
+    _kvg = next((_num(v) for l, v, _ in tiles if l.strip().lower() == "kv cache generated this run"
+                 and "GB" in v), None)
+    _fnd = re.search(r"KV generated in the run = .{0,200}?\(≈ ([\d.,]+) GB at", _text(unesc))
+    if _kvg is not None and _fnd:
+        _fv = float(_fnd.group(1).replace(",", ""))
+        r.check(abs(_kvg - _fv) <= max(0.1, 0.0005 * _fv),
+                "TILES KV generated agrees with the L3.5 finding",
+                f"KPI {_kvg:,.1f} GB vs finding {_fv:,.1f} GB")
+
     # The GPU util headline is the overall mean its formula describes, not the
     # busy-only mean: that one read 99.4% for GPUs idle 80% of the window.
     for lab, val, note in tiles:

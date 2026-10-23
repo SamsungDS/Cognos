@@ -118,9 +118,9 @@ def _read_intel_pcm_memory_raw_summary(raw_dir: Path) -> dict:
         a=num(r[idx_read]); b=num(r[idx_write])
         if a is None or b is None:
             continue
-        ag=a/1024.0; bg=b/1024.0
+        ag=a/1000.0; bg=b/1000.0   # pcm MB/s is decimal (1e6 B/s)
         if idx_mem is not None and len(r)>idx_mem and num(r[idx_mem]) is not None:
-            tg=num(r[idx_mem])/1024.0
+            tg=num(r[idx_mem])/1000.0
         else:
             tg=ag+bg
         if tg>0:
@@ -614,8 +614,8 @@ def _derive_nvme_columns(rows: list[dict]) -> list[dict]:
 
       rd_iops    = Δrd_ios  / Δtime_sec          (reads completed per sec)
       wr_iops    = Δwr_ios  / Δtime_sec          (writes completed per sec)
-      rd_bw_mbs  = Δrd_bytes / Δtime_sec / 2²⁰  (read MB/s from byte counter)
-      wr_bw_mbs  = Δwr_bytes / Δtime_sec / 2²⁰  (write MB/s from byte counter)
+      rd_bw_mbs  = Δrd_bytes / Δtime_sec / 1e6  (read MB/s from byte counter)
+      wr_bw_mbs  = Δwr_bytes / Δtime_sec / 1e6  (write MB/s from byte counter)
       rd_lat_ms  = Δrd_ms   / Δrd_ios            (avg read latency ms)
       wr_lat_ms  = Δwr_ms   / Δwr_ios            (avg write latency ms)
       io_util_pct= Δio_ms   / (Δtime_sec × 1000) × 100  (% time device was busy)
@@ -672,8 +672,8 @@ def _derive_nvme_columns(rows: list[dict]) -> list[dict]:
         if needs_bw and has_bytes:
             d_rdb = max(_to_float(row.get("rd_bytes")) - _to_float(prev.get("rd_bytes")), 0)
             d_wrb = max(_to_float(row.get("wr_bytes")) - _to_float(prev.get("wr_bytes")), 0)
-            row["rd_bw_mbs"] = round(d_rdb / dt / (1024 * 1024), 3)
-            row["wr_bw_mbs"] = round(d_wrb / dt / (1024 * 1024), 3)
+            row["rd_bw_mbs"] = round(d_rdb / dt / 1e6, 3)   # decimal MB/s
+            row["wr_bw_mbs"] = round(d_wrb / dt / 1e6, 3)
         elif needs_bw and needs_iops and has_ios:
             # No byte counters: estimate from IOPS × a typical NVMe block size.
             # We use the actual KV block size if we can get it, else 128 KB
@@ -804,13 +804,15 @@ def _chart_gpu(gpu: list[dict],
     if not gpu:
         return None
     # Candidate mem-column names in priority order. First match wins.
-    # Units are tracked so we can normalize everything to MB.
+    # Units are tracked so we can normalize everything to decimal MB.
+    # nvidia-smi / DCGM memory is MiB, and the "*_gb" columns are MiB / 1024.
+    _mib_mb = 2 ** 20 / 1e6
     mem_candidates = [
-        ("mem_used", 1.0),         # canonical (Prom & local), MB
-        ("mem_used_mb", 1.0),      # alt naming
-        ("hbm_used_mb", 1.0),      # legacy
-        ("mem_used_gb", 1024.0),   # GB → MB
-        ("hbm_used_gb", 1024.0),   # GB → MB
+        ("mem_used", _mib_mb),            # canonical (Prom & local), MiB
+        ("mem_used_mb", _mib_mb),         # alt naming, MiB
+        ("hbm_used_mb", _mib_mb),         # legacy, MiB
+        ("mem_used_gb", 2 ** 30 / 1e6),   # GiB → MB
+        ("hbm_used_gb", 2 ** 30 / 1e6),   # GiB → MB
     ]
     # Detect which candidate the rows actually carry. Probe the first
     # non-empty row.
@@ -902,16 +904,16 @@ def _chart_gpu(gpu: list[dict],
             # annotation explaining the recovery.
             summary_mb = 0.0
             if gpu_summary:
-                summary_mb = float(gpu_summary.get("hbm_used_mb_mean", 0) or 0)
+                summary_mb = float(gpu_summary.get("hbm_used_mb_mean", 0) or 0) * _mib_mb
                 if summary_mb == 0:
                     summary_gb = float(gpu_summary.get("hbm_used_gb_mean", 0) or 0)
-                    summary_mb = summary_gb * 1024.0
+                    summary_mb = summary_gb * 2 ** 30 / 1e6   # GiB → MB
             if summary_mb > 0:
                 avg_mem = [summary_mb] * n
                 mem_annotation = (
                     f"⚠ Per-sample HBM data was unavailable in "
                     f"gpu_timeseries.csv; showing summary mean "
-                    f"({summary_mb/1024:.1f} GB) as a flat reference. "
+                    f"({summary_mb/1e3:.1f} GB) as a flat reference. "
                     f"Re-collect with the DCGM exporter exposing the "
                     f"FB_USED metric per GPU to see the time-series.")
             else:
@@ -1446,7 +1448,7 @@ def _block_gb_from_summary(summary: dict, direction: str) -> float:
     for k in byte_keys:
         v = _to_float(summary.get(k), 0.0)
         if v > 0:
-            return v / (1024**3)
+            return v / 1e9
     return 0.0
 
 
@@ -1569,7 +1571,7 @@ def _chart_l3_prom_bandwidth(sglang: list[dict],
         "data": traces,
         "layout": _layout(
             f"L3 (local storage) cache Bandwidth — Prometheus-derived  "
-            f"(× {kv_bytes_per_token/1024:.0f} KB/tok)",
+            f"(× {kv_bytes_per_token/1e3:.0f} KB/tok)",
             "MB/s (estimated)", ts=ts),
     }
 
@@ -1764,7 +1766,8 @@ def _chart_bw_per_stream(bps: list[dict]) -> dict | None:
         rows.sort(key=lambda r: _to_float(r.get("bandwidth_mib_s")), reverse=True)
         rows = rows[:20]
         labels = [r.get("stream", "?") for r in rows]
-        bws = [_to_float(r.get("bandwidth_mib_s")) for r in rows]
+        # blktrace_analyzer writes MiB/s (bytes / 1048576); shown as MB/s
+        bws = [_to_float(r.get("bandwidth_mib_s")) * 2 ** 20 / 1e6 for r in rows]
         bytes_ = [_to_float(r.get("bytes")) / 1e6 for r in rows]
         traces.append({
             "y": labels, "x": bws,
@@ -1774,7 +1777,7 @@ def _chart_bw_per_stream(bps: list[dict]) -> dict | None:
             "customdata": bytes_,
             "hovertemplate": (f"<b>{op}</b><br>"
                               "Stream: %{y}<br>"
-                              "Bandwidth: <b>%{x:.2f} MiB/s</b><br>"
+                              "Bandwidth: <b>%{x:.2f} MB/s</b><br>"
                               "Total: %{customdata:.1f} MB<extra></extra>"),
         })
     if not traces:
@@ -1782,7 +1785,7 @@ def _chart_bw_per_stream(bps: list[dict]) -> dict | None:
     return {"data": traces,
             "layout": {**_layout("Bandwidth per Stream (top 20 per op)",
                                  "Stream (pid:comm)", height=580),
-                       "xaxis": {"title": {"text": "MiB / sec"},
+                       "xaxis": {"title": {"text": "MB / sec"},
                                  "tickfont": {"size": 12, "color": "#0f172a"}},
                        "barmode": "group"}}
 
@@ -2727,7 +2730,9 @@ try:
         resolve_kv_bytes_per_token as _k_resolve_kv,
         resolve_latency_percentile as _k_resolve_pct,
         resolve_l2_residency as _k_resolve_l2,
-        aligned_rate_series as _k_aligned_rate)
+        aligned_rate_series as _k_aligned_rate,
+        gb_from_gib as _k_gb_from_gib, gb_from_kib as _k_gb_from_kib,
+        collector_gb as _k_collector_gb)
 except Exception:  # pragma: no cover - standalone/bundled execution
     from metric_kernels import (  # type: ignore
         counter_delta as _k_counter_delta, window_rate as _k_window_rate,
@@ -2737,7 +2742,9 @@ except Exception:  # pragma: no cover - standalone/bundled execution
         resolve_kv_bytes_per_token as _k_resolve_kv,
         resolve_latency_percentile as _k_resolve_pct,
         resolve_l2_residency as _k_resolve_l2,
-        aligned_rate_series as _k_aligned_rate)
+        aligned_rate_series as _k_aligned_rate,
+        gb_from_gib as _k_gb_from_gib, gb_from_kib as _k_gb_from_kib,
+        collector_gb as _k_collector_gb)
 
 try:
     from amoprof.report.metric_formulas import (formula_details as _fx_details,
@@ -2986,9 +2993,13 @@ def build_report(raw_dir: Path, out_html: Path,
             qd_ts_data = _fallback
             qd_fallback_note = "Fallback from nvme_driver_timeseries inflight / iostat aqu-sz because exact blktrace Q→C queue-depth files are missing."
     # Capacity/used context for the SSD I/O Distribution chart
-    _ssd_cap_gb  = _to_float(smart_sum.get("nvme_device_capacity_gb")) or 0.0
-    _ssd_used_gb = _to_float(smart_sum.get("hicache_fs_used_gb")) or \
-                   _to_float(smart_sum.get("hicache_size_gb")) or 0.0
+    # Collector "*_gb" fields here are GiB; collector_gb converts to GB.
+    _ssd_cap_gb  = _k_collector_gb("nvme_device_capacity_gb",
+                                   _to_float(smart_sum.get("nvme_device_capacity_gb"))) or 0.0
+    _ssd_used_gb = _k_collector_gb("hicache_fs_used_gb",
+                                   _to_float(smart_sum.get("hicache_fs_used_gb"))) or \
+                   _k_collector_gb("hicache_size_gb",
+                                   _to_float(smart_sum.get("hicache_size_gb"))) or 0.0
     # blktrace analysis summary lives in the subdir; merge with collect summary.
     bt_summary  = _read_json(raw_dir / "summary.json")
     _ba_summary = _read_json(_ba_dir / "summary.json")
@@ -3478,8 +3489,8 @@ def build_report(raw_dir: Path, out_html: Path,
                 config=_iv_kv_cfg) / 1024.0
         if _l2_used_tokens > 0 and _kv_kb > 0:
             _tp_for_kv = max(_setup_float("TP size", "tp_size", default=1.0), 1.0)
-            _full_gb = _l2_used_tokens * _kv_kb / (1024 * 1024)
-            _tp_gb = _l2_used_tokens * (_kv_kb / _tp_for_kv) / (1024 * 1024)
+            _full_gb = _k_gb_from_kib(_l2_used_tokens * _kv_kb)
+            _tp_gb = _k_gb_from_kib(_l2_used_tokens * (_kv_kb / _tp_for_kv))
             if dram_total_gb > 0 and _full_gb > dram_total_gb * 1.05 and _tp_gb <= dram_total_gb * 1.05:
                 dram_used_gb = _tp_gb
                 _dram_used_kind = "l2kv"
@@ -3574,8 +3585,10 @@ def build_report(raw_dir: Path, out_html: Path,
     l3_total_gb = _setup_float("L3 (local storage) capacity GB", "L3 Capacity GB", "L3 total capacity GB", "l3_storage_capacity_gb", default=0.0)
     l3_used_gb = _setup_float("L3 (local storage) used GB", "L3 used capacity GB", "l3_storage_used_gb", default=0.0)
     if smart_sum:
-        l3_total_gb = float(smart_sum.get('hicache_fs_total_gb', l3_total_gb) or l3_total_gb)
-        l3_used_gb = float(smart_sum.get('hicache_fs_used_gb', l3_used_gb) or l3_used_gb)
+        l3_total_gb = (_k_collector_gb('hicache_fs_total_gb', smart_sum.get('hicache_fs_total_gb'))
+                       or l3_total_gb)
+        l3_used_gb = (_k_collector_gb('hicache_fs_used_gb', smart_sum.get('hicache_fs_used_gb'))
+                      or l3_used_gb)
     if _has_l3_iactive and l3_total_gb > 0:
         kpis.append(_kpi_tile("L3 (local storage) used",
                               (f"{l3_used_gb:.1f} / {l3_total_gb:.0f}" if l3_used_gb > 0 else f"— / {l3_total_gb:.0f}"),
@@ -3680,14 +3693,14 @@ Prompt/output token percentile metrics use prompt/generation token histogram buc
     formula_l3_bw = """L3 (local storage) read/onboard tokens = Δsglang_prefetched_tokens_total
 L3 (local storage) write/offload tokens = Δsglang_backuped_tokens_total
 L2→L1 load-back restore diagnostic = Δsglang_load_back_tokens_total × KV_bytes_per_token (L2→L1 restore diagnostic; not SSD/L3 bytes)
-Estimated read MB/s = prefetched_tokens × KV_bytes_per_token / Δtime_sec / 2^20
-Estimated write MB/s = backuped_tokens × KV_bytes_per_token / Δtime_sec / 2^20
+Estimated read MB/s = prefetched_tokens × KV_bytes_per_token / Δtime_sec / 1e6
+Estimated write MB/s = backuped_tokens × KV_bytes_per_token / Δtime_sec / 1e6
 These are SGLang/Mooncake tier movement estimates, not block-device measurements."""
     formula_host_io = """Host block I/O is derived from node-exporter/iostat-style counters, not SGLang. It is not treated as L3 SSD I/O unless setup_details resolves a concrete L3 local SSD device or mount path. df/cache-used is capacity footprint, not window I/O:
 Read IOPS = rate(node_disk_reads_completed_total) or rate(read_ios_total)
 Write IOPS = rate(node_disk_writes_completed_total) or rate(write_ios_total)
-Read MB/s = rate(node_disk_read_bytes_total) / 2^20
-Write MB/s = rate(node_disk_written_bytes_total) / 2^20
+Read MB/s = rate(node_disk_read_bytes_total) / 1e6
+Write MB/s = rate(node_disk_written_bytes_total) / 1e6
 VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node_vmstat_pswpin), rate(node_vmstat_pswpout)"""
 
     sections_html = []
@@ -3801,9 +3814,9 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
     _sg_backup_tok = _summary_or_ts_delta(sglang_sum, sglang_ts, "backuped_tokens_total", "kvb_backuped_tokens_total")
     _sg_load_tok = _summary_or_ts_delta(sglang_sum, sglang_ts, "load_back_tokens_total", "kvb_loadback_tokens_total")
     _sg_pref_tok = _summary_or_ts_delta(sglang_sum, sglang_ts, "prefetched_tokens_total", "kvb_prefetched_tokens_total")
-    _l3_sg_write_gb = (_sg_backup_tok * _kv_b_pt) / (1024**3) if _kv_b_pt > 0 else 0.0
-    _l3_sg_read_gb = (_sg_pref_tok * _kv_b_pt) / (1024**3) if _kv_b_pt > 0 else 0.0
-    _l3_sg_loadback_upper_gb = (_sg_load_tok * _kv_b_pt) / (1024**3) if _kv_b_pt > 0 else 0.0
+    _l3_sg_write_gb = (_sg_backup_tok * _kv_b_pt) / 1e9 if _kv_b_pt > 0 else 0.0
+    _l3_sg_read_gb = (_sg_pref_tok * _kv_b_pt) / 1e9 if _kv_b_pt > 0 else 0.0
+    _l3_sg_loadback_upper_gb = (_sg_load_tok * _kv_b_pt) / 1e9 if _kv_b_pt > 0 else 0.0
     _l3_block_read_gb = _block_gb_from_summary(bt_summary, "read")
     _l3_block_write_gb = _block_gb_from_summary(bt_summary, "write")
     if (_l3_block_read_gb <= 0 or _l3_block_write_gb <= 0) and _ba_summary:
@@ -3837,7 +3850,7 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
             "ch_l3_bw",
             _chart_l3_prom_bandwidth(sglang_ts, _kv_b_pt),
             f"Estimated from SGLang backuped/prefetched token counters × "
-            f"{_kv_b_pt/1024:.0f} KB/tok (model arch). Useful work, not raw "
+            f"{_kv_b_pt/1e3:.0f} KB/tok (model arch). Useful work, not raw "
             f"device bytes. load_back is shown as L2→L1 restore diagnostic-only and is not counted as SSD/L3 read bytes bytes."))
         sections_html.append(_section(
             "L3 (local storage) cache Traffic — Cumulative GB (Prometheus-derived)",
@@ -3949,7 +3962,8 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
     # who jumps directly to it sees the "this is under-counted" caveat next
     # to the data being doubted.
     _ba_cov_warning = (_ba_summary or {}).get("coverage_warning", "")
-    _ba_kernel_gb   = _to_float((_ba_summary or {}).get("kernel_wr_gb_delta")) or 0.0
+    # kernel_wr_gb_delta and fs_partition_start_gb are written as GiB (/ 1024**3)
+    _ba_kernel_gb   = _k_gb_from_gib(_to_float((_ba_summary or {}).get("kernel_wr_gb_delta"))) or 0.0
     _ba_capture_pct = (_to_float((_ba_summary or {}).get("captured_vs_kernel_ratio")) or 0.0) * 100
     # Write churn = total write traffic during the window / current FS-used at
     # analyze time. Ratio > 1 means the workload was overwriting/deleting (the
@@ -3980,7 +3994,7 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
     # whole device but the FS lives on a partition.
     _traced_device     = smart_sum.get("traced_device", "") or ""
     _fs_backing_dev    = smart_sum.get("fs_backing_device", "") or ""
-    _fs_part_start_gb  = _to_float(smart_sum.get("fs_partition_start_gb")) or 0.0
+    _fs_part_start_gb  = _k_gb_from_gib(_to_float(smart_sum.get("fs_partition_start_gb"))) or 0.0
     _lba_offset_warn   = smart_sum.get("lba_offset_warning", "") or ""
 
     _device_geom_line = ""
@@ -4001,7 +4015,7 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
         "not current file allocation: a workload that creates and overwrites or "
         "deletes KV blocks will rack up many TB of writes even if df shows only a "
         "few hundred GB of files at the end. "
-        "Diamonds mark the 30 hottest 16 MB buckets per op. "
+        "Diamonds mark the 30 hottest 16.8 MB buckets per op. "
         "Dotted line = device capacity. The dashed line at 'df' marks the "
         "filesystem byte total at analyze time — it's a different quantity than "
         "the bars: <b>df = files that currently exist</b>, <b>bars = bytes written "
