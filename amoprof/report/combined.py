@@ -4440,6 +4440,13 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # filesystems or NVMe devices on the node.
     _launch_raw_for_l3 = _pick(setup, ["Launch command","launch_command","Command","Reference launch command"], "")
     l3_explicit_config = _amoprof_has_explicit_l3_config(setup, str(_launch_raw_for_l3))
+    # The keyword scan above also matches a monitored device ("L3 device:
+    # /dev/nvme0n1") and defaulted fields; SGLang saying it has no storage
+    # backend outranks both.
+    _l3_no_tier = resolve_l3_backend(setup, str(_launch_raw_for_l3))
+    _l3_no_tier = _l3_no_tier if _l3_no_tier.backend_class == "host_dram_only" else None
+    if _l3_no_tier is not None:
+        l3_explicit_config = False
     l3_fs_total_gb = _k_collector_gb("hicache_fs_total_gb", _safe_float(smart.get("hicache_fs_total_gb", 0))) if l3_explicit_config else 0.0
     l3_fs_used_gb  = (_k_collector_gb("hicache_fs_used_gb", _safe_float(smart.get("hicache_fs_used_gb",
                                   smart.get("hicache_size_gb", 0)))) if l3_explicit_config else 0.0)
@@ -6929,7 +6936,51 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             "prefetched_tokens_total", "sglang_prefetched_tokens_total",
             "evicted_tokens_total", "sglang_evicted_tokens_total"))
         _evicted = evicted_tokens
-        if _has_sg_counters and l3_sglang_activity_tokens == 0:
+        if l3_backend_class == "none" and _l3_no_tier is not None:
+            # SGLang reports no storage backend.  Zero backup/prefetch
+            # is then the expected reading, not an idle tier, and "re-run with
+            # a larger context to drive L3 traffic" asks for traffic to a tier
+            # that does not exist.  Say what the counters mean for this
+            # architecture and whether adding a tier is worth considering.
+            _ev_n = int(_evicted or 0)
+            _proc = (_kvg_prompt + _kvg_decode) if (_kvg_prompt + _kvg_decode) > 0 else 0.0
+            _ev_ratio = (_ev_n / _proc) if _proc > 0 else 0.0
+            _hit = _safe_float(cache_hit, 0.0)
+            _pressure = _ev_ratio >= 1.0 or (_ev_n > 0 and 0 < _hit < 50)
+            _tiers = ("L1 HBM only" if "no HiCache" in _l3_no_tier.display_name
+                      else "L1 HBM + L2 DRAM only")
+            _held = "L1" if _tiers == "L1 HBM only" else "L1 + L2"
+            findings_items.append(finding(
+                "L3 TIER · NOT CONFIGURED",
+                (f'This run has no L3 tier ({_tiers}; SGLang server_info reports '
+                 f'<code>hicache_storage_backend</code> = None), so SGLang '
+                 f'<code>backuped_tokens_total</code> and <code>prefetched_tokens_total</code> '
+                 f'staying at 0 is expected — there is no tier to back up to or prefetch from. '
+                 + (f'<code>load_back_tokens_total</code> = {int(loadback_tokens):,} is L2→L1 '
+                    f'restore from host DRAM. '
+                    if loadback_tokens > 0 else '')
+                 + (f'<code>evicted_tokens_total</code> = {_ev_n:,}'
+                    + (f' ({_ev_ratio:,.1f}× the {_proc:,.0f} tokens processed)' if _proc > 0 else '')
+                    + (': with no L3 there is nowhere to offload evicted KV, so KV not also held '
+                       'in L2 is dropped and recomputed if a later request needs it. '
+                       if _held != "L1" else
+                       ': with no lower tier, evicted KV is dropped and recomputed if a later '
+                       'request needs it. ')
+                    if _ev_n > 0 else '')
+                 + '<strong>Recommendation:</strong> '
+                 + ('the eviction rate'
+                    + (f' and {_hit:.1f}% cache hit' if _hit > 0 else '')
+                    + (' suggest' if _hit > 0 else ' suggests')
+                    + f' the working set exceeds {_held} — consider adding an L3 tier '
+                      '(local NVMe or an AI Memory Node) so evicted KV is kept instead of recomputed.'
+                    if _pressure else
+                    f'{_held} held this workload without heavy eviction; add an L3 tier only if '
+                    'larger contexts or more sessions are expected.')),
+                plain=(f"No L3 tier is configured ({_tiers}), so zero backup/prefetch is expected. "
+                       + (f"{_ev_n:,} evicted tokens had no L3 to be offloaded to. " if _ev_n > 0 else "")
+                       + ("Consider adding an L3 tier to keep evicted KV."
+                          if _pressure else "No L3 tier is needed for this workload as observed."))))
+        elif _has_sg_counters and l3_sglang_activity_tokens == 0:
             # Counters present, but no reliable L3 storage evidence. load_back-only
             # and evicted-only are not counted as L3 usage.
             findings_items.append(finding(
@@ -7300,7 +7351,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             _layers.append(f"L2 (DRAM: {_gb(_l2_gb)})" if _l2_gb > 0 else "L2 (DRAM)")
 
         # L3: local NVMe SSD on the GPU node.
-        if not _remote and ((l3_fs_total_gb or 0) > 0 or str(_pick(setup, [
+        if not _remote and _be_cls != "none" and ((l3_fs_total_gb or 0) > 0 or str(_pick(setup, [
                 "L3 storage type", "L3 Device", "L3 Mount Path"], "")).strip()):
             _layers.append(f"L3 (NVMe SSD: {_gb(l3_fs_total_gb)})"
                            if (l3_fs_total_gb or 0) > 0 else "L3 (NVMe SSD)")

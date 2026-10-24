@@ -225,6 +225,25 @@ def resolve_l3_backend(setup: Mapping[str, Any] | None, launch_command: str | No
             False,
             evidence=f"SGLang server_info hicache_storage_backend={si_backend}")
 
+    # SGLang reporting hicache_storage_backend=None is the engine itself saying
+    # it has no storage tier: HiCache stops at L2 host DRAM.  A device or path
+    # in setup_details does not change that -- amoprof's --ssd-device is the
+    # disk it monitors, not a tier SGLang writes to -- so only an explicit
+    # (non-defaulted) tier/backend or a launch flag can override it.
+    si_raw = _get_server_info_raw(setup)
+    if ("hicache_storage_backend" in si_raw and not si_backend
+            and not (_ex_tier or _ex_backend)
+            and not _get_explicit(setup, "L3 storage type", "l3_storage_type")
+            and "--hicache-storage-backend" not in launch.lower()):
+        _hier = _norm(si_raw.get("enable_hierarchical_cache")).lower() in {"true", "1", "yes", "on"}
+        return L3BackendResolution(
+            "host_dram_only",
+            "Host DRAM only (HiCache L1+L2)" if _hier else "GPU HBM only (no HiCache)",
+            "not an L3 write; hicache_storage_backend=None (no storage tier)",
+            "not an L3 read; hicache_storage_backend=None (no storage tier)",
+            False,
+            evidence="SGLang server_info hicache_storage_backend=None — no storage tier")
+
     # 2. Fallback: prior logic based on explicit setup_details fields, launch
     # command flags, or heuristics.  Reached only when no live server_info
     # backend value was observed.
