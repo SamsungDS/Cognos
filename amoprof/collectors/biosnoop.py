@@ -34,6 +34,25 @@ from ..base import (
 log = logging.getLogger("amoprof.collectors.biosnoop")
 
 
+def disk_matches(base: str, disk: str) -> bool:
+    """True when biosnoop's DISK column names the device `base` or a partition.
+
+    With NVMe native multipath, /dev/nvme6n1 is the subsystem head and block
+    I/O is issued on its controller path nvme6c6n1, which is the name biosnoop
+    reports.  Filtering on nvme6n1 alone dropped every event for the disk.
+    """
+    d = str(disk or "")
+    if not base or not d:
+        return False
+    if d == base:
+        return True
+    m = re.fullmatch(r"nvme(\d+)n(\d+)(p\d+)?", base)
+    if m:
+        part = re.escape(m.group(3)) if m.group(3) else r"(?:p\d+)?"
+        return bool(re.fullmatch(rf"nvme{m.group(1)}(?:c\d+)?n{m.group(2)}{part}", d))
+    return bool(re.match(r"^[a-z]+[a-z]$", base) and d.startswith(base) and d[len(base):].isdigit())
+
+
 @register_collector
 class BiosnoopCollector(BaseCollector):
     SPEC = CollectorSpec(
@@ -103,6 +122,7 @@ class BiosnoopCollector(BaseCollector):
         self._headers_seen = 0
         self._reason = ""
         self._t0 = 0.0
+        self._header_at = 0.0
         self._found = None
         self._cmd = []
         self._header_cols = None
@@ -146,20 +166,12 @@ class BiosnoopCollector(BaseCollector):
         """Accept whole-device and partition names.
 
         Examples:
-          device nvme7n1 matches nvme7n1 and nvme7n1p1
+          device nvme7n1 matches nvme7n1, nvme7n1p1 and multipath path nvme7c7n1
           device sda     matches sda and sda1
         """
         if not self.device_name:
             return True
-        d = str(disk or "")
-        base = self.device_name
-        if d == base:
-            return True
-        if base.startswith("nvme") and d.startswith(base + "p"):
-            return True
-        if re.match(r"^[a-z]+[a-z]$", base) and d.startswith(base) and d[len(base):].isdigit():
-            return True
-        return False
+        return disk_matches(self.device_name, disk)
 
     def _open_outputs(self):
         header = ["ts", "comm", "pid", "disk", "op", "sector", "size_bytes", "latency_ms"]
@@ -186,6 +198,9 @@ class BiosnoopCollector(BaseCollector):
             "biosnoop_stderr": str(self._stderr_path),
             "biosnoop_command": str(self._cmd_path),
             "biosnoop_duration_s": round(time.time() - self._t0, 2) if self._t0 else 0,
+            # Startup (BPF compile + kallsyms scans) captures nothing; the
+            # capture window is what follows the header.
+            "biosnoop_startup_s": round(self._header_at - self._t0, 2) if self._header_at and self._t0 else None,
             "biosnoop_filter_disk": self.device_name or "(all)",
             "biosnoop_reason": self._reason,
             "biosnoop_binary": self._found,
@@ -210,6 +225,7 @@ class BiosnoopCollector(BaseCollector):
         self._lines_unparsed = 0
         self._headers_seen = 0
         self._reason = ""
+        self._header_at = 0.0
 
         candidates = [self.binary, "biosnoop", "biosnoop-bpfcc",
                       "/usr/sbin/biosnoop-bpfcc", "/usr/share/bcc/tools/biosnoop"]
@@ -251,6 +267,10 @@ class BiosnoopCollector(BaseCollector):
                 text=True,
                 env=env,
                 bufsize=1,
+                # sudo ignores signals from its own process group, so without
+                # this stop()'s SIGINT never reached biosnoop, and killing
+                # sudo left it running as root with its probes attached.
+                start_new_session=True,
             )
         except FileNotFoundError as e:
             self._reason = f"failed to launch biosnoop: {e}"
@@ -312,6 +332,8 @@ class BiosnoopCollector(BaseCollector):
             ("sector" in joined_norm or "bytes" in joined_norm)):
             self._header_cols = cols
             self._headers_seen += 1
+            if not self._header_at:
+                self._header_at = time.time()
             return "header"
 
         if len(cols) < 7:
@@ -371,6 +393,8 @@ class BiosnoopCollector(BaseCollector):
                 self._lines_unparsed += 1
 
     def stop(self) -> dict:
+        _starting = (self._proc is not None and self._proc.poll() is None
+                     and not self._headers_seen)
         if self._proc is not None and self._proc.poll() is None:
             # SIGINT is friendlier to BCC Python tools than SIGTERM and gives
             # them a chance to unwind probes and flush stdout/stderr.
@@ -421,6 +445,13 @@ class BiosnoopCollector(BaseCollector):
                     f"but none matched requested device filter {self.device_name!r}; "
                     f"inspect {self._csv_all_path.name} and check DISK names/partitions."
                 )
+            elif _starting:
+                self._reason = (
+                    f"biosnoop was still starting (no header after "
+                    f"{time.time() - self._t0:.0f}s: BCC compiles the eBPF program and scans "
+                    f"/proc/kallsyms first) when collection ended, so it captured nothing; "
+                    f"the KeyboardInterrupt traceback in {self._stderr_path.name} is from "
+                    f"stopping it. Use a longer --duration-s.")
             else:
                 stderr_tail = ""
                 try:
@@ -448,6 +479,7 @@ class BiosnoopCollector(BaseCollector):
                 "biosnoop_summary": str(self._summary_path),
                 "biosnoop_stderr": str(self._stderr_path),
                 "biosnoop_raw_log": str(self._raw_path),
+                "biosnoop_startup_s": summary.get("biosnoop_startup_s"),
             }
 
         return {
@@ -458,5 +490,6 @@ class BiosnoopCollector(BaseCollector):
             "biosnoop_all_devices_csv": str(self._csv_all_path),
             "biosnoop_summary": str(self._summary_path),
             "biosnoop_duration_s": round(time.time() - self._t0, 2),
+            "biosnoop_startup_s": summary.get("biosnoop_startup_s"),
             "biosnoop_filter_disk": self.device_name or "(all)",
         }

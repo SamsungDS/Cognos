@@ -41,6 +41,12 @@ TOOL_SMOKE_TIMEOUT_S = 4.0
 # blktrace needs a real (short) capture window; anything below ~0.6s tends to
 # produce no events on idle systems and looks like a failure.
 BLKTRACE_SMOKE_DURATION_S = 1
+# biosnoop prints its header only after BCC has compiled the eBPF program and
+# scanned /proc/kallsyms (a Python loop over every kernel symbol) for each
+# probe.  On a many-core host with large GPU modules that takes well over 8 s,
+# and interrupting it mid-scan leaves a KeyboardInterrupt traceback that reads
+# like a crash.  The wait ends as soon as the header appears.
+BIOSNOOP_STARTUP_TIMEOUT_S = 30.0
 
 
 @dataclasses.dataclass
@@ -87,16 +93,10 @@ def _biosnoop_disk_matches(line: str, device: str | None) -> bool:
     parts = line.split()
     # BCC biosnoop with -t: TIME(s) COMM PID DISK T SECTOR BYTES LAT(ms)
     # Without -t:           COMM PID DISK T SECTOR BYTES LAT(ms)
-    # Be permissive and look for any token equal to disk or partition name.
-    for tok in parts:
-        tok = tok.strip()
-        if tok == base:
-            return True
-        if base.startswith("nvme") and tok.startswith(base + "p"):
-            return True
-        if re.match(r"^[a-z]+[a-z]$", base) and tok.startswith(base) and tok[len(base):].isdigit():
-            return True
-    return False
+    # Be permissive and look for any token naming the disk, a partition or
+    # its NVMe multipath controller path.
+    from .collectors.biosnoop import disk_matches
+    return any(disk_matches(base, tok.strip()) for tok in parts)
 
 
 def _biosnoop_supports_t_option(binary: str) -> bool:
@@ -513,9 +513,13 @@ def check_biosnoop(biosnoop_bin: str = "biosnoop-bpfcc",
         cmd = ["sudo", "-n", "-E", "PYTHONUNBUFFERED=1"] + cmd
 
     try:
+        # Own session: sudo ignores signals sent from its own process group
+        # (so a terminal ^C is not delivered twice), and with use_pty the
+        # SIGINT below never reached biosnoop.  It was left running as root
+        # and holding the stderr pipe, so the read after teardown hung.
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, text=True,
-                                 env=env)
+                                 env=env, start_new_session=True)
     except FileNotFoundError:
         return CheckResult(
             "biosnoop (--enable-biosnoop)", "fail",
@@ -540,7 +544,7 @@ def check_biosnoop(biosnoop_bin: str = "biosnoop-bpfcc",
     t_start = time.monotonic()
 
     # Phase 1: wait for header.
-    deadline = time.monotonic() + 8.0
+    deadline = time.monotonic() + BIOSNOOP_STARTUP_TIMEOUT_S
     while time.monotonic() < deadline:
         if proc.poll() is not None:
             break
@@ -555,6 +559,9 @@ def check_biosnoop(biosnoop_bin: str = "biosnoop-bpfcc",
                 if "PID" in accumulated and ("COMM" in accumulated or "DISK" in accumulated):
                     header_seen = True
                     break
+    startup_s = time.monotonic() - t_start
+    # Exited by itself (a real failure) vs still starting when the wait ended.
+    exit_code = proc.poll()
 
     # Phase 2: if requested, actively prove event emission on target disk.
     if header_seen and verify_event and device:
@@ -581,21 +588,37 @@ def check_biosnoop(biosnoop_bin: str = "biosnoop-bpfcc",
             if event_seen:
                 break
 
-    # Graceful teardown — SIGINT lets BCC flush.
-    try:
-        proc.send_signal(2)
-        proc.wait(timeout=2.0)
-    except subprocess.TimeoutExpired:
+    # Graceful teardown — SIGINT lets BCC detach its probes and flush; SIGTERM
+    # is still relayed by sudo, SIGKILL is not.
+    for _sig, _wait in ((2, 5.0), (15, 2.0)):
+        try:
+            proc.send_signal(_sig)
+            proc.wait(timeout=_wait)
+            break
+        except subprocess.TimeoutExpired:
+            continue
+    if proc.poll() is None:
         proc.kill()
         try:
             proc.wait(timeout=1.0)
         except subprocess.TimeoutExpired:
             pass
 
-    try:
-        stderr = proc.stderr.read() if proc.stderr else ""
-    except Exception:
-        stderr = ""
+    # Read only what is already there: a surviving child still holds the pipe
+    # and a blocking read() would never return.
+    _chunks = []
+    if proc.stderr:
+        try:
+            _efd = proc.stderr.fileno()
+            _fcntl.fcntl(_efd, _fcntl.F_SETFL, _fcntl.fcntl(_efd, _fcntl.F_GETFL) | os.O_NONBLOCK)
+            while True:
+                _b = os.read(_efd, 65536)
+                if not _b:
+                    break
+                _chunks.append(_b)
+        except (BlockingIOError, OSError):
+            pass
+    stderr = b"".join(_chunks).decode("utf-8", errors="replace")
 
     elapsed = time.monotonic() - t_start
     try:
@@ -613,6 +636,10 @@ def check_biosnoop(biosnoop_bin: str = "biosnoop-bpfcc",
                 "trigger_returncode": trigger_rc,
                 "trigger_stderr": trigger_err,
                 "biosnoop_t_supported": bool(supports_t),
+                "startup_s": round(startup_s, 3),
+                "startup_timeout_s": BIOSNOOP_STARTUP_TIMEOUT_S,
+                "exited_before_header": bool(exit_code is not None and not header_seen),
+                "exit_code": exit_code,
                 "elapsed_s": round(elapsed, 3),
             },
         )
@@ -623,7 +650,7 @@ def check_biosnoop(biosnoop_bin: str = "biosnoop-bpfcc",
     if header_seen and (not verify_event):
         return CheckResult(
             "biosnoop (--enable-biosnoop)", "pass",
-            detail=(f"attach/header OK within {elapsed:.1f}s; event capture not verified "
+            detail=(f"attach/header OK within {startup_s:.1f}s; event capture not verified "
                     f"(run with --strict-sanity to verify target-device events; "
                     f"biosnoop -t supported={'yes' if supports_t else 'no'}; BTF={'yes' if btf_present else 'no'})"),
         )
@@ -664,18 +691,38 @@ def check_biosnoop(biosnoop_bin: str = "biosnoop-bpfcc",
         )
 
     # No header.
-    diagnostic = (accumulated + "\n" + stderr).strip()
-    last_lines = diagnostic.splitlines()[-3:] if diagnostic else ["(no output)"]
-    btf_hint = "" if btf_present else (
-        " (no BTF — first BCC run may need linux-headers-$(uname -r); "
-        "try preloading by running 'sudo biosnoop-bpfcc -t' once)")
     _stderr_path = diag_paths.get("stderr_path", "(preflight stderr path unavailable)")
     _stdout_path = diag_paths.get("stdout_path", "(preflight stdout path unavailable)")
     _summary_path = diag_paths.get("summary_path", "(preflight summary path unavailable)")
     _cmd_path = diag_paths.get("command_path", "(preflight command path unavailable)")
+    if exit_code is None:
+        # Still starting when the wait ended; the check stopped it, so any
+        # traceback in its output is that interrupt, not a fault.  The
+        # collector itself waits for the whole run.
+        return CheckResult(
+            "biosnoop (--enable-biosnoop)", "warn",
+            detail=(f"still starting after {BIOSNOOP_STARTUP_TIMEOUT_S:.0f}s (BCC compiles "
+                    f"the eBPF program and scans /proc/kallsyms before printing its header); "
+                    f"the check stopped it, so a KeyboardInterrupt traceback in its output is "
+                    f"expected. Diagnostics: stderr={_stderr_path}; stdout={_stdout_path}; "
+                    f"summary={_summary_path}; command={_cmd_path}"),
+            fix=("Collection will proceed; time how long `sudo " + biosnoop_bin + "` takes to "
+                 "print its header. Events from that startup period are not captured, so use "
+                 "--duration-s well above it."),
+            impact=["§I per-stream bandwidth (first seconds of the run)"],
+        )
+
+    # Exited by itself: report its own error, not the caret lines of a traceback.
+    diagnostic = (accumulated + "\n" + stderr).strip()
+    _lines = [l for l in diagnostic.splitlines() if l.strip() and not re.fullmatch(r"\s*[\^~]+\s*", l)]
+    last_lines = _lines[-3:] if _lines else ["(no output)"]
+    btf_hint = "" if btf_present else (
+        " (no BTF — first BCC run may need linux-headers-$(uname -r); "
+        "try preloading by running 'sudo biosnoop-bpfcc -t' once)")
     return CheckResult(
         "biosnoop (--enable-biosnoop)", "fail",
-        detail=(f"no header in 8s. Last output: {' | '.join(last_lines)[:160]}. "
+        detail=(f"exited with code {exit_code} after {startup_s:.1f}s without printing a header. "
+                f"Last output: {' | '.join(last_lines)[:240]}. "
                 f"Diagnostics: stderr={_stderr_path}; stdout={_stdout_path}; "
                 f"summary={_summary_path}; command={_cmd_path}"),
         fix=("Test manually: sudo " + biosnoop_bin + "  (or add -t only if its help lists -t). "
