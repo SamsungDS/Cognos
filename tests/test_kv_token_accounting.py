@@ -50,7 +50,10 @@ def test_phase_analysis_shows_token_reuse_density():
     from amoprof.report.amoprof import Metrics, _token_reuse_density_html
     m = Metrics()
     m.reuse_reused_tokens, m.reuse_computed_tokens, m.reuse_output_tokens = 22_659_071, 32_666_534, 48_252
-    m.kv_bytes_per_token_kb, m.reuse_kv_generated_gb, m.token_reuse_density = 560, 18_760.0, 1_207.9
+    m.kv_bytes_per_token, m.kv_bytes_per_token_kb = 560 * 1024, 560
+    m.reuse_kv_generated_gb, m.token_reuse_density = 18_760.0, 1_207.9
     html = _token_reuse_density_html(m)
-    assert "Token_Reuse_Density" in html and ">1,208<" in html and "good fit" in html
+    assert "Token_Reuse_Density" in html and ">1,208<" in html
+    assert "Indicates good KV cache re-use" in html
+    assert "× 573 KB/token" in html          # 573,440 bytes, decimal KB
     assert "unavailable" in _token_reuse_density_html(Metrics())
