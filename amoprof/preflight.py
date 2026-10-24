@@ -34,6 +34,8 @@ import time
 from pathlib import Path
 from typing import Callable
 
+from .blockdev import nvme_multipath_paths
+
 log = logging.getLogger("amoprof.preflight")
 
 # How long to allow each tool's smoke test before we give up
@@ -41,6 +43,10 @@ TOOL_SMOKE_TIMEOUT_S = 4.0
 # blktrace needs a real (short) capture window; anything below ~0.6s tends to
 # produce no events on idle systems and looks like a failure.
 BLKTRACE_SMOKE_DURATION_S = 1
+# blktrace starts and tears down one relay thread per CPU: a 1 s capture took
+# 4.5-5.3 s to exit on a 256-CPU host, past the old 4 s limit.  The wait ends
+# as soon as blktrace exits.
+BLKTRACE_SMOKE_TIMEOUT_S = 30.0
 # biosnoop prints its header only after BCC has compiled the eBPF program and
 # scanned /proc/kallsyms (a Python loop over every kernel symbol) for each
 # probe.  On a many-core host with large GPU modules that takes well over 8 s,
@@ -174,7 +180,7 @@ def _blktrace_smoke_capture(device: str, td: str, blktrace_bin: str,
                             use_sudo: bool) -> tuple[int, str, str, list[str]]:
     cmd = [blktrace_bin, "-d", device, "-w", str(BLKTRACE_SMOKE_DURATION_S),
            "-o", "smoke", "-D", td]
-    rc, out, err = _run(cmd, timeout=BLKTRACE_SMOKE_DURATION_S + 3.0, use_sudo=use_sudo)
+    rc, out, err = _run(cmd, timeout=BLKTRACE_SMOKE_TIMEOUT_S, use_sudo=use_sudo)
     if use_sudo and os.geteuid() != 0:
         cmd = ["sudo", "-n"] + cmd
     return rc, out, err, cmd
@@ -361,6 +367,19 @@ def check_blktrace(device: str, blktrace_bin: str = "blktrace",
             "blktrace (--enable-blktrace)", "fail",
             detail=f"{blkparse_bin} not in PATH",
             fix="apt install blktrace",
+            impact=["§C/§D/§H request-level NVMe charts"],
+        )
+    # On a multipath namespace head a capture always "succeeds" with empty
+    # per-CPU files, so test for it instead of smoke-capturing.
+    _mp_paths = nvme_multipath_paths(device)
+    if _mp_paths is not None:
+        return CheckResult(
+            "blktrace (--enable-blktrace)", "warn",
+            detail=(f"{device} is an NVMe multipath namespace head: its I/O is issued on "
+                    f"controller path {', '.join(_mp_paths) or 'nvmeXcYnZ'}, which has no "
+                    f"device node for blktrace to attach to, so the trace will hold no events"),
+            fix=("Use --enable-biosnoop for per-I/O events (it attributes path I/O to this "
+                 "disk); boot with nvme_core.multipath=N if blktrace request data is required."),
             impact=["§C/§D/§H request-level NVMe charts"],
         )
     # debugfs is the kernel-side dependency
