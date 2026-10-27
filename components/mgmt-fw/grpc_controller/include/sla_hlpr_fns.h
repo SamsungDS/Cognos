@@ -1,0 +1,200 @@
+#ifndef __SLA_HLPR_FNS_H__
+#define __SLA_HLPR_FNS_H__
+
+#include <algorithm>
+#include <boost/property_tree/json_parser.hpp>
+#include <boost/property_tree/ptree.hpp>
+#include <map>
+#include <mutex>
+#include <unordered_map>
+#include <vector>
+
+#include "svk_pub_sub_struct.h"
+
+enum class Device_Status_E {
+  DEVICE_INVALID = -1,
+  DEVICE_ONLINE = 0,
+  DEVICE_OFFLINE,
+  DEVICE_FAULTY,
+};
+
+typedef struct {
+  uint64_t avg_latency_ns;  // Device Latency in nanoseconds
+  uint64_t p99_latency;
+  uint64_t io_per_sec;
+  uint64_t bw_per_sec;
+  uint64_t io_size;
+  uint64_t queue_depth;
+} DeviceQOS;
+
+typedef struct DeviceInfo_T {
+  std::string controller_generated_id;
+  std::string node_name;
+  uint64_t device_id;
+  std::string device_serial;
+  std::string device_type;
+  std::string cxl_device_type;
+  std::string cxl_protocol;
+  uint64_t total_capacity_mb;
+  uint64_t available_capacity_mb;
+  uint64_t allocated_capacity_mb;
+  std::string status;
+  uint64_t numa;
+  uint64_t numa_attached;
+  DeviceQOS device_qos;
+  svk_slat_logic_output stats;
+  bool free_flag;
+  // This status is used for internal decisions
+  Device_Status_E internal_status;
+} DeviceInfo;
+
+// This structure holds the necessary device's info for the App.
+// For more details, use the ID to refer to the DeviceInfo
+struct AppDeviceInfo_T {
+  std::string controller_generated_id;
+  // This is used for book keeping the capacity usage in case app is
+  // unregistered
+  uint64_t allocated_capacity_mb;
+
+  // Check whether the device is already used for tiering before
+  bool used_for_tiering;
+};
+
+using AppDeviceInfo = AppDeviceInfo_T;
+
+typedef struct {
+  std::string app_name;
+  uint64_t appLatencyns;
+  uint64_t size;
+  pid_t pid;
+  uint64_t app_hotdata_size;
+  std::string node_ip;
+  // List of devices in the app with the tuple <numa, AppDeviceInfo>
+  std::unordered_map<uint64_t, AppDeviceInfo> app_device_map;
+} App_Info;
+
+class SLADeviceHelper {
+ public:
+  SLADeviceHelper(){};
+  int GetDeviceDetails(const std::string& node_name, const std::string& port);
+
+  /**
+   * Function to get the devices for the given requirements
+   *  - Only one APP per device (current)
+   *  - Latency lower or equal than the given latency requirement
+   *  - Device is ONLINE
+   *  - Device is not used by any other App
+   *  - Device replacement with the similar device attributes and the node name
+   * where the device is present
+   *
+   * @param sla_latency_ns App/Device Latency requirements. Device with latency
+   * equal or lower than the given will be taken
+   * @param size_in_mb Capacity requirement. For the given capacity, iterate
+   * over all the devices and club them. This can fail if the enough drives are
+   * not there to meet the capacity or the drive replacement with similar or
+   * larger capacity is not there
+   * @param node_name Node name where the devices should be present. Usually
+   * used for replacement scenarios
+   * @param max_count Maximum devices to be aggregated. If -1 is given, then any
+   * number of drives. Otherwise, only specific number of drives as per the
+   * input
+   * @param[out] devices Devices will be aggregated in the vector and returned
+   * to the caller
+   */
+
+  int GetDeviceForLatencyRequirements(
+      uint64_t sla_latency_ns, uint64_t size,
+      const std::vector<std::string>& node_names, int max_count,
+      std::vector<DeviceInfo>& devices);
+  void GetDevicesOfNode(const std::string& node_name,
+                        std::vector<DeviceInfo>& devices);
+  void UpdateDeviceAllocatedCapacity(const std::vector<DeviceInfo>& devices);
+
+  int SetAppInfo(const std::string& controller_generated_device_id,
+                 const App_Info& app_info);
+  int UnregisterDevicesForNode(const std::string& node_name);
+  int GetDeviceInfo(const std::string& controller_generated_device_id,
+                    DeviceInfo& device_info);
+  int GetAppInfo(const std::string& controller_generated_device_id,
+                 App_Info& app_info);
+  int MarkTheDeviceFaulty(const std::string& controller_generated_device_id);
+  int UpdateAllDevicesWithStatus(const std::string_view node_name,
+                                 Device_Status_E dev_status);
+  int GetReplacementDevice(const DeviceInfo& dev_info,
+                           DeviceInfo& replacment_dev);
+  int GetTieredDevice(const DeviceInfo& dev_info, DeviceInfo& tiered_dev);
+  /**
+   * Update the app details for the replacement device.
+   * As part of it, remove the faulty device from the device_map if app details
+   * are valid. Also remove the device from the app_info as well as this device
+   * is no more used Update the app_info as well as add the AppInfo for the new
+   * device as well.
+   *
+   * @param old_controller_generated_device_id - the controller generated device
+   * id of the faulty device
+   * @param new_controller_generated_device_id - the controller generated device
+   * id of the replacement device
+   * @param app_info - the app name and the app pid details
+   */
+  int UpdateAppInfoForReplacementDevice(
+      const std::string& old_controller_generated_device_id,
+      const std::string& new_controller_generated_device_id,
+      const App_Info& app_info);
+  ~SLADeviceHelper(){};
+
+ private:
+  // unordered map with device_id with the an array of App details
+  std::unordered_map<std::string /*controller_generated_device_id*/,
+                     std::string /*app_id*/>
+      m_device_app_data;
+
+  // Unordered map with the device ID generated by the controller and the
+  // associated device info
+  std::unordered_map<std::string /*controller_generated_device_id*/,
+                     DeviceInfo /*device_info*/>
+      m_device_map;
+
+  // Unordered map with app ID and the App Info
+  std::unordered_map<std::string /*app_id*/, App_Info /*app_info*/> m_app_map;
+  mutable std::mutex m_device_map_mutex;
+};
+
+class SLAStatsManager {
+ public:
+  SLAStatsManager(){};
+  ~SLAStatsManager(){};
+  bool addSLADataEntry(const std::string& app_name,
+                       const std::string& host_name,
+                       const std::string& device_name,
+                       const svk_slat_logic_output& data);
+  // Get data based on specific tuple
+  svk_slat_logic_output getSLAData(const std::string& app_name,
+                                   const std::string& host_name,
+                                   const std::string& device_name);
+  bool updateSLAData(const std::string& app_name, const std::string& host_name,
+                     const std::string& device_name,
+                     const svk_slat_logic_output& data);
+  // Get all entries that include name in the tuple
+  std::map<std::tuple<std::string, std::string, std::string>,
+           svk_slat_logic_output>
+  searchSLAData(const std::string& name);
+  bool writeToFile(const std::string& filename);
+  bool readFromFile(const std::string& filename);
+
+ private:
+  std::map<std::tuple<std::string, std::string, std::string>,
+           svk_slat_logic_output>
+      stats;
+};
+
+// Function to generate the controller unique ID for the given node name and
+// NUMA
+std::string generate_unique_device_id(const std::string& node_name,
+                                      const std::string& numa);
+// Function to generate a unique app ID
+std::string generate_app_id(const std::string& app_name,
+                            const std::string& app_pid);
+
+extern const std::shared_ptr<SLADeviceHelper> g_sla_device_hlpr;
+
+#endif /* __SLA_HLPR_FNS_H__ */

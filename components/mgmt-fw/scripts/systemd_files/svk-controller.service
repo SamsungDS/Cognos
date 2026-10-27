@@ -1,0 +1,19 @@
+[Unit]
+Description=Cognos gRPC Controller service
+After=network.target
+StartLimitBurst=5
+
+[Service]
+#User=svk
+KillMode=process
+WorkingDirectory = /usr/local/svk/mgmt-fw
+Type=notify
+
+ExecStart = /usr/local/svk/mgmt-fw/bin/svkgrpccontroller --svk_conf_file /etc/svk/mgmt_fw_config.json
+ExecReload = /bin/kill -s HUP $MAINPID
+ExecStop = /bin/kill -s INT $MAINPID
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+

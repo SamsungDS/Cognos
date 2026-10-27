@@ -1,0 +1,48 @@
+#!/usr/bin/make -f
+
+SHORT_VERSION := $(shell $(CURDIR)/../scripts/get_version.sh -s)
+INSTALL_PATH = usr/local/svk/mgmt-fw
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	cmake -DWITH_RELEASE=ON -DPKG_CONFIG_PREFIX=/$(INSTALL_PATH) -DCMAKE_INSTALL_PREFIX=/$(INSTALL_PATH) ..
+
+override_dh_auto_build:
+	make -j$(nproc)
+
+override_dh_auto_install:
+	make install DESTDIR=$(CURDIR)
+
+	# Rest API Build
+	mkdir -p -v $(CURDIR)/$(INSTALL_PATH)/rest_api
+	go mod tidy -C $(CURDIR)/rest_api/tests
+	# Build svk_rest_server with SHORT_VERSION var
+	go build -C $(CURDIR)/rest_api/tests/cmd/app -o $(CURDIR)/$(INSTALL_PATH)/rest_api/svk_rest_server-$(SHORT_VERSION)
+	# Set svk_rest_server symlink
+	ln -s svk_rest_server-$(SHORT_VERSION) $(CURDIR)/$(INSTALL_PATH)/rest_api/svk_rest_server
+
+override_dh_usrlocal:
+	# Do nothing, because we are installing to /usr/local even though this is non-standard practice
+
+override_dh_install:
+	# Create ld.conf.so.d file for SVK Management Framework
+	mkdir --verbose --parent $(CURDIR)/etc/ld.so.conf.d
+	echo "/$(INSTALL_PATH)/lib64" > $(CURDIR)/etc/ld.so.conf.d/svk-mgmt-fw.conf
+
+	dh_install
+
+override_dh_strip:
+	# Do not generate debug symbol packages
+	dh_strip --no-ddebs
+
+override_dh_shlibdeps:
+	# Set link path for shlibdeps
+	dh_shlibdeps -l$(CURDIR)/$(INSTALL_PATH)/lib64
+
+override_dh_installsystemd:
+	dh_installsystemd --name=cognos-controller
+	dh_installsystemd --name=cognos-node
+	dh_installsystemd --name=cognos-restserver
+	dh_installsystemd --name=cognos-svc-mgr
