@@ -50,7 +50,8 @@ scmc_ssl_key: "ssl_key"
 influxdb_org: "Samsung"
 influxdb_bucket: "internal"
 influxdb_user: "svk"
-influxdb_pwd: "CXL123mem!"
+# Placeholder. Set the real value in group_vars/all/passwords.yml (ansible-vault) or with --extra-vars. See the top-level README.
+influxdb_pwd: "CHANGE_ME_INFLUXDB_PASSWORD"
 influxdb_port: 8086
 
 influxdb_data_dir: "/var/lib/influxdb"
@@ -94,7 +95,8 @@ cognos_cleanup_enable_log_collection: false
 
 rbac_username: "super_admin"
 rbac_email: "super_admin@samsung.com"
-rbac_password: "Admin@123"
+# Placeholder. Set the real value in group_vars/all/passwords.yml (ansible-vault) or with --extra-vars. See the top-level README.
+rbac_password: "CHANGE_ME_RBAC_PASSWORD"
 
 rbac_db_port: "{{ rbac_ports['db'] | int }}"
 rbac_api_port: "{{ rbac_ports['api'] | int }}"
