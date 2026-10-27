@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Code Coverage
+*.coverage
+*.xml
+
+# NPM Cache
+.npm
+
+# IDE
+.vscode
+
+# Release build staging files
+/build

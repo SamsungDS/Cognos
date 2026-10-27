@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  frontend:
+    image: $IMAGE_TAG
+    ports:
+      - "5000:5000"
+    volumes:
+      - $CI_PROJECT_DIR/cognos/ui/:/svk/ui/
+    environment:
+      - NODE_OPTIONS=--openssl-legacy-provider
+    command: sh -c "cd /svk/ui/ && npm start"
+    network_mode: host
+    tty: true
+
+  mysql:
+    image: mysql:latest
+    environment:
+      MYSQL_ROOT_PASSWORD: $DB_ROOT_PASSWORD
+    ports:
+      - "3306:3306"
+    network_mode: host

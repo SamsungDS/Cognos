@@ -1,0 +1,181 @@
+.first-row {
+  height: 120px;
+}
+.second-row {
+  height: 90%;
+}
+.second-col-first-col {
+  height: 95%;
+}
+.second-col-second-col {
+  height: 82%;
+}
+.metric-title {
+  color: #00B3E3;
+  font-family:'Samsung Sharp Sans', sans-serif;
+  font-weight: bold;
+  font-size: 22px;
+}
+/* Progress bar CSS */
+.bandwidth {
+    margin: 12px auto;
+    margin-right: 12px;
+  }
+.bandwidth h1 {
+  margin-bottom: 12px;
+  padding: 14px;
+}
+
+.progress .host1 {
+--bs-progress-bar-bg: rgb(138, 233, 138) !important;
+}
+.progress .host2 {
+--bs-progress-bar-bg: rgb(25, 65, 124) !important;
+}
+.progress .host3 {
+--bs-progress-bar-bg: rgb(194, 230, 96) !important;
+}
+.progress .host4 {
+--bs-progress-bar-bg: rgb(60, 197, 227) !important;
+}
+.dropdownn-app-server {
+  width: 460px;
+}
+.memory-bandwidth {
+  font-size: 22px;
+  color: #00B3E3;
+  font-family: 'Samsung Sharp Sans', sans-serif;
+  font-weight: bold; 
+}
+.saphana-legend {
+  height: 50px;
+}
+.host-app-heading {
+  font-size: 22px;
+  font-weight: bold; 
+  padding: 10px;
+  color: #00B3E3;
+  font-family: 'Samsung Sharp Sans', sans-serif;
+}
+
+.sap-hana {
+  font-size: 22px;
+  bottom: 0px;
+  font-family: 'Samsung Sharp Sans', sans-serif;
+  font-weight: bold; 
+  padding: 12px;
+}
+.app-server-title {
+  color: #00B3E3;
+  font-family: 'Samsung sharp sans', sans-serif;
+}
+.dram-cxl-title {
+  font-size: 22px;
+  font-weight: bold; 
+  padding: 20px;
+  color: #00B3E3;
+  font-family: 'Samsung Sharp Sans', sans-serif;
+}
+.dram-cxl-title-pieChart {
+  font-size: 22px;
+  font-weight: bold; 
+  padding: 20px;
+  color: #00B3E3;
+  font-family: 'Samsung Sharp Sans', sans-serif;
+}
+.memory-cpu-heading {
+  font-size: 22px;
+  font-weight: bold;
+  font-family: 'Samsung sharp sans', sans-serif;
+  padding: 12px;
+} 
+
+.progres-bar-title-metrics {
+  margin-left: 200px;
+}
+.btn-outline-light {
+  --bs-btn-hover-bg: #3f464d;
+}
+/* Media Query as per device size */
+@media screen and (min-width: 768px) and ( max-width: 1023px){
+  .second-row {
+    height: 98%;
+  }
+  .app-server-title {
+    font-size: 16px;
+  }
+  .dropdownn-app-server {
+    width: 276px;
+  }
+  .saphana-legend {
+    height: 29px;
+  }
+  .host-app-heading {
+    font-size: 18px;
+  }
+  .sap-hana {
+    font-size: 22px;
+  }
+  .memory-bandwidth {
+    font-size: 22px;
+  }
+  .progres-bar-label-metrics {
+    margin-left: 117px;
+  }
+  .progres-bar-title-metrics {
+    margin-left: 5px;
+  }
+}
+
+@media screen and (min-width: 1024px) and ( max-width: 1439px) {
+  .second-row {
+    height: 90.5%;
+  }
+  .app-server-title {
+    font-size: 18px;
+  }
+  .dropdownn-app-server {
+    width: 380px;
+  }
+  .progres-bar-label-metrics {
+    margin-left: 190px;
+  }
+  .progres-bar-title-metrics {
+    margin-left: 40px;
+  }
+}
+@media screen and (min-width: 1440px) and ( max-width: 2559px) {
+  .first-row {
+    height: 120px;
+  }
+  .second-row {
+    height: 90%;
+  }
+  .second-col-first-col {
+    height: 95%;
+  }
+  .second-col-second-col {
+    height: 82%;
+  }
+  .app-server-title {
+    font-size: 22px;
+  }
+  .dropdownn-app-server {
+    width: 586px;
+  }
+  .progres-bar-label-metrics {
+    margin-left: 320px;
+  }
+  
+}
+@media screen and (min-width: 2560px) {
+  .app-server-title {
+    font-size: 40px;
+  }
+  .dropdownn-app-server {
+    width: 1138px;
+  }
+  .progres-bar-label-metrics {
+    margin-left: 690px;
+  }
+}

@@ -1,0 +1,17 @@
+deployment pipeline:
+  stage: deploy
+  environment:
+    name: $VM_NAME
+    url: http://$VM_NAME.msl.lab:$UI_PORT
+  trigger:
+    include:
+      - local: .config/ci/gitlab/vmware.yml
+      - local: .config/ci/gitlab/svk-install.yml
+      - local: .config/ci/gitlab/integration-test.yml
+    strategy: depend
+  resource_group: sapp_dev
+  rules:
+    - !reference [.default_rules, merge_and_push]
+  variables:
+    PARENT_PIPELINE_ID: $CI_PIPELINE_ID
+

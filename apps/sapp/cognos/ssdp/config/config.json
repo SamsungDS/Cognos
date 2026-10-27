@@ -1,0 +1,16 @@
+{
+
+    "mgmt_endpoint": "http://127.0.0.1:5000",
+    "data_endpoint": "http://127.0.0.1:4000",
+    "api_endpoint": "http://127.0.0.1:4000/api/v2.0.0",
+    "device_type": "CMM-B",
+    "manufacturer": "Samsung",
+    "cxl_version": "1.0",
+    "capacity": "100T",
+    "pcie_version": "gen5",
+    "upstream_ports": 16,
+    "downstream_ports": 16,
+    "MCAST_GRP": "239.255.255.250",
+    "MCAST_PORT": "1900"
+
+}

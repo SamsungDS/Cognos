@@ -1,0 +1,16 @@
+[Unit]
+Description=Cognos UI Service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+SyslogIdentifier=Cognos UI Service
+WorkingDirectory=/usr/local/svk/svk-app/cognos/ui
+KillMode=control-group
+Restart=on-failure
+ExecStart=/usr/bin/npm start
+ExecReload = /bin/kill -s HUP $MAINPID
+ExecStop = /bin/kill -s TERM $MAINPID
+
+[Install]
+WantedBy=multi-user.target

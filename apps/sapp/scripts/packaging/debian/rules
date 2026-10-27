@@ -1,0 +1,109 @@
+#!/usr/bin/make -f
+
+SVK_VERSION := $(shell $(CURDIR)/../scripts/get_version.sh)
+INSTALL_PATH = usr/local/svk/svk-app
+STATIC_REACT_PATH = var/www/scmc
+CADDY_PATH = etc/caddy/Caddyfile.d/
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	# Set version of Cognos UI (React App)
+	npm --prefix $(CURDIR)/../cognos/ui version $(SVK_VERSION) --allow-same-version
+	# Clean install Cognos UI dependencies
+	npm --prefix $(CURDIR)/../cognos/ui ci
+
+override_dh_auto_build:
+	# Create Cognos UI directory
+	mkdir -p -v $(CURDIR)/$(INSTALL_PATH)/
+
+	# Create React static bundle directory
+	mkdir -p -v $(CURDIR)/$(STATIC_REACT_PATH)/
+
+	# Create Caddy directory
+	mkdir -p -v ${CURDIR}/${CADDY_PATH}/
+
+	# create SCMC_VERSION file
+	$(CURDIR)/../scripts/get_version.sh > $(CURDIR)/SCMC_VERSION
+
+	# build React code into Static Bundle
+	npm --prefix $(CURDIR)/../cognos/ui run build
+
+override_dh_auto_install:
+	# Custom auto-install steps TBD (might include things like symlinks, conf file creation etc)
+
+	# copying Caddy file
+	cp $(CURDIR)/../scmc.conf ${CURDIR}/${CADDY_PATH}/
+
+	# copying React static bundle
+	cp -a $(CURDIR)/../cognos/ui/build/. $(CURDIR)/$(STATIC_REACT_PATH)/
+	cp $(CURDIR)/../cognos/ui/public/config.js $(CURDIR)/$(STATIC_REACT_PATH)/
+
+	# copying CAL files
+	mkdir -p -v $(CURDIR)/$(INSTALL_PATH)/cognos/backend/config/
+	cp $(CURDIR)/../cognos/backend/*.py $(CURDIR)/$(INSTALL_PATH)/cognos/backend/; 2>/dev/null
+	cp $(CURDIR)/../cognos/backend/VERSION $(CURDIR)/$(INSTALL_PATH)/cognos/backend/; 2>/dev/null
+	cp $(CURDIR)/../cognos/backend/config/*.json $(CURDIR)/$(INSTALL_PATH)/cognos/backend/config/; 2>/dev/null
+
+	# copying subscriber files
+	mkdir -p -v $(CURDIR)/$(INSTALL_PATH)/cognos/subscriber/
+	cp $(CURDIR)/../cognos/subscriber/*.py $(CURDIR)/$(INSTALL_PATH)/cognos/subscriber/; 2>/dev/null
+	cp $(CURDIR)/../cognos/subscriber/*.output $(CURDIR)/$(INSTALL_PATH)/cognos/subscriber/; 2>/dev/null
+	cp $(CURDIR)/../cognos/subscriber/*.json $(CURDIR)/$(INSTALL_PATH)/cognos/subscriber/; 2>/dev/null
+
+	# copy cognos config file
+	cp $(CURDIR)/../scripts/cognos.config $(CURDIR)/$(INSTALL_PATH)/cognos.config
+
+	# copy python requirements file
+	cp $(CURDIR)/../scripts/dependencies/python/requirements.txt $(CURDIR)/$(INSTALL_PATH)/requirements.txt
+
+	# Copy the VERSION file
+	cp $(CURDIR)/SCMC_VERSION $(CURDIR)/$(INSTALL_PATH)
+
+	# copying RBAC files
+	mkdir -p -v $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/
+	mkdir -p $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/bin
+	mkdir -p $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/etc
+	mkdir -p $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/ssl
+	mkdir -p $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/lib
+	cp $(CURDIR)/../cognos/rbac/rbac-docker-build-by-os.sh $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/
+	cp $(CURDIR)/../cognos/rbac/ubuntu_Dockerfile $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/
+	cp $(CURDIR)/../cognos/rbac/docker-config.env $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/
+	cp $(CURDIR)/../cognos/rbac/docker-env-setup.sh $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/
+	cp $(CURDIR)/../cognos/rbac/ecosystem.config.js $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/
+	cp -r $(CURDIR)/../cognos/rbac/core/bin/rbac-client-repo $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/bin/
+	cp -r $(CURDIR)/../cognos/rbac/core/bin/rbac-service $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/bin/
+	cp $(CURDIR)/../cognos/rbac/core/etc/rbac.yaml $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/etc/
+	cp -r $(CURDIR)/../cognos/rbac/core/bin/rbac-service/rbac-module $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/bin/rbac-service/
+	cp $(CURDIR)/../cognos/rbac/core/etc/ports.txt $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/etc/
+	cp $(CURDIR)/../cognos/rbac/core/etc/version.txt $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/etc/
+	cp $(CURDIR)/../cognos/rbac/core/etc/rbac_*.json $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/etc/
+	cp -r $(CURDIR)/../cognos/rbac/core/lib/licensing $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/lib/
+
+
+
+	# copying Telegraf files
+	mkdir -p -v $(CURDIR)/$(INSTALL_PATH)/cognos/telegraf/
+	cp -r $(CURDIR)/../cognos/telegraf/* $(CURDIR)/$(INSTALL_PATH)/cognos/telegraf/
+
+override_dh_usrlocal:
+	# Do nothing, because we are installing to /usr/local even though this is non-standard practice
+
+override_dh_install:
+	# Custom dh_install steps TBD
+
+	dh_install
+
+override_dh_strip:
+	# Do not generate debug symbol packages
+	dh_strip -X rbac-module --no-ddebs
+
+override_dh_shlibdeps:
+	# Set link path for shlibdeps TBD (if we are linking libs)
+
+override_dh_installsystemd:
+	# systemd steps TBD (for service files)
+	dh_installsystemd --name=cognos-subscriber
+	dh_installsystemd --name=cognos-app
+	dh_installsystemd --name=cognos-rbac
