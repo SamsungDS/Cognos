@@ -1,0 +1,3 @@
+[submodule "cama"]
+	path = cama
+	url = ../cama.git
