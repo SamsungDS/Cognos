@@ -1,0 +1,85 @@
+---
+### Path defaults
+deploy_kernel_artifacts_dir: "{{ inventory_dir }}/artifacts"
+deploy_kernel_staging_dir: /tmp/kernel
+
+### Kernel defaults
+deploy_kernel_version: "6.11.0"
+deploy_kernel_version_download: "6.11"
+
+deploy_kernel_source_code_url: "https://cdn.kernel.org/pub/linux/kernel/v{{ deploy_kernel_version[:1] }}.x/linux-{{ deploy_kernel_version_download }}.tar.xz"
+
+### kernel dependencies packages name
+deploy_kernel_require:
+  default:
+    - git
+    - fakeroot
+    - build-essential
+    - ncurses-dev
+    - xz-utils
+    - libssl-dev
+    - bc
+    - flex
+    - libelf-dev
+    - bison
+  Ubuntu:
+    - git
+    - fakeroot
+    - build-essential
+    - ncurses-dev
+    - xz-utils
+    - libssl-dev
+    - bc
+    - flex
+    - libelf-dev
+    - bison
+  OracleLinux:
+    - "Development Tools"
+    - ncurses-devel
+    - bison
+    - flex
+    - elfutils-libelf-devel
+    - openssl-devel
+    - rpm-build
+    - redhat-rpm-config
+    - asciidoc
+    - hmaccalc
+    - perl-devel
+    - python3-devel
+    - newt-devel
+    - pesign
+    - xmlto
+    - audit-libs-devel
+    - numactl-devel
+    - pciutils-devel
+    - python3-docutils
+    - bpftool
+    - java-devel
+
+deploy_kernel_dependencies: "{{ deploy_kernel_require[ansible_distribution] | default(deploy_kernel_require['default']) }}"
+### compile timeout
+deploy_kernel_compile_timeout: 7200
+deploy_kernel_compile_check_retries: 120
+deploy_kernel_compile_check_interval: 60
+deploy_kernel_available_disk_size_gb: 29
+
+### Reboot defaults
+deploy_kernel_reboot_timeout: 3600
+
+### update-grub.cfg order
+deploy_kernel_prefix_grub_default: 90
+
+
+deploy_kernel_mod_location:
+  default: /usr/lib/modules/{{ deploy_kernel_version }}
+  Ubuntu: /lib/modules/{{ deploy_kernel_version }}
+  Rocky: /usr/lib/modules/{{ deploy_kernel_version }}
+
+deploy_kernel_modules_location: "{{ deploy_kernel_mod_location[ansible_distribution] | default(deploy_kernel_mod_location['default']) }}"
+
+deploy_kernel_install_location:
+  default: /boot/vmlinuz
+  Ubuntu: /boot/vmlinuz-{{ deploy_kernel_version }}
+  Rocky: /boot/vmlinuz
+
+deploy_kernel_installation_location: "{{ deploy_kernel_install_location[ansible_distribution] | default(deploy_kernel_install_location['default']) }}"

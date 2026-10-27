@@ -1,0 +1,18 @@
+---
+- name: Assert OS is supported
+  ansible.builtin.assert:
+    that: "ansible_distribution in supported_distributions"
+    fail_msg: |
+      Unsupported OS: {{ ansible_distribution }}.
+      Supported distributions: {{ supported_distributions | join(', ') }}
+    success_msg: "OS {{ ansible_distribution }} is supported. Proceeding..."
+
+- name: Assert operating system version
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution_version is version_compare(min_supported_major_versions, '>=')
+      - ansible_distribution_version is version_compare(max_supported_major_versions, '<=')
+    fail_msg: |
+      {{ ansible_distribution }} version is must be >= {{ min_supported_major_versions }}, <= {{ max_supported_major_versions }}.
+      Current version is {{ ansible_distribution_version }}
+    success_msg: "OS {{ ansible_distribution }} version is correct: {{ ansible_distribution_version }}"

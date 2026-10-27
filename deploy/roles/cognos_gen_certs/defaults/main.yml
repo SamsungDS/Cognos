@@ -1,0 +1,24 @@
+---
+# Certificate generation variables
+# These can be overridden in playbook or inventory
+cognos_gen_certs_dest_dir: "/tmp/certs"
+# Country code (e.g., 'CN' for China, 'US' for United States)
+cognos_gen_certs_country: "US"
+
+# State/Province name
+cognos_gen_certs_state: "LA"
+
+# Locality/City name
+cognos_gen_certs_local: "San Jose"
+
+# Organization name
+cognos_gen_certs_org: "Samsung"
+
+# Organizational Unit name
+cognos_gen_certs_org_unit: "MSL"
+
+# Email address for the organization
+cognos_gen_certs_email: "rdmsl@samsung.com"
+
+# Certificate validity in days
+cognos_gen_certs_days: 365

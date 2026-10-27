@@ -1,0 +1,192 @@
+---
+- name: Install prerequisites for install influxdb and docker
+  ansible.builtin.dnf:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+      - tar
+    state: present
+  become: true
+
+- name: Configure GPG key for InfluxDB (OEL)
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      curl --silent --location -O https://repos.influxdata.com/influxdata-archive.key
+      gpg --show-keys --with-fingerprint --with-colons ./influxdata-archive.key 2>&1 |
+      grep -q '^fpr:\+24C975CBA61A024EE1B631787C3D57159FC2F927:$' && cat influxdata-archive.key |
+      gpg --dearmor |
+      tee /etc/pki/rpm-gpg/RPM-GPG-KEY-influxdata > /dev/null
+    executable: /bin/bash
+  register: management_server_deps_influxdb_db_dnf
+  failed_when: management_server_deps_influxdb_db_dnf.rc != 0
+  changed_when: false
+  become: true
+
+- name: Add InfluxDB repo
+  ansible.builtin.copy:
+    dest: /etc/yum.repos.d/influxdata.repo
+    mode: "0644"
+    content: |
+      [influxdata]
+      name = InfluxData Repository - Stable
+      baseurl = https://repos.influxdata.com/stable/${basearch}/main
+      enabled = 1
+      gpgcheck = 1
+      gpgkey = file:///etc/pki/rpm-gpg/RPM-GPG-KEY-influxdata
+  become: true
+
+- name: Install InfluxDB 2
+  ansible.builtin.dnf:
+    name: influxdb2
+    state: present
+  become: true
+
+- name: Start influx DB service
+  ansible.builtin.service:
+    name: influxdb
+    state: started
+    enabled: true
+  become: true
+
+- name: Check if influx command is available
+  ansible.builtin.command: which influx
+  register: management_server_deps_influxdb_stat
+  ignore_errors: true
+  failed_when: false
+  changed_when: false
+
+- name: Check if Influx cli artifact exists locally
+  ansible.builtin.stat:
+    path: "{{ artifacts_dir }}/influxdb2-client-*.tar.gz"
+  register: management_server_deps_influxdb_cli
+  when: management_server_deps_influxdb_stat.rc
+
+- name: Download InfluxDB2 Client to localhost artifacts directory if not present
+  ansible.builtin.get_url:
+    url: https://dl.influxdata.com/influxdb/releases/influxdb2-client-2.7.5-linux-amd64.tar.gz
+    dest: "{{ artifacts_dir }}"
+    mode: "0644"
+  register: management_server_deps_influxdb_download
+  delegate_to: localhost
+  when:
+    - management_server_deps_influxdb_stat.rc
+    - not management_server_deps_influxdb_cli.stat.exists
+
+- name: Find influxdb2-client tarball in artifacts directory
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      find "{{ artifacts_dir }}" -name "influxdb2-client-*.tar.gz" | head -n 1
+    executable: /bin/bash
+  register: management_server_deps_influxdb_tar
+  changed_when: false
+  delegate_to: localhost
+  when: management_server_deps_influxdb_stat.rc
+
+- name: Copy InfluxDB2 client tarball to remote /tmp
+  ansible.builtin.copy:
+    src: "{{ management_server_deps_influxdb_tar.stdout }}"
+    dest: /tmp/influxdb2-client.tar.gz
+    mode: '0644'
+  become: true
+  when:
+    - management_server_deps_influxdb_stat.rc
+    - not management_server_deps_influxdb_tar.rc
+
+- name: Extract InfluxDB2 Client to remote /tmp
+  ansible.builtin.unarchive:
+    src: /tmp/influxdb2-client.tar.gz
+    dest: /usr/local/bin
+    mode: '0755'
+    remote_src: true
+  become: true
+  when:
+    - management_server_deps_influxdb_stat.rc
+
+- name: Execute influx config command to check if instance is set up
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      /usr/local/bin/influx config list | grep "{{ influxdb_org }}"
+    executable: /bin/bash
+  register: management_server_deps_instance
+  become: true
+  changed_when: false
+  failed_when: false
+
+- name: Delete InfluxDB2 client tarball from /tmp
+  ansible.builtin.file:
+    path: /tmp/influxdb2-client.tar.gz
+    state: absent
+  become: true
+
+- name: Setup influxDB
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      /usr/local/bin/influx setup \
+        --username "{{ influxdb_user }}" \
+        --password "{{ influxdb_pwd }}" \
+        --org "{{ influxdb_org }}" \
+        --bucket "{{ influxdb_bucket }}" \
+        --force
+    executable: /bin/bash
+  become: true
+  when: management_server_deps_instance.rc
+  changed_when: false
+
+- name: Fetch & run NodeJS setup script
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      curl -fsSL https://rpm.nodesource.com/setup_24.x | bash -
+    executable: /bin/bash
+  changed_when: false
+  become: true
+
+- name: Install NodeJS
+  ansible.builtin.dnf:
+    name: nodejs
+    state: present
+  become: true
+
+- name: Install dnf-plugins-core
+  ansible.builtin.dnf:
+    name: dnf-plugins-core
+    state: present
+  become: true
+
+- name: Enable Copr Repo @caddy/caddy
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      dnf copr enable @caddy/caddy -y
+    executable: /bin/bash
+  args:
+    creates: /etc/yum.repos.d/copr_caddy-caddy.repo
+  become: true
+
+- name: Update dnf cache
+  ansible.builtin.dnf:
+    update_cache: true
+  become: true
+
+- name: Add Docker CE repo
+  ansible.builtin.command:
+    dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
+  changed_when: false
+  become: true
+
+- name: Install Docker packages
+  ansible.builtin.dnf:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+  become: true

@@ -1,0 +1,29 @@
+# Author: June Liu
+# Contact: june.liu@samsung.com
+---
+- name: Gather all public keys from source group
+  ansible.builtin.command: echo "{{ hostvars[item].ycsb_ssh_connect_public_key }}"
+  delegate_to: "{{ item }}"
+  loop: "{{ groups['ycsb_client'] }}"
+  register: ycsb_ssh_connect_source_keys
+  changed_when: false
+
+- name: Combine all public keys
+  ansible.builtin.set_fact:
+    ycsb_ssh_connect_public_keys: "{{ ycsb_ssh_connect_public_keys | default([]) + [item.stdout] }}"
+  loop: "{{ ycsb_ssh_connect_source_keys.results }}"
+
+- name: Ensure .ssh directory exists
+  ansible.builtin.file:
+    path: "{{ ansible_env.HOME }}/.ssh"
+    state: directory
+    mode: '0700'
+    owner: "{{ ansible_user }}"
+
+- name: Add all public keys to authorized_keys
+  ansible.posix.authorized_key:
+    user: "{{ ansible_user }}"
+    key: "{{ item }}"
+    exclusive: false
+    state: present
+  loop: "{{ ycsb_ssh_connect_public_keys }}"

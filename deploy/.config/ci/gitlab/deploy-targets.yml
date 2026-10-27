@@ -1,0 +1,29 @@
+# Deployment targets: VM short names (<name>.msl.lab, same name in vSphere).
+# To add a VM:
+#   1. add it to the TARGET_VM list of "restore vmware snapshot"
+#   2. add an "ansible-deploy[<os>]" job for it; <os> is the OS target the VM reports
+#      (ubuntu24, ubuntu22, ol10, ...) and is checked at deploy time
+# Every VM needs the svk-ansible CI deploy key (CI_KEY) authorized for root and a
+# vSphere snapshot of its clean state, which is reverted before every deploy.
+
+restore vmware snapshot:
+  extends: .restore-vmware-snapshot
+  parallel:
+    matrix:
+      - TARGET_VM:
+          - ssg-svkprod
+          - msl-ssg-vm53
+
+# Deployed from the shared docker runner.
+ansible-deploy[ol10]:
+  extends: .ansible-deploy
+  variables:
+    TARGET_VM: ssg-svkprod
+
+# Deployed from the docker runner on the VM itself (runner tagged with the VM name).
+ansible-deploy[ubuntu24]:
+  extends: .ansible-deploy
+  tags:
+    - msl-ssg-vm53
+  variables:
+    TARGET_VM: msl-ssg-vm53

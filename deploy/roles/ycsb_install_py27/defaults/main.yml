@@ -1,0 +1,29 @@
+# Author: June Liu
+# Contact: june.liu@samsung.com
+---
+ycsb_install_py27_dependencies:
+  oraclelinux:
+    - "@Development Tools"
+    - openssl-devel
+    - bzip2-devel
+    - libffi-devel
+    - zlib-devel
+    - readline-devel
+    - sqlite-devel
+  debian:
+    - build-essential
+    - zlib1g-dev
+    - libncurses5-dev
+    - libgdbm-dev
+    - libnss3-dev
+    - libssl-dev
+    - libreadline-dev
+    - libffi-dev
+    - wget
+
+ycsb_install_py27_install_dir: "/usr/local"
+ycsb_install_py27_build_dir: "/tmp"
+ycsb_install_py27_version: "2.7.18"
+
+ycsb_install_py27_source_url:
+  "https://www.python.org/ftp/python/{{ ycsb_install_py27_version }}/Python-{{ ycsb_install_py27_version }}.tgz"

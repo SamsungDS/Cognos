@@ -1,0 +1,13 @@
+# Author: June Liu
+# Contact: june.liu@samsung.com
+---
+
+- name: Create ssh public key
+  ansible.builtin.include_tasks:
+    file: setup_ssh_trust.yml
+  when: inventory_hostname in groups['ycsb_client']
+
+- name: Create ssh public key
+  ansible.builtin.include_tasks:
+    file: distribute_ssh_key.yml
+  when: inventory_hostname in groups['gemfire_server']

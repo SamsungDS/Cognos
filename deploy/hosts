@@ -1,0 +1,13 @@
+[kernel_upgrade_node]
+hostname1/host_ip1
+
+[management_server]
+hostname2/host_ip2
+
+[application_server]
+hostname3/host_ip3
+hostname4/host_ip4
+
+[all:vars]
+ansible_user=<user name>
+ansible_password={{ vault_ansible_password }}

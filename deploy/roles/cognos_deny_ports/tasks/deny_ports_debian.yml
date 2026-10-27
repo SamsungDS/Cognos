@@ -1,0 +1,23 @@
+---
+
+- name: Check if ufw is active
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      ufw status
+    executable: /bin/bash
+  register: cognos_deny_ports_ufw_status
+  changed_when: false
+
+- name: Parse ufw status
+  ansible.builtin.set_fact:
+    cognos_deny_ports_ufw_active: "{{ 'Status: active' in cognos_deny_ports_ufw_status.stdout }}"
+
+- name: Deny ports for cognos services with UFW
+  community.general.ufw:
+    rule: deny
+    port: "{{ item }}/tcp"
+  loop: "{{ ports | dict2items | map(attribute='value') | list }}"
+  when: cognos_deny_ports_ufw_active | default(false)
+  become: true
+  failed_when: false

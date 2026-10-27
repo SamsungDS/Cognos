@@ -1,0 +1,8 @@
+{
+  "rest_ip": "{{ip}}",
+  "rest_port": {{ mgmt_ports_backend['rest_http'] }},
+  "publisher_port": {{ mgmt_ports_frontend['publisher'] }},
+  "publisher_topic": "metric",
+  "interval": 5,
+  "cluster_id": ["{{ cognos_cluster_id }}"]
+}

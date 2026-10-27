@@ -1,0 +1,25 @@
+---
+- name: Gather service facts
+  ansible.builtin.service_facts:
+  become: true
+
+- name: Stop management services if they exist
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  become: true
+  loop:
+    - cognos-controller.service
+    - cognos-restserver.service
+  when: item in ansible_facts.services
+
+- name: Stop cognos-node service on management server
+  ansible.builtin.service:
+    name: cognos-node.service
+    state: stopped
+    enabled: false
+  become: true
+  when:
+    - management_server_type == 'CMMB'
+    - cognos-node.service in ansible_facts.services

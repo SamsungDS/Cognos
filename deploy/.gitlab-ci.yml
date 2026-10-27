@@ -1,0 +1,16 @@
+include:
+  - .config/ci/gitlab/lint.yml
+  - project: dfs/svk/tools
+    ref: main
+    file: .config/ci/gitlab/defaults.yml
+  - project: dfs/svk/tools
+    ref: main
+    file: .config/ci/gitlab/docker.yml
+  - .config/ci/gitlab/deploy.yml
+
+build docker: 
+  variables:
+    DOCKERFILE_NAME: ubuntu22
+
+variables:
+    UI_PORT: 5000

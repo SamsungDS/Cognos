@@ -1,0 +1,7 @@
+---
+- name: Cognos remove config files and logs
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ cognos_conf_log_files }}"
+  become: true

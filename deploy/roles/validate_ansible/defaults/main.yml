@@ -1,0 +1,28 @@
+---
+validate_ansible_ver_req:
+  Ubuntu:
+    ansible_min_ver: 2.17.4
+    ansible_max_ver: 2.17.14
+    py_min_ver: 3.10.12
+  OracleLinux:
+    ansible_min_ver: 2.17.4
+    ansible_max_ver: 2.17.14
+    py_min_ver: 3.12
+  RedHat:
+    ansible_min_ver: 2.16.0
+    ansible_max_ver: 2.19.14
+    py_min_ver: 3.12
+
+validate_ansible_min_ver: "{{ validate_ansible_ver_req[ansible_distribution]['ansible_min_ver'] }}"
+validate_ansible_max_ver: "{{ validate_ansible_ver_req[ansible_distribution]['ansible_max_ver'] }}"
+validate_ansible_py_min_ver: "{{ validate_ansible_ver_req[ansible_distribution]['py_min_ver'] }}"
+
+validate_ansible_py_mod_req:
+  # - name: netaddr
+  #   version: 0.8.0
+  # - name: paramiko
+  #   version: 2.7.2
+  # - name: jmespath
+  #   version: 0.10.0
+  - name: jinja2
+    version: 3.1.6

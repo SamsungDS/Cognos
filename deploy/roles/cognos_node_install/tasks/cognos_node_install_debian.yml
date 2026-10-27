@@ -1,0 +1,62 @@
+---
+# tasks file for roles/cognos_node_install
+
+
+- name: Install python3-venv
+  ansible.builtin.apt:
+    name: python3-venv
+    state: present
+  become: true
+
+- name: Check if cognos_node DEB is installed
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      apt list --installed | grep cognos-node
+    executable: /bin/bash
+  register: cognos_node_install_pkg_query
+  changed_when: false
+  failed_when: false
+
+- name: Determine OS type and version
+  ansible.builtin.set_fact:
+    cognos_node_install_os_family: "{{ ansible_distribution }}"
+    cognos_node_install_os_version: "{{ ansible_distribution_version }}"
+
+- name: Identify cognos_node package for Ubuntu
+  ansible.builtin.find:
+    path: "{{ cognos_pkg_dir }}"
+    patterns: "cognos-node*-ubuntu{{ cognos_node_install_os_version }}_*.deb"
+  delegate_to: localhost
+  run_once: true
+  register: cognos_node_install_pkg
+
+- name: Assert cognos_node package found
+  ansible.builtin.assert:
+    that: cognos_node_install_pkg.files | length > 0
+    fail_msg: "No cognos-node package found. Please download package to {{ cognos_node_install_artifacts_dir }}"
+
+- name: Identify newest version of cognos_node package found
+  ansible.builtin.set_fact:
+    cognos_node_install_pkg_file: "{{ (cognos_node_install_pkg.files | sort(attribute='mtime', reverse=true) | first).path }}"
+  run_once: true
+
+- name: Copy cognos_node package to staging directory
+  ansible.builtin.copy:
+    src: "{{ cognos_node_install_pkg_file }}"
+    dest: "{{ cognos_node_install_staging_dir }}"
+    mode: "0644"
+  when: cognos_node_install_pkg_query.rc != 0
+
+- name: Install cognos_node DEB
+  ansible.builtin.apt:
+    deb: "{{ cognos_node_install_staging_dir }}/{{ cognos_node_install_pkg_file | basename }}"
+    state: present
+  become: true
+  when: cognos_node_install_pkg_query.rc != 0
+
+- name: Delete cognos_node package from staging directory
+  ansible.builtin.file:
+    path: "{{ cognos_node_install_staging_dir }}/{{ cognos_node_install_pkg_file | basename }}"
+    state: absent
+  when: cognos_node_install_pkg_query.rc != 0

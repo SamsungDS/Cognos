@@ -1,0 +1,57 @@
+---
+- name: Check if cognos_app RPM is installed
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      dnf list --installed | grep cognos-app
+    executable: /bin/bash
+  register: cognos_app_install_pkg_query
+  changed_when: false
+  failed_when: false
+
+- name: Determine OS type and version
+  ansible.builtin.set_fact:
+    cognos_app_install_os_family: "{{ ansible_distribution }}"
+    cognos_app_install_os_version: "{{ ansible_distribution_version }}"
+
+- name: Identify cognos_app package for OEL
+  ansible.builtin.find:
+    path: "{{ cognos_pkg_dir }}"
+    patterns: "cognos-app*el{{ ansible_distribution_major_version }}*.rpm"
+  delegate_to: localhost
+  run_once: true
+  register: cognos_app_install_pkg
+
+- name: Identify newest version of cognos_app package found
+  ansible.builtin.set_fact:
+    cognos_app_install_pkg_file: "{{ (cognos_app_install_pkg.files | sort(attribute='mtime', reverse=true) | first).path }}"
+  run_once: true
+  when: cognos_app_install_pkg.files | length > 0
+
+- name: Copy cognos_app package to staging directory
+  ansible.builtin.copy:
+    src: "{{ cognos_app_install_pkg_file }}"
+    dest: "{{ deploy_staging_dir }}"
+    mode: "0644"
+  when:
+    - cognos_app_install_pkg_file is defined
+    - cognos_app_install_pkg_query.rc != 0
+
+- name: Install cognos_app RPM
+  ansible.builtin.dnf:
+    name: "{{ deploy_staging_dir }}/{{ cognos_app_install_pkg_file | basename }}"
+    state: present
+    disable_gpg_check: true
+  become: true
+  when:
+    - cognos_app_install_pkg_file is defined
+    - cognos_app_install_pkg_query.rc != 0
+
+- name: Delete cognos_app RPM from staging directory
+  ansible.builtin.file:
+    path: "{{ deploy_staging_dir }}/{{ cognos_app_install_pkg_file | basename }}"
+    state: absent
+  become: true
+  when:
+    - cognos_app_install_pkg_file is defined
+    - cognos_app_install_pkg_query.rc != 0

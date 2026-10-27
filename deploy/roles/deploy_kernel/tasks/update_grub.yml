@@ -1,0 +1,23 @@
+---
+- name: Create /etc/default/grub.d
+  ansible.builtin.file:
+    dest: /etc/default/grub.d
+    group: root
+    owner: root
+    mode: "0755"
+    state: directory
+
+- name: Set grub default configuration in /etc/default/grub.d
+  ansible.builtin.template:
+    src: grub_default.j2
+    dest: "/etc/default/grub.d/{{ deploy_kernel_prefix_grub_default }}-grub-default.cfg"
+    group: root
+    owner: root
+    mode: "0644"
+  notify:
+    - Execute update-grub
+    - Reboot system - kernel
+    - Gather facts post-reboot
+  register: deploy_kernel_grub_result
+  when: deploy_kernel_update_grub_default is defined and ansible_kernel is version (deploy_kernel_version, '!=')
+  become: true

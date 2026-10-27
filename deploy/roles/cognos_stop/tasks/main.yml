@@ -1,0 +1,41 @@
+---
+- name: Check if poller process is running
+  ansible.builtin.command:
+    pgrep -f poll.py
+  register: cognos_stop_check_poller
+  changed_when: false
+  failed_when: false
+
+- name: Kill poll.py process if running
+  ansible.builtin.command:
+    kill -9 {{ item }}
+  loop: "{{ cognos_stop_check_poller.stdout_lines }}"
+  when: cognos_stop_check_poller.stdout_lines | length > 0
+  changed_when: true
+  failed_when: false
+
+- name: Gather service facts
+  ansible.builtin.service_facts:
+
+- name: Stop cognos services if they exist
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  become: true
+  loop:
+    - cognos-subscriber.service
+    - cognos-app.service
+    - cognos-rbac.service
+    - caddy.service
+  when:
+    - item in ansible_facts.services
+    - ansible_facts.services[item].state == 'running'
+
+- name: Stop Docker service
+  ansible.builtin.systemd:
+    name: docker
+    state: stopped
+    enabled: false
+  failed_when: false
+  changed_when: true

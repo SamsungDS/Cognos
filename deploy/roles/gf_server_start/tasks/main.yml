@@ -1,0 +1,407 @@
+---
+# #############################################
+# ## STEP 11) Initialize GemFire server instances
+# #############################################
+
+- name: Check if CXL nodes is satisfied (CXL number >= gfs_num_each_host*cxl_num)
+  ansible.builtin.assert:
+    that:
+      - "(gf_get_numa_ids_sockets.values() | map(attribute='cxl') | map('length') | sum) >= ( gfs_num_each_host * cxl_num )"
+    fail_msg: "CXL nodes are not enough, cannot meet the  {{ gfs_num_each_host }} gemfire server instances on each host"
+
+- name: Check if server ports are in use using sock_state
+  ansible.builtin.shell: |
+    # ss -tln sport = :{{ server_ports }}
+    ss -tuln | grep "LISTEN" | grep ":{{ server_ports }}"
+  register: gf_server_start_ports_check
+  changed_when: false
+  ignore_errors: true
+  failed_when: false
+
+- name: Ensure mount directories exist
+  ansible.builtin.file:
+    path: "{{ item['mount_point'] }}"
+    state: directory
+    mode: '0755'
+  loop: "{{ gf_nvme_disks }}"
+
+- name: Ensure app directory exists
+  ansible.builtin.file:
+    path: "{{ gf_installed_base_dir }}/ycsb_benchmarks/"
+    state: directory
+    mode: '0755'
+  when: gf_server_start_ports_check.rc != 0
+
+# - name: Calculate size of gf_get_numa_ids_sockets(socket number)
+#   ansible.builtin.set_fact:
+#     socket_nodes_num: "{{ gf_get_numa_ids_sockets | length | int }}"
+
+- name: Flatten gf_get_numa_ids_sockets into list of available sockets
+  ansible.builtin.set_fact:
+    gf_server_start_socks_avail: "{{ gf_get_numa_ids_sockets.keys() | sort | map('int') | list }}"
+
+- name: Validate cxl_num and check CXL availability
+  ansible.builtin.set_fact:
+    gf_server_start_cxl_cnt_total: "{{ gf_get_numa_ids_sockets.values() | map(attribute='cxl') | map('length') | sum }}"
+    gf_server_start_cxl_cnt_req: "{{ gfs_num_each_host * cxl_num }}"
+  when: gfs_num_each_host > 0
+
+- name: Debug gf_server_start_cxl_cnt_total and gf_server_start_cxl_cnt_req
+  ansible.builtin.debug:
+    msg: "gf_server_start_cxl_cnt_req : {{ gf_server_start_cxl_cnt_req }}, gf_server_start_cxl_cnt_total : {{ gf_server_start_cxl_cnt_total }}"
+
+- name: Validate cxl_num and check CXL availability
+  ansible.builtin.assert:
+    that:
+      - gf_server_start_cxl_cnt_req <= gf_server_start_cxl_cnt_total
+    fail_msg: "Not enough CXLs. Required: {{ gf_server_start_cxl_cnt_req }}, Available: {{ gf_server_start_cxl_cnt_total }}"
+
+- name: Initialize gf_server_start_ratio_list
+  ansible.builtin.set_fact:
+    gf_server_start_ratio_list: "{{ gfs_ratio.split(':') | map('int') | list }}"
+
+- name: Load Gemfire locators from file
+  ansible.builtin.command: "cat {{ gf_check_stat_path }}/{{ gf_locator_info_file }}"
+  register: gf_server_start_locators
+  changed_when: gf_server_start_locators.rc != 0
+  delegate_to: localhost
+
+- name: Set Gemfire locators into list
+  ansible.builtin.set_fact:
+    gf_server_start_loc_list: "{{ gf_server_start_locators.stdout.splitlines() | map('trim') | list }}"
+  delegate_to: localhost
+
+- name: Initialize data
+  ansible.builtin.set_fact:
+    gf_server_start_socket_list: "{{ gf_get_numa_ids_sockets.keys() | map('int') | list | sort }}"
+    gf_server_start_socket_cnt: "{{ gf_get_numa_ids_sockets.keys() | length }}"
+    gf_server_start_dev_cnt: "{{ gf_nvme_disks | length }}"
+    gf_server_start_loc_cnt: "{{ gf_server_start_loc_list | length }}"
+    gf_server_start_dram_cnt: "{{ ((gf_server_start_ratio_list | length - cxl_num) | int) if cxl_num | int > 0 else 1 }}"
+
+- name: Verify resources NOT empty
+  ansible.builtin.fail:
+    msg: "{{ item }} should NOT be empty!"
+  loop:
+    - "gf_nvme_disks"
+    - "nic_list"
+  when:
+    - item == "gf_nvme_disks" and gf_server_start_dev_cnt | int == 0
+    - item == "nic_list" and (nic_list | length) == 0
+
+- name: Verify gfs_ratio
+  ansible.builtin.fail:
+    msg: "gfs_ratio error! cxl_num = {{ cxl_num }}, gfs_ratio length should be : gf_server_start_dram_cnt + cxl_num(gf_server_start_dram_cnt≥1)"
+  when:
+    - cxl_num | int > 0
+    - (gf_server_start_ratio_list | length - cxl_num) < 1
+
+- name: Verify gf_server_start_total_process
+  ansible.builtin.set_fact:
+    gf_server_start_total_process: "{{ gf_get_numa_ids_sockets.values() | map(attribute='cxl') | map('length') | sum // cxl_num }}"
+  when: cxl_num | int > 0
+
+- name: If cxl_num 0, CXL enough
+  ansible.builtin.set_fact:
+    gf_server_start_total_process: "{{ gfs_num_each_host | int }}"
+  when: cxl_num | int == 0
+
+- name: Check CXL devices
+  ansible.builtin.fail:
+    msg: "CXL devices are NOT enough! Need to start {{ gfs_num_each_host }} processes, but only support {{ gf_server_start_total_process }} processes"
+  when: gf_server_start_total_process | int < gfs_num_each_host | int
+
+- name: Generate process -> socket map
+  ansible.builtin.set_fact:
+    gf_server_start_pro_soc_map: "{{ gf_server_start_pro_soc_map | default([]) + [gf_server_start_socket_list[item % gf_server_start_socket_cnt | int]] }}"
+  loop: "{{ range(gfs_num_each_host) }}"
+
+- name: Build gf_server_start_map_pro_soc
+  ansible.builtin.set_fact:
+    gf_server_start_map_pro_soc: "{{ (gf_server_start_map_pro_soc | default({})) | combine({item | string: []}) }}"
+  loop: "{{ gf_server_start_socks_avail }}"
+
+- name: Debug socket assignment
+  ansible.builtin.debug:
+    msg: "Process {{ item + 1 }} → Socket {{ socket_id }}"
+  loop: "{{ range(gfs_num_each_host) }}"
+  vars:
+    socket_id: "{{ gf_server_start_socks_avail[item % gf_server_start_socks_avail | length] }}"
+
+- name: Assign each process to a socket (round-robin)
+  ansible.builtin.set_fact:
+    gf_server_start_map_pro_soc: "{{ gf_server_start_map_pro_soc | combine({socket_id: (gf_server_start_map_pro_soc[socket_id] + [item + 1]) | sort | list}) }}"
+  loop: "{{ range(gfs_num_each_host) }}"
+  vars:
+    socket_id: "{{ gf_server_start_socks_avail[item % gf_server_start_socks_avail | length] }}"
+
+- name: Build gf_server_start_pro_soc_cnt
+  ansible.builtin.set_fact:
+    gf_server_start_pro_soc_cnt: "{{ {} }}"
+
+- name: Set gf_server_start_pro_soc_cnt
+  ansible.builtin.set_fact:
+    gf_server_start_pro_soc_cnt: "{{ gf_server_start_pro_soc_cnt | combine({item.key: item.value | length | default(0)}) }}"
+  loop: "{{ gf_server_start_map_pro_soc | dict2items }}"
+
+- name: Initialize gf_server_start_dram_idx
+  ansible.builtin.set_fact:
+    gf_server_start_dram_idx: "{{ gf_server_start_dram_idx |
+      default({}) | combine({item | string: range(gf_server_start_pro_soc_cnt[item | string] | int * gf_server_start_dram_cnt | int) | list}) }}"
+  loop: "{{ gf_server_start_socket_list }}"
+  when: gf_server_start_pro_soc_cnt[item|string] | int > 0
+
+- name: Initialize gf_server_start_soc_dram_seq
+  ansible.builtin.set_fact:
+    gf_server_start_soc_dram_seq: "{{ {} }}"
+
+- name: Generate gf_server_start_soc_dram_seq with filter
+  ansible.builtin.set_fact:
+    gf_server_start_soc_dram_seq: "{{ gf_server_start_soc_dram_seq
+     | combine({item | string: gf_server_start_dram_idx[item | string] | preprocess_dram(socket_dramlist=gf_get_numa_ids_sockets[item | string].dram)}) }}"
+  loop: "{{ gf_server_start_socket_list }}"
+  when: gf_server_start_pro_soc_cnt[item|string] | int > 0
+
+- name: Initialize gf_server_start_soc_cpu_chunk
+  ansible.builtin.set_fact:
+    gf_server_start_soc_cpu_chunk: "{{ {} }}"
+
+- name: Set gf_server_start_soc_cpu_chunk
+  ansible.builtin.set_fact:
+    gf_server_start_soc_cpu_chunk: "{{ gf_server_start_soc_cpu_chunk
+     | combine({item.key: item.value | process_cpus(dram_sequences=gf_server_start_soc_dram_seq[item.key])}) }}"
+  loop: "{{ gf_get_numa_ids_sockets | dict2items }}"
+  when: item.key in gf_server_start_soc_dram_seq
+
+- name: Initialize gf_server_start_soc_init
+  ansible.builtin.set_fact:
+    gf_server_start_soc_init: "{{ {} }}"
+
+- name: Set gf_server_start_soc_init
+  ansible.builtin.set_fact:
+    gf_server_start_soc_init: >-
+      {{
+        (gf_server_start_soc_init | default({}))
+        | combine(
+          {
+            (item.key): {
+              'cxl_index': 0,
+              'ip_index' : 0,
+              'dram_index': 0,
+              'cpu_chunk_index' : 0,
+              'dram_list' : gf_get_numa_ids_sockets[item.key]['dram'],
+              'cxl_list' : gf_get_numa_ids_sockets[item.key]['cxl'],
+              'ip_list': gf_get_numa_ids_sockets[item.key]['nic_ips'],
+              'cpu_merged' : gf_server_start_soc_cpu_chunk[item.key]
+            }
+          }
+          )
+      }}
+  loop: "{{ gf_server_start_soc_dram_seq | dict2items }}"
+
+- name: Initialize gf_server_start_proc_res
+  ansible.builtin.set_fact:
+    gf_server_start_proc_res: "{{ [] }}"
+
+- name: Generate resources for processes
+  ansible.builtin.set_fact:
+    gf_server_start_proc_res: "{{ gf_server_start_proc_res | default([]) + [current_process] }}"
+    # update socket status
+    gf_server_start_soc_curr: "{{ gf_server_start_soc_curr | default(gf_server_start_soc_init) | combine({sock: updated_state}) }}"
+  loop: "{{ range(gfs_num_each_host) }}"
+  loop_control:
+    loop_var: process_seq
+  vars:
+    process_id: "{{ process_seq + 1 }}"
+    sock: "{{ gf_server_start_socks_avail[process_seq % gf_server_start_socks_avail | length] }}"
+    state: "{{ gf_server_start_soc_curr[sock] | default(gf_server_start_soc_init[sock]) }}"
+
+    # NVMe devices
+    device_mount: "{{ gf_nvme_disks[process_seq % gf_server_start_dev_cnt | int]['mount_point'] }}"
+
+    # Locator IP
+    locator: "{{ gf_server_start_loc_list[process_seq % gf_server_start_loc_cnt | int] }}"
+
+    # DRAM
+    dram_list: "{{ gf_server_start_soc_dram_seq[sock][state.dram_index | int : (state.dram_index | int + gf_server_start_dram_cnt | int)] }}"
+    new_dram_index: "{{ state.dram_index | int + gf_server_start_dram_cnt | int }}"
+
+    # CXL
+    cxl_list: "{{ state.cxl_list[state.cxl_index | int : state.cxl_index + cxl_num] if cxl_num | int > 0 else [] }}"
+    new_cxl_offset: "{{ state.cxl_index | int + cxl_num }}"
+
+    # host ip
+    ip: "{{ state.ip_list[state.ip_index | int] }}"
+    new_ip_index: "{{ (state.ip_index | int + 1) % state.ip_list | length }}"
+
+    # cpu_chunk
+    bind: "{{ state.cpu_merged[state.cpu_chunk_index] }}"
+    new_cpu_chunk_index: "{{ state.cpu_chunk_index + 1 }}"
+
+    # weights
+    dram_weights: "{{ gf_server_start_ratio_list[0 : gf_server_start_dram_cnt | int] }}"
+    cxl_weights: "{{ gf_server_start_ratio_list[gf_server_start_dram_cnt | int :] if cxl_num | int > 0 else [] }}"
+
+    # port
+    server_port: "{{ server_port_base + process_seq }}"
+
+    # current_process
+    current_process:
+      process_id: "{{ process_id }}"
+      device_mount: "{{ device_mount }}"
+      locator: "{{ locator }}"
+      dram_list: "{{ dram_list }}"
+      dram_weights: "{{ dram_weights }}"
+      cxl_list: "{{ cxl_list }}"
+      cxl_weights: "{{ cxl_weights }}"
+      cxl_str: "{{ cxl_list | join(',') }}"
+      ip: "{{ ip }}"
+      bind: "{{ bind }}"
+      server_port: "{{ server_port }}"
+
+    updated_state: "{{ state
+      | combine({'cxl_index': new_cxl_offset | int,
+        'ip_index': new_ip_index | int,
+        'dram_index': new_dram_index | int,
+        'cpu_chunk_index': new_cpu_chunk_index | int}) }}"
+
+- name: Debug gf_server_start_proc_res
+  ansible.builtin.debug:
+    msg: "{{ gf_server_start_proc_res }}"
+
+- name: Initialize Max Heap Size
+  ansible.builtin.set_fact:
+    gf_server_start_xms: "{{ (gfs_data_size_gb * 3 / gfs_num_each_host) | int | string + 'G' }}"
+    gf_server_start_xmx: "{{ (gfs_data_size_gb * 3 / gfs_num_each_host) | int | string + 'G' }}"
+  run_once: true
+
+- name: Generate start_server.sh and copy shell script to remote host
+  ansible.builtin.template:
+    src: "start_server.sh.j2"
+    dest: "{{ gf_installed_base_dir }}/ycsb_benchmarks/start_{{ inventory_hostname }}.sh"
+    mode: '0755'
+  become: true
+  when: gf_server_start_ports_check.rc != 0
+
+- name: Verify environment variables are set
+  ansible.builtin.shell:
+    cmd: |
+      source /etc/profile.d/gemfire_env.sh && echo $GEMFIRE_HOME
+    executable: /bin/bash
+  changed_when: false
+
+- name: Copy gemfire cache.xml to remote host
+  ansible.builtin.template:
+    src: "cache.xml.j2"
+    dest: "{{ gf_installed_base_dir }}/ycsb_benchmarks/cache.xml"
+    mode: '0755'
+  become: true
+
+- name: Start script if port is free
+  ansible.builtin.shell:
+    cmd: |
+      source /etc/profile.d/gemfire_env.sh && echo $GEMFIRE_HOME
+      {{ gf_installed_base_dir }}/ycsb_benchmarks/start_{{ inventory_hostname }}.sh
+  args:
+    executable: /bin/bash
+  become: true
+  when: gf_server_start_ports_check.rc != 0
+  changed_when: true
+
+- name: Get gemfire server instance status
+  ansible.builtin.include_role:
+    name: gf_member_stat
+
+- name: Prepare server status check key
+  ansible.builtin.set_fact:
+    gf_server_start_keys: "{{ gf_server_start_keys | default([]) +  ['server_' ~ (item + 1) ~ '_' ~ inventory_hostname] }}"
+  loop: "{{ range(gfs_num_each_host) | list }}"
+
+- name: Assert gemfire servers status
+  ansible.builtin.assert:
+    that:
+      - "item in gf_member_stat_info"
+      - "gf_member_stat_info[item] == 'Ready'"
+    fail_msg: >-
+      {{ item }} is not connected or its status is not Ready.
+      Current info: {{ gf_member_stat_info }}
+    success_msg: >-
+      {{ item }} status is Ready
+  loop: "{{ gf_server_start_keys }}"
+
+# #############################################
+# ## STEP 12) Create GemFire Regions as needed with appropriate configurations [Eg: redundancy/persistency e.t.c]
+# #############################################
+
+- name: Check if the region1 already exists
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      gfsh -e 'connect --locator={{ gf_server_start_loc_list[0] }}' -e 'describe region --name=usertable1'
+    executable: /bin/bash
+  register: gf_server_start_region_stat
+  ignore_errors: true
+  changed_when: false
+  failed_when: false
+
+- name: Generate create_region.sh and copy to gemfire server hosts
+  ansible.builtin.template:
+    src: "create_region.sh.j2"
+    dest: "{{ gf_installed_base_dir }}/ycsb_benchmarks/create_region.sh"
+    mode: '0755'
+  become: true
+  when: gf_server_start_region_stat.rc != 0
+
+- name: Run create_region.sh at one gemfire server host
+  ansible.builtin.shell: "{{ gf_installed_base_dir }}/ycsb_benchmarks/create_region.sh"
+  args:
+    executable: /bin/bash
+  run_once: true
+  register: gf_server_start_region_created
+  when: gf_server_start_region_stat.rc != 0
+  changed_when: false
+
+- name: Save Region -> Locator info. to file
+  ansible.builtin.template:
+    src: "create_region_info.j2"
+    dest: "{{ gf_check_stat_path }}/{{ gf_region_info_file }}"
+    mode: '0644'
+  become: true
+  when:
+    - gf_server_start_region_created is defined
+    - gf_server_start_region_created.rc is defined
+    - gf_server_start_region_created.rc == 0
+  delegate_to: localhost
+
+#############################################
+## STEP 13) Add all the GemFire database processes to cgroup:
+#############################################
+
+- name: Ensure cgroup file exists
+  ansible.builtin.file:
+    path: "{{ gf_check_deps_cgroup_point }}/hmsdk/cgroup.procs"
+    state: file
+    mode: '0644'
+  become: true
+
+- name: Add all the GemFire database processes to cgroup
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      res=$(ps -ef | grep gemfire | grep server-port | grep {{ server_port_base + item }} | awk '{print $2}' | sed -n '1p')
+      echo "$res" > {{ gf_check_deps_cgroup_point }}/hmsdk/cgroup.procs
+    executable: /bin/bash
+  loop: "{{ range(gfs_num_each_host | int) | list }}"
+  become: true
+  register: gf_server_start_add_cgroup
+  changed_when: gf_server_start_add_cgroup.rc != 0
+
+#############################################
+## Generate a shell script for collect metrics - numactl query
+#############################################
+- name: Create a shell script for numactl query
+  ansible.builtin.template:
+    src: "numactl_query.sh.j2"
+    dest: "{{ gf_installed_base_dir }}/ycsb_benchmarks/numactl_query.sh"
+    mode: '0755'
+  become: true

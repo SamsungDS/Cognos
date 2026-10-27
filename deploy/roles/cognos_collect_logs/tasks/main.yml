@@ -1,0 +1,245 @@
+---
+# tasks file for roles/svk_log_collect
+- name: Ensure svk_logs_backup_dir exists
+  ansible.builtin.file:
+    path: "{{ svk_logs_backup_dir }}"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: '0755'
+  delegate_to: localhost
+  run_once: true
+  become: true
+
+- name: Ensure temp backup directory is empty and ready
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      rm -rf "{{ svk_logs_temp_dir }}_{{ inventory_hostname }}"/{*,.[!.]*,..?*} 2>/dev/null || true
+      mkdir -p "{{ svk_logs_temp_dir }}_{{ inventory_hostname }}"
+      chmod 0755 "{{ svk_logs_temp_dir }}_{{ inventory_hostname }}"
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+# ============================================
+# Collect /var/log/svk directory
+# ============================================
+- name: Check if /var/log/svk directory exists
+  ansible.builtin.stat:
+    path: /var/log/svk
+  register: cognos_collect_logs_log
+  changed_when: false
+
+- name: Collect /var/log/svk directory
+  community.general.archive:
+    path: /var/log/svk
+    dest: "{{ svk_logs_temp_dir }}_{{ inventory_hostname }}/svk_logs_{{ inventory_hostname }}.tar.gz"
+    format: gz
+    mode: '0644'
+  register: cognos_collect_logs_archive
+  when: cognos_collect_logs_log.stat.exists
+
+# ============================================
+# Collect system information
+# ============================================
+- name: Collect dmesg output (kernel messages)
+  ansible.builtin.command: dmesg
+  register: cognos_collect_logs_dmesg
+  changed_when: false
+  failed_when: false
+
+- name: Save dmesg output
+  ansible.builtin.copy:
+    content: "{{ cognos_collect_logs_dmesg.stdout }}"
+    dest: "{{ svk_logs_temp_dir }}_{{ inventory_hostname }}/dmesg.txt"
+    mode: '0644'
+
+- name: Find all /var/log/messages* file
+  ansible.builtin.find:
+    paths: /var/log
+    patterns: 'messages*'
+    file_type: file
+    recurse: false
+  register: cognos_collect_logs_latest_dmesg
+  changed_when: false
+
+- name: Set latest messages file path (fallback to empty if none found)
+  ansible.builtin.set_fact:
+    cognos_collect_logs_latest_file:
+      "{{ (cognos_collect_logs_latest_dmesg.files | sort(attribute='mtime', reverse=true) | first).path
+        if cognos_collect_logs_latest_dmesg.matched > 0 else '' }}"
+  changed_when: false
+
+- name: Copy latest /var/log/messages* file with timestamped name (no archive)
+  ansible.builtin.copy:
+    src: "{{ cognos_collect_logs_latest_file }}"
+    dest: "{{ svk_logs_temp_dir }}_{{ inventory_hostname }}"
+    remote_src: true
+    mode: '0644'
+  register: cognos_collect_logs_messages_copy
+  when: cognos_collect_logs_latest_file | length > 0
+  ignore_errors: true
+
+- name: Collect journalctl --list-boots (list of boots)
+  ansible.builtin.command: journalctl --list-boots
+  register: cognos_collect_logs_journal_boots
+  changed_when: false
+  failed_when: false
+
+- name: Save journalctl boots list
+  ansible.builtin.copy:
+    content: "{{ cognos_collect_logs_journal_boots.stdout }}"
+    dest: "{{ svk_logs_temp_dir }}_{{ inventory_hostname }}/journalctl_boots.txt"
+    mode: '0644'
+
+- name: Collect uptime (boot details)
+  ansible.builtin.command: uptime
+  register: cognos_collect_logs_uptime
+  changed_when: false
+
+- name: Save uptime output
+  ansible.builtin.copy:
+    content: "{{ cognos_collect_logs_uptime.stdout }}"
+    dest: "{{ svk_logs_temp_dir }}_{{ inventory_hostname }}/uptime.txt"
+    mode: '0644'
+
+- name: Collect uname -a (kernel details)
+  ansible.builtin.command: uname -a
+  register: cognos_collect_logs_uname
+  changed_when: false
+
+- name: Save uname output
+  ansible.builtin.copy:
+    content: "{{ cognos_collect_logs_uname.stdout }}"
+    dest: "{{ svk_logs_temp_dir }}_{{ inventory_hostname }}/uname.txt"
+    mode: '0644'
+
+- name: Collect ps -auxww (list of processes)
+  ansible.builtin.command: ps -auxww
+  register: cognos_collect_logs_ps
+  changed_when: false
+
+- name: Save ps output
+  ansible.builtin.copy:
+    content: "{{ cognos_collect_logs_ps.stdout }}"
+    dest: "{{ svk_logs_temp_dir }}_{{ inventory_hostname }}/ps_auxww.txt"
+    mode: '0644'
+
+- name: Check if lsof command exists
+  ansible.builtin.command: which lsof
+  register: cognos_collect_logs_lsof
+  failed_when: false
+  changed_when: false
+
+- name: Collect lsof result
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      lsof > {{ svk_logs_temp_dir }}_{{ inventory_hostname }}/lsof.txt
+    executable: /bin/bash
+  become: true
+  changed_when: false
+  when: cognos_collect_logs_lsof.rc == 0
+
+- name: Check if ss command exists
+  ansible.builtin.command: which ss
+  register: cognos_collect_logs_ss
+  failed_when: false
+  changed_when: false
+
+- name: Execute ss -a and append to temp file
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      ss -a > {{ svk_logs_temp_dir }}_{{ inventory_hostname }}/ss_a.txt
+    executable: /bin/bash
+  become: true
+  changed_when: false
+  when: cognos_collect_logs_ss.rc == 0
+
+- name: Check if netstat command exists
+  ansible.builtin.command: which netstat
+  register: cognos_collect_logs_netstat
+  failed_when: false
+  changed_when: false
+
+- name: Execute netstat -pan and append to temp file
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      netstat -pan > {{ svk_logs_temp_dir }}_{{ inventory_hostname }}/netstat_pan.txt
+    executable: /bin/bash
+  become: true
+  changed_when: false
+  when: cognos_collect_logs_netstat.rc == 0
+
+# ============================================
+# Collect journalctl for Cognos backend services
+# ============================================
+- name: Collect journalctl for cognos-*.service directly to file
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      journalctl -u cognos-controller.service -b > {{ svk_logs_temp_dir }}_{{ inventory_hostname }}/journalctl_cognos-controller.txt
+      journalctl -u cognos-restserver.service -b > {{ svk_logs_temp_dir }}_{{ inventory_hostname }}/journalctl_cognos-restserver.txt
+    executable: /bin/bash
+  changed_when: false
+  failed_when: false
+  when: "'management_server' in group_names"
+
+- name: Collect journalctl for application services directly to file
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      journalctl -u cmmh_driver.service -b > {{ svk_logs_temp_dir }}_{{ inventory_hostname }}/journalctl_cmmh_driver.service.txt
+      journalctl -u cognos-node.service -b > {{ svk_logs_temp_dir }}_{{ inventory_hostname }}/journalctl_cognos-node.service.txt
+      journalctl -u cognos-svc-mgr.service -b > {{ svk_logs_temp_dir }}_{{ inventory_hostname }}/journalctl_cognos-svc-mgr.service.txt
+    executable: /bin/bash
+  changed_when: false
+  failed_when: false
+  when: "'application_server' in group_names"
+
+- name: Collect journalctl for frontend cognos-*.service directly to file
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      journalctl -u cognos-subscriber.service -b > {{ svk_logs_temp_dir }}_{{ inventory_hostname }}/journalctl_cognos-subscriber.service.txt
+      journalctl -u cognos-app.service -b > {{ svk_logs_temp_dir }}_{{ inventory_hostname }}/journalctl_cognos-app.service.txt
+      journalctl -u cognos-rbac.service -b > {{ svk_logs_temp_dir }}_{{ inventory_hostname }}/journalctl_cognos-rbac.service.txt
+      journalctl -u caddy.service -b > {{ svk_logs_temp_dir }}_{{ inventory_hostname }}/journalctl_caddy.service.txt
+    executable: /bin/bash
+  changed_when: false
+  failed_when: false
+  when: "'management_server' in group_names"
+
+# ============================================
+# Create unified archive with hostname and timestamp
+# ============================================
+- name: Set unified archive file name with hostname and timestamp
+  ansible.builtin.set_fact:
+    cognos_collect_logs_archive_file: "cognos_logs_{{ inventory_hostname }}_{{ ansible_date_time.iso8601 }}.tar.gz"
+
+- name: Create unified archive with hostname and timestamp
+  community.general.archive:
+    path: "{{ svk_logs_temp_dir }}_{{ inventory_hostname }}"
+    dest: "{{ svk_logs_temp_dir }}_{{ inventory_hostname }}/../{{ cognos_collect_logs_archive_file }}"
+    format: gz
+    mode: '0644'
+  register: cognos_collect_logs_uni_archive
+
+- name: Copy logs archive to ansible control node
+  ansible.builtin.fetch:
+    src: "{{ svk_logs_temp_dir }}_{{ inventory_hostname }}/../{{ cognos_collect_logs_archive_file }}"
+    dest: "{{ svk_logs_backup_dir }}/{{ cognos_collect_logs_archive_file }}"
+    flat: true
+  become: true
+  when: cognos_collect_logs_uni_archive.archived is defined
+
+- name: Cleanup temporary files on remote host
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ svk_logs_temp_dir }}_{{ inventory_hostname }}/../{{ cognos_collect_logs_archive_file }}"
+    - "{{ svk_logs_temp_dir }}_{{ inventory_hostname }}"

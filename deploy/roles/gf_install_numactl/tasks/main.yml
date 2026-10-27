@@ -1,0 +1,58 @@
+# Author: June Liu
+# Contact: june.liu@samsung.com
+---
+
+- name: Assert Test numactl_version
+  ansible.builtin.assert:
+    that:
+      - gf_install_numactl_version is defined
+      - gf_install_numactl_version is string
+      - gf_install_numactl_version is not none
+    quiet: true
+
+- name: Assert gf_install_numactl_staging_dir
+  ansible.builtin.assert:
+    that:
+      - gf_install_numactl_staging_dir is defined
+      - gf_install_numactl_staging_dir is string
+      - gf_install_numactl_staging_dir is not none
+    quiet: true
+
+- name: Download numactl source code
+  ansible.builtin.get_url:
+    url: "{{ gf_install_numactl_download_url }}"
+    dest: "{{ gf_install_numactl_artifacts_dir }}/numactl-{{ gf_install_numactl_version }}.tar.gz"
+    mode: "0644"
+  become: true
+  delegate_to: localhost
+  run_once: true
+
+- name: Get numactl tarball status
+  ansible.builtin.stat:
+    path: "{{ gf_install_numactl_artifacts_dir }}/numactl-{{ gf_install_numactl_version }}.tar.gz"
+  delegate_to: localhost
+  register: gf_install_numactl_tgz_stat
+
+- name: Assert numactl tarball found
+  ansible.builtin.assert:
+    that: gf_install_numactl_tgz_stat.stat.exists
+    fail_msg: "numactl tarball not found. Please download it to {{ gf_install_numactl_artifacts_dir }}"
+
+- name: Get current numactl version
+  ansible.builtin.command: numactl --version
+  register:
+    gf_install_numactl_curr_version
+  ignore_errors: true
+  changed_when: false
+
+- name: Assert current numactl version
+  ansible.builtin.assert:
+    that: gf_install_numactl_curr_version.stdout is version_compare(gf_install_numactl_version, '==')
+    success_msg: "numactl version is correct: {{ gf_install_numactl_curr_version.stdout }}"
+  when: gf_install_numactl_curr_version.rc == 0
+  register: gf_install_numactl_assert_version
+
+- name: Upgrade numactl for ubuntu
+  ansible.builtin.include_tasks:
+    file: deploy_numactl.yml
+  when: (gf_install_numactl_curr_version.rc != 0) or (gf_install_numactl_curr_version.stdout is version_compare(gf_install_numactl_version, '!='))

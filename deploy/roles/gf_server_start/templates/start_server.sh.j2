@@ -1,0 +1,60 @@
+#!/bin/bash
+# Generate startup script for gemfire server
+# Configuration: gfs_num_each_host={{ gfs_num_each_host }}, cxl_num={{ cxl_num }}, gfs_ratio={{ gfs_ratio }}
+# Time: {{ ansible_date_time.iso8601 }}
+
+DT=`date "+%F-%H-%M"`
+
+ls -ld /etc/alternatives/java
+echo 0 > /proc/sys/kernel/numa_balancing
+ulimit -c unlimited
+
+{% for proc in gf_server_start_proc_res %}
+# ============== start {{ proc.process_id }} ==============
+echo "Starting Server {{ proc.process_id }}"
+
+{# dram_weights #}
+{% for i in range(proc.dram_list | length) %}
+echo {{ proc.dram_weights[i] }} > /sys/kernel/mm/mempolicy/weighted_interleave/node{{ proc.dram_list[i] }}
+{% endfor %}
+
+{# cxl_weights(cxl_num>0) #}
+{% if cxl_num | int > 0 %}
+{% for i in range(proc.cxl_list | length) %}
+echo {{ proc.cxl_weights[i] }} > /sys/kernel/mm/mempolicy/weighted_interleave/node{{ proc.cxl_list[i] }}
+{% endfor %}
+{% endif %}
+
+# logsdir="/mnt"
+mkdir -p {{ proc.device_mount }}/server{{ proc.process_id }}
+cd {{ proc.device_mount }}/server{{ proc.process_id }}
+rm -rf *
+
+# dram={{ proc.dram_list | join(',') }} {% if cxl_num | int > 0 %}, cxl={{ proc.cxl_str }}{% endif %}
+
+nohup numactl --physcpubind={{ proc.bind }} \
+{% if (cxl_num | int == 0) or (proc.cxl_list | length == 0) %}
+--membind={{ proc.dram_list | join(',') }} \
+{% else %}
+--weighted-interleave={{ proc.dram_list | join(',') }},{{ proc.cxl_str }} \
+{% endif %}
+java -server -classpath {{ gemfire_home }}/lib/gemfire-bootstrap-{{ gemfire_ver }}.jar \
+--add-exports=java.management/com.sun.jmx.remote.security=ALL-UNNAMED --add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED \
+-Dgemfire.bind-address={{ proc.ip }} \
+-Dgemfire.start-dev-rest-api=false -Dgemfire.locators={{ proc.locator }} \
+-Dgemfire.use-cluster-configuration=true -Dgemfire.disk-synchronous={{ gfs_async_enable }} \
+{% if redundancy | int != 0 %}
+-Dgemfire.redundancy-zone={{ proc.l_ip }} 
+{% endif %}
+{{ gfs_timeout_value}} \
+-Dgemfire.jmx-manager-hostname-for-clients={{ proc.ip }} \
+-XX:+ScavengeBeforeFullGC -XX:OnOutOfMemoryError=kill \
+-Xms{{ gf_server_start_xms }} -Xmx{{ gf_server_start_xmx }} -Xmn{{ gfs_server_xmn }} -Xss{{ gfs_server_xss }} {{ zgc_value }} \
+-Xlog:gc*:{{ gf_installed_base_dir }}/ycsb_benchmarks/GCLogServer/gc_server{{ proc.process_id }}.log:time \
+-Dgemfire.launcher.registerSignalHandlers=true -Djava.awt.headless=true -Dsun.rmi.dgc.server.gcInterval=9223372036854775806 com.vmware.gemfire.bootstrap.ServerLauncher start server_{{ proc.process_id }}_{{ inventory_hostname }} \
+--automatic-module-classpath={{ gemfire_home }}/extensions/*:{{ gemfire_home }}/tools/Modules/gemfire-prometheus-metrics/* --server-bind-address={{ proc.ip }} \
+--server-port={{ proc.server_port }} \
+--hostname-for-clients={{ proc.ip }} \
+--dir={{ proc.device_mount }}/server{{ proc.process_id }}/ &
+
+{% endfor %}

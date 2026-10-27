@@ -1,0 +1,69 @@
+#!/bin/bash
+
+DT=`date "+%F-%H-%M"`
+
+
+{% set dataset = dataload_parameter['dataset_GB'] %}
+{% set total_regions = dataload_parameter['region_count'] %}
+{% set clientcount = dataload_parameter['concurrency']['clients'] %}
+
+{% set region_list = [] %}
+{% set locator_list = [] %}
+
+{% set ns = namespace(col1=[], col2=[]) %}
+
+{% for line in ycsb_dataload_run_locator_list.splitlines() %}
+    {% set line = line.strip() %}
+    {% if line %}
+        {% set parts = line.split() %}
+        {% if parts|length >= 2 %}
+            {% set _ = ns.col1.append(parts[0]) %}
+            {% set _ = ns.col2.append(parts[1]) %}
+        {% endif %}
+    {% endif %}
+{% endfor %}
+
+region_list_array=({% for item in ns.col1 %}"{{ item }}"{% if not loop.last %} {% endif %}{% endfor %})
+locator_list_array=({% for item in ns.col2 %}"{{ item }}"{% if not loop.last %} {% endif %}{% endfor %})
+
+
+dataset={{ dataload_parameter['dataset_GB'] }}
+total_regions={{ region_count }}
+clientcount={{ dataload_parameter['concurrency']['clients'] }}
+threadcount={{ dataload_parameter['concurrency']['threads'] }}
+
+region_size=$(((dataset * 1000000) / total_regions));
+clients_per_region=$((clientcount / total_regions));
+
+ycsbcount=1;
+recordcount=$((region_size / clients_per_region));
+insertoffset=0;
+l_idx=0;
+
+for ((x=0; x<total_regions; x++))
+do	
+    let y=1
+    while [ $y -le $clients_per_region ];
+    do
+        echo "Client Machine 1: Triggering ycsbclient: $ycsbcount with threadcount=$threadcount ; recordcount=$recordcount ; insertstart=$insertoffset to populate Region: ${region_list_array[$x]} ; locator: ${locator_list_array[$x]}"
+        nohup {{ gf_installed_base_dir }}/{{ ycsb_geode_binding }}/bin/ycsb \
+        load geode -P {{ gf_installed_base_dir }}/ycsb_benchmarks/workload-config/global_config_1.1KB_{{ config_type_key }} \
+        -p table=${region_list_array[$x]} \
+        -p recordcount=$recordcount \
+        -p operationcount=$recordcount \
+        -p insertstart=$insertoffset \
+        -p geode.locator="${locator_list_array[$x]}" \
+        -s -threads $threadcount > "/root/ycsb_benchmarks/results/test_write_${ycsbcount}_$DT.log" 2>&1 &
+        y=$(( y + 1 ))
+        ycsbcount=$(( ycsbcount + 1 ))
+        insertoffset=$(( insertoffset + recordcount ))
+    done;
+    insertoffset=0;
+done
+
+wait
+
+
+echo "All YCSB clients finished."
+
+exit 0

@@ -1,0 +1,19 @@
+---
+
+- name: Gather service facts
+  ansible.builtin.service_facts:
+
+- name: Check if firewalld is active
+  ansible.builtin.set_fact:
+    cognos_deny_ports_ufw_active: "{{ 'firewalld.service' in services and services['firewalld.service']['state'] == 'running' }}"
+
+- name: Deny ports with firewalld
+  ansible.posix.firewalld:
+    port: "{{ item }}/tcp"
+    permanent: true
+    immediate: true
+    state: disabled
+  loop: "{{ ports | dict2items | map(attribute='value') | list }}"
+  when: cognos_deny_ports_ufw_active | default(false)
+  become: true
+  failed_when: false

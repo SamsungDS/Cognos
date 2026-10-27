@@ -1,0 +1,15 @@
+window.CONFIGS = {
+  "mgmt_endpoint": "{{ cognos_start_protocol }}://{{ip}}:{{ mgmt_ports_frontend['mgmt_endpoint'] }}",
+  "data_endpoint": "{{ cognos_start_protocol }}://{{ip}}:{{ mgmt_ports_frontend['cal_port'] }}",
+  "api_endpoint": "{{ cognos_start_protocol }}://{{ip}}:{{ mgmt_ports_frontend['cal_port'] }}/api/v2.0.1",
+  "rbac_endpoint": "{{ cognos_start_protocol }}://{{ip}}:{{ rbac_front_port }}",
+  "rbac_enabled": {{ cognos_rbac_enabled | lower }},
+  "ssl": {{ cognos_start_https_enable | lower }},
+  "clusterPolicy": "roundRobin",
+  "policyOptions": {
+    "roundRobin": {
+      "comment": "the use case is that the user wants to have minimum number of application server for redundancy",
+      "minHostsPerCluster": 2
+    }
+  }
+}

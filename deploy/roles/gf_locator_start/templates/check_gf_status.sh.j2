@@ -1,0 +1,17 @@
+#!/bin/sh
+########### Locator WITH PERSISTENCY ################
+{% set socket_keys = gf_get_numa_ids_sockets.keys() | list %}   {# [0, 1, ...] #}
+{% set socket_count = socket_keys | length %}
+{% for i in range(gf_locator_num_per_host) %}
+{% set sock_idx = i % socket_count %}
+{% set sock_key = socket_keys[sock_idx] %}
+{% set sock = gf_get_numa_ids_sockets[sock_key] %}
+
+{% set group_idx = (i // socket_count) %}
+{% set nic_ips_val = (sock.nic_ips | length > group_idx)
+        and sock.nic_ips[group_idx]
+        or sock.nic_ips[0] %}
+{{ gf_installed_base_dir }}/vmware-gemfire-{{ gemfire_ver }}/bin/gfsh -e 'connect --locator={{ nic_ips_val }}[{{ (locator_port+i) }}]' -e 'list members'
+{% endfor %}
+
+exit

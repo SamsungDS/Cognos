@@ -1,0 +1,40 @@
+# Author: June Liu
+# Contact: june.liu@samsung.com
+---
+### Path defaults
+gf_install_numactl_artifacts_dir: "{{ inventory_dir }}/artifacts"
+gf_install_numactl_staging_dir: "{{ gf_installed_base_dir }}/ycsb_benchmarks/"
+
+### Kernel defaults
+gf_install_numactl_version: "2.0.19"
+
+gf_install_numactl_download_url: " https://github.com/numactl/numactl/archive/refs/tags/v{{ gf_install_numactl_version }}.tar.gz"
+
+### kernel dependencies packages name
+gf_install_numactl_require:
+  default:
+    - autoconf
+    - automake
+    - libtool
+    - gcc
+    - make
+  Ubuntu:
+    - autoconf
+    - automake
+    - libtool
+    - gcc
+    - make
+  OracleLinux:
+    - autoconf
+    - automake
+    - libtool
+    - gcc
+    - make
+
+gf_install_numactl_prefix: "/usr/local/bin/"
+
+gf_install_numactl_dependencies: "{{ gf_install_numactlrequire[ansible_distribution] | default(gf_install_numactl_require['default']) }}"
+### compile timeout
+gf_install_numactl_compile_timeout: 100
+gf_install_numactl_check_retries: 10
+gf_install_numactl_check_interval: 10

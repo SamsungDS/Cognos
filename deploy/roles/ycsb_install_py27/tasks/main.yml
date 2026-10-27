@@ -1,0 +1,10 @@
+---
+- name: Check if Python 2.7 is already installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/python2.7
+  register: ycsb_install_py27_bin
+
+- name: Install PYTHON27 for YCSB client
+  ansible.builtin.include_tasks:
+    "install_python_{{ ansible_distribution_file_variety | lower }}.yml"
+  when: not ycsb_install_py27_bin.stat.exists

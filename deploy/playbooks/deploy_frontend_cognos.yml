@@ -1,0 +1,41 @@
+---
+- name: Check ansible version
+  hosts: localhost
+  roles:
+    - validate_ansible
+
+- name: Check OS version
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - validate_os
+
+- name: Check kernel version
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - validate_kernel
+
+- name: Add epel-release repo
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - cognos_add_epel
+
+- name: Install required packages for management server
+  hosts:
+    - management_server
+  roles:
+    - management_server_deps
+
+- name: Install cognos app framework
+  hosts:
+    - management_server
+  roles:
+    - cognos_app_install
+
+- name: Start Cognos
+  ansible.builtin.import_playbook: start_frontend_cognos.yml

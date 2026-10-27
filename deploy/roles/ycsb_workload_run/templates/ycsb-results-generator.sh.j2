@@ -1,0 +1,83 @@
+#!/bin/sh
+## This script is to check if the YCSB logs generated are valid and print the results if valid
+
+usage="USAGE $0 WorkloadConfigFile ResultsDirectory Iterations"
+
+if [ $# -ne 3 ]; then
+        echo $usage
+        exit 1
+fi
+
+## Remove temp file
+rm -rf /root/ycsb_benchmarks/temp-parsed-results-verbose.out
+
+while read loop_config;
+do
+
+    ## Assign Key properties from Workload Config File to local variables
+    dataset=$( echo $loop_config | awk -F ',' '{print $1}' )
+    combination=$( echo $loop_config | awk -F ',' '{print $2}' )
+    threadcount=$( echo $combination | awk -F 'x' '{print $2}' )
+    recordcount=$( echo $loop_config | awk -F ',' '{print $3}' )
+    opscount=$( echo $loop_config | awk -F ',' '{print $4}' )
+    type=$( echo $loop_config | awk -F ',' '{print $10}' )
+
+    ## Navigate to the target results directory
+    dest_dir=$( echo "/"$dataset"-"$combination"-"$recordcount"-"$opscount"-"$type"-run" )
+    target_dir=$2$dest_dir
+
+    ## Trigger the log parser script to extract VERBOSE RESULTS from EACH ITERATION
+    sh /root/ycsb_benchmarks/ycsb-logs-parser.sh $target_dir $3 >> /root/ycsb_benchmarks/temp-parsed-results-verbose.out
+
+done < $1
+{# done < "/root/ycsb_benchmarks/workload-config/"$1 #}
+
+
+## Valdiate if all the iterations from the YCSB Workload execution are VALID or INVALID
+if [ `grep "INVALID" /root/ycsb_benchmarks/temp-parsed-results-verbose.out | wc -l` -eq 0 ]
+then
+    format="\n%50s\n\n"
+    printf "$format" "RESULTS ARE VALID"
+
+    ## If results are VALID, trigger the log parser script to display CONSOLIDATED REULTS from ALL THE ITERATIONS - COMBINED AVERAGE
+    printf "$format" "CONSOLIDATED RESULTS OF ALL $3 ITERATIONS :"
+    format="%10s%10s%14s%20s%20s%20s%20s%15s%20s%20s\n"
+    
+    {% if metrics_enable %}
+
+    printf "$format" "Workload" "RunTime" "Throughput" "ReadAvgLatency" "Read99thLatency" "UpdateAvgLatency" "Update99thLatency" "CPUAverage" "server1-Power-Idle" "server1-Power-Load" 
+    {% elif metrics_enable == false %}
+    
+    printf "$format" "Workload" "RunTime" "Throughput" "ReadAvgLatency" "Read99thLatency" "UpdateAvgLatency" "Update99thLatency"
+    {% endif %}
+    
+    
+    while read loop_config;
+        do
+            ## Assign Key properties from Workload Config File to local variables
+            dataset=$( echo $loop_config | awk -F ',' '{print $1}' )
+            combination=$( echo $loop_config | awk -F ',' '{print $2}' )
+            threadcount=$( echo $combination | awk -F 'x' '{print $2}' )
+            recordcount=$( echo $loop_config | awk -F ',' '{print $3}' )
+            opscount=$( echo $loop_config | awk -F ',' '{print $4}' )
+            type=$( echo $loop_config | awk -F ',' '{print $10}' )
+            dest_dir=$( echo "/"$dataset"-"$combination"-"$recordcount"-"$opscount"-"$type"-run" )
+            target_dir=$2$dest_dir
+            sh /root/ycsb_benchmarks/ycsb-logs-parser.sh $target_dir $3 | tail -1
+    done < $1
+    
+    ## If results are INVALID, print a message
+
+    {% if ycsb_logs_upload_to_dashboard_enable == true %}
+    echo "##############Start for persist benchmark results####################"
+    interations=$3
+    python3 /root/ycsb_benchmarks/store_results_in_mysql.py $dataset $interations $combination $recordcount $opscount $type $2 $dest_dir
+    {% endif %}
+
+    ## If results are INVALID, print a message
+    else
+    format="\n%50s\n\n"
+    printf "$format" "RESULTS ARE INVALID, CHECK ALL THE LOGS"
+fi
+
+exit

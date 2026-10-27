@@ -1,0 +1,41 @@
+---
+- name: Check if cognos-mgmt-fw DEB is installed
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      apt list --installed | grep cognos-mgmt-fw
+    executable: /bin/bash
+  register: cognos_mgmt_fw_remove_pkg_query
+  changed_when: false
+  failed_when: false
+  when: ansible_facts['distribution'] == "Ubuntu"
+
+- name: Remove the installed cognos-mgmt-fw
+  ansible.builtin.apt:
+    name: cognos-mgmt-fw
+    state: absent
+    purge: true
+  become: true
+  when:
+    - ansible_facts['distribution'] == "Ubuntu"
+    - cognos_mgmt_fw_remove_pkg_query.rc == 0
+
+- name: Check if cognos-mgmt-fw RPM is installed
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      dnf list --installed | grep cognos-mgmt-fw
+    executable: /bin/bash
+  register: cognos_mgmt_fw_remove_pkg_query
+  changed_when: false
+  failed_when: false
+  when: ansible_facts['distribution'] == "OracleLinux"
+
+- name: Remove the installed cognos-mgmt-fw
+  ansible.builtin.dnf:
+    name: cognos-mgmt-fw
+    state: absent
+  become: true
+  when:
+    - ansible_facts['distribution'] == "OracleLinux"
+    - cognos_mgmt_fw_remove_pkg_query.rc == 0

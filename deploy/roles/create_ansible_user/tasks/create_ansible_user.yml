@@ -1,0 +1,24 @@
+---
+- name: Set the parent home directory for ansible user to the custom path
+  ansible.builtin.set_fact:
+    create_ansible_user_parent_dir: "{{ create_ansible_user_custom_parent_path }}"
+  when: create_ansible_user_custom_parent_path is defined and create_ansible_user_custom_parent_path | length > 0
+
+- name: Set the parent home directory for ansible user to the default home
+  ansible.builtin.set_fact:
+    create_ansible_user_parent_dir: "/home"
+  when: create_ansible_user_custom_parent_path | length == 0
+
+- name: Ensure the home parent directory is accessible
+  ansible.builtin.file:
+    path: "{{ create_ansible_user_parent_dir }}"
+    state: directory
+    mode: '0755'
+
+- name: Create Ansible user
+  ansible.builtin.user:
+    name: "{{ create_ansible_user_name }}"
+    home: "{{ create_ansible_user_parent_dir }}/{{ create_ansible_user_name }}"
+    shell: "{{ create_ansible_user_shell }}"
+    create_home: true
+    state: present

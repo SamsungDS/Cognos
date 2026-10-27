@@ -1,0 +1,45 @@
+---
+- name: Identify vmware-gemfire package
+  ansible.builtin.find:
+    path: "{{ artifacts_dir }}"
+    patterns:
+      - "vmware-gemfire-{{ gemfire_ver }}.tar"
+      - "vmware-gemfire-{{ gemfire_ver }}.*"
+  delegate_to: localhost
+  run_once: true
+  register: gf_check_deps_gf_tar
+
+- name: Assert vm-gemfire package found
+  ansible.builtin.assert:
+    that: gf_check_deps_gf_tar.files | length > 0
+    fail_msg: "No vm-gemfire package found. Please download vm-gemfire to {{ artifacts_dir }}"
+
+- name: Get vm-gemfire package basename
+  ansible.builtin.set_fact:
+    gf_check_deps_gf_pkg: "{{ gf_check_deps_gf_tar.files[0].path | basename }}"
+
+- name: Check if unzipped vm-gemfire package exists
+  ansible.builtin.stat:
+    path: "{{ gf_installed_base_dir }}/{{ gf_check_deps_gf_pkg }}"
+  register: gf_check_deps_gf_zip
+
+- name: Copy vm-gemfire package to root directory
+  ansible.builtin.copy:
+    src: "{{ gf_check_deps_gf_tar.files[0].path }}"
+    dest: "{{ gf_installed_base_dir }}"
+    mode: "0755"
+  become: true
+  when: not gf_check_deps_gf_zip.stat.exists
+
+- name: Check if unzipped vm-gemfire package exists
+  ansible.builtin.stat:
+    path: "{{ gf_installed_base_dir }}/vmware-gemfire-{{ gemfire_ver }}"
+  register: gf_check_deps_gf_unzip
+
+- name: Unarchive vm-gemfire package
+  ansible.builtin.unarchive:
+    src: "{{ gf_check_deps_gf_zip.stat.path }}"
+    dest: "{{ gf_installed_base_dir }}"
+    remote_src: true
+  become: true
+  when: not gf_check_deps_gf_unzip.stat.exists

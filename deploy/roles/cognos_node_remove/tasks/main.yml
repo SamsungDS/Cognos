@@ -1,0 +1,17 @@
+---
+# tasks file for roles/cognos_node_remove
+
+- name: Remove the installed cognos-node on Ubuntu
+  ansible.builtin.apt:
+    name: cognos-node
+    state: absent
+    purge: true
+  become: true
+  when: ansible_facts['distribution'] == "Ubuntu"
+
+- name: Remove the installed cognos-node on OEL
+  ansible.builtin.dnf:
+    name: cognos-node
+    state: absent
+  become: true
+  when: ansible_facts['distribution'] == "OracleLinux"

@@ -1,0 +1,71 @@
+#!/bin/sh
+########### Locator WITH PERSISTENCY ################
+DT=`date "+%F-%H-%M"`
+{% set socket_keys = gf_get_numa_ids_sockets.keys() | list %}   {# [0, 1, ...] #}
+{% set socket_count = socket_keys | length %}
+{% set http_service_port = 7070 %}
+{% set jmx_manager_port = 1099 %}
+{% for i in range(gf_locator_num_per_host) %}
+    {# Caculate the index of socket #}
+    {% set sock_idx = i % socket_count %}
+    {% set sock_key = socket_keys[sock_idx] %}
+    {% set sock = gf_get_numa_ids_sockets[sock_key] %}
+    {# Caculate current group index #}
+    {% set group_idx = (i // socket_count) %}
+    {# choose dram and cpu_ids according group_idx，if group_idx exceed the dram list, use the first one #}
+    {% set dram_val = (sock.dram | length > group_idx)
+            and sock.dram[group_idx]
+            or sock.dram[0] %}
+    {% set cpu_ids_val = (sock.cpu_ids | length > group_idx)
+            and sock.cpu_ids[group_idx]
+            or sock.cpu_ids[0] %}
+    {# ---------Select cpus except the last one for usage  --------- #}
+    {% set cpu_ids_list = cpu_ids_val | split(' ') | list %}
+    {% set cpu_ids_trimmed = cpu_ids_list[:-1] %}
+    {% set cpu_ids = cpu_ids_trimmed | join(',') %}
+    {# ----------End of select CPU---------- #}
+    {% set nic_ips_val = (sock.nic_ips | length > group_idx)
+            and sock.nic_ips[group_idx]
+            or sock.nic_ips[0] %}
+
+echo "Starting {{ inventory_hostname }}-{{i}}"
+
+mkdir -p /root/ycsb_benchmarks/mc-baseline-dramcxl/{{ inventory_hostname }}-{{i}}
+cd /root/ycsb_benchmarks/mc-baseline-dramcxl/{{ inventory_hostname }}-{{i}}
+rm -rf *
+
+nohup numactl --physcpubind={{ cpu_ids }} --membind={{ dram_val }} java -server -classpath {{ gemfire_home }}/lib/gemfire-bootstrap-{{ gemfire_ver }}.jar \
+--add-exports=java.management/com.sun.jmx.remote.security=ALL-UNNAMED --add-exports=java.base/sun.nio.ch=ALL-UNNAMED \
+--add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED \
+-Dgemfire.http-service-bind-address={{ nic_ips_val }} \
+-Dgemfire.http-service-port={{ (http_service_port+i) }} \
+-Dgemfire.jmx-manager-hostname-for-clients={{ nic_ips_val }} \
+-Dgemfire.jmx-manager-port={{ (jmx_manager_port+i) }} \
+-Dgemfire.bind-address={{ nic_ips_val }} \
+-Dgemfire.port={{ (locator_port+i) }} \
+-Dgemfire.enable-cluster-configuration=true -Dgemfire.load-cluster-configuration-from-dir=false \
+{{ timeout_value }} \
+-Xms{{ gf_locator_xms }} -Xmx{{ gf_locator_xmx }} -Xmn{{ gf_locator_xmn }} -Xss{{ gf_locator_xss }} \
+-XX:+ScavengeBeforeFullGC -XX:+UnlockDiagnosticVMOptions {{ zgc_value }} -Xlog:gc*:{{ gf_installed_base_dir }}/ycsb_benchmarks/GCLogLocator/gc_locator.log:time -XX:+PrintGCDetails \
+-Dgemfire.launcher.registerSignalHandlers=true -Djava.awt.headless=true -Dsun.rmi.dgc.server.gcInterval=9223372036854775806 \
+com.vmware.gemfire.bootstrap.LocatorLauncher start {{ inventory_hostname }}-{{i}} \
+--automatic-module-classpath={{ gemfire_home }}/extensions/*:{{ gemfire_home }}/tools/Modules/gemfire-prometheus-metrics/* \
+--bind-address={{ nic_ips_val }} \
+--port={{ (locator_port+i) }} &
+{%endfor%}
+
+sleep 20
+
+{% for i in range(gf_locator_num_per_host) %}
+{% set sock_idx = i % socket_count %}
+{% set sock_key = socket_keys[sock_idx] %}
+{% set sock = gf_get_numa_ids_sockets[sock_key] %}
+
+{% set group_idx = (i // socket_count) %}
+{% set nic_ips_val = (sock.nic_ips | length > group_idx)
+        and sock.nic_ips[group_idx]
+        or sock.nic_ips[0] %}
+{{ gf_installed_base_dir }}/vmware-gemfire-{{ gemfire_ver }}/bin/gfsh -e 'connect --locator={{ nic_ips_val }}[{{ (locator_port+i) }}]' -e 'list members' -e 'configure pdx --read-serialized=true {{ persistency_value }}'
+{% endfor %}
+
+exit

@@ -1,0 +1,73 @@
+---
+
+
+- name: Check if cognos-ras RPM is installed
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      dnf list --installed | grep cognos-ras
+    executable: /bin/bash
+  register: cognos_ras_install_pkg_query
+  changed_when: false
+  failed_when: false
+
+- name: Determine OS type and version
+  ansible.builtin.set_fact:
+    cognos_ras_install_os_family: "{{ ansible_distribution }}"
+    cognos_ras_install_os_version: "{{ ansible_distribution_version }}"
+
+- name: Identify cognos-ras package on OEL
+  ansible.builtin.find:
+    path: "{{ cognos_pkg_dir }}"
+    patterns: "cognos-ras*el{{ ansible_distribution_major_version }}*.rpm"
+  delegate_to: localhost
+  run_once: true
+  register: cognos_ras_install_pkg
+
+- name: Identify newest version of cognos-ras package found
+  ansible.builtin.set_fact:
+    cognos_ras_install_pkg_file: "{{ (cognos_ras_install_pkg.files | sort(attribute='mtime', reverse=true) | first).path }}"
+  run_once: true
+  when: cognos_ras_install_pkg.files | length > 0
+
+- name: Remove the installed rasdaemon on OEL
+  ansible.builtin.dnf:
+    name: rasdaemon
+    state: absent
+  become: true
+  when: cognos_ras_install_pkg_file is defined
+
+- name: Delete the installation directories of rasdaemon
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ cognos_ras_install_rasdaemon_dir }}"
+  become: true
+  when: cognos_ras_install_pkg_file is defined
+
+- name: Copy cognos-ras package to staging directory
+  ansible.builtin.copy:
+    src: "{{ cognos_ras_install_pkg_file }}"
+    dest: "{{ cognos_ras_install_staging_dir }}"
+    mode: "0644"
+  when:
+    - cognos_ras_install_pkg_file is defined
+    - cognos_ras_install_pkg_query.rc != 0
+
+- name: Install cognos-ras rpm
+  ansible.builtin.dnf:
+    name: "{{ cognos_ras_install_staging_dir }}/{{ cognos_ras_install_pkg_file | basename }}"
+    state: present
+    disable_gpg_check: true
+  become: true
+  when:
+    - cognos_ras_install_pkg_file is defined
+    - cognos_ras_install_pkg_query.rc != 0
+
+- name: Delete cognos-ras package from staging directory
+  ansible.builtin.file:
+    path: "{{ cognos_ras_install_staging_dir }}/{{ cognos_ras_install_pkg_file | basename }}"
+    state: absent
+  when:
+    - cognos_ras_install_pkg_file is defined
+    - cognos_ras_install_pkg_query.rc != 0

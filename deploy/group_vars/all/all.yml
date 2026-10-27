@@ -1,0 +1,101 @@
+---
+supported_distributions:
+  - Ubuntu
+  - OracleLinux
+
+os_version_require:
+  Ubuntu:
+    min_ver: '22.04'
+    max_ver: '24.04'
+  OracleLinux:
+    min_ver: '9.6'
+    max_ver: '10.1'
+min_supported_major_versions: "{{ os_version_require[ansible_distribution]['min_ver'] }}"
+max_supported_major_versions: "{{ os_version_require[ansible_distribution]['max_ver'] }}"
+
+# Supported kernel range, keyed by distribution and then OS major version.
+kernel_version_require:
+  Ubuntu:
+    '22':
+      min_ver: '6.11.0'
+      max_ver: '6.11.0'
+    '24':
+      min_ver: '6.8.0'
+      max_ver: '6.17.0'
+  OracleLinux:
+    '9':
+      min_ver: '5.14.0'
+      max_ver: '6.12.0'
+    '10':
+      min_ver: '5.14.0'
+      max_ver: '6.12.0'
+min_supported_kernel_version: "{{ kernel_version_require[ansible_distribution][ansible_distribution_major_version]['min_ver'] }}"
+max_supported_kernel_version: "{{ kernel_version_require[ansible_distribution][ansible_distribution_major_version]['max_ver'] }}"
+
+artifacts_dir: "{{ inventory_dir }}/artifacts"
+deploy_staging_dir: "{{ ansible_env.HOME }}"
+svk_install_dir: "/usr/local/svk/"
+svk_logs_backup_dir: "{{ inventory_dir }}/logs"
+svk_logs_temp_dir: "{{ deploy_staging_dir }}/logs"
+
+cognos_certs_dir: "{{ artifacts_dir }}/certificates"
+cognos_certs_files:
+  - key.pem
+  - cert.pem
+
+scmc_ver: "1"
+scmc_ssl_cert: "ssl_cert"
+scmc_ssl_key: "ssl_key"
+
+influxdb_org: "Samsung"
+influxdb_bucket: "internal"
+influxdb_user: "svk"
+influxdb_pwd: "CXL123mem!"
+influxdb_port: 8086
+
+influxdb_data_dir: "/var/lib/influxdb"
+influxdb_uninstall_flag: false   ### Dangerous operation: Setting this to true will permanently delete all InfluxDB data and uninstall the database.
+
+feat_modules_bin_dir: "/usr/local/svk/feature_modules"
+
+mgmt_ports_backend:
+  controller: 9999
+  rest_http: 8001
+  rest_https: 8443
+
+mgmt_ports_frontend:
+  mgmt_endpoint: 5000
+  cal_port: 4000
+  exporter: 4001
+  publisher: 5556
+
+app_ports:
+  node_endpoint: 9998
+  pubsub: 5555
+  publisher: 5556
+
+rbac_ports:
+  db: 1027
+  api: 6721
+  frontend: 6720
+
+cognos_cluster_id: 'CL_ID_1'
+
+scmc_cxl_mock_enable: false
+management_server_type: ''
+application_server_type: 'CMMH'
+
+cognos_install_gui_enabled: false
+cognos_rbac_enabled: true
+cognos_certificates_enabled: false
+cognos_download_artifacts_enabled: false
+cognos_cleanup_enable_log_collection: false
+
+
+rbac_username: "super_admin"
+rbac_email: "super_admin@samsung.com"
+rbac_password: "Admin@123"
+
+rbac_db_port: "{{ rbac_ports['db'] | int }}"
+rbac_api_port: "{{ rbac_ports['api'] | int }}"
+rbac_front_port: "{{ rbac_ports['frontend'] | int }}"

@@ -1,0 +1,19 @@
+---
+
+- name: Create sudoers file for Ansible user
+  ansible.builtin.template:
+    src: ansible_sudoers.j2
+    dest: "/etc/sudoers.d/{{ create_ansible_user_name }}"
+    owner: root
+    group: root
+    mode: '0440'
+    backup: true
+  notify: Validate sudoers syntax
+
+- name: Ensure Ansible user has NOPASSWD sudo access
+  ansible.builtin.lineinfile:
+    path: "/etc/sudoers.d/{{ create_ansible_user_name }}"
+    line: "{{ create_ansible_user_sudoers_cognos }}"
+    state: present
+    validate: 'visudo -cf %s'
+  notify: Validate sudoers syntax

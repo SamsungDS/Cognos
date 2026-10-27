@@ -1,0 +1,15 @@
+---
+- name: Collect cognos logs and system information from all installed machines
+  hosts:
+    - management_server
+    - application_server
+  become: true
+  gather_facts: true
+
+  roles:
+    - cognos_collect_logs
+
+  post_tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg: "Log collection completed for {{ inventory_hostname }}. Logs stored at: {{ svk_logs_backup_dir }}"

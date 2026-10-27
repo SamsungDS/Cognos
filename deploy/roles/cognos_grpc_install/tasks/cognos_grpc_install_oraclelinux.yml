@@ -1,0 +1,54 @@
+---
+- name: Check if cognos-grpc RPM is installed
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      dnf list --installed | grep cognos-grpc
+    executable: /bin/bash
+  register: cognos_grpc_install_pkg_query
+  changed_when: false
+  failed_when: false
+
+- name: Determine OS type and version
+  ansible.builtin.set_fact:
+    cognos_grpc_install_os_family: "{{ ansible_distribution }}"
+    cognos_grpc_install_os_version: "{{ ansible_distribution_version }}"
+
+- name: Identify cognos-grpc package for OEL
+  ansible.builtin.find:
+    path: "{{ cognos_pkg_dir }}"
+    patterns: "cognos-grpc*el{{ ansible_distribution_major_version }}*.rpm"
+  delegate_to: localhost
+  run_once: true
+  register: cognos_grpc_install_pkg
+
+- name: Assert cognos-grpc package found
+  ansible.builtin.assert:
+    that: cognos_grpc_install_pkg.files | length > 0
+    fail_msg: "No cognos-grpc {{ cognos_grpc_install_os_family }} package found. Please download it to {{ artifacts_dir }}"
+
+- name: Identify newest version of cognos-grpc package found
+  ansible.builtin.set_fact:
+    cognos_grpc_install_pkg_file: "{{ (cognos_grpc_install_pkg.files | sort(attribute='mtime', reverse=true) | first).path }}"
+  run_once: true
+
+- name: Copy cognos-grpc package to staging directory
+  ansible.builtin.copy:
+    src: "{{ cognos_grpc_install_pkg_file }}"
+    dest: "{{ deploy_staging_dir }}"
+    mode: "0644"
+  when: cognos_grpc_install_pkg_query.rc != 0
+
+- name: Install cognos-grpc rpm
+  ansible.builtin.dnf:
+    name: "{{ deploy_staging_dir }}/{{ cognos_grpc_install_pkg_file | basename }}"
+    state: present
+    disable_gpg_check: true
+  become: true
+  when: cognos_grpc_install_pkg_query.rc != 0
+
+- name: Delete cognos_mgmt-fw package from staging directory
+  ansible.builtin.file:
+    path: "{{ deploy_staging_dir }}/{{ cognos_grpc_install_pkg_file | basename }}"
+    state: absent
+  when: cognos_grpc_install_pkg_file is defined

@@ -1,0 +1,106 @@
+# Author: June Liu
+# Contact: june.liu@samsung.com
+---
+
+- name: Install dependencies packages
+  become: true
+  ansible.builtin.package:
+    name: "{{ item }}"
+    state: present
+  with_items: "{{ gf_install_numactl_dependencies }}"
+
+- name: Create numactl source code destination path
+  ansible.builtin.file:
+    path: "{{ gf_install_numactl_staging_dir }}"
+    state: directory
+    mode: "0755"
+  become: true
+
+- name: Copy numactl tarball to specified node
+  ansible.builtin.copy:
+    src: "{{ gf_install_numactl_tgz_stat.stat.path }}"
+    dest: "{{ gf_install_numactl_staging_dir }}"
+    owner: root
+    group: root
+    mode: "0555"
+  become: true
+
+- name: Check if unzipped numactl source directory exists
+  ansible.builtin.stat:
+    path: "{{ gf_install_numactl_staging_dir }}/numactl-{{ gf_install_numactl_version }}"
+  register: gf_install_numactl_unzip_dir_stat
+
+- name: Unarchive numactl source code
+  ansible.builtin.unarchive:
+    src: "{{ gf_install_numactl_staging_dir }}/numactl-{{ gf_install_numactl_version }}.tar.gz"
+    dest: "{{ gf_install_numactl_staging_dir }}"
+    remote_src: true
+  become: true
+  when: not gf_install_numactl_unzip_dir_stat.stat.exists
+
+- name: Generate configure script
+  ansible.builtin.command: ./autogen.sh
+  args:
+    chdir: "{{ gf_install_numactl_staging_dir }}/numactl-{{ gf_install_numactl_version }}/"
+  changed_when: false
+
+- name: Run configure for compile numactl
+  ansible.builtin.command: ./configure --enable-shared
+  args:
+    chdir: "{{ gf_install_numactl_staging_dir }}/numactl-{{ gf_install_numactl_version }}/"
+  changed_when: false
+
+- name: Compile numactl from source code
+  ansible.builtin.command: make
+  args:
+    chdir: "{{ gf_install_numactl_staging_dir }}/numactl-{{ gf_install_numactl_version }}/"
+  become: true
+  async: "{{ gf_install_numactl_compile_timeout }}"
+  poll: 0
+  register: gf_install_numactl_make
+  changed_when: false
+
+- name: Wait for make
+  ansible.builtin.async_status:
+    jid: "{{ gf_install_numactl_make.ansible_job_id }}"
+  register: gf_install_numactl_wait_for_make
+  until:
+    - gf_install_numactl_wait_for_make.finished
+  retries: "{{ gf_install_numactl_check_retries }}"
+  delay: "{{ gf_install_numactl_check_interval }}"
+  when: not gf_install_numactl_make.failed
+
+- name: Install numactl
+  ansible.builtin.command: make install
+  args:
+    chdir: "{{ gf_install_numactl_staging_dir }}/numactl-{{ gf_install_numactl_version }}"
+  changed_when: false
+
+- name: Check if old numactl exists
+  ansible.builtin.stat:
+    path: "{{ gf_install_numactl_prefix }}/numactl"
+  register: gf_install_numactl_old_stat
+
+- name: Backup old numactl
+  ansible.builtin.command: mv {{ gf_install_numactl_prefix }}/numactl {{ gf_install_numactl_prefix }}/numactl.old
+  when: gf_install_numactl_old_stat.stat.exists
+  changed_when: false
+
+- name: Create symbolic link from new to old path
+  ansible.builtin.file:
+    src: "{{ gf_install_numactl_staging_dir }}/numactl-{{ gf_install_numactl_version }}/numactl"
+    dest: "{{ gf_install_numactl_prefix }}/numactl"
+    state: link
+    force: true
+
+- name: Get latest numactl version
+  ansible.builtin.command: numactl --version
+  register:
+    gf_install_numactl_curr_version
+  changed_when: false
+
+- name: Assert numactl version on target node
+  ansible.builtin.assert:
+    that: gf_install_numactl_curr_version is version_compare(gf_install_numactl_version, '==')
+    success_msg: "numactl version is correct: {{ gf_install_numactl_curr_version }}"
+  when: gf_install_numactl_curr_version.rc == 0

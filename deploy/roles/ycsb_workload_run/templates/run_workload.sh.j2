@@ -1,0 +1,369 @@
+#!/bin/bash
+# Generate run_workload.sh
+# This script is to trigger {{ svk_enable }} Workload
+
+# Configuration: 
+# YSCB workload config file: {{ ycsb_workload_config_generate_name }}
+# gemfire_server_list: {% for host in groups['gemfire_server'] %} {{ hostvars[host].ansible_host }} {% endfor %} 
+# ycsb_client_list: {% for host in groups['ycsb_client'] %} {{ host }} {% endfor %} 
+# damo_config_list: {% for host in groups['gemfire_server'] %} {{ hostvars[host].damo_config }} {% endfor %} 
+# Time: {{ ansible_date_time.iso8601 }}
+
+{% set gemfire_server_list = groups['gemfire_server'] | map('extract', hostvars, 'ansible_host') | list | join(' ') %}
+{% set ycsb_client_list = groups['ycsb_client'] | list | join(' ') %}
+{% set client_machine = groups['ycsb_client'] | length | int %}
+{% set damo_config_list = groups['gemfire_server'] | map('extract', hostvars, 'damo_config') | list | join(' ') %}
+gemfire_server_list=({% for host in gemfire_server_list %}{{host}}{% endfor %})
+ycsb_client_list=({% for host in ycsb_client_list %}{{host}}{% endfor %})
+client_machine={{ client_machine }}
+damo_config_list=({% for host in damo_config_list %}{{host}}{% endfor %})
+region_count={{ region_count }}
+{% set regions_info = ycsb_workload_run_region_list | join(' ') %}
+regions_info=({% for index in regions_info %}{{index}}{% endfor %})
+
+#########################################################################################################
+
+## Assign Key properties from Input Parameters to local variables
+workload_config={{ gf_installed_base_dir }}/ycsb_benchmarks/workload-config/{{ ycsb_workload_config_generate_name }}
+root_dir="/root/ycsb_benchmarks/results/{{ workload_parameter['results_directory'] }}_{{ ycsb_workload_config_generate_name }}_{{ ansible_date_time.iso8601 }}/"
+no_of_iterations="{{ workload_parameter['iteration_count'] }}"
+
+{% if ycsb_enable_metrics_all_iterations_value['dstat'] == 'on' %}
+## Collect DSTAT Metrics from GemFire Server throughout the execution of all iterations
+{% for host in groups['gemfire_server'] %}
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "nohup sh {{ gf_installed_base_dir }}/ycsb_benchmarks/collect-dstat-metrics.sh {{ hostvars[host].ansible_host }} > /dev/null 2>&1 &"
+{% endfor %}
+{% endif %}
+
+{% if ycsb_enable_metrics_all_iterations_value['sensor'] == 'on' %}
+## Collect Sensor Metrics from GemFire Server throughout the execution of all iterations
+{% for host in groups['gemfire_server'] %}
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "nohup sh {{ gf_installed_base_dir }}/ycsb_benchmarks/collect-sensor-metrics.sh {{ hostvars[host].ansible_host }} > /dev/null 2>&1 &"
+{% endfor %}
+{% endif %}
+
+{% if ycsb_enable_metrics_all_iterations_value['device_temperature'] == 'on' %}
+## Collect Device Temperature from GemFire Server throughout the execution of all iterations every 5 seconds
+{% for host in groups['gemfire_server'] %}
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "nohup bash {{ gf_installed_base_dir }}/ycsb_benchmarks/collect-device-temperature.sh {{ hostvars[host].ansible_host }} > /dev/null 2>&1 &"
+{% endfor %}
+{% endif %}
+
+{% if ycsb_enable_metrics_all_iterations_value['dmesg'] == 'on' %}
+## Collect dmesg logs from GemFire Server throughout the execution of all iterations every 60 seconds
+{% for host in groups['gemfire_server'] %}
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "nohup bash {{ gf_installed_base_dir }}/ycsb_benchmarks/collect-dmesg.sh {{ hostvars[host].ansible_host }} > /dev/null 2>&1 &"
+{% endfor %}
+{% endif %}
+
+{% if ycsb_enable_metrics_all_iterations_value['numastat'] == 'on' %}
+## Collect NUMASTAT logs from GemFire Server throughout the execution of all iterations every 60 seconds
+{% for host in groups['gemfire_server'] %}
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "nohup bash {{ gf_installed_base_dir }}/ycsb_benchmarks/collect-numastat.sh {{ hostvars[host].ansible_host }} > /dev/null 2>&1 &"
+{% endfor %}
+{% endif %}
+
+{% if ycsb_enable_metrics_all_iterations_value['vmstat'] == 'on' %}
+## Collect VMSTAT logs from GemFire Server throughout the execution of all iterations every 5 seconds
+{% for host in groups['gemfire_server'] %}
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "nohup bash {{ gf_installed_base_dir }}/ycsb_benchmarks/collect-vmstat.sh {{ hostvars[host].ansible_host }} > /dev/null 2>&1 &"
+{% endfor %}
+{% endif %}
+
+{% if ycsb_enable_metrics_all_iterations_value['top'] == 'on' %}
+## Collect TOP COMMAND logs from GemFire Server throughout the execution of all iterations every 5 seconds
+{% for host in groups['gemfire_server'] %}
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "nohup bash {{ gf_installed_base_dir }}/ycsb_benchmarks/collect-top.sh {{ hostvars[host].ansible_host }} > /dev/null 2>&1 &"
+{% endfor %}
+{% endif %}
+
+{% if svk_enable == 'svk' %}
+## Start Damo in GemFire Server - Will stay "ON" till all the iterations complete
+{% for host in groups['gemfire_server'] %}
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "damo start {{ gf_installed_base_dir }}/ycsb_benchmarks/{{ hostvars[host].damo_config }}"
+{% endfor %}
+{% endif %}
+
+{% if svk_enable == 'svk' %}
+## Buffer time for DAMO to start in the target GemFire server
+sleep 60
+{% endif %}
+
+## Assign Key properties from Workload Config File to local variables
+dataset={{ workload_config_file_parameter['dataset'] }}
+combination={{ workload_config_file_parameter['concurrency']['clients']}}x{{ workload_config_file_parameter['concurrency']['threads'] }}
+clientcount={{ workload_config_file_parameter['concurrency']['clients']}}
+threadcount={{ workload_config_file_parameter['concurrency']['threads'] }}
+recordcount={{ workload_config_file_parameter['record_cnt'] }}
+opscount={{ workload_config_file_parameter['operation_cnt'] }}
+readproportion={{ workload_config_file_parameter['readproportion'] }}
+insertproportion={{ workload_config_file_parameter['insertProportion'] }}
+updateproportion={{ workload_config_file_parameter['updateProportion'] }}
+locatoraddress={{ workload_config_file_parameter['locatorAddress'] }}
+ycsbconfig=global_config_1.1KB_{{ workload_config_file_parameter['ycsbConfig'] }}
+type={{ workload_config_file_parameter['typeofRun'] }}
+hotspotdata={{ workload_config_file_parameter['hotspotdata'] }}
+hotspotops={{ workload_config_file_parameter['hotspotops'] }}
+
+echo "clientcount: " $clientcount
+echo "region_count: " $region_count
+echo "client_machine: " $client_machine
+
+## Trigger YCSB Workload based on the number of iterations provided
+i=1
+while [ $i -le $no_of_iterations ];
+do
+    echo "=============== Running run $i =============================="
+    while read loop_config;
+    do
+        
+        ## Create the target results directory structure based on some of the workload values
+        dest_dir=$( echo $dataset"-"$combination"-"$recordcount"-"$opscount"-"$type"-run" )
+        target_dir=$root_dir$dest_dir$i
+        mkdir -p $target_dir
+        cd $target_dir
+        
+        echo "=============== Collect Metrics PRE-WORKLOAD execution (before very 1st iteration) =============================="
+        
+        {% if ycsb_enable_metrics_pre_iteration_value['numastat'] == 'on' %} 
+        ## Collect NUMASTAT Metrics PRE-WORKLOAD execution (before very 1st iteration)
+        if [ $i -eq 1 ]; then
+        {% for host in groups['gemfire_server'] %} 
+           ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "sh /root/ycsb_benchmarks/numastat-query.sh before_iteration_$i"
+           ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "cat /root/ycsb_benchmarks/results/numastat_gemfire1_before_iteration_$i" > server{{ hostvars[host].ansible_host }}_numastat_gemfire1_pre_run$i.out
+           ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "cat /root/ycsb_benchmarks/results/numastat_gemfire2_before_iteration_$i" > server{{ hostvars[host].ansible_host }}_numastat_gemfire2_pre_run$i.out
+           ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "cat /root/ycsb_benchmarks/results/numastat_gemfire3_before_iteration_$i" > server{{ hostvars[host].ansible_host }}_numastat_gemfire3_pre_run$i.out
+           ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "cat /root/ycsb_benchmarks/results/numastat_gemfire4_before_iteration_$i" > server{{ hostvars[host].ansible_host }}_numastat_gemfire4_pre_run$i.out
+        {% endfor %}
+        
+        fi
+        {% endif %} 
+        
+        {% if ycsb_enable_metrics_pre_iteration_value['trigger_PCM'] == 'on' %} 
+        # Trigger PCM during the 1st iteration before 1st workload starts
+        if [ $i -eq 1 ]; then
+        {% for host in groups['gemfire_server'] %} 
+            ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'nohup pcm-memory -nc -u -silent -csv=/root/ycsb_benchmarks/results/pcmtest.csv > /dev/null 2>&1 &'
+        {% endfor %}
+        
+        fi
+        {% endif %}
+        
+        {% if ycsb_enable_metrics_pre_iteration_value['disk_usage'] == 'on' %} 
+        ## Collect Disk Usage Metrics from GemFire Server PRE-WORKLOAD execution for the current iteration
+        {% for host in groups['gemfire_server'] %} 
+        ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'df -h' > server{{ hostvars[host].ansible_host }}_disk_usage_output_pre_run$i.out
+        {% endfor %}
+        {% endif %}
+        
+        {% if ycsb_enable_metrics_pre_iteration_value['power_consumption'] == 'on' %} 
+        ## Collect Power Metrics from GemFire Server PRE-WORKLOAD execution for the current iteration
+        {% for host in groups['gemfire_server'] %} 
+        ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'ipmitool sdr | grep Consumption | awk -F '\''|'\'' '\''{print $2}'\'' | sed '\''s/ //g'\'' ' > server{{ hostvars[host].ansible_host }}_power_consumption_pre_run$i.out
+        {% endfor %}
+        {% endif %}
+        
+        {% if ycsb_enable_metrics_pre_iteration_value['numactl'] == 'on' %} 
+        ## Collect NUMACTL Metrics from GemFire Server PRE-WORKLOAD execution for the current iteration
+        {% for host in groups['gemfire_server'] %} 
+        ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'numactl -H' > server{{ hostvars[host].ansible_host }}_numactl_output_pre_run$i.out
+        {% endfor %}
+        {% endif %}
+        
+        DT=`date "+%F-%H-%M"`
+        
+        ## Execute YCSB Workload for current iteration with the number of "Clients x Threads" based on the input from worklaod config file
+        ycsbcount=1
+        machine_id=0
+        region_id=0
+        for x in `seq 1 $clientcount`; do
+            machine_id=$(( ($x-1) % client_machine))
+            region_id=$(( ($x-1) % region_count))
+            
+            IFS=',' read -r region locator <<< ${regions_info[$region_id]}
+            echo "Client Machine ${ycsb_client_list[$machine_id]}: Triggering ycsbclient: $ycsbcount on Region: $region connected to locator: $locator" 
+            
+            ssh -n ${ycsb_client_list[$machine_id]} "nohup /root/ycsb-geode-binding-0.18.0-SNAPSHOT/bin/ycsb run geode -P /root/ycsb_benchmarks/workload-config/$ycsbconfig -p table=$region -p recordcount=$recordcount -p operationcount=$opscount -p readproportion=$readproportion -p insertproportion=$insertproportion -p updateproportion=$updateproportion -p scanproportion=0 -p readmodifywriteproportion=0 -p hotspotdatafraction=$hotspotdata -p hotspotopnfraction=$hotspotops -p geode.locator=$locator -threads $threadcount -s" > $target_dir/mixed_"$x"_$DT.log &
+            
+            ycsbcount=$((ycsbcount + 1))
+        done
+        
+        {% if ycsb_enable_metrics_during_iteration_value['cpu_metrics_mpstat'] == 'on' %} 
+        ## Trigger CPU Metrics collection agent in GemFire Server to continuosly record metrics DURING-WORKLOAD execution for the current iteration
+        {% for host in groups['gemfire_server'] %} 
+        ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'nohup sh /root/ycsb_benchmarks/collect-cpu-metrics-mpstat-node0.sh > /dev/null 2>&1 &'
+        ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'nohup sh /root/ycsb_benchmarks/collect-cpu-metrics-mpstat-node1.sh > /dev/null 2>&1 &'
+        {% endfor %}
+        {% endif %}
+        
+        {% if ycsb_enable_metrics_during_iteration_value['power_consumption'] == 'on' %} 
+        ## Trigger POWER Metrics collection agent in GemFire Server to continuosly record metrics DURING-WORKLOAD execution for the current iteration
+        {% for host in groups['gemfire_server'] %} 
+        ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'nohup sh /root/ycsb_benchmarks/power-consumption-monitor.sh > /dev/null 2>&1 &'
+        {% endfor %}
+        {% endif %}
+        
+        ## Wait till all the YCSB Clients from the current iteration completes
+        wait
+        
+        ## Terminate all the Metrics collection agents in GemFire Server POST-WORKLOAD execution (after the current iteration has completed)
+        {% if ycsb_enable_metrics_during_iteration_value['cpu_metrics_mpstat'] == 'on' %} 
+        {% for host in groups['gemfire_server'] %} 
+        ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'pkill -2 mpstat'
+        {% endfor %}
+        {% endif %}
+        {% if ycsb_enable_metrics_during_iteration_value['power_consumption'] == 'on' %}
+        {% for host in groups['gemfire_server'] %} 
+        ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'ps aux | grep power-consumption-monitor.sh | grep -v grep | awk '\''{print $2}'\'' | xargs kill '
+        {% endfor %}
+        {% endif %}
+        
+        {% if svk_enable == 'svk' %} 
+        ## Collect Damo Metrics POST-WORKLOAD execution (after the current iteration has completed)
+        {% if ycsb_enable_metrics_post_iteration_value['damo'] == 'on' %} 
+        {% for host in groups['gemfire_server'] %} 
+        ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'damo report damon' > server{{ hostvars[host].ansible_host }}_damo_status_post_run$i.out
+        {% endfor %}
+        {% endif %}
+        {% endif %}
+        
+        {% if ycsb_enable_metrics_post_iteration_value['numactl'] == 'on' %} 
+        ## Collect NUMASTAT Metrics POST-WORKLOAD execution (after 10 iterations has completed)
+        if [ $i -eq 10 ]; then
+        #if (( i % 10 == 0 )); then
+            {% for host in groups['gemfire_server'] %} 
+            ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "sh /root/ycsb_benchmarks/numastat-query.sh after_iteration_$i"
+            ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "cat /root/ycsb_benchmarks/results/numastat_gemfire1_after_iteration_$i" > server{{ hostvars[host].ansible_host }}_numastat_gemfire1_post_run$i.out
+            ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "cat /root/ycsb_benchmarks/results/numastat_gemfire2_after_iteration_$i" > server{{ hostvars[host].ansible_host }}_numastat_gemfire2_post_run$i.out
+            ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "cat /root/ycsb_benchmarks/results/numastat_gemfire3_after_iteration_$i" > server{{ hostvars[host].ansible_host }}_numastat_gemfire3_post_run$i.out
+            ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "cat /root/ycsb_benchmarks/results/numastat_gemfire4_after_iteration_$i" > server{{ hostvars[host].ansible_host }}_numastat_gemfire4_post_run$i.out
+            {% endfor %} 
+        fi
+        {% endif %}
+        
+        {% if ycsb_enable_metrics_post_iteration_value['cpu_metrics_mpstat'] == 'on' %} 
+        ## Collect CPU Metrics Average from GemFire Server POST-WORKLOAD execution (after the current iteration has completed)
+        {% for host in groups['gemfire_server'] %} 
+        ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'grep Average /root/ycsb_benchmarks/results/mpstat_node0.csv | grep -v NODE | awk '\''{ printf "%.0f", $12}'\'' ' > server{{ hostvars[host].ansible_host }}_cpu_mpstat_node0.out
+        ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'grep Average /root/ycsb_benchmarks/results/mpstat_node1.csv | grep -v NODE | awk '\''{ printf "%.0f", $12}'\'' ' > server{{ hostvars[host].ansible_host }}_cpu_mpstat_node1.out
+        {% endfor %}
+        {% endif %}	
+            
+        {% if ycsb_enable_metrics_post_iteration_value['power_consumption'] == 'on' %} 
+        ## Collect POWER Metrics Average from GemFire Server POST-WORKLOAD execution (after the current iteration has completed)
+        {% for host in groups['gemfire_server'] %} 
+        ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'cat /root/ycsb_benchmarks/results/power-consumption.out' > server{{ hostvars[host].ansible_host }}_power_consumption_during_run$i.out
+        {% endfor %}
+        {% endif %}
+        
+        {% if ycsb_enable_metrics_post_iteration_value['numactl'] == 'on' %} 
+        ## Collect NUMACTL Metrics Average from GemFire Server POST-WORKLOAD execution (after the current iteration has completed)
+        {% for host in groups['gemfire_server'] %} 
+        ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'numactl -H' > server{{ hostvars[host].ansible_host }}_numactl_output_post_run$i.out
+        {% endfor %}
+        {% endif %}
+               
+        {% if ycsb_enable_metrics_post_iteration_value['power_consumption'] == 'on' %} 
+        ## Collect POWER Metrics Average from GemFire Server POST-WORKLOAD execution (after the current iteration has completed)
+        {% for host in groups['gemfire_server'] %} 
+        ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'ipmitool sdr | grep Consumption | awk -F '\''|'\'' '\''{print $2}'\'' | sed '\''s/ //g'\'' ' > server{{ hostvars[host].ansible_host }}_power_consumption_post_run$i.out
+        {% endfor %}
+        {% endif %}
+               
+        {% if ycsb_enable_metrics_post_iteration_value['disk_usage'] == 'on' %} 
+        ## Collect Disk Usage Metrics from GemFire Server POST-WORKLOAD execution (after the current iteration has completed)
+        {% for host in groups['gemfire_server'] %} 
+        ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'df -h' > server{{ hostvars[host].ansible_host }}_disk_usage_output_post_run$i.out
+        {% endfor %}
+        {% endif %}
+        
+        {% if ycsb_enable_metrics_pre_iteration_value['trigger_PCM'] == 'on' %} 
+        ## Kill PCM and collect Metrics after final workload ends
+        if [ $i -eq $no_of_iterations ];then
+        {% for host in groups['gemfire_server'] %} 
+        ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'pkill -2 pcm-memory'
+        ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'cat /root/ycsb_benchmarks/results/pcmtest.csv' > server{{ hostvars[host].ansible_host }}_PCM.out
+        {% endfor %}
+        
+        fi
+        {% endif %}
+        
+done < $workload_config
+
+i=$(( $i + 1 ))
+
+done;
+
+{% if ycsb_enable_metrics_all_iterations_value['dstat'] == 'on' %}
+## Terminate DSTAT Metrics collection from GemFire Server
+{% for host in groups['gemfire_server'] %}
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'ps aux | grep collect-dstat-metrics.sh | grep -v grep | awk '\''{print $2}'\'' | xargs kill '
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'ps aux | grep dstat | grep python | grep -v grep | awk '\''{print $2}'\'' | xargs kill -9 '
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'pkill -9 dstat'
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "cat /root/ycsb_benchmarks/results/dstat_{{ hostvars[host].ansible_host }}" > $root_dir/server{{ hostvars[host].ansible_host }}_dstat_metrics_{{ hostvars[host].ansible_host }}.out
+{% endfor %}
+{% endif %}
+
+{% if ycsb_enable_metrics_all_iterations_value['sensor'] == 'on' %}
+## Terminate Sensor Metrics collection from GemFire Server
+{% for host in groups['gemfire_server'] %}
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'ps aux | grep collect-sensor-metrics.sh | grep -v grep | awk '\''{print $2}'\'' | xargs kill '
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "cat /root/ycsb_benchmarks/results/sensor_metrics_{{ hostvars[host].ansible_host }}" > $root_dir/server{{ hostvars[host].ansible_host }}_sensor_metrics_{{ hostvars[host].ansible_host }}.out
+{% endfor %}
+{% endif %}
+
+{% if ycsb_enable_metrics_all_iterations_value['device_temperature'] == 'on' %}
+## Terminate Device Temperature collection from GemFire Server
+{% for host in groups['gemfire_server'] %}
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'ps aux | grep collect-device-temperature.sh | grep -v grep | awk '\''{print $2}'\'' | xargs kill '
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "cat /root/ycsb_benchmarks/results/device_temperatures_rtm_{{ hostvars[host].ansible_host }}.log" > $root_dir/server{{ hostvars[host].ansible_host }}_device_temperature_{{ hostvars[host].ansible_host }}.out
+{% endfor %}
+{% endif %}
+
+{% if ycsb_enable_metrics_all_iterations_value['dmesg'] == 'on' %}
+## Terminate DMESG logs collection from GemFire Server
+{% for host in groups['gemfire_server'] %}
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'pkill -9 dmesg'
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'ps aux | grep collect-dmesg.sh | grep -v grep | awk '\''{print $2}'\'' | xargs kill '
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "cat /root/ycsb_benchmarks/results/dmesg_{{ hostvars[host].ansible_host }}.log" > $root_dir/server{{ hostvars[host].ansible_host }}_dmesg_{{ hostvars[host].ansible_host }}.out
+{% endfor %}
+{% endif %}
+
+{% if ycsb_enable_metrics_all_iterations_value['numastat'] == 'on' %}
+## Terminate NUMASTAT collection from GemFire Server
+{% for host in groups['gemfire_server'] %}
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'ps aux | grep collect-numastat.sh | grep -v grep | awk '\''{print $2}'\'' | xargs kill '
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "cat /root/ycsb_benchmarks/results/numastat_{{ hostvars[host].ansible_host }}.log" > $root_dir/server{{ hostvars[host].ansible_host }}_numastat_{{ hostvars[host].ansible_host }}.log
+{% endfor %}
+{% endif %}
+
+{% if ycsb_enable_metrics_all_iterations_value['vmstat'] == 'on' %}
+## Terminate VMSTAT collection from GemFire Server
+{% for host in groups['gemfire_server'] %}
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'ps aux | grep collect-vmstat.sh | grep -v grep | awk '\''{print $2}'\'' | xargs kill '
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'pkill -9 vmstat'
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "cat /root/ycsb_benchmarks/results/vmstat_{{ hostvars[host].ansible_host }}" > $root_dir/server{{ hostvars[host].ansible_host }}_vmstat_{{ hostvars[host].ansible_host }}.log
+{% endfor %}
+{% endif %}
+
+{% if ycsb_enable_metrics_all_iterations_value['top'] == 'on' %}
+## Terminate TOP COMMAND collection from GemFire Server
+{% for host in groups['gemfire_server'] %}
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'ps aux | grep collect-top.sh | grep -v grep | awk '\''{print $2}'\'' | xargs kill '
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} "cat /root/ycsb_benchmarks/results/top_{{ hostvars[host].ansible_host }}.log" > $root_dir/server{{ hostvars[host].ansible_host }}_top_{{ hostvars[host].ansible_host }}.log
+{% endfor %}
+{% endif %}
+
+{% if svk_enable == 'svk' %}
+## Stop Damo in GemFire Server
+{% for host in groups['gemfire_server'] %}
+ssh -i {{ ssh_private_key_path }} -l {{ ansible_user }} -n {{ hostvars[host].ansible_host }} 'damo stop'
+{% endfor %}
+{% endif %}
+
+########Call results parser scripts###################
+{% if ycsb_logs_parser_enable == true %}
+{{ gf_installed_base_dir }}/ycsb_benchmarks/ycsb-results-generator.sh $workload_config $root_dir $no_of_iterations
+{% endif %}
+
+exit

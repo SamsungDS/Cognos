@@ -1,0 +1,29 @@
+# Author: Hua He
+# Contact: h.he@samsung.com
+---
+
+- name: Debug svk_enable
+  ansible.builtin.debug:
+    msg: |
+      "The svk_enable value is: {{ svk_enable }}.
+      {{ 'Check if DAMON is enabled in the kernel' if svk_enable == "svk" else 'Skip all checks if svk_enable is not svk' }}"
+  run_once: true
+
+- name: Check if DAMON is enabled in the kernel
+  ansible.builtin.shell: |
+    cat /boot/config-{{ ansible_kernel }} | grep -i 'CONFIG_DAMON=y'
+  register: ycsb_damon_check_result
+  ignore_errors: true
+  failed_when: false
+  changed_when: false
+  when: svk_enable == "svk"
+
+- name: Fail if CONFIG_DAMON=y is not found
+  ansible.builtin.assert:
+    that:
+      - ycsb_damon_check_result.rc == 0
+    fail_msg: |
+      ERROR: CONFIG_DAMON=y is not enabled in the current kernel configuration.
+      Please ensure that CONFIG_DAMON=y is set in the kernel config.
+      You may need to recompile the kernel with DAMON support enabled.
+  when: svk_enable == "svk" and ycsb_damon_check_result.rc != 0

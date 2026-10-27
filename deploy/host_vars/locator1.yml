@@ -1,0 +1,10 @@
+---
+gf_nic_interfaces:
+  - interface: "enp23s0f0np0"
+    ip: "201.0.0.34"
+  - interface: "enp23s0f1np1"
+    ip: "202.0.0.34"
+  - interface: "enp202s0f0np0"
+    ip: "203.0.0.34"
+  - interface: "enp202s0f1np1"
+    ip: "204.0.0.34"

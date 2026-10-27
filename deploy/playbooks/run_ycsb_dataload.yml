@@ -1,0 +1,21 @@
+---
+### Playbook Documentation ###
+#
+# #### playbooks/run_ycsb_dataload.yml
+#
+# Execute this playbook to generate config_file, and run dataload.
+
+# This playbook will perform the following:
+#
+
+- name: Generate the config_file for start ycsb clients
+  hosts: ycsb_client
+  gather_facts: true
+  roles:
+    - ycsb_config_set
+
+- name: Run data load at ycsb_client
+  hosts: ycsb_client
+  gather_facts: true
+  roles:
+    - ycsb_dataload_run

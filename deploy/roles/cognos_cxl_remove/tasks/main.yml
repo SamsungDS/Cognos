@@ -1,0 +1,41 @@
+---
+- name: Remove the installed cognos-cxl on Ubuntu
+  ansible.builtin.apt:
+    name:
+      - cognos-cxl-mock
+      - cognos-cxl
+    state: absent
+    purge: true
+  become: true
+  when: ansible_facts['distribution'] == "Ubuntu"
+
+- name: Remove the installed cognos-cxl on OEL
+  ansible.builtin.dnf:
+    name:
+      - cognos-cxl-mock
+      - cognos-cxl
+    state: absent
+  become: true
+  when: ansible_facts['distribution'] == "OracleLinux"
+
+- name: Remove the installed pciutils on OEL9
+  ansible.builtin.dnf:
+    name:
+      - pciutils-libs
+      - pciutils
+    state: absent
+  become: true
+  when:
+    - ansible_facts['distribution'] == "OracleLinux"
+    - ansible_distribution_major_version == '9'
+
+- name: Install the original pciutils-libs and pciutils on OEL9
+  ansible.builtin.dnf:
+    name:
+      - pciutils-libs
+      - pciutils
+    state: present
+  become: true
+  when:
+    - ansible_facts['distribution'] == "OracleLinux"
+    - ansible_distribution_major_version == '9'
