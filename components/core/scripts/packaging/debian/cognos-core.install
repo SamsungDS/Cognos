@@ -1,0 +1,3 @@
+usr/local/svk/core/lib/libsvkframework* /usr/local/svk/core/lib/
+usr/local/svk/core/lib/libsvklogger* /usr/local/svk/core/lib/
+usr/local/svk/core/lib/libsvkzmq* /usr/local/svk/core/lib/

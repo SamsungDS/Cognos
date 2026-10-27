@@ -1,0 +1,6 @@
+#ifndef TEST_CONFIG_H_IN_
+#define TEST_CONFIG_H_IN_
+
+#define TEST_CONFIG_DIR "@TEST_CONFIG_DIR@"
+
+#endif // TEST_CONFIG_H_IN_

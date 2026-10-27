@@ -1,0 +1,25 @@
+release build:
+  stage: build
+  image:
+    name: $IMAGE_TAG
+    pull_policy: always
+  script:
+    # Build with release flag and generate artifact
+    - ./scripts/build.sh --release
+  artifacts:
+    name: release build $DOCKERFILE_NAME
+    expire_in: 300 seconds
+    paths:
+     - $ARTIFACTS_DIR/
+  variables:
+    IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
+  needs:
+    - build docker
+  parallel:
+    matrix:
+      - DOCKERFILE_NAME: rocky9
+      - DOCKERFILE_NAME: ubuntu22
+      - DOCKERFILE_NAME: ubuntu24
+      - DOCKERFILE_NAME: ol10
+  rules:
+    - !reference [.default_rules, merge_and_push]

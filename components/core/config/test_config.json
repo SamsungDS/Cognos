@@ -1,0 +1,14 @@
+{
+  "core": {
+    "conf_poll_timer": 5,
+    "feat_modules_dir": "../../../sample_feature",
+    "logger": {
+      "log_file_count": 1,
+      "log_file_name": "/var/log/svk/framework.log",
+      "log_file_size": 1048576,
+      "log_level": "INFO",
+      "sink_type": "rotating_file"
+    },
+    "reload_config": false
+  }
+}

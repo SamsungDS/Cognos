@@ -1,0 +1,5 @@
+cognos-core (DEB_VERSION) DEB_OSVER; urgency=medium
+
+  * DEB_CHANGELOG
+
+ -- Aaron Lee <a.lee03@samsung.com>  DEB_TIMESTAMP

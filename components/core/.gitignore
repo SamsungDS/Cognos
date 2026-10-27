@@ -1,0 +1,12 @@
+# Build files
+/build
+
+# Documentation files
+/html*
+/latex*
+
+# CI/CD files
+/bw-output
+
+# IDE files
+/.vscode
