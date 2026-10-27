@@ -1,0 +1,4 @@
+# Python packages for deployment only
+psutil
+py-libnuma==1.2
+distro

@@ -1,0 +1,17 @@
+{
+  "logger": {
+    "log_level": "INFO",
+    "log_file_name": "/var/log/svk/svk_node_feature.log",
+    "log_file_count": 1,
+    "log_file_size": 1048576,
+    "sink_type": "rotating_file"
+  },
+  "device_qos": {
+    "avg_latency_ns": 100,
+    "p99_latency_ns": 100,
+    "io_per_sec": 8000000,
+    "BW_per_sec": 35000000000,
+    "io_size_in_bytes": 4096,
+    "qd": 32
+  }
+}
