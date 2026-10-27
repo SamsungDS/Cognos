@@ -1,0 +1,12 @@
+Source: cognos-slat
+Section: utils
+Priority: optional
+Maintainer: Suresh Grandhi(suresh.g@samsung.com)
+Build-Depends: debhelper (>=12)
+Standards-Version: 4.1.4
+
+Package: cognos-slat
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, cognos-core, libboost-filesystem1.83.0|libboost-filesystem1.74.0
+Description: Cognos SLA Tracker module feature library
+
