@@ -2,13 +2,27 @@
 
 Cognos is a management console for CXL memory devices and tiered memory. This repository brings the Cognos software stack together in one place.
 
-The repository is being assembled. At present it contains the deployment automation; the other components are added as they are imported.
+Each component was imported from its own repository with its history unchanged. The repository-wide build and CI are being added; until then, each component builds with its own `scripts/build.sh`.
 
 ## Repository layout
 
 | Path | Contents |
 |---|---|
-| `deploy/` | Ansible playbooks and roles that deploy Cognos. Imported from the cognos-ansible repository with its history. |
+| `components/core` | Core framework: IPC, publish/subscribe and the feature-module loader. |
+| `components/mgmt-fw` | Management framework: gRPC controller, node server, REST server and service manager. |
+| `components/cxl` | CXL device feature module. |
+| `components/slat` | SLA tracker feature module. |
+| `components/ras` | RAS error-handling feature module. |
+| `components/me` | Memory engine feature module (tier-aware data placement). |
+| `components/node` | System information feature module (CPU, memory, PCI). |
+| `apps/sapp` | Cognos management application: backend, user interface and RBAC service. |
+| `profilers/amo-prof` | AMO_Prof profiler. Not part of the Cognos packages. |
+| `cama` | CaMa, a separate repository included as a git submodule. It is built and deployed separately. |
+| `deploy/` | Ansible playbooks and roles that deploy Cognos. |
+| `gitlab/` | GitLab-specific CI configuration. |
+| `VERSION` | Version of the Cognos stack. |
+
+To include CaMa, clone with `git clone --recurse-submodules`, or run `git submodule update --init` in an existing clone.
 
 ## Deploy Cognos using Ansible
 
