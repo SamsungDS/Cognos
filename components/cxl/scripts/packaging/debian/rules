@@ -1,0 +1,38 @@
+#!/usr/bin/make -f
+
+SHORT_VERSION := $(shell $(CURDIR)/../scripts/get_version.sh -s)
+INSTALL_PATH = usr/local/svk/feature_modules/cxl
+FMAPI_INCLUDE = FMAPI_INCLUDE_VAL
+FMAPI_LIB = FMAPI_LIB_VAL
+MOCK = MOCK_VAL
+%:
+	dh $@
+
+override_dh_auto_configure:
+
+	cmake -DMOCK=$(MOCK) -DWITH_RELEASE=ON -DCMAKE_INSTALL_PREFIX=/$(INSTALL_PATH) -DWITH_FMAPI=ON -DFMAPI_INCLUDE_PATH=$(FMAPI_INCLUDE) -DFMAPI_LIBRARY_PATH=$(FMAPI_LIB) ..
+override_dh_auto_build:
+	make -j$(nproc)
+
+override_dh_auto_install:
+	make DESTDIR=$(CURDIR) prefix=/usr install
+	dh_auto_install --destdir=debian/tmp
+
+override_dh_usrlocal:
+	# Do nothing, because we are installing to /usr/local even though this is non-standard practice
+
+override_dh_install:
+	# Add copying of input.json for mock mode to install files
+	if [ "${MOCK}" = "true" ]; then echo "/usr/local/svk/feature_modules/cxl/config/input.json /usr/local/svk/feature_modules/cxl/config/" | tee -a debian/svk-cxl*.install;  fi
+	echo "/usr/local/svk/feature_modules/cxl/config/log.conf /usr/local/svk/feature_modules/cxl/config/" | tee -a debian/svk-cxl*.install
+	dh_install
+
+override_dh_strip:
+	# Do not generate debug symbol packages
+	dh_strip --no-ddebs
+
+override_dh_shlibdeps:
+	# Set link path for shlibdeps
+	dh_shlibdeps -l$(CURDIR)/$(INSTALL_PATH)/lib64 -l$(CURDIR)/$(INSTALL_PATH)/share/cxl_memory_box/lib -l/lib/x86_64-linux-gnu -l/usr/lib/x86_64-linux-gnu
+
+override_dh_installsystemd:

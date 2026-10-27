@@ -1,0 +1,5 @@
+DEB_PACKAGE_NAME (DEB_VERSION) DEB_OSVER; urgency=medium
+
+  * DEB_CHANGELOG
+
+ -- Sukesh Nagaraja <sukesh.n@samsung.com>  DEB_TIMESTAMP 

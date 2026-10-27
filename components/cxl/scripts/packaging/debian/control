@@ -1,0 +1,18 @@
+Source: DEB_PACKAGE_NAME
+Section: utils
+Priority: optional
+Maintainer: Sukesh Nagaraja (sukesh.n@samsung.com)
+Build-Depends: debhelper (>=12)
+Standards-Version: 4.1.4
+
+Package: DEB_PACKAGE_NAME
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, cognos-mgmt-fw, pciutils (>=3.10), python3, python3-venv
+Description: Cognos Management framework - APIs and services for monitoring and management.
+ This package provides APIs and services related to the Cognos Management framework,
+ including tools for system monitoring and performance analysis.
+
+Package: DEB_PACKAGE_NAME-dev
+Architecture: amd64
+Depends: cognos-mgmt-fw-dev, DEB_PACKAGE_NAME (= ${binary:Version})
+Description: Cognos CXL Plugin, services
