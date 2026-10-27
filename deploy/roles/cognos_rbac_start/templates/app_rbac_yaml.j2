@@ -1,0 +1,104 @@
+orgName: '{{influxdb_org}}'
+database:
+  uri: 'mongodb://admin:admin@{{ip}}:{{ rbac_db_port }}'
+frontend:
+  url: '{{ cognos_rbac_start_protocol }}://{{ip}}:{{ rbac_front_port }}'
+  #url: 'if ssl is enable then use https://xxx.xx.xx.xx:6720' if not then use 'http://xxx.xx.xx.xx:6720'
+backend:
+  url: '{{ cognos_rbac_start_protocol }}://{{ip}}:{{ rbac_api_port }}'
+  #url: 'if ssl is enable then use https://xxx.xx.xx.xx:6721' if not then use 'http://xxx.xx.xx.xx:6721'
+email:
+  service: ''  # Email service provider (e.g., 'gmail', 'yahoo', 'hotmail', 'outlook', 'smtp')
+  user: ''  # Your email address
+  pass: ''  # Your email password
+ 
+  # Other possible values for the 'service' field:
+  # - 'gmail': Use Google's Gmail service
+  # - 'yahoo': Use Yahoo Mail service
+  # - 'hotmail': Use Microsoft's Hotmail/Outlook service
+  # - 'outlook': Use Microsoft's Outlook service
+  # - 'smtp': Use a custom SMTP server (requires additional configuration such as host, port, and secure)
+   
+  # Example configuration for using a custom SMTP server:
+  # service: 'smtp'  # Use a custom SMTP server
+  # host: 'smtp.example.com'  # SMTP server hostname
+  # port: 587  # SMTP server port (usually 587 for TLS, 465 for SSL, or 25 for unencrypted)
+  # secure: false  # True for SSL (port 465), false for TLS (port 587)
+  # user: 'your-email@example.com'  # Your email address
+  # pass: 'your-email-password'  # Your email password
+pages:
+  - path: "/"
+    permission: "read:all"
+  - path: "/login"
+    permission: "read:all"
+  - path: "/signup"
+    permission: "read:all"
+  - path: "/profile"
+    permission: "<fill permission here>"
+  - path: "/users"
+    permission: "<fill permission here>"
+  - path: "/admin"
+    permission: "read:admin"
+  - path: "/dashboard"
+    permission: "read:dashboard"
+    additionalFields:
+      - ''
+ 
+roles:
+  admin:
+    permissions:
+      - "read:admin"
+      - "write:admin"
+      - "read:dashboard"
+    roles:
+      - "admin"
+    filters:
+      users: "limited"
+  guest:
+    permissions:
+      - "read:dashboard"
+      - "read:profile"
+    roles:
+      - "guest"
+    filters:
+      users: "own"
+license:
+  key: '7e35f9e03847b71c11143924faee854e:8e0bc618c4168c6258f5d92f1e6ccb502431530e8e3de17a4095417474e54b7680c68420a574f45394c41fbd28d37ad2cd2f63a147aa4deda7d2a8094c4abab2378fe7e62bc0243e31ac4876e1e571a23c6ab5c2c1284792dcf5c23e4e4fdc9a59ba9811589dff9a235e5756adcb02d0ea4346aa13836efbece5c2a6241bdab5750d9bf9909808db1f4283898a46e4b29358adce3e68cd6a90902c2b97fc5d8327b815541a72a711232da89f492393eee0a60481988b5c612822a07e15db5de275f13cc51d6c13a7eb90761b7fb82ed7'
+  productID: 'prod-66hinoatktxdi'
+  subscriptionID: 'RBAC-prod-66hinoatktxdi-TRIAL'
+internet-communication: 'Y'
+  # 'Y': Enable automatic communication with the BV Licensing Server.
+  #      This allows:
+  #        - Automatic updates from the BV Licensing Server
+  #        - Automatic license key updates
+  #        - Automatic subscription updates
+  # 'N': Disable automatic communication with the BV Licensing Server.
+  #      This means:
+  #        - You will need to manually retrieve and update license keys
+  #        - Subscription updates must be handled manually
+  #        - Server updates will not be downloaded automatically
+ 
+user-approval-workflow: 'Y'
+  # 'Y': Enable user approval workflow.
+  #      This means:
+  #        - New user registrations require owner approval after email verification
+  #        - Only approved users can log in to the system
+  #        - Owner receives notifications for pending approvals
+  # 'N': Disable user approval workflow.
+  #      This means:
+  #        - Users can log in immediately after email verification
+  #        - No manual approval required
+ 
+email-verification: 'N'
+  # 'Y': Enable email verification for new user registrations.
+  #      This means:
+  #        - Users must verify their email before accessing the system
+  #        - Verification email is sent automatically upon registration
+  # 'N': Disable email verification.
+  #      This means:
+  #        - Users can access the system immediately after registration
+  #        - No email verification required
+ 
+signupRoles:  # Roles that users can select during registration
+  - "guest"
+  - "admin"

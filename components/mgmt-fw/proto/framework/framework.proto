@@ -1,0 +1,478 @@
+syntax = "proto3";
+
+package svk;
+
+option go_package = "rest_api/;Framework";
+
+import "google/api/annotations.proto";
+import "protoc-gen-openapiv2/options/annotations.proto";
+
+// Annotations used when generating the OpenAPI file.
+option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
+  info : {version : "1.0"};
+external_docs : {
+url:
+  "https://github.com/";
+description:
+  "gRPC-gateway for SVK Framework";
+}
+schemes : HTTP;
+}
+;
+
+// gRPC APIs at the SVK Controller node
+service Controller {
+  // Register SVK Agent Node with the SVK Controller node
+  rpc RegisterNode(RegisterRequest) returns (RegisterResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/register_node"
+      body : "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary : "Register SVK node"
+      description : "Register SVK node"
+      tags : "svk, controller, register_node"
+    };
+  }
+
+  // Unregister SVK Agent Node with the SVK Controller node
+  rpc UnregisterNode(UnregisterRequest) returns (UnregisterResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/unregister_node"
+      body : "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary : "Unregister SVK node"
+      description : "Unregister SVK node"
+      tags : "svk, controller, unregister_node"
+    };
+  }
+
+  // Set SVK Agent Node status with the SVK Controller node
+  rpc SetNodeStatus(SetNodeStatusRequest) returns (SetNodeStatusResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/set_node_status"
+      body : "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary : "Set SVK Node status"
+      description : "Set SVK Node status"
+      tags : "svk, controller, set_node_status"
+    };
+  }
+
+  // Process command sent to the SVK Controller node
+  rpc ProcessControllerCommand(CommandRequest) returns (CommandResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/process_controller_command"
+      body : "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary : "ProcessCommand"
+      description : "Process command sent to SVK Controller node"
+      tags : "svk, controller, command"
+    };
+  }
+
+  // List the nodes and the cluster topology
+  rpc ListClusterNodes(ListClusterCommandRequest)
+      returns (ListClusterCommandResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/list_cluster_nodes"
+      body : "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary : "ListNodes"
+      description : "List the nodes and the associated cluster registered with "
+                    "the SVK Controller node"
+      tags : "svk, controller, command"
+    };
+  }
+
+  // All the Cluster based APIs
+  rpc ClusterAPI(ClusterRequest) returns (ClusterResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/clusters"
+      body : "*"
+      additional_bindings {get : "/api/v1/clusters/{cluster_name}"}
+      additional_bindings {post : "/api/v1/clusters/{cluster_name}" body : "*"}
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary : "SVK Cluster API"
+      description : "SVK Cluster API"
+      tags : "svk, controller, cluster"
+    };
+  }
+
+  // All the Node based APIs
+  rpc NodeAPI(NodeRequest) returns (NodeResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/nodes"
+      body : "*"
+      additional_bindings {
+        get : "/api/v1/clusters/{cluster_name}/nodes/{node_name}"
+      }
+      additional_bindings {
+        post : "/api/v1/clusters/{cluster_name}/nodes/{node_name}"
+        body : "*"
+      }
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary : "SVK Node API"
+      description : "SVK Node API"
+      tags : "svk, controller, node"
+    };
+  }
+
+  // All the feature module based APIs
+  rpc FeatureAPI(FeatureRequest) returns (FeatureResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/features"
+      body : "*"
+      additional_bindings {
+        post : "/api/v1/nodes/{node_name}/features/{feature_name}"
+        body : "*"
+      }
+      additional_bindings {
+        post : "/api/v1/clusters/{cluster_name}/features/{feature_name}"
+        body : "*"
+      }
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary : "SVK Feature API"
+      description : "SVK Feature API"
+      tags : "svk, controller, feature"
+    };
+  }
+
+  // All the event API
+  rpc EventAPI(EventRequest) returns (EventResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/clusters/events"
+      body : "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary : "SVK Event API"
+      description : "SVK Event Handling API"
+      tags : "svk, controller, event"
+    };
+  }
+
+  // All the SLA Management module based APIs
+  rpc SLAManagementAPI(SLAManagementRequest) returns (SLAManagementResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/sla"
+      body : "*"
+      additional_bindings {post : "/api/v1/nodes/{node_name}/sla" body : "*"}
+      additional_bindings {
+        post : "/api/v1/clusters/{cluster_name}/sla"
+        body : "*"
+      }
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary : "SVK SLA Management API"
+      description : "SVK SLA Management API"
+      tags : "svk, controller, sla"
+    };
+  }
+
+  // stats based APIs
+  rpc StatsAPI(StatsRequest) returns (StatsResponse) {
+    option (google.api.http) = {
+      post : "/api/v1/stats"
+      body : "*"
+      additional_bindings {
+        post : "/api/v1/clusters/{cluster_name}/features/{feature_name}/stats"
+        body : "*"
+      }
+      additional_bindings {
+        post : "/api/v1/nodes/{node_name}/features/{feature_name}/stats"
+        body : "*"
+      }
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary : "SVK Stats API"
+      description : "SVK Stats API"
+      tags : "svk, controller, stats"
+    };
+  }
+}
+
+// gRPC APIs related to Command Framework at the SVK Agent node
+service CommandFwk {
+
+  // Process command send to SVK Agent node
+  rpc ProcessNodeCommand(CommandRequest) returns (CommandResponse) {
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary : "Process Command"
+      description : "Process command received by SVK Agent node"
+      tags : "svk, node, command"
+    };
+  }
+  rpc ProcessNodeConfiguration(NodeConfigRequest) returns (NodeConfigResponse) {
+  }
+}
+
+// A RegisterRequest resource sent to the Controller node to register
+// given node_id for a cluster with the controller.
+message RegisterRequest {
+  // Cluster ID for backwards compatibility
+  string cluster_name = 1;
+  // Node name
+  string node_name = 2;
+  // Node IP
+  string node_port = 3;
+  // Node port on which the gRPC node server is running
+  string node_ip = 4;
+}
+
+// A RegisterResponse resource.
+message RegisterResponse {
+  // Status of RegisterNode with success or failure with error details
+  string error_id_or_string_if_any = 1
+      [ json_name = "error_id_or_string_if_any" ];
+  int32 error_code = 2 [ json_name = "error_code" ];
+}
+
+// A UnregisterRequest resource sent to the Controller node to unregister
+// given node_id from the already associated cluster.
+message UnregisterRequest { string node_name = 1; }
+
+// A UnregisterResponse resource.
+message UnregisterResponse {
+  // Status of UnregisterNode with success or failure with error details
+  string status = 1;
+  int32 error_code = 2 [ json_name = "error_code" ];
+}
+
+message SetNodeStatusRequest {
+  string node_name = 1;
+  string node_status = 2;
+}
+
+message SetNodeStatusResponse {
+  string error_id_or_string_if_any = 1
+      [ json_name = "error_id_or_string_if_any" ];
+  int32 error_code = 2 [ json_name = "error_code" ];
+}
+
+// A CommandRequest resource sent either to the Controller node or the Agent
+// node to process the given input string. If sent to Controller node,
+// - One of the cluster_id or node_id fields is mandatory
+// - the controller checks the node_id. If valid, it sends the request to those
+// nodes only
+// - If node_id is not given, then the controller checks the cluster_id and
+// sends the request to all the nodes in that cluster If sent to Command node,
+// - the command node parse the feature_params and process the command.
+// - cluster_id and node_id are irrelevant
+message CommandRequest {
+  // Cluster ID associated with a set of nodes.
+  string cluster_id = 1;
+  // In Controller mode, node_id contains comma separated list of nodes.
+  // Optional if cluster_id is valid. In Node mode, node_id contains the node_id
+  // of the node the command is sent to.
+  string node_id = 2;
+  // Feature ID
+  int64 feature_id = 3;
+  // Parameters to be used by the Feature
+  string feature_params = 4;
+  // Command ID
+  string command_id = 5;
+
+  // New command processing, using this until FeatureAPI is implemented and old
+  // APIs are phased out If feature_name exists, use new style command
+  // processing
+  string feature_name = 6;
+  string command_name = 7;
+  string command_params = 8;
+}
+
+// A CommandResponse resource.
+// Array of node_id and its command response will be consolidated and send by
+// the controller node
+message CommandResponse {
+  message NodeResponse {
+    string node_id = 1 [ json_name = "node_id" ];
+    string output = 2 [ json_name = "output" ];
+  }
+  repeated NodeResponse node_responses = 1 [ json_name = "node_responses" ];
+}
+
+message NodeDetails {
+  // Node ID and other details
+  string node_id = 1 [ json_name = "node_id" ];
+  string node_port = 2 [ json_name = "node_port" ];
+}
+
+message ListClusterCommandRequest {
+  // Cluster ID associated with a set of nodes.
+  // Optional field. If not given, then all the node and the cluster association
+  // is retrieved If cluster_id given, then only the node details of the cluster
+  // will be returned
+  string cluster_id = 1;
+}
+
+message ListClusterCommandResponse {
+  message ClusterDetails {
+    string cluster_id = 1 [ json_name = "cluster_id" ];
+    repeated NodeDetails node_info = 2 [ json_name = "node_info" ];
+  }
+  repeated ClusterDetails cluster_info = 1 [ json_name = "cluster_info" ];
+}
+
+// A ClusterRequest resource sent to the Controller node to handle cluster API.
+message ClusterRequest {
+  string cluster_name = 1;
+  string command_name = 2;
+  // JSON format of the input params to be passed
+  string command_params = 3;
+}
+
+// A ClusterResponse resource.
+message ClusterResponse {
+  // Status of ClusterResponse with success or failure with error details
+  string error_id_or_string_if_any = 1
+      [ json_name = "error_id_or_string_if_any" ];
+  int32 error_code = 2 [ json_name = "error_code" ];
+  string api_version = 3 [ json_name = "api_version" ];
+  // JSON format of the output response
+  string command_response = 4 [ json_name = "command_response" ];
+}
+
+// A NodeRequest resource sent to the Controller node to handle cluster API.
+message NodeRequest {
+  string cluster_name = 1;
+  string node_name = 2;
+  string feature_id = 3;
+  string command_name = 4;
+  // JSON format of the input params to be passed
+  string command_params = 5;
+}
+
+// A NodeResponse resource.
+message NodeResponse {
+  // Status of NodeResponse with success or failure with error details
+  string error_id_or_string_if_any = 1
+      [ json_name = "error_id_or_string_if_any" ];
+  int32 error_code = 2 [ json_name = "error_code" ];
+  string api_version = 3 [ json_name = "api_version" ];
+  // JSON format of the output response
+  string command_response = 4 [ json_name = "command_response" ];
+}
+
+// A FeatureRequest resource sent to the Controller node to handle cluster API.
+message FeatureRequest {
+  string cluster_name = 1;
+  string node_name = 2;
+  string feature_name = 3;
+  string command_name = 4;
+  // JSON format of the input params to be passed
+  string command_params = 5;
+}
+
+// A FeatureResponse resource.
+message FeatureResponse {
+  // Status of FeatureResponse with success or failure with error details
+  string error_id_or_string_if_any = 1
+      [ json_name = "error_id_or_string_if_any" ];
+  int32 error_code = 2 [ json_name = "error_code" ];
+  string api_version = 3 [ json_name = "api_version" ];
+  // JSON format of the output response
+  repeated string response = 4 [ json_name = "response" ];
+}
+
+// A EventRequest resource sent to the Controller node to handle Event handling
+// API.
+message EventRequest {
+  string cluster_name = 1;
+  string node_name = 2;
+  string command_name = 3;
+  // JSON format of the input params to be passed
+  string command_params = 4;
+}
+
+// A EventResponse resource.
+message EventResponse {
+  // Status of FeatureResponse with success or failure with error details
+  string error_id_or_string_if_any = 1
+      [ json_name = "error_id_or_string_if_any" ];
+  int32 error_code = 2 [ json_name = "error_code" ];
+  string api_version = 3 [ json_name = "api_version" ];
+  // JSON format of the output response
+  string response = 4 [ json_name = "response" ];
+}
+
+// A SLAManagementRequest resource sent to the Controller node to handle SLA
+// Management API.
+message SLAManagementRequest {
+  string cluster_name = 1;
+  string node_name = 2;
+  string app_name = 3;
+  string command_name = 4;
+  // JSON format of the input params to be passed
+  string command_params = 5;
+}
+
+// A SLAManagementResponse resource.
+message SLAManagementResponse {
+  // Status of SLAManagementResponse with success or failure with error details
+  string error_id_or_string_if_any = 1
+      [ json_name = "error_id_or_string_if_any" ];
+  int32 error_code = 2 [ json_name = "error_code" ];
+  string api_version = 3 [ json_name = "api_version" ];
+  // JSON format of the output response
+  string response = 4 [ json_name = "response" ];
+}
+
+// A StatsRequest resource sent to the Controller node to handle stats API.
+message StatsRequest {
+  string cluster_name = 1;
+  string node_name = 2;
+  string application_name = 3;
+  string feature_name = 4;
+  string command_name = 5;
+  // JSON format of the input params to be passed
+  string command_params = 6;
+}
+
+// A StatsResponse resource.
+message StatsResponse {
+  // Status of StatsResponse with success or failure with error details
+  string error_id_or_string_if_any = 1
+      [ json_name = "error_id_or_string_if_any" ];
+  int32 error_code = 2 [ json_name = "error_code" ];
+  string api_version = 3 [ json_name = "api_version" ];
+  // JSON format of the output response
+  string response = 4 [ json_name = "response" ];
+}
+
+// Controller configuration propagated to node server for
+// node registered at the controller
+message ControllerConfig {
+  string controller_name = 1;
+  string controller_port = 2;
+}
+
+// A NodeConfigRequest is sent to the Cognos node server to update
+// controller_name/port, cluster name etc
+message NodeConfigRequest {
+  // Set this field if the cluster_name needs to be updated
+  // Since the delete cluster or remove_node_from_cluster needs to remove the
+  // cluster name, the empty string cannot be distinguished whether it is set
+  // intentionally or not
+  bool cluster_name_flag = 1;
+  // Cluster name to which the node should be set to as part of reboot
+  string cluster_name = 2;
+  // Set the controller_field if the controller details are to be considered
+  bool controller_flag = 3;
+  // Controller configuration to which the node should connect to
+  ControllerConfig controller = 4;
+}
+
+// A NodeConfigResponse resource.
+message NodeConfigResponse {
+  // Status of NodeConfigResponse with success or failure with error details
+  string error_id_or_string_if_any = 1
+      [ json_name = "error_id_or_string_if_any" ];
+  int32 error_code = 2 [ json_name = "error_code" ];
+}

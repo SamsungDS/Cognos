@@ -1,0 +1,1 @@
+add_subdirectory(slat_run_bin.cc)

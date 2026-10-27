@@ -1,0 +1,98 @@
+---
+- name: Get hostname
+  ansible.builtin.command: hostname
+  register: application_server_start_mock_hostname
+  changed_when: false
+
+- name: Configure mgmt_fw_config
+  ansible.builtin.template:
+    src: mgmt_fw_config.j2
+    dest: "/etc/svk/mgmt_fw_config.json"
+    mode: "0644"
+  vars:
+    ip: "{{ ansible_default_ipv4.address }}"
+    node_name: "{{ application_server_start_mock_hostname.stdout }}"
+  become: true
+
+- name: Configure input.json when device type is CMMB
+  ansible.builtin.template:
+    src: mgmt_fw_input.j2
+    dest: "/usr/local/svk/feature_modules/cxl/config/input.json"
+    mode: "0644"
+  vars:
+    node_name: "{{ application_server_start_mock_hostname.stdout }}"
+  become: true
+  when:
+    - application_server_type == 'CMMB'
+
+- name: Set mock_disable to be true
+  ansible.builtin.replace:
+    path: /usr/local/svk/feature_modules/cxl/config/cxl_dev_id_map.json
+    regexp: '"mock_disable"\s*:\s*false\s*(,?)'
+    replace: '"mock_disable": true\1'
+  when:
+    - application_server_type == 'CMMB'
+
+- name: Configure input.json when device type is CMMH
+  ansible.builtin.template:
+    src: cmmd_mgmt_fw_input.j2
+    dest: "/usr/local/svk/feature_modules/cxl/config/input.json"
+    mode: "0644"
+  become: true
+  when: application_server_type == 'CMMH'
+
+- name: Configure zmq
+  ansible.builtin.template:
+    src: zmq_config.j2
+    dest: "/etc/svk/zmq_config.json"
+    mode: "0644"
+  vars:
+    ip: "{{ ansible_default_ipv4.address }}"
+  become: true
+
+- name: Start application services
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: started
+    enabled: false
+  become: true
+  failed_when: false
+  loop:
+    - cmmh_driver.service
+    - cognos-node.service
+    - cognos-svc-mgr.service
+
+- name: Gather service status
+  ansible.builtin.service_facts:
+  changed_when: false
+
+- name: Check service status on application server
+  ansible.builtin.assert:
+    that:
+      - item in ansible_facts.services
+      - ansible_facts.services[item].state == 'running'
+    fail_msg: "{{ item }} failed to start!"
+    success_msg: "{{ item }} started successfully."
+  loop:
+    - cmmh_driver.service
+    - cognos-node.service
+    - cognos-svc-mgr.service
+  register: application_server_start_mock_check
+  ignore_errors: true
+
+- name: Set flag if any service failed the check
+  ansible.builtin.set_fact:
+    application_server_start_mock_flag: "{{ application_server_start_mock_check.results |
+      selectattr('failed', 'defined') |
+      selectattr('failed') |
+      list | length > 0 }}"
+
+- name: Restart all service after systemd daemon reload
+  ansible.builtin.include_role:
+    name: cognos_service_restart
+  vars:
+    cognos_service_restart_list:
+      - cmmh_driver.service
+      - cognos-node.service
+      - cognos-svc-mgr.service
+  when: application_server_start_mock_flag | default(false)

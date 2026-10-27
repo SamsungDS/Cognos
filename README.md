@@ -1,93 +1,75 @@
 # Cognos
 
+Cognos is a management console for CXL memory devices and tiered memory. This repository brings the Cognos software stack together in one place.
 
+Each component was imported from its own repository with its history unchanged. The repository-wide build and CI are being added; until then, each component builds with its own `scripts/build.sh`.
 
-## Getting started
+## Repository layout
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+| Path | Contents |
+|---|---|
+| `components/core` | Core framework: IPC, publish/subscribe and the feature-module loader. |
+| `components/mgmt-fw` | Management framework: gRPC controller, node server, REST server and service manager. |
+| `components/cxl` | CXL device feature module. |
+| `components/slat` | SLA tracker feature module. |
+| `components/ras` | RAS error-handling feature module. |
+| `components/me` | Memory engine feature module (tier-aware data placement). |
+| `components/node` | System information feature module (CPU, memory, PCI). |
+| `apps/sapp` | Cognos management application: backend, user interface and RBAC service. |
+| `profilers/amo-prof` | AMO_Prof profiler. Not part of the Cognos packages. |
+| `cama` | CaMa, a separate repository included as a git submodule. It is built and deployed separately. |
+| `deploy/` | Ansible playbooks and roles that deploy Cognos. |
+| `gitlab/` | GitLab-specific CI configuration. |
+| `VERSION` | Version of the Cognos stack. |
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+To include CaMa, clone with `git clone --recurse-submodules`, or run `git submodule update --init` in an existing clone.
 
-## Add your files
+## Deploy Cognos using Ansible
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+To deploy Cognos using Ansible, follow [deploy/README.md](deploy/README.md). It covers, in order:
 
+1. Creating the Ansible user on the cluster nodes and the controller.
+2. Setting up the Ansible controller.
+3. Writing the inventory file.
+4. Storing passwords with `ansible-vault`.
+5. Preparing the Cognos packages in `deploy/artifacts/`.
+6. Running the deployment playbook.
+
+In short, once the prerequisites are in place:
+
+```bash
+cd deploy
+ansible-playbook -i your_inventory playbooks/deploy_cognos.yml --ask-vault-pass
 ```
-cd existing_repo
-git remote add origin https://cxl-gitlab.ssi.samsung.com/dfs/svk/cognos.git
-git branch -M main
-git push -uf origin main
+
+### Passwords to set before deploying
+
+The repository does not contain working passwords. Two variables in `deploy/group_vars/all/all.yml` hold placeholder values and must be replaced before Cognos is deployed:
+
+| Variable | Used for | Placeholder |
+|---|---|---|
+| `influxdb_pwd` | Password of the InfluxDB user (`influxdb_user`, default `svk`) created when InfluxDB is set up on the management server. | `CHANGE_ME_INFLUXDB_PASSWORD` |
+| `rbac_password` | Password of the RBAC super administrator (`rbac_username`, default `super_admin`). Written to the RBAC service configuration as `SUPER_ADMIN_PASSWORD`. It must be at least 8 characters. | `CHANGE_ME_RBAC_PASSWORD` |
+
+Do not put real values in `all.yml` and do not commit them. Add them to the vault file that holds the Ansible user's password, `deploy/group_vars/all/passwords.yml` (section IV of [deploy/README.md](deploy/README.md)):
+
+```bash
+cd deploy
+ansible-vault edit group_vars/all/passwords.yml    # use "ansible-vault create" if the file does not exist yet
 ```
 
-## Integrate with your tools
+```yaml
+---
+vault_ansible_password: "<your_ansible_password>"
+influxdb_pwd: "<your_influxdb_password>"
+rbac_password: "<your_rbac_password>"
+```
 
-- [ ] [Set up project integrations](https://cxl-gitlab.ssi.samsung.com/dfs/svk/cognos/-/settings/integrations)
+Ansible loads the files in `group_vars/all/` in alphabetical order, so the values in `passwords.yml` override the placeholders in `all.yml`.
 
-## Collaborate with your team
+Other ways to supply the values:
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+- Pass an encrypted variables file with the same content: `ansible-playbook ... -e @secrets.yml --ask-vault-pass`.
+- In automation, write the three variables to `group_vars/all/passwords.yml` from protected, masked CI variables before running the playbook.
 
-## Test and Deploy
-
-Use the built-in continuous integration in GitLab.
-
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
-
-***
-
-# Editing this README
-
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
-
-## Suggestions for a good README
-
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
-
-## Name
-Choose a self-explaining name for your project.
-
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
-
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
-
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+The placeholders are not rejected automatically. If they are left unchanged, the InfluxDB user and the RBAC administrator are created with these placeholder passwords.

@@ -1,0 +1,24 @@
+---
+- name: Stop Cognos frontend
+  ansible.builtin.import_playbook: stop_frontend_cognos.yml
+
+- name: Remove app
+  hosts:
+    - management_server
+  roles:
+    - cognos_app_remove
+
+- name: Remove influxdb data and influx
+  hosts: management_server
+  roles:
+    - role: cognos_influx_remove
+
+- name: Remove residual configuration files and logs
+  hosts:
+    - management_server
+  roles:
+    - cognos_files_remove
+  vars:
+    cognos_conf_log_files:
+      - /usr/local/svk/cognos-app
+      - /etc/caddy/Caddyfile.d/scmc.conf

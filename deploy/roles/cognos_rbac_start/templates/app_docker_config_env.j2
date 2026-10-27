@@ -1,0 +1,144 @@
+# docker-config.env
+# RBAC 2.0 Configuration File
+#
+# INSTRUCTIONS FOR USERS:
+# 1. Edit values below according to your environment
+# 3. After editing, restart the service: sudo systemctl restart cognos-rbac.service
+ 
+# ==============================================================================
+# PORT CONFIGURATION
+# ==============================================================================
+# Frontend port - where React app will be accessible (1024-65535)
+FRONTEND_PORT={{ rbac_front_port }}
+ 
+# Backend port - where API server will run (1024-65535)
+# Must be different from FRONTEND_PORT
+BACKEND_PORT={{ rbac_api_port }}
+ 
+# ==============================================================================
+# SSL/HTTPS CONFIGURATION
+# ==============================================================================
+# Enable SSL/HTTPS (true/false)
+# Set to 'true' to enable HTTPS with SSL certificates
+# Set to 'false' to use HTTP only
+SSL_ENABLED={{ cognos_rbac_start_https_enable | lower }}
+#update this value if using https
+ 
+# SSL Certificate paths (required if SSL_ENABLED=true)
+# update private key name
+SSL_KEY_PATH=/app/private.pem
+ 
+ 
+# update file name
+SSL_CERT_PATH=/app/fullchain.pem
+ 
+# ==============================================================================
+# BACKEND URL CONFIGURATION
+# ==============================================================================
+# Full URL where backend API will be accessible
+# This is used by the frontend to connect to the backend
+#
+# FORMAT: protocol://domain-or-ip:port
+#
+# Examples:
+# Local testing: http://localhost:6721
+# LAN access: http://192.168.1.100:6721
+# if SSL_ENABLED is enable then use https://xxx.xx.xx.xx:6721' if not then use 'http://xxx.xx.xx.xx:6721
+# IMPORTANT: Update this with your actual server IP or domain!
+BACKEND_URL={{ cognos_rbac_start_protocol }}://{{ip}}:{{ rbac_api_port }}
+# update this value with the IP of the management_server
+ 
+# ==============================================================================
+# DATABASE CONFIGURATION
+# ==============================================================================
+# MongoDB connection URI
+MONGODB_URI=mongodb://admin:admin@{{ip}}:{{ rbac_db_port }}
+# update this value with the IP of the management_server
+ 
+# ==============================================================================
+# INTERNET COMMUNICATION
+# ==============================================================================
+# Enable internet communication for automatic updates
+#
+# Y = Enable automatic updates and license synchronization
+# - Automatic updates from BV Licensing Server
+# - Automatic license key updates
+# - Automatic subscription updates
+#
+# N = Disable internet communication (manual updates required this Optional don't change value)
+# - Manual license key retrieval and updates
+# - Manual subscription management
+# - No automatic server updates
+INTERNET_COMM_PREF=N
+ 
+# ==============================================================================
+# USER APPROVAL WORKFLOW
+# ==============================================================================
+# Require owner approval for new user registrations
+#
+# Y = New users need approval after email verification
+# - Users register and verify email
+# - Owner must approve in admin dashboard
+# - Users cannot login until approved
+#
+# N = Users can login immediately after email verification
+# - Automatic access after email verification
+# - No manual approval needed
+APPROVAL_WORKFLOW_ENABLED=Y
+ 
+# ==============================================================================
+# SUPER ADMIN (OWNER) CONFIGURATION
+# ==============================================================================
+# Initial super admin account credentials
+# This user will have full system access and can approve other users
+#
+# SECURITY WARNING:
+# - Change these default values before deployment!
+# - Use strong passwords (minimum 8 characters)
+# - Never share these credentials
+# - Change password immediately after first login# SUPER ADMIN (OWNER) CONFIGURATION
+ 
+#  Username (3-20 alphanumeric characters only)
+SUPER_ADMIN_USERNAME={{ rbac_username }}
+# update this value with a username example "super_admin"
+ 
+# Email address (valid email format required)
+SUPER_ADMIN_EMAIL={{ rbac_email }}
+# update this value with an email example "super_admin@samsung.com"
+ 
+# Password (minimum 8 characters)
+# IMPORTANT: Change this default password!
+SUPER_ADMIN_PASSWORD={{ rbac_password }}
+# update this value with a password example "<your_rbac_password>"
+ 
+# ==============================================================================
+# ADDITIONAL CONFIGURATION (Optional) not needed to change
+# ==============================================================================
+# Application log level
+# Options: debug, info, warn, error
+# Default: info
+LOG_LEVEL=info
+ 
+# Session timeout in minutes
+# How long users stay logged in without activity
+# Default: 60 minutes (1 hour)
+SESSION_TIMEOUT=60
+ 
+# Maximum file upload size in megabytes
+# Default: 10 MB
+MAX_UPLOAD_SIZE=10
+ 
+# ==============================================================================
+# ADVANCED OPTIONS (Usually not needed to change)
+# ==============================================================================
+# Node environment
+# Default: production (do not change unless debugging)
+NODE_ENV=production
+ 
+# JWT token expiration (in seconds)
+# Default: 86400 (24 hours)
+JWT_EXPIRATION=86400
+ 
+# Enable debug mode (true/false)
+# Default: false (set to true for troubleshooting)
+DEBUG_MODE=false

@@ -1,0 +1,6 @@
+---
+
+- name: Allow SELinux port bind to http_port_t tcp
+  ansible.builtin.include_tasks:
+    "allow_se_ports_oraclelinux.yml"
+  when: ansible_distribution == 'OracleLinux'

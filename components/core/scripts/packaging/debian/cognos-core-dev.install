@@ -1,0 +1,4 @@
+usr/local/svk/core/include/* /usr/local/svk/core/include/
+usr/local/svk/core/tests/* /usr/local/svk/core/tests/
+usr/local/svk/core/lib/cmake/* /usr/local/svk/core/lib/cmake/
+usr/local/svk/core/lib/pkgconfig/* /usr/local/svk/core/lib/pkgconfig/

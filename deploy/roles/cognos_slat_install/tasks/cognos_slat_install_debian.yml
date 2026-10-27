@@ -1,0 +1,57 @@
+---
+
+
+- name: Check if cognos-slat DEB is installed
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      apt list --installed | grep cognos-slat
+    executable: /bin/bash
+  register: cognos_slat_install_pkg_query
+  changed_when: false
+  failed_when: false
+
+- name: Determine OS type and version
+  ansible.builtin.set_fact:
+    cognos_slat_install_os_family: "{{ ansible_distribution }}"
+    cognos_slat_install_os_version: "{{ ansible_distribution_version }}"
+
+- name: Identify cognos_slat package for Ubuntu
+  ansible.builtin.find:
+    path: "{{ cognos_pkg_dir }}"
+    patterns: "cognos-slat_*-ubuntu{{ cognos_slat_install_os_version }}_*.deb"
+  delegate_to: localhost
+  run_once: true
+  register: cognos_slat_install_pkg
+
+- name: Identify newest version of cognos-slat package found
+  ansible.builtin.set_fact:
+    cognos_slat_install_pkg_file: "{{ (cognos_slat_install_pkg.files | sort(attribute='mtime', reverse=true) | first).path }}"
+  run_once: true
+  when: cognos_slat_install_pkg.files | length > 0
+
+- name: Copy cognos_slat package to staging directory
+  ansible.builtin.copy:
+    src: "{{ cognos_slat_install_pkg_file }}"
+    dest: "{{ deploy_staging_dir }}"
+    mode: "0644"
+  when:
+    - cognos_slat_install_pkg_file is defined
+    - cognos_slat_install_pkg_query.rc != 0
+
+- name: Install cognos_slat DEB
+  ansible.builtin.apt:
+    deb: "{{ deploy_staging_dir }}/{{ cognos_slat_install_pkg_file | basename }}"
+    state: present
+  become: true
+  when:
+    - cognos_slat_install_pkg_file is defined
+    - cognos_slat_install_pkg_query.rc != 0
+
+- name: Delete cognos_slat package from staging directory
+  ansible.builtin.file:
+    path: "{{ deploy_staging_dir }}/{{ cognos_slat_install_pkg_file | basename }}"
+    state: absent
+  when:
+    - cognos_slat_install_pkg_file is defined
+    - cognos_slat_install_pkg_query.rc != 0

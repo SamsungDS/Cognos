@@ -1,0 +1,42 @@
+# Bootstrap pipeline for the Cognos monorepo import.
+#
+# It runs only checks that do not touch any lab machine: the build of the
+# ansible-lint image and ansible-lint over deploy/.
+#
+# The pipeline that came with deploy/ (deploy/.gitlab-ci.yml) is deliberately
+# not included. Its deploy stage restores VM snapshots and deploys as root to
+# shared lab VMs.
+#
+# This file is replaced by the full monorepo pipeline.
+include:
+  - project: dfs/svk/tools
+    ref: main
+    file: .config/ci/gitlab/defaults.yml
+  - project: dfs/svk/tools
+    ref: main
+    file: .config/ci/gitlab/docker.yml
+  - local: deploy/.config/ci/gitlab/lint.yml
+
+# The template builds with the repository root as context. The Dockerfile
+# copies scripts/dependencies, which lives under deploy/ in the monorepo.
+build docker:
+  variables:
+    DOCKERFILE_NAME: ubuntu22
+    DOCKERFILE_PATH: deploy/scripts/docker/ubuntu22.DOCKERFILE
+    DOCKER_CONTEXT: deploy
+  script:
+    - |
+      docker buildx build \
+        --cache-from type=registry,ref=$CACHE_TAG \
+        --cache-to type=registry,ref=$CACHE_TAG \
+        --push \
+        --tag $IMAGE_TAG \
+        --tag $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$GIT_TAG_VERSION \
+        --file $DOCKERFILE_PATH $DOCKER_CONTEXT \
+        --provenance false
+
+# ansible.cfg, .ansible-lint and the playbooks are under deploy/.
+ansible-lint:
+  script:
+    - cd deploy
+    - ansible-lint

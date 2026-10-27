@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+AMT2_SCRIPTS_DIR="/usr/local/svk/feature_modules/me/scripts/amt2_scripts"
+CONFIG_DIR="/usr/local/svk/feature_modules/me/config"
+
+rm -f "$AMT2_SCRIPTS_DIR"/*_hot_fsrs.txt
+rm -f "$AMT2_SCRIPTS_DIR"/hotness_map_results_*.log
+rm -rf "$AMT2_SCRIPTS_DIR"/report_*/
+rm -f "$CONFIG_DIR"/global_damo_config.yaml

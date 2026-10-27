@@ -1,0 +1,19 @@
+---
+
+- name: Install PCM package
+  ansible.builtin.dnf:
+    name: "{{ pcm_package }}"
+    state: present
+    update_cache: true
+  become: true
+
+- name: Verify pcm command is available
+  ansible.builtin.command: which pcm
+  register: ycsb_pcm_install_check
+  ignore_errors: true
+  changed_when: false
+
+- name: Print pcm path
+  ansible.builtin.debug:
+    msg: "PCM binary found at: {{ ycsb_pcm_install_check.stdout }}"
+  when: ycsb_pcm_install_check.rc == 0

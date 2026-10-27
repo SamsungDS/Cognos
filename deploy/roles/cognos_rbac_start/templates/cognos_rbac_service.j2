@@ -1,0 +1,98 @@
+[Unit]
+Description=RBAC Docker Service v2.0
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=30
+WorkingDirectory=/usr/local/svk/svk-app/cognos/rbac
+User=root
+Group=root
+
+# Environment
+Environment="DOCKER_BUILDKIT=1"
+Environment="COMPOSE_DOCKER_CLI_BUILD=1"
+
+# Pre-start: Cleanup old containers
+ExecStartPre=-/usr/bin/docker stop rbac-container
+ExecStartPre=-/usr/bin/docker rm rbac-container
+ExecStartPre=-/usr/bin/docker stop rbac-mongo-db
+ExecStartPre=-/usr/bin/docker rm rbac-mongo-db
+
+# Pre-start: Create necessary directories
+ExecStartPre=/bin/mkdir -p /usr/local/svk/svk-app/cognos/rbac/data/mongodb
+ExecStartPre=/bin/mkdir -p /usr/local/svk/svk-app/cognos/rbac/core/logs
+ExecStartPre=/bin/mkdir -p /usr/local/svk/svk-app/cognos/rbac/core/data
+
+# Pre-start: Validate docker-config.env exists
+ExecStartPre=/bin/bash -c '[ -f /usr/local/svk/svk-app/cognos/rbac/docker-config.env ] || { echo "ERROR: docker-config.env not found!"; exit 1; }'
+
+# Start MongoDB container (detached is OK for pre-start)
+ExecStartPre=/usr/bin/docker run -d \
+  --name rbac-mongo-db \
+  --platform linux/amd64 \
+  --network bridge \
+  -p {{ rbac_db_port }}:27017 \
+  -v /usr/local/svk/svk-app/cognos/rbac/data/mongodb:/data/db \
+  -e MONGO_INITDB_ROOT_USERNAME=admin \
+  -e MONGO_INITDB_ROOT_PASSWORD=admin \
+  --restart unless-stopped \
+  mongo:6.0
+
+# Wait for MongoDB to initialize
+ExecStartPre=/bin/sleep 20
+
+# Build RBAC Docker image
+ExecStartPre=/usr/local/svk/svk-app/cognos/rbac/rbac-docker-build-by-os.sh
+
+# Start RBAC container in FOREGROUND (no -d flag, add --rm)
+ExecStart=/usr/bin/docker run --rm \
+  --name rbac-container \
+  --network bridge \
+  --platform linux/amd64 \
+  --link rbac-mongo-db:rbac-mongo-db \
+  -p {{ rbac_front_port }}:6720 \
+  -p {{ rbac_api_port }}:6721 \
+  -v /usr/local/svk/svk-app/cognos/rbac/docker-config.env:/app/docker-config.env:ro \
+  -v /usr/local/svk/svk-app/cognos/rbac/core/logs:/app/core/logs \
+  -v /usr/local/svk/svk-app/cognos/rbac/core/data:/app/core/data \
+{% if cognos_rbac_start_https_enable %}
+  -v {{ cognos_rbac_start_ssl_key }}:/app/private.pem:ro \
+  -v {{ cognos_rbac_start_ssl_cert }}:/app/fullchain.pem:ro \
+{% else %}
+  -v /usr/local/svk/svk-app/cognos/rbac/core/ssl/private.key:/app/private.key:ro \
+  -v /usr/local/svk/svk-app/cognos/rbac/core/ssl/combined.crt:/app/combined.crt:ro \
+{% endif %}
+  rbac-container:latest
+
+# SSL_KEY_PATH=/app/private.pem
+# -v {{ cognos_rbac_start_ssl_key }}:/app/private.key:ro \
+# -v {{ cognos_rbac_start_ssl_cert }}:/app/combined.crt:ro \
+
+# Stop containers gracefully
+ExecStop=-/usr/bin/docker exec rbac-container pm2 stop all
+ExecStop=-/bin/sleep 3
+ExecStop=-/usr/bin/docker stop -t 30 rbac-container
+ExecStop=-/usr/bin/docker stop -t 10 rbac-mongo-db
+
+# Post-stop: Cleanup MongoDB (RBAC container auto-removed due to --rm)
+ExecStopPost=-/usr/bin/docker rm -f rbac-mongo-db
+
+# Restart configuration
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+# Timeout configuration
+TimeoutStartSec=600
+TimeoutStopSec=120
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=rbac-service
+
+[Install]
+WantedBy=multi-user.target

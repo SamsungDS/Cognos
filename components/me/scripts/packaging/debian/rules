@@ -1,0 +1,47 @@
+#!/usr/bin/make -f
+
+# We can get a version string if needed
+SHORT_VERSION := $(shell $(CURDIR)/../scripts/get_version.sh -s)
+INSTALL_PATH = usr/local/svk/feature_modules/me
+SCRIPTS_DIR = $(CURDIR)/../scripts
+
+PYTHON_DEPS_PATH = $(INSTALL_PATH)/scripts/dependencies/python
+AMT2_SCRIPTS_PATH =  $(INSTALL_PATH)/scripts/amt2_scripts
+%:
+	dh $@
+
+override_dh_auto_configure:
+	# Configure steps below (eg: cmake)
+	cmake -DWITH_RELEASE=ON -DCMAKE_INSTALL_PREFIX=/$(INSTALL_PATH) ..
+
+override_dh_auto_build:
+	# build steps below (eg: make)
+	make -j$(nproc)
+
+override_dh_auto_install:
+	# install steps below (eg: make install)
+	make DESTDIR=$(CURDIR) prefix=/usr install
+	mkdir -p $(PYTHON_DEPS_PATH)
+	install -D -m 0644 $(SCRIPTS_DIR)/dependencies/python/requirements_deploy.txt $(PYTHON_DEPS_PATH)/
+	install -D -m 0644 $(SCRIPTS_DIR)/dependencies/python/requirements_deploy_amt_2.txt $(PYTHON_DEPS_PATH)/
+	mkdir -p $(AMT2_SCRIPTS_PATH)
+	install -m 0755 -t $(AMT2_SCRIPTS_PATH)/ $(SCRIPTS_DIR)/amt2_scripts/*
+
+override_dh_usrlocal:
+	# Do nothing, because we are installing to /usr/local even though this is non-standard practice
+
+override_dh_install:
+	dh_install
+
+override_dh_strip:
+	# Do not generate debug symbol packages
+	dh_strip --no-ddebs
+
+override_dh_shlibdeps:
+	# Set link path for shlibdeps if needed
+	dh_shlibdeps -l$(CURDIR)/$(INSTALL_PATH)/lib64
+
+override_dh_installsystemd:
+	# If we are installing a service
+	# dh_installsystemd
+

@@ -1,0 +1,52 @@
+---
+### Playbook Documentation ###
+#
+# #### playbooks/run_ycsb_workload.yml
+#
+# Execute this playbook to generate workload config file, and run workload.
+#
+# This playbook will perform the following:
+#
+
+- name: Install Intel PCM on Ubuntu/Debian
+  hosts: gemfire_server
+  gather_facts: true
+  become: true
+  vars:
+    pcm_package: "pcm"
+    apt_update: true
+  roles:
+    - ycsb_pcm_install
+
+- name: Check DAMON config
+  hosts: gemfire_server
+  gather_facts: true
+  roles:
+    - ycsb_damon_check
+
+- name: Generate YCSB workload config file
+  hosts: ycsb_client
+  gather_facts: true
+  roles:
+    - ycsb_workload_config_generate
+
+- name: Setup ssh connection between ycsb_client and gemfire servers
+  hosts:
+    - ycsb_client
+    - gemfire_server
+  gather_facts: true
+  roles:
+    - ycsb_ssh_connect
+
+  tasks:
+    - name: Get ssh_private_key_path
+      ansible.builtin.set_fact:
+        ssh_private_key_path: "{{ ycsb_ssh_connect_key_path }}"
+
+- name: Run YCSB workload
+  hosts: ycsb_client
+  gather_facts: true
+  roles:
+    - ycsb_workload_run
+  vars:
+    ssh_private_key_path: "{{ ycsb_ssh_connect_key_path }}"

@@ -1,0 +1,43 @@
+# Author: June Liu
+# Contact: june.liu@samsung.com
+---
+
+- name: Copy gf_check_status.sh to gemfire server host
+  ansible.builtin.copy:
+    src: "{{ gf_check_stat_path }}/{{ gf_check_stat_name }}"
+    dest: "{{ gf_installed_base_dir }}/ycsb_benchmarks/{{ gf_check_stat_name }}"
+    mode: '0755'
+  become: true
+
+- name: Execute gf_check_status.sh on gemfire server
+  ansible.builtin.command: "{{ gf_installed_base_dir }}/ycsb_benchmarks/{{ gf_check_stat_name }}"
+  register: gf_member_stat_server_stat
+  changed_when: gf_member_stat_server_stat.rc != 0
+
+- name: Retrieve the gemfire servers and locator status info
+  ansible.builtin.set_fact:
+    gf_member_stat_info: "{{
+      gf_member_stat_server_stat.stdout_lines
+      | select('search', '\\|')
+      | reject('search', '------')
+      | reject('search', 'Status')
+      | map('regex_replace', '([^|]*)\\|([^|]*)\\|([^|]*)\\|([^|]*)', '\\1:\\4')
+      | reject('equalto', None)
+      | map('split', ':')
+      | map('map', 'trim')
+      | list
+      }}"
+
+- name: Transform the gemfire servers and locator status info into dict
+  ansible.builtin.set_fact:
+    gf_member_stat_info: >-
+      {{ dict(
+        gf_member_stat_info
+          | map('first')
+          | zip( gf_member_stat_info | map('last'))
+          | list
+      ) }}
+
+- name: Debug gf_member_stat_info
+  ansible.builtin.debug:
+    msg: "{{ gf_member_stat_info }}"

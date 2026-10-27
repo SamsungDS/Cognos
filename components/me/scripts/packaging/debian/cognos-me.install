@@ -1,0 +1,8 @@
+/usr/local/svk/feature_modules/me/config/cme_config.json /usr/local/svk/feature_modules/me/config/
+/usr/local/svk/feature_modules/me/config/tm_gen_config.py /usr/local/svk/feature_modules/me/config/
+/usr/local/svk/feature_modules/me/config/damo_config.json /usr/local/svk/feature_modules/me/config/
+/usr/local/svk/feature_modules/me/lib64/libsvkme* /usr/local/svk/feature_modules/me/lib64/
+/usr/local/svk/feature_modules/me/logic_modules/movers/lib64/lib* /usr/local/svk/feature_modules/me/logic_modules/movers/lib64/
+/usr/local/svk/feature_modules/me/scripts/dependencies/python/requirements_deploy.txt /usr/local/svk/feature_modules/me/scripts/dependencies/python/
+/usr/local/svk/feature_modules/me/scripts/dependencies/python/requirements_deploy_amt_2.txt /usr/local/svk/feature_modules/me/scripts/dependencies/python/
+/usr/local/svk/feature_modules/me/scripts/amt2_scripts/* /usr/local/svk/feature_modules/me/scripts/amt2_scripts/

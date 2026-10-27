@@ -1,0 +1,12 @@
+# Build files
+build
+
+# IDE config
+.vscode
+
+# Doxygen
+html
+latex
+
+# Release artifacts
+*.tgz

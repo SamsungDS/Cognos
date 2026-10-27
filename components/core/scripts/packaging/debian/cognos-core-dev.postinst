@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+
+# Create symlink for Package Config file
+mkdir -p /usr/lib/pkgconfig
+ln -sf /usr/local/svk/core/lib/pkgconfig/svkframework.pc /usr/lib/pkgconfig/svkframework.pc
+
+ldconfig

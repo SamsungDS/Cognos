@@ -1,0 +1,32 @@
+---
+
+- name: Check if SELinux is enforcing (optional check)
+  ansible.builtin.command: getenforce
+  register: cognos_allow_se_ports_selinux_stat
+  changed_when: false
+
+- name: Check if the port is mapped to SELinux http_port_t (TCP)
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      semanage port -l | grep -E "^http_port_t\s+.*(tcp|udp)\s+.*{{ mgmt_ports_frontend['mgmt_endpoint'] }}"
+    executable: /bin/bash
+  register: cognos_allow_se_ports_check
+  become: true
+  failed_when: false
+  changed_when: false
+  when:
+    - cognos_allow_se_ports_selinux_stat is defined
+    - cognos_allow_se_ports_selinux_stat.stdout == "Enforcing"
+
+- name: Set SELinux is not blocking the port {{ mgmt_ports_frontend['mgmt_endpoint'] }}
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      semanage port -m -t http_port_t -p tcp {{ mgmt_ports_frontend['mgmt_endpoint'] }}
+    executable: /bin/bash
+  become: true
+  changed_when: false
+  when:
+    - cognos_allow_se_ports_selinux_stat.stdout == "Enforcing"
+    - cognos_allow_se_ports_check.rc != 0

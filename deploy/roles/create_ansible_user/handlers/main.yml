@@ -1,0 +1,9 @@
+---
+
+- name: Validate sudoers syntax
+  ansible.builtin.command: "visudo -cf {{ item }}"
+  args:
+    creates: "{{ item }}.backup"
+  loop:
+    - /etc/sudoers.d/{{ create_ansible_user_name }}
+  changed_when: false

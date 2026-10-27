@@ -1,0 +1,3 @@
+---
+# dependencies:
+#   - role: gf_get_numa_ids

@@ -1,0 +1,4 @@
+---
+ycsb_ssh_connect_key_name: "ansible_trust_key"
+ycsb_ssh_connect_key_path: "{{ ansible_env.HOME }}/.ssh/{{ ycsb_ssh_connect_key_name }}"
+ycsb_ssh_connect_key_passphrase: ""

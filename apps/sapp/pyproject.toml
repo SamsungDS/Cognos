@@ -1,0 +1,21 @@
+# pyproject.toml
+[tool.pytest.ini_options]
+pythonpath = [
+    "cognos/backend/",
+    "cognos/ssdp/",
+    "cognos/subscriber/",
+    "cognos/telegraf/"
+]
+
+testpaths = [
+    "cognos/backend/test",
+    "cognos/ssdp/tests",
+    "cognos/subscriber/test",
+    "cognos/telegraf/test"
+]
+
+[tool.coverage.run]
+omit = [
+    "/usr/*",
+    "*test*",
+]

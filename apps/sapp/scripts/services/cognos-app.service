@@ -1,0 +1,23 @@
+[Unit]
+Description=Cognos Management Abstraction Layer
+Wants=network-online.target
+After=network-online.target cognos-controller cognos-restserver
+Requires=cognos-controller cognos-restserver
+
+[Service]
+SyslogIdentifier=Cognos Abstraction Layer
+WorkingDirectory=/usr/local/svk/svk-app/cognos
+EnvironmentFile=/usr/local/svk/svk-app/cognos.config
+KillMode=control-group
+Restart=on-failure
+ExecStart=/bin/bash -c '\
+  if [ "${MODE}" = "mock" ]; then \
+    /usr/local/svk/svk-app/env/bin/python3 backend/app.py --host ${CAL_IP} --port ${CAL_PORT} --mock;\
+  else /usr/local/svk/svk-app/env/bin/python3 backend/app.py --host ${CAL_IP} --port ${CAL_PORT};\
+  fi'
+ExecReload = /bin/kill -s HUP $MAINPID
+ExecStop = /bin/kill -s SIGKILL $MAINPID
+SuccessExitStatus=SIGKILL
+
+[Install]
+WantedBy=multi-user.target

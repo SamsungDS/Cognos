@@ -1,0 +1,58 @@
+# Tasks file for ./roles/gf_check_deps
+# Author: June Liu
+# Contact: june.liu@samsung.com
+---
+- name: Identify metrics collect scripts package
+  ansible.builtin.find:
+    paths: "{{ artifacts_dir }}"
+    patterns: "{{ gf_metric_collect_tar }}"
+  delegate_to: localhost
+  run_once: true
+  register: gf_check_deps_metrics_collect
+
+- name: Assert metrics collect package found
+  ansible.builtin.assert:
+    that: gf_check_deps_metrics_collect.files | length > 0
+    fail_msg: "No {{ gf_metric_collect_tar }} package found. Please prepare it to {{ artifacts_dir }}"
+
+- name: Get metrics collect scripts package basename
+  ansible.builtin.set_fact:
+    gf_check_deps_metrics_pkg_name: "{{ gf_check_deps_metrics_collect.files[0].path | basename }}"
+
+- name: Check if zipped metrics collect scripts package exists
+  ansible.builtin.stat:
+    path: "{{ gf_installed_base_dir }}/{{ gf_check_deps_metrics_pkg_name }}"
+  register: gf_check_deps_metrics_zip_stat
+
+- name: Copy metrics collect scripts package to root directory
+  ansible.builtin.copy:
+    src: "{{ gf_check_deps_metrics_collect.files[0].path }}"
+    dest: "{{ gf_installed_base_dir }}"
+    mode: "0644"
+  become: true
+  when: not gf_check_deps_metrics_zip_stat.stat.exists
+
+- name: Check if unzipped metrics collect scripts package exists
+  ansible.builtin.stat:
+    path: "{{ gf_installed_base_dir }}/ycsb_benchmarks/gf_metrics_collect_scripts"
+  register: gf_check_deps_metrics_unzip_stat
+
+- name: Unarchive metrics collect scripts package
+  ansible.builtin.unarchive:
+    src: "{{ gf_installed_base_dir }}/{{ gf_metric_collect_tar }}"
+    dest: "{{ gf_installed_base_dir }}/ycsb_benchmarks"
+    remote_src: true
+  become: true
+  when: not gf_check_deps_metrics_unzip_stat.stat.exists
+
+- name: Rename extracted directory to custom name
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      mv {{ gf_installed_base_dir }}/ycsb_benchmarks/gf_metrics_collect_scripts/* {{ gf_installed_base_dir }}/ycsb_benchmarks/ 2>/dev/null || true
+      rmdir {{ gf_installed_base_dir }}/ycsb_benchmarks/gf_metrics_collect_scripts 2>/dev/null || true
+    executable: /bin/bash
+  become: true
+  run_once: true
+  changed_when: false
+  when: not gf_check_deps_metrics_unzip_stat.stat.exists

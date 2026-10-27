@@ -1,0 +1,25 @@
+[Unit]
+Description=Cognos Subscriber
+Wants=network-online.target
+After=influxdb.service network-online.target cognos-app.service
+
+[Service]
+SyslogIdentifier=Cognos Subscriber
+WorkingDirectory=/usr/local/svk/svk-app/cognos
+EnvironmentFile=/usr/local/svk/svk-app/cognos.config
+KillMode=control-group
+Restart=on-failure
+ExecStartPre=/bin/sleep 5
+ExecStart=/bin/bash -c '\
+  if [ "${MODE}" = "mock" ]; then \
+    /usr/local/svk/svk-app/env/bin/python3 subscriber/sub_client.py \
+    --mock subscriber/mock_publisher_events.output;\
+  else /usr/local/svk/svk-app/env/bin/python3 subscriber/sub_client.py \
+       --config subscriber/sub_config.json;\
+  fi'
+ExecReload = /bin/kill -s HUP $MAINPID
+ExecStop = /bin/kill -s SIGKILL $MAINPID
+SuccessExitStatus=SIGKILL
+
+[Install]
+WantedBy=multi-user.target

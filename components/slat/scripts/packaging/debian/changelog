@@ -1,0 +1,5 @@
+cognos-slat (DEB_VERSION) DEB_OSVER; urgency=medium
+
+  * DEB_CHANGELOG
+
+ -- Suresh Grandhi <suresh.g@samsung.com>  DEB_TIMESTAMP

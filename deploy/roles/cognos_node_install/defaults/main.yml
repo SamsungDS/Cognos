@@ -1,0 +1,4 @@
+---
+
+cognos_node_install_staging_dir: "/tmp/"
+cognos_node_install_artifacts_dir: "{{ inventory_dir }}/artifacts"

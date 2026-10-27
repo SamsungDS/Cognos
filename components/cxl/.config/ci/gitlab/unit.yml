@@ -1,0 +1,35 @@
+unit test:
+  stage: test
+  extends: release build
+  before_script:
+    # Install latest build-wrapper
+    - wget --no-verbose --content-disposition -E -c "$SONAR_HOST_URL/static/cpp/build-wrapper-linux-x86.zip"
+    - unzip -q build-wrapper-linux-x86.zip -d /
+  script:
+    # Build with unit tests and generate coverage report
+    - /build-wrapper-linux-x86/build-wrapper-linux-x86-64 --out-dir bw-output/ $BUILD_COMMAND
+  artifacts:
+    name: unit test - $DOCKERFILE_NAME
+    expire_in: 300 seconds
+    expose_as: Unit Test Artifacts
+    paths:
+     - bw-output
+     - build
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: $GITLAB_COVERAGE_REPORT
+      junit: $GITLAB_JUNIT_REPORT
+  variables:
+    BUILD_COMMAND: ./scripts/build.sh --build-tests --with-coverage --with-fmapi $FMAPI_PATH/build/libmbox_a1_shared.so $FMAPI_PATH
+    RELEASE_TYPE: release
+    FMAPI_CLONE_DIR: "$FMAPI_PROJECT/$DOCKERFILE_NAME/$RELEASE_TYPE"
+    FMAPI_PATH: $CI_PROJECT_DIR/$FMAPI_CLONE_DIR/$FMAPI_DIR
+  parallel:
+    matrix:
+      - DOCKERFILE_NAME: rocky9
+      - DOCKERFILE_NAME: ubuntu22
+      - DOCKERFILE_NAME: ubuntu24
+      - DOCKERFILE_NAME: ol10
+  rules:
+    - !reference [.default_rules, merge_and_push]

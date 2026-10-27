@@ -1,0 +1,94 @@
+---
+- name: Collect logs before cleanup cognos
+  ansible.builtin.import_playbook: collect_logs_cognos.yml
+  when: cognos_cleanup_enable_log_collection
+
+- name: Stop Cognos
+  ansible.builtin.import_playbook: stop_cognos.yml
+
+- name: Remove app
+  hosts:
+    - management_server
+  roles:
+    - cognos_app_remove
+
+- name: Remove influxdb data and influx
+  hosts: management_server
+  roles:
+    - role: cognos_influx_remove
+
+- name: Remove cognos_ras
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - role: cognos_ras_remove
+
+- name: Remove cognos_me
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - role: cognos_me_remove
+
+- name: Remove cognos_node
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - role: cognos_node_remove
+
+- name: Remove cognos-slat
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - cognos_slat_remove
+
+- name: Remove cognos-cxl
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - role: cognos_cxl_remove
+
+- name: Remove cognos-mgmt-fw
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - cognos_mgmt_fw_remove
+
+- name: Remove cognos-grpc
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - cognos_grpc_remove
+
+- name: Remove core
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - cognos_core_remove
+
+- name: Remove residual cognos packages
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - cognos_residual_pkg_rm
+
+- name: Remove residual configuration files and logs
+  hosts:
+    - management_server
+    - application_server
+  roles:
+    - cognos_files_remove
+  vars:
+    cognos_conf_log_files:
+      - /etc/svk
+      - /usr/local/svk
+      - /var/log/svk
+      - /var/lib/svk

@@ -1,0 +1,49 @@
+# Build the wheel, install it, and run the test suite against the tree.
+# SAST stays as it was.
+#
+# SAST customization: https://docs.gitlab.com/ee/user/application_security/sast/#customizing-the-sast-settings
+# Secret Detection customization: https://docs.gitlab.com/user/application_security/secret_detection/pipeline/configure
+# Note that environment variables can be set in several places
+# See https://docs.gitlab.com/ee/ci/variables/#cicd-variable-precedence
+stages:
+- build
+- test
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+cache:
+  paths:
+  - .cache/pip
+
+wheel:
+  stage: build
+  image: python:3.12
+  script:
+  - bash scripts/build_wheel.sh dist
+  artifacts:
+    paths:
+    - dist/*.whl
+    expire_in: 30 days
+
+tests:
+  stage: test
+  image: python:3.12
+  needs:
+  - wheel
+  script:
+  # The wheel is the artefact under test: install it with its dependencies,
+  # then check the console script from outside the source tree.
+  - python -m pip install dist/amoprof-*.whl pytest
+  - (cd /tmp && amoprof --version && amoprof compare --help > /dev/null)
+  # The source-tree install path stays usable.
+  - bash -n install.sh
+  - bash install.sh --help > /dev/null
+  - bash scripts/run_tests.sh
+
+sast:
+  stage: test
+
+include:
+- template: Security/SAST.gitlab-ci.yml

@@ -1,0 +1,79 @@
+# Author: Hua He
+# Contact: h.he@samsung.com
+---
+# #############################################
+# ## Run Workload
+# #############################################
+
+- name: Ensure YCSB global config file exists
+  ansible.builtin.file:
+    path: "{{ gf_installed_base_dir }}/ycsb_benchmarks/workload-config/global_config_1.1KB_{{ workload_config_file_parameter['ycsbConfig'] }}"
+    state: file
+    mode: '0644'
+  become: true
+
+- name: Ensure YSCB workload config file exists
+  ansible.builtin.file:
+    path: "{{ gf_installed_base_dir }}/ycsb_benchmarks/workload-config/{{ ycsb_workload_config_generate_name }}"
+    state: file
+    mode: '0644'
+  become: true
+
+- name: Load region info. from file
+  ansible.builtin.command: "cat {{ gf_check_stat_path }}/{{ gf_region_info_file }}"
+  register: ycsb_workload_run_region_info
+  changed_when: ycsb_workload_run_region_info.rc != 0
+  delegate_to: localhost
+
+- name: Save region info. into list
+  ansible.builtin.set_fact:
+    ycsb_workload_run_region_list: "{{ ycsb_workload_run_region_info.stdout.splitlines() | map('trim') | map('replace', ' ', ',', 1) | list }}"
+  delegate_to: localhost
+
+- name: Debug ycsb_workload_run_region_list
+  ansible.builtin.debug:
+    msg: "{{ ycsb_workload_run_region_list }}"
+  delegate_to: localhost
+
+- name: Upload store_results_in_mysql.py to specified directory
+  ansible.builtin.template:
+    src: "store_results_in_mysql.py.j2"
+    dest: "{{ gf_installed_base_dir }}/ycsb_benchmarks/store_results_in_mysql.py"
+    mode: '0755'
+  become: true
+  when: ycsb_logs_upload_to_dashboard_enable
+
+- name: Upload ycsb-logs-parser.sh to specified directory
+  ansible.builtin.template:
+    src: "ycsb-logs-parser.sh.j2"
+    dest: "{{ gf_installed_base_dir }}/ycsb_benchmarks/ycsb-logs-parser.sh"
+    mode: '0755'
+  become: true
+  when: ycsb_logs_parser_enable
+
+- name: Upload ycsb-results-generator.sh to specified directory
+  ansible.builtin.template:
+    src: "ycsb-results-generator.sh.j2"
+    dest: "{{ gf_installed_base_dir }}/ycsb_benchmarks/ycsb-results-generator.sh"
+    mode: '0755'
+  become: true
+  when: ycsb_logs_parser_enable
+
+- name: Generate workload script
+  ansible.builtin.template:
+    src: "run_workload.sh.j2"
+    dest: "{{ gf_installed_base_dir }}/ycsb_benchmarks/run-workload-{{ svk_enable }}-{{ 'metrics' if metrics_enable == true else 'nometrics' }}.sh"
+    mode: '0755'
+  become: true
+  delegate_to: "{{ hostvars[groups['ycsb_client'][0]]['inventory_hostname'] }}"
+
+- name: Start running workload script
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      "{{ gf_installed_base_dir }}/ycsb_benchmarks/run-workload-{{ svk_enable }}-{{ 'metrics' if metrics_enable == true else 'nometrics' }}.sh"
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ hostvars[groups['ycsb_client'][0]]['inventory_hostname'] }}"
+  become: true
+  changed_when: true

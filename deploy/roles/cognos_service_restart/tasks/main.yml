@@ -1,0 +1,36 @@
+---
+
+- name: Conduct systemd daemon-reload
+  ansible.builtin.systemd:
+    daemon-reload: true
+  become: true
+
+- name: Start application services after possible daemon-reload
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  become: true
+  loop: "{{ cognos_service_restart_list }}"
+  register: cognos_service_restart_stat
+
+- name: Summarize service restart actions
+  ansible.builtin.debug:
+    msg: |
+      Detected services not running, `daemon-reload` has been executed and the following services have been restarted:
+      {% for r in cognos_service_restart_stat.results %}
+      - {{ r.item }}: {{ 'changed' if r.changed else 'already running' }}
+      {% endfor %}
+
+- name: Gather service status
+  ansible.builtin.service_facts:
+  changed_when: false
+
+- name: Check service status after daemon-reload
+  ansible.builtin.assert:
+    that:
+      - item in ansible_facts.services
+      - ansible_facts.services[item].state == 'running'
+    fail_msg: "{{ item }} failed to start!"
+    success_msg: "{{ item }} started successfully."
+  loop: "{{ cognos_service_restart_list }}"

@@ -1,0 +1,56 @@
+import React from 'react';
+import Select from 'react-select';
+
+const DropDown = ({ options, title, dropDownType, onSelectChange, name }) => {
+
+    const [selectedValue, setSelectedValue] = React.useState(options[0] || '');
+    const isMulti = dropDownType === 'multi';
+
+    const handleSelectChange = (selectedOption) => {
+        setSelectedValue(selectedOption);
+        if (onSelectChange) {
+            onSelectChange(selectedOption);
+        }
+    };
+
+    React.useEffect(() => {
+        // Trigger API request with default selected value when component mounts
+        if (selectedValue) {
+            onSelectChange(selectedValue);
+        }
+    }, 
+    // eslint-disable-next-line react-hooks/exhaustive-deps 
+    []);
+
+    return (
+        <div className='dropdown-container' id='dropdown-container-id' data-testid={`dropdown-${name}`}>
+            <label htmlFor="dropdown" className='app-server' data-testid='label'>{title}</label>
+            <Select
+                value={selectedValue}
+                isMulti={isMulti}
+                options={options}
+                className="basic-multi-select"
+                classNamePrefix="select"
+                onChange={handleSelectChange}
+                styles={{
+                    control: (baseStyles, state) => ({
+                        ...baseStyles,
+                        borderColor: state.isFocused ? 'grey' : 'blue ',
+                    }),
+                }}
+                theme={(theme) => ({
+                    ...theme,
+                    borderRadius: 0,
+                    colors: {
+                        ...theme.colors,
+                        primary25: '#8093DC',
+                        primary: '#8093DC',
+                    },
+                })}
+                data-testid="select-inputs"
+            />
+        </div>
+    );
+};
+
+export default DropDown;

@@ -1,0 +1,8 @@
+usr/local/svk/svk-app/cognos/backend/* /usr/local/svk/svk-app/cognos/backend/
+usr/local/svk/svk-app/cognos/backend/config/* /usr/local/svk/svk-app/cognos/backend/config/
+usr/local/svk/svk-app/cognos/subscriber/* /usr/local/svk/svk-app/cognos/subscriber/
+usr/local/svk/svk-app/* /usr/local/svk/svk-app/
+usr/local/svk/svk-app/cognos/rbac/* /usr/local/svk/svk-app/cognos/rbac/
+usr/local/svk/svk-app/cognos/telegraf/* /usr/local/svk/svk-app/cognos/telegraf/
+etc/caddy/Caddyfile.d/scmc.conf /etc/caddy/Caddyfile.d/
+var/www/scmc/* /var/www/scmc/

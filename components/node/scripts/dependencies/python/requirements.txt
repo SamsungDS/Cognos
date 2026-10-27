@@ -1,0 +1,8 @@
+# Python dependencies for build and code coverage
+clang-format
+gcovr
+pytest
+pytest-cov
+pytest-mock
+
+-r requirements_deploy.txt

@@ -1,0 +1,34 @@
+build fmapi:
+  extends: release build
+  variables:
+    GIT_STRATEGY: none
+    CMAKE_ARGS:
+    RELEASE_TYPE: release
+    FMAPI_CLONE_DIR: "$FMAPI_PROJECT/$DOCKERFILE_NAME/$RELEASE_TYPE"
+  before_script:
+    # configure git with CI/CD token
+    - git config --global http.sslVerify false
+    # clone fmapi
+    - mkdir -p "$FMAPI_CLONE_DIR"
+    - cd $FMAPI_CLONE_DIR
+    - git clone https://gitlab-ci-token:${CI_JOB_TOKEN}@$CI_SERVER_HOST/$FMAPI_GROUP/$FMAPI_PROJECT .
+    - git reset --hard $FMAPI_COMMIT_ID
+  script:
+    - cd $FMAPI_DIR
+    - mkdir build
+    - cd build
+    - cmake $CMAKE_ARGS ..
+    - make
+  artifacts:
+    name: $CI_JOB_NAME - $DOCKERFILE_NAME
+    expire_in: 300 seconds
+    paths:
+     - $FMAPI_CLONE_DIR/$FMAPI_DIR
+  needs:
+    - build docker
+
+build fmapi simulation:
+  extends: build fmapi
+  variables:
+    CMAKE_ARGS: -DCMAKE_CXX_FLAGS="-DENABLE_SIM"
+    RELEASE_TYPE: sim

@@ -1,0 +1,65 @@
+---
+- name: Generate a self-signed certificates
+  ansible.builtin.include_role:
+    name: cognos_gen_certs
+  when:
+    - "'management_server' in group_names"
+    - cognos_certificates_enabled | default(false)
+
+- name: Check if certificates directory exists
+  ansible.builtin.stat:
+    path: "{{ cognos_certs_dir }}"
+  delegate_to: localhost
+  register: cognos_mgmt_fw_install_certs_dir
+  run_once: true
+  when: cognos_certificates_enabled | default(false)
+
+- name: Find certificate files in artifacts directory
+  ansible.builtin.find:
+    path: "{{ cognos_certs_dir }}"
+    file_type: file
+  delegate_to: localhost
+  register: cognos_mgmt_fw_install_certs_file
+  run_once: true
+  when:
+    - cognos_certificates_enabled | default(false)
+    - cognos_mgmt_fw_install_certs_dir.stat.exists
+
+- name: Check if all required certificate files exist
+  ansible.builtin.set_fact:
+    cognos_mgmt_fw_install_certs_founds: >-
+      {% if cognos_mgmt_fw_install_certs_file is defined %}
+      {% set found_basenames = cognos_mgmt_fw_install_certs_file.files | map(attribute='path') | map('basename') | list %}
+      {% set required_count = cognos_certs_files | length %}
+      {% set matched_count = (cognos_certs_files | intersect(found_basenames)) | length %}
+      {{ matched_count == required_count }}
+      {% else %} false {% endif %}
+  run_once: true
+  when:
+    - cognos_certificates_enabled | default(false)
+    - cognos_mgmt_fw_install_certs_file.files is defined
+
+- name: Create certificate destination directory
+  ansible.builtin.file:
+    path: "/etc/svk/certificates"
+    state: directory
+    mode: "0755"
+  become: true
+  when:
+    - "'management_server' in group_names"
+    - cognos_certificates_enabled | default(false)
+    - cognos_mgmt_fw_install_certs_founds is defined
+    - cognos_mgmt_fw_install_certs_founds | trim | bool
+
+- name: Copy certificates to destination
+  ansible.builtin.copy:
+    src: "{{ cognos_certs_dir }}/{{ item }}"
+    dest: "/etc/svk/certificates/{{ item }}"
+    mode: "0644"
+  become: true
+  loop: "{{ cognos_certs_files }}"
+  when:
+    - "'management_server' in group_names"
+    - cognos_certificates_enabled | default(false)
+    - cognos_mgmt_fw_install_certs_founds is defined
+    - cognos_mgmt_fw_install_certs_founds | trim | bool

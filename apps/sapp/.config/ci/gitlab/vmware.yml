@@ -1,0 +1,7 @@
+restore vmware snapshot:
+  stage: .pre
+  image: vmware/powerclicore:13.1
+  script:
+    - pwsh .config/ci/scripts/restore_vm_snapshot.ps1
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "parent_pipeline"

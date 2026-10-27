@@ -1,0 +1,5 @@
+# Python dependencies
+-r requirements_deploy.txt
+
+clang-format
+gcovr

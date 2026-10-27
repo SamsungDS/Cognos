@@ -1,0 +1,27 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	cmake -DWITH_RELEASE=ON -DPKG_CONFIG_PREFIX=/usr/local/svk/core -DCMAKE_INSTALL_PREFIX=/usr/local/svk/core -DFEAT_MODULE_PATH=/usr/local/svk/feature_modules ..
+
+override_dh_auto_build:
+	make -j$(nproc)
+
+override_dh_auto_install:
+	make install DESTDIR=$(CURDIR)/$(PACKAGE)
+
+override_dh_usrlocal:
+	# Do nothing, because we are installing to /usr/local even though it is against best practices
+
+override_dh_install:
+	# Create ld.conf.so.d file for SVK Core
+	dh_install
+
+override_dh_strip:
+	# Do not generate debug symbol packages
+	dh_strip --no-ddebs
+
+override_dh_shlibdeps:
+	# Set link path for shlibdeps - because it can't find libs in non-standard path in /usr/local

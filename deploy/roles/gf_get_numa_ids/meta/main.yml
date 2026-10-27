@@ -1,0 +1,3 @@
+---
+dependencies:
+  - role: gf_nic_status

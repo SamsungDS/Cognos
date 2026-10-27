@@ -1,0 +1,94 @@
+.configure-heading {
+  font-size: 20px;
+  font-family: 'Samsung Sharp Sans', sans-serif;
+  font-weight: bold; 
+  color: #00B3E3; 
+}
+.hostcapacity-bar>.progress-bar {
+    background-color: #45a7c8 !important;
+    font-size: large;
+    font-weight: bold;
+}
+table th {
+    color: #00B3E3 !important;
+    font-weight: 700 !important;
+}
+.table>:not(caption)>*>* {
+    background-color: black !important;
+}
+.memoboxTable {
+    height: 382px !important;
+}
+.table-div {
+    width: 100%;
+}
+thead,
+tbody {
+  display: block;
+}
+
+tbody {
+  max-height: 200px;
+}
+
+th, td {
+  min-width: 270px;
+  text-align: left;
+}
+
+.config-host {
+    margin: 12px;
+    top: 0; 
+    right: 0;
+    z-index: 2;
+}
+.cofig-row {
+  min-width: 230px;
+  font-family: 'Samsung Sharp Sans', sans-serif;
+  font-weight: bold; 
+  color: #00B3E3
+}
+.cmm-row {
+  min-width: 280px;
+}
+/* Media Query as per device size */
+@media screen and (min-width: 768px) and ( max-width: 920px)  {
+  .cofig-row {
+    min-width: 110px;
+    font-size: 12px;
+  }
+  .cmm-row {
+    min-width: 132px;
+    font-size: 12px;
+  }
+}
+@media screen and (min-width: 1024px) and ( max-width: 1440px) {
+  .cofig-row {
+    min-width: 150px;
+    font-size: 14px;
+  }
+  .cmm-row {
+    min-width: 180px;
+    font-size: 16px;
+  }
+}
+@media screen and (min-width: 1140px) and ( max-width: 2559px) {
+  .cofig-row {
+    min-width: 220px;
+    font-size: 18px;
+  }
+  .cmm-row {
+    min-width: 262px;
+    font-size: 18px;
+  }
+}
+@media screen and (min-width: 2560px) {
+  .cofig-row {
+    min-width: 405px;
+    font-size: 36px;
+  }
+  .cmm-row {
+    min-width: 484px;
+    font-size: 36px;
+  }
+}

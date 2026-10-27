@@ -1,0 +1,19 @@
+# Python dependencies
+click
+flask
+flask_cors
+gunicorn
+influxdb-client[ciso]
+pandas
+pytest
+pytest-asyncio
+pytest-cov==4.1.0
+pytest-mock
+requests
+responses
+simplejson
+selenium==4.18.1
+sqlparse
+websockets
+pyzmq
+unittest-xml-reporting

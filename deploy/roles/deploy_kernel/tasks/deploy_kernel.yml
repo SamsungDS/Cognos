@@ -1,0 +1,136 @@
+---
+
+- name: Install dependencies packages
+  become: true
+  ansible.builtin.package:
+    name: "{{ item }}"
+    state: present
+  with_items: "{{ deploy_kernel_dependencies }}"
+
+
+- name: Create kernel source code destination path
+  ansible.builtin.file:
+    path: "{{ deploy_kernel_staging_dir }}"
+    state: directory
+    mode: "0755"
+  become: true
+
+- name: Copy kernel tarball to specified node
+  ansible.builtin.copy:
+    src: "{{ deploy_kernel_tgz_stat.stat.path }}"
+    dest: "{{ deploy_kernel_staging_dir }}"
+    owner: root
+    group: root
+    mode: "0555"
+  become: true
+
+- name: Check if unzipped kernel source directory exists
+  ansible.builtin.stat:
+    path: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version_download }}"
+  register: deploy_kernel_unzip_dir_stat
+
+- name: Unarchive kernel source code
+  ansible.builtin.unarchive:
+    src: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version_download }}.tar.xz"
+    dest: "{{ deploy_kernel_staging_dir }}"
+    remote_src: true
+  become: true
+  when: not deploy_kernel_unzip_dir_stat.stat.exists
+
+- name: Copy current kernel config as kernel_source config file
+  ansible.builtin.copy:
+    src: "/boot/config-{{ ansible_kernel }}"
+    dest: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version_download }}/.config"
+    owner: root
+    group: root
+    mode: "0644"
+    remote_src: true
+  become: true
+
+- name: Fix for singed keys issue
+  ansible.builtin.shell: |
+    ./scripts/config --disable SYSTEM_REVOCATION_KEYS
+    ./scripts/config --disable SYSTEM_TRUSTED_KEYS
+  args:
+    chdir: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version_download }}/"
+  become: true
+  changed_when: false
+
+- name: Enable DAMO related kernel option
+  ansible.builtin.shell: |
+    ./scripts/config --enable CONFIG_DAMON
+    ./scripts/config --enable CONFIG_DAMON_VADDR
+    ./scripts/config --enable CONFIG_DAMON_PADDR
+    ./scripts/config --enable CONFIG_DAMON_SYSFS
+    ./scripts/config --enable CONFIG_DAMON_DBGFS_DEPRECATED
+    ./scripts/config --enable CONFIG_DAMON_DBGFS
+    ./scripts/config --enable CONFIG_DAMON_RECLAIM
+    ./scripts/config --enable CONFIG_DAMON_LRU_SORT
+  args:
+    chdir: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version_download }}/"
+  become: true
+  changed_when: false
+
+- name: Fix for invalid symbol issue
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      sh -c 'yes "" | make oldconfig'
+    executable: /bin/bash
+  args:
+    chdir: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version_download }}/"
+  become: true
+  register: deploy_kernel_fix_symbol
+  changed_when: deploy_kernel_fix_symbol.rc != 0
+
+- name: Compile kernel by source code - make
+  ansible.builtin.command:
+    cmd: make -j{{ ansible_processor_vcpus }}
+    chdir: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version_download }}"
+    creates: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version_download }}/vmlinux"
+  async: "{{ deploy_kernel_compile_timeout }}"
+  poll: 0
+  register: deploy_kernel_make
+  changed_when: false
+
+- name: Wait for make
+  ansible.builtin.async_status:
+    jid: "{{ deploy_kernel_make.ansible_job_id }}"
+  register: deploy_kernel_wait_for_make
+  until:
+    - deploy_kernel_wait_for_make.finished
+  retries: "{{ deploy_kernel_compile_check_retries }}"
+  delay: "{{ deploy_kernel_compile_check_interval }}"
+  when: not deploy_kernel_make.failed
+
+- name: "Ensure kernel modules directory is empty {{ deploy_kernel_modules_location }}"
+  ansible.builtin.file:
+    path: "{{ deploy_kernel_modules_location }}"
+    state: absent
+  when: not deploy_kernel_wait_for_make.failed
+
+- name: Make modules_install
+  ansible.builtin.command:
+    cmd: make INSTALL_MOD_STRIP=1 modules_install
+    chdir: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version_download }}"
+    creates: "{{ deploy_kernel_modules_location }}"
+  register: deploy_kernel_mod_install_status
+  when: not deploy_kernel_wait_for_make.failed
+
+- name: Assert kernel directory exists
+  ansible.builtin.file:
+    path: "{{ deploy_kernel_installation_location | dirname }}"
+    state: directory
+    mode: "0750"
+
+- name: Make install
+  ansible.builtin.command:
+    cmd: make install
+    chdir: "{{ deploy_kernel_staging_dir }}/linux-{{ deploy_kernel_version_download }}"
+    creates: "{{ deploy_kernel_installation_location }}"
+  when: not deploy_kernel_mod_install_status.failed
+
+- name: "Delete kernel compiling directory {{ deploy_kernel_staging_dir }}"
+  ansible.builtin.file:
+    path: "{{ deploy_kernel_staging_dir }}"
+    state: absent

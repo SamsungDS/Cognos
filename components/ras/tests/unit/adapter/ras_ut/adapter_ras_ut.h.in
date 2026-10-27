@@ -1,0 +1,6 @@
+#ifndef _ADAPTER_RAS_UT__H__
+#define _ADAPTER_RAS_UT__H__
+
+#define UT_ADPATER_NAME "@UT_RAS_ADAPTER_NAME@"
+
+#endif  // _ADAPTER_RAS_UT__H__

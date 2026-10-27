@@ -1,0 +1,34 @@
+# Author: June Liu
+# Contact: june.liu@samsung.com
+---
+
+- name: Get hostname of the first gemfire locator
+  ansible.builtin.command: hostname
+  delegate_to: "{{ hostvars[groups['gemfire_locator'][0]]['inventory_hostname'] }}"
+  register: ycsb_dataload_run_locator_hostname
+  changed_when: false
+
+- name: Load Gemfire locators from file
+  ansible.builtin.command: "cat {{ gf_check_stat_path }}/{{ gf_region_info_file }}"
+  register: ycsb_dataload_run_regions
+  delegate_to: localhost
+  changed_when: true
+
+- name: Load locators from file into list
+  ansible.builtin.set_fact:
+    ycsb_dataload_run_locator_list: "{{ ycsb_dataload_run_regions.stdout }}"
+  delegate_to: localhost
+
+- name: Generate run dataload scripts for ycsb_clients
+  ansible.builtin.template:
+    src: run_ycsb_dataload_multi.sh.j2
+    dest: "{{ gf_installed_base_dir }}/ycsb_benchmarks/run_ycsb_dataload.sh"
+    mode: "0755"
+  become: true
+
+- name: Conduct run dataload scripts on ycsb_clients
+  ansible.builtin.command: "{{ gf_installed_base_dir }}/ycsb_benchmarks/run_ycsb_dataload.sh"
+  register: ycsb_dataload_run_stat
+  run_once: true
+  changed_when: ycsb_dataload_run_stat.rc != 0
+  become: true

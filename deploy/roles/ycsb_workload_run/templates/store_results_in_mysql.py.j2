@@ -1,0 +1,394 @@
+#!/usr/bin/python
+# -*- coding: UTF-8 -*-
+# @filename: store_results_in_mysql.py
+# @author: june.liu@samsung.com
+
+import pymysql  
+from pathlib import Path
+import sys
+import os
+import re
+import time
+
+# database config
+DB_CONFIG = {
+    'host': "{{ dashboard_db_info['host'] }}",  # db host ip '105.128.44.136' '109.105.120.76'
+    'user': "{{ dashboard_db_info['user'] }}",  # db user name
+    'port': {{ dashboard_db_info['port'] }},   # db port 33070 3306
+    'password': "{{ dashboard_db_info['password'] }}",  # db password
+    'db': "{{ dashboard_db_info['db'] }}",  # db name
+    'charset': 'utf8mb4',  
+    'cursorclass': pymysql.cursors.DictCursor 
+}
+
+ycsb_overall_tab="ycsb_overall_result"
+ycsb_eachround_tab="ycsb_eachround_result"
+ycsb_10round_tab="ycsb_10round_result"
+ycsb_overall_sup_tab="ycsb_overall_supply_info"
+
+def create_table():
+    try:
+        # Connect to MySQL server
+        sql = '''
+        CREATE TABLE IF NOT EXISTS {} (
+                    `index` INTEGER UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    `date` DATETIME,
+                    `host` VARCHAR(45),
+                    `is_svk` VARCHAR(10) NOT NULL,
+                    `dram_num` SMALLINT UNSIGNED,
+                    `dram_total_capacity_GB` INTEGER UNSIGNED,
+                    `cxl_num` SMALLINT UNSIGNED,
+                    `cxl_total_capacity_GB` INTEGER UNSIGNED,
+                    `gemfire_num` SMALLINT UNSIGNED,
+                    `redundancy` SMALLINT UNSIGNED,
+                    `dram_cxl_cxl_ratio` VARCHAR(20),
+                    `wokload_data_size` VARCHAR(20),
+                    `workload_iterations` INTEGER UNSIGNED,
+                    `concurrency` VARCHAR(10),
+                    `mem_type` VARCHAR(20),
+                    `rec_count_m` INTEGER UNSIGNED,
+                    `ops_count_m` INTEGER UNSIGNED,
+                    `total_runtime_min` INTEGER UNSIGNED,
+                    `throughput_ops_per_sec` FLOAT,
+                    `read_avg_us` INTEGER UNSIGNED,
+                    `read_p99_us` INTEGER UNSIGNED,
+                    `update_avg_us` INTEGER UNSIGNED,
+                    `update_p99_us` INTEGER UNSIGNED
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+        '''.format(ycsb_overall_tab)
+        record_every_round_sql = '''
+        CREATE TABLE IF NOT EXISTS {} (
+                    `id` INTEGER UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    `iteration` SMALLINT UNSIGNED,
+                    `runtime_min` INTEGER UNSIGNED,
+                    `throughput_ops_per_sec` FLOAT,
+                    `read_avg_us` INTEGER UNSIGNED,
+                    `read_p99_us` INTEGER UNSIGNED,
+                    `update_avg_us` INTEGER UNSIGNED,
+                    `update_p99_us` INTEGER UNSIGNED,
+                    `overall_index` INTEGER UNSIGNED,
+                    FOREIGN KEY (`overall_index`) REFERENCES {}(`index`)
+                ) 
+        '''.format(ycsb_eachround_tab, ycsb_overall_tab)
+
+        record_10round_sql = '''
+        CREATE TABLE IF NOT EXISTS {} (
+                    `id` INTEGER UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    `iteration` SMALLINT UNSIGNED,
+                    `runtime_min` INTEGER UNSIGNED,
+                    `throughput_ops_per_sec` FLOAT,
+                    `read_avg_us` INTEGER UNSIGNED,
+                    `read_p99_us` INTEGER UNSIGNED,
+                    `update_avg_us` INTEGER UNSIGNED,
+                    `update_p99_us` INTEGER UNSIGNED,
+                    `overall_index` INTEGER UNSIGNED,
+                    FOREIGN KEY (`overall_index`) REFERENCES {}(`index`)
+                ) 
+        '''.format(ycsb_10round_tab, ycsb_overall_tab)
+
+        record_overall_info_sql = '''
+        CREATE TABLE IF NOT EXISTS {} (
+                    `id` INTEGER UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    `cpu_usage` DECIMAL(5,2),
+                    `power_consumption` FLOAT,
+                    `jira_id` VARCHAR(20),
+                    `timeout_setting` VARCHAR(20),
+                    `svk_applied_size` VARCHAR(20),
+                    `comment` VARCHAR(100),
+                    `load_type` VARCHAR(20),
+                    `overall_index` INTEGER UNSIGNED,
+                    FOREIGN KEY (`overall_index`) REFERENCES {}(`index`)
+                ) 
+        '''.format(ycsb_overall_sup_tab, ycsb_overall_tab)
+
+        connection = pymysql.connect(**DB_CONFIG)
+        with connection.cursor() as cursor:
+            # Create table
+            cursor.execute(sql)
+            connection.commit()
+            cursor.execute(record_every_round_sql)
+            connection.commit()
+            cursor.execute(record_10round_sql)
+            connection.commit()
+            cursor.execute(record_overall_info_sql)
+            connection.commit()
+            print("Table created successfully.")
+    except pymysql.MySQLError as e:
+        print(f"Error while creating table: {e}")
+    finally:
+        connection.close()
+
+def find_files_with_keyword(directory, keyword):
+    ret = None
+    for root, dirs, files in os.walk(directory):
+        for file in files:
+            file_path = os.path.join(root, file)
+            if keyword not in file:
+                continue
+            try:
+                file_size = os.path.getsize(file_path)
+                if file_size == 0:
+                    continue  # SKIP empty file
+            except (OSError, FileNotFoundError):
+                continue
+
+            # Find the first file, and return filename
+            ret = file
+            return ret
+    return ret  # Return None
+
+
+def get_host_mem_info(file_path):
+    if not os.path.exists(file_path):
+        print("File does not exist.")
+        return None
+    file = open(file_path, "r")
+    cxl_num = 0
+    cxl_capacity =0
+    dram_num =0 
+    dram_capacity = 0
+    cxl_id=[]
+    dram_id=[]
+    num_end_pattern = re.compile(r".*[0-9]$")
+    size_pattern = re.compile(r"node (\d+) size: (\d+) MB")
+    cxl_node_pattern = re.compile(r"node (\d+) cpus:$")
+    for line in file.readlines():
+        if cxl_node_pattern.match(line):
+            cxl_num+=1
+            cxl_id.append(re.findall("\d+", line)[0])
+        elif "cpus:" in line and num_end_pattern.match(line):
+            dram_num +=1
+            dram_id.append(re.findall("\d+", line)[0])
+        else:
+            match = re.match(size_pattern, line)
+            if match:
+                groups = match.groups()
+                if groups[0] in cxl_id:
+                    cxl_capacity += int(groups[1])/1024
+                elif groups[0] in dram_id:
+                    dram_capacity += int(groups[1])/1024
+    file.close()
+    return cxl_num,cxl_capacity,dram_capacity,dram_num
+
+def caculate_runtime(start_date,end_date):
+    start_time = time.strptime(start_date,"%Y/%m/%d %H:%M:%S")
+    end_time = time.strptime(end_date,"%Y/%m/%d %H:%M:%S")
+    start_timpstamp = time.mktime(start_time)
+    end_timestamp = time.mktime(end_time)
+    runtime = (end_timestamp - start_timpstamp)/60
+    return runtime
+
+
+def get_startdate_and_runtime_info(file_path1,file_path2):
+    start_date_pattern = re.compile(r"\[info \d{4}/\d{1,2}/\d{1,2} \d{1,2}:\d{1,2}:\d{1,2}")
+    run_time_pattern = re.compile(r"\[OVERALL\]\, RunTime\(ms\)\, (\d+)")
+
+    if not os.path.exists(file_path1) or not os.path.exists(file_path2) :
+        print("File does not exist.")
+        return None
+
+    start_date = None
+    total_runtime_min = 0
+    file1=find_files_with_keyword(file_path1, "mixed")
+    file2=find_files_with_keyword(file_path2, "mixed")
+    ########get start Date in file1########
+    if file1 is not None and len(file1) > 0:
+        file = open(file_path1+'/'+file1, "r")
+        for line in file.readlines():
+            match = re.match(start_date_pattern, line)
+            if match:
+                start_date = match.group().replace("[info ","")
+                break
+        file.close()
+    else:
+        print("No mixed workload results found.")
+        return None
+    end_date = None
+    
+    ########get start Date and runtime in file2########
+    if file2 is not None and len(file2) > 0:
+        file = open(file_path2+'/'+file2, "r")
+        for line in file.readlines():
+            match = re.match(start_date_pattern, line)
+            if match:
+                end_date = match.group().replace("[info ","")
+            else:
+                match = re.match(run_time_pattern, line)
+                if match:
+                    total_runtime_min += int(match.group().split(",")[-1])/1000/60
+                    break
+        file.close()
+    else:
+        print("No mixed workload results found.")
+        return None
+
+    if end_date is None or start_date is None:
+        print("Please check the mixed workload to see if the workload is complete.")
+        return None
+    total_runtime_min += caculate_runtime(start_date,end_date)
+
+    return start_date,total_runtime_min
+
+def get_avg_eachround_result(results_dir,keyword):
+    avg_result = 0
+    results = []
+    ten_results = []
+    i=0
+    file = find_files_with_keyword(results_dir,"mixedalliterations"+keyword)
+    if file is not None and len(file) > 0:
+        file = open(results_dir+'/'+file, "r")
+        for line in file.readlines():
+           avg_result += float(line)
+           results.append(float(line))
+           i+=1
+           if (i%10 ==0):
+                ten_results.append(avg_result/i)
+        file.close()
+        avg_result = avg_result/i
+        
+    return avg_result,results,ten_results
+
+
+def insert_data(dataset_info, results_dir, target_dir,iterations):
+    try:
+        ########### from gemfire-server-results-analyzer ###########
+        # `date`####
+        # `host`  ####
+        # `is_svk` ####
+        # `dram_num`####
+        # `dram_total_capacity`####
+        # `cxl_num`####
+        # `cxl_total_capacity`####
+        # `gemfire_num`-----------
+        # `dram_cxl_cxl_ratio`------------
+        # `redundancy`----------
+        # `total_runtime_min` ####
+        gemfire_num = {{ gf_server_total_num }}
+        dram_cxl_cxl_ratio = "{{ gfs_ratio }}"+"(cxl_num:"+"{{ cxl_num }}"+")"
+        redundancy = {{ redundancy }}
+        {% set host_ips = groups['gemfire_server'] | map('extract', hostvars, 'ansible_host') | list %}
+        {% set host_list = host_ips | join(',') %}
+
+        host = "{{ host_list }}"
+        # host = find_files_with_keyword(results_dir, 'dstat_metrics')
+        # if host != None:
+        #     host = host.split('_')[-1].split('.')[0]
+        
+        round1_log_dir= results_dir + '/' + target_dir + '1/'
+        round_last_log_dir= results_dir + '/' + target_dir + str(iterations)+'/'
+        print("round1_dir:",round1_log_dir)
+        print("round1ast_dir:",round_last_log_dir)
+
+        damo_file = find_files_with_keyword(round1_log_dir, 'damo')
+        if damo_file!= None:
+            is_svk = 'SVK'
+        else:
+            is_svk = 'NoSVK'
+
+        numa_file = find_files_with_keyword(round1_log_dir, 'numactl')
+        cxl_num,cxl_total_capacity,dram_total_capacity,dram_num = get_host_mem_info(round1_log_dir+'/'+numa_file)
+        date,total_runtime_min = get_startdate_and_runtime_info(round1_log_dir,round_last_log_dir)
+        
+
+        #################from workload-results ##################
+        #`throughput_ops_per_sec`####
+        # `read_avg_us`####
+        # `read_p99_us` ####
+        # `update_avg_us`####
+        # `update_p99_us`####
+        throughput_per_round =[]
+        read_avg_us_per_round = []
+        update_avg_us_per_round = []
+        read_p99_us_per_round = []
+        update_p99_us_per_round = []
+        runtime_per_round = []
+        throughput_10round =[]
+        read_avg_us_10round = []
+        update_avg_us_10round = []
+        read_p99_us_10round = []
+        update_p99_us_10round = []
+        runtime_per_10round = []
+        cur_path = os.path.dirname(results_dir)
+        parent_path = os.path.dirname(cur_path)
+
+        throughput_ops_per_sec,throughput_per_round,throughput_10round = get_avg_eachround_result(parent_path,"throughput")
+        read_avg_us,read_avg_us_per_round,read_avg_us_10round = get_avg_eachround_result(parent_path,"rlatency")
+        read_p99_us,read_p99_us_per_round,read_p99_us_10round = get_avg_eachround_result(parent_path,"r99latency")
+        update_avg_us,update_avg_us_per_round,update_avg_us_10round = get_avg_eachround_result(parent_path,"ulatency")
+        update_p99_us,update_p99_us_per_round,update_p99_us_10round = get_avg_eachround_result(parent_path,"u99latency")
+        avg_run_time,runtime_per_round,runtime_10round = get_avg_eachround_result(parent_path,"runtime")
+        
+        {% if metrics_enable %}
+        
+        avg_cpu,cpu_per_round,cpu_10round = get_avg_eachround_result(parent_path,"cpu")
+
+        {% endif %}
+
+        {% if ycsb_logs_parser_skiptimeout %}
+
+        timeout_setting = "skiptimeout"
+        {% else %}
+
+        timeout_setting = "noskiptimeout"
+        {% endif %}
+
+
+        # Connect to MySQL server and insert data
+        connection = pymysql.connect(**DB_CONFIG)
+        with connection.cursor() as cursor:
+            # insert the data into MySQL table
+            #sql = f"INSERT INTO ycsb_overall_result2 (`date`, `host`, `is_svk`,`dram_num`,`dram_total_capacity`,`cxl_num`, `cxl_total_capacity`,  `gemfire_num`,  `dram_cxl_cxl_ratio`, `wokload_data_size`, `workload_iterations`, `concurrency`,`mem_type`,`rec_count_m`,`ops_count_m`,`total_runtime_min`,`throughput_ops_per_sec`, `read_avg_us`, `read_p99_us`, `update_avg_us`, `update_p99_us`) VALUES (%s, %s, %d, %d, %d,%d, %d,  %d, %s, %s, %d, %s, %s, %d, %d, %d, %f, %d, %d, %d, %d)"
+            sql = f"INSERT INTO {ycsb_overall_tab} (`date`, `host`, `is_svk`,`dram_num`,`dram_total_capacity_GB`,`cxl_num`, `cxl_total_capacity_GB`,  `gemfire_num`,`redundancy`,  `dram_cxl_cxl_ratio`, `wokload_data_size`, `workload_iterations`, `concurrency`,`mem_type`,`rec_count_m`,`ops_count_m`,`total_runtime_min`,`throughput_ops_per_sec`, `read_avg_us`, `read_p99_us`, `update_avg_us`, `update_p99_us`)\
+             VALUES (%s, %s, %s, %s, %s,%s, %s,  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+            data = (date, host, is_svk,dram_num,dram_total_capacity,cxl_num, cxl_total_capacity, gemfire_num,redundancy, dram_cxl_cxl_ratio, dataset_info['wokload_data_size'],int(dataset_info['workload_iterations']), dataset_info['combination'],dataset_info['mem_type'],dataset_info['recordcount'],dataset_info['opscount'],total_runtime_min,throughput_ops_per_sec,read_avg_us,read_p99_us,update_avg_us,update_p99_us)
+            cursor.execute(sql,data)
+            connection.commit()
+
+            # get the latest record id
+            latest_record_id = cursor.lastrowid
+
+            ###insert data to every round info table
+            for i in range(0,int(dataset_info['workload_iterations'])):
+                sql = f"INSERT INTO {ycsb_eachround_tab} (`iteration`,`runtime_min`, `throughput_ops_per_sec`,`read_avg_us`, `read_p99_us`, `update_avg_us`, `update_p99_us`,`overall_index`) VALUES (%s,%s, %s, %s, %s, %s, %s,%s)"
+                data  = (i+1,runtime_per_round[i],throughput_per_round[i],read_avg_us_per_round[i],read_p99_us_per_round[i],update_avg_us_per_round[i],update_p99_us_per_round[i],latest_record_id)
+                cursor.execute(sql,data)
+                connection.commit()
+            
+            ###insert data to ten round info table
+            num_10iter = int(dataset_info['workload_iterations'])/10
+            for i in range(0,int(num_10iter)):
+                sql = f"INSERT INTO {ycsb_10round_tab} (`iteration`,`runtime_min`, `throughput_ops_per_sec`,`read_avg_us`, `read_p99_us`, `update_avg_us`, `update_p99_us`,`overall_index`) VALUES (%s,%s, %s, %s, %s, %s, %s,%s)"
+                data  = ((i+1)*10,runtime_10round[i],throughput_10round[i],read_avg_us_10round[i],read_p99_us_10round[i-1],update_avg_us_10round[i],update_p99_us_10round[i],latest_record_id)
+                cursor.execute(sql,data)
+                connection.commit()  
+            
+            #sql = f"INSERT INTO {ycsb_overall_sup_tab} (`cpu_usage`, `power_consumption`,`jira_id`,`timeout_setting`,`svk_applied_size`, `comment`,  `load_type`,`overall_index`)\
+            sql = f"INSERT INTO {ycsb_overall_sup_tab} (`cpu_usage`, `timeout_setting`,`overall_index`)\
+             VALUES (%s, %s, %s)"
+            data = (avg_cpu, timeout_setting, latest_record_id)
+            cursor.execute(sql,data)
+            connection.commit()
+
+            cursor.close()
+       
+    except pymysql.MySQLError as e:
+        print(f"Error while inserting data: {e}")
+    finally:
+        print("Persist benchmark result in database successfully.Closing connection")
+        connection.close()
+
+if __name__ == '__main__':
+    # 创建表
+    create_table()
+    dataset_info= {}
+    
+    dataset_info['wokload_data_size'] = sys.argv[1]
+    dataset_info['workload_iterations'] = int(sys.argv[2])
+    dataset_info['combination'] = sys.argv[3]
+    dataset_info['recordcount'] = int(sys.argv[4])/1000000
+    dataset_info['opscount'] = int(sys.argv[5])/1000000
+    dataset_info['mem_type'] = sys.argv[6]
+    results_dir = sys.argv[7]
+    target_dir = sys.argv[8] 
+    insert_data(dataset_info,results_dir, target_dir,dataset_info['workload_iterations'])
+    print("Data inserted successfully.")

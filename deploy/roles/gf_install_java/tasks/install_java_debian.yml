@@ -1,0 +1,36 @@
+---
+- name: Get the main version of current installed java
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      java -version 2>&1 | grep -o 'version \"[0-9].*\"' | awk -F'"' '{print $2}' | cut -d. -f1
+    executable: /bin/bash
+  register: gf_install_java_version
+  failed_when: false
+  changed_when: gf_install_java_version.rc != 0
+
+- name: Install OpenJDK via package manager (Ubuntu) when java version is not {{ gf_install_java_version_set }}
+  ansible.builtin.apt:
+    name: "{{ gf_install_java_jdk_package }}"
+    state: present
+    update_cache: true
+  become: true
+  when: gf_install_java_version.stdout != gf_install_java_version_set
+
+- name: Remove existing /etc/alternatives/java symlink
+  ansible.builtin.file:
+    path: /etc/alternatives/java
+    state: absent
+  become: true
+  when: gf_install_java_version.stdout != gf_install_java_version_set
+
+- name: Set system java version as {{ gf_install_java_version_set }}
+  ansible.builtin.file:
+    src: "{{ gf_java_home[ansible_distribution_file_variety | lower] }}/bin/java"
+    dest: /etc/alternatives/java
+    state: link
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+  when: gf_install_java_version.stdout != gf_install_java_version_set

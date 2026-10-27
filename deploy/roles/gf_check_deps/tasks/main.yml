@@ -1,0 +1,238 @@
+# Author: June Liu
+# Contact: june.liu@samsung.com
+---
+
+#############################
+## No need for Step: Setup Passwordless authentication from client machine to all database servers
+## STEP: Install and Set the correct java version in both Client and Database servers:
+#############################
+
+- name: Install Java
+  ansible.builtin.include_role:
+    name: gf_install_java
+
+##############################
+### STEP: Create below set of directories in both client and database Server:
+##############################
+
+- name: Create directories with specific permissions
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: '0755'
+  loop: "{{ gf_required_dirs }}"
+  become: true
+
+################################
+## STEP 6) Copy YCSB Client and Database software to "/root" in Client and Database Servers (GemFire in this case):
+################################
+
+- name: Deploy gemfire and ycsb packages
+  ansible.builtin.include_tasks:
+    file: deploy_gemfire.yml
+
+- name: Install sysstat on gemfire server to collect metrics
+  ansible.builtin.apt:
+    name: sysstat
+    state: present
+    update_cache: true
+  become: true
+  when:
+    - inventory_hostname in groups['gemfire_server']
+    - ansible_distribution == 'Ubuntu'
+
+- name: Install sysstat via dnf/yum (OEL)
+  ansible.builtin.dnf:
+    name: sysstat
+    state: present
+    disable_gpg_check: true
+  become: true
+  when:
+    - inventory_hostname in groups['gemfire_server']
+    - ansible_distribution == 'OracleLinux'
+
+- name: Enable and start sysstat service
+  ansible.builtin.systemd:
+    name: sysstat
+    state: started
+    enabled: true
+  become: true
+  when:
+    - inventory_hostname in groups['gemfire_server']
+
+- name: Deploy metrics collection script on gemfire servers
+  ansible.builtin.include_tasks:
+    file: deploy_metrics_collect_script.yml
+  when:
+    - inventory_hostname in groups['gemfire_server']
+
+################################
+## STEP: Edit .bashrc to set the correct java version to be used along with the paths for the Database Server (GemFire database in this case):
+################################
+- name: Ensure GemFire directory exists
+  ansible.builtin.file:
+    path: "{{ gemfire_home }}"
+    state: directory
+    mode: '0755'
+
+- name: Create /etc/profile.d/gemfire_env.sh
+  ansible.builtin.copy:
+    content: |
+      export JAVA_HOME={{ gf_java_home[ansible_distribution_file_variety | lower] }}
+      export GEMFIRE_HOME={{ gemfire_home }}
+      export GF_JAVA={{ gf_java }}
+      export PATH={{ gf_path_add }}:$PATH
+    dest: /etc/profile.d/gemfire_env.sh
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+
+- name: Verify environment variables are set
+  ansible.builtin.shell:
+    cmd: |
+      source /etc/profile.d/gemfire_env.sh && echo $JAVA_HOME
+    executable: /bin/bash
+  become: true
+  changed_when: false
+
+#############################################
+## STEP: Identify Socket Association Information for NVME drives/CXL Devices/Network Interfaces in Database Server and configure them as per the requirements:
+#############################################
+
+- name: Configure nvme_drives as gemfire server storage
+  ansible.builtin.include_tasks:
+    file: mount_disks_gemfire_server.yml
+  when: inventory_hostname in groups['gemfire_server']
+
+- name: Configure networks
+  ansible.builtin.include_role:
+    name: gf_nic_status
+
+- name: Get NUMAnode info and CPU Socket info
+  ansible.builtin.include_role:
+    name: gf_get_numa_ids
+
+#############################################
+## STEP: Create cgroup mount for DAMO Setup:
+#############################################
+
+- name: Ensure cgroup2 is mounted
+  ansible.posix.mount:
+    path: "{{ gf_check_deps_cgroup_point }}"
+    src: "none"
+    fstype: "cgroup2"
+    state: "mounted"
+    opts: "rw,relatime"
+    boot: false
+  become: true
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Enable memory controller in cgroup.subtree_control
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      echo '+memory' | tee {{ gf_check_deps_cgroup_point }}/cgroup.subtree_control
+    executable: /bin/bash
+  become: true
+  register: gf_check_deps_result
+  changed_when: gf_check_deps_result.rc == 0
+
+- name: Create directory for HMSDK
+  ansible.builtin.file:
+    path: "{{ gf_check_deps_cgroup_point }}/hmsdk"
+    state: directory
+    mode: "0755"
+  become: true
+  when: inventory_hostname in groups['gemfire_server']
+
+#############################################
+### STEP: Generate DAMO config file for current CXL Devices in Database Server:
+#############################################
+- name: Check if config file exists
+  ansible.builtin.stat:
+    path: "{{ gf_installed_base_dir }}/{{ gf_check_deps_hmsdk_tar }}"
+  register: gf_check_deps_hmsdk_file
+  when: inventory_hostname in groups['gemfire_server']
+
+- name: Copy large file using rsync
+  ansible.posix.synchronize:
+    src: "{{ artifacts_dir }}/{{ gf_check_deps_hmsdk_tar }}"
+    dest: "/tmp/"
+    mode: push
+    rsync_opts:
+      - "--partial"
+      - "--compress"
+      - "--progress"
+      - "--timeout=300"
+    compress: true
+  when:
+    - inventory_hostname in groups['gemfire_server']
+    - not gf_check_deps_hmsdk_file.stat.exists
+
+- name: Move file to {{ gf_installed_base_dir }}
+  ansible.builtin.command:
+    cmd: "mv /tmp/{{ gf_check_deps_hmsdk_tar }} {{ gf_installed_base_dir }}"
+  become: true
+  changed_when: false
+  when:
+    - inventory_hostname in groups['gemfire_server']
+    - not gf_check_deps_hmsdk_file.stat.exists
+
+- name: Check if unzipped HMSDK package exists
+  ansible.builtin.stat:
+    path: "{{ gf_hmsdk_dir }}"
+  register: gf_check_deps_hmsdk_unzip
+  when: inventory_hostname in groups['gemfire_server']
+
+- name: Unarchive HMSDK package
+  ansible.builtin.unarchive:
+    src: "{{ gf_installed_base_dir }}/{{ gf_check_deps_hmsdk_tar }}"
+    dest: "{{ gf_installed_base_dir }}"
+    remote_src: true
+    mode: '0755'
+  become: true
+  when:
+    - inventory_hostname in groups['gemfire_server']
+    - not gf_check_deps_hmsdk_unzip.stat.exists
+
+- name: Generate config_list with command details
+  ansible.builtin.set_fact:
+    gf_check_deps_config_list: |
+      export PYTHONPATH=$PYTHONPATH:/root/hmsdk/damo/src
+      {%- for pkg_id, phys_ids in gf_get_numa_ids_map.items() %}
+      {%- set pkg_id_int = pkg_id | int %}
+      {%- set dram_iter = phys_ids | intersect(gf_get_numa_ids_dram) %}
+      {%- set cxl_iter = phys_ids | intersect(gf_get_numa_ids_cxl) %}
+      {%- for dram_node in dram_iter %}
+      {%- for cxl_node in cxl_iter %}
+        config_command: /root/hmsdk/tools/gen_config.py -d {{ dram_node }} {{ cxl_node }} -p {{ cxl_node }} {{ dram_node }} \
+          -o /root/ycsb_benchmarks/damo-default-config-node{{ dram_node }}-{{ cxl_node }}.yaml
+      {%- endfor %}
+      {%- endfor %}
+      {%- endfor %}
+  when:
+    - inventory_hostname in groups['gemfire_server']
+    - gf_get_numa_ids_cxl | length > 0
+
+- name: Split gf_check_deps_config_list into list
+  ansible.builtin.set_fact:
+    gf_check_deps_cfg_cmds: "{{ gf_check_deps_config_list | split('config_command:') | map('trim') | list | reject('==', '') | list }}"
+  when: gf_check_deps_config_list is defined and inventory_hostname in groups['gemfire_server']
+
+- name: Execute gen_config commands
+  ansible.builtin.shell: "{{ item }}"
+  args:
+    executable: /bin/bash
+  environment:
+    PYTHONPATH: "{{ lookup('env', 'PYTHONPATH') }}:{{ gf_installed_base_dir }}/hmsdk/damo/src"
+  loop: "{{ gf_check_deps_cfg_cmds }}"
+  become: true
+  when:
+    - inventory_hostname in groups['gemfire_server']
+    - gf_check_deps_cfg_cmds is defined
+    - gf_check_deps_cfg_cmds | length > 0
+  register: gf_check_deps_damo_cfg
+  changed_when: gf_check_deps_damo_cfg.rc != 0

@@ -1,0 +1,33 @@
+# Author: Hua He
+# Contact: h.he@samsung.com
+---
+
+- name: Update apt package list
+  ansible.builtin.apt:
+    update_cache: true
+  when: apt_update
+
+- name: Install PCM package
+  ansible.builtin.apt:
+    name: "{{ pcm_package }}"
+    state: present
+    update_cache: true
+    install_recommends: false
+  become: true
+  register: ycsb_pcm_install_result
+
+- name: Show installation result
+  ansible.builtin.debug:
+    msg: "PCM installed successfully: {{ ycsb_pcm_install_result.changed }}"
+  when: ycsb_pcm_install_result != 0
+
+- name: Verify pcm command is available
+  ansible.builtin.command: which pcm
+  register: ycsb_pcm_install_check
+  ignore_errors: true
+  changed_when: false
+
+- name: Print pcm path
+  ansible.builtin.debug:
+    msg: "PCM binary found at: {{ ycsb_pcm_install_check.stdout }}"
+  when: ycsb_pcm_install_check.rc == 0

@@ -1,0 +1,29 @@
+[kernel_upgrade_node]
+hostname1/host_ip1
+
+[management_server]
+hostname2/host_ip2
+
+[application_server]
+hostname3/host_ip3
+hostname4/host_ip4
+
+[gemfire_server]
+gemfire1 ansible_host=<hostname/host_ip> server_ports=40404 damo_config="damo-default-config-node0-2.yaml"
+gemfire2 ansible_host=<hostname/host_ip> server_ports=40404 damo_config="damo-default-config-node0-2.yaml"
+gemfire3 ansible_host=<hostname/host_ip> server_ports=40404 damo_config="damo-default-config-node0-2.yaml"
+
+[gemfire_locator]
+locator1 ansible_host=<hostname/host_ip> locator_port=10334
+
+[ycsb_client]
+hostname5/host_ip5
+
+[benchmark_all:children]
+gemfire_server
+gemfire_locator
+ycsb_client
+
+[all:vars]
+ansible_user=<user name>
+ansible_password={{ vault_ansible_password }}

@@ -1,0 +1,15 @@
+---
+
+- name: Execute update-grub
+  ansible.builtin.command: "update-grub"
+  become: true
+  register: deploy_kernel_execute_update
+  changed_when: deploy_kernel_execute_update.rc != 0
+
+- name: Reboot system - kernel
+  ansible.builtin.reboot:
+    reboot_timeout: "{{ deploy_kernel_reboot_timeout }}"
+  become: true
+
+- name: Gather facts post-reboot
+  ansible.builtin.setup:

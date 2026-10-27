@@ -1,0 +1,150 @@
+#ifndef __SVK_LOGIC_STRUCT_H__
+#define __SVK_LOGIC_STRUCT_H__
+
+#include <boost/property_tree/json_parser.hpp>
+#include <boost/property_tree/ptree.hpp>
+#include <string>
+#include <thread>
+#include <unordered_map>
+
+#include "framework_downstream.h"
+#include "svk_logger.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/**
+ * @struct svk_logic_cmd
+ * @brief Passthrough command to the SLA Tracker logic execute function
+ *
+ * Passthrough command struct is used for communication between the
+ * top and lower levels
+ *
+ * @var svk_logic_cmd::logic_name
+ *  Specifies which logic to run command
+ *
+ * @var svk_logic_cmd::out_format
+ *  Output for the feature command (specific for specific cmd)
+ *
+ * @var svk_logic_cmd::out_format_len
+ *  Length field if needed
+ */
+typedef struct {
+  char logic_name[256];
+  void *out_format;
+  uint32_t out_format_len;
+} svk_logic_cmd;
+
+/**
+ * @struct svk_logic_input
+ * @brief Passthrough buffer info for SVK SLA Tracker logic function input
+ *
+ * @var svk_logic_input::input_buffer
+ *  Buffer for the application to use to pass any required info for
+ *  feature execution
+ *
+ * @var svk_logic_input::input_len
+ *  Length of the input_buffer
+ *
+ */
+typedef struct {
+  uint8_t *input_buffer;
+  uint64_t input_len;
+} svk_logic_input;
+
+/**
+ * @struct svk_logic_output
+ * @brief Passthrough buffer for SVK SLA Tracker logic function output
+ *
+ * @var svk_logic_output::status
+ *  Status code from feature execution
+ *
+ * @var svk_logic_output::output_buffer
+ *  Buffer for feature module to use to send any output to
+ *  application
+ *
+ * @var svk_logic_output::output_len
+ *  Length of buffer for the output_buffer
+ *
+ */
+typedef struct {
+  svk_status status;
+  uint8_t *output_buffer;
+  uint64_t output_len;
+} svk_logic_output;
+
+/**
+ * @struct svk_logic_module_details
+ * @brief Struct of downstream APIs to pass to logic modules during init
+ *
+ * Struct for each logic module to keep track of function pointers. Passed to
+ * logic modules during init to populate
+ *
+ * @var svk_logic_module_details::feature_name
+ *  @param feature_name    Feature name supported by this logic module. This
+ * needs to be filled by the logic module when called from the parent.
+ *
+ * @var svk_logic_module_details::logic_module_name
+ *  @param logic_module_name    logic module name to get registered with the
+ * respective parent feature module
+ *
+ * @var svk_logic_module_details::logic_app_details
+ *  @param logic_app_details    a void pointer whose structure needs to be
+ * agreed between the parent feature and the feature's logic modules as per the
+ * needs.
+ *
+ * @var svk_logic_module_details::execute_logic_sync
+ *  Pointer to the execute function that each logic module should define
+ *  so the SLAT can use it generically
+ *  @param cmd          Feature command details to pass through the function
+ * for execution
+ *  @param input        Input info structure
+ *  @param output       Output info structure
+ *
+ * @var svk_logic_module_details::execute_logic_async
+ *  Function pointer for async request, which will pass structs like callback fn
+ * to logic module
+ *  @param pass_thru      Logic command details to pass through the function
+ * for execution
+ *  @param postprocess_fn Contains callback and various data for async request
+ *
+ * @var svk_logic_module_details::cleanup_logic_module
+ *  Pointer to the cleanup function for this logic module that framework will
+ *  call on shutdown
+ * @param void            Pointer to give to logic module cleanup
+ */
+
+typedef struct svk_logic_module_details_t {
+  char feature_name[256];
+  char logic_module_name[256];
+  void *logic_app_details;
+  svk_status (*initialize_logic_module)(void *init_param);
+  svk_status (*get_supported_logic_details)(
+      struct svk_logic_module_details_t *details);
+  svk_status (*execute_logic_sync)(svk_logic_cmd *cmd, svk_logic_input *input,
+                                   svk_logic_output *output);
+  svk_status (*execute_logic_async)(svk_logic_cmd *pass_thru,
+                                    svk_postprocess_fn *postprocess_fn);
+  svk_status (*cleanup_logic_module)(void *);
+} svk_logic_module_details;
+
+#ifdef __cplusplus
+}  // extern "C"
+#endif
+
+#ifdef __cplusplus
+// Function pointer declaration for casting functions for dlsym
+using initialize_logic_module_dlsym = svk_status (*)(void *init_param);
+using get_supported_logic_details_dlsym =
+    svk_status (*)(svk_logic_module_details *details);
+using execute_logic_sync_dlsym = svk_status (*)(svk_logic_cmd *pass_thru,
+                                                svk_logic_input *input,
+                                                svk_logic_output *output);
+using execute_logic_async_dlsym = svk_status (*)(
+    svk_logic_cmd *pass_thru, svk_postprocess_fn *postprocess_fn);
+using cleanup_logic_module_dlsym = svk_status (*)(void *);
+
+#endif
+
+#endif  // __SVK_LOGIC_STRUCT_H__

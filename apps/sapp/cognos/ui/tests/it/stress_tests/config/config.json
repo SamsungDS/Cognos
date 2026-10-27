@@ -1,0 +1,23 @@
+{
+    "base_url": "http://example.com",
+    "devices": ["DEV_10-256G", "DEV_11-256G"],
+    "host": "ssg-svkapp.msl.lab",
+    "switch_ip": "105.140.86.13",
+    "endpoints": {
+        "membox_devices": "/api/v2.0.1/devices",
+        "available_devices": "/api/v2.0.1/available_devices",
+	"attach_device": "/api/v2.0.1/attach_device",
+	"detach_device": "/api/v2.0.1/detach_device",
+        "all_hosts": "/api/v2.0.1/all_hosts",
+        "hosts": "/api/v2.0.1/hosts",
+        "host_devices": "/api/v2.0.1/host_devices",
+        "topology": "/api/v2.0.1/topology"
+    },
+    "devices_payload": {
+        "input": "cluster_id=CLUST1;command=ListDevices;FM_id=203;FM_endpoint=samsung.com"
+    },
+    "membox_devices": ["mb-1"],
+    "hosts": [
+        "msl-stg-emr02.msl.lab"
+    ]
+}

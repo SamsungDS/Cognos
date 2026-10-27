@@ -1,0 +1,31 @@
+---
+# This set_grub_ubuntu.yml works for the bootable kernels in a submenu like follows:
+# submenu 'Advanced options for Ubuntu' $menuentry_id_option 'gnulinux-advanced-fd7a9e9d-2e34-4852-9e70-e3a37a54272e' {
+#  menuentry 'Ubuntu, with Linux 6.11.11' --class ubuntu --class gnu-linux --class gnu --class os $menuentry_id_option
+# 'gnulinux-6.11.11-advanced-fd7a9e9d-2e34-4852-9e70-e3a37a54272e' {
+
+- name: "Get target menuentry_id_option of {{ deploy_kernel_version }}"
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      awk '/\$\{*menuentry_id_option/ { print $(NF-1) }' /boot/grub/grub.cfg |sed s/\'//g|grep -v recovery|grep -F {{ deploy_kernel_version }}|awk 'NR==1'
+    executable: /bin/bash
+  register: deploy_kernel_menuentry_id
+  when: deploy_kernel_version is defined
+  changed_when: deploy_kernel_menuentry_id.rc != 0
+
+- name: Transform kernel_version to regex
+  ansible.builtin.set_fact:
+    deploy_kernel_ver_trans: "{{ deploy_kernel_version | regex_replace('\\.', '\\.') }}"
+
+- name: Get parent menuentry id
+  ansible.builtin.set_fact:
+    deploy_kernel_parent_menuentry: "{{ deploy_kernel_menuentry_id.stdout | regex_replace('-' + deploy_kernel_ver_trans, '') }}"
+
+- name: Set value for kernel grub update
+  ansible.builtin.set_fact:
+    deploy_kernel_update_grub_default: "{{ deploy_kernel_parent_menuentry }}>{{ deploy_kernel_menuentry_id.stdout }}"
+
+- name: Debug deploy_kernel_update_grub_default
+  ansible.builtin.debug:
+    msg: "{{ deploy_kernel_update_grub_default }}"

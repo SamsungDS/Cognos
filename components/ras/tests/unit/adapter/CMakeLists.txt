@@ -1,0 +1,25 @@
+
+set(LIBMOCKTEST "libmocktest")
+set(LOGICMOCKTEST "logicmocktest")
+set(LIBMOCK_INCLUDE_DEST ${CMAKE_SOURCE_DIR}/include/adapters/mock_adapter/include ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_SOURCE_DIR}/adapters/mock_adapter/src)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
+
+include_directories(${LIBMOCK_INCLUDE_DEST})
+link_directories(${CMAKE_SOURCE_DIR}/adapters/mock_adapter/lib64)
+add_executable(${LIBMOCKTEST} libmocktest.cpp)
+add_executable(${LOGICMOCKTEST} logicmocktest.cpp)
+
+target_include_directories(${LIBMOCKTEST} PUBLIC ${LIBMOCK_INCLUDE_DEST})
+target_include_directories(${LOGICMOCKTEST} PUBLIC ${LIBMOCK_INCLUDE_DEST})
+find_package(GTest)
+
+target_link_libraries(${LIBMOCKTEST} GTest::gtest_main gmock_main mock numa )
+target_link_libraries(${LOGICMOCKTEST} GTest::gtest_main gmock_main mock numa )
+
+configure_file(${CMAKE_SOURCE_DIR}/adapters/mock_adapter/config/mock_config.json ${CMAKE_CURRENT_BINARY_DIR}/config/mock_config.json @ONLY)
+
+add_subdirectory(ras_ut)
+
+include(GoogleTest)
+gtest_discover_tests(${LIBMOCKTEST})
+gtest_discover_tests(${LOGICMOCKTEST})

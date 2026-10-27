@@ -1,0 +1,30 @@
+#!/bin/sh
+set -e
+
+ldconfig
+
+MGMT_DIR="/usr/local/svk/mgmt-fw"
+CXL_VENV_DIR="/usr/local/svk/venv/cxl"
+
+# Remove venv created as part of install
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+rm -rf "${CXL_VENV_DIR}"
+fi
+
+# Only remove during purge
+if [ "$1" = "purge" ]; then
+echo "Purging svk-cxl config and directories..."
+
+# Remove symbolic link or file
+rm -f "$MGMT_DIR/input.json"
+rm -f "$MGMT_DIR/cxl_dev_id_map.json"
+rm -f "$MGMT_DIR/log.conf"
+rm -f "$MGMT_DIR/cxl.conf"
+rm -f "$MGMT_DIR/cxl_utils.py"
+
+# remove cxl tree
+rm -rf /usr/local/svk/feature_modules/cxl
+
+fi
+
+exit 0

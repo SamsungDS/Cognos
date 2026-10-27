@@ -1,0 +1,13 @@
+:{{ mgmt_ports_frontend['mgmt_endpoint'] }} {
+        root * /var/www/scmc
+ 
+        # Enable the static file server.
+        file_server
+ 
+        try_files {path} /index.html
+{% if cognos_start_https_enable %}
+        tls {{ cognos_start_ssl_cert }} {{ cognos_start_ssl_key }}
+{% endif %}
+
+        # reverse_proxy localhost:8080
+}

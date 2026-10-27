@@ -1,0 +1,54 @@
+---
+### Playbook Documentation ###
+#
+# #### playbooks/setup_gemfire.yml
+#
+# Execute this playbook to check dependencies, setup longevity test in your inventory.
+# This playbook will perform the following:
+#
+
+- name: Validate ansible versions and dependencies
+  hosts: localhost
+  roles:
+    - validate_ansible
+
+- name: Check ports are available for start gemfire locator instances
+  hosts: gemfire_locator
+  become: true
+  vars:
+    ports: "{{ locator_port | int }}"
+    instance_num: "{{ gf_locator_num_per_host | int }}"
+  roles:
+    - gf_check_ports
+
+- name: Check ports are available for start gemfire server instances
+  hosts: gemfire_server
+  become: true
+  vars:
+    ports: "{{ server_ports | int }}"
+    instance_num: "{{ gfs_num_each_host | int }}"
+  roles:
+    - gf_check_ports
+
+- name: Check prerequirement for gemfire server and locator install
+  hosts:
+    - gemfire_server
+    - gemfire_locator
+  roles:
+    - gf_check_deps
+
+- name: Start gemfire locator
+  hosts: gemfire_locator
+  roles:
+    - gf_locator_start
+
+- name: Start gemfire server install
+  hosts: gemfire_server
+  gather_facts: true
+  roles:
+    - gf_server_start
+
+- name: Check prerequirement for ycsb client install
+  hosts: ycsb_client
+  roles:
+    - ycsb_check_deps

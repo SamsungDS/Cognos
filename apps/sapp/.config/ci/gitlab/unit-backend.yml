@@ -1,0 +1,28 @@
+backend unit test:
+  stage: test
+  image:
+    name: $IMAGE_TAG
+    pull_policy: always
+  script:
+    # Execute unit tests and generate coverage report
+    - ./scripts/run-tests.sh --ut
+  artifacts:
+    name: unit test
+    expire_in: 300 seconds
+    paths:
+     - $backend_reports_dir/coverage.xml
+     - $backend_reports_dir/junit.xml
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: $backend_reports_dir/coverage.xml
+      junit: $backend_reports_dir/junit.xml
+  variables:
+    IMAGE_TAG: $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$DOCKER_BRANCH_NAME
+  parallel:
+    matrix:
+      - DOCKERFILE_NAME: ubuntu22
+      - DOCKERFILE_NAME: ubuntu24
+      - DOCKERFILE_NAME: ol10
+  rules:
+    - !reference [.default_rules, merge_and_push]

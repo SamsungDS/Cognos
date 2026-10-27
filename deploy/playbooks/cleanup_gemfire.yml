@@ -1,0 +1,24 @@
+---
+### Playbook Documentation ###
+#
+# #### playbooks/cleanup_longevity_test.yml
+#
+# Execute this playbook to stop ycsb clients, gemfire servers and gemfire locators.
+# This playbook will perform the following:
+#
+
+- name: Stop ycsb clients
+  hosts: ycsb_client
+  roles:
+    - ycsb_client_stop
+
+- name: Stop gemfire servers
+  hosts:
+    - gemfire_server
+  roles:
+    - gf_server_stop
+
+- name: Stop gemfire locator
+  hosts: gemfire_locator
+  roles:
+    - gf_locator_stop

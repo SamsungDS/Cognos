@@ -1,0 +1,6 @@
+---
+
+- name: Install oracle-epel-release
+  ansible.builtin.include_tasks:
+    cognos_add_epel_oraclelinux.yml
+  when: ansible_distribution == 'OracleLinux'

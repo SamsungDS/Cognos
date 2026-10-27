@@ -1,0 +1,4 @@
+#!/bin/sh
+set -e
+
+# post install steps go here

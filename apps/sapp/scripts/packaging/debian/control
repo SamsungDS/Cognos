@@ -1,0 +1,11 @@
+Source: cognos-app
+Section: utils
+Priority: optional
+Maintainer: Nadim Sarras (nadim.s@samsung.com)
+Build-Depends: debhelper (>=12)
+Standards-Version: 4.1.4
+
+Package: cognos-app
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, nodejs (>=21), caddy
+Description: Cognos Application, Cognos

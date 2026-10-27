@@ -1,0 +1,16 @@
+Source: DEB_PACKAGE_NAME 
+Section: utils
+Priority: optional
+Maintainer: Mandar Sawant (mandar.s@samsung.com)
+Build-Depends: debhelper (>=12)
+Standards-Version: 4.1.4
+
+Package: DEB_PACKAGE_NAME
+Architecture: amd64
+Depends: cognos-core, cognos-mgmt-fw, numactl, cgroup-tools, libyaml-cpp-dev
+Description: Cognos Memory Engine - APIs and functions for application memory monitoring and management
+
+Package: DEB_PACKAGE_NAME-dev
+Architecture: amd64
+Depends: cognos-core-dev, cognos-mgmt-fw-dev, numactl, cgroup-tools, libyaml-cpp-dev, DEB_PACKAGE_NAME (= ${binary:Version})
+Description: Cognos Memory Engine - APIs and functions for application memory monitoring and management

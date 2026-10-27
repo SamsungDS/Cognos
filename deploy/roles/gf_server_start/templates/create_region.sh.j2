@@ -1,0 +1,12 @@
+#!/bin/bash
+# Generate create_region.sh
+# Configuration: gf_server_start_loc_list={{ gf_server_start_loc_list }}, region_count={{ region_count }}, persistency={{ persistency }}, redundancy={{ redundancy }}, asynch={{ asynch }}, enable_statistics={{ enable_statistics }}
+# Time: {{ ansible_date_time.iso8601 }}
+
+{% for index in range(region_count) %}
+# ============== create region usertable{{ index+1 }} ==============
+echo "Create region usertable{{ index+1 }}"
+echo "gfsh -e 'connect --locator={{ gf_server_start_loc_list[index % gf_server_start_loc_cnt | int] }}' -e 'list members' -e 'create region --name=usertable{{ index+1 }}{% if persistency == false %} --type=PARTITION{% elif redundancy <= 0 %} --type=PARTITION_PERSISTENT{% else %} --type=PARTITION_REDUNDANT_PERSISTENT{% endif %}{% if asynch == false %} --enable-synchronous-disk=false{% else %} --enable-synchronous-disk=true{% endif %}{% if redundancy > 0 %} --redundant-copies={{ redundancy }}{% endif %}{% if enable_statistics == true %} --enable-statistics=true{% endif %}'{% if enable_statistics == true %} -e 'alter runtime --enable-statistics=true --statistic-archive-file={{ gf_installed_base_dir }}/ycsb_benchmarks/stats-singlenode-gemfire.gfs'{% endif %}"
+gfsh -e 'connect --locator={{ gf_server_start_loc_list[index % gf_server_start_loc_cnt | int] }}' -e 'list members' -e 'create region --name=usertable{{ index+1 }}{% if persistency == false %} --type=PARTITION{% elif redundancy <= 0 %} --type=PARTITION_PERSISTENT{% else %} --type=PARTITION_REDUNDANT_PERSISTENT{% endif %}{% if asynch == false %} --enable-synchronous-disk=false{% else %} --enable-synchronous-disk=true{% endif %}{% if redundancy > 0 %} --redundant-copies={{ redundancy }}{% endif %}{% if enable_statistics == true %} --enable-statistics=true{% endif %}'{% if enable_statistics == true %} -e 'alter runtime --enable-statistics=true --statistic-archive-file={{ gf_installed_base_dir }}/ycsb_benchmarks/stats-singlenode-gemfire.gfs'{% endif %}
+
+{% endfor %}

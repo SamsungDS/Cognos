@@ -1,0 +1,41 @@
+---
+- name: Check if cognos_core DEB is installed
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      apt list --installed | grep cognos-core
+    executable: /bin/bash
+  register: cognos_core_remove_query
+  changed_when: false
+  failed_when: false
+  when: ansible_facts['distribution'] == "Ubuntu"
+
+- name: Remove the installed cognos-core on Ubuntu
+  ansible.builtin.apt:
+    name: cognos-core
+    state: absent
+    purge: true
+  become: true
+  when:
+    - ansible_facts['distribution'] == "Ubuntu"
+    - cognos_core_remove_query.rc == 0
+
+- name: Check if cognos_core RPM is installed
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      dnf list --installed | grep cognos-core
+    executable: /bin/bash
+  register: cognos_core_remove_rpm_query
+  changed_when: false
+  failed_when: false
+  when: ansible_facts['distribution'] == "OracleLinux"
+
+- name: Remove the installed cognos-core on OEL
+  ansible.builtin.dnf:
+    name: cognos-core
+    state: absent
+  become: true
+  when:
+    - ansible_facts['distribution'] == "OracleLinux"
+    - cognos_core_remove_rpm_query.rc == 0

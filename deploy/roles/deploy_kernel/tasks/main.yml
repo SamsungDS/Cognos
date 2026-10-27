@@ -1,0 +1,86 @@
+---
+
+- name: Assert Test kernel_version
+  ansible.builtin.assert:
+    that:
+      - deploy_kernel_version is defined
+      - deploy_kernel_version is string
+      - deploy_kernel_version is not none
+    quiet: true
+
+- name: Assert deploy_kernel_staging_dir
+  ansible.builtin.assert:
+    that:
+      - deploy_kernel_staging_dir is defined
+      - deploy_kernel_staging_dir is string
+      - deploy_kernel_staging_dir is not none
+    quiet: true
+
+- name: Download kernel
+  ansible.builtin.get_url:
+    url: "{{ deploy_kernel_source_code_url }}"
+    dest: "{{ deploy_kernel_artifacts_dir }}/linux-{{ deploy_kernel_version_download }}.tar.xz"
+    mode: "0644"
+  delegate_to: localhost
+  run_once: true
+
+- name: Get kernel tarball status
+  ansible.builtin.stat:
+    path: "{{ deploy_kernel_artifacts_dir }}/linux-{{ deploy_kernel_version_download }}.tar.xz"
+  delegate_to: localhost
+  register: deploy_kernel_tgz_stat
+
+- name: Assert kernel tarball found
+  ansible.builtin.assert:
+    that: deploy_kernel_tgz_stat.stat.exists
+    fail_msg: "Kernel tarball not found. Please download it to {{ deploy_kernel_artifacts_dir }}"
+
+- name: Get current kernel version
+  ansible.builtin.set_fact:
+    deploy_kernel_curr_version: "{{ ansible_kernel.split('-')[0] }}"
+
+- name: Assert kernel version on target node
+  ansible.builtin.assert:
+    that: deploy_kernel_curr_version is version_compare(deploy_kernel_version, '!=')
+    fail_msg: "To upgrade kernel, current kernel version is must be != {{ deploy_kernel_version }} . Current version is {{ deploy_kernel_curr_version }}"
+    success_msg: "Kernel version is correct: {{ deploy_kernel_curr_version }}"
+  ignore_errors: true
+  register: deploy_kernel_assert_version
+
+- name: Get the capacity of the root partition('/')
+  ansible.builtin.command: " df -h --block-size=1GB / "
+  register: deploy_kernel_root_capacity
+  changed_when: deploy_kernel_root_capacity.rc != 0
+
+- name: "Check the capacity of the root partition('/') is greater than {{ deploy_kernel_available_disk_size_gb }}"
+  ansible.builtin.assert:
+    that: deploy_kernel_root_capacity.stdout_lines[1].split()[3] | int >= {{ deploy_kernel_available_disk_size_gb }}
+    fail_msg: "To upgrade kernel, available disk capacity must be >= {{ deploy_kernel_available_disk_size_gb }}GB.>
+       Current is {{ deploy_kernel_root_capacity.stdout_lines[1].split()[3] }}GB"
+    success_msg: "Current capacity of '/' is {{ deploy_kernel_root_capacity.stdout_lines[1].split()[3] }}GB"
+  ignore_errors: true
+  register: deploy_kernel_assert_disk_available
+
+- name: Upgrade kernel for ubuntu
+  ansible.builtin.include_tasks:
+    file: deploy_kernel.yml
+  tags:
+    - upgrade_kernel
+  when: not deploy_kernel_assert_version.failed and not deploy_kernel_assert_disk_available.failed
+
+- name: Set GRUB Commandline Options
+  ansible.builtin.import_tasks: set_grub_ubuntu.yml
+  when:
+    - ansible_distribution == "Ubuntu" and not deploy_kernel_assert_version.failed and not deploy_kernel_assert_disk_available.failed
+
+- name: Update grub
+  ansible.builtin.import_tasks: update_grub.yml
+
+- name: Flush handlers
+  ansible.builtin.meta: flush_handlers
+
+- name: Assert host kernel version
+  ansible.builtin.assert:
+    that: ansible_kernel is version (deploy_kernel_version, '==')
+    fail_msg: "Expected kernel version {{ deploy_kernel_version }} but found {{ ansible_kernel }}"
+    success_msg: "Detected host kernel version {{ deploy_kernel_version }}"

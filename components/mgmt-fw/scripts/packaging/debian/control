@@ -1,0 +1,16 @@
+Source: cognos-mgmt-fw
+Section: utils
+Priority: optional
+Maintainer: Suresh Grandhi (suresh.g@samsung.com)
+Build-Depends: debhelper (>=12)
+Standards-Version: 4.1.4
+
+Package: cognos-mgmt-fw
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, libre2-9|libre2-10, cognos-core
+Description: Cognos Management framework related APIs, services
+
+Package: cognos-mgmt-fw-dev
+Architecture: amd64
+Depends: ${misc:Depends}, cognos-mgmt-fw (= ${binary:Version}), cognos-core, cognos-core-dev, cognos-go-modules, cognos-grpc, libre2-9|libre2-10
+Description: Cognos Management framework related API header files.

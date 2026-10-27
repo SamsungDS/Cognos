@@ -1,0 +1,9 @@
+{
+    "username": "Admin",
+    "email": "Admin@gmail.com",
+    "password": "Admin@123",
+    "role": "owner",
+    "createdAt": "2025-12-28T18:54:58.645Z",
+    "isApproved": true,
+    "isInitialSetup": true
+}

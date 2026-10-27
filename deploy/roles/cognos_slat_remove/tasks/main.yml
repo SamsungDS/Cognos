@@ -1,0 +1,17 @@
+---
+
+
+- name: Remove cognos_slat packages on Ubuntu
+  ansible.builtin.apt:
+    name: cognos-slat
+    state: absent
+    purge: true
+  become: true
+  when: ansible_facts['distribution'] == "Ubuntu"
+
+- name: Remove cognos_slat packages on OEL
+  ansible.builtin.dnf:
+    name: cognos-slat
+    state: absent
+  become: true
+  when: ansible_facts['distribution'] == "OracleLinux"

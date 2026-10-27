@@ -1,0 +1,29 @@
+---
+
+- name: Assert create_ansible_user_name is defined
+  ansible.builtin.assert:
+    that:
+      - create_ansible_user_name is defined
+      - create_ansible_user_name is string
+      - create_ansible_user_name is not none
+    quiet: true
+
+- name: Assert create_ansible_user_shell is defined
+  ansible.builtin.assert:
+    that:
+      - create_ansible_user_shell is defined
+      - create_ansible_user_shell is string
+      - create_ansible_user_shell is not none
+    quiet: true
+
+- name: Create Ansible user
+  ansible.builtin.include_tasks:
+    create_ansible_user.yml
+
+- name: Set Ansible user password
+  ansible.builtin.include_tasks:
+    set_password.yml
+
+- name: Configure Ansible user sudoers
+  ansible.builtin.include_tasks:
+    set_sudoers.yml
