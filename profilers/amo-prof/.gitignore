@@ -1,0 +1,12 @@
+# Bytecode
+__pycache__/
+*.pyc
+
+# Report scratch output
+_tmp_static.html
+*.py.bak
+
+# Wheel build output (scripts/build_wheel.sh)
+build/
+dist/
+*.egg-info/

@@ -1,0 +1,83 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name            = "amoprof"
+version         = "1.78.0"
+description     = "AI Workload-Aware Storage Profiler — maps AI operations to SSD I/O dimensions"
+readme          = "README.md"
+# 3.12+: report/amoprof.py and report/combined.py use PEP 701 nested
+# f-strings.  On 3.11 the package installs cleanly and then fails at import
+# with a SyntaxError pointing at an emoji inside an f-string, which reads as
+# an encoding fault rather than a version one.  Fail at install instead.
+requires-python = ">=3.12"
+license         = { text = "Apache-2.0" }
+
+# Everything `collect`, `analyze` and `compare` need, and exactly what
+# install.sh installs, so a wheel install and an install.sh install behave the
+# same. The `amoprof` extra below is kept for existing `pip install .[amoprof]`
+# invocations; it adds nothing these do not.
+dependencies = [
+    "psutil>=5.9",
+    "rich>=13.0",
+    "PyYAML>=6.0",
+    "pandas>=1.5",
+    "numpy>=1.24",
+    "matplotlib>=3.7",
+    "scipy>=1.10",
+    "openpyxl>=3.1",
+    "requests>=2.28",
+    "Pillow>=9.4",
+]
+
+[project.optional-dependencies]
+cpu = [
+    "torch>=2.2",
+    "transformers>=4.40",
+    "accelerate>=0.30",
+    "datasets>=2.18",
+]
+gpu = [
+    "torch>=2.2",
+    "transformers>=4.40",
+    "accelerate>=0.30",
+    "vllm>=0.4",
+    "datasets>=2.18",
+]
+training = [
+    "torch>=2.2",
+    "transformers>=4.40",
+    "deepspeed>=0.14",
+    "datasets>=2.18",
+]
+# SGLang serving benchmark
+sglang = [
+    "sglang>=0.3",
+    "torch>=2.2",
+    "transformers>=4.40",
+]
+# Bundled amoprof analyzer — needed for `amoprof analyze --amoprof-report`
+amoprof = [
+    "matplotlib>=3.7.0",
+    "numpy>=1.24.0",
+    "pandas>=1.5.0",
+    "openpyxl>=3.1.0",
+    "requests>=2.28.0",
+    "scipy>=1.10.0",
+    "Pillow>=9.4.0",
+]
+# All extras
+all = ["amoprof[gpu,training,sglang,amoprof]"]
+
+[project.scripts]
+amoprof = "amoprof.cli:main"
+
+[tool.setuptools.packages.find]
+where   = ["."]
+include = ["amoprof*"]
+exclude = ["amoprof.tests*"]
+
+[tool.setuptools.package-data]
+"amoprof.report" = ["*.py", "*.txt"]
+"amoprof" = ["dashboard/*.html", "dashboard/*.jsx"]
