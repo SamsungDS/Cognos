@@ -1,0 +1,11 @@
+cmake_minimum_required(VERSION 3.7)
+
+if(BUILD_TESTING)
+include(${CMAKE_SOURCE_DIR}/cmake/gtest.cmake)
+
+include_directories(unit/include)
+add_subdirectory(unit)
+endif()
+
+add_subdirectory(tools/ras_err_inject)
+add_subdirectory(tools/mock_adapter_demo)

@@ -1,0 +1,5 @@
+cognos-ras (DEB_VERSION) DEB_OSVER; urgency=medium
+
+  * DEB_CHANGELOG
+
+ -- Mike Xu <pengfei.xu@samsung.com>  DEB_TIMESTAMP

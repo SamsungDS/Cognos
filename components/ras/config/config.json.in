@@ -1,0 +1,13 @@
+{
+    "ras": {
+        "logger": {
+            "log_level": "TRACE",
+            "log_file_name": "/var/log/svk/ras.log",
+            "log_file_count": "10",
+            "log_file_size": "10485760",
+            "monitor_interval": "60",
+            "sink_type": "rotating_file"
+        },
+        "adapters_directory": "@ADAPTERS_DIR@"
+    }
+}
