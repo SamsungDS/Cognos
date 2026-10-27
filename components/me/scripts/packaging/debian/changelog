@@ -1,0 +1,5 @@
+DEB_PACKAGE_NAME (DEB_VERSION) DEB_OSVER; urgency=medium
+
+  * DEB_CHANGELOG
+
+ -- Matt Durand <matt.d@samsung.com>  DEB_TIMESTAMP
