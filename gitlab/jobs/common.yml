@@ -1,0 +1,62 @@
+# Shared job templates.
+
+# The tools template's 'build docker' job is only a base for the image jobs
+# (extends: build docker); it never runs itself.
+build docker:
+  rules:
+    - when: never
+
+# Jobs that run in the ci-tools image ($COGNOS_CI_TOOLS_IMAGE, from
+# gitlab/jobs/ci-tools-image.yml) and in every pipeline.
+.ci-tools-job:
+  image: $COGNOS_CI_TOOLS_IMAGE
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      interruptible: true
+    - when: on_success
+
+# Builds and pushes $COGNOS_CI_TOOLS_IMAGE, but only if that tag does not exist yet.
+# The tag is a hash of the Dockerfile, so an unchanged Dockerfile costs one
+# manifest lookup. Reuses the certificates, buildx setup and registry login of
+# the tools template.
+#
+# The job first checks that the tag is the hash of the Dockerfile it builds,
+# so a stale gitlab/jobs/ci-tools-image.yml can never push one Dockerfile
+# under another's tag. It rebuilds only when the registry says the manifest
+# does not exist; any other registry error fails the job instead of
+# overwriting a tag that other pipelines use.
+images:ci-tools:
+  extends: build docker
+  stage: .pre
+  variables:
+    DOCKERFILE_NAME: ci-tools
+    DOCKERFILE_PATH: ci/docker/ci-tools.DOCKERFILE
+    IMAGE_TAG: $COGNOS_CI_TOOLS_IMAGE
+  script:
+    - |
+      h=$(sha256sum "$DOCKERFILE_PATH" | cut -c1-12)
+      case "$COGNOS_CI_TOOLS_IMAGE" in
+        *":$h") ;;
+        *)
+          echo "ERROR: COGNOS_CI_TOOLS_IMAGE ($COGNOS_CI_TOOLS_IMAGE) does not end in :$h, the hash of $DOCKERFILE_PATH."
+          echo "Run 'bash ci/scripts/generate-gitlab.sh' and commit gitlab/jobs/ci-tools-image.yml."
+          exit 1
+          ;;
+      esac
+      rc=0
+      inspect_err=$(docker manifest inspect "$COGNOS_CI_TOOLS_IMAGE" 2>&1 > /dev/null) || rc=$?
+      if [ "$rc" -eq 0 ]; then
+        echo "ci-tools image $COGNOS_CI_TOOLS_IMAGE exists; not rebuilding"
+      elif printf '%s' "$inspect_err" | grep -qiE 'manifest unknown|no such manifest|name unknown|repository name not known'; then
+        echo "building ci-tools image $COGNOS_CI_TOOLS_IMAGE"
+        docker buildx build \
+          --push \
+          --tag "$COGNOS_CI_TOOLS_IMAGE" \
+          --file "$DOCKERFILE_PATH" . \
+          --provenance false
+      else
+        echo "ERROR: cannot tell whether $COGNOS_CI_TOOLS_IMAGE exists (docker manifest inspect, exit $rc):"
+        printf '%s\n' "$inspect_err"
+        exit 1
+      fi
+  rules: !reference [.ci-tools-job, rules]

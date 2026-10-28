@@ -1,0 +1,67 @@
+# deploy/: the ansible-lint image and ansible-lint, as in the bootstrap
+# pipeline. Both run when deploy/ changes (merge requests, pushes to main and
+# release/X.Y), nightly and from the web UI.
+#
+# The two jobs share their rules through a YAML anchor; anchors are used for
+# simplicity, so 'changes: !reference' sits in the job's own rules.
+
+# The tools template builds with the repository root as context. The
+# Dockerfile copies scripts/dependencies, which lives under deploy/ in the
+# monorepo. Stage images, after the plan gate: a merge request that fails a
+# guard pushes nothing. A merge request into main that passes the gate still
+# pushes ubuntu22-main, as the bootstrap pipeline did (see docs/ci.md).
+images:deploy:
+  extends: build docker
+  stage: images
+  variables:
+    DOCKERFILE_NAME: ubuntu22
+    DOCKERFILE_PATH: deploy/scripts/docker/ubuntu22.DOCKERFILE
+    DOCKER_CONTEXT: deploy
+  script:
+    # 'git describe' can return an imported tag such as core/v0.0.1; '/' is
+    # not valid in an image tag. (POSIX tr: the job runs in busybox sh.)
+    - GIT_TAG_VERSION=$(printf '%s' "$GIT_TAG_VERSION" | tr / -)
+    - |
+      docker buildx build \
+        --cache-from type=registry,ref=$CACHE_TAG \
+        --cache-to type=registry,ref=$CACHE_TAG \
+        --push \
+        --tag $IMAGE_TAG \
+        --tag $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$GIT_TAG_VERSION \
+        --file $DOCKERFILE_PATH $DOCKER_CONTEXT \
+        --provenance false
+  # Image tag suffix (DOCKER_BRANCH_NAME), which may not contain '/':
+  # - merge requests into main: the target branch, as the tools template and
+  #   the bootstrap pipeline do;
+  # - merge requests into release/X.Y: mr-<iid>, because the target branch
+  #   name contains '/';
+  # - schedules, web and push pipelines: the ref slug.
+  rules: &deploy-rules
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $SCHEDULE_KIND == "nightly"
+      variables:
+        DOCKER_BRANCH_NAME: $CI_COMMIT_REF_SLUG
+    - if: $CI_PIPELINE_SOURCE == "web"
+      variables:
+        DOCKER_BRANCH_NAME: $CI_COMMIT_REF_SLUG
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^release[\/]/
+      changes: !reference [.selection, deploy]
+      interruptible: true
+      variables:
+        DOCKER_BRANCH_NAME: mr-$CI_MERGE_REQUEST_IID
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: !reference [.selection, deploy]
+      interruptible: true
+      variables:
+        DOCKER_BRANCH_NAME: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH
+      changes: !reference [.selection, deploy]
+      variables:
+        DOCKER_BRANCH_NAME: $CI_COMMIT_REF_SLUG
+
+# ansible.cfg, .ansible-lint and the playbooks are under deploy/. The job
+# itself comes from deploy/.config/ci/gitlab/lint.yml.
+ansible-lint:
+  script:
+    - cd deploy
+    - ansible-lint
+  rules: *deploy-rules
