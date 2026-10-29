@@ -182,16 +182,6 @@ lint ansible:
       export COGNOS_VERSION
       echo "Cognos version: $COGNOS_VERSION"
 
-# Tags, schedules and web runs build everything. Merge requests and pushes
-# build everything on a .rebuild-all change; each component adds a rule for
-# its own paths.
-.component rules:
-  rules:
-    - if: $CI_COMMIT_TAG || $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
-    # workflow rules limit pushes to main and release/X.Y
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
-      changes: !reference [.rebuild-all, changes]
-
 # Pushes $CI_REGISTRY/$CI_PROJECT_PATH/<component>:<os>-<ref slug> and
 # :<os>-<short sha>. The component directory is the build context, as in the
 # component repository.
@@ -238,8 +228,13 @@ lint ansible:
   variables:
     COMPONENT: core
     COMPONENT_DIR: components/core
+  # Tags, schedules and web runs build everything. Merge requests and pushes
+  # (workflow rules limit them to main and release/X.Y) build on a
+  # .rebuild-all change or a change in the component's own paths.
   rules:
-    - !reference [.component rules, rules]
+    - if: $CI_COMMIT_TAG || $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
+      changes: !reference [.rebuild-all, changes]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
       changes: !reference [.paths-core, changes]
 build core image:
@@ -252,8 +247,13 @@ build core:
   variables:
     COMPONENT: mgmt-fw
     COMPONENT_DIR: components/mgmt-fw
+  # Tags, schedules and web runs build everything. Merge requests and pushes
+  # (workflow rules limit them to main and release/X.Y) build on a
+  # .rebuild-all change or a change in the component's own paths.
   rules:
-    - !reference [.component rules, rules]
+    - if: $CI_COMMIT_TAG || $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
+      changes: !reference [.rebuild-all, changes]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
       changes: !reference [.paths-mgmt-fw, changes]
 build mgmt-fw image:
@@ -268,8 +268,13 @@ build mgmt-fw:
   variables:
     COMPONENT: node
     COMPONENT_DIR: components/node
+  # Tags, schedules and web runs build everything. Merge requests and pushes
+  # (workflow rules limit them to main and release/X.Y) build on a
+  # .rebuild-all change or a change in the component's own paths.
   rules:
-    - !reference [.component rules, rules]
+    - if: $CI_COMMIT_TAG || $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
+      changes: !reference [.rebuild-all, changes]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
       changes: !reference [.paths-node, changes]
 build node image:
@@ -284,8 +289,13 @@ build node:
   variables:
     COMPONENT: ras
     COMPONENT_DIR: components/ras
+  # Tags, schedules and web runs build everything. Merge requests and pushes
+  # (workflow rules limit them to main and release/X.Y) build on a
+  # .rebuild-all change or a change in the component's own paths.
   rules:
-    - !reference [.component rules, rules]
+    - if: $CI_COMMIT_TAG || $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
+      changes: !reference [.rebuild-all, changes]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
       changes: !reference [.paths-ras, changes]
 build ras image:
@@ -300,8 +310,13 @@ build ras:
   variables:
     COMPONENT: slat
     COMPONENT_DIR: components/slat
+  # Tags, schedules and web runs build everything. Merge requests and pushes
+  # (workflow rules limit them to main and release/X.Y) build on a
+  # .rebuild-all change or a change in the component's own paths.
   rules:
-    - !reference [.component rules, rules]
+    - if: $CI_COMMIT_TAG || $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
+      changes: !reference [.rebuild-all, changes]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
       changes: !reference [.paths-slat, changes]
 build slat image:
@@ -316,8 +331,13 @@ build slat:
   variables:
     COMPONENT: me
     COMPONENT_DIR: components/me
+  # Tags, schedules and web runs build everything. Merge requests and pushes
+  # (workflow rules limit them to main and release/X.Y) build on a
+  # .rebuild-all change or a change in the component's own paths.
   rules:
-    - !reference [.component rules, rules]
+    - if: $CI_COMMIT_TAG || $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
+      changes: !reference [.rebuild-all, changes]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
       changes: !reference [.paths-me, changes]
 build me image:
@@ -333,8 +353,13 @@ build me:
   variables:
     COMPONENT: cxl
     COMPONENT_DIR: components/cxl
+  # Tags, schedules and web runs build everything. Merge requests and pushes
+  # (workflow rules limit them to main and release/X.Y) build on a
+  # .rebuild-all change or a change in the component's own paths.
   rules:
-    - !reference [.component rules, rules]
+    - if: $CI_COMMIT_TAG || $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
+      changes: !reference [.rebuild-all, changes]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
       changes: !reference [.paths-cxl, changes]
 build cxl image:
@@ -357,8 +382,13 @@ build cxl:
   variables:
     COMPONENT: sapp
     COMPONENT_DIR: apps/sapp
+  # Tags, schedules and web runs build everything. Merge requests and pushes
+  # (workflow rules limit them to main and release/X.Y) build on a
+  # .rebuild-all change or a change in the component's own paths.
   rules:
-    - !reference [.component rules, rules]
+    - if: $CI_COMMIT_TAG || $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
+      changes: !reference [.rebuild-all, changes]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
       changes: !reference [.paths-sapp, changes]
 build sapp image:
