@@ -67,18 +67,23 @@ component_build_args() {
     esac
 }
 
-# The component's own unit-test command, as in its own CI.
+# The component's own unit-test command, as in its own CI. TEST_WRAPPER, if
+# set, is a command that the C/C++ test build runs under (CI: Sonar's
+# build-wrapper). Only that build runs under it: apt's signature check fails
+# under build-wrapper, so the upstream installs must not.
 run_component_tests() {
+    local wrapper=()
+    read -r -a wrapper <<< "${TEST_WRAPPER:-}"
     case $1 in
-        cxl) ./scripts/build.sh --build-tests --with-coverage ;;
-        me) ./scripts/build.sh --build-tests ;;
-        node) ./scripts/build.sh --run-tests && ./scripts/build.sh --run-python-tests ;;
+        cxl) "${wrapper[@]}" ./scripts/build.sh --build-tests --with-coverage ;;
+        me) "${wrapper[@]}" ./scripts/build.sh --build-tests ;;
+        node) "${wrapper[@]}" ./scripts/build.sh --run-tests && ./scripts/build.sh --run-python-tests ;;
         sapp)
             ./scripts/run-tests.sh --ut
             (cd cognos/ui && npm ci --prefer-offline --no-audit --no-fund && npm run test:coverage)
             (cd cognos/rbac/core/bin/rbac-client-repo && npm ci --prefer-offline --no-audit --no-fund && npm run test:coverage)
             ;;
-        *) ./scripts/build.sh --run-tests ;;
+        *) "${wrapper[@]}" ./scripts/build.sh --run-tests ;;
     esac
 }
 

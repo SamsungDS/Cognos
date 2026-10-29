@@ -131,19 +131,22 @@ stages:
     matrix:
       - OS: [ubuntu24, ol10]
 
-# Runs the component's unit tests (build.sh --test) under Sonar's
-# build-wrapper, which records the compiler calls for "scan <component>".
+# Runs the component's unit tests (build.sh --test). The test build runs under
+# Sonar's build-wrapper (TEST_WRAPPER), which records the compiler calls for
+# "scan <component>".
 .test:
   stage: test
   image:
     name: $CI_REGISTRY_IMAGE/$COMPONENT:$OS-$CI_COMMIT_SHORT_SHA
     pull_policy: always
+  variables:
+    TEST_WRAPPER: /opt/build-wrapper-linux-x86/build-wrapper-linux-x86-64 --out-dir $CI_PROJECT_DIR/$COMPONENT_DIR/bw-output
   before_script:
     - !reference [.version, before_script]
     - wget --no-verbose -P /tmp "$SONAR_HOST_URL/static/cpp/build-wrapper-linux-x86.zip"
     - unzip -q /tmp/build-wrapper-linux-x86.zip -d /opt
   script:
-    - /opt/build-wrapper-linux-x86/build-wrapper-linux-x86-64 --out-dir "$COMPONENT_DIR/bw-output" ./build.sh --native --test "$COMPONENT" --os "$OS"
+    - ./build.sh --native --test "$COMPONENT" --os "$OS"
   artifacts:
     name: $CI_JOB_NAME
     when: always
