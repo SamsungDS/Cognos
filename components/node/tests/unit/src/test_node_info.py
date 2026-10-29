@@ -544,15 +544,17 @@ def test_parse_args_custom_values(monkeypatch):
 def test_init_logger_success(monkeypatch, tmp_path):
     """Logger should be created when the directory exists."""
     log_file = tmp_path / "out.log"
+    file_handler = logging.NullHandler()
 
     monkeypatch.setattr(
-        logging, "FileHandler", lambda path: logging.NullHandler()
+        logging, "FileHandler", lambda path: file_handler
     )
     fn.init_logger("INFO", str(log_file))
     assert isinstance(fn.logger, logging.Logger)
     assert fn.logger.level == logging.INFO
-    # file handler should be present
-    assert len(fn.logger.handlers) == 1
+    # file handler should be present (pytest >= 9.1 also attaches its own
+    # LogCaptureHandlers to non-propagating loggers, so don't count handlers)
+    assert fn.logger.handlers.count(file_handler) == 1
 
 
 def test_init_logger_bad_directory(monkeypatch):
