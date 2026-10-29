@@ -1,7 +1,0 @@
-# The ci-tools image used by the plan, hygiene and (later) registry jobs.
-#
-# The tag is the first 12 hex digits of the sha256 of
-# ci/docker/ci-tools.DOCKERFILE, so images:ci-tools builds and pushes it only
-# when the Dockerfile changes. The value is static, so image: needs no dotenv.
-variables:
-  COGNOS_CI_TOOLS_IMAGE: $CI_REGISTRY_IMAGE/ci-tools:@TOOLS_IMAGE_HASH@

@@ -1,0 +1,13 @@
+# Code owners for the Cognos monorepo.
+#
+# These paths hold the component folders synced from their own repositories,
+# the stack version and the pipeline. A merge request that changes them needs
+# approval from a project Maintainer. This takes effect once "Require approval
+# from code owners" is enabled on the protected branch main.
+
+/components/ @@maintainer
+/apps/sapp/ @@maintainer
+/profilers/amo-prof/ @@maintainer
+/VERSION @@maintainer
+/CODEOWNERS @@maintainer
+/gitlab/ @@maintainer

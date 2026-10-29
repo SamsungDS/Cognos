@@ -19,8 +19,7 @@ Each component was imported from its own repository with its history unchanged. 
 | `profilers/amo-prof` | AMO_Prof profiler. Not part of the Cognos packages. |
 | `cama` | CaMa, a separate repository included as a git submodule. It is built and deployed separately. |
 | `deploy/` | Ansible playbooks and roles that deploy Cognos. |
-| `ci/` | Repository-wide CI: change selection, guards and scripts. See [docs/ci.md](docs/ci.md). |
-| `gitlab/` | GitLab-specific CI configuration. |
+| `gitlab/` | GitLab-specific CI configuration. See [docs/ci.md](docs/ci.md). |
 | `VERSION` | Version of the Cognos stack. |
 
 To include CaMa, clone with `git clone --recurse-submodules`, or run `git submodule update --init` in an existing clone.

@@ -1,65 +1,149 @@
-# Cognos monorepo pipeline. One pipeline per event; there are no child
-# pipelines. See docs/ci.md for the pipeline map.
-#
-# Selection lives in ci/selection.yml. Jobs use it through
-# rules:changes: !reference [.selection, <key>], and ci/scripts/plan.sh (the
-# plan job, ./build.sh --plan) applies the same lists.
+# Cognos monorepo pipeline. One pipeline per event, no child pipelines.
+# See docs/ci.md.
 #
 # The pipeline that came with deploy/ (deploy/.gitlab-ci.yml) is deliberately
 # not included. Its deploy stage restores VM snapshots and deploys as root to
 # shared lab VMs.
 
-workflow:
-  auto_cancel:
-    on_new_commit: interruptible
-  rules:
-    # 1. Merge requests.
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    # 2. Release tags vX.Y.Z.
-    - if: $CI_COMMIT_TAG =~ /^v[0-9]+[.][0-9]+[.][0-9]+$/
-    # 3. Every other tag (the imported core/v*, mgmt-fw/v*, ... tags) never runs.
-    - if: $CI_COMMIT_TAG
-      when: never
-    # 4. A push that creates a branch has no 'before' commit.
-    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BEFORE_SHA == "0000000000000000000000000000000000000000"
-      when: never
-    # 5. Pushes to main and to release/X.Y.
-    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
-    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^release[\/][0-9]+[.][0-9]+$/
-    # 6. Schedules on main.
-    - if: $CI_PIPELINE_SOURCE == "schedule" && $CI_COMMIT_BRANCH == "main"
-    # 7. Pipelines run from the web UI.
-    - if: $CI_PIPELINE_SOURCE == "web"
-    # 8. Everything else: feature-branch pushes, triggers, API.
-    - when: never
-
-stages:
-  - .pre
-  - plan
-  - images
-  - build
-  - test
-  - analysis
-  - publish
-  - release
-
-default:
-  # Only merge-request jobs are interruptible (rules set interruptible: true
-  # for them); main, release and tag jobs always finish.
-  interruptible: false
-
-variables:
-  GIT_SUBMODULE_STRATEGY: none
-
 include:
-  # Pinned to a full commit of dfs/svk/tools main.
   - project: dfs/svk/tools
     ref: efbaaadf825e3525126e506fc6400c91c794f406
     file: .config/ci/gitlab/defaults.yml
   - project: dfs/svk/tools
     ref: efbaaadf825e3525126e506fc6400c91c794f406
     file: .config/ci/gitlab/docker.yml
-  # The ansible-lint job of deploy/, adjusted in gitlab/jobs/deploy.yml.
   - local: deploy/.config/ci/gitlab/lint.yml
-  - local: ci/selection.yml
-  - local: gitlab/jobs/*.yml
+
+workflow:
+  rules:
+    # Merge requests.
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    # Release tags vX.Y.Z. A tag push has no 'before' commit, so this comes
+    # before the new-branch rule. The imported prefixed tags never run.
+    - if: $CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/
+    - if: $CI_COMMIT_TAG
+      when: never
+    # Pushes to main. main always exists, so the new-branch rule below does
+    # not apply to it.
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
+    # A push that creates a branch has no 'before' commit.
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BEFORE_SHA == "0000000000000000000000000000000000000000"
+      when: never
+    # Pushes to release/X.Y.
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^release\/[0-9]+\.[0-9]+$/
+    # Schedules and runs from the web UI.
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+    # Nothing else matches, so nothing else runs.
+
+stages:
+  - build-images
+  - build
+  - test
+  - scan
+  - publish
+  - release
+
+# Path lists for rules:changes, used with !reference.
+# A change in .rebuild-all rebuilds every component.
+# A change in one component's list rebuilds only that component.
+.rebuild-all:
+  changes:
+    - components/core/**/*
+    - components/mgmt-fw/**/*
+    - gitlab/**/*
+    - VERSION
+.paths-core:
+  changes:
+    - components/core/**/*
+.paths-mgmt-fw:
+  changes:
+    - components/mgmt-fw/**/*
+.paths-cxl:
+  changes:
+    - components/cxl/**/*
+.paths-slat:
+  changes:
+    - components/slat/**/*
+.paths-ras:
+  changes:
+    - components/ras/**/*
+.paths-me:
+  changes:
+    - components/me/**/*
+.paths-node:
+  changes:
+    - components/node/**/*
+.paths-sapp:
+  changes:
+    - apps/sapp/**/*
+.paths-amo-prof:
+  changes:
+    - profilers/amo-prof/**/*
+.paths-deploy:
+  changes:
+    - deploy/**/*
+
+# Runs in every pipeline, so every merge request has one.
+check version:
+  stage: test
+  image: alpine:3.19.1
+  needs: []
+  script:
+    - |
+      [ "$(grep -c '' VERSION)" -eq 1 ] && grep -Eqx '[0-9]+\.[0-9]+' VERSION || {
+        echo "VERSION must contain MAJOR.MINOR only, for example 1.6. Found: $(cat VERSION)"
+        exit 1
+      }
+
+# The template jobs are replaced by the jobs below.
+get branch:
+  rules:
+    - when: never
+build docker:
+  rules:
+    - when: never
+ansible-lint:
+  rules:
+    - when: never
+
+.deploy-rules:
+  variables:
+    # The slug, because '/' is not allowed in a Docker tag (release/X.Y), and
+    # so that a merge request never overwrites main's image.
+    DOCKER_BRANCH_NAME: $CI_COMMIT_REF_SLUG
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: !reference [.paths-deploy, changes]
+    # workflow rules limit pushes to main and release/X.Y
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH
+      changes: !reference [.paths-deploy, changes]
+    - if: $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
+
+# The ansible-lint image. The Dockerfile copies scripts/dependencies, which
+# lives under deploy/, so deploy/ is the build context.
+build ansible image:
+  extends: [build docker, .deploy-rules]
+  stage: build-images
+  variables:
+    DOCKERFILE_NAME: ubuntu22
+    DOCKERFILE_PATH: deploy/scripts/docker/ubuntu22.DOCKERFILE
+    DOCKER_CONTEXT: deploy
+  script:
+    - |
+      docker buildx build \
+        --cache-from type=registry,ref=$CACHE_TAG \
+        --cache-to type=registry,ref=$CACHE_TAG \
+        --push \
+        --tag $IMAGE_TAG \
+        --tag $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$GIT_TAG_VERSION \
+        --file $DOCKERFILE_PATH $DOCKER_CONTEXT \
+        --provenance false
+
+# ansible.cfg, .ansible-lint and the playbooks are under deploy/.
+lint ansible:
+  extends: [ansible-lint, .deploy-rules]
+  needs: ["build ansible image"]
+  script:
+    - cd deploy
+    - ansible-lint
