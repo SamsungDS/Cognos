@@ -996,6 +996,10 @@ def compute_cache_hit_kpis(raw_dir: Path | None = None,
         "cache_hit_prefill_compute_tokens": round(d_rt_compute, 3),
         "cache_hit_token_weighted_pct": round(max(0.0, min(100.0, cached_prompt_pct)), 6),
         "cache_hit_cached_prompt_pct": round(max(0.0, min(100.0, cached_prompt_pct)), 6),
+        # Unless both counters are exported the 0 above is "not measured",
+        # not a 0% hit rate.
+        "cache_hit_cached_prompt_available": bool(
+            d_prompt > 0 and _find_col(rr, "sglang_cached_tokens_total", "cached_tokens_total")),
         "cache_hit_effective_prompt_pct": round(max(0.0, min(100.0, effective_prompt_pct)), 6),
         "cache_hit_request_weighted_pct": round(max(0.0, min(100.0, request_pct)), 6),
         "cache_hit_time_weighted_pct": round(max(0.0, min(100.0, gauge_timeline_pct)), 6),

@@ -3341,7 +3341,12 @@ def build_report(raw_dir: Path, out_html: Path,
             _kpi_tile("Throughput mean", _tp_mean_val, "tok/s" if _tp_mean_val != "N/A" else "", _tp_mean_note),
             _kpi_tile("Throughput p50", f"{float(_tp_p50 or 0):.1f}" if _tp_p50 else "N/A", "tok/s" if _tp_p50 else "", "Median of active sglang_gen_throughput samples"),
             _kpi_tile("Cache hit", f"{float(sglang_sum.get('cache_hit_pct', sglang_sum.get('cache_hit_rate_realtime_pct', 0)) or 0):.1f}",
-                      "%", f"primary={sglang_sum.get('cache_hit_calc_method', 'canonical')} · prefill={float(sglang_sum.get('cache_hit_prefill_token_weighted_pct', 0) or 0):.1f}% · cached/prompt={float(sglang_sum.get('cache_hit_token_weighted_pct', 0) or 0):.1f}%"),
+                      "%", f"primary={sglang_sum.get('cache_hit_calc_method', 'canonical')} · prefill={float(sglang_sum.get('cache_hit_prefill_token_weighted_pct', 0) or 0):.1f}% · cached/prompt="
+                      # 0 means "not measured" unless prompt_tokens_total was exported.
+                      + (f"{float(sglang_sum.get('cache_hit_token_weighted_pct', 0) or 0):.1f}%"
+                         if sglang_sum.get("cache_hit_cached_prompt_available",
+                                           float(sglang_sum.get("cache_hit_token_weighted_denominator_tokens", 0) or 0) > 0)
+                         else "not exported")),
         ]
     # 4-value GPU util decomposition (matches cache-hit KPI shape).  Prefer
     # live timeseries; fall back to gpu_summary fields written by
