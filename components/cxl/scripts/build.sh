@@ -21,7 +21,6 @@ RELEASE=false
 MOCK=false
 BUILD_TESTING=false
 WITH_COVERAGE=false
-WITH_FMAPI=false
 
 export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/local/lib64/pkgconfig:/usr/local/lib/pkgconfig:/usr/lib/pkgconfig
 
@@ -33,6 +32,7 @@ die() {
 
 help()
 {
+  local rc=${1:-0}
   # Display Help
   echo "Build script for Cognos Framework"
   echo
@@ -50,16 +50,22 @@ help()
   echo "  Release build. Generates a tarball called cognos-core-<version>.tgz by default."
   echo "-f | --filename"
   echo "  Filename prefix to use for release tarball. Only applicable when building with release flag."
-  echo "--with-fmapi <FMAPI_LIB_PATH> <FMAPI_INCLUDE_PATH>"
-  echo "  Builds with fmapi. Requires fmapi library and source paths."
-  echo "e.g. scripts/build.sh --with-fmapi /cxl_memory_box/mbox_a1/build/libmbox_a1_shared.so /cxl_memory_box/mbox_a1"
   echo "-b | --build-package"
   echo "  Generate Cognos CXL FW RPMs/DEB packages."
   echo "-i | --install-path"
   echo "  Path that RPMs should install svk cxl to (Default: /usr/local/svk/cxl). Only applicable when building with release flag."
   echo "--mock"
-  echo "  use simulated fmapi library for cxl build, Usage ex: scripts/build.sh --mock --with-fmapi <FMAPI_LIB_PATH> <FMAPI_INCLUDE_PATH>" 
-  exit
+  echo "  Mock build: compile the mock CXL device adapter (MOCK=1) and name the packages cognos-cxl-mock. Usage ex: scripts/build.sh --mock"
+  exit "$rc"
+}
+
+# Exit 1 with the usage text if option $1 has no argument ($2)
+require_arg()
+{
+  if [[ -z "$2" || "$2" == -* ]]; then
+    echo "Missing argument for option $1" >&2
+    help 1
+  fi
 }
 
 parse_options()
@@ -76,9 +82,10 @@ parse_options()
       shift
       ;;
       -h|--help)
-      help
+      help 0
       ;;
       -p|--install-prefix)
+      require_arg "$1" "${2:-}"
       CMAKE_INSTALL_PREFIX="$2"
       shift
       shift
@@ -88,19 +95,8 @@ parse_options()
       shift
       ;;
       -f|--filename)
+      require_arg "$1" "${2:-}"
       RELEASE_FILENAME_PREFIX="$2"
-      shift
-      shift
-      ;;
-      --with-fmapi)
-      WITH_FMAPI=true
-      if [ -z "$2" ] || [ -z "$3" ]; then
-          echo "Missing FM library or include path."
-          help
-      fi
-      FMAPI_LIB_PATH="$2"
-      FMAPI_INCLUDE_PATH="$3"
-      shift
       shift
       shift
       ;;
@@ -109,6 +105,7 @@ parse_options()
       shift
       ;;
       -i|--install-path)
+      require_arg "$1" "${2:-}"
       PACKAGE_INSTALL_PATH="$2"
       shift
       shift
@@ -118,8 +115,8 @@ parse_options()
       shift 
       ;;
       *)
-      echo "Invalid option provided. Check the valid options"
-      help
+      echo "Invalid option provided: $1. Check the valid options" >&2
+      help 1
       ;;
   esac
   done
@@ -186,8 +183,6 @@ create_rpm()
   rpmbuild -bb --clean "$PROJECT_ROOT/scripts/packaging/rpm/svk_cxl.spec" \
     --define "_topdir $rpmBuildDir" \
     --define "installpath $installpath" \
-    --define "_fmapilibpath $FMAPI_LIB_PATH" \
-    --define "_fmapiincpath $FMAPI_INCLUDE_PATH" \
     --define "svk_cxl_version $RPM_VERSION" \
     --define "svk_os_version $ID$VERSION_ID" \
     --define "mock_flag ${mock_flag:-}"
@@ -225,9 +220,6 @@ create_deb()
     sed -i "s/DEB_TIMESTAMP/$(date -R)/g" "$DEBIAN_DIR/changelog"
     # Update changelog OS version
     sed -i "s/DEB_OSVER/$ID$VERSION_ID/g" "$DEBIAN_DIR/changelog"
-    # Update FM_API build and include dirs
-    sed -i -e "s@FMAPI_INCLUDE_VAL@$FMAPI_INCLUDE_PATH@g" "$DEBIAN_DIR/rules"
-    sed -i -e "s@FMAPI_LIB_VAL@$FMAPI_LIB_PATH@g" "$DEBIAN_DIR/rules"
     sed -i -e "s@MOCK_VAL@$MOCK@g" "$DEBIAN_DIR/rules"
     # Define the package name - needed to differentiate "release" from "simulation" package
     sed -i -e "s@DEB_PACKAGE_NAME@$DEB_PACKAGE_NAME@g" "$DEBIAN_DIR/rules"
@@ -309,23 +301,6 @@ if $WITH_COVERAGE;then
   CMAKE_OPTIONS+=("-DWITH_COVERAGE=ON")
 fi
 
-if $WITH_FMAPI;then
-  if [ ! -f "$FMAPI_LIB_PATH" ];then
-    die "$FMAPI_LIB_PATH does not exists"
-  fi
-
-  if [ ! -d "$FMAPI_INCLUDE_PATH" ];then
-    die "$FMAPI_INCLUDE_PATH does not exist"
-  fi
-  CMAKE_OPTIONS+=("-DWITH_FMAPI=ON")
-  CMAKE_OPTIONS+=("-DFMAPI_INCLUDE_PATH=$FMAPI_INCLUDE_PATH")
-  CMAKE_OPTIONS+=("-DFMAPI_LIBRARY_PATH=$FMAPI_LIB_PATH")
-
-  cp "$FMAPI_INCLUDE_PATH/sample_json/input.json" "$PROJECT_ROOT/tests"
-  mkdir -p "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/config"
-  cp "$PROJECT_ROOT/tests/input.json" "$BUILD_DIR/$CMAKE_INSTALL_PREFIX/config/"
-fi
-
 # Add cmake install prefix option
 if [ -n "$CMAKE_INSTALL_PREFIX" ];then
   CMAKE_OPTIONS+=("-DCMAKE_INSTALL_PREFIX=$CMAKE_INSTALL_PREFIX")
@@ -355,7 +330,7 @@ if $WITH_COVERAGE;then
     pushd tests
     echo "Running unit tests..."
 
-    cp "$PROJECT_ROOT/tests/input.json" "$BUILD_DIR/tests"
+    cp "$PROJECT_ROOT/config/input.json" "$BUILD_DIR/tests"
     cp "$PROJECT_ROOT/config/cxl.conf" "$BUILD_DIR/tests"
     cp "$PROJECT_ROOT/config/cxl_dev_id_map.json" "$BUILD_DIR/tests"
     cp "$PROJECT_ROOT/config/zmq_config.json" "$BUILD_DIR/tests"

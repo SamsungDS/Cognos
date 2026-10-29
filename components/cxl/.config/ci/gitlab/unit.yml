@@ -21,10 +21,7 @@ unit test:
         path: $GITLAB_COVERAGE_REPORT
       junit: $GITLAB_JUNIT_REPORT
   variables:
-    BUILD_COMMAND: ./scripts/build.sh --build-tests --with-coverage --with-fmapi $FMAPI_PATH/build/libmbox_a1_shared.so $FMAPI_PATH
-    RELEASE_TYPE: release
-    FMAPI_CLONE_DIR: "$FMAPI_PROJECT/$DOCKERFILE_NAME/$RELEASE_TYPE"
-    FMAPI_PATH: $CI_PROJECT_DIR/$FMAPI_CLONE_DIR/$FMAPI_DIR
+    BUILD_COMMAND: ./scripts/build.sh --build-tests --with-coverage
   parallel:
     matrix:
       - DOCKERFILE_NAME: rocky9

@@ -2,15 +2,13 @@
 
 SHORT_VERSION := $(shell $(CURDIR)/../scripts/get_version.sh -s)
 INSTALL_PATH = usr/local/svk/feature_modules/cxl
-FMAPI_INCLUDE = FMAPI_INCLUDE_VAL
-FMAPI_LIB = FMAPI_LIB_VAL
 MOCK = MOCK_VAL
 %:
 	dh $@
 
 override_dh_auto_configure:
 
-	cmake -DMOCK=$(MOCK) -DWITH_RELEASE=ON -DCMAKE_INSTALL_PREFIX=/$(INSTALL_PATH) -DWITH_FMAPI=ON -DFMAPI_INCLUDE_PATH=$(FMAPI_INCLUDE) -DFMAPI_LIBRARY_PATH=$(FMAPI_LIB) ..
+	cmake -DMOCK=$(MOCK) -DWITH_RELEASE=ON -DCMAKE_INSTALL_PREFIX=/$(INSTALL_PATH) ..
 override_dh_auto_build:
 	make -j$(nproc)
 
@@ -33,6 +31,6 @@ override_dh_strip:
 
 override_dh_shlibdeps:
 	# Set link path for shlibdeps
-	dh_shlibdeps -l$(CURDIR)/$(INSTALL_PATH)/lib64 -l$(CURDIR)/$(INSTALL_PATH)/share/cxl_memory_box/lib -l/lib/x86_64-linux-gnu -l/usr/lib/x86_64-linux-gnu
+	dh_shlibdeps -l$(CURDIR)/$(INSTALL_PATH)/lib64 -l/lib/x86_64-linux-gnu -l/usr/lib/x86_64-linux-gnu
 
 override_dh_installsystemd:

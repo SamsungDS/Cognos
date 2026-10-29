@@ -9,8 +9,8 @@ CADDY_PATH = etc/caddy/Caddyfile.d/
 	dh $@
 
 override_dh_auto_configure:
-	# Set version of Cognos UI (React App)
-	npm --prefix $(CURDIR)/../cognos/ui version $(SVK_VERSION) --allow-same-version
+	# Set version of Cognos UI (React App); npm accepts only semver, so '~' becomes '-'
+	npm --prefix $(CURDIR)/../cognos/ui version $(subst ~,-,$(SVK_VERSION)) --allow-same-version
 	# Clean install Cognos UI dependencies
 	npm --prefix $(CURDIR)/../cognos/ui ci
 

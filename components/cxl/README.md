@@ -86,74 +86,9 @@ dnf install cognos-mgmt-fw-devel -y
 
 git clone --recursive https://cxl-gitlab.ssi.samsung.com/dfs/svk/cxl.git
 
-#### CXL Mem box API (cxl_memory_box)
-CXL Mem box API implements a low level cxl fabric management API for Samsung CXL memory box. Cognos CXL plugin uses the same to execute immutable and mutable functions on Samsung CXL memory box, e.g. attach/detach CXL memory device to and from an application server.
+#### Mock device configuration
 
-For more details, please see http://sj-confluence.ssi.samsung.com:8090/display/MPL/CXL+memory+box+FM+APIs.
-
-git clone --recursive https://cxl-gitlab.ssi.samsung.com/cxl/cxl_memory_box.git
-
-##### Requesting access and more information
-
-Assuming you already have access to https://cxl-gitlab.ssi.samsung.com/, if not please contact Samsung IT.
-For additional access permissions and information on https://cxl-gitlab.ssi.samsung.com/cxl/cxl_memory_box.git please contact mukesh.garg@samsung.com (owner/maintainer) or changho.c@samsung.com.
-
-#### Build with CXL Memory box API
-
-https://cxl-gitlab.ssi.samsung.com/cxl/cxl_memory_box/-/blob/main/mbox_a1/README.md
-
-##### Two modes for CXL Memory box build
-
-- Simulated Mode 
-```bash
-git clone git@cxl-gitlab.ssi.samsung.com:cxl/cxl_memory_box.git  
-cd mbox_a1  
-mkdir build  
-cd build  
-cmake -DCMAKE_CXX_FLAGS="-DENABLE_SIM" ..
-make  
-```
-
-- Hardware Mode
-```bash
-git clone git@cxl-gitlab.ssi.samsung.com:cxl/cxl_memory_box.git  
-cd mbox_a1  
-mkdir build  
-cd build  
-cmake.. && make  
-```
-
-
-#### Link FM API with Cognos CXL
-
-For example,
-```
-[mandar.s@msl-ssg-vm11 cxl]$ scripts/build.sh --with-fmapi /home/mandar.s/cxl/svk-cxl/cxl_memory_box/mbox_a1/build/libmbox_a1_shared.so /home/mandar.s/cxl/svk-cxl/cxl_memory_box/mbox_a1/ --mock
-Build tests: false
-Build with code coverage: false
-CMake install prefix:
-~/cxl/svk-cxl/cxl/build ~/cxl/svk-cxl/cxl
-Cmake options: -DWITH_FMAPI=ON
-Cmake options: -DCMAKE_INCLUDE_PATH=/home/mandar.s/cxl/svk-cxl/cxl_memory_box/mbox_a1/
-Cmake options: -DCMAKE_LIBRARY_PATH=/home/mandar.s/cxl/svk-cxl/cxl_memory_box/mbox_a1/build/libmbox_a1_shared.so
-Running cmake...
--- GIT VERSION 0.0.0
--- GIT VERSION strip 0.0.0
--- Building with coverage
--- Building with FMAPI
--- Configuring done (0.6s)
--- Generating done (0.5s)
--- Build files have been written to: /home/mandar.s/cxl/svk-cxl/cxl/build
-Building libraries...
-make...
-[ 14%] Built target cxl_lib
-[ 28%] Built target gtest
-[ 42%] Built target gtest_main
-[ 57%] Built target gmock
-[ 71%] Built target gmock_main
-[100%] Built target cxl_ut
-~/cxl/svk-cxl/cxl
-```
+Cognos CXL does not need the cxl_memory_box library. The sample CXL device configuration is kept in this repository as `config/input.json`. The unit tests use it, and the release and mock packages install it to `/usr/local/svk/feature_modules/cxl/config/input.json`.
 
 ## Building and executing unit tests
 
@@ -177,9 +112,12 @@ options:
   Release build. Generates a tarball called cognos-core-<version>.tgz by default.
 -f | --filename
   Filename prefix to use for release tarball. Only applicable when building with release flag.
---with-fmapi <FMAPI_LIB_PATH> <FMAPI_INCLUDE_PATH>
-  Builds with fmapi. Requires fmapi library and source paths.
-e.g. scripts/build.sh --with-fmapi /cxl_memory_box/mbox_a1/build/libmbox_a1_shared.so /cxl_memory_box/mbox_a1
+-b | --build-package
+  Generate Cognos CXL FW RPMs/DEB packages.
+-i | --install-path
+  Path that RPMs should install svk cxl to (Default: /usr/local/svk/cxl). Only applicable when building with release flag.
+--mock
+  Mock build: compile the mock CXL device adapter (MOCK=1) and name the packages cognos-cxl-mock. Usage ex: scripts/build.sh --mock
 ```
 
 ### Unit Tests and Code Coverage
@@ -245,19 +183,19 @@ Total Test time (real) =   1.57 sec
 Generating coverage reports
 ```
 
-#### Build without CXL Memory box API
+#### Build
 
 cd cxl && scripts/build.sh
 
 
 #### Build RPMS
 e.g.
-cd cxl && scripts/build.sh --with-fmapi mbox_a1/build/libmbox_a1_shared.so mbox_a1 -r -b
+cd cxl && scripts/build.sh -r -b
 
 
 #### Build Debian pacakages
 e.g.
-cd cxl && scripts/build.sh --with-fmapi mbox_a1/build/libmbox_a1_shared.so mbox_a1 -r -b
+cd cxl && scripts/build.sh -r -b
 
 Note: for mock binary use "--mock" flag
 

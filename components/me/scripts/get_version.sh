@@ -67,8 +67,9 @@ parse_options()
 
 parse_options "$@"
 
-# Get the version from git tag
-GIT_VERSION=$(git -C "$GIT_DIR" describe --abbrev=4 --always --tags)
+# Get the version from COGNOS_VERSION if set, else from git tag
+GIT_VERSION=${COGNOS_VERSION:+v$COGNOS_VERSION}
+[[ -n $GIT_VERSION ]] || GIT_VERSION=$(git -C "$GIT_DIR" describe --abbrev=4 --always --tags)
 
 if [[ $NO_V == true || $SHORT == true ]]; then
     # strip the 'v'
@@ -77,6 +78,7 @@ fi
 if [[ $SHORT == true ]]; then
     # strip everything after patch integer
     GIT_VERSION="${GIT_VERSION/-*/}"
+    GIT_VERSION="${GIT_VERSION%%\~*}"
 fi
 
 echo "$GIT_VERSION"

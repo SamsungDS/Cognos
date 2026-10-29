@@ -1,6 +1,5 @@
 # Build files
 /build
-/cxl_memory_box
 
 # IDE config
 /.vscode
