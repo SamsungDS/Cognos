@@ -9,7 +9,6 @@ Summary:        Cognos CXL Plugin
 License:        Samsung Internal
 BuildRequires:  jansson
 Requires:       cognos-core, cognos-mgmt-fw, jansson, pciutils >= 3.10.0, dstat, python3
-Provides:	libmbox_a1_shared.so()(64bit)
 
 %package devel
 Summary:        Cognos CXL devel package contains headers
@@ -24,7 +23,6 @@ Cognos CXL downstream, upstream, and other related header files for app/feature 
 
 %{!?installpath: %global installpath /usr/local/svk/cxl}
 %{!?installpath_mgmt: %global installpath_mgmt /usr/local/svk/mgmt-fw}
-%{!?installpath_mbox: %global installpath_mbox /usr/local/lib/cxl_memory_box}
 %{!?cxl_build_dir: %global cxl_build_dir cognos-cxl}
 %{!?installpath_cmmh_lib: %global installpath_cmmh_lib /usr/local/lib}
 %{!?installpath_cmmh_include: %global installpath_cmmh_include /usr/local/include}
@@ -42,7 +40,6 @@ Cognos CXL downstream, upstream, and other related header files for app/feature 
 rm -rf %{buildroot}
 mkdir -p %{buildroot}/%{installpath}
 mkdir -p %{buildroot}/%{installpath_mgmt}
-mkdir -p %{buildroot}/%{installpath_mbox}
 mkdir -p %{buildroot}/%{installpath_cmmh_lib}
 mkdir -p %{buildroot}/%{installpath_cmmh_include}
 mkdir -p %{buildroot}/%{installpath_zmq}
@@ -67,7 +64,6 @@ cmake -DWITH_RELEASE=ON -DPKG_CONFIG_PREFIX=%svk_install_dir -DCMAKE_INSTALL_PRE
 %svk_install_dir/scripts/dependencies/python/requirements_deploy.txt
 %svk_install_dir/logic_modules
 %{installpath_mgmt}
-%{installpath_mbox}
 %{installpath_cmmh_lib}/libcmmh.a
 %{installpath_cmmh_service}/cmmh_driver.service
 %attr(0755, root, root) %{installpath_cmmh_driver}/cmmh_driver
@@ -94,7 +90,6 @@ touch /etc/ld.so.conf.d/svk-cxl-x86_64.conf
 chmod a+r /etc/ld.so.conf.d/svk-cxl-x86_64.conf
 chmod +x %svk_install_dir/scripts/cxl_device_info.py
 echo "$installpath/%{_lib}" | tee -a /etc/ld.so.conf.d/svk-cxl-x86_64.conf
-echo "/usr/local/lib/cxl_memory_box" | tee -a /etc/ld.so.conf.d/svk-cxl-x86_64.conf
 echo "/usr/local/svk/mgmt-fw/lib64" | tee -a /etc/ld.so.conf.d/svk-cxl-x86_64.conf
 /usr/sbin/ldconfig
 
@@ -121,7 +116,6 @@ if [ $1 -eq 0 ]; then
   rm -rf %cxl_venv_dir
 fi
 rm -f /etc/ld.so.conf.d/svk-cxl-x86_64.conf
-rm -rf /usr/local/lib/cxl_memory_box 
 rm -rf /usr/local/svk/cxl
 /usr/sbin/ldconfig
 

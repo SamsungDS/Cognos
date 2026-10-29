@@ -1,5 +1,4 @@
 include:
-  - .config/ci/gitlab/build_fmapi.yml
   - .config/ci/gitlab/build.yml
   - .config/ci/gitlab/publish.yml
   - .config/ci/gitlab/sonar.yml
@@ -32,10 +31,6 @@ variables:
   SONAR_COVERAGE_REPORT: $REPORT_DIR/sonar_coverage.xml
   GITLAB_COVERAGE_REPORT: $REPORT_DIR/gitlab_coverage.xml
   GITLAB_JUNIT_REPORT: $REPORT_DIR/gitlab_junit.xml
-  FMAPI_GROUP: cxl
-  FMAPI_PROJECT: cxl_memory_box
-  FMAPI_COMMIT_ID: 0a87cfd755563cd5769205b95de61521b38157e8
-  FMAPI_DIR: mbox_a1
 
 build docker:
   parallel:

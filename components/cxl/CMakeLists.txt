@@ -56,7 +56,6 @@ set(SVKCXL_INCLUDE_DEST "include/")
 set(SVKMGMTFW_DIRS "/usr/local/svk/mgmt-fw")
 set(SVKMGMTFW_INCLUDE_DIRS "/usr/local/svk/mgmt-fw/include")
 set(SVKMGMTFW_LIB_DIRS "/usr/local/svk/mgmt-fw/lib64")
-set(SVKCXL_FMAPI_DIRS "/usr/local/lib/cxl_memory_box")
 configure_file("cmake/${SVKCXL}.pc.in" "${pkg_config}" @ONLY)
 
 find_package(PkgConfig REQUIRED)
@@ -108,22 +107,6 @@ install(CODE "
     file(APPEND \"svk-cxl-x86_64.conf\" \"\\n${CMAKE_INSTALL_PREFIX}/lib64\\n\")
 ")
 
-if(WITH_FMAPI)
-    install(
-        FILES "${FMAPI_LIBRARY_PATH}"
-        DESTINATION "${SVKCXL_FMAPI_DIRS}"
-    )
-    install(CODE "
-        file(APPEND \"svk-cxl-x86_64.conf\" \"\\n${SVKCXL_FMAPI_DIRS}\\n\")
-    ")
-    if(MOCK_FLAG)
-        install(
-            FILES "${FMAPI_INCLUDE_PATH}/sample_json/input.json"
-            DESTINATION "${SVKMGMTFW_DIRS}"
-        )
-    endif()
-endif()
-
 install(
     FILES "build/svk-cxl-x86_64.conf"
     DESTINATION "/etc/ld.so.conf.d"
@@ -158,7 +141,7 @@ install(FILES
 	config/cxl.conf 
 	config/log.conf 
 	config/cxl_dev_id_map.json 
-	"${PROJECT_SOURCE_DIR}/tests/input.json"
+	config/input.json
 	src/cxl_utils.py
 DESTINATION "${SVK_CONFIG_PATH}")
 

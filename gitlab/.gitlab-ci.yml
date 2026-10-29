@@ -53,6 +53,7 @@ stages:
     - components/mgmt-fw/**/*
     - gitlab/**/*
     - VERSION
+    - build.sh
 .paths-core:
   changes:
     - components/core/**/*
@@ -147,3 +148,255 @@ lint ansible:
   script:
     - cd deploy
     - ansible-lint
+
+# Component builds: "build <component> image" builds the component's own
+# Dockerfile, "build <component>" builds its packages in that image with the
+# root build.sh. See docs/ci.md, "Builds".
+
+# The one version of every package built in this pipeline, from VERSION
+# (X.Y) and the vX.Y.Z tags.
+.set version:
+  before_script:
+    - |
+      X=$(cut -d. -f1 VERSION)
+      Y=$(cut -d. -f2 VERSION)
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        COGNOS_VERSION=${CI_COMMIT_TAG#v}
+      elif [ -n "$CI_MERGE_REQUEST_IID" ]; then
+        COGNOS_VERSION=$X.$((Y + 1)).0~dev.0.mr$CI_MERGE_REQUEST_IID.$CI_PIPELINE_IID
+      else
+        case $CI_COMMIT_BRANCH in
+          release/*)
+            if [ "${CI_COMMIT_BRANCH#release/}" != "$X.$Y" ]; then
+              echo "Branch $CI_COMMIT_BRANCH, but VERSION is $X.$Y"
+              exit 1
+            fi
+            # The patch after the highest vX.Y.* tag (none: patch 0).
+            P=$(git ls-remote --tags origin "refs/tags/v$X.$Y.*" | sed -n "s|.*refs/tags/v$X\.$Y\.\([0-9][0-9]*\)$|\1|p" | sort -n | tail -n 1)
+            COGNOS_VERSION=$X.$Y.$((${P:--1} + 1))~rc.$CI_PIPELINE_IID
+            ;;
+          # main, and schedules or web runs on any other branch.
+          *) COGNOS_VERSION=$X.$((Y + 1)).0~dev.$CI_PIPELINE_IID ;;
+        esac
+      fi
+      export COGNOS_VERSION
+      echo "Cognos version: $COGNOS_VERSION"
+
+# Pushes $CI_REGISTRY/$CI_PROJECT_PATH/<component>:<os>-<ref slug> and
+# :<os>-<short sha>. The component directory is the build context, as in the
+# component repository.
+.component image:
+  extends: build docker
+  stage: build-images
+  needs: []
+  variables:
+    DOCKER_BRANCH_NAME: $CI_COMMIT_REF_SLUG
+    CI_REGISTRY_IMAGE: $CI_REGISTRY/$CI_PROJECT_PATH/$COMPONENT
+    DOCKERFILE_NAME: $OS
+  script:
+    - cd $COMPONENT_DIR
+    # The template's second tag is <os>-<git describe>, which means nothing
+    # here (imported tags); name the commit instead.
+    - GIT_TAG_VERSION=$CI_COMMIT_SHORT_SHA
+    - echo "version tag (pushed) - $CI_REGISTRY_IMAGE:${DOCKERFILE_NAME}-$GIT_TAG_VERSION"
+    - !reference [build docker, script]
+  parallel:
+    matrix:
+      - OS: [ubuntu24, ol10]
+
+# The image already has the component's dependencies, so its
+# scripts/dependencies/install.sh is not run again. The per-commit tag, so that
+# overlapping pipelines on one ref never use each other's image.
+.component build:
+  extends: .set version
+  stage: build
+  image:
+    name: $CI_REGISTRY/$CI_PROJECT_PATH/$COMPONENT:$OS-$CI_COMMIT_SHORT_SHA
+    pull_policy: always
+  script:
+    - ./build.sh --native "$COMPONENT" --os "$OS"
+  artifacts:
+    name: $CI_JOB_NAME
+    expire_in: 14 days
+    paths:
+      - $COMPONENT_DIR/build/artifacts/
+  parallel:
+    matrix:
+      - OS: [ubuntu24, ol10]
+
+.core:
+  variables:
+    COMPONENT: core
+    COMPONENT_DIR: components/core
+  # Tags, schedules and web runs build everything. Merge requests and pushes
+  # (workflow rules limit them to main and release/X.Y) build on a
+  # .rebuild-all change or a change in the component's own paths.
+  rules:
+    - if: $CI_COMMIT_TAG || $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
+      changes: !reference [.rebuild-all, changes]
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
+      changes: !reference [.paths-core, changes]
+build core image:
+  extends: [.component image, .core]
+build core:
+  extends: [.component build, .core]
+  needs: ["build core image"]
+
+.mgmt-fw:
+  variables:
+    COMPONENT: mgmt-fw
+    COMPONENT_DIR: components/mgmt-fw
+  # Tags, schedules and web runs build everything. Merge requests and pushes
+  # (workflow rules limit them to main and release/X.Y) build on a
+  # .rebuild-all change or a change in the component's own paths.
+  rules:
+    - if: $CI_COMMIT_TAG || $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
+      changes: !reference [.rebuild-all, changes]
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
+      changes: !reference [.paths-mgmt-fw, changes]
+build mgmt-fw image:
+  extends: [.component image, .mgmt-fw]
+build mgmt-fw:
+  extends: [.component build, .mgmt-fw]
+  needs:
+    - build mgmt-fw image
+    - {job: build core, optional: true}
+
+.node:
+  variables:
+    COMPONENT: node
+    COMPONENT_DIR: components/node
+  # Tags, schedules and web runs build everything. Merge requests and pushes
+  # (workflow rules limit them to main and release/X.Y) build on a
+  # .rebuild-all change or a change in the component's own paths.
+  rules:
+    - if: $CI_COMMIT_TAG || $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
+      changes: !reference [.rebuild-all, changes]
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
+      changes: !reference [.paths-node, changes]
+build node image:
+  extends: [.component image, .node]
+build node:
+  extends: [.component build, .node]
+  needs:
+    - build node image
+    - {job: build core, optional: true}
+
+.ras:
+  variables:
+    COMPONENT: ras
+    COMPONENT_DIR: components/ras
+  # Tags, schedules and web runs build everything. Merge requests and pushes
+  # (workflow rules limit them to main and release/X.Y) build on a
+  # .rebuild-all change or a change in the component's own paths.
+  rules:
+    - if: $CI_COMMIT_TAG || $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
+      changes: !reference [.rebuild-all, changes]
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
+      changes: !reference [.paths-ras, changes]
+build ras image:
+  extends: [.component image, .ras]
+build ras:
+  extends: [.component build, .ras]
+  needs:
+    - build ras image
+    - {job: build core, optional: true}
+
+.slat:
+  variables:
+    COMPONENT: slat
+    COMPONENT_DIR: components/slat
+  # Tags, schedules and web runs build everything. Merge requests and pushes
+  # (workflow rules limit them to main and release/X.Y) build on a
+  # .rebuild-all change or a change in the component's own paths.
+  rules:
+    - if: $CI_COMMIT_TAG || $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
+      changes: !reference [.rebuild-all, changes]
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
+      changes: !reference [.paths-slat, changes]
+build slat image:
+  extends: [.component image, .slat]
+build slat:
+  extends: [.component build, .slat]
+  needs:
+    - build slat image
+    - {job: build core, optional: true}
+
+.me:
+  variables:
+    COMPONENT: me
+    COMPONENT_DIR: components/me
+  # Tags, schedules and web runs build everything. Merge requests and pushes
+  # (workflow rules limit them to main and release/X.Y) build on a
+  # .rebuild-all change or a change in the component's own paths.
+  rules:
+    - if: $CI_COMMIT_TAG || $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
+      changes: !reference [.rebuild-all, changes]
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
+      changes: !reference [.paths-me, changes]
+build me image:
+  extends: [.component image, .me]
+build me:
+  extends: [.component build, .me]
+  needs:
+    - build me image
+    - {job: build core, optional: true}
+    - {job: build mgmt-fw, optional: true}
+
+.cxl:
+  variables:
+    COMPONENT: cxl
+    COMPONENT_DIR: components/cxl
+  # Tags, schedules and web runs build everything. Merge requests and pushes
+  # (workflow rules limit them to main and release/X.Y) build on a
+  # .rebuild-all change or a change in the component's own paths.
+  rules:
+    - if: $CI_COMMIT_TAG || $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
+      changes: !reference [.rebuild-all, changes]
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
+      changes: !reference [.paths-cxl, changes]
+build cxl image:
+  extends: [.component image, .cxl]
+# Release and mock variants (cognos-cxl, cognos-cxl-mock).
+build cxl:
+  extends: [.component build, .cxl]
+  needs:
+    - build cxl image
+    - {job: build core, optional: true}
+    - {job: build mgmt-fw, optional: true}
+  script:
+    - ./build.sh --native cxl --os "$OS" $(if [ "$VARIANT" = mock ]; then echo --mock; fi)
+  parallel:
+    matrix:
+      - OS: [ubuntu24, ol10]
+        VARIANT: [release, mock]
+
+.sapp:
+  variables:
+    COMPONENT: sapp
+    COMPONENT_DIR: apps/sapp
+  # Tags, schedules and web runs build everything. Merge requests and pushes
+  # (workflow rules limit them to main and release/X.Y) build on a
+  # .rebuild-all change or a change in the component's own paths.
+  rules:
+    - if: $CI_COMMIT_TAG || $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
+      changes: !reference [.rebuild-all, changes]
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH)
+      changes: !reference [.paths-sapp, changes]
+build sapp image:
+  extends: [.component image, .sapp]
+build sapp:
+  extends: [.component build, .sapp]
+  needs: ["build sapp image"]
+  variables:
+    # As in sapp's own release-build job: with CI=true, react-scripts build
+    # treats warnings as errors.
+    CI: "false"

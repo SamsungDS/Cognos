@@ -7,8 +7,9 @@ set -eu
 SCRIPT_DIR=$(cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd)
 PROJECT_ROOT=$(realpath "$SCRIPT_DIR/..")
 
-# Get the version from git tag, this works from anywhere since we point to PROJECT_ROOT
-GIT_VERSION=$(git -C "$PROJECT_ROOT" describe --abbrev=4 --always --tags)
+# Get the version from COGNOS_VERSION if set, else from git tag, this works from anywhere since we point to PROJECT_ROOT
+GIT_VERSION=${COGNOS_VERSION:+v$COGNOS_VERSION}
+[[ -n $GIT_VERSION ]] || GIT_VERSION=$(git -C "$PROJECT_ROOT" describe --abbrev=4 --always --tags)
 
 # Output the version
 echo "$GIT_VERSION"

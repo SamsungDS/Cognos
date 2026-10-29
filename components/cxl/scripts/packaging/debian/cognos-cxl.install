@@ -7,7 +7,6 @@
 /usr/local/svk/feature_modules/cxl/logic_modules/cmmh/lib64/libcmmh* /usr/local/svk/feature_modules/cxl/logic_modules/cmmh/lib64/
 /usr/local/svk/feature_modules/cxl/scripts/cxl_device_info.py /usr/local/svk/feature_modules/cxl/scripts/
 /usr/local/svk/feature_modules/cxl/scripts/dependencies/python/requirements_deploy.txt /usr/local/svk/feature_modules/cxl/scripts/dependencies/python/
-/usr/local/lib/cxl_memory_box/* /usr/local/lib/cxl_memory_box/
 /etc/ld.so.conf.d/* /etc/ld.so.conf.d/
 /etc/svk/* /etc/svk/
 /usr/local/lib/libcmmh.a /usr/local/lib/
