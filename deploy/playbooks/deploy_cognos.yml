@@ -18,6 +18,11 @@
   roles:
     - validate_kernel
 
+# Every deployment starts from a clean host: remove any existing Cognos
+# installation, its configuration and logs. On a clean host this changes nothing.
+- name: Remove any existing Cognos installation
+  ansible.builtin.import_playbook: remove_cognos.yml
+
 - name: Check ports are available for start management server backend
   hosts: management_server
   become: true

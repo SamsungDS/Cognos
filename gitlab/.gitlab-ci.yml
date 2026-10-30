@@ -9,7 +9,8 @@
 #   2. What a change rebuilds
 #   3. Job templates: image, build, test, scan
 #   4. Components, one block each with all of its jobs
-#   5. Other jobs: check version, amo-prof, ansible
+#   5. Dev set
+#   6. Other jobs: check version, amo-prof, ansible
 #
 # The pipeline that came with deploy/ (deploy/.gitlab-ci.yml) is deliberately
 # not included. Its deploy stage restores VM snapshots and deploys as root to
@@ -432,7 +433,67 @@ scan sapp:
       -Dsonar.javascript.lcov.reportPaths=cognos/ui/coverage/lcov.info,cognos/rbac/core/bin/rbac-client-repo/coverage/lcov.info
 
 # ---------------------------------------------------------------------------
-# 5. Other jobs
+# 5. Dev set
+# ---------------------------------------------------------------------------
+# Every main pipeline publishes a complete dev set as its artifact
+# (ci/dev-set.py): the packages it built, plus the previous set's packages of
+# the components it did not build. It runs in every main pipeline, also when
+# nothing was built, so that the newest successful pipeline always holds the
+# newest set. GitLab never expires the artifacts of the most recent successful
+# pipeline ("Keep artifacts from most recent successful jobs"), so the newest
+# set stays until a newer one exists; older sets expire after 10 days.
+# deploy/scripts/fetch-packages.sh downloads a set for deployment.
+
+publish dev set:
+  stage: publish
+  image: python:3.12
+  resource_group: dev-set
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main" && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "schedule")
+  # This pipeline's packages, and only after its tests and scans passed.
+  needs:
+    - {job: build core, optional: true}
+    - {job: build mgmt-fw, optional: true}
+    - {job: build node, optional: true}
+    - {job: build ras, optional: true}
+    - {job: build slat, optional: true}
+    - {job: build me, optional: true}
+    - {job: build cxl, optional: true}
+    - {job: build sapp, optional: true}
+    - {job: test core, optional: true, artifacts: false}
+    - {job: test mgmt-fw, optional: true, artifacts: false}
+    - {job: test node, optional: true, artifacts: false}
+    - {job: test ras, optional: true, artifacts: false}
+    - {job: test slat, optional: true, artifacts: false}
+    - {job: test me, optional: true, artifacts: false}
+    - {job: test cxl, optional: true, artifacts: false}
+    - {job: test sapp, optional: true, artifacts: false}
+    - {job: scan core, optional: true, artifacts: false}
+    - {job: scan mgmt-fw, optional: true, artifacts: false}
+    - {job: scan node, optional: true, artifacts: false}
+    - {job: scan ras, optional: true, artifacts: false}
+    - {job: scan slat, optional: true, artifacts: false}
+    - {job: scan me, optional: true, artifacts: false}
+    - {job: scan cxl, optional: true, artifacts: false}
+    - {job: scan sapp, optional: true, artifacts: false}
+  before_script:
+    - !reference [.version, before_script]
+  script:
+    # The newest set: the artifact of the latest successful "publish dev set" on main.
+    - >-
+      curl --fail --silent --show-error --location --header "JOB-TOKEN: $CI_JOB_TOKEN" --output previous.zip
+      "$CI_API_V4_URL/projects/$CI_PROJECT_ID/jobs/artifacts/main/download?job=publish%20dev%20set"
+      || rm -f previous.zip
+    - if [ -s previous.zip ]; then python3 -m zipfile -e previous.zip previous; fi
+    - ci/dev-set.py --version "$COGNOS_VERSION" --pipeline "$CI_PIPELINE_ID" --previous previous/dev-set --out dev-set
+  artifacts:
+    name: dev-set-$CI_PIPELINE_ID
+    expire_in: 10 days
+    paths:
+      - dev-set/
+
+# ---------------------------------------------------------------------------
+# 6. Other jobs
 # ---------------------------------------------------------------------------
 
 # Runs in every pipeline, so every merge request has one.
