@@ -464,9 +464,10 @@ scan sapp:
 # If core or mgmt-fw failed, no set is published: everything depends on them.
 # A failed Sonar scan does not hold a set back. It runs in every main pipeline,
 # also when nothing was built, so the newest successful pipeline always holds
-# the newest set: GitLab never expires the artifacts of the most recent
-# successful pipeline ("Keep artifacts from most recent successful jobs").
-# Older sets expire after 10 days. Rerunning the job (e.g. after retrying a
+# the newest set (the newest successful "publish dev set" job, whatever its
+# pipeline's status). GitLab never expires the artifacts of the most recent
+# pipeline that passed ("Keep artifacts from most recent successful jobs");
+# other sets expire after 10 days. Rerunning the job (e.g. after retrying a
 # failed job) republishes the set with the new results.
 # deploy/scripts/fetch-packages.py downloads a set for deployment.
 
@@ -504,12 +505,8 @@ publish dev set:
     - !reference [.version, before_script]
   script:
     - gitlab/api.py job-results --pipeline "$CI_PIPELINE_ID" | tee results.json
-    # The newest set: the artifact of the latest successful "publish dev set" on main.
-    - >-
-      curl --fail --silent --show-error --location --header "JOB-TOKEN: $CI_JOB_TOKEN" --output previous.zip
-      "$CI_API_V4_URL/projects/$CI_PROJECT_ID/jobs/artifacts/main/download?job=publish%20dev%20set"
-      || rm -f previous.zip
-    - if [ -s previous.zip ]; then python3 -m zipfile -e previous.zip previous; fi
+    # The newest set: the newest successful "publish dev set" on main, whatever its pipeline's status.
+    - gitlab/api.py newest-dev-set --out previous
     - >-
       ci/dev-set.py --version "$COGNOS_VERSION" --pipeline "$CI_PIPELINE_ID" --results results.json
       --previous previous/dev-set --out dev-set

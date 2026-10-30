@@ -4,6 +4,8 @@
 Usage: gitlab/api.py <command> [options]
 
   job-results --pipeline <id>         print {"<component>/<os>": "passed"|"failed"} for ci/dev-set.py
+  newest-dev-set --out <dir>          extract the newest dev set (the newest successful "publish dev set" job on
+                                      main whose artifacts still exist, whatever its pipeline's status) into <dir>
   create-release                      create release/<VERSION>, its first tag and the backport-<VERSION> label
   propose --version <X.Y> --report <file>
                                       put VERSION=<X.Y> on release-bot/next and open or update the release MR
@@ -14,12 +16,14 @@ Usage: gitlab/api.py <command> [options]
                                       and create the GitLab release for $CI_COMMIT_TAG
 
 Uses the CI variables CI_API_V4_URL, CI_PROJECT_ID, CI_PROJECT_PATH, CI_SERVER_HOST, CI_COMMIT_SHA, and
-RELEASE_BOT_TOKEN (create-release, propose, tag-patch, backport) or CI_JOB_TOKEN (job-results, publish-release).
+RELEASE_BOT_TOKEN (create-release, propose, tag-patch, backport) or CI_JOB_TOKEN (newest-dev-set, publish-release).
+job-results and newest-dev-set read the public pipeline API without a token.
 Never prints a token.
 """
 
 import argparse
 import base64
+import io
 import json
 import os
 import pathlib
@@ -29,6 +33,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 
 API = os.environ.get("CI_API_V4_URL", "")
 PROJECT = os.environ.get("CI_PROJECT_ID", "")
@@ -130,6 +135,31 @@ def job_results(args):
             ok = all(status.get(n) == "success" for n in names_os)
             results[f"{component}/{os_name}"] = "passed" if ok else "failed"
     print(json.dumps(results, indent=2, sort_keys=True))
+
+
+def newest_dev_set(args):
+    """Searched pipeline by pipeline, newest first: GitLab's own "latest artifacts" lookup only considers pipelines
+    that passed, so it would skip a set published by a pipeline that failed elsewhere (for example a Sonar scan)."""
+    for pipeline in request("GET", "/pipelines?ref=main&per_page=50"):
+        jobs = request("GET", f"/pipelines/{pipeline['id']}/jobs?per_page=100&scope[]=success")
+        job = next((j for j in jobs if j["name"] == "publish dev set"), None)
+        if not job:
+            continue
+        token = os.environ.get("CI_JOB_TOKEN")
+        req = urllib.request.Request(f"{API}/projects/{PROJECT}/jobs/{job['id']}/artifacts",
+                                     headers={"JOB-TOKEN": token} if token else {})
+        try:
+            with urllib.request.urlopen(req, timeout=600) as response:
+                data = response.read()
+        except urllib.error.HTTPError as e:
+            if e.code == 404:  # expired
+                continue
+            die(f"artifacts of job {job['id']}: HTTP {e.code}")
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            z.extractall(args.out)
+        print(f"Newest dev set: pipeline {pipeline['id']} (job {job['id']}, pipeline status {pipeline['status']})")
+        return
+    print("No dev set found.")
 
 
 def create_release(_args):
@@ -274,6 +304,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("job-results").add_argument("--pipeline", required=True)
+    commands.add_parser("newest-dev-set").add_argument("--out", required=True)
     commands.add_parser("create-release")
     p = commands.add_parser("propose")
     p.add_argument("--version", required=True)
@@ -282,7 +313,7 @@ def main():
     commands.add_parser("backport")
     commands.add_parser("publish-release").add_argument("--dir", required=True)
     args = parser.parse_args()
-    {"job-results": job_results, "create-release": create_release, "propose": propose, "tag-patch": tag_patch,
+    {"job-results": job_results, "newest-dev-set": newest_dev_set, "create-release": create_release, "propose": propose, "tag-patch": tag_patch,
      "backport": backport, "publish-release": publish_release}[args.command](args)
 
 

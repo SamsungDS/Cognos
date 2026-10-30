@@ -105,15 +105,14 @@ def job_id(pipeline, name):
 
 
 def newest_dev_set_job():
-    """The job id of the newest dev set: the latest successful "publish dev set" on main whose artifacts still exist."""
-    data = get(f"{API}/jobs/artifacts/main/raw/dev-set/set.json?job={urllib.parse.quote(DEV_SET_JOB)}", missing_ok=True)
-    if data is not None:
-        return job_id(json.loads(data)["pipeline"], DEV_SET_JOB)
-    # The newest set's artifacts expired (its pipeline failed, and 10 days passed): look for the newest one left.
+    """The job id of the newest dev set: the newest successful "publish dev set" on main whose artifacts still exist.
+
+    Searched pipeline by pipeline, newest first, whatever the pipeline's own status: a set published by a pipeline
+    that failed elsewhere (for example a Sonar scan) is still the newest set.
+    """
     for pipeline in get_json(f"{API}/pipelines?ref=main&per_page=50"):
         job = job_id(pipeline["id"], DEV_SET_JOB)
         if job and get(f"{API}/jobs/{job}/artifacts/dev-set/set.json", missing_ok=True) is not None:
-            print(f"The newest dev set has expired; using the newest one still kept (pipeline {pipeline['id']}).")
             return job
     return None
 

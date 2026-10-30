@@ -162,11 +162,13 @@ A dev set is a complete set of Cognos packages, every component for ubuntu24 and
   file with its component, OS, version, sha256 and the pipeline that built it, and what happened to each component
   and OS in this pipeline. Packages built in this pipeline carry its version (`X.(Y+1).0~dev.<pipeline iid>`);
   others keep the version of the pipeline that built them.
-- The newest set is the artifact of the latest successful "publish dev set" job on `main`. GitLab keeps the artifacts
-  of the most recent successful pipeline, so the newest set stays until a newer one exists. Every other set expires
-  10 days after it was created. If the newest set came from a pipeline that failed overall (a component failed), GitLab
-  does not keep it: after 10 days without a newer set, `fetch-packages.py --set latest` uses the newest set still kept.
-  A nightly schedule on `main` avoids that.
+- The newest set is the artifact of the newest successful "publish dev set" job on `main`, whatever the status of its
+  pipeline: a pipeline can fail elsewhere (a component's tests, a Sonar scan) and still publish the newest set.
+  "publish dev set" and `fetch-packages.py --set latest` both find it by searching `main`'s pipelines, newest first.
+- Every set expires 10 days after it was created, except the one in the most recent pipeline that passed: GitLab keeps
+  those artifacts ("Keep artifacts from most recent successful jobs"). So the newest set stays until a newer one exists
+  if its pipeline passed. If its pipeline failed (for example a failing Sonar scan) and no newer set follows within 10
+  days, it expires and `--set latest` uses the newest set still kept. A nightly schedule on `main` avoids that.
 - Sets are created in pipeline order (`resource_group: dev-set`). If an older pipeline would still finish after a
   newer one, `ci/dev-set.py` refuses to replace the newer set and that job fails.
 - Dev sets are stored only in GitLab, as job artifacts; nothing is published to Nexus or to the package registry.
