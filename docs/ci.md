@@ -6,11 +6,14 @@
 | `build.sh` | builds or tests components, locally (Docker) or in CI (`--native`) | no |
 | `ci/version.sh` | prints the one version of a build | no |
 | `ci/image.sh` | builds a component image, or reuses it when its inputs are unchanged | no |
-| `ci/dev-set.py` | assembles a dev set and its `set.json` | no |
-| `deploy/scripts/fetch-packages.sh` | puts the packages of a dev set, a pipeline or a local build into `deploy/artifacts/SVK/` | uses the GitLab API to download |
+| `ci/dev-set.py` | assembles a dev set or a release, with its `set.json` | no |
+| `ci/compat-check.sh` | proposes a major or minor release (buf, abidiff) | no |
+| `gitlab/api.py` | the GitLab API calls: job results, release branches, tags, merge requests, backports, release upload | yes |
+| `deploy/scripts/fetch-packages.py` | puts the packages of a release, a dev set, a pipeline or a local build into `deploy/artifacts/SVK/` | uses the GitLab API to download |
 
-One pipeline per event, no child pipelines. `gitlab/.gitlab-ci.yml` has six sections: includes and workflow, what a
-change rebuilds, job templates, one block per component with all of its jobs, the dev set, and other jobs.
+One pipeline per event, no child pipelines. `gitlab/.gitlab-ci.yml` has seven sections: includes and workflow, what a
+change rebuilds, job templates, one block per component with all of its jobs, the dev set, releases, and other
+jobs.
 
 ## When a pipeline runs
 
@@ -45,7 +48,8 @@ Stages: `build-images`, `build`, `test`, `scan`, `publish`, `release`.
 | test \<component\> | test | runs the unit tests ([Tests](#tests)) |
 | scan \<component\> | scan | Sonar analysis, `main` only ([Scans](#scans)) |
 | test amo-prof | test | builds the amo-prof wheel and runs its tests |
-| publish dev set | publish | every `main` push and schedule ([Dev sets](#dev-sets)) |
+| publish dev set | publish | every `main` push, schedule and web run ([Dev sets](#dev-sets)) |
+| propose release, create release, tag patch, backport, publish release | release, publish | see [Releases](#releases) |
 | check version | test | every pipeline; checks that `VERSION` is `MAJOR.MINOR` |
 | build ansible image, lint ansible | build-images, test | lint `deploy/` |
 
@@ -76,9 +80,10 @@ picked up only when one of its two inputs changes.
 (`cognos-cxl-mock`).
 
 Upstream packages: every component except core and sapp builds against core, and cxl and me also against mgmt-fw.
-When "build core" or "build mgmt-fw" ran in the same pipeline, the job installs its packages from the artifacts and
-logs `upstream core: pipeline <version>`. Otherwise it uses the Nexus packages in the image and logs
-`upstream core: image <version>`.
+`build.sh` installs them from the first of: this pipeline's "build core" / "build mgmt-fw" artifacts (logged
+`upstream core: pipeline <version>`), the newest dev set (`upstream core: dev set <version>`), or the Nexus packages
+in the image (`upstream core: image <version>`). So a cxl-only change builds against the newest dev set's core and
+mgmt-fw, not the older ones in the image.
 
 ## Versions
 
@@ -141,35 +146,71 @@ Nexus, so a local Docker build needs the lab network.
 ## Dev sets
 
 A dev set is a complete set of Cognos packages, every component for ubuntu24 and ol10, built on `main`. It is what
-`deploy/scripts/fetch-packages.sh --set` deploys.
+`deploy/scripts/fetch-packages.py --set` deploys.
 
-- "publish dev set" runs in every `main` push and scheduled pipeline, after all of its builds, tests and scans passed.
-  If any of them failed, no set is published and the previous one stays the newest.
-- It takes the packages this pipeline built and, for each component it did not build, that component's packages from
-  the previous set (`ci/dev-set.py`). The set is the job's artifact: `dev-set/set.json` and `dev-set/<os>/<packages>`.
-- `set.json` lists every package file with its component, OS, version, sha256 and the pipeline that built it.
-  Packages built in this pipeline carry its version (`X.(Y+1).0~dev.<pipeline iid>`); unchanged components keep the
-  version of the pipeline that built them.
+- "publish dev set" runs in every `main` push, scheduled and web pipeline, once all of its builds and tests finished,
+  also when some failed (`ci/dev-set.py`). For each component and OS (cxl and cxl-mock separately):
+  - its build and tests passed: this pipeline's packages;
+  - its build or tests failed: the previous set's packages, noted as failed in `set.json`;
+  - not built in this pipeline: the previous set's packages.
+- If core or mgmt-fw failed on any OS, **no set is published** and the job fails: every other component depends on
+  them. The previous set stays the newest.
+- A failed Sonar scan does not hold a set back; scans report code quality, not whether the packages work.
+- A component that has never passed is missing from the set; `fetch-packages.py` warns about it.
+- Rerunning "publish dev set" (for example after retrying a failed job) republishes the set with the new results.
+- The set is the job's artifact: `dev-set/set.json` and `dev-set/<os>/<packages>`. `set.json` lists every package
+  file with its component, OS, version, sha256 and the pipeline that built it, and what happened to each component
+  and OS in this pipeline. Packages built in this pipeline carry its version (`X.(Y+1).0~dev.<pipeline iid>`);
+  others keep the version of the pipeline that built them.
 - The newest set is the artifact of the latest successful "publish dev set" job on `main`. GitLab keeps the artifacts
   of the most recent successful pipeline, so the newest set stays until a newer one exists. Every other set expires
-  10 days after it was created.
+  10 days after it was created. If the newest set came from a pipeline that failed overall (a component failed), GitLab
+  does not keep it: after 10 days without a newer set, `fetch-packages.py --set latest` uses the newest set still kept.
+  A nightly schedule on `main` avoids that.
 - Sets are created in pipeline order (`resource_group: dev-set`). If an older pipeline would still finish after a
   newer one, `ci/dev-set.py` refuses to replace the newer set and that job fails.
 - Dev sets are stored only in GitLab, as job artifacts; nothing is published to Nexus or to the package registry.
-- A merge request's packages are the artifacts of its build jobs (14 days): `fetch-packages.sh --pipeline <id>`
+- A merge request's packages are the artifacts of its build jobs (14 days): `fetch-packages.py --pipeline <id>`
   deploys them, with the newest dev set for the components the merge request did not build.
 
 Deploying: see "Prepare the artifacts" in [deploy/README.md](../deploy/README.md). Every deployment starts from a clean
 host: `deploy_cognos.yml` first runs `remove_cognos.yml`.
+
+## Releases
+
+`VERSION` holds the current release line `X.Y`; `main` builds `X.(Y+1).0~dev`. Releases are tagged `vX.Y.Z` and never
+reuse a version: the first patch of a line follows the highest `X.Y.P` released so far, including the component
+repositories' imported tags (so the first 1.6 release is `v1.6.3`).
+
+| Step | Job | When | What it does |
+|---|---|---|---|
+| 1. Propose | propose release | by hand, on any `main` pipeline | compares the newest dev set with the last release of the line (`ci/compat-check.sh`) and opens or updates one merge request from `release-bot/next` setting `VERSION` to the next `X.Y`: major if a public interface broke, else minor |
+| 2. Review | you | | merge it, or first edit `VERSION` in it to release a different version |
+| 3. Create | create release | the `main` push that changed `VERSION`; or by hand for the current line (the first release) | creates `release/X.Y`, the tag `vX.Y.P` and the label `backport-X.Y` |
+| 4. Publish | publish release | every `vX.Y.Z` tag pipeline, after every component built and tested on both OSes | uploads the packages and `set.json` to the package registry (`cognos/X.Y.Z`, kept permanently) and creates the GitLab release |
+| 5. Backport | backport | every `main` push | for a merged merge request labelled `backport-X.Y`: cherry-picks it onto `release/X.Y` and opens a merge request into it; on a conflict it comments on the merge request and fails, and the backport is done by hand |
+| 6. Patch | tag patch | every push to `release/X.Y` (e.g. a merged backport) | tags `vX.Y.(P+1)` unless the commit is tagged, which runs step 4 |
+
+The compatibility check: `buf breaking` on mgmt-fw's gRPC API (`proto/framework`) against the last release's
+protos, and `abidiff` on every shared library in the ubuntu24 packages against the last release's. A check that cannot
+run is reported in the merge request and does not count as a break. All release jobs share `resource_group: release`.
+They use `RELEASE_BOT_TOKEN`, except "publish release", which uses the job token. Releases are not published to Nexus
+yet; that comes when the component repositories stop releasing.
+
+Deploying a release: `deploy/scripts/fetch-packages.py --os ubuntu24 --release vX.Y.Z`.
 
 ## Required settings
 
 | Setting | Where | Why |
 |---|---|---|
 | "Keep artifacts from most recent successful jobs" on (the default) | Settings → CI/CD → Artifacts | keeps the newest dev set until a newer one exists |
-| Public pipelines on (the default for a public project) | Settings → CI/CD → General pipelines | `fetch-packages.sh` downloads without a token; otherwise users export `GITLAB_TOKEN` |
-| Optional: a schedule on `main`, e.g. nightly | Build → Pipeline schedules | rebuilds and tests every component and publishes a full set every night; not needed for dev sets to stay complete |
+| Public pipelines on (the default for a public project) | Settings → CI/CD → General pipelines | `fetch-packages.py` downloads without a token; otherwise users export `GITLAB_TOKEN` |
+| A schedule on `main`, e.g. nightly (recommended) | Build → Pipeline schedules | rebuilds and tests every component and publishes a fresh set every night, so a failed or stale component is retried and the newest set never expires |
+| `RELEASE_BOT_TOKEN`: Masked and hidden, Protected | Settings → CI/CD → Variables | the release jobs' GitLab API calls (an access token with the Maintainer role and the `api` and `write_repository` scopes) |
+| Protected branches `main` and `release/*`: allowed to merge "Maintainers" and the token's user; push "No one" | Settings → Repository → Protected branches | the token's protected variable is only available there; the token's user creates `release/X.Y` |
+| Protected tags `v*`: allowed to create "Maintainers" | Settings → Repository → Protected tags | only maintainers and the release jobs create release tags |
+| Merge method "Merge commit" | Settings → Merge requests | "backport" cherry-picks the merge commit of a merged merge request |
 
 ## Later
 
-Releases, and the sync from the component repositories.
+The sync from the component repositories, and publishing releases to Nexus.
