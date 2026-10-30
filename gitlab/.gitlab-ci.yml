@@ -59,6 +59,12 @@ stages:
   - publish
   - release
 
+variables:
+  # The lab runners lose DNS or network for a few seconds now and then; retry
+  # the repository fetch and artifact downloads instead of failing the job.
+  GET_SOURCES_ATTEMPTS: 3
+  ARTIFACT_DOWNLOAD_ATTEMPTS: 3
+
 # ---------------------------------------------------------------------------
 # 2. What a change rebuilds
 # ---------------------------------------------------------------------------
@@ -385,6 +391,11 @@ scan cxl:
   variables:
     COMPONENT: sapp
     COMPONENT_DIR: apps/sapp
+    # npm downloads from the public registry during the package build and the
+    # tests; retry dropped or slow connections longer than npm's default.
+    NPM_CONFIG_FETCH_RETRIES: "5"
+    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "20000"
+    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "120000"
   rules:
     - changes: *rebuild-all
     - changes: [apps/sapp/**/*]
