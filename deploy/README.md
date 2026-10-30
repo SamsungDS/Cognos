@@ -170,6 +170,26 @@ Your inventory file should contain hosts in the following groups:
 
 The cognos packages to be installed should be placed in the artifacts directory in advance.
 
+#### From this repository's builds
+
+`scripts/fetch-packages.sh` puts the packages for one OS (`ubuntu24` or `ol10`) into `artifacts/SVK/`. It removes
+any older `cognos-*` packages there first, copies only runtime packages (no `-dev`/`-devel`), and picks one cxl
+variant (`--mock` for `cognos-cxl-mock`). On ol10 it also downloads `cognos-grpc` from Nexus at the version pinned
+at the top of the script (`GRPC_VERSION`), which needs the lab network.
+
+| Packages from | Command, run from the repository root |
+|---|---|
+| The newest dev set (built on `main`) | `deploy/scripts/fetch-packages.sh --os ubuntu24 --set latest` |
+| The dev set of one `main` pipeline (kept for 10 days) | `deploy/scripts/fetch-packages.sh --os ubuntu24 --set <pipeline id>` |
+| A merge request or any pipeline (components it did not build come from the newest dev set) | `deploy/scripts/fetch-packages.sh --os ubuntu24 --pipeline <pipeline id>` |
+| Your own build (`./build.sh --os ubuntu24`) | `deploy/scripts/fetch-packages.sh --os ubuntu24 --local` |
+
+The pipeline id is shown on the merge request's or the commit's pipeline page. Dev sets are described in
+[docs/ci.md](../docs/ci.md#dev-sets). Downloads need no token while the project and its pipelines are public;
+otherwise export `GITLAB_TOKEN`. Run `deploy/scripts/fetch-packages.sh -h` for all options.
+
+#### From a release bundle or Nexus
+
 1. Enter $project_dir and create a directory named artifacts.
     * cd ./cognos-ansible
     * mkdir artifacts
@@ -243,6 +263,33 @@ Perform the kernel upgrade and default to upgrading to version 6.11.0 (Ubuntu 22
     **Note:** When running a playbook with `--ask-vault-pass`, the user must enter **the vault password** to decrypt the contents of `group_vars/all/passwords.yml`.
 
     **Note:** `deploy_cognos.yml` runs `start_cognos.yml` as its final step, so Cognos services are configured and started once this step completes. There is no need to run `start_cognos.yml` after a fresh deployment.
+
+    **Note:** Every deployment starts from a clean host. `deploy_cognos.yml` first runs `remove_cognos.yml`, which stops Cognos and removes its packages, configuration and logs (`/etc/svk`, `/usr/local/svk`, `/var/log/svk`, `/var/lib/svk`). On a clean host this changes nothing.
+
+### Deploy on your own machine
+
+The same playbooks deploy to the machine they run on. It must run Ubuntu 24.04 or Oracle Linux 10.
+
+1. [Put the packages into `artifacts/SVK/`](#prepare_artifacts), for example from your own build:
+
+        ./build.sh --os ubuntu24
+        deploy/scripts/fetch-packages.sh --os ubuntu24 --local
+
+2. Create an inventory, e.g. `local_hosts`, with this machine in both groups:
+
+        [management_server]
+        localhost ansible_connection=local
+
+        [application_server]
+        localhost ansible_connection=local
+
+3. Without CXL hardware, set `scmc_cxl_mock_enable: true` in `group_vars/all/all.yml` and fetch the packages with `--mock`.
+
+4. Deploy:
+
+        ansible-playbook -i local_hosts playbooks/deploy_cognos.yml --ask-vault-pass --ask-become-pass
+
+    `--ask-become-pass` asks for your sudo password; leave it out if you have password-less sudo.
 
 ### Manage Cognos Services After Deployment
 

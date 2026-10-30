@@ -6,9 +6,11 @@
 | `build.sh` | builds or tests components, locally (Docker) or in CI (`--native`) | no |
 | `ci/version.sh` | prints the one version of a build | no |
 | `ci/image.sh` | builds a component image, or reuses it when its inputs are unchanged | no |
+| `ci/dev-set.py` | assembles a dev set and its `set.json` | no |
+| `deploy/scripts/fetch-packages.sh` | puts the packages of a dev set, a pipeline or a local build into `deploy/artifacts/SVK/` | uses the GitLab API to download |
 
-One pipeline per event, no child pipelines. `gitlab/.gitlab-ci.yml` has five sections: includes and workflow, what a
-change rebuilds, job templates, one block per component with all of its jobs, and other jobs.
+One pipeline per event, no child pipelines. `gitlab/.gitlab-ci.yml` has six sections: includes and workflow, what a
+change rebuilds, job templates, one block per component with all of its jobs, the dev set, and other jobs.
 
 ## When a pipeline runs
 
@@ -28,7 +30,8 @@ change rebuilds, job templates, one block per component with all of its jobs, an
   builds and tests every component.
 - A change in one component's folder builds and tests only that component.
 - amo-prof and `deploy/` run only when their own folder changes.
-- Anything else (docs, the `cama` submodule bump) builds nothing; only "check version" runs.
+- Anything else (docs, the `cama` submodule bump) builds nothing; only "check version" runs, and on `main` also
+  "publish dev set", which then republishes the previous set unchanged.
 - Tag, schedule and web pipelines run every job. Images are still reused when their inputs are unchanged.
 
 ## Stages and jobs
@@ -42,6 +45,7 @@ Stages: `build-images`, `build`, `test`, `scan`, `publish`, `release`.
 | test \<component\> | test | runs the unit tests ([Tests](#tests)) |
 | scan \<component\> | scan | Sonar analysis, `main` only ([Scans](#scans)) |
 | test amo-prof | test | builds the amo-prof wheel and runs its tests |
+| publish dev set | publish | every `main` push and schedule ([Dev sets](#dev-sets)) |
 | check version | test | every pipeline; checks that `VERSION` is `MAJOR.MINOR` |
 | build ansible image, lint ansible | build-images, test | lint `deploy/` |
 
@@ -134,23 +138,38 @@ default `(branch|release)-.*` matches).
 The packages end up in `build/artifacts/<os>/`. The component Dockerfiles install dependencies from the internal
 Nexus, so a local Docker build needs the lab network.
 
-## Planned: dev sets
+## Dev sets
 
-- Every merge to `main`, and every nightly, produces a set. Its version is `X.(Y+1).0~dev.<pipeline iid>` in package
-  file names and deb/rpm versions, and `X.(Y+1).0-dev.<pipeline iid>` as the registry version.
-- Packages built in that pipeline carry the set version. Unchanged components are not rebuilt and keep the version of
-  their last build.
-- `cognos-dev-set/X.(Y+1).0-dev.<iid>/set.json` pins the exact package file, version and sha256 of every component
-  and OS. `latest.json` points to the newest set.
-- Deploying a set installs exactly the pinned versions, so hosts upgrade and restart only the changed components.
-- A release rebuilds every component at `X.Y.Z`.
+A dev set is a complete set of Cognos packages, every component for ubuntu24 and ol10, built on `main`. It is what
+`deploy/scripts/fetch-packages.sh --set` deploys.
 
-Package registry facts (GitLab 18.6):
+- "publish dev set" runs in every `main` push and scheduled pipeline, after all of its builds, tests and scans passed.
+  If any of them failed, no set is published and the previous one stays the newest.
+- It takes the packages this pipeline built and, for each component it did not build, that component's packages from
+  the previous set (`ci/dev-set.py`). The set is the job's artifact: `dev-set/set.json` and `dev-set/<os>/<packages>`.
+- `set.json` lists every package file with its component, OS, version, sha256 and the pipeline that built it.
+  Packages built in this pipeline carry its version (`X.(Y+1).0~dev.<pipeline iid>`); unchanged components keep the
+  version of the pipeline that built them.
+- The newest set is the artifact of the latest successful "publish dev set" job on `main`. GitLab keeps the artifacts
+  of the most recent successful pipeline, so the newest set stays until a newer one exists. Every other set expires
+  10 days after it was created.
+- Sets are created in pipeline order (`resource_group: dev-set`). If an older pipeline would still finish after a
+  newer one, `ci/dev-set.py` refuses to replace the newer set and that job fails.
+- Dev sets are stored only in GitLab, as job artifacts; nothing is published to Nexus or to the package registry.
+- A merge request's packages are the artifacts of its build jobs (14 days): `fetch-packages.sh --pipeline <id>`
+  deploys them, with the newest dev set for the components the merge request did not build.
 
-- Generic package versions reject `~`, so registry versions use `-dev.N` (for example `1.7.0-dev.12`).
-- File names may contain `~`.
-- Generic package protection rules are available.
+Deploying: see "Prepare the artifacts" in [deploy/README.md](../deploy/README.md). Every deployment starts from a clean
+host: `deploy_cognos.yml` first runs `remove_cognos.yml`.
+
+## Required settings
+
+| Setting | Where | Why |
+|---|---|---|
+| "Keep artifacts from most recent successful jobs" on (the default) | Settings → CI/CD → Artifacts | keeps the newest dev set until a newer one exists |
+| Public pipelines on (the default for a public project) | Settings → CI/CD → General pipelines | `fetch-packages.sh` downloads without a token; otherwise users export `GITLAB_TOKEN` |
+| Optional: a schedule on `main`, e.g. nightly | Build → Pipeline schedules | rebuilds and tests every component and publishes a full set every night; not needed for dev sets to stay complete |
 
 ## Later
 
-Dev sets and deploy, releases, and the sync from the component repositories.
+Releases, and the sync from the component repositories.
