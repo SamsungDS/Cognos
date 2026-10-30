@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
-"""Assembles a complete dev set: the packages of every component for ubuntu24 and ol10, plus set.json.
+"""Assembles a set of Cognos packages, every component for ubuntu24 and ol10, plus set.json.
 
-Usage: ci/dev-set.py --version <version> --pipeline <id> [--previous <dir>] --out <dir>
+Usage: ci/dev-set.py --version <version> --pipeline <id> [--results <file>] [--previous <dir>] --out <dir>
+       ci/dev-set.py --version <version> --pipeline <id> --complete --out <dir>     (a release)
 
-- A component built in this pipeline: its packages from <component dir>/build/artifacts/<os>/
-  (the artifacts of this pipeline's build jobs).
-- Every other component: its packages from the previous set (--previous: a directory holding a set.json
-  and the files it lists), unchanged.
+Packages are taken from <component dir>/build/artifacts/<os>/ (the artifacts of the pipeline's build jobs) and
+grouped by package name: cognos-cxl and cognos-cxl-mock are separate entries ("cxl", "cxl-mock").
 
-The result is <out>/set.json and <out>/<os>/<package files>. set.json lists, for each package file, its
-component, OS, version, sha256 and the pipeline that built it.
+Dev set (--results, --previous): --results is a JSON object {"<component>/<os>": "passed" | "failed"} for every
+component and OS this pipeline built and tested. For each component and OS:
+  - passed:              this pipeline's packages;
+  - failed:              the previous set's packages (or none), noted as failed;
+  - not in --results:    not built in this pipeline: the previous set's packages.
+If core or mgmt-fw failed on any OS, no set is made (exit 2): every other component depends on them.
+
+Release (--complete): every component and OS must have packages built in this pipeline, else exit 1.
+
+The result is <out>/set.json and <out>/<os>/<package files>. set.json lists every package file with its component,
+OS, version, sha256 and the pipeline that built it, and per component and OS what happened in this pipeline.
 
 Run from the repository root. Needs only the Python standard library.
 """
@@ -19,6 +27,7 @@ import datetime
 import hashlib
 import json
 import pathlib
+import re
 import shutil
 import sys
 
@@ -32,8 +41,23 @@ COMPONENT_DIRS = {
     "cxl": "components/cxl",
     "sapp": "apps/sapp",
 }
+# Package name (without -dev/-devel) -> set component. cxl's two variants are separate components.
+PACKAGE_COMPONENT = {
+    "cognos-core": "core", "cognos-mgmt-fw": "mgmt-fw", "cognos-node": "node", "cognos-ras": "ras",
+    "cognos-slat": "slat", "cognos-me": "me", "cognos-cxl": "cxl", "cognos-cxl-mock": "cxl-mock",
+    "cognos-app": "sapp",
+}
+COMPONENTS = ["core", "mgmt-fw", "node", "ras", "slat", "me", "cxl", "cxl-mock", "sapp"]
+UPSTREAMS = ("core", "mgmt-fw")
 OSES = ("ubuntu24", "ol10")
-PACKAGE_SUFFIX = {"ubuntu24": ".deb", "ol10": ".rpm"}
+SUFFIX = {"ubuntu24": ".deb", "ol10": ".rpm"}
+
+
+def package_component(file_name):
+    """cognos-cxl-mock-dev_1.7.0~dev.3-ubuntu24.04_amd64.deb -> cxl-mock"""
+    m = re.match(r"^([a-z0-9-]+?)(_|-[0-9])", file_name)
+    name = re.sub(r"-(dev|devel)$", "", m.group(1)) if m else ""
+    return PACKAGE_COMPONENT.get(name)
 
 
 def sha256(path):
@@ -44,61 +68,94 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def built_packages(os_name):
+    """{component: [paths]} of the packages under every component's build/artifacts/<os>/."""
+    found = {}
+    for component_dir in COMPONENT_DIRS.values():
+        for path in sorted(pathlib.Path(component_dir, "build", "artifacts", os_name).glob("*" + SUFFIX[os_name])):
+            component = package_component(path.name)
+            if component:
+                found.setdefault(component, []).append(path)
+    return found
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--version", required=True, help="the version of the packages built in this pipeline")
     parser.add_argument("--pipeline", required=True, type=int, help="this pipeline's id")
+    parser.add_argument("--results", type=pathlib.Path, help="JSON: {\"<component>/<os>\": \"passed\"|\"failed\"}")
     parser.add_argument("--previous", type=pathlib.Path, help="directory of the previous set (may not exist)")
+    parser.add_argument("--complete", action="store_true", help="a release: every component must be built here")
     parser.add_argument("--out", required=True, type=pathlib.Path)
     args = parser.parse_args()
 
+    results = json.loads(args.results.read_text()) if args.results else {}
+    failed_upstreams = sorted(k for k, v in results.items() if v != "passed" and k.split("/")[0] in UPSTREAMS)
+    if failed_upstreams:
+        print(f"dev-set: {', '.join(failed_upstreams)} failed. Every other component depends on core and mgmt-fw, "
+              "so no dev set is made; the previous set stays the newest.", file=sys.stderr)
+        sys.exit(2)
+
     previous = []
     previous_json = args.previous / "set.json" if args.previous else None
-    if previous_json and previous_json.is_file():
+    if not args.complete and previous_json and previous_json.is_file():
         previous_set = json.loads(previous_json.read_text())
-        # Sets must be created in pipeline order, or an older pipeline would replace a newer set.
+        # Sets are made in pipeline order: an older pipeline must not replace a newer set.
+        # The same pipeline may (a rerun after a retried job).
         if previous_set["pipeline"] > args.pipeline:
             sys.exit(f"dev-set: the newest set is from pipeline {previous_set['pipeline']}, "
                      f"newer than this pipeline ({args.pipeline}); not replacing it.")
         previous = previous_set["packages"]
         print(f"Previous set: {previous_set['version']} (pipeline {previous_set['pipeline']})")
-    else:
-        print("No previous set: this set holds only the packages built in this pipeline.")
+    elif not args.complete:
+        print("No previous set.")
 
-    packages = []
+    packages, outcomes, missing = [], {}, []
     for os_name in OSES:
         (args.out / os_name).mkdir(parents=True, exist_ok=True)
-        for component, component_dir in COMPONENT_DIRS.items():
-            built = sorted(pathlib.Path(component_dir, "build", "artifacts", os_name).glob("*" + PACKAGE_SUFFIX[os_name]))
-            if built:
-                for path in built:
+        built = built_packages(os_name)
+        for component in COMPONENTS:
+            key = f"{component}/{os_name}"
+            result = "passed" if args.complete else results.get(key)
+            use_built = result == "passed" and built.get(component)
+            if use_built:
+                for path in built[component]:
                     shutil.copy2(path, args.out / os_name / path.name)
                     packages.append({"component": component, "os": os_name, "file": f"{os_name}/{path.name}",
                                      "version": args.version, "pipeline": args.pipeline})
-                source = "built in this pipeline"
+                outcome = "built in this pipeline"
             else:
                 kept = [p for p in previous if p["component"] == component and p["os"] == os_name]
                 for package in kept:
                     shutil.copy2(args.previous / package["file"], args.out / package["file"])
                     packages.append({k: package[k] for k in ("component", "os", "file", "version", "pipeline")})
-                source = f"kept from pipeline {kept[0]['pipeline']}" if kept else "MISSING"
-            print(f"  {component:8} {os_name:9} {source}")
+                since = f"kept from pipeline {kept[0]['pipeline']}" if kept else "missing"
+                if result == "passed":
+                    outcome = f"passed but produced no packages; {since}"
+                elif result:
+                    outcome = f"failed in this pipeline; {since}"
+                else:
+                    outcome = f"not built in this pipeline; {since}"
+                if not kept:
+                    missing.append(key)
+            outcomes[key] = outcome
+            print(f"  {component:9} {os_name:9} {outcome}")
+
+    if args.complete and missing:
+        sys.exit("dev-set: a release needs every component built in this pipeline; missing: " + ", ".join(missing))
+    if missing:
+        print("WARNING: no packages for " + ", ".join(missing))
 
     for package in packages:
         package["sha256"] = sha256(args.out / package["file"])
-
-    missing = sorted({(c, o) for c in COMPONENT_DIRS for o in OSES}
-                     - {(p["component"], p["os"]) for p in packages})
-    if missing:
-        print("WARNING: no packages for " + ", ".join(f"{c} ({o})" for c, o in missing))
-
     (args.out / "set.json").write_text(json.dumps({
         "version": args.version,
         "pipeline": args.pipeline,
         "created": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+        "outcomes": outcomes,
         "packages": packages,
     }, indent=2) + "\n")
-    print(f"Dev set {args.version}: {len(packages)} package files in {args.out}")
+    print(f"Set {args.version}: {len(packages)} package files in {args.out}")
 
 
 if __name__ == "__main__":

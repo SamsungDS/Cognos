@@ -33,9 +33,12 @@ Version: COGNOS_VERSION if set, else ci/version.sh (the vX.Y.Z tag on HEAD,
 else X.(Y+1).0~dev.0.local from VERSION).
 
 Upstream packages: before building or testing, the packages of core (and of mgmt-fw for
-cxl and me) found in components/<upstream>/build/artifacts/<os>/ are installed
-(logged as "pipeline"). Otherwise the ones already installed are used (logged
-as "image").
+cxl and me) are installed from the first of:
+  1. components/<upstream>/build/artifacts/<os>/, this pipeline's or your own
+     build (logged as "pipeline");
+  2. the newest dev set, downloaded with deploy/scripts/fetch-packages.py
+     (logged as "dev set"; UPSTREAM_DEV_SET=0 skips it);
+  3. the packages already installed, e.g. the image's (logged as "image").
 EOF
 }
 
@@ -101,19 +104,34 @@ show_packages() {
 
 install_upstream() {
     local up=$1 pkgs
+    local dev_set_dir="$ROOT/build/dev-set/$OS/$up" log="$ROOT/build/dev-set-$up.log"
     pkgs=("$(component_dir "$up")/build/artifacts/$OS"/*."$PKG_EXT")
     if [[ ${#pkgs[@]} -gt 0 ]]; then
         echo "upstream $up: pipeline $(show_packages "${pkgs[0]}" | cut -d' ' -f2)"
-        if [[ $PKG_EXT == deb ]]; then
-            $SUDO apt-get update
-            DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y --allow-downgrades "${pkgs[@]}"
-        else
-            $SUDO dnf install -y "${pkgs[@]}"
-        fi
-    elif [[ $PKG_EXT == deb ]]; then
-        echo "upstream $up: image $(dpkg-query -W -f '${Version}' "cognos-$up" 2>/dev/null || echo 'not installed')"
     else
-        echo "upstream $up: image $(rpm -q --qf '%{VERSION}-%{RELEASE}' "cognos-$up" 2>/dev/null || echo 'not installed')"
+        pkgs=()
+        mkdir -p "$ROOT/build"
+        if [[ ${UPSTREAM_DEV_SET:-1} != 0 ]] && ARTIFACTS_DIR=$dev_set_dir "$ROOT/deploy/scripts/fetch-packages.py" \
+            --os "$OS" --set latest --only "$up" --with-dev > "$log" 2>&1; then
+            pkgs=("$dev_set_dir"/*."$PKG_EXT")
+        fi
+        if [[ ${#pkgs[@]} -gt 0 ]]; then
+            echo "upstream $up: dev set $(show_packages "${pkgs[0]}" | cut -d' ' -f2)"
+        else
+            [[ ! -s $log ]] || echo "upstream $up: no dev set packages ($(tail -n 1 "$log"))"
+            if [[ $PKG_EXT == deb ]]; then
+                echo "upstream $up: image $(dpkg-query -W -f '${Version}' "cognos-$up" 2>/dev/null || echo 'not installed')"
+            else
+                echo "upstream $up: image $(rpm -q --qf '%{VERSION}-%{RELEASE}' "cognos-$up" 2>/dev/null || echo 'not installed')"
+            fi
+            return
+        fi
+    fi
+    if [[ $PKG_EXT == deb ]]; then
+        $SUDO apt-get update
+        DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y --allow-downgrades "${pkgs[@]}"
+    else
+        $SUDO dnf install -y "${pkgs[@]}"
     fi
 }
 

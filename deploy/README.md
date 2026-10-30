@@ -172,21 +172,23 @@ The cognos packages to be installed should be placed in the artifacts directory 
 
 #### From this repository's builds
 
-`scripts/fetch-packages.sh` puts the packages for one OS (`ubuntu24` or `ol10`) into `artifacts/SVK/`. It removes
+`scripts/fetch-packages.py` (Python 3 only) puts the packages for one OS (`ubuntu24` or `ol10`) into
+`artifacts/SVK/`. It removes
 any older `cognos-*` packages there first, copies only runtime packages (no `-dev`/`-devel`), and picks one cxl
 variant (`--mock` for `cognos-cxl-mock`). On ol10 it also downloads `cognos-grpc` from Nexus at the version pinned
 at the top of the script (`GRPC_VERSION`), which needs the lab network.
 
 | Packages from | Command, run from the repository root |
 |---|---|
-| The newest dev set (built on `main`) | `deploy/scripts/fetch-packages.sh --os ubuntu24 --set latest` |
-| The dev set of one `main` pipeline (kept for 10 days) | `deploy/scripts/fetch-packages.sh --os ubuntu24 --set <pipeline id>` |
-| A merge request or any pipeline (components it did not build come from the newest dev set) | `deploy/scripts/fetch-packages.sh --os ubuntu24 --pipeline <pipeline id>` |
-| Your own build (`./build.sh --os ubuntu24`) | `deploy/scripts/fetch-packages.sh --os ubuntu24 --local` |
+| A release (kept permanently) | `deploy/scripts/fetch-packages.py --os ubuntu24 --release v1.6.3` |
+| The newest dev set (built on `main`) | `deploy/scripts/fetch-packages.py --os ubuntu24 --set latest` |
+| The dev set of one `main` pipeline (kept for 10 days) | `deploy/scripts/fetch-packages.py --os ubuntu24 --set <pipeline id>` |
+| A merge request or any pipeline (components it did not build come from the newest dev set) | `deploy/scripts/fetch-packages.py --os ubuntu24 --pipeline <pipeline id>` |
+| Your own build (`./build.sh --os ubuntu24`) | `deploy/scripts/fetch-packages.py --os ubuntu24 --local` |
 
 The pipeline id is shown on the merge request's or the commit's pipeline page. Dev sets are described in
 [docs/ci.md](../docs/ci.md#dev-sets). Downloads need no token while the project and its pipelines are public;
-otherwise export `GITLAB_TOKEN`. Run `deploy/scripts/fetch-packages.sh -h` for all options.
+otherwise export `GITLAB_TOKEN`. Run `deploy/scripts/fetch-packages.py -h` for all options.
 
 #### From a release bundle or Nexus
 
@@ -273,7 +275,7 @@ The same playbooks deploy to the machine they run on. It must run Ubuntu 24.04 o
 1. [Put the packages into `artifacts/SVK/`](#prepare_artifacts), for example from your own build:
 
         ./build.sh --os ubuntu24
-        deploy/scripts/fetch-packages.sh --os ubuntu24 --local
+        deploy/scripts/fetch-packages.py --os ubuntu24 --local
 
 2. Create an inventory, e.g. `local_hosts`, with this machine in both groups:
 
