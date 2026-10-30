@@ -18,25 +18,31 @@
 #include "svk_logger.hpp"
 #include "utils/logic_module_manager.hpp"
 
-#define RAS_LOG "ras_internal.log"
+constexpr const char *RAS_LOG = "ras_internal.log";
 
 // TODO: Hardcoding this path for now. This will be provided by the header from
 // the svk-core repo in the future
-#define SVK_FEATURE_MODULE_PATH "/usr/local/svk/feature_modules"
+constexpr const char *SVK_FEATURE_MODULE_PATH =
+    "/usr/local/svk/feature_modules";
 
-#define FEATURE_MODULE_RAS_PATH SVK_FEATURE_MODULE_PATH "/ras"
-#define FEATURE_MODULE_RAS_CONFIG_PATH FEATURE_MODULE_RAS_PATH "/config"
-#define FEATURE_MODULE_RAS_LIB_PATH FEATURE_MODULE_RAS_PATH "/lib64"
-#define RAS_CONFIG_FILE_DEFAULT FEATURE_MODULE_RAS_CONFIG_PATH "/config.json"
+constexpr const char *FEATURE_MODULE_RAS_PATH =
+    "/usr/local/svk/feature_modules/ras";
+constexpr const char *FEATURE_MODULE_RAS_CONFIG_PATH =
+    "/usr/local/svk/feature_modules/ras/config";
+constexpr const char *FEATURE_MODULE_RAS_LIB_PATH =
+    "/usr/local/svk/feature_modules/ras/lib64";
+constexpr const char *RAS_CONFIG_FILE_DEFAULT =
+    "/usr/local/svk/feature_modules/ras/config/config.json";
 
-#define RAS_LOGGER_LEVEL_DEFAULT "TRACE"
-#define RAS_LOGGER_FILE_NAME_DEFAULT "/var/log/svk/ras.log"
-#define RAS_LOGGER_FILE_COUNT_DEFAULT 1
-#define RAS_LOGGER_FILE_SIZE_DEFAULT 1048576
-#define RAS_MONITOR_INTERVAL_DEFAULT 60
-#define RAS_LOGGER_SINK_TYPE_DEFAULT "rotating_file"
+constexpr const char *RAS_LOGGER_LEVEL_DEFAULT = "TRACE";
+constexpr const char *RAS_LOGGER_FILE_NAME_DEFAULT = "/var/log/svk/ras.log";
+constexpr int RAS_LOGGER_FILE_COUNT_DEFAULT = 1;
+constexpr int RAS_LOGGER_FILE_SIZE_DEFAULT = 1048576;
+constexpr int RAS_MONITOR_INTERVAL_DEFAULT = 60;
+constexpr const char *RAS_LOGGER_SINK_TYPE_DEFAULT = "rotating_file";
 
-#define RAS_DEFAULT_ADAPTERS_DIRECTORY "/usr/local/svk/ras/adapters"
+constexpr const char *RAS_DEFAULT_ADAPTERS_DIRECTORY =
+    "/usr/local/svk/ras/adapters";
 
 /**
  * @struct ras_conf
@@ -83,7 +89,7 @@ struct ras_context_s {
   std::mutex ctx_mutex;
 };
 extern uint64_t g_monitor_interval;
-svk_status parsing_ras_conf(std::string, ras_conf *);
+svk_status parsing_ras_conf(const std::string &, ras_conf *);
 
 // Check if RAS shutdown has been initiated (for detached threads)
 bool ras_is_shutdown();

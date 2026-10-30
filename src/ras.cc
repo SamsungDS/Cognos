@@ -17,19 +17,20 @@ static std::atomic<bool> g_ras_shutdown{false};
 
 bool ras_is_shutdown() { return g_ras_shutdown.load(); }
 
-svk_status parsing_ras_conf(std::string ras_conf_path, ras_conf *ras_configs) {
+svk_status parsing_ras_conf(const std::string &ras_conf_path,
+                            ras_conf *ras_configs) {
   boost::property_tree::ptree root_conf;
   static boost::property_tree::ptree logger_conf;
   try {
     boost::property_tree::read_json(ras_conf_path, root_conf);
-  } catch (std::exception &e) {
+  } catch (const boost::property_tree::json_parser_error &e) {
     std::cout << "Unable to read ras config. Error -> " << e.what() << "."
               << std::endl
               << "Using the default config" << std::endl;
   }
   try {
     logger_conf = root_conf.get_child("ras.logger");
-  } catch (std::exception &e) {
+  } catch (const boost::property_tree::ptree_bad_path &e) {
     std::cout << "Unable to read ras logger config. Error -> " << e.what()
               << "." << std::endl
               << "Using the default config" << std::endl;
@@ -57,20 +58,22 @@ svk_status parsing_ras_conf(std::string ras_conf_path, ras_conf *ras_configs) {
   return SVK_STATUS_SUCCESS;
 }
 
+// Exported entry points: signatures are fixed by svk-core's
+// framework_downstream.h, so pointer params cannot be made const (S995).
+//
 // initialize_svk(char* config_file, void *details) will initialize svk_logger_0
 // according to the config file path and the function here will enable an
 // internal ras logger (svk_logger_1) which can log without svk-core
-extern "C" svk_status initialize(void *details) {
+extern "C" svk_status initialize(void *) {  // NOSONAR
   svk_status rc = SVK_STATUS_FAIL;
   std::string ras_conf_path;
-  const char *env_p;
-  if ((env_p = std::getenv("SVK_RAS_CONFIG")) != nullptr) {
+  if (const char *env_p = std::getenv("SVK_RAS_CONFIG"); env_p != nullptr) {
     ras_conf_path = env_p;
   } else {
     ras_conf_path = RAS_CONFIG_FILE_DEFAULT;
   }
-  ras_conf *ras_configs = new ras_conf();
-  rc = parsing_ras_conf(ras_conf_path, ras_configs);
+  auto ras_configs = std::make_unique<ras_conf>();
+  rc = parsing_ras_conf(ras_conf_path, ras_configs.get());
   if (rc != SVK_STATUS_SUCCESS) {
     return rc;
   }
@@ -83,7 +86,8 @@ extern "C" svk_status initialize(void *details) {
   // initialization in the ras_logger_init function
   if (svk_logger_init(RAS_LOGGER, ras_configs->log_file_name.c_str(),
                       log_level_map.at(ras_configs->log_level),
-                      ras_configs->log_file_count, ras_configs->log_file_size,
+                      static_cast<int>(ras_configs->log_file_count),
+                      ras_configs->log_file_size,
                       ras_configs->log_sink_type.c_str()) == 0) {
     svk_logger(RAS_LOGGER, level_E::INFO,
                "ras init called & logger is initialized");
@@ -116,7 +120,7 @@ extern "C" svk_status initialize(void *details) {
 }
 
 extern "C" svk_status get_supported_feature_list(feature_id *feature,
-                                                 char *feature_names) {
+                                                 char *) {  // NOSONAR
   *feature = feature_id::ZERO_ETL;
   std::string msg = "ras get_supported_feature_list called";
   svk_logger("ras", level_E::INFO, msg.c_str());
@@ -124,15 +128,15 @@ extern "C" svk_status get_supported_feature_list(feature_id *feature,
   return SVK_STATUS_SUCCESS;
 }
 
-extern "C" svk_status is_license_valid(void *) {
+extern "C" svk_status is_license_valid(void *) {  // NOSONAR
   std::string msg = "ras is_license_valid called";
   svk_logger("ras", level_E::INFO, msg.c_str());
   return SVK_STATUS_SUCCESS;
 }
 
 // Assuming that input and output buffers contain strings
-extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
-                                   svk_output *output) {
+extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd,  // NOSONAR
+                                   svk_input *input, svk_output *output) {
   char debug_info[2048];
 
   if (cmd == nullptr || input == nullptr || output == nullptr ||
@@ -200,14 +204,14 @@ extern "C" svk_status execute_sync(svk_pass_thru_cmd *cmd, svk_input *input,
   return SVK_STATUS_SUCCESS;
 }
 
-extern "C" svk_status execute_async(svk_pass_thru_cmd *pass_thru,
-                                    svk_postprocess_fn *postprocess_fn) {
+extern "C" svk_status execute_async(svk_pass_thru_cmd *,     // NOSONAR
+                                    svk_postprocess_fn *) {  // NOSONAR
   std::string msg = "ras execute_async called";
   svk_logger("ras", level_E::INFO, msg.c_str());
   return SVK_STATUS_SUCCESS;
 }
 
-extern "C" svk_status clean_up(void *) {
+extern "C" svk_status clean_up(void *) {  // NOSONAR
   std::string msg = "ras clean_up called";
   svk_logger(RAS_LOGGER, level_E::INFO, msg.c_str());
   std::lock_guard<std::mutex> lock(g_ras_context.ctx_mutex);
