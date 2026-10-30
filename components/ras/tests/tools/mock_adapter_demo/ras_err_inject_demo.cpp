@@ -43,7 +43,8 @@ void printTime(string &res) {
   res.assign(buffer);
 }
 
-svk_status parsing_ras_conf(std::string ras_conf_path, ras_conf *ras_configs) {
+svk_status parsing_ras_conf(const std::string &ras_conf_path,
+                            ras_conf *ras_configs) {
   boost::property_tree::ptree root_conf;
   static boost::property_tree::ptree logger_conf;
   try {

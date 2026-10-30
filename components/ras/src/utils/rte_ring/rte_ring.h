@@ -411,10 +411,12 @@ static __rte_always_inline unsigned int __rte_ring_move_prod_head(
     if (n == 0) return 0;
 
     *new_head = *old_head + n;
-    if (is_sp)
-      r->prod.head = *new_head, success = 1;
-    else
+    if (is_sp) {
+      r->prod.head = *new_head;
+      success = 1;
+    } else {
       success = rte_atomic32_cmpset(&r->prod.head, *old_head, *new_head);
+    }
   } while (unlikely(success == 0));
   return n;
 }
@@ -443,7 +445,8 @@ static __rte_always_inline unsigned int __rte_ring_do_enqueue(
     struct rte_ring *r, void *const *obj_table, unsigned int n,
     enum rte_ring_queue_behavior behavior, int is_sp,
     unsigned int *free_space) {
-  uint32_t prod_head, prod_next;
+  uint32_t prod_head;
+  uint32_t prod_next;
   uint32_t free_entries;
 
   n = __rte_ring_move_prod_head(r, is_sp, n, behavior, &prod_head, &prod_next,
@@ -508,10 +511,12 @@ static __rte_always_inline unsigned int __rte_ring_move_cons_head(
     if (n == 0) return 0;
 
     *new_head = *old_head + n;
-    if (is_sc)
-      r->cons.head = *new_head, success = 1;
-    else
+    if (is_sc) {
+      r->cons.head = *new_head;
+      success = 1;
+    } else {
       success = rte_atomic32_cmpset(&r->cons.head, *old_head, *new_head);
+    }
   } while (success == 0);
   return n;
 }
@@ -539,7 +544,8 @@ static __rte_always_inline unsigned int __rte_ring_move_cons_head(
 static __rte_always_inline unsigned int __rte_ring_do_dequeue(
     struct rte_ring *r, void **obj_table, unsigned int n,
     enum rte_ring_queue_behavior behavior, int is_sc, unsigned int *available) {
-  uint32_t cons_head, cons_next;
+  uint32_t cons_head;
+  uint32_t cons_next;
   uint32_t entries;
 
   n = __rte_ring_move_cons_head(r, is_sc, n, behavior, &cons_head, &cons_next,
